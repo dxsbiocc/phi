@@ -59,6 +59,7 @@ function ChatBubble({
         sx={{
           alignSelf: 'flex-end',
           maxWidth: '75%',
+          minWidth: 0,
           px: 2,
           py: 1.25,
           bgcolor: 'primary.main',
@@ -68,7 +69,12 @@ function ChatBubble({
       >
         <Typography
           variant="body1"
-          sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, fontSize: '0.95rem' }}
+          sx={{
+            whiteSpace: 'pre-wrap',
+            overflowWrap: 'anywhere',
+            lineHeight: 1.6,
+            fontSize: '0.95rem'
+          }}
         >
           {message.content}
         </Typography>
@@ -77,7 +83,7 @@ function ChatBubble({
   }
 
   return (
-    <Box sx={{ alignSelf: 'stretch', px: 0.5 }}>
+    <Box sx={{ alignSelf: 'stretch', minWidth: 0, px: 0.5 }}>
       <MarkdownContent text={message.content} />
     </Box>
   )
@@ -102,11 +108,15 @@ function ChatView({
 }: ViewProps): React.JSX.Element {
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <Box ref={messagesContainerRef} sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <Box
+        ref={messagesContainerRef}
+        sx={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overflowX: 'hidden' }}
+      >
         <Box
           sx={{
             maxWidth: 860,
             mx: 'auto',
+            minWidth: 0,
             display: 'flex',
             flexDirection: 'column',
             gap: 2,
@@ -191,7 +201,7 @@ function ChatView({
                 <TextField
                   {...params}
                   variant="standard"
-                  placeholder="默认模型"
+                  placeholder="自动选择"
                   aria-label="选择模型"
                   slotProps={{
                     ...params.slotProps,

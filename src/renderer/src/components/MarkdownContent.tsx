@@ -16,6 +16,7 @@ function CodeBlock({ children }: { children?: ReactNode }): React.JSX.Element {
         border: 1,
         borderColor: 'grey.800',
         overflowX: 'auto',
+        maxWidth: '100%',
         fontFamily: 'var(--font-mono)',
         fontSize: '0.82rem',
         lineHeight: 1.6
@@ -32,6 +33,9 @@ function MarkdownContent({ text }: { text: string }): React.JSX.Element {
       sx={{
         fontSize: '0.95rem',
         lineHeight: 1.7,
+        minWidth: 0,
+        maxWidth: '100%',
+        overflowWrap: 'anywhere',
         wordBreak: 'break-word',
         '& > :first-of-type': { mt: 0 },
         '& > :last-child': { mb: 0 }
@@ -56,7 +60,11 @@ function MarkdownContent({ text }: { text: string }): React.JSX.Element {
             </Typography>
           ),
           h3: ({ children }) => (
-            <Typography variant="subtitle2" component="h3" sx={{ mt: 1.5, mb: 0.5, fontWeight: 700 }}>
+            <Typography
+              variant="subtitle2"
+              component="h3"
+              sx={{ mt: 1.5, mb: 0.5, fontWeight: 700 }}
+            >
               {children}
             </Typography>
           ),

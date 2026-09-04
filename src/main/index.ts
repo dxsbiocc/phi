@@ -152,7 +152,14 @@ app.whenReady().then(() => {
       await session.setModel(model)
     }
   })
-  ipcMain.handle('models:selected', async () => selectedModel)
+  ipcMain.handle('models:selected', async () => {
+    if (selectedModel) return selectedModel
+    if (!sharedAgentSession) return null
+
+    const { session } = await sharedAgentSession
+    const model = session.model
+    return model ? { providerId: model.provider, modelId: model.id } : null
+  })
 
   if (process.env['PI_SMOKE'] === '1') {
     void runPiSmokeSession()

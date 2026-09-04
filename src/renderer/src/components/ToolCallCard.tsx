@@ -1,19 +1,10 @@
 import {
   Cancel as CancelIcon,
   CheckCircle as CheckCircleIcon,
-  ExpandMore as ExpandMoreIcon,
-  Terminal as TerminalIcon
+  ChevronRight as ChevronRightIcon
 } from '@mui/icons-material'
-import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
-  Box,
-  Chip,
-  CircularProgress,
-  Typography
-} from '@mui/material'
-import type { ReactNode } from 'react'
+import { Box, Collapse, Typography } from '@mui/material'
+import { useState, type ReactNode } from 'react'
 import type { ToolCallItem } from '../types'
 
 const MAX_OUTPUT_CHARS = 20000
@@ -29,7 +20,13 @@ function DiffAwareOutput({ text }: { text: string }): ReactNode {
       <Typography
         component="pre"
         variant="body2"
-        sx={{ m: 0, fontFamily: 'var(--font-mono)', fontSize: '0.8rem', whiteSpace: 'pre-wrap' }}
+        sx={{
+          m: 0,
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.8rem',
+          whiteSpace: 'pre-wrap',
+          overflowWrap: 'anywhere'
+        }}
       >
         {clipped}
       </Typography>
@@ -51,7 +48,13 @@ function DiffAwareOutput({ text }: { text: string }): ReactNode {
             key={index}
             component="div"
             variant="body2"
-            sx={{ fontFamily: 'inherit', fontSize: 'inherit', whiteSpace: 'pre-wrap', color }}
+            sx={{
+              fontFamily: 'inherit',
+              fontSize: 'inherit',
+              whiteSpace: 'pre-wrap',
+              overflowWrap: 'anywhere',
+              color
+            }}
           >
             {line || ' '}
           </Typography>
@@ -61,78 +64,154 @@ function DiffAwareOutput({ text }: { text: string }): ReactNode {
   )
 }
 
+function diffStat(output: string): { added: number; removed: number } | null {
+  const lines = output.split('\n')
+  let added = 0
+  let removed = 0
+  for (const line of lines) {
+    if (line.startsWith('+') && !line.startsWith('+++')) added += 1
+    else if (line.startsWith('-') && !line.startsWith('---')) removed += 1
+  }
+  return added || removed ? { added, removed } : null
+}
+
 function StatusIndicator({ status }: { status: ToolCallItem['status'] }): ReactNode {
   if (status === 'running') {
-    return <CircularProgress size={16} aria-label="执行中" />
+    return (
+      <Box
+        sx={{
+          width: 14,
+          height: 14,
+          borderRadius: '50%',
+          border: '2px solid',
+          borderColor: 'grey.700',
+          borderTopColor: 'text.secondary',
+          animation: 'spin 800ms linear infinite',
+          '@keyframes spin': { to: { transform: 'rotate(360deg)' } }
+        }}
+        aria-label="执行中"
+      />
+    )
   }
   if (status === 'error') {
-    return <CancelIcon color="error" fontSize="small" aria-label="失败" />
+    return <CancelIcon sx={{ fontSize: 14 }} color="error" aria-label="失败" />
   }
-  return <CheckCircleIcon color="success" fontSize="small" aria-label="完成" />
+  return <CheckCircleIcon sx={{ fontSize: 14, color: 'success.main' }} aria-label="完成" />
 }
 
 function ToolCallCard({ item }: { item: ToolCallItem }): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false)
+  const stat = item.output ? diffStat(item.output) : null
+  const toggle = (): void => setExpanded((value) => !value)
+
   return (
-    <Accordion
-      disableGutters
-      elevation={0}
-      sx={{
-        alignSelf: 'stretch',
-        maxWidth: '92%',
-        bgcolor: 'background.paper',
-        border: 1,
-        borderColor: item.status === 'error' ? 'error.dark' : 'grey.800',
-        borderRadius: 2,
-        '&:before': { display: 'none' }
-      }}
-    >
-      <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ minHeight: 44 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, width: '100%' }}>
-          <TerminalIcon fontSize="small" sx={{ color: 'text.secondary', flexShrink: 0 }} />
-          <Chip label={item.toolName} size="small" sx={{ fontFamily: 'var(--font-mono)' }} />
+    <Box sx={{ alignSelf: 'stretch', minWidth: 0 }}>
+      <Box
+        role="button"
+        tabIndex={0}
+        onClick={toggle}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            toggle()
+          }
+        }}
+        aria-expanded={expanded}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.75,
+          minWidth: 0,
+          py: 0.5,
+          px: 0.5,
+          borderRadius: 1,
+          cursor: 'pointer',
+          color: 'text.secondary',
+          transition: 'background-color 150ms',
+          '&:hover': { bgcolor: 'action.hover' },
+          '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
+        }}
+      >
+        <ChevronRightIcon
+          sx={{
+            fontSize: 16,
+            flexShrink: 0,
+            transition: 'transform 150ms',
+            transform: expanded ? 'rotate(90deg)' : 'none'
+          }}
+        />
+        <Typography
+          component="span"
+          variant="body2"
+          sx={{ fontFamily: 'var(--font-mono)', color: 'text.primary', flexShrink: 0 }}
+        >
+          {item.toolName}
+        </Typography>
+        <Typography
+          component="span"
+          variant="body2"
+          noWrap
+          sx={{ fontFamily: 'var(--font-mono)', flex: 1, minWidth: 0 }}
+        >
+          {item.argsPreview}
+        </Typography>
+        {stat ? (
           <Typography
-            variant="body2"
-            noWrap
-            sx={{ color: 'text.secondary', fontFamily: 'var(--font-mono)', flex: 1, minWidth: 0 }}
+            component="span"
+            variant="caption"
+            sx={{ flexShrink: 0, fontFamily: 'var(--font-mono)' }}
           >
-            {item.argsPreview}
+            {stat.added ? <Box component="span" sx={{ color: 'success.main' }}>+{stat.added} </Box> : null}
+            {stat.removed ? <Box component="span" sx={{ color: 'error.main' }}>-{stat.removed}</Box> : null}
           </Typography>
-          <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-            <StatusIndicator status={item.status} />
-          </Box>
+        ) : null}
+        <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+          <StatusIndicator status={item.status} />
         </Box>
-      </AccordionSummary>
-      <AccordionDetails sx={{ pt: 0 }}>
-        {item.argsJson ? (
-          <Box sx={{ mb: item.output ? 1.5 : 0 }}>
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-              参数
-            </Typography>
-            <Typography
-              component="pre"
-              variant="body2"
-              sx={{
-                m: 0,
-                fontFamily: 'var(--font-mono)',
-                fontSize: '0.8rem',
-                whiteSpace: 'pre-wrap',
-                color: 'text.secondary'
-              }}
-            >
-              {item.argsJson}
-            </Typography>
-          </Box>
-        ) : null}
-        {item.output ? (
-          <Box>
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-              输出
-            </Typography>
-            <DiffAwareOutput text={item.output} />
-          </Box>
-        ) : null}
-      </AccordionDetails>
-    </Accordion>
+      </Box>
+      <Collapse in={expanded} unmountOnExit>
+        <Box
+          sx={{
+            ml: 2.5,
+            pl: 1.5,
+            py: 1,
+            minWidth: 0,
+            borderLeft: 2,
+            borderColor: 'grey.800'
+          }}
+        >
+          {item.argsJson ? (
+            <Box sx={{ mb: item.output ? 1.5 : 0, minWidth: 0 }}>
+              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                参数
+              </Typography>
+              <Typography
+                component="pre"
+                variant="body2"
+                sx={{
+                  m: 0,
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.8rem',
+                  whiteSpace: 'pre-wrap',
+                  overflowWrap: 'anywhere',
+                  color: 'text.secondary'
+                }}
+              >
+                {item.argsJson}
+              </Typography>
+            </Box>
+          ) : null}
+          {item.output ? (
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                输出
+              </Typography>
+              <DiffAwareOutput text={item.output} />
+            </Box>
+          ) : null}
+        </Box>
+      </Collapse>
+    </Box>
   )
 }
 

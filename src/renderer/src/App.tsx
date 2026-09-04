@@ -466,6 +466,19 @@ function App(): React.JSX.Element {
 
     try {
       await rendererApi.sendPrompt(text)
+      if (!selectedModel) {
+        const active = await rendererApi.getSelectedModel()
+        if (active) {
+          setSelectedModel(
+            (prev) =>
+              prev ??
+              models.find(
+                (item) => item.providerId === active.providerId && item.modelId === active.modelId
+              ) ??
+              prev
+          )
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to send prompt'
       setMessages((prev) => [
