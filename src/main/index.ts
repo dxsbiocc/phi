@@ -8,6 +8,25 @@ import icon from '../../resources/icon.png?asset'
 
 type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
+const THINKING_LEVEL_ORDER: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
+// Mirrors @earendil-works/pi-ai's getSupportedThinkingLevels(): a level is
+// unsupported if the model's thinkingLevelMap explicitly maps it to null, and
+// 'xhigh'/'max' additionally require an explicit (non-undefined) mapping —
+// most models don't opt into those two tiers at all.
+function getSupportedThinkingLevels(model: {
+  reasoning: boolean
+  thinkingLevelMap?: Partial<Record<string, string | null>>
+}): ThinkingLevel[] {
+  if (!model.reasoning) return []
+  return THINKING_LEVEL_ORDER.filter((level) => {
+    const mapped = model.thinkingLevelMap?.[level]
+    if (mapped === null) return false
+    if (level === 'xhigh' || level === 'max') return mapped !== undefined
+    return true
+  })
+}
+
 let sharedAgentSession: Promise<Awaited<ReturnType<typeof createAgentSession>>> | null = null
 let selectedModel: { providerId: string; modelId: string } | null = null
 // Default is deliberately 'high', not the SDK's own default of 'off': many models
@@ -158,7 +177,8 @@ app.whenReady().then(() => {
     return runtime.getModels().map((model) => ({
       providerId: model.provider,
       modelId: model.id,
-      name: model.name
+      name: model.name,
+      thinkingLevels: getSupportedThinkingLevels(model)
     }))
   })
   ipcMain.handle('models:select', async (_, providerId: string, modelId: string) => {

@@ -6,26 +6,107 @@ import {
   Collapse,
   createFilterOptions,
   IconButton,
-  MenuItem,
   Paper,
-  Select,
+  Popover,
+  Slider,
   TextField,
   Typography
 } from '@mui/material'
-import { ChevronRight as ChevronRightIcon, Send as SendIcon } from '@mui/icons-material'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import {
+  Bolt as BoltIcon,
+  ChevronRight as ChevronRightIcon,
+  Send as SendIcon
+} from '@mui/icons-material'
+import { useId, useState, type FormEvent, type ReactNode } from 'react'
 import MarkdownContent from './MarkdownContent'
 import ToolCallCard from './ToolCallCard'
 import type { ChatItem, ChatMessage, ModelOption, ThinkingLevel } from '../types'
 
-const THINKING_LEVELS: { value: ThinkingLevel; label: string }[] = [
-  { value: 'minimal', label: '极简思考' },
-  { value: 'low', label: '低思考' },
-  { value: 'medium', label: '中等思考' },
-  { value: 'high', label: '深度思考' },
-  { value: 'xhigh', label: '极深思考' },
-  { value: 'max', label: '最大思考' }
-]
+const THINKING_LEVEL_ORDER: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'X-High',
+  max: 'Max'
+}
+
+function ThinkingLevelControl({
+  thinkingLevel,
+  onSelectThinkingLevel,
+  supportedLevels
+}: {
+  thinkingLevel: ThinkingLevel
+  onSelectThinkingLevel: (level: ThinkingLevel) => void
+  supportedLevels: ThinkingLevel[] | null
+}): ReactNode {
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
+  const popoverId = useId()
+
+  // supportedLevels is null when no model is explicitly selected (unknown until
+  // the SDK resolves a default) — in that case don't constrain the slider.
+  const disabled = supportedLevels !== null && supportedLevels.length === 0
+  const minIndex = supportedLevels?.length ? THINKING_LEVEL_ORDER.indexOf(supportedLevels[0]) : 0
+  const maxIndex = supportedLevels?.length
+    ? THINKING_LEVEL_ORDER.indexOf(supportedLevels[supportedLevels.length - 1])
+    : THINKING_LEVEL_ORDER.length - 1
+  const currentIndex = Math.min(
+    Math.max(THINKING_LEVEL_ORDER.indexOf(thinkingLevel), minIndex),
+    maxIndex
+  )
+
+  return (
+    <>
+      <Button
+        size="small"
+        onClick={(event) => setAnchorEl(event.currentTarget)}
+        disabled={disabled}
+        aria-describedby={popoverId}
+        startIcon={<BoltIcon sx={{ fontSize: 16 }} />}
+        sx={{
+          textTransform: 'none',
+          color: 'text.secondary',
+          fontSize: '0.85rem',
+          minHeight: 32,
+          px: 1
+        }}
+      >
+        {disabled ? 'No thinking' : THINKING_LEVEL_LABELS[THINKING_LEVEL_ORDER[currentIndex]]}
+      </Button>
+      <Popover
+        id={popoverId}
+        open={Boolean(anchorEl)}
+        anchorEl={anchorEl}
+        onClose={() => setAnchorEl(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
+        transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        slotProps={{ paper: { sx: { py: 3, px: 3.5, width: 320 } } }}
+      >
+        <Slider
+          value={currentIndex}
+          min={minIndex}
+          max={maxIndex}
+          step={1}
+          sx={{ mx: 1, width: 'calc(100% - 16px)' }}
+          marks={THINKING_LEVEL_ORDER.map((level, index) => ({
+            value: index,
+            label: (
+              <Typography variant="caption" sx={{ fontSize: '0.7rem' }}>
+                {THINKING_LEVEL_LABELS[level]}
+              </Typography>
+            )
+          }))}
+          onChange={(_, value) => {
+            const index = Array.isArray(value) ? value[0] : value
+            onSelectThinkingLevel(THINKING_LEVEL_ORDER[index])
+          }}
+          aria-label="Thinking level"
+        />
+      </Popover>
+    </>
+  )
+}
 
 function ThinkingBlock({ content }: { content: string }): ReactNode {
   const [expanded, setExpanded] = useState(false)
@@ -277,21 +358,11 @@ function ChatView({
               mt: 1
             }}
           >
-            <Select
-              value={thinkingLevel}
-              onChange={(event) => onSelectThinkingLevel(event.target.value as ThinkingLevel)}
-              variant="standard"
-              disableUnderline
-              size="small"
-              aria-label="思考等级"
-              sx={{ fontSize: '0.85rem', color: 'text.secondary', minWidth: 78 }}
-            >
-              {THINKING_LEVELS.map((option) => (
-                <MenuItem key={option.value} value={option.value} sx={{ fontSize: '0.85rem' }}>
-                  {option.label}
-                </MenuItem>
-              ))}
-            </Select>
+            <ThinkingLevelControl
+              thinkingLevel={thinkingLevel}
+              onSelectThinkingLevel={onSelectThinkingLevel}
+              supportedLevels={selectedModel?.thinkingLevels ?? null}
+            />
             <Autocomplete
               options={models}
               value={selectedModel}

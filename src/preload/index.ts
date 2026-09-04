@@ -65,6 +65,7 @@ type ModelOption = {
   providerId: string
   modelId: string
   name: string
+  thinkingLevels: ThinkingLevel[]
 }
 
 type SelectedModel = {

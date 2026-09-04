@@ -55,6 +55,7 @@ export interface ModelOption {
   providerId: string
   modelId: string
   name: string
+  thinkingLevels: ThinkingLevel[]
 }
 
 export interface AuthProgressEvent {

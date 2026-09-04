@@ -100,7 +100,14 @@ declare global {
               }
         ) => void
       ) => () => void
-      listModels: () => Promise<Array<{ providerId: string; modelId: string; name: string }>>
+      listModels: () => Promise<
+        Array<{
+          providerId: string
+          modelId: string
+          name: string
+          thinkingLevels: Array<'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'>
+        }>
+      >
       selectModel: (providerId: string, modelId: string) => Promise<void>
       getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>
       selectThinkingLevel: (
