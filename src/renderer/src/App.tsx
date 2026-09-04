@@ -178,7 +178,9 @@ function App(): React.JSX.Element {
   const [models, setModels] = useState<ModelOption[]>([])
   const [selectedModel, setSelectedModel] = useState<ModelOption | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
-  const assistantIdRef = useRef<string | null>(null)
+  const isSendingRef = useRef(false)
+  const textBlockIdsRef = useRef<Map<number, string>>(new Map())
+  const thinkingBlockIdsRef = useRef<Map<number, string>>(new Map())
   const rendererApi = getRendererApi()
 
   const refreshAuthStatuses = async (): Promise<void> => {
@@ -244,29 +246,39 @@ function App(): React.JSX.Element {
         }
 
         if (event.type === 'message_start' && event.message?.role === 'assistant') {
-          const id = `assistant-${Date.now()}`
-          assistantIdRef.current = id
-          next.push({ id, role: 'assistant', content: '' })
+          // Each assistant message can carry multiple streamed content blocks
+          // (thinking, text, tool-call) distinguished by contentIndex — start a
+          // fresh mapping per turn rather than assuming a single block.
+          textBlockIdsRef.current = new Map()
+          thinkingBlockIdsRef.current = new Map()
           return next
         }
 
         if (event.type === 'message_update' && event.message?.role === 'assistant') {
-          if (event.assistantMessageEvent?.type !== 'text_delta') {
+          const ame = event.assistantMessageEvent
+          if (!ame || (ame.type !== 'text_delta' && ame.type !== 'thinking_delta')) {
             return next
           }
 
-          let targetId = assistantIdRef.current
+          const isThinking = ame.type === 'thinking_delta'
+          const blockIds = isThinking ? thinkingBlockIdsRef.current : textBlockIdsRef.current
+          const contentIndex = ame.contentIndex ?? 0
+          let targetId = blockIds.get(contentIndex)
           if (!targetId) {
-            targetId = `assistant-${Date.now()}`
-            assistantIdRef.current = targetId
-            next.push({ id: targetId, role: 'assistant', content: '' })
+            targetId = `${isThinking ? 'thinking' : 'assistant'}-${Date.now()}-${contentIndex}`
+            blockIds.set(contentIndex, targetId)
+            next.push(
+              isThinking
+                ? { id: targetId, role: 'thinking', content: '' }
+                : { id: targetId, role: 'assistant', content: '' }
+            )
           }
 
-          const delta = event.assistantMessageEvent?.delta
-          if (typeof delta === 'string' && targetId) {
+          const delta = ame.delta
+          if (typeof delta === 'string') {
             const index = next.findIndex((item) => item.id === targetId)
             const current = index >= 0 ? next[index] : null
-            if (current && current.role !== 'tool') {
+            if (current && (current.role === 'assistant' || current.role === 'thinking')) {
               next[index] = {
                 ...current,
                 content: `${current.content}${delta}`
@@ -278,46 +290,45 @@ function App(): React.JSX.Element {
         }
 
         if (event.type === 'message_end' && event.message?.role === 'assistant') {
-          const finalMessage = extractTextFromMessage(event.message)
-          const errorText =
-            event.message.stopReason === 'error'
-              ? event.message.errorMessage || 'Request failed'
-              : ''
-          const currentId = assistantIdRef.current
+          const isError = event.message.stopReason === 'error'
+          const errorText = isError ? event.message.errorMessage || '请求失败' : ''
+          const textIds = [...textBlockIdsRef.current.values()]
 
-          if (currentId) {
-            const index = next.findIndex((item) => item.id === currentId)
+          if (isError) {
+            // Fold the error into the last streamed text block if there is one,
+            // instead of leaving a dangling empty bubble plus a separate error.
+            const lastTextId = textIds[textIds.length - 1]
+            const index = lastTextId ? next.findIndex((item) => item.id === lastTextId) : -1
             const current = index >= 0 ? next[index] : null
-            if (current && current.role !== 'tool') {
-              const finalContent =
-                event.message.stopReason === 'error'
-                  ? errorText || current.content || '请求失败'
-                  : finalMessage || current.content
-              if (!finalContent) {
-                next.splice(index, 1)
-              } else {
-                next[index] = {
-                  ...current,
-                  role: event.message.stopReason === 'error' ? 'error' : 'assistant',
-                  content: finalContent
-                }
+            if (current && current.role === 'assistant') {
+              next[index] = {
+                ...current,
+                role: 'error',
+                content: current.content || errorText
               }
+            } else if (errorText) {
+              next.push({ id: `error-${Date.now()}`, role: 'error', content: errorText })
+            }
+          } else if (textIds.length === 0) {
+            // No text_delta streamed at all (e.g. an instantly-final message) —
+            // fall back to the message's own content.
+            const finalMessage = extractTextFromMessage(event.message)
+            if (finalMessage) {
+              next.push({ id: `assistant-${Date.now()}`, role: 'assistant', content: finalMessage })
             }
           }
 
-          if (!currentId) {
-            const content =
-              event.message.stopReason === 'error' ? errorText || '请求失败' : finalMessage
-            if (content) {
-              next.push({
-                id: `assistant-${Date.now()}`,
-                role: event.message.stopReason === 'error' ? 'error' : 'assistant',
-                content
-              })
+          // Drop any thinking/text block left with no content (e.g. a thinking
+          // block that started but never received a delta before the turn ended).
+          for (let i = next.length - 1; i >= 0; i -= 1) {
+            const item = next[i]
+            if ((item.role === 'thinking' || item.role === 'assistant') && !item.content) {
+              next.splice(i, 1)
             }
           }
 
-          assistantIdRef.current = null
+          textBlockIdsRef.current = new Map()
+          thinkingBlockIdsRef.current = new Map()
         }
 
         return next
@@ -456,9 +467,12 @@ function App(): React.JSX.Element {
   const onChatSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
     const text = input.trim()
-    if (!text || isSendingMessage) {
+    // isSendingRef is checked-and-set synchronously so a second submit fired in the
+    // same tick (before the isSendingMessage state update commits) can't slip through.
+    if (!text || isSendingRef.current) {
       return
     }
+    isSendingRef.current = true
 
     setMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text }])
     setInput('')
@@ -486,6 +500,7 @@ function App(): React.JSX.Element {
         { id: `error-${Date.now()}`, role: 'error', content: message }
       ])
     } finally {
+      isSendingRef.current = false
       setIsSendingMessage(false)
     }
   }

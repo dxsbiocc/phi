@@ -3,17 +3,92 @@ import {
   Autocomplete,
   Box,
   Button,
+  Collapse,
   createFilterOptions,
   IconButton,
   Paper,
   TextField,
   Typography
 } from '@mui/material'
-import { Send as SendIcon } from '@mui/icons-material'
-import type { FormEvent, ReactNode } from 'react'
+import { ChevronRight as ChevronRightIcon, Send as SendIcon } from '@mui/icons-material'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import MarkdownContent from './MarkdownContent'
 import ToolCallCard from './ToolCallCard'
 import type { ChatItem, ChatMessage, ModelOption } from '../types'
+
+function ThinkingBlock({ content }: { content: string }): ReactNode {
+  const [expanded, setExpanded] = useState(false)
+  const toggle = (): void => setExpanded((value) => !value)
+  const preview = content.replace(/\s+/g, ' ').trim()
+
+  return (
+    <Box sx={{ alignSelf: 'stretch', minWidth: 0 }}>
+      <Box
+        role="button"
+        tabIndex={0}
+        onClick={toggle}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            toggle()
+          }
+        }}
+        aria-expanded={expanded}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.75,
+          minWidth: 0,
+          py: 0.5,
+          px: 0.5,
+          borderRadius: 1,
+          cursor: 'pointer',
+          color: 'text.secondary',
+          transition: 'background-color 150ms',
+          '&:hover': { bgcolor: 'action.hover' },
+          '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
+        }}
+      >
+        <ChevronRightIcon
+          sx={{
+            fontSize: 16,
+            flexShrink: 0,
+            transition: 'transform 150ms',
+            transform: expanded ? 'rotate(90deg)' : 'none'
+          }}
+        />
+        <Typography component="span" variant="body2" sx={{ fontStyle: 'italic', flexShrink: 0 }}>
+          思考
+        </Typography>
+        {!expanded ? (
+          <Typography
+            component="span"
+            variant="body2"
+            noWrap
+            sx={{ fontStyle: 'italic', flex: 1, minWidth: 0 }}
+          >
+            {preview}
+          </Typography>
+        ) : null}
+      </Box>
+      <Collapse in={expanded} unmountOnExit>
+        <Box sx={{ ml: 2.5, pl: 1.5, py: 1, minWidth: 0, borderLeft: 2, borderColor: 'grey.800' }}>
+          <Typography
+            variant="body2"
+            sx={{
+              whiteSpace: 'pre-wrap',
+              overflowWrap: 'anywhere',
+              fontStyle: 'italic',
+              color: 'text.secondary'
+            }}
+          >
+            {content}
+          </Typography>
+        </Box>
+      </Collapse>
+    </Box>
+  )
+}
 
 type ViewProps = {
   messages: ChatItem[]
@@ -51,6 +126,10 @@ function ChatBubble({
         </Typography>
       </Alert>
     )
+  }
+
+  if (message.role === 'thinking') {
+    return <ThinkingBlock content={message.content} />
   }
 
   if (message.role === 'user') {

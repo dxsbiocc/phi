@@ -7,6 +7,7 @@ import icon from '../../resources/icon.png?asset'
 
 let sharedAgentSession: Promise<Awaited<ReturnType<typeof createAgentSession>>> | null = null
 let selectedModel: { providerId: string; modelId: string } | null = null
+let promptQueue: Promise<void> = Promise.resolve()
 
 async function runPiSmokeSession(): Promise<void> {
   try {
@@ -31,25 +32,32 @@ function invalidateAgentSession(): void {
 
 async function getAgentSession(): Promise<Awaited<ReturnType<typeof createAgentSession>>> {
   if (!sharedAgentSession) {
-    const runtime = await getAuthManager().getRuntime()
-    const model = selectedModel
-      ? runtime.getModel(selectedModel.providerId, selectedModel.modelId)
-      : undefined
-    sharedAgentSession = createAgentSession({ modelRuntime: runtime, ...(model ? { model } : {}) })
-      .then((result) => {
-        result.session.subscribe((summary) => {
-          const targetWindow = getActiveWindow()
-          if (targetWindow && !targetWindow.isDestroyed()) {
-            targetWindow.webContents.send('agent:event', summary)
-          }
-        })
+    // Cache the in-flight promise synchronously (before any await) so concurrent
+    // callers share it instead of each racing to create their own session — an
+    // `await` before this assignment would let a second call slip through the
+    // `!sharedAgentSession` check while the first is still resolving.
+    sharedAgentSession = (async () => {
+      const runtime = await getAuthManager().getRuntime()
+      const model = selectedModel
+        ? runtime.getModel(selectedModel.providerId, selectedModel.modelId)
+        : undefined
+      const result = await createAgentSession({
+        modelRuntime: runtime,
+        ...(model ? { model } : {})
+      })
 
-        return result
+      result.session.subscribe((summary) => {
+        const targetWindow = getActiveWindow()
+        if (targetWindow && !targetWindow.isDestroyed()) {
+          targetWindow.webContents.send('agent:event', summary)
+        }
       })
-      .catch((error) => {
-        sharedAgentSession = null
-        throw error
-      })
+
+      return result
+    })().catch((error) => {
+      sharedAgentSession = null
+      throw error
+    })
   }
 
   return sharedAgentSession
@@ -107,8 +115,14 @@ app.whenReady().then(() => {
     const normalizedText = text.trim()
     if (!normalizedText) return
 
-    const { session } = await getAgentSession()
-    await session.prompt(normalizedText)
+    // Serialize prompts onto the shared session: a duplicate/overlapping IPC
+    // invoke must never run session.prompt() concurrently with another one.
+    const run = promptQueue.then(async () => {
+      const { session } = await getAgentSession()
+      await session.prompt(normalizedText)
+    })
+    promptQueue = run.catch(() => {})
+    await run
   })
 
   ipcMain.handle('auth:status', async () => getAuthManager().getProviderStatuses())

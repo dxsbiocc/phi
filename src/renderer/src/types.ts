@@ -1,4 +1,4 @@
-export type MessageRole = 'user' | 'assistant' | 'error'
+export type MessageRole = 'user' | 'assistant' | 'error' | 'thinking'
 
 export type Role = MessageRole
 
@@ -94,6 +94,7 @@ export interface AgentEventSummary {
   assistantMessageEvent?: {
     type?: string
     delta?: string
+    contentIndex?: number
   }
   toolCallId?: string
   toolName?: string
