@@ -20,7 +20,39 @@ import {
 import { useId, useState, type FormEvent, type ReactNode } from 'react'
 import MarkdownContent from './MarkdownContent'
 import ToolCallCard from './ToolCallCard'
-import type { ChatItem, ChatMessage, ModelOption, ThinkingLevel } from '../types'
+import ToolGroupCard from './ToolGroupCard'
+import type { ChatItem, ChatMessage, ModelOption, ThinkingLevel, ToolCallItem } from '../types'
+
+type RenderGroup =
+  | { kind: 'tool-group'; key: string; items: ToolCallItem[] }
+  | { kind: 'single'; key: string; item: ChatItem }
+
+function groupMessages(messages: ChatItem[]): RenderGroup[] {
+  const groups: RenderGroup[] = []
+  let run: ToolCallItem[] = []
+
+  const flushRun = (): void => {
+    if (run.length === 0) return
+    if (run.length === 1) {
+      groups.push({ kind: 'single', key: run[0].id, item: run[0] })
+    } else {
+      groups.push({ kind: 'tool-group', key: run[0].id, items: run })
+    }
+    run = []
+  }
+
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      run.push(message)
+    } else {
+      flushRun()
+      groups.push({ kind: 'single', key: message.id, item: message })
+    }
+  }
+  flushRun()
+
+  return groups
+}
 
 const THINKING_LEVEL_ORDER: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
@@ -302,13 +334,16 @@ function ChatView({
             p: 3
           }}
         >
-          {messages.map((message) =>
-            message.role === 'tool' ? (
-              <ToolCallCard key={message.id} item={message} />
+          {groupMessages(messages).map((group) => {
+            if (group.kind === 'tool-group') {
+              return <ToolGroupCard key={group.key} items={group.items} />
+            }
+            return group.item.role === 'tool' ? (
+              <ToolCallCard key={group.key} item={group.item} />
             ) : (
-              <ChatBubble key={message.id} message={message} onGoSettings={onGoSettings} />
+              <ChatBubble key={group.key} message={group.item} onGoSettings={onGoSettings} />
             )
-          )}
+          })}
         </Box>
       </Box>
       <Box

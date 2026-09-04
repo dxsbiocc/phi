@@ -64,7 +64,7 @@ function DiffAwareOutput({ text }: { text: string }): ReactNode {
   )
 }
 
-function diffStat(output: string): { added: number; removed: number } | null {
+export function diffStat(output: string): { added: number; removed: number } | null {
   const lines = output.split('\n')
   let added = 0
   let removed = 0
@@ -75,7 +75,7 @@ function diffStat(output: string): { added: number; removed: number } | null {
   return added || removed ? { added, removed } : null
 }
 
-function StatusIndicator({ status }: { status: ToolCallItem['status'] }): ReactNode {
+export function StatusIndicator({ status }: { status: ToolCallItem['status'] }): ReactNode {
   if (status === 'running') {
     return (
       <Box
@@ -161,8 +161,16 @@ function ToolCallCard({ item }: { item: ToolCallItem }): React.JSX.Element {
             variant="caption"
             sx={{ flexShrink: 0, fontFamily: 'var(--font-mono)' }}
           >
-            {stat.added ? <Box component="span" sx={{ color: 'success.main' }}>+{stat.added} </Box> : null}
-            {stat.removed ? <Box component="span" sx={{ color: 'error.main' }}>-{stat.removed}</Box> : null}
+            {stat.added ? (
+              <Box component="span" sx={{ color: 'success.main' }}>
+                +{stat.added}{' '}
+              </Box>
+            ) : null}
+            {stat.removed ? (
+              <Box component="span" sx={{ color: 'error.main' }}>
+                -{stat.removed}
+              </Box>
+            ) : null}
           </Typography>
         ) : null}
         <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
