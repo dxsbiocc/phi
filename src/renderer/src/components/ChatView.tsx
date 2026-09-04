@@ -117,34 +117,24 @@ function ChatView({
           <ChatBubble key={message.id} message={message} onGoSettings={onGoSettings} />
         ))}
       </Box>
-      <Paper
-        component="form"
-        onSubmit={onChatSubmit}
-        elevation={0}
-        sx={{ p: 2, borderTop: 1, borderColor: 'grey.700' }}
-      >
-        <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
-          <Autocomplete
-            options={models}
-            value={selectedModel}
-            filterOptions={modelFilterOptions}
-            onChange={(_, value) => onSelectModel(value)}
-            groupBy={(option) => option.providerId}
-            getOptionLabel={(option) => option.name}
-            isOptionEqualToValue={(option, value) =>
-              option.providerId === value.providerId && option.modelId === value.modelId
-            }
-            size="small"
-            sx={{ width: 240, flexShrink: 0 }}
-            renderInput={(params) => (
-              <TextField {...params} placeholder="默认模型" aria-label="选择模型" />
-            )}
-          />
+      <Box component="form" onSubmit={onChatSubmit} sx={{ px: 2, pb: 2, pt: 1 }}>
+        <Paper
+          variant="outlined"
+          sx={{
+            borderRadius: 4,
+            px: 2,
+            pt: 1.5,
+            pb: 1,
+            transition: 'border-color 200ms',
+            '&:focus-within': { borderColor: 'primary.main' }
+          }}
+        >
           <TextField
             fullWidth
             multiline
+            variant="standard"
             minRows={1}
-            maxRows={5}
+            maxRows={8}
             value={input}
             onChange={(event) => {
               onInputChange(event.target.value)
@@ -160,30 +150,69 @@ function ChatView({
             placeholder="输入消息，Enter 发送，Shift+Enter 换行"
             slotProps={{
               input: {
-                sx: {
-                  borderRadius: 3,
-                  minHeight: 44
-                }
-              },
-              inputLabel: {
-                sx: {
-                  color: 'text.secondary'
-                }
+                disableUnderline: true,
+                sx: { fontSize: '0.95rem', lineHeight: 1.6 }
               }
             }}
           />
-          <IconButton
-            type="submit"
-            color="primary"
-            size="large"
-            disabled={!canSend || !input.trim()}
-            aria-label="发送消息"
-            sx={{ width: 44, height: 44 }}
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              gap: 1,
+              mt: 1
+            }}
           >
-            <SendIcon />
-          </IconButton>
-        </Box>
-      </Paper>
+            <Autocomplete
+              options={models}
+              value={selectedModel}
+              filterOptions={modelFilterOptions}
+              onChange={(_, value) => onSelectModel(value)}
+              groupBy={(option) => option.providerId}
+              getOptionLabel={(option) => option.name}
+              isOptionEqualToValue={(option, value) =>
+                option.providerId === value.providerId && option.modelId === value.modelId
+              }
+              size="small"
+              disableClearable={false}
+              sx={{ width: 220 }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  variant="standard"
+                  placeholder="默认模型"
+                  aria-label="选择模型"
+                  slotProps={{
+                    ...params.slotProps,
+                    input: {
+                      ...params.slotProps.input,
+                      disableUnderline: true,
+                      sx: { fontSize: '0.85rem', color: 'text.secondary' }
+                    }
+                  }}
+                />
+              )}
+            />
+            <IconButton
+              type="submit"
+              disabled={!canSend || !input.trim()}
+              aria-label="发送消息"
+              sx={{
+                width: 36,
+                height: 36,
+                bgcolor: 'primary.main',
+                color: 'background.default',
+                transition: 'background-color 200ms',
+                '&:hover': { bgcolor: 'primary.dark' },
+                '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' }
+              }}
+            >
+              <SendIcon fontSize="small" />
+            </IconButton>
+          </Box>
+        </Paper>
+      </Box>
     </Box>
   )
 }
