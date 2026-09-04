@@ -99,6 +99,51 @@ export function StatusIndicator({ status }: { status: ToolCallItem['status'] }):
   return <CheckCircleIcon sx={{ fontSize: 14, color: 'success.main' }} aria-label="完成" />
 }
 
+export function ToolCallDetail({ item }: { item: ToolCallItem }): ReactNode {
+  return (
+    <Box
+      sx={{
+        ml: 2.5,
+        pl: 1.5,
+        py: 1,
+        minWidth: 0,
+        borderLeft: 2,
+        borderColor: 'grey.800'
+      }}
+    >
+      {item.argsJson ? (
+        <Box sx={{ mb: item.output ? 1.5 : 0, minWidth: 0 }}>
+          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+            参数
+          </Typography>
+          <Typography
+            component="pre"
+            variant="body2"
+            sx={{
+              m: 0,
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.8rem',
+              whiteSpace: 'pre-wrap',
+              overflowWrap: 'anywhere',
+              color: 'text.secondary'
+            }}
+          >
+            {item.argsJson}
+          </Typography>
+        </Box>
+      ) : null}
+      {item.output ? (
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+            输出
+          </Typography>
+          <DiffAwareOutput text={item.output} />
+        </Box>
+      ) : null}
+    </Box>
+  )
+}
+
 function ToolCallCard({ item }: { item: ToolCallItem }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const stat = item.output ? diffStat(item.output) : null
@@ -178,46 +223,7 @@ function ToolCallCard({ item }: { item: ToolCallItem }): React.JSX.Element {
         </Box>
       </Box>
       <Collapse in={expanded} unmountOnExit>
-        <Box
-          sx={{
-            ml: 2.5,
-            pl: 1.5,
-            py: 1,
-            minWidth: 0,
-            borderLeft: 2,
-            borderColor: 'grey.800'
-          }}
-        >
-          {item.argsJson ? (
-            <Box sx={{ mb: item.output ? 1.5 : 0, minWidth: 0 }}>
-              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                参数
-              </Typography>
-              <Typography
-                component="pre"
-                variant="body2"
-                sx={{
-                  m: 0,
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '0.8rem',
-                  whiteSpace: 'pre-wrap',
-                  overflowWrap: 'anywhere',
-                  color: 'text.secondary'
-                }}
-              >
-                {item.argsJson}
-              </Typography>
-            </Box>
-          ) : null}
-          {item.output ? (
-            <Box sx={{ minWidth: 0 }}>
-              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                输出
-              </Typography>
-              <DiffAwareOutput text={item.output} />
-            </Box>
-          ) : null}
-        </Box>
+        <ToolCallDetail item={item} />
       </Collapse>
     </Box>
   )

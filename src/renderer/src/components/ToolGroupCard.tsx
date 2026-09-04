@@ -1,7 +1,7 @@
 import { ChevronRight as ChevronRightIcon } from '@mui/icons-material'
 import { Box, Collapse, Typography } from '@mui/material'
 import { useState, type ReactNode } from 'react'
-import ToolCallCard, { StatusIndicator, diffStat } from './ToolCallCard'
+import ToolCallCard, { StatusIndicator, ToolCallDetail, diffStat } from './ToolCallCard'
 import type { ToolCallItem } from '../types'
 
 const FILE_TOOLS = new Set(['edit', 'write'])
@@ -23,13 +23,32 @@ function uniqueInOrder(values: string[]): string[] {
   return [...new Set(values)]
 }
 
+function capitalize(text: string): string {
+  return text.length > 0 ? text[0].toUpperCase() + text.slice(1) : text
+}
+
+function pluralCommands(count: number): string {
+  return count === 1 ? 'Ran a command' : `Ran ${count} commands`
+}
+
+function aggregateStat(items: ToolCallItem[]): { added: number; removed: number } | null {
+  return items.reduce<{ added: number; removed: number } | null>((acc, item) => {
+    const itemStat = item.output ? diffStat(item.output) : null
+    if (!itemStat) return acc
+    return {
+      added: (acc?.added ?? 0) + itemStat.added,
+      removed: (acc?.removed ?? 0) + itemStat.removed
+    }
+  }, null)
+}
+
 function summarize(items: ToolCallItem[]): {
   headline: string
   stat: { added: number; removed: number } | null
 } {
-  const commandCount = items.filter(
+  const commandItems = items.filter(
     (item) => !FILE_TOOLS.has(item.toolName) && item.toolName !== 'read'
-  ).length
+  )
   const editedFiles = uniqueInOrder(
     items.filter((item) => FILE_TOOLS.has(item.toolName)).map((item) => basename(item.argsPreview))
   )
@@ -40,9 +59,20 @@ function summarize(items: ToolCallItem[]): {
     items.filter((item) => item.toolName === 'read').map((item) => basename(item.argsPreview))
   )
 
+  // A single, file-less command call is more useful shown verbatim (it's
+  // already specific) than folded into the generic "Ran a command" phrasing.
+  if (
+    items.length === 1 &&
+    commandItems.length === 1 &&
+    editedFiles.length === 0 &&
+    readFiles.length === 0
+  ) {
+    return { headline: items[0].argsPreview || items[0].toolName, stat: aggregateStat(items) }
+  }
+
   const clauses: string[] = []
-  if (commandCount > 0) {
-    clauses.push(`Ran ${commandCount} command${commandCount > 1 ? 's' : ''}`)
+  if (commandItems.length > 0) {
+    clauses.push(pluralCommands(commandItems.length))
   }
   if (readFiles.length > 0 && editedFiles.length > 0) {
     clauses.push(`read and edited ${joinFiles(uniqueInOrder([...readFiles, ...editedFiles]))}`)
@@ -52,18 +82,10 @@ function summarize(items: ToolCallItem[]): {
     clauses.push(`read ${joinFiles(readFiles)}`)
   }
 
-  const headline = clauses.length > 0 ? clauses.join(', ') : `Ran ${items.length} tool calls`
+  const headline =
+    clauses.length > 0 ? capitalize(clauses.join(', ')) : `Ran ${items.length} tool calls`
 
-  const stat = items.reduce<{ added: number; removed: number } | null>((acc, item) => {
-    const itemStat = item.output ? diffStat(item.output) : null
-    if (!itemStat) return acc
-    return {
-      added: (acc?.added ?? 0) + itemStat.added,
-      removed: (acc?.removed ?? 0) + itemStat.removed
-    }
-  }, null)
-
-  return { headline, stat }
+  return { headline, stat: aggregateStat(items) }
 }
 
 function groupStatus(items: ToolCallItem[]): ToolCallItem['status'] {
@@ -139,13 +161,20 @@ function ToolGroupCard({ items }: { items: ToolCallItem[] }): ReactNode {
         </Box>
       </Box>
       <Collapse in={expanded} unmountOnExit>
-        <Box sx={{ ml: 2.5, pl: 1.5, minWidth: 0, borderLeft: 2, borderColor: 'grey.800' }}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5 }}>
-            {items.map((item) => (
-              <ToolCallCard key={item.id} item={item} />
-            ))}
+        {items.length === 1 ? (
+          // A single call: show its args/output directly under this row instead
+          // of nesting another independently-collapsible ToolCallCard inside it
+          // (that would need two clicks to reach the same detail).
+          <ToolCallDetail item={items[0]} />
+        ) : (
+          <Box sx={{ ml: 2.5, pl: 1.5, minWidth: 0, borderLeft: 2, borderColor: 'grey.800' }}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5 }}>
+              {items.map((item) => (
+                <ToolCallCard key={item.id} item={item} />
+              ))}
+            </Box>
           </Box>
-        </Box>
+        )}
       </Collapse>
     </Box>
   )
