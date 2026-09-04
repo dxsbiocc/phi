@@ -1,7 +1,5 @@
 import { BrowserWindow, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 type AuthInteraction = {
@@ -87,10 +85,6 @@ export interface AuthInteractionNotifyEvent {
 
 export type AuthInteractionEvent = AuthInteractionPromptEvent | AuthInteractionNotifyEvent
 
-// 与 pi CLI 共享同一凭证库（SDK 默认 agentDir 下的 auth.json），
-// 应用内登录和 CLI 登录互通，不再维护第二份凭证文件。
-const AUTH_PATH = join(homedir(), '.pi', 'agent', 'auth.json')
-
 interface PendingInteraction {
   resolve: (value: string) => void
   reject: (error: Error) => void
@@ -102,7 +96,10 @@ export class AuthManager {
   private readonly pendingInteractions = new Map<string, PendingInteraction>()
 
   constructor() {
-    this.runtime = ModelRuntime.create({ authPath: AUTH_PATH })
+    // No explicit authPath: PI_CODING_AGENT_DIR (set in main/index.ts) already
+    // redirects the SDK's default agent dir to pi-desktop's own ~/.phi, isolated
+    // from the pi CLI's ~/.pi/agent — no shared credential file, no lock contention.
+    this.runtime = ModelRuntime.create()
   }
 
   async getRuntime(): Promise<ModelRuntime> {
