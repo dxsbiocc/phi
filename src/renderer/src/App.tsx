@@ -9,7 +9,7 @@ import {
   ListItemIcon,
   ListItemText,
   ThemeProvider,
-  Toolbar,
+  Toolbar
 } from '@mui/material'
 import { Chat as ChatIcon, Settings as SettingsIcon } from '@mui/icons-material'
 import ChatView from './components/ChatView'
@@ -20,8 +20,9 @@ import type {
   AgentEventSummary,
   AuthInteractionEvent,
   ChatMessage,
+  ModelOption,
   ProviderAuthStatus,
-  RendererApi,
+  RendererApi
 } from './types'
 
 const drawerWidth = 200
@@ -30,25 +31,25 @@ const theme = createTheme({
   palette: {
     mode: 'dark',
     primary: {
-      main: '#22C55E',
+      main: '#22C55E'
     },
     background: {
       default: '#0F172A',
-      paper: '#1E293B',
+      paper: '#1E293B'
     },
     secondary: {
-      main: '#334155',
+      main: '#334155'
     },
     text: {
-      primary: '#F8FAFC',
-    },
+      primary: '#F8FAFC'
+    }
   },
   typography: {
     fontFamily:
-      "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif",
+      "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif"
   },
   shape: {
-    borderRadius: 12,
+    borderRadius: 12
   },
   transitions: {
     duration: {
@@ -58,8 +59,8 @@ const theme = createTheme({
       standard: 250,
       complex: 300,
       enteringScreen: 250,
-      leavingScreen: 200,
-    },
+      leavingScreen: 200
+    }
   },
   components: {
     MuiButton: {
@@ -67,10 +68,10 @@ const theme = createTheme({
         root: {
           transition: 'all 0.2s ease',
           ':hover': {
-            transform: 'translateY(-1px)',
-          },
-        },
-      },
+            transform: 'translateY(-1px)'
+          }
+        }
+      }
     },
     MuiListItemButton: {
       styleOverrides: {
@@ -79,19 +80,19 @@ const theme = createTheme({
           borderRadius: 10,
           margin: '0 8px 4px',
           ':hover': {
-            transform: 'translateX(2px)',
-          },
-        },
-      },
+            transform: 'translateX(2px)'
+          }
+        }
+      }
     },
     MuiIconButton: {
       styleOverrides: {
         root: {
-          transition: 'all 0.2s ease',
-        },
-      },
-    },
-  },
+          transition: 'all 0.2s ease'
+        }
+      }
+    }
+  }
 })
 
 function getRendererApi(): RendererApi {
@@ -124,6 +125,8 @@ function App(): React.JSX.Element {
   const [providerDialogProviderId, setProviderDialogProviderId] = useState<string | null>(null)
   const [isBusy, setIsBusy] = useState(false)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
+  const [models, setModels] = useState<ModelOption[]>([])
+  const [selectedModel, setSelectedModel] = useState<ModelOption | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
   const assistantIdRef = useRef<string | null>(null)
   const rendererApi = getRendererApi()
@@ -170,7 +173,7 @@ function App(): React.JSX.Element {
             if (index >= 0) {
               next[index] = {
                 ...next[index],
-                content: `${next[index].content}${delta}`,
+                content: `${next[index].content}${delta}`
               }
             }
           }
@@ -180,7 +183,10 @@ function App(): React.JSX.Element {
 
         if (event.type === 'message_end' && event.message?.role === 'assistant') {
           const finalMessage = extractTextFromMessage(event.message)
-          const errorText = event.message.stopReason === 'error' ? event.message.errorMessage || 'Request failed' : ''
+          const errorText =
+            event.message.stopReason === 'error'
+              ? event.message.errorMessage || 'Request failed'
+              : ''
           const currentId = assistantIdRef.current
 
           if (currentId) {
@@ -190,7 +196,9 @@ function App(): React.JSX.Element {
                 ...next[index],
                 role: event.message.stopReason === 'error' ? 'error' : 'assistant',
                 content:
-                  event.message.stopReason === 'error' ? errorText || next[index].content || '请求失败' : finalMessage || next[index].content,
+                  event.message.stopReason === 'error'
+                    ? errorText || next[index].content || '请求失败'
+                    : finalMessage || next[index].content
               }
             }
           }
@@ -199,7 +207,7 @@ function App(): React.JSX.Element {
             next.push({
               id: `assistant-${Date.now()}`,
               role: event.message.stopReason === 'error' ? 'error' : 'assistant',
-              content: event.message.stopReason === 'error' ? errorText || '请求失败' : finalMessage,
+              content: event.message.stopReason === 'error' ? errorText || '请求失败' : finalMessage
             })
           }
 
@@ -210,60 +218,66 @@ function App(): React.JSX.Element {
       })
     })
 
-    const unsubscribeAuthInteraction = rendererApi.onAuthInteraction((event: AuthInteractionEvent) => {
-      if (event.type === 'prompt') {
-        setActivePrompts((prev) => {
-          const exists = prev.some((item) => item.requestId === event.requestId)
-          if (exists) {
-            return prev.map((item) =>
-              item.requestId === event.requestId
-                ? {
-                    ...item,
-                    prompt: event.prompt,
-                    value: item.value,
-                  }
-                : item,
-            )
-          }
+    const unsubscribeAuthInteraction = rendererApi.onAuthInteraction(
+      (event: AuthInteractionEvent) => {
+        if (event.type === 'prompt') {
+          setActivePrompts((prev) => {
+            const exists = prev.some((item) => item.requestId === event.requestId)
+            if (exists) {
+              return prev.map((item) =>
+                item.requestId === event.requestId
+                  ? {
+                      ...item,
+                      prompt: event.prompt,
+                      value: item.value
+                    }
+                  : item
+              )
+            }
 
-          return [
-            ...prev,
-            {
-              requestId: event.requestId,
-              providerId: event.providerId,
-              prompt: event.prompt,
-              value: '',
-            },
-          ]
-        })
+            return [
+              ...prev,
+              {
+                requestId: event.requestId,
+                providerId: event.providerId,
+                prompt: event.prompt,
+                value: ''
+              }
+            ]
+          })
+
+          setProviderDialogProviderId(event.providerId)
+          setIsProviderDialogOpen(true)
+          setView('settings')
+          return
+        }
+
+        const hint =
+          event.event.type === 'auth_url'
+            ? `授权链接：${event.event.url}`
+            : event.event.type === 'info'
+              ? event.event.message
+              : event.event.type === 'progress'
+                ? event.event.message
+                : event.event.type === 'device_code'
+                  ? `验证码：${event.event.userCode}`
+                  : '收到授权提示'
+
+        setProviderHints((prev) => ({
+          ...prev,
+          [event.providerId]: hint
+        }))
 
         setProviderDialogProviderId(event.providerId)
-        setIsProviderDialogOpen(true)
-        setView('settings')
-        return
+        if (
+          event.event.type === 'progress' ||
+          event.event.type === 'auth_url' ||
+          event.event.type === 'device_code'
+        ) {
+          setIsProviderDialogOpen(true)
+        }
       }
-
-      const hint =
-        event.event.type === 'auth_url'
-          ? `授权链接：${event.event.url}`
-          : event.event.type === 'info'
-            ? event.event.message
-            : event.event.type === 'progress'
-              ? event.event.message
-              : event.event.type === 'device_code'
-                ? `验证码：${event.event.userCode}`
-                : '收到授权提示'
-
-      setProviderHints((prev) => ({
-        ...prev,
-        [event.providerId]: hint,
-      }))
-
-      setProviderDialogProviderId(event.providerId)
-      if (event.event.type === 'progress' || event.event.type === 'auth_url' || event.event.type === 'device_code') {
-        setIsProviderDialogOpen(true)
-      }
-    })
+    )
 
     return () => {
       unsubscribe()
@@ -273,7 +287,45 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     void refreshAuthStatuses()
+    void (async () => {
+      try {
+        const [available, selected] = await Promise.all([
+          rendererApi.listModels(),
+          rendererApi.getSelectedModel()
+        ])
+        setModels(available)
+        if (selected) {
+          setSelectedModel(
+            available.find(
+              (item) => item.providerId === selected.providerId && item.modelId === selected.modelId
+            ) ?? null
+          )
+        }
+      } catch {
+        // 模型列表加载失败不阻塞聊天；发送时会给出明确错误
+      }
+    })()
   }, [])
+
+  const onSelectModel = async (model: ModelOption | null): Promise<void> => {
+    if (!model) {
+      setSelectedModel(null)
+      return
+    }
+
+    const previous = selectedModel
+    setSelectedModel(model)
+    try {
+      await rendererApi.selectModel(model.providerId, model.modelId)
+    } catch (error) {
+      setSelectedModel(previous)
+      const message = error instanceof Error ? error.message : '切换模型失败'
+      setMessages((prev) => [
+        ...prev,
+        { id: `error-${Date.now()}`, role: 'error', content: message }
+      ])
+    }
+  }
 
   useEffect(() => {
     if (listRef.current) {
@@ -283,7 +335,7 @@ function App(): React.JSX.Element {
 
   const configuredCount = useMemo(
     () => providerStatuses.filter((provider) => provider.configured).length,
-    [providerStatuses],
+    [providerStatuses]
   )
 
   const onChatSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
@@ -301,7 +353,10 @@ function App(): React.JSX.Element {
       await rendererApi.sendPrompt(text)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to send prompt'
-      setMessages((prev) => [...prev, { id: `error-${Date.now()}`, role: 'error', content: message }])
+      setMessages((prev) => [
+        ...prev,
+        { id: `error-${Date.now()}`, role: 'error', content: message }
+      ])
     } finally {
       setIsSendingMessage(false)
     }
@@ -323,7 +378,7 @@ function App(): React.JSX.Element {
 
   const onUpdatePromptValue = (requestId: string, value: string): void => {
     setActivePrompts((prev) =>
-      prev.map((prompt) => (prompt.requestId === requestId ? { ...prompt, value } : prompt)),
+      prev.map((prompt) => (prompt.requestId === requestId ? { ...prompt, value } : prompt))
     )
   }
 
@@ -338,7 +393,7 @@ function App(): React.JSX.Element {
       setProviderStatuses(next)
       setProviderHints((prev) => ({
         ...prev,
-        [providerId]: 'API Key 已提交（实际校验延后到发送消息时）',
+        [providerId]: 'API Key 已提交（实际校验延后到发送消息时）'
       }))
     } finally {
       setIsBusy(false)
@@ -352,7 +407,7 @@ function App(): React.JSX.Element {
       setProviderStatuses(next)
       setProviderHints((prev) => ({
         ...prev,
-        [providerId]: 'OAuth 已触发，授权状态会在对话中完成',
+        [providerId]: 'OAuth 已触发，授权状态会在对话中完成'
       }))
     } finally {
       setIsBusy(false)
@@ -364,7 +419,9 @@ function App(): React.JSX.Element {
     await refreshAuthStatuses()
   }
 
-  const selectedPrompts = activePrompts.filter((item) => item.providerId === providerDialogProviderId)
+  const selectedPrompts = activePrompts.filter(
+    (item) => item.providerId === providerDialogProviderId
+  )
 
   return (
     <ThemeProvider theme={theme}>
@@ -375,7 +432,7 @@ function App(): React.JSX.Element {
           width: '100vw',
           height: '100vh',
           bgcolor: 'background.default',
-          overflow: 'hidden',
+          overflow: 'hidden'
         }}
       >
         <Drawer
@@ -387,8 +444,8 @@ function App(): React.JSX.Element {
               width: drawerWidth,
               boxSizing: 'border-box',
               bgcolor: 'background.paper',
-              borderRightColor: 'secondary.main',
-            },
+              borderRightColor: 'secondary.main'
+            }
           }}
         >
           <Toolbar />
@@ -429,7 +486,12 @@ function App(): React.JSX.Element {
               messagesContainerRef={(node) => {
                 listRef.current = node
               }}
-              canSend={!isSendingMessage && !isBusy && !!input.trim()}
+              canSend={!isSendingMessage && !isBusy}
+              models={models}
+              selectedModel={selectedModel}
+              onSelectModel={(model) => {
+                void onSelectModel(model)
+              }}
               onInputChange={setInput}
               onChatSubmit={onChatSubmit}
               onGoSettings={() => {

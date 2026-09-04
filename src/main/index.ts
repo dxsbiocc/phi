@@ -6,6 +6,7 @@ import { getAuthManager } from './agent/auth-manager'
 import icon from '../../resources/icon.png?asset'
 
 let sharedAgentSession: Promise<Awaited<ReturnType<typeof createAgentSession>>> | null = null
+let selectedModel: { providerId: string; modelId: string } | null = null
 
 async function runPiSmokeSession(): Promise<void> {
   try {
@@ -17,7 +18,11 @@ async function runPiSmokeSession(): Promise<void> {
 }
 
 function getActiveWindow(): BrowserWindow | null {
-  return BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((window) => !window.isDestroyed()) ?? null
+  return (
+    BrowserWindow.getFocusedWindow() ??
+    BrowserWindow.getAllWindows().find((window) => !window.isDestroyed()) ??
+    null
+  )
 }
 
 function invalidateAgentSession(): void {
@@ -27,7 +32,10 @@ function invalidateAgentSession(): void {
 async function getAgentSession(): Promise<Awaited<ReturnType<typeof createAgentSession>>> {
   if (!sharedAgentSession) {
     const runtime = await getAuthManager().getRuntime()
-    sharedAgentSession = createAgentSession({ modelRuntime: runtime })
+    const model = selectedModel
+      ? runtime.getModel(selectedModel.providerId, selectedModel.modelId)
+      : undefined
+    sharedAgentSession = createAgentSession({ modelRuntime: runtime, ...(model ? { model } : {}) })
       .then((result) => {
         result.session.subscribe((summary) => {
           const targetWindow = getActiveWindow()
@@ -122,6 +130,29 @@ app.whenReady().then(() => {
   ipcMain.handle('auth:interaction-response', async (_, requestId: string, value: string) => {
     await getAuthManager().resolveInteraction(requestId, value)
   })
+
+  ipcMain.handle('models:list', async () => {
+    const runtime = await getAuthManager().getRuntime()
+    return runtime.getModels().map((model) => ({
+      providerId: model.provider,
+      modelId: model.id,
+      name: model.name
+    }))
+  })
+  ipcMain.handle('models:select', async (_, providerId: string, modelId: string) => {
+    const runtime = await getAuthManager().getRuntime()
+    const model = runtime.getModel(providerId, modelId)
+    if (!model) {
+      throw new Error(`未知模型: ${providerId}/${modelId}`)
+    }
+
+    selectedModel = { providerId, modelId }
+    if (sharedAgentSession) {
+      const { session } = await sharedAgentSession
+      await session.setModel(model)
+    }
+  })
+  ipcMain.handle('models:selected', async () => selectedModel)
 
   if (process.env['PI_SMOKE'] === '1') {
     void runPiSmokeSession()

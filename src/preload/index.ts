@@ -7,7 +7,8 @@ type AuthStatusItem = {
   providerId: string
   name: string
   configured: boolean
-  source?: 'stored' | 'runtime' | 'environment' | 'fallback' | 'models_json_key' | 'models_json_command'
+  source?:
+    'stored' | 'runtime' | 'environment' | 'fallback' | 'models_json_key' | 'models_json_command'
   label?: string
   hasApiKey: boolean
   hasOAuth: boolean
@@ -60,6 +61,17 @@ type AuthInteractionNotifyEvent = {
 
 type AuthInteractionEvent = AuthInteractionPromptEvent | AuthInteractionNotifyEvent
 
+type ModelOption = {
+  providerId: string
+  modelId: string
+  name: string
+}
+
+type SelectedModel = {
+  providerId: string
+  modelId: string
+} | null
+
 type RendererAuthApi = {
   sendPrompt: (text: string) => Promise<void>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => Unsubscribe
@@ -69,6 +81,9 @@ type RendererAuthApi = {
   logout: (providerId: string) => Promise<void>
   submitAuthInteraction: (requestId: string, value: string) => Promise<void>
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => Unsubscribe
+  listModels: () => Promise<ModelOption[]>
+  selectModel: (providerId: string, modelId: string) => Promise<void>
+  getSelectedModel: () => Promise<SelectedModel>
 }
 
 const api: RendererAuthApi = {
@@ -103,6 +118,10 @@ const api: RendererAuthApi = {
       ipcRenderer.removeListener('auth:interaction', handler)
     }
   },
+  listModels: (): Promise<ModelOption[]> => ipcRenderer.invoke('models:list'),
+  selectModel: (providerId: string, modelId: string): Promise<void> =>
+    ipcRenderer.invoke('models:select', providerId, modelId),
+  getSelectedModel: (): Promise<SelectedModel> => ipcRenderer.invoke('models:selected')
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

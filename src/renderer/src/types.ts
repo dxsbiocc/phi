@@ -12,7 +12,8 @@ export interface ProviderAuthStatus {
   providerId: string
   name: string
   configured: boolean
-  source?: 'stored' | 'runtime' | 'environment' | 'fallback' | 'models_json_key' | 'models_json_command'
+  source?:
+    'stored' | 'runtime' | 'environment' | 'fallback' | 'models_json_key' | 'models_json_command'
   label?: string
   hasApiKey: boolean
   hasOAuth: boolean
@@ -38,6 +39,12 @@ export interface AuthPromptInteraction {
 
 export type ActiveAuthPrompt = AuthPromptInteraction
 
+export interface ModelOption {
+  providerId: string
+  modelId: string
+  name: string
+}
+
 export interface AuthProgressEvent {
   type: 'info' | 'auth_url' | 'device_code' | 'progress'
   message?: string
@@ -57,6 +64,9 @@ export type RendererApi = {
   logout: (providerId: string) => Promise<void>
   submitAuthInteraction: (requestId: string, value: string) => Promise<void>
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => () => void
+  listModels: () => Promise<ModelOption[]>
+  selectModel: (providerId: string, modelId: string) => Promise<void>
+  getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>
 }
 
 export interface AgentMessage {
