@@ -2,30 +2,46 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { createAgentSession } from './agent/session-manager'
+import { getAuthManager } from './agent/auth-manager'
 import icon from '../../resources/icon.png?asset'
 
-let mainWindow: BrowserWindow | null = null
 let sharedAgentSession: Promise<Awaited<ReturnType<typeof createAgentSession>>> | null = null
 
 async function runPiSmokeSession(): Promise<void> {
   try {
-    const { session } = await createAgentSession((summary) => {
-      console.log('[pi-smoke] event', summary)
-    })
+    const { session } = await getAgentSession()
     await session.prompt('reply with exactly: OK')
   } catch (error) {
     console.error('PI smoke test failed:', error)
   }
 }
 
+function getActiveWindow(): BrowserWindow | null {
+  return BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((window) => !window.isDestroyed()) ?? null
+}
+
+function invalidateAgentSession(): void {
+  sharedAgentSession = null
+}
+
 async function getAgentSession(): Promise<Awaited<ReturnType<typeof createAgentSession>>> {
   if (!sharedAgentSession) {
-    const targetWindow = mainWindow
-    sharedAgentSession = createAgentSession((summary) => {
-      if (targetWindow && !targetWindow.isDestroyed()) {
-        targetWindow.webContents.send('agent:event', summary)
-      }
-    })
+    const runtime = await getAuthManager().getRuntime()
+    sharedAgentSession = createAgentSession({ modelRuntime: runtime })
+      .then((result) => {
+        result.session.subscribe((summary) => {
+          const targetWindow = getActiveWindow()
+          if (targetWindow && !targetWindow.isDestroyed()) {
+            targetWindow.webContents.send('agent:event', summary)
+          }
+        })
+
+        return result
+      })
+      .catch((error) => {
+        sharedAgentSession = null
+        throw error
+      })
   }
 
   return sharedAgentSession
@@ -44,8 +60,6 @@ function createWindow(): void {
       sandbox: false
     }
   })
-
-  mainWindow = window
 
   window.on('ready-to-show', () => {
     window.show()
@@ -89,6 +103,26 @@ app.whenReady().then(() => {
     await session.prompt(normalizedText)
   })
 
+  ipcMain.handle('auth:status', async () => getAuthManager().getProviderStatuses())
+  ipcMain.handle('auth:loginApiKey', async (_, providerId: string, key: string) => {
+    const normalizedKey = key.trim()
+    const status = await getAuthManager().loginApiKey(providerId, normalizedKey)
+    invalidateAgentSession()
+    return status
+  })
+  ipcMain.handle('auth:loginOAuth', async (_, providerId: string) => {
+    const status = await getAuthManager().loginOAuth(providerId)
+    invalidateAgentSession()
+    return status
+  })
+  ipcMain.handle('auth:logout', async (_, providerId: string) => {
+    await getAuthManager().logout(providerId)
+    invalidateAgentSession()
+  })
+  ipcMain.handle('auth:interaction-response', async (_, requestId: string, value: string) => {
+    await getAuthManager().resolveInteraction(requestId, value)
+  })
+
   if (process.env['PI_SMOKE'] === '1') {
     void runPiSmokeSession()
   }
@@ -104,7 +138,7 @@ app.whenReady().then(() => {
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
+// with Cmd + Q.
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()

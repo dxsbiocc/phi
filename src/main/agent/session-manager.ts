@@ -43,8 +43,11 @@ function summarizeEvent(event: AgentSessionEvent): Record<string, unknown> {
   return summary
 }
 
-export async function createAgentSession(onEvent?: (summary: AgentEventSummary) => void) {
-  const result = await createSdkAgentSession()
+export async function createAgentSession(
+  options?: Parameters<typeof createSdkAgentSession>[0],
+  onEvent?: (summary: AgentEventSummary) => void,
+) {
+  const result = await createSdkAgentSession(options)
 
   result.session.subscribe((event) => {
     const summary = summarizeEvent(event)
