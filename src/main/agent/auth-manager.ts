@@ -135,7 +135,16 @@ export class AuthManager {
 
   async loginApiKey(providerId: string, key: string): Promise<AuthProviderStatusItem[]> {
     const runtime = await this.getRuntime()
-    await runtime.setRuntimeApiKey(providerId, key)
+    // runtime.setRuntimeApiKey() only holds the key in an in-memory Map — it never
+    // reaches AuthStorage, so it silently doesn't survive a restart. Go through
+    // runtime.login('api_key', ...) instead: same persistent path OAuth uses
+    // (credentials.modify() -> auth.json). The interaction's prompt() just returns
+    // the key we already collected from our own dialog, no extra round-trip.
+    const interaction: AuthInteraction = {
+      prompt: async () => key,
+      notify: () => {}
+    }
+    await runtime.login(providerId, 'api_key', interaction)
     return this.getProviderStatuses()
   }
 

@@ -69,10 +69,14 @@ function ThinkingLevelControl({
           color: 'text.secondary',
           fontSize: '0.85rem',
           minHeight: 32,
+          // Fixed width so the button (and therefore the popover's anchor point)
+          // never shifts as the label text changes length between levels.
+          width: 104,
+          justifyContent: 'flex-start',
           px: 1
         }}
       >
-        {disabled ? 'No thinking' : THINKING_LEVEL_LABELS[THINKING_LEVEL_ORDER[currentIndex]]}
+        {disabled ? 'Off' : THINKING_LEVEL_LABELS[THINKING_LEVEL_ORDER[currentIndex]]}
       </Button>
       <Popover
         id={popoverId}
