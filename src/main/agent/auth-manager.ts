@@ -63,7 +63,8 @@ export interface AuthProviderStatusItem {
   providerId: string
   name: string
   configured: boolean
-  source?: 'stored' | 'runtime' | 'environment' | 'fallback' | 'models_json_key' | 'models_json_command'
+  source?:
+    'stored' | 'runtime' | 'environment' | 'fallback' | 'models_json_key' | 'models_json_command'
   label?: string
   hasApiKey: boolean
   hasOAuth: boolean
@@ -86,7 +87,9 @@ export interface AuthInteractionNotifyEvent {
 
 export type AuthInteractionEvent = AuthInteractionPromptEvent | AuthInteractionNotifyEvent
 
-const AUTH_PATH = join(homedir(), '.pi', 'auth.json')
+// 与 pi CLI 共享同一凭证库（SDK 默认 agentDir 下的 auth.json），
+// 应用内登录和 CLI 登录互通，不再维护第二份凭证文件。
+const AUTH_PATH = join(homedir(), '.pi', 'agent', 'auth.json')
 
 interface PendingInteraction {
   resolve: (value: string) => void
@@ -117,7 +120,7 @@ export class AuthManager {
       const hasStoredCredential = credentialProviderIds.has(provider.id)
       const configured = baseStatus.configured || hasStoredCredential
       const hasConfigError = false
-      const statusText = configured ? baseStatus.source ?? '已配置' : '未配置'
+      const statusText = configured ? (baseStatus.source ?? '已配置') : '未配置'
 
       return {
         providerId: provider.id,
@@ -128,7 +131,7 @@ export class AuthManager {
         hasApiKey: Boolean(provider.auth?.apiKey),
         hasOAuth: Boolean(provider.auth?.oauth),
         hasConfigError,
-        statusText,
+        statusText
       }
     })
   }
@@ -187,7 +190,7 @@ export class AuthManager {
             },
             cleanup: () => {
               this.pendingInteractions.delete(requestId)
-            },
+            }
           }
 
           this.pendingInteractions.set(requestId, pending)
@@ -196,7 +199,7 @@ export class AuthManager {
             type: 'prompt',
             requestId,
             providerId,
-            prompt,
+            prompt
           })
 
           if (prompt.type === 'manual_code') {
@@ -206,8 +209,8 @@ export class AuthManager {
               providerId,
               event: {
                 type: 'info',
-                message: url,
-              },
+                message: url
+              }
             })
           }
         })
@@ -225,14 +228,18 @@ export class AuthManager {
         targetWindow.webContents.send('auth:interaction', {
           type: 'notify',
           providerId,
-          event,
+          event
         })
-      },
+      }
     }
   }
 
   private getActiveWindow(): BrowserWindow | null {
-    return BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null
+    return (
+      BrowserWindow.getFocusedWindow() ??
+      BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ??
+      null
+    )
   }
 }
 
