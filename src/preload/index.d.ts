@@ -1,5 +1,8 @@
 declare global {
   interface Window {
-    api: unknown
+    api: {
+      sendPrompt: (text: string) => Promise<void>
+      onAgentEvent: (cb: (event: Record<string, unknown>) => void) => () => void
+    }
   }
 }

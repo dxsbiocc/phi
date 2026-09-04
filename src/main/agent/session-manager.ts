@@ -1,5 +1,7 @@
 import { createAgentSession as createSdkAgentSession, type AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 
+export type AgentEventSummary = Record<string, unknown>
+
 function summarizeEvent(event: AgentSessionEvent): Record<string, unknown> {
   const summary: Record<string, unknown> = {
     type: event.type
@@ -41,11 +43,12 @@ function summarizeEvent(event: AgentSessionEvent): Record<string, unknown> {
   return summary
 }
 
-export async function createAgentSession() {
+export async function createAgentSession(onEvent?: (summary: AgentEventSummary) => void) {
   const result = await createSdkAgentSession()
 
   result.session.subscribe((event) => {
-    console.log('[pi-smoke] event', summarizeEvent(event))
+    const summary = summarizeEvent(event)
+    onEvent?.(summary)
   })
 
   return result

@@ -1,7 +1,22 @@
-import { contextBridge } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 
-// Custom APIs for renderer
-const api = {}
+type AgentEventSummary = Record<string, unknown>
+type Unsubscribe = () => void
+
+const api = {
+  sendPrompt: (text: string): Promise<void> => ipcRenderer.invoke('agent:prompt', text),
+  onAgentEvent: (cb: (event: AgentEventSummary) => void): Unsubscribe => {
+    const handler = (_: unknown, event: AgentEventSummary): void => {
+      cb(event)
+    }
+
+    ipcRenderer.on('agent:event', handler)
+
+    return () => {
+      ipcRenderer.removeListener('agent:event', handler)
+    }
+  }
+}
 
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise

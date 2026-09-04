@@ -4,18 +4,36 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { createAgentSession } from './agent/session-manager'
 import icon from '../../resources/icon.png?asset'
 
+let mainWindow: BrowserWindow | null = null
+let sharedAgentSession: Promise<Awaited<ReturnType<typeof createAgentSession>>> | null = null
+
 async function runPiSmokeSession(): Promise<void> {
   try {
-    const { session } = await createAgentSession()
+    const { session } = await createAgentSession((summary) => {
+      console.log('[pi-smoke] event', summary)
+    })
     await session.prompt('reply with exactly: OK')
   } catch (error) {
     console.error('PI smoke test failed:', error)
   }
 }
 
+async function getAgentSession(): Promise<Awaited<ReturnType<typeof createAgentSession>>> {
+  if (!sharedAgentSession) {
+    const targetWindow = mainWindow
+    sharedAgentSession = createAgentSession((summary) => {
+      if (targetWindow && !targetWindow.isDestroyed()) {
+        targetWindow.webContents.send('agent:event', summary)
+      }
+    })
+  }
+
+  return sharedAgentSession
+}
+
 function createWindow(): void {
   // Create the browser window.
-  const mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 900,
     height: 670,
     show: false,
@@ -27,11 +45,13 @@ function createWindow(): void {
     }
   })
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+  mainWindow = window
+
+  window.on('ready-to-show', () => {
+    window.show()
   })
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
+  window.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
   })
@@ -39,9 +59,9 @@ function createWindow(): void {
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    window.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(join(import.meta.dirname, '../renderer/index.html'))
+    window.loadFile(join(import.meta.dirname, '../renderer/index.html'))
   }
 }
 
@@ -61,6 +81,13 @@ app.whenReady().then(() => {
 
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
+  ipcMain.handle('agent:prompt', async (_, text: string) => {
+    const normalizedText = text.trim()
+    if (!normalizedText) return
+
+    const { session } = await getAgentSession()
+    await session.prompt(normalizedText)
+  })
 
   if (process.env['PI_SMOKE'] === '1') {
     void runPiSmokeSession()
