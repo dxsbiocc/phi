@@ -11,10 +11,11 @@ import {
 } from '@mui/material'
 import { Send as SendIcon } from '@mui/icons-material'
 import type { FormEvent, ReactNode } from 'react'
-import type { ChatMessage, ModelOption } from '../types'
+import ToolCallCard from './ToolCallCard'
+import type { ChatItem, ChatMessage, ModelOption } from '../types'
 
 type ViewProps = {
-  messages: ChatMessage[]
+  messages: ChatItem[]
   input: string
   messagesContainerRef: (node: HTMLDivElement | null) => void
   canSend: boolean
@@ -113,9 +114,13 @@ function ChatView({
           p: 2
         }}
       >
-        {messages.map((message) => (
-          <ChatBubble key={message.id} message={message} onGoSettings={onGoSettings} />
-        ))}
+        {messages.map((message) =>
+          message.role === 'tool' ? (
+            <ToolCallCard key={message.id} item={message} />
+          ) : (
+            <ChatBubble key={message.id} message={message} onGoSettings={onGoSettings} />
+          )
+        )}
       </Box>
       <Box component="form" onSubmit={onChatSubmit} sx={{ px: 2, pb: 2, pt: 1 }}>
         <Paper

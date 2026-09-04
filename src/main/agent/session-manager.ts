@@ -1,4 +1,7 @@
-import { createAgentSession as createSdkAgentSession, type AgentSessionEvent } from '@earendil-works/pi-coding-agent'
+import {
+  createAgentSession as createSdkAgentSession,
+  type AgentSessionEvent
+} from '@earendil-works/pi-coding-agent'
 
 export type AgentEventSummary = Record<string, unknown>
 
@@ -24,6 +27,14 @@ function summarizeEvent(event: AgentSessionEvent): Record<string, unknown> {
     summary.toolName = event.toolName
   }
 
+  if ('args' in event) {
+    summary.args = event.args
+  }
+
+  if ('partialResult' in event) {
+    summary.partialResult = event.partialResult
+  }
+
   if ('assistantMessageEvent' in event) {
     summary.assistantMessageEvent = event.assistantMessageEvent
   }
@@ -45,7 +56,7 @@ function summarizeEvent(event: AgentSessionEvent): Record<string, unknown> {
 
 export async function createAgentSession(
   options?: Parameters<typeof createSdkAgentSession>[0],
-  onEvent?: (summary: AgentEventSummary) => void,
+  onEvent?: (summary: AgentEventSummary) => void
 ) {
   const result = await createSdkAgentSession(options)
 

@@ -8,6 +8,18 @@ export interface ChatMessage {
   content: string
 }
 
+export interface ToolCallItem {
+  id: string
+  role: 'tool'
+  toolName: string
+  argsPreview: string
+  argsJson: string
+  output: string
+  status: 'running' | 'done' | 'error'
+}
+
+export type ChatItem = ChatMessage | ToolCallItem
+
 export interface ProviderAuthStatus {
   providerId: string
   name: string
@@ -83,6 +95,12 @@ export interface AgentEventSummary {
     type?: string
     delta?: string
   }
+  toolCallId?: string
+  toolName?: string
+  args?: unknown
+  partialResult?: unknown
+  result?: unknown
+  isError?: boolean
 }
 
 export type AuthEvent =

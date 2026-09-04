@@ -19,7 +19,7 @@ import type {
   ActiveAuthPrompt,
   AgentEventSummary,
   AuthInteractionEvent,
-  ChatMessage,
+  ChatItem,
   ModelOption,
   ProviderAuthStatus,
   RendererApi
@@ -114,8 +114,58 @@ function extractTextFromMessage(message: AgentEventSummary['message']): string {
     .join('')
 }
 
+function extractToolText(value: unknown): string {
+  if (typeof value === 'string') {
+    return value
+  }
+  if (value && typeof value === 'object') {
+    const record = value as { content?: unknown; output?: unknown; text?: unknown }
+    if (Array.isArray(record.content)) {
+      const text = record.content
+        .map((part) =>
+          part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string'
+            ? (part as { text: string }).text
+            : ''
+        )
+        .join('')
+      if (text) {
+        return text
+      }
+    }
+    if (typeof record.output === 'string') {
+      return record.output
+    }
+    if (typeof record.text === 'string') {
+      return record.text
+    }
+    try {
+      return JSON.stringify(value, null, 2)
+    } catch {
+      return String(value)
+    }
+  }
+  return value == null ? '' : String(value)
+}
+
+function toolArgsPreview(args: unknown): string {
+  if (!args || typeof args !== 'object') {
+    return ''
+  }
+  const record = args as Record<string, unknown>
+  const preferred = ['command', 'path', 'file_path', 'pattern', 'code', 'query']
+  for (const key of preferred) {
+    if (typeof record[key] === 'string' && record[key]) {
+      return record[key] as string
+    }
+  }
+  const firstString = Object.values(record).find(
+    (item): item is string => typeof item === 'string' && item.length > 0
+  )
+  return firstString ?? ''
+}
+
 function App(): React.JSX.Element {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messages, setMessages] = useState<ChatItem[]>([])
   const [input, setInput] = useState('')
   const [view, setView] = useState<'chat' | 'settings'>('chat')
   const [providerStatuses, setProviderStatuses] = useState<ProviderAuthStatus[]>([])
@@ -152,6 +202,47 @@ function App(): React.JSX.Element {
       setMessages((prev) => {
         const next = [...prev]
 
+        if (event.type === 'tool_execution_start' && typeof event.toolCallId === 'string') {
+          let argsJson = ''
+          try {
+            argsJson = JSON.stringify(event.args, null, 2) ?? ''
+          } catch {
+            argsJson = ''
+          }
+          next.push({
+            id: event.toolCallId,
+            role: 'tool',
+            toolName: typeof event.toolName === 'string' ? event.toolName : 'tool',
+            argsPreview: toolArgsPreview(event.args),
+            argsJson,
+            output: '',
+            status: 'running'
+          })
+          return next
+        }
+
+        if (
+          (event.type === 'tool_execution_update' || event.type === 'tool_execution_end') &&
+          typeof event.toolCallId === 'string'
+        ) {
+          const index = next.findIndex((item) => item.id === event.toolCallId)
+          const current = index >= 0 ? next[index] : null
+          if (current && current.role === 'tool') {
+            if (event.type === 'tool_execution_update') {
+              const partial = extractToolText(event.partialResult)
+              next[index] = { ...current, output: partial || current.output }
+            } else {
+              const output = extractToolText(event.result)
+              next[index] = {
+                ...current,
+                output: output || current.output,
+                status: event.isError ? 'error' : 'done'
+              }
+            }
+          }
+          return next
+        }
+
         if (event.type === 'message_start' && event.message?.role === 'assistant') {
           const id = `assistant-${Date.now()}`
           assistantIdRef.current = id
@@ -170,10 +261,11 @@ function App(): React.JSX.Element {
           const delta = event.assistantMessageEvent?.delta
           if (typeof delta === 'string' && targetId) {
             const index = next.findIndex((item) => item.id === targetId)
-            if (index >= 0) {
+            const current = index >= 0 ? next[index] : null
+            if (current && current.role !== 'tool') {
               next[index] = {
-                ...next[index],
-                content: `${next[index].content}${delta}`
+                ...current,
+                content: `${current.content}${delta}`
               }
             }
           }
@@ -191,14 +283,15 @@ function App(): React.JSX.Element {
 
           if (currentId) {
             const index = next.findIndex((item) => item.id === currentId)
-            if (index >= 0) {
+            const current = index >= 0 ? next[index] : null
+            if (current && current.role !== 'tool') {
               next[index] = {
-                ...next[index],
+                ...current,
                 role: event.message.stopReason === 'error' ? 'error' : 'assistant',
                 content:
                   event.message.stopReason === 'error'
-                    ? errorText || next[index].content || '请求失败'
-                    : finalMessage || next[index].content
+                    ? errorText || current.content || '请求失败'
+                    : finalMessage || current.content
               }
             }
           }
