@@ -112,54 +112,25 @@ export class AuthManager {
     const credentials = await runtime.listCredentials()
     const credentialProviderIds = new Set(credentials.map((entry) => entry.providerId))
 
-    return Promise.all(
-      providers.map(async (provider) => {
-        const baseStatus = runtime.getProviderAuthStatus(provider.id)
-        let statusText = baseStatus.source ? `${baseStatus.source}` : '未配置'
-        let hasConfigError = false
-        let configured = baseStatus.configured
+    return providers.map((provider) => {
+      const baseStatus = runtime.getProviderAuthStatus(provider.id)
+      const hasStoredCredential = credentialProviderIds.has(provider.id)
+      const configured = baseStatus.configured || hasStoredCredential
+      const hasConfigError = false
+      const statusText = configured ? baseStatus.source ?? '已配置' : '未配置'
 
-        try {
-          const authCheck = await runtime.checkAuth(provider.id)
-          if (authCheck) {
-            statusText = authCheck.source ? authCheck.source : '已配置'
-            configured = true
-          } else if (baseStatus.configured) {
-            statusText = '已配置/异常'
-            hasConfigError = true
-          }
-        } catch (error) {
-          statusText = error instanceof Error ? error.message : '认证异常'
-          hasConfigError = true
-          if (credentialProviderIds.has(provider.id) || baseStatus.configured) {
-            configured = true
-            statusText = '已配置/异常'
-          }
-        }
-
-        if (baseStatus.source === 'runtime' && !hasConfigError && configured) {
-          statusText = '已配置'
-        }
-        if (!configured && credentialProviderIds.has(provider.id)) {
-          configured = true
-        }
-        if (statusText === '未配置' && configured) {
-          statusText = hasConfigError ? '已配置/异常' : '已配置'
-        }
-
-        return {
-          providerId: provider.id,
-          name: provider.name || provider.id,
-          configured,
-          source: baseStatus.source,
-          label: baseStatus.label,
-          hasApiKey: Boolean(provider.auth?.apiKey),
-          hasOAuth: Boolean(provider.auth?.oauth),
-          hasConfigError,
-          statusText,
-        }
-      }),
-    )
+      return {
+        providerId: provider.id,
+        name: provider.name || provider.id,
+        configured,
+        source: baseStatus.source,
+        label: baseStatus.label,
+        hasApiKey: Boolean(provider.auth?.apiKey),
+        hasOAuth: Boolean(provider.auth?.oauth),
+        hasConfigError,
+        statusText,
+      }
+    })
   }
 
   async loginApiKey(providerId: string, key: string): Promise<AuthProviderStatusItem[]> {
