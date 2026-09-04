@@ -1,7 +1,17 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { createAgentSession } from './agent/session-manager'
 import icon from '../../resources/icon.png?asset'
+
+async function runPiSmokeSession(): Promise<void> {
+  try {
+    const { session } = await createAgentSession()
+    await session.prompt('reply with exactly: OK')
+  } catch (error) {
+    console.error('PI smoke test failed:', error)
+  }
+}
 
 function createWindow(): void {
   // Create the browser window.
@@ -51,6 +61,10 @@ app.whenReady().then(() => {
 
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
+
+  if (process.env['PI_SMOKE'] === '1') {
+    void runPiSmokeSession()
+  }
 
   createWindow()
 
