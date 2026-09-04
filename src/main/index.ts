@@ -6,8 +6,14 @@ import { createAgentSession } from './agent/session-manager'
 import { getAuthManager } from './agent/auth-manager'
 import icon from '../../resources/icon.png?asset'
 
+type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
 let sharedAgentSession: Promise<Awaited<ReturnType<typeof createAgentSession>>> | null = null
 let selectedModel: { providerId: string; modelId: string } | null = null
+// Default is deliberately 'high', not the SDK's own default of 'off': many models
+// (e.g. DeepSeek V4 Pro) only enable reasoning output at 'high'/'max', and this app
+// wants that reasoning visible in the UI out of the box rather than silently absent.
+let selectedThinkingLevel: ThinkingLevel = 'high'
 let promptQueue: Promise<void> = Promise.resolve()
 
 async function runPiSmokeSession(): Promise<void> {
@@ -44,6 +50,7 @@ async function getAgentSession(): Promise<Awaited<ReturnType<typeof createAgentS
         : undefined
       const result = await createAgentSession({
         modelRuntime: runtime,
+        thinkingLevel: selectedThinkingLevel,
         ...(model ? { model } : {})
       })
 
@@ -174,6 +181,21 @@ app.whenReady().then(() => {
     const { session } = await sharedAgentSession
     const model = session.model
     return model ? { providerId: model.provider, modelId: model.id } : null
+  })
+
+  ipcMain.handle('thinking:select', async (_, level: ThinkingLevel) => {
+    selectedThinkingLevel = level
+    if (sharedAgentSession) {
+      const { session } = await sharedAgentSession
+      session.setThinkingLevel(level)
+    }
+  })
+  ipcMain.handle('thinking:selected', async () => {
+    if (sharedAgentSession) {
+      const { session } = await sharedAgentSession
+      return session.thinkingLevel
+    }
+    return selectedThinkingLevel
   })
 
   if (process.env['PI_SMOKE'] === '1') {

@@ -103,6 +103,10 @@ declare global {
       listModels: () => Promise<Array<{ providerId: string; modelId: string; name: string }>>
       selectModel: (providerId: string, modelId: string) => Promise<void>
       getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>
+      selectThinkingLevel: (
+        level: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+      ) => Promise<void>
+      getThinkingLevel: () => Promise<'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'>
     }
   }
 }

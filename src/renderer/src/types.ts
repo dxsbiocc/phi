@@ -67,6 +67,8 @@ export interface AuthProgressEvent {
   expiresInSeconds?: number
 }
 
+export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
 export type RendererApi = {
   sendPrompt: (text: string) => Promise<void>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => () => void
@@ -79,6 +81,8 @@ export type RendererApi = {
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>
+  selectThinkingLevel: (level: ThinkingLevel) => Promise<void>
+  getThinkingLevel: () => Promise<ThinkingLevel>
 }
 
 export interface AgentMessage {

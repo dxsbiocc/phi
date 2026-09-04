@@ -22,7 +22,8 @@ import type {
   ChatItem,
   ModelOption,
   ProviderAuthStatus,
-  RendererApi
+  RendererApi,
+  ThinkingLevel
 } from './types'
 
 const drawerWidth = 200
@@ -177,6 +178,7 @@ function App(): React.JSX.Element {
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [models, setModels] = useState<ModelOption[]>([])
   const [selectedModel, setSelectedModel] = useState<ModelOption | null>(null)
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>('high')
   const listRef = useRef<HTMLDivElement | null>(null)
   const isSendingRef = useRef(false)
   const textBlockIdsRef = useRef<Map<number, string>>(new Map())
@@ -406,9 +408,10 @@ function App(): React.JSX.Element {
     void refreshAuthStatuses()
     void (async () => {
       try {
-        const [available, selected] = await Promise.all([
+        const [available, selected, level] = await Promise.all([
           rendererApi.listModels(),
-          rendererApi.getSelectedModel()
+          rendererApi.getSelectedModel(),
+          rendererApi.getThinkingLevel()
         ])
         setModels(available)
         if (selected) {
@@ -418,11 +421,27 @@ function App(): React.JSX.Element {
             ) ?? null
           )
         }
+        setThinkingLevel(level)
       } catch {
         // 模型列表加载失败不阻塞聊天；发送时会给出明确错误
       }
     })()
   }, [])
+
+  const onSelectThinkingLevel = async (level: ThinkingLevel): Promise<void> => {
+    const previous = thinkingLevel
+    setThinkingLevel(level)
+    try {
+      await rendererApi.selectThinkingLevel(level)
+    } catch (error) {
+      setThinkingLevel(previous)
+      const message = error instanceof Error ? error.message : '切换思考等级失败'
+      setMessages((prev) => [
+        ...prev,
+        { id: `error-${Date.now()}`, role: 'error', content: message }
+      ])
+    }
+  }
 
   const onSelectModel = async (model: ModelOption | null): Promise<void> => {
     if (!model) {
@@ -634,6 +653,10 @@ function App(): React.JSX.Element {
               selectedModel={selectedModel}
               onSelectModel={(model) => {
                 void onSelectModel(model)
+              }}
+              thinkingLevel={thinkingLevel}
+              onSelectThinkingLevel={(level) => {
+                void onSelectThinkingLevel(level)
               }}
               onInputChange={setInput}
               onChatSubmit={onChatSubmit}

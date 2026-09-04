@@ -72,6 +72,8 @@ type SelectedModel = {
   modelId: string
 } | null
 
+type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
 type RendererAuthApi = {
   sendPrompt: (text: string) => Promise<void>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => Unsubscribe
@@ -84,6 +86,8 @@ type RendererAuthApi = {
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<SelectedModel>
+  selectThinkingLevel: (level: ThinkingLevel) => Promise<void>
+  getThinkingLevel: () => Promise<ThinkingLevel>
 }
 
 const api: RendererAuthApi = {
@@ -121,7 +125,10 @@ const api: RendererAuthApi = {
   listModels: (): Promise<ModelOption[]> => ipcRenderer.invoke('models:list'),
   selectModel: (providerId: string, modelId: string): Promise<void> =>
     ipcRenderer.invoke('models:select', providerId, modelId),
-  getSelectedModel: (): Promise<SelectedModel> => ipcRenderer.invoke('models:selected')
+  getSelectedModel: (): Promise<SelectedModel> => ipcRenderer.invoke('models:selected'),
+  selectThinkingLevel: (level: ThinkingLevel): Promise<void> =>
+    ipcRenderer.invoke('thinking:select', level),
+  getThinkingLevel: (): Promise<ThinkingLevel> => ipcRenderer.invoke('thinking:selected')
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

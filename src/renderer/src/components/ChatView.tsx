@@ -6,7 +6,9 @@ import {
   Collapse,
   createFilterOptions,
   IconButton,
+  MenuItem,
   Paper,
+  Select,
   TextField,
   Typography
 } from '@mui/material'
@@ -14,7 +16,16 @@ import { ChevronRight as ChevronRightIcon, Send as SendIcon } from '@mui/icons-m
 import { useState, type FormEvent, type ReactNode } from 'react'
 import MarkdownContent from './MarkdownContent'
 import ToolCallCard from './ToolCallCard'
-import type { ChatItem, ChatMessage, ModelOption } from '../types'
+import type { ChatItem, ChatMessage, ModelOption, ThinkingLevel } from '../types'
+
+const THINKING_LEVELS: { value: ThinkingLevel; label: string }[] = [
+  { value: 'minimal', label: '极简思考' },
+  { value: 'low', label: '低思考' },
+  { value: 'medium', label: '中等思考' },
+  { value: 'high', label: '深度思考' },
+  { value: 'xhigh', label: '极深思考' },
+  { value: 'max', label: '最大思考' }
+]
 
 function ThinkingBlock({ content }: { content: string }): ReactNode {
   const [expanded, setExpanded] = useState(false)
@@ -98,6 +109,8 @@ type ViewProps = {
   models: ModelOption[]
   selectedModel: ModelOption | null
   onSelectModel: (model: ModelOption | null) => void
+  thinkingLevel: ThinkingLevel
+  onSelectThinkingLevel: (level: ThinkingLevel) => void
   onInputChange: (value: string) => void
   onChatSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>
   onGoSettings: () => void
@@ -181,6 +194,8 @@ function ChatView({
   models,
   selectedModel,
   onSelectModel,
+  thinkingLevel,
+  onSelectThinkingLevel,
   onInputChange,
   onChatSubmit,
   onGoSettings
@@ -262,6 +277,21 @@ function ChatView({
               mt: 1
             }}
           >
+            <Select
+              value={thinkingLevel}
+              onChange={(event) => onSelectThinkingLevel(event.target.value as ThinkingLevel)}
+              variant="standard"
+              disableUnderline
+              size="small"
+              aria-label="思考等级"
+              sx={{ fontSize: '0.85rem', color: 'text.secondary', minWidth: 78 }}
+            >
+              {THINKING_LEVELS.map((option) => (
+                <MenuItem key={option.value} value={option.value} sx={{ fontSize: '0.85rem' }}>
+                  {option.label}
+                </MenuItem>
+              ))}
+            </Select>
             <Autocomplete
               options={models}
               value={selectedModel}
