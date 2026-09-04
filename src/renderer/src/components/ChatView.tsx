@@ -11,6 +11,7 @@ import {
 } from '@mui/material'
 import { Send as SendIcon } from '@mui/icons-material'
 import type { FormEvent, ReactNode } from 'react'
+import MarkdownContent from './MarkdownContent'
 import ToolCallCard from './ToolCallCard'
 import type { ChatItem, ChatMessage, ModelOption } from '../types'
 
@@ -52,34 +53,33 @@ function ChatBubble({
     )
   }
 
-  const isUser = message.role === 'user'
-
-  return (
-    <Paper
-      variant="outlined"
-      sx={{
-        px: 2,
-        py: 1,
-        maxWidth: '80%',
-        alignSelf: isUser ? 'flex-end' : 'flex-start',
-        bgcolor: isUser ? 'primary.main' : 'background.paper',
-        color: isUser ? 'background.default' : 'text.primary',
-        borderColor: isUser ? 'primary.main' : 'grey.700',
-        borderRadius: 2,
-        boxShadow: 1
-      }}
-    >
-      <Typography
-        variant="body2"
+  if (message.role === 'user') {
+    return (
+      <Box
         sx={{
-          fontFamily: message.role === 'assistant' ? 'var(--font-stack)' : 'monospace',
-          whiteSpace: 'pre-wrap',
-          lineHeight: 1.6
+          alignSelf: 'flex-end',
+          maxWidth: '75%',
+          px: 2,
+          py: 1.25,
+          bgcolor: 'primary.main',
+          color: 'background.default',
+          borderRadius: '18px 18px 4px 18px'
         }}
       >
-        {message.content}
-      </Typography>
-    </Paper>
+        <Typography
+          variant="body1"
+          sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, fontSize: '0.95rem' }}
+        >
+          {message.content}
+        </Typography>
+      </Box>
+    )
+  }
+
+  return (
+    <Box sx={{ alignSelf: 'stretch', px: 0.5 }}>
+      <MarkdownContent text={message.content} />
+    </Box>
   )
 }
 
@@ -102,27 +102,31 @@ function ChatView({
 }: ViewProps): React.JSX.Element {
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <Box
-        ref={messagesContainerRef}
-        sx={{
-          flex: 1,
-          minHeight: 0,
-          overflowY: 'auto',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 1.5,
-          p: 2
-        }}
-      >
-        {messages.map((message) =>
-          message.role === 'tool' ? (
-            <ToolCallCard key={message.id} item={message} />
-          ) : (
-            <ChatBubble key={message.id} message={message} onGoSettings={onGoSettings} />
-          )
-        )}
+      <Box ref={messagesContainerRef} sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        <Box
+          sx={{
+            maxWidth: 860,
+            mx: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            p: 3
+          }}
+        >
+          {messages.map((message) =>
+            message.role === 'tool' ? (
+              <ToolCallCard key={message.id} item={message} />
+            ) : (
+              <ChatBubble key={message.id} message={message} onGoSettings={onGoSettings} />
+            )
+          )}
+        </Box>
       </Box>
-      <Box component="form" onSubmit={onChatSubmit} sx={{ px: 2, pb: 2, pt: 1 }}>
+      <Box
+        component="form"
+        onSubmit={onChatSubmit}
+        sx={{ px: 2, pb: 2, pt: 1, maxWidth: 892, mx: 'auto', width: '100%' }}
+      >
         <Paper
           variant="outlined"
           sx={{
@@ -181,6 +185,7 @@ function ChatView({
               }
               size="small"
               disableClearable={false}
+              noOptionsText="无可用模型 — 请先在设置中配置 Provider"
               sx={{ width: 220 }}
               renderInput={(params) => (
                 <TextField

@@ -251,6 +251,10 @@ function App(): React.JSX.Element {
         }
 
         if (event.type === 'message_update' && event.message?.role === 'assistant') {
+          if (event.assistantMessageEvent?.type !== 'text_delta') {
+            return next
+          }
+
           let targetId = assistantIdRef.current
           if (!targetId) {
             targetId = `assistant-${Date.now()}`
@@ -285,23 +289,32 @@ function App(): React.JSX.Element {
             const index = next.findIndex((item) => item.id === currentId)
             const current = index >= 0 ? next[index] : null
             if (current && current.role !== 'tool') {
-              next[index] = {
-                ...current,
-                role: event.message.stopReason === 'error' ? 'error' : 'assistant',
-                content:
-                  event.message.stopReason === 'error'
-                    ? errorText || current.content || '请求失败'
-                    : finalMessage || current.content
+              const finalContent =
+                event.message.stopReason === 'error'
+                  ? errorText || current.content || '请求失败'
+                  : finalMessage || current.content
+              if (!finalContent) {
+                next.splice(index, 1)
+              } else {
+                next[index] = {
+                  ...current,
+                  role: event.message.stopReason === 'error' ? 'error' : 'assistant',
+                  content: finalContent
+                }
               }
             }
           }
 
           if (!currentId) {
-            next.push({
-              id: `assistant-${Date.now()}`,
-              role: event.message.stopReason === 'error' ? 'error' : 'assistant',
-              content: event.message.stopReason === 'error' ? errorText || '请求失败' : finalMessage
-            })
+            const content =
+              event.message.stopReason === 'error' ? errorText || '请求失败' : finalMessage
+            if (content) {
+              next.push({
+                id: `assistant-${Date.now()}`,
+                role: event.message.stopReason === 'error' ? 'error' : 'assistant',
+                content
+              })
+            }
           }
 
           assistantIdRef.current = null
@@ -430,6 +443,15 @@ function App(): React.JSX.Element {
     () => providerStatuses.filter((provider) => provider.configured).length,
     [providerStatuses]
   )
+
+  const availableModels = useMemo(() => {
+    const configuredIds = new Set(
+      providerStatuses
+        .filter((provider) => provider.configured)
+        .map((provider) => provider.providerId)
+    )
+    return models.filter((model) => configuredIds.has(model.providerId))
+  }, [models, providerStatuses])
 
   const onChatSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
@@ -580,7 +602,7 @@ function App(): React.JSX.Element {
                 listRef.current = node
               }}
               canSend={!isSendingMessage && !isBusy}
-              models={models}
+              models={availableModels}
               selectedModel={selectedModel}
               onSelectModel={(model) => {
                 void onSelectModel(model)
