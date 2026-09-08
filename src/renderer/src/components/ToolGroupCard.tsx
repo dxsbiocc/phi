@@ -1,8 +1,13 @@
-import { ChevronRight as ChevronRightIcon } from '@mui/icons-material'
 import { Box, Collapse, Typography } from '@mui/material'
 import { useState, type ReactNode } from 'react'
-import ToolCallCard, { StatusIndicator, ToolCallDetail, diffStat } from './ToolCallCard'
+import { PhiIcons } from '../icons'
+import { ToolActionIcon } from './ToolActionIcon'
+import ToolCallCard, { StatusIndicator, ToolCallDetail } from './ToolCallCard'
+import { diffStat } from '../lib/toolOutput'
+import { toolActionKind, type ToolActionKind } from '../lib/toolActions'
 import type { ToolCallItem } from '../types'
+
+const ChevronRightIcon = PhiIcons.action.back
 
 const FILE_TOOLS = new Set(['edit', 'write'])
 const MAX_FILES_SHOWN = 2
@@ -23,12 +28,44 @@ function uniqueInOrder(values: string[]): string[] {
   return [...new Set(values)]
 }
 
+function uniqueActions(items: ToolCallItem[]): ToolActionKind[] {
+  return uniqueInOrder(
+    items.map((item) => toolActionKind(item.toolName, item.argsPreview, item.argsJson))
+  ) as ToolActionKind[]
+}
+
 function capitalize(text: string): string {
   return text.length > 0 ? text[0].toUpperCase() + text.slice(1) : text
 }
 
-function pluralCommands(count: number): string {
-  return count === 1 ? 'Ran a command' : `Ran ${count} commands`
+type AggregateToolStatus = 'running' | 'done'
+
+function commandPhrase(count: number, status: AggregateToolStatus): string {
+  if (status === 'running') return count === 1 ? '执行命令' : `执行 ${count} 条命令`
+  return count === 1 ? '已执行命令' : `已执行 ${count} 条命令`
+}
+
+function fileToolPhrase(
+  action: 'read' | 'edit' | 'read-edit',
+  files: string,
+  status: AggregateToolStatus
+): string {
+  const phrases = {
+    read: {
+      running: `读取 ${files}`,
+      done: `已读取 ${files}`
+    },
+    edit: {
+      running: `编辑 ${files}`,
+      done: `已编辑 ${files}`
+    },
+    'read-edit': {
+      running: `读取和编辑 ${files}`,
+      done: `已读取和编辑 ${files}`
+    }
+  } satisfies Record<typeof action, Record<AggregateToolStatus, string>>
+
+  return phrases[action][status]
 }
 
 function aggregateStat(items: ToolCallItem[]): { added: number; removed: number } | null {
@@ -46,6 +83,7 @@ function summarize(items: ToolCallItem[]): {
   headline: string
   stat: { added: number; removed: number } | null
 } {
+  const status = summarizeStatus(items)
   const commandItems = items.filter(
     (item) => !FILE_TOOLS.has(item.toolName) && item.toolName !== 'read'
   )
@@ -59,45 +97,47 @@ function summarize(items: ToolCallItem[]): {
     items.filter((item) => item.toolName === 'read').map((item) => basename(item.argsPreview))
   )
 
-  // A single, file-less command call is more useful shown verbatim (it's
-  // already specific) than folded into the generic "Ran a command" phrasing.
-  if (
-    items.length === 1 &&
-    commandItems.length === 1 &&
-    editedFiles.length === 0 &&
-    readFiles.length === 0
-  ) {
-    return { headline: items[0].argsPreview || items[0].toolName, stat: aggregateStat(items) }
-  }
-
   const clauses: string[] = []
   if (commandItems.length > 0) {
-    clauses.push(pluralCommands(commandItems.length))
+    clauses.push(commandPhrase(commandItems.length, status))
   }
   if (readFiles.length > 0 && editedFiles.length > 0) {
-    clauses.push(`read and edited ${joinFiles(uniqueInOrder([...readFiles, ...editedFiles]))}`)
+    clauses.push(
+      fileToolPhrase('read-edit', joinFiles(uniqueInOrder([...readFiles, ...editedFiles])), status)
+    )
   } else if (editedFiles.length > 0) {
-    clauses.push(`edited ${joinFiles(editedFiles)}`)
+    clauses.push(fileToolPhrase('edit', joinFiles(editedFiles), status))
   } else if (readFiles.length > 0) {
-    clauses.push(`read ${joinFiles(readFiles)}`)
+    clauses.push(fileToolPhrase('read', joinFiles(readFiles), status))
   }
 
   const headline =
-    clauses.length > 0 ? capitalize(clauses.join(', ')) : `Ran ${items.length} tool calls`
+    clauses.length > 0
+      ? capitalize(clauses.join(', '))
+      : status === 'running'
+        ? `${items.length} 个工具调用`
+        : `已运行 ${items.length} 个工具调用`
 
   return { headline, stat: aggregateStat(items) }
 }
 
-function groupStatus(items: ToolCallItem[]): ToolCallItem['status'] {
+function summarizeStatus(items: ToolCallItem[]): AggregateToolStatus {
   if (items.some((item) => item.status === 'running')) return 'running'
-  if (items.some((item) => item.status === 'error')) return 'error'
   return 'done'
 }
 
-function ToolGroupCard({ items }: { items: ToolCallItem[] }): ReactNode {
+function groupIndicatorStatus(items: ToolCallItem[]): ToolCallItem['status'] | null {
+  if (items.some((item) => item.status === 'running')) return 'running'
+  if (items.every((item) => item.status === 'done')) return 'done'
+  return null
+}
+
+function ToolGroupCard({ items, cwd }: { items: ToolCallItem[]; cwd?: string }): ReactNode {
   const [expanded, setExpanded] = useState(false)
   const toggle = (): void => setExpanded((value) => !value)
   const { headline, stat } = summarize(items)
+  const indicatorStatus = groupIndicatorStatus(items)
+  const actions = uniqueActions(items)
 
   return (
     <Box sx={{ alignSelf: 'stretch', minWidth: 0 }}>
@@ -135,6 +175,11 @@ function ToolGroupCard({ items }: { items: ToolCallItem[] }): ReactNode {
             transform: expanded ? 'rotate(90deg)' : 'none'
           }}
         />
+        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25, flexShrink: 0 }}>
+          {actions.map((action) => (
+            <ToolActionIcon key={action} action={action} />
+          ))}
+        </Box>
         <Typography component="span" variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
           {headline}
         </Typography>
@@ -156,21 +201,23 @@ function ToolGroupCard({ items }: { items: ToolCallItem[] }): ReactNode {
             ) : null}
           </Typography>
         ) : null}
-        <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-          <StatusIndicator status={groupStatus(items)} />
-        </Box>
+        {indicatorStatus ? (
+          <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+            <StatusIndicator status={indicatorStatus} />
+          </Box>
+        ) : null}
       </Box>
       <Collapse in={expanded} unmountOnExit>
         {items.length === 1 ? (
           // A single call: show its args/output directly under this row instead
           // of nesting another independently-collapsible ToolCallCard inside it
           // (that would need two clicks to reach the same detail).
-          <ToolCallDetail item={items[0]} />
+          <ToolCallDetail item={items[0]} cwd={cwd} />
         ) : (
           <Box sx={{ ml: 2.5, pl: 1.5, minWidth: 0, borderLeft: 2, borderColor: 'grey.800' }}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5 }}>
               {items.map((item) => (
-                <ToolCallCard key={item.id} item={item} />
+                <ToolCallCard key={item.id} item={item} cwd={cwd} />
               ))}
             </Box>
           </Box>

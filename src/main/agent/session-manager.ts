@@ -1,7 +1,9 @@
 import {
-  createAgentSession as createSdkAgentSession,
-  type AgentSessionEvent
-} from '@earendil-works/pi-coding-agent'
+  type AgentSessionEvent,
+  type CreateAgentSessionOptions,
+  type CreateAgentSessionResult,
+  createRuntimeAgentSession
+} from './runtime-adapter'
 
 export type AgentEventSummary = Record<string, unknown>
 
@@ -51,14 +53,38 @@ function summarizeEvent(event: AgentSessionEvent): Record<string, unknown> {
     summary.isError = event.isError
   }
 
+  if ('reason' in event) {
+    summary.reason = event.reason
+  }
+
+  if ('action' in event) {
+    summary.action = event.action
+  }
+
+  if ('aborted' in event) {
+    summary.aborted = event.aborted
+  }
+
+  if ('willRetry' in event) {
+    summary.willRetry = event.willRetry
+  }
+
+  if ('skipped' in event) {
+    summary.skipped = event.skipped
+  }
+
+  if ('errorMessage' in event) {
+    summary.errorMessage = event.errorMessage
+  }
+
   return summary
 }
 
 export async function createAgentSession(
-  options?: Parameters<typeof createSdkAgentSession>[0],
+  options?: CreateAgentSessionOptions,
   onEvent?: (summary: AgentEventSummary) => void
-) {
-  const result = await createSdkAgentSession(options)
+): Promise<CreateAgentSessionResult> {
+  const result = await createRuntimeAgentSession(options)
 
   result.session.subscribe((event) => {
     const summary = summarizeEvent(event)

@@ -1,4 +1,3 @@
-import { CheckCircle as CheckCircleIcon, Key as KeyIcon, Login as LoginIcon } from '@mui/icons-material'
 import {
   Alert,
   Autocomplete,
@@ -15,10 +14,15 @@ import {
   Select,
   Stack,
   TextField,
-  Typography,
+  Typography
 } from '@mui/material'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { PhiIcons } from '../icons'
 import type { ActiveAuthPrompt, ProviderAuthStatus } from '../types'
+
+const CheckCircleIcon = PhiIcons.state.done
+const KeyIcon = PhiIcons.action.saveKey
+const LoginIcon = PhiIcons.action.login
 
 type AddProviderDialogProps = {
   open: boolean
@@ -53,7 +57,7 @@ function formatPromptHint(eventType: ActiveAuthPrompt['prompt']['type']): string
   return '请填写并提交'
 }
 
-function AddProviderDialog({
+function AddProviderDialogContent({
   open,
   providers,
   initialProviderId,
@@ -66,29 +70,15 @@ function AddProviderDialog({
   onSubmitApiKey,
   onStartOAuth,
   onSubmitPrompt,
-  onUpdatePromptValue,
+  onUpdatePromptValue
 }: AddProviderDialogProps): React.JSX.Element {
-  const [step, setStep] = useState<'select' | 'configure'>('select')
+  const [step, setStep] = useState<'select' | 'configure'>(
+    initialProviderId ? 'configure' : 'select'
+  )
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(initialProviderId)
   const [apiKey, setApiKey] = useState('')
 
   const selectedProvider = providers.find((item) => item.providerId === selectedProviderId) ?? null
-
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-
-    if (initialProviderId) {
-      setSelectedProviderId(initialProviderId)
-      setStep('configure')
-    } else {
-      setSelectedProviderId(null)
-      setStep('select')
-    }
-
-    setApiKey('')
-  }, [open, initialProviderId])
 
   const renderPromptSection = (): React.JSX.Element | null => {
     if (!activePrompts.length) {
@@ -128,20 +118,20 @@ function AddProviderDialog({
                     ))}
                   </Select>
                 ) : (
-                <TextField
-                  fullWidth
-                  type={item.prompt.type === 'secret' ? 'password' : 'text'}
-                  value={item.value}
-                  onChange={(event) => {
-                    onUpdatePromptValue(item.requestId, event.target.value)
-                  }}
-                  placeholder={promptInputLabel(item.prompt)}
-                  slotProps={{
-                    input: {
-                      sx: { fontFamily: 'var(--font-mono)' },
-                    },
-                  }}
-                />
+                  <TextField
+                    fullWidth
+                    type={item.prompt.type === 'secret' ? 'password' : 'text'}
+                    value={item.value}
+                    onChange={(event) => {
+                      onUpdatePromptValue(item.requestId, event.target.value)
+                    }}
+                    placeholder={promptInputLabel(item.prompt)}
+                    slotProps={{
+                      input: {
+                        sx: { fontFamily: 'var(--font-mono)' }
+                      }
+                    }}
+                  />
                 )}
                 <Button
                   type="submit"
@@ -183,7 +173,9 @@ function AddProviderDialog({
                 onSelectProvider(value)
                 setApiKey('')
               }}
-              renderInput={(params) => <TextField {...params} label="搜索 Provider" placeholder="输入名称或 ID" />}
+              renderInput={(params) => (
+                <TextField {...params} label="搜索 Provider" placeholder="输入名称或 ID" />
+              )}
             />
           </Box>
         ) : null}
@@ -198,7 +190,11 @@ function AddProviderDialog({
             </Typography>
             <Divider sx={{ mb: 2 }} />
 
-            {providerHint ? <Alert severity="info" sx={{ mb: 2 }}>{providerHint}</Alert> : null}
+            {providerHint ? (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                {providerHint}
+              </Alert>
+            ) : null}
 
             <Typography variant="subtitle2">OAuth 登录</Typography>
             {selectedProvider.hasOAuth ? (
@@ -245,8 +241,8 @@ function AddProviderDialog({
                   sx={{ mt: 1 }}
                   slotProps={{
                     input: {
-                      sx: { fontFamily: 'var(--font-mono)' },
-                    },
+                      sx: { fontFamily: 'var(--font-mono)' }
+                    }
                   }}
                 />
                 <Button
@@ -291,6 +287,11 @@ function AddProviderDialog({
       </DialogActions>
     </Dialog>
   )
+}
+
+function AddProviderDialog(props: AddProviderDialogProps): React.JSX.Element {
+  const dialogSessionKey = props.open ? (props.initialProviderId ?? 'select') : 'closed'
+  return <AddProviderDialogContent key={dialogSessionKey} {...props} />
 }
 
 export default AddProviderDialog

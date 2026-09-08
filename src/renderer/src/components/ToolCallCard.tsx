@@ -1,18 +1,80 @@
-import {
-  Cancel as CancelIcon,
-  CheckCircle as CheckCircleIcon,
-  ChevronRight as ChevronRightIcon
-} from '@mui/icons-material'
-import { Box, Collapse, Typography } from '@mui/material'
+import { Box, Button, CircularProgress, Collapse, Divider, Typography } from '@mui/material'
 import { useState, type ReactNode } from 'react'
+import { PhiIcons } from '../icons'
 import type { ToolCallItem } from '../types'
+import { tokenizeLocalPaths } from '../lib/localPaths'
+import { toolActionKind } from '../lib/toolActions'
+import { toolTargetFromArgs } from '../lib/toolTargets'
+import { diffStat } from '../lib/toolOutput'
+import {
+  formatBytes,
+  isOutputPreviewTruncated,
+  isToolArgsPreviewTruncated,
+  outputPreviewText,
+  toolArgsPreviewText
+} from '../lib/toolOutputPresentation'
+import { ToolActionIcon } from './ToolActionIcon'
 
-const MAX_OUTPUT_CHARS = 20000
+const CancelIcon = PhiIcons.state.denied
+const CheckCircleIcon = PhiIcons.state.done
+const ChevronRightIcon = PhiIcons.action.back
 
-function DiffAwareOutput({ text }: { text: string }): ReactNode {
-  const clipped =
-    text.length > MAX_OUTPUT_CHARS ? `${text.slice(0, MAX_OUTPUT_CHARS)}\n…（输出已截断）` : text
-  const lines = clipped.split('\n')
+function LocalPathOutputButton({
+  text,
+  absolutePath
+}: {
+  text: string
+  absolutePath: string
+}): React.JSX.Element {
+  return (
+    <Box
+      component="button"
+      type="button"
+      title={absolutePath}
+      onClick={() => {
+        void window.api.revealPath(absolutePath).catch((error) => {
+          console.error('Failed to reveal tool output path:', error)
+        })
+      }}
+      sx={{
+        display: 'inline',
+        p: 0,
+        m: 0,
+        border: 0,
+        bgcolor: 'transparent',
+        color: 'primary.light',
+        font: 'inherit',
+        fontFamily: 'inherit',
+        textDecoration: 'underline',
+        textDecorationThickness: '1px',
+        textUnderlineOffset: '2px',
+        cursor: 'pointer',
+        overflowWrap: 'anywhere',
+        '&:hover': { color: 'primary.main' },
+        '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', borderRadius: 0.5 }
+      }}
+    >
+      {text}
+    </Box>
+  )
+}
+
+function LocalPathOutputText({ text, cwd }: { text: string; cwd?: string }): ReactNode {
+  return tokenizeLocalPaths(text, cwd ?? '').map((token, index) =>
+    token.kind === 'path' ? (
+      <LocalPathOutputButton
+        key={`${token.absolutePath}-${index}`}
+        text={token.text}
+        absolutePath={token.absolutePath}
+      />
+    ) : (
+      <span key={index}>{token.text}</span>
+    )
+  )
+}
+
+function DiffAwareOutput({ text, cwd }: { text: string; cwd?: string }): ReactNode {
+  const lines = text.split('\n')
   const looksLikeDiff = lines.some((line) => /^[+-]{1}[^+-]/.test(line) || /^@@ /.test(line))
 
   if (!looksLikeDiff) {
@@ -28,7 +90,7 @@ function DiffAwareOutput({ text }: { text: string }): ReactNode {
           overflowWrap: 'anywhere'
         }}
       >
-        {clipped}
+        <LocalPathOutputText text={text} cwd={cwd} />
       </Typography>
     )
   }
@@ -64,30 +126,18 @@ function DiffAwareOutput({ text }: { text: string }): ReactNode {
   )
 }
 
-export function diffStat(output: string): { added: number; removed: number } | null {
-  const lines = output.split('\n')
-  let added = 0
-  let removed = 0
-  for (const line of lines) {
-    if (line.startsWith('+') && !line.startsWith('+++')) added += 1
-    else if (line.startsWith('-') && !line.startsWith('---')) removed += 1
-  }
-  return added || removed ? { added, removed } : null
-}
-
 export function StatusIndicator({ status }: { status: ToolCallItem['status'] }): ReactNode {
   if (status === 'running') {
     return (
-      <Box
+      <CircularProgress
+        size={14}
+        thickness={5}
+        color="inherit"
         sx={{
-          width: 14,
-          height: 14,
-          borderRadius: '50%',
-          border: '2px solid',
-          borderColor: 'grey.700',
-          borderTopColor: 'text.secondary',
-          animation: 'spin 800ms linear infinite',
-          '@keyframes spin': { to: { transform: 'rotate(360deg)' } }
+          color: 'text.secondary',
+          '@media (prefers-reduced-motion: reduce)': {
+            animation: 'none'
+          }
         }}
         aria-label="执行中"
       />
@@ -99,7 +149,35 @@ export function StatusIndicator({ status }: { status: ToolCallItem['status'] }):
   return <CheckCircleIcon sx={{ fontSize: 14, color: 'success.main' }} aria-label="完成" />
 }
 
-export function ToolCallDetail({ item }: { item: ToolCallItem }): ReactNode {
+export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string }): ReactNode {
+  const [showFullArgs, setShowFullArgs] = useState(false)
+  const [showFullOutput, setShowFullOutput] = useState(false)
+  const target = toolTargetFromArgs(item.toolName, item.argsJson, cwd ?? '')
+  const hasSavedOutput = Boolean(item.outputTruncated && item.outputPath)
+  const argsCollapsedByPreview = item.argsJson ? isToolArgsPreviewTruncated(item.argsJson) : false
+  const argsText = item.argsJson
+    ? showFullArgs
+      ? item.argsJson
+      : toolArgsPreviewText(item.argsJson)
+    : ''
+  const outputCollapsedByPreview = item.output
+    ? !hasSavedOutput &&
+      isOutputPreviewTruncated({
+        output: item.output,
+        outputPath: item.outputPath,
+        outputTruncated: item.outputTruncated
+      })
+    : false
+  const outputPreview = item.output
+    ? showFullOutput && outputCollapsedByPreview
+      ? item.output
+      : outputPreviewText({
+          output: item.output,
+          outputPath: item.outputPath,
+          outputTruncated: item.outputTruncated
+        })
+    : ''
+
   return (
     <Box
       sx={{
@@ -111,11 +189,125 @@ export function ToolCallDetail({ item }: { item: ToolCallItem }): ReactNode {
         borderColor: 'grey.800'
       }}
     >
+      {target ? (
+        <Box
+          sx={{
+            mb: 1.25,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            minWidth: 0,
+            flexWrap: 'wrap'
+          }}
+        >
+          <Box sx={{ minWidth: 0, flex: 1 }}>
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              目标文件
+            </Typography>
+            <Typography
+              variant="caption"
+              component="div"
+              sx={{
+                mt: 0.25,
+                minWidth: 0,
+                fontFamily: 'var(--font-mono)',
+                color: 'text.secondary',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
+              title={target.absolutePath}
+            >
+              {target.label}
+            </Typography>
+          </Box>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => {
+              void window.api.revealPath(target.absolutePath).catch((error) => {
+                console.error('Failed to reveal tool target:', error)
+              })
+            }}
+          >
+            在文件夹显示
+          </Button>
+        </Box>
+      ) : null}
+      {hasSavedOutput ? (
+        <Box
+          sx={{
+            mb: 1.25,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            minWidth: 0,
+            flexWrap: 'wrap'
+          }}
+        >
+          <Box sx={{ minWidth: 0, flex: 1 }}>
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              完整输出已保存
+            </Typography>
+            <Typography
+              variant="caption"
+              component="div"
+              sx={{
+                mt: 0.25,
+                minWidth: 0,
+                fontFamily: 'var(--font-mono)',
+                color: 'text.secondary',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
+              title={item.outputPath}
+            >
+              {item.outputPath}
+            </Typography>
+          </Box>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => {
+              void window.api.revealPath(item.outputPath as string).catch((error) => {
+                console.error('Failed to reveal tool output:', error)
+              })
+            }}
+          >
+            在文件夹显示
+          </Button>
+        </Box>
+      ) : null}
       {item.argsJson ? (
         <Box sx={{ mb: item.output ? 1.5 : 0, minWidth: 0 }}>
-          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-            参数
-          </Typography>
+          <Box
+            sx={{
+              mb: 0.5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 1,
+              minWidth: 0
+            }}
+          >
+            <Typography
+              variant="caption"
+              component="div"
+              sx={{ color: 'text.secondary', fontWeight: 600, minWidth: 0 }}
+            >
+              参数{argsCollapsedByPreview && !showFullArgs ? ' · 已折叠' : ''}
+            </Typography>
+            {argsCollapsedByPreview ? (
+              <Button
+                size="small"
+                variant="text"
+                onClick={() => setShowFullArgs((value) => !value)}
+              >
+                {showFullArgs ? '收起参数' : '显示完整参数'}
+              </Button>
+            ) : null}
+          </Box>
           <Typography
             component="pre"
             variant="body2"
@@ -128,26 +320,62 @@ export function ToolCallDetail({ item }: { item: ToolCallItem }): ReactNode {
               color: 'text.secondary'
             }}
           >
-            {item.argsJson}
+            {argsText}
           </Typography>
         </Box>
       ) : null}
-      {item.output ? (
+      {item.argsJson && item.output ? <Divider sx={{ my: 1.25 }} /> : null}
+      {outputPreview ? (
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-            输出
-          </Typography>
-          <DiffAwareOutput text={item.output} />
+          <Box
+            sx={{
+              mb: 0.5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 1,
+              minWidth: 0
+            }}
+          >
+            <Typography
+              variant="caption"
+              component="div"
+              sx={{ color: 'text.secondary', fontWeight: 600, minWidth: 0 }}
+            >
+              {hasSavedOutput ? '输出预览' : '输出'}
+              {item.outputBytes ? ` · ${formatBytes(item.outputBytes)}` : ''}
+              {item.outputTruncated ? ' · 已截断' : ''}
+              {outputCollapsedByPreview && !showFullOutput ? ' · 已折叠' : ''}
+            </Typography>
+            {outputCollapsedByPreview ? (
+              <Button
+                size="small"
+                variant="text"
+                onClick={() => setShowFullOutput((value) => !value)}
+              >
+                {showFullOutput ? '收起输出' : '显示完整输出'}
+              </Button>
+            ) : null}
+          </Box>
+          <DiffAwareOutput text={outputPreview} cwd={cwd} />
         </Box>
       ) : null}
     </Box>
   )
 }
 
-function ToolCallCard({ item }: { item: ToolCallItem }): React.JSX.Element {
+function foldedToolHeadline(item: ToolCallItem, action: ReturnType<typeof toolActionKind>): string {
+  if (action === 'command') return '执行命令'
+  return item.argsPreview || item.toolName
+}
+
+function ToolCallCard({ item, cwd }: { item: ToolCallItem; cwd?: string }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const stat = item.output ? diffStat(item.output) : null
   const toggle = (): void => setExpanded((value) => !value)
+  const action = toolActionKind(item.toolName, item.argsPreview, item.argsJson)
+  const headline = foldedToolHeadline(item, action)
+  const showToolName = action !== 'command'
 
   return (
     <Box sx={{ alignSelf: 'stretch', minWidth: 0 }}>
@@ -185,20 +413,27 @@ function ToolCallCard({ item }: { item: ToolCallItem }): React.JSX.Element {
             transform: expanded ? 'rotate(90deg)' : 'none'
           }}
         />
-        <Typography
-          component="span"
-          variant="body2"
-          sx={{ fontFamily: 'var(--font-mono)', color: 'text.primary', flexShrink: 0 }}
-        >
-          {item.toolName}
-        </Typography>
+        <ToolActionIcon action={action} />
+        {showToolName ? (
+          <Typography
+            component="span"
+            variant="body2"
+            sx={{ fontFamily: 'var(--font-mono)', color: 'text.primary', flexShrink: 0 }}
+          >
+            {item.toolName}
+          </Typography>
+        ) : null}
         <Typography
           component="span"
           variant="body2"
           noWrap
-          sx={{ fontFamily: 'var(--font-mono)', flex: 1, minWidth: 0 }}
+          sx={{
+            fontFamily: showToolName ? 'var(--font-mono)' : 'inherit',
+            flex: 1,
+            minWidth: 0
+          }}
         >
-          {item.argsPreview}
+          {headline}
         </Typography>
         {stat ? (
           <Typography
@@ -218,12 +453,15 @@ function ToolCallCard({ item }: { item: ToolCallItem }): React.JSX.Element {
             ) : null}
           </Typography>
         ) : null}
-        <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+        <Box
+          aria-live={item.status === 'running' ? 'polite' : undefined}
+          sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}
+        >
           <StatusIndicator status={item.status} />
         </Box>
       </Box>
       <Collapse in={expanded} unmountOnExit>
-        <ToolCallDetail item={item} />
+        <ToolCallDetail item={item} cwd={cwd} />
       </Collapse>
     </Box>
   )

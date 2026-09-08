@@ -1,7 +1,7 @@
 import { BrowserWindow, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 
-import { ModelRuntime } from '@earendil-works/pi-coding-agent'
+import { createModelRuntime, type ModelRuntime } from './runtime-adapter'
 type AuthInteraction = {
   signal?: AbortSignal
   prompt(prompt: AuthPrompt): Promise<string>
@@ -88,21 +88,65 @@ export type AuthInteractionEvent = AuthInteractionPromptEvent | AuthInteractionN
 interface PendingInteraction {
   resolve: (value: string) => void
   reject: (error: Error) => void
-  cleanup: () => void
+}
+
+type AuthWindow = BrowserWindow
+
+function isUsableWindow(window: AuthWindow | null): window is AuthWindow {
+  return Boolean(window && !window.isDestroyed() && !window.webContents.isDestroyed?.())
+}
+
+function toRendererPrompt(prompt: AuthPrompt): AuthPrompt {
+  if (prompt.type === 'select') {
+    return {
+      type: prompt.type,
+      message: prompt.message,
+      options: prompt.options
+    }
+  }
+
+  return {
+    type: prompt.type,
+    message: prompt.message,
+    ...(prompt.placeholder === undefined ? {} : { placeholder: prompt.placeholder })
+  }
+}
+
+function addWindowUnavailableListener(window: AuthWindow, callback: () => void): () => void {
+  const webContents = window.webContents
+  const onUnavailable = (): void => callback()
+  const onNavigation = (...args: unknown[]): void => {
+    const isInPlace = args[2]
+    const isMainFrame = args[3]
+    if (isInPlace === true || isMainFrame === false) return
+    callback()
+  }
+
+  window.once('closed', onUnavailable)
+  webContents.once('destroyed', onUnavailable)
+  webContents.once('render-process-gone', onUnavailable)
+  webContents.on('did-start-navigation', onNavigation)
+
+  return () => {
+    window.removeListener('closed', onUnavailable)
+    webContents.removeListener('destroyed', onUnavailable)
+    webContents.removeListener('render-process-gone', onUnavailable)
+    webContents.removeListener('did-start-navigation', onNavigation)
+  }
 }
 
 export class AuthManager {
-  private readonly runtime: Promise<ModelRuntime>
+  private runtime: Promise<ModelRuntime> | null
   private readonly pendingInteractions = new Map<string, PendingInteraction>()
 
-  constructor() {
+  constructor(runtime?: Promise<ModelRuntime>) {
     // No explicit authPath: PI_CODING_AGENT_DIR (set in main/index.ts) already
-    // redirects the SDK's default agent dir to pi-desktop's own ~/.phi, isolated
-    // from the pi CLI's ~/.pi/agent — no shared credential file, no lock contention.
-    this.runtime = ModelRuntime.create()
+    // redirects the runtime's default agent dir to Phi's own ~/.phi.
+    this.runtime = runtime ?? null
   }
 
   async getRuntime(): Promise<ModelRuntime> {
+    this.runtime ??= createModelRuntime()
     return this.runtime
   }
 
@@ -162,62 +206,95 @@ export class AuthManager {
 
   async resolveInteraction(requestId: string, value: string): Promise<void> {
     const pending = this.pendingInteractions.get(requestId)
-    if (!pending) {
-      throw new Error('No pending auth interaction')
-    }
-
-    this.pendingInteractions.delete(requestId)
-    pending.cleanup()
+    if (!pending) return
     pending.resolve(value)
   }
 
   private createInteraction(providerId: string): AuthInteraction {
+    const interactionController = new AbortController()
+
     return {
+      signal: interactionController.signal,
       prompt: async (prompt: AuthPrompt): Promise<string> => {
         const window = this.getActiveWindow()
-        if (!window) {
+        if (!isUsableWindow(window)) {
+          interactionController.abort()
           throw new Error('No active window for auth interaction')
+        }
+        if (interactionController.signal.aborted || prompt.signal?.aborted) {
+          throw new Error('Auth interaction was cancelled')
         }
 
         return new Promise<string>((resolve, reject) => {
           const requestId = randomUUID()
+          let settled = false
+          const cleanupFns: Array<() => void> = []
+
           const cleanup = (): void => {
             this.pendingInteractions.delete(requestId)
+            for (const cleanupFn of cleanupFns.splice(0)) {
+              cleanupFn()
+            }
+          }
+
+          const settle = (callback: () => void): void => {
+            if (settled) return
+            settled = true
+            cleanup()
+            callback()
           }
 
           const pending: PendingInteraction = {
             resolve: (value: string) => {
-              cleanup()
-              resolve(value)
+              settle(() => resolve(value))
             },
             reject: (error: Error) => {
-              cleanup()
-              reject(error)
-            },
-            cleanup: () => {
-              this.pendingInteractions.delete(requestId)
+              settle(() => reject(error))
             }
           }
 
           this.pendingInteractions.set(requestId, pending)
 
-          window.webContents.send('auth:interaction', {
-            type: 'prompt',
-            requestId,
-            providerId,
-            prompt
-          })
+          const onAbort = (): void => pending.reject(new Error('Auth interaction was cancelled'))
+          const signals = [interactionController.signal, prompt.signal]
+          for (const signal of signals) {
+            if (!signal) continue
+            if (signal.aborted) {
+              onAbort()
+              return
+            }
+            signal.addEventListener('abort', onAbort, { once: true })
+            cleanupFns.push(() => signal.removeEventListener('abort', onAbort))
+          }
 
-          if (prompt.type === 'manual_code') {
-            const url = `输入授权码完成 ${providerId} 登录`
-            window.webContents.send('auth:interaction', {
-              type: 'notify',
-              providerId,
-              event: {
-                type: 'info',
-                message: url
-              }
+          cleanupFns.push(
+            addWindowUnavailableListener(window, () => {
+              pending.reject(new Error('Auth window was closed'))
+              interactionController.abort()
             })
+          )
+
+          try {
+            window.webContents.send('auth:interaction', {
+              type: 'prompt',
+              requestId,
+              providerId,
+              prompt: toRendererPrompt(prompt)
+            })
+
+            if (prompt.type === 'manual_code') {
+              const url = `输入授权码完成 ${providerId} 登录`
+              window.webContents.send('auth:interaction', {
+                type: 'notify',
+                providerId,
+                event: {
+                  type: 'info',
+                  message: url
+                }
+              })
+            }
+          } catch (error) {
+            pending.reject(error instanceof Error ? error : new Error(String(error)))
           }
         })
       },

@@ -74,9 +74,121 @@ type SelectedModel = {
 } | null
 
 type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+type SessionStatus = 'idle' | 'running' | 'needs_approval' | 'failed' | 'completed_unread'
+type UnreadKind = 'completed' | 'failed' | 'approval'
+type LastRunOutcome = 'completed' | 'failed' | 'interrupted' | 'stopped'
+
+type SessionRuntimeState = {
+  status: SessionStatus
+  unreadKind: UnreadKind | null
+  lastRunOutcome?: LastRunOutcome
+  currentRunId?: string
+  currentRunStartedAt?: string
+  lastActivityAt?: string
+}
+
+type SessionSummary = SessionRuntimeState & {
+  path: string
+  id: string
+  name?: string
+  created: string
+  modified: string
+  messageCount: number
+  firstMessage: string
+  phiSessionId?: string
+}
+
+type SessionSwitchResult = SessionRuntimeState & {
+  path: string
+  cwd: string
+  sessionGeneration: number
+  permissionMode: PermissionMode
+  messages: unknown[]
+}
+
+type CurrentSession = SessionRuntimeState & {
+  path: string | null
+  cwd: string
+  sessionGeneration: number
+  permissionMode: PermissionMode
+  messages?: unknown[]
+}
+
+type PromptResult = {
+  path: string | null
+  sessionGeneration: number
+}
+
+type PermissionMode = 'auto' | 'ask' | 'full'
+
+type Project = {
+  id: string
+  name: string
+  workingDirectory: string
+  permissionMode: PermissionMode
+  gitStatus?: {
+    branch: string
+    dirty: boolean
+  }
+  defaultModel?: { providerId: string; modelId: string }
+  defaultThinkingLevel?: ThinkingLevel
+  createdAt: string
+}
+
+type ToolApprovalRequest = {
+  requestId: string
+  sessionId?: string
+  sessionPath?: string
+  sessionGeneration?: number
+  runId?: string
+  cwd?: string
+  projectName?: string
+  toolName: string
+  summary: string
+}
+
+type PluginCatalogItem = {
+  id: string
+  name: string
+  source: string
+  description: string
+  author?: string
+  kind: 'extension' | 'skill' | 'prompt' | 'theme' | 'package'
+  downloads?: string
+  updated?: string
+  homepageUrl: string
+  npmUrl: string
+  installed: boolean
+  installedPath?: string
+}
+
+type SkillSummary = {
+  id: string
+  name: string
+  description: string
+  filePath: string
+  source: string
+  scope: 'user' | 'project' | 'temporary'
+  disabled: boolean
+}
+
+type McpServerSummary = {
+  id: string
+  name: string
+  command?: string
+  args?: string[]
+  envKeys?: string[]
+  sourcePath?: string
+  status: 'configured'
+}
 
 type RendererAuthApi = {
-  sendPrompt: (text: string) => Promise<void>
+  closeWindow: () => Promise<void>
+  minimizeWindow: () => Promise<void>
+  toggleWindowFullscreen: () => Promise<void>
+  revealPath: (path: string) => Promise<void>
+  copyDiagnostics: () => Promise<string>
+  sendPrompt: (text: string) => Promise<PromptResult | null>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => Unsubscribe
   getAuthStatus: () => Promise<AuthStatusItem[]>
   loginApiKey: (providerId: string, key: string) => Promise<AuthStatusItem[]>
@@ -89,10 +201,61 @@ type RendererAuthApi = {
   getSelectedModel: () => Promise<SelectedModel>
   selectThinkingLevel: (level: ThinkingLevel) => Promise<void>
   getThinkingLevel: () => Promise<ThinkingLevel>
+  getAppName: () => Promise<string>
+  isOnboarded: () => Promise<boolean>
+  getPersonaMarkdown: () => Promise<string>
+  setPersonaMarkdown: (markdown: string) => Promise<string>
+  skipOnboarding: () => Promise<void>
+  completeOnboarding: (description: string) => Promise<string>
+  listSessions: () => Promise<SessionSummary[]>
+  getCurrentSession: () => Promise<CurrentSession>
+  updateCurrentSessionPermissionMode: (permissionMode: PermissionMode) => Promise<CurrentSession>
+  createSession: () => Promise<CurrentSession>
+  switchSession: (path: string) => Promise<SessionSwitchResult | null>
+  acknowledgeSession: (path: string) => Promise<SessionSummary | null>
+  deleteSession: (path: string) => Promise<void>
+  renameSession: (path: string, name: string) => Promise<void>
+  listProjects: () => Promise<Project[]>
+  pickProjectDirectory: () => Promise<string | null>
+  createProject: (
+    name: string,
+    workingDirectory: string,
+    permissionMode: PermissionMode
+  ) => Promise<Project>
+  deleteProject: (id: string) => Promise<void>
+  updateProjectPermissionMode: (id: string, permissionMode: PermissionMode) => Promise<Project>
+  updateProjectDefaults: (
+    id: string,
+    defaults: {
+      defaultModel?: { providerId: string; modelId: string } | null
+      defaultThinkingLevel?: ThinkingLevel | null
+    }
+  ) => Promise<Project>
+  listProjectSessions: (workingDirectory: string) => Promise<SessionSummary[]>
+  createProjectSession: (
+    workingDirectory: string,
+    permissionMode: PermissionMode
+  ) => Promise<CurrentSession>
+  stopGeneration: () => Promise<void>
+  onSessionChanged: (cb: (session: CurrentSession) => void) => Unsubscribe
+  onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => Unsubscribe
+  onToolApprovalCancelled: (cb: () => void) => Unsubscribe
+  respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
+  listPlugins: () => Promise<PluginCatalogItem[]>
+  installPlugin: (source: string) => Promise<PluginCatalogItem[]>
+  removePlugin: (source: string) => Promise<PluginCatalogItem[]>
+  listSkills: (cwd?: string) => Promise<SkillSummary[]>
+  listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
 }
 
 const api: RendererAuthApi = {
-  sendPrompt: (text: string): Promise<void> => ipcRenderer.invoke('agent:prompt', text),
+  closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
+  minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
+  toggleWindowFullscreen: (): Promise<void> => ipcRenderer.invoke('window:toggle-fullscreen'),
+  revealPath: (path: string): Promise<void> => ipcRenderer.invoke('files:reveal', path),
+  copyDiagnostics: (): Promise<string> => ipcRenderer.invoke('diagnostics:copy'),
+  sendPrompt: (text: string): Promise<PromptResult | null> =>
+    ipcRenderer.invoke('agent:prompt', text),
   onAgentEvent: (cb: (event: AgentEventSummary) => void): Unsubscribe => {
     const handler = (_: unknown, event: AgentEventSummary): void => {
       cb(event)
@@ -129,7 +292,96 @@ const api: RendererAuthApi = {
   getSelectedModel: (): Promise<SelectedModel> => ipcRenderer.invoke('models:selected'),
   selectThinkingLevel: (level: ThinkingLevel): Promise<void> =>
     ipcRenderer.invoke('thinking:select', level),
-  getThinkingLevel: (): Promise<ThinkingLevel> => ipcRenderer.invoke('thinking:selected')
+  getThinkingLevel: (): Promise<ThinkingLevel> => ipcRenderer.invoke('thinking:selected'),
+  getAppName: (): Promise<string> => ipcRenderer.invoke('persona:getAppName'),
+  isOnboarded: (): Promise<boolean> => ipcRenderer.invoke('persona:isOnboarded'),
+  getPersonaMarkdown: (): Promise<string> => ipcRenderer.invoke('persona:getMarkdown'),
+  setPersonaMarkdown: (markdown: string): Promise<string> =>
+    ipcRenderer.invoke('persona:setMarkdown', markdown),
+  skipOnboarding: (): Promise<void> => ipcRenderer.invoke('persona:skip'),
+  completeOnboarding: (description: string): Promise<string> =>
+    ipcRenderer.invoke('persona:completeOnboarding', description),
+  listSessions: (): Promise<SessionSummary[]> => ipcRenderer.invoke('sessions:list'),
+  getCurrentSession: (): Promise<CurrentSession> => ipcRenderer.invoke('sessions:current'),
+  updateCurrentSessionPermissionMode: (permissionMode: PermissionMode): Promise<CurrentSession> =>
+    ipcRenderer.invoke('sessions:updatePermissionMode', permissionMode),
+  createSession: (): Promise<CurrentSession> => ipcRenderer.invoke('sessions:create'),
+  switchSession: (path: string): Promise<SessionSwitchResult | null> =>
+    ipcRenderer.invoke('sessions:switch', path),
+  acknowledgeSession: (path: string): Promise<SessionSummary | null> =>
+    ipcRenderer.invoke('sessions:acknowledge', path),
+  deleteSession: (path: string): Promise<void> => ipcRenderer.invoke('sessions:delete', path),
+  renameSession: (path: string, name: string): Promise<void> =>
+    ipcRenderer.invoke('sessions:rename', path, name),
+  listProjects: (): Promise<Project[]> => ipcRenderer.invoke('projects:list'),
+  pickProjectDirectory: (): Promise<string | null> => ipcRenderer.invoke('projects:pickDirectory'),
+  createProject: (
+    name: string,
+    workingDirectory: string,
+    permissionMode: PermissionMode
+  ): Promise<Project> =>
+    ipcRenderer.invoke('projects:create', name, workingDirectory, permissionMode),
+  deleteProject: (id: string): Promise<void> => ipcRenderer.invoke('projects:delete', id),
+  updateProjectPermissionMode: (id: string, permissionMode: PermissionMode): Promise<Project> =>
+    ipcRenderer.invoke('projects:updatePermissionMode', id, permissionMode),
+  updateProjectDefaults: (
+    id: string,
+    defaults: {
+      defaultModel?: { providerId: string; modelId: string } | null
+      defaultThinkingLevel?: ThinkingLevel | null
+    }
+  ): Promise<Project> => ipcRenderer.invoke('projects:updateDefaults', id, defaults),
+  listProjectSessions: (workingDirectory: string): Promise<SessionSummary[]> =>
+    ipcRenderer.invoke('projects:sessions', workingDirectory),
+  createProjectSession: (
+    workingDirectory: string,
+    permissionMode: PermissionMode
+  ): Promise<CurrentSession> =>
+    ipcRenderer.invoke('projects:newSession', workingDirectory, permissionMode),
+  stopGeneration: (): Promise<void> => ipcRenderer.invoke('agent:stop'),
+  onSessionChanged: (cb: (session: CurrentSession) => void): Unsubscribe => {
+    const handler = (_: unknown, session: CurrentSession): void => {
+      cb(session)
+    }
+
+    ipcRenderer.on('sessions:changed', handler)
+
+    return () => {
+      ipcRenderer.removeListener('sessions:changed', handler)
+    }
+  },
+  onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void): Unsubscribe => {
+    const handler = (_: unknown, event: ToolApprovalRequest): void => {
+      cb(event)
+    }
+
+    ipcRenderer.on('tool:approval-request', handler)
+
+    return () => {
+      ipcRenderer.removeListener('tool:approval-request', handler)
+    }
+  },
+  onToolApprovalCancelled: (cb: () => void): Unsubscribe => {
+    const handler = (): void => {
+      cb()
+    }
+
+    ipcRenderer.on('tool:approval-cancelled', handler)
+
+    return () => {
+      ipcRenderer.removeListener('tool:approval-cancelled', handler)
+    }
+  },
+  respondToolApproval: (requestId: string, approved: boolean): Promise<void> =>
+    ipcRenderer.invoke('tool:approval-response', requestId, approved),
+  listPlugins: (): Promise<PluginCatalogItem[]> => ipcRenderer.invoke('plugins:list'),
+  installPlugin: (source: string): Promise<PluginCatalogItem[]> =>
+    ipcRenderer.invoke('plugins:install', source),
+  removePlugin: (source: string): Promise<PluginCatalogItem[]> =>
+    ipcRenderer.invoke('plugins:remove', source),
+  listSkills: (cwd?: string): Promise<SkillSummary[]> => ipcRenderer.invoke('skills:list', cwd),
+  listMcpServers: (cwd?: string): Promise<McpServerSummary[]> =>
+    ipcRenderer.invoke('mcp:listServers', cwd)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
@@ -138,10 +390,13 @@ const api: RendererAuthApi = {
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('api', api)
+    contextBridge.exposeInMainWorld('platform', process.platform)
   } catch (error) {
     console.error(error)
   }
 } else {
   // @ts-ignore (define in dts)
   window.api = api
+  // @ts-ignore (define in dts)
+  window.platform = process.platform
 }

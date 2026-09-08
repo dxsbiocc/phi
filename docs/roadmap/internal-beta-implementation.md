@@ -1,0 +1,166 @@
+# Phi Internal Beta Implementation Roadmap
+
+Date: 2026-09-05
+
+This roadmap turns the internal beta decisions into implementation phases. The beta success criterion is a reliable local desktop workbench for heavy Pi/OMX users: project-bound sessions, multiple concurrent runs, understandable approvals, visible resources, and recoverable local history.
+
+## P0: Data Model And Session Runtime
+
+Goal: replace the single-active-session assumption with stable Phi sessions and per-session runs.
+
+- Introduce a Phi session registry backed by `~/.phi/sessions/{sessionId}/`.
+- Create session directories with `manifest.json`, `messages.jsonl`, `tool-outputs/`, and `artifacts/`.
+- Give every new ordinary or project session a stable `sessionId` before first send.
+- Introduce `runId` for each user submission.
+- Make `messages.jsonl` append-oriented and `manifest.json` the mutable summary/state file.
+- Store per-session model and thinking level in the session manifest.
+- Store project default model/thinking in Phi-owned project state under `~/.phi`, not in project directories.
+- Stop relying on `sessionFile` as UI identity. Treat SDK session files as implementation details.
+- Allow clean reset of old beta session data. Do not build a broad old-session migration layer.
+- Add tests for session creation, stable IDs, manifest persistence, append-only event writing, and unavailable-model handling.
+
+## P0: Multi-Session Execution
+
+Goal: let session switching be navigation while background runs continue.
+
+- Replace global active run state with a session runner registry keyed by `sessionId`.
+- Keep one active run per session and allow up to 4 running or approval-blocked sessions globally.
+- Block new runs above the soft limit instead of queueing.
+- Route SDK/runtime events to the correct session manifest and message stream by `sessionId` and `runId`.
+- Keep background sessions receiving, persisting, and summarizing events while not visible.
+- Make stop generation target only the selected session's active run.
+- Keep app exit behavior simple: stop all running sessions, cancel pending approvals, mark interrupted runs, and close.
+- Ensure switching sessions does not abort, dispose, or otherwise interrupt the previous session.
+- Add regression tests for switching while streaming, stopping one session without stopping another, and restart-after-interruption state.
+
+## P0: Approval State
+
+Goal: keep project safety clear while supporting background work.
+
+- Keep project conversations defaulting to `ask`; ordinary conversations default to `auto`.
+- Continue gating `bash`, `powershell`, `edit`, and `write` in `ask` mode.
+- Make project permission mode a live project policy that affects existing sessions on future calls.
+- Add durable approval events: `approval_requested`, `approval_approved`, `approval_denied`, and `approval_cancelled`.
+- Give approval requests stable `approvalId`s and associate them with `sessionId`, `runId`, and `toolCallId`.
+- Keep approval promises in memory only.
+- Show a global approval dialog for background requests with session name, project name, cwd, tool name, and command/path summary.
+- Provide an "open session" action from approval UI.
+- Mark permission denial as failed run state and record the denial in the timeline.
+- Do not auto-timeout approvals in the beta.
+- Add tests for background approval routing, denial state, stopping with pending approval, and project permission changes affecting existing sessions.
+
+## P0: Sidebar And Timeline State
+
+Goal: make concurrent work legible.
+
+- Add sidebar session states: `idle`, `running`, `needs_approval`, `failed`, and `completed_unread`.
+- Persist stable summary state and unread/attention markers in session manifests.
+- Sort sessions by recent activity and surface `needs_approval`, `running`, and `failed` within each group.
+- Clear completed/failed unread markers when the user opens the session. Do not clear active approval state on open.
+- Show distinct state treatments for completed, failed, and permission-requested sessions.
+- Keep completed state brief for active sessions and unread for background sessions.
+- Add elapsed time display for running sessions.
+- Throttle background preview updates; do not update sidebars on every streamed token.
+- Add tests for state transitions, unread clearing, failure acknowledgement, and sorting priority.
+
+## P0: Model Scope
+
+Goal: support global providers with project/session-specific model selection.
+
+- Keep provider auth and available provider/model discovery global.
+- Add project default model/thinking fields.
+- Add session model/thinking fields and make them win over project defaults.
+- New project sessions inherit project defaults, then global defaults.
+- Ordinary sessions inherit global defaults.
+- Place current-session model controls in the chat/session context, not only global settings.
+- Disable model/thinking switching while a session is `running` or `needs_approval`.
+- Treat model changes as affecting the next run only.
+- Show saved unavailable models without silently falling back. Require a valid model before sending.
+- Default thinking to `high` when supported, otherwise the highest supported regular level; disable for non-reasoning models.
+- Add tests for inheritance, switching rules, unavailable models, and per-session run creation.
+
+## P1: Project Registry And Resource Visibility
+
+Goal: make local project boundaries explicit without polluting repositories.
+
+- Store project state in `~/.phi/projects.json` or an equivalent Phi-owned registry.
+- Use `realpath` for project identity while preserving the user-selected display path.
+- Prevent duplicate normalized project paths.
+- Mark unavailable project paths and block new sessions until relocated or removed.
+- Keep relocation optional for P1 if time allows; otherwise show unavailable and allow removal.
+- Do not create project `.phi/` directories on add.
+- Prefer `.phi` resources while retaining `.pi` and `.omp` compatibility.
+- Keep Skills and MCP pages read-only.
+- Display skill source, scope, disabled state, file path, and diagnostics.
+- Display MCP configured status, config source, command, args, env keys, and diagnostics.
+- Do not actively read or inject project `.env`.
+- Add tests for project duplicate detection, unavailable projects, resource precedence, and read-only resource display data.
+
+## P1: Tool Output And Message Rendering
+
+Goal: preserve enough evidence for heavy users without overwhelming the renderer.
+
+- Store raw tool output locally.
+- Fold long outputs by default and expose expand/open full output controls.
+- Move very large outputs into `tool-outputs/` or artifacts and reference them from timeline events.
+- Keep tool calls as independent stored events while grouping visually by run/tool group.
+- Add clickable local paths for absolute paths and current-project relative paths.
+- Prefer revealing files in the system file manager over executing risky file types.
+- Add code block language labels and copy buttons.
+- Keep raw HTML disabled in Markdown rendering.
+- Save SDK-provided thinking content, folded by default.
+- Add tests for output truncation metadata, artifact references, path recognition, Markdown safety, and code block copy controls where practical.
+
+## P1: Plugin Beta Surface
+
+Goal: keep plugin management available but bounded.
+
+- Preserve plugin list/install/remove through the SDK/runtime.
+- Do not add arbitrary URL download or local zip install beyond runtime-supported source formats.
+- Add concise confirmation for install source and remove target.
+- Show plugin source, installed state, installed path, and operation errors.
+- Keep the latest plugin operation failure visible until refresh or the next operation.
+- Add tests for confirm flows and failure state retention where the UI can be exercised without live network installs.
+
+## P1: Diagnostics And Logs
+
+Goal: make small-circle beta support fast and privacy-aware.
+
+- Add a "copy diagnostics" action.
+- Include app version, platform, Node/Electron versions, session ID, project/cwd, provider/model ID, thinking level, permission mode, resource/plugin summaries, and recent errors.
+- Exclude secrets, full chat content, full tool output, and thinking text from lightweight diagnostics.
+- Add an explicit full session export action later, with a clear warning that it includes conversation and tool output.
+- Write logs to `~/.phi/logs`.
+- Retain logs for 14 days by default.
+- Avoid duplicating full tool output in ordinary logs.
+- Add tests for diagnostic redaction and log retention cleanup.
+
+## P2: UX Polish And Beta Release Readiness
+
+Goal: make the internal beta comfortable without expanding scope.
+
+- Add minimal shortcuts: new session, focus input/search, and close dialogs.
+- Keep search as local list filtering only.
+- Continue using SDK/runtime automatic session names and support manual rename.
+- Hide or clean up unsent and unrenamed empty sessions.
+- Add lightweight read-only Git status: branch and dirty marker.
+- Refresh Git status on project enter/switch, run completion, and manual refresh only.
+- Show edit/write targets in the timeline and provide external reveal/open actions.
+- Do not build a full diff viewer, command palette, drag-and-drop attachments, system notifications, automatic updates, or first-class OMX team/swarm dashboard in the beta.
+- Update README with internal beta scope, resettable data model notice, manual update expectations, and macOS security prompt notes.
+- Run `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` before beta handoff.
+
+## Deferred Until After Internal Beta
+
+- Public distribution, formal signing/notarization, and automatic updates.
+- Full command palette.
+- Cross-session full-text search.
+- Drag-and-drop file/image attachments.
+- In-app editing of AGENTS.md, Skills, or MCP config.
+- Full diff/review UI and Git operations.
+- System notifications.
+- Dedicated OMX team/swarm dashboard.
+- Remembered approval allowlists or path/command rules.
+- Project-level provider credential isolation.
+- Phi-specific model registry editor.
+- Automatic sync or import/export beyond backup-friendly local files.
