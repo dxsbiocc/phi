@@ -137,6 +137,16 @@ type PreloadAnalysisKernelDiagnostics = {
   messages: string[]
 }
 
+type PreloadJupyterServerStatus = {
+  projectCwd: string
+  state: 'stopped' | 'starting' | 'ready' | 'error' | 'exited'
+  startedAt?: string
+  exitedAt?: string
+  pid?: number
+  hasEndpoint: boolean
+  message?: string
+}
+
 declare global {
   interface Window {
     platform: NodeJS.Platform
@@ -337,6 +347,9 @@ declare global {
       ) => Promise<PreloadAnalysisNotebookFile>
       closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
       listAnalysisKernels: (cwd?: string) => Promise<PreloadAnalysisKernelDiagnostics>
+      getAnalysisJupyterStatus: (cwd: string) => Promise<PreloadJupyterServerStatus>
+      startAnalysisJupyter: (cwd: string) => Promise<PreloadJupyterServerStatus>
+      stopAnalysisJupyter: (cwd: string) => Promise<PreloadJupyterServerStatus>
       stopGeneration: () => Promise<void>
       onSessionChanged: (
         cb: (session: {

@@ -29,7 +29,8 @@ import type {
   AnalysisKernelLanguage,
   AnalysisNotebookFile,
   AnalysisNotebookRegistry,
-  AnalysisNotebookSummary
+  AnalysisNotebookSummary,
+  JupyterServerStatus
 } from '../types'
 
 type LeftPanel = 'chat' | 'notebooks'
@@ -53,8 +54,14 @@ export type AnalysisViewProps = {
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
   isLoadingKernels?: boolean
   kernelError?: string | null
+  jupyterServerStatus?: JupyterServerStatus | null
+  isStartingJupyterServer?: boolean
+  jupyterServerError?: string | null
   onRefreshNotebooks?: () => void
   onRefreshKernels?: () => void
+  onRefreshJupyterServer?: () => void
+  onStartJupyterServer?: (cwd: string) => void
+  onStopJupyterServer?: (cwd: string) => void
   onInitializeProjectAnalysis?: (cwd: string) => void
   onOpenNotebook?: (path: string) => void
   onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
@@ -248,6 +255,26 @@ function kernelAvailabilityColor(
   if (label.includes('missing')) return 'warning'
   if (label.includes('not started')) return 'primary'
   if (label.includes('ready')) return 'success'
+  return 'default'
+}
+
+function jupyterServerStateLabel(status: JupyterServerStatus | null | undefined): string {
+  if (!status) return 'Jupyter server unchecked'
+  if (status.state === 'starting') return 'Jupyter server starting'
+  if (status.state === 'ready') return 'Jupyter server ready'
+  if (status.state === 'error') return 'Jupyter server error'
+  if (status.state === 'exited') return 'Jupyter server exited'
+  return 'Jupyter server stopped'
+}
+
+function jupyterServerStateColor(
+  status: JupyterServerStatus | null | undefined
+): 'default' | 'primary' | 'success' | 'warning' | 'error' {
+  if (!status) return 'default'
+  if (status.state === 'ready') return 'success'
+  if (status.state === 'starting') return 'primary'
+  if (status.state === 'error') return 'error'
+  if (status.state === 'exited') return 'warning'
   return 'default'
 }
 
@@ -1014,21 +1041,37 @@ function FilesTab(): React.JSX.Element {
 }
 
 function KernelStatusSummary({
+  projectCwd,
   diagnostics,
   isLoading,
   error,
-  onRefresh
+  serverStatus,
+  isStartingServer,
+  serverError,
+  onRefresh,
+  onRefreshServer,
+  onStartServer,
+  onStopServer
 }: {
+  projectCwd?: string | null
   diagnostics?: AnalysisKernelDiagnostics | null
   isLoading?: boolean
   error?: string | null
+  serverStatus?: JupyterServerStatus | null
+  isStartingServer?: boolean
+  serverError?: string | null
   onRefresh?: () => void
+  onRefreshServer?: () => void
+  onStartServer?: (cwd: string) => void
+  onStopServer?: (cwd: string) => void
 }): React.JSX.Element {
   const serverLabel = isLoading
     ? 'Checking'
     : diagnostics?.jupyterServer.available
       ? `Jupyter ${diagnostics.jupyterServer.version ?? 'available'}`
       : 'Jupyter missing'
+  const canStopServer = serverStatus?.state === 'starting' || serverStatus?.state === 'ready'
+  const canControlServer = Boolean(projectCwd && (onStartServer || onStopServer))
   return (
     <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25, minWidth: 0 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -1047,6 +1090,12 @@ function KernelStatusSummary({
         <Chip size="small" variant="outlined" label={serverLabel} />
         <Chip
           size="small"
+          color={jupyterServerStateColor(serverStatus)}
+          variant="outlined"
+          label={jupyterServerStateLabel(serverStatus)}
+        />
+        <Chip
+          size="small"
           color={diagnostics?.hasPythonKernel ? 'success' : 'warning'}
           variant="outlined"
           label={diagnostics?.hasPythonKernel ? 'Python kernel' : 'Python missing'}
@@ -1058,9 +1107,51 @@ function KernelStatusSummary({
           label={diagnostics?.hasRKernel ? 'R kernel' : 'R missing'}
         />
       </Stack>
+      {canControlServer ? (
+        <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+          <Button
+            size="small"
+            variant={canStopServer ? 'outlined' : 'contained'}
+            startIcon={
+              canStopServer ? <StopIcon fontSize="small" /> : <PlayIcon fontSize="small" />
+            }
+            disabled={Boolean(isStartingServer)}
+            onClick={() => {
+              if (!projectCwd) return
+              if (canStopServer) {
+                onStopServer?.(projectCwd)
+              } else {
+                onStartServer?.(projectCwd)
+              }
+            }}
+          >
+            {canStopServer ? '停止 Jupyter' : '启动 Jupyter'}
+          </Button>
+          {onRefreshServer ? (
+            <Button
+              size="small"
+              variant="text"
+              startIcon={<RefreshIcon fontSize="small" />}
+              onClick={onRefreshServer}
+            >
+              状态
+            </Button>
+          ) : null}
+        </Stack>
+      ) : null}
       {error ? (
         <Typography variant="caption" color="error.main" sx={{ display: 'block', mt: 1 }}>
           {error}
+        </Typography>
+      ) : null}
+      {serverError ? (
+        <Typography variant="caption" color="error.main" sx={{ display: 'block', mt: 1 }}>
+          {serverError}
+        </Typography>
+      ) : null}
+      {serverStatus?.message ? (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+          {serverStatus.message}
         </Typography>
       ) : null}
       {diagnostics?.messages.map((message) => (
@@ -1078,23 +1169,44 @@ function KernelStatusSummary({
 }
 
 function VariablesTab({
+  projectCwd,
   kernelDiagnostics,
   isLoadingKernels,
   kernelError,
-  onRefreshKernels
+  jupyterServerStatus,
+  isStartingJupyterServer,
+  jupyterServerError,
+  onRefreshKernels,
+  onRefreshJupyterServer,
+  onStartJupyterServer,
+  onStopJupyterServer
 }: {
+  projectCwd?: string | null
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
   isLoadingKernels?: boolean
   kernelError?: string | null
+  jupyterServerStatus?: JupyterServerStatus | null
+  isStartingJupyterServer?: boolean
+  jupyterServerError?: string | null
   onRefreshKernels?: () => void
+  onRefreshJupyterServer?: () => void
+  onStartJupyterServer?: (cwd: string) => void
+  onStopJupyterServer?: (cwd: string) => void
 }): React.JSX.Element {
   return (
     <Stack spacing={1}>
       <KernelStatusSummary
+        projectCwd={projectCwd}
         diagnostics={kernelDiagnostics}
         isLoading={isLoadingKernels}
         error={kernelError}
+        serverStatus={jupyterServerStatus}
+        isStartingServer={isStartingJupyterServer}
+        serverError={jupyterServerError}
         onRefresh={onRefreshKernels}
+        onRefreshServer={onRefreshJupyterServer}
+        onStartServer={onStartJupyterServer}
+        onStopServer={onStopJupyterServer}
       />
       <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
         <Typography variant="caption" color="text.secondary">
@@ -1177,24 +1289,45 @@ function ArtifactsTab(): React.JSX.Element {
 
 function InspectorContent({
   tab,
+  projectCwd,
   kernelDiagnostics,
   isLoadingKernels,
   kernelError,
-  onRefreshKernels
+  jupyterServerStatus,
+  isStartingJupyterServer,
+  jupyterServerError,
+  onRefreshKernels,
+  onRefreshJupyterServer,
+  onStartJupyterServer,
+  onStopJupyterServer
 }: {
   tab: InspectorTab
+  projectCwd?: string | null
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
   isLoadingKernels?: boolean
   kernelError?: string | null
+  jupyterServerStatus?: JupyterServerStatus | null
+  isStartingJupyterServer?: boolean
+  jupyterServerError?: string | null
   onRefreshKernels?: () => void
+  onRefreshJupyterServer?: () => void
+  onStartJupyterServer?: (cwd: string) => void
+  onStopJupyterServer?: (cwd: string) => void
 }): React.JSX.Element {
   if (tab === 'variables') {
     return (
       <VariablesTab
+        projectCwd={projectCwd}
         kernelDiagnostics={kernelDiagnostics}
         isLoadingKernels={isLoadingKernels}
         kernelError={kernelError}
+        jupyterServerStatus={jupyterServerStatus}
+        isStartingJupyterServer={isStartingJupyterServer}
+        jupyterServerError={jupyterServerError}
         onRefreshKernels={onRefreshKernels}
+        onRefreshJupyterServer={onRefreshJupyterServer}
+        onStartJupyterServer={onStartJupyterServer}
+        onStopJupyterServer={onStopJupyterServer}
       />
     )
   }
@@ -1205,20 +1338,34 @@ function InspectorContent({
 function RightInspector({
   tab,
   collapsed,
+  projectCwd,
   kernelDiagnostics,
   isLoadingKernels,
   kernelError,
+  jupyterServerStatus,
+  isStartingJupyterServer,
+  jupyterServerError,
   onTabChange,
   onRefreshKernels,
+  onRefreshJupyterServer,
+  onStartJupyterServer,
+  onStopJupyterServer,
   onToggleCollapsed
 }: {
   tab: InspectorTab
   collapsed: boolean
+  projectCwd?: string | null
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
   isLoadingKernels?: boolean
   kernelError?: string | null
+  jupyterServerStatus?: JupyterServerStatus | null
+  isStartingJupyterServer?: boolean
+  jupyterServerError?: string | null
   onTabChange: (tab: InspectorTab) => void
   onRefreshKernels?: () => void
+  onRefreshJupyterServer?: () => void
+  onStartJupyterServer?: (cwd: string) => void
+  onStopJupyterServer?: (cwd: string) => void
   onToggleCollapsed: () => void
 }): React.JSX.Element {
   const tabs = useMemo(
@@ -1311,10 +1458,17 @@ function RightInspector({
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: 1.5 }}>
         <InspectorContent
           tab={tab}
+          projectCwd={projectCwd}
           kernelDiagnostics={kernelDiagnostics}
           isLoadingKernels={isLoadingKernels}
           kernelError={kernelError}
+          jupyterServerStatus={jupyterServerStatus}
+          isStartingJupyterServer={isStartingJupyterServer}
+          jupyterServerError={jupyterServerError}
           onRefreshKernels={onRefreshKernels}
+          onRefreshJupyterServer={onRefreshJupyterServer}
+          onStartJupyterServer={onStartJupyterServer}
+          onStopJupyterServer={onStopJupyterServer}
         />
       </Box>
     </Box>
@@ -1332,8 +1486,14 @@ export default function AnalysisView({
   kernelDiagnostics = null,
   isLoadingKernels = false,
   kernelError = null,
+  jupyterServerStatus = null,
+  isStartingJupyterServer = false,
+  jupyterServerError = null,
   onRefreshNotebooks,
   onRefreshKernels,
+  onRefreshJupyterServer,
+  onStartJupyterServer,
+  onStopJupyterServer,
   onInitializeProjectAnalysis,
   onOpenNotebook,
   onSaveNotebook,
@@ -1405,11 +1565,18 @@ export default function AnalysisView({
       <RightInspector
         tab={inspectorTab}
         collapsed={inspectorCollapsed}
+        projectCwd={notebookRegistry?.projectCwd ?? null}
         kernelDiagnostics={kernelDiagnostics}
         isLoadingKernels={isLoadingKernels}
         kernelError={kernelError}
+        jupyterServerStatus={jupyterServerStatus}
+        isStartingJupyterServer={isStartingJupyterServer}
+        jupyterServerError={jupyterServerError}
         onTabChange={setInspectorTab}
         onRefreshKernels={onRefreshKernels}
+        onRefreshJupyterServer={onRefreshJupyterServer}
+        onStartJupyterServer={onStartJupyterServer}
+        onStopJupyterServer={onStopJupyterServer}
         onToggleCollapsed={() => setInspectorCollapsed((value) => !value)}
       />
     </Box>

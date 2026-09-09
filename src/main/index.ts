@@ -70,6 +70,7 @@ import {
   type SaveProjectNotebookInput
 } from './agent/analysis-notebook-files'
 import { detectAnalysisKernels } from './agent/analysis-kernels'
+import { JupyterServerRegistry } from './agent/analysis-jupyter-server'
 import {
   isStaleSessionError,
   StaleSessionError,
@@ -258,6 +259,7 @@ const recentErrorSummaries: string[] = []
 const runnerRegistry = new SessionRunnerRegistry({
   onSessionEvent: broadcastSessionTimelineEvent
 })
+const jupyterServerRegistry = new JupyterServerRegistry()
 
 function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEvent): void {
   const run = [...activePromptRuns.values()].find((item) => item.phiSessionId === sessionId)
@@ -1400,6 +1402,7 @@ function createWindow(): void {
 
   window.on('close', () => {
     void stopAllPromptRuns()
+    jupyterServerRegistry.disposeAll()
     void invalidateAgentSession()
   })
 
@@ -1972,6 +1975,30 @@ app.whenReady().then(() => {
     }
     return detectAnalysisKernels()
   })
+  ipcMain.handle('analysis:jupyterStatus', async (_, cwd: string) => {
+    const project = getProjectByCwd(cwd)
+    if (!project) {
+      throw new Error('请选择一个已添加的项目')
+    }
+    assertProjectPathAvailable(project.workingDirectory)
+    return jupyterServerRegistry.status(project.workingDirectory)
+  })
+  ipcMain.handle('analysis:startJupyter', async (_, cwd: string) => {
+    const project = getProjectByCwd(cwd)
+    if (!project) {
+      throw new Error('请选择一个已添加的项目')
+    }
+    assertProjectPathAvailable(project.workingDirectory)
+    return jupyterServerRegistry.start(project.workingDirectory)
+  })
+  ipcMain.handle('analysis:stopJupyter', async (_, cwd: string) => {
+    const project = getProjectByCwd(cwd)
+    if (!project) {
+      throw new Error('请选择一个已添加的项目')
+    }
+    assertProjectPathAvailable(project.workingDirectory)
+    return jupyterServerRegistry.stop(project.workingDirectory)
+  })
 
   ipcMain.handle('tool:approval-response', async (_, requestId: string, approved: boolean) => {
     resolveToolApproval(requestId, approved)
@@ -2058,6 +2085,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   void stopAllPromptRuns()
+  jupyterServerRegistry.disposeAll()
   void invalidateAgentSession()
 })
 

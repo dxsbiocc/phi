@@ -269,6 +269,18 @@ export interface AnalysisKernelDiagnostics {
   messages: string[]
 }
 
+export type JupyterServerState = 'stopped' | 'starting' | 'ready' | 'error' | 'exited'
+
+export interface JupyterServerStatus {
+  projectCwd: string
+  state: JupyterServerState
+  startedAt?: string
+  exitedAt?: string
+  pid?: number
+  hasEndpoint: boolean
+  message?: string
+}
+
 export type RendererApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -333,6 +345,9 @@ export type RendererApi = {
   createAnalysisNotebook: (cwd: string, relativePath?: string) => Promise<AnalysisNotebookFile>
   closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
   listAnalysisKernels: (cwd?: string) => Promise<AnalysisKernelDiagnostics>
+  getAnalysisJupyterStatus: (cwd: string) => Promise<JupyterServerStatus>
+  startAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
+  stopAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => () => void
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => () => void

@@ -84,6 +84,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   revealedPaths: string[]
   appLogs: Array<Record<string, unknown>>
   acknowledgedSessions: Array<{ file: string; cwd: string }>
+  jupyterServerCalls: Array<{ action: string; cwd: string }>
   copiedText: () => string
 }> {
   const handlers = new Map<string, Handler>()
@@ -101,6 +102,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   const revealedPaths: string[] = []
   const appLogs: Array<Record<string, unknown>> = []
   const acknowledgedSessions: Array<{ file: string; cwd: string }> = []
+  const jupyterServerCalls: Array<{ action: string; cwd: string }> = []
   let copiedText = ''
   const runtimeSessionCwds = new Map<string, string>()
   const noop = (): undefined => undefined
@@ -243,6 +245,38 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     show = noop
     loadURL = noop
     loadFile = noop
+  }
+  class TestJupyterServerRegistry {
+    status(workingDirectory: string): Record<string, unknown> {
+      jupyterServerCalls.push({ action: 'status', cwd: workingDirectory })
+      return {
+        projectCwd: workingDirectory,
+        state: 'stopped',
+        hasEndpoint: false
+      }
+    }
+    start(workingDirectory: string): Record<string, unknown> {
+      jupyterServerCalls.push({ action: 'start', cwd: workingDirectory })
+      return {
+        projectCwd: workingDirectory,
+        state: 'starting',
+        pid: 2026,
+        hasEndpoint: false,
+        message: '正在启动 Jupyter Server'
+      }
+    }
+    stop(workingDirectory: string): Record<string, unknown> {
+      jupyterServerCalls.push({ action: 'stop', cwd: workingDirectory })
+      return {
+        projectCwd: workingDirectory,
+        state: 'stopped',
+        hasEndpoint: false,
+        message: 'Jupyter Server 已停止'
+      }
+    }
+    disposeAll(): void {
+      jupyterServerCalls.push({ action: 'disposeAll', cwd: '*' })
+    }
   }
   const app = Object.assign(new EventEmitter(), {
     setName: noop,
@@ -547,6 +581,9 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         messages: ['未检测到 R kernel。']
       })
     },
+    './agent/analysis-jupyter-server': {
+      JupyterServerRegistry: TestJupyterServerRegistry
+    },
     './agent/tool-approval': {
       cancelToolApprovals: noop,
       createApprovalExtension: (options: Record<string, unknown>): Record<string, unknown> => {
@@ -741,6 +778,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     revealedPaths,
     appLogs,
     acknowledgedSessions,
+    jupyterServerCalls,
     copiedText: () => copiedText
   }
 }
@@ -1034,6 +1072,36 @@ test('main IPC: analysis kernel diagnostics require a known project when cwd is 
   assert.equal(diagnostics.hasPythonKernel, true)
   assert.equal(diagnostics.hasRKernel, false)
   await assert.rejects(app.invoke('analysis:listKernels', '/missing/project'), /请选择/)
+})
+
+test('main IPC: analysis Jupyter server lifecycle uses the selected project', async () => {
+  const app = await harness()
+
+  const initial = (await app.invoke('analysis:jupyterStatus', '/projects/research')) as {
+    projectCwd: string
+    state: string
+  }
+  const started = (await app.invoke('analysis:startJupyter', '/projects/research')) as {
+    state: string
+    pid: number
+    hasEndpoint: boolean
+  }
+  const stopped = (await app.invoke('analysis:stopJupyter', '/projects/research')) as {
+    state: string
+  }
+
+  assert.equal(initial.projectCwd, '/projects/research')
+  assert.equal(initial.state, 'stopped')
+  assert.equal(started.state, 'starting')
+  assert.equal(started.pid, 2026)
+  assert.equal(started.hasEndpoint, false)
+  assert.equal(stopped.state, 'stopped')
+  assert.deepEqual(app.jupyterServerCalls, [
+    { action: 'status', cwd: '/projects/research' },
+    { action: 'start', cwd: '/projects/research' },
+    { action: 'stop', cwd: '/projects/research' }
+  ])
+  await assert.rejects(app.invoke('analysis:startJupyter', '/missing/project'), /请选择/)
 })
 
 test(

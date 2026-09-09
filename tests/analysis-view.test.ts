@@ -139,3 +139,28 @@ test('analysis view renders local kernel diagnostics', () => {
   assert.match(markup, /R missing/)
   assert.match(markup, /未检测到 R kernel/)
 })
+
+test('analysis view renders local Jupyter server controls', () => {
+  const markup = renderAnalysisView({
+    notebookRegistry: {
+      projectCwd: '/project',
+      projectName: 'Demo',
+      notebooks: [],
+      truncated: false,
+      initialized: true
+    },
+    jupyterServerStatus: {
+      projectCwd: '/project',
+      state: 'stopped',
+      hasEndpoint: false,
+      message: 'Jupyter Server 已停止'
+    },
+    onStartJupyterServer: () => undefined,
+    onStopJupyterServer: () => undefined,
+    onRefreshJupyterServer: () => undefined
+  })
+
+  assert.match(markup, /Jupyter server stopped/)
+  assert.match(markup, /启动 Jupyter/)
+  assert.match(markup, /Jupyter Server 已停止/)
+})

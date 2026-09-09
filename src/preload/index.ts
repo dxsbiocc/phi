@@ -242,6 +242,16 @@ type AnalysisKernelDiagnostics = {
   messages: string[]
 }
 
+type JupyterServerStatus = {
+  projectCwd: string
+  state: 'stopped' | 'starting' | 'ready' | 'error' | 'exited'
+  startedAt?: string
+  exitedAt?: string
+  pid?: number
+  hasEndpoint: boolean
+  message?: string
+}
+
 type RendererAuthApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -306,6 +316,9 @@ type RendererAuthApi = {
   createAnalysisNotebook: (cwd: string, relativePath?: string) => Promise<AnalysisNotebookFile>
   closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
   listAnalysisKernels: (cwd?: string) => Promise<AnalysisKernelDiagnostics>
+  getAnalysisJupyterStatus: (cwd: string) => Promise<JupyterServerStatus>
+  startAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
+  stopAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => Unsubscribe
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => Unsubscribe
@@ -424,6 +437,12 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('analysis:closeNotebook', cwd, path),
   listAnalysisKernels: (cwd?: string): Promise<AnalysisKernelDiagnostics> =>
     ipcRenderer.invoke('analysis:listKernels', cwd),
+  getAnalysisJupyterStatus: (cwd: string): Promise<JupyterServerStatus> =>
+    ipcRenderer.invoke('analysis:jupyterStatus', cwd),
+  startAnalysisJupyter: (cwd: string): Promise<JupyterServerStatus> =>
+    ipcRenderer.invoke('analysis:startJupyter', cwd),
+  stopAnalysisJupyter: (cwd: string): Promise<JupyterServerStatus> =>
+    ipcRenderer.invoke('analysis:stopJupyter', cwd),
   stopGeneration: (): Promise<void> => ipcRenderer.invoke('agent:stop'),
   onSessionChanged: (cb: (session: CurrentSession) => void): Unsubscribe => {
     const handler = (_: unknown, session: CurrentSession): void => {

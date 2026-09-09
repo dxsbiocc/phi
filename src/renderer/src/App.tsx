@@ -54,6 +54,7 @@ import type {
   ChatItem,
   CurrentSession,
   AnalysisKernelDiagnostics,
+  JupyterServerStatus,
   AnalysisNotebookFile,
   AnalysisNotebookRegistry,
   McpServerSummary,
@@ -205,6 +206,11 @@ function App(): React.JSX.Element {
     useState<AnalysisKernelDiagnostics | null>(null)
   const [isLoadingAnalysisKernels, setIsLoadingAnalysisKernels] = useState(false)
   const [analysisKernelError, setAnalysisKernelError] = useState<string | null>(null)
+  const [analysisJupyterStatus, setAnalysisJupyterStatus] = useState<JupyterServerStatus | null>(
+    null
+  )
+  const [isStartingAnalysisJupyter, setIsStartingAnalysisJupyter] = useState(false)
+  const [analysisJupyterError, setAnalysisJupyterError] = useState<string | null>(null)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
   const [activeSessionRuntimeState, setActiveSessionRuntimeState] =
     useState(idleSessionRuntimeState)
@@ -224,6 +230,7 @@ function App(): React.JSX.Element {
   const analysisNotebooksRequestRef = useRef(0)
   const analysisNotebookOpenRequestRef = useRef(0)
   const analysisKernelsRequestRef = useRef(0)
+  const analysisJupyterRequestRef = useRef(0)
   const sessionRefreshTimerRef = useRef<number | null>(null)
   const rendererApi = useMemo(() => getRendererApi(), [])
 
@@ -685,6 +692,68 @@ function App(): React.JSX.Element {
     }
   }, [rendererApi])
 
+  const refreshAnalysisJupyterStatus = useCallback(async (): Promise<void> => {
+    const request = ++analysisJupyterRequestRef.current
+    const cwd = activeCwdRef.current
+    if (!cwd) {
+      setAnalysisJupyterStatus(null)
+      return
+    }
+
+    setAnalysisJupyterError(null)
+    try {
+      const status = await rendererApi.getAnalysisJupyterStatus(cwd)
+      if (request !== analysisJupyterRequestRef.current || cwd !== activeCwdRef.current) return
+      setAnalysisJupyterStatus(status)
+    } catch (error) {
+      if (request !== analysisJupyterRequestRef.current) return
+      setAnalysisJupyterError(readableErrorMessage(error, '无法读取 Jupyter Server 状态'))
+      setAnalysisJupyterStatus(null)
+    }
+  }, [rendererApi])
+
+  const onStartAnalysisJupyter = useCallback(
+    async (cwd: string): Promise<void> => {
+      const request = ++analysisJupyterRequestRef.current
+      setIsStartingAnalysisJupyter(true)
+      setAnalysisJupyterError(null)
+      try {
+        const status = await rendererApi.startAnalysisJupyter(cwd)
+        if (request !== analysisJupyterRequestRef.current || cwd !== activeCwdRef.current) return
+        setAnalysisJupyterStatus(status)
+      } catch (error) {
+        if (request !== analysisJupyterRequestRef.current) return
+        setAnalysisJupyterError(readableErrorMessage(error, '无法启动 Jupyter Server'))
+      } finally {
+        if (request === analysisJupyterRequestRef.current) {
+          setIsStartingAnalysisJupyter(false)
+        }
+      }
+    },
+    [rendererApi]
+  )
+
+  const onStopAnalysisJupyter = useCallback(
+    async (cwd: string): Promise<void> => {
+      const request = ++analysisJupyterRequestRef.current
+      setIsStartingAnalysisJupyter(true)
+      setAnalysisJupyterError(null)
+      try {
+        const status = await rendererApi.stopAnalysisJupyter(cwd)
+        if (request !== analysisJupyterRequestRef.current || cwd !== activeCwdRef.current) return
+        setAnalysisJupyterStatus(status)
+      } catch (error) {
+        if (request !== analysisJupyterRequestRef.current) return
+        setAnalysisJupyterError(readableErrorMessage(error, '无法停止 Jupyter Server'))
+      } finally {
+        if (request === analysisJupyterRequestRef.current) {
+          setIsStartingAnalysisJupyter(false)
+        }
+      }
+    },
+    [rendererApi]
+  )
+
   const onCreateProject = async (
     name: string,
     workingDirectory: string,
@@ -1017,12 +1086,14 @@ function App(): React.JSX.Element {
       if (activeView === 'analysis') {
         void refreshAnalysisNotebooks()
         void refreshAnalysisKernels()
+        void refreshAnalysisJupyterStatus()
       }
     })
   }, [
     activeCwd,
     activeView,
     refreshAnalysisKernels,
+    refreshAnalysisJupyterStatus,
     refreshAnalysisNotebooks,
     refreshMcpServers,
     refreshProjects,
@@ -1763,6 +1834,9 @@ function App(): React.JSX.Element {
             kernelDiagnostics={analysisKernelDiagnostics}
             isLoadingKernels={isLoadingAnalysisKernels}
             kernelError={analysisKernelError}
+            jupyterServerStatus={analysisJupyterStatus}
+            isStartingJupyterServer={isStartingAnalysisJupyter}
+            jupyterServerError={analysisJupyterError}
             onRefreshNotebooks={() => {
               void refreshAnalysisNotebooks()
             }}
@@ -1771,6 +1845,15 @@ function App(): React.JSX.Element {
             }}
             onRefreshKernels={() => {
               void refreshAnalysisKernels()
+            }}
+            onRefreshJupyterServer={() => {
+              void refreshAnalysisJupyterStatus()
+            }}
+            onStartJupyterServer={(cwd) => {
+              void onStartAnalysisJupyter(cwd)
+            }}
+            onStopJupyterServer={(cwd) => {
+              void onStopAnalysisJupyter(cwd)
             }}
             onOpenNotebook={(path) => {
               void onOpenAnalysisNotebook(path)
