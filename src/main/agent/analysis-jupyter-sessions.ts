@@ -22,6 +22,13 @@ export interface AnalysisNotebookSessionStatus {
   updatedAt?: string
 }
 
+export interface AnalysisNotebookExecutionTarget {
+  connection: JupyterServerConnection
+  sessionId: string
+  kernelId: string
+  kernelName: string
+}
+
 export interface EnsureNotebookSessionInput {
   projectCwd: string
   notebookPath: string
@@ -42,6 +49,7 @@ export type JupyterKernelExecutionState =
 
 export type JupyterSessionRecord = {
   id: string
+  kernelId: string
   kernelName: string
   executionState: JupyterKernelExecutionState
 }
@@ -60,6 +68,7 @@ type SessionRecord = {
   kernelName: string
   kernelDisplayName: string
   sessionId: string
+  kernelId: string
   state: AnalysisNotebookKernelState
   startedAt: string
   updatedAt: string
@@ -69,6 +78,7 @@ type SessionRecord = {
 type RawJupyterSession = {
   id?: unknown
   kernel?: {
+    id?: unknown
     name?: unknown
     execution_state?: unknown
   }
@@ -187,6 +197,7 @@ function parseJupyterSession(
   if (!id) throw new Error('Jupyter Server did not return a session id')
   return {
     id,
+    kernelId: stringValue(payload.kernel?.id) ?? id,
     kernelName: stringValue(payload.kernel?.name) ?? fallbackKernelName,
     executionState: stringValue(payload.kernel?.execution_state) ?? 'unknown'
   }
@@ -305,6 +316,7 @@ export class AnalysisNotebookSessionRegistry {
         kernelName: created.kernelName,
         kernelDisplayName: kernel.displayName,
         sessionId: created.id,
+        kernelId: created.kernelId,
         state: sessionState(created.executionState),
         startedAt: timestamp,
         updatedAt: timestamp,
@@ -364,6 +376,35 @@ export class AnalysisNotebookSessionRegistry {
       message: 'Notebook kernel 已断开',
       updatedAt: this.now().toISOString()
     }
+  }
+
+  executionTarget(
+    projectCwd: string,
+    notebookPath: string
+  ): AnalysisNotebookExecutionTarget | null {
+    const record = this.records.get(this.key(projectCwd, notebookPath))
+    const connection = this.getConnection(projectCwd)
+    if (!record || !connection) return null
+    return {
+      connection,
+      sessionId: record.sessionId,
+      kernelId: record.kernelId,
+      kernelName: record.kernelName
+    }
+  }
+
+  updateSessionState(
+    projectCwd: string,
+    notebookPath: string,
+    state: AnalysisNotebookKernelState,
+    message?: string
+  ): AnalysisNotebookSessionStatus | null {
+    const record = this.records.get(this.key(projectCwd, notebookPath))
+    if (!record) return null
+    record.state = state
+    record.message = message
+    record.updatedAt = this.now().toISOString()
+    return publicStatus(record)
   }
 
   async closeProject(projectCwd: string): Promise<void> {

@@ -6,6 +6,7 @@ import test from 'node:test'
 import ts from 'typescript'
 import { formatDiagnostics } from '../src/main/agent/diagnostics'
 import * as lifecycle from '../src/main/agent/session-lifecycle'
+import * as notebookDocument from '../src/shared/notebookDocument'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -86,6 +87,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   acknowledgedSessions: Array<{ file: string; cwd: string }>
   jupyterServerCalls: Array<{ action: string; cwd: string }>
   notebookSessionCalls: Array<{ action: string; cwd: string; path?: string }>
+  notebookExecutionCalls: Array<{ cellId: string; source: string; kernelId: string }>
   copiedText: () => string
 }> {
   const handlers = new Map<string, Handler>()
@@ -105,6 +107,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   const acknowledgedSessions: Array<{ file: string; cwd: string }> = []
   const jupyterServerCalls: Array<{ action: string; cwd: string }> = []
   const notebookSessionCalls: Array<{ action: string; cwd: string; path?: string }> = []
+  const notebookExecutionCalls: Array<{ cellId: string; source: string; kernelId: string }> = []
   let copiedText = ''
   const runtimeSessionCwds = new Map<string, string>()
   const noop = (): undefined => undefined
@@ -320,6 +323,59 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     }
     closeProject(projectCwd: string): void {
       notebookSessionCalls.push({ action: 'closeProject', cwd: projectCwd })
+    }
+    executionTarget(): Record<string, unknown> {
+      return {
+        connection: { url: 'http://127.0.0.1:8888/lab', token: 'secret' },
+        sessionId: 'session-1',
+        kernelId: 'kernel-1',
+        kernelName: 'python3'
+      }
+    }
+    updateSessionState(
+      projectCwd: string,
+      notebookPath: string,
+      state: string,
+      message?: string
+    ): Record<string, unknown> {
+      notebookSessionCalls.push({ action: `state:${state}`, cwd: projectCwd, path: notebookPath })
+      return {
+        projectCwd,
+        notebookPath,
+        kernelName: 'python3',
+        sessionId: 'session-1',
+        state,
+        message
+      }
+    }
+  }
+  class TestAnalysisNotebookExecutor {
+    async executeCell(input: {
+      kernelId: string
+      cell: { id: string; source: string }
+    }): Promise<Record<string, unknown>> {
+      notebookExecutionCalls.push({
+        cellId: input.cell.id,
+        source: input.cell.source,
+        kernelId: input.kernelId
+      })
+      return {
+        cellId: input.cell.id,
+        executionCount: 2,
+        outputs: [
+          {
+            outputType: 'stream',
+            data: {},
+            metadata: {},
+            name: 'stdout',
+            text: 'ran\n',
+            extra: {}
+          }
+        ],
+        state: 'idle',
+        startedAt: '2026-09-09T00:00:00.000Z',
+        completedAt: '2026-09-09T00:00:00.010Z'
+      }
     }
   }
   const app = Object.assign(new EventEmitter(), {
@@ -631,6 +687,10 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     './agent/analysis-jupyter-sessions': {
       AnalysisNotebookSessionRegistry: TestAnalysisNotebookSessionRegistry
     },
+    './agent/analysis-jupyter-execution': {
+      AnalysisNotebookExecutor: TestAnalysisNotebookExecutor
+    },
+    '../shared/notebookDocument': notebookDocument,
     './agent/tool-approval': {
       cancelToolApprovals: noop,
       createApprovalExtension: (options: Record<string, unknown>): Record<string, unknown> => {
@@ -827,6 +887,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     acknowledgedSessions,
     jupyterServerCalls,
     notebookSessionCalls,
+    notebookExecutionCalls,
     copiedText: () => copiedText
   }
 }
@@ -1204,6 +1265,61 @@ test('main IPC: analysis notebook kernel session lifecycle uses the selected pro
   )
 })
 
+test('main IPC: analysis notebook cell execution updates the returned document', async () => {
+  const app = await harness()
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: [
+      {
+        id: 'cell-1',
+        cell_type: 'code',
+        metadata: {},
+        execution_count: null,
+        outputs: [],
+        source: 'print("ran")'
+      }
+    ]
+  })
+
+  const result = (await app.invoke(
+    'analysis:executeNotebookCell',
+    '/projects/research',
+    'notebooks/demo.ipynb',
+    document,
+    'cell-1'
+  )) as {
+    document: notebookDocument.NotebookDocument
+    sessionStatus: { state: string; message: string }
+    executionCount: number
+  }
+
+  assert.equal(result.executionCount, 2)
+  assert.equal(result.document.cells[0].executionCount, 2)
+  assert.equal(result.document.cells[0].outputs[0].text, 'ran\n')
+  assert.equal(result.sessionStatus.state, 'idle')
+  assert.deepEqual(app.notebookExecutionCalls, [
+    { cellId: 'cell-1', source: 'print("ran")', kernelId: 'kernel-1' }
+  ])
+  assert.deepEqual(app.notebookSessionCalls.slice(-3), [
+    {
+      action: 'ensure',
+      cwd: '/projects/research',
+      path: '/projects/research/notebooks/demo.ipynb'
+    },
+    {
+      action: 'state:busy',
+      cwd: '/projects/research',
+      path: '/projects/research/notebooks/demo.ipynb'
+    },
+    {
+      action: 'state:idle',
+      cwd: '/projects/research',
+      path: '/projects/research/notebooks/demo.ipynb'
+    }
+  ])
+})
 test(
   'main IPC: prompt text and tool events are persisted with large output previews',
   { timeout: 3000 },

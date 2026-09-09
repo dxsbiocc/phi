@@ -15,6 +15,7 @@ class FakeJupyterSessionClient implements JupyterSessionClient {
   readonly deleted: string[] = []
   nextSession: JupyterSessionRecord = {
     id: 'session-1',
+    kernelId: 'kernel-1',
     kernelName: 'python3',
     executionState: 'idle'
   }
@@ -89,6 +90,12 @@ test('AnalysisNotebookSessionRegistry creates one session for a notebook kernel'
   assert.equal(status.sessionId, 'session-1')
   assert.equal(status.kernelName, 'python3')
   assert.equal(second.sessionId, 'session-1')
+  assert.deepEqual(registry.executionTarget('/project', '/project/notebooks/demo.ipynb'), {
+    connection: { url: 'http://127.0.0.1:8888/lab', token: 'secret-token' },
+    sessionId: 'session-1',
+    kernelId: 'kernel-1',
+    kernelName: 'python3'
+  })
   assert.doesNotMatch(JSON.stringify(status), /secret-token/)
   assert.doesNotMatch(JSON.stringify(status), /127\.0\.0\.1/)
 })

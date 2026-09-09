@@ -122,7 +122,7 @@ Verification:
 
 ### N4: Local Kernel Discovery And Session Lifecycle
 
-Status: in progress. Kernel discovery, diagnostics, local Jupyter Server lifecycle registry, and notebook session status plumbing are complete; cell execution remains pending.
+Status: complete in code. Kernel discovery, diagnostics, local Jupyter Server lifecycle registry, and notebook session status plumbing are complete; live local kernel smoke remains pending.
 
 Deliverables:
 
@@ -144,6 +144,8 @@ Verification:
 - Manual smoke test against local Python kernel; optional R kernel smoke test.
 
 ### N5: Cell Execution And Output Rendering
+
+Status: in progress. Single-cell execution service, IPC plumbing, and draft output rendering are underway; run-all, interrupt, restart, clear output, bounded rich output rendering, and notebook persistence policy remain pending.
 
 Deliverables:
 

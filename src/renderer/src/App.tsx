@@ -218,6 +218,8 @@ function App(): React.JSX.Element {
   const [analysisNotebookSessionError, setAnalysisNotebookSessionError] = useState<string | null>(
     null
   )
+  const [executingAnalysisCellId, setExecutingAnalysisCellId] = useState<string | null>(null)
+  const [analysisCellExecutionError, setAnalysisCellExecutionError] = useState<string | null>(null)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
   const [activeSessionRuntimeState, setActiveSessionRuntimeState] =
     useState(idleSessionRuntimeState)
@@ -239,6 +241,7 @@ function App(): React.JSX.Element {
   const analysisKernelsRequestRef = useRef(0)
   const analysisJupyterRequestRef = useRef(0)
   const analysisNotebookSessionRequestRef = useRef(0)
+  const analysisCellExecutionRequestRef = useRef(0)
   const sessionRefreshTimerRef = useRef<number | null>(null)
   const rendererApi = useMemo(() => getRendererApi(), [])
 
@@ -841,6 +844,43 @@ function App(): React.JSX.Element {
       } finally {
         if (request === analysisNotebookSessionRequestRef.current) {
           setIsStartingAnalysisNotebookSession(false)
+        }
+      }
+    },
+    [rendererApi]
+  )
+
+  const onRunAnalysisNotebookCell = useCallback(
+    async (
+      file: AnalysisNotebookFile,
+      document: AnalysisNotebookFile['document'],
+      cellId: string
+    ): Promise<void> => {
+      const request = ++analysisCellExecutionRequestRef.current
+      const cwd = activeCwdRef.current
+      setExecutingAnalysisCellId(cellId)
+      setAnalysisCellExecutionError(null)
+      try {
+        const result = await rendererApi.executeAnalysisNotebookCell(
+          cwd,
+          file.path,
+          document,
+          cellId
+        )
+        if (request !== analysisCellExecutionRequestRef.current || cwd !== activeCwdRef.current) {
+          return
+        }
+        setActiveAnalysisNotebook({
+          ...file,
+          document: result.document
+        })
+        setAnalysisNotebookSessionStatus(result.sessionStatus)
+      } catch (error) {
+        if (request !== analysisCellExecutionRequestRef.current) return
+        setAnalysisCellExecutionError(readableErrorMessage(error, '无法执行 notebook cell'))
+      } finally {
+        if (request === analysisCellExecutionRequestRef.current) {
+          setExecutingAnalysisCellId(null)
         }
       }
     },
@@ -1933,6 +1973,8 @@ function App(): React.JSX.Element {
             notebookSessionStatus={analysisNotebookSessionStatus}
             isStartingNotebookSession={isStartingAnalysisNotebookSession}
             notebookSessionError={analysisNotebookSessionError}
+            executingNotebookCellId={executingAnalysisCellId}
+            notebookCellExecutionError={analysisCellExecutionError}
             onRefreshNotebooks={() => {
               void refreshAnalysisNotebooks()
             }}
@@ -1956,6 +1998,9 @@ function App(): React.JSX.Element {
             }}
             onStopNotebookSession={(file) => {
               void onStopAnalysisNotebookSession(file)
+            }}
+            onRunNotebookCell={(file, document, cellId) => {
+              void onRunAnalysisNotebookCell(file, document, cellId)
             }}
             onOpenNotebook={(path) => {
               void onOpenAnalysisNotebook(path)

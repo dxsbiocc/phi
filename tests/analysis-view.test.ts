@@ -225,3 +225,31 @@ test('analysis view renders notebook kernel session controls and status', () => 
   assert.match(connected, /断开/)
   assert.match(connected, /Notebook kernel 已连接/)
 })
+
+test('analysis view marks the executing notebook cell as running', () => {
+  const document = parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: {
+      kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' },
+      language_info: { name: 'python' }
+    },
+    cells: [{ id: 'code', cell_type: 'code', metadata: {}, source: 'print("running")' }]
+  })
+  const markup = renderAnalysisView({
+    notebookFile: {
+      path: '/project/notebooks/real.ipynb',
+      relativePath: 'notebooks/real.ipynb',
+      name: 'real.ipynb',
+      bytes: 512,
+      modifiedAt: '2026-09-09T00:00:00.000Z',
+      savedRevision: document.revision,
+      document
+    },
+    executingNotebookCellId: 'code',
+    onRunNotebookCell: () => undefined
+  })
+
+  assert.match(markup, /Running/)
+  assert.match(markup, /print/)
+})

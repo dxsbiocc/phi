@@ -159,6 +159,17 @@ type PreloadAnalysisNotebookSessionStatus = {
   updatedAt?: string
 }
 
+type PreloadAnalysisCellExecutionResult = {
+  cellId: string
+  executionCount: number | null
+  outputs: Record<string, unknown>[]
+  state: 'idle' | 'error'
+  startedAt: string
+  completedAt: string
+  document: Record<string, unknown>
+  sessionStatus: PreloadAnalysisNotebookSessionStatus
+}
+
 declare global {
   interface Window {
     platform: NodeJS.Platform
@@ -376,6 +387,12 @@ declare global {
         cwd: string,
         path: string
       ) => Promise<PreloadAnalysisNotebookSessionStatus>
+      executeAnalysisNotebookCell: (
+        cwd: string,
+        path: string,
+        document: Record<string, unknown>,
+        cellId: string
+      ) => Promise<PreloadAnalysisCellExecutionResult>
       stopGeneration: () => Promise<void>
       onSessionChanged: (
         cb: (session: {

@@ -1,4 +1,4 @@
-import type { NotebookDocument } from '../../shared/notebookDocument'
+import type { NotebookDocument, NotebookOutput } from '../../shared/notebookDocument'
 
 export type MessageRole = 'user' | 'assistant' | 'error' | 'warning' | 'thinking'
 
@@ -296,6 +296,17 @@ export interface AnalysisNotebookSessionStatus {
   updatedAt?: string
 }
 
+export interface AnalysisCellExecutionResult {
+  cellId: string
+  executionCount: number | null
+  outputs: NotebookOutput[]
+  state: 'idle' | 'error'
+  startedAt: string
+  completedAt: string
+  document: NotebookDocument
+  sessionStatus: AnalysisNotebookSessionStatus
+}
+
 export type RendererApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -377,6 +388,12 @@ export type RendererApi = {
     cwd: string,
     path: string
   ) => Promise<AnalysisNotebookSessionStatus>
+  executeAnalysisNotebookCell: (
+    cwd: string,
+    path: string,
+    document: NotebookDocument,
+    cellId: string
+  ) => Promise<AnalysisCellExecutionResult>
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => () => void
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => () => void

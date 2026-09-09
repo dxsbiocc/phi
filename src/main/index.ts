@@ -71,6 +71,7 @@ import {
 } from './agent/analysis-notebook-files'
 import { detectAnalysisKernels } from './agent/analysis-kernels'
 import { JupyterServerRegistry } from './agent/analysis-jupyter-server'
+import { AnalysisNotebookExecutor } from './agent/analysis-jupyter-execution'
 import { AnalysisNotebookSessionRegistry } from './agent/analysis-jupyter-sessions'
 import {
   isStaleSessionError,
@@ -96,7 +97,7 @@ import {
   type UnreadKind,
   listPhiSessions
 } from './agent/session-store'
-import type { NotebookDocument } from '../shared/notebookDocument'
+import { updateNotebookCell, type NotebookDocument } from '../shared/notebookDocument'
 import icon from '../../resources/icon.png?asset'
 
 const APP_NAME = 'Phi'
@@ -265,6 +266,7 @@ const jupyterServerRegistry = new JupyterServerRegistry()
 const notebookSessionRegistry = new AnalysisNotebookSessionRegistry({
   getConnection: (projectCwd) => jupyterServerRegistry.connection(projectCwd)
 })
+const notebookExecutor = new AnalysisNotebookExecutor()
 
 function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEvent): void {
   const run = [...activePromptRuns.values()].find((item) => item.phiSessionId === sessionId)
@@ -2050,6 +2052,72 @@ app.whenReady().then(() => {
     const file = openProjectNotebook(project.workingDirectory, notebookPath)
     return notebookSessionRegistry.closeSession(project.workingDirectory, file.path)
   })
+  ipcMain.handle(
+    'analysis:executeNotebookCell',
+    async (_, cwd: string, notebookPath: string, document: NotebookDocument, cellId: string) => {
+      const project = getProjectByCwd(cwd)
+      if (!project) {
+        throw new Error('请选择一个已添加的项目')
+      }
+      assertProjectPathAvailable(project.workingDirectory)
+      const file = openProjectNotebook(project.workingDirectory, notebookPath)
+      const kernels = detectAnalysisKernels()
+      const sessionStatus = await notebookSessionRegistry.ensureSession({
+        projectCwd: project.workingDirectory,
+        notebookPath: file.path,
+        document,
+        kernels
+      })
+      const target = notebookSessionRegistry.executionTarget(project.workingDirectory, file.path)
+      if (!target) {
+        throw new Error(sessionStatus.message ?? '请先连接 notebook kernel')
+      }
+
+      const cell = document.cells.find((item) => item.id === cellId)
+      if (!cell) {
+        throw new Error(`Notebook cell not found: ${cellId}`)
+      }
+
+      notebookSessionRegistry.updateSessionState(
+        project.workingDirectory,
+        file.path,
+        'busy',
+        'Notebook kernel 正在执行'
+      )
+      try {
+        const execution = await notebookExecutor.executeCell({
+          connection: target.connection,
+          sessionId: target.sessionId,
+          kernelId: target.kernelId,
+          cell
+        })
+        const nextDocument = updateNotebookCell(document, cellId, {
+          executionCount: execution.executionCount,
+          outputs: execution.outputs
+        })
+        const nextSessionStatus =
+          notebookSessionRegistry.updateSessionState(
+            project.workingDirectory,
+            file.path,
+            execution.state === 'error' ? 'error' : 'idle',
+            execution.state === 'error' ? 'Cell 执行出错' : 'Cell 执行完成'
+          ) ?? sessionStatus
+        return {
+          ...execution,
+          document: nextDocument,
+          sessionStatus: nextSessionStatus
+        }
+      } catch (error) {
+        notebookSessionRegistry.updateSessionState(
+          project.workingDirectory,
+          file.path,
+          'error',
+          error instanceof Error ? error.message : String(error)
+        )
+        throw error
+      }
+    }
+  )
 
   ipcMain.handle('tool:approval-response', async (_, requestId: string, approved: boolean) => {
     resolveToolApproval(requestId, approved)

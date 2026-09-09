@@ -68,6 +68,13 @@ export type AnalysisViewProps = {
   onStopJupyterServer?: (cwd: string) => void
   onStartNotebookSession?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onStopNotebookSession?: (file: AnalysisNotebookFile) => void
+  onRunNotebookCell?: (
+    file: AnalysisNotebookFile,
+    document: NotebookDocument,
+    cellId: string
+  ) => void
+  executingNotebookCellId?: string | null
+  notebookCellExecutionError?: string | null
   onInitializeProjectAnalysis?: (cwd: string) => void
   onOpenNotebook?: (path: string) => void
   onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
@@ -330,14 +337,19 @@ function outputPreview(cell: NotebookCell): string | undefined {
   return outputs.length > 0 ? outputs.join('\n') : undefined
 }
 
-function documentCells(document: NotebookDocument): CanvasCell[] {
+function documentCells(document: NotebookDocument, executingCellId?: string | null): CanvasCell[] {
   const language = notebookLanguage(document)
   return document.cells.map((cell) => ({
     id: cell.id,
     count: cell.executionCount,
     type: cell.cellType,
     language: cell.cellType === 'code' ? language : undefined,
-    state: cell.outputs.some((output) => output.outputType === 'error') ? 'error' : 'idle',
+    state:
+      executingCellId === cell.id
+        ? 'running'
+        : cell.outputs.some((output) => output.outputType === 'error')
+          ? 'error'
+          : 'idle',
     source: cell.source,
     output: cell.cellType === 'code' ? outputPreview(cell) : undefined
   }))
@@ -825,14 +837,17 @@ function Cell({
   cell,
   editable = false,
   onSourceChange,
-  onInsertAfter
+  onInsertAfter,
+  onRunCell
 }: {
   cell: CanvasCell
   editable?: boolean
   onSourceChange?: (cellId: string, source: string) => void
   onInsertAfter?: (cellId: string) => void
+  onRunCell?: (cellId: string) => void
 }): React.JSX.Element {
   const isMarkdown = cell.type === 'markdown'
+  const canRun = cell.type === 'code' && Boolean(onRunCell) && cell.state !== 'running'
   return (
     <Box
       sx={{
@@ -847,7 +862,13 @@ function Cell({
         sx={{ display: 'flex', alignItems: 'center', flexDirection: 'column', gap: 0.8, pt: 0.5 }}
       >
         <Tooltip title="运行 cell">
-          <IconButton size="small" aria-label="运行 cell" sx={{ width: 30, height: 30 }}>
+          <IconButton
+            size="small"
+            aria-label="运行 cell"
+            disabled={!canRun}
+            onClick={() => onRunCell?.(cell.id)}
+            sx={{ width: 30, height: 30 }}
+          >
             <PlayIcon fontSize="small" />
           </IconButton>
         </Tooltip>
@@ -1017,10 +1038,13 @@ function NotebookCanvas({
   notebookSessionStatus,
   isStartingNotebookSession,
   notebookSessionError,
+  executingCellId,
+  cellExecutionError,
   onSaveNotebook,
   onRefreshKernels,
   onStartNotebookSession,
-  onStopNotebookSession
+  onStopNotebookSession,
+  onRunNotebookCell
 }: {
   activeNotebookPath: string
   notebookFile?: AnalysisNotebookFile | null
@@ -1033,13 +1057,20 @@ function NotebookCanvas({
   notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   isStartingNotebookSession?: boolean
   notebookSessionError?: string | null
+  executingCellId?: string | null
+  cellExecutionError?: string | null
   onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onRefreshKernels?: () => void
   onStartNotebookSession?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onStopNotebookSession?: (file: AnalysisNotebookFile) => void
+  onRunNotebookCell?: (
+    file: AnalysisNotebookFile,
+    document: NotebookDocument,
+    cellId: string
+  ) => void
 }): React.JSX.Element {
   const [draftDocument, setDraftDocument] = useState<NotebookDocument | null>(initialDocument)
-  const cells = draftDocument ? documentCells(draftDocument) : mockCells
+  const cells = draftDocument ? documentCells(draftDocument, executingCellId) : mockCells
   const kernelLabel = draftDocument ? notebookLanguage(draftDocument) : 'Python 3.11'
   const kernelStatusLabel = notebookSessionStatus
     ? notebookSessionStateLabel(notebookSessionStatus)
@@ -1070,6 +1101,11 @@ function NotebookCanvas({
   const onSave = (): void => {
     if (notebookFile && draftDocument) {
       onSaveNotebook?.(notebookFile, draftDocument)
+    }
+  }
+  const onRunCell = (cellId: string): void => {
+    if (notebookFile && draftDocument) {
+      onRunNotebookCell?.(notebookFile, draftDocument, cellId)
     }
   }
 
@@ -1105,6 +1141,11 @@ function NotebookCanvas({
               {notebookSessionError}
             </Typography>
           ) : null}
+          {cellExecutionError ? (
+            <Typography color="error.main" sx={{ mb: 2 }}>
+              {cellExecutionError}
+            </Typography>
+          ) : null}
           {!isOpening &&
             cells.map((cell) => (
               <Cell
@@ -1113,6 +1154,7 @@ function NotebookCanvas({
                 editable={Boolean(draftDocument)}
                 onSourceChange={onUpdateCellSource}
                 onInsertAfter={onInsertCell}
+                onRunCell={onRunCell}
               />
             ))}
         </Box>
@@ -1623,6 +1665,8 @@ export default function AnalysisView({
   notebookSessionStatus = null,
   isStartingNotebookSession = false,
   notebookSessionError = null,
+  executingNotebookCellId = null,
+  notebookCellExecutionError = null,
   onRefreshNotebooks,
   onRefreshKernels,
   onRefreshJupyterServer,
@@ -1630,6 +1674,7 @@ export default function AnalysisView({
   onStopJupyterServer,
   onStartNotebookSession,
   onStopNotebookSession,
+  onRunNotebookCell,
   onInitializeProjectAnalysis,
   onOpenNotebook,
   onSaveNotebook,
@@ -1686,7 +1731,11 @@ export default function AnalysisView({
         onToggleCollapsed={() => setLeftCollapsed((value) => !value)}
       />
       <NotebookCanvas
-        key={notebookFile ? `${notebookFile.path}:${notebookFile.savedRevision}` : 'mock'}
+        key={
+          notebookFile
+            ? `${notebookFile.path}:${notebookFile.savedRevision}:${notebookFile.document.revision}`
+            : 'mock'
+        }
         activeNotebookPath={activeNotebookPath ?? 'No notebook selected'}
         notebookFile={notebookFile}
         initialDocument={notebookFile?.document ?? null}
@@ -1698,10 +1747,13 @@ export default function AnalysisView({
         notebookSessionStatus={notebookSessionStatus}
         isStartingNotebookSession={isStartingNotebookSession}
         notebookSessionError={notebookSessionError}
+        executingCellId={executingNotebookCellId}
+        cellExecutionError={notebookCellExecutionError}
         onSaveNotebook={onSaveNotebook}
         onRefreshKernels={onRefreshKernels}
         onStartNotebookSession={onStartNotebookSession}
         onStopNotebookSession={onStopNotebookSession}
+        onRunNotebookCell={onRunNotebookCell}
       />
       <RightInspector
         tab={inspectorTab}

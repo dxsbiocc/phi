@@ -264,6 +264,17 @@ type AnalysisNotebookSessionStatus = {
   updatedAt?: string
 }
 
+type AnalysisCellExecutionResult = {
+  cellId: string
+  executionCount: number | null
+  outputs: Record<string, unknown>[]
+  state: 'idle' | 'error'
+  startedAt: string
+  completedAt: string
+  document: Record<string, unknown>
+  sessionStatus: AnalysisNotebookSessionStatus
+}
+
 type RendererAuthApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -345,6 +356,12 @@ type RendererAuthApi = {
     cwd: string,
     path: string
   ) => Promise<AnalysisNotebookSessionStatus>
+  executeAnalysisNotebookCell: (
+    cwd: string,
+    path: string,
+    document: Record<string, unknown>,
+    cellId: string
+  ) => Promise<AnalysisCellExecutionResult>
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => Unsubscribe
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => Unsubscribe
@@ -486,6 +503,13 @@ const api: RendererAuthApi = {
     path: string
   ): Promise<AnalysisNotebookSessionStatus> =>
     ipcRenderer.invoke('analysis:closeNotebookSession', cwd, path),
+  executeAnalysisNotebookCell: (
+    cwd: string,
+    path: string,
+    document: Record<string, unknown>,
+    cellId: string
+  ): Promise<AnalysisCellExecutionResult> =>
+    ipcRenderer.invoke('analysis:executeNotebookCell', cwd, path, document, cellId),
   stopGeneration: (): Promise<void> => ipcRenderer.invoke('agent:stop'),
   onSessionChanged: (cb: (session: CurrentSession) => void): Unsubscribe => {
     const handler = (_: unknown, session: CurrentSession): void => {
