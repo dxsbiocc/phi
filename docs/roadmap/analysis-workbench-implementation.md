@@ -99,6 +99,8 @@ Verification:
 
 ### N3: Notebook Open/Save Service
 
+Status: complete.
+
 Deliverables:
 
 - Add main-process service APIs for open notebook, save notebook, close notebook, and create notebook.

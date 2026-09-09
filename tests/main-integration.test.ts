@@ -481,6 +481,55 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         initialized: true
       })
     },
+    './agent/analysis-notebook-files': {
+      openProjectNotebook: (workingDirectory: string, notebookPath: string) => ({
+        path: `${workingDirectory}/${notebookPath}`,
+        relativePath: notebookPath,
+        name: 'qc.ipynb',
+        bytes: 128,
+        modifiedAt: '2026-09-09T00:00:00.000Z',
+        savedRevision: 'nb-open',
+        document: {
+          nbformat: 4,
+          nbformatMinor: 5,
+          metadata: {},
+          cells: [],
+          extra: {},
+          revision: 'nb-open'
+        }
+      }),
+      saveProjectNotebook: (
+        workingDirectory: string,
+        input: { path: string; document: { revision: string } }
+      ) => ({
+        path: input.path,
+        relativePath: input.path.replace(`${workingDirectory}/`, ''),
+        name: 'qc.ipynb',
+        bytes: 256,
+        modifiedAt: '2026-09-09T00:01:00.000Z',
+        savedRevision: input.document.revision,
+        document: input.document
+      }),
+      createProjectNotebook: (workingDirectory: string) => ({
+        path: `${workingDirectory}/notebooks/Untitled.ipynb`,
+        relativePath: 'notebooks/Untitled.ipynb',
+        name: 'Untitled.ipynb',
+        bytes: 512,
+        modifiedAt: '2026-09-09T00:02:00.000Z',
+        savedRevision: 'nb-new',
+        document: {
+          nbformat: 4,
+          nbformatMinor: 5,
+          metadata: {},
+          cells: [],
+          extra: {},
+          revision: 'nb-new'
+        }
+      }),
+      closeProjectNotebook: (workingDirectory: string, notebookPath: string) => ({
+        path: `${workingDirectory}/${notebookPath}`
+      })
+    },
     './agent/tool-approval': {
       cancelToolApprovals: noop,
       createApprovalExtension: (options: Record<string, unknown>): Record<string, unknown> => {
@@ -921,6 +970,37 @@ test('main IPC: analysis notebooks use the active project working directory', as
     notebooksDir: '/projects/research/notebooks',
     outputsDir: '/projects/research/outputs'
   })
+})
+
+test('main IPC: analysis notebook files use the selected project service', async () => {
+  const app = await harness()
+
+  await app.invoke('projects:newSession', '/projects/research', 'ask')
+  const opened = (await app.invoke(
+    'analysis:openNotebook',
+    '/projects/research',
+    'notebooks/qc.ipynb'
+  )) as { path: string; relativePath: string; savedRevision: string }
+  const saved = (await app.invoke('analysis:saveNotebook', '/projects/research', {
+    path: '/projects/research/notebooks/qc.ipynb',
+    document: { revision: 'nb-edited' },
+    expectedRevision: opened.savedRevision
+  })) as { relativePath: string; savedRevision: string }
+  const created = (await app.invoke('analysis:createNotebook', '/projects/research')) as {
+    relativePath: string
+  }
+  const closed = (await app.invoke(
+    'analysis:closeNotebook',
+    '/projects/research',
+    'notebooks/qc.ipynb'
+  )) as { path: string }
+
+  assert.equal(opened.path, '/projects/research/notebooks/qc.ipynb')
+  assert.equal(opened.relativePath, 'notebooks/qc.ipynb')
+  assert.equal(saved.relativePath, 'notebooks/qc.ipynb')
+  assert.equal(saved.savedRevision, 'nb-edited')
+  assert.equal(created.relativePath, 'notebooks/Untitled.ipynb')
+  assert.equal(closed.path, '/projects/research/notebooks/qc.ipynb')
 })
 
 test(

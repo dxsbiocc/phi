@@ -1,3 +1,5 @@
+import type { NotebookDocument } from '../../shared/notebookDocument'
+
 export type MessageRole = 'user' | 'assistant' | 'error' | 'warning' | 'thinking'
 
 export type Role = MessageRole
@@ -226,6 +228,22 @@ export interface AnalysisProjectInitialization {
   outputsDir: string
 }
 
+export interface AnalysisNotebookFile {
+  path: string
+  relativePath: string
+  name: string
+  bytes: number
+  modifiedAt: string
+  savedRevision: string
+  document: NotebookDocument
+}
+
+export interface SaveAnalysisNotebookInput {
+  path: string
+  document: NotebookDocument
+  expectedRevision?: string
+}
+
 export type RendererApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -282,6 +300,13 @@ export type RendererApi = {
   ) => Promise<CurrentSession>
   listAnalysisNotebooks: (cwd?: string) => Promise<AnalysisNotebookRegistry>
   initializeProjectAnalysis: (cwd: string) => Promise<AnalysisProjectInitialization>
+  openAnalysisNotebook: (cwd: string, path: string) => Promise<AnalysisNotebookFile>
+  saveAnalysisNotebook: (
+    cwd: string,
+    input: SaveAnalysisNotebookInput
+  ) => Promise<AnalysisNotebookFile>
+  createAnalysisNotebook: (cwd: string, relativePath?: string) => Promise<AnalysisNotebookFile>
+  closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => () => void
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => () => void

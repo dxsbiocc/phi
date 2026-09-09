@@ -100,6 +100,22 @@ type PreloadAnalysisProjectInitialization = {
   outputsDir: string
 }
 
+type PreloadAnalysisNotebookFile = {
+  path: string
+  relativePath: string
+  name: string
+  bytes: number
+  modifiedAt: string
+  savedRevision: string
+  document: Record<string, unknown>
+}
+
+type PreloadSaveAnalysisNotebookInput = {
+  path: string
+  document: Record<string, unknown>
+  expectedRevision?: string
+}
+
 declare global {
   interface Window {
     platform: NodeJS.Platform
@@ -289,6 +305,16 @@ declare global {
       }>
       listAnalysisNotebooks: (cwd?: string) => Promise<PreloadAnalysisNotebookRegistry>
       initializeProjectAnalysis: (cwd: string) => Promise<PreloadAnalysisProjectInitialization>
+      openAnalysisNotebook: (cwd: string, path: string) => Promise<PreloadAnalysisNotebookFile>
+      saveAnalysisNotebook: (
+        cwd: string,
+        input: PreloadSaveAnalysisNotebookInput
+      ) => Promise<PreloadAnalysisNotebookFile>
+      createAnalysisNotebook: (
+        cwd: string,
+        relativePath?: string
+      ) => Promise<PreloadAnalysisNotebookFile>
+      closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
       stopGeneration: () => Promise<void>
       onSessionChanged: (
         cb: (session: {

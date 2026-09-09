@@ -17,7 +17,18 @@ import {
 } from '@mui/material'
 import { alpha, type Theme } from '@mui/material/styles'
 import { PhiIcons } from '../icons'
-import type { AnalysisNotebookRegistry, AnalysisNotebookSummary } from '../types'
+import {
+  insertNotebookCell,
+  updateNotebookCell,
+  type JsonObject,
+  type NotebookCell,
+  type NotebookDocument
+} from '../../../shared/notebookDocument'
+import type {
+  AnalysisNotebookFile,
+  AnalysisNotebookRegistry,
+  AnalysisNotebookSummary
+} from '../types'
 
 type LeftPanel = 'chat' | 'notebooks'
 type InspectorTab = 'files' | 'variables' | 'artifacts'
@@ -31,17 +42,23 @@ type NotebookListEntry = {
 
 export type AnalysisViewProps = {
   notebookRegistry?: AnalysisNotebookRegistry | null
+  notebookFile?: AnalysisNotebookFile | null
   initialLeftPanel?: LeftPanel
   isLoadingNotebooks?: boolean
+  isOpeningNotebook?: boolean
   notebookError?: string | null
+  notebookContentError?: string | null
   onRefreshNotebooks?: () => void
   onInitializeProjectAnalysis?: (cwd: string) => void
+  onOpenNotebook?: (path: string) => void
+  onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
+  onCreateNotebook?: (cwd: string) => void
 }
 
-type MockCell = {
+type CanvasCell = {
   id: string
   count: number | null
-  type: 'markdown' | 'code'
+  type: 'markdown' | 'code' | 'raw'
   language?: string
   state: CellState
   source: string
@@ -77,7 +94,7 @@ const mockNotebooks: NotebookListEntry[] = [
   { id: 'figures', path: 'notebooks/figures.ipynb', status: 'Saved' }
 ]
 
-const mockCells: MockCell[] = [
+const mockCells: CanvasCell[] = [
   {
     id: 'intro',
     count: null,
@@ -164,6 +181,64 @@ function stateColor(state: CellState): string {
 function compactPath(path: string): string {
   const parts = path.split('/')
   return parts.length <= 2 ? path : `${parts[0]}/.../${parts[parts.length - 1]}`
+}
+
+function stringFromMetadata(metadata: JsonObject, key: string): string | undefined {
+  const value = metadata[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+function objectFromMetadata(metadata: JsonObject, key: string): JsonObject | undefined {
+  const value = metadata[key]
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as JsonObject)
+    : undefined
+}
+
+function notebookLanguage(document: NotebookDocument): string {
+  const languageInfo = objectFromMetadata(document.metadata, 'language_info')
+  const kernelSpec = objectFromMetadata(document.metadata, 'kernelspec')
+  return (
+    stringFromMetadata(languageInfo ?? {}, 'name') ??
+    stringFromMetadata(kernelSpec ?? {}, 'language') ??
+    stringFromMetadata(kernelSpec ?? {}, 'display_name') ??
+    'Code'
+  )
+}
+
+function textFromOutputData(data: JsonObject): string | undefined {
+  const plain = data['text/plain']
+  if (typeof plain === 'string') return plain
+  if (Array.isArray(plain)) {
+    return plain.map((item) => (typeof item === 'string' ? item : '')).join('')
+  }
+  return undefined
+}
+
+function outputPreview(cell: NotebookCell): string | undefined {
+  const outputs = cell.outputs
+    .map((output) => {
+      if (output.text) return output.text
+      if (output.ename || output.evalue) {
+        return [output.ename, output.evalue].filter(Boolean).join(': ')
+      }
+      return textFromOutputData(output.data)
+    })
+    .filter((value): value is string => Boolean(value))
+  return outputs.length > 0 ? outputs.join('\n') : undefined
+}
+
+function documentCells(document: NotebookDocument): CanvasCell[] {
+  const language = notebookLanguage(document)
+  return document.cells.map((cell) => ({
+    id: cell.id,
+    count: cell.executionCount,
+    type: cell.cellType,
+    language: cell.cellType === 'code' ? language : undefined,
+    state: cell.outputs.some((output) => output.outputType === 'error') ? 'error' : 'idle',
+    source: cell.source,
+    output: cell.cellType === 'code' ? outputPreview(cell) : undefined
+  }))
 }
 
 function formatBytes(bytes: number): string {
@@ -277,16 +352,18 @@ function NotebookList({
   error,
   onSelectNotebook,
   onRefreshNotebooks,
-  onInitializeProjectAnalysis
+  onInitializeProjectAnalysis,
+  onCreateNotebook
 }: {
   notebooks: NotebookListEntry[]
   activeNotebookPath: string | null
   registry?: AnalysisNotebookRegistry | null
   isLoading?: boolean
   error?: string | null
-  onSelectNotebook: (path: string) => void
+  onSelectNotebook: (notebook: NotebookListEntry) => void
   onRefreshNotebooks?: () => void
   onInitializeProjectAnalysis?: (cwd: string) => void
+  onCreateNotebook?: (cwd: string) => void
 }): React.JSX.Element {
   const projectCwd = registry?.projectCwd ?? null
 
@@ -300,6 +377,13 @@ function NotebookList({
           <Tooltip title="刷新 notebooks">
             <IconButton size="small" onClick={onRefreshNotebooks}>
               <RefreshIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : null}
+        {projectCwd && onCreateNotebook ? (
+          <Tooltip title="新建 notebook">
+            <IconButton size="small" onClick={() => onCreateNotebook(projectCwd)}>
+              <AddIcon fontSize="small" />
             </IconButton>
           </Tooltip>
         ) : null}
@@ -346,7 +430,7 @@ function NotebookList({
         <ListItemButton
           key={notebook.id}
           selected={notebook.path === activeNotebookPath}
-          onClick={() => onSelectNotebook(notebook.path)}
+          onClick={() => onSelectNotebook(notebook)}
           sx={{ alignItems: 'flex-start', mx: 0, mb: 0.5, py: 1 }}
         >
           <NotebookIcon fontSize="small" sx={{ mt: 0.2, mr: 1, color: 'primary.main' }} />
@@ -379,6 +463,7 @@ function LeftRail({
   onSelectNotebook,
   onRefreshNotebooks,
   onInitializeProjectAnalysis,
+  onCreateNotebook,
   onToggleCollapsed
 }: {
   panel: LeftPanel
@@ -389,9 +474,10 @@ function LeftRail({
   isLoadingNotebooks?: boolean
   notebookError?: string | null
   onPanelChange: (panel: LeftPanel) => void
-  onSelectNotebook: (path: string) => void
+  onSelectNotebook: (notebook: NotebookListEntry) => void
   onRefreshNotebooks?: () => void
   onInitializeProjectAnalysis?: (cwd: string) => void
+  onCreateNotebook?: (cwd: string) => void
   onToggleCollapsed: () => void
 }): React.JSX.Element {
   if (collapsed) {
@@ -479,13 +565,28 @@ function LeftRail({
           onSelectNotebook={onSelectNotebook}
           onRefreshNotebooks={onRefreshNotebooks}
           onInitializeProjectAnalysis={onInitializeProjectAnalysis}
+          onCreateNotebook={onCreateNotebook}
         />
       )}
     </Box>
   )
 }
 
-function NotebookHeader({ activeNotebookPath }: { activeNotebookPath: string }): React.JSX.Element {
+function NotebookHeader({
+  activeNotebookPath,
+  kernelLabel,
+  isDirty,
+  hasDocument,
+  isOpening,
+  onSave
+}: {
+  activeNotebookPath: string
+  kernelLabel: string
+  isDirty: boolean
+  hasDocument: boolean
+  isOpening: boolean
+  onSave?: () => void
+}): React.JSX.Element {
   return (
     <Box
       sx={{
@@ -508,22 +609,42 @@ function NotebookHeader({ activeNotebookPath }: { activeNotebookPath: string }):
       >
         {activeNotebookPath}
       </Typography>
-      <Chip size="small" variant="outlined" label="Python 3.11" />
-      <Chip size="small" color="success" variant="outlined" label="Idle" />
-      <Chip size="small" color="warning" variant="outlined" label="Unsaved" />
+      <Chip size="small" variant="outlined" label={kernelLabel} />
+      <Chip
+        size="small"
+        color="success"
+        variant="outlined"
+        label={hasDocument ? 'Ready' : 'Preview'}
+      />
+      <Chip
+        size="small"
+        color={isDirty ? 'warning' : 'success'}
+        variant="outlined"
+        label={isDirty ? 'Unsaved' : 'Saved'}
+      />
       <Stack direction="row" spacing={0.5} sx={{ WebkitAppRegion: 'no-drag' }}>
+        {hasDocument ? (
+          <Button
+            size="small"
+            variant="contained"
+            disabled={!isDirty || isOpening}
+            onClick={onSave}
+          >
+            保存
+          </Button>
+        ) : null}
         <Tooltip title="运行全部 cell">
-          <IconButton size="small" aria-label="运行全部 cell">
+          <IconButton size="small" aria-label="运行全部 cell" disabled>
             <PlayIcon fontSize="small" />
           </IconButton>
         </Tooltip>
         <Tooltip title="中断 kernel">
-          <IconButton size="small" aria-label="中断 kernel">
+          <IconButton size="small" aria-label="中断 kernel" disabled>
             <StopIcon fontSize="small" />
           </IconButton>
         </Tooltip>
         <Tooltip title="重启 kernel">
-          <IconButton size="small" aria-label="重启 kernel">
+          <IconButton size="small" aria-label="重启 kernel" disabled>
             <RefreshIcon fontSize="small" />
           </IconButton>
         </Tooltip>
@@ -537,7 +658,17 @@ function NotebookHeader({ activeNotebookPath }: { activeNotebookPath: string }):
   )
 }
 
-function Cell({ cell }: { cell: MockCell }): React.JSX.Element {
+function Cell({
+  cell,
+  editable = false,
+  onSourceChange,
+  onInsertAfter
+}: {
+  cell: CanvasCell
+  editable?: boolean
+  onSourceChange?: (cellId: string, source: string) => void
+  onInsertAfter?: (cellId: string) => void
+}): React.JSX.Element {
   const isMarkdown = cell.type === 'markdown'
   return (
     <Box
@@ -623,7 +754,11 @@ function Cell({ cell }: { cell: MockCell }): React.JSX.Element {
           />
           <Box sx={{ flex: 1 }} />
           <Tooltip title="插入 cell">
-            <IconButton size="small" aria-label="插入 cell">
+            <IconButton
+              size="small"
+              aria-label="插入 cell"
+              onClick={() => onInsertAfter?.(cell.id)}
+            >
               <AddIcon fontSize="small" />
             </IconButton>
           </Tooltip>
@@ -633,21 +768,44 @@ function Cell({ cell }: { cell: MockCell }): React.JSX.Element {
             </IconButton>
           </Tooltip>
         </Box>
-        <Typography
-          component="pre"
-          variant="body2"
-          sx={{
-            m: 0,
-            p: isMarkdown ? 2 : 1.5,
-            whiteSpace: 'pre-wrap',
-            overflowWrap: 'anywhere',
-            fontFamily: isMarkdown ? 'inherit' : 'var(--font-mono)',
-            fontSize: isMarkdown ? '0.95rem' : '0.82rem',
-            lineHeight: 1.65
-          }}
-        >
-          {cell.source}
-        </Typography>
+        {editable ? (
+          <TextField
+            fullWidth
+            multiline
+            minRows={isMarkdown ? 2 : 3}
+            value={cell.source}
+            variant="standard"
+            onChange={(event) => onSourceChange?.(cell.id, event.target.value)}
+            slotProps={{
+              input: {
+                disableUnderline: true,
+                sx: {
+                  p: isMarkdown ? 2 : 1.5,
+                  alignItems: 'flex-start',
+                  fontFamily: isMarkdown ? 'inherit' : 'var(--font-mono)',
+                  fontSize: isMarkdown ? '0.95rem' : '0.82rem',
+                  lineHeight: 1.65
+                }
+              }
+            }}
+          />
+        ) : (
+          <Typography
+            component="pre"
+            variant="body2"
+            sx={{
+              m: 0,
+              p: isMarkdown ? 2 : 1.5,
+              whiteSpace: 'pre-wrap',
+              overflowWrap: 'anywhere',
+              fontFamily: isMarkdown ? 'inherit' : 'var(--font-mono)',
+              fontSize: isMarkdown ? '0.95rem' : '0.82rem',
+              lineHeight: 1.65
+            }}
+          >
+            {cell.source}
+          </Typography>
+        )}
         {cell.output ? (
           <>
             <Divider />
@@ -684,15 +842,73 @@ function Cell({ cell }: { cell: MockCell }): React.JSX.Element {
   )
 }
 
-function NotebookCanvas({ activeNotebookPath }: { activeNotebookPath: string }): React.JSX.Element {
+function NotebookCanvas({
+  activeNotebookPath,
+  notebookFile,
+  initialDocument,
+  isOpening,
+  error,
+  onSaveNotebook
+}: {
+  activeNotebookPath: string
+  notebookFile?: AnalysisNotebookFile | null
+  initialDocument: NotebookDocument | null
+  isOpening?: boolean
+  error?: string | null
+  onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
+}): React.JSX.Element {
+  const [draftDocument, setDraftDocument] = useState<NotebookDocument | null>(initialDocument)
+  const cells = draftDocument ? documentCells(draftDocument) : mockCells
+  const kernelLabel = draftDocument ? notebookLanguage(draftDocument) : 'Python 3.11'
+  const isDirty = Boolean(
+    notebookFile && draftDocument && draftDocument.revision !== notebookFile.savedRevision
+  )
+  const onUpdateCellSource = (cellId: string, source: string): void => {
+    setDraftDocument((document) =>
+      document ? updateNotebookCell(document, cellId, { source }) : document
+    )
+  }
+  const onInsertCell = (cellId: string): void => {
+    setDraftDocument((document) => {
+      if (!document) return document
+      const index = document.cells.findIndex((cell) => cell.id === cellId)
+      return insertNotebookCell(document, index + 1, { cellType: 'code', source: '' })
+    })
+  }
+  const onSave = (): void => {
+    if (notebookFile && draftDocument) {
+      onSaveNotebook?.(notebookFile, draftDocument)
+    }
+  }
+
   return (
     <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <NotebookHeader activeNotebookPath={activeNotebookPath} />
+      <NotebookHeader
+        activeNotebookPath={activeNotebookPath}
+        kernelLabel={kernelLabel}
+        isDirty={isDirty}
+        hasDocument={Boolean(notebookFile && draftDocument)}
+        isOpening={Boolean(isOpening)}
+        onSave={onSave}
+      />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: { xs: 2, md: 4 }, py: 2.5 }}>
         <Box sx={{ maxWidth: 920, mx: 'auto' }}>
-          {mockCells.map((cell) => (
-            <Cell key={cell.id} cell={cell} />
-          ))}
+          {isOpening ? <Typography color="text.secondary">正在打开 notebook...</Typography> : null}
+          {error ? (
+            <Typography color="error.main" sx={{ mb: 2 }}>
+              {error}
+            </Typography>
+          ) : null}
+          {!isOpening &&
+            cells.map((cell) => (
+              <Cell
+                key={cell.id}
+                cell={cell}
+                editable={Boolean(draftDocument)}
+                onSourceChange={onUpdateCellSource}
+                onInsertAfter={onInsertCell}
+              />
+            ))}
         </Box>
       </Box>
     </Box>
@@ -922,11 +1138,17 @@ function RightInspector({
 
 export default function AnalysisView({
   notebookRegistry,
+  notebookFile,
   initialLeftPanel = 'chat',
   isLoadingNotebooks = false,
+  isOpeningNotebook = false,
   notebookError = null,
+  notebookContentError = null,
   onRefreshNotebooks,
-  onInitializeProjectAnalysis
+  onInitializeProjectAnalysis,
+  onOpenNotebook,
+  onSaveNotebook,
+  onCreateNotebook
 }: AnalysisViewProps = {}): React.JSX.Element {
   const [leftPanel, setLeftPanel] = useState<LeftPanel>(initialLeftPanel)
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('variables')
@@ -936,10 +1158,19 @@ export default function AnalysisView({
   const [selectedNotebookPath, setSelectedNotebookPath] = useState<string | null>(
     notebooks[0]?.path ?? null
   )
-  const activeNotebookPath =
+  const selectedPathIsAvailable = Boolean(
     selectedNotebookPath && notebooks.some((notebook) => notebook.path === selectedNotebookPath)
-      ? selectedNotebookPath
-      : (notebooks[0]?.path ?? null)
+  )
+  const activeNotebookPath =
+    notebookFile?.relativePath ??
+    (selectedPathIsAvailable ? selectedNotebookPath : (notebooks[0]?.path ?? null))
+
+  const onSelectNotebook = (notebook: NotebookListEntry): void => {
+    setSelectedNotebookPath(notebook.path)
+    if (notebook.absolutePath) {
+      onOpenNotebook?.(notebook.absolutePath)
+    }
+  }
 
   return (
     <Box
@@ -963,12 +1194,21 @@ export default function AnalysisView({
         isLoadingNotebooks={isLoadingNotebooks}
         notebookError={notebookError}
         onPanelChange={setLeftPanel}
-        onSelectNotebook={setSelectedNotebookPath}
+        onSelectNotebook={onSelectNotebook}
         onRefreshNotebooks={onRefreshNotebooks}
         onInitializeProjectAnalysis={onInitializeProjectAnalysis}
+        onCreateNotebook={onCreateNotebook}
         onToggleCollapsed={() => setLeftCollapsed((value) => !value)}
       />
-      <NotebookCanvas activeNotebookPath={activeNotebookPath ?? 'No notebook selected'} />
+      <NotebookCanvas
+        key={notebookFile ? `${notebookFile.path}:${notebookFile.savedRevision}` : 'mock'}
+        activeNotebookPath={activeNotebookPath ?? 'No notebook selected'}
+        notebookFile={notebookFile}
+        initialDocument={notebookFile?.document ?? null}
+        isOpening={isOpeningNotebook}
+        error={notebookContentError}
+        onSaveNotebook={onSaveNotebook}
+      />
       <RightInspector
         tab={inspectorTab}
         collapsed={inspectorCollapsed}

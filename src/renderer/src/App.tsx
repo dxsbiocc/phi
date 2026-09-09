@@ -53,6 +53,7 @@ import type {
   AuthInteractionEvent,
   ChatItem,
   CurrentSession,
+  AnalysisNotebookFile,
   AnalysisNotebookRegistry,
   McpServerSummary,
   ModelOption,
@@ -190,8 +191,15 @@ function App(): React.JSX.Element {
   const [activeMcpServerId, setActiveMcpServerId] = useState<string | null>(null)
   const [analysisNotebookRegistry, setAnalysisNotebookRegistry] =
     useState<AnalysisNotebookRegistry | null>(null)
+  const [activeAnalysisNotebook, setActiveAnalysisNotebook] = useState<AnalysisNotebookFile | null>(
+    null
+  )
   const [isLoadingAnalysisNotebooks, setIsLoadingAnalysisNotebooks] = useState(false)
+  const [isOpeningAnalysisNotebook, setIsOpeningAnalysisNotebook] = useState(false)
   const [analysisNotebookError, setAnalysisNotebookError] = useState<string | null>(null)
+  const [analysisNotebookContentError, setAnalysisNotebookContentError] = useState<string | null>(
+    null
+  )
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
   const [activeSessionRuntimeState, setActiveSessionRuntimeState] =
     useState(idleSessionRuntimeState)
@@ -209,6 +217,7 @@ function App(): React.JSX.Element {
   const skillsRequestRef = useRef(0)
   const mcpServersRequestRef = useRef(0)
   const analysisNotebooksRequestRef = useRef(0)
+  const analysisNotebookOpenRequestRef = useRef(0)
   const sessionRefreshTimerRef = useRef<number | null>(null)
   const rendererApi = useMemo(() => getRendererApi(), [])
 
@@ -583,6 +592,69 @@ function App(): React.JSX.Element {
         await refreshAnalysisNotebooks()
       } catch (error) {
         setAnalysisNotebookError(readableErrorMessage(error, '无法初始化分析目录'))
+      }
+    },
+    [refreshAnalysisNotebooks, rendererApi]
+  )
+
+  const onOpenAnalysisNotebook = useCallback(
+    async (path: string): Promise<void> => {
+      const request = ++analysisNotebookOpenRequestRef.current
+      const cwd = activeCwdRef.current
+      setIsOpeningAnalysisNotebook(true)
+      setAnalysisNotebookContentError(null)
+      try {
+        const file = await rendererApi.openAnalysisNotebook(cwd, path)
+        if (request !== analysisNotebookOpenRequestRef.current || cwd !== activeCwdRef.current) {
+          return
+        }
+        setActiveAnalysisNotebook(file)
+      } catch (error) {
+        if (request !== analysisNotebookOpenRequestRef.current) return
+        setAnalysisNotebookContentError(readableErrorMessage(error, '无法打开 notebook'))
+      } finally {
+        if (request === analysisNotebookOpenRequestRef.current) {
+          setIsOpeningAnalysisNotebook(false)
+        }
+      }
+    },
+    [rendererApi]
+  )
+
+  const onSaveAnalysisNotebook = useCallback(
+    async (
+      file: AnalysisNotebookFile,
+      document: AnalysisNotebookFile['document']
+    ): Promise<void> => {
+      const cwd = activeCwdRef.current
+      setAnalysisNotebookContentError(null)
+      try {
+        const saved = await rendererApi.saveAnalysisNotebook(cwd, {
+          path: file.path,
+          document,
+          expectedRevision: file.savedRevision
+        })
+        setActiveAnalysisNotebook(saved)
+        await refreshAnalysisNotebooks()
+      } catch (error) {
+        setAnalysisNotebookContentError(readableErrorMessage(error, '无法保存 notebook'))
+      }
+    },
+    [refreshAnalysisNotebooks, rendererApi]
+  )
+
+  const onCreateAnalysisNotebook = useCallback(
+    async (cwd: string): Promise<void> => {
+      setIsOpeningAnalysisNotebook(true)
+      setAnalysisNotebookContentError(null)
+      try {
+        const file = await rendererApi.createAnalysisNotebook(cwd)
+        setActiveAnalysisNotebook(file)
+        await refreshAnalysisNotebooks()
+      } catch (error) {
+        setAnalysisNotebookContentError(readableErrorMessage(error, '无法新建 notebook'))
+      } finally {
+        setIsOpeningAnalysisNotebook(false)
       }
     },
     [refreshAnalysisNotebooks, rendererApi]
@@ -1656,13 +1728,25 @@ function App(): React.JSX.Element {
         ) : activeView === 'analysis' ? (
           <AnalysisView
             notebookRegistry={analysisNotebookRegistry}
+            notebookFile={activeAnalysisNotebook}
             isLoadingNotebooks={isLoadingAnalysisNotebooks}
+            isOpeningNotebook={isOpeningAnalysisNotebook}
             notebookError={analysisNotebookError}
+            notebookContentError={analysisNotebookContentError}
             onRefreshNotebooks={() => {
               void refreshAnalysisNotebooks()
             }}
             onInitializeProjectAnalysis={(cwd) => {
               void onInitializeProjectAnalysis(cwd)
+            }}
+            onOpenNotebook={(path) => {
+              void onOpenAnalysisNotebook(path)
+            }}
+            onSaveNotebook={(file, document) => {
+              void onSaveAnalysisNotebook(file, document)
+            }}
+            onCreateNotebook={(cwd) => {
+              void onCreateAnalysisNotebook(cwd)
             }}
           />
         ) : activeView === 'plugins' ? (

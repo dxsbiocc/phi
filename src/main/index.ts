@@ -63,6 +63,13 @@ import {
   listProjectNotebooks
 } from './agent/analysis-notebooks'
 import {
+  closeProjectNotebook,
+  createProjectNotebook,
+  openProjectNotebook,
+  saveProjectNotebook,
+  type SaveProjectNotebookInput
+} from './agent/analysis-notebook-files'
+import {
   isStaleSessionError,
   StaleSessionError,
   SessionLifecycle,
@@ -1918,6 +1925,41 @@ app.whenReady().then(() => {
     }
     assertProjectPathAvailable(project.workingDirectory)
     return initializeProjectAnalysis(project.workingDirectory)
+  })
+  ipcMain.handle('analysis:openNotebook', async (_, cwd: string, notebookPath: string) => {
+    const project = getProjectByCwd(cwd)
+    if (!project) {
+      throw new Error('请选择一个已添加的项目')
+    }
+    assertProjectPathAvailable(project.workingDirectory)
+    return openProjectNotebook(project.workingDirectory, notebookPath)
+  })
+  ipcMain.handle(
+    'analysis:saveNotebook',
+    async (_, cwd: string, input: SaveProjectNotebookInput) => {
+      const project = getProjectByCwd(cwd)
+      if (!project) {
+        throw new Error('请选择一个已添加的项目')
+      }
+      assertProjectPathAvailable(project.workingDirectory)
+      return saveProjectNotebook(project.workingDirectory, input)
+    }
+  )
+  ipcMain.handle('analysis:createNotebook', async (_, cwd: string, relativePath?: string) => {
+    const project = getProjectByCwd(cwd)
+    if (!project) {
+      throw new Error('请选择一个已添加的项目')
+    }
+    assertProjectPathAvailable(project.workingDirectory)
+    return createProjectNotebook(project.workingDirectory, relativePath)
+  })
+  ipcMain.handle('analysis:closeNotebook', async (_, cwd: string, notebookPath: string) => {
+    const project = getProjectByCwd(cwd)
+    if (!project) {
+      throw new Error('请选择一个已添加的项目')
+    }
+    assertProjectPathAvailable(project.workingDirectory)
+    return closeProjectNotebook(project.workingDirectory, notebookPath)
   })
 
   ipcMain.handle('tool:approval-response', async (_, requestId: string, approved: boolean) => {

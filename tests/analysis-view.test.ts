@@ -4,6 +4,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import AnalysisView, { type AnalysisViewProps } from '../src/renderer/src/components/AnalysisView'
+import { parseNotebook } from '../src/shared/notebookDocument'
 
 function renderAnalysisView(props: AnalysisViewProps = {}): string {
   const theme = createTheme()
@@ -72,4 +73,43 @@ test('analysis view renders notebook registry empty and loading states', () => {
   assert.match(empty, /当前项目还没有 notebook/)
   assert.match(empty, /初始化分析目录/)
   assert.match(loading, /正在扫描 notebooks/)
+})
+
+test('analysis view renders an opened notebook document', () => {
+  const document = parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: {
+      kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' },
+      language_info: { name: 'python' }
+    },
+    cells: [
+      { id: 'intro', cell_type: 'markdown', metadata: {}, source: '# Real notebook\n' },
+      {
+        id: 'code',
+        cell_type: 'code',
+        execution_count: 1,
+        metadata: {},
+        outputs: [{ output_type: 'stream', name: 'stdout', text: ['done\n'] }],
+        source: 'real = 1'
+      }
+    ]
+  })
+  const markup = renderAnalysisView({
+    notebookFile: {
+      path: '/project/notebooks/real.ipynb',
+      relativePath: 'notebooks/real.ipynb',
+      name: 'real.ipynb',
+      bytes: 512,
+      modifiedAt: '2026-09-09T00:00:00.000Z',
+      savedRevision: document.revision,
+      document
+    }
+  })
+
+  assert.match(markup, /notebooks\/real\.ipynb/)
+  assert.match(markup, /Real notebook/)
+  assert.match(markup, /real = 1/)
+  assert.match(markup, /done/)
+  assert.match(markup, /Saved/)
 })

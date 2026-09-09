@@ -205,6 +205,22 @@ type AnalysisProjectInitialization = {
   outputsDir: string
 }
 
+type AnalysisNotebookFile = {
+  path: string
+  relativePath: string
+  name: string
+  bytes: number
+  modifiedAt: string
+  savedRevision: string
+  document: Record<string, unknown>
+}
+
+type SaveAnalysisNotebookInput = {
+  path: string
+  document: Record<string, unknown>
+  expectedRevision?: string
+}
+
 type RendererAuthApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -261,6 +277,13 @@ type RendererAuthApi = {
   ) => Promise<CurrentSession>
   listAnalysisNotebooks: (cwd?: string) => Promise<AnalysisNotebookRegistry>
   initializeProjectAnalysis: (cwd: string) => Promise<AnalysisProjectInitialization>
+  openAnalysisNotebook: (cwd: string, path: string) => Promise<AnalysisNotebookFile>
+  saveAnalysisNotebook: (
+    cwd: string,
+    input: SaveAnalysisNotebookInput
+  ) => Promise<AnalysisNotebookFile>
+  createAnalysisNotebook: (cwd: string, relativePath?: string) => Promise<AnalysisNotebookFile>
+  closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => Unsubscribe
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => Unsubscribe
@@ -367,6 +390,16 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('analysis:listNotebooks', cwd),
   initializeProjectAnalysis: (cwd: string): Promise<AnalysisProjectInitialization> =>
     ipcRenderer.invoke('analysis:initializeProject', cwd),
+  openAnalysisNotebook: (cwd: string, path: string): Promise<AnalysisNotebookFile> =>
+    ipcRenderer.invoke('analysis:openNotebook', cwd, path),
+  saveAnalysisNotebook: (
+    cwd: string,
+    input: SaveAnalysisNotebookInput
+  ): Promise<AnalysisNotebookFile> => ipcRenderer.invoke('analysis:saveNotebook', cwd, input),
+  createAnalysisNotebook: (cwd: string, relativePath?: string): Promise<AnalysisNotebookFile> =>
+    ipcRenderer.invoke('analysis:createNotebook', cwd, relativePath),
+  closeAnalysisNotebook: (cwd: string, path: string): Promise<{ path: string }> =>
+    ipcRenderer.invoke('analysis:closeNotebook', cwd, path),
   stopGeneration: (): Promise<void> => ipcRenderer.invoke('agent:stop'),
   onSessionChanged: (cb: (session: CurrentSession) => void): Unsubscribe => {
     const handler = (_: unknown, session: CurrentSession): void => {
