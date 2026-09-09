@@ -24,6 +24,7 @@ import {
   type NotebookCell,
   type NotebookDocument
 } from '../../../shared/notebookDocument'
+import { PanelRight } from 'lucide-react'
 import type {
   AnalysisKernelDiagnostics,
   AnalysisKernelLanguage,
@@ -49,6 +50,7 @@ export type AnalysisViewProps = {
   notebookFile?: AnalysisNotebookFile | null
   initialLeftPanel?: LeftPanel
   initialInspectorTab?: InspectorTab
+  initialInspectorCollapsed?: boolean
   isLoadingNotebooks?: boolean
   isOpeningNotebook?: boolean
   notebookError?: string | null
@@ -94,7 +96,6 @@ type CanvasCell = {
 }
 
 const AddIcon = PhiIcons.action.add
-const AnalysisIcon = PhiIcons.nav.analysis
 const ChatIcon = PhiIcons.nav.chat
 const FileIcon = PhiIcons.tool.read
 const FolderIcon = PhiIcons.entity.folder
@@ -116,7 +117,6 @@ const collapsedRailWidth = 44
 const inspectorWidth = 340
 const minInspectorWidth = 240
 const maxInspectorWidth = 520
-const collapsedInspectorWidth = 48
 
 const mockNotebooks: NotebookListEntry[] = [
   { id: 'exploration', path: 'notebooks/exploration.ipynb', status: 'Unsaved' },
@@ -711,13 +711,15 @@ function NotebookHeader({
   hasDocument,
   isOpening,
   isStartingNotebookSession,
+  isInspectorCollapsed,
   notebookFile,
   draftDocument,
   notebookSessionStatus,
   onSave,
   onRefreshKernels,
   onStartNotebookSession,
-  onStopNotebookSession
+  onStopNotebookSession,
+  onToggleInspector
 }: {
   activeNotebookPath: string
   kernelLabel: string
@@ -727,6 +729,7 @@ function NotebookHeader({
   hasDocument: boolean
   isOpening: boolean
   isStartingNotebookSession?: boolean
+  isInspectorCollapsed: boolean
   notebookFile?: AnalysisNotebookFile | null
   draftDocument?: NotebookDocument | null
   notebookSessionStatus?: AnalysisNotebookSessionStatus | null
@@ -734,6 +737,7 @@ function NotebookHeader({
   onRefreshKernels?: () => void
   onStartNotebookSession?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onStopNotebookSession?: (file: AnalysisNotebookFile) => void
+  onToggleInspector: () => void
 }): React.JSX.Element {
   const hasLiveNotebookSession = Boolean(
     notebookSessionStatus?.sessionId &&
@@ -865,6 +869,17 @@ function NotebookHeader({
         <Tooltip title="更多 notebook 操作">
           <IconButton size="small" aria-label="更多 notebook 操作">
             <MoreIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title={isInspectorCollapsed ? '展开右侧栏' : '关闭右侧栏'}>
+          <IconButton
+            size="small"
+            color={isInspectorCollapsed ? 'default' : 'primary'}
+            aria-label={isInspectorCollapsed ? '展开右侧栏' : '关闭右侧栏'}
+            onClick={onToggleInspector}
+            sx={{ borderRadius: 1 }}
+          >
+            <PanelRight size={18} strokeWidth={1.85} />
           </IconButton>
         </Tooltip>
       </Stack>
@@ -1081,6 +1096,7 @@ function NotebookCanvas({
   jupyterServerStatus,
   notebookSessionStatus,
   isStartingNotebookSession,
+  isInspectorCollapsed,
   notebookSessionError,
   executingCellId,
   cellExecutionError,
@@ -1088,6 +1104,7 @@ function NotebookCanvas({
   onRefreshKernels,
   onStartNotebookSession,
   onStopNotebookSession,
+  onToggleInspector,
   onRunNotebookCell
 }: {
   activeNotebookPath: string
@@ -1101,6 +1118,7 @@ function NotebookCanvas({
   jupyterServerStatus?: JupyterServerStatus | null
   notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   isStartingNotebookSession?: boolean
+  isInspectorCollapsed: boolean
   notebookSessionError?: string | null
   executingCellId?: string | null
   cellExecutionError?: string | null
@@ -1108,6 +1126,7 @@ function NotebookCanvas({
   onRefreshKernels?: () => void
   onStartNotebookSession?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onStopNotebookSession?: (file: AnalysisNotebookFile) => void
+  onToggleInspector: () => void
   onRunNotebookCell?: (
     file: AnalysisNotebookFile,
     document: NotebookDocument,
@@ -1181,6 +1200,7 @@ function NotebookCanvas({
         hasDocument={Boolean(notebookFile && draftDocument)}
         isOpening={Boolean(isOpening)}
         isStartingNotebookSession={isStartingNotebookSession}
+        isInspectorCollapsed={isInspectorCollapsed}
         notebookFile={notebookFile}
         draftDocument={draftDocument}
         notebookSessionStatus={notebookSessionStatus}
@@ -1188,6 +1208,7 @@ function NotebookCanvas({
         onRefreshKernels={onRefreshKernels}
         onStartNotebookSession={onStartNotebookSession}
         onStopNotebookSession={onStopNotebookSession}
+        onToggleInspector={onToggleInspector}
       />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: { xs: 2, md: 4 }, py: 2.5 }}>
         <Box sx={{ maxWidth: 920, mx: 'auto' }}>
@@ -1610,7 +1631,6 @@ function InspectorContent({
 
 function RightInspector({
   tab,
-  collapsed,
   width,
   projectCwd,
   kernelDiagnostics,
@@ -1624,11 +1644,9 @@ function RightInspector({
   onRefreshKernels,
   onRefreshJupyterServer,
   onStartJupyterServer,
-  onStopJupyterServer,
-  onToggleCollapsed
+  onStopJupyterServer
 }: {
   tab: InspectorTab
-  collapsed: boolean
   width: number
   projectCwd?: string | null
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
@@ -1643,49 +1661,15 @@ function RightInspector({
   onRefreshJupyterServer?: () => void
   onStartJupyterServer?: (cwd: string) => void
   onStopJupyterServer?: (cwd: string) => void
-  onToggleCollapsed: () => void
 }): React.JSX.Element {
   const tabs = useMemo(
     () => [
-      { value: 'files' as const, label: 'Files', Icon: FileIcon },
-      { value: 'variables' as const, label: 'Variables', Icon: VariableIcon },
-      { value: 'artifacts' as const, label: 'Artifacts', Icon: AnalysisIcon }
+      { value: 'files' as const, label: 'Files' },
+      { value: 'variables' as const, label: 'Variables' },
+      { value: 'artifacts' as const, label: 'Artifacts' }
     ],
     []
   )
-
-  if (collapsed) {
-    return (
-      <Box
-        sx={{
-          width: collapsedInspectorWidth,
-          borderLeft: 1,
-          borderColor: 'divider',
-          pt: isMac ? `${macTitlebarHeight + contentTopGap}px` : 1,
-          display: 'flex',
-          alignItems: 'center',
-          flexDirection: 'column',
-          gap: 0.75
-        }}
-      >
-        {tabs.map(({ value, label, Icon }) => (
-          <Tooltip key={value} title={label} placement="left">
-            <IconButton
-              size="small"
-              color={tab === value ? 'primary' : 'default'}
-              aria-label={label}
-              onClick={() => {
-                onTabChange(value)
-                onToggleCollapsed()
-              }}
-            >
-              <Icon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        ))}
-      </Box>
-    )
-  }
 
   return (
     <Box
@@ -1719,14 +1703,7 @@ function RightInspector({
         sx={{ minHeight: 36, px: 1, '& .MuiTab-root': { minHeight: 36, py: 0.5, px: 0.5 } }}
       >
         {tabs.map(({ value, label }) => (
-          <Tab
-            key={value}
-            value={value}
-            label={label}
-            onClick={() => {
-              if (tab === value) onToggleCollapsed()
-            }}
-          />
+          <Tab key={value} value={value} label={label} />
         ))}
       </Tabs>
       <Divider />
@@ -1791,6 +1768,7 @@ export default function AnalysisView({
   notebookFile,
   initialLeftPanel = 'chat',
   initialInspectorTab = 'files',
+  initialInspectorCollapsed = false,
   isLoadingNotebooks = false,
   isOpeningNotebook = false,
   notebookError = null,
@@ -1822,7 +1800,7 @@ export default function AnalysisView({
   const [leftPanel, setLeftPanel] = useState<LeftPanel>(initialLeftPanel)
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>(initialInspectorTab)
   const [leftCollapsed, setLeftCollapsed] = useState(false)
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(false)
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(initialInspectorCollapsed)
   const [leftWidth, setLeftWidth] = useState(leftRailWidth)
   const [rightWidth, setRightWidth] = useState(inspectorWidth)
   const notebooks = useMemo(() => registryNotebooks(notebookRegistry), [notebookRegistry])
@@ -1942,6 +1920,7 @@ export default function AnalysisView({
         jupyterServerStatus={jupyterServerStatus}
         notebookSessionStatus={notebookSessionStatus}
         isStartingNotebookSession={isStartingNotebookSession}
+        isInspectorCollapsed={inspectorCollapsed}
         notebookSessionError={notebookSessionError}
         executingCellId={executingNotebookCellId}
         cellExecutionError={notebookCellExecutionError}
@@ -1949,30 +1928,31 @@ export default function AnalysisView({
         onRefreshKernels={onRefreshKernels}
         onStartNotebookSession={onStartNotebookSession}
         onStopNotebookSession={onStopNotebookSession}
+        onToggleInspector={() => setInspectorCollapsed((value) => !value)}
         onRunNotebookCell={onRunNotebookCell}
       />
       {!inspectorCollapsed ? (
         <ResizeSeparator label="调整检查器宽度" onMouseDown={onStartRightResize} />
       ) : null}
-      <RightInspector
-        tab={inspectorTab}
-        collapsed={inspectorCollapsed}
-        width={rightWidth}
-        projectCwd={notebookRegistry?.projectCwd ?? null}
-        kernelDiagnostics={kernelDiagnostics}
-        isLoadingKernels={isLoadingKernels}
-        kernelError={kernelError}
-        jupyterServerStatus={jupyterServerStatus}
-        isStartingJupyterServer={isStartingJupyterServer}
-        jupyterServerError={jupyterServerError}
-        notebookSessionStatus={notebookSessionStatus}
-        onTabChange={setInspectorTab}
-        onRefreshKernels={onRefreshKernels}
-        onRefreshJupyterServer={onRefreshJupyterServer}
-        onStartJupyterServer={onStartJupyterServer}
-        onStopJupyterServer={onStopJupyterServer}
-        onToggleCollapsed={() => setInspectorCollapsed((value) => !value)}
-      />
+      {!inspectorCollapsed ? (
+        <RightInspector
+          tab={inspectorTab}
+          width={rightWidth}
+          projectCwd={notebookRegistry?.projectCwd ?? null}
+          kernelDiagnostics={kernelDiagnostics}
+          isLoadingKernels={isLoadingKernels}
+          kernelError={kernelError}
+          jupyterServerStatus={jupyterServerStatus}
+          isStartingJupyterServer={isStartingJupyterServer}
+          jupyterServerError={jupyterServerError}
+          notebookSessionStatus={notebookSessionStatus}
+          onTabChange={setInspectorTab}
+          onRefreshKernels={onRefreshKernels}
+          onRefreshJupyterServer={onRefreshJupyterServer}
+          onStartJupyterServer={onStartJupyterServer}
+          onStopJupyterServer={onStopJupyterServer}
+        />
+      ) : null}
     </Box>
   )
 }

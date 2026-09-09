@@ -25,9 +25,19 @@ test('analysis view renders the first-phase notebook shell', () => {
   assert.match(markup, /workflows\/main\.nf/)
   assert.match(markup, /调整分析侧栏宽度/)
   assert.match(markup, /调整检查器宽度/)
+  assert.match(markup, /关闭右侧栏/)
   assert.doesNotMatch(markup, /Data Preview/)
   assert.doesNotMatch(markup, /Agent transaction/)
   assert.doesNotMatch(markup, /展开分析侧栏/)
+})
+
+test('analysis view can hide the right inspector behind the notebook toggle', () => {
+  const markup = renderAnalysisView({ initialInspectorCollapsed: true })
+
+  assert.match(markup, /展开右侧栏/)
+  assert.doesNotMatch(markup, /调整检查器宽度/)
+  assert.doesNotMatch(markup, /Inspector/)
+  assert.doesNotMatch(markup, /workflows\/main\.nf/)
 })
 
 test('analysis view renders project notebook registry entries', () => {
