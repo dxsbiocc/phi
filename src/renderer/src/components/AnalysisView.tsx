@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, type MouseEvent } from 'react'
 import {
   Box,
   Button,
@@ -96,8 +96,6 @@ type CanvasCell = {
 const AddIcon = PhiIcons.action.add
 const AnalysisIcon = PhiIcons.nav.analysis
 const ChatIcon = PhiIcons.nav.chat
-const CollapseIcon = PhiIcons.action.collapse
-const ExpandIcon = PhiIcons.action.expand
 const FileIcon = PhiIcons.tool.read
 const FolderIcon = PhiIcons.entity.folder
 const MoreIcon = PhiIcons.action.more
@@ -112,8 +110,12 @@ const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 const macTitlebarHeight = 44
 const contentTopGap = 8
 const leftRailWidth = 300
+const minLeftRailWidth = 220
+const maxLeftRailWidth = 460
 const collapsedRailWidth = 44
 const inspectorWidth = 340
+const minInspectorWidth = 240
+const maxInspectorWidth = 520
 const collapsedInspectorWidth = 48
 
 const mockNotebooks: NotebookListEntry[] = [
@@ -570,6 +572,7 @@ function NotebookList({
 function LeftRail({
   panel,
   collapsed,
+  width,
   notebooks,
   activeNotebookPath,
   notebookRegistry,
@@ -584,6 +587,7 @@ function LeftRail({
 }: {
   panel: LeftPanel
   collapsed: boolean
+  width: number
   notebooks: NotebookListEntry[]
   activeNotebookPath: string | null
   notebookRegistry?: AnalysisNotebookRegistry | null
@@ -596,6 +600,11 @@ function LeftRail({
   onCreateNotebook?: (cwd: string) => void
   onToggleCollapsed: () => void
 }): React.JSX.Element {
+  const tabs = [
+    { value: 'chat' as const, label: 'Chat', Icon: ChatIcon },
+    { value: 'notebooks' as const, label: 'Notebooks', Icon: NotebookIcon }
+  ]
+
   if (collapsed) {
     return (
       <Box
@@ -611,19 +620,21 @@ function LeftRail({
           gap: 0.75
         }}
       >
-        <Tooltip title="展开分析侧栏" placement="right">
-          <IconButton size="small" onClick={onToggleCollapsed}>
-            <ExpandIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Box
-          aria-label="Notebook has unsaved changes"
-          sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'warning.main' }}
-        />
-        <Box
-          aria-label="Agent activity idle"
-          sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'success.main' }}
-        />
+        {tabs.map(({ value, label, Icon }) => (
+          <Tooltip key={value} title={label} placement="right">
+            <IconButton
+              size="small"
+              color={panel === value ? 'primary' : 'default'}
+              aria-label={label}
+              onClick={() => {
+                onPanelChange(value)
+                onToggleCollapsed()
+              }}
+            >
+              <Icon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ))}
       </Box>
     )
   }
@@ -631,7 +642,7 @@ function LeftRail({
   return (
     <Box
       sx={{
-        width: leftRailWidth,
+        width,
         flexShrink: 0,
         borderRight: 1,
         borderColor: 'divider',
@@ -649,11 +660,6 @@ function LeftRail({
             分析
           </Typography>
         </Box>
-        <Tooltip title="收起分析侧栏">
-          <IconButton size="small" onClick={onToggleCollapsed}>
-            <CollapseIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
       </Box>
       <Box sx={{ px: 1, pb: 0.5 }}>
         <Tabs
@@ -665,8 +671,16 @@ function LeftRail({
             '& .MuiTab-root': { minHeight: 30, py: 0.25, fontSize: '0.74rem' }
           }}
         >
-          <Tab value="chat" label="Chat" />
-          <Tab value="notebooks" label="Notebooks" />
+          {tabs.map(({ value, label }) => (
+            <Tab
+              key={value}
+              value={value}
+              label={label}
+              onClick={() => {
+                if (panel === value) onToggleCollapsed()
+              }}
+            />
+          ))}
         </Tabs>
       </Box>
       {panel === 'chat' ? (
@@ -1597,6 +1611,7 @@ function InspectorContent({
 function RightInspector({
   tab,
   collapsed,
+  width,
   projectCwd,
   kernelDiagnostics,
   isLoadingKernels,
@@ -1614,6 +1629,7 @@ function RightInspector({
 }: {
   tab: InspectorTab
   collapsed: boolean
+  width: number
   projectCwd?: string | null
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
   isLoadingKernels?: boolean
@@ -1631,9 +1647,9 @@ function RightInspector({
 }): React.JSX.Element {
   const tabs = useMemo(
     () => [
-      { value: 'files' as const, label: 'Files' },
-      { value: 'variables' as const, label: 'Variables' },
-      { value: 'artifacts' as const, label: 'Artifacts' }
+      { value: 'files' as const, label: 'Files', Icon: FileIcon },
+      { value: 'variables' as const, label: 'Variables', Icon: VariableIcon },
+      { value: 'artifacts' as const, label: 'Artifacts', Icon: AnalysisIcon }
     ],
     []
   )
@@ -1652,22 +1668,18 @@ function RightInspector({
           gap: 0.75
         }}
       >
-        <Tooltip title="展开分析检查器" placement="left">
-          <IconButton size="small" onClick={onToggleCollapsed}>
-            <ExpandIcon fontSize="small" sx={{ transform: 'rotate(180deg)' }} />
-          </IconButton>
-        </Tooltip>
-        {tabs.map((item) => (
-          <Tooltip key={item.value} title={item.label} placement="left">
+        {tabs.map(({ value, label, Icon }) => (
+          <Tooltip key={value} title={label} placement="left">
             <IconButton
               size="small"
-              color={tab === item.value ? 'primary' : 'default'}
+              color={tab === value ? 'primary' : 'default'}
+              aria-label={label}
               onClick={() => {
-                onTabChange(item.value)
+                onTabChange(value)
                 onToggleCollapsed()
               }}
             >
-              <AnalysisIcon fontSize="small" />
+              <Icon fontSize="small" />
             </IconButton>
           </Tooltip>
         ))}
@@ -1678,7 +1690,7 @@ function RightInspector({
   return (
     <Box
       sx={{
-        width: inspectorWidth,
+        width,
         flexShrink: 0,
         borderLeft: 1,
         borderColor: 'divider',
@@ -1699,11 +1711,6 @@ function RightInspector({
             文件、变量和产物
           </Typography>
         </Box>
-        <Tooltip title="收起检查器">
-          <IconButton size="small" onClick={onToggleCollapsed}>
-            <CollapseIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
       </Box>
       <Tabs
         value={tab}
@@ -1711,9 +1718,16 @@ function RightInspector({
         variant="fullWidth"
         sx={{ minHeight: 36, px: 1, '& .MuiTab-root': { minHeight: 36, py: 0.5, px: 0.5 } }}
       >
-        <Tab value="files" label="Files" />
-        <Tab value="variables" label="Variables" />
-        <Tab value="artifacts" label="Artifacts" />
+        {tabs.map(({ value, label }) => (
+          <Tab
+            key={value}
+            value={value}
+            label={label}
+            onClick={() => {
+              if (tab === value) onToggleCollapsed()
+            }}
+          />
+        ))}
       </Tabs>
       <Divider />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: 1.5 }}>
@@ -1734,6 +1748,41 @@ function RightInspector({
         />
       </Box>
     </Box>
+  )
+}
+
+function ResizeSeparator({
+  label,
+  onMouseDown
+}: {
+  label: string
+  onMouseDown: (event: MouseEvent<HTMLDivElement>) => void
+}): React.JSX.Element {
+  return (
+    <Box
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      onMouseDown={onMouseDown}
+      sx={{
+        width: '1px',
+        flexShrink: 0,
+        position: 'relative',
+        cursor: 'col-resize',
+        bgcolor: (theme) =>
+          theme.palette.mode === 'dark' ? 'rgba(241, 246, 246, 0.18)' : 'rgba(15, 42, 48, 0.18)',
+        zIndex: 5,
+        WebkitAppRegion: 'no-drag',
+        '&::before': {
+          content: '""',
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          left: -4,
+          right: -4
+        }
+      }}
+    />
   )
 }
 
@@ -1774,6 +1823,8 @@ export default function AnalysisView({
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>(initialInspectorTab)
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false)
+  const [leftWidth, setLeftWidth] = useState(leftRailWidth)
+  const [rightWidth, setRightWidth] = useState(inspectorWidth)
   const notebooks = useMemo(() => registryNotebooks(notebookRegistry), [notebookRegistry])
   const [selectedNotebookPath, setSelectedNotebookPath] = useState<string | null>(
     notebooks[0]?.path ?? null
@@ -1791,6 +1842,56 @@ export default function AnalysisView({
       onOpenNotebook?.(notebook.absolutePath)
     }
   }
+  const onStartLeftResize = useCallback(
+    (event: MouseEvent<HTMLDivElement>): void => {
+      event.preventDefault()
+
+      const startX = event.clientX
+      const startWidth = leftWidth
+      const onMouseMove = (moveEvent: globalThis.MouseEvent): void => {
+        const delta = moveEvent.clientX - startX
+        setLeftWidth(Math.min(maxLeftRailWidth, Math.max(minLeftRailWidth, startWidth + delta)))
+      }
+
+      const onMouseUp = (): void => {
+        document.removeEventListener('mousemove', onMouseMove)
+        document.removeEventListener('mouseup', onMouseUp)
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
+
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+      document.addEventListener('mousemove', onMouseMove)
+      document.addEventListener('mouseup', onMouseUp)
+    },
+    [leftWidth]
+  )
+  const onStartRightResize = useCallback(
+    (event: MouseEvent<HTMLDivElement>): void => {
+      event.preventDefault()
+
+      const startX = event.clientX
+      const startWidth = rightWidth
+      const onMouseMove = (moveEvent: globalThis.MouseEvent): void => {
+        const delta = moveEvent.clientX - startX
+        setRightWidth(Math.min(maxInspectorWidth, Math.max(minInspectorWidth, startWidth - delta)))
+      }
+
+      const onMouseUp = (): void => {
+        document.removeEventListener('mousemove', onMouseMove)
+        document.removeEventListener('mouseup', onMouseUp)
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
+
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+      document.addEventListener('mousemove', onMouseMove)
+      document.addEventListener('mouseup', onMouseUp)
+    },
+    [rightWidth]
+  )
 
   return (
     <Box
@@ -1808,6 +1909,7 @@ export default function AnalysisView({
       <LeftRail
         panel={leftPanel}
         collapsed={leftCollapsed}
+        width={leftWidth}
         notebooks={notebooks}
         activeNotebookPath={activeNotebookPath}
         notebookRegistry={notebookRegistry}
@@ -1820,6 +1922,9 @@ export default function AnalysisView({
         onCreateNotebook={onCreateNotebook}
         onToggleCollapsed={() => setLeftCollapsed((value) => !value)}
       />
+      {!leftCollapsed ? (
+        <ResizeSeparator label="调整分析侧栏宽度" onMouseDown={onStartLeftResize} />
+      ) : null}
       <NotebookCanvas
         key={
           notebookFile
@@ -1846,9 +1951,13 @@ export default function AnalysisView({
         onStopNotebookSession={onStopNotebookSession}
         onRunNotebookCell={onRunNotebookCell}
       />
+      {!inspectorCollapsed ? (
+        <ResizeSeparator label="调整检查器宽度" onMouseDown={onStartRightResize} />
+      ) : null}
       <RightInspector
         tab={inspectorTab}
         collapsed={inspectorCollapsed}
+        width={rightWidth}
         projectCwd={notebookRegistry?.projectCwd ?? null}
         kernelDiagnostics={kernelDiagnostics}
         isLoadingKernels={isLoadingKernels}

@@ -23,8 +23,11 @@ test('analysis view renders the first-phase notebook shell', () => {
   assert.match(markup, /Variables/)
   assert.match(markup, /Artifacts/)
   assert.match(markup, /workflows\/main\.nf/)
+  assert.match(markup, /调整分析侧栏宽度/)
+  assert.match(markup, /调整检查器宽度/)
   assert.doesNotMatch(markup, /Data Preview/)
   assert.doesNotMatch(markup, /Agent transaction/)
+  assert.doesNotMatch(markup, /展开分析侧栏/)
 })
 
 test('analysis view renders project notebook registry entries', () => {
