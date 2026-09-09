@@ -86,6 +86,7 @@ const compactComposerIconButtonSx = {
 type ProviderIconMeta = {
   key: string
   label: string
+  shortLabel: string
   color: string
 }
 
@@ -93,90 +94,105 @@ const PROVIDER_ICON_RULES: Array<ProviderIconMeta & { matches: string[] }> = [
   {
     key: 'openai',
     label: 'OpenAI',
+    shortLabel: 'OA',
     color: '#10A37F',
     matches: ['openai', 'codex', 'chatgpt']
   },
   {
     key: 'deepseek',
     label: 'DeepSeek',
+    shortLabel: 'DS',
     color: '#4D6BFE',
     matches: ['deepseek']
   },
   {
     key: 'moonshot',
     label: 'Moonshot',
+    shortLabel: 'K',
     color: '#6D5DF6',
     matches: ['moonshot', 'kimi']
   },
   {
     key: 'anthropic',
     label: 'Anthropic',
+    shortLabel: 'A',
     color: '#D97757',
     matches: ['anthropic']
   },
   {
     key: 'claude',
     label: 'Claude',
+    shortLabel: 'C',
     color: '#D97757',
     matches: ['claude']
   },
   {
     key: 'gemini',
     label: 'Gemini',
+    shortLabel: 'G',
     color: '#4285F4',
     matches: ['gemini']
   },
   {
     key: 'google',
     label: 'Google',
+    shortLabel: 'G',
     color: '#4285F4',
     matches: ['google']
   },
   {
     key: 'qwen',
     label: 'Qwen',
+    shortLabel: 'Q',
     color: '#615CED',
     matches: ['qwen', 'dashscope', 'alibaba']
   },
   {
     key: 'openrouter',
     label: 'OpenRouter',
+    shortLabel: 'OR',
     color: '#6C5CE7',
     matches: ['openrouter']
   },
   {
     key: 'ollama',
     label: 'Ollama',
+    shortLabel: 'OL',
     color: '#111827',
     matches: ['ollama']
   },
   {
     key: 'mistral',
     label: 'Mistral',
+    shortLabel: 'MI',
     color: '#FA520F',
     matches: ['mistral']
   },
   {
     key: 'meta',
     label: 'Meta',
+    shortLabel: 'M',
     color: '#0668E1',
     matches: ['meta', 'llama']
   },
   {
     key: 'perplexity',
     label: 'Perplexity',
+    shortLabel: 'P',
     color: '#1FB8CD',
     matches: ['perplexity']
   },
   {
     key: 'xai',
     label: 'xAI',
+    shortLabel: 'X',
     color: '#111827',
     matches: ['xai', 'grok']
   },
   {
     key: 'copilot',
     label: 'GitHub Copilot',
+    shortLabel: 'GH',
     color: '#6E5494',
     matches: ['copilot', 'github']
   }
@@ -191,12 +207,14 @@ function providerIconMeta(providerId?: string): ProviderIconMeta {
     return {
       key: matched.key,
       label: matched.label,
+      shortLabel: matched.shortLabel,
       color: matched.color
     }
   }
   return {
     key: 'generic',
     label: 'Model Provider',
+    shortLabel: 'AI',
     color: 'text.secondary'
   }
 }
@@ -236,12 +254,30 @@ function ProviderModelIcon({
   const color = disabled ? 'action.disabled' : meta.color
 
   return (
-    <PsychologyIcon
+    <Box
       data-phi-provider-icon={meta.key}
-      htmlColor={undefined}
-      size="1.2rem"
-      sx={{ color }}
-    />
+      aria-label={meta.label}
+      title={meta.label}
+      sx={{
+        width: 23,
+        height: 23,
+        borderRadius: '50%',
+        border: 1,
+        borderColor: color,
+        color,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+        fontSize: meta.shortLabel.length > 1 ? '0.54rem' : '0.68rem',
+        fontWeight: 800,
+        lineHeight: 1,
+        bgcolor: 'background.paper',
+        userSelect: 'none'
+      }}
+    >
+      {meta.shortLabel}
+    </Box>
   )
 }
 
