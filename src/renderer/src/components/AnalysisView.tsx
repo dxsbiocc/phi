@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type MouseEvent } from 'react'
+import { useCallback, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Box,
   Button,
@@ -83,6 +83,7 @@ export type AnalysisViewProps = {
   onOpenNotebook?: (path: string) => void
   onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onCreateNotebook?: (cwd: string) => void
+  chatPanel?: ReactNode
 }
 
 type CanvasCell = {
@@ -93,20 +94,25 @@ type CanvasCell = {
   state: CellState
   source: string
   output?: string
-  agentTouched?: boolean
+}
+
+type NotebookArtifact = {
+  id: string
+  source: string
+  name: string
+  kind: string
+  size: string
 }
 
 const AddIcon = PhiIcons.action.add
 const ChatIcon = PhiIcons.nav.chat
 const CodeIcon = PhiIcons.tool.command
 const FileIcon = PhiIcons.tool.read
-const MoreIcon = PhiIcons.action.more
 const NotebookIcon = PhiIcons.nav.analysis
 const PlayIcon = PhiIcons.action.quick
 const RefreshIcon = PhiIcons.action.refresh
 const SaveIcon = PhiIcons.state.done
 const StopIcon = PhiIcons.action.stop
-const VariableIcon = PhiIcons.state.thinking
 
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 const macTitlebarHeight = 44
@@ -118,74 +124,6 @@ const collapsedRailWidth = 44
 const inspectorWidth = 340
 const minInspectorWidth = 240
 const maxInspectorWidth = 520
-
-const mockNotebooks: NotebookListEntry[] = [
-  { id: 'exploration', path: 'notebooks/exploration.ipynb', status: 'Unsaved' },
-  { id: 'qc', path: 'notebooks/qc-summary.ipynb', status: 'Saved' },
-  { id: 'figures', path: 'notebooks/figures.ipynb', status: 'Saved' }
-]
-
-const mockCells: CanvasCell[] = [
-  {
-    id: 'intro',
-    count: null,
-    type: 'markdown',
-    state: 'idle',
-    source:
-      '# Exploratory analysis\nLoad the sample table, inspect basic quality metrics, and sketch the first PCA view.'
-  },
-  {
-    id: 'load-data',
-    count: 1,
-    type: 'code',
-    language: 'python',
-    state: 'idle',
-    source: "import pandas as pd\nsamples = pd.read_csv('data/raw/samples.csv')\nsamples.head()",
-    output:
-      '5 rows x 8 columns · sample_id, condition, batch, reads, mapped_pct, duplication_pct...',
-    agentTouched: false
-  },
-  {
-    id: 'qc-summary',
-    count: 2,
-    type: 'code',
-    language: 'python',
-    state: 'stale',
-    source: "qc = samples.groupby('condition')[['reads', 'mapped_pct']].mean()\nqc",
-    output: 'Output is stale after Cell 1 changed.'
-  },
-  {
-    id: 'plot',
-    count: 3,
-    type: 'code',
-    language: 'python',
-    state: 'running',
-    source:
-      "fig = px.scatter(pca, x='PC1', y='PC2', color='condition')\nfig.write_html('outputs/exploration/pca.html')",
-    output: 'Saving interactive artifact...'
-  },
-  {
-    id: 'error',
-    count: 4,
-    type: 'code',
-    language: 'R',
-    state: 'error',
-    source: 'library(ggplot2)\nggplot(samples, aes(condition, mapped_pct)) + geom_boxplot()',
-    output: "Error: object 'mapped_pct' not found in R kernel"
-  }
-]
-
-const variables = [
-  { name: 'samples', type: 'DataFrame', shape: '128 x 8', detail: '8 columns · 2 missing values' },
-  { name: 'qc', type: 'DataFrame', shape: '4 x 2', detail: 'condition-level summary' },
-  { name: 'fig', type: 'Plotly Figure', shape: 'artifact', detail: 'outputs/exploration/pca.html' }
-]
-
-const artifacts = [
-  { source: 'Cell 3', name: 'pca.html', kind: 'HTML', size: '241 KB' },
-  { source: 'Cell 2', name: 'qc_table.csv', kind: 'Table', size: '3 KB' },
-  { source: 'Cell 4', name: 'r-boxplot-error.txt', kind: 'Log', size: '1 KB' }
-]
 
 function stateLabel(state: CellState): string {
   if (state === 'running') return 'Running'
@@ -327,6 +265,49 @@ function textFromOutputData(data: JsonObject): string | undefined {
   return undefined
 }
 
+function notebookOutputDataKind(key: string): string {
+  if (key === 'text/html') return 'HTML'
+  if (key === 'image/png') return 'PNG'
+  if (key === 'image/jpeg') return 'JPEG'
+  if (key === 'image/svg+xml') return 'SVG'
+  if (key === 'application/vnd.plotly.v1+json') return 'Plotly'
+  if (key === 'application/json') return 'JSON'
+  if (key.startsWith('text/')) return key.slice('text/'.length).toUpperCase()
+  return key
+}
+
+function notebookOutputDataBytes(value: unknown): number {
+  if (typeof value === 'string') return value.length
+  try {
+    return JSON.stringify(value).length
+  } catch {
+    return 0
+  }
+}
+
+function notebookArtifacts(document: NotebookDocument | null | undefined): NotebookArtifact[] {
+  if (!document) return []
+  return document.cells.flatMap((cell, cellIndex) => {
+    if (cell.cellType !== 'code') return []
+    return cell.outputs.flatMap((output, outputIndex) => {
+      const entries = Object.entries(output.data).filter(
+        ([key]) => key !== 'text/plain' && key !== 'text/markdown'
+      )
+      return entries.map(([key, value], dataIndex) => {
+        const kind = notebookOutputDataKind(key)
+        return {
+          id: `${cell.id}:${outputIndex}:${key}`,
+          source:
+            cell.executionCount !== null ? `Cell ${cell.executionCount}` : `Cell ${cellIndex + 1}`,
+          name: `${cell.id || `cell-${cellIndex + 1}`}.${kind.toLocaleLowerCase()}`,
+          kind,
+          size: formatBytes(notebookOutputDataBytes(value) + dataIndex)
+        }
+      })
+    })
+  })
+}
+
 function outputPreview(cell: NotebookCell): string | undefined {
   const outputs = cell.outputs
     .map((output) => {
@@ -371,7 +352,7 @@ function notebookStatus(notebook: AnalysisNotebookSummary): string {
 function registryNotebooks(
   registry: AnalysisNotebookRegistry | null | undefined
 ): NotebookListEntry[] {
-  if (!registry) return mockNotebooks
+  if (!registry) return []
   return registry.notebooks.map((notebook) => ({
     id: notebook.path,
     path: notebook.relativePath,
@@ -387,69 +368,21 @@ function AnalysisChatPanel({
 }): React.JSX.Element {
   return (
     <Box sx={{ display: 'flex', minHeight: 0, flex: 1, flexDirection: 'column' }}>
-      <Box sx={{ px: 1, pb: 0.75 }}>
+      <Box sx={{ px: 1, pb: 0.75, pt: 1 }}>
         <Typography
           variant="caption"
           color="text.secondary"
           noWrap
           sx={{ display: 'block', fontFamily: 'var(--font-mono)' }}
         >
-          {activeNotebookPath} · Cell 3
+          {activeNotebookPath}
         </Typography>
       </Box>
       <Divider />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: 1.5 }}>
-        <Stack spacing={1.2}>
-          <Box
-            sx={{
-              alignSelf: 'flex-start',
-              borderRadius: 1,
-              bgcolor: 'action.hover',
-              px: 1.25,
-              py: 1
-            }}
-          >
-            <Typography variant="body2">
-              我已把 PCA 图保存为交互式 artifact，并标记 Cell 2 输出过期。
-            </Typography>
-          </Box>
-          <Box
-            sx={{
-              alignSelf: 'stretch',
-              border: 1,
-              borderColor: 'divider',
-              borderRadius: 1,
-              px: 1.25,
-              py: 1
-            }}
-          >
-            <Typography variant="caption" color="text.secondary">
-              变更摘要
-            </Typography>
-            <Typography variant="body2" sx={{ mt: 0.25 }}>
-              Updated Cell 1, appended Cell 3, saved 1 artifact.
-            </Typography>
-          </Box>
-        </Stack>
-      </Box>
-      <Divider />
-      <Box sx={{ p: 1 }}>
-        <TextField
-          fullWidth
-          multiline
-          minRows={2}
-          maxRows={4}
-          placeholder="询问当前 cell、notebook 或项目..."
-          size="small"
-        />
-        <Box sx={{ mt: 1, display: 'flex', justifyContent: 'space-between', gap: 1 }}>
-          <Button size="small" variant="outlined" startIcon={<AddIcon fontSize="small" />}>
-            引用
-          </Button>
-          <Button size="small" variant="contained" endIcon={<ChatIcon fontSize="small" />}>
-            发送
-          </Button>
-        </Box>
+        <Typography variant="body2" color="text.secondary">
+          当前容器未传入真实聊天面板。
+        </Typography>
       </Box>
     </Box>
   )
@@ -576,6 +509,7 @@ function LeftRail({
   onRefreshNotebooks,
   onInitializeProjectAnalysis,
   onCreateNotebook,
+  chatPanel,
   onToggleCollapsed
 }: {
   panel: LeftPanel
@@ -591,6 +525,7 @@ function LeftRail({
   onRefreshNotebooks?: () => void
   onInitializeProjectAnalysis?: (cwd: string) => void
   onCreateNotebook?: (cwd: string) => void
+  chatPanel?: ReactNode
   onToggleCollapsed: () => void
 }): React.JSX.Element {
   const tabs = [
@@ -677,7 +612,11 @@ function LeftRail({
         </Tabs>
       </Box>
       {panel === 'chat' ? (
-        <AnalysisChatPanel activeNotebookPath={activeNotebookPath ?? 'No notebook selected'} />
+        chatPanel ? (
+          <Box sx={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>{chatPanel}</Box>
+        ) : (
+          <AnalysisChatPanel activeNotebookPath={activeNotebookPath ?? 'No notebook selected'} />
+        )
       ) : (
         <NotebookList
           notebooks={notebooks}
@@ -840,26 +779,6 @@ function NotebookHeader({
             </span>
           </Tooltip>
         ) : null}
-        <Tooltip title="运行全部 cell">
-          <IconButton size="small" aria-label="运行全部 cell" disabled>
-            <PlayIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="中断 kernel">
-          <IconButton size="small" aria-label="中断 kernel" disabled>
-            <StopIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="重启 kernel">
-          <IconButton size="small" aria-label="重启 kernel" disabled>
-            <RefreshIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="更多 notebook 操作">
-          <IconButton size="small" aria-label="更多 notebook 操作">
-            <MoreIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
       </Stack>
     </Box>
   )
@@ -972,24 +891,6 @@ function Cell({
           sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: stateColor(cell.state) }}
           title={stateLabel(cell.state)}
         />
-        {cell.agentTouched ? (
-          <Tooltip title="Agent transaction: updated source and saved output preview">
-            <Box
-              sx={{
-                width: 18,
-                height: 18,
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                bgcolor: 'action.selected',
-                color: 'primary.main'
-              }}
-            >
-              <VariableIcon sx={{ fontSize: 13 }} />
-            </Box>
-          </Tooltip>
-        ) : null}
       </Box>
       <Box
         className="cell-shell"
@@ -1041,11 +942,6 @@ function Cell({
               sx={{ width: 24, height: 24 }}
             >
               <AddIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="更多 cell 操作">
-            <IconButton size="small" aria-label="更多 cell 操作" sx={{ width: 24, height: 24 }}>
-              <MoreIcon fontSize="small" />
             </IconButton>
           </Tooltip>
         </Box>
@@ -1193,13 +1089,11 @@ function NotebookCanvas({
   activeNotebookPath,
   notebookFile,
   initialDocument,
-  hasNotebookRegistry,
   isOpening,
   error,
   kernelDiagnostics,
   isLoadingKernels,
   kernelError,
-  jupyterServerStatus,
   notebookSessionStatus,
   isStartingNotebookSession,
   notebookSessionError,
@@ -1214,13 +1108,11 @@ function NotebookCanvas({
   activeNotebookPath: string
   notebookFile?: AnalysisNotebookFile | null
   initialDocument: NotebookDocument | null
-  hasNotebookRegistry?: boolean
   isOpening?: boolean
   error?: string | null
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
   isLoadingKernels?: boolean
   kernelError?: string | null
-  jupyterServerStatus?: JupyterServerStatus | null
   notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   isStartingNotebookSession?: boolean
   notebookSessionError?: string | null
@@ -1237,19 +1129,7 @@ function NotebookCanvas({
   ) => void
 }): React.JSX.Element {
   const [draftDocument, setDraftDocument] = useState<NotebookDocument | null>(initialDocument)
-  const hasProjectAnalysisContext = Boolean(
-    hasNotebookRegistry ||
-    kernelDiagnostics ||
-    jupyterServerStatus ||
-    notebookSessionStatus ||
-    kernelError ||
-    notebookFile
-  )
-  const cells = draftDocument
-    ? documentCells(draftDocument, executingCellId)
-    : hasProjectAnalysisContext
-      ? []
-      : mockCells
+  const cells = draftDocument ? documentCells(draftDocument, executingCellId) : []
   const canRunCells = Boolean(draftDocument && isNotebookSessionRunnable(notebookSessionStatus))
   const kernelLabel = draftDocument
     ? isNotebookSessionRunnable(notebookSessionStatus)
@@ -1257,9 +1137,7 @@ function NotebookCanvas({
         notebookSessionStatus?.kernelName ??
         notebookLanguage(draftDocument))
       : `${notebookLanguage(draftDocument)} notebook`
-    : hasProjectAnalysisContext
-      ? 'No notebook'
-      : 'Python 3.11 demo'
+    : 'No notebook'
   const kernelStatusLabel = notebookSessionStatus
     ? notebookSessionStateLabel(notebookSessionStatus)
     : kernelAvailabilityLabel(
@@ -1685,20 +1563,6 @@ function VariablesTab({
   onStartJupyterServer?: (cwd: string) => void
   onStopJupyterServer?: (cwd: string) => void
 }): React.JSX.Element {
-  const hasLiveKernel = Boolean(
-    notebookSessionStatus?.sessionId &&
-    (notebookSessionStatus.state === 'idle' ||
-      notebookSessionStatus.state === 'busy' ||
-      notebookSessionStatus.state === 'restarting')
-  )
-  const showDemoVariables = Boolean(
-    !projectCwd &&
-    !kernelDiagnostics &&
-    !jupyterServerStatus &&
-    !notebookSessionStatus &&
-    !kernelError
-  )
-  const showVariables = hasLiveKernel && showDemoVariables
   return (
     <Stack spacing={1}>
       <KernelStatusSummary
@@ -1715,94 +1579,70 @@ function VariablesTab({
         onStartServer={onStartJupyterServer}
         onStopServer={onStopJupyterServer}
       />
-      {showVariables ? (
-        <>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
-            <Typography variant="caption" color="text.secondary">
-              Refreshed after Cell 3
-            </Typography>
-            <Button size="small" startIcon={<RefreshIcon fontSize="small" />}>
-              刷新
-            </Button>
-          </Box>
-          {variables.map((variable) => (
-            <Box
-              key={variable.name}
-              sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25, minWidth: 0 }}
-            >
-              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                <Typography
-                  variant="body2"
-                  sx={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)', fontWeight: 800 }}
-                  noWrap
-                >
-                  {variable.name}
-                </Typography>
-                <Chip size="small" variant="outlined" label={variable.type} />
-              </Box>
-              <Typography variant="caption" color="text.secondary">
-                {variable.shape} · {variable.detail}
-              </Typography>
-            </Box>
-          ))}
-          <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
-            <Box sx={{ px: 1.25, py: 0.9, borderBottom: 1, borderColor: 'divider' }}>
-              <Typography variant="caption" sx={{ fontWeight: 800 }}>
-                Data Preview · samples
-              </Typography>
-            </Box>
-            {[
-              'sample_id | condition | reads | mapped_pct',
-              'S1        | treated   | 24011 | 92.4',
-              'S2        | control   | 19842 | 89.7'
-            ].map((row) => (
-              <Typography
-                key={row}
-                component="pre"
-                variant="caption"
-                sx={{ m: 0, px: 1.25, py: 0.45, fontFamily: 'var(--font-mono)' }}
-              >
-                {row}
-              </Typography>
-            ))}
-          </Box>
-        </>
-      ) : (
-        <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25 }}>
-          <Typography variant="body2" sx={{ fontWeight: 700 }}>
-            变量检查
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            暂时保持收起；后续接入真实变量抓取后再按需展开。
-          </Typography>
-        </Box>
-      )}
+      <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25 }}>
+        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+          变量检查
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          暂时保持收起；接入真实 kernel 变量抓取 API 后再显示变量列表。
+        </Typography>
+      </Box>
     </Stack>
   )
 }
 
-function ArtifactsTab(): React.JSX.Element {
+function ArtifactsTab({
+  notebookFile
+}: {
+  notebookFile?: AnalysisNotebookFile | null
+}): React.JSX.Element {
+  const artifacts = notebookArtifacts(notebookFile?.document)
+
   return (
     <Stack spacing={1}>
-      <Typography variant="caption" color="text.secondary">
-        notebooks/exploration.ipynb
-      </Typography>
-      {artifacts.map((artifact) => (
-        <Box
-          key={artifact.name}
-          sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25, minWidth: 0 }}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="body2" noWrap sx={{ flex: 1, minWidth: 0, fontWeight: 800 }}>
-              {artifact.name}
-            </Typography>
-            <Chip size="small" label={artifact.kind} />
-          </Box>
+      {notebookFile ? (
+        <>
+          <Typography variant="caption" color="text.secondary" noWrap>
+            {notebookFile.relativePath}
+          </Typography>
+          {artifacts.length > 0 ? (
+            artifacts.map((artifact) => (
+              <Box
+                key={artifact.id}
+                sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25, minWidth: 0 }}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography variant="body2" noWrap sx={{ flex: 1, minWidth: 0, fontWeight: 800 }}>
+                    {artifact.name}
+                  </Typography>
+                  <Chip size="small" label={artifact.kind} />
+                </Box>
+                <Typography variant="caption" color="text.secondary">
+                  {artifact.source} · {artifact.size}
+                </Typography>
+              </Box>
+            ))
+          ) : (
+            <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25 }}>
+              <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                没有输出产物
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                运行产生 HTML、图片或 JSON 输出的 cell 后，这里会显示真实产物。
+              </Typography>
+            </Box>
+          )}
+        </>
+      ) : (
+        <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25 }}>
+          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+            还没有打开 notebook
+          </Typography>
           <Typography variant="caption" color="text.secondary">
-            {artifact.source} · {artifact.size}
+            打开 notebook 后显示真实输出产物。
           </Typography>
         </Box>
-      ))}
+      )}
     </Stack>
   )
 }
@@ -1812,6 +1652,7 @@ function InspectorContent({
   notebooks,
   activeNotebookPath,
   notebookRegistry,
+  notebookFile,
   isLoadingNotebooks,
   notebookError,
   projectCwd,
@@ -1835,6 +1676,7 @@ function InspectorContent({
   notebooks: NotebookListEntry[]
   activeNotebookPath: string | null
   notebookRegistry?: AnalysisNotebookRegistry | null
+  notebookFile?: AnalysisNotebookFile | null
   isLoadingNotebooks?: boolean
   notebookError?: string | null
   projectCwd?: string | null
@@ -1872,7 +1714,7 @@ function InspectorContent({
       />
     )
   }
-  if (tab === 'artifacts') return <ArtifactsTab />
+  if (tab === 'artifacts') return <ArtifactsTab notebookFile={notebookFile} />
   return (
     <FilesTab
       notebooks={notebooks}
@@ -1894,6 +1736,7 @@ function RightInspector({
   notebooks,
   activeNotebookPath,
   notebookRegistry,
+  notebookFile,
   isLoadingNotebooks,
   notebookError,
   projectCwd,
@@ -1919,6 +1762,7 @@ function RightInspector({
   notebooks: NotebookListEntry[]
   activeNotebookPath: string | null
   notebookRegistry?: AnalysisNotebookRegistry | null
+  notebookFile?: AnalysisNotebookFile | null
   isLoadingNotebooks?: boolean
   notebookError?: string | null
   projectCwd?: string | null
@@ -1990,6 +1834,7 @@ function RightInspector({
           notebooks={notebooks}
           activeNotebookPath={activeNotebookPath}
           notebookRegistry={notebookRegistry}
+          notebookFile={notebookFile}
           isLoadingNotebooks={isLoadingNotebooks}
           notebookError={notebookError}
           projectCwd={projectCwd}
@@ -2081,7 +1926,8 @@ export default function AnalysisView({
   onInitializeProjectAnalysis,
   onOpenNotebook,
   onSaveNotebook,
-  onCreateNotebook
+  onCreateNotebook,
+  chatPanel
 }: AnalysisViewProps = {}): React.JSX.Element {
   const [leftPanel, setLeftPanel] = useState<LeftPanel>(initialLeftPanel)
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>(initialInspectorTab)
@@ -2185,6 +2031,7 @@ export default function AnalysisView({
         onRefreshNotebooks={onRefreshNotebooks}
         onInitializeProjectAnalysis={onInitializeProjectAnalysis}
         onCreateNotebook={onCreateNotebook}
+        chatPanel={chatPanel}
         onToggleCollapsed={() => setLeftCollapsed((value) => !value)}
       />
       {!leftCollapsed ? (
@@ -2194,18 +2041,16 @@ export default function AnalysisView({
         key={
           notebookFile
             ? `${notebookFile.path}:${notebookFile.savedRevision}:${notebookFile.document.revision}`
-            : 'mock'
+            : 'empty'
         }
         activeNotebookPath={activeNotebookPath ?? 'No notebook selected'}
         notebookFile={notebookFile}
         initialDocument={notebookFile?.document ?? null}
-        hasNotebookRegistry={Boolean(notebookRegistry)}
         isOpening={isOpeningNotebook}
         error={notebookContentError}
         kernelDiagnostics={kernelDiagnostics}
         isLoadingKernels={isLoadingKernels}
         kernelError={kernelError}
-        jupyterServerStatus={jupyterServerStatus}
         notebookSessionStatus={notebookSessionStatus}
         isStartingNotebookSession={isStartingNotebookSession}
         notebookSessionError={notebookSessionError}
@@ -2227,6 +2072,7 @@ export default function AnalysisView({
           notebooks={notebooks}
           activeNotebookPath={activeNotebookPath}
           notebookRegistry={notebookRegistry}
+          notebookFile={notebookFile}
           isLoadingNotebooks={isLoadingNotebooks}
           notebookError={notebookError}
           projectCwd={notebookRegistry?.projectCwd ?? null}

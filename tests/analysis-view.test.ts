@@ -17,20 +17,26 @@ test('analysis view renders the first-phase notebook shell', () => {
   const markup = renderAnalysisView()
 
   assert.match(markup, /分析/)
-  assert.match(markup, /notebooks\/exploration\.ipynb/)
-  assert.match(markup, /Python 3\.11/)
+  assert.match(markup, /No notebook selected/)
   assert.match(markup, /Files/)
   assert.match(markup, /Variables/)
   assert.match(markup, /Artifacts/)
   assert.match(markup, /连接项目后显示真实 notebook 文件/)
+  assert.match(markup, /当前容器未传入真实聊天面板/)
   assert.match(markup, /调整分析侧栏宽度/)
   assert.match(markup, /调整检查器宽度/)
   assert.match(markup, /关闭右侧栏/)
   assert.match(markup, /添加 Code cell/)
   assert.match(markup, /添加 Markdown cell/)
+  assert.doesNotMatch(markup, /notebooks\/exploration\.ipynb/)
+  assert.doesNotMatch(markup, /Python 3\.11 demo/)
+  assert.doesNotMatch(markup, /Saving interactive artifact/)
   assert.doesNotMatch(markup, /Data Preview/)
   assert.doesNotMatch(markup, /Agent transaction/)
   assert.doesNotMatch(markup, /workflows\/main\.nf/)
+  assert.doesNotMatch(markup, /运行全部 cell/)
+  assert.doesNotMatch(markup, /更多 notebook 操作/)
+  assert.doesNotMatch(markup, /更多 cell 操作/)
   assert.doesNotMatch(markup, /展开分析侧栏/)
 })
 
@@ -136,6 +142,55 @@ test('analysis view renders an opened notebook document', () => {
   assert.match(markup, /real = 1/)
   assert.match(markup, /done/)
   assert.match(markup, /Saved/)
+})
+
+test('analysis view renders artifacts from opened notebook outputs', () => {
+  const document = parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: {
+      kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' },
+      language_info: { name: 'python' }
+    },
+    cells: [
+      {
+        id: 'plot-cell',
+        cell_type: 'code',
+        execution_count: 2,
+        metadata: {},
+        outputs: [
+          {
+            output_type: 'display_data',
+            metadata: {},
+            data: {
+              'text/html': '<div id="real-plot"></div>',
+              'text/plain': '<Figure>'
+            }
+          }
+        ],
+        source: 'fig'
+      }
+    ]
+  })
+  const markup = renderAnalysisView({
+    initialInspectorTab: 'artifacts',
+    notebookFile: {
+      path: '/project/notebooks/real.ipynb',
+      relativePath: 'notebooks/real.ipynb',
+      name: 'real.ipynb',
+      bytes: 512,
+      modifiedAt: '2026-09-09T00:00:00.000Z',
+      savedRevision: document.revision,
+      document
+    }
+  })
+
+  assert.match(markup, /notebooks\/real\.ipynb/)
+  assert.match(markup, /plot-cell\.html/)
+  assert.match(markup, /HTML/)
+  assert.match(markup, /Cell 2/)
+  assert.doesNotMatch(markup, /pca\.html/)
+  assert.doesNotMatch(markup, /qc_table\.csv/)
 })
 
 test('analysis view renders an empty opened notebook as a writable canvas', () => {
@@ -310,7 +365,7 @@ test('analysis view marks the executing notebook cell as running', () => {
   assert.match(markup, /print/)
 })
 
-test('analysis view hides demo notebook and variables when project kernel is unavailable', () => {
+test('analysis view hides placeholder notebook and variables when project kernel is unavailable', () => {
   const markup = renderAnalysisView({
     initialInspectorTab: 'variables',
     notebookRegistry: {
