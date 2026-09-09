@@ -29,6 +29,24 @@ import {
   type ReactNode,
   type Ref
 } from 'react'
+import type { IconType } from 'react-icons'
+import {
+  SiAnthropic,
+  SiClaude,
+  SiDeepseek,
+  SiGithubcopilot,
+  SiGoogle,
+  SiGooglegemini,
+  SiMetaai,
+  SiMistralai,
+  SiMoonshotai,
+  SiOllama,
+  SiOpenrouter,
+  SiPerplexity,
+  SiQwen,
+  SiX
+} from 'react-icons/si'
+import { TbBrandOpenai } from 'react-icons/tb'
 import MarkdownContent, { type LocalPathKind } from './MarkdownContent'
 import ToolCallCard, { StatusIndicator } from './ToolCallCard'
 import ToolGroupCard from './ToolGroupCard'
@@ -86,114 +104,114 @@ const compactComposerIconButtonSx = {
 type ProviderIconMeta = {
   key: string
   label: string
-  shortLabel: string
   color: string
+  Icon?: IconType
 }
 
 const PROVIDER_ICON_RULES: Array<ProviderIconMeta & { matches: string[] }> = [
   {
     key: 'openai',
     label: 'OpenAI',
-    shortLabel: 'OA',
     color: '#10A37F',
+    Icon: TbBrandOpenai,
     matches: ['openai', 'codex', 'chatgpt']
   },
   {
     key: 'deepseek',
     label: 'DeepSeek',
-    shortLabel: 'DS',
     color: '#4D6BFE',
+    Icon: SiDeepseek,
     matches: ['deepseek']
   },
   {
     key: 'moonshot',
     label: 'Moonshot',
-    shortLabel: 'K',
     color: '#6D5DF6',
+    Icon: SiMoonshotai,
     matches: ['moonshot', 'kimi']
   },
   {
     key: 'anthropic',
     label: 'Anthropic',
-    shortLabel: 'A',
     color: '#D97757',
+    Icon: SiAnthropic,
     matches: ['anthropic']
   },
   {
     key: 'claude',
     label: 'Claude',
-    shortLabel: 'C',
     color: '#D97757',
+    Icon: SiClaude,
     matches: ['claude']
   },
   {
     key: 'gemini',
     label: 'Gemini',
-    shortLabel: 'G',
     color: '#4285F4',
+    Icon: SiGooglegemini,
     matches: ['gemini']
   },
   {
     key: 'google',
     label: 'Google',
-    shortLabel: 'G',
     color: '#4285F4',
+    Icon: SiGoogle,
     matches: ['google']
   },
   {
     key: 'qwen',
     label: 'Qwen',
-    shortLabel: 'Q',
     color: '#615CED',
+    Icon: SiQwen,
     matches: ['qwen', 'dashscope', 'alibaba']
   },
   {
     key: 'openrouter',
     label: 'OpenRouter',
-    shortLabel: 'OR',
     color: '#6C5CE7',
+    Icon: SiOpenrouter,
     matches: ['openrouter']
   },
   {
     key: 'ollama',
     label: 'Ollama',
-    shortLabel: 'OL',
     color: '#111827',
+    Icon: SiOllama,
     matches: ['ollama']
   },
   {
     key: 'mistral',
     label: 'Mistral',
-    shortLabel: 'MI',
     color: '#FA520F',
+    Icon: SiMistralai,
     matches: ['mistral']
   },
   {
     key: 'meta',
     label: 'Meta',
-    shortLabel: 'M',
     color: '#0668E1',
+    Icon: SiMetaai,
     matches: ['meta', 'llama']
   },
   {
     key: 'perplexity',
     label: 'Perplexity',
-    shortLabel: 'P',
     color: '#1FB8CD',
+    Icon: SiPerplexity,
     matches: ['perplexity']
   },
   {
     key: 'xai',
     label: 'xAI',
-    shortLabel: 'X',
     color: '#111827',
+    Icon: SiX,
     matches: ['xai', 'grok']
   },
   {
     key: 'copilot',
     label: 'GitHub Copilot',
-    shortLabel: 'GH',
     color: '#6E5494',
+    Icon: SiGithubcopilot,
     matches: ['copilot', 'github']
   }
 ]
@@ -207,14 +225,13 @@ function providerIconMeta(providerId?: string): ProviderIconMeta {
     return {
       key: matched.key,
       label: matched.label,
-      shortLabel: matched.shortLabel,
-      color: matched.color
+      color: matched.color,
+      Icon: matched.Icon
     }
   }
   return {
     key: 'generic',
     label: 'Model Provider',
-    shortLabel: 'AI',
     color: 'text.secondary'
   }
 }
@@ -253,31 +270,39 @@ function ProviderModelIcon({
   const meta = providerIconMeta(providerId)
   const color = disabled ? 'action.disabled' : meta.color
 
+  if (meta.Icon) {
+    const BrandIcon = meta.Icon
+    return (
+      <Box
+        component="span"
+        data-phi-provider-icon={meta.key}
+        aria-label={meta.label}
+        title={meta.label}
+        sx={{
+          alignItems: 'center',
+          color,
+          display: 'inline-flex',
+          flexShrink: 0,
+          fontSize: '1.2rem',
+          height: '1em',
+          justifyContent: 'center',
+          lineHeight: 0,
+          width: '1em'
+        }}
+      >
+        <BrandIcon color="currentColor" focusable="false" size="1em" />
+      </Box>
+    )
+  }
+
   return (
-    <Box
+    <PsychologyIcon
       data-phi-provider-icon={meta.key}
       aria-label={meta.label}
-      title={meta.label}
-      sx={{
-        width: 23,
-        height: 23,
-        borderRadius: '50%',
-        border: 1,
-        borderColor: color,
-        color,
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
-        fontSize: meta.shortLabel.length > 1 ? '0.54rem' : '0.68rem',
-        fontWeight: 800,
-        lineHeight: 1,
-        bgcolor: 'background.paper',
-        userSelect: 'none'
-      }}
-    >
-      {meta.shortLabel}
-    </Box>
+      htmlColor={undefined}
+      size="1.2rem"
+      sx={{ color }}
+    />
   )
 }
 

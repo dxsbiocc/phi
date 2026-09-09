@@ -36,6 +36,7 @@
     "@mui/material": "^9.4.0",
     "@oh-my-pi/pi-coding-agent": "18.1.10",
     "lucide-react": "^1.41.0",
+    "react-icons": "^5.7.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },
