@@ -48,6 +48,7 @@ export type AnalysisViewProps = {
   notebookRegistry?: AnalysisNotebookRegistry | null
   notebookFile?: AnalysisNotebookFile | null
   initialLeftPanel?: LeftPanel
+  initialInspectorTab?: InspectorTab
   isLoadingNotebooks?: boolean
   isOpeningNotebook?: boolean
   notebookError?: string | null
@@ -103,6 +104,7 @@ const MoreIcon = PhiIcons.action.more
 const NotebookIcon = PhiIcons.nav.analysis
 const PlayIcon = PhiIcons.action.quick
 const RefreshIcon = PhiIcons.action.refresh
+const SaveIcon = PhiIcons.state.done
 const StopIcon = PhiIcons.action.stop
 const VariableIcon = PhiIcons.state.thinking
 
@@ -138,7 +140,7 @@ const mockCells: CanvasCell[] = [
     source: "import pandas as pd\nsamples = pd.read_csv('data/raw/samples.csv')\nsamples.head()",
     output:
       '5 rows x 8 columns · sample_id, condition, batch, reads, mapped_pct, duplication_pct...',
-    agentTouched: true
+    agentTouched: false
   },
   {
     id: 'qc-summary',
@@ -433,7 +435,7 @@ function AnalysisChatPanel({
             }}
           >
             <Typography variant="caption" color="text.secondary">
-              Agent transaction
+              变更摘要
             </Typography>
             <Typography variant="body2" sx={{ mt: 0.25 }}>
               Updated Cell 1, appended Cell 3, saved 1 artifact.
@@ -759,24 +761,41 @@ function NotebookHeader({
       >
         {activeNotebookPath}
       </Typography>
-      <Chip size="small" variant="outlined" label={kernelLabel} />
-      <Chip size="small" color={kernelStatusColor} variant="outlined" label={kernelStatusLabel} />
-      <Chip
-        size="small"
-        color={isDirty ? 'warning' : 'success'}
-        variant="outlined"
-        label={isDirty ? 'Unsaved' : 'Saved'}
-      />
+      <Box
+        sx={{
+          display: { xs: 'none', md: 'flex' },
+          alignItems: 'center',
+          gap: 0.75,
+          minWidth: 0,
+          color: 'text.secondary'
+        }}
+      >
+        <Box
+          sx={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            bgcolor: kernelStatusColor === 'default' ? 'text.disabled' : `${kernelStatusColor}.main`
+          }}
+        />
+        <Typography variant="caption" noWrap>
+          {kernelLabel} · {kernelStatusLabel} · {isDirty ? 'Unsaved' : 'Saved'}
+        </Typography>
+      </Box>
       <Stack direction="row" spacing={0.5} sx={{ WebkitAppRegion: 'no-drag' }}>
         {hasDocument ? (
-          <Button
-            size="small"
-            variant="contained"
-            disabled={!isDirty || isOpening}
-            onClick={onSave}
-          >
-            保存
-          </Button>
+          <Tooltip title={isDirty ? '保存 notebook' : '已保存'}>
+            <span>
+              <IconButton
+                size="small"
+                aria-label="保存 notebook"
+                disabled={!isDirty || isOpening}
+                onClick={onSave}
+              >
+                <SaveIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
         ) : null}
         {onRefreshKernels ? (
           <Tooltip title="刷新 kernels">
@@ -786,33 +805,39 @@ function NotebookHeader({
           </Tooltip>
         ) : null}
         {canConnectNotebookSession ? (
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<PlayIcon fontSize="small" />}
-            disabled={Boolean(isStartingNotebookSession)}
-            onClick={() => {
-              if (notebookFile && draftDocument) {
-                onStartNotebookSession?.(notebookFile, draftDocument)
-              }
-            }}
-          >
-            连接 kernel
-          </Button>
+          <Tooltip title="连接 kernel">
+            <span>
+              <IconButton
+                size="small"
+                aria-label="连接 kernel"
+                disabled={Boolean(isStartingNotebookSession)}
+                onClick={() => {
+                  if (notebookFile && draftDocument) {
+                    onStartNotebookSession?.(notebookFile, draftDocument)
+                  }
+                }}
+              >
+                <PlayIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
         ) : null}
         {canDisconnectNotebookSession ? (
-          <Button
-            size="small"
-            variant="outlined"
-            color="warning"
-            startIcon={<StopIcon fontSize="small" />}
-            disabled={Boolean(isStartingNotebookSession)}
-            onClick={() => {
-              if (notebookFile) onStopNotebookSession?.(notebookFile)
-            }}
-          >
-            断开
-          </Button>
+          <Tooltip title="断开 kernel">
+            <span>
+              <IconButton
+                size="small"
+                color="warning"
+                aria-label="断开 kernel"
+                disabled={Boolean(isStartingNotebookSession)}
+                onClick={() => {
+                  if (notebookFile) onStopNotebookSession?.(notebookFile)
+                }}
+              >
+                <StopIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
         ) : null}
         <Tooltip title="运行全部 cell">
           <IconButton size="small" aria-label="运行全部 cell" disabled>
@@ -861,14 +886,14 @@ function Cell({
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: '44px minmax(0, 1fr)',
-        gap: 1.25,
-        py: 1.6,
+        gridTemplateColumns: '32px minmax(0, 1fr)',
+        gap: 1,
+        py: 1.2,
         '&:hover .cell-hover-actions': { opacity: 1 }
       }}
     >
       <Box
-        sx={{ display: 'flex', alignItems: 'center', flexDirection: 'column', gap: 0.8, pt: 0.5 }}
+        sx={{ display: 'flex', alignItems: 'center', flexDirection: 'column', gap: 0.65, pt: 0.35 }}
       >
         <Tooltip title="运行 cell">
           <IconButton
@@ -876,19 +901,19 @@ function Cell({
             aria-label="运行 cell"
             disabled={!canRun}
             onClick={() => onRunCell?.(cell.id)}
-            sx={{ width: 30, height: 30 }}
+            sx={{ width: 28, height: 28 }}
           >
             <PlayIcon fontSize="small" />
           </IconButton>
         </Tooltip>
         <Typography
           variant="caption"
-          sx={{ fontFamily: 'var(--font-mono)', color: 'text.secondary', minHeight: 18 }}
+          sx={{ fontFamily: 'var(--font-mono)', color: 'text.secondary', minHeight: 16 }}
         >
           {cell.count ?? ''}
         </Typography>
         <Box
-          sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: stateColor(cell.state) }}
+          sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: stateColor(cell.state) }}
           title={stateLabel(cell.state)}
         />
         {cell.agentTouched ? (
@@ -915,7 +940,7 @@ function Cell({
           minWidth: 0,
           border: 1,
           borderColor: cell.state === 'error' ? 'error.main' : 'divider',
-          borderRadius: 2,
+          borderRadius: 1,
           bgcolor: (theme) =>
             alpha(theme.palette.background.paper, theme.palette.mode === 'dark' ? 0.5 : 0.9),
           overflow: 'hidden'
@@ -924,27 +949,28 @@ function Cell({
         <Box
           className="cell-hover-actions"
           sx={{
-            minHeight: 34,
-            px: 1.25,
+            minHeight: 30,
+            px: 1,
             display: 'flex',
             alignItems: 'center',
             gap: 0.75,
             borderBottom: isMarkdown ? 0 : 1,
             borderColor: 'divider',
-            opacity: cell.state === 'running' || cell.state === 'error' ? 1 : 0.2,
+            opacity: cell.state === 'running' || cell.state === 'error' ? 1 : 0.28,
             transition: 'opacity 150ms ease'
           }}
         >
-          <Chip
-            size="small"
-            label={isMarkdown ? 'Markdown' : (cell.language ?? 'Code')}
-            variant="outlined"
-          />
-          <Chip
-            size="small"
-            label={stateLabel(cell.state)}
-            sx={{ color: stateColor(cell.state) }}
-          />
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontFamily: 'var(--font-mono)', textTransform: 'lowercase' }}
+          >
+            {isMarkdown ? 'markdown' : (cell.language ?? 'code')}
+          </Typography>
+          <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: stateColor(cell.state) }} />
+          <Typography variant="caption" sx={{ color: stateColor(cell.state) }}>
+            {stateLabel(cell.state)}
+          </Typography>
           <Box sx={{ flex: 1 }} />
           <Tooltip title="插入 cell">
             <IconButton
@@ -973,7 +999,7 @@ function Cell({
               input: {
                 disableUnderline: true,
                 sx: {
-                  p: isMarkdown ? 2 : 1.5,
+                  p: isMarkdown ? 1.7 : 1.35,
                   alignItems: 'flex-start',
                   fontFamily: isMarkdown ? 'inherit' : 'var(--font-mono)',
                   fontSize: isMarkdown ? '0.95rem' : '0.82rem',
@@ -988,7 +1014,7 @@ function Cell({
             variant="body2"
             sx={{
               m: 0,
-              p: isMarkdown ? 2 : 1.5,
+              p: isMarkdown ? 1.7 : 1.35,
               whiteSpace: 'pre-wrap',
               overflowWrap: 'anywhere',
               fontFamily: isMarkdown ? 'inherit' : 'var(--font-mono)',
@@ -1004,9 +1030,9 @@ function Cell({
             <Divider />
             <Box
               sx={{
-                px: 1.5,
-                py: 1.25,
-                bgcolor: (theme) => alpha(theme.palette.text.primary, 0.035)
+                px: 1.35,
+                py: 1,
+                bgcolor: (theme) => alpha(theme.palette.text.primary, 0.03)
               }}
             >
               <Typography variant="caption" color="text.secondary">
@@ -1271,7 +1297,7 @@ function KernelStatusSummary({
     <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25, minWidth: 0 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Typography variant="caption" sx={{ flex: 1, fontWeight: 800 }}>
-          Kernel diagnostics
+          Kernel
         </Typography>
         {onRefresh ? (
           <Tooltip title="刷新 kernels">
@@ -1414,7 +1440,7 @@ function VariablesTab({
     !notebookSessionStatus &&
     !kernelError
   )
-  const showVariables = hasLiveKernel || showDemoVariables
+  const showVariables = hasLiveKernel && showDemoVariables
   return (
     <Stack spacing={1}>
       <KernelStatusSummary
@@ -1486,10 +1512,10 @@ function VariablesTab({
       ) : (
         <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25 }}>
           <Typography variant="body2" sx={{ fontWeight: 700 }}>
-            尚未连接可用 kernel
+            变量检查
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            启动 Jupyter 并连接 notebook kernel 后，执行 cell 会刷新变量和数据预览。
+            暂时保持收起；后续接入真实变量抓取后再按需展开。
           </Typography>
         </Box>
       )}
@@ -1721,6 +1747,7 @@ export default function AnalysisView({
   notebookRegistry,
   notebookFile,
   initialLeftPanel = 'chat',
+  initialInspectorTab = 'files',
   isLoadingNotebooks = false,
   isOpeningNotebook = false,
   notebookError = null,
@@ -1750,7 +1777,7 @@ export default function AnalysisView({
   onCreateNotebook
 }: AnalysisViewProps = {}): React.JSX.Element {
   const [leftPanel, setLeftPanel] = useState<LeftPanel>(initialLeftPanel)
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('variables')
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>(initialInspectorTab)
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false)
   const notebooks = useMemo(() => registryNotebooks(notebookRegistry), [notebookRegistry])

@@ -22,8 +22,9 @@ test('analysis view renders the first-phase notebook shell', () => {
   assert.match(markup, /Files/)
   assert.match(markup, /Variables/)
   assert.match(markup, /Artifacts/)
-  assert.match(markup, /Data Preview/)
-  assert.match(markup, /Agent transaction/)
+  assert.match(markup, /workflows\/main\.nf/)
+  assert.doesNotMatch(markup, /Data Preview/)
+  assert.doesNotMatch(markup, /Agent transaction/)
 })
 
 test('analysis view renders project notebook registry entries', () => {
@@ -116,6 +117,7 @@ test('analysis view renders an opened notebook document', () => {
 
 test('analysis view renders local kernel diagnostics', () => {
   const markup = renderAnalysisView({
+    initialInspectorTab: 'variables',
     kernelDiagnostics: {
       jupyterServer: { available: true, command: 'jupyter', version: '2.14.0' },
       kernels: [
@@ -133,7 +135,7 @@ test('analysis view renders local kernel diagnostics', () => {
     }
   })
 
-  assert.match(markup, /Kernel diagnostics/)
+  assert.match(markup, /Kernel/)
   assert.match(markup, /Jupyter 2\.14\.0/)
   assert.match(markup, /Python kernel/)
   assert.match(markup, /R missing/)
@@ -142,6 +144,7 @@ test('analysis view renders local kernel diagnostics', () => {
 
 test('analysis view renders local Jupyter server controls', () => {
   const markup = renderAnalysisView({
+    initialInspectorTab: 'variables',
     notebookRegistry: {
       projectCwd: '/project',
       projectName: 'Demo',
@@ -177,6 +180,7 @@ test('analysis view renders notebook kernel session controls and status', () => 
   })
 
   const disconnected = renderAnalysisView({
+    initialInspectorTab: 'variables',
     notebookFile: {
       path: '/project/notebooks/real.ipynb',
       relativePath: 'notebooks/real.ipynb',
@@ -197,6 +201,7 @@ test('analysis view renders notebook kernel session controls and status', () => 
     onStartNotebookSession: () => undefined
   })
   const connected = renderAnalysisView({
+    initialInspectorTab: 'variables',
     notebookFile: {
       path: '/project/notebooks/real.ipynb',
       relativePath: 'notebooks/real.ipynb',
@@ -256,6 +261,7 @@ test('analysis view marks the executing notebook cell as running', () => {
 
 test('analysis view hides demo notebook and variables when project kernel is unavailable', () => {
   const markup = renderAnalysisView({
+    initialInspectorTab: 'variables',
     notebookRegistry: {
       projectCwd: '/project',
       projectName: 'Demo',
@@ -276,6 +282,6 @@ test('analysis view hides demo notebook and variables when project kernel is una
   assert.doesNotMatch(markup, /Saving interactive artifact/)
   assert.doesNotMatch(markup, /Refreshed after Cell 3/)
   assert.match(markup, /选择或创建 notebook 后开始分析/)
-  assert.match(markup, /尚未连接可用 kernel/)
+  assert.match(markup, /变量检查/)
   assert.match(markup, /请重启 Phi/)
 })
