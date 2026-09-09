@@ -315,6 +315,12 @@ function notebookSessionStateColor(
   return 'default'
 }
 
+function isNotebookSessionRunnable(
+  status: AnalysisNotebookSessionStatus | null | undefined
+): boolean {
+  return Boolean(status?.sessionId && status.state === 'idle')
+}
+
 function textFromOutputData(data: JsonObject): string | undefined {
   const plain = data['text/plain']
   if (typeof plain === 'string') return plain
@@ -838,16 +844,19 @@ function Cell({
   editable = false,
   onSourceChange,
   onInsertAfter,
-  onRunCell
+  onRunCell,
+  canRunCells = false
 }: {
   cell: CanvasCell
   editable?: boolean
   onSourceChange?: (cellId: string, source: string) => void
   onInsertAfter?: (cellId: string) => void
   onRunCell?: (cellId: string) => void
+  canRunCells?: boolean
 }): React.JSX.Element {
   const isMarkdown = cell.type === 'markdown'
-  const canRun = cell.type === 'code' && Boolean(onRunCell) && cell.state !== 'running'
+  const canRun =
+    cell.type === 'code' && Boolean(onRunCell) && canRunCells && cell.state !== 'running'
   return (
     <Box
       sx={{
@@ -1035,6 +1044,7 @@ function NotebookCanvas({
   kernelDiagnostics,
   isLoadingKernels,
   kernelError,
+  jupyterServerStatus,
   notebookSessionStatus,
   isStartingNotebookSession,
   notebookSessionError,
@@ -1054,6 +1064,7 @@ function NotebookCanvas({
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
   isLoadingKernels?: boolean
   kernelError?: string | null
+  jupyterServerStatus?: JupyterServerStatus | null
   notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   isStartingNotebookSession?: boolean
   notebookSessionError?: string | null
@@ -1070,8 +1081,24 @@ function NotebookCanvas({
   ) => void
 }): React.JSX.Element {
   const [draftDocument, setDraftDocument] = useState<NotebookDocument | null>(initialDocument)
-  const cells = draftDocument ? documentCells(draftDocument, executingCellId) : mockCells
-  const kernelLabel = draftDocument ? notebookLanguage(draftDocument) : 'Python 3.11'
+  const hasProjectAnalysisContext = Boolean(
+    kernelDiagnostics || jupyterServerStatus || notebookSessionStatus || kernelError || notebookFile
+  )
+  const cells = draftDocument
+    ? documentCells(draftDocument, executingCellId)
+    : hasProjectAnalysisContext
+      ? []
+      : mockCells
+  const canRunCells = Boolean(draftDocument && isNotebookSessionRunnable(notebookSessionStatus))
+  const kernelLabel = draftDocument
+    ? isNotebookSessionRunnable(notebookSessionStatus)
+      ? (notebookSessionStatus?.kernelDisplayName ??
+        notebookSessionStatus?.kernelName ??
+        notebookLanguage(draftDocument))
+      : `${notebookLanguage(draftDocument)} notebook`
+    : hasProjectAnalysisContext
+      ? 'No notebook'
+      : 'Python 3.11 demo'
   const kernelStatusLabel = notebookSessionStatus
     ? notebookSessionStateLabel(notebookSessionStatus)
     : kernelAvailabilityLabel(
@@ -1155,8 +1182,23 @@ function NotebookCanvas({
                 onSourceChange={onUpdateCellSource}
                 onInsertAfter={onInsertCell}
                 onRunCell={onRunCell}
+                canRunCells={canRunCells}
               />
             ))}
+          {!isOpening && cells.length === 0 ? (
+            <Box
+              sx={{
+                border: 1,
+                borderColor: 'divider',
+                borderRadius: 2,
+                px: 2,
+                py: 3,
+                color: 'text.secondary'
+              }}
+            >
+              <Typography variant="body2">选择或创建 notebook 后开始分析。</Typography>
+            </Box>
+          ) : null}
         </Box>
       </Box>
     </Box>
@@ -1359,6 +1401,20 @@ function VariablesTab({
   onStartJupyterServer?: (cwd: string) => void
   onStopJupyterServer?: (cwd: string) => void
 }): React.JSX.Element {
+  const hasLiveKernel = Boolean(
+    notebookSessionStatus?.sessionId &&
+    (notebookSessionStatus.state === 'idle' ||
+      notebookSessionStatus.state === 'busy' ||
+      notebookSessionStatus.state === 'restarting')
+  )
+  const showDemoVariables = Boolean(
+    !projectCwd &&
+    !kernelDiagnostics &&
+    !jupyterServerStatus &&
+    !notebookSessionStatus &&
+    !kernelError
+  )
+  const showVariables = hasLiveKernel || showDemoVariables
   return (
     <Stack spacing={1}>
       <KernelStatusSummary
@@ -1375,55 +1431,68 @@ function VariablesTab({
         onStartServer={onStartJupyterServer}
         onStopServer={onStopJupyterServer}
       />
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
-        <Typography variant="caption" color="text.secondary">
-          Refreshed after Cell 3
-        </Typography>
-        <Button size="small" startIcon={<RefreshIcon fontSize="small" />}>
-          刷新
-        </Button>
-      </Box>
-      {variables.map((variable) => (
-        <Box
-          key={variable.name}
-          sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25, minWidth: 0 }}
-        >
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-            <Typography
-              variant="body2"
-              sx={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)', fontWeight: 800 }}
-              noWrap
-            >
-              {variable.name}
+      {showVariables ? (
+        <>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
+            <Typography variant="caption" color="text.secondary">
+              Refreshed after Cell 3
             </Typography>
-            <Chip size="small" variant="outlined" label={variable.type} />
+            <Button size="small" startIcon={<RefreshIcon fontSize="small" />}>
+              刷新
+            </Button>
           </Box>
+          {variables.map((variable) => (
+            <Box
+              key={variable.name}
+              sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25, minWidth: 0 }}
+            >
+              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                <Typography
+                  variant="body2"
+                  sx={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)', fontWeight: 800 }}
+                  noWrap
+                >
+                  {variable.name}
+                </Typography>
+                <Chip size="small" variant="outlined" label={variable.type} />
+              </Box>
+              <Typography variant="caption" color="text.secondary">
+                {variable.shape} · {variable.detail}
+              </Typography>
+            </Box>
+          ))}
+          <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
+            <Box sx={{ px: 1.25, py: 0.9, borderBottom: 1, borderColor: 'divider' }}>
+              <Typography variant="caption" sx={{ fontWeight: 800 }}>
+                Data Preview · samples
+              </Typography>
+            </Box>
+            {[
+              'sample_id | condition | reads | mapped_pct',
+              'S1        | treated   | 24011 | 92.4',
+              'S2        | control   | 19842 | 89.7'
+            ].map((row) => (
+              <Typography
+                key={row}
+                component="pre"
+                variant="caption"
+                sx={{ m: 0, px: 1.25, py: 0.45, fontFamily: 'var(--font-mono)' }}
+              >
+                {row}
+              </Typography>
+            ))}
+          </Box>
+        </>
+      ) : (
+        <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25 }}>
+          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+            尚未连接可用 kernel
+          </Typography>
           <Typography variant="caption" color="text.secondary">
-            {variable.shape} · {variable.detail}
+            启动 Jupyter 并连接 notebook kernel 后，执行 cell 会刷新变量和数据预览。
           </Typography>
         </Box>
-      ))}
-      <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
-        <Box sx={{ px: 1.25, py: 0.9, borderBottom: 1, borderColor: 'divider' }}>
-          <Typography variant="caption" sx={{ fontWeight: 800 }}>
-            Data Preview · samples
-          </Typography>
-        </Box>
-        {[
-          'sample_id | condition | reads | mapped_pct',
-          'S1        | treated   | 24011 | 92.4',
-          'S2        | control   | 19842 | 89.7'
-        ].map((row) => (
-          <Typography
-            key={row}
-            component="pre"
-            variant="caption"
-            sx={{ m: 0, px: 1.25, py: 0.45, fontFamily: 'var(--font-mono)' }}
-          >
-            {row}
-          </Typography>
-        ))}
-      </Box>
+      )}
     </Stack>
   )
 }
@@ -1744,6 +1813,7 @@ export default function AnalysisView({
         kernelDiagnostics={kernelDiagnostics}
         isLoadingKernels={isLoadingKernels}
         kernelError={kernelError}
+        jupyterServerStatus={jupyterServerStatus}
         notebookSessionStatus={notebookSessionStatus}
         isStartingNotebookSession={isStartingNotebookSession}
         notebookSessionError={notebookSessionError}

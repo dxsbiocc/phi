@@ -253,3 +253,29 @@ test('analysis view marks the executing notebook cell as running', () => {
   assert.match(markup, /Running/)
   assert.match(markup, /print/)
 })
+
+test('analysis view hides demo notebook and variables when project kernel is unavailable', () => {
+  const markup = renderAnalysisView({
+    notebookRegistry: {
+      projectCwd: '/project',
+      projectName: 'Demo',
+      notebooks: [],
+      truncated: false,
+      initialized: true
+    },
+    kernelDiagnostics: {
+      jupyterServer: { available: false, command: 'jupyter' },
+      kernels: [],
+      hasPythonKernel: false,
+      hasRKernel: false,
+      messages: ['Jupyter 不可用。']
+    },
+    kernelError: 'Notebook kernel API 尚未加载，请重启 Phi 后再试'
+  })
+
+  assert.doesNotMatch(markup, /Saving interactive artifact/)
+  assert.doesNotMatch(markup, /Refreshed after Cell 3/)
+  assert.match(markup, /选择或创建 notebook 后开始分析/)
+  assert.match(markup, /尚未连接可用 kernel/)
+  assert.match(markup, /请重启 Phi/)
+})

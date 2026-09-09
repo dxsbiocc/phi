@@ -97,6 +97,18 @@ function getRendererApi(): RendererApi {
   return (window as unknown as { api: RendererApi }).api
 }
 
+function requireRendererApiMethod<K extends keyof RendererApi>(
+  rendererApi: RendererApi,
+  method: K,
+  fallbackMessage: string
+): RendererApi[K] {
+  const candidate = rendererApi[method]
+  if (typeof candidate !== 'function') {
+    throw new Error(fallbackMessage)
+  }
+  return candidate
+}
+
 function modelOptionFromSelection(
   selection: { providerId: string; modelId: string } | null,
   available: ModelOption[]
@@ -723,7 +735,12 @@ function App(): React.JSX.Element {
     setIsLoadingAnalysisKernels(true)
     setAnalysisKernelError(null)
     try {
-      const diagnostics = await rendererApi.listAnalysisKernels(cwd)
+      const listAnalysisKernels = requireRendererApiMethod(
+        rendererApi,
+        'listAnalysisKernels',
+        'Notebook kernel API 尚未加载，请重启 Phi 后再试'
+      )
+      const diagnostics = await listAnalysisKernels(cwd)
       if (request !== analysisKernelsRequestRef.current || cwd !== activeCwdRef.current) return
       setAnalysisKernelDiagnostics(diagnostics)
     } catch (error) {
@@ -746,7 +763,12 @@ function App(): React.JSX.Element {
 
     setAnalysisJupyterError(null)
     try {
-      const status = await rendererApi.getAnalysisJupyterStatus(cwd)
+      const getAnalysisJupyterStatus = requireRendererApiMethod(
+        rendererApi,
+        'getAnalysisJupyterStatus',
+        'Jupyter Server API 尚未加载，请重启 Phi 后再试'
+      )
+      const status = await getAnalysisJupyterStatus(cwd)
       if (request !== analysisJupyterRequestRef.current || cwd !== activeCwdRef.current) return
       setAnalysisJupyterStatus(status)
     } catch (error) {
@@ -861,12 +883,18 @@ function App(): React.JSX.Element {
       setExecutingAnalysisCellId(cellId)
       setAnalysisCellExecutionError(null)
       try {
-        const result = await rendererApi.executeAnalysisNotebookCell(
-          cwd,
-          file.path,
-          document,
-          cellId
+        if (
+          !analysisNotebookSessionStatus?.sessionId ||
+          analysisNotebookSessionStatus.state !== 'idle'
+        ) {
+          throw new Error('请先连接可用的 notebook kernel')
+        }
+        const executeAnalysisNotebookCell = requireRendererApiMethod(
+          rendererApi,
+          'executeAnalysisNotebookCell',
+          'Notebook cell 执行 API 尚未加载，请重启 Phi 后再试'
         )
+        const result = await executeAnalysisNotebookCell(cwd, file.path, document, cellId)
         if (request !== analysisCellExecutionRequestRef.current || cwd !== activeCwdRef.current) {
           return
         }
@@ -884,7 +912,7 @@ function App(): React.JSX.Element {
         }
       }
     },
-    [rendererApi]
+    [analysisNotebookSessionStatus, rendererApi]
   )
 
   const onCreateProject = async (
