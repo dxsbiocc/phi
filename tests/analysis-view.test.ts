@@ -26,6 +26,8 @@ test('analysis view renders the first-phase notebook shell', () => {
   assert.match(markup, /调整分析侧栏宽度/)
   assert.match(markup, /调整检查器宽度/)
   assert.match(markup, /关闭右侧栏/)
+  assert.match(markup, /添加 Code cell/)
+  assert.match(markup, /添加 Markdown cell/)
   assert.doesNotMatch(markup, /Data Preview/)
   assert.doesNotMatch(markup, /Agent transaction/)
   assert.doesNotMatch(markup, /展开分析侧栏/)

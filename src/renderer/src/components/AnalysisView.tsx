@@ -22,6 +22,7 @@ import {
   updateNotebookCell,
   type JsonObject,
   type NotebookCell,
+  type NotebookCellType,
   type NotebookDocument
 } from '../../../shared/notebookDocument'
 import { PanelRight } from 'lucide-react'
@@ -97,6 +98,7 @@ type CanvasCell = {
 
 const AddIcon = PhiIcons.action.add
 const ChatIcon = PhiIcons.nav.chat
+const CodeIcon = PhiIcons.tool.command
 const FileIcon = PhiIcons.tool.read
 const FolderIcon = PhiIcons.entity.folder
 const MoreIcon = PhiIcons.action.more
@@ -1132,6 +1134,70 @@ function Cell({
   )
 }
 
+function NotebookInsertDock({
+  disabled = false,
+  onInsert
+}: {
+  disabled?: boolean
+  onInsert: (cellType: Extract<NotebookCellType, 'code' | 'markdown'>) => void
+}): React.JSX.Element {
+  const actions = [
+    { cellType: 'code' as const, label: 'Code', Icon: CodeIcon },
+    { cellType: 'markdown' as const, label: 'Markdown', Icon: FileIcon }
+  ]
+
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'center', py: 1.25 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.25,
+          px: 0.5,
+          py: 0.35,
+          border: 1,
+          borderColor: 'divider',
+          borderRadius: 1.5,
+          bgcolor: (theme) =>
+            theme.palette.mode === 'dark'
+              ? alpha(theme.palette.background.paper, 0.72)
+              : alpha(theme.palette.common.white, 0.9),
+          boxShadow: (theme) => theme.shadows[1],
+          opacity: disabled ? 0.55 : 1
+        }}
+      >
+        {actions.map(({ cellType, label, Icon }) => (
+          <Tooltip
+            key={cellType}
+            title={disabled ? '打开 notebook 后添加 cell' : `添加 ${label} cell`}
+          >
+            <span>
+              <Button
+                size="small"
+                variant="text"
+                startIcon={<Icon fontSize="small" />}
+                disabled={disabled}
+                aria-label={`添加 ${label} cell`}
+                onClick={() => onInsert(cellType)}
+                sx={{
+                  minWidth: 0,
+                  px: 1,
+                  py: 0.35,
+                  borderRadius: 1,
+                  color: 'text.secondary',
+                  '& .MuiButton-startIcon': { mr: 0.5 }
+                }}
+              >
+                {label}
+              </Button>
+            </span>
+          </Tooltip>
+        ))}
+      </Box>
+    </Box>
+  )
+}
+
 function NotebookCanvas({
   activeNotebookPath,
   notebookFile,
@@ -1215,11 +1281,20 @@ function NotebookCanvas({
       document ? updateNotebookCell(document, cellId, { source }) : document
     )
   }
-  const onInsertCell = (cellId: string): void => {
+  const onInsertCell = (
+    cellId: string,
+    cellType: Extract<NotebookCellType, 'code' | 'markdown'> = 'code'
+  ): void => {
     setDraftDocument((document) => {
       if (!document) return document
       const index = document.cells.findIndex((cell) => cell.id === cellId)
-      return insertNotebookCell(document, index + 1, { cellType: 'code', source: '' })
+      return insertNotebookCell(document, index + 1, { cellType, source: '' })
+    })
+  }
+  const onAppendCell = (cellType: Extract<NotebookCellType, 'code' | 'markdown'>): void => {
+    setDraftDocument((document) => {
+      if (!document) return document
+      return insertNotebookCell(document, document.cells.length, { cellType, source: '' })
     })
   }
   const onSave = (): void => {
@@ -1282,19 +1357,25 @@ function NotebookCanvas({
                 canRunCells={canRunCells}
               />
             ))}
+          {!isOpening && cells.length > 0 ? (
+            <NotebookInsertDock disabled={!draftDocument} onInsert={onAppendCell} />
+          ) : null}
           {!isOpening && cells.length === 0 ? (
-            <Box
-              sx={{
-                border: 1,
-                borderColor: 'divider',
-                borderRadius: 2,
-                px: 2,
-                py: 3,
-                color: 'text.secondary'
-              }}
-            >
-              <Typography variant="body2">选择或创建 notebook 后开始分析。</Typography>
-            </Box>
+            <>
+              <Box
+                sx={{
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: 2,
+                  px: 2,
+                  py: 3,
+                  color: 'text.secondary'
+                }}
+              >
+                <Typography variant="body2">选择或创建 notebook 后开始分析。</Typography>
+              </Box>
+              <NotebookInsertDock disabled={!draftDocument} onInsert={onAppendCell} />
+            </>
           ) : null}
         </Box>
       </Box>
