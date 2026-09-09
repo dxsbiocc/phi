@@ -26,15 +26,22 @@ Verification:
 
 This section decomposes the full notebook workbench into implementation tasks that can be completed and reviewed independently. Each stage should produce a working app state; avoid carrying half-wired runtime paths across stages.
 
+Reuse guardrail:
+
+- Use marimo as the primary notebook UX reference before implementing cell editing, output rendering, variable/data previews, artifact viewing, SQL-style data interactions, or AI notebook operations.
+- Prefer proven editor/data/rendering libraries over custom notebook widgets when the feature is not Phi-specific.
+- Keep custom code focused on Phi-specific adapters: `.ipynb` persistence, Electron IPC, project safety, approval-aware agent tools, local/remote execution boundaries, and bioinformatics workflow integration.
+- Do not show placeholder UI for future notebook actions. A visible control must call a real event, render real state, or be omitted until its backend exists.
+
 ### N0: Static Notebook Shell
 
-Status: complete.
+Status: complete and superseded by real-state UI. Initial mock data was acceptable only for the first visual spike; subsequent stages removed demo notebooks, variables, files, artifacts, and dead controls from the project-backed interface.
 
 Deliverables:
 
 - Add the Analysis activity-bar entry.
 - Render the Marimo-inspired notebook shell with left chat rail, center notebook canvas, and right inspector.
-- Use representative mock cells, variables, files, and artifacts only.
+- Use representative mock cells, variables, files, and artifacts only during the first visual spike.
 - Add component coverage that proves the first-phase shell renders.
 
 Boundaries:
@@ -46,7 +53,7 @@ Boundaries:
 
 Verification:
 
-- Component test for the shell landmarks.
+- Component test for the shell landmarks and regression tests that fake notebook/file/variable/artifact content does not leak into real analysis UI.
 - `npm run lint`.
 - `npm run typecheck`.
 - `npm run build`.
@@ -149,6 +156,7 @@ Status: in progress. Single-cell execution service, IPC plumbing, and draft outp
 
 Deliverables:
 
+- Review marimo's editor cell, output, renderer, and cell-run state modules before adding more custom UI.
 - Run selected cell, run current-and-select-next, run all, interrupt, restart, and clear output.
 - Render stdout, stderr, execute result, display data, errors, Markdown, small tables, and static images.
 - Fold long output and bound table previews.
@@ -165,11 +173,13 @@ Verification:
 - Component tests for output renderers.
 - Service tests for execution state transitions with fakes.
 - Manual smoke test: run, save, close, reopen, and confirm outputs.
+- Regression tests that toolbar actions are only visible when real service handlers exist.
 
 ### N6: Variables And Data Preview
 
 Deliverables:
 
+- Review marimo's data-table and dataframe UX before choosing or building the preview component.
 - Add Python and R inspection snippets for runtime variables.
 - Show name, type/class, shape/length, schema, missingness, head/sample, and cheap summaries.
 - Add bounded Data Preview inside the Variables tab.
@@ -186,11 +196,13 @@ Verification:
 - Parser tests for Python and R inspector responses.
 - Payload limit tests for large tables.
 - Manual smoke tests for pandas DataFrame and R data.frame/tibble.
+- Component tests that no sample variables appear before real inspection payloads are available.
 
 ### N7: Agent Notebook Transactions
 
 Deliverables:
 
+- Review marimo pair and editor AI patterns before designing Phi's agent notebook transaction surface.
 - Add agent-facing typed tools for outline, read cell, insert, update, move, run, read output, inspect variable, and export artifact.
 - Record cell-level transaction summaries in chat/timeline.
 - Add optimistic concurrency using cell id, content hash, and notebook revision.
@@ -213,6 +225,7 @@ Verification:
 
 Deliverables:
 
+- Review marimo's output renderer and iframe/sandbox patterns before adding rich artifact rendering.
 - Register notebook artifacts by notebook path, cell id, type, hash, created time, size, and URI.
 - Save large or interactive outputs as artifacts.
 - Render HTML artifacts in sandboxed iframes.

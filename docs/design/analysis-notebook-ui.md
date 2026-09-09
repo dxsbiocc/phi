@@ -6,6 +6,18 @@ This spec captures the first-phase notebook analysis interface for Phi. It sits 
 
 The first UI milestone is a local notebook workbench shell. It should make `.ipynb` analysis feel native in Phi without turning the app into a full JupyterLab, RStudio, or omics platform.
 
+## Marimo Reference And Reuse Policy
+
+Marimo is the primary reference for notebook interaction design. Phi should borrow its proven product patterns and evaluate its dependency choices before implementing notebook-specific UI from scratch.
+
+- Treat marimo as a product and architecture reference, not as unchecked source to copy into Phi.
+- Prefer mature notebook/editor building blocks over hand-rolled widgets: CodeMirror for code editing, a virtualized data grid for DataFrame/tibble preview, established mime renderers for rich outputs, and resizable panel primitives for layout.
+- If Phi copies or ports any marimo code directly, record the Apache-2.0 attribution and isolate the port behind a Phi adapter. The default path is to reimplement only the thin Phi-specific adapter.
+- Keep Phi-specific responsibilities in Phi: project-scoped desktop state, `.ipynb` compatibility, Jupyter kernel/session IPC, approval-aware agent notebook tools, remote/HPC execution, and bioinformatics workflow integration.
+- Before implementing notebook cell editing, output rendering, variables/data preview, artifact rendering, or AI notebook operations, review the matching marimo areas first: `frontend/src/components/editor/notebook-cell.tsx`, `frontend/src/components/editor/Output.tsx`, `frontend/src/components/editor/output/`, `frontend/src/core/cells/`, and `frontend/src/components/data-table/`.
+
+The practical rule: if marimo already solved the interaction or renderer problem, Phi should adapt that design or dependency shape; only build custom behavior when it is caused by Phi's desktop, project, security, agent, or bioinformatics constraints.
+
 ## Layout
 
 The analysis view uses a three-region desktop layout:
@@ -60,7 +72,7 @@ The center canvas is notebook-first and visually closer to a clean document edit
 The notebook header is compact:
 
 ```text
-notebooks/exploration.ipynb    Python 3.11 · Idle · Saved    Run all | Interrupt | Restart | ...
+notebooks/exploration.ipynb    Python 3.11 · Idle · Saved    Save | Connect | Disconnect
 ```
 
 It shows:
@@ -69,8 +81,8 @@ It shows:
 - Kernel name.
 - Kernel state: idle, busy, restarting, disconnected, missing, or error.
 - Save state: saved, unsaved, saving, or save failed.
-- Core actions: run all, interrupt, restart.
-- Secondary actions in a menu: select kernel, clear all outputs, export, close kernel, reveal file.
+- Visible actions must be backed by real events. In the current implementation this means save, refresh kernel diagnostics, connect kernel, and disconnect kernel.
+- Planned actions such as run all, interrupt, restart, select kernel, clear outputs, export, and reveal file should remain hidden until their service APIs exist.
 
 Kernel diagnostics should be visible from the header when a kernel is missing or unavailable. Users should not have to search settings to understand why execution is unavailable.
 
@@ -83,7 +95,7 @@ Cells have four visual modes:
 - `Focus/Edit`: shows editing affordances, selected border, cell toolbar, and language or kernel hint.
 - `Running/Error`: shows prominent execution state, spinner or progress marker, and error summary.
 
-The visual style should borrow Marimo's calm notebook feel: clean cell surfaces, minimal persistent chrome, natural document flow, and visible runtime context. Phi should not adopt Marimo's reactive execution model in phase one; execution remains standard Jupyter order-based execution.
+The visual style should borrow Marimo's calm notebook feel: clean cell surfaces, minimal persistent chrome, natural document flow, and visible runtime context. Phi should not adopt Marimo's reactive execution model for `.ipynb` execution in phase one; execution remains standard Jupyter order-based execution. Reactive ideas may still inform stale-state visualization and dependency hints later.
 
 ### Cell Gutter
 
@@ -98,7 +110,7 @@ Agent markers are subtle. Hovering or clicking the marker shows the cell-level t
 
 ### Cell Actions
 
-Phase-one actions:
+Planned cell actions:
 
 - Run cell.
 - Insert cell above.
@@ -108,6 +120,8 @@ Phase-one actions:
 - Delete cell.
 - Clear cell output.
 - More menu for less common actions.
+
+Only actions wired to real notebook mutation or kernel events should be visible. Placeholder menus and disabled future actions should not be kept in the UI just to imply completeness.
 
 Deletion should be easy to undo and should require extra care when the cell was human-authored or recently modified.
 
@@ -136,10 +150,11 @@ It is collapsible. When collapsed, it leaves a narrow tab rail or icon affordanc
 
 ### Files Tab
 
-The Files tab is a project file tree with analysis-aware defaults.
+The Files tab starts with real project notebook files and grows toward an analysis-aware project tree.
 
-- Default view shows analysis-related directories first: `notebooks/`, `data/`, `outputs/`, `reports/`, and `workflows/`.
-- Users can switch to the full project tree.
+- The current backed implementation lists real `.ipynb` files discovered by the project notebook registry.
+- The later project tree should show analysis-related directories first: `notebooks/`, `data/`, `outputs/`, `reports/`, and `workflows/`.
+- Users can later switch to the full project tree once file preview/reveal/copy actions are wired.
 - Common noise is hidden by default: `.git`, `node_modules`, `.nextflow`, cache directories, and bulky tool internals.
 - Supported actions: open notebook, preview supported small files, reveal path, copy path.
 - Phase one does not include complex Git controls or bulk file operations.
@@ -148,6 +163,7 @@ The Files tab is a project file tree with analysis-aware defaults.
 
 The Variables tab shows kernel state summaries.
 
+- Do not render sample variables. Until the variable inspection API exists, show only kernel/server state and an explicit empty state.
 - It refreshes after cell execution.
 - It clears on kernel restart.
 - It does not continuously poll.
@@ -187,6 +203,8 @@ Each artifact item shows:
 - Size when known.
 - Preview/open action.
 - Reveal and copy path actions.
+
+The current backed implementation may derive lightweight artifact rows from actual `.ipynb` output mime bundles. Persisted artifact registration and preview/open/reveal actions belong to the artifact viewer stage.
 
 Remote artifacts can be represented later as remote URIs, but remote artifact browsing is not part of the first UI milestone.
 
@@ -240,9 +258,9 @@ Shortcut hints should appear in menus or tooltips, not as permanent instructiona
 - Two-way selection bridge from interactive plots back into kernel or agent.
 - Specialist omics viewers such as AnnData, Seurat, spatial transcriptomics, mass spectrometry, or IGV panels.
 
-## Acceptance Criteria For Static Shell
+## Historical Acceptance Criteria For Static Shell
 
-Before connecting real Jupyter execution, the static UI shell is acceptable when:
+These criteria described the initial visual spike before real notebook wiring. They are no longer enough for implementation work after the notebook registry, open/save service, and kernel lifecycle exist:
 
 - Analysis appears as a first-class app view.
 - The left rail can switch between Chat and Notebooks and can collapse.
@@ -252,6 +270,8 @@ Before connecting real Jupyter execution, the static UI shell is acceptable when
 - Side panels collapse correctly at constrained widths.
 - The UI contains no raw HTML injection path.
 - Visual density remains closer to a readable notebook than a dense IDE.
+- Any visible action is backed by a real handler, derived from real state, or intentionally omitted until the backend exists.
+- Demo notebooks, variables, artifacts, and outputs must not appear in project-backed analysis UI.
 
 ## Implementation Notes
 
