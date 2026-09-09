@@ -933,14 +933,24 @@ function Cell({
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: '32px minmax(0, 1fr)',
-        gap: 1,
-        py: 1.2,
-        '&:hover .cell-hover-actions': { opacity: 1 }
+        gridTemplateColumns: '34px minmax(0, 1fr)',
+        gap: 0.75,
+        py: 1.05,
+        '&:hover .cell-floating-actions': {
+          opacity: 1,
+          transform: 'translateY(0)'
+        },
+        '&:focus-within .cell-floating-actions': {
+          opacity: 1,
+          transform: 'translateY(0)'
+        },
+        '&:hover .cell-shell': {
+          borderColor: (theme) => alpha(theme.palette.text.primary, 0.22)
+        }
       }}
     >
       <Box
-        sx={{ display: 'flex', alignItems: 'center', flexDirection: 'column', gap: 0.65, pt: 0.35 }}
+        sx={{ display: 'flex', alignItems: 'center', flexDirection: 'column', gap: 0.55, pt: 0.25 }}
       >
         <Tooltip title="运行 cell">
           <IconButton
@@ -948,7 +958,13 @@ function Cell({
             aria-label="运行 cell"
             disabled={!canRun}
             onClick={() => onRunCell?.(cell.id)}
-            sx={{ width: 28, height: 28 }}
+            sx={{
+              width: 28,
+              height: 28,
+              border: 1,
+              borderColor: canRun ? 'divider' : 'transparent',
+              bgcolor: canRun ? 'background.paper' : 'transparent'
+            }}
           >
             <PlayIcon fontSize="small" />
           </IconButton>
@@ -983,53 +999,59 @@ function Cell({
         ) : null}
       </Box>
       <Box
+        className="cell-shell"
         sx={{
           minWidth: 0,
+          position: 'relative',
           border: 1,
-          borderColor: cell.state === 'error' ? 'error.main' : 'divider',
-          borderRadius: 1,
+          borderColor: (theme) =>
+            cell.state === 'error'
+              ? theme.palette.error.main
+              : alpha(theme.palette.text.primary, 0.12),
+          borderRadius: 1.25,
           bgcolor: (theme) =>
-            alpha(theme.palette.background.paper, theme.palette.mode === 'dark' ? 0.5 : 0.9),
-          overflow: 'hidden'
+            alpha(theme.palette.background.paper, theme.palette.mode === 'dark' ? 0.48 : 0.72),
+          overflow: 'hidden',
+          transition: 'border-color 150ms ease, box-shadow 150ms ease'
         }}
       >
         <Box
-          className="cell-hover-actions"
+          className="cell-floating-actions"
           sx={{
-            minHeight: 30,
-            px: 1,
+            position: 'absolute',
+            top: 6,
+            right: 6,
+            zIndex: 2,
             display: 'flex',
             alignItems: 'center',
-            gap: 0.75,
-            borderBottom: isMarkdown ? 0 : 1,
+            gap: 0.25,
+            px: 0.35,
+            py: 0.2,
+            border: 1,
             borderColor: 'divider',
-            opacity: cell.state === 'running' || cell.state === 'error' ? 1 : 0.28,
-            transition: 'opacity 150ms ease'
+            borderRadius: 1,
+            bgcolor: (theme) =>
+              theme.palette.mode === 'dark'
+                ? alpha(theme.palette.background.paper, 0.9)
+                : alpha(theme.palette.common.white, 0.92),
+            boxShadow: (theme) => theme.shadows[1],
+            opacity: cell.state === 'running' || cell.state === 'error' ? 1 : 0,
+            transform: 'translateY(-2px)',
+            transition: 'opacity 150ms ease, transform 150ms ease'
           }}
         >
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ fontFamily: 'var(--font-mono)', textTransform: 'lowercase' }}
-          >
-            {isMarkdown ? 'markdown' : (cell.language ?? 'code')}
-          </Typography>
-          <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: stateColor(cell.state) }} />
-          <Typography variant="caption" sx={{ color: stateColor(cell.state) }}>
-            {stateLabel(cell.state)}
-          </Typography>
-          <Box sx={{ flex: 1 }} />
           <Tooltip title="插入 cell">
             <IconButton
               size="small"
               aria-label="插入 cell"
               onClick={() => onInsertAfter?.(cell.id)}
+              sx={{ width: 24, height: 24 }}
             >
               <AddIcon fontSize="small" />
             </IconButton>
           </Tooltip>
           <Tooltip title="更多 cell 操作">
-            <IconButton size="small" aria-label="更多 cell 操作">
+            <IconButton size="small" aria-label="更多 cell 操作" sx={{ width: 24, height: 24 }}>
               <MoreIcon fontSize="small" />
             </IconButton>
           </Tooltip>
@@ -1047,6 +1069,7 @@ function Cell({
                 disableUnderline: true,
                 sx: {
                   p: isMarkdown ? 1.7 : 1.35,
+                  pr: 5.5,
                   alignItems: 'flex-start',
                   fontFamily: isMarkdown ? 'inherit' : 'var(--font-mono)',
                   fontSize: isMarkdown ? '0.95rem' : '0.82rem',
@@ -1062,6 +1085,7 @@ function Cell({
             sx={{
               m: 0,
               p: isMarkdown ? 1.7 : 1.35,
+              pr: 5.5,
               whiteSpace: 'pre-wrap',
               overflowWrap: 'anywhere',
               fontFamily: isMarkdown ? 'inherit' : 'var(--font-mono)',
