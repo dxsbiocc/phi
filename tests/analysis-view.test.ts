@@ -22,7 +22,7 @@ test('analysis view renders the first-phase notebook shell', () => {
   assert.match(markup, /Files/)
   assert.match(markup, /Variables/)
   assert.match(markup, /Artifacts/)
-  assert.match(markup, /workflows\/main\.nf/)
+  assert.match(markup, /连接项目后显示真实 notebook 文件/)
   assert.match(markup, /调整分析侧栏宽度/)
   assert.match(markup, /调整检查器宽度/)
   assert.match(markup, /关闭右侧栏/)
@@ -30,6 +30,7 @@ test('analysis view renders the first-phase notebook shell', () => {
   assert.match(markup, /添加 Markdown cell/)
   assert.doesNotMatch(markup, /Data Preview/)
   assert.doesNotMatch(markup, /Agent transaction/)
+  assert.doesNotMatch(markup, /workflows\/main\.nf/)
   assert.doesNotMatch(markup, /展开分析侧栏/)
 })
 
@@ -60,12 +61,19 @@ test('analysis view renders project notebook registry entries', () => {
       ],
       truncated: false,
       initialized: true
-    }
+    },
+    onOpenNotebook: () => undefined,
+    onRefreshNotebooks: () => undefined,
+    onCreateNotebook: () => undefined
   })
 
   assert.match(markup, /Demo/)
   assert.match(markup, /notebooks\/real\.ipynb/)
+  assert.match(markup, /打开 notebooks\/real\.ipynb/)
+  assert.match(markup, /刷新 notebooks/)
+  assert.match(markup, /新建 notebook/)
   assert.match(markup, /2 KB/)
+  assert.doesNotMatch(markup, /data\/raw\/samples\.csv/)
 })
 
 test('analysis view renders notebook registry empty and loading states', () => {

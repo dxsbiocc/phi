@@ -100,7 +100,6 @@ const AddIcon = PhiIcons.action.add
 const ChatIcon = PhiIcons.nav.chat
 const CodeIcon = PhiIcons.tool.command
 const FileIcon = PhiIcons.tool.read
-const FolderIcon = PhiIcons.entity.folder
 const MoreIcon = PhiIcons.action.more
 const NotebookIcon = PhiIcons.nav.analysis
 const PlayIcon = PhiIcons.action.quick
@@ -174,14 +173,6 @@ const mockCells: CanvasCell[] = [
     source: 'library(ggplot2)\nggplot(samples, aes(condition, mapped_pct)) + geom_boxplot()',
     output: "Error: object 'mapped_pct' not found in R kernel"
   }
-]
-
-const analysisFiles = [
-  'notebooks/exploration.ipynb',
-  'data/raw/samples.csv',
-  'outputs/exploration/pca.html',
-  'reports/qc-summary.html',
-  'workflows/main.nf'
 ]
 
 const variables = [
@@ -1202,6 +1193,7 @@ function NotebookCanvas({
   activeNotebookPath,
   notebookFile,
   initialDocument,
+  hasNotebookRegistry,
   isOpening,
   error,
   kernelDiagnostics,
@@ -1222,6 +1214,7 @@ function NotebookCanvas({
   activeNotebookPath: string
   notebookFile?: AnalysisNotebookFile | null
   initialDocument: NotebookDocument | null
+  hasNotebookRegistry?: boolean
   isOpening?: boolean
   error?: string | null
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
@@ -1245,7 +1238,12 @@ function NotebookCanvas({
 }): React.JSX.Element {
   const [draftDocument, setDraftDocument] = useState<NotebookDocument | null>(initialDocument)
   const hasProjectAnalysisContext = Boolean(
-    kernelDiagnostics || jupyterServerStatus || notebookSessionStatus || kernelError || notebookFile
+    hasNotebookRegistry ||
+    kernelDiagnostics ||
+    jupyterServerStatus ||
+    notebookSessionStatus ||
+    kernelError ||
+    notebookFile
   )
   const cells = draftDocument
     ? documentCells(draftDocument, executingCellId)
@@ -1387,30 +1385,134 @@ function NotebookCanvas({
   )
 }
 
-function FilesTab(): React.JSX.Element {
+function FilesTab({
+  notebooks,
+  activeNotebookPath,
+  registry,
+  isLoading,
+  error,
+  onOpenNotebook,
+  onRefreshNotebooks,
+  onCreateNotebook,
+  onInitializeProjectAnalysis
+}: {
+  notebooks: NotebookListEntry[]
+  activeNotebookPath: string | null
+  registry?: AnalysisNotebookRegistry | null
+  isLoading?: boolean
+  error?: string | null
+  onOpenNotebook?: (path: string) => void
+  onRefreshNotebooks?: () => void
+  onCreateNotebook?: (cwd: string) => void
+  onInitializeProjectAnalysis?: (cwd: string) => void
+}): React.JSX.Element {
+  const projectCwd = registry?.projectCwd ?? null
+
   return (
     <List dense disablePadding>
-      {analysisFiles.map((path) => {
-        const isFolder = !path.includes('.')
-        const Icon = isFolder ? FolderIcon : FileIcon
-        return (
-          <ListItemButton key={path} sx={{ px: 1, borderRadius: 1 }}>
-            <Icon
-              fontSize="small"
-              sx={{ mr: 1, color: isFolder ? 'info.main' : 'text.secondary' }}
-            />
-            <ListItemText
-              primary={path}
-              slotProps={{
-                primary: {
-                  noWrap: true,
-                  sx: { fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }
-                }
-              }}
-            />
-          </ListItemButton>
-        )
-      })}
+      <Box sx={{ px: 1, pb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ flex: 1, minWidth: 0 }} noWrap>
+          {registry?.projectName ?? 'Project notebooks'}
+        </Typography>
+        {onRefreshNotebooks ? (
+          <Tooltip title="刷新 notebooks">
+            <IconButton size="small" aria-label="刷新 notebooks" onClick={onRefreshNotebooks}>
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : null}
+        {projectCwd && onCreateNotebook ? (
+          <Tooltip title="新建 notebook">
+            <IconButton
+              size="small"
+              aria-label="新建 notebook"
+              onClick={() => onCreateNotebook(projectCwd)}
+            >
+              <AddIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : null}
+      </Box>
+      {isLoading ? (
+        <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 1.5 }}>
+          正在扫描 notebooks...
+        </Typography>
+      ) : null}
+      {error ? (
+        <Typography variant="body2" color="error.main" sx={{ px: 1, py: 1.5 }}>
+          {error}
+        </Typography>
+      ) : null}
+      {!isLoading && !error && !registry ? (
+        <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 1.5 }}>
+          连接项目后显示真实 notebook 文件。
+        </Typography>
+      ) : null}
+      {!isLoading && !error && registry?.message ? (
+        <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 1.5 }}>
+          {registry.message}
+        </Typography>
+      ) : null}
+      {!isLoading && !error && projectCwd && notebooks.length === 0 ? (
+        <Box sx={{ px: 1, py: 1.5 }}>
+          <Typography variant="body2" color="text.secondary">
+            当前项目还没有 notebook。
+          </Typography>
+          {!registry?.initialized && onInitializeProjectAnalysis ? (
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<AddIcon fontSize="small" />}
+              sx={{ mt: 1 }}
+              onClick={() => onInitializeProjectAnalysis(projectCwd)}
+            >
+              初始化分析目录
+            </Button>
+          ) : null}
+        </Box>
+      ) : null}
+      {registry?.truncated ? (
+        <Typography variant="caption" color="warning.main" sx={{ display: 'block', px: 1, pb: 1 }}>
+          扫描结果已截断，请缩小项目目录或移动 notebook 到 notebooks/。
+        </Typography>
+      ) : null}
+      {!isLoading && !error && registry
+        ? notebooks.map((notebook) => {
+            const canOpen = Boolean(notebook.absolutePath && onOpenNotebook)
+            return (
+              <ListItemButton
+                key={notebook.id}
+                selected={notebook.path === activeNotebookPath}
+                disabled={!canOpen}
+                aria-label={`打开 ${notebook.path}`}
+                onClick={() => {
+                  if (notebook.absolutePath) onOpenNotebook?.(notebook.absolutePath)
+                }}
+                sx={{ px: 1, borderRadius: 1, mb: 0.35, alignItems: 'flex-start' }}
+              >
+                <NotebookIcon
+                  fontSize="small"
+                  sx={{
+                    mt: 0.25,
+                    mr: 1,
+                    color: notebook.path === activeNotebookPath ? 'primary.main' : 'text.secondary'
+                  }}
+                />
+                <ListItemText
+                  primary={notebook.path}
+                  secondary={notebook.status}
+                  slotProps={{
+                    primary: {
+                      noWrap: true,
+                      sx: { fontFamily: 'var(--font-mono)', fontSize: '0.8rem', fontWeight: 700 }
+                    },
+                    secondary: { sx: { fontSize: '0.72rem' } }
+                  }}
+                />
+              </ListItemButton>
+            )
+          })
+        : null}
     </List>
   )
 }
@@ -1707,6 +1809,11 @@ function ArtifactsTab(): React.JSX.Element {
 
 function InspectorContent({
   tab,
+  notebooks,
+  activeNotebookPath,
+  notebookRegistry,
+  isLoadingNotebooks,
+  notebookError,
   projectCwd,
   kernelDiagnostics,
   isLoadingKernels,
@@ -1715,12 +1822,21 @@ function InspectorContent({
   isStartingJupyterServer,
   jupyterServerError,
   notebookSessionStatus,
+  onOpenNotebook,
+  onRefreshNotebooks,
+  onCreateNotebook,
+  onInitializeProjectAnalysis,
   onRefreshKernels,
   onRefreshJupyterServer,
   onStartJupyterServer,
   onStopJupyterServer
 }: {
   tab: InspectorTab
+  notebooks: NotebookListEntry[]
+  activeNotebookPath: string | null
+  notebookRegistry?: AnalysisNotebookRegistry | null
+  isLoadingNotebooks?: boolean
+  notebookError?: string | null
   projectCwd?: string | null
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
   isLoadingKernels?: boolean
@@ -1729,6 +1845,10 @@ function InspectorContent({
   isStartingJupyterServer?: boolean
   jupyterServerError?: string | null
   notebookSessionStatus?: AnalysisNotebookSessionStatus | null
+  onOpenNotebook?: (path: string) => void
+  onRefreshNotebooks?: () => void
+  onCreateNotebook?: (cwd: string) => void
+  onInitializeProjectAnalysis?: (cwd: string) => void
   onRefreshKernels?: () => void
   onRefreshJupyterServer?: () => void
   onStartJupyterServer?: (cwd: string) => void
@@ -1753,12 +1873,29 @@ function InspectorContent({
     )
   }
   if (tab === 'artifacts') return <ArtifactsTab />
-  return <FilesTab />
+  return (
+    <FilesTab
+      notebooks={notebooks}
+      activeNotebookPath={activeNotebookPath}
+      registry={notebookRegistry}
+      isLoading={isLoadingNotebooks}
+      error={notebookError}
+      onOpenNotebook={onOpenNotebook}
+      onRefreshNotebooks={onRefreshNotebooks}
+      onCreateNotebook={onCreateNotebook}
+      onInitializeProjectAnalysis={onInitializeProjectAnalysis}
+    />
+  )
 }
 
 function RightInspector({
   tab,
   width,
+  notebooks,
+  activeNotebookPath,
+  notebookRegistry,
+  isLoadingNotebooks,
+  notebookError,
   projectCwd,
   kernelDiagnostics,
   isLoadingKernels,
@@ -1768,6 +1905,10 @@ function RightInspector({
   jupyterServerError,
   notebookSessionStatus,
   onTabChange,
+  onOpenNotebook,
+  onRefreshNotebooks,
+  onCreateNotebook,
+  onInitializeProjectAnalysis,
   onRefreshKernels,
   onRefreshJupyterServer,
   onStartJupyterServer,
@@ -1775,6 +1916,11 @@ function RightInspector({
 }: {
   tab: InspectorTab
   width: number
+  notebooks: NotebookListEntry[]
+  activeNotebookPath: string | null
+  notebookRegistry?: AnalysisNotebookRegistry | null
+  isLoadingNotebooks?: boolean
+  notebookError?: string | null
   projectCwd?: string | null
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
   isLoadingKernels?: boolean
@@ -1784,6 +1930,10 @@ function RightInspector({
   jupyterServerError?: string | null
   notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   onTabChange: (tab: InspectorTab) => void
+  onOpenNotebook?: (path: string) => void
+  onRefreshNotebooks?: () => void
+  onCreateNotebook?: (cwd: string) => void
+  onInitializeProjectAnalysis?: (cwd: string) => void
   onRefreshKernels?: () => void
   onRefreshJupyterServer?: () => void
   onStartJupyterServer?: (cwd: string) => void
@@ -1837,6 +1987,11 @@ function RightInspector({
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: 1.5 }}>
         <InspectorContent
           tab={tab}
+          notebooks={notebooks}
+          activeNotebookPath={activeNotebookPath}
+          notebookRegistry={notebookRegistry}
+          isLoadingNotebooks={isLoadingNotebooks}
+          notebookError={notebookError}
           projectCwd={projectCwd}
           kernelDiagnostics={kernelDiagnostics}
           isLoadingKernels={isLoadingKernels}
@@ -1845,6 +2000,10 @@ function RightInspector({
           isStartingJupyterServer={isStartingJupyterServer}
           jupyterServerError={jupyterServerError}
           notebookSessionStatus={notebookSessionStatus}
+          onOpenNotebook={onOpenNotebook}
+          onRefreshNotebooks={onRefreshNotebooks}
+          onCreateNotebook={onCreateNotebook}
+          onInitializeProjectAnalysis={onInitializeProjectAnalysis}
           onRefreshKernels={onRefreshKernels}
           onRefreshJupyterServer={onRefreshJupyterServer}
           onStartJupyterServer={onStartJupyterServer}
@@ -2040,6 +2199,7 @@ export default function AnalysisView({
         activeNotebookPath={activeNotebookPath ?? 'No notebook selected'}
         notebookFile={notebookFile}
         initialDocument={notebookFile?.document ?? null}
+        hasNotebookRegistry={Boolean(notebookRegistry)}
         isOpening={isOpeningNotebook}
         error={notebookContentError}
         kernelDiagnostics={kernelDiagnostics}
@@ -2064,6 +2224,11 @@ export default function AnalysisView({
         <RightInspector
           tab={inspectorTab}
           width={rightWidth}
+          notebooks={notebooks}
+          activeNotebookPath={activeNotebookPath}
+          notebookRegistry={notebookRegistry}
+          isLoadingNotebooks={isLoadingNotebooks}
+          notebookError={notebookError}
           projectCwd={notebookRegistry?.projectCwd ?? null}
           kernelDiagnostics={kernelDiagnostics}
           isLoadingKernels={isLoadingKernels}
@@ -2073,6 +2238,10 @@ export default function AnalysisView({
           jupyterServerError={jupyterServerError}
           notebookSessionStatus={notebookSessionStatus}
           onTabChange={setInspectorTab}
+          onOpenNotebook={onOpenNotebook}
+          onRefreshNotebooks={onRefreshNotebooks}
+          onCreateNotebook={onCreateNotebook}
+          onInitializeProjectAnalysis={onInitializeProjectAnalysis}
           onRefreshKernels={onRefreshKernels}
           onRefreshJupyterServer={onRefreshJupyterServer}
           onStartJupyterServer={onStartJupyterServer}
