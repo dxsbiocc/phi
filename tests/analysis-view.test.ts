@@ -113,3 +113,29 @@ test('analysis view renders an opened notebook document', () => {
   assert.match(markup, /done/)
   assert.match(markup, /Saved/)
 })
+
+test('analysis view renders local kernel diagnostics', () => {
+  const markup = renderAnalysisView({
+    kernelDiagnostics: {
+      jupyterServer: { available: true, command: 'jupyter', version: '2.14.0' },
+      kernels: [
+        {
+          name: 'python3',
+          displayName: 'Python 3',
+          language: 'python',
+          rawLanguage: 'python'
+        }
+      ],
+      preferredKernelName: 'python3',
+      hasPythonKernel: true,
+      hasRKernel: false,
+      messages: ['未检测到 R kernel。']
+    }
+  })
+
+  assert.match(markup, /Kernel diagnostics/)
+  assert.match(markup, /Jupyter 2\.14\.0/)
+  assert.match(markup, /Python kernel/)
+  assert.match(markup, /R missing/)
+  assert.match(markup, /未检测到 R kernel/)
+})

@@ -122,6 +122,8 @@ Verification:
 
 ### N4: Local Kernel Discovery And Session Lifecycle
 
+Status: in progress. Kernel discovery and diagnostics are complete; local server/session lifecycle remains pending.
+
 Deliverables:
 
 - Detect local Jupyter availability and kernelspecs for Python and R.

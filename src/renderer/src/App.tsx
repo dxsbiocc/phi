@@ -53,6 +53,7 @@ import type {
   AuthInteractionEvent,
   ChatItem,
   CurrentSession,
+  AnalysisKernelDiagnostics,
   AnalysisNotebookFile,
   AnalysisNotebookRegistry,
   McpServerSummary,
@@ -200,6 +201,10 @@ function App(): React.JSX.Element {
   const [analysisNotebookContentError, setAnalysisNotebookContentError] = useState<string | null>(
     null
   )
+  const [analysisKernelDiagnostics, setAnalysisKernelDiagnostics] =
+    useState<AnalysisKernelDiagnostics | null>(null)
+  const [isLoadingAnalysisKernels, setIsLoadingAnalysisKernels] = useState(false)
+  const [analysisKernelError, setAnalysisKernelError] = useState<string | null>(null)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
   const [activeSessionRuntimeState, setActiveSessionRuntimeState] =
     useState(idleSessionRuntimeState)
@@ -218,6 +223,7 @@ function App(): React.JSX.Element {
   const mcpServersRequestRef = useRef(0)
   const analysisNotebooksRequestRef = useRef(0)
   const analysisNotebookOpenRequestRef = useRef(0)
+  const analysisKernelsRequestRef = useRef(0)
   const sessionRefreshTimerRef = useRef<number | null>(null)
   const rendererApi = useMemo(() => getRendererApi(), [])
 
@@ -660,6 +666,25 @@ function App(): React.JSX.Element {
     [refreshAnalysisNotebooks, rendererApi]
   )
 
+  const refreshAnalysisKernels = useCallback(async (): Promise<void> => {
+    const request = ++analysisKernelsRequestRef.current
+    const cwd = activeCwdRef.current
+    setIsLoadingAnalysisKernels(true)
+    setAnalysisKernelError(null)
+    try {
+      const diagnostics = await rendererApi.listAnalysisKernels(cwd)
+      if (request !== analysisKernelsRequestRef.current || cwd !== activeCwdRef.current) return
+      setAnalysisKernelDiagnostics(diagnostics)
+    } catch (error) {
+      if (request !== analysisKernelsRequestRef.current) return
+      setAnalysisKernelError(readableErrorMessage(error, '无法检测 Jupyter kernels'))
+    } finally {
+      if (request === analysisKernelsRequestRef.current) {
+        setIsLoadingAnalysisKernels(false)
+      }
+    }
+  }, [rendererApi])
+
   const onCreateProject = async (
     name: string,
     workingDirectory: string,
@@ -991,11 +1016,13 @@ function App(): React.JSX.Element {
       }
       if (activeView === 'analysis') {
         void refreshAnalysisNotebooks()
+        void refreshAnalysisKernels()
       }
     })
   }, [
     activeCwd,
     activeView,
+    refreshAnalysisKernels,
     refreshAnalysisNotebooks,
     refreshMcpServers,
     refreshProjects,
@@ -1733,11 +1760,17 @@ function App(): React.JSX.Element {
             isOpeningNotebook={isOpeningAnalysisNotebook}
             notebookError={analysisNotebookError}
             notebookContentError={analysisNotebookContentError}
+            kernelDiagnostics={analysisKernelDiagnostics}
+            isLoadingKernels={isLoadingAnalysisKernels}
+            kernelError={analysisKernelError}
             onRefreshNotebooks={() => {
               void refreshAnalysisNotebooks()
             }}
             onInitializeProjectAnalysis={(cwd) => {
               void onInitializeProjectAnalysis(cwd)
+            }}
+            onRefreshKernels={() => {
+              void refreshAnalysisKernels()
             }}
             onOpenNotebook={(path) => {
               void onOpenAnalysisNotebook(path)

@@ -530,6 +530,23 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         path: `${workingDirectory}/${notebookPath}`
       })
     },
+    './agent/analysis-kernels': {
+      detectAnalysisKernels: () => ({
+        jupyterServer: { available: true, command: 'jupyter', version: '2.14.0' },
+        kernels: [
+          {
+            name: 'python3',
+            displayName: 'Python 3',
+            language: 'python',
+            rawLanguage: 'python'
+          }
+        ],
+        preferredKernelName: 'python3',
+        hasPythonKernel: true,
+        hasRKernel: false,
+        messages: ['未检测到 R kernel。']
+      })
+    },
     './agent/tool-approval': {
       cancelToolApprovals: noop,
       createApprovalExtension: (options: Record<string, unknown>): Record<string, unknown> => {
@@ -1001,6 +1018,22 @@ test('main IPC: analysis notebook files use the selected project service', async
   assert.equal(saved.savedRevision, 'nb-edited')
   assert.equal(created.relativePath, 'notebooks/Untitled.ipynb')
   assert.equal(closed.path, '/projects/research/notebooks/qc.ipynb')
+})
+
+test('main IPC: analysis kernel diagnostics require a known project when cwd is provided', async () => {
+  const app = await harness()
+
+  const diagnostics = (await app.invoke('analysis:listKernels', '/projects/research')) as {
+    jupyterServer: { available: boolean; version: string }
+    hasPythonKernel: boolean
+    hasRKernel: boolean
+  }
+
+  assert.equal(diagnostics.jupyterServer.available, true)
+  assert.equal(diagnostics.jupyterServer.version, '2.14.0')
+  assert.equal(diagnostics.hasPythonKernel, true)
+  assert.equal(diagnostics.hasRKernel, false)
+  await assert.rejects(app.invoke('analysis:listKernels', '/missing/project'), /请选择/)
 })
 
 test(

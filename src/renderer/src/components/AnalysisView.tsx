@@ -25,6 +25,8 @@ import {
   type NotebookDocument
 } from '../../../shared/notebookDocument'
 import type {
+  AnalysisKernelDiagnostics,
+  AnalysisKernelLanguage,
   AnalysisNotebookFile,
   AnalysisNotebookRegistry,
   AnalysisNotebookSummary
@@ -48,7 +50,11 @@ export type AnalysisViewProps = {
   isOpeningNotebook?: boolean
   notebookError?: string | null
   notebookContentError?: string | null
+  kernelDiagnostics?: AnalysisKernelDiagnostics | null
+  isLoadingKernels?: boolean
+  kernelError?: string | null
   onRefreshNotebooks?: () => void
+  onRefreshKernels?: () => void
   onInitializeProjectAnalysis?: (cwd: string) => void
   onOpenNotebook?: (path: string) => void
   onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
@@ -204,6 +210,45 @@ function notebookLanguage(document: NotebookDocument): string {
     stringFromMetadata(kernelSpec ?? {}, 'display_name') ??
     'Code'
   )
+}
+
+function notebookKernelLanguage(document: NotebookDocument): AnalysisKernelLanguage | null {
+  const language = notebookLanguage(document).toLocaleLowerCase()
+  if (language === 'python' || language.startsWith('python')) return 'python'
+  if (language === 'r' || language === 'ir') return 'r'
+  return null
+}
+
+function kernelAvailabilityLabel(
+  document: NotebookDocument | null,
+  diagnostics: AnalysisKernelDiagnostics | null | undefined,
+  isLoading: boolean,
+  error: string | null | undefined
+): string {
+  if (isLoading) return 'Checking kernels'
+  if (error) return 'Kernel check failed'
+  if (!diagnostics) return document ? 'Kernel unchecked' : 'Kernel preview'
+  if (!diagnostics.jupyterServer.available) return 'Jupyter missing'
+  if (!document) return 'Jupyter ready'
+
+  const language = notebookKernelLanguage(document)
+  if (language === 'python' && !diagnostics.hasPythonKernel) return 'Python kernel missing'
+  if (language === 'r' && !diagnostics.hasRKernel) return 'R kernel missing'
+
+  const matchingKernel =
+    diagnostics.kernels.find((kernel) => kernel.language === language) ??
+    diagnostics.kernels.find((kernel) => kernel.name === diagnostics.preferredKernelName)
+  return matchingKernel ? `${matchingKernel.displayName} · not started` : 'Kernel missing'
+}
+
+function kernelAvailabilityColor(
+  label: string
+): 'default' | 'primary' | 'success' | 'warning' | 'error' {
+  if (label.includes('failed')) return 'error'
+  if (label.includes('missing')) return 'warning'
+  if (label.includes('not started')) return 'primary'
+  if (label.includes('ready')) return 'success'
+  return 'default'
 }
 
 function textFromOutputData(data: JsonObject): string | undefined {
@@ -575,17 +620,23 @@ function LeftRail({
 function NotebookHeader({
   activeNotebookPath,
   kernelLabel,
+  kernelStatusLabel,
+  kernelStatusColor,
   isDirty,
   hasDocument,
   isOpening,
-  onSave
+  onSave,
+  onRefreshKernels
 }: {
   activeNotebookPath: string
   kernelLabel: string
+  kernelStatusLabel: string
+  kernelStatusColor: 'default' | 'primary' | 'success' | 'warning' | 'error'
   isDirty: boolean
   hasDocument: boolean
   isOpening: boolean
   onSave?: () => void
+  onRefreshKernels?: () => void
 }): React.JSX.Element {
   return (
     <Box
@@ -610,12 +661,7 @@ function NotebookHeader({
         {activeNotebookPath}
       </Typography>
       <Chip size="small" variant="outlined" label={kernelLabel} />
-      <Chip
-        size="small"
-        color="success"
-        variant="outlined"
-        label={hasDocument ? 'Ready' : 'Preview'}
-      />
+      <Chip size="small" color={kernelStatusColor} variant="outlined" label={kernelStatusLabel} />
       <Chip
         size="small"
         color={isDirty ? 'warning' : 'success'}
@@ -632,6 +678,13 @@ function NotebookHeader({
           >
             保存
           </Button>
+        ) : null}
+        {onRefreshKernels ? (
+          <Tooltip title="刷新 kernels">
+            <IconButton size="small" aria-label="刷新 kernels" onClick={onRefreshKernels}>
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
         ) : null}
         <Tooltip title="运行全部 cell">
           <IconButton size="small" aria-label="运行全部 cell" disabled>
@@ -848,18 +901,32 @@ function NotebookCanvas({
   initialDocument,
   isOpening,
   error,
-  onSaveNotebook
+  kernelDiagnostics,
+  isLoadingKernels,
+  kernelError,
+  onSaveNotebook,
+  onRefreshKernels
 }: {
   activeNotebookPath: string
   notebookFile?: AnalysisNotebookFile | null
   initialDocument: NotebookDocument | null
   isOpening?: boolean
   error?: string | null
+  kernelDiagnostics?: AnalysisKernelDiagnostics | null
+  isLoadingKernels?: boolean
+  kernelError?: string | null
   onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
+  onRefreshKernels?: () => void
 }): React.JSX.Element {
   const [draftDocument, setDraftDocument] = useState<NotebookDocument | null>(initialDocument)
   const cells = draftDocument ? documentCells(draftDocument) : mockCells
   const kernelLabel = draftDocument ? notebookLanguage(draftDocument) : 'Python 3.11'
+  const kernelStatusLabel = kernelAvailabilityLabel(
+    draftDocument,
+    kernelDiagnostics,
+    Boolean(isLoadingKernels),
+    kernelError
+  )
   const isDirty = Boolean(
     notebookFile && draftDocument && draftDocument.revision !== notebookFile.savedRevision
   )
@@ -886,10 +953,13 @@ function NotebookCanvas({
       <NotebookHeader
         activeNotebookPath={activeNotebookPath}
         kernelLabel={kernelLabel}
+        kernelStatusLabel={kernelStatusLabel}
+        kernelStatusColor={kernelAvailabilityColor(kernelStatusLabel)}
         isDirty={isDirty}
         hasDocument={Boolean(notebookFile && draftDocument)}
         isOpening={Boolean(isOpening)}
         onSave={onSave}
+        onRefreshKernels={onRefreshKernels}
       />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: { xs: 2, md: 4 }, py: 2.5 }}>
         <Box sx={{ maxWidth: 920, mx: 'auto' }}>
@@ -943,9 +1013,89 @@ function FilesTab(): React.JSX.Element {
   )
 }
 
-function VariablesTab(): React.JSX.Element {
+function KernelStatusSummary({
+  diagnostics,
+  isLoading,
+  error,
+  onRefresh
+}: {
+  diagnostics?: AnalysisKernelDiagnostics | null
+  isLoading?: boolean
+  error?: string | null
+  onRefresh?: () => void
+}): React.JSX.Element {
+  const serverLabel = isLoading
+    ? 'Checking'
+    : diagnostics?.jupyterServer.available
+      ? `Jupyter ${diagnostics.jupyterServer.version ?? 'available'}`
+      : 'Jupyter missing'
+  return (
+    <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.25, minWidth: 0 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Typography variant="caption" sx={{ flex: 1, fontWeight: 800 }}>
+          Kernel diagnostics
+        </Typography>
+        {onRefresh ? (
+          <Tooltip title="刷新 kernels">
+            <IconButton size="small" onClick={onRefresh}>
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : null}
+      </Box>
+      <Stack direction="row" spacing={0.75} sx={{ mt: 1, flexWrap: 'wrap', rowGap: 0.75 }}>
+        <Chip size="small" variant="outlined" label={serverLabel} />
+        <Chip
+          size="small"
+          color={diagnostics?.hasPythonKernel ? 'success' : 'warning'}
+          variant="outlined"
+          label={diagnostics?.hasPythonKernel ? 'Python kernel' : 'Python missing'}
+        />
+        <Chip
+          size="small"
+          color={diagnostics?.hasRKernel ? 'success' : 'warning'}
+          variant="outlined"
+          label={diagnostics?.hasRKernel ? 'R kernel' : 'R missing'}
+        />
+      </Stack>
+      {error ? (
+        <Typography variant="caption" color="error.main" sx={{ display: 'block', mt: 1 }}>
+          {error}
+        </Typography>
+      ) : null}
+      {diagnostics?.messages.map((message) => (
+        <Typography
+          key={message}
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: 'block', mt: 0.75 }}
+        >
+          {message}
+        </Typography>
+      ))}
+    </Box>
+  )
+}
+
+function VariablesTab({
+  kernelDiagnostics,
+  isLoadingKernels,
+  kernelError,
+  onRefreshKernels
+}: {
+  kernelDiagnostics?: AnalysisKernelDiagnostics | null
+  isLoadingKernels?: boolean
+  kernelError?: string | null
+  onRefreshKernels?: () => void
+}): React.JSX.Element {
   return (
     <Stack spacing={1}>
+      <KernelStatusSummary
+        diagnostics={kernelDiagnostics}
+        isLoading={isLoadingKernels}
+        error={kernelError}
+        onRefresh={onRefreshKernels}
+      />
       <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
         <Typography variant="caption" color="text.secondary">
           Refreshed after Cell 3
@@ -1025,8 +1175,29 @@ function ArtifactsTab(): React.JSX.Element {
   )
 }
 
-function InspectorContent({ tab }: { tab: InspectorTab }): React.JSX.Element {
-  if (tab === 'variables') return <VariablesTab />
+function InspectorContent({
+  tab,
+  kernelDiagnostics,
+  isLoadingKernels,
+  kernelError,
+  onRefreshKernels
+}: {
+  tab: InspectorTab
+  kernelDiagnostics?: AnalysisKernelDiagnostics | null
+  isLoadingKernels?: boolean
+  kernelError?: string | null
+  onRefreshKernels?: () => void
+}): React.JSX.Element {
+  if (tab === 'variables') {
+    return (
+      <VariablesTab
+        kernelDiagnostics={kernelDiagnostics}
+        isLoadingKernels={isLoadingKernels}
+        kernelError={kernelError}
+        onRefreshKernels={onRefreshKernels}
+      />
+    )
+  }
   if (tab === 'artifacts') return <ArtifactsTab />
   return <FilesTab />
 }
@@ -1034,12 +1205,20 @@ function InspectorContent({ tab }: { tab: InspectorTab }): React.JSX.Element {
 function RightInspector({
   tab,
   collapsed,
+  kernelDiagnostics,
+  isLoadingKernels,
+  kernelError,
   onTabChange,
+  onRefreshKernels,
   onToggleCollapsed
 }: {
   tab: InspectorTab
   collapsed: boolean
+  kernelDiagnostics?: AnalysisKernelDiagnostics | null
+  isLoadingKernels?: boolean
+  kernelError?: string | null
   onTabChange: (tab: InspectorTab) => void
+  onRefreshKernels?: () => void
   onToggleCollapsed: () => void
 }): React.JSX.Element {
   const tabs = useMemo(
@@ -1130,7 +1309,13 @@ function RightInspector({
       </Tabs>
       <Divider />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: 1.5 }}>
-        <InspectorContent tab={tab} />
+        <InspectorContent
+          tab={tab}
+          kernelDiagnostics={kernelDiagnostics}
+          isLoadingKernels={isLoadingKernels}
+          kernelError={kernelError}
+          onRefreshKernels={onRefreshKernels}
+        />
       </Box>
     </Box>
   )
@@ -1144,7 +1329,11 @@ export default function AnalysisView({
   isOpeningNotebook = false,
   notebookError = null,
   notebookContentError = null,
+  kernelDiagnostics = null,
+  isLoadingKernels = false,
+  kernelError = null,
   onRefreshNotebooks,
+  onRefreshKernels,
   onInitializeProjectAnalysis,
   onOpenNotebook,
   onSaveNotebook,
@@ -1207,12 +1396,20 @@ export default function AnalysisView({
         initialDocument={notebookFile?.document ?? null}
         isOpening={isOpeningNotebook}
         error={notebookContentError}
+        kernelDiagnostics={kernelDiagnostics}
+        isLoadingKernels={isLoadingKernels}
+        kernelError={kernelError}
         onSaveNotebook={onSaveNotebook}
+        onRefreshKernels={onRefreshKernels}
       />
       <RightInspector
         tab={inspectorTab}
         collapsed={inspectorCollapsed}
+        kernelDiagnostics={kernelDiagnostics}
+        isLoadingKernels={isLoadingKernels}
+        kernelError={kernelError}
         onTabChange={setInspectorTab}
+        onRefreshKernels={onRefreshKernels}
         onToggleCollapsed={() => setInspectorCollapsed((value) => !value)}
       />
     </Box>

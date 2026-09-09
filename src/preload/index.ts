@@ -221,6 +221,27 @@ type SaveAnalysisNotebookInput = {
   expectedRevision?: string
 }
 
+type AnalysisKernelDiagnostics = {
+  jupyterServer: {
+    available: boolean
+    command: 'jupyter'
+    version?: string
+    error?: string
+  }
+  kernels: Array<{
+    name: string
+    displayName: string
+    language: 'python' | 'r' | 'other'
+    rawLanguage: string
+    resourceDir?: string
+    executable?: string
+  }>
+  preferredKernelName?: string
+  hasPythonKernel: boolean
+  hasRKernel: boolean
+  messages: string[]
+}
+
 type RendererAuthApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -284,6 +305,7 @@ type RendererAuthApi = {
   ) => Promise<AnalysisNotebookFile>
   createAnalysisNotebook: (cwd: string, relativePath?: string) => Promise<AnalysisNotebookFile>
   closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
+  listAnalysisKernels: (cwd?: string) => Promise<AnalysisKernelDiagnostics>
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => Unsubscribe
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => Unsubscribe
@@ -400,6 +422,8 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('analysis:createNotebook', cwd, relativePath),
   closeAnalysisNotebook: (cwd: string, path: string): Promise<{ path: string }> =>
     ipcRenderer.invoke('analysis:closeNotebook', cwd, path),
+  listAnalysisKernels: (cwd?: string): Promise<AnalysisKernelDiagnostics> =>
+    ipcRenderer.invoke('analysis:listKernels', cwd),
   stopGeneration: (): Promise<void> => ipcRenderer.invoke('agent:stop'),
   onSessionChanged: (cb: (session: CurrentSession) => void): Unsubscribe => {
     const handler = (_: unknown, session: CurrentSession): void => {

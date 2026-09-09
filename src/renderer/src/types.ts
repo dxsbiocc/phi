@@ -244,6 +244,31 @@ export interface SaveAnalysisNotebookInput {
   expectedRevision?: string
 }
 
+export type AnalysisKernelLanguage = 'python' | 'r' | 'other'
+
+export interface AnalysisKernelSummary {
+  name: string
+  displayName: string
+  language: AnalysisKernelLanguage
+  rawLanguage: string
+  resourceDir?: string
+  executable?: string
+}
+
+export interface AnalysisKernelDiagnostics {
+  jupyterServer: {
+    available: boolean
+    command: 'jupyter'
+    version?: string
+    error?: string
+  }
+  kernels: AnalysisKernelSummary[]
+  preferredKernelName?: string
+  hasPythonKernel: boolean
+  hasRKernel: boolean
+  messages: string[]
+}
+
 export type RendererApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -307,6 +332,7 @@ export type RendererApi = {
   ) => Promise<AnalysisNotebookFile>
   createAnalysisNotebook: (cwd: string, relativePath?: string) => Promise<AnalysisNotebookFile>
   closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
+  listAnalysisKernels: (cwd?: string) => Promise<AnalysisKernelDiagnostics>
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => () => void
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => () => void

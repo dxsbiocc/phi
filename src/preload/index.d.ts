@@ -116,6 +116,27 @@ type PreloadSaveAnalysisNotebookInput = {
   expectedRevision?: string
 }
 
+type PreloadAnalysisKernelDiagnostics = {
+  jupyterServer: {
+    available: boolean
+    command: 'jupyter'
+    version?: string
+    error?: string
+  }
+  kernels: Array<{
+    name: string
+    displayName: string
+    language: 'python' | 'r' | 'other'
+    rawLanguage: string
+    resourceDir?: string
+    executable?: string
+  }>
+  preferredKernelName?: string
+  hasPythonKernel: boolean
+  hasRKernel: boolean
+  messages: string[]
+}
+
 declare global {
   interface Window {
     platform: NodeJS.Platform
@@ -315,6 +336,7 @@ declare global {
         relativePath?: string
       ) => Promise<PreloadAnalysisNotebookFile>
       closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
+      listAnalysisKernels: (cwd?: string) => Promise<PreloadAnalysisKernelDiagnostics>
       stopGeneration: () => Promise<void>
       onSessionChanged: (
         cb: (session: {

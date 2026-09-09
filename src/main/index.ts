@@ -69,6 +69,7 @@ import {
   saveProjectNotebook,
   type SaveProjectNotebookInput
 } from './agent/analysis-notebook-files'
+import { detectAnalysisKernels } from './agent/analysis-kernels'
 import {
   isStaleSessionError,
   StaleSessionError,
@@ -1960,6 +1961,16 @@ app.whenReady().then(() => {
     }
     assertProjectPathAvailable(project.workingDirectory)
     return closeProjectNotebook(project.workingDirectory, notebookPath)
+  })
+  ipcMain.handle('analysis:listKernels', async (_, cwd?: string) => {
+    if (cwd) {
+      const project = getProjectByCwd(cwd)
+      if (!project) {
+        throw new Error('请选择一个已添加的项目')
+      }
+      assertProjectPathAvailable(project.workingDirectory)
+    }
+    return detectAnalysisKernels()
   })
 
   ipcMain.handle('tool:approval-response', async (_, requestId: string, approved: boolean) => {
