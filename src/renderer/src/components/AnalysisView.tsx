@@ -392,21 +392,15 @@ function AnalysisChatPanel({
 }): React.JSX.Element {
   return (
     <Box sx={{ display: 'flex', minHeight: 0, flex: 1, flexDirection: 'column' }}>
-      <Box sx={{ px: 1.5, pb: 1.25 }}>
-        <Typography variant="caption" color="text.secondary">
-          Context
-        </Typography>
+      <Box sx={{ px: 1, pb: 0.75 }}>
         <Typography
-          variant="body2"
-          sx={{ mt: 0.25, fontFamily: 'var(--font-mono)', fontWeight: 700 }}
+          variant="caption"
+          color="text.secondary"
+          noWrap
+          sx={{ display: 'block', fontFamily: 'var(--font-mono)' }}
         >
           {activeNotebookPath} · Cell 3
         </Typography>
-        <Stack direction="row" spacing={0.75} sx={{ mt: 1, flexWrap: 'wrap', rowGap: 0.75 }}>
-          <Chip size="small" color="primary" variant="outlined" label="Selected cell" />
-          <Chip size="small" variant="outlined" label="Notebook" />
-          <Chip size="small" variant="outlined" label="Project" />
-        </Stack>
       </Box>
       <Divider />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: 1.5 }}>
@@ -414,7 +408,7 @@ function AnalysisChatPanel({
           <Box
             sx={{
               alignSelf: 'flex-start',
-              borderRadius: 2,
+              borderRadius: 1,
               bgcolor: 'action.hover',
               px: 1.25,
               py: 1
@@ -429,7 +423,7 @@ function AnalysisChatPanel({
               alignSelf: 'stretch',
               border: 1,
               borderColor: 'divider',
-              borderRadius: 2,
+              borderRadius: 1,
               px: 1.25,
               py: 1
             }}
@@ -444,7 +438,7 @@ function AnalysisChatPanel({
         </Stack>
       </Box>
       <Divider />
-      <Box sx={{ p: 1.5 }}>
+      <Box sx={{ p: 1 }}>
         <TextField
           fullWidth
           multiline
@@ -610,7 +604,7 @@ function LeftRail({
           flexShrink: 0,
           borderRight: 1,
           borderColor: 'divider',
-          pt: isMac ? `${macTitlebarHeight + contentTopGap}px` : 1,
+          pt: isMac ? 1 : 0.75,
           display: 'flex',
           alignItems: 'center',
           flexDirection: 'column',
@@ -641,7 +635,7 @@ function LeftRail({
         flexShrink: 0,
         borderRight: 1,
         borderColor: 'divider',
-        pt: isMac ? `${macTitlebarHeight + contentTopGap}px` : 1.5,
+        pt: isMac ? 1 : 0.75,
         display: 'flex',
         minHeight: 0,
         flexDirection: 'column',
@@ -649,13 +643,10 @@ function LeftRail({
           theme.palette.mode === 'dark' ? theme.palette.background.default : '#FFFFFF'
       }}
     >
-      <Box sx={{ px: 1.5, pb: 1.25, display: 'flex', alignItems: 'center', gap: 1 }}>
+      <Box sx={{ px: 1, pb: 0.5, display: 'flex', alignItems: 'center', gap: 0.75 }}>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
             分析
-          </Typography>
-          <Typography variant="caption" color="text.secondary" noWrap>
-            本地 notebook workbench
           </Typography>
         </Box>
         <Tooltip title="收起分析侧栏">
@@ -664,12 +655,15 @@ function LeftRail({
           </IconButton>
         </Tooltip>
       </Box>
-      <Box sx={{ px: 1.5, pb: 1 }}>
+      <Box sx={{ px: 1, pb: 0.5 }}>
         <Tabs
           value={panel}
           onChange={(_, value: LeftPanel) => onPanelChange(value)}
           variant="fullWidth"
-          sx={{ minHeight: 34, '& .MuiTab-root': { minHeight: 34, py: 0.5 } }}
+          sx={{
+            minHeight: 30,
+            '& .MuiTab-root': { minHeight: 30, py: 0.25, fontSize: '0.74rem' }
+          }}
         >
           <Tab value="chat" label="Chat" />
           <Tab value="notebooks" label="Notebooks" />

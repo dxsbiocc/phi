@@ -16,7 +16,7 @@ function renderAnalysisView(props: AnalysisViewProps = {}): string {
 test('analysis view renders the first-phase notebook shell', () => {
   const markup = renderAnalysisView()
 
-  assert.match(markup, /本地 notebook workbench/)
+  assert.match(markup, /分析/)
   assert.match(markup, /notebooks\/exploration\.ipynb/)
   assert.match(markup, /Python 3\.11/)
   assert.match(markup, /Files/)
