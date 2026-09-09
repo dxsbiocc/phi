@@ -281,6 +281,21 @@ export interface JupyterServerStatus {
   message?: string
 }
 
+export type AnalysisNotebookKernelState =
+  'missing' | 'idle' | 'busy' | 'restarting' | 'disconnected' | 'error'
+
+export interface AnalysisNotebookSessionStatus {
+  projectCwd: string
+  notebookPath: string
+  kernelName?: string
+  kernelDisplayName?: string
+  sessionId?: string
+  state: AnalysisNotebookKernelState
+  message?: string
+  startedAt?: string
+  updatedAt?: string
+}
+
 export type RendererApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -348,6 +363,20 @@ export type RendererApi = {
   getAnalysisJupyterStatus: (cwd: string) => Promise<JupyterServerStatus>
   startAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
   stopAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
+  getAnalysisNotebookSessionStatus: (
+    cwd: string,
+    path: string,
+    document: NotebookDocument
+  ) => Promise<AnalysisNotebookSessionStatus>
+  ensureAnalysisNotebookSession: (
+    cwd: string,
+    path: string,
+    document: NotebookDocument
+  ) => Promise<AnalysisNotebookSessionStatus>
+  closeAnalysisNotebookSession: (
+    cwd: string,
+    path: string
+  ) => Promise<AnalysisNotebookSessionStatus>
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => () => void
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => () => void

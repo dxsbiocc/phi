@@ -252,6 +252,18 @@ type JupyterServerStatus = {
   message?: string
 }
 
+type AnalysisNotebookSessionStatus = {
+  projectCwd: string
+  notebookPath: string
+  kernelName?: string
+  kernelDisplayName?: string
+  sessionId?: string
+  state: 'missing' | 'idle' | 'busy' | 'restarting' | 'disconnected' | 'error'
+  message?: string
+  startedAt?: string
+  updatedAt?: string
+}
+
 type RendererAuthApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -319,6 +331,20 @@ type RendererAuthApi = {
   getAnalysisJupyterStatus: (cwd: string) => Promise<JupyterServerStatus>
   startAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
   stopAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
+  getAnalysisNotebookSessionStatus: (
+    cwd: string,
+    path: string,
+    document: Record<string, unknown>
+  ) => Promise<AnalysisNotebookSessionStatus>
+  ensureAnalysisNotebookSession: (
+    cwd: string,
+    path: string,
+    document: Record<string, unknown>
+  ) => Promise<AnalysisNotebookSessionStatus>
+  closeAnalysisNotebookSession: (
+    cwd: string,
+    path: string
+  ) => Promise<AnalysisNotebookSessionStatus>
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => Unsubscribe
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => Unsubscribe
@@ -443,6 +469,23 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('analysis:startJupyter', cwd),
   stopAnalysisJupyter: (cwd: string): Promise<JupyterServerStatus> =>
     ipcRenderer.invoke('analysis:stopJupyter', cwd),
+  getAnalysisNotebookSessionStatus: (
+    cwd: string,
+    path: string,
+    document: Record<string, unknown>
+  ): Promise<AnalysisNotebookSessionStatus> =>
+    ipcRenderer.invoke('analysis:notebookSessionStatus', cwd, path, document),
+  ensureAnalysisNotebookSession: (
+    cwd: string,
+    path: string,
+    document: Record<string, unknown>
+  ): Promise<AnalysisNotebookSessionStatus> =>
+    ipcRenderer.invoke('analysis:ensureNotebookSession', cwd, path, document),
+  closeAnalysisNotebookSession: (
+    cwd: string,
+    path: string
+  ): Promise<AnalysisNotebookSessionStatus> =>
+    ipcRenderer.invoke('analysis:closeNotebookSession', cwd, path),
   stopGeneration: (): Promise<void> => ipcRenderer.invoke('agent:stop'),
   onSessionChanged: (cb: (session: CurrentSession) => void): Unsubscribe => {
     const handler = (_: unknown, session: CurrentSession): void => {

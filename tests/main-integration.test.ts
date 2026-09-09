@@ -85,6 +85,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   appLogs: Array<Record<string, unknown>>
   acknowledgedSessions: Array<{ file: string; cwd: string }>
   jupyterServerCalls: Array<{ action: string; cwd: string }>
+  notebookSessionCalls: Array<{ action: string; cwd: string; path?: string }>
   copiedText: () => string
 }> {
   const handlers = new Map<string, Handler>()
@@ -103,6 +104,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   const appLogs: Array<Record<string, unknown>> = []
   const acknowledgedSessions: Array<{ file: string; cwd: string }> = []
   const jupyterServerCalls: Array<{ action: string; cwd: string }> = []
+  const notebookSessionCalls: Array<{ action: string; cwd: string; path?: string }> = []
   let copiedText = ''
   const runtimeSessionCwds = new Map<string, string>()
   const noop = (): undefined => undefined
@@ -276,6 +278,48 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     }
     disposeAll(): void {
       jupyterServerCalls.push({ action: 'disposeAll', cwd: '*' })
+    }
+  }
+  class TestAnalysisNotebookSessionRegistry {
+    status(input: { projectCwd: string; notebookPath: string }): Record<string, unknown> {
+      notebookSessionCalls.push({
+        action: 'status',
+        cwd: input.projectCwd,
+        path: input.notebookPath
+      })
+      return {
+        projectCwd: input.projectCwd,
+        notebookPath: input.notebookPath,
+        state: 'disconnected',
+        message: 'Notebook 尚未连接 kernel'
+      }
+    }
+    ensureSession(input: { projectCwd: string; notebookPath: string }): Record<string, unknown> {
+      notebookSessionCalls.push({
+        action: 'ensure',
+        cwd: input.projectCwd,
+        path: input.notebookPath
+      })
+      return {
+        projectCwd: input.projectCwd,
+        notebookPath: input.notebookPath,
+        kernelName: 'python3',
+        sessionId: 'session-1',
+        state: 'idle',
+        message: 'Notebook kernel 已连接'
+      }
+    }
+    closeSession(projectCwd: string, notebookPath: string): Record<string, unknown> {
+      notebookSessionCalls.push({ action: 'close', cwd: projectCwd, path: notebookPath })
+      return {
+        projectCwd,
+        notebookPath,
+        state: 'disconnected',
+        message: 'Notebook kernel 已断开'
+      }
+    }
+    closeProject(projectCwd: string): void {
+      notebookSessionCalls.push({ action: 'closeProject', cwd: projectCwd })
     }
   }
   const app = Object.assign(new EventEmitter(), {
@@ -584,6 +628,9 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     './agent/analysis-jupyter-server': {
       JupyterServerRegistry: TestJupyterServerRegistry
     },
+    './agent/analysis-jupyter-sessions': {
+      AnalysisNotebookSessionRegistry: TestAnalysisNotebookSessionRegistry
+    },
     './agent/tool-approval': {
       cancelToolApprovals: noop,
       createApprovalExtension: (options: Record<string, unknown>): Record<string, unknown> => {
@@ -779,6 +826,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     appLogs,
     acknowledgedSessions,
     jupyterServerCalls,
+    notebookSessionCalls,
     copiedText: () => copiedText
   }
 }
@@ -1102,6 +1150,58 @@ test('main IPC: analysis Jupyter server lifecycle uses the selected project', as
     { action: 'stop', cwd: '/projects/research' }
   ])
   await assert.rejects(app.invoke('analysis:startJupyter', '/missing/project'), /请选择/)
+})
+
+test('main IPC: analysis notebook kernel session lifecycle uses the selected project', async () => {
+  const app = await harness()
+  const document = {
+    nbformat: 4,
+    nbformatMinor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: [],
+    extra: {},
+    revision: 'nb-1'
+  }
+
+  const status = (await app.invoke(
+    'analysis:notebookSessionStatus',
+    '/projects/research',
+    'notebooks/demo.ipynb',
+    document
+  )) as { state: string }
+  const ensured = (await app.invoke(
+    'analysis:ensureNotebookSession',
+    '/projects/research',
+    'notebooks/demo.ipynb',
+    document
+  )) as { state: string; sessionId: string }
+  const closed = (await app.invoke(
+    'analysis:closeNotebookSession',
+    '/projects/research',
+    'notebooks/demo.ipynb'
+  )) as { state: string }
+
+  assert.equal(status.state, 'disconnected')
+  assert.equal(ensured.state, 'idle')
+  assert.equal(ensured.sessionId, 'session-1')
+  assert.equal(closed.state, 'disconnected')
+  assert.deepEqual(app.notebookSessionCalls, [
+    {
+      action: 'status',
+      cwd: '/projects/research',
+      path: '/projects/research/notebooks/demo.ipynb'
+    },
+    {
+      action: 'ensure',
+      cwd: '/projects/research',
+      path: '/projects/research/notebooks/demo.ipynb'
+    },
+    { action: 'close', cwd: '/projects/research', path: '/projects/research/notebooks/demo.ipynb' }
+  ])
+  await assert.rejects(
+    app.invoke('analysis:ensureNotebookSession', '/missing/project', 'x.ipynb', document),
+    /请选择/
+  )
 })
 
 test(

@@ -30,6 +30,7 @@ import type {
   AnalysisNotebookFile,
   AnalysisNotebookRegistry,
   AnalysisNotebookSummary,
+  AnalysisNotebookSessionStatus,
   JupyterServerStatus
 } from '../types'
 
@@ -57,11 +58,16 @@ export type AnalysisViewProps = {
   jupyterServerStatus?: JupyterServerStatus | null
   isStartingJupyterServer?: boolean
   jupyterServerError?: string | null
+  notebookSessionStatus?: AnalysisNotebookSessionStatus | null
+  isStartingNotebookSession?: boolean
+  notebookSessionError?: string | null
   onRefreshNotebooks?: () => void
   onRefreshKernels?: () => void
   onRefreshJupyterServer?: () => void
   onStartJupyterServer?: (cwd: string) => void
   onStopJupyterServer?: (cwd: string) => void
+  onStartNotebookSession?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
+  onStopNotebookSession?: (file: AnalysisNotebookFile) => void
   onInitializeProjectAnalysis?: (cwd: string) => void
   onOpenNotebook?: (path: string) => void
   onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
@@ -87,7 +93,7 @@ const ExpandIcon = PhiIcons.action.expand
 const FileIcon = PhiIcons.tool.read
 const FolderIcon = PhiIcons.entity.folder
 const MoreIcon = PhiIcons.action.more
-const NotebookIcon = PhiIcons.file.markdown
+const NotebookIcon = PhiIcons.nav.analysis
 const PlayIcon = PhiIcons.action.quick
 const RefreshIcon = PhiIcons.action.refresh
 const StopIcon = PhiIcons.action.stop
@@ -275,6 +281,30 @@ function jupyterServerStateColor(
   if (status.state === 'starting') return 'primary'
   if (status.state === 'error') return 'error'
   if (status.state === 'exited') return 'warning'
+  return 'default'
+}
+
+function notebookSessionStateLabel(
+  status: AnalysisNotebookSessionStatus | null | undefined
+): string {
+  if (!status) return 'Kernel disconnected'
+  if (status.state === 'missing') return 'Kernel missing'
+  if (status.state === 'idle') return 'Kernel idle'
+  if (status.state === 'busy') return 'Kernel busy'
+  if (status.state === 'restarting') return 'Kernel restarting'
+  if (status.state === 'disconnected') return 'Kernel disconnected'
+  if (status.state === 'error') return 'Kernel error'
+  return 'Kernel unknown'
+}
+
+function notebookSessionStateColor(
+  status: AnalysisNotebookSessionStatus | null | undefined
+): 'default' | 'primary' | 'success' | 'warning' | 'error' {
+  if (!status) return 'default'
+  if (status.state === 'idle') return 'success'
+  if (status.state === 'busy' || status.state === 'restarting') return 'primary'
+  if (status.state === 'missing' || status.state === 'disconnected') return 'warning'
+  if (status.state === 'error') return 'error'
   return 'default'
 }
 
@@ -652,8 +682,14 @@ function NotebookHeader({
   isDirty,
   hasDocument,
   isOpening,
+  isStartingNotebookSession,
+  notebookFile,
+  draftDocument,
+  notebookSessionStatus,
   onSave,
-  onRefreshKernels
+  onRefreshKernels,
+  onStartNotebookSession,
+  onStopNotebookSession
 }: {
   activeNotebookPath: string
   kernelLabel: string
@@ -662,9 +698,27 @@ function NotebookHeader({
   isDirty: boolean
   hasDocument: boolean
   isOpening: boolean
+  isStartingNotebookSession?: boolean
+  notebookFile?: AnalysisNotebookFile | null
+  draftDocument?: NotebookDocument | null
+  notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   onSave?: () => void
   onRefreshKernels?: () => void
+  onStartNotebookSession?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
+  onStopNotebookSession?: (file: AnalysisNotebookFile) => void
 }): React.JSX.Element {
+  const hasLiveNotebookSession = Boolean(
+    notebookSessionStatus?.sessionId &&
+    (notebookSessionStatus.state === 'idle' ||
+      notebookSessionStatus.state === 'busy' ||
+      notebookSessionStatus.state === 'restarting')
+  )
+  const canConnectNotebookSession = Boolean(
+    notebookFile && draftDocument && onStartNotebookSession && !hasLiveNotebookSession
+  )
+  const canDisconnectNotebookSession = Boolean(
+    notebookFile && onStopNotebookSession && hasLiveNotebookSession
+  )
   return (
     <Box
       sx={{
@@ -712,6 +766,35 @@ function NotebookHeader({
               <RefreshIcon fontSize="small" />
             </IconButton>
           </Tooltip>
+        ) : null}
+        {canConnectNotebookSession ? (
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<PlayIcon fontSize="small" />}
+            disabled={Boolean(isStartingNotebookSession)}
+            onClick={() => {
+              if (notebookFile && draftDocument) {
+                onStartNotebookSession?.(notebookFile, draftDocument)
+              }
+            }}
+          >
+            连接 kernel
+          </Button>
+        ) : null}
+        {canDisconnectNotebookSession ? (
+          <Button
+            size="small"
+            variant="outlined"
+            color="warning"
+            startIcon={<StopIcon fontSize="small" />}
+            disabled={Boolean(isStartingNotebookSession)}
+            onClick={() => {
+              if (notebookFile) onStopNotebookSession?.(notebookFile)
+            }}
+          >
+            断开
+          </Button>
         ) : null}
         <Tooltip title="运行全部 cell">
           <IconButton size="small" aria-label="运行全部 cell" disabled>
@@ -931,8 +1014,13 @@ function NotebookCanvas({
   kernelDiagnostics,
   isLoadingKernels,
   kernelError,
+  notebookSessionStatus,
+  isStartingNotebookSession,
+  notebookSessionError,
   onSaveNotebook,
-  onRefreshKernels
+  onRefreshKernels,
+  onStartNotebookSession,
+  onStopNotebookSession
 }: {
   activeNotebookPath: string
   notebookFile?: AnalysisNotebookFile | null
@@ -942,18 +1030,28 @@ function NotebookCanvas({
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
   isLoadingKernels?: boolean
   kernelError?: string | null
+  notebookSessionStatus?: AnalysisNotebookSessionStatus | null
+  isStartingNotebookSession?: boolean
+  notebookSessionError?: string | null
   onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onRefreshKernels?: () => void
+  onStartNotebookSession?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
+  onStopNotebookSession?: (file: AnalysisNotebookFile) => void
 }): React.JSX.Element {
   const [draftDocument, setDraftDocument] = useState<NotebookDocument | null>(initialDocument)
   const cells = draftDocument ? documentCells(draftDocument) : mockCells
   const kernelLabel = draftDocument ? notebookLanguage(draftDocument) : 'Python 3.11'
-  const kernelStatusLabel = kernelAvailabilityLabel(
-    draftDocument,
-    kernelDiagnostics,
-    Boolean(isLoadingKernels),
-    kernelError
-  )
+  const kernelStatusLabel = notebookSessionStatus
+    ? notebookSessionStateLabel(notebookSessionStatus)
+    : kernelAvailabilityLabel(
+        draftDocument,
+        kernelDiagnostics,
+        Boolean(isLoadingKernels),
+        kernelError
+      )
+  const kernelStatusColor = notebookSessionStatus
+    ? notebookSessionStateColor(notebookSessionStatus)
+    : kernelAvailabilityColor(kernelStatusLabel)
   const isDirty = Boolean(
     notebookFile && draftDocument && draftDocument.revision !== notebookFile.savedRevision
   )
@@ -981,12 +1079,18 @@ function NotebookCanvas({
         activeNotebookPath={activeNotebookPath}
         kernelLabel={kernelLabel}
         kernelStatusLabel={kernelStatusLabel}
-        kernelStatusColor={kernelAvailabilityColor(kernelStatusLabel)}
+        kernelStatusColor={kernelStatusColor}
         isDirty={isDirty}
         hasDocument={Boolean(notebookFile && draftDocument)}
         isOpening={Boolean(isOpening)}
+        isStartingNotebookSession={isStartingNotebookSession}
+        notebookFile={notebookFile}
+        draftDocument={draftDocument}
+        notebookSessionStatus={notebookSessionStatus}
         onSave={onSave}
         onRefreshKernels={onRefreshKernels}
+        onStartNotebookSession={onStartNotebookSession}
+        onStopNotebookSession={onStopNotebookSession}
       />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: { xs: 2, md: 4 }, py: 2.5 }}>
         <Box sx={{ maxWidth: 920, mx: 'auto' }}>
@@ -994,6 +1098,11 @@ function NotebookCanvas({
           {error ? (
             <Typography color="error.main" sx={{ mb: 2 }}>
               {error}
+            </Typography>
+          ) : null}
+          {notebookSessionError ? (
+            <Typography color="error.main" sx={{ mb: 2 }}>
+              {notebookSessionError}
             </Typography>
           ) : null}
           {!isOpening &&
@@ -1048,6 +1157,7 @@ function KernelStatusSummary({
   serverStatus,
   isStartingServer,
   serverError,
+  notebookSessionStatus,
   onRefresh,
   onRefreshServer,
   onStartServer,
@@ -1060,6 +1170,7 @@ function KernelStatusSummary({
   serverStatus?: JupyterServerStatus | null
   isStartingServer?: boolean
   serverError?: string | null
+  notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   onRefresh?: () => void
   onRefreshServer?: () => void
   onStartServer?: (cwd: string) => void
@@ -1093,6 +1204,12 @@ function KernelStatusSummary({
           color={jupyterServerStateColor(serverStatus)}
           variant="outlined"
           label={jupyterServerStateLabel(serverStatus)}
+        />
+        <Chip
+          size="small"
+          color={notebookSessionStateColor(notebookSessionStatus)}
+          variant="outlined"
+          label={notebookSessionStateLabel(notebookSessionStatus)}
         />
         <Chip
           size="small"
@@ -1154,6 +1271,11 @@ function KernelStatusSummary({
           {serverStatus.message}
         </Typography>
       ) : null}
+      {notebookSessionStatus?.message ? (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+          {notebookSessionStatus.message}
+        </Typography>
+      ) : null}
       {diagnostics?.messages.map((message) => (
         <Typography
           key={message}
@@ -1176,6 +1298,7 @@ function VariablesTab({
   jupyterServerStatus,
   isStartingJupyterServer,
   jupyterServerError,
+  notebookSessionStatus,
   onRefreshKernels,
   onRefreshJupyterServer,
   onStartJupyterServer,
@@ -1188,6 +1311,7 @@ function VariablesTab({
   jupyterServerStatus?: JupyterServerStatus | null
   isStartingJupyterServer?: boolean
   jupyterServerError?: string | null
+  notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   onRefreshKernels?: () => void
   onRefreshJupyterServer?: () => void
   onStartJupyterServer?: (cwd: string) => void
@@ -1203,6 +1327,7 @@ function VariablesTab({
         serverStatus={jupyterServerStatus}
         isStartingServer={isStartingJupyterServer}
         serverError={jupyterServerError}
+        notebookSessionStatus={notebookSessionStatus}
         onRefresh={onRefreshKernels}
         onRefreshServer={onRefreshJupyterServer}
         onStartServer={onStartJupyterServer}
@@ -1296,6 +1421,7 @@ function InspectorContent({
   jupyterServerStatus,
   isStartingJupyterServer,
   jupyterServerError,
+  notebookSessionStatus,
   onRefreshKernels,
   onRefreshJupyterServer,
   onStartJupyterServer,
@@ -1309,6 +1435,7 @@ function InspectorContent({
   jupyterServerStatus?: JupyterServerStatus | null
   isStartingJupyterServer?: boolean
   jupyterServerError?: string | null
+  notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   onRefreshKernels?: () => void
   onRefreshJupyterServer?: () => void
   onStartJupyterServer?: (cwd: string) => void
@@ -1324,6 +1451,7 @@ function InspectorContent({
         jupyterServerStatus={jupyterServerStatus}
         isStartingJupyterServer={isStartingJupyterServer}
         jupyterServerError={jupyterServerError}
+        notebookSessionStatus={notebookSessionStatus}
         onRefreshKernels={onRefreshKernels}
         onRefreshJupyterServer={onRefreshJupyterServer}
         onStartJupyterServer={onStartJupyterServer}
@@ -1345,6 +1473,7 @@ function RightInspector({
   jupyterServerStatus,
   isStartingJupyterServer,
   jupyterServerError,
+  notebookSessionStatus,
   onTabChange,
   onRefreshKernels,
   onRefreshJupyterServer,
@@ -1361,6 +1490,7 @@ function RightInspector({
   jupyterServerStatus?: JupyterServerStatus | null
   isStartingJupyterServer?: boolean
   jupyterServerError?: string | null
+  notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   onTabChange: (tab: InspectorTab) => void
   onRefreshKernels?: () => void
   onRefreshJupyterServer?: () => void
@@ -1465,6 +1595,7 @@ function RightInspector({
           jupyterServerStatus={jupyterServerStatus}
           isStartingJupyterServer={isStartingJupyterServer}
           jupyterServerError={jupyterServerError}
+          notebookSessionStatus={notebookSessionStatus}
           onRefreshKernels={onRefreshKernels}
           onRefreshJupyterServer={onRefreshJupyterServer}
           onStartJupyterServer={onStartJupyterServer}
@@ -1489,11 +1620,16 @@ export default function AnalysisView({
   jupyterServerStatus = null,
   isStartingJupyterServer = false,
   jupyterServerError = null,
+  notebookSessionStatus = null,
+  isStartingNotebookSession = false,
+  notebookSessionError = null,
   onRefreshNotebooks,
   onRefreshKernels,
   onRefreshJupyterServer,
   onStartJupyterServer,
   onStopJupyterServer,
+  onStartNotebookSession,
+  onStopNotebookSession,
   onInitializeProjectAnalysis,
   onOpenNotebook,
   onSaveNotebook,
@@ -1559,8 +1695,13 @@ export default function AnalysisView({
         kernelDiagnostics={kernelDiagnostics}
         isLoadingKernels={isLoadingKernels}
         kernelError={kernelError}
+        notebookSessionStatus={notebookSessionStatus}
+        isStartingNotebookSession={isStartingNotebookSession}
+        notebookSessionError={notebookSessionError}
         onSaveNotebook={onSaveNotebook}
         onRefreshKernels={onRefreshKernels}
+        onStartNotebookSession={onStartNotebookSession}
+        onStopNotebookSession={onStopNotebookSession}
       />
       <RightInspector
         tab={inspectorTab}
@@ -1572,6 +1713,7 @@ export default function AnalysisView({
         jupyterServerStatus={jupyterServerStatus}
         isStartingJupyterServer={isStartingJupyterServer}
         jupyterServerError={jupyterServerError}
+        notebookSessionStatus={notebookSessionStatus}
         onTabChange={setInspectorTab}
         onRefreshKernels={onRefreshKernels}
         onRefreshJupyterServer={onRefreshJupyterServer}

@@ -122,7 +122,7 @@ Verification:
 
 ### N4: Local Kernel Discovery And Session Lifecycle
 
-Status: in progress. Kernel discovery, diagnostics, and local Jupyter Server lifecycle registry are complete; one session/kernel per open notebook remains pending.
+Status: in progress. Kernel discovery, diagnostics, local Jupyter Server lifecycle registry, and notebook session status plumbing are complete; cell execution remains pending.
 
 Deliverables:
 

@@ -164,3 +164,64 @@ test('analysis view renders local Jupyter server controls', () => {
   assert.match(markup, /启动 Jupyter/)
   assert.match(markup, /Jupyter Server 已停止/)
 })
+
+test('analysis view renders notebook kernel session controls and status', () => {
+  const document = parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: {
+      kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' },
+      language_info: { name: 'python' }
+    },
+    cells: []
+  })
+
+  const disconnected = renderAnalysisView({
+    notebookFile: {
+      path: '/project/notebooks/real.ipynb',
+      relativePath: 'notebooks/real.ipynb',
+      name: 'real.ipynb',
+      bytes: 512,
+      modifiedAt: '2026-09-09T00:00:00.000Z',
+      savedRevision: document.revision,
+      document
+    },
+    notebookSessionStatus: {
+      projectCwd: '/project',
+      notebookPath: '/project/notebooks/real.ipynb',
+      kernelName: 'python3',
+      kernelDisplayName: 'Python 3',
+      state: 'disconnected',
+      message: 'Notebook 尚未连接 kernel'
+    },
+    onStartNotebookSession: () => undefined
+  })
+  const connected = renderAnalysisView({
+    notebookFile: {
+      path: '/project/notebooks/real.ipynb',
+      relativePath: 'notebooks/real.ipynb',
+      name: 'real.ipynb',
+      bytes: 512,
+      modifiedAt: '2026-09-09T00:00:00.000Z',
+      savedRevision: document.revision,
+      document
+    },
+    notebookSessionStatus: {
+      projectCwd: '/project',
+      notebookPath: '/project/notebooks/real.ipynb',
+      kernelName: 'python3',
+      kernelDisplayName: 'Python 3',
+      sessionId: 'session-1',
+      state: 'idle',
+      message: 'Notebook kernel 已连接'
+    },
+    onStopNotebookSession: () => undefined
+  })
+
+  assert.match(disconnected, /Kernel disconnected/)
+  assert.match(disconnected, /连接 kernel/)
+  assert.match(disconnected, /Notebook 尚未连接 kernel/)
+  assert.match(connected, /Kernel idle/)
+  assert.match(connected, /断开/)
+  assert.match(connected, /Notebook kernel 已连接/)
+})

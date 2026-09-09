@@ -18,6 +18,11 @@ type JupyterEndpoint = {
   token?: string
 }
 
+export type JupyterServerConnection = {
+  url: string
+  token?: string
+}
+
 type StreamLike = {
   on(event: 'data', listener: (chunk: Buffer | string) => void): unknown
 }
@@ -132,6 +137,13 @@ export class JupyterServerRegistry {
         logs: []
       }
     )
+  }
+
+  connection(workingDirectory: string): JupyterServerConnection | null {
+    const projectCwd = resolveProjectCwd(workingDirectory)
+    const record = this.records.get(projectCwd)
+    if (!record?.endpoint || record.state !== 'ready') return null
+    return { ...record.endpoint }
   }
 
   start(workingDirectory: string): JupyterServerPublicStatus {

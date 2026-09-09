@@ -147,6 +147,18 @@ type PreloadJupyterServerStatus = {
   message?: string
 }
 
+type PreloadAnalysisNotebookSessionStatus = {
+  projectCwd: string
+  notebookPath: string
+  kernelName?: string
+  kernelDisplayName?: string
+  sessionId?: string
+  state: 'missing' | 'idle' | 'busy' | 'restarting' | 'disconnected' | 'error'
+  message?: string
+  startedAt?: string
+  updatedAt?: string
+}
+
 declare global {
   interface Window {
     platform: NodeJS.Platform
@@ -350,6 +362,20 @@ declare global {
       getAnalysisJupyterStatus: (cwd: string) => Promise<PreloadJupyterServerStatus>
       startAnalysisJupyter: (cwd: string) => Promise<PreloadJupyterServerStatus>
       stopAnalysisJupyter: (cwd: string) => Promise<PreloadJupyterServerStatus>
+      getAnalysisNotebookSessionStatus: (
+        cwd: string,
+        path: string,
+        document: Record<string, unknown>
+      ) => Promise<PreloadAnalysisNotebookSessionStatus>
+      ensureAnalysisNotebookSession: (
+        cwd: string,
+        path: string,
+        document: Record<string, unknown>
+      ) => Promise<PreloadAnalysisNotebookSessionStatus>
+      closeAnalysisNotebookSession: (
+        cwd: string,
+        path: string
+      ) => Promise<PreloadAnalysisNotebookSessionStatus>
       stopGeneration: () => Promise<void>
       onSessionChanged: (
         cb: (session: {

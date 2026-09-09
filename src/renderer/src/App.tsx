@@ -54,6 +54,7 @@ import type {
   ChatItem,
   CurrentSession,
   AnalysisKernelDiagnostics,
+  AnalysisNotebookSessionStatus,
   JupyterServerStatus,
   AnalysisNotebookFile,
   AnalysisNotebookRegistry,
@@ -211,6 +212,12 @@ function App(): React.JSX.Element {
   )
   const [isStartingAnalysisJupyter, setIsStartingAnalysisJupyter] = useState(false)
   const [analysisJupyterError, setAnalysisJupyterError] = useState<string | null>(null)
+  const [analysisNotebookSessionStatus, setAnalysisNotebookSessionStatus] =
+    useState<AnalysisNotebookSessionStatus | null>(null)
+  const [isStartingAnalysisNotebookSession, setIsStartingAnalysisNotebookSession] = useState(false)
+  const [analysisNotebookSessionError, setAnalysisNotebookSessionError] = useState<string | null>(
+    null
+  )
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
   const [activeSessionRuntimeState, setActiveSessionRuntimeState] =
     useState(idleSessionRuntimeState)
@@ -231,6 +238,7 @@ function App(): React.JSX.Element {
   const analysisNotebookOpenRequestRef = useRef(0)
   const analysisKernelsRequestRef = useRef(0)
   const analysisJupyterRequestRef = useRef(0)
+  const analysisNotebookSessionRequestRef = useRef(0)
   const sessionRefreshTimerRef = useRef<number | null>(null)
   const rendererApi = useMemo(() => getRendererApi(), [])
 
@@ -610,18 +618,47 @@ function App(): React.JSX.Element {
     [refreshAnalysisNotebooks, rendererApi]
   )
 
+  const refreshAnalysisNotebookSessionStatus = useCallback(
+    async (file: AnalysisNotebookFile): Promise<void> => {
+      const request = ++analysisNotebookSessionRequestRef.current
+      const cwd = activeCwdRef.current
+      setAnalysisNotebookSessionError(null)
+      try {
+        const status = await rendererApi.getAnalysisNotebookSessionStatus(
+          cwd,
+          file.path,
+          file.document
+        )
+        if (request !== analysisNotebookSessionRequestRef.current || cwd !== activeCwdRef.current) {
+          return
+        }
+        setAnalysisNotebookSessionStatus(status)
+      } catch (error) {
+        if (request !== analysisNotebookSessionRequestRef.current) return
+        setAnalysisNotebookSessionStatus(null)
+        setAnalysisNotebookSessionError(
+          readableErrorMessage(error, '无法读取 notebook kernel 状态')
+        )
+      }
+    },
+    [rendererApi]
+  )
+
   const onOpenAnalysisNotebook = useCallback(
     async (path: string): Promise<void> => {
       const request = ++analysisNotebookOpenRequestRef.current
       const cwd = activeCwdRef.current
       setIsOpeningAnalysisNotebook(true)
       setAnalysisNotebookContentError(null)
+      setAnalysisNotebookSessionError(null)
+      setAnalysisNotebookSessionStatus(null)
       try {
         const file = await rendererApi.openAnalysisNotebook(cwd, path)
         if (request !== analysisNotebookOpenRequestRef.current || cwd !== activeCwdRef.current) {
           return
         }
         setActiveAnalysisNotebook(file)
+        void refreshAnalysisNotebookSessionStatus(file)
       } catch (error) {
         if (request !== analysisNotebookOpenRequestRef.current) return
         setAnalysisNotebookContentError(readableErrorMessage(error, '无法打开 notebook'))
@@ -631,7 +668,7 @@ function App(): React.JSX.Element {
         }
       }
     },
-    [rendererApi]
+    [refreshAnalysisNotebookSessionStatus, rendererApi]
   )
 
   const onSaveAnalysisNotebook = useCallback(
@@ -648,21 +685,25 @@ function App(): React.JSX.Element {
           expectedRevision: file.savedRevision
         })
         setActiveAnalysisNotebook(saved)
+        void refreshAnalysisNotebookSessionStatus(saved)
         await refreshAnalysisNotebooks()
       } catch (error) {
         setAnalysisNotebookContentError(readableErrorMessage(error, '无法保存 notebook'))
       }
     },
-    [refreshAnalysisNotebooks, rendererApi]
+    [refreshAnalysisNotebookSessionStatus, refreshAnalysisNotebooks, rendererApi]
   )
 
   const onCreateAnalysisNotebook = useCallback(
     async (cwd: string): Promise<void> => {
       setIsOpeningAnalysisNotebook(true)
       setAnalysisNotebookContentError(null)
+      setAnalysisNotebookSessionError(null)
+      setAnalysisNotebookSessionStatus(null)
       try {
         const file = await rendererApi.createAnalysisNotebook(cwd)
         setActiveAnalysisNotebook(file)
+        void refreshAnalysisNotebookSessionStatus(file)
         await refreshAnalysisNotebooks()
       } catch (error) {
         setAnalysisNotebookContentError(readableErrorMessage(error, '无法新建 notebook'))
@@ -670,7 +711,7 @@ function App(): React.JSX.Element {
         setIsOpeningAnalysisNotebook(false)
       }
     },
-    [refreshAnalysisNotebooks, rendererApi]
+    [refreshAnalysisNotebookSessionStatus, refreshAnalysisNotebooks, rendererApi]
   )
 
   const refreshAnalysisKernels = useCallback(async (): Promise<void> => {
@@ -742,12 +783,64 @@ function App(): React.JSX.Element {
         const status = await rendererApi.stopAnalysisJupyter(cwd)
         if (request !== analysisJupyterRequestRef.current || cwd !== activeCwdRef.current) return
         setAnalysisJupyterStatus(status)
+        setAnalysisNotebookSessionStatus(null)
       } catch (error) {
         if (request !== analysisJupyterRequestRef.current) return
         setAnalysisJupyterError(readableErrorMessage(error, '无法停止 Jupyter Server'))
       } finally {
         if (request === analysisJupyterRequestRef.current) {
           setIsStartingAnalysisJupyter(false)
+        }
+      }
+    },
+    [rendererApi]
+  )
+
+  const onStartAnalysisNotebookSession = useCallback(
+    async (
+      file: AnalysisNotebookFile,
+      document: AnalysisNotebookFile['document']
+    ): Promise<void> => {
+      const request = ++analysisNotebookSessionRequestRef.current
+      const cwd = activeCwdRef.current
+      setIsStartingAnalysisNotebookSession(true)
+      setAnalysisNotebookSessionError(null)
+      try {
+        const status = await rendererApi.ensureAnalysisNotebookSession(cwd, file.path, document)
+        if (request !== analysisNotebookSessionRequestRef.current || cwd !== activeCwdRef.current) {
+          return
+        }
+        setAnalysisNotebookSessionStatus(status)
+      } catch (error) {
+        if (request !== analysisNotebookSessionRequestRef.current) return
+        setAnalysisNotebookSessionError(readableErrorMessage(error, '无法连接 notebook kernel'))
+      } finally {
+        if (request === analysisNotebookSessionRequestRef.current) {
+          setIsStartingAnalysisNotebookSession(false)
+        }
+      }
+    },
+    [rendererApi]
+  )
+
+  const onStopAnalysisNotebookSession = useCallback(
+    async (file: AnalysisNotebookFile): Promise<void> => {
+      const request = ++analysisNotebookSessionRequestRef.current
+      const cwd = activeCwdRef.current
+      setIsStartingAnalysisNotebookSession(true)
+      setAnalysisNotebookSessionError(null)
+      try {
+        const status = await rendererApi.closeAnalysisNotebookSession(cwd, file.path)
+        if (request !== analysisNotebookSessionRequestRef.current || cwd !== activeCwdRef.current) {
+          return
+        }
+        setAnalysisNotebookSessionStatus(status)
+      } catch (error) {
+        if (request !== analysisNotebookSessionRequestRef.current) return
+        setAnalysisNotebookSessionError(readableErrorMessage(error, '无法断开 notebook kernel'))
+      } finally {
+        if (request === analysisNotebookSessionRequestRef.current) {
+          setIsStartingAnalysisNotebookSession(false)
         }
       }
     },
@@ -1837,6 +1930,9 @@ function App(): React.JSX.Element {
             jupyterServerStatus={analysisJupyterStatus}
             isStartingJupyterServer={isStartingAnalysisJupyter}
             jupyterServerError={analysisJupyterError}
+            notebookSessionStatus={analysisNotebookSessionStatus}
+            isStartingNotebookSession={isStartingAnalysisNotebookSession}
+            notebookSessionError={analysisNotebookSessionError}
             onRefreshNotebooks={() => {
               void refreshAnalysisNotebooks()
             }}
@@ -1854,6 +1950,12 @@ function App(): React.JSX.Element {
             }}
             onStopJupyterServer={(cwd) => {
               void onStopAnalysisJupyter(cwd)
+            }}
+            onStartNotebookSession={(file, document) => {
+              void onStartAnalysisNotebookSession(file, document)
+            }}
+            onStopNotebookSession={(file) => {
+              void onStopAnalysisNotebookSession(file)
             }}
             onOpenNotebook={(path) => {
               void onOpenAnalysisNotebook(path)

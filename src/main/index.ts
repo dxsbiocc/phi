@@ -71,6 +71,7 @@ import {
 } from './agent/analysis-notebook-files'
 import { detectAnalysisKernels } from './agent/analysis-kernels'
 import { JupyterServerRegistry } from './agent/analysis-jupyter-server'
+import { AnalysisNotebookSessionRegistry } from './agent/analysis-jupyter-sessions'
 import {
   isStaleSessionError,
   StaleSessionError,
@@ -95,6 +96,7 @@ import {
   type UnreadKind,
   listPhiSessions
 } from './agent/session-store'
+import type { NotebookDocument } from '../shared/notebookDocument'
 import icon from '../../resources/icon.png?asset'
 
 const APP_NAME = 'Phi'
@@ -260,6 +262,9 @@ const runnerRegistry = new SessionRunnerRegistry({
   onSessionEvent: broadcastSessionTimelineEvent
 })
 const jupyterServerRegistry = new JupyterServerRegistry()
+const notebookSessionRegistry = new AnalysisNotebookSessionRegistry({
+  getConnection: (projectCwd) => jupyterServerRegistry.connection(projectCwd)
+})
 
 function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEvent): void {
   const run = [...activePromptRuns.values()].find((item) => item.phiSessionId === sessionId)
@@ -1963,6 +1968,8 @@ app.whenReady().then(() => {
       throw new Error('请选择一个已添加的项目')
     }
     assertProjectPathAvailable(project.workingDirectory)
+    const file = openProjectNotebook(project.workingDirectory, notebookPath)
+    await notebookSessionRegistry.closeSession(project.workingDirectory, file.path)
     return closeProjectNotebook(project.workingDirectory, notebookPath)
   })
   ipcMain.handle('analysis:listKernels', async (_, cwd?: string) => {
@@ -1997,7 +2004,51 @@ app.whenReady().then(() => {
       throw new Error('请选择一个已添加的项目')
     }
     assertProjectPathAvailable(project.workingDirectory)
+    await notebookSessionRegistry.closeProject(project.workingDirectory)
     return jupyterServerRegistry.stop(project.workingDirectory)
+  })
+  ipcMain.handle(
+    'analysis:notebookSessionStatus',
+    async (_, cwd: string, notebookPath: string, document: NotebookDocument) => {
+      const project = getProjectByCwd(cwd)
+      if (!project) {
+        throw new Error('请选择一个已添加的项目')
+      }
+      assertProjectPathAvailable(project.workingDirectory)
+      const file = openProjectNotebook(project.workingDirectory, notebookPath)
+      return notebookSessionRegistry.status({
+        projectCwd: project.workingDirectory,
+        notebookPath: file.path,
+        document,
+        kernels: detectAnalysisKernels()
+      })
+    }
+  )
+  ipcMain.handle(
+    'analysis:ensureNotebookSession',
+    async (_, cwd: string, notebookPath: string, document: NotebookDocument) => {
+      const project = getProjectByCwd(cwd)
+      if (!project) {
+        throw new Error('请选择一个已添加的项目')
+      }
+      assertProjectPathAvailable(project.workingDirectory)
+      const file = openProjectNotebook(project.workingDirectory, notebookPath)
+      return notebookSessionRegistry.ensureSession({
+        projectCwd: project.workingDirectory,
+        notebookPath: file.path,
+        document,
+        kernels: detectAnalysisKernels()
+      })
+    }
+  )
+  ipcMain.handle('analysis:closeNotebookSession', async (_, cwd: string, notebookPath: string) => {
+    const project = getProjectByCwd(cwd)
+    if (!project) {
+      throw new Error('请选择一个已添加的项目')
+    }
+    assertProjectPathAvailable(project.workingDirectory)
+    const file = openProjectNotebook(project.workingDirectory, notebookPath)
+    return notebookSessionRegistry.closeSession(project.workingDirectory, file.path)
   })
 
   ipcMain.handle('tool:approval-response', async (_, requestId: string, approved: boolean) => {
