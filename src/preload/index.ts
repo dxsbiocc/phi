@@ -172,6 +172,14 @@ type SkillSummary = {
   disabled: boolean
 }
 
+type PromptAgentSummary = {
+  id: string
+  name: string
+  description: string
+  source: string
+  trigger: string
+}
+
 type McpServerSummary = {
   id: string
   name: string
@@ -180,6 +188,99 @@ type McpServerSummary = {
   envKeys?: string[]
   sourcePath?: string
   status: 'configured'
+}
+
+type FilePreview = {
+  path: string
+  name: string
+  displayPath: string
+  rootPath: string
+  rootLabel: string
+  kind: 'text' | 'image' | 'pdf'
+  mimeType: string
+  bytes: number
+  previewBytes: number
+  truncated: boolean
+} & (
+  | {
+      kind: 'text'
+      mimeType: 'text/plain'
+      content: string
+      dataUrl?: never
+    }
+  | {
+      kind: 'image'
+      mimeType: 'image/png'
+      dataUrl: string
+      content?: never
+    }
+  | {
+      kind: 'pdf'
+      mimeType: 'application/pdf'
+      dataUrl: string
+      content?: never
+    }
+)
+
+type FileHoverPreview = {
+  path: string
+  name: string
+  displayPath: string
+  rootPath: string
+  rootLabel: string
+  bytes: number
+  previewBytes: number
+  truncated: boolean
+} & (
+  | {
+      kind: 'text'
+      mimeType: 'text/plain'
+      content: string
+      dataUrl?: never
+      format?: never
+      reason?: never
+    }
+  | {
+      kind: 'spreadsheet'
+      mimeType: 'text/csv' | 'text/tab-separated-values'
+      format: 'csv' | 'tsv'
+      content: string
+      dataUrl?: never
+      reason?: never
+    }
+  | {
+      kind: 'image'
+      mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
+      dataUrl: string
+      content?: never
+      format?: never
+      reason?: never
+    }
+  | {
+      kind: 'metadata'
+      mimeType: string
+      reason: 'binary' | 'large_file' | 'pdf' | 'unsupported_media'
+      content?: never
+      dataUrl?: never
+      format?: never
+    }
+)
+
+type FileTreeEntry = {
+  path: string
+  name: string
+  displayPath: string
+  kind: 'directory' | 'file'
+}
+
+type DirectoryListing = {
+  path: string
+  name: string
+  displayPath: string
+  rootPath: string
+  rootLabel: string
+  entries: FileTreeEntry[]
+  truncated: boolean
 }
 
 type AnalysisNotebookSummary = {
@@ -280,6 +381,11 @@ type RendererAuthApi = {
   minimizeWindow: () => Promise<void>
   toggleWindowFullscreen: () => Promise<void>
   revealPath: (path: string) => Promise<void>
+  openPath: (path: string) => Promise<void>
+  pickInputFiles: () => Promise<string[]>
+  previewFile: (path: string) => Promise<FilePreview>
+  hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
+  listDirectory: (path: string) => Promise<DirectoryListing>
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string) => Promise<PromptResult | null>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => Unsubscribe
@@ -375,6 +481,7 @@ type RendererAuthApi = {
   installPlugin: (source: string) => Promise<PluginCatalogItem[]>
   removePlugin: (source: string) => Promise<PluginCatalogItem[]>
   listSkills: (cwd?: string) => Promise<SkillSummary[]>
+  listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
 }
 
@@ -383,6 +490,13 @@ const api: RendererAuthApi = {
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   toggleWindowFullscreen: (): Promise<void> => ipcRenderer.invoke('window:toggle-fullscreen'),
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('files:reveal', path),
+  openPath: (path: string): Promise<void> => ipcRenderer.invoke('files:openPath', path),
+  pickInputFiles: (): Promise<string[]> => ipcRenderer.invoke('files:pickInput'),
+  previewFile: (path: string): Promise<FilePreview> => ipcRenderer.invoke('files:preview', path),
+  hoverPreviewFile: (path: string): Promise<FileHoverPreview> =>
+    ipcRenderer.invoke('files:hoverPreview', path),
+  listDirectory: (path: string): Promise<DirectoryListing> =>
+    ipcRenderer.invoke('files:listDirectory', path),
   copyDiagnostics: (): Promise<string> => ipcRenderer.invoke('diagnostics:copy'),
   sendPrompt: (text: string): Promise<PromptResult | null> =>
     ipcRenderer.invoke('agent:prompt', text),
@@ -561,6 +675,8 @@ const api: RendererAuthApi = {
   removePlugin: (source: string): Promise<PluginCatalogItem[]> =>
     ipcRenderer.invoke('plugins:remove', source),
   listSkills: (cwd?: string): Promise<SkillSummary[]> => ipcRenderer.invoke('skills:list', cwd),
+  listPromptAgents: (cwd?: string): Promise<PromptAgentSummary[]> =>
+    ipcRenderer.invoke('agents:list', cwd),
   listMcpServers: (cwd?: string): Promise<McpServerSummary[]> =>
     ipcRenderer.invoke('mcp:listServers', cwd)
 }

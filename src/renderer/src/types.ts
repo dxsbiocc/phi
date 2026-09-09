@@ -195,6 +195,14 @@ export interface SkillSummary {
   disabled: boolean
 }
 
+export interface PromptAgentSummary {
+  id: string
+  name: string
+  description: string
+  source: string
+  trigger: string
+}
+
 export interface McpServerSummary {
   id: string
   name: string
@@ -203,6 +211,111 @@ export interface McpServerSummary {
   envKeys?: string[]
   sourcePath?: string
   status: 'configured'
+}
+
+export type FilePreviewKind = 'text' | 'image' | 'pdf'
+
+interface FilePreviewBase {
+  path: string
+  name: string
+  displayPath: string
+  rootPath: string
+  rootLabel: string
+  kind: FilePreviewKind
+  mimeType: string
+  bytes: number
+  previewBytes: number
+  truncated: boolean
+}
+
+export type FilePreview = FilePreviewBase &
+  (
+    | {
+        kind: 'text'
+        mimeType: 'text/plain'
+        content: string
+        dataUrl?: never
+      }
+    | {
+        kind: 'image'
+        mimeType: 'image/png'
+        dataUrl: string
+        content?: never
+      }
+    | {
+        kind: 'pdf'
+        mimeType: 'application/pdf'
+        dataUrl: string
+        content?: never
+      }
+  )
+
+export type FileHoverPreviewKind = 'text' | 'spreadsheet' | 'image' | 'metadata'
+
+interface FileHoverPreviewBase {
+  path: string
+  name: string
+  displayPath: string
+  rootPath: string
+  rootLabel: string
+  kind: FileHoverPreviewKind
+  mimeType: string
+  bytes: number
+  previewBytes: number
+  truncated: boolean
+}
+
+export type FileHoverPreview = FileHoverPreviewBase &
+  (
+    | {
+        kind: 'text'
+        mimeType: 'text/plain'
+        content: string
+        dataUrl?: never
+        format?: never
+        reason?: never
+      }
+    | {
+        kind: 'spreadsheet'
+        mimeType: 'text/csv' | 'text/tab-separated-values'
+        format: 'csv' | 'tsv'
+        content: string
+        dataUrl?: never
+        reason?: never
+      }
+    | {
+        kind: 'image'
+        mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
+        dataUrl: string
+        content?: never
+        format?: never
+        reason?: never
+      }
+    | {
+        kind: 'metadata'
+        mimeType: string
+        reason: 'binary' | 'large_file' | 'pdf' | 'unsupported_media'
+        content?: never
+        dataUrl?: never
+        format?: never
+      }
+  )
+
+export interface FileTreeEntry {
+  path: string
+  name: string
+  displayPath: string
+  kind: 'directory' | 'file'
+}
+
+export interface DirectoryListing {
+  path: string
+  name: string
+  displayPath: string
+  rootPath: string
+  rootLabel: string
+  entries: FileTreeEntry[]
+  truncated: boolean
 }
 
 export interface AnalysisNotebookSummary {
@@ -312,6 +425,11 @@ export type RendererApi = {
   minimizeWindow: () => Promise<void>
   toggleWindowFullscreen: () => Promise<void>
   revealPath: (path: string) => Promise<void>
+  openPath: (path: string) => Promise<void>
+  pickInputFiles: () => Promise<string[]>
+  previewFile: (path: string) => Promise<FilePreview>
+  hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
+  listDirectory: (path: string) => Promise<DirectoryListing>
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string) => Promise<PromptResult | null>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => () => void
@@ -407,6 +525,7 @@ export type RendererApi = {
   installPlugin: (source: string) => Promise<PluginCatalogItem[]>
   removePlugin: (source: string) => Promise<PluginCatalogItem[]>
   listSkills: (cwd?: string) => Promise<SkillSummary[]>
+  listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
 }
 

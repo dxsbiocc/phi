@@ -1,4 +1,5 @@
 import './agent-env'
+import { closeSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs'
 import {
   app,
   shell,
@@ -9,7 +10,7 @@ import {
   nativeImage,
   nativeTheme
 } from 'electron'
-import { isAbsolute, join, relative, resolve } from 'path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { createAgentSession } from './agent/session-manager'
 import { getAuthManager } from './agent/auth-manager'
@@ -53,7 +54,7 @@ import {
   type RuntimeResourceLoader
 } from './agent/runtime-adapter'
 import { installPlugin, listPlugins, removePlugin } from './agent/plugins'
-import { listMcpServers, listSkills } from './agent/resources'
+import { listMcpServers, listPromptAgents, listSkills } from './agent/resources'
 import { formatDiagnostics, type DiagnosticsSnapshot } from './agent/diagnostics'
 import { LOG_RETENTION_DAYS, cleanupOldLogs, getPhiLogDir, writeAppLog } from './agent/app-logger'
 import { redactSensitiveText } from './agent/redaction'
@@ -125,6 +126,12 @@ type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 const THINKING_LEVEL_ORDER: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 const TOOL_OUTPUT_INLINE_LIMIT = 20000
+const FILE_PREVIEW_BYTES_LIMIT = 320000
+const FILE_MEDIA_PREVIEW_BYTES_LIMIT = 10 * 1024 * 1024
+const FILE_HOVER_TEXT_BYTES_LIMIT = 32 * 1024
+const FILE_HOVER_IMAGE_BYTES_LIMIT = 2 * 1024 * 1024
+const FILE_HOVER_SNIFF_BYTES_LIMIT = 512
+const DIRECTORY_ENTRY_LIMIT = 400
 const KIMI_CODE_REPLACEMENT_MODEL_IDS = [
   'kimi-for-coding',
   'k3',
@@ -565,17 +572,25 @@ function persistSessionEvent(
   })
 }
 
-function readPhiTimelineMessages(runtimeSessionPath: string, cwd: string): unknown[] {
-  const manifest = findPhiSessionByRuntimePath(runtimeSessionPath, cwd)
+function readPhiTimelineMessages(
+  runtimeSessionPath: string | null | undefined,
+  cwd: string,
+  phiSessionId?: string
+): unknown[] {
+  const manifest = phiSessionId
+    ? (listPhiSessions().find((session) => session.sessionId === phiSessionId) ?? null)
+    : runtimeSessionPath
+      ? findPhiSessionByRuntimePath(runtimeSessionPath, cwd)
+      : null
   if (!manifest) return []
   const events = readSessionEvents(manifest.sessionId)
   const hasPhiText = events.some(
     (event) => event.type === 'user_message' || event.type === 'assistant_message_finalized'
   )
   return events.map((event) => ({
-    source: 'phi',
+    ...event,
     ...(hasPhiText ? { preferPhiTimeline: true } : {}),
-    ...event
+    source: 'phi'
   }))
 }
 
@@ -852,21 +867,415 @@ function notifyToolApprovalsCancelled(): void {
   }
 }
 
-function assertRevealPathAllowed(filePath: string): string {
-  if (!isAbsolute(filePath)) {
-    throw new Error('只能显示绝对路径')
-  }
+function isLocalFilePathAllowed(target: string): boolean {
   const agentDir = resolve(AGENT_DIR)
   const cwd = resolve(currentCwd)
-  const target = resolve(filePath)
   const relativeAgentPath = relative(agentDir, target)
   const relativeCwdPath = relative(cwd, target)
-  const isInAgentDir = !relativeAgentPath.startsWith('..') && !isAbsolute(relativeAgentPath)
-  const isInCurrentCwd = !relativeCwdPath.startsWith('..') && !isAbsolute(relativeCwdPath)
-  if (!isInAgentDir && !isInCurrentCwd) {
-    throw new Error('只能显示 Phi 保存的文件或当前项目内的文件')
+  return (
+    (!relativeAgentPath.startsWith('..') && !isAbsolute(relativeAgentPath)) ||
+    (!relativeCwdPath.startsWith('..') && !isAbsolute(relativeCwdPath))
+  )
+}
+
+function getLocalPathScope(target: string): {
+  rootPath: string
+  rootLabel: string
+  displayPath: string
+} | null {
+  const cwd = resolve(currentCwd)
+  const agentDir = resolve(AGENT_DIR)
+  const relativeCwdPath = relative(cwd, target)
+  if (!relativeCwdPath.startsWith('..') && !isAbsolute(relativeCwdPath)) {
+    return {
+      rootPath: cwd,
+      rootLabel: basename(cwd) || cwd,
+      displayPath: relativeCwdPath || basename(target)
+    }
   }
-  return target
+
+  const relativeAgentPath = relative(agentDir, target)
+  if (!relativeAgentPath.startsWith('..') && !isAbsolute(relativeAgentPath)) {
+    return {
+      rootPath: agentDir,
+      rootLabel: 'Phi',
+      displayPath: join('Phi', relativeAgentPath || basename(target))
+    }
+  }
+
+  return null
+}
+
+function assertLocalFilePathAllowed(
+  filePath: string,
+  actionLabel: string,
+  options: { resolveSymlinks?: boolean } = {}
+): string {
+  if (!isAbsolute(filePath)) {
+    throw new Error(`只能${actionLabel}绝对路径`)
+  }
+  const target = resolve(filePath)
+  if (!isLocalFilePathAllowed(target)) {
+    throw new Error(`只能${actionLabel} Phi 保存的文件或当前项目内的文件`)
+  }
+  const inspectedTarget = options.resolveSymlinks ? realpathSync(target) : target
+  if (!isLocalFilePathAllowed(inspectedTarget)) {
+    throw new Error(`只能${actionLabel} Phi 保存的文件或当前项目内的文件`)
+  }
+  return inspectedTarget
+}
+
+function assertRevealPathAllowed(filePath: string): string {
+  return assertLocalFilePathAllowed(filePath, '显示')
+}
+
+function readFilePreviewBytes(target: string, bytesToRead: number): Buffer {
+  if (bytesToRead <= 0) return Buffer.alloc(0)
+
+  const fd = openSync(target, 'r')
+  try {
+    const buffer = Buffer.alloc(bytesToRead)
+    const bytesRead = readSync(fd, buffer, 0, bytesToRead, 0)
+    return buffer.subarray(0, bytesRead)
+  } finally {
+    closeSync(fd)
+  }
+}
+
+type FilePreviewBasePayload = {
+  path: string
+  name: string
+  displayPath: string
+  rootPath: string
+  rootLabel: string
+  bytes: number
+  previewBytes: number
+  truncated: boolean
+}
+
+type FilePreviewPayload = FilePreviewBasePayload &
+  (
+    | {
+        kind: 'text'
+        mimeType: 'text/plain'
+        content: string
+      }
+    | {
+        kind: 'image'
+        mimeType: 'image/png'
+        dataUrl: string
+      }
+    | {
+        kind: 'pdf'
+        mimeType: 'application/pdf'
+        dataUrl: string
+      }
+  )
+
+type FileHoverPreviewPayload = FilePreviewBasePayload &
+  (
+    | {
+        kind: 'text'
+        mimeType: 'text/plain'
+        content: string
+      }
+    | {
+        kind: 'spreadsheet'
+        mimeType: 'text/csv' | 'text/tab-separated-values'
+        format: 'csv' | 'tsv'
+        content: string
+      }
+    | {
+        kind: 'image'
+        mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
+        dataUrl: string
+      }
+    | {
+        kind: 'metadata'
+        mimeType: string
+        reason: 'binary' | 'large_file' | 'pdf' | 'unsupported_media'
+      }
+  )
+
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+function mediaPreviewType(
+  bytes: Buffer
+): { kind: 'image'; mimeType: 'image/png' } | { kind: 'pdf'; mimeType: 'application/pdf' } | null {
+  if (
+    bytes.length >= PNG_SIGNATURE.length &&
+    bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
+  ) {
+    return { kind: 'image', mimeType: 'image/png' }
+  }
+  if (bytes.subarray(0, 5).toString('ascii') === '%PDF-') {
+    return { kind: 'pdf', mimeType: 'application/pdf' }
+  }
+  return null
+}
+
+function filePreviewBasePayload(
+  target: string,
+  stats: { size: number },
+  previewBytes: number,
+  truncated: boolean
+): FilePreviewBasePayload {
+  const scope = getLocalPathScope(target)
+  return {
+    path: target,
+    name: basename(target),
+    displayPath: scope?.displayPath ?? basename(target),
+    rootPath: scope?.rootPath ?? dirname(target),
+    rootLabel: scope?.rootLabel ?? basename(dirname(target)),
+    bytes: stats.size,
+    previewBytes,
+    truncated
+  }
+}
+
+function spreadsheetHoverPreviewType(
+  path: string
+):
+  | { format: 'csv'; mimeType: 'text/csv' }
+  | { format: 'tsv'; mimeType: 'text/tab-separated-values' }
+  | null {
+  const name = basename(path).toLowerCase()
+  if (name.endsWith('.csv')) return { format: 'csv', mimeType: 'text/csv' }
+  if (name.endsWith('.tsv') || name.endsWith('.tab')) {
+    return { format: 'tsv', mimeType: 'text/tab-separated-values' }
+  }
+  return null
+}
+
+function hoverMediaPreviewType(
+  bytes: Buffer
+):
+  | { kind: 'image'; mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' }
+  | { kind: 'pdf'; mimeType: 'application/pdf' }
+  | null {
+  const fullPreviewType = mediaPreviewType(bytes)
+  if (fullPreviewType) return fullPreviewType
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return { kind: 'image', mimeType: 'image/jpeg' }
+  }
+  const signature = bytes.subarray(0, 6).toString('ascii')
+  if (signature === 'GIF87a' || signature === 'GIF89a') {
+    return { kind: 'image', mimeType: 'image/gif' }
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+  ) {
+    return { kind: 'image', mimeType: 'image/webp' }
+  }
+  return null
+}
+
+function createFilePreview(filePath: string): FilePreviewPayload {
+  const target = assertLocalFilePathAllowed(filePath, '预览', { resolveSymlinks: true })
+  const stats = statSync(target)
+  if (!stats.isFile()) {
+    throw new Error('只能预览文件内容')
+  }
+
+  const truncated = stats.size > FILE_PREVIEW_BYTES_LIMIT
+  const previewBytes = readFilePreviewBytes(target, Math.min(stats.size, FILE_PREVIEW_BYTES_LIMIT))
+  const base = filePreviewBasePayload(target, stats, previewBytes.byteLength, truncated)
+  const mediaType = mediaPreviewType(previewBytes)
+  if (mediaType) {
+    if (stats.size > FILE_MEDIA_PREVIEW_BYTES_LIMIT) {
+      throw new Error('文件过大，暂不支持直接预览')
+    }
+    const mediaBytes =
+      previewBytes.byteLength === stats.size
+        ? previewBytes
+        : readFilePreviewBytes(target, stats.size)
+    if (mediaType.kind === 'image') {
+      return {
+        ...base,
+        kind: 'image',
+        mimeType: 'image/png',
+        dataUrl: `data:${mediaType.mimeType};base64,${mediaBytes.toString('base64')}`,
+        previewBytes: mediaBytes.byteLength,
+        truncated: false
+      }
+    }
+
+    return {
+      ...base,
+      kind: 'pdf',
+      mimeType: 'application/pdf',
+      dataUrl: `data:${mediaType.mimeType};base64,${mediaBytes.toString('base64')}`,
+      previewBytes: mediaBytes.byteLength,
+      truncated: false
+    }
+  }
+
+  if (previewBytes.includes(0)) {
+    throw new Error('暂不支持预览二进制文件')
+  }
+
+  return {
+    ...base,
+    kind: 'text',
+    mimeType: 'text/plain',
+    content: previewBytes.toString('utf8'),
+    truncated
+  }
+}
+
+function createFileHoverPreview(filePath: string): FileHoverPreviewPayload {
+  const target = assertLocalFilePathAllowed(filePath, '预览', { resolveSymlinks: true })
+  const stats = statSync(target)
+  if (!stats.isFile()) {
+    throw new Error('只能预览文件内容')
+  }
+
+  const sniffBytes = readFilePreviewBytes(
+    target,
+    Math.min(stats.size, FILE_HOVER_SNIFF_BYTES_LIMIT)
+  )
+  const base = filePreviewBasePayload(
+    target,
+    stats,
+    sniffBytes.byteLength,
+    stats.size > sniffBytes.byteLength
+  )
+  const mediaType = hoverMediaPreviewType(sniffBytes)
+
+  if (mediaType?.kind === 'image') {
+    if (stats.size > FILE_HOVER_IMAGE_BYTES_LIMIT) {
+      return {
+        ...base,
+        kind: 'metadata',
+        mimeType: mediaType.mimeType,
+        reason: 'large_file',
+        truncated: true
+      }
+    }
+
+    const mediaBytes =
+      sniffBytes.byteLength === stats.size ? sniffBytes : readFilePreviewBytes(target, stats.size)
+    return {
+      ...base,
+      kind: 'image',
+      mimeType: mediaType.mimeType,
+      dataUrl: `data:${mediaType.mimeType};base64,${mediaBytes.toString('base64')}`,
+      previewBytes: mediaBytes.byteLength,
+      truncated: false
+    }
+  }
+
+  if (mediaType?.kind === 'pdf') {
+    return {
+      ...base,
+      kind: 'metadata',
+      mimeType: 'application/pdf',
+      reason: 'pdf',
+      truncated: stats.size > sniffBytes.byteLength
+    }
+  }
+
+  if (sniffBytes.includes(0)) {
+    return {
+      ...base,
+      kind: 'metadata',
+      mimeType: 'application/octet-stream',
+      reason: 'binary',
+      truncated: stats.size > sniffBytes.byteLength
+    }
+  }
+
+  const previewBytes =
+    sniffBytes.byteLength >= Math.min(stats.size, FILE_HOVER_TEXT_BYTES_LIMIT)
+      ? sniffBytes
+      : readFilePreviewBytes(target, Math.min(stats.size, FILE_HOVER_TEXT_BYTES_LIMIT))
+  const truncated = stats.size > previewBytes.byteLength
+  const spreadsheetType = spreadsheetHoverPreviewType(target)
+  if (spreadsheetType) {
+    return {
+      ...filePreviewBasePayload(target, stats, previewBytes.byteLength, truncated),
+      kind: 'spreadsheet',
+      mimeType: spreadsheetType.mimeType,
+      format: spreadsheetType.format,
+      content: previewBytes.toString('utf8')
+    }
+  }
+
+  return {
+    ...filePreviewBasePayload(target, stats, previewBytes.byteLength, truncated),
+    kind: 'text',
+    mimeType: 'text/plain',
+    content: previewBytes.toString('utf8')
+  }
+}
+
+function openLocalFilePath(filePath: string): Promise<void> {
+  const target = assertLocalFilePathAllowed(filePath, '打开', { resolveSymlinks: true })
+  return shell.openPath(target).then((errorMessage) => {
+    if (errorMessage) {
+      throw new Error(errorMessage)
+    }
+  })
+}
+
+function createDirectoryListing(dirPath: string): {
+  path: string
+  name: string
+  displayPath: string
+  rootPath: string
+  rootLabel: string
+  entries: Array<{
+    path: string
+    name: string
+    displayPath: string
+    kind: 'directory' | 'file'
+  }>
+  truncated: boolean
+} {
+  const target = assertLocalFilePathAllowed(dirPath, '列出', { resolveSymlinks: true })
+  const stats = statSync(target)
+  if (!stats.isDirectory()) {
+    throw new Error('只能列出文件夹内容')
+  }
+
+  const entries = readdirSync(target, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = join(target, entry.name)
+    let realEntryPath = entryPath
+    try {
+      realEntryPath = realpathSync(entryPath)
+      if (!isLocalFilePathAllowed(realEntryPath)) return []
+      const entryStats = statSync(realEntryPath)
+      if (!entryStats.isDirectory() && !entryStats.isFile()) return []
+      const scope = getLocalPathScope(entryPath)
+      return [
+        {
+          path: entryPath,
+          name: entry.name,
+          displayPath: scope?.displayPath ?? entry.name,
+          kind: entryStats.isDirectory() ? ('directory' as const) : ('file' as const)
+        }
+      ]
+    } catch {
+      return []
+    }
+  })
+  entries.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1
+    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+  })
+
+  const scope = getLocalPathScope(target)
+  return {
+    path: target,
+    name: basename(target) || target,
+    displayPath: scope?.displayPath ?? basename(target),
+    rootPath: scope?.rootPath ?? target,
+    rootLabel: scope?.rootLabel ?? basename(target),
+    entries: entries.slice(0, DIRECTORY_ENTRY_LIMIT),
+    truncated: entries.length > DIRECTORY_ENTRY_LIMIT
+  }
 }
 
 function cancelPendingToolApprovals(): void {
@@ -993,16 +1402,21 @@ async function getCurrentSessionPayloadWithMessages(): Promise<
   }
 > {
   const payload = getCurrentSessionPayload()
-  if (!payload.path) {
+  const phiSessionId = getPhiSessionIdForKey(currentSessionKey)
+  if (!payload.path && !phiSessionId) {
     return { ...payload, messages: [] }
   }
 
-  const current = await getCurrentResolvedSession()
+  const current = payload.path ? await getCurrentResolvedSession() : null
   return {
     ...payload,
     messages: [
       ...(current?.session.messages ?? []),
-      ...readPhiTimelineMessages(current?.session.sessionFile ?? payload.path, payload.cwd)
+      ...readPhiTimelineMessages(
+        current?.session.sessionFile ?? payload.path,
+        payload.cwd,
+        phiSessionId
+      )
     ]
   }
 }
@@ -1161,7 +1575,8 @@ async function stopAllPromptRuns(): Promise<void> {
 async function disposeAndSwitchSession(
   path: string | undefined,
   cwd: string = WORKSPACE_DIR,
-  permissionMode: PermissionMode = 'auto'
+  permissionMode: PermissionMode = 'auto',
+  options: { notify?: boolean } = {}
 ): Promise<{
   path: string | null
   cwd: string
@@ -1180,7 +1595,9 @@ async function disposeAndSwitchSession(
     currentPermissionMode = permissionMode
   }
   const target = getCurrentSessionPayload()
-  notifySessionChanged()
+  if (options.notify !== false) {
+    notifySessionChanged()
+  }
   return target
 }
 
@@ -1305,6 +1722,13 @@ async function getAgentSession(
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(model ? { model } : {})
       })
+      const run = getActivePromptRun(sessionKey)
+      if (run && result.session.sessionFile) {
+        run.sessionPath = result.session.sessionFile
+        updateSessionManifest(run.phiSessionId, {
+          runtimeSessionPath: result.session.sessionFile
+        })
+      }
       if (result.session.sessionFile) {
         const materializedKey = createSessionKey(result.session.sessionFile, creationSnapshot.cwd)
         aliasMaterializedSessionPath(sessionKey, result.session.sessionFile, creationSnapshot.cwd)
@@ -1321,13 +1745,6 @@ async function getAgentSession(
           currentSessionPath = nextSessionPath
           notifySessionChanged()
         }
-      }
-      const run = getActivePromptRun(sessionKey)
-      if (run && result.session.sessionFile) {
-        run.sessionPath = result.session.sessionFile
-        updateSessionManifest(run.phiSessionId, {
-          runtimeSessionPath: result.session.sessionFile
-        })
       }
 
       result.session.subscribe((summary) => {
@@ -1468,6 +1885,29 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('files:reveal', async (_, filePath: string) => {
     shell.showItemInFolder(assertRevealPathAllowed(filePath))
+  })
+  ipcMain.handle('files:openPath', async (_, filePath: string) => {
+    await openLocalFilePath(filePath)
+  })
+  ipcMain.handle('files:pickInput', async () => {
+    const window = getActiveWindow()
+    const options: Electron.OpenDialogOptions = {
+      defaultPath: currentCwd || undefined,
+      properties: ['openFile', 'openDirectory', 'multiSelections']
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? [] : result.filePaths
+  })
+  ipcMain.handle('files:preview', async (_, filePath: string) => {
+    return createFilePreview(filePath)
+  })
+  ipcMain.handle('files:hoverPreview', async (_, filePath: string) => {
+    return createFileHoverPreview(filePath)
+  })
+  ipcMain.handle('files:listDirectory', async (_, dirPath: string) => {
+    return createDirectoryListing(dirPath)
   })
   ipcMain.handle('diagnostics:copy', async () => {
     const text = await createDiagnosticsText()
@@ -1785,7 +2225,7 @@ app.whenReady().then(() => {
     const permissionMode = resolveSessionPermissionMode(targetKey, { path, cwd })
     const shouldBecomeCurrent = request === sessionSwitchRequest
     const target = shouldBecomeCurrent
-      ? await disposeAndSwitchSession(path, cwd, permissionMode)
+      ? await disposeAndSwitchSession(path, cwd, permissionMode, { notify: false })
       : {
           path,
           cwd,
@@ -1810,9 +2250,8 @@ app.whenReady().then(() => {
     if (!targetLifecycle.isCurrentGeneration(target.sessionGeneration)) {
       return null
     }
-    if (target.path) {
+    if (shouldBecomeCurrent && target.path) {
       acknowledgeSession(target.path, target.cwd)
-      notifySessionChanged()
     }
     const sessionPath = session.sessionFile ?? path
     return {
@@ -1821,16 +2260,15 @@ app.whenReady().then(() => {
       sessionGeneration: target.sessionGeneration,
       permissionMode,
       ...getSessionStatusPayload(targetKey, sessionPath, target.cwd),
-      messages: [...session.messages, ...readPhiTimelineMessages(sessionPath, target.cwd)]
+      messages: [
+        ...session.messages,
+        ...readPhiTimelineMessages(sessionPath, target.cwd, getPhiSessionIdForKey(targetKey))
+      ]
     }
   })
   ipcMain.handle('sessions:acknowledge', async (_, path: string) => {
     const cwd = (await openRuntimeSessionManager(path)).getCwd()
-    const acknowledged = acknowledgeSession(path, cwd)
-    if (acknowledged) {
-      notifySessionChanged()
-    }
-    return acknowledged
+    return acknowledgeSession(path, cwd)
   })
   ipcMain.handle('sessions:delete', async (_, path: string) => {
     if (currentSessionPath === path) {
@@ -2168,6 +2606,7 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('skills:list', async (_, cwd?: string) => listSkills(cwd ?? currentCwd))
+  ipcMain.handle('agents:list', async (_, cwd?: string) => listPromptAgents(cwd ?? currentCwd))
   ipcMain.handle('mcp:listServers', async (_, cwd?: string) => listMcpServers(cwd ?? currentCwd))
 
   ipcMain.handle('persona:getAppName', async () => APP_NAME)

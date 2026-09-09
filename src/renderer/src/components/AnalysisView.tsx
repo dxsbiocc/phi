@@ -796,6 +796,9 @@ function InspectorToggleButton({
   return (
     <Tooltip title={isCollapsed ? '展开右侧栏' : '关闭右侧栏'}>
       <IconButton
+        data-phi-inspector-toggle-button={isCollapsed ? 'collapsed' : 'expanded'}
+        data-phi-inspector-toggle-position="absolute"
+        data-phi-inspector-toggle-anchor="app-top-right"
         size="small"
         color={isCollapsed ? 'default' : 'primary'}
         aria-label={isCollapsed ? '展开右侧栏' : '关闭右侧栏'}
@@ -805,6 +808,8 @@ function InspectorToggleButton({
           top: 8,
           right: 8,
           zIndex: 20,
+          width: 32,
+          height: 32,
           borderRadius: 1.5,
           bgcolor: (theme) =>
             theme.palette.mode === 'dark'
@@ -1834,7 +1839,7 @@ function RightInspector({
         flexShrink: 0,
         borderLeft: 1,
         borderColor: 'divider',
-        pt: isMac ? `${macTitlebarHeight + contentTopGap}px` : 1.5,
+        pt: isMac ? `${macTitlebarHeight + contentTopGap}px` : 0,
         display: 'flex',
         minHeight: 0,
         flexDirection: 'column',
@@ -1842,26 +1847,32 @@ function RightInspector({
           theme.palette.mode === 'dark' ? theme.palette.background.default : '#FFFFFF'
       }}
     >
-      <Box sx={{ px: 1.5, pb: 1.25, display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-            Inspector
-          </Typography>
-          <Typography variant="caption" color="text.secondary" noWrap>
-            文件、变量和产物
-          </Typography>
-        </Box>
-      </Box>
-      <Tabs
-        value={tab}
-        onChange={(_, value: InspectorTab) => onTabChange(value)}
-        variant="fullWidth"
-        sx={{ minHeight: 36, px: 1, '& .MuiTab-root': { minHeight: 36, py: 0.5, px: 0.5 } }}
+      <Box
+        sx={{
+          minHeight: 36,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.5,
+          pl: 1,
+          pr: 1
+        }}
       >
-        {tabs.map(({ value, label }) => (
-          <Tab key={value} value={value} label={label} />
-        ))}
-      </Tabs>
+        <Tabs
+          value={tab}
+          onChange={(_, value: InspectorTab) => onTabChange(value)}
+          variant="fullWidth"
+          sx={{
+            flex: 1,
+            minHeight: 36,
+            minWidth: 0,
+            '& .MuiTab-root': { minHeight: 36, py: 0.5, px: 0.5 }
+          }}
+        >
+          {tabs.map(({ value, label }) => (
+            <Tab key={value} value={value} label={label} />
+          ))}
+        </Tabs>
+      </Box>
       <Divider />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: 1.5 }}>
         <InspectorContent

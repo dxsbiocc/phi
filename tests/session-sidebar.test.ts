@@ -12,7 +12,11 @@ import {
   sessionBeaconKind,
   sessionRunningBeaconSlotWidth
 } from '../src/renderer/src/lib/sessionBeacon'
-import { orderSessionsForDisplay } from '../src/renderer/src/lib/sessionOrder'
+import {
+  isSessionListSortedByActivityTime,
+  orderSessionsForDisplay,
+  preserveSessionListOrder
+} from '../src/renderer/src/lib/sessionOrder'
 import type { SessionRuntimeState, SessionSummary } from '../src/renderer/src/types'
 
 const baseSession: SessionSummary = {
@@ -188,5 +192,68 @@ test('session sidebar applies manual order without dropping new conversations', 
   assert.deepEqual(
     ordered.map((session) => session.path),
     ['session-b', 'session-a', 'session-c']
+  )
+})
+
+test('session sidebar detects activity-time sorted refreshes', () => {
+  const older = {
+    ...baseSession,
+    path: 'session-old',
+    id: 'session-old',
+    modified: '2026-09-06T00:00:00.000Z'
+  }
+  const newer = {
+    ...baseSession,
+    path: 'session-new',
+    id: 'session-new',
+    modified: '2026-09-06T00:02:00.000Z'
+  }
+
+  assert.equal(isSessionListSortedByActivityTime([newer, older]), true)
+  assert.equal(isSessionListSortedByActivityTime([older, newer]), false)
+})
+
+test('session sidebar keeps implicit order stable across summary refreshes', () => {
+  const second = { ...baseSession, path: 'session-b', id: 'session-b', firstMessage: '第二段' }
+  const refreshed = [
+    {
+      ...second,
+      modified: '2026-09-06T00:02:00.000Z'
+    },
+    {
+      ...baseSession,
+      status: 'completed_unread' as const,
+      unreadKind: 'completed' as const,
+      modified: '2026-09-06T00:01:00.000Z'
+    }
+  ]
+  const ordered = preserveSessionListOrder([baseSession, second], refreshed)
+
+  assert.deepEqual(
+    ordered.map((session) => session.path),
+    ['session-a', 'session-b']
+  )
+  assert.equal(ordered[0].unreadKind, 'completed')
+})
+
+test('session sidebar accepts refresh order when it is not activity-time sorted', () => {
+  const older = {
+    ...baseSession,
+    path: 'session-old',
+    id: 'session-old',
+    modified: '2026-09-06T00:00:00.000Z'
+  }
+  const newer = {
+    ...baseSession,
+    path: 'session-new',
+    id: 'session-new',
+    modified: '2026-09-06T00:02:00.000Z'
+  }
+
+  const ordered = preserveSessionListOrder([newer, older], [older, newer])
+
+  assert.deepEqual(
+    ordered.map((session) => session.path),
+    ['session-old', 'session-new']
   )
 })

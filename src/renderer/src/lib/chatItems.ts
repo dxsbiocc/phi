@@ -289,6 +289,7 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
   const toolCallIndexById = new Map<string, number>()
   const duplicateTextCounts = new Map<string, number>()
   const phiToolCallIds = new Set<string>()
+  let hasPreferredPhiTimeline = false
 
   for (const raw of messages) {
     if (!raw || typeof raw !== 'object') continue
@@ -297,8 +298,12 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
       type?: string
       content?: unknown
       toolCallId?: string
+      preferPhiTimeline?: boolean
     }
     if (message.source !== 'phi') continue
+    if (message.preferPhiTimeline === true) {
+      hasPreferredPhiTimeline = true
+    }
 
     if (
       (message.type === 'user_message' || message.type === 'assistant_message_finalized') &&
@@ -314,6 +319,28 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
     }
   }
 
+  const isRuntimeMessageCoveredByPhi = (raw: unknown): boolean => {
+    if (!raw || typeof raw !== 'object') return false
+    const message = raw as { source?: string; role?: string; content?: unknown }
+    if (message.source === 'phi') return false
+    if (message.role === 'user') {
+      const text = textFromContentParts(message.content)
+      return text.length > 0 && duplicateTextCounts.has(text)
+    }
+    if (message.role !== 'assistant' || !Array.isArray(message.content)) return false
+    return message.content.some((part) => {
+      if (!part || typeof part !== 'object' || (part as { type?: string }).type !== 'text') {
+        return false
+      }
+      const text = (part as { text?: string }).text ?? ''
+      return text.length > 0 && duplicateTextCounts.has(text)
+    })
+  }
+
+  const runtimeCoveredFromIndex = hasPreferredPhiTimeline
+    ? messages.findIndex(isRuntimeMessageCoveredByPhi)
+    : -1
+
   const consumeDuplicateText = (text: string): boolean => {
     const count = duplicateTextCounts.get(text) ?? 0
     if (count <= 0) return false
@@ -325,7 +352,7 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
     return true
   }
 
-  for (const raw of messages) {
+  for (const [messageIndex, raw] of messages.entries()) {
     if (!raw || typeof raw !== 'object') continue
     const message = raw as {
       source?: string
@@ -351,6 +378,14 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
       toProviderId?: string
       toModelId?: string
       toModelName?: string
+    }
+
+    if (
+      runtimeCoveredFromIndex >= 0 &&
+      messageIndex >= runtimeCoveredFromIndex &&
+      message.source !== 'phi'
+    ) {
+      continue
     }
 
     if (message.source === 'phi') {

@@ -92,6 +92,7 @@ export function mergePhiSessionState(
         {
           ...summary,
           phiSessionId: manifest.sessionId,
+          created: manifest.createdAt,
           status: manifest.status,
           unreadKind: manifest.unreadKind,
           lastRunOutcome: manifest.lastRunOutcome,

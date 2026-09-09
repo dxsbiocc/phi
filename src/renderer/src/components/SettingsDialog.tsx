@@ -6,8 +6,6 @@ import {
   Chip,
   Dialog,
   IconButton,
-  List,
-  ListItem,
   ListItemButton,
   ListItemText,
   Paper,
@@ -30,16 +28,18 @@ const ContentCopyIcon = PhiIcons.action.copy
 const KeyIcon = PhiIcons.entity.apiKey
 const LogoutIcon = PhiIcons.action.logout
 const PaletteIcon = PhiIcons.settings.appearance
-const PowerIcon = PhiIcons.settings.providers
+const ProviderIcon = PhiIcons.settings.providers
 const PsychologyIcon = PhiIcons.settings.persona
 const ShieldIcon = PhiIcons.settings.permissions
+const DiagnosticsIcon = PhiIcons.settings.diagnostics
+const CheckIcon = PhiIcons.state.check
 
 export type SettingsCategory =
   'persona' | 'providers' | 'permissions' | 'diagnostics' | 'appearance'
 
 const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.Element }> = [
   { id: 'persona', label: '助手人设', icon: <PsychologyIcon fontSize="small" /> },
-  { id: 'providers', label: 'Provider 配置', icon: <PowerIcon fontSize="small" /> },
+  { id: 'providers', label: 'Provider 配置', icon: <ProviderIcon fontSize="small" /> },
   { id: 'permissions', label: '权限', icon: <ShieldIcon fontSize="small" /> },
   { id: 'diagnostics', label: '诊断', icon: <ContentCopyIcon fontSize="small" /> },
   { id: 'appearance', label: '外观', icon: <PaletteIcon fontSize="small" /> }
@@ -139,52 +139,80 @@ function ProviderCard({
   onLogout: (providerId: string) => void
 }): React.JSX.Element {
   return (
-    <Paper variant="outlined" sx={{ p: 2, borderRadius: 1 }}>
-      <ListItem disablePadding>
-        <ListItemText
-          primary={<Typography variant="subtitle1">{provider.name}</Typography>}
-          secondary={
+    <Paper variant="outlined" sx={{ px: 1.5, py: 1.25, borderRadius: 1 }}>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={1.25}
+        sx={{ alignItems: { xs: 'stretch', sm: 'center' } }}
+      >
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{ alignItems: 'baseline', minWidth: 0, flexWrap: 'wrap', rowGap: 0.25 }}
+          >
+            <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.35 }}>
+              {provider.name}
+            </Typography>
             <Typography
               variant="body2"
-              sx={{ mt: 0.5, fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}
+              sx={{
+                color: 'text.secondary',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.82rem',
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
             >
               {provider.providerId}
             </Typography>
-          }
-        />
-        <Chip
-          size="small"
-          color={provider.configured ? 'success' : 'default'}
-          label={provider.configured ? '已配置' : '未配置'}
-        />
-      </ListItem>
+          </Stack>
 
-      <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap', rowGap: 1 }}>
-        {provider.hasApiKey && <Chip size="small" icon={<KeyIcon />} label="API Key" />}
-        {provider.hasOAuth && <Chip size="small" icon={<ShieldIcon />} label="OAuth" />}
-        {provider.statusText && (
-          <Chip size="small" label={provider.statusText} variant="outlined" />
-        )}
+          <Stack direction="row" spacing={0.75} sx={{ mt: 0.75, flexWrap: 'wrap', rowGap: 0.75 }}>
+            {provider.hasApiKey && <Chip size="small" icon={<KeyIcon />} label="API Key" />}
+            {provider.hasOAuth && <Chip size="small" icon={<ShieldIcon />} label="OAuth" />}
+            {provider.statusText && (
+              <Chip size="small" label={provider.statusText} variant="outlined" />
+            )}
+          </Stack>
+        </Box>
+
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: 'center',
+            justifyContent: { xs: 'space-between', sm: 'flex-end' },
+            flexShrink: 0
+          }}
+        >
+          <Chip
+            size="small"
+            color={provider.configured ? 'success' : 'default'}
+            label={provider.configured ? '已配置' : '未配置'}
+          />
+          {provider.configured && (
+            <Button
+              variant="outlined"
+              color="error"
+              size="small"
+              onClick={() => onLogout(provider.providerId)}
+              startIcon={<LogoutIcon />}
+              sx={{ minHeight: 34, px: 1.25 }}
+            >
+              登出
+            </Button>
+          )}
+        </Stack>
       </Stack>
 
       {hint ? (
-        <Alert severity="info" sx={{ mt: 2 }}>
+        <Alert severity="info" variant="outlined" sx={{ mt: 1.25, py: 0.5 }}>
           <Typography variant="body2">{hint}</Typography>
         </Alert>
       ) : null}
-
-      {provider.configured && (
-        <Button
-          variant="outlined"
-          color="error"
-          size="small"
-          onClick={() => onLogout(provider.providerId)}
-          startIcon={<LogoutIcon />}
-          sx={{ mt: 2, minHeight: 44 }}
-        >
-          登出
-        </Button>
-      )}
     </Paper>
   )
 }
@@ -205,7 +233,7 @@ function ProvidersSection({
   const configuredProviders = providers.filter((item) => item.configured)
 
   return (
-    <Stack spacing={2}>
+    <Stack spacing={1.5}>
       <Box
         sx={{
           display: 'flex',
@@ -246,12 +274,9 @@ function ProvidersSection({
           </Button>
         </Paper>
       ) : (
-        <List disablePadding>
-          {configuredProviders.map((provider, index) => (
-            <Box
-              key={provider.providerId}
-              sx={{ mb: index === configuredProviders.length - 1 ? 0 : 1.5 }}
-            >
+        <Stack spacing={1}>
+          {configuredProviders.map((provider) => (
+            <Box key={provider.providerId}>
               <ProviderCard
                 provider={provider}
                 hint={providerHints[provider.providerId]}
@@ -259,7 +284,7 @@ function ProvidersSection({
               />
             </Box>
           ))}
-        </List>
+        </Stack>
       )}
     </Stack>
   )
@@ -336,25 +361,61 @@ function DiagnosticsSection({
   }
 
   return (
-    <Stack spacing={2}>
+    <Stack spacing={2.5}>
       <Box>
         <Typography variant="h5">诊断</Typography>
         <Typography variant="body2" color="text.secondary">
-          复制一份不含聊天全文、工具完整输出或 thinking 的运行摘要。
+          给内部 beta 排查问题用的支持摘要，会自动过滤敏感信息和大段运行内容。
         </Typography>
       </Box>
 
-      <Box>
-        <Button
-          variant="contained"
-          startIcon={<ContentCopyIcon />}
-          disabled={isCopying}
-          onClick={handleCopy}
-          sx={{ minHeight: 44 }}
+      <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 1 }}>
+        <Stack
+          direction={{ xs: 'column', sm: 'row' }}
+          spacing={2}
+          sx={{ alignItems: { xs: 'stretch', sm: 'center' } }}
         >
-          复制诊断
-        </Button>
-      </Box>
+          <Box
+            sx={{
+              width: 42,
+              height: 42,
+              borderRadius: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              bgcolor: 'secondary.light',
+              color: 'secondary.dark',
+              flexShrink: 0
+            }}
+          >
+            <DiagnosticsIcon fontSize="small" />
+          </Box>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography variant="h6" sx={{ fontWeight: 700 }}>
+              复制支持摘要
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              包含应用版本、平台、当前会话、项目权限、模型、Provider、Skills、MCP、插件和最近错误。
+            </Typography>
+          </Box>
+          <Button
+            variant="contained"
+            startIcon={<ContentCopyIcon />}
+            disabled={isCopying}
+            onClick={handleCopy}
+            sx={{ minHeight: 44, flexShrink: 0 }}
+          >
+            {isCopying ? '复制中' : '复制诊断'}
+          </Button>
+        </Stack>
+
+        <Stack direction="row" spacing={1} sx={{ mt: 2, flexWrap: 'wrap', rowGap: 1 }}>
+          <Chip size="small" icon={<CheckIcon />} label="密钥脱敏" />
+          <Chip size="small" icon={<CheckIcon />} label="不含聊天全文" />
+          <Chip size="small" icon={<CheckIcon />} label="不含工具完整输出" />
+          <Chip size="small" icon={<CheckIcon />} label="不含 thinking" />
+        </Stack>
+      </Paper>
 
       {copiedAt ? <Alert severity="success">已复制 · {copiedAt}</Alert> : null}
       {error ? <Alert severity="error">{error}</Alert> : null}

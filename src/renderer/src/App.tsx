@@ -10,6 +10,7 @@ import {
   Typography
 } from '@mui/material'
 import ChatView from './components/ChatView'
+import type { LocalPathKind } from './components/MarkdownContent'
 import SessionSidebar from './components/SessionSidebar'
 import PluginView from './components/PluginView'
 import SkillView from './components/SkillView'
@@ -18,6 +19,10 @@ import SettingsDialog, { type SettingsCategory } from './components/SettingsDial
 import AddProviderDialog from './components/AddProviderDialog'
 import OnboardingDialog from './components/OnboardingDialog'
 import NewProjectDialog from './components/NewProjectDialog'
+import FilePreviewPanel, {
+  FilePreviewTitleTab,
+  type FilePreviewPanelState
+} from './components/FilePreviewPanel'
 import AnalysisView from './components/AnalysisView'
 import { createAppTheme } from './theme'
 import { useThemeMode } from './useThemeMode'
@@ -28,6 +33,7 @@ import { getPromptReadiness } from './lib/promptReadiness'
 import { shouldRefreshProjectGitStatusForAgentEvent } from './lib/projectGitRefresh'
 import { readableErrorMessage } from './lib/sessionNotifications'
 import { sessionDraftKey, updateSessionDraft } from './lib/sessionDrafts'
+import { preserveSessionListOrder } from './lib/sessionOrder'
 import { sessionDisplayTitle, titleFromMessages, truncateSessionTitle } from './lib/sessionTitles'
 import { PhiIcons } from './icons'
 import {
@@ -62,8 +68,10 @@ import type {
   ModelOption,
   PermissionMode,
   PluginCatalogItem,
+  PromptAgentSummary,
   Project,
   ProviderAuthStatus,
+  DirectoryListing,
   RendererApi,
   SessionRuntimeState,
   SessionSummary,
@@ -200,6 +208,7 @@ function App(): React.JSX.Element {
   const [busyPluginSource, setBusyPluginSource] = useState<string | null>(null)
   const [pluginOperationError, setPluginOperationError] = useState<string | null>(null)
   const [skills, setSkills] = useState<SkillSummary[]>([])
+  const [promptAgents, setPromptAgents] = useState<PromptAgentSummary[]>([])
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null)
   const [isLoadingSkills, setIsLoadingSkills] = useState(false)
   const [mcpServers, setMcpServers] = useState<McpServerSummary[]>([])
@@ -233,6 +242,7 @@ function App(): React.JSX.Element {
   const [executingAnalysisCellId, setExecutingAnalysisCellId] = useState<string | null>(null)
   const [analysisCellExecutionError, setAnalysisCellExecutionError] = useState<string | null>(null)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
+  const [filePreview, setFilePreview] = useState<FilePreviewPanelState | null>(null)
   const [activeSessionRuntimeState, setActiveSessionRuntimeState] =
     useState(idleSessionRuntimeState)
   const [, setSessionRuntimeStateRevision] = useState(0)
@@ -247,6 +257,7 @@ function App(): React.JSX.Element {
   const sessionRequestRef = useRef(0)
   const sendRequestRef = useRef(0)
   const skillsRequestRef = useRef(0)
+  const promptAgentsRequestRef = useRef(0)
   const mcpServersRequestRef = useRef(0)
   const analysisNotebooksRequestRef = useRef(0)
   const analysisNotebookOpenRequestRef = useRef(0)
@@ -254,6 +265,7 @@ function App(): React.JSX.Element {
   const analysisJupyterRequestRef = useRef(0)
   const analysisNotebookSessionRequestRef = useRef(0)
   const analysisCellExecutionRequestRef = useRef(0)
+  const filePreviewRequestRef = useRef(0)
   const sessionRefreshTimerRef = useRef<number | null>(null)
   const rendererApi = useMemo(() => getRendererApi(), [])
 
@@ -425,7 +437,7 @@ function App(): React.JSX.Element {
       await rendererApi.listSessions(),
       activeCwdRef.current
     )
-    setSessions(list)
+    setSessions((previous) => preserveSessionListOrder(previous, list))
     const activePath = activeSessionPathRef.current
     if (!activePath) return
     const active = list.find((session) => session.path === activePath)
@@ -506,7 +518,6 @@ function App(): React.JSX.Element {
           session.path === acknowledged.path ? { ...session, ...nextRuntimeState } : session
         )
       )
-      setProjectSessionRefreshKey((key) => key + 1)
       return
     }
     const request = ++sessionRequestRef.current
@@ -529,7 +540,6 @@ function App(): React.JSX.Element {
       }
       void refreshCurrentModelControls(request)
       void refreshSessions()
-      setProjectSessionRefreshKey((key) => key + 1)
     } finally {
       if (request === sessionRequestRef.current) {
         setIsSessionChanging(false)
@@ -591,6 +601,14 @@ function App(): React.JSX.Element {
         setIsLoadingSkills(false)
       }
     }
+  }, [rendererApi])
+
+  const refreshPromptAgents = useCallback(async (): Promise<void> => {
+    const request = ++promptAgentsRequestRef.current
+    const cwd = activeCwdRef.current
+    const list = await rendererApi.listPromptAgents(cwd)
+    if (request !== promptAgentsRequestRef.current || cwd !== activeCwdRef.current) return
+    setPromptAgents(list)
   }, [rendererApi])
 
   const refreshMcpServers = useCallback(async (): Promise<void> => {
@@ -1013,12 +1031,20 @@ function App(): React.JSX.Element {
     setIsProviderDialogOpen(true)
   }
 
-  const openSettings = (category?: SettingsCategory): void => {
+  const openSettings = useCallback((category?: SettingsCategory): void => {
     if (category) {
       setSettingsCategory(category)
     }
     setIsSettingsOpen(true)
-  }
+  }, [])
+
+  const onGoProviderSettings = useCallback((): void => {
+    openSettings('providers')
+  }, [openSettings])
+
+  const setMessagesContainerNode = useCallback((node: HTMLDivElement | null): void => {
+    listRef.current = node
+  }, [])
 
   const focusPrimaryInput = useCallback((): void => {
     const selector = activeView === 'chat' ? '[data-phi-focus="chat-input"]' : 'input[type="text"]'
@@ -1249,7 +1275,12 @@ function App(): React.JSX.Element {
         rendererApi.getCurrentSession(),
         rendererApi.listProjects()
       ])
-      setSessions(mergeSessionSummariesRuntimeState(sessionList, current.cwd))
+      setSessions((previous) =>
+        preserveSessionListOrder(
+          previous,
+          mergeSessionSummariesRuntimeState(sessionList, current.cwd)
+        )
+      )
       applyCurrentSession(current)
       if (Array.isArray(current.messages)) {
         replaceMessages(chatItemsFromSessionMessages(current.messages))
@@ -1583,6 +1614,107 @@ function App(): React.JSX.Element {
       setUpdatingPermissionProjectId(null)
     }
   }
+
+  const onOpenFilePreview = useCallback(
+    (path: string): void => {
+      const requestId = ++filePreviewRequestRef.current
+      setFilePreview({ status: 'loading', path })
+      void rendererApi
+        .previewFile(path)
+        .then((file) => {
+          if (filePreviewRequestRef.current !== requestId) return
+          setFilePreview({ status: 'ready', file })
+        })
+        .catch((error) => {
+          if (filePreviewRequestRef.current !== requestId) return
+          setFilePreview({
+            status: 'error',
+            path,
+            message: readableErrorMessage(error, '无法预览文件')
+          })
+        })
+    },
+    [rendererApi]
+  )
+
+  const onOpenDirectoryPreview = useCallback(
+    (path: string): void => {
+      const requestId = ++filePreviewRequestRef.current
+      setFilePreview({ status: 'loading', path, pathKind: 'directory' })
+      void rendererApi
+        .listDirectory(path)
+        .then((directory) => {
+          if (filePreviewRequestRef.current !== requestId) return
+          setFilePreview({ status: 'directory', directory })
+        })
+        .catch((error) => {
+          if (filePreviewRequestRef.current !== requestId) return
+          setFilePreview({
+            status: 'error',
+            path,
+            pathKind: 'directory',
+            message: readableErrorMessage(error, '无法读取目录')
+          })
+        })
+    },
+    [rendererApi]
+  )
+
+  const onOpenLocalPath = useCallback(
+    (path: string, pathKind: LocalPathKind): void => {
+      if (pathKind === 'directory') {
+        onOpenDirectoryPreview(path)
+        return
+      }
+      onOpenFilePreview(path)
+    },
+    [onOpenDirectoryPreview, onOpenFilePreview]
+  )
+
+  const onCloseFilePreview = useCallback((): void => {
+    filePreviewRequestRef.current += 1
+    setFilePreview(null)
+  }, [])
+
+  const onOpenDefaultPreviewPath = useCallback(
+    (path: string): void => {
+      void rendererApi.openPath(path).catch((error) => {
+        showSnackbarError(error, '无法打开文件')
+      })
+    },
+    [rendererApi, showSnackbarError]
+  )
+
+  const onRevealPreviewPath = useCallback(
+    (path: string): void => {
+      void rendererApi.revealPath(path).catch((error) => {
+        showSnackbarError(error, '无法在文件管理器中显示')
+      })
+    },
+    [rendererApi, showSnackbarError]
+  )
+
+  const onListPreviewDirectory = useCallback(
+    (path: string): Promise<DirectoryListing> => rendererApi.listDirectory(path),
+    [rendererApi]
+  )
+
+  const onOpenInputAddMenu = useCallback((): void => {
+    void refreshSkills()
+    void refreshPromptAgents()
+    if (plugins.length === 0) {
+      void refreshPlugins()
+    }
+  }, [plugins.length, refreshPlugins, refreshPromptAgents, refreshSkills])
+
+  const onPickInputFiles = useCallback(async (): Promise<string[]> => {
+    try {
+      return await rendererApi.pickInputFiles()
+    } catch (error) {
+      showSnackbarError(error, '选择文件失败')
+      return []
+    }
+  }, [rendererApi, showSnackbarError])
 
   const selectedPrompts = activePrompts.filter(
     (item) => item.providerId === providerDialogProviderId
@@ -1941,8 +2073,6 @@ function App(): React.JSX.Element {
                 flexShrink: 0,
                 display: 'flex',
                 alignItems: 'center',
-                borderBottom: 1,
-                borderColor: 'divider',
                 backgroundColor: (muiTheme) =>
                   muiTheme.palette.mode === 'dark'
                     ? muiTheme.palette.background.default
@@ -1953,65 +2083,136 @@ function App(): React.JSX.Element {
             >
               <Box
                 sx={{
-                  width: '100%',
-                  maxWidth: 860,
-                  mx: 'auto',
-                  px: 3,
-                  minWidth: 0
+                  flex: 1,
+                  minWidth: 0,
+                  height: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  borderBottom: 1,
+                  borderColor: 'divider'
                 }}
               >
-                <Typography
-                  variant="subtitle2"
-                  title={activeWorkspaceTitle}
+                <Box
                   sx={{
-                    maxWidth: { xs: 220, sm: 360, md: 520 },
-                    minWidth: 0,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    fontWeight: 600
+                    width: '100%',
+                    maxWidth: 860,
+                    mx: 'auto',
+                    px: 3,
+                    minWidth: 0
                   }}
                 >
-                  {activeWorkspaceTitle}
-                </Typography>
+                  <Typography
+                    variant="subtitle2"
+                    title={activeWorkspaceTitle}
+                    sx={{
+                      maxWidth: { xs: 220, sm: 360, md: 520 },
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      fontWeight: 600
+                    }}
+                  >
+                    {activeWorkspaceTitle}
+                  </Typography>
+                </Box>
               </Box>
+              {filePreview ? (
+                <FilePreviewTitleTab state={filePreview} onClose={onCloseFilePreview} />
+              ) : null}
             </Box>
-            <ChatView
-              messages={messages}
-              input={input}
-              messagesContainerRef={(node) => {
-                listRef.current = node
-              }}
-              canSend={!isSessionChanging && !currentSessionIsBusy && !isBusy}
-              isGenerating={currentSessionIsBusy}
-              currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
-              models={availableModels}
-              selectedModel={selectedModel}
-              onSelectModel={(model) => {
-                void onSelectModel(model)
-              }}
-              thinkingLevel={thinkingLevel}
-              onSelectThinkingLevel={(level) => {
-                void onSelectThinkingLevel(level)
-              }}
-              onInputChange={setActiveInput}
-              onChatSubmit={onChatSubmit}
-              onStopGeneration={onStopGeneration}
-              onGoSettings={() => openSettings('providers')}
-              permissionMode={activePermissionMode}
-              onSelectPermissionMode={(mode) => {
-                void onSelectPermissionMode(mode)
-              }}
-              disablePermissionModeSelect={isSessionChanging}
-              disableModelControls={isSessionChanging}
-              pendingApproval={pendingApproval}
-              onRespondApproval={onRespondToolApproval}
-              onOpenApprovalSession={onOpenApprovalSession}
-              cwd={activeCwd}
-            />
+            <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
+              <ChatView
+                messages={messages}
+                input={input}
+                messagesContainerRef={setMessagesContainerNode}
+                canSend={!isSessionChanging && !currentSessionIsBusy && !isBusy}
+                isGenerating={currentSessionIsBusy}
+                currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
+                models={availableModels}
+                selectedModel={selectedModel}
+                skills={skills}
+                promptAgents={promptAgents}
+                plugins={plugins}
+                onSelectModel={(model) => {
+                  void onSelectModel(model)
+                }}
+                thinkingLevel={thinkingLevel}
+                onSelectThinkingLevel={(level) => {
+                  void onSelectThinkingLevel(level)
+                }}
+                onInputChange={setActiveInput}
+                onOpenInputAddMenu={onOpenInputAddMenu}
+                onPickInputFiles={onPickInputFiles}
+                onChatSubmit={onChatSubmit}
+                onStopGeneration={onStopGeneration}
+                onGoSettings={onGoProviderSettings}
+                permissionMode={activePermissionMode}
+                onSelectPermissionMode={(mode) => {
+                  void onSelectPermissionMode(mode)
+                }}
+                disablePermissionModeSelect={isSessionChanging}
+                disableModelControls={isSessionChanging}
+                pendingApproval={pendingApproval}
+                onRespondApproval={onRespondToolApproval}
+                onOpenApprovalSession={onOpenApprovalSession}
+                onOpenLocalPath={onOpenLocalPath}
+                compactComposerControls={filePreview !== null}
+                cwd={activeCwd}
+              />
+              {filePreview ? (
+                <FilePreviewPanel
+                  state={filePreview}
+                  onOpenFile={onOpenFilePreview}
+                  onOpenDefaultPath={onOpenDefaultPreviewPath}
+                  onRevealPath={onRevealPreviewPath}
+                  onListDirectory={onListPreviewDirectory}
+                />
+              ) : null}
+            </Box>
           </Box>
         ) : activeView === 'analysis' ? (
           <AnalysisView
+            chatPanel={
+              <ChatView
+                messages={messages}
+                input={input}
+                messagesContainerRef={setMessagesContainerNode}
+                canSend={!isSessionChanging && !currentSessionIsBusy && !isBusy}
+                isGenerating={currentSessionIsBusy}
+                currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
+                models={availableModels}
+                selectedModel={selectedModel}
+                skills={skills}
+                promptAgents={promptAgents}
+                plugins={plugins}
+                onSelectModel={(model) => {
+                  void onSelectModel(model)
+                }}
+                thinkingLevel={thinkingLevel}
+                onSelectThinkingLevel={(level) => {
+                  void onSelectThinkingLevel(level)
+                }}
+                onInputChange={setActiveInput}
+                onOpenInputAddMenu={onOpenInputAddMenu}
+                onPickInputFiles={onPickInputFiles}
+                onChatSubmit={onChatSubmit}
+                onStopGeneration={onStopGeneration}
+                onGoSettings={onGoProviderSettings}
+                permissionMode={activePermissionMode}
+                onSelectPermissionMode={(mode) => {
+                  void onSelectPermissionMode(mode)
+                }}
+                disablePermissionModeSelect={isSessionChanging}
+                disableModelControls={isSessionChanging}
+                pendingApproval={pendingApproval}
+                onRespondApproval={onRespondToolApproval}
+                onOpenApprovalSession={onOpenApprovalSession}
+                onOpenLocalPath={onOpenLocalPath}
+                compactComposerControls
+                cwd={activeCwd}
+              />
+            }
             notebookRegistry={analysisNotebookRegistry}
             notebookFile={activeAnalysisNotebook}
             isLoadingNotebooks={isLoadingAnalysisNotebooks}
@@ -2031,9 +2232,6 @@ function App(): React.JSX.Element {
             notebookCellExecutionError={analysisCellExecutionError}
             onRefreshNotebooks={() => {
               void refreshAnalysisNotebooks()
-            }}
-            onInitializeProjectAnalysis={(cwd) => {
-              void onInitializeProjectAnalysis(cwd)
             }}
             onRefreshKernels={() => {
               void refreshAnalysisKernels()
@@ -2055,6 +2253,9 @@ function App(): React.JSX.Element {
             }}
             onRunNotebookCell={(file, document, cellId) => {
               void onRunAnalysisNotebookCell(file, document, cellId)
+            }}
+            onInitializeProjectAnalysis={(cwd) => {
+              void onInitializeProjectAnalysis(cwd)
             }}
             onOpenNotebook={(path) => {
               void onOpenAnalysisNotebook(path)

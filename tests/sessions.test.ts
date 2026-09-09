@@ -51,7 +51,8 @@ function manifest(
   status: PhiSessionManifest['status'],
   unreadKind: PhiSessionManifest['unreadKind'],
   lastActivityAt: string,
-  cwd = '/workspace'
+  cwd = '/workspace',
+  createdAt = '2026-09-05T00:00:00.000Z'
 ): PhiSessionManifest {
   return {
     schemaVersion: 1,
@@ -65,7 +66,7 @@ function manifest(
     status,
     unreadKind,
     messageCount: 1,
-    createdAt: '2026-09-05T00:00:00.000Z',
+    createdAt,
     updatedAt: lastActivityAt,
     lastActivityAt
   }
@@ -88,14 +89,18 @@ test('mergePhiSessionState overlays Phi status without auto-sorting by activity'
         '/sessions/approval.jsonl',
         'needs_approval',
         'approval',
-        '2026-09-05T09:30:00.000Z'
+        '2026-09-05T09:30:00.000Z',
+        '/workspace',
+        '2026-09-05T00:00:01.000Z'
       ),
       manifest(
         'phi-running',
         '/sessions/running.jsonl',
         'running',
         null,
-        '2026-09-05T08:30:00.000Z'
+        '2026-09-05T08:30:00.000Z',
+        '/workspace',
+        '2026-09-05T00:00:02.000Z'
       )
     ],
     '/workspace'
@@ -111,6 +116,46 @@ test('mergePhiSessionState overlays Phi status without auto-sorting by activity'
   assert.equal(sessions[1].modified, '2026-09-05T09:30:00.000Z')
   assert.equal(sessions[2].status, 'idle')
   assert.equal(sessions[2].unreadKind, null)
+})
+
+test('mergePhiSessionState keeps Phi created time stable when runtime metadata changes', () => {
+  const sessions = mergePhiSessionState(
+    [
+      sessionInfo('/sessions/original-first.jsonl', '2026-09-05T11:00:00.000Z', {
+        created: new Date('2026-09-05T00:05:00.000Z')
+      }),
+      sessionInfo('/sessions/original-second.jsonl', '2026-09-05T10:00:00.000Z', {
+        created: new Date('2026-09-05T00:10:00.000Z')
+      })
+    ],
+    [
+      manifest(
+        'phi-original-first',
+        '/sessions/original-first.jsonl',
+        'idle',
+        null,
+        '2026-09-05T11:00:00.000Z',
+        '/workspace',
+        '2026-09-05T00:10:00.000Z'
+      ),
+      manifest(
+        'phi-original-second',
+        '/sessions/original-second.jsonl',
+        'idle',
+        null,
+        '2026-09-05T10:00:00.000Z',
+        '/workspace',
+        '2026-09-05T00:05:00.000Z'
+      )
+    ],
+    '/workspace'
+  )
+
+  assert.deepEqual(
+    sessions.map((session) => session.path),
+    ['/sessions/original-first.jsonl', '/sessions/original-second.jsonl']
+  )
+  assert.equal(sessions[0].created, '2026-09-05T00:10:00.000Z')
 })
 
 test('mergePhiSessionState ignores manifests from another cwd', () => {

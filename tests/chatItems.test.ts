@@ -308,6 +308,70 @@ test('chatItemsFromSessionMessages keeps runtime history that is missing from Ph
   ])
 })
 
+test('chatItemsFromSessionMessages skips the runtime suffix covered by the Phi timeline', () => {
+  const items = chatItemsFromSessionMessages([
+    { role: 'user', content: [{ type: 'text', text: 'older user question' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'older assistant answer' }] },
+    { role: 'user', content: [{ type: 'text', text: 'current question' }] },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'runtime thinking that should not render first' },
+        {
+          type: 'toolCall',
+          id: 'call-runtime',
+          name: 'bash',
+          arguments: { command: 'date' }
+        },
+        { type: 'text', text: 'current answer' }
+      ]
+    },
+    {
+      role: 'toolResult',
+      toolCallId: 'call-runtime',
+      content: [{ type: 'text', text: 'runtime output' }]
+    },
+    {
+      source: 'phi',
+      preferPhiTimeline: true,
+      type: 'user_message',
+      eventId: 'event-user',
+      runId: 'run-current',
+      content: 'current question'
+    },
+    {
+      source: 'phi',
+      preferPhiTimeline: true,
+      type: 'assistant_thinking_completed',
+      eventId: 'event-thinking',
+      runId: 'run-current',
+      content: 'persisted thinking',
+      durationMs: 3000
+    },
+    {
+      source: 'phi',
+      preferPhiTimeline: true,
+      type: 'assistant_message_finalized',
+      eventId: 'event-assistant',
+      runId: 'run-current',
+      content: 'current answer'
+    }
+  ])
+
+  assert.deepEqual(items, [
+    { id: 'user-0', role: 'user', content: 'older user question' },
+    { id: 'assistant-1', role: 'assistant', content: 'older assistant answer' },
+    { id: 'event-user', role: 'user', content: 'current question' },
+    {
+      id: 'event-thinking',
+      role: 'thinking',
+      content: 'persisted thinking',
+      durationMs: 3000
+    },
+    { id: 'event-assistant', role: 'assistant', content: 'current answer' }
+  ])
+})
+
 test('chatItemsFromSessionMessages restores Phi thinking timeline events', () => {
   const items = chatItemsFromSessionMessages([
     {

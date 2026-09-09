@@ -1,6 +1,6 @@
 import { Box, Button, CircularProgress, Collapse, Divider, Typography } from '@mui/material'
 import { useState, type ReactNode } from 'react'
-import { PhiIcons } from '../icons'
+import { PhiIcons, fileIconForPath } from '../icons'
 import type { ToolCallItem } from '../types'
 import { tokenizeLocalPaths } from '../lib/localPaths'
 import { toolActionKind } from '../lib/toolActions'
@@ -153,7 +153,11 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
   const [showFullArgs, setShowFullArgs] = useState(false)
   const [showFullOutput, setShowFullOutput] = useState(false)
   const target = toolTargetFromArgs(item.toolName, item.argsJson, cwd ?? '')
+  const targetIcon = target ? fileIconForPath(target.absolutePath) : null
+  const TargetFileIcon = targetIcon?.Icon
   const hasSavedOutput = Boolean(item.outputTruncated && item.outputPath)
+  const outputIcon = item.outputPath ? fileIconForPath(item.outputPath) : null
+  const OutputFileIcon = outputIcon?.Icon
   const argsCollapsedByPreview = item.argsJson ? isToolArgsPreviewTruncated(item.argsJson) : false
   const argsText = item.argsJson
     ? showFullArgs
@@ -200,6 +204,9 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
             flexWrap: 'wrap'
           }}
         >
+          {TargetFileIcon && targetIcon ? (
+            <TargetFileIcon sx={{ color: targetIcon.color, fontSize: 22 }} />
+          ) : null}
           <Box sx={{ minWidth: 0, flex: 1 }}>
             <Typography variant="body2" sx={{ fontWeight: 600 }}>
               目标文件
@@ -245,6 +252,9 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
             flexWrap: 'wrap'
           }}
         >
+          {OutputFileIcon && outputIcon ? (
+            <OutputFileIcon sx={{ color: outputIcon.color, fontSize: 22 }} />
+          ) : null}
           <Box sx={{ minWidth: 0, flex: 1 }}>
             <Typography variant="body2" sx={{ fontWeight: 600 }}>
               完整输出已保存
@@ -365,6 +375,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
 }
 
 function foldedToolHeadline(item: ToolCallItem, action: ReturnType<typeof toolActionKind>): string {
+  if (action === 'python') return '执行 Python 代码'
   if (action === 'command') return '执行命令'
   return item.argsPreview || item.toolName
 }
@@ -375,7 +386,7 @@ function ToolCallCard({ item, cwd }: { item: ToolCallItem; cwd?: string }): Reac
   const toggle = (): void => setExpanded((value) => !value)
   const action = toolActionKind(item.toolName, item.argsPreview, item.argsJson)
   const headline = foldedToolHeadline(item, action)
-  const showToolName = action !== 'command'
+  const showToolName = action !== 'command' && action !== 'python'
 
   return (
     <Box sx={{ alignSelf: 'stretch', minWidth: 0 }}>

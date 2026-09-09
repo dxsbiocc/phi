@@ -19,9 +19,51 @@ export function readSessionOrder(scopeKey: string): string[] {
   }
 }
 
+export function sessionPaths(sessions: SessionSummary[]): string[] {
+  return sessions.map((session) => session.path)
+}
+
+export function initialSessionOrderForDisplay(
+  scopeKey: string,
+  sessions: SessionSummary[]
+): string[] {
+  const storedOrder = readSessionOrder(scopeKey)
+  return storedOrder.length > 0 ? storedOrder : sessionPaths(sessions)
+}
+
 export function writeSessionOrder(scopeKey: string, order: string[]): void {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(sessionOrderStorageKey(scopeKey), JSON.stringify(order))
+}
+
+function sessionActivityTime(session: SessionSummary): number {
+  const value = session.lastActivityAt ?? session.modified ?? session.created
+  const timestamp = Date.parse(value)
+  return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
+export function isSessionListSortedByActivityTime(sessions: SessionSummary[]): boolean {
+  return sessions.every((session, index) => {
+    if (index === 0) return true
+    return sessionActivityTime(sessions[index - 1]) >= sessionActivityTime(session)
+  })
+}
+
+export function preserveSessionListOrder(
+  previous: SessionSummary[],
+  next: SessionSummary[]
+): SessionSummary[] {
+  if (previous.length === 0 || next.length <= 1) return next
+  if (!isSessionListSortedByActivityTime(next)) return next
+
+  const nextByPath = new Map(next.map((session) => [session.path, session]))
+  const ordered = previous
+    .map((session) => nextByPath.get(session.path))
+    .filter((session): session is SessionSummary => session !== undefined)
+  const orderedPaths = new Set(ordered.map((session) => session.path))
+  const additions = next.filter((session) => !orderedPaths.has(session.path))
+
+  return [...ordered, ...additions]
 }
 
 export function reconcileSessionOrder(sessions: SessionSummary[], order: string[]): string[] {

@@ -20,36 +20,230 @@ import {
   useEffect,
   useId,
   useMemo,
+  memo,
+  useCallback,
   useRef,
   useState,
   type FormEvent,
   type MouseEvent,
-  type ReactNode
+  type ReactNode,
+  type Ref
 } from 'react'
-import MarkdownContent from './MarkdownContent'
+import MarkdownContent, { type LocalPathKind } from './MarkdownContent'
 import ToolCallCard, { StatusIndicator } from './ToolCallCard'
 import ToolGroupCard from './ToolGroupCard'
 import ToolApprovalDialog from './ToolApprovalDialog'
 import { PERMISSION_MODE_ICON_META, PhiIcons } from '../icons'
+import {
+  nextPromptHistoryCursor,
+  promptHistoryFromMessages,
+  type PromptHistoryDirection
+} from '../lib/promptHistory'
+import {
+  appendInputReference,
+  formatInputFileReferences,
+  formatPromptAgentReference,
+  formatPluginPromptReference,
+  formatSkillPromptReference
+} from '../lib/inputReferences'
 import { getProviderErrorDisplay } from '../lib/providerErrors'
 import type {
   ChatItem,
   ChatMessage,
   ModelOption,
   PermissionMode,
+  PluginCatalogItem,
+  PromptAgentSummary,
   RunLifecycleItem,
+  SkillSummary,
   ThinkingLevel,
   ToolApprovalRequest,
   ToolCallItem
 } from '../types'
 
+const AddIcon = PhiIcons.action.add
 const BoltIcon = PhiIcons.action.quick
 const CheckIcon = PhiIcons.state.check
 const ChevronRightIcon = PhiIcons.action.back
 const ExpandLessIcon = PhiIcons.action.collapse
+const InputAgentIcon = PhiIcons.entity.agent
+const InputFileIcon = PhiIcons.tool.read
+const InputPluginIcon = PhiIcons.entity.plugin
+const InputSkillIcon = PhiIcons.entity.skill
 const PsychologyIcon = PhiIcons.state.thinking
 const SendIcon = PhiIcons.action.send
 const StopIcon = PhiIcons.action.stop
+const COMPACT_COMPOSER_CONTROL_SIZE = 32
+const REGULAR_COMPOSER_ACTION_SIZE = 40
+const compactComposerIconButtonSx = {
+  width: COMPACT_COMPOSER_CONTROL_SIZE,
+  height: COMPACT_COMPOSER_CONTROL_SIZE,
+  minWidth: COMPACT_COMPOSER_CONTROL_SIZE,
+  minHeight: COMPACT_COMPOSER_CONTROL_SIZE,
+  flexShrink: 0
+} as const
+
+type ProviderIconMeta = {
+  key: string
+  label: string
+  color: string
+}
+
+const PROVIDER_ICON_RULES: Array<ProviderIconMeta & { matches: string[] }> = [
+  {
+    key: 'openai',
+    label: 'OpenAI',
+    color: '#10A37F',
+    matches: ['openai', 'codex', 'chatgpt']
+  },
+  {
+    key: 'deepseek',
+    label: 'DeepSeek',
+    color: '#4D6BFE',
+    matches: ['deepseek']
+  },
+  {
+    key: 'moonshot',
+    label: 'Moonshot',
+    color: '#6D5DF6',
+    matches: ['moonshot', 'kimi']
+  },
+  {
+    key: 'anthropic',
+    label: 'Anthropic',
+    color: '#D97757',
+    matches: ['anthropic']
+  },
+  {
+    key: 'claude',
+    label: 'Claude',
+    color: '#D97757',
+    matches: ['claude']
+  },
+  {
+    key: 'gemini',
+    label: 'Gemini',
+    color: '#4285F4',
+    matches: ['gemini']
+  },
+  {
+    key: 'google',
+    label: 'Google',
+    color: '#4285F4',
+    matches: ['google']
+  },
+  {
+    key: 'qwen',
+    label: 'Qwen',
+    color: '#615CED',
+    matches: ['qwen', 'dashscope', 'alibaba']
+  },
+  {
+    key: 'openrouter',
+    label: 'OpenRouter',
+    color: '#6C5CE7',
+    matches: ['openrouter']
+  },
+  {
+    key: 'ollama',
+    label: 'Ollama',
+    color: '#111827',
+    matches: ['ollama']
+  },
+  {
+    key: 'mistral',
+    label: 'Mistral',
+    color: '#FA520F',
+    matches: ['mistral']
+  },
+  {
+    key: 'meta',
+    label: 'Meta',
+    color: '#0668E1',
+    matches: ['meta', 'llama']
+  },
+  {
+    key: 'perplexity',
+    label: 'Perplexity',
+    color: '#1FB8CD',
+    matches: ['perplexity']
+  },
+  {
+    key: 'xai',
+    label: 'xAI',
+    color: '#111827',
+    matches: ['xai', 'grok']
+  },
+  {
+    key: 'copilot',
+    label: 'GitHub Copilot',
+    color: '#6E5494',
+    matches: ['copilot', 'github']
+  }
+]
+
+function providerIconMeta(providerId?: string): ProviderIconMeta {
+  const normalizedProviderId = providerId?.toLowerCase() ?? ''
+  const matched = PROVIDER_ICON_RULES.find((rule) =>
+    rule.matches.some((match) => normalizedProviderId.includes(match))
+  )
+  if (matched) {
+    return {
+      key: matched.key,
+      label: matched.label,
+      color: matched.color
+    }
+  }
+  return {
+    key: 'generic',
+    label: 'Model Provider',
+    color: 'text.secondary'
+  }
+}
+
+function textInputFromEventTarget(
+  target: EventTarget | null
+): HTMLInputElement | HTMLTextAreaElement | null {
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+    return target
+  }
+  return null
+}
+
+function isTextInputAtHistoryBoundary(
+  inputElement: HTMLInputElement | HTMLTextAreaElement,
+  direction: PromptHistoryDirection
+): boolean {
+  const { selectionStart, selectionEnd, value } = inputElement
+  if (selectionStart === null || selectionEnd === null) return true
+  if (selectionStart !== selectionEnd) return false
+  if (value.length === 0) return true
+
+  if (direction === 'previous') {
+    return value.lastIndexOf('\n', Math.max(0, selectionStart - 1)) === -1
+  }
+  return value.indexOf('\n', selectionEnd) === -1
+}
+
+function ProviderModelIcon({
+  providerId,
+  disabled = false
+}: {
+  providerId?: string
+  disabled?: boolean
+}): React.JSX.Element {
+  const meta = providerIconMeta(providerId)
+  const color = disabled ? 'action.disabled' : meta.color
+
+  return (
+    <PsychologyIcon
+      data-phi-provider-icon={meta.key}
+      htmlColor={undefined}
+      size="1.2rem"
+      sx={{ color }}
+    />
+  )
+}
 
 type VisibleChatItem = ChatMessage | ToolCallItem
 
@@ -196,14 +390,16 @@ function groupMessages(messages: ChatItem[]): RenderGroup[] {
     if (lastProcessingIndex < 0) {
       if (runStartedAtMs !== undefined) {
         const visibleItems = turnItems.filter(isVisibleChatItem)
-        groups.push({
-          kind: 'processing-group',
-          key: `processing-${turnItems[0].id}`,
-          items: [],
-          startedAtMs: runStartedAtMs,
-          completedAtMs: runCompletedAtMs ?? maxTimestamp(visibleItems),
-          durationMs: runDurationMs
-        })
+        if (visibleItems.length > 0 || groups.length > 0) {
+          groups.push({
+            kind: 'processing-group',
+            key: `processing-${turnItems[0].id}`,
+            items: [],
+            startedAtMs: runStartedAtMs,
+            completedAtMs: runCompletedAtMs ?? maxTimestamp(visibleItems),
+            durationMs: runDurationMs
+          })
+        }
       }
       groups.push(
         ...turnItems
@@ -255,16 +451,257 @@ const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
   max: 'Max'
 }
 
+function InputAddGroup({
+  title,
+  children
+}: {
+  title: string
+  children: ReactNode
+}): React.JSX.Element {
+  return (
+    <Box
+      sx={{
+        '& + &': { mt: 1.25 }
+      }}
+    >
+      <Typography
+        variant="body2"
+        sx={{
+          color: 'text.secondary',
+          display: 'block',
+          fontSize: '0.95rem',
+          fontWeight: 800,
+          letterSpacing: 0,
+          lineHeight: 1.35,
+          px: 1.75,
+          pt: 1,
+          pb: 0.5
+        }}
+      >
+        {title}
+      </Typography>
+      <Box sx={{ px: 0.75, pb: 0.75 }}>{children}</Box>
+    </Box>
+  )
+}
+
+function InputAddEmptyState({ children }: { children: ReactNode }): React.JSX.Element {
+  return (
+    <Typography
+      variant="body2"
+      color="text.secondary"
+      sx={{
+        px: 1,
+        py: 0.75
+      }}
+    >
+      {children}
+    </Typography>
+  )
+}
+
+function InputAddMenuRow({
+  icon,
+  primary,
+  disabled = false,
+  selected = false,
+  onClick
+}: {
+  icon: ReactNode
+  primary: string
+  disabled?: boolean
+  selected?: boolean
+  onClick: () => void
+}): React.JSX.Element {
+  return (
+    <ListItemButton
+      dense
+      role="menuitem"
+      disabled={disabled}
+      selected={selected}
+      onClick={onClick}
+      sx={{
+        borderRadius: 1.5,
+        gap: 0.5,
+        minHeight: 40,
+        px: 1,
+        py: 0.5,
+        '&.Mui-selected': {
+          bgcolor: 'action.hover',
+          '&:hover': { bgcolor: 'action.selected' }
+        }
+      }}
+    >
+      <ListItemIcon sx={{ color: 'primary.main', minWidth: 32 }}>{icon}</ListItemIcon>
+      <ListItemText
+        primary={primary}
+        slotProps={{
+          primary: { noWrap: true, sx: { fontSize: '0.9rem', fontWeight: 700 } }
+        }}
+      />
+    </ListItemButton>
+  )
+}
+
+function InputAddPanel({
+  panelId,
+  panelRef,
+  skills,
+  promptAgents,
+  plugins,
+  onPickFiles,
+  onInsertReference,
+  onClose
+}: {
+  panelId: string
+  panelRef: Ref<HTMLDivElement>
+  skills: SkillSummary[]
+  promptAgents: PromptAgentSummary[]
+  plugins: PluginCatalogItem[]
+  onPickFiles?: () => Promise<string[]>
+  onInsertReference: (reference: string) => void
+  onClose: () => void
+}): ReactNode {
+  const enabledSkills = useMemo(() => skills.filter((skill) => !skill.disabled), [skills])
+  const installedPlugins = useMemo(() => plugins.filter((plugin) => plugin.installed), [plugins])
+  const insertReference = useCallback(
+    (reference: string): void => {
+      onClose()
+      onInsertReference(reference)
+    },
+    [onClose, onInsertReference]
+  )
+  const pickFiles = useCallback(async (): Promise<void> => {
+    onClose()
+    const paths = (await onPickFiles?.()) ?? []
+    const reference = formatInputFileReferences(paths)
+    if (reference) {
+      onInsertReference(reference)
+    }
+  }, [onClose, onInsertReference, onPickFiles])
+
+  return (
+    <Paper
+      ref={panelRef}
+      id={panelId}
+      variant="outlined"
+      role="menu"
+      aria-label="添加上下文"
+      sx={{
+        width: '100%',
+        mb: 1,
+        borderRadius: 2,
+        bgcolor: 'background.paper',
+        maxHeight: 'min(420px, calc(100vh - 220px))',
+        overflowY: 'auto',
+        p: 1
+      }}
+    >
+      <InputAddGroup title="添加">
+        <InputAddMenuRow
+          icon={<InputFileIcon fontSize="small" />}
+          primary="文件和文件夹"
+          selected
+          disabled={!onPickFiles}
+          onClick={() => void pickFiles()}
+        />
+      </InputAddGroup>
+
+      <InputAddGroup title="智能体">
+        {promptAgents.length > 0 ? (
+          promptAgents.map((agent) => (
+            <InputAddMenuRow
+              key={agent.id}
+              icon={<InputAgentIcon fontSize="small" />}
+              primary={agent.name}
+              onClick={() => insertReference(formatPromptAgentReference(agent))}
+            />
+          ))
+        ) : (
+          <InputAddEmptyState>暂无可指定智能体</InputAddEmptyState>
+        )}
+      </InputAddGroup>
+
+      <InputAddGroup title="Skill">
+        {enabledSkills.length > 0 ? (
+          enabledSkills.map((skill) => (
+            <InputAddMenuRow
+              key={skill.id}
+              icon={<InputSkillIcon fontSize="small" />}
+              primary={skill.name}
+              onClick={() => insertReference(formatSkillPromptReference(skill))}
+            />
+          ))
+        ) : (
+          <InputAddEmptyState>暂无可引用 Skill</InputAddEmptyState>
+        )}
+      </InputAddGroup>
+
+      <InputAddGroup title="插件">
+        {installedPlugins.length > 0 ? (
+          installedPlugins.map((plugin) => (
+            <InputAddMenuRow
+              key={plugin.id}
+              icon={<InputPluginIcon fontSize="small" />}
+              primary={plugin.name}
+              onClick={() => insertReference(formatPluginPromptReference(plugin))}
+            />
+          ))
+        ) : (
+          <InputAddEmptyState>暂无已安装插件</InputAddEmptyState>
+        )}
+      </InputAddGroup>
+    </Paper>
+  )
+}
+
+function InputAddControl({
+  open,
+  controls,
+  buttonRef,
+  onToggle
+}: {
+  open: boolean
+  controls: string
+  buttonRef: Ref<HTMLButtonElement>
+  onToggle: () => void
+}): ReactNode {
+  return (
+    <Tooltip title="添加文件、智能体、Skill 或插件" enterDelay={400}>
+      <IconButton
+        ref={buttonRef}
+        size="small"
+        type="button"
+        aria-label="添加文件、智能体、Skill 或插件"
+        aria-controls={open ? controls : undefined}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={onToggle}
+        sx={{
+          ...compactComposerIconButtonSx,
+          color: open ? 'primary.main' : 'text.secondary',
+          bgcolor: open ? 'action.hover' : 'transparent',
+          '&:hover': { bgcolor: 'action.hover' }
+        }}
+      >
+        <AddIcon fontSize="small" />
+      </IconButton>
+    </Tooltip>
+  )
+}
+
 function ThinkingLevelControl({
   thinkingLevel,
   onSelectThinkingLevel,
   supportedLevels,
-  disabled: disabledBySession = false
+  disabled: disabledBySession = false,
+  compact = false
 }: {
   thinkingLevel: ThinkingLevel
   onSelectThinkingLevel: (level: ThinkingLevel) => void
   supportedLevels: ThinkingLevel[] | null
   disabled?: boolean
+  compact?: boolean
 }): ReactNode {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const popoverId = useId()
@@ -281,29 +718,45 @@ function ThinkingLevelControl({
     maxIndex
   )
   const disabled = disabledBySession || modelDisabled
+  const label = modelDisabled ? 'Off' : THINKING_LEVEL_LABELS[THINKING_LEVEL_ORDER[currentIndex]]
 
   return (
     <>
-      <Button
-        size="small"
-        onClick={(event) => setAnchorEl(event.currentTarget)}
-        disabled={disabled}
-        aria-describedby={popoverId}
-        startIcon={<BoltIcon sx={{ fontSize: 16 }} />}
-        sx={{
-          textTransform: 'none',
-          color: 'text.secondary',
-          fontSize: '0.85rem',
-          minHeight: 32,
-          // Fixed width so the button (and therefore the popover's anchor point)
-          // never shifts as the label text changes length between levels.
-          width: 104,
-          justifyContent: 'flex-start',
-          px: 1
-        }}
-      >
-        {modelDisabled ? 'Off' : THINKING_LEVEL_LABELS[THINKING_LEVEL_ORDER[currentIndex]]}
-      </Button>
+      <Tooltip title={`思考：${label}`} enterDelay={400}>
+        {compact ? (
+          <IconButton
+            size="small"
+            onClick={(event) => setAnchorEl(event.currentTarget)}
+            disabled={disabled}
+            aria-label={`选择思考等级：${label}`}
+            aria-describedby={popoverId}
+            sx={{ ...compactComposerIconButtonSx, color: 'text.secondary' }}
+          >
+            <BoltIcon fontSize="small" />
+          </IconButton>
+        ) : (
+          <Button
+            size="small"
+            onClick={(event) => setAnchorEl(event.currentTarget)}
+            disabled={disabled}
+            aria-describedby={popoverId}
+            startIcon={<BoltIcon sx={{ fontSize: 16 }} />}
+            sx={{
+              textTransform: 'none',
+              color: 'text.secondary',
+              fontSize: '0.85rem',
+              minHeight: 32,
+              // Fixed width so the button (and therefore the popover's anchor point)
+              // never shifts as the label text changes length between levels.
+              width: 104,
+              justifyContent: 'flex-start',
+              px: 1
+            }}
+          >
+            {label}
+          </Button>
+        )}
+      </Tooltip>
       <Popover
         id={popoverId}
         open={!disabled && Boolean(anchorEl)}
@@ -343,12 +796,14 @@ function ModelSelectorControl({
   models,
   selectedModel,
   onSelectModel,
-  disabled = false
+  disabled = false,
+  compact = false
 }: {
   models: ModelOption[]
   selectedModel: ModelOption | null
   onSelectModel: (model: ModelOption | null) => void
   disabled?: boolean
+  compact?: boolean
 }): ReactNode {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [query, setQuery] = useState('')
@@ -377,32 +832,51 @@ function ModelSelectorControl({
     setAnchorEl(null)
     setQuery('')
   }
+  const label = selectedModel ? selectedModel.name : '自动选择'
 
   return (
     <>
-      <Button
-        size="small"
-        onClick={(event) => setAnchorEl(event.currentTarget)}
-        disabled={disabled}
-        aria-describedby={popoverId}
-        aria-label="选择模型"
-        sx={{
-          textTransform: 'none',
-          color: 'text.secondary',
-          fontSize: '0.85rem',
-          minHeight: 32,
-          maxWidth: 160,
-          justifyContent: 'flex-start',
-          px: 1
-        }}
-      >
-        <Box
-          component="span"
-          sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-        >
-          {selectedModel ? selectedModel.name : '自动选择'}
-        </Box>
-      </Button>
+      <Tooltip title={`模型：${label}`} enterDelay={400}>
+        {compact ? (
+          <IconButton
+            size="small"
+            onClick={(event) => setAnchorEl(event.currentTarget)}
+            disabled={disabled}
+            aria-describedby={popoverId}
+            aria-label={`选择模型：${label}`}
+            sx={{ ...compactComposerIconButtonSx, color: 'text.secondary' }}
+          >
+            <ProviderModelIcon providerId={selectedModel?.providerId} disabled={disabled} />
+          </IconButton>
+        ) : (
+          <Button
+            size="small"
+            onClick={(event) => setAnchorEl(event.currentTarget)}
+            disabled={disabled}
+            aria-describedby={popoverId}
+            aria-label="选择模型"
+            startIcon={
+              <ProviderModelIcon providerId={selectedModel?.providerId} disabled={disabled} />
+            }
+            sx={{
+              textTransform: 'none',
+              color: 'text.secondary',
+              fontSize: '0.85rem',
+              minHeight: 32,
+              maxWidth: 160,
+              justifyContent: 'flex-start',
+              px: 1
+            }}
+          >
+            <Box
+              component="span"
+              sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {label}
+            </Box>
+          </Button>
+        )}
+      </Tooltip>
       {/* A plain search field + list rendered directly in the Popover's own Paper —
           not a nested Autocomplete, whose own floating listbox would position itself
           independently of this Popover and could visually overlap it near screen edges. */}
@@ -454,6 +928,9 @@ function ModelSelectorControl({
                       handleClose()
                     }}
                   >
+                    <ListItemIcon sx={{ minWidth: 30 }}>
+                      <ProviderModelIcon providerId={option.providerId} />
+                    </ListItemIcon>
                     <ListItemText primary={option.name} />
                   </ListItemButton>
                 ))}
@@ -670,6 +1147,7 @@ function processingStatusText({
 function ProcessingGroup({
   items,
   onGoSettings,
+  onOpenLocalPath,
   cwd = '',
   isActive = false,
   startedAtMs,
@@ -678,6 +1156,7 @@ function ProcessingGroup({
 }: {
   items: ProcessingItem[]
   onGoSettings: () => void
+  onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   cwd?: string
   isActive?: boolean
   startedAtMs?: number
@@ -766,6 +1245,7 @@ function ProcessingGroup({
                     key={group.key}
                     items={group.items}
                     onGoSettings={onGoSettings}
+                    onOpenLocalPath={onOpenLocalPath}
                     cwd={cwd}
                     isActive={false}
                     startedAtMs={group.startedAtMs}
@@ -781,6 +1261,7 @@ function ProcessingGroup({
                   key={group.key}
                   message={group.item}
                   onGoSettings={onGoSettings}
+                  onOpenLocalPath={onOpenLocalPath}
                   cwd={cwd}
                 />
               )
@@ -810,11 +1291,13 @@ function ProcessingGroup({
 function PermissionModeControl({
   permissionMode,
   disabled,
-  onSelectPermissionMode
+  onSelectPermissionMode,
+  compact = false
 }: {
   permissionMode: PermissionMode
   disabled: boolean
   onSelectPermissionMode: (mode: PermissionMode) => void
+  compact?: boolean
 }): ReactNode {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const popoverId = useId()
@@ -853,25 +1336,43 @@ function PermissionModeControl({
 
   return (
     <>
-      <Button
-        size="small"
-        aria-label="选择权限模式"
-        aria-describedby={popoverId}
-        disabled={disabled}
-        onClick={(event) => setAnchorEl(event.currentTarget)}
-        startIcon={<SelectedPermissionIcon sx={{ fontSize: 18 }} />}
-        sx={{
-          textTransform: 'none',
-          color: selectedIcon.color ?? 'text.secondary',
-          fontSize: '0.85rem',
-          minHeight: 32,
-          width: 116,
-          justifyContent: 'flex-start',
-          px: 1
-        }}
-      >
-        权限 {selectedMode.compactLabel}
-      </Button>
+      <Tooltip title={`权限：${selectedMode.compactLabel}`} enterDelay={400}>
+        {compact ? (
+          <IconButton
+            size="small"
+            aria-label={`选择权限模式：权限 ${selectedMode.compactLabel}`}
+            aria-describedby={popoverId}
+            disabled={disabled}
+            onClick={(event) => setAnchorEl(event.currentTarget)}
+            sx={{
+              ...compactComposerIconButtonSx,
+              color: selectedIcon.color ?? 'text.secondary'
+            }}
+          >
+            <SelectedPermissionIcon fontSize="small" />
+          </IconButton>
+        ) : (
+          <Button
+            size="small"
+            aria-label="选择权限模式"
+            aria-describedby={popoverId}
+            disabled={disabled}
+            onClick={(event) => setAnchorEl(event.currentTarget)}
+            startIcon={<SelectedPermissionIcon sx={{ fontSize: 18 }} />}
+            sx={{
+              textTransform: 'none',
+              color: selectedIcon.color ?? 'text.secondary',
+              fontSize: '0.85rem',
+              minHeight: 32,
+              width: 116,
+              justifyContent: 'flex-start',
+              px: 1
+            }}
+          >
+            权限 {selectedMode.compactLabel}
+          </Button>
+        )}
+      </Tooltip>
       <Popover
         id={popoverId}
         open={Boolean(anchorEl)}
@@ -955,10 +1456,15 @@ type ViewProps = {
   currentRunStartedAt?: string
   models: ModelOption[]
   selectedModel: ModelOption | null
+  skills?: SkillSummary[]
+  promptAgents?: PromptAgentSummary[]
+  plugins?: PluginCatalogItem[]
   onSelectModel: (model: ModelOption | null) => void
   thinkingLevel: ThinkingLevel
   onSelectThinkingLevel: (level: ThinkingLevel) => void
   onInputChange: (value: string) => void
+  onOpenInputAddMenu?: () => void
+  onPickInputFiles?: () => Promise<string[]>
   onChatSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>
   onStopGeneration: () => Promise<void>
   onGoSettings: () => void
@@ -966,19 +1472,23 @@ type ViewProps = {
   onSelectPermissionMode: (mode: PermissionMode) => void
   disablePermissionModeSelect?: boolean
   disableModelControls?: boolean
+  compactComposerControls?: boolean
   pendingApproval: ToolApprovalRequest | null
   onRespondApproval: (requestId: string, approved: boolean) => void
   onOpenApprovalSession: (path: string) => void
+  onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   cwd?: string
 }
 
 function ChatBubble({
   message,
   onGoSettings,
+  onOpenLocalPath,
   cwd = ''
 }: {
   message: ChatMessage
   onGoSettings: () => void
+  onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   cwd?: string
 }): ReactNode {
   if (message.role === 'error') {
@@ -1053,10 +1563,88 @@ function ChatBubble({
 
   return (
     <Box sx={{ alignSelf: 'stretch', minWidth: 0, px: 0.5 }}>
-      <MarkdownContent text={message.content} cwd={cwd} />
+      <MarkdownContent text={message.content} cwd={cwd} onOpenLocalPath={onOpenLocalPath} />
     </Box>
   )
 }
+
+type ChatMessageListProps = {
+  messages: ChatItem[]
+  messagesContainerRef: (node: HTMLDivElement | null) => void
+  isGenerating: boolean
+  currentRunStartedAt?: string
+  onGoSettings: () => void
+  onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
+  cwd?: string
+}
+
+const ChatMessageList = memo(function ChatMessageList({
+  messages,
+  messagesContainerRef,
+  isGenerating,
+  currentRunStartedAt,
+  onGoSettings,
+  onOpenLocalPath,
+  cwd = ''
+}: ChatMessageListProps): React.JSX.Element {
+  const renderGroups = useMemo(() => groupMessages(messages), [messages])
+
+  return (
+    <Box
+      ref={messagesContainerRef}
+      sx={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overflowX: 'hidden' }}
+    >
+      <Box
+        sx={{
+          maxWidth: 860,
+          mx: 'auto',
+          minWidth: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2,
+          p: 3
+        }}
+      >
+        {renderGroups.map((group, index) => {
+          if (group.kind === 'tool-group') {
+            return <ToolGroupCard key={group.key} items={group.items} cwd={cwd} />
+          }
+          if (group.kind === 'processing-group') {
+            const isActiveProcessingGroup = isGenerating && index === renderGroups.length - 1
+            return (
+              <ProcessingGroup
+                key={group.key}
+                items={group.items}
+                onGoSettings={onGoSettings}
+                onOpenLocalPath={onOpenLocalPath}
+                cwd={cwd}
+                isActive={isActiveProcessingGroup}
+                startedAtMs={
+                  isActiveProcessingGroup
+                    ? (timestampMs(currentRunStartedAt) ?? group.startedAtMs)
+                    : group.startedAtMs
+                }
+                completedAtMs={group.completedAtMs}
+                durationMs={group.durationMs}
+              />
+            )
+          }
+          return group.item.role === 'tool' ? (
+            <ToolCallCard key={group.key} item={group.item} cwd={cwd} />
+          ) : (
+            <ChatBubble
+              key={group.key}
+              message={group.item}
+              onGoSettings={onGoSettings}
+              onOpenLocalPath={onOpenLocalPath}
+              cwd={cwd}
+            />
+          )
+        })}
+      </Box>
+    </Box>
+  )
+})
 
 function ChatView({
   messages,
@@ -1067,10 +1655,15 @@ function ChatView({
   currentRunStartedAt,
   models,
   selectedModel,
+  skills = [],
+  promptAgents = [],
+  plugins = [],
   onSelectModel,
   thinkingLevel,
   onSelectThinkingLevel,
   onInputChange,
+  onOpenInputAddMenu,
+  onPickInputFiles,
   onChatSubmit,
   onStopGeneration,
   onGoSettings,
@@ -1078,15 +1671,40 @@ function ChatView({
   onSelectPermissionMode,
   disablePermissionModeSelect = false,
   disableModelControls = false,
+  compactComposerControls = false,
   pendingApproval,
   onRespondApproval,
   onOpenApprovalSession,
+  onOpenLocalPath,
   cwd = ''
 }: ViewProps): React.JSX.Element {
   const inputRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null)
-  const renderGroups = useMemo(() => groupMessages(messages), [messages])
+  const promptHistory = useMemo(() => promptHistoryFromMessages(messages), [messages])
+  const promptHistoryKey = useMemo(() => promptHistory.join('\u0000'), [promptHistory])
+  const promptHistoryCursorRef = useRef<number | null>(null)
+  const promptHistoryDraftRef = useRef('')
+  const promptHistoryKeyRef = useRef(promptHistoryKey)
+  const inputAddPanelId = useId()
+  const [inputAddMenuOpen, setInputAddMenuOpen] = useState(false)
+  const inputAddPanelRef = useRef<HTMLDivElement | null>(null)
+  const inputAddButtonRef = useRef<HTMLButtonElement | null>(null)
+  const actionControlSize = compactComposerControls
+    ? COMPACT_COMPOSER_CONTROL_SIZE
+    : REGULAR_COMPOSER_ACTION_SIZE
 
-  const focusInputFromComposerSurface = (event: MouseEvent<HTMLElement>): void => {
+  const resetPromptHistoryNavigation = useCallback((): void => {
+    promptHistoryKeyRef.current = promptHistoryKey
+    promptHistoryCursorRef.current = null
+    promptHistoryDraftRef.current = ''
+  }, [promptHistoryKey])
+
+  const syncPromptHistoryKey = useCallback((): void => {
+    if (promptHistoryKeyRef.current !== promptHistoryKey) {
+      resetPromptHistoryNavigation()
+    }
+  }, [promptHistoryKey, resetPromptHistoryNavigation])
+
+  const focusInputFromComposerSurface = useCallback((event: MouseEvent<HTMLElement>): void => {
     const target = event.target
     if (!(target instanceof HTMLElement)) {
       inputRef.current?.focus({ preventScroll: true })
@@ -1103,61 +1721,97 @@ function ChatView({
 
     event.preventDefault()
     inputRef.current?.focus({ preventScroll: true })
-  }
+  }, [])
+
+  const navigatePromptHistory = useCallback(
+    (direction: PromptHistoryDirection): boolean => {
+      syncPromptHistoryKey()
+      if (promptHistory.length === 0) return false
+      const currentCursor = promptHistoryCursorRef.current
+      if (direction === 'next' && currentCursor === null) return false
+
+      const nextCursor = nextPromptHistoryCursor(promptHistory.length, currentCursor, direction)
+      if (currentCursor === null) {
+        promptHistoryDraftRef.current = input
+      }
+
+      promptHistoryCursorRef.current = nextCursor
+      const nextValue =
+        nextCursor === null ? promptHistoryDraftRef.current : promptHistory[nextCursor]
+      onInputChange(nextValue)
+
+      window.requestAnimationFrame(() => {
+        const inputElement = inputRef.current
+        inputElement?.focus({ preventScroll: true })
+        inputElement?.setSelectionRange(nextValue.length, nextValue.length)
+      })
+
+      return true
+    },
+    [input, onInputChange, promptHistory, syncPromptHistoryKey]
+  )
+  const closeInputAddMenu = useCallback((): void => {
+    setInputAddMenuOpen(false)
+  }, [])
+  const toggleInputAddMenu = useCallback((): void => {
+    setInputAddMenuOpen((open) => {
+      const nextOpen = !open
+      if (nextOpen) {
+        onOpenInputAddMenu?.()
+      }
+      return nextOpen
+    })
+  }, [onOpenInputAddMenu])
+  useEffect(() => {
+    if (!inputAddMenuOpen) return undefined
+
+    const handleDocumentMouseDown = (event: globalThis.MouseEvent): void => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (inputAddPanelRef.current?.contains(target)) return
+      if (inputAddButtonRef.current?.contains(target)) return
+      closeInputAddMenu()
+    }
+
+    document.addEventListener('mousedown', handleDocumentMouseDown, true)
+    return () => {
+      document.removeEventListener('mousedown', handleDocumentMouseDown, true)
+    }
+  }, [closeInputAddMenu, inputAddMenuOpen])
+  const insertInputReference = useCallback(
+    (reference: string): void => {
+      resetPromptHistoryNavigation()
+      const nextValue = appendInputReference(input, reference)
+      promptHistoryDraftRef.current = nextValue
+      onInputChange(nextValue)
+
+      window.requestAnimationFrame(() => {
+        const inputElement = inputRef.current
+        inputElement?.focus({ preventScroll: true })
+        inputElement?.setSelectionRange(nextValue.length, nextValue.length)
+      })
+    },
+    [input, onInputChange, resetPromptHistoryNavigation]
+  )
+  const handleChatSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>): Promise<void> => {
+      closeInputAddMenu()
+      return onChatSubmit(event)
+    },
+    [closeInputAddMenu, onChatSubmit]
+  )
 
   return (
-    <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <Box
-        ref={messagesContainerRef}
-        sx={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overflowX: 'hidden' }}
-      >
-        <Box
-          sx={{
-            maxWidth: 860,
-            mx: 'auto',
-            minWidth: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 2,
-            p: 3
-          }}
-        >
-          {renderGroups.map((group, index) => {
-            if (group.kind === 'tool-group') {
-              return <ToolGroupCard key={group.key} items={group.items} cwd={cwd} />
-            }
-            if (group.kind === 'processing-group') {
-              const isActiveProcessingGroup = isGenerating && index === renderGroups.length - 1
-              return (
-                <ProcessingGroup
-                  key={group.key}
-                  items={group.items}
-                  onGoSettings={onGoSettings}
-                  cwd={cwd}
-                  isActive={isActiveProcessingGroup}
-                  startedAtMs={
-                    isActiveProcessingGroup
-                      ? (timestampMs(currentRunStartedAt) ?? group.startedAtMs)
-                      : group.startedAtMs
-                  }
-                  completedAtMs={group.completedAtMs}
-                  durationMs={group.durationMs}
-                />
-              )
-            }
-            return group.item.role === 'tool' ? (
-              <ToolCallCard key={group.key} item={group.item} cwd={cwd} />
-            ) : (
-              <ChatBubble
-                key={group.key}
-                message={group.item}
-                onGoSettings={onGoSettings}
-                cwd={cwd}
-              />
-            )
-          })}
-        </Box>
-      </Box>
+    <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <ChatMessageList
+        messages={messages}
+        messagesContainerRef={messagesContainerRef}
+        isGenerating={isGenerating}
+        currentRunStartedAt={currentRunStartedAt}
+        onGoSettings={onGoSettings}
+        onOpenLocalPath={onOpenLocalPath}
+        cwd={cwd}
+      />
       <Box
         sx={{
           px: 2,
@@ -1166,18 +1820,30 @@ function ChatView({
           flexShrink: 0
         }}
       >
-        <Box component="form" onSubmit={onChatSubmit} sx={{ maxWidth: 892, mx: 'auto' }}>
+        <Box component="form" onSubmit={handleChatSubmit} sx={{ maxWidth: 892, mx: 'auto' }}>
           <ToolApprovalDialog
             request={pendingApproval}
             onRespond={onRespondApproval}
             onOpenSession={onOpenApprovalSession}
           />
+          {inputAddMenuOpen && (
+            <InputAddPanel
+              panelId={inputAddPanelId}
+              panelRef={inputAddPanelRef}
+              skills={skills}
+              promptAgents={promptAgents}
+              plugins={plugins}
+              onPickFiles={onPickInputFiles}
+              onInsertReference={insertInputReference}
+              onClose={closeInputAddMenu}
+            />
+          )}
           <Paper
             variant="outlined"
             onMouseDownCapture={focusInputFromComposerSurface}
             sx={{
               borderRadius: 2,
-              px: 2,
+              px: compactComposerControls ? 1.25 : 2,
               pt: 1.5,
               pb: 1,
               cursor: 'text',
@@ -1198,9 +1864,32 @@ function ChatView({
               inputRef={inputRef}
               value={input}
               onChange={(event) => {
+                resetPromptHistoryNavigation()
+                promptHistoryDraftRef.current = event.target.value
                 onInputChange(event.target.value)
               }}
               onKeyDown={(event) => {
+                const historyDirection =
+                  event.key === 'ArrowUp' ? 'previous' : event.key === 'ArrowDown' ? 'next' : null
+                if (
+                  historyDirection &&
+                  !event.shiftKey &&
+                  !event.altKey &&
+                  !event.metaKey &&
+                  !event.ctrlKey &&
+                  !event.nativeEvent.isComposing
+                ) {
+                  const inputElement = textInputFromEventTarget(event.target)
+                  if (
+                    inputElement &&
+                    isTextInputAtHistoryBoundary(inputElement, historyDirection) &&
+                    navigatePromptHistory(historyDirection)
+                  ) {
+                    event.preventDefault()
+                    return
+                  }
+                }
+
                 if (
                   event.key === 'Enter' &&
                   !event.shiftKey &&
@@ -1212,7 +1901,9 @@ function ChatView({
                   event.currentTarget.closest('form')?.requestSubmit()
                 }
               }}
-              placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+              placeholder={
+                compactComposerControls ? '输入消息' : '输入消息，Enter 发送，Shift+Enter 换行'
+              }
               slotProps={{
                 htmlInput: {
                   'data-phi-focus': 'chat-input'
@@ -1232,32 +1923,55 @@ function ChatView({
                 mt: 1
               }}
             >
-              <PermissionModeControl
-                permissionMode={permissionMode}
-                disabled={disablePermissionModeSelect}
-                onSelectPermissionMode={onSelectPermissionMode}
-              />
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, minWidth: 0 }}>
+                <InputAddControl
+                  open={inputAddMenuOpen}
+                  controls={inputAddPanelId}
+                  buttonRef={inputAddButtonRef}
+                  onToggle={toggleInputAddMenu}
+                />
+                <PermissionModeControl
+                  permissionMode={permissionMode}
+                  disabled={disablePermissionModeSelect}
+                  onSelectPermissionMode={onSelectPermissionMode}
+                  compact={compactComposerControls}
+                />
+              </Box>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: compactComposerControls ? 0.25 : 1,
+                  minWidth: 0
+                }}
+              >
                 <ThinkingLevelControl
                   thinkingLevel={thinkingLevel}
                   onSelectThinkingLevel={onSelectThinkingLevel}
                   supportedLevels={selectedModel?.thinkingLevels ?? null}
                   disabled={disableModelControls}
+                  compact={compactComposerControls}
                 />
                 <ModelSelectorControl
                   models={models}
                   selectedModel={selectedModel}
                   onSelectModel={onSelectModel}
                   disabled={disableModelControls}
+                  compact={compactComposerControls}
                 />
                 {!isGenerating ? (
                   <IconButton
                     type="submit"
                     disabled={!canSend || !input.trim()}
                     aria-label="发送消息"
+                    data-phi-composer-action="send"
+                    data-phi-composer-size={actionControlSize}
                     sx={{
-                      width: 40,
-                      height: 40,
+                      width: actionControlSize,
+                      height: actionControlSize,
+                      minWidth: actionControlSize,
+                      minHeight: actionControlSize,
+                      flexShrink: 0,
                       bgcolor: 'primary.main',
                       color: 'background.default',
                       transition: 'background-color 200ms',
@@ -1277,9 +1991,14 @@ function ChatView({
                       void onStopGeneration()
                     }}
                     aria-label="停止生成"
+                    data-phi-composer-action="stop"
+                    data-phi-composer-size={actionControlSize}
                     sx={{
-                      width: 40,
-                      height: 40,
+                      width: actionControlSize,
+                      height: actionControlSize,
+                      minWidth: actionControlSize,
+                      minHeight: actionControlSize,
+                      flexShrink: 0,
                       bgcolor: 'error.main',
                       color: 'error.contrastText',
                       transition: 'background-color 200ms',

@@ -6,6 +6,17 @@ import { createTheme, ThemeProvider } from '@mui/material'
 import ChatView, { ThinkingBlock } from '../src/renderer/src/components/ChatView'
 import ToolCallCard from '../src/renderer/src/components/ToolCallCard'
 import ToolGroupCard from '../src/renderer/src/components/ToolGroupCard'
+import {
+  nextPromptHistoryCursor,
+  promptHistoryFromMessages
+} from '../src/renderer/src/lib/promptHistory'
+import {
+  appendInputReference,
+  formatInputFileReferences,
+  formatPromptAgentReference,
+  formatPluginPromptReference,
+  formatSkillPromptReference
+} from '../src/renderer/src/lib/inputReferences'
 import { toolActionKind } from '../src/renderer/src/lib/toolActions'
 import type {
   ChatItem,
@@ -22,6 +33,7 @@ function renderChat(
     isGenerating?: boolean
     currentRunStartedAt?: string
     disableModelControls?: boolean
+    compactComposerControls?: boolean
   } = {}
 ): string {
   const theme = createTheme()
@@ -62,7 +74,8 @@ function renderChat(
         disableModelControls: options.disableModelControls ?? false,
         pendingApproval: options.pendingApproval ?? null,
         onRespondApproval: () => undefined,
-        onOpenApprovalSession: () => undefined
+        onOpenApprovalSession: () => undefined,
+        compactComposerControls: options.compactComposerControls ?? false
       })
     )
   )
@@ -121,6 +134,48 @@ function withMockedNow<T>(isoTimestamp: string, run: () => T): T {
     Date.now = originalNow
   }
 }
+
+test('chat view builds input history from submitted user messages', () => {
+  const history = promptHistoryFromMessages([
+    { id: 'user-1', role: 'user', content: '第一条' },
+    { id: 'assistant-1', role: 'assistant', content: '收到' },
+    { id: 'user-2', role: 'user', content: '  第二条  ' },
+    { id: 'user-empty', role: 'user', content: '   ' }
+  ])
+
+  assert.deepEqual(history, ['第一条', '第二条'])
+})
+
+test('chat view navigates input history like a command line', () => {
+  const historyLength = 3
+
+  assert.equal(nextPromptHistoryCursor(historyLength, null, 'previous'), 2)
+  assert.equal(nextPromptHistoryCursor(historyLength, 2, 'previous'), 1)
+  assert.equal(nextPromptHistoryCursor(historyLength, 0, 'previous'), 0)
+  assert.equal(nextPromptHistoryCursor(historyLength, 0, 'next'), 1)
+  assert.equal(nextPromptHistoryCursor(historyLength, 2, 'next'), null)
+  assert.equal(nextPromptHistoryCursor(historyLength, null, 'next'), null)
+})
+
+test('chat view formats add-menu references for prompt input', () => {
+  assert.equal(
+    formatInputFileReferences(['/workspace/a.csv', '/workspace/b.pdf']),
+    '引用文件：\n- `/workspace/a.csv`\n- `/workspace/b.pdf`'
+  )
+  assert.equal(formatSkillPromptReference({ name: 'omics-visualization' }), '$omics-visualization')
+  assert.equal(
+    formatPromptAgentReference({ name: 'executor', trigger: '/prompts:executor' }),
+    '/prompts:executor'
+  )
+  assert.equal(
+    formatPluginPromptReference({ name: 'Bio Plugin', source: 'npm:@phi/bio' }),
+    '引用插件：Bio Plugin（npm:@phi/bio）'
+  )
+  assert.equal(
+    appendInputReference('先分析数据', '$omics-visualization'),
+    '先分析数据\n$omics-visualization'
+  )
+})
 
 test('chat view prompts recharge instead of provider configuration for billing failures', () => {
   const markup = renderChatError(
@@ -525,6 +580,36 @@ test('chat view prefers persisted run duration over equal lifecycle timestamps',
   assert.doesNotMatch(markup, /已完成，总共用时 0 秒/)
 })
 
+test('chat view hides a leading empty run lifecycle before the first user message', () => {
+  const markup = renderChat([
+    {
+      id: 'run-start',
+      role: 'run',
+      event: 'started',
+      runId: 'run-empty',
+      createdAt: '2026-09-07T00:00:10.000Z'
+    },
+    {
+      id: 'run-end',
+      role: 'run',
+      event: 'completed',
+      runId: 'run-empty',
+      createdAt: '2026-09-07T00:00:10.000Z'
+    },
+    { id: 'user-1', role: 'user', content: '查一下' },
+    {
+      id: 'assistant-1',
+      role: 'assistant',
+      content: '完成',
+      createdAt: '2026-09-07T00:00:11.000Z'
+    }
+  ])
+
+  assert.doesNotMatch(markup, /已完成，总共用时 0 秒/)
+  assert.match(markup, /查一下/)
+  assert.match(markup, /完成/)
+})
+
 test('thinking block shows elapsed time when folded and hides content until expanded', () => {
   const markup = renderThinkingBlock('这是一段很长的内部思考内容。', 4000)
 
@@ -538,6 +623,10 @@ test('tool rows classify common actions with distinct icons', () => {
   assert.equal(toolActionKind('write', 'src/App.tsx', '{"path":"src/App.tsx"}'), 'edit')
   assert.equal(toolActionKind('bash', 'npm test', '{"cmd":"npm test"}'), 'command')
   assert.equal(toolActionKind('bash', 'rg provider', '{"cmd":"rg provider"}'), 'command')
+  assert.equal(
+    toolActionKind('eval', 'import pandas as pd', '{"code":"import pandas as pd"}'),
+    'python'
+  )
   assert.equal(
     toolActionKind('bash', 'curl https://example.com', '{"cmd":"curl https://example.com"}'),
     'command'
@@ -561,6 +650,36 @@ test('tool rows classify common actions with distinct icons', () => {
   assert.match(markup, /aria-label="运行命令"/)
   assert.match(markup, /执行命令/)
   assert.doesNotMatch(markup, /npm test/)
+
+  const pythonMarkup = renderToolCall({
+    id: 'tool-python',
+    role: 'tool',
+    toolName: 'eval',
+    argsPreview: 'import pandas as pd import numpy as np from scipy import stats',
+    argsJson: '{"code":"import pandas as pd\\nimport numpy as np\\nfrom scipy import stats"}',
+    output: 'ok',
+    status: 'done'
+  })
+
+  assert.match(pythonMarkup, /aria-label="执行 Python 代码"/)
+  assert.match(pythonMarkup, /执行 Python 代码/)
+  assert.doesNotMatch(pythonMarkup, /import pandas/)
+  assert.doesNotMatch(pythonMarkup, />eval</)
+
+  const pythonGroupMarkup = renderToolGroup([
+    {
+      id: 'tool-python',
+      role: 'tool',
+      toolName: 'eval',
+      argsPreview: 'import pandas as pd import numpy as np from scipy import stats',
+      argsJson: '{"code":"import pandas as pd\\nimport numpy as np\\nfrom scipy import stats"}',
+      output: 'ok',
+      status: 'done'
+    }
+  ])
+
+  assert.match(pythonGroupMarkup, /已执行 Python 代码/)
+  assert.doesNotMatch(pythonGroupMarkup, /import pandas/)
 
   const groupMarkup = renderToolGroup([
     {
@@ -643,11 +762,40 @@ test('chat view shows current permission mode in the composer', () => {
   assert.match(markup, /aria-label="选择权限模式"/)
 })
 
+test('chat view shows add-context control before permissions', () => {
+  const markup = renderChat([])
+
+  assert.match(markup, /aria-label="添加文件、智能体、Skill 或插件"[\s\S]*aria-label="选择权限模式/)
+})
+
 test('chat view shows full access permission mode in the composer', () => {
   const markup = renderChat([], { permissionMode: 'full' })
 
   assert.match(markup, /权限 Full/)
   assert.match(markup, /aria-label="选择权限模式"/)
+})
+
+test('chat view uses icon-only composer controls when file preview is open', () => {
+  const markup = renderChat([], { compactComposerControls: true })
+
+  assert.match(markup, /placeholder="输入消息"/)
+  assert.match(markup, /aria-label="选择权限模式：权限 Auto"/)
+  assert.match(markup, /aria-label="选择思考等级：High"/)
+  assert.match(markup, /aria-label="选择模型：Kimi Coding"/)
+  assert.match(markup, /data-phi-provider-icon="moonshot"/)
+  assert.match(markup, /data-phi-composer-action="send" data-phi-composer-size="32"/)
+  assert.doesNotMatch(markup, />权限 Auto</)
+  assert.doesNotMatch(markup, />High</)
+  assert.doesNotMatch(markup, />Kimi Coding</)
+  assert.doesNotMatch(markup, /输入消息，Enter 发送/)
+})
+
+test('chat view keeps compact stop control the same size as other compact controls', () => {
+  const compactMarkup = renderChat([], { compactComposerControls: true, isGenerating: true })
+  const regularMarkup = renderChat([], { isGenerating: true })
+
+  assert.match(compactMarkup, /data-phi-composer-action="stop" data-phi-composer-size="32"/)
+  assert.match(regularMarkup, /data-phi-composer-action="stop" data-phi-composer-size="40"/)
 })
 
 test('chat view keeps next-run controls enabled and shows stop while the current session is busy', () => {

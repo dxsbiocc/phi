@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   closestCenter,
   DndContext,
@@ -8,6 +8,7 @@ import {
   type DragEndEvent
 } from '@dnd-kit/core'
 import {
+  type AnimateLayoutChanges,
   arrayMove,
   SortableContext,
   useSortable,
@@ -43,8 +44,10 @@ import {
 } from '../lib/sessionBeacon'
 import {
   orderSessionsForDisplay,
+  preserveSessionListOrder,
   readSessionOrder,
   reconcileSessionOrder,
+  sessionPaths,
   writeSessionOrder
 } from '../lib/sessionOrder'
 import type { Project, SessionRuntimeState, SessionSummary } from '../types'
@@ -73,6 +76,9 @@ const plainSidebarRowSx = {
   },
   '&.Mui-selected:hover': { backgroundColor: 'transparent !important' }
 } as const
+const CONVERSATION_SESSION_ORDER_SCOPE = 'conversation'
+const animateSortableLayoutChanges: AnimateLayoutChanges = ({ isSorting, wasDragging }) =>
+  isSorting || wasDragging
 
 function formatRelativeTime(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime()
@@ -216,26 +222,36 @@ function useSessionOrder(
   }))
 
   const order = storedOrder.scopeKey === scopeKey ? storedOrder.order : readSessionOrder(scopeKey)
+  const orderedSessions = useMemo(
+    () => (order.length > 0 ? orderSessionsForDisplay(sessions, order) : sessions),
+    [sessions, order]
+  )
 
-  const orderedSessions = useMemo(() => orderSessionsForDisplay(sessions, order), [sessions, order])
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent): void => {
+      const { active, over } = event
+      if (!over || active.id === over.id) return
+      const activePath = String(active.id)
+      const overPath = String(over.id)
 
-  const handleDragEnd = (event: DragEndEvent): void => {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-    const activePath = String(active.id)
-    const overPath = String(over.id)
-    setStoredOrder((previous) => {
-      const previousOrder =
-        previous.scopeKey === scopeKey ? previous.order : readSessionOrder(scopeKey)
-      const current = reconcileSessionOrder(sessions, previousOrder)
-      const activeIndex = current.indexOf(activePath)
-      const overIndex = current.indexOf(overPath)
-      if (activeIndex < 0 || overIndex < 0) return previous
-      const next = arrayMove(current, activeIndex, overIndex)
-      writeSessionOrder(scopeKey, next)
-      return { scopeKey, order: next }
-    })
-  }
+      setStoredOrder((previous) => {
+        const previousOrder =
+          previous.scopeKey === scopeKey ? previous.order : readSessionOrder(scopeKey)
+        const current = reconcileSessionOrder(
+          sessions,
+          previousOrder.length > 0 ? previousOrder : sessionPaths(sessions)
+        )
+        const activeIndex = current.indexOf(activePath)
+        const overIndex = current.indexOf(overPath)
+        if (activeIndex < 0 || overIndex < 0) return previous
+
+        const next = arrayMove(current, activeIndex, overIndex)
+        writeSessionOrder(scopeKey, next)
+        return { scopeKey, order: next }
+      })
+    },
+    [scopeKey, sessions]
+  )
 
   return { orderedSessions, handleDragEnd }
 }
@@ -251,7 +267,66 @@ type SessionRowProps = {
   onDelete: () => void
 }
 
-function SessionRow({
+function sessionRuntimeStatesMatch(
+  left: SessionRuntimeState | null | undefined,
+  right: SessionRuntimeState | null | undefined
+): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+  return (
+    left.status === right.status &&
+    left.unreadKind === right.unreadKind &&
+    left.lastRunOutcome === right.lastRunOutcome &&
+    left.currentRunId === right.currentRunId &&
+    left.currentRunStartedAt === right.currentRunStartedAt &&
+    left.lastActivityAt === right.lastActivityAt
+  )
+}
+
+function sessionSummariesMatch(left: SessionSummary, right: SessionSummary): boolean {
+  if (left === right) return true
+  return (
+    left.path === right.path &&
+    left.id === right.id &&
+    left.name === right.name &&
+    left.created === right.created &&
+    left.modified === right.modified &&
+    left.messageCount === right.messageCount &&
+    left.firstMessage === right.firstMessage &&
+    left.phiSessionId === right.phiSessionId &&
+    sessionRuntimeStatesMatch(left, right)
+  )
+}
+
+function sessionUsesLiveElapsedTime(session: SessionSummary): boolean {
+  return (
+    (session.status === 'running' || session.status === 'needs_approval') &&
+    Boolean(session.currentRunStartedAt)
+  )
+}
+
+function mergedSessionForDisplay({
+  session,
+  runtimeState
+}: Pick<SessionRowProps, 'session' | 'runtimeState'>): SessionSummary {
+  return runtimeState ? { ...session, ...runtimeState } : session
+}
+
+function sessionRowPropsMatch(left: SessionRowProps, right: SessionRowProps): boolean {
+  if (left.isActive !== right.isActive || left.indent !== right.indent) return false
+  if (!sessionSummariesMatch(left.session, right.session)) return false
+  if (!sessionRuntimeStatesMatch(left.runtimeState, right.runtimeState)) return false
+
+  const leftUsesLiveElapsedTime = sessionUsesLiveElapsedTime(mergedSessionForDisplay(left))
+  const rightUsesLiveElapsedTime = sessionUsesLiveElapsedTime(mergedSessionForDisplay(right))
+  if ((leftUsesLiveElapsedTime || rightUsesLiveElapsedTime) && left.nowMs !== right.nowMs) {
+    return false
+  }
+
+  return true
+}
+
+const SessionRow = memo(function SessionRow({
   session,
   runtimeState,
   isActive,
@@ -263,7 +338,7 @@ function SessionRow({
 }: SessionRowProps): React.JSX.Element {
   const [isEditing, setIsEditing] = useState(false)
   const [editingName, setEditingName] = useState(session.name ?? sessionTitle(session))
-  const displaySession = runtimeState ? { ...session, ...runtimeState } : session
+  const displaySession = mergedSessionForDisplay({ session, runtimeState })
 
   const commitRename = (): void => {
     if (editingName.trim()) onRename(editingName.trim())
@@ -422,22 +497,27 @@ function SessionRow({
       )}
     </ListItemButton>
   )
-}
+}, sessionRowPropsMatch)
 
-function SortableSessionRow(props: SessionRowProps): React.JSX.Element {
+const SortableSessionRow = memo(function SortableSessionRow(
+  props: SessionRowProps
+): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: props.session.path
+    id: props.session.path,
+    animateLayoutChanges: animateSortableLayoutChanges
   })
+  const hasSortableTransform = transform !== null
 
   return (
     <Box
       ref={setNodeRef}
       style={{
         transform: CSS.Transform.toString(transform),
-        transition,
+        transition: isDragging || hasSortableTransform ? transition : undefined,
         opacity: isDragging ? 0.72 : undefined,
         position: 'relative',
-        zIndex: isDragging ? 2 : undefined
+        zIndex: isDragging ? 2 : undefined,
+        willChange: isDragging || hasSortableTransform ? 'transform' : undefined
       }}
       {...attributes}
       {...listeners}
@@ -445,7 +525,7 @@ function SortableSessionRow(props: SessionRowProps): React.JSX.Element {
       <SessionRow {...props} />
     </Box>
   )
-}
+}, sessionRowPropsMatch)
 
 type ProjectRowProps = {
   project: Project
@@ -481,7 +561,7 @@ function ProjectRow({
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
   const gitStatusLabel = projectGitStatusLabel(project)
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   const { orderedSessions, handleDragEnd } = useSessionOrder(
     `project:${project.workingDirectory}`,
     sessions ?? []
@@ -492,7 +572,7 @@ function ProjectRow({
     let cancelled = false
     void onFetchSessions(project.workingDirectory).then((nextSessions) => {
       if (!cancelled) {
-        setSessions(nextSessions)
+        setSessions((previous) => preserveSessionListOrder(previous ?? [], nextSessions))
       }
     })
     return () => {
@@ -685,8 +765,11 @@ function SessionSidebar({
     activeCwd
   )
   const [nowMs, setNowMs] = useState(() => Date.now())
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
-  const { orderedSessions, handleDragEnd } = useSessionOrder(`conversation:${activeCwd}`, sessions)
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
+  const { orderedSessions, handleDragEnd } = useSessionOrder(
+    CONVERSATION_SESSION_ORDER_SCOPE,
+    sessions
+  )
 
   const hasActiveAttention =
     mode === 'projects' ||

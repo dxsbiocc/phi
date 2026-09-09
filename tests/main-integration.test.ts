@@ -83,11 +83,16 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   appendedSessionEvents: Array<Record<string, unknown>>
   persistedToolOutputs: Array<Record<string, unknown>>
   revealedPaths: string[]
+  openedPaths: string[]
+  previewReadRequests: Array<{ filePath: string; length: number }>
   appLogs: Array<Record<string, unknown>>
   acknowledgedSessions: Array<{ file: string; cwd: string }>
   jupyterServerCalls: Array<{ action: string; cwd: string }>
   notebookSessionCalls: Array<{ action: string; cwd: string; path?: string }>
   notebookExecutionCalls: Array<{ cellId: string; source: string; kernelId: string }>
+  openDialogOptions: Array<Record<string, unknown>>
+  operationLog: Array<Record<string, unknown>>
+  setOpenDialogResult: (result: { canceled: boolean; filePaths: string[] }) => void
   copiedText: () => string
 }> {
   const handlers = new Map<string, Handler>()
@@ -103,11 +108,57 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   const appendedSessionEvents: Array<Record<string, unknown>> = []
   const persistedToolOutputs: Array<Record<string, unknown>> = []
   const revealedPaths: string[] = []
+  const openedPaths: string[] = []
+  const previewReadRequests: Array<{ filePath: string; length: number }> = []
   const appLogs: Array<Record<string, unknown>> = []
   const acknowledgedSessions: Array<{ file: string; cwd: string }> = []
   const jupyterServerCalls: Array<{ action: string; cwd: string }> = []
   const notebookSessionCalls: Array<{ action: string; cwd: string; path?: string }> = []
   const notebookExecutionCalls: Array<{ cellId: string; source: string; kernelId: string }> = []
+  const openDialogOptions: Array<Record<string, unknown>> = []
+  const operationLog: Array<Record<string, unknown>> = []
+  let openDialogResult: { canceled: boolean; filePaths: string[] } = {
+    canceled: true,
+    filePaths: []
+  }
+  const previewFiles = new Map<string, Buffer>([
+    ['/projects/current/src/App.tsx', Buffer.from('export const app = true\n')],
+    ['/projects/current/README.md', Buffer.from('# Project\n')],
+    ['/projects/current/qc-demo.csv', Buffer.from('sample_id,value_a\nS001,1.75\n')],
+    ['/projects/current/large.txt', Buffer.alloc(320010, 'a')],
+    ['/projects/current/plot.png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+    [
+      '/projects/current/large-plot.png',
+      Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.alloc(2 * 1024 * 1024, 0xff)
+      ])
+    ],
+    ['/projects/current/report.pdf', Buffer.from('%PDF-1.7\n')],
+    ['/projects/other/secret.txt', Buffer.from('secret\n')],
+    ['/isolated/sessions/session-1/tool-outputs/out.txt', Buffer.from('saved output\n')],
+    ['/projects/current/binary.dat', Buffer.from([0, 1, 2])]
+  ])
+  const previewDirectories = new Map<string, Array<{ name: string; kind: 'directory' | 'file' }>>([
+    [
+      '/projects/current',
+      [
+        { name: 'src', kind: 'directory' },
+        { name: 'README.md', kind: 'file' },
+        { name: 'large.txt', kind: 'file' }
+      ]
+    ],
+    ['/projects/current/src', [{ name: 'App.tsx', kind: 'file' }]],
+    ['/isolated', [{ name: 'sessions', kind: 'directory' }]],
+    ['/isolated/sessions', [{ name: 'session-1', kind: 'directory' }]],
+    ['/isolated/sessions/session-1', [{ name: 'tool-outputs', kind: 'directory' }]],
+    ['/isolated/sessions/session-1/tool-outputs', [{ name: 'out.txt', kind: 'file' }]]
+  ])
+  const previewRealpaths = new Map<string, string>([
+    ['/projects/current/link-out.txt', '/projects/other/secret.txt']
+  ])
+  const previewFileDescriptors = new Map<number, { path: string; content: Buffer }>()
+  let nextPreviewFileDescriptor = 100
   let copiedText = ''
   const runtimeSessionCwds = new Map<string, string>()
   const noop = (): undefined => undefined
@@ -219,6 +270,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     static windows: Window[] = []
     webContents = {
       send: (channel: string, data: unknown): void => {
+        operationLog.push({ type: 'webContents.send', channel, data })
         events.push({ channel, data })
       },
       setWindowOpenHandler: noop,
@@ -252,6 +304,10 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     loadFile = noop
   }
   class TestJupyterServerRegistry {
+    connection(workingDirectory: string): Record<string, unknown> | null {
+      jupyterServerCalls.push({ action: 'connection', cwd: workingDirectory })
+      return null
+    }
     status(workingDirectory: string): Record<string, unknown> {
       jupyterServerCalls.push({ action: 'status', cwd: workingDirectory })
       return {
@@ -374,7 +430,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         ],
         state: 'idle',
         startedAt: '2026-09-09T00:00:00.000Z',
-        completedAt: '2026-09-09T00:00:00.010Z'
+        completedAt: '2026-09-09T00:00:01.000Z'
       }
     }
   }
@@ -386,12 +442,80 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   })
   const modules: Record<string, unknown> = {
     './agent-env': {},
+    'node:fs': {
+      openSync: (filePath: string): number => {
+        const target = path.resolve(filePath)
+        const content = previewFiles.get(target)
+        if (!content) throw new Error(`ENOENT ${target}`)
+        const fd = nextPreviewFileDescriptor++
+        previewFileDescriptors.set(fd, { path: target, content })
+        return fd
+      },
+      readSync: (
+        fd: number,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number | null
+      ): number => {
+        const file = previewFileDescriptors.get(fd)
+        if (!file) throw new Error(`EBADF ${fd}`)
+        const start = typeof position === 'number' ? position : 0
+        const chunk = file.content.subarray(start, start + length)
+        chunk.copy(buffer, offset)
+        previewReadRequests.push({ filePath: file.path, length })
+        return chunk.byteLength
+      },
+      closeSync: (fd: number): void => {
+        previewFileDescriptors.delete(fd)
+      },
+      readdirSync: (
+        filePath: string
+      ): Array<{
+        name: string
+        isDirectory: () => boolean
+        isFile: () => boolean
+      }> => {
+        const target = path.resolve(filePath)
+        const entries = previewDirectories.get(target)
+        if (!entries) throw new Error(`ENOTDIR ${target}`)
+        return entries.map((entry) => ({
+          name: entry.name,
+          isDirectory: () => entry.kind === 'directory',
+          isFile: () => entry.kind === 'file'
+        }))
+      },
+      realpathSync: (filePath: string): string => {
+        const target = path.resolve(filePath)
+        const realpath = previewRealpaths.get(target) ?? target
+        if (!previewFiles.has(realpath) && !previewDirectories.has(realpath)) {
+          throw new Error(`ENOENT ${target}`)
+        }
+        return realpath
+      },
+      statSync: (
+        filePath: string
+      ): { isDirectory: () => boolean; isFile: () => boolean; size: number } => {
+        const target = path.resolve(filePath)
+        const content = previewFiles.get(target)
+        const directory = previewDirectories.get(target)
+        return {
+          isDirectory: () => Boolean(directory),
+          isFile: () => Boolean(content),
+          size: content?.byteLength ?? 0
+        }
+      }
+    },
     path,
     electron: {
       app,
       BrowserWindow: Window,
       shell: {
         openExternal: noop,
+        openPath: async (filePath: string): Promise<string> => {
+          openedPaths.push(filePath)
+          return ''
+        },
         showItemInFolder: (filePath: string): void => {
           revealedPaths.push(filePath)
         }
@@ -401,7 +525,15 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
           copiedText = text
         }
       },
-      dialog: {},
+      dialog: {
+        showOpenDialog: async (
+          ...args: unknown[]
+        ): Promise<{ canceled: boolean; filePaths: string[] }> => {
+          const options = (args.length === 2 ? args[1] : args[0]) as Record<string, unknown>
+          openDialogOptions.push(options)
+          return openDialogResult
+        }
+      },
       ipcMain: {
         on: noop,
         handle: (name: string, handler: Handler): void => {
@@ -721,6 +853,15 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
           disabled: false
         }
       ],
+      listPromptAgents: async (cwd: string): Promise<unknown[]> => [
+        {
+          id: `${cwd}:agent`,
+          name: 'executor',
+          description: 'agent',
+          source: 'project',
+          trigger: '/prompts:executor'
+        }
+      ],
       listMcpServers: async (cwd: string): Promise<unknown[]> => [
         {
           id: `${cwd}:mcp`,
@@ -843,6 +984,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         sessionId: string,
         patch: Record<string, unknown>
       ): Record<string, unknown> => {
+        operationLog.push({ type: 'updateSessionManifest', sessionId, patch })
         updatedSessionManifests.push({ sessionId, patch })
         return { sessionId, ...patch }
       }
@@ -887,11 +1029,18 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     appendedSessionEvents,
     persistedToolOutputs,
     revealedPaths,
+    openedPaths,
+    previewReadRequests,
     appLogs,
     acknowledgedSessions,
     jupyterServerCalls,
     notebookSessionCalls,
     notebookExecutionCalls,
+    openDialogOptions,
+    operationLog,
+    setOpenDialogResult: (result): void => {
+      openDialogResult = result
+    },
     copiedText: () => copiedText
   }
 }
@@ -937,6 +1086,284 @@ test('main IPC: reveal path allows files inside the active project cwd', async (
   )
 
   assert.deepEqual(app.revealedPaths, ['/projects/current/src/App.tsx'])
+})
+
+test('main IPC: input file picker returns selected paths without reading files', async () => {
+  const app = await harness()
+  app.setOpenDialogResult({
+    canceled: false,
+    filePaths: ['/projects/current/src/App.tsx', '/tmp/external-data.csv']
+  })
+
+  const paths = await app.invoke('files:pickInput')
+
+  assert.deepEqual(paths, ['/projects/current/src/App.tsx', '/tmp/external-data.csv'])
+  assert.deepEqual(app.openDialogOptions.at(-1)?.properties, [
+    'openFile',
+    'openDirectory',
+    'multiSelections'
+  ])
+  assert.equal(app.previewReadRequests.length, 0)
+})
+
+test('main IPC: input file picker returns an empty list when cancelled', async () => {
+  const app = await harness()
+
+  assert.deepEqual(await app.invoke('files:pickInput'), [])
+})
+
+test('main IPC: file preview is limited to project and Phi-owned files', async () => {
+  const app = await harness()
+
+  await app.invoke('projects:newSession', '/projects/current', 'ask')
+  const projectPreview = (await app.invoke('files:preview', '/projects/current/src/App.tsx')) as {
+    name: string
+    path: string
+    displayPath: string
+    rootPath: string
+    rootLabel: string
+    content: string
+    bytes: number
+    previewBytes: number
+    truncated: boolean
+    kind: string
+    mimeType: string
+  }
+  const savedOutputPreview = (await app.invoke(
+    'files:preview',
+    '/isolated/sessions/session-1/tool-outputs/out.txt'
+  )) as { content: string }
+  const largePreview = (await app.invoke('files:preview', '/projects/current/large.txt')) as {
+    content: string
+    bytes: number
+    previewBytes: number
+    truncated: boolean
+  }
+  const imagePreview = (await app.invoke('files:preview', '/projects/current/plot.png')) as {
+    kind: string
+    mimeType: string
+    dataUrl: string
+    content?: string
+    bytes: number
+    previewBytes: number
+    truncated: boolean
+  }
+  const pdfPreview = (await app.invoke('files:preview', '/projects/current/report.pdf')) as {
+    kind: string
+    mimeType: string
+    dataUrl: string
+    content?: string
+    bytes: number
+    previewBytes: number
+    truncated: boolean
+  }
+
+  assert.equal(projectPreview.name, 'App.tsx')
+  assert.equal(projectPreview.path, '/projects/current/src/App.tsx')
+  assert.equal(projectPreview.displayPath, 'src/App.tsx')
+  assert.equal(projectPreview.rootPath, '/projects/current')
+  assert.equal(projectPreview.rootLabel, 'current')
+  assert.equal(projectPreview.kind, 'text')
+  assert.equal(projectPreview.mimeType, 'text/plain')
+  assert.equal(projectPreview.content, 'export const app = true\n')
+  assert.equal(projectPreview.bytes, Buffer.byteLength(projectPreview.content))
+  assert.equal(projectPreview.previewBytes, Buffer.byteLength(projectPreview.content))
+  assert.equal(projectPreview.truncated, false)
+  assert.equal(savedOutputPreview.content, 'saved output\n')
+  assert.equal(largePreview.truncated, true)
+  assert.equal(largePreview.bytes, 320010)
+  assert.equal(largePreview.previewBytes, 320000)
+  assert.equal(largePreview.content.length, 320000)
+  assert.equal(imagePreview.kind, 'image')
+  assert.equal(imagePreview.mimeType, 'image/png')
+  assert.match(imagePreview.dataUrl, /^data:image\/png;base64,/)
+  assert.equal(imagePreview.content, undefined)
+  assert.equal(imagePreview.bytes, 8)
+  assert.equal(imagePreview.previewBytes, 8)
+  assert.equal(imagePreview.truncated, false)
+  assert.equal(pdfPreview.kind, 'pdf')
+  assert.equal(pdfPreview.mimeType, 'application/pdf')
+  assert.match(pdfPreview.dataUrl, /^data:application\/pdf;base64,/)
+  assert.equal(pdfPreview.content, undefined)
+  assert.equal(pdfPreview.bytes, 9)
+  assert.equal(pdfPreview.previewBytes, 9)
+  assert.equal(pdfPreview.truncated, false)
+  assert.deepEqual(
+    app.previewReadRequests.find((request) => request.filePath === '/projects/current/large.txt'),
+    { filePath: '/projects/current/large.txt', length: 320000 }
+  )
+  await assert.rejects(
+    app.invoke('files:preview', '/projects/other/src/App.tsx'),
+    /只能预览 Phi 保存的文件或当前项目内的文件/
+  )
+  await assert.rejects(
+    app.invoke('files:preview', '/projects/current/link-out.txt'),
+    /只能预览 Phi 保存的文件或当前项目内的文件/
+  )
+  await assert.rejects(app.invoke('files:preview', 'relative.txt'), /只能预览绝对路径/)
+  await assert.rejects(
+    app.invoke('files:preview', '/projects/current/binary.dat'),
+    /暂不支持预览二进制文件/
+  )
+})
+
+test('main IPC: hover file preview is tiered and bounded', async () => {
+  const app = await harness()
+
+  await app.invoke('projects:newSession', '/projects/current', 'ask')
+  const textPreview = (await app.invoke('files:hoverPreview', '/projects/current/src/App.tsx')) as {
+    kind: string
+    content: string
+    bytes: number
+    previewBytes: number
+    truncated: boolean
+  }
+  const spreadsheetPreview = (await app.invoke(
+    'files:hoverPreview',
+    '/projects/current/qc-demo.csv'
+  )) as {
+    kind: string
+    mimeType: string
+    format: string
+    content: string
+  }
+  const imagePreview = (await app.invoke('files:hoverPreview', '/projects/current/plot.png')) as {
+    kind: string
+    mimeType: string
+    dataUrl: string
+    content?: string
+    previewBytes: number
+    truncated: boolean
+  }
+  const largeImagePreview = (await app.invoke(
+    'files:hoverPreview',
+    '/projects/current/large-plot.png'
+  )) as {
+    kind: string
+    reason: string
+    dataUrl?: string
+    previewBytes: number
+    truncated: boolean
+  }
+  const pdfPreview = (await app.invoke('files:hoverPreview', '/projects/current/report.pdf')) as {
+    kind: string
+    mimeType: string
+    reason: string
+    dataUrl?: string
+    content?: string
+  }
+  const binaryPreview = (await app.invoke(
+    'files:hoverPreview',
+    '/projects/current/binary.dat'
+  )) as {
+    kind: string
+    reason: string
+    dataUrl?: string
+    content?: string
+  }
+  const largeTextPreview = (await app.invoke(
+    'files:hoverPreview',
+    '/projects/current/large.txt'
+  )) as {
+    kind: string
+    content: string
+    previewBytes: number
+    truncated: boolean
+  }
+
+  assert.equal(textPreview.kind, 'text')
+  assert.equal(textPreview.content, 'export const app = true\n')
+  assert.equal(textPreview.bytes, Buffer.byteLength(textPreview.content))
+  assert.equal(textPreview.previewBytes, Buffer.byteLength(textPreview.content))
+  assert.equal(textPreview.truncated, false)
+  assert.equal(spreadsheetPreview.kind, 'spreadsheet')
+  assert.equal(spreadsheetPreview.mimeType, 'text/csv')
+  assert.equal(spreadsheetPreview.format, 'csv')
+  assert.equal(spreadsheetPreview.content, 'sample_id,value_a\nS001,1.75\n')
+  assert.equal(imagePreview.kind, 'image')
+  assert.equal(imagePreview.mimeType, 'image/png')
+  assert.match(imagePreview.dataUrl, /^data:image\/png;base64,/)
+  assert.equal(imagePreview.content, undefined)
+  assert.equal(imagePreview.previewBytes, 8)
+  assert.equal(imagePreview.truncated, false)
+  assert.equal(largeImagePreview.kind, 'metadata')
+  assert.equal(largeImagePreview.reason, 'large_file')
+  assert.equal(largeImagePreview.dataUrl, undefined)
+  assert.equal(largeImagePreview.previewBytes, 512)
+  assert.equal(largeImagePreview.truncated, true)
+  assert.equal(pdfPreview.kind, 'metadata')
+  assert.equal(pdfPreview.mimeType, 'application/pdf')
+  assert.equal(pdfPreview.reason, 'pdf')
+  assert.equal(pdfPreview.dataUrl, undefined)
+  assert.equal(pdfPreview.content, undefined)
+  assert.equal(binaryPreview.kind, 'metadata')
+  assert.equal(binaryPreview.reason, 'binary')
+  assert.equal(binaryPreview.dataUrl, undefined)
+  assert.equal(binaryPreview.content, undefined)
+  assert.equal(largeTextPreview.kind, 'text')
+  assert.equal(largeTextPreview.previewBytes, 32768)
+  assert.equal(largeTextPreview.content.length, 32768)
+  assert.equal(largeTextPreview.truncated, true)
+  assert.deepEqual(
+    app.previewReadRequests
+      .filter((request) => request.filePath === '/projects/current/large-plot.png')
+      .map((request) => request.length),
+    [512]
+  )
+  assert.deepEqual(
+    app.previewReadRequests
+      .filter((request) => request.filePath === '/projects/current/large.txt')
+      .map((request) => request.length),
+    [512, 32768]
+  )
+  await assert.rejects(
+    app.invoke('files:hoverPreview', '/projects/other/secret.txt'),
+    /只能预览 Phi 保存的文件或当前项目内的文件/
+  )
+})
+
+test('main IPC: local file open and directory listing stay inside allowed roots', async () => {
+  const app = await harness()
+
+  await app.invoke('projects:newSession', '/projects/current', 'ask')
+  await app.invoke('files:openPath', '/projects/current/src/App.tsx')
+  const rootListing = (await app.invoke('files:listDirectory', '/projects/current')) as {
+    displayPath: string
+    rootPath: string
+    entries: Array<{ name: string; path: string; displayPath: string; kind: 'directory' | 'file' }>
+    truncated: boolean
+  }
+  const srcListing = (await app.invoke('files:listDirectory', '/projects/current/src')) as {
+    displayPath: string
+    entries: Array<{ name: string; displayPath: string; kind: 'directory' | 'file' }>
+  }
+
+  assert.deepEqual(app.openedPaths, ['/projects/current/src/App.tsx'])
+  assert.equal(rootListing.displayPath, 'current')
+  assert.equal(rootListing.rootPath, '/projects/current')
+  assert.equal(rootListing.truncated, false)
+  assert.deepEqual(
+    rootListing.entries.map((entry) => [entry.name, entry.displayPath, entry.kind]),
+    [
+      ['src', 'src', 'directory'],
+      ['large.txt', 'large.txt', 'file'],
+      ['README.md', 'README.md', 'file']
+    ]
+  )
+  assert.equal(srcListing.displayPath, 'src')
+  assert.deepEqual(srcListing.entries, [
+    {
+      name: 'App.tsx',
+      path: '/projects/current/src/App.tsx',
+      displayPath: 'src/App.tsx',
+      kind: 'file'
+    }
+  ])
+  await assert.rejects(app.invoke('files:openPath', '/projects/other/secret.txt'), /只能打开/)
+  await assert.rejects(
+    app.invoke('files:listDirectory', '/projects/other'),
+    /只能列出 Phi 保存的文件或当前项目内的文件/
+  )
 })
 
 test('main IPC: diagnostics are copied without conversation or raw tool output', async () => {
@@ -1085,14 +1512,80 @@ test('main IPC: switching sessions includes stored Phi timeline events', async (
   ])
 })
 
-test('main IPC: acknowledging a session uses that session cwd', async () => {
+test(
+  'main IPC: current fresh prompt includes the user question before runtime materializes',
+  { timeout: 3000 },
+  async () => {
+    const gate = deferred<FakeSession>()
+    const app = await harness(async () => gate.promise)
+    const prompt = app.invoke('agent:prompt', 'where is my question')
+
+    try {
+      await tick()
+      const current = (await app.invoke('sessions:current')) as {
+        path: string | null
+        messages: Array<Record<string, unknown>>
+      }
+
+      assert.equal(current.path, null)
+      assert.equal(
+        current.messages.some(
+          (message) =>
+            message.source === 'phi' &&
+            message.type === 'user_message' &&
+            message.content === 'where is my question'
+        ),
+        true
+      )
+    } finally {
+      gate.resolve(new FakeSession('fresh.jsonl'))
+      await prompt
+    }
+  }
+)
+
+test(
+  'main IPC: materialized runtime path is linked before notifying the renderer',
+  { timeout: 3000 },
+  async () => {
+    const app = await harness()
+
+    await app.invoke('agent:prompt', 'hello')
+
+    const runtimePathPatchIndex = app.operationLog.findIndex((entry) => {
+      const patch = entry.patch as { runtimeSessionPath?: unknown } | undefined
+      return entry.type === 'updateSessionManifest' && patch?.runtimeSessionPath === 'fresh.jsonl'
+    })
+    const firstMaterializedNotifyIndex = app.operationLog.findIndex((entry) => {
+      const data = entry.data as { path?: unknown } | undefined
+      return (
+        entry.type === 'webContents.send' &&
+        entry.channel === 'sessions:changed' &&
+        data?.path === 'fresh.jsonl'
+      )
+    })
+
+    assert.notEqual(runtimePathPatchIndex, -1)
+    assert.notEqual(firstMaterializedNotifyIndex, -1)
+    assert.equal(runtimePathPatchIndex < firstMaterializedNotifyIndex, true)
+  }
+)
+
+test('main IPC: acknowledging a session uses that session cwd without sidebar rebroadcasts', async () => {
   const app = await harness()
 
   await app.invoke('sessions:switch', 'A')
   await app.invoke('sessions:switch', 'B')
+  const changedEventsBeforeAcknowledge = app.events.filter(
+    (event) => event.channel === 'sessions:changed'
+  ).length
   await app.invoke('sessions:acknowledge', 'A')
+  const changedEventsAfterAcknowledge = app.events.filter(
+    (event) => event.channel === 'sessions:changed'
+  ).length
 
   assert.deepEqual(app.acknowledgedSessions.at(-1), { file: 'A', cwd: '/projects/A' })
+  assert.equal(changedEventsAfterAcknowledge, changedEventsBeforeAcknowledge)
 })
 
 test(
@@ -1103,6 +1596,10 @@ test(
     await app.invoke('projects:newSession', '/projects/custom', 'ask')
     assert.match(
       ((await app.invoke('skills:list')) as Array<{ id: string }>)[0].id,
+      /^\/projects\/custom/
+    )
+    assert.match(
+      ((await app.invoke('agents:list')) as Array<{ id: string }>)[0].id,
       /^\/projects\/custom/
     )
     assert.match(
@@ -1331,6 +1828,7 @@ test('main IPC: analysis notebook cell execution updates the returned document',
     }
   ])
 })
+
 test(
   'main IPC: prompt text and tool events are persisted with large output previews',
   { timeout: 3000 },
@@ -1895,6 +2393,21 @@ test(
     assert.equal(((await app.invoke('sessions:current')) as { path: string }).path, 'B')
   }
 )
+
+test('main IPC: direct conversation switch returns state without sidebar rebroadcasts', async () => {
+  const app = await harness()
+  const initialChangedEvents = app.events.filter(
+    (event) => event.channel === 'sessions:changed'
+  ).length
+
+  const result = (await app.invoke('sessions:switch', 'A')) as { path: string; cwd: string }
+  const changedEvents = app.events.filter((event) => event.channel === 'sessions:changed').length
+
+  assert.equal(result.path, 'A')
+  assert.equal(result.cwd, '/projects/A')
+  assert.equal(changedEvents, initialChangedEvents)
+  assert.deepEqual(app.acknowledgedSessions.at(-1), { file: 'A', cwd: '/projects/A' })
+})
 
 test(
   'main IPC: a new prompt after stop can run and persist normally',

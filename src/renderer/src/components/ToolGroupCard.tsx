@@ -45,6 +45,11 @@ function commandPhrase(count: number, status: AggregateToolStatus): string {
   return count === 1 ? '已执行命令' : `已执行 ${count} 条命令`
 }
 
+function pythonPhrase(count: number, status: AggregateToolStatus): string {
+  if (status === 'running') return count === 1 ? '执行 Python 代码' : `执行 ${count} 段 Python 代码`
+  return count === 1 ? '已执行 Python 代码' : `已执行 ${count} 段 Python 代码`
+}
+
 function fileToolPhrase(
   action: 'read' | 'edit' | 'read-edit',
   files: string,
@@ -84,8 +89,14 @@ function summarize(items: ToolCallItem[]): {
   stat: { added: number; removed: number } | null
 } {
   const status = summarizeStatus(items)
-  const commandItems = items.filter(
+  const nonFileReadItems = items.filter(
     (item) => !FILE_TOOLS.has(item.toolName) && item.toolName !== 'read'
+  )
+  const pythonItems = nonFileReadItems.filter(
+    (item) => toolActionKind(item.toolName, item.argsPreview, item.argsJson) === 'python'
+  )
+  const commandItems = nonFileReadItems.filter(
+    (item) => toolActionKind(item.toolName, item.argsPreview, item.argsJson) !== 'python'
   )
   const editedFiles = uniqueInOrder(
     items.filter((item) => FILE_TOOLS.has(item.toolName)).map((item) => basename(item.argsPreview))
@@ -98,6 +109,9 @@ function summarize(items: ToolCallItem[]): {
   )
 
   const clauses: string[] = []
+  if (pythonItems.length > 0) {
+    clauses.push(pythonPhrase(pythonItems.length, status))
+  }
   if (commandItems.length > 0) {
     clauses.push(commandPhrase(commandItems.length, status))
   }

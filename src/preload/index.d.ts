@@ -67,6 +67,14 @@ type PreloadSkillSummary = {
   disabled: boolean
 }
 
+type PreloadPromptAgentSummary = {
+  id: string
+  name: string
+  description: string
+  source: string
+  trigger: string
+}
+
 type PreloadMcpServerSummary = {
   id: string
   name: string
@@ -75,6 +83,99 @@ type PreloadMcpServerSummary = {
   envKeys?: string[]
   sourcePath?: string
   status: 'configured'
+}
+
+type PreloadFilePreview = {
+  path: string
+  name: string
+  displayPath: string
+  rootPath: string
+  rootLabel: string
+  kind: 'text' | 'image' | 'pdf'
+  mimeType: string
+  bytes: number
+  previewBytes: number
+  truncated: boolean
+} & (
+  | {
+      kind: 'text'
+      mimeType: 'text/plain'
+      content: string
+      dataUrl?: never
+    }
+  | {
+      kind: 'image'
+      mimeType: 'image/png'
+      dataUrl: string
+      content?: never
+    }
+  | {
+      kind: 'pdf'
+      mimeType: 'application/pdf'
+      dataUrl: string
+      content?: never
+    }
+)
+
+type PreloadFileHoverPreview = {
+  path: string
+  name: string
+  displayPath: string
+  rootPath: string
+  rootLabel: string
+  bytes: number
+  previewBytes: number
+  truncated: boolean
+} & (
+  | {
+      kind: 'text'
+      mimeType: 'text/plain'
+      content: string
+      dataUrl?: never
+      format?: never
+      reason?: never
+    }
+  | {
+      kind: 'spreadsheet'
+      mimeType: 'text/csv' | 'text/tab-separated-values'
+      format: 'csv' | 'tsv'
+      content: string
+      dataUrl?: never
+      reason?: never
+    }
+  | {
+      kind: 'image'
+      mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
+      dataUrl: string
+      content?: never
+      format?: never
+      reason?: never
+    }
+  | {
+      kind: 'metadata'
+      mimeType: string
+      reason: 'binary' | 'large_file' | 'pdf' | 'unsupported_media'
+      content?: never
+      dataUrl?: never
+      format?: never
+    }
+)
+
+type PreloadFileTreeEntry = {
+  path: string
+  name: string
+  displayPath: string
+  kind: 'directory' | 'file'
+}
+
+type PreloadDirectoryListing = {
+  path: string
+  name: string
+  displayPath: string
+  rootPath: string
+  rootLabel: string
+  entries: PreloadFileTreeEntry[]
+  truncated: boolean
 }
 
 type PreloadAnalysisNotebookSummary = {
@@ -178,6 +279,11 @@ declare global {
       minimizeWindow: () => Promise<void>
       toggleWindowFullscreen: () => Promise<void>
       revealPath: (path: string) => Promise<void>
+      openPath: (path: string) => Promise<void>
+      pickInputFiles: () => Promise<string[]>
+      previewFile: (path: string) => Promise<PreloadFilePreview>
+      hoverPreviewFile: (path: string) => Promise<PreloadFileHoverPreview>
+      listDirectory: (path: string) => Promise<PreloadDirectoryListing>
       copyDiagnostics: () => Promise<string>
       sendPrompt: (text: string) => Promise<string | null>
       onAgentEvent: (cb: (event: Record<string, unknown>) => void) => () => void
@@ -413,6 +519,7 @@ declare global {
       installPlugin: (source: string) => Promise<PreloadPluginCatalogItem[]>
       removePlugin: (source: string) => Promise<PreloadPluginCatalogItem[]>
       listSkills: (cwd?: string) => Promise<PreloadSkillSummary[]>
+      listPromptAgents: (cwd?: string) => Promise<PreloadPromptAgentSummary[]>
       listMcpServers: (cwd?: string) => Promise<PreloadMcpServerSummary[]>
     }
   }
