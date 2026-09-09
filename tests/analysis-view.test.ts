@@ -130,6 +130,34 @@ test('analysis view renders an opened notebook document', () => {
   assert.match(markup, /Saved/)
 })
 
+test('analysis view renders an empty opened notebook as a writable canvas', () => {
+  const document = parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: {
+      kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' },
+      language_info: { name: 'python' }
+    },
+    cells: []
+  })
+  const markup = renderAnalysisView({
+    notebookFile: {
+      path: '/project/notebooks/empty.ipynb',
+      relativePath: 'notebooks/empty.ipynb',
+      name: 'empty.ipynb',
+      bytes: 128,
+      modifiedAt: '2026-09-09T00:00:00.000Z',
+      savedRevision: document.revision,
+      document
+    }
+  })
+
+  assert.match(markup, /notebooks\/empty\.ipynb/)
+  assert.match(markup, /添加 Code cell/)
+  assert.match(markup, /添加 Markdown cell/)
+  assert.doesNotMatch(markup, /选择或创建 notebook 后开始分析/)
+})
+
 test('analysis view renders local kernel diagnostics', () => {
   const markup = renderAnalysisView({
     initialInspectorTab: 'variables',

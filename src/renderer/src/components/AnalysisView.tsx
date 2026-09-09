@@ -1361,21 +1361,25 @@ function NotebookCanvas({
             <NotebookInsertDock disabled={!draftDocument} onInsert={onAppendCell} />
           ) : null}
           {!isOpening && cells.length === 0 ? (
-            <>
-              <Box
-                sx={{
-                  border: 1,
-                  borderColor: 'divider',
-                  borderRadius: 2,
-                  px: 2,
-                  py: 3,
-                  color: 'text.secondary'
-                }}
-              >
-                <Typography variant="body2">选择或创建 notebook 后开始分析。</Typography>
-              </Box>
-              <NotebookInsertDock disabled={!draftDocument} onInsert={onAppendCell} />
-            </>
+            draftDocument ? (
+              <NotebookInsertDock onInsert={onAppendCell} />
+            ) : (
+              <>
+                <Box
+                  sx={{
+                    border: 1,
+                    borderColor: 'divider',
+                    borderRadius: 2,
+                    px: 2,
+                    py: 3,
+                    color: 'text.secondary'
+                  }}
+                >
+                  <Typography variant="body2">选择或创建 notebook 后开始分析。</Typography>
+                </Box>
+                <NotebookInsertDock disabled={!draftDocument} onInsert={onAppendCell} />
+              </>
+            )
           ) : null}
         </Box>
       </Box>
