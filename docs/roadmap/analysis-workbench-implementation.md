@@ -22,6 +22,247 @@ Verification:
 - A small manual smoke test against a local Python kernel.
 - Optional manual R kernel test when IRkernel is installed.
 
+## Notebook Capability Task Breakdown
+
+This section decomposes the full notebook workbench into implementation tasks that can be completed and reviewed independently. Each stage should produce a working app state; avoid carrying half-wired runtime paths across stages.
+
+### N0: Static Notebook Shell
+
+Status: started.
+
+Deliverables:
+
+- Add the Analysis activity-bar entry.
+- Render the Marimo-inspired notebook shell with left chat rail, center notebook canvas, and right inspector.
+- Use representative mock cells, variables, files, and artifacts only.
+- Add component coverage that proves the first-phase shell renders.
+
+Boundaries:
+
+- No Jupyter Server.
+- No `.ipynb` reads or writes.
+- No kernel execution.
+- No new runtime dependency.
+
+Verification:
+
+- Component test for the shell landmarks.
+- `npm run lint`.
+- `npm run typecheck`.
+- `npm run build`.
+
+### N1: Notebook Document Model
+
+Deliverables:
+
+- Add a typed notebook document model for standard `.ipynb` files.
+- Parse and normalize notebook cells, metadata, outputs, execution count, and cell ids.
+- Preserve unknown notebook fields and `metadata.phi` without destructive rewrites.
+- Add pure helpers for insert, update, move, delete, clear output, and notebook revision hashing.
+
+Boundaries:
+
+- Main/renderer only use the model through typed helpers.
+- Do not start kernels.
+- Do not write project files yet unless the user explicitly saves through a later service.
+
+Verification:
+
+- Unit tests with minimal Python and R notebook fixtures.
+- Round-trip tests that preserve unknown fields.
+- Mutation tests for cell order, cell ids, and output clearing.
+
+### N2: Project Notebook Registry
+
+Deliverables:
+
+- Discover `.ipynb` files under the active project cwd with path safety checks.
+- Show real project notebooks in the Analysis left rail.
+- Add explicit initialization for `notebooks/`, `outputs/`, and optional analysis config.
+- Keep project add/import side-effect free.
+
+Boundaries:
+
+- Discovery is local only.
+- Do not auto-create project directories on project selection.
+- Do not scan bulky ignored directories by default.
+
+Verification:
+
+- Tests for safe path validation and ignored directories.
+- Regression test that adding a project does not mutate the project directory.
+- Renderer test for empty, loading, and populated notebook lists.
+
+### N3: Notebook Open/Save Service
+
+Deliverables:
+
+- Add main-process service APIs for open notebook, save notebook, close notebook, and create notebook.
+- Expose typed preload methods and renderer state for active notebook content.
+- Wire the center notebook canvas to real `.ipynb` cells.
+- Persist user edits only through explicit save/autosave policy chosen for this stage.
+
+Boundaries:
+
+- No kernel execution.
+- No agent notebook editing tools yet.
+- No raw renderer filesystem writes.
+
+Verification:
+
+- Main-process service tests with temporary project files.
+- IPC tests with fake service responses.
+- Manual smoke test: create/open/edit/save/reopen a notebook.
+
+### N4: Local Kernel Discovery And Session Lifecycle
+
+Deliverables:
+
+- Detect local Jupyter availability and kernelspecs for Python and R.
+- Start a local Jupyter Server per project on `127.0.0.1`.
+- Manage one Jupyter session/kernel per open notebook.
+- Surface kernel missing, idle, busy, restarting, disconnected, and error states.
+
+Boundaries:
+
+- Do not auto-install Python, R, Jupyter, or IRkernel.
+- Do not expose Jupyter tokens or raw server URLs to renderer state.
+- Local only; no SSH tunnel.
+
+Verification:
+
+- Unit tests for kernelspec normalization and missing-tool diagnostics.
+- Server registry lifecycle tests with fakes.
+- Manual smoke test against local Python kernel; optional R kernel smoke test.
+
+### N5: Cell Execution And Output Rendering
+
+Deliverables:
+
+- Run selected cell, run current-and-select-next, run all, interrupt, restart, and clear output.
+- Render stdout, stderr, execute result, display data, errors, Markdown, small tables, and static images.
+- Fold long output and bound table previews.
+- Persist lightweight outputs back into `.ipynb`.
+
+Boundaries:
+
+- Interactive HTML/JS is saved as an artifact, not injected into the main React tree.
+- Execution remains standard Jupyter order-based execution, not reactive execution.
+- No workflow or Nextflow execution from notebook magic.
+
+Verification:
+
+- Component tests for output renderers.
+- Service tests for execution state transitions with fakes.
+- Manual smoke test: run, save, close, reopen, and confirm outputs.
+
+### N6: Variables And Data Preview
+
+Deliverables:
+
+- Add Python and R inspection snippets for runtime variables.
+- Show name, type/class, shape/length, schema, missingness, head/sample, and cheap summaries.
+- Add bounded Data Preview inside the Variables tab.
+- Refresh after cell execution and on manual refresh; clear on kernel restart.
+
+Boundaries:
+
+- Do not continuously poll kernels.
+- Do not implement editable DataFrame grids.
+- Treat AnnData, Seurat, mass spectrometry, and spatial objects as later extension points.
+
+Verification:
+
+- Parser tests for Python and R inspector responses.
+- Payload limit tests for large tables.
+- Manual smoke tests for pandas DataFrame and R data.frame/tibble.
+
+### N7: Agent Notebook Transactions
+
+Deliverables:
+
+- Add agent-facing typed tools for outline, read cell, insert, update, move, run, read output, inspect variable, and export artifact.
+- Record cell-level transaction summaries in chat/timeline.
+- Add optimistic concurrency using cell id, content hash, and notebook revision.
+- Add conflict UI when human edits race with agent edits.
+- Add undo for the latest agent transaction.
+
+Boundaries:
+
+- Agent tools use notebook APIs, not raw JSON edits.
+- Project `ask` mode gates risky notebook mutations through existing approvals.
+- Do not allow silent overwrites after stale reads.
+
+Verification:
+
+- Transaction apply/rollback tests.
+- Conflict detection tests.
+- Tests that agent-triggered execution emits timeline events and respects permission mode.
+
+### N8: Artifact Viewer
+
+Deliverables:
+
+- Register notebook artifacts by notebook path, cell id, type, hash, created time, size, and URI.
+- Save large or interactive outputs as artifacts.
+- Render HTML artifacts in sandboxed iframes.
+- Provide preview/open, reveal, and copy-path actions.
+
+Boundaries:
+
+- Read-only artifact viewing first.
+- No two-way plot selection bridge.
+- Remote artifacts remain URI references until the remote stage.
+
+Verification:
+
+- Artifact registry tests.
+- Iframe sandbox component tests.
+- Manual Plotly or equivalent HTML artifact smoke test.
+
+### N9: Workflow Runner Bridge
+
+Deliverables:
+
+- Discover Nextflow workflows and configs.
+- Model local workflow runs and output artifacts.
+- Let notebooks launch/reference/inspect workflow runs through explicit UI/actions.
+- Keep Nextflow as a separate workflow surface, not hidden notebook behavior.
+
+Boundaries:
+
+- Local-only first.
+- Prefer nf-core/DSL2 conventions.
+- No remote execution in this stage.
+
+Verification:
+
+- Workflow discovery and run metadata tests.
+- Manual tiny Nextflow workflow smoke test when Nextflow is installed.
+
+### N10: Remote/HPC Execution
+
+Deliverables:
+
+- Add SSH host profiles under Phi-owned state.
+- Add explicit local/remote path mappings.
+- Run remote workflow commands through the controlled workflow runner.
+- Tail/read remote logs by bounded requests.
+- Preview small remote artifacts by explicit temporary cache download.
+- Register remote artifacts as remote URIs.
+
+Boundaries:
+
+- Do not automatically sync remote data to local project directories.
+- Do not make arbitrary remote shell the primary product surface.
+- Remote interactive notebooks remain deferred unless a later decision reverses that.
+
+Verification:
+
+- Redaction and profile validation tests.
+- Faked SSH command construction and log parsing tests.
+- Manual smoke test against a trusted SSH target before beta exposure.
+
 ## Phase 1: Project Notebook Registry
 
 Goal: make notebooks first-class project files while keeping Phi's storage boundaries intact.

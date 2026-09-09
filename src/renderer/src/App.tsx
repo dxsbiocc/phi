@@ -18,6 +18,7 @@ import SettingsDialog, { type SettingsCategory } from './components/SettingsDial
 import AddProviderDialog from './components/AddProviderDialog'
 import OnboardingDialog from './components/OnboardingDialog'
 import NewProjectDialog from './components/NewProjectDialog'
+import AnalysisView from './components/AnalysisView'
 import { createAppTheme } from './theme'
 import { useThemeMode } from './useThemeMode'
 import { chatItemsFromSessionMessages } from './lib/chatItems'
@@ -66,7 +67,7 @@ import type {
   ToolApprovalRequest
 } from './types'
 
-type AppView = 'chat' | 'projects' | 'plugins' | 'skills' | 'mcp'
+type AppView = 'chat' | 'projects' | 'analysis' | 'plugins' | 'skills' | 'mcp'
 type SnackbarNotice = {
   id: number
   severity: 'error' | 'info' | 'success' | 'warning'
@@ -80,6 +81,7 @@ const minNavigationPaneWidth = 240
 const maxNavigationPaneWidth = 520
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 const NavChatIcon = PhiIcons.nav.chat
+const NavAnalysisIcon = PhiIcons.nav.analysis
 const NavProjectsIcon = PhiIcons.nav.projects
 const NavPluginsIcon = PhiIcons.nav.plugins
 const NavSkillsIcon = PhiIcons.nav.skills
@@ -1385,6 +1387,17 @@ function App(): React.JSX.Element {
               <NavProjectsIcon fontSize="small" />
             </IconButton>
           </Tooltip>
+          <Tooltip title="分析" placement="right">
+            <IconButton
+              size="small"
+              color={activeView === 'analysis' ? 'primary' : 'default'}
+              onClick={() => {
+                setActiveView('analysis')
+              }}
+            >
+              <NavAnalysisIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
           <Tooltip title="插件" placement="right">
             <IconButton
               size="small"
@@ -1593,6 +1606,8 @@ function App(): React.JSX.Element {
               cwd={activeCwd}
             />
           </Box>
+        ) : activeView === 'analysis' ? (
+          <AnalysisView />
         ) : activeView === 'plugins' ? (
           <PluginView
             plugins={plugins}

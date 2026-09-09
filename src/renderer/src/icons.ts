@@ -180,6 +180,7 @@ export const PhiIcons = {
     skill: createPhiIcon('Skill', GraduationCap)
   },
   nav: {
+    analysis: createPhiIcon('NavAnalysis', FileText),
     chat: createPhiIcon('NavChat', MessageCircle),
     mcp: createPhiIcon('NavMcp', Network),
     plugins: createPhiIcon('NavPlugins', Puzzle),
@@ -249,6 +250,7 @@ export const PHI_ICON_META = {
   'entity.project': { label: '项目', Icon: PhiIcons.entity.project },
   'entity.provider': { label: 'Provider', Icon: PhiIcons.entity.provider },
   'entity.skill': { label: '技能', Icon: PhiIcons.entity.skill },
+  'nav.analysis': { label: '分析', Icon: PhiIcons.nav.analysis },
   'nav.chat': { label: '对话', Icon: PhiIcons.nav.chat },
   'nav.mcp': { label: 'MCP', Icon: PhiIcons.nav.mcp },
   'nav.plugins': { label: '插件', Icon: PhiIcons.nav.plugins },
