@@ -182,6 +182,29 @@ type McpServerSummary = {
   status: 'configured'
 }
 
+type AnalysisNotebookSummary = {
+  path: string
+  relativePath: string
+  name: string
+  directory: string
+  bytes: number
+  modifiedAt: string
+}
+
+type AnalysisNotebookRegistry = {
+  projectCwd: string | null
+  projectName?: string
+  notebooks: AnalysisNotebookSummary[]
+  truncated: boolean
+  initialized: boolean
+  message?: string
+}
+
+type AnalysisProjectInitialization = {
+  notebooksDir: string
+  outputsDir: string
+}
+
 type RendererAuthApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -236,6 +259,8 @@ type RendererAuthApi = {
     workingDirectory: string,
     permissionMode: PermissionMode
   ) => Promise<CurrentSession>
+  listAnalysisNotebooks: (cwd?: string) => Promise<AnalysisNotebookRegistry>
+  initializeProjectAnalysis: (cwd: string) => Promise<AnalysisProjectInitialization>
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => Unsubscribe
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => Unsubscribe
@@ -338,6 +363,10 @@ const api: RendererAuthApi = {
     permissionMode: PermissionMode
   ): Promise<CurrentSession> =>
     ipcRenderer.invoke('projects:newSession', workingDirectory, permissionMode),
+  listAnalysisNotebooks: (cwd?: string): Promise<AnalysisNotebookRegistry> =>
+    ipcRenderer.invoke('analysis:listNotebooks', cwd),
+  initializeProjectAnalysis: (cwd: string): Promise<AnalysisProjectInitialization> =>
+    ipcRenderer.invoke('analysis:initializeProject', cwd),
   stopGeneration: (): Promise<void> => ipcRenderer.invoke('agent:stop'),
   onSessionChanged: (cb: (session: CurrentSession) => void): Unsubscribe => {
     const handler = (_: unknown, session: CurrentSession): void => {

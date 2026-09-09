@@ -28,7 +28,7 @@ This section decomposes the full notebook workbench into implementation tasks th
 
 ### N0: Static Notebook Shell
 
-Status: started.
+Status: complete.
 
 Deliverables:
 
@@ -53,6 +53,8 @@ Verification:
 
 ### N1: Notebook Document Model
 
+Status: complete.
+
 Deliverables:
 
 - Add a typed notebook document model for standard `.ipynb` files.
@@ -73,6 +75,8 @@ Verification:
 - Mutation tests for cell order, cell ids, and output clearing.
 
 ### N2: Project Notebook Registry
+
+Status: complete.
 
 Deliverables:
 

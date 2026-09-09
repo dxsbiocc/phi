@@ -17,10 +17,26 @@ import {
 } from '@mui/material'
 import { alpha, type Theme } from '@mui/material/styles'
 import { PhiIcons } from '../icons'
+import type { AnalysisNotebookRegistry, AnalysisNotebookSummary } from '../types'
 
 type LeftPanel = 'chat' | 'notebooks'
 type InspectorTab = 'files' | 'variables' | 'artifacts'
 type CellState = 'idle' | 'running' | 'error' | 'stale'
+type NotebookListEntry = {
+  id: string
+  path: string
+  status: string
+  absolutePath?: string
+}
+
+export type AnalysisViewProps = {
+  notebookRegistry?: AnalysisNotebookRegistry | null
+  initialLeftPanel?: LeftPanel
+  isLoadingNotebooks?: boolean
+  notebookError?: string | null
+  onRefreshNotebooks?: () => void
+  onInitializeProjectAnalysis?: (cwd: string) => void
+}
 
 type MockCell = {
   id: string
@@ -55,7 +71,7 @@ const collapsedRailWidth = 44
 const inspectorWidth = 340
 const collapsedInspectorWidth = 48
 
-const mockNotebooks = [
+const mockNotebooks: NotebookListEntry[] = [
   { id: 'exploration', path: 'notebooks/exploration.ipynb', status: 'Unsaved' },
   { id: 'qc', path: 'notebooks/qc-summary.ipynb', status: 'Saved' },
   { id: 'figures', path: 'notebooks/figures.ipynb', status: 'Saved' }
@@ -150,7 +166,33 @@ function compactPath(path: string): string {
   return parts.length <= 2 ? path : `${parts[0]}/.../${parts[parts.length - 1]}`
 }
 
-function AnalysisChatPanel(): React.JSX.Element {
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function notebookStatus(notebook: AnalysisNotebookSummary): string {
+  return `${formatBytes(notebook.bytes)} · ${new Date(notebook.modifiedAt).toLocaleDateString()}`
+}
+
+function registryNotebooks(
+  registry: AnalysisNotebookRegistry | null | undefined
+): NotebookListEntry[] {
+  if (!registry) return mockNotebooks
+  return registry.notebooks.map((notebook) => ({
+    id: notebook.path,
+    path: notebook.relativePath,
+    absolutePath: notebook.path,
+    status: notebookStatus(notebook)
+  }))
+}
+
+function AnalysisChatPanel({
+  activeNotebookPath
+}: {
+  activeNotebookPath: string
+}): React.JSX.Element {
   return (
     <Box sx={{ display: 'flex', minHeight: 0, flex: 1, flexDirection: 'column' }}>
       <Box sx={{ px: 1.5, pb: 1.25 }}>
@@ -161,7 +203,7 @@ function AnalysisChatPanel(): React.JSX.Element {
           variant="body2"
           sx={{ mt: 0.25, fontFamily: 'var(--font-mono)', fontWeight: 700 }}
         >
-          exploration.ipynb · Cell 3
+          {activeNotebookPath} · Cell 3
         </Typography>
         <Stack direction="row" spacing={0.75} sx={{ mt: 1, flexWrap: 'wrap', rowGap: 0.75 }}>
           <Chip size="small" color="primary" variant="outlined" label="Selected cell" />
@@ -227,13 +269,84 @@ function AnalysisChatPanel(): React.JSX.Element {
   )
 }
 
-function NotebookList(): React.JSX.Element {
+function NotebookList({
+  notebooks,
+  activeNotebookPath,
+  registry,
+  isLoading,
+  error,
+  onSelectNotebook,
+  onRefreshNotebooks,
+  onInitializeProjectAnalysis
+}: {
+  notebooks: NotebookListEntry[]
+  activeNotebookPath: string | null
+  registry?: AnalysisNotebookRegistry | null
+  isLoading?: boolean
+  error?: string | null
+  onSelectNotebook: (path: string) => void
+  onRefreshNotebooks?: () => void
+  onInitializeProjectAnalysis?: (cwd: string) => void
+}): React.JSX.Element {
+  const projectCwd = registry?.projectCwd ?? null
+
   return (
     <List disablePadding sx={{ px: 0.75, py: 0.75 }}>
-      {mockNotebooks.map((notebook) => (
+      <Box sx={{ px: 0.75, pb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ flex: 1, minWidth: 0 }} noWrap>
+          {registry?.projectName ?? 'Notebook registry'}
+        </Typography>
+        {onRefreshNotebooks ? (
+          <Tooltip title="刷新 notebooks">
+            <IconButton size="small" onClick={onRefreshNotebooks}>
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : null}
+      </Box>
+      {isLoading ? (
+        <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 1.5 }}>
+          正在扫描 notebooks...
+        </Typography>
+      ) : null}
+      {error ? (
+        <Typography variant="body2" color="error.main" sx={{ px: 1, py: 1.5 }}>
+          {error}
+        </Typography>
+      ) : null}
+      {!isLoading && !error && registry?.message ? (
+        <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 1.5 }}>
+          {registry.message}
+        </Typography>
+      ) : null}
+      {!isLoading && !error && projectCwd && notebooks.length === 0 ? (
+        <Box sx={{ px: 1, py: 1.5 }}>
+          <Typography variant="body2" color="text.secondary">
+            当前项目还没有 notebook。
+          </Typography>
+          {!registry?.initialized && onInitializeProjectAnalysis ? (
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<AddIcon fontSize="small" />}
+              sx={{ mt: 1 }}
+              onClick={() => onInitializeProjectAnalysis(projectCwd)}
+            >
+              初始化分析目录
+            </Button>
+          ) : null}
+        </Box>
+      ) : null}
+      {registry?.truncated ? (
+        <Typography variant="caption" color="warning.main" sx={{ display: 'block', px: 1, pb: 1 }}>
+          扫描结果已截断，请缩小项目目录或移动 notebook 到 notebooks/。
+        </Typography>
+      ) : null}
+      {notebooks.map((notebook) => (
         <ListItemButton
           key={notebook.id}
-          selected={notebook.id === 'exploration'}
+          selected={notebook.path === activeNotebookPath}
+          onClick={() => onSelectNotebook(notebook.path)}
           sx={{ alignItems: 'flex-start', mx: 0, mb: 0.5, py: 1 }}
         >
           <NotebookIcon fontSize="small" sx={{ mt: 0.2, mr: 1, color: 'primary.main' }} />
@@ -257,12 +370,28 @@ function NotebookList(): React.JSX.Element {
 function LeftRail({
   panel,
   collapsed,
+  notebooks,
+  activeNotebookPath,
+  notebookRegistry,
+  isLoadingNotebooks,
+  notebookError,
   onPanelChange,
+  onSelectNotebook,
+  onRefreshNotebooks,
+  onInitializeProjectAnalysis,
   onToggleCollapsed
 }: {
   panel: LeftPanel
   collapsed: boolean
+  notebooks: NotebookListEntry[]
+  activeNotebookPath: string | null
+  notebookRegistry?: AnalysisNotebookRegistry | null
+  isLoadingNotebooks?: boolean
+  notebookError?: string | null
   onPanelChange: (panel: LeftPanel) => void
+  onSelectNotebook: (path: string) => void
+  onRefreshNotebooks?: () => void
+  onInitializeProjectAnalysis?: (cwd: string) => void
   onToggleCollapsed: () => void
 }): React.JSX.Element {
   if (collapsed) {
@@ -338,12 +467,25 @@ function LeftRail({
           <Tab value="notebooks" label="Notebooks" />
         </Tabs>
       </Box>
-      {panel === 'chat' ? <AnalysisChatPanel /> : <NotebookList />}
+      {panel === 'chat' ? (
+        <AnalysisChatPanel activeNotebookPath={activeNotebookPath ?? 'No notebook selected'} />
+      ) : (
+        <NotebookList
+          notebooks={notebooks}
+          activeNotebookPath={activeNotebookPath}
+          registry={notebookRegistry}
+          isLoading={isLoadingNotebooks}
+          error={notebookError}
+          onSelectNotebook={onSelectNotebook}
+          onRefreshNotebooks={onRefreshNotebooks}
+          onInitializeProjectAnalysis={onInitializeProjectAnalysis}
+        />
+      )}
     </Box>
   )
 }
 
-function NotebookHeader(): React.JSX.Element {
+function NotebookHeader({ activeNotebookPath }: { activeNotebookPath: string }): React.JSX.Element {
   return (
     <Box
       sx={{
@@ -364,7 +506,7 @@ function NotebookHeader(): React.JSX.Element {
         noWrap
         sx={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)', fontWeight: 800 }}
       >
-        notebooks/exploration.ipynb
+        {activeNotebookPath}
       </Typography>
       <Chip size="small" variant="outlined" label="Python 3.11" />
       <Chip size="small" color="success" variant="outlined" label="Idle" />
@@ -542,10 +684,10 @@ function Cell({ cell }: { cell: MockCell }): React.JSX.Element {
   )
 }
 
-function NotebookCanvas(): React.JSX.Element {
+function NotebookCanvas({ activeNotebookPath }: { activeNotebookPath: string }): React.JSX.Element {
   return (
     <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <NotebookHeader />
+      <NotebookHeader activeNotebookPath={activeNotebookPath} />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: { xs: 2, md: 4 }, py: 2.5 }}>
         <Box sx={{ maxWidth: 920, mx: 'auto' }}>
           {mockCells.map((cell) => (
@@ -778,11 +920,26 @@ function RightInspector({
   )
 }
 
-export default function AnalysisView(): React.JSX.Element {
-  const [leftPanel, setLeftPanel] = useState<LeftPanel>('chat')
+export default function AnalysisView({
+  notebookRegistry,
+  initialLeftPanel = 'chat',
+  isLoadingNotebooks = false,
+  notebookError = null,
+  onRefreshNotebooks,
+  onInitializeProjectAnalysis
+}: AnalysisViewProps = {}): React.JSX.Element {
+  const [leftPanel, setLeftPanel] = useState<LeftPanel>(initialLeftPanel)
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('variables')
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false)
+  const notebooks = useMemo(() => registryNotebooks(notebookRegistry), [notebookRegistry])
+  const [selectedNotebookPath, setSelectedNotebookPath] = useState<string | null>(
+    notebooks[0]?.path ?? null
+  )
+  const activeNotebookPath =
+    selectedNotebookPath && notebooks.some((notebook) => notebook.path === selectedNotebookPath)
+      ? selectedNotebookPath
+      : (notebooks[0]?.path ?? null)
 
   return (
     <Box
@@ -800,10 +957,18 @@ export default function AnalysisView(): React.JSX.Element {
       <LeftRail
         panel={leftPanel}
         collapsed={leftCollapsed}
+        notebooks={notebooks}
+        activeNotebookPath={activeNotebookPath}
+        notebookRegistry={notebookRegistry}
+        isLoadingNotebooks={isLoadingNotebooks}
+        notebookError={notebookError}
         onPanelChange={setLeftPanel}
+        onSelectNotebook={setSelectedNotebookPath}
+        onRefreshNotebooks={onRefreshNotebooks}
+        onInitializeProjectAnalysis={onInitializeProjectAnalysis}
         onToggleCollapsed={() => setLeftCollapsed((value) => !value)}
       />
-      <NotebookCanvas />
+      <NotebookCanvas activeNotebookPath={activeNotebookPath ?? 'No notebook selected'} />
       <RightInspector
         tab={inspectorTab}
         collapsed={inspectorCollapsed}

@@ -53,6 +53,7 @@ import type {
   AuthInteractionEvent,
   ChatItem,
   CurrentSession,
+  AnalysisNotebookRegistry,
   McpServerSummary,
   ModelOption,
   PermissionMode,
@@ -187,6 +188,10 @@ function App(): React.JSX.Element {
   const [isLoadingSkills, setIsLoadingSkills] = useState(false)
   const [mcpServers, setMcpServers] = useState<McpServerSummary[]>([])
   const [activeMcpServerId, setActiveMcpServerId] = useState<string | null>(null)
+  const [analysisNotebookRegistry, setAnalysisNotebookRegistry] =
+    useState<AnalysisNotebookRegistry | null>(null)
+  const [isLoadingAnalysisNotebooks, setIsLoadingAnalysisNotebooks] = useState(false)
+  const [analysisNotebookError, setAnalysisNotebookError] = useState<string | null>(null)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
   const [activeSessionRuntimeState, setActiveSessionRuntimeState] =
     useState(idleSessionRuntimeState)
@@ -203,6 +208,7 @@ function App(): React.JSX.Element {
   const sendRequestRef = useRef(0)
   const skillsRequestRef = useRef(0)
   const mcpServersRequestRef = useRef(0)
+  const analysisNotebooksRequestRef = useRef(0)
   const sessionRefreshTimerRef = useRef<number | null>(null)
   const rendererApi = useMemo(() => getRendererApi(), [])
 
@@ -551,6 +557,37 @@ function App(): React.JSX.Element {
     setActiveMcpServerId((current) => current ?? list[0]?.id ?? null)
   }, [rendererApi])
 
+  const refreshAnalysisNotebooks = useCallback(async (): Promise<void> => {
+    const request = ++analysisNotebooksRequestRef.current
+    const cwd = activeCwdRef.current
+    setIsLoadingAnalysisNotebooks(true)
+    setAnalysisNotebookError(null)
+    try {
+      const registry = await rendererApi.listAnalysisNotebooks(cwd)
+      if (request !== analysisNotebooksRequestRef.current || cwd !== activeCwdRef.current) return
+      setAnalysisNotebookRegistry(registry)
+    } catch (error) {
+      if (request !== analysisNotebooksRequestRef.current) return
+      setAnalysisNotebookError(readableErrorMessage(error, '无法读取项目 notebooks'))
+    } finally {
+      if (request === analysisNotebooksRequestRef.current) {
+        setIsLoadingAnalysisNotebooks(false)
+      }
+    }
+  }, [rendererApi])
+
+  const onInitializeProjectAnalysis = useCallback(
+    async (cwd: string): Promise<void> => {
+      try {
+        await rendererApi.initializeProjectAnalysis(cwd)
+        await refreshAnalysisNotebooks()
+      } catch (error) {
+        setAnalysisNotebookError(readableErrorMessage(error, '无法初始化分析目录'))
+      }
+    },
+    [refreshAnalysisNotebooks, rendererApi]
+  )
+
   const onCreateProject = async (
     name: string,
     workingDirectory: string,
@@ -880,8 +917,18 @@ function App(): React.JSX.Element {
       if (activeView === 'mcp') {
         void refreshMcpServers()
       }
+      if (activeView === 'analysis') {
+        void refreshAnalysisNotebooks()
+      }
     })
-  }, [activeCwd, activeView, refreshMcpServers, refreshProjects, refreshSkills])
+  }, [
+    activeCwd,
+    activeView,
+    refreshAnalysisNotebooks,
+    refreshMcpServers,
+    refreshProjects,
+    refreshSkills
+  ])
 
   useEffect(() => {
     void (async () => {
@@ -1607,7 +1654,17 @@ function App(): React.JSX.Element {
             />
           </Box>
         ) : activeView === 'analysis' ? (
-          <AnalysisView />
+          <AnalysisView
+            notebookRegistry={analysisNotebookRegistry}
+            isLoadingNotebooks={isLoadingAnalysisNotebooks}
+            notebookError={analysisNotebookError}
+            onRefreshNotebooks={() => {
+              void refreshAnalysisNotebooks()
+            }}
+            onInitializeProjectAnalysis={(cwd) => {
+              void onInitializeProjectAnalysis(cwd)
+            }}
+          />
         ) : activeView === 'plugins' ? (
           <PluginView
             plugins={plugins}

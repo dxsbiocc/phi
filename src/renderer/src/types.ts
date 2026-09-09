@@ -203,6 +203,29 @@ export interface McpServerSummary {
   status: 'configured'
 }
 
+export interface AnalysisNotebookSummary {
+  path: string
+  relativePath: string
+  name: string
+  directory: string
+  bytes: number
+  modifiedAt: string
+}
+
+export interface AnalysisNotebookRegistry {
+  projectCwd: string | null
+  projectName?: string
+  notebooks: AnalysisNotebookSummary[]
+  truncated: boolean
+  initialized: boolean
+  message?: string
+}
+
+export interface AnalysisProjectInitialization {
+  notebooksDir: string
+  outputsDir: string
+}
+
 export type RendererApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -257,6 +280,8 @@ export type RendererApi = {
     workingDirectory: string,
     permissionMode: PermissionMode
   ) => Promise<CurrentSession>
+  listAnalysisNotebooks: (cwd?: string) => Promise<AnalysisNotebookRegistry>
+  initializeProjectAnalysis: (cwd: string) => Promise<AnalysisProjectInitialization>
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => () => void
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => () => void

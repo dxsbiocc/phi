@@ -58,6 +58,11 @@ import { formatDiagnostics, type DiagnosticsSnapshot } from './agent/diagnostics
 import { LOG_RETENTION_DAYS, cleanupOldLogs, getPhiLogDir, writeAppLog } from './agent/app-logger'
 import { redactSensitiveText } from './agent/redaction'
 import {
+  emptyNotebookRegistry,
+  initializeProjectAnalysis,
+  listProjectNotebooks
+} from './agent/analysis-notebooks'
+import {
   isStaleSessionError,
   StaleSessionError,
   SessionLifecycle,
@@ -1892,6 +1897,28 @@ app.whenReady().then(() => {
       return disposeAndSwitchSession(undefined, workingDirectory, permissionMode)
     }
   )
+  ipcMain.handle('analysis:listNotebooks', async (_, cwd?: string) => {
+    const targetCwd = cwd ?? currentCwd
+    const project = getProjectByCwd(targetCwd)
+    if (!project) {
+      return emptyNotebookRegistry('选择一个项目后显示 notebooks')
+    }
+    assertProjectPathAvailable(project.workingDirectory)
+    const registry = listProjectNotebooks(project.workingDirectory)
+    return {
+      projectCwd: project.workingDirectory,
+      projectName: project.name,
+      ...registry
+    }
+  })
+  ipcMain.handle('analysis:initializeProject', async (_, cwd: string) => {
+    const project = getProjectByCwd(cwd)
+    if (!project) {
+      throw new Error('请选择一个已添加的项目')
+    }
+    assertProjectPathAvailable(project.workingDirectory)
+    return initializeProjectAnalysis(project.workingDirectory)
+  })
 
   ipcMain.handle('tool:approval-response', async (_, requestId: string, approved: boolean) => {
     resolveToolApproval(requestId, approved)

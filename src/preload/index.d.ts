@@ -77,6 +77,29 @@ type PreloadMcpServerSummary = {
   status: 'configured'
 }
 
+type PreloadAnalysisNotebookSummary = {
+  path: string
+  relativePath: string
+  name: string
+  directory: string
+  bytes: number
+  modifiedAt: string
+}
+
+type PreloadAnalysisNotebookRegistry = {
+  projectCwd: string | null
+  projectName?: string
+  notebooks: PreloadAnalysisNotebookSummary[]
+  truncated: boolean
+  initialized: boolean
+  message?: string
+}
+
+type PreloadAnalysisProjectInitialization = {
+  notebooksDir: string
+  outputsDir: string
+}
+
 declare global {
   interface Window {
     platform: NodeJS.Platform
@@ -264,6 +287,8 @@ declare global {
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
       }>
+      listAnalysisNotebooks: (cwd?: string) => Promise<PreloadAnalysisNotebookRegistry>
+      initializeProjectAnalysis: (cwd: string) => Promise<PreloadAnalysisProjectInitialization>
       stopGeneration: () => Promise<void>
       onSessionChanged: (
         cb: (session: {

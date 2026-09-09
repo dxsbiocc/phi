@@ -430,6 +430,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
               id: `project-${cwd}`,
               name: `Project ${cwd}`,
               permissionMode: 'ask',
+              workingDirectory: cwd,
               workingDirectoryRealPath: cwd,
               ...(cwd.includes('defaults')
                 ? {
@@ -449,6 +450,36 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
                     : {})
             }
           : null
+    },
+    './agent/analysis-notebooks': {
+      emptyNotebookRegistry: (message: string) => ({
+        projectCwd: null,
+        notebooks: [],
+        truncated: false,
+        initialized: false,
+        message
+      }),
+      initializeProjectAnalysis: (workingDirectory: string) => ({
+        notebooksDir: `${workingDirectory}/notebooks`,
+        outputsDir: `${workingDirectory}/outputs`
+      }),
+      listProjectNotebooks: (workingDirectory: string) => ({
+        notebooks:
+          workingDirectory === '/projects/research'
+            ? [
+                {
+                  path: '/projects/research/notebooks/qc.ipynb',
+                  relativePath: 'notebooks/qc.ipynb',
+                  name: 'qc.ipynb',
+                  directory: 'notebooks',
+                  bytes: 1024,
+                  modifiedAt: '2026-09-09T00:00:00.000Z'
+                }
+              ]
+            : [],
+        truncated: false,
+        initialized: true
+      })
     },
     './agent/tool-approval': {
       cancelToolApprovals: noop,
@@ -863,6 +894,34 @@ test(
     )
   }
 )
+
+test('main IPC: analysis notebooks use the active project working directory', async () => {
+  const app = await harness()
+
+  const ordinary = (await app.invoke('analysis:listNotebooks')) as { message?: string }
+  await app.invoke('projects:newSession', '/projects/research', 'ask')
+  const registry = (await app.invoke('analysis:listNotebooks')) as {
+    projectCwd: string
+    projectName: string
+    notebooks: Array<{ relativePath: string }>
+  }
+  const initialized = (await app.invoke('analysis:initializeProject', '/projects/research')) as {
+    notebooksDir: string
+    outputsDir: string
+  }
+
+  assert.equal(ordinary.message, '选择一个项目后显示 notebooks')
+  assert.equal(registry.projectCwd, '/projects/research')
+  assert.equal(registry.projectName, 'Project /projects/research')
+  assert.deepEqual(
+    registry.notebooks.map((notebook) => notebook.relativePath),
+    ['notebooks/qc.ipynb']
+  )
+  assert.deepEqual(initialized, {
+    notebooksDir: '/projects/research/notebooks',
+    outputsDir: '/projects/research/outputs'
+  })
+})
 
 test(
   'main IPC: prompt text and tool events are persisted with large output previews',
