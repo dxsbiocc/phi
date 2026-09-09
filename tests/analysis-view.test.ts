@@ -50,7 +50,7 @@ test('analysis view can hide the right inspector behind the notebook toggle', ()
 })
 
 test('analysis view renders project notebook registry entries', () => {
-  const markup = renderAnalysisView({
+  const props: AnalysisViewProps = {
     initialLeftPanel: 'notebooks',
     notebookRegistry: {
       projectCwd: '/project',
@@ -71,6 +71,11 @@ test('analysis view renders project notebook registry entries', () => {
     onOpenNotebook: () => undefined,
     onRefreshNotebooks: () => undefined,
     onCreateNotebook: () => undefined
+  }
+  const markup = renderAnalysisView(props)
+  const withDelete = renderAnalysisView({
+    ...props,
+    onDeleteNotebook: () => undefined
   })
 
   assert.match(markup, /Demo/)
@@ -79,6 +84,8 @@ test('analysis view renders project notebook registry entries', () => {
   assert.match(markup, /刷新 notebooks/)
   assert.match(markup, /新建 notebook/)
   assert.match(markup, /2 KB/)
+  assert.doesNotMatch(markup, /删除 notebooks\/real\.ipynb/)
+  assert.match(withDelete, /删除 notebooks\/real\.ipynb/)
   assert.doesNotMatch(markup, /data\/raw\/samples\.csv/)
 })
 

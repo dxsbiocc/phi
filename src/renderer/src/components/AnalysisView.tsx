@@ -83,6 +83,7 @@ export type AnalysisViewProps = {
   onOpenNotebook?: (path: string) => void
   onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onCreateNotebook?: (cwd: string) => void
+  onDeleteNotebook?: (file: { path: string; relativePath: string }) => void
   chatPanel?: ReactNode
 }
 
@@ -113,6 +114,7 @@ const PlayIcon = PhiIcons.action.quick
 const RefreshIcon = PhiIcons.action.refresh
 const SaveIcon = PhiIcons.state.done
 const StopIcon = PhiIcons.action.stop
+const DeleteIcon = PhiIcons.action.delete
 
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 const macTitlebarHeight = 44
@@ -1272,6 +1274,7 @@ function FilesTab({
   onOpenNotebook,
   onRefreshNotebooks,
   onCreateNotebook,
+  onDeleteNotebook,
   onInitializeProjectAnalysis
 }: {
   notebooks: NotebookListEntry[]
@@ -1282,6 +1285,7 @@ function FilesTab({
   onOpenNotebook?: (path: string) => void
   onRefreshNotebooks?: () => void
   onCreateNotebook?: (cwd: string) => void
+  onDeleteNotebook?: (file: { path: string; relativePath: string }) => void
   onInitializeProjectAnalysis?: (cwd: string) => void
 }): React.JSX.Element {
   const projectCwd = registry?.projectCwd ?? null
@@ -1357,37 +1361,63 @@ function FilesTab({
       {!isLoading && !error && registry
         ? notebooks.map((notebook) => {
             const canOpen = Boolean(notebook.absolutePath && onOpenNotebook)
+            const canDelete = Boolean(notebook.absolutePath && onDeleteNotebook)
             return (
-              <ListItemButton
+              <Box
                 key={notebook.id}
-                selected={notebook.path === activeNotebookPath}
-                disabled={!canOpen}
-                aria-label={`打开 ${notebook.path}`}
-                onClick={() => {
-                  if (notebook.absolutePath) onOpenNotebook?.(notebook.absolutePath)
-                }}
-                sx={{ px: 1, borderRadius: 1, mb: 0.35, alignItems: 'flex-start' }}
+                sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.25, mb: 0.35 }}
               >
-                <NotebookIcon
-                  fontSize="small"
-                  sx={{
-                    mt: 0.25,
-                    mr: 1,
-                    color: notebook.path === activeNotebookPath ? 'primary.main' : 'text.secondary'
+                <ListItemButton
+                  selected={notebook.path === activeNotebookPath}
+                  disabled={!canOpen}
+                  aria-label={`打开 ${notebook.path}`}
+                  onClick={() => {
+                    if (notebook.absolutePath) onOpenNotebook?.(notebook.absolutePath)
                   }}
-                />
-                <ListItemText
-                  primary={notebook.path}
-                  secondary={notebook.status}
-                  slotProps={{
-                    primary: {
-                      noWrap: true,
-                      sx: { fontFamily: 'var(--font-mono)', fontSize: '0.8rem', fontWeight: 700 }
-                    },
-                    secondary: { sx: { fontSize: '0.72rem' } }
-                  }}
-                />
-              </ListItemButton>
+                  sx={{ minWidth: 0, px: 1, borderRadius: 1, alignItems: 'flex-start' }}
+                >
+                  <NotebookIcon
+                    fontSize="small"
+                    sx={{
+                      mt: 0.25,
+                      mr: 1,
+                      color:
+                        notebook.path === activeNotebookPath ? 'primary.main' : 'text.secondary'
+                    }}
+                  />
+                  <ListItemText
+                    primary={notebook.path}
+                    secondary={notebook.status}
+                    slotProps={{
+                      primary: {
+                        noWrap: true,
+                        sx: { fontFamily: 'var(--font-mono)', fontSize: '0.8rem', fontWeight: 700 }
+                      },
+                      secondary: { sx: { fontSize: '0.72rem' } }
+                    }}
+                  />
+                </ListItemButton>
+                {canDelete ? (
+                  <Tooltip title="删除 notebook">
+                    <IconButton
+                      size="small"
+                      color="error"
+                      aria-label={`删除 ${notebook.path}`}
+                      onClick={() => {
+                        if (!notebook.absolutePath) return
+                        if (!window.confirm(`删除 notebook？\n${notebook.path}`)) return
+                        onDeleteNotebook?.({
+                          path: notebook.absolutePath,
+                          relativePath: notebook.path
+                        })
+                      }}
+                      sx={{ mt: 0.1, ml: 0.5, width: 28, height: 28 }}
+                    >
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                ) : null}
+              </Box>
             )
           })
         : null}
@@ -1666,6 +1696,7 @@ function InspectorContent({
   onOpenNotebook,
   onRefreshNotebooks,
   onCreateNotebook,
+  onDeleteNotebook,
   onInitializeProjectAnalysis,
   onRefreshKernels,
   onRefreshJupyterServer,
@@ -1690,6 +1721,7 @@ function InspectorContent({
   onOpenNotebook?: (path: string) => void
   onRefreshNotebooks?: () => void
   onCreateNotebook?: (cwd: string) => void
+  onDeleteNotebook?: (file: { path: string; relativePath: string }) => void
   onInitializeProjectAnalysis?: (cwd: string) => void
   onRefreshKernels?: () => void
   onRefreshJupyterServer?: () => void
@@ -1725,6 +1757,7 @@ function InspectorContent({
       onOpenNotebook={onOpenNotebook}
       onRefreshNotebooks={onRefreshNotebooks}
       onCreateNotebook={onCreateNotebook}
+      onDeleteNotebook={onDeleteNotebook}
       onInitializeProjectAnalysis={onInitializeProjectAnalysis}
     />
   )
@@ -1751,6 +1784,7 @@ function RightInspector({
   onOpenNotebook,
   onRefreshNotebooks,
   onCreateNotebook,
+  onDeleteNotebook,
   onInitializeProjectAnalysis,
   onRefreshKernels,
   onRefreshJupyterServer,
@@ -1777,6 +1811,7 @@ function RightInspector({
   onOpenNotebook?: (path: string) => void
   onRefreshNotebooks?: () => void
   onCreateNotebook?: (cwd: string) => void
+  onDeleteNotebook?: (file: { path: string; relativePath: string }) => void
   onInitializeProjectAnalysis?: (cwd: string) => void
   onRefreshKernels?: () => void
   onRefreshJupyterServer?: () => void
@@ -1848,6 +1883,7 @@ function RightInspector({
           onOpenNotebook={onOpenNotebook}
           onRefreshNotebooks={onRefreshNotebooks}
           onCreateNotebook={onCreateNotebook}
+          onDeleteNotebook={onDeleteNotebook}
           onInitializeProjectAnalysis={onInitializeProjectAnalysis}
           onRefreshKernels={onRefreshKernels}
           onRefreshJupyterServer={onRefreshJupyterServer}
@@ -1927,6 +1963,7 @@ export default function AnalysisView({
   onOpenNotebook,
   onSaveNotebook,
   onCreateNotebook,
+  onDeleteNotebook,
   chatPanel
 }: AnalysisViewProps = {}): React.JSX.Element {
   const [leftPanel, setLeftPanel] = useState<LeftPanel>(initialLeftPanel)
@@ -2087,6 +2124,7 @@ export default function AnalysisView({
           onOpenNotebook={onOpenNotebook}
           onRefreshNotebooks={onRefreshNotebooks}
           onCreateNotebook={onCreateNotebook}
+          onDeleteNotebook={onDeleteNotebook}
           onInitializeProjectAnalysis={onInitializeProjectAnalysis}
           onRefreshKernels={onRefreshKernels}
           onRefreshJupyterServer={onRefreshJupyterServer}

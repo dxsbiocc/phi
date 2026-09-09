@@ -369,6 +369,10 @@ declare global {
         relativePath?: string
       ) => Promise<PreloadAnalysisNotebookFile>
       closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
+      deleteAnalysisNotebook: (
+        cwd: string,
+        path: string
+      ) => Promise<{ path: string; relativePath: string }>
       listAnalysisKernels: (cwd?: string) => Promise<PreloadAnalysisKernelDiagnostics>
       getAnalysisJupyterStatus: (cwd: string) => Promise<PreloadJupyterServerStatus>
       startAnalysisJupyter: (cwd: string) => Promise<PreloadJupyterServerStatus>

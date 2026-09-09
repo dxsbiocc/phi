@@ -662,6 +662,10 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
       }),
       closeProjectNotebook: (workingDirectory: string, notebookPath: string) => ({
         path: `${workingDirectory}/${notebookPath}`
+      }),
+      deleteProjectNotebook: (workingDirectory: string, notebookPath: string) => ({
+        path: `${workingDirectory}/${notebookPath}`,
+        relativePath: notebookPath
       })
     },
     './agent/analysis-kernels': {
@@ -1158,6 +1162,11 @@ test('main IPC: analysis notebook files use the selected project service', async
     '/projects/research',
     'notebooks/qc.ipynb'
   )) as { path: string }
+  const deleted = (await app.invoke(
+    'analysis:deleteNotebook',
+    '/projects/research',
+    'notebooks/qc.ipynb'
+  )) as { path: string; relativePath: string }
 
   assert.equal(opened.path, '/projects/research/notebooks/qc.ipynb')
   assert.equal(opened.relativePath, 'notebooks/qc.ipynb')
@@ -1165,6 +1174,8 @@ test('main IPC: analysis notebook files use the selected project service', async
   assert.equal(saved.savedRevision, 'nb-edited')
   assert.equal(created.relativePath, 'notebooks/Untitled.ipynb')
   assert.equal(closed.path, '/projects/research/notebooks/qc.ipynb')
+  assert.equal(deleted.path, '/projects/research/notebooks/qc.ipynb')
+  assert.equal(deleted.relativePath, 'notebooks/qc.ipynb')
 })
 
 test('main IPC: analysis kernel diagnostics require a known project when cwd is provided', async () => {

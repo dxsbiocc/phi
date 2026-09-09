@@ -65,6 +65,7 @@ import {
 import {
   closeProjectNotebook,
   createProjectNotebook,
+  deleteProjectNotebook,
   openProjectNotebook,
   saveProjectNotebook,
   type SaveProjectNotebookInput
@@ -1973,6 +1974,16 @@ app.whenReady().then(() => {
     const file = openProjectNotebook(project.workingDirectory, notebookPath)
     await notebookSessionRegistry.closeSession(project.workingDirectory, file.path)
     return closeProjectNotebook(project.workingDirectory, notebookPath)
+  })
+  ipcMain.handle('analysis:deleteNotebook', async (_, cwd: string, notebookPath: string) => {
+    const project = getProjectByCwd(cwd)
+    if (!project) {
+      throw new Error('请选择一个已添加的项目')
+    }
+    assertProjectPathAvailable(project.workingDirectory)
+    const file = openProjectNotebook(project.workingDirectory, notebookPath)
+    await notebookSessionRegistry.closeSession(project.workingDirectory, file.path)
+    return deleteProjectNotebook(project.workingDirectory, notebookPath)
   })
   ipcMain.handle('analysis:listKernels', async (_, cwd?: string) => {
     if (cwd) {

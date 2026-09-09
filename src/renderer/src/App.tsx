@@ -729,6 +729,32 @@ function App(): React.JSX.Element {
     [refreshAnalysisNotebookSessionStatus, refreshAnalysisNotebooks, rendererApi]
   )
 
+  const onDeleteAnalysisNotebook = useCallback(
+    async (file: { path: string; relativePath: string }): Promise<void> => {
+      const cwd = activeCwdRef.current
+      setAnalysisNotebookContentError(null)
+      setAnalysisNotebookSessionError(null)
+      try {
+        await rendererApi.deleteAnalysisNotebook(cwd, file.path)
+        if (activeAnalysisNotebook?.path === file.path) {
+          setActiveAnalysisNotebook(null)
+          setAnalysisNotebookSessionStatus(null)
+          setExecutingAnalysisCellId(null)
+          setAnalysisCellExecutionError(null)
+        }
+        await refreshAnalysisNotebooks()
+        setSnackbarNotice({
+          id: Date.now(),
+          severity: 'success',
+          message: `已删除 ${file.relativePath}`
+        })
+      } catch (error) {
+        setAnalysisNotebookContentError(readableErrorMessage(error, '无法删除 notebook'))
+      }
+    },
+    [activeAnalysisNotebook, refreshAnalysisNotebooks, rendererApi]
+  )
+
   const refreshAnalysisKernels = useCallback(async (): Promise<void> => {
     const request = ++analysisKernelsRequestRef.current
     const cwd = activeCwdRef.current
@@ -2038,6 +2064,9 @@ function App(): React.JSX.Element {
             }}
             onCreateNotebook={(cwd) => {
               void onCreateAnalysisNotebook(cwd)
+            }}
+            onDeleteNotebook={(file) => {
+              void onDeleteAnalysisNotebook(file)
             }}
           />
         ) : activeView === 'plugins' ? (

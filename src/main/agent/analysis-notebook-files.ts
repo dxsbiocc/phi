@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  unlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   parseNotebook,
@@ -20,6 +28,11 @@ export interface SaveProjectNotebookInput {
   path: string
   document: NotebookDocument
   expectedRevision?: string
+}
+
+export interface DeleteProjectNotebookResult {
+  path: string
+  relativePath: string
 }
 
 function displayPath(path: string): string {
@@ -225,4 +238,14 @@ export function closeProjectNotebook(
 ): { path: string } {
   const { target } = resolveExistingNotebookPath(workingDirectory, notebookPath)
   return { path: target }
+}
+
+export function deleteProjectNotebook(
+  workingDirectory: string,
+  notebookPath: string
+): DeleteProjectNotebookResult {
+  const { root, target } = resolveExistingNotebookPath(workingDirectory, notebookPath)
+  const relativePath = displayPath(relative(root, target))
+  unlinkSync(target)
+  return { path: target, relativePath }
 }

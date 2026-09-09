@@ -338,6 +338,10 @@ type RendererAuthApi = {
   ) => Promise<AnalysisNotebookFile>
   createAnalysisNotebook: (cwd: string, relativePath?: string) => Promise<AnalysisNotebookFile>
   closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
+  deleteAnalysisNotebook: (
+    cwd: string,
+    path: string
+  ) => Promise<{ path: string; relativePath: string }>
   listAnalysisKernels: (cwd?: string) => Promise<AnalysisKernelDiagnostics>
   getAnalysisJupyterStatus: (cwd: string) => Promise<JupyterServerStatus>
   startAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
@@ -478,6 +482,11 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('analysis:createNotebook', cwd, relativePath),
   closeAnalysisNotebook: (cwd: string, path: string): Promise<{ path: string }> =>
     ipcRenderer.invoke('analysis:closeNotebook', cwd, path),
+  deleteAnalysisNotebook: (
+    cwd: string,
+    path: string
+  ): Promise<{ path: string; relativePath: string }> =>
+    ipcRenderer.invoke('analysis:deleteNotebook', cwd, path),
   listAnalysisKernels: (cwd?: string): Promise<AnalysisKernelDiagnostics> =>
     ipcRenderer.invoke('analysis:listKernels', cwd),
   getAnalysisJupyterStatus: (cwd: string): Promise<JupyterServerStatus> =>

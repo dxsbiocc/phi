@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
 import {
   createProjectNotebook,
+  deleteProjectNotebook,
   openProjectNotebook,
   saveProjectNotebook
 } from '../src/main/agent/analysis-notebook-files'
@@ -103,6 +113,21 @@ test('createProjectNotebook creates unique notebooks without overwriting existin
   })
 })
 
+test('deleteProjectNotebook removes project notebooks and returns the deleted path', () => {
+  withProjectDir((root) => {
+    mkdirSync(join(root, 'notebooks'))
+    const notebookPath = join(root, 'notebooks', 'analysis.ipynb')
+    writeNotebook(notebookPath)
+    const expectedPath = realpathSync(notebookPath)
+
+    const deleted = deleteProjectNotebook(root, 'notebooks/analysis.ipynb')
+
+    assert.equal(deleted.path, expectedPath)
+    assert.equal(deleted.relativePath, 'notebooks/analysis.ipynb')
+    assert.equal(existsSync(notebookPath), false)
+  })
+})
+
 test('notebook file service blocks paths outside the project', () => {
   withProjectDir((root) => {
     const outside = mkdtempSync(join(tmpdir(), 'phi-analysis-outside-'))
@@ -116,6 +141,7 @@ test('notebook file service blocks paths outside the project', () => {
       assert.throws(() => openProjectNotebook(root, '../secret.ipynb'), /当前项目内/)
       assert.throws(() => openProjectNotebook(root, 'notebooks/link.ipynb'), /当前项目内/)
       assert.throws(() => createProjectNotebook(root, '../bad.ipynb'), /当前项目内/)
+      assert.throws(() => deleteProjectNotebook(root, 'notebooks/link.ipynb'), /当前项目内/)
       assert.throws(
         () => createProjectNotebook(root, 'notebooks/outside-dir/bad.ipynb'),
         /当前项目内/
