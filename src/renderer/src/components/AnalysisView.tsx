@@ -711,15 +711,13 @@ function NotebookHeader({
   hasDocument,
   isOpening,
   isStartingNotebookSession,
-  isInspectorCollapsed,
   notebookFile,
   draftDocument,
   notebookSessionStatus,
   onSave,
   onRefreshKernels,
   onStartNotebookSession,
-  onStopNotebookSession,
-  onToggleInspector
+  onStopNotebookSession
 }: {
   activeNotebookPath: string
   kernelLabel: string
@@ -729,7 +727,6 @@ function NotebookHeader({
   hasDocument: boolean
   isOpening: boolean
   isStartingNotebookSession?: boolean
-  isInspectorCollapsed: boolean
   notebookFile?: AnalysisNotebookFile | null
   draftDocument?: NotebookDocument | null
   notebookSessionStatus?: AnalysisNotebookSessionStatus | null
@@ -737,7 +734,6 @@ function NotebookHeader({
   onRefreshKernels?: () => void
   onStartNotebookSession?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onStopNotebookSession?: (file: AnalysisNotebookFile) => void
-  onToggleInspector: () => void
 }): React.JSX.Element {
   const hasLiveNotebookSession = Boolean(
     notebookSessionStatus?.sessionId &&
@@ -871,19 +867,47 @@ function NotebookHeader({
             <MoreIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-        <Tooltip title={isInspectorCollapsed ? '展开右侧栏' : '关闭右侧栏'}>
-          <IconButton
-            size="small"
-            color={isInspectorCollapsed ? 'default' : 'primary'}
-            aria-label={isInspectorCollapsed ? '展开右侧栏' : '关闭右侧栏'}
-            onClick={onToggleInspector}
-            sx={{ borderRadius: 1 }}
-          >
-            <PanelRight size={18} strokeWidth={1.85} />
-          </IconButton>
-        </Tooltip>
       </Stack>
     </Box>
+  )
+}
+
+function InspectorToggleButton({
+  isCollapsed,
+  onToggle
+}: {
+  isCollapsed: boolean
+  onToggle: () => void
+}): React.JSX.Element {
+  return (
+    <Tooltip title={isCollapsed ? '展开右侧栏' : '关闭右侧栏'}>
+      <IconButton
+        size="small"
+        color={isCollapsed ? 'default' : 'primary'}
+        aria-label={isCollapsed ? '展开右侧栏' : '关闭右侧栏'}
+        onClick={onToggle}
+        sx={{
+          position: 'absolute',
+          top: 8,
+          right: 8,
+          zIndex: 20,
+          borderRadius: 1.5,
+          bgcolor: (theme) =>
+            theme.palette.mode === 'dark'
+              ? alpha(theme.palette.background.paper, 0.92)
+              : alpha(theme.palette.common.white, 0.92),
+          border: 1,
+          borderColor: 'divider',
+          boxShadow: (theme) => theme.shadows[1],
+          WebkitAppRegion: 'no-drag',
+          '&:hover': {
+            bgcolor: 'background.paper'
+          }
+        }}
+      >
+        <PanelRight size={18} strokeWidth={1.85} />
+      </IconButton>
+    </Tooltip>
   )
 }
 
@@ -1096,7 +1120,6 @@ function NotebookCanvas({
   jupyterServerStatus,
   notebookSessionStatus,
   isStartingNotebookSession,
-  isInspectorCollapsed,
   notebookSessionError,
   executingCellId,
   cellExecutionError,
@@ -1104,7 +1127,6 @@ function NotebookCanvas({
   onRefreshKernels,
   onStartNotebookSession,
   onStopNotebookSession,
-  onToggleInspector,
   onRunNotebookCell
 }: {
   activeNotebookPath: string
@@ -1118,7 +1140,6 @@ function NotebookCanvas({
   jupyterServerStatus?: JupyterServerStatus | null
   notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   isStartingNotebookSession?: boolean
-  isInspectorCollapsed: boolean
   notebookSessionError?: string | null
   executingCellId?: string | null
   cellExecutionError?: string | null
@@ -1126,7 +1147,6 @@ function NotebookCanvas({
   onRefreshKernels?: () => void
   onStartNotebookSession?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onStopNotebookSession?: (file: AnalysisNotebookFile) => void
-  onToggleInspector: () => void
   onRunNotebookCell?: (
     file: AnalysisNotebookFile,
     document: NotebookDocument,
@@ -1200,7 +1220,6 @@ function NotebookCanvas({
         hasDocument={Boolean(notebookFile && draftDocument)}
         isOpening={Boolean(isOpening)}
         isStartingNotebookSession={isStartingNotebookSession}
-        isInspectorCollapsed={isInspectorCollapsed}
         notebookFile={notebookFile}
         draftDocument={draftDocument}
         notebookSessionStatus={notebookSessionStatus}
@@ -1208,7 +1227,6 @@ function NotebookCanvas({
         onRefreshKernels={onRefreshKernels}
         onStartNotebookSession={onStartNotebookSession}
         onStopNotebookSession={onStopNotebookSession}
-        onToggleInspector={onToggleInspector}
       />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: { xs: 2, md: 4 }, py: 2.5 }}>
         <Box sx={{ maxWidth: 920, mx: 'auto' }}>
@@ -1879,6 +1897,7 @@ export default function AnalysisView({
         minWidth: 0,
         height: '100vh',
         display: 'flex',
+        position: 'relative',
         overflow: 'hidden',
         bgcolor: (theme: Theme) =>
           theme.palette.mode === 'dark' ? theme.palette.background.default : '#FFFFFF'
@@ -1920,7 +1939,6 @@ export default function AnalysisView({
         jupyterServerStatus={jupyterServerStatus}
         notebookSessionStatus={notebookSessionStatus}
         isStartingNotebookSession={isStartingNotebookSession}
-        isInspectorCollapsed={inspectorCollapsed}
         notebookSessionError={notebookSessionError}
         executingCellId={executingNotebookCellId}
         cellExecutionError={notebookCellExecutionError}
@@ -1928,7 +1946,6 @@ export default function AnalysisView({
         onRefreshKernels={onRefreshKernels}
         onStartNotebookSession={onStartNotebookSession}
         onStopNotebookSession={onStopNotebookSession}
-        onToggleInspector={() => setInspectorCollapsed((value) => !value)}
         onRunNotebookCell={onRunNotebookCell}
       />
       {!inspectorCollapsed ? (
@@ -1953,6 +1970,10 @@ export default function AnalysisView({
           onStopJupyterServer={onStopJupyterServer}
         />
       ) : null}
+      <InspectorToggleButton
+        isCollapsed={inspectorCollapsed}
+        onToggle={() => setInspectorCollapsed((value) => !value)}
+      />
     </Box>
   )
 }
