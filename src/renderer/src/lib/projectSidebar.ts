@@ -2,6 +2,23 @@ import type { Project } from '../types'
 
 export type ProjectExpansionOverrides = Record<string, boolean | undefined>
 
+export function activeCwdBelongsToProject(
+  projects: Pick<Project, 'workingDirectory'>[],
+  activeCwd: string
+): boolean {
+  return projects.some((project) => project.workingDirectory === activeCwd)
+}
+
+export function orderProjectsForSessionSelection<T extends Pick<Project, 'workingDirectory'>>(
+  projects: T[],
+  activeCwd: string
+): T[] {
+  const activeProject = projects.find((project) => project.workingDirectory === activeCwd)
+  return activeProject
+    ? [activeProject, ...projects.filter((project) => project !== activeProject)]
+    : projects
+}
+
 export function expandActiveProjectId(
   expandedProjectIds: Set<string>,
   mode: 'conversations' | 'projects',

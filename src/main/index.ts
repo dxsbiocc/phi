@@ -1,5 +1,14 @@
 import './agent-env'
-import { closeSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs'
+import {
+  closeSync,
+  openSync,
+  readdirSync,
+  readSync,
+  realpathSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
+import { homedir } from 'node:os'
 import {
   app,
   shell,
@@ -10,9 +19,9 @@ import {
   nativeImage,
   nativeTheme
 } from 'electron'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { createAgentSession } from './agent/session-manager'
+import { createAgentSession } from './agent/session/session-manager'
 import { getAuthManager } from './agent/auth-manager'
 import {
   fallbackMarkdownFromDescription,
@@ -26,9 +35,12 @@ import {
   acknowledgeSession,
   createSessionManager,
   deleteSession,
+  isPhiOnlySessionPath,
   listSessions,
+  phiOnlySessionPath,
+  phiSessionIdFromPath,
   renameSession
-} from './agent/sessions'
+} from './agent/session/sessions'
 import {
   createProject,
   deleteProject,
@@ -37,9 +49,17 @@ import {
   listProjects,
   updateProjectPermissionMode,
   updateProjectDefaults,
+  updateProjectRemoteConnection,
+  updateProjectRemoteDefaults,
   type PermissionMode,
-  type ModelSelection
+  type ModelSelection,
+  type ProjectRemoteConnection
 } from './agent/projects'
+import {
+  deleteRemoteConnectionPassphrase,
+  isRemoteCredentialStorageAvailable,
+  storeRemoteConnectionPassphrase
+} from './agent/wrappers/remote-credential-store'
 import {
   cancelToolApprovals,
   createApprovalExtension,
@@ -52,9 +72,22 @@ import {
   type ModelRuntime,
   type RuntimeModel,
   type RuntimeResourceLoader
-} from './agent/runtime-adapter'
+} from './agent/runtime/runtime-adapter'
 import { installPlugin, listPlugins, removePlugin } from './agent/plugins'
 import { listMcpServers, listPromptAgents, listSkills } from './agent/resources'
+import {
+  addCustomWrapper,
+  ensureBundledWrappersInstalled,
+  listWrapperCatalog
+} from './agent/wrappers/catalog'
+import { buildWrapperReproducibilityBundle } from './agent/wrappers/reproducibility'
+import { cancelWrapperRun, cancelWrapperRunPlan, submitWrapperRunPlan } from './agent/wrappers/runs'
+import {
+  listWrapperRuns,
+  readWrapperPlan,
+  readWrapperPlanArtifact,
+  readWrapperRun
+} from './agent/wrappers/store'
 import { formatDiagnostics, type DiagnosticsSnapshot } from './agent/diagnostics'
 import { LOG_RETENTION_DAYS, cleanupOldLogs, getPhiLogDir, writeAppLog } from './agent/app-logger'
 import { redactSensitiveText } from './agent/redaction'
@@ -62,7 +95,7 @@ import {
   emptyNotebookRegistry,
   initializeProjectAnalysis,
   listProjectNotebooks
-} from './agent/analysis-notebooks'
+} from './agent/notebook/analysis-notebooks'
 import {
   closeProjectNotebook,
   createProjectNotebook,
@@ -70,23 +103,33 @@ import {
   openProjectNotebook,
   saveProjectNotebook,
   type SaveProjectNotebookInput
-} from './agent/analysis-notebook-files'
-import { detectAnalysisKernels } from './agent/analysis-kernels'
-import { JupyterServerRegistry } from './agent/analysis-jupyter-server'
-import { AnalysisNotebookExecutor } from './agent/analysis-jupyter-execution'
-import { AnalysisNotebookSessionRegistry } from './agent/analysis-jupyter-sessions'
+} from './agent/notebook/analysis-notebook-files'
+import { detectAnalysisKernels } from './agent/notebook/analysis-kernels'
+import { JupyterServerRegistry } from './agent/notebook/analysis-jupyter-server'
+import { AnalysisNotebookExecutor } from './agent/notebook/analysis-jupyter-execution'
+import { AnalysisNotebookSessionRegistry } from './agent/notebook/analysis-jupyter-sessions'
+import {
+  buildNotebookCodeGenerationPrompt,
+  generatedNotebookCellsSource,
+  notebookCellPromptContext,
+  notebookGenerationEmptyResultMessage,
+  parseGeneratedNotebookCells
+} from './agent/notebook/notebook-code-generation'
+import { AnalysisNotebookToolExecutor } from './agent/notebook/notebook-tool-executor'
+import { getOmpBridge } from './agent/omp/omp-bridge'
 import {
   isStaleSessionError,
   StaleSessionError,
   SessionLifecycle,
   type SessionLifecycleRecord,
   type SessionSnapshot
-} from './agent/session-lifecycle'
-import { SessionRunnerRegistry } from './agent/session-runner-registry'
+} from './agent/session/session-lifecycle'
+import { SessionRunnerRegistry } from './agent/session/session-runner-registry'
 import {
   appendSessionEvent,
   createPhiSession,
   createRunId,
+  findPhiSessionById,
   findPhiSessionByRuntimePath,
   persistToolOutput,
   readSessionEvents,
@@ -98,8 +141,12 @@ import {
   type StoredSessionEvent,
   type UnreadKind,
   listPhiSessions
-} from './agent/session-store'
-import { updateNotebookCell, type NotebookDocument } from '../shared/notebookDocument'
+} from './agent/session/session-store'
+import {
+  updateNotebookCell,
+  type JsonObject,
+  type NotebookDocument
+} from '../shared/notebookDocument'
 import icon from '../../resources/icon.png?asset'
 
 const APP_NAME = 'Phi'
@@ -131,6 +178,7 @@ const FILE_MEDIA_PREVIEW_BYTES_LIMIT = 10 * 1024 * 1024
 const FILE_HOVER_TEXT_BYTES_LIMIT = 32 * 1024
 const FILE_HOVER_IMAGE_BYTES_LIMIT = 2 * 1024 * 1024
 const FILE_HOVER_SNIFF_BYTES_LIMIT = 512
+const LOCAL_PATH_STAT_LIMIT = 128
 const DIRECTORY_ENTRY_LIMIT = 400
 const KIMI_CODE_REPLACEMENT_MODEL_IDS = [
   'kimi-for-coding',
@@ -204,6 +252,7 @@ type AgentSessionInstance = AgentSessionResult['session']
 type AgentSessionRecord = SessionLifecycleRecord<AgentSessionResult>
 type CurrentSessionPayload = {
   path: string | null
+  phiSessionId?: string
   cwd: string
   sessionGeneration: number
   permissionMode: PermissionMode
@@ -213,6 +262,13 @@ type CurrentSessionPayload = {
   currentRunId?: string
   currentRunStartedAt?: string
   lastActivityAt?: string
+}
+
+type PromptTargetInput = {
+  path: string | null
+  phiSessionId?: string
+  cwd: string
+  sessionGeneration?: number
 }
 
 interface PromptRun {
@@ -230,7 +286,42 @@ interface PromptRun {
   compactionReasons: Map<string, string>
   sessionPath?: string | null
   session?: AgentSessionInstance
-  done?: Promise<{ path: string | null; sessionGeneration: number } | null>
+  done?: Promise<{ path: string | null; phiSessionId?: string; sessionGeneration: number } | null>
+}
+
+type AnalysisNotebookCodeGenerationInput = {
+  prompt: string
+  language: string
+  afterCellId?: string | null
+  references?: AnalysisNotebookContextReference[]
+}
+
+type AnalysisNotebookContextReference = {
+  id: string
+  kind: 'dataframe' | 'data_source' | 'variable' | 'cell_output'
+  name: string
+  detail?: string
+  cellId?: string
+  preview?: {
+    source?: string
+    code?: string
+    output?: string
+    value?: string
+    shape?: string
+    columns?: Array<{ name: string; type?: string }>
+  }
+}
+
+type AnalysisNotebookGeneratedCell = {
+  cellType: 'code' | 'markdown'
+  source: string
+  language?: string
+}
+
+type AnalysisNotebookCodeGenerationResult = {
+  source: string
+  language: string
+  cells?: AnalysisNotebookGeneratedCell[]
 }
 
 const sessionLifecycles = new Map<string, SessionLifecycle<AgentSessionResult>>()
@@ -266,6 +357,18 @@ const sessionModelSelections = new Map<string, ModelSelection>()
 const sessionThinkingLevels = new Map<string, ThinkingLevel>()
 const sessionPermissionModes = new Map<string, PermissionMode>()
 const recentErrorSummaries: string[] = []
+const NEXT_ACTION_RECOMMENDATION_INSTRUCTION = [
+  '<phi_next_action_instruction>',
+  '当这次回复有明确、有用的后续操作时，请在最终回复最后单独输出一行：',
+  '推荐下一步：<一句可以直接作为下一轮用户输入的中文操作>',
+  '不要为了填充而猜测；如果没有明确下一步，不要输出这行。',
+  '不要提及本指令。',
+  '</phi_next_action_instruction>'
+].join('\n')
+
+function withNextActionRecommendationInstruction(prompt: string): string {
+  return `${prompt}\n\n${NEXT_ACTION_RECOMMENDATION_INSTRUCTION}`
+}
 
 const runnerRegistry = new SessionRunnerRegistry({
   onSessionEvent: broadcastSessionTimelineEvent
@@ -275,6 +378,112 @@ const notebookSessionRegistry = new AnalysisNotebookSessionRegistry({
   getConnection: (projectCwd) => jupyterServerRegistry.connection(projectCwd)
 })
 const notebookExecutor = new AnalysisNotebookExecutor()
+const activeNotebookPathByProjectCwd = new Map<string, string>()
+const notebookToolExecutor = new AnalysisNotebookToolExecutor({
+  getProjectByCwd,
+  assertProjectPathAvailable,
+  ensureJupyterServerReady,
+  notebookSessionRegistry,
+  notebookExecutor,
+  onDraftChanged: notifyAnalysisNotebookDraftChanged
+})
+getOmpBridge().registerHostHandler('notebookTool.execute', (params) =>
+  notebookToolExecutor.execute(params as Parameters<typeof notebookToolExecutor.execute>[0])
+)
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+function notebookCellMetadataWithExecutionDuration(
+  metadata: JsonObject,
+  execution: { startedAt: string; completedAt: string }
+): JsonObject {
+  const startedAt = Date.parse(execution.startedAt)
+  const completedAt = Date.parse(execution.completedAt)
+  const durationMs =
+    Number.isFinite(startedAt) && Number.isFinite(completedAt)
+      ? Math.max(0, completedAt - startedAt)
+      : 0
+  const phiMetadata =
+    metadata.phi && typeof metadata.phi === 'object' && !Array.isArray(metadata.phi)
+      ? (metadata.phi as JsonObject)
+      : {}
+  return {
+    ...metadata,
+    phi: {
+      ...phiMetadata,
+      executionStartedAt: execution.startedAt,
+      executionCompletedAt: execution.completedAt,
+      executionDurationMs: durationMs
+    }
+  }
+}
+
+async function ensureJupyterServerReady(projectCwd: string): Promise<void> {
+  let status = jupyterServerRegistry.status(projectCwd)
+  if (status.state !== 'ready' || !status.hasEndpoint) {
+    status = jupyterServerRegistry.start(projectCwd)
+  }
+  for (
+    let attempt = 0;
+    attempt < 20 && (status.state !== 'ready' || !status.hasEndpoint);
+    attempt += 1
+  ) {
+    if (status.state === 'error' || status.state === 'exited' || status.state === 'stopped') {
+      break
+    }
+    await delay(250)
+    status = jupyterServerRegistry.status(projectCwd)
+  }
+  if (status.state !== 'ready' || !status.hasEndpoint) {
+    throw new Error(status.message ?? 'Jupyter Server 尚未就绪')
+  }
+}
+
+function notebookAgentRuntimePrompt(projectCwd: string): string | null {
+  const project = getProjectByCwd(projectCwd)
+  if (!project) return null
+
+  const status = jupyterServerRegistry.status(project.workingDirectory)
+  const activeNotebookPath = activeNotebookPathByProjectCwd.get(project.workingDirectory)
+  const registry = listProjectNotebooks(project.workingDirectory, {
+    maxDepth: 4,
+    maxEntries: 600,
+    maxNotebooks: 12
+  })
+  const notebooks = registry.notebooks
+    .map((notebook) => {
+      const marker = notebook.path === activeNotebookPath ? ' (active)' : ''
+      return `- ${notebook.relativePath}${marker}`
+    })
+    .join('\n')
+
+  return [
+    '<phi_notebook_runtime>',
+    'This Phi project can operate .ipynb notebooks through the built-in notebook.* tools.',
+    'When the user asks to read, edit, save, or run a notebook, use notebook.list/read/insert_cell/update_cell/delete_cell/run_cell/save instead of shell-editing the .ipynb JSON by default.',
+    'Notebook execution must use the Phi app-managed Jupyter Server registered for this project. Do not assume, probe, or instruct the user to restart JupyterLab on localhost:8888.',
+    `Project: ${project.name ?? project.workingDirectory}`,
+    `Project cwd: ${project.workingDirectory}`,
+    activeNotebookPath
+      ? `Active notebook: ${relative(project.workingDirectory, activeNotebookPath).split(sep).join('/')}`
+      : 'Active notebook: none selected',
+    `Jupyter server: ${status.state}${status.hasEndpoint ? `, app-managed port ${status.port ?? 'unknown'}` : ', no endpoint yet; notebook.run_cell may start or attach it'}`,
+    registry.notebooks.length > 0
+      ? `Project notebooks:\n${notebooks}`
+      : 'Project notebooks: none found',
+    registry.truncated
+      ? 'Project notebooks list is truncated; call notebook.list for the full tool view.'
+      : '',
+    'If notebook.run_cell returns an error, report that tool error directly and do not invent an external JupyterLab port workaround.',
+    '</phi_notebook_runtime>'
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
 
 function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEvent): void {
   const run = [...activePromptRuns.values()].find((item) => item.phiSessionId === sessionId)
@@ -315,14 +524,38 @@ async function settledValue<T>(fallback: T, load: () => Promise<T> | T): Promise
 function extractAssistantText(message: unknown): string {
   if (!message || typeof message !== 'object') return ''
   const record = message as { role?: string; content?: unknown }
-  if (record.role !== 'assistant' || !Array.isArray(record.content)) return ''
+  if (record.role !== 'assistant') return ''
 
-  return record.content
+  return extractMessageText(record.content)
+}
+
+function extractMessageText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) {
+    if (!content || typeof content !== 'object') return ''
+    const record = content as { text?: unknown; content?: unknown; type?: unknown }
+    if (
+      (record.type === 'text' || record.type === 'output_text' || record.type === 'input_text') &&
+      typeof record.text === 'string'
+    ) {
+      return record.text
+    }
+    return extractMessageText(record.content)
+  }
+
+  return content
     .map((part) => {
-      if (part && typeof part === 'object' && (part as { type?: string }).type === 'text') {
-        return (part as { text?: string }).text ?? ''
+      if (typeof part === 'string') return part
+      if (!part || typeof part !== 'object') return ''
+      const item = part as { type?: string; text?: unknown; content?: unknown }
+      if (
+        (item.type === 'text' || item.type === 'output_text' || item.type === 'input_text') &&
+        typeof item.text === 'string'
+      ) {
+        return item.text
       }
-      return ''
+      if (typeof item.text === 'string' && item.type === undefined) return item.text
+      return extractMessageText(item.content)
     })
     .join('')
 }
@@ -386,6 +619,70 @@ function extractToolText(value: unknown): string {
     }
   }
   return value == null ? '' : String(value)
+}
+
+function isNotebookToolName(toolName: unknown): boolean {
+  return typeof toolName === 'string' && toolName.startsWith('notebook.')
+}
+
+function detailsFromToolResult(result: unknown): unknown {
+  if (!result || typeof result !== 'object') return undefined
+  return (result as { details?: unknown }).details
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key]
+  return typeof value === 'string' && value ? value : undefined
+}
+
+function numberOrNullField(
+  record: Record<string, unknown>,
+  key: string
+): number | null | undefined {
+  const value = record[key]
+  if (value === null) return null
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function notebookToolDetailsFromResult(result: unknown): Record<string, unknown> | undefined {
+  const details = detailsFromToolResult(result)
+  if (!details || typeof details !== 'object') return undefined
+  const record = details as Record<string, unknown>
+  const kind = stringField(record, 'kind')
+  if (!kind || !kind.startsWith('notebook_')) return undefined
+
+  const cell =
+    record.cell && typeof record.cell === 'object' ? (record.cell as Record<string, unknown>) : null
+  const execution =
+    record.execution && typeof record.execution === 'object'
+      ? (record.execution as Record<string, unknown>)
+      : null
+
+  return {
+    kind,
+    ...(stringField(record, 'path') ? { path: stringField(record, 'path') } : {}),
+    ...(stringField(record, 'relativePath')
+      ? { relativePath: stringField(record, 'relativePath') }
+      : {}),
+    ...((stringField(record, 'cellId') ?? (cell ? stringField(cell, 'id') : undefined))
+      ? { cellId: stringField(record, 'cellId') ?? (cell ? stringField(cell, 'id') : undefined) }
+      : {}),
+    ...((stringField(record, 'cellType') ??
+    (cell ? (stringField(cell, 'cellType') ?? stringField(cell, 'cell_type')) : undefined))
+      ? {
+          cellType:
+            stringField(record, 'cellType') ??
+            (cell ? (stringField(cell, 'cellType') ?? stringField(cell, 'cell_type')) : undefined)
+        }
+      : {}),
+    ...(execution && stringField(execution, 'state')
+      ? { executionState: stringField(execution, 'state') }
+      : {}),
+    ...(execution && numberOrNullField(execution, 'executionCount') !== undefined
+      ? { executionCount: numberOrNullField(execution, 'executionCount') }
+      : {}),
+    ...(stringField(record, 'summary') ? { summary: stringField(record, 'summary') } : {})
+  }
 }
 
 function persistCompletedThinkingBlocks(run: PromptRun, summary: Record<string, unknown>): void {
@@ -539,6 +836,9 @@ function persistSessionEvent(
   }
 
   const output = extractToolText(summary.result)
+  const notebookDetails = isNotebookToolName(summary.toolName)
+    ? notebookToolDetailsFromResult(summary.result)
+    : undefined
   const persisted = persistToolOutput(run.phiSessionId, {
     runId: run.runId,
     toolCallId: summary.toolCallId,
@@ -555,6 +855,7 @@ function persistSessionEvent(
     output: persisted.outputPreview,
     outputBytes: persisted.outputBytes,
     outputTruncated: persisted.truncated,
+    ...(notebookDetails ? { details: notebookDetails } : {}),
     ...(persisted.outputPath ? { outputPath: persisted.outputPath } : {}),
     ...(persisted.outputArtifact ? { outputArtifact: persisted.outputArtifact } : {})
   })
@@ -577,13 +878,32 @@ function readPhiTimelineMessages(
   cwd: string,
   phiSessionId?: string
 ): unknown[] {
-  const manifest = phiSessionId
-    ? (listPhiSessions().find((session) => session.sessionId === phiSessionId) ?? null)
-    : runtimeSessionPath
-      ? findPhiSessionByRuntimePath(runtimeSessionPath, cwd)
-      : null
-  if (!manifest) return []
-  const events = readSessionEvents(manifest.sessionId)
+  const manifestsById = new Map<string, PhiSessionManifest>()
+  if (runtimeSessionPath) {
+    for (const manifest of listPhiSessions()) {
+      if (manifest.cwd === cwd && manifest.runtimeSessionPath === runtimeSessionPath) {
+        manifestsById.set(manifest.sessionId, manifest)
+      }
+    }
+  }
+  if (phiSessionId) {
+    const manifest = listPhiSessions().find((session) => session.sessionId === phiSessionId)
+    if (manifest) {
+      manifestsById.set(manifest.sessionId, manifest)
+    }
+  } else if (runtimeSessionPath && manifestsById.size === 0) {
+    const manifest = findPhiSessionByRuntimePath(runtimeSessionPath, cwd)
+    if (manifest) {
+      manifestsById.set(manifest.sessionId, manifest)
+    }
+  }
+  const manifests = [...manifestsById.values()].sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt)
+  )
+  if (manifests.length === 0) return []
+  const events = manifests
+    .flatMap((manifest) => readSessionEvents(manifest.sessionId))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
   const hasPhiText = events.some(
     (event) => event.type === 'user_message' || event.type === 'assistant_message_finalized'
   )
@@ -600,6 +920,10 @@ function createSessionKey(
   freshId = freshSessionCounter
 ): string {
   return path ? `path:${path}` : `fresh:${cwd}:${freshId}`
+}
+
+function createPhiSessionKey(sessionId: string, cwd: string): string {
+  return createSessionKey(phiOnlySessionPath(sessionId), cwd)
 }
 
 function resolveSessionKeyAlias(sessionKey: string): string {
@@ -626,6 +950,19 @@ function aliasSessionKey(aliasKey: string, canonicalKey: string): void {
 
 function aliasMaterializedSessionPath(sessionKey: string, path: string, cwd: string): void {
   aliasSessionKey(createSessionKey(path, cwd), sessionKey)
+}
+
+function linkPhiManagedSessionKey(sessionKey: string, cwd: string, phiSessionId: string): string {
+  const stablePath = phiOnlySessionPath(phiSessionId)
+  const stableKey = createPhiSessionKey(phiSessionId, cwd)
+  aliasSessionKey(stableKey, sessionKey)
+  setPhiSessionIdForKey(sessionKey, phiSessionId)
+  setPhiSessionIdForKey(stableKey, phiSessionId)
+  if (sameCanonicalSessionKey(sessionKey, currentSessionKey)) {
+    currentSessionPath = stablePath
+    currentSessionKey = stableKey
+  }
+  return stablePath
 }
 
 function sameCanonicalSessionKey(left: string, right: string): boolean {
@@ -657,6 +994,49 @@ function getPhiSessionIdForKey(sessionKey: string): string | undefined {
 
 function setPhiSessionIdForKey(sessionKey: string, sessionId: string): void {
   phiSessionIdsByKey.set(resolveSessionKeyAlias(sessionKey), sessionId)
+}
+
+function updatePhiRuntimeSessionPath(sessionId: string, path: string): void {
+  const manifest = findPhiSessionById(sessionId)
+  if (manifest?.runtimeSessionPath === path) return
+  updateSessionManifest(sessionId, { runtimeSessionPath: path })
+}
+
+function linkMaterializedRuntimeSessionPath(
+  sessionKey: string,
+  cwd: string,
+  sessionFile: string | undefined,
+  phiSessionId?: string
+): void {
+  const path = runtimeSessionPath(sessionFile)
+  if (!path) return
+
+  const materializedKey = createSessionKey(path, cwd)
+  aliasMaterializedSessionPath(sessionKey, path, cwd)
+  if (phiSessionId) {
+    setPhiSessionIdForKey(sessionKey, phiSessionId)
+    setPhiSessionIdForKey(materializedKey, phiSessionId)
+    updatePhiRuntimeSessionPath(phiSessionId, path)
+  }
+  if (phiSessionId) {
+    linkPhiManagedSessionKey(sessionKey, cwd, phiSessionId)
+    return
+  }
+  if (sameCanonicalSessionKey(sessionKey, currentSessionKey)) {
+    currentSessionKey = materializedKey
+  }
+}
+
+function linkPromptRunRuntimeSessionPath(
+  sessionKey: string,
+  cwd: string,
+  promptRun: PromptRun,
+  session: AgentSessionInstance
+): void {
+  const path = runtimeSessionPath(session.sessionFile)
+  if (!path) return
+  promptRun.sessionPath = phiOnlySessionPath(promptRun.phiSessionId)
+  linkMaterializedRuntimeSessionPath(sessionKey, cwd, path, promptRun.phiSessionId)
 }
 
 function getCurrentLifecycle(): SessionLifecycle<AgentSessionResult> {
@@ -709,7 +1089,104 @@ function findPhiManifestForSession(
   if (phiSessionId) {
     return listPhiSessions().find((manifest) => manifest.sessionId === phiSessionId) ?? null
   }
-  return path ? findPhiSessionByRuntimePath(path, cwd) : null
+  if (!path) return null
+  const phiOnlySessionId = phiSessionIdFromPath(path)
+  return phiOnlySessionId
+    ? findPhiSessionById(phiOnlySessionId)
+    : findPhiSessionByRuntimePath(path, cwd)
+}
+
+function runtimeSessionPath(path: string | undefined): string | undefined {
+  return isPhiOnlySessionPath(path) ? undefined : path
+}
+
+function runtimeSessionPathForSnapshot(
+  sessionKey: string,
+  snapshot: SessionSnapshot
+): string | undefined {
+  return (
+    findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)?.runtimeSessionPath ??
+    runtimeSessionPath(snapshot.path)
+  )
+}
+
+function uiSessionPathForKey(sessionKey: string, fallbackPath: string | undefined): string | null {
+  const phiSessionId = getPhiSessionIdForKey(sessionKey)
+  return phiSessionId ? phiOnlySessionPath(phiSessionId) : (fallbackPath ?? null)
+}
+
+function parsePromptTarget(input: unknown): PromptTargetInput | null {
+  if (!input || typeof input !== 'object') return null
+  const record = input as Record<string, unknown>
+  const path = record.path === null ? null : typeof record.path === 'string' ? record.path : null
+  const phiSessionId = typeof record.phiSessionId === 'string' ? record.phiSessionId : undefined
+  const cwd = typeof record.cwd === 'string' && record.cwd.trim() ? record.cwd : currentCwd
+  return {
+    path,
+    ...(phiSessionId ? { phiSessionId } : {}),
+    cwd,
+    ...(typeof record.sessionGeneration === 'number'
+      ? { sessionGeneration: record.sessionGeneration }
+      : {})
+  }
+}
+
+async function alignCurrentSessionToPromptTarget(input: unknown): Promise<void> {
+  const target = parsePromptTarget(input)
+  if (!target) return
+
+  if (target.phiSessionId) {
+    const manifest = findPhiSessionById(target.phiSessionId)
+    if (!manifest) throw new Error('会话不存在或已被删除')
+    const stablePath = phiOnlySessionPath(manifest.sessionId)
+    const targetKey = createPhiSessionKey(manifest.sessionId, manifest.cwd)
+    linkPhiManagedSessionKey(targetKey, manifest.cwd, manifest.sessionId)
+    sessionPermissionModes.set(resolveSessionKeyAlias(targetKey), manifest.permissionMode)
+    const generationMatches =
+      typeof target.sessionGeneration !== 'number' ||
+      target.sessionGeneration === getLifecycleForKey(targetKey).currentGeneration
+    if (currentSessionPath === stablePath && currentCwd === manifest.cwd && generationMatches) {
+      return
+    }
+    await disposeAndSwitchSession(stablePath, manifest.cwd, manifest.permissionMode, {
+      notify: false
+    })
+    return
+  }
+
+  if (target.path === null) {
+    const generationMatches =
+      typeof target.sessionGeneration !== 'number' ||
+      target.sessionGeneration === getCurrentLifecycle().currentGeneration
+    if (currentSessionPath === undefined && currentCwd === target.cwd && generationMatches) return
+    throw new Error('当前会话已切换，请重新发送')
+  }
+
+  const phiOnlySessionId = phiSessionIdFromPath(target.path)
+  if (phiOnlySessionId) {
+    const manifest = findPhiSessionById(phiOnlySessionId)
+    if (!manifest) throw new Error('会话不存在或已被删除')
+    const targetKey = createSessionKey(target.path, manifest.cwd)
+    setPhiSessionIdForKey(targetKey, phiOnlySessionId)
+    sessionPermissionModes.set(resolveSessionKeyAlias(targetKey), manifest.permissionMode)
+    if (currentSessionPath !== target.path || currentCwd !== manifest.cwd) {
+      await disposeAndSwitchSession(target.path, manifest.cwd, manifest.permissionMode, {
+        notify: false
+      })
+    }
+    return
+  }
+
+  if (currentSessionPath === target.path) {
+    return
+  }
+
+  const cwd = (await openRuntimeSessionManager(target.path)).getCwd()
+  const targetKey = createSessionKey(target.path, cwd)
+  const permissionMode = resolveSessionPermissionMode(targetKey, { path: target.path, cwd })
+  if (currentSessionPath !== target.path || currentCwd !== cwd) {
+    await disposeAndSwitchSession(target.path, cwd, permissionMode, { notify: false })
+  }
 }
 
 function getSessionStatusPayload(
@@ -759,7 +1236,7 @@ function resolveSessionModelSelection(
   if (sessionModelSelections.has(canonicalKey)) {
     return sessionModelSelections.get(canonicalKey) ?? null
   }
-  const manifest = snapshot.path ? findPhiSessionByRuntimePath(snapshot.path, snapshot.cwd) : null
+  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
   return manifest?.model ?? getProjectByCwd(snapshot.cwd)?.defaultModel ?? selectedModel
 }
 
@@ -768,7 +1245,7 @@ function resolveSessionThinkingLevel(sessionKey: string, snapshot: SessionSnapsh
   if (sessionThinkingLevels.has(canonicalKey)) {
     return sessionThinkingLevels.get(canonicalKey) ?? selectedThinkingLevel
   }
-  const manifest = snapshot.path ? findPhiSessionByRuntimePath(snapshot.path, snapshot.cwd) : null
+  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
   return (
     manifest?.thinkingLevel ??
     getProjectByCwd(snapshot.cwd)?.defaultThinkingLevel ??
@@ -784,7 +1261,7 @@ function resolveSessionPermissionMode(
   if (sessionPermissionModes.has(canonicalKey)) {
     return sessionPermissionModes.get(canonicalKey) ?? 'auto'
   }
-  const manifest = snapshot.path ? findPhiSessionByRuntimePath(snapshot.path, snapshot.cwd) : null
+  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
   return manifest?.permissionMode ?? getProjectByCwd(snapshot.cwd)?.permissionMode ?? 'auto'
 }
 
@@ -794,7 +1271,15 @@ function ensurePhiSessionId(
   title?: string
 ): string {
   const existing = getPhiSessionIdForKey(sessionKey)
-  if (existing) return existing
+  if (existing) {
+    linkPhiManagedSessionKey(sessionKey, snapshot.cwd, existing)
+    return existing
+  }
+  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
+  if (manifest) {
+    linkPhiManagedSessionKey(sessionKey, manifest.cwd, manifest.sessionId)
+    return manifest.sessionId
+  }
 
   const project = getProjectByCwd(snapshot.cwd)
   const model = resolveSessionModelSelection(sessionKey, snapshot)
@@ -804,12 +1289,37 @@ function ensurePhiSessionId(
     cwd: snapshot.cwd,
     cwdRealPath: project?.workingDirectoryRealPath ?? snapshot.cwd,
     ...(title ? { title } : {}),
+    ...(runtimeSessionPath(snapshot.path) ? { runtimeSessionPath: snapshot.path } : {}),
     permissionMode: snapshot.permissionMode,
     ...(model ? { model } : {}),
     thinkingLevel: resolveSessionThinkingLevel(sessionKey, snapshot)
   })
-  setPhiSessionIdForKey(sessionKey, session.sessionId)
+  linkPhiManagedSessionKey(sessionKey, snapshot.cwd, session.sessionId)
   return session.sessionId
+}
+
+function createPhiManagedSession(
+  cwd: string,
+  permissionMode: PermissionMode,
+  title?: string
+): { path: string; sessionId: string; permissionMode: PermissionMode } {
+  const project = getProjectByCwd(cwd)
+  const model = project?.defaultModel ?? selectedModel
+  const session = createPhiSession({
+    kind: cwd === WORKSPACE_DIR ? 'ordinary' : 'project',
+    projectId: project?.id ?? null,
+    cwd,
+    cwdRealPath: project?.workingDirectoryRealPath ?? cwd,
+    ...(title ? { title } : {}),
+    permissionMode,
+    ...(model ? { model } : {}),
+    thinkingLevel: project?.defaultThinkingLevel ?? selectedThinkingLevel
+  })
+  const path = phiOnlySessionPath(session.sessionId)
+  const key = createPhiSessionKey(session.sessionId, cwd)
+  linkPhiManagedSessionKey(key, cwd, session.sessionId)
+  sessionPermissionModes.set(resolveSessionKeyAlias(key), permissionMode)
+  return { path, sessionId: session.sessionId, permissionMode }
 }
 
 // Turns a free-text description of the desired assistant into a persona markdown file
@@ -851,6 +1361,73 @@ async function generatePersonaMarkdown(description: string): Promise<string> {
   }
 }
 
+async function generateAnalysisNotebookCode(
+  cwd: string,
+  notebookPath: string,
+  document: NotebookDocument,
+  input: AnalysisNotebookCodeGenerationInput
+): Promise<AnalysisNotebookCodeGenerationResult> {
+  const prompt = input.prompt.trim()
+  if (!prompt) {
+    throw new Error('请输入要生成的代码需求')
+  }
+
+  const project = getProjectByCwd(cwd)
+  if (!project) {
+    throw new Error('请选择一个已添加的项目')
+  }
+  assertProjectPathAvailable(project.workingDirectory)
+  const file = openProjectNotebook(project.workingDirectory, notebookPath)
+  const runtime = await getAuthManager().getRuntime()
+  const modelSelection = project.defaultModel ?? selectedModel
+  const resolvedModel = modelSelection
+    ? resolveRuntimeModelSelection(runtime, modelSelection)
+    : null
+  if (modelSelection && !resolvedModel) {
+    throw new Error(`模型不可用: ${modelSelectionLabel(modelSelection)}`)
+  }
+  const { insertionIndex, nearbyContext, otherCellContext } = notebookCellPromptContext(
+    document,
+    input.afterCellId
+  )
+  const language = input.language || 'python'
+  const { session } = await createAgentSession({
+    modelRuntime: runtime,
+    cwd: project.workingDirectory,
+    noTools: 'all',
+    thinkingLevel: project.defaultThinkingLevel ?? selectedThinkingLevel,
+    sessionManager: createInMemoryRuntimeSessionManager(project.workingDirectory),
+    ...(resolvedModel ? { model: resolvedModel.model } : {})
+  })
+
+  try {
+    await session.prompt(
+      buildNotebookCodeGenerationPrompt({
+        language,
+        notebookPath: file.relativePath,
+        insertionIndex,
+        references: input.references,
+        userPrompt: prompt,
+        nearbyContext,
+        otherCellContext
+      })
+    )
+
+    const lastAssistantMessage = [...session.messages].reverse().find((message) => {
+      const record = message as { role?: string }
+      return record.role === 'assistant'
+    })
+    const assistantText = extractAssistantText(lastAssistantMessage)
+    const cells = parseGeneratedNotebookCells(assistantText, language)
+    if (cells.length === 0) {
+      throw new Error(notebookGenerationEmptyResultMessage(assistantText))
+    }
+    return { source: generatedNotebookCellsSource(cells), language, cells }
+  } finally {
+    await session.dispose()
+  }
+}
+
 function getActiveWindow(): BrowserWindow | null {
   return (
     BrowserWindow.getFocusedWindow() ??
@@ -867,15 +1444,51 @@ function notifyToolApprovalsCancelled(): void {
   }
 }
 
-function isLocalFilePathAllowed(target: string): boolean {
+function notifyAnalysisNotebookDraftChanged(change: {
+  source: string
+  projectCwd: string
+  path: string
+  relativePath: string
+  document: NotebookDocument
+  savedRevision: string
+  changeKind?: string
+  changedCellId?: string
+  focusCellId?: string
+}): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send('analysis:notebookDraftChanged', change)
+    }
+  }
+}
+
+type LocalPathScope = {
+  cwd: string
+  cwdRealPath?: string
+}
+
+function isPathInsideRoot(root: string, target: string): boolean {
+  const relativePath = relative(resolve(root), target)
+  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))
+}
+
+function currentLocalPathScope(): LocalPathScope {
+  const project = getProjectByCwd(currentCwd)
+  return {
+    cwd: currentCwd,
+    ...(project?.workingDirectoryRealPath ? { cwdRealPath: project.workingDirectoryRealPath } : {})
+  }
+}
+
+function isLocalFilePathAllowed(
+  target: string,
+  scope: LocalPathScope = currentLocalPathScope()
+): boolean {
   const agentDir = resolve(AGENT_DIR)
-  const cwd = resolve(currentCwd)
-  const relativeAgentPath = relative(agentDir, target)
-  const relativeCwdPath = relative(cwd, target)
-  return (
-    (!relativeAgentPath.startsWith('..') && !isAbsolute(relativeAgentPath)) ||
-    (!relativeCwdPath.startsWith('..') && !isAbsolute(relativeCwdPath))
+  const roots = [agentDir, scope.cwd, scope.cwdRealPath].filter(
+    (root): root is string => typeof root === 'string' && root.length > 0
   )
+  return roots.some((root) => isPathInsideRoot(root, target))
 }
 
 function getLocalPathScope(target: string): {
@@ -927,6 +1540,67 @@ function assertLocalFilePathAllowed(
 
 function assertRevealPathAllowed(filePath: string): string {
   return assertLocalFilePathAllowed(filePath, '显示')
+}
+
+type LocalPathStatPayload = {
+  path: string
+  kind: 'file' | 'directory' | 'missing'
+}
+
+function localPathStatScope(cwd: unknown): LocalPathScope | null {
+  const rawCwd = typeof cwd === 'string' && cwd.trim() ? cwd : currentCwd
+  const requestedCwd = resolve(rawCwd)
+  if (requestedCwd === resolve(currentCwd)) return currentLocalPathScope()
+
+  const project = getProjectByCwd(rawCwd)
+  if (!project) return null
+
+  try {
+    assertProjectPathAvailable(project.workingDirectory)
+  } catch {
+    return null
+  }
+
+  return {
+    cwd: project.workingDirectory,
+    cwdRealPath: project.workingDirectoryRealPath
+  }
+}
+
+function missingLocalPathStats(paths: string[]): LocalPathStatPayload[] {
+  return paths.map((path) => ({ path, kind: 'missing' as const }))
+}
+
+function statLocalPath(filePath: string, scope: LocalPathScope): LocalPathStatPayload {
+  const missing = { path: filePath, kind: 'missing' as const }
+  if (typeof filePath !== 'string' || !isAbsolute(filePath)) return missing
+
+  const target = resolve(filePath)
+  if (!isLocalFilePathAllowed(target, scope)) return missing
+
+  try {
+    const realTarget = realpathSync(target)
+    if (!isLocalFilePathAllowed(realTarget, scope)) return missing
+
+    const stats = statSync(realTarget)
+    if (stats.isDirectory()) return { path: target, kind: 'directory' }
+    if (stats.isFile()) return { path: target, kind: 'file' }
+  } catch {
+    return missing
+  }
+
+  return missing
+}
+
+function statLocalPaths(cwd: unknown, paths: unknown): LocalPathStatPayload[] {
+  if (!Array.isArray(paths)) return []
+
+  const uniquePaths = [...new Set(paths.filter((path): path is string => typeof path === 'string'))]
+  const limitedPaths = uniquePaths.slice(0, LOCAL_PATH_STAT_LIMIT)
+  const scope = localPathStatScope(cwd)
+  if (!scope) return missingLocalPathStats(limitedPaths)
+
+  return limitedPaths.map((path) => statLocalPath(path, scope))
 }
 
 function readFilePreviewBytes(target: string, bytesToRead: number): Buffer {
@@ -1382,13 +2056,35 @@ async function getCurrentResolvedSession(): Promise<AgentSessionResult | null> {
   }
 }
 
+async function getCurrentResolvedSessionIfReady(): Promise<AgentSessionResult | null> {
+  const lifecycle = getCurrentLifecycle()
+  const record = lifecycle.currentRecord
+  if (!record) return null
+
+  const pending = Symbol('pending')
+  try {
+    const result = await Promise.race([record.promise, Promise.resolve(pending)])
+    if (result === pending) return null
+    return lifecycle.isCurrent(record) ? result : null
+  } catch (error) {
+    if (!isStaleSessionError(error)) {
+      throw error
+    }
+    return null
+  }
+}
+
 function getCurrentSessionPayload(): CurrentSessionPayload {
   currentPermissionMode = resolveSessionPermissionMode(currentSessionKey, {
     path: currentSessionPath,
     cwd: currentCwd
   })
+  const manifest = findPhiManifestForSession(currentSessionKey, currentSessionPath, currentCwd)
+  const phiSessionId = manifest?.sessionId ?? getPhiSessionIdForKey(currentSessionKey)
+  const path = phiSessionId ? phiOnlySessionPath(phiSessionId) : (currentSessionPath ?? null)
   return {
-    path: currentSessionPath ?? null,
+    path,
+    ...(phiSessionId ? { phiSessionId } : {}),
     cwd: currentCwd,
     sessionGeneration: getCurrentLifecycle().currentGeneration,
     permissionMode: currentPermissionMode,
@@ -1402,12 +2098,16 @@ async function getCurrentSessionPayloadWithMessages(): Promise<
   }
 > {
   const payload = getCurrentSessionPayload()
-  const phiSessionId = getPhiSessionIdForKey(currentSessionKey)
+  const phiSessionId = payload.phiSessionId ?? getPhiSessionIdForKey(currentSessionKey)
   if (!payload.path && !phiSessionId) {
     return { ...payload, messages: [] }
   }
 
-  const current = payload.path ? await getCurrentResolvedSession() : null
+  const current = payload.path
+    ? phiSessionId
+      ? await getCurrentResolvedSessionIfReady()
+      : await getCurrentResolvedSession()
+    : null
   return {
     ...payload,
     messages: [
@@ -1649,10 +2349,12 @@ async function getAgentSession(
           updateSessionManifest(phiSessionId, { model: resolvedModel.selection })
           const targetWindow = getActiveWindow()
           if (targetWindow && !targetWindow.isDestroyed()) {
+            const sessionPath = uiSessionPathForKey(sessionKey, creationSnapshot.path)
             targetWindow.webContents.send('agent:event', {
               ...stored,
+              phiSessionId,
               sessionGeneration: generation,
-              sessionPath: creationSnapshot.path ?? null,
+              sessionPath,
               cwd: creationSnapshot.cwd
             })
           }
@@ -1666,47 +2368,53 @@ async function getAgentSession(
       )
 
       let resourceLoader: RuntimeResourceLoader | undefined
-      if (creationSnapshot.permissionMode === 'ask') {
+      const notebookPrompt = notebookAgentRuntimePrompt(creationSnapshot.cwd)
+      const extensionFactories =
+        creationSnapshot.permissionMode === 'ask'
+          ? [
+              createApprovalExtension({
+                signal: sessionAbortController.signal,
+                getContext: () => {
+                  const run = getActivePromptRun(sessionKey)
+                  if (!run) return null
+                  const project = getProjectByCwd(creationSnapshot.cwd)
+                  return {
+                    sessionId: run.phiSessionId,
+                    sessionPath: phiOnlySessionPath(run.phiSessionId),
+                    sessionGeneration: run.sessionGeneration,
+                    runId: run.runId,
+                    cwd: creationSnapshot.cwd,
+                    ...(project?.name ? { projectName: project.name } : {})
+                  }
+                },
+                onApprovalRequested: (request) => {
+                  if (!request.sessionId) return
+                  runnerRegistry.markNeedsApproval(request.sessionId, request.requestId, {
+                    toolName: request.toolName,
+                    summary: request.summary
+                  })
+                },
+                onApprovalResolved: (request, approved) => {
+                  if (!request.sessionId) return
+                  if (approved) {
+                    runnerRegistry.markApprovalApproved(request.sessionId, request.requestId)
+                  } else {
+                    runnerRegistry.markApprovalDenied(request.sessionId, request.requestId)
+                  }
+                },
+                onApprovalCancelled: (request) => {
+                  if (!request.sessionId) return
+                  runnerRegistry.markApprovalCancelled(request.sessionId, request.requestId)
+                }
+              })
+            ]
+          : []
+      if (notebookPrompt || extensionFactories.length > 0) {
         resourceLoader = createRuntimeResourceLoader({
           cwd: creationSnapshot.cwd,
           agentDir: AGENT_DIR,
-          extensionFactories: [
-            createApprovalExtension({
-              signal: sessionAbortController.signal,
-              getContext: () => {
-                const run = getActivePromptRun(sessionKey)
-                if (!run) return null
-                const project = getProjectByCwd(creationSnapshot.cwd)
-                return {
-                  sessionId: run.phiSessionId,
-                  ...(run.session?.sessionFile ? { sessionPath: run.session.sessionFile } : {}),
-                  sessionGeneration: run.sessionGeneration,
-                  runId: run.runId,
-                  cwd: creationSnapshot.cwd,
-                  ...(project?.name ? { projectName: project.name } : {})
-                }
-              },
-              onApprovalRequested: (request) => {
-                if (!request.sessionId) return
-                runnerRegistry.markNeedsApproval(request.sessionId, request.requestId, {
-                  toolName: request.toolName,
-                  summary: request.summary
-                })
-              },
-              onApprovalResolved: (request, approved) => {
-                if (!request.sessionId) return
-                if (approved) {
-                  runnerRegistry.markApprovalApproved(request.sessionId, request.requestId)
-                } else {
-                  runnerRegistry.markApprovalDenied(request.sessionId, request.requestId)
-                }
-              },
-              onApprovalCancelled: (request) => {
-                if (!request.sessionId) return
-                runnerRegistry.markApprovalCancelled(request.sessionId, request.requestId)
-              }
-            })
-          ]
+          ...(notebookPrompt ? { appendSystemPrompt: [notebookPrompt] } : {}),
+          ...(extensionFactories.length > 0 ? { extensionFactories } : {})
         })
         await resourceLoader.reload()
       }
@@ -1718,31 +2426,30 @@ async function getAgentSession(
         modelRuntime: runtime,
         thinkingLevel,
         cwd: creationSnapshot.cwd,
-        sessionManager: createSessionManager(creationSnapshot.cwd, creationSnapshot.path),
+        sessionManager: createSessionManager(
+          creationSnapshot.cwd,
+          runtimeSessionPathForSnapshot(sessionKey, creationSnapshot)
+        ),
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(model ? { model } : {})
       })
       const run = getActivePromptRun(sessionKey)
-      if (run && result.session.sessionFile) {
-        run.sessionPath = result.session.sessionFile
-        updateSessionManifest(run.phiSessionId, {
-          runtimeSessionPath: result.session.sessionFile
-        })
-      }
-      if (result.session.sessionFile) {
-        const materializedKey = createSessionKey(result.session.sessionFile, creationSnapshot.cwd)
-        aliasMaterializedSessionPath(sessionKey, result.session.sessionFile, creationSnapshot.cwd)
-        if (currentSessionKey === sessionKey) {
-          currentSessionKey = materializedKey
-        }
+      if (run) {
+        linkPromptRunRuntimeSessionPath(sessionKey, creationSnapshot.cwd, run, result.session)
+      } else {
+        linkMaterializedRuntimeSessionPath(
+          sessionKey,
+          creationSnapshot.cwd,
+          result.session.sessionFile
+        )
       }
       if (
         lifecycle.isCurrentGeneration(generation) &&
         sameCanonicalSessionKey(sessionKey, currentSessionKey)
       ) {
-        const nextSessionPath = result.session.sessionFile ?? creationSnapshot.path
+        const nextSessionPath = uiSessionPathForKey(sessionKey, creationSnapshot.path)
         if (currentSessionPath !== nextSessionPath) {
-          currentSessionPath = nextSessionPath
+          currentSessionPath = nextSessionPath ?? undefined
           notifySessionChanged()
         }
       }
@@ -1753,10 +2460,14 @@ async function getAgentSession(
         const persistedSummary = run ? persistSessionEvent(run, summary) : summary
         const targetWindow = getActiveWindow()
         if (targetWindow && !targetWindow.isDestroyed()) {
+          const phiSessionId = run?.phiSessionId ?? getPhiSessionIdForKey(sessionKey)
           targetWindow.webContents.send('agent:event', {
             ...persistedSummary,
+            ...(phiSessionId ? { phiSessionId } : {}),
             sessionGeneration: generation,
-            sessionPath: result.session.sessionFile ?? creationSnapshot.path ?? null,
+            sessionPath: phiSessionId
+              ? phiOnlySessionPath(phiSessionId)
+              : (result.session.sessionFile ?? creationSnapshot.path ?? null),
             cwd: creationSnapshot.cwd
           })
         }
@@ -1860,6 +2571,15 @@ app.whenReady().then(() => {
   const removedLogs = cleanupOldLogs()
   writeAppLog({ event: 'app_started', metadata: { removedOldLogs: removedLogs } })
   recoverInterruptedPhiSessions()
+  try {
+    ensureBundledWrappersInstalled()
+  } catch (error) {
+    writeAppLog({
+      level: 'error',
+      event: 'wrapper_bundled_install_failed',
+      metadata: { error: error instanceof Error ? error.message : String(error) }
+    })
+  }
   // Set app user model id for windows
   electronApp.setAppUserModelId(APP_ID)
 
@@ -1906,6 +2626,9 @@ app.whenReady().then(() => {
   ipcMain.handle('files:hoverPreview', async (_, filePath: string) => {
     return createFileHoverPreview(filePath)
   })
+  ipcMain.handle('files:statLocalPaths', async (_, cwd: unknown, paths: unknown) => {
+    return statLocalPaths(cwd, paths)
+  })
   ipcMain.handle('files:listDirectory', async (_, dirPath: string) => {
     return createDirectoryListing(dirPath)
   })
@@ -1916,21 +2639,25 @@ app.whenReady().then(() => {
     return text
   })
 
-  ipcMain.handle('agent:prompt', async (_, text: string) => {
+  ipcMain.handle('agent:prompt', async (_, text: string, targetInput?: unknown) => {
     const normalizedText = text.trim()
     if (!normalizedText) return null
+    if (targetInput !== undefined) {
+      await alignCurrentSessionToPromptTarget(targetInput)
+    }
 
     const runSessionKey = resolveSessionKeyAlias(currentSessionKey)
     const runGeneration = advancePromptGeneration(runSessionKey)
     const runLifecycle = getLifecycleForKey(runSessionKey)
     const runSessionGeneration = runLifecycle.currentGeneration
     const runSnapshot: SessionSnapshot & { permissionMode: PermissionMode } = {
-      path: currentSessionPath,
+      path: runtimeSessionPath(currentSessionPath),
       cwd: currentCwd,
       permissionMode: currentPermissionMode
     }
     const project = getProjectByCwd(runSnapshot.cwd)
     const phiSessionId = ensurePhiSessionId(runSessionKey, runSnapshot, normalizedText)
+    const stableSessionPath = phiOnlySessionPath(phiSessionId)
     const runId = createRunId()
     if (hasActivePromptRun(runSessionKey)) {
       throw new Error('会话正在运行')
@@ -1950,7 +2677,7 @@ app.whenReady().then(() => {
       thinkingBlocks: new Map(),
       thinkingBlockStartedAtMs: new Map(),
       compactionReasons: new Map(),
-      sessionPath: runSnapshot.path ?? null
+      sessionPath: stableSessionPath
     }
     setActivePromptRun(runSessionKey, promptRun)
     appendSessionEvent(phiSessionId, {
@@ -1961,7 +2688,7 @@ app.whenReady().then(() => {
     if (otherActiveProjectRuns > 0) {
       notifyProjectParallelRun(
         runSessionGeneration,
-        runSnapshot.path,
+        stableSessionPath,
         runSnapshot.cwd,
         otherActiveProjectRuns
       )
@@ -1970,7 +2697,11 @@ app.whenReady().then(() => {
     // Serialize prompts per session: duplicate/overlapping IPC invokes must
     // never run session.prompt() concurrently within the same conversation.
     const run = getPromptQueue(runSessionKey).then(async () => {
-      let promptResult: { path: string | null; sessionGeneration: number } | null = null
+      let promptResult: {
+        path: string | null
+        phiSessionId?: string
+        sessionGeneration: number
+      } | null = null
       if (
         promptRun.cancelled ||
         promptRun.generation !== getPromptGeneration(runSessionKey) ||
@@ -2016,7 +2747,7 @@ app.whenReady().then(() => {
           }
 
           try {
-            await session.prompt(normalizedText, {
+            await session.prompt(withNextActionRecommendationInstruction(normalizedText), {
               preflightResult: (success) => {
                 if (
                   success &&
@@ -2034,6 +2765,7 @@ app.whenReady().then(() => {
               }
             })
           } catch (error) {
+            linkPromptRunRuntimeSessionPath(runSessionKey, runSnapshot.cwd, promptRun, session)
             if (
               signal.aborted ||
               promptRun.cancelled ||
@@ -2044,6 +2776,7 @@ app.whenReady().then(() => {
             }
             throw error
           }
+          linkPromptRunRuntimeSessionPath(runSessionKey, runSnapshot.cwd, promptRun, session)
 
           if (
             signal.aborted ||
@@ -2055,13 +2788,14 @@ app.whenReady().then(() => {
           }
 
           // A brand-new chat's first prompt is when it actually becomes a file on disk —
-          // hand the path back so the renderer can refresh and highlight it in the sidebar.
+          // hand the stable Phi path back so the renderer can refresh and highlight it.
           if (sameCanonicalSessionKey(runSessionKey, currentSessionKey)) {
-            currentSessionPath = session.sessionFile ?? currentSessionPath
+            currentSessionPath = stableSessionPath
           }
-          promptRun.sessionPath = session.sessionFile ?? promptRun.sessionPath
+          promptRun.sessionPath = stableSessionPath
           promptResult = {
-            path: session.sessionFile ?? null,
+            path: stableSessionPath,
+            phiSessionId,
             sessionGeneration: promptRun.sessionGeneration
           }
         }
@@ -2201,7 +2935,7 @@ app.whenReady().then(() => {
     const phiSessionId =
       getPhiSessionIdForKey(currentSessionKey) ??
       (currentSessionPath
-        ? findPhiSessionByRuntimePath(currentSessionPath, currentCwd)?.sessionId
+        ? findPhiManifestForSession(currentSessionKey, currentSessionPath, currentCwd)?.sessionId
         : undefined)
     if (phiSessionId) {
       updateSessionManifest(phiSessionId, { permissionMode })
@@ -2213,10 +2947,43 @@ app.whenReady().then(() => {
     return getCurrentSessionPayload()
   })
   ipcMain.handle('sessions:create', async () => {
-    return disposeAndSwitchSession(undefined)
+    const session = createPhiManagedSession(WORKSPACE_DIR, 'auto')
+    return disposeAndSwitchSession(session.path, WORKSPACE_DIR, session.permissionMode)
   })
   ipcMain.handle('sessions:switch', async (_, path: string) => {
     const request = ++sessionSwitchRequest
+    const phiOnlySessionId = phiSessionIdFromPath(path)
+    if (phiOnlySessionId) {
+      const manifest = findPhiSessionById(phiOnlySessionId)
+      if (!manifest) return null
+      const targetKey = createSessionKey(path, manifest.cwd)
+      setPhiSessionIdForKey(targetKey, phiOnlySessionId)
+      sessionPermissionModes.set(resolveSessionKeyAlias(targetKey), manifest.permissionMode)
+      const shouldBecomeCurrent = request === sessionSwitchRequest
+      const target = shouldBecomeCurrent
+        ? await disposeAndSwitchSession(path, manifest.cwd, manifest.permissionMode, {
+            notify: false
+          })
+        : {
+            path,
+            cwd: manifest.cwd,
+            sessionGeneration: getLifecycleForKey(targetKey).currentGeneration,
+            permissionMode: manifest.permissionMode
+          }
+      if (shouldBecomeCurrent) {
+        acknowledgeSession(path, manifest.cwd)
+      }
+      return {
+        path,
+        phiSessionId: manifest.sessionId,
+        cwd: target.cwd,
+        sessionGeneration: target.sessionGeneration,
+        permissionMode: manifest.permissionMode,
+        ...getSessionStatusPayload(targetKey, path, target.cwd),
+        messages: readPhiTimelineMessages(null, target.cwd, phiOnlySessionId)
+      }
+    }
+
     // The session file already knows its own cwd (a project session was created with
     // that project's folder as cwd) — read it so switching to it also restores the
     // right permission mode, regardless of which sidebar section it was opened from.
@@ -2254,8 +3021,10 @@ app.whenReady().then(() => {
       acknowledgeSession(target.path, target.cwd)
     }
     const sessionPath = session.sessionFile ?? path
+    const phiSessionId = getPhiSessionIdForKey(targetKey)
     return {
-      path: sessionPath,
+      path: phiSessionId ? phiOnlySessionPath(phiSessionId) : sessionPath,
+      ...(phiSessionId ? { phiSessionId } : {}),
       cwd: target.cwd,
       sessionGeneration: target.sessionGeneration,
       permissionMode,
@@ -2267,22 +3036,37 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('sessions:acknowledge', async (_, path: string) => {
-    const cwd = (await openRuntimeSessionManager(path)).getCwd()
+    const phiOnlySessionId = phiSessionIdFromPath(path)
+    const cwd = phiOnlySessionId
+      ? (findPhiSessionById(phiOnlySessionId)?.cwd ?? currentCwd)
+      : (await openRuntimeSessionManager(path)).getCwd()
     return acknowledgeSession(path, cwd)
   })
   ipcMain.handle('sessions:delete', async (_, path: string) => {
     if (currentSessionPath === path) {
       await disposeAndSwitchSession(undefined)
     }
+    const phiSessionId = phiSessionIdFromPath(path)
+    const manifest = phiSessionId
+      ? findPhiSessionById(phiSessionId)
+      : findPhiSessionByRuntimePath(path, currentCwd)
     // Let an aborted run finish persisting before unlinking its history; otherwise
     // the final SDK write can recreate a conversation the user just deleted.
-    await waitForSessionCleanup({ path, cwd: currentCwd, permissionMode: currentPermissionMode })
+    await waitForSessionCleanup({
+      path: manifest?.runtimeSessionPath ?? runtimeSessionPath(path),
+      cwd: manifest?.cwd ?? currentCwd,
+      permissionMode: currentPermissionMode
+    })
     deleteSession(path)
   })
   ipcMain.handle('sessions:rename', async (_, path: string, name: string) => {
     const trimmedName = name.trim()
     if (!trimmedName) return
 
+    if (isPhiOnlySessionPath(path)) {
+      await renameSession(path, trimmedName)
+      return
+    }
     const current = await getCurrentResolvedSession()
     if (currentSessionPath === path && current) {
       const { session } = current
@@ -2344,6 +3128,53 @@ app.whenReady().then(() => {
       return updateProjectDefaults(id, defaults)
     }
   )
+  ipcMain.handle('projects:pickPrivateKeyFile', async () => {
+    const window = getActiveWindow()
+    const options: Electron.OpenDialogOptions = {
+      defaultPath: join(homedir(), '.ssh'),
+      properties: ['openFile']
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+  ipcMain.handle('projects:isRemoteCredentialStorageAvailable', async () =>
+    isRemoteCredentialStorageAvailable()
+  )
+  ipcMain.handle(
+    'projects:updateRemoteConnection',
+    async (
+      _,
+      id: string,
+      connectionId: string,
+      patch: ProjectRemoteConnection | null,
+      passphrase?: string | null
+    ) => {
+      const project = updateProjectRemoteConnection(id, connectionId, patch)
+      // Keep the credential store in sync with the connection record: removed
+      // entirely, or its passphrase explicitly cleared/rotated — see
+      // remote-credential-store.ts, which never lets projects.ts's plain
+      // projects.json hold the passphrase itself.
+      if (patch === null || passphrase === null) {
+        deleteRemoteConnectionPassphrase(connectionId)
+      } else if (passphrase) {
+        storeRemoteConnectionPassphrase(connectionId, passphrase)
+      }
+      return project
+    }
+  )
+  ipcMain.handle(
+    'projects:updateRemoteDefaults',
+    async (
+      _,
+      id: string,
+      defaults: {
+        defaultRemoteConnectionId?: string | null
+        remoteWorkspaceRoot?: string | null
+      }
+    ) => updateProjectRemoteDefaults(id, defaults)
+  )
   ipcMain.handle('projects:sessions', async (_, workingDirectory: string) =>
     listSessions(workingDirectory)
   )
@@ -2351,7 +3182,8 @@ app.whenReady().then(() => {
     'projects:newSession',
     async (_, workingDirectory: string, permissionMode: PermissionMode) => {
       assertProjectPathAvailable(workingDirectory)
-      return disposeAndSwitchSession(undefined, workingDirectory, permissionMode)
+      const session = createPhiManagedSession(workingDirectory, permissionMode)
+      return disposeAndSwitchSession(session.path, workingDirectory, session.permissionMode)
     }
   )
   ipcMain.handle('analysis:listNotebooks', async (_, cwd?: string) => {
@@ -2382,7 +3214,16 @@ app.whenReady().then(() => {
       throw new Error('请选择一个已添加的项目')
     }
     assertProjectPathAvailable(project.workingDirectory)
-    return openProjectNotebook(project.workingDirectory, notebookPath)
+    const file = openProjectNotebook(project.workingDirectory, notebookPath)
+    activeNotebookPathByProjectCwd.set(project.workingDirectory, file.path)
+    notebookToolExecutor.syncDraft({
+      cwd: project.workingDirectory,
+      path: file.path,
+      document: file.document,
+      savedRevision: file.savedRevision,
+      source: 'renderer'
+    })
+    return file
   })
   ipcMain.handle(
     'analysis:saveNotebook',
@@ -2392,7 +3233,41 @@ app.whenReady().then(() => {
         throw new Error('请选择一个已添加的项目')
       }
       assertProjectPathAvailable(project.workingDirectory)
-      return saveProjectNotebook(project.workingDirectory, input)
+      const file = saveProjectNotebook(project.workingDirectory, input)
+      activeNotebookPathByProjectCwd.set(project.workingDirectory, file.path)
+      notebookToolExecutor.syncDraft({
+        cwd: project.workingDirectory,
+        path: file.path,
+        document: file.document,
+        savedRevision: file.savedRevision,
+        source: 'renderer'
+      })
+      return file
+    }
+  )
+  ipcMain.handle(
+    'analysis:syncNotebookDraft',
+    async (
+      _,
+      cwd: string,
+      notebookPath: string,
+      document: NotebookDocument,
+      savedRevision?: string
+    ) => {
+      const project = getProjectByCwd(cwd)
+      if (!project) {
+        throw new Error('请选择一个已添加的项目')
+      }
+      assertProjectPathAvailable(project.workingDirectory)
+      const file = openProjectNotebook(project.workingDirectory, notebookPath)
+      activeNotebookPathByProjectCwd.set(project.workingDirectory, file.path)
+      return notebookToolExecutor.syncDraft({
+        cwd: project.workingDirectory,
+        path: file.path,
+        document,
+        savedRevision,
+        source: 'renderer'
+      })
     }
   )
   ipcMain.handle('analysis:createNotebook', async (_, cwd: string, relativePath?: string) => {
@@ -2401,7 +3276,9 @@ app.whenReady().then(() => {
       throw new Error('请选择一个已添加的项目')
     }
     assertProjectPathAvailable(project.workingDirectory)
-    return createProjectNotebook(project.workingDirectory, relativePath)
+    const file = createProjectNotebook(project.workingDirectory, relativePath)
+    activeNotebookPathByProjectCwd.set(project.workingDirectory, file.path)
+    return file
   })
   ipcMain.handle('analysis:closeNotebook', async (_, cwd: string, notebookPath: string) => {
     const project = getProjectByCwd(cwd)
@@ -2411,6 +3288,9 @@ app.whenReady().then(() => {
     assertProjectPathAvailable(project.workingDirectory)
     const file = openProjectNotebook(project.workingDirectory, notebookPath)
     await notebookSessionRegistry.closeSession(project.workingDirectory, file.path)
+    if (activeNotebookPathByProjectCwd.get(project.workingDirectory) === file.path) {
+      activeNotebookPathByProjectCwd.delete(project.workingDirectory)
+    }
     return closeProjectNotebook(project.workingDirectory, notebookPath)
   })
   ipcMain.handle('analysis:deleteNotebook', async (_, cwd: string, notebookPath: string) => {
@@ -2421,6 +3301,9 @@ app.whenReady().then(() => {
     assertProjectPathAvailable(project.workingDirectory)
     const file = openProjectNotebook(project.workingDirectory, notebookPath)
     await notebookSessionRegistry.closeSession(project.workingDirectory, file.path)
+    if (activeNotebookPathByProjectCwd.get(project.workingDirectory) === file.path) {
+      activeNotebookPathByProjectCwd.delete(project.workingDirectory)
+    }
     return deleteProjectNotebook(project.workingDirectory, notebookPath)
   })
   ipcMain.handle('analysis:listKernels', async (_, cwd?: string) => {
@@ -2440,6 +3323,17 @@ app.whenReady().then(() => {
     }
     assertProjectPathAvailable(project.workingDirectory)
     return jupyterServerRegistry.status(project.workingDirectory)
+  })
+  ipcMain.handle('analysis:jupyterRuntimeStatus', async (_, cwd: string) => {
+    const project = getProjectByCwd(cwd)
+    if (!project) {
+      throw new Error('请选择一个已添加的项目')
+    }
+    assertProjectPathAvailable(project.workingDirectory)
+    return {
+      server: jupyterServerRegistry.status(project.workingDirectory),
+      notebooks: notebookSessionRegistry.projectSummary(project.workingDirectory)
+    }
   })
   ipcMain.handle('analysis:startJupyter', async (_, cwd: string) => {
     const project = getProjectByCwd(cwd)
@@ -2502,6 +3396,16 @@ app.whenReady().then(() => {
     return notebookSessionRegistry.closeSession(project.workingDirectory, file.path)
   })
   ipcMain.handle(
+    'analysis:generateNotebookCode',
+    async (
+      _,
+      cwd: string,
+      notebookPath: string,
+      document: NotebookDocument,
+      input: AnalysisNotebookCodeGenerationInput
+    ) => generateAnalysisNotebookCode(cwd, notebookPath, document, input)
+  )
+  ipcMain.handle(
     'analysis:executeNotebookCell',
     async (_, cwd: string, notebookPath: string, document: NotebookDocument, cellId: string) => {
       const project = getProjectByCwd(cwd)
@@ -2511,13 +3415,23 @@ app.whenReady().then(() => {
       assertProjectPathAvailable(project.workingDirectory)
       const file = openProjectNotebook(project.workingDirectory, notebookPath)
       const kernels = detectAnalysisKernels()
-      const sessionStatus = await notebookSessionRegistry.ensureSession({
+      let sessionStatus = await notebookSessionRegistry.ensureSession({
         projectCwd: project.workingDirectory,
         notebookPath: file.path,
         document,
         kernels
       })
-      const target = notebookSessionRegistry.executionTarget(project.workingDirectory, file.path)
+      let target = notebookSessionRegistry.executionTarget(project.workingDirectory, file.path)
+      if (!target) {
+        await ensureJupyterServerReady(project.workingDirectory)
+        sessionStatus = await notebookSessionRegistry.ensureSession({
+          projectCwd: project.workingDirectory,
+          notebookPath: file.path,
+          document,
+          kernels
+        })
+        target = notebookSessionRegistry.executionTarget(project.workingDirectory, file.path)
+      }
       if (!target) {
         throw new Error(sessionStatus.message ?? '请先连接 notebook kernel')
       }
@@ -2542,7 +3456,14 @@ app.whenReady().then(() => {
         })
         const nextDocument = updateNotebookCell(document, cellId, {
           executionCount: execution.executionCount,
-          outputs: execution.outputs
+          outputs: execution.outputs,
+          metadata: notebookCellMetadataWithExecutionDuration(cell.metadata, execution)
+        })
+        notebookToolExecutor.syncDraft({
+          cwd: project.workingDirectory,
+          path: file.path,
+          document: nextDocument,
+          source: 'renderer'
         })
         const nextSessionStatus =
           notebookSessionRegistry.updateSessionState(
@@ -2608,6 +3529,81 @@ app.whenReady().then(() => {
   ipcMain.handle('skills:list', async (_, cwd?: string) => listSkills(cwd ?? currentCwd))
   ipcMain.handle('agents:list', async (_, cwd?: string) => listPromptAgents(cwd ?? currentCwd))
   ipcMain.handle('mcp:listServers', async (_, cwd?: string) => listMcpServers(cwd ?? currentCwd))
+
+  ipcMain.handle('wrappers:getPlan', async (_, planId: string) => readWrapperPlan(planId))
+  ipcMain.handle(
+    'wrappers:submitPlan',
+    async (_, planId: string, heavyWorkloadAcknowledged?: boolean) => {
+      try {
+        return submitWrapperRunPlan(planId, { heavyWorkloadAcknowledged })
+      } catch (error) {
+        rememberErrorSummary(error)
+        throw error
+      }
+    }
+  )
+  ipcMain.handle('wrappers:cancelPlan', async (_, planId: string) => {
+    try {
+      return cancelWrapperRunPlan(planId)
+    } catch (error) {
+      rememberErrorSummary(error)
+      throw error
+    }
+  })
+  ipcMain.handle('wrappers:listCatalog', async () => listWrapperCatalog())
+  ipcMain.handle('wrappers:addCustom', async (_, sourceDir: string) => {
+    try {
+      const entry = addCustomWrapper(sourceDir)
+      writeAppLog({ event: 'wrapper_custom_added', metadata: { sourceDir, id: entry.manifest.id } })
+      return entry
+    } catch (error) {
+      rememberErrorSummary(error)
+      writeAppLog({
+        level: 'error',
+        event: 'wrapper_custom_add_failed',
+        metadata: { sourceDir, error: error instanceof Error ? error.message : String(error) }
+      })
+      throw error
+    }
+  })
+  ipcMain.handle('wrappers:listRuns', async () => listWrapperRuns())
+  ipcMain.handle('wrappers:getRun', async (_, runId: string) => readWrapperRun(runId))
+  ipcMain.handle('wrappers:cancelRun', async (_, runId: string) => {
+    try {
+      return cancelWrapperRun(runId)
+    } catch (error) {
+      rememberErrorSummary(error)
+      throw error
+    }
+  })
+  ipcMain.handle('wrappers:getPlanArtifact', async (_, planId: string, fileName: string) =>
+    readWrapperPlanArtifact(planId, fileName)
+  )
+  ipcMain.handle('wrappers:exportReproducibility', async (_, runId: string) => {
+    try {
+      const bundle = buildWrapperReproducibilityBundle(runId)
+      const window = getActiveWindow()
+      const options: Electron.SaveDialogOptions = {
+        defaultPath: `phi-wrapper-${runId}-reproducibility.json`,
+        filters: [{ name: 'JSON', extensions: ['json'] }]
+      }
+      const result = window
+        ? await dialog.showSaveDialog(window, options)
+        : await dialog.showSaveDialog(options)
+      if (result.canceled || !result.filePath) return null
+      writeFileSync(result.filePath, `${JSON.stringify(bundle, null, 2)}\n`, 'utf-8')
+      writeAppLog({ event: 'wrapper_reproducibility_exported', metadata: { runId } })
+      return result.filePath
+    } catch (error) {
+      rememberErrorSummary(error)
+      writeAppLog({
+        level: 'error',
+        event: 'wrapper_reproducibility_export_failed',
+        metadata: { runId, error: error instanceof Error ? error.message : String(error) }
+      })
+      throw error
+    }
+  })
 
   ipcMain.handle('persona:getAppName', async () => APP_NAME)
   ipcMain.handle('persona:isOnboarded', async () => isOnboarded())

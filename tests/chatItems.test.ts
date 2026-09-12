@@ -1,6 +1,86 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { chatItemsFromSessionMessages, extractToolText } from '../src/renderer/src/lib/chatItems'
+import {
+  chatItemsFromSessionMessages,
+  extractNotebookToolSummary,
+  extractToolText,
+  extractWrapperPlanId,
+  isNotebookToolName,
+  isWrapperToolName
+} from '../src/renderer/src/lib/chatItems'
+
+test('isWrapperToolName recognizes wrapper.<id> execute tool names only', () => {
+  assert.equal(isWrapperToolName('wrapper.phi_ngs_fastq_qc'), true)
+  assert.equal(isWrapperToolName('bash'), false)
+  assert.equal(isWrapperToolName('wrap.per'), false)
+})
+
+test('isWrapperToolName excludes wrapper.search/wrapper.inspect — they never produce a planId, so routing them through WrapperPlanCard would strand the card on "正在加载计划…" forever', () => {
+  assert.equal(isWrapperToolName('wrapper.search'), false)
+  assert.equal(isWrapperToolName('wrapper.inspect'), false)
+})
+
+test('extractWrapperPlanId reads the P1.8 wrapper.* tool result convention', () => {
+  assert.equal(
+    extractWrapperPlanId({
+      content: [{ type: 'text', text: 'Plan created' }],
+      details: { kind: 'wrapper_plan', planId: 'wplan_abc123' }
+    }),
+    'wplan_abc123'
+  )
+})
+
+test('extractWrapperPlanId ignores results that are not the wrapper_plan shape', () => {
+  assert.equal(extractWrapperPlanId(undefined), undefined)
+  assert.equal(extractWrapperPlanId({ content: [] }), undefined)
+  assert.equal(
+    extractWrapperPlanId({ details: { kind: 'something_else', planId: 'x' } }),
+    undefined
+  )
+  assert.equal(extractWrapperPlanId({ details: { kind: 'wrapper_plan' } }), undefined)
+})
+
+test('isNotebookToolName recognizes notebook.* tools only', () => {
+  assert.equal(isNotebookToolName('notebook.run_cell'), true)
+  assert.equal(isNotebookToolName('notebook.save'), true)
+  assert.equal(isNotebookToolName('jupyter.run_cell'), false)
+  assert.equal(isNotebookToolName('bash'), false)
+})
+
+test('extractNotebookToolSummary keeps notebook tool receipts compact', () => {
+  assert.deepEqual(
+    extractNotebookToolSummary({
+      content: [{ type: 'text', text: 'Ran Cell 2' }],
+      details: {
+        kind: 'notebook_cell_executed',
+        path: '/workspace/eda.ipynb',
+        relativePath: 'eda.ipynb',
+        summary: 'Ran Cell 2',
+        cell: {
+          id: 'cell-2',
+          cellType: 'code',
+          source: 'large source should not be copied'
+        },
+        execution: {
+          state: 'idle',
+          executionCount: 4,
+          outputs: [{ text: 'large output should not be copied' }]
+        },
+        document: { cells: new Array(100).fill({}) }
+      }
+    }),
+    {
+      kind: 'notebook_cell_executed',
+      path: '/workspace/eda.ipynb',
+      relativePath: 'eda.ipynb',
+      cellId: 'cell-2',
+      cellType: 'code',
+      executionState: 'idle',
+      executionCount: 4,
+      summary: 'Ran Cell 2'
+    }
+  )
+})
 
 test('extractToolText returns strings unchanged', () => {
   assert.equal(extractToolText('plain output'), 'plain output')
@@ -118,6 +198,91 @@ test('chatItemsFromSessionMessages restores Phi tool and approval timeline event
     },
     { id: 'event-3', role: 'error', content: '权限请求已拒绝。' }
   ])
+})
+
+test('chatItemsFromSessionMessages restores notebook details from Phi timeline events', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'tool_call_started',
+      eventId: 'event-1',
+      toolCallId: 'call-1',
+      toolName: 'notebook.run_cell',
+      args: { path: 'eda.ipynb', cellId: 'cell-2' },
+      createdAt: '2026-09-10T00:00:00.000Z'
+    },
+    {
+      source: 'phi',
+      type: 'tool_call_completed',
+      eventId: 'event-2',
+      toolCallId: 'call-1',
+      toolName: 'notebook.run_cell',
+      output: 'Ran Cell 2',
+      details: {
+        kind: 'notebook_cell_executed',
+        relativePath: 'eda.ipynb',
+        cellId: 'cell-2',
+        cellType: 'code',
+        executionState: 'idle',
+        executionCount: 7,
+        summary: 'Ran Cell 2'
+      },
+      isError: false,
+      createdAt: '2026-09-10T00:00:01.000Z'
+    }
+  ])
+
+  assert.equal(items.length, 1)
+  assert.equal(items[0].role, 'tool')
+  assert.deepEqual(items[0].notebook, {
+    kind: 'notebook_cell_executed',
+    relativePath: 'eda.ipynb',
+    cellId: 'cell-2',
+    cellType: 'code',
+    executionState: 'idle',
+    executionCount: 7,
+    summary: 'Ran Cell 2'
+  })
+})
+
+test('chatItemsFromSessionMessages restores notebook details from runtime tool results', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      role: 'assistant',
+      content: [
+        {
+          type: 'toolCall',
+          id: 'call-1',
+          name: 'notebook.update_cell',
+          arguments: { path: 'eda.ipynb', cellId: 'cell-1', source: 'df.head()' }
+        }
+      ]
+    },
+    {
+      role: 'toolResult',
+      toolCallId: 'call-1',
+      content: {
+        content: [{ type: 'text', text: 'Updated Cell 1' }],
+        details: {
+          kind: 'notebook_cell_updated',
+          relativePath: 'eda.ipynb',
+          cellId: 'cell-1',
+          cellType: 'code',
+          summary: 'Updated Cell 1'
+        }
+      }
+    }
+  ])
+
+  assert.equal(items.length, 1)
+  assert.equal(items[0].role, 'tool')
+  assert.deepEqual(items[0].notebook, {
+    kind: 'notebook_cell_updated',
+    relativePath: 'eda.ipynb',
+    cellId: 'cell-1',
+    cellType: 'code',
+    summary: 'Updated Cell 1'
+  })
 })
 
 test('chatItemsFromSessionMessages restores run failure details', () => {

@@ -397,6 +397,59 @@ test('tool execution end keeps persisted output metadata in live timeline', () =
   ])
 })
 
+test('a wrapper.* tool call renders as a wrapper_plan item, not a generic tool item', () => {
+  const started = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'tool_execution_start',
+    toolCallId: 'call-1',
+    toolName: 'wrapper.phi_ngs_fastq_qc',
+    args: { reads: 'data/*_{R1,R2}.fastq.gz' }
+  })
+
+  assert.deepEqual(started.messages, [
+    { id: 'call-1', role: 'wrapper_plan', toolName: 'wrapper.phi_ngs_fastq_qc', status: 'running' }
+  ])
+
+  const completed = reduceAgentEventState(started, {
+    type: 'tool_execution_end',
+    toolCallId: 'call-1',
+    toolName: 'wrapper.phi_ngs_fastq_qc',
+    result: {
+      content: [{ type: 'text', text: 'Plan wplan_abc123 created.' }],
+      details: { kind: 'wrapper_plan', planId: 'wplan_abc123' }
+    }
+  })
+
+  assert.deepEqual(completed.messages, [
+    {
+      id: 'call-1',
+      role: 'wrapper_plan',
+      toolName: 'wrapper.phi_ngs_fastq_qc',
+      planId: 'wplan_abc123',
+      status: 'done'
+    }
+  ])
+})
+
+test('a failed wrapper.* tool call marks the wrapper_plan item as errored without a planId', () => {
+  const started = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'tool_execution_start',
+    toolCallId: 'call-1',
+    toolName: 'wrapper.phi_ngs_fastq_qc',
+    args: {}
+  })
+  const failed = reduceAgentEventState(started, {
+    type: 'tool_execution_end',
+    toolCallId: 'call-1',
+    toolName: 'wrapper.phi_ngs_fastq_qc',
+    isError: true,
+    result: { content: [{ type: 'text', text: '缺少必填输入: reads' }] }
+  })
+
+  assert.deepEqual(failed.messages, [
+    { id: 'call-1', role: 'wrapper_plan', toolName: 'wrapper.phi_ngs_fastq_qc', status: 'error' }
+  ])
+})
+
 test('tool execution update previews long partial output in live timeline', () => {
   const started = reduceAgentEventState(createAgentEventReducerState(), {
     type: 'tool_execution_start',

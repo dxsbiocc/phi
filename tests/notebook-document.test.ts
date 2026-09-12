@@ -9,7 +9,8 @@ import {
   moveNotebookCell,
   parseNotebook,
   serializeNotebook,
-  updateNotebookCell
+  updateNotebookCell,
+  updateNotebookMetadata
 } from '../src/shared/notebookDocument'
 
 const pythonNotebook = {
@@ -133,6 +134,25 @@ test('parseNotebook supplies stable unique ids for older or duplicated cells', (
     document.cells.map((cell) => cell.id),
     ['phi-cell-1', 'same', 'same-2']
   )
+})
+
+test('updateNotebookMetadata replaces metadata and refreshes the notebook revision', () => {
+  const document = parseNotebook(pythonNotebook)
+  const updated = updateNotebookMetadata(document, {
+    ...document.metadata,
+    kernelspec: { name: 'ir', display_name: 'R', language: 'R' },
+    language_info: { name: 'R' }
+  })
+  const serialized = serializeNotebook(updated)
+
+  assert.notEqual(updated.revision, document.revision)
+  assert.deepEqual(serialized.metadata.kernelspec, {
+    name: 'ir',
+    display_name: 'R',
+    language: 'R'
+  })
+  assert.deepEqual(serialized.metadata.language_info, { name: 'R' })
+  assert.deepEqual(serialized.metadata.phi, { activeCellId: 'cell-code' })
 })
 
 test('notebook mutation helpers update cells immutably and revise the document', () => {

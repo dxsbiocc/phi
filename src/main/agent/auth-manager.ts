@@ -1,7 +1,7 @@
 import { BrowserWindow, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 
-import { createModelRuntime, type ModelRuntime } from './runtime-adapter'
+import { createModelRuntime, type ModelRuntime } from './runtime/runtime-adapter'
 type AuthInteraction = {
   signal?: AbortSignal
   prompt(prompt: AuthPrompt): Promise<string>

@@ -12,7 +12,10 @@ import {
   listProjects,
   readProjectGitStatus,
   updateProjectDefaults,
-  updateProjectPermissionMode
+  updateProjectPermissionMode,
+  updateProjectRemoteConnection,
+  updateProjectRemoteDefaults,
+  updateProjectWrapperDefault
 } from '../src/main/agent/projects'
 
 function withPhiDir<T>(callback: (paths: { phiDir: string; root: string }) => T): T {
@@ -137,6 +140,119 @@ test('project defaults and permission mode update independently', () => {
     })
     assert.equal(cleared.defaultModel, undefined)
     assert.equal(cleared.defaultThinkingLevel, undefined)
+  })
+})
+
+test('project wrapper defaults set, merge, and clear independently of other defaults', () => {
+  withPhiDir(({ root }) => {
+    const projectDir = join(root, 'demo')
+    mkdirSync(projectDir)
+    const project = createProject({
+      name: 'Demo',
+      workingDirectory: projectDir,
+      permissionMode: 'ask'
+    })
+
+    const withWrapperDefault = updateProjectWrapperDefault(project.id, 'phi/ngs/fastq-qc', {
+      version: '1.0.0',
+      params: { threads: 16 }
+    })
+    assert.deepEqual(withWrapperDefault.wrapperDefaults?.['phi/ngs/fastq-qc'], {
+      version: '1.0.0',
+      params: { threads: 16 }
+    })
+
+    const merged = updateProjectWrapperDefault(project.id, 'phi/ngs/fastq-qc', {
+      resources: { cpus: 16, memory: '32 GB' }
+    })
+    assert.deepEqual(merged.wrapperDefaults?.['phi/ngs/fastq-qc'], {
+      version: '1.0.0',
+      params: { threads: 16 },
+      resources: { cpus: 16, memory: '32 GB' }
+    })
+
+    const cleared = updateProjectWrapperDefault(project.id, 'phi/ngs/fastq-qc', null)
+    assert.equal(cleared.wrapperDefaults?.['phi/ngs/fastq-qc'], undefined)
+  })
+})
+
+test('project remote connections are added, replaced, and removed independently of the default pointer', () => {
+  withPhiDir(({ root }) => {
+    const projectDir = join(root, 'demo')
+    mkdirSync(projectDir)
+    const project = createProject({
+      name: 'Demo',
+      workingDirectory: projectDir,
+      permissionMode: 'ask'
+    })
+
+    const withConnection = updateProjectRemoteConnection(project.id, 'conn1', {
+      id: 'conn1',
+      label: 'Lab HPC',
+      host: 'lab-hpc.example.edu',
+      username: 'agent',
+      privateKeyPath: '/home/user/.ssh/id_ed25519'
+    })
+    assert.deepEqual(withConnection.remoteConnections, [
+      {
+        id: 'conn1',
+        label: 'Lab HPC',
+        host: 'lab-hpc.example.edu',
+        username: 'agent',
+        privateKeyPath: '/home/user/.ssh/id_ed25519'
+      }
+    ])
+
+    // Replacing by the same id updates in place rather than appending a duplicate.
+    const replaced = updateProjectRemoteConnection(project.id, 'conn1', {
+      id: 'conn1',
+      label: 'Lab HPC (renamed)',
+      host: 'lab-hpc.example.edu',
+      username: 'agent',
+      privateKeyPath: '/home/user/.ssh/id_ed25519',
+      hasPassphrase: true
+    })
+    assert.equal(replaced.remoteConnections?.length, 1)
+    assert.equal(replaced.remoteConnections?.[0].label, 'Lab HPC (renamed)')
+
+    const withDefault = updateProjectRemoteDefaults(project.id, {
+      defaultRemoteConnectionId: 'conn1',
+      remoteWorkspaceRoot: '/data/lab/.phi'
+    })
+    assert.equal(withDefault.defaultRemoteConnectionId, 'conn1')
+    assert.equal(withDefault.remoteWorkspaceRoot, '/data/lab/.phi')
+
+    // Removing the connection that is currently the default also clears the default pointer.
+    const removed = updateProjectRemoteConnection(project.id, 'conn1', null)
+    assert.equal(removed.remoteConnections?.length, 0)
+    assert.equal(removed.defaultRemoteConnectionId, undefined)
+    // remoteWorkspaceRoot is independent state — untouched by removing a connection.
+    assert.equal(removed.remoteWorkspaceRoot, '/data/lab/.phi')
+  })
+})
+
+test('updateProjectRemoteDefaults clears fields independently when passed null', () => {
+  withPhiDir(({ root }) => {
+    const projectDir = join(root, 'demo')
+    mkdirSync(projectDir)
+    const project = createProject({
+      name: 'Demo',
+      workingDirectory: projectDir,
+      permissionMode: 'ask'
+    })
+    updateProjectRemoteDefaults(project.id, {
+      defaultRemoteConnectionId: 'conn1',
+      remoteWorkspaceRoot: '/data/lab/.phi'
+    })
+
+    const clearedConnection = updateProjectRemoteDefaults(project.id, {
+      defaultRemoteConnectionId: null
+    })
+    assert.equal(clearedConnection.defaultRemoteConnectionId, undefined)
+    assert.equal(clearedConnection.remoteWorkspaceRoot, '/data/lab/.phi')
+
+    const clearedRoot = updateProjectRemoteDefaults(project.id, { remoteWorkspaceRoot: null })
+    assert.equal(clearedRoot.remoteWorkspaceRoot, undefined)
   })
 })
 

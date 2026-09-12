@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Phi Logo v3 Meaning Exploration</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --navy: #0e3a45;
+        --teal: #2e9fb3;
+        --turquoise: #3abaa4;
+        --orange: #f2994a;
+        --coral: #e8604c;
+        --paper: #f7fbfb;
+        --ink: #102a30;
+        --muted: #5d7479;
+        --line: rgba(14, 58, 69, 0.14);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main {
+        width: min(1180px, calc(100% - 48px));
+        margin: 0 auto;
+        padding: 54px 0 76px;
+      }
+
+      header {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 42px;
+        align-items: end;
+        padding-bottom: 32px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(42px, 8vw, 92px);
+        line-height: 0.96;
+        letter-spacing: 0;
+        font-weight: 720;
+      }
+
+      .intro {
+        margin: 0;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.7;
+      }
+
+      .recommended {
+        margin-top: 24px;
+        display: grid;
+        grid-template-columns: 286px 1fr;
+        gap: 24px;
+      }
+
+      .icon-stage,
+      .brief,
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #ffffff;
+      }
+
+      .icon-stage {
+        padding: 28px;
+        display: grid;
+        place-items: center;
+      }
+
+      .icon-stage svg {
+        width: 220px;
+        height: 220px;
+        display: block;
+      }
+
+      .brief {
+        padding: 28px;
+        display: grid;
+        align-content: center;
+      }
+
+      .brief h2 {
+        margin: 0 0 12px;
+        font-size: 28px;
+        letter-spacing: 0;
+      }
+
+      .brief p {
+        margin: 0;
+        max-width: 720px;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.72;
+      }
+
+      .legend {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 22px;
+      }
+
+      .legend span {
+        min-height: 58px;
+        border-radius: 8px;
+        background: rgba(46, 159, 179, 0.08);
+        color: var(--navy);
+        padding: 10px;
+        font-size: 12px;
+        line-height: 1.35;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 24px;
+      }
+
+      .card {
+        min-height: 382px;
+        padding: 24px;
+        display: grid;
+        grid-template-rows: 178px auto;
+        gap: 22px;
+      }
+
+      .mark-stage {
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        background:
+          linear-gradient(135deg, rgba(46, 159, 179, 0.10), rgba(242, 153, 74, 0.08)),
+          #f7fbfb;
+        color: var(--navy);
+      }
+
+      .mark-stage[data-accent="teal"] {
+        color: var(--teal);
+      }
+
+      .mark-stage[data-accent="turquoise"] {
+        color: var(--turquoise);
+      }
+
+      .mark-stage[data-accent="orange"] {
+        color: var(--orange);
+      }
+
+      .mark-stage[data-accent="coral"] {
+        color: var(--coral);
+      }
+
+      svg.logo {
+        width: 114px;
+        height: 114px;
+        overflow: visible;
+      }
+
+      .copy h2 {
+        margin: 0 0 8px;
+        font-size: 17px;
+        line-height: 1.25;
+      }
+
+      .tag {
+        margin: 0 0 14px;
+        color: var(--teal);
+        font-size: 12px;
+        font-weight: 740;
+        text-transform: uppercase;
+      }
+
+      .copy p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+
+      @media (max-width: 940px) {
+        header,
+        .recommended {
+          grid-template-columns: 1fr;
+        }
+
+        .legend,
+        .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 640px) {
+        main {
+          width: min(100% - 28px, 1180px);
+          padding-top: 34px;
+        }
+
+        .legend,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Phi logo v3</h1>
+        <p class="intro">
+          A meaning-first redo. Instead of treating Phi as a soft handwritten letter, these marks compress
+          the actual beta system: local project boundary, durable sessions, four concurrent lanes, and visible
+          approval thresholds.
+        </p>
+      </header>
+
+      <section class="recommended" aria-label="Recommended logo direction">
+        <div class="icon-stage">
+          <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Phi app icon v3">
+            <defs>
+              <linearGradient id="bg" x1="146" y1="78" x2="878" y2="944" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="#F7FBFB"/>
+                <stop offset="1" stop-color="#D8E8EA"/>
+              </linearGradient>
+              <linearGradient id="mark" x1="227" y1="175" x2="824" y2="846" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="#2E9FB3"/>
+                <stop offset="0.48" stop-color="#0E3A45"/>
+                <stop offset="1" stop-color="#3ABAA4"/>
+              </linearGradient>
+              <filter id="shadow" x="-12%" y="-10%" width="124%" height="128%" color-interpolation-filters="sRGB">
+                <feDropShadow dx="0" dy="32" stdDeviation="28" flood-color="#0E3A45" flood-opacity="0.22"/>
+              </filter>
+            </defs>
+            <rect x="72" y="72" width="880" height="880" rx="212" fill="url(#bg)"/>
+            <path d="M148 803C250 914 775 914 876 803" fill="none" stroke="#0E3A45" stroke-opacity="0.18" stroke-width="30" stroke-linecap="round"/>
+            <g filter="url(#shadow)" fill="none" stroke="url(#mark)" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M584 184C727 215 840 348 840 512C840 696 696 840 512 840C328 840 184 696 184 512C184 338 317 205 481 184" stroke-width="72"/>
+              <path d="M512 215V809" stroke-width="72"/>
+              <path d="M287 512H737" stroke-width="52"/>
+            </g>
+            <g fill="#F2994A">
+              <circle cx="512" cy="184" r="43"/>
+              <circle cx="840" cy="512" r="43"/>
+              <circle cx="512" cy="840" r="43"/>
+              <circle cx="184" cy="512" r="43"/>
+            </g>
+            <circle cx="512" cy="512" r="37" fill="#E8604C"/>
+          </svg>
+        </div>
+        <div class="brief">
+          <h2>Recommended: Phase Gate</h2>
+          <p>
+            This is no longer just a loop. The broken ring is the local project boundary and approval edge,
+            the vertical line is stable session identity, the lower curved lane is the active run, the four
+            outer nodes encode the beta's four global running/approval-blocked sessions, and the center node
+            is the selected session.
+          </p>
+          <div class="legend" aria-label="Symbol map">
+            <span>broken ring<br>local boundary</span>
+            <span>vertical spine<br>session identity</span>
+            <span>curved lane<br>active run</span>
+            <span>four nodes<br>concurrency cap</span>
+            <span>center node<br>selected session</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid" aria-label="Meaning-led logo variants">
+        <article class="card">
+          <div class="mark-stage">
+            <svg class="logo" viewBox="0 0 100 100" aria-hidden="true">
+              <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M57 18C71 21 82 34 82 50C82 68 68 82 50 82C32 82 18 68 18 50C18 33 31 20 47 18" stroke-width="7"/>
+                <path d="M50 21V79" stroke-width="7"/>
+                <path d="M31 64C43 75 64 69 72 52" stroke-width="5"/>
+              </g>
+              <g fill="currentColor">
+                <circle cx="50" cy="18" r="4.2"/>
+                <circle cx="82" cy="50" r="4.2"/>
+                <circle cx="50" cy="82" r="4.2"/>
+                <circle cx="18" cy="50" r="4.2"/>
+                <circle cx="50" cy="50" r="3.6"/>
+              </g>
+            </svg>
+          </div>
+          <div class="copy">
+            <h2>01 Phase Gate</h2>
+            <p class="tag">Recommended</p>
+            <p>The clearest product map: local field, four concurrent lanes, selected session, and approval boundary in one compact operator.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="mark-stage" data-accent="teal">
+            <svg class="logo" viewBox="0 0 100 100" aria-hidden="true">
+              <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M50 18V82" stroke-width="7.5"/>
+                <path d="M28 31H64C75 31 82 39 82 50C82 61 74 69 62 69H28" stroke-width="6.5"/>
+                <path d="M28 43H68" stroke-width="4"/>
+                <path d="M28 56H68" stroke-width="4"/>
+                <path d="M28 69H62" stroke-width="4"/>
+              </g>
+              <circle cx="28" cy="31" r="4" fill="currentColor"/>
+              <circle cx="28" cy="69" r="4" fill="currentColor"/>
+            </svg>
+          </div>
+          <div class="copy">
+            <h2>02 Ledger Spine</h2>
+            <p class="tag">Recoverable history</p>
+            <p>Emphasizes append-only session history and tool-output evidence. Strong for “workbench,” less iconic than Phase Gate.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="mark-stage" data-accent="turquoise">
+            <svg class="logo" viewBox="0 0 100 100" aria-hidden="true">
+              <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M25 24H43" stroke-width="6"/>
+                <path d="M57 24H75" stroke-width="6"/>
+                <path d="M25 76H43" stroke-width="6"/>
+                <path d="M57 76H75" stroke-width="6"/>
+                <path d="M24 25V43" stroke-width="6"/>
+                <path d="M76 25V43" stroke-width="6"/>
+                <path d="M24 57V75" stroke-width="6"/>
+                <path d="M76 57V75" stroke-width="6"/>
+                <path d="M50 22V78" stroke-width="7"/>
+                <path d="M35 63C45 73 65 68 71 53C77 37 65 27 50 30" stroke-width="7"/>
+              </g>
+              <circle cx="50" cy="50" r="4.5" fill="currentColor"/>
+            </svg>
+          </div>
+          <div class="copy">
+            <h2>03 Project Field</h2>
+            <p class="tag">Local boundary</p>
+            <p>Turns the logo into a bounded project workspace. Useful if the brand should foreground cwd/project safety.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="mark-stage" data-accent="coral">
+            <svg class="logo" viewBox="0 0 100 100" aria-hidden="true">
+              <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M50 17V83" stroke-width="7.5"/>
+                <path d="M50 24C69 24 80 36 77 52C74 68 58 77 41 72C27 68 20 58 24 47C28 36 39 31 50 33" stroke-width="7"/>
+                <path d="M24 47L16 39" stroke-width="4.5"/>
+                <path d="M77 52L86 61" stroke-width="4.5"/>
+                <path d="M35 50H65" stroke-width="4"/>
+              </g>
+              <circle cx="35" cy="50" r="4" fill="currentColor"/>
+              <circle cx="65" cy="50" r="4" fill="currentColor"/>
+            </svg>
+          </div>
+          <div class="copy">
+            <h2>04 Approval Threshold</h2>
+            <p class="tag">Ask mode</p>
+            <p>Focuses on the handoff from automatic flow into explicit approval. More safety-oriented and slightly sharper.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="mark-stage" data-accent="orange">
+            <svg class="logo" viewBox="0 0 100 100" aria-hidden="true">
+              <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M50 18V82" stroke-width="7"/>
+                <path d="M31 30H67C75 30 81 36 81 44C81 52 75 58 67 58H31" stroke-width="6.5"/>
+                <path d="M31 58H60C68 58 74 64 74 72C74 79 68 84 60 84H40" stroke-width="6.5"/>
+                <path d="M24 36L17 50L24 64" stroke-width="4.5"/>
+                <path d="M76 36L83 50L76 64" stroke-width="4.5"/>
+              </g>
+            </svg>
+          </div>
+          <div class="copy">
+            <h2>05 Notebook Bench</h2>
+            <p class="tag">Analysis workbench</p>
+            <p>Connects Phi to notebook/cell work. Good for future analysis direction, but too specific for the broader beta app.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="mark-stage" data-accent="teal">
+            <svg class="logo" viewBox="0 0 100 100" aria-hidden="true">
+              <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M50 17V83" stroke-width="7.5"/>
+                <path d="M25 36C37 22 62 21 74 36C87 52 73 76 50 76C30 76 19 63 23 49" stroke-width="6.5"/>
+                <path d="M24 64C37 76 62 76 75 64" stroke-width="4.5"/>
+                <path d="M25 36C37 48 63 48 75 36" stroke-width="4.5"/>
+              </g>
+              <g fill="currentColor">
+                <circle cx="25" cy="36" r="4"/>
+                <circle cx="75" cy="36" r="4"/>
+                <circle cx="24" cy="64" r="4"/>
+                <circle cx="75" cy="64" r="4"/>
+              </g>
+            </svg>
+          </div>
+          <div class="copy">
+            <h2>06 Agent Loom</h2>
+            <p class="tag">Pi / OMX flow</p>
+            <p>Frames Pi and OMX as threads moving through local sessions. More dynamic, but less immediately legible.</p>
+          </div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

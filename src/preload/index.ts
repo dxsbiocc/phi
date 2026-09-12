@@ -1,5 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+// Imported (unlike the other ambient types in this file, which are
+// hand-duplicated) because WrapperRunPlan/WrapperRun are large, evolving
+// shapes (see docs/design/phi-wrapper-technical-design.md) — duplicating
+// them here and in index.d.ts would just be another place for the two to
+// drift out of sync.
+import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
+import type { WrapperRun, WrapperRunPlan } from '../shared/wrapperTypes'
+
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
 
@@ -100,6 +108,7 @@ type SessionSummary = SessionRuntimeState & {
 
 type SessionSwitchResult = SessionRuntimeState & {
   path: string
+  phiSessionId?: string
   cwd: string
   sessionGeneration: number
   permissionMode: PermissionMode
@@ -108,6 +117,7 @@ type SessionSwitchResult = SessionRuntimeState & {
 
 type CurrentSession = SessionRuntimeState & {
   path: string | null
+  phiSessionId?: string
   cwd: string
   sessionGeneration: number
   permissionMode: PermissionMode
@@ -116,10 +126,28 @@ type CurrentSession = SessionRuntimeState & {
 
 type PromptResult = {
   path: string | null
+  phiSessionId?: string
+  sessionGeneration: number
+}
+
+type PromptTarget = {
+  path: string | null
+  phiSessionId?: string
+  cwd: string
   sessionGeneration: number
 }
 
 type PermissionMode = 'auto' | 'ask' | 'full'
+
+type ProjectRemoteConnection = {
+  id: string
+  label: string
+  host: string
+  port?: number
+  username: string
+  privateKeyPath: string
+  hasPassphrase?: boolean
+}
 
 type Project = {
   id: string
@@ -132,6 +160,9 @@ type Project = {
   }
   defaultModel?: { providerId: string; modelId: string }
   defaultThinkingLevel?: ThinkingLevel
+  remoteConnections?: ProjectRemoteConnection[]
+  defaultRemoteConnectionId?: string
+  remoteWorkspaceRoot?: string
   createdAt: string
 }
 
@@ -273,6 +304,11 @@ type FileTreeEntry = {
   kind: 'directory' | 'file'
 }
 
+type LocalPathStat = {
+  path: string
+  kind: 'file' | 'directory' | 'missing'
+}
+
 type DirectoryListing = {
   path: string
   name: string
@@ -316,6 +352,18 @@ type AnalysisNotebookFile = {
   document: Record<string, unknown>
 }
 
+type AnalysisNotebookDraftChange = {
+  source: 'agent' | 'renderer'
+  projectCwd: string
+  path: string
+  relativePath: string
+  document: Record<string, unknown>
+  savedRevision: string
+  changeKind?: 'synced' | 'inserted' | 'updated' | 'deleted' | 'executed' | 'saved'
+  changedCellId?: string
+  focusCellId?: string
+}
+
 type SaveAnalysisNotebookInput = {
   path: string
   document: Record<string, unknown>
@@ -349,6 +397,7 @@ type JupyterServerStatus = {
   startedAt?: string
   exitedAt?: string
   pid?: number
+  port?: number
   hasEndpoint: boolean
   message?: string
 }
@@ -365,6 +414,15 @@ type AnalysisNotebookSessionStatus = {
   updatedAt?: string
 }
 
+type AnalysisJupyterRuntimeStatus = {
+  server: JupyterServerStatus
+  notebooks: {
+    activeSessionCount: number
+    busySessionCount: number
+    sessions: AnalysisNotebookSessionStatus[]
+  }
+}
+
 type AnalysisCellExecutionResult = {
   cellId: string
   executionCount: number | null
@@ -376,6 +434,39 @@ type AnalysisCellExecutionResult = {
   sessionStatus: AnalysisNotebookSessionStatus
 }
 
+type AnalysisNotebookCodeGenerationInput = {
+  prompt: string
+  language: string
+  afterCellId?: string | null
+  references?: Array<{
+    id: string
+    kind: 'dataframe' | 'data_source' | 'variable' | 'cell_output'
+    name: string
+    detail?: string
+    cellId?: string
+    preview?: {
+      source?: string
+      code?: string
+      output?: string
+      value?: string
+      shape?: string
+      columns?: Array<{ name: string; type?: string }>
+    }
+  }>
+}
+
+type AnalysisNotebookGeneratedCell = {
+  cellType: 'code' | 'markdown'
+  source: string
+  language?: string
+}
+
+type AnalysisNotebookCodeGenerationResult = {
+  source: string
+  language: string
+  cells?: AnalysisNotebookGeneratedCell[]
+}
+
 type RendererAuthApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -385,9 +476,10 @@ type RendererAuthApi = {
   pickInputFiles: () => Promise<string[]>
   previewFile: (path: string) => Promise<FilePreview>
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
+  statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
   listDirectory: (path: string) => Promise<DirectoryListing>
   copyDiagnostics: () => Promise<string>
-  sendPrompt: (text: string) => Promise<PromptResult | null>
+  sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => Unsubscribe
   getAuthStatus: () => Promise<AuthStatusItem[]>
   loginApiKey: (providerId: string, key: string) => Promise<AuthStatusItem[]>
@@ -430,6 +522,21 @@ type RendererAuthApi = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => Promise<Project>
+  pickPrivateKeyFile: () => Promise<string | null>
+  isRemoteCredentialStorageAvailable: () => Promise<boolean>
+  updateProjectRemoteConnection: (
+    id: string,
+    connectionId: string,
+    patch: ProjectRemoteConnection | null,
+    passphrase?: string | null
+  ) => Promise<Project>
+  updateProjectRemoteDefaults: (
+    id: string,
+    defaults: {
+      defaultRemoteConnectionId?: string | null
+      remoteWorkspaceRoot?: string | null
+    }
+  ) => Promise<Project>
   listProjectSessions: (workingDirectory: string) => Promise<SessionSummary[]>
   createProjectSession: (
     workingDirectory: string,
@@ -442,6 +549,12 @@ type RendererAuthApi = {
     cwd: string,
     input: SaveAnalysisNotebookInput
   ) => Promise<AnalysisNotebookFile>
+  syncAnalysisNotebookDraft: (
+    cwd: string,
+    path: string,
+    document: Record<string, unknown>,
+    savedRevision?: string
+  ) => Promise<AnalysisNotebookDraftChange>
   createAnalysisNotebook: (cwd: string, relativePath?: string) => Promise<AnalysisNotebookFile>
   closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
   deleteAnalysisNotebook: (
@@ -450,6 +563,7 @@ type RendererAuthApi = {
   ) => Promise<{ path: string; relativePath: string }>
   listAnalysisKernels: (cwd?: string) => Promise<AnalysisKernelDiagnostics>
   getAnalysisJupyterStatus: (cwd: string) => Promise<JupyterServerStatus>
+  getAnalysisJupyterRuntimeStatus: (cwd: string) => Promise<AnalysisJupyterRuntimeStatus>
   startAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
   stopAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
   getAnalysisNotebookSessionStatus: (
@@ -472,7 +586,14 @@ type RendererAuthApi = {
     document: Record<string, unknown>,
     cellId: string
   ) => Promise<AnalysisCellExecutionResult>
+  generateAnalysisNotebookCode: (
+    cwd: string,
+    path: string,
+    document: Record<string, unknown>,
+    input: AnalysisNotebookCodeGenerationInput
+  ) => Promise<AnalysisNotebookCodeGenerationResult>
   stopGeneration: () => Promise<void>
+  onAnalysisNotebookDraftChanged: (cb: (change: AnalysisNotebookDraftChange) => void) => Unsubscribe
   onSessionChanged: (cb: (session: CurrentSession) => void) => Unsubscribe
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => Unsubscribe
   onToolApprovalCancelled: (cb: () => void) => Unsubscribe
@@ -483,6 +604,16 @@ type RendererAuthApi = {
   listSkills: (cwd?: string) => Promise<SkillSummary[]>
   listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
+  getWrapperPlan: (planId: string) => Promise<WrapperRunPlan | undefined>
+  submitWrapperPlan: (planId: string, heavyWorkloadAcknowledged?: boolean) => Promise<WrapperRun>
+  cancelWrapperRunPlan: (planId: string) => Promise<WrapperRunPlan>
+  listWrapperCatalog: () => Promise<WrapperCatalogEntry[]>
+  addCustomWrapper: (sourceDir: string) => Promise<WrapperCatalogEntry>
+  listWrapperRuns: () => Promise<WrapperRun[]>
+  getWrapperRun: (runId: string) => Promise<WrapperRun | undefined>
+  cancelWrapperRun: (runId: string) => Promise<WrapperRun>
+  getWrapperPlanArtifact: (planId: string, fileName: string) => Promise<string | undefined>
+  exportWrapperReproducibility: (runId: string) => Promise<string | null>
 }
 
 const api: RendererAuthApi = {
@@ -495,11 +626,13 @@ const api: RendererAuthApi = {
   previewFile: (path: string): Promise<FilePreview> => ipcRenderer.invoke('files:preview', path),
   hoverPreviewFile: (path: string): Promise<FileHoverPreview> =>
     ipcRenderer.invoke('files:hoverPreview', path),
+  statLocalPaths: (cwd: string, paths: string[]): Promise<LocalPathStat[]> =>
+    ipcRenderer.invoke('files:statLocalPaths', cwd, paths),
   listDirectory: (path: string): Promise<DirectoryListing> =>
     ipcRenderer.invoke('files:listDirectory', path),
   copyDiagnostics: (): Promise<string> => ipcRenderer.invoke('diagnostics:copy'),
-  sendPrompt: (text: string): Promise<PromptResult | null> =>
-    ipcRenderer.invoke('agent:prompt', text),
+  sendPrompt: (text: string, target?: PromptTarget): Promise<PromptResult | null> =>
+    ipcRenderer.invoke('agent:prompt', text, target),
   onAgentEvent: (cb: (event: AgentEventSummary) => void): Unsubscribe => {
     const handler = (_: unknown, event: AgentEventSummary): void => {
       cb(event)
@@ -575,6 +708,24 @@ const api: RendererAuthApi = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ): Promise<Project> => ipcRenderer.invoke('projects:updateDefaults', id, defaults),
+  pickPrivateKeyFile: (): Promise<string | null> =>
+    ipcRenderer.invoke('projects:pickPrivateKeyFile'),
+  isRemoteCredentialStorageAvailable: (): Promise<boolean> =>
+    ipcRenderer.invoke('projects:isRemoteCredentialStorageAvailable'),
+  updateProjectRemoteConnection: (
+    id: string,
+    connectionId: string,
+    patch: ProjectRemoteConnection | null,
+    passphrase?: string | null
+  ): Promise<Project> =>
+    ipcRenderer.invoke('projects:updateRemoteConnection', id, connectionId, patch, passphrase),
+  updateProjectRemoteDefaults: (
+    id: string,
+    defaults: {
+      defaultRemoteConnectionId?: string | null
+      remoteWorkspaceRoot?: string | null
+    }
+  ): Promise<Project> => ipcRenderer.invoke('projects:updateRemoteDefaults', id, defaults),
   listProjectSessions: (workingDirectory: string): Promise<SessionSummary[]> =>
     ipcRenderer.invoke('projects:sessions', workingDirectory),
   createProjectSession: (
@@ -592,6 +743,13 @@ const api: RendererAuthApi = {
     cwd: string,
     input: SaveAnalysisNotebookInput
   ): Promise<AnalysisNotebookFile> => ipcRenderer.invoke('analysis:saveNotebook', cwd, input),
+  syncAnalysisNotebookDraft: (
+    cwd: string,
+    path: string,
+    document: Record<string, unknown>,
+    savedRevision?: string
+  ): Promise<AnalysisNotebookDraftChange> =>
+    ipcRenderer.invoke('analysis:syncNotebookDraft', cwd, path, document, savedRevision),
   createAnalysisNotebook: (cwd: string, relativePath?: string): Promise<AnalysisNotebookFile> =>
     ipcRenderer.invoke('analysis:createNotebook', cwd, relativePath),
   closeAnalysisNotebook: (cwd: string, path: string): Promise<{ path: string }> =>
@@ -605,6 +763,8 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('analysis:listKernels', cwd),
   getAnalysisJupyterStatus: (cwd: string): Promise<JupyterServerStatus> =>
     ipcRenderer.invoke('analysis:jupyterStatus', cwd),
+  getAnalysisJupyterRuntimeStatus: (cwd: string): Promise<AnalysisJupyterRuntimeStatus> =>
+    ipcRenderer.invoke('analysis:jupyterRuntimeStatus', cwd),
   startAnalysisJupyter: (cwd: string): Promise<JupyterServerStatus> =>
     ipcRenderer.invoke('analysis:startJupyter', cwd),
   stopAnalysisJupyter: (cwd: string): Promise<JupyterServerStatus> =>
@@ -633,7 +793,27 @@ const api: RendererAuthApi = {
     cellId: string
   ): Promise<AnalysisCellExecutionResult> =>
     ipcRenderer.invoke('analysis:executeNotebookCell', cwd, path, document, cellId),
+  generateAnalysisNotebookCode: (
+    cwd: string,
+    path: string,
+    document: Record<string, unknown>,
+    input: AnalysisNotebookCodeGenerationInput
+  ): Promise<AnalysisNotebookCodeGenerationResult> =>
+    ipcRenderer.invoke('analysis:generateNotebookCode', cwd, path, document, input),
   stopGeneration: (): Promise<void> => ipcRenderer.invoke('agent:stop'),
+  onAnalysisNotebookDraftChanged: (
+    cb: (change: AnalysisNotebookDraftChange) => void
+  ): Unsubscribe => {
+    const handler = (_: unknown, change: AnalysisNotebookDraftChange): void => {
+      cb(change)
+    }
+
+    ipcRenderer.on('analysis:notebookDraftChanged', handler)
+
+    return () => {
+      ipcRenderer.removeListener('analysis:notebookDraftChanged', handler)
+    }
+  },
   onSessionChanged: (cb: (session: CurrentSession) => void): Unsubscribe => {
     const handler = (_: unknown, session: CurrentSession): void => {
       cb(session)
@@ -678,7 +858,26 @@ const api: RendererAuthApi = {
   listPromptAgents: (cwd?: string): Promise<PromptAgentSummary[]> =>
     ipcRenderer.invoke('agents:list', cwd),
   listMcpServers: (cwd?: string): Promise<McpServerSummary[]> =>
-    ipcRenderer.invoke('mcp:listServers', cwd)
+    ipcRenderer.invoke('mcp:listServers', cwd),
+  getWrapperPlan: (planId: string): Promise<WrapperRunPlan | undefined> =>
+    ipcRenderer.invoke('wrappers:getPlan', planId),
+  submitWrapperPlan: (planId: string, heavyWorkloadAcknowledged?: boolean): Promise<WrapperRun> =>
+    ipcRenderer.invoke('wrappers:submitPlan', planId, heavyWorkloadAcknowledged),
+  cancelWrapperRunPlan: (planId: string): Promise<WrapperRunPlan> =>
+    ipcRenderer.invoke('wrappers:cancelPlan', planId),
+  listWrapperCatalog: (): Promise<WrapperCatalogEntry[]> =>
+    ipcRenderer.invoke('wrappers:listCatalog'),
+  addCustomWrapper: (sourceDir: string): Promise<WrapperCatalogEntry> =>
+    ipcRenderer.invoke('wrappers:addCustom', sourceDir),
+  listWrapperRuns: (): Promise<WrapperRun[]> => ipcRenderer.invoke('wrappers:listRuns'),
+  getWrapperRun: (runId: string): Promise<WrapperRun | undefined> =>
+    ipcRenderer.invoke('wrappers:getRun', runId),
+  cancelWrapperRun: (runId: string): Promise<WrapperRun> =>
+    ipcRenderer.invoke('wrappers:cancelRun', runId),
+  getWrapperPlanArtifact: (planId: string, fileName: string): Promise<string | undefined> =>
+    ipcRenderer.invoke('wrappers:getPlanArtifact', planId, fileName),
+  exportWrapperReproducibility: (runId: string): Promise<string | null> =>
+    ipcRenderer.invoke('wrappers:exportReproducibility', runId)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

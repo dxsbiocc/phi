@@ -5,7 +5,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import SessionSidebar from '../src/renderer/src/components/SessionSidebar'
 import {
+  activeCwdBelongsToProject,
   expandActiveProjectId,
+  orderProjectsForSessionSelection,
   resolveProjectExpandedIds
 } from '../src/renderer/src/lib/projectSidebar'
 import {
@@ -32,7 +34,8 @@ const baseSession: SessionSummary = {
 
 function renderSidebar(
   sessions: SessionSummary[],
-  getSessionRuntimeState?: (path: string, cwd: string) => SessionRuntimeState | null
+  getSessionRuntimeState?: (path: string, cwd: string) => SessionRuntimeState | null,
+  options: { hideWindowDragSpacer?: boolean; compactHoverPreview?: boolean } = {}
 ): string {
   const theme = createTheme()
   return renderToStaticMarkup(
@@ -41,6 +44,8 @@ function renderSidebar(
       { theme },
       createElement(SessionSidebar, {
         mode: 'conversations',
+        hideWindowDragSpacer: options.hideWindowDragSpacer,
+        compactHoverPreview: options.compactHoverPreview,
         sessions,
         activeSessionPath: sessions[0]?.path ?? null,
         activeCwd: '/workspace',
@@ -72,6 +77,24 @@ test('project sidebar expands the active project by cwd', () => {
   )
 
   assert.deepEqual([...expanded], ['beta'])
+})
+
+test('project sidebar treats project membership as a cwd grouping concern', () => {
+  const projects = [
+    { id: 'alpha', workingDirectory: '/projects/alpha' },
+    { id: 'beta', workingDirectory: '/projects/beta' }
+  ]
+
+  assert.equal(activeCwdBelongsToProject(projects, '/projects/beta'), true)
+  assert.equal(activeCwdBelongsToProject(projects, '/ordinary/workspace'), false)
+  assert.deepEqual(
+    orderProjectsForSessionSelection(projects, '/projects/beta').map((project) => project.id),
+    ['beta', 'alpha']
+  )
+  assert.deepEqual(
+    orderProjectsForSessionSelection(projects, '/ordinary/workspace').map((project) => project.id),
+    ['alpha', 'beta']
+  )
 })
 
 test('project sidebar leaves expansion unchanged outside project mode', () => {
@@ -152,6 +175,30 @@ test('session sidebar does not show the running beacon for idle conversations', 
   assert.doesNotMatch(markup, /aria-label="会话运行中"/)
   assert.doesNotMatch(markup, /data-phi-slot="session-attention-beacon-slot"/)
   assert.doesNotMatch(markup, /data-phi-slot="session-attention-beacon"/)
+})
+
+test('embedded session sidebar fills menu width without the window drag spacer', () => {
+  const markup = renderSidebar([baseSession], undefined, { hideWindowDragSpacer: true })
+
+  assert.match(markup, /class="[^"]*app-sidebar-surface/)
+  assert.match(markup, /width:100%/)
+  assert.match(markup, /min-width:0/)
+  assert.doesNotMatch(markup, /min-height:44px;padding-left:80px/)
+})
+
+test('hover preview session sidebar stays compact and scrolls its own list', () => {
+  const markup = renderSidebar(
+    [baseSession, { ...baseSession, path: 'session-b', id: 'session-b', firstMessage: '第二段' }],
+    undefined,
+    { hideWindowDragSpacer: true, compactHoverPreview: true }
+  )
+
+  assert.match(markup, /data-phi-session-sidebar-variant="hover-preview"/)
+  assert.match(markup, /height:auto/)
+  assert.match(markup, /max-height:min\(420px, calc\(100vh - 96px\)\)/)
+  assert.match(markup, /flex:0 1 auto/)
+  assert.match(markup, /max-height:min\(320px, calc\(100vh - 176px\)\)/)
+  assert.doesNotMatch(markup, /height:100%/)
 })
 
 test('session running beacon slot stays centered in ordinary and indented gutters', () => {

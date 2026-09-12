@@ -1,7 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { WORKSPACE_DIR } from './sessions'
-import { installRuntimePlugin, listRuntimePlugins, removeRuntimePlugin } from './runtime-adapter'
+import { WORKSPACE_DIR } from './session/sessions'
+import {
+  installRuntimePlugin,
+  listRuntimePlugins,
+  removeRuntimePlugin
+} from './runtime/runtime-adapter'
 
 export const PLUGIN_CATALOG_URL = 'https://pi.dev/packages'
 

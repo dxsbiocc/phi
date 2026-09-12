@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
-import PluginView from '../src/renderer/src/components/PluginView'
+import PluginView from '../src/renderer/src/features/plugin/PluginView'
 import type { PluginCatalogItem } from '../src/renderer/src/types'
 
 const plugin: PluginCatalogItem = {

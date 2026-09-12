@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -18,6 +19,7 @@ import {
   formatSkillPromptReference
 } from '../src/renderer/src/lib/inputReferences'
 import { toolActionKind } from '../src/renderer/src/lib/toolActions'
+import { suggestedNextActionPlaceholderFromMessages } from '../src/renderer/src/lib/suggestedNextAction'
 import type {
   ChatItem,
   PermissionMode,
@@ -85,27 +87,35 @@ function renderChatError(content: string): string {
   return renderChat([{ id: 'error-1', role: 'error', content }])
 }
 
-function renderToolGroup(items: ToolCallItem[]): string {
+function renderToolGroup(
+  items: ToolCallItem[],
+  options: { onJumpToNotebookCell?: () => void } = {}
+): string {
   const theme = createTheme()
   return renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme },
       createElement(ToolGroupCard, {
-        items
+        items,
+        onJumpToNotebookCell: options.onJumpToNotebookCell
       })
     )
   )
 }
 
-function renderToolCall(item: ToolCallItem): string {
+function renderToolCall(
+  item: ToolCallItem,
+  options: { onJumpToNotebookCell?: () => void } = {}
+): string {
   const theme = createTheme()
   return renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme },
       createElement(ToolCallCard, {
-        item
+        item,
+        onJumpToNotebookCell: options.onJumpToNotebookCell
       })
     )
   )
@@ -174,6 +184,44 @@ test('chat view formats add-menu references for prompt input', () => {
   assert.equal(
     appendInputReference('先分析数据', '$omics-visualization'),
     '先分析数据\n$omics-visualization'
+  )
+})
+
+test('chat view extracts suggested next action placeholders from assistant messages', () => {
+  assert.equal(
+    suggestedNextActionPlaceholderFromMessages([
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '完成。\n\n推荐下一步：\n- 运行 notebook 并检查图表。'
+      }
+    ]),
+    '运行 notebook 并检查图表。'
+  )
+  assert.equal(
+    suggestedNextActionPlaceholderFromMessages([
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'Done.\n\nRecommended next steps, in order: (1) run the visual pass.'
+      }
+    ]),
+    'run the visual pass.'
+  )
+  assert.equal(
+    suggestedNextActionPlaceholderFromMessages([
+      {
+        id: 'user-1',
+        role: 'user',
+        content: 'Y轴超过30的按30算，重新调整火山图'
+      },
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '已完成。3 个火山图 cell 全部调整。Notebook 已重新执行验证，0 错误。'
+      }
+    ]),
+    null
   )
 })
 
@@ -359,6 +407,35 @@ test('chat view keeps in-flight processing folded with a spinner before the assi
   assert.match(markup, /aria-label="执行中"/)
   assert.match(markup, /role="progressbar"/)
   assert.doesNotMatch(markup, />执行中</)
+})
+
+test('chat view keeps streaming progress text inside the active processing fold', () => {
+  const markup = withMockedNow('2026-09-07T00:00:05.000Z', () =>
+    renderChat(
+      [
+        { id: 'user-1', role: 'user', content: '分析 notebook' },
+        {
+          id: 'thinking-1',
+          role: 'thinking',
+          content: '先确认 notebook 状态。',
+          createdAt: '2026-09-07T00:00:00.000Z',
+          completedAt: '2026-09-07T00:00:02.000Z',
+          durationMs: 2000
+        },
+        {
+          id: 'assistant-progress-1',
+          role: 'assistant',
+          content: '当前正在补充分析代码。',
+          createdAt: '2026-09-07T00:00:03.000Z'
+        }
+      ],
+      { isGenerating: true, currentRunStartedAt: '2026-09-07T00:00:00.000Z' }
+    )
+  )
+
+  assert.match(markup, /正在处理，已花费 5 秒/)
+  assert.match(markup, /aria-label="展开处理过程"/)
+  assert.doesNotMatch(markup, /当前正在补充分析代码。/)
 })
 
 test('chat view uses the active run start time for running processing totals', () => {
@@ -636,6 +713,10 @@ test('tool rows classify common actions with distinct icons', () => {
     toolActionKind('read', 'https://example.com', '{"url":"https://example.com"}'),
     'web'
   )
+  assert.equal(
+    toolActionKind('notebook.run_cell', 'eda.ipynb', '{"path":"eda.ipynb","cellId":"cell-2"}'),
+    'notebook'
+  )
 
   const markup = renderToolCall({
     id: 'tool-1',
@@ -680,6 +761,76 @@ test('tool rows classify common actions with distinct icons', () => {
 
   assert.match(pythonGroupMarkup, /已执行 Python 代码/)
   assert.doesNotMatch(pythonGroupMarkup, /import pandas/)
+
+  const notebookMarkup = renderToolCall({
+    id: 'tool-notebook',
+    role: 'tool',
+    toolName: 'notebook.run_cell',
+    argsPreview: 'eda.ipynb',
+    argsJson: '{"path":"eda.ipynb","cellId":"cell-2"}',
+    output: 'Ran Cell 2',
+    status: 'done',
+    notebook: {
+      kind: 'notebook_cell_executed',
+      relativePath: 'eda.ipynb',
+      cellId: 'cell-2',
+      cellType: 'code',
+      executionState: 'idle',
+      executionCount: 7,
+      summary: 'Ran Cell 2'
+    }
+  })
+
+  assert.match(notebookMarkup, /aria-label="分析"/)
+  assert.match(notebookMarkup, /已运行 Cell/)
+  assert.match(notebookMarkup, /eda\.ipynb/)
+  assert.match(notebookMarkup, /cell-2/)
+  assert.doesNotMatch(notebookMarkup, />notebook\.run_cell</)
+  assert.doesNotMatch(notebookMarkup, /aria-label="跳转到 cell"/)
+
+  const notebookJumpMarkup = renderToolCall(
+    {
+      id: 'tool-notebook',
+      role: 'tool',
+      toolName: 'notebook.update_cell',
+      argsPreview: 'eda.ipynb',
+      argsJson: '{"path":"eda.ipynb","cellId":"cell-2"}',
+      output: 'Updated Cell 2',
+      status: 'done',
+      notebook: {
+        kind: 'notebook_cell_updated',
+        path: '/project/eda.ipynb',
+        relativePath: 'eda.ipynb',
+        cellId: 'cell-2',
+        cellType: 'code',
+        summary: 'Updated Cell 2'
+      }
+    },
+    {
+      onJumpToNotebookCell: () => undefined
+    }
+  )
+
+  assert.match(notebookJumpMarkup, /aria-label="跳转到 cell"/)
+
+  const notebookGroupMarkup = renderToolGroup([
+    {
+      id: 'tool-notebook',
+      role: 'tool',
+      toolName: 'notebook.save',
+      argsPreview: 'eda.ipynb',
+      argsJson: '{"path":"eda.ipynb"}',
+      output: 'Saved eda.ipynb',
+      status: 'done',
+      notebook: {
+        kind: 'notebook_saved',
+        relativePath: 'eda.ipynb',
+        summary: 'Saved eda.ipynb'
+      }
+    }
+  ])
+
+  assert.match(notebookGroupMarkup, /已操作 Notebook/)
 
   const groupMarkup = renderToolGroup([
     {
@@ -768,6 +919,39 @@ test('chat view shows add-context control before permissions', () => {
   assert.match(markup, /aria-label="添加文件、智能体、Skill 或插件"[\s\S]*aria-label="选择权限模式/)
 })
 
+test('chat view uses the suggested next action as a clickable placeholder', () => {
+  const markup = renderChat([
+    {
+      id: 'assistant-1',
+      role: 'assistant',
+      content: '完成。\n\n下一步操作：\n1. 继续生成验证图表。'
+    }
+  ])
+
+  assert.match(markup, /placeholder="继续生成验证图表。"/)
+  assert.match(markup, /data-phi-placeholder-kind="suggested-next-action"/)
+})
+
+test('chat view does not reuse the previous user action when the assistant only reports completion', () => {
+  const markup = renderChat([
+    {
+      id: 'user-1',
+      role: 'user',
+      content: '把 SbatchRunner 接入 runs.ts 的提交流程'
+    },
+    {
+      id: 'assistant-1',
+      role: 'assistant',
+      content: '已完成，验证通过。'
+    }
+  ])
+
+  assert.match(markup, /placeholder="输入消息，Enter 发送，Shift\+Enter 换行"/)
+  assert.match(markup, /data-phi-placeholder-kind="default"/)
+  assert.doesNotMatch(markup, /placeholder="[^"]*SbatchRunner/)
+  assert.doesNotMatch(markup, /data-phi-placeholder-kind="suggested-next-action"/)
+})
+
 test('chat view shows full access permission mode in the composer', () => {
   const markup = renderChat([], { permissionMode: 'full' })
 
@@ -789,6 +973,27 @@ test('chat view uses icon-only composer controls when file preview is open', () 
   assert.doesNotMatch(markup, />High</)
   assert.doesNotMatch(markup, />Kimi Coding</)
   assert.doesNotMatch(markup, /输入消息，Enter 发送/)
+})
+
+test('chat view keeps compact composer icon buttons at the declared outer size', () => {
+  const chatViewSource = readFileSync('src/renderer/src/components/ChatView.tsx', 'utf8')
+  const controlStylesSource = readFileSync(
+    'src/renderer/src/components/chat/composerControlStyles.ts',
+    'utf8'
+  )
+
+  assert.match(
+    controlStylesSource,
+    /const compactComposerIconButtonSx = \{[\s\S]*?boxSizing: 'border-box'[\s\S]*?p: 0[\s\S]*?\} as const/
+  )
+  assert.match(
+    chatViewSource,
+    /data-phi-composer-action="send"[\s\S]*?boxSizing: 'border-box'[\s\S]*?p: 0/
+  )
+  assert.match(
+    chatViewSource,
+    /data-phi-composer-action="stop"[\s\S]*?boxSizing: 'border-box'[\s\S]*?p: 0/
+  )
 })
 
 test('chat view keeps compact stop control the same size as other compact controls', () => {
@@ -825,4 +1030,22 @@ test('chat view renders tool approval inline instead of a modal dialog', () => {
   assert.match(markup, /执行终端命令/)
   assert.match(markup, /which R/)
   assert.doesNotMatch(markup, /role="dialog"/)
+})
+
+test('chat view shows a preparing placeholder for a wrapper plan tool call with no planId yet', () => {
+  const markup = renderChat([
+    { id: 'call-1', role: 'wrapper_plan', toolName: 'wrapper.phi_ngs_fastq_qc', status: 'running' }
+  ])
+
+  assert.match(markup, /正在准备 wrapper 计划/)
+})
+
+test('chat view shows an error state for a failed wrapper plan tool call, with no plan metadata leaked', () => {
+  const markup = renderChat([
+    { id: 'call-1', role: 'wrapper_plan', toolName: 'wrapper.phi_ngs_fastq_qc', status: 'error' }
+  ])
+
+  assert.match(markup, /wrapper 计划创建失败/)
+  // The chat item itself never carries plan detail — only an id once resolved.
+  assert.doesNotMatch(markup, /fastq-qc|multiqc|nextflow/i)
 })

@@ -31,6 +31,27 @@ Unsigned or locally built macOS apps may show Gatekeeper/security prompts. For t
 beta, formal signing, notarization, and automatic updates are deferred; release notes
 should tell testers to expect the standard macOS warning flow for local builds.
 
+## Phi Wrapper (Phase 1)
+
+Phi Wrapper is a reproducible execution layer for bioinformatics and other heavy
+command-line tools: fixed, verified wrapper definitions the agent can call instead of
+assembling ad hoc shell commands. It has its own sidebar entry ("Wrappers"), its own
+storage under `~/.phi/wrappers`, and its own chat-timeline plan/run cards, independent
+of ordinary tool calls.
+
+Phase 1 is entirely local — there is no remote/HPC execution, no signed registry, and
+no CLI yet; those arrive in later phases. What works today: one bundled demo wrapper
+(`phi/ngs/fastq-qc`), asking the agent to prepare a run plan, reviewing and submitting
+it from the chat card, and watching a real local Nextflow run execute with live
+per-step status. See [`docs/design/phi-wrapper-product-prd.md`](docs/design/phi-wrapper-product-prd.md)
+for the full phased scope and [`docs/design/phi-wrapper-authoring-guide.md`](docs/design/phi-wrapper-authoring-guide.md)
+for how to point Phi at your own wrapper during development.
+
+Prefer a wrapper over Phi's notebook/Jupyter analysis path when a community- or
+lab-standard pipeline already exists for the task and reproducibility or resource cost
+matters; prefer the notebook path for exploratory work or custom one-off logic. See the
+PRD's "Relationship To Notebook Analysis" section for the full comparison.
+
 ## Development
 
 ```bash

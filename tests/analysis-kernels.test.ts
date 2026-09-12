@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { detectAnalysisKernels } from '../src/main/agent/analysis-kernels'
+import { detectAnalysisKernels } from '../src/main/agent/notebook/analysis-kernels'
 
 test('detectAnalysisKernels normalizes Python and R kernelspecs', () => {
   const calls: string[] = []

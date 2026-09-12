@@ -1,0 +1,10 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi lowercase notebook cursor mark</title>
+  <desc id="desc">A lowercase phi mark combining a notebook cursor and local execution loop.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M53 15V86" stroke-width="7.5"/>
+    <path d="M50 30C66 30 76 42 73 57C70 72 55 79 40 75C27 72 21 61 25 49C29 38 39 31 50 30Z" stroke-width="7.5"/>
+    <path d="M26 38L18 50L26 62" stroke-width="4.5"/>
+    <path d="M70 38L78 50L70 62" stroke-width="4.5"/>
+  </g>
+</svg>

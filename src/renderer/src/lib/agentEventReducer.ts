@@ -1,9 +1,13 @@
 import type { AgentEventSummary, ChatItem } from '../types'
 import {
   chatItemFromPhiTimelineEvent,
+  extractNotebookToolSummary,
   extractToolText,
+  extractWrapperPlanId,
   hasEquivalentErrorMessage,
   isDisplayableAssistantText,
+  isNotebookToolName,
+  isWrapperToolName,
   runLifecycleItemFromPhiTimelineEvent,
   toolArgsPreview
 } from './chatItems'
@@ -183,6 +187,18 @@ export function reduceAgentEventState(
   }
 
   if (event.type === 'tool_execution_start' && typeof event.toolCallId === 'string') {
+    const toolName = typeof event.toolName === 'string' ? event.toolName : 'tool'
+    if (isWrapperToolName(toolName)) {
+      next.push({
+        id: event.toolCallId,
+        role: 'wrapper_plan',
+        toolName,
+        status: 'running',
+        ...createdAtField(event.createdAt)
+      })
+      return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+    }
+
     let argsJson = ''
     try {
       argsJson = JSON.stringify(event.args, null, 2) ?? ''
@@ -192,7 +208,7 @@ export function reduceAgentEventState(
     next.push({
       id: event.toolCallId,
       role: 'tool',
-      toolName: typeof event.toolName === 'string' ? event.toolName : 'tool',
+      toolName,
       argsPreview: toolArgsPreview(event.args),
       argsJson,
       output: '',
@@ -208,6 +224,21 @@ export function reduceAgentEventState(
   ) {
     const index = next.findIndex((item) => item.id === event.toolCallId)
     const current = index >= 0 ? next[index] : null
+    if (current && current.role === 'wrapper_plan') {
+      if (event.type === 'tool_execution_end') {
+        const planId = extractWrapperPlanId(event.result) ?? current.planId
+        next[index] = {
+          ...current,
+          ...(planId !== undefined ? { planId } : {}),
+          status: event.isError ? 'error' : 'done',
+          ...completedAtField(event.createdAt),
+          ...(durationBetween(current.createdAt, event) !== undefined
+            ? { durationMs: durationBetween(current.createdAt, event) }
+            : {})
+        }
+      }
+      return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+    }
     if (current && current.role === 'tool') {
       if (event.type === 'tool_execution_update') {
         const partial = extractToolText(event.partialResult)
@@ -223,6 +254,11 @@ export function reduceAgentEventState(
           ...current,
           output: output || current.output,
           ...outputMetadata,
+          ...(isNotebookToolName(current.toolName)
+            ? {
+                notebook: extractNotebookToolSummary(event.result) ?? current.notebook
+              }
+            : {}),
           status: event.isError ? 'error' : 'done',
           ...completedAtField(event.createdAt),
           ...(durationMs !== undefined ? { durationMs } : {})

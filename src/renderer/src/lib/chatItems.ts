@@ -1,4 +1,112 @@
-import type { ChatItem, RunLifecycleItem } from '../types'
+import type { ChatItem, NotebookToolSummary, RunLifecycleItem } from '../types'
+
+const WRAPPER_TOOL_PREFIX = 'wrapper.'
+const NOTEBOOK_TOOL_PREFIX = 'notebook.'
+
+/**
+ * `wrapper.search`/`wrapper.inspect` (see src/main/agent/wrappers/tools.ts)
+ * are read-only lookups — they never return `details.kind === 'wrapper_plan'`,
+ * so a `WrapperPlanItem` built for one would never get a `planId` and
+ * WrapperPlanCard's `!item.planId || !plan` branch would show "正在加载计划…"
+ * forever instead of the actual search/inspect result. Both share the
+ * `wrapper.` prefix with real execute tools (`wrapperToolName()` sanitizes
+ * a canonical id into `wrapper.<id-with-slashes-as-underscores>`, which
+ * can't collide with these two fixed names), so they need an explicit
+ * exclusion rather than a prefix check alone.
+ */
+const WRAPPER_NON_PLAN_TOOL_NAMES = new Set(['wrapper.search', 'wrapper.inspect'])
+
+/**
+ * `wrapper.<id>` execute tool calls render as a `WrapperPlanItem` (a plan
+ * card), not a generic `ToolCallItem` — see docs/design/phi-wrapper-
+ * technical-design.md, "Chat And UI Integration". `wrapper.search`/
+ * `wrapper.inspect` are excluded — see `WRAPPER_NON_PLAN_TOOL_NAMES`.
+ */
+export function isWrapperToolName(toolName: string): boolean {
+  return toolName.startsWith(WRAPPER_TOOL_PREFIX) && !WRAPPER_NON_PLAN_TOOL_NAMES.has(toolName)
+}
+
+export function isNotebookToolName(toolName: string): boolean {
+  return toolName.startsWith(NOTEBOOK_TOOL_PREFIX)
+}
+
+/**
+ * Convention for `wrapper.<id>` tool results (Milestone P1.8): the tool
+ * returns `{ content: [...], details: { kind: 'wrapper_plan', planId } }`.
+ * Large plan metadata never travels through the chat event stream — only
+ * the id, which the card uses to load full detail from the wrapper store.
+ */
+export function extractWrapperPlanId(result: unknown): string | undefined {
+  if (!result || typeof result !== 'object') return undefined
+  const details = (result as { details?: unknown }).details
+  if (!details || typeof details !== 'object') return undefined
+  const record = details as { kind?: unknown; planId?: unknown }
+  if (record.kind !== 'wrapper_plan' || typeof record.planId !== 'string') return undefined
+  return record.planId
+}
+
+function detailsFromToolResult(result: unknown): unknown {
+  if (!result || typeof result !== 'object') return undefined
+  const record = result as { details?: unknown }
+  return record.details ?? result
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key]
+  return typeof value === 'string' && value ? value : undefined
+}
+
+function numberOrNullField(
+  record: Record<string, unknown>,
+  key: string
+): number | null | undefined {
+  const value = record[key]
+  if (value === null) return null
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+/**
+ * Notebook tool results can include full notebook/cell/output objects. Chat history
+ * only needs a small operation receipt, so this intentionally projects details down
+ * to path, cell id/type, execution state/count, and the human summary string.
+ */
+export function extractNotebookToolSummary(result: unknown): NotebookToolSummary | undefined {
+  const details = detailsFromToolResult(result)
+  if (!details || typeof details !== 'object') return undefined
+  const record = details as Record<string, unknown>
+  const kind = stringField(record, 'kind')
+  if (!kind || !kind.startsWith('notebook_')) return undefined
+
+  const cell =
+    record.cell && typeof record.cell === 'object' ? (record.cell as Record<string, unknown>) : null
+  const execution =
+    record.execution && typeof record.execution === 'object'
+      ? (record.execution as Record<string, unknown>)
+      : null
+  const cellId = stringField(record, 'cellId') ?? (cell ? stringField(cell, 'id') : undefined)
+  const cellType =
+    stringField(record, 'cellType') ??
+    (cell ? (stringField(cell, 'cellType') ?? stringField(cell, 'cell_type')) : undefined)
+  const executionState =
+    stringField(record, 'executionState') ??
+    (execution ? stringField(execution, 'state') : undefined)
+  const executionCount =
+    numberOrNullField(record, 'executionCount') ??
+    (execution ? numberOrNullField(execution, 'executionCount') : undefined)
+
+  return {
+    kind,
+    ...(stringField(record, 'path') ? { path: stringField(record, 'path') } : {}),
+    ...(stringField(record, 'relativePath')
+      ? { relativePath: stringField(record, 'relativePath') }
+      : {}),
+    ...(cellId ? { cellId } : {}),
+    ...(cellType ? { cellType } : {}),
+    ...(executionState ? { executionState } : {}),
+    ...(executionCount !== undefined ? { executionCount } : {}),
+    ...(stringField(record, 'summary') ? { summary: stringField(record, 'summary') } : {})
+  }
+}
 
 function toolOutputArtifactFrom(value: unknown):
   | {
@@ -370,6 +478,7 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
       outputBytes?: number
       outputTruncated?: boolean
       outputArtifact?: unknown
+      details?: unknown
       isError?: boolean
       durationMs?: number
       createdAt?: string
@@ -429,6 +538,12 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
               outputBytes: message.outputBytes ?? outputArtifact?.bytes,
               outputTruncated: message.outputTruncated,
               outputArtifact,
+              ...(isNotebookToolName(current.toolName)
+                ? {
+                    notebook:
+                      extractNotebookToolSummary({ details: message.details }) ?? current.notebook
+                  }
+                : {}),
               status: message.isError ? 'error' : 'done',
               ...completedAtField(message.createdAt),
               ...(durationMs !== undefined ? { durationMs } : {})
@@ -540,6 +655,11 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
           items[index] = {
             ...current,
             output: extractToolText(message.content) || current.output,
+            ...(isNotebookToolName(current.toolName)
+              ? {
+                  notebook: extractNotebookToolSummary(message.content) ?? current.notebook
+                }
+              : {}),
             status: message.isError ? 'error' : 'done'
           }
         }

@@ -7,7 +7,13 @@ import FilePreviewPanel, {
   FilePreviewTitleTab,
   ProjectFileTree,
   type FilePreviewPanelState
-} from '../src/renderer/src/components/FilePreviewPanel'
+} from '../src/renderer/src/features/file-preview/FilePreviewPanel'
+import {
+  parseDelimitedText,
+  spreadsheetColumnLabel,
+  spreadsheetFormatForPath,
+  spreadsheetPreviewModel
+} from '../src/renderer/src/lib/spreadsheetPreview'
 import type { DirectoryListing } from '../src/renderer/src/types'
 
 const readyPreviewState: FilePreviewPanelState = {
@@ -81,6 +87,7 @@ test('file preview panel renders file content with line numbers', () => {
   const markup = renderPanel(readyPreviewState)
 
   assert.match(markup, /aria-label="文件预览"/)
+  assert.match(markup, /data-phi-file-preview-layout="sidecar"/)
   assert.match(markup, /width:66\.666%/)
   assert.match(markup, /flex-basis:66\.666%/)
   assert.match(markup, /max-width:calc\(100% - 320px\)/)
@@ -102,6 +109,34 @@ test('file preview panel renders file content with line numbers', () => {
   assert.match(markup, />2<\/span>/)
   assert.match(markup, /const[\s\S]*answer[\s\S]*42/)
   assert.match(markup, /export[\s\S]*default[\s\S]*answer/)
+})
+
+test('file preview panel can render as the main workspace file surface', () => {
+  const markup = renderWithTheme(
+    createElement(FilePreviewPanel, {
+      state: readyPreviewState,
+      layout: 'workspace',
+      onOpenFile: () => undefined,
+      onOpenDefaultPath: () => undefined,
+      onRevealPath: () => undefined,
+      onListDirectory: async (): Promise<DirectoryListing> => ({
+        path: '/Users/example/project',
+        name: 'project',
+        displayPath: 'project',
+        rootPath: '/Users/example/project',
+        rootLabel: 'project',
+        entries: [],
+        truncated: false
+      })
+    })
+  )
+
+  assert.match(markup, /data-phi-file-preview-layout="workspace"/)
+  assert.match(markup, /width:100%/)
+  assert.match(markup, /flex-basis:100%/)
+  assert.match(markup, /max-width:none/)
+  assert.match(markup, /border-left:0/)
+  assert.match(markup, /App\.tsx/)
 })
 
 test('file preview panel renders csv files as spreadsheet grids', () => {
@@ -161,6 +196,31 @@ test('file preview panel renders tsv files as spreadsheet grids', () => {
   assert.match(markup, /data-phi-spreadsheet-column="B"/)
   assert.match(markup, /data-phi-spreadsheet-cell="B2"/)
   assert.match(markup, /8\.04/)
+})
+
+test('spreadsheet preview model parses delimited text without UI coupling', () => {
+  assert.deepEqual(parseDelimitedText('name,value\n"S,002","3,50"', ','), [
+    ['name', 'value'],
+    ['S,002', '3,50']
+  ])
+  assert.equal(spreadsheetFormatForPath('/tmp/example.tab'), 'tsv')
+  assert.equal(spreadsheetColumnLabel(26), 'AA')
+  assert.equal(
+    spreadsheetPreviewModel({
+      path: '/tmp/readme.md',
+      name: 'readme.md',
+      displayPath: 'readme.md',
+      rootPath: '/tmp',
+      rootLabel: 'tmp',
+      kind: 'text',
+      mimeType: 'text/markdown',
+      content: '# Readme',
+      bytes: 8,
+      previewBytes: 8,
+      truncated: false
+    }),
+    null
+  )
 })
 
 test('file preview panel renders png image previews', () => {

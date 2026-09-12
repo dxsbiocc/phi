@@ -19,6 +19,47 @@ export interface ProjectGitStatus {
   dirty: boolean
 }
 
+/**
+ * Per-wrapper defaults for a project. Phase 1 only ever populates
+ * version/params/resources; `executor`/`profile` stay "local" and the
+ * remote-connection fields below stay unset until Phase 2. The full shape is
+ * modeled now (see docs/design/phi-wrapper-technical-design.md, Storage) so
+ * this doesn't need a breaking change once Phase 2 remote defaults exist.
+ */
+export interface ProjectWrapperDefault {
+  version?: string
+  executor?: string
+  profile?: string
+  params?: Record<string, unknown>
+  resources?: {
+    cpus?: number
+    memory?: string
+    time?: string
+  }
+}
+
+/**
+ * A saved SSH target for remote wrapper execution — see
+ * docs/design/phi-wrapper-technical-design.md's "Project state stores
+ * references, not wrapper definitions". Deliberately holds no secret
+ * material: `privateKeyPath` points at a key file already on disk (Phi
+ * never copies or stores key bytes itself), and a passphrase — if the key
+ * needs one — lives only in the OS keychain via `remote-credential-store.ts`
+ * (Electron `safeStorage`), never in this JSON-on-disk `projects.json`
+ * record. See `remote-connection-resolver.ts` for turning this plus the
+ * stored passphrase into an actual `RemoteConnectionConfig`.
+ */
+export interface ProjectRemoteConnection {
+  id: string
+  label: string
+  host: string
+  port?: number
+  username: string
+  privateKeyPath: string
+  /** True when the key at `privateKeyPath` needs a passphrase to unlock. */
+  hasPassphrase?: boolean
+}
+
 export interface Project {
   id: string
   name: string
@@ -30,6 +71,13 @@ export interface Project {
   defaultThinkingLevel?: ThinkingLevel
   gitStatus?: ProjectGitStatus
   createdAt: string
+  wrapperDefaults?: Record<string, ProjectWrapperDefault>
+  /** Saved SSH targets this project can submit `slurm-controller`/remote wrapper runs to. */
+  remoteConnections?: ProjectRemoteConnection[]
+  /** Which `remoteConnections[].id` `runs.ts` uses when a submit doesn't specify one explicitly. */
+  defaultRemoteConnectionId?: string
+  /** Remote root Phi run directories are created under, e.g. `/data/lab/.phi`. */
+  remoteWorkspaceRoot?: string
 }
 
 function getProjectsPath(): string {
@@ -212,6 +260,87 @@ export function createProject(input: {
     createdAt: new Date().toISOString()
   }
   projects.push(project)
+  writeProjects(projects)
+  return project
+}
+
+export function updateProjectWrapperDefault(
+  id: string,
+  wrapperCanonicalId: string,
+  patch: ProjectWrapperDefault | null
+): Project {
+  const projects = readProjects()
+  const index = projects.findIndex((project) => project.id === id)
+  if (index < 0) {
+    throw new Error('项目不存在')
+  }
+
+  const project = { ...projects[index] }
+  const wrapperDefaults = { ...(project.wrapperDefaults ?? {}) }
+  if (patch === null) {
+    delete wrapperDefaults[wrapperCanonicalId]
+  } else {
+    wrapperDefaults[wrapperCanonicalId] = {
+      ...wrapperDefaults[wrapperCanonicalId],
+      ...patch
+    }
+  }
+  project.wrapperDefaults = wrapperDefaults
+  projects[index] = project
+  writeProjects(projects)
+  return project
+}
+
+/** Adds or replaces (by `connection.id`) one saved SSH target. Pass `null` to remove it — also clears `defaultRemoteConnectionId` if it pointed at the removed entry. Does not touch any stored passphrase; see `remote-credential-store.ts`, which the caller should clean up separately when actually removing a connection. */
+export function updateProjectRemoteConnection(
+  id: string,
+  connectionId: string,
+  patch: ProjectRemoteConnection | null
+): Project {
+  const projects = readProjects()
+  const index = projects.findIndex((project) => project.id === id)
+  if (index < 0) {
+    throw new Error('项目不存在')
+  }
+
+  const project = { ...projects[index] }
+  const remoteConnections = (project.remoteConnections ?? []).filter(
+    (connection) => connection.id !== connectionId
+  )
+  if (patch !== null) {
+    remoteConnections.push(patch)
+  } else if (project.defaultRemoteConnectionId === connectionId) {
+    delete project.defaultRemoteConnectionId
+  }
+  project.remoteConnections = remoteConnections
+  projects[index] = project
+  writeProjects(projects)
+  return project
+}
+
+export function updateProjectRemoteDefaults(
+  id: string,
+  defaults: {
+    defaultRemoteConnectionId?: string | null
+    remoteWorkspaceRoot?: string | null
+  }
+): Project {
+  const projects = readProjects()
+  const index = projects.findIndex((project) => project.id === id)
+  if (index < 0) {
+    throw new Error('项目不存在')
+  }
+
+  const project = { ...projects[index] }
+  if (defaults.defaultRemoteConnectionId !== undefined) {
+    if (defaults.defaultRemoteConnectionId === null) delete project.defaultRemoteConnectionId
+    else project.defaultRemoteConnectionId = defaults.defaultRemoteConnectionId
+  }
+  if (defaults.remoteWorkspaceRoot !== undefined) {
+    if (defaults.remoteWorkspaceRoot === null) delete project.remoteWorkspaceRoot
+    else project.remoteWorkspaceRoot = defaults.remoteWorkspaceRoot
+  }
+  projects[index] = project
   writeProjects(projects)
   return project
 }

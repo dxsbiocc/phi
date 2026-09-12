@@ -3,11 +3,19 @@ import type { AgentEventSummary } from '../types'
 export function agentEventBelongsToActiveSession(
   event: AgentEventSummary,
   active: {
+    phiSessionId?: string | null
     path: string | null
     cwd: string
     sessionGeneration: number
   }
 ): boolean {
+  if (typeof event.phiSessionId === 'string' && active.phiSessionId) {
+    return event.phiSessionId === active.phiSessionId
+  }
+  if (typeof event.phiSessionId === 'string' && !active.phiSessionId) {
+    return false
+  }
+
   if (
     typeof event.sessionGeneration === 'number' &&
     event.sessionGeneration !== active.sessionGeneration

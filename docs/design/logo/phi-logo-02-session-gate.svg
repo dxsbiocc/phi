@@ -1,0 +1,13 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi Session Gate logo mark</title>
+  <desc id="desc">A phi mark built from a protected vertical gate and session paths.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M50 18V82" stroke-width="8"/>
+    <path d="M50 24C68 24 77 35 75 49C73 64 59 73 42 73C28 73 20 65 22 53C24 42 34 35 47 35" stroke-width="7"/>
+    <path d="M34 46H66" stroke-width="4"/>
+    <path d="M30 58H58" stroke-width="4"/>
+  </g>
+  <circle cx="30" cy="46" r="3.5" fill="currentColor"/>
+  <circle cx="66" cy="46" r="3.5" fill="currentColor"/>
+  <circle cx="58" cy="58" r="3.5" fill="currentColor"/>
+</svg>

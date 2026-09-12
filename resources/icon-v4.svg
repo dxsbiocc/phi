@@ -1,0 +1,31 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi lowercase app icon v4</title>
+  <desc id="desc">A lowercase phi app icon for Phi, built around a descending stem and trace loop.</desc>
+  <defs>
+    <linearGradient id="bg" x1="146" y1="78" x2="878" y2="944" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FCFC"/>
+      <stop offset="1" stop-color="#DCEBED"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="308" y1="158" x2="750" y2="875" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2E9FB3"/>
+      <stop offset="0.58" stop-color="#0E3A45"/>
+      <stop offset="1" stop-color="#3ABAA4"/>
+    </linearGradient>
+    <filter id="shadow" x="-12%" y="-10%" width="124%" height="128%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="30" stdDeviation="26" flood-color="#0E3A45" flood-opacity="0.22"/>
+    </filter>
+    <clipPath id="iconClip">
+      <rect x="72" y="72" width="880" height="880" rx="212"/>
+    </clipPath>
+  </defs>
+  <rect x="72" y="72" width="880" height="880" rx="212" fill="url(#bg)"/>
+  <g clip-path="url(#iconClip)">
+    <path d="M140 803C242 914 782 914 884 803" fill="none" stroke="#0E3A45" stroke-opacity="0.18" stroke-width="30" stroke-linecap="round"/>
+    <g filter="url(#shadow)" fill="none" stroke="url(#mark)" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M543 154C481 328 461 614 512 881" stroke-width="82"/>
+      <path d="M512 307C686 307 799 430 768 584C737 748 563 829 389 768C256 717 205 594 266 471C317 369 420 307 512 307Z" stroke-width="82"/>
+      <path d="M317 676C430 758 625 707 717 563" stroke-width="52"/>
+    </g>
+    <circle cx="717" cy="563" r="43" fill="#F2994A"/>
+  </g>
+</svg>

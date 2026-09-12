@@ -16,10 +16,11 @@ import {
   Typography
 } from '@mui/material'
 import { PhiIcons } from '../icons'
-import type { ModelOption, ProviderAuthStatus } from '../types'
+import type { ModelOption, ProjectRemoteConnection, ProviderAuthStatus } from '../types'
 import type { PermissionMode, Project, ThinkingLevel, ToolApprovalRequest } from '../types'
 import type { ThemeMode } from '../theme'
 import { accentAt, ACCENT_PALETTE } from '../theme'
+import { WrapperRemoteSettingsSection } from '../features/wrapper/components/WrapperRemoteSettings'
 import { PermissionSettingsSection } from './PermissionView'
 
 const AddIcon = PhiIcons.action.add
@@ -32,15 +33,17 @@ const ProviderIcon = PhiIcons.settings.providers
 const PsychologyIcon = PhiIcons.settings.persona
 const ShieldIcon = PhiIcons.settings.permissions
 const DiagnosticsIcon = PhiIcons.settings.diagnostics
+const RemoteExecutionIcon = PhiIcons.settings.remoteExecution
 const CheckIcon = PhiIcons.state.check
 
 export type SettingsCategory =
-  'persona' | 'providers' | 'permissions' | 'diagnostics' | 'appearance'
+  'persona' | 'providers' | 'permissions' | 'remote' | 'diagnostics' | 'appearance'
 
 const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.Element }> = [
   { id: 'persona', label: '助手人设', icon: <PsychologyIcon fontSize="small" /> },
   { id: 'providers', label: 'Provider 配置', icon: <ProviderIcon fontSize="small" /> },
   { id: 'permissions', label: '权限', icon: <ShieldIcon fontSize="small" /> },
+  { id: 'remote', label: '远程执行', icon: <RemoteExecutionIcon fontSize="small" /> },
   { id: 'diagnostics', label: '诊断', icon: <ContentCopyIcon fontSize="small" /> },
   { id: 'appearance', label: '外观', icon: <PaletteIcon fontSize="small" /> }
 ]
@@ -445,6 +448,17 @@ type SettingsDialogProps = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => void
+  updatingRemoteProjectId: string | null
+  onUpdateProjectRemoteConnection: (
+    projectId: string,
+    connectionId: string,
+    patch: ProjectRemoteConnection | null,
+    passphrase?: string | null
+  ) => Promise<void>
+  onUpdateProjectRemoteDefaults: (
+    projectId: string,
+    defaults: { defaultRemoteConnectionId?: string | null; remoteWorkspaceRoot?: string | null }
+  ) => Promise<void>
   onOpenApprovalSession: (path: string) => void
   onRespondApproval: (requestId: string, approved: boolean) => void
   onCopyDiagnostics: () => Promise<string>
@@ -470,6 +484,9 @@ function SettingsDialog({
   updatingProjectId,
   onUpdateProjectPermissionMode,
   onUpdateProjectDefaults,
+  updatingRemoteProjectId,
+  onUpdateProjectRemoteConnection,
+  onUpdateProjectRemoteDefaults,
   onOpenApprovalSession,
   onRespondApproval,
   onCopyDiagnostics,
@@ -599,6 +616,14 @@ function SettingsDialog({
               onUpdateProjectDefaults={onUpdateProjectDefaults}
               onOpenApprovalSession={onOpenApprovalSession}
               onRespondApproval={onRespondApproval}
+            />
+          )}
+          {category === 'remote' && (
+            <WrapperRemoteSettingsSection
+              projects={projects}
+              updatingProjectId={updatingRemoteProjectId}
+              onUpdateRemoteConnection={onUpdateProjectRemoteConnection}
+              onUpdateRemoteDefaults={onUpdateProjectRemoteDefaults}
             />
           )}
           {category === 'diagnostics' && (

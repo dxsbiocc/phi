@@ -18,6 +18,16 @@ registerHooks({
     }
   },
   load(url, context, nextLoad) {
+    // Vite/electron-vite handles CSS imports in the real app build; under
+    // the plain Node test runner there's no CSS loader, so stub them out.
+    // (e.g. WrapperFlowDiagram.tsx imports '@xyflow/react/dist/style.css'.)
+    if (url.startsWith('file:') && url.endsWith('.css')) {
+      return { format: 'module', source: 'export {}', shortCircuit: true }
+    }
+    if (url.startsWith('file:') && url.includes('.svg?raw')) {
+      const source = JSON.stringify(readFileSync(fileURLToPath(new URL(url)), 'utf8'))
+      return { format: 'module', source: `export default ${source}`, shortCircuit: true }
+    }
     if (!url.startsWith('file:') || !/\.tsx?$/.test(url)) return nextLoad(url, context)
     const { outputText } = ts.transpileModule(readFileSync(fileURLToPath(url), 'utf8'), {
       fileName: fileURLToPath(url),

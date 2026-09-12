@@ -7,7 +7,7 @@ import {
   type JupyterKernelClient,
   type JupyterKernelExecuteRequest,
   type JupyterKernelExecuteResult
-} from '../src/main/agent/analysis-jupyter-execution'
+} from '../src/main/agent/notebook/analysis-jupyter-execution'
 
 class FakeKernelClient implements JupyterKernelClient {
   readonly requests: JupyterKernelExecuteRequest[] = []

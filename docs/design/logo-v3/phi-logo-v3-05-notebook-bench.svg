@@ -1,0 +1,11 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi Notebook Bench logo mark</title>
+  <desc id="desc">A notebook-first workbench mark where cells and a phi operator share one structure.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M50 18V82" stroke-width="7"/>
+    <path d="M31 30H67C75 30 81 36 81 44C81 52 75 58 67 58H31" stroke-width="6.5"/>
+    <path d="M31 58H60C68 58 74 64 74 72C74 79 68 84 60 84H40" stroke-width="6.5"/>
+    <path d="M24 36L17 50L24 64" stroke-width="4.5"/>
+    <path d="M76 36L83 50L76 64" stroke-width="4.5"/>
+  </g>
+</svg>

@@ -4,13 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { SessionRunnerRegistry } from '../src/main/agent/session-runner-registry'
+import { SessionRunnerRegistry } from '../src/main/agent/session/session-runner-registry'
 import {
   createPhiSession,
   createRunId,
   listPhiSessions,
   readSessionEvents
-} from '../src/main/agent/session-store'
+} from '../src/main/agent/session/session-store'
 
 function deferred<T = void>(): {
   promise: Promise<T>

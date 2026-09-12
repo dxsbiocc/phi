@@ -68,6 +68,17 @@ const MoreHorizIcon = PhiIcons.action.more
 const ROW_LABEL_FONT_SIZE = '0.875rem'
 const ROW_META_FONT_SIZE = '0.8rem'
 const CONTENT_TOP_GAP = 1
+const HOVER_PREVIEW_MAX_HEIGHT = 'min(420px, calc(100vh - 96px))'
+const HOVER_PREVIEW_LIST_MAX_HEIGHT = 'min(320px, calc(100vh - 176px))'
+const sessionActionButtonSx = {
+  width: 26,
+  height: 26,
+  p: 0,
+  borderRadius: 1.25,
+  '& svg': {
+    fontSize: 16
+  }
+} as const
 const plainSidebarRowSx = {
   backgroundColor: 'transparent !important',
   '&:hover': { backgroundColor: 'transparent !important' },
@@ -472,6 +483,7 @@ const SessionRow = memo(function SessionRow({
             <Tooltip title="重命名">
               <IconButton
                 size="small"
+                sx={sessionActionButtonSx}
                 onClick={(event) => {
                   event.stopPropagation()
                   setEditingName(session.name ?? sessionTitle(session))
@@ -484,6 +496,7 @@ const SessionRow = memo(function SessionRow({
             <Tooltip title="删除">
               <IconButton
                 size="small"
+                sx={sessionActionButtonSx}
                 onClick={(event) => {
                   event.stopPropagation()
                   onDelete()
@@ -720,6 +733,8 @@ function ProjectRow({
 
 type SessionSidebarProps = {
   mode: 'conversations' | 'projects'
+  hideWindowDragSpacer?: boolean
+  compactHoverPreview?: boolean
   sessions: SessionSummary[]
   activeSessionPath: string | null
   activeCwd: string
@@ -738,6 +753,8 @@ type SessionSidebarProps = {
 
 function SessionSidebar({
   mode,
+  hideWindowDragSpacer = false,
+  compactHoverPreview = false,
   sessions,
   activeSessionPath,
   activeCwd,
@@ -796,29 +813,35 @@ function SessionSidebar({
   return (
     <Box
       className="app-sidebar-surface"
+      data-phi-session-sidebar-variant={compactHoverPreview ? 'hover-preview' : 'sidebar'}
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        height: '100%',
+        width: '100%',
+        minWidth: 0,
+        height: compactHoverPreview ? 'auto' : '100%',
+        maxHeight: compactHoverPreview ? HOVER_PREVIEW_MAX_HEIGHT : undefined,
         backgroundColor: 'background.default'
       }}
     >
-      {/* No label here by design — this strip exists only so macOS's traffic lights
-          have room, and so the window has something to drag by. */}
-      <Box
-        sx={{
-          flexShrink: 0,
-          minHeight: 44,
-          pl: isMac ? '80px' : '16px'
-        }}
-      />
+      {!hideWindowDragSpacer ? (
+        // No label here by design — this strip exists only so macOS's traffic
+        // lights have room, and so the window has something to drag by.
+        <Box
+          sx={{
+            flexShrink: 0,
+            minHeight: 44,
+            pl: isMac ? '80px' : '16px'
+          }}
+        />
+      ) : null}
 
       <Stack
         spacing={1}
         sx={{
-          px: 1.5,
-          pt: CONTENT_TOP_GAP,
-          pb: 1,
+          px: compactHoverPreview ? 1 : 1.5,
+          pt: compactHoverPreview ? 1 : CONTENT_TOP_GAP,
+          pb: compactHoverPreview ? 0.75 : 1,
           flexShrink: 0,
           backgroundColor: 'transparent !important'
         }}
@@ -829,7 +852,11 @@ function SessionSidebar({
             variant="outlined"
             startIcon={<AddIcon />}
             onClick={onNewProject}
-            sx={{ minHeight: 44, justifyContent: 'flex-start', fontSize: ROW_LABEL_FONT_SIZE }}
+            sx={{
+              minHeight: compactHoverPreview ? 38 : 44,
+              justifyContent: 'flex-start',
+              fontSize: ROW_LABEL_FONT_SIZE
+            }}
           >
             新建项目
           </Button>
@@ -839,7 +866,11 @@ function SessionSidebar({
             variant="outlined"
             startIcon={<AddCommentIcon />}
             onClick={onNewChat}
-            sx={{ minHeight: 44, justifyContent: 'flex-start', fontSize: ROW_LABEL_FONT_SIZE }}
+            sx={{
+              minHeight: compactHoverPreview ? 38 : 44,
+              justifyContent: 'flex-start',
+              fontSize: ROW_LABEL_FONT_SIZE
+            }}
           >
             新对话
           </Button>
@@ -848,10 +879,12 @@ function SessionSidebar({
 
       <List
         sx={{
-          flex: 1,
+          flex: compactHoverPreview ? '0 1 auto' : 1,
           minHeight: 0,
+          maxHeight: compactHoverPreview ? HOVER_PREVIEW_LIST_MAX_HEIGHT : undefined,
           overflowY: 'auto',
           px: 0.5,
+          pb: compactHoverPreview ? 0.5 : undefined,
           backgroundColor: 'transparent !important'
         }}
         disablePadding

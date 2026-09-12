@@ -1,0 +1,16 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi logo v3</title>
+  <desc id="desc">Recommended phase gate logo for Phi, encoding local project boundary, four concurrent sessions, and approval-gated work.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M57 18C71 21 82 34 82 50C82 68 68 82 50 82C32 82 18 68 18 50C18 33 31 20 47 18" stroke-width="7"/>
+    <path d="M50 21V79" stroke-width="7"/>
+    <path d="M31 64C43 75 64 69 72 52" stroke-width="5"/>
+  </g>
+  <g fill="currentColor">
+    <circle cx="50" cy="18" r="4.2"/>
+    <circle cx="82" cy="50" r="4.2"/>
+    <circle cx="50" cy="82" r="4.2"/>
+    <circle cx="18" cy="50" r="4.2"/>
+    <circle cx="50" cy="50" r="3.6"/>
+  </g>
+</svg>

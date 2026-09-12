@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { SessionLifecycle, StaleSessionError } from '../src/main/agent/session-lifecycle'
+import { SessionLifecycle, StaleSessionError } from '../src/main/agent/session/session-lifecycle'
 
 function deferred<T>(): {
   promise: Promise<T>

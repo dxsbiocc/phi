@@ -2,30 +2,57 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } fr
 import {
   Alert,
   Box,
+  Button,
   CssBaseline,
   IconButton,
+  Paper,
+  Popover,
+  Popper,
   Snackbar,
   ThemeProvider,
   Tooltip,
   Typography
 } from '@mui/material'
+import { alpha } from '@mui/material/styles'
+import { FiMaximize2, FiMinimize2, FiMinus } from 'react-icons/fi'
+import { TbLayoutSidebarRight } from 'react-icons/tb'
 import ChatView from './components/ChatView'
 import type { LocalPathKind } from './components/MarkdownContent'
 import SessionSidebar from './components/SessionSidebar'
-import PluginView from './components/PluginView'
-import SkillView from './components/SkillView'
-import McpView from './components/McpView'
+import PluginView from './features/plugin/PluginView'
+import { usePluginCatalog } from './features/plugin/hooks/usePluginCatalog'
+import WrapperView from './features/wrapper/WrapperView'
+import SkillView from './features/skill/SkillView'
+import { useSkillCatalog } from './features/skill/hooks/useSkillCatalog'
+import McpView from './features/mcp/McpView'
+import { useMcpServerCatalog } from './features/mcp/hooks/useMcpServerCatalog'
 import SettingsDialog, { type SettingsCategory } from './components/SettingsDialog'
 import AddProviderDialog from './components/AddProviderDialog'
 import OnboardingDialog from './components/OnboardingDialog'
 import NewProjectDialog from './components/NewProjectDialog'
 import FilePreviewPanel, {
-  FilePreviewTitleTab,
   type FilePreviewPanelState
-} from './components/FilePreviewPanel'
-import AnalysisView from './components/AnalysisView'
+} from './features/file-preview/FilePreviewPanel'
+import AnalysisView, { type AnalysisWorkspaceFileTab } from './features/analysis/AnalysisView'
+import { useAnalysisNotebookRuntime } from './features/analysis/hooks/useAnalysisNotebookRuntime'
+import RuntimeView from './features/runtime/RuntimeView'
 import { createAppTheme } from './theme'
 import { useThemeMode } from './useThemeMode'
+import { useProviderAuth } from './useProviderAuth'
+import { modelOptionFromSelection, useModelSelection } from './useModelSelection'
+import { useProjects } from './useProjects'
+import { useWorkspaceFileTabs, type WorkspaceFileTab } from './useWorkspaceFileTabs'
+import {
+  useSessionStore,
+  sessionStateKey,
+  sessionStateKeyFromAgentEvent,
+  sessionStateKeyFromToolApproval,
+  sessionRuntimeStates,
+  pendingApprovalsBySession,
+  sessionAgentEventStates
+} from './stores/sessionStore'
+import { getRendererApi } from './lib/rendererApi'
+import { absoluteWorkspacePath, fileNameFromPath, filePreviewStatePath } from './lib/workspacePaths'
 import { chatItemsFromSessionMessages } from './lib/chatItems'
 import { getAppShortcutAction } from './lib/appShortcuts'
 import { agentEventBelongsToActiveSession } from './lib/agentEventRouting'
@@ -35,52 +62,24 @@ import { readableErrorMessage } from './lib/sessionNotifications'
 import { sessionDraftKey, updateSessionDraft } from './lib/sessionDrafts'
 import { preserveSessionListOrder } from './lib/sessionOrder'
 import { sessionDisplayTitle, titleFromMessages, truncateSessionTitle } from './lib/sessionTitles'
-import { PhiIcons } from './icons'
+import { isNotebookFilePath } from './features/analysis/lib/notebookPaths'
+import { activeCwdBelongsToProject, orderProjectsForSessionSelection } from './lib/projectSidebar'
+import { workspaceScopeLabelForCwd } from './lib/workspaceScope'
+import { workspaceSidebarModeIsExpanded, type WorkspaceSidebarMode } from './lib/workspaceSidebar'
+import { PhiIcons, fileIconForPath, directoryIconForPath } from './icons'
 import {
   idleSessionRuntimeState,
-  mergeSessionRuntimeState,
   reduceSessionRuntimeState,
   sessionRuntimeStateFrom,
   sessionRuntimeStateIsBusy,
-  sessionRuntimeStatesEqual,
   sessionStatusIsBusy
 } from './lib/sessionRuntimeState'
-import {
-  type AgentEventReducerState,
-  createAgentEventReducerState,
-  reduceAgentEventState,
-  replaceAgentEventMessages,
-  updateAgentEventMessages
-} from './lib/agentEventReducer'
+import { createAgentEventReducerState, reduceAgentEventState } from './lib/agentEventReducer'
 import { navigationPaneWidth } from './layout'
-import type {
-  ActiveAuthPrompt,
-  AgentEventSummary,
-  AuthInteractionEvent,
-  ChatItem,
-  CurrentSession,
-  AnalysisKernelDiagnostics,
-  AnalysisNotebookSessionStatus,
-  JupyterServerStatus,
-  AnalysisNotebookFile,
-  AnalysisNotebookRegistry,
-  McpServerSummary,
-  ModelOption,
-  PermissionMode,
-  PluginCatalogItem,
-  PromptAgentSummary,
-  Project,
-  ProviderAuthStatus,
-  DirectoryListing,
-  RendererApi,
-  SessionRuntimeState,
-  SessionSummary,
-  SkillSummary,
-  ThinkingLevel,
-  ToolApprovalRequest
-} from './types'
+import type { AgentEventSummary, PermissionMode, Project, SessionSummary } from './types'
 
-type AppView = 'chat' | 'projects' | 'analysis' | 'plugins' | 'skills' | 'mcp'
+export type AppView =
+  'chat' | 'projects' | 'analysis' | 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
 type SnackbarNotice = {
   id: number
   severity: 'error' | 'info' | 'success' | 'warning'
@@ -94,251 +93,426 @@ const minNavigationPaneWidth = 240
 const maxNavigationPaneWidth = 520
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 const NavChatIcon = PhiIcons.nav.chat
-const NavAnalysisIcon = PhiIcons.nav.analysis
 const NavProjectsIcon = PhiIcons.nav.projects
+const NavRuntimeIcon = PhiIcons.nav.runtime
 const NavPluginsIcon = PhiIcons.nav.plugins
 const NavSkillsIcon = PhiIcons.nav.skills
 const NavMcpIcon = PhiIcons.nav.mcp
+const NavWrappersIcon = PhiIcons.nav.wrappers
 const NavSettingsIcon = PhiIcons.nav.settings
 
-function getRendererApi(): RendererApi {
-  return (window as unknown as { api: RendererApi }).api
-}
+export function TopRightControls({
+  showInspectorFullscreen,
+  inspectorFullscreen,
+  inspectorCollapsed,
+  showInspectorToggle,
+  onToggleInspectorFullscreen,
+  onToggleInspector,
+  onMinimize
+}: {
+  showInspectorFullscreen: boolean
+  inspectorFullscreen: boolean
+  inspectorCollapsed: boolean
+  showInspectorToggle: boolean
+  onToggleInspectorFullscreen: () => void
+  onToggleInspector: () => void
+  onMinimize: () => void | Promise<void>
+}): React.JSX.Element | null {
+  if (!showInspectorFullscreen && !showInspectorToggle) return null
 
-function requireRendererApiMethod<K extends keyof RendererApi>(
-  rendererApi: RendererApi,
-  method: K,
-  fallbackMessage: string
-): RendererApi[K] {
-  const candidate = rendererApi[method]
-  if (typeof candidate !== 'function') {
-    throw new Error(fallbackMessage)
-  }
-  return candidate
-}
+  const buttonSx = {
+    width: 32,
+    height: 32,
+    borderRadius: 1.5,
+    color: 'text.secondary',
+    '&:hover': {
+      bgcolor: 'action.hover',
+      color: 'text.primary'
+    }
+  } as const
 
-function modelOptionFromSelection(
-  selection: { providerId: string; modelId: string } | null,
-  available: ModelOption[]
-): ModelOption | null {
-  if (!selection) return null
   return (
-    available.find(
-      (item) => item.providerId === selection.providerId && item.modelId === selection.modelId
-    ) ?? null
+    <Box
+      data-phi-top-right-controls="analysis"
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        flexShrink: 0,
+        gap: 0.5,
+        WebkitAppRegion: 'no-drag'
+      }}
+    >
+      {showInspectorFullscreen ? (
+        <Tooltip title={inspectorFullscreen ? '退出右侧内容全屏' : '右侧内容全屏'}>
+          <IconButton
+            data-phi-inspector-fullscreen-button={inspectorFullscreen ? 'expanded' : 'collapsed'}
+            size="small"
+            aria-label={inspectorFullscreen ? '退出右侧内容全屏' : '右侧内容全屏'}
+            onClick={onToggleInspectorFullscreen}
+            sx={buttonSx}
+          >
+            {inspectorFullscreen ? <FiMinimize2 size={18} /> : <FiMaximize2 size={18} />}
+          </IconButton>
+        </Tooltip>
+      ) : null}
+      <Tooltip title="最小化">
+        <IconButton
+          size="small"
+          aria-label="最小化"
+          onClick={() => {
+            void onMinimize()
+          }}
+          sx={buttonSx}
+        >
+          <FiMinus size={18} />
+        </IconButton>
+      </Tooltip>
+      {showInspectorToggle ? (
+        <Tooltip title={inspectorCollapsed ? '展开右侧栏' : '关闭右侧栏'}>
+          <IconButton
+            data-phi-inspector-toggle-button={inspectorCollapsed ? 'collapsed' : 'expanded'}
+            data-phi-inspector-toggle-position="titlebar-flow"
+            data-phi-inspector-toggle-anchor="analysis-chrome"
+            size="small"
+            color="default"
+            aria-label={inspectorCollapsed ? '展开右侧栏' : '关闭右侧栏'}
+            onClick={onToggleInspector}
+            sx={{
+              ...buttonSx,
+              bgcolor: inspectorCollapsed ? 'transparent' : 'action.selected',
+              color: inspectorCollapsed ? 'text.secondary' : 'text.primary'
+            }}
+          >
+            <TbLayoutSidebarRight size={18} />
+          </IconButton>
+        </Tooltip>
+      ) : null}
+    </Box>
   )
 }
 
-function sessionStateKey(input: {
-  path: string | null
-  cwd: string
-  sessionGeneration: number
-}): string {
-  return sessionDraftKey(input)
+function WorkspaceSidebarNavButton({
+  mode,
+  label,
+  icon: Icon,
+  active,
+  useContentPreview,
+  onPreviewOpen,
+  onPreviewClose,
+  onClick
+}: {
+  mode: WorkspaceSidebarMode
+  label: string
+  icon: typeof NavChatIcon
+  active: boolean
+  useContentPreview: boolean
+  onPreviewOpen: (mode: WorkspaceSidebarMode, anchorEl: HTMLElement) => void
+  onPreviewClose: () => void
+  onClick: () => void
+}): React.JSX.Element {
+  const button = (
+    <IconButton
+      size="small"
+      aria-label={label}
+      color={active ? 'primary' : 'default'}
+      onMouseEnter={(event) => {
+        if (useContentPreview) onPreviewOpen(mode, event.currentTarget)
+      }}
+      onMouseLeave={useContentPreview ? onPreviewClose : undefined}
+      onFocus={(event) => {
+        if (useContentPreview) onPreviewOpen(mode, event.currentTarget)
+      }}
+      onBlur={useContentPreview ? onPreviewClose : undefined}
+      onClick={onClick}
+    >
+      <Icon fontSize="small" />
+    </IconButton>
+  )
+
+  return useContentPreview ? (
+    button
+  ) : (
+    <Tooltip title={label} placement="right">
+      {button}
+    </Tooltip>
+  )
 }
 
-function sessionStateKeyFromAgentEvent(event: AgentEventSummary): string | null {
-  if (typeof event.sessionGeneration !== 'number' || typeof event.cwd !== 'string') {
-    return null
-  }
-  return sessionStateKey({
-    path: typeof event.sessionPath === 'string' ? event.sessionPath : null,
-    cwd: event.cwd,
-    sessionGeneration: event.sessionGeneration
-  })
+function WorkspaceFileTabs({
+  tabs,
+  activePath,
+  onSelect,
+  onClose
+}: {
+  tabs: WorkspaceFileTab[]
+  activePath: string | null
+  onSelect: (tab: WorkspaceFileTab) => void
+  onClose: (tab: WorkspaceFileTab) => void
+}): React.JSX.Element {
+  return (
+    <Box
+      role="tablist"
+      aria-label="Open files"
+      data-phi-workspace-file-tabs="true"
+      sx={{
+        flex: 1,
+        minWidth: 0,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0.55,
+        overflowX: 'auto',
+        alignSelf: 'stretch',
+        py: 0.65,
+        WebkitAppRegion: 'no-drag',
+        scrollbarWidth: 'none',
+        '&::-webkit-scrollbar': { display: 'none' }
+      }}
+    >
+      {tabs.map((tab) => {
+        const selected = tab.path === activePath
+        const fileIcon =
+          tab.kind === 'directory'
+            ? directoryIconForPath(tab.path, selected)
+            : fileIconForPath(tab.path)
+        const FileIcon = fileIcon.Icon
+        return (
+          <Box
+            key={tab.id}
+            role="tab"
+            tabIndex={0}
+            aria-selected={selected}
+            data-phi-workspace-file-tab={selected ? 'active' : 'inactive'}
+            data-phi-workspace-file-kind={tab.kind}
+            title={tab.absolutePath ?? tab.path}
+            onClick={() => {
+              if (!selected) onSelect(tab)
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              if (!selected) onSelect(tab)
+            }}
+            sx={{
+              border: 1,
+              borderColor: selected
+                ? (theme) => alpha(theme.palette.primary.main, 0.5)
+                : (theme) => alpha(theme.palette.text.primary, 0.12),
+              borderRadius: '999px',
+              bgcolor: selected
+                ? (theme) =>
+                    alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)
+                : (theme) => alpha(theme.palette.background.paper, 0.56),
+              color: selected ? 'text.primary' : 'text.secondary',
+              cursor: selected ? 'default' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.4,
+              flex: '0 0 156px',
+              width: 156,
+              minWidth: 118,
+              maxWidth: 156,
+              height: 32,
+              px: 0.6,
+              pl: 1,
+              lineHeight: 1,
+              '&:hover': {
+                bgcolor: selected
+                  ? (theme) =>
+                      alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)
+                  : (theme) => alpha(theme.palette.action.hover, 0.68),
+                color: 'text.primary'
+              },
+              '&:hover .workspace-file-tab-close, &:focus-within .workspace-file-tab-close': {
+                opacity: 1
+              }
+            }}
+          >
+            <FileIcon sx={{ flexShrink: 0, fontSize: 18, color: fileIcon.color }} />
+            <Typography
+              component="span"
+              noWrap
+              sx={{
+                flex: 1,
+                minWidth: 0,
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.78rem',
+                fontWeight: selected ? 800 : 650,
+                lineHeight: '18px'
+              }}
+            >
+              {tab.name}
+            </Typography>
+            <Box
+              className="workspace-file-tab-close"
+              component="span"
+              role="button"
+              aria-label={`关闭 ${tab.name}`}
+              tabIndex={0}
+              onClick={(event: MouseEvent<HTMLElement>) => {
+                event.stopPropagation()
+                onClose(tab)
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                event.stopPropagation()
+                onClose(tab)
+              }}
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                width: 17,
+                height: 17,
+                ml: 'auto',
+                borderRadius: '50%',
+                color: 'text.disabled',
+                opacity: selected ? 0.72 : 0,
+                transition: 'opacity 120ms ease, background-color 120ms ease, color 120ms ease',
+                '&:hover': {
+                  bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08),
+                  color: 'text.primary'
+                }
+              }}
+            >
+              <PhiIcons.action.close sx={{ fontSize: 14 }} />
+            </Box>
+          </Box>
+        )
+      })}
+    </Box>
+  )
 }
 
-function sessionStateKeyFromToolApproval(
-  request: ToolApprovalRequest,
-  fallbackGeneration: number
-): string | null {
-  if (typeof request.cwd !== 'string') return null
-  return sessionStateKey({
-    path: typeof request.sessionPath === 'string' ? request.sessionPath : null,
-    cwd: request.cwd,
-    sessionGeneration:
-      typeof request.sessionGeneration === 'number' ? request.sessionGeneration : fallbackGeneration
-  })
+function WorkspaceFileHeader({
+  tabs,
+  activePath,
+  onSelect,
+  onClose
+}: {
+  tabs: WorkspaceFileTab[]
+  activePath: string | null
+  onSelect: (tab: WorkspaceFileTab) => void
+  onClose: (tab: WorkspaceFileTab) => void
+}): React.JSX.Element {
+  return (
+    <Box
+      data-phi-workspace-file-header="true"
+      sx={{
+        height: macTitlebarHeight,
+        flexShrink: 0,
+        borderBottom: 1,
+        borderColor: 'divider',
+        px: 1.5,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        WebkitAppRegion: 'drag'
+      }}
+    >
+      <WorkspaceFileTabs
+        tabs={tabs}
+        activePath={activePath}
+        onSelect={onSelect}
+        onClose={onClose}
+      />
+    </Box>
+  )
 }
 
 function App(): React.JSX.Element {
   const { mode: themeMode, effectiveMode, setMode: setThemeMode } = useThemeMode()
   const theme = useMemo(() => createAppTheme(effectiveMode), [effectiveMode])
 
-  const [agentEventState, setAgentEventState] = useState(() => createAgentEventReducerState())
-  const agentEventStateRef = useRef(agentEventState)
-  const sessionAgentEventStatesRef = useRef(new Map<string, AgentEventReducerState>())
-  const sessionRuntimeStatesRef = useRef(new Map<string, SessionRuntimeState>())
-  const pendingApprovalsBySessionRef = useRef(new Map<string, ToolApprovalRequest>())
-  const projectsRef = useRef<Project[]>([])
-  const activeAgentEventStateKeyRef = useRef<string | null>(null)
+  const {
+    sessions,
+    setSessions,
+    activeSessionPath,
+    setActiveSessionPath,
+    activePhiSessionId,
+    setActivePhiSessionId,
+    activeCwd,
+    activeSessionGeneration,
+    projectSessionRefreshKey,
+    setProjectSessionRefreshKey,
+    currentPermissionMode,
+    isSessionChanging,
+    setIsSessionChanging,
+    agentEventState,
+    setAgentEventState,
+    pendingApproval,
+    setPendingApproval,
+    activeSessionRuntimeState,
+    setActiveSessionRuntimeState,
+    draftInputs,
+    setDraftInputs,
+    getSessionRuntimeState,
+    setVisibleAgentEventState,
+    replaceMessages,
+    updateMessages,
+    storeSessionRuntimeState,
+    mergeSessionSummariesRuntimeState,
+    applyCurrentSession,
+    refreshSessions,
+    startFreshChat,
+    scheduleSessionRefresh,
+    cancelScheduledSessionRefresh,
+    onRenameSession,
+    onRespondToolApproval
+  } = useSessionStore()
   const messages = agentEventState.messages
-  const [draftInputs, setDraftInputs] = useState<Record<string, string>>({})
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('persona')
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [sidebarWidth, setSidebarWidth] = useState(navigationPaneWidth)
   const [activeView, setActiveView] = useState<AppView>('chat')
-  const [sessions, setSessions] = useState<SessionSummary[]>([])
-  const [activeSessionPath, setActiveSessionPath] = useState<string | null>(null)
-  const [activeCwd, setActiveCwd] = useState('')
-  const [projectSessionRefreshKey, setProjectSessionRefreshKey] = useState(0)
-  const [currentPermissionMode, setCurrentPermissionMode] = useState<PermissionMode>('auto')
-  const [activeSessionGeneration, setActiveSessionGeneration] = useState(0)
-  const [isSessionChanging, setIsSessionChanging] = useState(false)
-  const [projects, setProjects] = useState<Project[]>([])
+  const [workspaceSidebarMode, setWorkspaceSidebarMode] =
+    useState<WorkspaceSidebarMode>('conversations')
+  const [workspaceSidebarPreview, setWorkspaceSidebarPreview] = useState<{
+    mode: WorkspaceSidebarMode
+    anchorEl: HTMLElement
+  } | null>(null)
+  const workspaceSidebarPreviewCloseTimer = useRef<number | null>(null)
+  const [analysisSessionSelectorAnchor, setAnalysisSessionSelectorAnchor] =
+    useState<HTMLElement | null>(null)
   const [isNewProjectDialogOpen, setIsNewProjectDialogOpen] = useState(false)
-  const [pendingApproval, setPendingApproval] = useState<ToolApprovalRequest | null>(null)
-  const [providerStatuses, setProviderStatuses] = useState<ProviderAuthStatus[]>([])
-  const [activePrompts, setActivePrompts] = useState<ActiveAuthPrompt[]>([])
-  const [providerHints, setProviderHints] = useState<Record<string, string>>({})
-  const [isProviderDialogOpen, setIsProviderDialogOpen] = useState(false)
-  const [providerDialogProviderId, setProviderDialogProviderId] = useState<string | null>(null)
   const [isBusy, setIsBusy] = useState(false)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
-  const [models, setModels] = useState<ModelOption[]>([])
-  const [isModelStateReady, setIsModelStateReady] = useState(false)
-  const [selectedModel, setSelectedModel] = useState<ModelOption | null>(null)
-  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>('high')
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [personaMarkdown, setPersonaMarkdownState] = useState<string | null>(null)
-  const [plugins, setPlugins] = useState<PluginCatalogItem[]>([])
-  const [activePluginId, setActivePluginId] = useState<string | null>(null)
-  const [isLoadingPlugins, setIsLoadingPlugins] = useState(false)
-  const [busyPluginSource, setBusyPluginSource] = useState<string | null>(null)
-  const [pluginOperationError, setPluginOperationError] = useState<string | null>(null)
-  const [skills, setSkills] = useState<SkillSummary[]>([])
-  const [promptAgents, setPromptAgents] = useState<PromptAgentSummary[]>([])
-  const [activeSkillId, setActiveSkillId] = useState<string | null>(null)
-  const [isLoadingSkills, setIsLoadingSkills] = useState(false)
-  const [mcpServers, setMcpServers] = useState<McpServerSummary[]>([])
-  const [activeMcpServerId, setActiveMcpServerId] = useState<string | null>(null)
-  const [analysisNotebookRegistry, setAnalysisNotebookRegistry] =
-    useState<AnalysisNotebookRegistry | null>(null)
-  const [activeAnalysisNotebook, setActiveAnalysisNotebook] = useState<AnalysisNotebookFile | null>(
-    null
-  )
-  const [isLoadingAnalysisNotebooks, setIsLoadingAnalysisNotebooks] = useState(false)
-  const [isOpeningAnalysisNotebook, setIsOpeningAnalysisNotebook] = useState(false)
-  const [analysisNotebookError, setAnalysisNotebookError] = useState<string | null>(null)
-  const [analysisNotebookContentError, setAnalysisNotebookContentError] = useState<string | null>(
-    null
-  )
-  const [analysisKernelDiagnostics, setAnalysisKernelDiagnostics] =
-    useState<AnalysisKernelDiagnostics | null>(null)
-  const [isLoadingAnalysisKernels, setIsLoadingAnalysisKernels] = useState(false)
-  const [analysisKernelError, setAnalysisKernelError] = useState<string | null>(null)
-  const [analysisJupyterStatus, setAnalysisJupyterStatus] = useState<JupyterServerStatus | null>(
-    null
-  )
-  const [isStartingAnalysisJupyter, setIsStartingAnalysisJupyter] = useState(false)
-  const [analysisJupyterError, setAnalysisJupyterError] = useState<string | null>(null)
-  const [analysisNotebookSessionStatus, setAnalysisNotebookSessionStatus] =
-    useState<AnalysisNotebookSessionStatus | null>(null)
-  const [isStartingAnalysisNotebookSession, setIsStartingAnalysisNotebookSession] = useState(false)
-  const [analysisNotebookSessionError, setAnalysisNotebookSessionError] = useState<string | null>(
-    null
-  )
-  const [executingAnalysisCellId, setExecutingAnalysisCellId] = useState<string | null>(null)
-  const [analysisCellExecutionError, setAnalysisCellExecutionError] = useState<string | null>(null)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
-  const [filePreview, setFilePreview] = useState<FilePreviewPanelState | null>(null)
-  const [activeSessionRuntimeState, setActiveSessionRuntimeState] =
-    useState(idleSessionRuntimeState)
-  const [, setSessionRuntimeStateRevision] = useState(0)
-  const [updatingPermissionProjectId, setUpdatingPermissionProjectId] = useState<string | null>(
-    null
-  )
   const listRef = useRef<HTMLDivElement | null>(null)
   const isSendingRef = useRef(false)
-  const activeSessionGenerationRef = useRef(0)
-  const activeSessionPathRef = useRef<string | null>(null)
-  const activeCwdRef = useRef('')
   const sessionRequestRef = useRef(0)
   const sendRequestRef = useRef(0)
-  const skillsRequestRef = useRef(0)
-  const promptAgentsRequestRef = useRef(0)
-  const mcpServersRequestRef = useRef(0)
-  const analysisNotebooksRequestRef = useRef(0)
-  const analysisNotebookOpenRequestRef = useRef(0)
-  const analysisKernelsRequestRef = useRef(0)
-  const analysisJupyterRequestRef = useRef(0)
-  const analysisNotebookSessionRequestRef = useRef(0)
-  const analysisCellExecutionRequestRef = useRef(0)
-  const filePreviewRequestRef = useRef(0)
-  const sessionRefreshTimerRef = useRef<number | null>(null)
+  const projectSidebarSelectionRequestRef = useRef(0)
   const rendererApi = useMemo(() => getRendererApi(), [])
+  const getActiveCwd = useCallback(() => useSessionStore.getState().activeCwd, [])
 
-  const storeSessionRuntimeState = useCallback(
-    (key: string, nextState: SessionRuntimeState): boolean => {
-      const previous = sessionRuntimeStatesRef.current.get(key)
-      if (sessionRuntimeStatesEqual(previous, nextState)) return false
-
-      sessionRuntimeStatesRef.current.set(key, nextState)
-      setSessionRuntimeStateRevision((revision) => revision + 1)
-      return true
-    },
-    []
-  )
-
-  const mergeSessionSummariesRuntimeState = useCallback(
-    (list: SessionSummary[], cwd: string): SessionSummary[] =>
-      list.map((session) => {
-        const stateKey = sessionStateKey({
-          path: session.path,
-          cwd,
-          sessionGeneration: activeSessionGenerationRef.current
-        })
-        const nextRuntimeState = mergeSessionRuntimeState(
-          sessionRuntimeStatesRef.current.get(stateKey),
-          session
-        )
-        storeSessionRuntimeState(stateKey, nextRuntimeState)
-        return { ...session, ...nextRuntimeState }
-      }),
-    [storeSessionRuntimeState]
-  )
-
-  const getSessionRuntimeState = useCallback(
-    (path: string, cwd: string): SessionRuntimeState | null =>
-      sessionRuntimeStatesRef.current.get(
-        sessionStateKey({
-          path,
-          cwd,
-          sessionGeneration: activeSessionGenerationRef.current
-        })
-      ) ?? null,
-    []
-  )
-
-  const setVisibleAgentEventState = useCallback(
-    (updater: (previous: AgentEventReducerState) => AgentEventReducerState): void => {
-      setAgentEventState((previous) => {
-        const next = updater(previous)
-        agentEventStateRef.current = next
-        const activeKey = activeAgentEventStateKeyRef.current
-        if (activeKey) {
-          sessionAgentEventStatesRef.current.set(activeKey, next)
-        }
-        return next
-      })
-    },
-    []
-  )
-
-  const replaceMessages = useCallback(
-    (nextMessages: ChatItem[]): void => {
-      setVisibleAgentEventState((prev) => replaceAgentEventMessages(prev, nextMessages))
-    },
-    [setVisibleAgentEventState]
-  )
-
-  const updateMessages = useCallback(
-    (updater: (prev: ChatItem[]) => ChatItem[]): void => {
-      setVisibleAgentEventState((prev) => updateAgentEventMessages(prev, updater))
-    },
-    [setVisibleAgentEventState]
-  )
+  const {
+    plugins,
+    activePluginId,
+    isLoadingPlugins,
+    busyPluginSource,
+    pluginOperationError,
+    setActivePluginId,
+    refreshPlugins,
+    installPlugin: onInstallPlugin,
+    removePlugin: onRemovePlugin
+  } = usePluginCatalog()
+  const {
+    skills,
+    promptAgents,
+    activeSkillId,
+    isLoadingSkills,
+    setActiveSkillId,
+    refreshSkills,
+    refreshPromptAgents
+  } = useSkillCatalog(getActiveCwd)
+  const { mcpServers, activeMcpServerId, setActiveMcpServerId, refreshMcpServers } =
+    useMcpServerCatalog(getActiveCwd)
 
   const showSnackbar = useCallback(
     (message: string, severity: SnackbarNotice['severity'] = 'error'): void => {
@@ -354,108 +528,128 @@ function App(): React.JSX.Element {
     [showSnackbar]
   )
 
-  const applyCurrentSession = useCallback(
-    (current: CurrentSession, options: { resetSending?: boolean } = {}): void => {
-      const previousPath = activeSessionPathRef.current
-      const previousCwd = activeCwdRef.current
-      const previousGeneration = activeSessionGenerationRef.current
-      const previousStateKey = activeAgentEventStateKeyRef.current
-      const isSameTarget = current.path === previousPath && current.cwd === previousCwd
-      if (isSameTarget && current.sessionGeneration < previousGeneration) return
+  const {
+    providerStatuses,
+    activePrompts,
+    providerHints,
+    isProviderDialogOpen,
+    providerDialogProviderId,
+    refreshAuthStatuses,
+    openProviderDialog,
+    closeProviderDialog,
+    setProviderDialogProviderId,
+    submitProviderApiKey,
+    submitProviderOAuth,
+    logoutProvider,
+    onSubmitAuthPrompt,
+    onUpdatePromptValue,
+    handleAuthInteractionEvent
+  } = useProviderAuth(setIsBusy)
+  const {
+    models,
+    availableModels,
+    isModelStateReady,
+    selectedModel,
+    setSelectedModel,
+    thinkingLevel,
+    setThinkingLevel,
+    onSelectModel,
+    onSelectThinkingLevel
+  } = useModelSelection(providerStatuses, showSnackbarError)
+  const {
+    projects,
+    setProjects,
+    projectsRef,
+    updatingPermissionProjectId,
+    updatingRemoteProjectId,
+    refreshProjects,
+    onUpdateProjectPermissionMode,
+    onUpdateProjectDefaults,
+    onUpdateProjectRemoteConnection,
+    onUpdateProjectRemoteDefaults
+  } = useProjects(showSnackbarError)
 
-      const nextStateKey = sessionStateKey({
-        path: current.path,
-        cwd: current.cwd,
-        sessionGeneration: current.sessionGeneration
-      })
-      const generationChanged = current.sessionGeneration !== previousGeneration
-      const targetChanged = current.path !== previousPath || current.cwd !== previousCwd
-      const stateKeyChanged = nextStateKey !== activeAgentEventStateKeyRef.current
-      const shouldCarryFreshState =
-        stateKeyChanged &&
-        previousPath === null &&
-        current.path !== null &&
-        current.cwd === previousCwd &&
-        current.sessionGeneration === previousGeneration
-      if (shouldCarryFreshState && previousStateKey) {
-        const previousPendingApproval = pendingApprovalsBySessionRef.current.get(previousStateKey)
-        if (previousPendingApproval && !pendingApprovalsBySessionRef.current.has(nextStateKey)) {
-          pendingApprovalsBySessionRef.current.set(nextStateKey, previousPendingApproval)
-          pendingApprovalsBySessionRef.current.delete(previousStateKey)
-        }
-        const previousRuntimeState = sessionRuntimeStatesRef.current.get(previousStateKey)
-        if (previousRuntimeState && !sessionRuntimeStatesRef.current.has(nextStateKey)) {
-          sessionRuntimeStatesRef.current.set(nextStateKey, previousRuntimeState)
-        }
-        setDraftInputs((prev) => {
-          if (prev[nextStateKey] !== undefined || prev[previousStateKey] === undefined) return prev
-          const next = { ...prev, [nextStateKey]: prev[previousStateKey] }
-          delete next[previousStateKey]
-          return next
-        })
-      }
-      activeSessionGenerationRef.current = current.sessionGeneration
-      activeSessionPathRef.current = current.path
-      activeCwdRef.current = current.cwd
-      activeAgentEventStateKeyRef.current = nextStateKey
-      setActiveSessionGeneration(current.sessionGeneration)
-      setActiveCwd(current.cwd)
-      setActiveSessionPath(current.path)
-      setCurrentPermissionMode(current.permissionMode ?? 'auto')
-      const nextRuntimeState = mergeSessionRuntimeState(
-        sessionRuntimeStatesRef.current.get(nextStateKey),
-        current,
-        { preserveBusy: false }
-      )
-      storeSessionRuntimeState(nextStateKey, nextRuntimeState)
-      setActiveSessionRuntimeState(nextRuntimeState)
-      setPendingApproval(pendingApprovalsBySessionRef.current.get(nextStateKey) ?? null)
-      if (options.resetSending || generationChanged || targetChanged) {
-        sendRequestRef.current += 1
-        isSendingRef.current = false
-        setIsSendingMessage(false)
-      }
-      if (generationChanged || targetChanged || stateKeyChanged) {
-        const restored =
-          sessionAgentEventStatesRef.current.get(nextStateKey) ??
-          (shouldCarryFreshState ? agentEventStateRef.current : createAgentEventReducerState())
-        sessionAgentEventStatesRef.current.set(nextStateKey, restored)
-        agentEventStateRef.current = restored
-        setAgentEventState(restored)
-      }
-    },
-    [storeSessionRuntimeState]
-  )
+  const {
+    filePreview,
+    setFilePreview,
+    workspaceFileTabs,
+    setWorkspaceFileTabs,
+    activeWorkspaceFilePath,
+    setActiveWorkspaceFilePath,
+    filePreviewRequestRef,
+    loadFilePreview,
+    previewFilePath,
+    previewDirectoryPath,
+    onRevealPreviewPath,
+    onListPreviewDirectory,
+    openPathWithSystemDefault
+  } = useWorkspaceFileTabs({
+    rendererApi,
+    getActiveCwd,
+    showSnackbarError,
+    setIsSidebarOpen,
+    setActiveView
+  })
 
-  const refreshAuthStatuses = useCallback(async (): Promise<void> => {
-    const data = await rendererApi.getAuthStatus()
-    setProviderStatuses(data)
-  }, [rendererApi])
+  const onNavigateToNotebookView = useCallback((): void => {
+    setFilePreview(null)
+    setActiveView('analysis')
+  }, [setFilePreview])
 
-  const refreshSessions = useCallback(async (): Promise<void> => {
-    const list = mergeSessionSummariesRuntimeState(
-      await rendererApi.listSessions(),
-      activeCwdRef.current
-    )
-    setSessions((previous) => preserveSessionListOrder(previous, list))
-    const activePath = activeSessionPathRef.current
-    if (!activePath) return
-    const active = list.find((session) => session.path === activePath)
-    if (!active) return
-    const activeKey = sessionStateKey({
-      path: activePath,
-      cwd: activeCwdRef.current,
-      sessionGeneration: activeSessionGenerationRef.current
-    })
-    const nextRuntimeState = mergeSessionRuntimeState(
-      sessionRuntimeStatesRef.current.get(activeKey),
-      active
-    )
-    storeSessionRuntimeState(activeKey, nextRuntimeState)
-    if (activeKey === activeAgentEventStateKeyRef.current) {
-      setActiveSessionRuntimeState(nextRuntimeState)
-    }
-  }, [mergeSessionSummariesRuntimeState, rendererApi, storeSessionRuntimeState])
+  const {
+    analysisNotebookRegistry,
+    analysisInspectorCollapsed,
+    setAnalysisInspectorCollapsed,
+    activeAnalysisNotebook,
+    setActiveAnalysisNotebook,
+    isLoadingAnalysisNotebooks,
+    isOpeningAnalysisNotebook,
+    analysisNotebookError,
+    analysisNotebookContentError,
+    analysisKernelDiagnostics,
+    isLoadingAnalysisKernels,
+    analysisKernelError,
+    analysisJupyterStatus,
+    analysisJupyterRuntimeStatus,
+    isLoadingAnalysisJupyterRuntime,
+    analysisJupyterRuntimeError,
+    isStartingAnalysisJupyter,
+    analysisJupyterError,
+    analysisNotebookSessionStatus,
+    isStartingAnalysisNotebookSession,
+    closingRuntimeNotebookPath,
+    analysisNotebookSessionError,
+    executingAnalysisCellId,
+    analysisCellExecutionError,
+    analysisAgentFocus,
+    refreshAnalysisNotebooks,
+    onInitializeProjectAnalysis,
+    onOpenAnalysisNotebook,
+    onSaveAnalysisNotebook,
+    onSyncAnalysisNotebookDraft,
+    onCreateAnalysisNotebook,
+    onDeleteAnalysisNotebook,
+    refreshAnalysisKernels,
+    refreshAnalysisJupyterStatus,
+    onJumpToAnalysisNotebookCell,
+    refreshAnalysisJupyterRuntimeStatus,
+    onStartAnalysisJupyter,
+    onStopAnalysisJupyter,
+    onStartAnalysisNotebookSession,
+    onStopAnalysisNotebookSession,
+    onStopRuntimeNotebookSession,
+    onRunAnalysisNotebookCell,
+    onGenerateAnalysisNotebookCode,
+    closeActiveNotebook,
+    resetAnalysisJupyterRuntimeForCwdChange,
+    handleNotebookDraftChanged
+  } = useAnalysisNotebookRuntime({
+    rendererApi,
+    getActiveCwd,
+    projectsRef,
+    showSnackbar,
+    onNavigateToNotebookView
+  })
 
   const refreshCurrentModelControls = useCallback(
     async (request = sessionRequestRef.current): Promise<void> => {
@@ -467,29 +661,31 @@ function App(): React.JSX.Element {
       setSelectedModel(modelOptionFromSelection(selected, models))
       setThinkingLevel(level)
     },
-    [models, rendererApi]
+    [models, rendererApi, setSelectedModel, setThinkingLevel]
   )
 
-  const startFreshChat = useCallback((): void => {
-    replaceMessages([])
-  }, [replaceMessages])
-
-  const scheduleSessionRefresh = useCallback((): void => {
-    if (sessionRefreshTimerRef.current !== null) return
-    sessionRefreshTimerRef.current = window.setTimeout(() => {
-      sessionRefreshTimerRef.current = null
-      void refreshSessions()
-      setProjectSessionRefreshKey((key) => key + 1)
-    }, 900)
-  }, [refreshSessions])
+  const onResetSending = useCallback((): void => {
+    sendRequestRef.current += 1
+    isSendingRef.current = false
+    setIsSendingMessage(false)
+  }, [])
 
   const onNewChat = useCallback(async (): Promise<void> => {
+    projectSidebarSelectionRequestRef.current += 1
     const request = ++sessionRequestRef.current
     setIsSessionChanging(true)
     try {
       const current = await rendererApi.createSession()
       if (request !== sessionRequestRef.current) return
-      applyCurrentSession(current, { resetSending: true })
+      setWorkspaceSidebarMode('conversations')
+      applyCurrentSession(
+        current,
+        { resetSending: true },
+        {
+          onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange,
+          onResetSending
+        }
+      )
       void refreshCurrentModelControls(request)
       startFreshChat()
     } finally {
@@ -497,70 +693,97 @@ function App(): React.JSX.Element {
         setIsSessionChanging(false)
       }
     }
-  }, [applyCurrentSession, refreshCurrentModelControls, rendererApi, startFreshChat])
+  }, [
+    applyCurrentSession,
+    onResetSending,
+    refreshCurrentModelControls,
+    rendererApi,
+    resetAnalysisJupyterRuntimeForCwdChange,
+    setIsSessionChanging,
+    startFreshChat
+  ])
 
-  const onSelectSession = async (path: string): Promise<void> => {
-    if (path === activeSessionPathRef.current) {
-      const acknowledged = await rendererApi.acknowledgeSession(path)
-      if (!acknowledged) return
-      const nextRuntimeState = sessionRuntimeStateFrom(acknowledged)
-      const stateKey = sessionStateKey({
-        path: acknowledged.path,
-        cwd: activeCwdRef.current,
-        sessionGeneration: activeSessionGenerationRef.current
-      })
-      storeSessionRuntimeState(stateKey, nextRuntimeState)
-      if (stateKey === activeAgentEventStateKeyRef.current) {
-        setActiveSessionRuntimeState(nextRuntimeState)
-      }
-      setSessions((prev) =>
-        prev.map((session) =>
-          session.path === acknowledged.path ? { ...session, ...nextRuntimeState } : session
+  const onSelectSession = useCallback(
+    async (path: string): Promise<void> => {
+      if (path === useSessionStore.getState().activeSessionPath) {
+        const acknowledged = await rendererApi.acknowledgeSession(path)
+        if (!acknowledged) return
+        const nextRuntimeState = sessionRuntimeStateFrom(acknowledged)
+        const stateKey = sessionStateKey({
+          phiSessionId: acknowledged.phiSessionId,
+          path: acknowledged.path,
+          cwd: useSessionStore.getState().activeCwd,
+          sessionGeneration: useSessionStore.getState().activeSessionGeneration
+        })
+        storeSessionRuntimeState(stateKey, nextRuntimeState)
+        if (stateKey === useSessionStore.getState().activeAgentEventStateKey) {
+          setActiveSessionRuntimeState(nextRuntimeState)
+        }
+        setSessions((prev) =>
+          prev.map((session) =>
+            session.path === acknowledged.path ? { ...session, ...nextRuntimeState } : session
+          )
         )
-      )
-      return
-    }
-    const request = ++sessionRequestRef.current
-    setIsSessionChanging(true)
-    try {
-      const result = await rendererApi.switchSession(path)
-      if (!result || request !== sessionRequestRef.current) return
-      applyCurrentSession(result, { resetSending: true })
-      const targetStateKey = sessionStateKey({
-        path: result.path,
-        cwd: result.cwd,
-        sessionGeneration: result.sessionGeneration
-      })
-      const cachedState = sessionAgentEventStatesRef.current.get(targetStateKey)
-      if (cachedState && cachedState.messages.length > 0) {
-        agentEventStateRef.current = cachedState
-        setAgentEventState(cachedState)
-      } else {
-        replaceMessages(chatItemsFromSessionMessages(result.messages))
+        return
       }
-      void refreshCurrentModelControls(request)
-      void refreshSessions()
-    } finally {
-      if (request === sessionRequestRef.current) {
-        setIsSessionChanging(false)
+      const request = ++sessionRequestRef.current
+      setIsSessionChanging(true)
+      try {
+        const result = await rendererApi.switchSession(path)
+        if (!result || request !== sessionRequestRef.current) return
+        applyCurrentSession(
+          result,
+          { resetSending: true },
+          { onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange, onResetSending }
+        )
+        const targetStateKey = sessionStateKey({
+          phiSessionId: result.phiSessionId,
+          path: result.path,
+          cwd: result.cwd,
+          sessionGeneration: result.sessionGeneration
+        })
+        const cachedState = sessionAgentEventStates.get(targetStateKey)
+        if (cachedState && cachedState.messages.length > 0) {
+          setAgentEventState(cachedState)
+        } else {
+          replaceMessages(chatItemsFromSessionMessages(result.messages))
+        }
+        void refreshCurrentModelControls(request)
+        void refreshSessions()
+      } finally {
+        if (request === sessionRequestRef.current) {
+          setIsSessionChanging(false)
+        }
       }
-    }
-  }
-
-  const onRenameSession = async (path: string, name: string): Promise<void> => {
-    await rendererApi.renameSession(path, name)
-    await refreshSessions()
-    setProjectSessionRefreshKey((key) => key + 1)
-  }
+    },
+    [
+      applyCurrentSession,
+      onResetSending,
+      refreshCurrentModelControls,
+      refreshSessions,
+      rendererApi,
+      replaceMessages,
+      resetAnalysisJupyterRuntimeForCwdChange,
+      setActiveSessionRuntimeState,
+      setAgentEventState,
+      setIsSessionChanging,
+      setSessions,
+      storeSessionRuntimeState
+    ]
+  )
 
   const onDeleteSession = async (path: string): Promise<void> => {
     const request = sessionRequestRef.current
-    const wasActive = path === activeSessionPathRef.current
+    const wasActive = path === useSessionStore.getState().activeSessionPath
     await rendererApi.deleteSession(path)
     if (wasActive && request === sessionRequestRef.current) {
       const current = await rendererApi.getCurrentSession()
       if (request === sessionRequestRef.current) {
-        applyCurrentSession(current, { resetSending: true })
+        applyCurrentSession(
+          current,
+          { resetSending: true },
+          { onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange, onResetSending }
+        )
         void refreshCurrentModelControls(request)
         replaceMessages([])
       }
@@ -569,394 +792,61 @@ function App(): React.JSX.Element {
     setProjectSessionRefreshKey((key) => key + 1)
   }
 
-  const refreshProjects = useCallback(async (): Promise<void> => {
-    const list = await rendererApi.listProjects()
-    projectsRef.current = list
-    setProjects(list)
-  }, [rendererApi])
-
-  const refreshPlugins = useCallback(async (): Promise<void> => {
-    setIsLoadingPlugins(true)
-    setPluginOperationError(null)
-    try {
-      const list = await rendererApi.listPlugins()
-      setPlugins(list)
-      setActivePluginId((current) => current ?? list[0]?.id ?? null)
-    } finally {
-      setIsLoadingPlugins(false)
-    }
-  }, [rendererApi])
-
-  const refreshSkills = useCallback(async (): Promise<void> => {
-    const request = ++skillsRequestRef.current
-    const cwd = activeCwdRef.current
-    setIsLoadingSkills(true)
-    try {
-      const list = await rendererApi.listSkills(cwd)
-      if (request !== skillsRequestRef.current || cwd !== activeCwdRef.current) return
-      setSkills(list)
-      setActiveSkillId((current) => current ?? list[0]?.id ?? null)
-    } finally {
-      if (request === skillsRequestRef.current) {
-        setIsLoadingSkills(false)
-      }
-    }
-  }, [rendererApi])
-
-  const refreshPromptAgents = useCallback(async (): Promise<void> => {
-    const request = ++promptAgentsRequestRef.current
-    const cwd = activeCwdRef.current
-    const list = await rendererApi.listPromptAgents(cwd)
-    if (request !== promptAgentsRequestRef.current || cwd !== activeCwdRef.current) return
-    setPromptAgents(list)
-  }, [rendererApi])
-
-  const refreshMcpServers = useCallback(async (): Promise<void> => {
-    const request = ++mcpServersRequestRef.current
-    const cwd = activeCwdRef.current
-    const list = await rendererApi.listMcpServers(cwd)
-    if (request !== mcpServersRequestRef.current || cwd !== activeCwdRef.current) return
-    setMcpServers(list)
-    setActiveMcpServerId((current) => current ?? list[0]?.id ?? null)
-  }, [rendererApi])
-
-  const refreshAnalysisNotebooks = useCallback(async (): Promise<void> => {
-    const request = ++analysisNotebooksRequestRef.current
-    const cwd = activeCwdRef.current
-    setIsLoadingAnalysisNotebooks(true)
-    setAnalysisNotebookError(null)
-    try {
-      const registry = await rendererApi.listAnalysisNotebooks(cwd)
-      if (request !== analysisNotebooksRequestRef.current || cwd !== activeCwdRef.current) return
-      setAnalysisNotebookRegistry(registry)
-    } catch (error) {
-      if (request !== analysisNotebooksRequestRef.current) return
-      setAnalysisNotebookError(readableErrorMessage(error, '无法读取项目 notebooks'))
-    } finally {
-      if (request === analysisNotebooksRequestRef.current) {
-        setIsLoadingAnalysisNotebooks(false)
-      }
-    }
-  }, [rendererApi])
-
-  const onInitializeProjectAnalysis = useCallback(
-    async (cwd: string): Promise<void> => {
-      try {
-        await rendererApi.initializeProjectAnalysis(cwd)
-        await refreshAnalysisNotebooks()
-      } catch (error) {
-        setAnalysisNotebookError(readableErrorMessage(error, '无法初始化分析目录'))
-      }
-    },
-    [refreshAnalysisNotebooks, rendererApi]
-  )
-
-  const refreshAnalysisNotebookSessionStatus = useCallback(
-    async (file: AnalysisNotebookFile): Promise<void> => {
-      const request = ++analysisNotebookSessionRequestRef.current
-      const cwd = activeCwdRef.current
-      setAnalysisNotebookSessionError(null)
-      try {
-        const status = await rendererApi.getAnalysisNotebookSessionStatus(
-          cwd,
-          file.path,
-          file.document
+  const onOpenNotebookWorkspaceFile = useCallback(
+    (path: string): void => {
+      const normalizedPath = absoluteWorkspacePath(useSessionStore.getState().activeCwd, path)
+      const title = fileNameFromPath(normalizedPath)
+      filePreviewRequestRef.current += 1
+      setFilePreview(null)
+      setWorkspaceFileTabs((tabs) => {
+        const nextTab: WorkspaceFileTab = {
+          id: normalizedPath,
+          path: normalizedPath,
+          name: title,
+          status: normalizedPath,
+          absolutePath: normalizedPath,
+          kind: 'notebook',
+          pathKind: 'file'
+        }
+        return tabs.some((tab) => tab.path === normalizedPath)
+          ? tabs.map((tab) => (tab.path === normalizedPath ? { ...tab, ...nextTab } : tab))
+          : [...tabs, nextTab]
+      })
+      setActiveWorkspaceFilePath(normalizedPath)
+      setIsSidebarOpen(true)
+      setActiveView('analysis')
+      void refreshAnalysisNotebooks()
+      void refreshAnalysisKernels()
+      void refreshAnalysisJupyterStatus()
+      void onOpenAnalysisNotebook(normalizedPath).then((file) => {
+        if (!file) return
+        setWorkspaceFileTabs((tabs) =>
+          tabs.map((tab) =>
+            tab.path === normalizedPath
+              ? {
+                  ...tab,
+                  id: file.path,
+                  path: file.path,
+                  name: file.name,
+                  status: file.relativePath,
+                  absolutePath: file.path
+                }
+              : tab
+          )
         )
-        if (request !== analysisNotebookSessionRequestRef.current || cwd !== activeCwdRef.current) {
-          return
-        }
-        setAnalysisNotebookSessionStatus(status)
-      } catch (error) {
-        if (request !== analysisNotebookSessionRequestRef.current) return
-        setAnalysisNotebookSessionStatus(null)
-        setAnalysisNotebookSessionError(
-          readableErrorMessage(error, '无法读取 notebook kernel 状态')
-        )
-      }
+        setActiveWorkspaceFilePath(file.path)
+      })
     },
-    [rendererApi]
-  )
-
-  const onOpenAnalysisNotebook = useCallback(
-    async (path: string): Promise<void> => {
-      const request = ++analysisNotebookOpenRequestRef.current
-      const cwd = activeCwdRef.current
-      setIsOpeningAnalysisNotebook(true)
-      setAnalysisNotebookContentError(null)
-      setAnalysisNotebookSessionError(null)
-      setAnalysisNotebookSessionStatus(null)
-      try {
-        const file = await rendererApi.openAnalysisNotebook(cwd, path)
-        if (request !== analysisNotebookOpenRequestRef.current || cwd !== activeCwdRef.current) {
-          return
-        }
-        setActiveAnalysisNotebook(file)
-        void refreshAnalysisNotebookSessionStatus(file)
-      } catch (error) {
-        if (request !== analysisNotebookOpenRequestRef.current) return
-        setAnalysisNotebookContentError(readableErrorMessage(error, '无法打开 notebook'))
-      } finally {
-        if (request === analysisNotebookOpenRequestRef.current) {
-          setIsOpeningAnalysisNotebook(false)
-        }
-      }
-    },
-    [refreshAnalysisNotebookSessionStatus, rendererApi]
-  )
-
-  const onSaveAnalysisNotebook = useCallback(
-    async (
-      file: AnalysisNotebookFile,
-      document: AnalysisNotebookFile['document']
-    ): Promise<void> => {
-      const cwd = activeCwdRef.current
-      setAnalysisNotebookContentError(null)
-      try {
-        const saved = await rendererApi.saveAnalysisNotebook(cwd, {
-          path: file.path,
-          document,
-          expectedRevision: file.savedRevision
-        })
-        setActiveAnalysisNotebook(saved)
-        void refreshAnalysisNotebookSessionStatus(saved)
-        await refreshAnalysisNotebooks()
-      } catch (error) {
-        setAnalysisNotebookContentError(readableErrorMessage(error, '无法保存 notebook'))
-      }
-    },
-    [refreshAnalysisNotebookSessionStatus, refreshAnalysisNotebooks, rendererApi]
-  )
-
-  const onCreateAnalysisNotebook = useCallback(
-    async (cwd: string): Promise<void> => {
-      setIsOpeningAnalysisNotebook(true)
-      setAnalysisNotebookContentError(null)
-      setAnalysisNotebookSessionError(null)
-      setAnalysisNotebookSessionStatus(null)
-      try {
-        const file = await rendererApi.createAnalysisNotebook(cwd)
-        setActiveAnalysisNotebook(file)
-        void refreshAnalysisNotebookSessionStatus(file)
-        await refreshAnalysisNotebooks()
-      } catch (error) {
-        setAnalysisNotebookContentError(readableErrorMessage(error, '无法新建 notebook'))
-      } finally {
-        setIsOpeningAnalysisNotebook(false)
-      }
-    },
-    [refreshAnalysisNotebookSessionStatus, refreshAnalysisNotebooks, rendererApi]
-  )
-
-  const onDeleteAnalysisNotebook = useCallback(
-    async (file: { path: string; relativePath: string }): Promise<void> => {
-      const cwd = activeCwdRef.current
-      setAnalysisNotebookContentError(null)
-      setAnalysisNotebookSessionError(null)
-      try {
-        await rendererApi.deleteAnalysisNotebook(cwd, file.path)
-        if (activeAnalysisNotebook?.path === file.path) {
-          setActiveAnalysisNotebook(null)
-          setAnalysisNotebookSessionStatus(null)
-          setExecutingAnalysisCellId(null)
-          setAnalysisCellExecutionError(null)
-        }
-        await refreshAnalysisNotebooks()
-        setSnackbarNotice({
-          id: Date.now(),
-          severity: 'success',
-          message: `已删除 ${file.relativePath}`
-        })
-      } catch (error) {
-        setAnalysisNotebookContentError(readableErrorMessage(error, '无法删除 notebook'))
-      }
-    },
-    [activeAnalysisNotebook, refreshAnalysisNotebooks, rendererApi]
-  )
-
-  const refreshAnalysisKernels = useCallback(async (): Promise<void> => {
-    const request = ++analysisKernelsRequestRef.current
-    const cwd = activeCwdRef.current
-    setIsLoadingAnalysisKernels(true)
-    setAnalysisKernelError(null)
-    try {
-      const listAnalysisKernels = requireRendererApiMethod(
-        rendererApi,
-        'listAnalysisKernels',
-        'Notebook kernel API 尚未加载，请重启 Phi 后再试'
-      )
-      const diagnostics = await listAnalysisKernels(cwd)
-      if (request !== analysisKernelsRequestRef.current || cwd !== activeCwdRef.current) return
-      setAnalysisKernelDiagnostics(diagnostics)
-    } catch (error) {
-      if (request !== analysisKernelsRequestRef.current) return
-      setAnalysisKernelError(readableErrorMessage(error, '无法检测 Jupyter kernels'))
-    } finally {
-      if (request === analysisKernelsRequestRef.current) {
-        setIsLoadingAnalysisKernels(false)
-      }
-    }
-  }, [rendererApi])
-
-  const refreshAnalysisJupyterStatus = useCallback(async (): Promise<void> => {
-    const request = ++analysisJupyterRequestRef.current
-    const cwd = activeCwdRef.current
-    if (!cwd) {
-      setAnalysisJupyterStatus(null)
-      return
-    }
-
-    setAnalysisJupyterError(null)
-    try {
-      const getAnalysisJupyterStatus = requireRendererApiMethod(
-        rendererApi,
-        'getAnalysisJupyterStatus',
-        'Jupyter Server API 尚未加载，请重启 Phi 后再试'
-      )
-      const status = await getAnalysisJupyterStatus(cwd)
-      if (request !== analysisJupyterRequestRef.current || cwd !== activeCwdRef.current) return
-      setAnalysisJupyterStatus(status)
-    } catch (error) {
-      if (request !== analysisJupyterRequestRef.current) return
-      setAnalysisJupyterError(readableErrorMessage(error, '无法读取 Jupyter Server 状态'))
-      setAnalysisJupyterStatus(null)
-    }
-  }, [rendererApi])
-
-  const onStartAnalysisJupyter = useCallback(
-    async (cwd: string): Promise<void> => {
-      const request = ++analysisJupyterRequestRef.current
-      setIsStartingAnalysisJupyter(true)
-      setAnalysisJupyterError(null)
-      try {
-        const status = await rendererApi.startAnalysisJupyter(cwd)
-        if (request !== analysisJupyterRequestRef.current || cwd !== activeCwdRef.current) return
-        setAnalysisJupyterStatus(status)
-      } catch (error) {
-        if (request !== analysisJupyterRequestRef.current) return
-        setAnalysisJupyterError(readableErrorMessage(error, '无法启动 Jupyter Server'))
-      } finally {
-        if (request === analysisJupyterRequestRef.current) {
-          setIsStartingAnalysisJupyter(false)
-        }
-      }
-    },
-    [rendererApi]
-  )
-
-  const onStopAnalysisJupyter = useCallback(
-    async (cwd: string): Promise<void> => {
-      const request = ++analysisJupyterRequestRef.current
-      setIsStartingAnalysisJupyter(true)
-      setAnalysisJupyterError(null)
-      try {
-        const status = await rendererApi.stopAnalysisJupyter(cwd)
-        if (request !== analysisJupyterRequestRef.current || cwd !== activeCwdRef.current) return
-        setAnalysisJupyterStatus(status)
-        setAnalysisNotebookSessionStatus(null)
-      } catch (error) {
-        if (request !== analysisJupyterRequestRef.current) return
-        setAnalysisJupyterError(readableErrorMessage(error, '无法停止 Jupyter Server'))
-      } finally {
-        if (request === analysisJupyterRequestRef.current) {
-          setIsStartingAnalysisJupyter(false)
-        }
-      }
-    },
-    [rendererApi]
-  )
-
-  const onStartAnalysisNotebookSession = useCallback(
-    async (
-      file: AnalysisNotebookFile,
-      document: AnalysisNotebookFile['document']
-    ): Promise<void> => {
-      const request = ++analysisNotebookSessionRequestRef.current
-      const cwd = activeCwdRef.current
-      setIsStartingAnalysisNotebookSession(true)
-      setAnalysisNotebookSessionError(null)
-      try {
-        const status = await rendererApi.ensureAnalysisNotebookSession(cwd, file.path, document)
-        if (request !== analysisNotebookSessionRequestRef.current || cwd !== activeCwdRef.current) {
-          return
-        }
-        setAnalysisNotebookSessionStatus(status)
-      } catch (error) {
-        if (request !== analysisNotebookSessionRequestRef.current) return
-        setAnalysisNotebookSessionError(readableErrorMessage(error, '无法连接 notebook kernel'))
-      } finally {
-        if (request === analysisNotebookSessionRequestRef.current) {
-          setIsStartingAnalysisNotebookSession(false)
-        }
-      }
-    },
-    [rendererApi]
-  )
-
-  const onStopAnalysisNotebookSession = useCallback(
-    async (file: AnalysisNotebookFile): Promise<void> => {
-      const request = ++analysisNotebookSessionRequestRef.current
-      const cwd = activeCwdRef.current
-      setIsStartingAnalysisNotebookSession(true)
-      setAnalysisNotebookSessionError(null)
-      try {
-        const status = await rendererApi.closeAnalysisNotebookSession(cwd, file.path)
-        if (request !== analysisNotebookSessionRequestRef.current || cwd !== activeCwdRef.current) {
-          return
-        }
-        setAnalysisNotebookSessionStatus(status)
-      } catch (error) {
-        if (request !== analysisNotebookSessionRequestRef.current) return
-        setAnalysisNotebookSessionError(readableErrorMessage(error, '无法断开 notebook kernel'))
-      } finally {
-        if (request === analysisNotebookSessionRequestRef.current) {
-          setIsStartingAnalysisNotebookSession(false)
-        }
-      }
-    },
-    [rendererApi]
-  )
-
-  const onRunAnalysisNotebookCell = useCallback(
-    async (
-      file: AnalysisNotebookFile,
-      document: AnalysisNotebookFile['document'],
-      cellId: string
-    ): Promise<void> => {
-      const request = ++analysisCellExecutionRequestRef.current
-      const cwd = activeCwdRef.current
-      setExecutingAnalysisCellId(cellId)
-      setAnalysisCellExecutionError(null)
-      try {
-        if (
-          !analysisNotebookSessionStatus?.sessionId ||
-          analysisNotebookSessionStatus.state !== 'idle'
-        ) {
-          throw new Error('请先连接可用的 notebook kernel')
-        }
-        const executeAnalysisNotebookCell = requireRendererApiMethod(
-          rendererApi,
-          'executeAnalysisNotebookCell',
-          'Notebook cell 执行 API 尚未加载，请重启 Phi 后再试'
-        )
-        const result = await executeAnalysisNotebookCell(cwd, file.path, document, cellId)
-        if (request !== analysisCellExecutionRequestRef.current || cwd !== activeCwdRef.current) {
-          return
-        }
-        setActiveAnalysisNotebook({
-          ...file,
-          document: result.document
-        })
-        setAnalysisNotebookSessionStatus(result.sessionStatus)
-      } catch (error) {
-        if (request !== analysisCellExecutionRequestRef.current) return
-        setAnalysisCellExecutionError(readableErrorMessage(error, '无法执行 notebook cell'))
-      } finally {
-        if (request === analysisCellExecutionRequestRef.current) {
-          setExecutingAnalysisCellId(null)
-        }
-      }
-    },
-    [analysisNotebookSessionStatus, rendererApi]
+    [
+      filePreviewRequestRef,
+      onOpenAnalysisNotebook,
+      refreshAnalysisJupyterStatus,
+      refreshAnalysisKernels,
+      refreshAnalysisNotebooks,
+      setActiveWorkspaceFilePath,
+      setFilePreview,
+      setWorkspaceFileTabs
+    ]
   )
 
   const onCreateProject = async (
@@ -970,6 +860,7 @@ function App(): React.JSX.Element {
   }
 
   const onStartProjectChat = async (project: Project): Promise<void> => {
+    projectSidebarSelectionRequestRef.current += 1
     const request = ++sessionRequestRef.current
     setIsSessionChanging(true)
     try {
@@ -978,7 +869,12 @@ function App(): React.JSX.Element {
         project.permissionMode
       )
       if (request !== sessionRequestRef.current) return
-      applyCurrentSession(current, { resetSending: true })
+      setWorkspaceSidebarMode('projects')
+      applyCurrentSession(
+        current,
+        { resetSending: true },
+        { onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange, onResetSending }
+      )
       void refreshCurrentModelControls(request)
       startFreshChat()
       setProjectSessionRefreshKey((key) => key + 1)
@@ -1003,32 +899,37 @@ function App(): React.JSX.Element {
     [mergeSessionSummariesRuntimeState, rendererApi]
   )
 
-  const onRespondToolApproval = async (requestId: string, approved: boolean): Promise<void> => {
-    const activeKey = activeAgentEventStateKeyRef.current
-    if (activeKey) {
-      pendingApprovalsBySessionRef.current.delete(activeKey)
-    }
-    setPendingApproval(null)
-    await rendererApi.respondToolApproval(requestId, approved)
-    await refreshSessions()
-    setProjectSessionRefreshKey((key) => key + 1)
-  }
+  const selectFirstAvailableProjectSession = useCallback(
+    async (request: number): Promise<boolean> => {
+      const orderedProjects = orderProjectsForSessionSelection(
+        projectsRef.current,
+        useSessionStore.getState().activeCwd
+      )
+
+      for (const project of orderedProjects) {
+        const projectSessions = await onFetchProjectSessions(project.workingDirectory)
+        if (request !== projectSidebarSelectionRequestRef.current) return false
+
+        const targetSession = projectSessions[0]
+        if (!targetSession) continue
+
+        await onSelectSession(targetSession.path)
+        if (request !== projectSidebarSelectionRequestRef.current) return false
+
+        setWorkspaceSidebarMode('projects')
+        setProjectSessionRefreshKey((key) => key + 1)
+        return true
+      }
+
+      return false
+    },
+    [onFetchProjectSessions, onSelectSession, projectsRef, setProjectSessionRefreshKey]
+  )
 
   const onOpenApprovalSession = (path: string): void => {
     setActiveView('chat')
     setIsSettingsOpen(false)
     void onSelectSession(path)
-  }
-
-  const closeProviderDialog = useCallback((): void => {
-    setIsProviderDialogOpen(false)
-    setProviderDialogProviderId(null)
-    setActivePrompts([])
-  }, [])
-
-  const openProviderDialog = (providerId: string | null = null): void => {
-    setProviderDialogProviderId(providerId)
-    setIsProviderDialogOpen(true)
   }
 
   const openSettings = useCallback((category?: SettingsCategory): void => {
@@ -1098,25 +999,27 @@ function App(): React.JSX.Element {
       }
 
       const belongsToActiveSession = agentEventBelongsToActiveSession(event, {
-        path: activeSessionPathRef.current,
-        cwd: activeCwdRef.current,
-        sessionGeneration: activeSessionGenerationRef.current
+        phiSessionId: useSessionStore.getState().activePhiSessionId,
+        path: useSessionStore.getState().activeSessionPath,
+        cwd: useSessionStore.getState().activeCwd,
+        sessionGeneration: useSessionStore.getState().activeSessionGeneration
       })
       const eventStateKey = sessionStateKeyFromAgentEvent(event)
       if (eventStateKey) {
         const nextRuntimeState = reduceSessionRuntimeState(
-          sessionRuntimeStatesRef.current.get(eventStateKey) ?? idleSessionRuntimeState(),
+          sessionRuntimeStates.get(eventStateKey) ?? idleSessionRuntimeState(),
           event
         )
         const runtimeStateChanged = storeSessionRuntimeState(eventStateKey, nextRuntimeState)
         const baseState =
-          sessionAgentEventStatesRef.current.get(eventStateKey) ??
-          (belongsToActiveSession ? agentEventStateRef.current : createAgentEventReducerState())
+          sessionAgentEventStates.get(eventStateKey) ??
+          (belongsToActiveSession
+            ? useSessionStore.getState().agentEventState
+            : createAgentEventReducerState())
         const nextState = reduceAgentEventState(baseState, event)
-        sessionAgentEventStatesRef.current.set(eventStateKey, nextState)
+        sessionAgentEventStates.set(eventStateKey, nextState)
         if (belongsToActiveSession) {
-          activeAgentEventStateKeyRef.current = eventStateKey
-          agentEventStateRef.current = nextState
+          useSessionStore.setState({ activeAgentEventStateKey: eventStateKey })
           setAgentEventState(nextState)
           setActiveSessionRuntimeState(nextRuntimeState)
         }
@@ -1133,82 +1036,27 @@ function App(): React.JSX.Element {
       setVisibleAgentEventState((prev) => reduceAgentEventState(prev, event))
     })
 
-    const unsubscribeAuthInteraction = rendererApi.onAuthInteraction(
-      (event: AuthInteractionEvent) => {
-        if (event.type === 'prompt') {
-          setActivePrompts((prev) => {
-            const exists = prev.some((item) => item.requestId === event.requestId)
-            if (exists) {
-              return prev.map((item) =>
-                item.requestId === event.requestId
-                  ? {
-                      ...item,
-                      prompt: event.prompt,
-                      value: item.value
-                    }
-                  : item
-              )
-            }
-
-            return [
-              ...prev,
-              {
-                requestId: event.requestId,
-                providerId: event.providerId,
-                prompt: event.prompt,
-                value: ''
-              }
-            ]
-          })
-
-          setProviderDialogProviderId(event.providerId)
-          setIsProviderDialogOpen(true)
-          setIsSettingsOpen(true)
-          return
-        }
-
-        const hint =
-          event.event.type === 'auth_url'
-            ? `授权链接：${event.event.url}`
-            : event.event.type === 'info'
-              ? event.event.message
-              : event.event.type === 'progress'
-                ? event.event.message
-                : event.event.type === 'device_code'
-                  ? `验证码：${event.event.userCode}`
-                  : '收到授权提示'
-
-        setProviderHints((prev) => ({
-          ...prev,
-          [event.providerId]: hint
-        }))
-
-        setProviderDialogProviderId(event.providerId)
-        if (
-          event.event.type === 'progress' ||
-          event.event.type === 'auth_url' ||
-          event.event.type === 'device_code'
-        ) {
-          setIsProviderDialogOpen(true)
-        }
+    const unsubscribeAuthInteraction = rendererApi.onAuthInteraction((event) => {
+      if (handleAuthInteractionEvent(event)) {
+        setIsSettingsOpen(true)
       }
-    )
+    })
 
     const unsubscribeToolApproval = rendererApi.onToolApprovalRequest((event) => {
       const approvalStateKey = sessionStateKeyFromToolApproval(
         event,
-        activeSessionGenerationRef.current
+        useSessionStore.getState().activeSessionGeneration
       )
       if (approvalStateKey) {
-        pendingApprovalsBySessionRef.current.set(approvalStateKey, event)
+        pendingApprovalsBySession.set(approvalStateKey, event)
         const nextRuntimeState = {
-          ...(sessionRuntimeStatesRef.current.get(approvalStateKey) ?? idleSessionRuntimeState()),
+          ...(sessionRuntimeStates.get(approvalStateKey) ?? idleSessionRuntimeState()),
           status: 'needs_approval' as const,
           unreadKind: 'approval' as const,
           currentRunId: event.runId
         }
         storeSessionRuntimeState(approvalStateKey, nextRuntimeState)
-        if (approvalStateKey === activeAgentEventStateKeyRef.current) {
+        if (approvalStateKey === useSessionStore.getState().activeAgentEventStateKey) {
           setPendingApproval(event)
           setActiveSessionRuntimeState(nextRuntimeState)
         }
@@ -1220,13 +1068,19 @@ function App(): React.JSX.Element {
     })
 
     const unsubscribeToolApprovalCancelled = rendererApi.onToolApprovalCancelled(() => {
-      pendingApprovalsBySessionRef.current.clear()
+      pendingApprovalsBySession.clear()
       setPendingApproval(null)
       scheduleSessionRefresh()
     })
 
+    const unsubscribeNotebookDraftChanged = rendererApi.onAnalysisNotebookDraftChanged(
+      handleNotebookDraftChanged
+    )
+
     const unsubscribeSessionChanged = rendererApi.onSessionChanged((session) => {
-      applyCurrentSession(session)
+      applyCurrentSession(session, undefined, {
+        onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
+      })
       setProjectSessionRefreshKey((key) => key + 1)
       if (activeView === 'projects') {
         void refreshProjects()
@@ -1238,18 +1092,25 @@ function App(): React.JSX.Element {
       unsubscribeAuthInteraction()
       unsubscribeToolApproval()
       unsubscribeToolApprovalCancelled()
+      unsubscribeNotebookDraftChanged()
       unsubscribeSessionChanged()
-      if (sessionRefreshTimerRef.current !== null) {
-        window.clearTimeout(sessionRefreshTimerRef.current)
-        sessionRefreshTimerRef.current = null
-      }
+      cancelScheduledSessionRefresh()
     }
   }, [
     activeView,
     applyCurrentSession,
+    cancelScheduledSessionRefresh,
+    handleAuthInteractionEvent,
+    handleNotebookDraftChanged,
+    projectsRef,
     refreshProjects,
     rendererApi,
+    resetAnalysisJupyterRuntimeForCwdChange,
     scheduleSessionRefresh,
+    setActiveSessionRuntimeState,
+    setAgentEventState,
+    setPendingApproval,
+    setProjectSessionRefreshKey,
     setVisibleAgentEventState,
     showSnackbar,
     storeSessionRuntimeState
@@ -1281,14 +1142,25 @@ function App(): React.JSX.Element {
           mergeSessionSummariesRuntimeState(sessionList, current.cwd)
         )
       )
-      applyCurrentSession(current)
+      applyCurrentSession(current, undefined, {
+        onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
+      })
       if (Array.isArray(current.messages)) {
         replaceMessages(chatItemsFromSessionMessages(current.messages))
       }
       setProjects(projectList)
       projectsRef.current = projectList
     })()
-  }, [applyCurrentSession, mergeSessionSummariesRuntimeState, rendererApi, replaceMessages])
+  }, [
+    applyCurrentSession,
+    mergeSessionSummariesRuntimeState,
+    projectsRef,
+    rendererApi,
+    replaceMessages,
+    resetAnalysisJupyterRuntimeForCwdChange,
+    setProjects,
+    setSessions
+  ])
 
   useEffect(() => {
     void Promise.resolve().then(() => {
@@ -1319,74 +1191,13 @@ function App(): React.JSX.Element {
   ])
 
   useEffect(() => {
-    void (async () => {
-      setIsModelStateReady(false)
-      try {
-        const [statuses, available, selected, level] = await Promise.all([
-          rendererApi.getAuthStatus(),
-          rendererApi.listModels(),
-          rendererApi.getSelectedModel(),
-          rendererApi.getThinkingLevel()
-        ])
-        setProviderStatuses(statuses)
-        setModels(available)
-        setSelectedModel(modelOptionFromSelection(selected, available))
-        setThinkingLevel(level)
-      } catch {
-        // 模型列表加载失败不阻塞聊天；发送时会给出明确错误
-      } finally {
-        setIsModelStateReady(true)
-      }
-    })()
-    const pluginRefreshTimer = window.setTimeout(() => {
-      void refreshPlugins()
-    }, 0)
-    return () => window.clearTimeout(pluginRefreshTimer)
-  }, [refreshPlugins, rendererApi])
-
-  const onSelectThinkingLevel = async (level: ThinkingLevel): Promise<void> => {
-    const previous = thinkingLevel
-    setThinkingLevel(level)
-    try {
-      await rendererApi.selectThinkingLevel(level)
-    } catch (error) {
-      setThinkingLevel(previous)
-      showSnackbarError(error, '切换思考等级失败')
-    }
-  }
-
-  const onSelectModel = async (model: ModelOption | null): Promise<void> => {
-    if (!model) {
-      setSelectedModel(null)
-      return
-    }
-
-    const previous = selectedModel
-    setSelectedModel(model)
-    try {
-      await rendererApi.selectModel(model.providerId, model.modelId)
-    } catch (error) {
-      setSelectedModel(previous)
-      showSnackbarError(error, '切换模型失败')
-    }
-  }
-
-  useEffect(() => {
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight
     }
   }, [messages])
 
-  const availableModels = useMemo(() => {
-    const configuredIds = new Set(
-      providerStatuses
-        .filter((provider) => provider.configured)
-        .map((provider) => provider.providerId)
-    )
-    return models.filter((model) => configuredIds.has(model.providerId))
-  }, [models, providerStatuses])
-
   const activeDraftKey = sessionDraftKey({
+    phiSessionId: activePhiSessionId,
     path: activeSessionPath,
     cwd: activeCwd,
     sessionGeneration: activeSessionGeneration
@@ -1396,7 +1207,7 @@ function App(): React.JSX.Element {
     (value: string): void => {
       setDraftInputs((prev) => updateSessionDraft(prev, activeDraftKey, value))
     },
-    [activeDraftKey]
+    [activeDraftKey, setDraftInputs]
   )
 
   const onChatSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
@@ -1419,7 +1230,7 @@ function App(): React.JSX.Element {
       return
     }
     isSendingRef.current = true
-    const submitGeneration = activeSessionGenerationRef.current
+    const submitGeneration = useSessionStore.getState().activeSessionGeneration
     const sendRequest = ++sendRequestRef.current
 
     updateMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text }])
@@ -1427,20 +1238,30 @@ function App(): React.JSX.Element {
     setIsSendingMessage(true)
 
     try {
-      const result = await rendererApi.sendPrompt(text)
+      const result = await rendererApi.sendPrompt(text, {
+        path: useSessionStore.getState().activeSessionPath,
+        phiSessionId: useSessionStore.getState().activePhiSessionId ?? undefined,
+        cwd: useSessionStore.getState().activeCwd,
+        sessionGeneration: submitGeneration
+      })
       if (
         !result ||
         sendRequest !== sendRequestRef.current ||
-        result.sessionGeneration !== activeSessionGenerationRef.current
+        result.sessionGeneration !== useSessionStore.getState().activeSessionGeneration
       ) {
         return
       }
 
       if (result.path && result.path !== activeSessionPath) {
-        // First prompt of a fresh chat: it just became a real file — pick it up so
+        // First prompt of a fresh chat: it just became a stable Phi session — pick it up so
         // the sidebar can highlight it.
-        activeSessionPathRef.current = result.path
         setActiveSessionPath(result.path)
+      }
+      if (
+        result.phiSessionId &&
+        result.phiSessionId !== useSessionStore.getState().activePhiSessionId
+      ) {
+        setActivePhiSessionId(result.phiSessionId)
       }
       void refreshSessions()
       if (!selectedModel) {
@@ -1452,7 +1273,7 @@ function App(): React.JSX.Element {
     } catch (error) {
       if (
         sendRequest !== sendRequestRef.current ||
-        submitGeneration !== activeSessionGenerationRef.current
+        submitGeneration !== useSessionStore.getState().activeSessionGeneration
       ) {
         return
       }
@@ -1460,7 +1281,7 @@ function App(): React.JSX.Element {
     } finally {
       if (
         sendRequest === sendRequestRef.current &&
-        submitGeneration === activeSessionGenerationRef.current
+        submitGeneration === useSessionStore.getState().activeSessionGeneration
       ) {
         isSendingRef.current = false
         setIsSendingMessage(false)
@@ -1476,63 +1297,6 @@ function App(): React.JSX.Element {
       setIsSendingMessage(false)
       setPendingApproval(null)
     }
-  }
-
-  const onSubmitAuthPrompt = async (requestId: string, value: string): Promise<void> => {
-    if (!value.trim()) {
-      return
-    }
-
-    setIsBusy(true)
-    try {
-      await rendererApi.submitAuthInteraction(requestId, value)
-      setActivePrompts((prev) => prev.filter((item) => item.requestId !== requestId))
-    } finally {
-      setIsBusy(false)
-    }
-  }
-
-  const onUpdatePromptValue = (requestId: string, value: string): void => {
-    setActivePrompts((prev) =>
-      prev.map((prompt) => (prompt.requestId === requestId ? { ...prompt, value } : prompt))
-    )
-  }
-
-  const submitProviderApiKey = async (providerId: string, key: string): Promise<void> => {
-    if (!key.trim()) {
-      return
-    }
-
-    setIsBusy(true)
-    try {
-      const next = await rendererApi.loginApiKey(providerId, key)
-      setProviderStatuses(next)
-      setProviderHints((prev) => ({
-        ...prev,
-        [providerId]: 'API Key 已提交（实际校验延后到发送消息时）'
-      }))
-    } finally {
-      setIsBusy(false)
-    }
-  }
-
-  const submitProviderOAuth = async (providerId: string): Promise<void> => {
-    setIsBusy(true)
-    try {
-      const next = await rendererApi.loginOAuth(providerId)
-      setProviderStatuses(next)
-      setProviderHints((prev) => ({
-        ...prev,
-        [providerId]: 'OAuth 已触发，授权状态会在对话中完成'
-      }))
-    } finally {
-      setIsBusy(false)
-    }
-  }
-
-  const logoutProvider = async (providerId: string): Promise<void> => {
-    await rendererApi.logout(providerId)
-    await refreshAuthStatuses()
   }
 
   const onSavePersonaMarkdown = async (markdown: string): Promise<void> => {
@@ -1551,152 +1315,50 @@ function App(): React.JSX.Element {
     setShowOnboarding(false)
   }
 
-  const onInstallPlugin = async (source: string): Promise<void> => {
-    setBusyPluginSource(source)
-    setPluginOperationError(null)
-    try {
-      const list = await rendererApi.installPlugin(source)
-      setPlugins(list)
-    } catch (error) {
-      setPluginOperationError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setBusyPluginSource(null)
-    }
-  }
-
-  const onRemovePlugin = async (source: string): Promise<void> => {
-    setBusyPluginSource(source)
-    setPluginOperationError(null)
-    try {
-      const list = await rendererApi.removePlugin(source)
-      setPlugins(list)
-    } catch (error) {
-      setPluginOperationError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setBusyPluginSource(null)
-    }
-  }
-
-  const onUpdateProjectPermissionMode = async (
-    projectId: string,
-    permissionMode: PermissionMode
-  ): Promise<void> => {
-    setUpdatingPermissionProjectId(projectId)
-    try {
-      const project = await rendererApi.updateProjectPermissionMode(projectId, permissionMode)
-      setProjects((prev) => prev.map((item) => (item.id === project.id ? project : item)))
-    } finally {
-      setUpdatingPermissionProjectId(null)
-    }
-  }
-
   const onSelectPermissionMode = async (permissionMode: PermissionMode): Promise<void> => {
     if (permissionMode === activePermissionMode) return
     const current = await rendererApi.updateCurrentSessionPermissionMode(permissionMode)
-    applyCurrentSession(current)
+    applyCurrentSession(current, undefined, {
+      onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
+    })
     setProjectSessionRefreshKey((key) => key + 1)
-  }
-
-  const onUpdateProjectDefaults = async (
-    projectId: string,
-    defaults: {
-      defaultModel?: { providerId: string; modelId: string } | null
-      defaultThinkingLevel?: ThinkingLevel | null
-    }
-  ): Promise<void> => {
-    setUpdatingPermissionProjectId(projectId)
-    try {
-      const project = await rendererApi.updateProjectDefaults(projectId, defaults)
-      setProjects((prev) => prev.map((item) => (item.id === project.id ? project : item)))
-    } catch (error) {
-      showSnackbarError(error, '更新项目默认模型失败')
-    } finally {
-      setUpdatingPermissionProjectId(null)
-    }
   }
 
   const onOpenFilePreview = useCallback(
     (path: string): void => {
-      const requestId = ++filePreviewRequestRef.current
-      setFilePreview({ status: 'loading', path })
-      void rendererApi
-        .previewFile(path)
-        .then((file) => {
-          if (filePreviewRequestRef.current !== requestId) return
-          setFilePreview({ status: 'ready', file })
-        })
-        .catch((error) => {
-          if (filePreviewRequestRef.current !== requestId) return
-          setFilePreview({
-            status: 'error',
-            path,
-            message: readableErrorMessage(error, '无法预览文件')
-          })
-        })
+      if (isNotebookFilePath(path)) {
+        onOpenNotebookWorkspaceFile(path)
+        return
+      }
+      previewFilePath(path)
     },
-    [rendererApi]
-  )
-
-  const onOpenDirectoryPreview = useCallback(
-    (path: string): void => {
-      const requestId = ++filePreviewRequestRef.current
-      setFilePreview({ status: 'loading', path, pathKind: 'directory' })
-      void rendererApi
-        .listDirectory(path)
-        .then((directory) => {
-          if (filePreviewRequestRef.current !== requestId) return
-          setFilePreview({ status: 'directory', directory })
-        })
-        .catch((error) => {
-          if (filePreviewRequestRef.current !== requestId) return
-          setFilePreview({
-            status: 'error',
-            path,
-            pathKind: 'directory',
-            message: readableErrorMessage(error, '无法读取目录')
-          })
-        })
-    },
-    [rendererApi]
+    [onOpenNotebookWorkspaceFile, previewFilePath]
   )
 
   const onOpenLocalPath = useCallback(
     (path: string, pathKind: LocalPathKind): void => {
       if (pathKind === 'directory') {
-        onOpenDirectoryPreview(path)
+        previewDirectoryPath(path)
         return
       }
-      onOpenFilePreview(path)
+      if (isNotebookFilePath(path)) {
+        onOpenNotebookWorkspaceFile(path)
+        return
+      }
+      previewFilePath(path)
     },
-    [onOpenDirectoryPreview, onOpenFilePreview]
+    [onOpenNotebookWorkspaceFile, previewDirectoryPath, previewFilePath]
   )
-
-  const onCloseFilePreview = useCallback((): void => {
-    filePreviewRequestRef.current += 1
-    setFilePreview(null)
-  }, [])
 
   const onOpenDefaultPreviewPath = useCallback(
     (path: string): void => {
-      void rendererApi.openPath(path).catch((error) => {
-        showSnackbarError(error, '无法打开文件')
-      })
+      if (isNotebookFilePath(path)) {
+        onOpenNotebookWorkspaceFile(path)
+        return
+      }
+      openPathWithSystemDefault(path)
     },
-    [rendererApi, showSnackbarError]
-  )
-
-  const onRevealPreviewPath = useCallback(
-    (path: string): void => {
-      void rendererApi.revealPath(path).catch((error) => {
-        showSnackbarError(error, '无法在文件管理器中显示')
-      })
-    },
-    [rendererApi, showSnackbarError]
-  )
-
-  const onListPreviewDirectory = useCallback(
-    (path: string): Promise<DirectoryListing> => rendererApi.listDirectory(path),
-    [rendererApi]
+    [onOpenNotebookWorkspaceFile, openPathWithSystemDefault]
   )
 
   const onOpenInputAddMenu = useCallback((): void => {
@@ -1719,19 +1381,180 @@ function App(): React.JSX.Element {
   const selectedPrompts = activePrompts.filter(
     (item) => item.providerId === providerDialogProviderId
   )
-  const isChatWorkspaceView = activeView === 'chat' || activeView === 'projects'
+  const isChatWorkspaceView =
+    activeView === 'chat' || activeView === 'projects' || activeView === 'analysis'
+  const isAnalysisWorkspaceView = activeView === 'analysis'
   const activeSession = activeSessionPath
-    ? (sessions.find((session) => session.path === activeSessionPath) ?? null)
+    ? (sessions.find((session) =>
+        activePhiSessionId
+          ? session.phiSessionId === activePhiSessionId
+          : session.path === activeSessionPath
+      ) ?? null)
     : null
+  const activeProject = activeCwd
+    ? (projects.find((project) => project.workingDirectory === activeCwd) ?? null)
+    : null
+  const activeWorkspaceIsProject = Boolean(activeProject)
+  const showProjectSessionPlaceholder = activeView === 'projects' && !activeWorkspaceIsProject
   const activeSessionHasWork =
     sessionStatusIsBusy(activeSession) || sessionRuntimeStateIsBusy(activeSessionRuntimeState)
   const currentSessionIsBusy = isSendingMessage || activeSessionHasWork
   const activeWorkspaceTitle = useMemo(() => {
+    if (showProjectSessionPlaceholder) return '项目会话'
     if (!isChatWorkspaceView) return activeView
     if (activeSession) return sessionDisplayTitle(activeSession)
     return titleFromMessages(messages) ?? truncateSessionTitle('新对话')
-  }, [activeSession, activeView, isChatWorkspaceView, messages])
+  }, [activeSession, activeView, isChatWorkspaceView, messages, showProjectSessionPlaceholder])
+  const activeWorkspaceScopeLabel = workspaceScopeLabelForCwd(activeCwd, projects)
   const activePermissionMode = currentPermissionMode
+  const showWorkspaceTitlebar = !isAnalysisWorkspaceView
+  const workspaceSidebarPreviewWidth = Math.min(360, Math.max(320, sidebarWidth))
+  const isWorkspaceSidebarModeExpanded = useCallback(
+    (mode: WorkspaceSidebarMode): boolean =>
+      workspaceSidebarModeIsExpanded({
+        activeView,
+        isSidebarOpen,
+        workspaceSidebarMode,
+        mode
+      }),
+    [activeView, isSidebarOpen, workspaceSidebarMode]
+  )
+  const shouldUseWorkspaceSidebarPreview = useCallback(
+    (mode: WorkspaceSidebarMode): boolean => !isWorkspaceSidebarModeExpanded(mode),
+    [isWorkspaceSidebarModeExpanded]
+  )
+  const visibleWorkspaceSidebarPreview =
+    workspaceSidebarPreview && shouldUseWorkspaceSidebarPreview(workspaceSidebarPreview.mode)
+      ? workspaceSidebarPreview
+      : null
+  const workspaceSidebarPreviewMode = visibleWorkspaceSidebarPreview?.mode ?? 'conversations'
+  const isWorkspaceSidebarPreviewOpen = visibleWorkspaceSidebarPreview !== null
+  const clearWorkspaceSidebarPreviewCloseTimer = useCallback((): void => {
+    if (workspaceSidebarPreviewCloseTimer.current === null) return
+    window.clearTimeout(workspaceSidebarPreviewCloseTimer.current)
+    workspaceSidebarPreviewCloseTimer.current = null
+  }, [])
+  const closeWorkspaceSidebarPreview = useCallback(
+    (delayMs = 0): void => {
+      clearWorkspaceSidebarPreviewCloseTimer()
+      if (delayMs <= 0) {
+        setWorkspaceSidebarPreview(null)
+        return
+      }
+      workspaceSidebarPreviewCloseTimer.current = window.setTimeout(() => {
+        workspaceSidebarPreviewCloseTimer.current = null
+        setWorkspaceSidebarPreview(null)
+      }, delayMs)
+    },
+    [clearWorkspaceSidebarPreviewCloseTimer]
+  )
+  const openWorkspaceSidebarPreview = useCallback(
+    (mode: WorkspaceSidebarMode, anchorEl: HTMLElement): void => {
+      if (!shouldUseWorkspaceSidebarPreview(mode)) {
+        closeWorkspaceSidebarPreview()
+        return
+      }
+      clearWorkspaceSidebarPreviewCloseTimer()
+      setWorkspaceSidebarPreview({ mode, anchorEl })
+    },
+    [
+      clearWorkspaceSidebarPreviewCloseTimer,
+      closeWorkspaceSidebarPreview,
+      shouldUseWorkspaceSidebarPreview
+    ]
+  )
+  const scheduleWorkspaceSidebarPreviewClose = useCallback((): void => {
+    closeWorkspaceSidebarPreview(160)
+  }, [closeWorkspaceSidebarPreview])
+
+  useEffect(
+    () => () => {
+      clearWorkspaceSidebarPreviewCloseTimer()
+    },
+    [clearWorkspaceSidebarPreviewCloseTimer]
+  )
+
+  const activeWorkspaceFileTab =
+    workspaceFileTabs.find((tab) => tab.path === activeWorkspaceFilePath) ?? null
+  const activeFilePreviewState =
+    activeWorkspaceFileTab && activeWorkspaceFileTab.kind !== 'notebook'
+      ? filePreview && filePreviewStatePath(filePreview) === activeWorkspaceFileTab.path
+        ? filePreview
+        : activeWorkspaceFileTab.pathKind === 'directory'
+          ? ({
+              status: 'loading',
+              path: activeWorkspaceFileTab.path,
+              pathKind: 'directory'
+            } satisfies FilePreviewPanelState)
+          : ({
+              status: 'loading',
+              path: activeWorkspaceFileTab.path
+            } satisfies FilePreviewPanelState)
+      : null
+
+  const onSelectWorkspaceFileTab = useCallback(
+    (tabLike: AnalysisWorkspaceFileTab): void => {
+      const tab = workspaceFileTabs.find((item) => item.path === tabLike.path)
+      if (!tab) return
+      setActiveWorkspaceFilePath(tab.path)
+      setActiveView('analysis')
+      if (tab.kind === 'notebook') {
+        onOpenNotebookWorkspaceFile(tab.path)
+        return
+      }
+      loadFilePreview(tab.path, tab.pathKind)
+    },
+    [loadFilePreview, onOpenNotebookWorkspaceFile, setActiveWorkspaceFilePath, workspaceFileTabs]
+  )
+
+  const onCloseWorkspaceFileTab = useCallback(
+    (tabLike: AnalysisWorkspaceFileTab): void => {
+      const closingTab = workspaceFileTabs.find((tab) => tab.path === tabLike.path)
+      if (!closingTab) return
+      const remainingTabs = workspaceFileTabs.filter((tab) => tab.path !== closingTab.path)
+      setWorkspaceFileTabs(remainingTabs)
+
+      if (closingTab.path !== activeWorkspaceFilePath) {
+        if (filePreview && filePreviewStatePath(filePreview) === closingTab.path) {
+          filePreviewRequestRef.current += 1
+          setFilePreview(null)
+        }
+        return
+      }
+
+      const nextTab = remainingTabs.at(-1) ?? null
+      if (!nextTab) {
+        filePreviewRequestRef.current += 1
+        setFilePreview(null)
+        setActiveWorkspaceFilePath(null)
+        closeActiveNotebook()
+        setActiveView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
+        return
+      }
+
+      setActiveWorkspaceFilePath(nextTab.path)
+      if (nextTab.kind === 'notebook') {
+        onOpenNotebookWorkspaceFile(nextTab.path)
+      } else {
+        setActiveAnalysisNotebook(null)
+        loadFilePreview(nextTab.path, nextTab.pathKind)
+      }
+    },
+    [
+      activeWorkspaceFilePath,
+      closeActiveNotebook,
+      filePreview,
+      filePreviewRequestRef,
+      loadFilePreview,
+      onOpenNotebookWorkspaceFile,
+      setActiveAnalysisNotebook,
+      setActiveWorkspaceFilePath,
+      setFilePreview,
+      setWorkspaceFileTabs,
+      workspaceFileTabs,
+      workspaceSidebarMode
+    ]
+  )
 
   const onStartSidebarResize = useCallback((event: MouseEvent<HTMLDivElement>): void => {
     event.preventDefault()
@@ -1759,14 +1582,98 @@ function App(): React.JSX.Element {
 
   const onSelectWorkspaceView = useCallback(
     (view: 'chat' | 'projects'): void => {
+      closeWorkspaceSidebarPreview()
+      const nextSidebarMode = view === 'projects' ? 'projects' : 'conversations'
+      const projectSelectionRequest =
+        view === 'projects' ? ++projectSidebarSelectionRequestRef.current : 0
+      if (view === 'chat') {
+        projectSidebarSelectionRequestRef.current += 1
+      }
+      if (activeView === 'analysis') {
+        setWorkspaceSidebarMode(nextSidebarMode)
+        if (workspaceSidebarMode === nextSidebarMode) {
+          setIsSidebarOpen((value) => !value)
+        } else {
+          setIsSidebarOpen(true)
+        }
+        return
+      }
+
+      setWorkspaceSidebarMode(nextSidebarMode)
       if (activeView === view) {
         setIsSidebarOpen((value) => !value)
         return
       }
       setActiveView(view)
       setIsSidebarOpen(true)
+      if (
+        view === 'projects' &&
+        !activeCwdBelongsToProject(projectsRef.current, useSessionStore.getState().activeCwd)
+      ) {
+        void selectFirstAvailableProjectSession(projectSelectionRequest)
+      }
     },
-    [activeView]
+    [
+      activeView,
+      closeWorkspaceSidebarPreview,
+      projectsRef,
+      selectFirstAvailableProjectSession,
+      workspaceSidebarMode
+    ]
+  )
+
+  const startPlaceholderProjectSession = (): void => {
+    const [project] = orderProjectsForSessionSelection(
+      projectsRef.current,
+      useSessionStore.getState().activeCwd
+    )
+    if (project) {
+      void onStartProjectChat(project)
+      return
+    }
+    setIsNewProjectDialogOpen(true)
+  }
+
+  const activeChatView = (
+    <ChatView
+      messages={messages}
+      input={input}
+      messagesContainerRef={setMessagesContainerNode}
+      canSend={!isSessionChanging && !currentSessionIsBusy && !isBusy}
+      isGenerating={currentSessionIsBusy}
+      currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
+      models={availableModels}
+      selectedModel={selectedModel}
+      skills={skills}
+      promptAgents={promptAgents}
+      plugins={plugins}
+      onSelectModel={(model) => {
+        void onSelectModel(model)
+      }}
+      thinkingLevel={thinkingLevel}
+      onSelectThinkingLevel={(level) => {
+        void onSelectThinkingLevel(level)
+      }}
+      onInputChange={setActiveInput}
+      onOpenInputAddMenu={onOpenInputAddMenu}
+      onPickInputFiles={onPickInputFiles}
+      onChatSubmit={onChatSubmit}
+      onStopGeneration={onStopGeneration}
+      onGoSettings={onGoProviderSettings}
+      permissionMode={activePermissionMode}
+      onSelectPermissionMode={(mode) => {
+        void onSelectPermissionMode(mode)
+      }}
+      disablePermissionModeSelect={isSessionChanging}
+      disableModelControls={isSessionChanging}
+      pendingApproval={pendingApproval}
+      onRespondApproval={onRespondToolApproval}
+      onOpenApprovalSession={onOpenApprovalSession}
+      onOpenLocalPath={onOpenLocalPath}
+      onJumpToNotebookCell={onJumpToAnalysisNotebookCell}
+      compactComposerControls={activeView === 'analysis' || filePreview !== null}
+      cwd={activeCwd}
+    />
   )
 
   return (
@@ -1791,7 +1698,10 @@ function App(): React.JSX.Element {
             left: 0,
             top: 0,
             bottom: 0,
-            width: isSidebarOpen ? activityBarWidth + sidebarWidth : activityBarWidth,
+            width:
+              isChatWorkspaceView && isSidebarOpen
+                ? activityBarWidth + sidebarWidth
+                : activityBarWidth,
             backgroundColor: (muiTheme) =>
               muiTheme.palette.mode === 'dark' ? muiTheme.palette.background.default : '#FFFFFF',
             pointerEvents: 'none',
@@ -1905,33 +1815,36 @@ function App(): React.JSX.Element {
             }
           }}
         >
-          <Tooltip title="对话" placement="right">
+          <WorkspaceSidebarNavButton
+            mode="conversations"
+            label="对话"
+            icon={NavChatIcon}
+            active={isWorkspaceSidebarModeExpanded('conversations')}
+            useContentPreview={shouldUseWorkspaceSidebarPreview('conversations')}
+            onPreviewOpen={openWorkspaceSidebarPreview}
+            onPreviewClose={scheduleWorkspaceSidebarPreviewClose}
+            onClick={() => onSelectWorkspaceView('chat')}
+          />
+          <WorkspaceSidebarNavButton
+            mode="projects"
+            label="项目"
+            icon={NavProjectsIcon}
+            active={isWorkspaceSidebarModeExpanded('projects')}
+            useContentPreview={shouldUseWorkspaceSidebarPreview('projects')}
+            onPreviewOpen={openWorkspaceSidebarPreview}
+            onPreviewClose={scheduleWorkspaceSidebarPreviewClose}
+            onClick={() => onSelectWorkspaceView('projects')}
+          />
+          <Tooltip title="运行时" placement="right">
             <IconButton
               size="small"
-              color={activeView === 'chat' ? 'primary' : 'default'}
-              onClick={() => onSelectWorkspaceView('chat')}
-            >
-              <NavChatIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="项目" placement="right">
-            <IconButton
-              size="small"
-              color={activeView === 'projects' ? 'primary' : 'default'}
-              onClick={() => onSelectWorkspaceView('projects')}
-            >
-              <NavProjectsIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="分析" placement="right">
-            <IconButton
-              size="small"
-              color={activeView === 'analysis' ? 'primary' : 'default'}
+              color={activeView === 'runtime' ? 'primary' : 'default'}
               onClick={() => {
-                setActiveView('analysis')
+                setActiveView('runtime')
+                void refreshAnalysisJupyterRuntimeStatus()
               }}
             >
-              <NavAnalysisIcon fontSize="small" />
+              <NavRuntimeIcon fontSize="small" />
             </IconButton>
           </Tooltip>
           <Tooltip title="插件" placement="right">
@@ -1970,6 +1883,15 @@ function App(): React.JSX.Element {
               <NavMcpIcon fontSize="small" />
             </IconButton>
           </Tooltip>
+          <Tooltip title="Wrappers" placement="right">
+            <IconButton
+              size="small"
+              color={activeView === 'wrappers' ? 'primary' : 'default'}
+              onClick={() => setActiveView('wrappers')}
+            >
+              <NavWrappersIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
           <Box sx={{ flex: 1 }} />
           <Tooltip title="设置" placement="right">
             <IconButton size="small" onClick={() => setIsSettingsOpen(true)} sx={{ mb: 1 }}>
@@ -1977,6 +1899,84 @@ function App(): React.JSX.Element {
             </IconButton>
           </Tooltip>
         </Box>
+
+        <Popper
+          open={isWorkspaceSidebarPreviewOpen}
+          anchorEl={visibleWorkspaceSidebarPreview?.anchorEl ?? null}
+          placement="right-start"
+          modifiers={[
+            {
+              name: 'offset',
+              options: { offset: [0, 6] }
+            },
+            {
+              name: 'preventOverflow',
+              options: { padding: 8 }
+            }
+          ]}
+          sx={{ zIndex: (muiTheme) => muiTheme.zIndex.tooltip }}
+        >
+          <Paper
+            data-phi-workspace-sidebar-hover-preview={workspaceSidebarPreviewMode}
+            elevation={8}
+            onMouseEnter={clearWorkspaceSidebarPreviewCloseTimer}
+            onMouseLeave={scheduleWorkspaceSidebarPreviewClose}
+            onFocus={clearWorkspaceSidebarPreviewCloseTimer}
+            onBlur={scheduleWorkspaceSidebarPreviewClose}
+            sx={{
+              width: workspaceSidebarPreviewWidth,
+              maxHeight: 'min(420px, calc(100vh - 96px))',
+              mt: isMac ? -0.5 : 0.5,
+              overflow: 'hidden',
+              borderRadius: 2,
+              border: 1,
+              borderColor: 'divider',
+              bgcolor: 'background.default',
+              boxShadow: (muiTheme) =>
+                muiTheme.palette.mode === 'dark'
+                  ? '0 18px 46px rgba(0, 0, 0, 0.48)'
+                  : '0 18px 46px rgba(12, 26, 32, 0.18)'
+            }}
+          >
+            <SessionSidebar
+              hideWindowDragSpacer
+              compactHoverPreview
+              mode={workspaceSidebarPreviewMode}
+              sessions={sessions}
+              activeSessionPath={activeSessionPath}
+              activeCwd={activeCwd}
+              projects={projects}
+              projectSessionRefreshKey={projectSessionRefreshKey}
+              onNewChat={() => {
+                closeWorkspaceSidebarPreview()
+                void onNewChat()
+              }}
+              onNewProject={() => {
+                closeWorkspaceSidebarPreview()
+                setIsNewProjectDialogOpen(true)
+              }}
+              onSelectSession={(path) => {
+                closeWorkspaceSidebarPreview()
+                void onSelectSession(path)
+              }}
+              onRenameSession={(path, name) => {
+                void onRenameSession(path, name)
+              }}
+              onDeleteSession={(path) => {
+                void onDeleteSession(path)
+              }}
+              onStartProjectChat={(project) => {
+                closeWorkspaceSidebarPreview()
+                void onStartProjectChat(project)
+              }}
+              onDeleteProject={(project) => {
+                void onDeleteProjectEntry(project)
+              }}
+              onFetchProjectSessions={onFetchProjectSessions}
+              getSessionRuntimeState={getSessionRuntimeState}
+            />
+          </Paper>
+        </Popper>
 
         {isChatWorkspaceView && isSidebarOpen && (
           <Box
@@ -1994,35 +1994,216 @@ function App(): React.JSX.Element {
               }
             }}
           >
-            <SessionSidebar
-              mode={activeView === 'projects' ? 'projects' : 'conversations'}
-              sessions={sessions}
-              activeSessionPath={activeSessionPath}
-              activeCwd={activeCwd}
-              projects={projects}
-              projectSessionRefreshKey={projectSessionRefreshKey}
-              onNewChat={() => {
-                void onNewChat()
-              }}
-              onNewProject={() => setIsNewProjectDialogOpen(true)}
-              onSelectSession={(path) => {
-                void onSelectSession(path)
-              }}
-              onRenameSession={(path, name) => {
-                void onRenameSession(path, name)
-              }}
-              onDeleteSession={(path) => {
-                void onDeleteSession(path)
-              }}
-              onStartProjectChat={(project) => {
-                void onStartProjectChat(project)
-              }}
-              onDeleteProject={(project) => {
-                void onDeleteProjectEntry(project)
-              }}
-              onFetchProjectSessions={onFetchProjectSessions}
-              getSessionRuntimeState={getSessionRuntimeState}
-            />
+            {activeView === 'analysis' ? (
+              <Box
+                data-phi-analysis-sidebar="true"
+                sx={{
+                  height: '100%',
+                  minHeight: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden'
+                }}
+              >
+                <Box
+                  sx={{
+                    flexShrink: 0,
+                    minHeight: isMac ? macTitlebarHeight : 0,
+                    WebkitAppRegion: 'drag'
+                  }}
+                />
+                <Box
+                  data-phi-analysis-session-selector="true"
+                  sx={{
+                    px: 1.5,
+                    pb: 1,
+                    flexShrink: 0
+                  }}
+                >
+                  <Button
+                    fullWidth
+                    variant="outlined"
+                    aria-haspopup="menu"
+                    aria-expanded={analysisSessionSelectorAnchor ? 'true' : undefined}
+                    data-phi-analysis-session-select-button="true"
+                    onClick={(event) => setAnalysisSessionSelectorAnchor(event.currentTarget)}
+                    sx={{
+                      minHeight: 48,
+                      justifyContent: 'space-between',
+                      gap: 1,
+                      borderRadius: 2,
+                      px: 1.25,
+                      py: 0.75,
+                      fontWeight: 700,
+                      textTransform: 'none',
+                      color: 'text.primary',
+                      borderColor: activeWorkspaceIsProject ? 'primary.light' : 'divider',
+                      bgcolor: (theme) =>
+                        theme.palette.mode === 'dark'
+                          ? 'rgba(255, 255, 255, 0.035)'
+                          : 'rgba(255, 255, 255, 0.92)',
+                      boxShadow: (theme) =>
+                        theme.palette.mode === 'dark'
+                          ? '0 10px 28px rgba(0, 0, 0, 0.22)'
+                          : '0 12px 34px rgba(24, 74, 86, 0.10)',
+                      '&:hover': {
+                        borderColor: 'primary.main',
+                        bgcolor: (theme) =>
+                          theme.palette.mode === 'dark'
+                            ? 'rgba(255, 255, 255, 0.055)'
+                            : 'rgba(248, 253, 255, 0.98)',
+                        boxShadow: (theme) =>
+                          theme.palette.mode === 'dark'
+                            ? '0 12px 30px rgba(0, 0, 0, 0.28)'
+                            : '0 14px 36px rgba(24, 74, 86, 0.14)'
+                      }
+                    }}
+                  >
+                    <Box
+                      component="span"
+                      sx={{
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        textAlign: 'left',
+                        fontSize: '0.92rem'
+                      }}
+                    >
+                      {activeWorkspaceTitle}
+                    </Box>
+                    <Box
+                      component="span"
+                      data-phi-analysis-session-scope-label={
+                        activeWorkspaceIsProject ? 'project' : 'ordinary'
+                      }
+                      title={activeWorkspaceScopeLabel}
+                      sx={{
+                        flexShrink: 0,
+                        maxWidth: 132,
+                        minWidth: 52,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        borderRadius: 999,
+                        px: 1,
+                        py: 0.35,
+                        textAlign: 'center',
+                        color: activeWorkspaceIsProject ? 'primary.dark' : 'text.secondary',
+                        bgcolor: activeWorkspaceIsProject
+                          ? 'rgba(46, 159, 179, 0.12)'
+                          : 'action.selected',
+                        border: 1,
+                        borderColor: activeWorkspaceIsProject ? 'primary.light' : 'divider',
+                        fontSize: '0.76rem',
+                        fontWeight: 800,
+                        lineHeight: 1.35
+                      }}
+                    >
+                      {activeWorkspaceScopeLabel}
+                    </Box>
+                  </Button>
+                  <Popover
+                    open={Boolean(analysisSessionSelectorAnchor)}
+                    anchorEl={analysisSessionSelectorAnchor}
+                    onClose={() => setAnalysisSessionSelectorAnchor(null)}
+                    anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+                    transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+                    slotProps={{
+                      paper: {
+                        sx: {
+                          mt: 0.75,
+                          width: Math.max(280, sidebarWidth - 24),
+                          height: 'min(360px, calc(100vh - 132px))',
+                          overflow: 'hidden',
+                          borderRadius: 2,
+                          border: 1,
+                          borderColor: 'divider',
+                          boxShadow: '0 18px 45px rgba(12, 26, 32, 0.18)'
+                        }
+                      }
+                    }}
+                  >
+                    <Box
+                      data-phi-analysis-session-select-menu="true"
+                      sx={{ width: '100%', height: '100%', display: 'flex', minHeight: 0 }}
+                    >
+                      <SessionSidebar
+                        hideWindowDragSpacer
+                        mode={workspaceSidebarMode}
+                        sessions={sessions}
+                        activeSessionPath={activeSessionPath}
+                        activeCwd={activeCwd}
+                        projects={projects}
+                        projectSessionRefreshKey={projectSessionRefreshKey}
+                        onNewChat={() => {
+                          setAnalysisSessionSelectorAnchor(null)
+                          void onNewChat()
+                        }}
+                        onNewProject={() => setIsNewProjectDialogOpen(true)}
+                        onSelectSession={(path) => {
+                          setAnalysisSessionSelectorAnchor(null)
+                          void onSelectSession(path)
+                        }}
+                        onRenameSession={(path, name) => {
+                          void onRenameSession(path, name)
+                        }}
+                        onDeleteSession={(path) => {
+                          void onDeleteSession(path)
+                        }}
+                        onStartProjectChat={(project) => {
+                          setAnalysisSessionSelectorAnchor(null)
+                          void onStartProjectChat(project)
+                        }}
+                        onDeleteProject={(project) => {
+                          void onDeleteProjectEntry(project)
+                        }}
+                        onFetchProjectSessions={onFetchProjectSessions}
+                        getSessionRuntimeState={getSessionRuntimeState}
+                      />
+                    </Box>
+                  </Popover>
+                </Box>
+                <Box sx={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
+                  <Box
+                    data-phi-analysis-chat-panel="true"
+                    sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}
+                  >
+                    {activeChatView}
+                  </Box>
+                </Box>
+              </Box>
+            ) : (
+              <SessionSidebar
+                mode={workspaceSidebarMode}
+                sessions={sessions}
+                activeSessionPath={activeSessionPath}
+                activeCwd={activeCwd}
+                projects={projects}
+                projectSessionRefreshKey={projectSessionRefreshKey}
+                onNewChat={() => {
+                  void onNewChat()
+                }}
+                onNewProject={() => setIsNewProjectDialogOpen(true)}
+                onSelectSession={(path) => {
+                  void onSelectSession(path)
+                }}
+                onRenameSession={(path, name) => {
+                  void onRenameSession(path, name)
+                }}
+                onDeleteSession={(path) => {
+                  void onDeleteSession(path)
+                }}
+                onStartProjectChat={(project) => {
+                  void onStartProjectChat(project)
+                }}
+                onDeleteProject={(project) => {
+                  void onDeleteProjectEntry(project)
+                }}
+                onFetchProjectSessions={onFetchProjectSessions}
+                getSessionRuntimeState={getSessionRuntimeState}
+              />
+            )}
           </Box>
         )}
 
@@ -2067,207 +2248,250 @@ function App(): React.JSX.Element {
               flexDirection: 'column'
             }}
           >
-            <Box
-              sx={{
-                height: macTitlebarHeight,
-                flexShrink: 0,
-                display: 'flex',
-                alignItems: 'center',
-                backgroundColor: (muiTheme) =>
-                  muiTheme.palette.mode === 'dark'
-                    ? muiTheme.palette.background.default
-                    : '#FFFFFF',
-                WebkitAppRegion: 'drag',
-                zIndex: 7
-              }}
-            >
+            {showWorkspaceTitlebar ? (
               <Box
                 sx={{
-                  flex: 1,
-                  minWidth: 0,
-                  height: '100%',
+                  height: macTitlebarHeight,
+                  flexShrink: 0,
                   display: 'flex',
                   alignItems: 'center',
-                  borderBottom: 1,
-                  borderColor: 'divider'
+                  backgroundColor: (muiTheme) =>
+                    muiTheme.palette.mode === 'dark'
+                      ? muiTheme.palette.background.default
+                      : '#FFFFFF',
+                  WebkitAppRegion: 'drag',
+                  zIndex: 7
                 }}
               >
                 <Box
                   sx={{
-                    width: '100%',
-                    maxWidth: 860,
-                    mx: 'auto',
-                    px: 3,
-                    minWidth: 0
+                    flex: 1,
+                    minWidth: 0,
+                    height: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    borderBottom: 1,
+                    borderColor: 'divider'
                   }}
                 >
-                  <Typography
-                    variant="subtitle2"
-                    title={activeWorkspaceTitle}
+                  <Box
                     sx={{
-                      maxWidth: { xs: 220, sm: 360, md: 520 },
-                      minWidth: 0,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      fontWeight: 600
+                      width: '100%',
+                      maxWidth: 860,
+                      mx: 'auto',
+                      px: 3,
+                      minWidth: 0
                     }}
                   >
-                    {activeWorkspaceTitle}
-                  </Typography>
+                    <Typography
+                      variant="subtitle2"
+                      title={activeWorkspaceTitle}
+                      sx={{
+                        maxWidth: { xs: 220, sm: 360, md: 520 },
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        fontWeight: 600
+                      }}
+                    >
+                      {activeWorkspaceTitle}
+                    </Typography>
+                  </Box>
                 </Box>
               </Box>
-              {filePreview ? (
-                <FilePreviewTitleTab state={filePreview} onClose={onCloseFilePreview} />
-              ) : null}
-            </Box>
+            ) : null}
             <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
-              <ChatView
-                messages={messages}
-                input={input}
-                messagesContainerRef={setMessagesContainerNode}
-                canSend={!isSessionChanging && !currentSessionIsBusy && !isBusy}
-                isGenerating={currentSessionIsBusy}
-                currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
-                models={availableModels}
-                selectedModel={selectedModel}
-                skills={skills}
-                promptAgents={promptAgents}
-                plugins={plugins}
-                onSelectModel={(model) => {
-                  void onSelectModel(model)
-                }}
-                thinkingLevel={thinkingLevel}
-                onSelectThinkingLevel={(level) => {
-                  void onSelectThinkingLevel(level)
-                }}
-                onInputChange={setActiveInput}
-                onOpenInputAddMenu={onOpenInputAddMenu}
-                onPickInputFiles={onPickInputFiles}
-                onChatSubmit={onChatSubmit}
-                onStopGeneration={onStopGeneration}
-                onGoSettings={onGoProviderSettings}
-                permissionMode={activePermissionMode}
-                onSelectPermissionMode={(mode) => {
-                  void onSelectPermissionMode(mode)
-                }}
-                disablePermissionModeSelect={isSessionChanging}
-                disableModelControls={isSessionChanging}
-                pendingApproval={pendingApproval}
-                onRespondApproval={onRespondToolApproval}
-                onOpenApprovalSession={onOpenApprovalSession}
-                onOpenLocalPath={onOpenLocalPath}
-                compactComposerControls={filePreview !== null}
-                cwd={activeCwd}
-              />
-              {filePreview ? (
-                <FilePreviewPanel
-                  state={filePreview}
-                  onOpenFile={onOpenFilePreview}
-                  onOpenDefaultPath={onOpenDefaultPreviewPath}
-                  onRevealPath={onRevealPreviewPath}
-                  onListDirectory={onListPreviewDirectory}
+              {isAnalysisWorkspaceView &&
+              activeWorkspaceFileTab &&
+              activeWorkspaceFileTab.kind !== 'notebook' ? (
+                <Box
+                  sx={{
+                    flex: 1,
+                    minWidth: 0,
+                    minHeight: 0,
+                    display: 'flex',
+                    flexDirection: 'column'
+                  }}
+                >
+                  <WorkspaceFileHeader
+                    tabs={workspaceFileTabs}
+                    activePath={activeWorkspaceFilePath}
+                    onSelect={onSelectWorkspaceFileTab}
+                    onClose={onCloseWorkspaceFileTab}
+                  />
+                  <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>
+                    {activeFilePreviewState ? (
+                      <FilePreviewPanel
+                        layout="workspace"
+                        state={activeFilePreviewState}
+                        onOpenFile={onOpenFilePreview}
+                        onOpenDefaultPath={onOpenDefaultPreviewPath}
+                        onRevealPath={onRevealPreviewPath}
+                        onListDirectory={onListPreviewDirectory}
+                      />
+                    ) : null}
+                  </Box>
+                </Box>
+              ) : isAnalysisWorkspaceView ? (
+                <AnalysisView
+                  hideLeftRail
+                  notebookRegistry={analysisNotebookRegistry}
+                  notebookFile={activeAnalysisNotebook}
+                  workspaceFileTabs={workspaceFileTabs}
+                  activeWorkspaceFilePath={activeWorkspaceFilePath}
+                  onSelectWorkspaceFileTab={onSelectWorkspaceFileTab}
+                  onCloseWorkspaceFileTab={onCloseWorkspaceFileTab}
+                  inspectorCollapsed={analysisInspectorCollapsed}
+                  topRightControls={(chromeState) => (
+                    <TopRightControls
+                      showInspectorFullscreen={chromeState.inspectorVisible}
+                      inspectorFullscreen={chromeState.inspectorFullscreen}
+                      showInspectorToggle
+                      inspectorCollapsed={analysisInspectorCollapsed}
+                      onToggleInspectorFullscreen={chromeState.onToggleInspectorFullscreen}
+                      onToggleInspector={() => {
+                        if (!analysisInspectorCollapsed && chromeState.inspectorFullscreen) {
+                          chromeState.onToggleInspectorFullscreen()
+                        }
+                        setAnalysisInspectorCollapsed((value) => !value)
+                      }}
+                      onMinimize={() => rendererApi.minimizeWindow()}
+                    />
+                  )}
+                  isLoadingNotebooks={isLoadingAnalysisNotebooks}
+                  isOpeningNotebook={isOpeningAnalysisNotebook}
+                  notebookError={analysisNotebookError}
+                  notebookContentError={analysisNotebookContentError}
+                  kernelDiagnostics={analysisKernelDiagnostics}
+                  isLoadingKernels={isLoadingAnalysisKernels}
+                  kernelError={analysisKernelError}
+                  jupyterServerStatus={analysisJupyterStatus}
+                  isStartingJupyterServer={isStartingAnalysisJupyter}
+                  jupyterServerError={analysisJupyterError}
+                  notebookSessionStatus={analysisNotebookSessionStatus}
+                  isStartingNotebookSession={isStartingAnalysisNotebookSession}
+                  notebookSessionError={analysisNotebookSessionError}
+                  executingNotebookCellId={executingAnalysisCellId}
+                  notebookCellExecutionError={analysisCellExecutionError}
+                  agentFocus={analysisAgentFocus}
+                  onRefreshNotebooks={() => {
+                    void refreshAnalysisNotebooks()
+                  }}
+                  onRefreshKernels={() => {
+                    void refreshAnalysisKernels()
+                  }}
+                  onRefreshJupyterServer={() => {
+                    void refreshAnalysisJupyterStatus()
+                  }}
+                  onStartJupyterServer={(cwd) => {
+                    void onStartAnalysisJupyter(cwd)
+                  }}
+                  onStopJupyterServer={(cwd) => {
+                    void onStopAnalysisJupyter(cwd)
+                  }}
+                  onStartNotebookSession={(file, document) => {
+                    return onStartAnalysisNotebookSession(file, document)
+                  }}
+                  onSyncNotebookDraft={(file, document) => {
+                    void onSyncAnalysisNotebookDraft(file, document)
+                  }}
+                  onStopNotebookSession={(file) => {
+                    return onStopAnalysisNotebookSession(file)
+                  }}
+                  onRunNotebookCell={(file, document, cellId) => {
+                    void onRunAnalysisNotebookCell(file, document, cellId)
+                  }}
+                  onGenerateNotebookCode={onGenerateAnalysisNotebookCode}
+                  onPickNotebookContextFiles={onPickInputFiles}
+                  onInitializeProjectAnalysis={(cwd) => {
+                    void onInitializeProjectAnalysis(cwd)
+                  }}
+                  onOpenNotebook={(path) => {
+                    void onOpenAnalysisNotebook(path)
+                  }}
+                  onCloseNotebook={() => {
+                    closeActiveNotebook()
+                    setActiveView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
+                  }}
+                  onSaveNotebook={(file, document) => {
+                    void onSaveAnalysisNotebook(file, document)
+                  }}
+                  onCreateNotebook={(cwd) => {
+                    void onCreateAnalysisNotebook(cwd)
+                  }}
+                  onDeleteNotebook={(file) => {
+                    void onDeleteAnalysisNotebook(file)
+                  }}
                 />
-              ) : null}
+              ) : (
+                <>
+                  {showProjectSessionPlaceholder ? (
+                    <Box
+                      sx={{
+                        flex: 1,
+                        minWidth: 0,
+                        minHeight: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        px: 3
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          width: 'min(420px, 100%)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: 2,
+                          textAlign: 'center'
+                        }}
+                      >
+                        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                          选择项目会话
+                        </Typography>
+                        <Button variant="outlined" onClick={startPlaceholderProjectSession}>
+                          {projects.length > 0 ? '新建项目对话' : '新建项目'}
+                        </Button>
+                      </Box>
+                    </Box>
+                  ) : (
+                    activeChatView
+                  )}
+                  {!showProjectSessionPlaceholder && filePreview ? (
+                    <FilePreviewPanel
+                      state={filePreview}
+                      onOpenFile={onOpenFilePreview}
+                      onOpenDefaultPath={onOpenDefaultPreviewPath}
+                      onRevealPath={onRevealPreviewPath}
+                      onListDirectory={onListPreviewDirectory}
+                    />
+                  ) : null}
+                </>
+              )}
             </Box>
           </Box>
-        ) : activeView === 'analysis' ? (
-          <AnalysisView
-            chatPanel={
-              <ChatView
-                messages={messages}
-                input={input}
-                messagesContainerRef={setMessagesContainerNode}
-                canSend={!isSessionChanging && !currentSessionIsBusy && !isBusy}
-                isGenerating={currentSessionIsBusy}
-                currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
-                models={availableModels}
-                selectedModel={selectedModel}
-                skills={skills}
-                promptAgents={promptAgents}
-                plugins={plugins}
-                onSelectModel={(model) => {
-                  void onSelectModel(model)
-                }}
-                thinkingLevel={thinkingLevel}
-                onSelectThinkingLevel={(level) => {
-                  void onSelectThinkingLevel(level)
-                }}
-                onInputChange={setActiveInput}
-                onOpenInputAddMenu={onOpenInputAddMenu}
-                onPickInputFiles={onPickInputFiles}
-                onChatSubmit={onChatSubmit}
-                onStopGeneration={onStopGeneration}
-                onGoSettings={onGoProviderSettings}
-                permissionMode={activePermissionMode}
-                onSelectPermissionMode={(mode) => {
-                  void onSelectPermissionMode(mode)
-                }}
-                disablePermissionModeSelect={isSessionChanging}
-                disableModelControls={isSessionChanging}
-                pendingApproval={pendingApproval}
-                onRespondApproval={onRespondToolApproval}
-                onOpenApprovalSession={onOpenApprovalSession}
-                onOpenLocalPath={onOpenLocalPath}
-                compactComposerControls
-                cwd={activeCwd}
-              />
-            }
-            notebookRegistry={analysisNotebookRegistry}
-            notebookFile={activeAnalysisNotebook}
-            isLoadingNotebooks={isLoadingAnalysisNotebooks}
-            isOpeningNotebook={isOpeningAnalysisNotebook}
-            notebookError={analysisNotebookError}
-            notebookContentError={analysisNotebookContentError}
-            kernelDiagnostics={analysisKernelDiagnostics}
-            isLoadingKernels={isLoadingAnalysisKernels}
-            kernelError={analysisKernelError}
-            jupyterServerStatus={analysisJupyterStatus}
-            isStartingJupyterServer={isStartingAnalysisJupyter}
-            jupyterServerError={analysisJupyterError}
-            notebookSessionStatus={analysisNotebookSessionStatus}
-            isStartingNotebookSession={isStartingAnalysisNotebookSession}
-            notebookSessionError={analysisNotebookSessionError}
-            executingNotebookCellId={executingAnalysisCellId}
-            notebookCellExecutionError={analysisCellExecutionError}
-            onRefreshNotebooks={() => {
-              void refreshAnalysisNotebooks()
+        ) : activeView === 'runtime' ? (
+          <RuntimeView
+            projectCwd={activeProject?.workingDirectory ?? ''}
+            projectName={activeProject?.name}
+            runtimeStatus={analysisJupyterRuntimeStatus}
+            isLoading={isLoadingAnalysisJupyterRuntime || isStartingAnalysisJupyter}
+            closingNotebookPath={closingRuntimeNotebookPath}
+            error={analysisJupyterRuntimeError ?? analysisJupyterError}
+            onRefresh={() => {
+              void refreshAnalysisJupyterRuntimeStatus()
             }}
-            onRefreshKernels={() => {
-              void refreshAnalysisKernels()
+            onStartJupyter={(cwd) => {
+              void onStartAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
             }}
-            onRefreshJupyterServer={() => {
-              void refreshAnalysisJupyterStatus()
+            onStopJupyter={(cwd) => {
+              void onStopAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
             }}
-            onStartJupyterServer={(cwd) => {
-              void onStartAnalysisJupyter(cwd)
-            }}
-            onStopJupyterServer={(cwd) => {
-              void onStopAnalysisJupyter(cwd)
-            }}
-            onStartNotebookSession={(file, document) => {
-              void onStartAnalysisNotebookSession(file, document)
-            }}
-            onStopNotebookSession={(file) => {
-              void onStopAnalysisNotebookSession(file)
-            }}
-            onRunNotebookCell={(file, document, cellId) => {
-              void onRunAnalysisNotebookCell(file, document, cellId)
-            }}
-            onInitializeProjectAnalysis={(cwd) => {
-              void onInitializeProjectAnalysis(cwd)
-            }}
-            onOpenNotebook={(path) => {
-              void onOpenAnalysisNotebook(path)
-            }}
-            onSaveNotebook={(file, document) => {
-              void onSaveAnalysisNotebook(file, document)
-            }}
-            onCreateNotebook={(cwd) => {
-              void onCreateAnalysisNotebook(cwd)
-            }}
-            onDeleteNotebook={(file) => {
-              void onDeleteAnalysisNotebook(file)
+            onOpenNotebook={onOpenNotebookWorkspaceFile}
+            onStopNotebookKernel={(notebookPath) => {
+              void onStopRuntimeNotebookSession(notebookPath)
             }}
           />
         ) : activeView === 'plugins' ? (
@@ -2307,6 +2531,12 @@ function App(): React.JSX.Element {
             onSelectServer={setActiveMcpServerId}
             onStartSidebarResize={onStartSidebarResize}
           />
+        ) : activeView === 'wrappers' ? (
+          <WrapperView
+            sidebarWidth={sidebarWidth}
+            onOpenLocalPath={onOpenLocalPath}
+            onStartSidebarResize={onStartSidebarResize}
+          />
         ) : (
           <Box component="main" sx={{ flex: 1, minWidth: 0, height: '100vh' }} />
         )}
@@ -2335,6 +2565,9 @@ function App(): React.JSX.Element {
           onUpdateProjectDefaults={(projectId, defaults) => {
             void onUpdateProjectDefaults(projectId, defaults)
           }}
+          updatingRemoteProjectId={updatingRemoteProjectId}
+          onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
+          onUpdateProjectRemoteDefaults={onUpdateProjectRemoteDefaults}
           onOpenApprovalSession={onOpenApprovalSession}
           onRespondApproval={onRespondToolApproval}
           onCopyDiagnostics={() => rendererApi.copyDiagnostics()}

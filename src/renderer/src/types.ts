@@ -1,4 +1,8 @@
-import type { NotebookDocument, NotebookOutput } from '../../shared/notebookDocument'
+import type {
+  NotebookCellType,
+  NotebookDocument,
+  NotebookOutput
+} from '../../shared/notebookDocument'
 
 export type MessageRole = 'user' | 'assistant' | 'error' | 'warning' | 'thinking'
 
@@ -33,6 +37,24 @@ export interface ToolCallItem {
     path: string
     bytes: number
   }
+  notebook?: NotebookToolSummary
+}
+
+export interface NotebookToolSummary {
+  kind: string
+  path?: string
+  relativePath?: string
+  cellId?: string
+  cellType?: string
+  executionState?: string
+  executionCount?: number | null
+  summary?: string
+}
+
+export interface NotebookCellJumpTarget {
+  path?: string
+  relativePath?: string
+  cellId: string
 }
 
 export interface RunLifecycleItem {
@@ -44,7 +66,26 @@ export interface RunLifecycleItem {
   durationMs?: number
 }
 
-export type ChatItem = ChatMessage | ToolCallItem | RunLifecycleItem
+/**
+ * A wrapper run plan created by a `wrapper.<id>` agent tool call (see
+ * docs/design/phi-wrapper-technical-design.md, "Chat And UI Integration").
+ * Deliberately thin: full plan detail (inputs, resources, command preview,
+ * structure diagram) is loaded from the wrapper store by `planId`, not
+ * carried in this chat item — large metadata stays out of messages.
+ */
+export interface WrapperPlanItem {
+  id: string
+  role: 'wrapper_plan'
+  toolName: string
+  /** Undefined until the tool call completes and the result is parsed. */
+  planId?: string
+  status: 'running' | 'done' | 'error'
+  createdAt?: string
+  completedAt?: string
+  durationMs?: number
+}
+
+export type ChatItem = ChatMessage | ToolCallItem | RunLifecycleItem | WrapperPlanItem
 
 export interface ProviderAuthStatus {
   providerId: string
@@ -121,6 +162,7 @@ export interface SessionSummary extends SessionRuntimeState {
 
 export interface SessionSwitchResult extends SessionRuntimeState {
   path: string
+  phiSessionId?: string
   cwd: string
   sessionGeneration: number
   permissionMode: PermissionMode
@@ -129,6 +171,7 @@ export interface SessionSwitchResult extends SessionRuntimeState {
 
 export interface CurrentSession extends SessionRuntimeState {
   path: string | null
+  phiSessionId?: string
   cwd: string
   sessionGeneration: number
   permissionMode: PermissionMode
@@ -137,10 +180,28 @@ export interface CurrentSession extends SessionRuntimeState {
 
 export interface PromptResult {
   path: string | null
+  phiSessionId?: string
+  sessionGeneration: number
+}
+
+export interface PromptTarget {
+  path: string | null
+  phiSessionId?: string
+  cwd: string
   sessionGeneration: number
 }
 
 export type PermissionMode = 'auto' | 'ask' | 'full'
+
+export interface ProjectRemoteConnection {
+  id: string
+  label: string
+  host: string
+  port?: number
+  username: string
+  privateKeyPath: string
+  hasPassphrase?: boolean
+}
 
 export interface Project {
   id: string
@@ -153,6 +214,9 @@ export interface Project {
   }
   defaultModel?: { providerId: string; modelId: string }
   defaultThinkingLevel?: ThinkingLevel
+  remoteConnections?: ProjectRemoteConnection[]
+  defaultRemoteConnectionId?: string
+  remoteWorkspaceRoot?: string
   createdAt: string
 }
 
@@ -318,6 +382,11 @@ export interface DirectoryListing {
   truncated: boolean
 }
 
+export type LocalPathStat = {
+  path: string
+  kind: 'file' | 'directory' | 'missing'
+}
+
 export interface AnalysisNotebookSummary {
   path: string
   relativePath: string
@@ -349,6 +418,59 @@ export interface AnalysisNotebookFile {
   modifiedAt: string
   savedRevision: string
   document: NotebookDocument
+}
+
+export type AnalysisNotebookDraftChangeKind =
+  'synced' | 'inserted' | 'updated' | 'deleted' | 'executed' | 'saved'
+
+export interface AnalysisNotebookDraftChange {
+  source: 'agent' | 'renderer'
+  projectCwd: string
+  path: string
+  relativePath: string
+  document: NotebookDocument
+  savedRevision: string
+  changeKind?: AnalysisNotebookDraftChangeKind
+  changedCellId?: string
+  focusCellId?: string
+}
+
+export interface AnalysisNotebookCodeGenerationInput {
+  prompt: string
+  language: string
+  afterCellId?: string | null
+  references?: AnalysisNotebookContextReference[]
+}
+
+export type AnalysisNotebookContextReferenceKind =
+  'dataframe' | 'data_source' | 'variable' | 'cell_output'
+
+export interface AnalysisNotebookContextReference {
+  id: string
+  kind: AnalysisNotebookContextReferenceKind
+  name: string
+  detail?: string
+  cellId?: string
+  preview?: {
+    source?: string
+    code?: string
+    output?: string
+    value?: string
+    shape?: string
+    columns?: Array<{ name: string; type?: string }>
+  }
+}
+
+export interface AnalysisNotebookGeneratedCell {
+  cellType: Extract<NotebookCellType, 'code' | 'markdown'>
+  source: string
+  language?: string
+}
+
+export interface AnalysisNotebookCodeGenerationResult {
+  source: string
+  language: string
+  cells?: AnalysisNotebookGeneratedCell[]
 }
 
 export interface SaveAnalysisNotebookInput {
@@ -390,6 +512,7 @@ export interface JupyterServerStatus {
   startedAt?: string
   exitedAt?: string
   pid?: number
+  port?: number
   hasEndpoint: boolean
   message?: string
 }
@@ -407,6 +530,17 @@ export interface AnalysisNotebookSessionStatus {
   message?: string
   startedAt?: string
   updatedAt?: string
+}
+
+export interface AnalysisNotebookRuntimeSummary {
+  activeSessionCount: number
+  busySessionCount: number
+  sessions: AnalysisNotebookSessionStatus[]
+}
+
+export interface AnalysisJupyterRuntimeStatus {
+  server: JupyterServerStatus
+  notebooks: AnalysisNotebookRuntimeSummary
 }
 
 export interface AnalysisCellExecutionResult {
@@ -429,9 +563,10 @@ export type RendererApi = {
   pickInputFiles: () => Promise<string[]>
   previewFile: (path: string) => Promise<FilePreview>
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
+  statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
   listDirectory: (path: string) => Promise<DirectoryListing>
   copyDiagnostics: () => Promise<string>
-  sendPrompt: (text: string) => Promise<PromptResult | null>
+  sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => () => void
   getAuthStatus: () => Promise<ProviderAuthStatus[]>
   loginApiKey: (providerId: string, key: string) => Promise<ProviderAuthStatus[]>
@@ -474,6 +609,21 @@ export type RendererApi = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => Promise<Project>
+  pickPrivateKeyFile: () => Promise<string | null>
+  isRemoteCredentialStorageAvailable: () => Promise<boolean>
+  updateProjectRemoteConnection: (
+    id: string,
+    connectionId: string,
+    patch: ProjectRemoteConnection | null,
+    passphrase?: string | null
+  ) => Promise<Project>
+  updateProjectRemoteDefaults: (
+    id: string,
+    defaults: {
+      defaultRemoteConnectionId?: string | null
+      remoteWorkspaceRoot?: string | null
+    }
+  ) => Promise<Project>
   listProjectSessions: (workingDirectory: string) => Promise<SessionSummary[]>
   createProjectSession: (
     workingDirectory: string,
@@ -486,6 +636,12 @@ export type RendererApi = {
     cwd: string,
     input: SaveAnalysisNotebookInput
   ) => Promise<AnalysisNotebookFile>
+  syncAnalysisNotebookDraft: (
+    cwd: string,
+    path: string,
+    document: NotebookDocument,
+    savedRevision?: string
+  ) => Promise<AnalysisNotebookDraftChange>
   createAnalysisNotebook: (cwd: string, relativePath?: string) => Promise<AnalysisNotebookFile>
   closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
   deleteAnalysisNotebook: (
@@ -494,6 +650,7 @@ export type RendererApi = {
   ) => Promise<{ path: string; relativePath: string }>
   listAnalysisKernels: (cwd?: string) => Promise<AnalysisKernelDiagnostics>
   getAnalysisJupyterStatus: (cwd: string) => Promise<JupyterServerStatus>
+  getAnalysisJupyterRuntimeStatus: (cwd: string) => Promise<AnalysisJupyterRuntimeStatus>
   startAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
   stopAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
   getAnalysisNotebookSessionStatus: (
@@ -516,6 +673,13 @@ export type RendererApi = {
     document: NotebookDocument,
     cellId: string
   ) => Promise<AnalysisCellExecutionResult>
+  generateAnalysisNotebookCode: (
+    cwd: string,
+    path: string,
+    document: NotebookDocument,
+    input: AnalysisNotebookCodeGenerationInput
+  ) => Promise<AnalysisNotebookCodeGenerationResult>
+  onAnalysisNotebookDraftChanged: (cb: (change: AnalysisNotebookDraftChange) => void) => () => void
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => () => void
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => () => void
@@ -539,6 +703,7 @@ export interface AgentMessage {
 export interface AgentEventSummary {
   source?: string
   type: string
+  phiSessionId?: string
   eventId?: string
   createdAt?: string
   runId?: string

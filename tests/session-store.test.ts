@@ -14,7 +14,7 @@ import {
   readSessionEvents,
   recoverInterruptedPhiSessions,
   updateSessionManifest
-} from '../src/main/agent/session-store'
+} from '../src/main/agent/session/session-store'
 
 function withPhiDir<T>(callback: (phiDir: string) => T): T {
   const previous = process.env.PI_CODING_AGENT_DIR

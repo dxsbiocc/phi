@@ -18,7 +18,7 @@ import {
   deleteProjectNotebook,
   openProjectNotebook,
   saveProjectNotebook
-} from '../src/main/agent/analysis-notebook-files'
+} from '../src/main/agent/notebook/analysis-notebook-files'
 import { updateNotebookCell } from '../src/shared/notebookDocument'
 
 function withProjectDir<T>(callback: (root: string) => T): T {

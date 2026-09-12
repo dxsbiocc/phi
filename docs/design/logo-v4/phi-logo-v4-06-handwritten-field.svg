@@ -1,0 +1,9 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi lowercase handwritten field mark</title>
+  <desc id="desc">A warmer lowercase phi mark that preserves the original hand-drawn app icon memory.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M57 18C47 34 45 61 50 84" stroke-width="9"/>
+    <path d="M48 31C63 28 76 39 75 55C74 72 56 82 38 76C24 71 20 58 26 46C31 36 41 31 48 31Z" stroke-width="9"/>
+    <path d="M29 65C40 72 58 68 68 54" stroke-width="5"/>
+  </g>
+</svg>

@@ -14,6 +14,7 @@ export function ToolActionIcon({
 }): ReactNode {
   const meta = TOOL_ACTION_META[action]
   const Icon = meta.Icon
+  const color = 'color' in meta ? meta.color : 'text.secondary'
 
   return (
     <Tooltip title={meta.label} enterDelay={500}>
@@ -28,7 +29,7 @@ export function ToolActionIcon({
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: meta.color
+          color
         }}
       >
         <Icon sx={{ fontSize: size }} />

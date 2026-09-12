@@ -1,0 +1,32 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi app icon v3</title>
+  <desc id="desc">A phase gate Phi app icon encoding a local workbench boundary, four concurrent sessions, and approval-gated execution.</desc>
+  <defs>
+    <linearGradient id="bg" x1="146" y1="78" x2="878" y2="944" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F7FBFB"/>
+      <stop offset="1" stop-color="#D8E8EA"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="227" y1="175" x2="824" y2="846" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2E9FB3"/>
+      <stop offset="0.48" stop-color="#0E3A45"/>
+      <stop offset="1" stop-color="#3ABAA4"/>
+    </linearGradient>
+    <filter id="shadow" x="-12%" y="-10%" width="124%" height="128%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="32" stdDeviation="28" flood-color="#0E3A45" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+  <rect x="72" y="72" width="880" height="880" rx="212" fill="url(#bg)"/>
+  <path d="M148 803C250 914 775 914 876 803" fill="none" stroke="#0E3A45" stroke-opacity="0.18" stroke-width="30" stroke-linecap="round"/>
+  <g filter="url(#shadow)" fill="none" stroke="url(#mark)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M584 184C727 215 840 348 840 512C840 696 696 840 512 840C328 840 184 696 184 512C184 338 317 205 481 184" stroke-width="72"/>
+    <path d="M512 215V809" stroke-width="72"/>
+    <path d="M317 655C440 768 655 707 737 532" stroke-width="52"/>
+  </g>
+  <g fill="#F2994A">
+    <circle cx="512" cy="184" r="43"/>
+    <circle cx="840" cy="512" r="43"/>
+    <circle cx="512" cy="840" r="43"/>
+    <circle cx="184" cy="512" r="43"/>
+  </g>
+  <circle cx="512" cy="512" r="37" fill="#E8604C"/>
+</svg>

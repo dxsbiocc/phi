@@ -1,0 +1,17 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi Project Field logo mark</title>
+  <desc id="desc">A local project field with a phi operator inside a bounded workbench.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M25 24H43" stroke-width="6"/>
+    <path d="M57 24H75" stroke-width="6"/>
+    <path d="M25 76H43" stroke-width="6"/>
+    <path d="M57 76H75" stroke-width="6"/>
+    <path d="M24 25V43" stroke-width="6"/>
+    <path d="M76 25V43" stroke-width="6"/>
+    <path d="M24 57V75" stroke-width="6"/>
+    <path d="M76 57V75" stroke-width="6"/>
+    <path d="M50 22V78" stroke-width="7"/>
+    <path d="M35 63C45 73 65 68 71 53C77 37 65 27 50 30" stroke-width="7"/>
+  </g>
+  <circle cx="50" cy="50" r="4.5" fill="currentColor"/>
+</svg>

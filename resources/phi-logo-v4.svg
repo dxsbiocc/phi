@@ -1,0 +1,10 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi lowercase logo v4</title>
+  <desc id="desc">Recommended lowercase phi mark for Phi, combining a descending stem with a local trace loop.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M53 15C47 32 45 60 50 86" stroke-width="8"/>
+    <path d="M50 30C67 30 78 42 75 57C72 73 55 81 38 75C25 70 20 58 26 46C31 36 41 30 50 30Z" stroke-width="8"/>
+    <path d="M31 66C42 74 61 69 70 55" stroke-width="5"/>
+  </g>
+  <circle cx="70" cy="55" r="4" fill="currentColor"/>
+</svg>

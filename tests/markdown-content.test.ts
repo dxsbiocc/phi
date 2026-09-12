@@ -6,9 +6,9 @@ import { createTheme, ThemeProvider, type Theme } from '@mui/material'
 import MarkdownContent from '../src/renderer/src/components/MarkdownContent'
 import { createAppTheme } from '../src/renderer/src/theme'
 
-function renderMarkdown(text: string, theme: Theme = createTheme()): string {
+function renderMarkdown(text: string, theme: Theme = createTheme(), enableMath?: boolean): string {
   return renderToStaticMarkup(
-    createElement(ThemeProvider, { theme }, createElement(MarkdownContent, { text }))
+    createElement(ThemeProvider, { theme }, createElement(MarkdownContent, { text, enableMath }))
   )
 }
 
@@ -68,6 +68,35 @@ test('markdown color swatches work inside emphasis and tables', () => {
   assert.match(markup, /style="background-color:#D55E00"/)
 })
 
+test('math is left as literal text by default (chat, wrapper views, etc.)', () => {
+  const markup = renderMarkdown('$$x^2 + y^2 = z^2$$')
+
+  assert.doesNotMatch(markup, /class="katex"/)
+  assert.match(markup, /\$\$x\^2 \+ y\^2 = z\^2\$\$/)
+})
+
+test('enableMath renders $$...$$ block and inline math as KaTeX', () => {
+  const block = renderMarkdown('$$x^2 + y^2 = z^2$$', createTheme(), true)
+  assert.match(block, /class="katex"/)
+  assert.match(block, /application\/x-tex">x\^2 \+ y\^2 = z\^2</)
+
+  const inline = renderMarkdown('Lift ($$L$$) depends on $$C_L$$.', createTheme(), true)
+  assert.match(inline, /class="katex"/)
+  assert.match(inline, /application\/x-tex">L</)
+  assert.match(inline, /application\/x-tex">C_L</)
+})
+
+test('enableMath still leaves plain currency text alone (single $ is not math)', () => {
+  const markup = renderMarkdown(
+    'The AWS bill is $5 and the GPU costs $10 per hour.',
+    createTheme(),
+    true
+  )
+
+  assert.doesNotMatch(markup, /class="katex"/)
+  assert.match(markup, /\$5 and the GPU costs \$10 per hour/)
+})
+
 test('markdown latex colorbox output becomes a swatch palette instead of raw control text', () => {
   const markup = renderMarkdown(
     'Google $$\\colorbox{#4285F4}{\\textcolor{white}{\\texttt{#4285F4}}}\\quad\\colorbox{#EA4335}{\\textcolor{white}{\\texttt{#EA4335}}}$$'
@@ -100,6 +129,8 @@ test('markdown paragraphs render local paths as file preview links', () => {
   assert.match(markup, /data-phi-path="\/Users\/example\/project\/README.md"/)
   assert.match(markup, /打开文件 \/Users\/example\/project\/README.md/)
   assert.match(markup, /data-phi-hover-preview-path="\/Users\/example\/project\/README.md"/)
+  assert.match(markup, /font-size:1em/)
+  assert.doesNotMatch(markup, /translateY\(1px\)/)
   assert.match(markup, /README.md<\/span><\/button>/)
   assert.doesNotMatch(markup, /\.\/src\/App.tsx<\/span>/)
 })
@@ -110,7 +141,7 @@ test('markdown file links use tiered hover previews without embedding media inli
       ThemeProvider,
       { theme: createTheme() },
       createElement(MarkdownContent, {
-        text: 'Outputs: stacked_bar.png, report.pdf.',
+        text: 'Outputs: ./stacked_bar.png, ./report.pdf.',
         cwd: '/Users/example/project'
       })
     )
@@ -141,18 +172,18 @@ test('markdown current-directory links render directory icons', () => {
   assert.match(markup, /data-phi-path="\/Users\/example\/project"/)
   assert.match(markup, /data-phi-path="\/Users\/example\/project\/outputs"/)
   assert.match(markup, /打开目录 \/Users\/example\/project/)
-  assert.match(markup, /lucide-folder/)
+  assert.doesNotMatch(markup, /lucide/)
   assert.match(markup, />test<\/span><\/button>/)
   assert.doesNotMatch(markup, /data-phi-file-kind="text"/)
 })
 
-test('markdown paragraphs render bare file names with representative icons', () => {
+test('markdown paragraphs render explicit relative file paths with representative icons', () => {
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme: createTheme() },
       createElement(MarkdownContent, {
-        text: 'Files: stacked_bar.R, main.py, test.py, analysis.ipynb, .env.local, data.json, pyproject.toml, uv.lock, README.md, .python-version, version 1.2.3.',
+        text: 'Files: ./stacked_bar.R, ./main.py, ./test.py, ./analysis.ipynb, ./.env.local, ./data.json, ./pyproject.toml, ./uv.lock, ./README.md, ./.python-version, version 1.2.3.',
         cwd: '/Users/example/project'
       })
     )
@@ -172,13 +203,31 @@ test('markdown paragraphs render bare file names with representative icons', () 
   assert.doesNotMatch(markup, /data-phi-path="\/Users\/example\/project\/1\.2\.3"/)
 })
 
-test('markdown inline code file names render as file preview links', () => {
+test('markdown leaves bare file-like words and dotted data fields as text', () => {
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme: createTheme() },
       createElement(MarkdownContent, {
-        text: '`main.py`, `README.md`, `src/renderer/App.tsx`, `.gitignore`, `List/ListItem`, and `--watch`',
+        text: 'Fields: adj.P.Val, P.Value, data.json, README.md, .env.local, version 1.2.3.',
+        cwd: '/Users/example/project'
+      })
+    )
+  )
+
+  assert.doesNotMatch(markup, /data-phi-slot="local-file-link"/)
+  assert.match(markup, /adj\.P\.Val/)
+  assert.match(markup, /data\.json/)
+  assert.match(markup, /README\.md/)
+})
+
+test('markdown inline code requires explicit paths for file preview links', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(MarkdownContent, {
+        text: '`./main.py`, `./README.md`, `./src/renderer/App.tsx`, `.gitignore`, `List/ListItem`, `adj.P.Val`, and `--watch`',
         cwd: '/Users/example/project'
       })
     )
@@ -187,13 +236,14 @@ test('markdown inline code file names render as file preview links', () => {
   assert.match(markup, /data-phi-path="\/Users\/example\/project\/main\.py"/)
   assert.match(markup, /data-phi-path="\/Users\/example\/project\/README\.md"/)
   assert.match(markup, /data-phi-path="\/Users\/example\/project\/src\/renderer\/App\.tsx"/)
-  assert.match(markup, /data-phi-path="\/Users\/example\/project\/\.gitignore"/)
   assert.match(markup, /data-phi-file-kind="python"/)
   assert.match(markup, /data-phi-file-kind="react"/)
-  assert.match(markup, /data-phi-file-kind="config"/)
   assert.match(markup, />main\.py<\/span><\/button>/)
+  assert.doesNotMatch(markup, /data-phi-path="\/Users\/example\/project\/\.gitignore"/)
   assert.doesNotMatch(markup, /data-phi-path="\/Users\/example\/project\/List\/ListItem"/)
   assert.match(markup, />List\/ListItem<\/code>/)
+  assert.doesNotMatch(markup, /data-phi-path="\/Users\/example\/project\/adj\.P\.Val"/)
+  assert.match(markup, />adj\.P\.Val<\/code>/)
   assert.doesNotMatch(markup, /data-phi-path="\/Users\/example\/project\/--watch"/)
 })
 

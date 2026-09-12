@@ -1,0 +1,137 @@
+# Phase 1 bundled demo wrapper. Local profile only — see
+# docs/design/phi-wrapper-product-prd.md (Phase 1 Scope) and
+# docs/design/phi-wrapper-v1-implementation-plan.md (Milestone P1.9).
+phiWrapperVersion: 1
+id: phi/ngs/fastq-qc
+shortId: fastq-qc
+name: FASTQ QC
+version: 1.0.0
+summary: Run FASTQ quality control and produce a MultiQC report.
+
+runtime:
+  minVersion: 1.0.0
+  maxVersion: 1.x
+
+# Informational only — never used to decide trust tier. Trust tier is
+# derived from install location (bundled vs. custom), not from this block.
+# See docs/design/phi-wrapper-technical-design.md, "Trust And Registry".
+verification:
+  status: unverified
+  registry: none
+
+registryStatus: active
+resourceClass: light
+
+engine:
+  type: nextflow
+  entrypoint: main.nf
+  profiles:
+    - id: local
+      executor: local
+    - id: docker
+      executor: local
+      containerRuntime: docker
+
+# Declares the workflow DAG for the plan card / sidebar structure diagram.
+# ids match the Nextflow process names in main.nf so live weblog events
+# (Milestone P1.7) can be attributed to the right step.
+steps:
+  - id: fastqc
+    label: FastQC
+    dependsOn: []
+  - id: multiqc
+    label: MultiQC
+    dependsOn: [fastqc]
+
+environment:
+  default: docker
+  options:
+    - kind: container
+      runtime: docker
+      image: ghcr.io/phi-wrappers/fastq-qc:1.0.0
+
+inputs:
+  - id: reads
+    type: fastq_reads
+    layout: paired_end
+    required: true
+    samplesheet:
+      columns:
+        - sample
+        - fastq_1
+        - fastq_2
+
+parameters:
+  schema:
+    type: object
+    required:
+      - reads
+    properties:
+      reads:
+        type: string
+      threads:
+        type: integer
+        default: 4
+        minimum: 1
+        maximum: 64
+
+outputs:
+  - id: report
+    label: MultiQC report
+    type: html
+    path: results/multiqc_report.html
+    primary: true
+  - id: metrics
+    label: QC metrics
+    type: table
+    path: results/multiqc_data/multiqc_general_stats.txt
+
+summaries:
+  - id: qc_metrics
+    fromOutput: metrics
+    kind: table
+    maxRows: 50
+
+resources:
+  defaults:
+    cpus: 4
+    memory: 8 GB
+    time: 2h
+
+permissions:
+  filesystem:
+    read:
+      - input_paths
+    write:
+      - run_workdir
+      - declared_outdir
+  network:
+    default: disabled
+  remote:
+    allowed: false
+
+tests:
+  smoke:
+    params: tests/smoke/params.yaml
+    expected:
+      - path: results/multiqc_report.html
+        exists: true
+
+license:
+  wrapper: MIT
+  tools:
+    - name: FastQC
+      license: GPL-3.0
+    - name: MultiQC
+      license: GPL-3.0
+
+citations:
+  - id: multiqc
+    doi: 10.1093/bioinformatics/btw354
+
+dataPolicy:
+  acceptedSensitivity:
+    - public
+    - internal
+  externalTransfer:
+    default: false

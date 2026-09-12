@@ -1,12 +1,12 @@
 import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, extname, join } from 'node:path'
-import { WORKSPACE_DIR } from './sessions'
+import { WORKSPACE_DIR } from './session/sessions'
 import {
   createRuntimeResourceLoader,
   createRuntimeSettingsManager,
   type RuntimeResourceLoader
-} from './runtime-adapter'
+} from './runtime/runtime-adapter'
 import { getGlobalMcpConfigPaths, getPhiAgentDir, getProjectMcpConfigPaths } from './runtime-paths'
 
 const AGENT_DIR = getPhiAgentDir()

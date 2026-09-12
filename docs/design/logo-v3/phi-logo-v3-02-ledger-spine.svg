@@ -1,0 +1,13 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi Ledger Spine logo mark</title>
+  <desc id="desc">A phi mark built from append-only timeline strata and a stable session spine.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M50 18V82" stroke-width="7.5"/>
+    <path d="M28 31H64C75 31 82 39 82 50C82 61 74 69 62 69H28" stroke-width="6.5"/>
+    <path d="M28 43H68" stroke-width="4"/>
+    <path d="M28 56H68" stroke-width="4"/>
+    <path d="M28 69H62" stroke-width="4"/>
+  </g>
+  <circle cx="28" cy="31" r="4" fill="currentColor"/>
+  <circle cx="28" cy="69" r="4" fill="currentColor"/>
+</svg>

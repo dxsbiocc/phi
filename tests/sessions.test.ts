@@ -4,14 +4,19 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { acknowledgeSession, mergePhiSessionState } from '../src/main/agent/sessions'
-import type { SessionInfo } from '../src/main/agent/runtime-adapter'
 import {
+  acknowledgeSession,
+  mergePhiSessionState,
+  phiOnlySessionPath
+} from '../src/main/agent/session/sessions'
+import type { SessionInfo } from '../src/main/agent/runtime/runtime-adapter'
+import {
+  appendSessionEvent,
   createPhiSession,
   listPhiSessions,
   updateSessionManifest,
   type PhiSessionManifest
-} from '../src/main/agent/session-store'
+} from '../src/main/agent/session/session-store'
 
 function withPhiDir<T>(callback: () => T): T {
   const previous = process.env.PI_CODING_AGENT_DIR
@@ -47,7 +52,7 @@ function sessionInfo(
 
 function manifest(
   sessionId: string,
-  runtimeSessionPath: string,
+  runtimeSessionPath: string | undefined,
   status: PhiSessionManifest['status'],
   unreadKind: PhiSessionManifest['unreadKind'],
   lastActivityAt: string,
@@ -61,7 +66,7 @@ function manifest(
     projectId: null,
     cwd,
     cwdRealPath: cwd,
-    runtimeSessionPath,
+    ...(runtimeSessionPath ? { runtimeSessionPath } : {}),
     permissionMode: 'auto',
     status,
     unreadKind,
@@ -108,7 +113,7 @@ test('mergePhiSessionState overlays Phi status without auto-sorting by activity'
 
   assert.deepEqual(
     sessions.map((session) => session.path),
-    ['/sessions/running.jsonl', '/sessions/approval.jsonl', '/sessions/idle.jsonl']
+    [phiOnlySessionPath('phi-running'), phiOnlySessionPath('phi-approval'), '/sessions/idle.jsonl']
   )
   assert.equal(sessions[1].phiSessionId, 'phi-approval')
   assert.equal(sessions[1].status, 'needs_approval')
@@ -153,7 +158,7 @@ test('mergePhiSessionState keeps Phi created time stable when runtime metadata c
 
   assert.deepEqual(
     sessions.map((session) => session.path),
-    ['/sessions/original-first.jsonl', '/sessions/original-second.jsonl']
+    [phiOnlySessionPath('phi-original-first'), phiOnlySessionPath('phi-original-second')]
   )
   assert.equal(sessions[0].created, '2026-09-05T00:10:00.000Z')
 })
@@ -242,8 +247,67 @@ test('mergePhiSessionState keeps empty sessions with active Phi state visible', 
 
   assert.deepEqual(
     sessions.map((session) => session.path),
-    ['/sessions/running-empty.jsonl', '/sessions/failed-empty.jsonl']
+    [phiOnlySessionPath('phi-running-empty'), phiOnlySessionPath('phi-failed-empty')]
   )
+})
+
+test('mergePhiSessionState exposes Phi-only conversations without runtime files', () => {
+  withPhiDir(() => {
+    const session = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      title: '余额不足前的问题',
+      permissionMode: 'auto'
+    })
+    appendSessionEvent(session.sessionId, {
+      type: 'user_message',
+      runId: 'run-1',
+      content: '为什么聊天记录消失'
+    })
+    updateSessionManifest(session.sessionId, {
+      status: 'failed',
+      unreadKind: 'failed',
+      lastRunOutcome: 'failed'
+    })
+
+    const [summary] = mergePhiSessionState([], listPhiSessions(), '/workspace')
+
+    assert.equal(summary.path, phiOnlySessionPath(session.sessionId))
+    assert.equal(summary.phiSessionId, session.sessionId)
+    assert.equal(summary.name, '余额不足前的问题')
+    assert.equal(summary.firstMessage, '余额不足前的问题')
+    assert.equal(summary.status, 'failed')
+    assert.equal(summary.unreadKind, 'failed')
+  })
+})
+
+test('acknowledgeSession handles Phi-only conversations', () => {
+  withPhiDir(() => {
+    const session = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      permissionMode: 'auto'
+    })
+    appendSessionEvent(session.sessionId, {
+      type: 'user_message',
+      runId: 'run-1',
+      content: '需要恢复的问题'
+    })
+    updateSessionManifest(session.sessionId, {
+      status: 'failed',
+      unreadKind: 'failed',
+      lastRunOutcome: 'failed'
+    })
+
+    const acknowledged = acknowledgeSession(phiOnlySessionPath(session.sessionId), '/workspace')
+
+    assert.equal(acknowledged?.path, phiOnlySessionPath(session.sessionId))
+    assert.equal(acknowledged?.firstMessage, '需要恢复的问题')
+    assert.equal(acknowledged?.status, 'failed')
+    assert.equal(acknowledged?.unreadKind, null)
+  })
 })
 
 test('acknowledgeSession clears completed and failed unread state', () => {

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { BrowserWindow } from 'electron'
-import type { InlineExtension } from './runtime-adapter'
+import type { InlineExtension } from './runtime/runtime-adapter'
 
 export interface ToolApprovalRequest {
   requestId: string

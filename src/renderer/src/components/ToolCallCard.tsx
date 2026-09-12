@@ -1,7 +1,16 @@
-import { Box, Button, CircularProgress, Collapse, Divider, Typography } from '@mui/material'
+import {
+  Box,
+  Button,
+  CircularProgress,
+  Collapse,
+  Divider,
+  IconButton,
+  Tooltip,
+  Typography
+} from '@mui/material'
 import { useState, type ReactNode } from 'react'
 import { PhiIcons, fileIconForPath } from '../icons'
-import type { ToolCallItem } from '../types'
+import type { NotebookCellJumpTarget, NotebookToolSummary, ToolCallItem } from '../types'
 import { tokenizeLocalPaths } from '../lib/localPaths'
 import { toolActionKind } from '../lib/toolActions'
 import { toolTargetFromArgs } from '../lib/toolTargets'
@@ -149,6 +158,106 @@ export function StatusIndicator({ status }: { status: ToolCallItem['status'] }):
   return <CheckCircleIcon sx={{ fontSize: 14, color: 'success.main' }} aria-label="完成" />
 }
 
+function notebookTargetLabel(notebook: NotebookToolSummary): string {
+  return notebook.relativePath ?? notebook.path ?? 'notebook'
+}
+
+function notebookVerb(kind: string, status: ToolCallItem['status']): string {
+  const done = status !== 'running'
+  switch (kind) {
+    case 'notebook_list':
+      return done ? '已列出 Notebook' : '列出 Notebook'
+    case 'notebook_document':
+      return done ? '已读取 Notebook' : '读取 Notebook'
+    case 'notebook_cell_inserted':
+      return done ? '已插入 Cell' : '插入 Cell'
+    case 'notebook_cell_updated':
+      return done ? '已更新 Cell' : '更新 Cell'
+    case 'notebook_cell_deleted':
+      return done ? '已删除 Cell' : '删除 Cell'
+    case 'notebook_cell_executed':
+      return done ? '已运行 Cell' : '运行 Cell'
+    case 'notebook_saved':
+      return done ? '已保存 Notebook' : '保存 Notebook'
+    default:
+      return done ? '已操作 Notebook' : '操作 Notebook'
+  }
+}
+
+function notebookHeadline(item: ToolCallItem): string | undefined {
+  if (!item.notebook) return undefined
+  const target = notebookTargetLabel(item.notebook)
+  const cell = item.notebook.cellId ? ` · ${item.notebook.cellId}` : ''
+  return `${notebookVerb(item.notebook.kind, item.status)} · ${target}${cell}`
+}
+
+function notebookJumpTarget(notebook?: NotebookToolSummary): NotebookCellJumpTarget | null {
+  if (!notebook?.cellId) return null
+  if (!notebook.path && !notebook.relativePath) return null
+  return {
+    path: notebook.path,
+    relativePath: notebook.relativePath,
+    cellId: notebook.cellId
+  }
+}
+
+function NotebookToolSummaryBlock({ notebook }: { notebook: NotebookToolSummary }): ReactNode {
+  const target = notebookTargetLabel(notebook)
+  const details = [
+    notebook.cellId ? `cell ${notebook.cellId}` : '',
+    notebook.cellType ?? '',
+    notebook.executionState ?? '',
+    notebook.executionCount !== undefined && notebook.executionCount !== null
+      ? `#${notebook.executionCount}`
+      : ''
+  ].filter(Boolean)
+
+  return (
+    <Box
+      sx={{
+        mb: 1.25,
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 1,
+        minWidth: 0,
+        color: 'text.secondary'
+      }}
+    >
+      <PhiIcons.nav.analysis sx={{ mt: 0.2, fontSize: 20, color: 'primary.main' }} />
+      <Box sx={{ minWidth: 0 }}>
+        <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.primary' }}>
+          {notebookVerb(notebook.kind, 'done')}
+        </Typography>
+        <Typography
+          variant="caption"
+          component="div"
+          sx={{
+            mt: 0.25,
+            minWidth: 0,
+            fontFamily: 'var(--font-mono)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}
+          title={target}
+        >
+          {target}
+        </Typography>
+        {details.length > 0 ? (
+          <Typography variant="caption" component="div" sx={{ mt: 0.25 }}>
+            {details.join(' · ')}
+          </Typography>
+        ) : null}
+        {notebook.summary ? (
+          <Typography variant="caption" component="div" sx={{ mt: 0.25 }}>
+            {notebook.summary}
+          </Typography>
+        ) : null}
+      </Box>
+    </Box>
+  )
+}
+
 export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string }): ReactNode {
   const [showFullArgs, setShowFullArgs] = useState(false)
   const [showFullOutput, setShowFullOutput] = useState(false)
@@ -193,6 +302,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
         borderColor: 'grey.800'
       }}
     >
+      {item.notebook ? <NotebookToolSummaryBlock notebook={item.notebook} /> : null}
       {target ? (
         <Box
           sx={{
@@ -375,18 +485,29 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
 }
 
 function foldedToolHeadline(item: ToolCallItem, action: ReturnType<typeof toolActionKind>): string {
+  const notebook = notebookHeadline(item)
+  if (notebook) return notebook
   if (action === 'python') return '执行 Python 代码'
   if (action === 'command') return '执行命令'
   return item.argsPreview || item.toolName
 }
 
-function ToolCallCard({ item, cwd }: { item: ToolCallItem; cwd?: string }): React.JSX.Element {
+function ToolCallCard({
+  item,
+  cwd,
+  onJumpToNotebookCell
+}: {
+  item: ToolCallItem
+  cwd?: string
+  onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
+}): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const stat = item.output ? diffStat(item.output) : null
   const toggle = (): void => setExpanded((value) => !value)
   const action = toolActionKind(item.toolName, item.argsPreview, item.argsJson)
   const headline = foldedToolHeadline(item, action)
-  const showToolName = action !== 'command' && action !== 'python'
+  const showToolName = action !== 'command' && action !== 'python' && action !== 'notebook'
+  const jumpTarget = notebookJumpTarget(item.notebook)
 
   return (
     <Box sx={{ alignSelf: 'stretch', minWidth: 0 }}>
@@ -463,6 +584,28 @@ function ToolCallCard({ item, cwd }: { item: ToolCallItem; cwd?: string }): Reac
               </Box>
             ) : null}
           </Typography>
+        ) : null}
+        {jumpTarget && onJumpToNotebookCell ? (
+          <Tooltip title="跳转到 cell" enterDelay={400}>
+            <IconButton
+              size="small"
+              aria-label="跳转到 cell"
+              onClick={(event) => {
+                event.stopPropagation()
+                onJumpToNotebookCell(jumpTarget)
+              }}
+              sx={{
+                width: 26,
+                height: 26,
+                flexShrink: 0,
+                color: 'primary.main',
+                bgcolor: 'background.paper',
+                '&:hover': { bgcolor: 'action.hover' }
+              }}
+            >
+              <PhiIcons.nav.analysis sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
         ) : null}
         <Box
           aria-live={item.status === 'running' ? 'polite' : undefined}

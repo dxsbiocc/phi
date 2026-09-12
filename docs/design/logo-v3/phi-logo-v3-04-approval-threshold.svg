@@ -1,0 +1,13 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi Approval Threshold logo mark</title>
+  <desc id="desc">A phi threshold mark showing the boundary between automatic and approval-gated work.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M50 17V83" stroke-width="7.5"/>
+    <path d="M50 24C69 24 80 36 77 52C74 68 58 77 41 72C27 68 20 58 24 47C28 36 39 31 50 33" stroke-width="7"/>
+    <path d="M24 47L16 39" stroke-width="4.5"/>
+    <path d="M77 52L86 61" stroke-width="4.5"/>
+    <path d="M35 50H65" stroke-width="4"/>
+  </g>
+  <circle cx="35" cy="50" r="4" fill="currentColor"/>
+  <circle cx="65" cy="50" r="4" fill="currentColor"/>
+</svg>

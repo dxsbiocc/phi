@@ -5,7 +5,8 @@ import * as path from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 import { formatDiagnostics } from '../src/main/agent/diagnostics'
-import * as lifecycle from '../src/main/agent/session-lifecycle'
+import * as notebookCodeGeneration from '../src/main/agent/notebook/notebook-code-generation'
+import * as lifecycle from '../src/main/agent/session/session-lifecycle'
 import * as notebookDocument from '../src/shared/notebookDocument'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -23,6 +24,7 @@ class FakeSession {
   readonly messages: unknown[] = []
   readonly listeners: Array<(event: unknown) => void> = []
   readonly log: string[] = []
+  readonly promptTexts: string[] = []
   model?: { provider: string; id: string }
   thinkingLevel?: string
   preflight = Promise.resolve()
@@ -33,12 +35,14 @@ class FakeSession {
   started = false
   disposed = false
   promptError?: Error
-  constructor(readonly sessionFile: string) {}
+  materializedSessionFile?: string
+  constructor(public sessionFile: string | undefined) {}
   subscribe(listener: (event: unknown) => void): () => void {
     this.listeners.push(listener)
     return () => undefined
   }
-  async prompt(_text: string, options?: PromptOptions): Promise<void> {
+  async prompt(text: string, options?: PromptOptions): Promise<void> {
+    this.promptTexts.push(text)
     await this.preflight
     options?.preflightResult?.(true)
     this.started = true
@@ -46,6 +50,7 @@ class FakeSession {
     for (const event of this.toolEvents) {
       this.listeners.forEach((listener) => listener(event))
     }
+    this.sessionFile ??= this.materializedSessionFile
     if (this.promptError) throw this.promptError
     if (this.hold) await this.finish.promise
     this.messages.push({ role: 'assistant', content: [{ type: 'text', text: 'done' }] })
@@ -78,6 +83,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   runnerEvents: Array<Record<string, unknown>>
   createdPhiSessions: Array<Record<string, unknown>>
   createdAgentOptions: Array<Record<string, unknown>>
+  resourceLoaderOptions: Array<Record<string, unknown>>
   updatedProjectDefaults: Array<Record<string, unknown>>
   updatedSessionManifests: Array<{ sessionId: string; patch: Record<string, unknown> }>
   appendedSessionEvents: Array<Record<string, unknown>>
@@ -103,6 +109,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   const runnerEvents: Array<Record<string, unknown>> = []
   const createdPhiSessions: Array<Record<string, unknown>> = []
   const createdAgentOptions: Array<Record<string, unknown>> = []
+  const resourceLoaderOptions: Array<Record<string, unknown>> = []
   const updatedProjectDefaults: Array<Record<string, unknown>> = []
   const updatedSessionManifests: Array<{ sessionId: string; patch: Record<string, unknown> }> = []
   const appendedSessionEvents: Array<Record<string, unknown>> = []
@@ -125,6 +132,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     ['/projects/current/src/App.tsx', Buffer.from('export const app = true\n')],
     ['/projects/current/README.md', Buffer.from('# Project\n')],
     ['/projects/current/qc-demo.csv', Buffer.from('sample_id,value_a\nS001,1.75\n')],
+    ['/projects/current/notebooks/eda.ipynb', Buffer.from('{"nbformat":4,"cells":[]}')],
     ['/projects/current/large.txt', Buffer.alloc(320010, 'a')],
     ['/projects/current/plot.png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
     [
@@ -380,6 +388,26 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     closeProject(projectCwd: string): void {
       notebookSessionCalls.push({ action: 'closeProject', cwd: projectCwd })
     }
+    projectSummary(projectCwd: string): Record<string, unknown> {
+      notebookSessionCalls.push({ action: 'summary', cwd: projectCwd })
+      return {
+        activeSessionCount: 1,
+        busySessionCount: 0,
+        sessions: [
+          {
+            projectCwd,
+            notebookPath: `${projectCwd}/notebooks/demo.ipynb`,
+            kernelName: 'python3',
+            kernelDisplayName: 'Python 3',
+            sessionId: 'session-1',
+            state: 'idle',
+            message: 'Notebook kernel 已连接',
+            startedAt: '2026-09-10T01:00:00.000Z',
+            updatedAt: '2026-09-10T01:02:00.000Z'
+          }
+        ]
+      }
+    }
     executionTarget(): Record<string, unknown> {
       return {
         connection: { url: 'http://127.0.0.1:8888/lab', token: 'secret' },
@@ -442,6 +470,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   })
   const modules: Record<string, unknown> = {
     './agent-env': {},
+    'node:os': { homedir: (): string => '/fake-home' },
     'node:fs': {
       openSync: (filePath: string): number => {
         const target = path.resolve(filePath)
@@ -548,12 +577,16 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
       optimizer: { watchWindowShortcuts: noop },
       is: { dev: false }
     },
-    './agent/runtime-adapter': {
-      createRuntimeResourceLoader: (): unknown => ({
-        async reload(): Promise<void> {
-          return
+    './agent/runtime/runtime-adapter': {
+      createRuntimeResourceLoader: (options: Record<string, unknown>): unknown => {
+        resourceLoaderOptions.push(options)
+        return {
+          options,
+          async reload(): Promise<void> {
+            return
+          }
         }
-      }),
+      },
       createInMemoryRuntimeSessionManager: (cwd: string): { file: string; cwd: string } => ({
         file: 'in-memory',
         cwd
@@ -562,7 +595,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         getCwd: () => runtimeSessionCwds.get(file) ?? `/projects/${file}`
       })
     },
-    './agent/session-manager': {
+    './agent/session/session-manager': {
       createAgentSession: async (options: {
         cwd: string
         sessionManager: { file: string }
@@ -630,8 +663,13 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
       setPersonaMarkdown: noop,
       getPersonaMarkdown: (): string => 'persona'
     },
-    './agent/sessions': {
+    './agent/session/sessions': {
       WORKSPACE_DIR: '/workspace',
+      phiOnlySessionPath: (sessionId: string): string => `phi-session:${sessionId}`,
+      phiSessionIdFromPath: (path: string): string | null =>
+        path.startsWith('phi-session:') ? path.slice('phi-session:'.length) : null,
+      isPhiOnlySessionPath: (path: string | null | undefined): boolean =>
+        typeof path === 'string' && path.startsWith('phi-session:'),
       createSessionManager: (cwd: string, file?: string): { file: string } => {
         const sessionFile = file ?? 'fresh.jsonl'
         runtimeSessionCwds.set(sessionFile, cwd)
@@ -681,6 +719,23 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         pathAvailable: true,
         createdAt: '2026-09-05T00:00:00.000Z'
       }),
+      updateProjectRemoteConnection: (id: string) => ({
+        id,
+        name: 'Project',
+        workingDirectory: '/projects/defaults',
+        permissionMode: 'ask',
+        pathAvailable: true,
+        createdAt: '2026-09-05T00:00:00.000Z'
+      }),
+      updateProjectRemoteDefaults: (id: string, defaults: Record<string, unknown>) => ({
+        id,
+        name: 'Project',
+        workingDirectory: '/projects/defaults',
+        permissionMode: 'ask',
+        pathAvailable: true,
+        createdAt: '2026-09-05T00:00:00.000Z',
+        ...defaults
+      }),
       getProjectByCwd: (
         cwd: string
       ): {
@@ -717,7 +772,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
             }
           : null
     },
-    './agent/analysis-notebooks': {
+    './agent/notebook/analysis-notebooks': {
       emptyNotebookRegistry: (message: string) => ({
         projectCwd: null,
         notebooks: [],
@@ -747,7 +802,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         initialized: true
       })
     },
-    './agent/analysis-notebook-files': {
+    './agent/notebook/analysis-notebook-files': {
       openProjectNotebook: (workingDirectory: string, notebookPath: string) => ({
         path: `${workingDirectory}/${notebookPath}`,
         relativePath: notebookPath,
@@ -800,7 +855,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         relativePath: notebookPath
       })
     },
-    './agent/analysis-kernels': {
+    './agent/notebook/analysis-kernels': {
       detectAnalysisKernels: () => ({
         jupyterServer: { available: true, command: 'jupyter', version: '2.14.0' },
         kernels: [
@@ -817,15 +872,44 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         messages: ['未检测到 R kernel。']
       })
     },
-    './agent/analysis-jupyter-server': {
+    './agent/notebook/analysis-jupyter-server': {
       JupyterServerRegistry: TestJupyterServerRegistry
     },
-    './agent/analysis-jupyter-sessions': {
+    './agent/notebook/analysis-jupyter-sessions': {
       AnalysisNotebookSessionRegistry: TestAnalysisNotebookSessionRegistry
     },
-    './agent/analysis-jupyter-execution': {
+    './agent/notebook/analysis-jupyter-execution': {
       AnalysisNotebookExecutor: TestAnalysisNotebookExecutor
     },
+    './agent/notebook/notebook-tool-executor': {
+      AnalysisNotebookToolExecutor: class TestAnalysisNotebookToolExecutor {
+        execute(): never {
+          throw new Error('notebookTool.execute is not exercised in main-integration.test.ts')
+        }
+        syncDraft(input: {
+          cwd: string
+          path: string
+          document: unknown
+          savedRevision?: string
+          source?: string
+        }): Record<string, unknown> {
+          return {
+            source: input.source ?? 'renderer',
+            projectCwd: input.cwd,
+            path: input.path,
+            relativePath: input.path,
+            document: input.document,
+            savedRevision: input.savedRevision ?? 'synced'
+          }
+        }
+      }
+    },
+    './agent/omp/omp-bridge': {
+      getOmpBridge: (): { registerHostHandler: () => () => void } => ({
+        registerHostHandler: () => () => {}
+      })
+    },
+    './agent/notebook/notebook-code-generation': notebookCodeGeneration,
     '../shared/notebookDocument': notebookDocument,
     './agent/tool-approval': {
       cancelToolApprovals: noop,
@@ -874,6 +958,40 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         }
       ]
     },
+    './agent/wrappers/runs': {
+      submitWrapperRunPlan: (): never => {
+        throw new Error('计划不存在: (mocked in main-integration.test.ts)')
+      },
+      cancelWrapperRunPlan: (): never => {
+        throw new Error('计划不存在: (mocked in main-integration.test.ts)')
+      },
+      cancelWrapperRun: (): never => {
+        throw new Error('run 不存在: (mocked in main-integration.test.ts)')
+      }
+    },
+    './agent/wrappers/store': {
+      readWrapperPlan: (): undefined => undefined,
+      listWrapperRuns: (): unknown[] => [],
+      readWrapperRun: (): undefined => undefined,
+      readWrapperPlanArtifact: (): undefined => undefined
+    },
+    './agent/wrappers/reproducibility': {
+      buildWrapperReproducibilityBundle: (): never => {
+        throw new Error('run 不存在: (mocked in main-integration.test.ts)')
+      }
+    },
+    './agent/wrappers/catalog': {
+      ensureBundledWrappersInstalled: (): unknown[] => [],
+      listWrapperCatalog: (): unknown[] => [],
+      addCustomWrapper: (): never => {
+        throw new Error('wrapper.yaml 校验失败: (mocked in main-integration.test.ts)')
+      }
+    },
+    './agent/wrappers/remote-credential-store': {
+      isRemoteCredentialStorageAvailable: (): boolean => false,
+      storeRemoteConnectionPassphrase: (): void => {},
+      deleteRemoteConnectionPassphrase: (): void => {}
+    },
     './agent/diagnostics': { formatDiagnostics },
     './agent/app-logger': {
       LOG_RETENTION_DAYS: 14,
@@ -889,9 +1007,9 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
           .replace(/\borg-[A-Za-z0-9_-]+(?:<[^>\s]+>)?/g, '[redacted]')
           .replace(/\bak-[A-Za-z0-9_-]{8,}\b/g, '[redacted]')
     },
-    './agent/session-lifecycle': lifecycle,
-    './agent/session-runner-registry': { SessionRunnerRegistry: RunnerRegistry },
-    './agent/session-store': {
+    './agent/session/session-lifecycle': lifecycle,
+    './agent/session/session-runner-registry': { SessionRunnerRegistry: RunnerRegistry },
+    './agent/session/session-store': {
       appendSessionEvent: (sessionId: string, event: Record<string, unknown>) => {
         appendedSessionEvents.push({ sessionId, event })
         return { sessionId, eventId: `event-${appendedSessionEvents.length}`, ...event }
@@ -908,6 +1026,28 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
           (entry) => entry.patch.runtimeSessionPath === runtimeSessionPath
         )
         return match ? { sessionId: match.sessionId } : null
+      },
+      findPhiSessionById: (sessionId: string): Record<string, unknown> | null => {
+        const session = createdPhiSessions.find((entry) => entry.sessionId === sessionId)
+        if (!session) return null
+        const patches = updatedSessionManifests
+          .filter((entry) => entry.sessionId === sessionId)
+          .map((entry) => entry.patch)
+        return Object.assign(
+          {
+            sessionId,
+            cwd: session.cwd ?? '/workspace',
+            permissionMode: session.permissionMode ?? 'auto',
+            status: 'idle',
+            unreadKind: null,
+            messageCount: 0,
+            createdAt: '2026-09-05T00:00:00.000Z',
+            updatedAt: '2026-09-05T00:00:00.000Z',
+            lastActivityAt: '2026-09-05T00:00:00.000Z'
+          },
+          session,
+          ...patches
+        )
       },
       listPhiSessions: () =>
         createdPhiSessions.map((session) => {
@@ -1024,6 +1164,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     runnerEvents,
     createdPhiSessions,
     createdAgentOptions,
+    resourceLoaderOptions,
     updatedProjectDefaults,
     updatedSessionManifests,
     appendedSessionEvents,
@@ -1062,6 +1203,18 @@ test(
   }
 )
 
+test('main IPC: agent prompt asks for explicit next-action recommendations without changing the saved user message', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  const app = await harness(async () => session)
+
+  await app.invoke('agent:prompt', 'hello')
+
+  assert.equal(session.promptTexts.length, 1)
+  assert.match(session.promptTexts[0], /^hello\n\n<phi_next_action_instruction>/)
+  assert.match(session.promptTexts[0], /推荐下一步：<一句可以直接作为下一轮用户输入的中文操作>/)
+  assert.equal(app.appendedSessionEvents[0].event.content, 'hello')
+})
+
 test('main IPC: reveal path is limited to Phi-owned files', async () => {
   const app = await harness()
 
@@ -1086,6 +1239,34 @@ test('main IPC: reveal path allows files inside the active project cwd', async (
   )
 
   assert.deepEqual(app.revealedPaths, ['/projects/current/src/App.tsx'])
+})
+
+test('main IPC: local path stats only report allowed existing files and directories', async () => {
+  const app = await harness()
+
+  const stats = await app.invoke('files:statLocalPaths', '/projects/current', [
+    '/projects/current/README.md',
+    '/projects/current/src',
+    '/projects/current/qc-demo.csv',
+    '/projects/current/notebooks/eda.ipynb',
+    '/projects/current/adj.P.Val',
+    '/projects/other/secret.txt',
+    'relative.txt'
+  ])
+
+  assert.deepEqual(stats, [
+    { path: '/projects/current/README.md', kind: 'file' },
+    { path: '/projects/current/src', kind: 'directory' },
+    { path: '/projects/current/qc-demo.csv', kind: 'file' },
+    { path: '/projects/current/notebooks/eda.ipynb', kind: 'file' },
+    { path: '/projects/current/adj.P.Val', kind: 'missing' },
+    { path: '/projects/other/secret.txt', kind: 'missing' },
+    { path: 'relative.txt', kind: 'missing' }
+  ])
+
+  assert.deepEqual(await app.invoke('files:statLocalPaths', '/tmp/external', ['/workspace']), [
+    { path: '/workspace', kind: 'missing' }
+  ])
 })
 
 test('main IPC: input file picker returns selected paths without reading files', async () => {
@@ -1468,7 +1649,11 @@ test(
     old.listeners.forEach((listener) => listener({ type: 'message_update' }))
     assert.equal(app.events.filter((event) => event.channel === 'agent:event').length, before + 1)
     old.finish.resolve()
-    assert.deepEqual(await prompt, { path: 'A', sessionGeneration: 0 })
+    assert.deepEqual(await prompt, {
+      path: 'phi-session:phi-1',
+      phiSessionId: 'phi-1',
+      sessionGeneration: 0
+    })
     assert.equal(((await app.invoke('sessions:current')) as { path: string }).path, 'B')
     await tick()
     assert.equal(old.disposed, false)
@@ -1524,10 +1709,12 @@ test(
       await tick()
       const current = (await app.invoke('sessions:current')) as {
         path: string | null
+        phiSessionId?: string
         messages: Array<Record<string, unknown>>
       }
 
-      assert.equal(current.path, null)
+      assert.equal(current.path, 'phi-session:phi-1')
+      assert.equal(current.phiSessionId, 'phi-1')
       assert.equal(
         current.messages.some(
           (message) =>
@@ -1543,6 +1730,100 @@ test(
     }
   }
 )
+
+test(
+  'main IPC: Phi-only failed prompts can be restored and materialized later',
+  { timeout: 3000 },
+  async () => {
+    let failBeforeRuntime = true
+    const app = await harness(async () => {
+      if (failBeforeRuntime) throw new Error('余额不足')
+      return new FakeSession('fresh.jsonl')
+    })
+
+    await assert.rejects(app.invoke('agent:prompt', '这里输入的聊天为什么消失'), /余额不足/)
+
+    assert.equal(app.createdPhiSessions.length, 1)
+    assert.equal(
+      app.updatedSessionManifests.some((entry) => 'runtimeSessionPath' in entry.patch),
+      false
+    )
+
+    const restored = (await app.invoke('sessions:switch', 'phi-session:phi-1')) as {
+      path: string
+      messages: Array<Record<string, unknown>>
+    }
+
+    assert.equal(restored.path, 'phi-session:phi-1')
+    assert.equal(
+      restored.messages.some(
+        (message) =>
+          message.source === 'phi' &&
+          message.type === 'user_message' &&
+          message.content === '这里输入的聊天为什么消失'
+      ),
+      true
+    )
+
+    failBeforeRuntime = false
+    await app.invoke('sessions:switch', 'other.jsonl')
+    await app.invoke('agent:prompt', '继续', restored)
+
+    assert.equal(app.createdPhiSessions.length, 1)
+    assert.deepEqual(
+      app.updatedSessionManifests.filter((entry) => 'runtimeSessionPath' in entry.patch),
+      [{ sessionId: 'phi-1', patch: { runtimeSessionPath: 'fresh.jsonl' } }]
+    )
+  }
+)
+
+test('main IPC: prompt target controls the write destination even after another session is current', async () => {
+  const app = await harness()
+
+  await app.invoke('sessions:switch', 'selected.jsonl')
+  const selected = (await app.invoke('sessions:current')) as {
+    path: string | null
+    cwd: string
+    sessionGeneration: number
+  }
+  await app.invoke('sessions:switch', 'other.jsonl')
+
+  await app.invoke('agent:prompt', 'write to selected', selected)
+
+  const selectedSession = app.sessions.find((session) => session.sessionFile === 'selected.jsonl')
+  const otherSession = app.sessions.find((session) => session.sessionFile === 'other.jsonl')
+  assert.equal(selectedSession?.promptTexts.length, 1)
+  assert.match(selectedSession?.promptTexts[0] ?? '', /^write to selected/)
+  assert.equal(otherSession?.promptTexts.length, 0)
+  assert.equal(app.createdPhiSessions.at(-1)?.runtimeSessionPath, 'selected.jsonl')
+  assert.equal(app.appendedSessionEvents.at(-1)?.event.content, 'write to selected')
+})
+
+test('main IPC: continuing a restored runtime conversation reuses its Phi session', async () => {
+  const app = await harness()
+
+  await app.invoke('sessions:switch', 'with-phi-events')
+  await app.invoke('agent:prompt', 'continue existing')
+
+  assert.equal(app.createdPhiSessions.length, 0)
+  assert.equal(app.appendedSessionEvents.at(-1)?.sessionId, 'phi-existing')
+  assert.equal(app.appendedSessionEvents.at(-1)?.event.content, 'continue existing')
+})
+
+test('main IPC: prompt target rejects stale fresh sessions instead of writing to the wrong chat', async () => {
+  const app = await harness()
+
+  const fresh = (await app.invoke('sessions:current')) as {
+    path: string | null
+    cwd: string
+    sessionGeneration: number
+  }
+  await app.invoke('sessions:switch', 'other.jsonl')
+
+  await assert.rejects(app.invoke('agent:prompt', 'must not leak', fresh), /当前会话已切换/)
+  assert.equal(app.createdPhiSessions.length, 0)
+  assert.equal(app.appendedSessionEvents.length, 0)
+})
 
 test(
   'main IPC: materialized runtime path is linked before notifying the renderer',
@@ -1561,7 +1842,7 @@ test(
       return (
         entry.type === 'webContents.send' &&
         entry.channel === 'sessions:changed' &&
-        data?.path === 'fresh.jsonl'
+        data?.path === 'phi-session:phi-1'
       )
     })
 
@@ -1570,6 +1851,54 @@ test(
     assert.equal(runtimePathPatchIndex < firstMaterializedNotifyIndex, true)
   }
 )
+
+test('main IPC: delayed runtime path materialization is linked to the Phi session', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(undefined)
+    session.materializedSessionFile = file
+    return session
+  })
+
+  const result = (await app.invoke('agent:prompt', 'first delayed message')) as {
+    path: string | null
+    phiSessionId?: string
+  }
+
+  assert.equal(result.path, 'phi-session:phi-1')
+  assert.equal(result.phiSessionId, 'phi-1')
+  assert.deepEqual(
+    app.updatedSessionManifests.filter((entry) => 'runtimeSessionPath' in entry.patch),
+    [{ sessionId: 'phi-1', patch: { runtimeSessionPath: 'fresh.jsonl' } }]
+  )
+})
+
+test('main IPC: continuing a freshly materialized conversation reuses its Phi session', async () => {
+  const app = await harness()
+
+  const first = (await app.invoke('agent:prompt', 'first message')) as {
+    path: string | null
+    cwd?: string
+    sessionGeneration: number
+  }
+  await app.invoke('agent:prompt', 'second message', {
+    path: first.path,
+    cwd: first.cwd ?? '/workspace',
+    sessionGeneration: first.sessionGeneration
+  })
+
+  const userEvents = app.appendedSessionEvents.filter(
+    (entry) => (entry.event as { type?: string }).type === 'user_message'
+  )
+  assert.equal(app.createdPhiSessions.length, 1)
+  assert.deepEqual(
+    userEvents.map((entry) => entry.sessionId),
+    ['phi-1', 'phi-1']
+  )
+  assert.deepEqual(
+    userEvents.map((entry) => (entry.event as { content?: string }).content),
+    ['first message', 'second message']
+  )
+})
 
 test('main IPC: acknowledging a session uses that session cwd without sidebar rebroadcasts', async () => {
   const app = await harness()
@@ -1721,6 +2050,33 @@ test('main IPC: analysis Jupyter server lifecycle uses the selected project', as
   await assert.rejects(app.invoke('analysis:startJupyter', '/missing/project'), /请选择/)
 })
 
+test('main IPC: analysis Jupyter runtime status combines server and notebook sessions', async () => {
+  const app = await harness()
+
+  const status = (await app.invoke('analysis:jupyterRuntimeStatus', '/projects/research')) as {
+    server: { projectCwd: string; state: string }
+    notebooks: {
+      activeSessionCount: number
+      busySessionCount: number
+      sessions: Array<{ notebookPath: string; kernelDisplayName: string; state: string }>
+    }
+  }
+
+  assert.equal(status.server.projectCwd, '/projects/research')
+  assert.equal(status.server.state, 'stopped')
+  assert.equal(status.notebooks.activeSessionCount, 1)
+  assert.equal(status.notebooks.busySessionCount, 0)
+  assert.equal(
+    status.notebooks.sessions[0]?.notebookPath,
+    '/projects/research/notebooks/demo.ipynb'
+  )
+  assert.equal(status.notebooks.sessions[0]?.kernelDisplayName, 'Python 3')
+  assert.equal(status.notebooks.sessions[0]?.state, 'idle')
+  assert.deepEqual(app.jupyterServerCalls, [{ action: 'status', cwd: '/projects/research' }])
+  assert.deepEqual(app.notebookSessionCalls, [{ action: 'summary', cwd: '/projects/research' }])
+  await assert.rejects(app.invoke('analysis:jupyterRuntimeStatus', '/missing/project'), /请选择/)
+})
+
 test('main IPC: analysis notebook kernel session lifecycle uses the selected project', async () => {
   const app = await harness()
   const document = {
@@ -1806,6 +2162,11 @@ test('main IPC: analysis notebook cell execution updates the returned document',
   assert.equal(result.executionCount, 2)
   assert.equal(result.document.cells[0].executionCount, 2)
   assert.equal(result.document.cells[0].outputs[0].text, 'ran\n')
+  assert.deepEqual(result.document.cells[0].metadata.phi, {
+    executionStartedAt: '2026-09-09T00:00:00.000Z',
+    executionCompletedAt: '2026-09-09T00:00:01.000Z',
+    executionDurationMs: 1000
+  })
   assert.equal(result.sessionStatus.state, 'idle')
   assert.deepEqual(app.notebookExecutionCalls, [
     { cellId: 'cell-1', source: 'print("ran")', kernelId: 'kernel-1' }
@@ -1827,6 +2188,27 @@ test('main IPC: analysis notebook cell execution updates the returned document',
       path: '/projects/research/notebooks/demo.ipynb'
     }
   ])
+})
+
+test('main IPC: project agent sessions receive active notebook and app Jupyter context', async () => {
+  const app = await harness()
+
+  await app.invoke('projects:newSession', '/projects/research', 'auto')
+  await app.invoke('analysis:openNotebook', '/projects/research', 'notebooks/qc.ipynb')
+  await app.invoke('agent:prompt', '运行当前 notebook 的最后一个 cell')
+
+  const resourceOptions = app.resourceLoaderOptions.at(-1)
+  const appendSystemPrompt = resourceOptions?.appendSystemPrompt as string[] | undefined
+  assert.ok(appendSystemPrompt?.length)
+  const notebookPrompt = appendSystemPrompt.join('\n')
+  assert.match(notebookPrompt, /<phi_notebook_runtime>/)
+  assert.match(notebookPrompt, /Active notebook: notebooks\/qc\.ipynb/)
+  assert.match(notebookPrompt, /Phi app-managed Jupyter Server/)
+  assert.match(
+    notebookPrompt,
+    /Do not assume, probe, or instruct the user to restart JupyterLab on localhost:8888/
+  )
+  assert.match(notebookPrompt, /notebook\.run_cell/)
 })
 
 test(
@@ -2249,10 +2631,23 @@ test(
     await app.invoke('agent:prompt', 'hello')
 
     assert.deepEqual(app.createdPhiSessions[0].model, {
-      providerId: 'openai',
-      modelId: 'gpt-session'
+      providerId: 'anthropic',
+      modelId: 'claude-test'
     })
-    assert.equal(app.createdPhiSessions[0].thinkingLevel, 'high')
+    assert.equal(app.createdPhiSessions[0].thinkingLevel, 'medium')
+    assert.deepEqual(
+      app.updatedSessionManifests.filter((entry) => 'model' in entry.patch),
+      [
+        {
+          sessionId: 'phi-1',
+          patch: { model: { providerId: 'openai', modelId: 'gpt-session' } }
+        }
+      ]
+    )
+    assert.deepEqual(
+      app.updatedSessionManifests.filter((entry) => 'thinkingLevel' in entry.patch),
+      [{ sessionId: 'phi-1', patch: { thinkingLevel: 'high' } }]
+    )
     assert.deepEqual(app.createdAgentOptions[0].model, {
       provider: 'openai',
       id: 'gpt-session',
@@ -2335,7 +2730,7 @@ test(
     assert.deepEqual(warnings[0].data, {
       type: 'project_parallel_warning',
       sessionGeneration: 0,
-      sessionPath: null,
+      sessionPath: 'phi-session:phi-2',
       cwd: '/projects/parallel',
       activeCount: 1
     })
@@ -2422,7 +2817,7 @@ test(
     await first
     session.hold = false
     const next = await app.invoke('agent:prompt', 'next')
-    assert.equal((next as { path: string }).path, 'fresh.jsonl')
+    assert.equal((next as { path: string }).path, 'phi-session:phi-1')
   }
 )
 
@@ -2565,7 +2960,7 @@ test(
       },
       {
         sessionId: 'phi-1',
-        sessionPath: 'fresh.jsonl',
+        sessionPath: 'phi-session:phi-1',
         cwd: '/projects/research',
         projectName: 'Project /projects/research'
       }
@@ -2665,13 +3060,13 @@ test(
       currentRunId?: string
       currentRunStartedAt?: string
     }
-    assert.equal(current.path, 'fresh.jsonl')
+    assert.equal(current.path, 'phi-session:phi-1')
     assert.equal(current.status, 'running')
     assert.match(current.currentRunId ?? '', /^run-/)
     assert.equal(current.currentRunStartedAt, '2026-09-05T00:00:00.000Z')
 
     await app.invoke('sessions:switch', 'other')
-    const restored = (await app.invoke('sessions:switch', 'fresh.jsonl')) as {
+    const restored = (await app.invoke('sessions:switch', 'phi-session:phi-1')) as {
       cwd: string
       status: string
       currentRunId?: string

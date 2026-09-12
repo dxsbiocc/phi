@@ -1,0 +1,11 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi Flow Ribbon logo mark</title>
+  <desc id="desc">A ribbon-shaped phi mark for continuous agent workflows.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M50 18C45 35 45 63 50 82" stroke-width="9"/>
+    <path d="M50 22C68 20 80 32 77 48C73 68 50 78 31 67C19 60 20 45 31 36C39 29 51 30 57 38" stroke-width="8"/>
+    <path d="M31 67C48 69 64 59 73 44" stroke-width="5"/>
+  </g>
+  <circle cx="29" cy="36" r="4" fill="currentColor"/>
+  <circle cx="73" cy="44" r="4" fill="currentColor"/>
+</svg>

@@ -1,52 +1,127 @@
 import { Box } from '@mui/material'
-import type { SxProps, Theme } from '@mui/material/styles'
+import { SvgIcon } from '@mui/material'
+import { useTheme, type SxProps, type Theme } from '@mui/material/styles'
+import materialIconManifestJson from 'material-icon-theme/dist/material-icons.json' with { type: 'json' }
+import type { Manifest } from 'material-icon-theme'
+import materialArchiveSvg from '../../../node_modules/material-icon-theme/icons/zip.svg?raw'
+import materialAstroSvg from '../../../node_modules/material-icon-theme/icons/astro.svg?raw'
+import materialAudioSvg from '../../../node_modules/material-icon-theme/icons/audio.svg?raw'
+import materialBinarySvg from '../../../node_modules/material-icon-theme/icons/hex.svg?raw'
+import materialBunSvg from '../../../node_modules/material-icon-theme/icons/bun.svg?raw'
+import materialCSvg from '../../../node_modules/material-icon-theme/icons/c.svg?raw'
+import materialClojureSvg from '../../../node_modules/material-icon-theme/icons/clojure.svg?raw'
+import materialCodeSvg from '../../../node_modules/material-icon-theme/icons/javascript.svg?raw'
+import materialConfigSvg from '../../../node_modules/material-icon-theme/icons/settings.svg?raw'
+import materialConsoleSvg from '../../../node_modules/material-icon-theme/icons/console.svg?raw'
+import materialCppSvg from '../../../node_modules/material-icon-theme/icons/cpp.svg?raw'
+import materialCsharpSvg from '../../../node_modules/material-icon-theme/icons/csharp.svg?raw'
+import materialCssSvg from '../../../node_modules/material-icon-theme/icons/css.svg?raw'
+import materialDartSvg from '../../../node_modules/material-icon-theme/icons/dart.svg?raw'
+import materialDataSvg from '../../../node_modules/material-icon-theme/icons/database.svg?raw'
+import materialDenoSvg from '../../../node_modules/material-icon-theme/icons/deno.svg?raw'
+import materialDirectorySvg from '../../../node_modules/material-icon-theme/icons/folder.svg?raw'
+import materialDirectoryOpenSvg from '../../../node_modules/material-icon-theme/icons/folder-open.svg?raw'
+import materialDockerSvg from '../../../node_modules/material-icon-theme/icons/docker.svg?raw'
+import materialDocumentSvg from '../../../node_modules/material-icon-theme/icons/document.svg?raw'
+import materialDotenvSvg from '../../../node_modules/material-icon-theme/icons/tune.svg?raw'
+import materialElixirSvg from '../../../node_modules/material-icon-theme/icons/elixir.svg?raw'
+import materialErlangSvg from '../../../node_modules/material-icon-theme/icons/erlang.svg?raw'
+import materialFileSvg from '../../../node_modules/material-icon-theme/icons/file.svg?raw'
+import materialFolderTestSvg from '../../../node_modules/material-icon-theme/icons/folder-test.svg?raw'
+import materialFolderTestOpenSvg from '../../../node_modules/material-icon-theme/icons/folder-test-open.svg?raw'
+import materialFontSvg from '../../../node_modules/material-icon-theme/icons/font.svg?raw'
+import materialGoSvg from '../../../node_modules/material-icon-theme/icons/go.svg?raw'
+import materialHaskellSvg from '../../../node_modules/material-icon-theme/icons/haskell.svg?raw'
+import materialHtmlSvg from '../../../node_modules/material-icon-theme/icons/html.svg?raw'
+import materialImageSvg from '../../../node_modules/material-icon-theme/icons/image.svg?raw'
+import materialJavaSvg from '../../../node_modules/material-icon-theme/icons/java.svg?raw'
+import materialJavascriptSvg from '../../../node_modules/material-icon-theme/icons/javascript.svg?raw'
+import materialJsonSvg from '../../../node_modules/material-icon-theme/icons/json.svg?raw'
+import materialJuliaSvg from '../../../node_modules/material-icon-theme/icons/julia.svg?raw'
+import materialJupyterSvg from '../../../node_modules/material-icon-theme/icons/jupyter.svg?raw'
+import materialKotlinSvg from '../../../node_modules/material-icon-theme/icons/kotlin.svg?raw'
+import materialLockSvg from '../../../node_modules/material-icon-theme/icons/lock.svg?raw'
+import materialLuaSvg from '../../../node_modules/material-icon-theme/icons/lua.svg?raw'
+import materialMarkdownSvg from '../../../node_modules/material-icon-theme/icons/markdown.svg?raw'
+import materialNodeSvg from '../../../node_modules/material-icon-theme/icons/nodejs.svg?raw'
+import materialPdfSvg from '../../../node_modules/material-icon-theme/icons/pdf.svg?raw'
+import materialPerlSvg from '../../../node_modules/material-icon-theme/icons/perl.svg?raw'
+import materialPhpSvg from '../../../node_modules/material-icon-theme/icons/php.svg?raw'
+import materialPythonMiscSvg from '../../../node_modules/material-icon-theme/icons/python-misc.svg?raw'
+import materialPythonSvg from '../../../node_modules/material-icon-theme/icons/python.svg?raw'
+import materialRSvg from '../../../node_modules/material-icon-theme/icons/r.svg?raw'
+import materialReactSvg from '../../../node_modules/material-icon-theme/icons/react_ts.svg?raw'
+import materialReadmeSvg from '../../../node_modules/material-icon-theme/icons/readme.svg?raw'
+import materialRubySvg from '../../../node_modules/material-icon-theme/icons/ruby.svg?raw'
+import materialRustSvg from '../../../node_modules/material-icon-theme/icons/rust.svg?raw'
+import materialSassSvg from '../../../node_modules/material-icon-theme/icons/sass.svg?raw'
+import materialScalaSvg from '../../../node_modules/material-icon-theme/icons/scala.svg?raw'
+import materialSoliditySvg from '../../../node_modules/material-icon-theme/icons/solidity.svg?raw'
+import materialSvelteSvg from '../../../node_modules/material-icon-theme/icons/svelte.svg?raw'
+import materialSwiftSvg from '../../../node_modules/material-icon-theme/icons/swift.svg?raw'
+import materialTableSvg from '../../../node_modules/material-icon-theme/icons/table.svg?raw'
+import materialTomlSvg from '../../../node_modules/material-icon-theme/icons/toml.svg?raw'
+import materialTypescriptSvg from '../../../node_modules/material-icon-theme/icons/typescript.svg?raw'
+import materialUvSvg from '../../../node_modules/material-icon-theme/icons/uv.svg?raw'
+import materialVideoSvg from '../../../node_modules/material-icon-theme/icons/video.svg?raw'
+import materialVueSvg from '../../../node_modules/material-icon-theme/icons/vue.svg?raw'
+import materialYamlSvg from '../../../node_modules/material-icon-theme/icons/yaml.svg?raw'
+import materialZigSvg from '../../../node_modules/material-icon-theme/icons/zig.svg?raw'
 import {
-  BrainCircuit,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  ChevronUp,
-  CircleCheck,
-  CircleX,
-  Copy,
-  Download,
-  ExternalLink,
-  FileText,
-  Folder,
-  FolderOpen,
-  Gauge,
-  Globe,
-  GraduationCap,
-  KeyRound,
-  LockKeyhole,
-  LockKeyholeOpen,
-  LogIn,
-  LogOut,
-  MessageCircle,
-  MessageSquarePlus,
-  MoreHorizontal,
-  Network,
-  Palette,
-  Pencil,
-  Plus,
-  Puzzle,
-  RefreshCw,
-  Search,
-  Send,
-  Settings,
-  Shield,
-  Square,
-  Terminal,
-  Trash2,
-  Wrench,
-  X,
-  Zap,
-  type LucideIcon,
-  type LucideProps
-} from 'lucide-react'
+  FiCheck,
+  FiCheckCircle,
+  FiChevronDown,
+  FiChevronRight,
+  FiChevronUp,
+  FiCopy,
+  FiDownload,
+  FiEdit3,
+  FiExternalLink,
+  FiFileText,
+  FiBarChart2,
+  FiGlobe,
+  FiKey,
+  FiLock,
+  FiLogIn,
+  FiLogOut,
+  FiMessageCircle,
+  FiMessageSquare,
+  FiMoreHorizontal,
+  FiPlay,
+  FiPlus,
+  FiRefreshCw,
+  FiSave,
+  FiSearch,
+  FiSend,
+  FiSettings,
+  FiShield,
+  FiSquare,
+  FiTerminal,
+  FiTool,
+  FiTrash2,
+  FiUnlock,
+  FiX,
+  FiXCircle,
+  FiZap
+} from 'react-icons/fi'
+import type { IconType } from 'react-icons'
+import {
+  TbBrain,
+  TbFolderOpen,
+  TbGauge,
+  TbListTree,
+  TbNetwork,
+  TbNotebook,
+  TbPalette,
+  TbPuzzle,
+  TbRoute,
+  TbSchool,
+  TbServer
+} from 'react-icons/tb'
 import {
   createElement,
   forwardRef,
+  type ComponentPropsWithoutRef,
   type CSSProperties,
   type ElementType,
   type ForwardRefExoticComponent,
@@ -57,13 +132,14 @@ import type { PermissionMode } from './types'
 type PhiIconFontSize = 'inherit' | 'small' | 'medium' | 'large'
 
 export type PhiIconProps = Omit<
-  LucideProps,
-  'absoluteStrokeWidth' | 'children' | 'color' | 'ref' | 'size' | 'style'
+  ComponentPropsWithoutRef<'span'>,
+  'children' | 'color' | 'ref' | 'size' | 'style'
 > & {
   color?: string
   fontSize?: PhiIconFontSize
   htmlColor?: string
   size?: number | string
+  strokeWidth?: number | string
   style?: CSSProperties
   sx?: SxProps<Theme>
 }
@@ -73,6 +149,132 @@ export type PhiIconComponent = ForwardRefExoticComponent<
 >
 
 const PHI_STROKE_WIDTH = 1.85
+const PYTHON_BLUE = '#3776AB'
+const FILE_ICON_GREEN = '#217346'
+const FILE_ICON_MARKDOWN = '#6B7280'
+const FILE_ICON_JSON = '#F2C94C'
+const MATERIAL_ICON_ASSET_PREFIX = '../../../node_modules/material-icon-theme/icons/'
+const MATERIAL_ICON_MANIFEST = materialIconManifestJson as Manifest
+const MATERIAL_ICON_SVG_MODULES =
+  typeof import.meta.glob === 'function'
+    ? import.meta.glob('../../../node_modules/material-icon-theme/icons/*.svg', {
+        eager: true,
+        import: 'default',
+        query: '?raw'
+      })
+    : {}
+const MATERIAL_ICON_SVG_MARKUP = MATERIAL_ICON_SVG_MODULES as Record<string, string>
+const MATERIAL_ICON_COMPONENT_CACHE = new Map<string, PhiIconComponent>()
+const MATERIAL_ICON_DIRECT_SVG_MARKUP: Record<string, string> = {
+  astro: materialAstroSvg,
+  audio: materialAudioSvg,
+  bun: materialBunSvg,
+  c: materialCSvg,
+  clojure: materialClojureSvg,
+  code: materialCodeSvg,
+  console: materialConsoleSvg,
+  cpp: materialCppSvg,
+  csharp: materialCsharpSvg,
+  css: materialCssSvg,
+  dart: materialDartSvg,
+  database: materialDataSvg,
+  deno: materialDenoSvg,
+  docker: materialDockerSvg,
+  document: materialDocumentSvg,
+  elixir: materialElixirSvg,
+  erlang: materialErlangSvg,
+  file: materialFileSvg,
+  folder: materialDirectorySvg,
+  'folder-open': materialDirectoryOpenSvg,
+  'folder-test': materialFolderTestSvg,
+  'folder-test-open': materialFolderTestOpenSvg,
+  font: materialFontSvg,
+  go: materialGoSvg,
+  haskell: materialHaskellSvg,
+  hex: materialBinarySvg,
+  html: materialHtmlSvg,
+  image: materialImageSvg,
+  java: materialJavaSvg,
+  javascript: materialJavascriptSvg,
+  json: materialJsonSvg,
+  julia: materialJuliaSvg,
+  jupyter: materialJupyterSvg,
+  kotlin: materialKotlinSvg,
+  lock: materialLockSvg,
+  lua: materialLuaSvg,
+  markdown: materialMarkdownSvg,
+  nodejs: materialNodeSvg,
+  pdf: materialPdfSvg,
+  perl: materialPerlSvg,
+  php: materialPhpSvg,
+  python: materialPythonSvg,
+  'python-misc': materialPythonMiscSvg,
+  r: materialRSvg,
+  react_ts: materialReactSvg,
+  readme: materialReadmeSvg,
+  ruby: materialRubySvg,
+  rust: materialRustSvg,
+  sass: materialSassSvg,
+  scala: materialScalaSvg,
+  settings: materialConfigSvg,
+  solidity: materialSoliditySvg,
+  svelte: materialSvelteSvg,
+  swift: materialSwiftSvg,
+  table: materialTableSvg,
+  toml: materialTomlSvg,
+  tune: materialDotenvSvg,
+  typescript: materialTypescriptSvg,
+  uv: materialUvSvg,
+  video: materialVideoSvg,
+  vue: materialVueSvg,
+  yaml: materialYamlSvg,
+  zig: materialZigSvg,
+  zip: materialArchiveSvg
+}
+
+type NodeLikeProcess = {
+  getBuiltinModule?: (moduleName: string) => unknown
+  versions?: {
+    node?: string
+  }
+}
+
+type ParsedMaterialSvg = {
+  content: string
+  fill?: string
+  stroke?: string
+  viewBox: string
+}
+
+type CreatePhiIconOptions = {
+  defaultStrokeWidth?: number | string | null
+  scale?: number
+}
+
+function lowerCaseRecord(record?: Record<string, string>): Record<string, string> {
+  if (!record) return {}
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [key.toLowerCase(), value])
+  )
+}
+
+const MATERIAL_FILE_NAME_ICONS = lowerCaseRecord(MATERIAL_ICON_MANIFEST.fileNames)
+const MATERIAL_FILE_EXTENSION_ICONS = lowerCaseRecord(MATERIAL_ICON_MANIFEST.fileExtensions)
+const MATERIAL_FOLDER_NAME_ICONS = lowerCaseRecord(MATERIAL_ICON_MANIFEST.folderNames)
+const MATERIAL_FOLDER_EXPANDED_NAME_ICONS = lowerCaseRecord(
+  MATERIAL_ICON_MANIFEST.folderNamesExpanded
+)
+const MATERIAL_ROOT_FOLDER_NAME_ICONS = lowerCaseRecord(MATERIAL_ICON_MANIFEST.rootFolderNames)
+const MATERIAL_ROOT_FOLDER_EXPANDED_NAME_ICONS = lowerCaseRecord(
+  MATERIAL_ICON_MANIFEST.rootFolderNamesExpanded
+)
+const MATERIAL_FILE_EXTENSION_KEYS = Object.keys(MATERIAL_FILE_EXTENSION_ICONS).sort(
+  (a, b) => b.length - a.length
+)
+const MATERIAL_FILE_NAME_ICON_OVERRIDES: Record<string, string> = {
+  '.venv': 'folder-environment'
+}
+const VIRTUAL_ENV_DIRECTORY_NAMES = new Set(['.venv', 'venv'])
 
 function fontSizeValue(fontSize?: PhiIconFontSize, size?: number | string): string | number {
   if (size !== undefined) return size
@@ -103,10 +305,29 @@ function mergeSx(base: SxProps<Theme>, sx?: SxProps<Theme>): SxProps<Theme> {
   return Array.isArray(sx) ? ([base, ...sx] as SxProps<Theme>) : ([base, sx] as SxProps<Theme>)
 }
 
-function createPhiIcon(name: string, Icon: LucideIcon): PhiIconComponent {
+function createPhiIcon(
+  name: string,
+  Icon: IconType,
+  options: CreatePhiIconOptions = {}
+): PhiIconComponent {
   const PhiIcon = forwardRef<HTMLSpanElement, PhiIconProps>(
-    ({ className, color, fontSize, htmlColor, size, strokeWidth, style, sx, ...rest }, ref) =>
-      createElement(
+    ({ className, color, fontSize, htmlColor, size, strokeWidth, style, sx, ...rest }, ref) => {
+      const iconProps: Record<string, unknown> = {
+        'aria-hidden': rest['aria-label'] ? undefined : true,
+        color: 'currentColor',
+        focusable: 'false',
+        size: '1em'
+      }
+      if (options.scale) {
+        iconProps.style = { transform: `scale(${options.scale})`, transformOrigin: 'center' }
+      }
+      if (strokeWidth !== undefined) {
+        iconProps.strokeWidth = strokeWidth
+      } else if (options.defaultStrokeWidth !== null) {
+        iconProps.strokeWidth = options.defaultStrokeWidth ?? PHI_STROKE_WIDTH
+      }
+
+      return createElement(
         Box as ElementType,
         {
           ...rest,
@@ -129,150 +350,392 @@ function createPhiIcon(name: string, Icon: LucideIcon): PhiIconComponent {
             sx
           )
         },
-        createElement(Icon, {
-          'aria-hidden': rest['aria-label'] ? undefined : true,
-          color: 'currentColor',
-          fill: 'none',
-          focusable: 'false',
-          size: '1em',
-          strokeWidth: strokeWidth ?? PHI_STROKE_WIDTH
-        })
+        createElement(Icon, iconProps)
       )
+    }
   )
 
   PhiIcon.displayName = `Phi${name}Icon`
   return PhiIcon
 }
 
+function materialIconFileName(iconName: string): string | null {
+  const iconPath = MATERIAL_ICON_MANIFEST.iconDefinitions?.[iconName]?.iconPath
+  return iconPath?.split('/').pop() ?? null
+}
+
+function nodeProcess(): NodeLikeProcess | null {
+  const process = (globalThis as { process?: NodeLikeProcess }).process
+  return process?.versions?.node ? process : null
+}
+
+function readMaterialIconMarkupFromDisk(fileName: string): string | null {
+  const process = nodeProcess()
+  if (!process?.getBuiltinModule) return null
+
+  try {
+    const fs = process.getBuiltinModule('node:fs') as
+      { readFileSync?: (path: string, encoding: 'utf8') => string } | undefined
+    const url = process.getBuiltinModule('node:url') as
+      { fileURLToPath?: (url: URL) => string } | undefined
+    if (!fs?.readFileSync || !url?.fileURLToPath) return null
+
+    return fs.readFileSync(
+      url.fileURLToPath(new URL(`${MATERIAL_ICON_ASSET_PREFIX}${fileName}`, import.meta.url)),
+      'utf8'
+    )
+  } catch {
+    return null
+  }
+}
+
+function materialIconMarkup(iconName: string): string | null {
+  const directMarkup = MATERIAL_ICON_DIRECT_SVG_MARKUP[iconName]
+  if (directMarkup) return directMarkup
+
+  const fileName = materialIconFileName(iconName)
+  if (!fileName) return null
+
+  const bundledMarkup = MATERIAL_ICON_SVG_MARKUP[`${MATERIAL_ICON_ASSET_PREFIX}${fileName}`]
+  if (bundledMarkup) return bundledMarkup
+
+  return readMaterialIconMarkupFromDisk(fileName)
+}
+
+function parseMaterialSvg(svgMarkup: string): ParsedMaterialSvg {
+  const trimmed = svgMarkup.trim()
+  const rootAttributes = trimmed.match(/<svg\b([^>]*)>/i)?.[1] ?? ''
+  const fill = rootAttributes.match(/\sfill=(["'])(.*?)\1/i)?.[2]
+  const stroke = rootAttributes.match(/\sstroke=(["'])(.*?)\1/i)?.[2]
+  const viewBox = trimmed.match(/\sviewBox=(["'])(.*?)\1/i)?.[2] ?? '0 0 24 24'
+  const content = trimmed.match(/<svg\b[^>]*>([\s\S]*?)<\/svg>/i)?.[1] ?? trimmed
+  return { content, fill, stroke, viewBox }
+}
+
+function materialLightIconName(iconName: string): string | null {
+  const lightIconName = `${iconName}_light`
+  return materialIconMarkup(lightIconName) ? lightIconName : null
+}
+
+function createMaterialSvgIcon(name: string, iconName: string): PhiIconComponent {
+  const svgMarkup = materialIconMarkup(iconName)
+  if (!svgMarkup) return createMissingMaterialIcon(name, iconName)
+  const defaultSvg = parseMaterialSvg(svgMarkup)
+  const lightIconName = materialLightIconName(iconName)
+  const lightSvgMarkup = lightIconName ? materialIconMarkup(lightIconName) : null
+  const lightSvg = lightSvgMarkup ? parseMaterialSvg(lightSvgMarkup) : null
+
+  const PhiIcon = forwardRef<HTMLSpanElement, PhiIconProps>(
+    ({ className, color, fontSize, htmlColor, size, style, sx, ...rest }, ref) => {
+      const theme = useTheme()
+      const activeIconName = theme.palette.mode === 'light' && lightSvg ? lightIconName : iconName
+      const activeSvg = theme.palette.mode === 'light' && lightSvg ? lightSvg : defaultSvg
+
+      return createElement(
+        Box as ElementType,
+        {
+          ...rest,
+          className,
+          component: 'span',
+          ref,
+          style,
+          sx: mergeSx(
+            {
+              alignItems: 'center',
+              color: colorValue(color, htmlColor),
+              display: 'inline-flex',
+              flexShrink: 0,
+              fontSize: fontSizeValue(fontSize, size),
+              height: '1em',
+              justifyContent: 'center',
+              lineHeight: 0,
+              width: '1em'
+            },
+            sx
+          )
+        },
+        createElement(
+          SvgIcon as ElementType,
+          {
+            'aria-hidden': true,
+            'data-phi-material-icon': activeIconName,
+            focusable: 'false',
+            htmlColor: undefined,
+            inheritViewBox: false,
+            viewBox: activeSvg.viewBox,
+            sx: {
+              display: 'block',
+              fontSize: '1em',
+              height: '1em',
+              width: '1em'
+            }
+          },
+          createElement('g', {
+            dangerouslySetInnerHTML: { __html: activeSvg.content },
+            fill: activeSvg.fill,
+            stroke: activeSvg.stroke
+          })
+        )
+      )
+    }
+  )
+
+  PhiIcon.displayName = `Phi${name}MaterialIcon`
+  return PhiIcon
+}
+
+function createMissingMaterialIcon(name: string, iconName: string): PhiIconComponent {
+  const PhiIcon = forwardRef<HTMLSpanElement, PhiIconProps>(
+    ({ className, color, fontSize, htmlColor, size, style, sx, ...rest }, ref) =>
+      createElement(
+        Box as ElementType,
+        {
+          ...rest,
+          className,
+          component: 'span',
+          'data-phi-missing-material-icon': iconName,
+          ref,
+          style,
+          sx: mergeSx(
+            {
+              alignItems: 'center',
+              color: colorValue(color, htmlColor),
+              display: 'inline-flex',
+              flexShrink: 0,
+              fontSize: fontSizeValue(fontSize, size),
+              height: '1em',
+              justifyContent: 'center',
+              lineHeight: 0,
+              width: '1em'
+            },
+            sx
+          )
+        },
+        createElement(FiFileText, {
+          'aria-hidden': true,
+          color: 'currentColor',
+          focusable: 'false',
+          size: '1em',
+          strokeWidth: PHI_STROKE_WIDTH
+        })
+      )
+  )
+
+  PhiIcon.displayName = `Phi${name}MissingMaterialIcon`
+  return PhiIcon
+}
+
+function materialIconComponentForName(iconName: string): PhiIconComponent | null {
+  const cached = MATERIAL_ICON_COMPONENT_CACHE.get(iconName)
+  if (cached) return cached
+
+  const safeIconName = iconName.replace(/[^A-Za-z0-9]/g, '')
+  const Icon = materialIconMarkup(iconName)
+    ? createMaterialSvgIcon(`Material${safeIconName}`, iconName)
+    : createMissingMaterialIcon(`Material${safeIconName}`, iconName)
+  MATERIAL_ICON_COMPONENT_CACHE.set(iconName, Icon)
+  return Icon
+}
+
+const MATERIAL_ICON_NAME_BY_KIND = {
+  archive: 'zip',
+  astro: 'astro',
+  audio: 'audio',
+  binary: 'hex',
+  bun: 'bun',
+  c: 'c',
+  clojure: 'clojure',
+  code: 'javascript',
+  config: 'settings',
+  cpp: 'cpp',
+  csharp: 'csharp',
+  css: 'css',
+  csv: 'table',
+  dart: 'dart',
+  data: 'database',
+  deno: 'deno',
+  directory: 'folder',
+  docker: 'docker',
+  dotenv: 'tune',
+  elixir: 'elixir',
+  erlang: 'erlang',
+  fish: 'console',
+  go: 'go',
+  haskell: 'haskell',
+  html: 'html',
+  image: 'image',
+  java: 'java',
+  javascript: 'javascript',
+  jupyter: 'jupyter',
+  json: 'json',
+  julia: 'julia',
+  kotlin: 'kotlin',
+  lock: 'lock',
+  lua: 'lua',
+  markdown: 'markdown',
+  node: 'nodejs',
+  pdf: 'pdf',
+  perl: 'perl',
+  php: 'php',
+  python: 'python',
+  r: 'r',
+  react: 'react_ts',
+  ruby: 'ruby',
+  rust: 'rust',
+  sass: 'sass',
+  scala: 'scala',
+  shell: 'console',
+  solidity: 'solidity',
+  spreadsheet: 'table',
+  svelte: 'svelte',
+  swift: 'swift',
+  text: 'document',
+  toml: 'toml',
+  typescript: 'typescript',
+  type: 'font',
+  video: 'video',
+  vue: 'vue',
+  yaml: 'yaml',
+  zig: 'zig'
+} as const
+
 export const PhiIcons = {
   action: {
-    add: createPhiIcon('Add', Plus),
-    addSession: createPhiIcon('AddSession', MessageSquarePlus),
-    approve: createPhiIcon('Approve', CircleCheck),
-    back: createPhiIcon('Back', ChevronRight),
-    cancel: createPhiIcon('Cancel', CircleX),
-    close: createPhiIcon('Close', X),
-    collapse: createPhiIcon('Collapse', ChevronUp),
-    copy: createPhiIcon('Copy', Copy),
-    delete: createPhiIcon('Delete', Trash2),
-    download: createPhiIcon('Download', Download),
-    edit: createPhiIcon('Edit', Pencil),
-    expand: createPhiIcon('Expand', ChevronDown),
-    login: createPhiIcon('Login', LogIn),
-    logout: createPhiIcon('Logout', LogOut),
-    more: createPhiIcon('More', MoreHorizontal),
-    openDefault: createPhiIcon('OpenDefault', ExternalLink),
-    openExternal: createPhiIcon('OpenExternal', ExternalLink),
-    quick: createPhiIcon('Quick', Zap),
-    refresh: createPhiIcon('Refresh', RefreshCw),
-    saveKey: createPhiIcon('SaveKey', KeyRound),
-    search: createPhiIcon('Search', Search),
-    send: createPhiIcon('Send', Send),
-    stop: createPhiIcon('Stop', Square)
+    add: createPhiIcon('Add', FiPlus),
+    addSession: createPhiIcon('AddSession', FiMessageSquare),
+    approve: createPhiIcon('Approve', FiCheckCircle),
+    back: createPhiIcon('Back', FiChevronRight),
+    cancel: createPhiIcon('Cancel', FiXCircle),
+    close: createPhiIcon('Close', FiX),
+    collapse: createPhiIcon('Collapse', FiChevronUp),
+    copy: createPhiIcon('Copy', FiCopy),
+    delete: createPhiIcon('Delete', FiTrash2),
+    download: createPhiIcon('Download', FiDownload),
+    edit: createPhiIcon('Edit', FiEdit3),
+    expand: createPhiIcon('Expand', FiChevronDown),
+    login: createPhiIcon('Login', FiLogIn),
+    logout: createPhiIcon('Logout', FiLogOut),
+    more: createPhiIcon('More', FiMoreHorizontal),
+    openDefault: createPhiIcon('OpenDefault', FiExternalLink),
+    openExternal: createPhiIcon('OpenExternal', FiExternalLink),
+    quick: createPhiIcon('Quick', FiZap),
+    run: createPhiIcon('Run', FiPlay),
+    refresh: createPhiIcon('Refresh', FiRefreshCw),
+    save: createPhiIcon('Save', FiSave),
+    saveKey: createPhiIcon('SaveKey', FiKey),
+    search: createPhiIcon('Search', FiSearch),
+    send: createPhiIcon('Send', FiSend),
+    stop: createPhiIcon('Stop', FiSquare)
   },
   entity: {
-    apiKey: createPhiIcon('ApiKey', KeyRound),
-    agent: createPhiIcon('Agent', BrainCircuit),
-    directoryTree: createPhiIcon('DirectoryTree', FolderOpen),
-    folder: createPhiIcon('Folder', Folder),
-    mcp: createPhiIcon('Mcp', Network),
-    plugin: createPhiIcon('Plugin', Puzzle),
-    project: createPhiIcon('Project', FolderOpen),
-    provider: createPhiIcon('Provider', Network),
-    skill: createPhiIcon('Skill', GraduationCap)
+    apiKey: createPhiIcon('ApiKey', FiKey),
+    agent: createPhiIcon('Agent', TbBrain),
+    directoryTree: createPhiIcon('DirectoryTree', TbListTree),
+    folder: createPhiIcon('Folder', TbFolderOpen),
+    mcp: createPhiIcon('Mcp', TbNetwork),
+    plugin: createPhiIcon('Plugin', TbPuzzle),
+    project: createPhiIcon('Project', TbFolderOpen),
+    provider: createPhiIcon('Provider', TbNetwork),
+    skill: createPhiIcon('Skill', TbSchool),
+    wrapper: createPhiIcon('Wrapper', TbRoute)
   },
   nav: {
-    analysis: createPhiIcon('NavAnalysis', FileText),
-    chat: createPhiIcon('NavChat', MessageCircle),
-    mcp: createPhiIcon('NavMcp', Network),
-    plugins: createPhiIcon('NavPlugins', Puzzle),
-    projects: createPhiIcon('NavProjects', Folder),
-    settings: createPhiIcon('NavSettings', Settings),
-    skills: createPhiIcon('NavSkills', GraduationCap)
+    analysis: createPhiIcon('NavAnalysis', FiFileText),
+    chat: createPhiIcon('NavChat', FiMessageCircle),
+    mcp: createPhiIcon('NavMcp', TbNetwork),
+    plugins: createPhiIcon('NavPlugins', TbPuzzle),
+    projects: createPhiIcon('NavProjects', TbFolderOpen),
+    runtime: createPhiIcon('NavRuntime', TbNotebook),
+    settings: createPhiIcon('NavSettings', FiSettings),
+    skills: createPhiIcon('NavSkills', TbSchool),
+    visualization: createPhiIcon('NavVisualization', FiBarChart2),
+    wrappers: createPhiIcon('NavWrappers', TbRoute)
   },
   settings: {
-    appearance: createPhiIcon('Appearance', Palette),
-    diagnostics: createPhiIcon('Diagnostics', Copy),
-    permissions: createPhiIcon('Permissions', Shield),
-    persona: createPhiIcon('Persona', BrainCircuit),
-    providers: createPhiIcon('Providers', Network)
+    appearance: createPhiIcon('Appearance', TbPalette),
+    diagnostics: createPhiIcon('Diagnostics', FiCopy),
+    permissions: createPhiIcon('Permissions', FiShield),
+    persona: createPhiIcon('Persona', TbBrain),
+    providers: createPhiIcon('Providers', TbNetwork),
+    remoteExecution: createPhiIcon('RemoteExecution', TbServer)
   },
   file: {
-    archive: createPhiIcon('FileArchive', FileText),
-    astro: createPhiIcon('FileAstro', FileText),
-    audio: createPhiIcon('FileAudio', FileText),
-    binary: createPhiIcon('FileBinary', FileText),
-    bun: createPhiIcon('FileBun', FileText),
-    c: createPhiIcon('FileC', Terminal),
-    clojure: createPhiIcon('FileClojure', Terminal),
-    code: createPhiIcon('FileCode', Terminal),
-    config: createPhiIcon('FileConfig', Wrench),
-    cpp: createPhiIcon('FileCpp', Terminal),
-    csharp: createPhiIcon('FileCSharp', Terminal),
-    css: createPhiIcon('FileCss', FileText),
-    dart: createPhiIcon('FileDart', Terminal),
-    data: createPhiIcon('FileData', FileText),
-    deno: createPhiIcon('FileDeno', Terminal),
-    directory: createPhiIcon('FileDirectory', Folder),
-    docker: createPhiIcon('FileDocker', Wrench),
-    dotenv: createPhiIcon('FileDotenv', KeyRound),
-    elixir: createPhiIcon('FileElixir', Terminal),
-    erlang: createPhiIcon('FileErlang', Terminal),
-    fish: createPhiIcon('FileFish', Terminal),
-    go: createPhiIcon('FileGo', Terminal),
-    haskell: createPhiIcon('FileHaskell', Terminal),
-    html: createPhiIcon('FileHtml', FileText),
-    image: createPhiIcon('FileImage', FileText),
-    java: createPhiIcon('FileJava', Terminal),
-    javascript: createPhiIcon('FileJavaScript', Terminal),
-    jupyter: createPhiIcon('FileJupyter', FileText),
-    json: createPhiIcon('FileJson', FileText),
-    julia: createPhiIcon('FileJulia', Terminal),
-    kotlin: createPhiIcon('FileKotlin', Terminal),
-    lock: createPhiIcon('FileLock', LockKeyhole),
-    lua: createPhiIcon('FileLua', Terminal),
-    markdown: createPhiIcon('FileMarkdown', FileText),
-    node: createPhiIcon('FileNode', Terminal),
-    pdf: createPhiIcon('FilePdf', FileText),
-    perl: createPhiIcon('FilePerl', Terminal),
-    php: createPhiIcon('FilePhp', Terminal),
-    python: createPhiIcon('FilePython', Terminal),
-    r: createPhiIcon('FileR', Terminal),
-    react: createPhiIcon('FileReact', Terminal),
-    ruby: createPhiIcon('FileRuby', Terminal),
-    rust: createPhiIcon('FileRust', Terminal),
-    sass: createPhiIcon('FileSass', FileText),
-    scala: createPhiIcon('FileScala', Terminal),
-    shell: createPhiIcon('FileShell', Terminal),
-    solidity: createPhiIcon('FileSolidity', Terminal),
-    spreadsheet: createPhiIcon('FileSpreadsheet', FileText),
-    svelte: createPhiIcon('FileSvelte', Terminal),
-    swift: createPhiIcon('FileSwift', Terminal),
-    text: createPhiIcon('FileText', FileText),
-    toml: createPhiIcon('FileToml', FileText),
-    typescript: createPhiIcon('FileTypeScript', Terminal),
-    type: createPhiIcon('FileType', FileText),
-    video: createPhiIcon('FileVideo', FileText),
-    vue: createPhiIcon('FileVue', Terminal),
-    yaml: createPhiIcon('FileYaml', FileText),
-    zig: createPhiIcon('FileZig', Terminal)
+    archive: createMaterialSvgIcon('FileArchive', MATERIAL_ICON_NAME_BY_KIND.archive),
+    astro: createMaterialSvgIcon('FileAstro', MATERIAL_ICON_NAME_BY_KIND.astro),
+    audio: createMaterialSvgIcon('FileAudio', MATERIAL_ICON_NAME_BY_KIND.audio),
+    binary: createMaterialSvgIcon('FileBinary', MATERIAL_ICON_NAME_BY_KIND.binary),
+    bun: createMaterialSvgIcon('FileBun', MATERIAL_ICON_NAME_BY_KIND.bun),
+    c: createMaterialSvgIcon('FileC', MATERIAL_ICON_NAME_BY_KIND.c),
+    clojure: createMaterialSvgIcon('FileClojure', MATERIAL_ICON_NAME_BY_KIND.clojure),
+    code: createMaterialSvgIcon('FileCode', MATERIAL_ICON_NAME_BY_KIND.code),
+    config: createMaterialSvgIcon('FileConfig', MATERIAL_ICON_NAME_BY_KIND.config),
+    cpp: createMaterialSvgIcon('FileCpp', MATERIAL_ICON_NAME_BY_KIND.cpp),
+    csharp: createMaterialSvgIcon('FileCSharp', MATERIAL_ICON_NAME_BY_KIND.csharp),
+    css: createMaterialSvgIcon('FileCss', MATERIAL_ICON_NAME_BY_KIND.css),
+    csv: createMaterialSvgIcon('FileCsv', MATERIAL_ICON_NAME_BY_KIND.csv),
+    dart: createMaterialSvgIcon('FileDart', MATERIAL_ICON_NAME_BY_KIND.dart),
+    data: createMaterialSvgIcon('FileData', MATERIAL_ICON_NAME_BY_KIND.data),
+    deno: createMaterialSvgIcon('FileDeno', MATERIAL_ICON_NAME_BY_KIND.deno),
+    directory: createMaterialSvgIcon('FileDirectory', MATERIAL_ICON_NAME_BY_KIND.directory),
+    docker: createMaterialSvgIcon('FileDocker', MATERIAL_ICON_NAME_BY_KIND.docker),
+    dotenv: createMaterialSvgIcon('FileDotenv', MATERIAL_ICON_NAME_BY_KIND.dotenv),
+    elixir: createMaterialSvgIcon('FileElixir', MATERIAL_ICON_NAME_BY_KIND.elixir),
+    erlang: createMaterialSvgIcon('FileErlang', MATERIAL_ICON_NAME_BY_KIND.erlang),
+    fish: createMaterialSvgIcon('FileFish', MATERIAL_ICON_NAME_BY_KIND.fish),
+    go: createMaterialSvgIcon('FileGo', MATERIAL_ICON_NAME_BY_KIND.go),
+    haskell: createMaterialSvgIcon('FileHaskell', MATERIAL_ICON_NAME_BY_KIND.haskell),
+    html: createMaterialSvgIcon('FileHtml', MATERIAL_ICON_NAME_BY_KIND.html),
+    image: createMaterialSvgIcon('FileImage', MATERIAL_ICON_NAME_BY_KIND.image),
+    java: createMaterialSvgIcon('FileJava', MATERIAL_ICON_NAME_BY_KIND.java),
+    javascript: createMaterialSvgIcon('FileJavaScript', MATERIAL_ICON_NAME_BY_KIND.javascript),
+    jupyter: createMaterialSvgIcon('FileJupyter', MATERIAL_ICON_NAME_BY_KIND.jupyter),
+    json: createMaterialSvgIcon('FileJson', MATERIAL_ICON_NAME_BY_KIND.json),
+    julia: createMaterialSvgIcon('FileJulia', MATERIAL_ICON_NAME_BY_KIND.julia),
+    kotlin: createMaterialSvgIcon('FileKotlin', MATERIAL_ICON_NAME_BY_KIND.kotlin),
+    lock: createMaterialSvgIcon('FileLock', MATERIAL_ICON_NAME_BY_KIND.lock),
+    lua: createMaterialSvgIcon('FileLua', MATERIAL_ICON_NAME_BY_KIND.lua),
+    markdown: createMaterialSvgIcon('FileMarkdown', MATERIAL_ICON_NAME_BY_KIND.markdown),
+    node: createMaterialSvgIcon('FileNode', MATERIAL_ICON_NAME_BY_KIND.node),
+    pdf: createMaterialSvgIcon('FilePdf', MATERIAL_ICON_NAME_BY_KIND.pdf),
+    perl: createMaterialSvgIcon('FilePerl', MATERIAL_ICON_NAME_BY_KIND.perl),
+    php: createMaterialSvgIcon('FilePhp', MATERIAL_ICON_NAME_BY_KIND.php),
+    python: createMaterialSvgIcon('FilePython', MATERIAL_ICON_NAME_BY_KIND.python),
+    r: createMaterialSvgIcon('FileR', MATERIAL_ICON_NAME_BY_KIND.r),
+    react: createMaterialSvgIcon('FileReact', MATERIAL_ICON_NAME_BY_KIND.react),
+    ruby: createMaterialSvgIcon('FileRuby', MATERIAL_ICON_NAME_BY_KIND.ruby),
+    rust: createMaterialSvgIcon('FileRust', MATERIAL_ICON_NAME_BY_KIND.rust),
+    sass: createMaterialSvgIcon('FileSass', MATERIAL_ICON_NAME_BY_KIND.sass),
+    scala: createMaterialSvgIcon('FileScala', MATERIAL_ICON_NAME_BY_KIND.scala),
+    shell: createMaterialSvgIcon('FileShell', MATERIAL_ICON_NAME_BY_KIND.shell),
+    solidity: createMaterialSvgIcon('FileSolidity', MATERIAL_ICON_NAME_BY_KIND.solidity),
+    spreadsheet: createMaterialSvgIcon('FileSpreadsheet', MATERIAL_ICON_NAME_BY_KIND.spreadsheet),
+    svelte: createMaterialSvgIcon('FileSvelte', MATERIAL_ICON_NAME_BY_KIND.svelte),
+    swift: createMaterialSvgIcon('FileSwift', MATERIAL_ICON_NAME_BY_KIND.swift),
+    text: createMaterialSvgIcon('FileText', MATERIAL_ICON_NAME_BY_KIND.text),
+    toml: createMaterialSvgIcon('FileToml', MATERIAL_ICON_NAME_BY_KIND.toml),
+    typescript: createMaterialSvgIcon('FileTypeScript', MATERIAL_ICON_NAME_BY_KIND.typescript),
+    type: createMaterialSvgIcon('FileType', MATERIAL_ICON_NAME_BY_KIND.type),
+    video: createMaterialSvgIcon('FileVideo', MATERIAL_ICON_NAME_BY_KIND.video),
+    vue: createMaterialSvgIcon('FileVue', MATERIAL_ICON_NAME_BY_KIND.vue),
+    yaml: createMaterialSvgIcon('FileYaml', MATERIAL_ICON_NAME_BY_KIND.yaml),
+    zig: createMaterialSvgIcon('FileZig', MATERIAL_ICON_NAME_BY_KIND.zig)
   },
   state: {
-    ask: createPhiIcon('Ask', LockKeyhole),
-    auto: createPhiIcon('Auto', Gauge),
-    check: createPhiIcon('Check', Check),
-    denied: createPhiIcon('Denied', CircleX),
-    done: createPhiIcon('Done', CircleCheck),
-    full: createPhiIcon('FullAccess', LockKeyholeOpen),
-    thinking: createPhiIcon('Thinking', BrainCircuit)
+    ask: createPhiIcon('Ask', FiLock),
+    auto: createPhiIcon('Auto', TbGauge, { scale: 1.16 }),
+    check: createPhiIcon('Check', FiCheck),
+    denied: createPhiIcon('Denied', FiXCircle),
+    done: createPhiIcon('Done', FiCheckCircle),
+    full: createPhiIcon('FullAccess', FiUnlock),
+    thinking: createPhiIcon('Thinking', TbBrain)
   },
   tool: {
-    command: createPhiIcon('ToolCommand', Terminal),
-    edit: createPhiIcon('ToolEdit', Pencil),
-    generic: createPhiIcon('ToolGeneric', Wrench),
-    read: createPhiIcon('ToolRead', FileText),
-    search: createPhiIcon('ToolSearch', Search),
-    web: createPhiIcon('ToolWeb', Globe)
+    command: createPhiIcon('ToolCommand', FiTerminal),
+    edit: createPhiIcon('ToolEdit', FiEdit3),
+    generic: createPhiIcon('ToolGeneric', FiTool),
+    read: createPhiIcon('ToolRead', FiFileText),
+    search: createPhiIcon('ToolSearch', FiSearch),
+    web: createPhiIcon('ToolWeb', FiGlobe)
   }
 } as const satisfies Record<string, Record<string, PhiIconComponent>>
 
@@ -280,6 +743,7 @@ export type PhiIconMeta = {
   label: string
   Icon: PhiIconComponent
   color?: string
+  materialIconName?: string
 }
 
 export const PHI_ICON_META = {
@@ -319,8 +783,10 @@ export const PHI_ICON_META = {
   'nav.mcp': { label: 'MCP', Icon: PhiIcons.nav.mcp },
   'nav.plugins': { label: '插件', Icon: PhiIcons.nav.plugins },
   'nav.projects': { label: '项目', Icon: PhiIcons.nav.projects },
+  'nav.runtime': { label: '运行时', Icon: PhiIcons.nav.runtime },
   'nav.settings': { label: '设置', Icon: PhiIcons.nav.settings },
   'nav.skills': { label: '技能', Icon: PhiIcons.nav.skills },
+  'nav.visualization': { label: '可视化', Icon: PhiIcons.nav.visualization },
   'settings.appearance': { label: '外观', Icon: PhiIcons.settings.appearance },
   'settings.diagnostics': { label: '诊断', Icon: PhiIcons.settings.diagnostics },
   'settings.permissions': { label: '权限', Icon: PhiIcons.settings.permissions },
@@ -335,9 +801,10 @@ export const PHI_ICON_META = {
   'file.clojure': { label: 'Clojure 文件', Icon: PhiIcons.file.clojure, color: '#5881D8' },
   'file.cpp': { label: 'C++ 文件', Icon: PhiIcons.file.cpp, color: '#00599C' },
   'file.csharp': { label: 'C# 文件', Icon: PhiIcons.file.csharp, color: '#512BD4' },
-  'file.code': { label: '代码文件', Icon: PhiIcons.file.code, color: 'primary.main' },
-  'file.config': { label: '配置文件', Icon: PhiIcons.file.config, color: 'warning.main' },
+  'file.code': { label: '代码文件', Icon: PhiIcons.file.code, color: '#64748B' },
+  'file.config': { label: '配置文件', Icon: PhiIcons.file.config, color: '#64748B' },
   'file.css': { label: 'CSS 文件', Icon: PhiIcons.file.css, color: '#2965F1' },
+  'file.csv': { label: 'CSV 文件', Icon: PhiIcons.file.csv, color: FILE_ICON_GREEN },
   'file.dart': { label: 'Dart 文件', Icon: PhiIcons.file.dart, color: '#0175C2' },
   'file.data': { label: '数据文件', Icon: PhiIcons.file.data, color: 'info.main' },
   'file.deno': { label: 'Deno 文件', Icon: PhiIcons.file.deno, color: 'text.primary' },
@@ -350,41 +817,45 @@ export const PHI_ICON_META = {
   'file.go': { label: 'Go 文件', Icon: PhiIcons.file.go, color: '#00ADD8' },
   'file.haskell': { label: 'Haskell 文件', Icon: PhiIcons.file.haskell, color: '#5D4F85' },
   'file.html': { label: 'HTML 文件', Icon: PhiIcons.file.html, color: '#E34F26' },
-  'file.image': { label: '图片文件', Icon: PhiIcons.file.image, color: 'success.main' },
+  'file.image': { label: '图片文件', Icon: PhiIcons.file.image, color: '#22A06B' },
   'file.java': { label: 'Java 文件', Icon: PhiIcons.file.java, color: '#B07219' },
   'file.javascript': { label: 'JavaScript 文件', Icon: PhiIcons.file.javascript, color: '#B7791F' },
   'file.jupyter': { label: 'Jupyter Notebook', Icon: PhiIcons.file.jupyter, color: '#F37626' },
-  'file.json': { label: 'JSON 文件', Icon: PhiIcons.file.json, color: 'warning.main' },
+  'file.json': { label: 'JSON 文件', Icon: PhiIcons.file.json, color: FILE_ICON_JSON },
   'file.julia': { label: 'Julia 文件', Icon: PhiIcons.file.julia, color: '#9558B2' },
   'file.kotlin': { label: 'Kotlin 文件', Icon: PhiIcons.file.kotlin, color: '#7F52FF' },
-  'file.lock': { label: '锁定文件', Icon: PhiIcons.file.lock, color: 'error.main' },
+  'file.lock': { label: '锁定文件', Icon: PhiIcons.file.lock, color: '#EF4444' },
   'file.lua': { label: 'Lua 文件', Icon: PhiIcons.file.lua, color: '#000080' },
   'file.markdown': {
     label: 'Markdown 文件',
     Icon: PhiIcons.file.markdown,
-    color: 'text.secondary'
+    color: FILE_ICON_MARKDOWN
   },
   'file.node': { label: 'Node.js 文件', Icon: PhiIcons.file.node, color: '#5FA04E' },
   'file.pdf': { label: 'PDF 文件', Icon: PhiIcons.file.pdf, color: 'error.main' },
   'file.perl': { label: 'Perl 文件', Icon: PhiIcons.file.perl, color: '#39457E' },
   'file.php': { label: 'PHP 文件', Icon: PhiIcons.file.php, color: '#777BB4' },
-  'file.python': { label: 'Python 文件', Icon: PhiIcons.file.python, color: '#3572A5' },
+  'file.python': { label: 'Python 文件', Icon: PhiIcons.file.python, color: PYTHON_BLUE },
   'file.r': { label: 'R 文件', Icon: PhiIcons.file.r, color: '#276DC3' },
   'file.react': { label: 'React 文件', Icon: PhiIcons.file.react, color: '#087EA4' },
   'file.ruby': { label: 'Ruby 文件', Icon: PhiIcons.file.ruby, color: '#CC342D' },
   'file.rust': { label: 'Rust 文件', Icon: PhiIcons.file.rust, color: '#B7410E' },
   'file.sass': { label: 'Sass 文件', Icon: PhiIcons.file.sass, color: '#CC6699' },
   'file.scala': { label: 'Scala 文件', Icon: PhiIcons.file.scala, color: '#DC322F' },
-  'file.shell': { label: '脚本文件', Icon: PhiIcons.file.shell, color: 'success.main' },
+  'file.shell': { label: '脚本文件', Icon: PhiIcons.file.shell, color: '#22A06B' },
   'file.solidity': { label: 'Solidity 文件', Icon: PhiIcons.file.solidity, color: '#363636' },
-  'file.spreadsheet': { label: '表格文件', Icon: PhiIcons.file.spreadsheet, color: 'success.main' },
+  'file.spreadsheet': {
+    label: '表格文件',
+    Icon: PhiIcons.file.spreadsheet,
+    color: FILE_ICON_GREEN
+  },
   'file.svelte': { label: 'Svelte 文件', Icon: PhiIcons.file.svelte, color: '#FF3E00' },
   'file.swift': { label: 'Swift 文件', Icon: PhiIcons.file.swift, color: '#F05138' },
-  'file.text': { label: '文本文件', Icon: PhiIcons.file.text, color: 'text.secondary' },
+  'file.text': { label: '文本文件', Icon: PhiIcons.file.text, color: '#6B7280' },
   'file.toml': { label: 'TOML 文件', Icon: PhiIcons.file.toml, color: '#9C4221' },
   'file.typescript': { label: 'TypeScript 文件', Icon: PhiIcons.file.typescript, color: '#3178C6' },
-  'file.type': { label: '字体文件', Icon: PhiIcons.file.type, color: 'secondary.main' },
-  'file.video': { label: '视频文件', Icon: PhiIcons.file.video, color: 'secondary.main' },
+  'file.type': { label: '字体文件', Icon: PhiIcons.file.type, color: '#7C3AED' },
+  'file.video': { label: '视频文件', Icon: PhiIcons.file.video, color: '#7C3AED' },
   'file.vue': { label: 'Vue 文件', Icon: PhiIcons.file.vue, color: '#42B883' },
   'file.yaml': { label: 'YAML 文件', Icon: PhiIcons.file.yaml, color: '#CB171E' },
   'file.zig': { label: 'Zig 文件', Icon: PhiIcons.file.zig, color: '#F7A41D' },
@@ -419,6 +890,7 @@ export type FileIconKind =
   | 'cpp'
   | 'csharp'
   | 'css'
+  | 'csv'
   | 'dart'
   | 'data'
   | 'deno'
@@ -483,6 +955,7 @@ export const FILE_TYPE_ICON_META = {
   cpp: { ...PHI_ICON_META['file.cpp'], kind: 'cpp' },
   csharp: { ...PHI_ICON_META['file.csharp'], kind: 'csharp' },
   css: { ...PHI_ICON_META['file.css'], kind: 'css' },
+  csv: { ...PHI_ICON_META['file.csv'], kind: 'csv' },
   dart: { ...PHI_ICON_META['file.dart'], kind: 'dart' },
   data: { ...PHI_ICON_META['file.data'], kind: 'data' },
   deno: { ...PHI_ICON_META['file.deno'], kind: 'deno' },
@@ -575,7 +1048,7 @@ const CONFIG_NAME_PATTERNS = [
   /(^|[.-])rc\.(cjs|js|json|mjs|ts|yaml|yml)$/
 ]
 
-const DOTENV_FILE_NAME_PATTERN = /^\.env(?:\.|$)/
+const DOTENV_FILE_NAME_PATTERN = /^\.(?:env|venv)(?:\.|$)/
 
 const EXTENSION_FILE_ICON: Record<string, FileIconKind> = {
   '7z': 'archive',
@@ -597,7 +1070,7 @@ const EXTENSION_FILE_ICON: Record<string, FileIconKind> = {
   cpp: 'cpp',
   cs: 'csharp',
   css: 'css',
-  csv: 'spreadsheet',
+  csv: 'csv',
   dart: 'dart',
   dmg: 'binary',
   doc: 'text',
@@ -681,7 +1154,7 @@ const EXTENSION_FILE_ICON: Record<string, FileIconKind> = {
   toml: 'toml',
   ts: 'typescript',
   tsx: 'react',
-  tsv: 'spreadsheet',
+  tsv: 'csv',
   ttf: 'type',
   txt: 'text',
   wav: 'audio',
@@ -710,23 +1183,88 @@ function extensionFromFileName(fileName: string): string {
   return match?.[1] ?? ''
 }
 
-export function fileIconForPath(path: string): FileIconMeta {
+function materialIconNameForFileName(fileName: string): string {
+  const normalized = fileName.toLowerCase()
+  const override = MATERIAL_FILE_NAME_ICON_OVERRIDES[normalized]
+  if (override) return override
+
+  const fileNameIcon = MATERIAL_FILE_NAME_ICONS[normalized]
+  if (fileNameIcon) return fileNameIcon
+
+  for (const extension of MATERIAL_FILE_EXTENSION_KEYS) {
+    if (normalized === extension || normalized.endsWith(`.${extension}`)) {
+      return MATERIAL_FILE_EXTENSION_ICONS[extension]
+    }
+  }
+
+  return MATERIAL_ICON_MANIFEST.file ?? 'file'
+}
+
+function materialIconNameForDirectoryPath(path: string, expanded = false, root = false): string {
+  const directoryName = fileNameFromPath(path).toLowerCase()
+  const names = root
+    ? expanded
+      ? MATERIAL_ROOT_FOLDER_EXPANDED_NAME_ICONS
+      : MATERIAL_ROOT_FOLDER_NAME_ICONS
+    : expanded
+      ? MATERIAL_FOLDER_EXPANDED_NAME_ICONS
+      : MATERIAL_FOLDER_NAME_ICONS
+  const namedIcon = names[directoryName]
+  if (namedIcon) return namedIcon
+
+  if (root) {
+    return expanded
+      ? (MATERIAL_ICON_MANIFEST.rootFolderExpanded ??
+          MATERIAL_ICON_MANIFEST.folderExpanded ??
+          'folder-open')
+      : (MATERIAL_ICON_MANIFEST.rootFolder ?? MATERIAL_ICON_MANIFEST.folder ?? 'folder')
+  }
+
+  return expanded
+    ? (MATERIAL_ICON_MANIFEST.folderExpanded ?? 'folder-open')
+    : (MATERIAL_ICON_MANIFEST.folder ?? 'folder')
+}
+
+function materialFileIconMeta(kind: FileIconKind, iconName: string): FileIconMeta | null {
+  const Icon = materialIconComponentForName(iconName)
+  if (!Icon) return null
+  return { ...FILE_TYPE_ICON_META[kind], Icon, materialIconName: iconName }
+}
+
+function fileIconKindForPath(path: string): FileIconKind {
   const fileName = fileNameFromPath(path).toLowerCase()
-  if (LOCK_FILE_NAMES.has(fileName)) return FILE_TYPE_ICON_META.lock
+  if (LOCK_FILE_NAMES.has(fileName)) return 'lock'
   const fileNameKind = FILE_NAME_ICON[fileName]
-  if (fileNameKind) return FILE_TYPE_ICON_META[fileNameKind]
-  if (DOTENV_FILE_NAME_PATTERN.test(fileName)) return FILE_TYPE_ICON_META.dotenv
-  if (CONFIG_FILE_NAMES.has(fileName)) return FILE_TYPE_ICON_META.config
+  if (fileNameKind) return fileNameKind
+  if (VIRTUAL_ENV_DIRECTORY_NAMES.has(fileName)) return 'directory'
+  if (DOTENV_FILE_NAME_PATTERN.test(fileName)) return 'dotenv'
+  if (CONFIG_FILE_NAMES.has(fileName)) return 'config'
   if (CONFIG_NAME_PATTERNS.some((pattern) => pattern.test(fileName))) {
-    return FILE_TYPE_ICON_META.config
+    return 'config'
   }
 
   const extension = extensionFromFileName(fileName)
   const kind = extension ? EXTENSION_FILE_ICON[extension] : undefined
-  return FILE_TYPE_ICON_META[kind ?? 'text']
+  return kind ?? 'text'
 }
 
-type ToolIconKey = 'command' | 'python' | 'read' | 'edit' | 'search' | 'web' | 'generic'
+export function fileIconForPath(path: string): FileIconMeta {
+  const kind = fileIconKindForPath(path)
+  const fileName = fileNameFromPath(path)
+  return (
+    materialFileIconMeta(kind, materialIconNameForFileName(fileName)) ?? FILE_TYPE_ICON_META[kind]
+  )
+}
+
+export function directoryIconForPath(path: string, expanded = false, root = false): FileIconMeta {
+  return (
+    materialFileIconMeta('directory', materialIconNameForDirectoryPath(path, expanded, root)) ??
+    FILE_TYPE_ICON_META.directory
+  )
+}
+
+type ToolIconKey =
+  'command' | 'python' | 'read' | 'edit' | 'search' | 'web' | 'notebook' | 'generic'
 
 export const TOOL_ACTION_ICON_META = {
   command: PHI_ICON_META['tool.command'],
@@ -735,6 +1273,7 @@ export const TOOL_ACTION_ICON_META = {
   edit: PHI_ICON_META['tool.edit'],
   search: PHI_ICON_META['tool.search'],
   web: PHI_ICON_META['tool.web'],
+  notebook: PHI_ICON_META['nav.analysis'],
   generic: PHI_ICON_META['tool.generic']
 } satisfies Record<ToolIconKey, PhiIconMeta>
 

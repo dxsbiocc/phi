@@ -288,6 +288,13 @@ export function serializeNotebook(document: NotebookDocument): JsonObject {
   return serializeNotebookBody(document)
 }
 
+export function updateNotebookMetadata(
+  document: NotebookDocument,
+  metadata: JsonObject
+): NotebookDocument {
+  return withRevision({ ...document, metadata: cloneJsonObject(metadata) })
+}
+
 export function createNotebookCell(
   input: NotebookCellInput,
   existingIds: Iterable<string> = []

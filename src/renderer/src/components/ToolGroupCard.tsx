@@ -5,7 +5,7 @@ import { ToolActionIcon } from './ToolActionIcon'
 import ToolCallCard, { StatusIndicator, ToolCallDetail } from './ToolCallCard'
 import { diffStat } from '../lib/toolOutput'
 import { toolActionKind, type ToolActionKind } from '../lib/toolActions'
-import type { ToolCallItem } from '../types'
+import type { NotebookCellJumpTarget, ToolCallItem } from '../types'
 
 const ChevronRightIcon = PhiIcons.action.back
 
@@ -48,6 +48,11 @@ function commandPhrase(count: number, status: AggregateToolStatus): string {
 function pythonPhrase(count: number, status: AggregateToolStatus): string {
   if (status === 'running') return count === 1 ? '执行 Python 代码' : `执行 ${count} 段 Python 代码`
   return count === 1 ? '已执行 Python 代码' : `已执行 ${count} 段 Python 代码`
+}
+
+function notebookPhrase(count: number, status: AggregateToolStatus): string {
+  if (status === 'running') return count === 1 ? '操作 Notebook' : `操作 ${count} 次 Notebook`
+  return count === 1 ? '已操作 Notebook' : `已操作 ${count} 次 Notebook`
 }
 
 function fileToolPhrase(
@@ -95,9 +100,13 @@ function summarize(items: ToolCallItem[]): {
   const pythonItems = nonFileReadItems.filter(
     (item) => toolActionKind(item.toolName, item.argsPreview, item.argsJson) === 'python'
   )
-  const commandItems = nonFileReadItems.filter(
-    (item) => toolActionKind(item.toolName, item.argsPreview, item.argsJson) !== 'python'
+  const notebookItems = nonFileReadItems.filter(
+    (item) => toolActionKind(item.toolName, item.argsPreview, item.argsJson) === 'notebook'
   )
+  const commandItems = nonFileReadItems.filter((item) => {
+    const action = toolActionKind(item.toolName, item.argsPreview, item.argsJson)
+    return action !== 'python' && action !== 'notebook'
+  })
   const editedFiles = uniqueInOrder(
     items.filter((item) => FILE_TOOLS.has(item.toolName)).map((item) => basename(item.argsPreview))
   )
@@ -111,6 +120,9 @@ function summarize(items: ToolCallItem[]): {
   const clauses: string[] = []
   if (pythonItems.length > 0) {
     clauses.push(pythonPhrase(pythonItems.length, status))
+  }
+  if (notebookItems.length > 0) {
+    clauses.push(notebookPhrase(notebookItems.length, status))
   }
   if (commandItems.length > 0) {
     clauses.push(commandPhrase(commandItems.length, status))
@@ -146,7 +158,15 @@ function groupIndicatorStatus(items: ToolCallItem[]): ToolCallItem['status'] | n
   return null
 }
 
-function ToolGroupCard({ items, cwd }: { items: ToolCallItem[]; cwd?: string }): ReactNode {
+function ToolGroupCard({
+  items,
+  cwd,
+  onJumpToNotebookCell
+}: {
+  items: ToolCallItem[]
+  cwd?: string
+  onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
+}): ReactNode {
   const [expanded, setExpanded] = useState(false)
   const toggle = (): void => setExpanded((value) => !value)
   const { headline, stat } = summarize(items)
@@ -231,7 +251,12 @@ function ToolGroupCard({ items, cwd }: { items: ToolCallItem[]; cwd?: string }):
           <Box sx={{ ml: 2.5, pl: 1.5, minWidth: 0, borderLeft: 2, borderColor: 'grey.800' }}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5 }}>
               {items.map((item) => (
-                <ToolCallCard key={item.id} item={item} cwd={cwd} />
+                <ToolCallCard
+                  key={item.id}
+                  item={item}
+                  cwd={cwd}
+                  onJumpToNotebookCell={onJumpToNotebookCell}
+                />
               ))}
             </Box>
           </Box>

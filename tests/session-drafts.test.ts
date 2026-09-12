@@ -10,6 +10,18 @@ test('sessionDraftKey scopes persisted sessions by runtime path', () => {
   )
 })
 
+test('sessionDraftKey scopes Phi-managed sessions by stable session id', () => {
+  assert.equal(
+    sessionDraftKey({
+      phiSessionId: 'phi-1',
+      path: 'session-a.jsonl',
+      cwd: '/workspace',
+      sessionGeneration: 1
+    }),
+    'phi:phi-1'
+  )
+})
+
 test('sessionDraftKey keeps fresh sessions separated by generation', () => {
   assert.notEqual(
     sessionDraftKey({ path: null, cwd: '/workspace', sessionGeneration: 1 }),

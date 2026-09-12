@@ -1,24 +1,33 @@
 import { Box, Button, Divider, Link, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
-import { Fragment, isValidElement, useEffect, useState, type ReactNode } from 'react'
+import { Fragment, isValidElement, useEffect, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { FILE_TYPE_ICON_META, PhiIcons, fileIconForPath } from '../icons'
-import { resolveLocalPath, tokenizeLocalPaths } from '../lib/localPaths'
+import { PhiIcons, directoryIconForPath, fileIconForPath } from '../icons'
+import { useMarkdownPlugins } from '../lib/markdownMathPlugins'
+import { tokenizeLocalPaths } from '../lib/localPaths'
 import {
-  normalizeHexColor,
-  tokenizeMarkdownColors,
-  type MarkdownColorToken
-} from '../lib/markdownColors'
+  collectBareFileReferencePaths,
+  inlineCodeBareFilePath,
+  inlineCodeFilePath,
+  localHrefToPath,
+  localPathKindForReference,
+  localPathLabel,
+  matchedBareFileReference,
+  stripLineReference,
+  tokenizeBareFileReferences,
+  type LocalPathKind
+} from '../lib/markdownLocalPathReferences'
+import { normalizeHexColor, tokenizeMarkdownColors } from '../lib/markdownColors'
 import { formatBytes } from '../lib/toolOutputPresentation'
-import type { FileHoverPreview } from '../types'
+import type { FileHoverPreview, LocalPathStat } from '../types'
+import { ColorCode, InlineCodeShell, MarkdownColorTokenView } from './markdown/MarkdownColorToken'
 
+export type { LocalPathKind } from '../lib/markdownLocalPathReferences'
 const ContentCopyIcon = PhiIcons.action.copy
 type HoverPreviewState =
   | { status: 'idle' | 'loading'; path: string }
   | { status: 'ready'; path: string; preview: FileHoverPreview }
   | { status: 'error'; path: string; message: string }
-export type LocalPathKind = 'file' | 'directory'
 const HOVER_PREVIEW_CACHE_LIMIT = 8
 const HOVER_PREVIEW_CACHE_CONTENT_LIMIT = 8 * 1024 * 1024
 const HOVER_PREVIEW_OPEN_DELAY_MS = 350
@@ -26,11 +35,8 @@ const HOVER_PREVIEW_FETCH_DELAY_MS = 150
 const HOVER_TEXT_LINE_LIMIT = 12
 const HOVER_SPREADSHEET_ROW_LIMIT = 8
 const HOVER_SPREADSHEET_COLUMN_LIMIT = 6
-const FILE_REFERENCE_NAME_PATTERN =
-  /^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z0-9][A-Za-z0-9_-]{0,15}|[A-Z][A-Za-z0-9_-]*file)$/
-const DOTFILE_REFERENCE_NAME_PATTERN = /^\.[A-Za-z0-9][A-Za-z0-9._-]*$/
-const BARE_FILE_REFERENCE_PATTERN =
-  /(^|[^\w./-])(\.[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z][A-Za-z0-9_-]{0,15}|[A-Z][A-Za-z0-9_-]*file)(?=$|[\s,;:!?。，、；：（()）)\]}+.])/g
+const LOCAL_PATH_STAT_CACHE_LIMIT = 512
+const LOCAL_PATH_STAT_MISSING_TTL_MS = 30_000
 const localPathTooltipSlotProps = {
   tooltip: {
     sx: {
@@ -60,6 +66,7 @@ const localPathTooltipSlotProps = {
 
 const hoverPreviewCache = new Map<string, FileHoverPreview>()
 const hoverPreviewRequests = new Map<string, Promise<FileHoverPreview>>()
+const localPathStatCache = new Map<string, { kind: LocalPathStat['kind']; checkedAt: number }>()
 
 function hoverPreviewApi(): {
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
@@ -69,6 +76,22 @@ function hoverPreviewApi(): {
   const api = (window as unknown as { api?: { hoverPreviewFile?: unknown } }).api
   return typeof api?.hoverPreviewFile === 'function'
     ? { hoverPreviewFile: api.hoverPreviewFile as (path: string) => Promise<FileHoverPreview> }
+    : null
+}
+
+function localPathStatApi(): {
+  statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
+} | null {
+  if (typeof window === 'undefined') return null
+
+  const api = (window as unknown as { api?: { statLocalPaths?: unknown } }).api
+  return typeof api?.statLocalPaths === 'function'
+    ? {
+        statLocalPaths: api.statLocalPaths as (
+          cwd: string,
+          paths: string[]
+        ) => Promise<LocalPathStat[]>
+      }
     : null
 }
 
@@ -104,6 +127,77 @@ function rememberHoverPreview(preview: FileHoverPreview): void {
     if (!oldestPath) break
     hoverPreviewCache.delete(oldestPath)
   }
+}
+
+function localPathStatCacheKey(cwd: string, path: string): string {
+  return `${cwd}\0${path}`
+}
+
+function cachedLocalPathStat(cwd: string, path: string): LocalPathStat['kind'] | null {
+  const key = localPathStatCacheKey(cwd, path)
+  const cached = localPathStatCache.get(key)
+  if (!cached) return null
+  if (cached.kind === 'missing' && Date.now() - cached.checkedAt > LOCAL_PATH_STAT_MISSING_TTL_MS) {
+    localPathStatCache.delete(key)
+    return null
+  }
+
+  localPathStatCache.delete(key)
+  localPathStatCache.set(key, cached)
+  return cached.kind
+}
+
+function rememberLocalPathStats(cwd: string, stats: LocalPathStat[]): void {
+  for (const stat of stats) {
+    localPathStatCache.set(localPathStatCacheKey(cwd, stat.path), {
+      kind: stat.kind,
+      checkedAt: Date.now()
+    })
+  }
+  while (localPathStatCache.size > LOCAL_PATH_STAT_CACHE_LIMIT) {
+    const oldestPath = localPathStatCache.keys().next().value
+    if (!oldestPath) break
+    localPathStatCache.delete(oldestPath)
+  }
+}
+
+function useLocalPathKinds(cwd: string, paths: string[]): ReadonlyMap<string, LocalPathKind> {
+  const [revision, setRevision] = useState(0)
+
+  useEffect(() => {
+    const pendingPaths = paths.filter((path) => cachedLocalPathStat(cwd, path) === null)
+    if (pendingPaths.length === 0) return
+
+    const api = localPathStatApi()
+    if (!api) return
+
+    let cancelled = false
+    void api
+      .statLocalPaths(cwd, pendingPaths)
+      .then((stats) => {
+        rememberLocalPathStats(cwd, stats)
+        if (!cancelled) setRevision((value) => value + 1)
+      })
+      .catch((error) => {
+        console.error('Failed to stat local path references:', error)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [cwd, paths])
+
+  return useMemo(() => {
+    void revision
+    const kinds = new Map<string, LocalPathKind>()
+    for (const path of paths) {
+      const kind = cachedLocalPathStat(cwd, path)
+      if (kind === 'file' || kind === 'directory') {
+        kinds.set(path, kind)
+      }
+    }
+    return kinds
+  }, [cwd, paths, revision])
 }
 
 function requestHoverPreview(path: string): Promise<FileHoverPreview> | null {
@@ -500,7 +594,7 @@ function LocalPathButton({
 }): React.JSX.Element {
   const label = localPathLabel(text, absolutePath)
   const pathIcon =
-    pathKind === 'directory' ? FILE_TYPE_ICON_META.directory : fileIconForPath(absolutePath)
+    pathKind === 'directory' ? directoryIconForPath(absolutePath) : fileIconForPath(absolutePath)
   const LocalFileIcon = pathIcon.Icon
   const supportsHoverPreview = pathKind === 'file'
   const [hoverPreviewActive, setHoverPreviewActive] = useState(false)
@@ -573,10 +667,7 @@ function LocalPathButton({
           }
         }}
       >
-        <LocalFileIcon
-          fontSize="inherit"
-          sx={{ color: pathIcon.color, fontSize: '0.95em', transform: 'translateY(1px)' }}
-        />
+        <LocalFileIcon fontSize="inherit" sx={{ color: pathIcon.color, fontSize: '1em' }} />
         <Box
           component="span"
           sx={{
@@ -610,217 +701,11 @@ function LocalPathButton({
   )
 }
 
-function fileNameFromPath(path: string): string {
-  return path.split('/').filter(Boolean).pop() ?? path
-}
-
-function localPathLabel(text: string, absolutePath: string): string {
-  const trimmed = text.trim()
-  const isPathLikeLabel =
-    trimmed === absolutePath ||
-    trimmed.startsWith('/') ||
-    trimmed.startsWith('./') ||
-    trimmed.startsWith('../') ||
-    (trimmed.includes('/') && !/\s/.test(trimmed))
-  if (!trimmed || isPathLikeLabel) {
-    return fileNameFromPath(absolutePath)
-  }
-  return trimmed
-}
-
-function localHrefToPath(href: string | undefined, cwd: string): string | null {
-  if (!href) return null
-
-  const withoutHash = href.split('#')[0]
-  let decoded = withoutHash
-  try {
-    decoded = decodeURIComponent(withoutHash)
-  } catch {
-    decoded = withoutHash
-  }
-
-  const lineMatch = /^(.*):\d+$/.exec(decoded)
-  const candidate = lineMatch?.[1] ?? decoded
-  return resolveLocalPath(candidate, cwd)
-}
-
-function stripLineReference(path: string): string {
-  return /^(.*):\d+$/.exec(path)?.[1] ?? path
-}
-
-function normalizePathIdentity(path: string): string {
-  const stripped = stripLineReference(path.trim())
-  if (stripped === '/') return stripped
-  return stripped.replace(/\/+$/, '')
-}
-
-function localPathKindForReference(
-  text: string,
-  absolutePath: string,
-  cwd: string,
-  inferUnknownExtensionlessDirectory: boolean
-): LocalPathKind {
-  const visiblePath = stripLineReference(text.trim())
-  if (visiblePath.endsWith('/')) return 'directory'
-
-  const normalizedPath = normalizePathIdentity(absolutePath)
-  if (cwd && normalizedPath === normalizePathIdentity(cwd)) return 'directory'
-  if (!inferUnknownExtensionlessDirectory) return 'file'
-
-  const icon = fileIconForPath(normalizedPath)
-  const name = fileNameFromPath(normalizedPath)
-  if (icon.kind === 'text' && name && !name.includes('.')) return 'directory'
-
-  return 'file'
-}
-
-function isBareFileReference(path: string): boolean {
-  if (!path || path.includes('\\') || /\s/.test(path) || path.endsWith('/')) return false
-  if (path.startsWith('-')) return false
-
-  const parts = path.split('/')
-  if (parts.some((part) => part.length === 0 || part === '.' || part === '..')) return false
-
-  const name = parts[parts.length - 1]
-  return FILE_REFERENCE_NAME_PATTERN.test(name) || DOTFILE_REFERENCE_NAME_PATTERN.test(name)
-}
-
-function inlineCodeFilePath(text: string, cwd: string): string | null {
-  const trimmed = text.trim()
-  if (!trimmed || trimmed !== text || trimmed.includes('\n')) return null
-
-  const withoutLine = stripLineReference(trimmed)
-  const explicitPath = resolveLocalPath(withoutLine, cwd)
-  if (explicitPath) return explicitPath
-
-  if (!cwd || !isBareFileReference(withoutLine)) return null
-  return resolveLocalPath(`./${withoutLine}`, cwd)
-}
-
-type BareFileReferenceToken =
-  { kind: 'text'; text: string } | { kind: 'file'; text: string; absolutePath: string }
-
-function bareFileReferencePath(text: string, cwd: string): string | null {
-  if (!cwd || !isBareFileReference(text)) return null
-
-  const fileIcon = fileIconForPath(text)
-  if (fileIcon.kind === 'text') return null
-
-  return resolveLocalPath(`./${text}`, cwd)
-}
-
-function tokenizeBareFileReferences(text: string, cwd: string): BareFileReferenceToken[] {
-  if (!cwd) return [{ kind: 'text', text }]
-
-  const tokens: BareFileReferenceToken[] = []
-  let cursor = 0
-
-  for (const match of text.matchAll(BARE_FILE_REFERENCE_PATTERN)) {
-    const leading = match[1] ?? ''
-    const candidate = match[2] ?? ''
-    const start = (match.index ?? 0) + leading.length
-    const end = start + candidate.length
-    const absolutePath = bareFileReferencePath(candidate, cwd)
-    if (!absolutePath) continue
-
-    if (start > cursor) tokens.push({ kind: 'text', text: text.slice(cursor, start) })
-    tokens.push({ kind: 'file', text: candidate, absolutePath })
-    cursor = end
-  }
-
-  if (cursor < text.length) tokens.push({ kind: 'text', text: text.slice(cursor) })
-  return tokens
-}
-
-function ColorSwatch({ color }: { color: string }): React.JSX.Element {
-  return (
-    <Box
-      component="span"
-      data-phi-slot="markdown-color-swatch"
-      aria-label={`颜色 ${color}`}
-      title={color}
-      sx={{
-        display: 'inline-block',
-        width: 14,
-        height: 14,
-        minWidth: 14,
-        maxWidth: 14,
-        aspectRatio: '1 / 1',
-        boxSizing: 'border-box',
-        borderRadius: '50%',
-        border: 1,
-        borderColor: 'divider',
-        boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.38)',
-        verticalAlign: '-0.15em',
-        flexShrink: 0
-      }}
-      style={{ backgroundColor: color }}
-    />
-  )
-}
-
-const inlineCodeSx = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: '0.85em',
-  px: 0.6,
-  py: 0.2,
-  borderRadius: 1,
-  bgcolor: 'rgba(148, 163, 184, 0.15)'
-} as const
-
-function ColorCode({ color }: { color: string }): React.JSX.Element {
-  return (
-    <Box
-      component="span"
-      data-phi-slot="markdown-color-token"
-      sx={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 0.5,
-        mx: 0.15,
-        verticalAlign: 'baseline',
-        whiteSpace: 'nowrap'
-      }}
-    >
-      <ColorSwatch color={color} />
-      <Box component="code" sx={inlineCodeSx}>
-        {color}
-      </Box>
-    </Box>
-  )
-}
-
-function ColorPalettePreview({ colors }: { colors: string[] }): React.JSX.Element {
-  return (
-    <Box
-      component="span"
-      data-phi-slot="markdown-color-palette"
-      sx={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: 0.75,
-        mx: 0.5,
-        verticalAlign: 'middle'
-      }}
-    >
-      {colors.map((color, index) => (
-        <ColorCode key={`${color}-${index}`} color={color} />
-      ))}
-    </Box>
-  )
-}
-
-function renderColorToken(token: MarkdownColorToken, key: string): ReactNode {
-  if (token.kind === 'color') return <ColorCode key={key} color={token.color} />
-  if (token.kind === 'palette') return <ColorPalettePreview key={key} colors={token.colors} />
-  return <Fragment key={key}>{token.text}</Fragment>
-}
-
 function renderDecoratedText(
   text: string,
   cwd: string,
   keyPrefix: string,
+  localPathKinds: ReadonlyMap<string, LocalPathKind>,
   onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
 ): ReactNode[] {
   const nodes: ReactNode[] = []
@@ -839,14 +724,14 @@ function renderDecoratedText(
       return
     }
 
-    tokenizeBareFileReferences(token.text, cwd).forEach((fileToken, fileIndex) => {
-      if (fileToken.kind === 'file') {
+    tokenizeBareFileReferences(token.text, cwd, localPathKinds).forEach((fileToken, fileIndex) => {
+      if (fileToken.kind === 'path') {
         nodes.push(
           <LocalPathButton
             key={`${keyPrefix}-file-${pathIndex}-${fileIndex}-${fileToken.absolutePath}`}
             text={fileToken.text}
             absolutePath={fileToken.absolutePath}
-            pathKind="file"
+            pathKind={fileToken.pathKind}
             onOpenLocalPath={onOpenLocalPath}
           />
         )
@@ -854,9 +739,12 @@ function renderDecoratedText(
       }
 
       nodes.push(
-        ...tokenizeMarkdownColors(fileToken.text).map((colorToken, colorIndex) =>
-          renderColorToken(colorToken, `${keyPrefix}-color-${pathIndex}-${fileIndex}-${colorIndex}`)
-        )
+        ...tokenizeMarkdownColors(fileToken.text).map((colorToken, colorIndex) => (
+          <MarkdownColorTokenView
+            key={`${keyPrefix}-color-${pathIndex}-${fileIndex}-${colorIndex}`}
+            token={colorToken}
+          />
+        ))
       )
     })
   })
@@ -867,14 +755,17 @@ function renderDecoratedText(
 function renderInlineChildren(
   children: ReactNode,
   cwd: string,
+  localPathKinds: ReadonlyMap<string, LocalPathKind>,
   onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
 ): ReactNode {
   if (typeof children === 'string') {
-    return renderDecoratedText(children, cwd, 'inline', onOpenLocalPath)
+    return renderDecoratedText(children, cwd, 'inline', localPathKinds, onOpenLocalPath)
   }
   if (Array.isArray(children)) {
     return children.map((child, index) => (
-      <Fragment key={index}>{renderInlineChildren(child, cwd, onOpenLocalPath)}</Fragment>
+      <Fragment key={index}>
+        {renderInlineChildren(child, cwd, localPathKinds, onOpenLocalPath)}
+      </Fragment>
     ))
   }
   return children
@@ -883,10 +774,12 @@ function renderInlineChildren(
 function InlineCode({
   children,
   cwd,
+  localPathKinds,
   onOpenLocalPath
 }: {
   children?: ReactNode
   cwd: string
+  localPathKinds: ReadonlyMap<string, LocalPathKind>
   onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
 }): React.JSX.Element {
   const codeText = textFromNode(children)
@@ -905,22 +798,42 @@ function InlineCode({
     )
   }
 
-  return (
-    <Box component="code" sx={inlineCodeSx}>
-      {children}
-    </Box>
-  )
+  const bareLocalPath = inlineCodeBareFilePath(codeText, cwd)
+  const bareReference = bareLocalPath
+    ? matchedBareFileReference(stripLineReference(codeText.trim()), cwd, localPathKinds)
+    : null
+  if (bareReference) {
+    return (
+      <LocalPathButton
+        text={codeText}
+        absolutePath={bareReference.absolutePath}
+        pathKind={bareReference.pathKind}
+        onOpenLocalPath={onOpenLocalPath}
+      />
+    )
+  }
+
+  return <InlineCodeShell>{children}</InlineCodeShell>
 }
 
 function MarkdownContent({
   text,
   cwd = '',
-  onOpenLocalPath
+  onOpenLocalPath,
+  enableMath = false
 }: {
   text: string
   cwd?: string
   onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
+  enableMath?: boolean // off by default -- see markdownMathPlugins.ts for why
 }): React.JSX.Element {
+  const bareFileReferencePaths = useMemo(
+    () => collectBareFileReferencePaths(text, cwd),
+    [cwd, text]
+  )
+  const localPathKinds = useLocalPathKinds(cwd, bareFileReferencePaths)
+  const { remarkPlugins, rehypePlugins } = useMarkdownPlugins(enableMath)
+
   return (
     <Box
       sx={{
@@ -936,11 +849,12 @@ function MarkdownContent({
     >
       <ReactMarkdown
         skipHtml
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
         components={{
           p: ({ children }) => (
             <Typography variant="body1" sx={{ my: 1, fontSize: 'inherit', lineHeight: 'inherit' }}>
-              {renderInlineChildren(children, cwd, onOpenLocalPath)}
+              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
             </Typography>
           ),
           h1: ({ children }) => (
@@ -974,17 +888,17 @@ function MarkdownContent({
           ),
           li: ({ children }) => (
             <Typography component="li" sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}>
-              {renderInlineChildren(children, cwd, onOpenLocalPath)}
+              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
             </Typography>
           ),
           strong: ({ children }) => (
             <Box component="strong" sx={{ fontWeight: 700 }}>
-              {renderInlineChildren(children, cwd, onOpenLocalPath)}
+              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
             </Box>
           ),
           em: ({ children }) => (
             <Box component="em" sx={{ fontStyle: 'italic' }}>
-              {renderInlineChildren(children, cwd, onOpenLocalPath)}
+              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
             </Box>
           ),
           a: ({ href, children }) => {
@@ -1020,7 +934,11 @@ function MarkdownContent({
                 {children}
               </Box>
             ) : (
-              <InlineCode cwd={cwd} onOpenLocalPath={onOpenLocalPath}>
+              <InlineCode
+                cwd={cwd}
+                localPathKinds={localPathKinds}
+                onOpenLocalPath={onOpenLocalPath}
+              >
                 {children}
               </InlineCode>
             ),
@@ -1062,11 +980,13 @@ function MarkdownContent({
           ),
           th: ({ children }) => (
             <Box component="th" sx={{ fontWeight: 700 }}>
-              {renderInlineChildren(children, cwd, onOpenLocalPath)}
+              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
             </Box>
           ),
           td: ({ children }) => (
-            <Box component="td">{renderInlineChildren(children, cwd, onOpenLocalPath)}</Box>
+            <Box component="td">
+              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
+            </Box>
           )
         }}
       >

@@ -1,0 +1,14 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi lowercase session thread mark</title>
+  <desc id="desc">A lowercase phi mark with four small session beads following a local thread.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M52 16C48 34 47 60 51 85" stroke-width="7.5"/>
+    <path d="M49 29C66 30 77 42 74 57C71 72 55 80 39 75C26 71 20 59 25 47C30 36 40 30 49 29Z" stroke-width="7.5"/>
+  </g>
+  <g fill="currentColor">
+    <circle cx="42" cy="31" r="3.6"/>
+    <circle cx="72" cy="49" r="3.6"/>
+    <circle cx="58" cy="75" r="3.6"/>
+    <circle cx="28" cy="62" r="3.6"/>
+  </g>
+</svg>

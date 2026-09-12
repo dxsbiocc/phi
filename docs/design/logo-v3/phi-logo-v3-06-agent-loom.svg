@@ -1,0 +1,16 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi Agent Loom logo mark</title>
+  <desc id="desc">A phi-shaped loom for Pi and OMX agents weaving through local sessions.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M50 17V83" stroke-width="7.5"/>
+    <path d="M25 36C37 22 62 21 74 36C87 52 73 76 50 76C30 76 19 63 23 49" stroke-width="6.5"/>
+    <path d="M24 64C37 76 62 76 75 64" stroke-width="4.5"/>
+    <path d="M25 36C37 48 63 48 75 36" stroke-width="4.5"/>
+  </g>
+  <g fill="currentColor">
+    <circle cx="25" cy="36" r="4"/>
+    <circle cx="75" cy="36" r="4"/>
+    <circle cx="24" cy="64" r="4"/>
+    <circle cx="75" cy="64" r="4"/>
+  </g>
+</svg>

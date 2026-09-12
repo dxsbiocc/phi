@@ -1,3 +1,8 @@
+// Imported (unlike the other ambient types in this file, which are
+// hand-duplicated) — see the matching comment in preload/index.ts.
+import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
+import type { WrapperRun, WrapperRunPlan } from '../shared/wrapperTypes'
+
 type PreloadSessionSummary = {
   path: string
   id: string
@@ -17,6 +22,30 @@ type PreloadSessionSummary = {
 
 type PreloadPermissionMode = 'auto' | 'ask' | 'full'
 
+type PreloadPromptTarget = {
+  path: string | null
+  phiSessionId?: string
+  cwd: string
+  sessionGeneration: number
+}
+
+type PreloadPromptResult = {
+  path: string | null
+  phiSessionId?: string
+  sessionGeneration: number
+}
+
+/** Mirrors `ProjectRemoteConnection` (src/main/agent/projects.ts) — no secret material, see that type's doc comment. */
+type PreloadProjectRemoteConnection = {
+  id: string
+  label: string
+  host: string
+  port?: number
+  username: string
+  privateKeyPath: string
+  hasPassphrase?: boolean
+}
+
 type PreloadProject = {
   id: string
   name: string
@@ -28,6 +57,9 @@ type PreloadProject = {
   }
   defaultModel?: { providerId: string; modelId: string }
   defaultThinkingLevel?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  remoteConnections?: PreloadProjectRemoteConnection[]
+  defaultRemoteConnectionId?: string
+  remoteWorkspaceRoot?: string
   createdAt: string
 }
 
@@ -35,6 +67,7 @@ type PreloadToolApprovalRequest = {
   requestId: string
   sessionId?: string
   sessionPath?: string
+  sessionGeneration?: number
   runId?: string
   cwd?: string
   projectName?: string
@@ -168,6 +201,11 @@ type PreloadFileTreeEntry = {
   kind: 'directory' | 'file'
 }
 
+type PreloadLocalPathStat = {
+  path: string
+  kind: 'file' | 'directory' | 'missing'
+}
+
 type PreloadDirectoryListing = {
   path: string
   name: string
@@ -211,6 +249,51 @@ type PreloadAnalysisNotebookFile = {
   document: Record<string, unknown>
 }
 
+type PreloadAnalysisNotebookDraftChange = {
+  source: 'agent' | 'renderer'
+  projectCwd: string
+  path: string
+  relativePath: string
+  document: Record<string, unknown>
+  savedRevision: string
+  changeKind?: 'synced' | 'inserted' | 'updated' | 'deleted' | 'executed' | 'saved'
+  changedCellId?: string
+  focusCellId?: string
+}
+
+type PreloadAnalysisNotebookCodeGenerationInput = {
+  prompt: string
+  language: string
+  afterCellId?: string | null
+  references?: Array<{
+    id: string
+    kind: 'dataframe' | 'data_source' | 'variable' | 'cell_output'
+    name: string
+    detail?: string
+    cellId?: string
+    preview?: {
+      source?: string
+      code?: string
+      output?: string
+      value?: string
+      shape?: string
+      columns?: Array<{ name: string; type?: string }>
+    }
+  }>
+}
+
+type PreloadAnalysisNotebookGeneratedCell = {
+  cellType: 'code' | 'markdown'
+  source: string
+  language?: string
+}
+
+type PreloadAnalysisNotebookCodeGenerationResult = {
+  source: string
+  language: string
+  cells?: PreloadAnalysisNotebookGeneratedCell[]
+}
+
 type PreloadSaveAnalysisNotebookInput = {
   path: string
   document: Record<string, unknown>
@@ -244,6 +327,7 @@ type PreloadJupyterServerStatus = {
   startedAt?: string
   exitedAt?: string
   pid?: number
+  port?: number
   hasEndpoint: boolean
   message?: string
 }
@@ -258,6 +342,15 @@ type PreloadAnalysisNotebookSessionStatus = {
   message?: string
   startedAt?: string
   updatedAt?: string
+}
+
+type PreloadAnalysisJupyterRuntimeStatus = {
+  server: PreloadJupyterServerStatus
+  notebooks: {
+    activeSessionCount: number
+    busySessionCount: number
+    sessions: PreloadAnalysisNotebookSessionStatus[]
+  }
 }
 
 type PreloadAnalysisCellExecutionResult = {
@@ -283,9 +376,13 @@ declare global {
       pickInputFiles: () => Promise<string[]>
       previewFile: (path: string) => Promise<PreloadFilePreview>
       hoverPreviewFile: (path: string) => Promise<PreloadFileHoverPreview>
+      statLocalPaths: (cwd: string, paths: string[]) => Promise<PreloadLocalPathStat[]>
       listDirectory: (path: string) => Promise<PreloadDirectoryListing>
       copyDiagnostics: () => Promise<string>
-      sendPrompt: (text: string) => Promise<string | null>
+      sendPrompt: (
+        text: string,
+        target?: PreloadPromptTarget
+      ) => Promise<PreloadPromptResult | null>
       onAgentEvent: (cb: (event: Record<string, unknown>) => void) => () => void
       getAuthStatus: () => Promise<
         Array<{
@@ -407,6 +504,7 @@ declare global {
       listSessions: () => Promise<PreloadSessionSummary[]>
       getCurrentSession: () => Promise<{
         path: string | null
+        phiSessionId?: string
         cwd: string
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
@@ -414,18 +512,21 @@ declare global {
       }>
       updateCurrentSessionPermissionMode: (permissionMode: PreloadPermissionMode) => Promise<{
         path: string | null
+        phiSessionId?: string
         cwd: string
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
       }>
       createSession: () => Promise<{
         path: string | null
+        phiSessionId?: string
         cwd: string
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
       }>
       switchSession: (path: string) => Promise<{
         path: string
+        phiSessionId?: string
         cwd: string
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
@@ -453,12 +554,35 @@ declare global {
           defaultThinkingLevel?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null
         }
       ) => Promise<PreloadProject>
+      pickPrivateKeyFile: () => Promise<string | null>
+      isRemoteCredentialStorageAvailable: () => Promise<boolean>
+      /**
+       * `patch: null` removes the connection. `passphrase` is write-only and
+       * never round-trips back through `PreloadProject` — pass `undefined` to
+       * leave a previously-stored passphrase untouched, a string to
+       * store/rotate it, or `null` to clear it (e.g. the user switched the
+       * key to passphrase-less).
+       */
+      updateProjectRemoteConnection: (
+        id: string,
+        connectionId: string,
+        patch: PreloadProjectRemoteConnection | null,
+        passphrase?: string | null
+      ) => Promise<PreloadProject>
+      updateProjectRemoteDefaults: (
+        id: string,
+        defaults: {
+          defaultRemoteConnectionId?: string | null
+          remoteWorkspaceRoot?: string | null
+        }
+      ) => Promise<PreloadProject>
       listProjectSessions: (workingDirectory: string) => Promise<PreloadSessionSummary[]>
       createProjectSession: (
         workingDirectory: string,
         permissionMode: PreloadPermissionMode
       ) => Promise<{
         path: string | null
+        phiSessionId?: string
         cwd: string
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
@@ -470,6 +594,12 @@ declare global {
         cwd: string,
         input: PreloadSaveAnalysisNotebookInput
       ) => Promise<PreloadAnalysisNotebookFile>
+      syncAnalysisNotebookDraft: (
+        cwd: string,
+        path: string,
+        document: Record<string, unknown>,
+        savedRevision?: string
+      ) => Promise<PreloadAnalysisNotebookDraftChange>
       createAnalysisNotebook: (
         cwd: string,
         relativePath?: string
@@ -481,6 +611,7 @@ declare global {
       ) => Promise<{ path: string; relativePath: string }>
       listAnalysisKernels: (cwd?: string) => Promise<PreloadAnalysisKernelDiagnostics>
       getAnalysisJupyterStatus: (cwd: string) => Promise<PreloadJupyterServerStatus>
+      getAnalysisJupyterRuntimeStatus: (cwd: string) => Promise<PreloadAnalysisJupyterRuntimeStatus>
       startAnalysisJupyter: (cwd: string) => Promise<PreloadJupyterServerStatus>
       stopAnalysisJupyter: (cwd: string) => Promise<PreloadJupyterServerStatus>
       getAnalysisNotebookSessionStatus: (
@@ -503,10 +634,20 @@ declare global {
         document: Record<string, unknown>,
         cellId: string
       ) => Promise<PreloadAnalysisCellExecutionResult>
+      generateAnalysisNotebookCode: (
+        cwd: string,
+        path: string,
+        document: Record<string, unknown>,
+        input: PreloadAnalysisNotebookCodeGenerationInput
+      ) => Promise<PreloadAnalysisNotebookCodeGenerationResult>
       stopGeneration: () => Promise<void>
+      onAnalysisNotebookDraftChanged: (
+        cb: (change: PreloadAnalysisNotebookDraftChange) => void
+      ) => () => void
       onSessionChanged: (
         cb: (session: {
           path: string | null
+          phiSessionId?: string
           cwd: string
           sessionGeneration: number
           permissionMode: PreloadPermissionMode
@@ -521,6 +662,19 @@ declare global {
       listSkills: (cwd?: string) => Promise<PreloadSkillSummary[]>
       listPromptAgents: (cwd?: string) => Promise<PreloadPromptAgentSummary[]>
       listMcpServers: (cwd?: string) => Promise<PreloadMcpServerSummary[]>
+      getWrapperPlan: (planId: string) => Promise<WrapperRunPlan | undefined>
+      submitWrapperPlan: (
+        planId: string,
+        heavyWorkloadAcknowledged?: boolean
+      ) => Promise<WrapperRun>
+      cancelWrapperRunPlan: (planId: string) => Promise<WrapperRunPlan>
+      listWrapperCatalog: () => Promise<WrapperCatalogEntry[]>
+      addCustomWrapper: (sourceDir: string) => Promise<WrapperCatalogEntry>
+      listWrapperRuns: () => Promise<WrapperRun[]>
+      getWrapperRun: (runId: string) => Promise<WrapperRun | undefined>
+      cancelWrapperRun: (runId: string) => Promise<WrapperRun>
+      getWrapperPlanArtifact: (planId: string, fileName: string) => Promise<string | undefined>
+      exportWrapperReproducibility: (runId: string) => Promise<string | null>
     }
   }
 }

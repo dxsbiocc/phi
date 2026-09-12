@@ -8,7 +8,7 @@ import {
   initializeProjectAnalysis,
   listProjectNotebooks,
   projectAnalysisInitialized
-} from '../src/main/agent/analysis-notebooks'
+} from '../src/main/agent/notebook/analysis-notebooks'
 
 function withProjectDir<T>(callback: (root: string) => T): T {
   const root = mkdtempSync(join(tmpdir(), 'phi-analysis-notebooks-'))

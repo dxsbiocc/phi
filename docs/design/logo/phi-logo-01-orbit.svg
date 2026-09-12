@@ -1,0 +1,10 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi Orbit logo mark</title>
+  <desc id="desc">A rounded phi-like orbital mark for the Phi desktop workbench.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M50 19C67 19 78 31 76 47C74 63 60 73 45 75C30 77 20 69 21 56C22 43 32 33 43 32" stroke-width="8"/>
+    <path d="M52 20C45 36 46 61 50 82" stroke-width="8"/>
+    <path d="M31 66C43 72 62 64 71 50" stroke-width="8"/>
+  </g>
+  <circle cx="75" cy="28" r="5" fill="currentColor"/>
+</svg>

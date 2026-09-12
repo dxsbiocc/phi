@@ -1,0 +1,10 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Phi lowercase project bowl mark</title>
+  <desc id="desc">A lowercase phi mark whose bowl behaves like a contained local project workspace.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M52 16C48 34 47 60 51 85" stroke-width="8"/>
+    <path d="M50 29C65 30 75 41 73 55C71 69 58 77 42 75C28 73 21 63 24 51C27 39 38 30 50 29Z" stroke-width="7"/>
+    <path d="M36 48H62" stroke-width="4"/>
+    <path d="M35 60H57" stroke-width="4"/>
+  </g>
+</svg>

@@ -1,4 +1,5 @@
-export type ToolActionKind = 'command' | 'python' | 'read' | 'edit' | 'search' | 'web' | 'generic'
+export type ToolActionKind =
+  'command' | 'python' | 'read' | 'edit' | 'search' | 'web' | 'notebook' | 'generic'
 
 const EDIT_TOOL_NAMES = new Set(['edit', 'write', 'apply_patch', 'patch', 'replace'])
 const READ_TOOL_NAMES = new Set(['read', 'open', 'view'])
@@ -33,6 +34,9 @@ export function toolActionKind(toolName: string, argsPreview = '', argsJson = ''
   const isCommandTool =
     COMMAND_TOOL_NAMES.has(name) || name.includes('shell') || name.includes('command')
 
+  if (name.startsWith('notebook.')) {
+    return 'notebook'
+  }
   if (PYTHON_TOOL_NAMES.has(name)) {
     return 'python'
   }

@@ -1,8 +1,10 @@
 export function sessionDraftKey(input: {
+  phiSessionId?: string | null
   path: string | null
   cwd: string
   sessionGeneration: number
 }): string {
+  if (input.phiSessionId) return `phi:${input.phiSessionId}`
   return input.path ? `path:${input.path}` : `fresh:${input.cwd}:${input.sessionGeneration}`
 }
 
