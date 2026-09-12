@@ -144,17 +144,22 @@ test('workspace nav content hover is used whenever the target sidebar mode is co
 })
 
 test('workspace nav content hover renders as a compact flyout', () => {
-  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
-  const hoverPreviewStart = appSource.indexOf('data-phi-workspace-sidebar-hover-preview=')
-  const hoverPreviewEnd = appSource.indexOf('{isChatWorkspaceView && isSidebarOpen && (')
+  const activityBarSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/AppActivityBar.tsx'),
+    'utf8'
+  )
+  const hoverPreviewStart = activityBarSource.indexOf('data-phi-workspace-sidebar-hover-preview=')
+  const hoverPreviewEnd = activityBarSource.indexOf('<SessionSidebar')
 
   assert.notEqual(hoverPreviewStart, -1)
   assert.notEqual(hoverPreviewEnd, -1)
 
-  const hoverPreviewSource = appSource.slice(hoverPreviewStart, hoverPreviewEnd)
+  const hoverPreviewSource = activityBarSource.slice(hoverPreviewStart, hoverPreviewEnd)
 
   assert.match(hoverPreviewSource, /width: workspaceSidebarPreviewWidth/)
   assert.match(hoverPreviewSource, /maxHeight: 'min\(420px, calc\(100vh - 96px\)\)'/)
-  assert.match(hoverPreviewSource, /compactHoverPreview/)
   assert.doesNotMatch(hoverPreviewSource, /height: `calc\(100vh/)
+
+  const sessionSidebarSource = activityBarSource.slice(hoverPreviewEnd)
+  assert.match(sessionSidebarSource, /compactHoverPreview/)
 })

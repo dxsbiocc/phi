@@ -1,14 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import {
-  Alert,
   Box,
   Button,
   CssBaseline,
   IconButton,
-  Paper,
-  Popover,
-  Popper,
-  Snackbar,
   ThemeProvider,
   Tooltip,
   Typography
@@ -18,7 +13,6 @@ import { FiMaximize2, FiMinimize2, FiMinus } from 'react-icons/fi'
 import { TbLayoutSidebarRight } from 'react-icons/tb'
 import ChatView from './components/ChatView'
 import type { LocalPathKind } from './components/MarkdownContent'
-import SessionSidebar from './components/SessionSidebar'
 import PluginView from './features/plugin/PluginView'
 import { usePluginCatalog } from './features/plugin/hooks/usePluginCatalog'
 import WrapperView from './features/wrapper/WrapperView'
@@ -26,10 +20,10 @@ import SkillView from './features/skill/SkillView'
 import { useSkillCatalog } from './features/skill/hooks/useSkillCatalog'
 import McpView from './features/mcp/McpView'
 import { useMcpServerCatalog } from './features/mcp/hooks/useMcpServerCatalog'
-import SettingsDialog, { type SettingsCategory } from './components/SettingsDialog'
-import AddProviderDialog from './components/AddProviderDialog'
-import OnboardingDialog from './components/OnboardingDialog'
-import NewProjectDialog from './components/NewProjectDialog'
+import { type SettingsCategory } from './components/SettingsDialog'
+import AppDialogs, { type SnackbarNotice } from './AppDialogs'
+import AppActivityBar from './AppActivityBar'
+import AppWorkspaceSidebar from './AppWorkspaceSidebar'
 import FilePreviewPanel, {
   type FilePreviewPanelState
 } from './features/file-preview/FilePreviewPanel'
@@ -80,26 +74,12 @@ import type { AgentEventSummary, PermissionMode, Project, SessionSummary } from 
 
 export type AppView =
   'chat' | 'projects' | 'analysis' | 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
-type SnackbarNotice = {
-  id: number
-  severity: 'error' | 'info' | 'success' | 'warning'
-  message: string
-}
 
 const activityBarWidth = 48
 const macTitlebarHeight = 44
-const macContentTopGap = 8
 const minNavigationPaneWidth = 240
 const maxNavigationPaneWidth = 520
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
-const NavChatIcon = PhiIcons.nav.chat
-const NavProjectsIcon = PhiIcons.nav.projects
-const NavRuntimeIcon = PhiIcons.nav.runtime
-const NavPluginsIcon = PhiIcons.nav.plugins
-const NavSkillsIcon = PhiIcons.nav.skills
-const NavMcpIcon = PhiIcons.nav.mcp
-const NavWrappersIcon = PhiIcons.nav.wrappers
-const NavSettingsIcon = PhiIcons.nav.settings
 
 export function TopRightControls({
   showInspectorFullscreen,
@@ -189,53 +169,6 @@ export function TopRightControls({
         </Tooltip>
       ) : null}
     </Box>
-  )
-}
-
-function WorkspaceSidebarNavButton({
-  mode,
-  label,
-  icon: Icon,
-  active,
-  useContentPreview,
-  onPreviewOpen,
-  onPreviewClose,
-  onClick
-}: {
-  mode: WorkspaceSidebarMode
-  label: string
-  icon: typeof NavChatIcon
-  active: boolean
-  useContentPreview: boolean
-  onPreviewOpen: (mode: WorkspaceSidebarMode, anchorEl: HTMLElement) => void
-  onPreviewClose: () => void
-  onClick: () => void
-}): React.JSX.Element {
-  const button = (
-    <IconButton
-      size="small"
-      aria-label={label}
-      color={active ? 'primary' : 'default'}
-      onMouseEnter={(event) => {
-        if (useContentPreview) onPreviewOpen(mode, event.currentTarget)
-      }}
-      onMouseLeave={useContentPreview ? onPreviewClose : undefined}
-      onFocus={(event) => {
-        if (useContentPreview) onPreviewOpen(mode, event.currentTarget)
-      }}
-      onBlur={useContentPreview ? onPreviewClose : undefined}
-      onClick={onClick}
-    >
-      <Icon fontSize="small" />
-    </IconButton>
-  )
-
-  return useContentPreview ? (
-    button
-  ) : (
-    <Tooltip title={label} placement="right">
-      {button}
-    </Tooltip>
   )
 }
 
@@ -1794,447 +1727,70 @@ function App(): React.JSX.Element {
             ))}
           </Box>
         )}
-        <Box
-          className="app-activity-bar"
-          sx={{
-            width: activityBarWidth,
-            height: '100vh',
-            flexShrink: 0,
-            position: 'relative',
-            zIndex: 1,
-            pt: isMac ? `${macTitlebarHeight + macContentTopGap}px` : 1,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 0.5,
-            backgroundColor: (muiTheme) =>
-              muiTheme.palette.mode === 'dark' ? muiTheme.palette.background.default : '#FFFFFF',
-            '& > *': {
-              position: 'relative',
-              zIndex: 8
-            }
-          }}
-        >
-          <WorkspaceSidebarNavButton
-            mode="conversations"
-            label="对话"
-            icon={NavChatIcon}
-            active={isWorkspaceSidebarModeExpanded('conversations')}
-            useContentPreview={shouldUseWorkspaceSidebarPreview('conversations')}
-            onPreviewOpen={openWorkspaceSidebarPreview}
-            onPreviewClose={scheduleWorkspaceSidebarPreviewClose}
-            onClick={() => onSelectWorkspaceView('chat')}
-          />
-          <WorkspaceSidebarNavButton
-            mode="projects"
-            label="项目"
-            icon={NavProjectsIcon}
-            active={isWorkspaceSidebarModeExpanded('projects')}
-            useContentPreview={shouldUseWorkspaceSidebarPreview('projects')}
-            onPreviewOpen={openWorkspaceSidebarPreview}
-            onPreviewClose={scheduleWorkspaceSidebarPreviewClose}
-            onClick={() => onSelectWorkspaceView('projects')}
-          />
-          <Tooltip title="运行时" placement="right">
-            <IconButton
-              size="small"
-              color={activeView === 'runtime' ? 'primary' : 'default'}
-              onClick={() => {
-                setActiveView('runtime')
-                void refreshAnalysisJupyterRuntimeStatus()
-              }}
-            >
-              <NavRuntimeIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="插件" placement="right">
-            <IconButton
-              size="small"
-              color={activeView === 'plugins' ? 'primary' : 'default'}
-              onClick={() => {
-                setActiveView('plugins')
-                void refreshPlugins()
-              }}
-            >
-              <NavPluginsIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="技能" placement="right">
-            <IconButton
-              size="small"
-              color={activeView === 'skills' ? 'primary' : 'default'}
-              onClick={() => {
-                setActiveView('skills')
-                void refreshSkills()
-              }}
-            >
-              <NavSkillsIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="MCP" placement="right">
-            <IconButton
-              size="small"
-              color={activeView === 'mcp' ? 'primary' : 'default'}
-              onClick={() => {
-                setActiveView('mcp')
-                void refreshMcpServers()
-              }}
-            >
-              <NavMcpIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="Wrappers" placement="right">
-            <IconButton
-              size="small"
-              color={activeView === 'wrappers' ? 'primary' : 'default'}
-              onClick={() => setActiveView('wrappers')}
-            >
-              <NavWrappersIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Box sx={{ flex: 1 }} />
-          <Tooltip title="设置" placement="right">
-            <IconButton size="small" onClick={() => setIsSettingsOpen(true)} sx={{ mb: 1 }}>
-              <NavSettingsIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        </Box>
 
-        <Popper
-          open={isWorkspaceSidebarPreviewOpen}
-          anchorEl={visibleWorkspaceSidebarPreview?.anchorEl ?? null}
-          placement="right-start"
-          modifiers={[
-            {
-              name: 'offset',
-              options: { offset: [0, 6] }
-            },
-            {
-              name: 'preventOverflow',
-              options: { padding: 8 }
-            }
-          ]}
-          sx={{ zIndex: (muiTheme) => muiTheme.zIndex.tooltip }}
-        >
-          <Paper
-            data-phi-workspace-sidebar-hover-preview={workspaceSidebarPreviewMode}
-            elevation={8}
-            onMouseEnter={clearWorkspaceSidebarPreviewCloseTimer}
-            onMouseLeave={scheduleWorkspaceSidebarPreviewClose}
-            onFocus={clearWorkspaceSidebarPreviewCloseTimer}
-            onBlur={scheduleWorkspaceSidebarPreviewClose}
-            sx={{
-              width: workspaceSidebarPreviewWidth,
-              maxHeight: 'min(420px, calc(100vh - 96px))',
-              mt: isMac ? -0.5 : 0.5,
-              overflow: 'hidden',
-              borderRadius: 2,
-              border: 1,
-              borderColor: 'divider',
-              bgcolor: 'background.default',
-              boxShadow: (muiTheme) =>
-                muiTheme.palette.mode === 'dark'
-                  ? '0 18px 46px rgba(0, 0, 0, 0.48)'
-                  : '0 18px 46px rgba(12, 26, 32, 0.18)'
-            }}
-          >
-            <SessionSidebar
-              hideWindowDragSpacer
-              compactHoverPreview
-              mode={workspaceSidebarPreviewMode}
-              sessions={sessions}
-              activeSessionPath={activeSessionPath}
-              activeCwd={activeCwd}
-              projects={projects}
-              projectSessionRefreshKey={projectSessionRefreshKey}
-              onNewChat={() => {
-                closeWorkspaceSidebarPreview()
-                void onNewChat()
-              }}
-              onNewProject={() => {
-                closeWorkspaceSidebarPreview()
-                setIsNewProjectDialogOpen(true)
-              }}
-              onSelectSession={(path) => {
-                closeWorkspaceSidebarPreview()
-                void onSelectSession(path)
-              }}
-              onRenameSession={(path, name) => {
-                void onRenameSession(path, name)
-              }}
-              onDeleteSession={(path) => {
-                void onDeleteSession(path)
-              }}
-              onStartProjectChat={(project) => {
-                closeWorkspaceSidebarPreview()
-                void onStartProjectChat(project)
-              }}
-              onDeleteProject={(project) => {
-                void onDeleteProjectEntry(project)
-              }}
-              onFetchProjectSessions={onFetchProjectSessions}
-              getSessionRuntimeState={getSessionRuntimeState}
-            />
-          </Paper>
-        </Popper>
+        <AppActivityBar
+          activeView={activeView}
+          setActiveView={setActiveView}
+          isWorkspaceSidebarModeExpanded={isWorkspaceSidebarModeExpanded}
+          shouldUseWorkspaceSidebarPreview={shouldUseWorkspaceSidebarPreview}
+          openWorkspaceSidebarPreview={openWorkspaceSidebarPreview}
+          scheduleWorkspaceSidebarPreviewClose={scheduleWorkspaceSidebarPreviewClose}
+          onSelectWorkspaceView={onSelectWorkspaceView}
+          refreshAnalysisJupyterRuntimeStatus={refreshAnalysisJupyterRuntimeStatus}
+          refreshPlugins={refreshPlugins}
+          refreshSkills={refreshSkills}
+          refreshMcpServers={refreshMcpServers}
+          setIsSettingsOpen={setIsSettingsOpen}
+          isWorkspaceSidebarPreviewOpen={isWorkspaceSidebarPreviewOpen}
+          visibleWorkspaceSidebarPreview={visibleWorkspaceSidebarPreview}
+          workspaceSidebarPreviewMode={workspaceSidebarPreviewMode}
+          workspaceSidebarPreviewWidth={workspaceSidebarPreviewWidth}
+          clearWorkspaceSidebarPreviewCloseTimer={clearWorkspaceSidebarPreviewCloseTimer}
+          closeWorkspaceSidebarPreview={closeWorkspaceSidebarPreview}
+          sessions={sessions}
+          activeSessionPath={activeSessionPath}
+          activeCwd={activeCwd}
+          projects={projects}
+          projectSessionRefreshKey={projectSessionRefreshKey}
+          onNewChat={onNewChat}
+          setIsNewProjectDialogOpen={setIsNewProjectDialogOpen}
+          onSelectSession={onSelectSession}
+          onRenameSession={onRenameSession}
+          onDeleteSession={onDeleteSession}
+          onStartProjectChat={onStartProjectChat}
+          onDeleteProjectEntry={onDeleteProjectEntry}
+          onFetchProjectSessions={onFetchProjectSessions}
+          getSessionRuntimeState={getSessionRuntimeState}
+        />
 
-        {isChatWorkspaceView && isSidebarOpen && (
-          <Box
-            className="app-sidebar-shell"
-            sx={{
-              width: sidebarWidth,
-              flexShrink: 0,
-              position: 'relative',
-              zIndex: 1,
-              backgroundColor: (muiTheme) =>
-                muiTheme.palette.mode === 'dark' ? muiTheme.palette.background.default : '#FFFFFF',
-              '& > *': {
-                position: 'relative',
-                zIndex: 8
-              }
-            }}
-          >
-            {activeView === 'analysis' ? (
-              <Box
-                data-phi-analysis-sidebar="true"
-                sx={{
-                  height: '100%',
-                  minHeight: 0,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  overflow: 'hidden'
-                }}
-              >
-                <Box
-                  sx={{
-                    flexShrink: 0,
-                    minHeight: isMac ? macTitlebarHeight : 0,
-                    WebkitAppRegion: 'drag'
-                  }}
-                />
-                <Box
-                  data-phi-analysis-session-selector="true"
-                  sx={{
-                    px: 1.5,
-                    pb: 1,
-                    flexShrink: 0
-                  }}
-                >
-                  <Button
-                    fullWidth
-                    variant="outlined"
-                    aria-haspopup="menu"
-                    aria-expanded={analysisSessionSelectorAnchor ? 'true' : undefined}
-                    data-phi-analysis-session-select-button="true"
-                    onClick={(event) => setAnalysisSessionSelectorAnchor(event.currentTarget)}
-                    sx={{
-                      minHeight: 48,
-                      justifyContent: 'space-between',
-                      gap: 1,
-                      borderRadius: 2,
-                      px: 1.25,
-                      py: 0.75,
-                      fontWeight: 700,
-                      textTransform: 'none',
-                      color: 'text.primary',
-                      borderColor: activeWorkspaceIsProject ? 'primary.light' : 'divider',
-                      bgcolor: (theme) =>
-                        theme.palette.mode === 'dark'
-                          ? 'rgba(255, 255, 255, 0.035)'
-                          : 'rgba(255, 255, 255, 0.92)',
-                      boxShadow: (theme) =>
-                        theme.palette.mode === 'dark'
-                          ? '0 10px 28px rgba(0, 0, 0, 0.22)'
-                          : '0 12px 34px rgba(24, 74, 86, 0.10)',
-                      '&:hover': {
-                        borderColor: 'primary.main',
-                        bgcolor: (theme) =>
-                          theme.palette.mode === 'dark'
-                            ? 'rgba(255, 255, 255, 0.055)'
-                            : 'rgba(248, 253, 255, 0.98)',
-                        boxShadow: (theme) =>
-                          theme.palette.mode === 'dark'
-                            ? '0 12px 30px rgba(0, 0, 0, 0.28)'
-                            : '0 14px 36px rgba(24, 74, 86, 0.14)'
-                      }
-                    }}
-                  >
-                    <Box
-                      component="span"
-                      sx={{
-                        minWidth: 0,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        textAlign: 'left',
-                        fontSize: '0.92rem'
-                      }}
-                    >
-                      {activeWorkspaceTitle}
-                    </Box>
-                    <Box
-                      component="span"
-                      data-phi-analysis-session-scope-label={
-                        activeWorkspaceIsProject ? 'project' : 'ordinary'
-                      }
-                      title={activeWorkspaceScopeLabel}
-                      sx={{
-                        flexShrink: 0,
-                        maxWidth: 132,
-                        minWidth: 52,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        borderRadius: 999,
-                        px: 1,
-                        py: 0.35,
-                        textAlign: 'center',
-                        color: activeWorkspaceIsProject ? 'primary.dark' : 'text.secondary',
-                        bgcolor: activeWorkspaceIsProject
-                          ? 'rgba(46, 159, 179, 0.12)'
-                          : 'action.selected',
-                        border: 1,
-                        borderColor: activeWorkspaceIsProject ? 'primary.light' : 'divider',
-                        fontSize: '0.76rem',
-                        fontWeight: 800,
-                        lineHeight: 1.35
-                      }}
-                    >
-                      {activeWorkspaceScopeLabel}
-                    </Box>
-                  </Button>
-                  <Popover
-                    open={Boolean(analysisSessionSelectorAnchor)}
-                    anchorEl={analysisSessionSelectorAnchor}
-                    onClose={() => setAnalysisSessionSelectorAnchor(null)}
-                    anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-                    transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-                    slotProps={{
-                      paper: {
-                        sx: {
-                          mt: 0.75,
-                          width: Math.max(280, sidebarWidth - 24),
-                          height: 'min(360px, calc(100vh - 132px))',
-                          overflow: 'hidden',
-                          borderRadius: 2,
-                          border: 1,
-                          borderColor: 'divider',
-                          boxShadow: '0 18px 45px rgba(12, 26, 32, 0.18)'
-                        }
-                      }
-                    }}
-                  >
-                    <Box
-                      data-phi-analysis-session-select-menu="true"
-                      sx={{ width: '100%', height: '100%', display: 'flex', minHeight: 0 }}
-                    >
-                      <SessionSidebar
-                        hideWindowDragSpacer
-                        mode={workspaceSidebarMode}
-                        sessions={sessions}
-                        activeSessionPath={activeSessionPath}
-                        activeCwd={activeCwd}
-                        projects={projects}
-                        projectSessionRefreshKey={projectSessionRefreshKey}
-                        onNewChat={() => {
-                          setAnalysisSessionSelectorAnchor(null)
-                          void onNewChat()
-                        }}
-                        onNewProject={() => setIsNewProjectDialogOpen(true)}
-                        onSelectSession={(path) => {
-                          setAnalysisSessionSelectorAnchor(null)
-                          void onSelectSession(path)
-                        }}
-                        onRenameSession={(path, name) => {
-                          void onRenameSession(path, name)
-                        }}
-                        onDeleteSession={(path) => {
-                          void onDeleteSession(path)
-                        }}
-                        onStartProjectChat={(project) => {
-                          setAnalysisSessionSelectorAnchor(null)
-                          void onStartProjectChat(project)
-                        }}
-                        onDeleteProject={(project) => {
-                          void onDeleteProjectEntry(project)
-                        }}
-                        onFetchProjectSessions={onFetchProjectSessions}
-                        getSessionRuntimeState={getSessionRuntimeState}
-                      />
-                    </Box>
-                  </Popover>
-                </Box>
-                <Box sx={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
-                  <Box
-                    data-phi-analysis-chat-panel="true"
-                    sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}
-                  >
-                    {activeChatView}
-                  </Box>
-                </Box>
-              </Box>
-            ) : (
-              <SessionSidebar
-                mode={workspaceSidebarMode}
-                sessions={sessions}
-                activeSessionPath={activeSessionPath}
-                activeCwd={activeCwd}
-                projects={projects}
-                projectSessionRefreshKey={projectSessionRefreshKey}
-                onNewChat={() => {
-                  void onNewChat()
-                }}
-                onNewProject={() => setIsNewProjectDialogOpen(true)}
-                onSelectSession={(path) => {
-                  void onSelectSession(path)
-                }}
-                onRenameSession={(path, name) => {
-                  void onRenameSession(path, name)
-                }}
-                onDeleteSession={(path) => {
-                  void onDeleteSession(path)
-                }}
-                onStartProjectChat={(project) => {
-                  void onStartProjectChat(project)
-                }}
-                onDeleteProject={(project) => {
-                  void onDeleteProjectEntry(project)
-                }}
-                onFetchProjectSessions={onFetchProjectSessions}
-                getSessionRuntimeState={getSessionRuntimeState}
-              />
-            )}
-          </Box>
-        )}
-
-        {isChatWorkspaceView && isSidebarOpen && (
-          <Box
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="调整侧边栏宽度"
-            onMouseDown={onStartSidebarResize}
-            sx={{
-              width: '1px',
-              flexShrink: 0,
-              position: 'relative',
-              cursor: 'col-resize',
-              bgcolor: (muiTheme) =>
-                muiTheme.palette.mode === 'dark'
-                  ? 'rgba(241, 246, 246, 0.18)'
-                  : 'rgba(15, 42, 48, 0.18)',
-              zIndex: 5,
-              WebkitAppRegion: 'no-drag',
-              '&::before': {
-                content: '""',
-                position: 'absolute',
-                top: 0,
-                bottom: 0,
-                left: -4,
-                right: -4
-              }
-            }}
-          />
-        )}
+        <AppWorkspaceSidebar
+          isChatWorkspaceView={isChatWorkspaceView}
+          isSidebarOpen={isSidebarOpen}
+          sidebarWidth={sidebarWidth}
+          activeView={activeView}
+          activeChatView={activeChatView}
+          onStartSidebarResize={onStartSidebarResize}
+          analysisSessionSelectorAnchor={analysisSessionSelectorAnchor}
+          setAnalysisSessionSelectorAnchor={setAnalysisSessionSelectorAnchor}
+          activeWorkspaceIsProject={activeWorkspaceIsProject}
+          activeWorkspaceTitle={activeWorkspaceTitle}
+          activeWorkspaceScopeLabel={activeWorkspaceScopeLabel}
+          workspaceSidebarMode={workspaceSidebarMode}
+          sessions={sessions}
+          activeSessionPath={activeSessionPath}
+          activeCwd={activeCwd}
+          projects={projects}
+          projectSessionRefreshKey={projectSessionRefreshKey}
+          onNewChat={onNewChat}
+          setIsNewProjectDialogOpen={setIsNewProjectDialogOpen}
+          onSelectSession={onSelectSession}
+          onRenameSession={onRenameSession}
+          onDeleteSession={onDeleteSession}
+          onStartProjectChat={onStartProjectChat}
+          onDeleteProjectEntry={onDeleteProjectEntry}
+          onFetchProjectSessions={onFetchProjectSessions}
+          getSessionRuntimeState={getSessionRuntimeState}
+        />
 
         {isChatWorkspaceView ? (
           <Box
@@ -2541,105 +2097,56 @@ function App(): React.JSX.Element {
           <Box component="main" sx={{ flex: 1, minWidth: 0, height: '100vh' }} />
         )}
 
-        <SettingsDialog
-          open={isSettingsOpen}
-          onClose={() => setIsSettingsOpen(false)}
-          category={settingsCategory}
-          onCategoryChange={setSettingsCategory}
-          providers={providerStatuses}
+        <AppDialogs
+          rendererApi={rendererApi}
+          isSettingsOpen={isSettingsOpen}
+          setIsSettingsOpen={setIsSettingsOpen}
+          settingsCategory={settingsCategory}
+          setSettingsCategory={setSettingsCategory}
+          providerStatuses={providerStatuses}
           providerHints={providerHints}
           personaMarkdown={personaMarkdown}
           onSavePersonaMarkdown={onSavePersonaMarkdown}
-          onRefresh={refreshAuthStatuses}
-          onOpenAddProvider={() => {
-            openProviderDialog(null)
-          }}
-          onLogout={logoutProvider}
+          refreshAuthStatuses={refreshAuthStatuses}
+          openProviderDialog={openProviderDialog}
+          logoutProvider={logoutProvider}
           projects={projects}
-          models={availableModels}
+          availableModels={availableModels}
           pendingApproval={pendingApproval}
-          updatingProjectId={updatingPermissionProjectId}
-          onUpdateProjectPermissionMode={(projectId, permissionMode) => {
-            void onUpdateProjectPermissionMode(projectId, permissionMode)
-          }}
-          onUpdateProjectDefaults={(projectId, defaults) => {
-            void onUpdateProjectDefaults(projectId, defaults)
-          }}
+          updatingPermissionProjectId={updatingPermissionProjectId}
+          onUpdateProjectPermissionMode={onUpdateProjectPermissionMode}
+          onUpdateProjectDefaults={onUpdateProjectDefaults}
           updatingRemoteProjectId={updatingRemoteProjectId}
           onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
           onUpdateProjectRemoteDefaults={onUpdateProjectRemoteDefaults}
           onOpenApprovalSession={onOpenApprovalSession}
-          onRespondApproval={onRespondToolApproval}
-          onCopyDiagnostics={() => rendererApi.copyDiagnostics()}
+          onRespondToolApproval={onRespondToolApproval}
           themeMode={themeMode}
-          onSelectThemeMode={setThemeMode}
-        />
-
-        <OnboardingDialog
-          open={showOnboarding}
-          onComplete={onCompleteOnboarding}
-          onSkip={onSkipOnboarding}
-        />
-
-        <AddProviderDialog
-          open={isProviderDialogOpen}
-          providers={providerStatuses}
-          initialProviderId={providerDialogProviderId}
-          activePrompts={selectedPrompts}
-          providerHint={providerDialogProviderId ? providerHints[providerDialogProviderId] : ''}
-          isProcessing={isBusy}
-          onClose={closeProviderDialog}
-          onSelectProvider={(provider) => {
-            setProviderDialogProviderId(provider.providerId)
-          }}
-          onBackToList={() => {
-            setProviderDialogProviderId(null)
-          }}
-          onSubmitApiKey={submitProviderApiKey}
-          onStartOAuth={submitProviderOAuth}
-          onSubmitPrompt={onSubmitAuthPrompt}
+          setThemeMode={setThemeMode}
+          showOnboarding={showOnboarding}
+          onCompleteOnboarding={onCompleteOnboarding}
+          onSkipOnboarding={onSkipOnboarding}
+          isProviderDialogOpen={isProviderDialogOpen}
+          providerDialogProviderId={providerDialogProviderId}
+          selectedPrompts={selectedPrompts}
+          isBusy={isBusy}
+          closeProviderDialog={closeProviderDialog}
+          setProviderDialogProviderId={setProviderDialogProviderId}
+          submitProviderApiKey={submitProviderApiKey}
+          submitProviderOAuth={submitProviderOAuth}
+          onSubmitAuthPrompt={onSubmitAuthPrompt}
           onUpdatePromptValue={onUpdatePromptValue}
+          isNewProjectDialogOpen={isNewProjectDialogOpen}
+          setIsNewProjectDialogOpen={setIsNewProjectDialogOpen}
+          onCreateProject={onCreateProject}
+          snackbarNotice={snackbarNotice}
+          setSnackbarNotice={setSnackbarNotice}
+          isChatWorkspaceView={isChatWorkspaceView}
+          isSidebarOpen={isSidebarOpen}
+          activityBarWidth={activityBarWidth}
+          sidebarWidth={sidebarWidth}
+          macTitlebarHeight={macTitlebarHeight}
         />
-
-        <NewProjectDialog
-          open={isNewProjectDialogOpen}
-          onClose={() => setIsNewProjectDialogOpen(false)}
-          onPickDirectory={() => rendererApi.pickProjectDirectory()}
-          onCreate={onCreateProject}
-        />
-
-        <Snackbar
-          key={snackbarNotice?.id}
-          open={Boolean(snackbarNotice)}
-          autoHideDuration={6000}
-          onClose={(_, reason) => {
-            if (reason === 'clickaway') return
-            setSnackbarNotice(null)
-          }}
-          anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-          sx={{
-            top: isChatWorkspaceView ? `${macTitlebarHeight + 12}px` : 16,
-            left: isChatWorkspaceView
-              ? `${activityBarWidth + (isSidebarOpen ? sidebarWidth + 1 : 0)}px`
-              : 0,
-            right: 0,
-            transform: 'none',
-            justifyContent: 'center',
-            pointerEvents: 'none',
-            '& .MuiAlert-root': {
-              pointerEvents: 'auto'
-            }
-          }}
-        >
-          <Alert
-            severity={snackbarNotice?.severity ?? 'error'}
-            variant="filled"
-            onClose={() => setSnackbarNotice(null)}
-            sx={{ maxWidth: 720, alignItems: 'center' }}
-          >
-            {snackbarNotice?.message}
-          </Alert>
-        </Snackbar>
       </Box>
     </ThemeProvider>
   )
