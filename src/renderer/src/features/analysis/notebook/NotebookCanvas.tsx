@@ -24,6 +24,7 @@ import { PhiIcons } from '../../../icons'
 import type { SyntaxLanguage } from '../../../lib/syntaxHighlight'
 import { hasLiveNotebookSession, isNotebookSessionRunnable } from '../lib/notebookSession'
 import { notebookAiInsertionConfirmationMessage } from '../lib/notebookConfirmations'
+import { notebookAiEmptyGenerationMessage, notebookAiPromptError } from '../lib/notebookAiErrors'
 import { useNotebookAutoConnect } from '../lib/useNotebookAutoConnect'
 import {
   clearNotebookCellOutput,
@@ -86,6 +87,7 @@ type NotebookAiPromptDraft = {
   references: AnalysisNotebookContextReference[]
   isGenerating: boolean
   error: string | null
+  errorDetail: string | null
 }
 type PendingAiInsertion = {
   draftId: string
@@ -428,16 +430,28 @@ export default function NotebookCanvas({
       language: insertCodeLanguage,
       references: [],
       isGenerating: false,
-      error: null
+      error: null,
+      errorDetail: null
     })
   }
+  const clearPendingAiInsertionForDraft = (draftId: string | null | undefined): void => {
+    if (!draftId) return
+    setPendingAiInsertion((pending) => (pending?.draftId === draftId ? null : pending))
+  }
   const updateAiPrompt = (prompt: string): void => {
-    setAiPromptDraft((draft) => (draft ? { ...draft, prompt, error: null } : draft))
+    clearPendingAiInsertionForDraft(aiPromptDraft?.id)
+    setAiPromptDraft((draft) =>
+      draft ? { ...draft, prompt, error: null, errorDetail: null } : draft
+    )
   }
   const updateAiPromptLanguage = (language: SyntaxLanguage): void => {
-    setAiPromptDraft((draft) => (draft ? { ...draft, language, error: null } : draft))
+    clearPendingAiInsertionForDraft(aiPromptDraft?.id)
+    setAiPromptDraft((draft) =>
+      draft ? { ...draft, language, error: null, errorDetail: null } : draft
+    )
   }
   const addAiPromptReference = (reference: AnalysisNotebookContextReference): void => {
+    clearPendingAiInsertionForDraft(aiPromptDraft?.id)
     setAiPromptDraft((draft) => {
       if (!draft) return draft
       const references = draft.references.some((item) => item.id === reference.id)
@@ -450,7 +464,7 @@ export default function NotebookCanvas({
             (match) => `${match.startsWith(' ') ? ' ' : ''}${token} `
           )
         : `${draft.prompt}${draft.prompt.endsWith(' ') || draft.prompt.length === 0 ? '' : ' '}${token} `
-      return { ...draft, references, prompt, error: null }
+      return { ...draft, references, prompt, error: null, errorDetail: null }
     })
   }
   const pickAiPromptContextFiles = async (): Promise<void> => {
@@ -467,18 +481,26 @@ export default function NotebookCanvas({
   const submitAiPrompt = async (): Promise<void> => {
     const draft = aiPromptDraft
     if (!draft || !draft.prompt.trim() || draft.isGenerating) return
+    if (pendingAiInsertion?.draftId === draft.id) return
 
     if (!notebookFile || !draftDocument || !onGenerateNotebookCode) {
       setAiPromptDraft((current) =>
         current?.id === draft.id
-          ? { ...current, error: 'Notebook AI 生成 API 尚未加载', isGenerating: false }
+          ? {
+              ...current,
+              error: 'Notebook AI 生成 API 尚未加载',
+              errorDetail: 'Notebook AI 生成 API 尚未加载',
+              isGenerating: false
+            }
           : current
       )
       return
     }
 
     setAiPromptDraft((current) =>
-      current?.id === draft.id ? { ...current, isGenerating: true, error: null } : current
+      current?.id === draft.id
+        ? { ...current, isGenerating: true, error: null, errorDetail: null }
+        : current
     )
 
     try {
@@ -501,11 +523,13 @@ export default function NotebookCanvas({
               ]
             : []
       if (generatedCells.length === 0) {
-        throw new Error('Agent 没有返回可插入的 cell')
+        throw new Error(notebookAiEmptyGenerationMessage)
       }
 
       setAiPromptDraft((current) =>
-        current?.id === draft.id ? { ...current, isGenerating: false, error: null } : current
+        current?.id === draft.id
+          ? { ...current, isGenerating: false, error: null, errorDetail: null }
+          : current
       )
       setPendingAiInsertion({
         draftId: draft.id,
@@ -513,9 +537,11 @@ export default function NotebookCanvas({
         generatedCells
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : '无法生成代码'
+      const { message, detail } = notebookAiPromptError(error)
       setAiPromptDraft((current) =>
-        current?.id === draft.id ? { ...current, isGenerating: false, error: message } : current
+        current?.id === draft.id
+          ? { ...current, isGenerating: false, error: message, errorDetail: detail }
+          : current
       )
     }
   }
@@ -565,13 +591,21 @@ export default function NotebookCanvas({
     })
   }
   const onMoveAiPrompt = (targetCellId: string, placement: CellPlacement): void => {
+    const targetIndex = cells.findIndex((cell) => cell.id === targetCellId)
+    if (targetIndex < 0) return
+    const afterCellId =
+      placement === 'after' ? targetCellId : targetIndex > 0 ? cells[targetIndex - 1].id : null
+    const draftId = aiPromptDraft?.id
+
     setAiPromptDraft((current) => {
       if (!current) return current
-      const targetIndex = cells.findIndex((cell) => cell.id === targetCellId)
-      if (targetIndex < 0) return current
-      const afterCellId =
-        placement === 'after' ? targetCellId : targetIndex > 0 ? cells[targetIndex - 1].id : null
       return current.afterCellId === afterCellId ? current : { ...current, afterCellId }
+    })
+    setPendingAiInsertion((pending) => {
+      if (!pending || pending.draftId !== draftId || pending.afterCellId === afterCellId) {
+        return pending
+      }
+      return { ...pending, afterCellId }
     })
   }
   const onDragAiPrompt = (event: DragEvent<HTMLButtonElement>): void => {
@@ -652,14 +686,16 @@ export default function NotebookCanvas({
       setAiPromptDraft(null)
       await saveNotebookDocument(nextDocument)
     } catch (error) {
-      const message = error instanceof Error ? error.message : '无法插入 AI 生成内容'
+      const { message, detail } = notebookAiPromptError(error)
       setAiPromptDraft((current) =>
         current?.id === pending.draftId
-          ? { ...current, isGenerating: false, error: message }
+          ? { ...current, isGenerating: false, error: message, errorDetail: detail }
           : current
       )
     }
   }
+  const activePendingAiInsertion =
+    pendingAiInsertion?.draftId === aiPromptDraft?.id ? pendingAiInsertion : null
   const aiPromptCell = aiPromptDraft ? (
     <NotebookAiPromptCell
       language={aiPromptDraft.language}
@@ -667,8 +703,17 @@ export default function NotebookCanvas({
       prompt={aiPromptDraft.prompt}
       references={aiPromptDraft.references}
       contextOptions={aiContextOptions}
+      pendingGeneratedCells={activePendingAiInsertion?.generatedCells ?? []}
+      confirmationMessage={
+        activePendingAiInsertion
+          ? notebookAiInsertionConfirmationMessage({
+              cellCount: activePendingAiInsertion.generatedCells.length
+            })
+          : undefined
+      }
       isGenerating={aiPromptDraft.isGenerating}
       error={aiPromptDraft.error}
+      errorDetail={aiPromptDraft.errorDetail}
       canPickContextFiles={Boolean(onPickContextFiles)}
       onSelect={() => setSelectedCellId(null)}
       onPromptChange={updateAiPrompt}
@@ -678,6 +723,10 @@ export default function NotebookCanvas({
         void pickAiPromptContextFiles()
       }}
       onSubmit={submitAiPrompt}
+      onConfirmInsertion={() => {
+        void confirmAiInsertion()
+      }}
+      onCancelInsertion={cancelAiInsertion}
       onCancel={closeAiPrompt}
       onDragStart={onDragAiPrompt}
     />
@@ -908,66 +957,6 @@ export default function NotebookCanvas({
             sx={{ borderRadius: 999, px: 2 }}
           >
             切换 kernel
-          </Button>
-        </DialogActions>
-      </Dialog>
-      <Dialog
-        open={Boolean(pendingAiInsertion)}
-        onClose={cancelAiInsertion}
-        maxWidth="xs"
-        fullWidth
-        data-phi-notebook-ai-insert-dialog="true"
-        slotProps={{
-          paper: {
-            sx: {
-              borderRadius: 3,
-              border: 1,
-              borderColor: (theme) => alpha(theme.palette.primary.main, 0.3),
-              bgcolor: 'background.paper',
-              boxShadow: (theme) => `0 18px 60px ${alpha(theme.palette.common.black, 0.34)}`
-            }
-          }
-        }}
-      >
-        <DialogTitle
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 1,
-            px: 2.5,
-            pt: 2.25,
-            pb: 1.25,
-            fontSize: '1rem',
-            fontWeight: 800
-          }}
-        >
-          <PhiIcons.action.quick sx={{ fontSize: 21, color: 'primary.main' }} />
-          插入 AI 生成内容
-        </DialogTitle>
-        <DialogContent sx={{ px: 2.5, pb: 1 }}>
-          <Typography
-            data-phi-notebook-ai-insert-message="true"
-            variant="body2"
-            color="text.secondary"
-            sx={{ lineHeight: 1.65, whiteSpace: 'pre-line' }}
-          >
-            {notebookAiInsertionConfirmationMessage({
-              cellCount: pendingAiInsertion?.generatedCells.length ?? 0
-            })}
-          </Typography>
-        </DialogContent>
-        <DialogActions sx={{ px: 2.5, pb: 2, gap: 1 }}>
-          <Button onClick={cancelAiInsertion} sx={{ borderRadius: 999 }}>
-            取消
-          </Button>
-          <Button
-            variant="contained"
-            onClick={() => {
-              void confirmAiInsertion()
-            }}
-            sx={{ borderRadius: 999, px: 2 }}
-          >
-            插入并保存
           </Button>
         </DialogActions>
       </Dialog>

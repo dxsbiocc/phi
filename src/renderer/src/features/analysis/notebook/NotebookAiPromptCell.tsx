@@ -19,18 +19,26 @@ import { TbGripVertical, TbSparkles } from 'react-icons/tb'
 import { PhiIcons } from '../../../icons'
 import { notebookContextKindLabel } from '../lib/notebookViewModel'
 import { type SyntaxLanguage } from '../../../lib/syntaxHighlight'
-import type { AnalysisNotebookContextReference } from '../../../types'
+import type {
+  AnalysisNotebookContextReference,
+  AnalysisNotebookGeneratedCell
+} from '../../../types'
 import {
   notebookAccentBoxShadow,
   notebookAccentColor,
   notebookCaretColor
 } from './notebookCellStyles'
 import { notebookInsertCodeAction } from './notebookInsertCodeAction'
+import NotebookPreOutput from './NotebookPreOutput'
 
 const CloseIcon = PhiIcons.action.close
 const FileIcon = PhiIcons.tool.read
 const SendIcon = PhiIcons.action.send
 const MarkdownIcon = PhiIcons.file.markdown
+const ApproveIcon = PhiIcons.action.approve
+const CancelIcon = PhiIcons.action.cancel
+
+const stagedNotebookCellPreviewLimit = 1400
 
 export type NotebookAiPromptCellProps = {
   language: SyntaxLanguage
@@ -38,8 +46,11 @@ export type NotebookAiPromptCellProps = {
   prompt: string
   references: AnalysisNotebookContextReference[]
   contextOptions: AnalysisNotebookContextReference[]
+  pendingGeneratedCells?: AnalysisNotebookGeneratedCell[]
+  confirmationMessage?: string
   isGenerating: boolean
   error?: string | null
+  errorDetail?: string | null
   canPickContextFiles?: boolean
   onSelect: () => void
   onPromptChange: (prompt: string) => void
@@ -47,8 +58,21 @@ export type NotebookAiPromptCellProps = {
   onReferenceAdd: (reference: AnalysisNotebookContextReference) => void
   onPickContextFiles: () => void
   onSubmit: () => void
+  onConfirmInsertion?: () => void
+  onCancelInsertion?: () => void
   onCancel: () => void
   onDragStart: (event: DragEvent<HTMLButtonElement>) => void
+}
+
+function stagedNotebookCellLabel(cell: AnalysisNotebookGeneratedCell): string {
+  if (cell.cellType === 'markdown') return 'Markdown'
+  return (cell.language ?? 'code').toUpperCase()
+}
+
+function stagedNotebookCellPreview(source: string): string {
+  const trimmed = source.trimEnd()
+  if (trimmed.length <= stagedNotebookCellPreviewLimit) return trimmed
+  return `${trimmed.slice(0, stagedNotebookCellPreviewLimit).trimEnd()}\n...`
 }
 
 function NotebookContextPreviewField({
@@ -214,8 +238,11 @@ export default function NotebookAiPromptCell({
   prompt,
   references,
   contextOptions,
+  pendingGeneratedCells = [],
+  confirmationMessage,
   isGenerating,
   error,
+  errorDetail,
   canPickContextFiles = true,
   onSelect,
   onPromptChange,
@@ -223,6 +250,8 @@ export default function NotebookAiPromptCell({
   onReferenceAdd,
   onPickContextFiles,
   onSubmit,
+  onConfirmInsertion,
+  onCancelInsertion,
   onCancel,
   onDragStart
 }: NotebookAiPromptCellProps): React.JSX.Element {
@@ -236,7 +265,17 @@ export default function NotebookAiPromptCell({
         )
       }
     : codeAction
-  const canSubmit = prompt.trim().length > 0 && !isGenerating
+  const hasPendingInsertion = pendingGeneratedCells.length > 0
+  const errorOutputText = (errorDetail ?? error ?? '').trim()
+  const showErrorSummary = Boolean(error && errorOutputText && errorOutputText !== error)
+  const canSubmit = prompt.trim().length > 0 && !isGenerating && !hasPendingInsertion
+  const submitTooltip = hasPendingInsertion
+    ? '请先确认或取消生成结果'
+    : isGenerating
+      ? '正在生成代码'
+      : canSubmit
+        ? '生成代码'
+        : '输入需求后生成'
   const promptCellRef = useRef<HTMLDivElement | null>(null)
   const contextOptionListRef = useRef<HTMLDivElement | null>(null)
   const contextOptionRefs = useRef(new Map<string, HTMLDivElement>())
@@ -626,21 +665,6 @@ export default function NotebookAiPromptCell({
               <ListItemText primary="Markdown" secondary="生成说明文字，不生成代码" />
             </MenuItem>
           </Menu>
-          {error ? (
-            <Typography
-              color="error"
-              sx={{
-                minWidth: 0,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                fontSize: '0.8rem',
-                fontWeight: 600
-              }}
-            >
-              {error}
-            </Typography>
-          ) : null}
           <Box sx={{ flex: 1 }} />
           <Tooltip title="@ 引用上下文">
             <IconButton
@@ -666,9 +690,7 @@ export default function NotebookAiPromptCell({
               </IconButton>
             </span>
           </Tooltip>
-          <Tooltip
-            title={isGenerating ? '正在生成代码' : canSubmit ? '生成代码' : '输入需求后生成'}
-          >
+          <Tooltip title={submitTooltip}>
             <span>
               <IconButton
                 size="small"
@@ -687,6 +709,163 @@ export default function NotebookAiPromptCell({
             </span>
           </Tooltip>
         </Box>
+        {error && errorOutputText ? (
+          <Box
+            data-phi-notebook-ai-error-output="true"
+            sx={{
+              mx: 1.2,
+              mb: 1.1,
+              pt: 1,
+              borderTop: 1,
+              borderColor: (theme) => alpha(theme.palette.error.main, 0.22)
+            }}
+          >
+            {showErrorSummary ? (
+              <Typography
+                data-phi-notebook-ai-error-summary="true"
+                sx={{
+                  mb: 0.65,
+                  color: 'error.main',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  lineHeight: 1.55
+                }}
+              >
+                {error}
+              </Typography>
+            ) : null}
+            <NotebookPreOutput kind="error" text={errorOutputText} tone="error" />
+          </Box>
+        ) : null}
+        {hasPendingInsertion ? (
+          <Box
+            data-phi-notebook-ai-staged-insertion="true"
+            sx={{
+              mx: 1.2,
+              mb: 1.1,
+              pt: 1,
+              borderTop: 1,
+              borderColor: (theme) => alpha(notebookAccentColor(theme, 'ai'), 0.18)
+            }}
+          >
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 0.9,
+                mb: 0.8,
+                minWidth: 0
+              }}
+            >
+              <ApproveIcon
+                sx={{
+                  mt: 0.15,
+                  fontSize: 18,
+                  color: (theme) => notebookAccentColor(theme, 'ai')
+                }}
+              />
+              <Typography
+                data-phi-notebook-ai-staged-message="true"
+                sx={{
+                  minWidth: 0,
+                  color: 'text.secondary',
+                  fontSize: '0.82rem',
+                  fontWeight: 650,
+                  lineHeight: 1.55,
+                  whiteSpace: 'pre-line'
+                }}
+              >
+                {confirmationMessage ??
+                  `确认将 AI 生成内容插入 notebook？\n\n将插入 ${pendingGeneratedCells.length} 个 cell。`}
+              </Typography>
+            </Box>
+            <Box sx={{ display: 'grid', gap: 0.75 }}>
+              {pendingGeneratedCells.map((cell, index) => (
+                <Box
+                  // Generated cells do not have IDs yet; their order is the staged identity.
+                  key={`${cell.cellType}-${index}`}
+                  data-phi-notebook-ai-staged-cell={cell.cellType}
+                  sx={{
+                    minWidth: 0,
+                    border: 1,
+                    borderColor: (theme) => alpha(theme.palette.text.primary, 0.1),
+                    borderRadius: 1,
+                    bgcolor: (theme) => alpha(theme.palette.text.primary, 0.025),
+                    overflow: 'hidden'
+                  }}
+                >
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      px: 1,
+                      py: 0.55,
+                      borderBottom: 1,
+                      borderColor: (theme) => alpha(theme.palette.text.primary, 0.08)
+                    }}
+                  >
+                    <Typography
+                      sx={{
+                        color: 'text.secondary',
+                        fontSize: '0.72rem',
+                        fontWeight: 800,
+                        letterSpacing: 0,
+                        textTransform: 'uppercase'
+                      }}
+                    >
+                      {stagedNotebookCellLabel(cell)}
+                    </Typography>
+                  </Box>
+                  <Typography
+                    component="pre"
+                    data-phi-notebook-ai-staged-cell-source="true"
+                    sx={{
+                      m: 0,
+                      px: 1,
+                      py: 0.8,
+                      maxHeight: 220,
+                      overflow: 'auto',
+                      color: 'text.primary',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.82rem',
+                      lineHeight: 1.55,
+                      whiteSpace: 'pre'
+                    }}
+                  >
+                    {stagedNotebookCellPreview(cell.source)}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-end',
+                gap: 0.75,
+                mt: 1
+              }}
+            >
+              <Button
+                size="small"
+                startIcon={<CancelIcon sx={{ fontSize: 17 }} />}
+                onClick={onCancelInsertion}
+                sx={{ borderRadius: 1, textTransform: 'none', fontWeight: 750 }}
+              >
+                取消
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                startIcon={<ApproveIcon sx={{ fontSize: 17 }} />}
+                onClick={onConfirmInsertion}
+                sx={{ borderRadius: 1, textTransform: 'none', fontWeight: 800, px: 1.5 }}
+              >
+                插入并保存
+              </Button>
+            </Box>
+          </Box>
+        ) : null}
       </Box>
       <Box
         sx={{

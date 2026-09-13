@@ -36,6 +36,11 @@ export type NotebookPromptContext = {
 }
 
 const markdownLanguages = new Set(['markdown', 'md'])
+const NOTEBOOK_CELLS_COMPLETION_DATA_TYPES = new Set([
+  'data-notebook-cells-completion',
+  'notebook-cells-completion'
+])
+const CELL_COMPLETION_DATA_TYPES = new Set(['data-cell-completion', 'cell-completion'])
 
 export function truncateNotebookPromptText(value: string, maxLength = 1200): string {
   const trimmed = value.trim()
@@ -192,15 +197,24 @@ export function parseGeneratedNotebookCells(
   return cell ? [cell] : []
 }
 
+export function parseGeneratedNotebookCompletion(
+  completion: unknown,
+  defaultLanguage: string
+): AnalysisNotebookGeneratedCell[] {
+  const structuredCells = parseStructuredNotebookCompletion(completion, defaultLanguage)
+  if (structuredCells.length > 0) return structuredCells
+
+  const text = completionText(completion)
+  return text ? parseGeneratedNotebookCells(text, defaultLanguage) : []
+}
+
 export function generatedNotebookCellsSource(cells: AnalysisNotebookGeneratedCell[]): string {
   return cells.map((cell) => cell.source).join('\n\n')
 }
 
 export function notebookGenerationEmptyResultMessage(assistantText: string): string {
   const preview = truncateNotebookPromptText(assistantText, 500)
-  return preview
-    ? `Agent 没有返回可插入的 cell。返回片段: ${preview}`
-    : 'Agent 没有返回可插入的 cell'
+  return preview ? `AI 没有生成可插入内容。返回片段: ${preview}` : 'AI 没有生成可插入内容'
 }
 
 function parseGeneratedNotebookJsonCells(
@@ -217,6 +231,42 @@ function parseGeneratedNotebookJsonCells(
     }
   }
   return []
+}
+
+function parseStructuredNotebookCompletion(
+  completion: unknown,
+  defaultLanguage: string
+): AnalysisNotebookGeneratedCell[] {
+  if (!completion || typeof completion === 'string') return []
+
+  if (Array.isArray(completion)) {
+    if (completion.every((item) => typeof item === 'string')) return []
+    const cells = completion.flatMap((item) =>
+      parseStructuredNotebookCompletion(item, defaultLanguage)
+    )
+    return cells.length > 0 ? cells : []
+  }
+
+  if (typeof completion !== 'object') return []
+  const record = completion as Record<string, unknown>
+  const type = stringField(record.type)
+  if (type === 'text' || type === 'output_text' || type === 'input_text') return []
+  if (type && NOTEBOOK_CELLS_COMPLETION_DATA_TYPES.has(type)) {
+    return cellsFromParsedNotebookGeneration(
+      record.data ?? record.value ?? record.content ?? record,
+      defaultLanguage
+    )
+  }
+  if (type && CELL_COMPLETION_DATA_TYPES.has(type)) {
+    return cellsFromParsedNotebookGeneration(record.data ?? record.value ?? record, defaultLanguage)
+  }
+
+  const cells = cellsFromParsedNotebookGeneration(record, defaultLanguage)
+  if (cells.length > 0) return cells
+
+  const contentCells = parseStructuredNotebookCompletion(record.content, defaultLanguage)
+  if (contentCells.length > 0) return contentCells
+  return parseStructuredNotebookCompletion(record.message, defaultLanguage)
 }
 
 function cellsFromParsedNotebookGeneration(
@@ -240,6 +290,29 @@ function cellsFromParsedNotebookGeneration(
   }
   const singleCell = normalizeGeneratedNotebookCell(record, defaultLanguage)
   return singleCell ? [singleCell] : []
+}
+
+function completionText(completion: unknown): string {
+  if (typeof completion === 'string') return completion
+  if (!completion || typeof completion !== 'object') return ''
+  if (Array.isArray(completion)) {
+    return completion.map(completionText).join('')
+  }
+
+  const record = completion as Record<string, unknown>
+  const type = stringField(record.type)
+  if (
+    (type === undefined ||
+      type === 'text' ||
+      type === 'output_text' ||
+      type === 'input_text' ||
+      type === 'markdown') &&
+    typeof record.text === 'string'
+  ) {
+    return record.text
+  }
+  if (typeof record.content === 'string') return record.content
+  return completionText(record.content) || completionText(record.message)
 }
 
 function normalizeGeneratedNotebookCells(
@@ -266,10 +339,10 @@ function normalizeGeneratedNotebookCell(
     stringField(record.kind)
   const cellType = normalizeGeneratedCellType(rawCellType, language, defaultLanguage)
   const rawSource =
-    stringField(record.source) ??
-    stringField(record.code) ??
-    stringField(record.content) ??
-    stringField(record.text) ??
+    sourceField(record.source) ??
+    sourceField(record.code) ??
+    sourceField(record.content) ??
+    sourceField(record.text) ??
     ''
   const source = cleanGeneratedCellSource(rawSource, cellType)
   if (!source.trim()) return null
@@ -472,4 +545,12 @@ function indentBlock(value: string, spaces: number): string {
 
 function stringField(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
+}
+
+function sourceField(value: unknown): string | undefined {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+    return value.join('')
+  }
+  return undefined
 }

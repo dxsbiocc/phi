@@ -78,3 +78,50 @@ test('the attach-file button stays disabled when no file picker is wired up', ()
   assert.ok(buttonMatch)
   assert.match(buttonMatch![0], /\bdisabled=""/)
 })
+
+test('the prompt cell stages generated cells inline until the user confirms insertion', () => {
+  const markup = renderPromptCell({
+    prompt: '写一个贪心算法',
+    pendingGeneratedCells: [
+      { cellType: 'markdown', source: '# Greedy idea' },
+      {
+        cellType: 'code',
+        source: 'def greedy(items):\n    return sorted(items)',
+        language: 'python'
+      }
+    ],
+    confirmationMessage: '确认将 AI 生成内容插入 notebook？\n\n将插入 2 个 cell。'
+  })
+
+  assert.match(markup, /data-phi-notebook-ai-staged-insertion="true"/)
+  assert.match(markup, /data-phi-notebook-ai-staged-message="true"/)
+  assert.match(markup, /确认将 AI 生成内容插入 notebook/)
+  assert.match(markup, /data-phi-notebook-ai-staged-cell="markdown"/)
+  assert.match(markup, /data-phi-notebook-ai-staged-cell="code"/)
+  assert.match(markup, /def greedy/)
+  assert.match(markup, />取消</)
+  assert.match(markup, />插入并保存</)
+
+  const submitButton = markup.match(/<button[^>]*aria-label="提交 AI 生成"[^>]*>/)
+  assert.ok(submitButton)
+  assert.match(submitButton![0], /\bdisabled=""/)
+})
+
+test('the prompt cell renders AI failures as notebook-style output', () => {
+  const markup = renderPromptCell({
+    prompt: '写一个贪心算法',
+    error: 'AI 没有生成可插入内容，请换一种更具体的描述后重试。',
+    errorDetail:
+      'AI 没有生成可插入内容。返回片段: 未收到模型返回文本或 data-notebook-cells-completion 结构化结果。'
+  })
+
+  assert.match(markup, /data-phi-notebook-ai-error-output="true"/)
+  assert.match(markup, /data-phi-notebook-ai-error-summary="true"/)
+  assert.match(markup, /data-phi-notebook-output-pre="true"/)
+  assert.match(markup, /data-phi-notebook-output-kind="error"/)
+  assert.match(markup, /data-phi-notebook-output-copy="true"/)
+  assert.match(markup, /data-notebook-cells-completion/)
+  assert.doesNotMatch(markup, /Error invoking remote method/)
+  assert.doesNotMatch(markup, /analysis:generateNotebookCode/)
+  assert.doesNotMatch(markup, /Agent 没/)
+})

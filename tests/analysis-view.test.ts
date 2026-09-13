@@ -9,6 +9,7 @@ import AnalysisView, {
   type AnalysisViewProps
 } from '../src/renderer/src/features/analysis/AnalysisView'
 import { notebookAiInsertionConfirmationMessage } from '../src/renderer/src/features/analysis/lib/notebookConfirmations'
+import { notebookAiPromptError } from '../src/renderer/src/features/analysis/lib/notebookAiErrors'
 import { shouldAutoStartNotebookSession } from '../src/renderer/src/features/analysis/lib/notebookSession'
 import {
   displayMimes,
@@ -651,10 +652,19 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(aiInsertionMessage, /将插入 2 个 cell/)
   assert.match(aiInsertionMessage, /立即保存到当前 \.ipynb 文件/)
   assert.match(analysisSource, /const \[pendingAiInsertion, setPendingAiInsertion\]/)
-  assert.match(analysisSource, /data-phi-notebook-ai-insert-dialog="true"/)
-  assert.match(analysisSource, /data-phi-notebook-ai-insert-message="true"/)
+  assert.match(aiPromptSource, /data-phi-notebook-ai-staged-insertion="true"/)
+  assert.match(aiPromptSource, /data-phi-notebook-ai-staged-message="true"/)
+  assert.match(
+    analysisSource,
+    /pendingGeneratedCells=\{activePendingAiInsertion\?\.generatedCells \?\? \[\]\}/
+  )
+  assert.match(analysisSource, /confirmationMessage=\{/)
+  assert.match(analysisSource, /onConfirmInsertion=\{\(\) =>/)
+  assert.match(analysisSource, /onCancelInsertion=\{cancelAiInsertion\}/)
+  assert.doesNotMatch(analysisSource, /data-phi-notebook-ai-insert-dialog/)
   assert.match(analysisSource, /setPendingAiInsertion\(\{/)
   assert.match(analysisSource, /void confirmAiInsertion\(\)/)
+  assert.match(analysisSource, /\{ \.\.\.pending, afterCellId \}/)
   assert.doesNotMatch(analysisSource, /window\.confirm/)
   assert.doesNotMatch(analysisSource, /confirmCellInsertion/)
   assert.doesNotMatch(analysisSource, /notebookCellInsertionConfirmationMessage/)
@@ -667,7 +677,7 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(analysisSource, /onGenerateNotebookCode\(notebookFile, draftDocument/)
   assert.match(notebookCodeGenerationSource, /Return only a JSON object with this exact shape/)
   assert.match(notebookCodeGenerationSource, /marimo-style notebook generation pattern/)
-  assert.match(mainSource, /parseGeneratedNotebookCells/)
+  assert.match(mainSource, /parseGeneratedNotebookCompletion/)
   assert.match(mainSource, /buildNotebookCodeGenerationPrompt/)
   assert.match(notebookCodeGenerationSource, /notebookContextReferencePrompt\(input\.references\)/)
   assert.match(
@@ -692,6 +702,28 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(preloadSource, /ipcRenderer\.invoke\('analysis:generateNotebookCode'/)
   assert.match(mainSource, /ipcMain\.handle\(\s*'analysis:generateNotebookCode'/)
   assert.match(mainSource, /noTools: 'all'/)
+})
+
+test('analysis notebook AI generation hides Electron IPC wrapper errors from the prompt cell', () => {
+  const error = notebookAiPromptError(
+    new Error(
+      "Error invoking remote method 'analysis:generateNotebookCode': Error: Agent 没有返回可插入的 cell"
+    )
+  )
+  const renderedError = `${error.message}\n${error.detail}`
+
+  assert.equal(error.message, 'AI 没有生成可插入内容，请换一种更具体的描述后重试。')
+  assert.equal(error.detail, 'AI 没有生成可插入内容')
+  assert.doesNotMatch(renderedError, /Error invoking remote method/)
+  assert.doesNotMatch(renderedError, /analysis:generateNotebookCode/)
+  assert.doesNotMatch(renderedError, /Agent 没/)
+
+  assert.deepEqual(
+    notebookAiPromptError(
+      "Error invoking remote method 'analysis:generateNotebookCode': Error: Provider failed"
+    ),
+    { message: 'Provider failed', detail: 'Provider failed' }
+  )
 })
 
 test('analysis view exposes detected kernels in the notebook header', () => {

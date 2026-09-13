@@ -34,6 +34,7 @@ class FakeSession {
   hold = false
   started = false
   disposed = false
+  skipFinalAssistantMessage = false
   promptError?: Error
   materializedSessionFile?: string
   constructor(public sessionFile: string | undefined) {}
@@ -53,7 +54,9 @@ class FakeSession {
     this.sessionFile ??= this.materializedSessionFile
     if (this.promptError) throw this.promptError
     if (this.hold) await this.finish.promise
-    this.messages.push({ role: 'assistant', content: [{ type: 'text', text: 'done' }] })
+    if (!this.skipFinalAssistantMessage) {
+      this.messages.push({ role: 'assistant', content: [{ type: 'text', text: 'done' }] })
+    }
     this.log.push('saved')
   }
   async abort(): Promise<void> {
@@ -596,18 +599,24 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
       })
     },
     './agent/session/session-manager': {
-      createAgentSession: async (options: {
-        cwd: string
-        sessionManager: { file: string }
-        model?: { provider: string; id: string }
-        thinkingLevel?: string
-      }): Promise<{ session: FakeSession }> => {
+      createAgentSession: async (
+        options: {
+          cwd: string
+          sessionManager: { file: string }
+          model?: { provider: string; id: string }
+          thinkingLevel?: string
+        },
+        onEvent?: (summary: Record<string, unknown>) => void
+      ): Promise<{ session: FakeSession }> => {
         createdAgentOptions.push(options)
         const session = factory
           ? await factory(options.cwd, options.sessionManager.file)
           : new FakeSession(options.sessionManager.file)
         session.model = options.model
         session.thinkingLevel = options.thinkingLevel
+        if (onEvent) {
+          session.subscribe((event) => onEvent(event as Record<string, unknown>))
+        }
         sessions.push(session)
         return { session }
       }
@@ -2188,6 +2197,172 @@ test('main IPC: analysis notebook cell execution updates the returned document',
       path: '/projects/research/notebooks/demo.ipynb'
     }
   ])
+})
+
+test('main IPC: notebook AI generation uses assistant event text when session history is empty', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                cells: [
+                  {
+                    cellType: 'code',
+                    source: 'def greedy(items):\n    return sorted(items)',
+                    language: 'python'
+                  }
+                ]
+              })
+            }
+          ]
+        }
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: []
+  })
+
+  const result = (await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc.ipynb',
+    document,
+    {
+      prompt: '写一个贪心算法',
+      language: 'python',
+      afterCellId: null,
+      references: []
+    }
+  )) as { source: string; language: string; cells: Array<{ cellType: string; source: string }> }
+
+  assert.equal(result.language, 'python')
+  assert.deepEqual(result.cells, [
+    {
+      cellType: 'code',
+      source: 'def greedy(items):\n    return sorted(items)',
+      language: 'python'
+    }
+  ])
+  assert.equal(result.source, 'def greedy(items):\n    return sorted(items)')
+  assert.equal(app.sessions[0].messages.length, 0)
+  assert.equal(app.createdAgentOptions[0].noTools, 'all')
+})
+
+test('main IPC: notebook AI generation uses assistant done event before session history', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      {
+        type: 'message_update',
+        message: { role: 'assistant' },
+        assistantMessageEvent: {
+          type: 'done',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  cells: [
+                    {
+                      cellType: 'code',
+                      source: 'def greedy(items):\n    return sorted(items, reverse=True)',
+                      language: 'python'
+                    }
+                  ]
+                })
+              }
+            ]
+          }
+        }
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: []
+  })
+
+  const result = (await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc.ipynb',
+    document,
+    {
+      prompt: '写一个贪心算法',
+      language: 'python',
+      afterCellId: null,
+      references: []
+    }
+  )) as { source: string; language: string; cells: Array<{ cellType: string; source: string }> }
+
+  assert.equal(result.language, 'python')
+  assert.deepEqual(result.cells, [
+    {
+      cellType: 'code',
+      source: 'def greedy(items):\n    return sorted(items, reverse=True)',
+      language: 'python'
+    }
+  ])
+  assert.equal(result.source, 'def greedy(items):\n    return sorted(items, reverse=True)')
+  assert.deepEqual(app.sessions[0].messages, [
+    { role: 'assistant', content: [{ type: 'text', text: 'done' }] }
+  ])
+})
+
+test('main IPC: notebook AI generation surfaces assistant event errors', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'message_update',
+        message: { role: 'assistant' },
+        assistantMessageEvent: {
+          type: 'error',
+          error: { errorMessage: 'Provider failed before returning notebook cells' }
+        }
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: []
+  })
+
+  await assert.rejects(
+    app.invoke(
+      'analysis:generateNotebookCode',
+      '/projects/research',
+      'notebooks/qc.ipynb',
+      document,
+      {
+        prompt: '写一个贪心算法',
+        language: 'python',
+        afterCellId: null,
+        references: []
+      }
+    ),
+    /Provider failed before returning notebook cells/
+  )
 })
 
 test('main IPC: project agent sessions receive active notebook and app Jupyter context', async () => {

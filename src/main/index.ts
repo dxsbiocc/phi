@@ -113,7 +113,7 @@ import {
   generatedNotebookCellsSource,
   notebookCellPromptContext,
   notebookGenerationEmptyResultMessage,
-  parseGeneratedNotebookCells
+  parseGeneratedNotebookCompletion
 } from './agent/notebook/notebook-code-generation'
 import { AnalysisNotebookToolExecutor } from './agent/notebook/notebook-tool-executor'
 import { getOmpBridge } from './agent/omp/omp-bridge'
@@ -558,6 +558,83 @@ function extractMessageText(content: unknown): string {
       return extractMessageText(item.content)
     })
     .join('')
+}
+
+function assistantTextFromEventSummary(
+  summary: Record<string, unknown>,
+  currentText: string
+): string {
+  const message = summary.message as { role?: string } | undefined
+  const assistantMessageEvent = summary.assistantMessageEvent as
+    { type?: unknown; delta?: unknown; message?: unknown } | undefined
+
+  if (
+    summary.type === 'message_update' &&
+    assistantMessageEvent?.type === 'text_delta' &&
+    typeof assistantMessageEvent.delta === 'string'
+  ) {
+    return `${currentText}${assistantMessageEvent.delta}`
+  }
+
+  if (summary.type === 'message_update' && assistantMessageEvent?.type === 'done') {
+    const text = extractAssistantText(assistantMessageEvent.message).trim()
+    return text || currentText
+  }
+
+  if (summary.type === 'message_end' && message?.role === 'assistant') {
+    const text = extractAssistantText(message).trim()
+    return text || currentText
+  }
+
+  return currentText
+}
+
+function assistantErrorMessageFromEventSummary(summary: Record<string, unknown>): string | null {
+  const assistantMessageEvent = summary.assistantMessageEvent as
+    { type?: unknown; error?: { errorMessage?: unknown; message?: unknown } } | undefined
+  if (summary.type === 'message_update' && assistantMessageEvent?.type === 'error') {
+    const error = assistantMessageEvent.error
+    const message =
+      typeof error?.errorMessage === 'string'
+        ? error.errorMessage
+        : typeof error?.message === 'string'
+          ? error.message
+          : ''
+    return message ? redactSensitiveText(message) : '请求失败'
+  }
+
+  const message = summary.message as
+    { role?: string; stopReason?: unknown; errorMessage?: unknown } | undefined
+  if (
+    summary.type === 'message_end' &&
+    message?.role === 'assistant' &&
+    message.stopReason === 'error'
+  ) {
+    return typeof message.errorMessage === 'string'
+      ? redactSensitiveText(message.errorMessage)
+      : '请求失败'
+  }
+
+  return null
+}
+
+function notebookCompletionCandidatesFromEventSummary(summary: Record<string, unknown>): unknown[] {
+  const candidates: unknown[] = []
+  const assistantMessageEvent = summary.assistantMessageEvent as
+    { type?: unknown; data?: unknown; value?: unknown; message?: unknown } | undefined
+  if (summary.type === 'message_update' && assistantMessageEvent) {
+    candidates.push(assistantMessageEvent)
+    if (assistantMessageEvent.message) candidates.push(assistantMessageEvent.message)
+    if (assistantMessageEvent.data) candidates.push(assistantMessageEvent.data)
+    if (assistantMessageEvent.value) candidates.push(assistantMessageEvent.value)
+  }
+
+  const message = summary.message as { role?: string } | undefined
+  if (summary.type === 'message_end' && message?.role === 'assistant') {
+    candidates.push(message)
+  }
+
+  return candidates
 }
 
 function extractAssistantThinkingBlocks(message: unknown): string[] {
@@ -1330,13 +1407,19 @@ async function generatePersonaMarkdown(description: string): Promise<string> {
   const model = selectedModel
     ? runtime.getModel(selectedModel.providerId, selectedModel.modelId)
     : undefined
-  const { session } = await createAgentSession({
-    modelRuntime: runtime,
-    cwd: WORKSPACE_DIR,
-    noTools: 'all',
-    sessionManager: createInMemoryRuntimeSessionManager(WORKSPACE_DIR),
-    ...(model ? { model } : {})
-  })
+  let eventAssistantText = ''
+  const { session } = await createAgentSession(
+    {
+      modelRuntime: runtime,
+      cwd: WORKSPACE_DIR,
+      noTools: 'all',
+      sessionManager: createInMemoryRuntimeSessionManager(WORKSPACE_DIR),
+      ...(model ? { model } : {})
+    },
+    (summary) => {
+      eventAssistantText = assistantTextFromEventSummary(summary, eventAssistantText)
+    }
+  )
 
   try {
     await session.prompt(
@@ -1354,7 +1437,7 @@ async function generatePersonaMarkdown(description: string): Promise<string> {
       const record = message as { role?: string }
       return record.role === 'assistant'
     })
-    const generated = extractAssistantText(lastAssistantMessage).trim()
+    const generated = extractAssistantText(lastAssistantMessage).trim() || eventAssistantText.trim()
     return generated || fallbackMarkdownFromDescription(description)
   } finally {
     await session.dispose()
@@ -1391,14 +1474,24 @@ async function generateAnalysisNotebookCode(
     input.afterCellId
   )
   const language = input.language || 'python'
-  const { session } = await createAgentSession({
-    modelRuntime: runtime,
-    cwd: project.workingDirectory,
-    noTools: 'all',
-    thinkingLevel: project.defaultThinkingLevel ?? selectedThinkingLevel,
-    sessionManager: createInMemoryRuntimeSessionManager(project.workingDirectory),
-    ...(resolvedModel ? { model: resolvedModel.model } : {})
-  })
+  let eventAssistantText = ''
+  let eventErrorMessage = ''
+  const eventCompletionCandidates: unknown[] = []
+  const { session } = await createAgentSession(
+    {
+      modelRuntime: runtime,
+      cwd: project.workingDirectory,
+      noTools: 'all',
+      thinkingLevel: project.defaultThinkingLevel ?? selectedThinkingLevel,
+      sessionManager: createInMemoryRuntimeSessionManager(project.workingDirectory),
+      ...(resolvedModel ? { model: resolvedModel.model } : {})
+    },
+    (summary) => {
+      eventAssistantText = assistantTextFromEventSummary(summary, eventAssistantText)
+      eventCompletionCandidates.push(...notebookCompletionCandidatesFromEventSummary(summary))
+      eventErrorMessage = assistantErrorMessageFromEventSummary(summary) ?? eventErrorMessage
+    }
+  )
 
   try {
     await session.prompt(
@@ -1412,15 +1505,35 @@ async function generateAnalysisNotebookCode(
         otherCellContext
       })
     )
+    if (eventErrorMessage) {
+      throw new Error(eventErrorMessage)
+    }
 
     const lastAssistantMessage = [...session.messages].reverse().find((message) => {
       const record = message as { role?: string }
       return record.role === 'assistant'
     })
-    const assistantText = extractAssistantText(lastAssistantMessage)
-    const cells = parseGeneratedNotebookCells(assistantText, language)
+    const candidates = [
+      ...eventCompletionCandidates,
+      eventAssistantText.trim(),
+      lastAssistantMessage
+    ]
+    let assistantText = eventAssistantText.trim()
+    let cells: ReturnType<typeof parseGeneratedNotebookCompletion> = []
+    for (const candidate of candidates) {
+      cells = parseGeneratedNotebookCompletion(candidate, language)
+      if (cells.length > 0) {
+        if (!assistantText && typeof candidate === 'string') assistantText = candidate
+        break
+      }
+      if (!assistantText && typeof candidate === 'string') assistantText = candidate
+    }
+    assistantText ||= extractAssistantText(lastAssistantMessage).trim()
     if (cells.length === 0) {
-      throw new Error(notebookGenerationEmptyResultMessage(assistantText))
+      const emptyResultDiagnostic =
+        assistantText ||
+        '未收到模型返回文本或 data-notebook-cells-completion 结构化结果。请检查当前模型/供应商配置，或稍后重试。'
+      throw new Error(notebookGenerationEmptyResultMessage(emptyResultDiagnostic))
     }
     return { source: generatedNotebookCellsSource(cells), language, cells }
   } finally {

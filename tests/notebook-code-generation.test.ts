@@ -6,7 +6,8 @@ import {
   notebookCellPromptContext,
   notebookContextReferencePrompt,
   notebookGenerationEmptyResultMessage,
-  parseGeneratedNotebookCells
+  parseGeneratedNotebookCells,
+  parseGeneratedNotebookCompletion
 } from '../src/main/agent/notebook/notebook-code-generation'
 import { parseNotebook } from '../src/shared/notebookDocument'
 
@@ -24,6 +25,49 @@ test('notebook AI generation parser accepts marimo-style code fields and unwraps
   assert.deepEqual(cells, [
     { cellType: 'markdown', source: '# Summary\nUse the dataframe below.' },
     { cellType: 'code', source: 'df.describe()', language: 'python' }
+  ])
+})
+
+test('notebook AI generation parser accepts ipynb-style source arrays', () => {
+  const cells = parseGeneratedNotebookCells(
+    JSON.stringify({
+      cells: [
+        {
+          cell_type: 'code',
+          source: ['def greedy(items):\n', '    return sorted(items)\n'],
+          language: 'python'
+        }
+      ]
+    }),
+    'python'
+  )
+
+  assert.deepEqual(cells, [
+    { cellType: 'code', source: 'def greedy(items):\n    return sorted(items)', language: 'python' }
+  ])
+})
+
+test('notebook AI generation parser accepts marimo notebook completion data parts', () => {
+  const cells = parseGeneratedNotebookCompletion(
+    {
+      type: 'data-notebook-cells-completion',
+      data: {
+        cells: [
+          { language: 'markdown', code: '## Plan' },
+          { language: 'python', code: 'def greedy(items):\n    return sorted(items)' }
+        ]
+      }
+    },
+    'python'
+  )
+
+  assert.deepEqual(cells, [
+    { cellType: 'markdown', source: '## Plan' },
+    {
+      cellType: 'code',
+      source: 'def greedy(items):\n    return sorted(items)',
+      language: 'python'
+    }
   ])
 })
 
@@ -113,8 +157,9 @@ test('notebook AI generation prompt includes selected references and notebook co
 })
 
 test('notebook AI generation empty result message includes a diagnostic preview', () => {
-  assert.match(
-    notebookGenerationEmptyResultMessage('I cannot help with that.'),
-    /返回片段: I cannot help/
-  )
+  const message = notebookGenerationEmptyResultMessage('I cannot help with that.')
+
+  assert.match(message, /AI 没有生成可插入内容/)
+  assert.match(message, /返回片段: I cannot help/)
+  assert.doesNotMatch(message, /Agent 没/)
 })
