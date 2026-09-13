@@ -498,6 +498,7 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     'utf8'
   )
   const preloadSource = readFileSync(resolve(process.cwd(), 'src/preload/index.ts'), 'utf8')
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
   const mainSource = readFileSync(resolve(process.cwd(), 'src/main/index.ts'), 'utf8')
   const notebookCodeGenerationSource = readFileSync(
     resolve(process.cwd(), 'src/main/agent/notebook/notebook-code-generation.ts'),
@@ -510,6 +511,9 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(aiPromptSource, /data-phi-notebook-ai-context-layout="compact-preview"/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-context-preview="true"/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-drag-handle="true"/)
+  assert.match(aiPromptSource, /data-phi-notebook-ai-generation-status="true"/)
+  assert.match(aiPromptSource, /data-phi-notebook-ai-generation-model="true"/)
+  assert.match(aiPromptSource, /data-phi-notebook-ai-generation-thinking="true"/)
   assert.match(notebookCellSource, /application\/x-phi-notebook-ai-prompt/)
   assert.match(analysisSource, /onMoveAiPrompt=\{onMoveAiPrompt\}/)
   assert.match(analysisSource, /aiPromptDraft\?\.afterCellId === null/)
@@ -638,6 +642,12 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(analysisSource, /pt: \{ xs: 3\.5, md: 3\.75 \}/)
   assert.match(analysisSource, /pb: 16/)
   assert.match(analysisSource, /onGenerateCode=\{openAiPrompt\}/)
+  assert.match(analysisSource, /generationStatus=\{aiGenerationStatus\}/)
+  assert.match(appSource, /const notebookAiGenerationStatus = useMemo/)
+  assert.match(appSource, /activeProject\?\.defaultModel \?\? null/)
+  assert.match(appSource, /modelOptionFromSelection\(projectModelSelection, models\)/)
+  assert.match(appSource, /selectedModel\?\.name \?\? '自动选择模型'/)
+  assert.match(appSource, /notebookAiGenerationStatus=\{notebookAiGenerationStatus\}/)
   assert.match(
     analysisSource,
     /const afterCellId = liveSelectedCellId \?\? cells\.at\(-1\)\?\.id \?\? null/
@@ -673,6 +683,11 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(notebookCodeGenerationSource, /marimo notebook completion pattern/)
   assert.match(mainSource, /parseGeneratedNotebookCompletion/)
   assert.match(mainSource, /buildNotebookCodeGenerationPrompt/)
+  assert.match(mainSource, /const modelSelection = project\.defaultModel \?\? selectedModel/)
+  assert.match(
+    mainSource,
+    /thinkingLevel: project\.defaultThinkingLevel \?\? selectedThinkingLevel/
+  )
   assert.match(notebookCodeGenerationSource, /notebookContextReferencePrompt\(input\.references\)/)
   assert.match(
     mainSource,

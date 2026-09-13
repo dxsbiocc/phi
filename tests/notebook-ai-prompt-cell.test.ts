@@ -63,6 +63,24 @@ test('the target-language button disables while a generation is in flight', () =
   assert.match(buttonMatch![0], /\bdisabled=""/)
 })
 
+test('the prompt cell shows generation status and the model being used', () => {
+  const markup = renderPromptCell({
+    prompt: '写一个贪心算法',
+    isGenerating: true,
+    generationStatus: {
+      modelLabel: 'GPT Test',
+      modelSourceLabel: '项目默认',
+      thinkingLevel: 'high'
+    }
+  })
+
+  assert.match(markup, /data-phi-notebook-ai-generation-status="true"/)
+  assert.match(markup, /data-phi-notebook-ai-generation-spinner="true"/)
+  assert.match(markup, /正在调用 Agent 生成代码/)
+  assert.match(markup, /项目默认: GPT Test/)
+  assert.match(markup, /思考 high/)
+})
+
 test('the attach-file button is enabled once a file picker handler is available', () => {
   const markup = renderPromptCell({ canPickContextFiles: true })
 

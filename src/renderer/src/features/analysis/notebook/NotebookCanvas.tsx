@@ -61,7 +61,7 @@ import type {
   AnalysisNotebookSessionStatus
 } from '../../../types'
 import { NotebookHeader } from '../components/NotebookHeader'
-import NotebookAiPromptCell from './NotebookAiPromptCell'
+import NotebookAiPromptCell, { type NotebookAiGenerationStatus } from './NotebookAiPromptCell'
 import NotebookCell, { type CellPlacement } from './NotebookCell'
 import NotebookFloatingActions, {
   notebookFloatingActionInset,
@@ -77,6 +77,7 @@ export type AnalysisNotebookAgentFocus = {
   cellId: string
   changeKind?: 'synced' | 'inserted' | 'updated' | 'deleted' | 'executed' | 'saved'
 }
+export type { NotebookAiGenerationStatus as AnalysisNotebookAiGenerationStatus }
 
 type NotebookAiPromptDraft = {
   id: string
@@ -142,6 +143,7 @@ export default function NotebookCanvas({
   onStopNotebookSession,
   onRunNotebookCell,
   onGenerateNotebookCode,
+  aiGenerationStatus,
   onPickContextFiles,
   onSelectNotebook,
   onCloseNotebook,
@@ -179,6 +181,7 @@ export default function NotebookCanvas({
     document: NotebookDocument,
     input: AnalysisNotebookCodeGenerationInput
   ) => Promise<AnalysisNotebookCodeGenerationResult>
+  aiGenerationStatus?: NotebookAiGenerationStatus
   onPickContextFiles?: () => Promise<string[]>
   onSelectNotebook?: (notebook: NotebookListEntry) => void
   onCloseNotebook?: (notebook: NotebookListEntry) => void
@@ -659,6 +662,7 @@ export default function NotebookCanvas({
       prompt={aiPromptDraft.prompt}
       references={aiPromptDraft.references}
       contextOptions={aiContextOptions}
+      generationStatus={aiGenerationStatus}
       isGenerating={aiPromptDraft.isGenerating}
       error={aiPromptDraft.error}
       errorDetail={aiPromptDraft.errorDetail}

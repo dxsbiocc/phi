@@ -5,6 +5,7 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   IconButton,
   ListItemButton,
   ListItemIcon,
@@ -22,7 +23,7 @@ import { PhiIcons } from '../../../icons'
 import { getProviderErrorDisplay } from '../../../lib/providerErrors'
 import { notebookContextKindLabel } from '../lib/notebookViewModel'
 import { type SyntaxLanguage } from '../../../lib/syntaxHighlight'
-import type { AnalysisNotebookContextReference } from '../../../types'
+import type { AnalysisNotebookContextReference, ThinkingLevel } from '../../../types'
 import {
   notebookAccentBoxShadow,
   notebookAccentColor,
@@ -35,12 +36,19 @@ const FileIcon = PhiIcons.tool.read
 const SendIcon = PhiIcons.action.send
 const MarkdownIcon = PhiIcons.file.markdown
 
+export type NotebookAiGenerationStatus = {
+  modelLabel: string
+  modelSourceLabel: string
+  thinkingLevel: ThinkingLevel
+}
+
 export type NotebookAiPromptCellProps = {
   language: SyntaxLanguage
   codeLanguage: SyntaxLanguage
   prompt: string
   references: AnalysisNotebookContextReference[]
   contextOptions: AnalysisNotebookContextReference[]
+  generationStatus?: NotebookAiGenerationStatus
   isGenerating: boolean
   error?: string | null
   errorDetail?: string | null
@@ -233,6 +241,7 @@ export default function NotebookAiPromptCell({
   prompt,
   references,
   contextOptions,
+  generationStatus,
   isGenerating,
   error,
   errorDetail,
@@ -261,6 +270,8 @@ export default function NotebookAiPromptCell({
   const errorDisplay = errorOutputText ? getProviderErrorDisplay(errorOutputText) : null
   const canSubmit = prompt.trim().length > 0 && !isGenerating
   const submitTooltip = isGenerating ? '正在生成代码' : canSubmit ? '生成代码' : '输入需求后生成'
+  const shouldShowGenerationStatus = isGenerating || Boolean(generationStatus)
+  const generationStatusMessage = isGenerating ? '正在调用 Agent 生成代码' : '将使用此模型生成代码'
   const promptCellRef = useRef<HTMLDivElement | null>(null)
   const contextOptionListRef = useRef<HTMLDivElement | null>(null)
   const contextOptionRefs = useRef(new Map<string, HTMLDivElement>())
@@ -694,6 +705,73 @@ export default function NotebookAiPromptCell({
             </span>
           </Tooltip>
         </Box>
+        {shouldShowGenerationStatus ? (
+          <Box
+            data-phi-notebook-ai-generation-status="true"
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 0.75,
+              mx: 1.2,
+              mb: 1.05,
+              px: 0.2,
+              color: 'text.secondary'
+            }}
+          >
+            {isGenerating ? (
+              <CircularProgress
+                size={14}
+                thickness={5}
+                data-phi-notebook-ai-generation-spinner="true"
+                sx={{ color: (theme) => notebookAccentColor(theme, 'ai') }}
+              />
+            ) : null}
+            <Typography
+              data-phi-notebook-ai-generation-message="true"
+              sx={{
+                color: isGenerating ? 'text.primary' : 'text.secondary',
+                fontSize: '0.76rem',
+                fontWeight: isGenerating ? 750 : 650,
+                lineHeight: 1.4
+              }}
+            >
+              {generationStatusMessage}
+            </Typography>
+            {generationStatus ? (
+              <>
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  data-phi-notebook-ai-generation-model="true"
+                  label={`${generationStatus.modelSourceLabel}: ${generationStatus.modelLabel}`}
+                  sx={{
+                    height: 22,
+                    borderRadius: 1,
+                    color: 'text.secondary',
+                    fontSize: '0.7rem',
+                    fontWeight: 700,
+                    '.MuiChip-label': { px: 0.75 }
+                  }}
+                />
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  data-phi-notebook-ai-generation-thinking="true"
+                  label={`思考 ${generationStatus.thinkingLevel}`}
+                  sx={{
+                    height: 22,
+                    borderRadius: 1,
+                    color: 'text.secondary',
+                    fontSize: '0.7rem',
+                    fontWeight: 700,
+                    '.MuiChip-label': { px: 0.75 }
+                  }}
+                />
+              </>
+            ) : null}
+          </Box>
+        ) : null}
         {error && errorOutputText && errorDisplay ? (
           <Box
             data-phi-notebook-ai-error-output="true"
