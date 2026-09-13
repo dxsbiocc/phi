@@ -3,6 +3,10 @@ import type { NotebookDocument } from '../../../shared/notebookDocument'
 export type AnalysisNotebookCodeGenerationInput = {
   prompt: string
   language: string
+  model?: {
+    providerId: string
+    modelId: string
+  } | null
   afterCellId?: string | null
   references?: AnalysisNotebookContextReference[]
 }

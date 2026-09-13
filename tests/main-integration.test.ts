@@ -2336,6 +2336,65 @@ test('main IPC: notebook AI generation reads batched assistant messages from run
   assert.equal(result.source, 'def choose(items):\n    return max(items)')
 })
 
+test('main IPC: notebook AI generation lets the prompt model override project defaults', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      {
+        type: 'agent_end',
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  cells: [
+                    {
+                      cellType: 'code',
+                      source: 'answer = 42',
+                      language: 'python'
+                    }
+                  ]
+                })
+              }
+            ]
+          }
+        ]
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: []
+  })
+
+  await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/defaults',
+    'notebooks/qc.ipynb',
+    document,
+    {
+      prompt: '写一个答案',
+      language: 'python',
+      model: { providerId: 'openai', modelId: 'gpt-test' },
+      afterCellId: null,
+      references: []
+    }
+  )
+
+  assert.deepEqual(app.createdAgentOptions[0].model, {
+    provider: 'openai',
+    id: 'gpt-test',
+    name: 'gpt-test',
+    reasoning: true
+  })
+  assert.equal(app.createdAgentOptions[0].thinkingLevel, 'medium')
+})
+
 test('main IPC: notebook AI generation uses assistant done event before session history', async () => {
   const app = await harness(async (_cwd, file) => {
     const session = new FakeSession(file)

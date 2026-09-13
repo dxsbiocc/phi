@@ -73,7 +73,13 @@ import {
 } from './lib/sessionRuntimeState'
 import { createAgentEventReducerState, reduceAgentEventState } from './lib/agentEventReducer'
 import { navigationPaneWidth } from './layout'
-import type { AgentEventSummary, PermissionMode, Project, SessionSummary } from './types'
+import type {
+  AgentEventSummary,
+  ModelOption,
+  PermissionMode,
+  Project,
+  SessionSummary
+} from './types'
 
 export type AppView =
   'chat' | 'projects' | 'analysis' | 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
@@ -1330,13 +1336,26 @@ function App(): React.JSX.Element {
   const activeProject = activeCwd
     ? (projects.find((project) => project.workingDirectory === activeCwd) ?? null)
     : null
+  const notebookAiDefaultModel = useMemo<ModelOption | null>(() => {
+    const projectModelSelection = activeProject?.defaultModel ?? null
+    if (projectModelSelection) {
+      return (
+        modelOptionFromSelection(projectModelSelection, models) ?? {
+          providerId: projectModelSelection.providerId,
+          modelId: projectModelSelection.modelId,
+          name: `${projectModelSelection.providerId}/${projectModelSelection.modelId}`,
+          thinkingLevels: []
+        }
+      )
+    }
+    return selectedModel
+  }, [activeProject, models, selectedModel])
   const notebookAiGenerationStatus = useMemo<AnalysisNotebookAiGenerationStatus>(() => {
     const projectModelSelection = activeProject?.defaultModel ?? null
-    const projectModel = modelOptionFromSelection(projectModelSelection, models)
     const modelLabel = !isModelStateReady
       ? '正在读取模型设置'
       : projectModelSelection
-        ? (projectModel?.name ??
+        ? (notebookAiDefaultModel?.name ??
           `${projectModelSelection.providerId}/${projectModelSelection.modelId}`)
         : (selectedModel?.name ?? '自动选择模型')
     const modelSourceLabel = !isModelStateReady
@@ -1351,7 +1370,7 @@ function App(): React.JSX.Element {
       modelSourceLabel,
       thinkingLevel: activeProject?.defaultThinkingLevel ?? thinkingLevel
     }
-  }, [activeProject, isModelStateReady, models, selectedModel, thinkingLevel])
+  }, [activeProject, isModelStateReady, notebookAiDefaultModel, selectedModel, thinkingLevel])
   const activeWorkspaceIsProject = Boolean(activeProject)
   const showProjectSessionPlaceholder = activeView === 'projects' && !activeWorkspaceIsProject
   const activeSessionHasWork =
@@ -1985,6 +2004,8 @@ function App(): React.JSX.Element {
                   }}
                   onGenerateNotebookCode={onGenerateAnalysisNotebookCode}
                   notebookAiGenerationStatus={notebookAiGenerationStatus}
+                  notebookAiModelOptions={availableModels}
+                  notebookAiDefaultModel={notebookAiDefaultModel}
                   onPickNotebookContextFiles={onPickInputFiles}
                   onInitializeProjectAnalysis={(cwd) => {
                     void onInitializeProjectAnalysis(cwd)

@@ -438,6 +438,10 @@ export interface AnalysisNotebookDraftChange {
 export interface AnalysisNotebookCodeGenerationInput {
   prompt: string
   language: string
+  model?: {
+    providerId: string
+    modelId: string
+  } | null
   afterCellId?: string | null
   references?: AnalysisNotebookContextReference[]
 }

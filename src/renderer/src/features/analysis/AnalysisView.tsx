@@ -19,7 +19,8 @@ import type {
   AnalysisNotebookFile,
   AnalysisNotebookRegistry,
   AnalysisNotebookSessionStatus,
-  JupyterServerStatus
+  JupyterServerStatus,
+  ModelOption
 } from '../../types'
 import { RightInspector, type InspectorTab } from './components/AnalysisInspector'
 
@@ -90,6 +91,8 @@ export type AnalysisViewProps = {
     input: AnalysisNotebookCodeGenerationInput
   ) => Promise<AnalysisNotebookCodeGenerationResult>
   notebookAiGenerationStatus?: AnalysisNotebookAiGenerationStatus
+  notebookAiModelOptions?: ModelOption[]
+  notebookAiDefaultModel?: ModelOption | null
   onPickNotebookContextFiles?: () => Promise<string[]>
   executingNotebookCellId?: string | null
   notebookCellExecutionError?: string | null
@@ -185,6 +188,8 @@ export default function AnalysisView({
   onRunNotebookCell,
   onGenerateNotebookCode,
   notebookAiGenerationStatus,
+  notebookAiModelOptions,
+  notebookAiDefaultModel,
   onPickNotebookContextFiles,
   onInitializeProjectAnalysis,
   onOpenNotebook,
@@ -404,6 +409,8 @@ export default function AnalysisView({
           onRunNotebookCell={onRunNotebookCell}
           onGenerateNotebookCode={onGenerateNotebookCode}
           aiGenerationStatus={notebookAiGenerationStatus}
+          aiModelOptions={notebookAiModelOptions}
+          aiDefaultModel={notebookAiDefaultModel}
           onPickContextFiles={onPickNotebookContextFiles}
           onSelectNotebook={onSelectNotebook}
           onCloseNotebook={onCloseNotebookTab}

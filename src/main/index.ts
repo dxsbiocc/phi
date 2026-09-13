@@ -292,6 +292,10 @@ interface PromptRun {
 type AnalysisNotebookCodeGenerationInput = {
   prompt: string
   language: string
+  model?: {
+    providerId: string
+    modelId: string
+  } | null
   afterCellId?: string | null
   references?: AnalysisNotebookContextReference[]
 }
@@ -1519,7 +1523,7 @@ async function generateAnalysisNotebookCode(
   assertProjectPathAvailable(project.workingDirectory)
   const file = openProjectNotebook(project.workingDirectory, notebookPath)
   const runtime = await getAuthManager().getRuntime()
-  const modelSelection = project.defaultModel ?? selectedModel
+  const modelSelection = input.model ?? project.defaultModel ?? selectedModel
   const resolvedModel = modelSelection
     ? resolveRuntimeModelSelection(runtime, modelSelection)
     : null

@@ -14,11 +14,14 @@ function renderPromptCell(overrides: Partial<NotebookAiPromptCellProps> = {}): s
     prompt: '',
     references: [],
     contextOptions: [],
+    modelOptions: [],
+    selectedModel: null,
     isGenerating: false,
     canPickContextFiles: true,
     onSelect: () => {},
     onPromptChange: () => {},
     onLanguageChange: () => {},
+    onModelChange: () => {},
     onReferenceAdd: () => {},
     onPickContextFiles: () => {},
     onSubmit: () => {},
@@ -79,6 +82,30 @@ test('the prompt cell shows generation status and the model being used', () => {
   assert.match(markup, /正在调用 Agent 生成代码/)
   assert.match(markup, /项目默认: GPT Test/)
   assert.match(markup, /思考 high/)
+})
+
+test('the prompt cell exposes a model selection button', () => {
+  const markup = renderPromptCell({
+    prompt: '写一个贪心算法',
+    modelOptions: [
+      {
+        providerId: 'openai',
+        modelId: 'gpt-test',
+        name: 'GPT Test',
+        thinkingLevels: ['high']
+      }
+    ],
+    selectedModel: {
+      providerId: 'openai',
+      modelId: 'gpt-test',
+      name: 'GPT Test',
+      thinkingLevels: ['high']
+    }
+  })
+
+  assert.match(markup, /data-phi-notebook-ai-model-selector="true"/)
+  assert.match(markup, /aria-label="选择模型"/)
+  assert.match(markup, /GPT Test/)
 })
 
 test('the attach-file button is enabled once a file picker handler is available', () => {

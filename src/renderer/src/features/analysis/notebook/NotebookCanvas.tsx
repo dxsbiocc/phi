@@ -58,7 +58,8 @@ import type {
   AnalysisNotebookGeneratedCell,
   AnalysisKernelDiagnostics,
   AnalysisNotebookFile,
-  AnalysisNotebookSessionStatus
+  AnalysisNotebookSessionStatus,
+  ModelOption
 } from '../../../types'
 import { NotebookHeader } from '../components/NotebookHeader'
 import NotebookAiPromptCell, { type NotebookAiGenerationStatus } from './NotebookAiPromptCell'
@@ -84,6 +85,8 @@ type NotebookAiPromptDraft = {
   afterCellId: string | null
   prompt: string
   language: SyntaxLanguage
+  model: ModelOption | null
+  modelSourceLabel: string
   references: AnalysisNotebookContextReference[]
   isGenerating: boolean
   error: string | null
@@ -144,6 +147,8 @@ export default function NotebookCanvas({
   onRunNotebookCell,
   onGenerateNotebookCode,
   aiGenerationStatus,
+  aiModelOptions,
+  aiDefaultModel,
   onPickContextFiles,
   onSelectNotebook,
   onCloseNotebook,
@@ -182,6 +187,8 @@ export default function NotebookCanvas({
     input: AnalysisNotebookCodeGenerationInput
   ) => Promise<AnalysisNotebookCodeGenerationResult>
   aiGenerationStatus?: NotebookAiGenerationStatus
+  aiModelOptions?: ModelOption[]
+  aiDefaultModel?: ModelOption | null
   onPickContextFiles?: () => Promise<string[]>
   onSelectNotebook?: (notebook: NotebookListEntry) => void
   onCloseNotebook?: (notebook: NotebookListEntry) => void
@@ -440,6 +447,8 @@ export default function NotebookCanvas({
       afterCellId,
       prompt: '',
       language: insertCodeLanguage,
+      model: aiDefaultModel ?? null,
+      modelSourceLabel: aiGenerationStatus?.modelSourceLabel ?? '默认',
       references: [],
       isGenerating: false,
       error: null,
@@ -454,6 +463,19 @@ export default function NotebookCanvas({
   const updateAiPromptLanguage = (language: SyntaxLanguage): void => {
     setAiPromptDraft((draft) =>
       draft ? { ...draft, language, error: null, errorDetail: null } : draft
+    )
+  }
+  const updateAiPromptModel = (model: ModelOption | null): void => {
+    setAiPromptDraft((draft) =>
+      draft
+        ? {
+            ...draft,
+            model,
+            modelSourceLabel: model ? '本次选择' : '默认',
+            error: null,
+            errorDetail: null
+          }
+        : draft
     )
   }
   const addAiPromptReference = (reference: AnalysisNotebookContextReference): void => {
@@ -510,6 +532,9 @@ export default function NotebookCanvas({
       const result = await onGenerateNotebookCode(notebookFile, draftDocument, {
         prompt: draft.prompt.trim(),
         language: draft.language,
+        model: draft.model
+          ? { providerId: draft.model.providerId, modelId: draft.model.modelId }
+          : undefined,
         afterCellId: draft.afterCellId,
         references: draft.references
       })
@@ -662,7 +687,17 @@ export default function NotebookCanvas({
       prompt={aiPromptDraft.prompt}
       references={aiPromptDraft.references}
       contextOptions={aiContextOptions}
-      generationStatus={aiGenerationStatus}
+      modelOptions={aiModelOptions ?? []}
+      selectedModel={aiPromptDraft.model}
+      generationStatus={
+        aiPromptDraft.model && aiGenerationStatus
+          ? {
+              ...aiGenerationStatus,
+              modelLabel: aiPromptDraft.model.name,
+              modelSourceLabel: aiPromptDraft.modelSourceLabel
+            }
+          : aiGenerationStatus
+      }
       isGenerating={aiPromptDraft.isGenerating}
       error={aiPromptDraft.error}
       errorDetail={aiPromptDraft.errorDetail}
@@ -670,6 +705,7 @@ export default function NotebookCanvas({
       onSelect={() => setSelectedCellId(null)}
       onPromptChange={updateAiPrompt}
       onLanguageChange={updateAiPromptLanguage}
+      onModelChange={updateAiPromptModel}
       onReferenceAdd={addAiPromptReference}
       onPickContextFiles={() => {
         void pickAiPromptContextFiles()

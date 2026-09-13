@@ -19,11 +19,12 @@ import {
 import { alpha, type Theme } from '@mui/material/styles'
 import { TbGripVertical, TbSparkles } from 'react-icons/tb'
 
+import { ModelSelectorControl } from '../../../components/chat/ChatComposerControls'
 import { PhiIcons } from '../../../icons'
 import { getProviderErrorDisplay } from '../../../lib/providerErrors'
 import { notebookContextKindLabel } from '../lib/notebookViewModel'
 import { type SyntaxLanguage } from '../../../lib/syntaxHighlight'
-import type { AnalysisNotebookContextReference, ThinkingLevel } from '../../../types'
+import type { AnalysisNotebookContextReference, ModelOption, ThinkingLevel } from '../../../types'
 import {
   notebookAccentBoxShadow,
   notebookAccentColor,
@@ -48,6 +49,8 @@ export type NotebookAiPromptCellProps = {
   prompt: string
   references: AnalysisNotebookContextReference[]
   contextOptions: AnalysisNotebookContextReference[]
+  modelOptions: ModelOption[]
+  selectedModel: ModelOption | null
   generationStatus?: NotebookAiGenerationStatus
   isGenerating: boolean
   error?: string | null
@@ -56,6 +59,7 @@ export type NotebookAiPromptCellProps = {
   onSelect: () => void
   onPromptChange: (prompt: string) => void
   onLanguageChange: (language: SyntaxLanguage) => void
+  onModelChange: (model: ModelOption | null) => void
   onReferenceAdd: (reference: AnalysisNotebookContextReference) => void
   onPickContextFiles: () => void
   onSubmit: () => void
@@ -241,6 +245,8 @@ export default function NotebookAiPromptCell({
   prompt,
   references,
   contextOptions,
+  modelOptions,
+  selectedModel,
   generationStatus,
   isGenerating,
   error,
@@ -249,6 +255,7 @@ export default function NotebookAiPromptCell({
   onSelect,
   onPromptChange,
   onLanguageChange,
+  onModelChange,
   onReferenceAdd,
   onPickContextFiles,
   onSubmit,
@@ -661,6 +668,14 @@ export default function NotebookAiPromptCell({
               <ListItemText primary="Markdown" secondary="生成说明文字，不生成代码" />
             </MenuItem>
           </Menu>
+          <Box data-phi-notebook-ai-model-selector="true" sx={{ minWidth: 0 }}>
+            <ModelSelectorControl
+              models={modelOptions}
+              selectedModel={selectedModel}
+              onSelectModel={onModelChange}
+              disabled={isGenerating}
+            />
+          </Box>
           <Box sx={{ flex: 1 }} />
           <Tooltip title="@ 引用上下文">
             <IconButton
