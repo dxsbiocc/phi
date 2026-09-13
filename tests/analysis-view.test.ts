@@ -350,6 +350,7 @@ test('analysis view renders an opened notebook document', () => {
   assert.match(markup, /aria-label="上方插入 Code cell"/)
   assert.match(markup, /aria-label="下方插入 Code cell"/)
   assert.match(markup, /aria-label="删除 cell"/)
+  assert.match(markup, /data-phi-notebook-cell-delete="marimo"/)
   assert.match(markup, /aria-label="拖动 cell"/)
   assert.match(markup, /data-phi-notebook-cell-drag-handle="true"/)
   assert.match(markup, /data-phi-notebook-cell-has-duration="true"/)
@@ -602,9 +603,25 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     /'&:focus-within': \{\s+borderColor: \(theme: Theme\) =>\s+alpha\(notebookAccentColor\(theme, cellAccent\)/
   )
   assert.match(notebookCellSource, /if \(isCellSelected\) return alpha\(accentColor, 0\.72\)/)
+  assert.match(
+    notebookCellSource,
+    /const isCodeSelectionChromeOnly = isCodeCell && !agentHighlighted/
+  )
+  assert.match(notebookCellSource, /if \(isCodeSelectionChromeOnly\) return 'transparent'/)
+  assert.doesNotMatch(notebookCellSource, /isCodeSelectionChromeOnly\s+\? 'none'/)
+  assert.match(notebookCellSource, /boxShadow: \(theme\) =>\s+showEditor/)
   assert.match(notebookCellSource, /if \(isCellSelected\) return alpha\(accentColor, 0\.065\)/)
   assert.match(notebookCellSource, /notebookAccentSelectionShadow\(theme, cellAccent, 0\.18\)/)
   assert.match(notebookCellSource, /notebookAccentSelectionShadow\(theme, cellAccent, 0\.2\)/)
+  assert.match(notebookCellSource, /data-phi-notebook-cell-delete="marimo"/)
+  assert.match(notebookCellSource, /onPointerDown=\{\(event: PointerEvent<HTMLButtonElement>\) =>/)
+  assert.match(notebookCellSource, /onMouseDown=\{\(event: MouseEvent<HTMLButtonElement>\) =>/)
+  assert.match(notebookCellSource, /event\.preventDefault\(\)/)
+  assert.match(notebookCellSource, /event\.stopPropagation\(\)/)
+  assert.match(notebookCellSource, /bottom: -2/)
+  assert.match(notebookCellSource, /fontSize: 14/)
+  assert.match(notebookCellSource, /bgcolor: 'transparent'/)
+  assert.match(notebookCellSource, /disabled=\{isRunning\}/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-accent="ai"/)
   assert.match(aiPromptSource, /notebookAccentBoxShadow\(theme, 'ai'\)/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-prompt-input="true"/)

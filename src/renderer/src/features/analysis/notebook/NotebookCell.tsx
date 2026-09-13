@@ -1,4 +1,4 @@
-import { useEffect, useState, type DragEvent, type MouseEvent } from 'react'
+import { useEffect, useState, type DragEvent, type MouseEvent, type PointerEvent } from 'react'
 import {
   Box,
   Divider,
@@ -27,7 +27,9 @@ import NotebookCodeEditor from './NotebookCodeEditor'
 import {
   notebookCodeGutterDividerWidth,
   notebookCodeGutterWidth,
-  notebookCodeMinHeight
+  notebookCodeMinHeight,
+  notebookCodeContentPaddingBottom,
+  notebookCodeContentPaddingTop
 } from './notebookCellLayout'
 import NotebookOutputArea from './NotebookOutputArea'
 import {
@@ -101,6 +103,7 @@ export default function NotebookCell({
   const showEditor = editable && isEditing && isCellSelected
   const showAccentShadow = showEditor || isCellSelected || agentHighlighted
   const isCodeCell = cell.type === 'code'
+  const isCodeSelectionChromeOnly = isCodeCell && !agentHighlighted
   const canRun = isCodeCell && Boolean(onRunCell) && canRunCells && cell.state !== 'running'
   const isRunning = cell.state === 'running'
   const isRenderedMarkdown = isMarkdown && !showEditor
@@ -355,6 +358,7 @@ export default function NotebookCell({
             if (agentHighlighted) return alpha(accentColor, 0.075)
             if (cell.state === 'error') return alpha(theme.palette.error.main, 0.035)
             if (cell.state === 'running') return alpha(accentColor, 0.03)
+            if (isCodeSelectionChromeOnly) return 'transparent'
             if (showEditor) return alpha(accentColor, 0.055)
             if (isCellSelected) return alpha(accentColor, 0.065)
             return 'transparent'
@@ -388,8 +392,8 @@ export default function NotebookCell({
                   '&::after': {
                     content: '""',
                     position: 'absolute',
-                    top: 0,
-                    bottom: 0,
+                    top: `${notebookCodeContentPaddingTop}px`,
+                    bottom: `${notebookCodeContentPaddingBottom}px`,
                     left: `calc(${notebookCodeGutterWidth}px - ${notebookCodeGutterDividerWidth}px)`,
                     width: `${notebookCodeGutterDividerWidth}px`,
                     bgcolor: (theme: Theme) => alpha(theme.palette.text.primary, 0.12),
@@ -401,29 +405,52 @@ export default function NotebookCell({
           }}
         >
           {editable && onDeleteCell ? (
-            <Tooltip title="删除 cell">
+            <Tooltip title={isRunning ? '运行中的 cell 不能删除' : '删除 cell'}>
               <IconButton
                 className="cell-delete-button"
                 size="small"
                 aria-label="删除 cell"
-                onClick={() => onDeleteCell(cell.id)}
+                aria-disabled={isRunning ? 'true' : undefined}
+                data-phi-notebook-cell-delete="marimo"
+                onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                }}
+                onMouseDown={(event: MouseEvent<HTMLButtonElement>) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                }}
+                onClick={() => {
+                  if (!isRunning) onDeleteCell(cell.id)
+                }}
                 sx={{
                   position: 'absolute',
-                  right: 6,
-                  bottom: 5,
+                  right: 2,
+                  bottom: -2,
                   zIndex: 2,
-                  width: 24,
-                  height: 24,
+                  width: 28,
+                  height: 28,
+                  p: 0,
                   opacity: 0,
-                  color: 'error.light',
+                  color: (theme) => alpha(theme.palette.error.main, 0.62),
+                  bgcolor: 'transparent',
+                  boxShadow: 'none',
                   transition: 'opacity 140ms ease, color 140ms ease',
                   '&:hover': {
                     color: 'error.main',
-                    bgcolor: (theme) => alpha(theme.palette.error.main, 0.08)
+                    bgcolor: 'transparent'
+                  },
+                  '&[aria-disabled="true"]': {
+                    color: 'text.disabled',
+                    cursor: 'default'
+                  },
+                  '&[aria-disabled="true"]:hover': {
+                    color: 'text.disabled',
+                    bgcolor: 'transparent'
                   }
                 }}
               >
-                <DeleteIcon sx={{ fontSize: 16 }} />
+                <DeleteIcon sx={{ fontSize: 14 }} />
               </IconButton>
             </Tooltip>
           ) : null}
@@ -659,7 +686,14 @@ export default function NotebookCell({
             <ListItemText primary="清空输出" />
           </MenuItem>
           <Divider />
-          <MenuItem onClick={() => runMenuAction(() => onDeleteCell?.(cell.id))}>
+          <MenuItem
+            disabled={isRunning}
+            onClick={() =>
+              runMenuAction(() => {
+                if (!isRunning) onDeleteCell?.(cell.id)
+              })
+            }
+          >
             <ListItemIcon>
               <DeleteIcon color="error" sx={{ fontSize: 17 }} />
             </ListItemIcon>

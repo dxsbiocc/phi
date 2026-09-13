@@ -2,13 +2,14 @@ import { type MouseEvent } from 'react'
 import { Box } from '@mui/material'
 import {
   notebookCodeActionPaddingRight,
+  notebookCodeContentPaddingBottom,
+  notebookCodeContentPaddingTop,
   notebookCodeContentPaddingX,
   notebookCodeGutterPaddingRight,
   notebookCodeFontSizeRem,
   notebookCodeGutterWidth,
   notebookCodeLineHeight,
-  notebookCodeMinHeight,
-  notebookCodeVerticalPadding
+  notebookCodeMinHeight
 } from './notebookCellLayout'
 import { highlightLine, type SyntaxLanguage } from '../../../lib/syntaxHighlight'
 import { syntaxTokenColor } from '../../../lib/syntaxTheme'
@@ -165,14 +166,10 @@ export default function NotebookCodeCellSource({
     <Box
       data-phi-notebook-code="highlighted"
       data-phi-syntax-language={language}
-      data-phi-notebook-code-edit-trigger="double-click"
-      data-phi-notebook-code-select-trigger="single-click"
+      data-phi-notebook-code-edit-trigger="single-click"
       role={editable ? 'button' : undefined}
       tabIndex={editable ? 0 : undefined}
       onClick={(event: MouseEvent<HTMLElement>) => {
-        if (editable) event.currentTarget.focus()
-      }}
-      onDoubleClick={(event: MouseEvent<HTMLElement>) => {
         if (editable) onEdit(codeSelectionFromClick(event, source))
       }}
       onKeyDown={(event) => {
@@ -189,13 +186,13 @@ export default function NotebookCodeCellSource({
         }
       }}
       sx={{
+        boxSizing: 'border-box',
         minHeight: notebookCodeMinHeight,
-        // notebookCodeVerticalPadding (not notebookCodeContentPaddingX)
-        // visually centers a one-line cell. NotebookCodeEditor uses the
-        // same static value when the user explicitly enters edit mode; simple
-        // selection keeps this source view mounted, so only the outer cell
-        // chrome changes.
-        py: `${notebookCodeVerticalPadding}px`,
+        // CodeMirror uses the same static top/bottom values when the user
+        // explicitly enters edit mode; simple selection keeps this source view
+        // mounted, so only the outer cell chrome changes.
+        pt: `${notebookCodeContentPaddingTop}px`,
+        pb: `${notebookCodeContentPaddingBottom}px`,
         pr: `${notebookCodeActionPaddingRight}px`,
         cursor: editable ? 'text' : 'default',
         overflowX: 'auto',

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -24,7 +26,9 @@ test('a single very long unwrapped line is height-capped and scrollable', () => 
   const markup = renderPreOutput('text/plain', text)
 
   assert.match(markup, /max-height:420px/)
+  assert.match(markup, /overflow-x:auto/)
   assert.match(markup, /overflow-y:auto/)
+  assert.match(markup, /white-space:pre/)
 })
 
 test('many real lines still fold behind a "展开完整输出" toggle', () => {
@@ -50,14 +54,35 @@ test('plain text output shows no "text/plain" mime label -- it is the unremarkab
   assert.match(markup, />2</)
   // the copy button should still be there, just not paired with a label
   assert.match(markup, /复制输出/)
+  assert.match(markup, /data-phi-notebook-output-copy="true"/)
+  assert.match(markup, /data-phi-notebook-output-wrap-toggle="true"/)
+  assert.match(markup, /data-phi-notebook-output-wrap="false"/)
+  assert.match(markup, /aria-label="开启输出换行"/)
 })
 
-test('stdout/stderr and error output keep their label -- it actually distinguishes the output', () => {
+test('stdout output hides its label, while stderr and error keep theirs', () => {
   const stdout = renderPreOutput('stream:stdout', 'hello')
   const stderr = renderPreOutput('stream:stderr', 'warn')
   const error = renderPreOutput('error', 'boom')
 
-  assert.match(stdout, />stdout</)
+  assert.doesNotMatch(stdout, />stdout</)
+  assert.match(stdout, />hello</)
   assert.match(stderr, />stderr</)
   assert.match(error, />error</)
+})
+
+test('output hover actions are hidden until the user hovers or focuses the output', () => {
+  const source = readFileSync(
+    resolve('src/renderer/src/features/analysis/notebook/NotebookPreOutput.tsx'),
+    'utf-8'
+  )
+
+  assert.match(source, /className="notebook-output-hover-actions"/)
+  assert.match(source, /opacity: 0/)
+  assert.match(source, /pointerEvents: 'none'/)
+  assert.match(
+    source,
+    /&:hover \.notebook-output-hover-actions, &:focus-within \.notebook-output-hover-actions/
+  )
+  assert.match(source, /whiteSpace: wrapText \? 'pre-wrap' : 'pre'/)
 })

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -63,4 +65,18 @@ test('a multi-line text/latex output (array of strings) is joined, not JSON-stri
   const markup = renderOutputs([output])
 
   assert.match(markup, /class="katex"/)
+})
+
+test('notebook output area uses marimo-style flow-root scrolling layout', () => {
+  const source = readFileSync(
+    resolve('src/renderer/src/features/analysis/notebook/NotebookOutputArea.tsx'),
+    'utf-8'
+  )
+
+  assert.match(source, /data-phi-notebook-output="area"/)
+  assert.match(source, /maxWidth: 'inherit'/)
+  assert.match(source, /p: 2/)
+  assert.match(source, /clear: 'both'/)
+  assert.match(source, /display: 'flow-root'/)
+  assert.match(source, /overflow: 'auto'/)
 })

@@ -352,8 +352,12 @@ export default function NotebookOutputArea({
       <Box
         data-phi-notebook-output="area"
         sx={{
-          px: 1.15,
-          py: 0.85,
+          width: '100%',
+          maxWidth: 'inherit',
+          p: 2,
+          clear: 'both',
+          display: 'flow-root',
+          overflow: 'auto',
           borderTop: 1,
           borderColor: (theme) => alpha(theme.palette.text.primary, 0.08),
           bgcolor: 'transparent',

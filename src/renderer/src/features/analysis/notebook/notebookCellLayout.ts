@@ -20,16 +20,27 @@ export const notebookCodeMinHeight = 44
 // of one rendered code line at notebookCodeFontSizeRem/notebookCodeLineHeight.
 const notebookCodeLineHeightPx = 16 * notebookCodeFontSizeRem * notebookCodeLineHeight
 
-// The top/bottom padding that visually centers a single line within
-// notebookCodeMinHeight. Deliberately a static number, not CSS
-// flex/justify-content: CodeMirror's own layout engine actively resizes
-// its internal .cm-scroller to fill its container, which silently defeats
-// flex centering there (verified empirically -- the "centered" box
-// measured identically to the un-centered one). Fixed padding is the one
-// technique both the read-only view and CodeMirror equally respect, so it's
-// the only way to make the two states genuinely pixel-identical instead of
-// each drifting to its own idea of "centered".
+// The geometric top/bottom padding for one line within notebookCodeMinHeight.
+// Deliberately a static number, not CSS flex/justify-content: CodeMirror's own
+// layout engine actively resizes its internal .cm-scroller to fill its
+// container, which silently defeats flex centering there (verified empirically
+// -- the "centered" box measured identically to the un-centered one). Fixed
+// padding is the one technique both the read-only view and CodeMirror equally
+// respect, so it's the only way to make the two states genuinely pixel-identical
+// instead of each drifting to its own idea of "centered".
 export const notebookCodeVerticalPadding = Math.max(
   0,
   (notebookCodeMinHeight - notebookCodeLineHeightPx) / 2
+)
+
+// Font ink sits slightly above the CSS line box center in the app font stack.
+// Shift the code content and gutter divider down together while keeping the
+// total reserved height stable, so a one-line code cell looks optically
+// centered like Marimo without creating selection/edit-mode jumps.
+export const notebookCodeVisualCenterOffset = 3
+export const notebookCodeContentPaddingTop =
+  notebookCodeVerticalPadding + notebookCodeVisualCenterOffset
+export const notebookCodeContentPaddingBottom = Math.max(
+  0,
+  notebookCodeVerticalPadding - notebookCodeVisualCenterOffset
 )

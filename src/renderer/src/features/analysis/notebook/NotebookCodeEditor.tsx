@@ -28,14 +28,15 @@ import type { SyntaxLanguage } from '../../../lib/syntaxHighlight'
 import { codeMirrorHighlightStyle } from '../../../lib/syntaxTheme'
 import {
   notebookCodeActionPaddingRight,
+  notebookCodeContentPaddingBottom,
+  notebookCodeContentPaddingTop,
   notebookCodeContentPaddingX,
   notebookCodeFontSizeRem,
   notebookCodeGutterDividerWidth,
   notebookCodeGutterPaddingRight,
   notebookCodeGutterWidth,
   notebookCodeLineHeight,
-  notebookCodeMinHeight,
-  notebookCodeVerticalPadding
+  notebookCodeMinHeight
 } from './notebookCellLayout'
 
 type NotebookCodeEditorProps = {
@@ -97,6 +98,7 @@ export default function NotebookCodeEditor({
     () =>
       EditorView.theme({
         '&': {
+          boxSizing: 'border-box',
           minHeight: `${notebookCodeMinHeight}px`,
           color: theme.palette.text.primary,
           backgroundColor: 'transparent',
@@ -112,12 +114,10 @@ export default function NotebookCodeEditor({
         },
         '.cm-content': {
           boxSizing: 'border-box',
-          // Top/bottom padding uses notebookCodeVerticalPadding (not
-          // notebookCodeContentPaddingX) to match NotebookCodeCellSource's
-          // read-only view exactly -- see notebookCodeVerticalPadding's own
-          // comment for why this has to be static padding rather than
-          // flex/justify-content centering.
-          padding: `${notebookCodeVerticalPadding}px ${notebookCodeActionPaddingRight}px ${notebookCodeVerticalPadding}px ${notebookCodeContentPaddingX}px`,
+          // Top/bottom padding matches NotebookCodeCellSource exactly; see
+          // notebookCellLayout for why this has to be static padding rather
+          // than flex/justify-content centering.
+          padding: `${notebookCodeContentPaddingTop}px ${notebookCodeActionPaddingRight}px ${notebookCodeContentPaddingBottom}px ${notebookCodeContentPaddingX}px`,
           caretColor,
           minHeight: `${notebookCodeMinHeight}px`
         },
@@ -131,18 +131,25 @@ export default function NotebookCodeEditor({
         },
         '.cm-gutters': {
           boxSizing: 'border-box',
+          position: 'relative',
           backgroundColor: 'transparent',
           color: theme.palette.text.disabled,
           borderRight: 0,
-          boxShadow: `inset -${notebookCodeGutterDividerWidth}px 0 0 ${alpha(
-            theme.palette.text.primary,
-            0.12
-          )}`,
           width: `${notebookCodeGutterWidth}px`,
           minWidth: `${notebookCodeGutterWidth}px`,
           margin: 0,
           padding: 0,
           overflow: 'hidden'
+        },
+        '.cm-gutters::after': {
+          content: '""',
+          position: 'absolute',
+          top: `${notebookCodeContentPaddingTop}px`,
+          bottom: `${notebookCodeContentPaddingBottom}px`,
+          right: 0,
+          width: `${notebookCodeGutterDividerWidth}px`,
+          backgroundColor: alpha(theme.palette.text.primary, 0.12),
+          pointerEvents: 'none'
         },
         '.cm-gutter, .cm-lineNumbers': {
           boxSizing: 'border-box',
@@ -233,7 +240,6 @@ export default function NotebookCodeEditor({
         ...defaultKeymap,
         ...historyKeymap
       ]),
-      EditorView.lineWrapping,
       editorTheme,
       EditorView.updateListener.of((update) => {
         if (update.docChanged) onChangeRef.current(update.state.doc.toString())
