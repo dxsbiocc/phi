@@ -2268,10 +2268,12 @@ test('main IPC: notebook AI generation uses assistant event text when session hi
   assert.equal(app.createdAgentOptions[0].noTools, 'all')
   assert.deepEqual(app.sessions[0].promptOptions[0], {
     expandPromptTemplates: false,
-    synthetic: true,
     userInitiated: false,
     skipCompactionCheck: true
   })
+  assert.doesNotMatch(app.sessions[0].promptTexts[0], /"cellType":"code"/)
+  assert.match(app.sessions[0].promptTexts[0], /NotebookCellsCompletion schema/)
+  assert.match(app.sessions[0].promptTexts[0], /"language":"python","code":"raw code only"/)
 })
 
 test('main IPC: notebook AI generation reads batched assistant messages from runtime events', async () => {

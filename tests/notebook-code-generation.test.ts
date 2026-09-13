@@ -71,6 +71,26 @@ test('notebook AI generation parser accepts marimo notebook completion data part
   ])
 })
 
+test('notebook AI generation parser accepts marimo single-cell completion data parts', () => {
+  const cells = parseGeneratedNotebookCompletion(
+    {
+      type: 'data-cell-completion',
+      data: {
+        code: 'def greedy(items):\n    return sorted(items)'
+      }
+    },
+    'python'
+  )
+
+  assert.deepEqual(cells, [
+    {
+      cellType: 'code',
+      source: 'def greedy(items):\n    return sorted(items)',
+      language: 'python'
+    }
+  ])
+})
+
 test('notebook AI generation parser splits markdown and code fences into insertable cells', () => {
   const cells = parseGeneratedNotebookCells(
     [
@@ -150,8 +170,9 @@ test('notebook AI generation prompt includes selected references and notebook co
 
   assert.match(referencePrompt, /@dataframe:\/\/df/)
   assert.match(referencePrompt, /100 rows x 3 columns/)
-  assert.match(prompt, /marimo-style notebook generation pattern/)
-  assert.match(prompt, /Return only a JSON object/)
+  assert.match(prompt, /marimo notebook completion pattern/)
+  assert.match(prompt, /NotebookCellsCompletion schema/)
+  assert.match(prompt, /"language":"python","code":"raw code only"/)
   assert.match(prompt, /df = pd\.read_csv/)
   assert.match(prompt, /@df 总结一下这个数据/)
 })

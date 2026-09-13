@@ -675,8 +675,8 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     /setDraftDocument\(nextDocument\)[\s\S]*?await saveNotebookDocument\(nextDocument\)/
   )
   assert.match(analysisSource, /onGenerateNotebookCode\(notebookFile, draftDocument/)
-  assert.match(notebookCodeGenerationSource, /Return only a JSON object with this exact shape/)
-  assert.match(notebookCodeGenerationSource, /marimo-style notebook generation pattern/)
+  assert.match(notebookCodeGenerationSource, /NotebookCellsCompletion schema/)
+  assert.match(notebookCodeGenerationSource, /marimo notebook completion pattern/)
   assert.match(mainSource, /parseGeneratedNotebookCompletion/)
   assert.match(mainSource, /buildNotebookCodeGenerationPrompt/)
   assert.match(notebookCodeGenerationSource, /notebookContextReferencePrompt\(input\.references\)/)
