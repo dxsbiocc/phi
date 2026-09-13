@@ -8,7 +8,6 @@ import { createTheme, ThemeProvider } from '@mui/material'
 import AnalysisView, {
   type AnalysisViewProps
 } from '../src/renderer/src/features/analysis/AnalysisView'
-import { notebookAiInsertionConfirmationMessage } from '../src/renderer/src/features/analysis/lib/notebookConfirmations'
 import { notebookAiPromptError } from '../src/renderer/src/features/analysis/lib/notebookAiErrors'
 import { shouldAutoStartNotebookSession } from '../src/renderer/src/features/analysis/lib/notebookSession'
 import {
@@ -504,7 +503,6 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     resolve(process.cwd(), 'src/main/agent/notebook/notebook-code-generation.ts'),
     'utf8'
   )
-  const aiInsertionMessage = notebookAiInsertionConfirmationMessage({ cellCount: 2 })
 
   assert.match(aiPromptSource, /data-phi-notebook-ai-prompt-cell="true"/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-context-menu="true"/)
@@ -648,32 +646,28 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(analysisSource, /onSelect=\{\(\) => setSelectedCellId\(null\)\}/)
   assert.match(analysisSource, /references: draft\.references/)
   assert.match(analysisSource, /const generatedCells =/)
-  assert.match(aiInsertionMessage, /确认将 AI 生成内容插入 notebook/)
-  assert.match(aiInsertionMessage, /将插入 2 个 cell/)
-  assert.match(aiInsertionMessage, /立即保存到当前 \.ipynb 文件/)
-  assert.match(analysisSource, /const \[pendingAiInsertion, setPendingAiInsertion\]/)
-  assert.match(aiPromptSource, /data-phi-notebook-ai-staged-insertion="true"/)
-  assert.match(aiPromptSource, /data-phi-notebook-ai-staged-message="true"/)
+  assert.match(analysisSource, /function insertGeneratedNotebookCells/)
+  assert.match(analysisSource, /const nextDocument = insertGeneratedNotebookCells/)
   assert.match(
     analysisSource,
-    /pendingGeneratedCells=\{activePendingAiInsertion\?\.generatedCells \?\? \[\]\}/
+    /await saveNotebookDocument\(nextDocument\)[\s\S]*?setDraftDocument\(nextDocument\)[\s\S]*?setAiPromptDraft/
   )
-  assert.match(analysisSource, /confirmationMessage=\{/)
-  assert.match(analysisSource, /onConfirmInsertion=\{\(\) =>/)
-  assert.match(analysisSource, /onCancelInsertion=\{cancelAiInsertion\}/)
+  assert.doesNotMatch(analysisSource, /const \[pendingAiInsertion, setPendingAiInsertion\]/)
+  assert.doesNotMatch(aiPromptSource, /data-phi-notebook-ai-staged-insertion/)
+  assert.doesNotMatch(aiPromptSource, /data-phi-notebook-ai-staged-message/)
+  assert.doesNotMatch(analysisSource, /pendingGeneratedCells=/)
+  assert.doesNotMatch(analysisSource, /confirmationMessage=\{/)
+  assert.doesNotMatch(analysisSource, /onConfirmInsertion=/)
+  assert.doesNotMatch(analysisSource, /onCancelInsertion=/)
   assert.doesNotMatch(analysisSource, /data-phi-notebook-ai-insert-dialog/)
-  assert.match(analysisSource, /setPendingAiInsertion\(\{/)
-  assert.match(analysisSource, /void confirmAiInsertion\(\)/)
-  assert.match(analysisSource, /\{ \.\.\.pending, afterCellId \}/)
+  assert.doesNotMatch(analysisSource, /setPendingAiInsertion\(/)
+  assert.doesNotMatch(analysisSource, /confirmAiInsertion/)
+  assert.doesNotMatch(analysisSource, /\{ \.\.\.pending, afterCellId \}/)
   assert.doesNotMatch(analysisSource, /window\.confirm/)
   assert.doesNotMatch(analysisSource, /confirmCellInsertion/)
   assert.doesNotMatch(analysisSource, /notebookCellInsertionConfirmationMessage/)
-  assert.match(analysisSource, /for \(const cell of pending\.generatedCells\)/)
+  assert.match(analysisSource, /for \(const cell of generatedCells\)/)
   assert.match(analysisSource, /cellType: cell\.cellType/)
-  assert.match(
-    analysisSource,
-    /setDraftDocument\(nextDocument\)[\s\S]*?await saveNotebookDocument\(nextDocument\)/
-  )
   assert.match(analysisSource, /onGenerateNotebookCode\(notebookFile, draftDocument/)
   assert.match(notebookCodeGenerationSource, /NotebookCellsCompletion schema/)
   assert.match(notebookCodeGenerationSource, /marimo notebook completion pattern/)

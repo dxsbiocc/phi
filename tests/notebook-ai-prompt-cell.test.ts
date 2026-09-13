@@ -79,35 +79,19 @@ test('the attach-file button stays disabled when no file picker is wired up', ()
   assert.match(buttonMatch![0], /\bdisabled=""/)
 })
 
-test('the prompt cell stages generated cells inline until the user confirms insertion', () => {
-  const markup = renderPromptCell({
-    prompt: '写一个贪心算法',
-    pendingGeneratedCells: [
-      { cellType: 'markdown', source: '# Greedy idea' },
-      {
-        cellType: 'code',
-        source: 'def greedy(items):\n    return sorted(items)',
-        language: 'python'
-      }
-    ],
-    confirmationMessage: '确认将 AI 生成内容插入 notebook？\n\n将插入 2 个 cell。'
-  })
+test('the prompt cell does not render a staged insertion confirmation panel', () => {
+  const markup = renderPromptCell({ prompt: '写一个贪心算法' })
 
-  assert.match(markup, /data-phi-notebook-ai-staged-insertion="true"/)
-  assert.match(markup, /data-phi-notebook-ai-staged-message="true"/)
-  assert.match(markup, /确认将 AI 生成内容插入 notebook/)
-  assert.match(markup, /data-phi-notebook-ai-staged-cell="markdown"/)
-  assert.match(markup, /data-phi-notebook-ai-staged-cell="code"/)
-  assert.match(markup, /def greedy/)
-  assert.match(markup, />取消</)
-  assert.match(markup, />插入并保存</)
+  assert.doesNotMatch(markup, /data-phi-notebook-ai-staged-insertion/)
+  assert.doesNotMatch(markup, /data-phi-notebook-ai-staged-message/)
+  assert.doesNotMatch(markup, />插入并保存</)
 
   const submitButton = markup.match(/<button[^>]*aria-label="提交 AI 生成"[^>]*>/)
   assert.ok(submitButton)
-  assert.match(submitButton![0], /\bdisabled=""/)
+  assert.doesNotMatch(submitButton![0], /\bdisabled\b/)
 })
 
-test('the prompt cell renders AI failures as notebook-style output', () => {
+test('the prompt cell renders AI failures like chat provider errors', () => {
   const markup = renderPromptCell({
     prompt: '写一个贪心算法',
     error: 'AI 没有生成可插入内容，请换一种更具体的描述后重试。',
@@ -116,10 +100,12 @@ test('the prompt cell renders AI failures as notebook-style output', () => {
   })
 
   assert.match(markup, /data-phi-notebook-ai-error-output="true"/)
+  assert.match(markup, /data-phi-notebook-ai-error-alert="true"/)
   assert.match(markup, /data-phi-notebook-ai-error-summary="true"/)
-  assert.match(markup, /data-phi-notebook-output-pre="true"/)
-  assert.match(markup, /data-phi-notebook-output-kind="error"/)
-  assert.match(markup, /data-phi-notebook-output-copy="true"/)
+  assert.match(markup, /data-phi-notebook-ai-error-description="true"/)
+  assert.doesNotMatch(markup, /data-phi-notebook-output-pre="true"/)
+  assert.doesNotMatch(markup, /data-phi-notebook-output-kind="error"/)
+  assert.doesNotMatch(markup, /data-phi-notebook-output-copy="true"/)
   assert.match(markup, /data-notebook-cells-completion/)
   assert.doesNotMatch(markup, /Error invoking remote method/)
   assert.doesNotMatch(markup, /analysis:generateNotebookCode/)
@@ -134,6 +120,19 @@ test('the prompt cell does not repeat equivalent AI failure text', () => {
   })
 
   assert.match(markup, /data-phi-notebook-ai-error-output="true"/)
-  assert.match(markup, /data-phi-notebook-output-pre="true"/)
+  assert.match(markup, /data-phi-notebook-ai-error-alert="true"/)
   assert.doesNotMatch(markup, /data-phi-notebook-ai-error-summary="true"/)
+})
+
+test('the prompt cell maps provider billing errors to the chat-style alert title', () => {
+  const markup = renderPromptCell({
+    prompt: '写一个贪心算法',
+    error: '402 Insufficient Balance',
+    errorDetail:
+      '402 Insufficient Balance\nInsufficient Balance (type=unknown_error param=invalid_request_error)'
+  })
+
+  assert.match(markup, /data-phi-notebook-ai-error-alert="true"/)
+  assert.match(markup, /账户余额不足/)
+  assert.doesNotMatch(markup, /data-phi-notebook-output-kind="error"/)
 })

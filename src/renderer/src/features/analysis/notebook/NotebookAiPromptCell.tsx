@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import {
+  Alert,
+  AlertTitle,
   Box,
   Button,
   Chip,
@@ -17,28 +19,21 @@ import { alpha, type Theme } from '@mui/material/styles'
 import { TbGripVertical, TbSparkles } from 'react-icons/tb'
 
 import { PhiIcons } from '../../../icons'
+import { getProviderErrorDisplay } from '../../../lib/providerErrors'
 import { notebookContextKindLabel } from '../lib/notebookViewModel'
 import { type SyntaxLanguage } from '../../../lib/syntaxHighlight'
-import type {
-  AnalysisNotebookContextReference,
-  AnalysisNotebookGeneratedCell
-} from '../../../types'
+import type { AnalysisNotebookContextReference } from '../../../types'
 import {
   notebookAccentBoxShadow,
   notebookAccentColor,
   notebookCaretColor
 } from './notebookCellStyles'
 import { notebookInsertCodeAction } from './notebookInsertCodeAction'
-import NotebookPreOutput from './NotebookPreOutput'
 
 const CloseIcon = PhiIcons.action.close
 const FileIcon = PhiIcons.tool.read
 const SendIcon = PhiIcons.action.send
 const MarkdownIcon = PhiIcons.file.markdown
-const ApproveIcon = PhiIcons.action.approve
-const CancelIcon = PhiIcons.action.cancel
-
-const stagedNotebookCellPreviewLimit = 1400
 
 export type NotebookAiPromptCellProps = {
   language: SyntaxLanguage
@@ -46,8 +41,6 @@ export type NotebookAiPromptCellProps = {
   prompt: string
   references: AnalysisNotebookContextReference[]
   contextOptions: AnalysisNotebookContextReference[]
-  pendingGeneratedCells?: AnalysisNotebookGeneratedCell[]
-  confirmationMessage?: string
   isGenerating: boolean
   error?: string | null
   errorDetail?: string | null
@@ -58,21 +51,8 @@ export type NotebookAiPromptCellProps = {
   onReferenceAdd: (reference: AnalysisNotebookContextReference) => void
   onPickContextFiles: () => void
   onSubmit: () => void
-  onConfirmInsertion?: () => void
-  onCancelInsertion?: () => void
   onCancel: () => void
   onDragStart: (event: DragEvent<HTMLButtonElement>) => void
-}
-
-function stagedNotebookCellLabel(cell: AnalysisNotebookGeneratedCell): string {
-  if (cell.cellType === 'markdown') return 'Markdown'
-  return (cell.language ?? 'code').toUpperCase()
-}
-
-function stagedNotebookCellPreview(source: string): string {
-  const trimmed = source.trimEnd()
-  if (trimmed.length <= stagedNotebookCellPreviewLimit) return trimmed
-  return `${trimmed.slice(0, stagedNotebookCellPreviewLimit).trimEnd()}\n...`
 }
 
 function comparableAiErrorText(value: string): string {
@@ -253,8 +233,6 @@ export default function NotebookAiPromptCell({
   prompt,
   references,
   contextOptions,
-  pendingGeneratedCells = [],
-  confirmationMessage,
   isGenerating,
   error,
   errorDetail,
@@ -265,8 +243,6 @@ export default function NotebookAiPromptCell({
   onReferenceAdd,
   onPickContextFiles,
   onSubmit,
-  onConfirmInsertion,
-  onCancelInsertion,
   onCancel,
   onDragStart
 }: NotebookAiPromptCellProps): React.JSX.Element {
@@ -280,17 +256,11 @@ export default function NotebookAiPromptCell({
         )
       }
     : codeAction
-  const hasPendingInsertion = pendingGeneratedCells.length > 0
   const errorOutputText = (errorDetail ?? error ?? '').trim()
   const showErrorSummary = shouldShowAiErrorSummary(error, errorOutputText)
-  const canSubmit = prompt.trim().length > 0 && !isGenerating && !hasPendingInsertion
-  const submitTooltip = hasPendingInsertion
-    ? '请先确认或取消生成结果'
-    : isGenerating
-      ? '正在生成代码'
-      : canSubmit
-        ? '生成代码'
-        : '输入需求后生成'
+  const errorDisplay = errorOutputText ? getProviderErrorDisplay(errorOutputText) : null
+  const canSubmit = prompt.trim().length > 0 && !isGenerating
+  const submitTooltip = isGenerating ? '正在生成代码' : canSubmit ? '生成代码' : '输入需求后生成'
   const promptCellRef = useRef<HTMLDivElement | null>(null)
   const contextOptionListRef = useRef<HTMLDivElement | null>(null)
   const contextOptionRefs = useRef(new Map<string, HTMLDivElement>())
@@ -724,7 +694,7 @@ export default function NotebookAiPromptCell({
             </span>
           </Tooltip>
         </Box>
-        {error && errorOutputText ? (
+        {error && errorOutputText && errorDisplay ? (
           <Box
             data-phi-notebook-ai-error-output="true"
             sx={{
@@ -735,150 +705,37 @@ export default function NotebookAiPromptCell({
               borderColor: (theme) => alpha(theme.palette.error.main, 0.22)
             }}
           >
-            {showErrorSummary ? (
+            <Alert severity="error" variant="outlined" data-phi-notebook-ai-error-alert="true">
+              <AlertTitle>{errorDisplay.title}</AlertTitle>
               <Typography
-                data-phi-notebook-ai-error-summary="true"
+                data-phi-notebook-ai-error-description="true"
+                variant="body2"
                 sx={{
-                  mb: 0.65,
-                  color: 'error.main',
-                  fontSize: '0.82rem',
-                  fontWeight: 700,
-                  lineHeight: 1.55
+                  color: 'inherit',
+                  mb: errorDisplay.showRawMessage || showErrorSummary ? 0.75 : 0
                 }}
               >
-                {error}
+                {errorDisplay.description}
               </Typography>
-            ) : null}
-            <NotebookPreOutput kind="error" text={errorOutputText} tone="error" />
-          </Box>
-        ) : null}
-        {hasPendingInsertion ? (
-          <Box
-            data-phi-notebook-ai-staged-insertion="true"
-            sx={{
-              mx: 1.2,
-              mb: 1.1,
-              pt: 1,
-              borderTop: 1,
-              borderColor: (theme) => alpha(notebookAccentColor(theme, 'ai'), 0.18)
-            }}
-          >
-            <Box
-              sx={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 0.9,
-                mb: 0.8,
-                minWidth: 0
-              }}
-            >
-              <ApproveIcon
-                sx={{
-                  mt: 0.15,
-                  fontSize: 18,
-                  color: (theme) => notebookAccentColor(theme, 'ai')
-                }}
-              />
-              <Typography
-                data-phi-notebook-ai-staged-message="true"
-                sx={{
-                  minWidth: 0,
-                  color: 'text.secondary',
-                  fontSize: '0.82rem',
-                  fontWeight: 650,
-                  lineHeight: 1.55,
-                  whiteSpace: 'pre-line'
-                }}
-              >
-                {confirmationMessage ??
-                  `确认将 AI 生成内容插入 notebook？\n\n将插入 ${pendingGeneratedCells.length} 个 cell。`}
-              </Typography>
-            </Box>
-            <Box sx={{ display: 'grid', gap: 0.75 }}>
-              {pendingGeneratedCells.map((cell, index) => (
-                <Box
-                  // Generated cells do not have IDs yet; their order is the staged identity.
-                  key={`${cell.cellType}-${index}`}
-                  data-phi-notebook-ai-staged-cell={cell.cellType}
-                  sx={{
-                    minWidth: 0,
-                    border: 1,
-                    borderColor: (theme) => alpha(theme.palette.text.primary, 0.1),
-                    borderRadius: 1,
-                    bgcolor: (theme) => alpha(theme.palette.text.primary, 0.025),
-                    overflow: 'hidden'
-                  }}
+              {errorDisplay.showRawMessage ? (
+                <Typography
+                  variant="body2"
+                  data-phi-notebook-ai-error-raw="true"
+                  sx={{ color: 'inherit', whiteSpace: 'pre-wrap' }}
                 >
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      px: 1,
-                      py: 0.55,
-                      borderBottom: 1,
-                      borderColor: (theme) => alpha(theme.palette.text.primary, 0.08)
-                    }}
-                  >
-                    <Typography
-                      sx={{
-                        color: 'text.secondary',
-                        fontSize: '0.72rem',
-                        fontWeight: 800,
-                        letterSpacing: 0,
-                        textTransform: 'uppercase'
-                      }}
-                    >
-                      {stagedNotebookCellLabel(cell)}
-                    </Typography>
-                  </Box>
-                  <Typography
-                    component="pre"
-                    data-phi-notebook-ai-staged-cell-source="true"
-                    sx={{
-                      m: 0,
-                      px: 1,
-                      py: 0.8,
-                      maxHeight: 220,
-                      overflow: 'auto',
-                      color: 'text.primary',
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: '0.82rem',
-                      lineHeight: 1.55,
-                      whiteSpace: 'pre'
-                    }}
-                  >
-                    {stagedNotebookCellPreview(cell.source)}
-                  </Typography>
-                </Box>
-              ))}
-            </Box>
-            <Box
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'flex-end',
-                gap: 0.75,
-                mt: 1
-              }}
-            >
-              <Button
-                size="small"
-                startIcon={<CancelIcon sx={{ fontSize: 17 }} />}
-                onClick={onCancelInsertion}
-                sx={{ borderRadius: 1, textTransform: 'none', fontWeight: 750 }}
-              >
-                取消
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                startIcon={<ApproveIcon sx={{ fontSize: 17 }} />}
-                onClick={onConfirmInsertion}
-                sx={{ borderRadius: 1, textTransform: 'none', fontWeight: 800, px: 1.5 }}
-              >
-                插入并保存
-              </Button>
-            </Box>
+                  原始错误：{errorDisplay.rawMessage}
+                </Typography>
+              ) : null}
+              {showErrorSummary ? (
+                <Typography
+                  data-phi-notebook-ai-error-summary="true"
+                  variant="body2"
+                  sx={{ color: 'inherit', mt: errorDisplay.showRawMessage ? 0.75 : 0 }}
+                >
+                  {error}
+                </Typography>
+              ) : null}
+            </Alert>
           </Box>
         ) : null}
       </Box>

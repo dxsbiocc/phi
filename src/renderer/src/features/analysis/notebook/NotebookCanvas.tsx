@@ -23,7 +23,6 @@ import { alpha } from '@mui/material/styles'
 import { PhiIcons } from '../../../icons'
 import type { SyntaxLanguage } from '../../../lib/syntaxHighlight'
 import { hasLiveNotebookSession, isNotebookSessionRunnable } from '../lib/notebookSession'
-import { notebookAiInsertionConfirmationMessage } from '../lib/notebookConfirmations'
 import { notebookAiEmptyGenerationMessage, notebookAiPromptError } from '../lib/notebookAiErrors'
 import { useNotebookAutoConnect } from '../lib/useNotebookAutoConnect'
 import {
@@ -89,11 +88,6 @@ type NotebookAiPromptDraft = {
   error: string | null
   errorDetail: string | null
 }
-type PendingAiInsertion = {
-  draftId: string
-  afterCellId: string | null
-  generatedCells: AnalysisNotebookGeneratedCell[]
-}
 type PendingKernelSwitch = {
   file: AnalysisNotebookFile
   currentKernelLabel: string
@@ -103,6 +97,24 @@ type PendingKernelSwitch = {
   nextAutoConnectKey: string
 }
 const NotebookIcon = PhiIcons.file.jupyter
+
+function insertGeneratedNotebookCells(
+  document: NotebookDocument,
+  afterCellId: string | null,
+  generatedCells: AnalysisNotebookGeneratedCell[]
+): NotebookDocument {
+  const afterIndex = afterCellId ? document.cells.findIndex((cell) => cell.id === afterCellId) : -1
+  let insertIndex = afterIndex >= 0 ? afterIndex + 1 : document.cells.length
+  let nextDocument = document
+  for (const cell of generatedCells) {
+    nextDocument = insertNotebookCell(nextDocument, insertIndex, {
+      cellType: cell.cellType,
+      source: cell.source
+    })
+    insertIndex += 1
+  }
+  return nextDocument
+}
 
 const notebookSiblingSpacingSelector = [
   '& > [data-phi-notebook-cell] + [data-phi-notebook-cell]',
@@ -177,7 +189,6 @@ export default function NotebookCanvas({
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null)
   const [agentHighlightedCellId, setAgentHighlightedCellId] = useState<string | null>(null)
   const [aiPromptDraft, setAiPromptDraft] = useState<NotebookAiPromptDraft | null>(null)
-  const [pendingAiInsertion, setPendingAiInsertion] = useState<PendingAiInsertion | null>(null)
   const [pendingKernelSwitch, setPendingKernelSwitch] = useState<PendingKernelSwitch | null>(null)
   const notebookCanvasRef = useRef<HTMLDivElement | null>(null)
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
@@ -276,7 +287,6 @@ export default function NotebookCanvas({
         setDraftDocument(initialDocument)
         setSelectedCellId(null)
         setAiPromptDraft(null)
-        setPendingAiInsertion(null)
       }
     })
     return () => {
@@ -422,7 +432,6 @@ export default function NotebookCanvas({
       selectedCellId && cells.some((cell) => cell.id === selectedCellId) ? selectedCellId : null
     const afterCellId = liveSelectedCellId ?? cells.at(-1)?.id ?? null
     setSelectedCellId(null)
-    setPendingAiInsertion(null)
     setAiPromptDraft({
       id: `phi-ai-${Date.now()}`,
       afterCellId,
@@ -434,24 +443,17 @@ export default function NotebookCanvas({
       errorDetail: null
     })
   }
-  const clearPendingAiInsertionForDraft = (draftId: string | null | undefined): void => {
-    if (!draftId) return
-    setPendingAiInsertion((pending) => (pending?.draftId === draftId ? null : pending))
-  }
   const updateAiPrompt = (prompt: string): void => {
-    clearPendingAiInsertionForDraft(aiPromptDraft?.id)
     setAiPromptDraft((draft) =>
       draft ? { ...draft, prompt, error: null, errorDetail: null } : draft
     )
   }
   const updateAiPromptLanguage = (language: SyntaxLanguage): void => {
-    clearPendingAiInsertionForDraft(aiPromptDraft?.id)
     setAiPromptDraft((draft) =>
       draft ? { ...draft, language, error: null, errorDetail: null } : draft
     )
   }
   const addAiPromptReference = (reference: AnalysisNotebookContextReference): void => {
-    clearPendingAiInsertionForDraft(aiPromptDraft?.id)
     setAiPromptDraft((draft) => {
       if (!draft) return draft
       const references = draft.references.some((item) => item.id === reference.id)
@@ -476,12 +478,10 @@ export default function NotebookCanvas({
   }
   const closeAiPrompt = (): void => {
     setAiPromptDraft(null)
-    setPendingAiInsertion(null)
   }
   const submitAiPrompt = async (): Promise<void> => {
     const draft = aiPromptDraft
     if (!draft || !draft.prompt.trim() || draft.isGenerating) return
-    if (pendingAiInsertion?.draftId === draft.id) return
 
     if (!notebookFile || !draftDocument || !onGenerateNotebookCode) {
       setAiPromptDraft((current) =>
@@ -526,16 +526,14 @@ export default function NotebookCanvas({
         throw new Error(notebookAiEmptyGenerationMessage)
       }
 
-      setAiPromptDraft((current) =>
-        current?.id === draft.id
-          ? { ...current, isGenerating: false, error: null, errorDetail: null }
-          : current
-      )
-      setPendingAiInsertion({
-        draftId: draft.id,
-        afterCellId: draft.afterCellId,
+      const nextDocument = insertGeneratedNotebookCells(
+        draftDocument,
+        draft.afterCellId,
         generatedCells
-      })
+      )
+      await saveNotebookDocument(nextDocument)
+      setDraftDocument(nextDocument)
+      setAiPromptDraft((current) => (current?.id === draft.id ? null : current))
     } catch (error) {
       const { message, detail } = notebookAiPromptError(error)
       setAiPromptDraft((current) =>
@@ -595,17 +593,10 @@ export default function NotebookCanvas({
     if (targetIndex < 0) return
     const afterCellId =
       placement === 'after' ? targetCellId : targetIndex > 0 ? cells[targetIndex - 1].id : null
-    const draftId = aiPromptDraft?.id
 
     setAiPromptDraft((current) => {
       if (!current) return current
       return current.afterCellId === afterCellId ? current : { ...current, afterCellId }
-    })
-    setPendingAiInsertion((pending) => {
-      if (!pending || pending.draftId !== draftId || pending.afterCellId === afterCellId) {
-        return pending
-      }
-      return { ...pending, afterCellId }
     })
   }
   const onDragAiPrompt = (event: DragEvent<HTMLButtonElement>): void => {
@@ -661,41 +652,6 @@ export default function NotebookCanvas({
       await onStartNotebookSession(pending.file, pending.nextDocument)
     }
   }
-  const cancelAiInsertion = (): void => {
-    setPendingAiInsertion(null)
-  }
-  const confirmAiInsertion = async (): Promise<void> => {
-    const pending = pendingAiInsertion
-    if (!pending || !draftDocument) return
-
-    setPendingAiInsertion(null)
-    try {
-      const afterIndex = pending.afterCellId
-        ? draftDocument.cells.findIndex((cell) => cell.id === pending.afterCellId)
-        : -1
-      let insertIndex = afterIndex >= 0 ? afterIndex + 1 : draftDocument.cells.length
-      let nextDocument = draftDocument
-      for (const cell of pending.generatedCells) {
-        nextDocument = insertNotebookCell(nextDocument, insertIndex, {
-          cellType: cell.cellType,
-          source: cell.source
-        })
-        insertIndex += 1
-      }
-      setDraftDocument(nextDocument)
-      setAiPromptDraft(null)
-      await saveNotebookDocument(nextDocument)
-    } catch (error) {
-      const { message, detail } = notebookAiPromptError(error)
-      setAiPromptDraft((current) =>
-        current?.id === pending.draftId
-          ? { ...current, isGenerating: false, error: message, errorDetail: detail }
-          : current
-      )
-    }
-  }
-  const activePendingAiInsertion =
-    pendingAiInsertion?.draftId === aiPromptDraft?.id ? pendingAiInsertion : null
   const aiPromptCell = aiPromptDraft ? (
     <NotebookAiPromptCell
       language={aiPromptDraft.language}
@@ -703,14 +659,6 @@ export default function NotebookCanvas({
       prompt={aiPromptDraft.prompt}
       references={aiPromptDraft.references}
       contextOptions={aiContextOptions}
-      pendingGeneratedCells={activePendingAiInsertion?.generatedCells ?? []}
-      confirmationMessage={
-        activePendingAiInsertion
-          ? notebookAiInsertionConfirmationMessage({
-              cellCount: activePendingAiInsertion.generatedCells.length
-            })
-          : undefined
-      }
       isGenerating={aiPromptDraft.isGenerating}
       error={aiPromptDraft.error}
       errorDetail={aiPromptDraft.errorDetail}
@@ -723,10 +671,6 @@ export default function NotebookCanvas({
         void pickAiPromptContextFiles()
       }}
       onSubmit={submitAiPrompt}
-      onConfirmInsertion={() => {
-        void confirmAiInsertion()
-      }}
-      onCancelInsertion={cancelAiInsertion}
       onCancel={closeAiPrompt}
       onDragStart={onDragAiPrompt}
     />
