@@ -123,6 +123,25 @@ test('notebook AI generation parser treats plain prose as markdown instead of Py
   ])
 })
 
+test('notebook AI generation parser rejects schema-planning prose instead of inserting code', () => {
+  const cells = parseGeneratedNotebookCells(
+    [
+      '用户要求写一个贪婪算法，并且要返回符合 marimo 的 NotebookCellsCompletion schema 的 JSON 对象。',
+      '',
+      '我应该：',
+      '1. 提供一个 markdown 单元格解释贪婪算法',
+      '2. 提供一个 Python 单元格实现贪婪算法',
+      '',
+      '规则要求：',
+      '- 返回 JSON: {"cells":[{"language":"...","code":"..."},...]}',
+      '- 不要对话式回答'
+    ].join('\n'),
+    'python'
+  )
+
+  assert.deepEqual(cells, [])
+})
+
 test('notebook AI generation prompt includes selected references and notebook context', () => {
   const document = parseNotebook({
     nbformat: 4,
@@ -172,7 +191,13 @@ test('notebook AI generation prompt includes selected references and notebook co
   assert.match(referencePrompt, /100 rows x 3 columns/)
   assert.match(prompt, /marimo notebook completion pattern/)
   assert.match(prompt, /NotebookCellsCompletion schema/)
+  assert.match(prompt, /"language":"markdown","code":"raw markdown only"/)
   assert.match(prompt, /"language":"python","code":"raw code only"/)
+  assert.match(prompt, /prefer multiple cells: a short markdown cell/)
+  assert.match(
+    prompt,
+    /Do not collapse markdown explanation and executable code into one code cell/
+  )
   assert.match(prompt, /df = pd\.read_csv/)
   assert.match(prompt, /@df 总结一下这个数据/)
 })

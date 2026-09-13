@@ -2395,6 +2395,76 @@ test('main IPC: notebook AI generation lets the prompt model override project de
   assert.equal(app.createdAgentOptions[0].thinkingLevel, 'medium')
 })
 
+test('main IPC: notebook AI generation preserves markdown and code cells', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      {
+        type: 'agent_end',
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  cells: [
+                    {
+                      language: 'markdown',
+                      code: '## 贪婪算法\n每一步选择当前看来最优的候选。'
+                    },
+                    {
+                      language: 'python',
+                      code: 'def greedy(values):\n    return sorted(values, reverse=True)'
+                    }
+                  ]
+                })
+              }
+            ]
+          }
+        ]
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: []
+  })
+
+  const result = (await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc.ipynb',
+    document,
+    {
+      prompt: '写一个贪婪算法，并解释思路',
+      language: 'python',
+      afterCellId: null,
+      references: []
+    }
+  )) as { source: string; language: string; cells: Array<{ cellType: string; source: string }> }
+
+  assert.deepEqual(result.cells, [
+    {
+      cellType: 'markdown',
+      source: '## 贪婪算法\n每一步选择当前看来最优的候选。'
+    },
+    {
+      cellType: 'code',
+      source: 'def greedy(values):\n    return sorted(values, reverse=True)',
+      language: 'python'
+    }
+  ])
+  assert.equal(
+    result.source,
+    '## 贪婪算法\n每一步选择当前看来最优的候选。\n\n' +
+      'def greedy(values):\n    return sorted(values, reverse=True)'
+  )
+})
+
 test('main IPC: notebook AI generation uses assistant done event before session history', async () => {
   const app = await harness(async (_cwd, file) => {
     const session = new FakeSession(file)

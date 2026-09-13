@@ -148,14 +148,19 @@ export function buildNotebookCodeGenerationPrompt(input: {
   return [
     'You are Phi Notebook AI, an assistant integrated into a Jupyter-compatible notebook editor.',
     'Use the marimo notebook completion pattern: create clear, insertable notebook cells, split logic into readable cells, and use explicit notebook context instead of guessing.',
+    'Your goal is to create new notebook cells, not to chat about what you will do.',
+    'You can create multiple cells with different languages.',
     '',
     "Return only a JSON object matching marimo's NotebookCellsCompletion schema:",
-    '{"cells":[{"language":"python","code":"raw code only"},{"language":"markdown","code":"raw markdown only"}]}',
+    '{"cells":[{"language":"markdown","code":"raw markdown only"},{"language":"python","code":"raw code only"}]}',
     '',
     'Rules:',
     '- Generate one or more cells. Each cell must have a language and code field.',
+    '- For ordinary executable requests, prefer multiple cells: a short markdown cell that explains the purpose/approach, followed by one or more target-language code cells.',
+    '- Do not collapse markdown explanation and executable code into one code cell.',
     '- For executable work, use the target language and put raw code in code, without Markdown fences or commentary.',
     '- For explanation cells, use language "markdown" and put raw Jupyter markdown in code, not mo.md(...) or any other wrapper.',
+    '- Do not include your private reasoning, schema notes, rule restatements, or phrases like "I should" in generated cells.',
     '- Do not answer conversationally. Every useful answer must be represented as an insertable cell.',
     '- The user may reference context as @kind://name or @name. Use the selected references when they are relevant.',
     '- You may reference variables from earlier cells, but avoid redefining existing variables unless the user asks for that.',
@@ -193,6 +198,7 @@ export function parseGeneratedNotebookCells(
 
   const source = stripGeneratedNotebookCode(assistantText)
   if (!source.trim()) return []
+  if (looksLikeNotebookProtocolText(source)) return []
   const cellType = looksLikeMarkdown(source, defaultLanguage) ? 'markdown' : 'code'
   const cell = normalizeGeneratedNotebookCell(
     { cellType, source, language: defaultLanguage },
@@ -506,6 +512,28 @@ function looksLikeMarkdown(source: string, defaultLanguage: string): boolean {
   }
   if (/[=(){}[\];]/.test(trimmed)) return false
   return /[\u4e00-\u9fff]|[.!?。！？]/.test(trimmed)
+}
+
+function looksLikeNotebookProtocolText(source: string): boolean {
+  const trimmed = source.trim()
+  const lower = trimmed.toLowerCase()
+  if (/notebookcellscompletion|data-notebook-cells-completion|cell-completion/.test(lower)) {
+    return true
+  }
+  if (/["']cells["']\s*:/.test(trimmed) && /["']code["']\s*:/.test(trimmed)) {
+    return true
+  }
+  if (/(return|返回)\s+(only\s+)?(a\s+)?json/.test(lower) && lower.includes('cells')) {
+    return true
+  }
+  if (
+    /(用户要求|user (asks|requested|requires)|我应该|i should|规则要求|rules require)/i.test(
+      trimmed
+    )
+  ) {
+    return true
+  }
+  return false
 }
 
 function languageRules(language: string): string {
