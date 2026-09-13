@@ -75,6 +75,21 @@ function stagedNotebookCellPreview(source: string): string {
   return `${trimmed.slice(0, stagedNotebookCellPreviewLimit).trimEnd()}\n...`
 }
 
+function comparableAiErrorText(value: string): string {
+  return value
+    .replace(/请换一种更具体的描述后重试/g, '')
+    .replace(/[。.,，\s]/g, '')
+    .trim()
+}
+
+function shouldShowAiErrorSummary(error: string | null | undefined, detail: string): boolean {
+  if (!error || !detail) return false
+  const comparableError = comparableAiErrorText(error)
+  const comparableDetail = comparableAiErrorText(detail)
+  if (!comparableError || !comparableDetail) return false
+  return comparableError !== comparableDetail
+}
+
 function NotebookContextPreviewField({
   label,
   value,
@@ -267,7 +282,7 @@ export default function NotebookAiPromptCell({
     : codeAction
   const hasPendingInsertion = pendingGeneratedCells.length > 0
   const errorOutputText = (errorDetail ?? error ?? '').trim()
-  const showErrorSummary = Boolean(error && errorOutputText && errorOutputText !== error)
+  const showErrorSummary = shouldShowAiErrorSummary(error, errorOutputText)
   const canSubmit = prompt.trim().length > 0 && !isGenerating && !hasPendingInsertion
   const submitTooltip = hasPendingInsertion
     ? '请先确认或取消生成结果'

@@ -529,6 +529,35 @@ function extractAssistantText(message: unknown): string {
   return extractMessageText(record.content)
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function assistantMessagesFrom(value: unknown): unknown[] {
+  if (!value) return []
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => assistantMessagesFrom(item))
+  }
+  if (!isRecord(value)) return []
+  const messages = Array.isArray(value.messages) ? assistantMessagesFrom(value.messages) : []
+  const message = isRecord(value.message) ? assistantMessagesFrom(value.message) : []
+  const self = value.role === 'assistant' ? [value] : []
+  return [...messages, ...message, ...self]
+}
+
+function lastAssistantMessageFrom(value: unknown): unknown {
+  return assistantMessagesFrom(value).at(-1)
+}
+
+function assistantErrorText(message: unknown, options: { allowContent?: boolean } = {}): string {
+  if (!isRecord(message)) return ''
+  if (typeof message.errorMessage === 'string') return message.errorMessage
+  if (typeof message.message === 'string') return message.message
+  if (message.role !== 'assistant') return ''
+  if (message.stopReason === 'error' || options.allowContent) return extractAssistantText(message)
+  return ''
+}
+
 function extractMessageText(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) {
@@ -566,7 +595,8 @@ function assistantTextFromEventSummary(
 ): string {
   const message = summary.message as { role?: string } | undefined
   const assistantMessageEvent = summary.assistantMessageEvent as
-    { type?: unknown; delta?: unknown; message?: unknown } | undefined
+    | { type?: unknown; delta?: unknown; message?: unknown; partial?: unknown; error?: unknown }
+    | undefined
 
   if (
     summary.type === 'message_update' &&
@@ -581,25 +611,31 @@ function assistantTextFromEventSummary(
     return text || currentText
   }
 
+  if (summary.type === 'message_update' && assistantMessageEvent?.partial) {
+    const text = extractAssistantText(assistantMessageEvent.partial).trim()
+    if (text) return text
+  }
+
   if (summary.type === 'message_end' && message?.role === 'assistant') {
     const text = extractAssistantText(message).trim()
     return text || currentText
   }
+
+  const batchedText = extractAssistantText(lastAssistantMessageFrom(summary.messages)).trim()
+  if (batchedText) return batchedText
+
+  const resultText = extractAssistantText(lastAssistantMessageFrom(summary.result)).trim()
+  if (resultText) return resultText
 
   return currentText
 }
 
 function assistantErrorMessageFromEventSummary(summary: Record<string, unknown>): string | null {
   const assistantMessageEvent = summary.assistantMessageEvent as
-    { type?: unknown; error?: { errorMessage?: unknown; message?: unknown } } | undefined
+    { type?: unknown; error?: unknown } | undefined
   if (summary.type === 'message_update' && assistantMessageEvent?.type === 'error') {
     const error = assistantMessageEvent.error
-    const message =
-      typeof error?.errorMessage === 'string'
-        ? error.errorMessage
-        : typeof error?.message === 'string'
-          ? error.message
-          : ''
+    const message = assistantErrorText(error, { allowContent: true })
     return message ? redactSensitiveText(message) : '请求失败'
   }
 
@@ -615,16 +651,34 @@ function assistantErrorMessageFromEventSummary(summary: Record<string, unknown>)
       : '请求失败'
   }
 
+  const batchedMessage = lastAssistantMessageFrom(summary.messages)
+  const batchedError = assistantErrorText(batchedMessage)
+  if (batchedError) return redactSensitiveText(batchedError)
+
+  const resultMessage = lastAssistantMessageFrom(summary.result)
+  const resultError = assistantErrorText(resultMessage)
+  if (resultError) return redactSensitiveText(resultError)
+
   return null
 }
 
 function notebookCompletionCandidatesFromEventSummary(summary: Record<string, unknown>): unknown[] {
   const candidates: unknown[] = []
   const assistantMessageEvent = summary.assistantMessageEvent as
-    { type?: unknown; data?: unknown; value?: unknown; message?: unknown } | undefined
+    | {
+        type?: unknown
+        data?: unknown
+        value?: unknown
+        message?: unknown
+        partial?: unknown
+        error?: unknown
+      }
+    | undefined
   if (summary.type === 'message_update' && assistantMessageEvent) {
     candidates.push(assistantMessageEvent)
     if (assistantMessageEvent.message) candidates.push(assistantMessageEvent.message)
+    if (assistantMessageEvent.partial) candidates.push(assistantMessageEvent.partial)
+    if (assistantMessageEvent.error) candidates.push(assistantMessageEvent.error)
     if (assistantMessageEvent.data) candidates.push(assistantMessageEvent.data)
     if (assistantMessageEvent.value) candidates.push(assistantMessageEvent.value)
   }
@@ -633,6 +687,9 @@ function notebookCompletionCandidatesFromEventSummary(summary: Record<string, un
   if (summary.type === 'message_end' && message?.role === 'assistant') {
     candidates.push(message)
   }
+
+  candidates.push(...assistantMessagesFrom(summary.messages))
+  candidates.push(...assistantMessagesFrom(summary.result))
 
   return candidates
 }
@@ -1503,7 +1560,13 @@ async function generateAnalysisNotebookCode(
         userPrompt: prompt,
         nearbyContext,
         otherCellContext
-      })
+      }),
+      {
+        expandPromptTemplates: false,
+        synthetic: true,
+        userInitiated: false,
+        skipCompactionCheck: true
+      }
     )
     if (eventErrorMessage) {
       throw new Error(eventErrorMessage)

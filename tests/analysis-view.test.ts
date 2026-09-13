@@ -713,7 +713,7 @@ test('analysis notebook AI generation hides Electron IPC wrapper errors from the
   const renderedError = `${error.message}\n${error.detail}`
 
   assert.equal(error.message, 'AI 没有生成可插入内容，请换一种更具体的描述后重试。')
-  assert.equal(error.detail, 'AI 没有生成可插入内容')
+  assert.equal(error.detail, 'AI 没有生成可插入内容，请换一种更具体的描述后重试。')
   assert.doesNotMatch(renderedError, /Error invoking remote method/)
   assert.doesNotMatch(renderedError, /analysis:generateNotebookCode/)
   assert.doesNotMatch(renderedError, /Agent 没/)

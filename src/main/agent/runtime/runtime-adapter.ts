@@ -112,6 +112,13 @@ export interface ModelRuntime {
 }
 
 export type AgentSessionEvent = { type: string } & Record<string, unknown>
+export type RuntimePromptOptions = {
+  preflightResult?: (accepted: boolean) => void
+  expandPromptTemplates?: boolean
+  synthetic?: boolean
+  userInitiated?: boolean
+  skipCompactionCheck?: boolean
+}
 export type ResourceDiagnostic = {
   type: 'error' | 'warning' | 'info'
   message: string
@@ -249,7 +256,7 @@ export interface RuntimeAgentSession {
   model?: RuntimeModel
   thinkingLevel?: ThinkingLevel
   subscribe(listener: (event: AgentSessionEvent) => void): () => void
-  prompt(text: string, options?: { preflightResult?: (accepted: boolean) => void }): Promise<void>
+  prompt(text: string, options?: RuntimePromptOptions): Promise<void>
   abort(): Promise<void>
   dispose(): Promise<void>
   setModel(model: RuntimeModel): Promise<void>
@@ -411,6 +418,23 @@ function applySessionState(session: RuntimeAgentSessionProxy, state: WorkerSessi
   if (state.cwd) {
     session.sessionManager.cwd = state.cwd
   }
+}
+
+function runtimePromptOptionsForWorker(
+  options: RuntimePromptOptions | undefined
+): Record<string, boolean> | undefined {
+  if (!options) return undefined
+  const promptOptions = {
+    ...(typeof options.expandPromptTemplates === 'boolean'
+      ? { expandPromptTemplates: options.expandPromptTemplates }
+      : {}),
+    ...(typeof options.synthetic === 'boolean' ? { synthetic: options.synthetic } : {}),
+    ...(typeof options.userInitiated === 'boolean' ? { userInitiated: options.userInitiated } : {}),
+    ...(typeof options.skipCompactionCheck === 'boolean'
+      ? { skipCompactionCheck: options.skipCompactionCheck }
+      : {})
+  }
+  return Object.keys(promptOptions).length > 0 ? promptOptions : undefined
 }
 
 class OmpModelRuntimeFacade implements ModelRuntime {
@@ -670,14 +694,12 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     return () => this.listeners.delete(listener)
   }
 
-  async prompt(
-    text: string,
-    options?: { preflightResult?: (accepted: boolean) => void }
-  ): Promise<void> {
+  async prompt(text: string, options?: RuntimePromptOptions): Promise<void> {
     options?.preflightResult?.(true)
     const state = await this.bridge.request<WorkerSessionState>('session.prompt', {
       sessionId: this.sessionId,
-      text
+      text,
+      options: runtimePromptOptionsForWorker(options)
     })
     applySessionState(this, state)
   }

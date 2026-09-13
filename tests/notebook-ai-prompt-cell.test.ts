@@ -125,3 +125,15 @@ test('the prompt cell renders AI failures as notebook-style output', () => {
   assert.doesNotMatch(markup, /analysis:generateNotebookCode/)
   assert.doesNotMatch(markup, /Agent 没/)
 })
+
+test('the prompt cell does not repeat equivalent AI failure text', () => {
+  const markup = renderPromptCell({
+    prompt: '写一个贪心算法',
+    error: 'AI 没有生成可插入内容，请换一种更具体的描述后重试。',
+    errorDetail: 'AI 没有生成可插入内容，请换一种更具体的描述后重试。'
+  })
+
+  assert.match(markup, /data-phi-notebook-ai-error-output="true"/)
+  assert.match(markup, /data-phi-notebook-output-pre="true"/)
+  assert.doesNotMatch(markup, /data-phi-notebook-ai-error-summary="true"/)
+})

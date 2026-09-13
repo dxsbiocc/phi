@@ -14,7 +14,6 @@ function summarizeEvent(event: AgentSessionEvent): Record<string, unknown> {
 
   if ('messages' in event) {
     summary.messages = event.messages
-    return summary
   }
 
   if ('message' in event) {

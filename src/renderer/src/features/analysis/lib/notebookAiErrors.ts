@@ -6,6 +6,8 @@ export type NotebookAiPromptError = {
   detail: string
 }
 
+const emptyGenerationBareMessage = 'AI 没有生成可插入内容'
+
 function stripFrameworkErrorPrefixes(value: string): string {
   let message = value.trim()
   for (;;) {
@@ -22,8 +24,9 @@ function stripFrameworkErrorPrefixes(value: string): string {
 function emptyGenerationDetail(message: string): string {
   if (message.startsWith('Agent 没有返回可插入的 cell')) {
     const suffix = message.slice('Agent 没有返回可插入的 cell'.length).trim()
-    return suffix ? `AI 没有生成可插入内容。${suffix}` : 'AI 没有生成可插入内容'
+    return suffix ? `${emptyGenerationBareMessage}。${suffix}` : notebookAiEmptyGenerationMessage
   }
+  if (message === emptyGenerationBareMessage) return notebookAiEmptyGenerationMessage
   return message
 }
 

@@ -59,6 +59,13 @@ type SessionEntry = {
   result: CreateAgentSessionResult
 }
 
+type WorkerPromptOptions = {
+  expandPromptTemplates?: boolean
+  synthetic?: boolean
+  userInitiated?: boolean
+  skipCompactionCheck?: boolean
+}
+
 type IncomingRequest = {
   id: string
   method: string
@@ -729,10 +736,28 @@ function getSession(sessionId: unknown): CreateAgentSessionResult {
   return entry.result
 }
 
+function promptOptions(value: unknown): WorkerPromptOptions | undefined {
+  if (!isRecord(value)) return undefined
+  const options: WorkerPromptOptions = {}
+  if (typeof value.expandPromptTemplates === 'boolean') {
+    options.expandPromptTemplates = value.expandPromptTemplates
+  }
+  if (typeof value.synthetic === 'boolean') {
+    options.synthetic = value.synthetic
+  }
+  if (typeof value.userInitiated === 'boolean') {
+    options.userInitiated = value.userInitiated
+  }
+  if (typeof value.skipCompactionCheck === 'boolean') {
+    options.skipCompactionCheck = value.skipCompactionCheck
+  }
+  return Object.keys(options).length > 0 ? options : undefined
+}
+
 async function promptSession(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const result = getSession(record.sessionId)
-  await result.session.prompt(stringValue(record.text))
+  await result.session.prompt(stringValue(record.text), promptOptions(record.options))
   return serializeSessionState(result)
 }
 

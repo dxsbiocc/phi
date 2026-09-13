@@ -19,12 +19,19 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
-type PromptOptions = { preflightResult?: (accepted: boolean) => void }
+type PromptOptions = {
+  preflightResult?: (accepted: boolean) => void
+  expandPromptTemplates?: boolean
+  synthetic?: boolean
+  userInitiated?: boolean
+  skipCompactionCheck?: boolean
+}
 class FakeSession {
   readonly messages: unknown[] = []
   readonly listeners: Array<(event: unknown) => void> = []
   readonly log: string[] = []
   readonly promptTexts: string[] = []
+  readonly promptOptions: PromptOptions[] = []
   model?: { provider: string; id: string }
   thinkingLevel?: string
   preflight = Promise.resolve()
@@ -44,6 +51,7 @@ class FakeSession {
   }
   async prompt(text: string, options?: PromptOptions): Promise<void> {
     this.promptTexts.push(text)
+    this.promptOptions.push(options ?? {})
     await this.preflight
     options?.preflightResult?.(true)
     this.started = true
@@ -2258,6 +2266,72 @@ test('main IPC: notebook AI generation uses assistant event text when session hi
   assert.equal(result.source, 'def greedy(items):\n    return sorted(items)')
   assert.equal(app.sessions[0].messages.length, 0)
   assert.equal(app.createdAgentOptions[0].noTools, 'all')
+  assert.deepEqual(app.sessions[0].promptOptions[0], {
+    expandPromptTemplates: false,
+    synthetic: true,
+    userInitiated: false,
+    skipCompactionCheck: true
+  })
+})
+
+test('main IPC: notebook AI generation reads batched assistant messages from runtime events', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'agent_end',
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  cells: [
+                    {
+                      cellType: 'code',
+                      source: 'def choose(items):\n    return max(items)',
+                      language: 'python'
+                    }
+                  ]
+                })
+              }
+            ]
+          }
+        ]
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: []
+  })
+
+  const result = (await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc.ipynb',
+    document,
+    {
+      prompt: '写一个贪心算法',
+      language: 'python',
+      afterCellId: null,
+      references: []
+    }
+  )) as { source: string; language: string; cells: Array<{ cellType: string; source: string }> }
+
+  assert.deepEqual(result.cells, [
+    {
+      cellType: 'code',
+      source: 'def choose(items):\n    return max(items)',
+      language: 'python'
+    }
+  ])
+  assert.equal(result.source, 'def choose(items):\n    return max(items)')
 })
 
 test('main IPC: notebook AI generation uses assistant done event before session history', async () => {
