@@ -62,7 +62,7 @@ import type {
   ModelOption
 } from '../../../types'
 import { NotebookHeader } from '../components/NotebookHeader'
-import NotebookAiPromptCell, { type NotebookAiGenerationStatus } from './NotebookAiPromptCell'
+import NotebookAiPromptCell from './NotebookAiPromptCell'
 import NotebookCell, { type CellPlacement } from './NotebookCell'
 import NotebookFloatingActions, {
   notebookFloatingActionInset,
@@ -78,15 +78,12 @@ export type AnalysisNotebookAgentFocus = {
   cellId: string
   changeKind?: 'synced' | 'inserted' | 'updated' | 'deleted' | 'executed' | 'saved'
 }
-export type { NotebookAiGenerationStatus as AnalysisNotebookAiGenerationStatus }
-
 type NotebookAiPromptDraft = {
   id: string
   afterCellId: string | null
   prompt: string
   language: SyntaxLanguage
   model: ModelOption | null
-  modelSourceLabel: string
   references: AnalysisNotebookContextReference[]
   isGenerating: boolean
   error: string | null
@@ -146,7 +143,6 @@ export default function NotebookCanvas({
   onStopNotebookSession,
   onRunNotebookCell,
   onGenerateNotebookCode,
-  aiGenerationStatus,
   aiModelOptions,
   aiDefaultModel,
   onPickContextFiles,
@@ -186,7 +182,6 @@ export default function NotebookCanvas({
     document: NotebookDocument,
     input: AnalysisNotebookCodeGenerationInput
   ) => Promise<AnalysisNotebookCodeGenerationResult>
-  aiGenerationStatus?: NotebookAiGenerationStatus
   aiModelOptions?: ModelOption[]
   aiDefaultModel?: ModelOption | null
   onPickContextFiles?: () => Promise<string[]>
@@ -448,7 +443,6 @@ export default function NotebookCanvas({
       prompt: '',
       language: insertCodeLanguage,
       model: aiDefaultModel ?? null,
-      modelSourceLabel: aiGenerationStatus?.modelSourceLabel ?? '默认',
       references: [],
       isGenerating: false,
       error: null,
@@ -471,7 +465,6 @@ export default function NotebookCanvas({
         ? {
             ...draft,
             model,
-            modelSourceLabel: model ? '本次选择' : '默认',
             error: null,
             errorDetail: null
           }
@@ -689,15 +682,6 @@ export default function NotebookCanvas({
       contextOptions={aiContextOptions}
       modelOptions={aiModelOptions ?? []}
       selectedModel={aiPromptDraft.model}
-      generationStatus={
-        aiPromptDraft.model && aiGenerationStatus
-          ? {
-              ...aiGenerationStatus,
-              modelLabel: aiPromptDraft.model.name,
-              modelSourceLabel: aiPromptDraft.modelSourceLabel
-            }
-          : aiGenerationStatus
-      }
       isGenerating={aiPromptDraft.isGenerating}
       error={aiPromptDraft.error}
       errorDetail={aiPromptDraft.errorDetail}

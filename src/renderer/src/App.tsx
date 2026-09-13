@@ -27,10 +27,7 @@ import AppWorkspaceSidebar from './AppWorkspaceSidebar'
 import FilePreviewPanel, {
   type FilePreviewPanelState
 } from './features/file-preview/FilePreviewPanel'
-import AnalysisView, {
-  type AnalysisNotebookAiGenerationStatus,
-  type AnalysisWorkspaceFileTab
-} from './features/analysis/AnalysisView'
+import AnalysisView, { type AnalysisWorkspaceFileTab } from './features/analysis/AnalysisView'
 import { useAnalysisNotebookRuntime } from './features/analysis/hooks/useAnalysisNotebookRuntime'
 import RuntimeView from './features/runtime/RuntimeView'
 import { createAppTheme } from './theme'
@@ -1350,27 +1347,6 @@ function App(): React.JSX.Element {
     }
     return selectedModel
   }, [activeProject, models, selectedModel])
-  const notebookAiGenerationStatus = useMemo<AnalysisNotebookAiGenerationStatus>(() => {
-    const projectModelSelection = activeProject?.defaultModel ?? null
-    const modelLabel = !isModelStateReady
-      ? '正在读取模型设置'
-      : projectModelSelection
-        ? (notebookAiDefaultModel?.name ??
-          `${projectModelSelection.providerId}/${projectModelSelection.modelId}`)
-        : (selectedModel?.name ?? '自动选择模型')
-    const modelSourceLabel = !isModelStateReady
-      ? '模型设置'
-      : projectModelSelection
-        ? '项目默认'
-        : selectedModel
-          ? '全局选择'
-          : '默认'
-    return {
-      modelLabel,
-      modelSourceLabel,
-      thinkingLevel: activeProject?.defaultThinkingLevel ?? thinkingLevel
-    }
-  }, [activeProject, isModelStateReady, notebookAiDefaultModel, selectedModel, thinkingLevel])
   const activeWorkspaceIsProject = Boolean(activeProject)
   const showProjectSessionPlaceholder = activeView === 'projects' && !activeWorkspaceIsProject
   const activeSessionHasWork =
@@ -2003,7 +1979,6 @@ function App(): React.JSX.Element {
                     void onRunAnalysisNotebookCell(file, document, cellId)
                   }}
                   onGenerateNotebookCode={onGenerateAnalysisNotebookCode}
-                  notebookAiGenerationStatus={notebookAiGenerationStatus}
                   notebookAiModelOptions={availableModels}
                   notebookAiDefaultModel={notebookAiDefaultModel}
                   onPickNotebookContextFiles={onPickInputFiles}

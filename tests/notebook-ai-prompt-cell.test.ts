@@ -66,22 +66,33 @@ test('the target-language button disables while a generation is in flight', () =
   assert.match(buttonMatch![0], /\bdisabled=""/)
 })
 
-test('the prompt cell shows generation status and the model being used', () => {
+test('the prompt cell keeps model status out of the lower text area', () => {
   const markup = renderPromptCell({
     prompt: '写一个贪心算法',
     isGenerating: true,
-    generationStatus: {
-      modelLabel: 'GPT Test',
-      modelSourceLabel: '项目默认',
-      thinkingLevel: 'high'
+    modelOptions: [
+      {
+        providerId: 'openai',
+        modelId: 'gpt-test',
+        name: 'GPT Test',
+        thinkingLevels: ['high']
+      }
+    ],
+    selectedModel: {
+      providerId: 'openai',
+      modelId: 'gpt-test',
+      name: 'GPT Test',
+      thinkingLevels: ['high']
     }
   })
 
-  assert.match(markup, /data-phi-notebook-ai-generation-status="true"/)
-  assert.match(markup, /data-phi-notebook-ai-generation-spinner="true"/)
-  assert.match(markup, /正在调用 Agent 生成代码/)
-  assert.match(markup, /项目默认: GPT Test/)
-  assert.match(markup, /思考 high/)
+  assert.doesNotMatch(markup, /data-phi-notebook-ai-generation-status="true"/)
+  assert.doesNotMatch(markup, /data-phi-notebook-ai-generation-spinner="true"/)
+  assert.doesNotMatch(markup, /正在调用 Agent 生成代码/)
+  assert.doesNotMatch(markup, /将使用此模型生成代码/)
+  assert.doesNotMatch(markup, /思考 high/)
+  assert.match(markup, /data-phi-notebook-ai-model-selector="true"/)
+  assert.match(markup, /GPT Test/)
 })
 
 test('the prompt cell exposes a model selection button', () => {
