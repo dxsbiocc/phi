@@ -111,13 +111,13 @@ import {
   TbGauge,
   TbListTree,
   TbNetwork,
-  TbNotebook,
   TbPalette,
   TbPuzzle,
   TbRoute,
   TbSchool,
   TbServer
 } from 'react-icons/tb'
+import { SiJupyter } from 'react-icons/si'
 import {
   createElement,
   forwardRef,
@@ -645,7 +645,7 @@ export const PhiIcons = {
     mcp: createPhiIcon('NavMcp', TbNetwork),
     plugins: createPhiIcon('NavPlugins', TbPuzzle),
     projects: createPhiIcon('NavProjects', TbFolderOpen),
-    runtime: createPhiIcon('NavRuntime', TbNotebook),
+    runtime: createPhiIcon('NavRuntime', SiJupyter),
     settings: createPhiIcon('NavSettings', FiSettings),
     skills: createPhiIcon('NavSkills', TbSchool),
     visualization: createPhiIcon('NavVisualization', FiBarChart2),

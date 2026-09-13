@@ -5,6 +5,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { IconType } from 'react-icons'
 import { FiExternalLink } from 'react-icons/fi'
+import { SiJupyter } from 'react-icons/si'
 import { TbFolderOpen, TbListTree } from 'react-icons/tb'
 import {
   FILE_TYPE_ICON_META,
@@ -225,4 +226,13 @@ test('language file icon kinds render non-empty icons', () => {
   assertUsesMaterialIcon(pythonMarkup, 'python')
   assert.equal(fileIconForPath('/workspace/main.py').materialIconName, 'python')
   assert.equal(fileIconForPath('/workspace/scripts/stacked_bar.R').materialIconName, 'r')
+})
+
+test('the left activity bar "运行时" nav icon reads as Jupyter, not a generic notebook glyph', () => {
+  // The runtime nav entry (left sidebar, below the project icon) always
+  // points at the app-managed Jupyter Server -- it should carry Jupyter's
+  // own mark like the other brand-specific nav/file icons do, not a
+  // generic TbNotebook glyph that could be any notebook app.
+  const markup = renderToStaticMarkup(createElement(PhiIcons.nav.runtime, { fontSize: 'small' }))
+  assertUsesReactIcon(markup, SiJupyter)
 })

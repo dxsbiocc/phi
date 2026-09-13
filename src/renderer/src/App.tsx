@@ -12,6 +12,8 @@ import { alpha } from '@mui/material/styles'
 import { FiMaximize2, FiMinimize2, FiMinus } from 'react-icons/fi'
 import { TbLayoutSidebarRight } from 'react-icons/tb'
 import ChatView from './components/ChatView'
+import MacWindowControls from './components/MacWindowControls'
+import WindowNavigationControls from './components/WindowNavigationControls'
 import type { LocalPathKind } from './components/MarkdownContent'
 import PluginView from './features/plugin/PluginView'
 import { usePluginCatalog } from './features/plugin/hooks/usePluginCatalog'
@@ -49,6 +51,13 @@ import { getRendererApi } from './lib/rendererApi'
 import { absoluteWorkspacePath, fileNameFromPath, filePreviewStatePath } from './lib/workspacePaths'
 import { chatItemsFromSessionMessages } from './lib/chatItems'
 import { getAppShortcutAction } from './lib/appShortcuts'
+import {
+  initialNavigationHistory,
+  navigationHistoryTargetIndex,
+  navigationRestorationSettled,
+  recordNavigationEntry,
+  type NavigationHistoryEntry
+} from './lib/navigationHistory'
 import { agentEventBelongsToActiveSession } from './lib/agentEventRouting'
 import { getPromptReadiness } from './lib/promptReadiness'
 import { shouldRefreshProjectGitStatusForAgentEvent } from './lib/projectGitRefresh'
@@ -406,7 +415,42 @@ function App(): React.JSX.Element {
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('persona')
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [sidebarWidth, setSidebarWidth] = useState(navigationPaneWidth)
-  const [activeView, setActiveView] = useState<AppView>('chat')
+  const [activeView, setActiveViewState] = useState<AppView>('chat')
+
+  // Back/forward navigation history: tracks top-level view switches and,
+  // within chat, which session was active, so "back" can return to an
+  // earlier screen by restoring already-loaded state instead of clicking
+  // through and re-rendering it from scratch. navigateToView must exist
+  // before useWorkspaceFileTabs below (which takes it as an option), so
+  // the recording half lives here; restoreNavigationEntry/goBack/goForward
+  // need onSelectSession and are declared further down, right after it.
+  // See lib/navigationHistory.ts for the (independently tested) reducer
+  // logic this wraps.
+  const [navigationHistory, setNavigationHistory] = useState(() =>
+    initialNavigationHistory({ view: 'chat', sessionPath: null })
+  )
+  const restoringNavigationEntryRef = useRef<NavigationHistoryEntry | null>(null)
+
+  const navigateToView = useCallback((view: AppView): void => {
+    setActiveViewState(view)
+  }, [])
+
+  useEffect(() => {
+    const current: NavigationHistoryEntry = { view: activeView, sessionPath: activeSessionPath }
+    const restoringTo = restoringNavigationEntryRef.current
+    if (restoringTo) {
+      // Still catching up to a back/forward target -- e.g. the view
+      // changed synchronously but the session switch is an async IPC call
+      // that hasn't landed yet. Don't record it as a new navigation either
+      // way (it's a restoration, not a fresh one) until it's settled.
+      if (navigationRestorationSettled(restoringTo, current)) {
+        restoringNavigationEntryRef.current = null
+      }
+      return
+    }
+    setNavigationHistory((prev) => recordNavigationEntry(prev, current))
+  }, [activeView, activeSessionPath])
+
   const [workspaceSidebarMode, setWorkspaceSidebarMode] =
     useState<WorkspaceSidebarMode>('conversations')
   const [workspaceSidebarPreview, setWorkspaceSidebarPreview] = useState<{
@@ -527,13 +571,13 @@ function App(): React.JSX.Element {
     getActiveCwd,
     showSnackbarError,
     setIsSidebarOpen,
-    setActiveView
+    setActiveView: navigateToView
   })
 
   const onNavigateToNotebookView = useCallback((): void => {
     setFilePreview(null)
-    setActiveView('analysis')
-  }, [setFilePreview])
+    navigateToView('analysis')
+  }, [setFilePreview, navigateToView])
 
   const {
     analysisNotebookRegistry,
@@ -711,6 +755,34 @@ function App(): React.JSX.Element {
     ]
   )
 
+  const restoreNavigationEntry = useCallback(
+    (entry: NavigationHistoryEntry): void => {
+      const viewChanges = entry.view !== activeView
+      const sessionChanges = Boolean(entry.sessionPath) && entry.sessionPath !== activeSessionPath
+      if (!viewChanges && !sessionChanges) return
+      restoringNavigationEntryRef.current = entry
+      if (viewChanges) setActiveViewState(entry.view)
+      if (sessionChanges) void onSelectSession(entry.sessionPath as string)
+    },
+    [activeView, activeSessionPath, onSelectSession]
+  )
+
+  const goInHistory = useCallback(
+    (direction: 'back' | 'forward'): void => {
+      const targetIndex = navigationHistoryTargetIndex(navigationHistory, direction)
+      if (targetIndex === null) return
+      const target = navigationHistory.entries[targetIndex]
+      setNavigationHistory((prev) => ({ ...prev, index: targetIndex }))
+      restoreNavigationEntry(target)
+    },
+    [navigationHistory, restoreNavigationEntry]
+  )
+  const goBackInHistory = useCallback(() => goInHistory('back'), [goInHistory])
+  const goForwardInHistory = useCallback(() => goInHistory('forward'), [goInHistory])
+
+  const canGoBackInHistory = navigationHistoryTargetIndex(navigationHistory, 'back') !== null
+  const canGoForwardInHistory = navigationHistoryTargetIndex(navigationHistory, 'forward') !== null
+
   const onDeleteSession = async (path: string): Promise<void> => {
     const request = sessionRequestRef.current
     const wasActive = path === useSessionStore.getState().activeSessionPath
@@ -753,7 +825,7 @@ function App(): React.JSX.Element {
       })
       setActiveWorkspaceFilePath(normalizedPath)
       setIsSidebarOpen(true)
-      setActiveView('analysis')
+      navigateToView('analysis')
       void refreshAnalysisNotebooks()
       void refreshAnalysisKernels()
       void refreshAnalysisJupyterStatus()
@@ -784,7 +856,8 @@ function App(): React.JSX.Element {
       refreshAnalysisNotebooks,
       setActiveWorkspaceFilePath,
       setFilePreview,
-      setWorkspaceFileTabs
+      setWorkspaceFileTabs,
+      navigateToView
     ]
   )
 
@@ -866,7 +939,7 @@ function App(): React.JSX.Element {
   )
 
   const onOpenApprovalSession = (path: string): void => {
-    setActiveView('chat')
+    navigateToView('chat')
     setIsSettingsOpen(false)
     void onSelectSession(path)
   }
@@ -899,7 +972,7 @@ function App(): React.JSX.Element {
 
       if (action === 'new-chat') {
         event.preventDefault()
-        setActiveView('chat')
+        navigateToView('chat')
         void onNewChat()
         return
       }
@@ -928,7 +1001,8 @@ function App(): React.JSX.Element {
     isNewProjectDialogOpen,
     isProviderDialogOpen,
     isSettingsOpen,
-    onNewChat
+    onNewChat,
+    navigateToView
   ])
 
   useEffect(() => {
@@ -1450,14 +1524,20 @@ function App(): React.JSX.Element {
       const tab = workspaceFileTabs.find((item) => item.path === tabLike.path)
       if (!tab) return
       setActiveWorkspaceFilePath(tab.path)
-      setActiveView('analysis')
+      navigateToView('analysis')
       if (tab.kind === 'notebook') {
         onOpenNotebookWorkspaceFile(tab.path)
         return
       }
       loadFilePreview(tab.path, tab.pathKind)
     },
-    [loadFilePreview, onOpenNotebookWorkspaceFile, setActiveWorkspaceFilePath, workspaceFileTabs]
+    [
+      loadFilePreview,
+      onOpenNotebookWorkspaceFile,
+      setActiveWorkspaceFilePath,
+      workspaceFileTabs,
+      navigateToView
+    ]
   )
 
   const onCloseWorkspaceFileTab = useCallback(
@@ -1481,7 +1561,7 @@ function App(): React.JSX.Element {
         setFilePreview(null)
         setActiveWorkspaceFilePath(null)
         closeActiveNotebook()
-        setActiveView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
+        navigateToView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
         return
       }
 
@@ -1505,7 +1585,8 @@ function App(): React.JSX.Element {
       setFilePreview,
       setWorkspaceFileTabs,
       workspaceFileTabs,
-      workspaceSidebarMode
+      workspaceSidebarMode,
+      navigateToView
     ]
   )
 
@@ -1557,7 +1638,7 @@ function App(): React.JSX.Element {
         setIsSidebarOpen((value) => !value)
         return
       }
-      setActiveView(view)
+      navigateToView(view)
       setIsSidebarOpen(true)
       if (
         view === 'projects' &&
@@ -1571,7 +1652,8 @@ function App(): React.JSX.Element {
       closeWorkspaceSidebarPreview,
       projectsRef,
       selectFirstAvailableProjectSession,
-      workspaceSidebarMode
+      workspaceSidebarMode,
+      navigateToView
     ]
   )
 
@@ -1662,95 +1744,42 @@ function App(): React.JSX.Element {
           }}
         />
         {isMac && (
+          // One shared no-drag boundary for the whole button cluster --
+          // see MacWindowControls' doc comment for why two separate
+          // sibling no-drag rectangles here was the likely cause of the
+          // buttons going unclickable after the first use (a known
+          // Electron frameless-window region quirk).
           <Box
             sx={{
               position: 'absolute',
-              top: '14px',
+              top: '10px',
               left: '14px',
               display: 'flex',
-              gap: '8px',
+              alignItems: 'center',
+              gap: '18px',
               zIndex: 20,
-              WebkitAppRegion: 'no-drag',
-              '&:hover .window-control-symbol': {
-                opacity: 1
-              }
+              WebkitAppRegion: 'no-drag'
             }}
           >
-            {[
-              {
-                label: '关闭',
-                color: '#FF5F57',
-                borderColor: '#E24640',
-                symbol: '×',
-                action: () => rendererApi.closeWindow()
-              },
-              {
-                label: '最小化',
-                color: '#FFBD2E',
-                borderColor: '#DFA123',
-                symbol: '−',
-                action: () => rendererApi.minimizeWindow()
-              },
-              {
-                label: '全屏',
-                color: '#28C840',
-                borderColor: '#20A935',
-                symbol: '+',
-                action: () => rendererApi.toggleWindowFullscreen()
-              }
-            ].map((control) => (
-              <Box
-                key={control.label}
-                component="button"
-                type="button"
-                aria-label={control.label}
-                onClick={() => {
-                  void control.action()
-                }}
-                sx={{
-                  width: 12,
-                  height: 12,
-                  p: 0,
-                  border: '1px solid',
-                  borderColor: control.borderColor,
-                  borderRadius: '50%',
-                  backgroundColor: control.color,
-                  cursor: 'default',
-                  WebkitAppRegion: 'no-drag',
-                  position: 'relative',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'rgba(45, 45, 45, 0.72)',
-                  fontSize: 10,
-                  lineHeight: 1,
-                  fontWeight: 700,
-                  '&:hover': {
-                    filter: 'brightness(0.96)'
-                  }
-                }}
-              >
-                <Box
-                  component="span"
-                  className="window-control-symbol"
-                  aria-hidden
-                  sx={{
-                    opacity: 0,
-                    transform: 'translateY(-0.5px)',
-                    transition: 'opacity 120ms ease',
-                    pointerEvents: 'none'
-                  }}
-                >
-                  {control.symbol}
-                </Box>
-              </Box>
-            ))}
+            <MacWindowControls
+              onClose={() => void rendererApi.closeWindow()}
+              onMinimize={() => void rendererApi.minimizeWindow()}
+              onToggleFullscreen={() => void rendererApi.toggleWindowFullscreen()}
+            />
+            <WindowNavigationControls
+              isSidebarOpen={isSidebarOpen}
+              onToggleSidebar={() => setIsSidebarOpen((value) => !value)}
+              canGoBack={canGoBackInHistory}
+              canGoForward={canGoForwardInHistory}
+              onGoBack={goBackInHistory}
+              onGoForward={goForwardInHistory}
+            />
           </Box>
         )}
 
         <AppActivityBar
           activeView={activeView}
-          setActiveView={setActiveView}
+          setActiveView={navigateToView}
           isWorkspaceSidebarModeExpanded={isWorkspaceSidebarModeExpanded}
           shouldUseWorkspaceSidebarPreview={shouldUseWorkspaceSidebarPreview}
           openWorkspaceSidebarPreview={openWorkspaceSidebarPreview}
@@ -1990,7 +2019,7 @@ function App(): React.JSX.Element {
                   }}
                   onCloseNotebook={() => {
                     closeActiveNotebook()
-                    setActiveView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
+                    navigateToView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
                   }}
                   onSaveNotebook={(file, document) => {
                     void onSaveAnalysisNotebook(file, document)

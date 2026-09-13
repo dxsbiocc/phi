@@ -801,6 +801,13 @@ test('analysis view exposes detected kernels in the notebook header', () => {
   )
   assert.match(headerSource, /kernelOptions\.map\(\(kernel\) =>/)
   assert.match(headerSource, /kernelOptionLabel\(kernel\)/)
+
+  // The runtime is always the app-managed Jupyter Server, so the leading
+  // icon next to the kernel picker should read as Jupyter's own icon, not a
+  // generic dot -- the busy/idle/error signal moves to a small corner badge
+  // (still carrying data-phi-notebook-kernel-status-dot, asserted above)
+  // instead of being the icon itself.
+  assert.match(markup, /data-phi-material-icon="jupyter"/)
 })
 
 test('analysis view keeps kernel selection available while a notebook kernel is busy or starting', () => {

@@ -93,16 +93,26 @@ export function NotebookHeader({
       >
         <Box
           aria-label={kernelStatusLabel}
-          data-phi-notebook-kernel-status-dot={kernelStatusColor}
           title={kernelStatusLabel}
-          sx={{
-            width: 8,
-            height: 8,
-            flexShrink: 0,
-            borderRadius: '50%',
-            bgcolor: kernelStatusColor === 'default' ? 'text.disabled' : `${kernelStatusColor}.main`
-          }}
-        />
+          sx={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}
+        >
+          <NotebookIcon sx={{ fontSize: 14 }} />
+          <Box
+            data-phi-notebook-kernel-status-dot={kernelStatusColor}
+            sx={{
+              position: 'absolute',
+              right: -2,
+              bottom: -2,
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              border: 1,
+              borderColor: 'background.paper',
+              bgcolor:
+                kernelStatusColor === 'default' ? 'text.disabled' : `${kernelStatusColor}.main`
+            }}
+          />
+        </Box>
         {kernelOptions.length > 0 && draftDocument ? (
           <>
             <Button
