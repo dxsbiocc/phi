@@ -1567,7 +1567,7 @@ async function generateAnalysisNotebookCode(
       }),
       {
         expandPromptTemplates: false,
-        userInitiated: false,
+        userInitiated: true,
         skipCompactionCheck: true
       }
     )

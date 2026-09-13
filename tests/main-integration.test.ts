@@ -2268,7 +2268,7 @@ test('main IPC: notebook AI generation uses assistant event text when session hi
   assert.equal(app.createdAgentOptions[0].noTools, 'all')
   assert.deepEqual(app.sessions[0].promptOptions[0], {
     expandPromptTemplates: false,
-    userInitiated: false,
+    userInitiated: true,
     skipCompactionCheck: true
   })
   assert.doesNotMatch(app.sessions[0].promptTexts[0], /"cellType":"code"/)
