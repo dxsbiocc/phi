@@ -45,6 +45,12 @@ function dataUrl(mime: string, payload: string): string {
   return payload.startsWith('data:') ? payload : `data:${mime};base64,${payload}`
 }
 
+function isLikelyErrorStderr(text: string): boolean {
+  return /(^|\n)\s*(?:Traceback\b|[\w.]*Error\b|Error(?:\s+in|\s*:)|Exception\b|Fatal error\b|Execution halted\b)/i.test(
+    text.trim()
+  )
+}
+
 function mediaSx(metadata?: NotebookMimeMetadata): Record<string, string | number> {
   return {
     display: 'block',
@@ -309,6 +315,54 @@ function NotebookDisplayData({
   )
 }
 
+function NotebookStderrOutput({ text }: { text: string }): React.JSX.Element {
+  const [isExpanded, setIsExpanded] = useState(false)
+
+  if (isLikelyErrorStderr(text)) {
+    return <NotebookPreOutput kind="stream:stderr" text={text} tone="error" />
+  }
+
+  return (
+    <Box
+      data-phi-notebook-output-stderr="true"
+      data-phi-notebook-output-stderr-collapsed={!isExpanded ? 'true' : undefined}
+      data-phi-notebook-output-stderr-expanded={isExpanded ? 'true' : undefined}
+      sx={{
+        display: 'grid',
+        gap: 0.75,
+        justifyItems: 'start'
+      }}
+    >
+      <Button
+        type="button"
+        size="small"
+        variant="text"
+        aria-expanded={isExpanded ? 'true' : 'false'}
+        onClick={() => setIsExpanded((current) => !current)}
+        data-phi-notebook-output-stderr-toggle="true"
+        sx={{
+          minWidth: 0,
+          px: 0.75,
+          py: 0.15,
+          borderRadius: 1,
+          color: isExpanded ? 'warning.dark' : 'text.secondary',
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.72rem',
+          lineHeight: 1.5,
+          textTransform: 'none',
+          bgcolor: (theme) => (isExpanded ? alpha(theme.palette.warning.main, 0.1) : 'transparent'),
+          '&:hover': {
+            bgcolor: (theme) => alpha(theme.palette.warning.main, isExpanded ? 0.14 : 0.08)
+          }
+        }}
+      >
+        stderr
+      </Button>
+      {isExpanded ? <NotebookPreOutput kind="stream:stderr" text={text} /> : null}
+    </Box>
+  )
+}
+
 function NotebookOutputItem({
   output,
   notebookPath
@@ -317,9 +371,12 @@ function NotebookOutputItem({
   notebookPath?: string | null
 }): React.JSX.Element | null {
   if (output.outputType === 'stream') {
-    return output.text ? (
+    if (!output.text) return null
+    return output.name === 'stderr' ? (
+      <NotebookStderrOutput text={output.text} />
+    ) : (
       <NotebookPreOutput kind={`stream:${output.name ?? 'stdout'}`} text={output.text} />
-    ) : null
+    )
   }
 
   if (output.outputType === 'error') {
