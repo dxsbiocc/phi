@@ -94,6 +94,19 @@ test('analysis workspace skips the blank outer titlebar', () => {
   assert.match(appSource, /workspaceFileTabs=\{workspaceFileTabs\}/)
 })
 
+test('workspace file tabs reuse cached surfaces when switching', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const analysisSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/analysis/AnalysisView.tsx'),
+    'utf8'
+  )
+
+  assert.match(appSource, /const showCachedOrLoadFilePreview = useCallback/)
+  assert.match(appSource, /filePreviewCache\[tab\.path\]/)
+  assert.match(appSource, /activateCachedAnalysisNotebook\(tab\.path\)/)
+  assert.doesNotMatch(analysisSource, /<NotebookCanvas[\s\S]{0,240}key=\{notebookFile/)
+})
+
 test('analysis session scope label follows the active session cwd, not the open sidebar mode', () => {
   const projects = [
     { name: '单细胞项目', workingDirectory: '/work/scrna' },

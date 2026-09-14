@@ -556,6 +556,8 @@ function App(): React.JSX.Element {
   const {
     filePreview,
     setFilePreview,
+    filePreviewCache,
+    clearCachedFilePreview,
     workspaceFileTabs,
     setWorkspaceFileTabs,
     activeWorkspaceFilePath,
@@ -609,6 +611,8 @@ function App(): React.JSX.Element {
     refreshAnalysisNotebooks,
     onInitializeProjectAnalysis,
     onOpenAnalysisNotebook,
+    activateCachedAnalysisNotebook,
+    forgetCachedAnalysisNotebook,
     onSaveAnalysisNotebook,
     onSyncAnalysisNotebookDraft,
     onCreateAnalysisNotebook,
@@ -869,6 +873,25 @@ function App(): React.JSX.Element {
       setActiveWorkspaceFilePath(normalizedPath)
       setIsSidebarOpen(true)
       navigateToView('analysis')
+      const cachedFile = activateCachedAnalysisNotebook(normalizedPath)
+      if (cachedFile) {
+        setWorkspaceFileTabs((tabs) =>
+          tabs.map((tab) =>
+            tab.path === normalizedPath || tab.path === cachedFile.path
+              ? {
+                  ...tab,
+                  id: cachedFile.path,
+                  path: cachedFile.path,
+                  name: cachedFile.name,
+                  status: cachedFile.relativePath,
+                  absolutePath: cachedFile.path
+                }
+              : tab
+          )
+        )
+        setActiveWorkspaceFilePath(cachedFile.path)
+        return
+      }
       void refreshAnalysisNotebooks()
       void refreshAnalysisKernels()
       void refreshAnalysisJupyterStatus()
@@ -892,6 +915,7 @@ function App(): React.JSX.Element {
       })
     },
     [
+      activateCachedAnalysisNotebook,
       filePreviewRequestRef,
       onOpenAnalysisNotebook,
       refreshAnalysisJupyterStatus,
@@ -1561,21 +1585,39 @@ function App(): React.JSX.Element {
 
   const activeWorkspaceFileTab =
     workspaceFileTabs.find((tab) => tab.path === activeWorkspaceFilePath) ?? null
+  const cachedActiveFilePreview =
+    activeWorkspaceFileTab && activeWorkspaceFileTab.kind !== 'notebook'
+      ? (filePreviewCache[activeWorkspaceFileTab.path] ?? null)
+      : null
   const activeFilePreviewState =
     activeWorkspaceFileTab && activeWorkspaceFileTab.kind !== 'notebook'
       ? filePreview && filePreviewStatePath(filePreview) === activeWorkspaceFileTab.path
         ? filePreview
-        : activeWorkspaceFileTab.pathKind === 'directory'
-          ? ({
-              status: 'loading',
-              path: activeWorkspaceFileTab.path,
-              pathKind: 'directory'
-            } satisfies FilePreviewPanelState)
-          : ({
-              status: 'loading',
-              path: activeWorkspaceFileTab.path
-            } satisfies FilePreviewPanelState)
+        : (cachedActiveFilePreview ??
+          (activeWorkspaceFileTab.pathKind === 'directory'
+            ? ({
+                status: 'loading',
+                path: activeWorkspaceFileTab.path,
+                pathKind: 'directory'
+              } satisfies FilePreviewPanelState)
+            : ({
+                status: 'loading',
+                path: activeWorkspaceFileTab.path
+              } satisfies FilePreviewPanelState)))
       : null
+
+  const showCachedOrLoadFilePreview = useCallback(
+    (tab: WorkspaceFileTab): void => {
+      const cachedPreview = filePreviewCache[tab.path] ?? null
+      if (cachedPreview) {
+        filePreviewRequestRef.current += 1
+        setFilePreview(cachedPreview)
+        return
+      }
+      loadFilePreview(tab.path, tab.pathKind)
+    },
+    [filePreviewCache, filePreviewRequestRef, loadFilePreview, setFilePreview]
+  )
 
   const onSelectWorkspaceFileTab = useCallback(
     (tabLike: AnalysisWorkspaceFileTab): void => {
@@ -1584,15 +1626,18 @@ function App(): React.JSX.Element {
       setActiveWorkspaceFilePath(tab.path)
       navigateToView('analysis')
       if (tab.kind === 'notebook') {
-        onOpenNotebookWorkspaceFile(tab.path)
+        if (!activateCachedAnalysisNotebook(tab.path)) {
+          onOpenNotebookWorkspaceFile(tab.path)
+        }
         return
       }
-      loadFilePreview(tab.path, tab.pathKind)
+      showCachedOrLoadFilePreview(tab)
     },
     [
-      loadFilePreview,
+      activateCachedAnalysisNotebook,
       onOpenNotebookWorkspaceFile,
       setActiveWorkspaceFilePath,
+      showCachedOrLoadFilePreview,
       workspaceFileTabs,
       navigateToView
     ]
@@ -1604,6 +1649,10 @@ function App(): React.JSX.Element {
       if (!closingTab) return
       const remainingTabs = workspaceFileTabs.filter((tab) => tab.path !== closingTab.path)
       setWorkspaceFileTabs(remainingTabs)
+      clearCachedFilePreview(closingTab.path)
+      if (closingTab.kind === 'notebook') {
+        forgetCachedAnalysisNotebook(closingTab.path)
+      }
 
       if (closingTab.path !== activeWorkspaceFilePath) {
         if (filePreview && filePreviewStatePath(filePreview) === closingTab.path) {
@@ -1625,23 +1674,28 @@ function App(): React.JSX.Element {
 
       setActiveWorkspaceFilePath(nextTab.path)
       if (nextTab.kind === 'notebook') {
-        onOpenNotebookWorkspaceFile(nextTab.path)
+        if (!activateCachedAnalysisNotebook(nextTab.path)) {
+          onOpenNotebookWorkspaceFile(nextTab.path)
+        }
       } else {
         setActiveAnalysisNotebook(null)
-        loadFilePreview(nextTab.path, nextTab.pathKind)
+        showCachedOrLoadFilePreview(nextTab)
       }
     },
     [
+      activateCachedAnalysisNotebook,
       activeWorkspaceFilePath,
+      clearCachedFilePreview,
       closeActiveNotebook,
       filePreview,
       filePreviewRequestRef,
-      loadFilePreview,
+      forgetCachedAnalysisNotebook,
       onOpenNotebookWorkspaceFile,
       setActiveAnalysisNotebook,
       setActiveWorkspaceFilePath,
       setFilePreview,
       setWorkspaceFileTabs,
+      showCachedOrLoadFilePreview,
       workspaceFileTabs,
       workspaceSidebarMode,
       navigateToView

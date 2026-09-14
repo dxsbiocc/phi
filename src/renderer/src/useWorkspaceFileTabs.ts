@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import type { LocalPathKind } from './components/MarkdownContent'
 import type { AnalysisWorkspaceFileTab } from './features/analysis/AnalysisView'
 import type { FilePreviewPanelState } from './features/file-preview/FilePreviewPanel'
-import { absoluteWorkspacePath, fileNameFromPath } from './lib/workspacePaths'
+import { absoluteWorkspacePath, fileNameFromPath, filePreviewStatePath } from './lib/workspacePaths'
 import { readableErrorMessage } from './lib/sessionNotifications'
 import type { AppView } from './App'
 import type { DirectoryListing, RendererApi } from './types'
@@ -11,6 +11,27 @@ export type WorkspaceFileTabKind = 'notebook' | 'file' | 'directory'
 export type WorkspaceFileTab = AnalysisWorkspaceFileTab & {
   kind: WorkspaceFileTabKind
   pathKind: LocalPathKind
+}
+export type WorkspaceFilePreviewCache = Record<string, FilePreviewPanelState>
+
+export function cacheWorkspaceFilePreviewState(
+  cache: WorkspaceFilePreviewCache,
+  state: FilePreviewPanelState
+): WorkspaceFilePreviewCache {
+  return {
+    ...cache,
+    [filePreviewStatePath(state)]: state
+  }
+}
+
+export function removeWorkspaceFilePreviewState(
+  cache: WorkspaceFilePreviewCache,
+  path: string
+): WorkspaceFilePreviewCache {
+  if (!(path in cache)) return cache
+  const next = { ...cache }
+  delete next[path]
+  return next
 }
 
 export type WorkspaceFileTabsDeps = {
@@ -24,6 +45,8 @@ export type WorkspaceFileTabsDeps = {
 export type WorkspaceFileTabsState = {
   filePreview: FilePreviewPanelState | null
   setFilePreview: (state: FilePreviewPanelState | null) => void
+  filePreviewCache: WorkspaceFilePreviewCache
+  clearCachedFilePreview: (path: string) => void
   workspaceFileTabs: WorkspaceFileTab[]
   setWorkspaceFileTabs: (
     tabs: WorkspaceFileTab[] | ((prev: WorkspaceFileTab[]) => WorkspaceFileTab[])
@@ -51,9 +74,18 @@ export function useWorkspaceFileTabs({
   setActiveView
 }: WorkspaceFileTabsDeps): WorkspaceFileTabsState {
   const [filePreview, setFilePreview] = useState<FilePreviewPanelState | null>(null)
+  const [filePreviewCache, setFilePreviewCache] = useState<WorkspaceFilePreviewCache>({})
   const [workspaceFileTabs, setWorkspaceFileTabs] = useState<WorkspaceFileTab[]>([])
   const [activeWorkspaceFilePath, setActiveWorkspaceFilePath] = useState<string | null>(null)
   const filePreviewRequestRef = useRef(0)
+
+  const cacheFilePreviewState = useCallback((state: FilePreviewPanelState): void => {
+    setFilePreviewCache((cache) => cacheWorkspaceFilePreviewState(cache, state))
+  }, [])
+
+  const clearCachedFilePreview = useCallback((path: string): void => {
+    setFilePreviewCache((cache) => removeWorkspaceFilePreviewState(cache, path))
+  }, [])
 
   const upsertWorkspaceFileTab = useCallback((tab: WorkspaceFileTab): void => {
     setWorkspaceFileTabs((tabs) => {
@@ -82,7 +114,9 @@ export function useWorkspaceFileTabs({
           .listDirectory(path)
           .then((directory) => {
             if (filePreviewRequestRef.current !== requestId) return
-            setFilePreview({ status: 'directory', directory })
+            const nextState = { status: 'directory', directory } satisfies FilePreviewPanelState
+            setFilePreview(nextState)
+            cacheFilePreviewState(nextState)
             upsertWorkspaceFileTab({
               id: directory.path,
               path: directory.path,
@@ -110,7 +144,9 @@ export function useWorkspaceFileTabs({
         .previewFile(path)
         .then((file) => {
           if (filePreviewRequestRef.current !== requestId) return
-          setFilePreview({ status: 'ready', file })
+          const nextState = { status: 'ready', file } satisfies FilePreviewPanelState
+          setFilePreview(nextState)
+          cacheFilePreviewState(nextState)
           upsertWorkspaceFileTab({
             id: file.path,
             path: file.path,
@@ -130,7 +166,7 @@ export function useWorkspaceFileTabs({
           })
         })
     },
-    [rendererApi, upsertWorkspaceFileTab]
+    [cacheFilePreviewState, rendererApi, upsertWorkspaceFileTab]
   )
 
   const previewFilePath = useCallback(
@@ -193,6 +229,8 @@ export function useWorkspaceFileTabs({
   return {
     filePreview,
     setFilePreview,
+    filePreviewCache,
+    clearCachedFilePreview,
     workspaceFileTabs,
     setWorkspaceFileTabs,
     activeWorkspaceFilePath,

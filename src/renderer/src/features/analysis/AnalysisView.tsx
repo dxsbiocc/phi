@@ -402,7 +402,6 @@ export default function AnalysisView({
       ) : null}
       {!effectiveLeftSidebarFullscreen && !effectiveRightInspectorFullscreen ? (
         <NotebookCanvas
-          key={notebookFile ? notebookFile.path : 'empty'}
           activeNotebookPath={headerActivePath ?? 'No notebook selected'}
           notebooks={headerTabs}
           notebookFile={notebookFile}

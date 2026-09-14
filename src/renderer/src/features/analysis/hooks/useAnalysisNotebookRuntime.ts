@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AnalysisJupyterRuntimeStatus,
   AnalysisNotebookCompletionResult,
@@ -12,152 +12,25 @@ import type {
   AnalysisNotebookRegistry,
   AnalysisNotebookSessionStatus,
   JupyterServerStatus,
-  NotebookCellJumpTarget,
-  Project,
-  RendererApi
+  NotebookCellJumpTarget
 } from '../../../types'
 import { readableErrorMessage } from '../../../lib/sessionNotifications'
 import { pollJupyterServerStartupStatus } from '../../runtime/lib/jupyterStatusPolling'
 import { updateNotebookCell } from '../../../../../shared/notebookDocument'
-
-export type AnalysisNotebookAgentFocus = {
-  requestId: string
-  path: string
-  relativePath: string
-  cellId: string
-  changeKind?: AnalysisNotebookDraftChange['changeKind']
-}
-
-function analysisNotebookMatchesTarget(
-  file: AnalysisNotebookFile,
-  target: NotebookCellJumpTarget
-): boolean {
-  return (
-    (target.path !== undefined && file.path === target.path) ||
-    (target.relativePath !== undefined && file.relativePath === target.relativePath)
-  )
-}
-
-function requireRendererApiMethod<K extends keyof RendererApi>(
-  rendererApi: RendererApi,
-  method: K,
-  fallbackMessage: string
-): RendererApi[K] {
-  const candidate = rendererApi[method]
-  if (typeof candidate !== 'function') {
-    throw new Error(fallbackMessage)
-  }
-  return candidate
-}
-
-function jupyterServerIsReady(status: JupyterServerStatus | null | undefined): boolean {
-  return status?.state === 'ready' && status.hasEndpoint
-}
-
-function missingJupyterRuntimeHandler(error: unknown): boolean {
-  const message = readableErrorMessage(error, '')
-  return (
-    message.includes("No handler registered for 'analysis:jupyterRuntimeStatus'") ||
-    message.includes('analysis:jupyterRuntimeStatus')
-  )
-}
-
-function waitForRendererDelay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms)
-  })
-}
-
-export type AnalysisNotebookRuntimeDeps = {
-  rendererApi: RendererApi
-  getActiveCwd: () => string
-  projectsRef: MutableRefObject<Project[]>
-  showSnackbar: (message: string, severity?: 'error' | 'info' | 'success' | 'warning') => void
-  onNavigateToNotebookView: () => void
-}
-
-export type AnalysisNotebookRuntimeState = {
-  analysisNotebookRegistry: AnalysisNotebookRegistry | null
-  analysisInspectorCollapsed: boolean
-  setAnalysisInspectorCollapsed: (value: boolean | ((prev: boolean) => boolean)) => void
-  activeAnalysisNotebook: AnalysisNotebookFile | null
-  setActiveAnalysisNotebook: (file: AnalysisNotebookFile | null) => void
-  isLoadingAnalysisNotebooks: boolean
-  isOpeningAnalysisNotebook: boolean
-  analysisNotebookError: string | null
-  analysisNotebookContentError: string | null
-  analysisKernelDiagnostics: AnalysisKernelDiagnostics | null
-  isLoadingAnalysisKernels: boolean
-  analysisKernelError: string | null
-  analysisJupyterStatus: JupyterServerStatus | null
-  analysisJupyterRuntimeStatus: AnalysisJupyterRuntimeStatus | null
-  isLoadingAnalysisJupyterRuntime: boolean
-  analysisJupyterRuntimeError: string | null
-  isStartingAnalysisJupyter: boolean
-  analysisJupyterError: string | null
-  analysisNotebookSessionStatus: AnalysisNotebookSessionStatus | null
-  isStartingAnalysisNotebookSession: boolean
-  closingRuntimeNotebookPath: string | null
-  analysisNotebookSessionError: string | null
-  executingAnalysisCellId: string | null
-  analysisCellExecutionError: string | null
-  analysisAgentFocus: AnalysisNotebookAgentFocus | null
-  refreshAnalysisNotebooks: () => Promise<void>
-  onInitializeProjectAnalysis: (cwd: string) => Promise<void>
-  refreshAnalysisNotebookSessionStatus: (file: AnalysisNotebookFile) => Promise<void>
-  onOpenAnalysisNotebook: (path: string) => Promise<AnalysisNotebookFile | null>
-  focusAnalysisNotebookCell: (file: AnalysisNotebookFile, target: NotebookCellJumpTarget) => boolean
-  onSaveAnalysisNotebook: (
-    file: AnalysisNotebookFile,
-    document: AnalysisNotebookFile['document']
-  ) => Promise<void>
-  onSyncAnalysisNotebookDraft: (
-    file: AnalysisNotebookFile,
-    document: AnalysisNotebookFile['document']
-  ) => Promise<void>
-  onCreateAnalysisNotebook: (cwd: string) => Promise<void>
-  onDeleteAnalysisNotebook: (file: { path: string; relativePath: string }) => Promise<void>
-  refreshAnalysisKernels: () => Promise<void>
-  refreshAnalysisJupyterStatus: () => Promise<void>
-  onJumpToAnalysisNotebookCell: (target: NotebookCellJumpTarget) => void
-  refreshAnalysisJupyterRuntimeStatus: () => Promise<void>
-  onStartAnalysisJupyter: (cwd: string) => Promise<void>
-  onStopAnalysisJupyter: (cwd: string) => Promise<void>
-  onStartAnalysisNotebookSession: (
-    file: AnalysisNotebookFile,
-    document: AnalysisNotebookFile['document']
-  ) => Promise<void>
-  onStopAnalysisNotebookSession: (file: AnalysisNotebookFile) => Promise<void>
-  onStopRuntimeNotebookSession: (notebookPath: string) => Promise<void>
-  onRunAnalysisNotebookCell: (
-    file: AnalysisNotebookFile,
-    document: AnalysisNotebookFile['document'],
-    cellId: string
-  ) => Promise<void>
-  onCompleteAnalysisNotebookCell: (
-    file: AnalysisNotebookFile,
-    document: AnalysisNotebookFile['document'],
-    cellId: string,
-    source: string,
-    cursorPosition: number
-  ) => Promise<AnalysisNotebookCompletionResult>
-  onFormatAnalysisNotebookCell: (
-    file: AnalysisNotebookFile,
-    document: AnalysisNotebookFile['document'],
-    cellId: string,
-    source: string,
-    language?: string
-  ) => Promise<AnalysisNotebookFormatResult>
-  onGenerateAnalysisNotebookCode: (
-    file: AnalysisNotebookFile,
-    document: AnalysisNotebookFile['document'],
-    input: AnalysisNotebookCodeGenerationInput
-  ) => Promise<AnalysisNotebookCodeGenerationResult>
-  closeActiveNotebook: () => void
-  resetAnalysisJupyterRuntimeForCwdChange: () => void
-  handleNotebookDraftChanged: (change: AnalysisNotebookDraftChange) => void
-  handleNotebookFileChanged: (change: AnalysisNotebookFileChange) => void
-}
+import type { AnalysisNotebookAgentFocus } from '../lib/notebookCanvasTypes'
+import type {
+  AnalysisNotebookRuntimeDeps,
+  AnalysisNotebookRuntimeState
+} from '../lib/analysisNotebookRuntimeTypes'
+import {
+  analysisNotebookMatchesTarget,
+  cacheAnalysisNotebookFile,
+  jupyterServerIsReady,
+  missingJupyterRuntimeHandler,
+  removeAnalysisNotebookFileCacheEntry,
+  requireRendererApiMethod,
+  waitForRendererDelay
+} from '../lib/analysisNotebookRuntimeUtils'
 
 export function useAnalysisNotebookRuntime({
   rendererApi,
@@ -207,6 +80,7 @@ export function useAnalysisNotebookRuntime({
   )
 
   const activeAnalysisNotebookRef = useRef<AnalysisNotebookFile | null>(null)
+  const analysisNotebookFileCacheRef = useRef<Map<string, AnalysisNotebookFile>>(new Map())
   const pendingAnalysisCellJumpRef = useRef<NotebookCellJumpTarget | null>(null)
   const analysisNotebooksRequestRef = useRef(0)
   const analysisNotebookOpenRequestRef = useRef(0)
@@ -218,6 +92,12 @@ export function useAnalysisNotebookRuntime({
 
   useEffect(() => {
     activeAnalysisNotebookRef.current = activeAnalysisNotebook
+    if (activeAnalysisNotebook) {
+      analysisNotebookFileCacheRef.current = cacheAnalysisNotebookFile(
+        analysisNotebookFileCacheRef.current,
+        activeAnalysisNotebook
+      )
+    }
   }, [activeAnalysisNotebook])
 
   const refreshAnalysisNotebooks = useCallback(async (): Promise<void> => {
@@ -306,6 +186,30 @@ export function useAnalysisNotebookRuntime({
     [getActiveCwd, refreshAnalysisNotebookSessionStatus, rendererApi]
   )
 
+  const activateCachedAnalysisNotebook = useCallback(
+    (path: string): AnalysisNotebookFile | null => {
+      const file = analysisNotebookFileCacheRef.current.get(path) ?? null
+      if (!file) return null
+
+      analysisNotebookOpenRequestRef.current += 1
+      setIsOpeningAnalysisNotebook(false)
+      setAnalysisNotebookContentError(null)
+      setAnalysisNotebookSessionError(null)
+      setAnalysisNotebookSessionStatus(null)
+      setActiveAnalysisNotebook(file)
+      void refreshAnalysisNotebookSessionStatus(file)
+      return file
+    },
+    [refreshAnalysisNotebookSessionStatus]
+  )
+
+  const forgetCachedAnalysisNotebook = useCallback((path: string): void => {
+    analysisNotebookFileCacheRef.current = removeAnalysisNotebookFileCacheEntry(
+      analysisNotebookFileCacheRef.current,
+      path
+    )
+  }, [])
+
   const focusAnalysisNotebookCell = useCallback(
     (file: AnalysisNotebookFile, target: NotebookCellJumpTarget): boolean => {
       if (!analysisNotebookMatchesTarget(file, target)) return false
@@ -363,6 +267,10 @@ export function useAnalysisNotebookRuntime({
       document: AnalysisNotebookFile['document']
     ): Promise<void> => {
       const cwd = getActiveCwd()
+      analysisNotebookFileCacheRef.current = cacheAnalysisNotebookFile(
+        analysisNotebookFileCacheRef.current,
+        { ...file, document }
+      )
       try {
         await rendererApi.syncAnalysisNotebookDraft(cwd, file.path, document, file.savedRevision)
       } catch (error) {
@@ -400,6 +308,10 @@ export function useAnalysisNotebookRuntime({
       setAnalysisNotebookSessionError(null)
       try {
         await rendererApi.deleteAnalysisNotebook(cwd, file.path)
+        analysisNotebookFileCacheRef.current = removeAnalysisNotebookFileCacheEntry(
+          analysisNotebookFileCacheRef.current,
+          file.path
+        )
         if (activeAnalysisNotebook?.path === file.path) {
           setActiveAnalysisNotebook(null)
           setAnalysisNotebookSessionStatus(null)
@@ -864,6 +776,7 @@ export function useAnalysisNotebookRuntime({
 
   const resetAnalysisJupyterRuntimeForCwdChange = useCallback((): void => {
     analysisJupyterRuntimeRequestRef.current += 1
+    analysisNotebookFileCacheRef.current = new Map()
     setAnalysisJupyterRuntimeStatus(null)
     setAnalysisJupyterRuntimeError(null)
   }, [])
@@ -892,6 +805,10 @@ export function useAnalysisNotebookRuntime({
         document: change.document,
         savedRevision: change.savedRevision
       }
+      analysisNotebookFileCacheRef.current = cacheAnalysisNotebookFile(
+        analysisNotebookFileCacheRef.current,
+        next
+      )
       setActiveAnalysisNotebook(next)
       const focusCellId = change.focusCellId ?? change.changedCellId
       if (focusCellId && change.document.cells.some((cell) => cell.id === focusCellId)) {
@@ -914,6 +831,19 @@ export function useAnalysisNotebookRuntime({
       if (change.projectCwd !== getActiveCwd()) return
 
       void refreshAnalysisNotebooks()
+
+      if (change.type === 'changed') {
+        analysisNotebookFileCacheRef.current = cacheAnalysisNotebookFile(
+          analysisNotebookFileCacheRef.current,
+          change.file
+        )
+      }
+      if (change.type === 'deleted') {
+        analysisNotebookFileCacheRef.current = removeAnalysisNotebookFileCacheEntry(
+          analysisNotebookFileCacheRef.current,
+          change.path
+        )
+      }
 
       const current = activeAnalysisNotebookRef.current
       if (!current) return
@@ -970,6 +900,8 @@ export function useAnalysisNotebookRuntime({
     onInitializeProjectAnalysis,
     refreshAnalysisNotebookSessionStatus,
     onOpenAnalysisNotebook,
+    activateCachedAnalysisNotebook,
+    forgetCachedAnalysisNotebook,
     focusAnalysisNotebookCell,
     onSaveAnalysisNotebook,
     onSyncAnalysisNotebookDraft,
