@@ -4,17 +4,56 @@ import { alpha } from '@mui/material/styles'
 import { PhiIcons, fileIconForPath } from '../../../icons'
 import {
   kernelOptionLabel,
+  notebookLanguage,
   notebookKernelName,
   notebookTabLabel,
   type NotebookListEntry
 } from '../lib/notebookViewModel'
-import type { AnalysisKernelDiagnostics } from '../../../types'
+import type { AnalysisKernelDiagnostics, AnalysisKernelSummary } from '../../../types'
 import type { NotebookDocument } from '../../../../../shared/notebookDocument'
 
 const CloseIcon = PhiIcons.action.close
 const ExpandIcon = PhiIcons.action.expand
 const NotebookIcon = PhiIcons.file.jupyter
+const PythonIcon = PhiIcons.file.python
+const RIcon = PhiIcons.file.r
 const macTitlebarHeight = 44
+
+function normalizedKernelIconKind(value: string | null | undefined): 'python' | 'r' | null {
+  const normalized = value?.trim().toLowerCase()
+  if (!normalized) return null
+  if (normalized === 'python' || normalized.startsWith('python') || normalized === 'py') {
+    return 'python'
+  }
+  if (normalized === 'r' || normalized === 'ir' || normalized.startsWith('r-')) return 'r'
+  return null
+}
+
+function notebookKernelIconKind(
+  kernel: AnalysisKernelSummary | undefined,
+  document: NotebookDocument | null | undefined,
+  fallbackLabel: string
+): 'python' | 'r' | 'jupyter' {
+  const candidates = kernel
+    ? [kernel.language, kernel.rawLanguage, kernel.name, kernel.displayName, fallbackLabel]
+    : [document ? notebookLanguage(document) : '', fallbackLabel]
+
+  for (const candidate of candidates) {
+    const iconKind = normalizedKernelIconKind(candidate)
+    if (iconKind) return iconKind
+  }
+  return 'jupyter'
+}
+
+function NotebookKernelIcon({
+  kind
+}: {
+  kind: ReturnType<typeof notebookKernelIconKind>
+}): React.JSX.Element {
+  if (kind === 'python') return <PythonIcon sx={{ fontSize: 14 }} />
+  if (kind === 'r') return <RIcon sx={{ fontSize: 14 }} />
+  return <NotebookIcon sx={{ fontSize: 14 }} />
+}
 
 export function NotebookHeader({
   activeNotebookPath,
@@ -55,6 +94,7 @@ export function NotebookHeader({
     : selectedKernel
       ? kernelOptionLabel(selectedKernel)
       : selectedKernelName || 'Auto'
+  const kernelIconKind = notebookKernelIconKind(selectedKernel, draftDocument, kernelLabel)
   const closeKernelMenu = (): void => setKernelMenuAnchor(null)
   const chooseKernel = (kernelName: string): void => {
     closeKernelMenu()
@@ -94,9 +134,10 @@ export function NotebookHeader({
         <Box
           aria-label={kernelStatusLabel}
           title={kernelStatusLabel}
+          data-phi-notebook-kernel-icon={kernelIconKind}
           sx={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}
         >
-          <NotebookIcon sx={{ fontSize: 14 }} />
+          <NotebookKernelIcon kind={kernelIconKind} />
           <Box
             data-phi-notebook-kernel-status-dot={kernelStatusColor}
             sx={{

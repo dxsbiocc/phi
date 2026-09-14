@@ -52,6 +52,7 @@ const MoreIcon = PhiIcons.action.more
 
 export default function NotebookCell({
   cell,
+  cellNumber,
   editable = false,
   selected = false,
   onSourceChange,
@@ -66,9 +67,11 @@ export default function NotebookCell({
   onRunCell,
   canRunCells = false,
   notebookPath,
-  agentHighlighted = false
+  agentHighlighted = false,
+  provisional = false
 }: {
   cell: CanvasCell
+  cellNumber?: number
   editable?: boolean
   selected?: boolean
   notebookPath?: string | null
@@ -90,6 +93,7 @@ export default function NotebookCell({
   onSelectCell?: (cellId: string) => void
   onRunCell?: (cellId: string) => void
   canRunCells?: boolean
+  provisional?: boolean
 }): React.JSX.Element {
   const isMarkdown = cell.type === 'markdown'
   const [isEditing, setIsEditing] = useState(false)
@@ -101,15 +105,16 @@ export default function NotebookCell({
   const cellAccent = notebookCellAccent(cell)
   const isCellSelected = Boolean(selected)
   const showEditor = editable && isEditing && isCellSelected
-  const showAccentShadow = showEditor || isCellSelected || agentHighlighted
+  const showAccentShadow = showEditor || isCellSelected || agentHighlighted || provisional
   const isCodeCell = cell.type === 'code'
-  const isCodeSelectionChromeOnly = isCodeCell && !agentHighlighted
+  const isCodeSelectionChromeOnly = isCodeCell && !agentHighlighted && !provisional
   const canRun = isCodeCell && Boolean(onRunCell) && canRunCells && cell.state !== 'running'
   const isRunning = cell.state === 'running'
   const isRenderedMarkdown = isMarkdown && !showEditor
   const isCodeSourceView = isCodeCell && !showEditor
   const hasOutputs = cell.outputs.length > 0
-  const canMove = editable && Boolean(onMoveCell)
+  const canMove = editable && Boolean(onMoveCell) && !provisional
+  const showCellActions = !provisional
   const runningElapsedMs = isRunning && runningTimer.cellId === cell.id ? runningTimer.elapsedMs : 0
   const executionMetaLabel = isRunning
     ? formatExecutionDuration(runningElapsedMs)
@@ -199,6 +204,7 @@ export default function NotebookCell({
       data-phi-notebook-cell="marimo-like"
       data-phi-notebook-cell-accent={cellAccent}
       data-phi-notebook-cell-id={cell.id}
+      data-phi-notebook-cell-provisional={provisional ? 'true' : undefined}
       data-phi-notebook-cell-selected={isCellSelected ? 'true' : undefined}
       data-phi-notebook-cell-agent-highlighted={agentHighlighted ? 'true' : undefined}
       data-phi-notebook-cell-editing={showEditor ? 'true' : undefined}
@@ -291,6 +297,9 @@ export default function NotebookCell({
         '&:focus-within .cell-execution-meta': {
           opacity: 1
         },
+        '&:hover .cell-number': {
+          color: 'text.secondary'
+        },
         '&:hover .cell-shell': {
           borderColor: (theme: Theme) => alpha(notebookAccentColor(theme, cellAccent), 0.42),
           bgcolor: (theme) => alpha(theme.palette.text.primary, 0.015)
@@ -302,8 +311,8 @@ export default function NotebookCell({
           minHeight: notebookCodeMinHeight,
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          flexDirection: 'column',
+          justifyContent: 'center',
+          position: 'relative',
           py: 0.15
         }}
       >
@@ -314,11 +323,34 @@ export default function NotebookCell({
               size="small"
               aria-label="上方插入 Code cell"
               onClick={() => onInsertBefore?.(cell.id, 'code')}
-              sx={insertionButtonSx}
+              sx={{
+                ...insertionButtonSx,
+                position: 'absolute',
+                top: -9,
+                left: 5
+              }}
             >
               <AddIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Tooltip>
+        ) : null}
+        {cellNumber !== undefined ? (
+          <Typography
+            className="cell-number"
+            variant="caption"
+            aria-label={`Cell ${cellNumber}`}
+            data-phi-notebook-cell-number={cellNumber}
+            sx={{
+              color: 'text.disabled',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.72rem',
+              lineHeight: 1,
+              userSelect: 'none',
+              transition: 'color 140ms ease'
+            }}
+          >
+            {cellNumber}
+          </Typography>
         ) : null}
         {editable ? (
           <Tooltip title="下方插入 Code cell">
@@ -327,7 +359,12 @@ export default function NotebookCell({
               size="small"
               aria-label="下方插入 Code cell"
               onClick={() => onInsertAfter?.(cell.id, 'code')}
-              sx={insertionButtonSx}
+              sx={{
+                ...insertionButtonSx,
+                position: 'absolute',
+                bottom: -9,
+                left: 5
+              }}
             >
               <AddIcon sx={{ fontSize: 16 }} />
             </IconButton>
@@ -342,8 +379,9 @@ export default function NotebookCell({
           position: 'relative',
           border: 1,
           borderColor: (theme) => {
-            const accentColor = notebookAccentColor(theme, cellAccent)
+            const accentColor = notebookAccentColor(theme, provisional ? 'ai' : cellAccent)
             if (isRenderedMarkdown && !showAccentShadow) return 'transparent'
+            if (provisional) return alpha(accentColor, 0.72)
             if (agentHighlighted) return alpha(theme.palette.primary.main, 0.82)
             if (cell.state === 'error') return theme.palette.error.main
             if (cell.state === 'running') return alpha(accentColor, 0.34)
@@ -353,8 +391,9 @@ export default function NotebookCell({
           },
           borderRadius: 1.75,
           bgcolor: (theme) => {
-            const accentColor = notebookAccentColor(theme, cellAccent)
+            const accentColor = notebookAccentColor(theme, provisional ? 'ai' : cellAccent)
             if (isRenderedMarkdown && !showAccentShadow) return 'transparent'
+            if (provisional) return alpha(accentColor, 0.045)
             if (agentHighlighted) return alpha(accentColor, 0.075)
             if (cell.state === 'error') return alpha(theme.palette.error.main, 0.035)
             if (cell.state === 'running') return alpha(accentColor, 0.03)
@@ -366,11 +405,13 @@ export default function NotebookCell({
           boxShadow: (theme) =>
             showEditor
               ? notebookAccentSelectionShadow(theme, cellAccent, 0.2)
-              : agentHighlighted
-                ? `0 0 0 3px ${alpha(theme.palette.primary.main, 0.16)}`
-                : isCellSelected
-                  ? notebookAccentSelectionShadow(theme, cellAccent, 0.18)
-                  : 'none',
+              : provisional
+                ? notebookAccentSelectionShadow(theme, 'ai', 0.16)
+                : agentHighlighted
+                  ? `0 0 0 3px ${alpha(theme.palette.primary.main, 0.16)}`
+                  : isCellSelected
+                    ? notebookAccentSelectionShadow(theme, cellAccent, 0.18)
+                    : 'none',
           overflow: 'visible',
           transition: 'background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease',
           ...(dropPlacement === 'before'
@@ -555,151 +596,157 @@ export default function NotebookCell({
             </Typography>
           )}
         </Box>
-        <Box
-          className="cell-floating-actions"
-          data-phi-notebook-cell-actions="marimo"
-          data-phi-notebook-rendered-markdown-actions={
-            isRenderedMarkdown ? 'solid-hover' : undefined
-          }
-          sx={{
-            position: 'absolute',
-            top: -18,
-            right: 8,
-            zIndex: 2,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 0.45,
-            opacity: menuAnchor ? 1 : 0,
-            transform: menuAnchor ? 'translateY(0)' : 'translateY(-2px)',
-            transition: 'opacity 150ms ease, transform 150ms ease'
-          }}
-        >
-          <Tooltip title={primaryActionTitle}>
-            <span>
-              <IconButton
-                className="cell-run-button"
-                size="small"
-                aria-label={primaryActionLabel}
-                data-phi-notebook-cell-action-surface="opaque"
-                disabled={isPrimaryActionDisabled}
-                onClick={
-                  isRenderedMarkdown
-                    ? () => setIsEditing(true)
-                    : isRunning
-                      ? undefined
-                      : () => onRunCell?.(cell.id)
-                }
-                sx={{
-                  ...actionButtonSx,
-                  color: (theme: Theme) =>
-                    isRunning
-                      ? theme.palette.text.disabled
-                      : showPrimaryActionAccent
-                        ? notebookAccentColor(theme, cellAccent)
-                        : theme.palette.text.disabled,
-                  bgcolor: (theme) => theme.palette.background.paper,
-                  '&:hover': {
-                    bgcolor: (theme: Theme) => theme.palette.background.paper
-                  },
-                  '&.Mui-disabled': {
-                    bgcolor: (theme) => theme.palette.background.paper,
-                    color: 'text.disabled',
-                    opacity: 1
-                  }
-                }}
-              >
-                {isRenderedMarkdown ? (
-                  <MarkdownIcon
-                    data-phi-notebook-rendered-markdown-action-icon="solid"
+        {showCellActions ? (
+          <>
+            <Box
+              className="cell-floating-actions"
+              data-phi-notebook-cell-actions="marimo"
+              data-phi-notebook-rendered-markdown-actions={
+                isRenderedMarkdown ? 'solid-hover' : undefined
+              }
+              sx={{
+                position: 'absolute',
+                top: -18,
+                right: 8,
+                zIndex: 2,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.45,
+                opacity: menuAnchor ? 1 : 0,
+                transform: menuAnchor ? 'translateY(0)' : 'translateY(-2px)',
+                transition: 'opacity 150ms ease, transform 150ms ease'
+              }}
+            >
+              <Tooltip title={primaryActionTitle}>
+                <span>
+                  <IconButton
+                    className="cell-run-button"
+                    size="small"
+                    aria-label={primaryActionLabel}
+                    data-phi-notebook-cell-action-surface="opaque"
+                    disabled={isPrimaryActionDisabled}
+                    onClick={
+                      isRenderedMarkdown
+                        ? () => setIsEditing(true)
+                        : isRunning
+                          ? undefined
+                          : () => onRunCell?.(cell.id)
+                    }
                     sx={{
-                      fontSize: 16,
-                      opacity: 1,
-                      '& svg, & path': {
+                      ...actionButtonSx,
+                      color: (theme: Theme) =>
+                        isRunning
+                          ? theme.palette.text.disabled
+                          : showPrimaryActionAccent
+                            ? notebookAccentColor(theme, cellAccent)
+                            : theme.palette.text.disabled,
+                      bgcolor: (theme) => theme.palette.background.paper,
+                      '&:hover': {
+                        bgcolor: (theme: Theme) => theme.palette.background.paper
+                      },
+                      '&.Mui-disabled': {
+                        bgcolor: (theme) => theme.palette.background.paper,
+                        color: 'text.disabled',
                         opacity: 1
                       }
                     }}
-                  />
-                ) : isRunning ? (
-                  <StopIcon sx={{ fontSize: 15 }} />
-                ) : (
-                  <PlayIcon sx={{ fontSize: 16 }} />
-                )}
-              </IconButton>
-            </span>
-          </Tooltip>
-          <Tooltip title="Cell 操作">
-            <IconButton
-              size="small"
-              aria-label="Cell 操作"
-              data-phi-notebook-cell-action-surface="opaque"
-              onClick={(event: MouseEvent<HTMLButtonElement>) => setMenuAnchor(event.currentTarget)}
-              sx={actionButtonSx}
+                  >
+                    {isRenderedMarkdown ? (
+                      <MarkdownIcon
+                        data-phi-notebook-rendered-markdown-action-icon="solid"
+                        sx={{
+                          fontSize: 16,
+                          opacity: 1,
+                          '& svg, & path': {
+                            opacity: 1
+                          }
+                        }}
+                      />
+                    ) : isRunning ? (
+                      <StopIcon sx={{ fontSize: 15 }} />
+                    ) : (
+                      <PlayIcon sx={{ fontSize: 16 }} />
+                    )}
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Tooltip title="Cell 操作">
+                <IconButton
+                  size="small"
+                  aria-label="Cell 操作"
+                  data-phi-notebook-cell-action-surface="opaque"
+                  onClick={(event: MouseEvent<HTMLButtonElement>) =>
+                    setMenuAnchor(event.currentTarget)
+                  }
+                  sx={actionButtonSx}
+                >
+                  <MoreIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </Tooltip>
+            </Box>
+            <Menu
+              anchorEl={menuAnchor}
+              open={Boolean(menuAnchor)}
+              onClose={closeMenu}
+              slotProps={{ paper: { sx: { minWidth: 230 } } }}
             >
-              <MoreIcon sx={{ fontSize: 16 }} />
-            </IconButton>
-          </Tooltip>
-        </Box>
-        <Menu
-          anchorEl={menuAnchor}
-          open={Boolean(menuAnchor)}
-          onClose={closeMenu}
-          slotProps={{ paper: { sx: { minWidth: 230 } } }}
-        >
-          <MenuItem onClick={() => runMenuAction(() => onInsertAfter?.(cell.id, 'code'))}>
-            <ListItemIcon>
-              <CodeIcon sx={{ fontSize: 17 }} />
-            </ListItemIcon>
-            <ListItemText primary="下方添加 Code cell" />
-          </MenuItem>
-          <MenuItem onClick={() => runMenuAction(() => onInsertAfter?.(cell.id, 'markdown'))}>
-            <ListItemIcon>
-              <FileIcon sx={{ fontSize: 17 }} />
-            </ListItemIcon>
-            <ListItemText primary="下方添加 Markdown cell" />
-          </MenuItem>
-          <Divider />
-          <MenuItem
-            disabled={cell.type === 'code'}
-            onClick={() => runMenuAction(() => onConvertCell?.(cell.id, 'code'))}
-          >
-            <ListItemIcon>
-              <CodeIcon sx={{ fontSize: 17 }} />
-            </ListItemIcon>
-            <ListItemText primary="转为 Code" />
-          </MenuItem>
-          <MenuItem
-            disabled={cell.type === 'markdown'}
-            onClick={() => runMenuAction(() => onConvertCell?.(cell.id, 'markdown'))}
-          >
-            <ListItemIcon>
-              <FileIcon sx={{ fontSize: 17 }} />
-            </ListItemIcon>
-            <ListItemText primary="转为 Markdown" />
-          </MenuItem>
-          <MenuItem
-            disabled={!hasOutputs}
-            onClick={() => runMenuAction(() => onClearOutputs?.(cell.id))}
-          >
-            <ListItemIcon>
-              <RefreshIcon sx={{ fontSize: 17 }} />
-            </ListItemIcon>
-            <ListItemText primary="清空输出" />
-          </MenuItem>
-          <Divider />
-          <MenuItem
-            disabled={isRunning}
-            onClick={() =>
-              runMenuAction(() => {
-                if (!isRunning) onDeleteCell?.(cell.id)
-              })
-            }
-          >
-            <ListItemIcon>
-              <DeleteIcon color="error" sx={{ fontSize: 17 }} />
-            </ListItemIcon>
-            <ListItemText primary="删除 cell" />
-          </MenuItem>
-        </Menu>
+              <MenuItem onClick={() => runMenuAction(() => onInsertAfter?.(cell.id, 'code'))}>
+                <ListItemIcon>
+                  <CodeIcon sx={{ fontSize: 17 }} />
+                </ListItemIcon>
+                <ListItemText primary="下方添加 Code cell" />
+              </MenuItem>
+              <MenuItem onClick={() => runMenuAction(() => onInsertAfter?.(cell.id, 'markdown'))}>
+                <ListItemIcon>
+                  <FileIcon sx={{ fontSize: 17 }} />
+                </ListItemIcon>
+                <ListItemText primary="下方添加 Markdown cell" />
+              </MenuItem>
+              <Divider />
+              <MenuItem
+                disabled={cell.type === 'code'}
+                onClick={() => runMenuAction(() => onConvertCell?.(cell.id, 'code'))}
+              >
+                <ListItemIcon>
+                  <CodeIcon sx={{ fontSize: 17 }} />
+                </ListItemIcon>
+                <ListItemText primary="转为 Code" />
+              </MenuItem>
+              <MenuItem
+                disabled={cell.type === 'markdown'}
+                onClick={() => runMenuAction(() => onConvertCell?.(cell.id, 'markdown'))}
+              >
+                <ListItemIcon>
+                  <FileIcon sx={{ fontSize: 17 }} />
+                </ListItemIcon>
+                <ListItemText primary="转为 Markdown" />
+              </MenuItem>
+              <MenuItem
+                disabled={!hasOutputs}
+                onClick={() => runMenuAction(() => onClearOutputs?.(cell.id))}
+              >
+                <ListItemIcon>
+                  <RefreshIcon sx={{ fontSize: 17 }} />
+                </ListItemIcon>
+                <ListItemText primary="清空输出" />
+              </MenuItem>
+              <Divider />
+              <MenuItem
+                disabled={isRunning}
+                onClick={() =>
+                  runMenuAction(() => {
+                    if (!isRunning) onDeleteCell?.(cell.id)
+                  })
+                }
+              >
+                <ListItemIcon>
+                  <DeleteIcon color="error" sx={{ fontSize: 17 }} />
+                </ListItemIcon>
+                <ListItemText primary="删除 cell" />
+              </MenuItem>
+            </Menu>
+          </>
+        ) : null}
         {cell.outputs.length > 0 ? (
           // NotebookOutputArea already draws its own top border as the
           // code/output divider -- an extra <Divider /> here just stacked a

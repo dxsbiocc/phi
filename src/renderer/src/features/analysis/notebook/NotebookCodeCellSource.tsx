@@ -24,21 +24,26 @@ function HighlightedCodeLines({
   const lines = source.length > 0 ? source.split('\n') : ['']
 
   return (
-    <>
-      {lines.map((line, lineIndex) => (
-        <Box
-          key={lineIndex}
-          data-phi-code-line-index={lineIndex}
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: `${notebookCodeGutterWidth}px minmax(0, 1fr)`,
-            minHeight: `${notebookCodeLineHeight}em`,
-            lineHeight: notebookCodeLineHeight
-          }}
-        >
+    <Box
+      data-phi-code-layout="fixed-gutter"
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: `${notebookCodeGutterWidth}px minmax(0, 1fr)`,
+        minWidth: 0
+      }}
+    >
+      <Box
+        data-phi-code-line-gutter="true"
+        aria-hidden="true"
+        sx={{
+          width: `${notebookCodeGutterWidth}px`,
+          minWidth: `${notebookCodeGutterWidth}px`
+        }}
+      >
+        {lines.map((_, lineIndex) => (
           <Box
+            key={lineIndex}
             component="span"
-            aria-hidden="true"
             sx={{
               boxSizing: 'border-box',
               display: 'flex',
@@ -47,6 +52,7 @@ function HighlightedCodeLines({
               width: `${notebookCodeGutterWidth}px`,
               minWidth: `${notebookCodeGutterWidth}px`,
               minHeight: `${notebookCodeLineHeight}em`,
+              lineHeight: notebookCodeLineHeight,
               pr: `${notebookCodeGutterPaddingRight}px`,
               pl: 0,
               m: 0,
@@ -58,29 +64,51 @@ function HighlightedCodeLines({
           >
             {lineIndex + 1}
           </Box>
+        ))}
+      </Box>
+      <Box
+        data-phi-code-scroll-pane="true"
+        sx={{
+          minWidth: 0,
+          overflowX: 'auto',
+          overflowY: 'hidden'
+        }}
+      >
+        {lines.map((line, lineIndex) => (
           <Box
-            component="code"
-            data-phi-code-line-text="true"
+            key={lineIndex}
+            data-phi-code-line-index={lineIndex}
             sx={{
-              display: 'block',
-              px: `${notebookCodeContentPaddingX}px`,
-              whiteSpace: 'pre'
+              width: 'max-content',
+              minWidth: '100%',
+              minHeight: `${notebookCodeLineHeight}em`,
+              lineHeight: notebookCodeLineHeight
             }}
           >
-            {highlightLine(line, language).map((token, tokenIndex) => (
-              <Box
-                key={`${lineIndex}-${tokenIndex}`}
-                component="span"
-                data-phi-syntax-token={token.kind}
-                sx={{ color: (theme) => syntaxTokenColor(theme, token.kind) }}
-              >
-                {token.value}
-              </Box>
-            ))}
+            <Box
+              component="code"
+              data-phi-code-line-text="true"
+              sx={{
+                display: 'block',
+                px: `${notebookCodeContentPaddingX}px`,
+                whiteSpace: 'pre'
+              }}
+            >
+              {highlightLine(line, language).map((token, tokenIndex) => (
+                <Box
+                  key={`${lineIndex}-${tokenIndex}`}
+                  component="span"
+                  data-phi-syntax-token={token.kind}
+                  sx={{ color: (theme) => syntaxTokenColor(theme, token.kind) }}
+                >
+                  {token.value}
+                </Box>
+              ))}
+            </Box>
           </Box>
-        </Box>
-      ))}
-    </>
+        ))}
+      </Box>
+    </Box>
   )
 }
 
@@ -195,7 +223,7 @@ export default function NotebookCodeCellSource({
         pb: `${notebookCodeContentPaddingBottom}px`,
         pr: `${notebookCodeActionPaddingRight}px`,
         cursor: editable ? 'text' : 'default',
-        overflowX: 'auto',
+        overflowX: 'hidden',
         fontFamily: 'var(--font-mono)',
         fontSize: `${notebookCodeFontSizeRem}rem`,
         lineHeight: notebookCodeLineHeight,

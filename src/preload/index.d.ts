@@ -261,9 +261,32 @@ type PreloadAnalysisNotebookDraftChange = {
   focusCellId?: string
 }
 
+type PreloadAnalysisNotebookFileChange =
+  | {
+      type: 'changed'
+      projectCwd: string
+      path: string
+      relativePath: string
+      file: PreloadAnalysisNotebookFile
+    }
+  | {
+      type: 'deleted'
+      projectCwd: string
+      path: string
+      relativePath: string
+    }
+  | {
+      type: 'error'
+      projectCwd: string
+      path: string
+      relativePath: string
+      message: string
+    }
+
 type PreloadAnalysisNotebookCodeGenerationInput = {
   prompt: string
   language: string
+  requestId?: string
   model?: {
     providerId: string
     modelId: string
@@ -296,6 +319,15 @@ type PreloadAnalysisNotebookCodeGenerationResult = {
   source: string
   language: string
   cells?: PreloadAnalysisNotebookGeneratedCell[]
+}
+
+type PreloadAnalysisNotebookCodeGenerationProgress = {
+  requestId: string
+  path: string
+  relativePath: string
+  source: string
+  language: string
+  cells: PreloadAnalysisNotebookGeneratedCell[]
 }
 
 type PreloadSaveAnalysisNotebookInput = {
@@ -644,9 +676,15 @@ declare global {
         document: Record<string, unknown>,
         input: PreloadAnalysisNotebookCodeGenerationInput
       ) => Promise<PreloadAnalysisNotebookCodeGenerationResult>
+      onAnalysisNotebookCodeGenerationProgress: (
+        cb: (progress: PreloadAnalysisNotebookCodeGenerationProgress) => void
+      ) => () => void
       stopGeneration: () => Promise<void>
       onAnalysisNotebookDraftChanged: (
         cb: (change: PreloadAnalysisNotebookDraftChange) => void
+      ) => () => void
+      onAnalysisNotebookFileChanged: (
+        cb: (change: PreloadAnalysisNotebookFileChange) => void
       ) => () => void
       onSessionChanged: (
         cb: (session: {

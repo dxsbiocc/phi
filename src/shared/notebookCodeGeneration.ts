@@ -20,13 +20,25 @@ export function normalizeNotebookGenerationLanguage(language: string): string {
 
 export function parseGeneratedNotebookCells(
   assistantText: string,
-  defaultLanguage: string
+  defaultLanguage: string,
+  options: {
+    allowPlainTextFallback?: boolean
+    allowOpenFence?: boolean
+    allowPartialJson?: boolean
+  } = {}
 ): AnalysisNotebookGeneratedCell[] {
   const jsonCells = parseGeneratedNotebookJsonCells(assistantText, defaultLanguage)
   if (jsonCells.length > 0) return jsonCells
 
-  const fencedCells = parseFencedNotebookCells(assistantText, defaultLanguage)
+  if (options.allowPartialJson) {
+    const partialJsonCells = parsePartialGeneratedNotebookJsonCells(assistantText, defaultLanguage)
+    if (partialJsonCells.length > 0) return partialJsonCells
+  }
+
+  const fencedCells = parseFencedNotebookCells(assistantText, defaultLanguage, options)
   if (fencedCells.length > 0) return fencedCells
+
+  if (options.allowPlainTextFallback === false) return []
 
   const source = stripGeneratedNotebookCode(assistantText)
   if (!source.trim()) return []
@@ -48,6 +60,40 @@ export function parseGeneratedNotebookCompletion(
 
   const text = completionText(completion)
   return text ? parseGeneratedNotebookCells(text, defaultLanguage) : []
+}
+
+export function parseGeneratedNotebookCompletionSnapshot(
+  completion: unknown,
+  defaultLanguage: string
+): AnalysisNotebookGeneratedCell[] {
+  const structuredCells = parseStructuredNotebookCompletion(completion, defaultLanguage)
+  if (structuredCells.length > 0) return structuredCells
+
+  const text = completionText(completion)
+  return text
+    ? parseGeneratedNotebookCells(text, defaultLanguage, {
+        allowPlainTextFallback: false,
+        allowOpenFence: true,
+        allowPartialJson: true
+      })
+    : []
+}
+
+export function parseFinalGeneratedNotebookCompletion(
+  completion: unknown,
+  defaultLanguage: string
+): AnalysisNotebookGeneratedCell[] {
+  const structuredCells = parseStructuredNotebookCompletion(completion, defaultLanguage)
+  if (structuredCells.length > 0) return structuredCells
+
+  const text = completionText(completion)
+  return text
+    ? parseGeneratedNotebookCells(text, defaultLanguage, {
+        allowPlainTextFallback: false,
+        allowOpenFence: false,
+        allowPartialJson: false
+      })
+    : []
 }
 
 export function generatedNotebookCellsSource(cells: AnalysisNotebookGeneratedCell[]): string {
@@ -79,6 +125,63 @@ function parseGeneratedNotebookJsonCells(
     }
   }
   return []
+}
+
+function parsePartialGeneratedNotebookJsonCells(
+  assistantText: string,
+  defaultLanguage: string
+): AnalysisNotebookGeneratedCell[] {
+  const cellsStart = /["']cells["']\s*:\s*\[/.exec(assistantText)
+  if (!cellsStart) return []
+
+  const arrayStart = assistantText.indexOf('[', cellsStart.index)
+  if (arrayStart < 0) return []
+
+  const rawCells: unknown[] = []
+  let objectStart = -1
+  let objectDepth = 0
+  let inString = false
+  let quote = ''
+  let escaping = false
+
+  for (let index = arrayStart + 1; index < assistantText.length; index += 1) {
+    const char = assistantText[index]
+    if (inString) {
+      if (escaping) {
+        escaping = false
+      } else if (char === '\\') {
+        escaping = true
+      } else if (char === quote) {
+        inString = false
+        quote = ''
+      }
+      continue
+    }
+
+    if (char === '"' || char === "'") {
+      inString = true
+      quote = char
+      continue
+    }
+    if (char === '{') {
+      if (objectDepth === 0) objectStart = index
+      objectDepth += 1
+      continue
+    }
+    if (char !== '}') continue
+
+    objectDepth -= 1
+    if (objectDepth === 0 && objectStart >= 0) {
+      try {
+        rawCells.push(JSON.parse(assistantText.slice(objectStart, index + 1)))
+      } catch {
+        // Ignore this candidate; it may be a non-JSON object or still incomplete.
+      }
+      objectStart = -1
+    }
+  }
+
+  return rawCells.length > 0 ? normalizeGeneratedNotebookCells(rawCells, defaultLanguage) : []
 }
 
 function parseStructuredNotebookCompletion(
@@ -194,12 +297,24 @@ function normalizeGeneratedNotebookCell(
     ''
   const source = cleanGeneratedCellSource(rawSource, cellType)
   if (!source.trim()) return null
+  if (looksLikeIncompleteGeneratedCellSource(source, cellType)) return null
   return cellType === 'code' ? { cellType, source, language } : { cellType, source }
+}
+
+function looksLikeIncompleteGeneratedCellSource(
+  source: string,
+  cellType: 'code' | 'markdown'
+): boolean {
+  const trimmed = source.trim()
+  if (/^(?:\.{3}|…)$/.test(trimmed)) return true
+  if (cellType === 'markdown' && /^#{1,6}\s*$/.test(trimmed)) return true
+  return false
 }
 
 function parseFencedNotebookCells(
   assistantText: string,
-  defaultLanguage: string
+  defaultLanguage: string,
+  options: { allowOpenFence?: boolean } = {}
 ): AnalysisNotebookGeneratedCell[] {
   const trimmed = assistantText.trim()
   const fencePattern = /```([^\n`]*)\n([\s\S]*?)```/g
@@ -210,23 +325,46 @@ function parseFencedNotebookCells(
   while ((match = fencePattern.exec(trimmed))) {
     const prose = trimmed.slice(lastIndex, match.index).trim()
     if (prose) {
-      cells.push({ cellType: 'markdown', source: prose })
+      pushGeneratedNotebookCell(cells, 'markdown', prose)
     }
 
     const language = normalizeNotebookGenerationLanguage(match[1].trim() || defaultLanguage)
     const cellType = markdownLanguages.has(language) ? 'markdown' : 'code'
     const source = cleanGeneratedCellSource(match[2].trimEnd(), cellType)
-    if (source.trim()) {
-      cells.push(cellType === 'code' ? { cellType, source, language } : { cellType, source })
-    }
+    pushGeneratedNotebookCell(cells, cellType, source, language)
     lastIndex = fencePattern.lastIndex
   }
 
   const trailing = trimmed.slice(lastIndex).trim()
+  if (options.allowOpenFence) {
+    const openFence = trailing.match(/```([^\n`]*)\n([\s\S]*)$/)
+    if (openFence) {
+      const prose = trailing.slice(0, trailing.length - openFence[0].length).trim()
+      pushGeneratedNotebookCell(cells, 'markdown', prose)
+      const language = normalizeNotebookGenerationLanguage(openFence[1].trim() || defaultLanguage)
+      if (!language.startsWith('json') && !NOTEBOOK_CELLS_COMPLETION_DATA_TYPES.has(language)) {
+        const cellType = markdownLanguages.has(language) ? 'markdown' : 'code'
+        const source = cleanGeneratedCellSource(openFence[2].trimEnd(), cellType)
+        pushGeneratedNotebookCell(cells, cellType, source, language)
+      }
+      return cells
+    }
+  }
   if (trailing && cells.length > 0) {
-    cells.push({ cellType: 'markdown', source: trailing })
+    pushGeneratedNotebookCell(cells, 'markdown', trailing)
   }
   return cells
+}
+
+function pushGeneratedNotebookCell(
+  cells: AnalysisNotebookGeneratedCell[],
+  cellType: 'code' | 'markdown',
+  source: string,
+  language?: string
+): void {
+  if (!source.trim()) return
+  if (looksLikeIncompleteGeneratedCellSource(source, cellType)) return
+  cells.push(cellType === 'code' ? { cellType, source, language } : { cellType, source })
 }
 
 function notebookJsonCandidates(source: string): string[] {

@@ -104,6 +104,7 @@ import {
   saveProjectNotebook,
   type SaveProjectNotebookInput
 } from './agent/notebook/analysis-notebook-files'
+import { AnalysisNotebookFileWatcher } from './agent/notebook/analysis-notebook-watch'
 import { detectAnalysisKernels } from './agent/notebook/analysis-kernels'
 import { JupyterServerRegistry } from './agent/notebook/analysis-jupyter-server'
 import {
@@ -116,7 +117,8 @@ import {
   generatedNotebookCellsSource,
   notebookCellPromptContext,
   notebookGenerationEmptyResultMessage,
-  parseGeneratedNotebookCompletion
+  parseFinalGeneratedNotebookCompletion,
+  parseGeneratedNotebookCompletionSnapshot
 } from './agent/notebook/notebook-code-generation'
 import { AnalysisNotebookToolExecutor } from './agent/notebook/notebook-tool-executor'
 import { getOmpBridge } from './agent/omp/omp-bridge'
@@ -295,6 +297,7 @@ interface PromptRun {
 type AnalysisNotebookCodeGenerationInput = {
   prompt: string
   language: string
+  requestId?: string
   model?: {
     providerId: string
     modelId: string
@@ -329,6 +332,15 @@ type AnalysisNotebookCodeGenerationResult = {
   source: string
   language: string
   cells?: AnalysisNotebookGeneratedCell[]
+}
+
+type AnalysisNotebookCodeGenerationProgress = {
+  requestId: string
+  path: string
+  relativePath: string
+  source: string
+  language: string
+  cells: AnalysisNotebookGeneratedCell[]
 }
 
 const sessionLifecycles = new Map<string, SessionLifecycle<AgentSessionResult>>()
@@ -393,6 +405,9 @@ const notebookToolExecutor = new AnalysisNotebookToolExecutor({
   notebookSessionRegistry,
   notebookExecutor,
   onDraftChanged: notifyAnalysisNotebookDraftChanged
+})
+const notebookFileWatcher = new AnalysisNotebookFileWatcher({
+  onChange: notifyAnalysisNotebookFileChanged
 })
 getOmpBridge().registerHostHandler('notebookTool.execute', (params) =>
   notebookToolExecutor.execute(params as Parameters<typeof notebookToolExecutor.execute>[0])
@@ -700,6 +715,41 @@ function notebookCompletionCandidatesFromEventSummary(summary: Record<string, un
   candidates.push(...assistantMessagesFrom(summary.result))
 
   return candidates
+}
+
+type NotebookCompletionSelection = {
+  cells: AnalysisNotebookGeneratedCell[]
+  text: string
+  score: number
+}
+
+function notebookCompletionCandidateText(candidate: unknown): string {
+  return typeof candidate === 'string' ? candidate.trim() : extractAssistantText(candidate).trim()
+}
+
+function notebookCompletionCellsScore(cells: AnalysisNotebookGeneratedCell[]): number {
+  const sourceLength = generatedNotebookCellsSource(cells).trim().length
+  const codeCellCount = cells.filter((cell) => cell.cellType === 'code').length
+  return sourceLength + cells.length * 1000 + codeCellCount * 1500
+}
+
+function chooseNotebookCompletion(
+  candidates: unknown[],
+  language: string,
+  parseCompletion: (candidate: unknown, defaultLanguage: string) => AnalysisNotebookGeneratedCell[]
+): NotebookCompletionSelection | null {
+  let best: NotebookCompletionSelection | null = null
+  for (const candidate of candidates) {
+    const cells = parseCompletion(candidate, language)
+    if (cells.length === 0) continue
+
+    const text = notebookCompletionCandidateText(candidate)
+    const score = notebookCompletionCellsScore(cells)
+    if (!best || score > best.score || (score === best.score && text.length > best.text.length)) {
+      best = { cells, text, score }
+    }
+  }
+  return best
 }
 
 function extractAssistantThinkingBlocks(message: unknown): string[] {
@@ -1596,7 +1646,8 @@ async function generateAnalysisNotebookCode(
   cwd: string,
   notebookPath: string,
   document: NotebookDocument,
-  input: AnalysisNotebookCodeGenerationInput
+  input: AnalysisNotebookCodeGenerationInput,
+  onProgress?: (progress: AnalysisNotebookCodeGenerationProgress) => void
 ): Promise<AnalysisNotebookCodeGenerationResult> {
   const prompt = input.prompt.trim()
   if (!prompt) {
@@ -1632,6 +1683,27 @@ async function generateAnalysisNotebookCode(
   let eventAssistantText = ''
   let eventErrorMessage = ''
   const eventCompletionCandidates: unknown[] = []
+  let lastProgressSource = ''
+  const emitProgress = (): void => {
+    if (!input.requestId || !onProgress) return
+    const selectedCompletion = chooseNotebookCompletion(
+      [...eventCompletionCandidates, eventAssistantText.trim()],
+      language,
+      parseGeneratedNotebookCompletionSnapshot
+    )
+    if (!selectedCompletion || selectedCompletion.cells.length === 0) return
+    const source = generatedNotebookCellsSource(selectedCompletion.cells)
+    if (source === lastProgressSource) return
+    lastProgressSource = source
+    onProgress({
+      requestId: input.requestId,
+      path: file.path,
+      relativePath: file.relativePath,
+      source,
+      language,
+      cells: selectedCompletion.cells
+    })
+  }
   const { session } = await createAgentSession(
     {
       modelRuntime: runtime,
@@ -1645,6 +1717,7 @@ async function generateAnalysisNotebookCode(
       eventAssistantText = assistantTextFromEventSummary(summary, eventAssistantText)
       eventCompletionCandidates.push(...notebookCompletionCandidatesFromEventSummary(summary))
       eventErrorMessage = assistantErrorMessageFromEventSummary(summary) ?? eventErrorMessage
+      emitProgress()
     }
   )
 
@@ -1678,24 +1751,32 @@ async function generateAnalysisNotebookCode(
       eventAssistantText.trim(),
       lastAssistantMessage
     ]
-    let assistantText = eventAssistantText.trim()
-    let cells: ReturnType<typeof parseGeneratedNotebookCompletion> = []
-    for (const candidate of candidates) {
-      cells = parseGeneratedNotebookCompletion(candidate, language)
-      if (cells.length > 0) {
-        if (!assistantText && typeof candidate === 'string') assistantText = candidate
-        break
-      }
-      if (!assistantText && typeof candidate === 'string') assistantText = candidate
-    }
+    const selectedCompletion = chooseNotebookCompletion(
+      candidates,
+      language,
+      parseFinalGeneratedNotebookCompletion
+    )
+    let assistantText = selectedCompletion?.text || eventAssistantText.trim()
     assistantText ||= extractAssistantText(lastAssistantMessage).trim()
+    const cells = selectedCompletion?.cells ?? []
     if (cells.length === 0) {
       const emptyResultDiagnostic =
         assistantText ||
         '未收到模型返回文本或 data-notebook-cells-completion 结构化结果。请检查当前模型/供应商配置，或稍后重试。'
       throw new Error(notebookGenerationEmptyResultMessage(emptyResultDiagnostic))
     }
-    return { source: generatedNotebookCellsSource(cells), language, cells }
+    const source = generatedNotebookCellsSource(cells)
+    if (input.requestId && onProgress && source !== lastProgressSource) {
+      onProgress({
+        requestId: input.requestId,
+        path: file.path,
+        relativePath: file.relativePath,
+        source,
+        language,
+        cells
+      })
+    }
+    return { source, language, cells }
   } finally {
     await session.dispose()
   }
@@ -1731,6 +1812,14 @@ function notifyAnalysisNotebookDraftChanged(change: {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
       window.webContents.send('analysis:notebookDraftChanged', change)
+    }
+  }
+}
+
+function notifyAnalysisNotebookFileChanged(change: unknown): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send('analysis:notebookFileChanged', change)
     }
   }
 }
@@ -3487,7 +3576,7 @@ app.whenReady().then(() => {
       throw new Error('请选择一个已添加的项目')
     }
     assertProjectPathAvailable(project.workingDirectory)
-    const file = openProjectNotebook(project.workingDirectory, notebookPath)
+    const file = notebookFileWatcher.watch(project.workingDirectory, notebookPath)
     activeNotebookPathByProjectCwd.set(project.workingDirectory, file.path)
     notebookToolExecutor.syncDraft({
       cwd: project.workingDirectory,
@@ -3507,6 +3596,7 @@ app.whenReady().then(() => {
       }
       assertProjectPathAvailable(project.workingDirectory)
       const file = saveProjectNotebook(project.workingDirectory, input)
+      notebookFileWatcher.noteLocalWrite(project.workingDirectory, file)
       activeNotebookPathByProjectCwd.set(project.workingDirectory, file.path)
       notebookToolExecutor.syncDraft({
         cwd: project.workingDirectory,
@@ -3550,6 +3640,7 @@ app.whenReady().then(() => {
     }
     assertProjectPathAvailable(project.workingDirectory)
     const file = createProjectNotebook(project.workingDirectory, relativePath)
+    notebookFileWatcher.watchFile(project.workingDirectory, file)
     activeNotebookPathByProjectCwd.set(project.workingDirectory, file.path)
     return file
   })
@@ -3564,6 +3655,7 @@ app.whenReady().then(() => {
     if (activeNotebookPathByProjectCwd.get(project.workingDirectory) === file.path) {
       activeNotebookPathByProjectCwd.delete(project.workingDirectory)
     }
+    notebookFileWatcher.unwatchFile(project.workingDirectory, file)
     return closeProjectNotebook(project.workingDirectory, notebookPath)
   })
   ipcMain.handle('analysis:deleteNotebook', async (_, cwd: string, notebookPath: string) => {
@@ -3577,6 +3669,7 @@ app.whenReady().then(() => {
     if (activeNotebookPathByProjectCwd.get(project.workingDirectory) === file.path) {
       activeNotebookPathByProjectCwd.delete(project.workingDirectory)
     }
+    notebookFileWatcher.unwatchFile(project.workingDirectory, file)
     return deleteProjectNotebook(project.workingDirectory, notebookPath)
   })
   ipcMain.handle('analysis:listKernels', async (_, cwd?: string) => {
@@ -3623,6 +3716,7 @@ app.whenReady().then(() => {
     }
     assertProjectPathAvailable(project.workingDirectory)
     await notebookSessionRegistry.closeProject(project.workingDirectory)
+    notebookFileWatcher.unwatchProject(project.workingDirectory)
     return jupyterServerRegistry.stop(project.workingDirectory)
   })
   ipcMain.handle(
@@ -3671,12 +3765,15 @@ app.whenReady().then(() => {
   ipcMain.handle(
     'analysis:generateNotebookCode',
     async (
-      _,
+      event,
       cwd: string,
       notebookPath: string,
       document: NotebookDocument,
       input: AnalysisNotebookCodeGenerationInput
-    ) => generateAnalysisNotebookCode(cwd, notebookPath, document, input)
+    ) =>
+      generateAnalysisNotebookCode(cwd, notebookPath, document, input, (progress) => {
+        event.sender.send('analysis:notebookCodeGenerationProgress', progress)
+      })
   )
   ipcMain.handle(
     'analysis:executeNotebookCell',
@@ -3923,6 +4020,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   void stopAllPromptRuns()
+  notebookFileWatcher.dispose()
   jupyterServerRegistry.disposeAll()
   void invalidateAgentSession()
 })

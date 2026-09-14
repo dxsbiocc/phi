@@ -336,6 +336,9 @@ test('analysis view renders an opened notebook document', () => {
   assert.match(markup, /data-phi-notebook-markdown-edit-trigger="double-click"/)
   assert.match(markup, /data-phi-notebook-markdown-select-trigger="single-click"/)
   assert.match(markup, /data-phi-notebook-cell="marimo-like"/)
+  assert.equal(markup.match(/data-phi-notebook-cell-number=/g)?.length, 2)
+  assert.match(markup, /data-phi-notebook-cell-number="1"/)
+  assert.match(markup, /data-phi-notebook-cell-number="2"/)
   assert.match(markup, /data-phi-notebook-cell-surface="markdown-rendered"/)
   assert.match(markup, /data-phi-notebook-cell-surface="framed"/)
   assert.match(markup, /data-phi-notebook-cell-spacing="roomy"/)
@@ -475,6 +478,13 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     resolve(process.cwd(), 'src/renderer/src/features/analysis/notebook/NotebookAiPromptCell.tsx'),
     'utf8'
   )
+  const aiPreviewActionsSource = readFileSync(
+    resolve(
+      process.cwd(),
+      'src/renderer/src/features/analysis/notebook/NotebookAiPreviewActions.tsx'
+    ),
+    'utf8'
+  )
   const notebookCellSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/features/analysis/notebook/NotebookCell.tsx'),
     'utf8'
@@ -504,20 +514,34 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     resolve(process.cwd(), 'src/main/agent/notebook/notebook-code-generation.ts'),
     'utf8'
   )
+  const notebookAiPromptDraftSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/analysis/lib/notebookAiPromptDraft.ts'),
+    'utf8'
+  )
 
   assert.match(aiPromptSource, /data-phi-notebook-ai-prompt-cell="true"/)
+  assert.match(aiPromptSource, /data-phi-notebook-ai-mode=\{mode\}/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-context-menu="true"/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-context-menu-placement="above"/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-context-layout="compact-preview"/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-context-preview="true"/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-drag-handle="true"/)
+  assert.doesNotMatch(aiPromptSource, /function NotebookAiStagedCells\(/)
+  assert.doesNotMatch(aiPromptSource, /data-phi-notebook-ai-staged-cells="true"/)
+  assert.match(aiPreviewActionsSource, /data-phi-notebook-ai-preview-actions="true"/)
+  assert.match(aiPreviewActionsSource, /data-phi-notebook-ai-preview-accept="true"/)
+  assert.match(aiPreviewActionsSource, /data-phi-notebook-ai-preview-reject="true"/)
+  assert.match(aiPreviewActionsSource, /data-phi-notebook-ai-preview-generating="true"/)
+  assert.match(analysisSource, /notebookCellsWithAiPreview\(cells, aiPromptDraft/)
+  assert.match(analysisSource, /displayCells\.map/)
+  assert.match(analysisSource, /provisional=\{isAiPreviewCell\}/)
   assert.doesNotMatch(aiPromptSource, /data-phi-notebook-ai-generation-status="true"/)
   assert.doesNotMatch(aiPromptSource, /data-phi-notebook-ai-generation-model="true"/)
   assert.doesNotMatch(aiPromptSource, /data-phi-notebook-ai-generation-thinking="true"/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-model-selector="true"/)
   assert.match(aiPromptSource, /ModelSelectorControl/)
   assert.match(notebookCellSource, /application\/x-phi-notebook-ai-prompt/)
-  assert.match(analysisSource, /onMoveAiPrompt=\{onMoveAiPrompt\}/)
+  assert.match(analysisSource, /onMoveAiPrompt=\{isAiPreviewCell \? undefined : onMoveAiPrompt\}/)
   assert.match(analysisSource, /aiPromptDraft\?\.afterCellId === null/)
   assert.match(aiPromptSource, /function NotebookContextPreview\(/)
   assert.match(analysisSource, /buildNotebookAiContextOptions\(cells\)/)
@@ -564,6 +588,15 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(aiPromptSource, /moveActiveContextOption\(-1\)/)
   assert.match(aiPromptSource, /event\.key === 'Enter' \|\| event\.key === 'Tab'/)
   assert.match(aiPromptSource, /selectActiveContextOption\(\)/)
+  assert.match(aiPromptSource, /event\.key === 'Enter' &&/)
+  assert.match(aiPromptSource, /!event\.shiftKey/)
+  assert.match(aiPromptSource, /!event\.nativeEvent\.isComposing/)
+  assert.doesNotMatch(
+    aiPromptSource,
+    /\(event\.metaKey \|\| event\.ctrlKey\) && event\.key === 'Enter'/
+  )
+  assert.match(aiPromptSource, /hasStagedCells && !isGenerating[\s\S]*?onAccept\(\)/)
+  assert.match(aiPromptSource, /event\.key === 'Escape'[\s\S]*?onReject\(\)/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-context-option=\{option\.kind\}/)
   assert.match(analysisSource, /buildNotebookAiContextOptions\(cells\)/)
   assert.match(analysisSource, /references=\{aiPromptDraft\.references\}/)
@@ -594,9 +627,11 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(notebookCellSource, /const showEditor = editable && isEditing && isCellSelected/)
   assert.match(
     notebookCellSource,
-    /const showAccentShadow = showEditor \|\| isCellSelected \|\| agentHighlighted/
+    /const showAccentShadow = showEditor \|\| isCellSelected \|\| agentHighlighted \|\| provisional/
   )
   assert.match(notebookCellSource, /data-phi-notebook-cell-agent-highlighted/)
+  assert.match(notebookCellSource, /data-phi-notebook-cell-provisional/)
+  assert.match(notebookCellSource, /const showCellActions = !provisional/)
   assert.match(notebookCellSource, /notebookAccentSelectionShadow\(theme, cellAccent/)
   assert.match(
     notebookCellStylesSource,
@@ -610,7 +645,7 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(notebookCellSource, /if \(isCellSelected\) return alpha\(accentColor, 0\.72\)/)
   assert.match(
     notebookCellSource,
-    /const isCodeSelectionChromeOnly = isCodeCell && !agentHighlighted/
+    /const isCodeSelectionChromeOnly = isCodeCell && !agentHighlighted && !provisional/
   )
   assert.match(notebookCellSource, /if \(isCodeSelectionChromeOnly\) return 'transparent'/)
   assert.doesNotMatch(notebookCellSource, /isCodeSelectionChromeOnly\s+\? 'none'/)
@@ -630,9 +665,11 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(aiPromptSource, /data-phi-notebook-ai-accent="ai"/)
   assert.match(aiPromptSource, /notebookAccentBoxShadow\(theme, 'ai'\)/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-prompt-input="true"/)
-  assert.match(analysisSource, /notebookSiblingSpacingSelector = \[/)
+  assert.match(analysisSource, /notebookSiblingSpacingSelector =/)
   assert.match(analysisSource, /data-phi-notebook-cell\] \+ \[data-phi-notebook-ai-prompt-cell/)
   assert.match(analysisSource, /data-phi-notebook-ai-prompt-cell\] \+ \[data-phi-notebook-cell/)
+  assert.match(analysisSource, /data-phi-notebook-cell\] \+ \[data-phi-notebook-ai-preview-actions/)
+  assert.match(analysisSource, /data-phi-notebook-ai-preview-actions\] \+ \[data-phi-notebook-cell/)
   assert.match(floatingActionsSource, /const notebookFloatingActionInset = 28/)
   assert.match(floatingActionsSource, /data-phi-notebook-floating-actions-inset/)
   assert.match(floatingActionsSource, /data-phi-notebook-floating-actions-position="fixed"/)
@@ -644,8 +681,27 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(analysisSource, /pt: \{ xs: 3\.5, md: 3\.75 \}/)
   assert.match(analysisSource, /pb: 16/)
   assert.match(analysisSource, /onGenerateCode=\{openAiPrompt\}/)
+  assert.match(notebookAiPromptDraftSource, /function acceptStagedNotebookCell/)
+  assert.match(notebookAiPromptDraftSource, /function rejectStagedNotebookCell/)
+  assert.match(notebookAiPromptDraftSource, /function stageGeneratedNotebookCells/)
+  assert.match(notebookAiPromptDraftSource, /function contextReferenceForSelectedCell/)
+  assert.match(notebookAiPromptDraftSource, /function shouldIgnoreNotebookAiRefactorShortcut/)
+  assert.match(analysisSource, /handleNotebookAiRefactorShortcut/)
+  assert.match(analysisSource, /event\.key\.toLowerCase\(\) !== 'e'/)
+  assert.match(
+    analysisSource,
+    /openAiPrompt\(\{ mode: 'refactor', targetCellId: liveSelectedCellId \}\)/
+  )
+  assert.match(notebookAiPromptDraftSource, /mode: 'insert' \| 'refactor'/)
+  assert.match(notebookAiPromptDraftSource, /targetCellId: string \| null/)
+  assert.match(analysisSource, /mode=\{aiPromptDraft\.mode\}/)
   assert.match(analysisSource, /modelOptions=\{aiModelOptions \?\? \[\]\}/)
   assert.match(analysisSource, /selectedModel=\{aiPromptDraft\.model\}/)
+  assert.match(analysisSource, /hasStagedCells=\{aiPromptDraft\.stagedCells\.length > 0\}/)
+  assert.match(analysisSource, /const displayCells = useMemo/)
+  assert.match(analysisSource, /const aiPromptSurface = hasAiPreviewCells \? null : aiPromptCell/)
+  assert.match(analysisSource, /onNotebookCodeGenerationProgress/)
+  assert.match(analysisSource, /requestId: draft\.id/)
   assert.match(analysisSource, /onModelChange=\{updateAiPromptModel\}/)
   assert.match(analysisSource, /model: draft\.model/)
   assert.doesNotMatch(analysisSource, /generationStatus=\{/)
@@ -659,14 +715,33 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(appSource, /notebookAiDefaultModel=\{notebookAiDefaultModel\}/)
   assert.match(
     analysisSource,
-    /const afterCellId = liveSelectedCellId \?\? cells\.at\(-1\)\?\.id \?\? null/
+    /mode === 'refactor' \? targetCellId : \(liveSelectedCellId \?\? cells\.at\(-1\)\?\.id \?\? null\)/
   )
   assert.match(analysisSource, /setSelectedCellId\(null\)/)
   assert.match(analysisSource, /onSelect=\{\(\) => setSelectedCellId\(null\)\}/)
   assert.match(analysisSource, /references: draft\.references/)
   assert.match(analysisSource, /const generatedCells =/)
-  assert.match(analysisSource, /function insertGeneratedNotebookCells/)
-  assert.match(analysisSource, /const nextDocument = insertGeneratedNotebookCells/)
+  assert.match(analysisSource, /stageGeneratedNotebookCells\(draftDocument, draft/)
+  assert.match(analysisSource, /acceptStagedNotebookCell\(/)
+  assert.match(analysisSource, /rejectStagedNotebookCell\(current, previewId\)/)
+  assert.doesNotMatch(
+    analysisSource,
+    /insertGeneratedNotebookCells\(draftDocument, draft\.afterCellId/
+  )
+  assert.doesNotMatch(analysisSource, /replaceNotebookCellWithGeneratedCells/)
+  assert.match(analysisSource, /Return replacement notebook cell\(s\) for the selected cell only/)
+  const submitAiPromptStart = analysisSource.indexOf('const submitAiPrompt = async')
+  const acceptAiPromptStart = analysisSource.indexOf('const acceptAiPreviewCell = useCallback(')
+  assert.ok(submitAiPromptStart >= 0)
+  assert.ok(acceptAiPromptStart > submitAiPromptStart)
+  const submitAiPromptSource = analysisSource.slice(submitAiPromptStart, acceptAiPromptStart)
+  assert.doesNotMatch(submitAiPromptSource, /saveNotebookDocument\(nextDocument\)/)
+  assert.match(
+    analysisSource.slice(acceptAiPromptStart),
+    /await saveNotebookDocument\(nextDocument\)/
+  )
+  assert.match(analysisSource, /onAccept=\{\(\) => \{[\s\S]*?void acceptAiPreviewCell\(cell\.id\)/)
+  assert.match(analysisSource, /onReject=\{\(\) => rejectAiPreviewCell\(cell\.id\)\}/)
   assert.match(
     analysisSource,
     /await saveNotebookDocument\(nextDocument\)[\s\S]*?setDraftDocument\(nextDocument\)[\s\S]*?setAiPromptDraft/
@@ -674,6 +749,7 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.doesNotMatch(analysisSource, /const \[pendingAiInsertion, setPendingAiInsertion\]/)
   assert.doesNotMatch(aiPromptSource, /data-phi-notebook-ai-staged-insertion/)
   assert.doesNotMatch(aiPromptSource, /data-phi-notebook-ai-staged-message/)
+  assert.doesNotMatch(aiPromptSource, /data-phi-notebook-ai-staged-cells/)
   assert.doesNotMatch(analysisSource, /pendingGeneratedCells=/)
   assert.doesNotMatch(analysisSource, /confirmationMessage=\{/)
   assert.doesNotMatch(analysisSource, /onConfirmInsertion=/)
@@ -685,12 +761,13 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.doesNotMatch(analysisSource, /window\.confirm/)
   assert.doesNotMatch(analysisSource, /confirmCellInsertion/)
   assert.doesNotMatch(analysisSource, /notebookCellInsertionConfirmationMessage/)
-  assert.match(analysisSource, /for \(const cell of generatedCells\)/)
-  assert.match(analysisSource, /cellType: cell\.cellType/)
+  assert.match(notebookAiPromptDraftSource, /generatedCells\.map\(\(cell, index\) =>/)
+  assert.match(notebookAiPromptDraftSource, /previewId: generatedCellPreviewId\(draft\.id, index\)/)
   assert.match(analysisSource, /onGenerateNotebookCode\(notebookFile, draftDocument/)
-  assert.match(notebookCodeGenerationSource, /NotebookCellsCompletion schema/)
-  assert.match(notebookCodeGenerationSource, /marimo notebook completion pattern/)
-  assert.match(mainSource, /parseGeneratedNotebookCompletion/)
+  assert.match(notebookCodeGenerationSource, /NotebookCellsCompletion pattern/)
+  assert.match(notebookCodeGenerationSource, /Return exactly one JSON object/)
+  assert.match(notebookCodeGenerationSource, /Do not include prose outside JSON/)
+  assert.match(mainSource, /parseGeneratedNotebookCompletionSnapshot/)
   assert.match(mainSource, /buildNotebookCodeGenerationPrompt/)
   assert.match(
     mainSource,
@@ -701,14 +778,11 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     /thinkingLevel: project\.defaultThinkingLevel \?\? selectedThinkingLevel/
   )
   assert.match(notebookCodeGenerationSource, /notebookContextReferencePrompt\(input\.references\)/)
-  assert.match(
-    mainSource,
-    /return \{ source: generatedNotebookCellsSource\(cells\), language, cells \}/
-  )
-  assert.match(analysisSource, /onSelectCell=\{setSelectedCellId\}/)
+  assert.match(mainSource, /return \{ source, language, cells \}/)
+  assert.match(analysisSource, /onSelectCell=\{isAiPreviewCell \? undefined : setSelectedCellId\}/)
   assert.match(
     analysisSource,
-    /afterCellId = liveSelectedCellId \?\? cells\.at\(-1\)\?\.id \?\? null/
+    /mode === 'refactor' \? targetCellId : \(liveSelectedCellId \?\? cells\.at\(-1\)\?\.id \?\? null\)/
   )
   assert.doesNotMatch(analysisSource, /notebookAiGeneratedSource/)
   assert.match(analysisRuntimeSource, /const onGenerateAnalysisNotebookCode = useCallback/)
@@ -721,7 +795,10 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(analysisSource, /setAgentHighlightedCellId\(agentFocus\.cellId\)/)
   assert.match(analysisRuntimeSource, /generateAnalysisNotebookCode\(getActiveCwd\(\), file\.path/)
   assert.match(preloadSource, /ipcRenderer\.invoke\('analysis:generateNotebookCode'/)
+  assert.match(preloadSource, /analysis:notebookCodeGenerationProgress/)
   assert.match(mainSource, /ipcMain\.handle\(\s*'analysis:generateNotebookCode'/)
+  assert.match(mainSource, /analysis:notebookCodeGenerationProgress/)
+  assert.match(mainSource, /chooseNotebookCompletion/)
   assert.match(mainSource, /noTools: 'all'/)
 })
 
@@ -802,12 +879,44 @@ test('analysis view exposes detected kernels in the notebook header', () => {
   assert.match(headerSource, /kernelOptions\.map\(\(kernel\) =>/)
   assert.match(headerSource, /kernelOptionLabel\(kernel\)/)
 
-  // The runtime is always the app-managed Jupyter Server, so the leading
-  // icon next to the kernel picker should read as Jupyter's own icon, not a
-  // generic dot -- the busy/idle/error signal moves to a small corner badge
-  // (still carrying data-phi-notebook-kernel-status-dot, asserted above)
-  // instead of being the icon itself.
-  assert.match(markup, /data-phi-material-icon="jupyter"/)
+  assert.match(markup, /data-phi-notebook-kernel-icon="python"/)
+  assert.match(markup, /data-phi-material-icon="python"/)
+})
+
+test('analysis view uses the selected R kernel logo in the notebook header', () => {
+  const document = parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: {
+      kernelspec: { display_name: 'R', language: 'R', name: 'ir' },
+      language_info: { name: 'R' }
+    },
+    cells: [{ id: 'code', cell_type: 'code', execution_count: null, metadata: {}, outputs: [] }]
+  })
+  const markup = renderAnalysisView({
+    notebookFile: {
+      path: '/project/notebooks/r-analysis.ipynb',
+      relativePath: 'notebooks/r-analysis.ipynb',
+      name: 'r-analysis.ipynb',
+      bytes: 512,
+      modifiedAt: '2026-09-09T00:00:00.000Z',
+      savedRevision: document.revision,
+      document
+    },
+    kernelDiagnostics: {
+      jupyterServer: { available: true, command: 'jupyter', version: '2.14.0' },
+      kernels: [{ name: 'ir', displayName: 'R', language: 'r', rawLanguage: 'R' }],
+      preferredKernelName: 'ir',
+      hasPythonKernel: true,
+      hasRKernel: true,
+      messages: []
+    }
+  })
+
+  assert.match(markup, /data-phi-notebook-kernel-select="true"/)
+  assert.match(markup, /R \(ir\)/)
+  assert.match(markup, /data-phi-notebook-kernel-icon="r"/)
+  assert.match(markup, /data-phi-material-icon="r"/)
 })
 
 test('analysis view keeps kernel selection available while a notebook kernel is busy or starting', () => {
@@ -864,13 +973,21 @@ test('analysis view uses an in-app dialog before switching kernels', () => {
     resolve('src/renderer/src/features/analysis/notebook/NotebookCanvas.tsx'),
     'utf8'
   )
+  const kernelSwitchDialogSource = readFileSync(
+    resolve('src/renderer/src/features/analysis/notebook/NotebookKernelSwitchDialog.tsx'),
+    'utf8'
+  )
 
   assert.match(analysisSource, /const \[pendingKernelSwitch, setPendingKernelSwitch\]/)
-  assert.match(analysisSource, /data-phi-notebook-kernel-switch-dialog="true"/)
-  assert.match(analysisSource, /data-phi-notebook-kernel-switch-summary="true"/)
-  assert.match(analysisSource, /data-phi-notebook-kernel-switch-warning="true"/)
-  assert.match(analysisSource, /当前连接的 kernel 会被终止，正在运行的 cell 会停止。/)
-  assert.match(analysisSource, /Notebook 的 kernel metadata 会更新，并使用新的 kernel 启动会话。/)
+  assert.match(analysisSource, /<NotebookKernelSwitchDialog/)
+  assert.match(kernelSwitchDialogSource, /data-phi-notebook-kernel-switch-dialog="true"/)
+  assert.match(kernelSwitchDialogSource, /data-phi-notebook-kernel-switch-summary="true"/)
+  assert.match(kernelSwitchDialogSource, /data-phi-notebook-kernel-switch-warning="true"/)
+  assert.match(kernelSwitchDialogSource, /当前连接的 kernel 会被终止，正在运行的 cell 会停止。/)
+  assert.match(
+    kernelSwitchDialogSource,
+    /Notebook 的 kernel metadata 会更新，并使用新的 kernel 启动会话。/
+  )
   assert.doesNotMatch(analysisSource, /window\.confirm\(\s*notebookKernelSwitchConfirmationMessage/)
 })
 

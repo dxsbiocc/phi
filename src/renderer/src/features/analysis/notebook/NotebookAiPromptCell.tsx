@@ -38,6 +38,7 @@ const SendIcon = PhiIcons.action.send
 const MarkdownIcon = PhiIcons.file.markdown
 
 export type NotebookAiPromptCellProps = {
+  mode?: 'insert' | 'refactor'
   language: SyntaxLanguage
   codeLanguage: SyntaxLanguage
   prompt: string
@@ -46,6 +47,7 @@ export type NotebookAiPromptCellProps = {
   modelOptions: ModelOption[]
   selectedModel: ModelOption | null
   isGenerating: boolean
+  hasStagedCells?: boolean
   error?: string | null
   errorDetail?: string | null
   canPickContextFiles?: boolean
@@ -56,6 +58,8 @@ export type NotebookAiPromptCellProps = {
   onReferenceAdd: (reference: AnalysisNotebookContextReference) => void
   onPickContextFiles: () => void
   onSubmit: () => void
+  onAccept: () => void
+  onReject: () => void
   onCancel: () => void
   onDragStart: (event: DragEvent<HTMLButtonElement>) => void
 }
@@ -233,6 +237,7 @@ function NotebookContextPreview({
 }
 
 export default function NotebookAiPromptCell({
+  mode = 'insert',
   language,
   codeLanguage,
   prompt,
@@ -241,6 +246,7 @@ export default function NotebookAiPromptCell({
   modelOptions,
   selectedModel,
   isGenerating,
+  hasStagedCells = false,
   error,
   errorDetail,
   canPickContextFiles = true,
@@ -251,6 +257,8 @@ export default function NotebookAiPromptCell({
   onReferenceAdd,
   onPickContextFiles,
   onSubmit,
+  onAccept,
+  onReject,
   onCancel,
   onDragStart
 }: NotebookAiPromptCellProps): React.JSX.Element {
@@ -268,7 +276,13 @@ export default function NotebookAiPromptCell({
   const showErrorSummary = shouldShowAiErrorSummary(error, errorOutputText)
   const errorDisplay = errorOutputText ? getProviderErrorDisplay(errorOutputText) : null
   const canSubmit = prompt.trim().length > 0 && !isGenerating
-  const submitTooltip = isGenerating ? '正在生成代码' : canSubmit ? '生成代码' : '输入需求后生成'
+  const submitTooltip = isGenerating
+    ? '正在生成代码'
+    : hasStagedCells
+      ? '重新生成预览'
+      : canSubmit
+        ? '生成预览'
+        : '输入需求后生成'
   const promptCellRef = useRef<HTMLDivElement | null>(null)
   const contextOptionListRef = useRef<HTMLDivElement | null>(null)
   const contextOptionRefs = useRef(new Map<string, HTMLDivElement>())
@@ -342,6 +356,7 @@ export default function NotebookAiPromptCell({
       ref={promptCellRef}
       data-phi-notebook-ai-prompt-cell="true"
       data-phi-notebook-ai-accent="ai"
+      data-phi-notebook-ai-mode={mode}
       onPointerDown={onSelect}
       onFocusCapture={onSelect}
       sx={{
@@ -396,7 +411,11 @@ export default function NotebookAiPromptCell({
             minRows={2}
             value={prompt}
             disabled={isGenerating}
-            placeholder="Generate with AI, @ to include context"
+            placeholder={
+              mode === 'refactor'
+                ? 'Refactor selected cell with AI, @ to include context'
+                : 'Generate with AI, @ to include context'
+            }
             variant="standard"
             data-phi-notebook-ai-prompt-input="true"
             onChange={(event) => {
@@ -405,11 +424,6 @@ export default function NotebookAiPromptCell({
               setContextMenuOpen(/(?:^|\s)@$/.test(nextPrompt))
             }}
             onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-                event.preventDefault()
-                if (canSubmit) onSubmit()
-                return
-              }
               if (showContextMenu && contextOptions.length > 0) {
                 if (event.key === 'ArrowDown') {
                   event.preventDefault()
@@ -427,8 +441,21 @@ export default function NotebookAiPromptCell({
                   return
                 }
               }
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                if (hasStagedCells && !isGenerating) {
+                  onAccept()
+                } else if (canSubmit) {
+                  onSubmit()
+                }
+                return
+              }
               if (event.key === 'Escape') {
-                setContextMenuOpen(false)
+                if (showContextMenu) {
+                  setContextMenuOpen(false)
+                } else if (hasStagedCells && !isGenerating) {
+                  onReject()
+                }
               }
             }}
             slotProps={{

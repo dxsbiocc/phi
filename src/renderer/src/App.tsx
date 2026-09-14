@@ -84,6 +84,7 @@ import { createAgentEventReducerState, reduceAgentEventState } from './lib/agent
 import { navigationPaneWidth } from './layout'
 import type {
   AgentEventSummary,
+  AnalysisNotebookFileChange,
   ModelOption,
   PermissionMode,
   Project,
@@ -625,7 +626,8 @@ function App(): React.JSX.Element {
     onGenerateAnalysisNotebookCode,
     closeActiveNotebook,
     resetAnalysisJupyterRuntimeForCwdChange,
-    handleNotebookDraftChanged
+    handleNotebookDraftChanged,
+    handleNotebookFileChanged
   } = useAnalysisNotebookRuntime({
     rendererApi,
     getActiveCwd,
@@ -633,6 +635,45 @@ function App(): React.JSX.Element {
     showSnackbar,
     onNavigateToNotebookView
   })
+
+  const handleNotebookFileChangedEvent = useCallback(
+    (change: AnalysisNotebookFileChange): void => {
+      handleNotebookFileChanged(change)
+      if (change.type === 'changed') {
+        setWorkspaceFileTabs((tabs) =>
+          tabs.map((tab) =>
+            tab.path === change.path || tab.path === change.file.path
+              ? {
+                  ...tab,
+                  id: change.file.path,
+                  path: change.file.path,
+                  name: change.file.name,
+                  status: change.file.relativePath,
+                  absolutePath: change.file.path
+                }
+              : tab
+          )
+        )
+        if (activeWorkspaceFilePath === change.path) {
+          setActiveWorkspaceFilePath(change.file.path)
+        }
+        return
+      }
+
+      if (change.type === 'deleted') {
+        setWorkspaceFileTabs((tabs) => tabs.filter((tab) => tab.path !== change.path))
+        if (activeWorkspaceFilePath === change.path) {
+          setActiveWorkspaceFilePath(null)
+        }
+      }
+    },
+    [
+      activeWorkspaceFilePath,
+      handleNotebookFileChanged,
+      setActiveWorkspaceFilePath,
+      setWorkspaceFileTabs
+    ]
+  )
 
   const refreshCurrentModelControls = useCallback(
     async (request = sessionRequestRef.current): Promise<void> => {
@@ -1101,6 +1142,9 @@ function App(): React.JSX.Element {
     const unsubscribeNotebookDraftChanged = rendererApi.onAnalysisNotebookDraftChanged(
       handleNotebookDraftChanged
     )
+    const unsubscribeNotebookFileChanged = rendererApi.onAnalysisNotebookFileChanged(
+      handleNotebookFileChangedEvent
+    )
 
     const unsubscribeSessionChanged = rendererApi.onSessionChanged((session) => {
       applyCurrentSession(session, undefined, {
@@ -1118,6 +1162,7 @@ function App(): React.JSX.Element {
       unsubscribeToolApproval()
       unsubscribeToolApprovalCancelled()
       unsubscribeNotebookDraftChanged()
+      unsubscribeNotebookFileChanged()
       unsubscribeSessionChanged()
       cancelScheduledSessionRefresh()
     }
@@ -1127,6 +1172,7 @@ function App(): React.JSX.Element {
     cancelScheduledSessionRefresh,
     handleAuthInteractionEvent,
     handleNotebookDraftChanged,
+    handleNotebookFileChangedEvent,
     projectsRef,
     refreshProjects,
     rendererApi,
@@ -2012,6 +2058,9 @@ function App(): React.JSX.Element {
                     void onRunAnalysisNotebookCell(file, document, cellId)
                   }}
                   onGenerateNotebookCode={onGenerateAnalysisNotebookCode}
+                  onNotebookCodeGenerationProgress={
+                    rendererApi.onAnalysisNotebookCodeGenerationProgress
+                  }
                   notebookAiModelOptions={availableModels}
                   notebookAiDefaultModel={notebookAiDefaultModel}
                   onPickNotebookContextFiles={onPickInputFiles}

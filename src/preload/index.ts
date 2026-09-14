@@ -364,6 +364,28 @@ type AnalysisNotebookDraftChange = {
   focusCellId?: string
 }
 
+type AnalysisNotebookFileChange =
+  | {
+      type: 'changed'
+      projectCwd: string
+      path: string
+      relativePath: string
+      file: AnalysisNotebookFile
+    }
+  | {
+      type: 'deleted'
+      projectCwd: string
+      path: string
+      relativePath: string
+    }
+  | {
+      type: 'error'
+      projectCwd: string
+      path: string
+      relativePath: string
+      message: string
+    }
+
 type SaveAnalysisNotebookInput = {
   path: string
   document: Record<string, unknown>
@@ -437,6 +459,7 @@ type AnalysisCellExecutionResult = {
 type AnalysisNotebookCodeGenerationInput = {
   prompt: string
   language: string
+  requestId?: string
   model?: {
     providerId: string
     modelId: string
@@ -469,6 +492,15 @@ type AnalysisNotebookCodeGenerationResult = {
   source: string
   language: string
   cells?: AnalysisNotebookGeneratedCell[]
+}
+
+type AnalysisNotebookCodeGenerationProgress = {
+  requestId: string
+  path: string
+  relativePath: string
+  source: string
+  language: string
+  cells: AnalysisNotebookGeneratedCell[]
 }
 
 type RendererAuthApi = {
@@ -596,8 +628,12 @@ type RendererAuthApi = {
     document: Record<string, unknown>,
     input: AnalysisNotebookCodeGenerationInput
   ) => Promise<AnalysisNotebookCodeGenerationResult>
+  onAnalysisNotebookCodeGenerationProgress: (
+    cb: (progress: AnalysisNotebookCodeGenerationProgress) => void
+  ) => Unsubscribe
   stopGeneration: () => Promise<void>
   onAnalysisNotebookDraftChanged: (cb: (change: AnalysisNotebookDraftChange) => void) => Unsubscribe
+  onAnalysisNotebookFileChanged: (cb: (change: AnalysisNotebookFileChange) => void) => Unsubscribe
   onSessionChanged: (cb: (session: CurrentSession) => void) => Unsubscribe
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => Unsubscribe
   onToolApprovalCancelled: (cb: () => void) => Unsubscribe
@@ -804,6 +840,19 @@ const api: RendererAuthApi = {
     input: AnalysisNotebookCodeGenerationInput
   ): Promise<AnalysisNotebookCodeGenerationResult> =>
     ipcRenderer.invoke('analysis:generateNotebookCode', cwd, path, document, input),
+  onAnalysisNotebookCodeGenerationProgress: (
+    cb: (progress: AnalysisNotebookCodeGenerationProgress) => void
+  ): Unsubscribe => {
+    const handler = (_: unknown, progress: AnalysisNotebookCodeGenerationProgress): void => {
+      cb(progress)
+    }
+
+    ipcRenderer.on('analysis:notebookCodeGenerationProgress', handler)
+
+    return () => {
+      ipcRenderer.removeListener('analysis:notebookCodeGenerationProgress', handler)
+    }
+  },
   stopGeneration: (): Promise<void> => ipcRenderer.invoke('agent:stop'),
   onAnalysisNotebookDraftChanged: (
     cb: (change: AnalysisNotebookDraftChange) => void
@@ -816,6 +865,19 @@ const api: RendererAuthApi = {
 
     return () => {
       ipcRenderer.removeListener('analysis:notebookDraftChanged', handler)
+    }
+  },
+  onAnalysisNotebookFileChanged: (
+    cb: (change: AnalysisNotebookFileChange) => void
+  ): Unsubscribe => {
+    const handler = (_: unknown, change: AnalysisNotebookFileChange): void => {
+      cb(change)
+    }
+
+    ipcRenderer.on('analysis:notebookFileChanged', handler)
+
+    return () => {
+      ipcRenderer.removeListener('analysis:notebookFileChanged', handler)
     }
   },
   onSessionChanged: (cb: (session: CurrentSession) => void): Unsubscribe => {

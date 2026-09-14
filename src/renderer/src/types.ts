@@ -435,9 +435,32 @@ export interface AnalysisNotebookDraftChange {
   focusCellId?: string
 }
 
+export type AnalysisNotebookFileChange =
+  | {
+      type: 'changed'
+      projectCwd: string
+      path: string
+      relativePath: string
+      file: AnalysisNotebookFile
+    }
+  | {
+      type: 'deleted'
+      projectCwd: string
+      path: string
+      relativePath: string
+    }
+  | {
+      type: 'error'
+      projectCwd: string
+      path: string
+      relativePath: string
+      message: string
+    }
+
 export interface AnalysisNotebookCodeGenerationInput {
   prompt: string
   language: string
+  requestId?: string
   model?: {
     providerId: string
     modelId: string
@@ -475,6 +498,15 @@ export interface AnalysisNotebookCodeGenerationResult {
   source: string
   language: string
   cells?: AnalysisNotebookGeneratedCell[]
+}
+
+export interface AnalysisNotebookCodeGenerationProgress {
+  requestId: string
+  path: string
+  relativePath: string
+  source: string
+  language: string
+  cells: AnalysisNotebookGeneratedCell[]
 }
 
 export interface SaveAnalysisNotebookInput {
@@ -683,7 +715,11 @@ export type RendererApi = {
     document: NotebookDocument,
     input: AnalysisNotebookCodeGenerationInput
   ) => Promise<AnalysisNotebookCodeGenerationResult>
+  onAnalysisNotebookCodeGenerationProgress: (
+    cb: (progress: AnalysisNotebookCodeGenerationProgress) => void
+  ) => () => void
   onAnalysisNotebookDraftChanged: (cb: (change: AnalysisNotebookDraftChange) => void) => () => void
+  onAnalysisNotebookFileChanged: (cb: (change: AnalysisNotebookFileChange) => void) => () => void
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => () => void
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => () => void

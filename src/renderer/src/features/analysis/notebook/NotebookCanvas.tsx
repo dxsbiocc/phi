@@ -1,28 +1,19 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type DragEvent,
-  type ReactNode
-} from 'react'
-import {
-  Box,
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Stack,
-  Typography
-} from '@mui/material'
-import { alpha } from '@mui/material/styles'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { Box, Typography } from '@mui/material'
 
-import { PhiIcons } from '../../../icons'
 import type { SyntaxLanguage } from '../../../lib/syntaxHighlight'
 import { hasLiveNotebookSession, isNotebookSessionRunnable } from '../lib/notebookSession'
+import {
+  acceptStagedNotebookCell,
+  contextReferenceForSelectedCell,
+  isNotebookAiPreviewCell,
+  notebookCellsWithAiPreview,
+  rejectStagedNotebookCell,
+  shouldIgnoreNotebookAiRefactorShortcut,
+  stageGeneratedNotebookCells,
+  type NotebookAiPromptDraft
+} from '../lib/notebookAiPromptDraft'
+import type { NotebookCanvasProps, PendingKernelSwitch } from '../lib/notebookCanvasTypes'
 import { notebookAiEmptyGenerationMessage, notebookAiPromptError } from '../lib/notebookAiErrors'
 import { notebookAiGeneratedCellsFromResult } from '../lib/notebookAiGenerationResult'
 import { useNotebookAutoConnect } from '../lib/useNotebookAutoConnect'
@@ -49,80 +40,24 @@ import {
   notebookSessionStateLabel,
   notebookSyntaxLanguage,
   withNotebookKernel,
-  type NotebookListEntry,
   type NotebookOutlineItem
 } from '../lib/notebookViewModel'
-import type {
-  AnalysisNotebookContextReference,
-  AnalysisNotebookCodeGenerationInput,
-  AnalysisNotebookCodeGenerationResult,
-  AnalysisNotebookGeneratedCell,
-  AnalysisKernelDiagnostics,
-  AnalysisNotebookFile,
-  AnalysisNotebookSessionStatus,
-  ModelOption
-} from '../../../types'
+import type { AnalysisNotebookContextReference, ModelOption } from '../../../types'
 import { NotebookHeader } from '../components/NotebookHeader'
 import NotebookAiPromptCell from './NotebookAiPromptCell'
+import NotebookAiPreviewActions from './NotebookAiPreviewActions'
 import NotebookCell, { type CellPlacement } from './NotebookCell'
 import NotebookFloatingActions, {
   notebookFloatingActionInset,
   type NotebookFloatingActionAnchor
 } from './NotebookFloatingActions'
 import NotebookInsertDock from './NotebookInsertDock'
+import NotebookKernelSwitchDialog from './NotebookKernelSwitchDialog'
 import NotebookScrollProgressRail from './NotebookScrollProgressRail'
 
-export type AnalysisNotebookAgentFocus = {
-  requestId: string
-  path: string
-  relativePath: string
-  cellId: string
-  changeKind?: 'synced' | 'inserted' | 'updated' | 'deleted' | 'executed' | 'saved'
-}
-type NotebookAiPromptDraft = {
-  id: string
-  afterCellId: string | null
-  prompt: string
-  language: SyntaxLanguage
-  model: ModelOption | null
-  references: AnalysisNotebookContextReference[]
-  isGenerating: boolean
-  error: string | null
-  errorDetail: string | null
-}
-type PendingKernelSwitch = {
-  file: AnalysisNotebookFile
-  currentKernelLabel: string
-  nextKernelLabel: string
-  hasCurrentLiveSession: boolean
-  nextDocument: NotebookDocument
-  nextAutoConnectKey: string
-}
-const NotebookIcon = PhiIcons.file.jupyter
+const notebookSiblingSpacingSelector =
+  '& > [data-phi-notebook-cell] + [data-phi-notebook-cell], & > [data-phi-notebook-cell] + [data-phi-notebook-ai-prompt-cell], & > [data-phi-notebook-ai-prompt-cell] + [data-phi-notebook-cell], & > [data-phi-notebook-cell] + [data-phi-notebook-ai-preview-actions], & > [data-phi-notebook-ai-preview-actions] + [data-phi-notebook-cell], & > [data-phi-notebook-ai-preview-actions] + [data-phi-notebook-ai-prompt-cell]'
 
-function insertGeneratedNotebookCells(
-  document: NotebookDocument,
-  afterCellId: string | null,
-  generatedCells: AnalysisNotebookGeneratedCell[]
-): NotebookDocument {
-  const afterIndex = afterCellId ? document.cells.findIndex((cell) => cell.id === afterCellId) : -1
-  let insertIndex = afterIndex >= 0 ? afterIndex + 1 : document.cells.length
-  let nextDocument = document
-  for (const cell of generatedCells) {
-    nextDocument = insertNotebookCell(nextDocument, insertIndex, {
-      cellType: cell.cellType,
-      source: cell.source
-    })
-    insertIndex += 1
-  }
-  return nextDocument
-}
-
-const notebookSiblingSpacingSelector = [
-  '& > [data-phi-notebook-cell] + [data-phi-notebook-cell]',
-  '& > [data-phi-notebook-cell] + [data-phi-notebook-ai-prompt-cell]',
-  '& > [data-phi-notebook-ai-prompt-cell] + [data-phi-notebook-cell]'
-].join(', ')
 export default function NotebookCanvas({
   activeNotebookPath,
   notebooks,
@@ -144,6 +79,7 @@ export default function NotebookCanvas({
   onStopNotebookSession,
   onRunNotebookCell,
   onGenerateNotebookCode,
+  onNotebookCodeGenerationProgress,
   aiModelOptions,
   aiDefaultModel,
   onPickContextFiles,
@@ -151,46 +87,7 @@ export default function NotebookCanvas({
   onCloseNotebook,
   agentFocus,
   topRightControls
-}: {
-  activeNotebookPath: string
-  notebooks: NotebookListEntry[]
-  notebookFile?: AnalysisNotebookFile | null
-  initialDocument: NotebookDocument | null
-  isOpening?: boolean
-  error?: string | null
-  kernelDiagnostics?: AnalysisKernelDiagnostics | null
-  isLoadingKernels?: boolean
-  kernelError?: string | null
-  notebookSessionStatus?: AnalysisNotebookSessionStatus | null
-  isStartingNotebookSession?: boolean
-  notebookSessionError?: string | null
-  executingCellId?: string | null
-  cellExecutionError?: string | null
-  onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void | Promise<void>
-  onSyncNotebookDraft?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
-  onStartNotebookSession?: (
-    file: AnalysisNotebookFile,
-    document: NotebookDocument
-  ) => void | Promise<void>
-  onStopNotebookSession?: (file: AnalysisNotebookFile) => void | Promise<void>
-  onRunNotebookCell?: (
-    file: AnalysisNotebookFile,
-    document: NotebookDocument,
-    cellId: string
-  ) => void
-  onGenerateNotebookCode?: (
-    file: AnalysisNotebookFile,
-    document: NotebookDocument,
-    input: AnalysisNotebookCodeGenerationInput
-  ) => Promise<AnalysisNotebookCodeGenerationResult>
-  aiModelOptions?: ModelOption[]
-  aiDefaultModel?: ModelOption | null
-  onPickContextFiles?: () => Promise<string[]>
-  onSelectNotebook?: (notebook: NotebookListEntry) => void
-  onCloseNotebook?: (notebook: NotebookListEntry) => void
-  agentFocus?: AnalysisNotebookAgentFocus | null
-  topRightControls?: ReactNode
-}): React.JSX.Element {
+}: NotebookCanvasProps): React.JSX.Element {
   const [draftDocument, setDraftDocument] = useState<NotebookDocument | null>(initialDocument)
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null)
   const [agentHighlightedCellId, setAgentHighlightedCellId] = useState<string | null>(null)
@@ -207,7 +104,12 @@ export default function NotebookCanvas({
     [draftDocument, executingCellId]
   )
   const aiContextOptions = useMemo(() => buildNotebookAiContextOptions(cells), [cells])
-  const outline = useMemo(() => notebookOutline(cells), [cells])
+  const insertCodeLanguage = draftDocument ? notebookSyntaxLanguage(draftDocument) : 'plain'
+  const displayCells = useMemo(
+    () => notebookCellsWithAiPreview(cells, aiPromptDraft, insertCodeLanguage),
+    [aiPromptDraft, cells, insertCodeLanguage]
+  )
+  const outline = useMemo(() => notebookOutline(displayCells), [displayCells])
   const [activeOutlineId, setActiveOutlineId] = useState<string | null>(outline[0]?.id ?? null)
 
   const findOutlineCellElement = useCallback((cellId: string): HTMLElement | null => {
@@ -301,6 +203,35 @@ export default function NotebookCanvas({
   }, [initialDocument])
 
   useEffect(() => {
+    if (!onNotebookCodeGenerationProgress) return undefined
+    return onNotebookCodeGenerationProgress((progress) => {
+      setAiPromptDraft((draft) => {
+        if (
+          !draft ||
+          !draftDocument ||
+          draft.id !== progress.requestId ||
+          progress.cells.length === 0
+        ) {
+          return draft
+        }
+        if (
+          notebookFile &&
+          progress.path !== notebookFile.path &&
+          progress.relativePath !== notebookFile.relativePath
+        ) {
+          return draft
+        }
+        return {
+          ...draft,
+          stagedCells: stageGeneratedNotebookCells(draftDocument, draft, progress.cells),
+          error: null,
+          errorDetail: null
+        }
+      })
+    })
+  }, [draftDocument, notebookFile, onNotebookCodeGenerationProgress])
+
+  useEffect(() => {
     if (!notebookFile || !draftDocument || !onSyncNotebookDraft) return
     const timeout = window.setTimeout(() => {
       onSyncNotebookDraft(notebookFile, draftDocument)
@@ -326,7 +257,7 @@ export default function NotebookCanvas({
       resizeObserver?.disconnect()
       window.removeEventListener('resize', updateActiveOutline)
     }
-  }, [draftDocument?.revision, cells.length, outline.length, updateActiveOutline])
+  }, [draftDocument?.revision, displayCells.length, outline.length, updateActiveOutline])
 
   useEffect(() => {
     const updateFloatingActionAnchor = (): void => {
@@ -364,7 +295,6 @@ export default function NotebookCanvas({
     }
   }, [])
 
-  const insertCodeLanguage = draftDocument ? notebookSyntaxLanguage(draftDocument) : 'plain'
   const canRunCells = Boolean(
     notebookFile && draftDocument && onRunNotebookCell && !executingCellId
   )
@@ -404,11 +334,14 @@ export default function NotebookCanvas({
   const isDirty = Boolean(
     notebookFile && draftDocument && draftDocument.revision !== notebookFile.savedRevision
   )
-  const saveNotebookDocument = async (document: NotebookDocument): Promise<void> => {
-    if (notebookFile && onSaveNotebook) {
-      await onSaveNotebook(notebookFile, document)
-    }
-  }
+  const saveNotebookDocument = useCallback(
+    async (document: NotebookDocument): Promise<void> => {
+      if (notebookFile && onSaveNotebook) {
+        await onSaveNotebook(notebookFile, document)
+      }
+    },
+    [notebookFile, onSaveNotebook]
+  )
   const onUpdateCellSource = (cellId: string, source: string): void => {
     setDraftDocument((document) =>
       document ? updateNotebookCell(document, cellId, { source }) : document
@@ -433,31 +366,83 @@ export default function NotebookCanvas({
     setDraftDocument(nextDocument)
     await saveNotebookDocument(nextDocument)
   }
-  const openAiPrompt = (): void => {
-    const liveSelectedCellId =
-      selectedCellId && cells.some((cell) => cell.id === selectedCellId) ? selectedCellId : null
-    const afterCellId = liveSelectedCellId ?? cells.at(-1)?.id ?? null
-    setSelectedCellId(null)
-    setAiPromptDraft({
-      id: `phi-ai-${Date.now()}`,
-      afterCellId,
-      prompt: '',
-      language: insertCodeLanguage,
-      model: aiDefaultModel ?? null,
-      references: [],
-      isGenerating: false,
-      error: null,
-      errorDetail: null
-    })
-  }
+  const openAiPrompt = useCallback(
+    (options: { mode?: 'insert' | 'refactor'; targetCellId?: string | null } = {}): void => {
+      const mode = options.mode ?? 'insert'
+      const requestedTargetCellId = options.targetCellId ?? null
+      const targetIndex = requestedTargetCellId
+        ? cells.findIndex((cell) => cell.id === requestedTargetCellId)
+        : -1
+      const targetCell = targetIndex >= 0 ? cells[targetIndex] : null
+      if (mode === 'refactor' && !targetCell) return
+      const targetCellId = mode === 'refactor' ? (targetCell?.id ?? null) : null
+
+      const liveSelectedCellId =
+        selectedCellId && cells.some((cell) => cell.id === selectedCellId) ? selectedCellId : null
+      const afterCellId =
+        mode === 'refactor' ? targetCellId : (liveSelectedCellId ?? cells.at(-1)?.id ?? null)
+      const targetLanguage =
+        mode === 'refactor' && targetCell?.type === 'markdown' ? 'markdown' : insertCodeLanguage
+      const references =
+        mode === 'refactor' && targetCell
+          ? [contextReferenceForSelectedCell(targetCell, targetIndex)]
+          : []
+
+      setSelectedCellId(null)
+      setAiPromptDraft({
+        id: `phi-ai-${Date.now()}`,
+        mode,
+        afterCellId,
+        targetCellId,
+        prompt: '',
+        language: targetLanguage,
+        model: aiDefaultModel ?? null,
+        references,
+        stagedCells: [],
+        isGenerating: false,
+        error: null,
+        errorDetail: null
+      })
+    },
+    [aiDefaultModel, cells, insertCodeLanguage, selectedCellId]
+  )
+  useEffect(() => {
+    const handleNotebookAiRefactorShortcut = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== 'e') {
+        return
+      }
+      if (!draftDocument || !notebookFile || isOpening || aiPromptDraft?.isGenerating) return
+      if (shouldIgnoreNotebookAiRefactorShortcut(event.target)) return
+      const liveSelectedCellId =
+        selectedCellId && cells.some((cell) => cell.id === selectedCellId) ? selectedCellId : null
+      if (!liveSelectedCellId) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      openAiPrompt({ mode: 'refactor', targetCellId: liveSelectedCellId })
+    }
+
+    document.addEventListener('keydown', handleNotebookAiRefactorShortcut, true)
+    return () => {
+      document.removeEventListener('keydown', handleNotebookAiRefactorShortcut, true)
+    }
+  }, [
+    aiPromptDraft?.isGenerating,
+    cells,
+    draftDocument,
+    isOpening,
+    notebookFile,
+    openAiPrompt,
+    selectedCellId
+  ])
   const updateAiPrompt = (prompt: string): void => {
     setAiPromptDraft((draft) =>
-      draft ? { ...draft, prompt, error: null, errorDetail: null } : draft
+      draft ? { ...draft, prompt, stagedCells: [], error: null, errorDetail: null } : draft
     )
   }
   const updateAiPromptLanguage = (language: SyntaxLanguage): void => {
     setAiPromptDraft((draft) =>
-      draft ? { ...draft, language, error: null, errorDetail: null } : draft
+      draft ? { ...draft, language, stagedCells: [], error: null, errorDetail: null } : draft
     )
   }
   const updateAiPromptModel = (model: ModelOption | null): void => {
@@ -466,6 +451,7 @@ export default function NotebookCanvas({
         ? {
             ...draft,
             model,
+            stagedCells: [],
             error: null,
             errorDetail: null
           }
@@ -485,7 +471,7 @@ export default function NotebookCanvas({
             (match) => `${match.startsWith(' ') ? ' ' : ''}${token} `
           )
         : `${draft.prompt}${draft.prompt.endsWith(' ') || draft.prompt.length === 0 ? '' : ' '}${token} `
-      return { ...draft, references, prompt, error: null, errorDetail: null }
+      return { ...draft, references, prompt, stagedCells: [], error: null, errorDetail: null }
     })
   }
   const pickAiPromptContextFiles = async (): Promise<void> => {
@@ -518,14 +504,24 @@ export default function NotebookCanvas({
 
     setAiPromptDraft((current) =>
       current?.id === draft.id
-        ? { ...current, isGenerating: true, error: null, errorDetail: null }
+        ? { ...current, isGenerating: true, stagedCells: [], error: null, errorDetail: null }
         : current
     )
 
     try {
+      const prompt =
+        draft.mode === 'refactor'
+          ? [
+              'Refactor the selected notebook cell according to the user request.',
+              'Return replacement notebook cell(s) for the selected cell only.',
+              '',
+              `User request: ${draft.prompt.trim()}`
+            ].join('\n')
+          : draft.prompt.trim()
       const result = await onGenerateNotebookCode(notebookFile, draftDocument, {
-        prompt: draft.prompt.trim(),
+        prompt,
         language: draft.language,
+        requestId: draft.id,
         model: draft.model
           ? { providerId: draft.model.providerId, modelId: draft.model.modelId }
           : undefined,
@@ -537,23 +533,63 @@ export default function NotebookCanvas({
         throw new Error(notebookAiEmptyGenerationMessage)
       }
 
-      const nextDocument = insertGeneratedNotebookCells(
-        draftDocument,
-        draft.afterCellId,
-        generatedCells
+      setAiPromptDraft((current) =>
+        current?.id === draft.id
+          ? {
+              ...current,
+              isGenerating: false,
+              stagedCells: stageGeneratedNotebookCells(draftDocument, draft, generatedCells),
+              error: null,
+              errorDetail: null
+            }
+          : current
       )
-      await saveNotebookDocument(nextDocument)
-      setDraftDocument(nextDocument)
-      setAiPromptDraft((current) => (current?.id === draft.id ? null : current))
     } catch (error) {
       const { message, detail } = notebookAiPromptError(error)
       setAiPromptDraft((current) =>
         current?.id === draft.id
-          ? { ...current, isGenerating: false, error: message, errorDetail: detail }
+          ? {
+              ...current,
+              isGenerating: false,
+              stagedCells: [],
+              error: message,
+              errorDetail: detail
+            }
           : current
       )
     }
   }
+  const acceptAiPreviewCell = useCallback(
+    async (previewId: string): Promise<void> => {
+      const draft = aiPromptDraft
+      if (!draft || draft.isGenerating || !draftDocument || draft.stagedCells.length === 0) return
+
+      const { document: nextDocument, draft: nextDraft } = acceptStagedNotebookCell(
+        draftDocument,
+        draft,
+        previewId
+      )
+      await saveNotebookDocument(nextDocument)
+      setDraftDocument(nextDocument)
+      setAiPromptDraft((current) => (current?.id === draft.id ? nextDraft : current))
+    },
+    [aiPromptDraft, draftDocument, saveNotebookDocument]
+  )
+  const acceptFirstAiPreviewCell = useCallback(async (): Promise<void> => {
+    const previewId = aiPromptDraft?.stagedCells[0]?.previewId
+    if (previewId) {
+      await acceptAiPreviewCell(previewId)
+    }
+  }, [acceptAiPreviewCell, aiPromptDraft?.stagedCells])
+  const rejectAiPreviewCell = useCallback((previewId: string): void => {
+    setAiPromptDraft((current) => {
+      if (!current || current.isGenerating) return current
+      return rejectStagedNotebookCell(current, previewId)
+    })
+  }, [])
+  const rejectAiPrompt = useCallback((): void => {
+    setAiPromptDraft(null)
+  }, [])
   const onAppendCell = async (
     cellType: Extract<NotebookCellType, 'code' | 'markdown'>
   ): Promise<void> => {
@@ -607,6 +643,7 @@ export default function NotebookCanvas({
 
     setAiPromptDraft((current) => {
       if (!current) return current
+      if (current.mode === 'refactor') return current
       return current.afterCellId === afterCellId ? current : { ...current, afterCellId }
     })
   }
@@ -665,6 +702,7 @@ export default function NotebookCanvas({
   }
   const aiPromptCell = aiPromptDraft ? (
     <NotebookAiPromptCell
+      mode={aiPromptDraft.mode}
       language={aiPromptDraft.language}
       codeLanguage={insertCodeLanguage}
       prompt={aiPromptDraft.prompt}
@@ -673,6 +711,7 @@ export default function NotebookCanvas({
       modelOptions={aiModelOptions ?? []}
       selectedModel={aiPromptDraft.model}
       isGenerating={aiPromptDraft.isGenerating}
+      hasStagedCells={aiPromptDraft.stagedCells.length > 0}
       error={aiPromptDraft.error}
       errorDetail={aiPromptDraft.errorDetail}
       canPickContextFiles={Boolean(onPickContextFiles)}
@@ -685,10 +724,16 @@ export default function NotebookCanvas({
         void pickAiPromptContextFiles()
       }}
       onSubmit={submitAiPrompt}
+      onAccept={() => {
+        void acceptFirstAiPreviewCell()
+      }}
+      onReject={rejectAiPrompt}
       onCancel={closeAiPrompt}
       onDragStart={onDragAiPrompt}
     />
   ) : null
+  const hasAiPreviewCells = Boolean(aiPromptDraft && aiPromptDraft.stagedCells.length > 0)
+  const aiPromptSurface = hasAiPreviewCells ? null : aiPromptCell
 
   return (
     <Box
@@ -753,33 +798,57 @@ export default function NotebookCanvas({
             </Typography>
           ) : null}
           {!isOpening && cells.length > 0 && aiPromptDraft?.afterCellId === null
-            ? aiPromptCell
+            ? aiPromptSurface
             : null}
           {!isOpening &&
-            cells.map((cell) => (
-              <Fragment key={cell.id}>
-                <NotebookCell
-                  cell={cell}
-                  editable={Boolean(draftDocument)}
-                  selected={selectedCellId === cell.id}
-                  agentHighlighted={agentHighlightedCellId === cell.id}
-                  onSourceChange={onUpdateCellSource}
-                  onInsertBefore={(cellId, cellType) => onInsertCell(cellId, 'before', cellType)}
-                  onInsertAfter={(cellId, cellType) => onInsertCell(cellId, 'after', cellType)}
-                  onClearOutputs={onClearCellOutputs}
-                  onDeleteCell={onDeleteCell}
-                  onConvertCell={onConvertCell}
-                  onMoveCell={onMoveCell}
-                  onMoveAiPrompt={onMoveAiPrompt}
-                  onSelectCell={setSelectedCellId}
-                  onRunCell={onRunCell}
-                  canRunCells={canRunCells}
-                  notebookPath={notebookFile?.path}
-                />
-                {aiPromptDraft?.afterCellId === cell.id ? aiPromptCell : null}
-              </Fragment>
-            ))}
-          {!isOpening && cells.length === 0 && aiPromptDraft ? aiPromptCell : null}
+            displayCells.map((cell, index) => {
+              const isAiPreviewCell = isNotebookAiPreviewCell(cell.id, aiPromptDraft)
+              return (
+                <Fragment key={cell.id}>
+                  <NotebookCell
+                    cell={cell}
+                    cellNumber={index + 1}
+                    editable={Boolean(draftDocument) && !isAiPreviewCell}
+                    selected={selectedCellId === cell.id}
+                    agentHighlighted={agentHighlightedCellId === cell.id}
+                    provisional={isAiPreviewCell}
+                    onSourceChange={isAiPreviewCell ? undefined : onUpdateCellSource}
+                    onInsertBefore={
+                      isAiPreviewCell
+                        ? undefined
+                        : (cellId, cellType) => onInsertCell(cellId, 'before', cellType)
+                    }
+                    onInsertAfter={
+                      isAiPreviewCell
+                        ? undefined
+                        : (cellId, cellType) => onInsertCell(cellId, 'after', cellType)
+                    }
+                    onClearOutputs={isAiPreviewCell ? undefined : onClearCellOutputs}
+                    onDeleteCell={isAiPreviewCell ? undefined : onDeleteCell}
+                    onConvertCell={isAiPreviewCell ? undefined : onConvertCell}
+                    onMoveCell={isAiPreviewCell ? undefined : onMoveCell}
+                    onMoveAiPrompt={isAiPreviewCell ? undefined : onMoveAiPrompt}
+                    onSelectCell={isAiPreviewCell ? undefined : setSelectedCellId}
+                    onRunCell={isAiPreviewCell ? undefined : onRunCell}
+                    canRunCells={canRunCells && !isAiPreviewCell}
+                    notebookPath={notebookFile?.path}
+                  />
+                  {isAiPreviewCell ? (
+                    <NotebookAiPreviewActions
+                      isGenerating={Boolean(aiPromptDraft?.isGenerating)}
+                      onAccept={() => {
+                        void acceptAiPreviewCell(cell.id)
+                      }}
+                      onReject={() => rejectAiPreviewCell(cell.id)}
+                    />
+                  ) : null}
+                  {!isAiPreviewCell && aiPromptDraft?.afterCellId === cell.id
+                    ? aiPromptSurface
+                    : null}
+                </Fragment>
+              )
+            })}
+          {!isOpening && cells.length === 0 && aiPromptDraft ? (aiPromptSurface ?? null) : null}
           {!isOpening && cells.length > 0 ? (
             <NotebookInsertDock
               disabled={!draftDocument}
@@ -831,93 +900,13 @@ export default function NotebookCanvas({
         onSave={onSave}
         onStopNotebookSession={onStopNotebookSession}
       />
-      <Dialog
-        open={Boolean(pendingKernelSwitch)}
-        onClose={() => setPendingKernelSwitch(null)}
-        maxWidth="xs"
-        fullWidth
-        data-phi-notebook-kernel-switch-dialog="true"
-        slotProps={{
-          paper: {
-            sx: {
-              borderRadius: 3,
-              border: 1,
-              borderColor: (theme) => alpha(theme.palette.warning.main, 0.28),
-              bgcolor: 'background.paper',
-              boxShadow: (theme) => `0 18px 60px ${alpha(theme.palette.common.black, 0.34)}`
-            }
-          }
+      <NotebookKernelSwitchDialog
+        pending={pendingKernelSwitch}
+        onCancel={() => setPendingKernelSwitch(null)}
+        onConfirm={() => {
+          void confirmKernelSwitch()
         }}
-      >
-        <DialogTitle
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 1,
-            px: 2.5,
-            pt: 2.25,
-            pb: 1.25,
-            fontSize: '1rem',
-            fontWeight: 800
-          }}
-        >
-          <NotebookIcon sx={{ fontSize: 21, color: 'warning.main' }} />
-          切换 notebook kernel
-        </DialogTitle>
-        <DialogContent sx={{ px: 2.5, pb: 1 }}>
-          <Stack spacing={1.25}>
-            <Box
-              data-phi-notebook-kernel-switch-summary="true"
-              sx={{
-                display: 'grid',
-                gridTemplateColumns: '64px minmax(0, 1fr)',
-                gap: 0.75,
-                p: 1.25,
-                borderRadius: 2,
-                bgcolor: (theme) => alpha(theme.palette.text.primary, 0.045)
-              }}
-            >
-              <Typography variant="caption" color="text.secondary">
-                当前
-              </Typography>
-              <Typography variant="body2" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
-                {pendingKernelSwitch?.currentKernelLabel}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                切换到
-              </Typography>
-              <Typography variant="body2" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
-                {pendingKernelSwitch?.nextKernelLabel}
-              </Typography>
-            </Box>
-            <Typography
-              data-phi-notebook-kernel-switch-warning="true"
-              variant="body2"
-              color="text.secondary"
-              sx={{ lineHeight: 1.65 }}
-            >
-              {pendingKernelSwitch?.hasCurrentLiveSession
-                ? '当前连接的 kernel 会被终止，正在运行的 cell 会停止。'
-                : 'Notebook 的 kernel metadata 会更新，并使用新的 kernel 启动会话。'}
-            </Typography>
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ px: 2.5, pb: 2, gap: 1 }}>
-          <Button onClick={() => setPendingKernelSwitch(null)} sx={{ borderRadius: 999 }}>
-            取消
-          </Button>
-          <Button
-            variant="contained"
-            color="warning"
-            onClick={() => {
-              void confirmKernelSwitch()
-            }}
-            sx={{ borderRadius: 999, px: 2 }}
-          >
-            切换 kernel
-          </Button>
-        </DialogActions>
-      </Dialog>
+      />
       <NotebookScrollProgressRail
         outline={outline}
         activeId={activeOutlineId ?? outline[0]?.id ?? null}

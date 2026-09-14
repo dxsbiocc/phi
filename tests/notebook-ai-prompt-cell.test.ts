@@ -25,6 +25,8 @@ function renderPromptCell(overrides: Partial<NotebookAiPromptCellProps> = {}): s
     onReferenceAdd: () => {},
     onPickContextFiles: () => {},
     onSubmit: () => {},
+    onAccept: () => {},
+    onReject: () => {},
     onCancel: () => {},
     onDragStart: () => {},
     ...overrides
@@ -54,6 +56,16 @@ test('the target-language button shows Markdown once that target is selected', (
 
   assert.match(markup, /data-phi-notebook-ai-target-language="markdown"/)
   assert.match(markup, />Markdown</)
+})
+
+test('the prompt cell exposes refactor mode for selected-cell AI edits', () => {
+  const markup = renderPromptCell({
+    mode: 'refactor',
+    prompt: '让这个 cell 更清晰'
+  })
+
+  assert.match(markup, /data-phi-notebook-ai-mode="refactor"/)
+  assert.match(markup, /placeholder="Refactor selected cell with AI, @ to include context"/)
 })
 
 test('the target-language button disables while a generation is in flight', () => {
@@ -141,16 +153,29 @@ test('the attach-file button stays disabled when no file picker is wired up', ()
   assert.match(buttonMatch![0], /\bdisabled=""/)
 })
 
-test('the prompt cell does not render a staged insertion confirmation panel', () => {
+test('the prompt cell does not render generated preview cells inside itself', () => {
   const markup = renderPromptCell({ prompt: '写一个贪心算法' })
 
-  assert.doesNotMatch(markup, /data-phi-notebook-ai-staged-insertion/)
-  assert.doesNotMatch(markup, /data-phi-notebook-ai-staged-message/)
-  assert.doesNotMatch(markup, />插入并保存</)
+  assert.doesNotMatch(markup, /data-phi-notebook-ai-staged-actions/)
+  assert.doesNotMatch(markup, /data-phi-notebook-ai-staged-accept/)
+  assert.doesNotMatch(markup, /data-phi-notebook-ai-staged-reject/)
+  assert.doesNotMatch(markup, /data-phi-notebook-ai-preview-cells/)
+  assert.doesNotMatch(markup, /data-phi-notebook-cell-provisional/)
 
   const submitButton = markup.match(/<button[^>]*aria-label="提交 AI 生成"[^>]*>/)
   assert.ok(submitButton)
   assert.doesNotMatch(submitButton![0], /\bdisabled\b/)
+})
+
+test('the prompt cell can still accept or reject a preview by keyboard state', () => {
+  const markup = renderPromptCell({
+    prompt: '画各国收入折线图',
+    hasStagedCells: true
+  })
+
+  assert.match(markup, /重新生成预览/)
+  assert.doesNotMatch(markup, /data-phi-notebook-ai-preview-accept/)
+  assert.doesNotMatch(markup, /data-phi-notebook-ai-preview-reject/)
 })
 
 test('the prompt cell renders AI failures like chat provider errors', () => {

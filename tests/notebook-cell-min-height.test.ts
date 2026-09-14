@@ -212,6 +212,40 @@ test('the CodeMirror editor keeps long code lines horizontally scrollable instea
   assert.doesNotMatch(editorSource, /EditorView\.lineWrapping/)
 })
 
+test('the read-only code view scrolls long lines without moving the line-number gutter', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(NotebookCodeCellSource, {
+        source: `print("${'x'.repeat(160)}")`,
+        language: 'python',
+        editable: true,
+        onEdit: () => undefined
+      })
+    )
+  )
+  const readViewSource = readSource(
+    'src/renderer/src/features/analysis/notebook/NotebookCodeCellSource.tsx'
+  )
+
+  assert.match(markup, /data-phi-code-layout="fixed-gutter"/)
+  assert.match(markup, /data-phi-code-line-gutter="true"/)
+  assert.match(markup, /data-phi-code-scroll-pane="true"/)
+  assert.match(markup, /overflow-x:hidden/)
+  assert.match(markup, /overflow-x:auto/)
+
+  assert.match(readViewSource, /data-phi-code-line-gutter="true"/)
+  assert.match(readViewSource, /data-phi-code-scroll-pane="true"/)
+  assert.match(readViewSource, /overflowX: 'hidden'/)
+  const gutterRulePattern = /data-phi-code-line-gutter="true"[\s\S]*?sx=\{\{[\s\S]*?\}\}/
+  const scrollPaneRule =
+    readViewSource.match(/data-phi-code-scroll-pane="true"[\s\S]*?overflowY: 'hidden'/)?.[0] ?? ''
+  assert.match(scrollPaneRule, /overflowX: 'auto'/)
+  const gutterRule = readViewSource.match(gutterRulePattern)?.[0] ?? ''
+  assert.doesNotMatch(gutterRule, /overflowX/)
+})
+
 test('line numbers are vertically centered without overriding CodeMirror line positioning', () => {
   const readViewSource = readSource(
     'src/renderer/src/features/analysis/notebook/NotebookCodeCellSource.tsx'

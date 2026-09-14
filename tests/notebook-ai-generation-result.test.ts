@@ -47,6 +47,37 @@ test('notebook AI result fallback parses fenced NotebookCellsCompletion JSON sou
   ])
 })
 
+test('notebook AI result reparses protocol JSON returned as a generated code cell', () => {
+  const cells = notebookAiGeneratedCellsFromResult(
+    {
+      language: 'python',
+      source: '',
+      cells: [
+        {
+          cellType: 'code',
+          language: 'json',
+          source: [
+            '```json',
+            JSON.stringify({
+              cells: [
+                { language: 'markdown', code: '### 收入趋势' },
+                { language: 'python', code: 'fig, ax = plt.subplots()\nax' }
+              ]
+            }),
+            '```'
+          ].join('\n')
+        }
+      ]
+    },
+    'python'
+  )
+
+  assert.deepEqual(cells, [
+    { cellType: 'markdown', source: '### 收入趋势' },
+    { cellType: 'code', source: 'fig, ax = plt.subplots()\nax', language: 'python' }
+  ])
+})
+
 test('notebook AI result fallback does not insert malformed completion JSON as code', () => {
   const cells = notebookAiGeneratedCellsFromResult(
     {
@@ -71,7 +102,7 @@ test('notebook AI result fallback does not insert truncated JSON fences as code'
   assert.deepEqual(cells, [])
 })
 
-test('notebook AI result fallback still accepts ordinary source as one code cell', () => {
+test('notebook AI result fallback rejects ordinary source instead of guessing a code cell', () => {
   const cells = notebookAiGeneratedCellsFromResult(
     {
       language: 'python',
@@ -80,5 +111,5 @@ test('notebook AI result fallback still accepts ordinary source as one code cell
     'python'
   )
 
-  assert.deepEqual(cells, [{ cellType: 'code', source: 'print("hello")', language: 'python' }])
+  assert.deepEqual(cells, [])
 })

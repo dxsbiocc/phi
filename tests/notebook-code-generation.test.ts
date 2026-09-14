@@ -6,8 +6,10 @@ import {
   notebookCellPromptContext,
   notebookContextReferencePrompt,
   notebookGenerationEmptyResultMessage,
+  parseFinalGeneratedNotebookCompletion,
   parseGeneratedNotebookCells,
-  parseGeneratedNotebookCompletion
+  parseGeneratedNotebookCompletion,
+  parseGeneratedNotebookCompletionSnapshot
 } from '../src/main/agent/notebook/notebook-code-generation'
 import { parseNotebook } from '../src/shared/notebookDocument'
 
@@ -112,6 +114,59 @@ test('notebook AI generation parser accepts marimo single-cell completion data p
   ])
 })
 
+test('notebook AI generation snapshot parser rejects ordinary assistant prose', () => {
+  const cells = parseGeneratedNotebookCompletionSnapshot(
+    {
+      role: 'assistant',
+      content: [
+        {
+          type: 'text',
+          text: 'Here is a notebook cell:\nprint("hello")'
+        }
+      ]
+    },
+    'python'
+  )
+
+  assert.deepEqual(cells, [])
+})
+
+test('notebook AI generation snapshot parser stages complete cells from partial JSON', () => {
+  const cells = parseGeneratedNotebookCompletionSnapshot(
+    [
+      '{"cells":[',
+      '{"language":"markdown","code":"## Summary"},',
+      '{"language":"python","code":"result = df.describe()"'
+    ].join(''),
+    'python'
+  )
+
+  assert.deepEqual(cells, [{ cellType: 'markdown', source: '## Summary' }])
+})
+
+test('notebook AI generation final parser rejects partial JSON snapshots', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    [
+      '{"cells":[',
+      '{"language":"markdown","code":"## Summary"},',
+      '{"language":"python","code":"result = df.describe()"'
+    ].join(''),
+    'python'
+  )
+
+  assert.deepEqual(cells, [])
+})
+
+test('notebook AI generation parser rejects unfinished markdown heading cells', () => {
+  assert.deepEqual(
+    parseGeneratedNotebookCompletionSnapshot(
+      '{"cells":[{"language":"markdown","code":"##"}]}',
+      'python'
+    ),
+    []
+  )
+})
+
 test('notebook AI generation parser splits markdown and code fences into insertable cells', () => {
   const cells = parseGeneratedNotebookCells(
     [
@@ -133,6 +188,42 @@ test('notebook AI generation parser splits markdown and code fences into inserta
     { cellType: 'markdown', source: 'Here is a quick summary cell.' },
     { cellType: 'code', source: 'summary = df.describe()\nsummary', language: 'python' },
     { cellType: 'markdown', source: 'The table above summarizes the numeric columns.' }
+  ])
+})
+
+test('notebook AI generation parser turns a complete markdown answer into markdown and code cells', () => {
+  const cells = parseGeneratedNotebookCells(
+    [
+      '## Greedy algorithm',
+      '',
+      'A greedy algorithm repeatedly makes the locally best choice.',
+      '',
+      '```python',
+      'def greedy_select(items):',
+      '    return sorted(items)',
+      '```',
+      '',
+      'Run it on a small input:',
+      '',
+      '```python',
+      'greedy_select([3, 1, 2])',
+      '```'
+    ].join('\n'),
+    'python'
+  )
+
+  assert.deepEqual(cells, [
+    {
+      cellType: 'markdown',
+      source: '## Greedy algorithm\n\nA greedy algorithm repeatedly makes the locally best choice.'
+    },
+    {
+      cellType: 'code',
+      source: 'def greedy_select(items):\n    return sorted(items)',
+      language: 'python'
+    },
+    { cellType: 'markdown', source: 'Run it on a small input:' },
+    { cellType: 'code', source: 'greedy_select([3, 1, 2])', language: 'python' }
   ])
 })
 
@@ -230,10 +321,11 @@ test('notebook AI generation prompt includes selected references and notebook co
 
   assert.match(referencePrompt, /@dataframe:\/\/df/)
   assert.match(referencePrompt, /100 rows x 3 columns/)
-  assert.match(prompt, /marimo notebook completion pattern/)
-  assert.match(prompt, /NotebookCellsCompletion schema/)
-  assert.match(prompt, /"language":"markdown","code":"raw markdown only"/)
-  assert.match(prompt, /"language":"python","code":"raw code only"/)
+  assert.match(prompt, /NotebookCellsCompletion pattern/)
+  assert.match(prompt, /Return exactly one JSON object/)
+  assert.match(prompt, /\{"cells":\[/)
+  assert.match(prompt, /Do not wrap the JSON in markdown fences/)
+  assert.match(prompt, /Do not include prose outside JSON/)
   assert.match(prompt, /prefer multiple cells: a short markdown cell/)
   assert.match(
     prompt,

@@ -5,6 +5,7 @@ import type {
   AnalysisNotebookCodeGenerationInput,
   AnalysisNotebookCodeGenerationResult,
   AnalysisNotebookDraftChange,
+  AnalysisNotebookFileChange,
   AnalysisNotebookFile,
   AnalysisNotebookRegistry,
   AnalysisNotebookSessionStatus,
@@ -139,6 +140,7 @@ export type AnalysisNotebookRuntimeState = {
   closeActiveNotebook: () => void
   resetAnalysisJupyterRuntimeForCwdChange: () => void
   handleNotebookDraftChanged: (change: AnalysisNotebookDraftChange) => void
+  handleNotebookFileChanged: (change: AnalysisNotebookFileChange) => void
 }
 
 export function useAnalysisNotebookRuntime({
@@ -843,6 +845,37 @@ export function useAnalysisNotebookRuntime({
     [getActiveCwd, refreshAnalysisNotebookSessionStatus, refreshAnalysisNotebooks]
   )
 
+  const handleNotebookFileChanged = useCallback(
+    (change: AnalysisNotebookFileChange): void => {
+      if (change.projectCwd !== getActiveCwd()) return
+
+      void refreshAnalysisNotebooks()
+
+      const current = activeAnalysisNotebookRef.current
+      if (!current) return
+      if (current.path !== change.path && current.relativePath !== change.relativePath) return
+
+      if (change.type === 'changed') {
+        setAnalysisNotebookContentError(null)
+        setActiveAnalysisNotebook(change.file)
+        void refreshAnalysisNotebookSessionStatus(change.file)
+        return
+      }
+
+      if (change.type === 'deleted') {
+        setActiveAnalysisNotebook(null)
+        setAnalysisNotebookSessionStatus(null)
+        setExecutingAnalysisCellId(null)
+        setAnalysisCellExecutionError(null)
+        setAnalysisNotebookContentError(`Notebook 已在磁盘上删除: ${change.relativePath}`)
+        return
+      }
+
+      setAnalysisNotebookContentError(`Notebook 已变化，但无法重新读取: ${change.message}`)
+    },
+    [getActiveCwd, refreshAnalysisNotebookSessionStatus, refreshAnalysisNotebooks]
+  )
+
   return {
     analysisNotebookRegistry,
     analysisInspectorCollapsed,
@@ -891,6 +924,7 @@ export function useAnalysisNotebookRuntime({
     onGenerateAnalysisNotebookCode,
     closeActiveNotebook,
     resetAnalysisJupyterRuntimeForCwdChange,
-    handleNotebookDraftChanged
+    handleNotebookDraftChanged,
+    handleNotebookFileChanged
   }
 }

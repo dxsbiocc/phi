@@ -2,7 +2,8 @@ import { useCallback, useMemo, useState, type MouseEvent, type ReactNode } from 
 import { Box } from '@mui/material'
 import { type Theme } from '@mui/material/styles'
 import { LeftRail, type LeftPanel } from './components/AnalysisLeftRail'
-import NotebookCanvas, { type AnalysisNotebookAgentFocus } from './notebook/NotebookCanvas'
+import NotebookCanvas from './notebook/NotebookCanvas'
+import type { AnalysisNotebookAgentFocus } from './lib/notebookCanvasTypes'
 import { type NotebookDocument } from '../../../../shared/notebookDocument'
 import {
   notebookFileEntry,
@@ -11,6 +12,7 @@ import {
 } from './lib/notebookViewModel'
 import type {
   AnalysisNotebookCodeGenerationInput,
+  AnalysisNotebookCodeGenerationProgress,
   AnalysisNotebookCodeGenerationResult,
   AnalysisKernelDiagnostics,
   AnalysisNotebookFile,
@@ -21,7 +23,7 @@ import type {
 } from '../../types'
 import { RightInspector, type InspectorTab } from './components/AnalysisInspector'
 
-export type { AnalysisNotebookAgentFocus } from './notebook/NotebookCanvas'
+export type { AnalysisNotebookAgentFocus } from './lib/notebookCanvasTypes'
 
 export type AnalysisWorkspaceFileTab = {
   id: string
@@ -84,6 +86,9 @@ export type AnalysisViewProps = {
     document: NotebookDocument,
     input: AnalysisNotebookCodeGenerationInput
   ) => Promise<AnalysisNotebookCodeGenerationResult>
+  onNotebookCodeGenerationProgress?: (
+    cb: (progress: AnalysisNotebookCodeGenerationProgress) => void
+  ) => () => void
   notebookAiModelOptions?: ModelOption[]
   notebookAiDefaultModel?: ModelOption | null
   onPickNotebookContextFiles?: () => Promise<string[]>
@@ -180,6 +185,7 @@ export default function AnalysisView({
   onStopNotebookSession,
   onRunNotebookCell,
   onGenerateNotebookCode,
+  onNotebookCodeGenerationProgress,
   notebookAiModelOptions,
   notebookAiDefaultModel,
   onPickNotebookContextFiles,
@@ -400,6 +406,7 @@ export default function AnalysisView({
           onStopNotebookSession={onStopNotebookSession}
           onRunNotebookCell={onRunNotebookCell}
           onGenerateNotebookCode={onGenerateNotebookCode}
+          onNotebookCodeGenerationProgress={onNotebookCodeGenerationProgress}
           aiModelOptions={notebookAiModelOptions}
           aiDefaultModel={notebookAiDefaultModel}
           onPickContextFiles={onPickNotebookContextFiles}
