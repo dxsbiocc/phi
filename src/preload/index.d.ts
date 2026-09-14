@@ -400,6 +400,39 @@ type PreloadAnalysisCellExecutionResult = {
   sessionStatus: PreloadAnalysisNotebookSessionStatus
 }
 
+type PreloadAnalysisNotebookCompletionInput = {
+  path: string
+  document: Record<string, unknown>
+  cellId: string
+  source: string
+  cursorPosition: number
+}
+
+type PreloadAnalysisNotebookCompletionResult = {
+  matches: string[]
+  cursorStart: number
+  cursorEnd: number
+  metadata: Record<string, unknown>
+  status: 'ok' | 'error'
+  message?: string
+}
+
+type PreloadAnalysisNotebookFormatInput = {
+  path: string
+  document: Record<string, unknown>
+  cellId: string
+  source: string
+  language?: string
+  lineLength?: number
+}
+
+type PreloadAnalysisNotebookFormatResult = {
+  source: string
+  changed: boolean
+  formatter: 'ruff' | 'black' | 'none'
+  message?: string
+}
+
 declare global {
   interface Window {
     platform: NodeJS.Platform
@@ -410,6 +443,8 @@ declare global {
       revealPath: (path: string) => Promise<void>
       openPath: (path: string) => Promise<void>
       pickInputFiles: () => Promise<string[]>
+      getPathForFile: (file: File) => string
+      onInputFilesDropped: (cb: (paths: string[]) => void) => () => void
       previewFile: (path: string) => Promise<PreloadFilePreview>
       hoverPreviewFile: (path: string) => Promise<PreloadFileHoverPreview>
       statLocalPaths: (cwd: string, paths: string[]) => Promise<PreloadLocalPathStat[]>
@@ -670,6 +705,14 @@ declare global {
         document: Record<string, unknown>,
         cellId: string
       ) => Promise<PreloadAnalysisCellExecutionResult>
+      completeAnalysisNotebookCell: (
+        cwd: string,
+        input: PreloadAnalysisNotebookCompletionInput
+      ) => Promise<PreloadAnalysisNotebookCompletionResult>
+      formatAnalysisNotebookCell: (
+        cwd: string,
+        input: PreloadAnalysisNotebookFormatInput
+      ) => Promise<PreloadAnalysisNotebookFormatResult>
       generateAnalysisNotebookCode: (
         cwd: string,
         path: string,

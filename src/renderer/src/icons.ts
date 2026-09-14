@@ -4,11 +4,14 @@ import { useTheme, type SxProps, type Theme } from '@mui/material/styles'
 import materialIconManifestJson from 'material-icon-theme/dist/material-icons.json' with { type: 'json' }
 import type { Manifest } from 'material-icon-theme'
 import materialArchiveSvg from '../../../node_modules/material-icon-theme/icons/zip.svg?raw'
+import materialAdobeIllustratorSvg from '../../../node_modules/material-icon-theme/icons/adobe-illustrator.svg?raw'
+import materialAdobePhotoshopSvg from '../../../node_modules/material-icon-theme/icons/adobe-photoshop.svg?raw'
 import materialAstroSvg from '../../../node_modules/material-icon-theme/icons/astro.svg?raw'
 import materialAudioSvg from '../../../node_modules/material-icon-theme/icons/audio.svg?raw'
 import materialBinarySvg from '../../../node_modules/material-icon-theme/icons/hex.svg?raw'
 import materialBunSvg from '../../../node_modules/material-icon-theme/icons/bun.svg?raw'
 import materialCSvg from '../../../node_modules/material-icon-theme/icons/c.svg?raw'
+import materialCertificateSvg from '../../../node_modules/material-icon-theme/icons/certificate.svg?raw'
 import materialClojureSvg from '../../../node_modules/material-icon-theme/icons/clojure.svg?raw'
 import materialCodeSvg from '../../../node_modules/material-icon-theme/icons/javascript.svg?raw'
 import materialConfigSvg from '../../../node_modules/material-icon-theme/icons/settings.svg?raw'
@@ -39,6 +42,7 @@ import materialJavascriptSvg from '../../../node_modules/material-icon-theme/ico
 import materialJsonSvg from '../../../node_modules/material-icon-theme/icons/json.svg?raw'
 import materialJuliaSvg from '../../../node_modules/material-icon-theme/icons/julia.svg?raw'
 import materialJupyterSvg from '../../../node_modules/material-icon-theme/icons/jupyter.svg?raw'
+import materialKeySvg from '../../../node_modules/material-icon-theme/icons/key.svg?raw'
 import materialKotlinSvg from '../../../node_modules/material-icon-theme/icons/kotlin.svg?raw'
 import materialLockSvg from '../../../node_modules/material-icon-theme/icons/lock.svg?raw'
 import materialLuaSvg from '../../../node_modules/material-icon-theme/icons/lua.svg?raw'
@@ -49,11 +53,13 @@ import materialPerlSvg from '../../../node_modules/material-icon-theme/icons/per
 import materialPhpSvg from '../../../node_modules/material-icon-theme/icons/php.svg?raw'
 import materialPythonMiscSvg from '../../../node_modules/material-icon-theme/icons/python-misc.svg?raw'
 import materialPythonSvg from '../../../node_modules/material-icon-theme/icons/python.svg?raw'
+import materialPowerpointSvg from '../../../node_modules/material-icon-theme/icons/powerpoint.svg?raw'
 import materialRSvg from '../../../node_modules/material-icon-theme/icons/r.svg?raw'
 import materialReactSvg from '../../../node_modules/material-icon-theme/icons/react_ts.svg?raw'
 import materialReadmeSvg from '../../../node_modules/material-icon-theme/icons/readme.svg?raw'
 import materialRubySvg from '../../../node_modules/material-icon-theme/icons/ruby.svg?raw'
 import materialRustSvg from '../../../node_modules/material-icon-theme/icons/rust.svg?raw'
+import materialSasSvg from '../../../node_modules/material-icon-theme/icons/sas.svg?raw'
 import materialSassSvg from '../../../node_modules/material-icon-theme/icons/sass.svg?raw'
 import materialScalaSvg from '../../../node_modules/material-icon-theme/icons/scala.svg?raw'
 import materialSoliditySvg from '../../../node_modules/material-icon-theme/icons/solidity.svg?raw'
@@ -65,6 +71,8 @@ import materialTypescriptSvg from '../../../node_modules/material-icon-theme/ico
 import materialUvSvg from '../../../node_modules/material-icon-theme/icons/uv.svg?raw'
 import materialVideoSvg from '../../../node_modules/material-icon-theme/icons/video.svg?raw'
 import materialVueSvg from '../../../node_modules/material-icon-theme/icons/vue.svg?raw'
+import materialWordSvg from '../../../node_modules/material-icon-theme/icons/word.svg?raw'
+import materialXmlSvg from '../../../node_modules/material-icon-theme/icons/xml.svg?raw'
 import materialYamlSvg from '../../../node_modules/material-icon-theme/icons/yaml.svg?raw'
 import materialZigSvg from '../../../node_modules/material-icon-theme/icons/zig.svg?raw'
 import {
@@ -166,10 +174,13 @@ const MATERIAL_ICON_SVG_MODULES =
 const MATERIAL_ICON_SVG_MARKUP = MATERIAL_ICON_SVG_MODULES as Record<string, string>
 const MATERIAL_ICON_COMPONENT_CACHE = new Map<string, PhiIconComponent>()
 const MATERIAL_ICON_DIRECT_SVG_MARKUP: Record<string, string> = {
+  'adobe-illustrator': materialAdobeIllustratorSvg,
+  'adobe-photoshop': materialAdobePhotoshopSvg,
   astro: materialAstroSvg,
   audio: materialAudioSvg,
   bun: materialBunSvg,
   c: materialCSvg,
+  certificate: materialCertificateSvg,
   clojure: materialClojureSvg,
   code: materialCodeSvg,
   console: materialConsoleSvg,
@@ -199,6 +210,7 @@ const MATERIAL_ICON_DIRECT_SVG_MARKUP: Record<string, string> = {
   json: materialJsonSvg,
   julia: materialJuliaSvg,
   jupyter: materialJupyterSvg,
+  key: materialKeySvg,
   kotlin: materialKotlinSvg,
   lock: materialLockSvg,
   lua: materialLuaSvg,
@@ -209,11 +221,13 @@ const MATERIAL_ICON_DIRECT_SVG_MARKUP: Record<string, string> = {
   php: materialPhpSvg,
   python: materialPythonSvg,
   'python-misc': materialPythonMiscSvg,
+  powerpoint: materialPowerpointSvg,
   r: materialRSvg,
   react_ts: materialReactSvg,
   readme: materialReadmeSvg,
   ruby: materialRubySvg,
   rust: materialRustSvg,
+  sas: materialSasSvg,
   sass: materialSassSvg,
   scala: materialScalaSvg,
   settings: materialConfigSvg,
@@ -227,6 +241,8 @@ const MATERIAL_ICON_DIRECT_SVG_MARKUP: Record<string, string> = {
   uv: materialUvSvg,
   video: materialVideoSvg,
   vue: materialVueSvg,
+  word: materialWordSvg,
+  xml: materialXmlSvg,
   yaml: materialYamlSvg,
   zig: materialZigSvg,
   zip: materialArchiveSvg
@@ -271,6 +287,41 @@ const MATERIAL_ROOT_FOLDER_EXPANDED_NAME_ICONS = lowerCaseRecord(
 const MATERIAL_FILE_EXTENSION_KEYS = Object.keys(MATERIAL_FILE_EXTENSION_ICONS).sort(
   (a, b) => b.length - a.length
 )
+const MATERIAL_FILE_EXTENSION_ICON_OVERRIDES: Record<string, string> = {
+  arrow: 'database',
+  bam: 'database',
+  bed: 'database',
+  db: 'database',
+  docm: 'word',
+  dotx: 'word',
+  dta: 'database',
+  fa: 'database',
+  fasta: 'database',
+  fastq: 'database',
+  feather: 'database',
+  fq: 'database',
+  gff: 'database',
+  gtf: 'database',
+  h5: 'database',
+  h5ad: 'database',
+  hdf5: 'database',
+  loom: 'database',
+  numbers: 'table',
+  pages: 'document',
+  parquet: 'database',
+  rda: 'database',
+  rds: 'database',
+  sam: 'database',
+  sav: 'database',
+  vcf: 'database',
+  xlsb: 'table',
+  xlt: 'table',
+  xltx: 'table',
+  zarr: 'database'
+}
+const MATERIAL_FILE_EXTENSION_OVERRIDE_KEYS = Object.keys(
+  MATERIAL_FILE_EXTENSION_ICON_OVERRIDES
+).sort((a, b) => b.length - a.length)
 const MATERIAL_FILE_NAME_ICON_OVERRIDES: Record<string, string> = {
   '.venv': 'folder-environment'
 }
@@ -554,6 +605,7 @@ const MATERIAL_ICON_NAME_BY_KIND = {
   dart: 'dart',
   data: 'database',
   deno: 'deno',
+  document: 'word',
   directory: 'folder',
   docker: 'docker',
   dotenv: 'tune',
@@ -577,6 +629,7 @@ const MATERIAL_ICON_NAME_BY_KIND = {
   pdf: 'pdf',
   perl: 'perl',
   php: 'php',
+  presentation: 'powerpoint',
   python: 'python',
   r: 'r',
   react: 'react_ts',
@@ -676,6 +729,7 @@ export const PhiIcons = {
     dart: createMaterialSvgIcon('FileDart', MATERIAL_ICON_NAME_BY_KIND.dart),
     data: createMaterialSvgIcon('FileData', MATERIAL_ICON_NAME_BY_KIND.data),
     deno: createMaterialSvgIcon('FileDeno', MATERIAL_ICON_NAME_BY_KIND.deno),
+    document: createMaterialSvgIcon('FileDocument', MATERIAL_ICON_NAME_BY_KIND.document),
     directory: createMaterialSvgIcon('FileDirectory', MATERIAL_ICON_NAME_BY_KIND.directory),
     docker: createMaterialSvgIcon('FileDocker', MATERIAL_ICON_NAME_BY_KIND.docker),
     dotenv: createMaterialSvgIcon('FileDotenv', MATERIAL_ICON_NAME_BY_KIND.dotenv),
@@ -699,6 +753,10 @@ export const PhiIcons = {
     pdf: createMaterialSvgIcon('FilePdf', MATERIAL_ICON_NAME_BY_KIND.pdf),
     perl: createMaterialSvgIcon('FilePerl', MATERIAL_ICON_NAME_BY_KIND.perl),
     php: createMaterialSvgIcon('FilePhp', MATERIAL_ICON_NAME_BY_KIND.php),
+    presentation: createMaterialSvgIcon(
+      'FilePresentation',
+      MATERIAL_ICON_NAME_BY_KIND.presentation
+    ),
     python: createMaterialSvgIcon('FilePython', MATERIAL_ICON_NAME_BY_KIND.python),
     r: createMaterialSvgIcon('FileR', MATERIAL_ICON_NAME_BY_KIND.r),
     react: createMaterialSvgIcon('FileReact', MATERIAL_ICON_NAME_BY_KIND.react),
@@ -808,6 +866,7 @@ export const PHI_ICON_META = {
   'file.dart': { label: 'Dart 文件', Icon: PhiIcons.file.dart, color: '#0175C2' },
   'file.data': { label: '数据文件', Icon: PhiIcons.file.data, color: 'info.main' },
   'file.deno': { label: 'Deno 文件', Icon: PhiIcons.file.deno, color: 'text.primary' },
+  'file.document': { label: '文档文件', Icon: PhiIcons.file.document, color: '#01579B' },
   'file.directory': { label: '文件夹', Icon: PhiIcons.file.directory, color: 'info.main' },
   'file.docker': { label: 'Docker 文件', Icon: PhiIcons.file.docker, color: '#2496ED' },
   'file.dotenv': { label: 'Dotenv 文件', Icon: PhiIcons.file.dotenv, color: '#ECD53F' },
@@ -835,6 +894,11 @@ export const PHI_ICON_META = {
   'file.pdf': { label: 'PDF 文件', Icon: PhiIcons.file.pdf, color: 'error.main' },
   'file.perl': { label: 'Perl 文件', Icon: PhiIcons.file.perl, color: '#39457E' },
   'file.php': { label: 'PHP 文件', Icon: PhiIcons.file.php, color: '#777BB4' },
+  'file.presentation': {
+    label: '演示文稿',
+    Icon: PhiIcons.file.presentation,
+    color: '#E64A19'
+  },
   'file.python': { label: 'Python 文件', Icon: PhiIcons.file.python, color: PYTHON_BLUE },
   'file.r': { label: 'R 文件', Icon: PhiIcons.file.r, color: '#276DC3' },
   'file.react': { label: 'React 文件', Icon: PhiIcons.file.react, color: '#087EA4' },
@@ -894,6 +958,7 @@ export type FileIconKind =
   | 'dart'
   | 'data'
   | 'deno'
+  | 'document'
   | 'directory'
   | 'docker'
   | 'dotenv'
@@ -917,6 +982,7 @@ export type FileIconKind =
   | 'pdf'
   | 'perl'
   | 'php'
+  | 'presentation'
   | 'python'
   | 'r'
   | 'react'
@@ -959,6 +1025,7 @@ export const FILE_TYPE_ICON_META = {
   dart: { ...PHI_ICON_META['file.dart'], kind: 'dart' },
   data: { ...PHI_ICON_META['file.data'], kind: 'data' },
   deno: { ...PHI_ICON_META['file.deno'], kind: 'deno' },
+  document: { ...PHI_ICON_META['file.document'], kind: 'document' },
   directory: { ...PHI_ICON_META['file.directory'], kind: 'directory' },
   docker: { ...PHI_ICON_META['file.docker'], kind: 'docker' },
   dotenv: { ...PHI_ICON_META['file.dotenv'], kind: 'dotenv' },
@@ -982,6 +1049,7 @@ export const FILE_TYPE_ICON_META = {
   pdf: { ...PHI_ICON_META['file.pdf'], kind: 'pdf' },
   perl: { ...PHI_ICON_META['file.perl'], kind: 'perl' },
   php: { ...PHI_ICON_META['file.php'], kind: 'php' },
+  presentation: { ...PHI_ICON_META['file.presentation'], kind: 'presentation' },
   python: { ...PHI_ICON_META['file.python'], kind: 'python' },
   r: { ...PHI_ICON_META['file.r'], kind: 'r' },
   react: { ...PHI_ICON_META['file.react'], kind: 'react' },
@@ -1055,10 +1123,13 @@ const EXTENSION_FILE_ICON: Record<string, FileIconKind> = {
   aac: 'audio',
   ai: 'image',
   app: 'binary',
+  arrow: 'data',
   astro: 'astro',
   avi: 'video',
   avif: 'image',
+  bam: 'data',
   bash: 'shell',
+  bed: 'data',
   bin: 'binary',
   bmp: 'image',
   bz2: 'archive',
@@ -1072,22 +1143,37 @@ const EXTENSION_FILE_ICON: Record<string, FileIconKind> = {
   css: 'css',
   csv: 'csv',
   dart: 'dart',
+  db: 'data',
   dmg: 'binary',
-  doc: 'text',
-  docx: 'text',
+  doc: 'document',
+  docm: 'document',
+  docx: 'document',
+  dotx: 'document',
+  dta: 'data',
   env: 'dotenv',
+  eps: 'image',
   erl: 'erlang',
-  epub: 'text',
+  epub: 'document',
   ex: 'elixir',
   exe: 'binary',
   exs: 'elixir',
+  fa: 'data',
+  fasta: 'data',
+  fastq: 'data',
+  feather: 'data',
   fig: 'image',
   fish: 'fish',
   flac: 'audio',
+  fq: 'data',
+  gff: 'data',
+  gtf: 'data',
   gif: 'image',
   go: 'go',
   gz: 'archive',
   h: 'c',
+  h5: 'data',
+  h5ad: 'data',
+  hdf5: 'data',
   hrl: 'erlang',
   heic: 'image',
   hs: 'haskell',
@@ -1111,6 +1197,7 @@ const EXTENSION_FILE_ICON: Record<string, FileIconKind> = {
   less: 'css',
   lock: 'lock',
   log: 'text',
+  loom: 'data',
   lua: 'lua',
   md: 'markdown',
   mdx: 'react',
@@ -1120,9 +1207,12 @@ const EXTENSION_FILE_ICON: Record<string, FileIconKind> = {
   mp4: 'video',
   mpeg: 'video',
   mpg: 'video',
+  numbers: 'spreadsheet',
   ods: 'spreadsheet',
   ogg: 'audio',
   otf: 'type',
+  pages: 'document',
+  parquet: 'data',
   pdf: 'pdf',
   pem: 'lock',
   pl: 'perl',
@@ -1130,15 +1220,25 @@ const EXTENSION_FILE_ICON: Record<string, FileIconKind> = {
   php: 'php',
   plist: 'config',
   png: 'image',
-  ppt: 'text',
-  pptx: 'text',
+  ppt: 'presentation',
+  pptm: 'presentation',
+  pptx: 'presentation',
+  potx: 'presentation',
+  pps: 'presentation',
+  ppsx: 'presentation',
+  psd: 'image',
   py: 'python',
   r: 'r',
   rar: 'archive',
+  rda: 'data',
+  rds: 'data',
   rb: 'ruby',
   rs: 'rust',
   rst: 'text',
+  sam: 'data',
   sass: 'sass',
+  sas7bdat: 'data',
+  sav: 'data',
   sbt: 'scala',
   scala: 'scala',
   scss: 'sass',
@@ -1151,6 +1251,8 @@ const EXTENSION_FILE_ICON: Record<string, FileIconKind> = {
   svelte: 'svelte',
   swift: 'swift',
   tar: 'archive',
+  tif: 'image',
+  tiff: 'image',
   toml: 'toml',
   ts: 'typescript',
   tsx: 'react',
@@ -1163,11 +1265,17 @@ const EXTENSION_FILE_ICON: Record<string, FileIconKind> = {
   woff: 'type',
   woff2: 'type',
   xls: 'spreadsheet',
+  xlsb: 'spreadsheet',
+  xlsm: 'spreadsheet',
   xlsx: 'spreadsheet',
+  xlt: 'spreadsheet',
+  xltx: 'spreadsheet',
   vue: 'vue',
+  vcf: 'data',
   xml: 'html',
   yaml: 'yaml',
   yml: 'yaml',
+  zarr: 'data',
   zig: 'zig',
   zsh: 'shell',
   zip: 'archive'
@@ -1190,6 +1298,12 @@ function materialIconNameForFileName(fileName: string): string {
 
   const fileNameIcon = MATERIAL_FILE_NAME_ICONS[normalized]
   if (fileNameIcon) return fileNameIcon
+
+  for (const extension of MATERIAL_FILE_EXTENSION_OVERRIDE_KEYS) {
+    if (normalized === extension || normalized.endsWith(`.${extension}`)) {
+      return MATERIAL_FILE_EXTENSION_ICON_OVERRIDES[extension]
+    }
+  }
 
   for (const extension of MATERIAL_FILE_EXTENSION_KEYS) {
     if (normalized === extension || normalized.endsWith(`.${extension}`)) {

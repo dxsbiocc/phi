@@ -14,10 +14,18 @@ import {
 } from '../src/renderer/src/lib/promptHistory'
 import {
   appendInputReference,
+  filterInputFileReferenceCandidates,
+  findActiveInputFileReference,
   formatInputFileReferences,
+  formatInputFileReferenceTarget,
   formatPromptAgentReference,
   formatPluginPromptReference,
-  formatSkillPromptReference
+  formatSkillPromptReference,
+  inputFileReferencePathsFromDroppedFiles,
+  inputFileReferenceDirectoryPath,
+  inputFileReferenceLeafQuery,
+  parseInputFileReferences,
+  replaceInputReferenceRange
 } from '../src/renderer/src/lib/inputReferences'
 import { toolActionKind } from '../src/renderer/src/lib/toolActions'
 import { suggestedNextActionPlaceholderFromMessages } from '../src/renderer/src/lib/suggestedNextAction'
@@ -37,6 +45,7 @@ function renderChat(
     currentRunStartedAt?: string
     disableModelControls?: boolean
     compactComposerControls?: boolean
+    input?: string
   } = {}
 ): string {
   const theme = createTheme()
@@ -46,7 +55,7 @@ function renderChat(
       { theme },
       createElement(ChatView, {
         messages,
-        input: '',
+        input: options.input ?? '',
         messagesContainerRef: () => undefined,
         canSend: true,
         isGenerating: options.isGenerating ?? false,
@@ -179,6 +188,28 @@ test('chat view formats add-menu references for prompt input', () => {
     formatInputFileReferences(['/workspace/a.csv', '/workspace/b.pdf']),
     '引用文件：\n- `/workspace/a.csv`\n- `/workspace/b.pdf`'
   )
+  assert.equal(
+    formatInputFileReferences(
+      ['/workspace/a.csv', '/workspace/.env', '/workspace/src/.cache/config.json'],
+      '/workspace'
+    ),
+    '引用文件：`/workspace/a.csv`'
+  )
+  const droppedFile = { path: '/workspace/dropped.csv' } as File & { path: string }
+  const bridgedFile = { path: '/workspace/legacy.csv' } as File & { path: string }
+  assert.deepEqual(inputFileReferencePathsFromDroppedFiles([droppedFile]), [
+    '/workspace/dropped.csv'
+  ])
+  assert.deepEqual(
+    inputFileReferencePathsFromDroppedFiles([bridgedFile, bridgedFile], () => {
+      throw new Error('webUtils unavailable')
+    }),
+    ['/workspace/legacy.csv']
+  )
+  assert.deepEqual(
+    inputFileReferencePathsFromDroppedFiles([bridgedFile], () => '/workspace/ui.csv'),
+    ['/workspace/ui.csv']
+  )
   assert.equal(formatSkillPromptReference({ name: 'omics-visualization' }), '$omics-visualization')
   assert.equal(
     formatPromptAgentReference({ name: 'executor', trigger: '/prompts:executor' }),
@@ -192,6 +223,158 @@ test('chat view formats add-menu references for prompt input', () => {
     appendInputReference('先分析数据', '$omics-visualization'),
     '先分析数据\n$omics-visualization'
   )
+})
+
+test('chat view resolves @ file reference queries in prompt input', () => {
+  assert.deepEqual(findActiveInputFileReference('请看 @src/App', 11), {
+    start: 3,
+    end: 11,
+    query: 'src/App'
+  })
+  assert.equal(findActiveInputFileReference('联系 a@b.com', 8), null)
+  assert.equal(
+    inputFileReferenceDirectoryPath('/workspace/project', 'src/renderer/App'),
+    '/workspace/project/src/renderer'
+  )
+  assert.equal(inputFileReferenceDirectoryPath('/workspace/project', ''), '/workspace/project')
+  assert.equal(inputFileReferenceLeafQuery('src/renderer/App'), 'App')
+  assert.equal(inputFileReferenceDirectoryPath('/workspace/project', '../secret'), null)
+  assert.equal(inputFileReferenceDirectoryPath('/workspace/project', '.git/config'), null)
+  assert.equal(inputFileReferenceDirectoryPath('/workspace/project', 'src/.cache/file'), null)
+
+  assert.equal(
+    formatInputFileReferenceTarget({
+      path: '/workspace/project/src/App.tsx',
+      name: 'App.tsx',
+      displayPath: 'src/App.tsx',
+      kind: 'file'
+    }),
+    '引用文件：`./src/App.tsx`'
+  )
+  assert.equal(
+    formatInputFileReferenceTarget({
+      path: '/workspace/project/src',
+      name: 'src',
+      displayPath: 'src',
+      kind: 'directory'
+    }),
+    '引用文件：`./src/`'
+  )
+
+  const replacement = replaceInputReferenceRange(
+    '请检查 @src/App',
+    { start: 4, end: 12, query: 'src/App' },
+    '引用文件：`./src/App.tsx`'
+  )
+  assert.equal(replacement.value, '请检查 引用文件：`./src/App.tsx`')
+  assert.equal(replacement.cursor, replacement.value.length)
+
+  assert.deepEqual(
+    filterInputFileReferenceCandidates(
+      [
+        {
+          path: '/workspace/project/src',
+          name: 'src',
+          displayPath: 'src',
+          kind: 'directory'
+        },
+        {
+          path: '/workspace/project/package.json',
+          name: 'package.json',
+          displayPath: 'package.json',
+          kind: 'file'
+        },
+        {
+          path: '/workspace/project/.env',
+          name: '.env',
+          displayPath: '.env',
+          kind: 'file'
+        },
+        {
+          path: '/workspace/project/.git',
+          name: '.git',
+          displayPath: '.git',
+          kind: 'directory'
+        },
+        {
+          path: '/workspace/project/src/.cache/config.json',
+          name: 'config.json',
+          displayPath: 'src/.cache/config.json',
+          kind: 'file'
+        }
+      ],
+      'pack'
+    ).map((entry) => entry.displayPath),
+    ['package.json']
+  )
+  assert.deepEqual(
+    filterInputFileReferenceCandidates(
+      [
+        {
+          path: '/workspace/project/src',
+          name: 'src',
+          displayPath: 'src',
+          kind: 'directory'
+        },
+        {
+          path: '/workspace/project/.env',
+          name: '.env',
+          displayPath: '.env',
+          kind: 'file'
+        },
+        {
+          path: '/workspace/project/.git',
+          name: '.git',
+          displayPath: '.git',
+          kind: 'directory'
+        }
+      ],
+      ''
+    ).map((entry) => entry.displayPath),
+    ['src']
+  )
+})
+
+test('chat view parses and renders file references as cards', () => {
+  assert.deepEqual(
+    parseInputFileReferences(
+      '引用文件：\n- `/workspace/hibit.diff.exp.genes.csv`\n- `/workspace/sirna.diff.exp.genes.csv`\n帮我绘制交叠情况'
+    ),
+    {
+      references: ['/workspace/hibit.diff.exp.genes.csv', '/workspace/sirna.diff.exp.genes.csv'],
+      body: '帮我绘制交叠情况'
+    }
+  )
+
+  const composerMarkup = renderChat([], {
+    input: '引用文件：`/workspace/hibit.diff.exp.genes.csv`\n随心输入'
+  })
+  assert.match(composerMarkup, /data-phi-file-drop-target="chat-composer"/)
+  assert.match(composerMarkup, /hibit\.diff\.exp\.genes\.csv/)
+  assert.match(composerMarkup, /aria-label="移除引用文件 hibit\.diff\.exp\.genes\.csv"/)
+  assert.match(composerMarkup, /随心输入/)
+  assert.doesNotMatch(composerMarkup, /引用文件：/)
+
+  const officeComposerMarkup = renderChat([], {
+    input: '引用文件：`/workspace/商铺.pptx`\n检查演示文稿'
+  })
+  assert.equal(officeComposerMarkup.match(/data-phi-material-icon="powerpoint"/g)?.length ?? 0, 1)
+  assert.doesNotMatch(officeComposerMarkup, /data-phi-missing-material-icon="powerpoint"/)
+
+  const messageMarkup = renderChat([
+    {
+      id: 'user-1',
+      role: 'user',
+      content:
+        '引用文件：\n- `/workspace/hibit.diff.exp.genes.csv`\n- `/workspace/sirna.diff.exp.genes.csv`\n帮我绘制一张图对比HiBiT和siRNA两组差异基因之间的交叠情况'
+    }
+  ])
+  assert.match(messageMarkup, /hibit\.diff\.exp\.genes\.csv/)
+  assert.match(messageMarkup, /sirna\.diff\.exp\.genes\.csv/)
+  assert.match(messageMarkup, /帮我绘制一张图/)
+  assert.match(messageMarkup, /border-radius:18px/)
+  assert.doesNotMatch(messageMarkup, />CSV</)
+  assert.doesNotMatch(messageMarkup, /引用文件：/)
 })
 
 test('chat view extracts suggested next action placeholders from assistant messages', () => {

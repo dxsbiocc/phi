@@ -89,8 +89,14 @@ test('fileIconForPath maps common files to representative icon kinds', () => {
   assert.equal(fileIconForPath('/workspace/bun.lock').kind, 'lock')
   assert.equal(fileIconForPath('/workspace/assets/logo.png').kind, 'image')
   assert.equal(fileIconForPath('/workspace/docs/report.pdf').kind, 'pdf')
+  assert.equal(fileIconForPath('/workspace/docs/report.docx').kind, 'document')
+  assert.equal(fileIconForPath('/workspace/slides/demo.pptx').kind, 'presentation')
+  assert.equal(fileIconForPath('/workspace/data/results.xlsm').kind, 'spreadsheet')
   assert.equal(fileIconForPath('/workspace/archive.zip').kind, 'archive')
   assert.equal(fileIconForPath('/workspace/data/results.csv').kind, 'csv')
+  assert.equal(fileIconForPath('/workspace/data/results.parquet').kind, 'data')
+  assert.equal(fileIconForPath('/workspace/data/variants.vcf').kind, 'data')
+  assert.equal(fileIconForPath('/workspace/assets/photo.tiff').kind, 'image')
   assert.equal(fileIconForPath('/workspace/notes.txt').kind, 'text')
   assert.equal(fileIconForPath('/workspace/database.sqlite').kind, 'data')
   assert.equal(fileIconForPath('/workspace/scripts/deploy.sh').kind, 'shell')
@@ -114,6 +120,8 @@ test('file icon colors follow recognizable file type colors', () => {
   assert.equal(fileIconForPath('/workspace/README.md').color, '#6B7280')
   assert.equal(fileIconForPath('/workspace/data/results.csv').color, '#217346')
   assert.equal(fileIconForPath('/workspace/report.xlsx').color, '#217346')
+  assert.equal(fileIconForPath('/workspace/report.docx').color, '#01579B')
+  assert.equal(fileIconForPath('/workspace/deck.pptx').color, '#E64A19')
 })
 
 test('requested file kinds use Material Icon Theme glyphs', () => {
@@ -130,6 +138,16 @@ test('requested file kinds use Material Icon Theme glyphs', () => {
   assertUsesMaterialIcon(iconMarkupForPath('/workspace/.venv'), 'folder-environment')
   assertUsesMaterialIcon(iconMarkupForPath('/workspace/pyproject.toml'), 'python-misc')
   assertUsesMaterialIcon(iconMarkupForPath('/workspace/uv.lock'), 'uv')
+  assertUsesMaterialIcon(iconMarkupForPath('/workspace/report.docx'), 'word')
+  assertUsesMaterialIcon(iconMarkupForPath('/workspace/deck.pptx'), 'powerpoint')
+  assertUsesMaterialIcon(iconMarkupForPath('/workspace/data/results.xlsm'), 'table')
+  assertUsesMaterialIcon(iconMarkupForPath('/workspace/data/results.parquet'), 'database')
+  assertUsesMaterialIcon(iconMarkupForPath('/workspace/data/results.sas7bdat'), 'sas')
+  assertUsesMaterialIcon(iconMarkupForPath('/workspace/certs/server.crt'), 'certificate')
+  assertUsesMaterialIcon(
+    iconMarkupForPathWithTheme('/workspace/design/mockup.psd', 'dark'),
+    'adobe-photoshop'
+  )
 })
 
 test('material svg icons preserve root fill so README does not render a dark backdrop', () => {
@@ -158,6 +176,8 @@ test('screenshot sample files resolve to concrete Material Icon Theme assets', (
   assertMaterialIconForPath('/workspace/test/README.md', 'readme')
   assertMaterialIconForPath('/workspace/test/.venv', 'folder-environment')
   assertMaterialIconForPath('/workspace/test/notebook.ipynb', 'jupyter')
+  assertMaterialIconForPath('/workspace/test/商铺.pptx', 'powerpoint')
+  assertMaterialIconForPath('/workspace/test/厦门大学博士.docx', 'word')
 
   const folder = directoryIconForPath('/workspace/test')
   const folderMarkup = renderToStaticMarkup(createElement(folder.Icon, { fontSize: 'small' }))

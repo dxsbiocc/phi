@@ -123,6 +123,7 @@ export function InputAddPanel({
   skills,
   promptAgents,
   plugins,
+  cwd,
   onPickFiles,
   onInsertReference,
   onClose
@@ -132,6 +133,7 @@ export function InputAddPanel({
   skills: SkillSummary[]
   promptAgents: PromptAgentSummary[]
   plugins: PluginCatalogItem[]
+  cwd: string
   onPickFiles?: () => Promise<string[]>
   onInsertReference: (reference: string) => void
   onClose: () => void
@@ -148,11 +150,11 @@ export function InputAddPanel({
   const pickFiles = useCallback(async (): Promise<void> => {
     onClose()
     const paths = (await onPickFiles?.()) ?? []
-    const reference = formatInputFileReferences(paths)
+    const reference = formatInputFileReferences(paths, cwd)
     if (reference) {
       onInsertReference(reference)
     }
-  }, [onClose, onInsertReference, onPickFiles])
+  }, [cwd, onClose, onInsertReference, onPickFiles])
 
   return (
     <Paper

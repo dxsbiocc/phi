@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) because WrapperRunPlan/WrapperRun are large, evolving
@@ -10,6 +10,9 @@ import type { WrapperRun, WrapperRunPlan } from '../shared/wrapperTypes'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
+
+const INPUT_FILE_DROP_TARGET_ATTRIBUTE = 'data-phi-file-drop-target'
+const inputFilesDroppedSubscribers = new Set<(paths: string[]) => void>()
 
 type AuthStatusItem = {
   providerId: string
@@ -456,6 +459,39 @@ type AnalysisCellExecutionResult = {
   sessionStatus: AnalysisNotebookSessionStatus
 }
 
+type AnalysisNotebookCompletionInput = {
+  path: string
+  document: Record<string, unknown>
+  cellId: string
+  source: string
+  cursorPosition: number
+}
+
+type AnalysisNotebookCompletionResult = {
+  matches: string[]
+  cursorStart: number
+  cursorEnd: number
+  metadata: Record<string, unknown>
+  status: 'ok' | 'error'
+  message?: string
+}
+
+type AnalysisNotebookFormatInput = {
+  path: string
+  document: Record<string, unknown>
+  cellId: string
+  source: string
+  language?: string
+  lineLength?: number
+}
+
+type AnalysisNotebookFormatResult = {
+  source: string
+  changed: boolean
+  formatter: 'ruff' | 'black' | 'none'
+  message?: string
+}
+
 type AnalysisNotebookCodeGenerationInput = {
   prompt: string
   language: string
@@ -510,6 +546,8 @@ type RendererAuthApi = {
   revealPath: (path: string) => Promise<void>
   openPath: (path: string) => Promise<void>
   pickInputFiles: () => Promise<string[]>
+  getPathForFile: (file: File) => string
+  onInputFilesDropped: (cb: (paths: string[]) => void) => Unsubscribe
   previewFile: (path: string) => Promise<FilePreview>
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
   statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
@@ -622,6 +660,14 @@ type RendererAuthApi = {
     document: Record<string, unknown>,
     cellId: string
   ) => Promise<AnalysisCellExecutionResult>
+  completeAnalysisNotebookCell: (
+    cwd: string,
+    input: AnalysisNotebookCompletionInput
+  ) => Promise<AnalysisNotebookCompletionResult>
+  formatAnalysisNotebookCell: (
+    cwd: string,
+    input: AnalysisNotebookFormatInput
+  ) => Promise<AnalysisNotebookFormatResult>
   generateAnalysisNotebookCode: (
     cwd: string,
     path: string,
@@ -663,6 +709,13 @@ const api: RendererAuthApi = {
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('files:reveal', path),
   openPath: (path: string): Promise<void> => ipcRenderer.invoke('files:openPath', path),
   pickInputFiles: (): Promise<string[]> => ipcRenderer.invoke('files:pickInput'),
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+  onInputFilesDropped: (cb: (paths: string[]) => void): Unsubscribe => {
+    inputFilesDroppedSubscribers.add(cb)
+    return () => {
+      inputFilesDroppedSubscribers.delete(cb)
+    }
+  },
   previewFile: (path: string): Promise<FilePreview> => ipcRenderer.invoke('files:preview', path),
   hoverPreviewFile: (path: string): Promise<FileHoverPreview> =>
     ipcRenderer.invoke('files:hoverPreview', path),
@@ -833,6 +886,16 @@ const api: RendererAuthApi = {
     cellId: string
   ): Promise<AnalysisCellExecutionResult> =>
     ipcRenderer.invoke('analysis:executeNotebookCell', cwd, path, document, cellId),
+  completeAnalysisNotebookCell: (
+    cwd: string,
+    input: AnalysisNotebookCompletionInput
+  ): Promise<AnalysisNotebookCompletionResult> =>
+    ipcRenderer.invoke('analysis:completeNotebookCell', cwd, input),
+  formatAnalysisNotebookCell: (
+    cwd: string,
+    input: AnalysisNotebookFormatInput
+  ): Promise<AnalysisNotebookFormatResult> =>
+    ipcRenderer.invoke('analysis:formatNotebookCell', cwd, input),
   generateAnalysisNotebookCode: (
     cwd: string,
     path: string,
@@ -945,6 +1008,71 @@ const api: RendererAuthApi = {
   exportWrapperReproducibility: (runId: string): Promise<string | null> =>
     ipcRenderer.invoke('wrappers:exportReproducibility', runId)
 }
+
+function dataTransferHasFiles(dataTransfer: DataTransfer | null): boolean {
+  if (!dataTransfer) return false
+  const types = Array.from(dataTransfer.types)
+  if (types.includes('Files')) return true
+  return Array.from(dataTransfer.items).some((item) => item.kind === 'file')
+}
+
+function inputFileDropTargetFromEvent(event: DragEvent): Element | null {
+  const target = event.target
+  if (!target || typeof (target as Element).closest !== 'function') return null
+  return (target as Element).closest(`[${INPUT_FILE_DROP_TARGET_ATTRIBUTE}="chat-composer"]`)
+}
+
+function droppedFilePathsFromEvent(event: DragEvent): string[] {
+  const files = Array.from(event.dataTransfer?.files ?? [])
+  const paths: string[] = []
+  const seen = new Set<string>()
+  for (const file of files) {
+    let path = ''
+    try {
+      path = webUtils.getPathForFile(file).trim()
+    } catch {
+      const fallbackPath = (file as File & { path?: unknown }).path
+      path = typeof fallbackPath === 'string' ? fallbackPath.trim() : ''
+    }
+    if (!path || seen.has(path)) continue
+    seen.add(path)
+    paths.push(path)
+  }
+  return paths
+}
+
+function notifyInputFilesDropped(paths: string[]): void {
+  for (const subscriber of inputFilesDroppedSubscribers) {
+    try {
+      subscriber(paths)
+    } catch (error) {
+      console.error(error)
+    }
+  }
+}
+
+window.addEventListener(
+  'dragover',
+  (event) => {
+    if (!inputFileDropTargetFromEvent(event) || !dataTransferHasFiles(event.dataTransfer)) return
+    event.preventDefault()
+    event.dataTransfer!.dropEffect = 'copy'
+  },
+  true
+)
+
+window.addEventListener(
+  'drop',
+  (event) => {
+    if (!inputFileDropTargetFromEvent(event) || !dataTransferHasFiles(event.dataTransfer)) return
+    const paths = droppedFilePathsFromEvent(event)
+    if (paths.length === 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    notifyInputFilesDropped(paths)
+  },
+  true
+)
 
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise

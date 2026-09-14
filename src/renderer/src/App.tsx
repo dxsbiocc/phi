@@ -623,6 +623,8 @@ function App(): React.JSX.Element {
     onStopAnalysisNotebookSession,
     onStopRuntimeNotebookSession,
     onRunAnalysisNotebookCell,
+    onCompleteAnalysisNotebookCell,
+    onFormatAnalysisNotebookCell,
     onGenerateAnalysisNotebookCode,
     closeActiveNotebook,
     resetAnalysisJupyterRuntimeForCwdChange,
@@ -1442,6 +1444,10 @@ function App(): React.JSX.Element {
       return []
     }
   }, [rendererApi, showSnackbarError])
+  const onListInputDirectory = useCallback(
+    (path: string) => rendererApi.listDirectory(path),
+    [rendererApi]
+  )
 
   const selectedPrompts = activePrompts.filter(
     (item) => item.providerId === providerDialogProviderId
@@ -1744,6 +1750,9 @@ function App(): React.JSX.Element {
       onInputChange={setActiveInput}
       onOpenInputAddMenu={onOpenInputAddMenu}
       onPickInputFiles={onPickInputFiles}
+      onGetPathForInputFile={rendererApi.getPathForFile}
+      onInputFilesDropped={rendererApi.onInputFilesDropped}
+      onListInputDirectory={onListInputDirectory}
       onChatSubmit={onChatSubmit}
       onStopGeneration={onStopGeneration}
       onGoSettings={onGoProviderSettings}
@@ -2057,6 +2066,8 @@ function App(): React.JSX.Element {
                   onRunNotebookCell={(file, document, cellId) => {
                     void onRunAnalysisNotebookCell(file, document, cellId)
                   }}
+                  onCompleteNotebookCell={onCompleteAnalysisNotebookCell}
+                  onFormatNotebookCell={onFormatAnalysisNotebookCell}
                   onGenerateNotebookCode={onGenerateAnalysisNotebookCode}
                   onNotebookCodeGenerationProgress={
                     rendererApi.onAnalysisNotebookCodeGenerationProgress

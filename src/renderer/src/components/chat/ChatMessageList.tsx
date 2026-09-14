@@ -16,6 +16,7 @@ import {
 } from '../../lib/chatRenderGroups'
 import type { ChatItem, ChatMessage, NotebookCellJumpTarget } from '../../types'
 import { ThinkingBlock } from './ThinkingBlock'
+import { ChatUserMessage } from './ChatUserMessage'
 import {
   useCollapseResizeNotifier,
   type ChatContentResizeHandler,
@@ -314,32 +315,7 @@ function ChatBubble({
   }
 
   if (message.role === 'user') {
-    return (
-      <Box
-        sx={{
-          alignSelf: 'flex-end',
-          maxWidth: '75%',
-          minWidth: 0,
-          px: 2,
-          py: 1.25,
-          bgcolor: 'primary.main',
-          color: 'background.default',
-          borderRadius: '18px 18px 4px 18px'
-        }}
-      >
-        <Typography
-          variant="body1"
-          sx={{
-            whiteSpace: 'pre-wrap',
-            overflowWrap: 'anywhere',
-            lineHeight: 1.6,
-            fontSize: '0.95rem'
-          }}
-        >
-          {message.content}
-        </Typography>
-      </Box>
-    )
+    return <ChatUserMessage message={message} />
   }
 
   return (

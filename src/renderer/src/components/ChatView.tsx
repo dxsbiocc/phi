@@ -16,12 +16,17 @@ import {
   PermissionModeControl,
   ThinkingLevelControl
 } from './chat/ChatComposerControls'
+import { FileReferenceCards } from './chat/FileReferenceCards'
 import { InputAddControl, InputAddPanel } from './chat/InputAddMenu'
+import { InputFileReferenceMenu } from './chat/InputFileReferenceMenu'
 import ChatMessageList from './chat/ChatMessageList'
 import {
   COMPACT_COMPOSER_CONTROL_SIZE,
-  REGULAR_COMPOSER_ACTION_SIZE
+  REGULAR_COMPOSER_ACTION_SIZE,
+  composerSurfaceSx
 } from './chat/composerControlStyles'
+import { useComposerFileDrop } from './chat/useComposerFileDrop'
+import { useInputFileReferenceMenu } from './chat/useInputFileReferenceMenu'
 import { PhiIcons } from '../icons'
 import {
   canNavigatePromptHistory,
@@ -29,10 +34,16 @@ import {
   promptHistoryFromMessages,
   type PromptHistoryDirection
 } from '../lib/promptHistory'
-import { appendInputReference } from '../lib/inputReferences'
+import {
+  appendInputReference,
+  composeInputWithFileReferences,
+  mergeInputFileReferences,
+  parseInputFileReferences
+} from '../lib/inputReferences'
 import { suggestedNextActionPlaceholderFromMessages } from '../lib/suggestedNextAction'
 import type {
   ChatItem,
+  DirectoryListing,
   ModelOption,
   NotebookCellJumpTarget,
   PermissionMode,
@@ -91,6 +102,9 @@ type ViewProps = {
   onInputChange: (value: string) => void
   onOpenInputAddMenu?: () => void
   onPickInputFiles?: () => Promise<string[]>
+  onGetPathForInputFile?: (file: File) => string
+  onInputFilesDropped?: (cb: (paths: string[]) => void) => () => void
+  onListInputDirectory?: (path: string) => Promise<DirectoryListing>
   onChatSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>
   onStopGeneration: () => Promise<void>
   onGoSettings: () => void
@@ -126,6 +140,9 @@ function ChatView({
   onInputChange,
   onOpenInputAddMenu,
   onPickInputFiles,
+  onGetPathForInputFile,
+  onInputFilesDropped,
+  onListInputDirectory,
   onChatSubmit,
   onStopGeneration,
   onGoSettings,
@@ -162,12 +179,42 @@ function ChatView({
     ? '输入消息'
     : '输入消息，Enter 发送，Shift+Enter 换行'
   const inputPlaceholder = suggestedNextAction ?? defaultInputPlaceholder
+  const parsedComposerInput = useMemo(() => parseInputFileReferences(input), [input])
+  const composerFileReferences = parsedComposerInput.references
+  const composerInputText = parsedComposerInput.body
 
   const resetPromptHistoryNavigation = useCallback((): void => {
     promptHistoryKeyRef.current = promptHistoryKey
     promptHistoryCursorRef.current = null
     promptHistoryDraftRef.current = ''
   }, [promptHistoryKey])
+  const applyFileReferenceInput = useCallback(
+    (nextValue: string, cursor: number): void => {
+      resetPromptHistoryNavigation()
+      const parsedNextValue = parseInputFileReferences(nextValue)
+      const nextReferences = mergeInputFileReferences(
+        composerFileReferences,
+        parsedNextValue.references
+      )
+      const nextFullValue = composeInputWithFileReferences(nextReferences, parsedNextValue.body)
+      promptHistoryDraftRef.current = nextFullValue
+      onInputChange(nextFullValue)
+
+      window.requestAnimationFrame(() => {
+        const inputElement = inputRef.current
+        inputElement?.focus({ preventScroll: true })
+        const nextCursor = Math.min(cursor, parsedNextValue.body.length)
+        inputElement?.setSelectionRange(nextCursor, nextCursor)
+      })
+    },
+    [composerFileReferences, onInputChange, resetPromptHistoryNavigation]
+  )
+  const fileReferenceMenu = useInputFileReferenceMenu({
+    input: composerInputText,
+    cwd,
+    onListInputDirectory,
+    onInsertReference: applyFileReferenceInput
+  })
 
   const syncPromptHistoryKey = useCallback((): void => {
     if (promptHistoryKeyRef.current !== promptHistoryKey) {
@@ -252,18 +299,46 @@ function ChatView({
   const insertInputReference = useCallback(
     (reference: string): void => {
       resetPromptHistoryNavigation()
-      const nextValue = appendInputReference(input, reference)
+      const parsedReference = parseInputFileReferences(reference)
+      const nextValue =
+        parsedReference.references.length > 0 && !parsedReference.body
+          ? composeInputWithFileReferences(
+              mergeInputFileReferences(composerFileReferences, parsedReference.references),
+              composerInputText
+            )
+          : appendInputReference(input, reference)
       promptHistoryDraftRef.current = nextValue
       onInputChange(nextValue)
 
       window.requestAnimationFrame(() => {
         const inputElement = inputRef.current
         inputElement?.focus({ preventScroll: true })
-        inputElement?.setSelectionRange(nextValue.length, nextValue.length)
+        const nextComposerText = parseInputFileReferences(nextValue).body
+        inputElement?.setSelectionRange(nextComposerText.length, nextComposerText.length)
       })
     },
-    [input, onInputChange, resetPromptHistoryNavigation]
+    [composerFileReferences, composerInputText, input, onInputChange, resetPromptHistoryNavigation]
   )
+  const removeFileReference = useCallback(
+    (index: number): void => {
+      resetPromptHistoryNavigation()
+      const nextReferences = composerFileReferences.filter((_, itemIndex) => itemIndex !== index)
+      const nextValue = composeInputWithFileReferences(nextReferences, composerInputText)
+      promptHistoryDraftRef.current = nextValue
+      onInputChange(nextValue)
+      window.requestAnimationFrame(() => {
+        inputRef.current?.focus({ preventScroll: true })
+      })
+    },
+    [composerFileReferences, composerInputText, onInputChange, resetPromptHistoryNavigation]
+  )
+  const { isDragActive: composerDragActive, dragHandlers: composerDragHandlers } =
+    useComposerFileDrop({
+      cwd,
+      onGetPathForFile: onGetPathForInputFile,
+      onInputFilesDropped,
+      onInsertReference: insertInputReference
+    })
   const handleChatSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>): Promise<void> => {
       closeInputAddMenu()
@@ -306,28 +381,39 @@ function ChatView({
               skills={skills}
               promptAgents={promptAgents}
               plugins={plugins}
+              cwd={cwd}
               onPickFiles={onPickInputFiles}
               onInsertReference={insertInputReference}
               onClose={closeInputAddMenu}
             />
           )}
+          {fileReferenceMenu.menuState ? (
+            <InputFileReferenceMenu
+              state={fileReferenceMenu.menuState}
+              highlightedIndex={fileReferenceMenu.highlightedIndex}
+              onHighlight={fileReferenceMenu.onHighlight}
+              onSelect={fileReferenceMenu.onSelect}
+            />
+          ) : null}
           <Paper
             variant="outlined"
             onMouseDownCapture={focusInputFromComposerSurface}
-            sx={{
-              borderRadius: 2,
-              px: compactComposerControls ? 1.25 : 2,
-              pt: 1.5,
-              pb: 1,
-              cursor: 'text',
-              borderColor: (theme) =>
-                theme.palette.mode === 'dark'
-                  ? 'rgba(241, 246, 246, 0.18)'
-                  : 'rgba(15, 42, 48, 0.14)',
-              transition: 'border-color 200ms',
-              '&:focus-within': { borderColor: 'primary.main' }
-            }}
+            onDragEnter={composerDragHandlers.onDragEnter}
+            onDragOver={composerDragHandlers.onDragOver}
+            onDragLeave={composerDragHandlers.onDragLeave}
+            onDrop={composerDragHandlers.onDrop}
+            aria-label="消息输入框"
+            data-phi-file-drop-target="chat-composer"
+            sx={composerSurfaceSx({
+              compact: compactComposerControls,
+              dragActive: composerDragActive
+            })}
           >
+            <FileReferenceCards
+              paths={composerFileReferences}
+              variant="composer"
+              onRemove={removeFileReference}
+            />
             <TextField
               fullWidth
               multiline
@@ -335,13 +421,25 @@ function ChatView({
               minRows={1}
               maxRows={8}
               inputRef={inputRef}
-              value={input}
+              value={composerInputText}
               onChange={(event) => {
                 resetPromptHistoryNavigation()
-                promptHistoryDraftRef.current = event.target.value
-                onInputChange(event.target.value)
+                fileReferenceMenu.onInputChanged(event.target)
+                const nextValue = composeInputWithFileReferences(
+                  composerFileReferences,
+                  event.target.value
+                )
+                promptHistoryDraftRef.current = nextValue
+                onInputChange(nextValue)
               }}
+              onSelect={(event) =>
+                fileReferenceMenu.onInputCursorChanged(textInputFromEventTarget(event.target))
+              }
               onKeyDown={(event) => {
+                if (fileReferenceMenu.onKeyDown(event)) {
+                  return
+                }
+
                 const historyDirection =
                   event.key === 'ArrowUp' ? 'previous' : event.key === 'ArrowDown' ? 'next' : null
                 if (

@@ -590,6 +590,39 @@ export interface AnalysisCellExecutionResult {
   sessionStatus: AnalysisNotebookSessionStatus
 }
 
+export interface AnalysisNotebookCompletionInput {
+  path: string
+  document: NotebookDocument
+  cellId: string
+  source: string
+  cursorPosition: number
+}
+
+export interface AnalysisNotebookCompletionResult {
+  matches: string[]
+  cursorStart: number
+  cursorEnd: number
+  metadata: Record<string, unknown>
+  status: 'ok' | 'error'
+  message?: string
+}
+
+export interface AnalysisNotebookFormatInput {
+  path: string
+  document: NotebookDocument
+  cellId: string
+  source: string
+  language?: string
+  lineLength?: number
+}
+
+export interface AnalysisNotebookFormatResult {
+  source: string
+  changed: boolean
+  formatter: 'ruff' | 'black' | 'none'
+  message?: string
+}
+
 export type RendererApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -597,6 +630,8 @@ export type RendererApi = {
   revealPath: (path: string) => Promise<void>
   openPath: (path: string) => Promise<void>
   pickInputFiles: () => Promise<string[]>
+  getPathForFile: (file: File) => string
+  onInputFilesDropped: (cb: (paths: string[]) => void) => () => void
   previewFile: (path: string) => Promise<FilePreview>
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
   statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
@@ -709,6 +744,14 @@ export type RendererApi = {
     document: NotebookDocument,
     cellId: string
   ) => Promise<AnalysisCellExecutionResult>
+  completeAnalysisNotebookCell: (
+    cwd: string,
+    input: AnalysisNotebookCompletionInput
+  ) => Promise<AnalysisNotebookCompletionResult>
+  formatAnalysisNotebookCell: (
+    cwd: string,
+    input: AnalysisNotebookFormatInput
+  ) => Promise<AnalysisNotebookFormatResult>
   generateAnalysisNotebookCode: (
     cwd: string,
     path: string,
