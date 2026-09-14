@@ -38,10 +38,12 @@ function outputKindLabel(kind: string): string {
 }
 
 export default function NotebookPreOutput({
+  hideKindLabel = false,
   kind,
   text,
   tone = 'normal'
 }: {
+  hideKindLabel?: boolean
   kind: string
   text: string
   tone?: 'normal' | 'error'
@@ -55,7 +57,7 @@ export default function NotebookPreOutput({
   // "text/plain" and ordinary stdout are the default, unremarkable cases.
   // Keep labels only where they distinguish the output, such as stderr,
   // errors, JSON/CSV/LaTeX rendered as text, and fallback mimes.
-  const showKindLabel = kind !== 'text/plain' && kind !== 'stream:stdout'
+  const showKindLabel = !hideKindLabel && kind !== 'text/plain' && kind !== 'stream:stdout'
 
   const copyOutput = async (): Promise<void> => {
     await navigator.clipboard.writeText(text)

@@ -71,6 +71,23 @@ test('stdout output hides its label, while stderr and error keep theirs', () => 
   assert.match(error, />error</)
 })
 
+test('stderr output can hide its inner label when an outer channel button already labels it', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(NotebookPreOutput, {
+        hideKindLabel: true,
+        kind: 'stream:stderr',
+        text: '载入程序包: dplyr'
+      })
+    )
+  )
+
+  assert.doesNotMatch(markup, />stderr</)
+  assert.match(markup, /载入程序包/)
+})
+
 test('output hover actions are hidden until the user hovers or focuses the output', () => {
   const source = readFileSync(
     resolve('src/renderer/src/features/analysis/notebook/NotebookPreOutput.tsx'),

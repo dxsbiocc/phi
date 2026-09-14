@@ -358,7 +358,7 @@ function NotebookStderrOutput({ text }: { text: string }): React.JSX.Element {
       >
         stderr
       </Button>
-      {isExpanded ? <NotebookPreOutput kind="stream:stderr" text={text} /> : null}
+      {isExpanded ? <NotebookPreOutput hideKindLabel kind="stream:stderr" text={text} /> : null}
     </Box>
   )
 }
