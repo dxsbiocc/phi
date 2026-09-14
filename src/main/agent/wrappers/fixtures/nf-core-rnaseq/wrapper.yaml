@@ -1,0 +1,198 @@
+# Adapter for nf-core/rnaseq 3.26.0 (https://github.com/nf-core/rnaseq/tree/3.26.0)
+# — Phi's first wrapper around a real, unmodified nf-core pipeline (every
+# other bundled wrapper so far was a Phi-authored demo script). Vendored
+# pipeline source (main.nf, workflows/, subworkflows/, modules/, conf/,
+# assets/, bin/) lives alongside this file, pruned of dev-only content
+# (.git, docs/, the nf-test suite, CI config) — see the fixture directory's
+# own state for exactly what shipped. Per
+# docs/design/phi-wrapper-technical-design.md: "An nf-core pipeline is not
+# automatically a Phi verified wrapper. A Phi wrapper adapter must fix
+# inputs, outputs, params, source revision, environment, and verification
+# metadata" — this file is that adapter, exposing a curated, essential
+# subset of the pipeline's ~150 parameters rather than mirroring all of
+# them (aligner + strandedness-bearing samplesheet + reference genome).
+# Verified against a real Nextflow 26.04.6 + Docker, using params.json
+# shaped exactly like plans.ts generates (a real absolute samplesheet/
+# fasta/gtf path, not a synthetic stand-in): the vendored tree parses
+# (`nextflow config .`, `nextflow run . --help`), passes the pipeline's
+# own parameter validation, and — using nf-core's own tiny CI test dataset
+# — actually ran real containerized processes end to end through genome
+# prep, indexing, QC, and trimming (GUNZIP_GTF, SAMTOOLS_FAIDX,
+# CUSTOM_GTFFILTER, STAR_GENOMEGENERATE, FASTQC, TRIMGALORE, …) with no
+# Phi-side errors. Not verified: a full run to completion (this
+# environment's Docker VM doesn't have the ~72 GB the heaviest step wants
+# — a real constraint of the pipeline itself, not a Phi bug, confirmed by
+# hitting it), and the two remote profiles (see their own comments below).
+phiWrapperVersion: 1
+id: nf-core/rnaseq/rnaseq
+shortId: rnaseq
+name: RNA-seq (nf-core)
+version: 3.26.0
+summary: RNA sequencing analysis pipeline for gene/isoform quantification and extensive quality control (nf-core/rnaseq).
+
+runtime:
+  minVersion: 1.0.0
+  maxVersion: 1.x
+
+source:
+  repository: https://github.com/nf-core/rnaseq
+  ref: 3.26.0
+
+# Informational only — never used to decide trust tier (see manifest.ts /
+# technical design's "Trust And Registry"). nf-core/rnaseq is community
+# maintained and widely used, but Phi has not independently re-verified its
+# internals beyond what's noted above.
+verification:
+  status: unverified
+  registry: none
+
+registryStatus: active
+# STAR genome indexing + multi-tool alignment/quantification genuinely need
+# scheduler-class resources for anything beyond a toy dataset — see
+# `resources.defaults` below (sized off the pipeline's own `process_high`
+# label in conf/base.config).
+resourceClass: hpc
+
+engine:
+  type: nextflow
+  entrypoint: main.nf
+  profiles:
+    # id must be exactly "local" — plans.ts's resolveLocalProfileId (Phase
+    # 1's local-executor resolver) looks up a manifest profile by that
+    # literal id, not by `executor: local` in general. nextflowProfile is
+    # what actually reaches Nextflow's `-profile` flag (nf-core/rnaseq's
+    # own real `docker` profile) — exactly the id/nextflowProfile split
+    # this field exists for.
+    - id: local
+      executor: local
+      containerRuntime: docker
+      nextflowProfile: docker
+    - id: remote-background
+      executor: remote
+      controller: detached_ssh
+      containerRuntime: singularity
+      # Real HPC login/compute nodes almost universally run Singularity/
+      # Apptainer, not Docker (no root). Not yet reachable via plans.ts's
+      # resolver (only the sbatch-controller profile below is) — declared
+      # for when it is. For a remote executor, `input`/`fasta`/`gtf` must
+      # already be absolute paths on the remote host (see
+      # docs/design/phi-wrapper-product-prd.md's Non-Goals: "Do not
+      # auto-sync project data to remote servers" — Phi never uploads
+      # them, by design, not because the feature is missing).
+      nextflowProfile: singularity
+    - id: slurm-controller
+      executor: remote
+      scheduler: slurm
+      controller: sbatch
+      containerRuntime: singularity
+      nextflowProfile: singularity
+
+inputs:
+  # A hand-authored nf-core-style samplesheet (sample,fastq_1,fastq_2,
+  # strandedness — see assets/schema_input.json), not Phi's glob-driven
+  # auto-generated one: strandedness is a wet-lab library-prep property,
+  # not something derivable from filenames, and nf-core users normally
+  # already have a samplesheet from preparing their run. Declared as a
+  # plain file input (not `layout`/`samplesheet`) so plans.ts substitutes
+  # its resolved absolute path into params.json — see plans.ts's
+  # resolveManifestInputs doc comment.
+  - id: input
+    type: nf_core_samplesheet
+    required: true
+  - id: fasta
+    type: reference_fasta
+    required: true
+  - id: gtf
+    type: reference_gtf
+    required: true
+
+parameters:
+  schema:
+    type: object
+    required:
+      - input
+      - fasta
+      - gtf
+    properties:
+      input:
+        type: string
+      fasta:
+        type: string
+      gtf:
+        type: string
+      aligner:
+        type: string
+        enum:
+          - star_salmon
+          - star_rsem
+          - hisat2
+          - bowtie2_salmon
+        default: star_salmon
+
+outputs:
+  # Paths are for the default `aligner: star_salmon` — nf-core/rnaseq
+  # namespaces downstream output under `<aligner>/` (see docs/output.md),
+  # so these would be wrong for `star_rsem`/`hisat2`/`bowtie2_salmon`.
+  # WrapperManifestOutput.path has no templating today, so a wrapper can't
+  # express "depends on the aligner param" — noted rather than silently
+  # wrong: an aligner-mismatched output just shows as "not found" in the
+  # plan card, it doesn't crash anything.
+  - id: report
+    label: MultiQC report
+    type: html
+    path: multiqc/star_salmon/multiqc_report.html
+    primary: true
+  - id: gene_counts
+    label: Gene counts (Salmon, merged)
+    type: table
+    path: star_salmon/salmon.merged.gene_counts.tsv
+
+resources:
+  # Sized off conf/base.config's `process_high` label (12 CPU / 72 GB /
+  # 16h) plus margin — the heaviest single step (STAR genome generation).
+  # Only load-bearing for `slurm-controller`: the whole pipeline runs
+  # inside that one sbatch allocation's envelope, since nothing here
+  # configures Nextflow's own native per-process Slurm submission (that
+  # would be `WrapperExecutor: 'slurm'`, not implemented in runs.ts yet —
+  # see the design doc's Executor Model).
+  defaults:
+    cpus: 16
+    memory: 72 GB
+    time: 24h
+
+permissions:
+  filesystem:
+    read:
+      - input_paths
+    write:
+      - run_workdir
+      - declared_outdir
+  network:
+    default: disabled
+  remote:
+    allowed: false
+
+license:
+  wrapper: MIT
+  tools:
+    - name: nf-core/rnaseq
+      license: MIT
+    - name: STAR
+      license: MIT
+    - name: Salmon
+      license: GPL-3.0
+    - name: MultiQC
+      license: GPL-3.0
+
+citations:
+  - id: nf-core
+    doi: 10.1038/s41587-020-0439-x
+  - id: nextflow
+    doi: 10.1038/nbt.3820
+
+dataPolicy:
+  acceptedSensitivity:
+    - public
+    - internal
+  externalTransfer:
+    default: false

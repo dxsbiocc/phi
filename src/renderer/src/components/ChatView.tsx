@@ -107,6 +107,7 @@ type ViewProps = {
   onListInputDirectory?: (path: string) => Promise<DirectoryListing>
   onChatSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>
   onStopGeneration: () => Promise<void>
+  onAcknowledgeActiveSession?: () => void
   onGoSettings: () => void
   permissionMode: PermissionMode
   onSelectPermissionMode: (mode: PermissionMode) => void
@@ -145,6 +146,7 @@ function ChatView({
   onListInputDirectory,
   onChatSubmit,
   onStopGeneration,
+  onAcknowledgeActiveSession,
   onGoSettings,
   permissionMode,
   onSelectPermissionMode,
@@ -348,7 +350,11 @@ function ChatView({
   )
 
   return (
-    <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <Box
+      onPointerDownCapture={onAcknowledgeActiveSession}
+      onFocusCapture={onAcknowledgeActiveSession}
+      sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+    >
       <ChatMessageList
         messages={messages}
         messagesContainerRef={messagesContainerRef}

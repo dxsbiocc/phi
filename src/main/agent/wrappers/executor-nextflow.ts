@@ -25,7 +25,14 @@ export function buildNextflowLaunch(
   weblogUrl?: string
 ): NextflowLaunchPlan {
   const entrypointPath = join(installedPath, manifest.engine.entrypoint)
-  const args = ['run', entrypointPath, '-params-file', 'params.json', '-profile', plan.profile]
+  const args = [
+    'run',
+    entrypointPath,
+    '-params-file',
+    'params.json',
+    '-profile',
+    plan.nextflowProfile ?? plan.profile
+  ]
   if (weblogUrl) {
     args.push('-with-weblog', weblogUrl)
   }

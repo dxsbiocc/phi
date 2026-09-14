@@ -1,0 +1,108 @@
+# Standalone wrapper around one module of nf-core/rnaseq 3.26.0 — MultiQC
+# report aggregation.
+#
+# See ../nf-core-rnaseq-fastqc/wrapper.yaml's doc comment for why this
+# exists as its own independently runnable Phi wrapper rather than being
+# composed into the full `nf-core/rnaseq/rnaseq` pipeline wrapper — Phi has
+# no wrapper-composition mechanism (product docs explicitly rule it out for
+# now). Typical use: point `input` at the combined output of this
+# namespace's other standalone wrappers (fastqc/trimgalore) to get one
+# aggregate report across them. The module itself
+# (modules/nf-core/multiqc/main.nf) is vendored unmodified;
+# `main.nf`/`nextflow.config` here are a small Phi-authored launcher.
+phiWrapperVersion: 1
+id: nf-core/rnaseq/multiqc
+shortId: multiqc
+name: MultiQC (nf-core/rnaseq module)
+version: 3.26.0
+summary: Aggregate QC/tool reports into one MultiQC HTML report — the report-aggregation module nf-core/rnaseq uses internally, wrapped standalone.
+
+runtime:
+  minVersion: 1.0.0
+  maxVersion: 1.x
+
+source:
+  repository: https://github.com/nf-core/rnaseq
+  ref: 3.26.0
+
+verification:
+  status: unverified
+  registry: none
+
+registryStatus: active
+resourceClass: light
+
+engine:
+  type: nextflow
+  entrypoint: main.nf
+  profiles:
+    - id: local
+      executor: local
+      containerRuntime: docker
+      nextflowProfile: docker
+    - id: slurm-controller
+      executor: remote
+      scheduler: slurm
+      controller: sbatch
+      containerRuntime: singularity
+      nextflowProfile: singularity
+
+inputs:
+  # A glob (not a directory path) — e.g. "results/**/*.{html,zip,txt,log}"
+  # — matching every report/log file to fold into the aggregate report.
+  # Points at the *outputs* of other tool wrappers (this namespace's own
+  # fastqc/trimgalore, or anything else MultiQC recognizes), not raw reads.
+  - id: input
+    type: glob
+    required: true
+
+parameters:
+  schema:
+    type: object
+    properties: {}
+
+outputs:
+  - id: report
+    label: MultiQC report
+    type: html
+    path: multiqc/multiqc_report.html
+    primary: true
+  - id: data
+    label: MultiQC parsed data
+    type: directory
+    path: multiqc/multiqc_data
+
+resources:
+  defaults:
+    cpus: 1
+    memory: 4 GB
+    time: 1h
+
+permissions:
+  filesystem:
+    read:
+      - input_paths
+    write:
+      - run_workdir
+      - declared_outdir
+  network:
+    default: disabled
+  remote:
+    allowed: false
+
+license:
+  wrapper: MIT
+  tools:
+    - name: MultiQC
+      license: GPL-3.0
+
+citations:
+  - id: nf-core
+    doi: 10.1038/s41587-020-0439-x
+
+dataPolicy:
+  acceptedSensitivity:
+    - public
+    - internal
+  externalTransfer:
+    default: false

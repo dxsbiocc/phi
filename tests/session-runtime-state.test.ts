@@ -4,6 +4,7 @@ import {
   idleSessionRuntimeState,
   mergeSessionRuntimeState,
   reduceSessionRuntimeState,
+  sessionRuntimeStateNeedsAcknowledgement,
   sessionRuntimeStateIsBusy,
   sessionRuntimeStatesEqual
 } from '../src/renderer/src/lib/sessionRuntimeState'
@@ -96,4 +97,12 @@ test('runtime reducer marks run start and completion as distinct states', () => 
   assert.equal(completed.status, 'completed_unread')
   assert.equal(completed.unreadKind, 'completed')
   assert.equal(sessionRuntimeStatesEqual(running, completed), false)
+})
+
+test('runtime acknowledgement is only needed for terminal unread states', () => {
+  assert.equal(sessionRuntimeStateNeedsAcknowledgement(null), false)
+  assert.equal(sessionRuntimeStateNeedsAcknowledgement({ unreadKind: null }), false)
+  assert.equal(sessionRuntimeStateNeedsAcknowledgement({ unreadKind: 'approval' }), false)
+  assert.equal(sessionRuntimeStateNeedsAcknowledgement({ unreadKind: 'completed' }), true)
+  assert.equal(sessionRuntimeStateNeedsAcknowledgement({ unreadKind: 'failed' }), true)
 })

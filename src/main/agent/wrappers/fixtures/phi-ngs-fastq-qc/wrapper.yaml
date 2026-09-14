@@ -31,6 +31,10 @@ engine:
     - id: docker
       executor: local
       containerRuntime: docker
+    - id: slurm-controller
+      executor: remote
+      scheduler: slurm
+      controller: sbatch
 
 # Declares the workflow DAG for the plan card / sidebar structure diagram.
 # ids match the Nextflow process names in main.nf so live weblog events

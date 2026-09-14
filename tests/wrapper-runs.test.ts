@@ -22,7 +22,12 @@ import {
   resolveRemoteSubmitOptions,
   submitWrapperRunPlan
 } from '../src/main/agent/wrappers/runs'
+import type {
+  RemoteExecResult,
+  RemoteSshSession
+} from '../src/main/agent/wrappers/remote-ssh-session'
 import {
+  getWrapperRunsDir,
   readWrapperPlan,
   readWrapperRun,
   writeWrapperPlan,
@@ -200,10 +205,15 @@ test('cancelWrapperRun cancels a not-yet-running run but refuses an already-runn
       agentDir
     })
     const run2 = submitWrapperRunPlan(plan2.planId, { agentDir, autoExecute: false })
-    // Simulate the executor having moved the run into "running" (P1.7 territory).
+    // Simulate the executor having moved the run into "running" — cancelling
+    // an actually-running *local* process still isn't supported (only
+    // slurm-controller's remote cancel is, see the tests below).
     const running = { ...run2, state: 'running' as const }
     writeWrapperRun(running, agentDir)
-    assert.throws(() => cancelWrapperRun(run2.runId, agentDir), /P1\.7/)
+    assert.throws(
+      () => cancelWrapperRun(run2.runId, agentDir),
+      /取消正在执行的进程需要对应执行器支持/
+    )
   })
 })
 
@@ -217,9 +227,12 @@ function slurmControllerPlan(agentDir: string, projectDir: string): WrapperRunPl
     cwd: projectDir,
     agentDir
   })
-  // plans.ts always produces executor: 'local' (Phase 2's resolver chain
-  // isn't built yet) — hand-override it, same as the executor-slurm-submit
-  // tests, to exercise the slurm-controller dispatch branch in runs.ts.
+  // Hand-overridden rather than routed through plans.ts's real resolver
+  // (which now CAN produce slurm-controller — see 'submitWrapperRunPlan
+  // dispatches a plan.ts-resolved slurm-controller plan end to end' below)
+  // so these tests stay independent of whether a project has remote
+  // execution configured, and keep exercising runs.ts's dispatch branch in
+  // isolation.
   const slurmPlan: WrapperRunPlan = { ...plan, executor: 'slurm-controller', profile: 'slurm' }
   writeWrapperPlan(slurmPlan, agentDir)
   return slurmPlan
@@ -252,6 +265,96 @@ test('submitWrapperRunPlan leaves a slurm-controller run at "created" when autoE
     // "missing remote connection info" failure path, not just the happy one.
     const stillCreated = readWrapperRun(run.runId, agentDir)
     assert.equal(stillCreated?.state, 'created')
+  })
+})
+
+function remoteBackgroundPlan(agentDir: string, projectDir: string): WrapperRunPlan {
+  writeFastqPair(projectDir, 'S1')
+  const wrapper = fastqQcWrapper(agentDir)
+  const plan = createWrapperRunPlan({
+    actor: 'agent',
+    wrapper,
+    params: { reads: 'data/*_{R1,R2}.fastq.gz' },
+    cwd: projectDir,
+    agentDir
+  })
+  // Hand-overridden — plans.ts's resolver never produces `remote-background`
+  // (only `slurm-controller`), same situation slurmControllerPlan() was in
+  // before Phase 2's resolver chain existed. Keeps these tests exercising
+  // runs.ts's dispatch branch in isolation.
+  const remotePlan: WrapperRunPlan = {
+    ...plan,
+    executor: 'remote-background',
+    profile: 'remote-background'
+  }
+  writeWrapperPlan(remotePlan, agentDir)
+  return remotePlan
+}
+
+test('submitWrapperRunPlan fails a remote-background run immediately when remote connection info is missing', () => {
+  withHarness(({ agentDir, projectDir }) => {
+    const plan = remoteBackgroundPlan(agentDir, projectDir)
+
+    const run = submitWrapperRunPlan(plan.planId, { agentDir })
+    assert.equal(run.state, 'created')
+
+    const failed = readWrapperRun(run.runId, agentDir)
+    assert.equal(failed?.state, 'failed')
+  })
+})
+
+test('submitWrapperRunPlan leaves a remote-background run at "created" when autoExecute is false', () => {
+  withHarness(({ agentDir, projectDir }) => {
+    const plan = remoteBackgroundPlan(agentDir, projectDir)
+
+    const run = submitWrapperRunPlan(plan.planId, { agentDir, autoExecute: false })
+    assert.equal(run.state, 'created')
+    assert.equal(run.executor, 'remote-background')
+
+    // autoExecute: false must skip dispatch entirely — including the
+    // "missing remote connection info" failure path, not just the happy one.
+    const stillCreated = readWrapperRun(run.runId, agentDir)
+    assert.equal(stillCreated?.state, 'created')
+  })
+})
+
+test('submitWrapperRunPlan dispatches a plan.ts-resolved slurm-controller plan end to end', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    writeFastqPair(projectDir, 'S1')
+    const wrapper = fastqQcWrapper(agentDir)
+    const project = createProject({
+      name: 'Demo',
+      workingDirectory: projectDir,
+      permissionMode: 'ask'
+    })
+    updateProjectRemoteConnection(project.id, 'conn1', {
+      id: 'conn1',
+      label: 'Lab HPC',
+      host: 'lab-hpc.example.edu',
+      username: 'agent',
+      privateKeyPath: join(projectDir, 'unused-key')
+    })
+    updateProjectRemoteDefaults(project.id, {
+      defaultRemoteConnectionId: 'conn1',
+      remoteWorkspaceRoot: '/cluster/facility/lab/WorkSpace'
+    })
+
+    // Unlike slurmControllerPlan() above, this plan comes from the real
+    // resolveExecutor() path (no hand-override) — proving plans.ts's
+    // resolver and runs.ts's dispatch branch actually connect end to end.
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper,
+      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
+      cwd: projectDir,
+      agentDir
+    })
+    assert.equal(plan.executor, 'slurm-controller')
+
+    const run = submitWrapperRunPlan(plan.planId, { agentDir, autoExecute: false })
+    assert.equal(run.state, 'created')
+    assert.equal(run.executor, 'slurm-controller')
+    assert.equal(run.planId, plan.planId)
   })
 })
 
@@ -390,5 +493,109 @@ test('resolveRemoteSubmitOptions surfaces the project connection error as the re
     if ('reason' in resolved) {
       assert.match(resolved.reason, /私钥文件/)
     }
+  })
+})
+
+// --- cancelWrapperRun's remote-running dispatch -----------------------------
+
+/** Fake session that only needs to answer `scancel` — reconciliation/submit's fuller `FakeSlurmHost` fixtures live in their own test files. */
+class FakeCancelSession implements RemoteSshSession {
+  execLog: string[] = []
+  closed = false
+
+  async exec(command: string): Promise<RemoteExecResult> {
+    this.execLog.push(command)
+    return { stdout: '', stderr: '', code: 0, signal: null }
+  }
+
+  async readTextFile(): Promise<string> {
+    throw new Error('FakeCancelSession: readTextFile not expected')
+  }
+
+  async writeTextFile(): Promise<void> {
+    // SbatchRunner.cancel/close never call this — only exec matters here.
+  }
+
+  async mkdirp(): Promise<void> {
+    // SbatchRunner.cancel/close never call this — only exec matters here.
+  }
+
+  async exists(): Promise<boolean> {
+    return false
+  }
+
+  async close(): Promise<void> {
+    this.closed = true
+  }
+}
+
+function writeRemoteSnapshotFixture(
+  agentDir: string,
+  runId: string,
+  remoteRunDir: string,
+  jobId: string
+): void {
+  const runDir = join(getWrapperRunsDir(agentDir), runId)
+  mkdirSync(runDir, { recursive: true })
+  writeFileSync(
+    join(runDir, 'remote.snapshot.json'),
+    `${JSON.stringify({ remoteRunDir, jobId })}\n`,
+    'utf-8'
+  )
+}
+
+test('cancelWrapperRun leaves a not-yet-running slurm-controller run cancelled immediately, with no remote dispatch', () => {
+  withHarness(({ agentDir, projectDir }) => {
+    const plan = slurmControllerPlan(agentDir, projectDir)
+    const run = submitWrapperRunPlan(plan.planId, { agentDir, autoExecute: false })
+    assert.equal(run.state, 'created')
+
+    const cancelled = cancelWrapperRun(run.runId, agentDir)
+    assert.equal(cancelled.state, 'cancelled')
+  })
+})
+
+test('cancelWrapperRun moves a running slurm-controller run to "cancelling" and dispatches a real scancel', async () => {
+  // Setup + the cancelWrapperRun call itself run fully synchronously inside
+  // withHarness (this file's harness doesn't await an async callback before
+  // cleaning up the temp dir — see wrapper-executor-slurm-submit.test.ts for
+  // the harness variant that does). dispatchRemoteCancel already read
+  // everything it needs from disk by the time cancelWrapperRun returns, so
+  // waiting on its fire-and-forget scancel happens below, against the
+  // in-memory fake session only.
+  const session = withHarness(({ agentDir, projectDir }) => {
+    const plan = slurmControllerPlan(agentDir, projectDir)
+    const run = slurmControllerRunFixture(plan, projectDir)
+    writeWrapperRun({ ...run, state: 'running' }, agentDir)
+
+    const remoteRunDir = `/cluster/facility/lab/WorkSpace/wrappers/runs/${run.runId}`
+    writeRemoteSnapshotFixture(agentDir, run.runId, remoteRunDir, '12345')
+
+    const fakeSession = new FakeCancelSession()
+    const cancelled = cancelWrapperRun(run.runId, agentDir, {
+      connection: { host: 'lab-hpc.example.edu', username: 'agent', privateKey: 'fake' },
+      remoteWorkspaceRoot: '/cluster/facility/lab/WorkSpace',
+      connectImpl: async () => fakeSession
+    })
+    assert.equal(cancelled.state, 'cancelling')
+    return fakeSession
+  })
+
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  assert.ok(session.execLog.some((command) => command.startsWith('scancel 12345')))
+  assert.equal(session.closed, true)
+})
+
+test('cancelWrapperRun refuses a run that is already "cancelling"', () => {
+  withHarness(({ agentDir, projectDir }) => {
+    const plan = slurmControllerPlan(agentDir, projectDir)
+    const run = slurmControllerRunFixture(plan, projectDir)
+    writeWrapperRun({ ...run, state: 'cancelling' }, agentDir)
+
+    assert.throws(
+      () => cancelWrapperRun(run.runId, agentDir),
+      /取消正在执行的进程需要对应执行器支持/
+    )
   })
 })

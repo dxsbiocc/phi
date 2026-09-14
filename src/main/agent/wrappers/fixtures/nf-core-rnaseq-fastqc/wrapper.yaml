@@ -1,0 +1,110 @@
+# Standalone wrapper around one module of nf-core/rnaseq 3.26.0 — FastQC.
+#
+# Why this exists alongside the full `nf-core/rnaseq/rnaseq` wrapper (see
+# ../nf-core-rnaseq/wrapper.yaml): the product docs (phi-wrapper-product-prd.md
+# Non-Goals) explicitly rule out "arbitrary wrapper composition" — there is
+# no mechanism for one wrapper to declare/invoke another, and building one
+# is out of scope (it's listed under Phase 3+ Future Extensions,
+# "Validated wrapper composition"). So the full pipeline wrapper and this
+# one are NOT connected: this is its own independently runnable Phi
+# wrapper around the same module the full pipeline also uses internally,
+# for a user who wants just FastQC without the rest of the pipeline. The
+# module itself (modules/nf-core/fastqc/main.nf) is vendored unmodified;
+# `main.nf`/`nextflow.config` here are a small Phi-authored launcher that
+# defines the input channel and publishes the module's outputs — nf-core
+# modules are `include`-only building blocks, not runnable pipelines on
+# their own.
+phiWrapperVersion: 1
+id: nf-core/rnaseq/fastqc
+shortId: fastqc
+name: FastQC (nf-core/rnaseq module)
+version: 3.26.0
+summary: Run FastQC quality control on FASTQ reads — the QC module nf-core/rnaseq uses internally, wrapped standalone.
+
+runtime:
+  minVersion: 1.0.0
+  maxVersion: 1.x
+
+source:
+  repository: https://github.com/nf-core/rnaseq
+  ref: 3.26.0
+
+verification:
+  status: unverified
+  registry: none
+
+registryStatus: active
+resourceClass: light
+
+engine:
+  type: nextflow
+  entrypoint: main.nf
+  profiles:
+    - id: local
+      executor: local
+      containerRuntime: docker
+      nextflowProfile: docker
+    - id: slurm-controller
+      executor: remote
+      scheduler: slurm
+      controller: sbatch
+      containerRuntime: singularity
+      nextflowProfile: singularity
+
+inputs:
+  - id: reads
+    type: fastq_reads
+    layout: paired_end
+    required: true
+    samplesheet:
+      columns:
+        - sample
+        - fastq_1
+        - fastq_2
+
+parameters:
+  schema:
+    type: object
+    properties: {}
+
+outputs:
+  - id: reports
+    label: FastQC reports (HTML + zip, one per sample)
+    type: directory
+    path: fastqc
+    primary: true
+
+resources:
+  defaults:
+    cpus: 2
+    memory: 4 GB
+    time: 1h
+
+permissions:
+  filesystem:
+    read:
+      - input_paths
+    write:
+      - run_workdir
+      - declared_outdir
+  network:
+    default: disabled
+  remote:
+    allowed: false
+
+license:
+  wrapper: MIT
+  tools:
+    - name: FastQC
+      license: GPL-2.0-only
+
+citations:
+  - id: nf-core
+    doi: 10.1038/s41587-020-0439-x
+
+dataPolicy:
+  acceptedSensitivity:
+    - public
+    - internal
+  externalTransfer:
+    default: false

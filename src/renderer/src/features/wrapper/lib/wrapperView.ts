@@ -32,13 +32,22 @@ export function runStateColor(
   return 'default'
 }
 
-/** States `runs.ts`'s `cancelWrapperRun` actually accepts today — see its own doc comment: cancelling an already-running local process needs executor support that doesn't exist yet, so it throws for anything past this list. */
-const CANCELLABLE_RUN_STATES: WrapperRun['state'][] = [
+/** States any executor accepts a cancel for before it's actually running anything — see `runs.ts`'s `cancelWrapperRun` doc comment. */
+const PRE_DISPATCH_CANCELLABLE_RUN_STATES: WrapperRun['state'][] = [
   'created',
   'validating',
   'provisioning',
   'queued'
 ]
+
+/**
+ * `slurm-controller` states where the remote job is actually running (or
+ * wrapping up) and `cancelWrapperRun` will issue a real `scancel` for it —
+ * see that function's doc comment. Local runs can't be cancelled once
+ * running (no local kill support exists yet), so this only applies when the
+ * run's executor is `slurm-controller`.
+ */
+const REMOTE_RUNNING_CANCELLABLE_STATES: WrapperRun['state'][] = ['running', 'collecting']
 
 export type WrapperCancelTarget =
   { kind: 'plan'; planId: string } | { kind: 'run'; runId: string } | undefined
@@ -57,10 +66,13 @@ export type WrapperCancelTarget =
  */
 export function resolveWrapperCancelTarget(
   plan: Pick<WrapperRunPlan, 'planId' | 'state'>,
-  run: Pick<WrapperRun, 'runId' | 'state'> | undefined
+  run: Pick<WrapperRun, 'runId' | 'state' | 'executor'> | undefined
 ): WrapperCancelTarget {
-  if (run && CANCELLABLE_RUN_STATES.includes(run.state)) {
-    return { kind: 'run', runId: run.runId }
+  if (run) {
+    const cancellable =
+      PRE_DISPATCH_CANCELLABLE_RUN_STATES.includes(run.state) ||
+      (run.executor === 'slurm-controller' && REMOTE_RUNNING_CANCELLABLE_STATES.includes(run.state))
+    if (cancellable) return { kind: 'run', runId: run.runId }
   }
   if (plan.state === 'valid' || plan.state === 'invalid' || plan.state === 'draft') {
     return { kind: 'plan', planId: plan.planId }

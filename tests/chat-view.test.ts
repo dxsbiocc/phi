@@ -652,7 +652,7 @@ test('chat view keeps in-flight processing folded with a spinner before the assi
     ])
   )
 
-  assert.match(markup, /正在处理，已花费 5 秒/)
+  assert.match(markup, /正在处理，已耗时 5 秒/)
   assert.match(markup, /aria-label="展开处理过程"/)
   assert.doesNotMatch(markup, /处理过程：/)
   assert.doesNotMatch(markup, /rg provider/)
@@ -685,7 +685,7 @@ test('chat view keeps streaming progress text inside the active processing fold'
     )
   )
 
-  assert.match(markup, /正在处理，已花费 5 秒/)
+  assert.match(markup, /正在处理，已耗时 5 秒/)
   assert.match(markup, /aria-label="展开处理过程"/)
   assert.doesNotMatch(markup, /当前正在补充分析代码。/)
 })
@@ -713,8 +713,8 @@ test('chat view uses the active run start time for running processing totals', (
     )
   )
 
-  assert.match(markup, /正在处理，已花费 30 秒/)
-  assert.doesNotMatch(markup, /正在处理，已花费 10 秒/)
+  assert.match(markup, /正在处理，已耗时 30 秒/)
+  assert.doesNotMatch(markup, /正在处理，已耗时 10 秒/)
 })
 
 test('chat view shows grouped running tool calls with a spinner instead of status text', () => {
@@ -744,7 +744,7 @@ test('chat view shows grouped running tool calls with a spinner instead of statu
     ])
   )
 
-  assert.match(markup, /正在处理，已花费 5 秒/)
+  assert.match(markup, /正在处理，已耗时 5 秒/)
   assert.match(markup, /aria-label="执行中"/)
   assert.match(markup, /aria-label="展开处理过程"/)
   assert.match(markup, /role="progressbar"/)

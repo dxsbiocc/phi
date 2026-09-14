@@ -282,6 +282,54 @@ test('mergePhiSessionState exposes Phi-only conversations without runtime files'
   })
 })
 
+test('mergePhiSessionState omits composer file reference metadata from titles', () => {
+  withPhiDir(() => {
+    const session = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      runtimeSessionPath: '/sessions/referenced.jsonl',
+      permissionMode: 'auto'
+    })
+    appendSessionEvent(session.sessionId, {
+      type: 'user_message',
+      runId: 'run-1',
+      content: '引用文件：\n- `./data.json`\n- `./metadata.csv`\n分析这个数据'
+    })
+
+    const [summary] = mergePhiSessionState(
+      [sessionInfo('/sessions/referenced.jsonl', '2026-09-05T10:00:00.000Z')],
+      listPhiSessions(),
+      '/workspace'
+    )
+
+    assert.equal(summary.name, undefined)
+    assert.equal(summary.firstMessage, '分析这个数据')
+  })
+})
+
+test('mergePhiSessionState sanitizes legacy manifest titles with file reference metadata', () => {
+  withPhiDir(() => {
+    const session = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      title: '引用文件：`./data.json`\n分析这个数据',
+      permissionMode: 'auto'
+    })
+    appendSessionEvent(session.sessionId, {
+      type: 'user_message',
+      runId: 'run-1',
+      content: '备用正文'
+    })
+
+    const [summary] = mergePhiSessionState([], listPhiSessions(), '/workspace')
+
+    assert.equal(summary.name, '分析这个数据')
+    assert.equal(summary.firstMessage, '分析这个数据')
+  })
+})
+
 test('acknowledgeSession handles Phi-only conversations', () => {
   withPhiDir(() => {
     const session = createPhiSession({

@@ -313,5 +313,5 @@ export function processingStatusText({
     })
   )
 
-  return isActive ? `正在处理，已花费 ${elapsed}` : `已完成，总共用时 ${elapsed}`
+  return isActive ? `正在处理，已耗时 ${elapsed}` : `已完成，总共用时 ${elapsed}`
 }

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -169,6 +171,15 @@ test('session sidebar keeps a solid beacon for completed unread conversations', 
   assert.match(markup, /已完成/)
 })
 
+test('session sidebar title ignores composer file reference metadata', () => {
+  const markup = renderSidebar([
+    { ...baseSession, firstMessage: '引用文件：`./data.json`\n分析这个数据' }
+  ])
+
+  assert.match(markup, /分析这个数据/)
+  assert.doesNotMatch(markup, /引用文件：/)
+})
+
 test('session sidebar does not show the running beacon for idle conversations', () => {
   const markup = renderSidebar([baseSession])
 
@@ -199,6 +210,22 @@ test('hover preview session sidebar stays compact and scrolls its own list', () 
   assert.match(markup, /flex:0 1 auto/)
   assert.match(markup, /max-height:min\(320px, calc\(100vh - 176px\)\)/)
   assert.doesNotMatch(markup, /height:100%/)
+})
+
+test('hover preview project actions keep their menu above the flyout', () => {
+  const sidebarSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/SessionSidebar.tsx'),
+    'utf8'
+  )
+  const deleteDialogsSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/session-sidebar/SessionDeleteDialogs.tsx'),
+    'utf8'
+  )
+
+  assert.match(sidebarSource, /onPreviewInteractionChange\?: \(active: boolean\) => void/)
+  assert.match(sidebarSource, /menuAnchor === null/)
+  assert.match(sidebarSource, /theme\.zIndex\.tooltip \+ 1/)
+  assert.match(deleteDialogsSource, /theme\.zIndex\.tooltip \+ 2/)
 })
 
 test('session running beacon slot stays centered in ordinary and indented gutters', () => {

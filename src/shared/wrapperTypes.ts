@@ -112,7 +112,10 @@ export interface WrapperRunPlan {
   trustTier: WrapperTrustTier
   /** Phase 1 is always "local"; the field is typed for the full union from the start. */
   executor: WrapperExecutor
+  /** A Phi engine profile id (`manifest.engine.profiles[].id`) — see `nextflowProfile` for the actual Nextflow `-profile` value. */
   profile: string
+  /** The literal value passed to Nextflow's `-profile` flag — see `WrapperManifestEngineProfile.nextflowProfile`'s doc comment. Optional only for backward compatibility with plans persisted before this field existed; falls back to `profile` wherever it's consumed. */
+  nextflowProfile?: string
   resourceClass: WrapperResourceClass
   /** Set when resourceClass is heavy/hpc and there is no remote to redirect to (Phase 1). */
   requiresHeavyWorkloadAcknowledgement?: boolean
@@ -167,6 +170,8 @@ export interface WrapperRun {
   trustTier: WrapperTrustTier
   executor: WrapperExecutor
   profile: string
+  /** Snapshotted from the plan — see `WrapperRunPlan.nextflowProfile`. */
+  nextflowProfile?: string
   /** Project directory this run executes against — `outDir` is relative to this. Snapshotted from the plan. */
   cwd: string
   outDir: string

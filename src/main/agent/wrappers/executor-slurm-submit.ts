@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
@@ -7,9 +7,15 @@ import {
   joinRemote,
   type ConnectImpl,
   type RemoteJobHandle,
-  type RemoteLaunchSpec,
-  type RemoteRunStatus
+  type RemoteLaunchSpec
 } from './executor-remote'
+import {
+  collectRemoteOutputs,
+  failRun,
+  pollUntilTerminal,
+  transition,
+  writeRemoteRunSnapshot
+} from './executor-remote-run'
 import { SbatchRunner } from './executor-slurm'
 import type { WrapperManifest } from './manifest-types'
 import {
@@ -18,13 +24,8 @@ import {
   type RemoteConnectionConfig,
   type RemoteSshSession
 } from './remote-ssh-session'
-import {
-  appendWrapperAuditEvent,
-  appendWrapperRunEvent,
-  getWrapperRunsDir,
-  writeWrapperRun
-} from './store'
-import type { WrapperOutputRecord, WrapperRun, WrapperRunPlan, WrapperRunState } from './types'
+import { readWrapperRun } from './store'
+import type { WrapperRun, WrapperRunPlan } from './types'
 
 /**
  * Drives one `slurm-controller` run end to end via `SbatchRunner` — the
@@ -47,64 +48,6 @@ export interface RunSlurmWrapperOptions {
   pollIntervalMs?: number
 }
 
-function ensureDir(path: string): void {
-  if (!existsSync(path)) mkdirSync(path, { recursive: true })
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-// --- state machine (duplicated from executor-local.ts's transition/failRun
-// on purpose — see module doc comment above) --------------------------------
-
-function transition(
-  run: WrapperRun,
-  agentDir: string,
-  state: WrapperRunState,
-  patch: Partial<WrapperRun> = {}
-): WrapperRun {
-  const updated: WrapperRun = { ...run, ...patch, state, updatedAt: new Date().toISOString() }
-  writeWrapperRun(updated, agentDir)
-  appendWrapperRunEvent(
-    run.runId,
-    { type: 'run_state_changed', timestamp: updated.updatedAt, state },
-    agentDir
-  )
-  appendWrapperAuditEvent(
-    {
-      type: 'run_state_changed',
-      timestamp: updated.updatedAt,
-      actor: run.actor,
-      runId: run.runId,
-      planId: run.planId,
-      wrapperId: run.wrapper.canonicalId,
-      wrapperVersion: run.wrapper.version,
-      detail: { state }
-    },
-    agentDir
-  )
-  return updated
-}
-
-function failRun(run: WrapperRun, agentDir: string, reason: string): WrapperRun {
-  const failed = transition(run, agentDir, 'failed', { completedAt: new Date().toISOString() })
-  appendWrapperAuditEvent(
-    {
-      type: 'run_state_changed',
-      timestamp: failed.updatedAt,
-      actor: run.actor,
-      runId: run.runId,
-      planId: run.planId,
-      wrapperId: run.wrapper.canonicalId,
-      wrapperVersion: run.wrapper.version,
-      detail: { state: 'failed', reason }
-    },
-    agentDir
-  )
-  return failed
-}
-
 // --- remote-specific pieces --------------------------------------------------
 
 /**
@@ -122,7 +65,14 @@ export function buildRemoteNextflowLaunch(
   remoteOutDir: string
 ): { command: string; args: string[]; paramsJson: string } {
   const entrypointPath = joinRemote(remoteInstalledPath, manifest.engine.entrypoint)
-  const args = ['run', entrypointPath, '-params-file', 'params.json', '-profile', plan.profile]
+  const args = [
+    'run',
+    entrypointPath,
+    '-params-file',
+    'params.json',
+    '-profile',
+    plan.nextflowProfile ?? plan.profile
+  ]
   const params: Record<string, unknown> = { ...plan.params }
   if (params.outdir === undefined) {
     params.outdir = remoteOutDir
@@ -158,39 +108,6 @@ async function uploadWrapperBundle(
     } else if (entry.isFile()) {
       await session.writeTextFile(remotePath, readFileSync(localPath, 'utf-8'))
     }
-  }
-}
-
-/**
- * Existence-only output collection — unlike `executor-local.ts`'s
- * `collectOutputs`, there's no cheap remote `stat` in `RemoteSshSession`
- * yet, so `bytes` is left unset. `location: 'remote'` is already part of
- * `WrapperOutputRecord`'s type (added when the full Phase 2 shape was
- * typed up front), so this needs no type changes.
- */
-async function collectRemoteOutputs(
-  session: RemoteSshSession,
-  manifest: WrapperManifest,
-  remoteOutDir: string
-): Promise<WrapperOutputRecord[]> {
-  const outputs: WrapperOutputRecord[] = []
-  for (const output of manifest.outputs) {
-    const path = joinRemote(remoteOutDir, output.path)
-    const exists = await session.exists(path)
-    outputs.push({ id: output.id, path, exists, primary: output.primary, location: 'remote' })
-  }
-  return outputs
-}
-
-async function pollUntilTerminal(
-  runner: SbatchRunner,
-  handle: RemoteJobHandle,
-  pollIntervalMs: number
-): Promise<RemoteRunStatus> {
-  for (;;) {
-    const status = await runner.status(handle)
-    if (status.outcome !== 'running') return status
-    await sleep(pollIntervalMs)
   }
 }
 
@@ -264,17 +181,9 @@ export async function runSlurmWrapperExecution(
 
   // Enough to rebuild a RemoteJobHandle and resume polling after a restart
   // — matches the `runs/<runId>/remote.snapshot.json` placeholder in the
-  // design doc's storage layout. TODO: nothing reads this back yet — an
-  // actual reconciliation-on-startup pass (the doc's "Monitoring And
-  // Recovery" section) is a separate, larger piece of work, not part of
-  // wiring up submit.
-  const runDir = join(getWrapperRunsDir(agentDir), run.runId)
-  ensureDir(runDir)
-  writeFileSync(
-    join(runDir, 'remote.snapshot.json'),
-    `${JSON.stringify({ remoteRunDir, jobId: handle.jobId }, null, 2)}\n`,
-    'utf-8'
-  )
+  // design doc's storage layout. Read back by `executor-slurm-reconcile.ts`'s
+  // startup pass and by `runs.ts`'s `cancelWrapperRun`.
+  writeRemoteRunSnapshot(run.runId, agentDir, { remoteRunDir, jobId: handle.jobId })
 
   try {
     const status = await pollUntilTerminal(runner, handle, pollIntervalMs)
@@ -289,7 +198,19 @@ export async function runSlurmWrapperExecution(
       })
     }
 
-    return transition(running, agentDir, status.outcome === 'lost' ? 'lost' : 'failed', {
+    if (status.outcome === 'lost') {
+      return transition(running, agentDir, 'lost', { completedAt: new Date().toISOString() })
+    }
+
+    // A concurrent `cancelWrapperRun` call may have moved the run to
+    // `cancelling` (and issued `scancel`) while this poll loop was waiting —
+    // re-read the current record rather than trusting `running`, which is a
+    // stale snapshot from before that happened. Slurm reports a cancelled
+    // job the same way it reports any other non-zero exit ("failed" states),
+    // so without this check a user-requested cancellation would land as
+    // `failed`, not the `cancelled` the design doc's state diagram promises.
+    const current = readWrapperRun(run.runId, agentDir) ?? running
+    return transition(running, agentDir, current.state === 'cancelling' ? 'cancelled' : 'failed', {
       completedAt: new Date().toISOString(),
       exitCode: status.exitCode
     })

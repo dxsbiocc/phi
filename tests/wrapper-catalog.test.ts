@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -64,20 +64,44 @@ resources:
   )
 }
 
-test('ensureBundledWrappersInstalled installs the fastq-qc fixture as bundled and is idempotent', () => {
+test('ensureBundledWrappersInstalled installs every bundled fixture and is idempotent', () => {
   withAgentDir((agentDir) => {
     const first = ensureBundledWrappersInstalled(agentDir)
-    assert.equal(first.length, 1)
-    assert.equal(first[0].manifest.id, 'phi/ngs/fastq-qc')
-    assert.equal(first[0].trustTier, 'bundled')
+    const firstIds = first.map((entry) => entry.manifest.id).sort()
+    assert.deepEqual(firstIds, [
+      'nf-core/rnaseq/fastqc',
+      'nf-core/rnaseq/multiqc',
+      'nf-core/rnaseq/rnaseq',
+      'nf-core/rnaseq/salmon-quant',
+      'nf-core/rnaseq/star-align',
+      'nf-core/rnaseq/trimgalore',
+      'phi/ngs/fastq-qc'
+    ])
+    assert.ok(first.every((entry) => entry.trustTier === 'bundled'))
 
     const second = ensureBundledWrappersInstalled(agentDir)
-    assert.equal(second.length, 1)
-    assert.equal(second[0].installedAt, first[0].installedAt)
+    assert.equal(second.length, first.length)
+    // installedAt is preserved across repeated calls (idempotent), matched
+    // up by manifest id since the array order isn't guaranteed.
+    for (const entry of second) {
+      const previous = first.find((candidate) => candidate.manifest.id === entry.manifest.id)
+      assert.equal(entry.installedAt, previous?.installedAt)
+    }
 
     const catalog = listWrapperCatalog(agentDir)
-    assert.equal(catalog.length, 1)
-    assert.equal(catalog[0].trustTier, 'bundled')
+    assert.equal(catalog.length, first.length)
+    assert.ok(catalog.every((entry) => entry.trustTier === 'bundled'))
+  })
+})
+
+test('ensureBundledWrappersInstalled copies the nf-core/rnaseq pipeline source alongside its manifest', () => {
+  withAgentDir((agentDir) => {
+    const entries = ensureBundledWrappersInstalled(agentDir)
+    const rnaseq = entries.find((entry) => entry.manifest.id === 'nf-core/rnaseq/rnaseq')
+    assert.ok(rnaseq)
+    assert.ok(existsSync(join(rnaseq!.installedPath, 'main.nf')))
+    assert.ok(existsSync(join(rnaseq!.installedPath, 'nextflow.config')))
+    assert.ok(existsSync(join(rnaseq!.installedPath, 'workflows')))
   })
 })
 
@@ -98,6 +122,34 @@ test('addCustomWrapper installs a local wrapper folder as custom', () => {
   })
 })
 
+test("addCustomWrapper copies the wrapper's real pipeline source, not just wrapper.yaml, and excludes .git", () => {
+  withAgentDir((agentDir) => {
+    const sourceRoot = mkdtempSync(join(tmpdir(), 'phi-custom-wrapper-'))
+    try {
+      writeCustomWrapperFixture(sourceRoot)
+      mkdirSync(join(sourceRoot, 'workflows'), { recursive: true })
+      writeFileSync(join(sourceRoot, 'main.nf'), '#!/usr/bin/env nextflow\n')
+      writeFileSync(join(sourceRoot, 'workflows', 'sub.nf'), '// subworkflow\n')
+      mkdirSync(join(sourceRoot, '.git'), { recursive: true })
+      writeFileSync(join(sourceRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n')
+
+      const entry = addCustomWrapper(sourceRoot, agentDir)
+
+      assert.equal(
+        readFileSync(join(entry.installedPath, 'main.nf'), 'utf-8'),
+        '#!/usr/bin/env nextflow\n'
+      )
+      assert.equal(
+        readFileSync(join(entry.installedPath, 'workflows', 'sub.nf'), 'utf-8'),
+        '// subworkflow\n'
+      )
+      assert.equal(existsSync(join(entry.installedPath, '.git')), false)
+    } finally {
+      rmSync(sourceRoot, { recursive: true, force: true })
+    }
+  })
+})
+
 test('a custom wrapper is never returned by the default agent tools query', () => {
   withAgentDir((agentDir) => {
     ensureBundledWrappersInstalled(agentDir)
@@ -107,10 +159,15 @@ test('a custom wrapper is never returned by the default agent tools query', () =
       addCustomWrapper(sourceRoot, agentDir)
 
       const defaults = listDefaultAgentToolWrappers(agentDir)
-      assert.deepEqual(
-        defaults.map((entry) => entry.manifest.id),
-        ['phi/ngs/fastq-qc']
-      )
+      assert.deepEqual(defaults.map((entry) => entry.manifest.id).sort(), [
+        'nf-core/rnaseq/fastqc',
+        'nf-core/rnaseq/multiqc',
+        'nf-core/rnaseq/rnaseq',
+        'nf-core/rnaseq/salmon-quant',
+        'nf-core/rnaseq/star-align',
+        'nf-core/rnaseq/trimgalore',
+        'phi/ngs/fastq-qc'
+      ])
     } finally {
       rmSync(sourceRoot, { recursive: true, force: true })
     }

@@ -6,13 +6,16 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import {
+  buildConnectConfig,
   buildExistsCommand,
   buildMkdirpCommand,
   buildReadTextFileCommand,
   buildSession,
   buildTruncateLastByteCommand,
   buildWriteTextFileCommand,
-  shellQuote
+  DEFAULT_SSH_IDENT,
+  shellQuote,
+  type RemoteConnectionConfig
 } from '../src/main/agent/wrappers/remote-ssh-session'
 import type { Client } from 'ssh2'
 
@@ -123,6 +126,46 @@ test('shellQuote neutralizes command substitution and expansion attempts', () =>
     assert.equal(runInRealBash(buildExistsCommand(join(dir, 'pwned2'))).code, 1)
     assert.equal(readFileSync(path, 'utf-8'), `${maliciousLookingContent}\n`)
   })
+})
+
+// --- ident (network-compatibility mitigation) ---------------------------
+//
+// See RemoteConnectionConfig.ident's doc comment: ssh2's own default ident
+// (SSH-2.0-ssh2js<version>) is the leading suspect for connections that
+// stalled mid-handshake against a real HPC cluster network, while plain
+// OpenSSH on the same network worked every time. buildConnectConfig is the
+// pure seam that lets this be verified without a real ssh2 Client/network.
+
+const BASE_CONNECTION: RemoteConnectionConfig = {
+  host: 'lab-hpc.example.edu',
+  username: 'agent',
+  privateKey: 'fake-key'
+}
+
+test("buildConnectConfig sends an OpenSSH-shaped ident by default, not ssh2's own", () => {
+  const config = buildConnectConfig(BASE_CONNECTION)
+  assert.equal(config.ident, DEFAULT_SSH_IDENT)
+  assert.match(DEFAULT_SSH_IDENT, /^OpenSSH_/)
+})
+
+test('buildConnectConfig respects an explicit ident override', () => {
+  const config = buildConnectConfig({ ...BASE_CONNECTION, ident: 'Custom_1.0' })
+  assert.equal(config.ident, 'Custom_1.0')
+})
+
+test('buildConnectConfig still forwards host/port/username/credentials/timeouts unchanged', () => {
+  const config = buildConnectConfig({
+    ...BASE_CONNECTION,
+    port: 2222,
+    passphrase: 'secret',
+    readyTimeoutMs: 5_000
+  })
+  assert.equal(config.host, 'lab-hpc.example.edu')
+  assert.equal(config.port, 2222)
+  assert.equal(config.username, 'agent')
+  assert.equal(config.privateKey, 'fake-key')
+  assert.equal(config.passphrase, 'secret')
+  assert.equal(config.readyTimeout, 5_000)
 })
 
 // --- exec() timeout ---------------------------------------------------

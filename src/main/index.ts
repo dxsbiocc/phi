@@ -80,6 +80,7 @@ import {
   ensureBundledWrappersInstalled,
   listWrapperCatalog
 } from './agent/wrappers/catalog'
+import { reconcileRemoteWrapperRuns } from './agent/wrappers/executor-slurm-reconcile'
 import { buildWrapperReproducibilityBundle } from './agent/wrappers/reproducibility'
 import { cancelWrapperRun, cancelWrapperRunPlan, submitWrapperRunPlan } from './agent/wrappers/runs'
 import {
@@ -158,6 +159,7 @@ import {
   type JsonObject,
   type NotebookDocument
 } from '../shared/notebookDocument'
+import { messageContentTitleText } from '../shared/sessionTitle'
 import icon from '../../resources/icon.png?asset'
 
 const APP_NAME = 'Phi'
@@ -1516,12 +1518,13 @@ function ensurePhiSessionId(
 
   const project = getProjectByCwd(snapshot.cwd)
   const model = resolveSessionModelSelection(sessionKey, snapshot)
+  const sessionTitle = messageContentTitleText(title)
   const session = createPhiSession({
     kind: snapshot.cwd === WORKSPACE_DIR ? 'ordinary' : 'project',
     projectId: project?.id ?? null,
     cwd: snapshot.cwd,
     cwdRealPath: project?.workingDirectoryRealPath ?? snapshot.cwd,
-    ...(title ? { title } : {}),
+    ...(sessionTitle ? { title: sessionTitle } : {}),
     ...(runtimeSessionPath(snapshot.path) ? { runtimeSessionPath: snapshot.path } : {}),
     permissionMode: snapshot.permissionMode,
     ...(model ? { model } : {}),
@@ -1538,12 +1541,13 @@ function createPhiManagedSession(
 ): { path: string; sessionId: string; permissionMode: PermissionMode } {
   const project = getProjectByCwd(cwd)
   const model = project?.defaultModel ?? selectedModel
+  const sessionTitle = messageContentTitleText(title)
   const session = createPhiSession({
     kind: cwd === WORKSPACE_DIR ? 'ordinary' : 'project',
     projectId: project?.id ?? null,
     cwd,
     cwdRealPath: project?.workingDirectoryRealPath ?? cwd,
-    ...(title ? { title } : {}),
+    ...(sessionTitle ? { title: sessionTitle } : {}),
     permissionMode,
     ...(model ? { model } : {}),
     thinkingLevel: project?.defaultThinkingLevel ?? selectedThinkingLevel
@@ -2983,6 +2987,16 @@ app.whenReady().then(() => {
       metadata: { error: error instanceof Error ? error.message : String(error) }
     })
   }
+  // Fire-and-forget: resumes any slurm-controller run left mid-flight by the
+  // previous app session (see executor-slurm-reconcile.ts's doc comment).
+  // Must never block startup — a network hiccup here shouldn't delay the window.
+  void reconcileRemoteWrapperRuns().catch((error: unknown) => {
+    writeAppLog({
+      level: 'error',
+      event: 'wrapper_remote_run_reconcile_failed',
+      metadata: { error: error instanceof Error ? error.message : String(error) }
+    })
+  })
   // Set app user model id for windows
   electronApp.setAppUserModelId(APP_ID)
 

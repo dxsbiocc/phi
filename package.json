@@ -19,7 +19,7 @@
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "sync:electron-icon": "node scripts/sync-electron-dev-icon.mjs",
-    "postinstall": "electron-builder install-app-deps && npm run sync:electron-icon",
+    "postinstall": "node scripts/remove-ssh2-native-optional-deps.mjs && electron-builder install-app-deps && npm run sync:electron-icon",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "npm run build && electron-builder --mac",

@@ -27,6 +27,12 @@ export function sessionRuntimeStateIsBusy(state: SessionRuntimeState | null | un
   return sessionStatusIsBusy(state)
 }
 
+export function sessionRuntimeStateNeedsAcknowledgement(
+  state: Pick<SessionRuntimeState, 'unreadKind'> | null | undefined
+): boolean {
+  return state?.unreadKind === 'completed' || state?.unreadKind === 'failed'
+}
+
 function sessionRuntimeStateHasTerminalSignal(state: SessionRuntimeState): boolean {
   return (
     state.status === 'failed' ||

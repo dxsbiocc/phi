@@ -50,15 +50,24 @@ const FIXTURE_LAUNCH: RemoteLaunchSpec = {
 
 /**
  * In-memory fake of `RemoteSshSession` that understands just enough of
- * `sbatch`/`squeue`/`sacct`/`scancel` output shape to drive `SbatchRunner` —
- * no real Slurm cluster involved, same approach as
+ * `sbatch`/`squeue`/`scontrol`/`sacct`/`scancel` output shape to drive
+ * `SbatchRunner` — no real Slurm cluster involved, same approach as
  * `tests/wrapper-executor-remote.test.ts`'s `FakeRemoteHost`.
+ *
+ * `scontrolKnowsJob`/`sacctBroken` model the two real-world failure modes
+ * `status()` has to tolerate — verified against an actual cluster during
+ * manual testing: `sacct` unconditionally errors there (no working
+ * `slurmdbd`) while `scontrol show job` and everything else works fine.
  */
 class FakeSlurmCluster implements RemoteSshSession {
   files = new Map<string, string>()
-  /** jobId -> sacct state (undefined while still queued/running) */
+  /** jobId -> final state (undefined while still queued/running) */
   jobs = new Map<string, { state: string; exitCode: number } | undefined>()
   closed = false
+  /** Set false to simulate scontrol's retention window having passed for every job. */
+  scontrolKnowsJob = true
+  /** Set true to simulate a cluster whose sacct is unconditionally broken (no working slurmdbd). */
+  sacctBroken = false
   private nextJobId = 5000
 
   async exec(command: string): Promise<RemoteExecResult> {
@@ -73,7 +82,34 @@ class FakeSlurmCluster implements RemoteSshSession {
       const finished = jobId !== undefined && this.jobs.get(jobId) !== undefined
       return { stdout: known && !finished ? 'RUNNING\n' : '', stderr: '', code: 0, signal: null }
     }
+    if (command.startsWith('scontrol show job ')) {
+      const jobId = command.match(/^scontrol show job (\d+)/)?.[1]
+      const outcome = jobId !== undefined ? this.jobs.get(jobId) : undefined
+      if (jobId === undefined || outcome === undefined || !this.scontrolKnowsJob) {
+        return {
+          stdout: '',
+          stderr: 'scontrol: error: Invalid job id specified\n',
+          code: 1,
+          signal: null
+        }
+      }
+      return {
+        stdout: `JobId=${jobId} JobName=phi-test\n   JobState=${outcome.state} Reason=None Dependency=(null)\n   ExitCode=${outcome.exitCode}:0\n`,
+        stderr: '',
+        code: 0,
+        signal: null
+      }
+    }
     if (command.startsWith('sacct ')) {
+      if (this.sacctBroken) {
+        return {
+          stdout: '',
+          stderr:
+            'sacct: error: cannot create accounting_storage context for accounting_storage/slurmdbd\n',
+          code: 1,
+          signal: null
+        }
+      }
       const jobId = command.match(/-j (\d+)/)?.[1]
       const outcome = jobId !== undefined ? this.jobs.get(jobId) : undefined
       if (jobId === undefined || outcome === undefined) {
@@ -190,7 +226,7 @@ test('SbatchRunner.status reports running while squeue still lists the job', asy
   assert.deepEqual(await runner.status(handle), { outcome: 'running' })
 })
 
-test('SbatchRunner.status reports completed/failed from sacct once the job leaves the queue', async () => {
+test('SbatchRunner.status reports completed/failed from scontrol once the job leaves the queue', async () => {
   const { runner, cluster } = makeRunner()
   const handle = await runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH)
 
@@ -204,7 +240,35 @@ test('SbatchRunner.status reports completed/failed from sacct once the job leave
   assert.deepEqual(await runner.status(handle), { outcome: 'failed', exitCode: 137 })
 })
 
-test('SbatchRunner.status reports lost when neither squeue nor sacct know the job', async () => {
+test('SbatchRunner.status still reports completed/failed via sacct when a real-world broken slurmdbd makes sacct fail — matches a real cluster tested manually, where sacct is unconditionally broken', async () => {
+  const { runner, cluster } = makeRunner()
+  const handle = await runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH)
+  cluster.finish(handle.jobId!, 'COMPLETED', 0)
+
+  // scontrol's retention window has already passed (or is disabled) — the
+  // only remaining source is sacct, and on a real cluster tested manually
+  // that command errors outright (broken slurmdbd plugin), which is what
+  // `sacctBroken` here reproduces.
+  cluster.scontrolKnowsJob = false
+  cluster.sacctBroken = true
+  assert.deepEqual(await runner.status(handle), { outcome: 'lost' })
+
+  // Same setup, but sacct actually works this time — confirms the fallback
+  // path itself (not just scontrol) still functions when it's needed.
+  cluster.sacctBroken = false
+  assert.deepEqual(await runner.status(handle), { outcome: 'completed', exitCode: 0 })
+})
+
+test('SbatchRunner.status still reports completed via scontrol alone when sacct is broken — matches a real cluster verified manually', async () => {
+  const { runner, cluster } = makeRunner()
+  const handle = await runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH)
+  cluster.finish(handle.jobId!, 'COMPLETED', 0)
+
+  cluster.sacctBroken = true
+  assert.deepEqual(await runner.status(handle), { outcome: 'completed', exitCode: 0 })
+})
+
+test('SbatchRunner.status reports lost when neither squeue, scontrol, nor sacct know the job', async () => {
   const { runner } = makeRunner()
   const status = await runner.status({ runId: 'wrun_gone', remoteRunDir: RUN_DIR, jobId: '99999' })
   assert.deepEqual(status, { outcome: 'lost' })

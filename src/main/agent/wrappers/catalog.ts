@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -30,10 +30,21 @@ const MANIFEST_FILE = 'wrapper.yaml'
 
 const WRAPPERS_MODULE_DIR = fileURLToPath(new URL('.', import.meta.url))
 
-// Phase 1's only bundled wrapper. Adding a second bundled wrapper later is
-// just adding another entry here — nothing about the shape below assumes
-// there is exactly one.
-const BUNDLED_FIXTURE_DIRS = [join(WRAPPERS_MODULE_DIR, 'fixtures', 'phi-ngs-fastq-qc')]
+const BUNDLED_FIXTURE_DIRS = [
+  join(WRAPPERS_MODULE_DIR, 'fixtures', 'phi-ngs-fastq-qc'),
+  // First wrapper around a real, unmodified upstream pipeline (every other
+  // bundled wrapper is a Phi-authored demo script) — see this fixture's own
+  // wrapper.yaml doc comment for what's vendored and what was verified.
+  join(WRAPPERS_MODULE_DIR, 'fixtures', 'nf-core-rnaseq'),
+  // Standalone wrappers around individual nf-core/rnaseq modules — see
+  // each fixture's own wrapper.yaml doc comment for why these exist
+  // alongside (not composed into) the full pipeline wrapper above.
+  join(WRAPPERS_MODULE_DIR, 'fixtures', 'nf-core-rnaseq-fastqc'),
+  join(WRAPPERS_MODULE_DIR, 'fixtures', 'nf-core-rnaseq-trimgalore'),
+  join(WRAPPERS_MODULE_DIR, 'fixtures', 'nf-core-rnaseq-star-align'),
+  join(WRAPPERS_MODULE_DIR, 'fixtures', 'nf-core-rnaseq-salmon-quant'),
+  join(WRAPPERS_MODULE_DIR, 'fixtures', 'nf-core-rnaseq-multiqc')
+]
 
 function ensureDir(path: string): void {
   if (!existsSync(path)) {
@@ -63,6 +74,26 @@ function readSourceMarker(installedPath: string): WrapperSourceMarker | undefine
   }
 }
 
+/**
+ * Copies every file in `sourceDir` into `installedPath` — not just
+ * `wrapper.yaml`. Real pipeline code (`main.nf`, `workflows/`, `conf/`,
+ * etc.) has to physically exist under `installedPath` for anything to
+ * actually execute: `executor-nextflow.ts` resolves `engine.entrypoint`
+ * relative to it, and the remote submit orchestrators upload its entire
+ * contents (`uploadWrapperBundle`). Both bundled and custom installs used
+ * to write only `wrapper.yaml` — invisible until now because the only
+ * wrapper ever exercised (the fastq-qc demo fixture) never shipped a real
+ * `main.nf` to begin with, so nothing ever needed the rest of the tree.
+ * `.git` is excluded — a custom wrapper's source directory pointing at a
+ * real git checkout shouldn't drag its whole history into `installed/`.
+ */
+function copyWrapperSourceTree(sourceDir: string, installedPath: string): void {
+  cpSync(sourceDir, installedPath, {
+    recursive: true,
+    filter: (src) => !src.split(/[\\/]/).includes('.git')
+  })
+}
+
 function loadManifestFromDir(dir: string): WrapperManifest {
   const manifestPath = join(dir, MANIFEST_FILE)
   if (!existsSync(manifestPath)) {
@@ -87,11 +118,7 @@ export function ensureBundledWrappersInstalled(agentDir = getPhiAgentDir()): Wra
     const manifest = loadManifestFromDir(fixtureDir)
     const installedPath = installedDirFor(manifest, agentDir)
     ensureDir(installedPath)
-    writeFileSync(
-      join(installedPath, MANIFEST_FILE),
-      readFileSync(join(fixtureDir, MANIFEST_FILE), 'utf-8'),
-      'utf-8'
-    )
+    copyWrapperSourceTree(fixtureDir, installedPath)
     const installedAt = readSourceMarker(installedPath)?.installedAt ?? new Date().toISOString()
     writeSourceMarker(installedPath, { trustTier: 'bundled', installedAt })
     entries.push({ manifest, trustTier: 'bundled', installedPath, installedAt })
@@ -111,11 +138,7 @@ export function addCustomWrapper(
   const manifest = loadManifestFromDir(sourceDir)
   const installedPath = installedDirFor(manifest, agentDir)
   ensureDir(installedPath)
-  writeFileSync(
-    join(installedPath, MANIFEST_FILE),
-    readFileSync(join(sourceDir, MANIFEST_FILE), 'utf-8'),
-    'utf-8'
-  )
+  copyWrapperSourceTree(sourceDir, installedPath)
   const installedAt = new Date().toISOString()
   writeSourceMarker(installedPath, { trustTier: 'custom', installedAt, sourcePath: sourceDir })
   return { manifest, trustTier: 'custom', installedPath, installedAt }

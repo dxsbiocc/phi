@@ -1,3 +1,4 @@
+import { useCallback, useRef, type FocusEvent } from 'react'
 import { Box, IconButton, Paper, Popper, Tooltip } from '@mui/material'
 import SessionSidebar from './components/SessionSidebar'
 import { PhiIcons } from './icons'
@@ -140,6 +141,46 @@ export default function AppActivityBar({
   onFetchProjectSessions,
   getSessionRuntimeState
 }: AppActivityBarProps): React.JSX.Element {
+  const previewInteractionLockedRef = useRef(false)
+  const previewSurfaceActiveRef = useRef(false)
+  const requestWorkspaceSidebarPreviewClose = useCallback((): void => {
+    if (previewInteractionLockedRef.current) {
+      clearWorkspaceSidebarPreviewCloseTimer()
+      return
+    }
+    scheduleWorkspaceSidebarPreviewClose()
+  }, [clearWorkspaceSidebarPreviewCloseTimer, scheduleWorkspaceSidebarPreviewClose])
+  const handleWorkspaceSidebarPreviewInteractionChange = useCallback(
+    (active: boolean): void => {
+      previewInteractionLockedRef.current = active
+      if (active) {
+        clearWorkspaceSidebarPreviewCloseTimer()
+      } else if (!previewSurfaceActiveRef.current) {
+        scheduleWorkspaceSidebarPreviewClose()
+      }
+    },
+    [clearWorkspaceSidebarPreviewCloseTimer, scheduleWorkspaceSidebarPreviewClose]
+  )
+  const handleWorkspaceSidebarPreviewEnter = useCallback((): void => {
+    previewSurfaceActiveRef.current = true
+    clearWorkspaceSidebarPreviewCloseTimer()
+  }, [clearWorkspaceSidebarPreviewCloseTimer])
+  const handleWorkspaceSidebarPreviewLeave = useCallback((): void => {
+    previewSurfaceActiveRef.current = false
+    requestWorkspaceSidebarPreviewClose()
+  }, [requestWorkspaceSidebarPreviewClose])
+  const handleWorkspaceSidebarPreviewBlur = useCallback(
+    (event: FocusEvent<HTMLElement>): void => {
+      const nextFocusedElement = event.relatedTarget
+      if (nextFocusedElement instanceof Node && event.currentTarget.contains(nextFocusedElement)) {
+        return
+      }
+      previewSurfaceActiveRef.current = false
+      requestWorkspaceSidebarPreviewClose()
+    },
+    [requestWorkspaceSidebarPreviewClose]
+  )
+
   return (
     <>
       <Box
@@ -170,7 +211,7 @@ export default function AppActivityBar({
           active={isWorkspaceSidebarModeExpanded('conversations')}
           useContentPreview={shouldUseWorkspaceSidebarPreview('conversations')}
           onPreviewOpen={openWorkspaceSidebarPreview}
-          onPreviewClose={scheduleWorkspaceSidebarPreviewClose}
+          onPreviewClose={requestWorkspaceSidebarPreviewClose}
           onClick={() => onSelectWorkspaceView('chat')}
         />
         <WorkspaceSidebarNavButton
@@ -180,7 +221,7 @@ export default function AppActivityBar({
           active={isWorkspaceSidebarModeExpanded('projects')}
           useContentPreview={shouldUseWorkspaceSidebarPreview('projects')}
           onPreviewOpen={openWorkspaceSidebarPreview}
-          onPreviewClose={scheduleWorkspaceSidebarPreviewClose}
+          onPreviewClose={requestWorkspaceSidebarPreviewClose}
           onClick={() => onSelectWorkspaceView('projects')}
         />
         <Tooltip title="运行时" placement="right">
@@ -267,10 +308,10 @@ export default function AppActivityBar({
         <Paper
           data-phi-workspace-sidebar-hover-preview={workspaceSidebarPreviewMode}
           elevation={8}
-          onMouseEnter={clearWorkspaceSidebarPreviewCloseTimer}
-          onMouseLeave={scheduleWorkspaceSidebarPreviewClose}
-          onFocus={clearWorkspaceSidebarPreviewCloseTimer}
-          onBlur={scheduleWorkspaceSidebarPreviewClose}
+          onMouseEnter={handleWorkspaceSidebarPreviewEnter}
+          onMouseLeave={handleWorkspaceSidebarPreviewLeave}
+          onFocus={handleWorkspaceSidebarPreviewEnter}
+          onBlur={handleWorkspaceSidebarPreviewBlur}
           sx={{
             width: workspaceSidebarPreviewWidth,
             maxHeight: 'min(420px, calc(100vh - 96px))',
@@ -289,6 +330,7 @@ export default function AppActivityBar({
           <SessionSidebar
             hideWindowDragSpacer
             compactHoverPreview
+            onPreviewInteractionChange={handleWorkspaceSidebarPreviewInteractionChange}
             mode={workspaceSidebarPreviewMode}
             sessions={sessions}
             activeSessionPath={activeSessionPath}

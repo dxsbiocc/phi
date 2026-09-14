@@ -8,6 +8,7 @@ import { formatDiagnostics } from '../src/main/agent/diagnostics'
 import * as notebookCodeGeneration from '../src/main/agent/notebook/notebook-code-generation'
 import * as lifecycle from '../src/main/agent/session/session-lifecycle'
 import * as notebookDocument from '../src/shared/notebookDocument'
+import * as sessionTitle from '../src/shared/sessionTitle'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -1070,6 +1071,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     },
     './agent/notebook/notebook-code-generation': notebookCodeGeneration,
     '../shared/notebookDocument': notebookDocument,
+    '../shared/sessionTitle': sessionTitle,
     './agent/tool-approval': {
       cancelToolApprovals: noop,
       createApprovalExtension: (options: Record<string, unknown>): Record<string, unknown> => {
@@ -1138,6 +1140,9 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
       buildWrapperReproducibilityBundle: (): never => {
         throw new Error('run 不存在: (mocked in main-integration.test.ts)')
       }
+    },
+    './agent/wrappers/executor-slurm-reconcile': {
+      reconcileRemoteWrapperRuns: (): Promise<void> => Promise.resolve()
     },
     './agent/wrappers/catalog': {
       ensureBundledWrappersInstalled: (): unknown[] => [],

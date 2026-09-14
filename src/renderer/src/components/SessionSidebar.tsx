@@ -19,11 +19,6 @@ import {
   Box,
   Button,
   Collapse,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogContentText,
-  DialogTitle,
   IconButton,
   List,
   ListItemButton,
@@ -37,6 +32,7 @@ import {
 import type { Theme } from '@mui/material/styles'
 import { PhiIcons } from '../icons'
 import { resolveProjectExpandedIds } from '../lib/projectSidebar'
+import { SessionDeleteDialogs } from './session-sidebar/SessionDeleteDialogs'
 import {
   RUNNING_BEACON_SIZE_PX,
   sessionBeaconKind,
@@ -51,6 +47,7 @@ import {
   writeSessionOrder
 } from '../lib/sessionOrder'
 import type { Project, SessionRuntimeState, SessionSummary } from '../types'
+import { messageContentTitleText } from '../../../shared/sessionTitle'
 
 const AddIcon = PhiIcons.action.add
 const AddCommentIcon = PhiIcons.action.addSession
@@ -114,7 +111,10 @@ function formatElapsedTime(iso: string, nowMs = Date.now()): string {
 }
 
 function sessionTitle(session: SessionSummary): string {
-  const raw = (session.name || session.firstMessage || '新对话').trim()
+  const raw =
+    messageContentTitleText(session.name) ||
+    messageContentTitleText(session.firstMessage) ||
+    '新对话'
   return raw.length > 60 ? `${raw.slice(0, 60)}…` : raw
 }
 
@@ -348,7 +348,7 @@ const SessionRow = memo(function SessionRow({
   onDelete
 }: SessionRowProps): React.JSX.Element {
   const [isEditing, setIsEditing] = useState(false)
-  const [editingName, setEditingName] = useState(session.name ?? sessionTitle(session))
+  const [editingName, setEditingName] = useState(sessionTitle(session))
   const displaySession = mergedSessionForDisplay({ session, runtimeState })
 
   const commitRename = (): void => {
@@ -486,7 +486,7 @@ const SessionRow = memo(function SessionRow({
                 sx={sessionActionButtonSx}
                 onClick={(event) => {
                   event.stopPropagation()
-                  setEditingName(session.name ?? sessionTitle(session))
+                  setEditingName(sessionTitle(session))
                   setIsEditing(true)
                 }}
               >
@@ -553,6 +553,8 @@ type ProjectRowProps = {
   onDeleteProject: () => void
   onFetchSessions: (workingDirectory: string) => Promise<SessionSummary[]>
   getSessionRuntimeState?: (path: string, cwd: string) => SessionRuntimeState | null
+  compactHoverPreview?: boolean
+  onPreviewInteractionChange?: (active: boolean) => void
   nowMs: number
 }
 
@@ -569,6 +571,8 @@ function ProjectRow({
   onDeleteProject,
   onFetchSessions,
   getSessionRuntimeState,
+  compactHoverPreview = false,
+  onPreviewInteractionChange,
   nowMs
 }: ProjectRowProps): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
@@ -596,6 +600,15 @@ function ProjectRow({
   const handleToggle = async (): Promise<void> => {
     onToggleExpanded()
   }
+  const closeProjectMenu = useCallback((): void => {
+    setMenuAnchor(null)
+  }, [])
+
+  useEffect(() => {
+    if (!compactHoverPreview || menuAnchor === null) return undefined
+    onPreviewInteractionChange?.(true)
+    return () => onPreviewInteractionChange?.(false)
+  }, [compactHoverPreview, menuAnchor, onPreviewInteractionChange])
 
   return (
     <Box>
@@ -677,10 +690,17 @@ function ProjectRow({
         </Stack>
       </ListItemButton>
 
-      <Menu anchorEl={menuAnchor} open={menuAnchor !== null} onClose={() => setMenuAnchor(null)}>
+      <Menu
+        anchorEl={menuAnchor}
+        open={menuAnchor !== null}
+        onClose={closeProjectMenu}
+        sx={
+          compactHoverPreview ? { zIndex: (theme: Theme) => theme.zIndex.tooltip + 1 } : undefined
+        }
+      >
         <MenuItem
           onClick={() => {
-            setMenuAnchor(null)
+            closeProjectMenu()
             onDeleteProject()
           }}
         >
@@ -735,6 +755,7 @@ type SessionSidebarProps = {
   mode: 'conversations' | 'projects'
   hideWindowDragSpacer?: boolean
   compactHoverPreview?: boolean
+  onPreviewInteractionChange?: (active: boolean) => void
   sessions: SessionSummary[]
   activeSessionPath: string | null
   activeCwd: string
@@ -755,6 +776,7 @@ function SessionSidebar({
   mode,
   hideWindowDragSpacer = false,
   compactHoverPreview = false,
+  onPreviewInteractionChange,
   sessions,
   activeSessionPath,
   activeCwd,
@@ -787,6 +809,14 @@ function SessionSidebar({
     CONVERSATION_SESSION_ORDER_SCOPE,
     sessions
   )
+  const previewDialogOpen =
+    compactHoverPreview && (deleteTarget !== null || deleteProjectTarget !== null)
+
+  useEffect(() => {
+    if (!previewDialogOpen) return undefined
+    onPreviewInteractionChange?.(true)
+    return () => onPreviewInteractionChange?.(false)
+  }, [onPreviewInteractionChange, previewDialogOpen])
 
   const hasActiveAttention =
     mode === 'projects' ||
@@ -905,6 +935,8 @@ function SessionSidebar({
               onDeleteProject={() => setDeleteProjectTarget(project)}
               onFetchSessions={onFetchProjectSessions}
               getSessionRuntimeState={getSessionRuntimeState}
+              compactHoverPreview={compactHoverPreview}
+              onPreviewInteractionChange={onPreviewInteractionChange}
               nowMs={nowMs}
             />
           ))}
@@ -936,55 +968,23 @@ function SessionSidebar({
         )}
       </List>
 
-      <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)}>
-        <DialogTitle>删除这段对话？</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            {deleteTarget ? sessionTitle(deleteTarget) : ''} 将被永久删除，无法恢复。
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteTarget(null)} sx={{ minHeight: 44 }}>
-            取消
-          </Button>
-          <Button
-            color="error"
-            variant="contained"
-            onClick={() => {
-              if (deleteTarget) onDeleteSession(deleteTarget.path)
-              setDeleteTarget(null)
-            }}
-            sx={{ minHeight: 44 }}
-          >
-            删除
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <Dialog open={deleteProjectTarget !== null} onClose={() => setDeleteProjectTarget(null)}>
-        <DialogTitle>移除这个项目？</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            仅从列表中移除「{deleteProjectTarget?.name}」，不会删除工作目录或对话记录。
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteProjectTarget(null)} sx={{ minHeight: 44 }}>
-            取消
-          </Button>
-          <Button
-            color="error"
-            variant="contained"
-            onClick={() => {
-              if (deleteProjectTarget) onDeleteProject(deleteProjectTarget)
-              setDeleteProjectTarget(null)
-            }}
-            sx={{ minHeight: 44 }}
-          >
-            移除
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <SessionDeleteDialogs
+        deleteSessionOpen={deleteTarget !== null}
+        deleteSessionTitle={deleteTarget ? sessionTitle(deleteTarget) : ''}
+        deleteProjectOpen={deleteProjectTarget !== null}
+        deleteProjectName={deleteProjectTarget?.name ?? ''}
+        compactHoverPreview={compactHoverPreview}
+        onCancelSessionDelete={() => setDeleteTarget(null)}
+        onConfirmSessionDelete={() => {
+          if (deleteTarget) onDeleteSession(deleteTarget.path)
+          setDeleteTarget(null)
+        }}
+        onCancelProjectDelete={() => setDeleteProjectTarget(null)}
+        onConfirmProjectDelete={() => {
+          if (deleteProjectTarget) onDeleteProject(deleteProjectTarget)
+          setDeleteProjectTarget(null)
+        }}
+      />
     </Box>
   )
 }

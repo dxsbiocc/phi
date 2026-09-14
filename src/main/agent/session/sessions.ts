@@ -19,6 +19,7 @@ import {
   type SessionStatus,
   type UnreadKind
 } from './session-store'
+import { messageContentTitleText } from '../../../shared/sessionTitle'
 
 // Fixed cwd for ad-hoc conversations (not tied to a project) — independent of how
 // Electron happens to be launched (double-clicked vs `electron-vite dev` from some
@@ -83,8 +84,14 @@ function summaryPathForManifest(manifest: PhiSessionManifest): string {
   return phiOnlySessionPath(manifest.sessionId)
 }
 
+function titleFromManifest(manifest: PhiSessionManifest): string | undefined {
+  const title = messageContentTitleText(manifest.title)
+  return title || undefined
+}
+
 function firstUserMessageFromManifest(manifest: PhiSessionManifest): string {
-  if (manifest.title?.trim()) return manifest.title.trim()
+  const title = titleFromManifest(manifest)
+  if (title) return title
   return firstUserMessageContentFromManifest(manifest)
 }
 
@@ -92,7 +99,7 @@ function firstUserMessageContentFromManifest(manifest: PhiSessionManifest): stri
   const userEvent = readSessionEvents(manifest.sessionId).find(
     (event) => event.type === 'user_message' && typeof event.content === 'string'
   )
-  return typeof userEvent?.content === 'string' ? userEvent.content : ''
+  return typeof userEvent?.content === 'string' ? messageContentTitleText(userEvent.content) : ''
 }
 
 function phiOnlySummary(manifest: PhiSessionManifest): SessionSummary {
@@ -100,7 +107,7 @@ function phiOnlySummary(manifest: PhiSessionManifest): SessionSummary {
   return {
     path: summaryPathForManifest(manifest),
     id: manifest.sessionId,
-    name: manifest.title,
+    name: titleFromManifest(manifest),
     created: manifest.createdAt,
     modified: manifest.lastActivityAt,
     messageCount: manifest.messageCount,
@@ -189,7 +196,7 @@ export function mergePhiSessionState(
         ...summary,
         path: summaryPathForManifest(manifest),
         id: manifest.sessionId,
-        name: manifest.title ?? summary.name,
+        name: titleFromManifest(manifest) ?? summary.name,
         firstMessage,
         phiSessionId: manifest.sessionId,
         created,

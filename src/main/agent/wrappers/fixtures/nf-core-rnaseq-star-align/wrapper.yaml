@@ -1,0 +1,126 @@
+# Standalone wrapper chaining two modules of nf-core/rnaseq 3.26.0 — STAR
+# genome index generation, then STAR alignment.
+#
+# See ../nf-core-rnaseq-fastqc/wrapper.yaml's doc comment for why this
+# exists as its own independently runnable Phi wrapper rather than being
+# composed into the full `nf-core/rnaseq/rnaseq` pipeline wrapper — Phi has
+# no wrapper-composition mechanism (product docs explicitly rule it out for
+# now). Unlike the single-module wrappers in this namespace (fastqc,
+# trimgalore, multiqc), this one chains two real modules
+# (STAR_GENOMEGENERATE + STAR_ALIGN) itself, since alignment needs an
+# index and there's no separate "build a STAR index" wrapper to depend on
+# — see main.nf's own doc comment. Both modules are vendored unmodified.
+phiWrapperVersion: 1
+id: nf-core/rnaseq/star-align
+shortId: star-align
+name: STAR alignment (nf-core/rnaseq modules)
+version: 3.26.0
+summary: Build a STAR genome index and align FASTQ reads to it — the alignment modules nf-core/rnaseq uses internally, wrapped standalone.
+
+runtime:
+  minVersion: 1.0.0
+  maxVersion: 1.x
+
+source:
+  repository: https://github.com/nf-core/rnaseq
+  ref: 3.26.0
+
+verification:
+  status: unverified
+  registry: none
+
+registryStatus: active
+# Genome indexing is genuinely scheduler-class work for anything beyond a
+# toy reference — see resources.defaults below.
+resourceClass: hpc
+
+engine:
+  type: nextflow
+  entrypoint: main.nf
+  profiles:
+    - id: local
+      executor: local
+      containerRuntime: docker
+      nextflowProfile: docker
+    - id: slurm-controller
+      executor: remote
+      scheduler: slurm
+      controller: sbatch
+      containerRuntime: singularity
+      nextflowProfile: singularity
+
+inputs:
+  - id: reads
+    type: fastq_reads
+    layout: paired_end
+    required: true
+    samplesheet:
+      columns:
+        - sample
+        - fastq_1
+        - fastq_2
+  - id: fasta
+    type: reference_fasta
+    required: true
+  - id: gtf
+    type: reference_gtf
+    required: true
+
+parameters:
+  schema:
+    type: object
+    properties: {}
+
+outputs:
+  - id: star_index
+    label: STAR genome index
+    type: directory
+    path: star_index/star
+  - id: alignments
+    label: Aligned BAMs + STAR logs (per sample)
+    type: directory
+    path: star_align
+    primary: true
+
+resources:
+  # Sized as a reasonable default for a real (not toy) reference genome —
+  # STAR_GENOMEGENERATE's memory need scales with genome size, so a large
+  # genome (e.g. human) needs meaningfully more than this; a small/test
+  # reference needs much less. Verified against a real, larger reference:
+  # nf-core/rnaseq's own conf/base.config sizes this same step's
+  # `process_high` label at 12 CPU / 72 GB / 16h.
+  defaults:
+    cpus: 8
+    memory: 32 GB
+    time: 8h
+
+permissions:
+  filesystem:
+    read:
+      - input_paths
+    write:
+      - run_workdir
+      - declared_outdir
+  network:
+    default: disabled
+  remote:
+    allowed: false
+
+license:
+  wrapper: MIT
+  tools:
+    - name: STAR
+      license: MIT
+    - name: samtools
+      license: MIT
+
+citations:
+  - id: nf-core
+    doi: 10.1038/s41587-020-0439-x
+
+dataPolicy:
+  acceptedSensitivity:
+    - public
+    - internal
+  externalTransfer:
+    default: false

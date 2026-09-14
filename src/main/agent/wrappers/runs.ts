@@ -4,6 +4,9 @@ import { getProjectByCwd } from '../projects'
 import { getPhiAgentDir } from '../runtime-paths'
 import { runLocalWrapperExecution } from './executor-local'
 import { joinRemote } from './executor-remote'
+import { runRemoteBackgroundWrapperExecution } from './executor-remote-background-submit'
+import { readRemoteRunSnapshot } from './executor-remote-run'
+import { SbatchRunner } from './executor-slurm'
 import { runSlurmWrapperExecution } from './executor-slurm-submit'
 import {
   resolveProjectRemoteSubmitOptions,
@@ -133,6 +136,7 @@ export function submitWrapperRunPlan(
     trustTier: plan.trustTier,
     executor: plan.executor,
     profile: plan.profile,
+    nextflowProfile: plan.nextflowProfile,
     cwd: plan.cwd,
     outDir: plan.outputDir,
     steps: plan.steps,
@@ -174,16 +178,36 @@ export function submitWrapperRunPlan(
     })
   } else if (options.autoExecute !== false && run.executor === 'slurm-controller') {
     // Same "submit must still land a terminal state" rule as local's catch
-    // above — a plan/run can be `slurm-controller` today only via a
-    // hand-built plan (`plans.ts`'s resolver chain that would actually let
-    // users choose this doesn't exist yet), so the "nothing configured"
-    // branch below mostly guards against exactly that: a run whose executor
-    // promises a remote host nobody configured, explicitly or via the project.
+    // above. The "nothing configured" branch below guards against a run
+    // whose executor promises a remote host nobody configured, explicitly
+    // or via the project (plans.ts's resolver only ever produces
+    // slurm-controller when a project's remote config is actually set).
     const remote = resolveRemoteSubmitOptions(run, options.remote, agentDir)
     if ('reason' in remote) {
       markRunFailed(run, agentDir, remote.reason)
     } else {
       void runSlurmWrapperExecution(run, submittedPlan, {
+        agentDir,
+        remoteRunDir: joinRemote(remote.remoteWorkspaceRoot, 'wrappers', 'runs', run.runId),
+        connection: remote.connection,
+        connectImpl: remote.connectImpl,
+        pollIntervalMs: remote.pollIntervalMs
+      }).catch((error: unknown) => {
+        markRunFailed(run, agentDir, error instanceof Error ? error.message : String(error))
+      })
+    }
+  } else if (options.autoExecute !== false && run.executor === 'remote-background') {
+    // Mirrors the slurm-controller branch above, dispatching to the
+    // `detached_ssh` controller instead of `sbatch`. A plan/run can be
+    // `remote-background` today only via a hand-built plan — plans.ts's
+    // resolver doesn't produce this executor yet (only slurm-controller),
+    // so the "nothing configured" branch below mostly guards against a run
+    // whose executor promises a remote host nobody configured.
+    const remote = resolveRemoteSubmitOptions(run, options.remote, agentDir)
+    if ('reason' in remote) {
+      markRunFailed(run, agentDir, remote.reason)
+    } else {
+      void runRemoteBackgroundWrapperExecution(run, submittedPlan, {
         agentDir,
         remoteRunDir: joinRemote(remote.remoteWorkspaceRoot, 'wrappers', 'runs', run.runId),
         connection: remote.connection,
@@ -225,43 +249,134 @@ export function cancelWrapperRunPlan(planId: string, agentDir = getPhiAgentDir()
   return cancelled
 }
 
-/**
- * Cancels a run that hasn't started executing on the local machine yet
- * (`created`/`validating`/`provisioning`/`queued`). Cancelling an actually
- * running local Nextflow process requires the executor from Milestone P1.7
- * — that case is intentionally out of scope here and throws a clear error
- * rather than silently doing nothing.
- */
-export function cancelWrapperRun(runId: string, agentDir = getPhiAgentDir()): WrapperRun {
-  const run = readWrapperRun(runId, agentDir)
-  if (!run) {
-    throw new Error(`run 不存在: ${runId}`)
-  }
-  if (!['created', 'validating', 'provisioning', 'queued'].includes(run.state)) {
-    throw new Error(
-      `run 当前状态为 "${run.state}"，取消正在执行的本地进程需要 Milestone P1.7 的本地执行器支持`
-    )
-  }
+/** States that haven't started executing anything anywhere yet — cancelling just marks the record, nothing to tear down remotely or locally. */
+const PRE_DISPATCH_CANCELLABLE_STATES: WrapperRun['state'][] = [
+  'created',
+  'validating',
+  'provisioning',
+  'queued'
+]
 
-  const now = new Date().toISOString()
-  const cancelled: WrapperRun = { ...run, state: 'cancelled', updatedAt: now }
-  writeWrapperRun(cancelled, agentDir)
-  appendWrapperRunEvent(
-    runId,
-    { type: 'run_state_changed', timestamp: now, state: 'cancelled' },
-    agentDir
-  )
+/** `slurm-controller` states where the remote job is actually running (or wrapping up) and worth issuing a real `scancel` for. */
+const REMOTE_CANCELLABLE_RUN_STATES: WrapperRun['state'][] = ['running', 'collecting']
+
+function requestCancelAuditEvent(run: WrapperRun, agentDir: string, timestamp: string): void {
   appendWrapperAuditEvent(
     {
       type: 'run_cancel_requested',
-      timestamp: now,
+      timestamp,
       actor: run.actor,
-      runId,
+      runId: run.runId,
       planId: run.planId,
       wrapperId: run.wrapper.canonicalId,
       wrapperVersion: run.wrapper.version
     },
     agentDir
   )
-  return cancelled
+}
+
+/**
+ * Best-effort `scancel` — fire-and-forget, matching submit's own
+ * "background dispatch, catch and report separately" pattern. The run's
+ * actual terminal state (`cancelled`/`failed`/`lost`) is decided by whoever
+ * next observes the scheduler's state: the in-flight `runSlurmWrapperExecution`
+ * poll loop from this same app session if it's still running (see its
+ * `wasCancelling` check), or `executor-slurm-reconcile.ts`'s startup pass
+ * after a restart. A missing snapshot (the job never made it to `sbatch`
+ * before cancel was requested) means there's nothing to cancel yet — the
+ * still-running submit will finalize the run on its own once it completes.
+ */
+async function dispatchRemoteCancel(
+  run: WrapperRun,
+  agentDir: string,
+  explicitRemote: RemoteSubmitOptions | undefined
+): Promise<void> {
+  const snapshot = readRemoteRunSnapshot(run.runId, agentDir)
+  if (!snapshot?.jobId) return
+
+  const remote = resolveRemoteSubmitOptions(run, explicitRemote, agentDir)
+  if ('reason' in remote) return
+
+  const runner = new SbatchRunner({
+    connection: remote.connection,
+    connectImpl: remote.connectImpl
+  })
+  try {
+    await runner.cancel({
+      runId: run.runId,
+      remoteRunDir: snapshot.remoteRunDir,
+      jobId: snapshot.jobId
+    })
+  } finally {
+    await runner.close()
+  }
+}
+
+function requestRemoteCancel(
+  run: WrapperRun,
+  agentDir: string,
+  explicitRemote: RemoteSubmitOptions | undefined
+): WrapperRun {
+  const now = new Date().toISOString()
+  const cancelling: WrapperRun = { ...run, state: 'cancelling', updatedAt: now }
+  writeWrapperRun(cancelling, agentDir)
+  appendWrapperRunEvent(
+    run.runId,
+    { type: 'run_state_changed', timestamp: now, state: 'cancelling' },
+    agentDir
+  )
+  requestCancelAuditEvent(run, agentDir, now)
+
+  void dispatchRemoteCancel(cancelling, agentDir, explicitRemote)
+
+  return cancelling
+}
+
+/**
+ * Cancels a run. Two cases:
+ *
+ *  - The run hasn't started executing anywhere yet (`created`/`validating`/
+ *    `provisioning`/`queued`) — cancelling just marks the record `cancelled`
+ *    immediately, matching the original Phase 1 behavior.
+ *  - A `slurm-controller` run whose remote job is actually `running`/
+ *    `collecting` — moves the run to `cancelling` and issues a best-effort
+ *    `scancel` in the background (see `dispatchRemoteCancel`); the run
+ *    reaches its real terminal state (`cancelled`/`failed`/`lost`) once the
+ *    scheduler confirms it, either from this session's own poll loop or a
+ *    future reconciliation pass.
+ *
+ * Cancelling an actually-running *local* Nextflow process, or an
+ * actually-running `remote-background` run (dispatched via
+ * `runRemoteBackgroundWrapperExecution` now, but with no `scancel`-style
+ * counterpart wired up here yet — a separate follow-up), remains out of
+ * scope and throws.
+ */
+export function cancelWrapperRun(
+  runId: string,
+  agentDir = getPhiAgentDir(),
+  remote?: RemoteSubmitOptions
+): WrapperRun {
+  const run = readWrapperRun(runId, agentDir)
+  if (!run) {
+    throw new Error(`run 不存在: ${runId}`)
+  }
+
+  if (PRE_DISPATCH_CANCELLABLE_STATES.includes(run.state)) {
+    const now = new Date().toISOString()
+    const cancelled: WrapperRun = { ...run, state: 'cancelled', updatedAt: now }
+    writeWrapperRun(cancelled, agentDir)
+    appendWrapperRunEvent(
+      runId,
+      { type: 'run_state_changed', timestamp: now, state: 'cancelled' },
+      agentDir
+    )
+    requestCancelAuditEvent(run, agentDir, now)
+    return cancelled
+  }
+
+  if (run.executor === 'slurm-controller' && REMOTE_CANCELLABLE_RUN_STATES.includes(run.state)) {
+    return requestRemoteCancel(run, agentDir, remote)
+  }
+
+  throw new Error(`run 当前状态为 "${run.state}"，取消正在执行的进程需要对应执行器支持`)
 }

@@ -40,6 +40,21 @@ export interface WrapperManifestEngineProfile {
   containerRuntime?: string
   scheduler?: 'slurm' | 'none'
   controller?: 'detached_ssh' | 'sbatch'
+  /**
+   * The literal value passed to Nextflow's `-profile` flag when this engine
+   * profile is selected. Defaults to `id` when omitted — that default is
+   * only correct by coincidence for a wrapper whose own `nextflow.config`
+   * happens to declare a profile with the exact same name as Phi's engine
+   * profile id (true for the bundled demo wrapper, e.g. `docker`/`local`,
+   * but not true in general: `id` is a Phi-internal selector — see
+   * `executor-local.ts`'s `requiresDocker` lookup, which depends on it
+   * matching a real `engine.profiles[].id` — while a real pipeline's own
+   * Nextflow profile names are whatever its `nextflow.config` declares,
+   * e.g. nf-core pipelines ship `docker`/`singularity`/`conda`/`test`, never
+   * a profile literally named `slurm-controller`). Set this whenever the
+   * two names diverge.
+   */
+  nextflowProfile?: string
 }
 
 export interface WrapperManifestEngine {

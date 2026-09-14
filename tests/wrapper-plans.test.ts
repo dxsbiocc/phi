@@ -5,6 +5,12 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import {
+  createProject,
+  updateProjectRemoteConnection,
+  updateProjectRemoteDefaults
+} from '../src/main/agent/projects'
+import { RUNTIME_AGENT_DIR_ENV } from '../src/main/agent/runtime-paths'
+import {
   ensureBundledWrappersInstalled,
   listWrapperCatalog,
   type WrapperCatalogEntry
@@ -29,6 +35,47 @@ function withHarness<T>(callback: (harness: { agentDir: string; projectDir: stri
   }
 }
 
+/**
+ * Like `withHarness`, but also points `projects.ts` (which always resolves
+ * `getPhiAgentDir()` from `RUNTIME_AGENT_DIR_ENV`, ignoring any explicit
+ * `agentDir` argument — unlike every wrapper-storage function) at the same
+ * temp dir, so a project created here and `resolveExecutor`'s internal
+ * `getProjectByCwd` call agree on where things live.
+ */
+function withProjectHarness<T>(
+  callback: (harness: { agentDir: string; projectDir: string }) => T
+): T {
+  return withHarness(({ agentDir, projectDir }) => {
+    const previous = process.env[RUNTIME_AGENT_DIR_ENV]
+    process.env[RUNTIME_AGENT_DIR_ENV] = agentDir
+    try {
+      return callback({ agentDir, projectDir })
+    } finally {
+      if (previous === undefined) delete process.env[RUNTIME_AGENT_DIR_ENV]
+      else process.env[RUNTIME_AGENT_DIR_ENV] = previous
+    }
+  })
+}
+
+function configureProjectRemote(agentDir: string, projectDir: string): void {
+  const project = createProject({
+    name: 'Demo',
+    workingDirectory: projectDir,
+    permissionMode: 'ask'
+  })
+  updateProjectRemoteConnection(project.id, 'conn1', {
+    id: 'conn1',
+    label: 'Lab HPC',
+    host: 'lab-hpc.example.edu',
+    username: 'agent',
+    privateKeyPath: join(projectDir, 'unused-key')
+  })
+  updateProjectRemoteDefaults(project.id, {
+    defaultRemoteConnectionId: 'conn1',
+    remoteWorkspaceRoot: '/cluster/facility/lab/WorkSpace'
+  })
+}
+
 function writeFastqPair(projectDir: string, sample: string): void {
   mkdirSync(join(projectDir, 'data'), { recursive: true })
   writeFileSync(join(projectDir, 'data', `${sample}_R1.fastq.gz`), 'r1')
@@ -42,7 +89,7 @@ function fastqQcWrapper(agentDir: string): WrapperCatalogEntry {
   return entry
 }
 
-test('createWrapperRunPlan always resolves executor "local" and a valid plan for good params', () => {
+test('createWrapperRunPlan resolves executor "local" when the project has no remote execution configured', () => {
   withHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
     const wrapper = fastqQcWrapper(agentDir)
@@ -125,6 +172,220 @@ test('createWrapperRunPlan flags a heavy/hpc resourceClass wrapper as requiring 
     assert.equal(plan.requiresHeavyWorkloadAcknowledgement, true)
     assert.equal(plan.heavyWorkloadAcknowledged, false)
     // Still valid and locally runnable — Phase 1 warns rather than blocks (no remote to redirect to).
+    assert.equal(plan.state, 'valid')
+  })
+})
+
+test('createWrapperRunPlan substitutes a resolved absolute path into params.json for a plain single-file input', () => {
+  withHarness(({ agentDir, projectDir }) => {
+    const wrapper = fastqQcWrapper(agentDir)
+    const wrapperWithFasta = {
+      ...wrapper,
+      manifest: {
+        ...wrapper.manifest,
+        inputs: [
+          ...wrapper.manifest.inputs,
+          { id: 'fasta', type: 'reference_fasta', required: true }
+        ]
+      }
+    }
+    writeFastqPair(projectDir, 'S1')
+    mkdirSync(join(projectDir, 'ref'), { recursive: true })
+    writeFileSync(join(projectDir, 'ref', 'genome.fa'), '>chr1\nACGT\n')
+
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: wrapperWithFasta,
+      params: { reads: 'data/*_{R1,R2}.fastq.gz', fasta: 'ref/genome.fa' },
+      cwd: projectDir,
+      agentDir
+    })
+
+    assert.equal(plan.state, 'valid')
+    // Nextflow runs with its own cwd, not the project directory the user
+    // typed a relative path against — params.json must carry the resolved
+    // absolute path, not the raw relative string.
+    assert.equal(plan.params.fasta, join(projectDir, 'ref', 'genome.fa'))
+    // The raw value the user actually typed is still there for display —
+    // resolveLocalInputPath's `userValue`, unaffected by the substitution.
+    const fastaInput = plan.inputs.find((input) => input.id === 'fasta')
+    assert.equal(fastaInput?.userValue, 'ref/genome.fa')
+  })
+})
+
+test("createWrapperRunPlan uses a profile's declared nextflowProfile for -profile, not the Phi profile id", () => {
+  withHarness(({ agentDir, projectDir }) => {
+    const wrapper = fastqQcWrapper(agentDir)
+    const wrapperWithRenamedProfile = {
+      ...wrapper,
+      manifest: {
+        ...wrapper.manifest,
+        engine: {
+          ...wrapper.manifest.engine,
+          profiles: [{ id: 'local', executor: 'local' as const, nextflowProfile: 'standard' }]
+        }
+      }
+    }
+    writeFastqPair(projectDir, 'S1')
+
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: wrapperWithRenamedProfile,
+      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
+      cwd: projectDir,
+      agentDir
+    })
+
+    assert.equal(plan.profile, 'local')
+    assert.equal(plan.nextflowProfile, 'standard')
+    assert.match(plan.commandPlan.command, /-profile standard$/)
+  })
+})
+
+// --- Phase 2: resolveExecutor's "project default" tier -------------------
+
+test('createWrapperRunPlan resolves the sbatch-controller profile when the project has remote execution configured', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    writeFastqPair(projectDir, 'S1')
+    const wrapper = fastqQcWrapper(agentDir)
+    configureProjectRemote(agentDir, projectDir)
+
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper,
+      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
+      cwd: projectDir,
+      agentDir
+    })
+
+    assert.equal(plan.executor, 'slurm-controller')
+    assert.equal(plan.profile, 'slurm-controller')
+    assert.equal(plan.state, 'valid')
+    assert.match(plan.commandPlan.command, /-profile slurm-controller$/)
+  })
+})
+
+test("createWrapperRunPlan trusts a remote plan's input paths verbatim — no local existence check, no cwd rewrite", () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    writeFastqPair(projectDir, 'S1')
+    const wrapper = fastqQcWrapper(agentDir)
+    const wrapperWithFasta = {
+      ...wrapper,
+      manifest: {
+        ...wrapper.manifest,
+        inputs: [
+          ...wrapper.manifest.inputs,
+          { id: 'fasta', type: 'reference_fasta', required: true }
+        ]
+      }
+    }
+    configureProjectRemote(agentDir, projectDir)
+    // Per docs/design/phi-wrapper-product-prd.md's Non-Goals ("Do not
+    // auto-sync project data to remote servers"), this path is never
+    // expected to exist on this machine — it's where the user already put
+    // the reference genome on the remote host themselves.
+    const remoteFastaPath = '/cluster/facility/lab/refs/genome.fa'
+
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: wrapperWithFasta,
+      params: { reads: 'data/*_{R1,R2}.fastq.gz', fasta: remoteFastaPath },
+      cwd: projectDir,
+      agentDir
+    })
+
+    assert.equal(plan.executor, 'slurm-controller')
+    assert.equal(plan.state, 'valid', plan.validation.errors.join('; '))
+    // Untouched — not resolved against a local cwd, not existence-checked.
+    assert.equal(plan.params.fasta, remoteFastaPath)
+    const fastaInput = plan.inputs.find((input) => input.id === 'fasta')
+    assert.equal(fastaInput?.kind, 'path')
+    assert.deepEqual(fastaInput?.localPaths, [])
+    assert.deepEqual(fastaInput?.remotePaths, [remoteFastaPath])
+  })
+})
+
+test('createWrapperRunPlan falls back to local when the project has remote configured but the wrapper declares no sbatch-controller profile', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    writeFastqPair(projectDir, 'S1')
+    const wrapper = fastqQcWrapper(agentDir)
+    const noRemoteProfileWrapper = {
+      ...wrapper,
+      manifest: {
+        ...wrapper.manifest,
+        engine: {
+          ...wrapper.manifest.engine,
+          profiles: wrapper.manifest.engine.profiles.filter(
+            (profile) => profile.executor === 'local'
+          )
+        }
+      }
+    }
+    configureProjectRemote(agentDir, projectDir)
+
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: noRemoteProfileWrapper,
+      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
+      cwd: projectDir,
+      agentDir
+    })
+
+    assert.equal(plan.executor, 'local')
+  })
+})
+
+test('createWrapperRunPlan falls back to local when the project has only partially configured remote execution', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    writeFastqPair(projectDir, 'S1')
+    const wrapper = fastqQcWrapper(agentDir)
+    const project = createProject({
+      name: 'Demo',
+      workingDirectory: projectDir,
+      permissionMode: 'ask'
+    })
+    updateProjectRemoteConnection(project.id, 'conn1', {
+      id: 'conn1',
+      label: 'Lab HPC',
+      host: 'lab-hpc.example.edu',
+      username: 'agent',
+      privateKeyPath: join(projectDir, 'unused-key')
+    })
+    // defaultRemoteConnectionId set, but remoteWorkspaceRoot never configured.
+    updateProjectRemoteDefaults(project.id, { defaultRemoteConnectionId: 'conn1' })
+
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper,
+      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
+      cwd: projectDir,
+      agentDir
+    })
+
+    assert.equal(plan.executor, 'local')
+  })
+})
+
+test('createWrapperRunPlan does not require heavy-workload acknowledgement once remote execution resolves the wrapper away from local', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    writeFastqPair(projectDir, 'S1')
+    const wrapper = fastqQcWrapper(agentDir)
+    const heavyWrapper = {
+      ...wrapper,
+      manifest: { ...wrapper.manifest, resourceClass: 'heavy' as const }
+    }
+    configureProjectRemote(agentDir, projectDir)
+
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: heavyWrapper,
+      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
+      cwd: projectDir,
+      agentDir
+    })
+
+    assert.equal(plan.executor, 'slurm-controller')
+    assert.equal(plan.requiresHeavyWorkloadAcknowledgement, undefined)
     assert.equal(plan.state, 'valid')
   })
 })

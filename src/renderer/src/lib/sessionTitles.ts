@@ -1,4 +1,5 @@
-import type { ChatItem, SessionSummary } from '../types'
+import type { ChatItem, ChatMessage, SessionSummary } from '../types'
+import { messageContentTitleText } from '../../../shared/sessionTitle'
 
 const MAX_SESSION_TITLE_CHARS = 60
 
@@ -9,14 +10,21 @@ export function truncateSessionTitle(title: string, maxLength = MAX_SESSION_TITL
 }
 
 export function sessionDisplayTitle(session: SessionSummary): string {
-  return truncateSessionTitle(session.name || session.firstMessage || '新对话')
+  const title =
+    messageContentTitleText(session.name) ||
+    messageContentTitleText(session.firstMessage) ||
+    '新对话'
+  return truncateSessionTitle(title)
+}
+
+function isUserChatMessage(message: ChatItem): message is ChatMessage & { role: 'user' } {
+  return message.role === 'user'
 }
 
 export function titleFromMessages(messages: ChatItem[]): string | null {
-  const firstUserMessage = messages.find(
-    (message) => message.role === 'user' && message.content.trim().length > 0
-  )
-  return firstUserMessage && firstUserMessage.role === 'user'
-    ? truncateSessionTitle(firstUserMessage.content)
-    : null
+  const title = messages
+    .filter(isUserChatMessage)
+    .map((message) => messageContentTitleText(message.content))
+    .find((content) => content.length > 0)
+  return title ? truncateSessionTitle(title) : null
 }

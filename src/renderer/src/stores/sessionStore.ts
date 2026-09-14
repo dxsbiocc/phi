@@ -8,6 +8,8 @@ import {
 import {
   idleSessionRuntimeState,
   mergeSessionRuntimeState,
+  sessionRuntimeStateFrom,
+  sessionRuntimeStateNeedsAcknowledgement,
   sessionRuntimeStatesEqual
 } from '../lib/sessionRuntimeState'
 import { sessionDraftKey } from '../lib/sessionDrafts'
@@ -88,6 +90,7 @@ export const pendingApprovalsBySession = new Map<string, ToolApprovalRequest>()
 export const sessionAgentEventStates = new Map<string, AgentEventReducerState>()
 
 let sessionRefreshTimer: number | null = null
+const activeSessionAcknowledgementRequests = new Set<string>()
 
 type SessionStoreState = {
   sessions: SessionSummary[]
@@ -137,6 +140,7 @@ type SessionStoreState = {
     callbacks?: { onCwdChanged?: () => void; onResetSending?: () => void }
   ) => void
   refreshSessions: () => Promise<void>
+  acknowledgeActiveSession: (options?: { force?: boolean }) => Promise<boolean>
   startFreshChat: () => void
   scheduleSessionRefresh: () => void
   cancelScheduledSessionRefresh: () => void
@@ -346,6 +350,77 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
     get().storeSessionRuntimeState(activeKey, nextRuntimeState)
     if (activeKey === get().activeAgentEventStateKey) {
       set({ activeSessionRuntimeState: nextRuntimeState })
+    }
+  },
+
+  acknowledgeActiveSession: async (options = {}) => {
+    const state = get()
+    const path = state.activeSessionPath
+    if (!path) return false
+
+    const activeSummary = state.sessions.find(
+      (session) =>
+        session.path === path ||
+        (typeof state.activePhiSessionId === 'string' &&
+          session.phiSessionId === state.activePhiSessionId)
+    )
+    if (
+      !options.force &&
+      !sessionRuntimeStateNeedsAcknowledgement(state.activeSessionRuntimeState) &&
+      !sessionRuntimeStateNeedsAcknowledgement(activeSummary)
+    ) {
+      return false
+    }
+
+    const requestKey =
+      state.activeAgentEventStateKey ??
+      sessionStateKey({
+        phiSessionId: state.activePhiSessionId,
+        path,
+        cwd: state.activeCwd,
+        sessionGeneration: state.activeSessionGeneration
+      })
+    if (activeSessionAcknowledgementRequests.has(requestKey)) return false
+    activeSessionAcknowledgementRequests.add(requestKey)
+
+    try {
+      const acknowledged = await getRendererApi().acknowledgeSession(path)
+      if (!acknowledged) return false
+
+      const nextRuntimeState = sessionRuntimeStateFrom(acknowledged)
+      const latest = get()
+      const activeStillMatches =
+        latest.activeSessionPath === acknowledged.path ||
+        (typeof acknowledged.phiSessionId === 'string' &&
+          acknowledged.phiSessionId === latest.activePhiSessionId)
+      const stateKey = activeStillMatches
+        ? (latest.activeAgentEventStateKey ??
+          sessionStateKey({
+            phiSessionId: latest.activePhiSessionId,
+            path: latest.activeSessionPath,
+            cwd: latest.activeCwd,
+            sessionGeneration: latest.activeSessionGeneration
+          }))
+        : requestKey
+
+      latest.storeSessionRuntimeState(stateKey, nextRuntimeState)
+      set((current) => ({
+        sessions: current.sessions.map((session) =>
+          session.path === acknowledged.path ||
+          (typeof acknowledged.phiSessionId === 'string' &&
+            session.phiSessionId === acknowledged.phiSessionId)
+            ? { ...session, ...nextRuntimeState }
+            : session
+        ),
+        activeSessionRuntimeState: activeStillMatches
+          ? nextRuntimeState
+          : current.activeSessionRuntimeState,
+        projectSessionRefreshKey: current.projectSessionRefreshKey + 1
+      }))
+
+      return true
+    } finally {
+      activeSessionAcknowledgementRequests.delete(requestKey)
     }
   },
 

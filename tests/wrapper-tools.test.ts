@@ -85,7 +85,7 @@ test('wrapperToolName sanitizes a canonical id into a safe tool name', () => {
   assert.equal(wrapperToolName('phi/ngs/fastq-qc'), 'wrapper.phi_ngs_fastq_qc')
 })
 
-test('buildDefaultWrapperCustomTools includes search, inspect, and only the bundled wrapper', async () => {
+test('buildDefaultWrapperCustomTools includes search, inspect, and only the bundled wrappers', async () => {
   await withHarness(({ agentDir, projectDir }) => {
     ensureBundledWrappersInstalled(agentDir)
     const sourceDir = join(projectDir, 'custom-src')
@@ -99,8 +99,14 @@ test('buildDefaultWrapperCustomTools includes search, inspect, and only the bund
     assert.ok(names.includes('wrapper.search'))
     assert.ok(names.includes('wrapper.inspect'))
     assert.ok(names.includes('wrapper.phi_ngs_fastq_qc'))
+    assert.ok(names.includes('wrapper.nf_core_rnaseq_rnaseq'))
+    assert.ok(names.includes('wrapper.nf_core_rnaseq_fastqc'))
+    assert.ok(names.includes('wrapper.nf_core_rnaseq_trimgalore'))
+    assert.ok(names.includes('wrapper.nf_core_rnaseq_star_align'))
+    assert.ok(names.includes('wrapper.nf_core_rnaseq_salmon_quant'))
+    assert.ok(names.includes('wrapper.nf_core_rnaseq_multiqc'))
     assert.ok(!names.includes('wrapper.acme_tools_toy_wrapper'))
-    assert.equal(tools.length, 3)
+    assert.equal(tools.length, 9)
   })
 })
 

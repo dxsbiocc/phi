@@ -25,7 +25,35 @@ export interface RemoteConnectionConfig {
    * NOT cover this — it only guards the handshake before `ready` fires.
    */
   execTimeoutMs?: number
+  /**
+   * SSH client identification string sent during the initial handshake
+   * (`SSH-2.0-<ident>` on the wire — ssh2 adds the `SSH-2.0-` prefix
+   * itself, see `buildConnectConfig`). Defaults to `DEFAULT_SSH_IDENT`
+   * rather than ssh2's own default (`SSH-2.0-ssh2js<version>`) — verified
+   * against a real HPC cluster network where connections consistently
+   * stalled part-way through the handshake (past `REQUEST_SUCCESS`, never
+   * reaching `ready`) with ssh2's default ident, while plain OpenSSH on the
+   * same network worked every time. The leading suspect, from protocol
+   * debug logs and raw-socket testing, is a firewall/security appliance
+   * fingerprinting the client ident as non-standard tooling rather than a
+   * real terminal client. Sending an OpenSSH-shaped ident is a best-effort
+   * mitigation for that specific failure mode, not a confirmed complete
+   * fix — a network that fingerprints deeper than the ident line (e.g. the
+   * KEX algorithm list) would need a different workaround. Override this
+   * only if a specific target network needs a different string.
+   */
+  ident?: string
 }
+
+/**
+ * ssh2's own default ident (`SSH-2.0-ssh2js<version>`) unambiguously marks
+ * the connection as this library, not a normal terminal client — see
+ * `RemoteConnectionConfig.ident`'s doc comment for why that's a real,
+ * previously-observed compatibility risk on at least one network. Kept as
+ * a module constant (not inlined) so both `buildConnectConfig` and its
+ * tests reference the exact same value.
+ */
+export const DEFAULT_SSH_IDENT = 'OpenSSH_9.6'
 
 export interface RemoteExecResult {
   stdout: string
@@ -119,13 +147,14 @@ export function buildTruncateLastByteCommand(remotePath: string): string {
 }
 
 /**
- * Real `ssh2`-backed implementation. Exported separately from the
- * `RemoteSshSession` interface so runners can accept an injected fake in
- * tests instead — see `executor-remote.ts`'s `RemoteControllerOptions.connectImpl`.
+ * Pure config builder — kept separate from `connectRemoteSshSession` so the
+ * `ident` mitigation (and its default) is testable without a real `ssh2`
+ * `Client`/network, matching this file's existing split between pure
+ * command builders and the real-ssh2 glue (see the module doc comment
+ * above `buildMkdirpCommand`).
  */
-export function connectRemoteSshSession(config: RemoteConnectionConfig): Promise<RemoteSshSession> {
-  const client = new Client()
-  const connectConfig: ConnectConfig = {
+export function buildConnectConfig(config: RemoteConnectionConfig): ConnectConfig {
+  return {
     host: config.host,
     port: config.port ?? 22,
     username: config.username,
@@ -137,8 +166,19 @@ export function connectRemoteSshSession(config: RemoteConnectionConfig): Promise
     // 3 keepalive probes 15s apart) and emit a real `error`/`close` event,
     // rather than relying solely on each exec() call's own timer.
     keepaliveInterval: 15_000,
-    keepaliveCountMax: 3
+    keepaliveCountMax: 3,
+    ident: config.ident ?? DEFAULT_SSH_IDENT
   }
+}
+
+/**
+ * Real `ssh2`-backed implementation. Exported separately from the
+ * `RemoteSshSession` interface so runners can accept an injected fake in
+ * tests instead — see `executor-remote.ts`'s `RemoteControllerOptions.connectImpl`.
+ */
+export function connectRemoteSshSession(config: RemoteConnectionConfig): Promise<RemoteSshSession> {
+  const client = new Client()
+  const connectConfig = buildConnectConfig(config)
 
   return new Promise<RemoteSshSession>((resolveSession, reject) => {
     client.once('error', reject)

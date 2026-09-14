@@ -76,7 +76,6 @@ import { PhiIcons, fileIconForPath, directoryIconForPath } from './icons'
 import {
   idleSessionRuntimeState,
   reduceSessionRuntimeState,
-  sessionRuntimeStateFrom,
   sessionRuntimeStateIsBusy,
   sessionStatusIsBusy
 } from './lib/sessionRuntimeState'
@@ -407,6 +406,7 @@ function App(): React.JSX.Element {
     storeSessionRuntimeState,
     mergeSessionSummariesRuntimeState,
     applyCurrentSession,
+    acknowledgeActiveSession,
     refreshSessions,
     startFreshChat,
     scheduleSessionRefresh,
@@ -736,24 +736,7 @@ function App(): React.JSX.Element {
   const onSelectSession = useCallback(
     async (path: string): Promise<void> => {
       if (path === useSessionStore.getState().activeSessionPath) {
-        const acknowledged = await rendererApi.acknowledgeSession(path)
-        if (!acknowledged) return
-        const nextRuntimeState = sessionRuntimeStateFrom(acknowledged)
-        const stateKey = sessionStateKey({
-          phiSessionId: acknowledged.phiSessionId,
-          path: acknowledged.path,
-          cwd: useSessionStore.getState().activeCwd,
-          sessionGeneration: useSessionStore.getState().activeSessionGeneration
-        })
-        storeSessionRuntimeState(stateKey, nextRuntimeState)
-        if (stateKey === useSessionStore.getState().activeAgentEventStateKey) {
-          setActiveSessionRuntimeState(nextRuntimeState)
-        }
-        setSessions((prev) =>
-          prev.map((session) =>
-            session.path === acknowledged.path ? { ...session, ...nextRuntimeState } : session
-          )
-        )
+        await acknowledgeActiveSession({ force: true })
         return
       }
       const request = ++sessionRequestRef.current
@@ -787,6 +770,7 @@ function App(): React.JSX.Element {
       }
     },
     [
+      acknowledgeActiveSession,
       applyCurrentSession,
       onResetSending,
       refreshCurrentModelControls,
@@ -794,11 +778,8 @@ function App(): React.JSX.Element {
       rendererApi,
       replaceMessages,
       resetAnalysisJupyterRuntimeForCwdChange,
-      setActiveSessionRuntimeState,
       setAgentEventState,
-      setIsSessionChanging,
-      setSessions,
-      storeSessionRuntimeState
+      setIsSessionChanging
     ]
   )
 
@@ -1781,6 +1762,10 @@ function App(): React.JSX.Element {
     setIsNewProjectDialogOpen(true)
   }
 
+  const acknowledgeActiveSessionInteraction = useCallback((): void => {
+    void acknowledgeActiveSession()
+  }, [acknowledgeActiveSession])
+
   const activeChatView = (
     <ChatView
       messages={messages}
@@ -1809,6 +1794,7 @@ function App(): React.JSX.Element {
       onListInputDirectory={onListInputDirectory}
       onChatSubmit={onChatSubmit}
       onStopGeneration={onStopGeneration}
+      onAcknowledgeActiveSession={acknowledgeActiveSessionInteraction}
       onGoSettings={onGoProviderSettings}
       permissionMode={activePermissionMode}
       onSelectPermissionMode={(mode) => {
