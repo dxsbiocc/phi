@@ -195,15 +195,17 @@ test('clicking a code cell enters edit mode at the clicked source position', () 
 
   assert.match(cellSource, /const showEditor = editable && isEditing && isCellSelected/)
   assert.match(codeSource, /data-phi-notebook-code-edit-trigger="single-click"/)
+  assert.match(codeSource, /data-phi-notebook-code-edit-event="pointerdown"/)
   assert.doesNotMatch(codeSource, /data-phi-notebook-code-select-trigger/)
   assert.doesNotMatch(codeSource, /onDoubleClick=/)
+  assert.doesNotMatch(codeSource, /onClick=\{\(event: MouseEvent<HTMLElement>\)/)
   assert.match(
     cellSource,
     /onEdit=\{\(selection\) => \{\s*onSelectCell\?\.\(cell\.id\)\s*setInitialEditorSelection\(selection\)\s*setIsEditing\(true\)/
   )
   assert.match(
     codeSource,
-    /onClick=\{\(event: MouseEvent<HTMLElement>\) => \{\s*if \(editable\) onEdit\(codeSelectionFromClick\(event, source\)\)\s*\}\}/
+    /onPointerDown=\{\(event: PointerEvent<HTMLElement>\) => \{\s*if \(!editable \|\| event\.button !== 0\) return\s*event\.preventDefault\(\)\s*event\.stopPropagation\(\)\s*onEdit\(codeSelectionFromPointer\(event, source\)\)/
   )
 })
 

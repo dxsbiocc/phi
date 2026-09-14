@@ -1,4 +1,4 @@
-import { type MouseEvent } from 'react'
+import { type MouseEvent, type PointerEvent } from 'react'
 import { Box } from '@mui/material'
 import {
   notebookCodeActionPaddingRight,
@@ -159,8 +159,8 @@ function approximateLineOffsetFromPoint(root: HTMLElement, line: string, x: numb
   return Math.max(0, Math.min(line.length, rawColumn))
 }
 
-function codeSelectionFromClick(
-  event: MouseEvent<HTMLElement>,
+function codeSelectionFromPointer(
+  event: MouseEvent<HTMLElement> | PointerEvent<HTMLElement>,
   source: string
 ): number | undefined {
   const target = event.target instanceof HTMLElement ? event.target : null
@@ -195,10 +195,14 @@ export default function NotebookCodeCellSource({
       data-phi-notebook-code="highlighted"
       data-phi-syntax-language={language}
       data-phi-notebook-code-edit-trigger="single-click"
+      data-phi-notebook-code-edit-event="pointerdown"
       role={editable ? 'button' : undefined}
       tabIndex={editable ? 0 : undefined}
-      onClick={(event: MouseEvent<HTMLElement>) => {
-        if (editable) onEdit(codeSelectionFromClick(event, source))
+      onPointerDown={(event: PointerEvent<HTMLElement>) => {
+        if (!editable || event.button !== 0) return
+        event.preventDefault()
+        event.stopPropagation()
+        onEdit(codeSelectionFromPointer(event, source))
       }}
       onKeyDown={(event) => {
         if (!editable) return
