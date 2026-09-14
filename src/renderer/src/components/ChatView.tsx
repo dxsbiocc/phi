@@ -24,6 +24,7 @@ import {
 } from './chat/composerControlStyles'
 import { PhiIcons } from '../icons'
 import {
+  canNavigatePromptHistory,
   nextPromptHistoryCursor,
   promptHistoryFromMessages,
   type PromptHistoryDirection
@@ -198,7 +199,7 @@ function ChatView({
       syncPromptHistoryKey()
       if (promptHistory.length === 0) return false
       const currentCursor = promptHistoryCursorRef.current
-      if (direction === 'next' && currentCursor === null) return false
+      if (!canNavigatePromptHistory(input, currentCursor, direction)) return false
 
       const nextCursor = nextPromptHistoryCursor(promptHistory.length, currentCursor, direction)
       if (currentCursor === null) {
@@ -262,22 +263,6 @@ function ChatView({
       })
     },
     [input, onInputChange, resetPromptHistoryNavigation]
-  )
-  const applySuggestedNextAction = useCallback(
-    (event: MouseEvent<HTMLElement>): void => {
-      if (event.button !== 0 || !suggestedNextAction || input.trim()) return
-      event.preventDefault()
-      resetPromptHistoryNavigation()
-      promptHistoryDraftRef.current = suggestedNextAction
-      onInputChange(suggestedNextAction)
-
-      window.requestAnimationFrame(() => {
-        const inputElement = inputRef.current
-        inputElement?.focus({ preventScroll: true })
-        inputElement?.setSelectionRange(suggestedNextAction.length, suggestedNextAction.length)
-      })
-    },
-    [input, onInputChange, resetPromptHistoryNavigation, suggestedNextAction]
   )
   const handleChatSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>): Promise<void> => {
@@ -351,7 +336,6 @@ function ChatView({
               maxRows={8}
               inputRef={inputRef}
               value={input}
-              onMouseDown={applySuggestedNextAction}
               onChange={(event) => {
                 resetPromptHistoryNavigation()
                 promptHistoryDraftRef.current = event.target.value

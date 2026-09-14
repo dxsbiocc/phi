@@ -8,6 +8,7 @@ import ChatView, { ThinkingBlock } from '../src/renderer/src/components/ChatView
 import ToolCallCard from '../src/renderer/src/components/ToolCallCard'
 import ToolGroupCard from '../src/renderer/src/components/ToolGroupCard'
 import {
+  canNavigatePromptHistory,
   nextPromptHistoryCursor,
   promptHistoryFromMessages
 } from '../src/renderer/src/lib/promptHistory'
@@ -165,6 +166,12 @@ test('chat view navigates input history like a command line', () => {
   assert.equal(nextPromptHistoryCursor(historyLength, 0, 'next'), 1)
   assert.equal(nextPromptHistoryCursor(historyLength, 2, 'next'), null)
   assert.equal(nextPromptHistoryCursor(historyLength, null, 'next'), null)
+  assert.equal(canNavigatePromptHistory('', null, 'previous'), true)
+  assert.equal(canNavigatePromptHistory('   ', null, 'previous'), true)
+  assert.equal(canNavigatePromptHistory('typed draft', null, 'previous'), false)
+  assert.equal(canNavigatePromptHistory('typed draft', null, 'next'), false)
+  assert.equal(canNavigatePromptHistory('历史内容', 1, 'previous'), true)
+  assert.equal(canNavigatePromptHistory('历史内容', 1, 'next'), true)
 })
 
 test('chat view formats add-menu references for prompt input', () => {
@@ -919,7 +926,7 @@ test('chat view shows add-context control before permissions', () => {
   assert.match(markup, /aria-label="添加文件、智能体、Skill 或插件"[\s\S]*aria-label="选择权限模式/)
 })
 
-test('chat view uses the suggested next action as a clickable placeholder', () => {
+test('chat view uses the suggested next action as a passive placeholder', () => {
   const markup = renderChat([
     {
       id: 'assistant-1',
@@ -930,6 +937,10 @@ test('chat view uses the suggested next action as a clickable placeholder', () =
 
   assert.match(markup, /placeholder="继续生成验证图表。"/)
   assert.match(markup, /data-phi-placeholder-kind="suggested-next-action"/)
+  assert.doesNotMatch(
+    readFileSync('src/renderer/src/components/ChatView.tsx', 'utf8'),
+    /applySuggestedNextAction|onMouseDown=\{applySuggestedNextAction\}/
+  )
 })
 
 test('chat view does not reuse the previous user action when the assistant only reports completion', () => {

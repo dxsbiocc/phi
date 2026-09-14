@@ -24,3 +24,13 @@ export function nextPromptHistoryCursor(
   if (cursor === null) return null
   return cursor >= historyLength - 1 ? null : cursor + 1
 }
+
+export function canNavigatePromptHistory(
+  input: string,
+  cursor: number | null,
+  direction: PromptHistoryDirection
+): boolean {
+  if (cursor !== null) return true
+  if (input.trim().length > 0) return false
+  return direction === 'previous'
+}
