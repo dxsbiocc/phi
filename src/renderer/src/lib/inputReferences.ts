@@ -43,6 +43,23 @@ function uniqueReferences(references: string[]): string[] {
   return unique
 }
 
+function trimLeadingBodyBoundaryNewlines(body: string): string {
+  return body.replace(/^\n+/, '')
+}
+
+function removeInputReferenceQuery(input: string, range: InputFileReferenceQuery): string {
+  const before = input.slice(0, range.start)
+  let after = input.slice(range.end)
+
+  if (!before) {
+    after = after.replace(/^\s+/, '')
+  } else if (/\s$/.test(before) && /^\s/.test(after)) {
+    after = after.replace(/^\s+/, '')
+  }
+
+  return `${before}${after}`
+}
+
 function normalizeInputFileReferencePath(path: string): string | null {
   const normalized = path.replace(/\\/g, '/').replace(/^\.\/+/, '')
   if (normalized.startsWith('/')) return null
@@ -85,20 +102,14 @@ export function findActiveInputFileReference(
   const beforeCursor = input.slice(0, cursor)
   const atIndex = beforeCursor.lastIndexOf('@')
   if (atIndex === -1) return null
-  if (atIndex > 0 && !/\s/.test(input[atIndex - 1])) return null
 
   const queryBeforeCursor = input.slice(atIndex + 1, cursor)
   if (INPUT_FILE_REFERENCE_STOP_CHARS.test(queryBeforeCursor)) return null
 
-  let end = cursor
-  while (end < input.length && !INPUT_FILE_REFERENCE_STOP_CHARS.test(input[end])) {
-    end += 1
-  }
-
   return {
     start: atIndex,
-    end,
-    query: input.slice(atIndex + 1, end)
+    end: cursor,
+    query: queryBeforeCursor
   }
 }
 
@@ -123,6 +134,14 @@ export function replaceInputReferenceRange(
 
   const before = input.slice(0, range.start)
   const after = input.slice(range.end)
+  if (trimmedReference.startsWith(INPUT_FILE_REFERENCE_LABEL)) {
+    const body = removeInputReferenceQuery(input, range)
+    return {
+      value: body ? `${trimmedReference}\n${body}` : trimmedReference,
+      cursor: Math.min(range.start, body.length)
+    }
+  }
+
   const leadingSeparator = before && !/\s$/.test(before) ? ' ' : ''
   const trailingSeparator = after && !/^\s/.test(after) ? ' ' : ''
   const value = `${before}${leadingSeparator}${trimmedReference}${trailingSeparator}${after}`
@@ -179,18 +198,20 @@ export function parseInputFileReferences(input: string): ParsedInputFileReferenc
     }
   }
 
+  const unique = uniqueReferences(references)
+  const body = bodyLines.join('\n')
+
   return {
-    references: uniqueReferences(references),
-    body: bodyLines.join('\n').trim()
+    references: unique,
+    body: unique.length > 0 ? trimLeadingBodyBoundaryNewlines(body) : body
   }
 }
 
 export function composeInputWithFileReferences(references: string[], body: string): string {
   const referenceText = formatInputFileReferences(references)
-  const trimmedBody = body.trim()
-  if (!referenceText) return trimmedBody
-  if (!trimmedBody) return referenceText
-  return `${referenceText}\n${trimmedBody}`
+  if (!referenceText) return body
+  if (body.length === 0) return referenceText
+  return `${referenceText}\n${body}`
 }
 
 export function mergeInputFileReferences(existing: string[], next: string[]): string[] {

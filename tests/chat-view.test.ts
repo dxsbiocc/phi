@@ -14,6 +14,7 @@ import {
 } from '../src/renderer/src/lib/promptHistory'
 import {
   appendInputReference,
+  composeInputWithFileReferences,
   filterInputFileReferenceCandidates,
   findActiveInputFileReference,
   formatInputFileReferences,
@@ -231,7 +232,26 @@ test('chat view resolves @ file reference queries in prompt input', () => {
     end: 11,
     query: 'src/App'
   })
-  assert.equal(findActiveInputFileReference('联系 a@b.com', 8), null)
+  assert.deepEqual(findActiveInputFileReference('请看@src/App', 10), {
+    start: 2,
+    end: 10,
+    query: 'src/App'
+  })
+  assert.deepEqual(findActiveInputFileReference('请看@', 3), {
+    start: 2,
+    end: 3,
+    query: ''
+  })
+  assert.deepEqual(findActiveInputFileReference('请检查@并总结', 4), {
+    start: 3,
+    end: 4,
+    query: ''
+  })
+  assert.deepEqual(findActiveInputFileReference('请检查@src/App并总结', 11), {
+    start: 3,
+    end: 11,
+    query: 'src/App'
+  })
   assert.equal(
     inputFileReferenceDirectoryPath('/workspace/project', 'src/renderer/App'),
     '/workspace/project/src/renderer'
@@ -266,8 +286,24 @@ test('chat view resolves @ file reference queries in prompt input', () => {
     { start: 4, end: 12, query: 'src/App' },
     '引用文件：`./src/App.tsx`'
   )
-  assert.equal(replacement.value, '请检查 引用文件：`./src/App.tsx`')
-  assert.equal(replacement.cursor, replacement.value.length)
+  assert.equal(replacement.value, '引用文件：`./src/App.tsx`\n请检查 ')
+  assert.equal(replacement.cursor, '请检查 '.length)
+
+  const inlineReplacement = replaceInputReferenceRange(
+    '请检查@src/App并总结',
+    { start: 3, end: 11, query: 'src/App' },
+    '引用文件：`./src/App.tsx`'
+  )
+  assert.equal(inlineReplacement.value, '引用文件：`./src/App.tsx`\n请检查并总结')
+  assert.equal(inlineReplacement.cursor, '请检查'.length)
+
+  const bareTriggerReplacement = replaceInputReferenceRange(
+    '请检查@并总结',
+    { start: 3, end: 4, query: '' },
+    '引用文件：`./src/App.tsx`'
+  )
+  assert.equal(bareTriggerReplacement.value, '引用文件：`./src/App.tsx`\n请检查并总结')
+  assert.equal(bareTriggerReplacement.cursor, '请检查'.length)
 
   assert.deepEqual(
     filterInputFileReferenceCandidates(
@@ -332,6 +368,32 @@ test('chat view resolves @ file reference queries in prompt input', () => {
       ''
     ).map((entry) => entry.displayPath),
     ['src']
+  )
+})
+
+test('chat composer input references preserve editable body spaces', () => {
+  assert.deepEqual(parseInputFileReferences('hello '), {
+    references: [],
+    body: 'hello '
+  })
+  assert.deepEqual(parseInputFileReferences('hello\n'), {
+    references: [],
+    body: 'hello\n'
+  })
+  assert.equal(composeInputWithFileReferences([], 'hello '), 'hello ')
+  assert.equal(composeInputWithFileReferences([], 'hello\n'), 'hello\n')
+  assert.equal(composeInputWithFileReferences([], '  '), '  ')
+  assert.deepEqual(parseInputFileReferences('引用文件：`/workspace/a.csv`\nhello '), {
+    references: ['/workspace/a.csv'],
+    body: 'hello '
+  })
+  assert.deepEqual(parseInputFileReferences('引用文件：`/workspace/a.csv`\nhello\n'), {
+    references: ['/workspace/a.csv'],
+    body: 'hello\n'
+  })
+  assert.equal(
+    composeInputWithFileReferences(['/workspace/a.csv'], 'hello '),
+    '引用文件：`/workspace/a.csv`\nhello '
   )
 })
 
