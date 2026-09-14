@@ -104,6 +104,20 @@ test('analysis session scope label follows the active session cwd, not the open 
   assert.equal(workspaceScopeLabelForCwd('/ordinary/workspace', projects), '普通')
 })
 
+test('analysis sidebar shows a static session title instead of a selector button', () => {
+  const sidebarSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/AppWorkspaceSidebar.tsx'),
+    'utf8'
+  )
+
+  assert.match(sidebarSource, /data-phi-analysis-session-header="true"/)
+  assert.match(sidebarSource, /activeWorkspaceTitle/)
+  assert.match(sidebarSource, /data-phi-analysis-session-scope-label=/)
+  assert.doesNotMatch(sidebarSource, /data-phi-analysis-session-select-button/)
+  assert.doesNotMatch(sidebarSource, /data-phi-analysis-session-select-menu/)
+  assert.doesNotMatch(sidebarSource, /analysisSessionSelectorAnchor/)
+})
+
 test('workspace nav content hover is used whenever the target sidebar mode is collapsed', () => {
   assert.equal(
     workspaceSidebarModeIsExpanded({

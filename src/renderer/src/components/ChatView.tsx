@@ -1,38 +1,23 @@
-import {
-  Alert,
-  AlertTitle,
-  Box,
-  Button,
-  Collapse,
-  IconButton,
-  Paper,
-  TextField,
-  Typography
-} from '@mui/material'
+import { Box, IconButton, Paper, TextField } from '@mui/material'
 import {
   useEffect,
   useId,
   useMemo,
-  memo,
   useCallback,
   useRef,
   useState,
   type FormEvent,
-  type MouseEvent,
-  type ReactNode
+  type MouseEvent
 } from 'react'
-import MarkdownContent, { type LocalPathKind } from './MarkdownContent'
-import ToolCallCard, { StatusIndicator } from './ToolCallCard'
-import ToolGroupCard from './ToolGroupCard'
+import { type LocalPathKind } from './MarkdownContent'
 import ToolApprovalDialog from './ToolApprovalDialog'
-import { WrapperPlanCard } from '../features/wrapper/components/WrapperPlanCard'
 import {
   ModelSelectorControl,
   PermissionModeControl,
   ThinkingLevelControl
 } from './chat/ChatComposerControls'
 import { InputAddControl, InputAddPanel } from './chat/InputAddMenu'
-import { ThinkingBlock } from './chat/ThinkingBlock'
+import ChatMessageList from './chat/ChatMessageList'
 import {
   COMPACT_COMPOSER_CONTROL_SIZE,
   REGULAR_COMPOSER_ACTION_SIZE
@@ -44,19 +29,9 @@ import {
   type PromptHistoryDirection
 } from '../lib/promptHistory'
 import { appendInputReference } from '../lib/inputReferences'
-import { getProviderErrorDisplay } from '../lib/providerErrors'
-import {
-  groupMessages,
-  groupProcessingItems,
-  processingGroupStatus,
-  processingStatusText,
-  timestampMs,
-  type ProcessingItem
-} from '../lib/chatRenderGroups'
 import { suggestedNextActionPlaceholderFromMessages } from '../lib/suggestedNextAction'
 import type {
   ChatItem,
-  ChatMessage,
   ModelOption,
   NotebookCellJumpTarget,
   PermissionMode,
@@ -69,8 +44,6 @@ import type {
 
 export { ThinkingBlock } from './chat/ThinkingBlock'
 
-const ChevronRightIcon = PhiIcons.action.back
-const ExpandLessIcon = PhiIcons.action.collapse
 const SendIcon = PhiIcons.action.send
 const StopIcon = PhiIcons.action.stop
 
@@ -98,175 +71,11 @@ function isTextInputAtHistoryBoundary(
   return value.indexOf('\n', selectionEnd) === -1
 }
 
-function ProcessingGroup({
-  items,
-  onGoSettings,
-  onOpenLocalPath,
-  onJumpToNotebookCell,
-  cwd = '',
-  isActive = false,
-  startedAtMs,
-  completedAtMs,
-  durationMs
-}: {
-  items: ProcessingItem[]
-  onGoSettings: () => void
-  onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
-  onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
-  cwd?: string
-  isActive?: boolean
-  startedAtMs?: number
-  completedAtMs?: number
-  durationMs?: number
-}): ReactNode {
-  const [expanded, setExpanded] = useState(false)
-  const [fallbackStartedAtMs] = useState(() => Date.now())
-  const [nowMs, setNowMs] = useState(() => Date.now())
-  const toggle = (): void => setExpanded((value) => !value)
-  const groupedItems = groupProcessingItems(items)
-  const status = processingGroupStatus(items, isActive)
-  const isProcessingActive = status === 'running'
-  const summary = processingStatusText({
-    items,
-    isActive: isProcessingActive,
-    nowMs,
-    fallbackStartedAtMs,
-    startedAtMs,
-    completedAtMs,
-    durationMs
-  })
-
-  useEffect(() => {
-    if (!isProcessingActive) return undefined
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [isProcessingActive])
-
-  return (
-    <Box sx={{ alignSelf: 'stretch', minWidth: 0 }}>
-      <Box
-        role="button"
-        tabIndex={0}
-        onClick={toggle}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            toggle()
-          }
-        }}
-        aria-expanded={expanded}
-        aria-label={expanded ? '折叠处理过程' : '展开处理过程'}
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.75,
-          minWidth: 0,
-          py: 0.5,
-          px: 0.5,
-          borderRadius: 1,
-          cursor: 'pointer',
-          color: 'text.secondary',
-          transition: 'background-color 150ms',
-          '&:hover': { bgcolor: 'action.hover' },
-          '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
-        }}
-      >
-        <ChevronRightIcon
-          sx={{
-            fontSize: 16,
-            flexShrink: 0,
-            transition: 'transform 150ms',
-            transform: expanded ? 'rotate(90deg)' : 'none'
-          }}
-        />
-        <Typography component="span" variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
-          {summary}
-        </Typography>
-        {status ? (
-          <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-            <StatusIndicator status={status} />
-          </Box>
-        ) : null}
-      </Box>
-      <Collapse in={expanded} unmountOnExit>
-        <Box sx={{ ml: 2.5, pl: 1.5, minWidth: 0, borderLeft: 2, borderColor: 'grey.800' }}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5 }}>
-            {groupedItems.map((group) => {
-              if (group.kind === 'tool-group') {
-                return (
-                  <ToolGroupCard
-                    key={group.key}
-                    items={group.items}
-                    cwd={cwd}
-                    onJumpToNotebookCell={onJumpToNotebookCell}
-                  />
-                )
-              }
-              if (group.kind === 'processing-group') {
-                return (
-                  <ProcessingGroup
-                    key={group.key}
-                    items={group.items}
-                    onGoSettings={onGoSettings}
-                    onOpenLocalPath={onOpenLocalPath}
-                    onJumpToNotebookCell={onJumpToNotebookCell}
-                    cwd={cwd}
-                    isActive={false}
-                    startedAtMs={group.startedAtMs}
-                    completedAtMs={group.completedAtMs}
-                    durationMs={group.durationMs}
-                  />
-                )
-              }
-              if (group.item.role === 'tool') {
-                return (
-                  <ToolCallCard
-                    key={group.key}
-                    item={group.item}
-                    cwd={cwd}
-                    onJumpToNotebookCell={onJumpToNotebookCell}
-                  />
-                )
-              }
-              if (group.item.role === 'wrapper_plan') {
-                return <WrapperPlanCard key={group.key} item={group.item} />
-              }
-              return (
-                <ChatBubble
-                  key={group.key}
-                  message={group.item}
-                  onGoSettings={onGoSettings}
-                  onOpenLocalPath={onOpenLocalPath}
-                  cwd={cwd}
-                />
-              )
-            })}
-          </Box>
-          <Box sx={{ display: 'flex', justifyContent: 'flex-start', pb: 0.5 }}>
-            <IconButton
-              size="small"
-              aria-label="折叠处理过程"
-              title="折叠处理过程"
-              onClick={toggle}
-              sx={{
-                width: 28,
-                height: 28,
-                color: 'text.secondary'
-              }}
-            >
-              <ExpandLessIcon fontSize="small" />
-            </IconButton>
-          </Box>
-        </Box>
-      </Collapse>
-    </Box>
-  )
-}
-
 type ViewProps = {
   messages: ChatItem[]
   input: string
-  messagesContainerRef: (node: HTMLDivElement | null) => void
+  messagesContainerRef?: (node: HTMLDivElement | null) => void
+  scrollResetKey?: string
   canSend: boolean
   isGenerating: boolean
   currentRunStartedAt?: string
@@ -297,200 +106,11 @@ type ViewProps = {
   cwd?: string
 }
 
-function ChatBubble({
-  message,
-  onGoSettings,
-  onOpenLocalPath,
-  cwd = ''
-}: {
-  message: ChatMessage
-  onGoSettings: () => void
-  onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
-  cwd?: string
-}): ReactNode {
-  if (message.role === 'error') {
-    const display = getProviderErrorDisplay(message.content)
-    return (
-      <Alert
-        severity="error"
-        variant="outlined"
-        action={
-          display.action === 'providerSettings' ? (
-            <Button size="small" color="inherit" onClick={onGoSettings} sx={{ minHeight: 44 }}>
-              {display.actionLabel}
-            </Button>
-          ) : undefined
-        }
-      >
-        <AlertTitle>{display.title}</AlertTitle>
-        <Typography variant="body2" sx={{ color: 'inherit', mb: 0.75 }}>
-          {display.description}
-        </Typography>
-        {display.showRawMessage ? (
-          <Typography variant="body2" sx={{ color: 'inherit', whiteSpace: 'pre-wrap' }}>
-            原始错误：{display.rawMessage}
-          </Typography>
-        ) : null}
-      </Alert>
-    )
-  }
-
-  if (message.role === 'warning') {
-    return (
-      <Alert severity="info" variant="outlined">
-        <Typography variant="body2" sx={{ color: 'inherit', whiteSpace: 'pre-wrap' }}>
-          {message.content}
-        </Typography>
-      </Alert>
-    )
-  }
-
-  if (message.role === 'thinking') {
-    return <ThinkingBlock content={message.content} durationMs={message.durationMs} />
-  }
-
-  if (message.role === 'user') {
-    return (
-      <Box
-        sx={{
-          alignSelf: 'flex-end',
-          maxWidth: '75%',
-          minWidth: 0,
-          px: 2,
-          py: 1.25,
-          bgcolor: 'primary.main',
-          color: 'background.default',
-          borderRadius: '18px 18px 4px 18px'
-        }}
-      >
-        <Typography
-          variant="body1"
-          sx={{
-            whiteSpace: 'pre-wrap',
-            overflowWrap: 'anywhere',
-            lineHeight: 1.6,
-            fontSize: '0.95rem'
-          }}
-        >
-          {message.content}
-        </Typography>
-      </Box>
-    )
-  }
-
-  return (
-    <Box sx={{ alignSelf: 'stretch', minWidth: 0, px: 0.5 }}>
-      <MarkdownContent text={message.content} cwd={cwd} onOpenLocalPath={onOpenLocalPath} />
-    </Box>
-  )
-}
-
-type ChatMessageListProps = {
-  messages: ChatItem[]
-  messagesContainerRef: (node: HTMLDivElement | null) => void
-  isGenerating: boolean
-  currentRunStartedAt?: string
-  onGoSettings: () => void
-  onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
-  onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
-  cwd?: string
-}
-
-const ChatMessageList = memo(function ChatMessageList({
-  messages,
-  messagesContainerRef,
-  isGenerating,
-  currentRunStartedAt,
-  onGoSettings,
-  onOpenLocalPath,
-  onJumpToNotebookCell,
-  cwd = ''
-}: ChatMessageListProps): React.JSX.Element {
-  const renderGroups = useMemo(
-    () => groupMessages(messages, { activeRun: isGenerating }),
-    [isGenerating, messages]
-  )
-
-  return (
-    <Box
-      ref={messagesContainerRef}
-      sx={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', overflowX: 'hidden' }}
-    >
-      <Box
-        sx={{
-          maxWidth: 860,
-          mx: 'auto',
-          minWidth: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 2,
-          p: 3
-        }}
-      >
-        {renderGroups.map((group, index) => {
-          if (group.kind === 'tool-group') {
-            return (
-              <ToolGroupCard
-                key={group.key}
-                items={group.items}
-                cwd={cwd}
-                onJumpToNotebookCell={onJumpToNotebookCell}
-              />
-            )
-          }
-          if (group.kind === 'processing-group') {
-            const isActiveProcessingGroup = isGenerating && index === renderGroups.length - 1
-            return (
-              <ProcessingGroup
-                key={group.key}
-                items={group.items}
-                onGoSettings={onGoSettings}
-                onOpenLocalPath={onOpenLocalPath}
-                onJumpToNotebookCell={onJumpToNotebookCell}
-                cwd={cwd}
-                isActive={isActiveProcessingGroup}
-                startedAtMs={
-                  isActiveProcessingGroup
-                    ? (timestampMs(currentRunStartedAt) ?? group.startedAtMs)
-                    : group.startedAtMs
-                }
-                completedAtMs={group.completedAtMs}
-                durationMs={group.durationMs}
-              />
-            )
-          }
-          if (group.item.role === 'tool') {
-            return (
-              <ToolCallCard
-                key={group.key}
-                item={group.item}
-                cwd={cwd}
-                onJumpToNotebookCell={onJumpToNotebookCell}
-              />
-            )
-          }
-          if (group.item.role === 'wrapper_plan') {
-            return <WrapperPlanCard key={group.key} item={group.item} />
-          }
-          return (
-            <ChatBubble
-              key={group.key}
-              message={group.item}
-              onGoSettings={onGoSettings}
-              onOpenLocalPath={onOpenLocalPath}
-              cwd={cwd}
-            />
-          )
-        })}
-      </Box>
-    </Box>
-  )
-})
-
 function ChatView({
   messages,
   input,
   messagesContainerRef,
+  scrollResetKey,
   canSend,
   isGenerating,
   currentRunStartedAt,
@@ -672,6 +292,7 @@ function ChatView({
       <ChatMessageList
         messages={messages}
         messagesContainerRef={messagesContainerRef}
+        scrollResetKey={scrollResetKey}
         isGenerating={isGenerating}
         currentRunStartedAt={currentRunStartedAt}
         onGoSettings={onGoSettings}

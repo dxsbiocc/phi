@@ -1,5 +1,5 @@
 import type { MouseEvent, ReactNode } from 'react'
-import { Box, Button, Popover } from '@mui/material'
+import { Box, Typography } from '@mui/material'
 import SessionSidebar from './components/SessionSidebar'
 import type { AppView } from './App'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
@@ -16,8 +16,6 @@ export type AppWorkspaceSidebarProps = {
   activeChatView: ReactNode
   onStartSidebarResize: (event: MouseEvent<HTMLDivElement>) => void
 
-  analysisSessionSelectorAnchor: HTMLElement | null
-  setAnalysisSessionSelectorAnchor: (anchor: HTMLElement | null) => void
   activeWorkspaceIsProject: boolean
   activeWorkspaceTitle: string
   activeWorkspaceScopeLabel: string
@@ -50,8 +48,6 @@ export default function AppWorkspaceSidebar({
   activeView,
   activeChatView,
   onStartSidebarResize,
-  analysisSessionSelectorAnchor,
-  setAnalysisSessionSelectorAnchor,
   activeWorkspaceIsProject,
   activeWorkspaceTitle,
   activeWorkspaceScopeLabel,
@@ -109,65 +105,39 @@ export default function AppWorkspaceSidebar({
               }}
             />
             <Box
-              data-phi-analysis-session-selector="true"
+              data-phi-analysis-session-header="true"
               sx={{
                 px: 1.5,
                 pb: 1,
                 flexShrink: 0
               }}
             >
-              <Button
-                fullWidth
-                variant="outlined"
-                aria-haspopup="menu"
-                aria-expanded={analysisSessionSelectorAnchor ? 'true' : undefined}
-                data-phi-analysis-session-select-button="true"
-                onClick={(event) => setAnalysisSessionSelectorAnchor(event.currentTarget)}
+              <Box
                 sx={{
                   minHeight: 48,
+                  display: 'flex',
+                  alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: 1,
-                  borderRadius: 2,
-                  px: 1.25,
+                  px: 0.75,
                   py: 0.75,
-                  fontWeight: 700,
-                  textTransform: 'none',
-                  color: 'text.primary',
-                  borderColor: activeWorkspaceIsProject ? 'primary.light' : 'divider',
-                  bgcolor: (theme) =>
-                    theme.palette.mode === 'dark'
-                      ? 'rgba(255, 255, 255, 0.035)'
-                      : 'rgba(255, 255, 255, 0.92)',
-                  boxShadow: (theme) =>
-                    theme.palette.mode === 'dark'
-                      ? '0 10px 28px rgba(0, 0, 0, 0.22)'
-                      : '0 12px 34px rgba(24, 74, 86, 0.10)',
-                  '&:hover': {
-                    borderColor: 'primary.main',
-                    bgcolor: (theme) =>
-                      theme.palette.mode === 'dark'
-                        ? 'rgba(255, 255, 255, 0.055)'
-                        : 'rgba(248, 253, 255, 0.98)',
-                    boxShadow: (theme) =>
-                      theme.palette.mode === 'dark'
-                        ? '0 12px 30px rgba(0, 0, 0, 0.28)'
-                        : '0 14px 36px rgba(24, 74, 86, 0.14)'
-                  }
+                  color: 'text.primary'
                 }}
               >
-                <Box
-                  component="span"
+                <Typography
+                  variant="subtitle1"
+                  title={activeWorkspaceTitle}
                   sx={{
                     minWidth: 0,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
-                    textAlign: 'left',
-                    fontSize: '0.92rem'
+                    fontWeight: 700,
+                    lineHeight: 1.35
                   }}
                 >
                   {activeWorkspaceTitle}
-                </Box>
+                </Typography>
                 <Box
                   component="span"
                   data-phi-analysis-session-scope-label={
@@ -198,67 +168,7 @@ export default function AppWorkspaceSidebar({
                 >
                   {activeWorkspaceScopeLabel}
                 </Box>
-              </Button>
-              <Popover
-                open={Boolean(analysisSessionSelectorAnchor)}
-                anchorEl={analysisSessionSelectorAnchor}
-                onClose={() => setAnalysisSessionSelectorAnchor(null)}
-                anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-                transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-                slotProps={{
-                  paper: {
-                    sx: {
-                      mt: 0.75,
-                      width: Math.max(280, sidebarWidth - 24),
-                      height: 'min(360px, calc(100vh - 132px))',
-                      overflow: 'hidden',
-                      borderRadius: 2,
-                      border: 1,
-                      borderColor: 'divider',
-                      boxShadow: '0 18px 45px rgba(12, 26, 32, 0.18)'
-                    }
-                  }
-                }}
-              >
-                <Box
-                  data-phi-analysis-session-select-menu="true"
-                  sx={{ width: '100%', height: '100%', display: 'flex', minHeight: 0 }}
-                >
-                  <SessionSidebar
-                    hideWindowDragSpacer
-                    mode={workspaceSidebarMode}
-                    sessions={sessions}
-                    activeSessionPath={activeSessionPath}
-                    activeCwd={activeCwd}
-                    projects={projects}
-                    projectSessionRefreshKey={projectSessionRefreshKey}
-                    onNewChat={() => {
-                      setAnalysisSessionSelectorAnchor(null)
-                      void onNewChat()
-                    }}
-                    onNewProject={() => setIsNewProjectDialogOpen(true)}
-                    onSelectSession={(path) => {
-                      setAnalysisSessionSelectorAnchor(null)
-                      void onSelectSession(path)
-                    }}
-                    onRenameSession={(path, name) => {
-                      void onRenameSession(path, name)
-                    }}
-                    onDeleteSession={(path) => {
-                      void onDeleteSession(path)
-                    }}
-                    onStartProjectChat={(project) => {
-                      setAnalysisSessionSelectorAnchor(null)
-                      void onStartProjectChat(project)
-                    }}
-                    onDeleteProject={(project) => {
-                      void onDeleteProjectEntry(project)
-                    }}
-                    onFetchProjectSessions={onFetchProjectSessions}
-                    getSessionRuntimeState={getSessionRuntimeState}
-                  />
-                </Box>
-              </Popover>
+              </Box>
             </Box>
             <Box sx={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
               <Box

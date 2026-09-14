@@ -1,6 +1,10 @@
 import { Box, Collapse, Tooltip, Typography } from '@mui/material'
 import { useState, type ReactNode } from 'react'
 import { PhiIcons } from '../../icons'
+import {
+  useCollapseResizeNotifier,
+  type ChatContentResizeHandler
+} from './useCollapseResizeNotifier'
 
 const ChevronRightIcon = PhiIcons.action.back
 const PsychologyIcon = PhiIcons.state.thinking
@@ -19,13 +23,19 @@ function formatThinkingDuration(durationMs?: number): string {
 
 export function ThinkingBlock({
   content,
-  durationMs
+  durationMs,
+  onContentResize
 }: {
   content: string
   durationMs?: number
+  onContentResize?: ChatContentResizeHandler
 }): ReactNode {
   const [expanded, setExpanded] = useState(false)
-  const toggle = (): void => setExpanded((value) => !value)
+  const notifyContentResize = useCollapseResizeNotifier(onContentResize)
+  const toggle = (): void => {
+    setExpanded((value) => !value)
+    notifyContentResize()
+  }
   const label = formatThinkingDuration(durationMs)
 
   return (
@@ -69,7 +79,16 @@ export function ThinkingBlock({
           {label}
         </Typography>
       </Box>
-      <Collapse in={expanded} unmountOnExit>
+      <Collapse
+        in={expanded}
+        unmountOnExit
+        onEnter={notifyContentResize}
+        onEntering={notifyContentResize}
+        onEntered={notifyContentResize}
+        onExit={notifyContentResize}
+        onExiting={notifyContentResize}
+        onExited={notifyContentResize}
+      >
         <Box sx={{ ml: 2.5, pl: 1.5, py: 1, minWidth: 0, borderLeft: 2, borderColor: 'grey.800' }}>
           <Typography
             variant="body2"

@@ -6,6 +6,10 @@ import ToolCallCard, { StatusIndicator, ToolCallDetail } from './ToolCallCard'
 import { diffStat } from '../lib/toolOutput'
 import { toolActionKind, type ToolActionKind } from '../lib/toolActions'
 import type { NotebookCellJumpTarget, ToolCallItem } from '../types'
+import {
+  useCollapseResizeNotifier,
+  type ChatContentResizeHandler
+} from './chat/useCollapseResizeNotifier'
 
 const ChevronRightIcon = PhiIcons.action.back
 
@@ -161,14 +165,20 @@ function groupIndicatorStatus(items: ToolCallItem[]): ToolCallItem['status'] | n
 function ToolGroupCard({
   items,
   cwd,
-  onJumpToNotebookCell
+  onJumpToNotebookCell,
+  onContentResize
 }: {
   items: ToolCallItem[]
   cwd?: string
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
+  onContentResize?: ChatContentResizeHandler
 }): ReactNode {
   const [expanded, setExpanded] = useState(false)
-  const toggle = (): void => setExpanded((value) => !value)
+  const notifyContentResize = useCollapseResizeNotifier(onContentResize)
+  const toggle = (): void => {
+    setExpanded((value) => !value)
+    notifyContentResize()
+  }
   const { headline, stat } = summarize(items)
   const indicatorStatus = groupIndicatorStatus(items)
   const actions = uniqueActions(items)
@@ -241,7 +251,16 @@ function ToolGroupCard({
           </Box>
         ) : null}
       </Box>
-      <Collapse in={expanded} unmountOnExit>
+      <Collapse
+        in={expanded}
+        unmountOnExit
+        onEnter={notifyContentResize}
+        onEntering={notifyContentResize}
+        onEntered={notifyContentResize}
+        onExit={notifyContentResize}
+        onExiting={notifyContentResize}
+        onExited={notifyContentResize}
+      >
         {items.length === 1 ? (
           // A single call: show its args/output directly under this row instead
           // of nesting another independently-collapsible ToolCallCard inside it
@@ -256,6 +275,7 @@ function ToolGroupCard({
                   item={item}
                   cwd={cwd}
                   onJumpToNotebookCell={onJumpToNotebookCell}
+                  onContentResize={onContentResize}
                 />
               ))}
             </Box>

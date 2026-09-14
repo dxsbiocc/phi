@@ -502,6 +502,7 @@ function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEv
   targetWindow.webContents.send('agent:event', {
     source: 'phi',
     ...event,
+    phiSessionId: run.phiSessionId,
     sessionGeneration: run.sessionGeneration,
     sessionPath: run.sessionPath ?? run.session?.sessionFile ?? null,
     cwd: run.cwd

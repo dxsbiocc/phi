@@ -141,6 +141,11 @@ function maxTimestamp(items: ChatItem[]): number | undefined {
   return timestamps.length > 0 ? Math.max(...timestamps) : undefined
 }
 
+function processingGroupKey(turnItems: ChatItem[], processingItems: ProcessingItem[]): string {
+  const lifecycle = turnItems.find(isRunLifecycleItem)
+  return `processing-${lifecycle?.runId ?? lifecycle?.id ?? processingItems[0]?.id ?? turnItems[0].id}`
+}
+
 export function groupMessages(
   messages: ChatItem[],
   options: { activeRun?: boolean } = {}
@@ -161,7 +166,7 @@ export function groupMessages(
         if (visibleItems.length > 0 || groups.length > 0) {
           groups.push({
             kind: 'processing-group',
-            key: `processing-${turnItems[0].id}`,
+            key: processingGroupKey(turnItems, []),
             items: [],
             startedAtMs: runStartedAtMs,
             completedAtMs: runCompletedAtMs ?? maxTimestamp(visibleItems),
@@ -190,7 +195,7 @@ export function groupMessages(
     if (processingItems.length > 0 || runStartedAtMs !== undefined) {
       groups.push({
         kind: 'processing-group',
-        key: `processing-${processingItems[0]?.id ?? turnItems[0].id}`,
+        key: processingGroupKey(turnItems, processingItems),
         items: processingItems,
         startedAtMs: runStartedAtMs ?? minTimestamp(processingItems),
         completedAtMs: runCompletedAtMs ?? maxTimestamp([...processingItems, ...trailingItems]),

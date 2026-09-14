@@ -23,6 +23,10 @@ import {
   toolArgsPreviewText
 } from '../lib/toolOutputPresentation'
 import { ToolActionIcon } from './ToolActionIcon'
+import {
+  useCollapseResizeNotifier,
+  type ChatContentResizeHandler
+} from './chat/useCollapseResizeNotifier'
 
 const CancelIcon = PhiIcons.state.denied
 const CheckCircleIcon = PhiIcons.state.done
@@ -495,15 +499,21 @@ function foldedToolHeadline(item: ToolCallItem, action: ReturnType<typeof toolAc
 function ToolCallCard({
   item,
   cwd,
-  onJumpToNotebookCell
+  onJumpToNotebookCell,
+  onContentResize
 }: {
   item: ToolCallItem
   cwd?: string
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
+  onContentResize?: ChatContentResizeHandler
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const stat = item.output ? diffStat(item.output) : null
-  const toggle = (): void => setExpanded((value) => !value)
+  const notifyContentResize = useCollapseResizeNotifier(onContentResize)
+  const toggle = (): void => {
+    setExpanded((value) => !value)
+    notifyContentResize()
+  }
   const action = toolActionKind(item.toolName, item.argsPreview, item.argsJson)
   const headline = foldedToolHeadline(item, action)
   const showToolName = action !== 'command' && action !== 'python' && action !== 'notebook'
@@ -614,7 +624,16 @@ function ToolCallCard({
           <StatusIndicator status={item.status} />
         </Box>
       </Box>
-      <Collapse in={expanded} unmountOnExit>
+      <Collapse
+        in={expanded}
+        unmountOnExit
+        onEnter={notifyContentResize}
+        onEntering={notifyContentResize}
+        onEntered={notifyContentResize}
+        onExit={notifyContentResize}
+        onExiting={notifyContentResize}
+        onExited={notifyContentResize}
+      >
         <ToolCallDetail item={item} cwd={cwd} />
       </Collapse>
     </Box>

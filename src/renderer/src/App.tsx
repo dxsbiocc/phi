@@ -58,7 +58,10 @@ import {
   recordNavigationEntry,
   type NavigationHistoryEntry
 } from './lib/navigationHistory'
-import { agentEventBelongsToActiveSession } from './lib/agentEventRouting'
+import {
+  agentEventBelongsToActiveSession,
+  agentEventMaterializesActiveFreshSession
+} from './lib/agentEventRouting'
 import { getPromptReadiness } from './lib/promptReadiness'
 import { shouldRefreshProjectGitStatusForAgentEvent } from './lib/projectGitRefresh'
 import { readableErrorMessage } from './lib/sessionNotifications'
@@ -458,15 +461,12 @@ function App(): React.JSX.Element {
     anchorEl: HTMLElement
   } | null>(null)
   const workspaceSidebarPreviewCloseTimer = useRef<number | null>(null)
-  const [analysisSessionSelectorAnchor, setAnalysisSessionSelectorAnchor] =
-    useState<HTMLElement | null>(null)
   const [isNewProjectDialogOpen, setIsNewProjectDialogOpen] = useState(false)
   const [isBusy, setIsBusy] = useState(false)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [personaMarkdown, setPersonaMarkdownState] = useState<string | null>(null)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
-  const listRef = useRef<HTMLDivElement | null>(null)
   const isSendingRef = useRef(false)
   const sessionRequestRef = useRef(0)
   const sendRequestRef = useRef(0)
@@ -955,10 +955,6 @@ function App(): React.JSX.Element {
     openSettings('providers')
   }, [openSettings])
 
-  const setMessagesContainerNode = useCallback((node: HTMLDivElement | null): void => {
-    listRef.current = node
-  }, [])
-
   const focusPrimaryInput = useCallback((): void => {
     const selector = activeView === 'chat' ? '[data-phi-focus="chat-input"]' : 'input[type="text"]'
     const target = document.querySelector<HTMLElement>(selector)
@@ -1011,12 +1007,20 @@ function App(): React.JSX.Element {
         scheduleSessionRefresh()
       }
 
-      const belongsToActiveSession = agentEventBelongsToActiveSession(event, {
+      const activeSessionIdentity = {
         phiSessionId: useSessionStore.getState().activePhiSessionId,
         path: useSessionStore.getState().activeSessionPath,
         cwd: useSessionStore.getState().activeCwd,
         sessionGeneration: useSessionStore.getState().activeSessionGeneration
-      })
+      }
+      const materializesActiveFreshSession = agentEventMaterializesActiveFreshSession(
+        event,
+        activeSessionIdentity,
+        isSendingRef.current
+      )
+      const belongsToActiveSession =
+        materializesActiveFreshSession ||
+        agentEventBelongsToActiveSession(event, activeSessionIdentity)
       const eventStateKey = sessionStateKeyFromAgentEvent(event)
       if (eventStateKey) {
         const nextRuntimeState = reduceSessionRuntimeState(
@@ -1032,7 +1036,15 @@ function App(): React.JSX.Element {
         const nextState = reduceAgentEventState(baseState, event)
         sessionAgentEventStates.set(eventStateKey, nextState)
         if (belongsToActiveSession) {
-          useSessionStore.setState({ activeAgentEventStateKey: eventStateKey })
+          useSessionStore.setState({
+            activeAgentEventStateKey: eventStateKey,
+            ...(materializesActiveFreshSession && typeof event.phiSessionId === 'string'
+              ? { activePhiSessionId: event.phiSessionId }
+              : {}),
+            ...(materializesActiveFreshSession && typeof event.sessionPath === 'string'
+              ? { activeSessionPath: event.sessionPath }
+              : {})
+          })
           setAgentEventState(nextState)
           setActiveSessionRuntimeState(nextRuntimeState)
         }
@@ -1202,12 +1214,6 @@ function App(): React.JSX.Element {
     refreshProjects,
     refreshSkills
   ])
-
-  useEffect(() => {
-    if (listRef.current) {
-      listRef.current.scrollTop = listRef.current.scrollHeight
-    }
-  }, [messages])
 
   const activeDraftKey = sessionDraftKey({
     phiSessionId: activePhiSessionId,
@@ -1673,7 +1679,7 @@ function App(): React.JSX.Element {
     <ChatView
       messages={messages}
       input={input}
-      messagesContainerRef={setMessagesContainerNode}
+      scrollResetKey={activeDraftKey}
       canSend={!isSessionChanging && !currentSessionIsBusy && !isBusy}
       isGenerating={currentSessionIsBusy}
       currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
@@ -1819,8 +1825,6 @@ function App(): React.JSX.Element {
           activeView={activeView}
           activeChatView={activeChatView}
           onStartSidebarResize={onStartSidebarResize}
-          analysisSessionSelectorAnchor={analysisSessionSelectorAnchor}
-          setAnalysisSessionSelectorAnchor={setAnalysisSessionSelectorAnchor}
           activeWorkspaceIsProject={activeWorkspaceIsProject}
           activeWorkspaceTitle={activeWorkspaceTitle}
           activeWorkspaceScopeLabel={activeWorkspaceScopeLabel}

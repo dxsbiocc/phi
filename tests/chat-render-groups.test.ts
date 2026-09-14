@@ -61,6 +61,47 @@ test('chat render groups keep streaming assistant text inside active processing 
   )
 })
 
+test('chat render groups keep active processing key stable as stream items arrive', () => {
+  const pending = groupMessages(
+    [
+      { id: 'user-1', role: 'user', content: 'do it' },
+      {
+        id: 'run-start-1',
+        role: 'run',
+        event: 'started',
+        runId: 'run-1',
+        createdAt: '2026-09-11T00:00:00.000Z'
+      }
+    ],
+    { activeRun: true }
+  ).find((group) => group.kind === 'processing-group')
+
+  const streaming = groupMessages(
+    [
+      { id: 'user-1', role: 'user', content: 'do it' },
+      {
+        id: 'run-start-1',
+        role: 'run',
+        event: 'started',
+        runId: 'run-1',
+        createdAt: '2026-09-11T00:00:00.000Z'
+      },
+      {
+        id: 'thinking-1',
+        role: 'thinking',
+        content: 'checking',
+        createdAt: '2026-09-11T00:00:02.000Z'
+      }
+    ],
+    { activeRun: true }
+  ).find((group) => group.kind === 'processing-group')
+
+  assert.equal(pending?.kind, 'processing-group')
+  assert.equal(streaming?.kind, 'processing-group')
+  assert.equal(pending?.key, 'processing-run-1')
+  assert.equal(streaming?.key, pending?.key)
+})
+
 test('processing status text uses stored terminal duration before timestamps', () => {
   const items: ProcessingItem[] = [
     {
