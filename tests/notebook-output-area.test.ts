@@ -87,6 +87,17 @@ test('stderr stream output collapses behind a stderr button by default', () => {
   assert.doesNotMatch(markup, /Warning message/)
 })
 
+test('stderr output expansion stretches the content pane while keeping the stderr button left aligned', () => {
+  const source = readFileSync(
+    resolve('src/renderer/src/features/analysis/notebook/NotebookOutputArea.tsx'),
+    'utf-8'
+  )
+
+  assert.match(source, /data-phi-notebook-output-stderr="true"[\s\S]*?justifyItems: 'stretch'/)
+  assert.match(source, /data-phi-notebook-output-stderr-toggle="true"[\s\S]*?justifySelf: 'start'/)
+  assert.match(source, /<NotebookPreOutput hideKindLabel kind="stream:stderr" text=\{text\} \/>/)
+})
+
 test('stderr stream output that looks like a real error stays visible', () => {
   const output: NotebookOutput = {
     outputType: 'stream',

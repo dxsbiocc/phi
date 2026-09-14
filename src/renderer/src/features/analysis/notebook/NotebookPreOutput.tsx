@@ -72,7 +72,9 @@ export default function NotebookPreOutput({
       data-phi-notebook-output-expanded={folded.isFoldable && isExpanded ? 'true' : undefined}
       data-phi-notebook-output-wrap={wrapText ? 'true' : 'false'}
       sx={{
+        minWidth: 0,
         position: 'relative',
+        width: '100%',
         '&:hover .notebook-output-hover-actions, &:focus-within .notebook-output-hover-actions': {
           opacity: 1,
           pointerEvents: 'auto'

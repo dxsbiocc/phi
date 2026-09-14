@@ -88,6 +88,18 @@ test('stderr output can hide its inner label when an outer channel button alread
   assert.match(markup, /载入程序包/)
 })
 
+test('output hover actions are anchored to the full output width', () => {
+  const source = readFileSync(
+    resolve('src/renderer/src/features/analysis/notebook/NotebookPreOutput.tsx'),
+    'utf-8'
+  )
+
+  assert.match(source, /data-phi-notebook-output-pre="true"[\s\S]*?minWidth: 0/)
+  assert.match(source, /data-phi-notebook-output-pre="true"[\s\S]*?width: '100%'/)
+  assert.match(source, /data-phi-notebook-output-toolbar="true"[\s\S]*?position: 'absolute'/)
+  assert.match(source, /data-phi-notebook-output-toolbar="true"[\s\S]*?right: 0/)
+})
+
 test('output hover actions are hidden until the user hovers or focuses the output', () => {
   const source = readFileSync(
     resolve('src/renderer/src/features/analysis/notebook/NotebookPreOutput.tsx'),

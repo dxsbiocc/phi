@@ -330,7 +330,7 @@ function NotebookStderrOutput({ text }: { text: string }): React.JSX.Element {
       sx={{
         display: 'grid',
         gap: 0.75,
-        justifyItems: 'start'
+        justifyItems: 'stretch'
       }}
     >
       <Button
@@ -348,6 +348,7 @@ function NotebookStderrOutput({ text }: { text: string }): React.JSX.Element {
           color: isExpanded ? 'warning.dark' : 'text.secondary',
           fontFamily: 'var(--font-mono)',
           fontSize: '0.72rem',
+          justifySelf: 'start',
           lineHeight: 1.5,
           textTransform: 'none',
           bgcolor: (theme) => (isExpanded ? alpha(theme.palette.warning.main, 0.1) : 'transparent'),
