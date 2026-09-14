@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import {
+  autocompletion,
+  startCompletion,
+  type Completion,
+  type CompletionContext,
+  type CompletionResult
+} from '@codemirror/autocomplete'
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+  insertNewlineAndIndent
+} from '@codemirror/commands'
 import {
   bracketMatching,
   HighlightStyle,
@@ -10,11 +23,9 @@ import {
 import { javascript } from '@codemirror/lang-javascript'
 import { markdown } from '@codemirror/lang-markdown'
 import { python } from '@codemirror/lang-python'
-import { r } from '@codemirror/legacy-modes/mode/r'
 import { shell } from '@codemirror/legacy-modes/mode/shell'
 import { Compartment, EditorSelection, EditorState, type Extension } from '@codemirror/state'
 import {
-  drawSelection,
   dropCursor,
   EditorView,
   highlightActiveLine,
@@ -26,6 +37,15 @@ import { Box } from '@mui/material'
 import { alpha, useTheme, type Theme } from '@mui/material/styles'
 import type { SyntaxLanguage } from '../../../lib/syntaxHighlight'
 import { codeMirrorHighlightStyle } from '../../../lib/syntaxTheme'
+import type { AnalysisNotebookCompletionResult } from '../../../types'
+import {
+  localNotebookCompletionOptions,
+  mergedNotebookCompletionOptions,
+  notebookCompletionRange,
+  type NotebookEditorCompletionOption
+} from '../lib/notebookCompletions'
+import { notebookIndentationExtensions } from './notebookIndentation'
+import { notebookRLanguage } from './notebookRLanguage'
 import {
   notebookCodeActionPaddingRight,
   notebookCodeContentPaddingBottom,
@@ -45,12 +65,20 @@ type NotebookCodeEditorProps = {
   onChange: (value: string) => void
   onRun?: () => void
   onRequestClose?: () => void
+  completionProvider?: NotebookCompletionProvider
+  onFormat?: (source: string, language: SyntaxLanguage) => void | Promise<void>
   initialSelection?: number
 }
 
+export type NotebookCompletionProvider = (request: {
+  source: string
+  language: SyntaxLanguage
+  cursorPosition: number
+}) => Promise<AnalysisNotebookCompletionResult | null>
+
 function languageExtension(language: SyntaxLanguage): Extension {
   if (language === 'python') return python()
-  if (language === 'r') return StreamLanguage.define(r)
+  if (language === 'r') return notebookRLanguage
   if (language === 'javascript') return javascript()
   if (language === 'typescript') return javascript({ typescript: true })
   if (language === 'shell') return StreamLanguage.define(shell)
@@ -62,12 +90,46 @@ function notebookEditorCaretColor(theme: Theme): string {
   return theme.palette.mode === 'dark' ? theme.palette.primary.light : theme.palette.text.primary
 }
 
+function completionTokenStart(
+  source: string,
+  cursorPosition: number,
+  language: SyntaxLanguage
+): number {
+  const beforeCursor = source.slice(0, cursorPosition)
+  if (beforeCursor.endsWith('.')) return cursorPosition
+  const token =
+    language === 'r'
+      ? beforeCursor.match(/[A-Za-z.][A-Za-z0-9._]*$/)?.[0]
+      : beforeCursor.match(/[A-Za-z_][A-Za-z0-9_]*$/)?.[0]
+  return token ? cursorPosition - token.length : cursorPosition
+}
+
+function completionShouldActivate(
+  context: CompletionContext,
+  source: string,
+  tokenStart: number
+): boolean {
+  if (context.explicit) return true
+  if (tokenStart < context.pos) return true
+  return source.slice(Math.max(0, context.pos - 1), context.pos) === '.'
+}
+
+function codeMirrorCompletion(option: NotebookEditorCompletionOption): Completion {
+  return {
+    label: option.label,
+    type: option.type,
+    detail: option.detail
+  }
+}
+
 export default function NotebookCodeEditor({
   value,
   language,
   onChange,
   onRun,
   onRequestClose,
+  completionProvider,
+  onFormat,
   initialSelection
 }: NotebookCodeEditorProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -76,9 +138,12 @@ export default function NotebookCodeEditor({
   const initialValueRef = useRef(value)
   const initialLanguageRef = useRef(language)
   const initialSelectionRef = useRef(initialSelection)
+  const languageRef = useRef(language)
   const onChangeRef = useRef(onChange)
   const onRunRef = useRef(onRun)
   const onRequestCloseRef = useRef(onRequestClose)
+  const completionProviderRef = useRef(completionProvider)
+  const onFormatRef = useRef(onFormat)
   const theme = useTheme()
   const caretColor = notebookEditorCaretColor(theme)
 
@@ -93,6 +158,14 @@ export default function NotebookCodeEditor({
   useEffect(() => {
     onRequestCloseRef.current = onRequestClose
   }, [onRequestClose])
+
+  useEffect(() => {
+    completionProviderRef.current = completionProvider
+  }, [completionProvider])
+
+  useEffect(() => {
+    onFormatRef.current = onFormat
+  }, [onFormat])
 
   const editorTheme = useMemo(
     () =>
@@ -124,6 +197,9 @@ export default function NotebookCodeEditor({
         '.cm-cursor, .cm-dropCursor': {
           borderLeftColor: `${caretColor} !important`,
           borderLeftWidth: '2px'
+        },
+        '.cm-content ::selection, .cm-content::selection': {
+          backgroundColor: alpha(theme.palette.primary.main, 0.22)
         },
         '.cm-line': {
           padding: 0,
@@ -182,13 +258,6 @@ export default function NotebookCodeEditor({
           color: theme.palette.text.secondary,
           padding: `0 ${notebookCodeGutterPaddingRight}px 0 0`
         },
-        '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
-          backgroundColor: `${alpha(theme.palette.primary.main, 0.22)} !important`
-        },
-        '.cm-selectionLayer .cm-selectionBackground:first-child': {
-          marginLeft: `-${notebookCodeContentPaddingX}px`,
-          paddingRight: `${notebookCodeContentPaddingX}px`
-        },
         '&.cm-focused': {
           outline: 'none'
         }
@@ -196,6 +265,46 @@ export default function NotebookCodeEditor({
     [caretColor, theme]
   )
   const highlightStyle = useMemo<HighlightStyle>(() => codeMirrorHighlightStyle(theme), [theme])
+  const completionSource = useMemo(
+    () =>
+      async (context: CompletionContext): Promise<CompletionResult | null> => {
+        const source = context.state.doc.toString()
+        const currentLanguage = languageRef.current
+        const tokenStart = completionTokenStart(source, context.pos, currentLanguage)
+        if (!completionShouldActivate(context, source, tokenStart)) {
+          return null
+        }
+
+        const local = localNotebookCompletionOptions({
+          source,
+          language: currentLanguage
+        })
+        let kernel: AnalysisNotebookCompletionResult | null = null
+        try {
+          kernel =
+            (await completionProviderRef.current?.({
+              source,
+              language: currentLanguage,
+              cursorPosition: context.pos
+            })) ?? null
+        } catch {
+          kernel = null
+        }
+        const options = mergedNotebookCompletionOptions({ kernel, local })
+        if (options.length === 0) return null
+        return {
+          ...notebookCompletionRange({
+            kernel,
+            tokenStart,
+            cursorPosition: context.pos,
+            sourceLength: source.length
+          }),
+          options: options.map(codeMirrorCompletion),
+          validFor: currentLanguage === 'r' ? /^[A-Za-z0-9._]*$/ : /^[A-Za-z0-9_]*$/
+        }
+      },
+    []
+  )
 
   useEffect(() => {
     if (!hostRef.current || viewRef.current) return undefined
@@ -208,12 +317,17 @@ export default function NotebookCodeEditor({
       lineNumbers(),
       highlightSpecialChars(),
       history(),
-      drawSelection(),
+      ...notebookIndentationExtensions(() => languageRef.current),
       dropCursor(),
       indentOnInput(),
       bracketMatching(),
       highlightActiveLine(),
       syntaxHighlighting(highlightStyle, { fallback: true }),
+      autocompletion({
+        activateOnTyping: true,
+        defaultKeymap: true,
+        override: [completionSource]
+      }),
       keymap.of([
         {
           key: 'Escape',
@@ -235,6 +349,27 @@ export default function NotebookCodeEditor({
             onRunRef.current?.()
             return true
           }
+        },
+        {
+          key: 'Mod-Space',
+          run: startCompletion
+        },
+        {
+          key: 'Ctrl-Space',
+          run: startCompletion
+        },
+        {
+          key: 'Mod-Shift-f',
+          run: (view) => {
+            const format = onFormatRef.current
+            if (!format) return false
+            void format(view.state.doc.toString(), languageRef.current)
+            return true
+          }
+        },
+        {
+          key: 'Enter',
+          run: insertNewlineAndIndent
         },
         indentWithTab,
         ...defaultKeymap,
@@ -261,7 +396,7 @@ export default function NotebookCodeEditor({
       view.destroy()
       viewRef.current = null
     }
-  }, [editorTheme, highlightStyle])
+  }, [completionSource, editorTheme, highlightStyle])
 
   useEffect(() => {
     const view = viewRef.current
@@ -274,6 +409,7 @@ export default function NotebookCodeEditor({
   }, [value])
 
   useEffect(() => {
+    languageRef.current = language
     const view = viewRef.current
     if (!view) return
     view.dispatch({
@@ -286,6 +422,8 @@ export default function NotebookCodeEditor({
       ref={hostRef}
       data-phi-notebook-code-editor="codemirror"
       data-phi-notebook-code-theme="phi"
+      data-phi-notebook-completion={completionProvider ? 'kernel' : 'local'}
+      data-phi-notebook-formatting={onFormat ? 'enabled' : 'disabled'}
       data-phi-syntax-language={language}
       sx={{ minHeight: notebookCodeMinHeight }}
     />

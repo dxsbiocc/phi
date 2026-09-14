@@ -4,15 +4,19 @@ import { parseNotebook } from '../src/shared/notebookDocument'
 import {
   AnalysisNotebookExecutor,
   buildNotebookVariableIntrospectionCode,
+  normalizeJupyterKernelCompletionMessages,
   normalizeJupyterKernelMessages,
   parseNotebookVariableIntrospectionResult,
+  type CompleteNotebookCodeInput,
   type JupyterKernelClient,
+  type JupyterKernelCompletionResult,
   type JupyterKernelExecuteRequest,
   type JupyterKernelExecuteResult
 } from '../src/main/agent/notebook/analysis-jupyter-execution'
 
 class FakeKernelClient implements JupyterKernelClient {
   readonly requests: JupyterKernelExecuteRequest[] = []
+  readonly completionRequests: CompleteNotebookCodeInput[] = []
   result: JupyterKernelExecuteResult = {
     executionCount: 7,
     outputs: [
@@ -31,6 +35,17 @@ class FakeKernelClient implements JupyterKernelClient {
   async executeCode(request: JupyterKernelExecuteRequest): Promise<JupyterKernelExecuteResult> {
     this.requests.push(request)
     return this.result
+  }
+
+  async completeCode(request: CompleteNotebookCodeInput): Promise<JupyterKernelCompletionResult> {
+    this.completionRequests.push(request)
+    return {
+      matches: ['DataFrame', 'date_range'],
+      cursorStart: Math.max(0, request.cursorPosition - 2),
+      cursorEnd: request.cursorPosition,
+      metadata: {},
+      status: 'ok'
+    }
   }
 }
 
@@ -97,6 +112,51 @@ test('normalizeJupyterKernelMessages preserves kernel errors as notebook error o
   assert.equal(result.outputs[0].outputType, 'error')
   assert.equal(result.outputs[0].ename, 'ValueError')
   assert.deepEqual(result.outputs[0].traceback, ['ValueError: bad value'])
+})
+
+test('normalizeJupyterKernelCompletionMessages reads Jupyter complete_reply payloads', () => {
+  const result = normalizeJupyterKernelCompletionMessages(
+    [
+      {
+        header: { msg_type: 'status' },
+        content: { execution_state: 'busy' }
+      },
+      {
+        header: { msg_type: 'complete_reply' },
+        content: {
+          matches: ['DataFrame', 'date_range', 42],
+          cursor_start: 3,
+          cursor_end: 5,
+          metadata: { experimental: true },
+          status: 'ok'
+        }
+      }
+    ],
+    5
+  )
+
+  assert.deepEqual(result.matches, ['DataFrame', 'date_range'])
+  assert.equal(result.cursorStart, 3)
+  assert.equal(result.cursorEnd, 5)
+  assert.deepEqual(result.metadata, { experimental: true })
+  assert.equal(result.status, 'ok')
+})
+
+test('AnalysisNotebookExecutor requests kernel completion with a clamped cursor', async () => {
+  const client = new FakeKernelClient()
+  const executor = new AnalysisNotebookExecutor({ client })
+
+  const result = await executor.completeCode({
+    connection: { url: 'http://127.0.0.1:8888/lab', token: 'secret' },
+    sessionId: 'session-1',
+    kernelId: 'kernel-1',
+    code: 'pd.da',
+    cursorPosition: 500
+  })
+
+  assert.equal(client.completionRequests.length, 1)
+  assert.equal(client.completionRequests[0].cursorPosition, 5)
+  assert.deepEqual(result.matches, ['DataFrame', 'date_range'])
 })
 
 test('AnalysisNotebookExecutor executes code cells through the kernel client', async () => {

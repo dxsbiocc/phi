@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import type {
   AnalysisJupyterRuntimeStatus,
+  AnalysisNotebookCompletionResult,
   AnalysisKernelDiagnostics,
   AnalysisNotebookCodeGenerationInput,
   AnalysisNotebookCodeGenerationResult,
   AnalysisNotebookDraftChange,
   AnalysisNotebookFileChange,
+  AnalysisNotebookFormatResult,
   AnalysisNotebookFile,
   AnalysisNotebookRegistry,
   AnalysisNotebookSessionStatus,
@@ -132,6 +134,20 @@ export type AnalysisNotebookRuntimeState = {
     document: AnalysisNotebookFile['document'],
     cellId: string
   ) => Promise<void>
+  onCompleteAnalysisNotebookCell: (
+    file: AnalysisNotebookFile,
+    document: AnalysisNotebookFile['document'],
+    cellId: string,
+    source: string,
+    cursorPosition: number
+  ) => Promise<AnalysisNotebookCompletionResult>
+  onFormatAnalysisNotebookCell: (
+    file: AnalysisNotebookFile,
+    document: AnalysisNotebookFile['document'],
+    cellId: string,
+    source: string,
+    language?: string
+  ) => Promise<AnalysisNotebookFormatResult>
   onGenerateAnalysisNotebookCode: (
     file: AnalysisNotebookFile,
     document: AnalysisNotebookFile['document'],
@@ -798,6 +814,54 @@ export function useAnalysisNotebookRuntime({
     [getActiveCwd, rendererApi]
   )
 
+  const onCompleteAnalysisNotebookCell = useCallback(
+    async (
+      file: AnalysisNotebookFile,
+      document: AnalysisNotebookFile['document'],
+      cellId: string,
+      source: string,
+      cursorPosition: number
+    ): Promise<AnalysisNotebookCompletionResult> => {
+      const completeAnalysisNotebookCell = requireRendererApiMethod(
+        rendererApi,
+        'completeAnalysisNotebookCell',
+        'Notebook code completion API 尚未加载，请重启 Phi 后再试'
+      )
+      return completeAnalysisNotebookCell(getActiveCwd(), {
+        path: file.path,
+        document,
+        cellId,
+        source,
+        cursorPosition
+      })
+    },
+    [getActiveCwd, rendererApi]
+  )
+
+  const onFormatAnalysisNotebookCell = useCallback(
+    async (
+      file: AnalysisNotebookFile,
+      document: AnalysisNotebookFile['document'],
+      cellId: string,
+      source: string,
+      language?: string
+    ): Promise<AnalysisNotebookFormatResult> => {
+      const formatAnalysisNotebookCell = requireRendererApiMethod(
+        rendererApi,
+        'formatAnalysisNotebookCell',
+        'Notebook code formatting API 尚未加载，请重启 Phi 后再试'
+      )
+      return formatAnalysisNotebookCell(getActiveCwd(), {
+        path: file.path,
+        document,
+        cellId,
+        source,
+        language
+      })
+    },
+    [getActiveCwd, rendererApi]
+  )
+
   const resetAnalysisJupyterRuntimeForCwdChange = useCallback((): void => {
     analysisJupyterRuntimeRequestRef.current += 1
     setAnalysisJupyterRuntimeStatus(null)
@@ -921,6 +985,8 @@ export function useAnalysisNotebookRuntime({
     onStopAnalysisNotebookSession,
     onStopRuntimeNotebookSession,
     onRunAnalysisNotebookCell,
+    onCompleteAnalysisNotebookCell,
+    onFormatAnalysisNotebookCell,
     onGenerateAnalysisNotebookCode,
     closeActiveNotebook,
     resetAnalysisJupyterRuntimeForCwdChange,

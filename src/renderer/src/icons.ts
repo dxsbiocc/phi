@@ -666,6 +666,7 @@ export const PhiIcons = {
     download: createPhiIcon('Download', FiDownload),
     edit: createPhiIcon('Edit', FiEdit3),
     expand: createPhiIcon('Expand', FiChevronDown),
+    format: createPhiIcon('Format', FiTool),
     login: createPhiIcon('Login', FiLogIn),
     logout: createPhiIcon('Logout', FiLogOut),
     more: createPhiIcon('More', FiMoreHorizontal),

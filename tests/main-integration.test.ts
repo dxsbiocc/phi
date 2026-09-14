@@ -106,7 +106,18 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   acknowledgedSessions: Array<{ file: string; cwd: string }>
   jupyterServerCalls: Array<{ action: string; cwd: string }>
   notebookSessionCalls: Array<{ action: string; cwd: string; path?: string }>
-  notebookExecutionCalls: Array<{ cellId: string; source: string; kernelId: string }>
+  notebookExecutionCalls: Array<{
+    cellId: string
+    source: string
+    kernelId: string
+    cursorPosition?: number
+  }>
+  notebookFormatCalls: Array<{
+    projectCwd: string
+    source: string
+    language?: string
+    lineLength?: number
+  }>
   openDialogOptions: Array<Record<string, unknown>>
   operationLog: Array<Record<string, unknown>>
   setOpenDialogResult: (result: { canceled: boolean; filePaths: string[] }) => void
@@ -132,7 +143,18 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   const acknowledgedSessions: Array<{ file: string; cwd: string }> = []
   const jupyterServerCalls: Array<{ action: string; cwd: string }> = []
   const notebookSessionCalls: Array<{ action: string; cwd: string; path?: string }> = []
-  const notebookExecutionCalls: Array<{ cellId: string; source: string; kernelId: string }> = []
+  const notebookExecutionCalls: Array<{
+    cellId: string
+    source: string
+    kernelId: string
+    cursorPosition?: number
+  }> = []
+  const notebookFormatCalls: Array<{
+    projectCwd: string
+    source: string
+    language?: string
+    lineLength?: number
+  }> = []
   const openDialogOptions: Array<Record<string, unknown>> = []
   const operationLog: Array<Record<string, unknown>> = []
   let openDialogResult: { canceled: boolean; filePaths: string[] } = {
@@ -504,6 +526,26 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
           : { name, exists: false }
       )
     }
+
+    async completeCode(input: {
+      kernelId: string
+      code: string
+      cursorPosition: number
+    }): Promise<Record<string, unknown>> {
+      notebookExecutionCalls.push({
+        cellId: '__completion__',
+        source: input.code,
+        kernelId: input.kernelId,
+        cursorPosition: input.cursorPosition
+      })
+      return {
+        matches: ['df', 'df.head'],
+        cursorStart: 0,
+        cursorEnd: input.cursorPosition,
+        metadata: {},
+        status: 'ok'
+      }
+    }
   }
   const app = Object.assign(new EventEmitter(), {
     setName: noop,
@@ -541,6 +583,9 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
       closeSync: (fd: number): void => {
         previewFileDescriptors.delete(fd)
       },
+      watch: (): { close: () => void } => ({
+        close: noop
+      }),
       readdirSync: (
         filePath: string
       ): Array<{
@@ -904,6 +949,46 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         relativePath: notebookPath
       })
     },
+    './agent/notebook/analysis-notebook-watch': {
+      AnalysisNotebookFileWatcher: class {
+        watch(workingDirectory: string, notebookPath: string): unknown {
+          return {
+            path: `${workingDirectory}/${notebookPath}`,
+            relativePath: notebookPath,
+            name: 'qc.ipynb',
+            bytes: 128,
+            modifiedAt: '2026-09-09T00:00:00.000Z',
+            savedRevision: 'nb-open',
+            document: {
+              nbformat: 4,
+              nbformatMinor: 5,
+              metadata: {},
+              cells: [],
+              extra: {},
+              revision: 'nb-open'
+            }
+          }
+        }
+        watchFile(): void {
+          return undefined
+        }
+        noteLocalWrite(): void {
+          return undefined
+        }
+        unwatch(): void {
+          return undefined
+        }
+        unwatchFile(): void {
+          return undefined
+        }
+        unwatchProject(): void {
+          return undefined
+        }
+        dispose(): void {
+          return undefined
+        }
+      }
+    },
     './agent/notebook/analysis-kernels': {
       detectAnalysisKernels: () => ({
         jupyterServer: { available: true, command: 'jupyter', version: '2.14.0' },
@@ -929,6 +1014,31 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     },
     './agent/notebook/analysis-jupyter-execution': {
       AnalysisNotebookExecutor: TestAnalysisNotebookExecutor
+    },
+    './agent/notebook/analysis-notebook-completion': {
+      completeNotebookPythonStaticCompletion: (): null => null,
+      mergeNotebookCompletionResults: (primary: unknown): unknown => primary
+    },
+    './agent/notebook/analysis-notebook-formatting': {
+      formatNotebookCellSource: (input: {
+        projectCwd: string
+        source: string
+        language?: string
+        lineLength?: number
+      }): Record<string, unknown> => {
+        notebookFormatCalls.push({
+          projectCwd: input.projectCwd,
+          source: input.source,
+          language: input.language,
+          lineLength: input.lineLength
+        })
+        const source = input.source.replace('x=1', 'x = 1')
+        return {
+          source,
+          changed: source !== input.source,
+          formatter: 'ruff'
+        }
+      }
     },
     './agent/notebook/notebook-tool-executor': {
       AnalysisNotebookToolExecutor: class TestAnalysisNotebookToolExecutor {
@@ -1226,6 +1336,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     jupyterServerCalls,
     notebookSessionCalls,
     notebookExecutionCalls,
+    notebookFormatCalls,
     openDialogOptions,
     operationLog,
     setOpenDialogResult: (result): void => {
@@ -2178,6 +2289,85 @@ test('main IPC: analysis notebook kernel session lifecycle uses the selected pro
   )
 })
 
+test('main IPC: analysis notebook completion asks the live kernel for matches', async () => {
+  const app = await harness()
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: [
+      {
+        id: 'cell-1',
+        cell_type: 'code',
+        metadata: {},
+        execution_count: null,
+        outputs: [],
+        source: 'df.he'
+      }
+    ]
+  })
+
+  const result = (await app.invoke('analysis:completeNotebookCell', '/projects/research', {
+    path: 'notebooks/demo.ipynb',
+    document,
+    cellId: 'cell-1',
+    source: 'df.he',
+    cursorPosition: 99
+  })) as { matches: string[]; cursorEnd: number; status: string }
+
+  assert.equal(result.status, 'ok')
+  assert.deepEqual(result.matches, ['df', 'df.head'])
+  assert.equal(result.cursorEnd, 5)
+  assert.deepEqual(app.notebookExecutionCalls.slice(-1), [
+    {
+      cellId: '__completion__',
+      source: 'df.he',
+      kernelId: 'kernel-1',
+      cursorPosition: 5
+    }
+  ])
+})
+
+test('main IPC: analysis notebook formatting returns formatter edits', async () => {
+  const app = await harness()
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: [
+      {
+        id: 'cell-1',
+        cell_type: 'code',
+        metadata: {},
+        execution_count: null,
+        outputs: [],
+        source: 'x=1'
+      }
+    ]
+  })
+
+  const result = (await app.invoke('analysis:formatNotebookCell', '/projects/research', {
+    path: 'notebooks/demo.ipynb',
+    document,
+    cellId: 'cell-1',
+    source: 'x=1',
+    language: 'python',
+    lineLength: 100
+  })) as { source: string; changed: boolean; formatter: string }
+
+  assert.equal(result.source, 'x = 1')
+  assert.equal(result.changed, true)
+  assert.equal(result.formatter, 'ruff')
+  assert.deepEqual(app.notebookFormatCalls, [
+    {
+      projectCwd: '/projects/research',
+      source: 'x=1',
+      language: 'python',
+      lineLength: 100
+    }
+  ])
+})
+
 test('main IPC: analysis notebook cell execution updates the returned document', async () => {
   const app = await harness()
   const document = notebookDocument.parseNotebook({
@@ -2304,8 +2494,9 @@ test('main IPC: notebook AI generation uses assistant event text when session hi
     skipCompactionCheck: true
   })
   assert.doesNotMatch(app.sessions[0].promptTexts[0], /"cellType":"code"/)
-  assert.match(app.sessions[0].promptTexts[0], /NotebookCellsCompletion schema/)
-  assert.match(app.sessions[0].promptTexts[0], /"language":"python","code":"raw code only"/)
+  assert.match(app.sessions[0].promptTexts[0], /NotebookCellsCompletion pattern/)
+  assert.match(app.sessions[0].promptTexts[0], /Return exactly one JSON object/)
+  assert.match(app.sessions[0].promptTexts[0], /Do not include prose outside JSON/)
 })
 
 test('main IPC: notebook AI generation enriches @ variables from the live kernel', async () => {
@@ -2574,6 +2765,218 @@ test('main IPC: notebook AI generation preserves markdown and code cells', async
     '## 贪婪算法\n每一步选择当前看来最优的候选。\n\n' +
       'def greedy(values):\n    return sorted(values, reverse=True)'
   )
+})
+
+test('main IPC: notebook AI generation chooses the full done message over a short streaming partial', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'message_update',
+        message: { role: 'assistant' },
+        assistantMessageEvent: {
+          type: 'partial',
+          partial: {
+            role: 'assistant',
+            content: [{ type: 'text', text: '折线图：各国' }]
+          }
+        }
+      },
+      {
+        type: 'message_update',
+        message: { role: 'assistant' },
+        assistantMessageEvent: {
+          type: 'done',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'text',
+                text: [
+                  '## 折线图：各国',
+                  '',
+                  '下面的代码绘制各国收入随年份变化的折线图。',
+                  '',
+                  '```python',
+                  'fig, ax = plt.subplots()',
+                  'income_by_country.T.plot(ax=ax)',
+                  'ax.set_title("各国收入趋势")',
+                  'ax',
+                  '```'
+                ].join('\n')
+              }
+            ]
+          }
+        }
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: []
+  })
+
+  const result = (await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc.ipynb',
+    document,
+    {
+      prompt: '画各国收入折线图',
+      language: 'python',
+      requestId: 'notebook-ai-stream-1',
+      afterCellId: null,
+      references: []
+    }
+  )) as { source: string; language: string; cells: Array<{ cellType: string; source: string }> }
+
+  assert.deepEqual(result.cells, [
+    {
+      cellType: 'markdown',
+      source: '## 折线图：各国\n\n下面的代码绘制各国收入随年份变化的折线图。'
+    },
+    {
+      cellType: 'code',
+      source:
+        'fig, ax = plt.subplots()\n' +
+        'income_by_country.T.plot(ax=ax)\n' +
+        'ax.set_title("各国收入趋势")\n' +
+        'ax',
+      language: 'python'
+    }
+  ])
+  assert.match(result.source, /income_by_country\.T\.plot/)
+  assert.notStrictEqual(result.source, '折线图：各国')
+  const progressEvents = app.events.filter(
+    (event) => event.channel === 'analysis:notebookCodeGenerationProgress'
+  ) as Array<{
+    channel: string
+    data: {
+      requestId: string
+      source: string
+      cells: Array<{ cellType: string; source: string }>
+    }
+  }>
+  assert.equal(progressEvents.at(-1)?.data.requestId, 'notebook-ai-stream-1')
+  assert.match(progressEvents.at(-1)?.data.source ?? '', /income_by_country\.T\.plot/)
+  assert.deepEqual(
+    progressEvents.at(-1)?.data.cells.map((cell) => cell.cellType),
+    ['markdown', 'code']
+  )
+})
+
+test('main IPC: notebook AI generation streams staged cells from partial NotebookCellsCompletion JSON', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'message_update',
+        message: { role: 'assistant' },
+        assistantMessageEvent: {
+          type: 'text_delta',
+          delta: '{"cells":[{"language":"markdown","code":"## Summary"},'
+        }
+      },
+      {
+        type: 'message_update',
+        message: { role: 'assistant' },
+        assistantMessageEvent: {
+          type: 'text_delta',
+          delta: '{"language":"python","code":"result = df.describe()"}]}'
+        }
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: []
+  })
+
+  const result = (await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc.ipynb',
+    document,
+    {
+      prompt: '总结 df',
+      language: 'python',
+      requestId: 'notebook-ai-json-stream',
+      afterCellId: null,
+      references: []
+    }
+  )) as { cells: Array<{ cellType: string; source: string }> }
+  const progressEvents = app.events.filter(
+    (event) => event.channel === 'analysis:notebookCodeGenerationProgress'
+  ) as Array<{
+    data: {
+      requestId: string
+      cells: Array<{ cellType: string; source: string }>
+    }
+  }>
+
+  assert.deepEqual(
+    progressEvents.map((event) => event.data.cells.map((cell) => cell.cellType)),
+    [['markdown'], ['markdown', 'code']]
+  )
+  assert.equal(progressEvents[0].data.requestId, 'notebook-ai-json-stream')
+  assert.deepEqual(
+    result.cells.map((cell) => cell.cellType),
+    ['markdown', 'code']
+  )
+})
+
+test('main IPC: notebook AI generation does not insert incomplete streamed JSON snapshots', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'message_update',
+        message: { role: 'assistant' },
+        assistantMessageEvent: {
+          type: 'text_delta',
+          delta: '{"cells":[{"language":"markdown","code":"##"}'
+        }
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: []
+  })
+
+  await assert.rejects(
+    app.invoke(
+      'analysis:generateNotebookCode',
+      '/projects/research',
+      'notebooks/qc.ipynb',
+      document,
+      {
+        prompt: '写一个快速排序算法',
+        language: 'python',
+        requestId: 'notebook-ai-incomplete-json',
+        afterCellId: null,
+        references: []
+      }
+    ),
+    /AI 没有生成可插入内容/
+  )
+
+  const progressEvents = app.events.filter(
+    (event) => event.channel === 'analysis:notebookCodeGenerationProgress'
+  )
+  assert.equal(progressEvents.length, 0)
 })
 
 test('main IPC: notebook AI generation uses assistant done event before session history', async () => {

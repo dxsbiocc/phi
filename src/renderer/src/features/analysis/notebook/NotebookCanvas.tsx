@@ -44,6 +44,7 @@ import {
 } from '../lib/notebookViewModel'
 import type { AnalysisNotebookContextReference, ModelOption } from '../../../types'
 import { NotebookHeader } from '../components/NotebookHeader'
+import { useNotebookSourceServices } from '../hooks/useNotebookSourceServices'
 import NotebookAiPromptCell from './NotebookAiPromptCell'
 import NotebookAiPreviewActions from './NotebookAiPreviewActions'
 import NotebookCell, { type CellPlacement } from './NotebookCell'
@@ -78,6 +79,8 @@ export default function NotebookCanvas({
   onStartNotebookSession,
   onStopNotebookSession,
   onRunNotebookCell,
+  onCompleteNotebookCell,
+  onFormatNotebookCell,
   onGenerateNotebookCode,
   onNotebookCodeGenerationProgress,
   aiModelOptions,
@@ -298,6 +301,20 @@ export default function NotebookCanvas({
   const canRunCells = Boolean(
     notebookFile && draftDocument && onRunNotebookCell && !executingCellId
   )
+  const {
+    canUseCompletionProvider,
+    formattingError,
+    isFormattingNotebook,
+    onCompleteCellSource,
+    onFormatCellSource,
+    onFormatNotebook
+  } = useNotebookSourceServices({
+    notebookFile,
+    draftDocument,
+    setDraftDocument,
+    onCompleteNotebookCell,
+    onFormatNotebookCell
+  })
   const selectedKernelName = draftDocument ? notebookKernelName(draftDocument) : ''
   const autoConnectKey =
     notebookFile && draftDocument
@@ -797,6 +814,11 @@ export default function NotebookCanvas({
               {cellExecutionError}
             </Typography>
           ) : null}
+          {formattingError ? (
+            <Typography color="warning.main" sx={{ mb: 2 }}>
+              {formattingError}
+            </Typography>
+          ) : null}
           {!isOpening && cells.length > 0 && aiPromptDraft?.afterCellId === null
             ? aiPromptSurface
             : null}
@@ -813,6 +835,12 @@ export default function NotebookCanvas({
                     agentHighlighted={agentHighlightedCellId === cell.id}
                     provisional={isAiPreviewCell}
                     onSourceChange={isAiPreviewCell ? undefined : onUpdateCellSource}
+                    onCompleteSource={
+                      isAiPreviewCell || !canUseCompletionProvider
+                        ? undefined
+                        : onCompleteCellSource
+                    }
+                    onFormatSource={isAiPreviewCell ? undefined : onFormatCellSource}
                     onInsertBefore={
                       isAiPreviewCell
                         ? undefined
@@ -898,6 +926,8 @@ export default function NotebookCanvas({
         notebookFile={notebookFile}
         notebookSessionStatus={notebookSessionStatus}
         onSave={onSave}
+        onFormat={onFormatNotebook}
+        isFormatting={isFormattingNotebook}
         onStopNotebookSession={onStopNotebookSession}
       />
       <NotebookKernelSwitchDialog

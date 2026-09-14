@@ -185,10 +185,13 @@ const SHELL_KEYWORDS = new Set([
 const TOML_KEYWORDS = new Set(['true', 'false'])
 const JSON_KEYWORDS = new Set(['true', 'false', 'null'])
 
-const WORD_RE = /^[A-Za-z_$][\w$.-]*/
+const SCRIPT_WORD_RE = /^[A-Za-z_$][\w$]*/
+const PYTHON_WORD_RE = /^[A-Za-z_]\w*/
+const R_WORD_RE = /^[A-Za-z.][\w.]*/
+const SHELL_WORD_RE = /^[A-Za-z_$][\w$.-]*/
 const NUMBER_RE = /^-?(?:0x[\da-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/
 const OPERATOR_RE =
-  /^(?:=>|->|<-|\|>|::|:::|==={0,1}|!==?|<=|>=|\+\+|--|\|\||&&|[+\-*/%=&|!<>~^$@?:]+)/
+  /^(?:=>|->|<-|\|>|:::|::|==={0,1}|!==?|<=|>=|\+\+|--|\|\||&&|[+\-*/%=&|!<>~^$@?:]+)/
 const PUNCTUATION_RE = /^[()[\]{}.,;]/
 
 function pushToken(tokens: SyntaxToken[], kind: SyntaxTokenKind, value: string): void {
@@ -253,9 +256,32 @@ function keywordKind(word: string, language: SyntaxLanguage): SyntaxTokenKind | 
   return null
 }
 
+function scriptWordPattern(language: SyntaxLanguage): RegExp {
+  if (language === 'python') return PYTHON_WORD_RE
+  if (language === 'r') return R_WORD_RE
+  if (language === 'shell') return SHELL_WORD_RE
+  return SCRIPT_WORD_RE
+}
+
+function isScriptMemberToken(line: string, index: number, language: SyntaxLanguage): boolean {
+  if (language === 'python' || language === 'typescript' || language === 'javascript') {
+    return line[index - 1] === '.'
+  }
+  if (language === 'r') {
+    return (
+      line[index - 1] === '$' ||
+      line[index - 1] === '@' ||
+      line.slice(index - 2, index) === '::' ||
+      line.slice(index - 3, index) === ':::'
+    )
+  }
+  return false
+}
+
 function tokenizeScriptLine(line: string, language: SyntaxLanguage): SyntaxToken[] {
   const tokens: SyntaxToken[] = []
   let index = 0
+  const wordPattern = scriptWordPattern(language)
 
   while (index < line.length) {
     const char = line[index]
@@ -291,13 +317,16 @@ function tokenizeScriptLine(line: string, language: SyntaxLanguage): SyntaxToken
       continue
     }
 
-    const wordMatch = rest.match(WORD_RE)
+    const wordMatch = rest.match(wordPattern)
     if (wordMatch) {
       const word = wordMatch[0]
       const lookAhead = line.slice(index + word.length)
       const kind = keywordKind(word, language)
+      const isMemberToken = isScriptMemberToken(line, index, language)
       if (kind) {
         pushToken(tokens, kind, word)
+      } else if (isMemberToken) {
+        pushToken(tokens, /^\s*\(/.test(lookAhead) ? 'function' : 'property', word)
       } else if (/^\s*\(/.test(lookAhead)) {
         pushToken(tokens, 'function', word)
       } else {

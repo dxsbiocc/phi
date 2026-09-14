@@ -109,8 +109,14 @@ import { detectAnalysisKernels } from './agent/notebook/analysis-kernels'
 import { JupyterServerRegistry } from './agent/notebook/analysis-jupyter-server'
 import {
   AnalysisNotebookExecutor,
+  type JupyterKernelCompletionResult,
   type NotebookVariableIntrospection
 } from './agent/notebook/analysis-jupyter-execution'
+import {
+  completeNotebookPythonStaticCompletion,
+  mergeNotebookCompletionResults
+} from './agent/notebook/analysis-notebook-completion'
+import { formatNotebookCellSource } from './agent/notebook/analysis-notebook-formatting'
 import { AnalysisNotebookSessionRegistry } from './agent/notebook/analysis-jupyter-sessions'
 import {
   buildNotebookCodeGenerationPrompt,
@@ -463,6 +469,41 @@ async function ensureJupyterServerReady(projectCwd: string): Promise<void> {
   if (status.state !== 'ready' || !status.hasEndpoint) {
     throw new Error(status.message ?? 'Jupyter Server 尚未就绪')
   }
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message
+  return String(error)
+}
+
+function emptyNotebookCompletionResult(
+  cursorPosition: number,
+  message?: string
+): JupyterKernelCompletionResult {
+  const position = Number.isFinite(cursorPosition) ? Math.max(0, cursorPosition) : 0
+  return {
+    matches: [],
+    cursorStart: position,
+    cursorEnd: position,
+    metadata: {},
+    status: 'error' as const,
+    message
+  }
+}
+
+function notebookDocumentLanguage(document: NotebookDocument): string {
+  const kernelspec = document.metadata.kernelspec
+  if (kernelspec && typeof kernelspec === 'object' && !Array.isArray(kernelspec)) {
+    const spec = kernelspec as JsonObject
+    if (typeof spec.language === 'string') return spec.language
+    if (typeof spec.name === 'string') return spec.name
+    if (typeof spec.display_name === 'string') return spec.display_name
+  }
+  return ''
+}
+
+function isPythonNotebookDocument(document: NotebookDocument): boolean {
+  return notebookDocumentLanguage(document).toLocaleLowerCase().includes('python')
 }
 
 function notebookAgentRuntimePrompt(projectCwd: string): string | null {
@@ -3762,6 +3803,102 @@ app.whenReady().then(() => {
     const file = openProjectNotebook(project.workingDirectory, notebookPath)
     return notebookSessionRegistry.closeSession(project.workingDirectory, file.path)
   })
+  ipcMain.handle(
+    'analysis:completeNotebookCell',
+    async (
+      _,
+      cwd: string,
+      input: {
+        path: string
+        document: NotebookDocument
+        cellId: string
+        source: string
+        cursorPosition: number
+      }
+    ) => {
+      const project = getProjectByCwd(cwd)
+      if (!project) {
+        throw new Error('请选择一个已添加的项目')
+      }
+      assertProjectPathAvailable(project.workingDirectory)
+      const file = openProjectNotebook(project.workingDirectory, input.path)
+      const cell = input.document.cells.find((item) => item.id === input.cellId)
+      const cursorPosition = Number.isFinite(input.cursorPosition)
+        ? Math.max(0, Math.min(input.cursorPosition, input.source.length))
+        : 0
+      if (!cell || cell.cellType !== 'code') {
+        return emptyNotebookCompletionResult(cursorPosition, 'Notebook cell is not a code cell')
+      }
+
+      const staticCompletion = isPythonNotebookDocument(input.document)
+        ? completeNotebookPythonStaticCompletion({
+            projectCwd: project.workingDirectory,
+            source: input.source,
+            cursorPosition
+          })
+        : null
+      const target = notebookSessionRegistry.executionTarget(project.workingDirectory, file.path)
+      if (!target) {
+        return (
+          staticCompletion ??
+          emptyNotebookCompletionResult(cursorPosition, 'Notebook kernel is not connected')
+        )
+      }
+
+      try {
+        const kernelCompletion = await notebookExecutor.completeCode({
+          connection: target.connection,
+          sessionId: target.sessionId,
+          kernelId: target.kernelId,
+          code: input.source,
+          cursorPosition
+        })
+        return mergeNotebookCompletionResults(kernelCompletion, staticCompletion)
+      } catch (error) {
+        return (
+          staticCompletion ?? emptyNotebookCompletionResult(cursorPosition, errorMessage(error))
+        )
+      }
+    }
+  )
+  ipcMain.handle(
+    'analysis:formatNotebookCell',
+    async (
+      _,
+      cwd: string,
+      input: {
+        path: string
+        document: NotebookDocument
+        cellId: string
+        source: string
+        language?: string
+        lineLength?: number
+      }
+    ) => {
+      const project = getProjectByCwd(cwd)
+      if (!project) {
+        throw new Error('请选择一个已添加的项目')
+      }
+      assertProjectPathAvailable(project.workingDirectory)
+      openProjectNotebook(project.workingDirectory, input.path)
+      const cell = input.document.cells.find((item) => item.id === input.cellId)
+      if (!cell || cell.cellType !== 'code') {
+        return {
+          source: input.source,
+          changed: false,
+          formatter: 'none' as const,
+          message: 'Notebook cell is not a code cell'
+        }
+      }
+
+      return formatNotebookCellSource({
+        projectCwd: project.workingDirectory,
+        source: input.source,
+        language: input.language,
+        lineLength: input.lineLength
+      })
+    }
+  )
   ipcMain.handle(
     'analysis:generateNotebookCode',
     async (

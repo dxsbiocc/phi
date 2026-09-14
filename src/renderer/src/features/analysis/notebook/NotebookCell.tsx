@@ -23,7 +23,7 @@ import {
 import type { NotebookCellType } from '../../../../../shared/notebookDocument'
 import MarkdownContent from '../../../components/MarkdownContent'
 import NotebookCodeCellSource from './NotebookCodeCellSource'
-import NotebookCodeEditor from './NotebookCodeEditor'
+import NotebookCodeEditor, { type NotebookCompletionProvider } from './NotebookCodeEditor'
 import {
   notebookCodeGutterDividerWidth,
   notebookCodeGutterWidth,
@@ -48,6 +48,7 @@ const PlayIcon = PhiIcons.action.run
 const RefreshIcon = PhiIcons.action.refresh
 const StopIcon = PhiIcons.action.stop
 const DeleteIcon = PhiIcons.action.delete
+const FormatIcon = PhiIcons.action.format
 const MoreIcon = PhiIcons.action.more
 
 export default function NotebookCell({
@@ -56,6 +57,8 @@ export default function NotebookCell({
   editable = false,
   selected = false,
   onSourceChange,
+  onCompleteSource,
+  onFormatSource,
   onInsertBefore,
   onInsertAfter,
   onClearOutputs,
@@ -77,6 +80,16 @@ export default function NotebookCell({
   notebookPath?: string | null
   agentHighlighted?: boolean
   onSourceChange?: (cellId: string, source: string) => void
+  onCompleteSource?: (
+    cellId: string,
+    source: string,
+    cursorPosition: number
+  ) => ReturnType<NotebookCompletionProvider>
+  onFormatSource?: (
+    cellId: string,
+    source: string,
+    language?: CanvasCell['language']
+  ) => void | Promise<void>
   onInsertBefore?: (
     cellId: string,
     cellType?: Extract<NotebookCellType, 'code' | 'markdown'>
@@ -501,6 +514,16 @@ export default function NotebookCell({
               language={cell.language ?? 'plain'}
               initialSelection={initialEditorSelection}
               onChange={(source) => onSourceChange?.(cell.id, source)}
+              completionProvider={
+                onCompleteSource
+                  ? (request) => onCompleteSource(cell.id, request.source, request.cursorPosition)
+                  : undefined
+              }
+              onFormat={
+                onFormatSource
+                  ? (source, language) => onFormatSource(cell.id, source, language)
+                  : undefined
+              }
               onRun={canRun ? () => onRunCell?.(cell.id) : undefined}
               onRequestClose={() => setIsEditing(false)}
             />
@@ -572,6 +595,7 @@ export default function NotebookCell({
               language={cell.language ?? 'plain'}
               editable={editable}
               onEdit={(selection) => {
+                onSelectCell?.(cell.id)
                 setInitialEditorSelection(selection)
                 setIsEditing(true)
               }}
@@ -729,6 +753,17 @@ export default function NotebookCell({
                   <RefreshIcon sx={{ fontSize: 17 }} />
                 </ListItemIcon>
                 <ListItemText primary="清空输出" />
+              </MenuItem>
+              <MenuItem
+                disabled={cell.type !== 'code' || !onFormatSource}
+                onClick={() =>
+                  runMenuAction(() => onFormatSource?.(cell.id, cell.source, cell.language))
+                }
+              >
+                <ListItemIcon>
+                  <FormatIcon sx={{ fontSize: 17 }} />
+                </ListItemIcon>
+                <ListItemText primary="格式化 cell" />
               </MenuItem>
               <Divider />
               <MenuItem

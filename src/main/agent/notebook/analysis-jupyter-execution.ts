@@ -23,6 +23,14 @@ export interface IntrospectNotebookVariablesInput {
   variableNames: string[]
 }
 
+export interface CompleteNotebookCodeInput {
+  connection: JupyterServerConnection
+  sessionId: string
+  kernelId: string
+  code: string
+  cursorPosition: number
+}
+
 export interface ExecutedNotebookCell {
   cellId: string
   executionCount: number | null
@@ -47,8 +55,18 @@ export interface JupyterKernelExecuteResult {
   status: 'ok' | 'error'
 }
 
+export interface JupyterKernelCompletionResult {
+  matches: string[]
+  cursorStart: number
+  cursorEnd: number
+  metadata: JsonObject
+  status: 'ok' | 'error'
+  message?: string
+}
+
 export interface JupyterKernelClient {
   executeCode(request: JupyterKernelExecuteRequest): Promise<JupyterKernelExecuteResult>
+  completeCode(request: CompleteNotebookCodeInput): Promise<JupyterKernelCompletionResult>
 }
 
 export interface NotebookVariableIntrospection {
@@ -92,6 +110,7 @@ type KernelWebSocketConstructor = new (url: string) => KernelWebSocket
 // longer than a typical request timeout. Only give up if the kernel truly
 // stops responding, not because a cell is legitimately still computing.
 const EXECUTION_TIMEOUT_MS = 30 * 60_000
+const COMPLETION_TIMEOUT_MS = 10_000
 const VARIABLE_INTROSPECTION_SENTINEL = '__PHI_NOTEBOOK_VARIABLES__'
 const PYTHON_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
@@ -223,6 +242,38 @@ export function normalizeJupyterKernelMessages(
   }
 
   return { executionCount, outputs, status }
+}
+
+export function normalizeJupyterKernelCompletionMessages(
+  messages: RawJupyterKernelMessage[],
+  fallbackPosition: number
+): JupyterKernelCompletionResult {
+  const reply = messages.find((message) => messageType(message) === 'complete_reply')
+  const content = jsonObject(reply?.content)
+  if (!content) {
+    return {
+      matches: [],
+      cursorStart: fallbackPosition,
+      cursorEnd: fallbackPosition,
+      metadata: {},
+      status: 'error',
+      message: 'Jupyter kernel did not return completion results'
+    }
+  }
+
+  const matches = Array.isArray(content.matches)
+    ? content.matches.filter((item): item is string => typeof item === 'string')
+    : []
+  const cursorStart = numberValue(content.cursor_start) ?? fallbackPosition
+  const cursorEnd = numberValue(content.cursor_end) ?? fallbackPosition
+  return {
+    matches,
+    cursorStart,
+    cursorEnd: Math.max(cursorStart, cursorEnd),
+    metadata: toJsonObject(content.metadata),
+    status: content.status === 'ok' ? 'ok' : 'error',
+    message: stringValue(content.message)
+  }
 }
 
 function safeVariableNames(variableNames: string[]): string[] {
@@ -472,6 +523,82 @@ export class WebSocketJupyterKernelClient implements JupyterKernelClient {
       })
     })
   }
+
+  async completeCode(request: CompleteNotebookCodeInput): Promise<JupyterKernelCompletionResult> {
+    const Constructor = websocketConstructor()
+    const msgId = randomUUID()
+    const code = request.code
+    const cursorPosition = Math.max(0, Math.min(request.cursorPosition, code.length))
+    const socket = new Constructor(
+      kernelChannelsUrl(request.connection, request.kernelId, request.sessionId)
+    )
+
+    return new Promise((resolve, reject) => {
+      const messages: RawJupyterKernelMessage[] = []
+      let sawReply = false
+      const timeout = setTimeout(() => {
+        socket.close()
+        reject(new Error('Notebook code completion timed out'))
+      }, COMPLETION_TIMEOUT_MS)
+
+      const finish = (): void => {
+        if (!sawReply) return
+        clearTimeout(timeout)
+        socket.close()
+        resolve(normalizeJupyterKernelCompletionMessages(messages, cursorPosition))
+      }
+
+      socket.addEventListener('open', () => {
+        socket.send(
+          JSON.stringify({
+            header: {
+              msg_id: msgId,
+              username: 'phi',
+              session: request.sessionId,
+              date: new Date().toISOString(),
+              msg_type: 'complete_request',
+              version: '5.3'
+            },
+            parent_header: {},
+            metadata: {},
+            content: {
+              code,
+              cursor_pos: cursorPosition
+            },
+            channel: 'shell'
+          })
+        )
+      })
+      socket.addEventListener('message', (event) => {
+        try {
+          const raw =
+            typeof event.data === 'string'
+              ? event.data
+              : Buffer.from(event.data as ArrayBuffer).toString('utf8')
+          const message = JSON.parse(raw) as RawJupyterKernelMessage
+          if (message.parent_header?.msg_id !== msgId) return
+          messages.push(message)
+          if (messageType(message) === 'complete_reply') sawReply = true
+          finish()
+        } catch (error) {
+          clearTimeout(timeout)
+          socket.close()
+          reject(error)
+        }
+      })
+      socket.addEventListener('error', (event) => {
+        clearTimeout(timeout)
+        socket.close()
+        reject(new Error(errorMessage(event.message ?? 'Jupyter kernel WebSocket error')))
+      })
+      socket.addEventListener('close', () => {
+        clearTimeout(timeout)
+        if (!sawReply) {
+          reject(new Error('Jupyter kernel WebSocket closed before completion results arrived'))
+        }
+      })
+    })
+  }
 }
 
 export class AnalysisNotebookExecutor {
@@ -517,5 +644,12 @@ export class AnalysisNotebookExecutor {
       storeHistory: false
     })
     return parseNotebookVariableIntrospectionResult(result)
+  }
+
+  async completeCode(input: CompleteNotebookCodeInput): Promise<JupyterKernelCompletionResult> {
+    return this.client.completeCode({
+      ...input,
+      cursorPosition: Math.max(0, Math.min(input.cursorPosition, input.code.length))
+    })
   }
 }

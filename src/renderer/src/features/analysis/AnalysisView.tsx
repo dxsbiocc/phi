@@ -14,6 +14,8 @@ import type {
   AnalysisNotebookCodeGenerationInput,
   AnalysisNotebookCodeGenerationProgress,
   AnalysisNotebookCodeGenerationResult,
+  AnalysisNotebookCompletionResult,
+  AnalysisNotebookFormatResult,
   AnalysisKernelDiagnostics,
   AnalysisNotebookFile,
   AnalysisNotebookRegistry,
@@ -81,6 +83,20 @@ export type AnalysisViewProps = {
     document: NotebookDocument,
     cellId: string
   ) => void
+  onCompleteNotebookCell?: (
+    file: AnalysisNotebookFile,
+    document: NotebookDocument,
+    cellId: string,
+    source: string,
+    cursorPosition: number
+  ) => Promise<AnalysisNotebookCompletionResult>
+  onFormatNotebookCell?: (
+    file: AnalysisNotebookFile,
+    document: NotebookDocument,
+    cellId: string,
+    source: string,
+    language?: string
+  ) => Promise<AnalysisNotebookFormatResult>
   onGenerateNotebookCode?: (
     file: AnalysisNotebookFile,
     document: NotebookDocument,
@@ -184,6 +200,8 @@ export default function AnalysisView({
   onStartNotebookSession,
   onStopNotebookSession,
   onRunNotebookCell,
+  onCompleteNotebookCell,
+  onFormatNotebookCell,
   onGenerateNotebookCode,
   onNotebookCodeGenerationProgress,
   notebookAiModelOptions,
@@ -405,6 +423,8 @@ export default function AnalysisView({
           onStartNotebookSession={onStartNotebookSession}
           onStopNotebookSession={onStopNotebookSession}
           onRunNotebookCell={onRunNotebookCell}
+          onCompleteNotebookCell={onCompleteNotebookCell}
+          onFormatNotebookCell={onFormatNotebookCell}
           onGenerateNotebookCode={onGenerateNotebookCode}
           onNotebookCodeGenerationProgress={onNotebookCodeGenerationProgress}
           aiModelOptions={notebookAiModelOptions}

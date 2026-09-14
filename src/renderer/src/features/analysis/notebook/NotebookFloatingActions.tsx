@@ -14,6 +14,7 @@ export type NotebookFloatingActionAnchor = {
 
 const SaveIcon = PhiIcons.action.save
 const StopIcon = PhiIcons.action.stop
+const FormatIcon = PhiIcons.action.format
 
 export default function NotebookFloatingActions({
   hasDocument,
@@ -24,6 +25,8 @@ export default function NotebookFloatingActions({
   notebookFile,
   notebookSessionStatus,
   onSave,
+  onFormat,
+  isFormatting = false,
   onStopNotebookSession
 }: {
   hasDocument: boolean
@@ -34,6 +37,8 @@ export default function NotebookFloatingActions({
   notebookFile?: AnalysisNotebookFile | null
   notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   onSave?: () => void
+  onFormat?: () => void | Promise<void>
+  isFormatting?: boolean
   onStopNotebookSession?: (file: AnalysisNotebookFile) => void | Promise<void>
 }): React.JSX.Element | null {
   const canDisconnectNotebookSession = Boolean(
@@ -76,6 +81,24 @@ export default function NotebookFloatingActions({
         alignItems: 'center'
       }}
     >
+      {hasDocument ? (
+        <Tooltip title={isFormatting ? '正在格式化 notebook' : '格式化 notebook'} placement="left">
+          <span>
+            <Fab
+              data-phi-notebook-floating-action="format"
+              size="small"
+              aria-label="格式化 notebook"
+              disabled={isOpening || isFormatting || !onFormat}
+              onClick={() => {
+                void onFormat?.()
+              }}
+              sx={fabSx}
+            >
+              <FormatIcon fontSize="small" />
+            </Fab>
+          </span>
+        </Tooltip>
+      ) : null}
       {hasDocument ? (
         <Tooltip title={isDirty ? '保存 notebook' : '已保存'} placement="left">
           <span>

@@ -198,6 +198,10 @@ test('clicking a code cell enters edit mode at the clicked source position', () 
   assert.doesNotMatch(codeSource, /data-phi-notebook-code-select-trigger/)
   assert.doesNotMatch(codeSource, /onDoubleClick=/)
   assert.match(
+    cellSource,
+    /onEdit=\{\(selection\) => \{\s*onSelectCell\?\.\(cell\.id\)\s*setInitialEditorSelection\(selection\)\s*setIsEditing\(true\)/
+  )
+  assert.match(
     codeSource,
     /onClick=\{\(event: MouseEvent<HTMLElement>\) => \{\s*if \(editable\) onEdit\(codeSelectionFromClick\(event, source\)\)\s*\}\}/
   )

@@ -37,6 +37,60 @@ test('highlightLine tokenizes scripts with vscode-like semantic groups', () => {
   )
 })
 
+test('highlightLine separates Python receivers from methods and properties', () => {
+  assert.deepEqual(
+    highlightLine('inc.groupby()', 'python').map((token) => [token.kind, token.value]),
+    [
+      ['plain', 'inc'],
+      ['punctuation', '.'],
+      ['function', 'groupby'],
+      ['punctuation', '()']
+    ]
+  )
+
+  assert.deepEqual(
+    highlightLine('inc_line.index', 'python').map((token) => [token.kind, token.value]),
+    [
+      ['plain', 'inc_line'],
+      ['punctuation', '.'],
+      ['property', 'index']
+    ]
+  )
+})
+
+test('highlightLine separates R member access without splitting dotted names', () => {
+  assert.deepEqual(
+    highlightLine('mtcars$mpg', 'r').map((token) => [token.kind, token.value]),
+    [
+      ['plain', 'mtcars'],
+      ['operator', '$'],
+      ['property', 'mpg']
+    ]
+  )
+
+  assert.deepEqual(
+    highlightLine('ggplot2::ggplot(mtcars)', 'r').map((token) => [token.kind, token.value]),
+    [
+      ['plain', 'ggplot2'],
+      ['operator', '::'],
+      ['function', 'ggplot'],
+      ['punctuation', '('],
+      ['plain', 'mtcars'],
+      ['punctuation', ')']
+    ]
+  )
+
+  assert.deepEqual(
+    highlightLine('as.data.frame(mtcars)', 'r').map((token) => [token.kind, token.value]),
+    [
+      ['function', 'as.data.frame'],
+      ['punctuation', '('],
+      ['plain', 'mtcars'],
+      ['punctuation', ')']
+    ]
+  )
+})
+
 test('highlightLine tokenizes data formats with properties and values', () => {
   assert.deepEqual(
     highlightLine('"name": "Phi"', 'json').map((token) => [token.kind, token.value]),

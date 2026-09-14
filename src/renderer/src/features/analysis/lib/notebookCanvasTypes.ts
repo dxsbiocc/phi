@@ -5,7 +5,9 @@ import type {
   AnalysisNotebookCodeGenerationInput,
   AnalysisNotebookCodeGenerationProgress,
   AnalysisNotebookCodeGenerationResult,
+  AnalysisNotebookCompletionResult,
   AnalysisNotebookFile,
+  AnalysisNotebookFormatResult,
   AnalysisNotebookSessionStatus,
   ModelOption
 } from '../../../types'
@@ -55,6 +57,20 @@ export type NotebookCanvasProps = {
     document: NotebookDocument,
     cellId: string
   ) => void
+  onCompleteNotebookCell?: (
+    file: AnalysisNotebookFile,
+    document: NotebookDocument,
+    cellId: string,
+    source: string,
+    cursorPosition: number
+  ) => Promise<AnalysisNotebookCompletionResult>
+  onFormatNotebookCell?: (
+    file: AnalysisNotebookFile,
+    document: NotebookDocument,
+    cellId: string,
+    source: string,
+    language?: string
+  ) => Promise<AnalysisNotebookFormatResult>
   onGenerateNotebookCode?: (
     file: AnalysisNotebookFile,
     document: NotebookDocument,
