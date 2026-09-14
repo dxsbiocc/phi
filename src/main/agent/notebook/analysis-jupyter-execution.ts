@@ -16,6 +16,13 @@ export interface ExecuteNotebookCellInput {
   cell: NotebookCell
 }
 
+export interface IntrospectNotebookVariablesInput {
+  connection: JupyterServerConnection
+  sessionId: string
+  kernelId: string
+  variableNames: string[]
+}
+
 export interface ExecutedNotebookCell {
   cellId: string
   executionCount: number | null
@@ -30,6 +37,8 @@ export interface JupyterKernelExecuteRequest {
   sessionId: string
   kernelId: string
   code: string
+  silent?: boolean
+  storeHistory?: boolean
 }
 
 export interface JupyterKernelExecuteResult {
@@ -40,6 +49,16 @@ export interface JupyterKernelExecuteResult {
 
 export interface JupyterKernelClient {
   executeCode(request: JupyterKernelExecuteRequest): Promise<JupyterKernelExecuteResult>
+}
+
+export interface NotebookVariableIntrospection {
+  name: string
+  exists: boolean
+  datatype?: string
+  shape?: string
+  columns?: Array<{ name: string; type?: string }>
+  preview?: string
+  error?: string
 }
 
 export type RawJupyterKernelMessage = {
@@ -73,6 +92,8 @@ type KernelWebSocketConstructor = new (url: string) => KernelWebSocket
 // longer than a typical request timeout. Only give up if the kernel truly
 // stops responding, not because a cell is legitimately still computing.
 const EXECUTION_TIMEOUT_MS = 30 * 60_000
+const VARIABLE_INTROSPECTION_SENTINEL = '__PHI_NOTEBOOK_VARIABLES__'
+const PYTHON_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message
@@ -204,6 +225,151 @@ export function normalizeJupyterKernelMessages(
   return { executionCount, outputs, status }
 }
 
+function safeVariableNames(variableNames: string[]): string[] {
+  return [...new Set(variableNames.filter((name) => PYTHON_IDENTIFIER_PATTERN.test(name)))]
+}
+
+export function buildNotebookVariableIntrospectionCode(variableNames: string[]): string {
+  const names = safeVariableNames(variableNames)
+  return [
+    'exec(',
+    JSON.stringify(
+      [
+        'import json',
+        '',
+        'def _phi_safe_text(value, limit=1200):',
+        '    try:',
+        '        text = str(value)',
+        '    except Exception as exc:',
+        '        text = f"<repr failed: {type(exc).__name__}: {exc}>"',
+        '    return text if len(text) <= limit else text[:limit - 1] + "…"',
+        '',
+        'def _phi_shape(value):',
+        '    shape = getattr(value, "shape", None)',
+        '    if shape is None:',
+        '        return None',
+        '    try:',
+        '        if isinstance(shape, tuple):',
+        '            return " x ".join(str(part) for part in shape)',
+        '        return _phi_safe_text(shape, 160)',
+        '    except Exception:',
+        '        return None',
+        '',
+        'def _phi_columns(value, limit=30):',
+        '    columns = getattr(value, "columns", None)',
+        '    if columns is None:',
+        '        return None',
+        '    dtypes = getattr(value, "dtypes", None)',
+        '    result = []',
+        '    try:',
+        '        iterable = list(columns)[:limit]',
+        '    except Exception:',
+        '        return None',
+        '    for column in iterable:',
+        '        item = {"name": _phi_safe_text(column, 120)}',
+        '        try:',
+        '            dtype = dtypes[column] if dtypes is not None else None',
+        '            if dtype is not None:',
+        '                item["type"] = _phi_safe_text(dtype, 120)',
+        '        except Exception:',
+        '            pass',
+        '        result.append(item)',
+        '    return result',
+        '',
+        'def _phi_preview(value):',
+        '    try:',
+        '        head = value.head(5) if hasattr(value, "head") else None',
+        '        if head is not None:',
+        '            if hasattr(head, "to_markdown"):',
+        '                return _phi_safe_text(head.to_markdown(index=False), 2000)',
+        '            return _phi_safe_text(head, 2000)',
+        '    except Exception:',
+        '        pass',
+        '    return _phi_safe_text(value, 1200)',
+        '',
+        'def _phi_variable(name):',
+        '    if name not in _phi_ns:',
+        '        return {"name": name, "exists": False}',
+        '    value = _phi_ns[name]',
+        '    item = {',
+        '        "name": name,',
+        '        "exists": True,',
+        '        "datatype": f"{type(value).__module__}.{type(value).__qualname__}",',
+        '        "preview": _phi_preview(value),',
+        '    }',
+        '    shape = _phi_shape(value)',
+        '    if shape:',
+        '        item["shape"] = shape',
+        '    columns = _phi_columns(value)',
+        '    if columns:',
+        '        item["columns"] = columns',
+        '    return item',
+        '',
+        'payload = {"variables": []}',
+        'for _phi_name in _phi_names:',
+        '    try:',
+        '        payload["variables"].append(_phi_variable(_phi_name))',
+        '    except Exception as exc:',
+        '        payload["variables"].append({',
+        '            "name": _phi_name,',
+        '            "exists": True,',
+        '            "error": f"{type(exc).__name__}: {exc}",',
+        '        })',
+        `print("${VARIABLE_INTROSPECTION_SENTINEL}" + json.dumps(payload, ensure_ascii=False))`
+      ].join('\n')
+    ),
+    `, {"__builtins__": __builtins__, "_phi_names": ${JSON.stringify(names)}, "_phi_ns": globals()}, {})`
+  ].join('')
+}
+
+export function parseNotebookVariableIntrospectionResult(
+  result: JupyterKernelExecuteResult
+): NotebookVariableIntrospection[] {
+  if (result.status === 'error') return []
+  const text = result.outputs
+    .filter((output) => output.outputType === 'stream')
+    .map((output) => output.text ?? '')
+    .join('\n')
+  const line = text.split(/\r?\n/).find((item) => item.startsWith(VARIABLE_INTROSPECTION_SENTINEL))
+  if (!line) return []
+  try {
+    const parsed = JSON.parse(line.slice(VARIABLE_INTROSPECTION_SENTINEL.length)) as unknown
+    const record = jsonObject(parsed)
+    const variables = Array.isArray(record?.variables) ? record.variables : []
+    return variables
+      .map((item) => notebookVariableIntrospectionValue(item))
+      .filter((item): item is NotebookVariableIntrospection => Boolean(item))
+  } catch {
+    return []
+  }
+}
+
+function notebookVariableIntrospectionValue(value: unknown): NotebookVariableIntrospection | null {
+  const record = jsonObject(value)
+  const name = stringValue(record?.name)
+  if (!record || !name) return null
+  const columns = Array.isArray(record.columns)
+    ? record.columns
+        .map((column) => {
+          const columnRecord = jsonObject(column)
+          const columnName = stringValue(columnRecord?.name)
+          if (!columnRecord || !columnName) return null
+          const columnType = stringValue(columnRecord.type)
+          return { name: columnName, ...(columnType ? { type: columnType } : {}) }
+        })
+        .filter((column): column is { name: string; type?: string } => Boolean(column))
+    : undefined
+  return {
+    name,
+    exists: record.exists === true,
+    datatype: stringValue(record.datatype),
+    shape: stringValue(record.shape),
+    columns,
+    preview: stringValue(record.preview),
+    error: stringValue(record.error)
+  }
+}
+
 function kernelChannelsUrl(
   connection: JupyterServerConnection,
   kernelId: string,
@@ -263,8 +429,8 @@ export class WebSocketJupyterKernelClient implements JupyterKernelClient {
             metadata: {},
             content: {
               code: request.code,
-              silent: false,
-              store_history: true,
+              silent: request.silent ?? false,
+              store_history: request.storeHistory ?? true,
               user_expressions: {},
               allow_stdin: false,
               stop_on_error: true
@@ -336,5 +502,20 @@ export class AnalysisNotebookExecutor {
       startedAt,
       completedAt: this.now().toISOString()
     }
+  }
+
+  async introspectVariables(
+    input: IntrospectNotebookVariablesInput
+  ): Promise<NotebookVariableIntrospection[]> {
+    const variableNames = safeVariableNames(input.variableNames)
+    if (variableNames.length === 0) return []
+    const result = await this.client.executeCode({
+      connection: input.connection,
+      sessionId: input.sessionId,
+      kernelId: input.kernelId,
+      code: buildNotebookVariableIntrospectionCode(variableNames),
+      storeHistory: false
+    })
+    return parseNotebookVariableIntrospectionResult(result)
   }
 }

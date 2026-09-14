@@ -47,6 +47,27 @@ test('notebook AI generation parser accepts ipynb-style source arrays', () => {
   ])
 })
 
+test('notebook AI generation parser accepts fenced NotebookCellsCompletion JSON', () => {
+  const cells = parseGeneratedNotebookCells(
+    [
+      '```json',
+      JSON.stringify({
+        cells: [
+          { language: 'markdown', code: '## Plan' },
+          { language: 'python', code: 'result = df.describe()' }
+        ]
+      }),
+      '```'
+    ].join('\n'),
+    'python'
+  )
+
+  assert.deepEqual(cells, [
+    { cellType: 'markdown', source: '## Plan' },
+    { cellType: 'code', source: 'result = df.describe()', language: 'python' }
+  ])
+})
+
 test('notebook AI generation parser accepts marimo notebook completion data parts', () => {
   const cells = parseGeneratedNotebookCompletion(
     {
@@ -140,6 +161,26 @@ test('notebook AI generation parser rejects schema-planning prose instead of ins
   )
 
   assert.deepEqual(cells, [])
+})
+
+test('notebook AI generation parser rejects malformed NotebookCellsCompletion JSON instead of inserting it as code', () => {
+  const cells = parseGeneratedNotebookCells(
+    '{"cells":[{"language":"markdown","code":"# Plan"',
+    'python'
+  )
+
+  assert.deepEqual(cells, [])
+})
+
+test('notebook AI generation parser rejects truncated JSON fences instead of inserting them as code', () => {
+  assert.deepEqual(parseGeneratedNotebookCells('```json', 'python'), [])
+  assert.deepEqual(
+    parseGeneratedNotebookCells(
+      '```json\n{"cells":[{"language":"markdown","code":"# Plan"',
+      'python'
+    ),
+    []
+  )
 })
 
 test('notebook AI generation prompt includes selected references and notebook context', () => {

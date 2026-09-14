@@ -24,6 +24,7 @@ import { PhiIcons } from '../../../icons'
 import type { SyntaxLanguage } from '../../../lib/syntaxHighlight'
 import { hasLiveNotebookSession, isNotebookSessionRunnable } from '../lib/notebookSession'
 import { notebookAiEmptyGenerationMessage, notebookAiPromptError } from '../lib/notebookAiErrors'
+import { notebookAiGeneratedCellsFromResult } from '../lib/notebookAiGenerationResult'
 import { useNotebookAutoConnect } from '../lib/useNotebookAutoConnect'
 import {
   clearNotebookCellOutput,
@@ -531,18 +532,7 @@ export default function NotebookCanvas({
         afterCellId: draft.afterCellId,
         references: draft.references
       })
-      const generatedCells =
-        result.cells && result.cells.length > 0
-          ? result.cells
-          : result.source.trim()
-            ? [
-                {
-                  cellType: 'code' as const,
-                  source: result.source.trimEnd(),
-                  language: result.language
-                }
-              ]
-            : []
+      const generatedCells = notebookAiGeneratedCellsFromResult(result, draft.language)
       if (generatedCells.length === 0) {
         throw new Error(notebookAiEmptyGenerationMessage)
       }

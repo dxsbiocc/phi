@@ -3,7 +3,9 @@ import test from 'node:test'
 import { parseNotebook } from '../src/shared/notebookDocument'
 import {
   AnalysisNotebookExecutor,
+  buildNotebookVariableIntrospectionCode,
   normalizeJupyterKernelMessages,
+  parseNotebookVariableIntrospectionResult,
   type JupyterKernelClient,
   type JupyterKernelExecuteRequest,
   type JupyterKernelExecuteResult
@@ -144,4 +146,83 @@ test('AnalysisNotebookExecutor rejects non-code cells', async () => {
     }),
     /只能执行 code cell/
   )
+})
+
+test('buildNotebookVariableIntrospectionCode filters invalid variable names', () => {
+  const code = buildNotebookVariableIntrospectionCode(['df', '__bad_name', 'bad-name', 'x.y'])
+
+  assert.match(code, /"df"/)
+  assert.match(code, /"__bad_name"/)
+  assert.doesNotMatch(code, /bad-name/)
+  assert.doesNotMatch(code, /x\.y/)
+})
+
+test('parseNotebookVariableIntrospectionResult reads sentinel JSON from stdout', () => {
+  const result = parseNotebookVariableIntrospectionResult({
+    executionCount: null,
+    status: 'ok',
+    outputs: [
+      {
+        outputType: 'stream',
+        data: {},
+        metadata: {},
+        name: 'stdout',
+        text: 'noise\n__PHI_NOTEBOOK_VARIABLES__{"variables":[{"name":"df","exists":true,"datatype":"pandas.core.frame.DataFrame","shape":"2 x 3","columns":[{"name":"a","type":"int64"}],"preview":"| a |\\n| 1 |"}]}\n',
+        extra: {}
+      }
+    ]
+  })
+
+  assert.deepEqual(result, [
+    {
+      name: 'df',
+      exists: true,
+      datatype: 'pandas.core.frame.DataFrame',
+      shape: '2 x 3',
+      columns: [{ name: 'a', type: 'int64' }],
+      preview: '| a |\n| 1 |',
+      error: undefined
+    }
+  ])
+})
+
+test('AnalysisNotebookExecutor introspects variables through the kernel without storing history', async () => {
+  const client = new FakeKernelClient()
+  client.result = {
+    executionCount: null,
+    status: 'ok',
+    outputs: [
+      {
+        outputType: 'stream',
+        data: {},
+        metadata: {},
+        name: 'stdout',
+        text: '__PHI_NOTEBOOK_VARIABLES__{"variables":[{"name":"threshold","exists":true,"datatype":"builtins.float","preview":"0.05"}]}\n',
+        extra: {}
+      }
+    ]
+  }
+  const executor = new AnalysisNotebookExecutor({ client })
+
+  const result = await executor.introspectVariables({
+    connection: { url: 'http://127.0.0.1:8888/lab', token: 'secret' },
+    sessionId: 'session-1',
+    kernelId: 'kernel-1',
+    variableNames: ['threshold']
+  })
+
+  assert.equal(client.requests.length, 1)
+  assert.equal(client.requests[0].storeHistory, false)
+  assert.match(client.requests[0].code, /threshold/)
+  assert.deepEqual(result, [
+    {
+      name: 'threshold',
+      exists: true,
+      datatype: 'builtins.float',
+      preview: '0.05',
+      shape: undefined,
+      columns: undefined,
+      error: undefined
+    }
+  ])
 })

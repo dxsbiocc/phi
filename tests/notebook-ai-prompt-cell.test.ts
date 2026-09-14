@@ -87,12 +87,18 @@ test('the prompt cell keeps model status out of the lower text area', () => {
   })
 
   assert.doesNotMatch(markup, /data-phi-notebook-ai-generation-status="true"/)
-  assert.doesNotMatch(markup, /data-phi-notebook-ai-generation-spinner="true"/)
   assert.doesNotMatch(markup, /正在调用 Agent 生成代码/)
   assert.doesNotMatch(markup, /将使用此模型生成代码/)
   assert.doesNotMatch(markup, /思考 high/)
   assert.match(markup, /data-phi-notebook-ai-model-selector="true"/)
   assert.match(markup, /GPT Test/)
+})
+
+test('the prompt cell shows an inline spinner while generation is in flight', () => {
+  const markup = renderPromptCell({ prompt: '写一个贪心算法', isGenerating: true })
+
+  assert.match(markup, /data-phi-notebook-ai-generation-spinner="true"/)
+  assert.match(markup, /aria-label="正在生成代码"/)
 })
 
 test('the prompt cell exposes a model selection button', () => {

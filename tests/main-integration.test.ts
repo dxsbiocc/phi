@@ -472,6 +472,38 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         completedAt: '2026-09-09T00:00:01.000Z'
       }
     }
+
+    async introspectVariables(input: { kernelId: string; variableNames: string[] }): Promise<
+      Array<{
+        name: string
+        exists: boolean
+        datatype?: string
+        shape?: string
+        columns?: Array<{ name: string; type?: string }>
+        preview?: string
+      }>
+    > {
+      notebookExecutionCalls.push({
+        cellId: '__introspection__',
+        source: input.variableNames.join(','),
+        kernelId: input.kernelId
+      })
+      return input.variableNames.map((name) =>
+        name === 'df'
+          ? {
+              name,
+              exists: true,
+              datatype: 'pandas.core.frame.DataFrame',
+              shape: '2 x 3',
+              columns: [
+                { name: 'Year', type: 'object' },
+                { name: 'Income', type: 'float64' }
+              ],
+              preview: '| Year | Income |\\n| 19th | 1208.7 |'
+            }
+          : { name, exists: false }
+      )
+    }
   }
   const app = Object.assign(new EventEmitter(), {
     setName: noop,
@@ -2274,6 +2306,85 @@ test('main IPC: notebook AI generation uses assistant event text when session hi
   assert.doesNotMatch(app.sessions[0].promptTexts[0], /"cellType":"code"/)
   assert.match(app.sessions[0].promptTexts[0], /NotebookCellsCompletion schema/)
   assert.match(app.sessions[0].promptTexts[0], /"language":"python","code":"raw code only"/)
+})
+
+test('main IPC: notebook AI generation enriches @ variables from the live kernel', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'agent_end',
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  cells: [{ language: 'python', code: 'df.describe()' }]
+                })
+              }
+            ]
+          }
+        ]
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: [
+      {
+        id: 'load',
+        cell_type: 'code',
+        metadata: {},
+        execution_count: 1,
+        outputs: [],
+        source: 'df = pd.read_json("use_data.json")'
+      }
+    ]
+  })
+
+  const result = (await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc.ipynb',
+    document,
+    {
+      prompt: '@df 总结数据',
+      language: 'python',
+      afterCellId: 'load',
+      references: [
+        {
+          id: 'dataframe:df',
+          kind: 'dataframe',
+          name: 'df',
+          detail: 'df = pd.read_json("use_data.json")',
+          cellId: 'load',
+          preview: { source: 'df = pd.read_json("use_data.json")' }
+        }
+      ]
+    }
+  )) as { cells: Array<{ cellType: string; source: string }> }
+
+  assert.deepEqual(result.cells, [
+    { cellType: 'code', source: 'df.describe()', language: 'python' }
+  ])
+  assert.ok(
+    app.notebookExecutionCalls.some(
+      (call) =>
+        call.cellId === '__introspection__' && call.source === 'df' && call.kernelId === 'kernel-1'
+    )
+  )
+  const prompt = app.sessions[0].promptTexts[0]
+  assert.match(prompt, /@dataframe:\/\/df/)
+  assert.match(prompt, /pandas\.core\.frame\.DataFrame/)
+  assert.match(prompt, /2 rows x 3 columns/)
+  assert.match(prompt, /Year \(object\), Income \(float64\)/)
+  assert.match(prompt, /\| Year \| Income \|/)
 })
 
 test('main IPC: notebook AI generation reads batched assistant messages from runtime events', async () => {

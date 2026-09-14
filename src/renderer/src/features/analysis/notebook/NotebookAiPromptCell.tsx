@@ -5,6 +5,7 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   IconButton,
   ListItemButton,
   ListItemIcon,
@@ -694,7 +695,7 @@ export default function NotebookAiPromptCell({
             <span>
               <IconButton
                 size="small"
-                aria-label="提交 AI 生成"
+                aria-label={isGenerating ? '正在生成代码' : '提交 AI 生成'}
                 disabled={!canSubmit}
                 onClick={onSubmit}
                 sx={{
@@ -704,7 +705,17 @@ export default function NotebookAiPromptCell({
                     canSubmit ? notebookAccentColor(theme, 'ai') : theme.palette.text.disabled
                 }}
               >
-                <SendIcon sx={{ fontSize: 18 }} />
+                {isGenerating ? (
+                  <CircularProgress
+                    size={18}
+                    thickness={4}
+                    color="inherit"
+                    data-phi-notebook-ai-generation-spinner="true"
+                    aria-label="正在生成代码"
+                  />
+                ) : (
+                  <SendIcon sx={{ fontSize: 18 }} />
+                )}
               </IconButton>
             </span>
           </Tooltip>

@@ -106,7 +106,10 @@ import {
 } from './agent/notebook/analysis-notebook-files'
 import { detectAnalysisKernels } from './agent/notebook/analysis-kernels'
 import { JupyterServerRegistry } from './agent/notebook/analysis-jupyter-server'
-import { AnalysisNotebookExecutor } from './agent/notebook/analysis-jupyter-execution'
+import {
+  AnalysisNotebookExecutor,
+  type NotebookVariableIntrospection
+} from './agent/notebook/analysis-jupyter-execution'
 import { AnalysisNotebookSessionRegistry } from './agent/notebook/analysis-jupyter-sessions'
 import {
   buildNotebookCodeGenerationPrompt,
@@ -1505,6 +1508,89 @@ async function generatePersonaMarkdown(description: string): Promise<string> {
   }
 }
 
+const NOTEBOOK_AI_VARIABLE_REFERENCE_PATTERN =
+  /@(?:(?:dataframe|variable):\/\/)?([A-Za-z_][A-Za-z0-9_]*)/g
+
+function notebookAiVariableNamesFromInput(
+  prompt: string,
+  references: AnalysisNotebookContextReference[] | undefined
+): string[] {
+  const names = new Set<string>()
+  for (const reference of references ?? []) {
+    if (reference.kind === 'dataframe' || reference.kind === 'variable') {
+      names.add(reference.name)
+    }
+  }
+  for (const match of prompt.matchAll(NOTEBOOK_AI_VARIABLE_REFERENCE_PATTERN)) {
+    names.add(match[1])
+  }
+  return [...names]
+}
+
+function kernelShapeLabel(shape: string | undefined): string | undefined {
+  if (!shape) return undefined
+  const match = shape.match(/^\s*(\d+)\s*x\s*(\d+)\s*$/)
+  return match ? `${match[1]} rows x ${match[2]} columns` : shape
+}
+
+function mergeKernelIntrospectionReference(
+  references: AnalysisNotebookContextReference[],
+  summary: NotebookVariableIntrospection
+): AnalysisNotebookContextReference[] {
+  if (!summary.exists || !summary.name) return references
+  const index = references.findIndex(
+    (reference) =>
+      reference.name === summary.name &&
+      (reference.kind === 'dataframe' || reference.kind === 'variable')
+  )
+  const existing = index >= 0 ? references[index] : null
+  const kind: AnalysisNotebookContextReference['kind'] =
+    existing?.kind ?? (summary.columns?.length || summary.shape ? 'dataframe' : 'variable')
+  const next: AnalysisNotebookContextReference = {
+    id: existing?.id ?? `${kind}:${summary.name}`,
+    kind,
+    name: summary.name,
+    detail: summary.datatype ?? existing?.detail ?? 'live kernel',
+    cellId: existing?.cellId,
+    preview: {
+      ...existing?.preview,
+      source: existing?.preview?.source ?? 'live kernel',
+      shape: kernelShapeLabel(summary.shape) ?? existing?.preview?.shape,
+      columns: summary.columns ?? existing?.preview?.columns,
+      value: summary.preview ?? existing?.preview?.value
+    }
+  }
+  if (index < 0) return [...references, next]
+  return references.map((reference, currentIndex) => (currentIndex === index ? next : reference))
+}
+
+async function notebookAiReferencesWithKernelIntrospection(input: {
+  projectCwd: string
+  notebookPath: string
+  prompt: string
+  language: string
+  references?: AnalysisNotebookContextReference[]
+}): Promise<AnalysisNotebookContextReference[] | undefined> {
+  const references = [...(input.references ?? [])]
+  if (!input.language.toLocaleLowerCase().startsWith('python')) return references
+  const variableNames = notebookAiVariableNamesFromInput(input.prompt, references)
+  if (variableNames.length === 0) return references
+  const target = notebookSessionRegistry.executionTarget(input.projectCwd, input.notebookPath)
+  if (!target) return references
+
+  try {
+    const summaries = await notebookExecutor.introspectVariables({
+      connection: target.connection,
+      sessionId: target.sessionId,
+      kernelId: target.kernelId,
+      variableNames
+    })
+    return summaries.reduce(mergeKernelIntrospectionReference, references)
+  } catch {
+    return references
+  }
+}
+
 async function generateAnalysisNotebookCode(
   cwd: string,
   notebookPath: string,
@@ -1535,6 +1621,13 @@ async function generateAnalysisNotebookCode(
     input.afterCellId
   )
   const language = input.language || 'python'
+  const references = await notebookAiReferencesWithKernelIntrospection({
+    projectCwd: project.workingDirectory,
+    notebookPath: file.path,
+    prompt,
+    language,
+    references: input.references
+  })
   let eventAssistantText = ''
   let eventErrorMessage = ''
   const eventCompletionCandidates: unknown[] = []
@@ -1560,7 +1653,7 @@ async function generateAnalysisNotebookCode(
         language,
         notebookPath: file.relativePath,
         insertionIndex,
-        references: input.references,
+        references,
         userPrompt: prompt,
         nearbyContext,
         otherCellContext
