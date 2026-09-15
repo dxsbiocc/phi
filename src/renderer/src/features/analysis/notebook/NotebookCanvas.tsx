@@ -587,25 +587,44 @@ export default function NotebookCanvas({
       document ? updateNotebookCell(document, cellId, { source }) : document
     )
   }
-  const onInsertCell = async (
-    cellId: string,
-    placement: CellPlacement,
-    cellType: Extract<NotebookCellType, 'code' | 'markdown'> = 'code'
-  ): Promise<void> => {
-    if (!draftDocument) return
+  const onInsertCell = useCallback(
+    async (
+      cellId: string,
+      placement: CellPlacement,
+      cellType: Extract<NotebookCellType, 'code' | 'markdown'> = 'code'
+    ): Promise<void> => {
+      if (!draftDocument) return
 
-    const index = draftDocument.cells.findIndex((cell) => cell.id === cellId)
-    const nextDocument = insertNotebookCell(
-      draftDocument,
-      index + (placement === 'after' ? 1 : 0),
-      {
-        cellType,
-        source: ''
-      }
-    )
-    setDraftDocument(nextDocument)
-    await saveNotebookDocument(nextDocument)
-  }
+      const index = draftDocument.cells.findIndex((cell) => cell.id === cellId)
+      const nextDocument = insertNotebookCell(
+        draftDocument,
+        index + (placement === 'after' ? 1 : 0),
+        {
+          cellType,
+          source: ''
+        }
+      )
+      setDraftDocument(nextDocument)
+      await saveNotebookDocument(nextDocument)
+    },
+    [draftDocument, saveNotebookDocument]
+  )
+  // Stable per-direction wrappers so NotebookCell (memoized) doesn't see a
+  // fresh function identity on every render — onInsertCell itself reads
+  // draftDocument directly (not via a setState updater), so a stale
+  // reference here could insert against an outdated document snapshot;
+  // keeping both in lockstep via useCallback avoids that without needing
+  // NotebookCell to treat them as always-safe-to-ignore.
+  const onInsertCellBefore = useCallback(
+    (cellId: string, cellType?: Extract<NotebookCellType, 'code' | 'markdown'>) =>
+      onInsertCell(cellId, 'before', cellType),
+    [onInsertCell]
+  )
+  const onInsertCellAfter = useCallback(
+    (cellId: string, cellType?: Extract<NotebookCellType, 'code' | 'markdown'>) =>
+      onInsertCell(cellId, 'after', cellType),
+    [onInsertCell]
+  )
   const openAiPrompt = useCallback(
     (options: { mode?: 'insert' | 'refactor'; targetCellId?: string | null } = {}): void => {
       const mode = options.mode ?? 'insert'
@@ -880,18 +899,25 @@ export default function NotebookCanvas({
       return moveNotebookCell(document, sourceCellId, adjustedInsertionIndex)
     })
   }
-  const onMoveAiPrompt = (targetCellId: string, placement: CellPlacement): void => {
-    const targetIndex = cells.findIndex((cell) => cell.id === targetCellId)
-    if (targetIndex < 0) return
-    const afterCellId =
-      placement === 'after' ? targetCellId : targetIndex > 0 ? cells[targetIndex - 1].id : null
+  // useCallback below: this reads `cells` directly (not via a setState
+  // updater), and is handed to the memoized NotebookCell as onMoveAiPrompt
+  // — an identity that changes only when it actually needs to keeps that
+  // memoization meaningful without risking a stale `cells` snapshot.
+  const onMoveAiPrompt = useCallback(
+    (targetCellId: string, placement: CellPlacement): void => {
+      const targetIndex = cells.findIndex((cell) => cell.id === targetCellId)
+      if (targetIndex < 0) return
+      const afterCellId =
+        placement === 'after' ? targetCellId : targetIndex > 0 ? cells[targetIndex - 1].id : null
 
-    setAiPromptDraft((current) => {
-      if (!current) return current
-      if (current.mode === 'refactor') return current
-      return current.afterCellId === afterCellId ? current : { ...current, afterCellId }
-    })
-  }
+      setAiPromptDraft((current) => {
+        if (!current) return current
+        if (current.mode === 'refactor') return current
+        return current.afterCellId === afterCellId ? current : { ...current, afterCellId }
+      })
+    },
+    [cells]
+  )
   const onDragAiPrompt = (event: DragEvent<HTMLButtonElement>): void => {
     event.dataTransfer.setData('application/x-phi-notebook-ai-prompt', 'true')
     event.dataTransfer.effectAllowed = 'move'
@@ -901,16 +927,26 @@ export default function NotebookCanvas({
       onSaveNotebook?.(notebookFile, draftDocument)
     }
   }
-  const onRunCell = (cellId: string): void => {
-    if (notebookFile && draftDocument) {
-      onRunNotebookCell?.(notebookFile, draftDocument, cellId)
-    }
-  }
-  const onStopCell = (cellId: string): void => {
-    if (notebookFile) {
-      onStopNotebookCell?.(notebookFile, cellId)
-    }
-  }
+  // Same rationale as onInsertCell/onMoveAiPrompt above: onRunCell/onStopCell
+  // read notebookFile/draftDocument directly, so NotebookCell needs their
+  // real identity (not a blanket "ignore all functions") to avoid running a
+  // stale document snapshot from a bailed-out memoized cell.
+  const onRunCell = useCallback(
+    (cellId: string): void => {
+      if (notebookFile && draftDocument) {
+        onRunNotebookCell?.(notebookFile, draftDocument, cellId)
+      }
+    },
+    [draftDocument, notebookFile, onRunNotebookCell]
+  )
+  const onStopCell = useCallback(
+    (cellId: string): void => {
+      if (notebookFile) {
+        onStopNotebookCell?.(notebookFile, cellId)
+      }
+    },
+    [notebookFile, onStopNotebookCell]
+  )
   const onKernelChange = async (kernelName: string): Promise<void> => {
     const kernel = kernelDiagnostics?.kernels.find((candidate) => candidate.name === kernelName)
     if (!kernel || !draftDocument || !notebookFile) return
@@ -1089,16 +1125,8 @@ export default function NotebookCanvas({
                           : onCompleteCellSource
                       }
                       onFormatSource={isAiPreviewCell ? undefined : onFormatCellSource}
-                      onInsertBefore={
-                        isAiPreviewCell
-                          ? undefined
-                          : (cellId, cellType) => onInsertCell(cellId, 'before', cellType)
-                      }
-                      onInsertAfter={
-                        isAiPreviewCell
-                          ? undefined
-                          : (cellId, cellType) => onInsertCell(cellId, 'after', cellType)
-                      }
+                      onInsertBefore={isAiPreviewCell ? undefined : onInsertCellBefore}
+                      onInsertAfter={isAiPreviewCell ? undefined : onInsertCellAfter}
                       onClearOutputs={isAiPreviewCell ? undefined : onClearCellOutputs}
                       onDeleteCell={isAiPreviewCell ? undefined : onDeleteCell}
                       onConvertCell={isAiPreviewCell ? undefined : onConvertCell}

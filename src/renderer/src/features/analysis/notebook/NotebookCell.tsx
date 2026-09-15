@@ -1,4 +1,11 @@
-import { useEffect, useState, type DragEvent, type MouseEvent, type PointerEvent } from 'react'
+import {
+  memo,
+  useEffect,
+  useState,
+  type DragEvent,
+  type MouseEvent,
+  type PointerEvent
+} from 'react'
 import {
   Box,
   Divider,
@@ -51,29 +58,7 @@ const DeleteIcon = PhiIcons.action.delete
 const FormatIcon = PhiIcons.action.format
 const MoreIcon = PhiIcons.action.more
 
-export default function NotebookCell({
-  cell,
-  cellNumber,
-  editable = false,
-  selected = false,
-  onSourceChange,
-  onCompleteSource,
-  onFormatSource,
-  onInsertBefore,
-  onInsertAfter,
-  onClearOutputs,
-  onDeleteCell,
-  onConvertCell,
-  onMoveCell,
-  onMoveAiPrompt,
-  onSelectCell,
-  onRunCell,
-  onStopCell,
-  canRunCells = false,
-  notebookPath,
-  agentHighlighted = false,
-  provisional = false
-}: {
+type NotebookCellProps = {
   cell: CanvasCell
   cellNumber?: number
   editable?: boolean
@@ -109,7 +94,65 @@ export default function NotebookCell({
   onStopCell?: (cellId: string) => void
   canRunCells?: boolean
   provisional?: boolean
-}): React.JSX.Element {
+}
+
+// NotebookCanvas passes several callbacks that are only conditionally
+// undefined based on `isAiPreviewCell`/`editable`/`canRunCells` — signals
+// already covered by the `provisional`/`editable`/`canRunCells` props below
+// — so their identity can be ignored entirely; whichever closure is current
+// only ever reads its args or writes via a setState updater, never stale
+// captured state. `onInsertBefore`/`onInsertAfter`/`onRunCell`/`onStopCell`/
+// `onMoveAiPrompt`/`onFormatSource` are the exception: they (or what they
+// wrap) read notebook document/cell-list state directly from a closure, so a
+// stale reference from a bailed-out render could act on outdated data —
+// NotebookCanvas keeps those specific ones behind useCallback so comparing
+// them by reference is both correct and still an effective memo boundary.
+// `onCompleteSource` only toggles defined/undefined based on kernel
+// availability (invisible elsewhere in props), so it's compared by
+// presence rather than identity.
+function notebookCellPropsEqual(prev: NotebookCellProps, next: NotebookCellProps): boolean {
+  return (
+    prev.cell === next.cell &&
+    prev.cellNumber === next.cellNumber &&
+    prev.editable === next.editable &&
+    prev.selected === next.selected &&
+    prev.agentHighlighted === next.agentHighlighted &&
+    prev.provisional === next.provisional &&
+    prev.canRunCells === next.canRunCells &&
+    prev.notebookPath === next.notebookPath &&
+    Boolean(prev.onCompleteSource) === Boolean(next.onCompleteSource) &&
+    prev.onFormatSource === next.onFormatSource &&
+    prev.onInsertBefore === next.onInsertBefore &&
+    prev.onInsertAfter === next.onInsertAfter &&
+    prev.onRunCell === next.onRunCell &&
+    prev.onStopCell === next.onStopCell &&
+    prev.onMoveAiPrompt === next.onMoveAiPrompt
+  )
+}
+
+function NotebookCellImpl({
+  cell,
+  cellNumber,
+  editable = false,
+  selected = false,
+  onSourceChange,
+  onCompleteSource,
+  onFormatSource,
+  onInsertBefore,
+  onInsertAfter,
+  onClearOutputs,
+  onDeleteCell,
+  onConvertCell,
+  onMoveCell,
+  onMoveAiPrompt,
+  onSelectCell,
+  onRunCell,
+  onStopCell,
+  canRunCells = false,
+  notebookPath,
+  agentHighlighted = false,
+  provisional = false
+}: NotebookCellProps): React.JSX.Element {
   const isMarkdown = cell.type === 'markdown'
   const [isEditing, setIsEditing] = useState(false)
   const [initialEditorSelection, setInitialEditorSelection] = useState<number | undefined>()
@@ -866,3 +909,7 @@ export default function NotebookCell({
     </Box>
   )
 }
+
+const NotebookCell = memo(NotebookCellImpl, notebookCellPropsEqual)
+
+export default NotebookCell
