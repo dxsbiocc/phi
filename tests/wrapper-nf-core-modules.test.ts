@@ -13,10 +13,12 @@ import type { WrapperCatalogEntry } from '../src/main/agent/wrappers/catalog'
 
 /**
  * Plan-creation coverage for the standalone wrappers around individual
- * nf-core/rnaseq modules (fastqc/trimgalore/star-align/salmon-quant/
- * multiqc — see fixtures/nf-core-rnaseq-fastqc/wrapper.yaml's doc comment
- * for why these exist alongside, not composed into, the full pipeline
- * wrapper). Exercises `plans.ts` against each wrapper's real `wrapper.yaml`
+ * nf-core/modules modules (fastqc/trimgalore/star-align/salmon-quant/
+ * multiqc — see resources/wrappers/fastqc/wrapper.yaml's
+ * doc comment for why these exist alongside, not composed into, the full
+ * nf-core/rnaseq pipeline wrapper, and why they're namespaced
+ * `nf-core/modules/*` rather than `nf-core/rnaseq/*`). Exercises `plans.ts`
+ * against each wrapper's real `wrapper.yaml`
  * — catches manifest-authoring mistakes a synthetic test manifest would
  * never surface. Actual pipeline *execution* (real Nextflow/Docker) is out
  * of scope for an automated test here — all five were verified manually
@@ -56,7 +58,7 @@ function writeReferenceFiles(projectDir: string): void {
 
 test('createWrapperRunPlan resolves a valid local plan for the standalone FastQC wrapper', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = moduleWrapper(agentDir, 'nf-core/rnaseq/fastqc')
+    const wrapper = moduleWrapper(agentDir, 'nf-core/modules/fastqc')
     writeFastqPair(projectDir, 'S1')
 
     const plan = createWrapperRunPlan({
@@ -78,7 +80,7 @@ test('createWrapperRunPlan resolves a valid local plan for the standalone FastQC
 
 test('createWrapperRunPlan resolves a valid local plan for the standalone Trim Galore wrapper', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = moduleWrapper(agentDir, 'nf-core/rnaseq/trimgalore')
+    const wrapper = moduleWrapper(agentDir, 'nf-core/modules/trimgalore')
     writeFastqPair(projectDir, 'S1')
 
     const plan = createWrapperRunPlan({
@@ -96,7 +98,7 @@ test('createWrapperRunPlan resolves a valid local plan for the standalone Trim G
 
 test('createWrapperRunPlan resolves a valid local plan for the standalone STAR align wrapper', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = moduleWrapper(agentDir, 'nf-core/rnaseq/star-align')
+    const wrapper = moduleWrapper(agentDir, 'nf-core/modules/star-align')
     writeFastqPair(projectDir, 'S1')
     writeReferenceFiles(projectDir)
 
@@ -123,7 +125,7 @@ test('createWrapperRunPlan resolves a valid local plan for the standalone STAR a
 
 test('createWrapperRunPlan resolves a valid local plan for the standalone Salmon quant wrapper', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = moduleWrapper(agentDir, 'nf-core/rnaseq/salmon-quant')
+    const wrapper = moduleWrapper(agentDir, 'nf-core/modules/salmon-quant')
     writeFastqPair(projectDir, 'S1')
     writeReferenceFiles(projectDir)
 
@@ -147,7 +149,7 @@ test('createWrapperRunPlan resolves a valid local plan for the standalone Salmon
 
 test('createWrapperRunPlan resolves a valid local plan for the standalone MultiQC wrapper', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = moduleWrapper(agentDir, 'nf-core/rnaseq/multiqc')
+    const wrapper = moduleWrapper(agentDir, 'nf-core/modules/multiqc')
     mkdirSync(join(projectDir, 'reports'), { recursive: true })
     writeFileSync(join(projectDir, 'reports', 'sample1_fastqc.zip'), 'zip')
 
@@ -166,7 +168,7 @@ test('createWrapperRunPlan resolves a valid local plan for the standalone MultiQ
 
 test('createWrapperRunPlan fails validation for the STAR align wrapper when the reference genome is missing', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = moduleWrapper(agentDir, 'nf-core/rnaseq/star-align')
+    const wrapper = moduleWrapper(agentDir, 'nf-core/modules/star-align')
     writeFastqPair(projectDir, 'S1')
 
     const plan = createWrapperRunPlan({

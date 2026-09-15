@@ -1,0 +1,131 @@
+# Standalone wrapper chaining modules from nf-core/modules — transcript
+# extraction (gffread), Salmon index, Salmon quantification. Salmon is
+# widely used for RNA-seq quantification but isn't an RNA-seq-exclusive
+# tool or namespace; see ../fastqc/wrapper.yaml's doc
+# comment for why this is namespaced `nf-core/modules/*`, not
+# `nf-core/rnaseq/*`.
+#
+# Why this exists alongside the full `nf-core/rnaseq/rnaseq` wrapper: the
+# product docs (phi-wrapper-product-prd.md Non-Goals) explicitly rule out
+# "arbitrary wrapper composition" — Phi has no mechanism for one wrapper to
+# declare/invoke another, and building one is out of scope (Phase 3+
+# Future Extensions). Like the star-align wrapper in this namespace, this
+# one chains multiple real modules itself (GFFREAD + SALMON_INDEX +
+# SALMON_QUANT) since quantification needs a transcript-level Salmon index
+# built from the genome fasta/gtf, and there's no separate wrapper to
+# depend on for that — see workflows/salmon_quant.nf's own doc comment.
+# All modules vendored
+# unmodified.
+phiWrapperVersion: 1
+id: nf-core/modules/salmon-quant
+shortId: salmon-quant
+name: Salmon quantification (nf-core module)
+version: 1.10.3
+summary: Quantify transcript/gene expression from FASTQ reads with Salmon (quasi-mapping).
+
+runtime:
+  minVersion: 1.0.0
+  maxVersion: 1.x
+
+source:
+  # See fastqc/wrapper.yaml's source comment — same
+  # shared-library provenance. Vendored at the commits nf-core/rnaseq
+  # 3.26.0's modules.json pinned:
+  # gffread c9ad4d691aa339e478a77847e3ef854ccd21778b,
+  # gunzip 96c57dfd98a0641886a67bd449fe33ee2ec0e374,
+  # salmon/index 196cde9b19d49324c5cf10977959f5db856ebbdd,
+  # salmon/quant 9ebc300e05af07c770b86ff089581a2d41346c8b.
+  repository: https://github.com/nf-core/modules
+  ref: master
+
+verification:
+  status: unverified
+  registry: none
+
+registryStatus: active
+resourceClass: standard
+
+engine:
+  type: nextflow
+  entrypoint: main.nf
+  profiles:
+    - id: local
+      executor: local
+      containerRuntime: docker
+      nextflowProfile: docker
+    - id: slurm-controller
+      executor: remote
+      scheduler: slurm
+      controller: sbatch
+      containerRuntime: singularity
+      nextflowProfile: singularity
+
+inputs:
+  - id: reads
+    type: fastq_reads
+    layout: paired_end
+    required: true
+    samplesheet:
+      columns:
+        - sample
+        - fastq_1
+        - fastq_2
+  - id: fasta
+    type: reference_fasta
+    required: true
+  - id: gtf
+    type: reference_gtf
+    required: true
+
+parameters:
+  schema:
+    type: object
+    properties: {}
+
+outputs:
+  - id: salmon_index
+    label: Salmon transcript index
+    type: directory
+    path: salmon_index
+  - id: quant
+    label: Per-sample quantification results
+    type: directory
+    path: salmon_quant
+    primary: true
+
+resources:
+  defaults:
+    cpus: 4
+    memory: 16 GB
+    time: 4h
+
+permissions:
+  filesystem:
+    read:
+      - input_paths
+    write:
+      - run_workdir
+      - declared_outdir
+  network:
+    default: disabled
+  remote:
+    allowed: false
+
+license:
+  wrapper: MIT
+  tools:
+    - name: Salmon
+      license: GPL-3.0
+    - name: gffread
+      license: MIT
+
+citations:
+  - id: nf-core
+    doi: 10.1038/s41587-020-0439-x
+
+dataPolicy:
+  acceptedSensitivity:
+    - public
+    - internal
+  externalTransfer:
+    default: false

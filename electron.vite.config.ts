@@ -32,10 +32,13 @@ function copyOmpWorkerPlugin(): { name: string; closeBundle(): void } {
  * parsing, the catalog, plan creation, JSON Schema validation — real,
  * already-tested logic, not two helper functions), so this plugin instead
  * copies the worker's actual dependency closure into `out/`, mirroring the
- * same relative-path layout `src/` has (unlike `copyWrapperFixturesPlugin`
- * below, which targets rollup's flattened layout for a different
- * consumer): `../runtime-paths`, the wrapper modules under `wrappers/` (in
- * turn needing `../../../shared/`), and — added when `notebook-tools.ts`/
+ * same relative-path layout `src/` has: `../runtime-paths`, the wrapper
+ * modules under `wrappers/` (in turn needing `../../../shared/`; note this
+ * no longer drags along a `fixtures/` subtree — bundled wrapper packages
+ * live under the project's `resources/wrappers/` now, which
+ * `catalog.ts`'s own packaging-aware path resolution finds without any
+ * copy-plugin help, unlike when they lived inside this directory), and —
+ * added when `notebook-tools.ts`/
  * `runtime-session-text.ts` picked up direct imports from the worker,
  * mirroring the file layout after Milestone P1.11's `notebook/`/`runtime/`
  * reorganization — `../notebook/notebook-tools` and
@@ -75,36 +78,9 @@ function copyOmpWorkerDepsPlugin(): { name: string; closeBundle(): void } {
   }
 }
 
-/**
- * Rollup only bundles JS it can see through imports — `wrapper.yaml` fixture
- * files referenced only via a runtime `fs.readFileSync` next to
- * `import.meta.url` (see src/main/agent/wrappers/catalog.ts) are invisible
- * to it and get silently dropped from `out/`, leaving `ensureBundled
- * WrappersInstalled()` with nothing to install. Copy them across the same
- * way `copyOmpWorkerPlugin` handles the worker script.
- *
- * Target is `out/main/fixtures`, NOT a path mirroring the source tree
- * (`out/main/agent/wrappers/fixtures`): rollup flattens every module of the
- * main entry into one `out/main/index.mjs`, so `import.meta.url` inside
- * catalog.ts resolves relative to `out/main/` at runtime, regardless of
- * where catalog.ts lived in src/. Verified against the actual dev build
- * output, not assumed — check `out/main/` after any rollup config change
- * that might split the main bundle into chunks.
- */
-function copyWrapperFixturesPlugin(): { name: string; closeBundle(): void } {
-  return {
-    name: 'copy-wrapper-fixtures',
-    closeBundle(): void {
-      const target = resolve('out/main/fixtures')
-      mkdirSync(dirname(target), { recursive: true })
-      cpSync(resolve('src/main/agent/wrappers/fixtures'), target, { recursive: true })
-    }
-  }
-}
-
 export default defineConfig({
   main: {
-    plugins: [copyOmpWorkerPlugin(), copyWrapperFixturesPlugin(), copyOmpWorkerDepsPlugin()],
+    plugins: [copyOmpWorkerPlugin(), copyOmpWorkerDepsPlugin()],
     build: {
       rollupOptions: {
         output: {

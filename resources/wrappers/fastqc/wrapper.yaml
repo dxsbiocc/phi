@@ -1,4 +1,12 @@
-# Standalone wrapper around one module of nf-core/rnaseq 3.26.0 — FastQC.
+# Standalone wrapper around one FastQC module from nf-core/modules — a
+# shared, pipeline-agnostic module library used by every nf-core pipeline
+# (RNA-seq, DNA-seq, ChIP-seq, ...), not something specific to RNA-seq.
+# Deliberately namespaced `nf-core/modules/*`, not `nf-core/rnaseq/*`: an
+# earlier version of this wrapper (and its siblings — trimgalore,
+# star-align, salmon-quant, multiqc) used the rnaseq namespace because
+# that's the pipeline this module happened to be vendored from, but FastQC
+# itself has nothing to do with RNA-seq specifically — the id should name
+# what the tool is, not which pipeline's modules.json last synced it.
 #
 # Why this exists alongside the full `nf-core/rnaseq/rnaseq` wrapper (see
 # ../nf-core-rnaseq/wrapper.yaml): the product docs (phi-wrapper-product-prd.md
@@ -10,24 +18,31 @@
 # wrapper around the same module the full pipeline also uses internally,
 # for a user who wants just FastQC without the rest of the pipeline. The
 # module itself (modules/nf-core/fastqc/main.nf) is vendored unmodified;
-# `main.nf`/`nextflow.config` here are a small Phi-authored launcher that
-# defines the input channel and publishes the module's outputs — nf-core
-# modules are `include`-only building blocks, not runnable pipelines on
-# their own.
+# `workflows/fastqc.nf`/`nextflow.config` here are a small Phi-authored
+# launcher that defines the input channel and publishes the module's
+# outputs — nf-core modules are `include`-only building blocks, not
+# runnable pipelines on their own. Root `main.nf` is a thin entrypoint
+# that just includes and calls the workflow, matching nf-core's own
+# main.nf/workflows split.
 phiWrapperVersion: 1
-id: nf-core/rnaseq/fastqc
+id: nf-core/modules/fastqc
 shortId: fastqc
-name: FastQC (nf-core/rnaseq module)
-version: 3.26.0
-summary: Run FastQC quality control on FASTQ reads — the QC module nf-core/rnaseq uses internally, wrapped standalone.
+name: FastQC (nf-core module)
+version: 0.12.1
+summary: Run FastQC quality control on FASTQ reads — a generic sequencing QC step, not RNA-seq specific.
 
 runtime:
   minVersion: 1.0.0
   maxVersion: 1.x
 
 source:
-  repository: https://github.com/nf-core/rnaseq
-  ref: 3.26.0
+  # The actual upstream: nf-core/modules is the shared module library every
+  # nf-core pipeline pulls from (see modules.json in any nf-core pipeline
+  # checkout) — this file was vendored via nf-core/rnaseq 3.26.0's own copy
+  # of it, at the commit its modules.json pinned:
+  # 3009f27c4e4b6e99da4eeebe82799e13924a4a1f.
+  repository: https://github.com/nf-core/modules
+  ref: master
 
 verification:
   status: unverified

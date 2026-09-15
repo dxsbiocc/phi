@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { getPhiAgentDir } from '../runtime-paths'
 import { getInstalledWrappersDir } from './store'
@@ -28,22 +28,71 @@ interface WrapperSourceMarker {
 const SOURCE_MARKER_FILE = '.source.json'
 const MANIFEST_FILE = 'wrapper.yaml'
 
-const WRAPPERS_MODULE_DIR = fileURLToPath(new URL('.', import.meta.url))
+const nodeRequire = createRequire(import.meta.url)
 
-const BUNDLED_FIXTURE_DIRS = [
-  join(WRAPPERS_MODULE_DIR, 'fixtures', 'phi-ngs-fastq-qc'),
+/**
+ * Locates `resources/wrappers/` — the on-disk home for every bundled
+ * wrapper package (manifest + vendored pipeline/module source). Not
+ * `src/main/agent/wrappers/fixtures/`, where these lived until this
+ * function replaced a rollup copy-plugin hack
+ * (`copyWrapperFixturesPlugin` in electron.vite.config.ts's history):
+ * `resources/` is this app's existing, already-packaging-aware home for
+ * "shipped content that isn't compiled code" — electron-builder.yml's
+ * `asarUnpack: - resources/**` already un-compresses it from the app
+ * bundle at build time, so nothing here needs a custom build step.
+ *
+ * Three contexts, three answers:
+ *  - Packaged Electron app: electron-builder's `asarUnpack` extracts
+ *    matched files OUT of the compressed `app.asar` at build time into a
+ *    sibling `app.asar.unpacked/` directory that mirrors the same
+ *    project-relative layout — a standard, documented electron-builder
+ *    idiom, not something to re-derive via relative path arithmetic from
+ *    wherever this compiled file happens to load from (rollup flattens the
+ *    whole main process into one file, so that arithmetic isn't even
+ *    stable across rollup config changes — exactly what the old
+ *    fixtures-under-src/ approach ran into).
+ *  - Dev Electron app (`electron-vite dev`/`preview`, unpackaged):
+ *    `app.getAppPath()` is the project root — no asar involved at all.
+ *  - Plain `node --test` (this project's whole test suite, no Electron
+ *    runtime present — `require('electron')` here returns a bare string,
+ *    the path to the Electron binary, not the API object): falls back to
+ *    `process.cwd()`, which every test invocation in package.json's `test`
+ *    script already runs from the project root.
+ */
+function getBundledWrapperPackagesDir(): string {
+  const electronModule = nodeRequire('electron') as
+    { app?: { isPackaged: boolean; getAppPath(): string } } | string
+  const electronApp = typeof electronModule === 'object' ? electronModule.app : undefined
+
+  if (!electronApp) {
+    return join(process.cwd(), 'resources', 'wrappers')
+  }
+  if (!electronApp.isPackaged) {
+    return join(electronApp.getAppPath(), 'resources', 'wrappers')
+  }
+  return join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'wrappers')
+}
+
+const BUNDLED_WRAPPERS_DIR = getBundledWrapperPackagesDir()
+
+const BUNDLED_WRAPPER_PACKAGE_DIRS = [
+  join(BUNDLED_WRAPPERS_DIR, 'phi-ngs-fastq-qc'),
   // First wrapper around a real, unmodified upstream pipeline (every other
-  // bundled wrapper is a Phi-authored demo script) — see this fixture's own
+  // bundled wrapper is a Phi-authored demo script) — see this package's own
   // wrapper.yaml doc comment for what's vendored and what was verified.
-  join(WRAPPERS_MODULE_DIR, 'fixtures', 'nf-core-rnaseq'),
-  // Standalone wrappers around individual nf-core/rnaseq modules — see
-  // each fixture's own wrapper.yaml doc comment for why these exist
-  // alongside (not composed into) the full pipeline wrapper above.
-  join(WRAPPERS_MODULE_DIR, 'fixtures', 'nf-core-rnaseq-fastqc'),
-  join(WRAPPERS_MODULE_DIR, 'fixtures', 'nf-core-rnaseq-trimgalore'),
-  join(WRAPPERS_MODULE_DIR, 'fixtures', 'nf-core-rnaseq-star-align'),
-  join(WRAPPERS_MODULE_DIR, 'fixtures', 'nf-core-rnaseq-salmon-quant'),
-  join(WRAPPERS_MODULE_DIR, 'fixtures', 'nf-core-rnaseq-multiqc')
+  join(BUNDLED_WRAPPERS_DIR, 'nf-core-rnaseq'),
+  // Standalone wrappers around individual nf-core/modules modules — see
+  // each package's own wrapper.yaml doc comment for why these exist
+  // alongside (not composed into) the full nf-core/rnaseq pipeline wrapper
+  // above, and why they're namespaced `nf-core/modules/*` rather than
+  // `nf-core/rnaseq/*` despite being vendored from an rnaseq checkout. The
+  // directory names drop that namespace prefix (unlike `nf-core-rnaseq`
+  // above) since the manifest's own `id` field already carries it.
+  join(BUNDLED_WRAPPERS_DIR, 'fastqc'),
+  join(BUNDLED_WRAPPERS_DIR, 'trimgalore'),
+  join(BUNDLED_WRAPPERS_DIR, 'star-align'),
+  join(BUNDLED_WRAPPERS_DIR, 'salmon-quant'),
+  join(BUNDLED_WRAPPERS_DIR, 'multiqc')
 ]
 
 function ensureDir(path: string): void {
@@ -107,18 +156,18 @@ function loadManifestFromDir(dir: string): WrapperManifest {
 }
 
 /**
- * Writes the app's bundled fixture wrappers into `installed/` if missing,
+ * Writes the app's bundled wrapper packages into `installed/` if missing,
  * always refreshing the manifest content (bundled wrappers are the app's own
  * definition — there is nothing for a user to customize) and the source
  * marker. Idempotent: safe to call on every app start.
  */
 export function ensureBundledWrappersInstalled(agentDir = getPhiAgentDir()): WrapperCatalogEntry[] {
   const entries: WrapperCatalogEntry[] = []
-  for (const fixtureDir of BUNDLED_FIXTURE_DIRS) {
-    const manifest = loadManifestFromDir(fixtureDir)
+  for (const packageDir of BUNDLED_WRAPPER_PACKAGE_DIRS) {
+    const manifest = loadManifestFromDir(packageDir)
     const installedPath = installedDirFor(manifest, agentDir)
     ensureDir(installedPath)
-    copyWrapperSourceTree(fixtureDir, installedPath)
+    copyWrapperSourceTree(packageDir, installedPath)
     const installedAt = readSourceMarker(installedPath)?.installedAt ?? new Date().toISOString()
     writeSourceMarker(installedPath, { trustTier: 'bundled', installedAt })
     entries.push({ manifest, trustTier: 'bundled', installedPath, installedAt })

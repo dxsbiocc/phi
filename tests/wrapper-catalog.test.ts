@@ -69,12 +69,12 @@ test('ensureBundledWrappersInstalled installs every bundled fixture and is idemp
     const first = ensureBundledWrappersInstalled(agentDir)
     const firstIds = first.map((entry) => entry.manifest.id).sort()
     assert.deepEqual(firstIds, [
-      'nf-core/rnaseq/fastqc',
-      'nf-core/rnaseq/multiqc',
+      'nf-core/modules/fastqc',
+      'nf-core/modules/multiqc',
+      'nf-core/modules/salmon-quant',
+      'nf-core/modules/star-align',
+      'nf-core/modules/trimgalore',
       'nf-core/rnaseq/rnaseq',
-      'nf-core/rnaseq/salmon-quant',
-      'nf-core/rnaseq/star-align',
-      'nf-core/rnaseq/trimgalore',
       'phi/ngs/fastq-qc'
     ])
     assert.ok(first.every((entry) => entry.trustTier === 'bundled'))
@@ -160,12 +160,12 @@ test('a custom wrapper is never returned by the default agent tools query', () =
 
       const defaults = listDefaultAgentToolWrappers(agentDir)
       assert.deepEqual(defaults.map((entry) => entry.manifest.id).sort(), [
-        'nf-core/rnaseq/fastqc',
-        'nf-core/rnaseq/multiqc',
+        'nf-core/modules/fastqc',
+        'nf-core/modules/multiqc',
+        'nf-core/modules/salmon-quant',
+        'nf-core/modules/star-align',
+        'nf-core/modules/trimgalore',
         'nf-core/rnaseq/rnaseq',
-        'nf-core/rnaseq/salmon-quant',
-        'nf-core/rnaseq/star-align',
-        'nf-core/rnaseq/trimgalore',
         'phi/ngs/fastq-qc'
       ])
     } finally {

@@ -12,8 +12,8 @@ covers what Phase 1 actually validates and runs.
 ## Two Ways A Wrapper Exists In Phase 1
 
 - **Bundled**: ships inside the app, installed automatically at startup. You can't add
-  one of these from the UI — it's the app's own fixture (see
-  `src/main/agent/wrappers/fixtures/`).
+  one of these from the UI — it's the app's own bundled wrapper package (see
+  `resources/wrappers/`).
 - **Custom**: a local folder you point Phi at. Open the Wrappers sidebar, click the
   **+** button (top-left, next to refresh), and choose the folder containing your
   `wrapper.yaml`. Custom wrappers show up in the catalog and can be inspected, but

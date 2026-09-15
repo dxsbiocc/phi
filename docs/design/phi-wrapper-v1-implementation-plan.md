@@ -137,7 +137,7 @@ Files:
 
 ```text
 src/main/agent/wrappers/catalog.ts
-src/main/agent/wrappers/fixtures/phi-ngs-fastq-qc/
+resources/wrappers/phi-ngs-fastq-qc/
 tests/wrapper-catalog.test.ts
 ```
 
@@ -573,4 +573,6 @@ tests/main-integration.test.ts
 - Deferring the resolver/remote path mapping to Phase 2 means Phase 1's `plans.ts` must still be shaped so the Phase 2 resolver chain is additive, not a rewrite — review this specifically at the P1.4/P1.10 boundary.
 - Real SSH/Slurm behavior varies across clusters (Phase 2 risk, unchanged from the original plan — just no longer blocking Phase 1).
 - **Confirmed incident, now fixed:** unit tests run against source via a plain TS transpile and never caught that Rollup drops non-JS files (the fixture `wrapper.yaml`) from the bundled `out/main/index.mjs` — the bundled wrapper silently failed to install in the real packaged/dev-built app even though every test passed. Fixed with a `closeBundle` copy plugin in `electron.vite.config.ts` (same pattern as the pre-existing `copyOmpWorkerPlugin`), copying `src/main/agent/wrappers/fixtures/` to `out/main/fixtures/` — note the target is flat (`out/main/fixtures`), not a path mirroring the source tree, because rollup flattens the whole main entry into one file and `import.meta.url`-relative resolution inside it resolves against that file's own location. **Lesson for P1.9 and beyond: unit tests alone don't catch bundler/packaging gaps — always do at least one real `electron-vite dev` restart-and-click check for any change that adds a new non-JS asset or a new IPC surface, not just `npm test`.**
+
+  **Superseded:** bundled wrapper packages were later moved out of `src/` entirely, to `resources/wrappers/`, using electron-builder's existing `asarUnpack: resources/**` mechanism instead of a bespoke copy plugin — `copyWrapperFixturesPlugin` was removed from `electron.vite.config.ts`. Path resolution across dev/packaged/plain-`node --test` contexts now goes through `getBundledWrapperPackagesDir()` in `catalog.ts`, using Electron's own `process.resourcesPath` / `app.getAppPath()` / `app.isPackaged` APIs. Verified against a real `electron-builder --dir` package: `app.asar.unpacked/resources/wrappers/` contains all bundled wrapper packages, and a real launch of the packaged app successfully installed them into `~/.phi/wrappers/installed/`.
 - Also confirmed and fixed in the same pass: the Wrappers sidebar (P1.6) didn't match the rest of the app's shell (title-bar drag region, resizable sidebar divider, icon-box list rows, detail header block) because it was built from scratch instead of copying `McpView.tsx`'s structure. Fixed by restructuring `WrapperView.tsx` to follow that file line-for-line on layout. When adding a new sidebar view, copy the closest existing view's shell first and only change the content — don't rebuild the shell from general MUI intuition.

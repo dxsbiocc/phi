@@ -13,7 +13,7 @@ import { validateWrapperParams } from '../src/main/agent/wrappers/schema'
 
 function readFixture(): string {
   return readFileSync(
-    new URL('../src/main/agent/wrappers/fixtures/phi-ngs-fastq-qc/wrapper.yaml', import.meta.url),
+    new URL('../resources/wrappers/phi-ngs-fastq-qc/wrapper.yaml', import.meta.url),
     'utf-8'
   )
 }

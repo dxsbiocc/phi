@@ -4,7 +4,7 @@
 // docs/design/phi-wrapper-technical-design.md (Manifest section), including
 // fields that only matter once Phase 2/3 land (engine profiles beyond
 // `local`/`docker`, remote permissions, registry verification). Phase 1 only
-// ever *produces* a subset (see manifest.ts / fixtures/phi-ngs-fastq-qc), but
+// ever *produces* a subset (see manifest.ts / resources/wrappers/phi-ngs-fastq-qc), but
 // parsing accepts the whole shape so a Phase 2/3 manifest doesn't need a
 // migration.
 

@@ -15,7 +15,7 @@ import type { WrapperRun, WrapperRunPlan } from '../src/shared/wrapperTypes'
 
 function fastqQcManifest(): WrapperManifest {
   const raw = readFileSync(
-    new URL('../src/main/agent/wrappers/fixtures/phi-ngs-fastq-qc/wrapper.yaml', import.meta.url),
+    new URL('../resources/wrappers/phi-ngs-fastq-qc/wrapper.yaml', import.meta.url),
     'utf-8'
   )
   const result = parseWrapperManifest(raw)

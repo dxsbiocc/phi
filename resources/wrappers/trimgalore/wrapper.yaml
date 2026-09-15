@@ -1,27 +1,37 @@
-# Standalone wrapper around one module of nf-core/rnaseq 3.26.0 — Trim
-# Galore adapter/quality trimming.
+# Standalone wrapper around one Trim Galore module from nf-core/modules —
+# a shared, pipeline-agnostic module library, not something specific to
+# RNA-seq. See ../fastqc/wrapper.yaml's doc comment for why
+# this is namespaced `nf-core/modules/*` rather than `nf-core/rnaseq/*` —
+# adapter/quality trimming is generic sequencing prep, used well beyond
+# RNA-seq.
 #
-# See ../nf-core-rnaseq-fastqc/wrapper.yaml's doc comment for why this
-# exists as its own independently runnable Phi wrapper rather than being
-# composed into the full `nf-core/rnaseq/rnaseq` pipeline wrapper — Phi has
-# no wrapper-composition mechanism (product docs explicitly rule it out for
-# now). The module itself (modules/nf-core/trimgalore/main.nf) is vendored
-# unmodified; `main.nf`/`nextflow.config` here are a small Phi-authored
-# launcher.
+# Why this exists alongside the full `nf-core/rnaseq/rnaseq` wrapper: the
+# product docs (phi-wrapper-product-prd.md Non-Goals) explicitly rule out
+# "arbitrary wrapper composition" — Phi has no mechanism for one wrapper to
+# declare/invoke another, and building one is out of scope (Phase 3+
+# Future Extensions). The module itself
+# (modules/nf-core/trimgalore/main.nf) is vendored unmodified;
+# `workflows/trimgalore.nf`/`nextflow.config` here are a small
+# Phi-authored launcher. Root `main.nf` is a thin entrypoint that just
+# includes and calls the workflow, matching nf-core's own
+# main.nf/workflows split.
 phiWrapperVersion: 1
-id: nf-core/rnaseq/trimgalore
+id: nf-core/modules/trimgalore
 shortId: trimgalore
-name: Trim Galore (nf-core/rnaseq module)
-version: 3.26.0
-summary: Adapter/quality-trim paired-end FASTQ reads with Trim Galore — the trimming module nf-core/rnaseq uses internally, wrapped standalone.
+name: Trim Galore (nf-core module)
+version: 2.1.0
+summary: Adapter/quality-trim paired-end FASTQ reads with Trim Galore — a generic sequencing prep step, not RNA-seq specific.
 
 runtime:
   minVersion: 1.0.0
   maxVersion: 1.x
 
 source:
-  repository: https://github.com/nf-core/rnaseq
-  ref: 3.26.0
+  # See fastqc/wrapper.yaml's source comment — same
+  # shared-library provenance, vendored at the commit nf-core/rnaseq
+  # 3.26.0's modules.json pinned: 0991b1032cccfcd9245ef59c6e56d6092ac0b3e7.
+  repository: https://github.com/nf-core/modules
+  ref: master
 
 verification:
   status: unverified

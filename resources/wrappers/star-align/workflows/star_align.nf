@@ -1,12 +1,14 @@
-#!/usr/bin/env nextflow
-// Thin standalone launcher chaining nf-core/rnaseq 3.26.0 modules
-// (vendored unmodified) — STAR_GENOMEGENERATE then STAR_ALIGN — since
-// alignment needs an index and there's no standalone "STAR index" wrapper
-// yet to depend on (Phi has no wrapper-composition mechanism; see this
-// wrapper's wrapper.yaml doc comment). The index is rebuilt on every run
-// rather than cached/reused across runs — fine for this wrapper's scope,
-// worth revisiting if repeated runs against the same reference turn out to
-// matter.
+// Orchestration for the STAR alignment wrapper — see fastqc/workflows/fastqc.nf's
+// doc comment for the nf-core-convention rationale behind this file's
+// existence (workflows/ vs modules/nf-core/ vs modules/local/).
+//
+// Chains two nf-core/rnaseq 3.26.0 modules (vendored unmodified) —
+// STAR_GENOMEGENERATE then STAR_ALIGN — since alignment needs an index and
+// there's no standalone "STAR index" wrapper yet to depend on (Phi has no
+// wrapper-composition mechanism; see this wrapper's wrapper.yaml doc
+// comment). The index is rebuilt on every run rather than cached/reused
+// across runs — fine for this wrapper's scope, worth revisiting if
+// repeated runs against the same reference turn out to matter.
 //
 // GTF is gunzipped first when compressed: verified against a real
 // reference — STAR's own genomeGenerate refuses a gzipped
@@ -16,11 +18,11 @@
 // the same fix since it drives the same module.
 nextflow.enable.dsl = 2
 
-include { GUNZIP as GUNZIP_GTF } from './modules/nf-core/gunzip/main'
-include { STAR_GENOMEGENERATE } from './modules/nf-core/star/genomegenerate/main'
-include { STAR_ALIGN } from './modules/nf-core/star/align/main'
+include { GUNZIP as GUNZIP_GTF } from '../modules/nf-core/gunzip/main'
+include { STAR_GENOMEGENERATE } from '../modules/nf-core/star/genomegenerate/main'
+include { STAR_ALIGN } from '../modules/nf-core/star/align/main'
 
-workflow {
+workflow STAR_ALIGN_WF {
     ch_fasta = Channel.of([[id: 'genome'], file(params.fasta)])
     ch_gtf_raw = Channel.of([[id: 'genome'], file(params.gtf)])
 
