@@ -80,3 +80,14 @@ test('the window sidebar toggle uses the shared collapse/expand sidebar icons', 
   assert.match(source, /GoSidebarExpand/)
   assert.doesNotMatch(source, /TbLayoutSidebar/)
 })
+
+test('the history navigation buttons use the shared arrow icons', () => {
+  const source = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/WindowNavigationControls.tsx'),
+    'utf8'
+  )
+
+  assert.match(source, /GoArrowLeft/)
+  assert.match(source, /GoArrowRight/)
+  assert.doesNotMatch(source, /TbChevron/)
+})

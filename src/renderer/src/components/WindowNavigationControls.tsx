@@ -1,6 +1,5 @@
 import { Box, IconButton, Tooltip } from '@mui/material'
-import { GoSidebarCollapse, GoSidebarExpand } from 'react-icons/go'
-import { TbChevronLeft, TbChevronRight } from 'react-icons/tb'
+import { GoArrowLeft, GoArrowRight, GoSidebarCollapse, GoSidebarExpand } from 'react-icons/go'
 
 /**
  * Sits to the right of the macOS traffic lights (MacWindowControls): a
@@ -67,7 +66,7 @@ export default function WindowNavigationControls({
             onClick={onGoBack}
             sx={iconButtonSx}
           >
-            <TbChevronLeft size={20} />
+            <GoArrowLeft size={20} />
           </IconButton>
         </span>
       </Tooltip>
@@ -80,7 +79,7 @@ export default function WindowNavigationControls({
             onClick={onGoForward}
             sx={iconButtonSx}
           >
-            <TbChevronRight size={20} />
+            <GoArrowRight size={20} />
           </IconButton>
         </span>
       </Tooltip>
