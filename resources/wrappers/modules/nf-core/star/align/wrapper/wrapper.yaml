@@ -1,0 +1,41 @@
+# Agent-facing wrapper adapter composing two vendored modules: ../genomegenerate
+# (builds the STAR index) and ../align (aligns reads against it). STAR_ALIGN
+# has no standalone meaning without an index, so this wrapper always builds
+# one from the given fasta/gtf rather than requiring a pre-built index as
+# input — see wrapper/main.nf's doc comment for why this is still "one
+# wrapper, two vendored modules" rather than a subworkflow (section 6 of
+# docs/design/phi-wrapper-agent-composition-design.md).
+id: nf-core/modules/star-align
+name: STAR align
+summary: Build a STAR genome index and align FASTQ reads to it.
+
+params:
+  fasta:
+    kind: input
+    type: file
+    required: true
+    description: Reference genome FASTA to build the STAR index from.
+  gtf:
+    kind: input
+    type: file
+    required: true
+    description: Gene annotation GTF matching the reference genome.
+  reads:
+    kind: input
+    type: fastq_glob
+    required: true
+    description: FASTQ files to align (glob matching paired- or single-end reads).
+  outdir:
+    kind: output
+    type: path
+    required: true
+    description: Output directory for the STAR index, aligned BAMs, and logs.
+
+outputs:
+  bam:
+    type: directory
+    path: "${outdir}/star_align"
+    primary: true
+  index:
+    type: directory
+    path: "${outdir}/star_index"

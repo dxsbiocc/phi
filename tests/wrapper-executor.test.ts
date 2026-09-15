@@ -5,15 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import {
-  ensureBundledWrappersInstalled,
-  listWrapperCatalog
-} from '../src/main/agent/wrappers/catalog'
 import type { SpawnImpl } from '../src/main/agent/wrappers/executor-local'
 import { runLocalWrapperExecution } from '../src/main/agent/wrappers/executor-local'
 import { createWrapperRunPlan } from '../src/main/agent/wrappers/plans'
 import { readWrapperRun } from '../src/main/agent/wrappers/store'
 import type { WrapperRun, WrapperRunPlan } from '../src/main/agent/wrappers/types'
+import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
 
 const OK_DOCTOR = (): { ok: true; checks: [] } => ({ ok: true, checks: [] })
 
@@ -57,9 +54,7 @@ async function createSubmittablePlan(
   agentDir: string,
   projectDir: string
 ): Promise<WrapperRunPlan> {
-  ensureBundledWrappersInstalled(agentDir)
-  const entry = listWrapperCatalog(agentDir).find((item) => item.manifest.id === 'phi/ngs/fastq-qc')
-  if (!entry) throw new Error('fastq-qc fixture not installed')
+  const entry = installLegacyFastqQcWrapper(agentDir, projectDir)
   writeFastqPair(projectDir, 'S1')
   return createWrapperRunPlan({
     actor: 'agent',

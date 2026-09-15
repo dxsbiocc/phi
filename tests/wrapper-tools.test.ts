@@ -4,10 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import {
-  addCustomWrapper,
-  ensureBundledWrappersInstalled
-} from '../src/main/agent/wrappers/catalog'
+import { addCustomWrapper } from '../src/main/agent/wrappers/catalog'
 import { readWrapperPlan } from '../src/main/agent/wrappers/store'
 import {
   buildDefaultWrapperCustomTools,
@@ -16,6 +13,7 @@ import {
   buildWrapperSearchTool,
   wrapperToolName
 } from '../src/main/agent/wrappers/tools'
+import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
 
 // Always resolves the callback through a Promise chain before cleanup runs —
 // a plain try/finally would run rmSync as soon as an async callback returns
@@ -85,9 +83,8 @@ test('wrapperToolName sanitizes a canonical id into a safe tool name', () => {
   assert.equal(wrapperToolName('phi/ngs/fastq-qc'), 'wrapper.phi_ngs_fastq_qc')
 })
 
-test('buildDefaultWrapperCustomTools includes search, inspect, and only the bundled wrappers', async () => {
+test('buildDefaultWrapperCustomTools includes only legacy search and inspect without bundled packages', async () => {
   await withHarness(({ agentDir, projectDir }) => {
-    ensureBundledWrappersInstalled(agentDir)
     const sourceDir = join(projectDir, 'custom-src')
     mkdirSync(sourceDir, { recursive: true })
     writeCustomWrapperFixture(sourceDir)
@@ -98,21 +95,13 @@ test('buildDefaultWrapperCustomTools includes search, inspect, and only the bund
 
     assert.ok(names.includes('wrapper.search'))
     assert.ok(names.includes('wrapper.inspect'))
-    assert.ok(names.includes('wrapper.phi_ngs_fastq_qc'))
-    assert.ok(names.includes('wrapper.nf_core_rnaseq_rnaseq'))
-    assert.ok(names.includes('wrapper.nf_core_modules_fastqc'))
-    assert.ok(names.includes('wrapper.nf_core_modules_trimgalore'))
-    assert.ok(names.includes('wrapper.nf_core_modules_star_align'))
-    assert.ok(names.includes('wrapper.nf_core_modules_salmon_quant'))
-    assert.ok(names.includes('wrapper.nf_core_modules_multiqc'))
     assert.ok(!names.includes('wrapper.acme_tools_toy_wrapper'))
-    assert.equal(tools.length, 9)
+    assert.equal(tools.length, 2)
   })
 })
 
 test('wrapper.search finds wrappers by keyword across the full catalog, including custom ones', async () => {
   await withHarness(async ({ agentDir, projectDir }) => {
-    ensureBundledWrappersInstalled(agentDir)
     const sourceDir = join(projectDir, 'custom-src')
     mkdirSync(sourceDir, { recursive: true })
     writeCustomWrapperFixture(sourceDir)
@@ -137,7 +126,7 @@ test('wrapper.search finds wrappers by keyword across the full catalog, includin
 
 test('wrapper.inspect returns full manifest detail for a known id and an error for an unknown one', async () => {
   await withHarness(async ({ agentDir, projectDir }) => {
-    ensureBundledWrappersInstalled(agentDir)
+    installLegacyFastqQcWrapper(agentDir, projectDir)
     const tool = buildWrapperInspectTool(agentDir)
 
     const found = await tool.execute(
@@ -163,14 +152,12 @@ test('wrapper.inspect returns full manifest detail for a known id and an error f
 
 test('a wrapper execute tool creates a plan with actor "agent" and never submits it', async () => {
   await withHarness(async ({ agentDir, projectDir }) => {
-    ensureBundledWrappersInstalled(agentDir)
+    const entry = installLegacyFastqQcWrapper(agentDir, projectDir)
     writeFastqPair(projectDir, 'S1')
 
-    const tools = buildDefaultWrapperCustomTools(agentDir)
-    const fastqTool = tools.find((tool) => tool.name === 'wrapper.phi_ngs_fastq_qc')
-    assert.ok(fastqTool)
+    const fastqTool = buildWrapperExecuteTool(entry, agentDir)
 
-    const result = await fastqTool!.execute(
+    const result = await fastqTool.execute(
       'call-1',
       { reads: 'data/*_{R1,R2}.fastq.gz' },
       undefined,
@@ -190,12 +177,10 @@ test('a wrapper execute tool creates a plan with actor "agent" and never submits
 
 test('an execute tool call with invalid params creates an invalid plan and reports the error, without throwing', async () => {
   await withHarness(async ({ agentDir, projectDir }) => {
-    ensureBundledWrappersInstalled(agentDir)
-    const tools = buildDefaultWrapperCustomTools(agentDir)
-    const fastqTool = tools.find((tool) => tool.name === 'wrapper.phi_ngs_fastq_qc')
-    assert.ok(fastqTool)
+    const entry = installLegacyFastqQcWrapper(agentDir, projectDir)
+    const fastqTool = buildWrapperExecuteTool(entry, agentDir)
 
-    const result = await fastqTool!.execute('call-1', {}, undefined, fakeCtx(projectDir) as never)
+    const result = await fastqTool.execute('call-1', {}, undefined, fakeCtx(projectDir) as never)
 
     assert.equal(result.isError, true)
     const details = result.details as { kind: string; planId: string }
@@ -205,8 +190,8 @@ test('an execute tool call with invalid params creates an invalid plan and repor
 })
 
 test('generated execute-tool schema matches the manifest parameter schema exactly', async () => {
-  await withHarness(({ agentDir }) => {
-    const [entry] = ensureBundledWrappersInstalled(agentDir)
+  await withHarness(({ agentDir, projectDir }) => {
+    const entry = installLegacyFastqQcWrapper(agentDir, projectDir)
     const tool = buildWrapperExecuteTool(entry, agentDir)
     assert.deepEqual(tool.parameters, entry.manifest.parameters.schema)
   })

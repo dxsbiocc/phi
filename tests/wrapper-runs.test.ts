@@ -11,10 +11,6 @@ import {
   updateProjectRemoteDefaults
 } from '../src/main/agent/projects'
 import { RUNTIME_AGENT_DIR_ENV } from '../src/main/agent/runtime-paths'
-import {
-  ensureBundledWrappersInstalled,
-  listWrapperCatalog
-} from '../src/main/agent/wrappers/catalog'
 import { createWrapperRunPlan } from '../src/main/agent/wrappers/plans'
 import {
   cancelWrapperRun,
@@ -35,6 +31,7 @@ import {
 } from '../src/main/agent/wrappers/store'
 import type { WrapperCatalogEntry } from '../src/main/agent/wrappers/catalog'
 import type { WrapperRun, WrapperRunPlan } from '../src/main/agent/wrappers/types'
+import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
 
 function withHarness<T>(callback: (harness: { agentDir: string; projectDir: string }) => T): T {
   const root = mkdtempSync(join(tmpdir(), 'phi-wrapper-runs-'))
@@ -70,11 +67,8 @@ function withProjectHarness<T>(
   })
 }
 
-function fastqQcWrapper(agentDir: string): WrapperCatalogEntry {
-  ensureBundledWrappersInstalled(agentDir)
-  const entry = listWrapperCatalog(agentDir).find((item) => item.manifest.id === 'phi/ngs/fastq-qc')
-  if (!entry) throw new Error('fastq-qc fixture not installed')
-  return entry
+function fastqQcWrapper(agentDir: string, projectDir: string): WrapperCatalogEntry {
+  return installLegacyFastqQcWrapper(agentDir, projectDir)
 }
 
 function writeFastqPair(projectDir: string, sample: string): void {
@@ -86,7 +80,7 @@ function writeFastqPair(projectDir: string, sample: string): void {
 test('submitWrapperRunPlan creates a durable run and marks the plan submitted', () => {
   withHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     const plan = createWrapperRunPlan({
       actor: 'agent',
       wrapper,
@@ -108,7 +102,7 @@ test('submitWrapperRunPlan creates a durable run and marks the plan submitted', 
 
 test('submitWrapperRunPlan rejects an invalid plan', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     const plan = createWrapperRunPlan({
       actor: 'agent',
       wrapper,
@@ -128,7 +122,7 @@ test('submitWrapperRunPlan rejects an invalid plan', () => {
 test('submitWrapperRunPlan requires heavy workload acknowledgement first', () => {
   withHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     const heavyWrapper = {
       ...wrapper,
       manifest: { ...wrapper.manifest, resourceClass: 'heavy' as const }
@@ -157,7 +151,7 @@ test('submitWrapperRunPlan requires heavy workload acknowledgement first', () =>
 test('cancelWrapperRunPlan cancels an unsubmitted plan but refuses an already-submitted one', () => {
   withHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     const plan = createWrapperRunPlan({
       actor: 'agent',
       wrapper,
@@ -184,7 +178,7 @@ test('cancelWrapperRunPlan cancels an unsubmitted plan but refuses an already-su
 test('cancelWrapperRun cancels a not-yet-running run but refuses an already-running one', () => {
   withHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     const plan = createWrapperRunPlan({
       actor: 'agent',
       wrapper,
@@ -219,7 +213,7 @@ test('cancelWrapperRun cancels a not-yet-running run but refuses an already-runn
 
 function slurmControllerPlan(agentDir: string, projectDir: string): WrapperRunPlan {
   writeFastqPair(projectDir, 'S1')
-  const wrapper = fastqQcWrapper(agentDir)
+  const wrapper = fastqQcWrapper(agentDir, projectDir)
   const plan = createWrapperRunPlan({
     actor: 'agent',
     wrapper,
@@ -270,7 +264,7 @@ test('submitWrapperRunPlan leaves a slurm-controller run at "created" when autoE
 
 function remoteBackgroundPlan(agentDir: string, projectDir: string): WrapperRunPlan {
   writeFastqPair(projectDir, 'S1')
-  const wrapper = fastqQcWrapper(agentDir)
+  const wrapper = fastqQcWrapper(agentDir, projectDir)
   const plan = createWrapperRunPlan({
     actor: 'agent',
     wrapper,
@@ -321,7 +315,7 @@ test('submitWrapperRunPlan leaves a remote-background run at "created" when auto
 test('submitWrapperRunPlan dispatches a plan.ts-resolved slurm-controller plan end to end', () => {
   withProjectHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     const project = createProject({
       name: 'Demo',
       workingDirectory: projectDir,

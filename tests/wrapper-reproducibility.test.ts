@@ -4,14 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import {
-  ensureBundledWrappersInstalled,
-  listWrapperCatalog
-} from '../src/main/agent/wrappers/catalog'
 import { createWrapperRunPlan } from '../src/main/agent/wrappers/plans'
 import { buildWrapperReproducibilityBundle } from '../src/main/agent/wrappers/reproducibility'
 import { submitWrapperRunPlan } from '../src/main/agent/wrappers/runs'
 import { appendWrapperRunEvent, getWrapperRunsDir } from '../src/main/agent/wrappers/store'
+import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
 
 function withHarness<T>(callback: (h: { agentDir: string; projectDir: string }) => T): T {
   const root = mkdtempSync(join(tmpdir(), 'phi-wrapper-repro-'))
@@ -33,11 +30,7 @@ function writeFastqPair(projectDir: string, sample: string): void {
 
 test('buildWrapperReproducibilityBundle gathers plan, manifest, events, and run-dir artifacts', () => {
   withHarness(({ agentDir, projectDir }) => {
-    ensureBundledWrappersInstalled(agentDir)
-    const entry = listWrapperCatalog(agentDir).find(
-      (item) => item.manifest.id === 'phi/ngs/fastq-qc'
-    )
-    if (!entry) throw new Error('fixture not installed')
+    const entry = installLegacyFastqQcWrapper(agentDir, projectDir)
     writeFastqPair(projectDir, 'S1')
 
     const plan = createWrapperRunPlan({

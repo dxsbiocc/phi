@@ -10,11 +10,7 @@ import {
   updateProjectRemoteDefaults
 } from '../src/main/agent/projects'
 import { RUNTIME_AGENT_DIR_ENV } from '../src/main/agent/runtime-paths'
-import {
-  ensureBundledWrappersInstalled,
-  listWrapperCatalog,
-  type WrapperCatalogEntry
-} from '../src/main/agent/wrappers/catalog'
+import type { WrapperCatalogEntry } from '../src/main/agent/wrappers/catalog'
 import {
   createWrapperRunPlan,
   isWrapperPlanExpired,
@@ -22,6 +18,7 @@ import {
 } from '../src/main/agent/wrappers/plans'
 import { readWrapperPlanArtifact } from '../src/main/agent/wrappers/store'
 import type { WrapperRunPlan } from '../src/main/agent/wrappers/types'
+import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
 
 function withHarness<T>(callback: (harness: { agentDir: string; projectDir: string }) => T): T {
   const root = mkdtempSync(join(tmpdir(), 'phi-wrapper-plans-'))
@@ -82,17 +79,14 @@ function writeFastqPair(projectDir: string, sample: string): void {
   writeFileSync(join(projectDir, 'data', `${sample}_R2.fastq.gz`), 'r2')
 }
 
-function fastqQcWrapper(agentDir: string): WrapperCatalogEntry {
-  ensureBundledWrappersInstalled(agentDir)
-  const entry = listWrapperCatalog(agentDir).find((item) => item.manifest.id === 'phi/ngs/fastq-qc')
-  if (!entry) throw new Error('fastq-qc fixture not installed')
-  return entry
+function fastqQcWrapper(agentDir: string, projectDir: string): WrapperCatalogEntry {
+  return installLegacyFastqQcWrapper(agentDir, projectDir)
 }
 
 test('createWrapperRunPlan resolves executor "local" when the project has no remote execution configured', () => {
   withHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
 
     const plan = createWrapperRunPlan({
       actor: 'agent',
@@ -113,7 +107,7 @@ test('createWrapperRunPlan resolves executor "local" when the project has no rem
 
 test('createWrapperRunPlan fails validation when the input glob matches nothing', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
 
     const plan = createWrapperRunPlan({
       actor: 'agent',
@@ -133,7 +127,7 @@ test('createWrapperRunPlan persists a generated samplesheet for paired-end fastq
   withHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
     writeFastqPair(projectDir, 'S2')
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
 
     const plan = createWrapperRunPlan({
       actor: 'user',
@@ -154,7 +148,7 @@ test('createWrapperRunPlan persists a generated samplesheet for paired-end fastq
 
 test('createWrapperRunPlan flags a heavy/hpc resourceClass wrapper as requiring acknowledgement', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     const heavyWrapper = {
       ...wrapper,
       manifest: { ...wrapper.manifest, resourceClass: 'heavy' as const }
@@ -178,7 +172,7 @@ test('createWrapperRunPlan flags a heavy/hpc resourceClass wrapper as requiring 
 
 test('createWrapperRunPlan substitutes a resolved absolute path into params.json for a plain single-file input', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     const wrapperWithFasta = {
       ...wrapper,
       manifest: {
@@ -215,7 +209,7 @@ test('createWrapperRunPlan substitutes a resolved absolute path into params.json
 
 test("createWrapperRunPlan uses a profile's declared nextflowProfile for -profile, not the Phi profile id", () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     const wrapperWithRenamedProfile = {
       ...wrapper,
       manifest: {
@@ -247,7 +241,7 @@ test("createWrapperRunPlan uses a profile's declared nextflowProfile for -profil
 test('createWrapperRunPlan resolves the sbatch-controller profile when the project has remote execution configured', () => {
   withProjectHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     configureProjectRemote(agentDir, projectDir)
 
     const plan = createWrapperRunPlan({
@@ -268,7 +262,7 @@ test('createWrapperRunPlan resolves the sbatch-controller profile when the proje
 test("createWrapperRunPlan trusts a remote plan's input paths verbatim — no local existence check, no cwd rewrite", () => {
   withProjectHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     const wrapperWithFasta = {
       ...wrapper,
       manifest: {
@@ -308,7 +302,7 @@ test("createWrapperRunPlan trusts a remote plan's input paths verbatim — no lo
 test('createWrapperRunPlan falls back to local when the project has remote configured but the wrapper declares no sbatch-controller profile', () => {
   withProjectHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     const noRemoteProfileWrapper = {
       ...wrapper,
       manifest: {
@@ -338,7 +332,7 @@ test('createWrapperRunPlan falls back to local when the project has remote confi
 test('createWrapperRunPlan falls back to local when the project has only partially configured remote execution', () => {
   withProjectHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     const project = createProject({
       name: 'Demo',
       workingDirectory: projectDir,
@@ -369,7 +363,7 @@ test('createWrapperRunPlan falls back to local when the project has only partial
 test('createWrapperRunPlan does not require heavy-workload acknowledgement once remote execution resolves the wrapper away from local', () => {
   withProjectHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
     const heavyWrapper = {
       ...wrapper,
       manifest: { ...wrapper.manifest, resourceClass: 'heavy' as const }
@@ -393,7 +387,7 @@ test('createWrapperRunPlan does not require heavy-workload acknowledgement once 
 test('reviseWrapperRunPlan keeps the same planId and bumps the revision', () => {
   withHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
-    const wrapper = fastqQcWrapper(agentDir)
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
 
     const initial = createWrapperRunPlan({
       actor: 'agent',

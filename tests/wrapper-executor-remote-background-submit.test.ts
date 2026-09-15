@@ -5,10 +5,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import {
-  ensureBundledWrappersInstalled,
-  listWrapperCatalog
-} from '../src/main/agent/wrappers/catalog'
 import { runRemoteBackgroundWrapperExecution } from '../src/main/agent/wrappers/executor-remote-background-submit'
 import { createWrapperRunPlan } from '../src/main/agent/wrappers/plans'
 import type {
@@ -17,6 +13,7 @@ import type {
 } from '../src/main/agent/wrappers/remote-ssh-session'
 import { getWrapperRunsDir, writeWrapperRun } from '../src/main/agent/wrappers/store'
 import type { WrapperRun, WrapperRunPlan } from '../src/main/agent/wrappers/types'
+import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
 
 const REMOTE_RUN_DIR_PREFIX = '/data/lab/.phi/wrappers/runs'
 const FAKE_CONNECTION = { host: 'lab-hpc.example.edu', username: 'agent', privateKey: 'fake' }
@@ -116,9 +113,7 @@ async function createRemoteBackgroundPlan(
   agentDir: string,
   projectDir: string
 ): Promise<WrapperRunPlan> {
-  ensureBundledWrappersInstalled(agentDir)
-  const entry = listWrapperCatalog(agentDir).find((item) => item.manifest.id === 'phi/ngs/fastq-qc')
-  if (!entry) throw new Error('fastq-qc fixture not installed')
+  const entry = installLegacyFastqQcWrapper(agentDir, projectDir)
   writeFastqPair(projectDir, 'S1')
   const localPlan = createWrapperRunPlan({
     actor: 'agent',

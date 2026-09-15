@@ -30,7 +30,7 @@ import { authPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
 import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
 import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
-import { buildDefaultWrapperCustomTools } from '../wrappers/tools'
+import { buildWrapperCompositionTools } from '../wrappers/composition/tools'
 
 type UnknownRecord = Record<string, unknown>
 type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -681,9 +681,9 @@ async function createSession(params: unknown): Promise<unknown> {
   // "Integration With The Existing Runtime (Confirmed By Milestone P1.0)".
   // Never let a wrapper-catalog problem block an otherwise-ordinary chat
   // session from starting.
-  let wrapperCustomTools: ReturnType<typeof buildDefaultWrapperCustomTools> = []
+  let wrapperCustomTools: ReturnType<typeof buildWrapperCompositionTools> = []
   try {
-    wrapperCustomTools = buildDefaultWrapperCustomTools(agentDir)
+    wrapperCustomTools = buildWrapperCompositionTools()
   } catch {
     wrapperCustomTools = []
   }

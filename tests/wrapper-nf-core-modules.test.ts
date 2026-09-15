@@ -1,186 +1,109 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename } from 'node:path'
 import test from 'node:test'
 
 import {
-  ensureBundledWrappersInstalled,
-  listWrapperCatalog
-} from '../src/main/agent/wrappers/catalog'
-import { createWrapperRunPlan } from '../src/main/agent/wrappers/plans'
-import type { WrapperCatalogEntry } from '../src/main/agent/wrappers/catalog'
+  findWrapperCompositionEntry,
+  listWrapperCompositionCatalog,
+  resetWrapperCompositionCatalogCache
+} from '../src/main/agent/wrappers/composition/discovery'
+import { parseWrapperCompositionManifest } from '../src/main/agent/wrappers/composition/manifest'
+import {
+  buildWrapperCompositionInspectTool,
+  buildWrapperCompositionSearchTool,
+  buildWrapperCompositionTools
+} from '../src/main/agent/wrappers/composition/tools'
 
-/**
- * Plan-creation coverage for the standalone wrappers around individual
- * nf-core/modules modules (fastqc/trimgalore/star-align/salmon-quant/
- * multiqc — see resources/wrappers/fastqc/wrapper.yaml's
- * doc comment for why these exist alongside, not composed into, the full
- * nf-core/rnaseq pipeline wrapper, and why they're namespaced
- * `nf-core/modules/*` rather than `nf-core/rnaseq/*`). Exercises `plans.ts`
- * against each wrapper's real `wrapper.yaml`
- * — catches manifest-authoring mistakes a synthetic test manifest would
- * never surface. Actual pipeline *execution* (real Nextflow/Docker) is out
- * of scope for an automated test here — all five were verified manually
- * end to end while authoring them; see each wrapper.yaml's doc comment.
- */
+const EXPECTED_MODULE_WRAPPER_IDS = [
+  'nf-core/modules/fastp',
+  'nf-core/modules/fastqc',
+  'nf-core/modules/gffread',
+  'nf-core/modules/gunzip',
+  'nf-core/modules/multiqc',
+  'nf-core/modules/star-align',
+  'nf-core/modules/trimgalore'
+]
 
-function withHarness<T>(callback: (harness: { agentDir: string; projectDir: string }) => T): T {
-  const root = mkdtempSync(join(tmpdir(), 'phi-wrapper-nf-core-modules-'))
-  const agentDir = join(root, '.phi-home')
-  const projectDir = join(root, 'project')
-  mkdirSync(projectDir, { recursive: true })
-  try {
-    return callback({ agentDir, projectDir })
-  } finally {
-    rmSync(root, { recursive: true, force: true })
+test('composition discovery finds wrappers from the modules/subworkflows resource layout', () => {
+  resetWrapperCompositionCatalogCache()
+
+  const entries = listWrapperCompositionCatalog()
+  assert.deepEqual(entries.map((entry) => entry.manifest.id).sort(), EXPECTED_MODULE_WRAPPER_IDS)
+
+  assert.ok(entries.every((entry) => basename(entry.wrapperDir) === 'wrapper'))
+  assert.ok(
+    entries.every((entry) =>
+      /resources\/wrappers\/(modules|subworkflows)\//.test(entry.componentDir)
+    )
+  )
+})
+
+test('composition discovery can find a wrapper by canonical id', () => {
+  resetWrapperCompositionCatalogCache()
+
+  const entry = findWrapperCompositionEntry('nf-core/modules/star-align')
+  assert.ok(entry)
+  assert.equal(entry!.manifest.name, 'STAR align')
+  assert.equal(entry!.manifest.params.reads.kind, 'input')
+})
+
+test('wrapper.search lists matching composition wrappers', async () => {
+  resetWrapperCompositionCatalogCache()
+
+  const result = await buildWrapperCompositionSearchTool().execute('call-1', {
+    query: 'fastqc'
+  })
+
+  assert.equal(result.isError, undefined)
+  const details = result.details as { results: Array<{ id: string }> }
+  assert.deepEqual(
+    details.results.map((item) => item.id),
+    ['nf-core/modules/fastqc']
+  )
+})
+
+test('wrapper.inspect returns the composition manifest plus default params', async () => {
+  resetWrapperCompositionCatalogCache()
+
+  const result = await buildWrapperCompositionInspectTool().execute('call-1', {
+    id: 'nf-core/modules/fastqc'
+  })
+
+  assert.equal(result.isError, undefined)
+  const details = result.details as {
+    manifest: { id: string; params: Record<string, unknown> }
+    defaultParams: Record<string, unknown>
   }
-}
-
-function moduleWrapper(agentDir: string, canonicalId: string): WrapperCatalogEntry {
-  ensureBundledWrappersInstalled(agentDir)
-  const entry = listWrapperCatalog(agentDir).find((item) => item.manifest.id === canonicalId)
-  if (!entry) throw new Error(`${canonicalId} fixture not installed`)
-  return entry
-}
-
-function writeFastqPair(projectDir: string, sample: string): void {
-  mkdirSync(join(projectDir, 'data'), { recursive: true })
-  writeFileSync(join(projectDir, 'data', `${sample}_R1.fastq.gz`), 'r1')
-  writeFileSync(join(projectDir, 'data', `${sample}_R2.fastq.gz`), 'r2')
-}
-
-function writeReferenceFiles(projectDir: string): void {
-  mkdirSync(join(projectDir, 'ref'), { recursive: true })
-  writeFileSync(join(projectDir, 'ref', 'genome.fa'), '>chr1\nACGT\n')
-  writeFileSync(join(projectDir, 'ref', 'genes.gtf'), '# minimal placeholder GTF\n')
-}
-
-test('createWrapperRunPlan resolves a valid local plan for the standalone FastQC wrapper', () => {
-  withHarness(({ agentDir, projectDir }) => {
-    const wrapper = moduleWrapper(agentDir, 'nf-core/modules/fastqc')
-    writeFastqPair(projectDir, 'S1')
-
-    const plan = createWrapperRunPlan({
-      actor: 'agent',
-      wrapper,
-      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
-      cwd: projectDir,
-      agentDir
-    })
-
-    assert.equal(plan.state, 'valid', plan.validation.errors.join('; '))
-    assert.equal(plan.executor, 'local')
-    assert.equal(plan.profile, 'local')
-    assert.equal(plan.nextflowProfile, 'docker')
-    assert.equal(plan.resourceClass, 'light')
-    assert.equal(plan.requiresHeavyWorkloadAcknowledgement, undefined)
+  assert.equal(details.manifest.id, 'nf-core/modules/fastqc')
+  assert.deepEqual(details.defaultParams, {
+    reads: 'tests/data/test_{1,2}.fastq.gz',
+    outdir: 'results'
   })
 })
 
-test('createWrapperRunPlan resolves a valid local plan for the standalone Trim Galore wrapper', () => {
-  withHarness(({ agentDir, projectDir }) => {
-    const wrapper = moduleWrapper(agentDir, 'nf-core/modules/trimgalore')
-    writeFastqPair(projectDir, 'S1')
-
-    const plan = createWrapperRunPlan({
-      actor: 'agent',
-      wrapper,
-      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
-      cwd: projectDir,
-      agentDir
-    })
-
-    assert.equal(plan.state, 'valid', plan.validation.errors.join('; '))
-    assert.equal(plan.resourceClass, 'light')
-  })
+test('composition tools expose the generic wrapper workflow only', () => {
+  assert.deepEqual(
+    buildWrapperCompositionTools().map((tool) => tool.name),
+    ['wrapper.search', 'wrapper.inspect', 'wrapper.run']
+  )
 })
 
-test('createWrapperRunPlan resolves a valid local plan for the standalone STAR align wrapper', () => {
-  withHarness(({ agentDir, projectDir }) => {
-    const wrapper = moduleWrapper(agentDir, 'nf-core/modules/star-align')
-    writeFastqPair(projectDir, 'S1')
-    writeReferenceFiles(projectDir)
-
-    const plan = createWrapperRunPlan({
-      actor: 'agent',
-      wrapper,
-      params: {
-        reads: 'data/*_{R1,R2}.fastq.gz',
-        fasta: 'ref/genome.fa',
-        gtf: 'ref/genes.gtf'
-      },
-      cwd: projectDir,
-      agentDir
-    })
-
-    assert.equal(plan.state, 'valid', plan.validation.errors.join('; '))
-    assert.equal(plan.resourceClass, 'hpc')
-    // Heavy/hpc local runs need the acknowledgement gate — see policy.ts.
-    assert.equal(plan.requiresHeavyWorkloadAcknowledgement, true)
-    assert.equal(plan.params.fasta, join(projectDir, 'ref', 'genome.fa'))
-    assert.equal(plan.params.gtf, join(projectDir, 'ref', 'genes.gtf'))
-  })
-})
-
-test('createWrapperRunPlan resolves a valid local plan for the standalone Salmon quant wrapper', () => {
-  withHarness(({ agentDir, projectDir }) => {
-    const wrapper = moduleWrapper(agentDir, 'nf-core/modules/salmon-quant')
-    writeFastqPair(projectDir, 'S1')
-    writeReferenceFiles(projectDir)
-
-    const plan = createWrapperRunPlan({
-      actor: 'agent',
-      wrapper,
-      params: {
-        reads: 'data/*_{R1,R2}.fastq.gz',
-        fasta: 'ref/genome.fa',
-        gtf: 'ref/genes.gtf'
-      },
-      cwd: projectDir,
-      agentDir
-    })
-
-    assert.equal(plan.state, 'valid', plan.validation.errors.join('; '))
-    assert.equal(plan.resourceClass, 'standard')
-    assert.equal(plan.requiresHeavyWorkloadAcknowledgement, undefined)
-  })
-})
-
-test('createWrapperRunPlan resolves a valid local plan for the standalone MultiQC wrapper', () => {
-  withHarness(({ agentDir, projectDir }) => {
-    const wrapper = moduleWrapper(agentDir, 'nf-core/modules/multiqc')
-    mkdirSync(join(projectDir, 'reports'), { recursive: true })
-    writeFileSync(join(projectDir, 'reports', 'sample1_fastqc.zip'), 'zip')
-
-    const plan = createWrapperRunPlan({
-      actor: 'agent',
-      wrapper,
-      params: { input: 'reports/*' },
-      cwd: projectDir,
-      agentDir
-    })
-
-    assert.equal(plan.state, 'valid', plan.validation.errors.join('; '))
-    assert.match(plan.commandPlan.command, /-profile docker$/)
-  })
-})
-
-test('createWrapperRunPlan fails validation for the STAR align wrapper when the reference genome is missing', () => {
-  withHarness(({ agentDir, projectDir }) => {
-    const wrapper = moduleWrapper(agentDir, 'nf-core/modules/star-align')
-    writeFastqPair(projectDir, 'S1')
-
-    const plan = createWrapperRunPlan({
-      actor: 'agent',
-      wrapper,
-      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
-      cwd: projectDir,
-      agentDir
-    })
-
-    assert.equal(plan.state, 'invalid')
-    assert.ok(plan.validation.errors.some((error) => error.includes('fasta')))
-    assert.ok(plan.validation.errors.some((error) => error.includes('gtf')))
-  })
+test('composition manifest parser rejects invalid param kinds', () => {
+  assert.throws(
+    () =>
+      parseWrapperCompositionManifest(`
+id: acme/tools/bad
+name: Bad
+summary: Invalid
+params:
+  reads:
+    kind: file
+    type: fastq_glob
+outputs:
+  reports:
+    type: directory
+    path: results
+`),
+    /kind must be input, output, or option/
+  )
 })

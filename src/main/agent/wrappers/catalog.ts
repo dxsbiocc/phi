@@ -59,7 +59,7 @@ const nodeRequire = createRequire(import.meta.url)
  *    `process.cwd()`, which every test invocation in package.json's `test`
  *    script already runs from the project root.
  */
-function getBundledWrapperPackagesDir(): string {
+export function getBundledWrapperPackagesDir(): string {
   const electronModule = nodeRequire('electron') as
     { app?: { isPackaged: boolean; getAppPath(): string } } | string
   const electronApp = typeof electronModule === 'object' ? electronModule.app : undefined
@@ -73,27 +73,16 @@ function getBundledWrapperPackagesDir(): string {
   return join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'wrappers')
 }
 
-const BUNDLED_WRAPPERS_DIR = getBundledWrapperPackagesDir()
-
-const BUNDLED_WRAPPER_PACKAGE_DIRS = [
-  join(BUNDLED_WRAPPERS_DIR, 'phi-ngs-fastq-qc'),
-  // First wrapper around a real, unmodified upstream pipeline (every other
-  // bundled wrapper is a Phi-authored demo script) — see this package's own
-  // wrapper.yaml doc comment for what's vendored and what was verified.
-  join(BUNDLED_WRAPPERS_DIR, 'nf-core-rnaseq'),
-  // Standalone wrappers around individual nf-core/modules modules — see
-  // each package's own wrapper.yaml doc comment for why these exist
-  // alongside (not composed into) the full nf-core/rnaseq pipeline wrapper
-  // above, and why they're namespaced `nf-core/modules/*` rather than
-  // `nf-core/rnaseq/*` despite being vendored from an rnaseq checkout. The
-  // directory names drop that namespace prefix (unlike `nf-core-rnaseq`
-  // above) since the manifest's own `id` field already carries it.
-  join(BUNDLED_WRAPPERS_DIR, 'fastqc'),
-  join(BUNDLED_WRAPPERS_DIR, 'trimgalore'),
-  join(BUNDLED_WRAPPERS_DIR, 'star-align'),
-  join(BUNDLED_WRAPPERS_DIR, 'salmon-quant'),
-  join(BUNDLED_WRAPPERS_DIR, 'multiqc')
-]
+/**
+ * Legacy package-level bundled wrappers were removed from `resources/wrappers/`.
+ * The app's bundled wrapper surface is now the composition layout discovered
+ * from `modules/**\/wrapper` and `subworkflows/**\/wrapper`.
+ *
+ * Keep this empty so the legacy catalog still supports custom installs and old
+ * plan/run tests, without app startup trying to copy directories that are no
+ * longer shipped.
+ */
+const BUNDLED_WRAPPER_PACKAGE_DIRS: string[] = []
 
 function ensureDir(path: string): void {
   if (!existsSync(path)) {

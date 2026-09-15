@@ -4,26 +4,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import {
-  ensureBundledWrappersInstalled,
-  listWrapperCatalog
-} from '../src/main/agent/wrappers/catalog'
 import { createWrapperRunPlan } from '../src/main/agent/wrappers/plans'
 import type { WrapperCatalogEntry } from '../src/main/agent/wrappers/catalog'
+import { installLegacyRnaseqWrapper } from './helpers/wrapperFixtures'
 
 /**
- * Plan-creation coverage for the vendored nf-core/rnaseq wrapper — the
- * first bundled wrapper around a real, unmodified upstream pipeline (every
- * other bundled wrapper is a Phi-authored demo script with no real source
- * behind it). These tests exercise `plans.ts` against the wrapper's real
- * `wrapper.yaml`, not a synthetic fixture — catches manifest-authoring
- * mistakes (a typo'd input id, a schema/param mismatch) that a synthetic
- * test manifest would never surface. Actual pipeline *execution* (spawning
- * real Nextflow/Docker against this wrapper) is out of scope here — see
- * `runs.ts`/`executor-local.ts`'s own tests for execution-layer coverage
- * against fakes, and the wrapper.yaml's own doc comment for what real
- * verification (real Nextflow parsing, real Docker containers) was done
- * manually while authoring it.
+ * Plan-creation coverage for the legacy package-level nf-core/rnaseq
+ * manifest shape. The bundled package itself moved out of
+ * `resources/wrappers/`; these tests still exercise `plans.ts` against the
+ * old manifest contract using a test-only install.
  */
 
 function withHarness<T>(callback: (harness: { agentDir: string; projectDir: string }) => T): T {
@@ -38,13 +27,8 @@ function withHarness<T>(callback: (harness: { agentDir: string; projectDir: stri
   }
 }
 
-function rnaseqWrapper(agentDir: string): WrapperCatalogEntry {
-  ensureBundledWrappersInstalled(agentDir)
-  const entry = listWrapperCatalog(agentDir).find(
-    (item) => item.manifest.id === 'nf-core/rnaseq/rnaseq'
-  )
-  if (!entry) throw new Error('nf-core/rnaseq fixture not installed')
-  return entry
+function rnaseqWrapper(agentDir: string, projectDir: string): WrapperCatalogEntry {
+  return installLegacyRnaseqWrapper(agentDir, projectDir)
 }
 
 /** A hand-authored nf-core-style samplesheet — see wrapper.yaml's `input` doc comment for why this isn't auto-generated from a glob. */
@@ -61,7 +45,7 @@ function writeProjectInputs(projectDir: string): void {
 
 test('createWrapperRunPlan resolves the nf-core/rnaseq manifest to a valid local plan', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = rnaseqWrapper(agentDir)
+    const wrapper = rnaseqWrapper(agentDir, projectDir)
     writeProjectInputs(projectDir)
 
     const plan = createWrapperRunPlan({
@@ -88,7 +72,7 @@ test('createWrapperRunPlan resolves the nf-core/rnaseq manifest to a valid local
 
 test('createWrapperRunPlan substitutes resolved absolute paths for input/fasta/gtf into params.json', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = rnaseqWrapper(agentDir)
+    const wrapper = rnaseqWrapper(agentDir, projectDir)
     writeProjectInputs(projectDir)
 
     const plan = createWrapperRunPlan({
@@ -111,7 +95,7 @@ test('createWrapperRunPlan substitutes resolved absolute paths for input/fasta/g
 
 test("createWrapperRunPlan uses the local profile's declared nextflowProfile (docker) for -profile, not the Phi id", () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = rnaseqWrapper(agentDir)
+    const wrapper = rnaseqWrapper(agentDir, projectDir)
     writeProjectInputs(projectDir)
 
     const plan = createWrapperRunPlan({
@@ -135,7 +119,7 @@ test("createWrapperRunPlan uses the local profile's declared nextflowProfile (do
 
 test('createWrapperRunPlan fails validation when a required reference input is missing', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = rnaseqWrapper(agentDir)
+    const wrapper = rnaseqWrapper(agentDir, projectDir)
     writeProjectInputs(projectDir)
 
     const plan = createWrapperRunPlan({
@@ -153,7 +137,7 @@ test('createWrapperRunPlan fails validation when a required reference input is m
 
 test('createWrapperRunPlan rejects an aligner value outside the declared enum', () => {
   withHarness(({ agentDir, projectDir }) => {
-    const wrapper = rnaseqWrapper(agentDir)
+    const wrapper = rnaseqWrapper(agentDir, projectDir)
     writeProjectInputs(projectDir)
 
     const plan = createWrapperRunPlan({

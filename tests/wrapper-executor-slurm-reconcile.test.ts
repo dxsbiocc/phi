@@ -11,10 +11,6 @@ import {
   updateProjectRemoteDefaults
 } from '../src/main/agent/projects'
 import { RUNTIME_AGENT_DIR_ENV } from '../src/main/agent/runtime-paths'
-import {
-  ensureBundledWrappersInstalled,
-  listWrapperCatalog
-} from '../src/main/agent/wrappers/catalog'
 import { reconcileRemoteWrapperRuns } from '../src/main/agent/wrappers/executor-slurm-reconcile'
 import type {
   RemoteExecResult,
@@ -26,6 +22,7 @@ import {
   writeWrapperRun
 } from '../src/main/agent/wrappers/store'
 import type { WrapperRun } from '../src/main/agent/wrappers/types'
+import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
 
 /**
  * In-memory fake covering exactly the commands `SbatchRunner.status()`/
@@ -136,9 +133,7 @@ function writeSlurmControllerRun(
   projectDir: string,
   overrides: Partial<WrapperRun> = {}
 ): WrapperRun {
-  ensureBundledWrappersInstalled(agentDir)
-  const entry = listWrapperCatalog(agentDir).find((item) => item.manifest.id === 'phi/ngs/fastq-qc')
-  if (!entry) throw new Error('fastq-qc fixture not installed')
+  const entry = installLegacyFastqQcWrapper(agentDir, projectDir)
   const now = new Date().toISOString()
   const run: WrapperRun = {
     runId: `wrun_${randomUUID()}`,

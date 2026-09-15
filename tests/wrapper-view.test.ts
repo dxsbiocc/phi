@@ -1,26 +1,19 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 
-import { parseWrapperManifest } from '../src/main/agent/wrappers/manifest'
 import { WrapperViewContent } from '../src/renderer/src/features/wrapper/WrapperView'
 import { buildWrapperFlowGraph } from '../src/renderer/src/features/wrapper/lib/wrapperFlow'
 import { resolveWrapperCancelTarget } from '../src/renderer/src/features/wrapper/lib/wrapperView'
+import { readLegacyFastqQcWrapperManifest } from './helpers/wrapperFixtures'
 import type { WrapperCatalogEntry } from '../src/shared/wrapperCatalogTypes'
 import type { WrapperManifest } from '../src/shared/wrapperManifestTypes'
 import type { WrapperRun, WrapperRunPlan } from '../src/shared/wrapperTypes'
 
 function fastqQcManifest(): WrapperManifest {
-  const raw = readFileSync(
-    new URL('../resources/wrappers/phi-ngs-fastq-qc/wrapper.yaml', import.meta.url),
-    'utf-8'
-  )
-  const result = parseWrapperManifest(raw)
-  if (!result.manifest) throw new Error('fixture manifest failed to parse')
-  return result.manifest
+  return readLegacyFastqQcWrapperManifest()
 }
 
 function bundledEntry(): WrapperCatalogEntry {

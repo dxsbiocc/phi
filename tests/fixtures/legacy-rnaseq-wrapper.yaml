@@ -1,0 +1,121 @@
+phiWrapperVersion: 1
+id: nf-core/rnaseq/rnaseq
+shortId: rnaseq
+name: RNA-seq (nf-core)
+version: 3.26.0
+summary: RNA sequencing analysis pipeline for gene/isoform quantification and extensive quality control.
+
+runtime:
+  minVersion: 1.0.0
+  maxVersion: 1.x
+
+source:
+  repository: https://github.com/nf-core/rnaseq
+  ref: 3.26.0
+
+verification:
+  status: unverified
+  registry: none
+
+registryStatus: active
+resourceClass: hpc
+
+engine:
+  type: nextflow
+  entrypoint: main.nf
+  profiles:
+    - id: local
+      executor: local
+      containerRuntime: docker
+      nextflowProfile: docker
+    - id: remote-background
+      executor: remote
+      controller: detached_ssh
+      containerRuntime: singularity
+      nextflowProfile: singularity
+    - id: slurm-controller
+      executor: remote
+      scheduler: slurm
+      controller: sbatch
+      containerRuntime: singularity
+      nextflowProfile: singularity
+
+inputs:
+  - id: input
+    type: nf_core_samplesheet
+    required: true
+  - id: fasta
+    type: reference_fasta
+    required: true
+  - id: gtf
+    type: reference_gtf
+    required: true
+
+parameters:
+  schema:
+    type: object
+    required:
+      - input
+      - fasta
+      - gtf
+    properties:
+      input:
+        type: string
+      fasta:
+        type: string
+      gtf:
+        type: string
+      aligner:
+        type: string
+        enum:
+          - star_salmon
+          - star_rsem
+          - hisat2
+          - bowtie2_salmon
+        default: star_salmon
+
+outputs:
+  - id: report
+    label: MultiQC report
+    type: html
+    path: multiqc/star_salmon/multiqc_report.html
+    primary: true
+  - id: gene_counts
+    label: Gene counts
+    type: table
+    path: star_salmon/salmon.merged.gene_counts.tsv
+
+resources:
+  defaults:
+    cpus: 16
+    memory: 72 GB
+    time: 24h
+
+permissions:
+  filesystem:
+    read:
+      - input_paths
+    write:
+      - run_workdir
+      - declared_outdir
+  network:
+    default: disabled
+  remote:
+    allowed: false
+
+license:
+  wrapper: MIT
+  tools:
+    - name: nf-core/rnaseq
+      license: MIT
+
+citations:
+  - id: nf-core
+    doi: 10.1038/s41587-020-0439-x
+
+dataPolicy:
+  acceptedSensitivity:
+    - public
+    - internal
+  externalTransfer:
+    default: false

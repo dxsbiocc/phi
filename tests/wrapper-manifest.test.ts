@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
@@ -10,12 +9,10 @@ import {
   parseWrapperManifest
 } from '../src/main/agent/wrappers/manifest'
 import { validateWrapperParams } from '../src/main/agent/wrappers/schema'
+import { readLegacyFastqQcWrapperManifestText } from './helpers/wrapperFixtures'
 
 function readFixture(): string {
-  return readFileSync(
-    new URL('../resources/wrappers/phi-ngs-fastq-qc/wrapper.yaml', import.meta.url),
-    'utf-8'
-  )
+  return readLegacyFastqQcWrapperManifestText()
 }
 
 test('parseWrapperManifest accepts the declared fastqc -> multiqc steps DAG', () => {
