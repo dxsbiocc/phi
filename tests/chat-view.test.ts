@@ -1025,6 +1025,7 @@ test('tool rows classify common actions with distinct icons', () => {
     notebook: {
       kind: 'notebook_cell_executed',
       relativePath: 'eda.ipynb',
+      cellNumber: 2,
       cellId: 'cell-2',
       cellType: 'code',
       executionState: 'idle',
@@ -1035,8 +1036,9 @@ test('tool rows classify common actions with distinct icons', () => {
 
   assert.match(notebookMarkup, /aria-label="分析"/)
   assert.match(notebookMarkup, /已运行 Cell/)
+  assert.match(notebookMarkup, /Cell 2/)
   assert.match(notebookMarkup, /eda\.ipynb/)
-  assert.match(notebookMarkup, /cell-2/)
+  assert.doesNotMatch(notebookMarkup, /cell-2/)
   assert.doesNotMatch(notebookMarkup, />notebook\.run_cell</)
   assert.doesNotMatch(notebookMarkup, /aria-label="跳转到 cell"/)
 
@@ -1053,6 +1055,7 @@ test('tool rows classify common actions with distinct icons', () => {
         kind: 'notebook_cell_updated',
         path: '/project/eda.ipynb',
         relativePath: 'eda.ipynb',
+        cellNumber: 2,
         cellId: 'cell-2',
         cellType: 'code',
         summary: 'Updated Cell 2'
