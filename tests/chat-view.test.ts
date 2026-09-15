@@ -439,6 +439,17 @@ test('chat view parses and renders file references as cards', () => {
   assert.doesNotMatch(messageMarkup, /引用文件：/)
 })
 
+test('chat view keeps user messages right aligned inside virtual rows', () => {
+  const markup = renderChat([{ id: 'user-1', role: 'user', content: '当前运行的notebook有哪些' }])
+
+  assert.match(
+    markup,
+    /\{[^}]*display:flex;[^}]*flex-direction:column;padding-top:0px;min-width:0;\}/
+  )
+  assert.match(markup, /align-self:flex-end;max-width:75%/)
+  assert.match(markup, /当前运行的notebook有哪些/)
+})
+
 test('chat view extracts suggested next action placeholders from assistant messages', () => {
   assert.equal(
     suggestedNextActionPlaceholderFromMessages([

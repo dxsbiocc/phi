@@ -111,7 +111,15 @@ function ChatVirtualRowShell({
   )
 
   return (
-    <Box ref={onRowRef} sx={{ pt: index === 0 ? 0 : CHAT_VIRTUAL_ROW_GAP_PT, minWidth: 0 }}>
+    <Box
+      ref={onRowRef}
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        pt: index === 0 ? 0 : CHAT_VIRTUAL_ROW_GAP_PT,
+        minWidth: 0
+      }}
+    >
       {children}
     </Box>
   )
