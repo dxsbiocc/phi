@@ -1,7 +1,7 @@
 import { Box, Button, Divider, Link, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
-import { Fragment, isValidElement, useEffect, useMemo, useState, type ReactNode } from 'react'
-import ReactMarkdown from 'react-markdown'
+import { Fragment, isValidElement, memo, useEffect, useMemo, useState, type ReactNode } from 'react'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import { PhiIcons, directoryIconForPath, fileIconForPath } from '../icons'
 import { useMarkdownPlugins } from '../lib/markdownMathPlugins'
 import { tokenizeLocalPaths } from '../lib/localPaths'
@@ -816,23 +816,154 @@ function InlineCode({
   return <InlineCodeShell>{children}</InlineCodeShell>
 }
 
-function MarkdownContent({
-  text,
-  cwd = '',
-  onOpenLocalPath,
-  enableMath = false
-}: {
+type MarkdownContentProps = {
   text: string
   cwd?: string
   onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
   enableMath?: boolean // off by default -- see markdownMathPlugins.ts for why
-}): React.JSX.Element {
+}
+
+function MarkdownContentImpl({
+  text,
+  cwd = '',
+  onOpenLocalPath,
+  enableMath = false
+}: MarkdownContentProps): React.JSX.Element {
   const bareFileReferencePaths = useMemo(
     () => collectBareFileReferencePaths(text, cwd),
     [cwd, text]
   )
   const localPathKinds = useLocalPathKinds(cwd, bareFileReferencePaths)
   const { remarkPlugins, rehypePlugins } = useMarkdownPlugins(enableMath)
+
+  const components = useMemo<Components>(
+    () => ({
+      p: ({ children }) => (
+        <Typography variant="body1" sx={{ my: 1, fontSize: 'inherit', lineHeight: 'inherit' }}>
+          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
+        </Typography>
+      ),
+      h1: ({ children }) => (
+        <Typography variant="h6" component="h1" sx={{ mt: 2.5, mb: 1, fontWeight: 700 }}>
+          {children}
+        </Typography>
+      ),
+      h2: ({ children }) => (
+        <Typography variant="subtitle1" component="h2" sx={{ mt: 2, mb: 1, fontWeight: 700 }}>
+          {children}
+        </Typography>
+      ),
+      h3: ({ children }) => (
+        <Typography variant="subtitle2" component="h3" sx={{ mt: 1.5, mb: 0.5, fontWeight: 700 }}>
+          {children}
+        </Typography>
+      ),
+      ul: ({ children }) => (
+        <Box component="ul" sx={{ my: 1, pl: 3, '& li': { mb: 0.5 } }}>
+          {children}
+        </Box>
+      ),
+      ol: ({ children }) => (
+        <Box component="ol" sx={{ my: 1, pl: 3, '& li': { mb: 0.5 } }}>
+          {children}
+        </Box>
+      ),
+      li: ({ children }) => (
+        <Typography component="li" sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}>
+          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
+        </Typography>
+      ),
+      strong: ({ children }) => (
+        <Box component="strong" sx={{ fontWeight: 700 }}>
+          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
+        </Box>
+      ),
+      em: ({ children }) => (
+        <Box component="em" sx={{ fontStyle: 'italic' }}>
+          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
+        </Box>
+      ),
+      a: ({ href, children }) => {
+        const localPath = localHrefToPath(href, cwd)
+        if (localPath) {
+          const pathKind = localPathKindForReference(textFromNode(children), localPath, cwd, true)
+          return (
+            <LocalPathButton
+              text={textFromNode(children)}
+              absolutePath={localPath}
+              pathKind={pathKind}
+              onOpenLocalPath={onOpenLocalPath}
+            />
+          )
+        }
+
+        return (
+          <Link href={href} target="_blank" rel="noreferrer" sx={{ color: 'primary.light' }}>
+            {children}
+          </Link>
+        )
+      },
+      hr: () => <Divider sx={{ my: 1.5 }} />,
+      pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+      code: ({ className, children }) =>
+        className ? (
+          <Box component="code" sx={{ fontFamily: 'var(--font-mono)', fontSize: 'inherit' }}>
+            {children}
+          </Box>
+        ) : (
+          <InlineCode cwd={cwd} localPathKinds={localPathKinds} onOpenLocalPath={onOpenLocalPath}>
+            {children}
+          </InlineCode>
+        ),
+      blockquote: ({ children }) => (
+        <Box
+          component="blockquote"
+          sx={{
+            m: 0,
+            my: 1,
+            pl: 2,
+            borderLeft: 3,
+            borderColor: 'grey.700',
+            color: 'text.secondary'
+          }}
+        >
+          {children}
+        </Box>
+      ),
+      table: ({ children }) => (
+        <Box sx={{ overflowX: 'auto', my: 1 }}>
+          <Box
+            component="table"
+            sx={{
+              borderCollapse: 'collapse',
+              '& th, & td': {
+                border: 1,
+                borderColor: 'grey.800',
+                px: 1.5,
+                py: 0.5,
+                fontSize: '0.88rem',
+                textAlign: 'left'
+              },
+              '& th': { bgcolor: 'rgba(148, 163, 184, 0.08)', fontWeight: 700 }
+            }}
+          >
+            {children}
+          </Box>
+        </Box>
+      ),
+      th: ({ children }) => (
+        <Box component="th" sx={{ fontWeight: 700 }}>
+          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
+        </Box>
+      ),
+      td: ({ children }) => (
+        <Box component="td">
+          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
+        </Box>
+      )
+    }),
+    [cwd, localPathKinds, onOpenLocalPath]
+  )
 
   return (
     <Box
@@ -851,149 +982,25 @@ function MarkdownContent({
         skipHtml
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}
-        components={{
-          p: ({ children }) => (
-            <Typography variant="body1" sx={{ my: 1, fontSize: 'inherit', lineHeight: 'inherit' }}>
-              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
-            </Typography>
-          ),
-          h1: ({ children }) => (
-            <Typography variant="h6" component="h1" sx={{ mt: 2.5, mb: 1, fontWeight: 700 }}>
-              {children}
-            </Typography>
-          ),
-          h2: ({ children }) => (
-            <Typography variant="subtitle1" component="h2" sx={{ mt: 2, mb: 1, fontWeight: 700 }}>
-              {children}
-            </Typography>
-          ),
-          h3: ({ children }) => (
-            <Typography
-              variant="subtitle2"
-              component="h3"
-              sx={{ mt: 1.5, mb: 0.5, fontWeight: 700 }}
-            >
-              {children}
-            </Typography>
-          ),
-          ul: ({ children }) => (
-            <Box component="ul" sx={{ my: 1, pl: 3, '& li': { mb: 0.5 } }}>
-              {children}
-            </Box>
-          ),
-          ol: ({ children }) => (
-            <Box component="ol" sx={{ my: 1, pl: 3, '& li': { mb: 0.5 } }}>
-              {children}
-            </Box>
-          ),
-          li: ({ children }) => (
-            <Typography component="li" sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}>
-              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
-            </Typography>
-          ),
-          strong: ({ children }) => (
-            <Box component="strong" sx={{ fontWeight: 700 }}>
-              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
-            </Box>
-          ),
-          em: ({ children }) => (
-            <Box component="em" sx={{ fontStyle: 'italic' }}>
-              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
-            </Box>
-          ),
-          a: ({ href, children }) => {
-            const localPath = localHrefToPath(href, cwd)
-            if (localPath) {
-              const pathKind = localPathKindForReference(
-                textFromNode(children),
-                localPath,
-                cwd,
-                true
-              )
-              return (
-                <LocalPathButton
-                  text={textFromNode(children)}
-                  absolutePath={localPath}
-                  pathKind={pathKind}
-                  onOpenLocalPath={onOpenLocalPath}
-                />
-              )
-            }
-
-            return (
-              <Link href={href} target="_blank" rel="noreferrer" sx={{ color: 'primary.light' }}>
-                {children}
-              </Link>
-            )
-          },
-          hr: () => <Divider sx={{ my: 1.5 }} />,
-          pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-          code: ({ className, children }) =>
-            className ? (
-              <Box component="code" sx={{ fontFamily: 'var(--font-mono)', fontSize: 'inherit' }}>
-                {children}
-              </Box>
-            ) : (
-              <InlineCode
-                cwd={cwd}
-                localPathKinds={localPathKinds}
-                onOpenLocalPath={onOpenLocalPath}
-              >
-                {children}
-              </InlineCode>
-            ),
-          blockquote: ({ children }) => (
-            <Box
-              component="blockquote"
-              sx={{
-                m: 0,
-                my: 1,
-                pl: 2,
-                borderLeft: 3,
-                borderColor: 'grey.700',
-                color: 'text.secondary'
-              }}
-            >
-              {children}
-            </Box>
-          ),
-          table: ({ children }) => (
-            <Box sx={{ overflowX: 'auto', my: 1 }}>
-              <Box
-                component="table"
-                sx={{
-                  borderCollapse: 'collapse',
-                  '& th, & td': {
-                    border: 1,
-                    borderColor: 'grey.800',
-                    px: 1.5,
-                    py: 0.5,
-                    fontSize: '0.88rem',
-                    textAlign: 'left'
-                  },
-                  '& th': { bgcolor: 'rgba(148, 163, 184, 0.08)', fontWeight: 700 }
-                }}
-              >
-                {children}
-              </Box>
-            </Box>
-          ),
-          th: ({ children }) => (
-            <Box component="th" sx={{ fontWeight: 700 }}>
-              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
-            </Box>
-          ),
-          td: ({ children }) => (
-            <Box component="td">
-              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
-            </Box>
-          )
-        }}
+        components={components}
       >
         {text}
       </ReactMarkdown>
     </Box>
   )
 }
+
+// `onOpenLocalPath` is intentionally excluded from the comparison: callers
+// often pass a fresh closure each render, but it doesn't capture render-local
+// state that would go stale, and including it would defeat memoization for
+// every historical chat message while a later one streams in.
+function markdownContentPropsEqual(
+  prev: MarkdownContentProps,
+  next: MarkdownContentProps
+): boolean {
+  return prev.text === next.text && prev.cwd === next.cwd && prev.enableMath === next.enableMath
+}
+
+const MarkdownContent = memo(MarkdownContentImpl, markdownContentPropsEqual)
 
 export default MarkdownContent

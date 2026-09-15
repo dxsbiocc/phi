@@ -125,6 +125,7 @@ function NotebookMimeOutput({
         data-phi-notebook-output-height={metadata?.height}
         alt="Notebook image output"
         src={dataUrl(mime, image)}
+        loading="lazy"
         sx={mediaSx(metadata)}
       />
     )
@@ -144,6 +145,7 @@ function NotebookMimeOutput({
         data-phi-notebook-output-height={metadata?.height}
         alt="Notebook SVG output"
         src={src}
+        loading="lazy"
         sx={mediaSx(metadata)}
       />
     )
@@ -156,6 +158,7 @@ function NotebookMimeOutput({
       <Box
         component="video"
         controls
+        preload="none"
         data-phi-notebook-output-kind={mime}
         data-phi-notebook-output-width={metadata?.width}
         data-phi-notebook-output-height={metadata?.height}

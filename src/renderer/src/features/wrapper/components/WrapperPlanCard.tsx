@@ -1,5 +1,5 @@
 import { Box, Button, CircularProgress, Collapse, Paper, Stack, Typography } from '@mui/material'
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import type { WrapperPlanItem } from '../../../types'
 import type { WrapperRun, WrapperRunPlan } from '../../../../../shared/wrapperTypes'
 import { PhiIcons } from '../../../icons'
@@ -133,7 +133,7 @@ function SamplesheetPreview({ inputId, csv }: { inputId: string; csv: string }):
  * Cancel are plain IPC calls against the durable plan store, independent of
  * whether the agent session that created this plan is still running.
  */
-export function WrapperPlanCard({ item }: { item: WrapperPlanItem }): React.JSX.Element {
+function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Element {
   const [loadState, setLoadState] = useState<{ plan?: WrapperRunPlan; error?: string }>({})
   const [expanded, setExpanded] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -481,3 +481,5 @@ export function WrapperPlanCard({ item }: { item: WrapperPlanItem }): React.JSX.
     </Paper>
   )
 }
+
+export const WrapperPlanCard = memo(WrapperPlanCardImpl)

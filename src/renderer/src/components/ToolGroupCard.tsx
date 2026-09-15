@@ -1,5 +1,5 @@
 import { Box, Collapse, Typography } from '@mui/material'
-import { useState, type ReactNode } from 'react'
+import { memo, useMemo, useState, type ReactNode } from 'react'
 import { PhiIcons } from '../icons'
 import { ToolActionIcon } from './ToolActionIcon'
 import ToolCallCard, { StatusIndicator, ToolCallDetail } from './ToolCallCard'
@@ -162,26 +162,28 @@ function groupIndicatorStatus(items: ToolCallItem[]): ToolCallItem['status'] | n
   return null
 }
 
+type ToolGroupCardProps = {
+  items: ToolCallItem[]
+  cwd?: string
+  onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
+  onContentResize?: ChatContentResizeHandler
+}
+
 function ToolGroupCard({
   items,
   cwd,
   onJumpToNotebookCell,
   onContentResize
-}: {
-  items: ToolCallItem[]
-  cwd?: string
-  onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
-  onContentResize?: ChatContentResizeHandler
-}): ReactNode {
+}: ToolGroupCardProps): ReactNode {
   const [expanded, setExpanded] = useState(false)
   const notifyContentResize = useCollapseResizeNotifier(onContentResize)
   const toggle = (): void => {
     setExpanded((value) => !value)
     notifyContentResize()
   }
-  const { headline, stat } = summarize(items)
-  const indicatorStatus = groupIndicatorStatus(items)
-  const actions = uniqueActions(items)
+  const { headline, stat } = useMemo(() => summarize(items), [items])
+  const indicatorStatus = useMemo(() => groupIndicatorStatus(items), [items])
+  const actions = useMemo(() => uniqueActions(items), [items])
 
   return (
     <Box sx={{ alignSelf: 'stretch', minWidth: 0 }}>
@@ -286,4 +288,22 @@ function ToolGroupCard({
   )
 }
 
-export default ToolGroupCard
+function sameItemsByReference(a: ToolCallItem[], b: ToolCallItem[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
+
+// groupMessages rebuilds each group's `items` array on every call even when
+// the underlying ToolCallItem objects are unchanged, so compare by element
+// reference rather than array identity to avoid re-rendering (and re-running
+// diffStat/summarize over) tool groups unrelated to the message currently
+// streaming in.
+function toolGroupCardPropsEqual(prev: ToolGroupCardProps, next: ToolGroupCardProps): boolean {
+  return sameItemsByReference(prev.items, next.items) && prev.cwd === next.cwd
+}
+
+export default memo(ToolGroupCard, toolGroupCardPropsEqual)

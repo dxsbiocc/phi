@@ -8,7 +8,7 @@ import {
   Tooltip,
   Typography
 } from '@mui/material'
-import { useState, type ReactNode } from 'react'
+import { memo, useMemo, useState, type ReactNode } from 'react'
 import { PhiIcons, fileIconForPath } from '../icons'
 import type { NotebookCellJumpTarget, NotebookToolSummary, ToolCallItem } from '../types'
 import { tokenizeLocalPaths } from '../lib/localPaths'
@@ -87,8 +87,11 @@ function LocalPathOutputText({ text, cwd }: { text: string; cwd?: string }): Rea
 }
 
 function DiffAwareOutput({ text, cwd }: { text: string; cwd?: string }): ReactNode {
-  const lines = text.split('\n')
-  const looksLikeDiff = lines.some((line) => /^[+-]{1}[^+-]/.test(line) || /^@@ /.test(line))
+  const lines = useMemo(() => text.split('\n'), [text])
+  const looksLikeDiff = useMemo(
+    () => lines.some((line) => /^[+-]{1}[^+-]/.test(line) || /^@@ /.test(line)),
+    [lines]
+  )
 
   if (!looksLikeDiff) {
     return (
@@ -505,19 +508,21 @@ function foldedToolHeadline(item: ToolCallItem, action: ReturnType<typeof toolAc
   return item.argsPreview || item.toolName
 }
 
+type ToolCallCardProps = {
+  item: ToolCallItem
+  cwd?: string
+  onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
+  onContentResize?: ChatContentResizeHandler
+}
+
 function ToolCallCard({
   item,
   cwd,
   onJumpToNotebookCell,
   onContentResize
-}: {
-  item: ToolCallItem
-  cwd?: string
-  onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
-  onContentResize?: ChatContentResizeHandler
-}): React.JSX.Element {
+}: ToolCallCardProps): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
-  const stat = item.output ? diffStat(item.output) : null
+  const stat = useMemo(() => (item.output ? diffStat(item.output) : null), [item.output])
   const notifyContentResize = useCollapseResizeNotifier(onContentResize)
   const toggle = (): void => {
     setExpanded((value) => !value)
@@ -649,4 +654,12 @@ function ToolCallCard({
   )
 }
 
-export default ToolCallCard
+// `item` keeps a stable object reference across reducer updates for every
+// tool call that isn't the one currently being mutated, so comparing by
+// reference is enough to skip re-rendering unrelated tool cards while a
+// sibling tool call/message is still streaming in.
+function toolCallCardPropsEqual(prev: ToolCallCardProps, next: ToolCallCardProps): boolean {
+  return prev.item === next.item && prev.cwd === next.cwd
+}
+
+export default memo(ToolCallCard, toolCallCardPropsEqual)

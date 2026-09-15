@@ -70,18 +70,16 @@ function messageScrollMarker(messages: ChatItem[]): MessageScrollMarker {
   }
 }
 
-function ProcessingGroup({
-  items,
-  onGoSettings,
-  onOpenLocalPath,
-  onJumpToNotebookCell,
-  onContentResize,
-  cwd = '',
-  isActive = false,
-  startedAtMs,
-  completedAtMs,
-  durationMs
-}: {
+function sameItemsByReference<T>(a: T[], b: T[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
+
+type ProcessingGroupProps = {
   items: ProcessingItem[]
   onGoSettings: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
@@ -92,7 +90,41 @@ function ProcessingGroup({
   startedAtMs?: number
   completedAtMs?: number
   durationMs?: number
-}): ReactNode {
+}
+
+// groupMessages/groupProcessingItems rebuild group wrapper objects (and their
+// `items` arrays) on every call, even when the underlying ChatItem objects are
+// unchanged. Comparing item-by-item reference equality (instead of the default
+// shallow array-reference check) lets an unrelated group skip re-rendering
+// while a sibling message is still streaming. Function props are intentionally
+// excluded: they're recreated by parent renders but don't capture render-local
+// state that would go stale.
+function processingGroupPropsEqual(
+  prev: ProcessingGroupProps,
+  next: ProcessingGroupProps
+): boolean {
+  return (
+    sameItemsByReference(prev.items, next.items) &&
+    prev.cwd === next.cwd &&
+    prev.isActive === next.isActive &&
+    prev.startedAtMs === next.startedAtMs &&
+    prev.completedAtMs === next.completedAtMs &&
+    prev.durationMs === next.durationMs
+  )
+}
+
+const ProcessingGroup = memo(function ProcessingGroup({
+  items,
+  onGoSettings,
+  onOpenLocalPath,
+  onJumpToNotebookCell,
+  onContentResize,
+  cwd = '',
+  isActive = false,
+  startedAtMs,
+  completedAtMs,
+  durationMs
+}: ProcessingGroupProps): ReactNode {
   const [expanded, setExpanded] = useState(false)
   const [fallbackStartedAtMs] = useState(() => Date.now())
   const [nowMs, setNowMs] = useState(() => Date.now())
@@ -252,21 +284,32 @@ function ProcessingGroup({
       </Collapse>
     </Box>
   )
-}
+}, processingGroupPropsEqual)
 
-function ChatBubble({
-  message,
-  onGoSettings,
-  onOpenLocalPath,
-  onContentResize,
-  cwd = ''
-}: {
+type ChatBubbleProps = {
   message: ChatMessage
   onGoSettings: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onContentResize?: ChatContentResizeHandler
   cwd?: string
-}): ReactNode {
+}
+
+// `message` keeps a stable object reference across reducer updates for every
+// item that isn't the one currently being mutated (see agentEventReducer's
+// `next[index] = { ...current, ... }` update), so a reference check here is
+// enough to skip re-rendering (and re-parsing markdown for) every past
+// message while the latest one streams in.
+function chatBubblePropsEqual(prev: ChatBubbleProps, next: ChatBubbleProps): boolean {
+  return prev.message === next.message && prev.cwd === next.cwd
+}
+
+const ChatBubble = memo(function ChatBubble({
+  message,
+  onGoSettings,
+  onOpenLocalPath,
+  onContentResize,
+  cwd = ''
+}: ChatBubbleProps): ReactNode {
   if (message.role === 'error') {
     const display = getProviderErrorDisplay(message.content)
     return (
@@ -323,7 +366,7 @@ function ChatBubble({
       <MarkdownContent text={message.content} cwd={cwd} onOpenLocalPath={onOpenLocalPath} />
     </Box>
   )
-}
+}, chatBubblePropsEqual)
 
 export type ChatMessageListProps = {
   messages: ChatItem[]
@@ -383,7 +426,7 @@ const ChatMessageList = memo(function ChatMessageList({
     (options?: ChatContentResizeOptions): void => {
       if (!scrollContainer) return
 
-      if (options?.preserveScrollPosition) {
+      if (options?.preserveScrollPosition && !stickToBottomRef.current) {
         suppressAutoScrollUntilRef.current = Date.now() + USER_RESIZE_AUTO_SCROLL_SUPPRESSION_MS
         updateScrollState(scrollContainer)
         return
@@ -493,7 +536,9 @@ const ChatMessageList = memo(function ChatMessageList({
             display: 'flex',
             flexDirection: 'column',
             gap: 2,
-            p: 3
+            px: 3,
+            pt: 3,
+            pb: isGenerating ? 6 : 3
           }}
         >
           {renderGroups.map((group, index) => {
