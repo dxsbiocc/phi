@@ -217,14 +217,18 @@ test('hover preview project actions keep their menu above the flyout', () => {
     resolve(process.cwd(), 'src/renderer/src/components/SessionSidebar.tsx'),
     'utf8'
   )
+  const projectRowSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/session-sidebar/ProjectRow.tsx'),
+    'utf8'
+  )
   const deleteDialogsSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/components/session-sidebar/SessionDeleteDialogs.tsx'),
     'utf8'
   )
 
   assert.match(sidebarSource, /onPreviewInteractionChange\?: \(active: boolean\) => void/)
-  assert.match(sidebarSource, /menuAnchor === null/)
-  assert.match(sidebarSource, /theme\.zIndex\.tooltip \+ 1/)
+  assert.match(projectRowSource, /menuAnchor === null/)
+  assert.match(projectRowSource, /theme\.zIndex\.tooltip \+ 1/)
   assert.match(deleteDialogsSource, /theme\.zIndex\.tooltip \+ 2/)
 })
 

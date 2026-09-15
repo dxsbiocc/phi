@@ -1,5 +1,8 @@
-import { useCallback, useRef, type FocusEvent } from 'react'
+import { memo, useCallback, useRef, type FocusEvent } from 'react'
 import { Box, IconButton, Paper, Popper, Tooltip } from '@mui/material'
+import type { IconType } from 'react-icons'
+import { SiHyperskill, SiNextflow } from 'react-icons/si'
+import { VscMcp } from 'react-icons/vsc'
 import SessionSidebar from './components/SessionSidebar'
 import { PhiIcons } from './icons'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
@@ -10,14 +13,83 @@ const activityBarWidth = 48
 const macTitlebarHeight = 44
 const macContentTopGap = 8
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
-const NavChatIcon = PhiIcons.nav.chat
-const NavProjectsIcon = PhiIcons.nav.projects
-const NavRuntimeIcon = PhiIcons.nav.runtime
-const NavPluginsIcon = PhiIcons.nav.plugins
-const NavSkillsIcon = PhiIcons.nav.skills
-const NavMcpIcon = PhiIcons.nav.mcp
-const NavWrappersIcon = PhiIcons.nav.wrappers
 const NavSettingsIcon = PhiIcons.nav.settings
+type ActivityBarIconFontSize = 'inherit' | 'small' | 'medium' | 'large'
+type ActivityBarIconProps = {
+  fontSize?: ActivityBarIconFontSize
+  size?: number | string
+}
+type ActivityBarIconComponent = (props: ActivityBarIconProps) => React.JSX.Element
+const activityBarIconBoxSize = 24
+const activityBarPhiIconGlyphSize = 24
+const activityBarReactIconGlyphSize = 20
+
+function activityBarIconSize(
+  fontSize?: ActivityBarIconFontSize,
+  size?: number | string,
+  defaultSize: number | string = activityBarPhiIconGlyphSize
+): number | string {
+  if (size !== undefined) return size
+  if (fontSize === 'inherit') return '1em'
+  if (fontSize === 'small') return defaultSize
+  if (fontSize === 'large') return '2.1875rem'
+  return defaultSize
+}
+
+function ActivityBarIconBox({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return (
+    <Box
+      component="span"
+      sx={{
+        alignItems: 'center',
+        display: 'inline-flex',
+        flexShrink: 0,
+        height: activityBarIconBoxSize,
+        justifyContent: 'center',
+        lineHeight: 0,
+        width: activityBarIconBoxSize
+      }}
+    >
+      {children}
+    </Box>
+  )
+}
+
+function createActivityBarPhiIcon(Icon: typeof NavSettingsIcon): ActivityBarIconComponent {
+  return function ActivityBarPhiIcon({ fontSize, size }: ActivityBarIconProps): React.JSX.Element {
+    return (
+      <ActivityBarIconBox>
+        <Icon size={activityBarIconSize(fontSize, size, activityBarPhiIconGlyphSize)} />
+      </ActivityBarIconBox>
+    )
+  }
+}
+
+function createActivityBarReactIcon(Icon: IconType): ActivityBarIconComponent {
+  return function ActivityBarReactIcon({
+    fontSize,
+    size
+  }: ActivityBarIconProps): React.JSX.Element {
+    return (
+      <ActivityBarIconBox>
+        <Icon
+          aria-hidden
+          focusable="false"
+          size={activityBarIconSize(fontSize, size, activityBarReactIconGlyphSize)}
+          style={{ display: 'block' }}
+        />
+      </ActivityBarIconBox>
+    )
+  }
+}
+
+const NavChatIcon = createActivityBarPhiIcon(PhiIcons.nav.chat)
+const NavProjectsIcon = createActivityBarPhiIcon(PhiIcons.nav.projects)
+const NavRuntimeIcon = createActivityBarPhiIcon(PhiIcons.nav.runtime)
+const NavPluginsIcon = createActivityBarPhiIcon(PhiIcons.nav.plugins)
+const NavSkillsIcon = createActivityBarReactIcon(SiHyperskill)
+const NavMcpIcon = createActivityBarReactIcon(VscMcp)
+const NavWrappersIcon = createActivityBarReactIcon(SiNextflow)
 
 function WorkspaceSidebarNavButton({
   mode,
@@ -107,7 +179,7 @@ export type AppActivityBarProps = {
   ) => SessionRuntimeState | null
 }
 
-export default function AppActivityBar({
+function AppActivityBarImpl({
   activeView,
   setActiveView,
   isWorkspaceSidebarModeExpanded,
@@ -370,3 +442,29 @@ export default function AppActivityBar({
     </>
   )
 }
+
+// Same rationale as AppWorkspaceSidebar's comparator: App() re-renders on
+// every agent-stream event, but this bar's own visible state only depends on
+// these fields — `sessions`/`projects` are reference-stable except when their
+// data actually changes, and `projectSessionRefreshKey` reliably bumps
+// whenever any session's runtime state changes anywhere in the app.
+function appActivityBarPropsEqual(prev: AppActivityBarProps, next: AppActivityBarProps): boolean {
+  return (
+    prev.activeView === next.activeView &&
+    prev.isWorkspaceSidebarPreviewOpen === next.isWorkspaceSidebarPreviewOpen &&
+    prev.visibleWorkspaceSidebarPreview?.mode === next.visibleWorkspaceSidebarPreview?.mode &&
+    prev.visibleWorkspaceSidebarPreview?.anchorEl ===
+      next.visibleWorkspaceSidebarPreview?.anchorEl &&
+    prev.workspaceSidebarPreviewMode === next.workspaceSidebarPreviewMode &&
+    prev.workspaceSidebarPreviewWidth === next.workspaceSidebarPreviewWidth &&
+    prev.sessions === next.sessions &&
+    prev.activeSessionPath === next.activeSessionPath &&
+    prev.activeCwd === next.activeCwd &&
+    prev.projects === next.projects &&
+    prev.projectSessionRefreshKey === next.projectSessionRefreshKey
+  )
+}
+
+const AppActivityBar = memo(AppActivityBarImpl, appActivityBarPropsEqual)
+
+export default AppActivityBar

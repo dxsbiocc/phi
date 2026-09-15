@@ -1,4 +1,4 @@
-import type { MouseEvent, ReactNode } from 'react'
+import { memo, type MouseEvent, type ReactNode } from 'react'
 import { Box, Typography } from '@mui/material'
 import SessionSidebar from './components/SessionSidebar'
 import type { AppView } from './App'
@@ -41,7 +41,7 @@ export type AppWorkspaceSidebarProps = {
   ) => SessionRuntimeState | null
 }
 
-export default function AppWorkspaceSidebar({
+function AppWorkspaceSidebarImpl({
   isChatWorkspaceView,
   isSidebarOpen,
   sidebarWidth,
@@ -241,3 +241,45 @@ export default function AppWorkspaceSidebar({
     </>
   )
 }
+
+// App() re-renders on essentially every agent-stream event, but that almost
+// never changes anything this component actually shows: `sessions`/`projects`
+// only get new array references when their data genuinely changes (plain
+// useState, not recreated per render), and `projectSessionRefreshKey` is
+// bumped specifically whenever any session's runtime state changes anywhere
+// (including project sessions this component can't see directly) — so
+// comparing those plus the other primitive props is enough to catch every
+// real update while skipping the rest.
+//
+// `activeChatView` is the one exception: in the 'analysis' branch it's
+// rendered directly, but it's a fresh React element every render of App(),
+// so memoizing wouldn't help there anyway — require an exact match whenever
+// either side is in 'analysis' mode so a stale chat view is never displayed.
+function appWorkspaceSidebarPropsEqual(
+  prev: AppWorkspaceSidebarProps,
+  next: AppWorkspaceSidebarProps
+): boolean {
+  if (prev.activeView !== next.activeView) return false
+  if (prev.activeView === 'analysis' && prev.activeChatView !== next.activeChatView) {
+    return false
+  }
+
+  return (
+    prev.isChatWorkspaceView === next.isChatWorkspaceView &&
+    prev.isSidebarOpen === next.isSidebarOpen &&
+    prev.sidebarWidth === next.sidebarWidth &&
+    prev.activeWorkspaceIsProject === next.activeWorkspaceIsProject &&
+    prev.activeWorkspaceTitle === next.activeWorkspaceTitle &&
+    prev.activeWorkspaceScopeLabel === next.activeWorkspaceScopeLabel &&
+    prev.workspaceSidebarMode === next.workspaceSidebarMode &&
+    prev.sessions === next.sessions &&
+    prev.activeSessionPath === next.activeSessionPath &&
+    prev.activeCwd === next.activeCwd &&
+    prev.projects === next.projects &&
+    prev.projectSessionRefreshKey === next.projectSessionRefreshKey
+  )
+}
+
+const AppWorkspaceSidebar = memo(AppWorkspaceSidebarImpl, appWorkspaceSidebarPropsEqual)
+
+export default AppWorkspaceSidebar
