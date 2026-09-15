@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -66,4 +68,15 @@ test('the sidebar toggle label flips between collapse/expand based on isSidebarO
   assert.match(openMarkup, /data-phi-window-sidebar-toggle-icon="collapse"/)
   assert.match(closedMarkup, /aria-label="展开侧边栏"/)
   assert.match(closedMarkup, /data-phi-window-sidebar-toggle-icon="expand"/)
+})
+
+test('the window sidebar toggle uses the shared collapse/expand sidebar icons', () => {
+  const source = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/WindowNavigationControls.tsx'),
+    'utf8'
+  )
+
+  assert.match(source, /GoSidebarCollapse/)
+  assert.match(source, /GoSidebarExpand/)
+  assert.doesNotMatch(source, /TbLayoutSidebar/)
 })

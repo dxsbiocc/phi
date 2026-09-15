@@ -1,10 +1,6 @@
 import { Box, IconButton, Tooltip } from '@mui/material'
-import {
-  TbChevronLeft,
-  TbChevronRight,
-  TbLayoutSidebarLeftCollapse,
-  TbLayoutSidebarLeftExpand
-} from 'react-icons/tb'
+import { GoSidebarCollapse, GoSidebarExpand } from 'react-icons/go'
+import { TbChevronLeft, TbChevronRight } from 'react-icons/tb'
 
 /**
  * Sits to the right of the macOS traffic lights (MacWindowControls): a
@@ -39,7 +35,7 @@ export default function WindowNavigationControls({
       color: 'text.disabled'
     }
   }
-  const SidebarToggleIcon = isSidebarOpen ? TbLayoutSidebarLeftCollapse : TbLayoutSidebarLeftExpand
+  const SidebarToggleIcon = isSidebarOpen ? GoSidebarCollapse : GoSidebarExpand
 
   return (
     <Box

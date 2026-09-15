@@ -9,7 +9,7 @@ import {
   Typography
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
-import { TbLayoutSidebarRightCollapse, TbLayoutSidebarRightExpand } from 'react-icons/tb'
+import { GoSidebarCollapse, GoSidebarExpand, GoSync } from 'react-icons/go'
 import ChatView from './components/ChatView'
 import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
@@ -111,7 +111,7 @@ const workspaceFileHeaderLeadingChromeInsetWidth =
   titlebarLeadingChromeReserveWidth - activityBarWidth
 const workspaceFileHeaderLeadingChromeInset = `${workspaceFileHeaderLeadingChromeInsetWidth}px`
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
-const RefreshIcon = PhiIcons.action.refresh
+const RefreshIcon = GoSync
 
 export function TopRightControls({
   showSidePanelRefresh,
@@ -129,9 +129,7 @@ export function TopRightControls({
   onToggleSidePanel: () => void
 }): React.JSX.Element | null {
   if (!showSidePanelRefresh && !showSidePanelToggle) return null
-  const SidePanelToggleIcon = sidePanelCollapsed
-    ? TbLayoutSidebarRightExpand
-    : TbLayoutSidebarRightCollapse
+  const SidePanelToggleIcon = sidePanelCollapsed ? GoSidebarExpand : GoSidebarCollapse
 
   const buttonSx = {
     width: titlebarChromeIconButtonSize,
@@ -172,7 +170,7 @@ export function TopRightControls({
               onClick={onRefreshSidePanel}
               sx={buttonSx}
             >
-              <RefreshIcon fontSize="small" />
+              <RefreshIcon size={19} />
             </IconButton>
           </span>
         </Tooltip>
@@ -194,7 +192,7 @@ export function TopRightControls({
               color: sidePanelCollapsed ? 'text.secondary' : 'text.primary'
             }}
           >
-            <SidePanelToggleIcon size={18} />
+            <SidePanelToggleIcon size={19} />
           </IconButton>
         </Tooltip>
       ) : null}
