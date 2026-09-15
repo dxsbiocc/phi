@@ -73,6 +73,9 @@ test('notebook tool executor edits a live draft and saves only on request', asyn
     })
     assert.equal(opened.kind, 'notebook_document')
     assert.match(opened.summary, /1 个 cell/)
+    const openedCells = opened.cells as Array<{ cellNumber: number; index?: number }>
+    assert.equal(openedCells[0]?.cellNumber, 1)
+    assert.equal(openedCells[0]?.index, undefined)
 
     const updated = await executor.execute({
       action: 'update_cell',
@@ -80,6 +83,7 @@ test('notebook tool executor edits a live draft and saves only on request', asyn
       params: { path: 'notebooks/analysis.ipynb', cellId: 'cell-1', source: 'x = 2' }
     })
     assert.equal(updated.kind, 'notebook_cell_updated')
+    assert.match(updated.summary, /Cell 1/)
     assert.match(readFileSync(notebookPath, 'utf-8'), /x = 1/)
 
     const draft = await executor.execute({
@@ -117,15 +121,25 @@ test('notebook tool executor inserts and deletes cells in the live draft', async
         source: '# Notes'
       }
     })
-    const insertedCell = inserted.cell as { id: string; cellType: string; source: string }
+    assert.match(inserted.summary, /Cell 2/)
+    assert.equal(inserted.cellNumber, 2)
+    const insertedCell = inserted.cell as {
+      id: string
+      cellNumber: number
+      cellType: string
+      source: string
+    }
+    assert.equal(insertedCell.cellNumber, 2)
     assert.equal(insertedCell.cellType, 'markdown')
     assert.equal(insertedCell.source, '# Notes')
 
-    await executor.execute({
+    const deleted = await executor.execute({
       action: 'delete_cell',
       cwd: root,
       params: { path: 'notebooks/analysis.ipynb', cellId: insertedCell.id }
     })
+    assert.match(deleted.summary, /Cell 2/)
+    assert.equal(deleted.cellNumber, 2)
     const draft = await executor.execute({
       action: 'read',
       cwd: root,
@@ -135,6 +149,43 @@ test('notebook tool executor inserts and deletes cells in the live draft', async
     assert.deepEqual(
       cells.map((cell) => cell.id),
       ['cell-1']
+    )
+  })
+})
+
+test('notebook tool executor accepts one-based cellNumber for insertion', async () => {
+  await withProjectDir(async (root) => {
+    mkdirSync(join(root, 'notebooks'))
+    const notebookPath = join(root, 'notebooks', 'analysis.ipynb')
+    writeNotebook(notebookPath)
+    const executor = createExecutor(root)
+
+    const inserted = await executor.execute({
+      action: 'insert_cell',
+      cwd: root,
+      params: {
+        path: 'notebooks/analysis.ipynb',
+        cellNumber: 1,
+        cellType: 'code',
+        source: 'print("first")'
+      }
+    })
+
+    assert.match(inserted.summary, /Cell 1/)
+    assert.equal(inserted.cellNumber, 1)
+
+    const draft = await executor.execute({
+      action: 'read',
+      cwd: root,
+      params: { path: 'notebooks/analysis.ipynb', includeOutputs: false }
+    })
+    const cells = draft.cells as Array<{ cellNumber: number; source: string }>
+    assert.deepEqual(
+      cells.map((cell) => [cell.cellNumber, cell.source]),
+      [
+        [1, 'print("first")'],
+        [2, 'x = 1']
+      ]
     )
   })
 })

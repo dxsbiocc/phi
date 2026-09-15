@@ -166,6 +166,13 @@ function notebookTargetLabel(notebook: NotebookToolSummary): string {
   return notebook.relativePath ?? notebook.path ?? 'notebook'
 }
 
+function notebookCellLabel(notebook: NotebookToolSummary): string {
+  if (typeof notebook.cellNumber === 'number' && Number.isFinite(notebook.cellNumber)) {
+    return `Cell ${Math.trunc(notebook.cellNumber)}`
+  }
+  return notebook.cellId ?? ''
+}
+
 function notebookVerb(kind: string, status: ToolCallItem['status']): string {
   const done = status !== 'running'
   switch (kind) {
@@ -191,7 +198,8 @@ function notebookVerb(kind: string, status: ToolCallItem['status']): string {
 function notebookHeadline(item: ToolCallItem): string | undefined {
   if (!item.notebook) return undefined
   const target = notebookTargetLabel(item.notebook)
-  const cell = item.notebook.cellId ? ` · ${item.notebook.cellId}` : ''
+  const cellLabel = notebookCellLabel(item.notebook)
+  const cell = cellLabel ? ` · ${cellLabel}` : ''
   return `${notebookVerb(item.notebook.kind, item.status)} · ${target}${cell}`
 }
 
@@ -207,8 +215,9 @@ function notebookJumpTarget(notebook?: NotebookToolSummary): NotebookCellJumpTar
 
 function NotebookToolSummaryBlock({ notebook }: { notebook: NotebookToolSummary }): ReactNode {
   const target = notebookTargetLabel(notebook)
+  const cellLabel = notebookCellLabel(notebook)
   const details = [
-    notebook.cellId ? `cell ${notebook.cellId}` : '',
+    cellLabel,
     notebook.cellType ?? '',
     notebook.executionState ?? '',
     notebook.executionCount !== undefined && notebook.executionCount !== null

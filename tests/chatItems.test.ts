@@ -58,6 +58,7 @@ test('extractNotebookToolSummary keeps notebook tool receipts compact', () => {
         summary: 'Ran Cell 2',
         cell: {
           id: 'cell-2',
+          index: 1,
           cellType: 'code',
           source: 'large source should not be copied'
         },
@@ -73,6 +74,7 @@ test('extractNotebookToolSummary keeps notebook tool receipts compact', () => {
       kind: 'notebook_cell_executed',
       path: '/workspace/eda.ipynb',
       relativePath: 'eda.ipynb',
+      cellNumber: 2,
       cellId: 'cell-2',
       cellType: 'code',
       executionState: 'idle',
@@ -221,6 +223,7 @@ test('chatItemsFromSessionMessages restores notebook details from Phi timeline e
       details: {
         kind: 'notebook_cell_executed',
         relativePath: 'eda.ipynb',
+        cellNumber: 2,
         cellId: 'cell-2',
         cellType: 'code',
         executionState: 'idle',
@@ -237,6 +240,7 @@ test('chatItemsFromSessionMessages restores notebook details from Phi timeline e
   assert.deepEqual(items[0].notebook, {
     kind: 'notebook_cell_executed',
     relativePath: 'eda.ipynb',
+    cellNumber: 2,
     cellId: 'cell-2',
     cellType: 'code',
     executionState: 'idle',
@@ -266,6 +270,7 @@ test('chatItemsFromSessionMessages restores notebook details from runtime tool r
         details: {
           kind: 'notebook_cell_updated',
           relativePath: 'eda.ipynb',
+          cellNumber: 1,
           cellId: 'cell-1',
           cellType: 'code',
           summary: 'Updated Cell 1'
@@ -279,6 +284,7 @@ test('chatItemsFromSessionMessages restores notebook details from runtime tool r
   assert.deepEqual(items[0].notebook, {
     kind: 'notebook_cell_updated',
     relativePath: 'eda.ipynb',
+    cellNumber: 1,
     cellId: 'cell-1',
     cellType: 'code',
     summary: 'Updated Cell 1'

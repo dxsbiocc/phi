@@ -44,6 +44,7 @@ export interface NotebookToolSummary {
   kind: string
   path?: string
   relativePath?: string
+  cellNumber?: number
   cellId?: string
   cellType?: string
   executionState?: string
@@ -735,6 +736,10 @@ export type RendererApi = {
     document: NotebookDocument
   ) => Promise<AnalysisNotebookSessionStatus>
   closeAnalysisNotebookSession: (
+    cwd: string,
+    path: string
+  ) => Promise<AnalysisNotebookSessionStatus>
+  interruptAnalysisNotebookExecution: (
     cwd: string,
     path: string
   ) => Promise<AnalysisNotebookSessionStatus>

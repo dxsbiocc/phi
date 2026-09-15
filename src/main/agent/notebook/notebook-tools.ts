@@ -80,7 +80,7 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
         name: 'notebook.read',
         label: 'Read Notebook',
         description:
-          'Read the current in-memory notebook draft for a project notebook. Opens the notebook into the live agent workspace on first use.',
+          'Read the current in-memory notebook draft for a project notebook. Opens the notebook into the live agent workspace on first use. Cell summaries use one-based cellNumber values for human-facing order; use the stable id field as cellId when editing, deleting, or running a cell.',
         parameters: {
           type: 'object',
           required: ['path'],
@@ -117,17 +117,18 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
               enum: ['code', 'markdown', 'raw'],
               description: 'Cell type. Defaults to code.'
             },
-            index: {
+            cellNumber: {
               type: 'number',
-              description: 'Zero-based insertion index. Defaults to the end of the notebook.'
+              description:
+                'One-based insertion position. 1 inserts before the first cell; N inserts before Cell N; values after the last cell append. Defaults to the end of the notebook.'
             },
             afterCellId: {
               type: 'string',
-              description: 'Insert after this cell id. Takes precedence over index.'
+              description: 'Insert after this cell id. Takes precedence over cellNumber.'
             },
             beforeCellId: {
               type: 'string',
-              description: 'Insert before this cell id. Takes precedence over index.'
+              description: 'Insert before this cell id. Takes precedence over cellNumber.'
             }
           }
         },
@@ -147,7 +148,11 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
           required: ['path', 'cellId', 'source'],
           properties: {
             path: { type: 'string', description: 'Project-relative or absolute notebook path.' },
-            cellId: { type: 'string', description: 'Target cell id.' },
+            cellId: {
+              type: 'string',
+              description:
+                'Stable target cell id from notebook.read. Do not use the one-based Cell N label here.'
+            },
             source: { type: 'string', description: 'Replacement cell source.' },
             cellType: {
               type: 'string',
@@ -172,7 +177,11 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
           required: ['path', 'cellId'],
           properties: {
             path: { type: 'string', description: 'Project-relative or absolute notebook path.' },
-            cellId: { type: 'string', description: 'Target cell id.' }
+            cellId: {
+              type: 'string',
+              description:
+                'Stable target cell id from notebook.read. Do not use the one-based Cell N label here.'
+            }
           }
         },
         approval: 'write'
@@ -191,7 +200,11 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
           required: ['path', 'cellId'],
           properties: {
             path: { type: 'string', description: 'Project-relative or absolute notebook path.' },
-            cellId: { type: 'string', description: 'Target code cell id.' }
+            cellId: {
+              type: 'string',
+              description:
+                'Stable target code cell id from notebook.read. Do not use the one-based Cell N label here.'
+            }
           }
         },
         approval: 'write'

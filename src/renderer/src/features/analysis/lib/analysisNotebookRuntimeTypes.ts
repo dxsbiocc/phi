@@ -86,6 +86,7 @@ export type AnalysisNotebookRuntimeState = {
     document: AnalysisNotebookFile['document'],
     cellId: string
   ) => Promise<void>
+  onStopAnalysisNotebookCell: (file: AnalysisNotebookFile, cellId: string) => Promise<void>
   onCompleteAnalysisNotebookCell: (
     file: AnalysisNotebookFile,
     document: AnalysisNotebookFile['document'],

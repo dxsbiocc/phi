@@ -27,6 +27,19 @@ test('buildNotebookCustomTools exposes live notebook operations', () => {
   )
 })
 
+test('notebook insert tool exposes one-based cellNumber instead of zero-based index', () => {
+  const tools = buildNotebookCustomTools(async () => ({}))
+  const tool = tools.find((candidate) => candidate.name === 'notebook.insert_cell')
+  assert.ok(tool)
+
+  const parameters = tool.parameters as {
+    properties?: Record<string, unknown>
+  }
+
+  assert.ok(parameters.properties?.cellNumber)
+  assert.equal(parameters.properties?.index, undefined)
+})
+
 test('notebook tools forward the session cwd, action, and params to the host executor', async () => {
   const calls: NotebookToolRequest[] = []
   const tools = buildNotebookCustomTools(async (request) => {

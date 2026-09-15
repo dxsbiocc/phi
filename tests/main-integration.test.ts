@@ -111,6 +111,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     cellId: string
     source: string
     kernelId: string
+    language?: string
     cursorPosition?: number
   }>
   notebookFormatCalls: Array<{
@@ -148,6 +149,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     cellId: string
     source: string
     kernelId: string
+    language?: string
     cursorPosition?: number
   }> = []
   const notebookFormatCalls: Array<{
@@ -507,7 +509,11 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
       }
     }
 
-    async introspectVariables(input: { kernelId: string; variableNames: string[] }): Promise<
+    async introspectVariables(input: {
+      kernelId: string
+      variableNames: string[]
+      language?: string
+    }): Promise<
       Array<{
         name: string
         exists: boolean
@@ -520,8 +526,26 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
       notebookExecutionCalls.push({
         cellId: '__introspection__',
         source: input.variableNames.join(','),
-        kernelId: input.kernelId
+        kernelId: input.kernelId,
+        language: input.language
       })
+      if (input.language?.toLocaleLowerCase() === 'r') {
+        return input.variableNames.map((name) =>
+          name === 'df'
+            ? {
+                name,
+                exists: true,
+                datatype: 'data.frame',
+                shape: '2 x 3',
+                columns: [
+                  { name: 'Year', type: 'character' },
+                  { name: 'Income', type: 'numeric' }
+                ],
+                preview: '  Year Income\\n1 19th 1208.7'
+              }
+            : { name, exists: false }
+        )
+      }
       return input.variableNames.map((name) =>
         name === 'df'
           ? {
@@ -2610,6 +2634,86 @@ test('main IPC: notebook AI generation enriches @ variables from the live kernel
   assert.match(prompt, /2 rows x 3 columns/)
   assert.match(prompt, /Year \(object\), Income \(float64\)/)
   assert.match(prompt, /\| Year \| Income \|/)
+})
+
+test('main IPC: notebook AI generation enriches R @ data frames from the live kernel', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'agent_end',
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  cells: [{ language: 'r', code: 'summary(df)' }]
+                })
+              }
+            ]
+          }
+        ]
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'R', language: 'R', name: 'ir' } },
+    cells: [
+      {
+        id: 'load',
+        cell_type: 'code',
+        metadata: {},
+        execution_count: 1,
+        outputs: [],
+        source: 'df <- readr::read_csv("use_data.csv")'
+      }
+    ]
+  })
+
+  const result = (await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc-r.ipynb',
+    document,
+    {
+      prompt: '@df 总结数据',
+      language: 'r',
+      afterCellId: 'load',
+      references: [
+        {
+          id: 'dataframe:df',
+          kind: 'dataframe',
+          name: 'df',
+          detail: 'df <- readr::read_csv("use_data.csv")',
+          cellId: 'load',
+          preview: { source: 'df <- readr::read_csv("use_data.csv")' }
+        }
+      ]
+    }
+  )) as { cells: Array<{ cellType: string; source: string }> }
+
+  assert.deepEqual(result.cells, [{ cellType: 'code', source: 'summary(df)', language: 'r' }])
+  assert.ok(
+    app.notebookExecutionCalls.some(
+      (call) =>
+        call.cellId === '__introspection__' &&
+        call.source === 'df' &&
+        call.kernelId === 'kernel-1' &&
+        call.language === 'r'
+    )
+  )
+  const prompt = app.sessions[0].promptTexts[0]
+  assert.match(prompt, /@dataframe:\/\/df/)
+  assert.match(prompt, /data\.frame/)
+  assert.match(prompt, /2 rows x 3 columns/)
+  assert.match(prompt, /Year \(character\), Income \(numeric\)/)
+  assert.match(prompt, /19th 1208\.7/)
 })
 
 test('main IPC: notebook AI generation reads batched assistant messages from runtime events', async () => {

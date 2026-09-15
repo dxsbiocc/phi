@@ -68,6 +68,7 @@ export default function NotebookCell({
   onMoveAiPrompt,
   onSelectCell,
   onRunCell,
+  onStopCell,
   canRunCells = false,
   notebookPath,
   agentHighlighted = false,
@@ -105,6 +106,7 @@ export default function NotebookCell({
   onMoveAiPrompt?: (targetCellId: string, placement: CellPlacement) => void
   onSelectCell?: (cellId: string) => void
   onRunCell?: (cellId: string) => void
+  onStopCell?: (cellId: string) => void
   canRunCells?: boolean
   provisional?: boolean
 }): React.JSX.Element {
@@ -123,6 +125,7 @@ export default function NotebookCell({
   const isCodeSelectionChromeOnly = isCodeCell && !agentHighlighted && !provisional
   const canRun = isCodeCell && Boolean(onRunCell) && canRunCells && cell.state !== 'running'
   const isRunning = cell.state === 'running'
+  const canStop = isRunning && Boolean(onStopCell)
   const isRenderedMarkdown = isMarkdown && !showEditor
   const isCodeSourceView = isCodeCell && !showEditor
   const hasOutputs = cell.outputs.length > 0
@@ -143,7 +146,7 @@ export default function NotebookCell({
         ? '运行 cell'
         : '此 cell 无需运行'
   const primaryActionLabel = primaryActionTitle
-  const isPrimaryActionDisabled = isRenderedMarkdown ? !editable : isRunning || !canRun
+  const isPrimaryActionDisabled = isRenderedMarkdown ? !editable : isRunning ? !canStop : !canRun
   const showPrimaryActionAccent = !isRunning && (isRenderedMarkdown || canRun)
   const runCellFromKeyboard = (event: React.KeyboardEvent<HTMLElement>): void => {
     if (
@@ -648,12 +651,18 @@ export default function NotebookCell({
                     size="small"
                     aria-label={primaryActionLabel}
                     data-phi-notebook-cell-action-surface="opaque"
+                    data-phi-notebook-cell-primary-action={
+                      isRenderedMarkdown ? 'edit-markdown' : isRunning ? 'stop' : 'run'
+                    }
+                    data-phi-notebook-cell-primary-action-enabled={
+                      isPrimaryActionDisabled ? 'false' : 'true'
+                    }
                     disabled={isPrimaryActionDisabled}
                     onClick={
                       isRenderedMarkdown
                         ? () => setIsEditing(true)
                         : isRunning
-                          ? undefined
+                          ? () => onStopCell?.(cell.id)
                           : () => onRunCell?.(cell.id)
                     }
                     sx={{

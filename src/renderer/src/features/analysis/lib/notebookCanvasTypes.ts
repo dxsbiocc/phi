@@ -57,6 +57,7 @@ export type NotebookCanvasProps = {
     document: NotebookDocument,
     cellId: string
   ) => void
+  onStopNotebookCell?: (file: AnalysisNotebookFile, cellId: string) => void
   onCompleteNotebookCell?: (
     file: AnalysisNotebookFile,
     document: NotebookDocument,

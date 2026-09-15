@@ -171,7 +171,7 @@ export function buildNotebookCodeGenerationPrompt(input: {
     '',
     `Target language: ${language}`,
     `Notebook: ${input.notebookPath}`,
-    `Insert position: before cell ${input.insertionIndex + 1} (or append if that index is after the end).`,
+    `Insert position: before Cell ${input.insertionIndex + 1} (or append if that position is after the end).`,
     '',
     languageRules(language),
     '',
@@ -186,6 +186,65 @@ export function buildNotebookCodeGenerationPrompt(input: {
     '',
     'Other notebook cells for variable/name awareness:',
     input.otherCellContext
+  ].join('\n')
+}
+
+export function buildNotebookCodeGenerationRepairPrompt(input: {
+  language: string
+  notebookPath: string
+  insertionIndex: number
+  references?: AnalysisNotebookContextReference[]
+  userPrompt: string
+  nearbyContext: string
+  otherCellContext: string
+  invalidOutput: string
+}): string {
+  const language = normalizeLanguage(input.language)
+  return [
+    'You are Phi Notebook AI, formatting a failed notebook generation into marimo NotebookCellsCompletion.',
+    'The previous response was not insertable because it did not return valid notebook cells.',
+    'Return a corrected insertable notebook completion now.',
+    '',
+    'Output format:',
+    '- Return exactly one JSON object and nothing else.',
+    '- The JSON object must match this schema:',
+    `  {"cells":[{"language":"markdown","code":"raw markdown"},{"language":"${language}","code":"raw ${language} code"}]}`,
+    '- Each item in cells becomes one notebook cell.',
+    '- For Markdown cells, use language "markdown" and raw Jupyter markdown in code.',
+    `- For executable cells, use language "${language}" and raw runnable ${language} code in code.`,
+    '- Do not wrap the JSON in markdown fences.',
+    '- Do not include prose outside JSON.',
+    '- Do not restate the schema or explain what you are doing.',
+    '- Do not include private reasoning or transcript text.',
+    '',
+    'Repair task:',
+    '- Use the original user requirement and notebook context below.',
+    '- If the invalid previous response contains a concrete code or markdown intent, convert that intent into separate cells.',
+    '- If the invalid previous response only describes a plan, fulfill the original user requirement directly as cells.',
+    '- Keep markdown explanation and executable code in separate cells.',
+    '',
+    `Target language: ${language}`,
+    `Notebook: ${input.notebookPath}`,
+    `Insert position: before Cell ${input.insertionIndex + 1} (or append if that position is after the end).`,
+    '',
+    languageRules(language),
+    '',
+    '@ context references selected by the user:',
+    notebookContextReferencePrompt(input.references),
+    '',
+    'Original user requirement:',
+    input.userPrompt,
+    '',
+    'Nearby notebook context:',
+    input.nearbyContext,
+    '',
+    'Other notebook cells for variable/name awareness:',
+    input.otherCellContext,
+    '',
+    'Invalid previous model output:',
+    '```text',
+    truncateNotebookPromptText(input.invalidOutput, 6000) || '(empty)',
+    '```'
   ].join('\n')
 }
 

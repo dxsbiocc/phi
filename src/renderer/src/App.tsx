@@ -627,6 +627,7 @@ function App(): React.JSX.Element {
     onStopAnalysisNotebookSession,
     onStopRuntimeNotebookSession,
     onRunAnalysisNotebookCell,
+    onStopAnalysisNotebookCell,
     onCompleteAnalysisNotebookCell,
     onFormatAnalysisNotebookCell,
     onGenerateAnalysisNotebookCode,
@@ -2105,6 +2106,9 @@ function App(): React.JSX.Element {
                   }}
                   onRunNotebookCell={(file, document, cellId) => {
                     void onRunAnalysisNotebookCell(file, document, cellId)
+                  }}
+                  onStopNotebookCell={(file, cellId) => {
+                    void onStopAnalysisNotebookCell(file, cellId)
                   }}
                   onCompleteNotebookCell={onCompleteAnalysisNotebookCell}
                   onFormatNotebookCell={onFormatAnalysisNotebookCell}

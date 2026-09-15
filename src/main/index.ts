@@ -1666,7 +1666,12 @@ async function generatePersonaMarkdown(description: string): Promise<string> {
 }
 
 const NOTEBOOK_AI_VARIABLE_REFERENCE_PATTERN =
-  /@(?:(?:dataframe|variable):\/\/)?([A-Za-z_][A-Za-z0-9_]*)/g
+  /@(?:(?:dataframe|variable):\/\/)?((?:[A-Za-z_]|\.(?!\d))[A-Za-z0-9._]*)/g
+
+function notebookLanguageSupportsKernelIntrospection(language: string): boolean {
+  const value = language.toLocaleLowerCase()
+  return value.startsWith('python') || value === 'r' || value === 'ir' || value === 'rscript'
+}
 
 function notebookAiVariableNamesFromInput(
   prompt: string,
@@ -1729,7 +1734,7 @@ async function notebookAiReferencesWithKernelIntrospection(input: {
   references?: AnalysisNotebookContextReference[]
 }): Promise<AnalysisNotebookContextReference[] | undefined> {
   const references = [...(input.references ?? [])]
-  if (!input.language.toLocaleLowerCase().startsWith('python')) return references
+  if (!notebookLanguageSupportsKernelIntrospection(input.language)) return references
   const variableNames = notebookAiVariableNamesFromInput(input.prompt, references)
   if (variableNames.length === 0) return references
   const target = notebookSessionRegistry.executionTarget(input.projectCwd, input.notebookPath)
@@ -1740,7 +1745,8 @@ async function notebookAiReferencesWithKernelIntrospection(input: {
       connection: target.connection,
       sessionId: target.sessionId,
       kernelId: target.kernelId,
-      variableNames
+      variableNames,
+      language: input.language
     })
     return summaries.reduce(mergeKernelIntrospectionReference, references)
   } catch {

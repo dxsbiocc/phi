@@ -83,6 +83,7 @@ export type AnalysisViewProps = {
     document: NotebookDocument,
     cellId: string
   ) => void
+  onStopNotebookCell?: (file: AnalysisNotebookFile, cellId: string) => void
   onCompleteNotebookCell?: (
     file: AnalysisNotebookFile,
     document: NotebookDocument,
@@ -200,6 +201,7 @@ export default function AnalysisView({
   onStartNotebookSession,
   onStopNotebookSession,
   onRunNotebookCell,
+  onStopNotebookCell,
   onCompleteNotebookCell,
   onFormatNotebookCell,
   onGenerateNotebookCode,
@@ -422,6 +424,7 @@ export default function AnalysisView({
           onStartNotebookSession={onStartNotebookSession}
           onStopNotebookSession={onStopNotebookSession}
           onRunNotebookCell={onRunNotebookCell}
+          onStopNotebookCell={onStopNotebookCell}
           onCompleteNotebookCell={onCompleteNotebookCell}
           onFormatNotebookCell={onFormatNotebookCell}
           onGenerateNotebookCode={onGenerateNotebookCode}

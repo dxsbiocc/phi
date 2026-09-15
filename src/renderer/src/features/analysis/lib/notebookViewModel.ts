@@ -230,6 +230,39 @@ function pushNotebookContextReference(
   references.push(reference)
 }
 
+const PYTHON_IDENTIFIER_SOURCE = '[A-Za-z_][A-Za-z0-9_]*'
+const R_IDENTIFIER_SOURCE = '(?:[A-Za-z]|\\.(?!\\d))[A-Za-z0-9._]*'
+const R_DATAFRAME_CALL_SOURCE =
+  '(?:read(?:\\.csv2?|\\.delim|\\.table)|readr::read_(?:csv|csv2|tsv|delim)|readxl::read_excel|arrow::read_parquet|data\\.table::fread|vroom::vroom|data\\.frame|as\\.data\\.frame|tibble(?:::tibble)?|dplyr::as_tibble|jsonlite::fromJSON|readRDS)'
+
+function dataframeAssignmentPatternForCell(cell: CanvasCell): RegExp {
+  if (cell.language === 'r') {
+    return new RegExp(
+      `(?:^|\\n)\\s*(${R_IDENTIFIER_SOURCE})\\s*(?:<-|=)\\s*([^\\n#]*(?:${R_DATAFRAME_CALL_SOURCE})[^\\n#]*)`,
+      'g'
+    )
+  }
+  return new RegExp(
+    `(?:^|\\n)\\s*(${PYTHON_IDENTIFIER_SOURCE})\\s*=\\s*([^\\n#]*(?:read_csv|read_json|read_excel|read_parquet|DataFrame|scanpy\\.read|sc\\.read|anndata\\.read)[^\\n#]*)`,
+    'g'
+  )
+}
+
+function simpleAssignmentPatternForCell(cell: CanvasCell): RegExp {
+  if (cell.language === 'r') {
+    return new RegExp(`(?:^|\\n)\\s*(${R_IDENTIFIER_SOURCE})\\s*(?:<-|=)\\s*([^\\n#]+)`, 'g')
+  }
+  return new RegExp(`(?:^|\\n)\\s*(${PYTHON_IDENTIFIER_SOURCE})\\s*=\\s*([^\\n#]+)`, 'g')
+}
+
+function importPatternForCell(cell: CanvasCell): RegExp | null {
+  if (cell.language === 'r') return null
+  return new RegExp(
+    `(?:^|\\n)\\s*(?:import\\s+([A-Za-z_][A-Za-z0-9_.]*)\\s+as\\s+(${PYTHON_IDENTIFIER_SOURCE})|from\\s+([A-Za-z_][A-Za-z0-9_.]*)\\s+import\\s+(${PYTHON_IDENTIFIER_SOURCE}))`,
+    'g'
+  )
+}
+
 export function buildNotebookAiContextOptions(
   cells: CanvasCell[]
 ): AnalysisNotebookContextReference[] {
@@ -237,16 +270,13 @@ export function buildNotebookAiContextOptions(
   const seen = new Set<string>()
   const dataframeNames = new Set<string>()
   const dataframeSourcePaths = new Set<string>()
-  const assignmentPattern =
-    /(?:^|\n)\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\n#]*(?:read_csv|read_json|read_excel|read_parquet|DataFrame|scanpy\.read|sc\.read|anndata\.read)[^\n#]*)/g
-  const importPattern =
-    /(?:^|\n)\s*(?:import\s+([A-Za-z_][A-Za-z0-9_.]*)\s+as\s+([A-Za-z_][A-Za-z0-9_]*)|from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+import\s+([A-Za-z_][A-Za-z0-9_]*))/g
-  const simpleAssignmentPattern = /(?:^|\n)\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\n#]+)/g
-  const dataPathPattern = /['"]([^'"]+\.(?:csv|tsv|json|jsonl|xlsx|xls|parquet|h5ad|loom))['"]/gi
+  const dataPathPattern =
+    /['"]([^'"]+\.(?:csv|tsv|json|jsonl|xlsx|xls|parquet|h5ad|loom|rds|rda|rdata|feather|fst))['"]/gi
 
   for (const cell of cells) {
     if (cell.type !== 'code') continue
 
+    const assignmentPattern = dataframeAssignmentPatternForCell(cell)
     for (const match of cell.source.matchAll(assignmentPattern)) {
       const name = match[1]
       const expression = match[2]?.trim() ?? ''
@@ -259,6 +289,7 @@ export function buildNotebookAiContextOptions(
 
   cells.forEach((cell, index) => {
     if (cell.type === 'code') {
+      const assignmentPattern = dataframeAssignmentPatternForCell(cell)
       for (const match of cell.source.matchAll(assignmentPattern)) {
         const name = match[1]
         const expression = match[2]?.trim()
@@ -276,21 +307,25 @@ export function buildNotebookAiContextOptions(
         })
       }
 
-      for (const match of cell.source.matchAll(importPattern)) {
-        const name = match[2] ?? match[4]
-        if (!name) continue
-        pushNotebookContextReference(references, seen, {
-          id: `variable:${name}`,
-          kind: 'variable',
-          name,
-          detail: 'module',
-          cellId: cell.id,
-          preview: {
-            value: importContextPreviewValue(match)
-          }
-        })
+      const importPattern = importPatternForCell(cell)
+      if (importPattern) {
+        for (const match of cell.source.matchAll(importPattern)) {
+          const name = match[2] ?? match[4]
+          if (!name) continue
+          pushNotebookContextReference(references, seen, {
+            id: `variable:${name}`,
+            kind: 'variable',
+            name,
+            detail: 'module',
+            cellId: cell.id,
+            preview: {
+              value: importContextPreviewValue(match)
+            }
+          })
+        }
       }
 
+      const simpleAssignmentPattern = simpleAssignmentPatternForCell(cell)
       for (const match of cell.source.matchAll(simpleAssignmentPattern)) {
         const name = match[1]
         const expression = match[2]?.trim()

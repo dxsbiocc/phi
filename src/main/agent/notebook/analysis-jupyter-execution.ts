@@ -21,6 +21,7 @@ export interface IntrospectNotebookVariablesInput {
   sessionId: string
   kernelId: string
   variableNames: string[]
+  language?: string
 }
 
 export interface CompleteNotebookCodeInput {
@@ -113,6 +114,7 @@ const EXECUTION_TIMEOUT_MS = 30 * 60_000
 const COMPLETION_TIMEOUT_MS = 10_000
 const VARIABLE_INTROSPECTION_SENTINEL = '__PHI_NOTEBOOK_VARIABLES__'
 const PYTHON_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+const R_IDENTIFIER_PATTERN = /^(?:[A-Za-z]|\.(?!\d))[A-Za-z0-9._]*$/
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message
@@ -276,12 +278,17 @@ export function normalizeJupyterKernelCompletionMessages(
   }
 }
 
-function safeVariableNames(variableNames: string[]): string[] {
-  return [...new Set(variableNames.filter((name) => PYTHON_IDENTIFIER_PATTERN.test(name)))]
+function isRNotebookLanguage(language: string | undefined): boolean {
+  const value = language?.toLocaleLowerCase()
+  return value === 'r' || value === 'ir' || value === 'rscript'
 }
 
-export function buildNotebookVariableIntrospectionCode(variableNames: string[]): string {
-  const names = safeVariableNames(variableNames)
+function safeVariableNames(variableNames: string[], language?: string): string[] {
+  const pattern = isRNotebookLanguage(language) ? R_IDENTIFIER_PATTERN : PYTHON_IDENTIFIER_PATTERN
+  return [...new Set(variableNames.filter((name) => pattern.test(name)))]
+}
+
+function buildPythonNotebookVariableIntrospectionCode(names: string[]): string {
   return [
     'exec(',
     JSON.stringify(
@@ -371,6 +378,133 @@ export function buildNotebookVariableIntrospectionCode(variableNames: string[]):
     ),
     `, {"__builtins__": __builtins__, "_phi_names": ${JSON.stringify(names)}, "_phi_ns": globals()}, {})`
   ].join('')
+}
+
+function rStringVector(values: string[]): string {
+  if (values.length === 0) return 'character()'
+  return `c(${values.map((value) => JSON.stringify(value)).join(', ')})`
+}
+
+function buildRNotebookVariableIntrospectionCode(names: string[]): string {
+  return [
+    'local({',
+    `  .phi_names <- ${rStringVector(names)}`,
+    '',
+    '  .phi_safe_text <- function(value, limit = 1200) {',
+    '    text <- tryCatch({',
+    '      paste(utils::capture.output(print(value)), collapse = "\\n")',
+    '    }, error = function(exc) {',
+    '      paste0("<repr failed: ", class(exc)[1], ": ", conditionMessage(exc), ">")',
+    '    })',
+    '    if (nchar(text, type = "chars", allowNA = FALSE) <= limit) text else paste0(substr(text, 1, limit - 1), "…")',
+    '  }',
+    '',
+    '  .phi_shape <- function(value) {',
+    '    dims <- dim(value)',
+    '    if (is.null(dims)) return(NULL)',
+    '    paste(dims, collapse = " x ")',
+    '  }',
+    '',
+    '  .phi_columns <- function(value, limit = 30) {',
+    '    if (!inherits(value, "data.frame")) return(NULL)',
+    '    column_names <- names(value)',
+    '    if (is.null(column_names)) return(NULL)',
+    '    column_names <- utils::head(column_names, limit)',
+    '    lapply(column_names, function(column_name) {',
+    '      column <- value[[column_name]]',
+    '      list(name = as.character(column_name), type = paste(class(column), collapse = "/"))',
+    '    })',
+    '  }',
+    '',
+    '  .phi_preview <- function(value) {',
+    '    if (inherits(value, "data.frame")) {',
+    '      return(.phi_safe_text(utils::head(value, 5), 2000))',
+    '    }',
+    '    tryCatch({',
+    '      paste(utils::capture.output(str(value, max.level = 1, give.attr = FALSE)), collapse = "\\n")',
+    '    }, error = function(exc) .phi_safe_text(value, 1200))',
+    '  }',
+    '',
+    '  .phi_variable <- function(name) {',
+    '    if (!exists(name, envir = .GlobalEnv, inherits = FALSE)) {',
+    '      return(list(name = name, exists = FALSE))',
+    '    }',
+    '    value <- get(name, envir = .GlobalEnv, inherits = FALSE)',
+    '    item <- list(',
+    '      name = name,',
+    '      exists = TRUE,',
+    '      datatype = paste(class(value), collapse = ", "),',
+    '      preview = .phi_preview(value)',
+    '    )',
+    '    shape <- .phi_shape(value)',
+    '    if (!is.null(shape)) item$shape <- shape',
+    '    columns <- .phi_columns(value)',
+    '    if (!is.null(columns) && length(columns) > 0) item$columns <- columns',
+    '    item',
+    '  }',
+    '',
+    '  .phi_json_string <- function(value) {',
+    '    if (is.null(value) || length(value) == 0 || is.na(value[[1]])) return("null")',
+    '    text <- as.character(value[[1]])',
+    '    text <- gsub("\\\\", "\\\\\\\\", text, fixed = TRUE)',
+    '    text <- gsub("\\"", "\\\\\\"", text, fixed = TRUE)',
+    '    text <- gsub("\\n", "\\\\n", text, fixed = TRUE)',
+    '    text <- gsub("\\r", "\\\\r", text, fixed = TRUE)',
+    '    text <- gsub("\\t", "\\\\t", text, fixed = TRUE)',
+    '    paste0("\\"", text, "\\"")',
+    '  }',
+    '',
+    '  .phi_pair <- function(key, value_json) paste0(.phi_json_string(key), ":", value_json)',
+    '  .phi_object <- function(pairs) paste0("{", paste(pairs, collapse = ","), "}")',
+    '',
+    '  .phi_column_json <- function(column) {',
+    '    pairs <- c(',
+    '      .phi_pair("name", .phi_json_string(column$name)),',
+    '      .phi_pair("type", .phi_json_string(column$type))',
+    '    )',
+    '    .phi_object(pairs)',
+    '  }',
+    '',
+    '  .phi_variable_json <- function(item) {',
+    '    pairs <- c(',
+    '      .phi_pair("name", .phi_json_string(item$name)),',
+    '      .phi_pair("exists", if (isTRUE(item$exists)) "true" else "false")',
+    '    )',
+    '    if (!is.null(item$datatype)) pairs <- c(pairs, .phi_pair("datatype", .phi_json_string(item$datatype)))',
+    '    if (!is.null(item$shape)) pairs <- c(pairs, .phi_pair("shape", .phi_json_string(item$shape)))',
+    '    if (!is.null(item$columns)) {',
+    '      columns_json <- paste(vapply(item$columns, .phi_column_json, character(1)), collapse = ",")',
+    '      pairs <- c(pairs, .phi_pair("columns", paste0("[", columns_json, "]")))',
+    '    }',
+    '    if (!is.null(item$preview)) pairs <- c(pairs, .phi_pair("preview", .phi_json_string(item$preview)))',
+    '    if (!is.null(item$error)) pairs <- c(pairs, .phi_pair("error", .phi_json_string(item$error)))',
+    '    .phi_object(pairs)',
+    '  }',
+    '',
+    '  payload <- list(variables = lapply(.phi_names, function(.phi_name) {',
+    '    tryCatch(.phi_variable(.phi_name), error = function(exc) {',
+    '      list(name = .phi_name, exists = TRUE, error = paste0(class(exc)[1], ": ", conditionMessage(exc)))',
+    '    })',
+    '  }))',
+    '',
+    '  if (requireNamespace("jsonlite", quietly = TRUE)) {',
+    `    cat("${VARIABLE_INTROSPECTION_SENTINEL}", jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null", na = "null"), "\\n", sep = "")`,
+    '  } else {',
+    '    variables_json <- paste(vapply(payload$variables, .phi_variable_json, character(1)), collapse = ",")',
+    `    cat("${VARIABLE_INTROSPECTION_SENTINEL}", "{\\"variables\\":[", variables_json, "]}", "\\n", sep = "")`,
+    '  }',
+    '})'
+  ].join('\n')
+}
+
+export function buildNotebookVariableIntrospectionCode(
+  variableNames: string[],
+  language?: string
+): string {
+  const names = safeVariableNames(variableNames, language)
+  return isRNotebookLanguage(language)
+    ? buildRNotebookVariableIntrospectionCode(names)
+    : buildPythonNotebookVariableIntrospectionCode(names)
 }
 
 export function parseNotebookVariableIntrospectionResult(
@@ -634,13 +768,13 @@ export class AnalysisNotebookExecutor {
   async introspectVariables(
     input: IntrospectNotebookVariablesInput
   ): Promise<NotebookVariableIntrospection[]> {
-    const variableNames = safeVariableNames(input.variableNames)
+    const variableNames = safeVariableNames(input.variableNames, input.language)
     if (variableNames.length === 0) return []
     const result = await this.client.executeCode({
       connection: input.connection,
       sessionId: input.sessionId,
       kernelId: input.kernelId,
-      code: buildNotebookVariableIntrospectionCode(variableNames),
+      code: buildNotebookVariableIntrospectionCode(variableNames, input.language),
       storeHistory: false
     })
     return parseNotebookVariableIntrospectionResult(result)

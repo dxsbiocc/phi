@@ -84,6 +84,18 @@ function optionalIndex(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : undefined
 }
 
+function optionalCellNumber(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error('cellNumber 必须是从 1 开始的数字')
+  }
+  const cellNumber = Math.trunc(value)
+  if (cellNumber < 1) {
+    throw new Error('cellNumber 必须从 1 开始')
+  }
+  return cellNumber
+}
+
 function cellTypeValue(value: unknown): NotebookCellType {
   if (value === 'markdown' || value === 'raw' || value === 'code') return value
   return 'code'
@@ -110,13 +122,21 @@ function outputSummary(cell: NotebookCell): string[] {
     .filter((text) => text.length > 0)
 }
 
+function cellNumberForIndex(index: number): number {
+  return index + 1
+}
+
+function cellLabel(index: number): string {
+  return `Cell ${cellNumberForIndex(index)}`
+}
+
 function summarizeCell(
   cell: NotebookCell,
   index: number,
   includeOutputs: boolean
 ): Record<string, unknown> {
   return {
-    index,
+    cellNumber: cellNumberForIndex(index),
     id: cell.id,
     cellType: cell.cellType,
     executionCount: cell.executionCount,
@@ -287,7 +307,11 @@ export class AnalysisNotebookToolExecutor {
     const state = this.stateFor(project, stringValue(params.path, 'path'))
     const beforeCellId = optionalString(params.beforeCellId)
     const afterCellId = optionalString(params.afterCellId)
-    let index = optionalIndex(params.index) ?? state.document.cells.length
+    const cellNumber = optionalCellNumber(params.cellNumber)
+    let index =
+      cellNumber !== undefined
+        ? cellNumber - 1
+        : (optionalIndex(params.index) ?? state.document.cells.length)
     if (beforeCellId) {
       index = state.document.cells.findIndex((cell) => cell.id === beforeCellId)
       if (index < 0) throw new Error(`Notebook cell not found: ${beforeCellId}`)
@@ -297,11 +321,12 @@ export class AnalysisNotebookToolExecutor {
       index += 1
     }
 
+    const boundedIndex = Math.max(0, Math.min(index, state.document.cells.length))
     state.document = insertNotebookCell(state.document, index, {
       cellType: cellTypeValue(params.cellType),
       source: stringValue(params.source, 'source')
     })
-    const cell = state.document.cells[Math.max(0, Math.min(index, state.document.cells.length - 1))]
+    const cell = state.document.cells[boundedIndex]
     this.emitDraftChanged(project, state, 'agent', {
       changeKind: 'inserted',
       changedCellId: cell.id,
@@ -309,11 +334,12 @@ export class AnalysisNotebookToolExecutor {
     })
     return {
       kind: 'notebook_cell_inserted',
-      summary: `已在 ${state.file.relativePath} 插入 ${cell.cellType} cell: ${cell.id}。`,
+      summary: `已在 ${state.file.relativePath} 插入 ${cell.cellType} ${cellLabel(boundedIndex)}。`,
       path: state.file.path,
       relativePath: state.file.relativePath,
       revision: state.document.revision,
-      cell: summarizeCell(cell, index, false)
+      cellNumber: cellNumberForIndex(boundedIndex),
+      cell: summarizeCell(cell, boundedIndex, false)
     }
   }
 
@@ -326,6 +352,7 @@ export class AnalysisNotebookToolExecutor {
     if (params.cellType !== undefined) patch.cellType = cellTypeValue(params.cellType)
     state.document = updateNotebookCell(state.document, cellId, patch)
     const cell = state.document.cells.find((item) => item.id === cellId)
+    const cellIndex = cell ? state.document.cells.indexOf(cell) : -1
     this.emitDraftChanged(project, state, 'agent', {
       changeKind: 'updated',
       changedCellId: cellId,
@@ -333,17 +360,22 @@ export class AnalysisNotebookToolExecutor {
     })
     return {
       kind: 'notebook_cell_updated',
-      summary: `已更新 ${state.file.relativePath} 的 cell: ${cellId}。`,
+      summary: `已更新 ${state.file.relativePath} 的 ${
+        cellIndex >= 0 ? cellLabel(cellIndex) : `cell: ${cellId}`
+      }。`,
       path: state.file.path,
       relativePath: state.file.relativePath,
       revision: state.document.revision,
-      cell: cell ? summarizeCell(cell, state.document.cells.indexOf(cell), false) : undefined
+      ...(cellIndex >= 0 ? { cellNumber: cellNumberForIndex(cellIndex) } : {}),
+      cell: cell && cellIndex >= 0 ? summarizeCell(cell, cellIndex, false) : undefined
     }
   }
 
   private deleteCell(project: ProjectRef, params: Record<string, unknown>): NotebookToolResult {
     const state = this.stateFor(project, stringValue(params.path, 'path'))
     const cellId = stringValue(params.cellId, 'cellId')
+    const cellIndex = state.document.cells.findIndex((item) => item.id === cellId)
+    if (cellIndex < 0) throw new Error(`Notebook cell not found: ${cellId}`)
     state.document = deleteNotebookCell(state.document, cellId)
     this.emitDraftChanged(project, state, 'agent', {
       changeKind: 'deleted',
@@ -351,10 +383,11 @@ export class AnalysisNotebookToolExecutor {
     })
     return {
       kind: 'notebook_cell_deleted',
-      summary: `已删除 ${state.file.relativePath} 的 cell: ${cellId}。`,
+      summary: `已删除 ${state.file.relativePath} 的 ${cellLabel(cellIndex)}。`,
       path: state.file.path,
       relativePath: state.file.relativePath,
       revision: state.document.revision,
+      cellNumber: cellNumberForIndex(cellIndex),
       cellId
     }
   }
@@ -427,14 +460,22 @@ export class AnalysisNotebookToolExecutor {
           execution.state === 'error' ? 'Cell 执行出错' : 'Cell 执行完成'
         ) ?? sessionStatus
       const updatedCell = state.document.cells.find((item) => item.id === cellId) ?? cell
+      const updatedCellIndex = state.document.cells.indexOf(updatedCell)
       return {
         kind: 'notebook_cell_executed',
-        summary: `已运行 ${state.file.relativePath} 的 cell: ${cellId}，状态 ${execution.state}。`,
+        summary: `已运行 ${state.file.relativePath} 的 ${
+          updatedCellIndex >= 0 ? cellLabel(updatedCellIndex) : `cell: ${cellId}`
+        }，状态 ${execution.state}。`,
         path: state.file.path,
         relativePath: state.file.relativePath,
         revision: state.document.revision,
         cellId,
-        cell: summarizeCell(updatedCell, state.document.cells.indexOf(updatedCell), false),
+        ...(updatedCellIndex >= 0
+          ? {
+              cellNumber: cellNumberForIndex(updatedCellIndex),
+              cell: summarizeCell(updatedCell, updatedCellIndex, false)
+            }
+          : {}),
         execution: {
           state: execution.state,
           executionCount: execution.executionCount,

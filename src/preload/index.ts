@@ -654,6 +654,10 @@ type RendererAuthApi = {
     cwd: string,
     path: string
   ) => Promise<AnalysisNotebookSessionStatus>
+  interruptAnalysisNotebookExecution: (
+    cwd: string,
+    path: string
+  ) => Promise<AnalysisNotebookSessionStatus>
   executeAnalysisNotebookCell: (
     cwd: string,
     path: string,
@@ -879,6 +883,11 @@ const api: RendererAuthApi = {
     path: string
   ): Promise<AnalysisNotebookSessionStatus> =>
     ipcRenderer.invoke('analysis:closeNotebookSession', cwd, path),
+  interruptAnalysisNotebookExecution: (
+    cwd: string,
+    path: string
+  ): Promise<AnalysisNotebookSessionStatus> =>
+    ipcRenderer.invoke('analysis:interruptNotebookExecution', cwd, path),
   executeAnalysisNotebookCell: (
     cwd: string,
     path: string,

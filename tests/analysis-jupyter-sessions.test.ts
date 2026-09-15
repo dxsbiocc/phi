@@ -13,6 +13,7 @@ import type { AnalysisKernelDiagnostics } from '../src/main/agent/notebook/analy
 class FakeJupyterSessionClient implements JupyterSessionClient {
   readonly created: JupyterSessionCreateRequest[] = []
   readonly deleted: string[] = []
+  readonly interrupted: string[] = []
   nextSession: JupyterSessionRecord = {
     id: 'session-1',
     kernelId: 'kernel-1',
@@ -30,6 +31,10 @@ class FakeJupyterSessionClient implements JupyterSessionClient {
 
   async deleteSession(_connection: JupyterServerConnection, sessionId: string): Promise<void> {
     this.deleted.push(sessionId)
+  }
+
+  async interruptKernel(_connection: JupyterServerConnection, kernelId: string): Promise<void> {
+    this.interrupted.push(kernelId)
   }
 }
 
@@ -246,4 +251,30 @@ test('AnalysisNotebookSessionRegistry closes a tracked notebook session', async 
   assert.equal(closed.state, 'disconnected')
   assert.equal(closed.sessionId, undefined)
   assert.match(closed.message ?? '', /已断开/)
+})
+
+test('AnalysisNotebookSessionRegistry interrupts a tracked notebook kernel', async () => {
+  const client = new FakeJupyterSessionClient()
+  const registry = new AnalysisNotebookSessionRegistry({
+    client,
+    now: () => new Date('2026-09-09T00:02:00.000Z'),
+    getConnection: () => ({ url: 'http://127.0.0.1:8888/lab', token: 'secret-token' })
+  })
+  const document = notebook({
+    kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' }
+  })
+  await registry.ensureSession({
+    projectCwd: '/project',
+    notebookPath: '/project/notebooks/demo.ipynb',
+    document,
+    kernels: kernels()
+  })
+  registry.updateSessionState('/project', '/project/notebooks/demo.ipynb', 'busy', 'running')
+
+  const interrupted = await registry.interruptSession('/project', '/project/notebooks/demo.ipynb')
+
+  assert.deepEqual(client.interrupted, ['kernel-1'])
+  assert.equal(interrupted.state, 'idle')
+  assert.equal(interrupted.updatedAt, '2026-09-09T00:02:00.000Z')
+  assert.match(interrupted.message ?? '', /停止请求/)
 })

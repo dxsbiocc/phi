@@ -9,6 +9,11 @@ import AnalysisView, {
   type AnalysisViewProps
 } from '../src/renderer/src/features/analysis/AnalysisView'
 import { notebookAiPromptError } from '../src/renderer/src/features/analysis/lib/notebookAiErrors'
+import {
+  filterNotebookAiContextOptions,
+  notebookAiContextMentionAtCursor,
+  notebookAiPromptWithContextReference
+} from '../src/renderer/src/features/analysis/lib/notebookAiContextMentions'
 import { shouldAutoStartNotebookSession } from '../src/renderer/src/features/analysis/lib/notebookSession'
 import {
   displayMimes,
@@ -84,6 +89,54 @@ test('notebook output mime bundle processing follows marimo-style sorting and hi
       mime: 'application/vnd.vegalite.v5+json'
     }),
     { width: 640, height: 360 }
+  )
+})
+
+test('notebook AI prompt @ mentions filter and replace context options', () => {
+  const options = [
+    {
+      id: 'dataframe:income_by_country',
+      kind: 'dataframe' as const,
+      name: 'income_by_country',
+      detail: 'pd.read_json("use_data.json")',
+      preview: { source: 'pd.read_json("use_data.json")', shape: '2 x 4' }
+    },
+    {
+      id: 'variable:palette',
+      kind: 'variable' as const,
+      name: 'palette',
+      detail: 'in-memory',
+      preview: { value: '["#1b9e77", "#d95f02"]' }
+    },
+    {
+      id: 'cell_output:cell-3',
+      kind: 'cell_output' as const,
+      name: 'cell-3',
+      detail: 'output preview',
+      preview: { output: 'shape: (284, 3)' }
+    }
+  ]
+
+  const prompt = 'plot @inc'
+  const mention = notebookAiContextMentionAtCursor(prompt, prompt.length)
+
+  assert.deepEqual(mention, { start: 5, end: 9, query: 'inc' })
+  assert.equal(notebookAiContextMentionAtCursor('email a@b', 9), null)
+  assert.deepEqual(
+    filterNotebookAiContextOptions(options, 'inc').map((option) => option.id),
+    ['dataframe:income_by_country']
+  )
+  assert.deepEqual(
+    filterNotebookAiContextOptions(options, 'shape').map((option) => option.id),
+    ['cell_output:cell-3']
+  )
+  assert.deepEqual(
+    filterNotebookAiContextOptions(options, '2 x').map((option) => option.id),
+    ['dataframe:income_by_country']
+  )
+  assert.equal(
+    notebookAiPromptWithContextReference(prompt, mention!, options[0]),
+    'plot @income_by_country '
   )
 })
 
@@ -363,6 +416,42 @@ test('analysis view renders an opened notebook document', () => {
   assert.match(markup, /data-phi-syntax-token="number"/)
 })
 
+test('analysis view renders large notebooks through a virtual cell window', () => {
+  const document = parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: {
+      kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' },
+      language_info: { name: 'python' }
+    },
+    cells: Array.from({ length: 30 }, (_, index) => ({
+      id: `cell-${index}`,
+      cell_type: 'code' as const,
+      execution_count: null,
+      metadata: {},
+      outputs: [],
+      source: `value_${index} = ${index}`
+    }))
+  })
+  const markup = renderAnalysisView({
+    notebookFile: {
+      path: '/project/notebooks/large.ipynb',
+      relativePath: 'notebooks/large.ipynb',
+      name: 'large.ipynb',
+      bytes: 2048,
+      modifiedAt: '2026-09-09T00:00:00.000Z',
+      savedRevision: document.revision,
+      document
+    }
+  })
+
+  assert.match(markup, /data-phi-notebook-virtual-list="true"/)
+  assert.match(markup, /data-phi-notebook-virtual-spacer="after"/)
+  assert.ok((markup.match(/data-phi-notebook-cell-number=/g)?.length ?? 0) < 30)
+  assert.match(markup, /data-phi-notebook-cell-number="1"/)
+  assert.doesNotMatch(markup, /data-phi-notebook-cell-number="30"/)
+})
+
 test('analysis notebook outline popover is hover-driven, not focus-sticky', () => {
   const source = readFileSync(
     resolve(
@@ -523,6 +612,8 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(aiPromptSource, /data-phi-notebook-ai-mode=\{mode\}/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-context-menu="true"/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-context-menu-placement="above"/)
+  assert.match(aiPromptSource, /data-phi-notebook-ai-context-query=\{activeContextQuery/)
+  assert.match(aiPromptSource, /data-phi-notebook-ai-context-empty-match="true"/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-context-layout="compact-preview"/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-context-preview="true"/)
   assert.match(aiPromptSource, /data-phi-notebook-ai-drag-handle="true"/)
@@ -583,6 +674,9 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(aiPromptSource, /overflow: 'visible'/)
   assert.match(aiPromptSource, /onMouseEnter=\{\(\) => setActiveContextOptionId\(option\.id\)\}/)
   assert.match(aiPromptSource, /event\.key === 'ArrowDown'/)
+  assert.match(aiPromptSource, /filteredContextOptions\.length > 0/)
+  assert.match(aiPromptSource, /notebookAiContextMentionAtCursor\(nextPrompt, nextCursor\)/)
+  assert.match(aiPromptSource, /notebookAiPromptWithContextReference/)
   assert.match(aiPromptSource, /moveActiveContextOption\(1\)/)
   assert.match(aiPromptSource, /event\.key === 'ArrowUp'/)
   assert.match(aiPromptSource, /moveActiveContextOption\(-1\)/)
@@ -700,8 +794,15 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(analysisSource, /hasStagedCells=\{aiPromptDraft\.stagedCells\.length > 0\}/)
   assert.match(analysisSource, /const displayCells = useMemo/)
   assert.match(analysisSource, /const aiPromptSurface = hasAiPreviewCells \? null : aiPromptCell/)
+  assert.match(analysisSource, /const previousNotebookDocumentKeyRef = useRef/)
+  assert.match(
+    analysisSource,
+    /const notebookChanged = previousNotebookDocumentKeyRef\.current !== notebookDocumentKey/
+  )
+  assert.match(analysisSource, /if \(notebookChanged\) setAiPromptDraft\(null\)/)
   assert.match(analysisSource, /onNotebookCodeGenerationProgress/)
   assert.match(analysisSource, /requestId: draft\.id/)
+  assert.match(analysisSource, /draft\.isGenerating/)
   assert.match(analysisSource, /onModelChange=\{updateAiPromptModel\}/)
   assert.match(analysisSource, /model: draft\.model/)
   assert.doesNotMatch(analysisSource, /generationStatus=\{/)
@@ -791,7 +892,7 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     analysisRuntimeSource,
     /focusCellId = change\.focusCellId \?\? change\.changedCellId/
   )
-  assert.match(analysisSource, /findOutlineCellElement\(agentFocus\.cellId\)\?\.scrollIntoView/)
+  assert.match(analysisSource, /scrollToNotebookCell\(agentFocus\.cellId, 'center'\)/)
   assert.match(analysisSource, /setAgentHighlightedCellId\(agentFocus\.cellId\)/)
   assert.match(analysisRuntimeSource, /generateAnalysisNotebookCode\(getActiveCwd\(\), file\.path/)
   assert.match(preloadSource, /ipcRenderer\.invoke\('analysis:generateNotebookCode'/)
@@ -1695,11 +1796,14 @@ test('analysis view marks the executing notebook cell as running', () => {
       document
     },
     executingNotebookCellId: 'code',
-    onRunNotebookCell: () => undefined
+    onRunNotebookCell: () => undefined,
+    onStopNotebookCell: () => undefined
   })
 
   assert.match(markup, /data-phi-notebook-cell-actions="marimo"/)
   assert.match(markup, /aria-label="停止 cell"/)
+  assert.match(markup, /data-phi-notebook-cell-primary-action="stop"/)
+  assert.match(markup, /data-phi-notebook-cell-primary-action-enabled="true"/)
   assert.doesNotMatch(markup, /aria-label="运行 cell"/)
   assert.equal(markup.match(/data-phi-notebook-cell-action-surface="opaque"/g)?.length, 2)
   assert.doesNotMatch(markup, /cell 停止待接入 kernel interrupt/)

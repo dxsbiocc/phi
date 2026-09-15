@@ -710,6 +710,32 @@ export function useAnalysisNotebookRuntime({
     [getActiveCwd, rendererApi]
   )
 
+  const onStopAnalysisNotebookCell = useCallback(
+    async (file: AnalysisNotebookFile, cellId: string): Promise<void> => {
+      const request = ++analysisCellExecutionRequestRef.current
+      const cwd = getActiveCwd()
+      setExecutingAnalysisCellId((current) => (current === cellId ? null : current))
+      setAnalysisCellExecutionError(null)
+      try {
+        const interruptAnalysisNotebookExecution = requireRendererApiMethod(
+          rendererApi,
+          'interruptAnalysisNotebookExecution',
+          'Notebook cell 停止 API 尚未加载，请重启 Phi 后再试'
+        )
+        const status = await interruptAnalysisNotebookExecution(cwd, file.path)
+        if (request !== analysisCellExecutionRequestRef.current || cwd !== getActiveCwd()) {
+          return
+        }
+        setAnalysisNotebookSessionStatus(status)
+        showSnackbar('已请求停止 notebook cell', 'info')
+      } catch (error) {
+        if (request !== analysisCellExecutionRequestRef.current) return
+        setAnalysisCellExecutionError(readableErrorMessage(error, '无法停止 notebook cell'))
+      }
+    },
+    [getActiveCwd, rendererApi, showSnackbar]
+  )
+
   const onGenerateAnalysisNotebookCode = useCallback(
     async (
       file: AnalysisNotebookFile,
@@ -917,6 +943,7 @@ export function useAnalysisNotebookRuntime({
     onStopAnalysisNotebookSession,
     onStopRuntimeNotebookSession,
     onRunAnalysisNotebookCell,
+    onStopAnalysisNotebookCell,
     onCompleteAnalysisNotebookCell,
     onFormatAnalysisNotebookCell,
     onGenerateAnalysisNotebookCode,

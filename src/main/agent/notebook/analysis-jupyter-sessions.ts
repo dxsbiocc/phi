@@ -66,6 +66,7 @@ export interface JupyterSessionClient {
     request: JupyterSessionCreateRequest
   ): Promise<JupyterSessionRecord>
   deleteSession(connection: JupyterServerConnection, sessionId: string): Promise<void>
+  interruptKernel(connection: JupyterServerConnection, kernelId: string): Promise<void>
 }
 
 type SessionRecord = {
@@ -312,6 +313,17 @@ export class FetchJupyterSessionClient implements JupyterSessionClient {
       throw new Error(`Jupyter session delete failed: ${response.status} ${response.statusText}`)
     }
   }
+
+  async interruptKernel(connection: JupyterServerConnection, kernelId: string): Promise<void> {
+    const response = await this.requestWithXsrf(
+      connection,
+      new URL(`/api/kernels/${encodeURIComponent(kernelId)}/interrupt`, connection.url).toString(),
+      { method: 'POST' }
+    )
+    if (!response.ok) {
+      throw new Error(`Jupyter kernel interrupt failed: ${response.status} ${response.statusText}`)
+    }
+  }
 }
 
 export class AnalysisNotebookSessionRegistry {
@@ -461,6 +473,43 @@ export class AnalysisNotebookSessionRegistry {
       state: 'disconnected',
       message: 'Notebook kernel 已断开',
       updatedAt: this.now().toISOString()
+    }
+  }
+
+  async interruptSession(
+    projectCwd: string,
+    notebookPath: string
+  ): Promise<AnalysisNotebookSessionStatus> {
+    const key = this.key(projectCwd, notebookPath)
+    const existing = this.records.get(key)
+    if (!existing) {
+      return {
+        projectCwd,
+        notebookPath,
+        state: 'disconnected',
+        message: 'Notebook kernel 未连接'
+      }
+    }
+
+    const connection = this.getConnection(projectCwd)
+    if (!connection) {
+      existing.state = 'disconnected'
+      existing.message = 'Jupyter Server 尚未就绪'
+      existing.updatedAt = this.now().toISOString()
+      return publicStatus(existing)
+    }
+
+    try {
+      await this.client.interruptKernel(connection, existing.kernelId)
+      existing.state = 'idle'
+      existing.message = 'Notebook kernel 停止请求已发送'
+      existing.updatedAt = this.now().toISOString()
+      return publicStatus(existing)
+    } catch (error) {
+      existing.state = 'error'
+      existing.message = errorMessage(error)
+      existing.updatedAt = this.now().toISOString()
+      return publicStatus(existing)
     }
   }
 

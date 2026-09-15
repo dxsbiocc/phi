@@ -91,7 +91,7 @@ export function notebookCellsWithAiPreview(
   draft: NotebookAiPromptDraft | null,
   fallbackLanguage: SyntaxLanguage
 ): CanvasCell[] {
-  if (!draft || draft.stagedCells.length === 0) return cells
+  if (!draft || draft.isGenerating || draft.stagedCells.length === 0) return cells
 
   const baseCells =
     draft.mode === 'refactor' && draft.targetCellId

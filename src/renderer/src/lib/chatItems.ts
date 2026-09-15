@@ -65,10 +65,28 @@ function numberOrNullField(
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
+function numberField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = numberOrNullField(record, key)
+  return typeof value === 'number' ? value : undefined
+}
+
+function notebookCellNumberFrom(
+  record: Record<string, unknown>,
+  cell: Record<string, unknown> | null
+): number | undefined {
+  const explicit =
+    numberField(record, 'cellNumber') ??
+    (cell ? (numberField(cell, 'cellNumber') ?? numberField(cell, 'number')) : undefined)
+  if (explicit !== undefined && explicit >= 1) return Math.trunc(explicit)
+  const legacyIndex = cell ? numberField(cell, 'index') : undefined
+  return legacyIndex !== undefined && legacyIndex >= 0 ? Math.trunc(legacyIndex) + 1 : undefined
+}
+
 /**
  * Notebook tool results can include full notebook/cell/output objects. Chat history
  * only needs a small operation receipt, so this intentionally projects details down
- * to path, cell id/type, execution state/count, and the human summary string.
+ * to path, one-based cell number, cell id/type, execution state/count, and the
+ * human summary string.
  */
 export function extractNotebookToolSummary(result: unknown): NotebookToolSummary | undefined {
   const details = detailsFromToolResult(result)
@@ -83,6 +101,7 @@ export function extractNotebookToolSummary(result: unknown): NotebookToolSummary
     record.execution && typeof record.execution === 'object'
       ? (record.execution as Record<string, unknown>)
       : null
+  const cellNumber = notebookCellNumberFrom(record, cell)
   const cellId = stringField(record, 'cellId') ?? (cell ? stringField(cell, 'id') : undefined)
   const cellType =
     stringField(record, 'cellType') ??
@@ -100,6 +119,7 @@ export function extractNotebookToolSummary(result: unknown): NotebookToolSummary
     ...(stringField(record, 'relativePath')
       ? { relativePath: stringField(record, 'relativePath') }
       : {}),
+    ...(cellNumber !== undefined ? { cellNumber } : {}),
     ...(cellId ? { cellId } : {}),
     ...(cellType ? { cellType } : {}),
     ...(executionState ? { executionState } : {}),

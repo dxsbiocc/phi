@@ -100,6 +100,17 @@ test('AI preview cells are inserted into the notebook cell sequence', () => {
   ])
 })
 
+test('AI preview cells are not inserted while generation is still streaming', () => {
+  const generatingDraft = createDraft({ isGenerating: true })
+  const cells = notebookCellsWithAiPreview([baseCell], generatingDraft, 'python')
+
+  assert.deepEqual(cells, [baseCell])
+  assert.deepEqual(notebookAiPreviewCellIds(generatingDraft), [
+    'preview-run:preview-0',
+    'preview-run:preview-1'
+  ])
+})
+
 test('AI refactor preview visually replaces the target cell with generated cells', () => {
   const refactorDraft = createDraft({
     mode: 'refactor',

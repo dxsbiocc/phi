@@ -1,4 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode
+} from 'react'
 import { Box, Typography } from '@mui/material'
 
 import type { SyntaxLanguage } from '../../../lib/syntaxHighlight'
@@ -42,10 +50,17 @@ import {
   withNotebookKernel,
   type NotebookOutlineItem
 } from '../lib/notebookViewModel'
+import {
+  normalizedNotebookVirtualRowHeight,
+  notebookVirtualWindow,
+  type NotebookVirtualViewport
+} from '../lib/notebookVirtualization'
 import type { AnalysisNotebookContextReference, ModelOption } from '../../../types'
 import { NotebookHeader } from '../components/NotebookHeader'
 import { useNotebookSourceServices } from '../hooks/useNotebookSourceServices'
-import NotebookAiPromptCell from './NotebookAiPromptCell'
+import NotebookAiPromptCell, {
+  type NotebookAiPromptReferenceAddOptions
+} from './NotebookAiPromptCell'
 import NotebookAiPreviewActions from './NotebookAiPreviewActions'
 import NotebookCell, { type CellPlacement } from './NotebookCell'
 import NotebookFloatingActions, {
@@ -58,6 +73,51 @@ import NotebookScrollProgressRail from './NotebookScrollProgressRail'
 
 const notebookSiblingSpacingSelector =
   '& > [data-phi-notebook-cell] + [data-phi-notebook-cell], & > [data-phi-notebook-cell] + [data-phi-notebook-ai-prompt-cell], & > [data-phi-notebook-ai-prompt-cell] + [data-phi-notebook-cell], & > [data-phi-notebook-cell] + [data-phi-notebook-ai-preview-actions], & > [data-phi-notebook-ai-preview-actions] + [data-phi-notebook-cell], & > [data-phi-notebook-ai-preview-actions] + [data-phi-notebook-ai-prompt-cell]'
+
+const initialVirtualViewport: NotebookVirtualViewport = { scrollTop: 0, viewportHeight: 0 }
+
+type NotebookVirtualRowHeightState = {
+  documentKey: string | null
+  heights: Record<string, number>
+}
+
+function notebookVirtualListScrollTop(
+  scrollViewport: HTMLElement,
+  virtualList: HTMLElement | null
+): number {
+  if (!virtualList) return 0
+  const viewportRect = scrollViewport.getBoundingClientRect()
+  const listRect = virtualList.getBoundingClientRect()
+  return Math.max(0, scrollViewport.scrollTop + listRect.top - viewportRect.top)
+}
+
+function NotebookVirtualRowShell({
+  cellId,
+  index,
+  onMeasure,
+  children
+}: {
+  cellId: string
+  index: number
+  onMeasure: (cellId: string, element: HTMLDivElement | null) => void
+  children: ReactNode
+}): React.JSX.Element {
+  const onRowRef = useCallback(
+    (element: HTMLDivElement | null) => onMeasure(cellId, element),
+    [cellId, onMeasure]
+  )
+
+  return (
+    <Box
+      ref={onRowRef}
+      data-phi-notebook-virtual-row="true"
+      data-phi-notebook-virtual-row-index={index}
+      sx={{ pt: index === 0 ? 0 : 1.35 }}
+    >
+      {children}
+    </Box>
+  )
+}
 
 export default function NotebookCanvas({
   activeNotebookPath,
@@ -79,6 +139,7 @@ export default function NotebookCanvas({
   onStartNotebookSession,
   onStopNotebookSession,
   onRunNotebookCell,
+  onStopNotebookCell,
   onCompleteNotebookCell,
   onFormatNotebookCell,
   onGenerateNotebookCode,
@@ -98,6 +159,27 @@ export default function NotebookCanvas({
   const [pendingKernelSwitch, setPendingKernelSwitch] = useState<PendingKernelSwitch | null>(null)
   const notebookCanvasRef = useRef<HTMLDivElement | null>(null)
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
+  const virtualListRef = useRef<HTMLDivElement | null>(null)
+  const aiPromptDraftRef = useRef<NotebookAiPromptDraft | null>(null)
+  const scrollFrameRef = useRef<number | null>(null)
+  const virtualRowObserversRef = useRef<Map<string, ResizeObserver>>(new Map())
+  const notebookDocumentKey = notebookFile?.path ?? activeNotebookPath ?? null
+  const previousNotebookDocumentKeyRef = useRef<string | null>(notebookDocumentKey)
+  const [virtualViewport, setVirtualViewport] =
+    useState<NotebookVirtualViewport>(initialVirtualViewport)
+  const [virtualRowHeightState, setVirtualRowHeightState] = useState<NotebookVirtualRowHeightState>(
+    {
+      documentKey: notebookDocumentKey,
+      heights: {}
+    }
+  )
+  const virtualRowHeights = useMemo(
+    () =>
+      virtualRowHeightState.documentKey === notebookDocumentKey
+        ? virtualRowHeightState.heights
+        : {},
+    [notebookDocumentKey, virtualRowHeightState]
+  )
   const [floatingActionAnchor, setFloatingActionAnchor] = useState<NotebookFloatingActionAnchor>({
     right: notebookFloatingActionInset,
     bottom: notebookFloatingActionInset
@@ -112,8 +194,49 @@ export default function NotebookCanvas({
     () => notebookCellsWithAiPreview(cells, aiPromptDraft, insertCodeLanguage),
     [aiPromptDraft, cells, insertCodeLanguage]
   )
+  const virtualCells = useMemo(
+    () => notebookVirtualWindow(displayCells, virtualRowHeights, virtualViewport),
+    [displayCells, virtualRowHeights, virtualViewport]
+  )
+  const cellIndexById = useMemo(
+    () => new Map(displayCells.map((cell, index) => [cell.id, index])),
+    [displayCells]
+  )
   const outline = useMemo(() => notebookOutline(displayCells), [displayCells])
   const [activeOutlineId, setActiveOutlineId] = useState<string | null>(outline[0]?.id ?? null)
+
+  useEffect(() => {
+    aiPromptDraftRef.current = aiPromptDraft
+  }, [aiPromptDraft])
+
+  useEffect(() => {
+    const virtualRowObservers = virtualRowObserversRef.current
+    return () => {
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current)
+      }
+      for (const observer of virtualRowObservers.values()) {
+        observer.disconnect()
+      }
+      virtualRowObservers.clear()
+    }
+  }, [])
+
+  const syncVirtualViewport = useCallback((): void => {
+    const scrollViewport = scrollViewportRef.current
+    if (!scrollViewport) return
+    const listTop = notebookVirtualListScrollTop(scrollViewport, virtualListRef.current)
+    const nextViewport = {
+      scrollTop: Math.max(0, scrollViewport.scrollTop - listTop),
+      viewportHeight: scrollViewport.clientHeight
+    }
+    setVirtualViewport((current) =>
+      current.scrollTop === nextViewport.scrollTop &&
+      current.viewportHeight === nextViewport.viewportHeight
+        ? current
+        : nextViewport
+    )
+  }, [])
 
   const findOutlineCellElement = useCallback((cellId: string): HTMLElement | null => {
     const scrollViewport = scrollViewportRef.current
@@ -140,6 +263,24 @@ export default function NotebookCanvas({
       return
     }
 
+    if (virtualCells.enabled) {
+      const listTop = notebookVirtualListScrollTop(scrollViewport, virtualListRef.current)
+      const thresholdTop = Math.max(0, scrollViewport.scrollTop - listTop + 24)
+      let activeId = outline[0].id
+      for (const item of outline) {
+        const index = cellIndexById.get(item.cellId)
+        if (index === undefined) continue
+        const itemTop = virtualCells.offsets[index] ?? 0
+        if (itemTop <= thresholdTop) {
+          activeId = item.id
+          continue
+        }
+        break
+      }
+      setActiveOutlineId((currentId) => (currentId === activeId ? currentId : activeId))
+      return
+    }
+
     let activeId = outline[0].id
     const thresholdTop = scrollViewport.scrollTop + 24
     for (const item of outline) {
@@ -152,15 +293,88 @@ export default function NotebookCanvas({
       break
     }
     setActiveOutlineId((currentId) => (currentId === activeId ? currentId : activeId))
-  }, [findOutlineCellElement, outline])
+  }, [cellIndexById, findOutlineCellElement, outline, virtualCells])
+
+  const scrollToNotebookCell = useCallback(
+    (cellId: string, block: ScrollLogicalPosition): void => {
+      const element = findOutlineCellElement(cellId)
+      if (element) {
+        element.scrollIntoView({ block, behavior: 'smooth' })
+        return
+      }
+      if (!virtualCells.enabled) return
+      const scrollViewport = scrollViewportRef.current
+      const index = cellIndexById.get(cellId)
+      if (!scrollViewport || index === undefined) return
+      const listTop = notebookVirtualListScrollTop(scrollViewport, virtualListRef.current)
+      const itemTop = virtualCells.offsets[index] ?? 0
+      const itemHeight = virtualCells.heights[index] ?? 0
+      const targetTop =
+        block === 'center'
+          ? listTop + itemTop - Math.max(0, (scrollViewport.clientHeight - itemHeight) / 2)
+          : listTop + itemTop
+      scrollViewport.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' })
+    },
+    [cellIndexById, findOutlineCellElement, virtualCells]
+  )
+
+  const measureVirtualRow = useCallback(
+    (cellId: string, element: HTMLDivElement | null): void => {
+      const existingObserver = virtualRowObserversRef.current.get(cellId)
+      if (existingObserver) {
+        existingObserver.disconnect()
+        virtualRowObserversRef.current.delete(cellId)
+      }
+      if (!element) return
+
+      const updateHeight = (): void => {
+        const height = normalizedNotebookVirtualRowHeight(element.getBoundingClientRect().height)
+        setVirtualRowHeightState((current) => {
+          const currentHeights = current.documentKey === notebookDocumentKey ? current.heights : {}
+          if (current.documentKey === notebookDocumentKey && currentHeights[cellId] === height) {
+            return current
+          }
+          return {
+            documentKey: notebookDocumentKey,
+            heights: { ...currentHeights, [cellId]: height }
+          }
+        })
+      }
+      updateHeight()
+
+      if (typeof ResizeObserver === 'undefined') return
+      const observer = new ResizeObserver(updateHeight)
+      observer.observe(element)
+      virtualRowObserversRef.current.set(cellId, observer)
+    },
+    [notebookDocumentKey]
+  )
+
+  const updateNotebookScrollState = useCallback(() => {
+    syncVirtualViewport()
+    updateActiveOutline()
+  }, [syncVirtualViewport, updateActiveOutline])
+
+  const scheduleNotebookScrollState = useCallback(() => {
+    if (scrollFrameRef.current !== null) return
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null
+      updateNotebookScrollState()
+    })
+  }, [updateNotebookScrollState])
+
+  const handleNotebookScroll = scheduleNotebookScrollState
+
+  useEffect(() => {
+    scheduleNotebookScrollState()
+  }, [displayCells.length, scheduleNotebookScrollState])
 
   const onSelectOutlineItem = useCallback(
     (item: NotebookOutlineItem): void => {
-      const element = findOutlineCellElement(item.cellId)
-      element?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      scrollToNotebookCell(item.cellId, 'start')
       setActiveOutlineId(item.id)
     },
-    [findOutlineCellElement]
+    [scrollToNotebookCell]
   )
 
   useEffect(() => {
@@ -176,10 +390,7 @@ export default function NotebookCanvas({
     const focusTimer = window.setTimeout(() => {
       setSelectedCellId(agentFocus.cellId)
       setAgentHighlightedCellId(agentFocus.cellId)
-      findOutlineCellElement(agentFocus.cellId)?.scrollIntoView({
-        block: 'center',
-        behavior: 'smooth'
-      })
+      scrollToNotebookCell(agentFocus.cellId, 'center')
     }, 0)
     const clearTimer = window.setTimeout(() => {
       setAgentHighlightedCellId((current) => (current === agentFocus.cellId ? null : current))
@@ -189,29 +400,41 @@ export default function NotebookCanvas({
       window.clearTimeout(focusTimer)
       window.clearTimeout(clearTimer)
     }
-  }, [agentFocus, cells, findOutlineCellElement, notebookFile])
+  }, [agentFocus, cells, notebookFile, scrollToNotebookCell])
 
   useEffect(() => {
+    const notebookChanged = previousNotebookDocumentKeyRef.current !== notebookDocumentKey
+    previousNotebookDocumentKeyRef.current = notebookDocumentKey
     let cancelled = false
     queueMicrotask(() => {
       if (!cancelled) {
         setDraftDocument(initialDocument)
         setSelectedCellId(null)
-        setAiPromptDraft(null)
+        if (notebookChanged) setAiPromptDraft(null)
       }
     })
     return () => {
       cancelled = true
     }
-  }, [initialDocument])
+  }, [initialDocument, notebookDocumentKey])
 
   useEffect(() => {
     if (!onNotebookCodeGenerationProgress) return undefined
     return onNotebookCodeGenerationProgress((progress) => {
+      const draftSnapshot = aiPromptDraftRef.current
+      if (
+        !draftSnapshot ||
+        draftSnapshot.isGenerating ||
+        draftSnapshot.id !== progress.requestId ||
+        progress.cells.length === 0
+      ) {
+        return
+      }
       setAiPromptDraft((draft) => {
         if (
           !draft ||
           !draftDocument ||
+          draft.isGenerating ||
           draft.id !== progress.requestId ||
           progress.cells.length === 0
         ) {
@@ -245,22 +468,22 @@ export default function NotebookCanvas({
   }, [draftDocument, notebookFile, onSyncNotebookDraft])
 
   useEffect(() => {
-    updateActiveOutline()
+    scheduleNotebookScrollState()
     const scrollViewport = scrollViewportRef.current
     if (!scrollViewport) return
 
     const content = scrollViewport.firstElementChild
     const resizeObserver =
-      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateActiveOutline)
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleNotebookScrollState)
     resizeObserver?.observe(scrollViewport)
     if (content) resizeObserver?.observe(content)
-    window.addEventListener('resize', updateActiveOutline)
+    window.addEventListener('resize', scheduleNotebookScrollState)
 
     return () => {
       resizeObserver?.disconnect()
-      window.removeEventListener('resize', updateActiveOutline)
+      window.removeEventListener('resize', scheduleNotebookScrollState)
     }
-  }, [draftDocument?.revision, displayCells.length, outline.length, updateActiveOutline])
+  }, [draftDocument?.revision, displayCells.length, outline.length, scheduleNotebookScrollState])
 
   useEffect(() => {
     const updateFloatingActionAnchor = (): void => {
@@ -475,19 +698,24 @@ export default function NotebookCanvas({
         : draft
     )
   }
-  const addAiPromptReference = (reference: AnalysisNotebookContextReference): void => {
+  const addAiPromptReference = (
+    reference: AnalysisNotebookContextReference,
+    options: NotebookAiPromptReferenceAddOptions = {}
+  ): void => {
     setAiPromptDraft((draft) => {
       if (!draft) return draft
       const references = draft.references.some((item) => item.id === reference.id)
         ? draft.references
         : [...draft.references, reference]
       const token = `@${reference.name}`
-      const prompt = /(?:^|\s)@$/.test(draft.prompt)
-        ? draft.prompt.replace(
-            /(?:^|\s)@$/,
-            (match) => `${match.startsWith(' ') ? ' ' : ''}${token} `
-          )
-        : `${draft.prompt}${draft.prompt.endsWith(' ') || draft.prompt.length === 0 ? '' : ' '}${token} `
+      const prompt =
+        options.prompt ??
+        (/(?:^|\s)@$/.test(draft.prompt)
+          ? draft.prompt.replace(
+              /(?:^|\s)@$/,
+              (match) => `${match.startsWith(' ') ? ' ' : ''}${token} `
+            )
+          : `${draft.prompt}${draft.prompt.endsWith(' ') || draft.prompt.length === 0 ? '' : ' '}${token} `)
       return { ...draft, references, prompt, stagedCells: [], error: null, errorDetail: null }
     })
   }
@@ -678,6 +906,11 @@ export default function NotebookCanvas({
       onRunNotebookCell?.(notebookFile, draftDocument, cellId)
     }
   }
+  const onStopCell = (cellId: string): void => {
+    if (notebookFile) {
+      onStopNotebookCell?.(notebookFile, cellId)
+    }
+  }
   const onKernelChange = async (kernelName: string): Promise<void> => {
     const kernel = kernelDiagnostics?.kernels.find((candidate) => candidate.name === kernelName)
     if (!kernel || !draftDocument || !notebookFile) return
@@ -749,7 +982,9 @@ export default function NotebookCanvas({
       onDragStart={onDragAiPrompt}
     />
   ) : null
-  const hasAiPreviewCells = Boolean(aiPromptDraft && aiPromptDraft.stagedCells.length > 0)
+  const hasAiPreviewCells = Boolean(
+    aiPromptDraft && !aiPromptDraft.isGenerating && aiPromptDraft.stagedCells.length > 0
+  )
   const aiPromptSurface = hasAiPreviewCells ? null : aiPromptCell
 
   return (
@@ -779,7 +1014,7 @@ export default function NotebookCanvas({
       />
       <Box
         ref={scrollViewportRef}
-        onScroll={updateActiveOutline}
+        onScroll={handleNotebookScroll}
         sx={{
           flex: 1,
           minHeight: 0,
@@ -822,60 +1057,84 @@ export default function NotebookCanvas({
           {!isOpening && cells.length > 0 && aiPromptDraft?.afterCellId === null
             ? aiPromptSurface
             : null}
-          {!isOpening &&
-            displayCells.map((cell, index) => {
-              const isAiPreviewCell = isNotebookAiPreviewCell(cell.id, aiPromptDraft)
-              return (
-                <Fragment key={cell.id}>
-                  <NotebookCell
-                    cell={cell}
-                    cellNumber={index + 1}
-                    editable={Boolean(draftDocument) && !isAiPreviewCell}
-                    selected={selectedCellId === cell.id}
-                    agentHighlighted={agentHighlightedCellId === cell.id}
-                    provisional={isAiPreviewCell}
-                    onSourceChange={isAiPreviewCell ? undefined : onUpdateCellSource}
-                    onCompleteSource={
-                      isAiPreviewCell || !canUseCompletionProvider
-                        ? undefined
-                        : onCompleteCellSource
-                    }
-                    onFormatSource={isAiPreviewCell ? undefined : onFormatCellSource}
-                    onInsertBefore={
-                      isAiPreviewCell
-                        ? undefined
-                        : (cellId, cellType) => onInsertCell(cellId, 'before', cellType)
-                    }
-                    onInsertAfter={
-                      isAiPreviewCell
-                        ? undefined
-                        : (cellId, cellType) => onInsertCell(cellId, 'after', cellType)
-                    }
-                    onClearOutputs={isAiPreviewCell ? undefined : onClearCellOutputs}
-                    onDeleteCell={isAiPreviewCell ? undefined : onDeleteCell}
-                    onConvertCell={isAiPreviewCell ? undefined : onConvertCell}
-                    onMoveCell={isAiPreviewCell ? undefined : onMoveCell}
-                    onMoveAiPrompt={isAiPreviewCell ? undefined : onMoveAiPrompt}
-                    onSelectCell={isAiPreviewCell ? undefined : setSelectedCellId}
-                    onRunCell={isAiPreviewCell ? undefined : onRunCell}
-                    canRunCells={canRunCells && !isAiPreviewCell}
-                    notebookPath={notebookFile?.path}
-                  />
-                  {isAiPreviewCell ? (
-                    <NotebookAiPreviewActions
-                      isGenerating={Boolean(aiPromptDraft?.isGenerating)}
-                      onAccept={() => {
-                        void acceptAiPreviewCell(cell.id)
-                      }}
-                      onReject={() => rejectAiPreviewCell(cell.id)}
+          <Box ref={virtualListRef} data-phi-notebook-virtual-list="true">
+            {!isOpening && virtualCells.beforeHeight > 0 ? (
+              <Box
+                aria-hidden="true"
+                data-phi-notebook-virtual-spacer="before"
+                sx={{ height: virtualCells.beforeHeight }}
+              />
+            ) : null}
+            {!isOpening &&
+              virtualCells.items.map(({ item: cell, index }) => {
+                const isAiPreviewCell = isNotebookAiPreviewCell(cell.id, aiPromptDraft)
+                return (
+                  <NotebookVirtualRowShell
+                    key={cell.id}
+                    cellId={cell.id}
+                    index={index}
+                    onMeasure={measureVirtualRow}
+                  >
+                    <NotebookCell
+                      cell={cell}
+                      cellNumber={index + 1}
+                      editable={Boolean(draftDocument) && !isAiPreviewCell}
+                      selected={selectedCellId === cell.id}
+                      agentHighlighted={agentHighlightedCellId === cell.id}
+                      provisional={isAiPreviewCell}
+                      onSourceChange={isAiPreviewCell ? undefined : onUpdateCellSource}
+                      onCompleteSource={
+                        isAiPreviewCell || !canUseCompletionProvider
+                          ? undefined
+                          : onCompleteCellSource
+                      }
+                      onFormatSource={isAiPreviewCell ? undefined : onFormatCellSource}
+                      onInsertBefore={
+                        isAiPreviewCell
+                          ? undefined
+                          : (cellId, cellType) => onInsertCell(cellId, 'before', cellType)
+                      }
+                      onInsertAfter={
+                        isAiPreviewCell
+                          ? undefined
+                          : (cellId, cellType) => onInsertCell(cellId, 'after', cellType)
+                      }
+                      onClearOutputs={isAiPreviewCell ? undefined : onClearCellOutputs}
+                      onDeleteCell={isAiPreviewCell ? undefined : onDeleteCell}
+                      onConvertCell={isAiPreviewCell ? undefined : onConvertCell}
+                      onMoveCell={isAiPreviewCell ? undefined : onMoveCell}
+                      onMoveAiPrompt={isAiPreviewCell ? undefined : onMoveAiPrompt}
+                      onSelectCell={isAiPreviewCell ? undefined : setSelectedCellId}
+                      onRunCell={isAiPreviewCell ? undefined : onRunCell}
+                      onStopCell={isAiPreviewCell ? undefined : onStopCell}
+                      canRunCells={canRunCells && !isAiPreviewCell}
+                      notebookPath={notebookFile?.path}
                     />
-                  ) : null}
-                  {!isAiPreviewCell && aiPromptDraft?.afterCellId === cell.id
-                    ? aiPromptSurface
-                    : null}
-                </Fragment>
-              )
-            })}
+                    {isAiPreviewCell ? (
+                      <Box sx={{ mt: 1.35 }}>
+                        <NotebookAiPreviewActions
+                          isGenerating={Boolean(aiPromptDraft?.isGenerating)}
+                          onAccept={() => {
+                            void acceptAiPreviewCell(cell.id)
+                          }}
+                          onReject={() => rejectAiPreviewCell(cell.id)}
+                        />
+                      </Box>
+                    ) : null}
+                    {!isAiPreviewCell && aiPromptDraft?.afterCellId === cell.id ? (
+                      <Box sx={{ mt: 1.35 }}>{aiPromptSurface}</Box>
+                    ) : null}
+                  </NotebookVirtualRowShell>
+                )
+              })}
+            {!isOpening && virtualCells.afterHeight > 0 ? (
+              <Box
+                aria-hidden="true"
+                data-phi-notebook-virtual-spacer="after"
+                sx={{ height: virtualCells.afterHeight }}
+              />
+            ) : null}
+          </Box>
           {!isOpening && cells.length === 0 && aiPromptDraft ? (aiPromptSurface ?? null) : null}
           {!isOpening && cells.length > 0 ? (
             <NotebookInsertDock

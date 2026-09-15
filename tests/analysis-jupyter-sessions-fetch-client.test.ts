@@ -91,6 +91,17 @@ function startFakeJupyterServer(options: { rejectFirstNPosts?: number }): Promis
       return
     }
 
+    if (method === 'POST' && url.startsWith('/api/kernels/') && url.endsWith('/interrupt')) {
+      if (!hasValidXsrf(request)) {
+        response.writeHead(403, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ message: "'_xsrf' argument missing from POST" }))
+        return
+      }
+      response.writeHead(204)
+      response.end()
+      return
+    }
+
     response.writeHead(404)
     response.end()
   }
@@ -131,6 +142,23 @@ test('FetchJupyterSessionClient fetches the _xsrf cookie and sends it back on cr
     assert.deepEqual(
       requests.map((entry) => `${entry.method} ${entry.url}`),
       ['GET /', 'POST /api/sessions', 'DELETE /api/sessions/session-1']
+    )
+  } finally {
+    await closeServer(server)
+  }
+})
+
+test('FetchJupyterSessionClient sends xsrf credentials when interrupting a kernel', async () => {
+  const { server, url, requests } = await startFakeJupyterServer({})
+  try {
+    const client = new FetchJupyterSessionClient()
+    const connection = { url }
+
+    await client.interruptKernel(connection, 'kernel-1')
+
+    assert.deepEqual(
+      requests.map((entry) => `${entry.method} ${entry.url}`),
+      ['GET /', 'POST /api/kernels/kernel-1/interrupt']
     )
   } finally {
     await closeServer(server)

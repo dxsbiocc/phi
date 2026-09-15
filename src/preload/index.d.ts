@@ -699,6 +699,10 @@ declare global {
         cwd: string,
         path: string
       ) => Promise<PreloadAnalysisNotebookSessionStatus>
+      interruptAnalysisNotebookExecution: (
+        cwd: string,
+        path: string
+      ) => Promise<PreloadAnalysisNotebookSessionStatus>
       executeAnalysisNotebookCell: (
         cwd: string,
         path: string,

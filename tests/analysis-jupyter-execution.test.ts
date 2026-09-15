@@ -217,6 +217,16 @@ test('buildNotebookVariableIntrospectionCode filters invalid variable names', ()
   assert.doesNotMatch(code, /x\.y/)
 })
 
+test('buildNotebookVariableIntrospectionCode supports R data frame variables', () => {
+  const code = buildNotebookVariableIntrospectionCode(['df', 'my.data', 'bad-name', '.2bad'], 'r')
+
+  assert.match(code, /inherits\(value, "data\.frame"\)/)
+  assert.match(code, /"df"/)
+  assert.match(code, /"my\.data"/)
+  assert.doesNotMatch(code, /bad-name/)
+  assert.doesNotMatch(code, /\.2bad/)
+})
+
 test('parseNotebookVariableIntrospectionResult reads sentinel JSON from stdout', () => {
   const result = parseNotebookVariableIntrospectionResult({
     executionCount: null,
@@ -282,6 +292,49 @@ test('AnalysisNotebookExecutor introspects variables through the kernel without 
       preview: '0.05',
       shape: undefined,
       columns: undefined,
+      error: undefined
+    }
+  ])
+})
+
+test('AnalysisNotebookExecutor generates R introspection code for R kernels', async () => {
+  const client = new FakeKernelClient()
+  client.result = {
+    executionCount: null,
+    status: 'ok',
+    outputs: [
+      {
+        outputType: 'stream',
+        data: {},
+        metadata: {},
+        name: 'stdout',
+        text: '__PHI_NOTEBOOK_VARIABLES__{"variables":[{"name":"my.data","exists":true,"datatype":"data.frame","shape":"2 x 1","columns":[{"name":"sample","type":"character"}],"preview":"sample\\nS1"}]}\n',
+        extra: {}
+      }
+    ]
+  }
+  const executor = new AnalysisNotebookExecutor({ client })
+
+  const result = await executor.introspectVariables({
+    connection: { url: 'http://127.0.0.1:8888/lab', token: 'secret' },
+    sessionId: 'session-1',
+    kernelId: 'kernel-1',
+    variableNames: ['my.data'],
+    language: 'r'
+  })
+
+  assert.equal(client.requests.length, 1)
+  assert.equal(client.requests[0].storeHistory, false)
+  assert.match(client.requests[0].code, /inherits\(value, "data\.frame"\)/)
+  assert.match(client.requests[0].code, /"my\.data"/)
+  assert.deepEqual(result, [
+    {
+      name: 'my.data',
+      exists: true,
+      datatype: 'data.frame',
+      shape: '2 x 1',
+      columns: [{ name: 'sample', type: 'character' }],
+      preview: 'sample\nS1',
       error: undefined
     }
   ])

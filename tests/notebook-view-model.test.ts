@@ -155,6 +155,39 @@ test('notebook view model extracts AI context references from cells and outputs'
   )
 })
 
+test('notebook view model extracts R dataframe and variable context references', () => {
+  const document = parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: {
+      kernelspec: { name: 'ir', display_name: 'R', language: 'R' },
+      language_info: { name: 'R' }
+    },
+    cells: [
+      {
+        id: 'load-r',
+        cell_type: 'code',
+        metadata: {},
+        execution_count: 1,
+        source:
+          'counts <- readr::read_csv("counts.csv")\nmetadata <- tibble::tibble(sample = c("S1"))\nthreshold <- 0.05',
+        outputs: []
+      }
+    ]
+  })
+
+  const references = buildNotebookAiContextOptions(documentCells(document))
+
+  assert.ok(references.some((reference) => reference.id === 'dataframe:counts'))
+  assert.ok(references.some((reference) => reference.id === 'dataframe:metadata'))
+  assert.ok(references.some((reference) => reference.id === 'variable:threshold'))
+  assert.ok(!references.some((reference) => reference.id === 'variable:counts'))
+  assert.match(
+    references.find((reference) => reference.id === 'dataframe:counts')?.preview?.source ?? '',
+    /readr::read_csv/
+  )
+})
+
 test('notebook view model updates kernel metadata without losing language info', () => {
   const document = parseNotebook({
     nbformat: 4,

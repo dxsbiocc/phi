@@ -22,6 +22,11 @@ import { TbGripVertical, TbSparkles } from 'react-icons/tb'
 import { ModelSelectorControl } from '../../../components/chat/ChatComposerControls'
 import { PhiIcons } from '../../../icons'
 import { getProviderErrorDisplay } from '../../../lib/providerErrors'
+import {
+  filterNotebookAiContextOptions,
+  notebookAiContextMentionAtCursor,
+  notebookAiPromptWithContextReference
+} from '../lib/notebookAiContextMentions'
 import { notebookContextKindLabel } from '../lib/notebookViewModel'
 import { type SyntaxLanguage } from '../../../lib/syntaxHighlight'
 import type { AnalysisNotebookContextReference, ModelOption } from '../../../types'
@@ -55,13 +60,20 @@ export type NotebookAiPromptCellProps = {
   onPromptChange: (prompt: string) => void
   onLanguageChange: (language: SyntaxLanguage) => void
   onModelChange: (model: ModelOption | null) => void
-  onReferenceAdd: (reference: AnalysisNotebookContextReference) => void
+  onReferenceAdd: (
+    reference: AnalysisNotebookContextReference,
+    options?: NotebookAiPromptReferenceAddOptions
+  ) => void
   onPickContextFiles: () => void
   onSubmit: () => void
   onAccept: () => void
   onReject: () => void
   onCancel: () => void
   onDragStart: (event: DragEvent<HTMLButtonElement>) => void
+}
+
+export type NotebookAiPromptReferenceAddOptions = {
+  prompt?: string
 }
 
 function comparableAiErrorText(value: string): string {
@@ -284,14 +296,26 @@ export default function NotebookAiPromptCell({
         ? '生成预览'
         : '输入需求后生成'
   const promptCellRef = useRef<HTMLDivElement | null>(null)
+  const promptInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
   const contextOptionListRef = useRef<HTMLDivElement | null>(null)
   const contextOptionRefs = useRef(new Map<string, HTMLDivElement>())
+  const pendingPromptCursorRef = useRef<number | null>(null)
   const [contextMenuOpen, setContextMenuOpen] = useState(false)
   const [languageMenuAnchor, setLanguageMenuAnchor] = useState<HTMLElement | null>(null)
   const [activeContextOptionId, setActiveContextOptionId] = useState<string | null>(null)
-  const showContextMenu = contextMenuOpen
+  const [dismissedContextMentionKey, setDismissedContextMentionKey] = useState<string | null>(null)
+  const [promptCursorPosition, setPromptCursorPosition] = useState(prompt.length)
+  const activeContextMention = notebookAiContextMentionAtCursor(prompt, promptCursorPosition)
+  const activeContextMentionKey = activeContextMention
+    ? `${activeContextMention.start}:${activeContextMention.end}:${activeContextMention.query}`
+    : null
+  const activeContextQuery = activeContextMention?.query ?? ''
+  const filteredContextOptions = filterNotebookAiContextOptions(contextOptions, activeContextQuery)
+  const showContextMenu =
+    contextMenuOpen ||
+    Boolean(activeContextMentionKey && activeContextMentionKey !== dismissedContextMentionKey)
   const selectedReferenceIds = new Set(references.map((reference) => reference.id))
-  const groupedContextOptions = contextOptions.reduce((groups, option) => {
+  const groupedContextOptions = filteredContextOptions.reduce((groups, option) => {
     const label = notebookContextKindLabel(option.kind)
     groups.set(label, [...(groups.get(label) ?? []), option])
     return groups
@@ -314,11 +338,26 @@ export default function NotebookAiPromptCell({
           : visibleContextOptions.length - 1
     setActiveContextOptionId(visibleContextOptions[nextIndex].id)
   }
+  const addContextOption = (option: AnalysisNotebookContextReference): void => {
+    const mention = activeContextMention
+    const nextPrompt = mention
+      ? notebookAiPromptWithContextReference(prompt, mention, option)
+      : undefined
+    if (mention && nextPrompt) {
+      pendingPromptCursorRef.current = mention.start + `@${option.name}`.length + 1
+    }
+    onReferenceAdd(option, nextPrompt ? { prompt: nextPrompt } : undefined)
+    setActiveContextOptionId(option.id)
+    setContextMenuOpen(false)
+  }
   const selectActiveContextOption = (): void => {
     if (!activeContextOption) return
-    onReferenceAdd(activeContextOption)
-    setActiveContextOptionId(activeContextOption.id)
-    setContextMenuOpen(false)
+    addContextOption(activeContextOption)
+  }
+  const updatePromptCursorFromElement = (
+    element: HTMLInputElement | HTMLTextAreaElement | null
+  ): void => {
+    setPromptCursorPosition(element?.selectionStart ?? prompt.length)
   }
   useEffect(() => {
     if (!showContextMenu) return
@@ -328,6 +367,7 @@ export default function NotebookAiPromptCell({
       if (!(target instanceof Node)) return
       if (!promptCellRef.current?.contains(target)) {
         setContextMenuOpen(false)
+        setDismissedContextMentionKey(activeContextMentionKey)
       }
     }
 
@@ -335,7 +375,7 @@ export default function NotebookAiPromptCell({
     return () => {
       document.removeEventListener('pointerdown', closeContextMenuOnOutsidePointer, true)
     }
-  }, [showContextMenu])
+  }, [activeContextMentionKey, showContextMenu])
   useEffect(() => {
     if (!showContextMenu || !activeContextOption?.id) return
     const list = contextOptionListRef.current
@@ -350,6 +390,16 @@ export default function NotebookAiPromptCell({
       list.scrollTop -= listRect.top - optionRect.top
     }
   }, [activeContextOption?.id, showContextMenu])
+  useEffect(() => {
+    const cursor = pendingPromptCursorRef.current
+    const input = promptInputRef.current
+    if (cursor === null || !input) return
+    pendingPromptCursorRef.current = null
+    const nextCursor = Math.max(0, Math.min(cursor, prompt.length))
+    input.focus()
+    input.setSelectionRange(nextCursor, nextCursor)
+    setPromptCursorPosition(nextCursor)
+  }, [prompt])
 
   return (
     <Box
@@ -411,6 +461,7 @@ export default function NotebookAiPromptCell({
             minRows={2}
             value={prompt}
             disabled={isGenerating}
+            inputRef={promptInputRef}
             placeholder={
               mode === 'refactor'
                 ? 'Refactor selected cell with AI, @ to include context'
@@ -418,13 +469,31 @@ export default function NotebookAiPromptCell({
             }
             variant="standard"
             data-phi-notebook-ai-prompt-input="true"
+            onSelect={(event) => {
+              updatePromptCursorFromElement(
+                event.currentTarget as HTMLInputElement | HTMLTextAreaElement
+              )
+            }}
+            onClick={(event) => {
+              updatePromptCursorFromElement(
+                event.currentTarget as HTMLInputElement | HTMLTextAreaElement
+              )
+            }}
+            onKeyUp={(event) => {
+              updatePromptCursorFromElement(
+                event.currentTarget as HTMLInputElement | HTMLTextAreaElement
+              )
+            }}
             onChange={(event) => {
               const nextPrompt = event.target.value
+              const nextCursor = event.target.selectionStart ?? nextPrompt.length
               onPromptChange(nextPrompt)
-              setContextMenuOpen(/(?:^|\s)@$/.test(nextPrompt))
+              setPromptCursorPosition(nextCursor)
+              setDismissedContextMentionKey(null)
+              setContextMenuOpen(Boolean(notebookAiContextMentionAtCursor(nextPrompt, nextCursor)))
             }}
             onKeyDown={(event) => {
-              if (showContextMenu && contextOptions.length > 0) {
+              if (showContextMenu && filteredContextOptions.length > 0) {
                 if (event.key === 'ArrowDown') {
                   event.preventDefault()
                   moveActiveContextOption(1)
@@ -453,6 +522,7 @@ export default function NotebookAiPromptCell({
               if (event.key === 'Escape') {
                 if (showContextMenu) {
                   setContextMenuOpen(false)
+                  setDismissedContextMentionKey(activeContextMentionKey)
                 } else if (hasStagedCells && !isGenerating) {
                   onReject()
                 }
@@ -477,6 +547,7 @@ export default function NotebookAiPromptCell({
             <Box
               data-phi-notebook-ai-context-menu="true"
               data-phi-notebook-ai-context-menu-placement="above"
+              data-phi-notebook-ai-context-query={activeContextQuery || undefined}
               sx={{
                 position: 'absolute',
                 bottom: 'calc(100% + 8px)',
@@ -495,6 +566,13 @@ export default function NotebookAiPromptCell({
               {contextOptions.length === 0 ? (
                 <Typography sx={{ px: 1.2, py: 1, color: 'text.secondary', fontSize: '0.82rem' }}>
                   暂无可引用上下文
+                </Typography>
+              ) : filteredContextOptions.length === 0 ? (
+                <Typography
+                  data-phi-notebook-ai-context-empty-match="true"
+                  sx={{ px: 1.2, py: 1, color: 'text.secondary', fontSize: '0.82rem' }}
+                >
+                  没有匹配的上下文
                 </Typography>
               ) : (
                 <Box
@@ -544,8 +622,7 @@ export default function NotebookAiPromptCell({
                             onMouseEnter={() => setActiveContextOptionId(option.id)}
                             onFocus={() => setActiveContextOptionId(option.id)}
                             onClick={() => {
-                              onReferenceAdd(option)
-                              setContextMenuOpen(false)
+                              addContextOption(option)
                             }}
                             sx={{
                               minHeight: 32,
@@ -699,7 +776,10 @@ export default function NotebookAiPromptCell({
               size="small"
               aria-label="@ 引用上下文"
               disabled={isGenerating}
-              onClick={() => setContextMenuOpen((open) => !open)}
+              onClick={() => {
+                setDismissedContextMentionKey(null)
+                setContextMenuOpen((open) => !open)
+              }}
               sx={{ width: 30, height: 30 }}
             >
               <Typography sx={{ fontWeight: 900, lineHeight: 1 }}>@</Typography>
