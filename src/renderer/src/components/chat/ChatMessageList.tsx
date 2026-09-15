@@ -12,8 +12,15 @@ import {
   processingGroupStatus,
   processingStatusText,
   timestampMs,
-  type ProcessingItem
+  type ProcessingItem,
+  type RenderGroup
 } from '../../lib/chatRenderGroups'
+import {
+  chatVirtualWindow,
+  normalizedChatVirtualRowHeight,
+  type ChatVirtualItem,
+  type ChatVirtualViewport
+} from '../../lib/chatVirtualization'
 import type { ChatItem, ChatMessage, NotebookCellJumpTarget } from '../../types'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ChatUserMessage } from './ChatUserMessage'
@@ -68,6 +75,46 @@ function messageScrollMarker(messages: ChatItem[]): MessageScrollMarker {
     lastRole: last?.role ?? null,
     length: messages.length
   }
+}
+
+type ChatGroupVirtualItem = ChatVirtualItem & { group: RenderGroup }
+
+// Matches the vertical rhythm the previous flex `gap: 2` (16px) gave every
+// group — moved onto each row's own top padding so a row's measured height
+// (used for virtual-window math) includes the gap that follows it.
+const CHAT_VIRTUAL_ROW_GAP_PT = 2
+
+function chatVirtualListScrollTop(
+  scrollViewport: HTMLElement,
+  virtualList: HTMLElement | null
+): number {
+  if (!virtualList) return 0
+  const viewportRect = scrollViewport.getBoundingClientRect()
+  const listRect = virtualList.getBoundingClientRect()
+  return Math.max(0, scrollViewport.scrollTop + listRect.top - viewportRect.top)
+}
+
+function ChatVirtualRowShell({
+  groupKey,
+  index,
+  onMeasure,
+  children
+}: {
+  groupKey: string
+  index: number
+  onMeasure: (groupKey: string, element: HTMLDivElement | null) => void
+  children: ReactNode
+}): ReactNode {
+  const onRowRef = useCallback(
+    (element: HTMLDivElement | null) => onMeasure(groupKey, element),
+    [groupKey, onMeasure]
+  )
+
+  return (
+    <Box ref={onRowRef} sx={{ pt: index === 0 ? 0 : CHAT_VIRTUAL_ROW_GAP_PT, minWidth: 0 }}>
+      {children}
+    </Box>
+  )
 }
 
 function sameItemsByReference<T>(a: T[], b: T[]): boolean {
@@ -393,21 +440,122 @@ const ChatMessageList = memo(function ChatMessageList({
 }: ChatMessageListProps): React.JSX.Element {
   const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null)
   const [showJumpToLatest, setShowJumpToLatest] = useState(false)
+  // Mirrors stickToBottomRef for the one place (the virtualCells memo below)
+  // that needs to react to it during render — refs can't be read there, only
+  // in effects/callbacks. The ref stays the source of truth for synchronous
+  // reads (e.g. inside onMessagesContentResize) where waiting for a re-render
+  // would be too late.
+  const [isStuckToBottom, setIsStuckToBottom] = useState(true)
   const stickToBottomRef = useRef(true)
   const suppressAutoScrollUntilRef = useRef(0)
   const lastMessageMarkerRef = useRef<MessageScrollMarker | null>(null)
+  const virtualListRef = useRef<HTMLDivElement | null>(null)
+  const virtualRowObserversRef = useRef<Map<string, ResizeObserver>>(new Map())
   const currentMessageMarker = useMemo(() => messageScrollMarker(messages), [messages])
   const renderGroups = useMemo(
     () => groupMessages(messages, { activeRun: isGenerating }),
     [isGenerating, messages]
   )
+  const virtualItems = useMemo<ChatGroupVirtualItem[]>(
+    () => renderGroups.map((group) => ({ id: group.key, group })),
+    [renderGroups]
+  )
+
+  const [virtualViewport, setVirtualViewport] = useState<ChatVirtualViewport>({
+    scrollTop: 0,
+    viewportHeight: 0
+  })
+  const [virtualRowHeightState, setVirtualRowHeightState] = useState<{
+    resetKey: string | undefined
+    heights: Record<string, number>
+  }>({ resetKey: scrollResetKey, heights: {} })
+  const virtualRowHeights = useMemo(
+    () => (virtualRowHeightState.resetKey === scrollResetKey ? virtualRowHeightState.heights : {}),
+    [scrollResetKey, virtualRowHeightState]
+  )
+
+  const rawVirtualCells = useMemo(
+    () => chatVirtualWindow(virtualItems, virtualRowHeights, virtualViewport),
+    [virtualItems, virtualRowHeights, virtualViewport]
+  )
+  // While stuck to the bottom (the common case for an in-progress or freshly
+  // opened conversation), force the window to include the last group even
+  // before a real scrollTop has been measured (e.g. on first mount) or before
+  // the scroll-driven sync below has caught up with a just-appended message —
+  // otherwise the reader would briefly see the top of a long conversation
+  // instead of the newest message.
+  const virtualCells = useMemo(() => {
+    if (!isStuckToBottom || rawVirtualCells.endIndex >= virtualItems.length) {
+      return rawVirtualCells
+    }
+    return chatVirtualWindow(virtualItems, virtualRowHeights, {
+      scrollTop: rawVirtualCells.totalHeight,
+      viewportHeight: virtualViewport.viewportHeight
+    })
+  }, [
+    isStuckToBottom,
+    rawVirtualCells,
+    virtualItems,
+    virtualRowHeights,
+    virtualViewport.viewportHeight
+  ])
+
+  const measureVirtualRow = useCallback(
+    (groupKey: string, element: HTMLDivElement | null): void => {
+      const existingObserver = virtualRowObserversRef.current.get(groupKey)
+      if (existingObserver) {
+        existingObserver.disconnect()
+        virtualRowObserversRef.current.delete(groupKey)
+      }
+      if (!element) return
+
+      const updateHeight = (): void => {
+        const height = normalizedChatVirtualRowHeight(element.getBoundingClientRect().height)
+        setVirtualRowHeightState((current) => {
+          const currentHeights = current.resetKey === scrollResetKey ? current.heights : {}
+          if (current.resetKey === scrollResetKey && currentHeights[groupKey] === height) {
+            return current
+          }
+          return { resetKey: scrollResetKey, heights: { ...currentHeights, [groupKey]: height } }
+        })
+      }
+      updateHeight()
+
+      if (typeof ResizeObserver === 'undefined') return
+      const observer = new ResizeObserver(updateHeight)
+      observer.observe(element)
+      virtualRowObserversRef.current.set(groupKey, observer)
+    },
+    [scrollResetKey]
+  )
+
+  useEffect(() => {
+    const observers = virtualRowObserversRef.current
+    return () => {
+      for (const observer of observers.values()) observer.disconnect()
+      observers.clear()
+    }
+  }, [])
 
   const updateScrollState = useCallback(
     (node = scrollContainer): void => {
       if (!node) return
       const isNearBottom = isNearMessagesBottom(node)
       stickToBottomRef.current = isNearBottom
+      setIsStuckToBottom(isNearBottom)
       setShowJumpToLatest(!isNearBottom && messagesCanScroll(node))
+
+      const listTop = chatVirtualListScrollTop(node, virtualListRef.current)
+      const nextViewport = {
+        scrollTop: Math.max(0, node.scrollTop - listTop),
+        viewportHeight: node.clientHeight
+      }
+      setVirtualViewport((current) =>
+        current.scrollTop === nextViewport.scrollTop &&
+        current.viewportHeight === nextViewport.viewportHeight
+          ? current
+          : nextViewport
+      )
     },
     [scrollContainer]
   )
@@ -417,6 +565,7 @@ const ChatMessageList = memo(function ChatMessageList({
       if (!scrollContainer) return
       scrollMessagesElementToBottom(scrollContainer, behavior)
       stickToBottomRef.current = true
+      setIsStuckToBottom(true)
       setShowJumpToLatest(false)
     },
     [scrollContainer]
@@ -521,6 +670,74 @@ const ChatMessageList = memo(function ChatMessageList({
     }
   }, [onMessagesContentResize, scrollContainer])
 
+  const renderGroup = useCallback(
+    (group: RenderGroup, absoluteIndex: number): ReactNode => {
+      if (group.kind === 'tool-group') {
+        return (
+          <ToolGroupCard
+            items={group.items}
+            cwd={cwd}
+            onJumpToNotebookCell={onJumpToNotebookCell}
+            onContentResize={onMessagesContentResize}
+          />
+        )
+      }
+      if (group.kind === 'processing-group') {
+        const isActiveProcessingGroup = isGenerating && absoluteIndex === renderGroups.length - 1
+        return (
+          <ProcessingGroup
+            items={group.items}
+            onGoSettings={onGoSettings}
+            onOpenLocalPath={onOpenLocalPath}
+            onJumpToNotebookCell={onJumpToNotebookCell}
+            onContentResize={onMessagesContentResize}
+            cwd={cwd}
+            isActive={isActiveProcessingGroup}
+            startedAtMs={
+              isActiveProcessingGroup
+                ? (timestampMs(currentRunStartedAt) ?? group.startedAtMs)
+                : group.startedAtMs
+            }
+            completedAtMs={group.completedAtMs}
+            durationMs={group.durationMs}
+          />
+        )
+      }
+      if (group.item.role === 'tool') {
+        return (
+          <ToolCallCard
+            item={group.item}
+            cwd={cwd}
+            onJumpToNotebookCell={onJumpToNotebookCell}
+            onContentResize={onMessagesContentResize}
+          />
+        )
+      }
+      if (group.item.role === 'wrapper_plan') {
+        return <WrapperPlanCard item={group.item} />
+      }
+      return (
+        <ChatBubble
+          message={group.item}
+          onGoSettings={onGoSettings}
+          onOpenLocalPath={onOpenLocalPath}
+          onContentResize={onMessagesContentResize}
+          cwd={cwd}
+        />
+      )
+    },
+    [
+      cwd,
+      currentRunStartedAt,
+      isGenerating,
+      onGoSettings,
+      onJumpToNotebookCell,
+      onMessagesContentResize,
+      onOpenLocalPath,
+      renderGroups.length
+    ]
+  )
+
   return (
     <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
       <Box
@@ -529,77 +746,32 @@ const ChatMessageList = memo(function ChatMessageList({
         sx={{ height: '100%', minWidth: 0, overflowY: 'auto', overflowX: 'hidden' }}
       >
         <Box
+          ref={virtualListRef}
           sx={{
             maxWidth: 860,
             mx: 'auto',
             minWidth: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 2,
             px: 3,
             pt: 3,
             pb: isGenerating ? 6 : 3
           }}
         >
-          {renderGroups.map((group, index) => {
-            if (group.kind === 'tool-group') {
-              return (
-                <ToolGroupCard
-                  key={group.key}
-                  items={group.items}
-                  cwd={cwd}
-                  onJumpToNotebookCell={onJumpToNotebookCell}
-                  onContentResize={onMessagesContentResize}
-                />
-              )
-            }
-            if (group.kind === 'processing-group') {
-              const isActiveProcessingGroup = isGenerating && index === renderGroups.length - 1
-              return (
-                <ProcessingGroup
-                  key={group.key}
-                  items={group.items}
-                  onGoSettings={onGoSettings}
-                  onOpenLocalPath={onOpenLocalPath}
-                  onJumpToNotebookCell={onJumpToNotebookCell}
-                  onContentResize={onMessagesContentResize}
-                  cwd={cwd}
-                  isActive={isActiveProcessingGroup}
-                  startedAtMs={
-                    isActiveProcessingGroup
-                      ? (timestampMs(currentRunStartedAt) ?? group.startedAtMs)
-                      : group.startedAtMs
-                  }
-                  completedAtMs={group.completedAtMs}
-                  durationMs={group.durationMs}
-                />
-              )
-            }
-            if (group.item.role === 'tool') {
-              return (
-                <ToolCallCard
-                  key={group.key}
-                  item={group.item}
-                  cwd={cwd}
-                  onJumpToNotebookCell={onJumpToNotebookCell}
-                  onContentResize={onMessagesContentResize}
-                />
-              )
-            }
-            if (group.item.role === 'wrapper_plan') {
-              return <WrapperPlanCard key={group.key} item={group.item} />
-            }
-            return (
-              <ChatBubble
-                key={group.key}
-                message={group.item}
-                onGoSettings={onGoSettings}
-                onOpenLocalPath={onOpenLocalPath}
-                onContentResize={onMessagesContentResize}
-                cwd={cwd}
-              />
-            )
-          })}
+          {virtualCells.beforeHeight > 0 ? (
+            <Box aria-hidden="true" sx={{ height: virtualCells.beforeHeight }} />
+          ) : null}
+          {virtualCells.items.map(({ item, index }) => (
+            <ChatVirtualRowShell
+              key={item.group.key}
+              groupKey={item.group.key}
+              index={index}
+              onMeasure={measureVirtualRow}
+            >
+              {renderGroup(item.group, index)}
+            </ChatVirtualRowShell>
+          ))}
+          {virtualCells.afterHeight > 0 ? (
+            <Box aria-hidden="true" sx={{ height: virtualCells.afterHeight }} />
+          ) : null}
         </Box>
       </Box>
       {showJumpToLatest ? (
