@@ -41,7 +41,6 @@ export function useAnalysisNotebookRuntime({
 }: AnalysisNotebookRuntimeDeps): AnalysisNotebookRuntimeState {
   const [analysisNotebookRegistry, setAnalysisNotebookRegistry] =
     useState<AnalysisNotebookRegistry | null>(null)
-  const [analysisInspectorCollapsed, setAnalysisInspectorCollapsed] = useState(true)
   const [activeAnalysisNotebook, setActiveAnalysisNotebook] = useState<AnalysisNotebookFile | null>(
     null
   )
@@ -898,8 +897,6 @@ export function useAnalysisNotebookRuntime({
 
   return {
     analysisNotebookRegistry,
-    analysisInspectorCollapsed,
-    setAnalysisInspectorCollapsed,
     activeAnalysisNotebook,
     setActiveAnalysisNotebook,
     isLoadingAnalysisNotebooks,

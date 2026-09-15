@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import test from 'node:test'
 import { createElement, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -100,15 +102,54 @@ test('file preview panel renders file content with line numbers', () => {
   assert.match(markup, /data-phi-syntax-token="number"/)
   assert.match(markup, /App\.tsx/)
   assert.match(markup, />src<\/span>/)
-  assert.match(markup, /aria-label="显示目录树"/)
-  assert.match(markup, /aria-pressed="false"/)
+  assert.doesNotMatch(markup, /aria-label="显示目录树"/)
+  assert.doesNotMatch(markup, /aria-pressed="false"/)
   assert.doesNotMatch(markup, />目录树<\/button>/)
-  assert.match(markup, /打开/)
-  assert.match(markup, /aria-label="打开方式"/)
+  assert.match(markup, /data-phi-file-open-default-button="true"/)
+  assert.match(markup, /aria-label="默认应用打开"/)
+  assert.match(markup, /data-phi-file-reveal-button="true"/)
+  assert.match(markup, /aria-label="文件管理器中显示"/)
+  assert.doesNotMatch(markup, /aria-label="打开方式"/)
+  assert.doesNotMatch(markup, /aria-haspopup="menu"/)
   assert.match(markup, />1<\/span>/)
   assert.match(markup, />2<\/span>/)
   assert.match(markup, /const[\s\S]*answer[\s\S]*42/)
   assert.match(markup, /export[\s\S]*default[\s\S]*answer/)
+})
+
+test('file preview panel keeps large json previews lightweight', () => {
+  const entries = Array.from(
+    { length: 1300 },
+    (_, index) => `  {"symbol": "Gene${index}", "logFC": ${index}, "adj.P.Val": 0.01}`
+  )
+  const content = ['[', ...entries, ']'].join('\n')
+  const markup = renderPanel({
+    status: 'ready',
+    file: {
+      path: '/Users/example/project/data.json',
+      name: 'data.json',
+      displayPath: 'data.json',
+      rootPath: '/Users/example/project',
+      rootLabel: 'project',
+      kind: 'text',
+      mimeType: 'text/plain',
+      content,
+      bytes: 532000,
+      previewBytes: 313000,
+      truncated: true
+    }
+  })
+
+  assert.match(markup, /data-phi-syntax-language="json"/)
+  assert.match(markup, /data-phi-code-preview-mode="lightweight"/)
+  assert.match(markup, /data-phi-code-preview-rendered-lines="1200"/)
+  assert.match(markup, /data-phi-code-preview-total-lines="1302"/)
+  assert.match(markup, /data-phi-syntax-token="plain"/)
+  assert.doesNotMatch(markup, /data-phi-syntax-token="property"/)
+  assert.match(markup, />1200<\/span>/)
+  assert.doesNotMatch(markup, />1201<\/span>/)
+  assert.match(markup, /大文件已使用轻量文本预览/)
+  assert.match(markup, /仅渲染前 1,200 行/)
 })
 
 test('file preview panel can render as the main workspace file surface', () => {
@@ -290,6 +331,78 @@ test('file preview title tab renders in the top split area', () => {
   assert.match(markup, /border-radius:8px/)
   assert.match(markup, /data-phi-file-kind="react"/)
   assert.match(markup, /App\.tsx/)
+  assert.match(markup, /aria-label="关闭文件预览"/)
+})
+
+test('file preview path tooltips are attached to text labels, not blank titlebar rows', () => {
+  const source = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/file-preview/FilePreviewPanel.tsx'),
+    'utf8'
+  )
+  const titleTabSource = source.slice(
+    source.indexOf('export function FilePreviewTitleTab'),
+    source.indexOf('function FilePathBreadcrumb')
+  )
+  const breadcrumbSource = source.slice(
+    source.indexOf('function FilePathBreadcrumb'),
+    source.indexOf('function FilePreviewActions')
+  )
+
+  assert.doesNotMatch(
+    titleTabSource,
+    /<Tooltip title=\{path\}[\s\S]{0,160}<Box[\s\S]{0,80}role="tab"/
+  )
+  assert.match(titleTabSource, /<Tooltip title=\{path\}[\s\S]{0,160}<Typography/)
+  assert.match(titleTabSource, /maxWidth: 'calc\(100% - 48px\)'/)
+  assert.doesNotMatch(
+    breadcrumbSource,
+    /<Tooltip title=\{fullPath\}[\s\S]{0,160}<Box[\s\S]{0,80}aria-label=\{`文件路径/
+  )
+  assert.match(breadcrumbSource, /<Tooltip title=\{fullPath\}[\s\S]{0,160}<Typography/)
+})
+
+test('file preview default open action uses the system file icon without a menu', () => {
+  const panelSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/file-preview/FilePreviewPanel.tsx'),
+    'utf8'
+  )
+  const mainSource = readFileSync(resolve(process.cwd(), 'src/main/index.ts'), 'utf8')
+  const preloadSource = readFileSync(resolve(process.cwd(), 'src/preload/index.ts'), 'utf8')
+  const preloadTypes = readFileSync(resolve(process.cwd(), 'src/preload/index.d.ts'), 'utf8')
+  const rendererTypes = readFileSync(resolve(process.cwd(), 'src/renderer/src/types.ts'), 'utf8')
+
+  assert.match(panelSource, /window\.api[\s\S]{0,120}\.getFileIcon\(path\)/)
+  assert.match(panelSource, /data-phi-file-open-default-app-icon="system"/)
+  assert.doesNotMatch(panelSource, /MenuItem/)
+  assert.doesNotMatch(panelSource, /aria-label="打开方式"/)
+  assert.match(mainSource, /ipcMain\.handle\('files:getIcon'/)
+  assert.match(mainSource, /com\.apple\.launchservices\.secure\.plist/)
+  assert.match(mainSource, /\/usr\/bin\/mdfind/)
+  assert.match(
+    mainSource,
+    /macFallbackApplicationBundleIdByExtension[\s\S]*png: 'com\.apple\.preview'/
+  )
+  assert.match(mainSource, /getMacApplicationIconDataUrl\(bundleId\)/)
+  assert.match(
+    preloadSource,
+    /getFileIcon: \(path: string\): Promise<string \| null> => ipcRenderer\.invoke\('files:getIcon', path\)/
+  )
+  assert.match(preloadTypes, /getFileIcon: \(path: string\) => Promise<string \| null>/)
+  assert.match(rendererTypes, /getFileIcon: \(path: string\) => Promise<string \| null>/)
+})
+
+test('file preview title tab can reserve fixed app chrome space', () => {
+  const markup = renderWithTheme(
+    createElement(FilePreviewTitleTab, {
+      state: readyPreviewState,
+      titlebarInsetStart: '172px',
+      titlebarInsetEnd: '120px',
+      onClose: () => undefined
+    })
+  )
+
+  assert.match(markup, /padding-left:172px/)
+  assert.match(markup, /padding-right:120px/)
   assert.match(markup, /aria-label="关闭文件预览"/)
 })
 

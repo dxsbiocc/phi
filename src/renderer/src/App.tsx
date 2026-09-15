@@ -9,8 +9,7 @@ import {
   Typography
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
-import { FiMaximize2, FiMinimize2, FiMinus } from 'react-icons/fi'
-import { TbLayoutSidebarRight } from 'react-icons/tb'
+import { TbLayoutSidebarRightCollapse, TbLayoutSidebarRightExpand } from 'react-icons/tb'
 import ChatView from './components/ChatView'
 import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
@@ -27,9 +26,11 @@ import AppDialogs, { type SnackbarNotice } from './AppDialogs'
 import AppActivityBar from './AppActivityBar'
 import AppWorkspaceSidebar from './AppWorkspaceSidebar'
 import FilePreviewPanel, {
+  FilePreviewTitleTab,
   type FilePreviewPanelState
 } from './features/file-preview/FilePreviewPanel'
 import AnalysisView, { type AnalysisWorkspaceFileTab } from './features/analysis/AnalysisView'
+import { WorkspaceSidePanel } from './components/WorkspaceSidePanel'
 import { useAnalysisNotebookRuntime } from './features/analysis/hooks/useAnalysisNotebookRuntime'
 import RuntimeView from './features/runtime/RuntimeView'
 import { createAppTheme } from './theme'
@@ -97,41 +98,60 @@ const activityBarWidth = 48
 const macTitlebarHeight = 44
 const minNavigationPaneWidth = 240
 const maxNavigationPaneWidth = 520
+const workspaceSidePanelWidthDefault = 340
+const minWorkspaceSidePanelWidth = 240
+const maxWorkspaceSidePanelWidth = 520
+const titlebarChromeTopOffset = '10px'
+const titlebarChromeHorizontalInset = '14px'
+const titlebarChromeIconButtonSize = 28
+const titlebarLeadingChromeReserveWidth = 220
+const titlebarTrailingSidePanelChromeReserve = '84px'
+const titlebarTrailingToggleChromeReserve = '56px'
+const workspaceFileHeaderLeadingChromeInsetWidth =
+  titlebarLeadingChromeReserveWidth - activityBarWidth
+const workspaceFileHeaderLeadingChromeInset = `${workspaceFileHeaderLeadingChromeInsetWidth}px`
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
+const RefreshIcon = PhiIcons.action.refresh
 
 export function TopRightControls({
-  showInspectorFullscreen,
-  inspectorFullscreen,
-  inspectorCollapsed,
-  showInspectorToggle,
-  onToggleInspectorFullscreen,
-  onToggleInspector,
-  onMinimize
+  showSidePanelRefresh,
+  sidePanelRefreshDisabled,
+  sidePanelCollapsed,
+  showSidePanelToggle,
+  onRefreshSidePanel,
+  onToggleSidePanel
 }: {
-  showInspectorFullscreen: boolean
-  inspectorFullscreen: boolean
-  inspectorCollapsed: boolean
-  showInspectorToggle: boolean
-  onToggleInspectorFullscreen: () => void
-  onToggleInspector: () => void
-  onMinimize: () => void | Promise<void>
+  showSidePanelRefresh: boolean
+  sidePanelRefreshDisabled: boolean
+  sidePanelCollapsed: boolean
+  showSidePanelToggle: boolean
+  onRefreshSidePanel: () => void
+  onToggleSidePanel: () => void
 }): React.JSX.Element | null {
-  if (!showInspectorFullscreen && !showInspectorToggle) return null
+  if (!showSidePanelRefresh && !showSidePanelToggle) return null
+  const SidePanelToggleIcon = sidePanelCollapsed
+    ? TbLayoutSidebarRightExpand
+    : TbLayoutSidebarRightCollapse
 
   const buttonSx = {
-    width: 32,
-    height: 32,
+    width: titlebarChromeIconButtonSize,
+    height: titlebarChromeIconButtonSize,
     borderRadius: 1.5,
     color: 'text.secondary',
+    pointerEvents: 'auto',
+    WebkitAppRegion: 'no-drag',
     '&:hover': {
       bgcolor: 'action.hover',
       color: 'text.primary'
+    },
+    '&.Mui-disabled': {
+      color: 'text.disabled'
     }
   } as const
 
   return (
     <Box
-      data-phi-top-right-controls="analysis"
+      data-phi-top-right-controls="workspace"
       sx={{
         display: 'flex',
         alignItems: 'center',
@@ -141,48 +161,40 @@ export function TopRightControls({
         WebkitAppRegion: 'no-drag'
       }}
     >
-      {showInspectorFullscreen ? (
-        <Tooltip title={inspectorFullscreen ? '退出右侧内容全屏' : '右侧内容全屏'}>
-          <IconButton
-            data-phi-inspector-fullscreen-button={inspectorFullscreen ? 'expanded' : 'collapsed'}
-            size="small"
-            aria-label={inspectorFullscreen ? '退出右侧内容全屏' : '右侧内容全屏'}
-            onClick={onToggleInspectorFullscreen}
-            sx={buttonSx}
-          >
-            {inspectorFullscreen ? <FiMinimize2 size={18} /> : <FiMaximize2 size={18} />}
-          </IconButton>
+      {showSidePanelRefresh ? (
+        <Tooltip title="刷新文件树">
+          <span>
+            <IconButton
+              data-phi-workspace-side-panel-refresh-button="true"
+              size="small"
+              aria-label="刷新文件树"
+              disabled={sidePanelRefreshDisabled}
+              onClick={onRefreshSidePanel}
+              sx={buttonSx}
+            >
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+          </span>
         </Tooltip>
       ) : null}
-      <Tooltip title="最小化">
-        <IconButton
-          size="small"
-          aria-label="最小化"
-          onClick={() => {
-            void onMinimize()
-          }}
-          sx={buttonSx}
-        >
-          <FiMinus size={18} />
-        </IconButton>
-      </Tooltip>
-      {showInspectorToggle ? (
-        <Tooltip title={inspectorCollapsed ? '展开右侧栏' : '关闭右侧栏'}>
+      {showSidePanelToggle ? (
+        <Tooltip title={sidePanelCollapsed ? '展开右侧栏' : '关闭右侧栏'}>
           <IconButton
-            data-phi-inspector-toggle-button={inspectorCollapsed ? 'collapsed' : 'expanded'}
-            data-phi-inspector-toggle-position="titlebar-flow"
-            data-phi-inspector-toggle-anchor="analysis-chrome"
+            data-phi-side-panel-toggle-button={sidePanelCollapsed ? 'collapsed' : 'expanded'}
+            data-phi-side-panel-toggle-icon={sidePanelCollapsed ? 'expand' : 'collapse'}
+            data-phi-side-panel-toggle-position="titlebar-flow"
+            data-phi-side-panel-toggle-anchor="workspace-chrome"
             size="small"
             color="default"
-            aria-label={inspectorCollapsed ? '展开右侧栏' : '关闭右侧栏'}
-            onClick={onToggleInspector}
+            aria-label={sidePanelCollapsed ? '展开右侧栏' : '关闭右侧栏'}
+            onClick={onToggleSidePanel}
             sx={{
               ...buttonSx,
-              bgcolor: inspectorCollapsed ? 'transparent' : 'action.selected',
-              color: inspectorCollapsed ? 'text.secondary' : 'text.primary'
+              bgcolor: sidePanelCollapsed ? 'transparent' : 'action.selected',
+              color: sidePanelCollapsed ? 'text.secondary' : 'text.primary'
             }}
           >
-            <TbLayoutSidebarRight size={18} />
+            <SidePanelToggleIcon size={18} />
           </IconButton>
         </Tooltip>
       ) : null}
@@ -341,12 +353,16 @@ function WorkspaceFileHeader({
   tabs,
   activePath,
   onSelect,
-  onClose
+  onClose,
+  reserveLeadingChromeSpace = false,
+  reserveTrailingChromeSpace = false
 }: {
   tabs: WorkspaceFileTab[]
   activePath: string | null
   onSelect: (tab: WorkspaceFileTab) => void
   onClose: (tab: WorkspaceFileTab) => void
+  reserveLeadingChromeSpace?: boolean
+  reserveTrailingChromeSpace?: boolean
 }): React.JSX.Element {
   return (
     <Box
@@ -356,7 +372,8 @@ function WorkspaceFileHeader({
         flexShrink: 0,
         borderBottom: 1,
         borderColor: 'divider',
-        px: 1.5,
+        pl: reserveLeadingChromeSpace ? workspaceFileHeaderLeadingChromeInset : 1.5,
+        pr: reserveTrailingChromeSpace ? titlebarTrailingToggleChromeReserve : 1.5,
         display: 'flex',
         alignItems: 'center',
         gap: 1,
@@ -370,6 +387,41 @@ function WorkspaceFileHeader({
         onClose={onClose}
       />
     </Box>
+  )
+}
+
+function AppResizeSeparator({
+  label,
+  onMouseDown
+}: {
+  label: string
+  onMouseDown: (event: MouseEvent<HTMLDivElement>) => void
+}): React.JSX.Element {
+  return (
+    <Box
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      onMouseDown={onMouseDown}
+      sx={{
+        width: '1px',
+        flexShrink: 0,
+        position: 'relative',
+        cursor: 'col-resize',
+        bgcolor: (theme) =>
+          theme.palette.mode === 'dark' ? 'rgba(241, 246, 246, 0.18)' : 'rgba(15, 42, 48, 0.18)',
+        zIndex: 5,
+        WebkitAppRegion: 'no-drag',
+        '&::before': {
+          content: '""',
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          left: -4,
+          right: -4
+        }
+      }}
+    />
   )
 }
 
@@ -584,8 +636,6 @@ function App(): React.JSX.Element {
 
   const {
     analysisNotebookRegistry,
-    analysisInspectorCollapsed,
-    setAnalysisInspectorCollapsed,
     activeAnalysisNotebook,
     setActiveAnalysisNotebook,
     isLoadingAnalysisNotebooks,
@@ -595,7 +645,6 @@ function App(): React.JSX.Element {
     analysisKernelDiagnostics,
     isLoadingAnalysisKernels,
     analysisKernelError,
-    analysisJupyterStatus,
     analysisJupyterRuntimeStatus,
     isLoadingAnalysisJupyterRuntime,
     analysisJupyterRuntimeError,
@@ -616,7 +665,6 @@ function App(): React.JSX.Element {
     onSaveAnalysisNotebook,
     onSyncAnalysisNotebookDraft,
     onCreateAnalysisNotebook,
-    onDeleteAnalysisNotebook,
     refreshAnalysisKernels,
     refreshAnalysisJupyterStatus,
     onJumpToAnalysisNotebookCell,
@@ -642,6 +690,11 @@ function App(): React.JSX.Element {
     showSnackbar,
     onNavigateToNotebookView
   })
+  const [workspaceSidePanelCollapsed, setWorkspaceSidePanelCollapsed] = useState(true)
+  const [workspaceSidePanelWidth, setWorkspaceSidePanelWidth] = useState(
+    workspaceSidePanelWidthDefault
+  )
+  const [workspaceSidePanelTreeRevision, setWorkspaceSidePanelTreeRevision] = useState(0)
 
   const handleNotebookFileChangedEvent = useCallback(
     (change: AnalysisNotebookFileChange): void => {
@@ -1461,6 +1514,42 @@ function App(): React.JSX.Element {
   const isChatWorkspaceView =
     activeView === 'chat' || activeView === 'projects' || activeView === 'analysis'
   const isAnalysisWorkspaceView = activeView === 'analysis'
+  const onToggleWorkspaceSidePanel = useCallback((): void => {
+    setWorkspaceSidePanelCollapsed((value) => !value)
+  }, [])
+  const onRefreshWorkspaceSidePanel = useCallback((): void => {
+    setWorkspaceSidePanelTreeRevision((value) => value + 1)
+  }, [])
+  const onStartWorkspaceSidePanelResize = useCallback(
+    (event: MouseEvent<HTMLDivElement>): void => {
+      event.preventDefault()
+
+      const startX = event.clientX
+      const startWidth = workspaceSidePanelWidth
+      const onMouseMove = (moveEvent: globalThis.MouseEvent): void => {
+        const delta = moveEvent.clientX - startX
+        setWorkspaceSidePanelWidth(
+          Math.min(
+            maxWorkspaceSidePanelWidth,
+            Math.max(minWorkspaceSidePanelWidth, startWidth - delta)
+          )
+        )
+      }
+
+      const onMouseUp = (): void => {
+        document.removeEventListener('mousemove', onMouseMove)
+        document.removeEventListener('mouseup', onMouseUp)
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
+
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+      document.addEventListener('mousemove', onMouseMove)
+      document.addEventListener('mouseup', onMouseUp)
+    },
+    [workspaceSidePanelWidth]
+  )
   const activeSession = activeSessionPath
     ? (sessions.find((session) =>
         activePhiSessionId
@@ -1587,6 +1676,8 @@ function App(): React.JSX.Element {
                 path: activeWorkspaceFileTab.path
               } satisfies FilePreviewPanelState)))
       : null
+  const activeWorkspaceSidePanelPath =
+    activeWorkspaceFilePath ?? (filePreview ? filePreviewStatePath(filePreview) : null)
 
   const showCachedOrLoadFilePreview = useCallback(
     (tab: WorkspaceFileTab): void => {
@@ -1683,6 +1774,32 @@ function App(): React.JSX.Element {
       navigateToView
     ]
   )
+
+  const onCloseCurrentFilePreview = useCallback((): void => {
+    if (!filePreview) return
+    const previewPath = filePreviewStatePath(filePreview)
+    const previewTab = workspaceFileTabs.find((tab) => tab.path === previewPath)
+    if (previewTab) {
+      onCloseWorkspaceFileTab(previewTab)
+      return
+    }
+
+    filePreviewRequestRef.current += 1
+    clearCachedFilePreview(previewPath)
+    setFilePreview(null)
+    if (activeWorkspaceFilePath === previewPath) {
+      setActiveWorkspaceFilePath(null)
+    }
+  }, [
+    activeWorkspaceFilePath,
+    clearCachedFilePreview,
+    filePreview,
+    filePreviewRequestRef,
+    onCloseWorkspaceFileTab,
+    setActiveWorkspaceFilePath,
+    setFilePreview,
+    workspaceFileTabs
+  ])
 
   const onStartSidebarResize = useCallback((event: MouseEvent<HTMLDivElement>): void => {
     event.preventDefault()
@@ -1845,40 +1962,6 @@ function App(): React.JSX.Element {
             zIndex: 0
           }}
         />
-        {isMac && (
-          // One shared no-drag boundary for the whole button cluster --
-          // see MacWindowControls' doc comment for why two separate
-          // sibling no-drag rectangles here was the likely cause of the
-          // buttons going unclickable after the first use (a known
-          // Electron frameless-window region quirk).
-          <Box
-            sx={{
-              position: 'absolute',
-              top: '10px',
-              left: '14px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '18px',
-              zIndex: 20,
-              WebkitAppRegion: 'no-drag'
-            }}
-          >
-            <MacWindowControls
-              onClose={() => void rendererApi.closeWindow()}
-              onMinimize={() => void rendererApi.minimizeWindow()}
-              onToggleFullscreen={() => void rendererApi.toggleWindowFullscreen()}
-            />
-            <WindowNavigationControls
-              isSidebarOpen={isSidebarOpen}
-              onToggleSidebar={() => setIsSidebarOpen((value) => !value)}
-              canGoBack={canGoBackInHistory}
-              canGoForward={canGoForwardInHistory}
-              onGoBack={goBackInHistory}
-              onGoForward={goForwardInHistory}
-            />
-          </Box>
-        )}
-
         <AppActivityBar
           activeView={activeView}
           setActiveView={navigateToView}
@@ -1970,7 +2053,7 @@ function App(): React.JSX.Element {
               >
                 <Box
                   sx={{
-                    flex: 1,
+                    flex: filePreview && !showProjectSessionPlaceholder ? '1 1 320px' : 1,
                     minWidth: 0,
                     height: '100%',
                     display: 'flex',
@@ -2004,6 +2087,15 @@ function App(): React.JSX.Element {
                     </Typography>
                   </Box>
                 </Box>
+                {filePreview && !showProjectSessionPlaceholder ? (
+                  <FilePreviewTitleTab
+                    state={filePreview}
+                    titlebarInsetEnd={
+                      workspaceSidePanelCollapsed ? titlebarTrailingToggleChromeReserve : 1.25
+                    }
+                    onClose={onCloseCurrentFilePreview}
+                  />
+                ) : null}
               </Box>
             ) : null}
             <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
@@ -2024,6 +2116,8 @@ function App(): React.JSX.Element {
                     activePath={activeWorkspaceFilePath}
                     onSelect={onSelectWorkspaceFileTab}
                     onClose={onCloseWorkspaceFileTab}
+                    reserveLeadingChromeSpace={isMac && !isSidebarOpen}
+                    reserveTrailingChromeSpace={workspaceSidePanelCollapsed}
                   />
                   <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>
                     {activeFilePreviewState ? (
@@ -2047,23 +2141,6 @@ function App(): React.JSX.Element {
                   activeWorkspaceFilePath={activeWorkspaceFilePath}
                   onSelectWorkspaceFileTab={onSelectWorkspaceFileTab}
                   onCloseWorkspaceFileTab={onCloseWorkspaceFileTab}
-                  inspectorCollapsed={analysisInspectorCollapsed}
-                  topRightControls={(chromeState) => (
-                    <TopRightControls
-                      showInspectorFullscreen={chromeState.inspectorVisible}
-                      inspectorFullscreen={chromeState.inspectorFullscreen}
-                      showInspectorToggle
-                      inspectorCollapsed={analysisInspectorCollapsed}
-                      onToggleInspectorFullscreen={chromeState.onToggleInspectorFullscreen}
-                      onToggleInspector={() => {
-                        if (!analysisInspectorCollapsed && chromeState.inspectorFullscreen) {
-                          chromeState.onToggleInspectorFullscreen()
-                        }
-                        setAnalysisInspectorCollapsed((value) => !value)
-                      }}
-                      onMinimize={() => rendererApi.minimizeWindow()}
-                    />
-                  )}
                   isLoadingNotebooks={isLoadingAnalysisNotebooks}
                   isOpeningNotebook={isOpeningAnalysisNotebook}
                   notebookError={analysisNotebookError}
@@ -2071,9 +2148,6 @@ function App(): React.JSX.Element {
                   kernelDiagnostics={analysisKernelDiagnostics}
                   isLoadingKernels={isLoadingAnalysisKernels}
                   kernelError={analysisKernelError}
-                  jupyterServerStatus={analysisJupyterStatus}
-                  isStartingJupyterServer={isStartingAnalysisJupyter}
-                  jupyterServerError={analysisJupyterError}
                   notebookSessionStatus={analysisNotebookSessionStatus}
                   isStartingNotebookSession={isStartingAnalysisNotebookSession}
                   notebookSessionError={analysisNotebookSessionError}
@@ -2082,18 +2156,6 @@ function App(): React.JSX.Element {
                   agentFocus={analysisAgentFocus}
                   onRefreshNotebooks={() => {
                     void refreshAnalysisNotebooks()
-                  }}
-                  onRefreshKernels={() => {
-                    void refreshAnalysisKernels()
-                  }}
-                  onRefreshJupyterServer={() => {
-                    void refreshAnalysisJupyterStatus()
-                  }}
-                  onStartJupyterServer={(cwd) => {
-                    void onStartAnalysisJupyter(cwd)
-                  }}
-                  onStopJupyterServer={(cwd) => {
-                    void onStopAnalysisJupyter(cwd)
                   }}
                   onStartNotebookSession={(file, document) => {
                     return onStartAnalysisNotebookSession(file, document)
@@ -2123,7 +2185,7 @@ function App(): React.JSX.Element {
                     void onInitializeProjectAnalysis(cwd)
                   }}
                   onOpenNotebook={(path) => {
-                    void onOpenAnalysisNotebook(path)
+                    onOpenNotebookWorkspaceFile(path)
                   }}
                   onCloseNotebook={() => {
                     closeActiveNotebook()
@@ -2134,9 +2196,6 @@ function App(): React.JSX.Element {
                   }}
                   onCreateNotebook={(cwd) => {
                     void onCreateAnalysisNotebook(cwd)
-                  }}
-                  onDeleteNotebook={(file) => {
-                    void onDeleteAnalysisNotebook(file)
                   }}
                 />
               ) : (
@@ -2255,6 +2314,89 @@ function App(): React.JSX.Element {
         ) : (
           <Box component="main" sx={{ flex: 1, minWidth: 0, height: '100vh' }} />
         )}
+
+        {!workspaceSidePanelCollapsed ? (
+          <>
+            <AppResizeSeparator
+              label="调整工作区面板宽度"
+              onMouseDown={onStartWorkspaceSidePanelResize}
+            />
+            <Box
+              data-phi-workspace-side-panel-shell="true"
+              sx={{
+                height: '100vh',
+                flexShrink: 0,
+                display: 'flex',
+                minWidth: 0,
+                minHeight: 0
+              }}
+            >
+              <WorkspaceSidePanel
+                titlebarInsetEnd={titlebarTrailingSidePanelChromeReserve}
+                width={workspaceSidePanelWidth}
+                treeRevision={workspaceSidePanelTreeRevision}
+                workspaceRootPath={activeCwd}
+                activeWorkspacePath={activeWorkspaceSidePanelPath}
+                onOpenWorkspaceFile={onOpenFilePreview}
+                onListWorkspaceDirectory={onListPreviewDirectory}
+              />
+            </Box>
+          </>
+        ) : null}
+
+        {/* App chrome renders after view titlebars so Electron drag regions cannot swallow clicks. */}
+        {isMac && (
+          <Box
+            data-phi-window-top-left-chrome="true"
+            sx={{
+              position: 'absolute',
+              top: titlebarChromeTopOffset,
+              left: titlebarChromeHorizontalInset,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '18px',
+              pointerEvents: 'auto',
+              zIndex: 30,
+              WebkitAppRegion: 'no-drag'
+            }}
+          >
+            <MacWindowControls
+              onClose={() => void rendererApi.closeWindow()}
+              onMinimize={() => void rendererApi.minimizeWindow()}
+              onToggleFullscreen={() => void rendererApi.toggleWindowFullscreen()}
+            />
+            <WindowNavigationControls
+              isSidebarOpen={isSidebarOpen}
+              onToggleSidebar={() => setIsSidebarOpen((value) => !value)}
+              canGoBack={canGoBackInHistory}
+              canGoForward={canGoForwardInHistory}
+              onGoBack={goBackInHistory}
+              onGoForward={goForwardInHistory}
+            />
+          </Box>
+        )}
+        <Box
+          data-phi-workspace-top-right-chrome="true"
+          sx={{
+            position: 'absolute',
+            top: titlebarChromeTopOffset,
+            right: titlebarChromeHorizontalInset,
+            display: 'flex',
+            alignItems: 'center',
+            pointerEvents: 'auto',
+            zIndex: 30,
+            WebkitAppRegion: 'no-drag'
+          }}
+        >
+          <TopRightControls
+            showSidePanelRefresh={!workspaceSidePanelCollapsed}
+            sidePanelRefreshDisabled={!activeCwd}
+            showSidePanelToggle
+            sidePanelCollapsed={workspaceSidePanelCollapsed}
+            onRefreshSidePanel={onRefreshWorkspaceSidePanel}
+            onToggleSidePanel={onToggleWorkspaceSidePanel}
+          />
+        </Box>
 
         <AppDialogs
           rendererApi={rendererApi}

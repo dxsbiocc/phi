@@ -28,8 +28,6 @@ export type AnalysisNotebookRuntimeDeps = {
 
 export type AnalysisNotebookRuntimeState = {
   analysisNotebookRegistry: AnalysisNotebookRegistry | null
-  analysisInspectorCollapsed: boolean
-  setAnalysisInspectorCollapsed: (value: boolean | ((prev: boolean) => boolean)) => void
   activeAnalysisNotebook: AnalysisNotebookFile | null
   setActiveAnalysisNotebook: (file: AnalysisNotebookFile | null) => void
   isLoadingAnalysisNotebooks: boolean

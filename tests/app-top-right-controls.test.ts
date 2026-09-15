@@ -11,10 +11,10 @@ import { workspaceScopeLabelForCwd } from '../src/renderer/src/lib/workspaceScop
 
 function renderControls(
   options: {
-    showInspectorFullscreen?: boolean
-    inspectorFullscreen?: boolean
-    showInspectorToggle?: boolean
-    inspectorCollapsed?: boolean
+    showSidePanelRefresh?: boolean
+    sidePanelRefreshDisabled?: boolean
+    showSidePanelToggle?: boolean
+    sidePanelCollapsed?: boolean
   } = {}
 ): string {
   const theme = createTheme()
@@ -23,61 +23,61 @@ function renderControls(
       ThemeProvider,
       { theme },
       createElement(TopRightControls, {
-        showInspectorFullscreen: options.showInspectorFullscreen ?? true,
-        inspectorFullscreen: options.inspectorFullscreen ?? false,
-        inspectorCollapsed: options.inspectorCollapsed ?? false,
-        showInspectorToggle: options.showInspectorToggle ?? true,
-        onToggleInspectorFullscreen: () => undefined,
-        onToggleInspector: () => undefined,
-        onMinimize: () => undefined
+        showSidePanelRefresh: options.showSidePanelRefresh ?? true,
+        sidePanelRefreshDisabled: options.sidePanelRefreshDisabled ?? false,
+        sidePanelCollapsed: options.sidePanelCollapsed ?? false,
+        showSidePanelToggle: options.showSidePanelToggle ?? true,
+        onRefreshSidePanel: () => undefined,
+        onToggleSidePanel: () => undefined
       })
     )
   )
 }
 
-test('analysis top-right controls render in the expected chrome order', () => {
+test('workspace top-right controls render refresh and side-panel actions in one row', () => {
   const markup = renderControls()
-  const fullscreenIndex = markup.indexOf('aria-label="右侧内容全屏"')
-  const minimizeIndex = markup.indexOf('aria-label="最小化"')
-  const inspectorIndex = markup.indexOf('aria-label="关闭右侧栏"')
+  const refreshIndex = markup.indexOf('aria-label="刷新文件树"')
+  const sidePanelIndex = markup.indexOf('aria-label="关闭右侧栏"')
 
-  assert.ok(fullscreenIndex >= 0)
-  assert.ok(minimizeIndex > fullscreenIndex)
-  assert.ok(inspectorIndex > minimizeIndex)
-  assert.match(markup, /data-phi-top-right-controls="analysis"/)
-  assert.match(markup, /data-phi-inspector-fullscreen-button="collapsed"/)
-  assert.match(markup, /data-phi-inspector-toggle-button="expanded"/)
-  assert.match(markup, /data-phi-inspector-toggle-position="titlebar-flow"/)
-  assert.match(markup, /data-phi-inspector-toggle-anchor="analysis-chrome"/)
+  assert.ok(refreshIndex >= 0)
+  assert.ok(sidePanelIndex > refreshIndex)
+  assert.doesNotMatch(markup, /aria-label="最小化"/)
+  assert.doesNotMatch(markup, /aria-label="右侧面板全屏"/)
+  assert.match(markup, /data-phi-top-right-controls="workspace"/)
+  assert.match(markup, /data-phi-workspace-side-panel-refresh-button="true"/)
+  assert.match(markup, /data-phi-side-panel-toggle-button="expanded"/)
+  assert.match(markup, /data-phi-side-panel-toggle-icon="collapse"/)
+  assert.match(markup, /data-phi-side-panel-toggle-position="titlebar-flow"/)
+  assert.match(markup, /data-phi-side-panel-toggle-anchor="workspace-chrome"/)
 })
 
-test('analysis top-right controls keep the inspector action in place when collapsed', () => {
-  const markup = renderControls({ inspectorCollapsed: true })
+test('workspace top-right controls keep the side panel action in place when collapsed', () => {
+  const markup = renderControls({ sidePanelCollapsed: true, showSidePanelRefresh: false })
 
   assert.match(markup, /aria-label="展开右侧栏"/)
-  assert.match(markup, /data-phi-inspector-toggle-button="collapsed"/)
-  assert.match(markup, /data-phi-inspector-toggle-position="titlebar-flow"/)
+  assert.doesNotMatch(markup, /aria-label="刷新文件树"/)
+  assert.match(markup, /data-phi-side-panel-toggle-button="collapsed"/)
+  assert.match(markup, /data-phi-side-panel-toggle-icon="expand"/)
+  assert.match(markup, /data-phi-side-panel-toggle-position="titlebar-flow"/)
 })
 
-test('analysis top-right controls hide the inspector fullscreen action when the inspector is hidden', () => {
-  const markup = renderControls({ showInspectorFullscreen: false })
+test('workspace top-right controls can disable refresh without moving the side panel action', () => {
+  const markup = renderControls({ sidePanelRefreshDisabled: true })
 
-  assert.doesNotMatch(markup, /aria-label="右侧内容全屏"/)
-  assert.doesNotMatch(markup, /data-phi-inspector-fullscreen-button/)
-  assert.match(markup, /aria-label="最小化"/)
+  assert.match(markup, /aria-label="刷新文件树"/)
+  assert.match(markup, /disabled=""/)
   assert.match(markup, /aria-label="关闭右侧栏"/)
 })
 
-test('analysis top-right controls can show the exit action for inspector fullscreen', () => {
-  const markup = renderControls({ inspectorFullscreen: true, showInspectorToggle: false })
+test('workspace top-right controls hide refresh when the side panel is hidden', () => {
+  const markup = renderControls({ showSidePanelRefresh: false })
 
-  assert.match(markup, /aria-label="退出右侧内容全屏"/)
-  assert.match(markup, /data-phi-inspector-fullscreen-button="expanded"/)
-  assert.doesNotMatch(markup, /data-phi-inspector-toggle-button/)
+  assert.doesNotMatch(markup, /aria-label="刷新文件树"/)
+  assert.match(markup, /aria-label="关闭右侧栏"/)
 })
 
-test('analysis top-right controls stay hidden when not requested', () => {
-  assert.equal(renderControls({ showInspectorFullscreen: false, showInspectorToggle: false }), '')
+test('workspace top-right controls stay hidden when not requested', () => {
+  assert.equal(renderControls({ showSidePanelRefresh: false, showSidePanelToggle: false }), '')
 })
 
 test('analysis workspace skips the blank outer titlebar', () => {
@@ -92,6 +92,107 @@ test('analysis workspace skips the blank outer titlebar', () => {
   assert.match(appSource, /borderRadius: '999px'/)
   assert.match(appSource, /layout="workspace"/)
   assert.match(appSource, /workspaceFileTabs=\{workspaceFileTabs\}/)
+})
+
+test('workspace top-right controls are app-level chrome, not notebook-only content', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+
+  assert.match(appSource, /const titlebarChromeTopOffset = '10px'/)
+  assert.match(appSource, /const titlebarChromeHorizontalInset = '14px'/)
+  assert.match(appSource, /const titlebarChromeIconButtonSize = 28/)
+  assert.match(appSource, /width: titlebarChromeIconButtonSize/)
+  assert.match(appSource, /height: titlebarChromeIconButtonSize/)
+  assert.match(appSource, /pointerEvents: 'auto'[\s\S]{0,120}WebkitAppRegion: 'no-drag'/)
+  assert.match(appSource, /data-phi-workspace-top-right-chrome="true"/)
+  const topRightChromeIndex = appSource.indexOf('data-phi-workspace-top-right-chrome="true"')
+  const workspaceTitlebarIndex = appSource.indexOf(
+    "WebkitAppRegion: 'drag'",
+    appSource.indexOf('{showWorkspaceTitlebar ? (')
+  )
+  const workspaceSidePanelIndex = appSource.indexOf('data-phi-workspace-side-panel-shell="true"')
+  assert.ok(
+    topRightChromeIndex > workspaceTitlebarIndex,
+    'top-right controls must render after workspace drag titlebars so clicks are not swallowed'
+  )
+  assert.ok(
+    topRightChromeIndex > workspaceSidePanelIndex,
+    'top-right controls must render after the workspace side panel shell so they stay clickable on top'
+  )
+  assert.doesNotMatch(appSource, /isChatWorkspaceView \? \([\s\S]{0,400}<TopRightControls/)
+  assert.match(appSource, /left: titlebarChromeHorizontalInset[\s\S]{0,360}<MacWindowControls/)
+  assert.match(appSource, /position: 'absolute'[\s\S]{0,360}<TopRightControls/)
+  assert.match(appSource, /top: titlebarChromeTopOffset[\s\S]{0,360}<TopRightControls/)
+  assert.match(appSource, /right: titlebarChromeHorizontalInset[\s\S]{0,360}<TopRightControls/)
+  assert.match(appSource, /showSidePanelRefresh=\{!workspaceSidePanelCollapsed\}/)
+  assert.match(appSource, /sidePanelRefreshDisabled=\{!activeCwd\}/)
+  assert.match(appSource, /onRefreshSidePanel=\{onRefreshWorkspaceSidePanel\}/)
+  assert.match(appSource, /onToggleSidePanel=\{onToggleWorkspaceSidePanel\}/)
+  assert.doesNotMatch(appSource, /showSidePanelFullscreen/)
+  assert.doesNotMatch(appSource, /workspaceSidePanelFullscreen/)
+  assert.doesNotMatch(appSource, /onToggleWorkspaceSidePanelFullscreen/)
+  assert.doesNotMatch(appSource, /FiMaximize2/)
+  assert.doesNotMatch(appSource, /FiMinimize2/)
+  assert.match(appSource, /TbLayoutSidebarRightCollapse/)
+  assert.match(appSource, /TbLayoutSidebarRightExpand/)
+  assert.doesNotMatch(appSource, /TbLayoutSidebarRight[,}]/)
+  assert.doesNotMatch(appSource, /<TopRightControls[\s\S]{0,400}onMinimize=/)
+  assert.doesNotMatch(appSource, /FiMinus/)
+  assert.doesNotMatch(appSource, /topRightControls=\{\(chromeState\) =>/)
+})
+
+test('workspace file previews and chats can show the shared right side panel', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+
+  assert.match(appSource, /data-phi-workspace-side-panel-shell="true"/)
+  assert.match(appSource, /!workspaceSidePanelCollapsed \? \([\s\S]*?<WorkspaceSidePanel/)
+  assert.match(appSource, /workspaceRootPath=\{activeCwd\}/)
+  assert.match(appSource, /activeWorkspacePath=\{activeWorkspaceSidePanelPath\}/)
+  assert.doesNotMatch(
+    appSource,
+    /activeWorkspaceFileTab\.kind !== 'notebook'[\s\S]{0,900}<WorkspaceSidePanel/
+  )
+  assert.doesNotMatch(appSource, /activeChatView[\s\S]{0,900}<WorkspaceSidePanel/)
+  assert.match(appSource, /label="调整工作区面板宽度"/)
+  assert.match(appSource, /treeRevision=\{workspaceSidePanelTreeRevision\}/)
+  assert.match(appSource, /titlebarInsetEnd=\{titlebarTrailingSidePanelChromeReserve\}/)
+  assert.doesNotMatch(appSource, /position: 'fixed'[\s\S]{0,120}inset: 0/)
+})
+
+test('workspace file titlebars reserve trailing app chrome only at the window edge', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+
+  assert.match(appSource, /FilePreviewTitleTab,/)
+  assert.match(appSource, /const titlebarLeadingChromeReserveWidth = 220/)
+  assert.match(appSource, /const titlebarTrailingSidePanelChromeReserve = '84px'/)
+  assert.match(appSource, /const titlebarTrailingToggleChromeReserve = '56px'/)
+  assert.match(
+    appSource,
+    /const workspaceFileHeaderLeadingChromeInsetWidth =\s*titlebarLeadingChromeReserveWidth - activityBarWidth/
+  )
+  assert.match(
+    appSource,
+    /const workspaceFileHeaderLeadingChromeInset = `\$\{workspaceFileHeaderLeadingChromeInsetWidth\}px`/
+  )
+  assert.match(
+    appSource,
+    /filePreview && !showProjectSessionPlaceholder \? \([\s\S]{0,220}<FilePreviewTitleTab/
+  )
+  assert.match(
+    appSource,
+    /titlebarInsetEnd=\{\s*workspaceSidePanelCollapsed \? titlebarTrailingToggleChromeReserve : 1\.25\s*\}/
+  )
+  assert.match(appSource, /onClose=\{onCloseCurrentFilePreview\}/)
+  assert.match(
+    appSource,
+    /pl: reserveLeadingChromeSpace \? workspaceFileHeaderLeadingChromeInset : 1\.5/
+  )
+  assert.match(appSource, /reserveTrailingChromeSpace\?: boolean/)
+  assert.match(
+    appSource,
+    /pr: reserveTrailingChromeSpace \? titlebarTrailingToggleChromeReserve : 1\.5/
+  )
+  assert.match(appSource, /reserveLeadingChromeSpace=\{isMac && !isSidebarOpen\}/)
+  assert.match(appSource, /reserveTrailingChromeSpace=\{workspaceSidePanelCollapsed\}/)
 })
 
 test('workspace file tabs reuse cached surfaces when switching', () => {

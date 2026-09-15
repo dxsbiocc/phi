@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react'
 import type { NotebookDocument } from '../../../../../shared/notebookDocument'
 import type {
   AnalysisKernelDiagnostics,
@@ -45,6 +44,8 @@ export type NotebookCanvasProps = {
   notebookSessionError?: string | null
   executingCellId?: string | null
   cellExecutionError?: string | null
+  availableNotebooks?: NotebookListEntry[]
+  projectCwd?: string | null
   onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void | Promise<void>
   onSyncNotebookDraft?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onStartNotebookSession?: (
@@ -84,7 +85,7 @@ export type NotebookCanvasProps = {
   aiDefaultModel?: ModelOption | null
   onPickContextFiles?: () => Promise<string[]>
   onSelectNotebook?: (notebook: NotebookListEntry) => void
+  onCreateNotebook?: (cwd: string) => void
   onCloseNotebook?: (notebook: NotebookListEntry) => void
   agentFocus?: AnalysisNotebookAgentFocus | null
-  topRightControls?: ReactNode
 }

@@ -1,17 +1,15 @@
-import { Box, Button, IconButton, Menu, MenuItem, Tooltip, Typography } from '@mui/material'
+import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { PhiIcons } from '../../icons'
 import type { DirectoryListing } from '../../types'
 import { FilePreviewBody } from './components/FilePreviewBody'
-import { ProjectFileTree } from './components/ProjectFileTree'
 import {
   previewDisplayPath,
   previewFullPath,
   previewIconForState,
   previewRootLabel,
   previewTitle,
-  previewTreeRootPath,
   type FilePreviewPanelState
 } from './lib/filePreviewState'
 
@@ -19,10 +17,8 @@ export type { FilePreviewPanelState } from './lib/filePreviewState'
 export { ProjectFileTree } from './components/ProjectFileTree'
 
 const CloseIcon = PhiIcons.action.close
-const CollapseIcon = PhiIcons.action.expand
 const BreadcrumbSeparatorIcon = PhiIcons.action.back
 const DefaultOpenIcon = PhiIcons.action.openDefault
-const DirectoryTreeIcon = PhiIcons.entity.directoryTree
 const FolderIcon = PhiIcons.entity.folder
 const filePreviewPaneLayoutSx = {
   width: '66.666%',
@@ -75,10 +71,14 @@ function fileManagerLabel(): string {
 
 export function FilePreviewTitleTab({
   state,
-  onClose
+  onClose,
+  titlebarInsetStart = 1.25,
+  titlebarInsetEnd = 1.25
 }: {
   state: FilePreviewPanelState
   onClose: () => void
+  titlebarInsetStart?: number | string
+  titlebarInsetEnd?: number | string
 }): React.JSX.Element {
   const title = previewTitle(state)
   const path = previewFullPath(state)
@@ -95,36 +95,38 @@ export function FilePreviewTitleTab({
         borderColor: 'divider',
         display: 'flex',
         alignItems: 'center',
-        px: 1.25,
+        pl: titlebarInsetStart,
+        pr: titlebarInsetEnd,
         WebkitAppRegion: 'drag'
       }}
     >
-      <Tooltip title={path} placement="top-start" arrow slotProps={pathTooltipSlotProps}>
-        <Box
-          role="tab"
-          aria-selected="true"
-          aria-label={`${ariaLabel}：${title}`}
-          data-phi-file-kind={previewIcon.kind}
-          sx={{
-            height: 32,
-            maxWidth: 'min(360px, 100%)',
-            minWidth: 0,
-            px: 1.15,
-            borderRadius: 2,
-            bgcolor: (theme) => alpha(theme.palette.text.primary, 0.055),
-            color: 'text.primary',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 0.9,
-            WebkitAppRegion: 'no-drag'
-          }}
-        >
-          <PreviewFileIcon fontSize="small" sx={{ color: previewIcon.color, flexShrink: 0 }} />
+      <Box
+        role="tab"
+        aria-selected="true"
+        aria-label={`${ariaLabel}：${title}`}
+        data-phi-file-kind={previewIcon.kind}
+        sx={{
+          height: 32,
+          maxWidth: 'min(360px, 100%)',
+          minWidth: 0,
+          px: 1.15,
+          borderRadius: 2,
+          bgcolor: (theme) => alpha(theme.palette.text.primary, 0.055),
+          color: 'text.primary',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.9,
+          WebkitAppRegion: 'no-drag'
+        }}
+      >
+        <PreviewFileIcon fontSize="small" sx={{ color: previewIcon.color, flexShrink: 0 }} />
+        <Tooltip title={path} placement="top-start" arrow slotProps={pathTooltipSlotProps}>
           <Typography
             variant="subtitle2"
             sx={{
-              flex: 1,
               minWidth: 0,
+              maxWidth: 'calc(100% - 48px)',
+              display: 'inline-block',
               fontWeight: 700,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -133,16 +135,16 @@ export function FilePreviewTitleTab({
           >
             {title}
           </Typography>
-          <IconButton
-            size="small"
-            aria-label="关闭文件预览"
-            onClick={onClose}
-            sx={{ ml: 0.25, p: 0.35, flexShrink: 0 }}
-          >
-            <CloseIcon sx={{ fontSize: 16 }} />
-          </IconButton>
-        </Box>
-      </Tooltip>
+        </Tooltip>
+        <IconButton
+          size="small"
+          aria-label="关闭文件预览"
+          onClick={onClose}
+          sx={{ ml: 0.25, p: 0.35, flexShrink: 0 }}
+        >
+          <CloseIcon sx={{ fontSize: 16 }} />
+        </IconButton>
+      </Box>
     </Box>
   )
 }
@@ -162,36 +164,34 @@ function FilePathBreadcrumb({
   const shownItems = items.length > 4 ? [items[0], '...', ...items.slice(-2)] : items
 
   return (
-    <Tooltip title={fullPath} placement="top-start" arrow slotProps={pathTooltipSlotProps}>
-      <Box
-        aria-label={`文件路径：${items.join(' / ')}`}
-        sx={{
-          flex: 1,
-          minWidth: 0,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.65,
-          color: 'text.secondary',
-          overflow: 'hidden'
-        }}
-      >
-        {shownItems.map((item, index) => (
-          <Box
-            key={`${item}-${index}`}
-            component="span"
-            sx={{
-              minWidth: 0,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 0.65,
-              flexShrink: index === shownItems.length - 1 ? 1 : 0
-            }}
-          >
-            {index > 0 ? (
-              <BreadcrumbSeparatorIcon
-                sx={{ fontSize: 16, color: 'text.disabled', flexShrink: 0 }}
-              />
-            ) : null}
+    <Box
+      aria-label={`文件路径：${items.join(' / ')}`}
+      sx={{
+        flex: 1,
+        minWidth: 0,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0.65,
+        color: 'text.secondary',
+        overflow: 'hidden'
+      }}
+    >
+      {shownItems.map((item, index) => (
+        <Box
+          key={`${item}-${index}`}
+          component="span"
+          sx={{
+            minWidth: 0,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 0.65,
+            flexShrink: index === shownItems.length - 1 ? 1 : 0
+          }}
+        >
+          {index > 0 ? (
+            <BreadcrumbSeparatorIcon sx={{ fontSize: 16, color: 'text.disabled', flexShrink: 0 }} />
+          ) : null}
+          <Tooltip title={fullPath} placement="top-start" arrow slotProps={pathTooltipSlotProps}>
             <Typography
               component="span"
               variant="caption"
@@ -207,14 +207,14 @@ function FilePathBreadcrumb({
             >
               {item}
             </Typography>
-          </Box>
-        ))}
-      </Box>
-    </Tooltip>
+          </Tooltip>
+        </Box>
+      ))}
+    </Box>
   )
 }
 
-function OpenWithMenu({
+function FilePreviewActions({
   path,
   onOpenDefaultPath,
   onRevealPath
@@ -223,42 +223,97 @@ function OpenWithMenu({
   onOpenDefaultPath: (path: string) => void
   onRevealPath: (path: string) => void
 }): React.JSX.Element {
-  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
-  const isOpen = Boolean(anchorEl)
   const revealLabel = fileManagerLabel()
+  const [defaultAppIcon, setDefaultAppIcon] = useState<{ path: string; src: string | null } | null>(
+    null
+  )
+  const defaultAppIconSrc = defaultAppIcon?.path === path ? defaultAppIcon.src : null
 
-  const close = (): void => setAnchorEl(null)
-  const runAction = (action: (path: string) => void): void => {
-    close()
-    action(path)
-  }
+  useEffect(() => {
+    let active = true
+
+    if (typeof window === 'undefined' || typeof window.api?.getFileIcon !== 'function') {
+      return () => {
+        active = false
+      }
+    }
+
+    void window.api
+      .getFileIcon(path)
+      .then((iconSrc) => {
+        if (active) setDefaultAppIcon({ path, src: iconSrc })
+      })
+      .catch(() => {
+        if (active) setDefaultAppIcon({ path, src: null })
+      })
+
+    return () => {
+      active = false
+    }
+  }, [path])
 
   return (
-    <>
-      <Button
-        size="small"
-        variant="outlined"
-        startIcon={<DefaultOpenIcon sx={{ fontSize: 16 }} />}
-        endIcon={<CollapseIcon sx={{ fontSize: 15 }} />}
-        aria-label="打开方式"
-        aria-haspopup="menu"
-        aria-expanded={isOpen ? 'true' : undefined}
-        onClick={(event) => setAnchorEl(event.currentTarget)}
-        sx={{ minHeight: 30, px: 1.1, whiteSpace: 'nowrap' }}
-      >
-        打开
-      </Button>
-      <Menu anchorEl={anchorEl} open={isOpen} onClose={close} keepMounted>
-        <MenuItem onClick={() => runAction(onOpenDefaultPath)}>
-          <DefaultOpenIcon fontSize="small" sx={{ mr: 1 }} />
-          默认应用
-        </MenuItem>
-        <MenuItem onClick={() => runAction(onRevealPath)}>
-          <FolderIcon fontSize="small" sx={{ mr: 1 }} />
-          {revealLabel}
-        </MenuItem>
-      </Menu>
-    </>
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.35, flexShrink: 0 }}>
+      <Tooltip title="默认应用打开" enterDelay={400}>
+        <IconButton
+          size="small"
+          aria-label="默认应用打开"
+          data-phi-file-open-default-button="true"
+          onClick={() => onOpenDefaultPath(path)}
+          sx={{
+            width: 34,
+            height: 30,
+            border: 1,
+            borderColor: 'divider',
+            borderRadius: 2,
+            color: 'primary.main',
+            '&:hover': {
+              borderColor: 'primary.main',
+              bgcolor: (theme) =>
+                alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.18 : 0.1)
+            }
+          }}
+        >
+          {defaultAppIconSrc ? (
+            <Box
+              component="img"
+              src={defaultAppIconSrc}
+              alt=""
+              aria-hidden="true"
+              data-phi-file-open-default-app-icon="system"
+              sx={{
+                width: 18,
+                height: 18,
+                objectFit: 'contain',
+                flexShrink: 0
+              }}
+            />
+          ) : (
+            <DefaultOpenIcon sx={{ fontSize: 17 }} />
+          )}
+        </IconButton>
+      </Tooltip>
+      <Tooltip title={revealLabel} enterDelay={400}>
+        <IconButton
+          size="small"
+          aria-label={revealLabel}
+          data-phi-file-reveal-button="true"
+          onClick={() => onRevealPath(path)}
+          sx={{
+            width: 34,
+            height: 30,
+            borderRadius: 2,
+            color: 'text.secondary',
+            '&:hover': {
+              bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08),
+              color: 'text.primary'
+            }
+          }}
+        >
+          <FolderIcon sx={{ fontSize: 17 }} />
+        </IconButton>
+      </Tooltip>
+    </Box>
   )
 }
 
@@ -270,14 +325,11 @@ export default function FilePreviewPanel({
   onRevealPath,
   onListDirectory
 }: FilePreviewPanelProps): React.JSX.Element {
-  const [treeOpen, setTreeOpen] = useState(false)
   const path = previewFullPath(state)
   const displayPath = previewDisplayPath(state)
-  const treeRootPath = previewTreeRootPath(state)
   const rootLabel = previewRootLabel(state)
   const previewIcon = previewIconForState(state)
   const isDirectoryState = state.status === 'directory'
-  const treeToggleLabel = treeOpen ? '隐藏目录树' : '显示目录树'
 
   return (
     <Box
@@ -316,38 +368,7 @@ export default function FilePreviewPanel({
         }}
       >
         <FilePathBreadcrumb rootLabel={rootLabel} displayPath={displayPath} fullPath={path} />
-        {isDirectoryState ? null : (
-          <Tooltip title={treeToggleLabel} enterDelay={400}>
-            <IconButton
-              size="small"
-              aria-label={treeToggleLabel}
-              aria-pressed={treeOpen}
-              onClick={() => setTreeOpen((open) => !open)}
-              sx={(theme) => ({
-                width: 34,
-                height: 30,
-                border: 1,
-                borderColor: treeOpen ? 'primary.main' : 'divider',
-                borderRadius: 2,
-                color: treeOpen ? 'primary.main' : 'text.secondary',
-                bgcolor: treeOpen
-                  ? alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.18 : 0.1)
-                  : 'transparent',
-                '&:hover': {
-                  borderColor: 'primary.main',
-                  bgcolor: alpha(
-                    theme.palette.primary.main,
-                    theme.palette.mode === 'dark' ? 0.24 : 0.14
-                  ),
-                  color: 'primary.main'
-                }
-              })}
-            >
-              <DirectoryTreeIcon sx={{ fontSize: 18 }} />
-            </IconButton>
-          </Tooltip>
-        )}
-        <OpenWithMenu
+        <FilePreviewActions
           path={path}
           onOpenDefaultPath={onOpenDefaultPath}
           onRevealPath={onRevealPath}
@@ -379,15 +400,6 @@ export default function FilePreviewPanel({
             onListDirectory={onListDirectory}
           />
         </Box>
-        {!isDirectoryState && treeOpen ? (
-          <ProjectFileTree
-            key={treeRootPath}
-            rootPath={treeRootPath}
-            activePath={path}
-            onOpenFile={onOpenFile}
-            onListDirectory={onListDirectory}
-          />
-        ) : null}
       </Box>
     </Box>
   )

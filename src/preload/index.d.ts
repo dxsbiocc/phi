@@ -442,6 +442,7 @@ declare global {
       toggleWindowFullscreen: () => Promise<void>
       revealPath: (path: string) => Promise<void>
       openPath: (path: string) => Promise<void>
+      getFileIcon: (path: string) => Promise<string | null>
       pickInputFiles: () => Promise<string[]>
       getPathForFile: (file: File) => string
       onInputFilesDropped: (cb: (paths: string[]) => void) => () => void

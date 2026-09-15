@@ -20,10 +20,8 @@ import type {
   AnalysisNotebookFile,
   AnalysisNotebookRegistry,
   AnalysisNotebookSessionStatus,
-  JupyterServerStatus,
   ModelOption
 } from '../../types'
-import { RightInspector, type InspectorTab } from './components/AnalysisInspector'
 
 export type { AnalysisNotebookAgentFocus } from './lib/notebookCanvasTypes'
 
@@ -34,14 +32,6 @@ export type AnalysisWorkspaceFileTab = {
   status: string
   absolutePath?: string
 }
-export type AnalysisTopRightControlsState = {
-  leftSidebarVisible: boolean
-  leftSidebarFullscreen: boolean
-  onToggleLeftSidebarFullscreen: () => void
-  inspectorVisible: boolean
-  inspectorFullscreen: boolean
-  onToggleInspectorFullscreen: () => void
-}
 
 export type AnalysisViewProps = {
   notebookRegistry?: AnalysisNotebookRegistry | null
@@ -50,11 +40,7 @@ export type AnalysisViewProps = {
   activeWorkspaceFilePath?: string | null
   hideLeftRail?: boolean
   initialLeftPanel?: LeftPanel
-  initialInspectorTab?: InspectorTab
-  initialInspectorCollapsed?: boolean
   initialLeftSidebarFullscreen?: boolean
-  inspectorCollapsed?: boolean
-  topRightControls?: (state: AnalysisTopRightControlsState) => ReactNode
   isLoadingNotebooks?: boolean
   isOpeningNotebook?: boolean
   notebookError?: string | null
@@ -62,17 +48,10 @@ export type AnalysisViewProps = {
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
   isLoadingKernels?: boolean
   kernelError?: string | null
-  jupyterServerStatus?: JupyterServerStatus | null
-  isStartingJupyterServer?: boolean
-  jupyterServerError?: string | null
   notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   isStartingNotebookSession?: boolean
   notebookSessionError?: string | null
   onRefreshNotebooks?: () => void
-  onRefreshKernels?: () => void
-  onRefreshJupyterServer?: () => void
-  onStartJupyterServer?: (cwd: string) => void
-  onStopJupyterServer?: (cwd: string) => void
   onStartNotebookSession?: (
     file: AnalysisNotebookFile,
     document: NotebookDocument
@@ -120,16 +99,12 @@ export type AnalysisViewProps = {
   onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void | Promise<void>
   onSyncNotebookDraft?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onCreateNotebook?: (cwd: string) => void
-  onDeleteNotebook?: (file: { path: string; relativePath: string }) => void
   chatPanel?: ReactNode
 }
 
 const leftRailWidth = 300
 const minLeftRailWidth = 220
 const maxLeftRailWidth = 460
-const inspectorWidth = 340
-const minInspectorWidth = 240
-const maxInspectorWidth = 520
 
 function ResizeSeparator({
   label,
@@ -173,10 +148,7 @@ export default function AnalysisView({
   activeWorkspaceFilePath,
   hideLeftRail = false,
   initialLeftPanel = 'chat',
-  initialInspectorTab = 'files',
-  initialInspectorCollapsed = true,
   initialLeftSidebarFullscreen = false,
-  inspectorCollapsed: controlledInspectorCollapsed,
   isLoadingNotebooks = false,
   isOpeningNotebook = false,
   notebookError = null,
@@ -184,9 +156,6 @@ export default function AnalysisView({
   kernelDiagnostics = null,
   isLoadingKernels = false,
   kernelError = null,
-  jupyterServerStatus = null,
-  isStartingJupyterServer = false,
-  jupyterServerError = null,
   notebookSessionStatus = null,
   isStartingNotebookSession = false,
   notebookSessionError = null,
@@ -194,10 +163,6 @@ export default function AnalysisView({
   notebookCellExecutionError = null,
   agentFocus = null,
   onRefreshNotebooks,
-  onRefreshKernels,
-  onRefreshJupyterServer,
-  onStartJupyterServer,
-  onStopJupyterServer,
   onStartNotebookSession,
   onStopNotebookSession,
   onRunNotebookCell,
@@ -217,22 +182,14 @@ export default function AnalysisView({
   onSaveNotebook,
   onSyncNotebookDraft,
   onCreateNotebook,
-  onDeleteNotebook,
-  chatPanel,
-  topRightControls
+  chatPanel
 }: AnalysisViewProps = {}): React.JSX.Element {
   const [leftPanel, setLeftPanel] = useState<LeftPanel>(initialLeftPanel)
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>(initialInspectorTab)
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [leftSidebarFullscreen, setLeftSidebarFullscreen] = useState(initialLeftSidebarFullscreen)
-  const [rightInspectorFullscreen, setRightInspectorFullscreen] = useState(false)
   const [leftWidth, setLeftWidth] = useState(leftRailWidth)
-  const [rightWidth, setRightWidth] = useState(inspectorWidth)
-  const inspectorCollapsed = controlledInspectorCollapsed ?? initialInspectorCollapsed
   const showLeftRail = !hideLeftRail
   const effectiveLeftSidebarFullscreen = showLeftRail && !leftCollapsed && leftSidebarFullscreen
-  const effectiveRightInspectorFullscreen =
-    !effectiveLeftSidebarFullscreen && !inspectorCollapsed && rightInspectorFullscreen
   const onToggleLeftCollapsed = useCallback((): void => {
     setLeftCollapsed((value) => {
       const nextValue = !value
@@ -240,20 +197,6 @@ export default function AnalysisView({
       return nextValue
     })
   }, [])
-  const onToggleLeftSidebarFullscreen = useCallback((): void => {
-    setLeftSidebarFullscreen((value) => !value)
-  }, [])
-  const onToggleInspectorFullscreen = useCallback((): void => {
-    setRightInspectorFullscreen((value) => !value)
-  }, [])
-  const topRightControlsNode = topRightControls?.({
-    leftSidebarVisible: showLeftRail && !leftCollapsed,
-    leftSidebarFullscreen: effectiveLeftSidebarFullscreen,
-    onToggleLeftSidebarFullscreen,
-    inspectorVisible: !effectiveLeftSidebarFullscreen && !inspectorCollapsed,
-    inspectorFullscreen: effectiveRightInspectorFullscreen,
-    onToggleInspectorFullscreen
-  })
   const notebooks = useMemo(() => registryNotebooks(notebookRegistry), [notebookRegistry])
   const activeNotebookEntry = useMemo(() => notebookFileEntry(notebookFile), [notebookFile])
   const [openNotebookPaths, setOpenNotebookPaths] = useState<string[]>([])
@@ -281,8 +224,21 @@ export default function AnalysisView({
 
   const onSelectNotebook = (notebook: NotebookListEntry): void => {
     if (onSelectWorkspaceFileTab) {
-      onSelectWorkspaceFileTab(notebook)
-      return
+      const matchingWorkspaceTab = workspaceFileTabs?.find(
+        (tab) =>
+          tab.path === notebook.path ||
+          tab.path === notebook.absolutePath ||
+          tab.absolutePath === notebook.path ||
+          tab.absolutePath === notebook.absolutePath
+      )
+      if (matchingWorkspaceTab) {
+        onSelectWorkspaceFileTab(matchingWorkspaceTab)
+        return
+      }
+      if (onOpenNotebook) {
+        onOpenNotebook(notebook.absolutePath ?? notebook.path)
+        return
+      }
     }
     setOpenNotebookPaths((paths) =>
       paths.includes(notebook.path) ? paths : [...paths, notebook.path]
@@ -335,31 +291,6 @@ export default function AnalysisView({
     },
     [leftWidth]
   )
-  const onStartRightResize = useCallback(
-    (event: MouseEvent<HTMLDivElement>): void => {
-      event.preventDefault()
-
-      const startX = event.clientX
-      const startWidth = rightWidth
-      const onMouseMove = (moveEvent: globalThis.MouseEvent): void => {
-        const delta = moveEvent.clientX - startX
-        setRightWidth(Math.min(maxInspectorWidth, Math.max(minInspectorWidth, startWidth - delta)))
-      }
-
-      const onMouseUp = (): void => {
-        document.removeEventListener('mousemove', onMouseMove)
-        document.removeEventListener('mouseup', onMouseUp)
-        document.body.style.cursor = ''
-        document.body.style.userSelect = ''
-      }
-
-      document.body.style.cursor = 'col-resize'
-      document.body.style.userSelect = 'none'
-      document.addEventListener('mousemove', onMouseMove)
-      document.addEventListener('mouseup', onMouseUp)
-    },
-    [rightWidth]
-  )
 
   return (
     <Box
@@ -375,7 +306,7 @@ export default function AnalysisView({
           theme.palette.mode === 'dark' ? theme.palette.background.default : '#FFFFFF'
       }}
     >
-      {showLeftRail && !effectiveRightInspectorFullscreen ? (
+      {showLeftRail ? (
         <LeftRail
           panel={leftPanel}
           collapsed={leftCollapsed}
@@ -393,19 +324,17 @@ export default function AnalysisView({
           onCreateNotebook={onCreateNotebook}
           chatPanel={chatPanel}
           onToggleCollapsed={onToggleLeftCollapsed}
-          topRightControls={effectiveLeftSidebarFullscreen ? topRightControlsNode : undefined}
         />
       ) : null}
-      {showLeftRail &&
-      !leftCollapsed &&
-      !effectiveLeftSidebarFullscreen &&
-      !effectiveRightInspectorFullscreen ? (
+      {showLeftRail && !leftCollapsed && !effectiveLeftSidebarFullscreen ? (
         <ResizeSeparator label="调整分析侧栏宽度" onMouseDown={onStartLeftResize} />
       ) : null}
-      {!effectiveLeftSidebarFullscreen && !effectiveRightInspectorFullscreen ? (
+      {!effectiveLeftSidebarFullscreen ? (
         <NotebookCanvas
           activeNotebookPath={headerActivePath ?? 'No notebook selected'}
           notebooks={headerTabs}
+          availableNotebooks={notebooks}
+          projectCwd={notebookRegistry?.projectCwd ?? null}
           notebookFile={notebookFile}
           initialDocument={notebookFile?.document ?? null}
           isOpening={isOpeningNotebook}
@@ -433,45 +362,8 @@ export default function AnalysisView({
           aiDefaultModel={notebookAiDefaultModel}
           onPickContextFiles={onPickNotebookContextFiles}
           onSelectNotebook={onSelectNotebook}
-          onCloseNotebook={onCloseNotebookTab}
-          topRightControls={inspectorCollapsed ? topRightControlsNode : undefined}
-        />
-      ) : null}
-      {!effectiveLeftSidebarFullscreen &&
-      !inspectorCollapsed &&
-      !effectiveRightInspectorFullscreen ? (
-        <ResizeSeparator label="调整检查器宽度" onMouseDown={onStartRightResize} />
-      ) : null}
-      {!effectiveLeftSidebarFullscreen && !inspectorCollapsed ? (
-        <RightInspector
-          tab={inspectorTab}
-          width={effectiveRightInspectorFullscreen ? '100%' : rightWidth}
-          fullscreen={effectiveRightInspectorFullscreen}
-          notebooks={notebooks}
-          activeNotebookPath={activeNotebookPath}
-          notebookRegistry={notebookRegistry}
-          notebookFile={notebookFile}
-          isLoadingNotebooks={isLoadingNotebooks}
-          notebookError={notebookError}
-          projectCwd={notebookRegistry?.projectCwd ?? null}
-          kernelDiagnostics={kernelDiagnostics}
-          isLoadingKernels={isLoadingKernels}
-          kernelError={kernelError}
-          jupyterServerStatus={jupyterServerStatus}
-          isStartingJupyterServer={isStartingJupyterServer}
-          jupyterServerError={jupyterServerError}
-          notebookSessionStatus={notebookSessionStatus}
-          onTabChange={setInspectorTab}
-          onOpenNotebook={onOpenNotebook}
-          onRefreshNotebooks={onRefreshNotebooks}
           onCreateNotebook={onCreateNotebook}
-          onDeleteNotebook={onDeleteNotebook}
-          onInitializeProjectAnalysis={onInitializeProjectAnalysis}
-          onRefreshKernels={onRefreshKernels}
-          onRefreshJupyterServer={onRefreshJupyterServer}
-          onStartJupyterServer={onStartJupyterServer}
-          onStopJupyterServer={onStopJupyterServer}
-          topRightControls={topRightControlsNode}
+          onCloseNotebook={onCloseNotebookTab}
         />
       ) : null}
     </Box>

@@ -28,7 +28,7 @@ test('App.tsx wraps both window-control clusters in exactly one shared no-drag b
   const appSource = readSource('src/renderer/src/App.tsx')
 
   const clusterMatch = appSource.match(
-    /\{isMac && \([\s\S]*?<MacWindowControls[\s\S]*?<WindowNavigationControls[\s\S]*?\)\}/
+    /\{isMac && \([\s\S]*?data-phi-window-top-left-chrome="true"[\s\S]*?<MacWindowControls[\s\S]*?<WindowNavigationControls[\s\S]*?\)\}/
   )
   assert.ok(clusterMatch, 'expected the isMac-gated window-controls JSX block')
   const cluster = clusterMatch![0]
@@ -36,4 +36,34 @@ test('App.tsx wraps both window-control clusters in exactly one shared no-drag b
   const noDragCount = (cluster.match(/WebkitAppRegion:\s*'no-drag'/g) ?? []).length
   assert.equal(noDragCount, 1, 'exactly one no-drag boundary should wrap the whole cluster')
   assert.match(cluster, /position:\s*'absolute'/)
+  assert.match(cluster, /pointerEvents:\s*'auto'/)
+  assert.match(cluster, /zIndex:\s*30/)
+})
+
+test('App.tsx renders top-left chrome after draggable workspace layers', () => {
+  const appSource = readSource('src/renderer/src/App.tsx')
+
+  const topLeftChromeIndex = appSource.indexOf('data-phi-window-top-left-chrome="true"')
+  const activityBarIndex = appSource.indexOf('<AppActivityBar')
+  const workspaceSidebarIndex = appSource.indexOf('<AppWorkspaceSidebar')
+  const workspaceFileHeaderIndex = appSource.indexOf('<WorkspaceFileHeader')
+  const workspaceSidePanelIndex = appSource.indexOf('data-phi-workspace-side-panel-shell="true"')
+
+  assert.ok(topLeftChromeIndex >= 0, 'expected a top-left chrome marker')
+  assert.ok(
+    topLeftChromeIndex > activityBarIndex,
+    'top-left controls must render after the activity bar to preserve hit testing'
+  )
+  assert.ok(
+    topLeftChromeIndex > workspaceSidebarIndex,
+    'top-left controls must render after the workspace sidebar to preserve hit testing'
+  )
+  assert.ok(
+    topLeftChromeIndex > workspaceFileHeaderIndex,
+    'top-left controls must render after file headers so file-open drag regions cannot swallow clicks'
+  )
+  assert.ok(
+    topLeftChromeIndex > workspaceSidePanelIndex,
+    'top-left controls must render after the side panel shell so fullscreen panels cannot cover them'
+  )
 })

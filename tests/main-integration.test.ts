@@ -102,6 +102,8 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   persistedToolOutputs: Array<Record<string, unknown>>
   revealedPaths: string[]
   openedPaths: string[]
+  fileIconRequests: string[]
+  execFileCalls: Array<{ file: string; args: string[] }>
   previewReadRequests: Array<{ filePath: string; length: number }>
   appLogs: Array<Record<string, unknown>>
   acknowledgedSessions: Array<{ file: string; cwd: string }>
@@ -140,6 +142,8 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   const persistedToolOutputs: Array<Record<string, unknown>> = []
   const revealedPaths: string[] = []
   const openedPaths: string[] = []
+  const fileIconRequests: string[] = []
+  const execFileCalls: Array<{ file: string; args: string[] }> = []
   const previewReadRequests: Array<{ filePath: string; length: number }> = []
   const appLogs: Array<Record<string, unknown>> = []
   const acknowledgedSessions: Array<{ file: string; cwd: string }> = []
@@ -587,10 +591,59 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     setName: noop,
     getVersion: (): string => '9.8.7',
     whenReady: (): Promise<void> => Promise.resolve(),
+    getFileIcon: async (
+      filePath: string
+    ): Promise<{ isEmpty: () => boolean; toDataURL: () => string }> => {
+      fileIconRequests.push(filePath)
+      return {
+        isEmpty: () => false,
+        toDataURL: () => 'data:image/png;base64,aWNvbg=='
+      }
+    },
     quit: noop
   })
   const modules: Record<string, unknown> = {
     './agent-env': {},
+    'node:child_process': {
+      execFile: (
+        file: string,
+        args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void
+      ): void => {
+        execFileCalls.push({ file, args })
+        if (file === '/usr/bin/mdfind') {
+          const query = String(args[0] ?? '')
+          callback(
+            null,
+            query.includes('com.microsoft.vscode') ? '/Applications/Visual Studio Code.app\n' : '',
+            ''
+          )
+          return
+        }
+        if (file !== '/usr/bin/plutil') {
+          callback(new Error(`Unexpected command: ${file}`), '', '')
+          return
+        }
+        callback(
+          null,
+          JSON.stringify({
+            LSHandlers: [
+              {
+                LSHandlerContentTagClass: 'public.filename-extension',
+                LSHandlerContentTag: 'tsx',
+                LSHandlerRoleAll: 'com.microsoft.vscode'
+              },
+              {
+                LSHandlerContentType: 'public.comma-separated-values-text',
+                LSHandlerRoleAll: 'com.microsoft.excel'
+              }
+            ]
+          }),
+          ''
+        )
+      }
+    },
     'node:os': { homedir: (): string => '/fake-home' },
     'node:fs': {
       openSync: (filePath: string): number => {
@@ -1370,6 +1423,8 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     persistedToolOutputs,
     revealedPaths,
     openedPaths,
+    fileIconRequests,
+    execFileCalls,
     previewReadRequests,
     appLogs,
     acknowledgedSessions,
@@ -1439,6 +1494,36 @@ test('main IPC: reveal path allows files inside the active project cwd', async (
   )
 
   assert.deepEqual(app.revealedPaths, ['/projects/current/src/App.tsx'])
+})
+
+test('main IPC: file icons use the same local file boundary as file actions', async () => {
+  const app = await harness()
+
+  await app.invoke('projects:newSession', '/projects/current', 'ask')
+  const icon = await app.invoke('files:getIcon', '/projects/current/src/App.tsx')
+  const pngIcon = await app.invoke('files:getIcon', '/projects/current/plot.png')
+
+  assert.equal(icon, 'data:image/png;base64,aWNvbg==')
+  assert.equal(pngIcon, 'data:image/png;base64,aWNvbg==')
+  assert.deepEqual(app.fileIconRequests, [
+    process.platform === 'darwin'
+      ? '/Applications/Visual Studio Code.app'
+      : '/projects/current/src/App.tsx',
+    process.platform === 'darwin'
+      ? '/System/Applications/Preview.app'
+      : '/projects/current/plot.png'
+  ])
+  if (process.platform === 'darwin') {
+    assert.equal(app.execFileCalls.at(0)?.file, '/usr/bin/plutil')
+    assert.equal(app.execFileCalls.at(1)?.file, '/usr/bin/mdfind')
+    assert.equal(app.execFileCalls.at(2)?.file, '/usr/bin/mdfind')
+    assert.equal(app.execFileCalls.length, 3)
+  }
+  await assert.rejects(
+    app.invoke('files:getIcon', '/projects/other/src/App.tsx'),
+    /只能读取图标 Phi 保存的文件或当前项目内的文件/
+  )
+  await assert.rejects(app.invoke('files:getIcon', 'relative.txt'), /只能读取图标绝对路径/)
 })
 
 test('main IPC: local path stats only report allowed existing files and directories', async () => {

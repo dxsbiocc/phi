@@ -545,6 +545,7 @@ type RendererAuthApi = {
   toggleWindowFullscreen: () => Promise<void>
   revealPath: (path: string) => Promise<void>
   openPath: (path: string) => Promise<void>
+  getFileIcon: (path: string) => Promise<string | null>
   pickInputFiles: () => Promise<string[]>
   getPathForFile: (file: File) => string
   onInputFilesDropped: (cb: (paths: string[]) => void) => Unsubscribe
@@ -712,6 +713,7 @@ const api: RendererAuthApi = {
   toggleWindowFullscreen: (): Promise<void> => ipcRenderer.invoke('window:toggle-fullscreen'),
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('files:reveal', path),
   openPath: (path: string): Promise<void> => ipcRenderer.invoke('files:openPath', path),
+  getFileIcon: (path: string): Promise<string | null> => ipcRenderer.invoke('files:getIcon', path),
   pickInputFiles: (): Promise<string[]> => ipcRenderer.invoke('files:pickInput'),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   onInputFilesDropped: (cb: (paths: string[]) => void): Unsubscribe => {

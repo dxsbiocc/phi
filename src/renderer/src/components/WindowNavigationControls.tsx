@@ -1,5 +1,10 @@
 import { Box, IconButton, Tooltip } from '@mui/material'
-import { TbChevronLeft, TbChevronRight, TbLayoutSidebar } from 'react-icons/tb'
+import {
+  TbChevronLeft,
+  TbChevronRight,
+  TbLayoutSidebarLeftCollapse,
+  TbLayoutSidebarLeftExpand
+} from 'react-icons/tb'
 
 /**
  * Sits to the right of the macOS traffic lights (MacWindowControls): a
@@ -34,6 +39,7 @@ export default function WindowNavigationControls({
       color: 'text.disabled'
     }
   }
+  const SidebarToggleIcon = isSidebarOpen ? TbLayoutSidebarLeftCollapse : TbLayoutSidebarLeftExpand
 
   return (
     <Box
@@ -49,10 +55,11 @@ export default function WindowNavigationControls({
         <IconButton
           size="small"
           aria-label={isSidebarOpen ? '收起侧边栏' : '展开侧边栏'}
+          data-phi-window-sidebar-toggle-icon={isSidebarOpen ? 'collapse' : 'expand'}
           onClick={onToggleSidebar}
           sx={{ ...iconButtonSx, color: isSidebarOpen ? 'text.primary' : 'text.secondary' }}
         >
-          <TbLayoutSidebar size={19} />
+          <SidebarToggleIcon size={19} />
         </IconButton>
       </Tooltip>
       <Tooltip title="后退">

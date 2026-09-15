@@ -7,9 +7,10 @@ import {
   type DragEvent,
   type ReactNode
 } from 'react'
-import { Box, Typography } from '@mui/material'
+import { Box, Button, Typography } from '@mui/material'
 
 import type { SyntaxLanguage } from '../../../lib/syntaxHighlight'
+import { PhiIcons, fileIconForPath } from '../../../icons'
 import { hasLiveNotebookSession, isNotebookSessionRunnable } from '../lib/notebookSession'
 import {
   acceptStagedNotebookCell,
@@ -41,6 +42,7 @@ import {
   kernelAvailabilityColor,
   kernelAvailabilityLabel,
   kernelOptionLabel,
+  compactPath,
   notebookKernelName,
   notebookLanguage,
   notebookOutline,
@@ -48,6 +50,7 @@ import {
   notebookSessionStateLabel,
   notebookSyntaxLanguage,
   withNotebookKernel,
+  type NotebookListEntry,
   type NotebookOutlineItem
 } from '../lib/notebookViewModel'
 import {
@@ -74,6 +77,7 @@ import NotebookScrollProgressRail from './NotebookScrollProgressRail'
 const notebookSiblingSpacingSelector =
   '& > [data-phi-notebook-cell] + [data-phi-notebook-cell], & > [data-phi-notebook-cell] + [data-phi-notebook-ai-prompt-cell], & > [data-phi-notebook-ai-prompt-cell] + [data-phi-notebook-cell], & > [data-phi-notebook-cell] + [data-phi-notebook-ai-preview-actions], & > [data-phi-notebook-ai-preview-actions] + [data-phi-notebook-cell], & > [data-phi-notebook-ai-preview-actions] + [data-phi-notebook-ai-prompt-cell]'
 
+const AddIcon = PhiIcons.action.add
 const initialVirtualViewport: NotebookVirtualViewport = { scrollTop: 0, viewportHeight: 0 }
 
 type NotebookVirtualRowHeightState = {
@@ -119,6 +123,101 @@ function NotebookVirtualRowShell({
   )
 }
 
+function EmptyNotebookState({
+  notebooks,
+  projectCwd,
+  onSelectNotebook,
+  onCreateNotebook
+}: {
+  notebooks: NotebookListEntry[]
+  projectCwd?: string | null
+  onSelectNotebook?: (notebook: NotebookListEntry) => void
+  onCreateNotebook?: (cwd: string) => void
+}): React.JSX.Element {
+  const visibleNotebooks = notebooks.slice(0, 5)
+  const canCreateNotebook = Boolean(projectCwd && onCreateNotebook)
+
+  return (
+    <Box
+      data-phi-notebook-empty-state="true"
+      sx={{
+        border: 1,
+        borderColor: 'divider',
+        borderRadius: 2,
+        px: 2,
+        py: 3,
+        color: 'text.secondary'
+      }}
+    >
+      <Typography variant="body2">选择或创建 notebook 后开始分析。</Typography>
+      {visibleNotebooks.length > 0 ? (
+        <Box
+          data-phi-notebook-empty-options="true"
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 0.75,
+            mt: 2
+          }}
+        >
+          {visibleNotebooks.map((notebook) => {
+            const notebookIcon = fileIconForPath(notebook.path)
+            const NotebookFileIcon = notebookIcon.Icon
+            return (
+              <Button
+                key={notebook.id}
+                data-phi-notebook-empty-select={notebook.path}
+                variant="outlined"
+                startIcon={
+                  <NotebookFileIcon
+                    data-phi-notebook-empty-select-icon={notebookIcon.materialIconName}
+                    fontSize="small"
+                    sx={{ color: notebookIcon.color }}
+                  />
+                }
+                onClick={() => onSelectNotebook?.(notebook)}
+                sx={{
+                  justifyContent: 'flex-start',
+                  minHeight: 36,
+                  minWidth: 0,
+                  textTransform: 'none',
+                  color: 'text.primary'
+                }}
+              >
+                <Box component="span" sx={{ minWidth: 0, textAlign: 'left' }}>
+                  <Typography component="span" noWrap sx={{ display: 'block', fontWeight: 700 }}>
+                    {compactPath(notebook.path)}
+                  </Typography>
+                  <Typography
+                    component="span"
+                    noWrap
+                    sx={{ display: 'block', color: 'text.secondary', fontSize: '0.75rem' }}
+                  >
+                    {notebook.status}
+                  </Typography>
+                </Box>
+              </Button>
+            )
+          })}
+        </Box>
+      ) : null}
+      {canCreateNotebook ? (
+        <Button
+          data-phi-notebook-empty-create="true"
+          variant={visibleNotebooks.length > 0 ? 'text' : 'outlined'}
+          startIcon={<AddIcon fontSize="small" />}
+          onClick={() => {
+            if (projectCwd) onCreateNotebook?.(projectCwd)
+          }}
+          sx={{ mt: visibleNotebooks.length > 0 ? 1.25 : 2, textTransform: 'none' }}
+        >
+          新建 notebook
+        </Button>
+      ) : null}
+    </Box>
+  )
+}
+
 export default function NotebookCanvas({
   activeNotebookPath,
   notebooks,
@@ -134,6 +233,8 @@ export default function NotebookCanvas({
   notebookSessionError,
   executingCellId,
   cellExecutionError,
+  availableNotebooks,
+  projectCwd,
   onSaveNotebook,
   onSyncNotebookDraft,
   onStartNotebookSession,
@@ -148,9 +249,9 @@ export default function NotebookCanvas({
   aiDefaultModel,
   onPickContextFiles,
   onSelectNotebook,
+  onCreateNotebook,
   onCloseNotebook,
-  agentFocus,
-  topRightControls
+  agentFocus
 }: NotebookCanvasProps): React.JSX.Element {
   const [draftDocument, setDraftDocument] = useState<NotebookDocument | null>(initialDocument)
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null)
@@ -1046,7 +1147,6 @@ export default function NotebookCanvas({
         onKernelChange={onKernelChange}
         onSelectNotebook={onSelectNotebook}
         onCloseNotebook={onCloseNotebook}
-        topRightControls={topRightControls}
       />
       <Box
         ref={scrollViewportRef}
@@ -1181,18 +1281,12 @@ export default function NotebookCanvas({
               />
             ) : (
               <>
-                <Box
-                  sx={{
-                    border: 1,
-                    borderColor: 'divider',
-                    borderRadius: 2,
-                    px: 2,
-                    py: 3,
-                    color: 'text.secondary'
-                  }}
-                >
-                  <Typography variant="body2">选择或创建 notebook 后开始分析。</Typography>
-                </Box>
+                <EmptyNotebookState
+                  notebooks={availableNotebooks ?? notebooks}
+                  projectCwd={projectCwd}
+                  onSelectNotebook={onSelectNotebook}
+                  onCreateNotebook={onCreateNotebook}
+                />
                 <NotebookInsertDock
                   disabled={!draftDocument}
                   codeLanguage={insertCodeLanguage}

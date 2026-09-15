@@ -186,8 +186,7 @@ export function LeftRail({
   onInitializeProjectAnalysis,
   onCreateNotebook,
   chatPanel,
-  onToggleCollapsed,
-  topRightControls
+  onToggleCollapsed
 }: {
   panel: LeftPanel
   collapsed: boolean
@@ -205,7 +204,6 @@ export function LeftRail({
   onCreateNotebook?: (cwd: string) => void
   chatPanel?: ReactNode
   onToggleCollapsed: () => void
-  topRightControls?: ReactNode
 }): React.JSX.Element {
   const tabs = [
     { value: 'chat' as const, label: 'Chat', Icon: ChatIcon },
@@ -253,7 +251,7 @@ export function LeftRail({
         flexShrink: 0,
         borderRight: 1,
         borderColor: 'divider',
-        pt: isMac || topRightControls ? 0 : 0.75,
+        pt: isMac ? 0 : 0.75,
         display: 'flex',
         minHeight: 0,
         flexDirection: 'column',
@@ -261,10 +259,10 @@ export function LeftRail({
           theme.palette.mode === 'dark' ? theme.palette.background.default : '#FFFFFF'
       }}
     >
-      {isMac || topRightControls ? (
+      {isMac ? (
         <Box
           sx={{
-            height: isMac ? leftRailMacChromeHeight : 36,
+            height: leftRailMacChromeHeight,
             flexShrink: 0,
             px: 1,
             display: 'flex',
@@ -272,20 +270,7 @@ export function LeftRail({
             justifyContent: 'flex-end',
             WebkitAppRegion: 'drag'
           }}
-        >
-          {topRightControls ? (
-            <Box
-              sx={{
-                flexShrink: 0,
-                display: 'flex',
-                alignItems: 'center',
-                WebkitAppRegion: 'no-drag'
-              }}
-            >
-              {topRightControls}
-            </Box>
-          ) : null}
-        </Box>
+        />
       ) : null}
       <Box sx={{ px: 1, pb: 0.5 }}>
         <Tabs

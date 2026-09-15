@@ -1,4 +1,5 @@
 import './agent-env'
+import { execFile } from 'node:child_process'
 import {
   closeSync,
   openSync,
@@ -19,7 +20,7 @@ import {
   nativeImage,
   nativeTheme
 } from 'electron'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { createAgentSession } from './agent/session/session-manager'
 import { getAuthManager } from './agent/auth-manager'
@@ -170,6 +171,60 @@ const DEFAULT_WINDOW_HEIGHT = 820
 const MIN_WINDOW_WIDTH = 860
 const MIN_WINDOW_HEIGHT = 560
 const appIcon = nativeImage.createFromPath(icon)
+const macFilenameExtensionTagClass = 'public.filename-extension'
+const macContentTypesByExtension: Record<string, string[]> = {
+  csv: ['public.comma-separated-values-text'],
+  htm: ['public.html'],
+  html: ['public.html'],
+  key: ['com.apple.keynote.key'],
+  numbers: ['com.apple.iwork.numbers.numbers'],
+  pages: ['com.apple.iwork.pages.pages'],
+  pdf: ['com.adobe.pdf', 'public.pdf'],
+  ppt: ['com.microsoft.powerpoint.ppt'],
+  pptx: ['org.openxmlformats.presentationml.presentation'],
+  tsv: ['public.tab-separated-values-text'],
+  xls: ['com.microsoft.excel.xls'],
+  xlsx: ['org.openxmlformats.spreadsheetml.sheet'],
+  doc: ['com.microsoft.word.doc'],
+  docx: ['org.openxmlformats.wordprocessingml.document']
+}
+const macFallbackApplicationBundleIdByExtension: Record<string, string> = {
+  avif: 'com.apple.preview',
+  bmp: 'com.apple.preview',
+  gif: 'com.apple.preview',
+  heic: 'com.apple.preview',
+  jpeg: 'com.apple.preview',
+  jpg: 'com.apple.preview',
+  pdf: 'com.apple.preview',
+  png: 'com.apple.preview',
+  tif: 'com.apple.preview',
+  tiff: 'com.apple.preview',
+  webp: 'com.apple.preview'
+}
+const macApplicationPathsByBundleId: Record<string, string[]> = {
+  'com.apple.preview': ['/System/Applications/Preview.app', '/Applications/Preview.app'],
+  'com.apple.textedit': ['/System/Applications/TextEdit.app', '/Applications/TextEdit.app'],
+  'com.apple.iwork.keynote': ['/Applications/Keynote.app'],
+  'com.apple.iwork.numbers': ['/Applications/Numbers.app'],
+  'com.apple.iwork.pages': ['/Applications/Pages.app'],
+  'com.google.chrome': ['/Applications/Google Chrome.app'],
+  'com.microsoft.excel': ['/Applications/Microsoft Excel.app'],
+  'com.microsoft.powerpoint': ['/Applications/Microsoft PowerPoint.app'],
+  'com.microsoft.vscode': ['/Applications/Visual Studio Code.app'],
+  'com.microsoft.word': ['/Applications/Microsoft Word.app']
+}
+
+type MacLaunchServicesHandler = {
+  LSHandlerContentTag?: string
+  LSHandlerContentTagClass?: string
+  LSHandlerContentType?: string
+  LSHandlerRoleAll?: string
+  LSHandlerRoleViewer?: string
+  LSHandlerRoleEditor?: string
+}
+
+let macLaunchServicesHandlers: Promise<MacLaunchServicesHandler[]> | null = null
+const macApplicationPathQueries = new Map<string, Promise<string[]>>()
 // Set by agent-env.ts before this module's own top-level code runs.
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
 
@@ -2460,6 +2515,159 @@ function openLocalFilePath(filePath: string): Promise<void> {
   })
 }
 
+function readMacLaunchServicesHandlers(): Promise<MacLaunchServicesHandler[]> {
+  if (macLaunchServicesHandlers) return macLaunchServicesHandlers
+
+  macLaunchServicesHandlers = new Promise((resolveHandlers) => {
+    execFile(
+      '/usr/bin/plutil',
+      [
+        '-convert',
+        'json',
+        '-o',
+        '-',
+        join(
+          homedir(),
+          'Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist'
+        )
+      ],
+      { encoding: 'utf8', maxBuffer: 1024 * 1024, timeout: 1200 },
+      (error, stdout) => {
+        if (error) {
+          resolveHandlers([])
+          return
+        }
+        try {
+          const data = JSON.parse(stdout) as { LSHandlers?: unknown }
+          resolveHandlers(
+            Array.isArray(data.LSHandlers) ? (data.LSHandlers as MacLaunchServicesHandler[]) : []
+          )
+        } catch {
+          resolveHandlers([])
+        }
+      }
+    )
+  })
+
+  return macLaunchServicesHandlers
+}
+
+function macDefaultApplicationBundleIdForExtension(
+  handlers: MacLaunchServicesHandler[],
+  extension: string
+): string | null {
+  const extensionHandler = handlers.find(
+    (handler) =>
+      handler.LSHandlerContentTagClass === macFilenameExtensionTagClass &&
+      handler.LSHandlerContentTag?.toLowerCase() === extension
+  )
+  const extensionBundleId =
+    extensionHandler?.LSHandlerRoleAll ??
+    extensionHandler?.LSHandlerRoleViewer ??
+    extensionHandler?.LSHandlerRoleEditor
+  if (extensionBundleId) return extensionBundleId.toLowerCase()
+
+  const contentTypes = macContentTypesByExtension[extension] ?? []
+  const contentTypeHandler = handlers.find(
+    (handler) =>
+      typeof handler.LSHandlerContentType === 'string' &&
+      contentTypes.includes(handler.LSHandlerContentType.toLowerCase())
+  )
+  const contentTypeBundleId =
+    contentTypeHandler?.LSHandlerRoleAll ??
+    contentTypeHandler?.LSHandlerRoleViewer ??
+    contentTypeHandler?.LSHandlerRoleEditor
+  if (contentTypeBundleId) return contentTypeBundleId.toLowerCase()
+
+  return macFallbackApplicationBundleIdByExtension[extension] ?? null
+}
+
+function macApplicationPathsForBundleId(bundleId: string): string[] {
+  return macApplicationPathsByBundleId[bundleId.toLowerCase()] ?? []
+}
+
+function quoteMacSpotlightQueryValue(value: string): string {
+  return value.replace(/["\\]/g, '\\$&')
+}
+
+function readMacApplicationPathsForBundleId(bundleId: string): Promise<string[]> {
+  const normalizedBundleId = bundleId.toLowerCase()
+  const cached = macApplicationPathQueries.get(normalizedBundleId)
+  if (cached) return cached
+
+  const query = new Promise<string[]>((resolvePaths) => {
+    execFile(
+      '/usr/bin/mdfind',
+      [`kMDItemCFBundleIdentifier == "${quoteMacSpotlightQueryValue(bundleId)}"`],
+      { encoding: 'utf8', maxBuffer: 128 * 1024, timeout: 1200 },
+      (error, stdout) => {
+        if (error) {
+          resolvePaths([])
+          return
+        }
+        resolvePaths(
+          stdout
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+        )
+      }
+    )
+  })
+  macApplicationPathQueries.set(normalizedBundleId, query)
+  return query
+}
+
+async function getMacApplicationIconDataUrl(bundleId: string): Promise<string | null> {
+  const applicationPaths = [
+    ...(await readMacApplicationPathsForBundleId(bundleId)),
+    ...macApplicationPathsForBundleId(bundleId)
+  ]
+  const visitedPaths = new Set<string>()
+
+  for (const applicationPath of applicationPaths) {
+    if (visitedPaths.has(applicationPath)) continue
+    visitedPaths.add(applicationPath)
+    try {
+      const icon = await getNativeIconDataUrl(applicationPath)
+      if (icon) return icon
+    } catch {
+      continue
+    }
+  }
+
+  return null
+}
+
+async function getMacDefaultApplicationIconDataUrl(filePath: string): Promise<string | null> {
+  if (process.platform !== 'darwin') return null
+
+  const extension = extname(filePath).slice(1).toLowerCase()
+  if (!extension) return null
+
+  const bundleId = macDefaultApplicationBundleIdForExtension(
+    await readMacLaunchServicesHandlers(),
+    extension
+  )
+  return bundleId ? getMacApplicationIconDataUrl(bundleId) : null
+}
+
+async function getNativeIconDataUrl(path: string): Promise<string | null> {
+  const icon = await app.getFileIcon(path, { size: 'normal' })
+  return icon.isEmpty() ? null : icon.toDataURL()
+}
+
+async function getLocalFileIconDataUrl(filePath: string): Promise<string | null> {
+  const target = assertLocalFilePathAllowed(filePath, '读取图标', { resolveSymlinks: true })
+  try {
+    const defaultApplicationIcon = await getMacDefaultApplicationIconDataUrl(target)
+    if (defaultApplicationIcon) return defaultApplicationIcon
+    return getNativeIconDataUrl(target)
+  } catch {
+    return null
+  }
+}
+
 function createDirectoryListing(dirPath: string): {
   path: string
   name: string
@@ -3187,6 +3395,9 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('files:openPath', async (_, filePath: string) => {
     await openLocalFilePath(filePath)
+  })
+  ipcMain.handle('files:getIcon', async (_, filePath: string) => {
+    return getLocalFileIconDataUrl(filePath)
   })
   ipcMain.handle('files:pickInput', async () => {
     const window = getActiveWindow()

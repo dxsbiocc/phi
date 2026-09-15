@@ -33,6 +33,7 @@ test('the sidebar toggle and back/forward buttons are all present', () => {
 
   assert.match(markup, /data-phi-window-navigation-controls="true"/)
   assert.match(markup, /aria-label="收起侧边栏"/)
+  assert.match(markup, /data-phi-window-sidebar-toggle-icon="collapse"/)
   assert.match(markup, /aria-label="后退"/)
   assert.match(markup, /aria-label="前进"/)
 })
@@ -62,5 +63,7 @@ test('the sidebar toggle label flips between collapse/expand based on isSidebarO
   const closedMarkup = renderControls({ isSidebarOpen: false })
 
   assert.match(openMarkup, /aria-label="收起侧边栏"/)
+  assert.match(openMarkup, /data-phi-window-sidebar-toggle-icon="collapse"/)
   assert.match(closedMarkup, /aria-label="展开侧边栏"/)
+  assert.match(closedMarkup, /data-phi-window-sidebar-toggle-icon="expand"/)
 })

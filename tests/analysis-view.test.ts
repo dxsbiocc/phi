@@ -2,12 +2,13 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import AnalysisView, {
   type AnalysisViewProps
 } from '../src/renderer/src/features/analysis/AnalysisView'
+import { WorkspaceSidePanel } from '../src/renderer/src/components/WorkspaceSidePanel'
 import { notebookAiPromptError } from '../src/renderer/src/features/analysis/lib/notebookAiErrors'
 import {
   filterNotebookAiContextOptions,
@@ -29,6 +30,22 @@ function renderAnalysisView(props: AnalysisViewProps = {}): string {
   )
 }
 
+function renderWorkspaceSidePanel(
+  props: Partial<ComponentProps<typeof WorkspaceSidePanel>> = {}
+): string {
+  const theme = createTheme()
+  return renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme },
+      createElement(WorkspaceSidePanel, {
+        width: 340,
+        ...props
+      })
+    )
+  )
+}
+
 test('analysis view renders the first-phase notebook shell', () => {
   const markup = renderAnalysisView()
 
@@ -42,6 +59,7 @@ test('analysis view renders the first-phase notebook shell', () => {
   assert.doesNotMatch(markup, /Files/)
   assert.doesNotMatch(markup, /Variables/)
   assert.doesNotMatch(markup, /Artifacts/)
+  assert.doesNotMatch(markup, /Workspace/)
   assert.doesNotMatch(markup, />Inspector</)
   assert.doesNotMatch(markup, /文件、变量和产物/)
   assert.doesNotMatch(markup, /data-phi-inspector-toggle-button/)
@@ -151,95 +169,103 @@ test('analysis view can embed into the main workspace without its own chat/noteb
   assert.doesNotMatch(markup, />Notebooks</)
 })
 
-test('analysis view can hide the right inspector behind the notebook toggle', () => {
+test('analysis view does not own the workspace side panel', () => {
   const markup = renderAnalysisView()
 
   assert.doesNotMatch(markup, /调整检查器宽度/)
+  assert.doesNotMatch(markup, /data-phi-workspace-explorer-header="true"/)
   assert.doesNotMatch(markup, /Inspector/)
   assert.doesNotMatch(markup, /data-phi-inspector-toggle-button/)
   assert.doesNotMatch(markup, /data-phi-inspector-toggle-rail/)
   assert.doesNotMatch(markup, /workflows\/main\.nf/)
 })
 
-test('analysis view only renders the right inspector when explicitly expanded', () => {
-  const markup = renderAnalysisView({ initialInspectorCollapsed: false })
+test('workspace side panel renders an empty state without a workspace', () => {
+  const markup = renderWorkspaceSidePanel()
 
-  assert.match(markup, /调整检查器宽度/)
-  assert.match(markup, /Files/)
-  assert.match(markup, /Variables/)
-  assert.match(markup, /Artifacts/)
+  assert.match(markup, /data-phi-workspace-explorer-header="true"/)
+  assert.match(markup, /Workspace/)
+  assert.doesNotMatch(markup, /刷新文件树/)
+  assert.match(markup, /还没有工作空间/)
+  assert.doesNotMatch(markup, /Variables/)
+  assert.doesNotMatch(markup, /Artifacts/)
+  assert.doesNotMatch(markup, /变量检查/)
 })
 
-test('analysis view moves top-right chrome controls with the inspector state', () => {
-  const controls: AnalysisViewProps['topRightControls'] = ({
-    leftSidebarVisible,
-    leftSidebarFullscreen,
-    inspectorVisible,
-    inspectorFullscreen
-  }) =>
-    createElement(
-      'div',
-      {
-        'data-phi-top-right-controls': 'analysis',
-        'data-left-sidebar-visible': String(leftSidebarVisible),
-        'data-left-sidebar-fullscreen': String(leftSidebarFullscreen),
-        'data-inspector-visible': String(inspectorVisible),
-        'data-inspector-fullscreen': String(inspectorFullscreen)
-      },
-      'chrome controls'
-    )
-  const expanded = renderAnalysisView({
-    initialInspectorCollapsed: false,
-    topRightControls: controls
-  })
-  const collapsed = renderAnalysisView({
-    initialInspectorCollapsed: true,
-    topRightControls: controls
+test('workspace side panel renders the current workspace file tree', () => {
+  const markup = renderWorkspaceSidePanel({
+    workspaceRootPath: '/project',
+    activeWorkspacePath: '/project/src/App.tsx',
+    onOpenWorkspaceFile: () => undefined,
+    onListWorkspaceDirectory: async () => ({
+      path: '/project',
+      name: 'project',
+      displayPath: '/project',
+      rootPath: '/project',
+      rootLabel: 'project',
+      entries: [
+        { path: '/project/src', name: 'src', displayPath: 'src', kind: 'directory' },
+        {
+          path: '/project/package.json',
+          name: 'package.json',
+          displayPath: 'package.json',
+          kind: 'file'
+        }
+      ],
+      truncated: false
+    })
   })
 
-  assert.ok(
-    expanded.indexOf('data-phi-top-right-controls="analysis"') < expanded.indexOf('Files'),
-    'expanded inspector renders chrome controls before its tab row'
-  )
-  assert.match(expanded, /调整检查器宽度/)
-  assert.match(expanded, /data-inspector-visible="true"/)
-  assert.match(expanded, /data-inspector-fullscreen="false"/)
-  assert.match(collapsed, /data-phi-top-right-controls="analysis"/)
-  assert.match(collapsed, /data-inspector-visible="false"/)
-  assert.doesNotMatch(collapsed, /调整检查器宽度/)
-  assert.doesNotMatch(collapsed, /Files/)
+  assert.match(markup, /data-phi-workspace-explorer-header="true"/)
+  assert.match(markup, /Workspace/)
+  assert.match(markup, /aria-label="项目目录树"/)
+  assert.match(markup, /筛选文件/)
+  assert.match(markup, /data-phi-file-tree-root="true"/)
+  assert.match(markup, /正在读取目录/)
+  assert.doesNotMatch(markup, /还没有工作空间/)
+  assert.doesNotMatch(markup, /Variables/)
+  assert.doesNotMatch(markup, /Artifacts/)
+})
+
+test('workspace side panel leaves refresh controls to app chrome', () => {
+  const markup = renderWorkspaceSidePanel({
+    titlebarInsetEnd: '120px'
+  })
+
+  assert.match(markup, /data-phi-workspace-explorer-header="true"/)
+  assert.match(markup, /padding-right:120px/)
+  assert.match(markup, /Workspace/)
+  assert.doesNotMatch(markup, /aria-label="刷新文件树"/)
+  assert.doesNotMatch(markup, /aria-label="右侧面板全屏"/)
+})
+
+test('analysis view leaves top-right chrome and workspace side panel to app chrome', () => {
+  const markup = renderAnalysisView()
+
+  assert.match(markup, /添加 Code cell/)
+  assert.doesNotMatch(markup, /data-phi-top-right-controls/)
+  assert.doesNotMatch(markup, /data-phi-workspace-explorer-header="true"/)
+  assert.doesNotMatch(markup, /调整检查器宽度/)
 })
 
 test('analysis view lets the left sidebar occupy the analysis window', () => {
-  const controls: AnalysisViewProps['topRightControls'] = ({
-    leftSidebarVisible,
-    leftSidebarFullscreen
-  }) =>
-    createElement('div', {
-      'data-phi-top-right-controls': 'analysis',
-      'data-left-sidebar-visible': String(leftSidebarVisible),
-      'data-left-sidebar-fullscreen': String(leftSidebarFullscreen)
-    })
   const markup = renderAnalysisView({
-    initialLeftSidebarFullscreen: true,
-    topRightControls: controls
+    initialLeftSidebarFullscreen: true
   })
 
-  assert.match(markup, /data-left-sidebar-visible="true"/)
-  assert.match(markup, /data-left-sidebar-fullscreen="true"/)
+  assert.match(markup, /Chat/)
+  assert.match(markup, /Notebooks/)
+  assert.doesNotMatch(markup, /data-phi-top-right-controls/)
   assert.doesNotMatch(markup, /调整分析侧栏宽度/)
   assert.doesNotMatch(markup, /调整检查器宽度/)
   assert.doesNotMatch(markup, /添加 Code cell/)
   assert.doesNotMatch(markup, /Files/)
   assert.doesNotMatch(markup, /Variables/)
   assert.doesNotMatch(markup, /Artifacts/)
+  assert.doesNotMatch(markup, /Workspace/)
 })
 
 test('analysis view renders project notebook registry entries', () => {
-  const inspectorSource = readFileSync(
-    resolve(process.cwd(), 'src/renderer/src/features/analysis/components/AnalysisInspector.tsx'),
-    'utf8'
-  )
   const props: AnalysisViewProps = {
     initialLeftPanel: 'notebooks',
     notebookRegistry: {
@@ -263,11 +289,6 @@ test('analysis view renders project notebook registry entries', () => {
     onCreateNotebook: () => undefined
   }
   const markup = renderAnalysisView(props)
-  const withDelete = renderAnalysisView({
-    ...props,
-    initialInspectorCollapsed: false,
-    onDeleteNotebook: () => undefined
-  })
 
   assert.match(markup, /Demo/)
   assert.match(markup, /notebooks\/real\.ipynb/)
@@ -275,11 +296,50 @@ test('analysis view renders project notebook registry entries', () => {
   assert.match(markup, /新建 notebook/)
   assert.match(markup, /2 KB/)
   assert.doesNotMatch(markup, /删除 notebooks\/real\.ipynb/)
-  assert.match(withDelete, /删除 notebooks\/real\.ipynb/)
-  assert.match(inspectorSource, /data-phi-notebook-delete-dialog="true"/)
-  assert.match(inspectorSource, /setPendingDeleteNotebook\(\{/)
-  assert.doesNotMatch(inspectorSource, /window\.confirm/)
   assert.doesNotMatch(markup, /data\/raw\/samples\.csv/)
+})
+
+test('analysis empty notebook canvas offers notebook recovery actions', () => {
+  const markup = renderAnalysisView({
+    hideLeftRail: true,
+    notebookRegistry: {
+      projectCwd: '/project',
+      projectName: 'Demo',
+      notebooks: [
+        {
+          path: '/project/notebooks/real.ipynb',
+          relativePath: 'notebooks/real.ipynb',
+          name: 'real.ipynb',
+          directory: 'notebooks',
+          bytes: 2048,
+          modifiedAt: '2026-09-09T00:00:00.000Z'
+        }
+      ],
+      truncated: false,
+      initialized: true
+    },
+    onOpenNotebook: () => undefined,
+    onCreateNotebook: () => undefined
+  })
+
+  assert.match(markup, /data-phi-notebook-empty-state="true"/)
+  assert.match(markup, /data-phi-notebook-empty-options="true"/)
+  assert.match(markup, /data-phi-notebook-empty-select="notebooks\/real\.ipynb"/)
+  assert.match(markup, /data-phi-notebook-empty-select-icon="jupyter"/)
+  assert.match(markup, /data-phi-notebook-empty-create="true"/)
+  assert.match(markup, /选择或创建 notebook 后开始分析/)
+})
+
+test('analysis notebook selection can open notebooks missing from controlled workspace tabs', () => {
+  const analysisSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/analysis/AnalysisView.tsx'),
+    'utf8'
+  )
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+
+  assert.match(analysisSource, /const matchingWorkspaceTab = workspaceFileTabs\?\.find/)
+  assert.match(analysisSource, /onOpenNotebook\(notebook\.absolutePath \?\? notebook\.path\)/)
+  assert.match(appSource, /onOpenNotebookWorkspaceFile\(path\)/)
 })
 
 test('analysis view renders notebook registry empty and loading states', () => {
@@ -339,8 +399,7 @@ test('analysis view renders an opened notebook document', () => {
       modifiedAt: '2026-09-09T00:00:00.000Z',
       savedRevision: document.revision,
       document
-    },
-    onRefreshKernels: () => undefined
+    }
   })
 
   assert.match(markup, /notebooks\/real\.ipynb/)
@@ -1092,7 +1151,7 @@ test('analysis view uses an in-app dialog before switching kernels', () => {
   assert.doesNotMatch(analysisSource, /window\.confirm\(\s*notebookKernelSwitchConfirmationMessage/)
 })
 
-test('analysis view renders artifacts from opened notebook outputs', () => {
+test('analysis view keeps notebook artifacts out of the workspace explorer', () => {
   const document = parseNotebook({
     nbformat: 4,
     nbformat_minor: 5,
@@ -1121,8 +1180,6 @@ test('analysis view renders artifacts from opened notebook outputs', () => {
     ]
   })
   const markup = renderAnalysisView({
-    initialInspectorCollapsed: false,
-    initialInspectorTab: 'artifacts',
     notebookFile: {
       path: '/project/notebooks/real.ipynb',
       relativePath: 'notebooks/real.ipynb',
@@ -1135,9 +1192,11 @@ test('analysis view renders artifacts from opened notebook outputs', () => {
   })
 
   assert.match(markup, /notebooks\/real\.ipynb/)
-  assert.match(markup, /plot-cell\.html/)
-  assert.match(markup, /HTML/)
-  assert.match(markup, /Cell 2/)
+  assert.doesNotMatch(markup, /data-phi-workspace-explorer-header="true"/)
+  assert.doesNotMatch(markup, /Workspace/)
+  assert.doesNotMatch(markup, /还没有工作空间/)
+  assert.doesNotMatch(markup, /plot-cell\.html/)
+  assert.doesNotMatch(markup, /Cell 2/)
   assert.doesNotMatch(markup, /pca\.html/)
   assert.doesNotMatch(markup, /qc_table\.csv/)
 })
@@ -1590,8 +1649,6 @@ test('analysis view renders the insert dock with an R code action for R notebook
 
 test('analysis view renders local kernel diagnostics', () => {
   const markup = renderAnalysisView({
-    initialInspectorCollapsed: false,
-    initialInspectorTab: 'variables',
     kernelDiagnostics: {
       jupyterServer: { available: true, command: 'jupyter', version: '2.14.0' },
       kernels: [
@@ -1609,38 +1666,29 @@ test('analysis view renders local kernel diagnostics', () => {
     }
   })
 
-  assert.match(markup, /Kernel/)
-  assert.match(markup, /Jupyter 2\.14\.0/)
-  assert.match(markup, /Python kernel/)
-  assert.match(markup, /R missing/)
-  assert.match(markup, /未检测到 R kernel/)
+  assert.doesNotMatch(markup, /Workspace/)
+  assert.doesNotMatch(markup, /Jupyter 2\.14\.0/)
+  assert.doesNotMatch(markup, /Python kernel/)
+  assert.doesNotMatch(markup, /R missing/)
+  assert.doesNotMatch(markup, /未检测到 R kernel/)
 })
 
-test('analysis view renders local Jupyter server controls', () => {
+test('analysis view keeps local Jupyter server controls out of the workspace explorer', () => {
   const markup = renderAnalysisView({
-    initialInspectorCollapsed: false,
-    initialInspectorTab: 'variables',
     notebookRegistry: {
       projectCwd: '/project',
       projectName: 'Demo',
       notebooks: [],
       truncated: false,
       initialized: true
-    },
-    jupyterServerStatus: {
-      projectCwd: '/project',
-      state: 'stopped',
-      hasEndpoint: false,
-      message: 'Jupyter Server 已停止'
-    },
-    onStartJupyterServer: () => undefined,
-    onStopJupyterServer: () => undefined,
-    onRefreshJupyterServer: () => undefined
+    }
   })
 
-  assert.match(markup, /Jupyter server stopped/)
-  assert.match(markup, /启动 Jupyter/)
-  assert.match(markup, /Jupyter Server 已停止/)
+  assert.doesNotMatch(markup, /Workspace/)
+  assert.doesNotMatch(markup, /data-phi-workspace-explorer-header="true"/)
+  assert.doesNotMatch(markup, /Jupyter server stopped/)
+  assert.doesNotMatch(markup, /启动 Jupyter/)
+  assert.doesNotMatch(markup, /Jupyter Server 已停止/)
 })
 
 test('analysis view renders notebook kernel session controls and status', () => {
@@ -1655,8 +1703,6 @@ test('analysis view renders notebook kernel session controls and status', () => 
   })
 
   const disconnected = renderAnalysisView({
-    initialInspectorCollapsed: false,
-    initialInspectorTab: 'variables',
     notebookFile: {
       path: '/project/notebooks/real.ipynb',
       relativePath: 'notebooks/real.ipynb',
@@ -1677,8 +1723,6 @@ test('analysis view renders notebook kernel session controls and status', () => 
     onStartNotebookSession: () => undefined
   })
   const connected = renderAnalysisView({
-    initialInspectorCollapsed: false,
-    initialInspectorTab: 'variables',
     notebookFile: {
       path: '/project/notebooks/real.ipynb',
       relativePath: 'notebooks/real.ipynb',
@@ -1702,12 +1746,10 @@ test('analysis view renders notebook kernel session controls and status', () => 
 
   assert.match(disconnected, /Kernel disconnected/)
   assert.doesNotMatch(disconnected, /aria-label="连接 kernel"/)
-  assert.match(disconnected, /Notebook 尚未连接 kernel/)
   assert.match(connected, /Kernel idle/)
   assert.match(connected, /data-phi-notebook-floating-actions="true"/)
   assert.match(connected, /data-phi-notebook-floating-action="disconnect-kernel"/)
   assert.match(connected, /断开/)
-  assert.match(connected, /Notebook kernel 已连接/)
 })
 
 test('analysis view auto-starts notebook sessions only when a kernel can be selected', () => {
@@ -1813,8 +1855,6 @@ test('analysis view marks the executing notebook cell as running', () => {
 
 test('analysis view hides placeholder notebook and variables when project kernel is unavailable', () => {
   const markup = renderAnalysisView({
-    initialInspectorCollapsed: false,
-    initialInspectorTab: 'variables',
     notebookRegistry: {
       projectCwd: '/project',
       projectName: 'Demo',
@@ -1835,6 +1875,8 @@ test('analysis view hides placeholder notebook and variables when project kernel
   assert.doesNotMatch(markup, /Saving interactive artifact/)
   assert.doesNotMatch(markup, /Refreshed after Cell 3/)
   assert.match(markup, /选择或创建 notebook 后开始分析/)
-  assert.match(markup, /变量检查/)
-  assert.match(markup, /请重启 Phi/)
+  assert.doesNotMatch(markup, /Workspace/)
+  assert.doesNotMatch(markup, /data-phi-workspace-explorer-header="true"/)
+  assert.doesNotMatch(markup, /变量检查/)
+  assert.doesNotMatch(markup, /请重启 Phi/)
 })

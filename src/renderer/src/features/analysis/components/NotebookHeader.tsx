@@ -1,4 +1,4 @@
-import { useState, type MouseEvent, type ReactNode } from 'react'
+import { useState, type MouseEvent } from 'react'
 import { Box, Button, Menu, MenuItem, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { PhiIcons, fileIconForPath } from '../../../icons'
@@ -65,8 +65,7 @@ export function NotebookHeader({
   kernelDiagnostics,
   onKernelChange,
   onSelectNotebook,
-  onCloseNotebook,
-  topRightControls
+  onCloseNotebook
 }: {
   activeNotebookPath: string
   notebooks: NotebookListEntry[]
@@ -78,7 +77,6 @@ export function NotebookHeader({
   onKernelChange?: (kernelName: string) => void | Promise<void>
   onSelectNotebook?: (notebook: NotebookListEntry) => void
   onCloseNotebook?: (notebook: NotebookListEntry) => void
-  topRightControls?: ReactNode
 }): React.JSX.Element {
   const kernelOptions = kernelDiagnostics?.kernels ?? []
   const selectedKernelName = draftDocument ? notebookKernelName(draftDocument) : ''
@@ -108,7 +106,8 @@ export function NotebookHeader({
         flexShrink: 0,
         borderBottom: 1,
         borderColor: 'divider',
-        px: 1.5,
+        pl: 1.5,
+        pr: 15,
         display: 'flex',
         alignItems: 'center',
         gap: 1,
@@ -238,13 +237,6 @@ export function NotebookHeader({
           </Typography>
         )}
       </Box>
-      {topRightControls ? (
-        <Box
-          sx={{ flexShrink: 0, display: 'flex', alignItems: 'center', WebkitAppRegion: 'no-drag' }}
-        >
-          {topRightControls}
-        </Box>
-      ) : null}
     </Box>
   )
 }
