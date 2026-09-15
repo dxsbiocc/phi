@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  buildNotebookCodeGenerationRepairPrompt,
   buildNotebookCodeGenerationPrompt,
   notebookCellPromptContext,
   notebookContextReferencePrompt,
@@ -94,6 +95,98 @@ test('notebook AI generation parser accepts marimo notebook completion data part
   ])
 })
 
+test('notebook AI generation parser accepts marimo data parts nested in assistant content', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    {
+      role: 'assistant',
+      content: [
+        {
+          type: 'data-notebook-cells-completion',
+          data: {
+            cells: [
+              { language: 'markdown', code: '#### 配色更新' },
+              { language: 'python', code: 'ax = inc_line.plot(color=["#1b9e77", "#d95f02"])' }
+            ]
+          }
+        }
+      ]
+    },
+    'python'
+  )
+
+  assert.deepEqual(cells, [
+    { cellType: 'markdown', source: '#### 配色更新' },
+    {
+      cellType: 'code',
+      source: 'ax = inc_line.plot(color=["#1b9e77", "#d95f02"])',
+      language: 'python'
+    }
+  ])
+})
+
+test('notebook AI generation parser accepts provider text nested in delta objects', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    {
+      type: 'message_delta',
+      delta: {
+        content: [
+          {
+            type: 'output_text',
+            text: [
+              '下面是替换后的 Cell 20 代码：',
+              '',
+              '```python',
+              'colors = ["#1b9e77", "#d95f02"]',
+              'ax = inc_line.plot(color=colors)',
+              'ax',
+              '```'
+            ].join('\n')
+          }
+        ]
+      }
+    },
+    'python'
+  )
+
+  assert.deepEqual(cells, [
+    {
+      cellType: 'code',
+      source: 'colors = ["#1b9e77", "#d95f02"]\nax = inc_line.plot(color=colors)\nax',
+      language: 'python'
+    }
+  ])
+})
+
+test('notebook AI generation parser accepts structured data nested in provider delta objects', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    {
+      type: 'message_delta',
+      delta: {
+        type: 'data-notebook-cells-completion',
+        data: {
+          cells: [
+            { language: 'markdown', code: '#### 配色更新' },
+            {
+              language: 'python',
+              code: 'ax = inc_line.plot(color=["#1b9e77", "#d95f02"])'
+            }
+          ]
+        }
+      }
+    },
+    'python'
+  )
+
+  assert.deepEqual(cells, [
+    { cellType: 'markdown', source: '#### 配色更新' },
+    {
+      cellType: 'code',
+      source: 'ax = inc_line.plot(color=["#1b9e77", "#d95f02"])',
+      language: 'python'
+    }
+  ])
+})
+
 test('notebook AI generation parser accepts marimo single-cell completion data parts', () => {
   const cells = parseGeneratedNotebookCompletion(
     {
@@ -167,11 +260,147 @@ test('notebook AI generation parser rejects unfinished markdown heading cells', 
   )
 })
 
-test('notebook AI generation parser splits markdown and code fences into insertable cells', () => {
+test('notebook AI generation parser rejects standalone ellipsis placeholder lines', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    JSON.stringify({
+      cells: [
+        { language: 'python', code: '...\n\n...' },
+        { language: 'python', code: '# Top 10 up/down at 48 h\n...' },
+        { language: 'python', code: 'df.head()' }
+      ]
+    }),
+    'python'
+  )
+
+  assert.deepEqual(cells, [{ cellType: 'code', source: 'df.head()', language: 'python' }])
+})
+
+test('notebook AI generation parser accepts embedded fenced JSON in a structured code cell', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    {
+      cells: [
+        {
+          cellType: 'code',
+          language: 'python',
+          source: [
+            "I'll use `['#004488', '#DDAA33']` as the new color pair.",
+            '',
+            'JSON output only, no markdown fences.',
+            '',
+            "Let's construct:",
+            '',
+            '```json',
+            JSON.stringify({
+              cells: [
+                { language: 'markdown', code: '#### 配色更新' },
+                {
+                  language: 'python',
+                  code: 'inc_line = inc.groupby(["Country", "Year"])["Income"].mean().unstack()'
+                }
+              ]
+            }),
+            '```',
+            '',
+            "This looks good. It's raw JSON, no fences."
+          ].join('\n')
+        }
+      ]
+    },
+    'python'
+  )
+
+  assert.deepEqual(cells, [
+    { cellType: 'markdown', source: '#### 配色更新' },
+    {
+      cellType: 'code',
+      source: 'inc_line = inc.groupby(["Country", "Year"])["Income"].mean().unstack()',
+      language: 'python'
+    }
+  ])
+})
+
+test('notebook AI generation parser splits a single fenced Python block in a structured code cell', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    {
+      cells: [
+        {
+          cellType: 'code',
+          language: 'python',
+          source: ['```python', 'summary = df.describe()', 'summary', '```'].join('\n')
+        }
+      ]
+    },
+    'python'
+  )
+
+  assert.deepEqual(cells, [
+    { cellType: 'code', source: 'summary = df.describe()\nsummary', language: 'python' }
+  ])
+})
+
+test('notebook AI generation parser accepts one clear fenced code block with surrounding prose', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    {
+      cells: [
+        {
+          cellType: 'code',
+          language: 'python',
+          source: [
+            'Here is the updated cell code:',
+            '',
+            '```python',
+            'colors = ["#004488", "#DDAA33"]',
+            'ax = inc_line.plot(color=colors)',
+            '```',
+            '',
+            'This changes the chart palette.'
+          ].join('\n')
+        }
+      ]
+    },
+    'python'
+  )
+
+  assert.deepEqual(cells, [
+    {
+      cellType: 'code',
+      source: 'colors = ["#004488", "#DDAA33"]\nax = inc_line.plot(color=colors)',
+      language: 'python'
+    }
+  ])
+})
+
+test('notebook AI generation parser rejects structured run transcripts around ordinary fences', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    {
+      cells: [
+        {
+          cellType: 'code',
+          language: 'python',
+          source: [
+            'I need to inspect the dataframe first.',
+            '',
+            '```python',
+            'df.head()',
+            '```',
+            '',
+            'Now I can construct the answer.'
+          ].join('\n')
+        }
+      ]
+    },
+    'python'
+  )
+
+  assert.deepEqual(cells, [])
+})
+
+test('notebook AI generation parser accepts exact markdown and code fences as insertable cells', () => {
   const cells = parseGeneratedNotebookCells(
     [
+      '```markdown',
       'Here is a quick summary cell.',
-      '',
+      '```',
       '```python',
       'summary = df.describe()',
       'summary',
@@ -191,7 +420,7 @@ test('notebook AI generation parser splits markdown and code fences into inserta
   ])
 })
 
-test('notebook AI generation parser turns a complete markdown answer into markdown and code cells', () => {
+test('notebook AI generation parser rejects non-schema markdown answers', () => {
   const cells = parseGeneratedNotebookCells(
     [
       '## Greedy algorithm',
@@ -212,27 +441,120 @@ test('notebook AI generation parser turns a complete markdown answer into markdo
     'python'
   )
 
+  assert.deepEqual(cells, [])
+})
+
+test('notebook AI generation final parser accepts prose around a fenced NotebookCellsCompletion JSON block', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    [
+      '可以，下面是可插入的 notebook cells:',
+      '',
+      '```json',
+      JSON.stringify({
+        cells: [
+          { language: 'markdown', code: '#### 配色更新' },
+          {
+            language: 'python',
+            code: 'colors = ["#1b9e77", "#d95f02"]\nax = inc_line.plot(color=colors)\nax'
+          }
+        ]
+      }),
+      '```'
+    ].join('\n'),
+    'python'
+  )
+
   assert.deepEqual(cells, [
-    {
-      cellType: 'markdown',
-      source: '## Greedy algorithm\n\nA greedy algorithm repeatedly makes the locally best choice.'
-    },
+    { cellType: 'markdown', source: '#### 配色更新' },
     {
       cellType: 'code',
-      source: 'def greedy_select(items):\n    return sorted(items)',
+      source: 'colors = ["#1b9e77", "#d95f02"]\nax = inc_line.plot(color=colors)\nax',
       language: 'python'
-    },
-    { cellType: 'markdown', source: 'Run it on a small input:' },
-    { cellType: 'code', source: 'greedy_select([3, 1, 2])', language: 'python' }
+    }
   ])
 })
 
-test('notebook AI generation parser treats plain prose as markdown instead of Python code', () => {
-  const cells = parseGeneratedNotebookCells('这个数据集包含三列，可以先检查缺失值。', 'python')
+test('notebook AI generation final parser accepts prose around one fenced Python block', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    [
+      '下面是替换后的 Cell 20 代码：',
+      '',
+      '```python',
+      'colors = ["#1b9e77", "#d95f02"]',
+      'ax = inc_line.plot(color=colors)',
+      'ax',
+      '```'
+    ].join('\n'),
+    'python'
+  )
 
   assert.deepEqual(cells, [
-    { cellType: 'markdown', source: '这个数据集包含三列，可以先检查缺失值。' }
+    {
+      cellType: 'code',
+      source: 'colors = ["#1b9e77", "#d95f02"]\nax = inc_line.plot(color=colors)\nax',
+      language: 'python'
+    }
   ])
+})
+
+test('notebook AI generation final parser accepts raw Python code as a fallback', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    [
+      'colors = ["#1b9e77", "#d95f02"]',
+      'ax = inc_line.plot(color=colors)',
+      'ax.set_title("Mean Income by Country and Century")',
+      'ax'
+    ].join('\n'),
+    'python'
+  )
+
+  assert.deepEqual(cells, [
+    {
+      cellType: 'code',
+      source: [
+        'colors = ["#1b9e77", "#d95f02"]',
+        'ax = inc_line.plot(color=colors)',
+        'ax.set_title("Mean Income by Country and Century")',
+        'ax'
+      ].join('\n'),
+      language: 'python'
+    }
+  ])
+})
+
+test('notebook AI generation final parser accepts raw R code as a fallback', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    [
+      'colors <- c("#1b9e77", "#d95f02")',
+      'plot(inc_line, col = colors)',
+      'legend("topright", legend = colnames(inc_line), col = colors, lty = 1)'
+    ].join('\n'),
+    'r'
+  )
+
+  assert.deepEqual(cells, [
+    {
+      cellType: 'code',
+      source: [
+        'colors <- c("#1b9e77", "#d95f02")',
+        'plot(inc_line, col = colors)',
+        'legend("topright", legend = colnames(inc_line), col = colors, lty = 1)'
+      ].join('\n'),
+      language: 'r'
+    }
+  ])
+})
+
+test('notebook AI generation final parser still rejects ordinary prose', () => {
+  const cells = parseFinalGeneratedNotebookCompletion('这个图可以使用更高对比度的配色。', 'python')
+
+  assert.deepEqual(cells, [])
+})
+
+test('notebook AI generation parser rejects plain prose instead of guessing a markdown cell', () => {
+  const cells = parseGeneratedNotebookCells('这个数据集包含三列，可以先检查缺失值。', 'python')
+
+  assert.deepEqual(cells, [])
 })
 
 test('notebook AI generation parser rejects schema-planning prose instead of inserting code', () => {
@@ -248,6 +570,31 @@ test('notebook AI generation parser rejects schema-planning prose instead of ins
       '- 返回 JSON: {"cells":[{"language":"...","code":"..."},...]}',
       '- 不要对话式回答'
     ].join('\n'),
+    'python'
+  )
+
+  assert.deepEqual(cells, [])
+})
+
+test('notebook AI generation final parser rejects Chinese generation transcript text', () => {
+  const cells = parseFinalGeneratedNotebookCompletion(
+    {
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          text: [
+            '最安全的是使用 matplotlib 的 `tab10` 中差异大的颜色。',
+            '',
+            '我提供一个 markdown 解释 + 修改后的 code cell。',
+            '',
+            '等等，实际上 Cell 20 有两条线，所以两条线需要区分明显。',
+            '',
+            '返回 JSON，包含两个 cells: markdown + python。'
+          ].join('\n')
+        }
+      ]
+    },
     'python'
   )
 
@@ -333,6 +680,31 @@ test('notebook AI generation prompt includes selected references and notebook co
   )
   assert.match(prompt, /df = pd\.read_csv/)
   assert.match(prompt, /@df 总结一下这个数据/)
+})
+
+test('notebook AI generation repair prompt preserves the marimo completion contract', () => {
+  const prompt = buildNotebookCodeGenerationRepairPrompt({
+    language: 'python',
+    notebookPath: 'notebooks/example.ipynb',
+    insertionIndex: 20,
+    references: [],
+    userPrompt: '@cell-20 这个图片使用其他配色',
+    nearbyContext: 'Cell 20 [code]\n```\nax.plot(color=["#0072B2", "#E69F00"])\n```',
+    otherCellContext: '(none)',
+    invalidOutput: [
+      '最安全的是使用 matplotlib 的 tab10 中差异大的颜色。',
+      '我提供一个 markdown 解释 + 修改后的 code cell。',
+      '返回 JSON，包含两个 cells: markdown + python。'
+    ].join('\n')
+  })
+
+  assert.match(prompt, /marimo NotebookCellsCompletion/)
+  assert.match(prompt, /Return exactly one JSON object/)
+  assert.match(prompt, /\{"cells":\[/)
+  assert.match(prompt, /Invalid previous model output/)
+  assert.match(prompt, /@cell-20 这个图片使用其他配色/)
+  assert.match(prompt, /raw runnable python code/)
+  assert.match(prompt, /Do not include prose outside JSON/)
 })
 
 test('notebook AI generation empty result message includes a diagnostic preview', () => {

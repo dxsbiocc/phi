@@ -120,6 +120,7 @@ import {
 import { formatNotebookCellSource } from './agent/notebook/analysis-notebook-formatting'
 import { AnalysisNotebookSessionRegistry } from './agent/notebook/analysis-jupyter-sessions'
 import {
+  buildNotebookCodeGenerationRepairPrompt,
   buildNotebookCodeGenerationPrompt,
   generatedNotebookCellsSource,
   notebookCellPromptContext,
@@ -181,6 +182,7 @@ function applyDockIcon(): void {
 }
 
 let mainWindow: BrowserWindow | null = null
+let mainWindowCleanupStarted = false
 
 type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -555,9 +557,7 @@ function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEv
   if (!run) return
 
   const targetWindow = getActiveWindow()
-  if (!targetWindow || targetWindow.isDestroyed()) return
-
-  targetWindow.webContents.send('agent:event', {
+  sendToWindow(targetWindow, 'agent:event', {
     source: 'phi',
     ...event,
     phiSessionId: run.phiSessionId,
@@ -628,14 +628,28 @@ function extractMessageText(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) {
     if (!content || typeof content !== 'object') return ''
-    const record = content as { text?: unknown; content?: unknown; type?: unknown }
+    const record = content as Record<string, unknown>
     if (
       (record.type === 'text' || record.type === 'output_text' || record.type === 'input_text') &&
       typeof record.text === 'string'
     ) {
       return record.text
     }
-    return extractMessageText(record.content)
+    if (record.type === undefined && typeof record.text === 'string') return record.text
+    if (record.type === undefined && typeof record.output_text === 'string') {
+      return record.output_text
+    }
+    if (typeof record.content === 'string') return record.content
+    return (
+      extractMessageText(record.content) ||
+      extractMessageText(record.delta) ||
+      extractMessageText(record.data) ||
+      extractMessageText(record.value) ||
+      extractMessageText(record.result) ||
+      extractMessageText(record.output) ||
+      extractMessageText(record.outputs) ||
+      extractMessageText(record.message)
+    )
   }
 
   return content
@@ -661,7 +675,14 @@ function assistantTextFromEventSummary(
 ): string {
   const message = summary.message as { role?: string } | undefined
   const assistantMessageEvent = summary.assistantMessageEvent as
-    | { type?: unknown; delta?: unknown; message?: unknown; partial?: unknown; error?: unknown }
+    | {
+        type?: unknown
+        delta?: unknown
+        message?: unknown
+        partial?: unknown
+        error?: unknown
+        content?: unknown
+      }
     | undefined
 
   if (
@@ -671,6 +692,12 @@ function assistantTextFromEventSummary(
   ) {
     return `${currentText}${assistantMessageEvent.delta}`
   }
+  if (summary.type === 'message_update' && typeof assistantMessageEvent?.type === 'string') {
+    const deltaText = extractMessageText(assistantMessageEvent.delta)
+    if (deltaText && assistantMessageEvent.type.endsWith('_delta')) {
+      return `${currentText}${deltaText}`
+    }
+  }
 
   if (summary.type === 'message_update' && assistantMessageEvent?.type === 'done') {
     const text = extractAssistantText(assistantMessageEvent.message).trim()
@@ -679,6 +706,10 @@ function assistantTextFromEventSummary(
 
   if (summary.type === 'message_update' && assistantMessageEvent?.partial) {
     const text = extractAssistantText(assistantMessageEvent.partial).trim()
+    if (text) return text
+  }
+  if (summary.type === 'message_update' && assistantMessageEvent) {
+    const text = extractMessageText(assistantMessageEvent).trim()
     if (text) return text
   }
 
@@ -735,6 +766,11 @@ function notebookCompletionCandidatesFromEventSummary(summary: Record<string, un
         type?: unknown
         data?: unknown
         value?: unknown
+        content?: unknown
+        delta?: unknown
+        result?: unknown
+        output?: unknown
+        outputs?: unknown
         message?: unknown
         partial?: unknown
         error?: unknown
@@ -747,6 +783,11 @@ function notebookCompletionCandidatesFromEventSummary(summary: Record<string, un
     if (assistantMessageEvent.error) candidates.push(assistantMessageEvent.error)
     if (assistantMessageEvent.data) candidates.push(assistantMessageEvent.data)
     if (assistantMessageEvent.value) candidates.push(assistantMessageEvent.value)
+    if (assistantMessageEvent.content) candidates.push(assistantMessageEvent.content)
+    if (assistantMessageEvent.delta) candidates.push(assistantMessageEvent.delta)
+    if (assistantMessageEvent.result) candidates.push(assistantMessageEvent.result)
+    if (assistantMessageEvent.output) candidates.push(assistantMessageEvent.output)
+    if (assistantMessageEvent.outputs) candidates.push(assistantMessageEvent.outputs)
   }
 
   const message = summary.message as { role?: string } | undefined
@@ -767,7 +808,8 @@ type NotebookCompletionSelection = {
 }
 
 function notebookCompletionCandidateText(candidate: unknown): string {
-  return typeof candidate === 'string' ? candidate.trim() : extractAssistantText(candidate).trim()
+  if (typeof candidate === 'string') return candidate.trim()
+  return extractAssistantText(candidate).trim() || extractMessageText(candidate).trim()
 }
 
 function notebookCompletionCellsScore(cells: AnalysisNotebookGeneratedCell[]): number {
@@ -879,6 +921,23 @@ function numberOrNullField(
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
+function numberField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = numberOrNullField(record, key)
+  return typeof value === 'number' ? value : undefined
+}
+
+function notebookCellNumberFrom(
+  record: Record<string, unknown>,
+  cell: Record<string, unknown> | null
+): number | undefined {
+  const explicit =
+    numberField(record, 'cellNumber') ??
+    (cell ? (numberField(cell, 'cellNumber') ?? numberField(cell, 'number')) : undefined)
+  if (explicit !== undefined && explicit >= 1) return Math.trunc(explicit)
+  const legacyIndex = cell ? numberField(cell, 'index') : undefined
+  return legacyIndex !== undefined && legacyIndex >= 0 ? Math.trunc(legacyIndex) + 1 : undefined
+}
+
 function notebookToolDetailsFromResult(result: unknown): Record<string, unknown> | undefined {
   const details = detailsFromToolResult(result)
   if (!details || typeof details !== 'object') return undefined
@@ -892,6 +951,7 @@ function notebookToolDetailsFromResult(result: unknown): Record<string, unknown>
     record.execution && typeof record.execution === 'object'
       ? (record.execution as Record<string, unknown>)
       : null
+  const cellNumber = notebookCellNumberFrom(record, cell)
 
   return {
     kind,
@@ -902,6 +962,7 @@ function notebookToolDetailsFromResult(result: unknown): Record<string, unknown>
     ...((stringField(record, 'cellId') ?? (cell ? stringField(cell, 'id') : undefined))
       ? { cellId: stringField(record, 'cellId') ?? (cell ? stringField(cell, 'id') : undefined) }
       : {}),
+    ...(cellNumber !== undefined ? { cellNumber } : {}),
     ...((stringField(record, 'cellType') ??
     (cell ? (stringField(cell, 'cellType') ?? stringField(cell, 'cell_type')) : undefined))
       ? {
@@ -1687,6 +1748,62 @@ async function notebookAiReferencesWithKernelIntrospection(input: {
   }
 }
 
+async function repairNotebookGenerationCompletion(input: {
+  sessionOptions: NonNullable<Parameters<typeof createAgentSession>[0]>
+  language: string
+  notebookPath: string
+  insertionIndex: number
+  references?: AnalysisNotebookContextReference[]
+  userPrompt: string
+  nearbyContext: string
+  otherCellContext: string
+  invalidOutput: string
+}): Promise<NotebookCompletionSelection | null> {
+  let assistantText = ''
+  let errorMessage = ''
+  const candidates: unknown[] = []
+  const { session } = await createAgentSession(input.sessionOptions, (summary) => {
+    assistantText = assistantTextFromEventSummary(summary, assistantText)
+    candidates.push(...notebookCompletionCandidatesFromEventSummary(summary))
+    errorMessage = assistantErrorMessageFromEventSummary(summary) ?? errorMessage
+  })
+
+  try {
+    await session.prompt(
+      buildNotebookCodeGenerationRepairPrompt({
+        language: input.language,
+        notebookPath: input.notebookPath,
+        insertionIndex: input.insertionIndex,
+        references: input.references,
+        userPrompt: input.userPrompt,
+        nearbyContext: input.nearbyContext,
+        otherCellContext: input.otherCellContext,
+        invalidOutput: input.invalidOutput
+      }),
+      {
+        expandPromptTemplates: false,
+        synthetic: true,
+        skipCompactionCheck: true
+      }
+    )
+    if (errorMessage) {
+      throw new Error(errorMessage)
+    }
+
+    const lastAssistantMessage = [...session.messages].reverse().find((message) => {
+      const record = message as { role?: string }
+      return record.role === 'assistant'
+    })
+    return chooseNotebookCompletion(
+      [...candidates, assistantText.trim(), lastAssistantMessage],
+      input.language,
+      parseFinalGeneratedNotebookCompletion
+    )
+  } finally {
+    await session.dispose()
+  }
+}
+
 async function generateAnalysisNotebookCode(
   cwd: string,
   notebookPath: string,
@@ -1725,6 +1842,14 @@ async function generateAnalysisNotebookCode(
     language,
     references: input.references
   })
+  const sessionOptions = {
+    modelRuntime: runtime,
+    cwd: project.workingDirectory,
+    noTools: 'all' as const,
+    thinkingLevel: project.defaultThinkingLevel ?? selectedThinkingLevel,
+    sessionManager: createInMemoryRuntimeSessionManager(project.workingDirectory),
+    ...(resolvedModel ? { model: resolvedModel.model } : {})
+  }
   let eventAssistantText = ''
   let eventErrorMessage = ''
   const eventCompletionCandidates: unknown[] = []
@@ -1749,22 +1874,12 @@ async function generateAnalysisNotebookCode(
       cells: selectedCompletion.cells
     })
   }
-  const { session } = await createAgentSession(
-    {
-      modelRuntime: runtime,
-      cwd: project.workingDirectory,
-      noTools: 'all',
-      thinkingLevel: project.defaultThinkingLevel ?? selectedThinkingLevel,
-      sessionManager: createInMemoryRuntimeSessionManager(project.workingDirectory),
-      ...(resolvedModel ? { model: resolvedModel.model } : {})
-    },
-    (summary) => {
-      eventAssistantText = assistantTextFromEventSummary(summary, eventAssistantText)
-      eventCompletionCandidates.push(...notebookCompletionCandidatesFromEventSummary(summary))
-      eventErrorMessage = assistantErrorMessageFromEventSummary(summary) ?? eventErrorMessage
-      emitProgress()
-    }
-  )
+  const { session } = await createAgentSession(sessionOptions, (summary) => {
+    eventAssistantText = assistantTextFromEventSummary(summary, eventAssistantText)
+    eventCompletionCandidates.push(...notebookCompletionCandidatesFromEventSummary(summary))
+    eventErrorMessage = assistantErrorMessageFromEventSummary(summary) ?? eventErrorMessage
+    emitProgress()
+  })
 
   try {
     await session.prompt(
@@ -1803,10 +1918,28 @@ async function generateAnalysisNotebookCode(
     )
     let assistantText = selectedCompletion?.text || eventAssistantText.trim()
     assistantText ||= extractAssistantText(lastAssistantMessage).trim()
-    const cells = selectedCompletion?.cells ?? []
+    let cells = selectedCompletion?.cells ?? []
+    let completionText = assistantText
+    if (cells.length === 0) {
+      const repairedCompletion = await repairNotebookGenerationCompletion({
+        sessionOptions,
+        language,
+        notebookPath: file.relativePath,
+        insertionIndex,
+        references,
+        userPrompt: prompt,
+        nearbyContext,
+        otherCellContext,
+        invalidOutput: assistantText
+      })
+      if (repairedCompletion) {
+        cells = repairedCompletion.cells
+        completionText = repairedCompletion.text
+      }
+    }
     if (cells.length === 0) {
       const emptyResultDiagnostic =
-        assistantText ||
+        completionText ||
         '未收到模型返回文本或 data-notebook-cells-completion 结构化结果。请检查当前模型/供应商配置，或稍后重试。'
       throw new Error(notebookGenerationEmptyResultMessage(emptyResultDiagnostic))
     }
@@ -1827,20 +1960,48 @@ async function generateAnalysisNotebookCode(
   }
 }
 
-function getActiveWindow(): BrowserWindow | null {
+function isUsableWindow(window: BrowserWindow | null): window is BrowserWindow {
+  return Boolean(window && !window.isDestroyed() && !window.webContents.isDestroyed())
+}
+
+function isDisposedFrameSendError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
   return (
-    BrowserWindow.getFocusedWindow() ??
-    BrowserWindow.getAllWindows().find((window) => !window.isDestroyed()) ??
-    null
+    message.includes('Render frame was disposed before WebFrameMain could be accessed') ||
+    message.includes('Object has been destroyed')
   )
 }
 
-function notifyToolApprovalsCancelled(): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send('tool:approval-cancelled')
-    }
+function isExpectedShutdownCleanupError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('OMP worker exited (130)')
+}
+
+function sendToWindow(window: BrowserWindow | null, channel: string, ...args: unknown[]): boolean {
+  if (!isUsableWindow(window)) return false
+  try {
+    window.webContents.send(channel, ...args)
+    return true
+  } catch (error) {
+    if (isDisposedFrameSendError(error)) return false
+    throw error
   }
+}
+
+function sendToAllWindows(channel: string, ...args: unknown[]): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    sendToWindow(window, channel, ...args)
+  }
+}
+
+function getActiveWindow(): BrowserWindow | null {
+  const focusedWindow = BrowserWindow.getFocusedWindow()
+  if (isUsableWindow(focusedWindow)) return focusedWindow
+  return BrowserWindow.getAllWindows().find((window) => isUsableWindow(window)) ?? null
+}
+
+function notifyToolApprovalsCancelled(): void {
+  sendToAllWindows('tool:approval-cancelled')
 }
 
 function notifyAnalysisNotebookDraftChanged(change: {
@@ -1854,19 +2015,11 @@ function notifyAnalysisNotebookDraftChanged(change: {
   changedCellId?: string
   focusCellId?: string
 }): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send('analysis:notebookDraftChanged', change)
-    }
-  }
+  sendToAllWindows('analysis:notebookDraftChanged', change)
 }
 
 function notifyAnalysisNotebookFileChanged(change: unknown): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send('analysis:notebookFileChanged', change)
-    }
-  }
+  sendToAllWindows('analysis:notebookFileChanged', change)
 }
 
 type LocalPathScope = {
@@ -2413,7 +2566,10 @@ async function cleanupSessionRecord(
       }
       await abortAndDisposeSession(session, options)
     } catch (error) {
-      if (!isStaleSessionError(error)) {
+      if (
+        !isStaleSessionError(error) &&
+        !(mainWindowCleanupStarted && isExpectedShutdownCleanupError(error))
+      ) {
         rememberErrorSummary(error)
         console.error('Failed to clean up agent session:', error)
       }
@@ -2530,11 +2686,7 @@ async function getCurrentSessionPayloadWithMessages(): Promise<
 
 function notifySessionChanged(): void {
   const payload = getCurrentSessionPayload()
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send('sessions:changed', payload)
-    }
-  }
+  sendToAllWindows('sessions:changed', payload)
 }
 
 function notifyProjectParallelRun(
@@ -2544,8 +2696,7 @@ function notifyProjectParallelRun(
   activeCount: number
 ): void {
   const window = getActiveWindow()
-  if (!window || window.isDestroyed()) return
-  window.webContents.send('agent:event', {
+  sendToWindow(window, 'agent:event', {
     type: 'project_parallel_warning',
     sessionGeneration,
     sessionPath: sessionPath ?? null,
@@ -2671,9 +2822,18 @@ async function stopAllPromptRuns(): Promise<void> {
   await Promise.all(
     [...activePromptRuns.values()].map(async (run) => {
       if (!run.session) return
-      await abortSession(run.session)
+      await abortSessionWithoutCancellingApprovals(run.session)
     })
   )
+}
+
+function cleanupMainWindowRuntime(): void {
+  if (mainWindowCleanupStarted) return
+  mainWindowCleanupStarted = true
+  void stopAllPromptRuns()
+  notebookFileWatcher.dispose()
+  jupyterServerRegistry.disposeAll()
+  void invalidateAgentSession()
 }
 
 // A user-visible conversation switch points future getAgentSession() calls at a
@@ -2755,16 +2915,14 @@ async function getAgentSession(
           })
           updateSessionManifest(phiSessionId, { model: resolvedModel.selection })
           const targetWindow = getActiveWindow()
-          if (targetWindow && !targetWindow.isDestroyed()) {
-            const sessionPath = uiSessionPathForKey(sessionKey, creationSnapshot.path)
-            targetWindow.webContents.send('agent:event', {
-              ...stored,
-              phiSessionId,
-              sessionGeneration: generation,
-              sessionPath,
-              cwd: creationSnapshot.cwd
-            })
-          }
+          const sessionPath = uiSessionPathForKey(sessionKey, creationSnapshot.path)
+          sendToWindow(targetWindow, 'agent:event', {
+            ...stored,
+            phiSessionId,
+            sessionGeneration: generation,
+            sessionPath,
+            cwd: creationSnapshot.cwd
+          })
         }
       }
       const thinkingLevel = resolveSessionThinkingLevel(sessionKey, creationSnapshot)
@@ -2866,18 +3024,16 @@ async function getAgentSession(
         const run = getActivePromptRun(sessionKey)
         const persistedSummary = run ? persistSessionEvent(run, summary) : summary
         const targetWindow = getActiveWindow()
-        if (targetWindow && !targetWindow.isDestroyed()) {
-          const phiSessionId = run?.phiSessionId ?? getPhiSessionIdForKey(sessionKey)
-          targetWindow.webContents.send('agent:event', {
-            ...persistedSummary,
-            ...(phiSessionId ? { phiSessionId } : {}),
-            sessionGeneration: generation,
-            sessionPath: phiSessionId
-              ? phiOnlySessionPath(phiSessionId)
-              : (result.session.sessionFile ?? creationSnapshot.path ?? null),
-            cwd: creationSnapshot.cwd
-          })
-        }
+        const phiSessionId = run?.phiSessionId ?? getPhiSessionIdForKey(sessionKey)
+        sendToWindow(targetWindow, 'agent:event', {
+          ...persistedSummary,
+          ...(phiSessionId ? { phiSessionId } : {}),
+          sessionGeneration: generation,
+          sessionPath: phiSessionId
+            ? phiOnlySessionPath(phiSessionId)
+            : (result.session.sessionFile ?? creationSnapshot.path ?? null),
+          cwd: creationSnapshot.cwd
+        })
       })
 
       return result
@@ -2908,6 +3064,8 @@ async function applyNextRunConfiguration(
 }
 
 function createWindow(): void {
+  mainWindowCleanupStarted = false
+
   // Create the browser window.
   const window = new BrowserWindow({
     title: APP_NAME,
@@ -2944,9 +3102,7 @@ function createWindow(): void {
   })
 
   window.on('close', () => {
-    void stopAllPromptRuns()
-    jupyterServerRegistry.disposeAll()
-    void invalidateAgentSession()
+    cleanupMainWindowRuntime()
   })
 
   window.on('closed', () => {
@@ -3818,6 +3974,18 @@ app.whenReady().then(() => {
     return notebookSessionRegistry.closeSession(project.workingDirectory, file.path)
   })
   ipcMain.handle(
+    'analysis:interruptNotebookExecution',
+    async (_, cwd: string, notebookPath: string) => {
+      const project = getProjectByCwd(cwd)
+      if (!project) {
+        throw new Error('请选择一个已添加的项目')
+      }
+      assertProjectPathAvailable(project.workingDirectory)
+      const file = openProjectNotebook(project.workingDirectory, notebookPath)
+      return notebookSessionRegistry.interruptSession(project.workingDirectory, file.path)
+    }
+  )
+  ipcMain.handle(
     'analysis:completeNotebookCell',
     async (
       _,
@@ -4170,10 +4338,7 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
-  void stopAllPromptRuns()
-  notebookFileWatcher.dispose()
-  jupyterServerRegistry.disposeAll()
-  void invalidateAgentSession()
+  cleanupMainWindowRuntime()
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common

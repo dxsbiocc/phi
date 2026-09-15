@@ -419,6 +419,17 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         message: 'Notebook kernel 已断开'
       }
     }
+    interruptSession(projectCwd: string, notebookPath: string): Record<string, unknown> {
+      notebookSessionCalls.push({ action: 'interrupt', cwd: projectCwd, path: notebookPath })
+      return {
+        projectCwd,
+        notebookPath,
+        kernelName: 'python3',
+        sessionId: 'session-1',
+        state: 'idle',
+        message: 'Notebook kernel 停止请求已发送'
+      }
+    }
     closeProject(projectCwd: string): void {
       notebookSessionCalls.push({ action: 'closeProject', cwd: projectCwd })
     }
@@ -2434,6 +2445,24 @@ test('main IPC: analysis notebook cell execution updates the returned document',
   ])
 })
 
+test('main IPC: analysis notebook execution can be interrupted', async () => {
+  const app = await harness()
+
+  const status = (await app.invoke(
+    'analysis:interruptNotebookExecution',
+    '/projects/research',
+    'notebooks/demo.ipynb'
+  )) as { state: string; message: string }
+
+  assert.equal(status.state, 'idle')
+  assert.match(status.message, /停止请求/)
+  assert.deepEqual(app.notebookSessionCalls.at(-1), {
+    action: 'interrupt',
+    cwd: '/projects/research',
+    path: '/projects/research/notebooks/demo.ipynb'
+  })
+})
+
 test('main IPC: notebook AI generation uses assistant event text when session history is empty', async () => {
   const app = await harness(async (_cwd, file) => {
     const session = new FakeSession(file)
@@ -2773,9 +2802,40 @@ test('main IPC: notebook AI generation preserves markdown and code cells', async
 })
 
 test('main IPC: notebook AI generation chooses the full done message over a short streaming partial', async () => {
+  let sessionCount = 0
   const app = await harness(async (_cwd, file) => {
+    sessionCount += 1
     const session = new FakeSession(file)
     session.skipFinalAssistantMessage = true
+    if (sessionCount > 1) {
+      session.toolEvents = [
+        {
+          type: 'message_update',
+          message: { role: 'assistant' },
+          assistantMessageEvent: {
+            type: 'text_delta',
+            delta: JSON.stringify({
+              cells: [
+                {
+                  language: 'markdown',
+                  code: '## 折线图：各国\n\n下面的代码绘制各国收入随年份变化的折线图。'
+                },
+                {
+                  language: 'python',
+                  code: [
+                    'fig, ax = plt.subplots()',
+                    'income_by_country.T.plot(ax=ax)',
+                    'ax.set_title("各国收入趋势")',
+                    'ax'
+                  ].join('\n')
+                }
+              ]
+            })
+          }
+        }
+      ]
+      return session
+    }
     session.toolEvents = [
       {
         type: 'message_update',
@@ -2839,11 +2899,8 @@ test('main IPC: notebook AI generation chooses the full done message over a shor
     }
   )) as { source: string; language: string; cells: Array<{ cellType: string; source: string }> }
 
+  assert.equal(app.sessions.length, 1)
   assert.deepEqual(result.cells, [
-    {
-      cellType: 'markdown',
-      source: '## 折线图：各国\n\n下面的代码绘制各国收入随年份变化的折线图。'
-    },
     {
       cellType: 'code',
       source:
@@ -2870,7 +2927,7 @@ test('main IPC: notebook AI generation chooses the full done message over a shor
   assert.match(progressEvents.at(-1)?.data.source ?? '', /income_by_country\.T\.plot/)
   assert.deepEqual(
     progressEvents.at(-1)?.data.cells.map((cell) => cell.cellType),
-    ['markdown', 'code']
+    ['code']
   )
 })
 
@@ -2982,6 +3039,288 @@ test('main IPC: notebook AI generation does not insert incomplete streamed JSON 
     (event) => event.channel === 'analysis:notebookCodeGenerationProgress'
   )
   assert.equal(progressEvents.length, 0)
+})
+
+test('main IPC: notebook AI generation repairs prose transcripts into NotebookCellsCompletion JSON', async () => {
+  let sessionCount = 0
+  const app = await harness(async (_cwd, file) => {
+    sessionCount += 1
+    const session = new FakeSession(file)
+    session.skipFinalAssistantMessage = true
+    if (sessionCount === 1) {
+      session.toolEvents = [
+        {
+          type: 'message_update',
+          message: { role: 'assistant' },
+          assistantMessageEvent: {
+            type: 'text_delta',
+            delta: [
+              '最安全的是使用 matplotlib 的 tab10 中差异大的颜色。',
+              '',
+              '我提供一个 markdown 解释 + 修改后的 code cell。',
+              '',
+              '返回 JSON，包含两个 cells: markdown + python。'
+            ].join('\n')
+          }
+        }
+      ]
+    } else {
+      session.toolEvents = [
+        {
+          type: 'message_update',
+          message: { role: 'assistant' },
+          assistantMessageEvent: {
+            type: 'text_delta',
+            delta: JSON.stringify({
+              cells: [
+                { language: 'markdown', code: '#### 配色更新' },
+                {
+                  language: 'python',
+                  code: 'colors = ["#1b9e77", "#d95f02"]\nax = inc_line.plot(color=colors)\nax'
+                }
+              ]
+            })
+          }
+        }
+      ]
+    }
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: [
+      {
+        id: 'cell-20',
+        cell_type: 'code',
+        execution_count: null,
+        metadata: {},
+        outputs: [],
+        source: 'inc_line.plot(color=["#0072B2", "#E69F00"])'
+      }
+    ]
+  })
+
+  const result = (await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc.ipynb',
+    document,
+    {
+      prompt: '@cell-20 这个图片使用其他配色',
+      language: 'python',
+      requestId: 'notebook-ai-repair-json',
+      afterCellId: 'cell-20',
+      references: []
+    }
+  )) as { cells: Array<{ cellType: string; source: string; language?: string }> }
+
+  assert.equal(app.sessions.length, 2)
+  assert.match(app.sessions[1].promptTexts[0], /Invalid previous model output/)
+  assert.match(app.sessions[1].promptTexts[0], /我提供一个 markdown 解释/)
+  assert.equal(app.sessions[1].promptOptions[0].synthetic, true)
+  assert.deepEqual(result.cells, [
+    { cellType: 'markdown', source: '#### 配色更新' },
+    {
+      cellType: 'code',
+      source: 'colors = ["#1b9e77", "#d95f02"]\nax = inc_line.plot(color=colors)\nax',
+      language: 'python'
+    }
+  ])
+})
+
+test('main IPC: notebook AI generation accepts a clear fenced code answer', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'message_update',
+        message: { role: 'assistant' },
+        assistantMessageEvent: {
+          type: 'text_delta',
+          delta: [
+            '下面是替换后的 Cell 20 代码：',
+            '',
+            '```python',
+            'colors = ["#1b9e77", "#d95f02"]',
+            'ax = inc_line.plot(color=colors)',
+            'ax',
+            '```'
+          ].join('\n')
+        }
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: [
+      {
+        id: 'cell-20',
+        cell_type: 'code',
+        execution_count: null,
+        metadata: {},
+        outputs: [],
+        source: 'inc_line.plot(color=["#0072B2", "#E69F00"])'
+      }
+    ]
+  })
+
+  const result = (await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc.ipynb',
+    document,
+    {
+      prompt: '@cell-20 这个图片使用其他配色',
+      language: 'python',
+      requestId: 'notebook-ai-fenced-code',
+      afterCellId: 'cell-20',
+      references: []
+    }
+  )) as { cells: Array<{ cellType: string; source: string; language?: string }> }
+
+  assert.equal(app.sessions.length, 1)
+  assert.deepEqual(result.cells, [
+    {
+      cellType: 'code',
+      source: 'colors = ["#1b9e77", "#d95f02"]\nax = inc_line.plot(color=colors)\nax',
+      language: 'python'
+    }
+  ])
+})
+
+test('main IPC: notebook AI generation accepts provider delta object text', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'message_update',
+        message: { role: 'assistant' },
+        assistantMessageEvent: {
+          type: 'message_delta',
+          delta: {
+            content: [
+              {
+                type: 'output_text',
+                text: [
+                  '下面是替换后的 Cell 20 代码：',
+                  '',
+                  '```python',
+                  'colors = ["#1b9e77", "#d95f02"]',
+                  'ax = inc_line.plot(color=colors)',
+                  'ax',
+                  '```'
+                ].join('\n')
+              }
+            ]
+          }
+        }
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: [
+      {
+        id: 'cell-20',
+        cell_type: 'code',
+        execution_count: null,
+        metadata: {},
+        outputs: [],
+        source: 'inc_line.plot(color=["#0072B2", "#E69F00"])'
+      }
+    ]
+  })
+
+  const result = (await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc.ipynb',
+    document,
+    {
+      prompt: '@cell-20 这个图片使用其他配色',
+      language: 'python',
+      requestId: 'notebook-ai-provider-delta',
+      afterCellId: 'cell-20',
+      references: []
+    }
+  )) as { cells: Array<{ cellType: string; source: string; language?: string }> }
+
+  assert.equal(app.sessions.length, 1)
+  assert.deepEqual(result.cells, [
+    {
+      cellType: 'code',
+      source: 'colors = ["#1b9e77", "#d95f02"]\nax = inc_line.plot(color=colors)\nax',
+      language: 'python'
+    }
+  ])
+})
+
+test('main IPC: notebook AI generation accepts raw code answers', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'message_update',
+        message: { role: 'assistant' },
+        assistantMessageEvent: {
+          type: 'text_delta',
+          delta: ['colors = ["#1b9e77", "#d95f02"]', 'ax = inc_line.plot(color=colors)', 'ax'].join(
+            '\n'
+          )
+        }
+      }
+    ]
+    return session
+  })
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' } },
+    cells: [
+      {
+        id: 'cell-20',
+        cell_type: 'code',
+        execution_count: null,
+        metadata: {},
+        outputs: [],
+        source: 'inc_line.plot(color=["#0072B2", "#E69F00"])'
+      }
+    ]
+  })
+
+  const result = (await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc.ipynb',
+    document,
+    {
+      prompt: '@cell-20 这个图片使用其他配色',
+      language: 'python',
+      requestId: 'notebook-ai-raw-code',
+      afterCellId: 'cell-20',
+      references: []
+    }
+  )) as { cells: Array<{ cellType: string; source: string; language?: string }> }
+
+  assert.equal(app.sessions.length, 1)
+  assert.deepEqual(result.cells, [
+    {
+      cellType: 'code',
+      source: 'colors = ["#1b9e77", "#d95f02"]\nax = inc_line.plot(color=colors)\nax',
+      language: 'python'
+    }
+  ])
 })
 
 test('main IPC: notebook AI generation uses assistant done event before session history', async () => {

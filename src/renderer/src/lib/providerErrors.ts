@@ -83,6 +83,16 @@ export function isProviderBillingError(message: string): boolean {
 export function getProviderErrorDisplay(message: string): ProviderErrorDisplay {
   const rawMessage = redactProviderErrorMessage(message.trim() || '请求失败')
 
+  if (rawMessage.startsWith('AI 没有生成可插入内容')) {
+    return {
+      title: '没有可插入的 notebook cell',
+      description: '模型返回内容未能转换成 notebook cell。请查看原始返回片段后重试。',
+      rawMessage,
+      showRawMessage: true,
+      action: null
+    }
+  }
+
   if (isProviderBillingError(rawMessage)) {
     return {
       title: '账户余额不足',

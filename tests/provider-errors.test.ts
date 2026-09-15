@@ -27,6 +27,15 @@ test('provider errors keep missing provider failures actionable as configuration
   assert.equal(display.actionLabel, '去配置 Provider')
 })
 
+test('provider errors keep notebook empty-generation diagnostics visible', () => {
+  const display = getProviderErrorDisplay('AI 没有生成可插入内容。返回片段: 下面是替换后的代码')
+
+  assert.equal(display.title, '没有可插入的 notebook cell')
+  assert.match(display.description, /原始返回片段/)
+  assert.equal(display.showRawMessage, true)
+  assert.match(display.rawMessage, /返回片段/)
+})
+
 test('provider errors classify missing Kimi models as configuration issues', () => {
   const display = getProviderErrorDisplay(
     '404 Not found the model kimi-k2.5 or Permission denied (type=resource_not_found_error)'
