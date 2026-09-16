@@ -227,7 +227,7 @@ test('workspace session tabs do not stack stale file previews under chat', () =>
   )
 })
 
-test('workspace file tabs move the active conversation into the sidebar', () => {
+test('workspace file opens keep the left sidebar matched to the source surface', () => {
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
 
   assert.match(appSource, /const showActiveConversationInSidebar = useCallback/)
@@ -245,10 +245,70 @@ test('workspace file tabs move the active conversation into the sidebar', () => 
     appSource,
     /const onOpenNotebookWorkspaceFile = useCallback[\s\S]{0,420}showActiveConversationInSidebar\(\)/
   )
+  assert.match(appSource, /const onOpenWorkspaceFileFromSidebar = useCallback/)
   assert.match(
     appSource,
-    /const onSelectWorkspaceFileTab = useCallback[\s\S]{0,260}showActiveConversationInSidebar\(\)/
+    /const onOpenWorkspaceFileFromSidebar = useCallback[\s\S]{0,260}setWorkspaceSidebarMode\('files'\)/
   )
+  assert.match(
+    appSource,
+    /onOpenNotebookWorkspaceFile\(path, \{ revealConversationSidebar: false \}\)/
+  )
+  const selectFileTabStart = appSource.indexOf('const onSelectWorkspaceFileTab = useCallback')
+  const closeFileTabStart = appSource.indexOf('const onCloseWorkspaceFileTab = useCallback')
+  assert.ok(selectFileTabStart >= 0)
+  assert.ok(closeFileTabStart > selectFileTabStart)
+  assert.doesNotMatch(
+    appSource.slice(selectFileTabStart, closeFileTabStart),
+    /showActiveConversationInSidebar\(\)/
+  )
+})
+
+test('workspace files are available from the left sidebar activity item', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const activitySource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/AppActivityBar.tsx'),
+    'utf8'
+  )
+  const sidebarSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/AppWorkspaceSidebar.tsx'),
+    'utf8'
+  )
+  const sidePanelSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/WorkspaceSidePanel.tsx'),
+    'utf8'
+  )
+  const sidebarModeSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/lib/workspaceSidebar.ts'),
+    'utf8'
+  )
+
+  assert.match(sidebarModeSource, /'files'/)
+  assert.match(
+    activitySource,
+    /GoBook[\s\S]{0,120}GoComment[\s\S]{0,120}GoContainer[\s\S]{0,120}GoFileDirectory[\s\S]{0,120}GoGear[\s\S]{0,120}GoPackage[\s\S]{0,120}GoProject[\s\S]{0,120}GoTools[\s\S]{0,120}from 'react-icons\/go'/
+  )
+  assert.match(activitySource, /const NavChatIcon = createActivityBarReactIcon\(GoComment\)/)
+  assert.match(activitySource, /const NavProjectsIcon = createActivityBarReactIcon\(GoProject\)/)
+  assert.match(activitySource, /const NavFilesIcon = createActivityBarReactIcon\(GoFileDirectory\)/)
+  assert.match(activitySource, /const NavPluginsIcon = createActivityBarReactIcon\(GoPackage\)/)
+  assert.match(activitySource, /const NavSkillsIcon = createActivityBarReactIcon\(GoBook\)/)
+  assert.match(activitySource, /const NavMcpIcon = createActivityBarReactIcon\(GoTools\)/)
+  assert.match(activitySource, /const NavWrappersIcon = createActivityBarReactIcon\(GoContainer\)/)
+  assert.match(
+    activitySource,
+    /const NavRuntimeIcon = createActivityBarPhiIcon\(PhiIcons\.nav\.runtime\)/
+  )
+  assert.match(activitySource, /const NavSettingsIcon = createActivityBarReactIcon\(GoGear\)/)
+  assert.match(activitySource, /mode="files"[\s\S]{0,160}label="文件"/)
+  assert.match(activitySource, /onClick=\{\(\) => onSelectWorkspaceSidebarMode\('files'\)\}/)
+  assert.match(sidebarSource, /workspaceSidebarMode === 'files'/)
+  assert.match(sidebarSource, /data-phi-files-sidebar="true"/)
+  assert.match(sidebarSource, /<WorkspaceFilesPane/)
+  assert.match(sidePanelSource, /export function WorkspaceFilesPane/)
+  assert.match(appSource, /workspaceRootPath=\{activeCwd\}/)
+  assert.match(appSource, /onOpenWorkspaceFile=\{onOpenWorkspaceFileFromSidebar\}/)
+  assert.match(appSource, /onRefreshWorkspaceFiles=\{onRefreshWorkspaceSidePanel\}/)
 })
 
 test('workspace file titlebars reserve trailing app chrome only at the window edge', () => {

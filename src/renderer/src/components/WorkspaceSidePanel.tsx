@@ -7,7 +7,7 @@ export type WorkspaceSidePanelTab = 'files'
 
 const DirectoryTreeIcon = PhiIcons.entity.directoryTree
 
-function WorkspaceFilesPane({
+export function WorkspaceFilesPane({
   rootPath,
   activePath,
   treeRevision,

@@ -992,12 +992,16 @@ function App(): React.JSX.Element {
   }, [])
 
   const onOpenNotebookWorkspaceFile = useCallback(
-    (path: string): void => {
+    (path: string, options: { revealConversationSidebar?: boolean } = {}): void => {
       const normalizedPath = absoluteWorkspacePath(useSessionStore.getState().activeCwd, path)
       const title = fileNameFromPath(normalizedPath)
       filePreviewRequestRef.current += 1
       setFilePreview(null)
-      showActiveConversationInSidebar()
+      if (options.revealConversationSidebar ?? true) {
+        showActiveConversationInSidebar()
+      } else {
+        setIsSidebarOpen(true)
+      }
       setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
       setWorkspaceFileTabs((tabs) => {
         const nextTab: WorkspaceFileTab = {
@@ -1592,6 +1596,21 @@ function App(): React.JSX.Element {
     [getActiveCwd, previewDirectoryPath, showActiveConversationInSidebar]
   )
 
+  const onOpenWorkspaceFileFromSidebar = useCallback(
+    (path: string): void => {
+      const normalizedPath = absoluteWorkspacePath(getActiveCwd(), path)
+      setWorkspaceSidebarMode('files')
+      setIsSidebarOpen(true)
+      setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
+      if (isNotebookFilePath(path)) {
+        onOpenNotebookWorkspaceFile(path, { revealConversationSidebar: false })
+        return
+      }
+      previewFilePath(path)
+    },
+    [getActiveCwd, onOpenNotebookWorkspaceFile, previewFilePath]
+  )
+
   const onOpenFilePreview = useCallback(
     (path: string): void => {
       if (isNotebookFilePath(path)) {
@@ -1942,7 +1961,6 @@ function App(): React.JSX.Element {
     (tabLike: AnalysisWorkspaceFileTab): void => {
       const tab = workspaceFileTabs.find((item) => item.path === tabLike.path)
       if (!tab) return
-      showActiveConversationInSidebar()
       setActiveWorkspaceTabKey(workspaceFileTabKey(tab.path))
       setActiveWorkspaceFilePath(tab.path)
       navigateToView('analysis')
@@ -1958,7 +1976,6 @@ function App(): React.JSX.Element {
       activateCachedAnalysisNotebook,
       onOpenNotebookWorkspaceFile,
       setActiveWorkspaceFilePath,
-      showActiveConversationInSidebar,
       showCachedOrLoadFilePreview,
       workspaceFileTabs,
       navigateToView
@@ -2585,6 +2602,12 @@ function App(): React.JSX.Element {
           activeWorkspaceTitle={activeWorkspaceTitle}
           activeWorkspaceScopeLabel={activeWorkspaceScopeLabel}
           workspaceSidebarMode={workspaceSidebarMode}
+          workspaceRootPath={activeCwd}
+          activeWorkspacePath={activeWorkspaceSidePanelPath}
+          workspaceFileTreeRevision={workspaceSidePanelTreeRevision}
+          onOpenWorkspaceFile={onOpenWorkspaceFileFromSidebar}
+          onListWorkspaceDirectory={onListPreviewDirectory}
+          onRefreshWorkspaceFiles={onRefreshWorkspaceSidePanel}
           runtimeProjectCwd={activeProject?.workingDirectory ?? ''}
           runtimeStatus={analysisJupyterRuntimeStatus}
           isRuntimeLoading={isLoadingAnalysisJupyterRuntime || isStartingAnalysisJupyter}

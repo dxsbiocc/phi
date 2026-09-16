@@ -30,9 +30,28 @@ import materialDotenvSvg from '../../../node_modules/material-icon-theme/icons/t
 import materialElixirSvg from '../../../node_modules/material-icon-theme/icons/elixir.svg?raw'
 import materialErlangSvg from '../../../node_modules/material-icon-theme/icons/erlang.svg?raw'
 import materialFileSvg from '../../../node_modules/material-icon-theme/icons/file.svg?raw'
+import materialFolderDistSvg from '../../../node_modules/material-icon-theme/icons/folder-dist.svg?raw'
+import materialFolderDistOpenSvg from '../../../node_modules/material-icon-theme/icons/folder-dist-open.svg?raw'
+import materialFolderEnvironmentSvg from '../../../node_modules/material-icon-theme/icons/folder-environment.svg?raw'
+import materialFolderEnvironmentOpenSvg from '../../../node_modules/material-icon-theme/icons/folder-environment-open.svg?raw'
+import materialFolderGitSvg from '../../../node_modules/material-icon-theme/icons/folder-git.svg?raw'
+import materialFolderGitOpenSvg from '../../../node_modules/material-icon-theme/icons/folder-git-open.svg?raw'
+import materialFolderIncludeSvg from '../../../node_modules/material-icon-theme/icons/folder-include.svg?raw'
+import materialFolderIncludeOpenSvg from '../../../node_modules/material-icon-theme/icons/folder-include-open.svg?raw'
+import materialFolderLibSvg from '../../../node_modules/material-icon-theme/icons/folder-lib.svg?raw'
+import materialFolderLibOpenSvg from '../../../node_modules/material-icon-theme/icons/folder-lib-open.svg?raw'
+import materialFolderLogSvg from '../../../node_modules/material-icon-theme/icons/folder-log.svg?raw'
+import materialFolderLogOpenSvg from '../../../node_modules/material-icon-theme/icons/folder-log-open.svg?raw'
+import materialFolderRootSvg from '../../../node_modules/material-icon-theme/icons/folder-root.svg?raw'
+import materialFolderRootOpenSvg from '../../../node_modules/material-icon-theme/icons/folder-root-open.svg?raw'
+import materialFolderScriptsSvg from '../../../node_modules/material-icon-theme/icons/folder-scripts.svg?raw'
+import materialFolderScriptsOpenSvg from '../../../node_modules/material-icon-theme/icons/folder-scripts-open.svg?raw'
+import materialFolderSrcSvg from '../../../node_modules/material-icon-theme/icons/folder-src.svg?raw'
+import materialFolderSrcOpenSvg from '../../../node_modules/material-icon-theme/icons/folder-src-open.svg?raw'
 import materialFolderTestSvg from '../../../node_modules/material-icon-theme/icons/folder-test.svg?raw'
 import materialFolderTestOpenSvg from '../../../node_modules/material-icon-theme/icons/folder-test-open.svg?raw'
 import materialFontSvg from '../../../node_modules/material-icon-theme/icons/font.svg?raw'
+import materialGitSvg from '../../../node_modules/material-icon-theme/icons/git.svg?raw'
 import materialGoSvg from '../../../node_modules/material-icon-theme/icons/go.svg?raw'
 import materialHaskellSvg from '../../../node_modules/material-icon-theme/icons/haskell.svg?raw'
 import materialHtmlSvg from '../../../node_modules/material-icon-theme/icons/html.svg?raw'
@@ -195,11 +214,30 @@ const MATERIAL_ICON_DIRECT_SVG_MARKUP: Record<string, string> = {
   elixir: materialElixirSvg,
   erlang: materialErlangSvg,
   file: materialFileSvg,
+  'folder-dist': materialFolderDistSvg,
+  'folder-dist-open': materialFolderDistOpenSvg,
+  'folder-environment': materialFolderEnvironmentSvg,
+  'folder-environment-open': materialFolderEnvironmentOpenSvg,
+  'folder-git': materialFolderGitSvg,
+  'folder-git-open': materialFolderGitOpenSvg,
+  'folder-include': materialFolderIncludeSvg,
+  'folder-include-open': materialFolderIncludeOpenSvg,
+  'folder-lib': materialFolderLibSvg,
+  'folder-lib-open': materialFolderLibOpenSvg,
+  'folder-log': materialFolderLogSvg,
+  'folder-log-open': materialFolderLogOpenSvg,
   folder: materialDirectorySvg,
   'folder-open': materialDirectoryOpenSvg,
+  'folder-root': materialFolderRootSvg,
+  'folder-root-open': materialFolderRootOpenSvg,
+  'folder-scripts': materialFolderScriptsSvg,
+  'folder-scripts-open': materialFolderScriptsOpenSvg,
+  'folder-src': materialFolderSrcSvg,
+  'folder-src-open': materialFolderSrcOpenSvg,
   'folder-test': materialFolderTestSvg,
   'folder-test-open': materialFolderTestOpenSvg,
   font: materialFontSvg,
+  git: materialGitSvg,
   go: materialGoSvg,
   haskell: materialHaskellSvg,
   hex: materialBinarySvg,

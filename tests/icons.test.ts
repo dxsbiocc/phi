@@ -70,6 +70,18 @@ function assertMaterialIconForPath(path: string, iconName: string): void {
   assertUsesMaterialIcon(markup, iconName)
 }
 
+function assertDirectoryMaterialIconForPath(
+  path: string,
+  iconName: string,
+  expanded = false
+): void {
+  const meta = directoryIconForPath(path, expanded)
+  const markup = renderToStaticMarkup(createElement(meta.Icon, { fontSize: 'small' }))
+
+  assert.equal(meta.materialIconName, iconName)
+  assertUsesMaterialIcon(markup, iconName)
+}
+
 test('fileIconForPath maps common files to representative icon kinds', () => {
   assert.equal(fileIconForPath('/workspace/src/App.tsx').kind, 'react')
   assert.equal(fileIconForPath('/workspace/src/index.ts').kind, 'typescript')
@@ -183,6 +195,42 @@ test('screenshot sample files resolve to concrete Material Icon Theme assets', (
   const folderMarkup = renderToStaticMarkup(createElement(folder.Icon, { fontSize: 'small' }))
   assert.equal(folder.materialIconName, 'folder-test')
   assertUsesMaterialIcon(folderMarkup, 'folder-test')
+})
+
+test('workspace tree special paths resolve to VS Code style Material icons', () => {
+  const rootFolder = directoryIconForPath('/workspace/test', true, true)
+  const rootMarkup = renderToStaticMarkup(createElement(rootFolder.Icon, { fontSize: 'small' }))
+  assert.equal(rootFolder.materialIconName, 'folder-root-open')
+  assertUsesMaterialIcon(rootMarkup, 'folder-root-open')
+
+  const gitFolder = directoryIconForPath('/workspace/test/.git')
+  const gitFolderMarkup = renderToStaticMarkup(createElement(gitFolder.Icon, { fontSize: 'small' }))
+  assert.equal(gitFolder.materialIconName, 'folder-git')
+  assertUsesMaterialIcon(gitFolderMarkup, 'folder-git')
+
+  const venvFolder = directoryIconForPath('/workspace/test/.venv')
+  const venvFolderMarkup = renderToStaticMarkup(
+    createElement(venvFolder.Icon, { fontSize: 'small' })
+  )
+  assert.equal(venvFolder.materialIconName, 'folder-environment')
+  assertUsesMaterialIcon(venvFolderMarkup, 'folder-environment')
+
+  for (const [path, iconName, expandedIconName] of [
+    ['/workspace/test/bin', 'folder-dist', 'folder-dist-open'],
+    ['/workspace/test/build', 'folder-dist', 'folder-dist-open'],
+    ['/workspace/test/dist', 'folder-dist', 'folder-dist-open'],
+    ['/workspace/test/include', 'folder-include', 'folder-include-open'],
+    ['/workspace/test/lib', 'folder-lib', 'folder-lib-open'],
+    ['/workspace/test/log', 'folder-log', 'folder-log-open'],
+    ['/workspace/test/logs', 'folder-log', 'folder-log-open'],
+    ['/workspace/test/scripts', 'folder-scripts', 'folder-scripts-open'],
+    ['/workspace/test/src', 'folder-src', 'folder-src-open']
+  ] as const) {
+    assertDirectoryMaterialIconForPath(path, iconName)
+    assertDirectoryMaterialIconForPath(path, expandedIconName, true)
+  }
+
+  assertMaterialIconForPath('/workspace/test/.gitignore', 'git')
 })
 
 test('file icons render Material Icon Theme assets as inline React icon components', () => {

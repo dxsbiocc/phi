@@ -1,16 +1,20 @@
 import { memo, type MouseEvent, type ReactNode } from 'react'
-import { Box, Typography } from '@mui/material'
+import { Box, IconButton, Stack, Tooltip, Typography } from '@mui/material'
+import { GoSync } from 'react-icons/go'
 import SessionSidebar from './components/SessionSidebar'
+import { PhiIcons } from './icons'
 import { McpSidebar } from './features/mcp/McpView'
 import { PluginSidebar } from './features/plugin/PluginView'
 import { RuntimeSidebar } from './features/runtime/RuntimeView'
 import { SkillSidebar } from './features/skill/SkillView'
 import { WrapperSidebar } from './features/wrapper/WrapperView'
+import { WorkspaceFilesPane } from './components/WorkspaceSidePanel'
 import type { AppView } from './App'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
 import type { WrapperCatalogEntry } from '../../shared/wrapperCatalogTypes'
 import type {
   AnalysisJupyterRuntimeStatus,
+  DirectoryListing,
   McpServerSummary,
   PluginCatalogItem,
   Project,
@@ -21,6 +25,8 @@ import type {
 
 const macTitlebarHeight = 44
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
+const FilesIcon = PhiIcons.entity.directoryTree
+const RefreshIcon = GoSync
 
 export type AppWorkspaceSidebarProps = {
   isSidebarOpen: boolean
@@ -34,6 +40,13 @@ export type AppWorkspaceSidebarProps = {
   activeWorkspaceScopeLabel: string
 
   workspaceSidebarMode: WorkspaceSidebarMode
+
+  workspaceRootPath: string
+  activeWorkspacePath: string | null
+  workspaceFileTreeRevision: number
+  onOpenWorkspaceFile: (path: string) => void
+  onListWorkspaceDirectory: (path: string) => Promise<DirectoryListing>
+  onRefreshWorkspaceFiles: () => void
 
   runtimeProjectCwd: string
   runtimeStatus: AnalysisJupyterRuntimeStatus | null
@@ -98,6 +111,12 @@ function AppWorkspaceSidebarImpl({
   activeWorkspaceTitle,
   activeWorkspaceScopeLabel,
   workspaceSidebarMode,
+  workspaceRootPath,
+  activeWorkspacePath,
+  workspaceFileTreeRevision,
+  onOpenWorkspaceFile,
+  onListWorkspaceDirectory,
+  onRefreshWorkspaceFiles,
   runtimeProjectCwd,
   runtimeStatus,
   isRuntimeLoading,
@@ -233,6 +252,63 @@ function AppWorkspaceSidebarImpl({
           >
             {activeChatView}
           </Box>
+        </Box>
+      </Box>
+    ) : workspaceSidebarMode === 'files' ? (
+      <Box
+        data-phi-files-sidebar="true"
+        sx={{
+          width: '100%',
+          minWidth: 0,
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          bgcolor: (muiTheme) =>
+            muiTheme.palette.mode === 'dark' ? muiTheme.palette.background.default : '#FFFFFF',
+          pt: isMac ? `${macTitlebarHeight + 8}px` : 2,
+          WebkitAppRegion: 'no-drag'
+        }}
+      >
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{ flexShrink: 0, px: 1.5, pb: 1, alignItems: 'center' }}
+        >
+          <FilesIcon sx={{ fontSize: 20, color: 'text.secondary', flexShrink: 0 }} />
+          <Typography
+            variant="h6"
+            sx={{ flex: 1, minWidth: 0, fontSize: '1rem', fontWeight: 800 }}
+            noWrap
+          >
+            Files
+          </Typography>
+          <Tooltip title="刷新文件树">
+            <span>
+              <IconButton
+                size="small"
+                aria-label="刷新文件树"
+                disabled={!workspaceRootPath}
+                onClick={onRefreshWorkspaceFiles}
+                sx={{
+                  width: 30,
+                  height: 30,
+                  color: 'text.secondary',
+                  '&:hover': { bgcolor: 'action.hover', color: 'text.primary' }
+                }}
+              >
+                <RefreshIcon size={18} />
+              </IconButton>
+            </span>
+          </Tooltip>
+        </Stack>
+        <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
+          <WorkspaceFilesPane
+            rootPath={workspaceRootPath}
+            activePath={activeWorkspacePath}
+            treeRevision={workspaceFileTreeRevision}
+            onOpenFile={onOpenWorkspaceFile}
+            onListDirectory={onListWorkspaceDirectory}
+          />
         </Box>
       </Box>
     ) : workspaceSidebarMode === 'runtime' ? (

@@ -2,8 +2,16 @@ import { memo, useCallback, useRef, type FocusEvent } from 'react'
 import { Box, IconButton, Paper, Popper, Tooltip } from '@mui/material'
 import type { SxProps, Theme } from '@mui/material/styles'
 import type { IconType } from 'react-icons'
-import { SiHyperskill, SiNextflow } from 'react-icons/si'
-import { VscMcp } from 'react-icons/vsc'
+import {
+  GoBook,
+  GoComment,
+  GoContainer,
+  GoFileDirectory,
+  GoGear,
+  GoPackage,
+  GoProject,
+  GoTools
+} from 'react-icons/go'
 import SessionSidebar from './components/SessionSidebar'
 import { PhiIcons } from './icons'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
@@ -13,7 +21,7 @@ const activityBarWidth = 48
 const macTitlebarHeight = 44
 const macContentTopGap = 8
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
-const NavSettingsIcon = PhiIcons.nav.settings
+type PhiIconComponent = typeof PhiIcons.nav.settings
 type ActivityBarIconFontSize = 'inherit' | 'small' | 'medium' | 'large'
 type ActivityBarIconProps = {
   fontSize?: ActivityBarIconFontSize
@@ -55,7 +63,7 @@ function ActivityBarIconBox({ children }: { children: React.ReactNode }): React.
   )
 }
 
-function createActivityBarPhiIcon(Icon: typeof NavSettingsIcon): ActivityBarIconComponent {
+function createActivityBarPhiIcon(Icon: PhiIconComponent): ActivityBarIconComponent {
   return function ActivityBarPhiIcon({ fontSize, size }: ActivityBarIconProps): React.JSX.Element {
     return (
       <ActivityBarIconBox>
@@ -96,13 +104,15 @@ function activityBarButtonSx(active: boolean): SxProps<Theme> {
   } as const
 }
 
-const NavChatIcon = createActivityBarPhiIcon(PhiIcons.nav.chat)
-const NavProjectsIcon = createActivityBarPhiIcon(PhiIcons.nav.projects)
+const NavChatIcon = createActivityBarReactIcon(GoComment)
+const NavProjectsIcon = createActivityBarReactIcon(GoProject)
+const NavFilesIcon = createActivityBarReactIcon(GoFileDirectory)
 const NavRuntimeIcon = createActivityBarPhiIcon(PhiIcons.nav.runtime)
-const NavPluginsIcon = createActivityBarPhiIcon(PhiIcons.nav.plugins)
-const NavSkillsIcon = createActivityBarReactIcon(SiHyperskill)
-const NavMcpIcon = createActivityBarReactIcon(VscMcp)
-const NavWrappersIcon = createActivityBarReactIcon(SiNextflow)
+const NavPluginsIcon = createActivityBarReactIcon(GoPackage)
+const NavSkillsIcon = createActivityBarReactIcon(GoBook)
+const NavMcpIcon = createActivityBarReactIcon(GoTools)
+const NavWrappersIcon = createActivityBarReactIcon(GoContainer)
+const NavSettingsIcon = createActivityBarReactIcon(GoGear)
 
 function WorkspaceSidebarNavButton({
   mode,
@@ -310,6 +320,16 @@ function AppActivityBarImpl({
           onPreviewOpen={openWorkspaceSidebarPreview}
           onPreviewClose={requestWorkspaceSidebarPreviewClose}
           onClick={() => onSelectWorkspaceView('projects')}
+        />
+        <WorkspaceSidebarNavButton
+          mode="files"
+          label="文件"
+          icon={NavFilesIcon}
+          active={isWorkspaceSidebarModeExpanded('files')}
+          useContentPreview={false}
+          onPreviewOpen={openWorkspaceSidebarPreview}
+          onPreviewClose={requestWorkspaceSidebarPreviewClose}
+          onClick={() => onSelectWorkspaceSidebarMode('files')}
         />
         <Tooltip title="运行时" placement="right">
           <IconButton

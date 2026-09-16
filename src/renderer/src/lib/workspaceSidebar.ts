@@ -1,5 +1,5 @@
 export type WorkspaceSidebarMode =
-  'conversations' | 'projects' | 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
+  'conversations' | 'projects' | 'files' | 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
 
 export function workspaceSidebarModeIsExpanded({
   isSidebarOpen,
