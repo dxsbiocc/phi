@@ -17,7 +17,11 @@ test('markdown code blocks show language labels and copy controls', () => {
 
   assert.match(markup, /ts/)
   assert.match(markup, /复制/)
-  assert.match(markup, /const answer = 42/)
+  assert.match(markup, /data-phi-markdown-code="highlighted"/)
+  assert.match(markup, /data-phi-markdown-code-language="typescript"/)
+  assert.match(markup, /data-phi-syntax-token="keyword"[^>]*>const</)
+  assert.match(markup, /data-phi-syntax-token="plain"[^>]*> answer </)
+  assert.match(markup, /data-phi-syntax-token="number"[^>]*>42</)
 })
 
 test('markdown code blocks fall back to a generic label without a language', () => {
@@ -25,6 +29,36 @@ test('markdown code blocks fall back to a generic label without a language', () 
 
   assert.match(markup, /代码/)
   assert.match(markup, /plain text/)
+  assert.match(markup, /data-phi-markdown-code="plain"/)
+})
+
+test('markdown code blocks syntax highlight Python, R, and Rust fences', () => {
+  const markup = renderMarkdown(
+    [
+      '```python',
+      'for value in items:',
+      '    print(value)',
+      '```',
+      '',
+      '```r',
+      'plot <- function(x) x + 1',
+      '```',
+      '',
+      '```rust',
+      'fn main() { let value: i32 = 42; }',
+      '```'
+    ].join('\n')
+  )
+
+  assert.equal((markup.match(/data-phi-markdown-code="highlighted"/g) ?? []).length, 3)
+  assert.match(markup, /data-phi-markdown-code-language="python"/)
+  assert.match(markup, /data-phi-markdown-code-language="r"/)
+  assert.match(markup, /data-phi-markdown-code-language="rust"/)
+  assert.match(markup, /data-phi-syntax-token="keyword"[^>]*>for</)
+  assert.match(markup, /data-phi-syntax-token="function"[^>]*>print</)
+  assert.match(markup, /data-phi-syntax-token="keyword"[^>]*>function</)
+  assert.match(markup, /data-phi-syntax-token="keyword"[^>]*>fn</)
+  assert.match(markup, /data-phi-syntax-token="type"[^>]*>i32</)
 })
 
 test('markdown code blocks use theme surfaces instead of hard-coded dark panels', () => {
@@ -277,7 +311,10 @@ test('markdown code blocks do not linkify paths inside code', () => {
   const markup = renderMarkdown('```sh\ncat ./src/App.tsx\n```')
 
   assert.doesNotMatch(markup, /title="\/Users\/example\/project\/src\/App.tsx"/)
-  assert.match(markup, /cat \.\/src\/App.tsx/)
+  assert.doesNotMatch(markup, /data-phi-slot="local-file-link"/)
+  assert.match(markup, /data-phi-markdown-code-language="shell"/)
+  assert.match(markup, /data-phi-syntax-token="plain"[^>]*>cat /)
+  assert.match(markup, /data-phi-syntax-token="plain"[^>]*>App\.tsx</)
 })
 
 test('markdown rendering drops raw html', () => {

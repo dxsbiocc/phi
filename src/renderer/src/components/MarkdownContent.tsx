@@ -5,6 +5,8 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import { PhiIcons, directoryIconForPath, fileIconForPath } from '../icons'
 import { useMarkdownPlugins } from '../lib/markdownMathPlugins'
 import { tokenizeLocalPaths } from '../lib/localPaths'
+import { highlightLine, type SyntaxLanguage } from '../lib/syntaxHighlight'
+import { syntaxTokenColor } from '../lib/syntaxTheme'
 import {
   collectBareFileReferencePaths,
   inlineCodeBareFilePath,
@@ -29,6 +31,41 @@ import {
 export type { LocalPathKind } from '../lib/markdownLocalPathReferences'
 const ContentCopyIcon = PhiIcons.action.copy
 
+const MARKDOWN_CODE_LANGUAGE_ALIASES: Record<string, SyntaxLanguage> = {
+  bash: 'shell',
+  cjs: 'javascript',
+  console: 'shell',
+  css: 'css',
+  javascript: 'javascript',
+  js: 'javascript',
+  json: 'json',
+  jsonc: 'json',
+  jsx: 'javascript',
+  markdown: 'markdown',
+  md: 'markdown',
+  mdx: 'markdown',
+  mjs: 'javascript',
+  none: 'plain',
+  plaintext: 'plain',
+  py: 'python',
+  python: 'python',
+  python3: 'python',
+  r: 'r',
+  rs: 'rust',
+  rscript: 'r',
+  rust: 'rust',
+  sh: 'shell',
+  shell: 'shell',
+  text: 'plain',
+  toml: 'toml',
+  ts: 'typescript',
+  tsx: 'typescript',
+  typescript: 'typescript',
+  yaml: 'yaml',
+  yml: 'yaml',
+  zsh: 'shell'
+}
+
 function textFromNode(node: ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node)
   if (Array.isArray(node)) return node.map(textFromNode).join('')
@@ -36,17 +73,62 @@ function textFromNode(node: ReactNode): string {
   return ''
 }
 
-function languageFromCodeChild(children: ReactNode): string {
+function languageFromCodeChild(children: ReactNode): string | null {
   const child = Array.isArray(children) ? children[0] : children
-  if (!isValidElement<{ className?: string }>(child)) return '代码'
+  if (!isValidElement<{ className?: string }>(child)) return null
 
   const match = /language-([^\s]+)/.exec(child.props.className ?? '')
-  return match?.[1] ?? '代码'
+  return match?.[1] ?? null
+}
+
+function syntaxLanguageForMarkdownCode(language: string | null): SyntaxLanguage {
+  if (!language) return 'plain'
+  return MARKDOWN_CODE_LANGUAGE_ALIASES[language.trim().toLowerCase()] ?? 'plain'
+}
+
+function HighlightedCodeContent({
+  codeText,
+  language
+}: {
+  codeText: string
+  language: SyntaxLanguage
+}): React.JSX.Element {
+  const lines = useMemo(
+    () => codeText.split('\n').map((line) => highlightLine(line, language)),
+    [codeText, language]
+  )
+
+  return (
+    <Box
+      component="code"
+      data-phi-markdown-code={language === 'plain' ? 'plain' : 'highlighted'}
+      data-phi-markdown-code-language={language}
+      sx={{ color: 'text.primary' }}
+    >
+      {lines.map((tokens, lineIndex) => (
+        <Fragment key={lineIndex}>
+          {tokens.map((token, tokenIndex) => (
+            <Box
+              key={`${lineIndex}-${tokenIndex}`}
+              component="span"
+              data-phi-syntax-token={token.kind}
+              sx={{ color: (theme) => syntaxTokenColor(theme, token.kind) }}
+            >
+              {token.value}
+            </Box>
+          ))}
+          {lineIndex < lines.length - 1 ? '\n' : null}
+        </Fragment>
+      ))}
+    </Box>
+  )
 }
 
 function CodeBlock({ children }: { children?: ReactNode }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const language = languageFromCodeChild(children)
+  const languageLabel = language ?? '代码'
+  const syntaxLanguage = syntaxLanguageForMarkdownCode(language)
   const codeText = textFromNode(children).replace(/\n$/, '')
 
   const copyCode = async (): Promise<void> => {
@@ -98,9 +180,9 @@ function CodeBlock({ children }: { children?: ReactNode }): React.JSX.Element {
             color: 'text.secondary',
             fontFamily: 'var(--font-mono)'
           }}
-          title={language}
+          title={languageLabel}
         >
-          {language}
+          {languageLabel}
         </Typography>
         <Button
           size="small"
@@ -133,7 +215,7 @@ function CodeBlock({ children }: { children?: ReactNode }): React.JSX.Element {
           }
         }}
       >
-        {children}
+        <HighlightedCodeContent codeText={codeText} language={syntaxLanguage} />
       </Box>
     </Box>
   )

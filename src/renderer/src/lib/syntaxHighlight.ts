@@ -5,6 +5,7 @@ export type SyntaxLanguage =
   | 'markdown'
   | 'python'
   | 'r'
+  | 'rust'
   | 'shell'
   | 'toml'
   | 'typescript'
@@ -182,6 +183,70 @@ const SHELL_KEYWORDS = new Set([
   'while'
 ])
 
+const RUST_KEYWORDS = new Set([
+  'as',
+  'async',
+  'await',
+  'break',
+  'const',
+  'continue',
+  'crate',
+  'dyn',
+  'else',
+  'enum',
+  'extern',
+  'fn',
+  'for',
+  'if',
+  'impl',
+  'in',
+  'let',
+  'loop',
+  'match',
+  'mod',
+  'move',
+  'mut',
+  'pub',
+  'ref',
+  'return',
+  'self',
+  'Self',
+  'static',
+  'struct',
+  'super',
+  'trait',
+  'type',
+  'unsafe',
+  'use',
+  'where',
+  'while'
+])
+
+const RUST_TYPES = new Set([
+  'Box',
+  'Option',
+  'Result',
+  'String',
+  'Vec',
+  'bool',
+  'char',
+  'f32',
+  'f64',
+  'i8',
+  'i16',
+  'i32',
+  'i64',
+  'i128',
+  'isize',
+  'str',
+  'u8',
+  'u16',
+  'u32',
+  'u64',
+  'u128',
+  'usize'
+])
+
 const TOML_KEYWORDS = new Set(['true', 'false'])
 const JSON_KEYWORDS = new Set(['true', 'false', 'null'])
 
@@ -218,7 +283,9 @@ function readQuotedString(line: string, start: number, quote: string): number {
 }
 
 function startsLineComment(line: string, index: number, language: SyntaxLanguage): boolean {
-  if (language === 'typescript' || language === 'javascript') return line.startsWith('//', index)
+  if (language === 'typescript' || language === 'javascript' || language === 'rust') {
+    return line.startsWith('//', index)
+  }
   if (language === 'python' || language === 'r' || language === 'shell') {
     return line[index] === '#'
   }
@@ -253,6 +320,13 @@ function keywordKind(word: string, language: SyntaxLanguage): SyntaxTokenKind | 
     return null
   }
 
+  if (language === 'rust') {
+    if (word === 'true' || word === 'false') return 'boolean'
+    if (RUST_KEYWORDS.has(word)) return 'keyword'
+    if (RUST_TYPES.has(word)) return 'type'
+    return null
+  }
+
   return null
 }
 
@@ -264,7 +338,12 @@ function scriptWordPattern(language: SyntaxLanguage): RegExp {
 }
 
 function isScriptMemberToken(line: string, index: number, language: SyntaxLanguage): boolean {
-  if (language === 'python' || language === 'typescript' || language === 'javascript') {
+  if (
+    language === 'python' ||
+    language === 'typescript' ||
+    language === 'javascript' ||
+    language === 'rust'
+  ) {
     return line[index - 1] === '.'
   }
   if (language === 'r') {
@@ -292,7 +371,10 @@ function tokenizeScriptLine(line: string, language: SyntaxLanguage): SyntaxToken
     }
 
     if (
-      (language === 'typescript' || language === 'javascript' || language === 'css') &&
+      (language === 'typescript' ||
+        language === 'javascript' ||
+        language === 'rust' ||
+        language === 'css') &&
       line.startsWith('/*', index)
     ) {
       const end = line.indexOf('*/', index + 2)
@@ -516,6 +598,7 @@ export function languageForPath(path: string): SyntaxLanguage {
   }
   if (extension === 'py' || name === '.python-version') return 'python'
   if (extension === 'r') return 'r'
+  if (extension === 'rs') return 'rust'
   if (extension === 'sh' || extension === 'bash' || extension === 'zsh') return 'shell'
   if (extension === 'json' || extension === 'jsonc') return 'json'
   if (extension === 'yaml' || extension === 'yml') return 'yaml'
@@ -539,6 +622,7 @@ export function highlightLine(line: string, language: SyntaxLanguage): SyntaxTok
     language === 'javascript' ||
     language === 'python' ||
     language === 'r' ||
+    language === 'rust' ||
     language === 'shell'
   ) {
     return tokenizeScriptLine(line, language)

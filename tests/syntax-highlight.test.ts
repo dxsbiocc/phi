@@ -6,6 +6,7 @@ test('languageForPath detects common preview languages', () => {
   assert.equal(languageForPath('/workspace/src/App.tsx'), 'typescript')
   assert.equal(languageForPath('/workspace/scripts/main.py'), 'python')
   assert.equal(languageForPath('/workspace/scripts/plot.R'), 'r')
+  assert.equal(languageForPath('/workspace/src/main.rs'), 'rust')
   assert.equal(languageForPath('/workspace/scripts/deploy.sh'), 'shell')
   assert.equal(languageForPath('/workspace/package.json'), 'json')
   assert.equal(languageForPath('/workspace/config.yaml'), 'yaml')
@@ -33,6 +34,35 @@ test('highlightLine tokenizes scripts with vscode-like semantic groups', () => {
       ['punctuation', ')'],
       ['plain', ' '],
       ['comment', '// render chart']
+    ]
+  )
+})
+
+test('highlightLine tokenizes Rust keywords and built-in types', () => {
+  const tokens = highlightLine('fn main() { let value: i32 = 42; }', 'rust')
+
+  assert.deepEqual(
+    tokens.map((token) => [token.kind, token.value]),
+    [
+      ['keyword', 'fn'],
+      ['plain', ' '],
+      ['function', 'main'],
+      ['punctuation', '()'],
+      ['plain', ' '],
+      ['punctuation', '{'],
+      ['plain', ' '],
+      ['keyword', 'let'],
+      ['plain', ' value'],
+      ['operator', ':'],
+      ['plain', ' '],
+      ['type', 'i32'],
+      ['plain', ' '],
+      ['operator', '='],
+      ['plain', ' '],
+      ['number', '42'],
+      ['punctuation', ';'],
+      ['plain', ' '],
+      ['punctuation', '}']
     ]
   )
 })
