@@ -1,4 +1,4 @@
-import { Box, Divider, Typography } from '@mui/material'
+import { Box, Typography } from '@mui/material'
 import { PhiIcons } from '../icons'
 import type { DirectoryListing } from '../types'
 import { ProjectFileTree } from '../features/file-preview/components/ProjectFileTree'
@@ -6,6 +6,39 @@ import { ProjectFileTree } from '../features/file-preview/components/ProjectFile
 export type WorkspaceSidePanelTab = 'files'
 
 const DirectoryTreeIcon = PhiIcons.entity.directoryTree
+const TerminalIcon = PhiIcons.tool.command
+const BrowserIcon = PhiIcons.tool.web
+
+function WorkspaceToolCard({
+  kind,
+  label,
+  Icon
+}: {
+  kind: 'terminal' | 'browser'
+  label: string
+  Icon: typeof TerminalIcon
+}): React.JSX.Element {
+  return (
+    <Box
+      data-phi-workspace-side-panel-tool-card={kind}
+      sx={{
+        minHeight: 74,
+        borderRadius: 1.5,
+        bgcolor: 'action.hover',
+        color: 'text.primary',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1.25,
+        px: 1.5
+      }}
+    >
+      <Icon sx={{ fontSize: 24, color: 'primary.main', flexShrink: 0 }} />
+      <Typography variant="body1" sx={{ minWidth: 0, fontWeight: 800 }} noWrap>
+        {label}
+      </Typography>
+    </Box>
+  )
+}
 
 export function WorkspaceFilesPane({
   rootPath,
@@ -58,25 +91,10 @@ export function WorkspaceFilesPane({
   )
 }
 
-export function WorkspaceSidePanel({
-  width,
-  treeRevision = 0,
-  titlebarInsetEnd = 15,
-  workspaceRootPath,
-  activeWorkspacePath,
-  onOpenWorkspaceFile,
-  onListWorkspaceDirectory
-}: {
-  width: number | string
-  treeRevision?: number
-  titlebarInsetEnd?: number | string
-  workspaceRootPath?: string | null
-  activeWorkspacePath?: string | null
-  onOpenWorkspaceFile?: (path: string) => void
-  onListWorkspaceDirectory?: (path: string) => Promise<DirectoryListing>
-}): React.JSX.Element {
+export function WorkspaceSidePanel({ width }: { width: number | string }): React.JSX.Element {
   return (
     <Box
+      data-phi-workspace-tools-side-panel="true"
       sx={{
         width,
         flexShrink: 0,
@@ -85,40 +103,16 @@ export function WorkspaceSidePanel({
         display: 'flex',
         minHeight: 0,
         flexDirection: 'column',
+        gap: 1,
+        px: 1.5,
+        pt: 6,
+        pb: 1.5,
         bgcolor: (theme) =>
           theme.palette.mode === 'dark' ? theme.palette.background.default : '#FFFFFF'
       }}
     >
-      <Box
-        data-phi-workspace-explorer-header="true"
-        sx={{
-          minHeight: 40,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.75,
-          pl: 1.5,
-          pr: titlebarInsetEnd
-        }}
-      >
-        <DirectoryTreeIcon sx={{ fontSize: 18, color: 'text.secondary', flexShrink: 0 }} />
-        <Typography
-          variant="button"
-          sx={{ flex: 1, minWidth: 0, fontSize: '0.78rem', fontWeight: 850 }}
-          noWrap
-        >
-          Workspace
-        </Typography>
-      </Box>
-      <Divider />
-      <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
-        <WorkspaceFilesPane
-          rootPath={workspaceRootPath}
-          activePath={activeWorkspacePath}
-          treeRevision={treeRevision}
-          onOpenFile={onOpenWorkspaceFile}
-          onListDirectory={onListWorkspaceDirectory}
-        />
-      </Box>
+      <WorkspaceToolCard kind="terminal" label="终端" Icon={TerminalIcon} />
+      <WorkspaceToolCard kind="browser" label="浏览器" Icon={BrowserIcon} />
     </Box>
   )
 }

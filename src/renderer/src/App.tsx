@@ -125,7 +125,6 @@ const titlebarChromeTopOffset = '10px'
 const titlebarChromeHorizontalInset = '14px'
 const titlebarChromeIconButtonSize = 28
 const titlebarLeadingChromeReserveWidth = 220
-const titlebarTrailingSidePanelChromeReserve = '84px'
 const titlebarTrailingToggleChromeReserve = '56px'
 const workspaceFileHeaderLeadingChromeInsetWidth =
   titlebarLeadingChromeReserveWidth - activityBarWidth
@@ -2607,7 +2606,6 @@ function App(): React.JSX.Element {
           workspaceFileTreeRevision={workspaceSidePanelTreeRevision}
           onOpenWorkspaceFile={onOpenWorkspaceFileFromSidebar}
           onListWorkspaceDirectory={onListPreviewDirectory}
-          onRefreshWorkspaceFiles={onRefreshWorkspaceSidePanel}
           runtimeProjectCwd={activeProject?.workingDirectory ?? ''}
           runtimeStatus={analysisJupyterRuntimeStatus}
           isRuntimeLoading={isLoadingAnalysisJupyterRuntime || isStartingAnalysisJupyter}
@@ -2832,15 +2830,7 @@ function App(): React.JSX.Element {
                 minHeight: 0
               }}
             >
-              <WorkspaceSidePanel
-                titlebarInsetEnd={titlebarTrailingSidePanelChromeReserve}
-                width={workspaceSidePanelWidth}
-                treeRevision={workspaceSidePanelTreeRevision}
-                workspaceRootPath={activeCwd}
-                activeWorkspacePath={activeWorkspaceSidePanelPath}
-                onOpenWorkspaceFile={onOpenFilePreview}
-                onListWorkspaceDirectory={onListPreviewDirectory}
-              />
+              <WorkspaceSidePanel width={workspaceSidePanelWidth} />
             </Box>
           </>
         ) : null}
@@ -2890,8 +2880,8 @@ function App(): React.JSX.Element {
           }}
         >
           <TopRightControls
-            showSidePanelRefresh={!workspaceSidePanelCollapsed}
-            sidePanelRefreshDisabled={!activeCwd}
+            showSidePanelRefresh={false}
+            sidePanelRefreshDisabled={false}
             showSidePanelToggle
             sidePanelCollapsed={workspaceSidePanelCollapsed}
             onRefreshSidePanel={onRefreshWorkspaceSidePanel}

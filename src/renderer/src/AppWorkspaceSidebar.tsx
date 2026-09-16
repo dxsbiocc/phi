@@ -1,8 +1,6 @@
 import { memo, type MouseEvent, type ReactNode } from 'react'
-import { Box, IconButton, Stack, Tooltip, Typography } from '@mui/material'
-import { GoSync } from 'react-icons/go'
+import { Box, Typography } from '@mui/material'
 import SessionSidebar from './components/SessionSidebar'
-import { PhiIcons } from './icons'
 import { McpSidebar } from './features/mcp/McpView'
 import { PluginSidebar } from './features/plugin/PluginView'
 import { RuntimeSidebar } from './features/runtime/RuntimeView'
@@ -25,8 +23,6 @@ import type {
 
 const macTitlebarHeight = 44
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
-const FilesIcon = PhiIcons.entity.directoryTree
-const RefreshIcon = GoSync
 
 export type AppWorkspaceSidebarProps = {
   isSidebarOpen: boolean
@@ -46,7 +42,6 @@ export type AppWorkspaceSidebarProps = {
   workspaceFileTreeRevision: number
   onOpenWorkspaceFile: (path: string) => void
   onListWorkspaceDirectory: (path: string) => Promise<DirectoryListing>
-  onRefreshWorkspaceFiles: () => void
 
   runtimeProjectCwd: string
   runtimeStatus: AnalysisJupyterRuntimeStatus | null
@@ -116,7 +111,6 @@ function AppWorkspaceSidebarImpl({
   workspaceFileTreeRevision,
   onOpenWorkspaceFile,
   onListWorkspaceDirectory,
-  onRefreshWorkspaceFiles,
   runtimeProjectCwd,
   runtimeStatus,
   isRuntimeLoading,
@@ -269,38 +263,6 @@ function AppWorkspaceSidebarImpl({
           WebkitAppRegion: 'no-drag'
         }}
       >
-        <Stack
-          direction="row"
-          spacing={1}
-          sx={{ flexShrink: 0, px: 1.5, pb: 1, alignItems: 'center' }}
-        >
-          <FilesIcon sx={{ fontSize: 20, color: 'text.secondary', flexShrink: 0 }} />
-          <Typography
-            variant="h6"
-            sx={{ flex: 1, minWidth: 0, fontSize: '1rem', fontWeight: 800 }}
-            noWrap
-          >
-            Files
-          </Typography>
-          <Tooltip title="刷新文件树">
-            <span>
-              <IconButton
-                size="small"
-                aria-label="刷新文件树"
-                disabled={!workspaceRootPath}
-                onClick={onRefreshWorkspaceFiles}
-                sx={{
-                  width: 30,
-                  height: 30,
-                  color: 'text.secondary',
-                  '&:hover': { bgcolor: 'action.hover', color: 'text.primary' }
-                }}
-              >
-                <RefreshIcon size={18} />
-              </IconButton>
-            </span>
-          </Tooltip>
-        </Stack>
         <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
           <WorkspaceFilesPane
             rootPath={workspaceRootPath}

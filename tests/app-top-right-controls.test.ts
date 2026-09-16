@@ -171,8 +171,8 @@ test('workspace top-right controls are app-level chrome, not notebook-only conte
   assert.match(appSource, /position: 'absolute'[\s\S]{0,360}<TopRightControls/)
   assert.match(appSource, /top: titlebarChromeTopOffset[\s\S]{0,360}<TopRightControls/)
   assert.match(appSource, /right: titlebarChromeHorizontalInset[\s\S]{0,360}<TopRightControls/)
-  assert.match(appSource, /showSidePanelRefresh=\{!workspaceSidePanelCollapsed\}/)
-  assert.match(appSource, /sidePanelRefreshDisabled=\{!activeCwd\}/)
+  assert.match(appSource, /showSidePanelRefresh=\{false\}/)
+  assert.match(appSource, /sidePanelRefreshDisabled=\{false\}/)
   assert.match(appSource, /onRefreshSidePanel=\{onRefreshWorkspaceSidePanel\}/)
   assert.match(appSource, /onToggleSidePanel=\{onToggleWorkspaceSidePanel\}/)
   assert.doesNotMatch(appSource, /showSidePanelFullscreen/)
@@ -195,16 +195,16 @@ test('workspace file previews and chats can show the shared right side panel', (
 
   assert.match(appSource, /data-phi-workspace-side-panel-shell="true"/)
   assert.match(appSource, /!workspaceSidePanelCollapsed \? \([\s\S]*?<WorkspaceSidePanel/)
-  assert.match(appSource, /workspaceRootPath=\{activeCwd\}/)
-  assert.match(appSource, /activeWorkspacePath=\{activeWorkspaceSidePanelPath\}/)
+  assert.doesNotMatch(appSource, /<WorkspaceSidePanel[\s\S]{0,180}workspaceRootPath=/)
+  assert.doesNotMatch(appSource, /<WorkspaceSidePanel[\s\S]{0,180}activeWorkspacePath=/)
   assert.doesNotMatch(
     appSource,
     /activeWorkspaceFileTab\.kind !== 'notebook'[\s\S]{0,900}<WorkspaceSidePanel/
   )
   assert.doesNotMatch(appSource, /activeChatView[\s\S]{0,900}<WorkspaceSidePanel/)
   assert.match(appSource, /label="调整工作区面板宽度"/)
-  assert.match(appSource, /treeRevision=\{workspaceSidePanelTreeRevision\}/)
-  assert.match(appSource, /titlebarInsetEnd=\{titlebarTrailingSidePanelChromeReserve\}/)
+  assert.doesNotMatch(appSource, /<WorkspaceSidePanel[\s\S]{0,180}treeRevision=/)
+  assert.doesNotMatch(appSource, /<WorkspaceSidePanel[\s\S]{0,180}titlebarInsetEnd=/)
   assert.doesNotMatch(appSource, /position: 'fixed'[\s\S]{0,120}inset: 0/)
 })
 
@@ -274,20 +274,14 @@ test('workspace files are available from the left sidebar activity item', () => 
     resolve(process.cwd(), 'src/renderer/src/AppWorkspaceSidebar.tsx'),
     'utf8'
   )
-  const sidePanelSource = readFileSync(
-    resolve(process.cwd(), 'src/renderer/src/components/WorkspaceSidePanel.tsx'),
-    'utf8'
-  )
   const sidebarModeSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/lib/workspaceSidebar.ts'),
     'utf8'
   )
 
   assert.match(sidebarModeSource, /'files'/)
-  assert.match(
-    activitySource,
-    /GoBook[\s\S]{0,120}GoComment[\s\S]{0,120}GoContainer[\s\S]{0,120}GoFileDirectory[\s\S]{0,120}GoGear[\s\S]{0,120}GoPackage[\s\S]{0,120}GoProject[\s\S]{0,120}GoTools[\s\S]{0,120}from 'react-icons\/go'/
-  )
+  assert.match(activitySource, /GoFileDirectory/)
+  assert.doesNotMatch(activitySource, /GoTerminal/)
   assert.match(activitySource, /const NavChatIcon = createActivityBarReactIcon\(GoComment\)/)
   assert.match(activitySource, /const NavProjectsIcon = createActivityBarReactIcon\(GoProject\)/)
   assert.match(activitySource, /const NavFilesIcon = createActivityBarReactIcon\(GoFileDirectory\)/)
@@ -305,10 +299,10 @@ test('workspace files are available from the left sidebar activity item', () => 
   assert.match(sidebarSource, /workspaceSidebarMode === 'files'/)
   assert.match(sidebarSource, /data-phi-files-sidebar="true"/)
   assert.match(sidebarSource, /<WorkspaceFilesPane/)
-  assert.match(sidePanelSource, /export function WorkspaceFilesPane/)
-  assert.match(appSource, /workspaceRootPath=\{activeCwd\}/)
+  assert.doesNotMatch(sidebarSource, /Tooltip title="刷新文件树"/)
+  assert.doesNotMatch(sidebarSource, /aria-label="刷新文件树"/)
   assert.match(appSource, /onOpenWorkspaceFile=\{onOpenWorkspaceFileFromSidebar\}/)
-  assert.match(appSource, /onRefreshWorkspaceFiles=\{onRefreshWorkspaceSidePanel\}/)
+  assert.doesNotMatch(appSource, /onRefreshWorkspaceFiles=\{onRefreshWorkspaceSidePanel\}/)
 })
 
 test('workspace file titlebars reserve trailing app chrome only at the window edge', () => {
@@ -316,7 +310,6 @@ test('workspace file titlebars reserve trailing app chrome only at the window ed
 
   assert.match(appSource, /FilePreviewTitleTab,/)
   assert.match(appSource, /const titlebarLeadingChromeReserveWidth = 220/)
-  assert.match(appSource, /const titlebarTrailingSidePanelChromeReserve = '84px'/)
   assert.match(appSource, /const titlebarTrailingToggleChromeReserve = '56px'/)
   assert.match(
     appSource,

@@ -183,58 +183,35 @@ test('analysis view does not own the workspace side panel', () => {
 test('workspace side panel renders an empty state without a workspace', () => {
   const markup = renderWorkspaceSidePanel()
 
-  assert.match(markup, /data-phi-workspace-explorer-header="true"/)
-  assert.match(markup, /Workspace/)
+  assert.match(markup, /data-phi-workspace-tools-side-panel="true"/)
+  assert.match(markup, /data-phi-workspace-side-panel-tool-card="terminal"/)
+  assert.match(markup, /data-phi-workspace-side-panel-tool-card="browser"/)
+  assert.match(markup, /终端/)
+  assert.match(markup, /浏览器/)
+  assert.doesNotMatch(markup, /data-phi-workspace-explorer-header="true"/)
   assert.doesNotMatch(markup, /刷新文件树/)
-  assert.match(markup, /还没有工作空间/)
+  assert.doesNotMatch(markup, /还没有工作空间/)
   assert.doesNotMatch(markup, /Variables/)
   assert.doesNotMatch(markup, /Artifacts/)
   assert.doesNotMatch(markup, /变量检查/)
 })
 
-test('workspace side panel renders the current workspace file tree', () => {
-  const markup = renderWorkspaceSidePanel({
-    workspaceRootPath: '/project',
-    activeWorkspacePath: '/project/src/App.tsx',
-    onOpenWorkspaceFile: () => undefined,
-    onListWorkspaceDirectory: async () => ({
-      path: '/project',
-      name: 'project',
-      displayPath: '/project',
-      rootPath: '/project',
-      rootLabel: 'project',
-      entries: [
-        { path: '/project/src', name: 'src', displayPath: 'src', kind: 'directory' },
-        {
-          path: '/project/package.json',
-          name: 'package.json',
-          displayPath: 'package.json',
-          kind: 'file'
-        }
-      ],
-      truncated: false
-    })
-  })
+test('workspace side panel does not render the workspace file tree', () => {
+  const markup = renderWorkspaceSidePanel()
 
-  assert.match(markup, /data-phi-workspace-explorer-header="true"/)
-  assert.match(markup, /Workspace/)
-  assert.match(markup, /aria-label="项目目录树"/)
-  assert.match(markup, /筛选文件/)
-  assert.match(markup, /data-phi-file-tree-root="true"/)
-  assert.match(markup, /正在读取目录/)
-  assert.doesNotMatch(markup, /还没有工作空间/)
+  assert.match(markup, /data-phi-workspace-tools-side-panel="true"/)
+  assert.doesNotMatch(markup, /aria-label="项目目录树"/)
+  assert.doesNotMatch(markup, /筛选文件/)
+  assert.doesNotMatch(markup, /data-phi-file-tree-root="true"/)
+  assert.doesNotMatch(markup, /正在读取目录/)
   assert.doesNotMatch(markup, /Variables/)
   assert.doesNotMatch(markup, /Artifacts/)
 })
 
-test('workspace side panel leaves refresh controls to app chrome', () => {
-  const markup = renderWorkspaceSidePanel({
-    titlebarInsetEnd: '120px'
-  })
+test('workspace side panel leaves refresh controls out of the side panel', () => {
+  const markup = renderWorkspaceSidePanel()
 
-  assert.match(markup, /data-phi-workspace-explorer-header="true"/)
-  assert.match(markup, /padding-right:120px/)
-  assert.match(markup, /Workspace/)
+  assert.match(markup, /data-phi-workspace-tools-side-panel="true"/)
   assert.doesNotMatch(markup, /aria-label="刷新文件树"/)
   assert.doesNotMatch(markup, /aria-label="右侧面板全屏"/)
 })
