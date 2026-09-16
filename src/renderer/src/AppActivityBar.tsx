@@ -1,12 +1,12 @@
 import { memo, useCallback, useRef, type FocusEvent } from 'react'
 import { Box, IconButton, Paper, Popper, Tooltip } from '@mui/material'
+import type { SxProps, Theme } from '@mui/material/styles'
 import type { IconType } from 'react-icons'
 import { SiHyperskill, SiNextflow } from 'react-icons/si'
 import { VscMcp } from 'react-icons/vsc'
 import SessionSidebar from './components/SessionSidebar'
 import { PhiIcons } from './icons'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
-import type { AppView } from './App'
 import type { Project, SessionRuntimeState, SessionSummary } from './types'
 
 const activityBarWidth = 48
@@ -83,6 +83,19 @@ function createActivityBarReactIcon(Icon: IconType): ActivityBarIconComponent {
   }
 }
 
+function activityBarButtonSx(active: boolean): SxProps<Theme> {
+  return {
+    color: active ? 'primary.main' : 'text.secondary',
+    '&:hover': {
+      color: active ? 'primary.main' : 'text.primary',
+      bgcolor: 'action.hover'
+    },
+    '& svg': {
+      color: 'inherit'
+    }
+  } as const
+}
+
 const NavChatIcon = createActivityBarPhiIcon(PhiIcons.nav.chat)
 const NavProjectsIcon = createActivityBarPhiIcon(PhiIcons.nav.projects)
 const NavRuntimeIcon = createActivityBarPhiIcon(PhiIcons.nav.runtime)
@@ -115,6 +128,7 @@ function WorkspaceSidebarNavButton({
       size="small"
       aria-label={label}
       color={active ? 'primary' : 'default'}
+      sx={activityBarButtonSx(active)}
       onMouseEnter={(event) => {
         if (useContentPreview) onPreviewOpen(mode, event.currentTarget)
       }}
@@ -139,13 +153,13 @@ function WorkspaceSidebarNavButton({
 }
 
 export type AppActivityBarProps = {
-  activeView: AppView
-  setActiveView: (view: AppView) => void
+  activeView: string
   isWorkspaceSidebarModeExpanded: (mode: WorkspaceSidebarMode) => boolean
   shouldUseWorkspaceSidebarPreview: (mode: WorkspaceSidebarMode) => boolean
   openWorkspaceSidebarPreview: (mode: WorkspaceSidebarMode, anchorEl: HTMLElement) => void
   scheduleWorkspaceSidebarPreviewClose: () => void
   onSelectWorkspaceView: (view: 'chat' | 'projects') => void
+  onSelectWorkspaceSidebarMode: (mode: WorkspaceSidebarMode) => void
   refreshAnalysisJupyterRuntimeStatus: () => Promise<void>
   refreshPlugins: () => Promise<void>
   refreshSkills: () => Promise<void>
@@ -180,13 +194,12 @@ export type AppActivityBarProps = {
 }
 
 function AppActivityBarImpl({
-  activeView,
-  setActiveView,
   isWorkspaceSidebarModeExpanded,
   shouldUseWorkspaceSidebarPreview,
   openWorkspaceSidebarPreview,
   scheduleWorkspaceSidebarPreviewClose,
   onSelectWorkspaceView,
+  onSelectWorkspaceSidebarMode,
   refreshAnalysisJupyterRuntimeStatus,
   refreshPlugins,
   refreshSkills,
@@ -252,6 +265,8 @@ function AppActivityBarImpl({
     },
     [requestWorkspaceSidebarPreviewClose]
   )
+  const sessionSidebarPreviewMode =
+    workspaceSidebarPreviewMode === 'projects' ? 'projects' : 'conversations'
 
   return (
     <>
@@ -299,9 +314,10 @@ function AppActivityBarImpl({
         <Tooltip title="运行时" placement="right">
           <IconButton
             size="small"
-            color={activeView === 'runtime' ? 'primary' : 'default'}
+            color={isWorkspaceSidebarModeExpanded('runtime') ? 'primary' : 'default'}
+            sx={activityBarButtonSx(isWorkspaceSidebarModeExpanded('runtime'))}
             onClick={() => {
-              setActiveView('runtime')
+              onSelectWorkspaceSidebarMode('runtime')
               void refreshAnalysisJupyterRuntimeStatus()
             }}
           >
@@ -311,9 +327,10 @@ function AppActivityBarImpl({
         <Tooltip title="插件" placement="right">
           <IconButton
             size="small"
-            color={activeView === 'plugins' ? 'primary' : 'default'}
+            color={isWorkspaceSidebarModeExpanded('plugins') ? 'primary' : 'default'}
+            sx={activityBarButtonSx(isWorkspaceSidebarModeExpanded('plugins'))}
             onClick={() => {
-              setActiveView('plugins')
+              onSelectWorkspaceSidebarMode('plugins')
               void refreshPlugins()
             }}
           >
@@ -323,9 +340,10 @@ function AppActivityBarImpl({
         <Tooltip title="技能" placement="right">
           <IconButton
             size="small"
-            color={activeView === 'skills' ? 'primary' : 'default'}
+            color={isWorkspaceSidebarModeExpanded('skills') ? 'primary' : 'default'}
+            sx={activityBarButtonSx(isWorkspaceSidebarModeExpanded('skills'))}
             onClick={() => {
-              setActiveView('skills')
+              onSelectWorkspaceSidebarMode('skills')
               void refreshSkills()
             }}
           >
@@ -335,9 +353,10 @@ function AppActivityBarImpl({
         <Tooltip title="MCP" placement="right">
           <IconButton
             size="small"
-            color={activeView === 'mcp' ? 'primary' : 'default'}
+            color={isWorkspaceSidebarModeExpanded('mcp') ? 'primary' : 'default'}
+            sx={activityBarButtonSx(isWorkspaceSidebarModeExpanded('mcp'))}
             onClick={() => {
-              setActiveView('mcp')
+              onSelectWorkspaceSidebarMode('mcp')
               void refreshMcpServers()
             }}
           >
@@ -347,15 +366,20 @@ function AppActivityBarImpl({
         <Tooltip title="Wrappers" placement="right">
           <IconButton
             size="small"
-            color={activeView === 'wrappers' ? 'primary' : 'default'}
-            onClick={() => setActiveView('wrappers')}
+            color={isWorkspaceSidebarModeExpanded('wrappers') ? 'primary' : 'default'}
+            sx={activityBarButtonSx(isWorkspaceSidebarModeExpanded('wrappers'))}
+            onClick={() => onSelectWorkspaceSidebarMode('wrappers')}
           >
             <NavWrappersIcon fontSize="small" />
           </IconButton>
         </Tooltip>
         <Box sx={{ flex: 1 }} />
         <Tooltip title="设置" placement="right">
-          <IconButton size="small" onClick={() => setIsSettingsOpen(true)} sx={{ mb: 1 }}>
+          <IconButton
+            size="small"
+            onClick={() => setIsSettingsOpen(true)}
+            sx={{ ...activityBarButtonSx(false), mb: 1 }}
+          >
             <NavSettingsIcon fontSize="small" />
           </IconButton>
         </Tooltip>
@@ -403,7 +427,7 @@ function AppActivityBarImpl({
             hideWindowDragSpacer
             compactHoverPreview
             onPreviewInteractionChange={handleWorkspaceSidebarPreviewInteractionChange}
-            mode={workspaceSidebarPreviewMode}
+            mode={sessionSidebarPreviewMode}
             sessions={sessions}
             activeSessionPath={activeSessionPath}
             activeCwd={activeCwd}
@@ -451,6 +475,8 @@ function AppActivityBarImpl({
 function appActivityBarPropsEqual(prev: AppActivityBarProps, next: AppActivityBarProps): boolean {
   return (
     prev.activeView === next.activeView &&
+    prev.isWorkspaceSidebarModeExpanded === next.isWorkspaceSidebarModeExpanded &&
+    prev.shouldUseWorkspaceSidebarPreview === next.shouldUseWorkspaceSidebarPreview &&
     prev.isWorkspaceSidebarPreviewOpen === next.isWorkspaceSidebarPreviewOpen &&
     prev.visibleWorkspaceSidebarPreview?.mode === next.visibleWorkspaceSidebarPreview?.mode &&
     prev.visibleWorkspaceSidebarPreview?.anchorEl ===

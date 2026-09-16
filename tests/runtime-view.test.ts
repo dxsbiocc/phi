@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import test from 'node:test'
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
-import RuntimeView, {
-  type RuntimeViewProps
-} from '../src/renderer/src/features/runtime/RuntimeView'
+import { RuntimeSidebar } from '../src/renderer/src/features/runtime/RuntimeView'
 import type { AnalysisJupyterRuntimeStatus } from '../src/renderer/src/types'
 
 const runtimeStatus: AnalysisJupyterRuntimeStatus = {
@@ -20,9 +20,20 @@ const runtimeStatus: AnalysisJupyterRuntimeStatus = {
       '[IPKernelApp] WARNING | Kernel is running over TCP without encryption. All communication is sent in plain text.'
   },
   notebooks: {
-    activeSessionCount: 2,
-    busySessionCount: 1,
+    activeSessionCount: 3,
+    busySessionCount: 2,
     sessions: [
+      {
+        projectCwd: '/projects/research',
+        notebookPath: '/projects/research/notebooks/r_analysis.ipynb',
+        kernelName: 'ir',
+        kernelDisplayName: 'R',
+        sessionId: 'session-r',
+        state: 'busy',
+        message: 'Notebook kernel 正在执行',
+        startedAt: '2026-09-10T01:00:00.000Z',
+        updatedAt: '2026-09-10T01:03:00.000Z'
+      },
       {
         projectCwd: '/projects/research',
         notebookPath: '/projects/research/notebooks/eda.ipynb',
@@ -33,118 +44,130 @@ const runtimeStatus: AnalysisJupyterRuntimeStatus = {
         message: 'Notebook kernel 正在执行',
         startedAt: '2026-09-10T01:00:00.000Z',
         updatedAt: '2026-09-10T01:02:00.000Z'
+      },
+      {
+        projectCwd: '/projects/research',
+        notebookPath: '/projects/research/notebooks/idle.ipynb',
+        kernelName: 'python3',
+        kernelDisplayName: 'Python 3',
+        sessionId: 'session-idle',
+        state: 'idle',
+        startedAt: '2026-09-10T01:00:00.000Z',
+        updatedAt: '2026-09-10T01:01:00.000Z'
       }
     ]
   }
 }
 
-function renderRuntimeView(
+function renderRuntimeSidebar(
   status: AnalysisJupyterRuntimeStatus | null = runtimeStatus,
-  overrides: Partial<RuntimeViewProps> = {}
+  overrides: Partial<ComponentProps<typeof RuntimeSidebar>> = {}
 ): string {
   const theme = createTheme()
   return renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme },
-      createElement(RuntimeView, {
+      createElement(RuntimeSidebar, {
         projectCwd: '/projects/research',
-        projectName: 'Research',
         runtimeStatus: status,
-        onRefresh: () => undefined,
+        onOpenNotebook: () => undefined,
         onStartJupyter: () => undefined,
         onStopJupyter: () => undefined,
-        onOpenNotebook: () => undefined,
         onStopNotebookKernel: () => undefined,
+        onRefresh: () => undefined,
         ...overrides
       })
     )
   )
 }
 
-test('runtime view shows real Jupyter server and notebook session summary', () => {
-  const markup = renderRuntimeView()
+test('runtime sidebar shows global Jupyter Server before Notebook Kernels', () => {
+  const markup = renderRuntimeSidebar()
 
-  assert.match(markup, /Jupyter Runtime/)
-  assert.match(markup, /Research/)
-  assert.match(markup, /Jupyter Server/)
-  assert.match(markup, /Ready/)
+  const serverIndex = markup.indexOf('Jupyter Server')
+  const kernelsIndex = markup.indexOf('Notebook Kernels')
+  assert.ok(serverIndex >= 0)
+  assert.ok(kernelsIndex > serverIndex)
+  assert.match(markup, /data-phi-runtime-sidebar-server="true"/)
+  assert.match(markup, /data-phi-runtime-sidebar-kernel="true"/)
+  assert.match(markup, /runtime-sidebar-row-actions/)
+  assert.match(markup, /aria-label="刷新 Server 状态"/)
+  assert.match(markup, /aria-label="停止 Jupyter server"/)
+  assert.doesNotMatch(markup, /aria-label="启动 Jupyter server"/)
+  assert.match(markup, /aria-label="关闭 eda\.ipynb kernel"/)
+  assert.match(markup, /data-phi-runtime-sidebar-kernel-close="true"/)
+  assert.match(markup, /data-phi-runtime-sidebar-kernel-close-state="ready"/)
+  assert.match(markup, /data-phi-runtime-sidebar-running-kernel-count="true"/)
+  assert.doesNotMatch(markup, /2 busy/)
+  assert.match(markup, /data-phi-runtime-sidebar-kernel-icon="r"/)
+  assert.match(markup, /data-phi-runtime-sidebar-kernel-icon="python"/)
   assert.match(markup, /PID 2026/)
   assert.match(markup, /Port 31888/)
-  assert.match(markup, /2 active/)
-  assert.match(markup, /1 running/)
+  assert.match(markup, /r_analysis\.ipynb/)
+  assert.match(markup, />R</)
   assert.match(markup, /eda\.ipynb/)
-  assert.match(markup, /data-phi-runtime-notebook-open="true"/)
-  assert.match(markup, /data-phi-runtime-notebook-open-target="filename"/)
-  assert.match(markup, /aria-label="打开 eda\.ipynb"/)
   assert.match(markup, /Python 3/)
-  assert.match(markup, /Server 正在为当前项目运行/)
-  assert.match(markup, /关闭 eda\.ipynb kernel/)
-  assert.match(markup, /data-phi-runtime-notebook-close-kernel="true"/)
-  assert.match(markup, /data-phi-runtime-notebook-close-state="ready"/)
-  assert.doesNotMatch(markup, /IPKernelApp/)
+  assert.doesNotMatch(markup, /idle\.ipynb/)
+  assert.doesNotMatch(markup, /正在执行/)
+  assert.doesNotMatch(markup, /已连接/)
+  assert.doesNotMatch(markup, /Ready · Research/)
+  assert.doesNotMatch(markup, /Ready · test/)
+  assert.doesNotMatch(markup, /aria-label="打开 eda\.ipynb"/)
+  assert.doesNotMatch(markup, /data-phi-runtime-notebook-open/)
+  assert.doesNotMatch(markup, /aria-label="刷新运行时"/)
+  assert.doesNotMatch(markup, /Jupyter Runtime/)
+  assert.doesNotMatch(markup, />运行时</)
 })
 
-test('runtime view keeps kernel close enabled while refreshing runtime status', () => {
-  const markup = renderRuntimeView(runtimeStatus, { isLoading: true })
-  const labelIndex = markup.indexOf('aria-label="关闭 eda.ipynb kernel"')
-  assert.notEqual(labelIndex, -1)
-  const closeButtonStart = markup.lastIndexOf('<button', labelIndex)
-  const closeButtonEnd = markup.indexOf('</button>', labelIndex)
-  const closeButtonMarkup = markup.slice(closeButtonStart, closeButtonEnd)
+test('runtime sidebar swaps server start and stop actions in one slot', () => {
+  const stoppedMarkup = renderRuntimeSidebar({
+    ...runtimeStatus,
+    server: {
+      projectCwd: runtimeStatus.server.projectCwd,
+      state: 'stopped',
+      hasEndpoint: false
+    }
+  })
 
-  assert.match(closeButtonMarkup, /data-phi-runtime-notebook-close-state="ready"/)
-  assert.doesNotMatch(closeButtonMarkup, /disabled/)
+  assert.match(stoppedMarkup, /aria-label="启动 Jupyter server"/)
+  assert.doesNotMatch(stoppedMarkup, /aria-label="停止 Jupyter server"/)
 })
 
-test('runtime view disables only the kernel currently being closed', () => {
-  const markup = renderRuntimeView(runtimeStatus, {
+test('runtime sidebar action styling uses GoSync and no hover button borders', () => {
+  const source = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/runtime/RuntimeView.tsx'),
+    'utf8'
+  )
+
+  assert.match(source, /import \{ GoSync \} from 'react-icons\/go'/)
+  assert.match(source, /const RefreshIcon = GoSync/)
+  assert.doesNotMatch(source, /borderColor/)
+  assert.doesNotMatch(source, /border:\s*1/)
+  assert.match(source, /alignSelf:\s*'center'/)
+  assert.doesNotMatch(source, /aria-label="刷新运行时"/)
+  assert.doesNotMatch(source, /正在执行/)
+})
+
+test('runtime sidebar disables only the kernel currently being closed', () => {
+  const markup = renderRuntimeSidebar(runtimeStatus, {
     closingNotebookPath: '/projects/research/notebooks/eda.ipynb'
   })
 
-  assert.match(markup, /data-phi-runtime-notebook-close-state="closing"/)
+  assert.match(markup, /data-phi-runtime-sidebar-kernel-close-state="closing"/)
   assert.match(markup, /disabled/)
 })
 
-test('runtime view leaves notebook sessions non-clickable without an open handler', () => {
-  const markup = renderRuntimeView(runtimeStatus, { onOpenNotebook: undefined })
-
-  assert.match(markup, /eda\.ipynb/)
-  assert.doesNotMatch(markup, /data-phi-runtime-notebook-open="true"/)
-  assert.doesNotMatch(markup, /aria-label="打开 eda\.ipynb"/)
-})
-
-test('runtime view renders an empty kernel state without placeholder features', () => {
-  const markup = renderRuntimeView({
+test('runtime sidebar renders the empty notebook kernel state inline', () => {
+  const markup = renderRuntimeSidebar({
     ...runtimeStatus,
     notebooks: { activeSessionCount: 0, busySessionCount: 0, sessions: [] }
   })
 
-  assert.match(markup, /当前项目还没有连接中的 notebook kernel/)
+  assert.match(markup, /Jupyter Server/)
+  assert.match(markup, /Notebook Kernels/)
+  assert.match(markup, /data-phi-runtime-sidebar-empty-kernels="true"/)
+  assert.match(markup, /当前项目还没有运行中的 notebook kernel/)
   assert.doesNotMatch(markup, /Nextflow/)
   assert.doesNotMatch(markup, /Slurm/)
-})
-
-test('runtime view keeps the no-project state quiet and left aligned', () => {
-  const theme = createTheme()
-  const markup = renderToStaticMarkup(
-    createElement(
-      ThemeProvider,
-      { theme },
-      createElement(RuntimeView, {
-        projectCwd: '',
-        runtimeStatus: null,
-        error: '请选择一个已添加的项目',
-        onRefresh: () => undefined,
-        onStartJupyter: () => undefined,
-        onStopJupyter: () => undefined,
-        onStopNotebookKernel: () => undefined
-      })
-    )
-  )
-
-  assert.match(markup, /未选择项目/)
-  assert.match(markup, /先从左侧项目列表打开一个项目会话/)
-  assert.doesNotMatch(markup, /请选择一个已添加的项目/)
-  assert.doesNotMatch(markup, /MuiAlert/)
 })

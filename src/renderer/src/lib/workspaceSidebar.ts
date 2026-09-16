@@ -1,7 +1,7 @@
-export type WorkspaceSidebarMode = 'conversations' | 'projects'
+export type WorkspaceSidebarMode =
+  'conversations' | 'projects' | 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
 
 export function workspaceSidebarModeIsExpanded({
-  activeView,
   isSidebarOpen,
   workspaceSidebarMode,
   mode
@@ -11,9 +11,5 @@ export function workspaceSidebarModeIsExpanded({
   workspaceSidebarMode: WorkspaceSidebarMode
   mode: WorkspaceSidebarMode
 }): boolean {
-  return (
-    isSidebarOpen &&
-    (activeView === 'chat' || activeView === 'projects') &&
-    workspaceSidebarMode === mode
-  )
+  return isSidebarOpen && workspaceSidebarMode === mode
 }

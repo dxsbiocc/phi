@@ -84,7 +84,10 @@ test('analysis workspace skips the blank outer titlebar', () => {
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
 
   assert.match(appSource, /const isAnalysisWorkspaceView = activeView === 'analysis'/)
-  assert.match(appSource, /const showWorkspaceTitlebar = !isAnalysisWorkspaceView/)
+  assert.match(
+    appSource,
+    /const showWorkspaceTitlebar =\s*!isAnalysisWorkspaceView && !isResourceWorkspaceView && !showWorkspaceTabs/
+  )
   assert.doesNotMatch(appSource, /activeView !== 'analysis' \|\| Boolean\(filePreview\)/)
   assert.match(appSource, /\{showWorkspaceTitlebar \? \(/)
   assert.match(appSource, /data-phi-workspace-file-header="true"/)
@@ -92,6 +95,37 @@ test('analysis workspace skips the blank outer titlebar', () => {
   assert.match(appSource, /borderRadius: '999px'/)
   assert.match(appSource, /layout="workspace"/)
   assert.match(appSource, /workspaceFileTabs=\{workspaceFileTabs\}/)
+})
+
+test('workspace sessions and resources share the same tab strip', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const tabSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/WorkspaceResourceTabs.tsx'),
+    'utf8'
+  )
+  const tabTypesSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/lib/workspaceResourceTabs.ts'),
+    'utf8'
+  )
+
+  assert.match(appSource, /const \[workspaceTabs, setWorkspaceTabs\] = useState<WorkspaceTab\[\]>/)
+  assert.match(appSource, /workspaceSessionTabKey\(activeSessionPath, activeSessionGeneration\)/)
+  assert.match(
+    appSource,
+    /const showWorkspaceTabs =\s*visibleWorkspaceTabs\.length > 0 && \(activeView === 'chat' \|\| isResourceWorkspaceView\)/
+  )
+  assert.match(appSource, /tabs=\{visibleWorkspaceTabs\}/)
+  assert.match(appSource, /onSelect=\{selectWorkspaceTab\}/)
+  assert.match(appSource, /onClose=\{onCloseWorkspaceTab\}/)
+  assert.match(
+    appSource,
+    /activeWorkspaceTab\?\.kind === 'session' \? chatWorkspaceContent : activeWorkspaceResourceContent/
+  )
+  assert.match(
+    tabTypesSource,
+    /export type WorkspaceTab = WorkspaceSessionTab \| WorkspaceResourceTab/
+  )
+  assert.match(tabSource, /session: PhiIcons\.nav\.chat/)
 })
 
 test('workspace top-right controls are app-level chrome, not notebook-only content', () => {
@@ -269,7 +303,7 @@ test('workspace nav content hover is used whenever the target sidebar mode is co
       workspaceSidebarMode: 'projects',
       mode: 'projects'
     }),
-    false
+    true
   )
 })
 

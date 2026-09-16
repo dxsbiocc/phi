@@ -1,15 +1,28 @@
 import { memo, type MouseEvent, type ReactNode } from 'react'
 import { Box, Typography } from '@mui/material'
 import SessionSidebar from './components/SessionSidebar'
+import { McpSidebar } from './features/mcp/McpView'
+import { PluginSidebar } from './features/plugin/PluginView'
+import { RuntimeSidebar } from './features/runtime/RuntimeView'
+import { SkillSidebar } from './features/skill/SkillView'
+import { WrapperSidebar } from './features/wrapper/WrapperView'
 import type { AppView } from './App'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
-import type { Project, SessionRuntimeState, SessionSummary } from './types'
+import type { WrapperCatalogEntry } from '../../shared/wrapperCatalogTypes'
+import type {
+  AnalysisJupyterRuntimeStatus,
+  McpServerSummary,
+  PluginCatalogItem,
+  Project,
+  SessionRuntimeState,
+  SessionSummary,
+  SkillSummary
+} from './types'
 
 const macTitlebarHeight = 44
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 
 export type AppWorkspaceSidebarProps = {
-  isChatWorkspaceView: boolean
   isSidebarOpen: boolean
   sidebarWidth: number
   activeView: AppView
@@ -21,6 +34,40 @@ export type AppWorkspaceSidebarProps = {
   activeWorkspaceScopeLabel: string
 
   workspaceSidebarMode: WorkspaceSidebarMode
+
+  runtimeProjectCwd: string
+  runtimeStatus: AnalysisJupyterRuntimeStatus | null
+  isRuntimeLoading: boolean
+  runtimeClosingNotebookPath: string | null
+  onOpenRuntimeNotebook: (notebookPath: string) => void
+  onRefreshRuntime: () => void
+  onStartRuntime: (cwd: string) => void
+  onStopRuntime: (cwd: string) => void
+  onStopRuntimeNotebookKernel: (notebookPath: string) => void
+
+  plugins: PluginCatalogItem[]
+  activePluginId: string | null
+  isLoadingPlugins: boolean
+  onOpenPlugin: (plugin: PluginCatalogItem) => void
+  onRefreshPlugins: () => void
+
+  skills: SkillSummary[]
+  activeSkillId: string | null
+  isLoadingSkills: boolean
+  onOpenSkill: (skill: SkillSummary) => void
+
+  mcpServers: McpServerSummary[]
+  activeMcpServerId: string | null
+  onOpenMcpServer: (server: McpServerSummary) => void
+
+  wrapperCatalog: WrapperCatalogEntry[]
+  selectedWrapperId: string | null
+  isLoadingWrappers: boolean
+  isAddingWrapper: boolean
+  onOpenWrapper: (entry: WrapperCatalogEntry) => void
+  onRefreshWrappers: () => void
+  onAddCustomWrapper: () => void
+
   sessions: SessionSummary[]
   activeSessionPath: string | null
   activeCwd: string
@@ -42,7 +89,6 @@ export type AppWorkspaceSidebarProps = {
 }
 
 function AppWorkspaceSidebarImpl({
-  isChatWorkspaceView,
   isSidebarOpen,
   sidebarWidth,
   activeView,
@@ -52,6 +98,34 @@ function AppWorkspaceSidebarImpl({
   activeWorkspaceTitle,
   activeWorkspaceScopeLabel,
   workspaceSidebarMode,
+  runtimeProjectCwd,
+  runtimeStatus,
+  isRuntimeLoading,
+  runtimeClosingNotebookPath,
+  onOpenRuntimeNotebook,
+  onRefreshRuntime,
+  onStartRuntime,
+  onStopRuntime,
+  onStopRuntimeNotebookKernel,
+  plugins,
+  activePluginId,
+  isLoadingPlugins,
+  onOpenPlugin,
+  onRefreshPlugins,
+  skills,
+  activeSkillId,
+  isLoadingSkills,
+  onOpenSkill,
+  mcpServers,
+  activeMcpServerId,
+  onOpenMcpServer,
+  wrapperCatalog,
+  selectedWrapperId,
+  isLoadingWrappers,
+  isAddingWrapper,
+  onOpenWrapper,
+  onRefreshWrappers,
+  onAddCustomWrapper,
   sessions,
   activeSessionPath,
   activeCwd,
@@ -67,7 +141,174 @@ function AppWorkspaceSidebarImpl({
   onFetchProjectSessions,
   getSessionRuntimeState
 }: AppWorkspaceSidebarProps): React.JSX.Element | null {
-  if (!isChatWorkspaceView || !isSidebarOpen) return null
+  if (!isSidebarOpen) return null
+
+  const sidebarContent =
+    activeView === 'analysis' && workspaceSidebarMode === 'conversations' ? (
+      <Box
+        data-phi-analysis-sidebar="true"
+        sx={{
+          height: '100%',
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden'
+        }}
+      >
+        <Box
+          sx={{
+            flexShrink: 0,
+            minHeight: isMac ? macTitlebarHeight : 0,
+            WebkitAppRegion: 'drag'
+          }}
+        />
+        <Box
+          data-phi-analysis-session-header="true"
+          sx={{
+            px: 1.5,
+            pb: 1,
+            flexShrink: 0
+          }}
+        >
+          <Box
+            sx={{
+              minHeight: 48,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 1,
+              px: 0.75,
+              py: 0.75,
+              color: 'text.primary'
+            }}
+          >
+            <Typography
+              variant="subtitle1"
+              title={activeWorkspaceTitle}
+              sx={{
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                fontWeight: 700,
+                lineHeight: 1.35
+              }}
+            >
+              {activeWorkspaceTitle}
+            </Typography>
+            <Box
+              component="span"
+              data-phi-analysis-session-scope-label={
+                activeWorkspaceIsProject ? 'project' : 'ordinary'
+              }
+              title={activeWorkspaceScopeLabel}
+              sx={{
+                flexShrink: 0,
+                maxWidth: 132,
+                minWidth: 52,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                borderRadius: 999,
+                px: 1,
+                py: 0.35,
+                textAlign: 'center',
+                color: activeWorkspaceIsProject ? 'primary.dark' : 'text.secondary',
+                bgcolor: activeWorkspaceIsProject ? 'rgba(46, 159, 179, 0.12)' : 'action.selected',
+                border: 1,
+                borderColor: activeWorkspaceIsProject ? 'primary.light' : 'divider',
+                fontSize: '0.76rem',
+                fontWeight: 800,
+                lineHeight: 1.35
+              }}
+            >
+              {activeWorkspaceScopeLabel}
+            </Box>
+          </Box>
+        </Box>
+        <Box sx={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
+          <Box
+            data-phi-analysis-chat-panel="true"
+            sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}
+          >
+            {activeChatView}
+          </Box>
+        </Box>
+      </Box>
+    ) : workspaceSidebarMode === 'runtime' ? (
+      <RuntimeSidebar
+        projectCwd={runtimeProjectCwd}
+        runtimeStatus={runtimeStatus}
+        isLoading={isRuntimeLoading}
+        onOpenNotebook={onOpenRuntimeNotebook}
+        closingNotebookPath={runtimeClosingNotebookPath}
+        onRefresh={onRefreshRuntime}
+        onStartJupyter={onStartRuntime}
+        onStopJupyter={onStopRuntime}
+        onStopNotebookKernel={onStopRuntimeNotebookKernel}
+      />
+    ) : workspaceSidebarMode === 'plugins' ? (
+      <PluginSidebar
+        plugins={plugins}
+        isLoading={isLoadingPlugins}
+        activePluginId={activePluginId}
+        onSelectPlugin={onOpenPlugin}
+        onRefresh={onRefreshPlugins}
+      />
+    ) : workspaceSidebarMode === 'skills' ? (
+      <SkillSidebar
+        skills={skills}
+        isLoading={isLoadingSkills}
+        activeSkillId={activeSkillId}
+        onSelectSkill={onOpenSkill}
+      />
+    ) : workspaceSidebarMode === 'mcp' ? (
+      <McpSidebar
+        servers={mcpServers}
+        activeServerId={activeMcpServerId}
+        onSelectServer={onOpenMcpServer}
+      />
+    ) : workspaceSidebarMode === 'wrappers' ? (
+      <WrapperSidebar
+        catalog={wrapperCatalog}
+        selectedId={selectedWrapperId}
+        isLoading={isLoadingWrappers}
+        isAdding={isAddingWrapper}
+        onSelect={onOpenWrapper}
+        onRefresh={onRefreshWrappers}
+        onAddCustom={onAddCustomWrapper}
+      />
+    ) : (
+      <SessionSidebar
+        mode={workspaceSidebarMode}
+        sessions={sessions}
+        activeSessionPath={activeSessionPath}
+        activeCwd={activeCwd}
+        projects={projects}
+        projectSessionRefreshKey={projectSessionRefreshKey}
+        onNewChat={() => {
+          void onNewChat()
+        }}
+        onNewProject={() => setIsNewProjectDialogOpen(true)}
+        onSelectSession={(path) => {
+          void onSelectSession(path)
+        }}
+        onRenameSession={(path, name) => {
+          void onRenameSession(path, name)
+        }}
+        onDeleteSession={(path) => {
+          void onDeleteSession(path)
+        }}
+        onStartProjectChat={(project) => {
+          void onStartProjectChat(project)
+        }}
+        onDeleteProject={(project) => {
+          void onDeleteProjectEntry(project)
+        }}
+        onFetchProjectSessions={onFetchProjectSessions}
+        getSessionRuntimeState={getSessionRuntimeState}
+      />
+    )
 
   return (
     <>
@@ -86,130 +327,7 @@ function AppWorkspaceSidebarImpl({
           }
         }}
       >
-        {activeView === 'analysis' ? (
-          <Box
-            data-phi-analysis-sidebar="true"
-            sx={{
-              height: '100%',
-              minHeight: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden'
-            }}
-          >
-            <Box
-              sx={{
-                flexShrink: 0,
-                minHeight: isMac ? macTitlebarHeight : 0,
-                WebkitAppRegion: 'drag'
-              }}
-            />
-            <Box
-              data-phi-analysis-session-header="true"
-              sx={{
-                px: 1.5,
-                pb: 1,
-                flexShrink: 0
-              }}
-            >
-              <Box
-                sx={{
-                  minHeight: 48,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 1,
-                  px: 0.75,
-                  py: 0.75,
-                  color: 'text.primary'
-                }}
-              >
-                <Typography
-                  variant="subtitle1"
-                  title={activeWorkspaceTitle}
-                  sx={{
-                    minWidth: 0,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    fontWeight: 700,
-                    lineHeight: 1.35
-                  }}
-                >
-                  {activeWorkspaceTitle}
-                </Typography>
-                <Box
-                  component="span"
-                  data-phi-analysis-session-scope-label={
-                    activeWorkspaceIsProject ? 'project' : 'ordinary'
-                  }
-                  title={activeWorkspaceScopeLabel}
-                  sx={{
-                    flexShrink: 0,
-                    maxWidth: 132,
-                    minWidth: 52,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    borderRadius: 999,
-                    px: 1,
-                    py: 0.35,
-                    textAlign: 'center',
-                    color: activeWorkspaceIsProject ? 'primary.dark' : 'text.secondary',
-                    bgcolor: activeWorkspaceIsProject
-                      ? 'rgba(46, 159, 179, 0.12)'
-                      : 'action.selected',
-                    border: 1,
-                    borderColor: activeWorkspaceIsProject ? 'primary.light' : 'divider',
-                    fontSize: '0.76rem',
-                    fontWeight: 800,
-                    lineHeight: 1.35
-                  }}
-                >
-                  {activeWorkspaceScopeLabel}
-                </Box>
-              </Box>
-            </Box>
-            <Box sx={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
-              <Box
-                data-phi-analysis-chat-panel="true"
-                sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}
-              >
-                {activeChatView}
-              </Box>
-            </Box>
-          </Box>
-        ) : (
-          <SessionSidebar
-            mode={workspaceSidebarMode}
-            sessions={sessions}
-            activeSessionPath={activeSessionPath}
-            activeCwd={activeCwd}
-            projects={projects}
-            projectSessionRefreshKey={projectSessionRefreshKey}
-            onNewChat={() => {
-              void onNewChat()
-            }}
-            onNewProject={() => setIsNewProjectDialogOpen(true)}
-            onSelectSession={(path) => {
-              void onSelectSession(path)
-            }}
-            onRenameSession={(path, name) => {
-              void onRenameSession(path, name)
-            }}
-            onDeleteSession={(path) => {
-              void onDeleteSession(path)
-            }}
-            onStartProjectChat={(project) => {
-              void onStartProjectChat(project)
-            }}
-            onDeleteProject={(project) => {
-              void onDeleteProjectEntry(project)
-            }}
-            onFetchProjectSessions={onFetchProjectSessions}
-            getSessionRuntimeState={getSessionRuntimeState}
-          />
-        )}
+        {sidebarContent}
       </Box>
 
       <Box
@@ -242,44 +360,6 @@ function AppWorkspaceSidebarImpl({
   )
 }
 
-// App() re-renders on essentially every agent-stream event, but that almost
-// never changes anything this component actually shows: `sessions`/`projects`
-// only get new array references when their data genuinely changes (plain
-// useState, not recreated per render), and `projectSessionRefreshKey` is
-// bumped specifically whenever any session's runtime state changes anywhere
-// (including project sessions this component can't see directly) — so
-// comparing those plus the other primitive props is enough to catch every
-// real update while skipping the rest.
-//
-// `activeChatView` is the one exception: in the 'analysis' branch it's
-// rendered directly, but it's a fresh React element every render of App(),
-// so memoizing wouldn't help there anyway — require an exact match whenever
-// either side is in 'analysis' mode so a stale chat view is never displayed.
-function appWorkspaceSidebarPropsEqual(
-  prev: AppWorkspaceSidebarProps,
-  next: AppWorkspaceSidebarProps
-): boolean {
-  if (prev.activeView !== next.activeView) return false
-  if (prev.activeView === 'analysis' && prev.activeChatView !== next.activeChatView) {
-    return false
-  }
-
-  return (
-    prev.isChatWorkspaceView === next.isChatWorkspaceView &&
-    prev.isSidebarOpen === next.isSidebarOpen &&
-    prev.sidebarWidth === next.sidebarWidth &&
-    prev.activeWorkspaceIsProject === next.activeWorkspaceIsProject &&
-    prev.activeWorkspaceTitle === next.activeWorkspaceTitle &&
-    prev.activeWorkspaceScopeLabel === next.activeWorkspaceScopeLabel &&
-    prev.workspaceSidebarMode === next.workspaceSidebarMode &&
-    prev.sessions === next.sessions &&
-    prev.activeSessionPath === next.activeSessionPath &&
-    prev.activeCwd === next.activeCwd &&
-    prev.projects === next.projects &&
-    prev.projectSessionRefreshKey === next.projectSessionRefreshKey
-  )
-}
-
-const AppWorkspaceSidebar = memo(AppWorkspaceSidebarImpl, appWorkspaceSidebarPropsEqual)
+const AppWorkspaceSidebar = memo(AppWorkspaceSidebarImpl)
 
 export default AppWorkspaceSidebar

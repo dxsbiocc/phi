@@ -4,22 +4,25 @@ import {
   Button,
   CssBaseline,
   IconButton,
+  Stack,
   ThemeProvider,
   Tooltip,
   Typography
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { GoSidebarCollapse, GoSidebarExpand, GoSync } from 'react-icons/go'
+import type { WrapperCatalogEntry } from '../../shared/wrapperCatalogTypes'
 import ChatView from './components/ChatView'
 import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
 import type { LocalPathKind } from './components/MarkdownContent'
-import PluginView from './features/plugin/PluginView'
+import { PluginDetail } from './features/plugin/PluginView'
 import { usePluginCatalog } from './features/plugin/hooks/usePluginCatalog'
-import WrapperView from './features/wrapper/WrapperView'
-import SkillView from './features/skill/SkillView'
+import { WrapperDetail } from './features/wrapper/WrapperView'
+import { useWrapperCatalog } from './features/wrapper/hooks/useWrapperCatalog'
+import { SkillDetail } from './features/skill/SkillView'
 import { useSkillCatalog } from './features/skill/hooks/useSkillCatalog'
-import McpView from './features/mcp/McpView'
+import { McpDetail } from './features/mcp/McpView'
 import { useMcpServerCatalog } from './features/mcp/hooks/useMcpServerCatalog'
 import { type SettingsCategory } from './components/SettingsDialog'
 import AppDialogs, { type SnackbarNotice } from './AppDialogs'
@@ -32,7 +35,7 @@ import FilePreviewPanel, {
 import AnalysisView, { type AnalysisWorkspaceFileTab } from './features/analysis/AnalysisView'
 import { WorkspaceSidePanel } from './components/WorkspaceSidePanel'
 import { useAnalysisNotebookRuntime } from './features/analysis/hooks/useAnalysisNotebookRuntime'
-import RuntimeView from './features/runtime/RuntimeView'
+import { WorkspaceResourceTabs } from './components/WorkspaceResourceTabs'
 import { createAppTheme } from './theme'
 import { useThemeMode } from './useThemeMode'
 import { useProviderAuth } from './useProviderAuth'
@@ -70,8 +73,19 @@ import { sessionDraftKey, updateSessionDraft } from './lib/sessionDrafts'
 import { preserveSessionListOrder } from './lib/sessionOrder'
 import { sessionDisplayTitle, titleFromMessages, truncateSessionTitle } from './lib/sessionTitles'
 import { isNotebookFilePath } from './features/analysis/lib/notebookPaths'
-import { activeCwdBelongsToProject, orderProjectsForSessionSelection } from './lib/projectSidebar'
+import { orderProjectsForSessionSelection } from './lib/projectSidebar'
 import { workspaceScopeLabelForCwd } from './lib/workspaceScope'
+import {
+  isWorkspaceResourceKind,
+  workspaceResourceKindLabel,
+  workspaceResourceKindToSidebarMode,
+  workspaceResourceTabKey,
+  workspaceSessionTabKey,
+  type WorkspaceResourceKind,
+  type WorkspaceResourceTab,
+  type WorkspaceSessionTab,
+  type WorkspaceTab
+} from './lib/workspaceResourceTabs'
 import { workspaceSidebarModeIsExpanded, type WorkspaceSidebarMode } from './lib/workspaceSidebar'
 import { PhiIcons, fileIconForPath, directoryIconForPath } from './icons'
 import {
@@ -85,10 +99,13 @@ import { navigationPaneWidth } from './layout'
 import type {
   AgentEventSummary,
   AnalysisNotebookFileChange,
+  McpServerSummary,
   ModelOption,
   PermissionMode,
+  PluginCatalogItem,
   Project,
-  SessionSummary
+  SessionSummary,
+  SkillSummary
 } from './types'
 
 export type AppView =
@@ -388,6 +405,47 @@ function WorkspaceFileHeader({
   )
 }
 
+function WorkspaceResourceHeader({
+  tabs,
+  activeKey,
+  onSelect,
+  onClose,
+  reserveLeadingChromeSpace = false,
+  reserveTrailingChromeSpace = false
+}: {
+  tabs: WorkspaceTab[]
+  activeKey: string | null
+  onSelect: (tab: WorkspaceTab) => void
+  onClose: (tab: WorkspaceTab) => void
+  reserveLeadingChromeSpace?: boolean
+  reserveTrailingChromeSpace?: boolean
+}): React.JSX.Element {
+  return (
+    <Box
+      data-phi-workspace-resource-header="true"
+      sx={{
+        height: macTitlebarHeight,
+        flexShrink: 0,
+        borderBottom: 1,
+        borderColor: 'divider',
+        pl: reserveLeadingChromeSpace ? workspaceFileHeaderLeadingChromeInset : 1.5,
+        pr: reserveTrailingChromeSpace ? titlebarTrailingToggleChromeReserve : 1.5,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        WebkitAppRegion: 'drag'
+      }}
+    >
+      <WorkspaceResourceTabs
+        tabs={tabs}
+        activeKey={activeKey}
+        onSelect={onSelect}
+        onClose={onClose}
+      />
+    </Box>
+  )
+}
+
 function AppResizeSeparator({
   label,
   onMouseDown
@@ -507,6 +565,11 @@ function App(): React.JSX.Element {
 
   const [workspaceSidebarMode, setWorkspaceSidebarMode] =
     useState<WorkspaceSidebarMode>('conversations')
+  const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>([])
+  const [closedWorkspaceSessionTabKeys, setClosedWorkspaceSessionTabKeys] = useState<Set<string>>(
+    () => new Set()
+  )
+  const [activeWorkspaceTabKey, setActiveWorkspaceTabKey] = useState<string | null>(null)
   const [workspaceSidebarPreview, setWorkspaceSidebarPreview] = useState<{
     mode: WorkspaceSidebarMode
     anchorEl: HTMLElement
@@ -547,6 +610,18 @@ function App(): React.JSX.Element {
   } = useSkillCatalog(getActiveCwd)
   const { mcpServers, activeMcpServerId, setActiveMcpServerId, refreshMcpServers } =
     useMcpServerCatalog(getActiveCwd)
+  const {
+    catalog: wrapperCatalog,
+    runs: wrapperRuns,
+    selectedWrapperId,
+    isLoadingWrappers,
+    wrapperError,
+    isAddingWrapper,
+    setSelectedWrapperId,
+    refreshWrappers,
+    addCustomWrapper,
+    exportWrapperReproducibility
+  } = useWrapperCatalog()
 
   const showSnackbar = useCallback(
     (message: string, severity: SnackbarNotice['severity'] = 'error'): void => {
@@ -645,9 +720,7 @@ function App(): React.JSX.Element {
     analysisKernelError,
     analysisJupyterRuntimeStatus,
     isLoadingAnalysisJupyterRuntime,
-    analysisJupyterRuntimeError,
     isStartingAnalysisJupyter,
-    analysisJupyterError,
     analysisNotebookSessionStatus,
     isStartingAnalysisNotebookSession,
     closingRuntimeNotebookPath,
@@ -770,6 +843,15 @@ function App(): React.JSX.Element {
       )
       void refreshCurrentModelControls(request)
       startFreshChat()
+      const tabKey = workspaceSessionTabKey(current.path, current.sessionGeneration)
+      setClosedWorkspaceSessionTabKeys((keys) => {
+        if (!keys.has(tabKey)) return keys
+        const nextKeys = new Set(keys)
+        nextKeys.delete(tabKey)
+        return nextKeys
+      })
+      setActiveWorkspaceTabKey(tabKey)
+      navigateToView('chat')
     } finally {
       if (request === sessionRequestRef.current) {
         setIsSessionChanging(false)
@@ -777,6 +859,7 @@ function App(): React.JSX.Element {
     }
   }, [
     applyCurrentSession,
+    navigateToView,
     onResetSending,
     refreshCurrentModelControls,
     rendererApi,
@@ -815,6 +898,15 @@ function App(): React.JSX.Element {
         }
         void refreshCurrentModelControls(request)
         void refreshSessions()
+        const tabKey = workspaceSessionTabKey(result.path, result.sessionGeneration)
+        setClosedWorkspaceSessionTabKeys((keys) => {
+          if (!keys.has(tabKey)) return keys
+          const nextKeys = new Set(keys)
+          nextKeys.delete(tabKey)
+          return nextKeys
+        })
+        setActiveWorkspaceTabKey(tabKey)
+        navigateToView('chat')
       } finally {
         if (request === sessionRequestRef.current) {
           setIsSessionChanging(false)
@@ -824,6 +916,7 @@ function App(): React.JSX.Element {
     [
       acknowledgeActiveSession,
       applyCurrentSession,
+      navigateToView,
       onResetSending,
       refreshCurrentModelControls,
       refreshSessions,
@@ -961,6 +1054,54 @@ function App(): React.JSX.Element {
     ]
   )
 
+  const onStartProjectChat = useCallback(
+    async (project: Project): Promise<void> => {
+      projectSidebarSelectionRequestRef.current += 1
+      const request = ++sessionRequestRef.current
+      setIsSessionChanging(true)
+      try {
+        const current = await rendererApi.createProjectSession(
+          project.workingDirectory,
+          project.permissionMode
+        )
+        if (request !== sessionRequestRef.current) return
+        setWorkspaceSidebarMode('projects')
+        applyCurrentSession(
+          current,
+          { resetSending: true },
+          { onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange, onResetSending }
+        )
+        void refreshCurrentModelControls(request)
+        startFreshChat()
+        const tabKey = workspaceSessionTabKey(current.path, current.sessionGeneration)
+        setClosedWorkspaceSessionTabKeys((keys) => {
+          if (!keys.has(tabKey)) return keys
+          const nextKeys = new Set(keys)
+          nextKeys.delete(tabKey)
+          return nextKeys
+        })
+        setActiveWorkspaceTabKey(tabKey)
+        navigateToView('chat')
+        setProjectSessionRefreshKey((key) => key + 1)
+      } finally {
+        if (request === sessionRequestRef.current) {
+          setIsSessionChanging(false)
+        }
+      }
+    },
+    [
+      applyCurrentSession,
+      navigateToView,
+      onResetSending,
+      refreshCurrentModelControls,
+      rendererApi,
+      resetAnalysisJupyterRuntimeForCwdChange,
+      setIsSessionChanging,
+      setProjectSessionRefreshKey,
+      startFreshChat
+    ]
+  )
+
   const onCreateProject = async (
     name: string,
     workingDirectory: string,
@@ -969,32 +1110,6 @@ function App(): React.JSX.Element {
     const project = await rendererApi.createProject(name, workingDirectory, permissionMode)
     await refreshProjects()
     await onStartProjectChat(project)
-  }
-
-  const onStartProjectChat = async (project: Project): Promise<void> => {
-    projectSidebarSelectionRequestRef.current += 1
-    const request = ++sessionRequestRef.current
-    setIsSessionChanging(true)
-    try {
-      const current = await rendererApi.createProjectSession(
-        project.workingDirectory,
-        project.permissionMode
-      )
-      if (request !== sessionRequestRef.current) return
-      setWorkspaceSidebarMode('projects')
-      applyCurrentSession(
-        current,
-        { resetSending: true },
-        { onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange, onResetSending }
-      )
-      void refreshCurrentModelControls(request)
-      startFreshChat()
-      setProjectSessionRefreshKey((key) => key + 1)
-    } finally {
-      if (request === sessionRequestRef.current) {
-        setIsSessionChanging(false)
-      }
-    }
   }
 
   const onDeleteProjectEntry = async (project: Project): Promise<void> => {
@@ -1009,33 +1124,6 @@ function App(): React.JSX.Element {
         workingDirectory
       ),
     [mergeSessionSummariesRuntimeState, rendererApi]
-  )
-
-  const selectFirstAvailableProjectSession = useCallback(
-    async (request: number): Promise<boolean> => {
-      const orderedProjects = orderProjectsForSessionSelection(
-        projectsRef.current,
-        useSessionStore.getState().activeCwd
-      )
-
-      for (const project of orderedProjects) {
-        const projectSessions = await onFetchProjectSessions(project.workingDirectory)
-        if (request !== projectSidebarSelectionRequestRef.current) return false
-
-        const targetSession = projectSessions[0]
-        if (!targetSession) continue
-
-        await onSelectSession(targetSession.path)
-        if (request !== projectSidebarSelectionRequestRef.current) return false
-
-        setWorkspaceSidebarMode('projects')
-        setProjectSessionRefreshKey((key) => key + 1)
-        return true
-      }
-
-      return false
-    },
-    [onFetchProjectSessions, onSelectSession, projectsRef, setProjectSessionRefreshKey]
   )
 
   const onOpenApprovalSession = (path: string): void => {
@@ -1210,7 +1298,7 @@ function App(): React.JSX.Element {
         onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
       })
       setProjectSessionRefreshKey((key) => key + 1)
-      if (activeView === 'projects') {
+      if (workspaceSidebarMode === 'projects') {
         void refreshProjects()
       }
     })
@@ -1226,7 +1314,6 @@ function App(): React.JSX.Element {
       cancelScheduledSessionRefresh()
     }
   }, [
-    activeView,
     applyCurrentSession,
     cancelScheduledSessionRefresh,
     handleAuthInteractionEvent,
@@ -1243,7 +1330,8 @@ function App(): React.JSX.Element {
     setProjectSessionRefreshKey,
     setVisibleAgentEventState,
     showSnackbar,
-    storeSessionRuntimeState
+    storeSessionRuntimeState,
+    workspaceSidebarMode
   ])
 
   useEffect(() => {
@@ -1294,13 +1382,19 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     void Promise.resolve().then(() => {
-      if (activeView === 'projects') {
+      if (workspaceSidebarMode === 'projects') {
         void refreshProjects()
       }
-      if (activeView === 'skills') {
+      if (workspaceSidebarMode === 'runtime') {
+        void refreshAnalysisJupyterRuntimeStatus()
+      }
+      if (workspaceSidebarMode === 'plugins') {
+        void refreshPlugins()
+      }
+      if (workspaceSidebarMode === 'skills') {
         void refreshSkills()
       }
-      if (activeView === 'mcp') {
+      if (workspaceSidebarMode === 'mcp') {
         void refreshMcpServers()
       }
       if (activeView === 'analysis') {
@@ -1313,11 +1407,14 @@ function App(): React.JSX.Element {
     activeCwd,
     activeView,
     refreshAnalysisKernels,
+    refreshAnalysisJupyterRuntimeStatus,
     refreshAnalysisJupyterStatus,
     refreshAnalysisNotebooks,
     refreshMcpServers,
+    refreshPlugins,
     refreshProjects,
-    refreshSkills
+    refreshSkills,
+    workspaceSidebarMode
   ])
 
   const activeDraftKey = sessionDraftKey({
@@ -1380,6 +1477,16 @@ function App(): React.JSX.Element {
         // First prompt of a fresh chat: it just became a stable Phi session — pick it up so
         // the sidebar can highlight it.
         setActiveSessionPath(result.path)
+      }
+      if (result.path) {
+        const tabKey = workspaceSessionTabKey(result.path, result.sessionGeneration)
+        setClosedWorkspaceSessionTabKeys((keys) => {
+          if (!keys.has(tabKey)) return keys
+          const nextKeys = new Set(keys)
+          nextKeys.delete(tabKey)
+          return nextKeys
+        })
+        setActiveWorkspaceTabKey(tabKey)
       }
       if (
         result.phiSessionId &&
@@ -1509,8 +1616,10 @@ function App(): React.JSX.Element {
   const selectedPrompts = activePrompts.filter(
     (item) => item.providerId === providerDialogProviderId
   )
+  const isResourceWorkspaceView = isWorkspaceResourceKind(activeView)
   const isChatWorkspaceView =
     activeView === 'chat' || activeView === 'projects' || activeView === 'analysis'
+  const isWorkspaceView = isChatWorkspaceView || isResourceWorkspaceView
   const isAnalysisWorkspaceView = activeView === 'analysis'
   const onToggleWorkspaceSidePanel = useCallback((): void => {
     setWorkspaceSidePanelCollapsed((value) => !value)
@@ -1558,6 +1667,49 @@ function App(): React.JSX.Element {
   const activeProject = activeCwd
     ? (projects.find((project) => project.workingDirectory === activeCwd) ?? null)
     : null
+  const currentSessionTab = useMemo<WorkspaceSessionTab>(
+    () => ({
+      key: workspaceSessionTabKey(activeSessionPath, activeSessionGeneration),
+      kind: 'session',
+      itemId: activeSessionPath ?? `fresh:${activeSessionGeneration}`,
+      title: activeSession
+        ? sessionDisplayTitle(activeSession)
+        : (titleFromMessages(messages) ?? truncateSessionTitle('新对话')),
+      subtitle: workspaceScopeLabelForCwd(activeCwd, projects),
+      sessionPath: activeSessionPath,
+      sessionGeneration: activeSessionGeneration,
+      sidebarMode: activeProject ? 'projects' : 'conversations'
+    }),
+    [
+      activeCwd,
+      activeProject,
+      activeSession,
+      activeSessionGeneration,
+      activeSessionPath,
+      messages,
+      projects
+    ]
+  )
+  const visibleWorkspaceTabs = useMemo(() => {
+    const staleFreshSessionKey =
+      currentSessionTab.sessionPath === null
+        ? null
+        : workspaceSessionTabKey(null, currentSessionTab.sessionGeneration)
+    const normalizedTabs = workspaceTabs.filter((tab) => tab.key !== staleFreshSessionKey)
+    if (closedWorkspaceSessionTabKeys.has(currentSessionTab.key)) return normalizedTabs
+
+    const existingIndex = normalizedTabs.findIndex((tab) => tab.key === currentSessionTab.key)
+    if (existingIndex === -1) return [currentSessionTab, ...normalizedTabs]
+    return normalizedTabs.map((tab, index) =>
+      index === existingIndex ? { ...tab, ...currentSessionTab } : tab
+    )
+  }, [closedWorkspaceSessionTabKeys, currentSessionTab, workspaceTabs])
+  const effectiveActiveWorkspaceTabKey =
+    activeWorkspaceTabKey ?? (activeView === 'chat' ? currentSessionTab.key : null)
+  const activeWorkspaceTab =
+    visibleWorkspaceTabs.find((tab) => tab.key === effectiveActiveWorkspaceTabKey) ?? null
+  const activeWorkspaceResourceTab =
+    activeWorkspaceTab?.kind !== 'session' ? activeWorkspaceTab : null
   const notebookAiDefaultModel = useMemo<ModelOption | null>(() => {
     const projectModelSelection = activeProject?.defaultModel ?? null
     if (projectModelSelection) {
@@ -1579,13 +1731,30 @@ function App(): React.JSX.Element {
   const currentSessionIsBusy = isSendingMessage || activeSessionHasWork
   const activeWorkspaceTitle = useMemo(() => {
     if (showProjectSessionPlaceholder) return '项目会话'
+    if (isResourceWorkspaceView) {
+      return (
+        activeWorkspaceResourceTab?.title ??
+        workspaceResourceKindLabel(activeView as WorkspaceResourceKind)
+      )
+    }
     if (!isChatWorkspaceView) return activeView
     if (activeSession) return sessionDisplayTitle(activeSession)
     return titleFromMessages(messages) ?? truncateSessionTitle('新对话')
-  }, [activeSession, activeView, isChatWorkspaceView, messages, showProjectSessionPlaceholder])
+  }, [
+    activeSession,
+    activeView,
+    activeWorkspaceResourceTab,
+    isChatWorkspaceView,
+    isResourceWorkspaceView,
+    messages,
+    showProjectSessionPlaceholder
+  ])
   const activeWorkspaceScopeLabel = workspaceScopeLabelForCwd(activeCwd, projects)
   const activePermissionMode = currentPermissionMode
-  const showWorkspaceTitlebar = !isAnalysisWorkspaceView
+  const showWorkspaceTabs =
+    visibleWorkspaceTabs.length > 0 && (activeView === 'chat' || isResourceWorkspaceView)
+  const showWorkspaceTitlebar =
+    !isAnalysisWorkspaceView && !isResourceWorkspaceView && !showWorkspaceTabs
   const workspaceSidebarPreviewWidth = Math.min(360, Math.max(320, sidebarWidth))
   const isWorkspaceSidebarModeExpanded = useCallback(
     (mode: WorkspaceSidebarMode): boolean =>
@@ -1799,6 +1968,150 @@ function App(): React.JSX.Element {
     workspaceFileTabs
   ])
 
+  const upsertWorkspaceTab = useCallback((tab: WorkspaceTab): void => {
+    setWorkspaceTabs((tabs) => {
+      const existingIndex = tabs.findIndex((item) => item.key === tab.key)
+      if (existingIndex === -1) return [...tabs, tab]
+      return tabs.map((item, index) => (index === existingIndex ? { ...item, ...tab } : item))
+    })
+  }, [])
+
+  const selectWorkspaceTab = useCallback(
+    (tab: WorkspaceTab): void => {
+      setActiveWorkspaceTabKey(tab.key)
+      if (tab.kind === 'session') {
+        setClosedWorkspaceSessionTabKeys((keys) => {
+          if (!keys.has(tab.key)) return keys
+          const nextKeys = new Set(keys)
+          nextKeys.delete(tab.key)
+          return nextKeys
+        })
+        setWorkspaceSidebarMode(tab.sidebarMode)
+        setIsSidebarOpen(true)
+        navigateToView('chat')
+        if (tab.sessionPath && tab.sessionPath !== useSessionStore.getState().activeSessionPath) {
+          void onSelectSession(tab.sessionPath)
+        } else {
+          void acknowledgeActiveSession({ force: true })
+        }
+        return
+      }
+
+      setWorkspaceSidebarMode(workspaceResourceKindToSidebarMode(tab.kind))
+      setIsSidebarOpen(true)
+      if (tab.kind === 'plugins') {
+        setActivePluginId(tab.itemId)
+      } else if (tab.kind === 'skills') {
+        setActiveSkillId(tab.itemId)
+      } else if (tab.kind === 'mcp') {
+        setActiveMcpServerId(tab.itemId)
+      } else if (tab.kind === 'wrappers') {
+        setSelectedWrapperId(tab.itemId)
+      }
+      navigateToView(tab.kind)
+    },
+    [
+      acknowledgeActiveSession,
+      navigateToView,
+      onSelectSession,
+      setActiveMcpServerId,
+      setActivePluginId,
+      setActiveSkillId,
+      setSelectedWrapperId
+    ]
+  )
+
+  const openWorkspaceResourceTab = useCallback(
+    (tab: Omit<WorkspaceResourceTab, 'key'>): void => {
+      const nextTab: WorkspaceResourceTab = {
+        ...tab,
+        key: workspaceResourceTabKey(tab.kind, tab.itemId)
+      }
+      upsertWorkspaceTab(nextTab)
+      selectWorkspaceTab(nextTab)
+    },
+    [selectWorkspaceTab, upsertWorkspaceTab]
+  )
+
+  const onOpenPluginTab = useCallback(
+    (plugin: PluginCatalogItem): void => {
+      setActivePluginId(plugin.id)
+      openWorkspaceResourceTab({
+        kind: 'plugins',
+        itemId: plugin.id,
+        title: plugin.name,
+        subtitle: plugin.source
+      })
+    },
+    [openWorkspaceResourceTab, setActivePluginId]
+  )
+
+  const onOpenSkillTab = useCallback(
+    (skill: SkillSummary): void => {
+      setActiveSkillId(skill.id)
+      openWorkspaceResourceTab({
+        kind: 'skills',
+        itemId: skill.id,
+        title: skill.name,
+        subtitle: skill.filePath
+      })
+    },
+    [openWorkspaceResourceTab, setActiveSkillId]
+  )
+
+  const onOpenMcpServerTab = useCallback(
+    (server: McpServerSummary): void => {
+      setActiveMcpServerId(server.id)
+      openWorkspaceResourceTab({
+        kind: 'mcp',
+        itemId: server.id,
+        title: server.name,
+        subtitle: server.sourcePath ?? server.command
+      })
+    },
+    [openWorkspaceResourceTab, setActiveMcpServerId]
+  )
+
+  const onOpenWrapperTab = useCallback(
+    (entry: WrapperCatalogEntry): void => {
+      setSelectedWrapperId(entry.manifest.id)
+      openWorkspaceResourceTab({
+        kind: 'wrappers',
+        itemId: entry.manifest.id,
+        title: entry.manifest.name,
+        subtitle: entry.manifest.id
+      })
+    },
+    [openWorkspaceResourceTab, setSelectedWrapperId]
+  )
+
+  const onCloseWorkspaceTab = useCallback(
+    (tab: WorkspaceTab): void => {
+      const closingIndex = visibleWorkspaceTabs.findIndex((item) => item.key === tab.key)
+      if (closingIndex === -1) return
+      const remainingTabs = visibleWorkspaceTabs.filter((item) => item.key !== tab.key)
+      if (tab.kind === 'session') {
+        setClosedWorkspaceSessionTabKeys((keys) => {
+          if (keys.has(tab.key)) return keys
+          const nextKeys = new Set(keys)
+          nextKeys.add(tab.key)
+          return nextKeys
+        })
+      }
+      setWorkspaceTabs((tabs) => tabs.filter((item) => item.key !== tab.key))
+      if (tab.key !== effectiveActiveWorkspaceTabKey) return
+
+      const nextTab = remainingTabs[Math.min(closingIndex, remainingTabs.length - 1)] ?? null
+      if (nextTab) {
+        selectWorkspaceTab(nextTab)
+        return
+      }
+      setActiveWorkspaceTabKey(null)
+      navigateToView('chat')
+    },
+    [effectiveActiveWorkspaceTabKey, navigateToView, selectWorkspaceTab, visibleWorkspaceTabs]
+  )
+
   const onStartSidebarResize = useCallback((event: MouseEvent<HTMLDivElement>): void => {
     event.preventDefault()
 
@@ -1823,47 +2136,48 @@ function App(): React.JSX.Element {
     document.addEventListener('mouseup', onMouseUp)
   }, [])
 
-  const onSelectWorkspaceView = useCallback(
-    (view: 'chat' | 'projects'): void => {
+  const onSelectWorkspaceSidebarMode = useCallback(
+    (mode: WorkspaceSidebarMode): void => {
       closeWorkspaceSidebarPreview()
-      const nextSidebarMode = view === 'projects' ? 'projects' : 'conversations'
-      const projectSelectionRequest =
-        view === 'projects' ? ++projectSidebarSelectionRequestRef.current : 0
-      if (view === 'chat') {
+      if (mode === 'projects' || mode === 'conversations') {
         projectSidebarSelectionRequestRef.current += 1
       }
-      if (activeView === 'analysis') {
-        setWorkspaceSidebarMode(nextSidebarMode)
-        if (workspaceSidebarMode === nextSidebarMode) {
-          setIsSidebarOpen((value) => !value)
-        } else {
-          setIsSidebarOpen(true)
-        }
-        return
-      }
-
-      setWorkspaceSidebarMode(nextSidebarMode)
-      if (activeView === view) {
+      setWorkspaceSidebarMode(mode)
+      if (workspaceSidebarMode === mode) {
         setIsSidebarOpen((value) => !value)
         return
       }
-      navigateToView(view)
       setIsSidebarOpen(true)
-      if (
-        view === 'projects' &&
-        !activeCwdBelongsToProject(projectsRef.current, useSessionStore.getState().activeCwd)
-      ) {
-        void selectFirstAvailableProjectSession(projectSelectionRequest)
-      }
     },
-    [
-      activeView,
-      closeWorkspaceSidebarPreview,
-      projectsRef,
-      selectFirstAvailableProjectSession,
-      workspaceSidebarMode,
-      navigateToView
-    ]
+    [closeWorkspaceSidebarPreview, workspaceSidebarMode]
+  )
+
+  const onSelectWorkspaceView = useCallback(
+    (view: 'chat' | 'projects'): void => {
+      onSelectWorkspaceSidebarMode(view === 'projects' ? 'projects' : 'conversations')
+    },
+    [onSelectWorkspaceSidebarMode]
+  )
+
+  const onNewChatFromSidebar = useCallback(async (): Promise<void> => {
+    await onNewChat()
+    navigateToView('chat')
+  }, [navigateToView, onNewChat])
+
+  const onOpenSessionFromSidebar = useCallback(
+    async (path: string): Promise<void> => {
+      await onSelectSession(path)
+      navigateToView('chat')
+    },
+    [navigateToView, onSelectSession]
+  )
+
+  const onStartProjectChatFromSidebar = useCallback(
+    async (project: Project): Promise<void> => {
+      await onStartProjectChat(project)
+      navigateToView('chat')
+    },
+    [navigateToView, onStartProjectChat]
   )
 
   const startPlaceholderProjectSession = (): void => {
@@ -1881,6 +2195,52 @@ function App(): React.JSX.Element {
   const acknowledgeActiveSessionInteraction = useCallback((): void => {
     void acknowledgeActiveSession()
   }, [acknowledgeActiveSession])
+
+  const activeResourcePlugin =
+    activeWorkspaceResourceTab?.kind === 'plugins'
+      ? (plugins.find((plugin) => plugin.id === activeWorkspaceResourceTab.itemId) ?? null)
+      : null
+  const activeResourceSkill =
+    activeWorkspaceResourceTab?.kind === 'skills'
+      ? (skills.find((skill) => skill.id === activeWorkspaceResourceTab.itemId) ?? null)
+      : null
+  const activeResourceMcpServer =
+    activeWorkspaceResourceTab?.kind === 'mcp'
+      ? (mcpServers.find((server) => server.id === activeWorkspaceResourceTab.itemId) ?? null)
+      : null
+
+  const activeWorkspaceResourceContent = activeWorkspaceResourceTab ? (
+    activeWorkspaceResourceTab.kind === 'plugins' ? (
+      <PluginDetail
+        selectedPlugin={activeResourcePlugin}
+        busySource={busyPluginSource}
+        operationError={pluginOperationError}
+        onInstall={(source) => {
+          void onInstallPlugin(source)
+        }}
+        onRemove={(source) => {
+          void onRemovePlugin(source)
+        }}
+      />
+    ) : activeWorkspaceResourceTab.kind === 'skills' ? (
+      <SkillDetail selectedSkill={activeResourceSkill} />
+    ) : activeWorkspaceResourceTab.kind === 'mcp' ? (
+      <McpDetail selectedServer={activeResourceMcpServer} />
+    ) : activeWorkspaceResourceTab.kind === 'wrappers' ? (
+      <WrapperDetail
+        catalog={wrapperCatalog}
+        runs={wrapperRuns}
+        selectedId={activeWorkspaceResourceTab.itemId}
+        error={wrapperError}
+        onOpenLocalPath={onOpenLocalPath}
+        onExportReproducibility={(runId) => void exportWrapperReproducibility(runId)}
+      />
+    ) : null
+  ) : (
+    <Stack spacing={1} sx={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+      <Typography color="text.secondary">从左侧选择一个项目打开 tab。</Typography>
+    </Stack>
+  )
 
   const activeChatView = (
     <ChatView
@@ -1928,6 +2288,56 @@ function App(): React.JSX.Element {
     />
   )
 
+  const chatWorkspaceContent = (
+    <>
+      {showProjectSessionPlaceholder ? (
+        <Box
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            px: 3
+          }}
+        >
+          <Box
+            sx={{
+              width: 'min(420px, 100%)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 2,
+              textAlign: 'center'
+            }}
+          >
+            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+              选择项目会话
+            </Typography>
+            <Button variant="outlined" onClick={startPlaceholderProjectSession}>
+              {projects.length > 0 ? '新建项目对话' : '新建项目'}
+            </Button>
+          </Box>
+        </Box>
+      ) : (
+        activeChatView
+      )}
+      {!showProjectSessionPlaceholder && filePreview ? (
+        <FilePreviewPanel
+          state={filePreview}
+          onOpenFile={onOpenFilePreview}
+          onOpenDefaultPath={onOpenDefaultPreviewPath}
+          onRevealPath={onRevealPreviewPath}
+          onListDirectory={onListPreviewDirectory}
+        />
+      ) : null}
+    </>
+  )
+
+  const activeWorkspaceTabContent =
+    activeWorkspaceTab?.kind === 'session' ? chatWorkspaceContent : activeWorkspaceResourceContent
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -1950,10 +2360,7 @@ function App(): React.JSX.Element {
             left: 0,
             top: 0,
             bottom: 0,
-            width:
-              isChatWorkspaceView && isSidebarOpen
-                ? activityBarWidth + sidebarWidth
-                : activityBarWidth,
+            width: isSidebarOpen ? activityBarWidth + sidebarWidth : activityBarWidth,
             backgroundColor: (muiTheme) =>
               muiTheme.palette.mode === 'dark' ? muiTheme.palette.background.default : '#FFFFFF',
             pointerEvents: 'none',
@@ -1962,12 +2369,12 @@ function App(): React.JSX.Element {
         />
         <AppActivityBar
           activeView={activeView}
-          setActiveView={navigateToView}
           isWorkspaceSidebarModeExpanded={isWorkspaceSidebarModeExpanded}
           shouldUseWorkspaceSidebarPreview={shouldUseWorkspaceSidebarPreview}
           openWorkspaceSidebarPreview={openWorkspaceSidebarPreview}
           scheduleWorkspaceSidebarPreviewClose={scheduleWorkspaceSidebarPreviewClose}
           onSelectWorkspaceView={onSelectWorkspaceView}
+          onSelectWorkspaceSidebarMode={onSelectWorkspaceSidebarMode}
           refreshAnalysisJupyterRuntimeStatus={refreshAnalysisJupyterRuntimeStatus}
           refreshPlugins={refreshPlugins}
           refreshSkills={refreshSkills}
@@ -1984,19 +2391,18 @@ function App(): React.JSX.Element {
           activeCwd={activeCwd}
           projects={projects}
           projectSessionRefreshKey={projectSessionRefreshKey}
-          onNewChat={onNewChat}
+          onNewChat={onNewChatFromSidebar}
           setIsNewProjectDialogOpen={setIsNewProjectDialogOpen}
-          onSelectSession={onSelectSession}
+          onSelectSession={onOpenSessionFromSidebar}
           onRenameSession={onRenameSession}
           onDeleteSession={onDeleteSession}
-          onStartProjectChat={onStartProjectChat}
+          onStartProjectChat={onStartProjectChatFromSidebar}
           onDeleteProjectEntry={onDeleteProjectEntry}
           onFetchProjectSessions={onFetchProjectSessions}
           getSessionRuntimeState={getSessionRuntimeState}
         />
 
         <AppWorkspaceSidebar
-          isChatWorkspaceView={isChatWorkspaceView}
           isSidebarOpen={isSidebarOpen}
           sidebarWidth={sidebarWidth}
           activeView={activeView}
@@ -2006,23 +2412,65 @@ function App(): React.JSX.Element {
           activeWorkspaceTitle={activeWorkspaceTitle}
           activeWorkspaceScopeLabel={activeWorkspaceScopeLabel}
           workspaceSidebarMode={workspaceSidebarMode}
+          runtimeProjectCwd={activeProject?.workingDirectory ?? ''}
+          runtimeStatus={analysisJupyterRuntimeStatus}
+          isRuntimeLoading={isLoadingAnalysisJupyterRuntime || isStartingAnalysisJupyter}
+          runtimeClosingNotebookPath={closingRuntimeNotebookPath}
+          onOpenRuntimeNotebook={onOpenNotebookWorkspaceFile}
+          onRefreshRuntime={() => {
+            void refreshAnalysisJupyterRuntimeStatus()
+          }}
+          onStartRuntime={(cwd) => {
+            void onStartAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
+          }}
+          onStopRuntime={(cwd) => {
+            void onStopAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
+          }}
+          onStopRuntimeNotebookKernel={(notebookPath) => {
+            void onStopRuntimeNotebookSession(notebookPath)
+          }}
+          plugins={plugins}
+          activePluginId={activePluginId}
+          isLoadingPlugins={isLoadingPlugins}
+          onOpenPlugin={onOpenPluginTab}
+          onRefreshPlugins={() => {
+            void refreshPlugins()
+          }}
+          skills={skills}
+          activeSkillId={activeSkillId}
+          isLoadingSkills={isLoadingSkills}
+          onOpenSkill={onOpenSkillTab}
+          mcpServers={mcpServers}
+          activeMcpServerId={activeMcpServerId}
+          onOpenMcpServer={onOpenMcpServerTab}
+          wrapperCatalog={wrapperCatalog}
+          selectedWrapperId={selectedWrapperId}
+          isLoadingWrappers={isLoadingWrappers}
+          isAddingWrapper={isAddingWrapper}
+          onOpenWrapper={onOpenWrapperTab}
+          onRefreshWrappers={() => {
+            void refreshWrappers()
+          }}
+          onAddCustomWrapper={() => {
+            void addCustomWrapper()
+          }}
           sessions={sessions}
           activeSessionPath={activeSessionPath}
           activeCwd={activeCwd}
           projects={projects}
           projectSessionRefreshKey={projectSessionRefreshKey}
-          onNewChat={onNewChat}
+          onNewChat={onNewChatFromSidebar}
           setIsNewProjectDialogOpen={setIsNewProjectDialogOpen}
-          onSelectSession={onSelectSession}
+          onSelectSession={onOpenSessionFromSidebar}
           onRenameSession={onRenameSession}
           onDeleteSession={onDeleteSession}
-          onStartProjectChat={onStartProjectChat}
+          onStartProjectChat={onStartProjectChatFromSidebar}
           onDeleteProjectEntry={onDeleteProjectEntry}
           onFetchProjectSessions={onFetchProjectSessions}
           getSessionRuntimeState={getSessionRuntimeState}
         />
 
-        {isChatWorkspaceView ? (
+        {isWorkspaceView ? (
           <Box
             component="main"
             sx={{
@@ -2097,9 +2545,40 @@ function App(): React.JSX.Element {
               </Box>
             ) : null}
             <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
-              {isAnalysisWorkspaceView &&
-              activeWorkspaceFileTab &&
-              activeWorkspaceFileTab.kind !== 'notebook' ? (
+              {showWorkspaceTabs ? (
+                <Box
+                  sx={{
+                    flex: 1,
+                    minWidth: 0,
+                    minHeight: 0,
+                    display: 'flex',
+                    flexDirection: 'column'
+                  }}
+                >
+                  <WorkspaceResourceHeader
+                    tabs={visibleWorkspaceTabs}
+                    activeKey={effectiveActiveWorkspaceTabKey}
+                    onSelect={selectWorkspaceTab}
+                    onClose={onCloseWorkspaceTab}
+                    reserveLeadingChromeSpace={isMac && !isSidebarOpen}
+                    reserveTrailingChromeSpace={workspaceSidePanelCollapsed}
+                  />
+                  <Box
+                    sx={{
+                      flex: 1,
+                      minWidth: 0,
+                      minHeight: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      overflow: 'hidden'
+                    }}
+                  >
+                    {activeWorkspaceTabContent}
+                  </Box>
+                </Box>
+              ) : isAnalysisWorkspaceView &&
+                activeWorkspaceFileTab &&
+                activeWorkspaceFileTab.kind !== 'notebook' ? (
                 <Box
                   sx={{
                     flex: 1,
@@ -2197,118 +2676,10 @@ function App(): React.JSX.Element {
                   }}
                 />
               ) : (
-                <>
-                  {showProjectSessionPlaceholder ? (
-                    <Box
-                      sx={{
-                        flex: 1,
-                        minWidth: 0,
-                        minHeight: 0,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        px: 3
-                      }}
-                    >
-                      <Box
-                        sx={{
-                          width: 'min(420px, 100%)',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          gap: 2,
-                          textAlign: 'center'
-                        }}
-                      >
-                        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                          选择项目会话
-                        </Typography>
-                        <Button variant="outlined" onClick={startPlaceholderProjectSession}>
-                          {projects.length > 0 ? '新建项目对话' : '新建项目'}
-                        </Button>
-                      </Box>
-                    </Box>
-                  ) : (
-                    activeChatView
-                  )}
-                  {!showProjectSessionPlaceholder && filePreview ? (
-                    <FilePreviewPanel
-                      state={filePreview}
-                      onOpenFile={onOpenFilePreview}
-                      onOpenDefaultPath={onOpenDefaultPreviewPath}
-                      onRevealPath={onRevealPreviewPath}
-                      onListDirectory={onListPreviewDirectory}
-                    />
-                  ) : null}
-                </>
+                chatWorkspaceContent
               )}
             </Box>
           </Box>
-        ) : activeView === 'runtime' ? (
-          <RuntimeView
-            projectCwd={activeProject?.workingDirectory ?? ''}
-            projectName={activeProject?.name}
-            runtimeStatus={analysisJupyterRuntimeStatus}
-            isLoading={isLoadingAnalysisJupyterRuntime || isStartingAnalysisJupyter}
-            closingNotebookPath={closingRuntimeNotebookPath}
-            error={analysisJupyterRuntimeError ?? analysisJupyterError}
-            onRefresh={() => {
-              void refreshAnalysisJupyterRuntimeStatus()
-            }}
-            onStartJupyter={(cwd) => {
-              void onStartAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
-            }}
-            onStopJupyter={(cwd) => {
-              void onStopAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
-            }}
-            onOpenNotebook={onOpenNotebookWorkspaceFile}
-            onStopNotebookKernel={(notebookPath) => {
-              void onStopRuntimeNotebookSession(notebookPath)
-            }}
-          />
-        ) : activeView === 'plugins' ? (
-          <PluginView
-            plugins={plugins}
-            isLoading={isLoadingPlugins}
-            activePluginId={activePluginId}
-            busySource={busyPluginSource}
-            operationError={pluginOperationError}
-            sidebarWidth={sidebarWidth}
-            onSelectPlugin={setActivePluginId}
-            onInstall={(source) => {
-              void onInstallPlugin(source)
-            }}
-            onRemove={(source) => {
-              void onRemovePlugin(source)
-            }}
-            onRefresh={() => {
-              void refreshPlugins()
-            }}
-            onStartSidebarResize={onStartSidebarResize}
-          />
-        ) : activeView === 'skills' ? (
-          <SkillView
-            skills={skills}
-            isLoading={isLoadingSkills}
-            activeSkillId={activeSkillId}
-            sidebarWidth={sidebarWidth}
-            onSelectSkill={setActiveSkillId}
-            onStartSidebarResize={onStartSidebarResize}
-          />
-        ) : activeView === 'mcp' ? (
-          <McpView
-            servers={mcpServers}
-            activeServerId={activeMcpServerId}
-            sidebarWidth={sidebarWidth}
-            onSelectServer={setActiveMcpServerId}
-            onStartSidebarResize={onStartSidebarResize}
-          />
-        ) : activeView === 'wrappers' ? (
-          <WrapperView
-            sidebarWidth={sidebarWidth}
-            onOpenLocalPath={onOpenLocalPath}
-            onStartSidebarResize={onStartSidebarResize}
-          />
         ) : (
           <Box component="main" sx={{ flex: 1, minWidth: 0, height: '100vh' }} />
         )}

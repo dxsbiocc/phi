@@ -17,3 +17,22 @@ test('workspace hover preview stays open while nested project actions are open',
     /onPreviewInteractionChange=\{handleWorkspaceSidebarPreviewInteractionChange\}/
   )
 })
+
+test('workspace activity buttons apply selected theme color to every icon implementation', () => {
+  const activityBarSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/AppActivityBar.tsx'),
+    'utf8'
+  )
+
+  assert.match(activityBarSource, /function activityBarButtonSx\(active: boolean\)/)
+  assert.match(activityBarSource, /color: active \? 'primary\.main' : 'text\.secondary'/)
+  assert.match(activityBarSource, /'& svg': \{\s*color: 'inherit'\s*\}/)
+  assert.match(
+    activityBarSource,
+    /sx=\{activityBarButtonSx\(isWorkspaceSidebarModeExpanded\('wrappers'\)\)\}/
+  )
+  assert.match(
+    activityBarSource,
+    /prev\.isWorkspaceSidebarModeExpanded === next\.isWorkspaceSidebarModeExpanded/
+  )
+})
