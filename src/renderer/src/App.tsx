@@ -76,11 +76,14 @@ import { isNotebookFilePath } from './features/analysis/lib/notebookPaths'
 import { orderProjectsForSessionSelection } from './lib/projectSidebar'
 import { workspaceScopeLabelForCwd } from './lib/workspaceScope'
 import {
+  isWorkspaceFileTabKind,
   isWorkspaceResourceKind,
+  workspaceFileTabKey,
   workspaceResourceKindLabel,
   workspaceResourceKindToSidebarMode,
   workspaceResourceTabKey,
   workspaceSessionTabKey,
+  type WorkspaceFileWorkspaceTab,
   type WorkspaceResourceKind,
   type WorkspaceResourceTab,
   type WorkspaceSessionTab,
@@ -127,6 +130,12 @@ const titlebarTrailingToggleChromeReserve = '56px'
 const workspaceFileHeaderLeadingChromeInsetWidth =
   titlebarLeadingChromeReserveWidth - activityBarWidth
 const workspaceFileHeaderLeadingChromeInset = `${workspaceFileHeaderLeadingChromeInsetWidth}px`
+
+function isWorkspaceFileWorkspaceTab(
+  tab: WorkspaceTab | null | undefined
+): tab is WorkspaceFileWorkspaceTab {
+  return Boolean(tab && isWorkspaceFileTabKind(tab.kind))
+}
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 const RefreshIcon = GoSync
 
@@ -976,12 +985,20 @@ function App(): React.JSX.Element {
     setProjectSessionRefreshKey((key) => key + 1)
   }
 
+  const showActiveConversationInSidebar = useCallback((): void => {
+    projectSidebarSelectionRequestRef.current += 1
+    setWorkspaceSidebarMode('conversations')
+    setIsSidebarOpen(true)
+  }, [])
+
   const onOpenNotebookWorkspaceFile = useCallback(
     (path: string): void => {
       const normalizedPath = absoluteWorkspacePath(useSessionStore.getState().activeCwd, path)
       const title = fileNameFromPath(normalizedPath)
       filePreviewRequestRef.current += 1
       setFilePreview(null)
+      showActiveConversationInSidebar()
+      setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
       setWorkspaceFileTabs((tabs) => {
         const nextTab: WorkspaceFileTab = {
           id: normalizedPath,
@@ -997,7 +1014,6 @@ function App(): React.JSX.Element {
           : [...tabs, nextTab]
       })
       setActiveWorkspaceFilePath(normalizedPath)
-      setIsSidebarOpen(true)
       navigateToView('analysis')
       const cachedFile = activateCachedAnalysisNotebook(normalizedPath)
       if (cachedFile) {
@@ -1050,7 +1066,8 @@ function App(): React.JSX.Element {
       setActiveWorkspaceFilePath,
       setFilePreview,
       setWorkspaceFileTabs,
-      navigateToView
+      navigateToView,
+      showActiveConversationInSidebar
     ]
   )
 
@@ -1555,30 +1572,50 @@ function App(): React.JSX.Element {
     setProjectSessionRefreshKey((key) => key + 1)
   }
 
+  const previewFilePathInWorkspaceTab = useCallback(
+    (path: string): void => {
+      const normalizedPath = absoluteWorkspacePath(getActiveCwd(), path)
+      showActiveConversationInSidebar()
+      setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
+      previewFilePath(path)
+    },
+    [getActiveCwd, previewFilePath, showActiveConversationInSidebar]
+  )
+
+  const previewDirectoryPathInWorkspaceTab = useCallback(
+    (path: string): void => {
+      const normalizedPath = absoluteWorkspacePath(getActiveCwd(), path)
+      showActiveConversationInSidebar()
+      setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
+      previewDirectoryPath(path)
+    },
+    [getActiveCwd, previewDirectoryPath, showActiveConversationInSidebar]
+  )
+
   const onOpenFilePreview = useCallback(
     (path: string): void => {
       if (isNotebookFilePath(path)) {
         onOpenNotebookWorkspaceFile(path)
         return
       }
-      previewFilePath(path)
+      previewFilePathInWorkspaceTab(path)
     },
-    [onOpenNotebookWorkspaceFile, previewFilePath]
+    [onOpenNotebookWorkspaceFile, previewFilePathInWorkspaceTab]
   )
 
   const onOpenLocalPath = useCallback(
     (path: string, pathKind: LocalPathKind): void => {
       if (pathKind === 'directory') {
-        previewDirectoryPath(path)
+        previewDirectoryPathInWorkspaceTab(path)
         return
       }
       if (isNotebookFilePath(path)) {
         onOpenNotebookWorkspaceFile(path)
         return
       }
-      previewFilePath(path)
+      previewFilePathInWorkspaceTab(path)
     },
-    [onOpenNotebookWorkspaceFile, previewDirectoryPath, previewFilePath]
+    [onOpenNotebookWorkspaceFile, previewDirectoryPathInWorkspaceTab, previewFilePathInWorkspaceTab]
   )
 
   const onOpenDefaultPreviewPath = useCallback(
@@ -1690,26 +1727,67 @@ function App(): React.JSX.Element {
       projects
     ]
   )
+  const workspaceFileWorkspaceTabs = useMemo<WorkspaceFileWorkspaceTab[]>(
+    () =>
+      workspaceFileTabs.map((tab) => ({
+        key: workspaceFileTabKey(tab.path),
+        kind: tab.kind,
+        id: tab.id,
+        itemId: tab.path,
+        name: tab.name,
+        status: tab.status,
+        title: tab.name,
+        subtitle: tab.status,
+        path: tab.path,
+        pathKind: tab.pathKind,
+        absolutePath: tab.absolutePath ?? tab.path
+      })),
+    [workspaceFileTabs]
+  )
+  const shouldShowSessionWorkspaceTab = !(
+    activeView === 'analysis' && workspaceSidebarMode === 'conversations'
+  )
   const visibleWorkspaceTabs = useMemo(() => {
     const staleFreshSessionKey =
       currentSessionTab.sessionPath === null
         ? null
         : workspaceSessionTabKey(null, currentSessionTab.sessionGeneration)
-    const normalizedTabs = workspaceTabs.filter((tab) => tab.key !== staleFreshSessionKey)
-    if (closedWorkspaceSessionTabKeys.has(currentSessionTab.key)) return normalizedTabs
+    const normalizedTabs = workspaceTabs.filter(
+      (tab) =>
+        tab.key !== staleFreshSessionKey &&
+        (shouldShowSessionWorkspaceTab || tab.kind !== 'session')
+    )
+    const normalizedTabsWithFiles = [...normalizedTabs, ...workspaceFileWorkspaceTabs]
+    if (!shouldShowSessionWorkspaceTab) return normalizedTabsWithFiles
+    if (closedWorkspaceSessionTabKeys.has(currentSessionTab.key)) return normalizedTabsWithFiles
 
-    const existingIndex = normalizedTabs.findIndex((tab) => tab.key === currentSessionTab.key)
-    if (existingIndex === -1) return [currentSessionTab, ...normalizedTabs]
-    return normalizedTabs.map((tab, index) =>
+    const existingIndex = normalizedTabsWithFiles.findIndex(
+      (tab) => tab.key === currentSessionTab.key
+    )
+    if (existingIndex === -1) return [currentSessionTab, ...normalizedTabsWithFiles]
+    return normalizedTabsWithFiles.map((tab, index) =>
       index === existingIndex ? { ...tab, ...currentSessionTab } : tab
     )
-  }, [closedWorkspaceSessionTabKeys, currentSessionTab, workspaceTabs])
+  }, [
+    closedWorkspaceSessionTabKeys,
+    currentSessionTab,
+    shouldShowSessionWorkspaceTab,
+    workspaceFileWorkspaceTabs,
+    workspaceTabs
+  ])
   const effectiveActiveWorkspaceTabKey =
-    activeWorkspaceTabKey ?? (activeView === 'chat' ? currentSessionTab.key : null)
+    activeWorkspaceTabKey ??
+    (activeView === 'analysis' && activeWorkspaceFilePath
+      ? workspaceFileTabKey(activeWorkspaceFilePath)
+      : activeView === 'chat'
+        ? currentSessionTab.key
+        : null)
   const activeWorkspaceTab =
     visibleWorkspaceTabs.find((tab) => tab.key === effectiveActiveWorkspaceTabKey) ?? null
   const activeWorkspaceResourceTab =
-    activeWorkspaceTab?.kind !== 'session' ? activeWorkspaceTab : null
+    activeWorkspaceTab && isWorkspaceResourceKind(activeWorkspaceTab.kind)
+      ? activeWorkspaceTab
+      : null
   const notebookAiDefaultModel = useMemo<ModelOption | null>(() => {
     const projectModelSelection = activeProject?.defaultModel ?? null
     if (projectModelSelection) {
@@ -1752,7 +1830,8 @@ function App(): React.JSX.Element {
   const activeWorkspaceScopeLabel = workspaceScopeLabelForCwd(activeCwd, projects)
   const activePermissionMode = currentPermissionMode
   const showWorkspaceTabs =
-    visibleWorkspaceTabs.length > 0 && (activeView === 'chat' || isResourceWorkspaceView)
+    visibleWorkspaceTabs.length > 0 &&
+    (activeView === 'chat' || activeView === 'analysis' || isResourceWorkspaceView)
   const showWorkspaceTitlebar =
     !isAnalysisWorkspaceView && !isResourceWorkspaceView && !showWorkspaceTabs
   const workspaceSidebarPreviewWidth = Math.min(360, Math.max(320, sidebarWidth))
@@ -1863,6 +1942,8 @@ function App(): React.JSX.Element {
     (tabLike: AnalysisWorkspaceFileTab): void => {
       const tab = workspaceFileTabs.find((item) => item.path === tabLike.path)
       if (!tab) return
+      showActiveConversationInSidebar()
+      setActiveWorkspaceTabKey(workspaceFileTabKey(tab.path))
       setActiveWorkspaceFilePath(tab.path)
       navigateToView('analysis')
       if (tab.kind === 'notebook') {
@@ -1877,6 +1958,7 @@ function App(): React.JSX.Element {
       activateCachedAnalysisNotebook,
       onOpenNotebookWorkspaceFile,
       setActiveWorkspaceFilePath,
+      showActiveConversationInSidebar,
       showCachedOrLoadFilePreview,
       workspaceFileTabs,
       navigateToView
@@ -1997,6 +2079,11 @@ function App(): React.JSX.Element {
         return
       }
 
+      if (isWorkspaceFileWorkspaceTab(tab)) {
+        onSelectWorkspaceFileTab(tab)
+        return
+      }
+
       setWorkspaceSidebarMode(workspaceResourceKindToSidebarMode(tab.kind))
       setIsSidebarOpen(true)
       if (tab.kind === 'plugins') {
@@ -2014,6 +2101,7 @@ function App(): React.JSX.Element {
       acknowledgeActiveSession,
       navigateToView,
       onSelectSession,
+      onSelectWorkspaceFileTab,
       setActiveMcpServerId,
       setActivePluginId,
       setActiveSkillId,
@@ -2097,8 +2185,11 @@ function App(): React.JSX.Element {
           nextKeys.add(tab.key)
           return nextKeys
         })
+      } else if (isWorkspaceFileWorkspaceTab(tab)) {
+        onCloseWorkspaceFileTab(tab)
+      } else {
+        setWorkspaceTabs((tabs) => tabs.filter((item) => item.key !== tab.key))
       }
-      setWorkspaceTabs((tabs) => tabs.filter((item) => item.key !== tab.key))
       if (tab.key !== effectiveActiveWorkspaceTabKey) return
 
       const nextTab = remainingTabs[Math.min(closingIndex, remainingTabs.length - 1)] ?? null
@@ -2109,7 +2200,13 @@ function App(): React.JSX.Element {
       setActiveWorkspaceTabKey(null)
       navigateToView('chat')
     },
-    [effectiveActiveWorkspaceTabKey, navigateToView, selectWorkspaceTab, visibleWorkspaceTabs]
+    [
+      effectiveActiveWorkspaceTabKey,
+      navigateToView,
+      onCloseWorkspaceFileTab,
+      selectWorkspaceTab,
+      visibleWorkspaceTabs
+    ]
   )
 
   const onStartSidebarResize = useCallback((event: MouseEvent<HTMLDivElement>): void => {
@@ -2283,7 +2380,7 @@ function App(): React.JSX.Element {
       onOpenApprovalSession={onOpenApprovalSession}
       onOpenLocalPath={onOpenLocalPath}
       onJumpToNotebookCell={onJumpToAnalysisNotebookCell}
-      compactComposerControls={activeView === 'analysis' || filePreview !== null}
+      compactComposerControls={activeView === 'analysis'}
       cwd={activeCwd}
     />
   )
@@ -2323,20 +2420,96 @@ function App(): React.JSX.Element {
       ) : (
         activeChatView
       )}
-      {!showProjectSessionPlaceholder && filePreview ? (
-        <FilePreviewPanel
-          state={filePreview}
-          onOpenFile={onOpenFilePreview}
-          onOpenDefaultPath={onOpenDefaultPreviewPath}
-          onRevealPath={onRevealPreviewPath}
-          onListDirectory={onListPreviewDirectory}
-        />
-      ) : null}
     </>
   )
 
+  const activeAnalysisView = (
+    <AnalysisView
+      hideLeftRail
+      notebookRegistry={analysisNotebookRegistry}
+      notebookFile={activeAnalysisNotebook}
+      workspaceFileTabs={workspaceFileTabs}
+      activeWorkspaceFilePath={activeWorkspaceFilePath}
+      onSelectWorkspaceFileTab={onSelectWorkspaceFileTab}
+      onCloseWorkspaceFileTab={onCloseWorkspaceFileTab}
+      isLoadingNotebooks={isLoadingAnalysisNotebooks}
+      isOpeningNotebook={isOpeningAnalysisNotebook}
+      notebookError={analysisNotebookError}
+      notebookContentError={analysisNotebookContentError}
+      kernelDiagnostics={analysisKernelDiagnostics}
+      isLoadingKernels={isLoadingAnalysisKernels}
+      kernelError={analysisKernelError}
+      notebookSessionStatus={analysisNotebookSessionStatus}
+      isStartingNotebookSession={isStartingAnalysisNotebookSession}
+      notebookSessionError={analysisNotebookSessionError}
+      executingNotebookCellId={executingAnalysisCellId}
+      notebookCellExecutionError={analysisCellExecutionError}
+      agentFocus={analysisAgentFocus}
+      onRefreshNotebooks={() => {
+        void refreshAnalysisNotebooks()
+      }}
+      onStartNotebookSession={(file, document) => {
+        return onStartAnalysisNotebookSession(file, document)
+      }}
+      onSyncNotebookDraft={(file, document) => {
+        void onSyncAnalysisNotebookDraft(file, document)
+      }}
+      onStopNotebookSession={(file) => {
+        return onStopAnalysisNotebookSession(file)
+      }}
+      onRunNotebookCell={(file, document, cellId) => {
+        void onRunAnalysisNotebookCell(file, document, cellId)
+      }}
+      onStopNotebookCell={(file, cellId) => {
+        void onStopAnalysisNotebookCell(file, cellId)
+      }}
+      onCompleteNotebookCell={onCompleteAnalysisNotebookCell}
+      onFormatNotebookCell={onFormatAnalysisNotebookCell}
+      onGenerateNotebookCode={onGenerateAnalysisNotebookCode}
+      onNotebookCodeGenerationProgress={rendererApi.onAnalysisNotebookCodeGenerationProgress}
+      notebookAiModelOptions={availableModels}
+      notebookAiDefaultModel={notebookAiDefaultModel}
+      onPickNotebookContextFiles={onPickInputFiles}
+      onInitializeProjectAnalysis={(cwd) => {
+        void onInitializeProjectAnalysis(cwd)
+      }}
+      onOpenNotebook={(path) => {
+        onOpenNotebookWorkspaceFile(path)
+      }}
+      onCloseNotebook={() => {
+        closeActiveNotebook()
+        navigateToView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
+      }}
+      onSaveNotebook={(file, document) => {
+        void onSaveAnalysisNotebook(file, document)
+      }}
+      onCreateNotebook={(cwd) => {
+        void onCreateAnalysisNotebook(cwd)
+      }}
+    />
+  )
+
+  const activeWorkspaceFileTabContent = isWorkspaceFileWorkspaceTab(activeWorkspaceTab) ? (
+    activeWorkspaceTab.kind === 'notebook' ? (
+      activeAnalysisView
+    ) : activeFilePreviewState ? (
+      <FilePreviewPanel
+        layout="workspace"
+        state={activeFilePreviewState}
+        onOpenFile={onOpenFilePreview}
+        onOpenDefaultPath={onOpenDefaultPreviewPath}
+        onRevealPath={onRevealPreviewPath}
+        onListDirectory={onListPreviewDirectory}
+      />
+    ) : null
+  ) : null
+
   const activeWorkspaceTabContent =
-    activeWorkspaceTab?.kind === 'session' ? chatWorkspaceContent : activeWorkspaceResourceContent
+    activeWorkspaceTab?.kind === 'session'
+      ? chatWorkspaceContent
+      : isWorkspaceFileWorkspaceTab(activeWorkspaceTab)
+        ? activeWorkspaceFileTabContent
+        : activeWorkspaceResourceContent
 
   return (
     <ThemeProvider theme={theme}>
@@ -2610,71 +2783,7 @@ function App(): React.JSX.Element {
                   </Box>
                 </Box>
               ) : isAnalysisWorkspaceView ? (
-                <AnalysisView
-                  hideLeftRail
-                  notebookRegistry={analysisNotebookRegistry}
-                  notebookFile={activeAnalysisNotebook}
-                  workspaceFileTabs={workspaceFileTabs}
-                  activeWorkspaceFilePath={activeWorkspaceFilePath}
-                  onSelectWorkspaceFileTab={onSelectWorkspaceFileTab}
-                  onCloseWorkspaceFileTab={onCloseWorkspaceFileTab}
-                  isLoadingNotebooks={isLoadingAnalysisNotebooks}
-                  isOpeningNotebook={isOpeningAnalysisNotebook}
-                  notebookError={analysisNotebookError}
-                  notebookContentError={analysisNotebookContentError}
-                  kernelDiagnostics={analysisKernelDiagnostics}
-                  isLoadingKernels={isLoadingAnalysisKernels}
-                  kernelError={analysisKernelError}
-                  notebookSessionStatus={analysisNotebookSessionStatus}
-                  isStartingNotebookSession={isStartingAnalysisNotebookSession}
-                  notebookSessionError={analysisNotebookSessionError}
-                  executingNotebookCellId={executingAnalysisCellId}
-                  notebookCellExecutionError={analysisCellExecutionError}
-                  agentFocus={analysisAgentFocus}
-                  onRefreshNotebooks={() => {
-                    void refreshAnalysisNotebooks()
-                  }}
-                  onStartNotebookSession={(file, document) => {
-                    return onStartAnalysisNotebookSession(file, document)
-                  }}
-                  onSyncNotebookDraft={(file, document) => {
-                    void onSyncAnalysisNotebookDraft(file, document)
-                  }}
-                  onStopNotebookSession={(file) => {
-                    return onStopAnalysisNotebookSession(file)
-                  }}
-                  onRunNotebookCell={(file, document, cellId) => {
-                    void onRunAnalysisNotebookCell(file, document, cellId)
-                  }}
-                  onStopNotebookCell={(file, cellId) => {
-                    void onStopAnalysisNotebookCell(file, cellId)
-                  }}
-                  onCompleteNotebookCell={onCompleteAnalysisNotebookCell}
-                  onFormatNotebookCell={onFormatAnalysisNotebookCell}
-                  onGenerateNotebookCode={onGenerateAnalysisNotebookCode}
-                  onNotebookCodeGenerationProgress={
-                    rendererApi.onAnalysisNotebookCodeGenerationProgress
-                  }
-                  notebookAiModelOptions={availableModels}
-                  notebookAiDefaultModel={notebookAiDefaultModel}
-                  onPickNotebookContextFiles={onPickInputFiles}
-                  onInitializeProjectAnalysis={(cwd) => {
-                    void onInitializeProjectAnalysis(cwd)
-                  }}
-                  onOpenNotebook={(path) => {
-                    onOpenNotebookWorkspaceFile(path)
-                  }}
-                  onCloseNotebook={() => {
-                    closeActiveNotebook()
-                    navigateToView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
-                  }}
-                  onSaveNotebook={(file, document) => {
-                    void onSaveAnalysisNotebook(file, document)
-                  }}
-                  onCreateNotebook={(cwd) => {
-                    void onCreateAnalysisNotebook(cwd)
-                  }}
-                />
+                activeAnalysisView
               ) : (
                 chatWorkspaceContent
               )}

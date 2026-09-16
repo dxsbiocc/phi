@@ -1,7 +1,8 @@
 import type { WorkspaceSidebarMode } from './workspaceSidebar'
 
 export type WorkspaceResourceKind = 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
-export type WorkspaceTabKind = 'session' | WorkspaceResourceKind
+export type WorkspaceFileTabKind = 'file' | 'directory' | 'notebook'
+export type WorkspaceTabKind = 'session' | WorkspaceResourceKind | WorkspaceFileTabKind
 
 export type WorkspaceSessionTab = {
   key: string
@@ -22,7 +23,21 @@ export type WorkspaceResourceTab = {
   subtitle?: string
 }
 
-export type WorkspaceTab = WorkspaceSessionTab | WorkspaceResourceTab
+export type WorkspaceFileWorkspaceTab = {
+  key: string
+  kind: WorkspaceFileTabKind
+  id: string
+  itemId: string
+  name: string
+  status: string
+  title: string
+  subtitle?: string
+  path: string
+  pathKind: 'file' | 'directory'
+  absolutePath: string
+}
+
+export type WorkspaceTab = WorkspaceSessionTab | WorkspaceResourceTab | WorkspaceFileWorkspaceTab
 
 const resourceLabels: Record<WorkspaceResourceKind, string> = {
   runtime: '运行时',
@@ -34,7 +49,10 @@ const resourceLabels: Record<WorkspaceResourceKind, string> = {
 
 const tabLabels: Record<WorkspaceTabKind, string> = {
   session: '会话',
-  ...resourceLabels
+  ...resourceLabels,
+  file: '文件',
+  directory: '文件夹',
+  notebook: 'Notebook'
 }
 
 export function workspaceSessionTabKey(path: string | null, sessionGeneration: number): string {
@@ -45,6 +63,10 @@ export function workspaceResourceTabKey(kind: WorkspaceResourceKind, itemId: str
   return `${kind}:${itemId}`
 }
 
+export function workspaceFileTabKey(path: string): string {
+  return `file:${path}`
+}
+
 export function isWorkspaceResourceKind(value: string): value is WorkspaceResourceKind {
   return (
     value === 'runtime' ||
@@ -53,6 +75,10 @@ export function isWorkspaceResourceKind(value: string): value is WorkspaceResour
     value === 'mcp' ||
     value === 'wrappers'
   )
+}
+
+export function isWorkspaceFileTabKind(value: string): value is WorkspaceFileTabKind {
+  return value === 'file' || value === 'directory' || value === 'notebook'
 }
 
 export function workspaceResourceKindToSidebarMode(

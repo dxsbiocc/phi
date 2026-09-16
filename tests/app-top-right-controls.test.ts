@@ -112,20 +112,34 @@ test('workspace sessions and resources share the same tab strip', () => {
   assert.match(appSource, /workspaceSessionTabKey\(activeSessionPath, activeSessionGeneration\)/)
   assert.match(
     appSource,
-    /const showWorkspaceTabs =\s*visibleWorkspaceTabs\.length > 0 && \(activeView === 'chat' \|\| isResourceWorkspaceView\)/
+    /const showWorkspaceTabs =\s*visibleWorkspaceTabs\.length > 0 &&\s*\(activeView === 'chat' \|\| activeView === 'analysis' \|\| isResourceWorkspaceView\)/
   )
+  assert.match(appSource, /workspaceFileWorkspaceTabs/)
+  assert.match(
+    appSource,
+    /const shouldShowSessionWorkspaceTab = !\(\s*activeView === 'analysis' && workspaceSidebarMode === 'conversations'\s*\)/
+  )
+  assert.match(appSource, /shouldShowSessionWorkspaceTab \|\| tab\.kind !== 'session'/)
+  assert.match(appSource, /if \(!shouldShowSessionWorkspaceTab\) return normalizedTabsWithFiles/)
+  assert.match(appSource, /workspaceFileTabKey\(tab\.path\)/)
+  assert.match(appSource, /isWorkspaceFileWorkspaceTab\(tab\)/)
   assert.match(appSource, /tabs=\{visibleWorkspaceTabs\}/)
   assert.match(appSource, /onSelect=\{selectWorkspaceTab\}/)
   assert.match(appSource, /onClose=\{onCloseWorkspaceTab\}/)
+  assert.match(appSource, /activeWorkspaceFileTabContent/)
   assert.match(
     appSource,
-    /activeWorkspaceTab\?\.kind === 'session' \? chatWorkspaceContent : activeWorkspaceResourceContent/
+    /activeWorkspaceTab\?\.kind === 'session'[\s\S]{0,240}\? activeWorkspaceFileTabContent[\s\S]{0,140}: activeWorkspaceResourceContent/
   )
   assert.match(
     tabTypesSource,
     /export type WorkspaceTab = WorkspaceSessionTab \| WorkspaceResourceTab/
   )
+  assert.match(tabTypesSource, /WorkspaceFileWorkspaceTab/)
   assert.match(tabSource, /session: PhiIcons\.nav\.chat/)
+  assert.match(tabSource, /file: PhiIcons\.file\.document/)
+  assert.match(tabSource, /directory: PhiIcons\.file\.directory/)
+  assert.match(tabSource, /notebook: PhiIcons\.file\.jupyter/)
 })
 
 test('workspace top-right controls are app-level chrome, not notebook-only content', () => {
@@ -192,6 +206,49 @@ test('workspace file previews and chats can show the shared right side panel', (
   assert.match(appSource, /treeRevision=\{workspaceSidePanelTreeRevision\}/)
   assert.match(appSource, /titlebarInsetEnd=\{titlebarTrailingSidePanelChromeReserve\}/)
   assert.doesNotMatch(appSource, /position: 'fixed'[\s\S]{0,120}inset: 0/)
+})
+
+test('workspace session tabs do not stack stale file previews under chat', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const chatWorkspaceStart = appSource.indexOf('const chatWorkspaceContent = (')
+  const activeAnalysisViewStart = appSource.indexOf(
+    'const activeAnalysisView = (',
+    chatWorkspaceStart
+  )
+  const chatWorkspaceSource = appSource.slice(chatWorkspaceStart, activeAnalysisViewStart)
+
+  assert.ok(chatWorkspaceStart >= 0)
+  assert.ok(activeAnalysisViewStart > chatWorkspaceStart)
+  assert.doesNotMatch(chatWorkspaceSource, /<FilePreviewPanel/)
+  assert.match(appSource, /compactComposerControls=\{activeView === 'analysis'\}/)
+  assert.doesNotMatch(
+    appSource,
+    /compactComposerControls=\{activeView === 'analysis' \|\| filePreview !== null\}/
+  )
+})
+
+test('workspace file tabs move the active conversation into the sidebar', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+
+  assert.match(appSource, /const showActiveConversationInSidebar = useCallback/)
+  assert.match(appSource, /setWorkspaceSidebarMode\('conversations'\)/)
+  assert.match(appSource, /setIsSidebarOpen\(true\)/)
+  assert.match(
+    appSource,
+    /const previewFilePathInWorkspaceTab = useCallback[\s\S]{0,260}showActiveConversationInSidebar\(\)/
+  )
+  assert.match(
+    appSource,
+    /const previewDirectoryPathInWorkspaceTab = useCallback[\s\S]{0,260}showActiveConversationInSidebar\(\)/
+  )
+  assert.match(
+    appSource,
+    /const onOpenNotebookWorkspaceFile = useCallback[\s\S]{0,420}showActiveConversationInSidebar\(\)/
+  )
+  assert.match(
+    appSource,
+    /const onSelectWorkspaceFileTab = useCallback[\s\S]{0,260}showActiveConversationInSidebar\(\)/
+  )
 })
 
 test('workspace file titlebars reserve trailing app chrome only at the window edge', () => {
