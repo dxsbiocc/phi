@@ -58,6 +58,7 @@ function NotebookKernelIcon({
 export function NotebookHeader({
   activeNotebookPath,
   notebooks,
+  hideNotebookTabs = false,
   kernelLabel,
   kernelStatusLabel,
   kernelStatusColor,
@@ -69,6 +70,7 @@ export function NotebookHeader({
 }: {
   activeNotebookPath: string
   notebooks: NotebookListEntry[]
+  hideNotebookTabs?: boolean
   kernelLabel: string
   kernelStatusLabel: string
   kernelStatusColor: 'default' | 'primary' | 'success' | 'warning' | 'error'
@@ -114,12 +116,16 @@ export function NotebookHeader({
         WebkitAppRegion: 'drag'
       }}
     >
-      <NotebookFileTabs
-        activeNotebookPath={activeNotebookPath}
-        notebooks={notebooks}
-        onSelectNotebook={onSelectNotebook}
-        onCloseNotebook={onCloseNotebook}
-      />
+      {hideNotebookTabs ? (
+        <Box data-phi-notebook-file-tabs-hidden="true" sx={{ flex: 1, minWidth: 0 }} />
+      ) : (
+        <NotebookFileTabs
+          activeNotebookPath={activeNotebookPath}
+          notebooks={notebooks}
+          onSelectNotebook={onSelectNotebook}
+          onCloseNotebook={onCloseNotebook}
+        />
+      )}
       <Box
         sx={{
           display: { xs: 'none', md: 'flex' },

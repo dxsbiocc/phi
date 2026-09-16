@@ -36,6 +36,7 @@ export type NotebookCanvasProps = {
   initialDocument: NotebookDocument | null
   isOpening?: boolean
   error?: string | null
+  hideNotebookTabs?: boolean
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
   isLoadingKernels?: boolean
   kernelError?: string | null

@@ -225,6 +225,7 @@ export default function NotebookCanvas({
   initialDocument,
   isOpening,
   error,
+  hideNotebookTabs,
   kernelDiagnostics,
   isLoadingKernels,
   kernelError,
@@ -1139,6 +1140,7 @@ export default function NotebookCanvas({
       <NotebookHeader
         activeNotebookPath={activeNotebookPath}
         notebooks={notebooks}
+        hideNotebookTabs={hideNotebookTabs}
         kernelLabel={kernelLabel}
         kernelStatusLabel={kernelStatusLabel}
         kernelStatusColor={kernelStatusColor}

@@ -333,6 +333,7 @@ export default function AnalysisView({
         <NotebookCanvas
           activeNotebookPath={headerActivePath ?? 'No notebook selected'}
           notebooks={headerTabs}
+          hideNotebookTabs={Boolean(workspaceFileTabs)}
           availableNotebooks={notebooks}
           projectCwd={notebookRegistry?.projectCwd ?? null}
           notebookFile={notebookFile}

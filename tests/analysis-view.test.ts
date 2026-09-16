@@ -452,6 +452,54 @@ test('analysis view renders an opened notebook document', () => {
   assert.match(markup, /data-phi-syntax-token="number"/)
 })
 
+test('analysis view hides notebook-local tabs when workspace tabs control files', () => {
+  const document = parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: {
+      kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' },
+      language_info: { name: 'python' }
+    },
+    cells: [
+      {
+        id: 'code',
+        cell_type: 'code',
+        execution_count: null,
+        metadata: {},
+        outputs: [],
+        source: 'answer = 42'
+      }
+    ]
+  })
+  const markup = renderAnalysisView({
+    hideLeftRail: true,
+    notebookFile: {
+      path: '/project/notebooks/real.ipynb',
+      relativePath: 'notebooks/real.ipynb',
+      name: 'real.ipynb',
+      bytes: 512,
+      modifiedAt: '2026-09-09T00:00:00.000Z',
+      savedRevision: document.revision,
+      document
+    },
+    workspaceFileTabs: [
+      {
+        id: '/project/notebooks/real.ipynb',
+        path: '/project/notebooks/real.ipynb',
+        name: 'real.ipynb',
+        status: 'notebooks/real.ipynb',
+        absolutePath: '/project/notebooks/real.ipynb'
+      }
+    ],
+    activeWorkspaceFilePath: '/project/notebooks/real.ipynb'
+  })
+
+  assert.match(markup, /data-phi-notebook-file-tabs-hidden="true"/)
+  assert.doesNotMatch(markup, /data-phi-notebook-file-tabs="true"/)
+  assert.match(markup, /data-phi-notebook-code="highlighted"/)
+  assert.match(markup, /answer/)
+})
+
 test('analysis view renders large notebooks through a virtual cell window', () => {
   const document = parseNotebook({
     nbformat: 4,
