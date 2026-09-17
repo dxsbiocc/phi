@@ -295,6 +295,8 @@ export interface PluginCatalogItem {
   installedPath?: string
 }
 
+export type SkillSourceCategory = 'system' | 'third-party' | 'user' | 'generated'
+
 export interface SkillSummary {
   id: string
   name: string
@@ -302,7 +304,14 @@ export interface SkillSummary {
   filePath: string
   source: string
   scope: 'user' | 'project' | 'temporary'
+  sourceCategory: SkillSourceCategory
+  sourceCategoryLabel: string
   disabled: boolean
+}
+
+export interface SkillContent {
+  filePath: string
+  content: string
 }
 
 export interface PromptAgentSummary {
@@ -830,6 +839,9 @@ export type RendererApi = {
   installPlugin: (source: string) => Promise<PluginCatalogItem[]>
   removePlugin: (source: string) => Promise<PluginCatalogItem[]>
   listSkills: (cwd?: string) => Promise<SkillSummary[]>
+  readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
+  setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string) => Promise<SkillSummary[]>
+  deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
   listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
 }

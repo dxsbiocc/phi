@@ -81,7 +81,14 @@ import {
   type RuntimeResourceLoader
 } from './agent/runtime/runtime-adapter'
 import { installPlugin, listPlugins, removePlugin } from './agent/plugins'
-import { listMcpServers, listPromptAgents, listSkills } from './agent/resources'
+import {
+  deleteSkill,
+  listMcpServers,
+  listPromptAgents,
+  listSkills,
+  readSkillContent,
+  setSkillDisabled
+} from './agent/resources'
 import {
   addCustomWrapper,
   ensureBundledWrappersInstalled,
@@ -4569,6 +4576,17 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('skills:list', async (_, cwd?: string) => listSkills(cwd ?? currentCwd))
+  ipcMain.handle('skills:read', async (_, filePath: string, cwd?: string) =>
+    readSkillContent(filePath, cwd ?? currentCwd)
+  )
+  ipcMain.handle(
+    'skills:setDisabled',
+    async (_, filePath: string, disabled: boolean, cwd?: string) =>
+      setSkillDisabled(filePath, Boolean(disabled), cwd ?? currentCwd)
+  )
+  ipcMain.handle('skills:delete', async (_, filePath: string, cwd?: string) =>
+    deleteSkill(filePath, cwd ?? currentCwd)
+  )
   ipcMain.handle('agents:list', async (_, cwd?: string) => listPromptAgents(cwd ?? currentCwd))
   ipcMain.handle('mcp:listServers', async (_, cwd?: string) => listMcpServers(cwd ?? currentCwd))
 

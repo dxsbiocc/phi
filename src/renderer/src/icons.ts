@@ -131,6 +131,7 @@ import {
   FiXCircle,
   FiZap
 } from 'react-icons/fi'
+import { GoVerified } from 'react-icons/go'
 import type { IconType } from 'react-icons'
 import {
   TbBrain,
@@ -824,7 +825,8 @@ export const PhiIcons = {
     denied: createPhiIcon('Denied', FiXCircle),
     done: createPhiIcon('Done', FiCheckCircle),
     full: createPhiIcon('FullAccess', FiUnlock),
-    thinking: createPhiIcon('Thinking', TbBrain)
+    thinking: createPhiIcon('Thinking', TbBrain),
+    verified: createPhiIcon('Verified', GoVerified)
   },
   tool: {
     command: createPhiIcon('ToolCommand', FiTerminal),

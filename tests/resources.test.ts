@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { after } from 'node:test'
@@ -137,6 +137,8 @@ test('listSkills reads project skills from the selected cwd', async () => {
 
   const projectASkills = await listSkills(projectA)
   const projectBSkills = await listSkills(projectB)
+  const projectAUserSkill = projectASkills.find((skill) => skill.name === 'user-skill')
+  const projectAPhiSkill = projectASkills.find((skill) => skill.name === 'project-a-phi-skill')
 
   assert(projectASkills.some((skill) => skill.name === 'project-a-skill'))
   assert(
@@ -153,6 +155,58 @@ test('listSkills reads project skills from the selected cwd', async () => {
   )
   assert(!projectBSkills.some((skill) => skill.name === 'project-a-skill'))
   assert(projectASkills.some((skill) => skill.name === 'user-skill' && skill.scope === 'user'))
+  assert.equal(projectAUserSkill?.sourceCategory, 'user')
+  assert.equal(projectAUserSkill?.sourceCategoryLabel, 'User')
+  assert.equal(projectAPhiSkill?.sourceCategory, 'user')
+})
+
+test('readSkillContent reads only cataloged skill files', async () => {
+  const { readSkillContent } = await import('../src/main/agent/resources')
+
+  const filePath = join(projectA, '.phi', 'skills', 'project-a-phi-skill', 'SKILL.md')
+  const result = await readSkillContent(filePath, projectA)
+
+  assert.equal(result.filePath, filePath)
+  assert.match(result.content, /# Project A Phi skill/)
+  await assert.rejects(
+    () =>
+      readSkillContent(join(projectB, '.pi', 'skills', 'project-b-skill', 'SKILL.md'), projectA),
+    /not available/
+  )
+})
+
+test('setSkillDisabled updates skill frontmatter', async () => {
+  const { setSkillDisabled } = await import('../src/main/agent/resources')
+
+  const filePath = join(projectA, '.phi', 'skills', 'project-a-phi-skill', 'SKILL.md')
+
+  const disabledSkills = await setSkillDisabled(filePath, true, projectA)
+  assert.equal(disabledSkills.find((skill) => skill.filePath === filePath)?.disabled, true)
+  assert.match(readFileSync(filePath, 'utf-8'), /disableModelInvocation: true/)
+  assert.match(readFileSync(filePath, 'utf-8'), /hide: true/)
+
+  const enabledSkills = await setSkillDisabled(filePath, false, projectA)
+  assert.equal(enabledSkills.find((skill) => skill.filePath === filePath)?.disabled, false)
+  assert.match(readFileSync(filePath, 'utf-8'), /disableModelInvocation: false/)
+  assert.match(readFileSync(filePath, 'utf-8'), /hide: false/)
+})
+
+test('deleteSkill removes mutable cataloged skill directories', async () => {
+  const { deleteSkill } = await import('../src/main/agent/resources')
+
+  const skillDir = join(projectA, '.phi', 'skills', 'delete-me')
+  const filePath = join(skillDir, 'SKILL.md')
+  mkdirSync(skillDir, { recursive: true })
+  writeFileSync(filePath, '---\ndescription: Delete me fixture\n---\n# Delete me\n')
+
+  const skills = await deleteSkill(filePath, projectA)
+
+  assert.equal(existsSync(skillDir), false)
+  assert(!skills.some((skill) => skill.filePath === filePath))
+  await assert.rejects(
+    () => deleteSkill(join(projectB, '.pi', 'skills', 'project-b-skill', 'SKILL.md'), projectA),
+    /not available/
+  )
 })
 
 test('listPromptAgents reads prompt agents from the selected cwd', async () => {

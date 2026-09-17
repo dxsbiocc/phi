@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync, type Dirent } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, extname, join } from 'node:path'
+import { basename, dirname, extname, join, resolve } from 'node:path'
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { WORKSPACE_DIR } from './session/sessions'
 import {
   createRuntimeResourceLoader,
@@ -11,6 +12,8 @@ import { getGlobalMcpConfigPaths, getPhiAgentDir, getProjectMcpConfigPaths } fro
 
 const AGENT_DIR = getPhiAgentDir()
 
+export type SkillSourceCategory = 'system' | 'third-party' | 'user' | 'generated'
+
 export interface SkillSummary {
   id: string
   name: string
@@ -18,7 +21,14 @@ export interface SkillSummary {
   filePath: string
   source: string
   scope: 'user' | 'project' | 'temporary'
+  sourceCategory: SkillSourceCategory
+  sourceCategoryLabel: string
   disabled: boolean
+}
+
+export interface SkillContent {
+  filePath: string
+  content: string
 }
 
 export interface McpServerSummary {
@@ -89,6 +99,124 @@ function stringValue(value: unknown): string | undefined {
 
 function promptAgentTrigger(name: string): string {
   return `/prompts:${name}`
+}
+
+const SKILL_SOURCE_CATEGORY_LABELS: Record<SkillSourceCategory, string> = {
+  system: 'System',
+  'third-party': 'Plugin',
+  user: 'User',
+  generated: 'Agent'
+}
+const SKILL_SOURCE_CATEGORY_ORDER: Record<SkillSourceCategory, number> = {
+  system: 0,
+  'third-party': 1,
+  user: 2,
+  generated: 3
+}
+
+function normalizedPath(value: string | undefined): string {
+  return value ? value.replaceAll('\\', '/').toLowerCase() : ''
+}
+
+function classifySkillSource(skill: {
+  filePath: string
+  sourceInfo: {
+    source: string
+    scope: 'user' | 'project' | 'temporary'
+    origin?: string
+    baseDir?: string
+  }
+}): SkillSourceCategory {
+  const filePath = normalizedPath(skill.filePath)
+  const baseDir = normalizedPath(skill.sourceInfo.baseDir)
+  const source = skill.sourceInfo.source.toLowerCase()
+  const origin = skill.sourceInfo.origin?.toLowerCase() ?? ''
+  const haystack = `${filePath} ${baseDir} ${source} ${origin}`
+
+  if (
+    haystack.includes('/.agents/skills/') ||
+    source.startsWith('agents') ||
+    origin.includes('generated')
+  ) {
+    return 'generated'
+  }
+
+  if (
+    haystack.includes('/skills/.system/') ||
+    haystack.includes('/openai-bundled/') ||
+    haystack.includes('/openai-primary-runtime/') ||
+    source.includes('system') ||
+    source.includes('builtin')
+  ) {
+    return 'system'
+  }
+
+  if (
+    haystack.includes('/plugins/cache/') ||
+    haystack.includes('/plugins/') ||
+    source.includes('plugin') ||
+    source.includes('package') ||
+    source.includes('npm')
+  ) {
+    return 'third-party'
+  }
+
+  return 'user'
+}
+
+function toSkillSummary(skill: {
+  name: string
+  description: string
+  filePath: string
+  disableModelInvocation?: boolean
+  hide?: boolean
+  sourceInfo: {
+    source: string
+    scope: 'user' | 'project' | 'temporary'
+    origin?: string
+    baseDir?: string
+  }
+}): SkillSummary {
+  const sourceCategory = classifySkillSource(skill)
+
+  return {
+    id: skill.filePath,
+    name: skill.name,
+    description: skill.description,
+    filePath: skill.filePath,
+    source: skill.sourceInfo.source,
+    scope: skill.sourceInfo.scope,
+    sourceCategory,
+    sourceCategoryLabel: SKILL_SOURCE_CATEGORY_LABELS[sourceCategory],
+    disabled: skillDisabledFromFile(skill)
+  }
+}
+
+function metadataBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined
+}
+
+function skillDisabledFromFile(skill: {
+  filePath: string
+  disableModelInvocation?: boolean
+  hide?: boolean
+}): boolean {
+  const fallback = skill.disableModelInvocation === true || skill.hide === true
+
+  try {
+    const metadata = parseFrontmatterRecord(
+      markdownFrontmatter(readFileSync(skill.filePath, 'utf-8'))
+    )
+    const values = [
+      metadataBoolean(metadata.disableModelInvocation),
+      metadataBoolean(metadata.hide),
+      metadataBoolean(metadata['disable-model-invocation'])
+    ].filter((value): value is boolean => value !== undefined)
+
+    return values.length > 0 ? values.some(Boolean) : fallback
+  } catch {
+    return fallback
+  }
 }
 
 function promptListFromResource(value: unknown): UnknownRecord[] {
@@ -166,13 +294,33 @@ function configLineValue(content: string, key: string): string | undefined {
 }
 
 function markdownFrontmatter(content: string): string {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  const match = content.match(/^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/)
   return match?.[1] ?? ''
 }
 
 function markdownBody(content: string): string {
-  const match = content.match(/^---\r?\n[\s\S]*?\r?\n---/)
+  const match = content.match(/^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/)
   return match ? content.slice(match[0].length) : content
+}
+
+function parseFrontmatterRecord(frontmatter: string): UnknownRecord {
+  const parsed = frontmatter.trim() ? parseYaml(frontmatter) : {}
+  if (!isRecord(parsed)) {
+    throw new Error('Skill metadata must be a YAML mapping')
+  }
+  return parsed
+}
+
+function skillMarkdownWithMetadata(content: string, patch: UnknownRecord): string {
+  const frontmatter = markdownFrontmatter(content)
+  const body = markdownBody(content)
+  const metadata = {
+    ...parseFrontmatterRecord(frontmatter),
+    ...patch
+  }
+  const nextFrontmatter = stringifyYaml(metadata).trimEnd()
+  const separator = body.startsWith('\n') || body.startsWith('\r\n') ? '' : '\n'
+  return `---\n${nextFrontmatter}\n---${separator}${body}`
 }
 
 function markdownDescription(content: string): string {
@@ -268,16 +416,92 @@ export async function listSkills(cwd = WORKSPACE_DIR): Promise<SkillSummary[]> {
   const { skills } = loader.getSkills()
 
   return skills
-    .map((skill) => ({
-      id: skill.filePath,
-      name: skill.name,
-      description: skill.description,
-      filePath: skill.filePath,
-      source: skill.sourceInfo.source,
-      scope: skill.sourceInfo.scope,
-      disabled: Boolean(skill.disableModelInvocation)
-    }))
-    .sort((left, right) => left.name.localeCompare(right.name))
+    .map(toSkillSummary)
+    .sort(
+      (left, right) =>
+        SKILL_SOURCE_CATEGORY_ORDER[left.sourceCategory] -
+          SKILL_SOURCE_CATEGORY_ORDER[right.sourceCategory] || left.name.localeCompare(right.name)
+    )
+}
+
+async function findCatalogSkill(
+  filePath: string,
+  cwd = WORKSPACE_DIR
+): Promise<{
+  skill: {
+    name: string
+    description: string
+    filePath: string
+    disableModelInvocation?: boolean
+    sourceInfo: {
+      source: string
+      scope: 'user' | 'project' | 'temporary'
+      origin?: string
+      baseDir?: string
+    }
+  }
+  sourceCategory: SkillSourceCategory
+}> {
+  const loader = createResourceLoader(cwd)
+  await loader.reload()
+  const { skills } = loader.getSkills()
+  const normalizedTarget = resolve(filePath)
+  const skill = skills.find((candidate) => resolve(candidate.filePath) === normalizedTarget)
+
+  if (!skill) {
+    throw new Error('Skill file is not available in the current resource catalog')
+  }
+
+  return {
+    skill,
+    sourceCategory: classifySkillSource(skill)
+  }
+}
+
+export async function readSkillContent(
+  filePath: string,
+  cwd = WORKSPACE_DIR
+): Promise<SkillContent> {
+  const { skill } = await findCatalogSkill(filePath, cwd)
+
+  return {
+    filePath: skill.filePath,
+    content: readFileSync(skill.filePath, 'utf-8')
+  }
+}
+
+export async function setSkillDisabled(
+  filePath: string,
+  disabled: boolean,
+  cwd = WORKSPACE_DIR
+): Promise<SkillSummary[]> {
+  const { skill, sourceCategory } = await findCatalogSkill(filePath, cwd)
+
+  if (sourceCategory === 'system') {
+    throw new Error('System skills cannot be modified')
+  }
+
+  const content = readFileSync(skill.filePath, 'utf-8')
+  writeFileSync(
+    skill.filePath,
+    skillMarkdownWithMetadata(content, { disableModelInvocation: disabled, hide: disabled }),
+    'utf-8'
+  )
+  return listSkills(cwd)
+}
+
+export async function deleteSkill(filePath: string, cwd = WORKSPACE_DIR): Promise<SkillSummary[]> {
+  const { skill, sourceCategory } = await findCatalogSkill(filePath, cwd)
+
+  if (sourceCategory === 'system') {
+    throw new Error('System skills cannot be deleted')
+  }
+  if (sourceCategory === 'third-party') {
+    throw new Error('Plugin skills must be removed from the plugin manager')
+  }
+
+  rmSync(dirname(skill.filePath), { recursive: true, force: false })
+  return listSkills(cwd)
 }
 
 export async function listPromptAgents(cwd = WORKSPACE_DIR): Promise<PromptAgentSummary[]> {

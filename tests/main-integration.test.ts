@@ -1213,9 +1213,33 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
           filePath: `${cwd}/.phi/skills/skill/SKILL.md`,
           source: 'project',
           scope: 'project',
+          sourceCategory: 'user',
+          sourceCategoryLabel: 'User',
           disabled: false
         }
       ],
+      readSkillContent: async (filePath: string): Promise<unknown> => ({
+        filePath,
+        content: '# skill\n'
+      }),
+      setSkillDisabled: async (
+        _filePath: string,
+        disabled: boolean,
+        cwd: string
+      ): Promise<unknown[]> => [
+        {
+          id: `${cwd}:skill`,
+          name: 'skill',
+          description: 'skill',
+          filePath: `${cwd}/.phi/skills/skill/SKILL.md`,
+          source: 'project',
+          scope: 'project',
+          sourceCategory: 'user',
+          sourceCategoryLabel: 'User',
+          disabled
+        }
+      ],
+      deleteSkill: async (): Promise<unknown[]> => [],
       listPromptAgents: async (cwd: string): Promise<unknown[]> => [
         {
           id: `${cwd}:agent`,

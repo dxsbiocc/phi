@@ -201,6 +201,8 @@ type PluginCatalogItem = {
   installedPath?: string
 }
 
+type SkillSourceCategory = 'system' | 'third-party' | 'user' | 'generated'
+
 type SkillSummary = {
   id: string
   name: string
@@ -208,7 +210,14 @@ type SkillSummary = {
   filePath: string
   source: string
   scope: 'user' | 'project' | 'temporary'
+  sourceCategory: SkillSourceCategory
+  sourceCategoryLabel: string
   disabled: boolean
+}
+
+type SkillContent = {
+  filePath: string
+  content: string
 }
 
 type PromptAgentSummary = {
@@ -705,6 +714,9 @@ type RendererAuthApi = {
   installPlugin: (source: string) => Promise<PluginCatalogItem[]>
   removePlugin: (source: string) => Promise<PluginCatalogItem[]>
   listSkills: (cwd?: string) => Promise<SkillSummary[]>
+  readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
+  setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string) => Promise<SkillSummary[]>
+  deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
   listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
   getWrapperPlan: (planId: string) => Promise<WrapperRunPlan | undefined>
@@ -1037,6 +1049,12 @@ const api: RendererAuthApi = {
   removePlugin: (source: string): Promise<PluginCatalogItem[]> =>
     ipcRenderer.invoke('plugins:remove', source),
   listSkills: (cwd?: string): Promise<SkillSummary[]> => ipcRenderer.invoke('skills:list', cwd),
+  readSkillContent: (filePath: string, cwd?: string): Promise<SkillContent> =>
+    ipcRenderer.invoke('skills:read', filePath, cwd),
+  setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string): Promise<SkillSummary[]> =>
+    ipcRenderer.invoke('skills:setDisabled', filePath, disabled, cwd),
+  deleteSkill: (filePath: string, cwd?: string): Promise<SkillSummary[]> =>
+    ipcRenderer.invoke('skills:delete', filePath, cwd),
   listPromptAgents: (cwd?: string): Promise<PromptAgentSummary[]> =>
     ipcRenderer.invoke('agents:list', cwd),
   listMcpServers: (cwd?: string): Promise<McpServerSummary[]> =>

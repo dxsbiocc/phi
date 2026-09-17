@@ -94,6 +94,8 @@ type PreloadPluginCatalogItem = {
   installedPath?: string
 }
 
+type PreloadSkillSourceCategory = 'system' | 'third-party' | 'user' | 'generated'
+
 type PreloadSkillSummary = {
   id: string
   name: string
@@ -101,7 +103,14 @@ type PreloadSkillSummary = {
   filePath: string
   source: string
   scope: 'user' | 'project' | 'temporary'
+  sourceCategory: PreloadSkillSourceCategory
+  sourceCategoryLabel: string
   disabled: boolean
+}
+
+type PreloadSkillContent = {
+  filePath: string
+  content: string
 }
 
 type PreloadPromptAgentSummary = {
@@ -763,6 +772,13 @@ declare global {
       installPlugin: (source: string) => Promise<PreloadPluginCatalogItem[]>
       removePlugin: (source: string) => Promise<PreloadPluginCatalogItem[]>
       listSkills: (cwd?: string) => Promise<PreloadSkillSummary[]>
+      readSkillContent: (filePath: string, cwd?: string) => Promise<PreloadSkillContent>
+      setSkillDisabled: (
+        filePath: string,
+        disabled: boolean,
+        cwd?: string
+      ) => Promise<PreloadSkillSummary[]>
+      deleteSkill: (filePath: string, cwd?: string) => Promise<PreloadSkillSummary[]>
       listPromptAgents: (cwd?: string) => Promise<PreloadPromptAgentSummary[]>
       listMcpServers: (cwd?: string) => Promise<PreloadMcpServerSummary[]>
       getWrapperPlan: (planId: string) => Promise<WrapperRunPlan | undefined>

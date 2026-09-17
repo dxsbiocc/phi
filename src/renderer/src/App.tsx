@@ -627,9 +627,12 @@ function App(): React.JSX.Element {
     promptAgents,
     activeSkillId,
     isLoadingSkills,
+    busySkillId,
     setActiveSkillId,
     refreshSkills,
-    refreshPromptAgents
+    refreshPromptAgents,
+    setSkillDisabled,
+    deleteSkill
   } = useSkillCatalog(getActiveCwd)
   const { mcpServers, activeMcpServerId, setActiveMcpServerId, refreshMcpServers } =
     useMcpServerCatalog(getActiveCwd)
@@ -2383,6 +2386,50 @@ function App(): React.JSX.Element {
     [openWorkspaceResourceTab, setActiveSkillId]
   )
 
+  const onSetSkillDisabled = useCallback(
+    async (skill: SkillSummary, disabled: boolean): Promise<void> => {
+      try {
+        await setSkillDisabled(skill, disabled)
+        showSnackbar(disabled ? '已关闭技能' : '已启用技能', 'success')
+      } catch (error) {
+        showSnackbarError(error, disabled ? '关闭技能失败' : '启用技能失败')
+        throw error
+      }
+    },
+    [setSkillDisabled, showSnackbar, showSnackbarError]
+  )
+
+  const onDeleteSkill = useCallback(
+    async (skill: SkillSummary): Promise<void> => {
+      try {
+        const nextSkills = await deleteSkill(skill)
+        showSnackbar('已卸载技能', 'success')
+        if (
+          activeWorkspaceResourceTab?.kind === 'skills' &&
+          activeWorkspaceResourceTab.itemId === skill.id
+        ) {
+          const nextSkill = nextSkills[0] ?? null
+          if (nextSkill) {
+            onOpenSkillTab(nextSkill)
+          } else {
+            setActiveSkillId(null)
+          }
+        }
+      } catch (error) {
+        showSnackbarError(error, '卸载技能失败')
+        throw error
+      }
+    },
+    [
+      activeWorkspaceResourceTab,
+      deleteSkill,
+      onOpenSkillTab,
+      setActiveSkillId,
+      showSnackbar,
+      showSnackbarError
+    ]
+  )
+
   const onOpenMcpServerTab = useCallback(
     (server: McpServerSummary): void => {
       setActiveMcpServerId(server.id)
@@ -2556,7 +2603,12 @@ function App(): React.JSX.Element {
         }}
       />
     ) : activeWorkspaceResourceTab.kind === 'skills' ? (
-      <SkillDetail selectedSkill={activeResourceSkill} />
+      <SkillDetail
+        selectedSkill={activeResourceSkill}
+        busySkillId={busySkillId}
+        onSetSkillDisabled={onSetSkillDisabled}
+        onDeleteSkill={onDeleteSkill}
+      />
     ) : activeWorkspaceResourceTab.kind === 'mcp' ? (
       <McpDetail selectedServer={activeResourceMcpServer} />
     ) : activeWorkspaceResourceTab.kind === 'wrappers' ? (

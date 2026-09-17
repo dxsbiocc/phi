@@ -1,23 +1,39 @@
-import { useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
+  Alert,
   Box,
+  Button,
   Chip,
   CircularProgress,
   Divider,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  IconButton,
   InputAdornment,
   List,
   ListItemButton,
-  ListItemText,
   Stack,
+  Switch,
   TextField,
+  Tooltip,
   Typography
 } from '@mui/material'
-import type { Theme } from '@mui/material/styles'
+import { alpha, type Theme } from '@mui/material/styles'
+import MarkdownContent from '../../components/MarkdownContent'
 import { PhiIcons } from '../../icons'
-import type { SkillSummary } from '../../types'
+import type { SkillSourceCategory, SkillSummary } from '../../types'
+import { skillMarkdownBody } from './lib/skillMarkdown'
 
 const SkillIcon = PhiIcons.entity.skill
 const SearchIcon = PhiIcons.action.search
+const SystemBuiltInIcon = PhiIcons.state.verified
+const DeleteIcon = PhiIcons.action.delete
+const ExpandIcon = PhiIcons.action.expand
 
 type SidebarWidth = number | string
 
@@ -28,6 +44,9 @@ export type SkillViewProps = {
   sidebarWidth: number
   onSelectSkill: (id: string) => void
   onStartSidebarResize: (event: MouseEvent<HTMLDivElement>) => void
+  busySkillId?: string | null
+  onSetSkillDisabled?: (skill: SkillSummary, disabled: boolean) => Promise<void> | void
+  onDeleteSkill?: (skill: SkillSummary) => Promise<void> | void
 }
 
 export type SkillSidebarProps = {
@@ -40,25 +59,148 @@ export type SkillSidebarProps = {
 
 export type SkillDetailProps = {
   selectedSkill: SkillSummary | null
+  busySkillId?: string | null
+  onSetSkillDisabled?: (skill: SkillSummary, disabled: boolean) => Promise<void> | void
+  onDeleteSkill?: (skill: SkillSummary) => Promise<void> | void
 }
 
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 const macTitlebarHeight = 44
 const contentTopGap = 8
+const skillSourceCategoryOrder: SkillSourceCategory[] = [
+  'system',
+  'third-party',
+  'user',
+  'generated'
+]
+const skillSourceCategoryLabels: Record<SkillSourceCategory, string> = {
+  system: 'System',
+  'third-party': 'Plugin',
+  user: 'User',
+  generated: 'Agent'
+}
+const skillSourceCategoryMarkerColors: Record<SkillSourceCategory, string> = {
+  system: 'info.main',
+  'third-party': 'warning.main',
+  user: 'success.main',
+  generated: 'primary.main'
+}
+const skillScopeLabels: Record<SkillSummary['scope'], string> = {
+  user: '用户',
+  project: '项目',
+  temporary: '临时'
+}
+const validSkillSourceCategories = new Set<SkillSourceCategory>(skillSourceCategoryOrder)
 const plainSidebarRowSx = {
-  alignItems: 'flex-start',
+  alignItems: 'center',
+  borderRadius: 1.5,
+  mx: 1,
+  my: 0.25,
   py: 1.25,
   backgroundColor: 'transparent !important',
-  '&:hover': { backgroundColor: 'transparent !important' },
-  '&.Mui-selected': {
-    backgroundColor: 'transparent !important',
-    boxShadow: (theme: Theme) => `inset 3px 0 0 ${theme.palette.primary.main}`
+  transition: 'background-color 120ms ease',
+  '&:hover': {
+    backgroundColor: (theme: Theme) =>
+      `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.12 : 0.06)} !important`
   },
-  '&.Mui-selected:hover': { backgroundColor: 'transparent !important' }
+  '&.Mui-selected': {
+    backgroundColor: (theme: Theme) =>
+      `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)} !important`,
+    boxShadow: 'none'
+  },
+  '&.Mui-selected:hover': {
+    backgroundColor: (theme: Theme) =>
+      `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)} !important`
+  }
 } as const
 
+function normalizedSkillText(value: string | undefined): string {
+  return value ? value.replaceAll('\\', '/').toLowerCase() : ''
+}
+
+function fallbackSkillSourceCategory(skill: SkillSummary): SkillSourceCategory {
+  const filePath = normalizedSkillText(skill.filePath)
+  const source = normalizedSkillText(skill.source)
+  const haystack = `${filePath} ${source}`
+
+  if (haystack.includes('/.agents/skills/') || source.startsWith('agents')) {
+    return 'generated'
+  }
+
+  if (
+    haystack.includes('/skills/.system/') ||
+    haystack.includes('/openai-bundled/') ||
+    haystack.includes('/openai-primary-runtime/') ||
+    source.includes('system') ||
+    source.includes('builtin')
+  ) {
+    return 'system'
+  }
+
+  if (
+    haystack.includes('/plugins/cache/') ||
+    haystack.includes('/plugins/') ||
+    source.includes('plugin') ||
+    source.includes('package') ||
+    source.includes('npm')
+  ) {
+    return 'third-party'
+  }
+
+  return 'user'
+}
+
+function skillSourceCategory(skill: SkillSummary): SkillSourceCategory {
+  return validSkillSourceCategories.has(skill.sourceCategory)
+    ? skill.sourceCategory
+    : fallbackSkillSourceCategory(skill)
+}
+
+function skillSourceCategoryLabel(skillOrCategory: SkillSummary | SkillSourceCategory): string {
+  const category =
+    typeof skillOrCategory === 'string' ? skillOrCategory : skillSourceCategory(skillOrCategory)
+  return skillSourceCategoryLabels[category]
+}
+
+function skillSourceCategoryLine(skill: SkillSummary): string {
+  const category = skillSourceCategory(skill)
+  const label = skillSourceCategoryLabel(category)
+  return category === 'system' ? `${label} · 内置` : label
+}
+
+function skillToggleDisabledReason(skill: SkillSummary): string | null {
+  return skillSourceCategory(skill) === 'system' ? '系统内置技能不可关闭' : null
+}
+
+function skillDeleteDisabledReason(skill: SkillSummary): string | null {
+  const category = skillSourceCategory(skill)
+  if (category === 'system') return '系统内置技能不可卸载'
+  if (category === 'third-party') return '第三方技能请通过插件管理卸载'
+  return null
+}
+
+function skillDirectory(filePath: string): string {
+  const normalizedPath = filePath.replaceAll('\\', '/')
+  const separatorIndex = normalizedPath.lastIndexOf('/')
+  return separatorIndex > 0 ? filePath.slice(0, separatorIndex) : ''
+}
+
 function sourceLabel(skill: SkillSummary): string {
-  return `${skill.scope} · ${skill.source}`
+  return `${skillSourceCategoryLabel(skill)} · ${skillScopeLabels[skill.scope]} · ${skill.source}`
+}
+
+function groupedSkills(skills: SkillSummary[]): Array<{
+  category: SkillSourceCategory
+  label: string
+  skills: SkillSummary[]
+}> {
+  return skillSourceCategoryOrder
+    .map((category) => ({
+      category,
+      label: skillSourceCategoryLabel(category),
+      skills: skills.filter((skill) => skillSourceCategory(skill) === category)
+    }))
+    .filter((section) => section.skills.length > 0)
 }
 
 function selectedSkillFromList(
@@ -66,6 +208,150 @@ function selectedSkillFromList(
   activeSkillId: string | null
 ): SkillSummary | null {
   return skills.find((skill) => skill.id === activeSkillId) ?? skills[0] ?? null
+}
+
+function stopSkillActionEvent(event: MouseEvent<HTMLElement>): void {
+  event.stopPropagation()
+}
+
+function SkillManagementActions({
+  skill,
+  busySkillId,
+  onSetSkillDisabled,
+  onRequestDelete,
+  variant = 'compact'
+}: {
+  skill: SkillSummary
+  busySkillId?: string | null
+  onSetSkillDisabled?: (skill: SkillSummary, disabled: boolean) => Promise<void> | void
+  onRequestDelete?: (skill: SkillSummary) => void
+  variant?: 'compact' | 'detail'
+}): React.JSX.Element {
+  const isBusy = busySkillId === skill.id
+  const toggleReason = skillToggleDisabledReason(skill)
+  const deleteReason = skillDeleteDisabledReason(skill)
+  const toggleDisabled = isBusy || !onSetSkillDisabled || Boolean(toggleReason)
+  const deleteDisabled = isBusy || !onRequestDelete || Boolean(deleteReason)
+  const toggleTitle = toggleReason ?? (skill.disabled ? '启用技能' : '关闭技能')
+  const deleteTitle = deleteReason ?? '卸载技能'
+
+  const switchControl = (
+    <Tooltip title={toggleTitle}>
+      <span>
+        <Switch
+          size="small"
+          checked={!skill.disabled}
+          disabled={toggleDisabled}
+          slotProps={{ input: { 'aria-label': skill.disabled ? '启用技能' : '关闭技能' } }}
+          onClick={stopSkillActionEvent}
+          onChange={(event) => {
+            event.stopPropagation()
+            void onSetSkillDisabled?.(skill, !event.target.checked)
+          }}
+        />
+      </span>
+    </Tooltip>
+  )
+
+  const deleteControl = (
+    <Tooltip title={deleteTitle}>
+      <span>
+        <IconButton
+          size="small"
+          color="error"
+          disabled={deleteDisabled}
+          aria-label={`卸载技能 ${skill.name}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            onRequestDelete?.(skill)
+          }}
+        >
+          <DeleteIcon fontSize="small" />
+        </IconButton>
+      </span>
+    </Tooltip>
+  )
+
+  if (variant === 'detail') {
+    return (
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{ alignItems: 'center', flexShrink: 0 }}
+        onClick={stopSkillActionEvent}
+      >
+        {switchControl}
+        {deleteControl}
+      </Stack>
+    )
+  }
+
+  return (
+    <Stack
+      direction="row"
+      spacing={0.25}
+      sx={{ alignItems: 'center', flexShrink: 0, ml: 0.75 }}
+      onClick={stopSkillActionEvent}
+    >
+      {switchControl}
+      {deleteControl}
+    </Stack>
+  )
+}
+
+function SkillDeleteDialog({
+  skill,
+  isDeleting,
+  onClose,
+  onConfirm
+}: {
+  skill: SkillSummary | null
+  isDeleting: boolean
+  onClose: () => void
+  onConfirm: (skill: SkillSummary) => Promise<void>
+}): React.JSX.Element {
+  return (
+    <Dialog
+      open={Boolean(skill)}
+      onClose={isDeleting ? undefined : onClose}
+      maxWidth="xs"
+      fullWidth
+    >
+      <DialogTitle>卸载技能</DialogTitle>
+      <DialogContent>
+        <Typography variant="body2" sx={{ mb: 1 }}>
+          确定卸载技能「{skill?.name}」吗？这个操作会删除它所在的技能目录。
+        </Typography>
+        <Typography
+          component="code"
+          sx={{
+            display: 'block',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.78rem',
+            color: 'text.secondary',
+            overflowWrap: 'anywhere'
+          }}
+        >
+          {skill ? skillDirectory(skill.filePath) : ''}
+        </Typography>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={isDeleting}>
+          取消
+        </Button>
+        <Button
+          color="error"
+          variant="contained"
+          disabled={!skill || isDeleting}
+          onClick={() => {
+            if (skill) void onConfirm(skill)
+          }}
+        >
+          卸载
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
 }
 
 function ResizeSeparator({
@@ -156,11 +442,19 @@ export function SkillSidebar({
   const filteredSkills = useMemo(() => {
     if (!normalizedQuery) return skills
     return skills.filter((skill) =>
-      [skill.name, skill.description, skill.source, skill.filePath, skill.scope]
+      [
+        skill.name,
+        skill.description,
+        skill.source,
+        skill.filePath,
+        skill.scope,
+        skillSourceCategoryLabel(skill)
+      ]
         .filter(Boolean)
         .some((value) => value.toLowerCase().includes(normalizedQuery))
     )
   }, [normalizedQuery, skills])
+  const skillSections = useMemo(() => groupedSkills(filteredSkills), [filteredSkills])
   const selectedSkill = selectedSkillFromList(filteredSkills, activeSkillId)
   const enabledCount = skills.filter((skill) => !skill.disabled).length
 
@@ -230,57 +524,229 @@ export function SkillSidebar({
               正在读取技能
             </Typography>
           </Stack>
-        ) : (
-          filteredSkills.map((skill) => (
-            <ListItemButton
-              key={skill.id}
-              selected={selectedSkill?.id === skill.id}
-              onClick={() => onSelectSkill(skill)}
-              sx={plainSidebarRowSx}
+        ) : skillSections.length > 0 ? (
+          skillSections.map((section) => (
+            <Accordion
+              key={section.category}
+              defaultExpanded
+              disableGutters
+              elevation={0}
+              sx={{
+                bgcolor: 'transparent',
+                border: 0,
+                '&::before': { display: 'none' }
+              }}
             >
-              <Box
+              <AccordionSummary
+                expandIcon={<ExpandIcon fontSize="small" />}
                 sx={{
-                  width: 34,
-                  height: 34,
-                  mr: 1.25,
-                  borderRadius: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  bgcolor: skill.disabled ? 'background.paper' : 'primary.main',
-                  border: skill.disabled ? 1 : 0,
-                  borderColor: 'divider',
-                  color: skill.disabled ? 'text.secondary' : 'primary.contrastText',
-                  flexShrink: 0
-                }}
-              >
-                <SkillIcon fontSize="small" />
-              </Box>
-              <ListItemText
-                primary={skill.name}
-                secondary={skill.description || sourceLabel(skill)}
-                slotProps={{
-                  primary: { noWrap: true, sx: { fontSize: '0.9rem', fontWeight: 600 } },
-                  secondary: {
-                    sx: {
-                      fontSize: '0.8rem',
-                      display: '-webkit-box',
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: 'vertical',
-                      overflow: 'hidden'
-                    }
+                  minHeight: 34,
+                  px: 2,
+                  py: 0,
+                  '& .MuiAccordionSummary-content': {
+                    alignItems: 'center',
+                    my: 0.5,
+                    minWidth: 0
                   }
                 }}
-              />
-            </ListItemButton>
+              >
+                <Stack
+                  direction="row"
+                  spacing={0.75}
+                  sx={{ alignItems: 'center', minWidth: 0, width: '100%' }}
+                >
+                  <Box
+                    sx={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: 999,
+                      bgcolor: skillSourceCategoryMarkerColors[section.category],
+                      flexShrink: 0
+                    }}
+                  />
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', fontWeight: 800, letterSpacing: 0 }}
+                  >
+                    {section.label}
+                  </Typography>
+                  {section.category === 'system' ? (
+                    <SystemBuiltInIcon
+                      title="系统内置"
+                      size={14}
+                      sx={{ color: 'info.main', flexShrink: 0 }}
+                    />
+                  ) : null}
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', ml: 'auto !important', fontWeight: 700 }}
+                  >
+                    {section.skills.length}
+                  </Typography>
+                </Stack>
+              </AccordionSummary>
+              <AccordionDetails sx={{ p: 0 }}>
+                {section.skills.map((skill) => (
+                  <ListItemButton
+                    key={skill.id}
+                    selected={selectedSkill?.id === skill.id}
+                    onClick={() => onSelectSkill(skill)}
+                    sx={plainSidebarRowSx}
+                  >
+                    <Box
+                      sx={{
+                        width: 46,
+                        height: 46,
+                        mr: 1.5,
+                        borderRadius: 1.75,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        bgcolor: skill.disabled ? 'background.paper' : 'primary.main',
+                        border: skill.disabled ? 1 : 0,
+                        borderColor: 'divider',
+                        color: skill.disabled ? 'text.secondary' : 'primary.contrastText',
+                        flexShrink: 0
+                      }}
+                    >
+                      <SkillIcon sx={{ fontSize: 28 }} />
+                    </Box>
+                    <Box sx={{ minWidth: 0, flex: 1 }}>
+                      <Typography
+                        noWrap
+                        title={skill.name}
+                        sx={{ fontSize: '0.92rem', fontWeight: 700, lineHeight: 1.25 }}
+                      >
+                        {skill.name}
+                      </Typography>
+                      <Typography
+                        noWrap
+                        title={skill.description || sourceLabel(skill)}
+                        color="text.secondary"
+                        sx={{ mt: 0.25, fontSize: '0.84rem', lineHeight: 1.25 }}
+                      >
+                        {skill.description || '这个技能没有提供说明。'}
+                      </Typography>
+                      <Typography
+                        noWrap
+                        title={skillSourceCategoryLine(skill)}
+                        color="text.secondary"
+                        sx={{ mt: 0.35, fontSize: '0.78rem', fontWeight: 700, lineHeight: 1.25 }}
+                      >
+                        {skillSourceCategoryLine(skill)}
+                      </Typography>
+                    </Box>
+                  </ListItemButton>
+                ))}
+              </AccordionDetails>
+            </Accordion>
           ))
+        ) : (
+          <Stack spacing={1} sx={{ py: 4, alignItems: 'center' }}>
+            <SkillIcon color="disabled" />
+            <Typography variant="body2" color="text.secondary">
+              没有找到技能
+            </Typography>
+          </Stack>
         )}
       </List>
     </Box>
   )
 }
 
-export function SkillDetail({ selectedSkill }: SkillDetailProps): React.JSX.Element {
+type SkillContentState = {
+  content: string | null
+  isLoading: boolean
+  error: string | null
+}
+
+type LoadedSkillContent = {
+  filePath: string
+  content: string | null
+  error: string | null
+}
+
+function useSkillContent(selectedSkill: SkillSummary | null): SkillContentState {
+  const [loadedContent, setLoadedContent] = useState<LoadedSkillContent | null>(null)
+  const selectedFilePath = selectedSkill?.filePath ?? null
+  const canReadSkillContent = typeof window !== 'undefined' && Boolean(window.api?.readSkillContent)
+
+  useEffect(() => {
+    if (!selectedFilePath || !canReadSkillContent) return
+
+    let cancelled = false
+
+    window.api
+      .readSkillContent(selectedFilePath)
+      .then((result) => {
+        if (cancelled) return
+        setLoadedContent({
+          filePath: selectedFilePath,
+          content: skillMarkdownBody(result.content),
+          error: null
+        })
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        const message = error instanceof Error ? error.message : String(error)
+        setLoadedContent({
+          filePath: selectedFilePath,
+          content: null,
+          error: message
+        })
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [canReadSkillContent, selectedFilePath])
+
+  if (!selectedFilePath) {
+    return { content: null, isLoading: false, error: null }
+  }
+
+  if (!canReadSkillContent) {
+    return {
+      content: null,
+      isLoading: false,
+      error: '需要重启 Phi 以加载完整 SKILL.md 读取接口。'
+    }
+  }
+
+  const currentContent =
+    loadedContent?.filePath === selectedFilePath ? loadedContent : { content: null, error: null }
+
+  return {
+    content: currentContent.content,
+    isLoading: loadedContent?.filePath !== selectedFilePath,
+    error: currentContent.error
+  }
+}
+
+export function SkillDetail({
+  selectedSkill,
+  busySkillId,
+  onSetSkillDisabled,
+  onDeleteSkill
+}: SkillDetailProps): React.JSX.Element {
+  const skillContent = useSkillContent(selectedSkill)
+  const [deleteCandidate, setDeleteCandidate] = useState<SkillSummary | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const confirmDelete = async (skill: SkillSummary): Promise<void> => {
+    if (!onDeleteSkill) return
+    setIsDeleting(true)
+    try {
+      await onDeleteSkill(skill)
+      setDeleteCandidate(null)
+    } catch {
+      // Error feedback is handled by the caller so the dialog can stay open.
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   return (
     <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
       {selectedSkill ? (
@@ -311,12 +777,28 @@ export function SkillDetail({ selectedSkill }: SkillDetailProps): React.JSX.Elem
               <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
                 <Chip
                   size="small"
+                  variant="outlined"
+                  label={skillSourceCategoryLabel(selectedSkill)}
+                />
+                <Chip
+                  size="small"
                   color={selectedSkill.disabled ? 'default' : 'success'}
                   label={selectedSkill.disabled ? '仅手动调用' : '可自动调用'}
                 />
-                <Chip size="small" variant="outlined" label={selectedSkill.scope} />
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={skillScopeLabels[selectedSkill.scope]}
+                />
               </Stack>
             </Box>
+            <SkillManagementActions
+              skill={selectedSkill}
+              variant="detail"
+              busySkillId={busySkillId}
+              onSetSkillDisabled={onSetSkillDisabled}
+              onRequestDelete={setDeleteCandidate}
+            />
           </Stack>
 
           <Divider sx={{ my: 4 }} />
@@ -343,6 +825,61 @@ export function SkillDetail({ selectedSkill }: SkillDetailProps): React.JSX.Elem
           >
             {selectedSkill.filePath}
           </Typography>
+
+          <Typography variant="h6" sx={{ fontWeight: 700, mt: 4, mb: 1 }}>
+            SKILL.md
+          </Typography>
+          <Box
+            sx={{
+              border: 1,
+              borderColor: 'divider',
+              borderRadius: 1,
+              bgcolor: (muiTheme) =>
+                muiTheme.palette.mode === 'dark'
+                  ? 'rgba(255, 255, 255, 0.03)'
+                  : 'rgba(15, 42, 48, 0.025)',
+              overflow: 'auto',
+              maxHeight: '62vh'
+            }}
+          >
+            {skillContent.isLoading ? (
+              <Stack spacing={1} sx={{ py: 4, alignItems: 'center' }}>
+                <CircularProgress size={20} />
+                <Typography variant="body2" color="text.secondary">
+                  正在读取 SKILL.md
+                </Typography>
+              </Stack>
+            ) : skillContent.error ? (
+              <Alert severity="warning" sx={{ m: 2 }}>
+                {skillContent.error}
+              </Alert>
+            ) : skillContent.content !== null ? (
+              <Box
+                sx={{
+                  p: 2,
+                  minWidth: 0,
+                  '& [data-phi-markdown-code-language="markdown"]': {
+                    whiteSpace: 'pre-wrap'
+                  }
+                }}
+              >
+                <MarkdownContent
+                  text={skillContent.content}
+                  cwd={skillDirectory(selectedSkill.filePath)}
+                />
+              </Box>
+            ) : (
+              <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+                选择技能后会在这里显示完整源文。
+              </Typography>
+            )}
+          </Box>
+          <SkillDeleteDialog
+            skill={deleteCandidate}
+            isDeleting={isDeleting}
+            onClose={() => setDeleteCandidate(null)}
+            onConfirm={confirmDelete}
+          />
         </Box>
       ) : (
         <Stack spacing={1} sx={{ height: '100%', alignItems: 'center', justifyContent: 'center' }}>
@@ -360,12 +897,15 @@ export default function SkillView({
   activeSkillId,
   sidebarWidth,
   onSelectSkill,
-  onStartSidebarResize
+  onStartSidebarResize,
+  busySkillId,
+  onSetSkillDisabled,
+  onDeleteSkill
 }: SkillViewProps): React.JSX.Element {
   const selectedSkill = selectedSkillFromList(skills, activeSkillId)
 
   return (
-    <>
+    <Fragment>
       <SkillSidebar
         skills={skills}
         isLoading={isLoading}
@@ -375,8 +915,13 @@ export default function SkillView({
       />
       <ResizeSeparator onMouseDown={onStartSidebarResize} />
       <DetailPage title={selectedSkill?.name ?? '技能'}>
-        <SkillDetail selectedSkill={selectedSkill} />
+        <SkillDetail
+          selectedSkill={selectedSkill}
+          busySkillId={busySkillId}
+          onSetSkillDisabled={onSetSkillDisabled}
+          onDeleteSkill={onDeleteSkill}
+        />
       </DetailPage>
-    </>
+    </Fragment>
   )
 }
