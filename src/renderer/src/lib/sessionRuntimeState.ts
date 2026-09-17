@@ -3,7 +3,11 @@ import type { AgentEventSummary, SessionRuntimeState } from '../types'
 export function sessionStatusIsBusy(
   session: Pick<SessionRuntimeState, 'status'> | null | undefined
 ): boolean {
-  return session?.status === 'running' || session?.status === 'needs_approval'
+  return (
+    session?.status === 'running' ||
+    session?.status === 'needs_approval' ||
+    session?.status === 'needs_input'
+  )
 }
 
 export function idleSessionRuntimeState(): SessionRuntimeState {
@@ -113,7 +117,27 @@ export function reduceSessionRuntimeState(
     }
   }
 
+  if (event.type === 'input_requested') {
+    return {
+      ...previous,
+      status: 'needs_input',
+      unreadKind: 'input',
+      currentRunId: runId,
+      lastActivityAt: timestamp
+    }
+  }
+
   if (event.type === 'approval_approved' || event.type === 'run_resumed') {
+    return {
+      ...previous,
+      status: 'running',
+      unreadKind: null,
+      currentRunId: runId,
+      lastActivityAt: timestamp
+    }
+  }
+
+  if (event.type === 'input_answered' || event.type === 'input_cancelled') {
     return {
       ...previous,
       status: 'running',

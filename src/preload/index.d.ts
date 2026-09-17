@@ -2,6 +2,10 @@
 // hand-duplicated) — see the matching comment in preload/index.ts.
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
 import type { WrapperRun, WrapperRunPlan } from '../shared/wrapperTypes'
+import type {
+  AgentUserInteractionRequest,
+  AgentUserInteractionResponse
+} from '../shared/agentInteractionTypes'
 
 type PreloadSessionSummary = {
   path: string
@@ -12,8 +16,8 @@ type PreloadSessionSummary = {
   messageCount: number
   firstMessage: string
   phiSessionId?: string
-  status: 'idle' | 'running' | 'needs_approval' | 'failed' | 'completed_unread'
-  unreadKind: 'completed' | 'failed' | 'approval' | null
+  status: 'idle' | 'running' | 'needs_approval' | 'needs_input' | 'failed' | 'completed_unread'
+  unreadKind: 'completed' | 'failed' | 'approval' | 'input' | null
   lastRunOutcome?: 'completed' | 'failed' | 'interrupted' | 'stopped'
   currentRunId?: string
   currentRunStartedAt?: string
@@ -456,6 +460,15 @@ declare global {
         target?: PreloadPromptTarget
       ) => Promise<PreloadPromptResult | null>
       onAgentEvent: (cb: (event: Record<string, unknown>) => void) => () => void
+      onAgentUserInteractionRequest: (
+        cb: (event: AgentUserInteractionRequest) => void
+      ) => () => void
+      onAgentUserInteractionCancelled: (cb: () => void) => () => void
+      respondAgentUserInteraction: (
+        requestId: string,
+        response: AgentUserInteractionResponse,
+        cancelled?: boolean
+      ) => Promise<void>
       getAuthStatus: () => Promise<
         Array<{
           providerId: string

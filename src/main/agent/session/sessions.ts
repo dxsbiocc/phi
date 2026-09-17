@@ -147,6 +147,7 @@ function runtimeManifestGroups(
 
 function statusPriority(manifest: PhiSessionManifest): number {
   if (manifest.status === 'needs_approval' || manifest.unreadKind === 'approval') return 5
+  if (manifest.status === 'needs_input' || manifest.unreadKind === 'input') return 5
   if (manifest.status === 'running') return 4
   if (manifest.status === 'failed' || manifest.unreadKind === 'failed') return 3
   if (manifest.status === 'completed_unread' || manifest.unreadKind === 'completed') return 2
@@ -240,7 +241,7 @@ export function acknowledgeSession(path: string, cwd: string): SessionSummary | 
     ? findPhiSessionById(phiSessionId)
     : findPhiSessionByRuntimePath(path, cwd)
   if (!manifest) return null
-  if (manifest.status === 'needs_approval') return null
+  if (manifest.status === 'needs_approval' || manifest.status === 'needs_input') return null
   if (manifest.unreadKind !== 'completed' && manifest.unreadKind !== 'failed') return null
 
   const nextStatus =

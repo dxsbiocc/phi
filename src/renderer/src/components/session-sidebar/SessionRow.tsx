@@ -66,6 +66,7 @@ function formatElapsedTime(iso: string, nowMs = Date.now()): string {
 
 function sessionStatusLabel(session: SessionSummary): string | null {
   if (session.status === 'needs_approval') return '请求权限'
+  if (session.status === 'needs_input') return '等待输入'
   if (session.status === 'running') return '运行中'
   if (session.status === 'failed' || session.unreadKind === 'failed') return '失败'
   if (session.status === 'completed_unread' || session.unreadKind === 'completed') return '已完成'
@@ -74,6 +75,7 @@ function sessionStatusLabel(session: SessionSummary): string | null {
 
 function sessionStatusColor(session: SessionSummary): string {
   if (session.status === 'needs_approval') return 'warning.main'
+  if (session.status === 'needs_input') return 'warning.main'
   if (session.status === 'running') return 'info.main'
   if (session.status === 'failed' || session.unreadKind === 'failed') return 'error.main'
   if (session.status === 'completed_unread' || session.unreadKind === 'completed') {
@@ -95,6 +97,7 @@ function SessionAttentionBeacon({
   const labelByKind = {
     running: '会话运行中',
     approval: '会话请求权限',
+    input: '会话等待输入',
     failed: '会话失败未读',
     completed: '会话已完成未读'
   } satisfies Record<NonNullable<ReturnType<typeof sessionBeaconKind>>, string>
@@ -147,7 +150,9 @@ function SessionAttentionBeacon({
 function sessionSecondaryText(session: SessionSummary, nowMs = Date.now()): string {
   const status = sessionStatusLabel(session)
   if (
-    (session.status === 'running' || session.status === 'needs_approval') &&
+    (session.status === 'running' ||
+      session.status === 'needs_approval' ||
+      session.status === 'needs_input') &&
     session.currentRunStartedAt
   ) {
     return `${status ?? '运行中'} · ${formatElapsedTime(session.currentRunStartedAt, nowMs)}`
@@ -200,7 +205,9 @@ function sessionSummariesMatch(left: SessionSummary, right: SessionSummary): boo
 
 function sessionUsesLiveElapsedTime(session: SessionSummary): boolean {
   return (
-    (session.status === 'running' || session.status === 'needs_approval') &&
+    (session.status === 'running' ||
+      session.status === 'needs_approval' ||
+      session.status === 'needs_input') &&
     Boolean(session.currentRunStartedAt)
   )
 }
@@ -330,6 +337,7 @@ const SessionRow = memo(function SessionRow({
                 fontWeight:
                   isActive ||
                   displaySession.status === 'needs_approval' ||
+                  displaySession.status === 'needs_input' ||
                   displaySession.unreadKind
                     ? 600
                     : 400

@@ -13,8 +13,9 @@ import { join } from 'node:path'
 import { getPhiAgentDir } from '../runtime-paths'
 
 export type SessionKind = 'ordinary' | 'project'
-export type SessionStatus = 'idle' | 'running' | 'needs_approval' | 'failed' | 'completed_unread'
-export type UnreadKind = 'completed' | 'failed' | 'approval'
+export type SessionStatus =
+  'idle' | 'running' | 'needs_approval' | 'needs_input' | 'failed' | 'completed_unread'
+export type UnreadKind = 'completed' | 'failed' | 'approval' | 'input'
 export type PermissionMode = 'auto' | 'ask' | 'full'
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type LastRunOutcome = 'completed' | 'failed' | 'interrupted' | 'stopped'
@@ -301,6 +302,7 @@ function recoverInterruptedManifest(manifest: PhiSessionManifest): PhiSessionMan
   const wasActive =
     manifest.status === 'running' ||
     manifest.status === 'needs_approval' ||
+    manifest.status === 'needs_input' ||
     manifest.currentRunId !== undefined ||
     manifest.currentRunStartedAt !== undefined
   if (!wasActive) return manifest

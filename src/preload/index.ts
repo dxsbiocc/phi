@@ -7,6 +7,10 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 // drift out of sync.
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
 import type { WrapperRun, WrapperRunPlan } from '../shared/wrapperTypes'
+import type {
+  AgentUserInteractionRequest,
+  AgentUserInteractionResponse
+} from '../shared/agentInteractionTypes'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
@@ -85,8 +89,9 @@ type SelectedModel = {
 } | null
 
 type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-type SessionStatus = 'idle' | 'running' | 'needs_approval' | 'failed' | 'completed_unread'
-type UnreadKind = 'completed' | 'failed' | 'approval'
+type SessionStatus =
+  'idle' | 'running' | 'needs_approval' | 'needs_input' | 'failed' | 'completed_unread'
+type UnreadKind = 'completed' | 'failed' | 'approval' | 'input'
 type LastRunOutcome = 'completed' | 'failed' | 'interrupted' | 'stopped'
 
 type SessionRuntimeState = {
@@ -556,6 +561,13 @@ type RendererAuthApi = {
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => Unsubscribe
+  onAgentUserInteractionRequest: (cb: (event: AgentUserInteractionRequest) => void) => Unsubscribe
+  onAgentUserInteractionCancelled: (cb: () => void) => Unsubscribe
+  respondAgentUserInteraction: (
+    requestId: string,
+    response: AgentUserInteractionResponse,
+    cancelled?: boolean
+  ) => Promise<void>
   getAuthStatus: () => Promise<AuthStatusItem[]>
   loginApiKey: (providerId: string, key: string) => Promise<AuthStatusItem[]>
   loginOAuth: (providerId: string) => Promise<AuthStatusItem[]>
@@ -989,6 +1001,36 @@ const api: RendererAuthApi = {
   },
   respondToolApproval: (requestId: string, approved: boolean): Promise<void> =>
     ipcRenderer.invoke('tool:approval-response', requestId, approved),
+  onAgentUserInteractionRequest: (
+    cb: (event: AgentUserInteractionRequest) => void
+  ): Unsubscribe => {
+    const handler = (_: unknown, event: AgentUserInteractionRequest): void => {
+      cb(event)
+    }
+
+    ipcRenderer.on('agent:interaction-request', handler)
+
+    return () => {
+      ipcRenderer.removeListener('agent:interaction-request', handler)
+    }
+  },
+  onAgentUserInteractionCancelled: (cb: () => void): Unsubscribe => {
+    const handler = (): void => {
+      cb()
+    }
+
+    ipcRenderer.on('agent:interaction-cancelled', handler)
+
+    return () => {
+      ipcRenderer.removeListener('agent:interaction-cancelled', handler)
+    }
+  },
+  respondAgentUserInteraction: (
+    requestId: string,
+    response: AgentUserInteractionResponse,
+    cancelled = false
+  ): Promise<void> =>
+    ipcRenderer.invoke('agent:interaction-response', requestId, response, cancelled),
   listPlugins: (): Promise<PluginCatalogItem[]> => ipcRenderer.invoke('plugins:list'),
   installPlugin: (source: string): Promise<PluginCatalogItem[]> =>
     ipcRenderer.invoke('plugins:install', source),

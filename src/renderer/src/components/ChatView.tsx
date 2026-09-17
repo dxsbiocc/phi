@@ -1,4 +1,4 @@
-import { Box, IconButton, Paper, TextField } from '@mui/material'
+import { Box, IconButton, Paper, Stack, TextField, Typography } from '@mui/material'
 import {
   useEffect,
   useId,
@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { type LocalPathKind } from './MarkdownContent'
 import ToolApprovalDialog from './ToolApprovalDialog'
+import UserInteractionPanel from './UserInteractionPanel'
 import {
   ModelSelectorControl,
   PermissionModeControl,
@@ -42,6 +43,8 @@ import {
 } from '../lib/inputReferences'
 import { suggestedNextActionPlaceholderFromMessages } from '../lib/suggestedNextAction'
 import type {
+  AgentUserInteractionRequest,
+  AgentUserInteractionResponse,
   ChatItem,
   DirectoryListing,
   ModelOption,
@@ -58,6 +61,7 @@ export { ThinkingBlock } from './chat/ThinkingBlock'
 
 const SendIcon = PhiIcons.action.send
 const StopIcon = PhiIcons.action.stop
+const CloseIcon = PhiIcons.action.close
 
 function textInputFromEventTarget(
   target: EventTarget | null
@@ -89,6 +93,7 @@ type ViewProps = {
   messagesContainerRef?: (node: HTMLDivElement | null) => void
   scrollResetKey?: string
   canSend: boolean
+  canQueue?: boolean
   isGenerating: boolean
   currentRunStartedAt?: string
   models: ModelOption[]
@@ -116,7 +121,15 @@ type ViewProps = {
   disableModelControls?: boolean
   compactComposerControls?: boolean
   pendingApproval: ToolApprovalRequest | null
+  pendingUserInteraction: AgentUserInteractionRequest | null
+  queuedPrompts?: Array<{ id: string; text: string }>
   onRespondApproval: (requestId: string, approved: boolean) => void
+  onRespondUserInteraction: (
+    requestId: string,
+    response: AgentUserInteractionResponse,
+    cancelled?: boolean
+  ) => void
+  onRemoveQueuedPrompt?: (id: string) => void
   onOpenApprovalSession: (path: string) => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
@@ -129,6 +142,7 @@ function ChatView({
   messagesContainerRef,
   scrollResetKey,
   canSend,
+  canQueue = false,
   isGenerating,
   currentRunStartedAt,
   models,
@@ -156,7 +170,11 @@ function ChatView({
   disableModelControls = false,
   compactComposerControls = false,
   pendingApproval,
+  pendingUserInteraction,
+  queuedPrompts = [],
   onRespondApproval,
+  onRespondUserInteraction,
+  onRemoveQueuedPrompt,
   onOpenApprovalSession,
   onOpenLocalPath,
   onJumpToNotebookCell,
@@ -405,6 +423,61 @@ function ChatView({
             onRespond={onRespondApproval}
             onOpenSession={onOpenApprovalSession}
           />
+          <UserInteractionPanel
+            request={pendingUserInteraction}
+            onRespond={onRespondUserInteraction}
+          />
+          {queuedPrompts.length > 0 && (
+            <Paper
+              variant="outlined"
+              aria-label="消息队列"
+              sx={{ width: '100%', mb: 1, borderRadius: 2, p: 1.25 }}
+            >
+              <Stack spacing={0.75}>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
+                  排队中 {queuedPrompts.length} 条
+                </Typography>
+                {queuedPrompts.map((item) => (
+                  <Box
+                    key={item.id}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1,
+                      minWidth: 0,
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      px: 1,
+                      py: 0.75
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        flex: 1,
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }}
+                      title={item.text}
+                    >
+                      {item.text}
+                    </Typography>
+                    {onRemoveQueuedPrompt && (
+                      <IconButton
+                        size="small"
+                        aria-label="移除排队消息"
+                        onClick={() => onRemoveQueuedPrompt(item.id)}
+                      >
+                        <CloseIcon fontSize="small" />
+                      </IconButton>
+                    )}
+                  </Box>
+                ))}
+              </Stack>
+            </Paper>
+          )}
           {inputAddMenuOpen && (
             <InputAddPanel
               panelId={inputAddPanelId}
@@ -496,7 +569,7 @@ function ChatView({
                   event.key === 'Enter' &&
                   !event.shiftKey &&
                   !event.nativeEvent.isComposing &&
-                  canSend &&
+                  (canSend || canQueue) &&
                   input.trim()
                 ) {
                   event.preventDefault()
@@ -590,30 +663,58 @@ function ChatView({
                     <SendIcon fontSize="small" />
                   </IconButton>
                 ) : (
-                  <IconButton
-                    type="button"
-                    onClick={() => {
-                      void onStopGeneration()
-                    }}
-                    aria-label="停止生成"
-                    data-phi-composer-action="stop"
-                    data-phi-composer-size={actionControlSize}
-                    sx={{
-                      boxSizing: 'border-box',
-                      width: actionControlSize,
-                      height: actionControlSize,
-                      minWidth: actionControlSize,
-                      minHeight: actionControlSize,
-                      p: 0,
-                      flexShrink: 0,
-                      bgcolor: 'error.main',
-                      color: 'error.contrastText',
-                      transition: 'background-color 200ms',
-                      '&:hover': { bgcolor: 'error.dark' }
-                    }}
-                  >
-                    <StopIcon fontSize="small" />
-                  </IconButton>
+                  <>
+                    <IconButton
+                      type="submit"
+                      disabled={!canQueue || !input.trim()}
+                      aria-label="加入队列"
+                      data-phi-composer-action="queue"
+                      data-phi-composer-size={actionControlSize}
+                      sx={{
+                        boxSizing: 'border-box',
+                        width: actionControlSize,
+                        height: actionControlSize,
+                        minWidth: actionControlSize,
+                        minHeight: actionControlSize,
+                        p: 0,
+                        flexShrink: 0,
+                        bgcolor: 'primary.main',
+                        color: 'background.default',
+                        transition: 'background-color 200ms',
+                        '&:hover': { bgcolor: 'primary.dark' },
+                        '&.Mui-disabled': {
+                          bgcolor: 'action.disabledBackground',
+                          color: 'action.disabled'
+                        }
+                      }}
+                    >
+                      <SendIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton
+                      type="button"
+                      onClick={() => {
+                        void onStopGeneration()
+                      }}
+                      aria-label="停止生成"
+                      data-phi-composer-action="stop"
+                      data-phi-composer-size={actionControlSize}
+                      sx={{
+                        boxSizing: 'border-box',
+                        width: actionControlSize,
+                        height: actionControlSize,
+                        minWidth: actionControlSize,
+                        minHeight: actionControlSize,
+                        p: 0,
+                        flexShrink: 0,
+                        bgcolor: 'error.main',
+                        color: 'error.contrastText',
+                        transition: 'background-color 200ms',
+                        '&:hover': { bgcolor: 'error.dark' }
+                      }}
+                    >
+                      <StopIcon fontSize="small" />
+                    </IconButton>
+                  </>
                 )}
               </Box>
             </Box>

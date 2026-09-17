@@ -139,8 +139,9 @@ export interface AuthProgressEvent {
 }
 
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-export type SessionStatus = 'idle' | 'running' | 'needs_approval' | 'failed' | 'completed_unread'
-export type UnreadKind = 'completed' | 'failed' | 'approval'
+export type SessionStatus =
+  'idle' | 'running' | 'needs_approval' | 'needs_input' | 'failed' | 'completed_unread'
+export type UnreadKind = 'completed' | 'failed' | 'approval' | 'input'
 export type LastRunOutcome = 'completed' | 'failed' | 'interrupted' | 'stopped'
 
 export interface SessionRuntimeState {
@@ -150,6 +151,48 @@ export interface SessionRuntimeState {
   currentRunId?: string
   currentRunStartedAt?: string
   lastActivityAt?: string
+}
+
+export type AgentUserInteractionOption = {
+  label: string
+  description: string
+  preview?: string
+}
+
+export type AgentUserInteractionQuestion = {
+  question: string
+  header: string
+  options: AgentUserInteractionOption[]
+  multiSelect?: boolean
+}
+
+export type AgentUserInteractionRequest = {
+  requestId: string
+  questions: AgentUserInteractionQuestion[]
+  sessionId?: string
+  sessionPath?: string
+  sessionGeneration?: number
+  runId?: string
+  cwd?: string
+  projectName?: string
+}
+
+export type AgentUserInteractionAnswer = {
+  questionIndex: number
+  question: string
+  kind: 'option' | 'custom' | 'multi'
+  answer: string | null
+  selected?: string[]
+  notes?: string
+  preview?: string
+}
+
+export type AgentUserInteractionResponse = {
+  requestId: string
+  answers: AgentUserInteractionAnswer[]
+  cancelled?: boolean
+  globalNote?: string
+  error?: string
 }
 
 export interface SessionSummary extends SessionRuntimeState {
@@ -643,6 +686,13 @@ export type RendererApi = {
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => () => void
+  onAgentUserInteractionRequest: (cb: (event: AgentUserInteractionRequest) => void) => () => void
+  onAgentUserInteractionCancelled: (cb: () => void) => () => void
+  respondAgentUserInteraction: (
+    requestId: string,
+    response: AgentUserInteractionResponse,
+    cancelled?: boolean
+  ) => Promise<void>
   getAuthStatus: () => Promise<ProviderAuthStatus[]>
   loginApiKey: (providerId: string, key: string) => Promise<ProviderAuthStatus[]>
   loginOAuth: (providerId: string) => Promise<ProviderAuthStatus[]>

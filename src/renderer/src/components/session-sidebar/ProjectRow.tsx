@@ -108,7 +108,7 @@ function ProjectRowImpl({
   const hasActiveAttention = (sessions ?? []).some((session) => {
     const runtimeState = getSessionRuntimeState?.(session.path, project.workingDirectory) ?? null
     const status = runtimeState?.status ?? session.status
-    return status === 'running' || status === 'needs_approval'
+    return status === 'running' || status === 'needs_approval' || status === 'needs_input'
   })
 
   useEffect(() => {

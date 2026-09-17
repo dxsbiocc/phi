@@ -17,6 +17,8 @@ import { preserveSessionListOrder } from '../lib/sessionOrder'
 import { getRendererApi } from '../lib/rendererApi'
 import type {
   AgentEventSummary,
+  AgentUserInteractionRequest,
+  AgentUserInteractionResponse,
   ChatItem,
   CurrentSession,
   PermissionMode,
@@ -77,6 +79,30 @@ export function sessionStateKeyFromToolApproval(
   })
 }
 
+export function sessionStateKeyFromAgentUserInteraction(
+  request: AgentUserInteractionRequest,
+  fallbackGeneration: number
+): string | null {
+  if (typeof request.sessionId === 'string') {
+    return sessionStateKey({
+      phiSessionId: request.sessionId,
+      path: typeof request.sessionPath === 'string' ? request.sessionPath : null,
+      cwd: typeof request.cwd === 'string' ? request.cwd : '',
+      sessionGeneration:
+        typeof request.sessionGeneration === 'number'
+          ? request.sessionGeneration
+          : fallbackGeneration
+    })
+  }
+  if (typeof request.cwd !== 'string') return null
+  return sessionStateKey({
+    path: typeof request.sessionPath === 'string' ? request.sessionPath : null,
+    cwd: request.cwd,
+    sessionGeneration:
+      typeof request.sessionGeneration === 'number' ? request.sessionGeneration : fallbackGeneration
+  })
+}
+
 /**
  * These maps back many sessions' worth of bookkeeping (runtime status, pending
  * approvals, cached agent-event state) that the UI never renders directly — only
@@ -87,6 +113,7 @@ export function sessionStateKeyFromToolApproval(
  */
 export const sessionRuntimeStates = new Map<string, SessionRuntimeState>()
 export const pendingApprovalsBySession = new Map<string, ToolApprovalRequest>()
+export const pendingUserInteractionsBySession = new Map<string, AgentUserInteractionRequest>()
 export const sessionAgentEventStates = new Map<string, AgentEventReducerState>()
 
 let sessionRefreshTimer: number | null = null
@@ -104,6 +131,7 @@ type SessionStoreState = {
   projectSessionRefreshKey: number
   agentEventState: AgentEventReducerState
   pendingApproval: ToolApprovalRequest | null
+  pendingUserInteraction: AgentUserInteractionRequest | null
   activeSessionRuntimeState: SessionRuntimeState
   draftInputs: Record<string, string>
 
@@ -116,6 +144,7 @@ type SessionStoreState = {
   setCurrentPermissionMode: (mode: PermissionMode) => void
   setProjectSessionRefreshKey: (updater: number | ((prev: number) => number)) => void
   setPendingApproval: (approval: ToolApprovalRequest | null) => void
+  setPendingUserInteraction: (request: AgentUserInteractionRequest | null) => void
   setAgentEventState: (state: AgentEventReducerState) => void
   setActiveSessionRuntimeState: (state: SessionRuntimeState) => void
   setDraftInputs: (
@@ -146,6 +175,11 @@ type SessionStoreState = {
   cancelScheduledSessionRefresh: () => void
   onRenameSession: (path: string, name: string) => Promise<void>
   onRespondToolApproval: (requestId: string, approved: boolean) => Promise<void>
+  onRespondAgentUserInteraction: (
+    requestId: string,
+    response: AgentUserInteractionResponse,
+    cancelled?: boolean
+  ) => Promise<void>
 }
 
 export const useSessionStore = create<SessionStoreState>()((set, get) => ({
@@ -160,6 +194,7 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
   projectSessionRefreshKey: 0,
   agentEventState: createAgentEventReducerState(),
   pendingApproval: null,
+  pendingUserInteraction: null,
   activeSessionRuntimeState: idleSessionRuntimeState(),
   draftInputs: {},
 
@@ -179,6 +214,7 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
         typeof updater === 'function' ? updater(state.projectSessionRefreshKey) : updater
     })),
   setPendingApproval: (approval) => set({ pendingApproval: approval }),
+  setPendingUserInteraction: (request) => set({ pendingUserInteraction: request }),
   setAgentEventState: (state) => set({ agentEventState: state }),
   setActiveSessionRuntimeState: (state) => set({ activeSessionRuntimeState: state }),
   setDraftInputs: (updater) =>
@@ -271,6 +307,11 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
         pendingApprovalsBySession.set(nextStateKey, previousPendingApproval)
         pendingApprovalsBySession.delete(previousStateKey)
       }
+      const previousPendingUserInteraction = pendingUserInteractionsBySession.get(previousStateKey)
+      if (previousPendingUserInteraction && !pendingUserInteractionsBySession.has(nextStateKey)) {
+        pendingUserInteractionsBySession.set(nextStateKey, previousPendingUserInteraction)
+        pendingUserInteractionsBySession.delete(previousStateKey)
+      }
       const previousRuntimeState = sessionRuntimeStates.get(previousStateKey)
       if (previousRuntimeState && !sessionRuntimeStates.has(nextStateKey)) {
         sessionRuntimeStates.set(nextStateKey, previousRuntimeState)
@@ -316,6 +357,7 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
       currentPermissionMode: current.permissionMode ?? 'auto',
       activeSessionRuntimeState: nextRuntimeState,
       pendingApproval: pendingApprovalsBySession.get(nextStateKey) ?? null,
+      pendingUserInteraction: pendingUserInteractionsBySession.get(nextStateKey) ?? null,
       agentEventState: nextAgentEventState
     })
 
@@ -459,6 +501,18 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
     }
     set({ pendingApproval: null })
     await rendererApi.respondToolApproval(requestId, approved)
+    await get().refreshSessions()
+    get().setProjectSessionRefreshKey((key) => key + 1)
+  },
+
+  onRespondAgentUserInteraction: async (requestId, response, cancelled = false) => {
+    const rendererApi = getRendererApi()
+    const activeKey = get().activeAgentEventStateKey
+    if (activeKey) {
+      pendingUserInteractionsBySession.delete(activeKey)
+    }
+    set({ pendingUserInteraction: null })
+    await rendererApi.respondAgentUserInteraction(requestId, response, cancelled)
     await get().refreshSessions()
     get().setProjectSessionRefreshKey((key) => key + 1)
   }

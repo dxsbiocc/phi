@@ -67,6 +67,12 @@ import {
   resolveToolApproval
 } from './agent/tool-approval'
 import {
+  canRequestAgentUserInteraction,
+  cancelAgentUserInteractions,
+  resolveAgentUserInteraction,
+  waitForAgentUserInteraction
+} from './agent/user-interaction'
+import {
   createInMemoryRuntimeSessionManager,
   createRuntimeResourceLoader,
   openRuntimeSessionManager,
@@ -162,6 +168,7 @@ import {
   type NotebookDocument
 } from '../shared/notebookDocument'
 import { messageContentTitleText } from '../shared/sessionTitle'
+import type { AgentUserInteractionQuestion } from '../shared/agentInteractionTypes'
 import icon from '../../resources/icon.png?asset'
 
 const APP_NAME = 'Phi'
@@ -477,6 +484,109 @@ const notebookFileWatcher = new AnalysisNotebookFileWatcher({
 getOmpBridge().registerHostHandler('notebookTool.execute', (params) =>
   notebookToolExecutor.execute(params as Parameters<typeof notebookToolExecutor.execute>[0])
 )
+getOmpBridge().registerHostHandler('agentInteraction.request', handleAgentInteractionRequest)
+
+function optionalStringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key]
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+function interactionOptionsField(
+  value: unknown
+): AgentUserInteractionQuestion['options'] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const options = value
+    .filter(isRecord)
+    .map((item) => {
+      const label = optionalStringField(item, 'label')
+      const description = optionalStringField(item, 'description')
+      if (!label || !description) return null
+      return {
+        label,
+        description,
+        ...(optionalStringField(item, 'preview')
+          ? { preview: optionalStringField(item, 'preview') }
+          : {})
+      }
+    })
+    .filter((item): item is AgentUserInteractionQuestion['options'][number] => item !== null)
+  return options.length > 0 ? options : undefined
+}
+
+function interactionQuestionsField(value: unknown): AgentUserInteractionQuestion[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter(isRecord)
+    .map((item) => {
+      const question = optionalStringField(item, 'question')
+      const header = optionalStringField(item, 'header')
+      const options = interactionOptionsField(item.options)
+      if (!question || !header || !options) return null
+      return {
+        question,
+        header,
+        options,
+        ...(item.multiSelect === true ? { multiSelect: true } : {})
+      }
+    })
+    .filter((item): item is AgentUserInteractionQuestion => item !== null)
+}
+
+function findActivePromptRunByRuntimeSessionId(runtimeSessionId: string): PromptRun | null {
+  return (
+    [...activePromptRuns.values()].find(
+      (run) => run.session?.runtimeSessionId === runtimeSessionId
+    ) ?? null
+  )
+}
+
+async function handleAgentInteractionRequest(params: unknown): Promise<unknown> {
+  const record = isRecord(params) ? params : {}
+  const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
+  const questions = interactionQuestionsField(record.questions)
+  if (!runtimeSessionId || questions.length === 0) {
+    throw new Error('Invalid user interaction request')
+  }
+
+  const run = findActivePromptRunByRuntimeSessionId(runtimeSessionId)
+  if (!run) {
+    throw new Error('No active run for user interaction request')
+  }
+
+  const window = getActiveWindow()
+  if (!canRequestAgentUserInteraction(window)) {
+    throw new Error('没有可用窗口来请求用户输入')
+  }
+
+  const interactionId = createRunId()
+  const project = getProjectByCwd(run.cwd)
+  runnerRegistry.markNeedsInput(run.phiSessionId, interactionId, {
+    kind: 'ask_user_question',
+    message: questions[0].question
+  })
+  const response = await waitForAgentUserInteraction(
+    {
+      requestId: interactionId,
+      questions,
+      sessionId: run.phiSessionId,
+      sessionPath: phiOnlySessionPath(run.phiSessionId),
+      sessionGeneration: run.sessionGeneration,
+      runId: run.runId,
+      cwd: run.cwd,
+      ...(project?.name ? { projectName: project.name } : {})
+    },
+    window
+  )
+  if (response.cancelled) {
+    runnerRegistry.markInputCancelled(run.phiSessionId, interactionId)
+  } else {
+    runnerRegistry.markInputAnswered(run.phiSessionId, interactionId)
+  }
+  notifySessionChanged()
+  return response
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -1558,7 +1668,12 @@ function getSessionStatusPayload(
   if (activeRun) {
     return {
       status: activeRun.status,
-      unreadKind: activeRun.status === 'needs_approval' ? 'approval' : null,
+      unreadKind:
+        activeRun.status === 'needs_approval'
+          ? 'approval'
+          : activeRun.status === 'needs_input'
+            ? 'input'
+            : null,
       currentRunId: activeRun.runId,
       currentRunStartedAt: activeRun.startedAt
     }
@@ -2063,6 +2178,10 @@ function getActiveWindow(): BrowserWindow | null {
 
 function notifyToolApprovalsCancelled(): void {
   sendToAllWindows('tool:approval-cancelled')
+}
+
+function notifyAgentUserInteractionsCancelled(): void {
+  sendToAllWindows('agent:interaction-cancelled')
 }
 
 function notifyAnalysisNotebookDraftChanged(change: {
@@ -2731,8 +2850,18 @@ function cancelPendingToolApprovals(): void {
   notifyToolApprovalsCancelled()
 }
 
-async function abortSession(session: AgentSessionInstance): Promise<void> {
+function cancelPendingAgentUserInteractions(): void {
+  cancelAgentUserInteractions()
+  notifyAgentUserInteractionsCancelled()
+}
+
+function cancelPendingRunWaits(): void {
   cancelPendingToolApprovals()
+  cancelPendingAgentUserInteractions()
+}
+
+async function abortSession(session: AgentSessionInstance): Promise<void> {
+  cancelPendingRunWaits()
   await session.abort()
 }
 
@@ -3004,7 +3133,7 @@ async function invalidateAgentSession(): Promise<void> {
   if (activePromptRun) {
     activePromptRun.cancelled = true
   }
-  cancelPendingToolApprovals()
+  cancelPendingRunWaits()
   notifySessionChanged()
   void cleanupSessionRecord(previous)
 }
@@ -3014,13 +3143,13 @@ async function stopActivePrompt(): Promise<void> {
   advancePromptGeneration(currentSessionKey)
   const run = getActivePromptRun(currentSessionKey)
   if (!run) {
-    cancelPendingToolApprovals()
+    cancelPendingRunWaits()
     return
   }
 
   run.cancelled = true
   runnerRegistry.stopRun(run.phiSessionId)
-  cancelPendingToolApprovals()
+  cancelPendingRunWaits()
   if (run.session) {
     await abortSession(run.session)
   }
@@ -3032,7 +3161,7 @@ async function stopAllPromptRuns(): Promise<void> {
     run.cancelled = true
   }
   runnerRegistry.stopAll()
-  cancelPendingToolApprovals()
+  cancelPendingRunWaits()
   await Promise.all(
     [...activePromptRuns.values()].map(async (run) => {
       if (!run.session) return
@@ -4398,6 +4527,13 @@ app.whenReady().then(() => {
   ipcMain.handle('tool:approval-response', async (_, requestId: string, approved: boolean) => {
     resolveToolApproval(requestId, approved)
   })
+
+  ipcMain.handle(
+    'agent:interaction-response',
+    async (_, requestId: string, response, cancelled?: boolean) => {
+      resolveAgentUserInteraction(requestId, response, cancelled === true)
+    }
+  )
 
   ipcMain.handle('plugins:list', async () => listPlugins())
   ipcMain.handle('plugins:install', async (_, source: string) => {

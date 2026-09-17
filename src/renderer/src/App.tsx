@@ -46,9 +46,11 @@ import {
   useSessionStore,
   sessionStateKey,
   sessionStateKeyFromAgentEvent,
+  sessionStateKeyFromAgentUserInteraction,
   sessionStateKeyFromToolApproval,
   sessionRuntimeStates,
   pendingApprovalsBySession,
+  pendingUserInteractionsBySession,
   sessionAgentEventStates
 } from './stores/sessionStore'
 import { getRendererApi } from './lib/rendererApi'
@@ -106,6 +108,7 @@ import type {
   ModelOption,
   PermissionMode,
   PluginCatalogItem,
+  PromptTarget,
   Project,
   SessionSummary,
   SkillSummary
@@ -113,6 +116,12 @@ import type {
 
 export type AppView =
   'chat' | 'projects' | 'analysis' | 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
+
+type QueuedPrompt = {
+  id: string
+  text: string
+  target: PromptTarget
+}
 
 const activityBarWidth = 48
 const macTitlebarHeight = 44
@@ -511,6 +520,8 @@ function App(): React.JSX.Element {
     setAgentEventState,
     pendingApproval,
     setPendingApproval,
+    pendingUserInteraction,
+    setPendingUserInteraction,
     activeSessionRuntimeState,
     setActiveSessionRuntimeState,
     draftInputs,
@@ -528,7 +539,8 @@ function App(): React.JSX.Element {
     scheduleSessionRefresh,
     cancelScheduledSessionRefresh,
     onRenameSession,
-    onRespondToolApproval
+    onRespondToolApproval,
+    onRespondAgentUserInteraction
   } = useSessionStore()
   const messages = agentEventState.messages
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -590,6 +602,7 @@ function App(): React.JSX.Element {
   const [personaMarkdown, setPersonaMarkdownState] = useState<string | null>(null)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
   const isSendingRef = useRef(false)
+  const currentSessionIsBusyRef = useRef(false)
   const sessionRequestRef = useRef(0)
   const sendRequestRef = useRef(0)
   const projectSidebarSelectionRequestRef = useRef(0)
@@ -1306,6 +1319,39 @@ function App(): React.JSX.Element {
       scheduleSessionRefresh()
     })
 
+    const unsubscribeAgentUserInteraction = rendererApi.onAgentUserInteractionRequest((event) => {
+      const interactionStateKey = sessionStateKeyFromAgentUserInteraction(
+        event,
+        useSessionStore.getState().activeSessionGeneration
+      )
+      if (interactionStateKey) {
+        pendingUserInteractionsBySession.set(interactionStateKey, event)
+        const nextRuntimeState = {
+          ...(sessionRuntimeStates.get(interactionStateKey) ?? idleSessionRuntimeState()),
+          status: 'needs_input' as const,
+          unreadKind: 'input' as const,
+          currentRunId: event.runId
+        }
+        storeSessionRuntimeState(interactionStateKey, nextRuntimeState)
+        if (interactionStateKey === useSessionStore.getState().activeAgentEventStateKey) {
+          setPendingUserInteraction(event)
+          setActiveSessionRuntimeState(nextRuntimeState)
+        }
+      } else {
+        setPendingUserInteraction(event)
+      }
+      setProjectSessionRefreshKey((key) => key + 1)
+      scheduleSessionRefresh()
+    })
+
+    const unsubscribeAgentUserInteractionCancelled = rendererApi.onAgentUserInteractionCancelled(
+      () => {
+        pendingUserInteractionsBySession.clear()
+        setPendingUserInteraction(null)
+        scheduleSessionRefresh()
+      }
+    )
+
     const unsubscribeNotebookDraftChanged = rendererApi.onAnalysisNotebookDraftChanged(
       handleNotebookDraftChanged
     )
@@ -1328,6 +1374,8 @@ function App(): React.JSX.Element {
       unsubscribeAuthInteraction()
       unsubscribeToolApproval()
       unsubscribeToolApprovalCancelled()
+      unsubscribeAgentUserInteraction()
+      unsubscribeAgentUserInteractionCancelled()
       unsubscribeNotebookDraftChanged()
       unsubscribeNotebookFileChanged()
       unsubscribeSessionChanged()
@@ -1347,6 +1395,7 @@ function App(): React.JSX.Element {
     setActiveSessionRuntimeState,
     setAgentEventState,
     setPendingApproval,
+    setPendingUserInteraction,
     setProjectSessionRefreshKey,
     setVisibleAgentEventState,
     showSnackbar,
@@ -1450,94 +1499,198 @@ function App(): React.JSX.Element {
     },
     [activeDraftKey, setDraftInputs]
   )
+  const [queuedPromptsBySession, setQueuedPromptsBySession] = useState<
+    Record<string, QueuedPrompt[]>
+  >({})
+  const activeQueuedPrompts = useMemo(
+    () => queuedPromptsBySession[activeDraftKey] ?? [],
+    [activeDraftKey, queuedPromptsBySession]
+  )
+  const removeQueuedPrompt = useCallback(
+    (id: string): void => {
+      setQueuedPromptsBySession((prev) => {
+        const current = prev[activeDraftKey] ?? []
+        const next = current.filter((item) => item.id !== id)
+        if (next.length === current.length) return prev
+        const updated = { ...prev }
+        if (next.length > 0) {
+          updated[activeDraftKey] = next
+        } else {
+          delete updated[activeDraftKey]
+        }
+        return updated
+      })
+    },
+    [activeDraftKey]
+  )
+  const queuePromptText = useCallback(
+    (text: string, target: PromptTarget): void => {
+      setQueuedPromptsBySession((prev) => {
+        const current = prev[activeDraftKey] ?? []
+        return {
+          ...prev,
+          [activeDraftKey]: [
+            ...current,
+            {
+              id: `queued-${Date.now()}-${current.length}`,
+              text,
+              target
+            }
+          ]
+        }
+      })
+      setActiveInput('')
+    },
+    [activeDraftKey, setActiveInput]
+  )
+
+  const sendPromptText = useCallback(
+    async (text: string, target: PromptTarget): Promise<boolean> => {
+      if (!text.trim() || isSendingRef.current) {
+        return false
+      }
+      const readiness = getPromptReadiness({
+        modelStateReady: isModelStateReady,
+        providers: providerStatuses,
+        availableModels
+      })
+      if (!readiness.ready) {
+        if (readiness.reason !== 'providers_loading') {
+          openSettings('providers')
+        }
+        return false
+      }
+
+      isSendingRef.current = true
+      const submitGeneration = target.sessionGeneration
+      const sendRequest = ++sendRequestRef.current
+
+      updateMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text }])
+      setIsSendingMessage(true)
+
+      try {
+        const result = await rendererApi.sendPrompt(text, target)
+        if (
+          !result ||
+          sendRequest !== sendRequestRef.current ||
+          result.sessionGeneration !== useSessionStore.getState().activeSessionGeneration
+        ) {
+          return true
+        }
+
+        if (result.path) {
+          const materializedQueueKey = sessionDraftKey({
+            phiSessionId: result.phiSessionId ?? null,
+            path: result.path,
+            cwd: target.cwd,
+            sessionGeneration: result.sessionGeneration
+          })
+          if (materializedQueueKey !== activeDraftKey) {
+            const materializedTarget: PromptTarget = {
+              path: result.path,
+              phiSessionId: result.phiSessionId,
+              cwd: target.cwd,
+              sessionGeneration: result.sessionGeneration
+            }
+            setQueuedPromptsBySession((prev) => {
+              const queued = prev[activeDraftKey] ?? []
+              if (queued.length === 0) return prev
+              const updated = { ...prev }
+              delete updated[activeDraftKey]
+              updated[materializedQueueKey] = [
+                ...(updated[materializedQueueKey] ?? []),
+                ...queued.map((item) => ({ ...item, target: materializedTarget }))
+              ]
+              return updated
+            })
+          }
+        }
+
+        if (result.path && result.path !== activeSessionPath) {
+          // First prompt of a fresh chat: it just became a stable Phi session — pick it up so
+          // the sidebar can highlight it.
+          setActiveSessionPath(result.path)
+        }
+        if (result.path) {
+          const tabKey = workspaceSessionTabKey(result.path, result.sessionGeneration)
+          setClosedWorkspaceSessionTabKeys((keys) => {
+            if (!keys.has(tabKey)) return keys
+            const nextKeys = new Set(keys)
+            nextKeys.delete(tabKey)
+            return nextKeys
+          })
+          setActiveWorkspaceTabKey(tabKey)
+        }
+        if (
+          result.phiSessionId &&
+          result.phiSessionId !== useSessionStore.getState().activePhiSessionId
+        ) {
+          setActivePhiSessionId(result.phiSessionId)
+        }
+        void refreshSessions()
+        if (!selectedModel) {
+          const active = await rendererApi.getSelectedModel()
+          if (active) {
+            setSelectedModel((prev) => prev ?? modelOptionFromSelection(active, models) ?? prev)
+          }
+        }
+        return true
+      } catch (error) {
+        if (
+          sendRequest !== sendRequestRef.current ||
+          submitGeneration !== useSessionStore.getState().activeSessionGeneration
+        ) {
+          return true
+        }
+        showSnackbarError(error, '发送消息失败')
+        return true
+      } finally {
+        if (
+          sendRequest === sendRequestRef.current &&
+          submitGeneration === useSessionStore.getState().activeSessionGeneration
+        ) {
+          isSendingRef.current = false
+          setIsSendingMessage(false)
+        }
+      }
+    },
+    [
+      activeDraftKey,
+      activeSessionPath,
+      availableModels,
+      isModelStateReady,
+      models,
+      openSettings,
+      providerStatuses,
+      refreshSessions,
+      rendererApi,
+      selectedModel,
+      setActivePhiSessionId,
+      setActiveSessionPath,
+      setActiveWorkspaceTabKey,
+      setClosedWorkspaceSessionTabKeys,
+      setSelectedModel,
+      showSnackbarError,
+      updateMessages
+    ]
+  )
 
   const onChatSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
     const text = input.trim()
-    // isSendingRef is checked-and-set synchronously so a second submit fired in the
-    // same tick (before the isSendingMessage state update commits) can't slip through.
-    if (!text || isSendingRef.current || currentSessionIsBusy) {
+    if (!text) return
+    const target: PromptTarget = {
+      path: useSessionStore.getState().activeSessionPath,
+      phiSessionId: useSessionStore.getState().activePhiSessionId ?? undefined,
+      cwd: useSessionStore.getState().activeCwd,
+      sessionGeneration: useSessionStore.getState().activeSessionGeneration
+    }
+    if (currentSessionIsBusy || isSendingRef.current) {
+      queuePromptText(text, target)
       return
     }
-    const readiness = getPromptReadiness({
-      modelStateReady: isModelStateReady,
-      providers: providerStatuses,
-      availableModels
-    })
-    if (!readiness.ready) {
-      if (readiness.reason !== 'providers_loading') {
-        openSettings('providers')
-      }
-      return
-    }
-    isSendingRef.current = true
-    const submitGeneration = useSessionStore.getState().activeSessionGeneration
-    const sendRequest = ++sendRequestRef.current
-
-    updateMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text }])
     setActiveInput('')
-    setIsSendingMessage(true)
-
-    try {
-      const result = await rendererApi.sendPrompt(text, {
-        path: useSessionStore.getState().activeSessionPath,
-        phiSessionId: useSessionStore.getState().activePhiSessionId ?? undefined,
-        cwd: useSessionStore.getState().activeCwd,
-        sessionGeneration: submitGeneration
-      })
-      if (
-        !result ||
-        sendRequest !== sendRequestRef.current ||
-        result.sessionGeneration !== useSessionStore.getState().activeSessionGeneration
-      ) {
-        return
-      }
-
-      if (result.path && result.path !== activeSessionPath) {
-        // First prompt of a fresh chat: it just became a stable Phi session — pick it up so
-        // the sidebar can highlight it.
-        setActiveSessionPath(result.path)
-      }
-      if (result.path) {
-        const tabKey = workspaceSessionTabKey(result.path, result.sessionGeneration)
-        setClosedWorkspaceSessionTabKeys((keys) => {
-          if (!keys.has(tabKey)) return keys
-          const nextKeys = new Set(keys)
-          nextKeys.delete(tabKey)
-          return nextKeys
-        })
-        setActiveWorkspaceTabKey(tabKey)
-      }
-      if (
-        result.phiSessionId &&
-        result.phiSessionId !== useSessionStore.getState().activePhiSessionId
-      ) {
-        setActivePhiSessionId(result.phiSessionId)
-      }
-      void refreshSessions()
-      if (!selectedModel) {
-        const active = await rendererApi.getSelectedModel()
-        if (active) {
-          setSelectedModel((prev) => prev ?? modelOptionFromSelection(active, models) ?? prev)
-        }
-      }
-    } catch (error) {
-      if (
-        sendRequest !== sendRequestRef.current ||
-        submitGeneration !== useSessionStore.getState().activeSessionGeneration
-      ) {
-        return
-      }
-      showSnackbarError(error, '发送消息失败')
-    } finally {
-      if (
-        sendRequest === sendRequestRef.current &&
-        submitGeneration === useSessionStore.getState().activeSessionGeneration
-      ) {
-        isSendingRef.current = false
-        setIsSendingMessage(false)
-      }
-    }
+    await sendPromptText(text, target)
   }
 
   const onStopGeneration = async (): Promise<void> => {
@@ -1547,6 +1700,7 @@ function App(): React.JSX.Element {
       isSendingRef.current = false
       setIsSendingMessage(false)
       setPendingApproval(null)
+      setPendingUserInteraction(null)
     }
   }
 
@@ -1825,88 +1979,70 @@ function App(): React.JSX.Element {
   const activeSessionHasWork =
     sessionStatusIsBusy(activeSession) || sessionRuntimeStateIsBusy(activeSessionRuntimeState)
   const currentSessionIsBusy = isSendingMessage || activeSessionHasWork
-  const onRetryUserMessage = async (content: string): Promise<void> => {
-    const text = content.trim()
-    if (!text || isSendingRef.current || currentSessionIsBusy) {
-      return
-    }
+  useEffect(() => {
+    currentSessionIsBusyRef.current = currentSessionIsBusy
+  }, [currentSessionIsBusy])
+  const onRetryUserMessage = useCallback(
+    async (content: string): Promise<void> => {
+      const text = content.trim()
+      if (!text) return
+      const state = useSessionStore.getState()
+      const target: PromptTarget = {
+        path: state.activeSessionPath,
+        phiSessionId: state.activePhiSessionId ?? undefined,
+        cwd: state.activeCwd,
+        sessionGeneration: state.activeSessionGeneration
+      }
+      if (currentSessionIsBusyRef.current || isSendingRef.current) {
+        queuePromptText(text, target)
+        return
+      }
+      await sendPromptText(text, target)
+    },
+    [queuePromptText, sendPromptText]
+  )
+  useEffect(() => {
+    if (currentSessionIsBusy || isSessionChanging || isBusy || isSendingRef.current) return
+    const nextPrompt = activeQueuedPrompts[0]
+    if (!nextPrompt) return
     const readiness = getPromptReadiness({
       modelStateReady: isModelStateReady,
       providers: providerStatuses,
       availableModels
     })
-    if (!readiness.ready) {
-      if (readiness.reason !== 'providers_loading') {
-        openSettings('providers')
-      }
-      return
-    }
-    isSendingRef.current = true
-    const submitGeneration = useSessionStore.getState().activeSessionGeneration
-    const sendRequest = ++sendRequestRef.current
+    if (!readiness.ready) return
 
-    updateMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text }])
-    setIsSendingMessage(true)
-
-    try {
-      const result = await rendererApi.sendPrompt(text, {
-        path: useSessionStore.getState().activeSessionPath,
-        phiSessionId: useSessionStore.getState().activePhiSessionId ?? undefined,
-        cwd: useSessionStore.getState().activeCwd,
-        sessionGeneration: submitGeneration
-      })
-      if (
-        !result ||
-        sendRequest !== sendRequestRef.current ||
-        result.sessionGeneration !== useSessionStore.getState().activeSessionGeneration
-      ) {
-        return
-      }
-
-      if (result.path && result.path !== activeSessionPath) {
-        setActiveSessionPath(result.path)
-      }
-      if (result.path) {
-        const tabKey = workspaceSessionTabKey(result.path, result.sessionGeneration)
-        setClosedWorkspaceSessionTabKeys((keys) => {
-          if (!keys.has(tabKey)) return keys
-          const nextKeys = new Set(keys)
-          nextKeys.delete(tabKey)
-          return nextKeys
-        })
-        setActiveWorkspaceTabKey(tabKey)
-      }
-      if (
-        result.phiSessionId &&
-        result.phiSessionId !== useSessionStore.getState().activePhiSessionId
-      ) {
-        setActivePhiSessionId(result.phiSessionId)
-      }
-      void refreshSessions()
-      if (!selectedModel) {
-        const active = await rendererApi.getSelectedModel()
-        if (active) {
-          setSelectedModel((prev) => prev ?? modelOptionFromSelection(active, models) ?? prev)
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      setQueuedPromptsBySession((prev) => {
+        const current = prev[activeDraftKey] ?? []
+        if (current[0]?.id !== nextPrompt.id) return prev
+        const remaining = current.slice(1)
+        const updated = { ...prev }
+        if (remaining.length > 0) {
+          updated[activeDraftKey] = remaining
+        } else {
+          delete updated[activeDraftKey]
         }
-      }
-    } catch (error) {
-      if (
-        sendRequest !== sendRequestRef.current ||
-        submitGeneration !== useSessionStore.getState().activeSessionGeneration
-      ) {
-        return
-      }
-      showSnackbarError(error, '发送消息失败')
-    } finally {
-      if (
-        sendRequest === sendRequestRef.current &&
-        submitGeneration === useSessionStore.getState().activeSessionGeneration
-      ) {
-        isSendingRef.current = false
-        setIsSendingMessage(false)
-      }
+        return updated
+      })
+      void sendPromptText(nextPrompt.text, nextPrompt.target)
+    })
+    return () => {
+      cancelled = true
     }
-  }
+  }, [
+    activeDraftKey,
+    activeQueuedPrompts,
+    availableModels,
+    currentSessionIsBusy,
+    isModelStateReady,
+    isBusy,
+    isSessionChanging,
+    providerStatuses,
+    sendPromptText
+  ])
   const activeWorkspaceTitle = useMemo(() => {
     if (showProjectSessionPlaceholder) return '项目会话'
     if (isResourceWorkspaceView) {
@@ -2443,6 +2579,7 @@ function App(): React.JSX.Element {
       input={input}
       scrollResetKey={activeDraftKey}
       canSend={!isSessionChanging && !currentSessionIsBusy && !isBusy}
+      canQueue={!isSessionChanging && currentSessionIsBusy && !isBusy}
       isGenerating={currentSessionIsBusy}
       currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
       models={availableModels}
@@ -2457,8 +2594,8 @@ function App(): React.JSX.Element {
       onSelectThinkingLevel={(level) => {
         void onSelectThinkingLevel(level)
       }}
-      onRetryUserMessage={onRetryUserMessage}
       onInputChange={setActiveInput}
+      onRetryUserMessage={onRetryUserMessage}
       onOpenInputAddMenu={onOpenInputAddMenu}
       onPickInputFiles={onPickInputFiles}
       onGetPathForInputFile={rendererApi.getPathForFile}
@@ -2475,7 +2612,11 @@ function App(): React.JSX.Element {
       disablePermissionModeSelect={isSessionChanging}
       disableModelControls={isSessionChanging}
       pendingApproval={pendingApproval}
+      pendingUserInteraction={pendingUserInteraction}
+      queuedPrompts={activeQueuedPrompts.map((item) => ({ id: item.id, text: item.text }))}
       onRespondApproval={onRespondToolApproval}
+      onRespondUserInteraction={onRespondAgentUserInteraction}
+      onRemoveQueuedPrompt={removeQueuedPrompt}
       onOpenApprovalSession={onOpenApprovalSession}
       onOpenLocalPath={onOpenLocalPath}
       onJumpToNotebookCell={onJumpToAnalysisNotebookCell}

@@ -250,6 +250,7 @@ export interface RuntimeResourceLoader {
 }
 
 export interface RuntimeAgentSession {
+  readonly runtimeSessionId: string
   readonly sessionManager: RuntimeSessionManager
   messages: unknown[]
   sessionFile?: string
@@ -652,6 +653,7 @@ class ActiveRuntimeSessionManagerProxy extends RuntimeSessionManagerProxy {
 }
 
 class RuntimeAgentSessionProxy implements RuntimeAgentSession {
+  readonly runtimeSessionId: string
   messages: unknown[] = []
   sessionFile?: string
   model?: RuntimeModel
@@ -668,6 +670,7 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     state: WorkerSessionState,
     private readonly toolCallHandlers: ToolCallHandler[]
   ) {
+    this.runtimeSessionId = sessionId
     this.sessionManager = new ActiveRuntimeSessionManagerProxy(sessionManager, bridge, sessionId)
     applySessionState(this, state)
     this.cleanupFns.push(

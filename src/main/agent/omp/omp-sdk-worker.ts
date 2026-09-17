@@ -30,6 +30,7 @@ import { authPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
 import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
 import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
+import { buildAskUserQuestionCustomTools } from '../user-interaction-tools'
 import { buildWrapperCompositionTools } from '../wrappers/composition/tools'
 
 type UnknownRecord = Record<string, unknown>
@@ -690,7 +691,10 @@ async function createSession(params: unknown): Promise<unknown> {
   const notebookCustomTools = buildNotebookCustomTools(async (request) =>
     requestHost('notebookTool.execute', request)
   )
-  const customTools = [...wrapperCustomTools, ...notebookCustomTools]
+  const userInteractionCustomTools = buildAskUserQuestionCustomTools(sessionId, async (request) =>
+    requestHost('agentInteraction.request', request)
+  )
+  const customTools = [...wrapperCustomTools, ...notebookCustomTools, ...userInteractionCustomTools]
 
   const result = await createLegacyAgentSession({
     cwd,

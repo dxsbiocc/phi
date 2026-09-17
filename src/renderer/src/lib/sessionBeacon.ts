@@ -2,7 +2,7 @@ export const SESSION_ROW_GUTTER_PX = 16
 export const INDENTED_SESSION_ROW_GUTTER_PX = 32
 export const RUNNING_BEACON_SIZE_PX = 8
 
-export type SessionBeaconKind = 'running' | 'approval' | 'failed' | 'completed'
+export type SessionBeaconKind = 'running' | 'approval' | 'input' | 'failed' | 'completed'
 
 export function sessionBeaconKind(session: {
   status: string
@@ -10,6 +10,7 @@ export function sessionBeaconKind(session: {
 }): SessionBeaconKind | null {
   if (session.status === 'running') return 'running'
   if (session.status === 'needs_approval' || session.unreadKind === 'approval') return 'approval'
+  if (session.status === 'needs_input' || session.unreadKind === 'input') return 'input'
   if (session.status === 'failed' || session.unreadKind === 'failed') return 'failed'
   if (session.status === 'completed_unread' || session.unreadKind === 'completed')
     return 'completed'

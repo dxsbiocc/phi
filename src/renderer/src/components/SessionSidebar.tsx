@@ -98,7 +98,7 @@ function SessionSidebar({
   const hasActiveAttention = sessions.some((session) => {
     const runtimeState = getSessionRuntimeState?.(session.path, activeCwd) ?? null
     const status = runtimeState?.status ?? session.status
-    return status === 'running' || status === 'needs_approval'
+    return status === 'running' || status === 'needs_approval' || status === 'needs_input'
   })
 
   useEffect(() => {

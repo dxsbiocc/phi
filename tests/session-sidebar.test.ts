@@ -242,6 +242,7 @@ test('session beacon kind covers durable attention states', () => {
   assert.equal(sessionBeaconKind({ status: 'idle', unreadKind: 'completed' }), 'completed')
   assert.equal(sessionBeaconKind({ status: 'idle', unreadKind: 'failed' }), 'failed')
   assert.equal(sessionBeaconKind({ status: 'needs_approval', unreadKind: 'approval' }), 'approval')
+  assert.equal(sessionBeaconKind({ status: 'needs_input', unreadKind: 'input' }), 'input')
   assert.equal(sessionBeaconKind({ status: 'idle', unreadKind: null }), null)
 })
 

@@ -293,6 +293,43 @@ test('runner can mark a run as needing approval and then resume state', async ()
   })
 })
 
+test('runner can mark a run as needing user input and then resume state', async () => {
+  await withPhiDir(async () => {
+    const registry = new SessionRunnerRegistry()
+    const sessionId = createTestSession()
+    const inputGate = deferred()
+    const run = registry.startRun({
+      sessionId,
+      runId: createRunId(),
+      execute: async () => {
+        registry.markNeedsInput(sessionId, 'input-1', {
+          kind: 'select',
+          message: '请选择执行方式'
+        })
+        await inputGate.promise
+        registry.markInputAnswered(sessionId, 'input-1')
+      }
+    })
+
+    await tick()
+    assert.equal(registry.getActiveRun(sessionId)?.status, 'needs_input')
+    assert.equal(listPhiSessions()[0].status, 'needs_input')
+    assert.equal(listPhiSessions()[0].unreadKind, 'input')
+
+    inputGate.resolve()
+    await run.done
+    assert.equal(run.outcome, 'completed')
+    assert.deepEqual(
+      readSessionEvents(sessionId).map((event) => event.type),
+      ['run_started', 'input_requested', 'input_answered', 'run_completed']
+    )
+    const requestEvent = readSessionEvents(sessionId)[1]
+    assert.equal(requestEvent.interactionId, 'input-1')
+    assert.equal(requestEvent.kind, 'select')
+    assert.equal(requestEvent.message, '请选择执行方式')
+  })
+})
+
 test('runner records approval approval and denial decisions', async () => {
   await withPhiDir(async () => {
     const registry = new SessionRunnerRegistry()

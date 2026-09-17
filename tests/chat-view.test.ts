@@ -31,6 +31,7 @@ import {
 import { toolActionKind } from '../src/renderer/src/lib/toolActions'
 import { suggestedNextActionPlaceholderFromMessages } from '../src/renderer/src/lib/suggestedNextAction'
 import type {
+  AgentUserInteractionRequest,
   ChatItem,
   PermissionMode,
   ToolApprovalRequest,
@@ -47,6 +48,9 @@ function renderChat(
     disableModelControls?: boolean
     compactComposerControls?: boolean
     input?: string
+    canQueue?: boolean
+    pendingUserInteraction?: AgentUserInteractionRequest | null
+    queuedPrompts?: Array<{ id: string; text: string }>
   } = {}
 ): string {
   const theme = createTheme()
@@ -59,6 +63,7 @@ function renderChat(
         input: options.input ?? '',
         messagesContainerRef: () => undefined,
         canSend: true,
+        canQueue: options.canQueue ?? false,
         isGenerating: options.isGenerating ?? false,
         currentRunStartedAt: options.currentRunStartedAt,
         models: [
@@ -86,7 +91,11 @@ function renderChat(
         onSelectPermissionMode: () => undefined,
         disableModelControls: options.disableModelControls ?? false,
         pendingApproval: options.pendingApproval ?? null,
+        pendingUserInteraction: options.pendingUserInteraction ?? null,
+        queuedPrompts: options.queuedPrompts ?? [],
         onRespondApproval: () => undefined,
+        onRespondUserInteraction: () => undefined,
+        onRemoveQueuedPrompt: () => undefined,
         onOpenApprovalSession: () => undefined,
         compactComposerControls: options.compactComposerControls ?? false
       })
@@ -1333,6 +1342,70 @@ test('chat view renders tool approval inline instead of a modal dialog', () => {
   assert.match(markup, /执行终端命令/)
   assert.match(markup, /which R/)
   assert.doesNotMatch(markup, /role="dialog"/)
+})
+
+test('chat view renders a user input request inline', () => {
+  const markup = renderChat([], {
+    pendingUserInteraction: {
+      requestId: 'input-1',
+      questions: [
+        {
+          header: '目标目录',
+          question: '请选择目标目录策略？',
+          options: [
+            { label: '当前目录', description: '继续使用当前工作目录。' },
+            {
+              label: '新目录',
+              description: '切换到用户指定的新目录。',
+              preview: '/tmp/project'
+            }
+          ]
+        },
+        {
+          header: '数据库',
+          question: '偏好哪个通路数据库？',
+          options: [
+            { label: 'KEGG', description: '通路图最常用。' },
+            { label: 'Reactome', description: '人工审核通路。' }
+          ]
+        }
+      ],
+      projectName: 'test',
+      cwd: '/tmp/test'
+    }
+  })
+
+  assert.match(markup, /等待用户输入/)
+  assert.match(markup, /需要选择/)
+  assert.match(markup, /1 \/ 2/)
+  assert.doesNotMatch(markup, /第 1 \/ 2 题/)
+  assert.match(markup, /目标目录/)
+  assert.match(markup, /请选择目标目录策略/)
+  assert.match(markup, /当前目录/)
+  assert.match(markup, /继续使用当前工作目录。/)
+  assert.match(markup, /自定义答案/)
+  assert.doesNotMatch(markup, /打开会话/)
+  assert.doesNotMatch(markup, /\/tmp\/test/)
+  assert.match(markup, /下一步/)
+  assert.doesNotMatch(markup, /偏好哪个通路数据库/)
+  assert.doesNotMatch(markup, /Reactome/)
+  assert.doesNotMatch(markup, /备注/)
+  assert.doesNotMatch(markup, /整体备注/)
+})
+
+test('chat view shows queued prompts above the composer while a session is busy', () => {
+  const markup = renderChat([], {
+    isGenerating: true,
+    canQueue: true,
+    input: '继续下一步',
+    queuedPrompts: [{ id: 'queued-1', text: '排队的下一条问题' }]
+  })
+
+  assert.match(markup, /aria-label="加入队列"/)
+  assert.match(markup, /消息队列/)
+  assert.match(markup, /排队中 1 条/)
+  assert.match(markup, /排队的下一条问题/)
+  assert.match(markup, /aria-label="移除排队消息"/)
 })
 
 test('chat view shows a preparing placeholder for a wrapper plan tool call with no planId yet', () => {

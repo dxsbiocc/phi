@@ -26,7 +26,7 @@ export interface SessionRun {
   readonly signal: AbortSignal
   readonly startedAt: string
   readonly done: Promise<void>
-  status: Extract<SessionStatus, 'running' | 'needs_approval'>
+  status: Extract<SessionStatus, 'running' | 'needs_approval' | 'needs_input'>
   outcome?: LastRunOutcome
 }
 
@@ -299,6 +299,81 @@ export class SessionRunnerRegistry {
       sessionId,
       runId: run.runId,
       metadata: { approvalId }
+    })
+  }
+
+  markNeedsInput(
+    sessionId: string,
+    interactionId: string,
+    metadata: { kind?: string; message?: string } = {}
+  ): void {
+    const run = this.activeRuns.get(sessionId)
+    if (!run) return
+
+    run.status = 'needs_input'
+    this.appendEvent(sessionId, {
+      type: 'input_requested',
+      runId: run.runId,
+      interactionId,
+      ...metadata
+    })
+    writeAppLog({
+      event: 'input_requested',
+      sessionId,
+      runId: run.runId,
+      metadata: {
+        interactionId,
+        kind: metadata.kind,
+        message: metadata.message
+      }
+    })
+    updateSessionManifest(sessionId, {
+      status: 'needs_input',
+      unreadKind: 'input'
+    })
+  }
+
+  markInputAnswered(sessionId: string, interactionId: string): void {
+    const run = this.activeRuns.get(sessionId)
+    if (!run) return
+
+    run.status = 'running'
+    this.appendEvent(sessionId, {
+      type: 'input_answered',
+      runId: run.runId,
+      interactionId
+    })
+    writeAppLog({
+      event: 'input_answered',
+      sessionId,
+      runId: run.runId,
+      metadata: { interactionId }
+    })
+    updateSessionManifest(sessionId, {
+      status: 'running',
+      unreadKind: null
+    })
+  }
+
+  markInputCancelled(sessionId: string, interactionId: string): void {
+    const run = this.activeRuns.get(sessionId)
+    if (!run) return
+
+    run.status = 'running'
+    this.appendEvent(sessionId, {
+      type: 'input_cancelled',
+      runId: run.runId,
+      interactionId
+    })
+    writeAppLog({
+      event: 'input_cancelled',
+      sessionId,
+      runId: run.runId,
+      metadata: { interactionId }
+    })
+    updateSessionManifest(sessionId, {
+      status: 'running',
+      unreadKind: null
     })
   }
 

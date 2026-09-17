@@ -220,7 +220,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         done: Promise<void>
         runId: string
         startedAt: string
-        status: 'running' | 'needs_approval'
+        status: 'running' | 'needs_approval' | 'needs_input'
       }
     >()
     constructor(options: { maxActiveRuns?: number } = {}) {
@@ -272,7 +272,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
       sessionId: string
       runId: string
       startedAt: string
-      status: 'running' | 'needs_approval'
+      status: 'running' | 'needs_approval' | 'needs_input'
     } | null {
       const run = this.runs.get(sessionId)
       return run
@@ -312,6 +312,25 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     }
     markApprovalCancelled(sessionId: string, approvalId: string): void {
       runnerEvents.push({ type: 'approval_cancelled', sessionId, approvalId })
+    }
+    markNeedsInput(
+      sessionId: string,
+      interactionId: string,
+      metadata?: Record<string, unknown>
+    ): void {
+      const run = this.runs.get(sessionId)
+      if (run) run.status = 'needs_input'
+      runnerEvents.push({ type: 'input_requested', sessionId, interactionId, metadata })
+    }
+    markInputAnswered(sessionId: string, interactionId: string): void {
+      const run = this.runs.get(sessionId)
+      if (run) run.status = 'running'
+      runnerEvents.push({ type: 'input_answered', sessionId, interactionId })
+    }
+    markInputCancelled(sessionId: string, interactionId: string): void {
+      const run = this.runs.get(sessionId)
+      if (run) run.status = 'running'
+      runnerEvents.push({ type: 'input_cancelled', sessionId, interactionId })
     }
   }
   class Window extends EventEmitter {
@@ -1166,6 +1185,17 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         approvalOptions.push(options)
         return { name: 'approval-extension' }
       }
+    },
+    './agent/user-interaction': {
+      canRequestAgentUserInteraction: (): boolean => true,
+      cancelAgentUserInteractions: noop,
+      resolveAgentUserInteraction: noop,
+      waitForAgentUserInteraction: async (
+        request: Record<string, unknown>
+      ): Promise<Record<string, unknown>> => ({
+        requestId: request.requestId,
+        answers: []
+      })
     },
     './agent/plugins': {
       listPlugins: async (): Promise<unknown[]> => [
