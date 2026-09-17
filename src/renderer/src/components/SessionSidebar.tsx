@@ -136,7 +136,8 @@ function SessionSidebar({
           sx={{
             flexShrink: 0,
             minHeight: 44,
-            pl: isMac ? '80px' : '16px'
+            pl: isMac ? '80px' : '16px',
+            WebkitAppRegion: 'drag'
           }}
         />
       ) : null}
@@ -148,7 +149,8 @@ function SessionSidebar({
           pt: compactHoverPreview ? 1 : CONTENT_TOP_GAP,
           pb: compactHoverPreview ? 0.75 : 1,
           flexShrink: 0,
-          backgroundColor: 'transparent !important'
+          backgroundColor: 'transparent !important',
+          WebkitAppRegion: compactHoverPreview ? 'no-drag' : 'drag'
         }}
       >
         {isProjectsMode ? (
@@ -160,7 +162,8 @@ function SessionSidebar({
             sx={{
               minHeight: compactHoverPreview ? 38 : 44,
               justifyContent: 'flex-start',
-              fontSize: ROW_LABEL_FONT_SIZE
+              fontSize: ROW_LABEL_FONT_SIZE,
+              WebkitAppRegion: 'no-drag'
             }}
           >
             新建项目
@@ -174,7 +177,8 @@ function SessionSidebar({
             sx={{
               minHeight: compactHoverPreview ? 38 : 44,
               justifyContent: 'flex-start',
-              fontSize: ROW_LABEL_FONT_SIZE
+              fontSize: ROW_LABEL_FONT_SIZE,
+              WebkitAppRegion: 'no-drag'
             }}
           >
             新对话

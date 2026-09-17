@@ -42,7 +42,7 @@ export function WorkspaceResourceTabs({
         overflowX: 'auto',
         alignSelf: 'stretch',
         py: 0.65,
-        WebkitAppRegion: 'no-drag',
+        WebkitAppRegion: 'drag',
         scrollbarWidth: 'none',
         '&::-webkit-scrollbar': { display: 'none' }
       }}
@@ -90,6 +90,7 @@ export function WorkspaceResourceTabs({
               px: 0.6,
               pl: 1,
               lineHeight: 1,
+              WebkitAppRegion: 'no-drag',
               '&:hover': {
                 bgcolor: selected
                   ? (theme) =>
@@ -148,6 +149,7 @@ export function WorkspaceResourceTabs({
                 color: 'text.disabled',
                 opacity: selected ? 0.72 : 0,
                 transition: 'opacity 120ms ease, background-color 120ms ease, color 120ms ease',
+                WebkitAppRegion: 'no-drag',
                 '&:hover': {
                   bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08),
                   color: 'text.primary'

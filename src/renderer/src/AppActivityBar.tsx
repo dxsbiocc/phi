@@ -93,6 +93,7 @@ function createActivityBarReactIcon(Icon: IconType): ActivityBarIconComponent {
 
 function activityBarButtonSx(active: boolean): SxProps<Theme> {
   return {
+    WebkitAppRegion: 'no-drag',
     color: active ? 'primary.main' : 'text.secondary',
     '&:hover': {
       color: active ? 'primary.main' : 'text.primary',
@@ -295,6 +296,7 @@ function AppActivityBarImpl({
           gap: 0.5,
           backgroundColor: (muiTheme) =>
             muiTheme.palette.mode === 'dark' ? muiTheme.palette.background.default : '#FFFFFF',
+          WebkitAppRegion: 'drag',
           '& > *': {
             position: 'relative',
             zIndex: 8
