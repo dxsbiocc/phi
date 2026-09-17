@@ -1825,6 +1825,88 @@ function App(): React.JSX.Element {
   const activeSessionHasWork =
     sessionStatusIsBusy(activeSession) || sessionRuntimeStateIsBusy(activeSessionRuntimeState)
   const currentSessionIsBusy = isSendingMessage || activeSessionHasWork
+  const onRetryUserMessage = async (content: string): Promise<void> => {
+    const text = content.trim()
+    if (!text || isSendingRef.current || currentSessionIsBusy) {
+      return
+    }
+    const readiness = getPromptReadiness({
+      modelStateReady: isModelStateReady,
+      providers: providerStatuses,
+      availableModels
+    })
+    if (!readiness.ready) {
+      if (readiness.reason !== 'providers_loading') {
+        openSettings('providers')
+      }
+      return
+    }
+    isSendingRef.current = true
+    const submitGeneration = useSessionStore.getState().activeSessionGeneration
+    const sendRequest = ++sendRequestRef.current
+
+    updateMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text }])
+    setIsSendingMessage(true)
+
+    try {
+      const result = await rendererApi.sendPrompt(text, {
+        path: useSessionStore.getState().activeSessionPath,
+        phiSessionId: useSessionStore.getState().activePhiSessionId ?? undefined,
+        cwd: useSessionStore.getState().activeCwd,
+        sessionGeneration: submitGeneration
+      })
+      if (
+        !result ||
+        sendRequest !== sendRequestRef.current ||
+        result.sessionGeneration !== useSessionStore.getState().activeSessionGeneration
+      ) {
+        return
+      }
+
+      if (result.path && result.path !== activeSessionPath) {
+        setActiveSessionPath(result.path)
+      }
+      if (result.path) {
+        const tabKey = workspaceSessionTabKey(result.path, result.sessionGeneration)
+        setClosedWorkspaceSessionTabKeys((keys) => {
+          if (!keys.has(tabKey)) return keys
+          const nextKeys = new Set(keys)
+          nextKeys.delete(tabKey)
+          return nextKeys
+        })
+        setActiveWorkspaceTabKey(tabKey)
+      }
+      if (
+        result.phiSessionId &&
+        result.phiSessionId !== useSessionStore.getState().activePhiSessionId
+      ) {
+        setActivePhiSessionId(result.phiSessionId)
+      }
+      void refreshSessions()
+      if (!selectedModel) {
+        const active = await rendererApi.getSelectedModel()
+        if (active) {
+          setSelectedModel((prev) => prev ?? modelOptionFromSelection(active, models) ?? prev)
+        }
+      }
+    } catch (error) {
+      if (
+        sendRequest !== sendRequestRef.current ||
+        submitGeneration !== useSessionStore.getState().activeSessionGeneration
+      ) {
+        return
+      }
+      showSnackbarError(error, '发送消息失败')
+    } finally {
+      if (
+        sendRequest === sendRequestRef.current &&
+        submitGeneration === useSessionStore.getState().activeSessionGeneration
+      ) {
+        isSendingRef.current = false
+        setIsSendingMessage(false)
+      }
+    }
+  }
   const activeWorkspaceTitle = useMemo(() => {
     if (showProjectSessionPlaceholder) return '项目会话'
     if (isResourceWorkspaceView) {
@@ -2375,6 +2457,7 @@ function App(): React.JSX.Element {
       onSelectThinkingLevel={(level) => {
         void onSelectThinkingLevel(level)
       }}
+      onRetryUserMessage={onRetryUserMessage}
       onInputChange={setActiveInput}
       onOpenInputAddMenu={onOpenInputAddMenu}
       onPickInputFiles={onPickInputFiles}

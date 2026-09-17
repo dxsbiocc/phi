@@ -23,7 +23,7 @@ import {
 } from '../../lib/chatVirtualization'
 import type { ChatItem, ChatMessage, NotebookCellJumpTarget } from '../../types'
 import { ThinkingBlock } from './ThinkingBlock'
-import { ChatUserMessage } from './ChatUserMessage'
+import { ChatUserMessage, type UserMessageState } from './ChatUserMessage'
 import {
   useCollapseResizeNotifier,
   type ChatContentResizeHandler,
@@ -75,6 +75,37 @@ function messageScrollMarker(messages: ChatItem[]): MessageScrollMarker {
     lastRole: last?.role ?? null,
     length: messages.length
   }
+}
+
+function failedUserMessageStates(messages: ChatItem[]): Map<string, UserMessageState> {
+  const states = new Map<string, UserMessageState>()
+  let currentUser: (ChatMessage & { role: 'user' }) | null = null
+  let currentFailed = false
+
+  const flushCurrentUser = (): void => {
+    if (!currentUser) return
+    states.set(currentUser.id, currentFailed ? 'failed' : 'normal')
+  }
+
+  for (const message of messages) {
+    if (message.role === 'user') {
+      flushCurrentUser()
+      currentUser = message as ChatMessage & { role: 'user' }
+      currentFailed = false
+      continue
+    }
+
+    if (!currentUser) continue
+    if (
+      (message.role === 'run' && message.event === 'failed') ||
+      (message.role === 'error' && message.runId)
+    ) {
+      currentFailed = true
+    }
+  }
+
+  flushCurrentUser()
+  return states
 }
 
 type ChatGroupVirtualItem = ChatVirtualItem & { group: RenderGroup }
@@ -343,6 +374,9 @@ const ProcessingGroup = memo(function ProcessingGroup({
 
 type ChatBubbleProps = {
   message: ChatMessage
+  userMessageState?: UserMessageState
+  onEditUserMessage?: (content: string) => void
+  onRetryUserMessage?: (content: string) => void
   onGoSettings: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onContentResize?: ChatContentResizeHandler
@@ -355,11 +389,20 @@ type ChatBubbleProps = {
 // enough to skip re-rendering (and re-parsing markdown for) every past
 // message while the latest one streams in.
 function chatBubblePropsEqual(prev: ChatBubbleProps, next: ChatBubbleProps): boolean {
-  return prev.message === next.message && prev.cwd === next.cwd
+  return (
+    prev.message === next.message &&
+    prev.cwd === next.cwd &&
+    prev.userMessageState === next.userMessageState &&
+    prev.onEditUserMessage === next.onEditUserMessage &&
+    prev.onRetryUserMessage === next.onRetryUserMessage
+  )
 }
 
 const ChatBubble = memo(function ChatBubble({
   message,
+  userMessageState,
+  onEditUserMessage,
+  onRetryUserMessage,
   onGoSettings,
   onOpenLocalPath,
   onContentResize,
@@ -413,7 +456,14 @@ const ChatBubble = memo(function ChatBubble({
   }
 
   if (message.role === 'user') {
-    return <ChatUserMessage message={message} />
+    return (
+      <ChatUserMessage
+        message={message}
+        state={userMessageState}
+        onEdit={onEditUserMessage}
+        onRetry={onRetryUserMessage}
+      />
+    )
   }
 
   return (
@@ -429,6 +479,8 @@ export type ChatMessageListProps = {
   scrollResetKey?: string
   isGenerating: boolean
   currentRunStartedAt?: string
+  onEditUserMessage?: (content: string) => void
+  onRetryUserMessage?: (content: string) => void
   onGoSettings: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
@@ -441,6 +493,8 @@ const ChatMessageList = memo(function ChatMessageList({
   scrollResetKey,
   isGenerating,
   currentRunStartedAt,
+  onEditUserMessage,
+  onRetryUserMessage,
   onGoSettings,
   onOpenLocalPath,
   onJumpToNotebookCell,
@@ -464,6 +518,7 @@ const ChatMessageList = memo(function ChatMessageList({
     () => groupMessages(messages, { activeRun: isGenerating }),
     [isGenerating, messages]
   )
+  const userMessageStates = useMemo(() => failedUserMessageStates(messages), [messages])
   const virtualItems = useMemo<ChatGroupVirtualItem[]>(
     () => renderGroups.map((group) => ({ id: group.key, group })),
     [renderGroups]
@@ -727,6 +782,11 @@ const ChatMessageList = memo(function ChatMessageList({
       return (
         <ChatBubble
           message={group.item}
+          userMessageState={
+            group.item.role === 'user' ? userMessageStates.get(group.item.id) : undefined
+          }
+          onEditUserMessage={onEditUserMessage}
+          onRetryUserMessage={onRetryUserMessage}
           onGoSettings={onGoSettings}
           onOpenLocalPath={onOpenLocalPath}
           onContentResize={onMessagesContentResize}
@@ -738,11 +798,14 @@ const ChatMessageList = memo(function ChatMessageList({
       cwd,
       currentRunStartedAt,
       isGenerating,
+      onEditUserMessage,
       onGoSettings,
       onJumpToNotebookCell,
       onMessagesContentResize,
       onOpenLocalPath,
-      renderGroups.length
+      onRetryUserMessage,
+      renderGroups.length,
+      userMessageStates
     ]
   )
 

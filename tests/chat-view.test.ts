@@ -450,6 +450,39 @@ test('chat view keeps user messages right aligned inside virtual rows', () => {
   assert.match(markup, /当前运行的notebook有哪些/)
 })
 
+test('chat view shows copy and edit hover actions for normal user messages', () => {
+  const markup = renderChat([{ id: 'user-1', role: 'user', content: '当前运行的notebook有哪些' }])
+
+  assert.match(markup, /aria-label="复制消息"/)
+  assert.match(markup, /aria-label="编辑消息"/)
+  assert.doesNotMatch(markup, /aria-label="重试消息"/)
+})
+
+test('chat view shows only retry for failed user message turns', () => {
+  const markup = renderChat([
+    { id: 'user-1', role: 'user', content: '查一下' },
+    {
+      id: 'run-start',
+      role: 'run',
+      event: 'started',
+      runId: 'run-1',
+      createdAt: '2026-09-07T00:00:00.000Z'
+    },
+    {
+      id: 'run-failed',
+      role: 'run',
+      event: 'failed',
+      runId: 'run-1',
+      createdAt: '2026-09-07T00:00:03.000Z'
+    },
+    { id: 'error-1', role: 'error', content: 'Provider failed', runId: 'run-1' }
+  ])
+
+  assert.match(markup, /aria-label="重试消息"/)
+  assert.doesNotMatch(markup, /aria-label="复制消息"/)
+  assert.doesNotMatch(markup, /aria-label="编辑消息"/)
+})
+
 test('chat view extracts suggested next action placeholders from assistant messages', () => {
   assert.equal(
     suggestedNextActionPlaceholderFromMessages([

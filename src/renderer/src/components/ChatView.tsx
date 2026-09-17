@@ -100,6 +100,7 @@ type ViewProps = {
   thinkingLevel: ThinkingLevel
   onSelectThinkingLevel: (level: ThinkingLevel) => void
   onInputChange: (value: string) => void
+  onRetryUserMessage?: (content: string) => Promise<void> | void
   onOpenInputAddMenu?: () => void
   onPickInputFiles?: () => Promise<string[]>
   onGetPathForInputFile?: (file: File) => string
@@ -139,6 +140,7 @@ function ChatView({
   thinkingLevel,
   onSelectThinkingLevel,
   onInputChange,
+  onRetryUserMessage,
   onOpenInputAddMenu,
   onPickInputFiles,
   onGetPathForInputFile,
@@ -321,6 +323,27 @@ function ChatView({
     },
     [composerFileReferences, composerInputText, input, onInputChange, resetPromptHistoryNavigation]
   )
+  const editUserMessage = useCallback(
+    (content: string): void => {
+      resetPromptHistoryNavigation()
+      promptHistoryDraftRef.current = content
+      onInputChange(content)
+
+      window.requestAnimationFrame(() => {
+        const inputElement = inputRef.current
+        const nextComposerText = parseInputFileReferences(content).body
+        inputElement?.focus({ preventScroll: true })
+        inputElement?.setSelectionRange(nextComposerText.length, nextComposerText.length)
+      })
+    },
+    [onInputChange, resetPromptHistoryNavigation]
+  )
+  const retryUserMessage = useCallback(
+    (content: string): void => {
+      void onRetryUserMessage?.(content)
+    },
+    [onRetryUserMessage]
+  )
   const removeFileReference = useCallback(
     (index: number): void => {
       resetPromptHistoryNavigation()
@@ -364,6 +387,8 @@ function ChatView({
         onGoSettings={onGoSettings}
         onOpenLocalPath={onOpenLocalPath}
         onJumpToNotebookCell={onJumpToNotebookCell}
+        onEditUserMessage={editUserMessage}
+        onRetryUserMessage={retryUserMessage}
         cwd={cwd}
       />
       <Box
