@@ -323,6 +323,50 @@ test('run lifecycle events become hidden timeline metadata for processing totals
   ])
 })
 
+test('run interruption finalizes still-running tool items for that run', () => {
+  const started = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'run_started',
+    eventId: 'event-start',
+    runId: 'run-1',
+    createdAt: '2026-09-07T00:00:00.000Z'
+  })
+  const toolStarted = reduceAgentEventState(started, {
+    type: 'tool_execution_start',
+    runId: 'run-1',
+    toolCallId: 'tool-1',
+    toolName: 'bash',
+    args: { command: 'long task' },
+    createdAt: '2026-09-07T00:00:05.000Z'
+  })
+  const interrupted = reduceAgentEventState(toolStarted, {
+    type: 'run_interrupted',
+    eventId: 'event-interrupted',
+    runId: 'run-1',
+    reason: 'app_restarted',
+    createdAt: '2026-09-07T00:00:20.000Z',
+    durationMs: 20000
+  })
+
+  assert.deepEqual(
+    interrupted.messages.filter((item) => item.role === 'tool'),
+    [
+      {
+        id: 'tool-1',
+        role: 'tool',
+        runId: 'run-1',
+        toolName: 'bash',
+        argsPreview: 'long task',
+        argsJson: '{\n  "command": "long task"\n}',
+        output: '',
+        status: 'error',
+        createdAt: '2026-09-07T00:00:05.000Z',
+        completedAt: '2026-09-07T00:00:20.000Z',
+        durationMs: 15000
+      }
+    ]
+  )
+})
+
 test('auto compaction end becomes a visible timeline item', () => {
   const state = reduceAgentEventState(createAgentEventReducerState(), {
     type: 'auto_compaction_end',

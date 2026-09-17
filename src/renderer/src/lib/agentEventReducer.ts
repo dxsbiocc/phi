@@ -64,6 +64,43 @@ function completedAtField(completedAt?: string): { completedAt: string } | Recor
   return typeof completedAt === 'string' ? { completedAt } : {}
 }
 
+function runIdField(runId?: unknown): { runId: string } | Record<string, never> {
+  return typeof runId === 'string' && runId ? { runId } : {}
+}
+
+function terminalToolStatusForRunEvent(eventType: string): 'done' | 'error' | null {
+  if (eventType === 'run_completed') return 'done'
+  if (eventType === 'run_failed' || eventType === 'run_interrupted') return 'error'
+  return null
+}
+
+function shouldFinalizeItemForRun(
+  item: ChatItem,
+  runId: string | undefined
+): item is Extract<ChatItem, { role: 'tool' | 'wrapper_plan' }> {
+  if ((item.role !== 'tool' && item.role !== 'wrapper_plan') || item.status !== 'running') {
+    return false
+  }
+  return !runId || !item.runId || item.runId === runId
+}
+
+function finalizeRunningItemsForRun(next: ChatItem[], event: AgentEventSummary): void {
+  const status = terminalToolStatusForRunEvent(event.type)
+  if (!status) return
+
+  for (let index = next.length - 1; index >= 0; index -= 1) {
+    const item = next[index]
+    if (!shouldFinalizeItemForRun(item, event.runId)) continue
+    const durationMs = durationBetween(item.createdAt, event)
+    next[index] = {
+      ...item,
+      status,
+      ...completedAtField(event.createdAt),
+      ...(durationMs !== undefined ? { durationMs } : {})
+    }
+  }
+}
+
 function toolOutputMetadataFrom(
   result: unknown
 ): Pick<
@@ -149,6 +186,9 @@ export function reduceAgentEventState(
   }
 
   const lifecycleItem = runLifecycleItemFromPhiTimelineEvent(event)
+  if (lifecycleItem) {
+    finalizeRunningItemsForRun(next, event)
+  }
   if (lifecycleItem && !next.some((item) => item.id === lifecycleItem.id)) {
     next.push(lifecycleItem)
   }
@@ -192,6 +232,7 @@ export function reduceAgentEventState(
       next.push({
         id: event.toolCallId,
         role: 'wrapper_plan',
+        ...runIdField(event.runId),
         toolName,
         status: 'running',
         ...createdAtField(event.createdAt)
@@ -208,6 +249,7 @@ export function reduceAgentEventState(
     next.push({
       id: event.toolCallId,
       role: 'tool',
+      ...runIdField(event.runId),
       toolName,
       argsPreview: toolArgsPreview(event.args),
       argsJson,

@@ -21,6 +21,7 @@ export interface ChatMessage {
 export interface ToolCallItem {
   id: string
   role: 'tool'
+  runId?: string
   toolName: string
   argsPreview: string
   argsJson: string
@@ -77,6 +78,7 @@ export interface RunLifecycleItem {
 export interface WrapperPlanItem {
   id: string
   role: 'wrapper_plan'
+  runId?: string
   toolName: string
   /** Undefined until the tool call completes and the result is parsed. */
   planId?: string

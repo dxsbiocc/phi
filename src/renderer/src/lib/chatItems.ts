@@ -246,6 +246,43 @@ function runIdField(runId?: unknown): { runId: string } | Record<string, never> 
   return typeof runId === 'string' && runId ? { runId } : {}
 }
 
+function terminalToolStatusForRunEvent(type: string | undefined): 'done' | 'error' | null {
+  if (type === 'run_completed') return 'done'
+  if (type === 'run_failed' || type === 'run_interrupted') return 'error'
+  return null
+}
+
+function shouldFinalizeRestoredToolForRun(
+  item: ChatItem,
+  runId: string | undefined
+): item is Extract<ChatItem, { role: 'tool' }> {
+  return (
+    item.role === 'tool' &&
+    item.status === 'running' &&
+    (!runId || !item.runId || item.runId === runId)
+  )
+}
+
+function finalizeRestoredRunningToolsForRun(
+  items: ChatItem[],
+  event: { type?: string; runId?: string; createdAt?: string }
+): void {
+  const status = terminalToolStatusForRunEvent(event.type)
+  if (!status) return
+
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (!shouldFinalizeRestoredToolForRun(item, event.runId)) continue
+    const durationMs = durationBetween(item.createdAt, event.createdAt)
+    items[index] = {
+      ...item,
+      status,
+      ...completedAtField(event.createdAt),
+      ...(durationMs !== undefined ? { durationMs } : {})
+    }
+  }
+}
+
 export function hasEquivalentErrorMessage(
   items: ChatItem[],
   content: string,
@@ -520,6 +557,7 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
     if (message.source === 'phi') {
       const lifecycleItem = runLifecycleItemFromPhiTimelineEvent(message)
       if (lifecycleItem) {
+        finalizeRestoredRunningToolsForRun(items, message)
         items.push(lifecycleItem)
       }
 
@@ -534,6 +572,7 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
         items.push({
           id: message.toolCallId,
           role: 'tool',
+          ...runIdField(message.runId),
           toolName: typeof message.toolName === 'string' ? message.toolName : 'tool',
           argsPreview: toolArgsPreview(message.args),
           argsJson,

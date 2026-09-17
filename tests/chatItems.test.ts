@@ -202,6 +202,55 @@ test('chatItemsFromSessionMessages restores Phi tool and approval timeline event
   ])
 })
 
+test('chatItemsFromSessionMessages finalizes restored running tools on interrupted runs', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'run_started',
+      eventId: 'event-start',
+      runId: 'run-1',
+      createdAt: '2026-09-10T00:00:00.000Z'
+    },
+    {
+      source: 'phi',
+      type: 'tool_call_started',
+      eventId: 'event-tool',
+      runId: 'run-1',
+      toolCallId: 'call-1',
+      toolName: 'bash',
+      args: { command: 'long task' },
+      createdAt: '2026-09-10T00:00:05.000Z'
+    },
+    {
+      source: 'phi',
+      type: 'run_interrupted',
+      eventId: 'event-interrupted',
+      runId: 'run-1',
+      reason: 'app_restarted',
+      createdAt: '2026-09-10T00:00:20.000Z'
+    }
+  ])
+
+  assert.deepEqual(
+    items.filter((item) => item.role === 'tool'),
+    [
+      {
+        id: 'call-1',
+        role: 'tool',
+        runId: 'run-1',
+        toolName: 'bash',
+        argsPreview: 'long task',
+        argsJson: '{\n  "command": "long task"\n}',
+        output: '',
+        status: 'error',
+        createdAt: '2026-09-10T00:00:05.000Z',
+        completedAt: '2026-09-10T00:00:20.000Z',
+        durationMs: 15000
+      }
+    ]
+  )
+})
+
 test('chatItemsFromSessionMessages restores notebook details from Phi timeline events', () => {
   const items = chatItemsFromSessionMessages([
     {
