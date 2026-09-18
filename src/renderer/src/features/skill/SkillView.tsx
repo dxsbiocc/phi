@@ -1,4 +1,14 @@
-import { Fragment, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+  type RefObject
+} from 'react'
 import {
   Accordion,
   AccordionDetails,
@@ -90,6 +100,9 @@ const skillScopeLabels: Record<SkillSummary['scope'], string> = {
   project: '项目',
   temporary: '临时'
 }
+const SKILL_ACCORDION_HEADER_HEIGHT = 34
+const SKILL_LIST_VERTICAL_PADDING = 16
+const SKILL_EXPANDED_BODY_MIN_HEIGHT = 96
 const validSkillSourceCategories = new Set<SkillSourceCategory>(skillSourceCategoryOrder)
 const plainSidebarRowSx = {
   alignItems: 'center',
@@ -186,6 +199,9 @@ function skillDirectory(filePath: string): string {
 }
 
 function sourceLabel(skill: SkillSummary): string {
+  if (skillSourceCategory(skill) === 'system') {
+    return `${skillSourceCategoryLabel(skill)} · ${skill.source}`
+  }
   return `${skillSourceCategoryLabel(skill)} · ${skillScopeLabels[skill.scope]} · ${skill.source}`
 }
 
@@ -201,6 +217,29 @@ function groupedSkills(skills: SkillSummary[]): Array<{
       skills: skills.filter((skill) => skillSourceCategory(skill) === category)
     }))
     .filter((section) => section.skills.length > 0)
+}
+
+function useExpandedSkillBodyMaxHeight(
+  listRef: RefObject<HTMLUListElement | null>,
+  groupCount: number
+): number {
+  const [listHeight, setListHeight] = useState(0)
+
+  useEffect(() => {
+    const node = listRef.current
+    if (!node) return undefined
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect
+      if (rect) setListHeight(rect.height)
+    })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [listRef])
+
+  return Math.max(
+    SKILL_EXPANDED_BODY_MIN_HEIGHT,
+    listHeight - groupCount * SKILL_ACCORDION_HEADER_HEIGHT - SKILL_LIST_VERTICAL_PADDING
+  )
 }
 
 function selectedSkillFromList(
@@ -457,6 +496,27 @@ export function SkillSidebar({
   const skillSections = useMemo(() => groupedSkills(filteredSkills), [filteredSkills])
   const selectedSkill = selectedSkillFromList(filteredSkills, activeSkillId)
   const enabledCount = skills.filter((skill) => !skill.disabled).length
+  const listRef = useRef<HTMLUListElement | null>(null)
+  const selectedCategory = selectedSkill ? skillSourceCategory(selectedSkill) : null
+  const [manualExpandedCategory, setManualExpandedCategory] = useState<
+    SkillSourceCategory | null | undefined
+  >(undefined)
+  const [trackedSelectedCategory, setTrackedSelectedCategory] = useState(selectedCategory)
+  if (selectedCategory !== trackedSelectedCategory) {
+    setTrackedSelectedCategory(selectedCategory)
+    if (selectedCategory) setManualExpandedCategory(selectedCategory)
+  }
+  const expandedCategory =
+    manualExpandedCategory !== undefined
+      ? manualExpandedCategory
+      : (selectedCategory ?? skillSections[0]?.category ?? null)
+  const expandedBodyMaxHeight = useExpandedSkillBodyMaxHeight(listRef, skillSections.length)
+  const handleExpandedChange = useCallback(
+    (category: SkillSourceCategory, isExpanded: boolean): void => {
+      setManualExpandedCategory(isExpanded ? category : null)
+    },
+    []
+  )
 
   return (
     <Box
@@ -508,9 +568,10 @@ export function SkillSidebar({
       <Divider />
 
       <List
+        ref={listRef}
         disablePadding
         sx={{
-          overflowY: 'auto',
+          overflow: 'hidden',
           flex: 1,
           py: 1,
           backgroundColor: 'transparent !important',
@@ -528,9 +589,13 @@ export function SkillSidebar({
           skillSections.map((section) => (
             <Accordion
               key={section.category}
-              defaultExpanded
+              expanded={section.category === expandedCategory}
+              onChange={(_event, isExpanded) => handleExpandedChange(section.category, isExpanded)}
               disableGutters
               elevation={0}
+              slotProps={{
+                transition: { timeout: { enter: 200, exit: 120 } }
+              }}
               sx={{
                 bgcolor: 'transparent',
                 border: 0,
@@ -540,9 +605,11 @@ export function SkillSidebar({
               <AccordionSummary
                 expandIcon={<ExpandIcon fontSize="small" />}
                 sx={{
-                  minHeight: 34,
+                  height: SKILL_ACCORDION_HEADER_HEIGHT,
+                  minHeight: `${SKILL_ACCORDION_HEADER_HEIGHT}px !important`,
                   px: 2,
                   py: 0,
+                  WebkitAppRegion: 'no-drag',
                   '& .MuiAccordionSummary-content': {
                     alignItems: 'center',
                     my: 0.5,
@@ -587,7 +654,15 @@ export function SkillSidebar({
                   </Typography>
                 </Stack>
               </AccordionSummary>
-              <AccordionDetails sx={{ p: 0 }}>
+              <AccordionDetails
+                sx={{
+                  p: 0,
+                  WebkitAppRegion: 'no-drag',
+                  ...(section.category === expandedCategory
+                    ? { maxHeight: expandedBodyMaxHeight, overflowY: 'auto' }
+                    : {})
+                }}
+              >
                 {section.skills.map((skill) => (
                   <ListItemButton
                     key={skill.id}
@@ -785,11 +860,13 @@ export function SkillDetail({
                   color={selectedSkill.disabled ? 'default' : 'success'}
                   label={selectedSkill.disabled ? '仅手动调用' : '可自动调用'}
                 />
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  label={skillScopeLabels[selectedSkill.scope]}
-                />
+                {skillSourceCategory(selectedSkill) !== 'system' ? (
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    label={skillScopeLabels[selectedSkill.scope]}
+                  />
+                ) : null}
               </Stack>
             </Box>
             <SkillManagementActions

@@ -665,6 +665,14 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     },
     'node:os': { homedir: (): string => '/fake-home' },
     'node:fs': {
+      existsSync: (filePath: string): boolean => {
+        const target = path.resolve(filePath)
+        return (
+          target === path.resolve(process.cwd(), 'resources', 'skills') ||
+          previewFiles.has(target) ||
+          previewDirectories.has(target)
+        )
+      },
       openSync: (filePath: string): number => {
         const target = path.resolve(filePath)
         const content = previewFiles.get(target)
@@ -783,6 +791,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
           }
         }
       },
+      getBundledSkillsDir: (): string => path.join(process.cwd(), 'resources', 'skills'),
       createInMemoryRuntimeSessionManager: (cwd: string): { file: string; cwd: string } => ({
         file: 'in-memory',
         cwd

@@ -142,11 +142,8 @@ function classifySkillSource(skill: {
   }
 
   if (
-    haystack.includes('/skills/.system/') ||
-    haystack.includes('/openai-bundled/') ||
-    haystack.includes('/openai-primary-runtime/') ||
-    source.includes('system') ||
-    source.includes('builtin')
+    haystack.includes('/resources/skills/') ||
+    (source === 'bundled' && origin.includes('resources'))
   ) {
     return 'system'
   }
@@ -154,9 +151,14 @@ function classifySkillSource(skill: {
   if (
     haystack.includes('/plugins/cache/') ||
     haystack.includes('/plugins/') ||
+    haystack.includes('/skills/.system/') ||
+    haystack.includes('/openai-bundled/') ||
+    haystack.includes('/openai-primary-runtime/') ||
     source.includes('plugin') ||
     source.includes('package') ||
-    source.includes('npm')
+    source.includes('npm') ||
+    source.includes('system') ||
+    source.includes('builtin')
   ) {
     return 'third-party'
   }

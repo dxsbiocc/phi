@@ -74,6 +74,7 @@ test('skill view groups skills by source category and exposes the skill markdown
   assert.match(markup, /SKILL\.md/)
   assert.match(markup, /需要重启 Phi/)
   assert.doesNotMatch(markup, /文件结构/)
+  assert.doesNotMatch(markup, /System · User/)
 })
 
 test('skill view derives source category for old skill summaries', () => {
@@ -98,6 +99,13 @@ test('skill sidebar keeps management actions out of the browsing list', () => {
   assert.match(markup, /system-skill/)
   assert.doesNotMatch(markup, /卸载技能/)
   assert.doesNotMatch(markup, /启用技能|关闭技能/)
+})
+
+test('skill sidebar keeps group headers fixed while expanded group content scrolls', () => {
+  const markup = renderSkillSidebar()
+
+  assert.match(markup, /overflow:hidden/)
+  assert.match(markup, /overflow-y:auto/)
 })
 
 test('skill detail management controls keep labels in hover text only', () => {

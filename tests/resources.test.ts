@@ -132,6 +132,17 @@ test('listMcpServers reads MCP config from the selected cwd', async () => {
   )
 })
 
+test('runtime resource loader includes bundled skills from resources/skills', async () => {
+  const { createRuntimeResourceLoader, getBundledSkillsDir } =
+    await import('../src/main/agent/runtime/runtime-adapter')
+
+  const bundledSkillsDir = getBundledSkillsDir()
+  const loader = createRuntimeResourceLoader({ cwd: projectA, agentDir })
+
+  assert.equal(existsSync(bundledSkillsDir), true)
+  assert.equal(loader.options.additionalSkillPaths?.includes(bundledSkillsDir), true)
+})
+
 test('listSkills reads project skills from the selected cwd', async () => {
   const { listSkills } = await import('../src/main/agent/resources')
 
@@ -139,8 +150,15 @@ test('listSkills reads project skills from the selected cwd', async () => {
   const projectBSkills = await listSkills(projectB)
   const projectAUserSkill = projectASkills.find((skill) => skill.name === 'user-skill')
   const projectAPhiSkill = projectASkills.find((skill) => skill.name === 'project-a-phi-skill')
+  const bundledSkill = projectASkills.find(
+    (skill) =>
+      skill.name === 'anndata' && skill.filePath.includes(join('resources', 'skills', 'anndata'))
+  )
 
   assert(projectASkills.some((skill) => skill.name === 'project-a-skill'))
+  assert(bundledSkill)
+  assert.equal(bundledSkill.sourceCategory, 'system')
+  assert.equal(bundledSkill.sourceCategoryLabel, 'System')
   assert(
     projectASkills.some(
       (skill) => skill.name === 'project-a-phi-skill' && skill.scope === 'project'

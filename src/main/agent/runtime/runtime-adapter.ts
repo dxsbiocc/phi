@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import { getOmpBridge, type OmpBridge } from '../omp/omp-bridge'
 import {
@@ -11,6 +13,7 @@ import {
 
 export const AGENT_RUNTIME_ID = 'omp-sdk'
 export const AGENT_RUNTIME_PACKAGE = '@oh-my-pi/pi-coding-agent'
+const nodeRequire = createRequire(import.meta.url)
 
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type RuntimeAuthSource =
@@ -316,6 +319,65 @@ function dedupePaths(paths: string[]): string[] {
   return [...new Set(paths)]
 }
 
+function firstExistingPath(paths: string[]): string {
+  const candidates = dedupePaths(paths)
+  return candidates.find((path) => existsSync(path)) ?? candidates[0]
+}
+
+function resourceDirCandidates(resourceName: string, appPath?: string): string[] {
+  const candidates: string[] = []
+
+  if (appPath) {
+    let current = resolve(appPath)
+    for (let depth = 0; depth < 4; depth += 1) {
+      candidates.push(join(current, 'resources', resourceName))
+      const parent = dirname(current)
+      if (parent === current) break
+      current = parent
+    }
+  }
+
+  candidates.push(join(process.cwd(), 'resources', resourceName))
+  return candidates
+}
+
+export function getBundledSkillsDir(): string {
+  const electronModule = nodeRequire('electron') as
+    | {
+        app?: {
+          isPackaged: boolean
+          getAppPath(): string
+        }
+      }
+    | string
+  const electronApp = typeof electronModule === 'object' ? electronModule.app : undefined
+  if (!electronApp) return firstExistingPath(resourceDirCandidates('skills'))
+
+  if (!electronApp.isPackaged) {
+    return firstExistingPath(resourceDirCandidates('skills', electronApp.getAppPath()))
+  }
+
+  return firstExistingPath([
+    join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'skills'),
+    ...resourceDirCandidates('skills', electronApp.getAppPath())
+  ])
+}
+
+function pathIsInside(path: string, root: string): boolean {
+  const relativePath = relative(resolve(root), resolve(path))
+  return (
+    relativePath === '' ||
+    (!!relativePath && !relativePath.startsWith('..') && !isAbsolute(relativePath))
+  )
+}
+
+function appendExistingBundledSkillPaths(paths: string[] | undefined): string[] | undefined {
+  const bundledSkillsDir = getBundledSkillsDir()
+  const bundledPaths = existsSync(bundledSkillsDir) ? [bundledSkillsDir] : []
+  const merged = dedupePaths([...bundledPaths, ...(paths ?? [])])
+  return merged.length > 0 ? merged : paths
+}
+
 function appendExistingProjectResourcePaths(
   paths: string[] | undefined,
   cwd: string,
@@ -326,6 +388,37 @@ function appendExistingProjectResourcePaths(
   )
   const merged = dedupePaths([...projectPaths, ...(paths ?? [])])
   return merged.length > 0 ? merged : paths
+}
+
+function markBundledSystemSkills(options: ResourceLoaderOptions): ResourceLoaderOptions {
+  const existingOverride = options.skillsOverride
+
+  return {
+    ...options,
+    skillsOverride: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
+      const resolved = existingOverride ? existingOverride(base) : base
+      const bundledSkillsDir = getBundledSkillsDir()
+
+      return {
+        ...resolved,
+        skills: resolved.skills.map((skill) => {
+          if (!pathIsInside(skill.filePath, bundledSkillsDir)) return skill
+
+          return {
+            ...skill,
+            sourceInfo: {
+              ...skill.sourceInfo,
+              path: skill.filePath,
+              source: 'bundled',
+              scope: 'user',
+              origin: 'resources',
+              baseDir: bundledSkillsDir
+            }
+          }
+        })
+      }
+    }
+  }
 }
 
 function markPhiProjectSkills(options: ResourceLoaderOptions): ResourceLoaderOptions {
@@ -360,29 +453,31 @@ function markPhiProjectSkills(options: ResourceLoaderOptions): ResourceLoaderOpt
 }
 
 function withPhiProjectResources(options: ResourceLoaderOptions): ResourceLoaderOptions {
-  return markPhiProjectSkills({
-    ...options,
-    additionalExtensionPaths: appendExistingProjectResourcePaths(
-      options.additionalExtensionPaths,
-      options.cwd,
-      'extensions'
-    ),
-    additionalPromptTemplatePaths: appendExistingProjectResourcePaths(
-      options.additionalPromptTemplatePaths,
-      options.cwd,
-      'prompts'
-    ),
-    additionalSkillPaths: appendExistingProjectResourcePaths(
-      options.additionalSkillPaths,
-      options.cwd,
-      'skills'
-    ),
-    additionalThemePaths: appendExistingProjectResourcePaths(
-      options.additionalThemePaths,
-      options.cwd,
-      'themes'
-    )
-  })
+  return markPhiProjectSkills(
+    markBundledSystemSkills({
+      ...options,
+      additionalExtensionPaths: appendExistingProjectResourcePaths(
+        options.additionalExtensionPaths,
+        options.cwd,
+        'extensions'
+      ),
+      additionalPromptTemplatePaths: appendExistingProjectResourcePaths(
+        options.additionalPromptTemplatePaths,
+        options.cwd,
+        'prompts'
+      ),
+      additionalSkillPaths: appendExistingProjectResourcePaths(
+        appendExistingBundledSkillPaths(options.additionalSkillPaths),
+        options.cwd,
+        'skills'
+      ),
+      additionalThemePaths: appendExistingProjectResourcePaths(
+        options.additionalThemePaths,
+        options.cwd,
+        'themes'
+      )
+    })
+  )
 }
 
 function serializableResourceOptions(options: ResourceLoaderOptions): Record<string, unknown> {

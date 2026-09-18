@@ -2,6 +2,7 @@ import './agent-env'
 import { execFile } from 'node:child_process'
 import {
   closeSync,
+  existsSync,
   openSync,
   readdirSync,
   readSync,
@@ -75,6 +76,7 @@ import {
 import {
   createInMemoryRuntimeSessionManager,
   createRuntimeResourceLoader,
+  getBundledSkillsDir,
   openRuntimeSessionManager,
   type ModelRuntime,
   type RuntimeModel,
@@ -3284,6 +3286,7 @@ async function getAgentSession(
 
       let resourceLoader: RuntimeResourceLoader | undefined
       const notebookPrompt = notebookAgentRuntimePrompt(creationSnapshot.cwd)
+      const shouldLoadBundledSkills = existsSync(getBundledSkillsDir())
       const extensionFactories =
         creationSnapshot.permissionMode === 'ask'
           ? [
@@ -3324,7 +3327,7 @@ async function getAgentSession(
               })
             ]
           : []
-      if (notebookPrompt || extensionFactories.length > 0) {
+      if (shouldLoadBundledSkills || notebookPrompt || extensionFactories.length > 0) {
         resourceLoader = createRuntimeResourceLoader({
           cwd: creationSnapshot.cwd,
           agentDir: AGENT_DIR,
