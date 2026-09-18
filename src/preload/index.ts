@@ -6,11 +6,18 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 // them here and in index.d.ts would just be another place for the two to
 // drift out of sync.
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
+import type { WrapperCompositionManifest } from '../shared/wrapperCompositionManifestTypes'
+import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
 import type { WrapperRun, WrapperRunPlan } from '../shared/wrapperTypes'
 import type {
   AgentUserInteractionRequest,
   AgentUserInteractionResponse
 } from '../shared/agentInteractionTypes'
+import type {
+  DefaultProxyMode,
+  PhiAppSettings,
+  PhiAppSettingsPatch
+} from '../shared/appSettingsTypes'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
@@ -143,6 +150,8 @@ type PromptTarget = {
   phiSessionId?: string
   cwd: string
   sessionGeneration: number
+  suppressUserMessageEvent?: boolean
+  retryUserMessageId?: string
 }
 
 type PermissionMode = 'auto' | 'ask' | 'full'
@@ -583,6 +592,9 @@ type RendererAuthApi = {
   logout: (providerId: string) => Promise<void>
   submitAuthInteraction: (requestId: string, value: string) => Promise<void>
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => Unsubscribe
+  getAppSettings: () => Promise<PhiAppSettings>
+  updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
+  updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<SelectedModel>
@@ -724,6 +736,9 @@ type RendererAuthApi = {
   cancelWrapperRunPlan: (planId: string) => Promise<WrapperRunPlan>
   listWrapperCatalog: () => Promise<WrapperCatalogEntry[]>
   addCustomWrapper: (sourceDir: string) => Promise<WrapperCatalogEntry>
+  listWrapperCompositionCatalog: () => Promise<WrapperCompositionManifest[]>
+  getWrapperCompositionDag: (id: string) => Promise<string | undefined>
+  getWrapperCompositionModuleDetails: (id: string) => Promise<WrapperModuleDetails | undefined>
   listWrapperRuns: () => Promise<WrapperRun[]>
   getWrapperRun: (runId: string) => Promise<WrapperRun | undefined>
   cancelWrapperRun: (runId: string) => Promise<WrapperRun>
@@ -786,6 +801,11 @@ const api: RendererAuthApi = {
       ipcRenderer.removeListener('auth:interaction', handler)
     }
   },
+  getAppSettings: (): Promise<PhiAppSettings> => ipcRenderer.invoke('settings:get'),
+  updateAppSettings: (patch: PhiAppSettingsPatch): Promise<PhiAppSettings> =>
+    ipcRenderer.invoke('settings:update', patch),
+  updateDefaultProxyMode: (mode: DefaultProxyMode): Promise<PhiAppSettings> =>
+    ipcRenderer.invoke('settings:updateDefaultProxyMode', mode),
   listModels: (): Promise<ModelOption[]> => ipcRenderer.invoke('models:list'),
   selectModel: (providerId: string, modelId: string): Promise<void> =>
     ipcRenderer.invoke('models:select', providerId, modelId),
@@ -1069,6 +1089,12 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('wrappers:listCatalog'),
   addCustomWrapper: (sourceDir: string): Promise<WrapperCatalogEntry> =>
     ipcRenderer.invoke('wrappers:addCustom', sourceDir),
+  listWrapperCompositionCatalog: (): Promise<WrapperCompositionManifest[]> =>
+    ipcRenderer.invoke('wrappers:listCompositionCatalog'),
+  getWrapperCompositionDag: (id: string): Promise<string | undefined> =>
+    ipcRenderer.invoke('wrappers:getCompositionDag', id),
+  getWrapperCompositionModuleDetails: (id: string): Promise<WrapperModuleDetails | undefined> =>
+    ipcRenderer.invoke('wrappers:getCompositionModuleDetails', id),
   listWrapperRuns: (): Promise<WrapperRun[]> => ipcRenderer.invoke('wrappers:listRuns'),
   getWrapperRun: (runId: string): Promise<WrapperRun | undefined> =>
     ipcRenderer.invoke('wrappers:getRun', runId),

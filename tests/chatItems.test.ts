@@ -361,6 +361,44 @@ test('chatItemsFromSessionMessages restores run failure details', () => {
   ])
 })
 
+test('chatItemsFromSessionMessages clears failed output after a persisted retry marker', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'user_message',
+      eventId: 'event-user',
+      content: '帮我检索THRSP基因的信息'
+    },
+    {
+      source: 'phi',
+      type: 'run_failed',
+      eventId: 'event-failed',
+      runId: 'run-1',
+      errorMessage: '账户余额不足'
+    },
+    {
+      source: 'phi',
+      type: 'user_message_retry',
+      eventId: 'event-retry',
+      runId: 'run-2',
+      userMessageId: 'event-user',
+      content: '帮我检索THRSP基因的信息'
+    },
+    {
+      source: 'phi',
+      type: 'run_started',
+      eventId: 'event-run-started',
+      runId: 'run-2',
+      createdAt: '2026-09-18T00:00:00.000Z'
+    }
+  ])
+
+  assert.deepEqual(
+    items.map((item) => item.id),
+    ['event-user', 'run-event-run-started']
+  )
+})
+
 test('chatItemsFromSessionMessages deduplicates equivalent run failure errors', () => {
   const items = chatItemsFromSessionMessages([
     {

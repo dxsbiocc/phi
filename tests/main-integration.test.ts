@@ -86,7 +86,10 @@ class FakeSession {
 }
 
 type Handler = (_event: unknown, ...args: unknown[]) => unknown
-async function harness(factory?: (cwd: string, file: string) => Promise<FakeSession>): Promise<{
+type HarnessOptions = {
+  enableDbConnectorTools?: boolean
+}
+type HarnessResult = {
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
   sessions: FakeSession[]
   deleted: string[]
@@ -124,9 +127,15 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   }>
   openDialogOptions: Array<Record<string, unknown>>
   operationLog: Array<Record<string, unknown>>
+  appSettingsUpdates: string[]
   setOpenDialogResult: (result: { canceled: boolean; filePaths: string[] }) => void
   copiedText: () => string
-}> {
+}
+
+async function harness(
+  factory?: (cwd: string, file: string) => Promise<FakeSession>,
+  options: HarnessOptions = {}
+): Promise<HarnessResult> {
   const handlers = new Map<string, Handler>()
   const sessions: FakeSession[] = []
   const deleted: string[] = []
@@ -164,6 +173,17 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
   }> = []
   const openDialogOptions: Array<Record<string, unknown>> = []
   const operationLog: Array<Record<string, unknown>> = []
+  const appSettingsUpdates: string[] = []
+  let appDefaultProxyMode = 'auto'
+  const appNoProjectTaskFolder = '/workspace'
+  const appEnableDbConnectorTools = options.enableDbConnectorTools !== false
+  const appProxyTransportStatus = {
+    systemTransportAvailable: true,
+    controlledProxyAvailable: false,
+    autoTransportName: 'system',
+    enabledModeAvailable: false,
+    unavailableReason: '尚未配置受控代理通道'
+  }
   let openDialogResult: { canceled: boolean; filePaths: string[] } = {
     canceled: true,
     filePaths: []
@@ -807,6 +827,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
           sessionManager: { file: string }
           model?: { provider: string; id: string }
           thinkingLevel?: string
+          enableDbConnectorTools?: boolean
         },
         onEvent?: (summary: Record<string, unknown>) => void
       ): Promise<{ session: FakeSession }> => {
@@ -1302,6 +1323,9 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
         throw new Error('wrapper.yaml 校验失败: (mocked in main-integration.test.ts)')
       }
     },
+    './agent/wrappers/composition/discovery': {
+      listWrapperCompositionCatalog: (): unknown[] => []
+    },
     './agent/wrappers/remote-credential-store': {
       isRemoteCredentialStorageAvailable: (): boolean => false,
       storeRemoteConnectionPassphrase: (): void => {},
@@ -1314,6 +1338,28 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
       getPhiLogDir: () => '/tmp/phi/logs',
       writeAppLog: (entry: Record<string, unknown>) => {
         appLogs.push(entry)
+      }
+    },
+    './agent/app-settings': {
+      readAppSettings: (): Record<string, unknown> => ({
+        defaultProxyMode: appDefaultProxyMode,
+        enableDbConnectorTools: appEnableDbConnectorTools,
+        noProjectTaskFolder: appNoProjectTaskFolder,
+        preventSleepDuringRuns: false,
+        nextActionSuggestionsEnabled: true,
+        proxyTransportStatus: appProxyTransportStatus
+      }),
+      updateDefaultProxyMode: (mode: string): Record<string, unknown> => {
+        appSettingsUpdates.push(mode)
+        appDefaultProxyMode = mode
+        return {
+          defaultProxyMode: appDefaultProxyMode,
+          enableDbConnectorTools: appEnableDbConnectorTools,
+          noProjectTaskFolder: appNoProjectTaskFolder,
+          preventSleepDuringRuns: false,
+          nextActionSuggestionsEnabled: true,
+          proxyTransportStatus: appProxyTransportStatus
+        }
       }
     },
     './agent/redaction': {
@@ -1497,6 +1543,7 @@ async function harness(factory?: (cwd: string, file: string) => Promise<FakeSess
     notebookFormatCalls,
     openDialogOptions,
     operationLog,
+    appSettingsUpdates,
     setOpenDialogResult: (result): void => {
       openDialogResult = result
     },
@@ -1531,6 +1578,60 @@ test('main IPC: agent prompt asks for explicit next-action recommendations witho
   assert.match(session.promptTexts[0], /^hello\n\n<phi_next_action_instruction>/)
   assert.match(session.promptTexts[0], /推荐下一步：<一句可以直接作为下一轮用户输入的中文操作>/)
   assert.equal(app.appendedSessionEvents[0].event.content, 'hello')
+})
+
+test('main IPC: app settings exposes and updates default proxy mode', async () => {
+  const app = await harness()
+  const expectedStatus = {
+    systemTransportAvailable: true,
+    controlledProxyAvailable: false,
+    autoTransportName: 'system',
+    enabledModeAvailable: false,
+    unavailableReason: '尚未配置受控代理通道'
+  }
+
+  assert.deepEqual(await app.invoke('settings:get'), {
+    defaultProxyMode: 'auto',
+    enableDbConnectorTools: true,
+    noProjectTaskFolder: '/workspace',
+    preventSleepDuringRuns: false,
+    nextActionSuggestionsEnabled: true,
+    proxyTransportStatus: expectedStatus
+  })
+  assert.deepEqual(await app.invoke('settings:updateDefaultProxyMode', 'enabled'), {
+    defaultProxyMode: 'enabled',
+    enableDbConnectorTools: true,
+    noProjectTaskFolder: '/workspace',
+    preventSleepDuringRuns: false,
+    nextActionSuggestionsEnabled: true,
+    proxyTransportStatus: expectedStatus
+  })
+  assert.deepEqual(await app.invoke('settings:get'), {
+    defaultProxyMode: 'enabled',
+    enableDbConnectorTools: true,
+    noProjectTaskFolder: '/workspace',
+    preventSleepDuringRuns: false,
+    nextActionSuggestionsEnabled: true,
+    proxyTransportStatus: expectedStatus
+  })
+  assert.deepEqual(app.appSettingsUpdates, ['enabled'])
+})
+
+test('main IPC: DB connector tools register by default and can be disabled through app settings', async () => {
+  const disabledApp = await harness(undefined, { enableDbConnectorTools: false })
+  await disabledApp.invoke('projects:newSession', '/projects/db-disabled', 'ask')
+  await disabledApp.invoke('agent:prompt', 'hello')
+  assert.equal(disabledApp.createdAgentOptions[0].enableDbConnectorTools, undefined)
+
+  const enabledApp = await harness()
+  await enabledApp.invoke('projects:newSession', '/projects/db-enabled', 'ask')
+  await enabledApp.invoke('agent:prompt', 'hello')
+  assert.equal(enabledApp.createdAgentOptions[0].enableDbConnectorTools, true)
+  const resourceOptions = enabledApp.resourceLoaderOptions.at(-1)
+  const appendSystemPrompt = resourceOptions?.appendSystemPrompt as string[] | undefined
+  assert.match(appendSystemPrompt?.join('\n') ?? '', /<phi_db_connector_runtime>/)
+  assert.match(appendSystemPrompt?.join('\n') ?? '', /db_search/)
+  assert.match(appendSystemPrompt?.join('\n') ?? '', /Prefer db_\* over bash/)
 })
 
 test('main IPC: reveal path is limited to Phi-owned files', async () => {
@@ -2245,6 +2346,53 @@ test('main IPC: continuing a freshly materialized conversation reuses its Phi se
   assert.deepEqual(
     userEvents.map((entry) => (entry.event as { content?: string }).content),
     ['first message', 'second message']
+  )
+})
+
+test('main IPC: retry prompt target can suppress a duplicate user event', async () => {
+  const app = await harness()
+
+  const first = (await app.invoke('agent:prompt', 'retry me')) as {
+    path: string | null
+    phiSessionId?: string
+    cwd?: string
+    sessionGeneration: number
+  }
+  const beforeRetryEventCount = app.appendedSessionEvents.length
+
+  await app.invoke('agent:prompt', 'retry me', {
+    path: first.path,
+    phiSessionId: first.phiSessionId,
+    cwd: first.cwd ?? '/workspace',
+    sessionGeneration: first.sessionGeneration,
+    suppressUserMessageEvent: true,
+    retryUserMessageId: 'event-user'
+  })
+
+  const retryEvents = app.appendedSessionEvents.slice(beforeRetryEventCount)
+  assert.equal(
+    retryEvents.some((entry) => (entry.event as { type?: string }).type === 'user_message'),
+    false
+  )
+  assert.deepEqual(
+    retryEvents.filter((entry) => (entry.event as { type?: string }).type === 'user_message_retry'),
+    [
+      {
+        sessionId: 'phi-1',
+        event: {
+          type: 'user_message_retry',
+          runId: 'run-2',
+          content: 'retry me',
+          userMessageId: 'event-user'
+        }
+      }
+    ]
+  )
+  const session = app.sessions.find((item) => item.sessionFile === 'fresh.jsonl')
+  assert.equal(session?.promptTexts.length, 2)
+  assert.equal(
+    session?.promptTexts.every((text) => text.startsWith('retry me')),
+    true
   )
 })
 

@@ -28,6 +28,8 @@ import {
 } from '@oh-my-pi/pi-coding-agent/thinking'
 import { authPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
 import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
+import { buildDefaultDbCustomTools, isDbConnectorRuntimeEnabled } from '../db/tools'
+import { buildLibraryCustomTools } from '../library/library-tools'
 import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
 import { buildAskUserQuestionCustomTools } from '../user-interaction-tools'
@@ -518,7 +520,7 @@ function serializeSkill(cwd: string, skill: unknown): unknown {
 
   return {
     ...skill,
-    disableModelInvocation: Boolean(skill.disableModelInvocation ?? skill.hide),
+    disableModelInvocation: skill.disableModelInvocation === true || skill.hide === true,
     sourceInfo
   }
 }
@@ -688,13 +690,31 @@ async function createSession(params: unknown): Promise<unknown> {
   } catch {
     wrapperCustomTools = []
   }
+  let dbCustomTools: ReturnType<typeof buildDefaultDbCustomTools> = []
+  const enableDbConnectorTools =
+    isDbConnectorRuntimeEnabled(record.enableDbConnectorTools) ||
+    isDbConnectorRuntimeEnabled(process.env.PHI_ENABLE_DB_CONNECTOR_TOOLS)
+  if (enableDbConnectorTools) {
+    try {
+      dbCustomTools = buildDefaultDbCustomTools(agentDir)
+    } catch {
+      dbCustomTools = []
+    }
+  }
   const notebookCustomTools = buildNotebookCustomTools(async (request) =>
     requestHost('notebookTool.execute', request)
   )
+  const libraryCustomTools = buildLibraryCustomTools()
   const userInteractionCustomTools = buildAskUserQuestionCustomTools(sessionId, async (request) =>
     requestHost('agentInteraction.request', request)
   )
-  const customTools = [...wrapperCustomTools, ...notebookCustomTools, ...userInteractionCustomTools]
+  const customTools = [
+    ...wrapperCustomTools,
+    ...dbCustomTools,
+    ...notebookCustomTools,
+    ...libraryCustomTools,
+    ...userInteractionCustomTools
+  ]
 
   const result = await createLegacyAgentSession({
     cwd,

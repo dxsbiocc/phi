@@ -21,6 +21,7 @@ import { FileReferenceCards } from './chat/FileReferenceCards'
 import { InputAddControl, InputAddPanel } from './chat/InputAddMenu'
 import { InputFileReferenceMenu } from './chat/InputFileReferenceMenu'
 import ChatMessageList from './chat/ChatMessageList'
+import type { UserMessageRetryTarget } from './chat/ChatUserMessage'
 import {
   COMPACT_COMPOSER_CONTROL_SIZE,
   REGULAR_COMPOSER_ACTION_SIZE,
@@ -105,7 +106,7 @@ type ViewProps = {
   thinkingLevel: ThinkingLevel
   onSelectThinkingLevel: (level: ThinkingLevel) => void
   onInputChange: (value: string) => void
-  onRetryUserMessage?: (content: string) => Promise<void> | void
+  onRetryUserMessage?: (message: UserMessageRetryTarget) => Promise<void> | void
   onOpenInputAddMenu?: () => void
   onPickInputFiles?: () => Promise<string[]>
   onGetPathForInputFile?: (file: File) => string
@@ -357,8 +358,8 @@ function ChatView({
     [onInputChange, resetPromptHistoryNavigation]
   )
   const retryUserMessage = useCallback(
-    (content: string): void => {
-      void onRetryUserMessage?.(content)
+    (message: UserMessageRetryTarget): void => {
+      void onRetryUserMessage?.(message)
     },
     [onRetryUserMessage]
   )

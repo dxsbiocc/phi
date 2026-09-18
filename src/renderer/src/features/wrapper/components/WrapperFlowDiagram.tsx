@@ -1,7 +1,14 @@
-import { Handle, Position, ReactFlow, ReactFlowProvider, type NodeProps } from '@xyflow/react'
+import {
+  Handle,
+  MarkerType,
+  Position,
+  ReactFlow,
+  ReactFlowProvider,
+  type NodeProps
+} from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { Box, Typography, useTheme, type Theme } from '@mui/material'
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import type { WrapperFlowGraph, WrapperFlowNode, WrapperFlowNodeData } from '../lib/wrapperFlow'
 
 function stateColor(theme: Theme, data: WrapperFlowNodeData): string {
@@ -19,11 +26,20 @@ function stateColor(theme: Theme, data: WrapperFlowNodeData): string {
 }
 
 const WrapperFlowStepNode = memo(function WrapperFlowStepNode({
-  data
+  data,
+  type
 }: NodeProps<WrapperFlowNode>): React.JSX.Element {
   const theme = useTheme()
   const color = stateColor(theme, data)
   const isIo = data.kind === 'io'
+  // A step node is always wired on both sides. An io node is only ever one
+  // end of an edge — which end depends on its own ReactFlow `type`: an
+  // "input" io node is an edge's source (feeds into a step), an "output" io
+  // node is an edge's target (fed by a step). Without the matching Handle,
+  // ReactFlow has no anchor to route the edge to/from and silently drops it
+  // — which is why these boxes rendered with no connecting lines at all.
+  const showTargetHandle = !isIo || type === 'output'
+  const showSourceHandle = !isIo || type === 'input'
 
   return (
     <Box
@@ -38,7 +54,7 @@ const WrapperFlowStepNode = memo(function WrapperFlowStepNode({
         textAlign: 'center'
       }}
     >
-      {!isIo && <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />}
+      {showTargetHandle && <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />}
       <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', lineHeight: 1.3 }}>
         {data.label}
       </Typography>
@@ -56,7 +72,9 @@ const WrapperFlowStepNode = memo(function WrapperFlowStepNode({
           {runStepStateLabel(data.state)}
         </Typography>
       )}
-      {!isIo && <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />}
+      {showSourceHandle && (
+        <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+      )}
     </Box>
   )
 })
@@ -80,10 +98,6 @@ const nodeTypes = {
   output: WrapperFlowStepNode
 }
 
-const defaultEdgeOptions = {
-  style: { strokeWidth: 1 }
-}
-
 export interface WrapperFlowDiagramProps {
   graph: WrapperFlowGraph
   height?: number
@@ -100,6 +114,25 @@ export function WrapperFlowDiagram({
   graph,
   height = 160
 }: WrapperFlowDiagramProps): React.JSX.Element {
+  const theme = useTheme()
+  // A handful of nodes reads fine as a static "fit to box" thumbnail (the
+  // original design intent — see this component's own doc comment). A real
+  // pipeline's contracted process graph can run into dozens of nodes, which
+  // just look cramped at a forced fit — let those pan/zoom instead.
+  const isLarge = graph.nodes.length > 8
+  const defaultEdgeOptions = useMemo(
+    () => ({
+      style: { strokeWidth: 1, stroke: theme.palette.text.secondary },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: theme.palette.text.secondary,
+        width: 14,
+        height: 14
+      }
+    }),
+    [theme.palette.text.secondary]
+  )
+
   return (
     <Box
       sx={{
@@ -122,9 +155,9 @@ export function WrapperFlowDiagram({
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={false}
-          panOnDrag={false}
-          zoomOnScroll={false}
-          zoomOnPinch={false}
+          panOnDrag={isLarge}
+          zoomOnScroll={isLarge}
+          zoomOnPinch={isLarge}
           zoomOnDoubleClick={false}
           proOptions={{ hideAttribution: true }}
         />

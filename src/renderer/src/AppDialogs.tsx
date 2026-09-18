@@ -6,18 +6,26 @@ import NewProjectDialog from './components/NewProjectDialog'
 import type { ThemeMode } from './theme'
 import type {
   ActiveAuthPrompt,
+  DefaultProxyMode,
   ModelOption,
+  PhiAppSettingsPatch,
   PermissionMode,
   Project,
   ProjectRemoteConnection,
   ProviderAuthStatus,
+  ProxyTransportStatus,
   RendererApi,
   ThinkingLevel,
   ToolApprovalRequest
 } from './types'
 
 export type SnackbarSeverity = 'error' | 'info' | 'success' | 'warning'
-export type SnackbarNotice = { id: number; severity: SnackbarSeverity; message: string }
+export type SnackbarNotice = {
+  id: number
+  severity: SnackbarSeverity
+  message: string
+  persistent?: boolean
+}
 
 export type AppDialogsProps = {
   rendererApi: RendererApi
@@ -60,6 +68,17 @@ export type AppDialogsProps = {
   onRespondToolApproval: (requestId: string, approved: boolean) => Promise<void>
   themeMode: ThemeMode
   setThemeMode: (mode: ThemeMode) => void
+  defaultProxyMode: DefaultProxyMode
+  noProjectTaskFolder: string
+  preventSleepDuringRuns: boolean
+  nextActionSuggestionsEnabled: boolean
+  enableDbConnectorTools: boolean
+  proxyTransportStatus: ProxyTransportStatus
+  isSavingDefaultProxyMode: boolean
+  isSavingAppSettings: boolean
+  onSelectDefaultProxyMode: (mode: DefaultProxyMode) => void
+  onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
+  onPickNoProjectTaskFolder: () => void
 
   showOnboarding: boolean
   onCompleteOnboarding: (description: string) => Promise<void>
@@ -119,6 +138,17 @@ export default function AppDialogs({
   onRespondToolApproval,
   themeMode,
   setThemeMode,
+  defaultProxyMode,
+  noProjectTaskFolder,
+  preventSleepDuringRuns,
+  nextActionSuggestionsEnabled,
+  enableDbConnectorTools,
+  proxyTransportStatus,
+  isSavingDefaultProxyMode,
+  isSavingAppSettings,
+  onSelectDefaultProxyMode,
+  onUpdateAppSettings,
+  onPickNoProjectTaskFolder,
   showOnboarding,
   onCompleteOnboarding,
   onSkipOnboarding,
@@ -175,6 +205,17 @@ export default function AppDialogs({
         onOpenApprovalSession={onOpenApprovalSession}
         onRespondApproval={onRespondToolApproval}
         onCopyDiagnostics={() => rendererApi.copyDiagnostics()}
+        defaultProxyMode={defaultProxyMode}
+        noProjectTaskFolder={noProjectTaskFolder}
+        preventSleepDuringRuns={preventSleepDuringRuns}
+        nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
+        enableDbConnectorTools={enableDbConnectorTools}
+        proxyTransportStatus={proxyTransportStatus}
+        isSavingDefaultProxyMode={isSavingDefaultProxyMode}
+        isSavingAppSettings={isSavingAppSettings}
+        onSelectDefaultProxyMode={onSelectDefaultProxyMode}
+        onUpdateAppSettings={onUpdateAppSettings}
+        onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
         themeMode={themeMode}
         onSelectThemeMode={setThemeMode}
       />
@@ -215,17 +256,19 @@ export default function AppDialogs({
       <Snackbar
         key={snackbarNotice?.id}
         open={Boolean(snackbarNotice)}
-        autoHideDuration={6000}
+        autoHideDuration={snackbarNotice?.persistent ? null : 6000}
         onClose={(_, reason) => {
           if (reason === 'clickaway') return
           setSnackbarNotice(null)
         }}
         anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
         sx={{
-          top: isChatWorkspaceView ? `${macTitlebarHeight + 12}px` : 16,
-          left: isChatWorkspaceView
-            ? `${activityBarWidth + (isSidebarOpen ? sidebarWidth + 1 : 0)}px`
-            : 0,
+          top: isSettingsOpen ? 24 : isChatWorkspaceView ? `${macTitlebarHeight + 12}px` : 16,
+          left: isSettingsOpen
+            ? 0
+            : isChatWorkspaceView
+              ? `${activityBarWidth + (isSidebarOpen ? sidebarWidth + 1 : 0)}px`
+              : 0,
           right: 0,
           transform: 'none',
           justifyContent: 'center',

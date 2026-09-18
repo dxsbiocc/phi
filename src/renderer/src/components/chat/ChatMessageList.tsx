@@ -23,7 +23,11 @@ import {
 } from '../../lib/chatVirtualization'
 import type { ChatItem, ChatMessage, NotebookCellJumpTarget } from '../../types'
 import { ThinkingBlock } from './ThinkingBlock'
-import { ChatUserMessage, type UserMessageState } from './ChatUserMessage'
+import {
+  ChatUserMessage,
+  type UserMessageRetryTarget,
+  type UserMessageState
+} from './ChatUserMessage'
 import {
   useCollapseResizeNotifier,
   type ChatContentResizeHandler,
@@ -182,15 +186,15 @@ type ProcessingGroupProps = {
 // `items` arrays) on every call, even when the underlying ChatItem objects are
 // unchanged. Comparing item-by-item reference equality (instead of the default
 // shallow array-reference check) lets an unrelated group skip re-rendering
-// while a sibling message is still streaming. Function props are intentionally
-// excluded: they're recreated by parent renders but don't capture render-local
-// state that would go stale.
+// while a sibling message is still streaming. The local-path opener is included
+// because Markdown links depend on it without changing the message items.
 function processingGroupPropsEqual(
   prev: ProcessingGroupProps,
   next: ProcessingGroupProps
 ): boolean {
   return (
     sameItemsByReference(prev.items, next.items) &&
+    prev.onOpenLocalPath === next.onOpenLocalPath &&
     prev.cwd === next.cwd &&
     prev.isActive === next.isActive &&
     prev.startedAtMs === next.startedAtMs &&
@@ -376,7 +380,7 @@ type ChatBubbleProps = {
   message: ChatMessage
   userMessageState?: UserMessageState
   onEditUserMessage?: (content: string) => void
-  onRetryUserMessage?: (content: string) => void
+  onRetryUserMessage?: (message: UserMessageRetryTarget) => void
   onGoSettings: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onContentResize?: ChatContentResizeHandler
@@ -480,7 +484,7 @@ export type ChatMessageListProps = {
   isGenerating: boolean
   currentRunStartedAt?: string
   onEditUserMessage?: (content: string) => void
-  onRetryUserMessage?: (content: string) => void
+  onRetryUserMessage?: (message: UserMessageRetryTarget) => void
   onGoSettings: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void

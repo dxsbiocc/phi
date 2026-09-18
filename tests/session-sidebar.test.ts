@@ -188,6 +188,25 @@ test('session sidebar does not show the running beacon for idle conversations', 
   assert.doesNotMatch(markup, /data-phi-slot="session-attention-beacon"/)
 })
 
+test('session sidebar renders the selected conversation as a pill row', () => {
+  const markup = renderSidebar([baseSession])
+  const rowSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/session-sidebar/SessionRow.tsx'),
+    'utf8'
+  )
+
+  assert.match(markup, /data-phi-session-row="active"/)
+  assert.doesNotMatch(markup, /data-phi-session-active-icon="true"/)
+  assert.match(markup, /border-radius:999px/)
+  assert.doesNotMatch(markup, /font-weight:800/)
+  assert.doesNotMatch(markup, /inset 3px 0 0/)
+  assert.doesNotMatch(
+    rowSource,
+    /className="session-actions"[\s\S]{0,240}bgcolor: 'background\.default'/
+  )
+  assert.match(rowSource, /const sessionActionButtonSx = \{[\s\S]{0,160}bgcolor: 'transparent'/)
+})
+
 test('embedded session sidebar fills menu width without the window drag spacer', () => {
   const markup = renderSidebar([baseSession], undefined, { hideWindowDragSpacer: true })
 

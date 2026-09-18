@@ -285,6 +285,7 @@ export type CreateAgentSessionOptions = {
   model?: RuntimeModel
   thinkingLevel?: ThinkingLevel
   noTools?: 'all' | boolean
+  enableDbConnectorTools?: boolean
   sessionManager?: RuntimeSessionManager
   resourceLoader?: RuntimeResourceLoader
 }
@@ -914,6 +915,7 @@ export async function createRuntimeAgentSession(
     model: options.model,
     thinkingLevel: options.thinkingLevel,
     noTools: options.noTools,
+    enableDbConnectorTools: options.enableDbConnectorTools,
     sessionManager: {
       kind: sessionManager.kind,
       cwd: sessionManager.cwd,

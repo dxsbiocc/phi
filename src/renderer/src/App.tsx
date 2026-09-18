@@ -11,7 +11,13 @@ import {
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { GoSidebarCollapse, GoSidebarExpand, GoSync } from 'react-icons/go'
-import type { WrapperCatalogEntry } from '../../shared/wrapperCatalogTypes'
+import {
+  DEFAULT_DB_CONNECTOR_TOOLS_ENABLED,
+  DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
+  DEFAULT_PREVENT_SLEEP_DURING_RUNS,
+  DEFAULT_PROXY_TRANSPORT_STATUS
+} from '../../shared/appSettingsTypes'
+import type { WrapperCompositionManifest } from '../../shared/wrapperCompositionManifestTypes'
 import ChatView from './components/ChatView'
 import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
@@ -56,6 +62,7 @@ import {
 import { getRendererApi } from './lib/rendererApi'
 import { absoluteWorkspacePath, fileNameFromPath, filePreviewStatePath } from './lib/workspacePaths'
 import { chatItemsFromSessionMessages } from './lib/chatItems'
+import { messagesForUserRetry } from './lib/chatRetry'
 import { getAppShortcutAction } from './lib/appShortcuts'
 import {
   initialNavigationHistory,
@@ -101,15 +108,20 @@ import {
 } from './lib/sessionRuntimeState'
 import { createAgentEventReducerState, reduceAgentEventState } from './lib/agentEventReducer'
 import { navigationPaneWidth } from './layout'
+import type { UserMessageRetryTarget } from './components/chat/ChatUserMessage'
 import type {
   AgentEventSummary,
   AnalysisNotebookFileChange,
+  DefaultProxyMode,
   McpServerSummary,
   ModelOption,
+  PhiAppSettings,
+  PhiAppSettingsPatch,
   PermissionMode,
   PluginCatalogItem,
   PromptTarget,
   Project,
+  ProxyTransportStatus,
   SessionSummary,
   SkillSummary
 } from './types'
@@ -121,6 +133,13 @@ type QueuedPrompt = {
   id: string
   text: string
   target: PromptTarget
+  sendOptions?: SendPromptOptions
+}
+
+type SendPromptOptions = {
+  appendUserMessage?: boolean
+  retryUserMessageId?: string
+  suppressUserMessageEvent?: boolean
 }
 
 const activityBarWidth = 48
@@ -547,7 +566,7 @@ function App(): React.JSX.Element {
   } = useSessionStore()
   const messages = agentEventState.messages
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('persona')
+  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('general')
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [sidebarWidth, setSidebarWidth] = useState(navigationPaneWidth)
   const [activeView, setActiveViewState] = useState<AppView>('chat')
@@ -603,6 +622,22 @@ function App(): React.JSX.Element {
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [personaMarkdown, setPersonaMarkdownState] = useState<string | null>(null)
+  const [defaultProxyMode, setDefaultProxyMode] = useState<DefaultProxyMode>('auto')
+  const [noProjectTaskFolder, setNoProjectTaskFolder] = useState('')
+  const [preventSleepDuringRuns, setPreventSleepDuringRuns] = useState(
+    DEFAULT_PREVENT_SLEEP_DURING_RUNS
+  )
+  const [nextActionSuggestionsEnabled, setNextActionSuggestionsEnabled] = useState(
+    DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED
+  )
+  const [enableDbConnectorTools, setEnableDbConnectorTools] = useState(
+    DEFAULT_DB_CONNECTOR_TOOLS_ENABLED
+  )
+  const [proxyTransportStatus, setProxyTransportStatus] = useState<ProxyTransportStatus>(
+    DEFAULT_PROXY_TRANSPORT_STATUS
+  )
+  const [isSavingDefaultProxyMode, setIsSavingDefaultProxyMode] = useState(false)
+  const [isSavingAppSettings, setIsSavingAppSettings] = useState(false)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
   const isSendingRef = useRef(false)
   const currentSessionIsBusyRef = useRef(false)
@@ -643,16 +678,18 @@ function App(): React.JSX.Element {
     selectedWrapperId,
     isLoadingWrappers,
     wrapperError,
-    isAddingWrapper,
     setSelectedWrapperId,
     refreshWrappers,
-    addCustomWrapper,
     exportWrapperReproducibility
   } = useWrapperCatalog()
 
   const showSnackbar = useCallback(
-    (message: string, severity: SnackbarNotice['severity'] = 'error'): void => {
-      setSnackbarNotice({ id: Date.now(), message, severity })
+    (
+      message: string,
+      severity: SnackbarNotice['severity'] = 'error',
+      options?: { persistent?: boolean }
+    ): void => {
+      setSnackbarNotice({ id: Date.now(), message, severity, persistent: options?.persistent })
     },
     []
   )
@@ -663,6 +700,132 @@ function App(): React.JSX.Element {
     },
     [showSnackbar]
   )
+
+  const applyAppSettings = useCallback((settings: PhiAppSettings): void => {
+    setDefaultProxyMode(settings.defaultProxyMode)
+    setNoProjectTaskFolder(settings.noProjectTaskFolder)
+    setPreventSleepDuringRuns(settings.preventSleepDuringRuns)
+    setNextActionSuggestionsEnabled(settings.nextActionSuggestionsEnabled)
+    setEnableDbConnectorTools(settings.enableDbConnectorTools)
+    setProxyTransportStatus(settings.proxyTransportStatus)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void rendererApi
+      .getAppSettings()
+      .then((settings) => {
+        if (!cancelled) {
+          applyAppSettings(settings)
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          showSnackbarError(error, '读取通用设置失败')
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [applyAppSettings, rendererApi, showSnackbarError])
+
+  const onSelectDefaultProxyMode = useCallback(
+    async (mode: DefaultProxyMode): Promise<void> => {
+      if (mode === defaultProxyMode) return
+      if (mode === 'enabled' && !proxyTransportStatus.enabledModeAvailable) {
+        setDefaultProxyMode('auto')
+        setIsSavingDefaultProxyMode(true)
+        showSnackbar('DB_PROXY_UNAVAILABLE：受控代理通道不可用，已切换到自动选择。', 'warning', {
+          persistent: true
+        })
+        try {
+          const settings = await rendererApi.updateDefaultProxyMode('auto')
+          applyAppSettings(settings)
+        } catch (error) {
+          showSnackbarError(error, '切换默认代理模式到自动选择失败')
+        } finally {
+          setIsSavingDefaultProxyMode(false)
+        }
+        return
+      }
+      const previousMode = defaultProxyMode
+      setDefaultProxyMode(mode)
+      setIsSavingDefaultProxyMode(true)
+      try {
+        const settings = await rendererApi.updateDefaultProxyMode(mode)
+        applyAppSettings(settings)
+      } catch (error) {
+        setDefaultProxyMode(previousMode)
+        showSnackbarError(error, '保存默认代理模式失败')
+      } finally {
+        setIsSavingDefaultProxyMode(false)
+      }
+    },
+    [
+      applyAppSettings,
+      defaultProxyMode,
+      proxyTransportStatus.enabledModeAvailable,
+      rendererApi,
+      showSnackbar,
+      showSnackbarError
+    ]
+  )
+
+  const onUpdateAppSettings = useCallback(
+    async (patch: PhiAppSettingsPatch): Promise<void> => {
+      const previousNoProjectTaskFolder = noProjectTaskFolder
+      const previousPreventSleepDuringRuns = preventSleepDuringRuns
+      const previousNextActionSuggestionsEnabled = nextActionSuggestionsEnabled
+      const previousEnableDbConnectorTools = enableDbConnectorTools
+
+      if (patch.noProjectTaskFolder !== undefined) {
+        setNoProjectTaskFolder(patch.noProjectTaskFolder)
+      }
+      if (patch.preventSleepDuringRuns !== undefined) {
+        setPreventSleepDuringRuns(patch.preventSleepDuringRuns)
+      }
+      if (patch.nextActionSuggestionsEnabled !== undefined) {
+        setNextActionSuggestionsEnabled(patch.nextActionSuggestionsEnabled)
+      }
+      if (patch.enableDbConnectorTools !== undefined) {
+        setEnableDbConnectorTools(patch.enableDbConnectorTools)
+      }
+
+      setIsSavingAppSettings(true)
+      try {
+        const settings = await rendererApi.updateAppSettings(patch)
+        applyAppSettings(settings)
+      } catch (error) {
+        setNoProjectTaskFolder(previousNoProjectTaskFolder)
+        setPreventSleepDuringRuns(previousPreventSleepDuringRuns)
+        setNextActionSuggestionsEnabled(previousNextActionSuggestionsEnabled)
+        setEnableDbConnectorTools(previousEnableDbConnectorTools)
+        showSnackbarError(error, '保存通用设置失败')
+      } finally {
+        setIsSavingAppSettings(false)
+      }
+    },
+    [
+      applyAppSettings,
+      enableDbConnectorTools,
+      nextActionSuggestionsEnabled,
+      noProjectTaskFolder,
+      preventSleepDuringRuns,
+      rendererApi,
+      showSnackbarError
+    ]
+  )
+
+  const onPickNoProjectTaskFolder = useCallback(async (): Promise<void> => {
+    try {
+      const path = await rendererApi.pickProjectDirectory()
+      if (!path) return
+      await onUpdateAppSettings({ noProjectTaskFolder: path })
+    } catch (error) {
+      showSnackbarError(error, '选择无项目任务文件夹失败')
+    }
+  }, [onUpdateAppSettings, rendererApi, showSnackbarError])
 
   const {
     providerStatuses,
@@ -1530,7 +1693,7 @@ function App(): React.JSX.Element {
     [activeDraftKey]
   )
   const queuePromptText = useCallback(
-    (text: string, target: PromptTarget): void => {
+    (text: string, target: PromptTarget, sendOptions?: SendPromptOptions): void => {
       setQueuedPromptsBySession((prev) => {
         const current = prev[activeDraftKey] ?? []
         return {
@@ -1540,7 +1703,8 @@ function App(): React.JSX.Element {
             {
               id: `queued-${Date.now()}-${current.length}`,
               text,
-              target
+              target,
+              sendOptions
             }
           ]
         }
@@ -1551,7 +1715,11 @@ function App(): React.JSX.Element {
   )
 
   const sendPromptText = useCallback(
-    async (text: string, target: PromptTarget): Promise<boolean> => {
+    async (
+      text: string,
+      target: PromptTarget,
+      options: SendPromptOptions = {}
+    ): Promise<boolean> => {
       if (!text.trim() || isSendingRef.current) {
         return false
       }
@@ -1571,11 +1739,29 @@ function App(): React.JSX.Element {
       const submitGeneration = target.sessionGeneration
       const sendRequest = ++sendRequestRef.current
 
-      updateMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text }])
+      if (options.retryUserMessageId) {
+        updateMessages((prev) => messagesForUserRetry(prev, options.retryUserMessageId as string))
+      } else if (options.appendUserMessage !== false) {
+        updateMessages((prev) => [
+          ...prev,
+          { id: `user-${Date.now()}`, role: 'user', content: text }
+        ])
+      }
       setIsSendingMessage(true)
 
       try {
-        const result = await rendererApi.sendPrompt(text, target)
+        const result = await rendererApi.sendPrompt(
+          text,
+          options.suppressUserMessageEvent
+            ? {
+                ...target,
+                suppressUserMessageEvent: true,
+                ...(options.retryUserMessageId
+                  ? { retryUserMessageId: options.retryUserMessageId }
+                  : {})
+              }
+            : target
+        )
         if (
           !result ||
           sendRequest !== sendRequestRef.current ||
@@ -1989,8 +2175,8 @@ function App(): React.JSX.Element {
     currentSessionIsBusyRef.current = currentSessionIsBusy
   }, [currentSessionIsBusy])
   const onRetryUserMessage = useCallback(
-    async (content: string): Promise<void> => {
-      const text = content.trim()
+    async (message: UserMessageRetryTarget): Promise<void> => {
+      const text = message.content.trim()
       if (!text) return
       const state = useSessionStore.getState()
       const target: PromptTarget = {
@@ -1999,11 +2185,16 @@ function App(): React.JSX.Element {
         cwd: state.activeCwd,
         sessionGeneration: state.activeSessionGeneration
       }
+      const sendOptions: SendPromptOptions = {
+        appendUserMessage: false,
+        retryUserMessageId: message.id,
+        suppressUserMessageEvent: true
+      }
       if (currentSessionIsBusyRef.current || isSendingRef.current) {
-        queuePromptText(text, target)
+        queuePromptText(text, target, sendOptions)
         return
       }
-      await sendPromptText(text, target)
+      await sendPromptText(text, target, sendOptions)
     },
     [queuePromptText, sendPromptText]
   )
@@ -2033,7 +2224,7 @@ function App(): React.JSX.Element {
         }
         return updated
       })
-      void sendPromptText(nextPrompt.text, nextPrompt.target)
+      void sendPromptText(nextPrompt.text, nextPrompt.target, nextPrompt.sendOptions)
     })
     return () => {
       cancelled = true
@@ -2445,13 +2636,13 @@ function App(): React.JSX.Element {
   )
 
   const onOpenWrapperTab = useCallback(
-    (entry: WrapperCatalogEntry): void => {
-      setSelectedWrapperId(entry.manifest.id)
+    (entry: WrapperCompositionManifest): void => {
+      setSelectedWrapperId(entry.id)
       openWorkspaceResourceTab({
         kind: 'wrappers',
-        itemId: entry.manifest.id,
-        title: entry.manifest.name,
-        subtitle: entry.manifest.id
+        itemId: entry.id,
+        title: entry.name,
+        subtitle: entry.id
       })
     },
     [openWorkspaceResourceTab, setSelectedWrapperId]
@@ -2474,6 +2665,24 @@ function App(): React.JSX.Element {
       } else {
         setWorkspaceTabs((tabs) => tabs.filter((item) => item.key !== tab.key))
       }
+
+      // The sidebar's "selected" resource id is independent of which tab is
+      // active — clicking a resource icon in the activity bar switches
+      // `workspaceSidebarMode` without touching `activeWorkspaceTabKey` (see
+      // selectWorkspaceTab), so closing that resource's tab from the *tab
+      // bar* wouldn't otherwise clear its sidebar highlight even when the
+      // tab wasn't the active one. Without this, the sidebar keeps showing
+      // an item selected indefinitely after its last tab closes.
+      if (tab.kind === 'plugins' && activePluginId === tab.itemId) {
+        setActivePluginId(null)
+      } else if (tab.kind === 'skills' && activeSkillId === tab.itemId) {
+        setActiveSkillId(null)
+      } else if (tab.kind === 'mcp' && activeMcpServerId === tab.itemId) {
+        setActiveMcpServerId(null)
+      } else if (tab.kind === 'wrappers' && selectedWrapperId === tab.itemId) {
+        setSelectedWrapperId(null)
+      }
+
       if (tab.key !== effectiveActiveWorkspaceTabKey) return
 
       const nextTab = remainingTabs[Math.min(closingIndex, remainingTabs.length - 1)] ?? null
@@ -2485,10 +2694,18 @@ function App(): React.JSX.Element {
       navigateToView('chat')
     },
     [
+      activeMcpServerId,
+      activePluginId,
+      activeSkillId,
       effectiveActiveWorkspaceTabKey,
       navigateToView,
       onCloseWorkspaceFileTab,
       selectWorkspaceTab,
+      selectedWrapperId,
+      setActiveMcpServerId,
+      setActivePluginId,
+      setActiveSkillId,
+      setSelectedWrapperId,
       visibleWorkspaceTabs
     ]
   )
@@ -2919,13 +3136,9 @@ function App(): React.JSX.Element {
           wrapperCatalog={wrapperCatalog}
           selectedWrapperId={selectedWrapperId}
           isLoadingWrappers={isLoadingWrappers}
-          isAddingWrapper={isAddingWrapper}
           onOpenWrapper={onOpenWrapperTab}
           onRefreshWrappers={() => {
             void refreshWrappers()
-          }}
-          onAddCustomWrapper={() => {
-            void addCustomWrapper()
           }}
           sessions={sessions}
           activeSessionPath={activeSessionPath}
@@ -3194,6 +3407,17 @@ function App(): React.JSX.Element {
           onRespondToolApproval={onRespondToolApproval}
           themeMode={themeMode}
           setThemeMode={setThemeMode}
+          defaultProxyMode={defaultProxyMode}
+          noProjectTaskFolder={noProjectTaskFolder}
+          preventSleepDuringRuns={preventSleepDuringRuns}
+          nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
+          enableDbConnectorTools={enableDbConnectorTools}
+          proxyTransportStatus={proxyTransportStatus}
+          isSavingDefaultProxyMode={isSavingDefaultProxyMode}
+          isSavingAppSettings={isSavingAppSettings}
+          onSelectDefaultProxyMode={onSelectDefaultProxyMode}
+          onUpdateAppSettings={onUpdateAppSettings}
+          onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
           showOnboarding={showOnboarding}
           onCompleteOnboarding={onCompleteOnboarding}
           onSkipOnboarding={onSkipOnboarding}

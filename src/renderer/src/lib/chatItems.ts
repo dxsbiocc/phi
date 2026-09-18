@@ -1,4 +1,5 @@
 import type { ChatItem, NotebookToolSummary, RunLifecycleItem } from '../types'
+import { messagesForUserRetryTarget } from './chatRetry'
 
 const WRAPPER_TOOL_PREFIX = 'wrapper.'
 const NOTEBOOK_TOOL_PREFIX = 'notebook.'
@@ -525,6 +526,7 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
       type?: string
       eventId?: string
       runId?: string
+      userMessageId?: string
       preferPhiTimeline?: boolean
       content?: unknown
       toolCallId?: string
@@ -619,6 +621,17 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
           content: message.content,
           ...createdAtField(message.createdAt)
         })
+        continue
+      }
+
+      if (message.type === 'user_message_retry') {
+        const nextItems = messagesForUserRetryTarget(items, {
+          ...(typeof message.userMessageId === 'string' ? { id: message.userMessageId } : {}),
+          ...(typeof message.content === 'string' ? { content: message.content } : {})
+        })
+        if (nextItems !== items) {
+          items.splice(0, items.length, ...nextItems)
+        }
         continue
       }
 

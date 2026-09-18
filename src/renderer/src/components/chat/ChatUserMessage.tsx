@@ -9,6 +9,7 @@ const EditIcon = PhiIcons.action.edit
 const RetryIcon = PhiIcons.action.refresh
 
 export type UserMessageState = 'normal' | 'failed'
+export type UserMessageRetryTarget = Pick<ChatMessage, 'id' | 'content'>
 
 function copyMessageContent(content: string): void {
   if (typeof navigator === 'undefined' || !navigator.clipboard) return
@@ -24,7 +25,7 @@ export function ChatUserMessage({
   message: ChatMessage
   state?: UserMessageState
   onEdit?: (content: string) => void
-  onRetry?: (content: string) => void
+  onRetry?: (message: UserMessageRetryTarget) => void
 }): React.JSX.Element {
   const parsedMessage = parseInputFileReferences(message.content)
   const failed = state === 'failed'
@@ -110,7 +111,7 @@ export function ChatUserMessage({
                 size="small"
                 aria-label="重试消息"
                 title="重试消息"
-                onClick={() => onRetry?.(message.content)}
+                onClick={() => onRetry?.({ id: message.id, content: message.content })}
                 sx={actionButtonSx}
               >
                 <RetryIcon size={14} />

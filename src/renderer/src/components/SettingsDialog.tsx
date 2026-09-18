@@ -5,18 +5,30 @@ import {
   Button,
   Chip,
   Dialog,
+  FormControl,
+  FormControlLabel,
   IconButton,
   ListItemButton,
   ListItemText,
   Paper,
+  Radio,
+  RadioGroup,
   Stack,
+  Switch,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
   Typography
 } from '@mui/material'
 import { PhiIcons } from '../icons'
-import type { ModelOption, ProjectRemoteConnection, ProviderAuthStatus } from '../types'
+import type {
+  DefaultProxyMode,
+  ModelOption,
+  PhiAppSettingsPatch,
+  ProjectRemoteConnection,
+  ProviderAuthStatus,
+  ProxyTransportStatus
+} from '../types'
 import type { PermissionMode, Project, ThinkingLevel, ToolApprovalRequest } from '../types'
 import type { ThemeMode } from '../theme'
 import { accentAt, ACCENT_PALETTE } from '../theme'
@@ -34,12 +46,14 @@ const PsychologyIcon = PhiIcons.settings.persona
 const ShieldIcon = PhiIcons.settings.permissions
 const DiagnosticsIcon = PhiIcons.settings.diagnostics
 const RemoteExecutionIcon = PhiIcons.settings.remoteExecution
+const GeneralIcon = PhiIcons.nav.settings
 const CheckIcon = PhiIcons.state.check
 
 export type SettingsCategory =
-  'persona' | 'providers' | 'permissions' | 'remote' | 'diagnostics' | 'appearance'
+  'general' | 'persona' | 'providers' | 'permissions' | 'remote' | 'diagnostics' | 'appearance'
 
 const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.Element }> = [
+  { id: 'general', label: '通用', icon: <GeneralIcon fontSize="small" /> },
   { id: 'persona', label: '助手人设', icon: <PsychologyIcon fontSize="small" /> },
   { id: 'providers', label: 'Provider 配置', icon: <ProviderIcon fontSize="small" /> },
   { id: 'permissions', label: '权限', icon: <ShieldIcon fontSize="small" /> },
@@ -293,6 +307,190 @@ function ProvidersSection({
   )
 }
 
+function GeneralSection({
+  defaultProxyMode,
+  noProjectTaskFolder,
+  preventSleepDuringRuns,
+  nextActionSuggestionsEnabled,
+  enableDbConnectorTools,
+  proxyTransportStatus,
+  isSavingDefaultProxyMode,
+  isSavingAppSettings,
+  onSelectDefaultProxyMode,
+  onUpdateAppSettings,
+  onPickNoProjectTaskFolder
+}: {
+  defaultProxyMode: DefaultProxyMode
+  noProjectTaskFolder: string
+  preventSleepDuringRuns: boolean
+  nextActionSuggestionsEnabled: boolean
+  enableDbConnectorTools: boolean
+  proxyTransportStatus: ProxyTransportStatus
+  isSavingDefaultProxyMode: boolean
+  isSavingAppSettings: boolean
+  onSelectDefaultProxyMode: (mode: DefaultProxyMode) => void
+  onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
+  onPickNoProjectTaskFolder: () => void
+}): React.JSX.Element {
+  const proxyStatusSeverity =
+    proxyTransportStatus.controlledProxyAvailable || defaultProxyMode !== 'enabled'
+      ? 'info'
+      : 'warning'
+  const proxyStatusText = proxyTransportStatus.controlledProxyAvailable
+    ? `受控代理通道可用：${proxyTransportStatus.controlledProxyName ?? 'proxy'}`
+    : (proxyTransportStatus.unavailableReason ?? '受控代理通道不可用')
+
+  return (
+    <Stack spacing={2}>
+      <Box>
+        <Typography variant="h5">通用</Typography>
+        <Typography variant="body2" color="text.secondary">
+          控制应用级默认行为。
+        </Typography>
+      </Box>
+
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: { xs: 'flex-start', md: 'center' },
+          justifyContent: 'space-between',
+          gap: 2,
+          flexDirection: { xs: 'column', md: 'row' }
+        }}
+      >
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="body1" sx={{ fontWeight: 600 }}>
+            无项目任务文件夹
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            在项目外启动的任务默认存储数据的位置。
+          </Typography>
+        </Box>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            minWidth: 0,
+            maxWidth: { xs: '100%', md: '58%' },
+            alignItems: 'center',
+            alignSelf: { xs: 'stretch', md: 'center' }
+          }}
+        >
+          <Typography
+            variant="body2"
+            title={noProjectTaskFolder}
+            sx={{
+              minWidth: 0,
+              flex: 1,
+              fontFamily: 'var(--font-mono)',
+              color: 'text.secondary',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {noProjectTaskFolder}
+          </Typography>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={isSavingAppSettings}
+            onClick={onPickNoProjectTaskFolder}
+          >
+            更改
+          </Button>
+        </Stack>
+      </Box>
+
+      <Box>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          默认代理模式
+        </Typography>
+        <FormControl disabled={isSavingDefaultProxyMode}>
+          <RadioGroup
+            row
+            value={defaultProxyMode}
+            onChange={(event) => onSelectDefaultProxyMode(event.target.value as DefaultProxyMode)}
+          >
+            <FormControlLabel value="auto" control={<Radio />} label="自动选择" />
+            <FormControlLabel value="enabled" control={<Radio />} label="开启" />
+            <FormControlLabel value="disabled" control={<Radio />} label="关闭" />
+          </RadioGroup>
+        </FormControl>
+        <Alert severity={proxyStatusSeverity} variant="outlined" sx={{ mt: 1.5 }}>
+          <Stack spacing={0.75}>
+            <Typography variant="body2">{proxyStatusText}</Typography>
+            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
+              <Chip size="small" label={`自动选择：${proxyTransportStatus.autoTransportName}`} />
+              <Chip
+                size="small"
+                color={proxyTransportStatus.enabledModeAvailable ? 'success' : 'default'}
+                variant="outlined"
+                label={proxyTransportStatus.enabledModeAvailable ? '开启可用' : '开启不可用'}
+              />
+              <Chip size="small" variant="outlined" label="关闭：system" />
+            </Stack>
+          </Stack>
+        </Alert>
+      </Box>
+
+      <Box>
+        <FormControlLabel
+          disabled={isSavingAppSettings}
+          control={
+            <Switch
+              checked={preventSleepDuringRuns}
+              onChange={(event) =>
+                onUpdateAppSettings({ preventSleepDuringRuns: event.target.checked })
+              }
+            />
+          }
+          label="运行任务时防止系统休眠"
+        />
+        <Typography variant="caption" color="text.secondary" component="div" sx={{ ml: 5.25 }}>
+          仅在有会话运行、等待审批或等待输入时保持唤醒。
+        </Typography>
+      </Box>
+
+      <Box>
+        <FormControlLabel
+          disabled={isSavingAppSettings}
+          control={
+            <Switch
+              checked={nextActionSuggestionsEnabled}
+              onChange={(event) =>
+                onUpdateAppSettings({ nextActionSuggestionsEnabled: event.target.checked })
+              }
+            />
+          }
+          label="提示词建议"
+        />
+        <Typography variant="caption" color="text.secondary" component="div" sx={{ ml: 5.25 }}>
+          允许助手在合适时给出一句可直接继续的下一步建议。
+        </Typography>
+      </Box>
+
+      <Box>
+        <FormControlLabel
+          disabled={isSavingAppSettings}
+          control={
+            <Switch
+              checked={enableDbConnectorTools}
+              onChange={(event) =>
+                onUpdateAppSettings({ enableDbConnectorTools: event.target.checked })
+              }
+            />
+          }
+          label="生物数据库工具"
+        />
+        <Typography variant="caption" color="text.secondary" component="div" sx={{ ml: 5.25 }}>
+          默认开启，向新会话注册 db_search、db_domain、db_query、db_docs_search。
+        </Typography>
+      </Box>
+    </Stack>
+  )
+}
+
 function AppearanceSection({
   mode,
   onSelectMode
@@ -462,6 +660,17 @@ type SettingsDialogProps = {
   onOpenApprovalSession: (path: string) => void
   onRespondApproval: (requestId: string, approved: boolean) => void
   onCopyDiagnostics: () => Promise<string>
+  defaultProxyMode: DefaultProxyMode
+  noProjectTaskFolder: string
+  preventSleepDuringRuns: boolean
+  nextActionSuggestionsEnabled: boolean
+  enableDbConnectorTools: boolean
+  proxyTransportStatus: ProxyTransportStatus
+  isSavingDefaultProxyMode: boolean
+  isSavingAppSettings: boolean
+  onSelectDefaultProxyMode: (mode: DefaultProxyMode) => void
+  onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
+  onPickNoProjectTaskFolder: () => void
   themeMode: ThemeMode
   onSelectThemeMode: (mode: ThemeMode) => void
   category: SettingsCategory
@@ -490,6 +699,17 @@ function SettingsDialog({
   onOpenApprovalSession,
   onRespondApproval,
   onCopyDiagnostics,
+  defaultProxyMode,
+  noProjectTaskFolder,
+  preventSleepDuringRuns,
+  nextActionSuggestionsEnabled,
+  enableDbConnectorTools,
+  proxyTransportStatus,
+  isSavingDefaultProxyMode,
+  isSavingAppSettings,
+  onSelectDefaultProxyMode,
+  onUpdateAppSettings,
+  onPickNoProjectTaskFolder,
   themeMode,
   onSelectThemeMode,
   category,
@@ -591,6 +811,21 @@ function SettingsDialog({
             position: 'relative'
           }}
         >
+          {category === 'general' && (
+            <GeneralSection
+              defaultProxyMode={defaultProxyMode}
+              noProjectTaskFolder={noProjectTaskFolder}
+              preventSleepDuringRuns={preventSleepDuringRuns}
+              nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
+              enableDbConnectorTools={enableDbConnectorTools}
+              proxyTransportStatus={proxyTransportStatus}
+              isSavingDefaultProxyMode={isSavingDefaultProxyMode}
+              isSavingAppSettings={isSavingAppSettings}
+              onSelectDefaultProxyMode={onSelectDefaultProxyMode}
+              onUpdateAppSettings={onUpdateAppSettings}
+              onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
+            />
+          )}
           {category === 'persona' && (
             <PersonaSection
               personaMarkdown={personaMarkdown}

@@ -130,3 +130,60 @@ export function buildWrapperFlowGraph(
   }
   return buildFallbackGraph(source)
 }
+
+export interface WrapperParamsFlowSource {
+  name: string
+  inputLabels: string[]
+  outputLabels: string[]
+}
+
+/**
+ * One node per named input/output, wired through a single wrapper node —
+ * for a composition manifest's own declared `params`/`outputs` (already the
+ * wrapper's real, user-facing contract), not Nextflow's internal process
+ * signature. Deliberately not the same source as the real Nextflow DAG
+ * (`parseWrapperNextflowDag`): a module's actual Nextflow process can take
+ * extra channels the wrapper hardcodes off (e.g. fastp's `discard_trimmed_pass`/
+ * `save_trimmed_fail`/`save_merged` toggles) — drawing those as if they were
+ * real inputs is *accurate to the process signature* but wrong for showing
+ * someone what THIS WRAPPER actually takes.
+ */
+export function buildWrapperParamsFlowGraph(source: WrapperParamsFlowSource): WrapperFlowGraph {
+  const inputs = source.inputLabels.length > 0 ? source.inputLabels : ['Inputs']
+  const outputs = source.outputLabels.length > 0 ? source.outputLabels : ['Outputs']
+
+  const nodes: WrapperFlowNode[] = []
+  const edges: Edge[] = []
+
+  inputs.forEach((label, index) => {
+    const id = `in-${index}`
+    nodes.push({
+      id,
+      position: { x: 0, y: index * ROW_HEIGHT },
+      data: { label, kind: 'io' },
+      type: 'input'
+    })
+    edges.push({ id: `${id}->wrapper`, source: id, target: 'wrapper' })
+  })
+
+  const wrapperY = ((Math.max(inputs.length, outputs.length) - 1) * ROW_HEIGHT) / 2
+  nodes.push({
+    id: 'wrapper',
+    position: { x: COLUMN_WIDTH, y: wrapperY },
+    data: { label: source.name, kind: 'step', state: 'pending' },
+    type: 'default'
+  })
+
+  outputs.forEach((label, index) => {
+    const id = `out-${index}`
+    nodes.push({
+      id,
+      position: { x: COLUMN_WIDTH * 2, y: index * ROW_HEIGHT },
+      data: { label, kind: 'io' },
+      type: 'output'
+    })
+    edges.push({ id: `wrapper->${id}`, source: 'wrapper', target: id })
+  })
+
+  return { nodes, edges }
+}

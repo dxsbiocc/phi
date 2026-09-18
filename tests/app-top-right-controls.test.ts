@@ -126,6 +126,22 @@ test('workspace sessions and resources share the same tab strip', () => {
   assert.match(appSource, /tabs=\{visibleWorkspaceTabs\}/)
   assert.match(appSource, /onSelect=\{selectWorkspaceTab\}/)
   assert.match(appSource, /onClose=\{onCloseWorkspaceTab\}/)
+  assert.match(
+    appSource,
+    /tab\.kind === 'plugins' && activePluginId === tab\.itemId[\s\S]{0,40}setActivePluginId\(null\)/
+  )
+  assert.match(
+    appSource,
+    /tab\.kind === 'skills' && activeSkillId === tab\.itemId[\s\S]{0,40}setActiveSkillId\(null\)/
+  )
+  assert.match(
+    appSource,
+    /tab\.kind === 'mcp' && activeMcpServerId === tab\.itemId[\s\S]{0,40}setActiveMcpServerId\(null\)/
+  )
+  assert.match(
+    appSource,
+    /tab\.kind === 'wrappers' && selectedWrapperId === tab\.itemId[\s\S]{0,40}setSelectedWrapperId\(null\)/
+  )
   assert.match(appSource, /activeWorkspaceFileTabContent/)
   assert.match(
     appSource,

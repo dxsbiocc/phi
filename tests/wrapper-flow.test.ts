@@ -3,7 +3,10 @@ import test from 'node:test'
 
 import { readLegacyFastqQcWrapperManifest } from './helpers/wrapperFixtures'
 import type { WrapperManifest } from '../src/shared/wrapperManifestTypes'
-import { buildWrapperFlowGraph } from '../src/renderer/src/features/wrapper/lib/wrapperFlow'
+import {
+  buildWrapperFlowGraph,
+  buildWrapperParamsFlowGraph
+} from '../src/renderer/src/features/wrapper/lib/wrapperFlow'
 
 function fastqQcManifest(): WrapperManifest {
   return readLegacyFastqQcWrapperManifest()
@@ -55,5 +58,38 @@ test('buildWrapperFlowGraph falls back to a trivial inputs -> wrapper -> outputs
       ['inputs', 'wrapper'],
       ['wrapper', 'outputs']
     ]
+  )
+})
+
+test('buildWrapperParamsFlowGraph draws one node per named input/output around the wrapper', () => {
+  const graph = buildWrapperParamsFlowGraph({
+    name: 'fastp',
+    inputLabels: ['reads'],
+    outputLabels: ['reads', 'reports']
+  })
+
+  assert.deepEqual(
+    graph.nodes.map((node) => node.id),
+    ['in-0', 'wrapper', 'out-0', 'out-1']
+  )
+  assert.equal(graph.nodes[0].data.label, 'reads')
+  assert.equal(graph.nodes[1].data.label, 'fastp')
+  assert.equal(graph.nodes[2].data.label, 'reads')
+  assert.equal(graph.nodes[3].data.label, 'reports')
+  assert.deepEqual(
+    graph.edges.map((edge) => [edge.source, edge.target]),
+    [
+      ['in-0', 'wrapper'],
+      ['wrapper', 'out-0'],
+      ['wrapper', 'out-1']
+    ]
+  )
+})
+
+test('buildWrapperParamsFlowGraph falls back to generic Inputs/Outputs labels when a wrapper declares none', () => {
+  const graph = buildWrapperParamsFlowGraph({ name: 'toy', inputLabels: [], outputLabels: [] })
+  assert.deepEqual(
+    graph.nodes.map((node) => node.data.label),
+    ['Inputs', 'toy', 'Outputs']
   )
 })

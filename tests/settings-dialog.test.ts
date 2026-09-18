@@ -3,6 +3,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
+import { DEFAULT_PROXY_TRANSPORT_STATUS } from '../src/shared/appSettingsTypes'
 import SettingsDialog from '../src/renderer/src/components/SettingsDialog'
 import type { ModelOption, Project, ProviderAuthStatus } from '../src/renderer/src/types'
 
@@ -40,9 +41,23 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
     updatingProjectId: null,
     onUpdateProjectPermissionMode: () => undefined,
     onUpdateProjectDefaults: () => undefined,
+    updatingRemoteProjectId: null,
+    onUpdateProjectRemoteConnection: async () => undefined,
+    onUpdateProjectRemoteDefaults: async () => undefined,
     onOpenApprovalSession: () => undefined,
     onRespondApproval: () => undefined,
     onCopyDiagnostics: async () => '',
+    defaultProxyMode: 'auto',
+    noProjectTaskFolder: '/Users/example/Documents/Codex',
+    preventSleepDuringRuns: false,
+    nextActionSuggestionsEnabled: true,
+    enableDbConnectorTools: true,
+    proxyTransportStatus: DEFAULT_PROXY_TRANSPORT_STATUS,
+    isSavingDefaultProxyMode: false,
+    isSavingAppSettings: false,
+    onSelectDefaultProxyMode: () => undefined,
+    onUpdateAppSettings: () => undefined,
+    onPickNoProjectTaskFolder: () => undefined,
     themeMode: 'system',
     onSelectThemeMode: () => undefined,
     ...overrides
@@ -99,6 +114,33 @@ test('settings dialog explains diagnostics as a privacy-safe support summary', (
   assert.match(markup, /密钥脱敏/)
   assert.match(markup, /不含聊天全文/)
   assert.match(markup, /不含工具完整输出/)
+  assert.doesNotMatch(markup, /添加 Provider/)
+})
+
+test('settings dialog exposes default proxy mode in general settings', () => {
+  const markup = renderSettingsDialog({ category: 'general', defaultProxyMode: 'enabled' })
+
+  assert.match(markup, /通用/)
+  assert.match(markup, /默认代理模式/)
+  assert.match(markup, /自动选择/)
+  assert.match(markup, /开启/)
+  assert.match(markup, /关闭/)
+  assert.match(markup, /type="radio"/)
+  assert.match(markup, /受控代理通道/)
+  assert.match(markup, /开启不可用/)
+  assert.match(markup, /无项目任务文件夹/)
+  assert.match(markup, /在项目外启动的任务默认存储数据的位置。/)
+  assert.match(markup, /\/Users\/example\/Documents\/Codex/)
+  assert.match(markup, /更改/)
+  assert.match(markup, /运行任务时防止系统休眠/)
+  assert.match(markup, /提示词建议/)
+  assert.match(markup, /生物数据库工具/)
+  assert.match(markup, /默认开启/)
+  assert.match(markup, /db_search/)
+  assert.match(markup, /db_domain/)
+  assert.match(markup, /db_query/)
+  assert.match(markup, /db_docs_search/)
+  assert.doesNotMatch(markup, /本地路径点击方式/)
   assert.doesNotMatch(markup, /添加 Provider/)
 })
 

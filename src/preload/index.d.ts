@@ -1,11 +1,18 @@
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) — see the matching comment in preload/index.ts.
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
+import type { WrapperCompositionManifest } from '../shared/wrapperCompositionManifestTypes'
+import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
 import type { WrapperRun, WrapperRunPlan } from '../shared/wrapperTypes'
 import type {
   AgentUserInteractionRequest,
   AgentUserInteractionResponse
 } from '../shared/agentInteractionTypes'
+import type {
+  DefaultProxyMode,
+  PhiAppSettings,
+  PhiAppSettingsPatch
+} from '../shared/appSettingsTypes'
 
 type PreloadSessionSummary = {
   path: string
@@ -31,6 +38,8 @@ type PreloadPromptTarget = {
   phiSessionId?: string
   cwd: string
   sessionGeneration: number
+  suppressUserMessageEvent?: boolean
+  retryUserMessageId?: string
 }
 
 type PreloadPromptResult = {
@@ -575,6 +584,9 @@ declare global {
               }
         ) => void
       ) => () => void
+      getAppSettings: () => Promise<PhiAppSettings>
+      updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
+      updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
       listModels: () => Promise<
         Array<{
           providerId: string
@@ -789,6 +801,9 @@ declare global {
       cancelWrapperRunPlan: (planId: string) => Promise<WrapperRunPlan>
       listWrapperCatalog: () => Promise<WrapperCatalogEntry[]>
       addCustomWrapper: (sourceDir: string) => Promise<WrapperCatalogEntry>
+      listWrapperCompositionCatalog: () => Promise<WrapperCompositionManifest[]>
+      getWrapperCompositionDag: (id: string) => Promise<string | undefined>
+      getWrapperCompositionModuleDetails: (id: string) => Promise<WrapperModuleDetails | undefined>
       listWrapperRuns: () => Promise<WrapperRun[]>
       getWrapperRun: (runId: string) => Promise<WrapperRun | undefined>
       cancelWrapperRun: (runId: string) => Promise<WrapperRun>

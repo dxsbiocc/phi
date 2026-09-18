@@ -3,6 +3,14 @@ import type {
   NotebookDocument,
   NotebookOutput
 } from '../../shared/notebookDocument'
+import type {
+  DefaultProxyMode,
+  PhiAppSettings,
+  PhiAppSettingsPatch,
+  ProxyTransportStatus
+} from '../../shared/appSettingsTypes'
+
+export type { DefaultProxyMode, PhiAppSettings, PhiAppSettingsPatch, ProxyTransportStatus }
 
 export type MessageRole = 'user' | 'assistant' | 'error' | 'warning' | 'thinking'
 
@@ -235,6 +243,8 @@ export interface PromptTarget {
   phiSessionId?: string
   cwd: string
   sessionGeneration: number
+  suppressUserMessageEvent?: boolean
+  retryUserMessageId?: string
 }
 
 export type PermissionMode = 'auto' | 'ask' | 'full'
@@ -708,6 +718,9 @@ export type RendererApi = {
   logout: (providerId: string) => Promise<void>
   submitAuthInteraction: (requestId: string, value: string) => Promise<void>
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => () => void
+  getAppSettings: () => Promise<PhiAppSettings>
+  updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
+  updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>

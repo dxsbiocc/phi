@@ -8,29 +8,44 @@ import { WrapperViewContent } from '../src/renderer/src/features/wrapper/Wrapper
 import { buildWrapperFlowGraph } from '../src/renderer/src/features/wrapper/lib/wrapperFlow'
 import { resolveWrapperCancelTarget } from '../src/renderer/src/features/wrapper/lib/wrapperView'
 import { readLegacyFastqQcWrapperManifest } from './helpers/wrapperFixtures'
-import type { WrapperCatalogEntry } from '../src/shared/wrapperCatalogTypes'
+import type { WrapperCompositionManifest } from '../src/shared/wrapperCompositionManifestTypes'
 import type { WrapperManifest } from '../src/shared/wrapperManifestTypes'
 import type { WrapperRun, WrapperRunPlan } from '../src/shared/wrapperTypes'
 
+// Only used by the diagram-equality test below, which just needs a
+// `{name, steps}`-shaped fixture — unrelated to the catalog shape the rest
+// of this file exercises.
 function fastqQcManifest(): WrapperManifest {
   return readLegacyFastqQcWrapperManifest()
 }
 
-function bundledEntry(): WrapperCatalogEntry {
+function moduleEntry(
+  overrides: Partial<WrapperCompositionManifest> = {}
+): WrapperCompositionManifest {
   return {
-    manifest: fastqQcManifest(),
-    trustTier: 'bundled',
-    installedPath: '/tmp/installed/phi/ngs/fastq-qc/1.0.0',
-    installedAt: '2026-01-01T00:00:00.000Z'
+    id: 'nf-core/modules/demo',
+    name: 'Demo Module',
+    summary: 'A demo module wrapper for tests.',
+    params: {
+      reads: { kind: 'input', type: 'fastq_glob', required: true, description: 'Input reads.' }
+    },
+    outputs: {
+      report: { type: 'directory', path: '${outdir}/demo', primary: true }
+    },
+    ...overrides
   }
 }
 
-function customEntry(): WrapperCatalogEntry {
+function workflowEntry(
+  overrides: Partial<WrapperCompositionManifest> = {}
+): WrapperCompositionManifest {
   return {
-    manifest: { ...fastqQcManifest(), id: 'acme/tools/toy', shortId: 'toy', name: 'Toy Wrapper' },
-    trustTier: 'custom',
-    installedPath: '/tmp/installed/acme/tools/toy/1.0.0',
-    installedAt: '2026-01-01T00:00:00.000Z'
+    id: 'nf-core/workflows/demo-pipeline',
+    name: 'Demo Pipeline',
+    summary: 'A demo full pipeline wrapper for tests.',
+    params: {},
+    outputs: {},
+    ...overrides
   }
 }
 
@@ -42,16 +57,16 @@ function sampleRun(overrides: Partial<WrapperRun> = {}): WrapperRun {
     state: 'completed',
     actor: 'agent',
     wrapper: {
-      canonicalId: 'phi/ngs/fastq-qc',
-      namespace: 'phi/ngs',
-      shortId: 'fastq-qc',
+      canonicalId: 'nf-core/modules/demo',
+      namespace: 'nf-core/modules',
+      shortId: 'demo',
       version: '1.0.0'
     },
     trustTier: 'bundled',
     executor: 'local',
     profile: 'local',
     cwd: '/tmp/project',
-    outDir: '/tmp/project/results/phi-wrapper/fastq-qc/run',
+    outDir: '/tmp/project/results/phi-wrapper/demo/run',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:05:00.000Z',
     ...overrides
@@ -65,31 +80,29 @@ function renderView(overrides: Partial<Parameters<typeof WrapperViewContent>[0]>
       ThemeProvider,
       { theme },
       createElement(WrapperViewContent, {
-        catalog: [bundledEntry()],
+        catalog: [moduleEntry()],
         runs: [],
-        selectedId: 'phi/ngs/fastq-qc',
+        selectedId: 'nf-core/modules/demo',
         isLoading: false,
         error: null,
-        isAdding: false,
         sidebarWidth: 280,
         onSelect: () => undefined,
         onRefresh: () => undefined,
-        onAddCustom: () => undefined,
         ...overrides
       })
     )
   )
 }
 
-test('wrapper view shows an empty state when no wrappers are installed', () => {
+test('wrapper view shows an empty state when no wrappers are found', () => {
   const markup = renderView({ catalog: [], selectedId: null })
-  assert.match(markup, /还没有安装任何 wrapper/)
+  assert.match(markup, /没有发现任何 wrapper/)
 })
 
-test('wrapper view distinguishes bundled and custom trust tiers in the catalog list', () => {
-  const markup = renderView({ catalog: [bundledEntry(), customEntry()] })
-  assert.match(markup, /内置/)
-  assert.match(markup, /自定义/)
+test('wrapper view groups catalog entries by tier', () => {
+  const markup = renderView({ catalog: [moduleEntry(), workflowEntry()] })
+  assert.match(markup, /模块/)
+  assert.match(markup, /完整流水线/)
 })
 
 test('wrapper view run history shows state and links to the output directory', () => {
@@ -110,9 +123,9 @@ test('wrapper view run history filters runs to the selected wrapper only', () =>
       sampleRun({
         runId: 'wrun_other',
         wrapper: {
-          canonicalId: 'acme/tools/toy',
-          namespace: 'acme/tools',
-          shortId: 'toy',
+          canonicalId: 'nf-core/modules/other',
+          namespace: 'nf-core/modules',
+          shortId: 'other',
           version: '1.0.0'
         }
       })

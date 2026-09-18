@@ -10,7 +10,7 @@ import {
   Tooltip,
   Typography
 } from '@mui/material'
-import type { Theme } from '@mui/material/styles'
+import { alpha, type Theme } from '@mui/material/styles'
 import { PhiIcons } from '../../icons'
 import {
   sessionBeaconKind,
@@ -35,6 +35,10 @@ const sessionActionButtonSx = {
   height: 26,
   p: 0,
   borderRadius: 1.25,
+  bgcolor: 'transparent',
+  '&:hover': {
+    bgcolor: 'transparent'
+  },
   '& svg': {
     fontSize: 16
   }
@@ -246,6 +250,11 @@ const SessionRow = memo(function SessionRow({
   const [isEditing, setIsEditing] = useState(false)
   const [editingName, setEditingName] = useState(sessionTitle(session))
   const displaySession = mergedSessionForDisplay({ session, runtimeState })
+  const hasAttentionWeight = Boolean(
+    displaySession.status === 'needs_approval' ||
+    displaySession.status === 'needs_input' ||
+    displaySession.unreadKind
+  )
 
   const commitRename = (): void => {
     if (editingName.trim()) onRename(editingName.trim())
@@ -255,6 +264,7 @@ const SessionRow = memo(function SessionRow({
   return (
     <ListItemButton
       selected={isActive}
+      data-phi-session-row={isActive ? 'active' : 'inactive'}
       onClick={() => {
         if (!isEditing) onSelect()
       }}
@@ -266,12 +276,36 @@ const SessionRow = memo(function SessionRow({
         pl: `${sessionRunningBeaconSlotWidth(indent)}px`,
         pr: 1,
         position: 'relative',
+        overflow: 'hidden',
         border: 1,
-        borderColor: isActive ? 'primary.main' : 'transparent',
-        boxShadow: isActive
-          ? (theme: Theme) => `inset 3px 0 0 ${theme.palette.primary.main}`
-          : 'none',
-        transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+        borderColor: isActive
+          ? (theme: Theme) => alpha(theme.palette.primary.main, 0.5)
+          : 'transparent',
+        borderRadius: isActive ? '999px' : 1.5,
+        bgcolor: isActive
+          ? (theme: Theme) =>
+              alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)
+          : 'transparent',
+        boxShadow: 'none',
+        transition: 'border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease',
+        '&.Mui-selected': {
+          backgroundColor: isActive
+            ? (theme: Theme) =>
+                `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)} !important`
+            : 'transparent !important'
+        },
+        '&.Mui-selected:hover': {
+          backgroundColor: isActive
+            ? (theme: Theme) =>
+                `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)} !important`
+            : 'transparent !important'
+        },
+        '&:hover': {
+          backgroundColor: isActive
+            ? (theme: Theme) =>
+                `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)} !important`
+            : 'transparent !important'
+        },
         '&:hover .session-actions': { opacity: 1 },
         '&:hover .session-time': { opacity: 0 }
       }}
@@ -334,13 +368,7 @@ const SessionRow = memo(function SessionRow({
                 minWidth: 0,
                 flex: 1,
                 fontSize: ROW_LABEL_FONT_SIZE,
-                fontWeight:
-                  isActive ||
-                  displaySession.status === 'needs_approval' ||
-                  displaySession.status === 'needs_input' ||
-                  displaySession.unreadKind
-                    ? 600
-                    : 400
+                fontWeight: hasAttentionWeight ? 600 : 400
               }}
             >
               {sessionTitle(displaySession)}
@@ -373,8 +401,7 @@ const SessionRow = memo(function SessionRow({
               transform: 'translateY(-50%)',
               opacity: 0,
               transition: 'opacity 0.15s ease',
-              flexShrink: 0,
-              bgcolor: 'background.default'
+              flexShrink: 0
             }}
           >
             <Tooltip title="重命名">

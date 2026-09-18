@@ -6,6 +6,33 @@ export function trustTierLabel(tier: string): string {
   return tier
 }
 
+/**
+ * Composition manifest ids follow `<provider>/<tier>/<name...>`, e.g.
+ * `nf-core/modules/fastqc` or `nf-core/workflows/rnaseq` — see
+ * `resources/wrappers/{modules,subworkflows,workflows}/**\/wrapper/wrapper.yaml`.
+ * Not schema-enforced, just the convention every current wrapper.yaml
+ * follows, so this degrades to putting the whole id in `name` rather than
+ * throwing when an id doesn't fit.
+ */
+export function parseWrapperCompositionId(id: string): {
+  provider: string
+  tier: string
+  name: string
+} {
+  const [provider, tier, ...rest] = id.split('/')
+  if (!provider || !tier || rest.length === 0) {
+    return { provider: provider ?? id, tier: '', name: id }
+  }
+  return { provider, tier, name: rest.join('/') }
+}
+
+export function wrapperTierLabel(tier: string): string {
+  if (tier === 'modules') return '模块'
+  if (tier === 'subworkflows') return '子流程'
+  if (tier === 'workflows') return '完整流水线'
+  return tier
+}
+
 export function runStateLabel(state: WrapperRun['state']): string {
   const labels: Record<WrapperRun['state'], string> = {
     created: '已创建',

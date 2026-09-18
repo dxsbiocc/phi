@@ -1,36 +1,25 @@
 import { parse as parseYaml } from 'yaml'
 
+import type {
+  WrapperCompositionManifest,
+  WrapperCompositionOutput,
+  WrapperCompositionParam
+} from '../../../../shared/wrapperCompositionManifestTypes'
+
 /**
  * Parser for the minimal per-wrapper manifest described in
  * docs/design/phi-wrapper-agent-composition-design.md section 3 — NOT the
  * fuller package manifest `manifest.ts`/`manifest-types.ts` parse (that one
  * describes a whole bundled wrapper package; this one describes a single
  * `wrapper/wrapper.yaml` adapter beside a vendored nf-core module or
- * subworkflow).
+ * subworkflow). The shape itself lives in `shared/wrapperCompositionManifestTypes.ts`
+ * so the renderer can use it too — see that file's own header comment.
  */
-
-export interface WrapperCompositionParam {
-  kind: 'input' | 'output' | 'option'
-  type: string
-  required: boolean
-  description?: string
-  minimum?: number
-  maximum?: number
-}
-
-export interface WrapperCompositionOutput {
-  type: string
-  path: string
-  primary: boolean
-}
-
-export interface WrapperCompositionManifest {
-  id: string
-  name: string
-  summary: string
-  params: Record<string, WrapperCompositionParam>
-  outputs: Record<string, WrapperCompositionOutput>
-}
+export type {
+  WrapperCompositionManifest,
+  WrapperCompositionOutput,
+  WrapperCompositionParam
+} from '../../../../shared/wrapperCompositionManifestTypes'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -67,7 +56,11 @@ export function parseWrapperCompositionManifest(yamlText: string): WrapperCompos
       required: value.required === true,
       description: typeof value.description === 'string' ? value.description : undefined,
       minimum: typeof value.minimum === 'number' ? value.minimum : undefined,
-      maximum: typeof value.maximum === 'number' ? value.maximum : undefined
+      maximum: typeof value.maximum === 'number' ? value.maximum : undefined,
+      enum:
+        Array.isArray(value.enum) && value.enum.every((item) => typeof item === 'string')
+          ? (value.enum as string[])
+          : undefined
     }
   }
 

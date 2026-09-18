@@ -9,7 +9,7 @@ import { WrapperSidebar } from './features/wrapper/WrapperView'
 import { WorkspaceFilesPane } from './components/WorkspaceSidePanel'
 import type { AppView } from './App'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
-import type { WrapperCatalogEntry } from '../../shared/wrapperCatalogTypes'
+import type { WrapperCompositionManifest } from '../../shared/wrapperCompositionManifestTypes'
 import type {
   AnalysisJupyterRuntimeStatus,
   DirectoryListing,
@@ -68,13 +68,11 @@ export type AppWorkspaceSidebarProps = {
   activeMcpServerId: string | null
   onOpenMcpServer: (server: McpServerSummary) => void
 
-  wrapperCatalog: WrapperCatalogEntry[]
+  wrapperCatalog: WrapperCompositionManifest[]
   selectedWrapperId: string | null
   isLoadingWrappers: boolean
-  isAddingWrapper: boolean
-  onOpenWrapper: (entry: WrapperCatalogEntry) => void
+  onOpenWrapper: (entry: WrapperCompositionManifest) => void
   onRefreshWrappers: () => void
-  onAddCustomWrapper: () => void
 
   sessions: SessionSummary[]
   activeSessionPath: string | null
@@ -135,10 +133,8 @@ function AppWorkspaceSidebarImpl({
   wrapperCatalog,
   selectedWrapperId,
   isLoadingWrappers,
-  isAddingWrapper,
   onOpenWrapper,
   onRefreshWrappers,
-  onAddCustomWrapper,
   sessions,
   activeSessionPath,
   activeCwd,
@@ -311,10 +307,8 @@ function AppWorkspaceSidebarImpl({
         catalog={wrapperCatalog}
         selectedId={selectedWrapperId}
         isLoading={isLoadingWrappers}
-        isAdding={isAddingWrapper}
         onSelect={onOpenWrapper}
         onRefresh={onRefreshWrappers}
-        onAddCustom={onAddCustomWrapper}
       />
     ) : (
       <SessionSidebar

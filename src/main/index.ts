@@ -19,7 +19,8 @@ import {
   dialog,
   ipcMain,
   nativeImage,
-  nativeTheme
+  nativeTheme,
+  powerSaveBlocker
 } from 'electron'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -33,7 +34,6 @@ import {
   skipOnboarding
 } from './agent/persona-manager'
 import {
-  WORKSPACE_DIR,
   acknowledgeSession,
   createSessionManager,
   deleteSession,
@@ -96,6 +96,11 @@ import {
   ensureBundledWrappersInstalled,
   listWrapperCatalog
 } from './agent/wrappers/catalog'
+import {
+  listWrapperCompositionCatalog,
+  readWrapperCompositionDag,
+  readWrapperModuleDetails
+} from './agent/wrappers/composition/discovery'
 import { reconcileRemoteWrapperRuns } from './agent/wrappers/executor-slurm-reconcile'
 import { buildWrapperReproducibilityBundle } from './agent/wrappers/reproducibility'
 import { cancelWrapperRun, cancelWrapperRunPlan, submitWrapperRunPlan } from './agent/wrappers/runs'
@@ -107,6 +112,7 @@ import {
 } from './agent/wrappers/store'
 import { formatDiagnostics, type DiagnosticsSnapshot } from './agent/diagnostics'
 import { LOG_RETENTION_DAYS, cleanupOldLogs, getPhiLogDir, writeAppLog } from './agent/app-logger'
+import { readAppSettings, updateAppSettings, updateDefaultProxyMode } from './agent/app-settings'
 import { redactSensitiveText } from './agent/redaction'
 import {
   emptyNotebookRegistry,
@@ -259,6 +265,18 @@ type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 const THINKING_LEVEL_ORDER: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 const TOOL_OUTPUT_INLINE_LIMIT = 20000
+const ENABLED_ENV_VALUES = new Set(['1', 'true', 'yes'])
+
+function isExperimentalEnvEnabled(value: unknown): boolean {
+  return typeof value === 'string' && ENABLED_ENV_VALUES.has(value.trim().toLowerCase())
+}
+
+function shouldEnableDbConnectorTools(): boolean {
+  return (
+    isExperimentalEnvEnabled(process.env.PHI_ENABLE_DB_CONNECTOR_TOOLS) ||
+    readAppSettings(AGENT_DIR).enableDbConnectorTools
+  )
+}
 const FILE_PREVIEW_BYTES_LIMIT = 320000
 const FILE_MEDIA_PREVIEW_BYTES_LIMIT = 10 * 1024 * 1024
 const FILE_HOVER_TEXT_BYTES_LIMIT = 32 * 1024
@@ -355,6 +373,8 @@ type PromptTargetInput = {
   phiSessionId?: string
   cwd: string
   sessionGeneration?: number
+  suppressUserMessageEvent?: boolean
+  retryUserMessageId?: string
 }
 
 interface PromptRun {
@@ -428,6 +448,11 @@ const sessionLifecycles = new Map<string, SessionLifecycle<AgentSessionResult>>(
 const sessionAbortControllers = new Map<string, AbortController>()
 const cleanupBarriersByPath = new Map<string, Promise<void>>()
 const unknownPathCleanupBarriers = new Set<Promise<void>>()
+
+function getNoProjectTaskFolder(): string {
+  return readAppSettings(AGENT_DIR).noProjectTaskFolder
+}
+
 let freshSessionCounter = 0
 // The session file currently active in the UI. undefined = a fresh, not-yet-persisted
 // chat (nothing appended to it yet, so no file exists and it won't show in the sidebar
@@ -436,17 +461,17 @@ let freshSessionCounter = 0
 // the in-memory AgentSession (e.g. after an auth/model/persona change) against whatever
 // conversation was already active.
 let currentSessionPath: string | undefined
-// Working directory for the active conversation. A plain "对话" (conversation) always
-// uses WORKSPACE_DIR; a "项目" (project) uses its own folder and carries a permission
-// mode gating bash/edit/write tool calls (see tool-approval.ts).
-let currentCwd: string = WORKSPACE_DIR
+// Working directory for the active conversation. A plain "对话" (conversation) uses the
+// user-configurable no-project task folder; a "项目" (project) uses its own folder and
+// carries a permission mode gating bash/edit/write tool calls (see tool-approval.ts).
+let currentCwd: string = getNoProjectTaskFolder()
 let currentPermissionMode: PermissionMode = 'auto'
 const selectedModel: ModelSelection | null = null
 // Default is deliberately 'high', not the SDK's own default of 'off': many models
 // (e.g. DeepSeek V4 Pro) only enable reasoning output at 'high'/'max', and this app
 // wants that reasoning visible in the UI out of the box rather than silently absent.
 const selectedThinkingLevel: ThinkingLevel = 'high'
-let currentSessionKey = createSessionKey(undefined, WORKSPACE_DIR, freshSessionCounter)
+let currentSessionKey = createSessionKey(undefined, currentCwd, freshSessionCounter)
 let sessionSwitchRequest = 0
 const promptQueues = new Map<string, Promise<void>>()
 const promptGenerations = new Map<string, number>()
@@ -457,6 +482,7 @@ const sessionModelSelections = new Map<string, ModelSelection>()
 const sessionThinkingLevels = new Map<string, ThinkingLevel>()
 const sessionPermissionModes = new Map<string, PermissionMode>()
 const recentErrorSummaries: string[] = []
+let preventSleepBlockerId: number | null = null
 const NEXT_ACTION_RECOMMENDATION_INSTRUCTION = [
   '<phi_next_action_instruction>',
   '当这次回复有明确、有用的后续操作时，请在最终回复最后单独输出一行：',
@@ -473,6 +499,20 @@ function withNextActionRecommendationInstruction(prompt: string): string {
 const runnerRegistry = new SessionRunnerRegistry({
   onSessionEvent: broadcastSessionTimelineEvent
 })
+
+function syncPreventSleepBlocker(): void {
+  const shouldBlock = readAppSettings().preventSleepDuringRuns && runnerRegistry.activeCount > 0
+  if (shouldBlock && preventSleepBlockerId === null) {
+    preventSleepBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+    return
+  }
+  if (!shouldBlock && preventSleepBlockerId !== null) {
+    if (powerSaveBlocker.isStarted(preventSleepBlockerId)) {
+      powerSaveBlocker.stop(preventSleepBlockerId)
+    }
+    preventSleepBlockerId = null
+  }
+}
 const jupyterServerRegistry = new JupyterServerRegistry()
 const notebookSessionRegistry = new AnalysisNotebookSessionRegistry({
   getConnection: (projectCwd) => jupyterServerRegistry.connection(projectCwd)
@@ -724,6 +764,18 @@ function notebookAgentRuntimePrompt(projectCwd: string): string | null {
   ]
     .filter(Boolean)
     .join('\n')
+}
+
+function dbConnectorAgentRuntimePrompt(): string {
+  return [
+    '<phi_db_connector_runtime>',
+    'This Phi session has experimental biological database connector tools registered.',
+    'Use db_search, db_domain, db_docs_search, and db_query for structured biological database lookup requests such as NCBI Entrez, PubMed, ClinVar, Ensembl, UniProt, genes, variants, proteins, accessions, and field/schema lookup.',
+    'Prefer db_* over bash, curl, wget, browser search, or ad hoc Python/Biopython for supported structured database records.',
+    'If the user asks what biological database tools are available, mention db_search/db_domain/db_docs_search/db_query and do not claim that no dedicated biological database search tool exists.',
+    'Large db_query results are summarized or written to artifacts; inspect the returned resolvedQuery/provenance before making claims.',
+    '</phi_db_connector_runtime>'
+  ].join('\n')
 }
 
 function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEvent): void {
@@ -1597,6 +1649,10 @@ function parsePromptTarget(input: unknown): PromptTargetInput | null {
     cwd,
     ...(typeof record.sessionGeneration === 'number'
       ? { sessionGeneration: record.sessionGeneration }
+      : {}),
+    ...(record.suppressUserMessageEvent === true ? { suppressUserMessageEvent: true } : {}),
+    ...(typeof record.retryUserMessageId === 'string'
+      ? { retryUserMessageId: record.retryUserMessageId }
       : {})
   }
 }
@@ -1760,7 +1816,7 @@ function ensurePhiSessionId(
   const model = resolveSessionModelSelection(sessionKey, snapshot)
   const sessionTitle = messageContentTitleText(title)
   const session = createPhiSession({
-    kind: snapshot.cwd === WORKSPACE_DIR ? 'ordinary' : 'project',
+    kind: project ? 'project' : 'ordinary',
     projectId: project?.id ?? null,
     cwd: snapshot.cwd,
     cwdRealPath: project?.workingDirectoryRealPath ?? snapshot.cwd,
@@ -1783,7 +1839,7 @@ function createPhiManagedSession(
   const model = project?.defaultModel ?? selectedModel
   const sessionTitle = messageContentTitleText(title)
   const session = createPhiSession({
-    kind: cwd === WORKSPACE_DIR ? 'ordinary' : 'project',
+    kind: project ? 'project' : 'ordinary',
     projectId: project?.id ?? null,
     cwd,
     cwdRealPath: project?.workingDirectoryRealPath ?? cwd,
@@ -1808,12 +1864,13 @@ async function generatePersonaMarkdown(description: string): Promise<string> {
     ? runtime.getModel(selectedModel.providerId, selectedModel.modelId)
     : undefined
   let eventAssistantText = ''
+  const cwd = getNoProjectTaskFolder()
   const { session } = await createAgentSession(
     {
       modelRuntime: runtime,
-      cwd: WORKSPACE_DIR,
+      cwd,
       noTools: 'all',
-      sessionManager: createInMemoryRuntimeSessionManager(WORKSPACE_DIR),
+      sessionManager: createInMemoryRuntimeSessionManager(cwd),
       ...(model ? { model } : {})
     },
     (summary) => {
@@ -3193,7 +3250,7 @@ function cleanupMainWindowRuntime(): void {
 // session: switching conversations is navigation, not stop.
 async function disposeAndSwitchSession(
   path: string | undefined,
-  cwd: string = WORKSPACE_DIR,
+  cwd: string = getNoProjectTaskFolder(),
   permissionMode: PermissionMode = 'auto',
   options: { notify?: boolean } = {}
 ): Promise<{
@@ -3286,6 +3343,11 @@ async function getAgentSession(
 
       let resourceLoader: RuntimeResourceLoader | undefined
       const notebookPrompt = notebookAgentRuntimePrompt(creationSnapshot.cwd)
+      const enableDbConnectorTools = shouldEnableDbConnectorTools()
+      const appendSystemPrompt = [
+        ...(notebookPrompt ? [notebookPrompt] : []),
+        ...(enableDbConnectorTools ? [dbConnectorAgentRuntimePrompt()] : [])
+      ]
       const shouldLoadBundledSkills = existsSync(getBundledSkillsDir())
       const extensionFactories =
         creationSnapshot.permissionMode === 'ask'
@@ -3327,11 +3389,15 @@ async function getAgentSession(
               })
             ]
           : []
-      if (shouldLoadBundledSkills || notebookPrompt || extensionFactories.length > 0) {
+      if (
+        shouldLoadBundledSkills ||
+        appendSystemPrompt.length > 0 ||
+        extensionFactories.length > 0
+      ) {
         resourceLoader = createRuntimeResourceLoader({
           cwd: creationSnapshot.cwd,
           agentDir: AGENT_DIR,
-          ...(notebookPrompt ? { appendSystemPrompt: [notebookPrompt] } : {}),
+          ...(appendSystemPrompt.length > 0 ? { appendSystemPrompt } : {}),
           ...(extensionFactories.length > 0 ? { extensionFactories } : {})
         })
         await resourceLoader.reload()
@@ -3348,6 +3414,7 @@ async function getAgentSession(
           creationSnapshot.cwd,
           runtimeSessionPathForSnapshot(sessionKey, creationSnapshot)
         ),
+        ...(enableDbConnectorTools ? { enableDbConnectorTools: true } : {}),
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(model ? { model } : {})
       })
@@ -3571,6 +3638,7 @@ app.whenReady().then(() => {
   ipcMain.handle('agent:prompt', async (_, text: string, targetInput?: unknown) => {
     const normalizedText = text.trim()
     if (!normalizedText) return null
+    const promptTarget = parsePromptTarget(targetInput)
     if (targetInput !== undefined) {
       await alignCurrentSessionToPromptTarget(targetInput)
     }
@@ -3609,11 +3677,22 @@ app.whenReady().then(() => {
       sessionPath: stableSessionPath
     }
     setActivePromptRun(runSessionKey, promptRun)
-    appendSessionEvent(phiSessionId, {
-      type: 'user_message',
-      runId,
-      content: normalizedText
-    })
+    if (promptTarget?.suppressUserMessageEvent === true) {
+      appendSessionEvent(phiSessionId, {
+        type: 'user_message_retry',
+        runId,
+        content: normalizedText,
+        ...(promptTarget.retryUserMessageId
+          ? { userMessageId: promptTarget.retryUserMessageId }
+          : {})
+      })
+    } else {
+      appendSessionEvent(phiSessionId, {
+        type: 'user_message',
+        runId,
+        content: normalizedText
+      })
+    }
     if (otherActiveProjectRuns > 0) {
       notifyProjectParallelRun(
         runSessionGeneration,
@@ -3676,7 +3755,10 @@ app.whenReady().then(() => {
           }
 
           try {
-            await session.prompt(withNextActionRecommendationInstruction(normalizedText), {
+            const promptText = readAppSettings().nextActionSuggestionsEnabled
+              ? withNextActionRecommendationInstruction(normalizedText)
+              : normalizedText
+            await session.prompt(promptText, {
               preflightResult: (success) => {
                 if (
                   success &&
@@ -3729,6 +3811,8 @@ app.whenReady().then(() => {
           }
         }
       })
+      syncPreventSleepBlocker()
+      void registryRun.done.then(syncPreventSleepBlocker, syncPreventSleepBlocker)
       await registryRun.done
       return promptRun.cancelled ? null : promptResult
     })
@@ -3772,6 +3856,16 @@ app.whenReady().then(() => {
   ipcMain.handle('auth:interaction-response', async (_, requestId: string, value: string) => {
     await getAuthManager().resolveInteraction(requestId, value)
   })
+
+  ipcMain.handle('settings:get', async () => readAppSettings())
+  ipcMain.handle('settings:update', async (_, patch: unknown) => {
+    const settings = updateAppSettings(patch)
+    syncPreventSleepBlocker()
+    return settings
+  })
+  ipcMain.handle('settings:updateDefaultProxyMode', async (_, mode: unknown) =>
+    updateDefaultProxyMode(mode)
+  )
 
   ipcMain.handle('models:list', async () => {
     const runtime = await getAuthManager().getRuntime()
@@ -3856,7 +3950,7 @@ app.whenReady().then(() => {
     })
   })
 
-  ipcMain.handle('sessions:list', async () => listSessions())
+  ipcMain.handle('sessions:list', async () => listSessions(getNoProjectTaskFolder()))
   ipcMain.handle('sessions:current', async () => getCurrentSessionPayloadWithMessages())
   ipcMain.handle('sessions:updatePermissionMode', async (_, permissionMode: PermissionMode) => {
     currentPermissionMode = permissionMode
@@ -3876,8 +3970,9 @@ app.whenReady().then(() => {
     return getCurrentSessionPayload()
   })
   ipcMain.handle('sessions:create', async () => {
-    const session = createPhiManagedSession(WORKSPACE_DIR, 'auto')
-    return disposeAndSwitchSession(session.path, WORKSPACE_DIR, session.permissionMode)
+    const cwd = getNoProjectTaskFolder()
+    const session = createPhiManagedSession(cwd, 'auto')
+    return disposeAndSwitchSession(session.path, cwd, session.permissionMode)
   })
   ipcMain.handle('sessions:switch', async (_, path: string) => {
     const request = ++sessionSwitchRequest
@@ -4614,6 +4709,15 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('wrappers:listCatalog', async () => listWrapperCatalog())
+  ipcMain.handle('wrappers:listCompositionCatalog', async () =>
+    listWrapperCompositionCatalog().map((entry) => entry.manifest)
+  )
+  ipcMain.handle('wrappers:getCompositionDag', async (_, id: string) =>
+    readWrapperCompositionDag(id)
+  )
+  ipcMain.handle('wrappers:getCompositionModuleDetails', async (_, id: string) =>
+    readWrapperModuleDetails(id)
+  )
   ipcMain.handle('wrappers:addCustom', async (_, sourceDir: string) => {
     try {
       const entry = addCustomWrapper(sourceDir)
@@ -4712,6 +4816,10 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  if (preventSleepBlockerId !== null && powerSaveBlocker.isStarted(preventSleepBlockerId)) {
+    powerSaveBlocker.stop(preventSleepBlockerId)
+    preventSleepBlockerId = null
+  }
   cleanupMainWindowRuntime()
 })
 
