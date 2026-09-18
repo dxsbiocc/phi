@@ -513,6 +513,7 @@ function App(): React.JSX.Element {
     setActivePhiSessionId,
     activeCwd,
     activeSessionGeneration,
+    activeChatScrollResetKey,
     projectSessionRefreshKey,
     setProjectSessionRefreshKey,
     currentPermissionMode,
@@ -2631,7 +2632,7 @@ function App(): React.JSX.Element {
     <ChatView
       messages={messages}
       input={input}
-      scrollResetKey={activeDraftKey}
+      scrollResetKey={activeChatScrollResetKey}
       canSend={!isSessionChanging && !currentSessionIsBusy && !isBusy}
       canQueue={!isSessionChanging && currentSessionIsBusy && !isBusy}
       isGenerating={currentSessionIsBusy}

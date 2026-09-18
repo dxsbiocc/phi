@@ -43,6 +43,12 @@ function resetSessionStore(): void {
     activeCwd: '',
     activeSessionGeneration: 0,
     activeAgentEventStateKey: null,
+    activeChatScrollResetKey: sessionStateKey({
+      phiSessionId: null,
+      path: null,
+      cwd: '',
+      sessionGeneration: 0
+    }),
     agentEventState: createAgentEventReducerState(),
     pendingApproval: null,
     activeSessionRuntimeState: idleSessionRuntimeState(),
@@ -136,6 +142,106 @@ test('active session acknowledgement does not clear approval attention', async (
   assert.equal(await useSessionStore.getState().acknowledgeActiveSession(), false)
   assert.deepEqual(calls, [])
   assert.equal(useSessionStore.getState().activeSessionRuntimeState.unreadKind, 'approval')
+})
+
+test('current session keeps visible messages when an existing path gains a Phi id', () => {
+  const pathStateKey = sessionStateKey({
+    phiSessionId: null,
+    path: baseSession.path,
+    cwd: '/workspace',
+    sessionGeneration: 3
+  })
+  const phiStateKey = sessionStateKey({
+    phiSessionId: 'phi-session-1',
+    path: baseSession.path,
+    cwd: '/workspace',
+    sessionGeneration: 3
+  })
+  const visibleState = createAgentEventReducerState([
+    { id: 'user-local', role: 'user', content: 'hello' }
+  ])
+
+  sessionAgentEventStates.set(pathStateKey, visibleState)
+  useSessionStore.setState({
+    activeSessionPath: baseSession.path,
+    activePhiSessionId: null,
+    activeCwd: '/workspace',
+    activeSessionGeneration: 3,
+    activeAgentEventStateKey: pathStateKey,
+    activeChatScrollResetKey: pathStateKey,
+    agentEventState: visibleState
+  })
+
+  useSessionStore.getState().applyCurrentSession({
+    path: baseSession.path,
+    phiSessionId: 'phi-session-1',
+    cwd: '/workspace',
+    sessionGeneration: 3,
+    permissionMode: 'auto',
+    messages: []
+  })
+
+  const nextState = useSessionStore.getState()
+  assert.equal(nextState.activeAgentEventStateKey, phiStateKey)
+  assert.equal(nextState.activeChatScrollResetKey, pathStateKey)
+  assert.deepEqual(
+    nextState.agentEventState.messages.map((message) => message.id),
+    ['user-local']
+  )
+  assert.deepEqual(
+    sessionAgentEventStates.get(phiStateKey)?.messages.map((message) => message.id),
+    ['user-local']
+  )
+})
+
+test('current session keeps visible messages and scroll key when a fresh chat materializes', () => {
+  const freshStateKey = sessionStateKey({
+    phiSessionId: null,
+    path: null,
+    cwd: '/workspace',
+    sessionGeneration: 4
+  })
+  const materializedStateKey = sessionStateKey({
+    phiSessionId: 'phi-session-2',
+    path: 'phi-session:phi-session-2',
+    cwd: '/workspace',
+    sessionGeneration: 4
+  })
+  const visibleState = createAgentEventReducerState([
+    { id: 'user-local', role: 'user', content: 'first message' }
+  ])
+
+  sessionAgentEventStates.set(freshStateKey, visibleState)
+  useSessionStore.setState({
+    activeSessionPath: null,
+    activePhiSessionId: null,
+    activeCwd: '/workspace',
+    activeSessionGeneration: 4,
+    activeAgentEventStateKey: freshStateKey,
+    activeChatScrollResetKey: freshStateKey,
+    agentEventState: visibleState
+  })
+
+  useSessionStore.getState().applyCurrentSession({
+    path: 'phi-session:phi-session-2',
+    phiSessionId: 'phi-session-2',
+    cwd: '/workspace',
+    sessionGeneration: 4,
+    permissionMode: 'auto',
+    messages: []
+  })
+
+  const nextState = useSessionStore.getState()
+  assert.equal(nextState.activeAgentEventStateKey, materializedStateKey)
+  assert.equal(nextState.activeChatScrollResetKey, freshStateKey)
+  assert.deepEqual(
+    nextState.agentEventState.messages.map((message) => message.id),
+    ['user-local']
+  )
+  assert.deepEqual(
+    sessionAgentEventStates.get(materializedStateKey)?.messages.map((message) => message.id),
+    ['user-local']
+  )
 })
 
 test('chat interactions are wired to acknowledge the active session marker', () => {

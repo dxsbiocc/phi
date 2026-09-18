@@ -126,6 +126,7 @@ type SessionStoreState = {
   activeCwd: string
   activeSessionGeneration: number
   activeAgentEventStateKey: string | null
+  activeChatScrollResetKey: string
   isSessionChanging: boolean
   currentPermissionMode: PermissionMode
   projectSessionRefreshKey: number
@@ -189,6 +190,12 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
   activeCwd: '',
   activeSessionGeneration: 0,
   activeAgentEventStateKey: null,
+  activeChatScrollResetKey: sessionStateKey({
+    phiSessionId: null,
+    path: null,
+    cwd: '',
+    sessionGeneration: 0
+  }),
   isSessionChanging: false,
   currentPermissionMode: 'auto',
   projectSessionRefreshKey: 0,
@@ -280,28 +287,39 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
     const previousCwd = state.activeCwd
     const previousGeneration = state.activeSessionGeneration
     const previousStateKey = state.activeAgentEventStateKey
-    const currentIdentity = current.phiSessionId ?? current.path
-    const previousIdentity = previousPhiSessionId ?? previousPath
-    const isSameTarget = currentIdentity === previousIdentity && current.cwd === previousCwd
+    const currentPhiSessionId = current.phiSessionId ?? null
+    const matchesPreviousPhi =
+      currentPhiSessionId !== null && currentPhiSessionId === previousPhiSessionId
+    const matchesPreviousPath = current.path !== null && current.path === previousPath
+    const matchesFreshTarget =
+      currentPhiSessionId === null &&
+      current.path === null &&
+      previousPhiSessionId === null &&
+      previousPath === null
+    const isSameTarget =
+      current.cwd === previousCwd &&
+      (matchesPreviousPhi || matchesPreviousPath || matchesFreshTarget)
     if (isSameTarget && current.sessionGeneration < previousGeneration) return
 
     const nextStateKey = sessionStateKey({
-      phiSessionId: current.phiSessionId,
+      phiSessionId: currentPhiSessionId,
       path: current.path,
       cwd: current.cwd,
       sessionGeneration: current.sessionGeneration
     })
     const generationChanged = current.sessionGeneration !== previousGeneration
-    const targetChanged = currentIdentity !== previousIdentity || current.cwd !== previousCwd
+    const targetChanged = !isSameTarget
     const stateKeyChanged = nextStateKey !== previousStateKey
-    const shouldCarryFreshState =
+    const materializesFreshPath = previousPath === null && current.path !== null
+    const recordsPhiForKnownPath =
+      previousPath !== null && current.path === previousPath && currentPhiSessionId !== null
+    const shouldCarryActiveState =
       stateKeyChanged &&
       previousPhiSessionId === null &&
-      previousPath === null &&
-      current.path !== null &&
       current.cwd === previousCwd &&
-      current.sessionGeneration === previousGeneration
-    if (shouldCarryFreshState && previousStateKey) {
+      current.sessionGeneration === previousGeneration &&
+      (materializesFreshPath || recordsPhiForKnownPath)
+    if (shouldCarryActiveState && previousStateKey) {
       const previousPendingApproval = pendingApprovalsBySession.get(previousStateKey)
       if (previousPendingApproval && !pendingApprovalsBySession.has(nextStateKey)) {
         pendingApprovalsBySession.set(nextStateKey, previousPendingApproval)
@@ -344,16 +362,19 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
     if (generationChanged || targetChanged || stateKeyChanged) {
       nextAgentEventState =
         sessionAgentEventStates.get(nextStateKey) ??
-        (shouldCarryFreshState ? state.agentEventState : createAgentEventReducerState())
+        (shouldCarryActiveState ? state.agentEventState : createAgentEventReducerState())
       sessionAgentEventStates.set(nextStateKey, nextAgentEventState)
     }
 
     set({
       activeSessionGeneration: current.sessionGeneration,
       activeSessionPath: current.path,
-      activePhiSessionId: current.phiSessionId ?? null,
+      activePhiSessionId: currentPhiSessionId,
       activeCwd: current.cwd,
       activeAgentEventStateKey: nextStateKey,
+      activeChatScrollResetKey: shouldCarryActiveState
+        ? state.activeChatScrollResetKey
+        : nextStateKey,
       currentPermissionMode: current.permissionMode ?? 'auto',
       activeSessionRuntimeState: nextRuntimeState,
       pendingApproval: pendingApprovalsBySession.get(nextStateKey) ?? null,

@@ -48,6 +48,34 @@ test('agent event routing accepts the active materialized session only', () => {
   )
 })
 
+test('agent event routing accepts Phi events by path before the active Phi id is recorded', () => {
+  assert.equal(
+    agentEventBelongsToActiveSession(
+      {
+        type: 'message_update',
+        phiSessionId: 'phi-1',
+        sessionGeneration: 0,
+        sessionPath: 'active.jsonl',
+        cwd: '/workspace'
+      },
+      { path: 'active.jsonl', cwd: '/workspace', sessionGeneration: 0 }
+    ),
+    true
+  )
+  assert.equal(
+    agentEventBelongsToActiveSession(
+      {
+        type: 'message_update',
+        phiSessionId: 'phi-1',
+        sessionGeneration: 0,
+        cwd: '/workspace'
+      },
+      { path: 'active.jsonl', cwd: '/workspace', sessionGeneration: 0 }
+    ),
+    false
+  )
+})
+
 test('agent event routing keeps fresh-session events generation scoped', () => {
   assert.equal(
     agentEventBelongsToActiveSession(

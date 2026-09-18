@@ -12,7 +12,11 @@ export function agentEventBelongsToActiveSession(
   if (typeof event.phiSessionId === 'string' && active.phiSessionId) {
     return event.phiSessionId === active.phiSessionId
   }
-  if (typeof event.phiSessionId === 'string' && !active.phiSessionId) {
+  if (
+    typeof event.phiSessionId === 'string' &&
+    !active.phiSessionId &&
+    typeof event.sessionPath !== 'string'
+  ) {
     return false
   }
 
