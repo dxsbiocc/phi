@@ -202,6 +202,13 @@ nextflow run wrapper/main.nf -params-file wrapper/params.json -profile docker
 rm -rf work .nextflow* results
 ```
 
+Or let the smoke script do it (from the Phi repo root; it also checks the triad, `params.json` against `wrapper.yaml`, the includes, every URL in `params.json`, and each primary output, and cleans up `work/`, `results/`, `.nextflow*` itself):
+
+```bash
+npm run smoke:wrappers -- <part of the wrapper id> --preview     # compile check, no processes run
+npm run smoke:wrappers -- <part of the wrapper id> --run --profile docker
+```
+
 Then confirm the primary output exists under `results/`. If the run fails, the channel shape from step 3 almost always doesn't match `main.nf`'s `input:` block — recheck `tests/main.nf.test`; if the tool itself errors on the data (e.g. "no features were loaded"), the test data and the tool's defaults disagree — set an option in `params.json`/`nextflow.config` rather than changing the data.
 
 ### 7. Generate the DAG
