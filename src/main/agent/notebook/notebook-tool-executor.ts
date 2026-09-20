@@ -7,7 +7,7 @@ import {
   type NotebookCellType,
   type NotebookDocument
 } from '../../../shared/notebookDocument'
-import { detectAnalysisKernels } from './analysis-kernels'
+import { detectConfiguredAnalysisKernels } from '../environment'
 import { AnalysisNotebookExecutor } from './analysis-jupyter-execution'
 import { AnalysisNotebookSessionRegistry } from './analysis-jupyter-sessions'
 import { listProjectNotebooks } from './analysis-notebooks'
@@ -402,7 +402,7 @@ export class AnalysisNotebookToolExecutor {
     if (!cell) throw new Error(`Notebook cell not found: ${cellId}`)
     if (cell.cellType !== 'code') throw new Error('只能运行 code cell')
 
-    const kernels = detectAnalysisKernels()
+    const kernels = detectConfiguredAnalysisKernels()
     let sessionStatus = await this.notebookSessionRegistry.ensureSession({
       projectCwd: project.workingDirectory,
       notebookPath: state.file.path,

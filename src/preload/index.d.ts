@@ -15,6 +15,11 @@ import type {
   PhiAppSettingsPatch
 } from '../shared/appSettingsTypes'
 import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
+import type {
+  EnvironmentGetResult,
+  EnvironmentSnapshot,
+  EnvironmentToolId
+} from '../shared/environmentTypes'
 
 type PreloadSessionSummary = {
   path: string
@@ -590,6 +595,14 @@ declare global {
       getAppSettings: () => Promise<PhiAppSettings>
       updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
       updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
+      getEnvironment: () => Promise<EnvironmentGetResult>
+      redetectEnvironment: () => Promise<EnvironmentSnapshot>
+      dismissEnvironmentSummary: () => Promise<EnvironmentSnapshot>
+      setEnvironmentToolPath: (
+        toolId: EnvironmentToolId,
+        path: string | null
+      ) => Promise<EnvironmentSnapshot>
+      pickEnvironmentBinary: () => Promise<string | null>
       listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
       setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
       listModels: () => Promise<

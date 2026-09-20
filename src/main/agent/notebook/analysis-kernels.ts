@@ -116,13 +116,15 @@ function preferredKernel(kernels: AnalysisKernelSummary[]): string | undefined {
 }
 
 export function detectAnalysisKernels(
-  runner: CommandRunner = runCommand
+  runner?: CommandRunner,
+  jupyterCommand = 'jupyter'
 ): AnalysisKernelDiagnostics {
+  const run = runner ?? runCommand
   const messages: string[] = []
   let jupyterServer: JupyterServerStatus
 
   try {
-    const version = runner('jupyter', ['server', '--version']).trim()
+    const version = run(jupyterCommand, ['server', '--version']).trim()
     jupyterServer = {
       available: true,
       command: 'jupyter',
@@ -140,7 +142,7 @@ export function detectAnalysisKernels(
   let kernels: AnalysisKernelSummary[] = []
   if (jupyterServer.available) {
     try {
-      kernels = normalizeKernelspecs(runner('jupyter', ['kernelspec', 'list', '--json']))
+      kernels = normalizeKernelspecs(run(jupyterCommand, ['kernelspec', 'list', '--json']))
     } catch (error) {
       messages.push(`无法读取 Jupyter kernelspec: ${errorMessage(error)}`)
     }

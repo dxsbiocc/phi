@@ -8,6 +8,8 @@ import type {
   ActiveAuthPrompt,
   DbConnectorSettingsItem,
   DefaultProxyMode,
+  EnvironmentSnapshot,
+  EnvironmentToolId,
   ModelOption,
   PhiAppSettingsPatch,
   PermissionMode,
@@ -19,6 +21,7 @@ import type {
   ThinkingLevel,
   ToolApprovalRequest
 } from './types'
+import { EnvironmentSummaryDialog } from './features/environment/components/EnvironmentSummaryDialog'
 
 export type SnackbarSeverity = 'error' | 'info' | 'success' | 'warning'
 export type SnackbarNotice = {
@@ -79,6 +82,13 @@ export type AppDialogsProps = {
   onSelectDefaultProxyMode: (mode: DefaultProxyMode) => void
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
+  environmentSnapshot: EnvironmentSnapshot | null
+  isLoadingEnvironment: boolean
+  isRedetectingEnvironment: boolean
+  onRedetectEnvironment: () => Promise<void>
+  onSetEnvironmentToolPath: (toolId: EnvironmentToolId, path: string | null) => Promise<void>
+  showEnvironmentSummary: boolean
+  onDismissEnvironmentSummary: () => Promise<void>
   dbConnectors: DbConnectorSettingsItem[]
   isLoadingDbConnectors: boolean
   updatingDbConnectorId: string | null
@@ -153,6 +163,13 @@ export default function AppDialogs({
   onSelectDefaultProxyMode,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
+  environmentSnapshot,
+  isLoadingEnvironment,
+  isRedetectingEnvironment,
+  onRedetectEnvironment,
+  onSetEnvironmentToolPath,
+  showEnvironmentSummary,
+  onDismissEnvironmentSummary,
   dbConnectors,
   isLoadingDbConnectors,
   updatingDbConnectorId,
@@ -224,6 +241,11 @@ export default function AppDialogs({
         onSelectDefaultProxyMode={onSelectDefaultProxyMode}
         onUpdateAppSettings={onUpdateAppSettings}
         onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
+        environmentSnapshot={environmentSnapshot}
+        isLoadingEnvironment={isLoadingEnvironment}
+        isRedetectingEnvironment={isRedetectingEnvironment}
+        onRedetectEnvironment={onRedetectEnvironment}
+        onSetEnvironmentToolPath={onSetEnvironmentToolPath}
         dbConnectors={dbConnectors}
         isLoadingDbConnectors={isLoadingDbConnectors}
         updatingDbConnectorId={updatingDbConnectorId}
@@ -231,6 +253,19 @@ export default function AppDialogs({
         onSetDbConnectorEnabled={onSetDbConnectorEnabled}
         themeMode={themeMode}
         onSelectThemeMode={setThemeMode}
+      />
+
+      <EnvironmentSummaryDialog
+        open={showEnvironmentSummary}
+        snapshot={environmentSnapshot}
+        onClose={() => {
+          void onDismissEnvironmentSummary()
+        }}
+        onOpenSettings={() => {
+          void onDismissEnvironmentSummary()
+          setSettingsCategory('environment')
+          setIsSettingsOpen(true)
+        }}
       />
 
       <OnboardingDialog

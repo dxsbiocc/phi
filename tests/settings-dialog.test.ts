@@ -57,6 +57,32 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
     onSelectDefaultProxyMode: () => undefined,
     onUpdateAppSettings: () => undefined,
     onPickNoProjectTaskFolder: () => undefined,
+    environmentSnapshot: {
+      scannedAt: '2026-01-01T00:00:00.000Z',
+      firstScanCompleted: true,
+      summaryDismissed: true,
+      tools: [
+        {
+          id: 'nextflow',
+          label: 'Nextflow',
+          status: 'ready',
+          source: 'detected',
+          activePath: '/opt/nextflow',
+          detectedPath: '/opt/nextflow',
+          detectedVersion: '24.0.0'
+        },
+        {
+          id: 'jupyter',
+          label: 'Jupyter',
+          status: 'missing',
+          source: 'none'
+        }
+      ]
+    },
+    isLoadingEnvironment: false,
+    isRedetectingEnvironment: false,
+    onRedetectEnvironment: async () => undefined,
+    onSetEnvironmentToolPath: async () => undefined,
     dbConnectors: [
       {
         id: 'entrez/ncbi',
@@ -87,6 +113,16 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
     createElement(ThemeProvider, { theme }, createElement(SettingsDialog, props))
   )
 }
+
+test('settings dialog exposes environment toolchain detection', () => {
+  const markup = renderSettingsDialog({ category: 'environment' })
+
+  assert.match(markup, /环境/)
+  assert.match(markup, /Nextflow/)
+  assert.match(markup, /已就绪|重新检测/)
+  assert.match(markup, /Jupyter/)
+  assert.doesNotMatch(markup, /检测到：/)
+})
 
 test('settings dialog can open directly on provider configuration', () => {
   const markup = renderSettingsDialog({ category: 'providers' })

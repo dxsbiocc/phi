@@ -154,7 +154,13 @@ import {
   type SaveProjectNotebookInput
 } from './agent/notebook/analysis-notebook-files'
 import { AnalysisNotebookFileWatcher } from './agent/notebook/analysis-notebook-watch'
-import { detectAnalysisKernels } from './agent/notebook/analysis-kernels'
+import {
+  detectConfiguredAnalysisKernels,
+  dismissEnvironmentSummary,
+  getEnvironment,
+  redetectEnvironment,
+  setEnvironmentToolPath
+} from './agent/environment'
 import { JupyterServerRegistry } from './agent/notebook/analysis-jupyter-server'
 import {
   AnalysisNotebookExecutor,
@@ -4538,6 +4544,31 @@ app.whenReady().then(() => {
   ipcMain.handle('settings:updateDefaultProxyMode', async (_, mode: unknown) =>
     updateDefaultProxyMode(mode)
   )
+
+  ipcMain.handle('environment:get', async () => getEnvironment())
+  ipcMain.handle('environment:redetect', async () => redetectEnvironment())
+  ipcMain.handle('environment:dismissSummary', async () => dismissEnvironmentSummary())
+  ipcMain.handle('environment:setToolPath', async (_, toolId: unknown, path: unknown) => {
+    if (typeof toolId !== 'string' || !toolId.trim()) {
+      throw new Error('工具 id 无效')
+    }
+    if (path !== null && typeof path !== 'string') {
+      throw new Error('工具路径必须是字符串或 null')
+    }
+    return setEnvironmentToolPath(toolId as Parameters<typeof setEnvironmentToolPath>[0], path)
+  })
+  ipcMain.handle('environment:pickBinary', async () => {
+    const window = getActiveWindow()
+    const options: Electron.OpenDialogOptions = {
+      title: '选择工具可执行文件',
+      properties: ['openFile']
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
   ipcMain.handle('db:listConnectors', async () => dbConnectorSettingsItems())
   ipcMain.handle('db:setConnectorEnabled', async (_, id: unknown, enabled: unknown) => {
     if (typeof id !== 'string' || !id.trim()) {
@@ -5034,7 +5065,7 @@ app.whenReady().then(() => {
       }
       assertProjectPathAvailable(project.workingDirectory)
     }
-    return detectAnalysisKernels()
+    return detectConfiguredAnalysisKernels()
   })
   ipcMain.handle('analysis:jupyterStatus', async (_, cwd: string) => {
     const project = getProjectByCwd(cwd)
@@ -5086,7 +5117,7 @@ app.whenReady().then(() => {
         projectCwd: project.workingDirectory,
         notebookPath: file.path,
         document,
-        kernels: detectAnalysisKernels()
+        kernels: detectConfiguredAnalysisKernels()
       })
     }
   )
@@ -5103,7 +5134,7 @@ app.whenReady().then(() => {
         projectCwd: project.workingDirectory,
         notebookPath: file.path,
         document,
-        kernels: detectAnalysisKernels()
+        kernels: detectConfiguredAnalysisKernels()
       })
     }
   )
@@ -5246,7 +5277,7 @@ app.whenReady().then(() => {
       }
       assertProjectPathAvailable(project.workingDirectory)
       const file = openProjectNotebook(project.workingDirectory, notebookPath)
-      const kernels = detectAnalysisKernels()
+      const kernels = detectConfiguredAnalysisKernels()
       let sessionStatus = await notebookSessionRegistry.ensureSession({
         projectCwd: project.workingDirectory,
         notebookPath: file.path,

@@ -10,11 +10,18 @@ import type {
   ProxyTransportStatus
 } from '../../shared/appSettingsTypes'
 import type { DbConnectorSettingsItem } from '../../shared/dbConnectorTypes'
+import type {
+  EnvironmentGetResult,
+  EnvironmentSnapshot,
+  EnvironmentToolId,
+  EnvironmentToolState
+} from '../../shared/environmentTypes'
 import type { RemoteHpcSettings } from '../../shared/wrapperRemoteTypes'
 import type { AgentExecutionItem } from './lib/agentExecutionTypes'
 
 export type { DefaultProxyMode, PhiAppSettings, PhiAppSettingsPatch, ProxyTransportStatus }
 export type { DbConnectorSettingsItem }
+export type { EnvironmentGetResult, EnvironmentSnapshot, EnvironmentToolId, EnvironmentToolState }
 export type {
   AgentExecutionItem,
   AgentExecutionStep,
@@ -732,6 +739,14 @@ export type RendererApi = {
   getAppSettings: () => Promise<PhiAppSettings>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
   updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
+  getEnvironment: () => Promise<EnvironmentGetResult>
+  redetectEnvironment: () => Promise<EnvironmentSnapshot>
+  dismissEnvironmentSummary: () => Promise<EnvironmentSnapshot>
+  setEnvironmentToolPath: (
+    toolId: EnvironmentToolId,
+    path: string | null
+  ) => Promise<EnvironmentSnapshot>
+  pickEnvironmentBinary: () => Promise<string | null>
   listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
   setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
   listModels: () => Promise<ModelOption[]>
