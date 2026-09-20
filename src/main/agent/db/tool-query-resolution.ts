@@ -324,18 +324,16 @@ function scoreDbQueryTarget(
 
   if (entry.manifest.id === 'rest-json/uniprot') {
     if (/\buniprot\b|\buniprotkb\b/.test(query)) score += 180
-    if (
-      domain.id === 'id_mapping' &&
-      (/\bid\s+mapping\b|\bmap\b|\bmapping\b|\bconvert\b|\bconversion\b|\bxref\b|\bcross-?ref/.test(
+    const requestsIdMapping =
+      /\bid\s+mapping\b|\bmap\b|\bmapping\b|\bconvert\b|\bconversion\b|\bmap\s+to\b|映射|转换/.test(
         query
-      ) ||
-        uniprotMappingTargetFromText(queryText))
-    ) {
-      score += 220
+      )
+    if (domain.id === 'id_mapping' && requestsIdMapping) {
+      score += uniprotMappingTargetFromText(queryText) ? 250 : 220
     }
     if (
       domain.id === 'protein' &&
-      /\bprotein\b|\baccession\b|\bsequence\b|\bfasta\b|\bamino\s+acid\b|\bswiss-?prot\b|\btrembl\b|\bgo\b|\bpdb\b/.test(
+      /\bprotein\b|\baccession\b|\bsequence\b|\bfasta\b|\bamino\s+acid\b|\bswiss-?prot\b|\btrembl\b|\bgo\b|\bpdb\b|\balphafold\b|\bprotein\s+structure\b|蛋白|蛋白质结构/.test(
         query
       )
     ) {
@@ -492,9 +490,12 @@ function inferQueryPredicate(
   }
   if (database === 'rest-json/uniprot' && domain === 'protein') {
     const accession = uniprotAccessionFromText(queryText)
-    return accession
-      ? { filters: [{ field: 'accession', op: '=', value: accession }] }
-      : { filters: [{ field: 'gene_name', op: '=', value: term }] }
+    if (accession) return { filters: [{ field: 'accession', op: '=', value: accession }] }
+    const filters: DbFilter[] = [{ field: 'gene_name', op: '=', value: term }]
+    if (/\bhuman\b|\bhomo\s+sapiens\b|人类|人体/i.test(queryText)) {
+      filters.push({ field: 'organism_id', op: '=', value: '9606' })
+    }
+    return { filters }
   }
   if (database === 'rest-json/uniprot' && domain === 'id_mapping') {
     const accession = uniprotAccessionFromText(queryText) ?? term
@@ -578,6 +579,10 @@ const DB_QUERY_TERM_STOPWORDS = new Set([
   'GENES',
   'PROTEIN',
   'PROTEINS',
+  'PDB',
+  'ALPHAFOLD',
+  'STRUCTURE',
+  'STRUCTURES',
   'VARIANT',
   'VARIANTS',
   'HUMAN',

@@ -62,9 +62,7 @@ test('the Phi-managed persona file is removed from generic context after explici
     },
     '/home/user/.phi/AGENTS.md'
   )
-  assert.deepEqual(result.agentsFiles, [
-    { path: '/project/AGENTS.md', content: 'project rules' }
-  ])
+  assert.deepEqual(result.agentsFiles, [{ path: '/project/AGENTS.md', content: 'project rules' }])
 })
 
 test('required-first blocks a matching generic tool until the specialist has failed', async () => {
@@ -145,6 +143,30 @@ test('a structured blocked report unlocks the declared fallback route', async ()
   )
   assert.equal(decision.allowed, true)
   assert.equal(decision.agent, 'Database')
+})
+
+test('a structured not-found report hands the exhausted database route back to the main agent', async () => {
+  const registry = new AgentRunRegistry()
+  const run = await registry.launch({
+    agent: 'Database',
+    task: 'find an experimental structure',
+    background: false,
+    runner: async () => ({
+      text: `<phi_agent_result>{"status":"not_found","missingInputs":[],"fallbackReason":"no matching record in installed connectors"}</phi_agent_result>\nNo matching database record was found.`,
+      toolCalls: 2
+    })
+  }).done
+
+  assert.equal(run.reportStatus, 'not_found')
+  const decision = evaluateSpecialistFallback(
+    {
+      toolName: 'bash',
+      input: { command: 'curl https://rest.uniprot.org/uniprotkb/search' }
+    },
+    [DATABASE],
+    registry
+  )
+  assert.equal(decision.allowed, true)
 })
 
 test('structured specialist reports preserve prose and expose blocked state', () => {

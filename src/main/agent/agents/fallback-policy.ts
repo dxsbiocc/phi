@@ -45,7 +45,7 @@ export function evaluateSpecialistFallback(
     agent: owner.name,
     reason:
       readiness.reason ??
-      `${owner.name} owns this target. Delegate to ${owner.name} first; use ${call.toolName} only after ${owner.fallback.afterFailures} failed specialist attempt(s).`
+      `${owner.name} owns this target. Delegate to ${owner.name} first; use ${call.toolName} only after ${owner.fallback.afterFailures} not-found, blocked, or failed specialist attempt(s).`
   }
 }
 

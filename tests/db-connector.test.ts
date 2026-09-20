@@ -36,6 +36,7 @@ import type {
   DbAdapterQueryResult,
   DbConnectorManifest,
   DbDownloadFileCandidate,
+  DbQueryParams,
   DbQueryToolDetails,
   DbResolvedQuery,
   DbQueryToolErrorDetails
@@ -401,6 +402,30 @@ test('DB connector tool descriptions steer agents to route biological database i
   assert.match(descriptions, /PubMed/)
   assert.match(descriptions, /ClinVar/)
   assert.match(descriptions, /UniProt/)
+})
+
+test('db_search discovers UniProt from PDB structure field intent', async () => {
+  await withHarness(async ({ agentDir }) => {
+    const result = await buildDbSearchTool(agentDir).execute(
+      'call-search-pdb',
+      { query: 'PDB structure' },
+      undefined,
+      fakeCtx()
+    )
+    const details = result.details as {
+      kind: string
+      results: Array<{ id: string; domains: Array<{ id: string }> }>
+    }
+    assert.equal(details.kind, 'db_search_results')
+    assert.equal(
+      details.results.some(
+        (entry) =>
+          entry.id === 'rest-json/uniprot' &&
+          entry.domains.some((domain) => domain.id === 'protein')
+      ),
+      true
+    )
+  })
 })
 
 test('result writer keeps small results inline and writes large results to artifact files', async () => {
@@ -2468,7 +2493,7 @@ test('UniProt adapter queries UniProtKB REST and normalizes protein records', as
   assert.match(searchParams.get('fields') ?? '', /ft_mutagen/)
   assert.match(searchParams.get('fields') ?? '', /xref_refseq/)
   assert.match(searchParams.get('fields') ?? '', /xref_embl/)
-  assert.match(searchParams.get('fields') ?? '', /xref_uniparc/)
+  assert.doesNotMatch(searchParams.get('fields') ?? '', /xref_uniparc/)
   assert.match(searchParams.get('fields') ?? '', /xref_alphafolddb/)
   assert.match(searchParams.get('fields') ?? '', /xref_interpro/)
   assert.match(searchParams.get('fields') ?? '', /xref_pfam/)
@@ -5256,6 +5281,70 @@ CTCCCAGCACAGAAAATGGCAGCTCAGTGTT`,
   )
   assert.equal(nucleotide.provenance.attempts, 3)
   assert.equal(nucleotide.provenance.transportName, 'mock-ncbi-nucleotide')
+})
+
+test('db_query routes protein structure intent to UniProt protein fields, not ID mapping', async () => {
+  await withHarness(async ({ agentDir }) => {
+    let received: DbQueryParams | undefined
+    const adapter: DbAdapter = {
+      async listDomains() {
+        return []
+      },
+      async describeDomain() {
+        return []
+      },
+      async query(params): Promise<DbAdapterQueryResult> {
+        received = params
+        return {
+          rows: [
+            {
+              accession: 'Q92748',
+              gene_name: 'THRSP',
+              pdb_ids: [],
+              alphafold_ids: ['Q92748']
+            }
+          ],
+          truncated: false,
+          provenance: {
+            database: 'rest-json/uniprot',
+            domain: params.domain,
+            retrievedAt: '2026-09-20T00:00:00.000Z'
+          }
+        }
+      }
+    }
+    const tool = buildDbQueryTool({ 'rest-json/uniprot': adapter }, agentDir)
+    const result = await tool.execute(
+      'call-thrsp-structure',
+      {
+        query: 'human THRSP protein structure PDB AlphaFold',
+        fields: ['accession', 'gene_name', 'protein_name', 'pdb_ids', 'alphafold_ids'],
+        limit: 1
+      },
+      undefined,
+      fakeCtx()
+    )
+
+    assert.equal(result.isError, undefined)
+    const details = result.details as DbQueryToolDetails
+    assert.equal(details.resolvedQuery?.database, 'rest-json/uniprot')
+    assert.equal(details.resolvedQuery?.domain, 'protein')
+    assert.deepEqual(details.resolvedQuery?.filters, [
+      { field: 'gene_name', op: '=', value: 'THRSP' },
+      { field: 'organism_id', op: '=', value: '9606' }
+    ])
+    assert.deepEqual(received, {
+      domain: 'protein',
+      filters: [
+        { field: 'gene_name', op: '=', value: 'THRSP' },
+        { field: 'organism_id', op: '=', value: '9606' }
+      ],
+      fields: ['accession', 'gene_name', 'protein_name', 'pdb_ids', 'alphafold_ids'],
+      limit: 1,
+      cursor: undefined,
+      rawQuery: undefined
+    })
+  })
 })
 
 test('db_query infers database, domain, and filters from natural biological query text', async () => {

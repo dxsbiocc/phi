@@ -204,7 +204,10 @@ export class AgentRunRegistry {
     for (const run of attempts.toReversed()) {
       const failed =
         run.state === 'error' ||
-        (run.state === 'done' && (run.reportStatus === 'blocked' || run.reportStatus === 'failed'))
+        (run.state === 'done' &&
+          (run.reportStatus === 'not_found' ||
+            run.reportStatus === 'blocked' ||
+            run.reportStatus === 'failed'))
       if (!failed) break
       failures += 1
     }
@@ -213,7 +216,7 @@ export class AgentRunRegistry {
       : {
           allowed: false,
           failures,
-          reason: `${agent} fallback needs ${afterFailures} consecutive failed or blocked attempt(s); ${failures} recorded.`
+          reason: `${agent} fallback needs ${afterFailures} consecutive not-found, blocked, or failed attempt(s); ${failures} recorded.`
         }
   }
 

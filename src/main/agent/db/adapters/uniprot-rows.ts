@@ -90,7 +90,7 @@ export function uniprotKbRow(entry: unknown): Record<string, unknown> {
     refseq_ids: crossReferenceIds(entry, 'RefSeq'),
     gene_ids: crossReferenceIds(entry, 'GeneID'),
     embl_ids: crossReferenceIds(entry, 'EMBL'),
-    uniparc_ids: crossReferenceIds(entry, 'UniParc'),
+    uniparc_ids: uniparcIds(entry),
     ccds_ids: crossReferenceIds(entry, 'CCDS'),
     alphafold_ids: crossReferenceIds(entry, 'AlphaFoldDB'),
     interpro_ids: crossReferenceIds(entry, 'InterPro'),
@@ -677,4 +677,11 @@ function crossReferenceIds(entry: Record<string, unknown>, database: string): st
       })
       .map((xref) => stringValue(xref.id))
   )
+}
+
+function uniparcIds(entry: Record<string, unknown>): string[] {
+  return uniqueStrings([
+    ...crossReferenceIds(entry, 'UniParc'),
+    firstNestedString(entry, ['extraAttributes', 'uniParcId'])
+  ])
 }

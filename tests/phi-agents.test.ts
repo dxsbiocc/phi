@@ -365,7 +365,7 @@ test('the bundled Wrapper agent is a valid, well-formed definition', () => {
   assert.ok(wrapper.delegation && wrapper.delegation.length > 0)
 })
 
-test('the bundled Database agent owns the biological database tools', () => {
+test('the bundled Database agent owns only biological database tools', () => {
   const { agents, diagnostics } = discoverPhiAgents({
     cwd: '/nonexistent/cwd',
     agentDir: '/nonexistent/agentdir',
@@ -376,26 +376,19 @@ test('the bundled Database agent owns the biological database tools', () => {
   const database = agents.find((agent) => agent.name === 'Database')
   assert.ok(database, 'resources/agents/Database.md should define Database')
   assert.equal(database.source, 'phi')
-  for (const tool of [
-    'read',
-    'glob',
-    'grep',
-    'bash',
-    'write',
-    'edit',
-    'db_search',
-    'db_domain',
-    'db_docs_search',
-    'db_query'
-  ]) {
-    assert.ok(database.tools.includes(tool), `Database should have ${tool}`)
+  assert.deepEqual(database.tools, ['db_search', 'db_domain', 'db_docs_search', 'db_query'])
+  for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit', 'eval', 'web_search']) {
+    assert.ok(!database.tools.includes(tool), `Database must not have system tool ${tool}`)
   }
-  assert.deepEqual(database.skills, ['create-database-connector'])
+  assert.deepEqual(database.skills, [])
   assert.equal(existsSync(join(REPO_SKILLS_DIR, 'create-database-connector', 'SKILL.md')), true)
   assert.match(database.systemPrompt, /stable_id/)
   assert.match(database.systemPrompt, /provenance/i)
   assert.match(database.systemPrompt, /bulk download/i)
-  assert.match(database.systemPrompt, /skill:\/\/create-database-connector/)
+  assert.match(database.systemPrompt, /before (?:the )?first tool call/i)
+  assert.match(database.systemPrompt, /candidate routes/i)
+  assert.match(database.systemPrompt, /do not repeat/i)
+  assert.doesNotMatch(database.systemPrompt, /skill:\/\/create-database-connector/)
   assert.ok(database.delegation && database.delegation.length > 0)
   assert.equal(database.delegationMode, 'required-first')
   assert.equal(database.fallback?.afterFailures, 1)
@@ -431,6 +424,7 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
   assert.match(prompt, /do not/i)
   assert.match(prompt, /required-first/i)
   assert.match(prompt, /controlled fallback/i)
+  assert.match(prompt, /not_found/i)
   // The leader never learns the specialist's own tool functions.
   for (const name of [
     'wrapper_search',

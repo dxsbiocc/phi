@@ -325,7 +325,6 @@ export function buildUniProtKbSearchParams(params: DbQueryParams): URLSearchPara
       'xref_refseq',
       'xref_geneid',
       'xref_embl',
-      'xref_uniparc',
       'xref_ccds',
       'xref_alphafolddb',
       'xref_interpro',

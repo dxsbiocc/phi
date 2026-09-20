@@ -125,6 +125,32 @@ function catalogSearchItem(entry: DbConnectorCatalogEntry): Record<string, unkno
   }
 }
 
+function catalogSearchText(entry: DbConnectorCatalogEntry): string {
+  return [
+    entry.manifest.id,
+    entry.manifest.name,
+    ...entry.manifest.domains.flatMap((domain) => [
+      domain.id,
+      domain.summary,
+      ...domain.commonFields,
+      ...(domain.fields ?? []).flatMap((field) => [
+        field.name,
+        field.description ?? '',
+        field.namespace ?? '',
+        ...(field.synonyms ?? [])
+      ])
+    ])
+  ]
+    .join(' ')
+    .toLowerCase()
+}
+
+function catalogSearchScore(entry: DbConnectorCatalogEntry, terms: string[]): number {
+  if (terms.length === 0) return 1
+  const haystack = catalogSearchText(entry)
+  return terms.reduce((score, term) => score + (haystack.includes(term) ? 1 : 0), 0)
+}
+
 function dbQueryErrorContent(error: unknown): string {
   if (error instanceof DbHttpError) {
     return `${error.code}: ${error.message}`
@@ -176,6 +202,7 @@ export function buildDbSearchTool(agentDir: string = getPhiAgentDir()): CustomTo
     async execute(_toolCallId, params) {
       const record = isRecord(params) ? params : {}
       const query = typeof record.query === 'string' ? record.query.trim().toLowerCase() : ''
+      const queryTerms = query.split(/\s+/).filter(Boolean)
       const results = listDbConnectorCatalog(agentDir)
         .filter((entry) => {
           if (
@@ -193,13 +220,12 @@ export function buildDbSearchTool(agentDir: string = getPhiAgentDir()): CustomTo
           if (typeof record.trustTier === 'string' && entry.trustTier !== record.trustTier) {
             return false
           }
-          if (!query) return true
-          const haystack = `${entry.manifest.id} ${entry.manifest.name} ${entry.manifest.domains
-            .map((domain) => `${domain.id} ${domain.summary}`)
-            .join(' ')}`.toLowerCase()
-          return haystack.includes(query)
+          return true
         })
-        .map(catalogSearchItem)
+        .map((entry) => ({ entry, score: catalogSearchScore(entry, queryTerms) }))
+        .filter(({ score }) => score > 0)
+        .sort((left, right) => right.score - left.score)
+        .map(({ entry }) => catalogSearchItem(entry))
       return {
         content: [
           {

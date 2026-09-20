@@ -12,7 +12,7 @@ export type PhiAgentSource = 'phi' | 'compat'
 export type PhiAgentDelegationMode = 'required-first' | 'preferred' | 'optional'
 
 export interface PhiAgentFallback {
-  /** Number of consecutive failed/blocked runs required before generic tools may take over. */
+  /** Consecutive not-found/blocked/failed runs required before generic tools may take over. */
   afterFailures: number
   /** Main-agent tools that may be used as the fallback route. */
   tools: string[]
@@ -115,7 +115,10 @@ function delegationMode(value: unknown): PhiAgentDelegationMode | undefined {
     : undefined
 }
 
-function fallbackPolicy(value: unknown, fail: (message: string) => never): PhiAgentFallback | undefined {
+function fallbackPolicy(
+  value: unknown,
+  fail: (message: string) => never
+): PhiAgentFallback | undefined {
   if (value === undefined) return undefined
   if (!isRecord(value)) return fail('fallback must be a YAML object.')
   const afterFailures = value.after_failures

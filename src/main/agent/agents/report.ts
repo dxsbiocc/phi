@@ -1,4 +1,4 @@
-export type AgentReportStatus = 'completed' | 'partial' | 'blocked' | 'failed'
+export type AgentReportStatus = 'completed' | 'partial' | 'not_found' | 'blocked' | 'failed'
 
 export interface AgentReport {
   status: AgentReportStatus
@@ -10,7 +10,13 @@ export interface AgentReport {
 }
 
 const RESULT_PATTERN = /<phi_agent_result>\s*([\s\S]*?)\s*<\/phi_agent_result>/i
-const STATUSES = new Set<AgentReportStatus>(['completed', 'partial', 'blocked', 'failed'])
+const STATUSES = new Set<AgentReportStatus>([
+  'completed',
+  'partial',
+  'not_found',
+  'blocked',
+  'failed'
+])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -65,7 +71,7 @@ export function parseAgentReport(value: string): AgentReport {
 
 export const AGENT_REPORT_PROTOCOL = `<phi_agent_reporting>
 End your final response with one machine-readable metadata block followed by the concise report for the main agent:
-<phi_agent_result>{"status":"completed|partial|blocked|failed","missingInputs":[],"nextAgent":null,"fallbackReason":null}</phi_agent_result>
+<phi_agent_result>{"status":"completed|partial|not_found|blocked|failed","missingInputs":[],"nextAgent":null,"fallbackReason":null}</phi_agent_result>
 
-Use completed only when the delegated goal is complete. Use partial when useful work exists but the task should be delegated again with more context. Use blocked when your specialist capability cannot complete the task and a different route or main-agent fallback is appropriate. Use failed when the attempted specialist operation failed. Put the human-readable report outside the metadata block. Do not wrap the JSON in a Markdown code fence.
+Use completed only when the delegated goal is complete. Use partial when useful work exists but the task should be delegated again with more context. Use not_found when valid queries exhausted the relevant specialist data sources without a matching record. Use blocked when the required capability/source is unavailable or not installed. Use failed when the attempted specialist operation failed. Put the human-readable report outside the metadata block. Do not wrap the JSON in a Markdown code fence.
 </phi_agent_reporting>`

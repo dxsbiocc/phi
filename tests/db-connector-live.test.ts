@@ -66,6 +66,20 @@ test(
     assert.equal(uniprotKb.rows[0]?.sequence_length, 1863)
     assert.match(String(uniprotKb.rows[0]?.fasta ?? ''), /^>sp\|P38398\|BRCA1_HUMAN/m)
 
+    const thrspStructure = await uniprot.query({
+      domain: 'protein',
+      filters: [
+        { field: 'gene_name', op: '=', value: 'THRSP' },
+        { field: 'organism_id', op: '=', value: '9606' }
+      ],
+      fields: ['accession', 'gene_name', 'protein_name', 'pdb_ids', 'alphafold_ids'],
+      limit: 1
+    })
+    assert.equal(thrspStructure.rows[0]?.accession, 'Q92748')
+    assert.equal(thrspStructure.rows[0]?.gene_name, 'THRSP')
+    assert.equal(thrspStructure.rows[0]?.pdb_ids, undefined)
+    assert.deepEqual(thrspStructure.rows[0]?.alphafold_ids, ['Q92748'])
+
     const uniref = await uniprot.query({
       domain: 'uniref',
       rawQuery: 'UniRef50_P38398',

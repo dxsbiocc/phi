@@ -17,7 +17,7 @@ export function buildAgentLeaderPrompt(agents: readonly PhiAgentDefinition[]): s
     }
     if (agent.fallback) {
       lines.push(
-        `  Fallback: after ${agent.fallback.afterFailures} consecutive failed or blocked ${agent.name} attempt(s), the main agent may use ${agent.fallback.tools.join(', ')} only for the failed subtask. Phi enforces declared target matches at tool-call time.`
+        `  Fallback: after ${agent.fallback.afterFailures} consecutive not-found, blocked, or failed ${agent.name} attempt(s), the main agent may use ${agent.fallback.tools.join(', ')} only for the unresolved subtask. Phi enforces declared target matches at tool-call time.`
       )
     }
     if (agent.delegation) {
@@ -31,8 +31,8 @@ export function buildAgentLeaderPrompt(agents: readonly PhiAgentDefinition[]): s
     "Phi has specialist agents. You lead: when a request falls in a specialist's remit, delegate it by calling the tool named after that agent instead of doing the work yourself.",
     'A required-first specialist owns the first attempt. Do not start the same work with bash, eval, web search, or another general-purpose tool. This is specialist-first routing, not a permanent ban: controlled fallback becomes available only after the declared number of failed or blocked specialist attempts.',
     'Write `task` as a self-contained request. A specialist cannot see this conversation and cannot ask the user anything, so include the goal, the absolute paths of the relevant files (resolve relative paths against the project directory), where outputs should go, and any user preference.',
-    'Interpret specialist outcomes explicitly: completed means synthesize the report; partial means add the missing context and delegate again; blocked or failed means follow nextAgent when provided, retry when the cause is recoverable, or use the declared fallback after its threshold. Relay reports faithfully and never claim an output exists that the report did not confirm.',
-    'After a completed specialist report, continue only with synthesis or work outside that specialist\'s ownership. Do not redo successful specialist work through general-purpose tools. After fallback is unlocked, limit it to the failed subtask and tell the user why Phi degraded and which source produced the result.',
+    'Interpret specialist outcomes explicitly: completed means synthesize the report; partial means add missing context and delegate again; not_found means valid specialist sources were searched without a matching record, so continue with a different source or declared fallback without repeating the same query; blocked means the source or capability is unavailable; failed means execution failed and may be retried only when recoverable. Follow nextAgent when provided. Relay reports faithfully and never claim an output exists that the report did not confirm.',
+    "After a completed specialist report, continue only with synthesis or work outside that specialist's ownership. Do not redo successful specialist work through general-purpose tools. After fallback is unlocked, limit it to the failed subtask and tell the user why Phi degraded and which source produced the result.",
     'Independent tasks can be delegated together: call several agents in the same turn and they run in parallel. Set `background: true` on a delegation to get a run id back at once and keep working. When a background run ends, Phi sends you a message with its report, even after your turn is over, so tell the user it is running and end your turn instead of polling. Use `agent_wait` only when you cannot go on without a result, `agent_status` to see progress, `agent_steer` to redirect a running agent (it reads the message after its current tool call), and `agent_stop` to cancel one. Delegate in the foreground when you need the report before you can continue.',
     'Available agents:',
     ...entries,
