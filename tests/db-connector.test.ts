@@ -452,6 +452,33 @@ test('result writer keeps small results inline and writes large results to artif
     assert.equal(small.mode, 'inline')
     assert.deepEqual(small.resolvedQuery, resolvedQuery)
 
+    const typedViewers = buildDbQueryToolDetails(
+      {
+        rows: [
+          {
+            pdb_id: '1TUP',
+            canonical_smiles: 'CC(=O)Oc1ccccc1C(=O)O',
+            source_id: 'BRCA1',
+            target_id: 'BARD1',
+            confidence_score: 0.98
+          }
+        ],
+        truncated: false,
+        provenance
+      },
+      { agentDir, fileStem: 'typed-viewers' }
+    )
+    assert.equal(typedViewers.mode, 'inline')
+    assert.deepEqual(
+      typedViewers.viewerHints?.map((hint) => [hint.kind, hint.recommendedLibrary]),
+      [
+        ['protein_structure', 'molstar'],
+        ['small_molecule', 'rdkit-js'],
+        ['interaction_network', 'cytoscape-js']
+      ]
+    )
+    assert.deepEqual(typedViewers.viewerHints?.[2]?.sampleValues, ['BRCA1 -> BARD1'])
+
     const geoDownloadFiles = [
       {
         kind: 'series_matrix',

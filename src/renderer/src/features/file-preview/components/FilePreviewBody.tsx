@@ -5,6 +5,8 @@ import type { DirectoryListing } from '../../../types'
 import type { FilePreviewPanelState } from '../lib/filePreviewState'
 import { CodePreview } from './CodePreview'
 import { MediaPreview } from './MediaPreview'
+import { molecularStructureFormatForPath } from '../lib/molecularStructureFiles'
+import { MolecularStructureFilePreview } from './MolecularStructureFilePreview'
 import { ProjectFileTree } from './ProjectFileTree'
 import { SpreadsheetPreview } from './SpreadsheetPreview'
 
@@ -69,6 +71,8 @@ export function FilePreviewBody({
   }
 
   const spreadsheetModel = spreadsheetPreviewModel(state.file)
+  const molecularStructureFormat =
+    state.file.kind === 'text' ? molecularStructureFormatForPath(state.file.path) : null
 
   return (
     <>
@@ -80,6 +84,11 @@ export function FilePreviewBody({
       ) : null}
       {spreadsheetModel ? (
         <SpreadsheetPreview model={spreadsheetModel} />
+      ) : molecularStructureFormat && state.file.kind === 'text' ? (
+        <>
+          <MolecularStructureFilePreview file={state.file} format={molecularStructureFormat} />
+          <CodePreview file={state.file} />
+        </>
       ) : (
         <CodePreview file={state.file} />
       )}

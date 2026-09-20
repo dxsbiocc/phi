@@ -255,12 +255,28 @@ export interface DbDownloadManifestSummary {
   kinds: string[]
 }
 
+export type DbResultViewerKind = 'protein_structure' | 'small_molecule' | 'interaction_network'
+
+export type DbResultViewerLibrary = 'molstar' | 'rdkit-js' | 'cytoscape-js'
+
+export interface DbResultViewerHint {
+  kind: DbResultViewerKind
+  label: string
+  recommendedLibrary: DbResultViewerLibrary
+  confidence: 'low' | 'medium' | 'high'
+  rowCount: number
+  fields: string[]
+  sampleValues: string[]
+  reason: string
+}
+
 export type DbQueryToolDetails =
   | {
       kind: 'db_query_result'
       mode: 'inline'
       summary: DbResultSummary
       rows: Record<string, unknown>[]
+      viewerHints?: DbResultViewerHint[]
       artifacts?: DbQueryArtifact[]
       downloadManifestArtifact?: DbQueryArtifact
       downloadManifestSummary?: DbDownloadManifestSummary
@@ -272,6 +288,7 @@ export type DbQueryToolDetails =
       mode: 'artifact'
       summary: DbResultSummary
       sampleRows: Record<string, unknown>[]
+      viewerHints?: DbResultViewerHint[]
       artifact: DbQueryArtifact
       artifacts: DbQueryArtifact[]
       metadataArtifact: DbQueryArtifact

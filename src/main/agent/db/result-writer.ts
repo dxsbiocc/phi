@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { getSessionDir } from '../session/session-store'
 import { getDbConnectorResultsDir } from './store'
+import { detectDbResultViewerHints } from './result-viewer-hints'
 import type {
   DbAdapterQueryResult,
   DbDownloadFileAvailability,
@@ -291,6 +292,7 @@ export function buildDbQueryToolDetails(
   options: BuildDbQueryToolDetailsOptions
 ): DbQueryToolDetails {
   const summary = summaryFrom(result)
+  const viewerHints = detectDbResultViewerHints(result)
   const downloadManifest = buildDownloadManifest(result, summary, options.resolvedQuery)
   const downloadManifestSummary = downloadManifest
     ? summarizeDownloadManifest(downloadManifest)
@@ -311,6 +313,7 @@ export function buildDbQueryToolDetails(
       mode: 'inline',
       summary,
       rows: result.rows,
+      ...(viewerHints.length > 0 ? { viewerHints } : {}),
       ...(downloadManifestArtifact
         ? {
             artifacts: [downloadManifestArtifact],
@@ -377,6 +380,7 @@ export function buildDbQueryToolDetails(
     summary,
     provenance: result.provenance,
     ...(options.resolvedQuery ? { resolvedQuery: options.resolvedQuery } : {}),
+    ...(viewerHints.length > 0 ? { viewerHints } : {}),
     schema: {
       fields: metadataSchema(result.rows, fields)
     },
@@ -403,6 +407,7 @@ export function buildDbQueryToolDetails(
     mode: 'artifact',
     summary,
     sampleRows: result.rows.slice(0, SAMPLE_ROW_LIMIT),
+    ...(viewerHints.length > 0 ? { viewerHints } : {}),
     artifact,
     artifacts,
     metadataArtifact,

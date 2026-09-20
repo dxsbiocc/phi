@@ -108,6 +108,24 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
-    plugins: [react()]
+    plugins: [react()],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id): string | undefined {
+            if (id.includes('node_modules/molstar/')) {
+              return 'molstar'
+            }
+            if (id.includes('node_modules/@rdkit/rdkit/')) {
+              return 'rdkit'
+            }
+            if (id.includes('node_modules/cytoscape/')) {
+              return 'cytoscape'
+            }
+            return undefined
+          }
+        }
+      }
+    }
   }
 })

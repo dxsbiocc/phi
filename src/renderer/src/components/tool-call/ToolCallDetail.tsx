@@ -2,6 +2,7 @@ import { Box, Button, Divider, Typography } from '@mui/material'
 import { useState, type ReactNode } from 'react'
 import { fileIconForPath } from '../../icons'
 import type { ToolCallItem } from '../../types'
+import { DbQueryResultPreview } from '../../features/databases/components/DbQueryResultPreview'
 import { toolTargetFromArgs } from '../../lib/toolTargets'
 import {
   formatBytes,
@@ -50,6 +51,9 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
   return (
     <TimelineRail sx={{ py: 1 }}>
       {item.notebook ? <NotebookToolSummaryBlock notebook={item.notebook} /> : null}
+      {item.toolName === 'db_query' && item.output ? (
+        <DbQueryResultPreview output={item.output} />
+      ) : null}
       {target ? (
         <Box
           sx={{
