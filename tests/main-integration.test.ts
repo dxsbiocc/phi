@@ -1,3 +1,8 @@
+import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
+import * as jobContinue from '../src/main/agent/wrappers/composition/job-continue'
+import { MAX_AUTOMATIC_CONTINUATIONS } from '../src/main/agent/wrappers/composition/job-continue'
+import { deliverWrapperRunFinished } from '../src/main/agent/wrappers/composition/job-notify'
+import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
@@ -27,7 +32,10 @@ type PromptOptions = {
   userInitiated?: boolean
   skipCompactionCheck?: boolean
 }
+let fakeRuntimeSessionCounter = 0
+
 class FakeSession {
+  readonly runtimeSessionId = `runtime-${++fakeRuntimeSessionCounter}`
   readonly messages: unknown[] = []
   readonly listeners: Array<(event: unknown) => void> = []
   readonly log: string[] = []
@@ -148,6 +156,10 @@ async function harness(
   const updatedProjectDefaults: Array<Record<string, unknown>> = []
   const updatedSessionManifests: Array<{ sessionId: string; patch: Record<string, unknown> }> = []
   const appendedSessionEvents: Array<Record<string, unknown>> = []
+  let appFocused = true
+  const reportedWrapperRuns = new Set<string>()
+  const wrapperJobFinishListeners: Array<(run: unknown, status: unknown) => void> = []
+  const osNotifications: Array<{ title: string; body: string }> = []
   const persistedToolOutputs: Array<Record<string, unknown>> = []
   const revealedPaths: string[] = []
   const openedPaths: string[] = []
@@ -372,7 +384,7 @@ async function harness(
       return Window.windows
     }
     static getFocusedWindow(): Window | null {
-      return Window.windows[0] ?? null
+      return appFocused ? (Window.windows[0] ?? null) : null
     }
     isDestroyed(): boolean {
       return false
@@ -793,6 +805,18 @@ async function harness(
           handlers.set(name, handler)
         }
       },
+      Notification: class {
+        static isSupported(): boolean {
+          return true
+        }
+        constructor(readonly options: { title: string; body: string }) {}
+        on(): void {
+          // click handling is not exercised here
+        }
+        show(): void {
+          osNotifications.push(this.options)
+        }
+      },
       nativeImage: { createFromPath: () => ({ isEmpty: () => false }) },
       nativeTheme: { shouldUseDarkColors: false }
     },
@@ -812,6 +836,7 @@ async function harness(
         }
       },
       getBundledSkillsDir: (): string => path.join(process.cwd(), 'resources', 'skills'),
+      getBundledAgentsDir: (): string => path.join(process.cwd(), 'resources', 'agents'),
       createInMemoryRuntimeSessionManager: (cwd: string): { file: string; cwd: string } => ({
         file: 'in-memory',
         cwd
@@ -1313,6 +1338,35 @@ async function harness(
         throw new Error('run 不存在: (mocked in main-integration.test.ts)')
       }
     },
+    './agent/wrappers/composition/job-host-handlers': {
+      wrapperJobHostHandlers: (): Record<string, never> => ({})
+    },
+    './agent/wrappers/composition/job-continue': jobContinue,
+    // The real delivery logic: this test is what proves index.ts wires it to the session timeline.
+    './agent/wrappers/composition/job-notify': { deliverWrapperRunFinished },
+    './agent/wrappers/composition/job-manager': {
+      WrapperJobManager: class {
+        onChange(): () => void {
+          return (): void => {}
+        }
+        onFinish(listener: (run: unknown, status: unknown) => void): () => void {
+          wrapperJobFinishListeners.push(listener)
+          return (): void => {}
+        }
+        shutdown(): void {
+          // nothing running in the harness
+        }
+        cancel(): Promise<{ ok: true }> {
+          return Promise.resolve({ ok: true })
+        }
+        hasBeenReported(runId: string): boolean {
+          return reportedWrapperRuns.has(runId)
+        }
+      }
+    },
+    './agent/wrappers/composition/run-record': {
+      markInterruptedCompositionRuns: (): number => 0
+    },
     './agent/wrappers/executor-slurm-reconcile': {
       reconcileRemoteWrapperRuns: (): Promise<void> => Promise.resolve()
     },
@@ -1323,6 +1377,12 @@ async function harness(
         throw new Error('wrapper.yaml 校验失败: (mocked in main-integration.test.ts)')
       }
     },
+    // Real scan of the repo's bundled agents, but never the developer's own ~/.claude etc.
+    './agent/agents/discovery': {
+      discoverPhiAgents: (options: Parameters<typeof discoverPhiAgents>[0]) =>
+        discoverPhiAgents({ ...options, homeDir: '/nonexistent-home' })
+    },
+    './agent/agents/leader-prompt': { buildAgentLeaderPrompt },
     './agent/wrappers/composition/discovery': {
       listWrapperCompositionCatalog: (): unknown[] => []
     },
@@ -1529,6 +1589,12 @@ async function harness(
     updatedProjectDefaults,
     updatedSessionManifests,
     appendedSessionEvents,
+    wrapperJobFinishListeners,
+    osNotifications,
+    reportedWrapperRuns,
+    setAppFocused: (focused: boolean): void => {
+      appFocused = focused
+    },
     persistedToolOutputs,
     revealedPaths,
     openedPaths,
@@ -1632,6 +1698,14 @@ test('main IPC: DB connector tools register by default and can be disabled throu
   assert.match(appendSystemPrompt?.join('\n') ?? '', /<phi_db_connector_runtime>/)
   assert.match(appendSystemPrompt?.join('\n') ?? '', /db_search/)
   assert.match(appendSystemPrompt?.join('\n') ?? '', /Prefer db_\* over bash/)
+  // Phi's own scan feeds the leader prompt, and the same definitions go to the worker.
+  assert.match(appendSystemPrompt?.join('\n') ?? '', /<phi_agents>/)
+  assert.match(appendSystemPrompt?.join('\n') ?? '', /- Wrapper: /)
+  const phiAgents = enabledApp.createdAgentOptions[0].phiAgents as Array<{ name: string }> | undefined
+  assert.deepEqual(
+    phiAgents?.map((agent) => agent.name),
+    ['Wrapper']
+  )
 })
 
 test('main IPC: reveal path is limited to Phi-owned files', async () => {
@@ -4744,3 +4818,299 @@ test(
     )
   }
 )
+
+test('main IPC: a background wrapper run that ends is reported in the conversation that started it', async () => {
+  const app = await harness()
+  await app.invoke('projects:newSession', '/projects/wrapper-notice', 'ask')
+  await app.invoke('agent:prompt', 'run fastqc')
+  const runtimeSessionId = (app.sessions[0] as unknown as { runtimeSessionId: string })
+    .runtimeSessionId
+  assert.equal(app.wrapperJobFinishListeners.length, 1)
+
+  const before = app.events.length
+  app.wrapperJobFinishListeners[0](
+    {
+      runId: 'wrun_1',
+      state: 'completed',
+      exitCode: 0,
+      outDir: '/data/qc',
+      originSessionId: runtimeSessionId,
+      wrapper: { canonicalId: 'nf-core/modules/fastqc' }
+    },
+    { elapsedSeconds: 42, missingOutputs: [] }
+  )
+
+  const persisted = app.appendedSessionEvents.filter(
+    (entry) => (entry.event as { type?: string }).type === 'wrapper_run_finished'
+  )
+  assert.equal(persisted.length, 1)
+  const event = persisted[0].event as { wrapperRunId: string; state: string; outDir: string }
+  assert.equal(event.wrapperRunId, 'wrun_1')
+  assert.equal(event.state, 'completed')
+  assert.equal(event.outDir, '/data/qc')
+
+  const pushed = app.events
+    .slice(before)
+    .filter((entry) => (entry.data as { type?: string }).type === 'wrapper_run_finished')
+  assert.equal(pushed.length, 1)
+  assert.equal(pushed[0].channel, 'agent:event')
+  const payload = pushed[0].data as { phiSessionId?: string; sessionPath?: string; cwd?: string }
+  assert.equal(payload.phiSessionId, persisted[0].sessionId)
+  assert.match(payload.sessionPath ?? '', new RegExp(String(persisted[0].sessionId)))
+  assert.equal(payload.cwd, '/projects/wrapper-notice')
+
+  // The (fake) window is focused, so no system notification on top of the in-chat one.
+  assert.deepEqual(app.osNotifications, [])
+})
+
+test('main IPC: a run that ends while Phi is in the background raises a system notification', async () => {
+  const app = await harness()
+  await app.invoke('projects:newSession', '/projects/wrapper-notice', 'ask')
+  await app.invoke('agent:prompt', 'hi')
+  const runtimeSessionId = (app.sessions[0] as unknown as { runtimeSessionId: string })
+    .runtimeSessionId
+
+  app.setAppFocused(false)
+  app.wrapperJobFinishListeners[0](
+    {
+      runId: 'wrun_2',
+      state: 'failed',
+      exitCode: 1,
+      outDir: '/x',
+      originSessionId: runtimeSessionId,
+      wrapper: { canonicalId: 'a/b/c' }
+    },
+    { elapsedSeconds: 5 }
+  )
+
+  assert.equal(app.osNotifications.length, 1)
+  assert.equal(app.osNotifications[0].title, 'Wrapper 运行失败')
+  assert.match(app.osNotifications[0].body, /a\/b\/c/)
+  assert.match(app.osNotifications[0].body, /wrun_2/)
+})
+
+test('main IPC: a run from a session Phi does not know is announced by system notification only', async () => {
+  const app = await harness()
+  await app.invoke('projects:newSession', '/projects/wrapper-notice', 'ask')
+  await app.invoke('agent:prompt', 'hi')
+
+  app.setAppFocused(false)
+  app.wrapperJobFinishListeners[0](
+    {
+      runId: 'wrun_3',
+      state: 'completed',
+      exitCode: 0,
+      outDir: '/x',
+      originSessionId: 'runtime-unknown',
+      wrapper: { canonicalId: 'a/b/c' }
+    },
+    { elapsedSeconds: 5 }
+  )
+
+  assert.equal(
+    app.appendedSessionEvents.some(
+      (entry) => (entry.event as { type?: string }).type === 'wrapper_run_finished'
+    ),
+    false
+  )
+  assert.equal(app.osNotifications.length, 1)
+  assert.equal(app.osNotifications[0].title, 'Wrapper 运行已完成')
+})
+
+// ── automatic continuation after a background wrapper run ─────────────────
+
+const FINISHED_RUN = (
+  originSessionId: string,
+  overrides: Record<string, unknown> = {}
+): unknown => ({
+  runId: 'wrun_1',
+  state: 'completed',
+  exitCode: 0,
+  outDir: '/data/qc',
+  originSessionId,
+  wrapper: { canonicalId: 'nf-core/modules/fastqc' },
+  ...overrides
+})
+
+async function waitUntil(condition: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('timed out waiting for condition')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+}
+
+async function idleConversation(): Promise<{
+  app: Awaited<ReturnType<typeof harness>>
+  session: FakeSession
+}> {
+  const app = await harness()
+  await app.invoke('projects:newSession', '/projects/wrapper-continue', 'ask')
+  await app.invoke('agent:prompt', 'run fastqc on my reads')
+  await tick()
+  return { app, session: app.sessions[0] as unknown as FakeSession }
+}
+
+const WOKEN = /<phi_wrapper_run_finished>/
+
+test('main IPC: a run that ends wakes an idle conversation with a message from Phi', async () => {
+  const { app, session } = await idleConversation()
+  const userMessagesBefore = app.appendedSessionEvents.filter(
+    (e) => (e.event as { type?: string }).type === 'user_message'
+  ).length
+
+  app.wrapperJobFinishListeners[0](FINISHED_RUN(session.runtimeSessionId), { elapsedSeconds: 42 })
+  await waitUntil(() => session.promptTexts.length === 2)
+
+  assert.match(session.promptTexts[1], WOKEN)
+  assert.match(session.promptTexts[1], /wrun_1/)
+  assert.match(session.promptTexts[1], /\/data\/qc/)
+  // Not the user's words: no user bubble is recorded for it…
+  assert.equal(
+    app.appendedSessionEvents.filter((e) => (e.event as { type?: string }).type === 'user_message')
+      .length,
+    userMessagesBefore
+  )
+  // …but the run is tracked like any other, and nothing else was opened or switched.
+  await waitUntil(() => session.log.filter((entry) => entry === 'saved').length === 2)
+  assert.equal(app.sessions.length, 1)
+})
+
+test('main IPC: a run that ends while the conversation is busy wakes it once the busy run is over', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  await app.invoke('projects:newSession', '/projects/wrapper-continue', 'ask')
+  const first = app.invoke('agent:prompt', 'work on something')
+  await tick()
+
+  app.wrapperJobFinishListeners[0](FINISHED_RUN(session.runtimeSessionId), { elapsedSeconds: 7 })
+  await tick()
+  assert.equal(session.promptTexts.length, 1, 'must not interrupt the run in progress')
+
+  session.finish.resolve()
+  await first
+  await waitUntil(() => session.promptTexts.length === 2)
+  assert.match(session.promptTexts[1], WOKEN)
+})
+
+test('main IPC: runs that end while busy are reported together in one wake-up', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  await app.invoke('projects:newSession', '/projects/wrapper-continue', 'ask')
+  const first = app.invoke('agent:prompt', 'work')
+  await tick()
+
+  app.wrapperJobFinishListeners[0](FINISHED_RUN(session.runtimeSessionId), { elapsedSeconds: 1 })
+  app.wrapperJobFinishListeners[0](
+    FINISHED_RUN(session.runtimeSessionId, {
+      runId: 'wrun_2',
+      wrapper: { canonicalId: 'nf-core/modules/fastp' }
+    }),
+    { elapsedSeconds: 2 }
+  )
+  session.finish.resolve()
+  await first
+  await waitUntil(() => session.promptTexts.length === 2)
+  await tick()
+
+  assert.equal(session.promptTexts.length, 2)
+  assert.match(session.promptTexts[1], /wrun_1/)
+  assert.match(session.promptTexts[1], /wrun_2/)
+})
+
+test('main IPC: stopping a run means its pending wake-up is dropped', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  await app.invoke('projects:newSession', '/projects/wrapper-continue', 'ask')
+  const first = app.invoke('agent:prompt', 'work')
+  await tick()
+
+  app.wrapperJobFinishListeners[0](FINISHED_RUN(session.runtimeSessionId), { elapsedSeconds: 1 })
+  await app.invoke('agent:stop')
+  await first
+  await tick()
+  await tick()
+
+  assert.equal(session.promptTexts.length, 1)
+})
+
+test('main IPC: a cancelled run, an opted-out run and an unknown conversation do not wake anything', async () => {
+  const { app, session } = await idleConversation()
+  const fire = (run: unknown): void => app.wrapperJobFinishListeners[0](run, { elapsedSeconds: 1 })
+
+  fire(FINISHED_RUN(session.runtimeSessionId, { state: 'cancelled', exitCode: -1 }))
+  fire(FINISHED_RUN(session.runtimeSessionId, { continueWhenDone: false }))
+  fire(FINISHED_RUN('runtime-unknown'))
+  await tick()
+  await tick()
+
+  assert.equal(session.promptTexts.length, 1)
+})
+
+test('main IPC: automatic wake-ups are capped, and a real user message starts the count over', async () => {
+  const { app, session } = await idleConversation()
+  const wake = async (n: number): Promise<void> => {
+    app.wrapperJobFinishListeners[0](
+      FINISHED_RUN(session.runtimeSessionId, { runId: `wrun_${n}` }),
+      { elapsedSeconds: 1 }
+    )
+    await tick()
+    await tick()
+  }
+
+  for (let n = 1; n <= MAX_AUTOMATIC_CONTINUATIONS; n += 1) {
+    await wake(n)
+    await waitUntil(() => session.promptTexts.length === 1 + n)
+  }
+  await wake(99)
+  assert.equal(session.promptTexts.length, 1 + MAX_AUTOMATIC_CONTINUATIONS, 'the cap holds')
+
+  await app.invoke('agent:prompt', 'ok, carry on')
+  await tick()
+  await wake(100)
+  await waitUntil(() => session.promptTexts.length === 2 + MAX_AUTOMATIC_CONTINUATIONS + 1)
+  assert.match(session.promptTexts.at(-1) ?? '', /wrun_100/)
+})
+
+test('main IPC: a run whose outcome Wrapper already reported inside the same turn does not wake the conversation again', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  await app.invoke('projects:newSession', '/projects/wrapper-continue', 'ask')
+  const first = app.invoke('agent:prompt', 'run it and wait for the result')
+  await tick()
+
+  // The run ends while the turn is still going, and Wrapper's wait hands the outcome to the agent.
+  app.wrapperJobFinishListeners[0](FINISHED_RUN(session.runtimeSessionId), { elapsedSeconds: 3 })
+  app.reportedWrapperRuns.add('wrun_1')
+  session.finish.resolve()
+  await first
+  await tick()
+  await tick()
+
+  assert.equal(session.promptTexts.length, 1)
+})
+
+test('main IPC: only the runs nobody has reported are included in a wake-up', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  await app.invoke('projects:newSession', '/projects/wrapper-continue', 'ask')
+  const first = app.invoke('agent:prompt', 'work')
+  await tick()
+
+  app.wrapperJobFinishListeners[0](FINISHED_RUN(session.runtimeSessionId), { elapsedSeconds: 1 })
+  app.wrapperJobFinishListeners[0](FINISHED_RUN(session.runtimeSessionId, { runId: 'wrun_2' }), {
+    elapsedSeconds: 1
+  })
+  app.reportedWrapperRuns.add('wrun_1')
+  session.finish.resolve()
+  await first
+  await waitUntil(() => session.promptTexts.length === 2)
+
+  assert.doesNotMatch(session.promptTexts[1], /wrun_1/)
+  assert.match(session.promptTexts[1], /wrun_2/)
+})

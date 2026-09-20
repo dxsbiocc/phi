@@ -1,18 +1,18 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/nf-core/modules/master/modules/meta-schema.json
-name: "dupradar"
+name: 'dupradar'
 description: Assessment of duplication rates in RNA-Seq datasets
 keywords:
   - rnaseq
   - duplication
   - genomics
 tools:
-  - "dupradar":
-      description: "Assessment of duplication rates in RNA-Seq datasets"
-      homepage: "https://bioconductor.org/packages/release/bioc/html/dupRadar.html"
-      documentation: "https://bioconductor.org/packages/release/bioc/vignettes/dupRadar/inst/doc/dupRadar.html"
-      tool_dev_url: "https://github.com/ssayols/dupRadar"
-      doi: "10.1186/s12859-016-1276-2"
-      licence: ["GPL v3"]
+  - 'dupradar':
+      description: 'Assessment of duplication rates in RNA-Seq datasets'
+      homepage: 'https://bioconductor.org/packages/release/bioc/html/dupRadar.html'
+      documentation: 'https://bioconductor.org/packages/release/bioc/vignettes/dupRadar/inst/doc/dupRadar.html'
+      tool_dev_url: 'https://github.com/ssayols/dupRadar'
+      doi: '10.1186/s12859-016-1276-2'
+      licence: ['GPL v3']
       identifier: biotools:dupradar
 
 input:
@@ -24,7 +24,7 @@ input:
     - bam:
         type: file
         description: BAM/SAM file containing read alignments
-        pattern: "*.{bam}"
+        pattern: '*.{bam}'
         ontologies: []
   - - meta2:
         type: map
@@ -34,7 +34,7 @@ input:
     - gtf:
         type: file
         description: Genomic features annotation in GTF or SAF
-        pattern: "*.{gtf}"
+        pattern: '*.{gtf}'
         ontologies: []
 output:
   scatter2d:
@@ -43,10 +43,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. `[ id:'sample1', single_end:false ]`
-      - "*_duprateExpDens.pdf":
+      - '*_duprateExpDens.pdf':
           type: file
           description: PDF duplication rate against total read count plot
-          pattern: "*_duprateExpDens.pdf"
+          pattern: '*_duprateExpDens.pdf'
           ontologies: []
   boxplot:
     - - meta:
@@ -54,11 +54,11 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. `[ id:'sample1', single_end:false ]`
-      - "*_duprateExpBoxplot.pdf":
+      - '*_duprateExpBoxplot.pdf':
           type: file
           description: |
             PDF duplication rate ~ total reads per kilobase (RPK) boxplot
-          pattern: "*_duprateExpBoxplot.pdf"
+          pattern: '*_duprateExpBoxplot.pdf'
           ontologies: []
   hist:
     - - meta:
@@ -66,11 +66,11 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. `[ id:'sample1', single_end:false ]`
-      - "*_expressionHist.pdf":
+      - '*_expressionHist.pdf':
           type: file
           description: |
             PDF expression histogram
-          pattern: "*.pdf"
+          pattern: '*.pdf'
           ontologies: []
   dupmatrix:
     - - meta:
@@ -78,12 +78,12 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. `[ id:'sample1', single_end:false ]`
-      - "*_dupMatrix.txt":
+      - '*_dupMatrix.txt':
           type: file
           description: |
             Text file containing tags falling on the features described in the GTF
             file
-          pattern: "*_dupMatrix.txt"
+          pattern: '*_dupMatrix.txt'
           ontologies: []
   intercept_slope:
     - - meta:
@@ -91,11 +91,11 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. `[ id:'sample1', single_end:false ]`
-      - "*_intercept_slope.txt":
+      - '*_intercept_slope.txt':
           type: file
           description: |
             Text file containing intercept and slope from dupRadar modelling
-          pattern: "*_intercept_slope.txt"
+          pattern: '*_intercept_slope.txt'
           ontologies: []
   multiqc:
     - - meta:
@@ -103,11 +103,11 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. `[ id:'sample1', single_end:false ]`
-      - "*_mqc.txt":
+      - '*_mqc.txt':
           type: file
           description: |
             dupRadar files for passing to MultiQC
-          pattern: "*_multiqc.txt"
+          pattern: '*_multiqc.txt'
           ontologies: []
   session_info:
     - - meta:
@@ -115,16 +115,16 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. `[ id:'sample1', single_end:false ]`
-      - "*.R_sessionInfo.log":
+      - '*.R_sessionInfo.log':
           type: file
           description: dump of R SessionInfo
-          pattern: "*.log"
+          pattern: '*.log'
           ontologies: []
   versions:
     - versions.yml:
         type: file
         description: File containing software versions
-        pattern: "versions.yml"
+        pattern: 'versions.yml'
         ontologies:
           - edam: http://edamontology.org/format_3750 # YAML
 topics:
@@ -133,6 +133,6 @@ topics:
         type: string
         description: The name of the process
 authors:
-  - "@pinin4fjords"
+  - '@pinin4fjords'
 maintainers:
-  - "@pinin4fjords"
+  - '@pinin4fjords'

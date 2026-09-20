@@ -10,8 +10,8 @@ tools:
       description: |
         The cat utility reads files sequentially, writing them to the standard output.
       documentation: https://www.gnu.org/software/coreutils/manual/html_node/cat-invocation.html
-      licence: ["GPL-3.0-or-later"]
-      identifier: ""
+      licence: ['GPL-3.0-or-later']
+      identifier: ''
 input:
   - - meta:
         type: map
@@ -31,10 +31,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.merged.fastq.gz":
+      - '*.merged.fastq.gz':
           type: file
           description: Merged fastq file
-          pattern: "*.{merged.fastq.gz}"
+          pattern: '*.{merged.fastq.gz}'
           ontologies: []
   versions_cat:
     - - ${task.process}:
@@ -60,8 +60,8 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@joseespinosa"
-  - "@drpatelh"
+  - '@joseespinosa'
+  - '@drpatelh'
 maintainers:
-  - "@joseespinosa"
-  - "@drpatelh"
+  - '@joseespinosa'
+  - '@drpatelh'

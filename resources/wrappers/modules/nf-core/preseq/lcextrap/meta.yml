@@ -11,7 +11,7 @@ tools:
       documentation: http://smithlabresearch.org/wp-content/uploads/manual.pdf
       tool_dev_url: https://github.com/smithlabcode/preseq
       licence:
-        - "GPL"
+        - 'GPL'
       identifier: biotools:preseq
 input:
   - - meta:
@@ -22,7 +22,7 @@ input:
     - bam:
         type: file
         description: BAM/CRAM/SAM file
-        pattern: "*.{bam,cram,sam}"
+        pattern: '*.{bam,cram,sam}'
         ontologies: []
 output:
   lc_extrap:
@@ -31,10 +31,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.lc_extrap.txt":
+      - '*.lc_extrap.txt':
           type: file
           description: File containing output of Preseq lcextrap
-          pattern: "*.{lc_extrap.txt}"
+          pattern: '*.{lc_extrap.txt}'
           ontologies: []
   log:
     - - meta:
@@ -42,10 +42,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.log":
+      - '*.log':
           type: file
           description: Log file containing stderr produced by Preseq
-          pattern: "*.{log}"
+          pattern: '*.{log}'
           ontologies: []
   versions_preseq:
     - - ${task.process}:
@@ -71,8 +71,8 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@drpatelh"
-  - "@edmundmiller"
+  - '@drpatelh'
+  - '@edmundmiller'
 maintainers:
-  - "@drpatelh"
-  - "@edmundmiller"
+  - '@drpatelh'
+  - '@edmundmiller'

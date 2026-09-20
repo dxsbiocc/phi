@@ -12,7 +12,7 @@ tools:
       homepage: http://rseqc.sourceforge.net/
       documentation: http://rseqc.sourceforge.net/
       doi: 10.1093/bioinformatics/bts356
-      licence: ["GPL-3.0-or-later"]
+      licence: ['GPL-3.0-or-later']
       identifier: biotools:rseqc
 input:
   - - meta:
@@ -23,24 +23,24 @@ input:
     - bam:
         type: file
         description: the bam file to calculate statistics of
-        pattern: "*.{bam}"
+        pattern: '*.{bam}'
         ontologies: []
     - bai:
         type: file
         description: BAM index file
-        pattern: "*.{bai}"
+        pattern: '*.{bai}'
         ontologies: []
 output:
   txt:
     - - meta:
           type: file
           description: bam statistics report
-          pattern: "*.bam_stat.txt"
+          pattern: '*.bam_stat.txt'
           ontologies: []
-      - "*.bam_stat.txt":
+      - '*.bam_stat.txt':
           type: file
           description: bam statistics report
-          pattern: "*.bam_stat.txt"
+          pattern: '*.bam_stat.txt'
           ontologies: []
   versions_rseqc:
     - - ${task.process}:
@@ -64,10 +64,10 @@ topics:
           type: eval
           description: The expression to obtain the version of the tool
 authors:
-  - "@drpatelh"
-  - "@kevinmenden"
-  - "@rhassaine"
+  - '@drpatelh'
+  - '@kevinmenden'
+  - '@rhassaine'
 maintainers:
-  - "@drpatelh"
-  - "@kevinmenden"
-  - "@rhassaine"
+  - '@drpatelh'
+  - '@kevinmenden'
+  - '@rhassaine'

@@ -24,8 +24,8 @@ tools:
       homepage: https://seqeralabs.github.io/RustQC/
       documentation: https://seqeralabs.github.io/RustQC/
       tool_dev_url: https://github.com/seqeralabs/rustqc
-      licence: ["GPL-3.0-or-later"]
-      identifier: ""
+      licence: ['GPL-3.0-or-later']
+      identifier: ''
 
 input:
   - - meta:
@@ -36,12 +36,12 @@ input:
     - bam:
         type: file
         description: Sorted BAM file
-        pattern: "*.{bam}"
+        pattern: '*.{bam}'
         ontologies: []
     - bai:
         type: file
         description: BAM index file
-        pattern: "*.{bai}"
+        pattern: '*.{bai}'
         ontologies: []
   - - meta2:
         type: map
@@ -51,7 +51,7 @@ input:
     - gtf:
         type: file
         description: GTF annotation file
-        pattern: "*.{gtf}"
+        pattern: '*.{gtf}'
         ontologies: []
 
 output:
@@ -61,10 +61,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "${prefix}/dupradar/*":
+      - '${prefix}/dupradar/*':
           type: file
           description: dupRadar-compatible duplication rate plots and tables
-          pattern: "${prefix}/dupradar/*"
+          pattern: '${prefix}/dupradar/*'
           ontologies: []
   featurecounts:
     - - meta:
@@ -72,10 +72,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "${prefix}/featurecounts/*":
+      - '${prefix}/featurecounts/*':
           type: file
           description: featureCounts-compatible biotype quantification files
-          pattern: "${prefix}/featurecounts/*"
+          pattern: '${prefix}/featurecounts/*'
           ontologies: []
   preseq:
     - - meta:
@@ -83,10 +83,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "${prefix}/preseq/*":
+      - '${prefix}/preseq/*':
           type: file
           description: Preseq-compatible library complexity extrapolation
-          pattern: "${prefix}/preseq/*"
+          pattern: '${prefix}/preseq/*'
           ontologies: []
   samtools:
     - - meta:
@@ -94,10 +94,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "${prefix}/samtools/*":
+      - '${prefix}/samtools/*':
           type: file
           description: SAMtools flagstat, idxstats, and stats output
-          pattern: "${prefix}/samtools/*"
+          pattern: '${prefix}/samtools/*'
           ontologies: []
   rseqc:
     - - meta:
@@ -105,10 +105,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "${prefix}/rseqc/**":
+      - '${prefix}/rseqc/**':
           type: file
           description: RSeQC-compatible outputs (bam_stat, infer_experiment, read_distribution, read_duplication, junction_annotation, junction_saturation, inner_distance, TIN)
-          pattern: "${prefix}/rseqc/**"
+          pattern: '${prefix}/rseqc/**'
           ontologies: []
   qualimap:
     - - meta:
@@ -116,10 +116,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "${prefix}/qualimap/**":
+      - '${prefix}/qualimap/**':
           type: file
           description: Qualimap RNA-seq QC report and raw data
-          pattern: "${prefix}/qualimap/**"
+          pattern: '${prefix}/qualimap/**'
           ontologies: []
   versions_rustqc:
     - - ${task.process}:
@@ -145,11 +145,11 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@ewels"
-  - "@pinin4fjords"
+  - '@ewels'
+  - '@pinin4fjords'
 maintainers:
-  - "@ewels"
-  - "@pinin4fjords"
+  - '@ewels'
+  - '@pinin4fjords'
 containers:
   docker:
     linux/amd64:

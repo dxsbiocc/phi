@@ -11,30 +11,30 @@ tools:
       homepage: https://github.com/deweylab/RSEM
       documentation: https://github.com/deweylab/RSEM
       doi: 10.1186/1471-2105-12-323
-      licence: ["GPL-3.0-or-later"]
+      licence: ['GPL-3.0-or-later']
       identifier: biotools:rsem
 input:
   - fasta:
       type: file
       description: The Fasta file of the reference genome
-      pattern: "*.{fasta,fa}"
+      pattern: '*.{fasta,fa}'
       ontologies: []
   - gtf:
       type: file
       description: The GTF file of the reference genome
-      pattern: "*.gtf"
+      pattern: '*.gtf'
       ontologies: []
 output:
   index:
     - rsem:
         type: directory
         description: RSEM index directory
-        pattern: "rsem"
+        pattern: 'rsem'
   transcript_fasta:
-    - "*transcripts.fa":
+    - '*transcripts.fa':
         type: file
         description: Fasta file of transcripts
-        pattern: "rsem/*transcripts.fa"
+        pattern: 'rsem/*transcripts.fa'
         ontologies: []
   versions_rsem:
     - - ${task.process}:
@@ -79,8 +79,8 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@drpatelh"
-  - "@kevinmenden"
+  - '@drpatelh'
+  - '@kevinmenden'
 maintainers:
-  - "@drpatelh"
-  - "@kevinmenden"
+  - '@drpatelh'
+  - '@kevinmenden'

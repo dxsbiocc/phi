@@ -11,11 +11,11 @@ tools:
       documentation: https://github.com/OpenGene/fastp
       doi: 10.1093/bioinformatics/bty560
       publication:
-        author: "Chen S., Zhou Y., Chen Y. & Gu J."
+        author: 'Chen S., Zhou Y., Chen Y. & Gu J.'
         year: 2018
-        title: "fastp: an ultra-fast all-in-one FASTQ preprocessor"
-        source: "Bioinformatics"
-      licence: ["MIT"]
+        title: 'fastp: an ultra-fast all-in-one FASTQ preprocessor'
+        source: 'Bioinformatics'
+      licence: ['MIT']
       identifier: biotools:fastp
 input:
   - - meta:
@@ -33,7 +33,7 @@ input:
     - adapter_fasta:
         type: file
         description: File in FASTA format containing possible adapters to remove.
-        pattern: "*.{fasta,fna,fas,fa}"
+        pattern: '*.{fasta,fna,fas,fa}'
         ontologies: []
   - discard_trimmed_pass:
       type: boolean
@@ -53,10 +53,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.fastp.fastq.gz":
+      - '*.fastp.fastq.gz':
           type: file
           description: The trimmed/modified/unmerged fastq reads
-          pattern: "*fastp.fastq.gz"
+          pattern: '*fastp.fastq.gz'
           ontologies:
             - edam: http://edamontology.org/format_1930 # FASTQ
             - edam: http://edamontology.org/format_3989 # GZIP format
@@ -66,10 +66,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.json":
+      - '*.json':
           type: file
           description: Results in JSON format
-          pattern: "*.json"
+          pattern: '*.json'
           ontologies:
             - edam: http://edamontology.org/format_3464 # JSON
   html:
@@ -78,10 +78,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.html":
+      - '*.html':
           type: file
           description: Results in HTML format
-          pattern: "*.html"
+          pattern: '*.html'
           ontologies: []
   log:
     - - meta:
@@ -89,10 +89,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.log":
+      - '*.log':
           type: file
           description: fastq log file
-          pattern: "*.log"
+          pattern: '*.log'
           ontologies: []
   reads_fail:
     - - meta:
@@ -100,10 +100,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.fail.fastq.gz":
+      - '*.fail.fastq.gz':
           type: file
           description: Reads the failed the preprocessing
-          pattern: "*fail.fastq.gz"
+          pattern: '*fail.fastq.gz'
           ontologies:
             - edam: http://edamontology.org/format_1930 # FASTQ
             - edam: http://edamontology.org/format_3989 # GZIP format
@@ -113,13 +113,13 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.merged.fastq.gz":
+      - '*.merged.fastq.gz':
           type: file
           description: Reads that were successfully merged
-          pattern: "*.{merged.fastq.gz}"
+          pattern: '*.{merged.fastq.gz}'
           ontologies: []
   versions_fastp:
-    - - "${task.process}":
+    - - '${task.process}':
           type: string
           description: The name of the process
       - fastp:
@@ -130,7 +130,7 @@ output:
           description: The expression to obtain the version of the tool
 topics:
   versions:
-    - - "${task.process}":
+    - - '${task.process}':
           type: string
           description: The name of the process
       - fastp:
@@ -140,12 +140,12 @@ topics:
           type: eval
           description: The expression to obtain the version of the tool
 authors:
-  - "@drpatelh"
-  - "@kevinmenden"
-  - "@eit-maxlcummins"
+  - '@drpatelh'
+  - '@kevinmenden'
+  - '@eit-maxlcummins'
 maintainers:
-  - "@drpatelh"
-  - "@kevinmenden"
+  - '@drpatelh'
+  - '@kevinmenden'
 containers:
   docker:
     linux/arm64:

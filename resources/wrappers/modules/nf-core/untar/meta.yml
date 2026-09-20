@@ -9,8 +9,8 @@ tools:
       description: |
         Extract tar, tar.gz, tar.bz2, tar.xz files.
       documentation: https://www.gnu.org/software/tar/manual/
-      licence: ["GPL-3.0-or-later"]
-      identifier: ""
+      licence: ['GPL-3.0-or-later']
+      identifier: ''
 input:
   - - meta:
         type: map
@@ -20,7 +20,7 @@ input:
     - archive:
         type: file
         description: File to be untarred
-        pattern: "*.{tar,tar.gz,tar.bz2,tar.xz}"
+        pattern: '*.{tar,tar.gz,tar.bz2,tar.xz}'
         ontologies:
           - edam: http://edamontology.org/format_3981 # TAR format
           - edam: http://edamontology.org/format_3989 # GZIP format
@@ -31,13 +31,13 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-          pattern: "*/"
+          pattern: '*/'
       - ${prefix}:
           type: map
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-          pattern: "*/"
+          pattern: '*/'
   versions_untar:
     - - ${task.process}:
           type: string
@@ -62,12 +62,12 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@joseespinosa"
-  - "@drpatelh"
-  - "@matthdsm"
-  - "@jfy133"
+  - '@joseespinosa'
+  - '@drpatelh'
+  - '@matthdsm'
+  - '@jfy133'
 maintainers:
-  - "@joseespinosa"
-  - "@drpatelh"
-  - "@matthdsm"
-  - "@jfy133"
+  - '@joseespinosa'
+  - '@drpatelh'
+  - '@matthdsm'
+  - '@jfy133'

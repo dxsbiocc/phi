@@ -15,8 +15,8 @@ tools:
       homepage: http://bowtie-bio.sourceforge.net/bowtie2/index.shtml
       documentation: http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml
       doi: 10.1186/gb-2009-10-3-r25
-      licence: ["GPL-3.0-or-later"]
-      identifier: ""
+      licence: ['GPL-3.0-or-later']
+      identifier: ''
 input:
   - - meta:
         type: map
@@ -37,7 +37,7 @@ input:
     - index:
         type: file
         description: Bowtie2 genome index files
-        pattern: "*.ebwt"
+        pattern: '*.ebwt'
         ontologies: []
   - - meta3:
         type: map
@@ -47,9 +47,9 @@ input:
     - fasta:
         type: file
         description: Reference genome FASTA file
-        pattern: "*.{fa,fasta,fna}"
+        pattern: '*.{fa,fasta,fna}'
         ontologies:
-          - edam: "http://edamontology.org/format_1929"
+          - edam: 'http://edamontology.org/format_1929'
   - save_unaligned:
       type: boolean
       description: |
@@ -58,70 +58,70 @@ input:
   - sort_bam:
       type: boolean
       description: use samtools sort (true) or samtools view (false)
-      pattern: "true or false"
+      pattern: 'true or false'
 output:
   sam:
     - - meta:
           type: map
           description: Groovy Map containing sample information
-      - "*.sam":
+      - '*.sam':
           type: file
           description: Output SAM file containing read alignments
-          pattern: "*.sam"
+          pattern: '*.sam'
           ontologies: []
   bam:
     - - meta:
           type: map
           description: Groovy Map containing sample information
-      - "*.bam":
+      - '*.bam':
           type: file
           description: Output BAM file containing read alignments
-          pattern: "*.bam"
+          pattern: '*.bam'
           ontologies: []
   cram:
     - - meta:
           type: map
           description: Groovy Map containing sample information
-      - "*.cram":
+      - '*.cram':
           type: file
           description: Output CRAM file containing read alignments
-          pattern: "*.cram"
+          pattern: '*.cram'
           ontologies: []
   csi:
     - - meta:
           type: map
           description: Groovy Map containing sample information
-      - "*.csi":
+      - '*.csi':
           type: file
           description: Output SAM/BAM index for large inputs
-          pattern: "*.csi"
+          pattern: '*.csi'
           ontologies: []
   crai:
     - - meta:
           type: map
           description: Groovy Map containing sample information
-      - "*.crai":
+      - '*.crai':
           type: file
           description: Output CRAM index
-          pattern: "*.crai"
+          pattern: '*.crai'
           ontologies: []
   log:
     - - meta:
           type: map
           description: Groovy Map containing sample information
-      - "*.log":
+      - '*.log':
           type: file
           description: Alignment log
-          pattern: "*.log"
+          pattern: '*.log'
           ontologies: []
   fastq:
     - - meta:
           type: map
           description: Groovy Map containing sample information
-      - "*fastq.gz":
+      - '*fastq.gz':
           type: file
           description: Unaligned FastQ files
-          pattern: "*.fastq.gz"
+          pattern: '*.fastq.gz'
           ontologies:
             - edam: http://edamontology.org/format_3989 # GZIP format
   versions_bowtie2:
@@ -186,8 +186,8 @@ topics:
           description: The expression to obtain the version of pigz
 
 authors:
-  - "@joseespinosa"
-  - "@drpatelh"
+  - '@joseespinosa'
+  - '@drpatelh'
 maintainers:
-  - "@joseespinosa"
-  - "@drpatelh"
+  - '@joseespinosa'
+  - '@drpatelh'

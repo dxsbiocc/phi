@@ -1,0 +1,39 @@
+# Agent-facing wrapper adapter for the vendored bowtie2/align module at
+# ../main.nf. Follows the minimal contract in
+# docs/design/phi-wrapper-agent-composition-design.md section 3.
+#
+# This wrapper composes bowtie2/build + bowtie2/align internally (builds
+# the index from `fasta` first) — see ../wrapper/main.nf's own comment for
+# why: nf-core's own module tests build the index as a setup step too,
+# since there's no pre-built index in test-datasets to just point at.
+id: nf-core/modules/bowtie2-align
+name: bowtie2 align
+summary: Align paired-end FASTQ reads to a reference genome with bowtie2.
+
+params:
+  reads_1:
+    kind: input
+    type: fastq
+    required: true
+    description: FASTQ file for read 1.
+  reads_2:
+    kind: input
+    type: fastq
+    required: true
+    description: FASTQ file for read 2.
+  fasta:
+    kind: input
+    type: fasta
+    required: true
+    description: Reference genome FASTA to build the bowtie2 index from and align against.
+  outdir:
+    kind: output
+    type: path
+    required: true
+    description: Output directory for the alignment BAM and log.
+
+outputs:
+  bam:
+    type: directory
+    path: '${outdir}/bowtie2_align'
+    primary: true

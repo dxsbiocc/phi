@@ -15,7 +15,7 @@ tools:
         MspI-digested RRBS-type (Reduced Representation Bisufite-Seq) libraries.
       homepage: https://www.bioinformatics.babraham.ac.uk/projects/trim_galore/
       documentation: https://github.com/FelixKrueger/TrimGalore/blob/master/Docs/Trim_Galore_User_Guide.md
-      licence: ["GPL-3.0-or-later"]
+      licence: ['GPL-3.0-or-later']
       identifier: biotools:trim_galore
 
 input:
@@ -30,7 +30,7 @@ input:
           List of input FastQ files of size 1 and 2 for single-end and paired-end data,
           respectively.
         ontologies:
-          - edam: "http://edamontology.org/format_1930" # FASTQ
+          - edam: 'http://edamontology.org/format_1930' # FASTQ
 output:
   reads:
     - - meta:
@@ -38,12 +38,12 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*{3prime,5prime,trimmed,val}{,_1,_2}.fq.gz":
+      - '*{3prime,5prime,trimmed,val}{,_1,_2}.fq.gz':
           type: file
           description: The trimmed/modified fastq reads
-          pattern: "*{3prime,5prime,trimmed,val}{,_1,_2}.fq.gz"
+          pattern: '*{3prime,5prime,trimmed,val}{,_1,_2}.fq.gz'
           ontologies:
-            - edam: "http://edamontology.org/format_1930" # FASTQ
+            - edam: 'http://edamontology.org/format_1930' # FASTQ
             - edam: http://edamontology.org/format_3989 # GZIP format
   log:
     - - meta:
@@ -51,24 +51,24 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*report.txt":
+      - '*report.txt':
           type: file
           description: trimgalore log file
-          pattern: "*report.txt"
+          pattern: '*report.txt'
           ontologies:
-            - edam: "http://edamontology.org/format_2330" # Textual format
+            - edam: 'http://edamontology.org/format_2330' # Textual format
   unpaired:
     - - meta:
           type: map
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*unpaired{,_1,_2}.fq.gz":
+      - '*unpaired{,_1,_2}.fq.gz':
           type: file
           description: unpaired reads when --retain_unpaired flag is used
-          pattern: "*unpaired*.fq.gz"
+          pattern: '*unpaired*.fq.gz'
           ontologies:
-            - edam: "http://edamontology.org/format_1930" # FASTQ
+            - edam: 'http://edamontology.org/format_1930' # FASTQ
             - edam: http://edamontology.org/format_3989 # GZIP format
   html:
     - - meta:
@@ -76,23 +76,23 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.html":
+      - '*.html':
           type: file
           description: FastQC HTML report after trimming when the --fastqc flag is used
-          pattern: "*_fastqc.html"
+          pattern: '*_fastqc.html'
           ontologies:
-            - edam: "http://edamontology.org/format_2331" # HTML
+            - edam: 'http://edamontology.org/format_2331' # HTML
   zip:
     - - meta:
           type: map
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.zip":
+      - '*.zip':
           type: file
           description: FastQC report output zip after trimming when the --fastqc flag
             is used
-          pattern: "*_fastqc.zip"
+          pattern: '*_fastqc.zip'
           ontologies:
             - edam: http://edamontology.org/format_3987 # ZIP format
   versions_trimgalore:
@@ -119,11 +119,11 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@drpatelh"
-  - "@ewels"
-  - "@FelixKrueger"
+  - '@drpatelh'
+  - '@ewels'
+  - '@FelixKrueger'
 maintainers:
-  - "@drpatelh"
-  - "@ewels"
-  - "@FelixKrueger"
-  - "@vagkaratzas"
+  - '@drpatelh'
+  - '@ewels'
+  - '@FelixKrueger'
+  - '@vagkaratzas'

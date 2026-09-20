@@ -37,7 +37,9 @@ import { parseWrapperNextflowDag } from './lib/wrapperNextflowDag'
 import { highlightLine } from '../../lib/syntaxHighlight'
 import { syntaxTokenColor } from '../../lib/syntaxTheme'
 import {
+  canCancelBackgroundRun,
   parseWrapperCompositionId,
+  runProgressLabel,
   runStateColor,
   runStateLabel,
   wrapperTierLabel
@@ -95,6 +97,7 @@ export interface WrapperDetailProps {
   error: string | null
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onExportReproducibility?: (runId: string) => void
+  onCancelRun?: (runId: string) => void
 }
 
 export interface WrapperViewContentProps extends WrapperDetailProps {
@@ -663,7 +666,8 @@ export function WrapperDetail({
   selectedId,
   error,
   onOpenLocalPath,
-  onExportReproducibility
+  onExportReproducibility,
+  onCancelRun
 }: WrapperDetailProps): React.JSX.Element {
   const selected = useMemo(
     () => catalog.find((entry) => entry.id === selectedId),
@@ -999,7 +1003,22 @@ export function WrapperDetail({
                     <Typography variant="caption" color="text.secondary">
                       {new Date(run.createdAt).toLocaleString()}
                     </Typography>
+                    {runProgressLabel(run) ? (
+                      <Typography variant="caption" color="text.secondary">
+                        {runProgressLabel(run)}
+                      </Typography>
+                    ) : null}
                     <Box sx={{ flex: 1 }} />
+                    {canCancelBackgroundRun(run) ? (
+                      <Button
+                        size="small"
+                        color="error"
+                        aria-label="取消运行"
+                        onClick={() => onCancelRun?.(run.runId)}
+                      >
+                        取消运行
+                      </Button>
+                    ) : null}
                     <Tooltip title="导出可复现性元数据">
                       <span>
                         <IconButton
@@ -1048,6 +1067,7 @@ export function WrapperViewContent({
   onRefresh,
   onOpenLocalPath,
   onExportReproducibility,
+  onCancelRun,
   onStartSidebarResize
 }: WrapperViewContentProps): React.JSX.Element {
   const selected = catalog.find((entry) => entry.id === selectedId) ?? null
@@ -1071,6 +1091,7 @@ export function WrapperViewContent({
           error={error}
           onOpenLocalPath={onOpenLocalPath}
           onExportReproducibility={onExportReproducibility}
+          onCancelRun={onCancelRun}
         />
       </DetailPage>
     </>

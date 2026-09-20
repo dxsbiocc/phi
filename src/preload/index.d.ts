@@ -768,6 +768,7 @@ declare global {
       onAnalysisNotebookFileChanged: (
         cb: (change: PreloadAnalysisNotebookFileChange) => void
       ) => () => void
+      onWrapperRunsChanged: (cb: (change: { runId: string }) => void) => () => void
       onSessionChanged: (
         cb: (session: {
           path: string | null

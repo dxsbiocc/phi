@@ -24,5 +24,5 @@ params:
 outputs:
   annotation:
     type: directory
-    path: "${outdir}/gffread"
+    path: '${outdir}/gffread'
     primary: true

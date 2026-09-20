@@ -87,7 +87,7 @@ params:
 outputs:
   reports:
     type: directory
-    path: "${outdir}"
+    path: '${outdir}'
     primary: true
 ```
 
@@ -120,9 +120,9 @@ the agent.
 
 Agent tools should be generic and progressively loaded:
 
-- `wrapper.search`: returns compact results only: id, name, summary, key
+- `wrapper_search`: returns compact results only: id, name, summary, key
   input/output params, and primary output.
-- `wrapper.inspect`: returns `wrapper.yaml` plus default
+- `wrapper_inspect`: returns `wrapper.yaml` plus default
   `wrapper/params.json`.
 - `wrapper.plan_run`: accepts param overrides, merges them with
   `wrapper/params.json`, validates the merged params, and creates a plan.
@@ -212,7 +212,7 @@ are loaded only for composition, debugging, or deeper parameter work.
 This replaces the earlier plan to orchestrate multiple independent wrapper
 runs from Phi. The implementation should move toward:
 
-- generic wrapper tools instead of eager `wrapper.<id>` execute tools
+- generic wrapper tools instead of eager `wrapper_<id>` execute tools
 - scanning `wrapper/` directories under `modules/` and `subworkflows/`
 - plan creation from overrides merged into `wrapper/params.json`
 - a minimal `wrapper.yaml` parser/validator separate from the existing full
@@ -226,3 +226,204 @@ Existing bundled wrappers can be migrated incrementally. The next slice
 should be small: one module wrapper using this layout, indexed through the
 generic search/inspect/plan path, with a smoke test proving the fixed
 Nextflow command works.
+
+## 9. Phi Agents (the `Wrapper` agent)
+
+The generic tools in section 4 are **not** handed to the main agent. Wrapper work
+belongs to a specialist agent, `Wrapper`, and the main agent is the leader that
+delegates to it. This is a general Phi mechanism, not a wrapper special case.
+
+### Naming
+
+- **Agents** are capitalised and never carry an `Agent` suffix: `Wrapper`,
+  `CodeReviewer`. The name is enforced (`^[A-Z][A-Za-z0-9]*$`, not ending in
+  `Agent`) and must equal the file name.
+- **Tool functions** stay snake_case (`wrapper_search`, `read`, `bash`). The
+  two are never confused: an agent is invoked by its name, a function by its.
+
+### Definition and scanning (`src/main/agent/agents/`)
+
+An agent is a Markdown file: frontmatter plus the system prompt as the body.
+
+```markdown
+---
+name: Wrapper
+description: One sentence the main agent sees.
+tools: [read, glob, grep, bash, write, edit, wrapper_search, wrapper_inspect, wrapper_run]
+skills: [create-wrapper, nextflow]
+delegation: |
+  Guidance for the main agent: when to hand work over, what not to do itself.
+---
+You are Wrapper, ...
+```
+
+Phi scans **its own** locations first; the SDK's `.omp/agents` mechanism is not
+used. Legacy layouts are then read for compatibility only, the same way Phi
+skills also honour legacy config directories. The first definition of a name
+wins, so a Phi agent always beats a compat one.
+
+| Order | Location | Kind |
+| --- | --- | --- |
+| 1 | `<project>/.phi/agents/` | Phi |
+| 2 | `~/.phi/agents/` | Phi |
+| 3 | bundled `resources/agents/` (`Wrapper.md`) | Phi |
+| 4 | `<project>/{.omp,.pi,.claude}/agents/` | compat |
+| 5 | `~/.omp/agent/agents/`, `~/.pi/agent/agents/`, `~/.claude/agents/` | compat |
+
+Compat definitions are normalised rather than rejected: the name becomes
+`CodeReviewer` (`code-reviewer`, `planner-agent` → `Planner`), a comma-separated
+`tools:` string is accepted, foreign tool names map onto Phi built-ins
+(`Read`→`read`, `MultiEdit`→`edit`, `WebSearch`→`web_search`; the rest are
+dropped), and a missing `tools:` defaults to the standard file/shell toolbox.
+An invalid file becomes a diagnostic (logged as `agent_definition_invalid`) and
+never blocks the others. Codex `.toml` agents are not read (different schema).
+
+### How the main agent leads
+
+The **main process scans once per session** and uses that single result twice,
+so the prompt and the tools cannot disagree:
+
+1. `buildAgentLeaderPrompt` appends an `<phi_agents>` block to the main system
+   prompt (beside the notebook and DB-connector runtime prompts): delegate work
+   in a specialist's remit, write self-contained tasks (the specialist cannot see
+   the conversation or ask questions), relay reports faithfully, then continue
+   downstream. Each agent's `description` and `delegation` are listed. It never
+   names a specialist's own tool functions.
+2. The definitions are sent to the worker (`session.create` → `phiAgents`), which
+   exposes **one delegation tool per agent, named after it** (`Wrapper`), with
+   `loadMode: 'essential'` (custom tools default to `discoverable`, hidden behind
+   `read xd://`) and `approval: 'read'`.
+
+### How an agent runs
+
+- **Own session.** `createPhiAgentSession` starts an in-memory session with the
+  parent's model and thinking level. The definition drives it: the body is the
+  system prompt, `tools` the restricted toolbox (`restrictToolNames` +
+  `allowRestrictedCustomTools`; no MCP, LSP, web or task), `skills` the only
+  skills exposed. Phi tool functions in `tools:` are resolved in the worker
+  (`phiToolFunctions`) and are never given to the main agent, so wrapper
+  catalogs and Nextflow logs stay out of the main conversation; only the short
+  final report returns.
+- **Approvals unchanged.** The session's approval extension is bound to the
+  *parent's* `sessionId`, so its shell and file writes go through the same
+  approval flow, in the chat the user is watching.
+- **Cancel / time limit / progress.** The parent tool call's abort signal aborts
+  the session; a 3 hour wall-clock backstop applies; each tool call the agent makes
+  is streamed to the tool card as a one-line update.
+
+The SDK's built-in `task` sub-agents cannot host this: custom tools registered
+through `customTools` are not inherited by them, and they are discovered from
+`.omp/agents`. They are left untouched.
+
+Creating or changing a wrapper edits `resources/wrappers/` and `tests/` in the
+Phi source tree, so it only works from a Phi checkout, not from a packaged app.
+
+### Runs are background jobs
+
+A wrapper run can take hours, so `wrapper_run` does not block. The agent starts a
+run and gets a run id back at once; the main conversation is never held up.
+
+- **Owner.** `WrapperJobManager` (`composition/job-manager.ts`) is a singleton in
+  the **main process**. It cannot live in the agent worker: the bridge stops the
+  worker whenever it is idle, which would kill the run with it. The worker's tools
+  reach the manager through the existing host-request channel
+  (`createHostJobClient` → `wrapperJob.*` → `wrapperJobHostHandlers`, which
+  validates what arrives from the worker).
+- **Tools** (the `Wrapper` agent's, never the main agent's):
+
+  | Tool | Behaviour |
+  | --- | --- |
+  | `wrapper_run` | Validates, records, starts Nextflow, returns the run id at once. |
+  | `wrapper_status` | State, progress, outputs and log tail of one run; without an id, the recent runs. |
+  | `wrapper_wait` | Blocks until the run ends or `timeout_seconds` (max 600); aborting the call stops the wait, never the run. |
+  | `wrapper_cancel` | Stops the run. |
+
+  By default `Wrapper` does not wait: it reports the run id, output directory and
+  "running in the background". It waits (repeated `wrapper_wait`) only when the task
+  needs the result ("run it, then summarise…"). The leader learns this from the
+  agent's `delegation` text and follows up with "report the status of run <id>".
+- **Progress.** Parsed from Nextflow's own console output (Nextflow 26
+  `[PROCESS ab/123456] NAME` and the classic `Submitted process > NAME`):
+  `started` = distinct processes begun, `total` = distinct process nodes in
+  `wrapper/dag.mmd`. It is an estimate of how far the run has got, not a completion
+  percentage. Persisted in `run.json` (throttled) and shown in the Wrappers view.
+- **Log.** The full output is appended to `runs/<runId>/nextflow.log`, so status
+  is answerable from disk after a restart.
+- **Cancelling stops Nextflow.** The process is started in its own process group;
+  cancel sends SIGTERM to the whole group and SIGKILL after a grace period.
+  Verified against real Nextflow + Docker: the run is `cancelled` within
+  milliseconds and no container is left behind. Quitting the app stops every live
+  run and records it `cancelled`.
+- **Recorded in the run store**, the one the Wrappers view reads
+  (`composition/run-record.ts`): `origin: 'composition'`, `actor: 'agent'`,
+  `planId: ''`, `wrapper.canonicalId` = the composition id. `params.json`,
+  `outputs.json` and `summary.json` (with the manifest) land in the run
+  directory, so reproducibility export works.
+- **States:** `running` → `cancelling` → `cancelled`, or `completed` | `failed`
+  (non-zero exit, or a primary output is missing). A run still non-terminal at the
+  next app start belonged to a process that is gone and is marked `lost` (outcome
+  unknown, so not `failed`).
+- **Limits:** at most 3 runs at once.
+- **UI.** The main process broadcasts `wrappers:runsChanged`; the run history
+  reloads on it (coalesced), shows `2/6 步 · HISAT2_ALIGN`, and offers 取消运行
+  for a running background run.
+
+### When a run ends
+
+`WrapperJobManager.onFinish` fires once for a run that ends on its own
+(completed, failed, cancelled) — not on app shutdown, when nobody is left to tell.
+The main process (`composition/job-notify.ts`) then does two independent things:
+
+1. **A notice in the conversation that started the run.** Every run is stamped with
+   the runtime session whose `Wrapper` agent started it (`originSessionId`, set by
+   the worker's job client). The main process registers each runtime session's
+   conversation when the session is created, appends a `wrapper_run_finished`
+   event to that conversation's timeline (persisted, so it is still there when the
+   user switches back) and pushes it to the window. The renderer shows it as an
+   info banner: outcome, wrapper, elapsed time, output directory, run id, and for a
+   failure the cause and "ask Wrapper to look at the log". Live and restored
+   history share one function (`chatItems.ts`), and the event does not touch the
+   conversation's run status.
+2. **An OS notification, only when Phi is not in the foreground.** A run the user
+   just cancelled produces no pop-up (they know), but is still recorded in the
+   conversation. A run whose conversation is unknown still gets the notification.
+
+A failure in one channel never blocks the other.
+
+#### Waking the conversation
+
+Telling the user is not enough for a chain like "run fastqc, then plot the results":
+the agent has to carry on when the run ends. So, by default, Phi also **wakes the
+conversation that started the run**: it submits a message to the agent, wrapped in
+`<phi_wrapper_run_finished>` and labelled as coming from Phi, not the user. It carries
+the outcome, the exit code, the output directory and, for a failure, the missing
+outputs. The leader learns this from the `Wrapper` agent's `delegation` text: after
+delegating it should say the run is going and end its turn, with no waiting or
+polling.
+
+- **Core.** `agent:prompt` was split: `submitPromptRun` runs a prompt in *any*
+  conversation, by session key, without touching which conversation is on screen; the
+  IPC handler is a thin wrapper around it. Waking uses the same path, so the run gets
+  the usual run tracking, approvals, model settings and events, and a conversation in
+  the background is woken in the background (it is never switched to).
+- **What the user sees.** No user bubble: the message is not the user's words, so no
+  `user_message` event is recorded (when the timeline holds text, history restore skips
+  the runtime user message that duplicates it). The `wrapper_run_finished` banner is
+  already there, followed by the agent's reply.
+- **Busy conversation.** A run that ends while the conversation is mid-turn is queued,
+  never injected. When that turn ends the queue is flushed as **one** message covering
+  every run that ended meanwhile. If the user pressed stop, the queue is dropped.
+- **Already reported.** A run whose outcome `wrapper_wait` or `wrapper_status` already
+  handed to the agent (`WrapperJobManager.hasBeenReported`) is left out, so a result the
+  agent just reported is not announced twice.
+- **Who is not woken:** a cancelled run (the user did it), a run started with
+  `continue_when_done: false` (the `Wrapper` agent uses this when the task says nothing
+  should happen afterwards), and a conversation Phi no longer knows.
+- **Loop guard.** At most `MAX_AUTOMATIC_CONTINUATIONS` (5) wake-ups in a row per
+  conversation; a real user message starts the count over. Without it an agent that
+  starts a run every time it is woken would run unattended indefinitely.
+- **Policy and message** are in `composition/job-continue.ts`; the queue and the call
+  into `submitPromptRun` are in `index.ts`.
+
+Not built yet: the sidebar does not mark the conversation unread; runs do not survive
+quitting the app.

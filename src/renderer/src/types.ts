@@ -77,7 +77,7 @@ export interface RunLifecycleItem {
 }
 
 /**
- * A wrapper run plan created by a `wrapper.<id>` agent tool call (see
+ * A wrapper run plan created by a `wrapper_<id>` agent tool call (see
  * docs/design/phi-wrapper-technical-design.md, "Chat And UI Integration").
  * Deliberately thin: full plan detail (inputs, resources, command preview,
  * structure diagram) is loaded from the wrapper store by `planId`, not

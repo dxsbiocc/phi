@@ -123,7 +123,7 @@ function SamplesheetPreview({ inputId, csv }: { inputId: string; csv: string }):
 }
 
 /**
- * Chat timeline card for a `wrapper.<id>` tool call — see
+ * Chat timeline card for a `wrapper_<id>` tool call — see
  * docs/design/phi-wrapper-technical-design.md, "Chat And UI Integration".
  * Styled after ToolApprovalDialog.tsx (an outlined Paper, plain info text
  * joined with " · " instead of chip badges, a small status icon instead of

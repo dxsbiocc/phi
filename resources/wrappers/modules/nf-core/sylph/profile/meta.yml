@@ -1,4 +1,4 @@
-name: "sylph_profile"
+name: 'sylph_profile'
 description: Sylph profile command for taxonoming profiling
 keywords:
   - profile
@@ -14,7 +14,7 @@ tools:
       tool_dev_url: https://github.com/bluenote-1577/sylph
       doi: 10.1038/s41587-024-02412-y
       licence:
-        - "MIT"
+        - 'MIT'
       identifier: biotools:sylph
 input:
   - - meta:
@@ -27,7 +27,7 @@ input:
         description: |
           List of input FastQ/FASTA files of size 1 and 2 for single-end and paired-end data,
           respectively. They are automatically sketched to .sylsp/.syldb
-        pattern: "*.{fasta,fastq,fna,fa,fq,fas,fasta.gz,fastq.gz,fna,fa.gz,fq,fas.gz}"
+        pattern: '*.{fasta,fastq,fna,fa,fq,fas,fasta.gz,fastq.gz,fna,fa.gz,fq,fas.gz}'
         ontologies:
           - edam: http://edamontology.org/format_1929 # FASTA
           - edam: http://edamontology.org/format_1930 # FASTQ
@@ -35,17 +35,17 @@ input:
       type: file
       description: Pre-sketched *.syldb/*.sylsp files. Raw single-end fastq/fasta are
         allowed and will be automatically sketched to .sylsp/.syldb.
-      pattern: "*.{syldb,sylsp}"
+      pattern: '*.{syldb,sylsp}'
 output:
   profile_out:
     - - meta:
           type: map
           description: Groovy Map containing sample information
-      - "*.tsv":
+      - '*.tsv':
           type: file
           description: Output file of species-level taxonomic profiling with abundances
             and ANIs.
-          pattern: "*tsv"
+          pattern: '*tsv'
           ontologies:
             - edam: http://edamontology.org/format_3475 # TSV
   versions_sylph:
@@ -70,7 +70,7 @@ topics:
           type: eval
           description: The expression to obtain the version of the tool
 authors:
-  - "@jiahang1234"
-  - "@sofstam"
+  - '@jiahang1234'
+  - '@sofstam'
 maintainers:
-  - "@sofstam"
+  - '@sofstam'

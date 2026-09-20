@@ -16,7 +16,7 @@ tools:
         overrepresented sequences.
       homepage: https://www.bioinformatics.babraham.ac.uk/projects/fastqc/
       documentation: https://www.bioinformatics.babraham.ac.uk/projects/fastqc/Help/
-      licence: ["GPL-2.0-only"]
+      licence: ['GPL-2.0-only']
       identifier: biotools:fastqc
 input:
   - - meta:
@@ -37,10 +37,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.html":
+      - '*.html':
           type: file
           description: FastQC report
-          pattern: "*_{fastqc.html}"
+          pattern: '*_{fastqc.html}'
           ontologies: []
   zip:
     - - meta:
@@ -48,10 +48,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.zip":
+      - '*.zip':
           type: file
           description: FastQC report archive
-          pattern: "*_{fastqc.zip}"
+          pattern: '*_{fastqc.zip}'
           ontologies: []
   versions_fastqc:
     - - ${task.process}:
@@ -76,15 +76,15 @@ topics:
           type: eval
           description: The expression to obtain the version of the tool
 authors:
-  - "@drpatelh"
-  - "@grst"
-  - "@ewels"
-  - "@FelixKrueger"
+  - '@drpatelh'
+  - '@grst'
+  - '@ewels'
+  - '@FelixKrueger'
 maintainers:
-  - "@drpatelh"
-  - "@grst"
-  - "@ewels"
-  - "@FelixKrueger"
+  - '@drpatelh'
+  - '@grst'
+  - '@ewels'
+  - '@FelixKrueger'
 containers:
   docker:
     linux/arm64:

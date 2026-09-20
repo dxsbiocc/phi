@@ -14,7 +14,7 @@ tools:
       homepage: http://www.htslib.org/
       documentation: http://www.htslib.org/doc/samtools.html
       doi: 10.1093/bioinformatics/btp352
-      licence: ["MIT"]
+      licence: ['MIT']
       identifier: biotools:samtools
 input:
   - - meta:
@@ -25,12 +25,12 @@ input:
     - input:
         type: file
         description: BAM/CRAM/SAM file
-        pattern: "*.{bam,cram,sam}"
+        pattern: '*.{bam,cram,sam}'
         ontologies: []
     - index:
         type: file
         description: BAM.BAI/BAM.CSI/CRAM.CRAI file (optional)
-        pattern: "*.{.bai,.csi,.crai}"
+        pattern: '*.{.bai,.csi,.crai}'
         ontologies: []
   - - meta2:
         type: map
@@ -40,13 +40,13 @@ input:
     - fasta:
         type: file
         description: Fasta reference file
-        pattern: "*.{fasta,fa}"
+        pattern: '*.{fasta,fa}'
         ontologies:
           - edam: http://edamontology.org/format_1929 # FASTA
     - fai:
         type: file
         description: Fasta reference file index
-        pattern: "*.{fai}"
+        pattern: '*.{fai}'
         ontologies:
           - edam: http://edamontology.org/format_3326 # Index
   - - meta3:
@@ -57,7 +57,7 @@ input:
     - qname:
         type: file
         description: Optional file with read names to output only select alignments
-        pattern: "*.{txt,list}"
+        pattern: '*.{txt,list}'
         ontologies: []
   - - meta4:
         type: map
@@ -67,13 +67,13 @@ input:
     - bed:
         type: file
         description: Optional BED file for filtering alignments by genomic region (-L)
-        pattern: "*.{bed}"
+        pattern: '*.{bed}'
         ontologies:
           - edam: http://edamontology.org/format_3003 # BED
   - index_format:
       type: string
       description: Index format, used together with ext.args = '--write-index'
-      pattern: "bai|csi|crai"
+      pattern: 'bai|csi|crai'
 output:
   bam:
     - - meta:
@@ -84,7 +84,7 @@ output:
       - ${prefix}.bam:
           type: file
           description: optional filtered/converted BAM file
-          pattern: "*.{bam}"
+          pattern: '*.{bam}'
           ontologies: []
   cram:
     - - meta:
@@ -95,7 +95,7 @@ output:
       - ${prefix}.cram:
           type: file
           description: optional filtered/converted CRAM file
-          pattern: "*.{cram}"
+          pattern: '*.{cram}'
           ontologies: []
   sam:
     - - meta:
@@ -106,7 +106,7 @@ output:
       - ${prefix}.sam:
           type: file
           description: optional filtered/converted SAM file
-          pattern: "*.{sam}"
+          pattern: '*.{sam}'
           ontologies: []
   bai:
     - - meta:
@@ -117,7 +117,7 @@ output:
       - ${prefix}.${file_type}.bai:
           type: file
           description: optional BAM file index
-          pattern: "*.{bai}"
+          pattern: '*.{bai}'
           ontologies: []
   csi:
     - - meta:
@@ -128,7 +128,7 @@ output:
       - ${prefix}.${file_type}.csi:
           type: file
           description: optional tabix BAM file index
-          pattern: "*.{csi}"
+          pattern: '*.{csi}'
           ontologies: []
   crai:
     - - meta:
@@ -139,7 +139,7 @@ output:
       - ${prefix}.${file_type}.crai:
           type: file
           description: optional CRAM file index
-          pattern: "*.{crai}"
+          pattern: '*.{crai}'
           ontologies: []
   unselected:
     - - meta:
@@ -150,7 +150,7 @@ output:
       - ${prefix}.unselected.${file_type}:
           type: file
           description: optional file with unselected alignments
-          pattern: "*.unselected.{bam,cram,sam}"
+          pattern: '*.unselected.{bam,cram,sam}'
           ontologies: []
   unselected_index:
     - - meta:
@@ -161,7 +161,7 @@ output:
       - ${prefix}.unselected.${file_type}.{csi,crai}:
           type: file
           description: index for the "unselected" file
-          pattern: "*.unselected.{csi,crai}"
+          pattern: '*.unselected.{csi,crai}'
           ontologies: []
   versions_samtools:
     - - ${task.process}:
@@ -187,13 +187,13 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@drpatelh"
-  - "@joseespinosa"
-  - "@FriederikeHanssen"
-  - "@priyanka-surana"
+  - '@drpatelh'
+  - '@joseespinosa'
+  - '@FriederikeHanssen'
+  - '@priyanka-surana'
 maintainers:
-  - "@drpatelh"
-  - "@joseespinosa"
-  - "@FriederikeHanssen"
-  - "@priyanka-surana"
-  - "@matthdsm"
+  - '@drpatelh'
+  - '@joseespinosa'
+  - '@FriederikeHanssen'
+  - '@priyanka-surana'
+  - '@matthdsm'

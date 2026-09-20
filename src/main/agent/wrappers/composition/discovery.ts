@@ -101,6 +101,18 @@ export function listWrapperCompositionCatalog(): WrapperCompositionEntry[] {
   return cachedCatalog
 }
 
+/** A wrapper's `params.json` (the defaults every run starts from); {} when missing or unreadable. */
+export function readWrapperDefaultParams(wrapperDir: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(wrapperDir, 'params.json'), 'utf-8'))
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {}
+  } catch {
+    return {}
+  }
+}
+
 export function findWrapperCompositionEntry(id: string): WrapperCompositionEntry | undefined {
   return listWrapperCompositionCatalog().find((entry) => entry.manifest.id === id)
 }

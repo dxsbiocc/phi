@@ -14,7 +14,7 @@ tools:
       homepage: http://qualimap.bioinfo.cipf.es/
       documentation: http://qualimap.conesalab.org/doc_html/index.html
       doi: 10.1093/bioinformatics/bts503
-      licence: ["GPL-2.0-only"]
+      licence: ['GPL-2.0-only']
       identifier: biotools:qualimap
 input:
   - - meta:
@@ -25,7 +25,7 @@ input:
     - bam:
         type: file
         description: BAM file
-        pattern: "*.{bam}"
+        pattern: '*.{bam}'
         ontologies: []
   - - meta2:
         type: map
@@ -35,7 +35,7 @@ input:
     - gtf:
         type: file
         description: GTF file of the reference genome
-        pattern: "*.{gtf}"
+        pattern: '*.{gtf}'
         ontologies: []
 output:
   results:
@@ -47,7 +47,7 @@ output:
       - ${prefix}:
           type: directory
           description: Qualimap results dir
-          pattern: "*/*"
+          pattern: '*/*'
   versions_qualimap:
     - - ${task.process}:
           type: string
@@ -72,6 +72,6 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@FriederikeHanssen"
+  - '@FriederikeHanssen'
 maintainers:
-  - "@FriederikeHanssen"
+  - '@FriederikeHanssen'

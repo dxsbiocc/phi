@@ -1,4 +1,4 @@
-name: "custom_catadditionalfasta"
+name: 'custom_catadditionalfasta'
 description: Custom module to Add a new fasta file to an old one and update an
   associated GTF
 keywords:
@@ -6,13 +6,13 @@ keywords:
   - gtf
   - genomics
 tools:
-  - "custom":
-      description: "Custom module to Add a new fasta file to an old one and update an
-        associated GTF"
-      tool_dev_url: "https://github.com/nf-core/modules/blob/master/modules/nf-core/custom/catadditionalfasta/main.nf"
+  - 'custom':
+      description: 'Custom module to Add a new fasta file to an old one and update an
+        associated GTF'
+      tool_dev_url: 'https://github.com/nf-core/modules/blob/master/modules/nf-core/custom/catadditionalfasta/main.nf'
       licence:
-        - "MIT"
-      identifier: ""
+        - 'MIT'
+      identifier: ''
 input:
   - - meta:
         type: map
@@ -21,12 +21,12 @@ input:
     - fasta:
         type: file
         description: FASTA-format sequence file
-        pattern: "*.{fasta,fa}"
+        pattern: '*.{fasta,fa}'
         ontologies: []
     - gtf:
         type: file
         description: GTF-format annotation file for fasta
-        pattern: "*.gtf"
+        pattern: '*.gtf'
         ontologies: []
   - - meta2:
         type: map
@@ -35,7 +35,7 @@ input:
     - add_fasta:
         type: file
         description: FASTA-format file of additional sequences
-        pattern: "*.fa"
+        pattern: '*.fa'
         ontologies: []
   - biotype:
       type: string
@@ -49,7 +49,7 @@ output:
       - out/${prefix}.fasta:
           type: file
           description: FASTA-format combined sequence file
-          pattern: "*.{fasta,fa}"
+          pattern: '*.{fasta,fa}'
           ontologies: []
   gtf:
     - - meta:
@@ -59,13 +59,13 @@ output:
       - out/${prefix}.gtf:
           type: file
           description: GTF-format combined annotation file
-          pattern: "*.gtf"
+          pattern: '*.gtf'
           ontologies: []
   versions:
     - versions.yml:
         type: file
         description: File containing software versions
-        pattern: "versions.yml"
+        pattern: 'versions.yml'
         ontologies:
           - edam: http://edamontology.org/format_3750 # YAML
 topics:
@@ -73,10 +73,10 @@ topics:
     - versions.yml:
         type: file
         description: File containing software versions
-        pattern: "versions.yml"
+        pattern: 'versions.yml'
         ontologies:
           - edam: http://edamontology.org/format_3750 # YAML
 authors:
-  - "@pinin4fjords"
+  - '@pinin4fjords'
 maintainers:
-  - "@pinin4fjords"
+  - '@pinin4fjords'

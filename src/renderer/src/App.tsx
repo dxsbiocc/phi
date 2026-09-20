@@ -680,6 +680,7 @@ function App(): React.JSX.Element {
     wrapperError,
     setSelectedWrapperId,
     refreshWrappers,
+    cancelWrapperRun,
     exportWrapperReproducibility
   } = useWrapperCatalog()
 
@@ -2644,8 +2645,10 @@ function App(): React.JSX.Element {
         title: entry.name,
         subtitle: entry.id
       })
+      // Runs the agent started while this view was closed (wrapper_run) only exist on disk.
+      void refreshWrappers()
     },
-    [openWorkspaceResourceTab, setSelectedWrapperId]
+    [openWorkspaceResourceTab, refreshWrappers, setSelectedWrapperId]
   )
 
   const onCloseWorkspaceTab = useCallback(
@@ -2837,6 +2840,7 @@ function App(): React.JSX.Element {
         error={wrapperError}
         onOpenLocalPath={onOpenLocalPath}
         onExportReproducibility={(runId) => void exportWrapperReproducibility(runId)}
+        onCancelRun={(runId) => void cancelWrapperRun(runId)}
       />
     ) : null
   ) : (

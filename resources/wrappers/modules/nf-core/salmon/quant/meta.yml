@@ -12,7 +12,7 @@ tools:
       homepage: https://salmon.readthedocs.io/en/latest/salmon.html
       manual: https://salmon.readthedocs.io/en/latest/salmon.html
       doi: 10.1038/nmeth.4197
-      licence: ["GPL-3.0-or-later"]
+      licence: ['GPL-3.0-or-later']
       identifier: biotools:salmon
 input:
   - - meta:
@@ -50,31 +50,31 @@ output:
     - - meta:
           type: directory
           description: Folder containing the quantification results for a specific sample
-          pattern: "${prefix}"
+          pattern: '${prefix}'
       - ${prefix}:
           type: directory
           description: Folder containing the quantification results for a specific sample
-          pattern: "${prefix}"
+          pattern: '${prefix}'
   json_info:
     - - meta:
           type: directory
           description: Folder containing the quantification results for a specific sample
-          pattern: "${prefix}"
-      - "*info.json":
+          pattern: '${prefix}'
+      - '*info.json':
           type: file
           description: File containing meta information from Salmon quant
-          pattern: "*info.json"
+          pattern: '*info.json'
           ontologies:
             - edam: http://edamontology.org/format_3464 # JSON
   lib_format_counts:
     - - meta:
           type: directory
           description: Folder containing the quantification results for a specific sample
-          pattern: "${prefix}"
-      - "*lib_format_counts.json":
+          pattern: '${prefix}'
+      - '*lib_format_counts.json':
           type: file
           description: File containing the library format counts
-          pattern: "*lib_format_counts.json"
+          pattern: '*lib_format_counts.json'
           ontologies:
             - edam: http://edamontology.org/format_3464 # JSON
   versions_salmon:
@@ -101,8 +101,8 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@kevinmenden"
-  - "@drpatelh"
+  - '@kevinmenden'
+  - '@drpatelh'
 maintainers:
-  - "@kevinmenden"
-  - "@drpatelh"
+  - '@kevinmenden'
+  - '@drpatelh'

@@ -15,7 +15,7 @@ tools:
       documentation: http://www.htslib.org/doc/samtools.html
       doi: 10.1093/bioinformatics/btp352
       licence:
-        - "MIT"
+        - 'MIT'
       identifier: biotools:samtools
 input:
   - - meta:
@@ -34,10 +34,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.{bai,csi,crai}":
+      - '*.{bai,csi,crai}':
           type: file
           description: BAM/CRAM/SAM index file
-          pattern: "*.{bai,csi,crai}"
+          pattern: '*.{bai,csi,crai}'
           ontologies: []
   versions_samtools:
     - - ${task.process}:
@@ -61,10 +61,10 @@ topics:
           type: eval
           description: The expression to obtain the version of the tool
 authors:
-  - "@drpatelh"
-  - "@ewels"
-  - "@maxulysse"
+  - '@drpatelh'
+  - '@ewels'
+  - '@maxulysse'
 maintainers:
-  - "@ewels"
-  - "@maxulysse"
-  - "@matthdsm"
+  - '@ewels'
+  - '@maxulysse'
+  - '@matthdsm'

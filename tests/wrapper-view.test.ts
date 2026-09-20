@@ -205,3 +205,61 @@ test('resolveWrapperCancelTarget prefers the run over the plan once both exist, 
     runId: 'wrun_abc123'
   })
 })
+
+test('a running background run shows its progress and a cancel button', () => {
+  const markup = renderView({
+    runs: [
+      sampleRun({
+        state: 'running',
+        origin: 'composition',
+        progress: { started: 2, total: 6, current: 'HISAT2_ALIGN' }
+      })
+    ]
+  })
+  assert.match(markup, /运行中/)
+  assert.match(markup, /2\/6/)
+  assert.match(markup, /HISAT2_ALIGN/)
+  assert.match(markup, /取消运行/)
+})
+
+test('progress without a known total still shows how many steps have started', () => {
+  const markup = renderView({
+    runs: [
+      sampleRun({
+        state: 'running',
+        origin: 'composition',
+        progress: { started: 3, current: 'FASTQC' }
+      })
+    ]
+  })
+  assert.match(markup, /已开始 3 步/)
+  assert.match(markup, /FASTQC/)
+})
+
+test('only a running background run can be cancelled from the run history', () => {
+  const finished = renderView({ runs: [sampleRun({ state: 'completed', origin: 'composition' })] })
+  assert.doesNotMatch(finished, /取消运行/)
+
+  const cancelling = renderView({
+    runs: [sampleRun({ state: 'cancelling', origin: 'composition' })]
+  })
+  assert.match(cancelling, /取消中/)
+  assert.doesNotMatch(cancelling, /取消运行/)
+
+  // A plan-based local run has no kill support, so no cancel button is offered.
+  const legacy = renderView({ runs: [sampleRun({ state: 'running' })] })
+  assert.doesNotMatch(legacy, /取消运行/)
+})
+
+test('a completed run does not show a progress count', () => {
+  const markup = renderView({
+    runs: [
+      sampleRun({
+        state: 'completed',
+        origin: 'composition',
+        progress: { started: 6, total: 6, current: 'MULTIQC' }
+      })
+    ]
+  })
+  assert.doesNotMatch(markup, /6\/6/)
+})

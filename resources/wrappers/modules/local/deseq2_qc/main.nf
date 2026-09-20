@@ -12,6 +12,7 @@ process DESEQ2_QC {
     path counts
     path pca_header_multiqc
     path clustering_header_multiqc
+    path deseq2_qc_script, stageAs: 'deseq2_qc.r'
 
     output:
     path "*.pdf"                , optional:true, emit: pdf
@@ -35,7 +36,7 @@ process DESEQ2_QC {
     def label_upper = args2.toUpperCase()
     prefix = task.ext.prefix ?: "deseq2"
     """
-    deseq2_qc.r \\
+    ./deseq2_qc.r \\
         --count_file $counts \\
         --outdir ./ \\
         --cores $task.cpus \\
@@ -77,4 +78,15 @@ process DESEQ2_QC {
         touch size_factors/\${i}.size_factors.RData
     done
     """
+}
+
+// This module's companion script lives in its own `bin/` directory (not the
+// consuming pipeline's) and is passed to DESEQ2_QC as a `path` process
+// input, so Nextflow stages it into each task's own work directory — the
+// one Docker actually mounts. `moduleDir` here resolves against this file's
+// own location regardless of which pipeline includes it, unlike a runtime
+// `${moduleDir}/bin/...` reference inside the script block, which points at
+// a host path the container can't see.
+def deseq2QcScript() {
+    return Channel.fromPath("${moduleDir}/bin/deseq2_qc.r").first()
 }

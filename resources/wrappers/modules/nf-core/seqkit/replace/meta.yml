@@ -13,7 +13,7 @@ tools:
       homepage: https://bioinf.shenwei.me/seqkit/usage/
       documentation: https://bioinf.shenwei.me/seqkit/usage/
       tool_dev_url: https://github.com/shenwei356/seqkit/
-      doi: "10.1371/journal.pone.016396"
+      doi: '10.1371/journal.pone.016396'
       identifier: biotools:seqkit
 input:
   - - meta:
@@ -24,7 +24,7 @@ input:
     - fastx:
         type: file
         description: fasta/q file
-        pattern: "*.{fasta,fastq,fa,fq,fas,fna,faa}*"
+        pattern: '*.{fasta,fastq,fa,fq,fas,fna,faa}*'
         ontologies:
           - edam: http://edamontology.org/format_1930 # FASTQ
   - out_ext:
@@ -39,10 +39,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.fast*":
+      - '*.fast*':
           type: file
           description: fasta/q file with replaced values
-          pattern: "*.{fasta,fastq,fa,fq,fas,fna,faa}*"
+          pattern: '*.{fasta,fastq,fa,fq,fas,fna,faa}*'
           ontologies:
             - edam: http://edamontology.org/format_1930 # FASTQ
   versions_seqkit:
@@ -69,6 +69,6 @@ topics:
           description: The expression to obtain the version of seqkit
 
 authors:
-  - "@mjcipriano"
+  - '@mjcipriano'
 maintainers:
-  - "@mjcipriano"
+  - '@mjcipriano'

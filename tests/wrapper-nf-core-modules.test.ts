@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { basename } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import test from 'node:test'
 
 import {
@@ -12,15 +13,21 @@ import {
 import { parseWrapperCompositionManifest } from '../src/main/agent/wrappers/composition/manifest'
 import {
   buildWrapperCompositionInspectTool,
+  buildWrapperCompositionRunTool,
   buildWrapperCompositionSearchTool,
   buildWrapperCompositionTools
 } from '../src/main/agent/wrappers/composition/tools'
+import { WrapperJobManager } from '../src/main/agent/wrappers/composition/job-manager'
+import { validateWrapperParams } from '../src/main/agent/wrappers/composition/validate'
 
 const EXPECTED_MODULE_WRAPPER_IDS = [
+  'nf-core/modules/bedtools-genomecov',
   'nf-core/modules/bowtie2-align',
   'nf-core/modules/bowtie2-build',
+  'nf-core/modules/cat-fastq',
   'nf-core/modules/fastp',
   'nf-core/modules/fastqc',
+  'nf-core/modules/fq-lint',
   'nf-core/modules/gffread',
   'nf-core/modules/gunzip',
   'nf-core/modules/hisat2-align',
@@ -29,8 +36,11 @@ const EXPECTED_MODULE_WRAPPER_IDS = [
   'nf-core/modules/kallisto-index',
   'nf-core/modules/kallisto-quant',
   'nf-core/modules/multiqc',
+  'nf-core/modules/picard-markduplicates',
   'nf-core/modules/rsem-calculateexpression',
   'nf-core/modules/rsem-preparereference',
+  'nf-core/modules/rseqc-bamstat',
+  'nf-core/modules/rseqc-inferexperiment',
   'nf-core/modules/salmon-index',
   'nf-core/modules/salmon-quant',
   'nf-core/modules/samtools-faidx',
@@ -41,11 +51,19 @@ const EXPECTED_MODULE_WRAPPER_IDS = [
   'nf-core/modules/samtools-sort',
   'nf-core/modules/samtools-stats',
   'nf-core/modules/samtools-view',
+  'nf-core/modules/seqkit-stats',
   'nf-core/modules/star-align',
   'nf-core/modules/star-genomegenerate',
   'nf-core/modules/stringtie-merge',
   'nf-core/modules/stringtie-stringtie',
+  'nf-core/modules/subread-featurecounts',
   'nf-core/modules/trimgalore',
+  'nf-core/modules/untar',
+  'nf-core/subworkflows/bam-sort-stats-samtools',
+  'nf-core/subworkflows/fastq-align-hisat2',
+  'nf-core/subworkflows/fastq-qc-trim-filter-setstrandedness',
+  'nf-core/subworkflows/fastq-remove-rrna',
+  'nf-core/subworkflows/quantify-pseudo-alignment',
   'nf-core/workflows/rnaseq'
 ]
 
@@ -116,7 +134,7 @@ test('readWrapperModuleDetails returns undefined for an unknown wrapper id', () 
   assert.equal(readWrapperModuleDetails('nf-core/modules/does-not-exist'), undefined)
 })
 
-test('wrapper.search lists matching composition wrappers', async () => {
+test('wrapper_search lists matching composition wrappers', async () => {
   resetWrapperCompositionCatalogCache()
 
   const result = await buildWrapperCompositionSearchTool().execute('call-1', {
@@ -124,14 +142,19 @@ test('wrapper.search lists matching composition wrappers', async () => {
   })
 
   assert.equal(result.isError, undefined)
-  const details = result.details as { results: Array<{ id: string }> }
-  assert.deepEqual(
-    details.results.map((item) => item.id),
-    ['nf-core/modules/fastqc']
-  )
+  const details = result.details as {
+    results: Array<{ id: string; name: string; summary: string }>
+  }
+  // Matching is a substring search over id/name/summary, so wrappers that merely
+  // mention FastQC (e.g. the QC/trim subworkflow) are legitimate hits too.
+  assert.ok(details.results.some((item) => item.id === 'nf-core/modules/fastqc'))
+  for (const item of details.results) {
+    assert.match(`${item.id} ${item.name} ${item.summary}`.toLowerCase(), /fastqc/)
+  }
+  assert.ok(details.results.length < listWrapperCompositionCatalog().length)
 })
 
-test('wrapper.inspect returns the composition manifest plus default params', async () => {
+test('wrapper_inspect returns the composition manifest plus default params', async () => {
   resetWrapperCompositionCatalogCache()
 
   const result = await buildWrapperCompositionInspectTool().execute('call-1', {
@@ -152,8 +175,15 @@ test('wrapper.inspect returns the composition manifest plus default params', asy
 
 test('composition tools expose the generic wrapper workflow only', () => {
   assert.deepEqual(
-    buildWrapperCompositionTools().map((tool) => tool.name),
-    ['wrapper.search', 'wrapper.inspect', 'wrapper.run']
+    buildWrapperCompositionTools(new WrapperJobManager()).map((tool) => tool.name),
+    [
+      'wrapper_search',
+      'wrapper_inspect',
+      'wrapper_run',
+      'wrapper_status',
+      'wrapper_wait',
+      'wrapper_cancel'
+    ]
   )
 })
 
@@ -175,4 +205,38 @@ outputs:
 `),
     /kind must be input, output, or option/
   )
+})
+
+test('every bundled wrapper passes validation with its own default params', () => {
+  resetWrapperCompositionCatalogCache()
+
+  for (const entry of listWrapperCompositionCatalog()) {
+    const defaults = JSON.parse(
+      readFileSync(join(entry.wrapperDir, 'params.json'), 'utf-8')
+    ) as Record<string, unknown>
+    assert.deepEqual(
+      validateWrapperParams(entry.manifest, defaults, {}, entry.componentDir),
+      [],
+      `${entry.manifest.id} default params should validate`
+    )
+  }
+})
+
+test('wrapper_run rejects invalid params before launching Nextflow', async () => {
+  resetWrapperCompositionCatalogCache()
+  const tool = buildWrapperCompositionRunTool(new WrapperJobManager())
+
+  const unknown = await tool.execute('call-1', {
+    id: 'nf-core/modules/fastqc',
+    params: { read: 'x.fastq.gz' }
+  })
+  assert.equal(unknown.isError, true)
+  assert.match(JSON.stringify(unknown.content), /Unknown parameter: read/)
+
+  const plain = await tool.execute('call-2', {
+    id: 'nf-core/modules/gffread',
+    params: { gff: '/definitely/not/here.gff3' }
+  })
+  assert.equal(plain.isError, true)
+  assert.match(JSON.stringify(plain.content), /input path does not exist/)
 })

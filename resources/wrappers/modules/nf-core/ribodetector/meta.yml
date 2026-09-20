@@ -1,4 +1,4 @@
-name: "ribodetector"
+name: 'ribodetector'
 description: Accurate and rapid RiboRNA sequences Detector based on deep
   learning
 keywords:
@@ -20,11 +20,11 @@ tools:
         out rRNA reads from Ribo-seq datasets, improving the quality of downstream
         analyses. As of version 0.3.1, Ribodetector doesn't support setting a
         random seed, so results may not be fully deterministic across runs.
-      homepage: "https://github.com/hzi-bifo/RiboDetector"
-      documentation: "https://github.com/hzi-bifo/RiboDetector"
-      tool_dev_url: "https://github.com/hzi-bifo/RiboDetector"
-      doi: "10.1093/nar/gkac112"
-      licence: ["GPL v3-or-later"]
+      homepage: 'https://github.com/hzi-bifo/RiboDetector'
+      documentation: 'https://github.com/hzi-bifo/RiboDetector'
+      tool_dev_url: 'https://github.com/hzi-bifo/RiboDetector'
+      doi: '10.1093/nar/gkac112'
+      licence: ['GPL v3-or-later']
       identifier: biotools:ribodetector
 
 input:
@@ -44,16 +44,16 @@ input:
       type: integer
       description: |
         Sequencing read length (mean length). Note: the accuracy reduces for reads shorter than 40
-      pattern: "integer >= 1"
+      pattern: 'integer >= 1'
 output:
   fastq:
     - - meta:
           type: map
           description: Groovy Map containing sample information
-      - "*.nonrna*.fastq.gz":
+      - '*.nonrna*.fastq.gz':
           type: file
           description: rRNA depleted FastQ files
-          pattern: "*.nonrna*.fastq.gz"
+          pattern: '*.nonrna*.fastq.gz'
           ontologies:
             - edam: http://edamontology.org/format_1930 # fastq format
             - edam: http://edamontology.org/format_3989 # GZIP format
@@ -61,10 +61,10 @@ output:
     - - meta:
           type: map
           description: Groovy Map containing sample information
-      - "*.log":
+      - '*.log':
           type: file
           description: Log file from RiboDetector
-          pattern: "*.log"
+          pattern: '*.log'
           ontologies: []
   versions_ribodetector:
     - - ${task.process}:
@@ -109,6 +109,6 @@ topics:
           description: CUDA version bundled with the task's pytorch build, or `no CUDA available` on the non-GPU path
 
 authors:
-  - "@maxibor"
+  - '@maxibor'
 maintainers:
-  - "@maxibor"
+  - '@maxibor'

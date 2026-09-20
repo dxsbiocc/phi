@@ -15,7 +15,7 @@ tools:
       homepage: http://www.htslib.org/
       documentation: http://www.htslib.org/doc/samtools.html
       doi: 10.1093/bioinformatics/btp352
-      licence: ["MIT"]
+      licence: ['MIT']
       identifier: biotools:samtools
 input:
   - - meta:
@@ -26,12 +26,12 @@ input:
     - input:
         type: file
         description: BAM/CRAM file from alignment
-        pattern: "*.{bam,cram}"
+        pattern: '*.{bam,cram}'
         ontologies: []
     - input_index:
         type: file
         description: BAI/CRAI file from alignment
-        pattern: "*.{bai,crai}"
+        pattern: '*.{bai,crai}'
         ontologies: []
   - - meta2:
         type: map
@@ -41,12 +41,12 @@ input:
     - fasta:
         type: file
         description: Reference file the CRAM was created with (optional)
-        pattern: "*.{fasta,fa,fna}"
+        pattern: '*.{fasta,fa,fna}'
         ontologies: []
     - fai:
         type: file
         description: FASTA ref index file
-        pattern: "*.{fasta,fa,fna}.fai"
+        pattern: '*.{fasta,fa,fna}.fai'
         ontologies: []
 output:
   stats:
@@ -55,10 +55,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.stats":
+      - '*.stats':
           type: file
           description: File containing samtools stats output
-          pattern: "*.{stats}"
+          pattern: '*.{stats}'
           ontologies: []
   versions_samtools:
     - - ${task.process}:
@@ -84,11 +84,11 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@drpatelh"
-  - "@FriederikeHanssen"
-  - "@ramprasadn"
+  - '@drpatelh'
+  - '@FriederikeHanssen'
+  - '@ramprasadn'
 maintainers:
-  - "@drpatelh"
-  - "@FriederikeHanssen"
-  - "@ramprasadn"
-  - "@matthdsm"
+  - '@drpatelh'
+  - '@FriederikeHanssen'
+  - '@ramprasadn'
+  - '@matthdsm'

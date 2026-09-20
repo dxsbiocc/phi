@@ -10,13 +10,14 @@ export type WrapperCatalogState = {
   wrapperError: string | null
   setSelectedWrapperId: (id: string | null) => void
   refreshWrappers: () => Promise<void>
+  cancelWrapperRun: (runId: string) => Promise<void>
   exportWrapperReproducibility: (runId: string) => Promise<void>
 }
 
 /**
  * Reads the agent's own composition catalog — the same bundled
  * `resources/wrappers/{modules,subworkflows,workflows}/**\/wrapper/wrapper.yaml`
- * scan the `wrapper.search`/`wrapper.run` agent tools use (see
+ * scan the `wrapper_search`/`wrapper_run` agent tools use (see
  * `src/main/agent/wrappers/composition/discovery.ts`) — rather than the
  * legacy `~/.phi/wrappers/installed` catalog (`listWrapperCatalog`), which
  * nothing keeps in sync with it: that legacy catalog's bundled-install path
@@ -61,9 +62,37 @@ export function useWrapperCatalog(): WrapperCatalogState {
     }
   }, [])
 
+  const cancelWrapperRun = useCallback(async (runId: string): Promise<void> => {
+    try {
+      await window.api.cancelWrapperRun(runId)
+    } catch (err) {
+      setWrapperError(err instanceof Error ? err.message : String(err))
+    }
+  }, [])
+
   useEffect(() => {
     void Promise.resolve().then(() => refreshWrappers())
   }, [refreshWrappers])
+
+  // Background runs change on their own (progress, finish, cancel): reload just the
+  // run list when the main process says so, coalescing a burst into one reload.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const unsubscribe = window.api.onWrapperRunsChanged(() => {
+      if (timer) return
+      timer = setTimeout(() => {
+        timer = undefined
+        window.api
+          .listWrapperRuns()
+          .then(setRuns)
+          .catch(() => undefined)
+      }, 300)
+    })
+    return () => {
+      unsubscribe()
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
 
   return {
     catalog,
@@ -73,6 +102,7 @@ export function useWrapperCatalog(): WrapperCatalogState {
     wrapperError,
     setSelectedWrapperId,
     refreshWrappers,
+    cancelWrapperRun,
     exportWrapperReproducibility
   }
 }

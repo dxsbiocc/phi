@@ -11,8 +11,8 @@ tools:
       description: Convert a bedGraph file to bigWig format.
       homepage: http://hgdownload.cse.ucsc.edu/admin/exe/
       documentation: https://genome.ucsc.edu/goldenPath/help/bigWig.html
-      licence: ["varies; see http://genome.ucsc.edu/license"]
-      identifier: ""
+      licence: ['varies; see http://genome.ucsc.edu/license']
+      identifier: ''
 input:
   - - meta:
         type: map
@@ -22,12 +22,12 @@ input:
     - bedgraph:
         type: file
         description: bedGraph file
-        pattern: "*.{bedGraph}"
+        pattern: '*.{bedGraph}'
         ontologies: []
   - sizes:
       type: file
       description: chromosome sizes file
-      pattern: "*.{sizes}"
+      pattern: '*.{sizes}'
       ontologies: []
 output:
   bigwig:
@@ -36,10 +36,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.bigWig":
+      - '*.bigWig':
           type: file
           description: bigWig file
-          pattern: "*.{bigWig}"
+          pattern: '*.{bigWig}'
           ontologies: []
   versions_ucsc:
     - - ${task.process}:
@@ -48,7 +48,7 @@ output:
       - ucsc:
           type: string
           description: The tool name
-      - "482":
+      - '482':
           type: eval
           description: The expression to obtain the version of the tool
 
@@ -60,11 +60,11 @@ topics:
       - ucsc:
           type: string
           description: The tool name
-      - "482":
+      - '482':
           type: eval
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@drpatelh"
+  - '@drpatelh'
 maintainers:
-  - "@drpatelh"
+  - '@drpatelh'

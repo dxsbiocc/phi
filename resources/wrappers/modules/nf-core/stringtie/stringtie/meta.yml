@@ -12,7 +12,7 @@ tools:
       homepage: https://ccb.jhu.edu/software/stringtie/index.shtml
       documentation: https://ccb.jhu.edu/software/stringtie/index.shtml?t=manual
       licence:
-        - "MIT"
+        - 'MIT'
       identifier: biotools:stringtie
 input:
   - - meta:
@@ -24,13 +24,13 @@ input:
         type: file
         description: |
           Sorted and indexed bam file from short-read alignment.
-        pattern: ".bam"
+        pattern: '.bam'
         ontologies: []
     - lrbam:
         type: file
         description: |
           Sorted and indexed bam file from long-read alignment.
-        pattern: ".bam"
+        pattern: '.bam'
         ontologies: []
   - mode:
       type: string
@@ -45,7 +45,7 @@ input:
       type: file
       description: |
         Annotation gtf file (optional).
-      pattern: ".gtf"
+      pattern: '.gtf'
       ontologies: []
 output:
   transcript_gtf:
@@ -58,7 +58,7 @@ output:
           type: file
           description: |
             Output assembly (transcriptome)
-          pattern: ".gtf"
+          pattern: '.gtf'
           ontologies: []
   abundance:
     - - meta:
@@ -70,7 +70,7 @@ output:
           type: file
           description: |
             Abundance for non-redundand set of transcripts
-          pattern: ".txt"
+          pattern: '.txt'
           ontologies: []
   coverage_gtf:
     - - meta:
@@ -82,7 +82,7 @@ output:
           type: file
           description: |
             Coverage for the sample
-          pattern: ".gtf"
+          pattern: '.gtf'
           ontologies: []
   ballgown:
     - - meta:
@@ -94,7 +94,7 @@ output:
           type: file
           description: |
             Ballgown output for the sample
-          pattern: ".ctab"
+          pattern: '.ctab'
           ontologies: []
   versions_stringtie:
     - - ${task.process}:
@@ -118,8 +118,8 @@ topics:
           type: eval
           description: The expression to obtain the version of the tool
 authors:
-  - "@drpatelh"
-  - "@khersameesh24"
+  - '@drpatelh'
+  - '@khersameesh24'
 maintainers:
-  - "@drpatelh"
-  - "@khersameesh24"
+  - '@drpatelh'
+  - '@khersameesh24'

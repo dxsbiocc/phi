@@ -12,7 +12,7 @@ tools:
       homepage: http://rseqc.sourceforge.net/
       documentation: http://rseqc.sourceforge.net/
       doi: 10.1093/bioinformatics/bts356
-      licence: ["GPL-3.0-or-later"]
+      licence: ['GPL-3.0-or-later']
       identifier: biotools:rseqc
 input:
   - - meta:
@@ -23,95 +23,95 @@ input:
     - bam:
         type: file
         description: the alignment in bam format
-        pattern: "*.{bam}"
+        pattern: '*.{bam}'
         ontologies: []
     - bai:
         type: file
         description: BAM index file
-        pattern: "*.{bai}"
+        pattern: '*.{bai}'
         ontologies: []
   - bed:
       type: file
       description: a bed file for the reference gene model
-      pattern: "*.{bed}"
+      pattern: '*.{bed}'
       ontologies: []
 output:
   xls:
     - - meta:
           type: file
           description: xls file with junction information
-          pattern: "*.xls"
+          pattern: '*.xls'
           ontologies: []
-      - "*.xls":
+      - '*.xls':
           type: file
           description: xls file with junction information
-          pattern: "*.xls"
+          pattern: '*.xls'
           ontologies: []
   rscript:
     - - meta:
           type: file
           description: xls file with junction information
-          pattern: "*.xls"
+          pattern: '*.xls'
           ontologies: []
-      - "*.r":
+      - '*.r':
           type: file
           description: Rscript to reproduce the plots
-          pattern: "*.r"
+          pattern: '*.r'
           ontologies: []
   log:
     - - meta:
           type: file
           description: xls file with junction information
-          pattern: "*.xls"
+          pattern: '*.xls'
           ontologies: []
-      - "*.log":
+      - '*.log':
           type: file
           description: Log file of execution
-          pattern: "*.junction_annotation.log"
+          pattern: '*.junction_annotation.log'
           ontologies: []
   bed:
     - - meta:
           type: file
           description: xls file with junction information
-          pattern: "*.xls"
+          pattern: '*.xls'
           ontologies: []
-      - "*.junction.bed":
+      - '*.junction.bed':
           type: file
           description: bed file of annotated junctions
-          pattern: "*.junction.bed"
+          pattern: '*.junction.bed'
           ontologies: []
   interact_bed:
     - - meta:
           type: file
           description: xls file with junction information
-          pattern: "*.xls"
+          pattern: '*.xls'
           ontologies: []
-      - "*.Interact.bed":
+      - '*.Interact.bed':
           type: file
           description: Interact bed file
-          pattern: "*.Interact.bed"
+          pattern: '*.Interact.bed'
           ontologies: []
   pdf:
     - - meta:
           type: file
           description: xls file with junction information
-          pattern: "*.xls"
+          pattern: '*.xls'
           ontologies: []
-      - "*junction.pdf":
+      - '*junction.pdf':
           type: file
           description: junction plot
-          pattern: "*.junction.pdf"
+          pattern: '*.junction.pdf'
           ontologies: []
   events_pdf:
     - - meta:
           type: file
           description: xls file with junction information
-          pattern: "*.xls"
+          pattern: '*.xls'
           ontologies: []
-      - "*events.pdf":
+      - '*events.pdf':
           type: file
           description: events plot
-          pattern: "*.events.pdf"
+          pattern: '*.events.pdf'
           ontologies: []
   versions_rseqc:
     - - ${task.process}:
@@ -135,10 +135,10 @@ topics:
           type: eval
           description: The expression to obtain the version of the tool of the tool
 authors:
-  - "@drpatelh"
-  - "@kevinmenden"
-  - "@rhassaine"
+  - '@drpatelh'
+  - '@kevinmenden'
+  - '@rhassaine'
 maintainers:
-  - "@drpatelh"
-  - "@kevinmenden"
-  - "@rhassaine"
+  - '@drpatelh'
+  - '@kevinmenden'
+  - '@rhassaine'

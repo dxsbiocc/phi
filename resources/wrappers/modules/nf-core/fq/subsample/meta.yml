@@ -1,4 +1,4 @@
-name: "fq_subsample"
+name: 'fq_subsample'
 description: fq subsample outputs a subset of records from single or paired FASTQ
   files. This requires a seed (--seed) to be set in ext.args.
 keywords:
@@ -6,13 +6,13 @@ keywords:
   - fq
   - subsample
 tools:
-  - "fq":
-      description: "fq is a library to generate and validate FASTQ file pairs."
-      homepage: "https://github.com/stjude-rust-labs/fq"
-      documentation: "https://github.com/stjude-rust-labs/fq"
-      tool_dev_url: "https://github.com/stjude-rust-labs/fq"
-      licence: ["MIT"]
-      identifier: ""
+  - 'fq':
+      description: 'fq is a library to generate and validate FASTQ file pairs.'
+      homepage: 'https://github.com/stjude-rust-labs/fq'
+      documentation: 'https://github.com/stjude-rust-labs/fq'
+      tool_dev_url: 'https://github.com/stjude-rust-labs/fq'
+      licence: ['MIT']
+      identifier: ''
 input:
   - - meta:
         type: map
@@ -22,7 +22,7 @@ input:
     - fastq:
         type: file
         description: FASTQ file
-        pattern: "*.{fq,fastq}{,.gz}"
+        pattern: '*.{fq,fastq}{,.gz}'
         ontologies:
           - edam: http://edamontology.org/format_1930 # FASTQ
 output:
@@ -32,10 +32,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.fastq.gz":
+      - '*.fastq.gz':
           type: file
           description: Randomly sampled FASTQ files.
-          pattern: "*_R[12].fastq.gz"
+          pattern: '*_R[12].fastq.gz'
           ontologies:
             - edam: http://edamontology.org/format_3989 # GZIP format
   versions_fq:
@@ -62,6 +62,6 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@adamrtalbot"
+  - '@adamrtalbot'
 maintainers:
-  - "@adamrtalbot"
+  - '@adamrtalbot'

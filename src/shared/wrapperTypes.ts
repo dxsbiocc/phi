@@ -159,6 +159,16 @@ export interface WrapperOutputRecord {
  */
 export type WrapperStepState = 'pending' | 'running' | 'completed' | 'failed'
 
+/** How far a running wrapper has got, estimated from Nextflow's console output. */
+export interface WrapperRunProgress {
+  /** Distinct processes that have started so far. */
+  started: number
+  /** Distinct processes in the wrapper's DAG, when known. */
+  total?: number
+  /** The most recently started process. */
+  current?: string
+}
+
 export interface WrapperRun {
   runId: string
   runName?: string
@@ -178,6 +188,18 @@ export interface WrapperRun {
   /** Snapshotted from the plan — the executor's weblog listener matches Nextflow process names against these. */
   steps?: WrapperManifestStep[]
   originSessionId?: string
+  /**
+   * Set on runs started by the agent-composition layer (`wrapper_run`), which has no plan:
+   * `planId` is empty and there is no `plan.json`. Absent on runs created from a plan.
+   */
+  origin?: 'composition'
+  /**
+   * Whether Phi should wake the conversation that started this run once it ends. Only
+   * `false` opts out; absent means yes (the default for runs the agent starts).
+   */
+  continueWhenDone?: boolean
+  /** Latest known progress of a run in flight; the final value is kept once it ends. */
+  progress?: WrapperRunProgress
   createdAt: string
   updatedAt: string
   startedAt?: string

@@ -9,18 +9,26 @@ import {
   isWrapperToolName
 } from '../src/renderer/src/lib/chatItems'
 
-test('isWrapperToolName recognizes wrapper.<id> execute tool names only', () => {
-  assert.equal(isWrapperToolName('wrapper.phi_ngs_fastq_qc'), true)
+test('isWrapperToolName recognizes wrapper_<id> execute tool names only', () => {
+  assert.equal(isWrapperToolName('wrapper_phi_ngs_fastq_qc'), true)
   assert.equal(isWrapperToolName('bash'), false)
-  assert.equal(isWrapperToolName('wrap.per'), false)
+  assert.equal(isWrapperToolName('wrap_per'), false)
 })
 
-test('isWrapperToolName excludes wrapper.search/wrapper.inspect — they never produce a planId, so routing them through WrapperPlanCard would strand the card on "正在加载计划…" forever', () => {
-  assert.equal(isWrapperToolName('wrapper.search'), false)
-  assert.equal(isWrapperToolName('wrapper.inspect'), false)
+test('isWrapperToolName excludes wrapper_search/wrapper_inspect — they never produce a planId, so routing them through WrapperPlanCard would strand the card on "正在加载计划…" forever', () => {
+  assert.equal(isWrapperToolName('wrapper_search'), false)
+  assert.equal(isWrapperToolName('wrapper_inspect'), false)
 })
 
-test('extractWrapperPlanId reads the P1.8 wrapper.* tool result convention', () => {
+test('isWrapperToolName excludes wrapper_run — it executes directly and returns wrapper_run_result, never a planId', () => {
+  assert.equal(isWrapperToolName('wrapper_run'), false)
+})
+
+test('the Wrapper agent (a delegation tool named after the agent) is not a wrapper_<id> plan tool', () => {
+  assert.equal(isWrapperToolName('Wrapper'), false)
+})
+
+test('extractWrapperPlanId reads the P1.8 wrapper_* tool result convention', () => {
   assert.equal(
     extractWrapperPlanId({
       content: [{ type: 'text', text: 'Plan created' }],
@@ -762,4 +770,40 @@ test('chatItemsFromSessionMessages restores model selection migration notices', 
       content: 'kimi-code/kimi-k2.5 当前不可用，已切换到 kimi-code/kimi-for-coding。'
     }
   ])
+})
+
+const FINISHED_EVENT = {
+  source: 'phi',
+  type: 'wrapper_run_finished',
+  eventId: 'event-wrapper-done',
+  createdAt: '2026-09-20T10:03:00.000Z',
+  wrapperRunId: 'wrun_abc',
+  wrapperId: 'nf-core/modules/fastqc',
+  state: 'completed',
+  exitCode: 0,
+  outDir: '/data/qc',
+  elapsedSeconds: 125
+}
+
+test('chatItemsFromSessionMessages restores the notice for a finished background wrapper run', () => {
+  const items = chatItemsFromSessionMessages([FINISHED_EVENT])
+  assert.equal(items.length, 1)
+  assert.equal(items[0].role, 'warning')
+  assert.equal(items[0].id, 'event-wrapper-done')
+  const content = (items[0] as { content: string }).content
+  assert.match(content, /^Wrapper 运行已完成\n/)
+  assert.match(content, /nf-core\/modules\/fastqc/)
+  assert.match(content, /2 分 5 秒/)
+  assert.match(content, /\/data\/qc/)
+  assert.match(content, /wrun_abc/)
+})
+
+test('a failed background wrapper run is restored with its cause and a next step', () => {
+  const items = chatItemsFromSessionMessages([
+    { ...FINISHED_EVENT, state: 'failed', exitCode: 137 }
+  ])
+  const content = (items[0] as { content: string }).content
+  assert.match(content, /^Wrapper 运行失败\n/)
+  assert.match(content, /137/)
+  assert.match(content, /让 Wrapper 查看/)
 })

@@ -12,7 +12,7 @@ tools:
       homepage: http://rseqc.sourceforge.net/
       documentation: http://rseqc.sourceforge.net/
       doi: 10.1093/bioinformatics/bts356
-      licence: ["GPL-3.0-or-later"]
+      licence: ['GPL-3.0-or-later']
       identifier: biotools:rseqc
 input:
   - - meta:
@@ -23,73 +23,73 @@ input:
     - bam:
         type: file
         description: the alignment in bam format
-        pattern: "*.{bam}"
+        pattern: '*.{bam}'
         ontologies: []
     - bai:
         type: file
         description: BAM index file
-        pattern: "*.{bai}"
+        pattern: '*.{bai}'
         ontologies: []
   - bed:
       type: file
       description: a bed file for the reference gene model
-      pattern: "*.{bed}"
+      pattern: '*.{bed}'
       ontologies: []
 output:
   distance:
     - - meta:
           type: file
           description: the inner distances
-          pattern: "*.inner_distance.txt"
+          pattern: '*.inner_distance.txt'
           ontologies: []
-      - "*distance.txt":
+      - '*distance.txt':
           type: file
           description: the inner distances
-          pattern: "*.inner_distance.txt"
+          pattern: '*.inner_distance.txt'
           ontologies: []
   freq:
     - - meta:
           type: file
           description: the inner distances
-          pattern: "*.inner_distance.txt"
+          pattern: '*.inner_distance.txt'
           ontologies: []
-      - "*freq.txt":
+      - '*freq.txt':
           type: file
           description: frequencies of different insert sizes
-          pattern: "*.inner_distance_freq.txt"
+          pattern: '*.inner_distance_freq.txt'
           ontologies: []
   mean:
     - - meta:
           type: file
           description: the inner distances
-          pattern: "*.inner_distance.txt"
+          pattern: '*.inner_distance.txt'
           ontologies: []
-      - "*mean.txt":
+      - '*mean.txt':
           type: file
           description: mean/median values of inner distances
-          pattern: "*.inner_distance_mean.txt"
+          pattern: '*.inner_distance_mean.txt'
           ontologies: []
   pdf:
     - - meta:
           type: file
           description: the inner distances
-          pattern: "*.inner_distance.txt"
+          pattern: '*.inner_distance.txt'
           ontologies: []
-      - "*.pdf":
+      - '*.pdf':
           type: file
           description: distribution plot of inner distances
-          pattern: "*.inner_distance_plot.pdf"
+          pattern: '*.inner_distance_plot.pdf'
           ontologies: []
   rscript:
     - - meta:
           type: file
           description: the inner distances
-          pattern: "*.inner_distance.txt"
+          pattern: '*.inner_distance.txt'
           ontologies: []
-      - "*.r":
+      - '*.r':
           type: file
           description: script to reproduce the plot
-          pattern: "*.inner_distance_plot.R"
+          pattern: '*.inner_distance_plot.R'
           ontologies:
             - edam: http://edamontology.org/format_3999 # R script
   versions_rseqc:
@@ -114,10 +114,10 @@ topics:
           type: eval
           description: The expression to obtain the version of the tool
 authors:
-  - "@drpatelh"
-  - "@kevinmenden"
-  - "@rhassaine"
+  - '@drpatelh'
+  - '@kevinmenden'
+  - '@rhassaine'
 maintainers:
-  - "@drpatelh"
-  - "@kevinmenden"
-  - "@rhassaine"
+  - '@drpatelh'
+  - '@kevinmenden'
+  - '@rhassaine'

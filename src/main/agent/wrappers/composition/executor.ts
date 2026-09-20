@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 
@@ -79,26 +79,86 @@ function condaRootFromEnvBin(binPath: string): string | undefined {
 
 export interface WrapperRunResult {
   success: boolean
+  /** True when the run was stopped through `signal`; `success` is then false. */
+  cancelled?: boolean
   exitCode: number
   /** Combined, tail-truncated stdout+stderr — enough to explain success/failure, not the full log. */
   output: string
 }
 
+export interface RunWrapperOptions {
+  /** Aborting stops Nextflow: SIGTERM to its whole process group, SIGKILL after `killGraceMs`. */
+  signal?: AbortSignal
+  killGraceMs?: number
+}
+
+export interface StartWrapperOptions extends RunWrapperOptions {
+  /** Called with each chunk of Nextflow's combined stdout/stderr as it arrives. */
+  onOutput?: (chunk: string) => void
+}
+
+/** A running (or already finished) Nextflow process. */
+export interface WrapperProcess {
+  pid: number | undefined
+  /** Resolves once Nextflow has exited. Never rejects. */
+  done: Promise<WrapperRunResult>
+  /** Stops Nextflow (SIGTERM to its process group, SIGKILL after the grace period). Idempotent. */
+  cancel: () => void
+}
+
+const DEFAULT_KILL_GRACE_MS = 10_000
+const MAX_BUFFERED_OUTPUT = 64 * 1024
+
+// Nextflow runs in its own process group so a cancel reaches java, the launcher
+// script and anything they spawned. Live groups are tracked so quitting the app
+// cannot leave an orphaned pipeline behind.
+const activeGroups = new Set<number>()
+let exitHookInstalled = false
+
+function signalGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(process.platform === 'win32' ? pid : -pid, signal)
+  } catch {
+    // Already gone.
+  }
+}
+
+/** SIGTERM every live Nextflow process group. Called on app quit; also runs on process exit. */
+export function killAllWrapperProcesses(): void {
+  for (const pid of activeGroups) signalGroup(pid, 'SIGTERM')
+}
+
+function installExitHook(): void {
+  if (exitHookInstalled) return
+  exitHookInstalled = true
+  process.once('exit', killAllWrapperProcesses)
+}
+
 /**
- * `wrapperDir` is the `wrapper/` adapter directory (containing
- * wrapper.yaml/main.nf/params.json); Nextflow itself is launched with cwd
- * set to its parent (the module/subworkflow root), matching the fixed
- * command's own relative path (`wrapper/main.nf`).
+ * Starts Nextflow for `wrapperDir` and returns immediately. `wrapperDir` is the
+ * `wrapper/` adapter directory (containing wrapper.yaml/main.nf/params.json);
+ * Nextflow is launched with cwd set to its parent (the module/subworkflow
+ * root), matching the fixed command's own relative path (`wrapper/main.nf`).
+ * Throws synchronously for an unknown profile or when no Nextflow can be found.
  */
-export async function runWrapperComposition(
+export function startWrapperComposition(
   wrapperDir: string,
   overrides: Record<string, unknown>,
-  profile: WrapperExecutionProfile = 'docker'
-): Promise<WrapperRunResult> {
+  profile: WrapperExecutionProfile = 'docker',
+  options: StartWrapperOptions = {}
+): WrapperProcess {
   if (!WRAPPER_EXECUTION_PROFILES.includes(profile)) {
     throw new Error(
       `Unknown execution profile: ${profile}. Must be one of ${WRAPPER_EXECUTION_PROFILES.join(', ')}.`
     )
+  }
+  const { signal } = options
+  if (signal?.aborted) {
+    return {
+      pid: undefined,
+      done: Promise.resolve({ success: false, cancelled: true, exitCode: -1, output: '' }),
+      cancel: () => undefined
+    }
   }
 
   const nextflowBin = findNextflowBinary()
@@ -119,28 +179,68 @@ export async function runWrapperComposition(
   ]
   const env = { ...process.env, PATH: `${pathDirs.join(':')}:${process.env.PATH ?? ''}` }
 
-  const { exitCode, output } = await new Promise<{ exitCode: number; output: string }>(
-    (resolve) => {
-      const child = spawn(
-        nextflowBin,
-        ['run', 'wrapper/main.nf', '-params-file', paramsFilePath, '-profile', profile],
-        { cwd: componentDir, env }
-      )
-      let combined = ''
-      child.stdout.on('data', (chunk: Buffer) => {
-        combined += chunk.toString('utf-8')
-      })
-      child.stderr.on('data', (chunk: Buffer) => {
-        combined += chunk.toString('utf-8')
-      })
-      child.on('close', (code) => resolve({ exitCode: code ?? -1, output: combined }))
-      child.on('error', (error) => resolve({ exitCode: -1, output: String(error) }))
-    }
+  installExitHook()
+  const child = spawn(
+    nextflowBin,
+    ['run', 'wrapper/main.nf', '-params-file', paramsFilePath, '-profile', profile],
+    { cwd: componentDir, env, detached: process.platform !== 'win32' }
   )
+  const pid = child.pid
+  if (pid !== undefined) activeGroups.add(pid)
 
-  return {
-    success: exitCode === 0,
-    exitCode,
-    output: output.length > 4000 ? output.slice(-4000) : output
+  let combined = ''
+  let cancelled = false
+  let killTimer: NodeJS.Timeout | undefined
+
+  const cancel = (): void => {
+    if (cancelled) return
+    cancelled = true
+    if (pid === undefined) return
+    signalGroup(pid, 'SIGTERM')
+    killTimer = setTimeout(
+      () => signalGroup(pid, 'SIGKILL'),
+      options.killGraceMs ?? DEFAULT_KILL_GRACE_MS
+    )
+    killTimer.unref()
   }
+  signal?.addEventListener('abort', cancel, { once: true })
+
+  const done = new Promise<WrapperRunResult>((resolve) => {
+    const settle = (exitCode: number): void => {
+      if (killTimer) clearTimeout(killTimer)
+      signal?.removeEventListener('abort', cancel)
+      if (pid !== undefined) activeGroups.delete(pid)
+      rmSync(tmpDir, { recursive: true, force: true })
+      resolve({
+        success: exitCode === 0 && !cancelled,
+        ...(cancelled ? { cancelled: true } : {}),
+        exitCode,
+        output: combined.length > 4000 ? combined.slice(-4000) : combined
+      })
+    }
+    const onData = (chunk: Buffer): void => {
+      const text = chunk.toString('utf-8')
+      combined = (combined + text).slice(-MAX_BUFFERED_OUTPUT)
+      options.onOutput?.(text)
+    }
+    child.stdout.on('data', onData)
+    child.stderr.on('data', onData)
+    child.on('close', (code) => settle(code ?? -1))
+    child.on('error', (error) => {
+      combined += String(error)
+      settle(-1)
+    })
+  })
+
+  return { pid, done, cancel }
+}
+
+/** Blocking form of {@link startWrapperComposition}: resolves when Nextflow exits. */
+export async function runWrapperComposition(
+  wrapperDir: string,
+  overrides: Record<string, unknown>,
+  profile: WrapperExecutionProfile = 'docker',
+  options: RunWrapperOptions = {}
+): Promise<WrapperRunResult> {
+  return startWrapperComposition(wrapperDir, overrides, profile, options).done
 }

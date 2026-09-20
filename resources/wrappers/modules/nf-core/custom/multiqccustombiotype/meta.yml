@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/nf-core/modules/master/modules/meta-schema.json
-name: "custom_multiqccustombiotype"
+name: 'custom_multiqccustombiotype'
 description: Generate MultiQC-compatible biotype count summaries from featureCounts output
 keywords:
   - biotype
@@ -8,11 +8,11 @@ keywords:
   - rnaseq
   - qc
 tools:
-  - "custom":
-      description: "Summarise featureCounts biotype assignments for MultiQC reporting"
-      tool_dev_url: "https://github.com/nf-core/modules/blob/master/modules/nf-core/custom/multiqccustombiotype/main.nf"
-      licence: ["MIT"]
-      identifier: ""
+  - 'custom':
+      description: 'Summarise featureCounts biotype assignments for MultiQC reporting'
+      tool_dev_url: 'https://github.com/nf-core/modules/blob/master/modules/nf-core/custom/multiqccustombiotype/main.nf'
+      licence: ['MIT']
+      identifier: ''
 
 input:
   - - meta:
@@ -23,7 +23,7 @@ input:
     - count:
         type: file
         description: featureCounts output count file
-        pattern: "*.featureCounts.txt"
+        pattern: '*.featureCounts.txt'
         ontologies: []
   - - meta2:
         type: map
@@ -32,7 +32,7 @@ input:
     - header:
         type: file
         description: Header file for the biotype counts MultiQC table
-        pattern: "*.txt"
+        pattern: '*.txt'
         ontologies: []
 output:
   tsv:
@@ -40,30 +40,30 @@ output:
           type: map
           description: |
             Groovy Map containing sample information
-      - "*biotype_counts_mqc.tsv":
+      - '*biotype_counts_mqc.tsv':
           type: file
           description: |
             Biotype counts formatted for MultiQC. The process fails if the
             number of biotype rows exceeds the threshold passed via
             `ext.args = '--max_biotypes N'` (default 100), since MultiQC
             cannot render a bar plot with that many categories.
-          pattern: "*biotype_counts_mqc.tsv"
+          pattern: '*biotype_counts_mqc.tsv'
           ontologies: []
   rrna:
     - - meta:
           type: map
           description: |
             Groovy Map containing sample information
-      - "*biotype_counts_rrna_mqc.tsv":
+      - '*biotype_counts_rrna_mqc.tsv':
           type: file
           description: rRNA percentage for MultiQC general stats
-          pattern: "*biotype_counts_rrna_mqc.tsv"
+          pattern: '*biotype_counts_rrna_mqc.tsv'
           ontologies: []
   versions:
     - versions.yml:
         type: file
         description: File containing software versions
-        pattern: "versions.yml"
+        pattern: 'versions.yml'
         ontologies:
           - edam: http://edamontology.org/format_3750
 topics:
@@ -72,6 +72,6 @@ topics:
         type: string
         description: The name of the process
 authors:
-  - "@pinin4fjords"
+  - '@pinin4fjords'
 maintainers:
-  - "@pinin4fjords"
+  - '@pinin4fjords'

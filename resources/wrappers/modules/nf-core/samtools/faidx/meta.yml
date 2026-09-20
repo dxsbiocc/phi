@@ -16,7 +16,7 @@ tools:
       documentation: http://www.htslib.org/doc/samtools.html
       doi: 10.1093/bioinformatics/btp352
       licence:
-        - "MIT"
+        - 'MIT'
       identifier: biotools:samtools
 input:
   - - meta:
@@ -27,12 +27,12 @@ input:
     - fasta:
         type: file
         description: FASTA file
-        pattern: "*.{fa,fasta}"
+        pattern: '*.{fa,fasta}'
         ontologies: []
     - fai:
         type: file
         description: FASTA index file
-        pattern: "*.{fai}"
+        pattern: '*.{fai}'
         ontologies: []
   - get_sizes:
       type: boolean
@@ -44,10 +44,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.{fa,fasta}":
+      - '*.{fa,fasta}':
           type: file
           description: FASTA file
-          pattern: "*.{fa}"
+          pattern: '*.{fa}'
           ontologies: []
   sizes:
     - - meta:
@@ -55,10 +55,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.sizes":
+      - '*.sizes':
           type: file
           description: File containing chromosome lengths
-          pattern: "*.{sizes}"
+          pattern: '*.{sizes}'
           ontologies: []
   fai:
     - - meta:
@@ -66,10 +66,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.fai":
+      - '*.fai':
           type: file
           description: FASTA index file
-          pattern: "*.{fai}"
+          pattern: '*.{fai}'
           ontologies: []
   gzi:
     - - meta:
@@ -77,10 +77,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.gzi":
+      - '*.gzi':
           type: file
           description: Optional gzip index file for compressed inputs
-          pattern: "*.gzi"
+          pattern: '*.gzi'
           ontologies: []
   versions_samtools:
     - - ${task.process}:
@@ -104,10 +104,10 @@ topics:
           type: eval
           description: The command used to generate the version of the tool
 authors:
-  - "@drpatelh"
-  - "@ewels"
-  - "@phue"
+  - '@drpatelh'
+  - '@ewels'
+  - '@phue'
 maintainers:
-  - "@maxulysse"
-  - "@phue"
-  - "@matthdsm"
+  - '@maxulysse'
+  - '@phue'
+  - '@matthdsm'

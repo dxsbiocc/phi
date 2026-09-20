@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/nf-core/modules/master/modules/meta-schema.json
-name: "custom_tx2gene"
+name: 'custom_tx2gene'
 description: Make a transcript/gene mapping from a GTF and cross-reference with transcript
   quantifications.
 keywords:
@@ -9,13 +9,13 @@ keywords:
   - rsem
   - transcript
 tools:
-  - "custom":
+  - 'custom':
       description: |
         "Custom module to create a transcript to gene mapping from a GTF and
         check it against transcript quantifications"
-      tool_dev_url: "https://github.com/nf-core/modules/blob/master/modules/nf-core/custom/tx2gene/main.nf"
-      licence: ["MIT"]
-      identifier: ""
+      tool_dev_url: 'https://github.com/nf-core/modules/blob/master/modules/nf-core/custom/tx2gene/main.nf'
+      licence: ['MIT']
+      identifier: ''
 
 input:
   - - meta:
@@ -26,7 +26,7 @@ input:
     - gtf:
         type: file
         description: An annotation file of the reference genome in GTF format
-        pattern: "*.gtf"
+        pattern: '*.gtf'
         ontologies: []
   - - meta2:
         type: map
@@ -52,10 +52,10 @@ output:
           description: |
             Groovy Map containing reference information related to the GTF file
             e.g. `[ id:'yeast' ]`
-      - "*tx2gene.tsv":
+      - '*tx2gene.tsv':
           type: file
           description: A transcript/ gene mapping table in TSV format
-          pattern: "*.tx2gene.tsv"
+          pattern: '*.tx2gene.tsv'
           ontologies:
             - edam: http://edamontology.org/format_3475 # TSV
   versions:
@@ -70,6 +70,6 @@ topics:
         type: string
         description: The name of the process
 authors:
-  - "@pinin4fjords"
+  - '@pinin4fjords'
 maintainers:
-  - "@pinin4fjords"
+  - '@pinin4fjords'

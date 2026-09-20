@@ -110,7 +110,7 @@ worth knowing about.
   `outdir` into `params.json` automatically if your manifest doesn't already declare
   it as a parameter).
 - **`verification`**, **`registryStatus`**, **`source`** are parsed and preserved but
-  never read to decide trust — trust tier comes from *how the wrapper got onto disk*
+  never read to decide trust — trust tier comes from _how the wrapper got onto disk_
   (bundled vs. custom), never from anything inside the manifest itself. Don't bother
   filling these in for a Phase 1 custom wrapper; they don't do anything yet.
 - **`environment`**, **`summaries`**, **`permissions`**, **`tests`**, **`license`**,
@@ -139,8 +139,8 @@ worth knowing about.
 
 ## Why The Agent Only Gets Tools For Bundled Wrappers
 
-`wrapper.search` and `wrapper.inspect` see the whole catalog, bundled or custom, so
-the agent can tell you a custom wrapper exists. But a per-wrapper `wrapper.<id>` tool
+`wrapper_search` and `wrapper_inspect` see the whole catalog, bundled or custom, so
+the agent can tell you a custom wrapper exists. But a per-wrapper `wrapper_<id>` tool
 — the one that actually creates a run plan — is only generated for `bundled` entries.
 This isn't a technical limitation; it's deliberate: a `custom` wrapper is something you
 pointed Phi at yourself, with no verification at all, and Phase 1 doesn't yet have a

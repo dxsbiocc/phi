@@ -718,6 +718,7 @@ type RendererAuthApi = {
   stopGeneration: () => Promise<void>
   onAnalysisNotebookDraftChanged: (cb: (change: AnalysisNotebookDraftChange) => void) => Unsubscribe
   onAnalysisNotebookFileChanged: (cb: (change: AnalysisNotebookFileChange) => void) => Unsubscribe
+  onWrapperRunsChanged: (cb: (change: { runId: string }) => void) => Unsubscribe
   onSessionChanged: (cb: (session: CurrentSession) => void) => Unsubscribe
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => Unsubscribe
   onToolApprovalCancelled: (cb: () => void) => Unsubscribe
@@ -983,6 +984,15 @@ const api: RendererAuthApi = {
 
     return () => {
       ipcRenderer.removeListener('analysis:notebookDraftChanged', handler)
+    }
+  },
+  onWrapperRunsChanged: (cb: (change: { runId: string }) => void): Unsubscribe => {
+    const handler = (_: unknown, change: { runId: string }): void => {
+      cb(change)
+    }
+    ipcRenderer.on('wrappers:runsChanged', handler)
+    return () => {
+      ipcRenderer.removeListener('wrappers:runsChanged', handler)
     }
   },
   onAnalysisNotebookFileChanged: (

@@ -6,3 +6,9 @@ out
 *.log*
 .codegraph
 *.tsbuildinfo
+
+# Nextflow run artifacts left behind by testing wrapper/subworkflow/workflow
+# adapters under resources/wrappers/ — not something to ship or commit.
+resources/wrappers/**/work/
+resources/wrappers/**/results/
+resources/wrappers/**/.nextflow/

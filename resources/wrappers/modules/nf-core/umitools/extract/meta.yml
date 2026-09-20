@@ -12,8 +12,8 @@ tools:
         UMI-tools contains tools for dealing with Unique Molecular Identifiers (UMIs)/Random
         Molecular Tags (RMTs) and single cell RNA-Seq cell barcodes
       documentation: https://umi-tools.readthedocs.io/en/latest/
-      license: "MIT"
-      identifier: ""
+      license: 'MIT'
+      identifier: ''
 input:
   - - meta:
         type: map
@@ -31,12 +31,12 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.fastq.gz":
+      - '*.fastq.gz':
           type: file
           description: >
             Extracted FASTQ files. | For single-end reads, pattern is \${prefix}.umi_extract.fastq.gz.
             | For paired-end reads, pattern is \${prefix}.umi_extract_{1,2}.fastq.gz.
-          pattern: "*.{fastq.gz}"
+          pattern: '*.{fastq.gz}'
           ontologies: []
   log:
     - - meta:
@@ -44,10 +44,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.log":
+      - '*.log':
           type: file
           description: Logfile for umi_tools
-          pattern: "*.{log}"
+          pattern: '*.{log}'
           ontologies: []
   versions_umitools:
     - - ${task.process}:
@@ -73,8 +73,8 @@ topics:
           description: The expression to obtain the version of umitools
 
 authors:
-  - "@drpatelh"
-  - "@grst"
+  - '@drpatelh'
+  - '@grst'
 maintainers:
-  - "@drpatelh"
-  - "@grst"
+  - '@drpatelh'
+  - '@grst'

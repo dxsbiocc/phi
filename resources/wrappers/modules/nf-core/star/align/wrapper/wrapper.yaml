@@ -34,8 +34,8 @@ params:
 outputs:
   bam:
     type: directory
-    path: "${outdir}/star_align"
+    path: '${outdir}/star_align'
     primary: true
   index:
     type: directory
-    path: "${outdir}/star_index"
+    path: '${outdir}/star_index'

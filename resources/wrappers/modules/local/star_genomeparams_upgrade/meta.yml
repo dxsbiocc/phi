@@ -1,6 +1,6 @@
 ---
 # yaml-language-server: $schema=https://raw.githubusercontent.com/nf-core/modules/master/modules/meta-schema.json
-name: "star_genomeparams_upgrade"
+name: 'star_genomeparams_upgrade'
 description: |
   Upgrade STAR 2.6.x `genomeParameters.txt` metadata into the 2.7.4a-compatible schema. The
   on-disk binary index files (Genome, SA, SAindex, suffix array, etc.) did not change between
@@ -19,13 +19,13 @@ keywords:
   - index
   - compatibility
 tools:
-  - "gawk":
-      description: "GNU awk - used to rewrite genomeParameters.txt metadata"
-      homepage: "https://www.gnu.org/software/gawk/"
-      documentation: "https://www.gnu.org/software/gawk/manual/"
+  - 'gawk':
+      description: 'GNU awk - used to rewrite genomeParameters.txt metadata'
+      homepage: 'https://www.gnu.org/software/gawk/'
+      documentation: 'https://www.gnu.org/software/gawk/manual/'
       licence:
-        - "GPL v3"
-      identifier: ""
+        - 'GPL v3'
+      identifier: ''
 input:
   - - meta:
         type: map
@@ -37,7 +37,7 @@ input:
         description: |
           Pre-built STAR index directory (typically a STAR 2.6.x-built iGenomes index). Must
           contain a `genomeParameters.txt` file alongside the binary index files.
-        pattern: "*"
+        pattern: '*'
         ontologies: []
 output:
   index:
@@ -51,7 +51,7 @@ output:
           description: |
             Upgraded STAR index directory. Contains symlinks to every binary file from the
             input index plus a patched `genomeParameters.txt` rewritten into the 2.7.4a schema.
-          pattern: "star"
+          pattern: 'star'
           ontologies: []
   versions_gawk:
     - - ${task.process}:
@@ -75,6 +75,6 @@ topics:
           type: eval
           description: The expression to obtain the version of the tool
 authors:
-  - "@pinin4fjords"
+  - '@pinin4fjords'
 maintainers:
-  - "@pinin4fjords"
+  - '@pinin4fjords'

@@ -17,7 +17,7 @@ tools:
         Illumina, Ion Torrent and PacBio data, and can produce SAM and BLAST-like alignments.
       homepage: https://hpc.nih.gov/apps/sortmeRNA.html
       documentation: https://github.com/biocore/sortmerna/wiki/
-      licence: ["GPL-3.0-or-later"]
+      licence: ['GPL-3.0-or-later']
       identifier: biotools:sortmerna
 input:
   - - meta:
@@ -58,10 +58,10 @@ output:
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ], or reference information from an
             indexing-only run
-      - "*non_rRNA.fastq.gz":
+      - '*non_rRNA.fastq.gz':
           type: file
           description: The filtered fastq reads
-          pattern: "*fastq.gz"
+          pattern: '*fastq.gz'
           ontologies:
             - edam: http://edamontology.org/format_3989 # GZIP format
   log:
@@ -71,10 +71,10 @@ output:
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ], or reference information from an
             indexing-only run
-      - "*.log":
+      - '*.log':
           type: file
           description: SortMeRNA log file
-          pattern: "*sortmerna.log"
+          pattern: '*sortmerna.log'
           ontologies: []
   index:
     - - meta2:
@@ -110,8 +110,8 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@drpatelh"
-  - "@mashehu"
+  - '@drpatelh'
+  - '@mashehu'
 maintainers:
-  - "@drpatelh"
-  - "@mashehu"
+  - '@drpatelh'
+  - '@mashehu'

@@ -80,7 +80,7 @@ function fakeCtx(cwd: string): { sessionManager: { getCwd: () => string } } {
 }
 
 test('wrapperToolName sanitizes a canonical id into a safe tool name', () => {
-  assert.equal(wrapperToolName('phi/ngs/fastq-qc'), 'wrapper.phi_ngs_fastq_qc')
+  assert.equal(wrapperToolName('phi/ngs/fastq-qc'), 'wrapper_phi_ngs_fastq_qc')
 })
 
 test('buildDefaultWrapperCustomTools includes only legacy search and inspect without bundled packages', async () => {
@@ -93,14 +93,14 @@ test('buildDefaultWrapperCustomTools includes only legacy search and inspect wit
     const tools = buildDefaultWrapperCustomTools(agentDir)
     const names = tools.map((tool) => tool.name)
 
-    assert.ok(names.includes('wrapper.search'))
-    assert.ok(names.includes('wrapper.inspect'))
-    assert.ok(!names.includes('wrapper.acme_tools_toy_wrapper'))
+    assert.ok(names.includes('wrapper_search'))
+    assert.ok(names.includes('wrapper_inspect'))
+    assert.ok(!names.includes('wrapper_acme_tools_toy_wrapper'))
     assert.equal(tools.length, 2)
   })
 })
 
-test('wrapper.search finds wrappers by keyword across the full catalog, including custom ones', async () => {
+test('wrapper_search finds wrappers by keyword across the full catalog, including custom ones', async () => {
   await withHarness(async ({ agentDir, projectDir }) => {
     const sourceDir = join(projectDir, 'custom-src')
     mkdirSync(sourceDir, { recursive: true })
@@ -124,7 +124,7 @@ test('wrapper.search finds wrappers by keyword across the full catalog, includin
   })
 })
 
-test('wrapper.inspect returns full manifest detail for a known id and an error for an unknown one', async () => {
+test('wrapper_inspect returns full manifest detail for a known id and an error for an unknown one', async () => {
   await withHarness(async ({ agentDir, projectDir }) => {
     installLegacyFastqQcWrapper(agentDir, projectDir)
     const tool = buildWrapperInspectTool(agentDir)

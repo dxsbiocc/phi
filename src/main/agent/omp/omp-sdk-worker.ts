@@ -33,6 +33,11 @@ import { buildLibraryCustomTools } from '../library/library-tools'
 import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
 import { buildAskUserQuestionCustomTools } from '../user-interaction-tools'
+import { isPhiAgentDefinition, type PhiAgentDefinition } from '../agents/definition'
+import { createAgentRunner, type AgentSessionLike } from '../agents/runner'
+import { resolveAgentTools } from '../agents/tool-resolution'
+import { buildAgentTool } from '../agents/tool'
+import { createHostJobClient } from '../wrappers/composition/job-host-client'
 import { buildWrapperCompositionTools } from '../wrappers/composition/tools'
 
 type UnknownRecord = Record<string, unknown>
@@ -654,6 +659,87 @@ function serializeSessionState(result: CreateAgentSessionResult): unknown {
   }
 }
 
+/**
+ * The Phi tool functions an agent definition may list in `tools:`. Built fresh
+ * per agent session so each one binds to that session. Add a provider here to
+ * make more Phi tools available to agents; the delegating (main) agent never
+ * receives these directly.
+ */
+function phiToolFunctions(
+  originSessionId: string
+): Map<string, ReturnType<typeof buildWrapperCompositionTools>[number]> {
+  // Wrapper runs are background jobs owned by the main process; these tools only talk to it.
+  // Each run is stamped with the session that started it, so its end can be reported there.
+  const jobs = createHostJobClient(requestHost, { originSessionId })
+  return new Map(buildWrapperCompositionTools(jobs).map((tool) => [tool.name, tool]))
+}
+
+/**
+ * Builds an in-memory session for one scanned Phi agent. The definition drives
+ * everything: its Markdown body is the system prompt, `tools` is the (restricted)
+ * toolbox, `skills` the only skills exposed. The session gets its own resource
+ * loader (the SDK forbids sharing loaded extension instances across sessions)
+ * whose approval extension is bound to the *parent's* sessionId, so its shell
+ * and file writes are approved in the chat the user is looking at. The parent's
+ * model and thinking level are reused.
+ */
+async function createPhiAgentSession(
+  definition: PhiAgentDefinition,
+  deps: {
+    sessionId: string
+    cwd: string
+    agentDir: string
+    ctx: RuntimeContext
+    resourceOptions: unknown
+    enableToolApproval: boolean
+    parent: () => CreateAgentSessionResult | undefined
+  }
+): Promise<AgentSessionLike> {
+  const { sessionId, cwd, agentDir, ctx } = deps
+  const settings = await Settings.init({ cwd, agentDir })
+  const loader = isRecord(deps.resourceOptions)
+    ? new DefaultResourceLoader({
+        ...resourceOptions({ ...deps.resourceOptions, cwd, agentDir }),
+        settingsManager: SettingsManager.create(cwd, agentDir),
+        extensionFactories: deps.enableToolApproval
+          ? [createBridgeToolApprovalExtension(sessionId)]
+          : undefined
+      })
+    : undefined
+  if (loader) await loader.reload()
+
+  const { toolNames, customTools } = resolveAgentTools(
+    definition.tools,
+    phiToolFunctions(sessionId)
+  )
+  const parentSession = deps.parent()?.session
+  const skills = loader
+    ? loader.getSkills().skills.filter((skill) => definition.skills.includes(skill.name))
+    : undefined
+
+  const result = await createLegacyAgentSession({
+    cwd,
+    agentDir,
+    settings,
+    authStorage: ctx.authStorage,
+    modelRegistry: ctx.modelRegistry,
+    sessionManager: SessionManager.inMemory(cwd),
+    ...(parentSession?.model ? { model: parentSession.model } : {}),
+    ...(parentSession?.thinkingLevel ? { thinkingLevel: parentSession.thinkingLevel } : {}),
+    ...(loader ? { resourceLoader: loader } : {}),
+    ...(skills ? { skills } : {}),
+    appendSystemPrompt: definition.systemPrompt,
+    ...(customTools.length > 0 ? { customTools } : {}),
+    toolNames,
+    restrictToolNames: true,
+    // Without this the restriction also drops our Phi tool functions.
+    allowRestrictedCustomTools: true,
+    enableMCP: false,
+    enableLsp: false
+  })
+  return result.session as unknown as AgentSessionLike
+}
+
 async function createSession(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const sessionId = stringValue(record.sessionId, randomUUID())
@@ -684,12 +770,32 @@ async function createSession(params: unknown): Promise<unknown> {
   // "Integration With The Existing Runtime (Confirmed By Milestone P1.0)".
   // Never let a wrapper-catalog problem block an otherwise-ordinary chat
   // session from starting.
-  let wrapperCustomTools: ReturnType<typeof buildWrapperCompositionTools> = []
-  try {
-    wrapperCustomTools = buildWrapperCompositionTools()
-  } catch {
-    wrapperCustomTools = []
-  }
+  // The main agent leads: it gets one delegation tool per scanned Phi agent,
+  // named after the agent (e.g. `Wrapper`), and none of the agents' own tool
+  // functions (wrapper_search, …), so their catalogs and logs stay out of the
+  // main conversation. Definitions come from the main process's scan.
+  const parentRef: { current?: CreateAgentSessionResult } = {}
+  const phiAgents = Array.isArray(record.phiAgents)
+    ? record.phiAgents.filter(isPhiAgentDefinition)
+    : []
+  const agentCustomTools = phiAgents.map((definition) =>
+    buildAgentTool(
+      definition,
+      createAgentRunner({
+        agent: definition.name,
+        createSession: () =>
+          createPhiAgentSession(definition, {
+            sessionId,
+            cwd,
+            agentDir,
+            ctx,
+            resourceOptions: record.resourceOptions,
+            enableToolApproval: Boolean(record.enableToolApproval),
+            parent: () => parentRef.current
+          })
+      })
+    )
+  )
   let dbCustomTools: ReturnType<typeof buildDefaultDbCustomTools> = []
   const enableDbConnectorTools =
     isDbConnectorRuntimeEnabled(record.enableDbConnectorTools) ||
@@ -709,7 +815,7 @@ async function createSession(params: unknown): Promise<unknown> {
     requestHost('agentInteraction.request', request)
   )
   const customTools = [
-    ...wrapperCustomTools,
+    ...agentCustomTools,
     ...dbCustomTools,
     ...notebookCustomTools,
     ...libraryCustomTools,
@@ -741,6 +847,8 @@ async function createSession(params: unknown): Promise<unknown> {
         }
       : {})
   })
+
+  parentRef.current = result
 
   result.session.subscribe((event) => {
     sendEvent('sessionEvent', event, { sessionId })

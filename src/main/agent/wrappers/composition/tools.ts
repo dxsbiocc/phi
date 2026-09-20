@@ -1,24 +1,23 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-
 import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 
-import { findWrapperCompositionEntry, listWrapperCompositionCatalog } from './discovery'
 import {
-  WRAPPER_EXECUTION_PROFILES,
-  runWrapperComposition,
-  type WrapperExecutionProfile
-} from './executor'
+  findWrapperCompositionEntry,
+  listWrapperCompositionCatalog,
+  readWrapperDefaultParams
+} from './discovery'
+import { WRAPPER_EXECUTION_PROFILES } from './executor'
+import { formatJobList, formatJobStatus } from './job-format'
+import type { WrapperJobClient } from './job-types'
 
 /**
- * The generic, progressively-loaded `wrapper.*` tools described in
+ * The generic, progressively-loaded `wrapper_*` tools described in
  * docs/design/phi-wrapper-agent-composition-design.md section 4 — search,
  * inspect, then run. Supersedes the older one-tool-per-bundled-wrapper
  * model in `../tools.ts` (`buildDefaultWrapperCustomTools`), which this
- * build's `omp-sdk-worker.ts` no longer wires in, to avoid two `wrapper.*`
+ * build's `omp-sdk-worker.ts` no longer wires in, to avoid two `wrapper_*`
  * tool sets registering the same names.
  *
- * `wrapper.run` executes directly (no separate plan/submit step) — the
+ * `wrapper_run` executes directly (no separate plan/submit step) — the
  * plan-card chat UI from Milestone P1.5 was built for the older package
  * manifest and hasn't been ported to this layout yet.
  */
@@ -27,23 +26,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function readDefaultParams(wrapperDir: string): Record<string, unknown> {
-  try {
-    return JSON.parse(readFileSync(join(wrapperDir, 'params.json'), 'utf-8')) as Record<
-      string,
-      unknown
-    >
-  } catch {
-    return {}
-  }
-}
-
 export function buildWrapperCompositionSearchTool(): CustomTool {
   return {
-    name: 'wrapper.search',
+    name: 'wrapper_search',
     label: 'Search Wrappers',
     description:
-      'Search available Nextflow module/subworkflow wrappers by keyword. Returns id, name, and summary. Use before wrapper.inspect.',
+      'Search available Nextflow module/subworkflow wrappers by keyword. Returns id, name, and summary. Use before wrapper_inspect.',
     parameters: {
       type: 'object',
       properties: {
@@ -89,10 +77,10 @@ export function buildWrapperCompositionSearchTool(): CustomTool {
 
 export function buildWrapperCompositionInspectTool(): CustomTool {
   return {
-    name: 'wrapper.inspect',
+    name: 'wrapper_inspect',
     label: 'Inspect Wrapper',
     description:
-      'Get the params/outputs contract and default run parameters for one wrapper by id (from wrapper.search), so you know what to override before calling wrapper.run.',
+      'Get the params/outputs contract and default run parameters for one wrapper by id (from wrapper_search), so you know what to override before calling wrapper_run.',
     parameters: {
       type: 'object',
       required: ['id'],
@@ -113,7 +101,7 @@ export function buildWrapperCompositionInspectTool(): CustomTool {
       if (!entry) {
         return { content: [{ type: 'text', text: `Wrapper not found: ${id}` }], isError: true }
       }
-      const defaultParams = readDefaultParams(entry.wrapperDir)
+      const defaultParams = readWrapperDefaultParams(entry.wrapperDir)
 
       return {
         content: [
@@ -125,12 +113,33 @@ export function buildWrapperCompositionInspectTool(): CustomTool {
   }
 }
 
-export function buildWrapperCompositionRunTool(): CustomTool {
+const DEFAULT_WAIT_SECONDS = 120
+const MAX_WAIT_SECONDS = 600
+
+function textResult(text: string): { content: Array<{ type: 'text'; text: string }> } {
+  return { content: [{ type: 'text', text }] }
+}
+
+function errorResult(text: string): {
+  content: Array<{ type: 'text'; text: string }>
+  isError: true
+} {
+  return { ...textResult(text), isError: true }
+}
+
+function runIdParam(params: unknown): string | undefined {
+  return isRecord(params) && typeof params.run_id === 'string' && params.run_id.trim()
+    ? params.run_id.trim()
+    : undefined
+}
+
+/** Starts a run in the background and returns at once with its run id. */
+export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTool {
   return {
-    name: 'wrapper.run',
+    name: 'wrapper_run',
     label: 'Run Wrapper',
     description:
-      "Run one wrapper by id, merging the given parameter overrides into its default params.json. Executes a real local Nextflow run and returns success/failure plus a tail of the log. Choose `profile` based on what the user has available or prefers: docker (default) or singularity for container runtimes, conda to build/reuse a conda environment from the module's environment.yml instead.",
+      "Start one wrapper by id in the BACKGROUND, merging the given parameter overrides into its default params.json, and return immediately with a run id. It launches a real local Nextflow run that keeps going by itself; follow it with wrapper_status, block on it with wrapper_wait, stop it with wrapper_cancel. Choose `profile` based on what the user has available or prefers: docker (default) or singularity for container runtimes, conda to build/reuse a conda environment from the module's environment.yml instead.",
     parameters: {
       type: 'object',
       required: ['id'],
@@ -146,70 +155,160 @@ export function buildWrapperCompositionRunTool(): CustomTool {
           enum: [...WRAPPER_EXECUTION_PROFILES],
           description:
             'Execution profile: "docker" (default) or "singularity" run the tool in a container; "conda" builds/reuses a conda environment instead. Ask the user which is available if unsure — do not assume Docker is installed.'
+        },
+        continue_when_done: {
+          type: 'boolean',
+          description:
+            'Default true: when the run ends, Phi wakes the main agent with the outcome so it can continue with the results. Set false only when the task says nothing should happen afterwards.'
         }
       }
     },
     approval: 'write',
     async execute(_toolCallId, params) {
       const id = isRecord(params) && typeof params.id === 'string' ? params.id : undefined
-      if (!id) {
-        return {
-          content: [{ type: 'text', text: 'Missing required parameter: id' }],
-          isError: true
-        }
-      }
+      if (!id) return errorResult('Missing required parameter: id')
       const overrides = isRecord(params) && isRecord(params.params) ? params.params : {}
-      const requestedProfile =
-        isRecord(params) && typeof params.profile === 'string' ? params.profile : undefined
-      if (
-        requestedProfile &&
-        !WRAPPER_EXECUTION_PROFILES.includes(requestedProfile as WrapperExecutionProfile)
-      ) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Invalid profile: ${requestedProfile}. Must be one of ${WRAPPER_EXECUTION_PROFILES.join(', ')}.`
-            }
-          ],
-          isError: true
-        }
-      }
-      const profile = (requestedProfile as WrapperExecutionProfile | undefined) ?? 'docker'
-      const entry = findWrapperCompositionEntry(id)
-      if (!entry) {
-        return { content: [{ type: 'text', text: `Wrapper not found: ${id}` }], isError: true }
-      }
+      const profile =
+        isRecord(params) && typeof params.profile === 'string' ? params.profile : 'docker'
 
-      try {
-        const result = await runWrapperComposition(entry.wrapperDir, overrides, profile)
-        const summary = result.success
-          ? `Wrapper ${id} completed successfully (profile: ${profile}).\n${result.output}`
-          : `Wrapper ${id} failed (exit ${result.exitCode}, profile: ${profile}).\n${result.output}`
-        return {
-          content: [{ type: 'text', text: summary }],
-          details: {
-            kind: 'wrapper_run_result',
-            id,
-            success: result.success,
-            exitCode: result.exitCode
-          },
-          ...(result.success ? {} : { isError: true })
-        }
-      } catch (error) {
-        return {
-          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
-          isError: true
-        }
+      const continueWhenDone =
+        isRecord(params) && params.continue_when_done === false ? false : undefined
+      const started = await jobs.start({
+        id,
+        overrides,
+        profile,
+        ...(continueWhenDone === false ? { continueWhenDone } : {})
+      })
+      if (!started.ok) return errorResult(started.error)
+      const { runId, outDir } = started.status
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Started wrapper run ${runId} (${id}, profile ${profile}) in the background. Output directory: ${outDir}. ${
+              continueWhenDone === false
+                ? 'The conversation will NOT be woken when it ends.'
+                : 'When it ends Phi wakes the main agent with the outcome, so you do not need to wait for it.'
+            } You can check it with wrapper_status, wait for it with wrapper_wait (only if the task needs the result now), or stop it with wrapper_cancel.`
+          }
+        ],
+        details: { kind: 'wrapper_run_started', id, runId, outDir }
       }
     }
   }
 }
 
-export function buildWrapperCompositionTools(): CustomTool[] {
+/** One run in detail, or the list of recent runs when no run id is given. */
+export function buildWrapperCompositionStatusTool(jobs: WrapperJobClient): CustomTool {
+  return {
+    name: 'wrapper_status',
+    label: 'Wrapper Run Status',
+    description:
+      'Report on a wrapper run started with wrapper_run: its state (running, completed, failed, cancelled, lost), progress, output locations, and the tail of its Nextflow log. Without run_id, lists the most recent runs so you can find one.',
+    parameters: {
+      type: 'object',
+      properties: {
+        run_id: {
+          type: 'string',
+          description: 'Run id returned by wrapper_run, e.g. "wrun_…". Omit to list recent runs.'
+        }
+      }
+    },
+    approval: 'read',
+    async execute(_toolCallId, params) {
+      const runId = runIdParam(params)
+      if (!runId) return textResult(formatJobList(await jobs.list(10)))
+      const status = await jobs.status(runId)
+      if (!status) return errorResult(`Run not found: ${runId}`)
+      return {
+        ...textResult(formatJobStatus(status)),
+        details: { kind: 'wrapper_run_status', runId, state: status.state }
+      }
+    }
+  }
+}
+
+/** Blocks (up to a limit) until a run ends. Aborting the call stops the wait, never the run. */
+export function buildWrapperCompositionWaitTool(jobs: WrapperJobClient): CustomTool {
+  return {
+    name: 'wrapper_wait',
+    label: 'Wait For Wrapper Run',
+    description: `Block until a wrapper run ends or up to timeout_seconds (default ${DEFAULT_WAIT_SECONDS}, max ${MAX_WAIT_SECONDS}), then report its status. If the run is still going when the time is up you get its current status and can call this again. Use it only when the task needs the run's results before the next step; otherwise start the run and finish.`,
+    parameters: {
+      type: 'object',
+      required: ['run_id'],
+      properties: {
+        run_id: { type: 'string', description: 'Run id returned by wrapper_run.' },
+        timeout_seconds: {
+          type: 'number',
+          description: `How long to wait, in seconds (1–${MAX_WAIT_SECONDS}). Default ${DEFAULT_WAIT_SECONDS}.`
+        }
+      }
+    },
+    approval: 'read',
+    async execute(_toolCallId, params, _onUpdate, _ctx, signal) {
+      const runId = runIdParam(params)
+      if (!runId) return errorResult('Missing required parameter: run_id')
+      const requested =
+        isRecord(params) && typeof params.timeout_seconds === 'number'
+          ? params.timeout_seconds
+          : DEFAULT_WAIT_SECONDS
+      const seconds = Math.min(Math.max(1, Math.round(requested)), MAX_WAIT_SECONDS)
+
+      const aborted = new Promise<'aborted'>((resolve) => {
+        if (signal?.aborted) resolve('aborted')
+        else signal?.addEventListener('abort', () => resolve('aborted'), { once: true })
+      })
+      const outcome = await Promise.race([jobs.wait(runId, seconds * 1000), aborted])
+      const status = outcome === 'aborted' ? await jobs.status(runId) : outcome
+      if (!status) return errorResult(`Run not found: ${runId}`)
+
+      const stillRunning = status.state === 'running' || status.state === 'cancelling'
+      const prefix = stillRunning
+        ? `Still running${outcome === 'aborted' ? ' (stopped waiting)' : ` after ${seconds}s`}.\n`
+        : ''
+      return {
+        ...textResult(`${prefix}${formatJobStatus(status)}`),
+        details: { kind: 'wrapper_run_status', runId, state: status.state }
+      }
+    }
+  }
+}
+
+export function buildWrapperCompositionCancelTool(jobs: WrapperJobClient): CustomTool {
+  return {
+    name: 'wrapper_cancel',
+    label: 'Cancel Wrapper Run',
+    description:
+      'Stop a running wrapper run: Nextflow and everything it spawned are terminated and the run is recorded as cancelled. Only cancel when the user asked for it or the run is clearly wrong.',
+    parameters: {
+      type: 'object',
+      required: ['run_id'],
+      properties: { run_id: { type: 'string', description: 'Run id returned by wrapper_run.' } }
+    },
+    approval: 'write',
+    async execute(_toolCallId, params) {
+      const runId = runIdParam(params)
+      if (!runId) return errorResult('Missing required parameter: run_id')
+      const result = await jobs.cancel(runId)
+      if (!result.ok) return errorResult(result.error)
+      return {
+        ...textResult(
+          `Cancelling run ${runId}: Nextflow is being stopped. Use wrapper_wait to confirm it has ended.`
+        ),
+        details: { kind: 'wrapper_run_cancelled', runId }
+      }
+    }
+  }
+}
+
+export function buildWrapperCompositionTools(jobs: WrapperJobClient): CustomTool[] {
   return [
     buildWrapperCompositionSearchTool(),
     buildWrapperCompositionInspectTool(),
-    buildWrapperCompositionRunTool()
+    buildWrapperCompositionRunTool(jobs),
+    buildWrapperCompositionStatusTool(jobs),
+    buildWrapperCompositionWaitTool(jobs),
+    buildWrapperCompositionCancelTool(jobs)
   ]
 }

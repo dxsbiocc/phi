@@ -10,7 +10,7 @@ import {
 import { createWrapperRunPlan } from './plans'
 
 /**
- * Builds the LLM-callable `wrapper.*` tools — see docs/design/phi-wrapper-
+ * Builds the LLM-callable `wrapper_*` tools — see docs/design/phi-wrapper-
  * technical-design.md, "Agent Tool Registration" and the Milestone P1.0
  * correction ("Integration With The Existing Runtime"). These are plain
  * `CustomTool` objects passed via the SDK's `customTools` option, not
@@ -20,7 +20,7 @@ import { createWrapperRunPlan } from './plans'
  * that's a narrow slice: just `sessionManager.getCwd()`).
  */
 
-const TOOL_NAME_PREFIX = 'wrapper.'
+const TOOL_NAME_PREFIX = 'wrapper_'
 
 /** "phi/ngs/fastq-qc" -> "phi_ngs_fastq_qc" — a safe, unique tool name per canonical id. */
 export function wrapperToolName(canonicalId: string): string {
@@ -50,17 +50,17 @@ function catalogSearchItem(entry: WrapperCatalogEntry): WrapperSearchResultItem 
 }
 
 /**
- * `wrapper.search` — always registered. Searches the full installed
+ * `wrapper_search` — always registered. Searches the full installed
  * catalog (bundled and custom) so the agent can tell the user a custom
  * wrapper exists, even though only bundled ones become their own callable
  * tool by default (see technical design's Agent Tool Registration).
  */
 export function buildWrapperSearchTool(agentDir: string = getPhiAgentDir()): CustomTool {
   return {
-    name: 'wrapper.search',
+    name: 'wrapper_search',
     label: 'Search Wrappers',
     description:
-      'Search installed Phi wrapper definitions (reproducible bioinformatics/heavy-CLI tools) by keyword. Returns id, name, version, trust tier, and summary. Use this before wrapper.inspect or a specific wrapper.<id> tool to find the right wrapper.',
+      'Search installed Phi wrapper definitions (reproducible bioinformatics/heavy-CLI tools) by keyword. Returns id, name, version, trust tier, and summary. Use this before wrapper_inspect or a specific wrapper_<id> tool to find the right wrapper.',
     parameters: {
       type: 'object',
       properties: {
@@ -100,17 +100,17 @@ export function buildWrapperSearchTool(agentDir: string = getPhiAgentDir()): Cus
 }
 
 /**
- * `wrapper.inspect` — always registered. Returns manifest detail (inputs,
+ * `wrapper_inspect` — always registered. Returns manifest detail (inputs,
  * parameter schema, outputs, resourceClass, profiles) for one wrapper by
  * canonical id, so the agent can decide what params to pass before calling
  * the wrapper's own execute tool.
  */
 export function buildWrapperInspectTool(agentDir: string = getPhiAgentDir()): CustomTool {
   return {
-    name: 'wrapper.inspect',
+    name: 'wrapper_inspect',
     label: 'Inspect Wrapper',
     description:
-      'Get full manifest detail for one installed wrapper by its canonical id (from wrapper.search) — inputs, parameter schema, declared outputs, resource class, and available profiles.',
+      'Get full manifest detail for one installed wrapper by its canonical id (from wrapper_search) — inputs, parameter schema, declared outputs, resource class, and available profiles.',
     parameters: {
       type: 'object',
       required: ['id'],
@@ -160,7 +160,7 @@ export function buildWrapperInspectTool(agentDir: string = getPhiAgentDir()): Cu
 }
 
 /**
- * Builds the `wrapper.<id>` execute tool for one specific catalog entry.
+ * Builds the `wrapper_<id>` execute tool for one specific catalog entry.
  * Calling it creates a `WrapperRunPlan` (never a submitted run — submission
  * is always a separate, explicit user action through the plan card's plain
  * IPC, not something the agent can trigger — see technical design's
@@ -214,8 +214,8 @@ export function buildWrapperExecuteTool(
 }
 
 /**
- * Default `customTools` set for a session: always `wrapper.search` +
- * `wrapper.inspect`, plus one execute tool per `bundled` wrapper — `custom`
+ * Default `customTools` set for a session: always `wrapper_search` +
+ * `wrapper_inspect`, plus one execute tool per `bundled` wrapper — `custom`
  * wrappers never register here (see technical design's Agent Tool
  * Registration; "top-N" is trivial with today's single-wrapper catalog but
  * this is shaped for more).

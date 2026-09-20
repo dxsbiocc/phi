@@ -106,3 +106,12 @@ test('runtime acknowledgement is only needed for terminal unread states', () => 
   assert.equal(sessionRuntimeStateNeedsAcknowledgement({ unreadKind: 'completed' }), true)
   assert.equal(sessionRuntimeStateNeedsAcknowledgement({ unreadKind: 'failed' }), true)
 })
+
+test("a finished background wrapper run does not change a conversation's run status", () => {
+  const event = { type: 'wrapper_run_finished', wrapperRunId: 'wrun_abc', state: 'completed' }
+  const idle = idleSessionRuntimeState()
+  assert.equal(reduceSessionRuntimeState(idle, event), idle)
+
+  const running = reduceSessionRuntimeState(idle, { type: 'run_started', runId: 'run-1' })
+  assert.equal(reduceSessionRuntimeState(running, event), running)
+})

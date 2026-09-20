@@ -8,7 +8,7 @@ This document defines the technical shape of Phi Wrapper after the clarification
 
 **This section replaces an earlier draft that assumed wrapper tools would register through `runtime-adapter.ts`'s `InlineExtension`/`extensionFactories` mechanism, the same path [`resources.ts`](../../src/main/agent/resources.ts) and [`plugins.ts`](../../src/main/agent/plugins.ts) use. That assumption was wrong, and Milestone P1.0 (source-level investigation, not yet a live end-to-end run — see implementation plan) exists specifically because it was wrong. The correct integration point, confirmed by reading the vendored `@oh-my-pi/pi-coding-agent` SDK source, is different and is described below.**
 
-`InlineExtension` / `extensionFactories` (`runtime-adapter.ts`) is an approval-interception hook, not a tool-registration mechanism. Concretely: `collectToolCallHandlers()` in `runtime-adapter.ts` registers handlers for a `'tool_call'` event that fires when the agent is *about to run an already-existing tool* (built-in tools like `bash`/`write`/`edit` — see [`tool-approval.ts`](../../src/main/agent/tool-approval.ts)'s `RISKY_TOOLS` set), and the handler's return value can only approve/block that call. This is confirmed by `omp-sdk-worker.ts`'s `createSession()`, which passes `extensionFactories: record.enableToolApproval ? [createBridgeToolApprovalExtension(sessionId)] : undefined` into `DefaultResourceLoader` — the whole mechanism exists to gate the existing tool-approval UI, not to add new tools with new JSON schemas that the LLM can see and call.
+`InlineExtension` / `extensionFactories` (`runtime-adapter.ts`) is an approval-interception hook, not a tool-registration mechanism. Concretely: `collectToolCallHandlers()` in `runtime-adapter.ts` registers handlers for a `'tool_call'` event that fires when the agent is _about to run an already-existing tool_ (built-in tools like `bash`/`write`/`edit` — see [`tool-approval.ts`](../../src/main/agent/tool-approval.ts)'s `RISKY_TOOLS` set), and the handler's return value can only approve/block that call. This is confirmed by `omp-sdk-worker.ts`'s `createSession()`, which passes `extensionFactories: record.enableToolApproval ? [createBridgeToolApprovalExtension(sessionId)] : undefined` into `DefaultResourceLoader` — the whole mechanism exists to gate the existing tool-approval UI, not to add new tools with new JSON schemas that the LLM can see and call.
 
 The actual mechanism for adding a brand-new, schema-carrying, LLM-callable tool is the underlying SDK's `customTools: (CustomTool | ToolDefinition)[]` option on `CreateAgentSessionOptions` (defined in the SDK's `sdk.ts`, re-exported through `extensibility/legacy-pi-coding-agent-shim.ts`, which is what `omp-sdk-worker.ts` actually calls as `createLegacyAgentSession`). Confirmed by reading the source directly:
 
@@ -16,7 +16,7 @@ The actual mechanism for adding a brand-new, schema-carrying, LLM-callable tool 
 - The legacy shim's `createAgentSession()` (what `omp-sdk-worker.ts` calls) spreads all of `options` (minus `resourceLoader`) into the object it forwards to the real SDK call, so `customTools` passes through untouched — no shim-side change is needed to make this flow through, only a Phi-side change to actually supply it.
 - A `CustomTool` (defined in `extensibility/custom-tools/types.ts`) has exactly the shape Phi Wrapper needs: `name`, `description`, `parameters` (a schema — the manifest's JSON Schema can be adapted to it), and an `execute(toolCallId, params, onUpdate, ctx, signal)` closure that runs with real session context and can do arbitrary Node work (filesystem, `child_process` for local Nextflow, etc.).
 
-Concrete integration point: `omp-sdk-worker.ts`'s `createSession()` (around the `createLegacyAgentSession({...})` call) gets one more field, `customTools: buildWrapperCustomTools(...)`, where `buildWrapperCustomTools` is a new function — living in `omp-sdk-worker.ts` itself or a module it imports, **not** in `runtime-adapter.ts` — that constructs `wrapper.search`, `wrapper.inspect`, and per-wrapper `wrapper.<id>` tools by importing Phi's own `src/main/agent/wrappers/*` runtime modules directly. This works because `omp-sdk-worker.ts` is Phi's own source file, run as a `bun`-spawned child process (see `omp-bridge.ts`'s `spawn('bun', [workerPath], ...)`) — it is not a black-box vendored binary, so it can `import` sibling TypeScript modules from this repo the same way it already imports `PluginManager` and other local code. The wrapper store lives under `~/.phi/wrappers` on disk, which any process on the same machine can read/write, so there is no need to proxy tool execution back across the IPC boundary to Phi's Electron main process — the custom tool's `execute()` can call wrapper runtime functions directly, in-process, inside the worker.
+Concrete integration point: `omp-sdk-worker.ts`'s `createSession()` (around the `createLegacyAgentSession({...})` call) gets one more field, `customTools: buildWrapperCustomTools(...)`, where `buildWrapperCustomTools` is a new function — living in `omp-sdk-worker.ts` itself or a module it imports, **not** in `runtime-adapter.ts` — that constructs `wrapper_search`, `wrapper_inspect`, and per-wrapper `wrapper_<id>` tools by importing Phi's own `src/main/agent/wrappers/*` runtime modules directly. This works because `omp-sdk-worker.ts` is Phi's own source file, run as a `bun`-spawned child process (see `omp-bridge.ts`'s `spawn('bun', [workerPath], ...)`) — it is not a black-box vendored binary, so it can `import` sibling TypeScript modules from this repo the same way it already imports `PluginManager` and other local code. The wrapper store lives under `~/.phi/wrappers` on disk, which any process on the same machine can read/write, so there is no need to proxy tool execution back across the IPC boundary to Phi's Electron main process — the custom tool's `execute()` can call wrapper runtime functions directly, in-process, inside the worker.
 
 ### Plan/Run UI Is Not A New Pending-Action Type (Corrected)
 
@@ -24,7 +24,7 @@ The earlier draft proposed `type PendingAction = ToolApprovalRequest | WrapperRu
 
 Instead, follow the pattern Phi already uses for other durable, restart-surviving domain objects (installed plugins, projects): a plain main-process store plus a plain preload/IPC surface, independent of the agent tool-call loop.
 
-- The `wrapper.<id>` custom tool's `execute()` creates and persists a `WrapperRunPlan` (via `wrappers/plans.ts`) and returns a small tool result to the LLM (plan id + one-line summary) — it does not push a pending action into the SDK's approval system.
+- The `wrapper_<id>` custom tool's `execute()` creates and persists a `WrapperRunPlan` (via `wrappers/plans.ts`) and returns a small tool result to the LLM (plan id + one-line summary) — it does not push a pending action into the SDK's approval system.
 - The custom tool's `execute()` (or an `onUpdate` call) also emits a structured session event (already part of `AgentSessionEvent`'s open `{ type: string } & Record<string, unknown>` shape) carrying the new plan's id. Phi's existing `bridge.onSessionEvent` forwarding (already wired in `RuntimeAgentSessionProxy`) delivers this to the renderer like any other session event; `session-events.ts` and `ChatView.tsx` turn a `wrapper_plan_created` event into a `WrapperPlanItem` in the timeline, which then loads full plan detail from the wrapper store by id (as already described under Chat And UI Integration below) rather than carrying the payload inline.
 - The **Validate / Submit / Cancel** buttons on the resulting `WrapperPlanCard` are ordinary Electron IPC calls — preload exposes something like `window.api.wrappers.submitPlan(planId)` straight to a main-process handler in `wrappers/plans.ts` / `wrappers/runs.ts` — exactly like how installing a plugin ([`plugins.ts`](../../src/main/agent/plugins.ts)) is a plain async function called from the Plugins page, not something gated by the agent's tool-approval loop. This is simpler than threading plan submission back through the agent, and it is what actually satisfies "a run survives chat context changes and app restarts": the action is decoupled from any live agent session.
 
@@ -123,13 +123,13 @@ Project state stores references, not wrapper definitions. Full target shape (Pha
 ```json
 {
   "projectId": "project_...",
-  "defaultRemoteConnectionId": "lab-hpc",       // Phase 2
+  "defaultRemoteConnectionId": "lab-hpc", // Phase 2
   "remoteWorkspaceRoot": "/data/lab/project-a", // Phase 2
   "wrapperDefaults": {
     "phi/ngs/fastq-qc": {
       "version": "1.0.0",
-      "executor": "remote:lab-hpc",             // Phase 1 value is always "local"
-      "profile": "slurm",                       // Phase 2
+      "executor": "remote:lab-hpc", // Phase 1 value is always "local"
+      "profile": "slurm", // Phase 2
       "params": {
         "threads": 16
       },
@@ -406,7 +406,7 @@ Undeclared files can be browsed in the file tree but are not default agent input
 
 ## Trust And Registry
 
-This whole section is Phase 3 target design. Phase 1 has no registry at all: trust tier is derived purely from which `installed/` subtree a wrapper's manifest was loaded from — `installed/<namespace>/<wrapper>/<version>/` written by the app itself at build/first-run time is `bundled`; anything loaded via a dev-mode local-path pointer is `custom`. A manifest's own `verification:` block (see Manifest) is never trusted as a self-report in any phase — it is informational only, and Phase 1 code should not read it to decide trust tier at all. This matters: don't let a Phase 1 implementation shortcut by trusting `verification.status: official_verified` written inside the YAML itself, since that would make trust trivially forgeable by anyone who edits a manifest — the actual trust decision has to come from *how the wrapper got onto disk* (bundled by the app vs. pointed at by the user), never from a claim inside the file.
+This whole section is Phase 3 target design. Phase 1 has no registry at all: trust tier is derived purely from which `installed/` subtree a wrapper's manifest was loaded from — `installed/<namespace>/<wrapper>/<version>/` written by the app itself at build/first-run time is `bundled`; anything loaded via a dev-mode local-path pointer is `custom`. A manifest's own `verification:` block (see Manifest) is never trusted as a self-report in any phase — it is informational only, and Phase 1 code should not read it to decide trust tier at all. This matters: don't let a Phase 1 implementation shortcut by trusting `verification.status: official_verified` written inside the YAML itself, since that would make trust trivially forgeable by anyone who edits a manifest — the actual trust decision has to come from _how the wrapper got onto disk_ (bundled by the app vs. pointed at by the user), never from a claim inside the file.
 
 Phase 3: registry is Git-backed and signed. Phi may ship a bootstrap snapshot for offline catalog display.
 
@@ -728,8 +728,8 @@ Large input files are not bundled by default.
 Agent-facing tools:
 
 ```text
-wrapper.search
-wrapper.inspect
+wrapper_search
+wrapper_inspect
 wrapper.<snake_case_id>
 ```
 
@@ -754,7 +754,7 @@ type ChatItem = ExistingChatItem | WrapperPlanItem | WrapperRunItem
 
 Plan and run cards reference ids and load detail from the wrapper store. Large metadata stays out of messages.
 
-**Correction from Milestone P1.0** (see "Plan/Run UI Is Not A New Pending-Action Type" above): do not add a `WrapperRunRequest` to a shared `PendingAction` union alongside `ToolApprovalRequest`. Wrapper plan/run cards are not an approval gate on an about-to-run tool call — they are a view onto a durable, independently-stored `WrapperRunPlan`/`WrapperRun` object, and their action buttons (validate/submit/cancel) call plain IPC methods on the main process, not the agent's tool-approval flow. Reuse the *visual* design language of `ToolApprovalRequest` cards (compact rows, chips, expandable sections), not its type or its approval plumbing.
+**Correction from Milestone P1.0** (see "Plan/Run UI Is Not A New Pending-Action Type" above): do not add a `WrapperRunRequest` to a shared `PendingAction` union alongside `ToolApprovalRequest`. Wrapper plan/run cards are not an approval gate on an about-to-run tool call — they are a view onto a durable, independently-stored `WrapperRunPlan`/`WrapperRun` object, and their action buttons (validate/submit/cancel) call plain IPC methods on the main process, not the agent's tool-approval flow. Reuse the _visual_ design language of `ToolApprovalRequest` cards (compact rows, chips, expandable sections), not its type or its approval plumbing.
 
 ### Workflow Structure And Live Run State (react-flow)
 
@@ -796,7 +796,7 @@ in.
   `-with-weblog`, this listener is reusable as-is rather than needing a remote-specific
   reimplementation — worth trying before building something new.
 - `tools.ts`'s agent tools call `createWrapperRunPlan({ cwd: ctx.sessionManager
-  .getCwd(), ... })` and nothing else about plan creation — the resolver Phase 2 adds
+.getCwd(), ... })` and nothing else about plan creation — the resolver Phase 2 adds
   lives inside `plans.ts`, not in the tool layer, so `tools.ts` shouldn't need changes
   for Phase 2's resolver work.
 
@@ -805,8 +805,8 @@ in.
 - `plans.ts`'s `buildPlan()` currently hardcodes `executor: 'local'` and a trivial
   `resolveLocalProfileId()` lookup. Phase 2's PRD-described resolver chain (explicit →
   project default → global default → auto resolver) replaces this specific piece of
-  internal logic — the function's *output shape* (a `WrapperRunPlan`) doesn't change,
-  but its *body* does non-trivially. Don't try to bolt remote resolution onto
+  internal logic — the function's _output shape_ (a `WrapperRunPlan`) doesn't change,
+  but its _body_ does non-trivially. Don't try to bolt remote resolution onto
   `resolveLocalProfileId` — replace it.
 - `ProjectWrapperDefault` (`src/main/agent/projects.ts`) already reserves
   `executor`/`profile` as plain `string` (not narrowed to `WrapperExecutor`) precisely

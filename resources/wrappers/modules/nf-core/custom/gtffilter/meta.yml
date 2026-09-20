@@ -1,15 +1,15 @@
-name: "custom_gtffilter"
+name: 'custom_gtffilter'
 description: Filter a gtf file to keep only regions that are located on a chromosome represented in a given fasta file
 keywords:
   - gtf
   - fasta
   - filter
 tools:
-  - "gtffilter":
-      description: "Filter a gtf file to keep only regions that are located on a chromosome represented in a given fasta file"
-      tool_dev_url: "https://github.com/nf-core/modules/blob/master/modules/nf-core/custom/gtffilter/main.nf"
+  - 'gtffilter':
+      description: 'Filter a gtf file to keep only regions that are located on a chromosome represented in a given fasta file'
+      tool_dev_url: 'https://github.com/nf-core/modules/blob/master/modules/nf-core/custom/gtffilter/main.nf'
 
-      identifier: ""
+      identifier: ''
 input:
   - - meta:
         type: map
@@ -19,7 +19,7 @@ input:
     - gtf:
         type: file
         description: GTF file
-        pattern: "*.{gtf}"
+        pattern: '*.{gtf}'
         ontologies: []
   - - meta2:
         type: map
@@ -29,7 +29,7 @@ input:
     - fasta:
         type: file
         description: Genome fasta file
-        pattern: "*.{fasta,fa}"
+        pattern: '*.{fasta,fa}'
         ontologies: []
 output:
   gtf:
@@ -41,13 +41,13 @@ output:
       - ${prefix}.${suffix}:
           type: file
           description: Filtered GTF file
-          pattern: "*.{gtf}"
+          pattern: '*.{gtf}'
           ontologies: []
   versions:
     - versions.yml:
         type: file
         description: File containing software versions
-        pattern: "versions.yml"
+        pattern: 'versions.yml'
         ontologies:
           - edam: http://edamontology.org/format_3750 # YAML
 topics:
@@ -56,9 +56,9 @@ topics:
         type: string
         description: The name of the process
 authors:
-  - "@nictru"
+  - '@nictru'
 maintainers:
-  - "@nictru"
+  - '@nictru'
 containers:
   docker:
     linux/amd64:

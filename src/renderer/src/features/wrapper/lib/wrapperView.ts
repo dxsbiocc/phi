@@ -59,6 +59,25 @@ export function runStateColor(
   return 'default'
 }
 
+/**
+ * "2/6 步 · HISAT2_ALIGN": how far a run has got. The count is processes that have
+ * *started* (Nextflow does not report completion), so it is only shown while
+ * the outcome is still open or after an unfinished end — a completed run needs no count.
+ */
+export function runProgressLabel(run: Pick<WrapperRun, 'state' | 'progress'>): string | undefined {
+  const progress = run.progress
+  if (!progress || progress.started <= 0 || run.state === 'completed') return undefined
+  const count = progress.total
+    ? `${progress.started}/${progress.total} 步`
+    : `已开始 ${progress.started} 步`
+  return progress.current ? `${count} · ${progress.current}` : count
+}
+
+/** Background (agent-started) runs are owned by the job manager and can be stopped while running. */
+export function canCancelBackgroundRun(run: Pick<WrapperRun, 'origin' | 'state'>): boolean {
+  return run.origin === 'composition' && run.state === 'running'
+}
+
 /** States any executor accepts a cancel for before it's actually running anything — see `runs.ts`'s `cancelWrapperRun` doc comment. */
 const PRE_DISPATCH_CANCELLABLE_RUN_STATES: WrapperRun['state'][] = [
   'created',

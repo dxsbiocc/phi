@@ -20,5 +20,5 @@ params:
 outputs:
   reads:
     type: directory
-    path: "${outdir}/trimgalore"
+    path: '${outdir}/trimgalore'
     primary: true

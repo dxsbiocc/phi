@@ -1,27 +1,29 @@
+import { wrapperRunNotice, type WrapperRunFinishedEvent } from '../../../shared/wrapperRunNotice'
 import type { ChatItem, NotebookToolSummary, RunLifecycleItem } from '../types'
 import { messagesForUserRetryTarget } from './chatRetry'
 
-const WRAPPER_TOOL_PREFIX = 'wrapper.'
+const WRAPPER_TOOL_PREFIX = 'wrapper_'
 const NOTEBOOK_TOOL_PREFIX = 'notebook.'
 
 /**
- * `wrapper.search`/`wrapper.inspect` (see src/main/agent/wrappers/tools.ts)
- * are read-only lookups — they never return `details.kind === 'wrapper_plan'`,
+ * `wrapper_search`/`wrapper_inspect` (see src/main/agent/wrappers/tools.ts)
+ * are read-only lookups, `wrapper_run` (composition/tools.ts) executes
+ * directly — neither returns `details.kind === 'wrapper_plan'`,
  * so a `WrapperPlanItem` built for one would never get a `planId` and
  * WrapperPlanCard's `!item.planId || !plan` branch would show "正在加载计划…"
  * forever instead of the actual search/inspect result. Both share the
- * `wrapper.` prefix with real execute tools (`wrapperToolName()` sanitizes
- * a canonical id into `wrapper.<id-with-slashes-as-underscores>`, which
- * can't collide with these two fixed names), so they need an explicit
+ * `wrapper_` prefix with real execute tools (`wrapperToolName()` sanitizes
+ * a canonical id into `wrapper_<id-with-slashes-as-underscores>`, which
+ * can't collide with these fixed names), so they need an explicit
  * exclusion rather than a prefix check alone.
  */
-const WRAPPER_NON_PLAN_TOOL_NAMES = new Set(['wrapper.search', 'wrapper.inspect'])
+const WRAPPER_NON_PLAN_TOOL_NAMES = new Set(['wrapper_search', 'wrapper_inspect', 'wrapper_run'])
 
 /**
- * `wrapper.<id>` execute tool calls render as a `WrapperPlanItem` (a plan
+ * `wrapper_<id>` execute tool calls render as a `WrapperPlanItem` (a plan
  * card), not a generic `ToolCallItem` — see docs/design/phi-wrapper-
- * technical-design.md, "Chat And UI Integration". `wrapper.search`/
- * `wrapper.inspect` are excluded — see `WRAPPER_NON_PLAN_TOOL_NAMES`.
+ * technical-design.md, "Chat And UI Integration". `wrapper_search`/
+ * `wrapper_inspect` are excluded — see `WRAPPER_NON_PLAN_TOOL_NAMES`.
  */
 export function isWrapperToolName(toolName: string): boolean {
   return toolName.startsWith(WRAPPER_TOOL_PREFIX) && !WRAPPER_NON_PLAN_TOOL_NAMES.has(toolName)
@@ -32,7 +34,7 @@ export function isNotebookToolName(toolName: string): boolean {
 }
 
 /**
- * Convention for `wrapper.<id>` tool results (Milestone P1.8): the tool
+ * Convention for `wrapper_<id>` tool results (Milestone P1.8): the tool
  * returns `{ content: [...], details: { kind: 'wrapper_plan', planId } }`.
  * Large plan metadata never travels through the chat event stream — only
  * the id, which the card uses to load full detail from the wrapper store.
@@ -406,6 +408,15 @@ export function chatItemFromPhiTimelineEvent(event: {
       id,
       role: 'warning',
       content: `${from} 当前不可用，已切换到 ${to}。`,
+      ...createdAtField(event.createdAt)
+    }
+  }
+  if (event.type === 'wrapper_run_finished') {
+    const notice = wrapperRunNotice(event as unknown as WrapperRunFinishedEvent)
+    return {
+      id,
+      role: 'warning',
+      content: `${notice.title}\n${notice.body}`,
       ...createdAtField(event.createdAt)
     }
   }

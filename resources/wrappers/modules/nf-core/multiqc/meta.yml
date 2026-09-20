@@ -13,7 +13,7 @@ tools:
       homepage: https://multiqc.info/
       documentation: https://multiqc.info/docs/
       licence:
-        - "GPL-3.0-or-later"
+        - 'GPL-3.0-or-later'
       identifier: biotools:multiqc
 input:
   - - meta:
@@ -29,13 +29,13 @@ input:
     - multiqc_config:
         type: file
         description: Optional config yml for MultiQC
-        pattern: "*.{yml,yaml}"
+        pattern: '*.{yml,yaml}'
         ontologies:
           - edam: http://edamontology.org/format_3750
     - multiqc_logo:
         type: file
         description: Optional logo file for MultiQC
-        pattern: "*.{png}"
+        pattern: '*.{png}'
         ontologies: []
     - replace_names:
         type: file
@@ -43,7 +43,7 @@ input:
           Optional two-column sample renaming file. First column a set of
           patterns, second column a set of corresponding replacements. Passed via
           MultiQC's `--replace-names` option.
-        pattern: "*.{tsv}"
+        pattern: '*.{tsv}'
         ontologies:
           - edam: http://edamontology.org/format_3475
     - sample_names:
@@ -51,7 +51,7 @@ input:
         description: |
           Optional TSV file with headers, passed to the MultiQC --sample_names
           argument.
-        pattern: "*.{tsv}"
+        pattern: '*.{tsv}'
         ontologies:
           - edam: http://edamontology.org/format_3475
 output:
@@ -61,10 +61,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'sample1', single_end:false ]
-      - "*.html":
+      - '*.html':
           type: file
           description: MultiQC report file
-          pattern: ".html"
+          pattern: '.html'
           ontologies: []
   data:
     - - meta:
@@ -72,20 +72,20 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'sample1', single_end:false ]
-      - "*_data":
+      - '*_data':
           type: directory
           description: MultiQC data dir
-          pattern: "multiqc_data"
+          pattern: 'multiqc_data'
   plots:
     - - meta:
           type: map
           description: |
             Groovy Map containing sample information
             e.g. [ id:'sample1', single_end:false ]
-      - "*_plots":
+      - '*_plots':
           type: file
           description: Plots created by MultiQC
-          pattern: "*_plots"
+          pattern: '*_plots'
           ontologies: []
   versions:
     - - ${task.process}:
@@ -98,15 +98,15 @@ output:
           type: eval
           description: The expression to obtain the version of the tool
 authors:
-  - "@abhi18av"
-  - "@bunop"
-  - "@drpatelh"
-  - "@jfy133"
+  - '@abhi18av'
+  - '@bunop'
+  - '@drpatelh'
+  - '@jfy133'
 maintainers:
-  - "@abhi18av"
-  - "@bunop"
-  - "@drpatelh"
-  - "@jfy133"
+  - '@abhi18av'
+  - '@bunop'
+  - '@drpatelh'
+  - '@jfy133'
 containers:
   conda:
     linux/amd64:

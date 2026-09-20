@@ -13,11 +13,11 @@ tools:
       documentation: https://github.com/DerrickWood/kraken2/wiki/Manual
       doi: 10.1186/s13059-019-1891-0
       publication:
-        author: "Wood D.E., Lu J. & Langmead B."
+        author: 'Wood D.E., Lu J. & Langmead B.'
         year: 2019
-        title: "Improved metagenomic analysis with Kraken 2"
-        source: "Genome Biology"
-      licence: ["MIT"]
+        title: 'Improved metagenomic analysis with Kraken 2'
+        source: 'Genome Biology'
+      licence: ['MIT']
       identifier: biotools:kraken2
 input:
   - - meta:
@@ -51,12 +51,12 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.classified{.,_}*":
+      - '*.classified{.,_}*':
           type: file
           description: |
             Reads classified as belonging to any of the taxa
             on the Kraken2 database.
-          pattern: "*{fastq.gz}"
+          pattern: '*{fastq.gz}'
           ontologies: []
   unclassified_reads_fastq:
     - - meta:
@@ -64,12 +64,12 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.unclassified{.,_}*":
+      - '*.unclassified{.,_}*':
           type: file
           description: |
             Reads not classified to any of the taxa
             on the Kraken2 database.
-          pattern: "*{fastq.gz}"
+          pattern: '*{fastq.gz}'
           ontologies: []
   classified_reads_assignment:
     - - meta:
@@ -77,7 +77,7 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*classifiedreads.txt":
+      - '*classifiedreads.txt':
           type: file
           description: |
             Kraken2 output file indicating the taxonomic assignment of
@@ -89,12 +89,12 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*report.txt":
+      - '*report.txt':
           type: file
           description: |
             Kraken2 report containing stats about classified
             and not classified reads.
-          pattern: "*.{report.txt}"
+          pattern: '*.{report.txt}'
           ontologies: []
   versions_kraken2:
     - - ${task.process}:
@@ -139,8 +139,8 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@joseespinosa"
-  - "@drpatelh"
+  - '@joseespinosa'
+  - '@drpatelh'
 maintainers:
-  - "@joseespinosa"
-  - "@drpatelh"
+  - '@joseespinosa'
+  - '@drpatelh'

@@ -1,3 +1,5 @@
+import type { WrapperRunFinishedEvent } from '../shared/wrapperRunNotice'
+import type { WrapperRun } from '../shared/wrapperTypes'
 import './agent-env'
 import { execFile } from 'node:child_process'
 import {
@@ -20,6 +22,7 @@ import {
   ipcMain,
   nativeImage,
   nativeTheme,
+  Notification,
   powerSaveBlocker
 } from 'electron'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
@@ -76,6 +79,7 @@ import {
 import {
   createInMemoryRuntimeSessionManager,
   createRuntimeResourceLoader,
+  getBundledAgentsDir,
   getBundledSkillsDir,
   openRuntimeSessionManager,
   type ModelRuntime,
@@ -101,7 +105,17 @@ import {
   readWrapperCompositionDag,
   readWrapperModuleDetails
 } from './agent/wrappers/composition/discovery'
+import { wrapperJobHostHandlers } from './agent/wrappers/composition/job-host-handlers'
+import {
+  shouldContinueConversation,
+  wrapperRunContinuationPrompt
+} from './agent/wrappers/composition/job-continue'
+import { deliverWrapperRunFinished } from './agent/wrappers/composition/job-notify'
+import { WrapperJobManager } from './agent/wrappers/composition/job-manager'
+import { markInterruptedCompositionRuns } from './agent/wrappers/composition/run-record'
 import { reconcileRemoteWrapperRuns } from './agent/wrappers/executor-slurm-reconcile'
+import { discoverPhiAgents } from './agent/agents/discovery'
+import { buildAgentLeaderPrompt } from './agent/agents/leader-prompt'
 import { buildWrapperReproducibilityBundle } from './agent/wrappers/reproducibility'
 import { cancelWrapperRun, cancelWrapperRunPlan, submitWrapperRunPlan } from './agent/wrappers/runs'
 import {
@@ -534,6 +548,52 @@ getOmpBridge().registerHostHandler('notebookTool.execute', (params) =>
   notebookToolExecutor.execute(params as Parameters<typeof notebookToolExecutor.execute>[0])
 )
 getOmpBridge().registerHostHandler('agentInteraction.request', handleAgentInteractionRequest)
+
+// Background wrapper runs. The manager lives here, not in the agent worker: a run
+// must outlive any chat session, and the worker is stopped whenever it idles.
+const wrapperJobs = new WrapperJobManager()
+for (const [method, handler] of Object.entries(wrapperJobHostHandlers(wrapperJobs))) {
+  getOmpBridge().registerHostHandler(method, handler)
+}
+wrapperJobs.onChange((runId) => sendToAllWindows('wrappers:runsChanged', { runId }))
+
+// The agent worker knows which runtime session started a run; the timeline that must hear
+// about its end belongs to the Phi conversation that session serves. Registered when the
+// session is created and kept for the app's lifetime (a few short entries).
+const runtimeSessionOrigins = new Map<string, { sessionKey: string; cwd: string }>()
+
+wrapperJobs.onFinish((run, status) =>
+  deliverWrapperRunFinished(run, status, {
+    resolveSession: (originSessionId) => {
+      if (!originSessionId) return undefined
+      const origin = runtimeSessionOrigins.get(originSessionId)
+      const phiSessionId = origin
+        ? getPhiSessionIdForKey(origin.sessionKey)
+        : findActivePromptRunByRuntimeSessionId(originSessionId)?.phiSessionId
+      return phiSessionId ? { phiSessionId, cwd: origin?.cwd ?? currentCwd } : undefined
+    },
+    appendToSession: (phiSessionId, event) => appendSessionEvent(phiSessionId, { ...event }),
+    sendToWindow: (payload) =>
+      sendToWindow(getActiveWindow(), 'agent:event', {
+        ...payload,
+        sessionPath: phiOnlySessionPath(String(payload.phiSessionId))
+      }),
+    isAppFocused: () => BrowserWindow.getFocusedWindow() !== null,
+    continueConversation: continueConversationAfterWrapperRun,
+    showOsNotification: ({ title, body }) => {
+      if (!Notification.isSupported()) return
+      const notification = new Notification({ title, body })
+      notification.on('click', () => {
+        const window = getActiveWindow()
+        if (!window) return
+        if (window.isMinimized()) window.restore()
+        window.show()
+        window.focus()
+      })
+      notification.show()
+    }
+  })
+)
 
 function optionalStringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key]
@@ -1655,6 +1715,303 @@ function parsePromptTarget(input: unknown): PromptTargetInput | null {
       ? { retryUserMessageId: record.retryUserMessageId }
       : {})
   }
+}
+
+// Waking a conversation when a background wrapper run it started has ended. The policy and
+// the message are in job-continue.ts; this is the plumbing. State is per Phi conversation.
+const automaticContinuations = new Map<string, number>()
+const pendingContinuations = new Map<string, WrapperRunFinishedEvent[]>()
+
+function startAutomaticContinuation(
+  phiSessionId: string,
+  events: readonly WrapperRunFinishedEvent[]
+): void {
+  const manifest = findPhiSessionById(phiSessionId)
+  if (!manifest) return
+  const sessionKey = createPhiSessionKey(manifest.sessionId, manifest.cwd)
+  linkPhiManagedSessionKey(sessionKey, manifest.cwd, manifest.sessionId)
+  sessionPermissionModes.set(resolveSessionKeyAlias(sessionKey), manifest.permissionMode)
+  automaticContinuations.set(phiSessionId, (automaticContinuations.get(phiSessionId) ?? 0) + 1)
+
+  void submitPromptRun({
+    sessionKey,
+    snapshot: {
+      path: undefined,
+      cwd: manifest.cwd,
+      permissionMode: manifest.permissionMode
+    },
+    text: wrapperRunContinuationPrompt(events),
+    promptTarget: null,
+    automatic: true
+  }).catch((error: unknown) => {
+    rememberErrorSummary(error)
+    writeAppLog({
+      level: 'error',
+      event: 'wrapper_run_continue_failed',
+      metadata: {
+        phiSessionId,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    })
+  })
+}
+
+function continueConversationAfterWrapperRun(
+  phiSessionId: string,
+  event: WrapperRunFinishedEvent,
+  run: WrapperRun
+): void {
+  const decision = shouldContinueConversation({
+    run,
+    state: event.state,
+    automaticCount: automaticContinuations.get(phiSessionId) ?? 0
+  })
+  if (!decision.continue) {
+    if (decision.reason === 'limit') {
+      writeAppLog({
+        event: 'wrapper_run_continue_limit',
+        metadata: { phiSessionId, wrapperRunId: event.wrapperRunId }
+      })
+    }
+    return
+  }
+  const manifest = findPhiSessionById(phiSessionId)
+  if (!manifest) return
+  if (hasActivePromptRun(createPhiSessionKey(manifest.sessionId, manifest.cwd))) {
+    // Never interrupt a run in progress: wake the conversation when it is over.
+    pendingContinuations.set(phiSessionId, [
+      ...(pendingContinuations.get(phiSessionId) ?? []),
+      event
+    ])
+    return
+  }
+  startAutomaticContinuation(phiSessionId, [event])
+}
+
+/** A prompt run just ended: deliver what came in meanwhile, unless the user stopped that run. */
+function flushPendingContinuations(phiSessionId: string, runWasCancelled: boolean): void {
+  const queued = pendingContinuations.get(phiSessionId)
+  if (!queued) return
+  pendingContinuations.delete(phiSessionId)
+  // A run whose outcome Wrapper already reported during that turn (it waited for it) needs no announcement.
+  const events = queued.filter((event) => !wrapperJobs.hasBeenReported(event.wrapperRunId))
+  if (runWasCancelled || events.length === 0) return
+  try {
+    startAutomaticContinuation(phiSessionId, events)
+  } catch (error) {
+    rememberErrorSummary(error)
+  }
+}
+
+interface SubmitPromptInput {
+  sessionKey: string
+  snapshot: SessionSnapshot & { permissionMode: PermissionMode }
+  text: string
+  promptTarget: PromptTargetInput | null
+  /** A prompt Phi sends on its own (e.g. a background run ended), not the user's words. */
+  automatic?: boolean
+}
+
+/**
+ * Runs one prompt in the conversation `sessionKey`. It does not depend on which
+ * conversation is on screen, so it also serves prompts for a conversation in the
+ * background. The `agent:prompt` handler and automatic continuation both use it.
+ */
+async function submitPromptRun(input: SubmitPromptInput): Promise<{
+  path: string | null
+  phiSessionId?: string
+  sessionGeneration: number
+} | null> {
+  const normalizedText = input.text
+  const promptTarget = input.promptTarget
+  const runSessionKey = resolveSessionKeyAlias(input.sessionKey)
+  const runGeneration = advancePromptGeneration(runSessionKey)
+  const runLifecycle = getLifecycleForKey(runSessionKey)
+  const runSessionGeneration = runLifecycle.currentGeneration
+  const runSnapshot = input.snapshot
+  const project = getProjectByCwd(runSnapshot.cwd)
+  const phiSessionId = ensurePhiSessionId(runSessionKey, runSnapshot, normalizedText)
+  const stableSessionPath = phiOnlySessionPath(phiSessionId)
+  // A real user message starts the automatic wake-up count over.
+  if (!input.automatic) automaticContinuations.delete(phiSessionId)
+  const runId = createRunId()
+  if (hasActivePromptRun(runSessionKey)) {
+    throw new Error('会话正在运行')
+  }
+  const otherActiveProjectRuns = project
+    ? countOtherActiveProjectRuns(project.id, runSessionKey)
+    : 0
+  const promptRun: PromptRun = {
+    sessionKey: runSessionKey,
+    phiSessionId,
+    runId,
+    cwd: runSnapshot.cwd,
+    ...(project ? { projectId: project.id } : {}),
+    generation: runGeneration,
+    sessionGeneration: runSessionGeneration,
+    cancelled: false,
+    thinkingBlocks: new Map(),
+    thinkingBlockStartedAtMs: new Map(),
+    compactionReasons: new Map(),
+    sessionPath: stableSessionPath
+  }
+  setActivePromptRun(runSessionKey, promptRun)
+  if (input.automatic) {
+    // Phi's own message to the agent, not the user's words: nothing to show as a user bubble.
+  } else if (promptTarget?.suppressUserMessageEvent === true) {
+    appendSessionEvent(phiSessionId, {
+      type: 'user_message_retry',
+      runId,
+      content: normalizedText,
+      ...(promptTarget.retryUserMessageId ? { userMessageId: promptTarget.retryUserMessageId } : {})
+    })
+  } else {
+    appendSessionEvent(phiSessionId, {
+      type: 'user_message',
+      runId,
+      content: normalizedText
+    })
+  }
+  if (otherActiveProjectRuns > 0 && !input.automatic) {
+    notifyProjectParallelRun(
+      runSessionGeneration,
+      stableSessionPath,
+      runSnapshot.cwd,
+      otherActiveProjectRuns
+    )
+  }
+
+  // Serialize prompts per session: duplicate/overlapping IPC invokes must
+  // never run session.prompt() concurrently within the same conversation.
+  const run = getPromptQueue(runSessionKey).then(async () => {
+    let promptResult: {
+      path: string | null
+      phiSessionId?: string
+      sessionGeneration: number
+    } | null = null
+    if (
+      promptRun.cancelled ||
+      promptRun.generation !== getPromptGeneration(runSessionKey) ||
+      !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
+    ) {
+      return null
+    }
+
+    const registryRun = runnerRegistry.startRun({
+      sessionId: phiSessionId,
+      runId,
+      getRecordedFailure: () => promptRun.recordedFailureMessage,
+      execute: async ({ signal }) => {
+        if (signal.aborted || promptRun.cancelled) return
+
+        let session: AgentSessionInstance
+        try {
+          const result = await getAgentSession(runSessionKey, runSnapshot)
+          session = result.session
+        } catch (error) {
+          if (
+            isStaleSessionError(error) ||
+            promptRun.cancelled ||
+            signal.aborted ||
+            !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
+          ) {
+            return
+          }
+          throw error
+        }
+        promptRun.session = session
+
+        await applyNextRunConfiguration(session, runSessionKey, runSnapshot)
+
+        if (
+          signal.aborted ||
+          promptRun.cancelled ||
+          promptRun.generation !== getPromptGeneration(runSessionKey) ||
+          !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
+        ) {
+          await abortSession(session)
+          return
+        }
+
+        try {
+          const promptText = readAppSettings().nextActionSuggestionsEnabled
+            ? withNextActionRecommendationInstruction(normalizedText)
+            : normalizedText
+          await session.prompt(promptText, {
+            preflightResult: (success) => {
+              if (
+                success &&
+                (signal.aborted ||
+                  promptRun.cancelled ||
+                  promptRun.generation !== getPromptGeneration(runSessionKey) ||
+                  !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration))
+              ) {
+                void abortSessionWithoutCancellingApprovals(session).catch((error) => {
+                  rememberErrorSummary(error)
+                  console.error('Failed to abort stale prompt:', error)
+                })
+                throw new StaleSessionError()
+              }
+            }
+          })
+        } catch (error) {
+          linkPromptRunRuntimeSessionPath(runSessionKey, runSnapshot.cwd, promptRun, session)
+          if (
+            signal.aborted ||
+            promptRun.cancelled ||
+            promptRun.generation !== getPromptGeneration(runSessionKey) ||
+            !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
+          ) {
+            return
+          }
+          throw error
+        }
+        linkPromptRunRuntimeSessionPath(runSessionKey, runSnapshot.cwd, promptRun, session)
+
+        if (
+          signal.aborted ||
+          promptRun.cancelled ||
+          promptRun.generation !== getPromptGeneration(runSessionKey) ||
+          !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
+        ) {
+          return
+        }
+
+        // A brand-new chat's first prompt is when it actually becomes a file on disk —
+        // hand the stable Phi path back so the renderer can refresh and highlight it.
+        if (sameCanonicalSessionKey(runSessionKey, currentSessionKey)) {
+          currentSessionPath = stableSessionPath
+        }
+        promptRun.sessionPath = stableSessionPath
+        promptResult = {
+          path: stableSessionPath,
+          phiSessionId,
+          sessionGeneration: promptRun.sessionGeneration
+        }
+      }
+    })
+    syncPreventSleepBlocker()
+    void registryRun.done.then(syncPreventSleepBlocker, syncPreventSleepBlocker)
+    await registryRun.done
+    return promptRun.cancelled ? null : promptResult
+  })
+  promptRun.done = run
+  setPromptQueue(
+    runSessionKey,
+    run.then(
+      () => {
+        deleteActivePromptRun(runSessionKey, promptRun)
+        notifySessionChanged()
+        flushPendingContinuations(phiSessionId, promptRun.cancelled)
+      },
+      () => {
+        deleteActivePromptRun(runSessionKey, promptRun)
+        notifySessionChanged()
+        flushPendingContinuations(phiSessionId, promptRun.cancelled)
+      }
+    )
+  )
+  return run
 }
 
 async function alignCurrentSessionToPromptTarget(input: unknown): Promise<void> {
@@ -3344,9 +3701,25 @@ async function getAgentSession(
       let resourceLoader: RuntimeResourceLoader | undefined
       const notebookPrompt = notebookAgentRuntimePrompt(creationSnapshot.cwd)
       const enableDbConnectorTools = shouldEnableDbConnectorTools()
+      // Phi scans its own agent definitions (plus legacy layouts for compatibility).
+      // The same scan feeds the leader prompt here and the delegation tools the
+      // worker builds, so the two can never disagree.
+      const agentScan = discoverPhiAgents({
+        cwd: creationSnapshot.cwd,
+        agentDir: AGENT_DIR,
+        bundledDir: getBundledAgentsDir()
+      })
+      for (const diagnostic of agentScan.diagnostics) {
+        writeAppLog({
+          event: 'agent_definition_invalid',
+          metadata: { filePath: diagnostic.filePath, message: diagnostic.message }
+        })
+      }
+      const agentLeaderPrompt = buildAgentLeaderPrompt(agentScan.agents)
       const appendSystemPrompt = [
         ...(notebookPrompt ? [notebookPrompt] : []),
-        ...(enableDbConnectorTools ? [dbConnectorAgentRuntimePrompt()] : [])
+        ...(enableDbConnectorTools ? [dbConnectorAgentRuntimePrompt()] : []),
+        ...(agentLeaderPrompt ? [agentLeaderPrompt] : [])
       ]
       const shouldLoadBundledSkills = existsSync(getBundledSkillsDir())
       const extensionFactories =
@@ -3416,8 +3789,15 @@ async function getAgentSession(
         ),
         ...(enableDbConnectorTools ? { enableDbConnectorTools: true } : {}),
         ...(resourceLoader ? { resourceLoader } : {}),
+        ...(agentScan.agents.length > 0 ? { phiAgents: agentScan.agents } : {}),
         ...(model ? { model } : {})
       })
+      if (typeof result.session.runtimeSessionId === 'string') {
+        runtimeSessionOrigins.set(result.session.runtimeSessionId, {
+          sessionKey,
+          cwd: creationSnapshot.cwd
+        })
+      }
       const run = getActivePromptRun(sessionKey)
       if (run) {
         linkPromptRunRuntimeSessionPath(sessionKey, creationSnapshot.cwd, run, result.session)
@@ -3573,6 +3953,20 @@ app.whenReady().then(() => {
       metadata: { error: error instanceof Error ? error.message : String(error) }
     })
   })
+  // Agent-started (wrapper_run) local runs cannot outlive the worker that owned
+  // them: anything still non-terminal from the previous session is `lost`.
+  try {
+    const lost = markInterruptedCompositionRuns()
+    if (lost > 0) {
+      writeAppLog({ event: 'wrapper_composition_runs_marked_lost', metadata: { count: lost } })
+    }
+  } catch (error) {
+    writeAppLog({
+      level: 'error',
+      event: 'wrapper_composition_run_reconcile_failed',
+      metadata: { error: error instanceof Error ? error.message : String(error) }
+    })
+  }
   // Set app user model id for windows
   electronApp.setAppUserModelId(APP_ID)
 
@@ -3643,194 +4037,16 @@ app.whenReady().then(() => {
       await alignCurrentSessionToPromptTarget(targetInput)
     }
 
-    const runSessionKey = resolveSessionKeyAlias(currentSessionKey)
-    const runGeneration = advancePromptGeneration(runSessionKey)
-    const runLifecycle = getLifecycleForKey(runSessionKey)
-    const runSessionGeneration = runLifecycle.currentGeneration
-    const runSnapshot: SessionSnapshot & { permissionMode: PermissionMode } = {
-      path: runtimeSessionPath(currentSessionPath),
-      cwd: currentCwd,
-      permissionMode: currentPermissionMode
-    }
-    const project = getProjectByCwd(runSnapshot.cwd)
-    const phiSessionId = ensurePhiSessionId(runSessionKey, runSnapshot, normalizedText)
-    const stableSessionPath = phiOnlySessionPath(phiSessionId)
-    const runId = createRunId()
-    if (hasActivePromptRun(runSessionKey)) {
-      throw new Error('会话正在运行')
-    }
-    const otherActiveProjectRuns = project
-      ? countOtherActiveProjectRuns(project.id, runSessionKey)
-      : 0
-    const promptRun: PromptRun = {
-      sessionKey: runSessionKey,
-      phiSessionId,
-      runId,
-      cwd: runSnapshot.cwd,
-      ...(project ? { projectId: project.id } : {}),
-      generation: runGeneration,
-      sessionGeneration: runSessionGeneration,
-      cancelled: false,
-      thinkingBlocks: new Map(),
-      thinkingBlockStartedAtMs: new Map(),
-      compactionReasons: new Map(),
-      sessionPath: stableSessionPath
-    }
-    setActivePromptRun(runSessionKey, promptRun)
-    if (promptTarget?.suppressUserMessageEvent === true) {
-      appendSessionEvent(phiSessionId, {
-        type: 'user_message_retry',
-        runId,
-        content: normalizedText,
-        ...(promptTarget.retryUserMessageId
-          ? { userMessageId: promptTarget.retryUserMessageId }
-          : {})
-      })
-    } else {
-      appendSessionEvent(phiSessionId, {
-        type: 'user_message',
-        runId,
-        content: normalizedText
-      })
-    }
-    if (otherActiveProjectRuns > 0) {
-      notifyProjectParallelRun(
-        runSessionGeneration,
-        stableSessionPath,
-        runSnapshot.cwd,
-        otherActiveProjectRuns
-      )
-    }
-
-    // Serialize prompts per session: duplicate/overlapping IPC invokes must
-    // never run session.prompt() concurrently within the same conversation.
-    const run = getPromptQueue(runSessionKey).then(async () => {
-      let promptResult: {
-        path: string | null
-        phiSessionId?: string
-        sessionGeneration: number
-      } | null = null
-      if (
-        promptRun.cancelled ||
-        promptRun.generation !== getPromptGeneration(runSessionKey) ||
-        !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
-      ) {
-        return null
-      }
-
-      const registryRun = runnerRegistry.startRun({
-        sessionId: phiSessionId,
-        runId,
-        getRecordedFailure: () => promptRun.recordedFailureMessage,
-        execute: async ({ signal }) => {
-          if (signal.aborted || promptRun.cancelled) return
-
-          let session: AgentSessionInstance
-          try {
-            const result = await getAgentSession(runSessionKey, runSnapshot)
-            session = result.session
-          } catch (error) {
-            if (
-              isStaleSessionError(error) ||
-              promptRun.cancelled ||
-              signal.aborted ||
-              !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
-            ) {
-              return
-            }
-            throw error
-          }
-          promptRun.session = session
-
-          await applyNextRunConfiguration(session, runSessionKey, runSnapshot)
-
-          if (
-            signal.aborted ||
-            promptRun.cancelled ||
-            promptRun.generation !== getPromptGeneration(runSessionKey) ||
-            !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
-          ) {
-            await abortSession(session)
-            return
-          }
-
-          try {
-            const promptText = readAppSettings().nextActionSuggestionsEnabled
-              ? withNextActionRecommendationInstruction(normalizedText)
-              : normalizedText
-            await session.prompt(promptText, {
-              preflightResult: (success) => {
-                if (
-                  success &&
-                  (signal.aborted ||
-                    promptRun.cancelled ||
-                    promptRun.generation !== getPromptGeneration(runSessionKey) ||
-                    !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration))
-                ) {
-                  void abortSessionWithoutCancellingApprovals(session).catch((error) => {
-                    rememberErrorSummary(error)
-                    console.error('Failed to abort stale prompt:', error)
-                  })
-                  throw new StaleSessionError()
-                }
-              }
-            })
-          } catch (error) {
-            linkPromptRunRuntimeSessionPath(runSessionKey, runSnapshot.cwd, promptRun, session)
-            if (
-              signal.aborted ||
-              promptRun.cancelled ||
-              promptRun.generation !== getPromptGeneration(runSessionKey) ||
-              !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
-            ) {
-              return
-            }
-            throw error
-          }
-          linkPromptRunRuntimeSessionPath(runSessionKey, runSnapshot.cwd, promptRun, session)
-
-          if (
-            signal.aborted ||
-            promptRun.cancelled ||
-            promptRun.generation !== getPromptGeneration(runSessionKey) ||
-            !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
-          ) {
-            return
-          }
-
-          // A brand-new chat's first prompt is when it actually becomes a file on disk —
-          // hand the stable Phi path back so the renderer can refresh and highlight it.
-          if (sameCanonicalSessionKey(runSessionKey, currentSessionKey)) {
-            currentSessionPath = stableSessionPath
-          }
-          promptRun.sessionPath = stableSessionPath
-          promptResult = {
-            path: stableSessionPath,
-            phiSessionId,
-            sessionGeneration: promptRun.sessionGeneration
-          }
-        }
-      })
-      syncPreventSleepBlocker()
-      void registryRun.done.then(syncPreventSleepBlocker, syncPreventSleepBlocker)
-      await registryRun.done
-      return promptRun.cancelled ? null : promptResult
+    return submitPromptRun({
+      sessionKey: resolveSessionKeyAlias(currentSessionKey),
+      snapshot: {
+        path: runtimeSessionPath(currentSessionPath),
+        cwd: currentCwd,
+        permissionMode: currentPermissionMode
+      },
+      text: normalizedText,
+      promptTarget
     })
-    promptRun.done = run
-    setPromptQueue(
-      runSessionKey,
-      run.then(
-        () => {
-          deleteActivePromptRun(runSessionKey, promptRun)
-          notifySessionChanged()
-        },
-        () => {
-          deleteActivePromptRun(runSessionKey, promptRun)
-          notifySessionChanged()
-        }
-      )
-    )
-    return run
   })
 
   ipcMain.handle('agent:stop', async () => {
@@ -4737,6 +4953,12 @@ app.whenReady().then(() => {
   ipcMain.handle('wrappers:getRun', async (_, runId: string) => readWrapperRun(runId))
   ipcMain.handle('wrappers:cancelRun', async (_, runId: string) => {
     try {
+      // Agent-started (background) runs are owned by the job manager, not the plan executor.
+      if (readWrapperRun(runId)?.origin === 'composition') {
+        const cancelled = await wrapperJobs.cancel(runId)
+        if (!cancelled.ok) throw new Error(cancelled.error)
+        return readWrapperRun(runId)
+      }
       return cancelWrapperRun(runId)
     } catch (error) {
       rememberErrorSummary(error)
@@ -4816,6 +5038,8 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  // Stops every background wrapper run and records it cancelled (synchronously: we are exiting).
+  wrapperJobs.shutdown()
   if (preventSleepBlockerId !== null && powerSaveBlocker.isStarted(preventSleepBlockerId)) {
     powerSaveBlocker.stop(preventSleepBlockerId)
     preventSleepBlockerId = null

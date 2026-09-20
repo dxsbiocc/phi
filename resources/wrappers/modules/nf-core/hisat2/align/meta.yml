@@ -10,8 +10,8 @@ tools:
       description: HISAT2 is a fast and sensitive alignment program for mapping next-generation sequencing reads (both DNA and RNA) to a population of human genomes as well as to a single reference genome.
       homepage: https://daehwankimlab.github.io/hisat2/
       documentation: https://daehwankimlab.github.io/hisat2/manual/
-      doi: "10.1038/s41587-019-0201-4"
-      licence: ["MIT"]
+      doi: '10.1038/s41587-019-0201-4'
+      licence: ['MIT']
       identifier: biotools:hisat2
 input:
   - - meta:
@@ -33,7 +33,7 @@ input:
     - index:
         type: file
         description: HISAT2 genome index file
-        pattern: "*.ht2"
+        pattern: '*.ht2'
         ontologies: []
   - - meta3:
         type: map
@@ -43,7 +43,7 @@ input:
     - splicesites:
         type: file
         description: Splices sites in gtf file
-        pattern: "*.{txt}"
+        pattern: '*.{txt}'
         ontologies: []
   - save_unaligned:
       type: boolean
@@ -55,10 +55,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.bam":
+      - '*.bam':
           type: file
           description: Output BAM file containing read alignments
-          pattern: "*.{bam}"
+          pattern: '*.{bam}'
           ontologies: []
   summary:
     - - meta:
@@ -66,10 +66,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.log":
+      - '*.log':
           type: file
           description: Alignment log
-          pattern: "*.log"
+          pattern: '*.log'
           ontologies: []
   fastq:
     - - meta:
@@ -77,10 +77,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*fastq.gz":
+      - '*fastq.gz':
           type: file
           description: Output FastQ file
-          pattern: "*fastq.gz"
+          pattern: '*fastq.gz'
           ontologies:
             - edam: http://edamontology.org/format_3989 # GZIP format
   versions_hisat2:
@@ -126,12 +126,12 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@ntoda03"
-  - "@ramprasadn"
-  - "@srisarya"
+  - '@ntoda03'
+  - '@ramprasadn'
+  - '@srisarya'
 maintainers:
-  - "@ntoda03"
-  - "@ramprasadn"
+  - '@ntoda03'
+  - '@ramprasadn'
 containers:
   docker:
     linux/amd64:

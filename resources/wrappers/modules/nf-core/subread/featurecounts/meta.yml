@@ -13,8 +13,8 @@ tools:
         to count both RNA-seq and genomic DNA-seq reads.
       homepage: https://subread.sourceforge.net/featureCounts.html
       documentation: https://subread.sourceforge.net/SubreadUsersGuide.pdf
-      doi: "10.1093/bioinformatics/btt656"
-      licence: ["GPL v3"]
+      doi: '10.1093/bioinformatics/btt656'
+      licence: ['GPL v3']
       identifier: biotools:subread
 input:
   - - meta:
@@ -25,12 +25,12 @@ input:
     - bams:
         type: file
         description: BAM files containing mapped reads
-        pattern: "*.bam"
+        pattern: '*.bam'
         ontologies: []
     - annotation:
         type: file
         description: Genomic features annotation in GTF or SAF
-        pattern: "*.{gtf,saf}"
+        pattern: '*.{gtf,saf}'
         ontologies: []
 output:
   counts:
@@ -39,10 +39,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*featureCounts.tsv":
+      - '*featureCounts.tsv':
           type: file
           description: Counts of reads mapping to features
-          pattern: "*featureCounts.tsv"
+          pattern: '*featureCounts.tsv'
           ontologies:
             - edam: http://edamontology.org/format_3475 # TSV
   summary:
@@ -51,10 +51,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*featureCounts.tsv.summary":
+      - '*featureCounts.tsv.summary':
           type: file
           description: Summary log file
-          pattern: "*.featureCounts.tsv.summary"
+          pattern: '*.featureCounts.tsv.summary'
           ontologies: []
   versions_subread:
     - - ${task.process}:
@@ -80,6 +80,6 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@ntoda03"
+  - '@ntoda03'
 maintainers:
-  - "@ntoda03"
+  - '@ntoda03'

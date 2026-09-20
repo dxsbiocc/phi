@@ -12,7 +12,7 @@ tools:
         tools.
       homepage: https://jgi.doe.gov/data-and-tools/software-tools/bbtools/bb-tools-user-guide/
       documentation: https://jgi.doe.gov/data-and-tools/software-tools/bbtools/bb-tools-user-guide/
-      licence: ["UC-LBL license (see package)"]
+      licence: ['UC-LBL license (see package)']
       identifier: biotools:bbmap
 input:
   - - meta:
@@ -29,11 +29,11 @@ input:
   - index:
       type: directory
       description: Directory to place generated index
-      pattern: "*"
+      pattern: '*'
   - primary_ref:
       type: file
       description: Path to the primary reference
-      pattern: "*"
+      pattern: '*'
       ontologies: []
   - - other_ref_names:
         type: list
@@ -49,17 +49,17 @@ output:
     - bbsplit_index:
         type: directory
         description: Directory with index files
-        pattern: "bbsplit_index"
+        pattern: 'bbsplit_index'
   primary_fastq:
     - - meta:
           type: map
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*primary*fastq.gz":
+      - '*primary*fastq.gz':
           type: file
           description: Output reads that map to the primary reference
-          pattern: "*primary*fastq.gz"
+          pattern: '*primary*fastq.gz'
           ontologies:
             - edam: http://edamontology.org/format_3989 # GZIP format
   all_fastq:
@@ -68,10 +68,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*fastq.gz":
+      - '*fastq.gz':
           type: file
           description: All reads mapping to any of the references
-          pattern: "*fastq.gz"
+          pattern: '*fastq.gz'
           ontologies:
             - edam: http://edamontology.org/format_3989 # GZIP format
   stats:
@@ -80,10 +80,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*txt":
+      - '*txt':
           type: file
           description: Tab-delimited text file containing mapping statistics
-          pattern: "*.txt"
+          pattern: '*.txt'
           ontologies: []
   log:
     - - meta:
@@ -91,10 +91,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.log":
+      - '*.log':
           type: file
           description: Log file
-          pattern: "*.log"
+          pattern: '*.log'
           ontologies: []
   versions_bbmap:
     - - ${task.process}:
@@ -120,10 +120,10 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@joseespinosa"
-  - "@drpatelh"
-  - "@pinin4fjords"
+  - '@joseespinosa'
+  - '@drpatelh'
+  - '@pinin4fjords'
 maintainers:
-  - "@joseespinosa"
-  - "@drpatelh"
-  - "@pinin4fjords"
+  - '@joseespinosa'
+  - '@drpatelh'
+  - '@pinin4fjords'

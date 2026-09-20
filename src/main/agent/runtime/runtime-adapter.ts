@@ -1,3 +1,4 @@
+import type { PhiAgentDefinition } from '../agents/definition'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -288,6 +289,8 @@ export type CreateAgentSessionOptions = {
   enableDbConnectorTools?: boolean
   sessionManager?: RuntimeSessionManager
   resourceLoader?: RuntimeResourceLoader
+  /** Phi agents scanned by the main process; the worker exposes each as a delegation tool. */
+  phiAgents?: PhiAgentDefinition[]
 }
 
 type RuntimeSnapshot = {
@@ -342,7 +345,7 @@ function resourceDirCandidates(resourceName: string, appPath?: string): string[]
   return candidates
 }
 
-export function getBundledSkillsDir(): string {
+function getBundledResourceDir(resourceName: string): string {
   const electronModule = nodeRequire('electron') as
     | {
         app?: {
@@ -352,16 +355,25 @@ export function getBundledSkillsDir(): string {
       }
     | string
   const electronApp = typeof electronModule === 'object' ? electronModule.app : undefined
-  if (!electronApp) return firstExistingPath(resourceDirCandidates('skills'))
+  if (!electronApp) return firstExistingPath(resourceDirCandidates(resourceName))
 
   if (!electronApp.isPackaged) {
-    return firstExistingPath(resourceDirCandidates('skills', electronApp.getAppPath()))
+    return firstExistingPath(resourceDirCandidates(resourceName, electronApp.getAppPath()))
   }
 
   return firstExistingPath([
-    join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'skills'),
-    ...resourceDirCandidates('skills', electronApp.getAppPath())
+    join(process.resourcesPath, 'app.asar.unpacked', 'resources', resourceName),
+    ...resourceDirCandidates(resourceName, electronApp.getAppPath())
   ])
+}
+
+export function getBundledSkillsDir(): string {
+  return getBundledResourceDir('skills')
+}
+
+/** Phi's own bundled agent definitions (`resources/agents`). */
+export function getBundledAgentsDir(): string {
+  return getBundledResourceDir('agents')
 }
 
 function pathIsInside(path: string, root: string): boolean {
@@ -924,7 +936,8 @@ export async function createRuntimeAgentSession(
     resourceOptions: resourceLoader
       ? serializableResourceOptions(resourceLoader.options)
       : undefined,
-    enableToolApproval: toolCallHandlers.length > 0
+    enableToolApproval: toolCallHandlers.length > 0,
+    phiAgents: options.phiAgents
   })
   const session = new RuntimeAgentSessionProxy(
     bridge,

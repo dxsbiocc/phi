@@ -1,4 +1,4 @@
-name: "umicollapse"
+name: 'umicollapse'
 description: Deduplicate reads based on the mapping co-ordinate and the UMI
   attached to the read.
 keywords:
@@ -6,15 +6,15 @@ keywords:
   - deduplication
   - genomics
 tools:
-  - "umicollapse":
-      description: "UMICollapse contains tools for dealing with Unique Molecular Identifiers
-        (UMIs)/Random Molecular Tags (RMTs)."
-      homepage: "https://github.com/Daniel-Liu-c0deb0t/UMICollapse"
-      documentation: "https://github.com/Daniel-Liu-c0deb0t/UMICollapse"
-      tool_dev_url: "https://github.com/siddharthab/UMICollapse"
-      doi: "10.7717/peerj.8275"
-      licence: ["MIT"]
-      identifier: ""
+  - 'umicollapse':
+      description: 'UMICollapse contains tools for dealing with Unique Molecular Identifiers
+        (UMIs)/Random Molecular Tags (RMTs).'
+      homepage: 'https://github.com/Daniel-Liu-c0deb0t/UMICollapse'
+      documentation: 'https://github.com/Daniel-Liu-c0deb0t/UMICollapse'
+      tool_dev_url: 'https://github.com/siddharthab/UMICollapse'
+      doi: '10.7717/peerj.8275'
+      licence: ['MIT']
+      identifier: ''
 input:
   - - meta:
         type: map
@@ -24,19 +24,19 @@ input:
     - input:
         type: file
         description: Input bam file
-        pattern: "*.bam"
+        pattern: '*.bam'
         ontologies: []
     - bai:
         type: file
         description: |
           BAM index files corresponding to the input BAM file. Optionally can be skipped using [] when using FastQ input.
-        pattern: "*.{bai}"
+        pattern: '*.{bai}'
         ontologies: []
   - mode:
       type: string
       description: |
         Selects the mode of Umicollapse - either fastq or bam need to be provided.
-      pattern: "{fastq,bam}"
+      pattern: '{fastq,bam}'
 output:
   bam:
     - - meta:
@@ -44,10 +44,10 @@ output:
           description: |
             Groovy Map containing sample information
               e.g. [ id:'test', single_end:false ]
-      - "*.bam":
+      - '*.bam':
           type: file
           description: BAM file with deduplicated UMIs.
-          pattern: "*.{bam}"
+          pattern: '*.{bam}'
           ontologies: []
   fastq:
     - - meta:
@@ -55,10 +55,10 @@ output:
           description: |
             Groovy Map containing sample information
               e.g. [ id:'test', single_end:false ]
-      - "*dedup*fastq.gz":
+      - '*dedup*fastq.gz':
           type: file
           description: FASTQ file with deduplicated UMIs.
-          pattern: "*dedup*fastq.gz"
+          pattern: '*dedup*fastq.gz'
           ontologies:
             - edam: http://edamontology.org/format_3989 # GZIP format
   log:
@@ -67,10 +67,10 @@ output:
           description: |
             Groovy Map containing sample information
               e.g. [ id:'test', single_end:false ]
-      - "*_UMICollapse.log":
+      - '*_UMICollapse.log':
           type: file
           description: A log file with the deduplication statistics.
-          pattern: "*_{UMICollapse.log}"
+          pattern: '*_{UMICollapse.log}'
           ontologies: []
   versions_umicollapse:
     - - ${task.process}:
@@ -96,11 +96,11 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@CharlotteAnne"
-  - "@chris-cheshire"
+  - '@CharlotteAnne'
+  - '@chris-cheshire'
 maintainers:
-  - "@CharlotteAnne"
-  - "@chris-cheshire"
-  - "@apeltzer"
-  - "@siddharthab"
-  - "@MatthiasZepper"
+  - '@CharlotteAnne'
+  - '@chris-cheshire'
+  - '@apeltzer'
+  - '@siddharthab'
+  - '@MatthiasZepper'

@@ -23,5 +23,5 @@ params:
 outputs:
   reports:
     type: directory
-    path: "${outdir}/fastqc"
+    path: '${outdir}/fastqc'
     primary: true

@@ -12,8 +12,8 @@ tools:
         Molecular Tags (RMTs) and single cell RNA-Seq cell barcodes
 
       documentation: https://umi-tools.readthedocs.io/en/latest/
-      license: ["MIT"]
-      identifier: ""
+      license: ['MIT']
+      identifier: ''
 input:
   - - meta:
         type: map
@@ -24,13 +24,13 @@ input:
         type: file
         description: |
           BAM file containing reads to be deduplicated via UMIs.
-        pattern: "*.{bam}"
+        pattern: '*.{bam}'
         ontologies: []
     - bai:
         type: file
         description: |
           BAM index files corresponding to the input BAM file.
-        pattern: "*.{bai}"
+        pattern: '*.{bai}'
         ontologies: []
   - get_output_stats:
       type: boolean
@@ -46,7 +46,7 @@ output:
       - ${prefix}.bam:
           type: file
           description: BAM file with deduplicated UMIs.
-          pattern: "*.{bam}"
+          pattern: '*.{bam}'
           ontologies: []
   log:
     - - meta:
@@ -54,10 +54,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*.log":
+      - '*.log':
           type: file
           description: File with logging information
-          pattern: "*.{log}"
+          pattern: '*.{log}'
           ontologies: []
   tsv_edit_distance:
     - - meta:
@@ -65,11 +65,11 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*edit_distance.tsv":
+      - '*edit_distance.tsv':
           type: file
           description: Reports the (binned) average edit distance between the UMIs at
             each position.
-          pattern: "*edit_distance.tsv"
+          pattern: '*edit_distance.tsv'
           ontologies:
             - edam: http://edamontology.org/format_3475 # TSV
   tsv_per_umi:
@@ -78,10 +78,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*per_umi.tsv":
+      - '*per_umi.tsv':
           type: file
           description: UMI-level summary statistics.
-          pattern: "*per_umi.tsv"
+          pattern: '*per_umi.tsv'
           ontologies:
             - edam: http://edamontology.org/format_3475 # TSV
   tsv_umi_per_position:
@@ -90,10 +90,10 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-      - "*per_position.tsv":
+      - '*per_position.tsv':
           type: file
           description: Tabulates the counts for unique combinations of UMI and position.
-          pattern: "*per_position.tsv"
+          pattern: '*per_position.tsv'
           ontologies:
             - edam: http://edamontology.org/format_3475 # TSV
   versions_umitools:
@@ -119,10 +119,10 @@ topics:
           type: eval
           description: The expression to obtain the version of the tool
 authors:
-  - "@drpatelh"
-  - "@grst"
-  - "@klkeys"
+  - '@drpatelh'
+  - '@grst'
+  - '@klkeys'
 maintainers:
-  - "@drpatelh"
-  - "@grst"
-  - "@klkeys"
+  - '@drpatelh'
+  - '@grst'
+  - '@klkeys'

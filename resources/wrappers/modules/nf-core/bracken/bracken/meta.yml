@@ -13,8 +13,8 @@ tools:
       homepage: https://ccb.jhu.edu/software/bracken/
       documentation: https://ccb.jhu.edu/software/bracken/index.shtml?t=manual
       tool_dev_url: https://github.com/jenniferlu717/Bracken
-      doi: "10.7717/peerj-cs.104"
-      licence: ["GPL v3"]
+      doi: '10.7717/peerj-cs.104'
+      licence: ['GPL v3']
       identifier: biotools:bracken
 input:
   - - meta:
@@ -25,13 +25,13 @@ input:
     - kraken_report:
         type: file
         description: TSV file with six columns coming from kraken2 output
-        pattern: "*.{tsv}"
+        pattern: '*.{tsv}'
         ontologies:
           - edam: http://edamontology.org/format_3475 # TSV
   - database:
       type: file
       description: Directory containing the kraken2/Bracken files for analysis
-      pattern: "*"
+      pattern: '*'
       ontologies: []
 output:
   reports:
@@ -40,26 +40,26 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-          pattern: "*.{tsv}"
+          pattern: '*.{tsv}'
       - bracken_report:
           type: map
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-          pattern: "*.{tsv}"
+          pattern: '*.{tsv}'
   txt:
     - - meta:
           type: map
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-          pattern: "*.{tsv}"
+          pattern: '*.{tsv}'
       - bracken_kraken_style_report:
           type: map
           description: |
             Groovy Map containing sample information
             e.g. [ id:'test', single_end:false ]
-          pattern: "*.txt"
+          pattern: '*.txt'
   versions_bracken:
     - - ${task.process}:
           type: string
@@ -84,6 +84,6 @@ topics:
           description: The expression to obtain the version of the tool
 
 authors:
-  - "@Midnighter"
+  - '@Midnighter'
 maintainers:
-  - "@Midnighter"
+  - '@Midnighter'

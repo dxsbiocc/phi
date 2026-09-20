@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/nf-core/modules/master/modules/meta-schema.json
-name: "eautils_gtf2bed"
+name: 'eautils_gtf2bed'
 description: Convert a GTF/GFF annotation file to BED12 format
 keywords:
   - gtf
@@ -9,17 +9,17 @@ keywords:
   - annotation
   - conversion
 tools:
-  - "gtf2bed":
+  - 'gtf2bed':
       description: |
         Perl script from the ea-utils package that converts GTF/GFF annotation
         files to BED12 format, handling exons, start/stop codons, and miRNAs.
         Produces UCSC-compatible BED with proper thin/thick regions.
-      homepage: "https://expressionanalysis.github.io/ea-utils/"
-      documentation: "https://github.com/ExpressionAnalysis/ea-utils/blob/master/clipper/gtf2bed"
-      tool_dev_url: "https://github.com/ExpressionAnalysis/ea-utils"
+      homepage: 'https://expressionanalysis.github.io/ea-utils/'
+      documentation: 'https://github.com/ExpressionAnalysis/ea-utils/blob/master/clipper/gtf2bed'
+      tool_dev_url: 'https://github.com/ExpressionAnalysis/ea-utils'
       licence:
-        - "MIT"
-      identifier: ""
+        - 'MIT'
+      identifier: ''
 input:
   - - meta:
         type: map
@@ -29,7 +29,7 @@ input:
     - gtf:
         type: file
         description: GTF or GFF annotation file
-        pattern: "*.{gtf,gff,gtf.gz,gff.gz}"
+        pattern: '*.{gtf,gff,gtf.gz,gff.gz}'
         ontologies:
           - edam: http://edamontology.org/format_2306 # GTF
 output:
@@ -39,17 +39,17 @@ output:
           description: |
             Groovy Map containing sample information
             e.g. `[ id:'genome' ]`
-      - "${prefix}.bed":
+      - '${prefix}.bed':
           type: file
           description: BED12 format annotation file with one entry per transcript
-          pattern: "*.bed"
+          pattern: '*.bed'
           ontologies:
             - edam: http://edamontology.org/format_3003 # BED
   versions:
     - versions.yml:
         type: file
         description: File containing software versions
-        pattern: "versions.yml"
+        pattern: 'versions.yml'
         ontologies:
           - edam: http://edamontology.org/format_3750 # YAML
 
@@ -59,6 +59,6 @@ topics:
         type: string
         description: The name of the process
 authors:
-  - "@pinin4fjords"
+  - '@pinin4fjords'
 maintainers:
-  - "@pinin4fjords"
+  - '@pinin4fjords'
