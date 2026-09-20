@@ -175,12 +175,6 @@ function skillSourceCategoryLabel(skillOrCategory: SkillSummary | SkillSourceCat
   return skillSourceCategoryLabels[category]
 }
 
-function skillSourceCategoryLine(skill: SkillSummary): string {
-  const category = skillSourceCategory(skill)
-  const label = skillSourceCategoryLabel(category)
-  return category === 'system' ? `${label} · 内置` : label
-}
-
 function skillToggleDisabledReason(skill: SkillSummary): string | null {
   return skillSourceCategory(skill) === 'system' ? '系统内置技能不可关闭' : null
 }
@@ -703,14 +697,6 @@ export function SkillSidebar({
                         sx={{ mt: 0.25, fontSize: '0.84rem', lineHeight: 1.25 }}
                       >
                         {skill.description || '这个技能没有提供说明。'}
-                      </Typography>
-                      <Typography
-                        noWrap
-                        title={skillSourceCategoryLine(skill)}
-                        color="text.secondary"
-                        sx={{ mt: 0.35, fontSize: '0.78rem', fontWeight: 700, lineHeight: 1.25 }}
-                      >
-                        {skillSourceCategoryLine(skill)}
                       </Typography>
                     </Box>
                   </ListItemButton>

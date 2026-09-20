@@ -97,6 +97,7 @@ test('skill sidebar keeps management actions out of the browsing list', () => {
   const markup = renderSkillSidebar()
 
   assert.match(markup, /system-skill/)
+  assert.doesNotMatch(markup, /System · 内置/)
   assert.doesNotMatch(markup, /卸载技能/)
   assert.doesNotMatch(markup, /启用技能|关闭技能/)
 })
