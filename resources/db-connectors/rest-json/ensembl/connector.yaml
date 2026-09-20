@@ -1,0 +1,1254 @@
+phiDbConnectorVersion: 1
+id: rest-json/ensembl
+name: Ensembl REST
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://rest.ensembl.org
+networkPolicy:
+  allowedHosts:
+    - rest.ensembl.org
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 10
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: gene
+    summary: Human Ensembl gene lookup by external gene symbol; compatibility alias for lookup_symbol with species fixed to homo_sapiens.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.stable_id
+      primaryUrlTemplate: https://www.ensembl.org/id/{stable_id}
+    commonFields:
+      [id, display_name, species, biotype, description, seq_region_name, start, end, strand]
+    rest:
+      request:
+        path: /lookup/symbol/homo_sapiens/{filter:symbol}
+        queryParams:
+          expand: '1'
+      response:
+        rowsPath: $
+    fields:
+      - { name: symbol, type: string, description: External gene symbol, namespace: hgnc.symbol }
+      - {
+          name: id,
+          type: string,
+          description: Ensembl stable identifier,
+          namespace: ensembl.gene_id
+        }
+      - { name: display_name, type: string, description: Ensembl display name }
+      - { name: species, type: string, description: Ensembl species name }
+      - { name: biotype, type: string, description: Gene biotype }
+      - { name: description, type: string, description: Gene description }
+      - { name: seq_region_name, type: string, description: Sequence region name }
+      - { name: start, type: number, description: Genomic start coordinate }
+      - { name: end, type: number, description: Genomic end coordinate }
+      - { name: strand, type: number, description: Genomic strand }
+  - id: lookup_id
+    summary: Lookup an Ensembl stable identifier and return object metadata.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.stable_id
+      primaryUrlTemplate: https://www.ensembl.org/id/{stable_id}
+    commonFields:
+      [
+        id,
+        object_type,
+        species,
+        biotype,
+        display_name,
+        description,
+        seq_region_name,
+        start,
+        end,
+        strand
+      ]
+    rest:
+      request:
+        path: /lookup/id/{filter:id}
+        filterParamMap: { expand: expand, mane: mane }
+      response: { rowsPath: $ }
+  - id: lookup_id_batch
+    summary: Batch lookup Ensembl stable identifiers with Ensembl REST POST /lookup/id.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.stable_id
+      primaryUrlTemplate: https://www.ensembl.org/id/{stable_id}
+    commonFields:
+      [
+        id,
+        object_type,
+        species,
+        biotype,
+        display_name,
+        description,
+        seq_region_name,
+        start,
+        end,
+        strand
+      ]
+    rest:
+      request:
+        path: /lookup/id
+        method: POST
+        idempotent: true
+        jsonBodyParamMap: { ids: ids }
+        jsonBodyArrayFields: [ids]
+        filterParamMap: { expand: expand, mane: mane }
+      response: { rowsPath: $.* }
+  - id: lookup_symbol
+    summary: Lookup an Ensembl object by species and external symbol.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.stable_id
+      primaryUrlTemplate: https://www.ensembl.org/id/{stable_id}
+    commonFields:
+      [id, display_name, species, biotype, description, seq_region_name, start, end, strand]
+    rest:
+      request:
+        path: /lookup/symbol/{filter:species}/{filter:symbol}
+        filterParamMap: { expand: expand }
+      response: { rowsPath: $ }
+  - id: lookup_symbol_batch
+    summary: Batch lookup Ensembl objects by species and external symbols with Ensembl REST POST /lookup/symbol/:species.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.stable_id
+      primaryUrlTemplate: https://www.ensembl.org/id/{stable_id}
+    commonFields:
+      [id, display_name, species, biotype, description, seq_region_name, start, end, strand]
+    rest:
+      request:
+        path: /lookup/symbol/{filter:species}
+        method: POST
+        idempotent: true
+        jsonBodyParamMap: { symbols: symbols }
+        jsonBodyArrayFields: [symbols]
+        filterParamMap: { expand: expand }
+      response: { rowsPath: $.* }
+  - id: xref
+    summary: Human Ensembl objects linked to an external symbol; compatibility alias for xref_symbol with species fixed to homo_sapiens.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.stable_id
+      primaryUrlTemplate: https://www.ensembl.org/id/{stable_id}
+    commonFields: [id, display_id, type, dbname, description]
+    rest:
+      request:
+        path: /xrefs/symbol/homo_sapiens/{filter:symbol}
+        filterParamMap: { external_db: external_db, object_type: object_type }
+      response: { rowsPath: $ }
+    fields:
+      - { name: symbol, type: string, description: External symbol, namespace: hgnc.symbol }
+      - {
+          name: id,
+          type: string,
+          description: Linked Ensembl stable identifier,
+          namespace: ensembl.stable_id
+        }
+      - { name: display_id, type: string, description: External display identifier }
+      - { name: type, type: string, description: Object type }
+      - { name: dbname, type: string, description: External database name }
+      - { name: description, type: string, description: External cross-reference description }
+  - id: xref_symbol
+    summary: Ensembl cross-references linked to an external symbol for a species.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.stable_id
+      primaryUrlTemplate: https://www.ensembl.org/id/{stable_id}
+    commonFields: [id, display_id, type, dbname, description]
+    rest:
+      request:
+        path: /xrefs/symbol/{filter:species}/{filter:symbol}
+        filterParamMap: { external_db: external_db, object_type: object_type }
+      response: { rowsPath: $ }
+  - id: xref_id
+    summary: External database cross-references for an Ensembl stable identifier.
+    commonFields: [primary_id, display_id, dbname, description, info_type, version]
+    rest:
+      request:
+        path: /xrefs/id/{filter:id}
+        filterParamMap: { external_db: external_db, all_levels: all_levels }
+      response: { rowsPath: $ }
+  - id: xref_name
+    summary: Ensembl cross-reference lookup by external accession or display label.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.stable_id
+      primaryUrlTemplate: https://www.ensembl.org/id/{stable_id}
+    commonFields: [id, display_id, type, dbname, description]
+    rest:
+      request:
+        path: /xrefs/name/{filter:species}/{filter:name}
+        filterParamMap: { external_db: external_db }
+      response: { rowsPath: $ }
+  - id: sequence_id
+    summary: Sequence by Ensembl stable identifier.
+    identity:
+      stableIdFields: [id, query]
+      namespace: ensembl.stable_id
+      primaryUrlTemplate: https://www.ensembl.org/id/{stable_id}
+    commonFields: [id, query, desc, seq, molecule]
+    rest:
+      request:
+        path: /sequence/id/{filter:id}
+        filterParamMap:
+          { type: type, mask: mask, expand_5prime: expand_5prime, expand_3prime: expand_3prime }
+      response: { rowsPath: $ }
+  - id: sequence_id_batch
+    summary: Batch retrieve sequences by Ensembl stable identifiers with Ensembl REST POST /sequence/id.
+    identity:
+      stableIdFields: [id, query]
+      namespace: ensembl.stable_id
+      primaryUrlTemplate: https://www.ensembl.org/id/{stable_id}
+    commonFields: [id, query, desc, seq, molecule]
+    rest:
+      request:
+        path: /sequence/id
+        method: POST
+        idempotent: true
+        jsonBodyParamMap: { ids: ids }
+        jsonBodyArrayFields: [ids]
+        filterParamMap:
+          { type: type, mask: mask, expand_5prime: expand_5prime, expand_3prime: expand_3prime }
+      response: { rowsPath: $ }
+  - id: sequence_region
+    summary: Genomic sequence for a species and genomic region.
+    commonFields: [id, query, desc, seq, molecule]
+    rest:
+      request:
+        path: /sequence/region/{filter:species}/{filter:region}
+        filterParamMap:
+          {
+            coord_system_version: coord_system_version,
+            mask: mask,
+            expand_5prime: expand_5prime,
+            expand_3prime: expand_3prime
+          }
+      response: { rowsPath: $ }
+  - id: sequence_region_batch
+    summary: Batch retrieve genomic sequences by species and region list with Ensembl REST POST /sequence/region/:species.
+    commonFields: [id, query, desc, seq, molecule]
+    rest:
+      request:
+        path: /sequence/region/{filter:species}
+        method: POST
+        idempotent: true
+        jsonBodyParamMap: { regions: regions }
+        jsonBodyArrayFields: [regions]
+        filterParamMap:
+          {
+            coord_system: coord_system,
+            coord_system_version: coord_system_version,
+            mask: mask,
+            expand_5prime: expand_5prime,
+            expand_3prime: expand_3prime
+          }
+      response: { rowsPath: $ }
+  - id: overlap_id
+    summary: Features overlapping the genomic span of an Ensembl identifier.
+    commonFields: [id, feature_type, biotype, external_name, seq_region_name, start, end, strand]
+    rest:
+      request:
+        path: /overlap/id/{filter:id}
+        filterParamMap: { feature: feature }
+      response: { rowsPath: $ }
+  - id: overlap_region
+    summary: Features overlapping a genomic region for a species.
+    commonFields: [id, feature_type, biotype, external_name, seq_region_name, start, end, strand]
+    rest:
+      request:
+        path: /overlap/region/{filter:species}/{filter:region}
+        filterParamMap: { feature: feature }
+      response: { rowsPath: $ }
+  - id: overlap_translation
+    summary: Protein-domain and variant features related to a translation stable identifier.
+    commonFields: [id, feature_type, description, interpro, start, end]
+    rest:
+      request:
+        path: /overlap/translation/{filter:id}
+        filterParamMap: { feature: feature }
+      response: { rowsPath: $ }
+  - id: homology_id
+    summary: Comparative homology information by species and Ensembl stable gene identifier.
+    commonFields: [id, type, target, source, homologies]
+    rest:
+      request:
+        path: /homology/id/{filter:species}/{filter:id}
+        filterParamMap: { target_species: target_species, type: type, sequence: sequence }
+      response: { rowsPath: data }
+  - id: homology_symbol
+    summary: Comparative homology information by species and external gene symbol.
+    commonFields: [id, type, target, source, homologies]
+    rest:
+      request:
+        path: /homology/symbol/{filter:species}/{filter:symbol}
+        filterParamMap: { target_species: target_species, type: type, sequence: sequence }
+      response: { rowsPath: data }
+  - id: genetree_member_symbol
+    summary: Gene tree containing a gene identified by species and symbol.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.genetree_id
+    commonFields: [id, tree, aligned, cigar_line]
+    rest:
+      request:
+        path: /genetree/member/symbol/{filter:species}/{filter:symbol}
+        filterParamMap: { nh_format: nh_format, sequence: sequence }
+      response: { rowsPath: $ }
+  - id: genetree_id
+    summary: Gene tree by gene tree stable identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.genetree_id
+    commonFields: [id, tree, aligned, cigar_line]
+    rest:
+      request:
+        path: /genetree/id/{filter:id}
+        filterParamMap: { nh_format: nh_format, sequence: sequence }
+      response: { rowsPath: $ }
+  - id: genetree_member_id
+    summary: Gene tree containing a gene, transcript, or translation stable identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.genetree_id
+    commonFields: [id, tree, aligned, cigar_line]
+    rest:
+      request:
+        path: /genetree/member/id/{filter:species}/{filter:id}
+        filterParamMap: { nh_format: nh_format, sequence: sequence }
+      response: { rowsPath: $ }
+  - id: cafe_genetree_id
+    summary: CAFE gene family tree by gene tree stable identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.genetree_id
+    commonFields: [id, tree]
+    rest:
+      request:
+        path: /cafe/genetree/id/{filter:id}
+        filterParamMap: { nh_format: nh_format }
+      response: { rowsPath: $ }
+  - id: cafe_genetree_member_symbol
+    summary: CAFE gene family tree containing a gene identified by species and symbol.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.genetree_id
+    commonFields: [id, tree]
+    rest:
+      request:
+        path: /cafe/genetree/member/symbol/{filter:species}/{filter:symbol}
+        filterParamMap: { nh_format: nh_format }
+      response: { rowsPath: $ }
+  - id: cafe_genetree_member_id
+    summary: CAFE gene family tree containing a gene, transcript, or translation stable identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.genetree_id
+    commonFields: [id, tree]
+    rest:
+      request:
+        path: /cafe/genetree/member/id/{filter:species}/{filter:id}
+        filterParamMap: { nh_format: nh_format }
+      response: { rowsPath: $ }
+  - id: alignment_region
+    summary: Genomic alignments for a species and region.
+    commonFields: [alignments, tree, method_link_species_set]
+    rest:
+      request:
+        path: /alignment/region/{filter:species}/{filter:region}
+        filterParamMap: { method: method, species_set: species_set }
+      response: { rowsPath: $ }
+  - id: variation
+    summary: Ensembl variation feature details by species and variant identifier.
+    identity:
+      stableIdFields: [name]
+      namespace: ensembl.variation_id
+    commonFields: [name, source, mappings, synonyms, evidence, most_severe_consequence]
+    rest:
+      request:
+        path: /variation/{filter:species}/{filter:id}
+        filterParamMap:
+          {
+            genotypes: genotypes,
+            phenotypes: phenotypes,
+            pops: pops,
+            population_genotypes: population_genotypes
+          }
+      response: { rowsPath: $ }
+  - id: variation_batch
+    summary: Batch variation feature details by species and variant identifiers with Ensembl REST POST /variation/:species.
+    identity:
+      stableIdFields: [name]
+      namespace: ensembl.variation_id
+    commonFields: [name, source, mappings, synonyms, evidence, most_severe_consequence]
+    rest:
+      request:
+        path: /variation/{filter:species}
+        method: POST
+        idempotent: true
+        jsonBodyParamMap: { ids: ids }
+        jsonBodyArrayFields: [ids]
+        filterParamMap:
+          {
+            genotypes: genotypes,
+            phenotypes: phenotypes,
+            pops: pops,
+            population_genotypes: population_genotypes
+          }
+      response: { rowsPath: $.* }
+  - id: variation_pmcid
+    summary: Variants associated with a PubMed Central reference.
+    identity:
+      stableIdFields: [name]
+      namespace: ensembl.variation_id
+    commonFields: [name, source, mappings, synonyms, evidence, most_severe_consequence]
+    rest:
+      request:
+        path: /variation/{filter:species}/pmcid/{filter:pmcid}
+      response: { rowsPath: $ }
+  - id: variation_pmid
+    summary: Variants associated with a PubMed reference.
+    identity:
+      stableIdFields: [name]
+      namespace: ensembl.variation_id
+    commonFields: [name, source, mappings, synonyms, evidence, most_severe_consequence]
+    rest:
+      request:
+        path: /variation/{filter:species}/pmid/{filter:pmid}
+      response: { rowsPath: $ }
+  - id: variant_recoder
+    summary: Translate a variant ID, HGVS notation, or SPDI notation to Ensembl/RefSeq/HGVS/SPDI forms.
+    commonFields: [id, input, hgvsc, hgvsp, spdi, vcf_string, variation_id]
+    rest:
+      request:
+        path: /variant_recoder/{filter:species}/{filter:id}
+      response: { rowsPath: $.*.* }
+  - id: variant_recoder_batch
+    summary: Batch translate variant IDs, HGVS notations, or SPDI notations with Ensembl REST POST /variant_recoder.
+    commonFields: [id, input, hgvsc, hgvsp, spdi, vcf_string, variation_id]
+    rest:
+      request:
+        path: /variant_recoder/{filter:species}
+        method: POST
+        idempotent: true
+        jsonBodyParamMap: { ids: ids }
+        jsonBodyArrayFields: [ids]
+      response: { rowsPath: $.*.* }
+  - id: vep_hgvs
+    summary: Variant Effect Predictor consequences for one HGVS notation.
+    identity:
+      stableIdFields: [id, input]
+      namespace: ensembl.variation_id
+    commonFields: [input, id, most_severe_consequence, transcript_consequences, colocated_variants]
+    rest:
+      request:
+        path: /vep/{filter:species}/hgvs/{filter:hgvs}
+        filterParamMap: { canonical: canonical, mane: mane, merged: merged, protein: protein }
+      response: { rowsPath: $ }
+  - id: vep_hgvs_batch
+    summary: Batch Variant Effect Predictor consequences for HGVS notations with Ensembl REST POST /vep/:species/hgvs.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.variation_id
+    commonFields: [input, id, most_severe_consequence, transcript_consequences, colocated_variants]
+    rest:
+      request:
+        path: /vep/{filter:species}/hgvs
+        method: POST
+        idempotent: true
+        jsonBodyParamMap: { hgvs_notations: hgvs_notations }
+        jsonBodyArrayFields: [hgvs_notations]
+        filterParamMap: { canonical: canonical, mane: mane, merged: merged, protein: protein }
+      response: { rowsPath: $ }
+  - id: vep_id
+    summary: Variant Effect Predictor consequences for one variant identifier.
+    identity:
+      stableIdFields: [id, input]
+      namespace: ensembl.variation_id
+    commonFields: [input, id, most_severe_consequence, transcript_consequences, colocated_variants]
+    rest:
+      request:
+        path: /vep/{filter:species}/id/{filter:id}
+        filterParamMap: { canonical: canonical, mane: mane, merged: merged, protein: protein }
+      response: { rowsPath: $ }
+  - id: vep_id_batch
+    summary: Batch Variant Effect Predictor consequences for variant identifiers with Ensembl REST POST /vep/:species/id.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.variation_id
+    commonFields: [input, id, most_severe_consequence, transcript_consequences, colocated_variants]
+    rest:
+      request:
+        path: /vep/{filter:species}/id
+        method: POST
+        idempotent: true
+        jsonBodyParamMap: { ids: ids }
+        jsonBodyArrayFields: [ids]
+        filterParamMap: { canonical: canonical, mane: mane, merged: merged, protein: protein }
+      response: { rowsPath: $ }
+  - id: vep_region
+    summary: Variant Effect Predictor consequences for a single region variant and allele.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.variation_id
+    commonFields: [input, id, most_severe_consequence, transcript_consequences, colocated_variants]
+    rest:
+      request:
+        path: /vep/{filter:species}/region/{filter:region}/{filter:allele}
+        filterParamMap: { canonical: canonical, mane: mane, merged: merged, protein: protein }
+      response: { rowsPath: $ }
+  - id: vep_region_batch
+    summary: Batch Variant Effect Predictor consequences for region variants with Ensembl REST POST /vep/:species/region.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.variation_id
+    commonFields: [input, id, most_severe_consequence, transcript_consequences, colocated_variants]
+    rest:
+      request:
+        path: /vep/{filter:species}/region
+        method: POST
+        idempotent: true
+        jsonBodyParamMap: { variants: variants }
+        jsonBodyArrayFields: [variants]
+        filterParamMap: { canonical: canonical, mane: mane, merged: merged, protein: protein }
+      response: { rowsPath: $ }
+  - id: phenotype_gene
+    summary: Phenotype annotations for a gene.
+    commonFields: [id, source, trait, description, attributes, ontology_accessions]
+    rest:
+      request:
+        path: /phenotype/gene/{filter:species}/{filter:gene}
+        filterParamMap: { include_associated: include_associated }
+      response: { rowsPath: $ }
+  - id: phenotype_accession
+    summary: Phenotype annotations for genomic features by ontology accession.
+    commonFields: [id, source, trait, description, attributes, ontology_accessions]
+    rest:
+      request:
+        path: /phenotype/accession/{filter:species}/{filter:accession}
+        filterParamMap: { include_associated: include_associated }
+      response: { rowsPath: $ }
+  - id: phenotype_region
+    summary: Phenotype annotations overlapping a genomic region.
+    commonFields: [id, source, trait, description, attributes, ontology_accessions]
+    rest:
+      request:
+        path: /phenotype/region/{filter:species}/{filter:region}
+        filterParamMap: { feature_type: feature_type }
+      response: { rowsPath: $ }
+  - id: phenotype_term
+    summary: Phenotype annotations for genomic features by ontology term.
+    commonFields: [id, source, trait, description, attributes, ontology_accessions]
+    rest:
+      request:
+        path: /phenotype/term/{filter:species}/{filter:term}
+        filterParamMap: { include_associated: include_associated }
+      response: { rowsPath: $ }
+  - id: regulation_binding_matrix
+    summary: Ensembl regulation binding matrix by species and binding-matrix stable identifier.
+    identity:
+      stableIdFields: [binding_matrix_stable_id]
+      namespace: ensembl.binding_matrix_id
+    commonFields: [binding_matrix_stable_id, name, description, pwm, transcription_factor]
+    rest:
+      request:
+        path: /species/{filter:species}/binding_matrix/{filter:binding_matrix_stable_id}
+      response: { rowsPath: $ }
+  - id: map_cdna
+    summary: Map cDNA coordinates for a transcript to genomic coordinates.
+    commonFields: [mappings]
+    rest:
+      request:
+        path: /map/cdna/{filter:id}/{filter:region}
+      response: { rowsPath: mappings }
+  - id: map_cds
+    summary: Map CDS coordinates for a transcript to genomic coordinates.
+    commonFields: [mappings]
+    rest:
+      request:
+        path: /map/cds/{filter:id}/{filter:region}
+      response: { rowsPath: mappings }
+  - id: map_translation
+    summary: Map protein translation coordinates to genomic coordinates.
+    commonFields: [mappings]
+    rest:
+      request:
+        path: /map/translation/{filter:id}/{filter:region}
+      response: { rowsPath: mappings }
+  - id: map_assembly
+    summary: Map coordinates between assembly versions for a species.
+    commonFields: [mappings]
+    rest:
+      request:
+        path: /map/{filter:species}/{filter:source_assembly}/{filter:region}/{filter:target_assembly}
+      response: { rowsPath: mappings }
+  - id: ontology_id
+    summary: Ontology term by accession.
+    identity:
+      stableIdFields: [accession]
+      namespace: ontology.term_accession
+    commonFields: [accession, name, definition, namespace, subsets, synonyms]
+    rest:
+      request:
+        path: /ontology/id/{filter:id}
+      response: { rowsPath: $ }
+  - id: ontology_name
+    summary: Ontology term lookup by term name.
+    identity:
+      stableIdFields: [accession]
+      namespace: ontology.term_accession
+    commonFields: [accession, name, definition, namespace, subsets, synonyms]
+    rest:
+      request:
+        path: /ontology/name/{filter:name}
+      response: { rowsPath: $ }
+  - id: ontology_ancestors
+    summary: Ancestor ontology terms for an ontology accession.
+    identity:
+      stableIdFields: [accession]
+      namespace: ontology.term_accession
+    commonFields: [accession, name, definition, namespace]
+    rest:
+      request:
+        path: /ontology/ancestors/{filter:id}
+      response: { rowsPath: $ }
+  - id: ontology_ancestors_chart
+    summary: Ancestor ontology graph chart for an ontology accession.
+    commonFields: [nodes, edges]
+    rest:
+      request:
+        path: /ontology/ancestors/chart/{filter:id}
+      response: { rowsPath: $ }
+  - id: ontology_descendants
+    summary: Descendant ontology terms for an ontology accession.
+    identity:
+      stableIdFields: [accession]
+      namespace: ontology.term_accession
+    commonFields: [accession, name, definition, namespace]
+    rest:
+      request:
+        path: /ontology/descendants/{filter:id}
+      response: { rowsPath: $ }
+  - id: ontology_descendants_chart
+    summary: Descendant ontology graph chart for an ontology accession.
+    commonFields: [nodes, edges]
+    rest:
+      request:
+        path: /ontology/descendants/chart/{filter:id}
+      response: { rowsPath: $ }
+  - id: taxonomy_id
+    summary: Taxonomy node by taxon identifier or name.
+    identity:
+      stableIdFields: [id]
+      namespace: ncbi.taxonomy_id
+    commonFields: [id, scientific_name, common_name, rank, parent]
+    rest:
+      request:
+        path: /taxonomy/id/{filter:id}
+      response: { rowsPath: $ }
+  - id: taxonomy_name
+    summary: Taxonomy node lookup by scientific or common name.
+    identity:
+      stableIdFields: [id]
+      namespace: ncbi.taxonomy_id
+    commonFields: [id, scientific_name, common_name, rank, parent]
+    rest:
+      request:
+        path: /taxonomy/name/{filter:name}
+      response: { rowsPath: $ }
+  - id: taxonomy_classification
+    summary: Taxonomy lineage classification for a taxon identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ncbi.taxonomy_id
+    commonFields: [id, scientific_name, common_name, rank, parent]
+    rest:
+      request:
+        path: /taxonomy/classification/{filter:id}
+      response: { rowsPath: $ }
+  - id: ld_id
+    summary: Linkage disequilibrium for a variant identifier in a population.
+    commonFields: [variation1, variation2, r2, d_prime, population_name]
+    rest:
+      request:
+        path: /ld/{filter:species}/{filter:id}/{filter:population_name}
+      response: { rowsPath: $ }
+  - id: ld_pairwise
+    summary: Pairwise linkage disequilibrium for two variants.
+    commonFields: [variation1, variation2, r2, d_prime, population_name]
+    rest:
+      request:
+        path: /ld/{filter:species}/pairwise/{filter:id1}/{filter:id2}
+        filterParamMap: { population_name: population_name }
+      response: { rowsPath: $ }
+  - id: ld_region
+    summary: Linkage disequilibrium for variants in a genomic region and population.
+    commonFields: [variation1, variation2, r2, d_prime, population_name]
+    rest:
+      request:
+        path: /ld/{filter:species}/region/{filter:region}/{filter:population_name}
+      response: { rowsPath: $ }
+  - id: transcript_haplotypes
+    summary: Observed transcript haplotype sequences based on phased genotype data.
+    commonFields: [transcript, haplotypes]
+    rest:
+      request:
+        path: /transcript_haplotypes/{filter:species}/{filter:id}
+      response: { rowsPath: $ }
+  - id: archive_id
+    summary: Latest version and archive status for an Ensembl stable identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.stable_id
+      primaryUrlTemplate: https://www.ensembl.org/id/{stable_id}
+    commonFields: [id, latest, release, possible_replacement, version]
+    rest:
+      request:
+        path: /archive/id/{filter:id}
+      response: { rowsPath: $ }
+  - id: archive_id_batch
+    summary: Batch retrieve latest version and archive status for Ensembl stable identifiers with Ensembl REST POST /archive/id.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.stable_id
+      primaryUrlTemplate: https://www.ensembl.org/id/{stable_id}
+    commonFields: [id, latest, release, possible_replacement, version]
+    rest:
+      request:
+        path: /archive/id
+        method: POST
+        idempotent: true
+        jsonBodyParamMap: { id: ids }
+        jsonBodyArrayFields: [id]
+      response: { rowsPath: $.* }
+  - id: info_species
+    summary: List available Ensembl species and aliases.
+    commonFields: [species, division, release]
+    rest:
+      request:
+        path: /info/species
+      response: { rowsPath: species }
+  - id: info_assembly
+    summary: Assembly information for a species.
+    commonFields: [assembly_name, assembly_accession, genebuild, karyotype, top_level_region]
+    rest:
+      request:
+        path: /info/assembly/{filter:species}
+      response: { rowsPath: $ }
+  - id: info_assembly_region
+    summary: Assembly information for a specific top-level sequence region.
+    commonFields: [assembly_name, assembly_accession, coord_system, length, name]
+    rest:
+      request:
+        path: /info/assembly/{filter:species}/{filter:region_name}
+      response: { rowsPath: $ }
+  - id: info_analysis
+    summary: Analysis logic names and descriptions available for a species.
+    commonFields: [logic_name, description, display_label]
+    rest:
+      request:
+        path: /info/analysis/{filter:species}
+      response: { rowsPath: $ }
+  - id: info_biotypes
+    summary: Biotypes available for a species.
+    commonFields: [name, object_type, db_type]
+    rest:
+      request:
+        path: /info/biotypes/{filter:species}
+      response: { rowsPath: $ }
+  - id: info_biotypes_object_type
+    summary: Biotypes for a species filtered by object type.
+    commonFields: [name, object_type, db_type]
+    rest:
+      request:
+        path: /info/biotypes/{filter:species}/{filter:object_type}
+      response: { rowsPath: $ }
+  - id: info_biotypes_group
+    summary: Biotype groups, or biotypes within a group and object type.
+    commonFields: [name, object_type, db_type, group]
+    rest:
+      request:
+        path: /info/biotypes/groups/{filter:group}/{filter:object_type}
+      response: { rowsPath: $ }
+  - id: info_biotypes_name
+    summary: Biotype properties by biotype name and object type.
+    commonFields: [name, object_type, db_type, group]
+    rest:
+      request:
+        path: /info/biotypes/name/{filter:name}/{filter:object_type}
+      response: { rowsPath: $ }
+  - id: info_compara_methods
+    summary: Comparative genomics methods available from Ensembl Compara.
+    commonFields: [name, class, type]
+    rest:
+      request:
+        path: /info/compara/methods
+      response: { rowsPath: $ }
+  - id: info_compara_species_sets
+    summary: Species sets available for a comparative genomics method.
+    commonFields: [name, species_set, method]
+    rest:
+      request:
+        path: /info/compara/species_sets/{filter:method}
+      response: { rowsPath: $ }
+  - id: info_comparas
+    summary: Available comparative genomics databases and releases; deprecated upstream in favour of info/genomes/division.
+    commonFields: [name, release, division]
+    rest:
+      request:
+        path: /info/comparas
+      response: { rowsPath: $ }
+  - id: info_external_dbs
+    summary: External database cross-reference sources available for a species.
+    commonFields: [name, release, status, priority]
+    rest:
+      request:
+        path: /info/external_dbs/{filter:species}
+        filterParamMap: { feature: feature }
+      response: { rowsPath: $ }
+  - id: info_data
+    summary: Ensembl REST available data groups.
+    commonFields: [data]
+    rest:
+      request:
+        path: /info/data
+      response: { rowsPath: $ }
+  - id: info_divisions
+    summary: Ensembl divisions for which genome information is available.
+    commonFields: [division]
+    rest:
+      request:
+        path: /info/divisions
+      response: { rowsPath: $ }
+  - id: info_eg_version
+    summary: Ensembl Genomes version backing this service.
+    commonFields: [version]
+    rest:
+      request:
+        path: /info/eg_version
+      response: { rowsPath: $ }
+  - id: info_genomes
+    summary: Genome metadata by genome name.
+    commonFields: [name, display_name, division, assembly_name, taxon_id]
+    rest:
+      request:
+        path: /info/genomes/{filter:genome_name}
+      response: { rowsPath: $ }
+  - id: info_genomes_accession
+    summary: Genome metadata for genomes containing an INSDC accession.
+    commonFields: [name, display_name, division, assembly_name, taxon_id]
+    rest:
+      request:
+        path: /info/genomes/accession/{filter:accession}
+      response: { rowsPath: $ }
+  - id: info_genomes_assembly
+    summary: Genome metadata by assembly identifier.
+    commonFields: [name, display_name, division, assembly_name, taxon_id]
+    rest:
+      request:
+        path: /info/genomes/assembly/{filter:assembly_id}
+      response: { rowsPath: $ }
+  - id: info_genomes_division
+    summary: Genome metadata for all genomes in an Ensembl division.
+    commonFields: [name, display_name, division, assembly_name, taxon_id]
+    rest:
+      request:
+        path: /info/genomes/division/{filter:division_name}
+      response: { rowsPath: $ }
+  - id: info_genomes_taxonomy
+    summary: Genome metadata beneath a taxonomy node.
+    commonFields: [name, display_name, division, assembly_name, taxon_id]
+    rest:
+      request:
+        path: /info/genomes/taxonomy/{filter:taxon_name}
+      response: { rowsPath: $ }
+  - id: info_ping
+    summary: Ensembl REST service health ping.
+    commonFields: [ping]
+    rest:
+      request:
+        path: /info/ping
+      response: { rowsPath: $ }
+  - id: info_software
+    summary: Ensembl software version information.
+    commonFields: [software]
+    rest:
+      request:
+        path: /info/software
+      response: { rowsPath: $ }
+  - id: info_variation
+    summary: Variation sources used in Ensembl for a species.
+    commonFields: [name, description, somatic_status]
+    rest:
+      request:
+        path: /info/variation/{filter:species}
+      response: { rowsPath: $ }
+  - id: info_variation_consequence_types
+    summary: Variant consequence types recognised by Ensembl.
+    identity:
+      stableIdFields: [accession]
+      namespace: sequence_ontology.accession
+    commonFields: [SO_term, accession, description]
+    rest:
+      request:
+        path: /info/variation/consequence_types
+      response: { rowsPath: $ }
+  - id: info_variation_populations
+    summary: Variation populations available for a species.
+    commonFields: [name, description, size]
+    rest:
+      request:
+        path: /info/variation/populations/{filter:species}
+      response: { rowsPath: $ }
+  - id: info_variation_population
+    summary: Individuals for a variation population in a species.
+    commonFields: [name, description, size, individuals]
+    rest:
+      request:
+        path: /info/variation/populations/{filter:species}/{filter:population_name}
+      response: { rowsPath: $ }
+  - id: info_rest
+    summary: Ensembl REST API version information.
+    commonFields: [release, version]
+    rest:
+      request:
+        path: /info/rest
+      response: { rowsPath: $ }
+  - id: ga4gh_beacon
+    summary: GA4GH Beacon metadata.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.beacon_id
+    commonFields: [id, name, apiVersion, organization]
+    rest:
+      request:
+        path: /ga4gh/beacon
+      response: { rowsPath: $ }
+  - id: ga4gh_beacon_query
+    summary: GA4GH Beacon allele query.
+    commonFields: [exists, alleleRequest, datasetAlleleResponses]
+    rest:
+      request:
+        path: /ga4gh/beacon/query
+        filterParamMap:
+          referenceName: referenceName
+          start: start
+          referenceBases: referenceBases
+          alternateBases: alternateBases
+          assemblyId: assemblyId
+      response: { rowsPath: $ }
+  - id: ga4gh_beacon_query_post
+    summary: GA4GH Beacon allele query with JSON POST body.
+    commonFields: [exists, alleleRequest, datasetAlleleResponses]
+    rest:
+      request:
+        path: /ga4gh/beacon/query
+        method: POST
+        idempotent: true
+        jsonBodyParamMap:
+          {
+            referenceName: referenceName,
+            start: start,
+            end: end,
+            referenceBases: referenceBases,
+            alternateBases: alternateBases,
+            variantType: variantType,
+            assemblyId: assemblyId,
+            datasetIds: datasetIds,
+            includeResultsetResponses: includeResultsetResponses
+          }
+        jsonBodyArrayFields: [datasetIds]
+        jsonBodyOptionalFields:
+          [
+            referenceName,
+            start,
+            end,
+            referenceBases,
+            alternateBases,
+            variantType,
+            assemblyId,
+            datasetIds,
+            includeResultsetResponses
+          ]
+      response: { rowsPath: $ }
+  - id: ga4gh_variant
+    summary: GA4GH variant by identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.variant_id
+    commonFields: [id, variantSetId, names, referenceName, start, end]
+    rest:
+      request:
+        path: /ga4gh/variants/{filter:id}
+      response: { rowsPath: $ }
+  - id: ga4gh_variant_search
+    summary: GA4GH variant search with JSON POST body.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.variant_id
+    commonFields: [id, variantSetId, names, referenceName, start, end]
+    rest:
+      request:
+        path: /ga4gh/variants/search
+        method: POST
+        idempotent: true
+        jsonBodyParamMap:
+          {
+            variantSetId: variantSetId,
+            callSetIds: callSetIds,
+            referenceName: referenceName,
+            start: start,
+            end: end,
+            pageSize: pageSize,
+            pageToken: pageToken
+          }
+        jsonBodyArrayFields: [callSetIds]
+        jsonBodyOptionalFields: [callSetIds, pageSize, pageToken]
+      response: { rowsPath: variants }
+  - id: ga4gh_feature
+    summary: GA4GH sequence annotation feature by identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.feature_id
+    commonFields: [id, featureSetId, name, start, end]
+    rest:
+      request:
+        path: /ga4gh/features/{filter:id}
+      response: { rowsPath: $ }
+  - id: ga4gh_feature_search
+    summary: GA4GH sequence annotation feature search with JSON POST body.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.feature_id
+    commonFields: [id, featureSetId, name, start, end]
+    rest:
+      request:
+        path: /ga4gh/features/search
+        method: POST
+        idempotent: true
+        jsonBodyParamMap:
+          {
+            featureSetId: featureSetId,
+            featureTypes: featureTypes,
+            parentId: parentId,
+            referenceName: referenceName,
+            start: start,
+            end: end,
+            pageSize: pageSize,
+            pageToken: pageToken
+          }
+        jsonBodyArrayFields: [featureTypes]
+        jsonBodyOptionalFields: [featureSetId, featureTypes, parentId, pageSize, pageToken]
+      response: { rowsPath: features }
+  - id: ga4gh_callset
+    summary: GA4GH call set by identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.callset_id
+    commonFields: [id, name, bioSampleId, variantSetIds]
+    rest:
+      request:
+        path: /ga4gh/callsets/{filter:id}
+      response: { rowsPath: $ }
+  - id: ga4gh_callset_search
+    summary: GA4GH call set search with JSON POST body.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.callset_id
+    commonFields: [id, name, bioSampleId, variantSetIds]
+    rest:
+      request:
+        path: /ga4gh/callsets/search
+        method: POST
+        idempotent: true
+        jsonBodyParamMap:
+          {
+            variantSetId: variantSetId,
+            name: name,
+            bioSampleId: bioSampleId,
+            pageSize: pageSize,
+            pageToken: pageToken
+          }
+        jsonBodyOptionalFields: [name, bioSampleId, pageSize, pageToken]
+      response: { rowsPath: callSets }
+  - id: ga4gh_dataset
+    summary: GA4GH dataset by identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.dataset_id
+    commonFields: [id, name, description]
+    rest:
+      request:
+        path: /ga4gh/datasets/{filter:id}
+      response: { rowsPath: $ }
+  - id: ga4gh_dataset_search
+    summary: GA4GH dataset search with JSON POST body.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.dataset_id
+    commonFields: [id, name, description]
+    rest:
+      request:
+        path: /ga4gh/datasets/search
+        method: POST
+        idempotent: true
+        jsonBodyParamMap: { pageSize: pageSize, pageToken: pageToken }
+        jsonBodyOptionalFields: [pageSize, pageToken]
+      response: { rowsPath: datasets }
+  - id: ga4gh_featureset
+    summary: GA4GH feature set by identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.featureset_id
+    commonFields: [id, datasetId, referenceSetId, name]
+    rest:
+      request:
+        path: /ga4gh/featuresets/{filter:id}
+      response: { rowsPath: $ }
+  - id: ga4gh_featureset_search
+    summary: GA4GH feature set search with JSON POST body.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.featureset_id
+    commonFields: [id, datasetId, referenceSetId, name]
+    rest:
+      request:
+        path: /ga4gh/featuresets/search
+        method: POST
+        idempotent: true
+        jsonBodyParamMap:
+          {
+            datasetId: datasetId,
+            referenceSetId: referenceSetId,
+            pageSize: pageSize,
+            pageToken: pageToken
+          }
+        jsonBodyOptionalFields: [referenceSetId, pageSize, pageToken]
+      response: { rowsPath: featureSets }
+  - id: ga4gh_variantset
+    summary: GA4GH variant set by identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.variantset_id
+    commonFields: [id, datasetId, referenceSetId, metadata]
+    rest:
+      request:
+        path: /ga4gh/variantsets/{filter:id}
+      response: { rowsPath: $ }
+  - id: ga4gh_variantset_search
+    summary: GA4GH variant set search with JSON POST body.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.variantset_id
+    commonFields: [id, datasetId, referenceSetId, metadata]
+    rest:
+      request:
+        path: /ga4gh/variantsets/search
+        method: POST
+        idempotent: true
+        jsonBodyParamMap:
+          {
+            datasetId: datasetId,
+            referenceSetId: referenceSetId,
+            pageSize: pageSize,
+            pageToken: pageToken
+          }
+        jsonBodyOptionalFields: [referenceSetId, pageSize, pageToken]
+      response: { rowsPath: variantSets }
+  - id: ga4gh_reference
+    summary: GA4GH reference sequence by identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.reference_id
+    commonFields: [id, name, length, md5checksum]
+    rest:
+      request:
+        path: /ga4gh/references/{filter:id}
+      response: { rowsPath: $ }
+  - id: ga4gh_reference_search
+    summary: GA4GH reference search with JSON POST body.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.reference_id
+    commonFields: [id, name, length, md5checksum]
+    rest:
+      request:
+        path: /ga4gh/references/search
+        method: POST
+        idempotent: true
+        jsonBodyParamMap:
+          {
+            referenceSetId: referenceSetId,
+            md5checksum: md5checksum,
+            accession: accession,
+            pageSize: pageSize,
+            pageToken: pageToken
+          }
+        jsonBodyOptionalFields: [md5checksum, accession, pageSize, pageToken]
+      response: { rowsPath: references }
+  - id: ga4gh_referenceset
+    summary: GA4GH reference set by identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.referenceset_id
+    commonFields: [id, name, assemblyId, md5checksum]
+    rest:
+      request:
+        path: /ga4gh/referencesets/{filter:id}
+      response: { rowsPath: $ }
+  - id: ga4gh_referenceset_search
+    summary: GA4GH reference set search with JSON POST body.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.referenceset_id
+    commonFields: [id, name, assemblyId, md5checksum]
+    rest:
+      request:
+        path: /ga4gh/referencesets/search
+        method: POST
+        idempotent: true
+        jsonBodyParamMap:
+          {
+            md5checksum: md5checksum,
+            accession: accession,
+            assemblyId: assemblyId,
+            pageSize: pageSize,
+            pageToken: pageToken
+          }
+        jsonBodyOptionalFields: [md5checksum, accession, assemblyId, pageSize, pageToken]
+      response: { rowsPath: referenceSets }
+  - id: ga4gh_variantannotationset
+    summary: GA4GH variant annotation set metadata by identifier.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.variantannotationset_id
+    commonFields: [id, datasetId, name, ontology]
+    rest:
+      request:
+        path: /ga4gh/variantannotationsets/{filter:id}
+      response: { rowsPath: $ }
+  - id: ga4gh_variantannotationset_search
+    summary: GA4GH variant annotation set search with JSON POST body.
+    identity:
+      stableIdFields: [id]
+      namespace: ga4gh.variantannotationset_id
+    commonFields: [id, datasetId, name, ontology]
+    rest:
+      request:
+        path: /ga4gh/variantannotationsets/search
+        method: POST
+        idempotent: true
+        jsonBodyParamMap: { datasetId: datasetId, pageSize: pageSize, pageToken: pageToken }
+        jsonBodyOptionalFields: [pageSize, pageToken]
+      response: { rowsPath: variantAnnotationSets }
+xref:
+  - from: { domain: gene, field: symbol, namespace: hgnc.symbol, species: '9606' }
+    to: { domain: lookup_symbol, field: id, namespace: ensembl.gene_id, species: '9606' }
+  - from: { domain: variation, field: name, namespace: ensembl.variation_id }
+    to: { domain: vep_id, field: id, namespace: ensembl.variation_id }

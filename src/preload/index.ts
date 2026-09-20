@@ -18,6 +18,7 @@ import type {
   PhiAppSettings,
   PhiAppSettingsPatch
 } from '../shared/appSettingsTypes'
+import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
@@ -595,6 +596,8 @@ type RendererAuthApi = {
   getAppSettings: () => Promise<PhiAppSettings>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
   updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
+  listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
+  setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<SelectedModel>
@@ -807,6 +810,10 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('settings:update', patch),
   updateDefaultProxyMode: (mode: DefaultProxyMode): Promise<PhiAppSettings> =>
     ipcRenderer.invoke('settings:updateDefaultProxyMode', mode),
+  listDbConnectors: (): Promise<DbConnectorSettingsItem[]> =>
+    ipcRenderer.invoke('db:listConnectors'),
+  setDbConnectorEnabled: (id: string, enabled: boolean): Promise<DbConnectorSettingsItem[]> =>
+    ipcRenderer.invoke('db:setConnectorEnabled', id, enabled),
   listModels: (): Promise<ModelOption[]> => ipcRenderer.invoke('models:list'),
   selectModel: (providerId: string, modelId: string): Promise<void> =>
     ipcRenderer.invoke('models:select', providerId, modelId),

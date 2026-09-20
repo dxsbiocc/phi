@@ -286,7 +286,6 @@ export type CreateAgentSessionOptions = {
   model?: RuntimeModel
   thinkingLevel?: ThinkingLevel
   noTools?: 'all' | boolean
-  enableDbConnectorTools?: boolean
   sessionManager?: RuntimeSessionManager
   resourceLoader?: RuntimeResourceLoader
   /** Phi agents scanned by the main process; the worker exposes each as a delegation tool. */
@@ -953,7 +952,6 @@ export async function createRuntimeAgentSession(
     model: options.model,
     thinkingLevel: options.thinkingLevel,
     noTools: options.noTools,
-    enableDbConnectorTools: options.enableDbConnectorTools,
     sessionManager: {
       kind: sessionManager.kind,
       cwd: sessionManager.cwd,

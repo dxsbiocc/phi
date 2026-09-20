@@ -5,17 +5,20 @@ import { getPhiAgentDir } from '../runtime-paths'
 import { EntrezAdapter } from './adapters/entrez-adapter'
 import { RestJsonAdapter } from './adapters/rest-json-adapter'
 import { SparqlAdapter } from './adapters/sparql-adapter'
+import { UniProtAdapter } from './adapters/uniprot-adapter'
 import { getDbProxyTransport } from './egress-transport'
 import { findDbConnectorCatalogEntry, listDbConnectorCatalog } from './catalog'
 import { buildDbQueryToolDetails } from './result-writer'
 import { DbHttpError, type DbEgressTransport, type DbSleep } from './policy'
-import type { DbAdapter } from './adapters/types'
+import { DB_STANDARD_RECORD_FIELDS } from './adapters/types'
+import type { DbAdapter, DbAdapterQueryContext } from './adapters/types'
 import type {
   DbAdapterQueryResult,
   DbConnectorCatalogEntry,
   DbDomainManifest,
   DbFieldSchema,
   DbFilter,
+  DbQueryParams,
   DbQueryToolErrorCode,
   DbQueryToolErrorDetails,
   DbResolvedQuery,
@@ -49,7 +52,9 @@ export interface DefaultDbAdapterOptions {
 type DbDocsSearchKind = 'database' | 'domain' | 'field' | 'xref'
 
 const DB_TOOL_ROUTING_HINT =
-  'For biological database lookup requests such as NCBI Entrez, PubMed, ClinVar, Ensembl, UniProt, genes, variants, proteins, accessions, and field/schema lookup, infer the database/domain from the user intent and use the db_* tools automatically. Prefer db_* over general web search for structured database records; the user should not need to name tool functions.'
+  'For biological database lookup requests such as NCBI Entrez, PubMed, ClinVar, Ensembl, UniProt, genes, variants, proteins, nucleotide sequences, FASTA records, accessions, and field/schema lookup, infer the database/domain from the user intent and use the db_* tools automatically. Prefer db_* over general web search for structured database records; the user should not need to name tool functions.'
+
+const MAX_DB_QUERY_PAGES = 10
 
 interface DbDocsSearchResult {
   kind: DbDocsSearchKind
@@ -75,6 +80,52 @@ interface DbDocsSearchResult {
   }
 }
 
+async function queryDbAdapterPages(
+  adapter: DbAdapter,
+  params: DbQueryParams,
+  context: DbAdapterQueryContext,
+  maxPages: number
+): Promise<DbAdapterQueryResult> {
+  const pages: DbAdapterQueryResult[] = []
+  const seenCursors = new Set<string>()
+  let cursor = params.cursor
+  if (cursor) seenCursors.add(cursor)
+
+  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    const page = await adapter.query({ ...params, cursor }, context)
+    pages.push(page)
+    if (!page.truncated || !page.nextCursor || pageIndex + 1 >= maxPages) break
+    if (seenCursors.has(page.nextCursor)) {
+      throw new Error(`database adapter returned repeated pagination cursor: ${page.nextCursor}`)
+    }
+    seenCursors.add(page.nextCursor)
+    cursor = page.nextCursor
+  }
+
+  if (pages.length === 1) return pages[0]
+  const first = pages[0]
+  const last = pages[pages.length - 1]
+  const attempts = pages
+    .map((page) => page.provenance.attempts)
+    .filter((value): value is number => typeof value === 'number')
+  return {
+    rows: pages.flatMap((page) => page.rows),
+    totalRows: pages.find((page) => page.totalRows !== undefined)?.totalRows,
+    truncated: last.truncated,
+    ...(last.nextCursor ? { nextCursor: last.nextCursor } : {}),
+    provenance: {
+      ...last.provenance,
+      sourceVersion: last.provenance.sourceVersion ?? first.provenance.sourceVersion,
+      rawQueryUsed: pages.some((page) => page.provenance.rawQueryUsed),
+      ...(attempts.length > 0
+        ? { attempts: attempts.reduce((total, value) => total + value, 0) }
+        : {}),
+      retried: pages.some((page) => page.provenance.retried),
+      pagesFetched: pages.length
+    }
+  }
+}
+
 interface DbDocsSearchCandidate {
   result: Omit<DbDocsSearchResult, 'score' | 'matchReasons'>
   searchFields: Array<{ label: string; value: string; weight: number }>
@@ -87,10 +138,6 @@ interface ResolvedDbQueryInput {
   fields?: string[]
   rawQuery?: string
   resolvedQuery: DbResolvedQuery
-}
-
-export function isDbConnectorRuntimeEnabled(value: unknown): boolean {
-  return value === true || value === '1' || value === 'true' || value === 'yes'
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -587,21 +634,135 @@ function scoreDbQueryTarget(
       /\bclinvar\b|\bvariant\b|\bvariation\b|\bpathogenic\b|\bclinical\b/.test(query)
     )
       score += 150
+    if (domain.id === 'protein') {
+      if (/\brefseq\b|\bfasta\b|\b(?:NP|XP|YP|WP|AP)_\d+(?:\.\d+)?\b/.test(query)) {
+        score += 160
+      }
+      if (
+        /\bncbi\b|\bentrez\b/.test(query) &&
+        /\bprotein\b|\bsequence\b|\bamino\s+acid\b/.test(query)
+      ) {
+        score += 150
+      }
+      if (/\bprotein\b|\baccession\b|\bfasta\b|\bsequence\b|\bamino\s+acid\b/.test(query)) {
+        score += 35
+      }
+    }
+    if (domain.id === 'nucleotide') {
+      if (/\b(?:NC|NG|NM|NR|XM|XR|NT|NW|AC|AP|CP|CM)_\d+(?:\.\d+)?\b/.test(query)) {
+        score += 170
+      }
+      if (/\bnucleotide\b|\bnuccore\b|\bdna\b|\brna\b|\bmrna\b|\bgenbank\b/.test(query)) {
+        score += 150
+      }
+      if (/\bncbi\b|\bentrez\b/.test(query) && /\bsequence\b|\bfasta\b/.test(query)) {
+        score += 45
+      }
+    }
+    if (domain.id === 'biosample') {
+      if (/\b(?:SAMN|SAMEA|SAMD)\d+\b/i.test(queryText)) score += 180
+      if (
+        /\bbiosample\b|\bsample\s+metadata\b|\bsample\s+attribute|\bgeo_loc_name\b|\bisolation\s+source\b|\btissue\b/.test(
+          query
+        )
+      )
+        score += 150
+    }
+    if (domain.id === 'sra') {
+      if (/\b(?:SRR|SRX|SRP|SRS|SRA|ERR|ERX|ERP|ERS|DRR|DRX|DRP|DRS)\d+\b/i.test(queryText)) {
+        score += 185
+      }
+      if (
+        /\bsra\b|\bsequence\s+read\s+archive\b|\bsequencing\s+run\b|\breads?\s+archive\b|\bexperiment\s+accession\b|\brna-?seq\s+run\b/.test(
+          query
+        )
+      ) {
+        score += 150
+      }
+    }
+    if (domain.id === 'geo') {
+      if (/\b(?:GSE|GSM|GPL|GDS)\d+\b/i.test(queryText)) score += 185
+      if (
+        /\bgeo\b|\bgene\s+expression\s+omnibus\b|\bgds\b|\bgeo\s+datasets?\b|\bexpression\s+profil(?:e|ing)\b|\bmicroarray\b|\bseries\s+accession\b|\bplatform\s+accession\b/.test(
+          query
+        )
+      ) {
+        score += 150
+      }
+    }
+    if (domain.id === 'bioproject') {
+      if (/\bPRJ(?:NA|EB|DB)\d+\b/i.test(queryText)) score += 185
+      if (
+        /\bbioproject\b|\bbio\s+project\b|\bproject\s+accession\b|\bproject\s+metadata\b|\bproject\s+data\s+type\b|\bsubmitter\s+organization\b/.test(
+          query
+        )
+      ) {
+        score += 150
+      }
+    }
+    if (
+      domain.id === 'taxonomy' &&
+      /\btaxonomy\b|\btaxon\b|\btaxid\b|\btaxonomy\s+id\b|\borganism\b|\bspecies\b|\blineage\b/.test(
+        query
+      )
+    )
+      score += 150
     if (domain.id === 'gene' && /\bgene\b|\bsymbol\b|\bhgnc\b/.test(query)) score += 90
   }
 
   if (entry.manifest.id === 'rest-json/ensembl') {
     if (/\bensembl\b/.test(query)) score += 150
     if (domain.id === 'gene' && /\bgene\b|\bsymbol\b|\bhgnc\b/.test(query)) score += 30
+    const stableId = ensemblStableIdFromText(queryText)
+    const variantId = ensemblVariantIdFromText(queryText)
+    const hgvs = ensemblHgvsFromText(queryText)
+    const requestsVep = /\bvep\b|\bvariant\s+effect\b|\bconsequences?\b/.test(query)
+    if (domain.id === 'lookup_id' && stableId && !/\bsequence\b|\bfasta\b/.test(query)) {
+      score += 220
+    }
+    if (domain.id === 'sequence_id' && stableId && /\bsequence\b|\bfasta\b/.test(query)) {
+      score += 260
+    }
+    if (domain.id === 'variation' && variantId && !requestsVep) score += 250
+    if (domain.id === 'vep_id' && variantId && requestsVep) score += 300
+    if (domain.id === 'vep_hgvs' && hgvs && requestsVep) score += 320
+  }
+
+  if (entry.manifest.id === 'rest-json/uniprot') {
+    if (/\buniprot\b|\buniprotkb\b/.test(query)) score += 180
+    if (
+      domain.id === 'id_mapping' &&
+      (/\bid\s+mapping\b|\bmap\b|\bmapping\b|\bconvert\b|\bconversion\b|\bxref\b|\bcross-?ref/.test(
+        query
+      ) ||
+        uniprotMappingTargetFromText(queryText))
+    ) {
+      score += 220
+    }
+    if (
+      domain.id === 'protein' &&
+      /\bprotein\b|\baccession\b|\bsequence\b|\bfasta\b|\bamino\s+acid\b|\bswiss-?prot\b|\btrembl\b|\bgo\b|\bpdb\b/.test(
+        query
+      )
+    ) {
+      score += 150
+    }
+    if (uniprotAccessionFromText(queryText)) {
+      score += 170
+    }
   }
 
   if (entry.manifest.id === 'sparql/uniprot') {
-    if (/\buniprot\b|\bprotein\b|\baccession\b/.test(query)) score += 160
+    if (/\buniprot\b|\bprotein\b|\baccession\b|\bsequence\b|\bamino\s+acid\b/.test(query)) {
+      score += 80
+    }
   }
 
   if (extractPrimaryDbQueryTerm(queryText)) {
     if (entry.manifest.id === 'entrez/ncbi' && domain.id === 'gene') score += 35
     if (entry.manifest.id === 'rest-json/ensembl' && domain.id === 'gene') score += 25
+    if (entry.manifest.id === 'rest-json/uniprot' && domain.id === 'protein') score += 35
+    if (entry.manifest.id === 'rest-json/uniprot' && domain.id === 'id_mapping') score += 25
     if (entry.manifest.id === 'sparql/uniprot' && domain.id === 'protein') score += 20
   }
 
@@ -622,11 +783,134 @@ function inferQueryPredicate(
   if (database === 'entrez/ncbi' && domain === 'pubmed') {
     return { rawQuery: queryText.trim() }
   }
+  if (database === 'entrez/ncbi' && domain === 'protein') {
+    const organism = /\bhuman\b|\bhomo\s+sapiens\b/i.test(queryText)
+      ? ' AND Homo sapiens[organism]'
+      : ''
+    return { rawQuery: `${term}${organism}` }
+  }
+  if (database === 'entrez/ncbi' && domain === 'nucleotide') {
+    const organism = /\bhuman\b|\bhomo\s+sapiens\b/i.test(queryText)
+      ? ' AND Homo sapiens[organism]'
+      : ''
+    return { rawQuery: `${term}${organism}` }
+  }
+  if (database === 'entrez/ncbi' && domain === 'biosample') {
+    const accession = queryText.match(/\b(?:SAMN|SAMEA|SAMD)\d+\b/i)?.[0]
+    const cleaned =
+      accession ??
+      queryText
+        .replace(/\b(?:ncbi|entrez|biosample|sample|metadata|attribute|attributes)\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    return { rawQuery: cleaned || queryText.trim() }
+  }
+  if (database === 'entrez/ncbi' && domain === 'sra') {
+    const accession = queryText.match(
+      /\b(?:SRR|SRX|SRP|SRS|SRA|ERR|ERX|ERP|ERS|DRR|DRX|DRP|DRS)\d+\b/i
+    )?.[0]
+    const cleaned =
+      accession ??
+      queryText
+        .replace(
+          /\b(?:ncbi|entrez|sra|sequence\s+read\s+archive|sequencing|run|runs|experiment|accession|metadata)\b/gi,
+          ' '
+        )
+        .replace(/\s+/g, ' ')
+        .trim()
+    return { rawQuery: cleaned || queryText.trim() }
+  }
+  if (database === 'entrez/ncbi' && domain === 'geo') {
+    const accession = queryText.match(/\b(?:GSE|GSM|GPL|GDS)\d+\b/i)?.[0]
+    const cleaned =
+      accession ??
+      queryText
+        .replace(
+          /\b(?:ncbi|entrez|geo|gene\s+expression\s+omnibus|gds|datasets?|series|sample|platform|accession|metadata|expression\s+profiling|expression\s+profile|microarray)\b/gi,
+          ' '
+        )
+        .replace(/\s+/g, ' ')
+        .trim()
+    return { rawQuery: cleaned || queryText.trim() }
+  }
+  if (database === 'entrez/ncbi' && domain === 'bioproject') {
+    const accession = queryText.match(/\bPRJ(?:NA|EB|DB)\d+\b/i)?.[0]
+    const cleaned =
+      accession ??
+      queryText
+        .replace(
+          /\b(?:ncbi|entrez|bioproject|bio\s+project|project|accession|metadata|data\s+type|submitter|organization)\b/gi,
+          ' '
+        )
+        .replace(/\s+/g, ' ')
+        .trim()
+    return { rawQuery: cleaned || queryText.trim() }
+  }
+  if (database === 'entrez/ncbi' && domain === 'taxonomy') {
+    const taxId = queryText.match(/\b(?:taxid|taxon(?:omy)?\s+id)\s*[:#]?\s*(\d+)\b/i)?.[1]
+    const cleaned =
+      taxId ??
+      queryText
+        .replace(/\b(?:ncbi|entrez|taxonomy|taxon|taxid|organism|species|lineage)\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    return { rawQuery: taxId ? `${taxId}[uid]` : cleaned || queryText.trim() }
+  }
   if (database === 'entrez/ncbi' && domain === 'clinvar') {
     return { rawQuery: looksLikeClinvarAccession(term) ? term : `${term}[gene]` }
   }
   if (database === 'rest-json/ensembl' && (domain === 'gene' || domain === 'xref')) {
     return { filters: [{ field: 'symbol', op: '=', value: term }] }
+  }
+  if (database === 'rest-json/ensembl' && domain === 'lookup_id') {
+    return {
+      filters: [{ field: 'id', op: '=', value: ensemblStableIdFromText(queryText) ?? term }]
+    }
+  }
+  if (database === 'rest-json/ensembl' && domain === 'sequence_id') {
+    return {
+      filters: [{ field: 'id', op: '=', value: ensemblStableIdFromText(queryText) ?? term }]
+    }
+  }
+  if (database === 'rest-json/ensembl' && domain === 'variation') {
+    return {
+      filters: [
+        { field: 'species', op: '=', value: 'homo_sapiens' },
+        { field: 'id', op: '=', value: ensemblVariantIdFromText(queryText) ?? term }
+      ]
+    }
+  }
+  if (database === 'rest-json/ensembl' && domain === 'vep_id') {
+    return {
+      filters: [
+        { field: 'species', op: '=', value: 'homo_sapiens' },
+        { field: 'id', op: '=', value: ensemblVariantIdFromText(queryText) ?? term }
+      ]
+    }
+  }
+  if (database === 'rest-json/ensembl' && domain === 'vep_hgvs') {
+    return {
+      filters: [
+        { field: 'species', op: '=', value: 'homo_sapiens' },
+        { field: 'hgvs', op: '=', value: ensemblHgvsFromText(queryText) ?? term }
+      ]
+    }
+  }
+  if (database === 'rest-json/uniprot' && domain === 'protein') {
+    const accession = uniprotAccessionFromText(queryText)
+    return accession
+      ? { filters: [{ field: 'accession', op: '=', value: accession }] }
+      : { filters: [{ field: 'gene_name', op: '=', value: term }] }
+  }
+  if (database === 'rest-json/uniprot' && domain === 'id_mapping') {
+    const accession = uniprotAccessionFromText(queryText) ?? term
+    return {
+      filters: [
+        { field: 'from', op: '=', value: 'UniProtKB_AC-ID' },
+        { field: 'to', op: '=', value: uniprotMappingTargetFromText(queryText) ?? 'Ensembl' },
+        { field: 'ids', op: 'in', value: [accession] }
+      ]
+    }
   }
   if (database === 'sparql/uniprot' && domain === 'protein') {
     return { filters: [{ field: 'gene_name', op: '=', value: term }] }
@@ -644,6 +928,58 @@ const DB_QUERY_TERM_STOPWORDS = new Set([
   'CLINVAR',
   'ENSEMBL',
   'UNIPROT',
+  'REFSEQ',
+  'SEQUENCE',
+  'FASTA',
+  'NUCLEOTIDE',
+  'NUCLEOTIDES',
+  'NUCCORE',
+  'BIOSAMPLE',
+  'SAMPLE',
+  'SAMPLES',
+  'METADATA',
+  'ATTRIBUTE',
+  'ATTRIBUTES',
+  'SRA',
+  'SRR',
+  'SRX',
+  'SRP',
+  'SRS',
+  'RUN',
+  'RUNS',
+  'EXPERIMENT',
+  'GEO',
+  'GDS',
+  'GSE',
+  'GSM',
+  'GPL',
+  'DATASET',
+  'DATASETS',
+  'SERIES',
+  'PLATFORM',
+  'PLATFORMS',
+  'MICROARRAY',
+  'OMNIBUS',
+  'BIOPROJECT',
+  'PROJECT',
+  'PROJECTS',
+  'PRJNA',
+  'PRJEB',
+  'PRJDB',
+  'SUBMITTER',
+  'ORGANIZATION',
+  'TAXONOMY',
+  'TAXON',
+  'TAXID',
+  'ORGANISM',
+  'SPECIES',
+  'LINEAGE',
+  'GENBANK',
+  'DNA',
+  'RNA',
+  'MRNA',
+  'AMINO',
+  'ACID',
   'GENE',
   'GENES',
   'PROTEIN',
@@ -656,7 +992,7 @@ const DB_QUERY_TERM_STOPWORDS = new Set([
 ])
 
 function extractPrimaryDbQueryTerm(queryText: string): string | undefined {
-  const tokens = queryText.match(/[A-Za-z][A-Za-z0-9_-]{1,30}/g) ?? []
+  const tokens = queryText.match(/[A-Za-z][A-Za-z0-9_.-]{1,30}/g) ?? []
   return tokens.find((token) => {
     const upper = token.toUpperCase()
     if (DB_QUERY_TERM_STOPWORDS.has(upper)) return false
@@ -666,6 +1002,34 @@ function extractPrimaryDbQueryTerm(queryText: string): string | undefined {
 
 function looksLikeClinvarAccession(value: string): boolean {
   return /^(VCV|RCV|SCV)\d+$/i.test(value)
+}
+
+function uniprotAccessionFromText(value: string): string | undefined {
+  return value.match(/\b(?:[A-NR-Z][0-9][A-Z0-9]{3}[0-9]|[A-Z][0-9][A-Z0-9]{3}[0-9]-\d+)\b/)?.[0]
+}
+
+function uniprotMappingTargetFromText(value: string): string | undefined {
+  const query = value.toLowerCase()
+  if (/\bensembl\b/.test(query)) return 'Ensembl'
+  if (/\bpdb\b|\bprotein\s+data\s+bank\b/.test(query)) return 'PDB'
+  if (/\brefseq\s+protein\b|\brefseq_protein\b/.test(query)) return 'RefSeq_Protein'
+  if (/\brefseq\b|\brefseq\s+(?:nucleotide|rna|dna)\b/.test(query)) return 'RefSeq_Nucleotide'
+  if (/\bgeneid\b|\bgene\s+id\b|\bncbi\s+gene\b/.test(query)) return 'GeneID'
+  if (/\bembl\b/.test(query)) return 'EMBL'
+  if (/\buniparc\b/.test(query)) return 'UniParc'
+  return undefined
+}
+
+function ensemblStableIdFromText(value: string): string | undefined {
+  return value.match(/\bENS[A-Z]*\d+(?:\.\d+)?\b/i)?.[0].toUpperCase()
+}
+
+function ensemblVariantIdFromText(value: string): string | undefined {
+  return value.match(/\brs\d+\b/i)?.[0].toLowerCase()
+}
+
+function ensemblHgvsFromText(value: string): string | undefined {
+  return value.match(/\b(?:[A-Z]{1,4}_\d+(?:\.\d+)?:)?[\w.-]+:[cgmnpr]\.\S+/i)?.[0]
 }
 
 export function buildDbSearchTool(agentDir: string = getPhiAgentDir()): CustomTool {
@@ -755,7 +1119,9 @@ export function buildDbDomainTool(agentDir: string = getPhiAgentDir()): CustomTo
         domain: domain.id,
         summary: domain.summary,
         commonFields: domain.commonFields,
-        fields: domain.fields ?? []
+        standardFields: [...DB_STANDARD_RECORD_FIELDS],
+        fields: domain.fields ?? [],
+        identity: domain.identity
       }
       return { content: [{ type: 'text', text: JSON.stringify(details, null, 2) }], details }
     }
@@ -781,6 +1147,7 @@ export function buildDbQueryTool(
         filters: { type: 'array' },
         fields: { type: 'array', items: { type: 'string' } },
         limit: { type: 'integer', default: 50, maximum: 500 },
+        maxPages: { type: 'integer', default: 1, minimum: 1, maximum: MAX_DB_QUERY_PAGES },
         cursor: { type: 'string' },
         rawQuery: { type: 'string' }
       }
@@ -840,7 +1207,12 @@ export function buildDbQueryTool(
           typeof record.limit === 'number' && Number.isFinite(record.limit)
             ? Math.min(Math.max(1, Math.floor(record.limit)), 500)
             : 50
-        const result: DbAdapterQueryResult = await adapter.query(
+        const maxPages =
+          typeof record.maxPages === 'number' && Number.isFinite(record.maxPages)
+            ? Math.min(Math.max(1, Math.floor(record.maxPages)), MAX_DB_QUERY_PAGES)
+            : 1
+        const result = await queryDbAdapterPages(
+          adapter,
           {
             domain,
             filters: resolved.filters,
@@ -852,7 +1224,8 @@ export function buildDbQueryTool(
           {
             defaultProxyMode: settings.defaultProxyMode,
             proxyTransport: getDbProxyTransport()
-          }
+          },
+          maxPages
         )
         const details = buildDbQueryToolDetails(result, {
           agentDir,
@@ -943,6 +1316,8 @@ export function buildDefaultDbAdapters(
   for (const entry of listDbConnectorCatalog(agentDir)) {
     if (entry.manifest.protocolFamily === 'entrez') {
       adapters[entry.manifest.id] = new EntrezAdapter(entry.manifest, options.entrez)
+    } else if (entry.manifest.id === 'rest-json/uniprot') {
+      adapters[entry.manifest.id] = new UniProtAdapter(entry.manifest, options.restJson)
     } else if (entry.manifest.protocolFamily === 'rest-json') {
       adapters[entry.manifest.id] = new RestJsonAdapter(entry.manifest, options.restJson)
     } else if (entry.manifest.protocolFamily === 'sparql') {

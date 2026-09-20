@@ -6,6 +6,7 @@ import NewProjectDialog from './components/NewProjectDialog'
 import type { ThemeMode } from './theme'
 import type {
   ActiveAuthPrompt,
+  DbConnectorSettingsItem,
   DefaultProxyMode,
   ModelOption,
   PhiAppSettingsPatch,
@@ -72,13 +73,17 @@ export type AppDialogsProps = {
   noProjectTaskFolder: string
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
-  enableDbConnectorTools: boolean
   proxyTransportStatus: ProxyTransportStatus
   isSavingDefaultProxyMode: boolean
   isSavingAppSettings: boolean
   onSelectDefaultProxyMode: (mode: DefaultProxyMode) => void
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
+  dbConnectors: DbConnectorSettingsItem[]
+  isLoadingDbConnectors: boolean
+  updatingDbConnectorId: string | null
+  onRefreshDbConnectors: () => Promise<void>
+  onSetDbConnectorEnabled: (id: string, enabled: boolean) => Promise<void>
 
   showOnboarding: boolean
   onCompleteOnboarding: (description: string) => Promise<void>
@@ -142,13 +147,17 @@ export default function AppDialogs({
   noProjectTaskFolder,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
-  enableDbConnectorTools,
   proxyTransportStatus,
   isSavingDefaultProxyMode,
   isSavingAppSettings,
   onSelectDefaultProxyMode,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
+  dbConnectors,
+  isLoadingDbConnectors,
+  updatingDbConnectorId,
+  onRefreshDbConnectors,
+  onSetDbConnectorEnabled,
   showOnboarding,
   onCompleteOnboarding,
   onSkipOnboarding,
@@ -209,13 +218,17 @@ export default function AppDialogs({
         noProjectTaskFolder={noProjectTaskFolder}
         preventSleepDuringRuns={preventSleepDuringRuns}
         nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
-        enableDbConnectorTools={enableDbConnectorTools}
         proxyTransportStatus={proxyTransportStatus}
         isSavingDefaultProxyMode={isSavingDefaultProxyMode}
         isSavingAppSettings={isSavingAppSettings}
         onSelectDefaultProxyMode={onSelectDefaultProxyMode}
         onUpdateAppSettings={onUpdateAppSettings}
         onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
+        dbConnectors={dbConnectors}
+        isLoadingDbConnectors={isLoadingDbConnectors}
+        updatingDbConnectorId={updatingDbConnectorId}
+        onRefreshDbConnectors={onRefreshDbConnectors}
+        onSetDbConnectorEnabled={onSetDbConnectorEnabled}
         themeMode={themeMode}
         onSelectThemeMode={setThemeMode}
       />

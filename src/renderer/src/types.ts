@@ -9,8 +9,10 @@ import type {
   PhiAppSettingsPatch,
   ProxyTransportStatus
 } from '../../shared/appSettingsTypes'
+import type { DbConnectorSettingsItem } from '../../shared/dbConnectorTypes'
 
 export type { DefaultProxyMode, PhiAppSettings, PhiAppSettingsPatch, ProxyTransportStatus }
+export type { DbConnectorSettingsItem }
 
 export type MessageRole = 'user' | 'assistant' | 'error' | 'warning' | 'thinking'
 
@@ -721,6 +723,8 @@ export type RendererApi = {
   getAppSettings: () => Promise<PhiAppSettings>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
   updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
+  listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
+  setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>

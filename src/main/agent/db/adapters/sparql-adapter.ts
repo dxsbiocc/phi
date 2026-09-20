@@ -8,7 +8,13 @@ import type {
 } from '../manifest-types'
 import { executeDbHttpRequest, type DbEgressTransport, type DbSleep } from '../policy'
 import type { DbAdapter, DbAdapterQueryContext, DomainSummary } from './types'
-import { domainSummaryFromManifest } from './types'
+import {
+  domainSummaryFromManifest,
+  normalizeDbRecord,
+  projectDbRow,
+  validateDbQueryWindow,
+  validateDbRequestedFields
+} from './types'
 
 interface SparqlAdapterOptions {
   transport?: DbEgressTransport
@@ -80,6 +86,7 @@ function renderSparqlTemplate(template: string, params: DbQueryParams): SparqlTe
 }
 
 export function buildSparqlQuery(domain: DbDomainManifest, params: DbQueryParams): string {
+  validateDbQueryWindow(params, 'offset')
   const sparql = domain.sparql
   if (!sparql) throw new Error(`SPARQL domain is missing query mapping: ${domain.id}`)
 
@@ -107,6 +114,7 @@ export class SparqlAdapter implements DbAdapter {
   ): Promise<DbAdapterQueryResult> {
     const domain = this.manifest.domains.find((candidate) => candidate.id === params.domain)
     if (!domain) throw new Error(`Unknown SPARQL domain: ${params.domain}`)
+    validateDbRequestedFields(domain, params.fields)
     const query = buildSparqlQuery(domain, params)
     const response = await executeDbHttpRequest({
       manifest: this.manifest,
@@ -121,7 +129,12 @@ export class SparqlAdapter implements DbAdapter {
       timeoutMs: this.options.timeoutMs,
       idempotent: true
     })
-    const rows = rowsFromSparqlJson(await response.response.json(), params)
+    const rows = rowsFromSparqlJson(
+      await response.response.json(),
+      params,
+      domain,
+      this.manifest.id
+    )
     return {
       rows: rows.rows,
       truncated: rows.truncated,
@@ -159,7 +172,9 @@ function parseCursor(cursor: string | undefined): number {
 
 function rowsFromSparqlJson(
   payload: unknown,
-  params: DbQueryParams
+  params: DbQueryParams,
+  domain: DbDomainManifest,
+  database: string
 ): { rows: Record<string, unknown>[]; truncated: boolean; nextCursor?: string } {
   if (
     !isRecord(payload) ||
@@ -169,7 +184,7 @@ function rowsFromSparqlJson(
     throw new Error('Unexpected SPARQL JSON response shape')
   }
   const mappedRows = payload.results.bindings.map((binding) =>
-    projectSparqlRow(bindingToRow(binding), params)
+    projectDbRow(normalizeDbRecord(bindingToRow(binding), database, domain), params.fields)
   )
   return {
     rows: mappedRows,
@@ -204,15 +219,4 @@ function coerceSparqlBindingValue(value: string, datatype: unknown): unknown {
   }
   if (datatype.endsWith('#boolean')) return value === 'true' || value === '1'
   return value
-}
-
-function projectSparqlRow(
-  row: Record<string, unknown>,
-  params: DbQueryParams
-): Record<string, unknown> {
-  if (!params.fields || params.fields.length === 0) return row
-  return params.fields.reduce<Record<string, unknown>>((next, field) => {
-    if (row[field] !== undefined) next[field] = row[field]
-    return next
-  }, {})
 }

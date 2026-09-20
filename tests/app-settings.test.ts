@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import {
-  DEFAULT_DB_CONNECTOR_TOOLS_ENABLED,
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
   DEFAULT_PREVENT_SLEEP_DURING_RUNS,
   DEFAULT_PROXY_TRANSPORT_STATUS
@@ -31,7 +30,6 @@ test('app settings default proxy mode falls back to auto', () => {
   withTempAgentDir((agentDir) => {
     assert.deepEqual(readAppSettings(agentDir), {
       defaultProxyMode: 'auto',
-      enableDbConnectorTools: DEFAULT_DB_CONNECTOR_TOOLS_ENABLED,
       noProjectTaskFolder: join(agentDir, 'workspace'),
       preventSleepDuringRuns: DEFAULT_PREVENT_SLEEP_DURING_RUNS,
       nextActionSuggestionsEnabled: DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
@@ -50,8 +48,7 @@ test('app settings update default proxy mode while preserving unknown fields', (
       settingsPath,
       JSON.stringify({
         mcpServers: { local: { command: 'phi' } },
-        defaultProxyMode: 'disabled',
-        enableDbConnectorTools: true
+        defaultProxyMode: 'disabled'
       }),
       'utf-8'
     )
@@ -64,7 +61,6 @@ test('app settings update default proxy mode while preserving unknown fields', (
 
     assert.deepEqual(settings, {
       defaultProxyMode: 'enabled',
-      enableDbConnectorTools: true,
       noProjectTaskFolder: join(agentDir, 'workspace'),
       preventSleepDuringRuns: DEFAULT_PREVENT_SLEEP_DURING_RUNS,
       nextActionSuggestionsEnabled: DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
@@ -99,7 +95,6 @@ test('app settings update general preferences while preserving unknown fields', 
 
     assert.deepEqual(settings, {
       defaultProxyMode: 'auto',
-      enableDbConnectorTools: DEFAULT_DB_CONNECTOR_TOOLS_ENABLED,
       noProjectTaskFolder,
       preventSleepDuringRuns: true,
       nextActionSuggestionsEnabled: false,

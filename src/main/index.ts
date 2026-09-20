@@ -127,6 +127,12 @@ import {
 import { formatDiagnostics, type DiagnosticsSnapshot } from './agent/diagnostics'
 import { LOG_RETENTION_DAYS, cleanupOldLogs, getPhiLogDir, writeAppLog } from './agent/app-logger'
 import { readAppSettings, updateAppSettings, updateDefaultProxyMode } from './agent/app-settings'
+import {
+  findDbConnectorCatalogEntry,
+  listDbConnectorCatalog,
+  syncGeneratedDbConnectorDocs
+} from './agent/db/catalog'
+import { setDbConnectorQueryEnabled } from './agent/db/store'
 import { redactSensitiveText } from './agent/redaction'
 import {
   emptyNotebookRegistry,
@@ -198,6 +204,7 @@ import {
 } from '../shared/notebookDocument'
 import { messageContentTitleText } from '../shared/sessionTitle'
 import type { AgentUserInteractionQuestion } from '../shared/agentInteractionTypes'
+import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
 import icon from '../../resources/icon.png?asset'
 
 const APP_NAME = 'Phi'
@@ -279,18 +286,6 @@ type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 const THINKING_LEVEL_ORDER: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 const TOOL_OUTPUT_INLINE_LIMIT = 20000
-const ENABLED_ENV_VALUES = new Set(['1', 'true', 'yes'])
-
-function isExperimentalEnvEnabled(value: unknown): boolean {
-  return typeof value === 'string' && ENABLED_ENV_VALUES.has(value.trim().toLowerCase())
-}
-
-function shouldEnableDbConnectorTools(): boolean {
-  return (
-    isExperimentalEnvEnabled(process.env.PHI_ENABLE_DB_CONNECTOR_TOOLS) ||
-    readAppSettings(AGENT_DIR).enableDbConnectorTools
-  )
-}
 const FILE_PREVIEW_BYTES_LIMIT = 320000
 const FILE_MEDIA_PREVIEW_BYTES_LIMIT = 10 * 1024 * 1024
 const FILE_HOVER_TEXT_BYTES_LIMIT = 32 * 1024
@@ -826,16 +821,21 @@ function notebookAgentRuntimePrompt(projectCwd: string): string | null {
     .join('\n')
 }
 
-function dbConnectorAgentRuntimePrompt(): string {
-  return [
-    '<phi_db_connector_runtime>',
-    'This Phi session has experimental biological database connector tools registered.',
-    'Use db_search, db_domain, db_docs_search, and db_query for structured biological database lookup requests such as NCBI Entrez, PubMed, ClinVar, Ensembl, UniProt, genes, variants, proteins, accessions, and field/schema lookup.',
-    'Prefer db_* over bash, curl, wget, browser search, or ad hoc Python/Biopython for supported structured database records.',
-    'If the user asks what biological database tools are available, mention db_search/db_domain/db_docs_search/db_query and do not claim that no dedicated biological database search tool exists.',
-    'Large db_query results are summarized or written to artifacts; inspect the returned resolvedQuery/provenance before making claims.',
-    '</phi_db_connector_runtime>'
-  ].join('\n')
+function dbConnectorSettingsItems(): DbConnectorSettingsItem[] {
+  return listDbConnectorCatalog(AGENT_DIR).map((entry) => ({
+    id: entry.manifest.id,
+    name: entry.manifest.name,
+    protocolFamily: entry.manifest.protocolFamily,
+    curationTier: entry.manifest.curationTier,
+    trustTier: entry.trustTier,
+    enabledForQuery: entry.enabledForQuery,
+    installedAt: entry.installedAt,
+    domainCount: entry.manifest.domains.length,
+    domains: entry.manifest.domains.map((domain) => ({
+      id: domain.id,
+      summary: domain.summary
+    }))
+  }))
 }
 
 function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEvent): void {
@@ -3700,7 +3700,6 @@ async function getAgentSession(
 
       let resourceLoader: RuntimeResourceLoader | undefined
       const notebookPrompt = notebookAgentRuntimePrompt(creationSnapshot.cwd)
-      const enableDbConnectorTools = shouldEnableDbConnectorTools()
       // Phi scans its own agent definitions (plus legacy layouts for compatibility).
       // The same scan feeds the leader prompt here and the delegation tools the
       // worker builds, so the two can never disagree.
@@ -3718,7 +3717,6 @@ async function getAgentSession(
       const agentLeaderPrompt = buildAgentLeaderPrompt(agentScan.agents)
       const appendSystemPrompt = [
         ...(notebookPrompt ? [notebookPrompt] : []),
-        ...(enableDbConnectorTools ? [dbConnectorAgentRuntimePrompt()] : []),
         ...(agentLeaderPrompt ? [agentLeaderPrompt] : [])
       ]
       const shouldLoadBundledSkills = existsSync(getBundledSkillsDir())
@@ -3787,7 +3785,6 @@ async function getAgentSession(
           creationSnapshot.cwd,
           runtimeSessionPathForSnapshot(sessionKey, creationSnapshot)
         ),
-        ...(enableDbConnectorTools ? { enableDbConnectorTools: true } : {}),
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(agentScan.agents.length > 0 ? { phiAgents: agentScan.agents } : {}),
         ...(model ? { model } : {})
@@ -4082,6 +4079,26 @@ app.whenReady().then(() => {
   ipcMain.handle('settings:updateDefaultProxyMode', async (_, mode: unknown) =>
     updateDefaultProxyMode(mode)
   )
+  ipcMain.handle('db:listConnectors', async () => dbConnectorSettingsItems())
+  ipcMain.handle('db:setConnectorEnabled', async (_, id: unknown, enabled: unknown) => {
+    if (typeof id !== 'string' || !id.trim()) {
+      throw new Error('数据库 id 无效')
+    }
+    if (typeof enabled !== 'boolean') {
+      throw new Error('数据库启用状态必须是布尔值')
+    }
+    const entry = findDbConnectorCatalogEntry(id, AGENT_DIR)
+    if (!entry) {
+      throw new Error(`未找到数据库连接器: ${id}`)
+    }
+    setDbConnectorQueryEnabled(entry.manifest.id, entry.digest, entry.trustTier, enabled, AGENT_DIR)
+    try {
+      syncGeneratedDbConnectorDocs(AGENT_DIR)
+    } catch {
+      // Generated navigator docs should not block settings changes.
+    }
+    return dbConnectorSettingsItems()
+  })
 
   ipcMain.handle('models:list', async () => {
     const runtime = await getAuthManager().getRuntime()

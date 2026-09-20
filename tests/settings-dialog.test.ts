@@ -51,13 +51,33 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
     noProjectTaskFolder: '/Users/example/Documents/Codex',
     preventSleepDuringRuns: false,
     nextActionSuggestionsEnabled: true,
-    enableDbConnectorTools: true,
     proxyTransportStatus: DEFAULT_PROXY_TRANSPORT_STATUS,
     isSavingDefaultProxyMode: false,
     isSavingAppSettings: false,
     onSelectDefaultProxyMode: () => undefined,
     onUpdateAppSettings: () => undefined,
     onPickNoProjectTaskFolder: () => undefined,
+    dbConnectors: [
+      {
+        id: 'entrez/ncbi',
+        name: 'NCBI Entrez',
+        protocolFamily: 'entrez',
+        curationTier: 'curated',
+        trustTier: 'bundled',
+        enabledForQuery: true,
+        installedAt: 'bundled',
+        domainCount: 3,
+        domains: [
+          { id: 'gene', summary: 'Gene records' },
+          { id: 'pubmed', summary: 'Literature records' },
+          { id: 'clinvar', summary: 'Clinical variants' }
+        ]
+      }
+    ],
+    isLoadingDbConnectors: false,
+    updatingDbConnectorId: null,
+    onRefreshDbConnectors: async () => undefined,
+    onSetDbConnectorEnabled: async () => undefined,
     themeMode: 'system',
     onSelectThemeMode: () => undefined,
     ...overrides
@@ -134,13 +154,23 @@ test('settings dialog exposes default proxy mode in general settings', () => {
   assert.match(markup, /更改/)
   assert.match(markup, /运行任务时防止系统休眠/)
   assert.match(markup, /提示词建议/)
-  assert.match(markup, /生物数据库工具/)
-  assert.match(markup, /默认开启/)
-  assert.match(markup, /db_search/)
-  assert.match(markup, /db_domain/)
-  assert.match(markup, /db_query/)
-  assert.match(markup, /db_docs_search/)
+  assert.doesNotMatch(markup, /生物数据库工具/)
   assert.doesNotMatch(markup, /本地路径点击方式/)
+  assert.doesNotMatch(markup, /添加 Provider/)
+})
+
+test('settings dialog exposes database connector toggles in database settings', () => {
+  const markup = renderSettingsDialog({ category: 'databases' })
+
+  assert.match(markup, /数据库/)
+  assert.match(markup, /控制 Database agent 是否允许查询各个生物数据库/)
+  assert.match(markup, /Database agent 始终可以发现已安装的数据库/)
+  assert.match(markup, /关闭某个数据库后仍可查看说明，但不会执行查询/)
+  assert.doesNotMatch(markup, /\bdb_(?:search|domain|docs_search|query)\b/)
+  assert.match(markup, /NCBI Entrez/)
+  assert.match(markup, /entrez\/ncbi/)
+  assert.match(markup, /启用查询/)
+  assert.match(markup, /type="checkbox"/)
   assert.doesNotMatch(markup, /添加 Provider/)
 })
 

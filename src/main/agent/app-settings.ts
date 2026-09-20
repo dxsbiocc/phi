@@ -7,7 +7,6 @@ import type {
   PhiAppSettingsPatch
 } from '../../shared/appSettingsTypes'
 import {
-  DEFAULT_DB_CONNECTOR_TOOLS_ENABLED,
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
   DEFAULT_PREVENT_SLEEP_DURING_RUNS,
   DEFAULT_PROXY_MODE,
@@ -72,10 +71,6 @@ function readRawSettings(agentDir: string, options: { strict: boolean }): Record
 function appSettingsFromRaw(raw: Record<string, unknown>, agentDir: string): PhiAppSettings {
   return {
     defaultProxyMode: normalizeDefaultProxyMode(raw.defaultProxyMode),
-    enableDbConnectorTools: booleanSetting(
-      raw.enableDbConnectorTools,
-      DEFAULT_DB_CONNECTOR_TOOLS_ENABLED
-    ),
     noProjectTaskFolder: normalizeNoProjectTaskFolder(raw.noProjectTaskFolder, agentDir),
     preventSleepDuringRuns: booleanSetting(
       raw.preventSleepDuringRuns,
@@ -120,13 +115,6 @@ export function updateAppSettings(patch: unknown, agentDir = getPhiAgentDir()): 
     const normalized = resolve(trimmed)
     mkdirSync(normalized, { recursive: true })
     nextRaw.noProjectTaskFolder = normalized
-  }
-
-  if (hasOwnSetting(patch, 'enableDbConnectorTools')) {
-    if (typeof patch.enableDbConnectorTools !== 'boolean') {
-      throw new Error('数据库连接器工具设置必须是布尔值')
-    }
-    nextRaw.enableDbConnectorTools = patch.enableDbConnectorTools
   }
 
   if (hasOwnSetting(patch, 'preventSleepDuringRuns')) {

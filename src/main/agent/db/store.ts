@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
+import type { DbTrustTier } from './manifest-types'
 
 const DB_CONNECTORS_DIR = 'db-connectors'
 const INSTALLED_DIR = 'installed'
@@ -9,6 +10,7 @@ const RESULTS_DIR = 'results'
 const DOCS_DIR = 'docs'
 const NAVIGATOR_DIR = 'db-navigator'
 const ALLOW_LIST_FILE = 'allow-list.json'
+const DISABLED_CONNECTORS_FILE = 'disabled-connectors.json'
 const AUDIT_LOG_FILE = 'audit.jsonl'
 const FIELD_GLOSSARY_FILE = 'field-glossary.md'
 const SKILL_FILE = 'SKILL.md'
@@ -65,9 +67,28 @@ function readAllowList(agentDir: string): Record<string, string> {
   }
 }
 
+function readDisabledConnectors(agentDir: string): Record<string, boolean> {
+  const path = join(getDbConnectorsRootDir(agentDir), DISABLED_CONNECTORS_FILE)
+  if (!existsSync(path)) return {}
+  try {
+    return JSON.parse(readFileSync(path, 'utf-8')) as Record<string, boolean>
+  } catch {
+    return {}
+  }
+}
+
 function writeAllowList(agentDir: string, allowList: Record<string, string>): void {
   ensureDir(getDbConnectorsRootDir(agentDir))
   writeFileSync(getAllowListPath(agentDir), `${JSON.stringify(allowList, null, 2)}\n`, 'utf-8')
+}
+
+function writeDisabledConnectors(agentDir: string, disabled: Record<string, boolean>): void {
+  ensureDir(getDbConnectorsRootDir(agentDir))
+  writeFileSync(
+    join(getDbConnectorsRootDir(agentDir), DISABLED_CONNECTORS_FILE),
+    `${JSON.stringify(disabled, null, 2)}\n`,
+    'utf-8'
+  )
 }
 
 export function allowCustomDbConnector(
@@ -80,10 +101,43 @@ export function allowCustomDbConnector(
   writeAllowList(agentDir, allowList)
 }
 
+function removeCustomDbConnectorAllowance(id: string, agentDir: string): void {
+  const allowList = readAllowList(agentDir)
+  if (!(id in allowList)) return
+  delete allowList[id]
+  writeAllowList(agentDir, allowList)
+}
+
 export function isCustomDbConnectorAllowed(
   id: string,
   digest: string,
   agentDir = getPhiAgentDir()
 ): boolean {
   return readAllowList(agentDir)[id] === digest
+}
+
+export function isDbConnectorQueryDisabled(id: string, agentDir = getPhiAgentDir()): boolean {
+  return readDisabledConnectors(agentDir)[id] === true
+}
+
+export function setDbConnectorQueryEnabled(
+  id: string,
+  digest: string,
+  trustTier: DbTrustTier,
+  enabled: boolean,
+  agentDir = getPhiAgentDir()
+): void {
+  const disabled = readDisabledConnectors(agentDir)
+  if (enabled) {
+    delete disabled[id]
+    if (trustTier === 'custom') {
+      allowCustomDbConnector(id, digest, agentDir)
+    }
+  } else {
+    disabled[id] = true
+    if (trustTier === 'custom') {
+      removeCustomDbConnectorAllowance(id, agentDir)
+    }
+  }
+  writeDisabledConnectors(agentDir, disabled)
 }

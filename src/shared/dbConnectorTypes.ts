@@ -41,9 +41,13 @@ export interface DbFieldSchema {
 
 export interface DbRestJsonRequestMapping {
   path: string
-  method?: 'GET'
+  method?: 'GET' | 'POST'
+  idempotent?: boolean
   queryParams?: Record<string, string | number | boolean>
   filterParamMap?: Record<string, string>
+  jsonBodyParamMap?: Record<string, string>
+  jsonBodyArrayFields?: string[]
+  jsonBodyOptionalFields?: string[]
   rawQueryParam?: string
   limitParam?: string
   cursorParam?: string
@@ -66,12 +70,19 @@ export interface DbSparqlDomainConfig {
   prefixes?: Record<string, string>
 }
 
+export interface DbRecordIdentity {
+  stableIdFields: string[]
+  namespace?: string
+  primaryUrlTemplate?: string
+}
+
 export interface DbDomainManifest {
   id: string
   dbParam?: string
   summary: string
   commonFields: string[]
   fields?: DbFieldSchema[]
+  identity?: DbRecordIdentity
   rest?: DbRestJsonDomainConfig
   sparql?: DbSparqlDomainConfig
 }
@@ -113,6 +124,18 @@ export interface DbConnectorCatalogEntry {
   enabledForQuery: boolean
 }
 
+export interface DbConnectorSettingsItem {
+  id: string
+  name: string
+  protocolFamily: DbProtocolFamily
+  curationTier: DbCurationTier
+  trustTier: DbTrustTier
+  enabledForQuery: boolean
+  installedAt: string
+  domainCount: number
+  domains: Array<{ id: string; summary: string }>
+}
+
 export interface DbManifestParseResult {
   valid: boolean
   errors: string[]
@@ -149,6 +172,7 @@ export interface DbQueryProvenance {
   lastStatus?: number
   transportName?: string
   defaultProxyMode?: DefaultProxyMode
+  pagesFetched?: number
 }
 
 export interface DbAdapterQueryResult {
@@ -157,6 +181,33 @@ export interface DbAdapterQueryResult {
   truncated: boolean
   nextCursor?: string
   provenance: DbQueryProvenance
+}
+
+export type DbDownloadFileAvailability =
+  'candidate_file' | 'directory' | 'direct_url' | 'landing_page'
+
+export type DbDownloadFileSource =
+  | 'derived_from_gse_accession'
+  | 'sra_efetch_xml'
+  | 'derived_from_run_accession'
+  | 'derived_from_uniprot_accession'
+  | (string & {})
+
+export interface DbDownloadFileCandidate {
+  kind: string
+  url: string
+  accession?: string
+  label?: string
+  format?: string
+  compression?: string
+  filename?: string
+  size?: number
+  md5?: string
+  semantic_name?: string
+  supertype?: string
+  cluster?: string
+  availability: DbDownloadFileAvailability
+  source: DbDownloadFileSource
 }
 
 export interface DbResultSummary {
@@ -187,10 +238,21 @@ export interface DbResolvedQuery {
 export interface DbQueryArtifact {
   kind: 'db_query_result'
   path: string
-  format: 'jsonl' | 'csv' | 'metadata_json'
+  format: 'jsonl' | 'csv' | 'metadata_json' | 'download_manifest_json'
   bytes: number
   rowCount?: number
   sha256?: string
+}
+
+export interface DbDownloadManifestSummary {
+  rowCount: number
+  candidateCount: number
+  directUrlCount: number
+  landingPageCount: number
+  directoryCount: number
+  candidateFileCount: number
+  formats: string[]
+  kinds: string[]
 }
 
 export type DbQueryToolDetails =
@@ -199,6 +261,9 @@ export type DbQueryToolDetails =
       mode: 'inline'
       summary: DbResultSummary
       rows: Record<string, unknown>[]
+      artifacts?: DbQueryArtifact[]
+      downloadManifestArtifact?: DbQueryArtifact
+      downloadManifestSummary?: DbDownloadManifestSummary
       provenance: DbQueryProvenance
       resolvedQuery?: DbResolvedQuery
     }
@@ -211,6 +276,8 @@ export type DbQueryToolDetails =
       artifacts: DbQueryArtifact[]
       metadataArtifact: DbQueryArtifact
       csvArtifact?: DbQueryArtifact
+      downloadManifestArtifact?: DbQueryArtifact
+      downloadManifestSummary?: DbDownloadManifestSummary
       outputPath: string
       outputArtifact: { kind: 'tool_output'; path: string; bytes: number }
       provenance: DbQueryProvenance

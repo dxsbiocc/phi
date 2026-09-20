@@ -94,9 +94,6 @@ class FakeSession {
 }
 
 type Handler = (_event: unknown, ...args: unknown[]) => unknown
-type HarnessOptions = {
-  enableDbConnectorTools?: boolean
-}
 type HarnessResult = {
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
   sessions: FakeSession[]
@@ -136,13 +133,13 @@ type HarnessResult = {
   openDialogOptions: Array<Record<string, unknown>>
   operationLog: Array<Record<string, unknown>>
   appSettingsUpdates: string[]
+  dbConnectorEnabledUpdates: Array<{ id: string; digest: string; enabled: boolean }>
   setOpenDialogResult: (result: { canceled: boolean; filePaths: string[] }) => void
   copiedText: () => string
 }
 
 async function harness(
-  factory?: (cwd: string, file: string) => Promise<FakeSession>,
-  options: HarnessOptions = {}
+  factory?: (cwd: string, file: string) => Promise<FakeSession>
 ): Promise<HarnessResult> {
   const handlers = new Map<string, Handler>()
   const sessions: FakeSession[] = []
@@ -186,9 +183,9 @@ async function harness(
   const openDialogOptions: Array<Record<string, unknown>> = []
   const operationLog: Array<Record<string, unknown>> = []
   const appSettingsUpdates: string[] = []
+  const dbConnectorEnabledUpdates: Array<{ id: string; digest: string; enabled: boolean }> = []
   let appDefaultProxyMode = 'auto'
   const appNoProjectTaskFolder = '/workspace'
-  const appEnableDbConnectorTools = options.enableDbConnectorTools !== false
   const appProxyTransportStatus = {
     systemTransportAvailable: true,
     controlledProxyAvailable: false,
@@ -852,7 +849,6 @@ async function harness(
           sessionManager: { file: string }
           model?: { provider: string; id: string }
           thinkingLevel?: string
-          enableDbConnectorTools?: boolean
         },
         onEvent?: (summary: Record<string, unknown>) => void
       ): Promise<{ session: FakeSession }> => {
@@ -1403,7 +1399,6 @@ async function harness(
     './agent/app-settings': {
       readAppSettings: (): Record<string, unknown> => ({
         defaultProxyMode: appDefaultProxyMode,
-        enableDbConnectorTools: appEnableDbConnectorTools,
         noProjectTaskFolder: appNoProjectTaskFolder,
         preventSleepDuringRuns: false,
         nextActionSuggestionsEnabled: true,
@@ -1414,12 +1409,61 @@ async function harness(
         appDefaultProxyMode = mode
         return {
           defaultProxyMode: appDefaultProxyMode,
-          enableDbConnectorTools: appEnableDbConnectorTools,
           noProjectTaskFolder: appNoProjectTaskFolder,
           preventSleepDuringRuns: false,
           nextActionSuggestionsEnabled: true,
           proxyTransportStatus: appProxyTransportStatus
         }
+      }
+    },
+    './agent/db/catalog': {
+      listDbConnectorCatalog: (): unknown[] => [
+        {
+          manifest: {
+            phiDbConnectorVersion: 1,
+            id: 'entrez/ncbi',
+            name: 'NCBI Entrez',
+            protocolFamily: 'entrez',
+            curationTier: 'curated',
+            baseUrl: 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils',
+            networkPolicy: {
+              allowedHosts: ['eutils.ncbi.nlm.nih.gov'],
+              allowRedirects: false
+            },
+            domains: [{ id: 'gene', summary: 'Gene records.', commonFields: ['uid'] }]
+          },
+          trustTier: 'bundled',
+          installedPath: '/resources/db-connectors/entrez/ncbi',
+          installedAt: '2026-09-18T00:00:00.000Z',
+          digest: 'digest-entrez',
+          enabledForQuery: true
+        }
+      ],
+      findDbConnectorCatalogEntry: (id: string): unknown =>
+        id === 'entrez/ncbi'
+          ? {
+              manifest: {
+                id: 'entrez/ncbi',
+                name: 'NCBI Entrez',
+                protocolFamily: 'entrez',
+                curationTier: 'curated',
+                domains: [{ id: 'gene', summary: 'Gene records.', commonFields: ['uid'] }]
+              },
+              trustTier: 'bundled',
+              digest: 'digest-entrez',
+              enabledForQuery: true
+            }
+          : undefined,
+      syncGeneratedDbConnectorDocs: (): void => {}
+    },
+    './agent/db/store': {
+      setDbConnectorQueryEnabled: (
+        id: string,
+        digest: string,
+        _trustTier: string,
+        enabled: boolean
+      ): void => {
+        dbConnectorEnabledUpdates.push({ id, digest, enabled })
       }
     },
     './agent/redaction': {
@@ -1610,6 +1654,7 @@ async function harness(
     openDialogOptions,
     operationLog,
     appSettingsUpdates,
+    dbConnectorEnabledUpdates,
     setOpenDialogResult: (result): void => {
       openDialogResult = result
     },
@@ -1658,7 +1703,6 @@ test('main IPC: app settings exposes and updates default proxy mode', async () =
 
   assert.deepEqual(await app.invoke('settings:get'), {
     defaultProxyMode: 'auto',
-    enableDbConnectorTools: true,
     noProjectTaskFolder: '/workspace',
     preventSleepDuringRuns: false,
     nextActionSuggestionsEnabled: true,
@@ -1666,7 +1710,6 @@ test('main IPC: app settings exposes and updates default proxy mode', async () =
   })
   assert.deepEqual(await app.invoke('settings:updateDefaultProxyMode', 'enabled'), {
     defaultProxyMode: 'enabled',
-    enableDbConnectorTools: true,
     noProjectTaskFolder: '/workspace',
     preventSleepDuringRuns: false,
     nextActionSuggestionsEnabled: true,
@@ -1674,7 +1717,6 @@ test('main IPC: app settings exposes and updates default proxy mode', async () =
   })
   assert.deepEqual(await app.invoke('settings:get'), {
     defaultProxyMode: 'enabled',
-    enableDbConnectorTools: true,
     noProjectTaskFolder: '/workspace',
     preventSleepDuringRuns: false,
     nextActionSuggestionsEnabled: true,
@@ -1683,29 +1725,38 @@ test('main IPC: app settings exposes and updates default proxy mode', async () =
   assert.deepEqual(app.appSettingsUpdates, ['enabled'])
 })
 
-test('main IPC: DB connector tools register by default and can be disabled through app settings', async () => {
-  const disabledApp = await harness(undefined, { enableDbConnectorTools: false })
-  await disabledApp.invoke('projects:newSession', '/projects/db-disabled', 'ask')
-  await disabledApp.invoke('agent:prompt', 'hello')
-  assert.equal(disabledApp.createdAgentOptions[0].enableDbConnectorTools, undefined)
-
-  const enabledApp = await harness()
-  await enabledApp.invoke('projects:newSession', '/projects/db-enabled', 'ask')
-  await enabledApp.invoke('agent:prompt', 'hello')
-  assert.equal(enabledApp.createdAgentOptions[0].enableDbConnectorTools, true)
-  const resourceOptions = enabledApp.resourceLoaderOptions.at(-1)
+test('main IPC: DB connector tools stay behind Database agent and toggles remain per connector', async () => {
+  const app = await harness()
+  await app.invoke('projects:newSession', '/projects/db-enabled', 'ask')
+  await app.invoke('agent:prompt', 'hello')
+  assert.equal('enableDbConnectorTools' in app.createdAgentOptions[0], false)
+  const resourceOptions = app.resourceLoaderOptions.at(-1)
   const appendSystemPrompt = resourceOptions?.appendSystemPrompt as string[] | undefined
-  assert.match(appendSystemPrompt?.join('\n') ?? '', /<phi_db_connector_runtime>/)
-  assert.match(appendSystemPrompt?.join('\n') ?? '', /db_search/)
-  assert.match(appendSystemPrompt?.join('\n') ?? '', /Prefer db_\* over bash/)
+  assert.doesNotMatch(appendSystemPrompt?.join('\n') ?? '', /<phi_db_connector_runtime>/)
+  assert.doesNotMatch(
+    appendSystemPrompt?.join('\n') ?? '',
+    /\bdb_(?:search|domain|docs_search|query)\b/
+  )
   // Phi's own scan feeds the leader prompt, and the same definitions go to the worker.
   assert.match(appendSystemPrompt?.join('\n') ?? '', /<phi_agents>/)
+  assert.match(appendSystemPrompt?.join('\n') ?? '', /- Database: /)
   assert.match(appendSystemPrompt?.join('\n') ?? '', /- Wrapper: /)
-  const phiAgents = enabledApp.createdAgentOptions[0].phiAgents as Array<{ name: string }> | undefined
+  const phiAgents = app.createdAgentOptions[0].phiAgents as Array<{ name: string }> | undefined
   assert.deepEqual(
     phiAgents?.map((agent) => agent.name),
-    ['Wrapper']
+    ['Database', 'Wrapper']
   )
+
+  const connectors = (await app.invoke('db:listConnectors')) as Array<{ id: string }>
+  assert.deepEqual(
+    connectors.map((connector) => connector.id),
+    ['entrez/ncbi']
+  )
+
+  await app.invoke('db:setConnectorEnabled', 'entrez/ncbi', false)
+  assert.deepEqual(app.dbConnectorEnabledUpdates, [
+    { id: 'entrez/ncbi', digest: 'digest-entrez', enabled: false }
+  ])
 })
 
 test('main IPC: reveal path is limited to Phi-owned files', async () => {

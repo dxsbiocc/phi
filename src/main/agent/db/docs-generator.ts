@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
+import { DB_STANDARD_RECORD_FIELDS } from './adapters/types'
 import type { DbConnectorCatalogEntry, DbDomainManifest, DbFieldSchema } from './manifest-types'
 import { getDbConnectorFieldGlossaryPath, getDbConnectorNavigatorSkillPath } from './store'
 
@@ -115,6 +116,8 @@ export function buildDbFieldGlossaryMarkdown(
     `Generated: ${generatedAt.toISOString()}`,
     '',
     'This glossary is generated from installed DB connector manifests. It is documentation only; database access still goes through `db_*` tools.',
+    '',
+    `Every returned record includes source metadata when available: ${DB_STANDARD_RECORD_FIELDS.map(code).join(', ')}. Stable IDs and primary URLs are emitted only when the domain declares an explicit identity contract.`,
     ''
   ]
 
@@ -137,6 +140,10 @@ export function buildDbFieldGlossaryMarkdown(
         domain.summary,
         '',
         `Common fields: ${domain.commonFields.length ? domain.commonFields.map(code).join(', ') : '-'}`,
+        '',
+        domain.identity
+          ? `Identity: ${domain.identity.stableIdFields.map(code).join(' -> ')}${domain.identity.namespace ? `; namespace ${code(domain.identity.namespace)}` : ''}${domain.identity.primaryUrlTemplate ? `; URL ${code(domain.identity.primaryUrlTemplate)}` : ''}`
+          : 'Identity: not declared; no stable ID is inferred.',
         '',
         '| Field | Type | Namespace | Synonyms | Nullable | Common | Description |',
         '| --- | --- | --- | --- | --- | --- | --- |'
@@ -219,6 +226,16 @@ function commonUseCasesForEntry(entry: DbConnectorCatalogEntry): string[] {
     if (domain.id === 'pubmed') {
       return [
         `- Literature metadata or abstracts -> inspect ${code(`${database}/pubmed`)}, then query PubMed through ${code('db_query')} for small metadata/abstract lookups.`
+      ]
+    }
+    if (database === 'rest-json/uniprot' && domain.id === 'protein') {
+      return [
+        `- Ordinary UniProtKB protein lookup, accessions, sequences, Swiss-Prot status, GO/PDB/Ensembl cross-references -> use ${code('rest-json/uniprot/protein')} as the default UniProt route.`
+      ]
+    }
+    if (database === 'sparql/uniprot' && domain.id === 'protein') {
+      return [
+        `- Advanced UniProt RDF graph joins or custom SPARQL-shaped questions -> use ${code('sparql/uniprot/protein')}; prefer ${code('rest-json/uniprot/protein')} for routine lookups.`
       ]
     }
     return []

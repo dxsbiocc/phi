@@ -9,7 +9,13 @@ import type {
 } from '../manifest-types'
 import { executeDbHttpRequest, type DbEgressTransport, type DbSleep } from '../policy'
 import type { DbAdapter, DbAdapterQueryContext, DomainSummary } from './types'
-import { domainSummaryFromManifest } from './types'
+import {
+  domainSummaryFromManifest,
+  normalizeDbRecord,
+  projectDbRow,
+  validateDbQueryWindow,
+  validateDbRequestedFields
+} from './types'
 
 interface RestJsonAdapterOptions {
   transport?: DbEgressTransport
@@ -23,6 +29,16 @@ interface RestJsonTemplateResult {
   value: string
   consumedFilters: Set<string>
   consumedRawQuery: boolean
+}
+
+type RestJsonBodyPrimitive = string | number | boolean
+type RestJsonBodyValue = RestJsonBodyPrimitive | RestJsonBodyPrimitive[]
+
+interface BuiltRestJsonRequest {
+  path: string
+  searchParams: URLSearchParams
+  method: 'GET' | 'POST'
+  body?: string
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -67,6 +83,28 @@ function primitiveToString(value: unknown, label: string): string {
   throw new Error(`rest-json value for ${label} must be string, number, or boolean`)
 }
 
+function primitiveToBodyValue(value: unknown, label: string): RestJsonBodyPrimitive {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'boolean') return value
+  throw new Error(`rest-json body value for ${label} must be string, number, or boolean`)
+}
+
+function bodyValueFromFilter(
+  filter: DbFilter,
+  options: { forceArray: boolean }
+): RestJsonBodyValue {
+  if (filter.op === 'in') {
+    const values = Array.isArray(filter.value) ? filter.value : [filter.value]
+    return values.map((value) => primitiveToBodyValue(value, filter.field))
+  }
+  if (filter.op === '=') {
+    const value = primitiveToBodyValue(filter.value, filter.field)
+    return options.forceArray ? [value] : value
+  }
+  throw new Error(`rest-json body filter ${filter.field} only supports = or in`)
+}
+
 function renderRestJsonTemplate(
   template: string,
   params: DbQueryParams,
@@ -101,12 +139,71 @@ function renderRestJsonTemplate(
   return { value, consumedFilters, consumedRawQuery }
 }
 
+function restJsonRequestTemplates(domain: DbDomainManifest): string[] {
+  const request = domain.rest?.request
+  if (!request) return []
+  return [
+    request.path,
+    ...Object.values(request.queryParams ?? {}).filter(
+      (value): value is string => typeof value === 'string'
+    )
+  ]
+}
+
+function restJsonTemplateFilterFields(template: string): string[] {
+  return [...template.matchAll(/\{filter:([^{}]+)\}/g)]
+    .map((match) => match[1]?.trim())
+    .filter((field): field is string => Boolean(field))
+}
+
+function validateRestJsonQueryInputs(domain: DbDomainManifest, params: DbQueryParams): void {
+  validateDbQueryWindow(params, 'opaque')
+  const request = domain.rest?.request
+  if (!request) throw new Error(`rest-json domain is missing request mapping: ${domain.id}`)
+  const filters = params.filters ?? []
+  if (filters.length > 0 && params.rawQuery) {
+    throw new Error('rest-json filters and rawQuery cannot be used together')
+  }
+
+  const seenFields = new Set<string>()
+  for (const filter of filters) {
+    if (seenFields.has(filter.field)) {
+      throw new Error(`rest-json duplicate filter: ${filter.field}`)
+    }
+    seenFields.add(filter.field)
+  }
+
+  const templates = restJsonRequestTemplates(domain)
+  const acceptedFields = new Set([
+    ...templates.flatMap(restJsonTemplateFilterFields),
+    ...Object.keys(request.filterParamMap ?? {}),
+    ...Object.values(request.jsonBodyParamMap ?? {})
+  ])
+  for (const filter of filters) {
+    if (!acceptedFields.has(filter.field)) {
+      const accepted = [...acceptedFields].sort().join(', ')
+      throw new Error(
+        `rest-json domain ${domain.id} does not accept filter: ${filter.field}${
+          accepted ? `; accepted filters: ${accepted}` : ''
+        }`
+      )
+    }
+  }
+
+  const cursorInTemplate = templates.some((template) => /\{cursor\}/.test(template))
+  if (params.cursor && !request.cursorParam && !cursorInTemplate) {
+    throw new Error(`rest-json domain ${domain.id} does not support cursor pagination`)
+  }
+}
+
 export function buildRestJsonRequest(
   domain: DbDomainManifest,
   params: DbQueryParams
-): { path: string; searchParams: URLSearchParams } {
+): BuiltRestJsonRequest {
   const rest = domain.rest
   if (!rest) throw new Error(`rest-json domain is missing request mapping: ${domain.id}`)
+  validateRestJsonQueryInputs(domain, params)
+  const method = rest.request.method ?? 'GET'
 
   const pathTemplate = renderRestJsonTemplate(rest.request.path, params, {
     encodePathSegment: true
@@ -129,6 +226,21 @@ export function buildRestJsonRequest(
     }
   }
 
+  const body: Record<string, RestJsonBodyValue> = {}
+  const forceArrayFields = new Set(rest.request.jsonBodyArrayFields ?? [])
+  const optionalBodyFields = new Set(rest.request.jsonBodyOptionalFields ?? [])
+  for (const [bodyKey, filterField] of Object.entries(rest.request.jsonBodyParamMap ?? {})) {
+    const filter = params.filters?.find((candidate) => candidate.field === filterField)
+    if (!filter) {
+      if (optionalBodyFields.has(bodyKey)) continue
+      throw new Error(`rest-json body requires filter: ${filterField}`)
+    }
+    body[bodyKey] = bodyValueFromFilter(filter, {
+      forceArray: forceArrayFields.has(bodyKey)
+    })
+    consumedFilters.add(filterField)
+  }
+
   if (params.rawQuery) {
     if (rest.request.rawQueryParam) {
       searchParams.append(rest.request.rawQueryParam, params.rawQuery)
@@ -139,7 +251,8 @@ export function buildRestJsonRequest(
 
   for (const filter of params.filters ?? []) {
     if (consumedFilters.has(filter.field)) continue
-    const queryParam = rest.request.filterParamMap?.[filter.field] ?? filter.field
+    const queryParam = rest.request.filterParamMap?.[filter.field]
+    if (!queryParam) throw new Error(`rest-json filter is not mapped: ${filter.field}`)
     searchParams.append(queryParam, formatFilterValue(filter))
   }
 
@@ -148,7 +261,12 @@ export function buildRestJsonRequest(
     searchParams.append(rest.request.cursorParam, params.cursor)
   }
 
-  return { path: pathTemplate.value, searchParams }
+  return {
+    path: pathTemplate.value,
+    searchParams,
+    method,
+    ...(Object.keys(body).length > 0 ? { body: JSON.stringify(body) } : {})
+  }
 }
 
 export class RestJsonAdapter implements DbAdapter {
@@ -171,27 +289,29 @@ export class RestJsonAdapter implements DbAdapter {
   ): Promise<DbAdapterQueryResult> {
     const domain = this.manifest.domains.find((candidate) => candidate.id === params.domain)
     if (!domain) throw new Error(`Unknown rest-json domain: ${params.domain}`)
+    validateDbRequestedFields(domain, params.fields)
     const rest = domain.rest
     if (!rest) throw new Error(`rest-json domain is missing request mapping: ${params.domain}`)
-    if (rest.request.method && rest.request.method !== 'GET') {
-      throw new Error(`Unsupported rest-json method: ${rest.request.method}`)
-    }
 
     const request = buildRestJsonRequest(domain, params)
+    const headers: Record<string, string> = { accept: 'application/json' }
+    if (request.body !== undefined) headers['content-type'] = 'application/json'
     const response = await executeDbHttpRequest({
       manifest: this.manifest,
       path: request.path,
       searchParams: request.searchParams,
-      method: 'GET',
+      method: request.method,
+      headers,
+      body: request.body,
       defaultProxyMode: context.defaultProxyMode,
       transport: this.options.transport,
       proxyTransport: context.proxyTransport ?? this.options.proxyTransport,
       sleep: this.options.sleep,
       timeoutMs: this.options.timeoutMs,
-      idempotent: true
+      idempotent: request.method === 'GET' || rest.request.idempotent === true
     })
     const payload = await response.response.json()
-    const rows = rowsFromRestJsonPayload(payload, rest, params)
+    const rows = rowsFromRestJsonPayload(payload, domain, this.manifest.id, params)
     return {
       rows: rows.rows,
       totalRows: rows.totalRows,
@@ -214,7 +334,8 @@ export class RestJsonAdapter implements DbAdapter {
 
 function rowsFromRestJsonPayload(
   payload: unknown,
-  rest: DbRestJsonDomainConfig,
+  domain: DbDomainManifest,
+  database: string,
   params: DbQueryParams
 ): {
   rows: Record<string, unknown>[]
@@ -222,11 +343,12 @@ function rowsFromRestJsonPayload(
   truncated: boolean
   nextCursor?: string
 } {
+  const rest = domain.rest as DbRestJsonDomainConfig
   const response = rest.response
   const rawRows = readJsonPath(payload, response?.rowsPath ?? '$')
   const sourceRows = Array.isArray(rawRows) ? rawRows : rawRows === undefined ? [] : [rawRows]
   const mappedRows = sourceRows.map((row) =>
-    projectRestJsonRow(mapRestJsonRow(row, response), params)
+    projectDbRow(normalizeDbRecord(mapRestJsonRow(row, response), database, domain), params.fields)
   )
   const returnedRows = mappedRows.slice(0, params.limit)
   const totalRows = parseOptionalNumber(
@@ -243,16 +365,22 @@ function rowsFromRestJsonPayload(
     rows: returnedRows,
     totalRows,
     truncated:
-      Boolean(nextCursor) || clientTruncated || isTotalRowsTruncated(totalRows, returnedRows),
+      Boolean(nextCursor) ||
+      clientTruncated ||
+      isTotalRowsTruncated(totalRows, returnedRows, params.cursor),
     nextCursor
   }
 }
 
 function isTotalRowsTruncated(
   totalRows: number | undefined,
-  returnedRows: Record<string, unknown>[]
+  returnedRows: Record<string, unknown>[],
+  cursor: string | undefined
 ): boolean {
-  return totalRows !== undefined && returnedRows.length < totalRows
+  if (totalRows === undefined) return false
+  const offset = parseOptionalNumber(cursor)
+  if (cursor && offset === undefined) return false
+  return (offset ?? 0) + returnedRows.length < totalRows
 }
 
 function mapRestJsonRow(
@@ -270,17 +398,6 @@ function mapRestJsonRow(
   return isRecord(row) ? { ...row } : { value: row }
 }
 
-function projectRestJsonRow(
-  row: Record<string, unknown>,
-  params: DbQueryParams
-): Record<string, unknown> {
-  if (!params.fields || params.fields.length === 0) return row
-  return params.fields.reduce<Record<string, unknown>>((next, field) => {
-    if (row[field] !== undefined) next[field] = row[field]
-    return next
-  }, {})
-}
-
 function stringifyOptionalValue(value: unknown): string | undefined {
   if (value === undefined || value === null || value === '') return undefined
   if (typeof value === 'string') return value
@@ -293,13 +410,25 @@ function readJsonPath(payload: unknown, path: string): unknown {
   if (!path || path === '$') return payload
   const normalized = path.replace(/^\$\.?/, '').replace(/\[(\d+)\]/g, '.$1')
   if (!normalized) return payload
-  return normalized.split('.').reduce<unknown>((current, segment) => {
-    if (current === undefined || current === null) return undefined
-    if (Array.isArray(current)) {
-      const index = Number(segment)
-      return Number.isInteger(index) ? current[index] : undefined
+  let values: unknown[] = [payload]
+  for (const segment of normalized.split('.')) {
+    const next: unknown[] = []
+    for (const current of values) {
+      if (current === undefined || current === null) continue
+      if (segment === '*') {
+        if (Array.isArray(current)) next.push(...current)
+        else if (isRecord(current)) next.push(...Object.values(current))
+        continue
+      }
+      if (Array.isArray(current)) {
+        const index = Number(segment)
+        if (Number.isInteger(index) && current[index] !== undefined) next.push(current[index])
+        continue
+      }
+      if (isRecord(current) && current[segment] !== undefined) next.push(current[segment])
     }
-    if (isRecord(current)) return current[segment]
-    return undefined
-  }, payload)
+    if (next.length === 0) return undefined
+    values = next
+  }
+  return values.length === 1 ? values[0] : values
 }

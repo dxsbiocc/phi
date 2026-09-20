@@ -11,7 +11,6 @@ export interface ProxyTransportStatus {
 
 export interface PhiAppSettings {
   defaultProxyMode: DefaultProxyMode
-  enableDbConnectorTools: boolean
   noProjectTaskFolder: string
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
@@ -20,14 +19,12 @@ export interface PhiAppSettings {
 
 export type PhiAppSettingsPatch = {
   defaultProxyMode?: DefaultProxyMode
-  enableDbConnectorTools?: boolean
   noProjectTaskFolder?: string
   preventSleepDuringRuns?: boolean
   nextActionSuggestionsEnabled?: boolean
 }
 
 export const DEFAULT_PROXY_MODE: DefaultProxyMode = 'auto'
-export const DEFAULT_DB_CONNECTOR_TOOLS_ENABLED = true
 export const DEFAULT_PREVENT_SLEEP_DURING_RUNS = false
 export const DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED = true
 

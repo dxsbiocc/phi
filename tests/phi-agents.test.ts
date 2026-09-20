@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -22,10 +22,11 @@ import {
   extractAssistantText,
   type AgentSessionLike
 } from '../src/main/agent/agents/runner'
-import { resolveAgentTools } from '../src/main/agent/agents/tool-resolution'
+import { buildScopedPhiToolMap, resolveAgentTools } from '../src/main/agent/agents/tool-resolution'
 import { buildAgentTool, type AgentRunner } from '../src/main/agent/agents/tool'
 
 const REPO_AGENTS_DIR = join(import.meta.dirname, '..', 'resources', 'agents')
+const REPO_SKILLS_DIR = join(import.meta.dirname, '..', 'resources', 'skills')
 
 function agentMarkdown(fields: Record<string, string>, body = 'You are a specialist.'): string {
   const lines = Object.entries(fields).map(([key, value]) => `${key}: ${value}`)
@@ -364,6 +365,43 @@ test('the bundled Wrapper agent is a valid, well-formed definition', () => {
   assert.ok(wrapper.delegation && wrapper.delegation.length > 0)
 })
 
+test('the bundled Database agent owns the biological database tools', () => {
+  const { agents, diagnostics } = discoverPhiAgents({
+    cwd: '/nonexistent/cwd',
+    agentDir: '/nonexistent/agentdir',
+    bundledDir: REPO_AGENTS_DIR,
+    homeDir: '/nonexistent/home'
+  })
+  assert.deepEqual(diagnostics, [])
+  const database = agents.find((agent) => agent.name === 'Database')
+  assert.ok(database, 'resources/agents/Database.md should define Database')
+  assert.equal(database.source, 'phi')
+  for (const tool of [
+    'read',
+    'glob',
+    'grep',
+    'bash',
+    'write',
+    'edit',
+    'db_search',
+    'db_domain',
+    'db_docs_search',
+    'db_query'
+  ]) {
+    assert.ok(database.tools.includes(tool), `Database should have ${tool}`)
+  }
+  assert.deepEqual(database.skills, ['create-database-connector'])
+  assert.equal(existsSync(join(REPO_SKILLS_DIR, 'create-database-connector', 'SKILL.md')), true)
+  assert.match(database.systemPrompt, /stable_id/)
+  assert.match(database.systemPrompt, /provenance/i)
+  assert.match(database.systemPrompt, /bulk download/i)
+  assert.match(database.systemPrompt, /skill:\/\/create-database-connector/)
+  assert.ok(database.delegation && database.delegation.length > 0)
+  for (const toolName of ['db_search', 'db_domain', 'db_docs_search', 'db_query']) {
+    assert.doesNotMatch(database.delegation ?? '', new RegExp(`\\b${toolName}\\b`))
+  }
+})
+
 // ── the leader prompt ─────────────────────────────────────────────────────
 
 test('there is no leader prompt when there are no agents', () => {
@@ -380,6 +418,7 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
   const prompt = buildAgentLeaderPrompt(agents)
   assert.match(prompt, /^<phi_agents>/)
   assert.match(prompt, /<\/phi_agents>$/)
+  assert.match(prompt, /- Database: /)
   assert.match(prompt, /- Wrapper: /)
   assert.match(prompt, /self-contained/i)
   assert.match(prompt, /absolute/i)
@@ -387,7 +426,15 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
   assert.match(prompt, /nextflow/i)
   assert.match(prompt, /do not/i)
   // The leader never learns the specialist's own tool functions.
-  for (const name of ['wrapper_search', 'wrapper_inspect', 'wrapper_run']) {
+  for (const name of [
+    'wrapper_search',
+    'wrapper_inspect',
+    'wrapper_run',
+    'db_search',
+    'db_domain',
+    'db_docs_search',
+    'db_query'
+  ]) {
     assert.ok(!new RegExp(`\\b${name}\\b`).test(prompt), `leader prompt must not mention ${name}`)
   }
 })
@@ -402,6 +449,24 @@ test('resolveAgentTools separates Phi tool functions from SDK built-ins', () => 
   )
   assert.deepEqual(toolNames, ['read', 'wrapper_search', 'bash', 'not_registered'])
   assert.deepEqual(customTools, [fn])
+})
+
+test('resolveAgentTools resolves Database tools only when provided by its scoped registry', () => {
+  const dbQuery = { name: 'db_query' } as never
+  const declared = ['db_search', 'db_query']
+  assert.deepEqual(resolveAgentTools(declared, new Map()).customTools, [])
+  assert.deepEqual(resolveAgentTools(declared, new Map([['db_query', dbQuery]])).customTools, [
+    dbQuery
+  ])
+})
+
+test('Phi tool ownership isolates Wrapper and Database internals', () => {
+  const wrapper = { name: 'wrapper_run' } as never
+  const database = { name: 'db_query' } as never
+  const groups = { wrapper: [wrapper], database: [database] }
+  assert.deepEqual([...buildScopedPhiToolMap('Wrapper', groups).keys()], ['wrapper_run'])
+  assert.deepEqual([...buildScopedPhiToolMap('Database', groups).keys()], ['db_query'])
+  assert.deepEqual([...buildScopedPhiToolMap('Other', groups).keys()], [])
 })
 
 // ── delegation tool ───────────────────────────────────────────────────────

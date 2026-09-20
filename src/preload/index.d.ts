@@ -13,6 +13,7 @@ import type {
   PhiAppSettings,
   PhiAppSettingsPatch
 } from '../shared/appSettingsTypes'
+import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
 
 type PreloadSessionSummary = {
   path: string
@@ -587,6 +588,8 @@ declare global {
       getAppSettings: () => Promise<PhiAppSettings>
       updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
       updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
+      listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
+      setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
       listModels: () => Promise<
         Array<{
           providerId: string

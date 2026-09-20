@@ -17,6 +17,11 @@ import {
 } from '../src/main/agent/db/adapters/rest-json-adapter'
 import { SparqlAdapter, buildSparqlQuery } from '../src/main/agent/db/adapters/sparql-adapter'
 import {
+  UniProtAdapter,
+  buildUniProtKbSearchParams,
+  directUniProtKbAccession
+} from '../src/main/agent/db/adapters/uniprot-adapter'
+import {
   addCustomDbConnector,
   listDbConnectorCatalog,
   syncGeneratedDbConnectorDocs
@@ -30,6 +35,7 @@ import type { DbAdapter } from '../src/main/agent/db/adapters/types'
 import type {
   DbAdapterQueryResult,
   DbConnectorManifest,
+  DbDownloadFileCandidate,
   DbQueryToolDetails,
   DbResolvedQuery,
   DbQueryToolErrorDetails
@@ -47,15 +53,15 @@ import {
   allowCustomDbConnector,
   getDbConnectorAuditLogPath,
   getDbConnectorFieldGlossaryPath,
-  getDbConnectorNavigatorSkillPath
+  getDbConnectorNavigatorSkillPath,
+  setDbConnectorQueryEnabled
 } from '../src/main/agent/db/store'
 import {
   buildDbDomainTool,
   buildDbDocsSearchTool,
   buildDbQueryTool,
   buildDbSearchTool,
-  buildDefaultDbCustomTools,
-  isDbConnectorRuntimeEnabled
+  buildDefaultDbCustomTools
 } from '../src/main/agent/db/tools'
 
 function withHarness<T>(
@@ -139,6 +145,32 @@ test('parseDbConnectorManifest validates trust source separation and required sh
   assert.match(invalid.errors.join('\n'), /trustTier/)
 })
 
+test('parseDbConnectorManifest validates explicit record identity contracts', () => {
+  const validYaml = connectorYaml('rest-json/identity').replace(
+    '    commonFields: [symbol, description]\n',
+    `    commonFields: [symbol, description]\n    identity:\n      stableIdFields: [symbol]\n      namespace: hgnc.symbol\n      primaryUrlTemplate: https://example.org/gene/{stable_id}\n`
+  )
+  const valid = parseDbConnectorManifest(validYaml)
+  assert.equal(valid.valid, true, valid.errors.join('\n'))
+  assert.deepEqual(valid.manifest?.domains[0]?.identity, {
+    stableIdFields: ['symbol'],
+    namespace: 'hgnc.symbol',
+    primaryUrlTemplate: 'https://example.org/gene/{stable_id}'
+  })
+
+  const unknownField = parseDbConnectorManifest(
+    validYaml.replace('stableIdFields: [symbol]', 'stableIdFields: [missing_id]')
+  )
+  assert.equal(unknownField.valid, false)
+  assert.match(unknownField.errors.join('\n'), /identity\.stableIdFields.*missing_id/)
+
+  const insecureUrl = parseDbConnectorManifest(
+    validYaml.replace('https://example.org/gene/{stable_id}', 'http://example.org/gene/{stable_id}')
+  )
+  assert.equal(insecureUrl.valid, false)
+  assert.match(insecureUrl.errors.join('\n'), /identity\.primaryUrlTemplate.*https/)
+})
+
 test('custom connector catalog requires digest-bound allow-list before query is enabled', async () => {
   await withHarness(({ root, agentDir }) => {
     const sourceDir = join(root, 'connector-src')
@@ -199,6 +231,23 @@ test('db_search and db_domain expose connector/domain metadata', async () => {
       domainDetails.fields.map((field) => field.name),
       ['symbol']
     )
+
+    const ncbiDomain = await buildDbDomainTool(agentDir).execute(
+      'call-3',
+      { database: 'entrez/ncbi', domain: 'gene' },
+      undefined,
+      fakeCtx()
+    )
+    const ncbiDetails = ncbiDomain.details as {
+      standardFields: string[]
+      identity: { stableIdFields: string[]; namespace: string; primaryUrlTemplate: string }
+    }
+    assert.equal(ncbiDetails.standardFields.includes('stable_id'), true)
+    assert.deepEqual(ncbiDetails.identity, {
+      stableIdFields: ['uid'],
+      namespace: 'ncbi.gene_id',
+      primaryUrlTemplate: 'https://www.ncbi.nlm.nih.gov/gene/{stable_id}'
+    })
   })
 })
 
@@ -253,7 +302,7 @@ test('db_docs_search returns ranked manifest docs, fields, and xref hints', asyn
 
     const xrefSearch = await buildDbDocsSearchTool().execute(
       'call-docs-3',
-      { query: 'uniprot accession', database: 'entrez/ncbi', limit: 10 },
+      { query: 'uniprot accession', database: 'entrez/ncbi', limit: 30 },
       undefined,
       fakeCtx()
     )
@@ -264,8 +313,8 @@ test('db_docs_search returns ranked manifest docs, fields, and xref hints', asyn
       xrefDetails.results.some(
         (result) =>
           result.kind === 'xref' &&
-          result.xref?.to.database === 'sparql/uniprot' &&
-          result.xref.to.namespace === 'uniprot.gene_name'
+          result.xref?.to.database === 'rest-json/uniprot' &&
+          result.xref.to.namespace === 'hgnc.symbol'
       ),
       true
     )
@@ -291,6 +340,8 @@ test('generated DB connector docs include navigator guidance and field glossary 
     assert.match(docs.fieldGlossaryMarkdown, /entrez\/ncbi - NCBI Entrez/)
     assert.match(docs.fieldGlossaryMarkdown, /hgnc\.symbol/)
     assert.match(docs.fieldGlossaryMarkdown, /sparql\/uniprot\/protein\.gene_name/)
+    assert.match(docs.fieldGlossaryMarkdown, /Every returned record includes source metadata/)
+    assert.match(docs.fieldGlossaryMarkdown, /Identity: `uid`; namespace `ncbi\.gene_id`/)
 
     const paths = writeGeneratedDbConnectorDocs(entries, agentDir, generatedAt)
     assert.equal(paths.navigatorSkillPath, getDbConnectorNavigatorSkillPath(agentDir))
@@ -298,12 +349,42 @@ test('generated DB connector docs include navigator guidance and field glossary 
     assert.equal(existsSync(paths.navigatorSkillPath), true)
     assert.equal(existsSync(paths.fieldGlossaryPath), true)
     assert.match(readFileSync(paths.navigatorSkillPath, 'utf-8'), /Common Question Routing/)
+    assert.match(readFileSync(paths.navigatorSkillPath, 'utf-8'), /rest-json\/uniprot\/protein/)
+    assert.match(readFileSync(paths.navigatorSkillPath, 'utf-8'), /sparql\/uniprot\/protein/)
+    assert.match(readFileSync(paths.navigatorSkillPath, 'utf-8'), /default UniProt route/)
+    assert.match(
+      readFileSync(paths.navigatorSkillPath, 'utf-8'),
+      /Advanced UniProt RDF graph joins/
+    )
     assert.match(readFileSync(paths.fieldGlossaryPath, 'utf-8'), /Clinical variant assertions/)
 
     const synced = syncGeneratedDbConnectorDocs(agentDir)
     assert.equal(synced.navigatorSkillPath, paths.navigatorSkillPath)
     assert.equal(synced.fieldGlossaryPath, paths.fieldGlossaryPath)
     assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /rest-json\/toy - Toy DB/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /NCBI Protein records/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /NCBI Nucleotide records/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /NCBI BioSample records/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /UniProtKB REST/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /Primary\/default UniProtKB/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /UniProt SPARQL \(advanced\)/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /Advanced UniProt RDF\/SPARQL/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /NCBI Sequence Read Archive/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /NCBI Gene Expression Omnibus/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /NCBI BioProject records/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /NCBI Taxonomy organism records/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /gene_type/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /geo_loc_name/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /run_accessions/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /sample_accessions/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /download_urls/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /download_files/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /UniProtKB JSON, FASTA/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /shared download-file schema/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /SRA run browser/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /geo_accessions/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /scientific_name/)
+    assert.match(readFileSync(synced.fieldGlossaryPath, 'utf-8'), /review_status/)
   })
 })
 
@@ -345,6 +426,83 @@ test('result writer keeps small results inline and writes large results to artif
     )
     assert.equal(small.mode, 'inline')
     assert.deepEqual(small.resolvedQuery, resolvedQuery)
+
+    const geoDownloadFiles = [
+      {
+        kind: 'series_matrix',
+        accession: 'GSE2553',
+        url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/matrix/GSE2553_series_matrix.txt.gz',
+        format: 'txt',
+        availability: 'candidate_file',
+        source: 'derived_from_gse_accession'
+      }
+    ] satisfies DbDownloadFileCandidate[]
+    const geoInline = buildDbQueryToolDetails(
+      {
+        rows: [
+          {
+            accession: 'GSE2553',
+            title: 'Breast cancer series',
+            download_urls: {
+              matrix:
+                'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/matrix/GSE2553_series_matrix.txt.gz'
+            },
+            download_files: geoDownloadFiles
+          }
+        ],
+        truncated: false,
+        provenance: { ...provenance, domain: 'geo' }
+      },
+      { agentDir, fileStem: 'geo-inline', resolvedQuery }
+    )
+    assert.equal(geoInline.mode, 'inline')
+    assert.deepEqual(
+      geoInline.artifacts?.map((artifact) => artifact.format),
+      ['download_manifest_json']
+    )
+    assert.ok(geoInline.downloadManifestArtifact)
+    assert.equal(geoInline.downloadManifestArtifact.format, 'download_manifest_json')
+    assert.deepEqual(geoInline.downloadManifestSummary, {
+      rowCount: 1,
+      candidateCount: 1,
+      directUrlCount: 0,
+      landingPageCount: 0,
+      directoryCount: 0,
+      candidateFileCount: 1,
+      formats: ['txt'],
+      kinds: ['series_matrix']
+    })
+    assert.equal(existsSync(geoInline.downloadManifestArtifact.path), true)
+    const inlineManifest = JSON.parse(
+      readFileSync(geoInline.downloadManifestArtifact.path, 'utf-8')
+    ) as {
+      kind: string
+      rows: Array<{
+        accession: string
+        download_files: Array<{ kind: string; url: string }>
+      }>
+    }
+    assert.equal(inlineManifest.kind, 'db_query_download_manifest')
+    assert.equal(inlineManifest.rows[0]?.accession, 'GSE2553')
+    assert.equal(inlineManifest.rows[0]?.download_files[0]?.kind, 'series_matrix')
+    assert.equal(inlineManifest.rows[0]?.download_files[0]?.url, geoDownloadFiles[0].url)
+
+    const incompleteDownloadFiles = buildDbQueryToolDetails(
+      {
+        rows: [
+          {
+            accession: 'GSE2553',
+            download_files: [{ url: geoDownloadFiles[0].url }]
+          }
+        ],
+        truncated: false,
+        provenance: { ...provenance, domain: 'geo' }
+      },
+      { agentDir, fileStem: 'geo-incomplete-download-files' }
+    )
+    assert.equal(incompleteDownloadFiles.mode, 'inline')
+    assert.equal(incompleteDownloadFiles.downloadManifestArtifact, undefined)
+    assert.equal(incompleteDownloadFiles.downloadManifestSummary, undefined)
 
     const rows = Array.from({ length: 30 }, (_, index) => ({
       symbol: `GENE${index}`,
@@ -406,6 +564,151 @@ test('result writer keeps small results inline and writes large results to artif
       nested.artifacts.map((artifact) => artifact.format),
       ['jsonl', 'metadata_json']
     )
+
+    const geoLargeRows = Array.from({ length: 30 }, (_, index) => ({
+      accession: `GSE${2553 + index}`,
+      title: `GEO series ${index}`,
+      download_files: geoDownloadFiles
+    }))
+    const geoLarge = buildDbQueryToolDetails(
+      {
+        rows: geoLargeRows,
+        totalRows: geoLargeRows.length,
+        truncated: false,
+        provenance: { ...provenance, domain: 'geo' }
+      },
+      { agentDir, fileStem: 'geo-large-result', resolvedQuery }
+    )
+    assert.equal(geoLarge.mode, 'artifact')
+    assert.ok(geoLarge.downloadManifestArtifact)
+    assert.equal(geoLarge.downloadManifestArtifact.format, 'download_manifest_json')
+    assert.deepEqual(geoLarge.downloadManifestSummary, {
+      rowCount: 30,
+      candidateCount: 30,
+      directUrlCount: 0,
+      landingPageCount: 0,
+      directoryCount: 0,
+      candidateFileCount: 30,
+      formats: ['txt'],
+      kinds: ['series_matrix']
+    })
+    assert.equal(existsSync(geoLarge.downloadManifestArtifact.path), true)
+    assert.deepEqual(
+      geoLarge.artifacts.map((artifact) => artifact.format),
+      ['jsonl', 'download_manifest_json', 'metadata_json']
+    )
+    const geoMetadata = JSON.parse(readFileSync(geoLarge.metadataArtifact.path, 'utf-8')) as {
+      artifacts: Array<{ format: string }>
+      downloadManifestArtifact: { format: string }
+      downloadManifestSummary: { candidateCount: number; candidateFileCount: number }
+    }
+    assert.deepEqual(
+      geoMetadata.artifacts.map((artifact) => artifact.format),
+      ['jsonl', 'download_manifest_json']
+    )
+    assert.equal(geoMetadata.downloadManifestArtifact.format, 'download_manifest_json')
+    assert.equal(geoMetadata.downloadManifestSummary.candidateCount, 30)
+    assert.equal(geoMetadata.downloadManifestSummary.candidateFileCount, 30)
+  })
+})
+
+test('db_query writes download manifest artifacts from adapter download_files', async () => {
+  await withHarness(async ({ agentDir }) => {
+    let received: unknown
+    const downloadFiles = [
+      {
+        kind: 'sra_run_browser',
+        accession: 'SRR000001',
+        url: 'https://trace.ncbi.nlm.nih.gov/Traces/?view=run_browser&acc=SRR000001',
+        format: 'html',
+        availability: 'landing_page',
+        source: 'derived_from_run_accession'
+      }
+    ] satisfies DbDownloadFileCandidate[]
+    const adapter: DbAdapter = {
+      async listDomains() {
+        return []
+      },
+      async describeDomain() {
+        return []
+      },
+      async query(params): Promise<DbAdapterQueryResult> {
+        received = params
+        return {
+          rows: [
+            {
+              accession: 'SRX000001',
+              title: 'RNA-seq SRA experiment',
+              run_accessions: ['SRR000001'],
+              download_urls: {
+                run_browser: {
+                  SRR000001: 'https://trace.ncbi.nlm.nih.gov/Traces/?view=run_browser&acc=SRR000001'
+                }
+              },
+              download_files: downloadFiles
+            }
+          ],
+          truncated: false,
+          provenance: {
+            database: 'entrez/ncbi',
+            domain: params.domain,
+            retrievedAt: '2026-09-18T00:00:00.000Z'
+          }
+        }
+      }
+    }
+
+    const result = await buildDbQueryTool({ 'entrez/ncbi': adapter }, agentDir).execute(
+      'call-sra-download-manifest',
+      {
+        database: 'entrez/ncbi',
+        domain: 'sra',
+        rawQuery: 'SRX000001',
+        limit: 1
+      },
+      undefined,
+      fakeCtx()
+    )
+
+    assert.equal(result.isError, undefined)
+    assert.deepEqual(received, {
+      domain: 'sra',
+      filters: undefined,
+      fields: undefined,
+      limit: 1,
+      cursor: undefined,
+      rawQuery: 'SRX000001'
+    })
+    const details = result.details as DbQueryToolDetails
+    assert.equal(details.mode, 'inline')
+    assert.equal(details.downloadManifestArtifact?.format, 'download_manifest_json')
+    assert.deepEqual(details.downloadManifestSummary, {
+      rowCount: 1,
+      candidateCount: 1,
+      directUrlCount: 0,
+      landingPageCount: 1,
+      directoryCount: 0,
+      candidateFileCount: 0,
+      formats: ['html'],
+      kinds: ['sra_run_browser']
+    })
+    assert.match(result.content[0]?.text ?? '', /"downloadManifestSummary"/)
+    assert.equal(existsSync(details.downloadManifestArtifact?.path ?? ''), true)
+    const manifest = JSON.parse(
+      readFileSync(details.downloadManifestArtifact?.path ?? '', 'utf-8')
+    ) as {
+      kind: string
+      rows: Array<{
+        accession: string
+        download_files: Array<{ accession: string; kind: string; url: string }>
+      }>
+      resolvedQuery: DbResolvedQuery
+    }
+    assert.equal(manifest.kind, 'db_query_download_manifest')
+    assert.equal(manifest.rows[0]?.accession, 'SRX000001')
+    assert.deepEqual(manifest.rows[0]?.download_files, downloadFiles)
+    assert.equal(manifest.resolvedQuery.database, 'entrez/ncbi')
+    assert.equal(manifest.resolvedQuery.domain, 'sra')
   })
 })
 
@@ -591,6 +894,71 @@ test('HTTP policy executor expires GET response cache after ttl', async () => {
     assert.deepEqual(await second.response.json(), { calls: 2 })
     assert.equal(calls, 2)
     assert.equal(second.cached, undefined)
+  })
+})
+
+test('HTTP policy executor caches explicit idempotent POST responses by body', async () => {
+  await withHarness(async ({ agentDir }) => {
+    const parsed = parseDbConnectorManifest(connectorYaml('rest-json/post-cache-toy'))
+    assert.equal(parsed.valid, true)
+    const manifest = parsed.manifest as DbConnectorManifest
+    let calls = 0
+    const transport: DbEgressTransport = {
+      name: 'post-cache-test',
+      async fetch(_input, init) {
+        calls += 1
+        return new Response(
+          JSON.stringify({
+            calls,
+            body: init.body
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      }
+    }
+    const baseOptions = {
+      manifest,
+      path: 'genes/batch',
+      method: 'POST' as const,
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      transport,
+      agentDir,
+      cacheTtlMs: 60_000,
+      idempotent: true,
+      retryPolicy: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+      sleep: async () => {}
+    }
+
+    const first = await executeDbHttpRequest({
+      ...baseOptions,
+      body: JSON.stringify({ ids: ['ENSG00000012048'] })
+    })
+    assert.deepEqual(await first.response.json(), {
+      calls: 1,
+      body: '{"ids":["ENSG00000012048"]}'
+    })
+
+    const second = await executeDbHttpRequest({
+      ...baseOptions,
+      body: JSON.stringify({ ids: ['ENSG00000012048'] })
+    })
+    assert.deepEqual(await second.response.json(), {
+      calls: 1,
+      body: '{"ids":["ENSG00000012048"]}'
+    })
+    assert.equal(second.cached, true)
+    assert.equal(second.attempts, 0)
+
+    const third = await executeDbHttpRequest({
+      ...baseOptions,
+      body: JSON.stringify({ ids: ['ENSG00000139618'] })
+    })
+    assert.deepEqual(await third.response.json(), {
+      calls: 2,
+      body: '{"ids":["ENSG00000139618"]}'
+    })
+    assert.equal(third.cached, undefined)
+    assert.equal(calls, 2)
   })
 })
 
@@ -935,13 +1303,14 @@ test('RestJson adapter maps filter templates, query params, rows, and provenance
     sleep: async () => {},
     transport: {
       name: 'mock-rest-json',
-      async fetch(input) {
+      async fetch(input, init) {
         calls += 1
         assert.equal(input.hostname, 'api.example.org')
         assert.equal(input.pathname, '/v1/genes/BRCA1')
         assert.equal(input.searchParams.get('species'), '9606')
         assert.equal(input.searchParams.get('limit'), '1')
         assert.equal(input.searchParams.get('offset'), '10')
+        assert.equal(new Headers(init.headers).get('accept'), 'application/json')
         return new Response(
           JSON.stringify({
             data: [
@@ -971,7 +1340,14 @@ test('RestJson adapter maps filter templates, query params, rows, and provenance
   )
 
   assert.equal(calls, 1)
-  assert.deepEqual(result.rows, [{ symbol: 'BRCA1', description: 'DNA repair associated' }])
+  assert.deepEqual(result.rows, [
+    {
+      symbol: 'BRCA1',
+      description: 'DNA repair associated',
+      source_database: 'rest-json/toy',
+      source_domain: 'gene'
+    }
+  ])
   assert.equal(result.totalRows, 12)
   assert.equal(result.truncated, true)
   assert.equal(result.nextCursor, '11')
@@ -1016,10 +1392,2323 @@ test('RestJson adapter supports rawQuery params and single-object responses', as
     limit: 5
   })
 
-  assert.deepEqual(result.rows, [{ symbol: 'TP53', description: 'Tumor protein p53' }])
+  assert.deepEqual(result.rows, [
+    {
+      symbol: 'TP53',
+      description: 'Tumor protein p53',
+      source_database: 'rest-json/rawtoy',
+      source_domain: 'gene'
+    }
+  ])
   assert.equal(result.totalRows, 1)
   assert.equal(result.truncated, false)
   assert.equal(result.provenance.rawQueryUsed, true)
+})
+
+test('RestJson request validation rejects ambiguous or unsupported query inputs', () => {
+  const parsed = parseDbConnectorManifest(connectorYaml('rest-json/validated'))
+  assert.equal(parsed.valid, true, parsed.errors.join('\n'))
+  const domain = (parsed.manifest as DbConnectorManifest).domains[0]
+
+  assert.throws(
+    () =>
+      buildRestJsonRequest(domain, {
+        domain: 'gene',
+        filters: [
+          { field: 'symbol', op: '=', value: 'BRCA1' },
+          { field: 'organsim', op: '=', value: '9606' }
+        ],
+        limit: 10
+      }),
+    /does not accept filter: organsim/
+  )
+  assert.throws(
+    () =>
+      buildRestJsonRequest(domain, {
+        domain: 'gene',
+        filters: [
+          { field: 'symbol', op: '=', value: 'BRCA1' },
+          { field: 'symbol', op: '=', value: 'BRCA2' }
+        ],
+        limit: 10
+      }),
+    /duplicate filter: symbol/
+  )
+  assert.throws(
+    () =>
+      buildRestJsonRequest(domain, {
+        domain: 'gene',
+        filters: [{ field: 'symbol', op: '=', value: 'BRCA1' }],
+        rawQuery: 'BRCA1',
+        limit: 10
+      }),
+    /filters and rawQuery cannot be used together/
+  )
+
+  const noCursorYaml = connectorYaml('rest-json/no-cursor').replace(
+    '        cursorParam: offset\n',
+    ''
+  )
+  const noCursor = parseDbConnectorManifest(noCursorYaml)
+  assert.equal(noCursor.valid, true, noCursor.errors.join('\n'))
+  assert.throws(
+    () =>
+      buildRestJsonRequest((noCursor.manifest as DbConnectorManifest).domains[0], {
+        domain: 'gene',
+        filters: [{ field: 'symbol', op: '=', value: 'BRCA1' }],
+        cursor: '10',
+        limit: 10
+      }),
+    /does not support cursor pagination/
+  )
+})
+
+test('database adapters reject invalid page sizes and offset cursors', () => {
+  const rest = parseDbConnectorManifest(connectorYaml('rest-json/window'))
+  assert.equal(rest.valid, true, rest.errors.join('\n'))
+  assert.throws(
+    () =>
+      buildRestJsonRequest((rest.manifest as DbConnectorManifest).domains[0], {
+        domain: 'gene',
+        filters: [{ field: 'symbol', op: '=', value: 'BRCA1' }],
+        limit: 501
+      }),
+    /limit must be an integer between 1 and 500/
+  )
+
+  assert.throws(
+    () =>
+      buildUniProtKbSearchParams({
+        domain: 'protein',
+        rawQuery: 'BRCA1',
+        limit: 1.5
+      }),
+    /limit must be an integer between 1 and 500/
+  )
+
+  const entrez = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/entrez/ncbi/connector.yaml', 'utf-8')
+  )
+  assert.equal(entrez.valid, true, entrez.errors.join('\n'))
+  assert.throws(
+    () =>
+      buildEntrezSearchParams(entrez.manifest as DbConnectorManifest, {
+        domain: 'gene',
+        rawQuery: 'BRCA1',
+        limit: 10,
+        cursor: 'not-an-offset'
+      }),
+    /cursor must be a non-negative integer offset/
+  )
+
+  const sparql = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/sparql/uniprot/connector.yaml', 'utf-8')
+  )
+  assert.equal(sparql.valid, true, sparql.errors.join('\n'))
+  assert.throws(
+    () =>
+      buildSparqlQuery((sparql.manifest as DbConnectorManifest).domains[0], {
+        domain: 'protein',
+        rawQuery: 'SELECT * WHERE { ?s ?p ?o }',
+        limit: 10,
+        cursor: '-1'
+      }),
+    /cursor must be a non-negative integer offset/
+  )
+})
+
+test('RestJson adapter stops pagination on a numeric final page', async () => {
+  const parsed = parseDbConnectorManifest(connectorYaml('rest-json/final-page'))
+  assert.equal(parsed.valid, true)
+  const adapter = new RestJsonAdapter(parsed.manifest as DbConnectorManifest, {
+    sleep: async () => {},
+    transport: {
+      name: 'mock-rest-json-final-page',
+      async fetch() {
+        return new Response(
+          JSON.stringify({
+            data: [
+              { symbol: 'GENE11', description: 'Row 11' },
+              { symbol: 'GENE12', description: 'Row 12' }
+            ],
+            meta: { total: 12 }
+          }),
+          { status: 200 }
+        )
+      }
+    }
+  })
+
+  const result = await adapter.query({
+    domain: 'gene',
+    filters: [{ field: 'symbol', op: '=', value: 'GENE' }],
+    limit: 2,
+    cursor: '10'
+  })
+
+  assert.equal(result.totalRows, 12)
+  assert.equal(result.truncated, false)
+  assert.equal(result.nextCursor, undefined)
+})
+
+test('RestJson adapter expands nested wildcard response paths', async () => {
+  const yaml = connectorYaml('rest-json/nested-wildcard').replace(
+    'rowsPath: data',
+    'rowsPath: groups.*.items.*'
+  )
+  const parsed = parseDbConnectorManifest(yaml)
+  assert.equal(parsed.valid, true, parsed.errors.join('\n'))
+  const adapter = new RestJsonAdapter(parsed.manifest as DbConnectorManifest, {
+    sleep: async () => {},
+    transport: {
+      name: 'mock-rest-json-nested-wildcard',
+      async fetch() {
+        return new Response(
+          JSON.stringify({
+            groups: {
+              first: { items: [{ symbol: 'BRCA1', description: 'First' }] },
+              second: { items: [{ symbol: 'BRCA2', description: 'Second' }] }
+            }
+          }),
+          { status: 200 }
+        )
+      }
+    }
+  })
+
+  const result = await adapter.query({
+    domain: 'gene',
+    filters: [{ field: 'symbol', op: '=', value: 'BRCA' }],
+    limit: 10
+  })
+
+  assert.deepEqual(result.rows, [
+    {
+      symbol: 'BRCA1',
+      description: 'First',
+      source_database: 'rest-json/nested-wildcard',
+      source_domain: 'gene'
+    },
+    {
+      symbol: 'BRCA2',
+      description: 'Second',
+      source_database: 'rest-json/nested-wildcard',
+      source_domain: 'gene'
+    }
+  ])
+  assert.equal(result.truncated, false)
+})
+
+test('RestJson adapter supports POST JSON body filters', async () => {
+  const yaml = connectorYaml('rest-json/posttoy').replace(
+    `path: /genes/{filter:symbol}
+        queryParams:
+          content-type: application/json
+        filterParamMap:
+          organism: species
+        rawQueryParam: q
+        limitParam: limit
+        cursorParam: offset`,
+    `path: /genes/batch
+        method: POST
+        idempotent: true
+        jsonBodyParamMap:
+          ids: ids
+          includeMetadata: include_metadata
+        jsonBodyArrayFields: [ids]
+        jsonBodyOptionalFields: [includeMetadata]
+        filterParamMap:
+          organism: species`
+  )
+  const parsed = parseDbConnectorManifest(yaml)
+  assert.equal(parsed.valid, true, parsed.errors.join('\n'))
+  const manifest = parsed.manifest as DbConnectorManifest
+  const domain = manifest.domains[0]
+  const request = buildRestJsonRequest(domain, {
+    domain: 'gene',
+    filters: [
+      { field: 'ids', op: 'in', value: ['ENSG00000012048', 'ENSG00000139618'] },
+      { field: 'organism', op: '=', value: 'homo_sapiens' }
+    ],
+    limit: 10
+  })
+  assert.equal(request.method, 'POST')
+  assert.equal(request.path, '/genes/batch')
+  assert.equal(request.searchParams.get('species'), 'homo_sapiens')
+  assert.equal(request.searchParams.has('ids'), false)
+  assert.deepEqual(JSON.parse(request.body ?? '{}'), {
+    ids: ['ENSG00000012048', 'ENSG00000139618']
+  })
+  const requestWithOptionalBody = buildRestJsonRequest(domain, {
+    domain: 'gene',
+    filters: [
+      { field: 'ids', op: 'in', value: ['ENSG00000012048'] },
+      { field: 'include_metadata', op: '=', value: true }
+    ],
+    limit: 10
+  })
+  assert.deepEqual(JSON.parse(requestWithOptionalBody.body ?? '{}'), {
+    ids: ['ENSG00000012048'],
+    includeMetadata: true
+  })
+
+  let calls = 0
+  const adapter = new RestJsonAdapter(manifest, {
+    sleep: async () => {},
+    transport: {
+      name: 'mock-rest-json-post',
+      async fetch(input, init) {
+        calls += 1
+        assert.equal(input.pathname, '/v1/genes/batch')
+        assert.equal(input.searchParams.get('species'), 'homo_sapiens')
+        assert.equal(init.method, 'POST')
+        const headers = new Headers(init.headers)
+        assert.equal(headers.get('accept'), 'application/json')
+        assert.equal(headers.get('content-type'), 'application/json')
+        assert.deepEqual(JSON.parse(String(init.body)), {
+          ids: ['ENSG00000012048', 'ENSG00000139618']
+        })
+        if (calls === 1) return new Response('try again', { status: 503 })
+        return new Response(
+          JSON.stringify({
+            data: [
+              { symbol: 'BRCA1', description: 'DNA repair associated' },
+              { symbol: 'BRCA2', description: 'DNA repair associated' }
+            ]
+          }),
+          { status: 200 }
+        )
+      }
+    }
+  })
+
+  const result = await adapter.query({
+    domain: 'gene',
+    filters: [
+      { field: 'ids', op: 'in', value: ['ENSG00000012048', 'ENSG00000139618'] },
+      { field: 'organism', op: '=', value: 'homo_sapiens' }
+    ],
+    limit: 10
+  })
+
+  assert.equal(calls, 2)
+  assert.deepEqual(result.rows, [
+    {
+      symbol: 'BRCA1',
+      description: 'DNA repair associated',
+      source_database: 'rest-json/posttoy',
+      source_domain: 'gene'
+    },
+    {
+      symbol: 'BRCA2',
+      description: 'DNA repair associated',
+      source_database: 'rest-json/posttoy',
+      source_domain: 'gene'
+    }
+  ])
+  assert.equal(result.provenance.attempts, 2)
+  assert.equal(result.provenance.retried, true)
+})
+
+test('Ensembl REST manifest covers major GET endpoint families and renders requests', () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/rest-json/ensembl/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true, parsed.errors.join('\n'))
+  const manifest = parsed.manifest as DbConnectorManifest
+  const domainIds = manifest.domains.map((domain) => domain.id)
+  assert.deepEqual(
+    [
+      'lookup_id',
+      'lookup_id_batch',
+      'lookup_symbol',
+      'lookup_symbol_batch',
+      'xref_id',
+      'xref_name',
+      'sequence_id',
+      'sequence_id_batch',
+      'sequence_region',
+      'sequence_region_batch',
+      'overlap_id',
+      'overlap_region',
+      'homology_id',
+      'homology_symbol',
+      'genetree_member_symbol',
+      'genetree_id',
+      'genetree_member_id',
+      'cafe_genetree_id',
+      'cafe_genetree_member_symbol',
+      'cafe_genetree_member_id',
+      'alignment_region',
+      'variation',
+      'variation_batch',
+      'variation_pmcid',
+      'variation_pmid',
+      'variant_recoder',
+      'variant_recoder_batch',
+      'vep_hgvs',
+      'vep_hgvs_batch',
+      'vep_id',
+      'vep_id_batch',
+      'vep_region',
+      'vep_region_batch',
+      'phenotype_gene',
+      'phenotype_accession',
+      'phenotype_region',
+      'phenotype_term',
+      'regulation_binding_matrix',
+      'map_cdna',
+      'map_cds',
+      'map_assembly',
+      'ontology_id',
+      'ontology_name',
+      'ontology_ancestors',
+      'ontology_ancestors_chart',
+      'ontology_descendants',
+      'ontology_descendants_chart',
+      'taxonomy_id',
+      'taxonomy_name',
+      'taxonomy_classification',
+      'ld_id',
+      'ld_pairwise',
+      'ld_region',
+      'transcript_haplotypes',
+      'archive_id',
+      'archive_id_batch',
+      'info_species',
+      'info_assembly',
+      'info_assembly_region',
+      'info_analysis',
+      'info_biotypes',
+      'info_biotypes_object_type',
+      'info_biotypes_group',
+      'info_biotypes_name',
+      'info_compara_methods',
+      'info_compara_species_sets',
+      'info_comparas',
+      'info_external_dbs',
+      'info_data',
+      'info_divisions',
+      'info_eg_version',
+      'info_genomes',
+      'info_genomes_accession',
+      'info_genomes_assembly',
+      'info_genomes_division',
+      'info_genomes_taxonomy',
+      'info_ping',
+      'info_software',
+      'info_variation',
+      'info_variation_populations',
+      'info_variation_population',
+      'info_rest',
+      'ga4gh_beacon',
+      'ga4gh_beacon_query',
+      'ga4gh_beacon_query_post',
+      'ga4gh_callset',
+      'ga4gh_callset_search',
+      'ga4gh_dataset',
+      'ga4gh_dataset_search',
+      'ga4gh_feature',
+      'ga4gh_feature_search',
+      'ga4gh_featureset',
+      'ga4gh_featureset_search',
+      'ga4gh_variant',
+      'ga4gh_variant_search',
+      'ga4gh_variantset',
+      'ga4gh_variantset_search',
+      'ga4gh_reference',
+      'ga4gh_reference_search',
+      'ga4gh_referenceset',
+      'ga4gh_referenceset_search',
+      'ga4gh_variantannotationset',
+      'ga4gh_variantannotationset_search'
+    ].every((domainId) => domainIds.includes(domainId)),
+    true
+  )
+
+  const identityCases: Record<string, { fields: string[]; namespace: string }> = {
+    genetree_id: { fields: ['id'], namespace: 'ensembl.genetree_id' },
+    cafe_genetree_id: { fields: ['id'], namespace: 'ensembl.genetree_id' },
+    variation_pmid: { fields: ['name'], namespace: 'ensembl.variation_id' },
+    vep_id_batch: { fields: ['id'], namespace: 'ensembl.variation_id' },
+    regulation_binding_matrix: {
+      fields: ['binding_matrix_stable_id'],
+      namespace: 'ensembl.binding_matrix_id'
+    },
+    ontology_id: { fields: ['accession'], namespace: 'ontology.term_accession' },
+    archive_id: { fields: ['id'], namespace: 'ensembl.stable_id' },
+    ga4gh_variant: { fields: ['id'], namespace: 'ga4gh.variant_id' },
+    ga4gh_variant_search: { fields: ['id'], namespace: 'ga4gh.variant_id' },
+    ga4gh_reference: { fields: ['id'], namespace: 'ga4gh.reference_id' }
+  }
+  for (const [domainId, expected] of Object.entries(identityCases)) {
+    const domain = manifest.domains.find((candidate) => candidate.id === domainId)
+    assert.ok(domain, domainId)
+    assert.deepEqual(domain.identity?.stableIdFields, expected.fields, domainId)
+    assert.equal(domain.identity?.namespace, expected.namespace, domainId)
+  }
+  for (const domainId of [
+    'overlap_region',
+    'phenotype_gene',
+    'map_assembly',
+    'ld_region',
+    'transcript_haplotypes',
+    'info_ping',
+    'ga4gh_beacon_query',
+    'variant_recoder'
+  ]) {
+    assert.equal(
+      manifest.domains.find((candidate) => candidate.id === domainId)?.identity,
+      undefined,
+      domainId
+    )
+  }
+  assert.equal(
+    manifest.domains.find((candidate) => candidate.id === 'variant_recoder')?.rest?.response
+      ?.rowsPath,
+    '$.*.*'
+  )
+
+  const requestCases: Array<{
+    domain: string
+    filters: Array<{ field: string; op: '=' | 'in'; value: string | number | boolean | string[] }>
+    path: string
+    method?: 'GET' | 'POST'
+    query?: Record<string, string>
+    body?: unknown
+  }> = [
+    {
+      domain: 'lookup_symbol',
+      filters: [
+        { field: 'species', op: '=', value: 'homo_sapiens' },
+        { field: 'symbol', op: '=', value: 'BRCA1' },
+        { field: 'expand', op: '=', value: true }
+      ],
+      path: '/lookup/symbol/homo_sapiens/BRCA1',
+      query: { expand: 'true' }
+    },
+    {
+      domain: 'lookup_id_batch',
+      filters: [
+        { field: 'ids', op: 'in', value: ['ENSG00000012048', 'ENSG00000139618'] },
+        { field: 'expand', op: '=', value: true }
+      ],
+      path: '/lookup/id',
+      method: 'POST',
+      query: { expand: 'true' },
+      body: { ids: ['ENSG00000012048', 'ENSG00000139618'] }
+    },
+    {
+      domain: 'lookup_symbol_batch',
+      filters: [
+        { field: 'species', op: '=', value: 'homo_sapiens' },
+        { field: 'symbols', op: 'in', value: ['BRCA1', 'BRCA2'] },
+        { field: 'expand', op: '=', value: true }
+      ],
+      path: '/lookup/symbol/homo_sapiens',
+      method: 'POST',
+      query: { expand: 'true' },
+      body: { symbols: ['BRCA1', 'BRCA2'] }
+    },
+    {
+      domain: 'sequence_id',
+      filters: [
+        { field: 'id', op: '=', value: 'ENSG00000012048' },
+        { field: 'type', op: '=', value: 'genomic' }
+      ],
+      path: '/sequence/id/ENSG00000012048',
+      query: { type: 'genomic' }
+    },
+    {
+      domain: 'sequence_id_batch',
+      filters: [
+        { field: 'ids', op: 'in', value: ['ENSG00000012048', 'ENSG00000139618'] },
+        { field: 'type', op: '=', value: 'genomic' }
+      ],
+      path: '/sequence/id',
+      method: 'POST',
+      query: { type: 'genomic' },
+      body: { ids: ['ENSG00000012048', 'ENSG00000139618'] }
+    },
+    {
+      domain: 'sequence_region_batch',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'regions', op: 'in', value: ['X:1000000..1000100:1', '13:32315086..32315100:1'] },
+        { field: 'mask', op: '=', value: 'soft' }
+      ],
+      path: '/sequence/region/human',
+      method: 'POST',
+      query: { mask: 'soft' },
+      body: { regions: ['X:1000000..1000100:1', '13:32315086..32315100:1'] }
+    },
+    {
+      domain: 'overlap_region',
+      filters: [
+        { field: 'species', op: '=', value: 'homo_sapiens' },
+        { field: 'region', op: '=', value: '13:32315086-32315100' },
+        { field: 'feature', op: '=', value: 'gene' }
+      ],
+      path: '/overlap/region/homo_sapiens/13%3A32315086-32315100',
+      query: { feature: 'gene' }
+    },
+    {
+      domain: 'genetree_member_id',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'id', op: '=', value: 'ENSG00000012048' },
+        { field: 'sequence', op: '=', value: 'none' }
+      ],
+      path: '/genetree/member/id/human/ENSG00000012048',
+      query: { sequence: 'none' }
+    },
+    {
+      domain: 'cafe_genetree_member_symbol',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'symbol', op: '=', value: 'BRCA1' },
+        { field: 'nh_format', op: '=', value: 'full' }
+      ],
+      path: '/cafe/genetree/member/symbol/human/BRCA1',
+      query: { nh_format: 'full' }
+    },
+    {
+      domain: 'variation_batch',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'ids', op: 'in', value: ['rs699', 'rs7412'] },
+        { field: 'phenotypes', op: '=', value: true }
+      ],
+      path: '/variation/human',
+      method: 'POST',
+      query: { phenotypes: 'true' },
+      body: { ids: ['rs699', 'rs7412'] }
+    },
+    {
+      domain: 'variation_pmid',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'pmid', op: '=', value: '12345678' }
+      ],
+      path: '/variation/human/pmid/12345678'
+    },
+    {
+      domain: 'vep_hgvs',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'hgvs', op: '=', value: '9:g.22125504G>C' },
+        { field: 'canonical', op: '=', value: true }
+      ],
+      path: '/vep/human/hgvs/9%3Ag.22125504G%3EC',
+      query: { canonical: 'true' }
+    },
+    {
+      domain: 'vep_hgvs_batch',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        {
+          field: 'hgvs_notations',
+          op: 'in',
+          value: ['ENST00000366667:c.803C>T', '9:g.22125504G>C']
+        },
+        { field: 'canonical', op: '=', value: true }
+      ],
+      path: '/vep/human/hgvs',
+      method: 'POST',
+      query: { canonical: 'true' },
+      body: { hgvs_notations: ['ENST00000366667:c.803C>T', '9:g.22125504G>C'] }
+    },
+    {
+      domain: 'vep_id_batch',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'ids', op: 'in', value: ['rs699'] },
+        { field: 'canonical', op: '=', value: true }
+      ],
+      path: '/vep/human/id',
+      method: 'POST',
+      query: { canonical: 'true' },
+      body: { ids: ['rs699'] }
+    },
+    {
+      domain: 'vep_region',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'region', op: '=', value: '21:26960070-26960070' },
+        { field: 'allele', op: '=', value: 'A' },
+        { field: 'canonical', op: '=', value: true }
+      ],
+      path: '/vep/human/region/21%3A26960070-26960070/A',
+      query: { canonical: 'true' }
+    },
+    {
+      domain: 'vep_region_batch',
+      filters: [
+        { field: 'species', op: '=', value: 'homo_sapiens' },
+        {
+          field: 'variants',
+          op: 'in',
+          value: ['21 26960070 rs116645811 G A . . .', '21 26965148 rs1135638 G A . . .']
+        },
+        { field: 'canonical', op: '=', value: true }
+      ],
+      path: '/vep/homo_sapiens/region',
+      method: 'POST',
+      query: { canonical: 'true' },
+      body: {
+        variants: ['21 26960070 rs116645811 G A . . .', '21 26965148 rs1135638 G A . . .']
+      }
+    },
+    {
+      domain: 'map_translation',
+      filters: [
+        { field: 'id', op: '=', value: 'ENSP00000350283' },
+        { field: 'region', op: '=', value: '1..10' }
+      ],
+      path: '/map/translation/ENSP00000350283/1..10'
+    },
+    {
+      domain: 'map_cds',
+      filters: [
+        { field: 'id', op: '=', value: 'ENST00000357654' },
+        { field: 'region', op: '=', value: '1..10' }
+      ],
+      path: '/map/cds/ENST00000357654/1..10'
+    },
+    {
+      domain: 'map_assembly',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'source_assembly', op: '=', value: 'GRCh37' },
+        { field: 'region', op: '=', value: '13:32889611..32889620:1' },
+        { field: 'target_assembly', op: '=', value: 'GRCh38' }
+      ],
+      path: '/map/human/GRCh37/13%3A32889611..32889620%3A1/GRCh38'
+    },
+    {
+      domain: 'phenotype_region',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'region', op: '=', value: '13:32315086-32315100' },
+        { field: 'feature_type', op: '=', value: 'Gene' }
+      ],
+      path: '/phenotype/region/human/13%3A32315086-32315100',
+      query: { feature_type: 'Gene' }
+    },
+    {
+      domain: 'ontology_name',
+      filters: [{ field: 'name', op: '=', value: 'protein_coding_gene' }],
+      path: '/ontology/name/protein_coding_gene'
+    },
+    {
+      domain: 'ontology_ancestors',
+      filters: [{ field: 'id', op: '=', value: 'SO:0001217' }],
+      path: '/ontology/ancestors/SO%3A0001217'
+    },
+    {
+      domain: 'ontology_descendants_chart',
+      filters: [{ field: 'id', op: '=', value: 'SO:0000704' }],
+      path: '/ontology/descendants/chart/SO%3A0000704'
+    },
+    {
+      domain: 'taxonomy_name',
+      filters: [{ field: 'name', op: '=', value: 'Homo sapiens' }],
+      path: '/taxonomy/name/Homo%20sapiens'
+    },
+    {
+      domain: 'taxonomy_classification',
+      filters: [{ field: 'id', op: '=', value: '9606' }],
+      path: '/taxonomy/classification/9606'
+    },
+    {
+      domain: 'ld_id',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'id', op: '=', value: 'rs699' },
+        { field: 'population_name', op: '=', value: '1000GENOMES:phase_3:CEU' }
+      ],
+      path: '/ld/human/rs699/1000GENOMES%3Aphase_3%3ACEU'
+    },
+    {
+      domain: 'ld_region',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'region', op: '=', value: '13:32315086-32315100' },
+        { field: 'population_name', op: '=', value: '1000GENOMES:phase_3:CEU' }
+      ],
+      path: '/ld/human/region/13%3A32315086-32315100/1000GENOMES%3Aphase_3%3ACEU'
+    },
+    {
+      domain: 'info_biotypes_object_type',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'object_type', op: '=', value: 'gene' }
+      ],
+      path: '/info/biotypes/human/gene'
+    },
+    {
+      domain: 'info_assembly_region',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'region_name', op: '=', value: '13' }
+      ],
+      path: '/info/assembly/human/13'
+    },
+    {
+      domain: 'info_compara_species_sets',
+      filters: [{ field: 'method', op: '=', value: 'EPO' }],
+      path: '/info/compara/species_sets/EPO'
+    },
+    {
+      domain: 'info_external_dbs',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'feature', op: '=', value: 'gene' }
+      ],
+      path: '/info/external_dbs/human',
+      query: { feature: 'gene' }
+    },
+    {
+      domain: 'info_genomes_accession',
+      filters: [{ field: 'accession', op: '=', value: 'CM000675.2' }],
+      path: '/info/genomes/accession/CM000675.2'
+    },
+    {
+      domain: 'info_variation_population',
+      filters: [
+        { field: 'species', op: '=', value: 'human' },
+        { field: 'population_name', op: '=', value: '1000GENOMES:phase_3:CEU' }
+      ],
+      path: '/info/variation/populations/human/1000GENOMES%3Aphase_3%3ACEU'
+    },
+    {
+      domain: 'info_data',
+      filters: [],
+      path: '/info/data'
+    },
+    {
+      domain: 'archive_id_batch',
+      filters: [{ field: 'ids', op: 'in', value: ['ENSG00000012048', 'ENSG00000139618'] }],
+      path: '/archive/id',
+      method: 'POST',
+      body: { id: ['ENSG00000012048', 'ENSG00000139618'] }
+    },
+    {
+      domain: 'ga4gh_beacon_query',
+      filters: [
+        { field: 'referenceName', op: '=', value: '13' },
+        { field: 'start', op: '=', value: 32315086 },
+        { field: 'referenceBases', op: '=', value: 'A' },
+        { field: 'alternateBases', op: '=', value: 'T' },
+        { field: 'assemblyId', op: '=', value: 'GRCh38' }
+      ],
+      path: '/ga4gh/beacon/query',
+      query: {
+        referenceName: '13',
+        start: '32315086',
+        referenceBases: 'A',
+        alternateBases: 'T',
+        assemblyId: 'GRCh38'
+      }
+    },
+    {
+      domain: 'ga4gh_beacon_query_post',
+      filters: [
+        { field: 'referenceName', op: '=', value: '13' },
+        { field: 'start', op: '=', value: 32315086 },
+        { field: 'referenceBases', op: '=', value: 'A' },
+        { field: 'alternateBases', op: '=', value: 'T' },
+        { field: 'assemblyId', op: '=', value: 'GRCh38' },
+        { field: 'datasetIds', op: 'in', value: ['dataset-1'] }
+      ],
+      path: '/ga4gh/beacon/query',
+      method: 'POST',
+      body: {
+        referenceName: '13',
+        start: 32315086,
+        referenceBases: 'A',
+        alternateBases: 'T',
+        assemblyId: 'GRCh38',
+        datasetIds: ['dataset-1']
+      }
+    },
+    {
+      domain: 'ga4gh_variant_search',
+      filters: [
+        { field: 'variantSetId', op: '=', value: 'variant-set-1' },
+        { field: 'referenceName', op: '=', value: '13' },
+        { field: 'start', op: '=', value: 32315086 },
+        { field: 'end', op: '=', value: 32315100 }
+      ],
+      path: '/ga4gh/variants/search',
+      method: 'POST',
+      body: {
+        variantSetId: 'variant-set-1',
+        referenceName: '13',
+        start: 32315086,
+        end: 32315100
+      }
+    },
+    {
+      domain: 'ga4gh_feature_search',
+      filters: [
+        { field: 'featureSetId', op: '=', value: 'Ensembl' },
+        { field: 'featureTypes', op: 'in', value: ['transcript'] },
+        { field: 'referenceName', op: '=', value: '6' },
+        { field: 'start', op: '=', value: 1080164 },
+        { field: 'end', op: '=', value: 1200164 }
+      ],
+      path: '/ga4gh/features/search',
+      method: 'POST',
+      body: {
+        featureSetId: 'Ensembl',
+        featureTypes: ['transcript'],
+        referenceName: '6',
+        start: 1080164,
+        end: 1200164
+      }
+    },
+    {
+      domain: 'ga4gh_callset_search',
+      filters: [{ field: 'variantSetId', op: '=', value: '1' }],
+      path: '/ga4gh/callsets/search',
+      method: 'POST',
+      body: { variantSetId: '1' }
+    },
+    {
+      domain: 'ga4gh_featureset_search',
+      filters: [{ field: 'datasetId', op: '=', value: 'Ensembl' }],
+      path: '/ga4gh/featuresets/search',
+      method: 'POST',
+      body: { datasetId: 'Ensembl' }
+    },
+    {
+      domain: 'ga4gh_variantset_search',
+      filters: [{ field: 'datasetId', op: '=', value: '6e340c4d1e333c7a676b1710d2e3953c' }],
+      path: '/ga4gh/variantsets/search',
+      method: 'POST',
+      body: { datasetId: '6e340c4d1e333c7a676b1710d2e3953c' }
+    },
+    {
+      domain: 'ga4gh_variantannotationset_search',
+      filters: [{ field: 'datasetId', op: '=', value: 'Ensembl' }],
+      path: '/ga4gh/variantannotationsets/search',
+      method: 'POST',
+      body: { datasetId: 'Ensembl' }
+    },
+    {
+      domain: 'ga4gh_reference_search',
+      filters: [
+        { field: 'referenceSetId', op: '=', value: 'GRCh38' },
+        { field: 'accession', op: '=', value: 'CM000675.2' }
+      ],
+      path: '/ga4gh/references/search',
+      method: 'POST',
+      body: { referenceSetId: 'GRCh38', accession: 'CM000675.2' }
+    }
+  ]
+
+  for (const item of requestCases) {
+    const domain = manifest.domains.find((candidate) => candidate.id === item.domain)
+    assert.ok(domain, item.domain)
+    const request = buildRestJsonRequest(domain, {
+      domain: item.domain,
+      filters: item.filters,
+      limit: 1
+    })
+    assert.equal(request.method, item.method ?? 'GET')
+    assert.equal(request.path, item.path)
+    if (item.method === 'POST') {
+      assert.equal(domain.rest?.request.idempotent, true)
+    }
+    for (const [key, value] of Object.entries(item.query ?? {})) {
+      assert.equal(request.searchParams.get(key), value)
+    }
+    if (item.body !== undefined) {
+      assert.deepEqual(JSON.parse(request.body ?? '{}'), item.body)
+    } else {
+      assert.equal(request.body, undefined)
+    }
+  }
+})
+
+test('Ensembl identity audit normalizes entities without inventing relationship identities', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/rest-json/ensembl/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true, parsed.errors.join('\n'))
+  const adapter = new RestJsonAdapter(parsed.manifest as DbConnectorManifest, {
+    transport: {
+      name: 'mock-ensembl-identity-audit',
+      async fetch(input) {
+        if (input.pathname === '/genetree/id/ENSGT00390000003602') {
+          return new Response(
+            JSON.stringify({ id: 'ENSGT00390000003602', type: 'gene tree', tree: {} }),
+            { status: 200 }
+          )
+        }
+        if (input.pathname === '/variant_recoder/human/rs699') {
+          return new Response(
+            JSON.stringify([
+              {
+                G: {
+                  input: 'rs699',
+                  id: ['rs699', 'COSV64184214'],
+                  hgvsg: ['NC_000001.11:g.230710048A>G']
+                }
+              }
+            ]),
+            { status: 200 }
+          )
+        }
+        assert.equal(input.pathname, '/overlap/id/ENSG00000012048')
+        return new Response(
+          JSON.stringify([
+            {
+              id: 'ENST00000357654',
+              feature_type: 'transcript',
+              start: 43044295,
+              end: 43125482
+            }
+          ]),
+          { status: 200 }
+        )
+      }
+    }
+  })
+
+  const geneTree = await adapter.query({
+    domain: 'genetree_id',
+    filters: [{ field: 'id', op: '=', value: 'ENSGT00390000003602' }],
+    fields: ['id'],
+    limit: 1
+  })
+  assert.deepEqual(geneTree.rows[0], {
+    id: 'ENSGT00390000003602',
+    source_database: 'rest-json/ensembl',
+    source_domain: 'genetree_id',
+    stable_id: 'ENSGT00390000003602',
+    stable_id_namespace: 'ensembl.genetree_id'
+  })
+
+  const recoded = await adapter.query({
+    domain: 'variant_recoder',
+    filters: [
+      { field: 'species', op: '=', value: 'human' },
+      { field: 'id', op: '=', value: 'rs699' }
+    ],
+    fields: ['input', 'id'],
+    limit: 5
+  })
+  assert.deepEqual(recoded.rows[0], {
+    input: 'rs699',
+    id: ['rs699', 'COSV64184214'],
+    source_database: 'rest-json/ensembl',
+    source_domain: 'variant_recoder'
+  })
+  assert.equal(recoded.rows[0]?.stable_id, undefined)
+
+  const overlap = await adapter.query({
+    domain: 'overlap_id',
+    filters: [
+      { field: 'id', op: '=', value: 'ENSG00000012048' },
+      { field: 'feature', op: '=', value: 'transcript' }
+    ],
+    fields: ['id', 'feature_type'],
+    limit: 5
+  })
+  assert.equal(overlap.rows[0]?.id, 'ENST00000357654')
+  assert.equal(overlap.rows[0]?.stable_id, undefined)
+  assert.equal(overlap.rows[0]?.source_domain, 'overlap_id')
+})
+
+test('UniProt adapter queries UniProtKB REST and normalizes protein records', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/rest-json/uniprot/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true)
+  const manifest = parsed.manifest as DbConnectorManifest
+  const searchParams = buildUniProtKbSearchParams({
+    domain: 'protein',
+    filters: [
+      { field: 'gene_name', op: '=', value: 'BRCA1' },
+      { field: 'organism_id', op: '=', value: '9606' },
+      { field: 'reviewed', op: '=', value: true }
+    ],
+    limit: 2,
+    cursor: 'abc'
+  })
+  assert.equal(searchParams.get('query'), 'gene_exact:BRCA1 AND organism_id:9606 AND reviewed:true')
+  assert.equal(searchParams.get('size'), '2')
+  assert.equal(searchParams.get('cursor'), 'abc')
+  assert.match(searchParams.get('fields') ?? '', /cc_function/)
+  assert.match(searchParams.get('fields') ?? '', /cc_disease/)
+  assert.match(searchParams.get('fields') ?? '', /protein_existence/)
+  assert.match(searchParams.get('fields') ?? '', /lineage/)
+  assert.match(searchParams.get('fields') ?? '', /date_created/)
+  assert.match(searchParams.get('fields') ?? '', /date_modified/)
+  assert.match(searchParams.get('fields') ?? '', /date_sequence_modified/)
+  assert.match(searchParams.get('fields') ?? '', /version/)
+  assert.match(searchParams.get('fields') ?? '', /ec/)
+  assert.match(searchParams.get('fields') ?? '', /keyword/)
+  assert.match(searchParams.get('fields') ?? '', /cc_catalytic_activity/)
+  assert.match(searchParams.get('fields') ?? '', /cc_cofactor/)
+  assert.match(searchParams.get('fields') ?? '', /cc_pathway/)
+  assert.match(searchParams.get('fields') ?? '', /cc_interaction/)
+  assert.match(searchParams.get('fields') ?? '', /cc_alternative_products/)
+  assert.match(searchParams.get('fields') ?? '', /lit_pubmed_id/)
+  assert.match(searchParams.get('fields') ?? '', /ft_domain/)
+  assert.match(searchParams.get('fields') ?? '', /ft_act_site/)
+  assert.match(searchParams.get('fields') ?? '', /ft_variant/)
+  assert.match(searchParams.get('fields') ?? '', /ft_signal/)
+  assert.match(searchParams.get('fields') ?? '', /ft_transmem/)
+  assert.match(searchParams.get('fields') ?? '', /ft_topo_dom/)
+  assert.match(searchParams.get('fields') ?? '', /ft_chain/)
+  assert.match(searchParams.get('fields') ?? '', /ft_motif/)
+  assert.match(searchParams.get('fields') ?? '', /ft_mutagen/)
+  assert.match(searchParams.get('fields') ?? '', /xref_refseq/)
+  assert.match(searchParams.get('fields') ?? '', /xref_embl/)
+  assert.match(searchParams.get('fields') ?? '', /xref_uniparc/)
+  assert.match(searchParams.get('fields') ?? '', /xref_alphafolddb/)
+  assert.match(searchParams.get('fields') ?? '', /xref_interpro/)
+  assert.match(searchParams.get('fields') ?? '', /xref_pfam/)
+  assert.match(searchParams.get('fields') ?? '', /xref_string/)
+  assert.match(searchParams.get('fields') ?? '', /xref_chembl/)
+  assert.match(searchParams.get('fields') ?? '', /xref_drugbank/)
+  assert.match(searchParams.get('fields') ?? '', /xref_proteomes/)
+  const filteredSearchParams = buildUniProtKbSearchParams({
+    domain: 'protein',
+    filters: [
+      { field: 'protein_name', op: 'like', value: 'DNA repair protein' },
+      { field: 'ec_number', op: 'in', value: ['2.3.2.27', '3.4.21.4'] },
+      { field: 'go_id', op: '=', value: 'GO:0005634' },
+      { field: 'keyword', op: '=', value: 'DNA damage' },
+      { field: 'xref', op: '=', value: 'pdb-1jm7' },
+      { field: 'database', op: '=', value: 'pdb' },
+      { field: 'sequence_length', op: 'between', value: [100, 200] },
+      { field: 'date_modified', op: '>=', value: '2020-01-01' }
+    ],
+    limit: 5
+  })
+  assert.equal(
+    filteredSearchParams.get('query'),
+    'protein_name:"DNA repair protein" AND (ec:2.3.2.27 OR ec:3.4.21.4) AND keyword:"DNA damage" AND go:GO:0005634 AND xref:pdb-1jm7 AND database:pdb AND length:[100 TO 200] AND date_modified:[2020-01-01 TO *]'
+  )
+  assert.equal(
+    directUniProtKbAccession({
+      domain: 'protein',
+      filters: [{ field: 'accession', op: '=', value: 'p38398' }],
+      limit: 1
+    }),
+    'P38398'
+  )
+  assert.equal(
+    directUniProtKbAccession({
+      domain: 'protein',
+      filters: [{ field: 'accession', op: '=', value: 'BRCA1' }],
+      limit: 1
+    }),
+    undefined
+  )
+  assert.equal(
+    directUniProtKbAccession({
+      domain: 'protein',
+      filters: [
+        { field: 'accession', op: '=', value: 'P38398' },
+        { field: 'organism_id', op: '=', value: '9606' }
+      ],
+      limit: 1
+    }),
+    undefined
+  )
+
+  let calls = 0
+  const adapter = new UniProtAdapter(manifest, {
+    now: () => new Date('2026-09-18T00:00:00.000Z'),
+    sleep: async () => {},
+    transport: {
+      name: 'mock-uniprot-rest',
+      async fetch(input) {
+        calls += 1
+        assert.equal(input.hostname, 'rest.uniprot.org')
+        assert.equal(input.search, '')
+        if (input.pathname === '/uniprotkb/P38398.fasta') {
+          return new Response(
+            `>sp|P38398|BRCA1_HUMAN Breast cancer type 1 susceptibility protein OS=Homo sapiens
+MDLSALRVEEVQNVINAMQKILECPICLELIKE`,
+            {
+              status: 200,
+              headers: {
+                'content-type': 'text/x-fasta',
+                'x-uniprot-release': '2026_04'
+              }
+            }
+          )
+        }
+        if (input.pathname === '/uniprotkb/P38398.txt') {
+          return new Response(
+            `ID   BRCA1_HUMAN
+AC   P38398;
+DE   RecName: Full=Breast cancer type 1 susceptibility protein;`,
+            {
+              status: 200,
+              headers: {
+                'content-type': 'text/plain',
+                'x-uniprot-release': '2026_04'
+              }
+            }
+          )
+        }
+        assert.equal(input.pathname, '/uniprotkb/P38398.json')
+        return new Response(
+          JSON.stringify({
+            primaryAccession: 'P38398',
+            secondaryAccessions: ['A0A024RBG1'],
+            uniProtkbId: 'BRCA1_HUMAN',
+            entryType: 'UniProtKB reviewed (Swiss-Prot)',
+            proteinExistence: 'Evidence at protein level',
+            annotationScore: 5,
+            entryAudit: {
+              firstPublicDate: '1986-07-21',
+              lastAnnotationUpdateDate: '2026-04-08',
+              lastSequenceUpdateDate: '2001-11-01',
+              entryVersion: 309,
+              sequenceVersion: 3
+            },
+            proteinDescription: {
+              recommendedName: {
+                fullName: { value: 'Breast cancer type 1 susceptibility protein' },
+                ecNumbers: [{ value: '2.3.2.27' }]
+              },
+              alternativeNames: [
+                {
+                  fullName: { value: 'RING-type E3 ubiquitin transferase' },
+                  shortNames: [{ value: 'RING E3 ligase BRCA1' }]
+                }
+              ]
+            },
+            genes: [
+              {
+                geneName: { value: 'BRCA1' },
+                synonyms: [{ value: 'RNF53' }],
+                orderedLocusNames: [{ value: 'RP11-242D8.1' }],
+                orfNames: [{ value: 'HSPC029' }]
+              }
+            ],
+            organism: {
+              scientificName: 'Homo sapiens',
+              taxonId: 9606,
+              lineage: ['Eukaryota', 'Metazoa', 'Chordata', 'Mammalia']
+            },
+            sequence: {
+              value: 'MDLSALRVEEVQNVINAMQKILECPICLELIKE',
+              length: 1863,
+              molWeight: 207721
+            },
+            comments: [
+              {
+                commentType: 'FUNCTION',
+                texts: [{ value: 'E3 ubiquitin-protein ligase.' }]
+              },
+              {
+                commentType: 'CATALYTIC ACTIVITY',
+                reaction: {
+                  name: 'S-ubiquitinyl-[E2 ubiquitin-conjugating enzyme] + [acceptor protein]-L-lysine = [E2 ubiquitin-conjugating enzyme]-L-cysteine + N(6)-ubiquitinyl-[acceptor protein]-L-lysine.',
+                  ecNumber: '2.3.2.27',
+                  reactionCrossReferences: [{ database: 'Rhea', id: 'RHEA:10000' }]
+                },
+                texts: [{ value: 'Requires BARD1 for efficient activity.' }]
+              },
+              {
+                commentType: 'COFACTOR',
+                cofactors: [
+                  {
+                    name: 'Zn(2+)',
+                    cofactorCrossReference: { database: 'ChEBI', id: 'CHEBI:29105' }
+                  }
+                ],
+                texts: [{ value: 'Binds zinc through the RING domain.' }]
+              },
+              {
+                commentType: 'DISEASE',
+                texts: [{ value: 'Variants are associated with breast cancer.' }]
+              },
+              {
+                commentType: 'PATHWAY',
+                texts: [{ value: 'Protein modification; protein ubiquitination.' }]
+              },
+              {
+                commentType: 'SUBCELLULAR LOCATION',
+                subcellularLocations: [{ location: { value: 'Nucleus' } }]
+              },
+              {
+                commentType: 'INTERACTION',
+                interactions: [
+                  {
+                    interactantOne: {
+                      uniProtKBAccession: 'P38398',
+                      geneName: 'BRCA1'
+                    },
+                    interactantTwo: {
+                      uniProtKBAccession: 'Q99728',
+                      geneName: 'BARD1'
+                    },
+                    numberOfExperiments: 12
+                  }
+                ]
+              },
+              {
+                commentType: 'ALTERNATIVE PRODUCTS',
+                isoforms: [
+                  {
+                    isoformIds: ['P38398-1'],
+                    name: { value: 'Isoform 1' },
+                    sequenceStatus: 'Displayed',
+                    sequenceIds: ['VSP_000001'],
+                    note: { value: 'Canonical sequence.' }
+                  },
+                  {
+                    isoformIds: ['P38398-2'],
+                    name: { value: 'Isoform 2' },
+                    sequenceStatus: 'Described',
+                    sequenceIds: ['VSP_000002'],
+                    note: { value: 'Alternative splicing removes an internal segment.' }
+                  }
+                ]
+              }
+            ],
+            references: [
+              {
+                citation: {
+                  citationType: 'journal article',
+                  title:
+                    'A strong candidate for the breast and ovarian cancer susceptibility gene BRCA1.',
+                  journal: 'Science',
+                  publicationDate: '1994',
+                  volume: '266',
+                  firstPage: '66',
+                  lastPage: '71',
+                  citationCrossReferences: [
+                    { database: 'PubMed', id: '7545954' },
+                    { database: 'DOI', id: '10.1126/science.7545954' }
+                  ]
+                }
+              }
+            ],
+            keywords: [{ name: 'DNA damage' }, { name: 'Tumor suppressor' }],
+            features: [
+              {
+                type: 'Domain',
+                description: 'RING-type zinc finger',
+                featureId: 'PRO_0000055732',
+                location: { start: { value: 24 }, end: { value: 64 } }
+              },
+              {
+                type: 'Region',
+                description: 'Interaction with BARD1',
+                location: { start: { value: 1 }, end: { value: 100 } }
+              },
+              {
+                type: 'Active site',
+                description: 'Cysteine radical intermediate',
+                location: { start: { value: 61 }, end: { value: 61 } }
+              },
+              {
+                type: 'Binding site',
+                description: 'Zinc 1',
+                location: { start: { value: 39 }, end: { value: 39 } }
+              },
+              {
+                type: 'Modified residue',
+                description: 'Phosphoserine',
+                location: { start: { value: 1524 }, end: { value: 1524 } }
+              },
+              {
+                type: 'Natural variant',
+                description: 'Breast cancer-associated variant',
+                featureId: 'VAR_007766',
+                location: { start: { value: 1699 }, end: { value: 1699 } }
+              },
+              {
+                type: 'Signal peptide',
+                description: 'Predicted signal peptide',
+                location: { start: { value: 1 }, end: { value: 22 } }
+              },
+              {
+                type: 'Transmembrane',
+                description: 'Helical',
+                location: { start: { value: 23 }, end: { value: 45 } }
+              },
+              {
+                type: 'Topological domain',
+                description: 'Cytoplasmic',
+                location: { start: { value: 46 }, end: { value: 80 } }
+              },
+              {
+                type: 'Chain',
+                description: 'Mature protein',
+                featureId: 'PRO_000000001',
+                location: { start: { value: 23 }, end: { value: 1863 } }
+              },
+              {
+                type: 'Peptide',
+                description: 'Processed peptide',
+                location: { start: { value: 100 }, end: { value: 120 } }
+              },
+              {
+                type: 'Propeptide',
+                description: 'Activation peptide',
+                location: { start: { value: 121 }, end: { value: 140 } }
+              },
+              {
+                type: 'Repeat',
+                description: 'BRCT repeat 1',
+                location: { start: { value: 1646 }, end: { value: 1736 } }
+              },
+              {
+                type: 'Motif',
+                description: 'Nuclear localization signal',
+                location: { start: { value: 503 }, end: { value: 508 } }
+              },
+              {
+                type: 'Coiled coil',
+                description: 'Coiled coil region',
+                location: { start: { value: 1364 }, end: { value: 1437 } }
+              },
+              {
+                type: 'Zinc finger',
+                description: 'RING-type',
+                location: { start: { value: 24 }, end: { value: 64 } }
+              },
+              {
+                type: 'Disulfide bond',
+                description: 'Interchain',
+                location: { start: { value: 61 }, end: { value: 64 } }
+              },
+              {
+                type: 'Mutagenesis',
+                description: 'C61G disrupts ligase activity',
+                location: { start: { value: 61 }, end: { value: 61 } }
+              }
+            ],
+            uniProtKBCrossReferences: [
+              { database: 'GO', id: 'GO:0005634' },
+              { database: 'PDB', id: '1JM7' },
+              { database: 'Ensembl', id: 'ENSG00000012048' },
+              { database: 'RefSeq', id: 'NP_009225.1' },
+              { database: 'GeneID', id: '672' },
+              { database: 'EMBL', id: 'U14680' },
+              { database: 'UniParc', id: 'UPI0000001B66' },
+              { database: 'CCDS', id: 'CCDS11453.1' },
+              { database: 'AlphaFoldDB', id: 'P38398' },
+              { database: 'InterPro', id: 'IPR001841' },
+              { database: 'Pfam', id: 'PF00533' },
+              { database: 'PROSITE', id: 'PS50089' },
+              { database: 'SMART', id: 'SM00184' },
+              { database: 'SUPFAM', id: 'SSF57903' },
+              { database: 'STRING', id: '9606.ENSP00000350283' },
+              { database: 'Reactome', id: 'R-HSA-5685938' },
+              { database: 'KEGG', id: 'hsa:672' },
+              { database: 'ChEMBL', id: 'CHEMBL5990' },
+              { database: 'DrugBank', id: 'DB12345' },
+              { database: 'Proteomes', id: 'UP000005640' }
+            ]
+          }),
+          {
+            status: 200,
+            headers: {
+              'content-type': 'application/json',
+              'x-uniprot-release': '2026_04'
+            }
+          }
+        )
+      }
+    }
+  })
+
+  const result = await adapter.query(
+    {
+      domain: 'protein',
+      filters: [{ field: 'accession', op: '=', value: 'P38398' }],
+      fields: [
+        'accession',
+        'entry_name',
+        'reviewed',
+        'protein_name',
+        'alternative_protein_names',
+        'protein_existence',
+        'gene_name',
+        'gene_synonyms',
+        'ordered_locus_names',
+        'orf_names',
+        'organism_lineage',
+        'sequence',
+        'fasta',
+        'flat_file',
+        'date_created',
+        'date_modified',
+        'date_sequence_modified',
+        'entry_version',
+        'sequence_version',
+        'pubmed_ids',
+        'references',
+        'catalytic_activities',
+        'cofactors',
+        'pathways',
+        'interactions',
+        'isoforms',
+        'isoform_ids',
+        'ec_numbers',
+        'keywords',
+        'disease_comments',
+        'subcellular_locations',
+        'domains',
+        'regions',
+        'active_sites',
+        'binding_sites',
+        'modified_residues',
+        'variants',
+        'signal_peptides',
+        'transmembrane_regions',
+        'topological_domains',
+        'chains',
+        'peptides',
+        'propeptides',
+        'repeats',
+        'motifs',
+        'coiled_coils',
+        'zinc_fingers',
+        'disulfide_bonds',
+        'mutagenesis_sites',
+        'refseq_ids',
+        'gene_ids',
+        'embl_ids',
+        'uniparc_ids',
+        'ccds_ids',
+        'alphafold_ids',
+        'interpro_ids',
+        'pfam_ids',
+        'prosite_ids',
+        'smart_ids',
+        'supfam_ids',
+        'string_ids',
+        'reactome_ids',
+        'kegg_ids',
+        'chembl_ids',
+        'drugbank_ids',
+        'proteome_ids',
+        'url',
+        'download_urls',
+        'download_files'
+      ],
+      limit: 1
+    },
+    { defaultProxyMode: 'disabled' }
+  )
+
+  assert.equal(calls, 3)
+  assert.deepEqual(result.rows[0], {
+    accession: 'P38398',
+    entry_name: 'BRCA1_HUMAN',
+    reviewed: true,
+    protein_name: 'Breast cancer type 1 susceptibility protein',
+    alternative_protein_names: ['RING-type E3 ubiquitin transferase', 'RING E3 ligase BRCA1'],
+    protein_existence: 'Evidence at protein level',
+    gene_name: 'BRCA1',
+    gene_synonyms: ['RNF53'],
+    ordered_locus_names: ['RP11-242D8.1'],
+    orf_names: ['HSPC029'],
+    organism_lineage: ['Eukaryota', 'Metazoa', 'Chordata', 'Mammalia'],
+    sequence: 'MDLSALRVEEVQNVINAMQKILECPICLELIKE',
+    fasta:
+      '>sp|P38398|BRCA1_HUMAN Breast cancer type 1 susceptibility protein OS=Homo sapiens\nMDLSALRVEEVQNVINAMQKILECPICLELIKE',
+    flat_file:
+      'ID   BRCA1_HUMAN\nAC   P38398;\nDE   RecName: Full=Breast cancer type 1 susceptibility protein;',
+    date_created: '1986-07-21',
+    date_modified: '2026-04-08',
+    date_sequence_modified: '2001-11-01',
+    entry_version: 309,
+    sequence_version: 3,
+    pubmed_ids: ['7545954'],
+    references: [
+      {
+        title: 'A strong candidate for the breast and ovarian cancer susceptibility gene BRCA1.',
+        citation_type: 'journal article',
+        journal: 'Science',
+        publication_date: '1994',
+        volume: '266',
+        first_page: '66',
+        last_page: '71',
+        pubmed_id: '7545954',
+        doi: '10.1126/science.7545954'
+      }
+    ],
+    catalytic_activities: [
+      {
+        reaction:
+          'S-ubiquitinyl-[E2 ubiquitin-conjugating enzyme] + [acceptor protein]-L-lysine = [E2 ubiquitin-conjugating enzyme]-L-cysteine + N(6)-ubiquitinyl-[acceptor protein]-L-lysine.',
+        ec_number: '2.3.2.27',
+        reaction_cross_references: [{ database: 'Rhea', id: 'RHEA:10000' }],
+        notes: ['Requires BARD1 for efficient activity.']
+      }
+    ],
+    cofactors: [
+      {
+        name: 'Zn(2+)',
+        database: 'ChEBI',
+        id: 'CHEBI:29105',
+        notes: ['Binds zinc through the RING domain.']
+      }
+    ],
+    pathways: ['Protein modification; protein ubiquitination.'],
+    interactions: [
+      {
+        interactant_one: {
+          accession: 'P38398',
+          gene_name: 'BRCA1'
+        },
+        interactant_two: {
+          accession: 'Q99728',
+          gene_name: 'BARD1'
+        },
+        experiments: 12
+      }
+    ],
+    isoforms: [
+      {
+        ids: ['P38398-1'],
+        name: 'Isoform 1',
+        sequence_status: 'Displayed',
+        sequence_ids: ['VSP_000001'],
+        note: 'Canonical sequence.',
+        urls: {
+          'P38398-1': 'https://rest.uniprot.org/uniprotkb/P38398-1.fasta'
+        }
+      },
+      {
+        ids: ['P38398-2'],
+        name: 'Isoform 2',
+        sequence_status: 'Described',
+        sequence_ids: ['VSP_000002'],
+        note: 'Alternative splicing removes an internal segment.',
+        urls: {
+          'P38398-2': 'https://rest.uniprot.org/uniprotkb/P38398-2.fasta'
+        }
+      }
+    ],
+    isoform_ids: ['P38398-1', 'P38398-2'],
+    ec_numbers: ['2.3.2.27'],
+    keywords: ['DNA damage', 'Tumor suppressor'],
+    disease_comments: ['Variants are associated with breast cancer.'],
+    subcellular_locations: ['Nucleus'],
+    domains: [
+      {
+        type: 'Domain',
+        description: 'RING-type zinc finger',
+        feature_id: 'PRO_0000055732',
+        start: 24,
+        end: 64
+      }
+    ],
+    regions: [
+      {
+        type: 'Region',
+        description: 'Interaction with BARD1',
+        start: 1,
+        end: 100
+      }
+    ],
+    active_sites: [
+      {
+        type: 'Active site',
+        description: 'Cysteine radical intermediate',
+        start: 61,
+        end: 61
+      }
+    ],
+    binding_sites: [
+      {
+        type: 'Binding site',
+        description: 'Zinc 1',
+        start: 39,
+        end: 39
+      }
+    ],
+    modified_residues: [
+      {
+        type: 'Modified residue',
+        description: 'Phosphoserine',
+        start: 1524,
+        end: 1524
+      }
+    ],
+    variants: [
+      {
+        type: 'Natural variant',
+        description: 'Breast cancer-associated variant',
+        feature_id: 'VAR_007766',
+        start: 1699,
+        end: 1699
+      }
+    ],
+    signal_peptides: [
+      {
+        type: 'Signal peptide',
+        description: 'Predicted signal peptide',
+        start: 1,
+        end: 22
+      }
+    ],
+    transmembrane_regions: [
+      {
+        type: 'Transmembrane',
+        description: 'Helical',
+        start: 23,
+        end: 45
+      }
+    ],
+    topological_domains: [
+      {
+        type: 'Topological domain',
+        description: 'Cytoplasmic',
+        start: 46,
+        end: 80
+      }
+    ],
+    chains: [
+      {
+        type: 'Chain',
+        description: 'Mature protein',
+        feature_id: 'PRO_000000001',
+        start: 23,
+        end: 1863
+      }
+    ],
+    peptides: [
+      {
+        type: 'Peptide',
+        description: 'Processed peptide',
+        start: 100,
+        end: 120
+      }
+    ],
+    propeptides: [
+      {
+        type: 'Propeptide',
+        description: 'Activation peptide',
+        start: 121,
+        end: 140
+      }
+    ],
+    repeats: [
+      {
+        type: 'Repeat',
+        description: 'BRCT repeat 1',
+        start: 1646,
+        end: 1736
+      }
+    ],
+    motifs: [
+      {
+        type: 'Motif',
+        description: 'Nuclear localization signal',
+        start: 503,
+        end: 508
+      }
+    ],
+    coiled_coils: [
+      {
+        type: 'Coiled coil',
+        description: 'Coiled coil region',
+        start: 1364,
+        end: 1437
+      }
+    ],
+    zinc_fingers: [
+      {
+        type: 'Zinc finger',
+        description: 'RING-type',
+        start: 24,
+        end: 64
+      }
+    ],
+    disulfide_bonds: [
+      {
+        type: 'Disulfide bond',
+        description: 'Interchain',
+        start: 61,
+        end: 64
+      }
+    ],
+    mutagenesis_sites: [
+      {
+        type: 'Mutagenesis',
+        description: 'C61G disrupts ligase activity',
+        start: 61,
+        end: 61
+      }
+    ],
+    refseq_ids: ['NP_009225.1'],
+    gene_ids: ['672'],
+    embl_ids: ['U14680'],
+    uniparc_ids: ['UPI0000001B66'],
+    ccds_ids: ['CCDS11453.1'],
+    alphafold_ids: ['P38398'],
+    interpro_ids: ['IPR001841'],
+    pfam_ids: ['PF00533'],
+    prosite_ids: ['PS50089'],
+    smart_ids: ['SM00184'],
+    supfam_ids: ['SSF57903'],
+    string_ids: ['9606.ENSP00000350283'],
+    reactome_ids: ['R-HSA-5685938'],
+    kegg_ids: ['hsa:672'],
+    chembl_ids: ['CHEMBL5990'],
+    drugbank_ids: ['DB12345'],
+    proteome_ids: ['UP000005640'],
+    url: 'https://www.uniprot.org/uniprotkb/P38398/entry',
+    download_urls: {
+      entry: 'https://www.uniprot.org/uniprotkb/P38398/entry',
+      json: 'https://rest.uniprot.org/uniprotkb/P38398.json',
+      fasta: 'https://rest.uniprot.org/uniprotkb/P38398.fasta',
+      txt: 'https://rest.uniprot.org/uniprotkb/P38398.txt'
+    },
+    download_files: [
+      {
+        kind: 'uniprot_json',
+        accession: 'P38398',
+        label: 'UniProtKB JSON record',
+        url: 'https://rest.uniprot.org/uniprotkb/P38398.json',
+        format: 'json',
+        availability: 'direct_url',
+        source: 'derived_from_uniprot_accession'
+      },
+      {
+        kind: 'uniprot_fasta',
+        accession: 'P38398',
+        label: 'UniProtKB FASTA sequence',
+        url: 'https://rest.uniprot.org/uniprotkb/P38398.fasta',
+        format: 'fasta',
+        availability: 'direct_url',
+        source: 'derived_from_uniprot_accession'
+      },
+      {
+        kind: 'uniprot_txt',
+        accession: 'P38398',
+        label: 'UniProtKB flat-file record',
+        url: 'https://rest.uniprot.org/uniprotkb/P38398.txt',
+        format: 'txt',
+        availability: 'direct_url',
+        source: 'derived_from_uniprot_accession'
+      }
+    ],
+    source_database: 'rest-json/uniprot',
+    source_domain: 'protein',
+    stable_id: 'P38398',
+    stable_id_namespace: 'uniprot.accession',
+    primary_url: 'https://www.uniprot.org/uniprotkb/P38398/entry'
+  })
+  assert.equal(result.totalRows, 1)
+  assert.equal(result.truncated, false)
+  assert.equal(result.nextCursor, undefined)
+  assert.equal(result.provenance.database, 'rest-json/uniprot')
+  assert.equal(result.provenance.sourceVersion, '2026_04')
+  assert.equal(result.provenance.transportName, 'mock-uniprot-rest')
+  assert.equal(result.provenance.defaultProxyMode, 'disabled')
+})
+
+test('UniProt adapter rejects filters that cannot be translated before network access', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/rest-json/uniprot/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true, parsed.errors.join('\n'))
+  let calls = 0
+  const adapter = new UniProtAdapter(parsed.manifest as DbConnectorManifest, {
+    transport: {
+      name: 'unexpected-uniprot-network',
+      async fetch() {
+        calls += 1
+        return new Response('{}', { status: 200 })
+      }
+    }
+  })
+
+  await assert.rejects(
+    () =>
+      adapter.query({
+        domain: 'protein',
+        filters: [{ field: 'gene_nam', op: '=', value: 'BRCA1' }],
+        limit: 10
+      }),
+    /does not accept filter: gene_nam/
+  )
+  await assert.rejects(
+    () =>
+      adapter.query({
+        domain: 'protein',
+        filters: [{ field: 'gene_name', op: '>', value: 'BRCA1' }],
+        limit: 10
+      }),
+    /does not support op > for filter: gene_name/
+  )
+  await assert.rejects(
+    () =>
+      adapter.query({
+        domain: 'protein',
+        filters: [{ field: 'gene_name', op: '=', value: 'BRCA1' }],
+        rawQuery: 'gene_exact:BRCA1',
+        limit: 10
+      }),
+    /filters and rawQuery cannot be used together/
+  )
+  await assert.rejects(
+    () =>
+      adapter.query({
+        domain: 'id_mapping',
+        filters: [
+          { field: 'to', op: '=', value: 'Ensembl' },
+          { field: 'ids', op: 'in', value: ['P38398'] },
+          { field: 'extra', op: '=', value: 'ignored' }
+        ],
+        limit: 10
+      }),
+    /does not accept filter: extra/
+  )
+  await assert.rejects(
+    () =>
+      adapter.query({
+        domain: 'uniref',
+        filters: [{ field: 'identity', op: '>', value: 0.9 }],
+        limit: 10
+      }),
+    /does not support op > for filter: identity/
+  )
+  assert.equal(calls, 0)
+})
+
+test('UniProt adapter queries UniRef, UniParc, and Proteomes REST collections', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/rest-json/uniprot/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true)
+  const manifest = parsed.manifest as DbConnectorManifest
+  assert.equal(
+    ['uniref', 'uniparc', 'proteome'].every((domain) =>
+      manifest.domains.some((candidate) => candidate.id === domain)
+    ),
+    true
+  )
+
+  const seenPaths: string[] = []
+  const adapter = new UniProtAdapter(manifest, {
+    now: () => new Date('2026-09-19T00:00:00.000Z'),
+    sleep: async () => {},
+    transport: {
+      name: 'mock-uniprot-collections',
+      async fetch(input) {
+        seenPaths.push(`${input.pathname}${input.search}`)
+        assert.equal(input.hostname, 'rest.uniprot.org')
+        assert.equal(input.searchParams.get('format'), 'json')
+        assert.equal(input.searchParams.get('size'), '1')
+
+        if (input.pathname === '/uniref/search') {
+          assert.equal(input.searchParams.get('query'), 'UniRef50_P38398')
+          return new Response(
+            JSON.stringify({
+              results: [
+                {
+                  id: 'UniRef50_P38398',
+                  name: 'Cluster: Breast cancer type 1 susceptibility protein',
+                  entryType: 'UniRef50',
+                  updated: '2026-09-02',
+                  commonTaxon: { scientificName: 'Eukaryota', taxonId: 2759 },
+                  memberCount: 42,
+                  organismCount: 12,
+                  seedId: 'P38398',
+                  memberIdTypes: ['UniProtKB ID'],
+                  members: ['P38398', 'A0A024RBG1'],
+                  organisms: [
+                    { scientificName: 'Homo sapiens', commonName: 'Human', taxonId: 9606 }
+                  ],
+                  goTerms: [{ goId: 'GO:0005634', aspect: 'Cellular component' }, {}],
+                  representativeMember: {
+                    memberId: 'P38398',
+                    memberIdType: 'UniProtKB ID',
+                    proteinName: 'Breast cancer type 1 susceptibility protein',
+                    organismName: 'Homo sapiens',
+                    organismTaxId: 9606,
+                    accessions: ['P38398'],
+                    uniref90Id: 'UniRef90_P38398',
+                    uniref100Id: 'UniRef100_P38398',
+                    uniparcId: 'UPI0000126AC8',
+                    sequence: {
+                      value: 'MDLSALRVEEVQNVINAMQKILECPICLELIKE',
+                      length: 1863,
+                      molWeight: 207721,
+                      crc64: 'ABCDEF0123456789',
+                      md5: '0123456789abcdef0123456789abcdef'
+                    }
+                  }
+                }
+              ]
+            }),
+            {
+              status: 200,
+              headers: {
+                'content-type': 'application/json',
+                'x-total-results': '1',
+                'x-uniprot-release': '2026_04'
+              }
+            }
+          )
+        }
+
+        if (input.pathname === '/uniparc/search') {
+          assert.equal(input.searchParams.get('query'), 'P38398')
+          return new Response(
+            JSON.stringify({
+              results: [
+                {
+                  uniParcId: 'UPI0000126AC8',
+                  crossReferenceCount: 88,
+                  uniProtKBAccessions: ['P38398'],
+                  commonTaxons: [
+                    { topLevel: 'Eukaryota', commonTaxon: 'Homo sapiens', commonTaxonId: 9606 },
+                    {}
+                  ],
+                  sequence: {
+                    value: 'MDLSALRVEEVQNVINAMQKILECPICLELIKE',
+                    length: 1863,
+                    molWeight: 207721,
+                    crc64: 'ABCDEF0123456789',
+                    md5: '0123456789abcdef0123456789abcdef'
+                  },
+                  sequenceFeatures: [
+                    {
+                      database: 'InterPro',
+                      databaseId: 'IPR001841',
+                      interproGroup: { id: 'IPR001841', name: 'Zinc finger, RING-type' },
+                      locations: [{ start: 24, end: 64, alignment: '24..64' }, {}]
+                    },
+                    {}
+                  ],
+                  oldestCrossRefCreated: '1995-11-01',
+                  mostRecentCrossRefUpdated: '2026-04-08'
+                }
+              ]
+            }),
+            {
+              status: 200,
+              headers: {
+                'content-type': 'application/json',
+                'x-total-results': '1',
+                'x-uniprot-release': '2026_04'
+              }
+            }
+          )
+        }
+
+        assert.equal(input.pathname, '/proteomes/search')
+        assert.equal(input.searchParams.get('query'), 'UP000005640')
+        return new Response(
+          JSON.stringify({
+            results: [
+              {
+                id: 'UP000005640',
+                description: 'Homo sapiens reference proteome',
+                taxonomy: {
+                  scientificName: 'Homo sapiens',
+                  commonName: 'Human',
+                  taxonId: 9606,
+                  mnemonic: 'HUMAN'
+                },
+                modified: '2026-04-22',
+                proteomeType: 'Reference proteome',
+                superkingdom: 'Eukaryota',
+                geneCount: 20642,
+                proteinCount: 81653,
+                annotationScore: 4.2,
+                proteomeStatistics: {
+                  reviewedProteinCount: 20419,
+                  unreviewedProteinCount: 61234,
+                  isoformProteinCount: 42120
+                },
+                genomeAssembly: {
+                  assemblyId: 'GCA_000001405.29',
+                  genomeAssemblyUrl: 'https://www.ncbi.nlm.nih.gov/assembly/GCA_000001405.29',
+                  level: 'Chromosome',
+                  source: 'Genome assembly'
+                },
+                genomeAnnotation: {
+                  source: 'Ensembl',
+                  url: 'https://www.ensembl.org/Homo_sapiens'
+                },
+                components: [
+                  {
+                    name: 'Chromosome 17',
+                    proteinCount: 3300,
+                    genomeAnnotation: { source: 'Ensembl' },
+                    proteomeCrossReferences: [{ id: 'CM000679.2' }]
+                  }
+                ],
+                citations: [
+                  {
+                    citationCrossReferences: [{ database: 'PubMed', id: '30357393' }]
+                  }
+                ]
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: {
+              'content-type': 'application/json',
+              'x-total-results': '1',
+              'x-uniprot-release': '2026_04'
+            }
+          }
+        )
+      }
+    }
+  })
+
+  const uniref = await adapter.query({
+    domain: 'uniref',
+    rawQuery: 'UniRef50_P38398',
+    fields: ['id', 'representative_member_id', 'sequence_length', 'go_terms', 'url'],
+    limit: 1
+  })
+  assert.deepEqual(uniref.rows[0], {
+    id: 'UniRef50_P38398',
+    representative_member_id: 'P38398',
+    sequence_length: 1863,
+    go_terms: [{ go_id: 'GO:0005634', aspect: 'Cellular component' }],
+    url: 'https://www.uniprot.org/uniref/UniRef50_P38398',
+    source_database: 'rest-json/uniprot',
+    source_domain: 'uniref',
+    stable_id: 'UniRef50_P38398',
+    stable_id_namespace: 'uniprot.uniref_id',
+    primary_url: 'https://www.uniprot.org/uniref/UniRef50_P38398'
+  })
+  assert.equal(uniref.provenance.domain, 'uniref')
+  assert.equal(uniref.provenance.sourceVersion, '2026_04')
+  assert.equal(uniref.truncated, false)
+  assert.equal(uniref.nextCursor, undefined)
+
+  const uniparc = await adapter.query({
+    domain: 'uniparc',
+    rawQuery: 'P38398',
+    fields: ['uniparc_id', 'uniprotkb_accessions', 'common_taxons', 'sequence_features', 'url'],
+    limit: 1
+  })
+  assert.deepEqual(uniparc.rows[0], {
+    uniparc_id: 'UPI0000126AC8',
+    uniprotkb_accessions: ['P38398'],
+    common_taxons: [{ top_level: 'Eukaryota', common_taxon: 'Homo sapiens', tax_id: 9606 }],
+    sequence_features: [
+      {
+        database: 'InterPro',
+        database_id: 'IPR001841',
+        interpro_id: 'IPR001841',
+        interpro_name: 'Zinc finger, RING-type',
+        locations: [{ start: 24, end: 64, alignment: '24..64' }]
+      }
+    ],
+    url: 'https://www.uniprot.org/uniparc/UPI0000126AC8',
+    source_database: 'rest-json/uniprot',
+    source_domain: 'uniparc',
+    stable_id: 'UPI0000126AC8',
+    stable_id_namespace: 'uniprot.uniparc_id',
+    primary_url: 'https://www.uniprot.org/uniparc/UPI0000126AC8'
+  })
+  assert.equal(uniparc.provenance.domain, 'uniparc')
+  assert.equal(uniparc.truncated, false)
+  assert.equal(uniparc.nextCursor, undefined)
+
+  const proteome = await adapter.query({
+    domain: 'proteome',
+    rawQuery: 'UP000005640',
+    fields: ['id', 'organism', 'tax_id', 'protein_count', 'components', 'pubmed_ids', 'url'],
+    limit: 1
+  })
+  assert.deepEqual(proteome.rows[0], {
+    id: 'UP000005640',
+    organism: 'Homo sapiens',
+    tax_id: 9606,
+    protein_count: 81653,
+    components: [
+      {
+        name: 'Chromosome 17',
+        protein_count: 3300,
+        genome_annotation_source: 'Ensembl',
+        genome_accessions: ['CM000679.2']
+      }
+    ],
+    pubmed_ids: ['30357393'],
+    url: 'https://www.uniprot.org/proteomes/UP000005640',
+    source_database: 'rest-json/uniprot',
+    source_domain: 'proteome',
+    stable_id: 'UP000005640',
+    stable_id_namespace: 'uniprot.proteome_id',
+    primary_url: 'https://www.uniprot.org/proteomes/UP000005640'
+  })
+  assert.equal(proteome.provenance.domain, 'proteome')
+  assert.equal(proteome.truncated, false)
+  assert.equal(proteome.nextCursor, undefined)
+  assert.deepEqual(
+    seenPaths.map((path) => path.split('?')[0]),
+    ['/uniref/search', '/uniparc/search', '/proteomes/search']
+  )
+})
+
+test('UniProt adapter runs ID mapping jobs and normalizes mapping results', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/rest-json/uniprot/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true)
+  const manifest = parsed.manifest as DbConnectorManifest
+  assert.equal(
+    manifest.domains.some((domain) => domain.id === 'id_mapping'),
+    true
+  )
+
+  const calls: Array<{ path: string; method?: string; body?: string }> = []
+  const adapter = new UniProtAdapter(manifest, {
+    now: () => new Date('2026-09-18T00:00:00.000Z'),
+    sleep: async () => {},
+    transport: {
+      name: 'mock-uniprot-id-mapping',
+      async fetch(input, init) {
+        calls.push({
+          path: `${input.pathname}${input.search}`,
+          method: init.method,
+          body: typeof init.body === 'string' ? init.body : undefined
+        })
+        assert.equal(input.hostname, 'rest.uniprot.org')
+        if (input.pathname === '/idmapping/run') {
+          assert.equal(init.method, 'POST')
+          assert.equal(init.headers instanceof Headers, true)
+          const body = new URLSearchParams(typeof init.body === 'string' ? init.body : '')
+          assert.equal(body.get('from'), 'UniProtKB_AC-ID')
+          assert.equal(body.get('to'), 'Ensembl')
+          assert.equal(body.get('ids'), 'P38398,Q9Y261')
+          return new Response(JSON.stringify({ jobId: 'JOB-123' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' }
+          })
+        }
+        if (input.pathname === '/idmapping/status/JOB-123') {
+          const statusCalls = calls.filter((call) =>
+            call.path.startsWith('/idmapping/status/JOB-123')
+          ).length
+          return new Response(
+            JSON.stringify({ jobStatus: statusCalls === 1 ? 'RUNNING' : 'FINISHED' }),
+            {
+              status: 200,
+              headers: {
+                'content-type': 'application/json',
+                'x-uniprot-release': '2026_04'
+              }
+            }
+          )
+        }
+        assert.equal(input.pathname, '/idmapping/results/JOB-123')
+        assert.equal(input.searchParams.get('format'), 'json')
+        assert.equal(input.searchParams.get('size'), '2')
+        assert.equal(input.searchParams.get('cursor'), 'next-page')
+        return new Response(
+          JSON.stringify({
+            results: [
+              { from: 'P38398', to: 'ENSG00000012048' },
+              {
+                from: 'Q9Y261',
+                to: {
+                  id: 'ENSG00000141510',
+                  name: 'TP53'
+                }
+              }
+            ],
+            failedIds: ['BAD_ID']
+          }),
+          {
+            status: 200,
+            headers: {
+              'content-type': 'application/json',
+              'x-total-results': '2',
+              link: '<https://rest.uniprot.org/idmapping/results/JOB-123?cursor=after>; rel="next"'
+            }
+          }
+        )
+      }
+    }
+  })
+
+  const result = await adapter.query(
+    {
+      domain: 'id_mapping',
+      filters: [
+        { field: 'from', op: '=', value: 'UniProtKB_AC-ID' },
+        { field: 'to', op: '=', value: 'Ensembl' },
+        { field: 'ids', op: 'in', value: ['P38398', 'Q9Y261'] }
+      ],
+      fields: ['from', 'to', 'from_db', 'to_db', 'job_id', 'target', 'failed', 'failure'],
+      limit: 2,
+      cursor: 'next-page'
+    },
+    { defaultProxyMode: 'disabled' }
+  )
+
+  assert.deepEqual(
+    calls.map((call) => call.path),
+    [
+      '/idmapping/run',
+      '/idmapping/status/JOB-123',
+      '/idmapping/status/JOB-123',
+      '/idmapping/results/JOB-123?format=json&size=2&cursor=next-page'
+    ]
+  )
+  assert.deepEqual(result.rows, [
+    {
+      from: 'P38398',
+      to: 'ENSG00000012048',
+      from_db: 'UniProtKB_AC-ID',
+      to_db: 'Ensembl',
+      job_id: 'JOB-123',
+      failed: false,
+      source_database: 'rest-json/uniprot',
+      source_domain: 'id_mapping'
+    },
+    {
+      from: 'Q9Y261',
+      to: 'ENSG00000141510',
+      from_db: 'UniProtKB_AC-ID',
+      to_db: 'Ensembl',
+      job_id: 'JOB-123',
+      target: {
+        id: 'ENSG00000141510',
+        name: 'TP53'
+      },
+      failed: false,
+      source_database: 'rest-json/uniprot',
+      source_domain: 'id_mapping'
+    },
+    {
+      from: 'BAD_ID',
+      from_db: 'UniProtKB_AC-ID',
+      to_db: 'Ensembl',
+      job_id: 'JOB-123',
+      failed: true,
+      source_database: 'rest-json/uniprot',
+      source_domain: 'id_mapping'
+    }
+  ])
+  assert.equal(result.totalRows, 2)
+  assert.equal(result.truncated, true)
+  assert.equal(result.nextCursor, 'after')
+  assert.equal(result.provenance.database, 'rest-json/uniprot')
+  assert.equal(result.provenance.domain, 'id_mapping')
+  assert.equal(result.provenance.sourceVersion, '2026_04')
+  assert.equal(result.provenance.attempts, 4)
+  assert.equal(result.provenance.defaultProxyMode, 'disabled')
 })
 
 test('Sparql adapter renders bounded SELECT queries and parses SPARQL JSON rows', async () => {
@@ -1036,6 +3725,7 @@ test('Sparql adapter renders bounded SELECT queries and parses SPARQL JSON rows'
     cursor: '4'
   })
   assert.match(rendered, /UCASE\("BRCA1"\)/)
+  assert.match(rendered, /up:sequence\/rdf:value \?sequence/)
   assert.match(rendered, /LIMIT 2/)
   assert.match(rendered, /OFFSET 4/)
 
@@ -1052,11 +3742,14 @@ test('Sparql adapter renders bounded SELECT queries and parses SPARQL JSON rows'
         assert.equal(input.searchParams.get('format'), 'json')
         const query = input.searchParams.get('query') ?? ''
         assert.match(query, /gene_name/)
+        assert.match(query, /sequence/)
         assert.match(query, /LIMIT 2/)
         assert.match(query, /OFFSET 4/)
         return new Response(
           JSON.stringify({
-            head: { vars: ['accession', 'mnemonic', 'protein_name', 'gene_name', 'organism'] },
+            head: {
+              vars: ['accession', 'mnemonic', 'protein_name', 'gene_name', 'organism', 'sequence']
+            },
             results: {
               bindings: [
                 {
@@ -1067,7 +3760,8 @@ test('Sparql adapter renders bounded SELECT queries and parses SPARQL JSON rows'
                     value: 'Breast cancer type 1 susceptibility protein'
                   },
                   gene_name: { type: 'literal', value: 'BRCA1' },
-                  organism: { type: 'literal', value: 'Homo sapiens' }
+                  organism: { type: 'literal', value: 'Homo sapiens' },
+                  sequence: { type: 'literal', value: 'MDLSALRVEEVQNVINAMQKILECPICLELIKE' }
                 },
                 {
                   accession: { type: 'literal', value: 'Q9BX63' },
@@ -1089,7 +3783,7 @@ test('Sparql adapter renders bounded SELECT queries and parses SPARQL JSON rows'
     {
       domain: 'protein',
       filters: [{ field: 'gene_name', op: '=', value: 'BRCA1' }],
-      fields: ['accession', 'gene_name', 'protein_name'],
+      fields: ['accession', 'gene_name', 'protein_name', 'sequence'],
       limit: 2,
       cursor: '4'
     },
@@ -1100,7 +3794,13 @@ test('Sparql adapter renders bounded SELECT queries and parses SPARQL JSON rows'
   assert.deepEqual(result.rows[0], {
     accession: 'P38398',
     gene_name: 'BRCA1',
-    protein_name: 'Breast cancer type 1 susceptibility protein'
+    protein_name: 'Breast cancer type 1 susceptibility protein',
+    sequence: 'MDLSALRVEEVQNVINAMQKILECPICLELIKE',
+    source_database: 'sparql/uniprot',
+    source_domain: 'protein',
+    stable_id: 'P38398',
+    stable_id_namespace: 'uniprot.accession',
+    primary_url: 'https://www.uniprot.org/uniprotkb/P38398/entry'
   })
   assert.equal(result.rows.length, 2)
   assert.equal(result.truncated, true)
@@ -1146,13 +3846,88 @@ test('Entrez adapter translates filters into an Entrez query string', () => {
   assert.equal(summaryParams.get('db'), 'gene')
   assert.equal(summaryParams.get('id'), '672,675')
   assert.equal(summaryParams.get('retmode'), 'json')
+  const geneFetchParams = buildEntrezFetchParams(manifest, { domain: 'gene' }, ['672', '675'])
+  assert.equal(geneFetchParams.get('db'), 'gene')
+  assert.equal(geneFetchParams.get('id'), '672,675')
+  assert.equal(geneFetchParams.get('retmode'), 'xml')
   const fetchParams = buildEntrezFetchParams(manifest, { domain: 'pubmed' }, ['40000001'])
   assert.equal(fetchParams.get('db'), 'pubmed')
   assert.equal(fetchParams.get('id'), '40000001')
   assert.equal(fetchParams.get('retmode'), 'xml')
+  const clinvarFetchParams = buildEntrezFetchParams(manifest, { domain: 'clinvar' }, [
+    'VCV000012345'
+  ])
+  assert.equal(clinvarFetchParams.get('db'), 'clinvar')
+  assert.equal(clinvarFetchParams.get('id'), 'VCV000012345')
+  assert.equal(clinvarFetchParams.get('retmode'), 'xml')
+  const proteinFetchParams = buildEntrezFetchParams(manifest, { domain: 'protein' }, ['4557601'])
+  assert.equal(proteinFetchParams.get('db'), 'protein')
+  assert.equal(proteinFetchParams.get('id'), '4557601')
+  assert.equal(proteinFetchParams.get('rettype'), 'fasta')
+  assert.equal(proteinFetchParams.get('retmode'), 'text')
+  const nucleotideFetchParams = buildEntrezFetchParams(manifest, { domain: 'nucleotide' }, [
+    '555931'
+  ])
+  assert.equal(nucleotideFetchParams.get('db'), 'nuccore')
+  assert.equal(nucleotideFetchParams.get('id'), '555931')
+  assert.equal(nucleotideFetchParams.get('rettype'), 'fasta')
+  assert.equal(nucleotideFetchParams.get('retmode'), 'text')
+  const biosampleFetchParams = buildEntrezFetchParams(manifest, { domain: 'biosample' }, ['123456'])
+  assert.equal(biosampleFetchParams.get('db'), 'biosample')
+  assert.equal(biosampleFetchParams.get('id'), '123456')
+  assert.equal(biosampleFetchParams.get('retmode'), 'xml')
+  const sraFetchParams = buildEntrezFetchParams(manifest, { domain: 'sra' }, ['100001'])
+  assert.equal(sraFetchParams.get('db'), 'sra')
+  assert.equal(sraFetchParams.get('id'), '100001')
+  assert.equal(sraFetchParams.get('retmode'), 'xml')
+  const geoFetchParams = buildEntrezFetchParams(manifest, { domain: 'geo' }, ['200002553'])
+  assert.equal(geoFetchParams.get('db'), 'gds')
+  assert.equal(geoFetchParams.get('id'), '200002553')
+  assert.equal(geoFetchParams.get('retmode'), 'text')
+  const bioProjectFetchParams = buildEntrezFetchParams(manifest, { domain: 'bioproject' }, [
+    '92161'
+  ])
+  assert.equal(bioProjectFetchParams.get('db'), 'bioproject')
+  assert.equal(bioProjectFetchParams.get('id'), '92161')
+  assert.equal(bioProjectFetchParams.get('retmode'), 'xml')
+  const taxonomyFetchParams = buildEntrezFetchParams(manifest, { domain: 'taxonomy' }, ['9606'])
+  assert.equal(taxonomyFetchParams.get('db'), 'taxonomy')
+  assert.equal(taxonomyFetchParams.get('id'), '9606')
+  assert.equal(taxonomyFetchParams.get('retmode'), 'xml')
 })
 
-test('Entrez adapter queries esearch and esummary through the DB HTTP policy executor', async () => {
+test('Entrez request validation rejects ambiguous filters and rawQuery', () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/entrez/ncbi/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true, parsed.errors.join('\n'))
+  const manifest = parsed.manifest as DbConnectorManifest
+
+  assert.throws(
+    () =>
+      buildEntrezSearchParams(manifest, {
+        domain: 'gene',
+        filters: [{ field: 'gene', op: '=', value: 'BRCA1' }],
+        rawQuery: 'BRCA1[gene]',
+        limit: 10
+      }),
+    /filters and rawQuery cannot be used together/
+  )
+  assert.throws(
+    () =>
+      buildEntrezSearchParams(manifest, {
+        domain: 'gene',
+        filters: [
+          { field: 'gene', op: '=', value: 'BRCA1' },
+          { field: 'gene', op: '=', value: 'BRCA2' }
+        ],
+        limit: 10
+      }),
+    /duplicate filter: gene/
+  )
+})
+
+test('Entrez adapter queries esearch, esummary, and gene efetch through the DB HTTP policy executor', async () => {
   const parsed = parseDbConnectorManifest(
     readFileSync('resources/db-connectors/entrez/ncbi/connector.yaml', 'utf-8')
   )
@@ -1178,6 +3953,80 @@ test('Entrez adapter queries esearch and esummary through the DB HTTP policy exe
                 idlist: ['672', '675']
               }
             }),
+            { status: 200 }
+          )
+        }
+        if (input.pathname.endsWith('/efetch.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'gene')
+          assert.equal(input.searchParams.get('id'), '672,675')
+          assert.equal(input.searchParams.get('retmode'), 'xml')
+          return new Response(
+            `<?xml version="1.0"?>
+            <Entrezgene-Set>
+              <Entrezgene>
+                <Entrezgene_track-info>
+                  <Gene-track>
+                    <Gene-track_geneid>672</Gene-track_geneid>
+                  </Gene-track>
+                </Entrezgene_track-info>
+                <Entrezgene_type value="protein-coding">6</Entrezgene_type>
+                <Entrezgene_source>
+                  <BioSource>
+                    <BioSource_org>
+                      <Org-ref>
+                        <Org-ref_taxname>Homo sapiens</Org-ref_taxname>
+                        <Org-ref_db>
+                          <Dbtag>
+                            <Dbtag_db>taxon</Dbtag_db>
+                            <Dbtag_tag>
+                              <Object-id>
+                                <Object-id_id>9606</Object-id_id>
+                              </Object-id>
+                            </Dbtag_tag>
+                          </Dbtag>
+                        </Org-ref_db>
+                      </Org-ref>
+                    </BioSource_org>
+                  </BioSource>
+                </Entrezgene_source>
+                <Entrezgene_gene>
+                  <Gene-ref>
+                    <Gene-ref_locus>BRCA1</Gene-ref_locus>
+                    <Gene-ref_desc>BRCA1 DNA repair associated</Gene-ref_desc>
+                    <Gene-ref_maploc>17q21.31</Gene-ref_maploc>
+                    <Gene-ref_syn>
+                      <Gene-ref_syn_E>BRCC1</Gene-ref_syn_E>
+                      <Gene-ref_syn_E>FANCS</Gene-ref_syn_E>
+                      <Gene-ref_syn_E>RNF53</Gene-ref_syn_E>
+                    </Gene-ref_syn>
+                  </Gene-ref>
+                </Entrezgene_gene>
+                <Entrezgene_summary>BRCA1 is involved in DNA repair and transcriptional regulation.</Entrezgene_summary>
+                <Entrezgene_location>
+                  <Maps>
+                    <Maps_display-str>17q21.31</Maps_display-str>
+                  </Maps>
+                </Entrezgene_location>
+              </Entrezgene>
+              <Entrezgene>
+                <Entrezgene_track-info>
+                  <Gene-track>
+                    <Gene-track_geneid>675</Gene-track_geneid>
+                  </Gene-track>
+                </Entrezgene_track-info>
+                <Entrezgene_type value="protein-coding">6</Entrezgene_type>
+                <Entrezgene_gene>
+                  <Gene-ref>
+                    <Gene-ref_locus>BRCA2</Gene-ref_locus>
+                    <Gene-ref_desc>BRCA2 DNA repair associated</Gene-ref_desc>
+                    <Gene-ref_syn>
+                      <Gene-ref_syn_E>FAD1</Gene-ref_syn_E>
+                    </Gene-ref_syn>
+                  </Gene-ref>
+                </Entrezgene_gene>
+                <Entrezgene_summary>BRCA2 is involved in homologous recombination repair.</Entrezgene_summary>
+              </Entrezgene>
+            </Entrezgene-Set>`,
             { status: 200 }
           )
         }
@@ -1220,24 +4069,853 @@ test('Entrez adapter queries esearch and esummary through the DB HTTP policy exe
   assert.equal(result.rows[0].uid, '672')
   assert.equal(result.rows[0].symbol, 'BRCA1')
   assert.equal(result.rows[0].description, 'BRCA1 DNA repair associated')
-  assert.deepEqual(result.rows[0].aliases, ['BRCC1', 'FANCS'])
+  assert.equal(
+    result.rows[0].summary,
+    'BRCA1 is involved in DNA repair and transcriptional regulation.'
+  )
+  assert.deepEqual(result.rows[0].aliases, ['BRCC1', 'FANCS', 'RNF53'])
+  assert.equal(result.rows[0].mapLocation, '17q21.31')
+  assert.equal(result.rows[0].gene_type, 'protein-coding')
+  assert.equal(result.rows[0].tax_id, 9606)
   assert.deepEqual(result.rows[0].organism, {
     scientificName: 'Homo sapiens',
     commonName: 'human',
     taxId: 9606
   })
   assert.equal(result.rows[1].symbol, 'BRCA2')
+  assert.equal(result.rows[1].summary, 'BRCA2 is involved in homologous recombination repair.')
+  assert.deepEqual(result.rows[1].aliases, ['FAD1'])
+  assert.equal(result.rows[1].gene_type, 'protein-coding')
   assert.equal(result.totalRows, 3)
   assert.equal(result.truncated, true)
   assert.equal(result.nextCursor, '2')
   assert.equal(result.provenance.retried, true)
-  assert.equal(result.provenance.attempts, 3)
+  assert.equal(result.provenance.attempts, 4)
   assert.equal(result.provenance.lastStatus, 200)
   assert.equal(result.provenance.transportName, 'mock-ncbi')
   assert.equal(result.provenance.defaultProxyMode, 'auto')
+
+  const projected = await adapter.query({
+    domain: 'gene',
+    filters: [{ field: 'gene', op: '=', value: 'BRCA1' }],
+    fields: ['uid', 'symbol'],
+    limit: 2
+  })
+  assert.deepEqual(projected.rows, [
+    {
+      uid: '672',
+      symbol: 'BRCA1',
+      source_database: 'entrez/ncbi',
+      source_domain: 'gene',
+      stable_id: '672',
+      stable_id_namespace: 'ncbi.gene_id',
+      primary_url: 'https://www.ncbi.nlm.nih.gov/gene/672'
+    },
+    {
+      uid: '675',
+      symbol: 'BRCA2',
+      source_database: 'entrez/ncbi',
+      source_domain: 'gene',
+      stable_id: '675',
+      stable_id_namespace: 'ncbi.gene_id',
+      primary_url: 'https://www.ncbi.nlm.nih.gov/gene/675'
+    }
+  ])
+
+  const callsBeforeInvalidProjection = calls
+  await assert.rejects(
+    () =>
+      adapter.query({
+        domain: 'gene',
+        filters: [{ field: 'gene', op: '=', value: 'BRCA1' }],
+        fields: ['symbl'],
+        limit: 2
+      }),
+    /does not expose field: symbl/
+  )
+  assert.equal(calls, callsBeforeInvalidProjection)
+
+  await assert.rejects(
+    () =>
+      adapter.query({
+        domain: 'gene',
+        filters: [{ field: 'gene', op: '=', value: 'BRCA1' }],
+        fields: ['uid', 'uid'],
+        limit: 2
+      }),
+    /duplicate field: uid/
+  )
+  assert.equal(calls, callsBeforeInvalidProjection)
 })
 
-test('Entrez adapter normalizes PubMed efetch abstracts and ClinVar esummary rows', async () => {
+test('Entrez adapter fetches NCBI BioSample XML attributes through efetch', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/entrez/ncbi/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true)
+  const manifest = parsed.manifest as DbConnectorManifest
+  const adapter = new EntrezAdapter(manifest, {
+    now: () => new Date('2026-09-17T00:00:00.000Z'),
+    sleep: async () => {},
+    transport: {
+      name: 'mock-ncbi-biosample',
+      async fetch(input) {
+        assert.equal(input.hostname, 'eutils.ncbi.nlm.nih.gov')
+        if (input.pathname.endsWith('/esearch.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'biosample')
+          assert.equal(input.searchParams.get('term'), 'SAMN00000001')
+          return new Response(
+            JSON.stringify({
+              esearchresult: {
+                count: '1',
+                idlist: ['123456']
+              }
+            }),
+            { status: 200 }
+          )
+        }
+        if (input.pathname.endsWith('/efetch.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'biosample')
+          assert.equal(input.searchParams.get('id'), '123456')
+          assert.equal(input.searchParams.get('retmode'), 'xml')
+          return new Response(
+            `<?xml version="1.0"?>
+            <BioSampleSet>
+              <BioSample access="SAMN00000001" id="123456" submission_date="2024-01-02">
+                <Ids>
+                  <Id db="BioSample" is_primary="1">SAMN00000001</Id>
+                  <Id db_label="Sample name">BRCA1_sample_1</Id>
+                </Ids>
+                <Description>
+                  <Title>Human breast tumor sample</Title>
+                  <Organism taxonomy_id="9606" taxonomy_name="Homo sapiens">Homo sapiens</Organism>
+                </Description>
+                <Owner>
+                  <Name>Example Genome Center</Name>
+                </Owner>
+                <Models>
+                  <Model>Generic</Model>
+                </Models>
+                <Package display_name="Human">Human.1.0</Package>
+                <Attributes>
+                  <Attribute attribute_name="collection date">2024-01-01</Attribute>
+                  <Attribute attribute_name="geo_loc_name">USA: California</Attribute>
+                  <Attribute attribute_name="tissue">breast tumor</Attribute>
+                  <Attribute attribute_name="isolation-source">primary tumor</Attribute>
+                </Attributes>
+              </BioSample>
+            </BioSampleSet>`,
+            { status: 200 }
+          )
+        }
+        assert.equal(input.pathname.endsWith('/esummary.fcgi'), true)
+        assert.equal(input.searchParams.get('db'), 'biosample')
+        assert.equal(input.searchParams.get('id'), '123456')
+        return new Response(
+          JSON.stringify({
+            result: {
+              uids: ['123456'],
+              '123456': {
+                uid: '123456',
+                accession: 'SAMN00000001',
+                title: 'Human breast tumor sample',
+                organism: 'Homo sapiens',
+                taxid: 9606
+              }
+            }
+          }),
+          { status: 200 }
+        )
+      }
+    }
+  })
+
+  const biosample = await adapter.query({
+    domain: 'biosample',
+    rawQuery: 'SAMN00000001',
+    limit: 1
+  })
+
+  assert.equal(biosample.rows[0].uid, '123456')
+  assert.equal(biosample.rows[0].accession, 'SAMN00000001')
+  assert.equal(biosample.rows[0].title, 'Human breast tumor sample')
+  assert.equal(biosample.rows[0].organism, 'Homo sapiens')
+  assert.equal(biosample.rows[0].tax_id, 9606)
+  assert.equal(biosample.rows[0].sample_name, 'BRCA1_sample_1')
+  assert.equal(biosample.rows[0].owner, 'Example Genome Center')
+  assert.equal(biosample.rows[0].package, 'Human')
+  assert.equal(biosample.rows[0].model, 'Generic')
+  assert.equal(biosample.rows[0].collection_date, '2024-01-01')
+  assert.equal(biosample.rows[0].geo_loc_name, 'USA: California')
+  assert.equal(biosample.rows[0].tissue, 'breast tumor')
+  assert.equal(biosample.rows[0].isolation_source, 'primary tumor')
+  assert.deepEqual(biosample.rows[0].attributes, {
+    collection_date: '2024-01-01',
+    geo_loc_name: 'USA: California',
+    tissue: 'breast tumor',
+    isolation_source: 'primary tumor'
+  })
+  assert.equal(biosample.provenance.attempts, 3)
+  assert.equal(biosample.provenance.transportName, 'mock-ncbi-biosample')
+})
+
+test('Entrez adapter fetches NCBI SRA experiment and run XML details through efetch', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/entrez/ncbi/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true)
+  const manifest = parsed.manifest as DbConnectorManifest
+  const adapter = new EntrezAdapter(manifest, {
+    now: () => new Date('2026-09-17T00:00:00.000Z'),
+    sleep: async () => {},
+    transport: {
+      name: 'mock-ncbi-sra',
+      async fetch(input) {
+        assert.equal(input.hostname, 'eutils.ncbi.nlm.nih.gov')
+        if (input.pathname.endsWith('/esearch.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'sra')
+          assert.equal(input.searchParams.get('term'), 'SRX000001')
+          return new Response(
+            JSON.stringify({
+              esearchresult: {
+                count: '1',
+                idlist: ['100001']
+              }
+            }),
+            { status: 200 }
+          )
+        }
+        if (input.pathname.endsWith('/efetch.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'sra')
+          assert.equal(input.searchParams.get('id'), '100001')
+          assert.equal(input.searchParams.get('retmode'), 'xml')
+          return new Response(
+            `<?xml version="1.0"?>
+            <EXPERIMENT_PACKAGE_SET>
+              <EXPERIMENT_PACKAGE>
+                <STUDY>
+                  <IDENTIFIERS>
+                    <EXTERNAL_ID namespace="BioProject">PRJNA000001</EXTERNAL_ID>
+                  </IDENTIFIERS>
+                </STUDY>
+                <EXPERIMENT accession="SRX000001">
+                  <TITLE>RNA-seq of human breast tumor sample</TITLE>
+                  <STUDY_REF accession="SRP000001"/>
+                  <DESIGN>
+                    <SAMPLE_DESCRIPTOR accession="SRS000001"/>
+                    <LIBRARY_DESCRIPTOR>
+                      <LIBRARY_STRATEGY>RNA-Seq</LIBRARY_STRATEGY>
+                      <LIBRARY_SOURCE>TRANSCRIPTOMIC</LIBRARY_SOURCE>
+                      <LIBRARY_SELECTION>cDNA</LIBRARY_SELECTION>
+                      <LIBRARY_LAYOUT>
+                        <PAIRED/>
+                      </LIBRARY_LAYOUT>
+                    </LIBRARY_DESCRIPTOR>
+                  </DESIGN>
+                  <PLATFORM>
+                    <ILLUMINA>
+                      <INSTRUMENT_MODEL>Illumina HiSeq 2000</INSTRUMENT_MODEL>
+                    </ILLUMINA>
+                  </PLATFORM>
+                </EXPERIMENT>
+                <SAMPLE accession="SRS000001">
+                  <SAMPLE_NAME>
+                    <TAXON_ID>9606</TAXON_ID>
+                    <SCIENTIFIC_NAME>Homo sapiens</SCIENTIFIC_NAME>
+                  </SAMPLE_NAME>
+                  <IDENTIFIERS>
+                    <EXTERNAL_ID namespace="BioSample">SAMN00000001</EXTERNAL_ID>
+                  </IDENTIFIERS>
+                </SAMPLE>
+                <RUN_SET>
+                  <RUN accession="SRR000001" total_spots="1000" total_bases="150000" size="12345" published="2024-01-03">
+                    <SRAFiles>
+                      <SRAFile cluster="public" filename="SRR000001" url="https://sra-pub-run-odp.s3.amazonaws.com/sra/SRR000001/SRR000001" size="12345" md5="abc123" semantic_name="SRA Normalized" supertype="Original"/>
+                    </SRAFiles>
+                  </RUN>
+                  <RUN accession="SRR000002" total_spots="2000" total_bases="300000" size="23456"/>
+                </RUN_SET>
+              </EXPERIMENT_PACKAGE>
+            </EXPERIMENT_PACKAGE_SET>`,
+            { status: 200 }
+          )
+        }
+        assert.equal(input.pathname.endsWith('/esummary.fcgi'), true)
+        assert.equal(input.searchParams.get('db'), 'sra')
+        assert.equal(input.searchParams.get('id'), '100001')
+        return new Response(
+          JSON.stringify({
+            result: {
+              uids: ['100001'],
+              '100001': {
+                uid: '100001',
+                expxml:
+                  '<Summary><Title>RNA-seq of human breast tumor sample</Title></Summary><Experiment acc="SRX000001"/><Study acc="SRP000001"/><Organism taxid="9606" ScientificName="Homo sapiens"/><Sample acc="SRS000001"/><Platform instrument_model="Illumina HiSeq 2000">ILLUMINA</Platform><Bioproject>PRJNA000001</Bioproject><Biosample>SAMN00000001</Biosample>',
+                runs: '<Run acc="SRR000001" total_spots="1000"/><Run acc="SRR000002" total_spots="2000"/>'
+              }
+            }
+          }),
+          { status: 200 }
+        )
+      }
+    }
+  })
+
+  const sra = await adapter.query({
+    domain: 'sra',
+    rawQuery: 'SRX000001',
+    limit: 1
+  })
+
+  assert.equal(sra.rows[0].uid, '100001')
+  assert.equal(sra.rows[0].accession, 'SRX000001')
+  assert.equal(sra.rows[0].title, 'RNA-seq of human breast tumor sample')
+  assert.equal(sra.rows[0].study_accession, 'SRP000001')
+  assert.equal(sra.rows[0].experiment_accession, 'SRX000001')
+  assert.equal(sra.rows[0].sample_accession, 'SRS000001')
+  assert.equal(sra.rows[0].biosample_accession, 'SAMN00000001')
+  assert.equal(sra.rows[0].bioproject_accession, 'PRJNA000001')
+  assert.equal(sra.rows[0].organism, 'Homo sapiens')
+  assert.equal(sra.rows[0].tax_id, 9606)
+  assert.equal(sra.rows[0].platform, 'ILLUMINA')
+  assert.equal(sra.rows[0].instrument_model, 'Illumina HiSeq 2000')
+  assert.equal(sra.rows[0].library_strategy, 'RNA-Seq')
+  assert.equal(sra.rows[0].library_source, 'TRANSCRIPTOMIC')
+  assert.equal(sra.rows[0].library_selection, 'cDNA')
+  assert.equal(sra.rows[0].library_layout, 'PAIRED')
+  assert.deepEqual(sra.rows[0].run_accessions, ['SRR000001', 'SRR000002'])
+  assert.deepEqual(sra.rows[0].runs, [
+    {
+      accession: 'SRR000001',
+      total_spots: 1000,
+      total_bases: 150000,
+      size: 12345,
+      published: '2024-01-03'
+    },
+    {
+      accession: 'SRR000002',
+      total_spots: 2000,
+      total_bases: 300000,
+      size: 23456,
+      published: undefined
+    }
+  ])
+  assert.deepEqual(sra.rows[0].download_urls, {
+    run_browser: {
+      SRR000001: 'https://trace.ncbi.nlm.nih.gov/Traces/?view=run_browser&acc=SRR000001',
+      SRR000002: 'https://trace.ncbi.nlm.nih.gov/Traces/?view=run_browser&acc=SRR000002'
+    },
+    sra_record: {
+      SRR000001: 'https://www.ncbi.nlm.nih.gov/sra/SRR000001',
+      SRR000002: 'https://www.ncbi.nlm.nih.gov/sra/SRR000002'
+    }
+  })
+  assert.deepEqual(sra.rows[0].download_files, [
+    {
+      kind: 'sra_file',
+      accession: 'SRR000001',
+      url: 'https://sra-pub-run-odp.s3.amazonaws.com/sra/SRR000001/SRR000001',
+      format: 'sra',
+      filename: 'SRR000001',
+      size: 12345,
+      md5: 'abc123',
+      semantic_name: 'SRA Normalized',
+      supertype: 'Original',
+      cluster: 'public',
+      availability: 'direct_url',
+      source: 'sra_efetch_xml'
+    },
+    {
+      kind: 'sra_run_browser',
+      accession: 'SRR000001',
+      url: 'https://trace.ncbi.nlm.nih.gov/Traces/?view=run_browser&acc=SRR000001',
+      format: 'html',
+      availability: 'landing_page',
+      source: 'derived_from_run_accession'
+    },
+    {
+      kind: 'sra_run_browser',
+      accession: 'SRR000002',
+      url: 'https://trace.ncbi.nlm.nih.gov/Traces/?view=run_browser&acc=SRR000002',
+      format: 'html',
+      availability: 'landing_page',
+      source: 'derived_from_run_accession'
+    }
+  ])
+  assert.equal(sra.provenance.attempts, 3)
+  assert.equal(sra.provenance.transportName, 'mock-ncbi-sra')
+})
+
+test('Entrez adapter fetches NCBI GEO DataSets text details through efetch', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/entrez/ncbi/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true)
+  const manifest = parsed.manifest as DbConnectorManifest
+  const adapter = new EntrezAdapter(manifest, {
+    now: () => new Date('2026-09-17T00:00:00.000Z'),
+    sleep: async () => {},
+    transport: {
+      name: 'mock-ncbi-geo',
+      async fetch(input) {
+        assert.equal(input.hostname, 'eutils.ncbi.nlm.nih.gov')
+        if (input.pathname.endsWith('/esearch.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'gds')
+          assert.equal(input.searchParams.get('term'), 'GSE2553')
+          return new Response(
+            JSON.stringify({
+              esearchresult: {
+                count: '1',
+                idlist: ['200002553']
+              }
+            }),
+            { status: 200 }
+          )
+        }
+        if (input.pathname.endsWith('/efetch.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'gds')
+          assert.equal(input.searchParams.get('id'), '200002553')
+          assert.equal(input.searchParams.get('retmode'), 'text')
+          return new Response(
+            `1. NHGRI_Sarcoma_Baird
+(Submitter supplied) Sarcomas are a biologically complex group of tumors of mesenchymal origin.
+Organism:\tHomo sapiens
+Type:\t\tExpression profiling by array
+Platform: GPL1977 2 Samples
+FTP download: GEO ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/
+Series\t\tAccession: GSE2553\tID: 200002553`,
+            { status: 200 }
+          )
+        }
+        assert.equal(input.pathname.endsWith('/esummary.fcgi'), true)
+        assert.equal(input.searchParams.get('db'), 'gds')
+        assert.equal(input.searchParams.get('id'), '200002553')
+        return new Response(
+          JSON.stringify({
+            result: {
+              uids: ['200002553'],
+              '200002553': {
+                uid: '200002553',
+                accession: 'GSE2553',
+                title: 'NHGRI_Sarcoma_Baird',
+                summary:
+                  'Sarcomas are a biologically complex group of tumors of mesenchymal origin.',
+                gpl: '1977',
+                gse: '2553',
+                taxon: 'Homo sapiens',
+                entrytype: 'GSE',
+                gdstype: 'Expression profiling by array',
+                pdat: '2005/10/11',
+                samples: [
+                  { accession: 'GSM48846', title: 'Patient sample ST248, Liposarcoma' },
+                  { accession: 'GSM48763', title: 'Patient sample ST357, Liposarcoma' }
+                ],
+                n_samples: 2,
+                pubmedids: ['16230383'],
+                ftplink: 'ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/',
+                geo2r: 'yes',
+                bioproject: 'PRJNA92161'
+              }
+            }
+          }),
+          { status: 200 }
+        )
+      }
+    }
+  })
+
+  const geo = await adapter.query({
+    domain: 'geo',
+    rawQuery: 'GSE2553',
+    limit: 1
+  })
+
+  assert.equal(geo.rows[0].uid, '200002553')
+  assert.equal(geo.rows[0].accession, 'GSE2553')
+  assert.equal(geo.rows[0].title, 'NHGRI_Sarcoma_Baird')
+  assert.equal(
+    geo.rows[0].summary,
+    'Sarcomas are a biologically complex group of tumors of mesenchymal origin.'
+  )
+  assert.equal(
+    geo.rows[0].fetch_summary,
+    '(Submitter supplied) Sarcomas are a biologically complex group of tumors of mesenchymal origin.'
+  )
+  assert.equal(geo.rows[0].organism, 'Homo sapiens')
+  assert.equal(geo.rows[0].entry_type, 'GSE')
+  assert.equal(geo.rows[0].gds_type, 'Expression profiling by array')
+  assert.equal(geo.rows[0].series_accession, 'GSE2553')
+  assert.equal(geo.rows[0].platform_accession, 'GPL1977')
+  assert.deepEqual(geo.rows[0].sample_accessions, ['GSM48846', 'GSM48763'])
+  assert.deepEqual(geo.rows[0].samples, [
+    { accession: 'GSM48846', title: 'Patient sample ST248, Liposarcoma' },
+    { accession: 'GSM48763', title: 'Patient sample ST357, Liposarcoma' }
+  ])
+  assert.equal(geo.rows[0].sample_count, 2)
+  assert.deepEqual(geo.rows[0].pubmed_ids, ['16230383'])
+  assert.equal(geo.rows[0].bioproject_accession, 'PRJNA92161')
+  assert.equal(geo.rows[0].ftp_link, 'ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/')
+  assert.deepEqual(geo.rows[0].download_urls, {
+    series_ftp: 'ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/',
+    series_https: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/',
+    matrix_dir: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/matrix/',
+    matrix:
+      'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/matrix/GSE2553_series_matrix.txt.gz',
+    soft_dir: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/soft/',
+    soft_family:
+      'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/soft/GSE2553_family.soft.gz',
+    miniml_dir: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/miniml/',
+    miniml_family:
+      'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/miniml/GSE2553_family.xml.tgz',
+    supplementary_dir: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/suppl/',
+    raw_tar: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/suppl/GSE2553_RAW.tar'
+  })
+  assert.deepEqual(geo.rows[0].download_files, [
+    {
+      kind: 'series_matrix',
+      label: 'Series Matrix',
+      accession: 'GSE2553',
+      url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/matrix/GSE2553_series_matrix.txt.gz',
+      format: 'txt',
+      compression: 'gzip',
+      availability: 'candidate_file',
+      source: 'derived_from_gse_accession'
+    },
+    {
+      kind: 'series_matrix_directory',
+      label: 'Series Matrix Directory',
+      accession: 'GSE2553',
+      url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/matrix/',
+      format: 'directory',
+      availability: 'directory',
+      source: 'derived_from_gse_accession'
+    },
+    {
+      kind: 'soft_family',
+      label: 'SOFT Family',
+      accession: 'GSE2553',
+      url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/soft/GSE2553_family.soft.gz',
+      format: 'soft',
+      compression: 'gzip',
+      availability: 'candidate_file',
+      source: 'derived_from_gse_accession'
+    },
+    {
+      kind: 'miniml_family',
+      label: 'MINiML Family',
+      accession: 'GSE2553',
+      url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/miniml/GSE2553_family.xml.tgz',
+      format: 'xml',
+      compression: 'tgz',
+      availability: 'candidate_file',
+      source: 'derived_from_gse_accession'
+    },
+    {
+      kind: 'supplementary_directory',
+      label: 'Supplementary Directory',
+      accession: 'GSE2553',
+      url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/suppl/',
+      format: 'directory',
+      availability: 'directory',
+      source: 'derived_from_gse_accession'
+    },
+    {
+      kind: 'raw_tar',
+      label: 'Raw Supplementary Archive',
+      accession: 'GSE2553',
+      url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/suppl/GSE2553_RAW.tar',
+      format: 'tar',
+      availability: 'candidate_file',
+      source: 'derived_from_gse_accession'
+    }
+  ])
+  assert.equal(geo.rows[0].geo2r_available, true)
+  assert.equal(geo.rows[0].published_date, '2005/10/11')
+  assert.equal(geo.provenance.attempts, 3)
+  assert.equal(geo.provenance.transportName, 'mock-ncbi-geo')
+})
+
+test('Entrez adapter fetches NCBI BioProject XML details through efetch', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/entrez/ncbi/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true)
+  const manifest = parsed.manifest as DbConnectorManifest
+  const adapter = new EntrezAdapter(manifest, {
+    now: () => new Date('2026-09-17T00:00:00.000Z'),
+    sleep: async () => {},
+    transport: {
+      name: 'mock-ncbi-bioproject',
+      async fetch(input) {
+        assert.equal(input.hostname, 'eutils.ncbi.nlm.nih.gov')
+        if (input.pathname.endsWith('/esearch.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'bioproject')
+          assert.equal(input.searchParams.get('term'), 'PRJNA92161')
+          return new Response(
+            JSON.stringify({
+              esearchresult: {
+                count: '1',
+                idlist: ['92161']
+              }
+            }),
+            { status: 200 }
+          )
+        }
+        if (input.pathname.endsWith('/efetch.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'bioproject')
+          assert.equal(input.searchParams.get('id'), '92161')
+          assert.equal(input.searchParams.get('retmode'), 'xml')
+          return new Response(
+            `<?xml version="1.0" ?>
+            <RecordSet>
+              <DocumentSummary uid="92161">
+                <Project>
+                  <ProjectID>
+                    <ArchiveID accession="PRJNA92161" archive="NCBI" id="92161"/>
+                  </ProjectID>
+                  <ProjectDescr>
+                    <Name>Homo sapiens</Name>
+                    <Title>NHGRI_Sarcoma_Baird</Title>
+                    <Description>Sarcoma expression profiling project.</Description>
+                    <ExternalLink label="">
+                      <dbXREF db="GEO">
+                        <ID>GSE2553</ID>
+                      </dbXREF>
+                    </ExternalLink>
+                    <Publication date="2005-10-19T00:00:00Z" id="16230383" status="ePublished">
+                      <Reference>16230383</Reference>
+                      <DbType>ePubmed</DbType>
+                    </Publication>
+                    <ProjectReleaseDate>2005-10-11T00:00:00Z</ProjectReleaseDate>
+                    <Relevance>
+                      <Medical>Yes</Medical>
+                    </Relevance>
+                  </ProjectDescr>
+                  <ProjectType>
+                    <ProjectTypeSubmission>
+                      <Target capture="eWhole" material="eTranscriptome" sample_scope="eMultiisolate">
+                        <Organism species="9606" taxID="9606">
+                          <OrganismName>Homo sapiens</OrganismName>
+                          <Supergroup>eEukaryotes</Supergroup>
+                        </Organism>
+                      </Target>
+                      <Method method_type="eArray"/>
+                      <Objectives>
+                        <Data data_type="eExpression"/>
+                      </Objectives>
+                      <ProjectDataTypeSet>
+                        <DataType>Transcriptome or Gene expression</DataType>
+                      </ProjectDataTypeSet>
+                    </ProjectTypeSubmission>
+                  </ProjectType>
+                </Project>
+                <Submission last_update="2013-01-17" submitted="2005-04-21" submission_id="SUB159169">
+                  <Description>
+                    <Organization role="owner" type="institute">
+                      <Name>Genetics Branch, National Cancer Institute</Name>
+                    </Organization>
+                    <Access>public</Access>
+                  </Description>
+                  <Action action_id="SUB159169-1"/>
+                </Submission>
+              </DocumentSummary>
+            </RecordSet>`,
+            { status: 200 }
+          )
+        }
+        assert.equal(input.pathname.endsWith('/esummary.fcgi'), true)
+        assert.equal(input.searchParams.get('db'), 'bioproject')
+        assert.equal(input.searchParams.get('id'), '92161')
+        return new Response(
+          JSON.stringify({
+            result: {
+              uids: ['92161'],
+              '92161': {
+                uid: '92161',
+                taxid: 9606,
+                project_id: 92161,
+                project_acc: 'PRJNA92161',
+                project_type: 'Primary submission',
+                project_data_type: 'Transcriptome or Gene expression',
+                project_target_scope: 'Multiisolate',
+                project_target_material: 'Transcriptome',
+                project_target_capture: 'Whole',
+                project_methodtype: 'Array',
+                project_objectives_list: [{ project_objectivestype: 'Expression' }],
+                registration_date: '2005/10/11 00:00',
+                project_name: 'Homo sapiens',
+                project_title: 'NHGRI_Sarcoma_Baird',
+                project_description: 'Sarcoma expression profiling project.',
+                relevance_medical: 'Yes',
+                organism_name: 'Homo sapiens',
+                sequencing_status: 'Unknown',
+                submitter_organization: 'Genetics Branch, National Cancer Institute',
+                supergroup: 'Eukaryotes'
+              }
+            }
+          }),
+          { status: 200 }
+        )
+      }
+    }
+  })
+
+  const bioProject = await adapter.query({
+    domain: 'bioproject',
+    rawQuery: 'PRJNA92161',
+    limit: 1
+  })
+
+  assert.equal(bioProject.rows[0].uid, '92161')
+  assert.equal(bioProject.rows[0].accession, 'PRJNA92161')
+  assert.equal(bioProject.rows[0].project_id, 92161)
+  assert.equal(bioProject.rows[0].title, 'NHGRI_Sarcoma_Baird')
+  assert.equal(bioProject.rows[0].name, 'Homo sapiens')
+  assert.equal(bioProject.rows[0].description, 'Sarcoma expression profiling project.')
+  assert.equal(bioProject.rows[0].organism, 'Homo sapiens')
+  assert.equal(bioProject.rows[0].tax_id, 9606)
+  assert.equal(bioProject.rows[0].project_type, 'Primary submission')
+  assert.equal(bioProject.rows[0].data_type, 'Transcriptome or Gene expression')
+  assert.equal(bioProject.rows[0].target_scope, 'Multiisolate')
+  assert.equal(bioProject.rows[0].target_material, 'Transcriptome')
+  assert.equal(bioProject.rows[0].target_capture, 'Whole')
+  assert.equal(bioProject.rows[0].method_type, 'Array')
+  assert.deepEqual(bioProject.rows[0].objectives, ['Expression'])
+  assert.deepEqual(bioProject.rows[0].relevance, { medical: 'Yes' })
+  assert.equal(
+    bioProject.rows[0].submitter_organization,
+    'Genetics Branch, National Cancer Institute'
+  )
+  assert.equal(bioProject.rows[0].registration_date, '2005/10/11 00:00')
+  assert.equal(bioProject.rows[0].release_date, '2005-10-11T00:00:00Z')
+  assert.equal(bioProject.rows[0].submitted_date, '2005-04-21')
+  assert.equal(bioProject.rows[0].last_update, '2013-01-17')
+  assert.equal(bioProject.rows[0].submission_id, 'SUB159169')
+  assert.equal(bioProject.rows[0].access, 'public')
+  assert.deepEqual(bioProject.rows[0].geo_accessions, ['GSE2553'])
+  assert.deepEqual(bioProject.rows[0].pubmed_ids, ['16230383'])
+  assert.equal(bioProject.rows[0].supergroup, 'Eukaryotes')
+  assert.equal(bioProject.rows[0].sequencing_status, 'Unknown')
+  assert.equal(bioProject.provenance.attempts, 3)
+  assert.equal(bioProject.provenance.transportName, 'mock-ncbi-bioproject')
+})
+
+test('Entrez adapter fetches NCBI Taxonomy XML details through efetch', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/entrez/ncbi/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true)
+  const manifest = parsed.manifest as DbConnectorManifest
+  const adapter = new EntrezAdapter(manifest, {
+    now: () => new Date('2026-09-17T00:00:00.000Z'),
+    sleep: async () => {},
+    transport: {
+      name: 'mock-ncbi-taxonomy',
+      async fetch(input) {
+        assert.equal(input.hostname, 'eutils.ncbi.nlm.nih.gov')
+        if (input.pathname.endsWith('/esearch.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'taxonomy')
+          assert.equal(input.searchParams.get('term'), '9606[uid]')
+          return new Response(
+            JSON.stringify({
+              esearchresult: {
+                count: '1',
+                idlist: ['9606']
+              }
+            }),
+            { status: 200 }
+          )
+        }
+        if (input.pathname.endsWith('/efetch.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'taxonomy')
+          assert.equal(input.searchParams.get('id'), '9606')
+          assert.equal(input.searchParams.get('retmode'), 'xml')
+          return new Response(
+            `<?xml version="1.0"?>
+            <TaxaSet>
+              <Taxon>
+                <TaxId>9606</TaxId>
+                <ScientificName>Homo sapiens</ScientificName>
+                <OtherNames>
+                  <GenbankCommonName>human</GenbankCommonName>
+                  <Synonym>man</Synonym>
+                  <EquivalentName>humans</EquivalentName>
+                </OtherNames>
+                <Rank>species</Rank>
+                <Division>Mammals</Division>
+                <Lineage>cellular organisms; Eukaryota; Metazoa; Chordata; Mammalia; Primates; Hominidae; Homo</Lineage>
+                <LineageEx>
+                  <Taxon>
+                    <TaxId>9605</TaxId>
+                    <ScientificName>Homo</ScientificName>
+                    <Rank>genus</Rank>
+                  </Taxon>
+                </LineageEx>
+                <ParentTaxId>9605</ParentTaxId>
+                <GeneticCode>
+                  <GCId>1</GCId>
+                  <GCName>Standard</GCName>
+                </GeneticCode>
+                <MitoGeneticCode>
+                  <GCId>2</GCId>
+                  <GCName>Vertebrate Mitochondrial</GCName>
+                </MitoGeneticCode>
+              </Taxon>
+            </TaxaSet>`,
+            { status: 200 }
+          )
+        }
+        assert.equal(input.pathname.endsWith('/esummary.fcgi'), true)
+        assert.equal(input.searchParams.get('db'), 'taxonomy')
+        assert.equal(input.searchParams.get('id'), '9606')
+        return new Response(
+          JSON.stringify({
+            result: {
+              uids: ['9606'],
+              '9606': {
+                uid: '9606',
+                scientificname: 'Homo sapiens',
+                commonname: 'human',
+                rank: 'species',
+                division: 'Primates',
+                parentid: '9605'
+              }
+            }
+          }),
+          { status: 200 }
+        )
+      }
+    }
+  })
+
+  const taxonomy = await adapter.query({
+    domain: 'taxonomy',
+    rawQuery: '9606[uid]',
+    limit: 1
+  })
+
+  assert.equal(taxonomy.rows[0].uid, '9606')
+  assert.equal(taxonomy.rows[0].tax_id, 9606)
+  assert.equal(taxonomy.rows[0].scientific_name, 'Homo sapiens')
+  assert.equal(taxonomy.rows[0].common_name, 'human')
+  assert.equal(taxonomy.rows[0].rank, 'species')
+  assert.equal(taxonomy.rows[0].division, 'Primates')
+  assert.equal(taxonomy.rows[0].parent_tax_id, 9605)
+  assert.deepEqual(taxonomy.rows[0].synonyms, ['man', 'humans'])
+  assert.equal(
+    taxonomy.rows[0].lineage,
+    'cellular organisms; Eukaryota; Metazoa; Chordata; Mammalia; Primates; Hominidae; Homo'
+  )
+  assert.deepEqual(taxonomy.rows[0].genetic_code, { id: 1, name: 'Standard' })
+  assert.deepEqual(taxonomy.rows[0].mitochondrial_genetic_code, {
+    id: 2,
+    name: 'Vertebrate Mitochondrial'
+  })
+  assert.equal(taxonomy.provenance.attempts, 3)
+  assert.equal(taxonomy.provenance.transportName, 'mock-ncbi-taxonomy')
+})
+
+test('Entrez adapter normalizes PubMed abstracts and ClinVar efetch XML details', async () => {
   const parsed = parseDbConnectorManifest(
     readFileSync('resources/db-connectors/entrez/ncbi/connector.yaml', 'utf-8')
   )
@@ -1264,23 +4942,70 @@ test('Entrez adapter normalizes PubMed efetch abstracts and ClinVar esummary row
         }
 
         if (input.pathname.endsWith('/efetch.fcgi')) {
-          assert.equal(db, 'pubmed')
-          assert.equal(input.searchParams.get('id'), '40000001')
+          if (db === 'pubmed') {
+            assert.equal(input.searchParams.get('id'), '40000001')
+            return new Response(
+              `<?xml version="1.0"?>
+              <PubmedArticleSet>
+                <PubmedArticle>
+                  <MedlineCitation>
+                    <PMID>40000001</PMID>
+                    <Article>
+                      <Abstract>
+                        <AbstractText Label="BACKGROUND">BRCA1 participates in DNA repair.</AbstractText>
+                        <AbstractText Label="RESULTS">Repair signaling increased after perturbation.</AbstractText>
+                      </Abstract>
+                      <PublicationTypeList>
+                        <PublicationType UI="D016428">Journal Article</PublicationType>
+                        <PublicationType UI="D016454">Review</PublicationType>
+                      </PublicationTypeList>
+                    </Article>
+                    <MeshHeadingList>
+                      <MeshHeading>
+                        <DescriptorName UI="D001943" MajorTopicYN="Y">Breast Neoplasms</DescriptorName>
+                      </MeshHeading>
+                      <MeshHeading>
+                        <DescriptorName UI="D053842" MajorTopicYN="N">DNA Repair</DescriptorName>
+                      </MeshHeading>
+                    </MeshHeadingList>
+                    <KeywordList>
+                      <Keyword MajorTopicYN="N">BRCA1</Keyword>
+                      <Keyword MajorTopicYN="N">DNA repair</Keyword>
+                    </KeywordList>
+                  </MedlineCitation>
+                </PubmedArticle>
+              </PubmedArticleSet>`,
+              { status: 200 }
+            )
+          }
+          assert.equal(db, 'clinvar')
+          assert.equal(input.searchParams.get('id'), 'VCV000012345')
           return new Response(
             `<?xml version="1.0"?>
-            <PubmedArticleSet>
-              <PubmedArticle>
-                <MedlineCitation>
-                  <PMID>40000001</PMID>
-                  <Article>
-                    <Abstract>
-                      <AbstractText Label="BACKGROUND">BRCA1 participates in DNA repair.</AbstractText>
-                      <AbstractText Label="RESULTS">Repair signaling increased after perturbation.</AbstractText>
-                    </Abstract>
-                  </Article>
-                </MedlineCitation>
-              </PubmedArticle>
-            </PubmedArticleSet>`,
+            <ClinVarResult-Set>
+              <VariationArchive VariationID="12345" Accession="VCV000012345" Version="1" VariationType="Deletion">
+                <ClassifiedRecord>
+                  <Classifications>
+                    <GermlineClassification DateLastEvaluated="2025-04-01">
+                      <Description>Pathogenic</Description>
+                      <ReviewStatus>criteria provided, multiple submitters, no conflicts</ReviewStatus>
+                    </GermlineClassification>
+                  </Classifications>
+                  <SimpleAllele>
+                    <MolecularConsequenceList>
+                      <MolecularConsequence Type="frameshift variant"/>
+                    </MolecularConsequenceList>
+                  </SimpleAllele>
+                  <TraitSet>
+                    <Trait Type="Disease">
+                      <Name>
+                        <ElementValue Type="Preferred">Hereditary breast ovarian cancer syndrome</ElementValue>
+                      </Name>
+                    </Trait>
+                  </TraitSet>
+                </ClassifiedRecord>
+              </VariationArchive>
+            </ClinVarResult-Set>`,
             { status: 200 }
           )
         }
@@ -1346,6 +5071,9 @@ test('Entrez adapter normalizes PubMed efetch abstracts and ClinVar esummary row
     pubmed.rows[0].abstract,
     'BACKGROUND: BRCA1 participates in DNA repair.\nRESULTS: Repair signaling increased after perturbation.'
   )
+  assert.deepEqual(pubmed.rows[0].mesh_terms, ['Breast Neoplasms', 'DNA Repair'])
+  assert.deepEqual(pubmed.rows[0].keywords, ['BRCA1', 'DNA repair'])
+  assert.deepEqual(pubmed.rows[0].publication_types, ['Journal Article', 'Review'])
   assert.equal(pubmed.provenance.attempts, 3)
 
   const clinvar = await adapter.query({
@@ -1359,6 +5087,175 @@ test('Entrez adapter normalizes PubMed efetch abstracts and ClinVar esummary row
   assert.equal(clinvar.rows[0].variation_id, '12345')
   assert.equal(clinvar.rows[0].clinical_significance, 'Pathogenic')
   assert.equal(clinvar.rows[0].gene, 'BRCA1')
+  assert.deepEqual(clinvar.rows[0].condition, ['Hereditary breast ovarian cancer syndrome'])
+  assert.equal(
+    clinvar.rows[0].review_status,
+    'criteria provided, multiple submitters, no conflicts'
+  )
+  assert.equal(clinvar.rows[0].last_evaluated, '2025-04-01')
+  assert.deepEqual(clinvar.rows[0].molecular_consequence, ['frameshift variant'])
+  assert.equal(clinvar.rows[0].variant_type, 'Deletion')
+  assert.equal(clinvar.provenance.attempts, 3)
+})
+
+test('Entrez adapter fetches NCBI Protein FASTA sequences through efetch', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/entrez/ncbi/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true)
+  const manifest = parsed.manifest as DbConnectorManifest
+  const adapter = new EntrezAdapter(manifest, {
+    now: () => new Date('2026-09-17T00:00:00.000Z'),
+    sleep: async () => {},
+    transport: {
+      name: 'mock-ncbi-protein',
+      async fetch(input) {
+        assert.equal(input.hostname, 'eutils.ncbi.nlm.nih.gov')
+        if (input.pathname.endsWith('/esearch.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'protein')
+          assert.equal(input.searchParams.get('term'), 'BRCA1')
+          return new Response(
+            JSON.stringify({
+              esearchresult: {
+                count: '1',
+                idlist: ['4557601']
+              }
+            }),
+            { status: 200 }
+          )
+        }
+        if (input.pathname.endsWith('/esummary.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'protein')
+          assert.equal(input.searchParams.get('id'), '4557601')
+          return new Response(
+            JSON.stringify({
+              result: {
+                uids: ['4557601'],
+                '4557601': {
+                  uid: '4557601',
+                  accessionversion: 'NP_009225.1',
+                  title: 'breast cancer type 1 susceptibility protein isoform 1',
+                  taxname: 'Homo sapiens'
+                }
+              }
+            }),
+            { status: 200 }
+          )
+        }
+
+        assert.equal(input.pathname.endsWith('/efetch.fcgi'), true)
+        assert.equal(input.searchParams.get('db'), 'protein')
+        assert.equal(input.searchParams.get('id'), '4557601')
+        assert.equal(input.searchParams.get('rettype'), 'fasta')
+        assert.equal(input.searchParams.get('retmode'), 'text')
+        return new Response(
+          `>NP_009225.1 breast cancer type 1 susceptibility protein isoform 1 [Homo sapiens]
+MDLSALRVEEVQNVINAMQKILECPICLELIKE
+PVSTKCDHIFCKFCMLKLLNQKKGPSQCPLCKNDITKRSLQ`,
+          { status: 200 }
+        )
+      }
+    }
+  })
+
+  const protein = await adapter.query({
+    domain: 'protein',
+    rawQuery: 'BRCA1',
+    limit: 1
+  })
+
+  assert.equal(protein.rows[0].uid, '4557601')
+  assert.equal(protein.rows[0].accession, 'NP_009225.1')
+  assert.equal(protein.rows[0].title, 'breast cancer type 1 susceptibility protein isoform 1')
+  assert.equal(protein.rows[0].organism, 'Homo sapiens')
+  assert.equal(
+    protein.rows[0].sequence,
+    'MDLSALRVEEVQNVINAMQKILECPICLELIKEPVSTKCDHIFCKFCMLKLLNQKKGPSQCPLCKNDITKRSLQ'
+  )
+  assert.equal(protein.provenance.attempts, 3)
+  assert.equal(protein.provenance.transportName, 'mock-ncbi-protein')
+})
+
+test('Entrez adapter fetches NCBI Nucleotide FASTA sequences through efetch', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/entrez/ncbi/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true)
+  const manifest = parsed.manifest as DbConnectorManifest
+  const adapter = new EntrezAdapter(manifest, {
+    now: () => new Date('2026-09-17T00:00:00.000Z'),
+    sleep: async () => {},
+    transport: {
+      name: 'mock-ncbi-nucleotide',
+      async fetch(input) {
+        assert.equal(input.hostname, 'eutils.ncbi.nlm.nih.gov')
+        if (input.pathname.endsWith('/esearch.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'nuccore')
+          assert.equal(input.searchParams.get('term'), 'NM_007294.4')
+          return new Response(
+            JSON.stringify({
+              esearchresult: {
+                count: '1',
+                idlist: ['555931']
+              }
+            }),
+            { status: 200 }
+          )
+        }
+        if (input.pathname.endsWith('/esummary.fcgi')) {
+          assert.equal(input.searchParams.get('db'), 'nuccore')
+          assert.equal(input.searchParams.get('id'), '555931')
+          return new Response(
+            JSON.stringify({
+              result: {
+                uids: ['555931'],
+                '555931': {
+                  uid: '555931',
+                  accessionversion: 'NM_007294.4',
+                  title: 'Homo sapiens BRCA1 DNA repair associated (BRCA1), mRNA',
+                  taxname: 'Homo sapiens',
+                  slen: 7088,
+                  biomol: 'mRNA'
+                }
+              }
+            }),
+            { status: 200 }
+          )
+        }
+
+        assert.equal(input.pathname.endsWith('/efetch.fcgi'), true)
+        assert.equal(input.searchParams.get('db'), 'nuccore')
+        assert.equal(input.searchParams.get('id'), '555931')
+        assert.equal(input.searchParams.get('rettype'), 'fasta')
+        assert.equal(input.searchParams.get('retmode'), 'text')
+        return new Response(
+          `>NM_007294.4 Homo sapiens BRCA1 DNA repair associated (BRCA1), mRNA
+ACAGCTGCTGGGCTCCATGGTGATGGCTGAA
+CTCCCAGCACAGAAAATGGCAGCTCAGTGTT`,
+          { status: 200 }
+        )
+      }
+    }
+  })
+
+  const nucleotide = await adapter.query({
+    domain: 'nucleotide',
+    rawQuery: 'NM_007294.4',
+    limit: 1
+  })
+
+  assert.equal(nucleotide.rows[0].uid, '555931')
+  assert.equal(nucleotide.rows[0].accession, 'NM_007294.4')
+  assert.equal(nucleotide.rows[0].title, 'Homo sapiens BRCA1 DNA repair associated (BRCA1), mRNA')
+  assert.equal(nucleotide.rows[0].organism, 'Homo sapiens')
+  assert.equal(nucleotide.rows[0].sequence_length, 7088)
+  assert.equal(nucleotide.rows[0].molecule_type, 'mRNA')
+  assert.equal(
+    nucleotide.rows[0].sequence,
+    'ACAGCTGCTGGGCTCCATGGTGATGGCTGAACTCCCAGCACAGAAAATGGCAGCTCAGTGTT'
+  )
+  assert.equal(nucleotide.provenance.attempts, 3)
+  assert.equal(nucleotide.provenance.transportName, 'mock-ncbi-nucleotide')
 })
 
 test('db_query infers database, domain, and filters from natural biological query text', async () => {
@@ -1453,12 +5350,12 @@ test('db_query infers PubMed and UniProt intents without user naming db tools', 
         return []
       },
       async query(params): Promise<DbAdapterQueryResult> {
-        received.push({ database: 'sparql/uniprot', params })
+        received.push({ database: 'rest-json/uniprot', params })
         return {
           rows: [{ accession: 'P38398', gene_name: 'BRCA1' }],
           truncated: false,
           provenance: {
-            database: 'sparql/uniprot',
+            database: 'rest-json/uniprot',
             domain: params.domain,
             retrievedAt: '2026-09-18T00:00:00.000Z'
           }
@@ -1467,7 +5364,7 @@ test('db_query infers PubMed and UniProt intents without user naming db tools', 
     }
 
     const tool = buildDbQueryTool(
-      { 'entrez/ncbi': pubmedAdapter, 'sparql/uniprot': uniprotAdapter },
+      { 'entrez/ncbi': pubmedAdapter, 'rest-json/uniprot': uniprotAdapter },
       agentDir
     )
     const pubmed = await tool.execute(
@@ -1482,16 +5379,88 @@ test('db_query infers PubMed and UniProt intents without user naming db tools', 
       undefined,
       fakeCtx()
     )
+    const sequence = await tool.execute(
+      'call-infer-uniprot-sequence',
+      { query: 'BRCA1 sequence', limit: 1 },
+      undefined,
+      fakeCtx()
+    )
+    const ncbiProtein = await tool.execute(
+      'call-infer-ncbi-protein',
+      { query: 'NCBI BRCA1 protein sequence', limit: 1 },
+      undefined,
+      fakeCtx()
+    )
+    const ncbiNucleotide = await tool.execute(
+      'call-infer-ncbi-nucleotide',
+      { query: 'NCBI NM_007294.4 nucleotide FASTA', limit: 1 },
+      undefined,
+      fakeCtx()
+    )
+    const ncbiBioSample = await tool.execute(
+      'call-infer-ncbi-biosample',
+      { query: 'NCBI BioSample SAMN00000001 sample metadata', limit: 1 },
+      undefined,
+      fakeCtx()
+    )
+    const ncbiSra = await tool.execute(
+      'call-infer-ncbi-sra',
+      { query: 'NCBI SRA SRX000001 sequencing run metadata', limit: 1 },
+      undefined,
+      fakeCtx()
+    )
+    const ncbiGeo = await tool.execute(
+      'call-infer-ncbi-geo',
+      { query: 'NCBI GEO GSE2553 expression profiling dataset', limit: 1 },
+      undefined,
+      fakeCtx()
+    )
+    const ncbiBioProject = await tool.execute(
+      'call-infer-ncbi-bioproject',
+      { query: 'NCBI BioProject PRJNA92161 project metadata', limit: 1 },
+      undefined,
+      fakeCtx()
+    )
+    const ncbiTaxonomy = await tool.execute(
+      'call-infer-ncbi-taxonomy',
+      { query: 'NCBI taxonomy taxid 9606', limit: 1 },
+      undefined,
+      fakeCtx()
+    )
+    const uniprotMapping = await tool.execute(
+      'call-infer-uniprot-id-mapping',
+      { query: 'Map UniProt P38398 to Ensembl', limit: 5 },
+      undefined,
+      fakeCtx()
+    )
 
     assert.equal(pubmed.isError, undefined)
     assert.equal(uniprot.isError, undefined)
+    assert.equal(sequence.isError, undefined)
+    assert.equal(ncbiProtein.isError, undefined)
+    assert.equal(ncbiNucleotide.isError, undefined)
+    assert.equal(ncbiBioSample.isError, undefined)
+    assert.equal(ncbiSra.isError, undefined)
+    assert.equal(ncbiGeo.isError, undefined)
+    assert.equal(ncbiBioProject.isError, undefined)
+    assert.equal(ncbiTaxonomy.isError, undefined)
+    assert.equal(uniprotMapping.isError, undefined)
     const pubmedDetails = pubmed.details as DbQueryToolDetails
     const uniprotDetails = uniprot.details as DbQueryToolDetails
+    const sequenceDetails = sequence.details as DbQueryToolDetails
+    const ncbiProteinDetails = ncbiProtein.details as DbQueryToolDetails
+    const ncbiNucleotideDetails = ncbiNucleotide.details as DbQueryToolDetails
+    const ncbiBioSampleDetails = ncbiBioSample.details as DbQueryToolDetails
+    const ncbiSraDetails = ncbiSra.details as DbQueryToolDetails
+    const ncbiGeoDetails = ncbiGeo.details as DbQueryToolDetails
+    const ncbiBioProjectDetails = ncbiBioProject.details as DbQueryToolDetails
+    const ncbiTaxonomyDetails = ncbiTaxonomy.details as DbQueryToolDetails
+    const uniprotMappingDetails = uniprotMapping.details as DbQueryToolDetails
     assert.equal(pubmedDetails.resolvedQuery?.database, 'entrez/ncbi')
     assert.equal(pubmedDetails.resolvedQuery?.domain, 'pubmed')
     assert.equal(pubmedDetails.resolvedQuery?.rawQuery, 'PubMed BRCA1 DNA repair abstract')
     assert.equal(pubmedDetails.resolvedQuery?.predicateSource, 'heuristic')
-    assert.equal(uniprotDetails.resolvedQuery?.database, 'sparql/uniprot')
+    assert.equal(uniprotDetails.resolvedQuery?.database, 'rest-json/uniprot')
     assert.equal(uniprotDetails.resolvedQuery?.domain, 'protein')
     assert.deepEqual(uniprotDetails.resolvedQuery?.filters, [
       { field: 'gene_name', op: '=', value: 'BRCA1' }
@@ -1509,7 +5478,7 @@ test('db_query infers PubMed and UniProt intents without user naming db tools', 
       }
     })
     assert.deepEqual(received[1], {
-      database: 'sparql/uniprot',
+      database: 'rest-json/uniprot',
       params: {
         domain: 'protein',
         filters: [{ field: 'gene_name', op: '=', value: 'BRCA1' }],
@@ -1519,6 +5488,379 @@ test('db_query infers PubMed and UniProt intents without user naming db tools', 
         rawQuery: undefined
       }
     })
+    assert.equal(sequenceDetails.resolvedQuery?.database, 'rest-json/uniprot')
+    assert.equal(sequenceDetails.resolvedQuery?.domain, 'protein')
+    assert.deepEqual(sequenceDetails.resolvedQuery?.filters, [
+      { field: 'gene_name', op: '=', value: 'BRCA1' }
+    ])
+    assert.deepEqual(received[2], {
+      database: 'rest-json/uniprot',
+      params: {
+        domain: 'protein',
+        filters: [{ field: 'gene_name', op: '=', value: 'BRCA1' }],
+        fields: undefined,
+        limit: 1,
+        cursor: undefined,
+        rawQuery: undefined
+      }
+    })
+    assert.equal(ncbiProteinDetails.resolvedQuery?.database, 'entrez/ncbi')
+    assert.equal(ncbiProteinDetails.resolvedQuery?.domain, 'protein')
+    assert.equal(ncbiProteinDetails.resolvedQuery?.rawQuery, 'BRCA1')
+    assert.deepEqual(received[3], {
+      database: 'entrez/ncbi',
+      params: {
+        domain: 'protein',
+        filters: undefined,
+        fields: undefined,
+        limit: 1,
+        cursor: undefined,
+        rawQuery: 'BRCA1'
+      }
+    })
+    assert.equal(ncbiNucleotideDetails.resolvedQuery?.database, 'entrez/ncbi')
+    assert.equal(ncbiNucleotideDetails.resolvedQuery?.domain, 'nucleotide')
+    assert.equal(ncbiNucleotideDetails.resolvedQuery?.rawQuery, 'NM_007294.4')
+    assert.deepEqual(received[4], {
+      database: 'entrez/ncbi',
+      params: {
+        domain: 'nucleotide',
+        filters: undefined,
+        fields: undefined,
+        limit: 1,
+        cursor: undefined,
+        rawQuery: 'NM_007294.4'
+      }
+    })
+    assert.equal(ncbiBioSampleDetails.resolvedQuery?.database, 'entrez/ncbi')
+    assert.equal(ncbiBioSampleDetails.resolvedQuery?.domain, 'biosample')
+    assert.equal(ncbiBioSampleDetails.resolvedQuery?.rawQuery, 'SAMN00000001')
+    assert.deepEqual(received[5], {
+      database: 'entrez/ncbi',
+      params: {
+        domain: 'biosample',
+        filters: undefined,
+        fields: undefined,
+        limit: 1,
+        cursor: undefined,
+        rawQuery: 'SAMN00000001'
+      }
+    })
+    assert.equal(ncbiSraDetails.resolvedQuery?.database, 'entrez/ncbi')
+    assert.equal(ncbiSraDetails.resolvedQuery?.domain, 'sra')
+    assert.equal(ncbiSraDetails.resolvedQuery?.rawQuery, 'SRX000001')
+    assert.deepEqual(received[6], {
+      database: 'entrez/ncbi',
+      params: {
+        domain: 'sra',
+        filters: undefined,
+        fields: undefined,
+        limit: 1,
+        cursor: undefined,
+        rawQuery: 'SRX000001'
+      }
+    })
+    assert.equal(ncbiGeoDetails.resolvedQuery?.database, 'entrez/ncbi')
+    assert.equal(ncbiGeoDetails.resolvedQuery?.domain, 'geo')
+    assert.equal(ncbiGeoDetails.resolvedQuery?.rawQuery, 'GSE2553')
+    assert.deepEqual(received[7], {
+      database: 'entrez/ncbi',
+      params: {
+        domain: 'geo',
+        filters: undefined,
+        fields: undefined,
+        limit: 1,
+        cursor: undefined,
+        rawQuery: 'GSE2553'
+      }
+    })
+    assert.equal(ncbiBioProjectDetails.resolvedQuery?.database, 'entrez/ncbi')
+    assert.equal(ncbiBioProjectDetails.resolvedQuery?.domain, 'bioproject')
+    assert.equal(ncbiBioProjectDetails.resolvedQuery?.rawQuery, 'PRJNA92161')
+    assert.deepEqual(received[8], {
+      database: 'entrez/ncbi',
+      params: {
+        domain: 'bioproject',
+        filters: undefined,
+        fields: undefined,
+        limit: 1,
+        cursor: undefined,
+        rawQuery: 'PRJNA92161'
+      }
+    })
+    assert.equal(ncbiTaxonomyDetails.resolvedQuery?.database, 'entrez/ncbi')
+    assert.equal(ncbiTaxonomyDetails.resolvedQuery?.domain, 'taxonomy')
+    assert.equal(ncbiTaxonomyDetails.resolvedQuery?.rawQuery, '9606[uid]')
+    assert.deepEqual(received[9], {
+      database: 'entrez/ncbi',
+      params: {
+        domain: 'taxonomy',
+        filters: undefined,
+        fields: undefined,
+        limit: 1,
+        cursor: undefined,
+        rawQuery: '9606[uid]'
+      }
+    })
+    assert.equal(uniprotMappingDetails.resolvedQuery?.database, 'rest-json/uniprot')
+    assert.equal(uniprotMappingDetails.resolvedQuery?.domain, 'id_mapping')
+    assert.deepEqual(uniprotMappingDetails.resolvedQuery?.filters, [
+      { field: 'from', op: '=', value: 'UniProtKB_AC-ID' },
+      { field: 'to', op: '=', value: 'Ensembl' },
+      { field: 'ids', op: 'in', value: ['P38398'] }
+    ])
+    assert.deepEqual(received[10], {
+      database: 'rest-json/uniprot',
+      params: {
+        domain: 'id_mapping',
+        filters: [
+          { field: 'from', op: '=', value: 'UniProtKB_AC-ID' },
+          { field: 'to', op: '=', value: 'Ensembl' },
+          { field: 'ids', op: 'in', value: ['P38398'] }
+        ],
+        fields: undefined,
+        limit: 5,
+        cursor: undefined,
+        rawQuery: undefined
+      }
+    })
+  })
+})
+
+test('db_query routes core Ensembl identifier, sequence, variation, and VEP intents', async () => {
+  await withHarness(async ({ agentDir }) => {
+    const received: unknown[] = []
+    const adapter: DbAdapter = {
+      async listDomains() {
+        return []
+      },
+      async describeDomain() {
+        return []
+      },
+      async query(params): Promise<DbAdapterQueryResult> {
+        received.push(params)
+        return {
+          rows: [{ ok: true }],
+          truncated: false,
+          provenance: {
+            database: 'rest-json/ensembl',
+            domain: params.domain,
+            retrievedAt: '2026-09-19T00:00:00.000Z'
+          }
+        }
+      }
+    }
+    const tool = buildDbQueryTool({ 'rest-json/ensembl': adapter }, agentDir)
+
+    const lookup = await tool.execute(
+      'call-ensembl-lookup',
+      { query: 'Ensembl lookup ENSG00000012048' },
+      undefined,
+      fakeCtx()
+    )
+    const sequence = await tool.execute(
+      'call-ensembl-sequence',
+      { query: 'Ensembl sequence for ENSG00000012048' },
+      undefined,
+      fakeCtx()
+    )
+    const variation = await tool.execute(
+      'call-ensembl-variation',
+      { query: 'Ensembl variation details for rs699' },
+      undefined,
+      fakeCtx()
+    )
+    const vep = await tool.execute(
+      'call-ensembl-vep',
+      { query: 'Ensembl VEP consequences for rs699' },
+      undefined,
+      fakeCtx()
+    )
+
+    assert.equal((lookup.details as DbQueryToolDetails).resolvedQuery?.domain, 'lookup_id')
+    assert.equal((sequence.details as DbQueryToolDetails).resolvedQuery?.domain, 'sequence_id')
+    assert.equal((variation.details as DbQueryToolDetails).resolvedQuery?.domain, 'variation')
+    assert.equal((vep.details as DbQueryToolDetails).resolvedQuery?.domain, 'vep_id')
+    assert.deepEqual(received, [
+      {
+        domain: 'lookup_id',
+        filters: [{ field: 'id', op: '=', value: 'ENSG00000012048' }],
+        fields: undefined,
+        limit: 50,
+        cursor: undefined,
+        rawQuery: undefined
+      },
+      {
+        domain: 'sequence_id',
+        filters: [{ field: 'id', op: '=', value: 'ENSG00000012048' }],
+        fields: undefined,
+        limit: 50,
+        cursor: undefined,
+        rawQuery: undefined
+      },
+      {
+        domain: 'variation',
+        filters: [
+          { field: 'species', op: '=', value: 'homo_sapiens' },
+          { field: 'id', op: '=', value: 'rs699' }
+        ],
+        fields: undefined,
+        limit: 50,
+        cursor: undefined,
+        rawQuery: undefined
+      },
+      {
+        domain: 'vep_id',
+        filters: [
+          { field: 'species', op: '=', value: 'homo_sapiens' },
+          { field: 'id', op: '=', value: 'rs699' }
+        ],
+        fields: undefined,
+        limit: 50,
+        cursor: undefined,
+        rawQuery: undefined
+      }
+    ])
+  })
+})
+
+test('db_query fetches bounded pages and aggregates provenance', async () => {
+  await withHarness(async ({ agentDir }) => {
+    const cursors: Array<string | undefined> = []
+    const adapter: DbAdapter = {
+      async listDomains() {
+        return []
+      },
+      async describeDomain() {
+        return []
+      },
+      async query(params): Promise<DbAdapterQueryResult> {
+        cursors.push(params.cursor)
+        const page = params.cursor === undefined ? 0 : Number(params.cursor) / 2
+        const rows =
+          page === 0
+            ? [{ uid: '1' }, { uid: '2' }]
+            : page === 1
+              ? [{ uid: '3' }, { uid: '4' }]
+              : [{ uid: '5' }]
+        const nextCursor = page < 2 ? String((page + 1) * 2) : undefined
+        return {
+          rows,
+          totalRows: 5,
+          truncated: Boolean(nextCursor),
+          ...(nextCursor ? { nextCursor } : {}),
+          provenance: {
+            database: 'entrez/ncbi',
+            domain: params.domain,
+            retrievedAt: `2026-09-20T00:00:0${page}.000Z`,
+            attempts: page === 1 ? 2 : 1,
+            retried: page === 1,
+            lastStatus: 200,
+            transportName: 'mock-paged',
+            defaultProxyMode: 'disabled'
+          }
+        }
+      }
+    }
+
+    const tool = buildDbQueryTool({ 'entrez/ncbi': adapter }, agentDir)
+    const bounded = await tool.execute(
+      'call-paged-bounded',
+      {
+        database: 'entrez/ncbi',
+        domain: 'gene',
+        rawQuery: 'BRCA1',
+        limit: 2,
+        maxPages: 2
+      },
+      undefined,
+      fakeCtx()
+    )
+    assert.equal(bounded.isError, undefined)
+    const boundedDetails = bounded.details as DbQueryToolDetails
+    assert.equal(boundedDetails.mode, 'inline')
+    if (boundedDetails.mode !== 'inline') assert.fail('expected inline DB result')
+    assert.equal(boundedDetails.summary.returnedRows, 4)
+    assert.equal(boundedDetails.summary.truncated, true)
+    assert.equal(boundedDetails.summary.nextCursor, '4')
+    assert.equal(boundedDetails.provenance.pagesFetched, 2)
+    assert.deepEqual(cursors, [undefined, '2'])
+
+    cursors.length = 0
+    const result = await tool.execute(
+      'call-paged',
+      {
+        database: 'entrez/ncbi',
+        domain: 'gene',
+        rawQuery: 'BRCA1',
+        limit: 2,
+        maxPages: 3
+      },
+      undefined,
+      fakeCtx()
+    )
+
+    assert.equal(result.isError, undefined)
+    const details = result.details as DbQueryToolDetails
+    assert.equal(details.mode, 'inline')
+    if (details.mode !== 'inline') assert.fail('expected inline DB result')
+    assert.deepEqual(details.rows, [
+      { uid: '1' },
+      { uid: '2' },
+      { uid: '3' },
+      { uid: '4' },
+      { uid: '5' }
+    ])
+    assert.deepEqual(cursors, [undefined, '2', '4'])
+    assert.equal(details.summary.returnedRows, 5)
+    assert.equal(details.summary.truncated, false)
+    assert.equal(details.provenance.attempts, 4)
+    assert.equal(details.provenance.retried, true)
+    assert.equal(details.provenance.pagesFetched, 3)
+  })
+})
+
+test('db_query stops when an adapter repeats a pagination cursor', async () => {
+  await withHarness(async ({ agentDir }) => {
+    let calls = 0
+    const adapter: DbAdapter = {
+      async listDomains() {
+        return []
+      },
+      async describeDomain() {
+        return []
+      },
+      async query(params): Promise<DbAdapterQueryResult> {
+        calls += 1
+        return {
+          rows: [{ uid: String(calls) }],
+          truncated: true,
+          nextCursor: params.cursor ?? 'same',
+          provenance: {
+            database: 'entrez/ncbi',
+            domain: params.domain,
+            retrievedAt: '2026-09-20T00:00:00.000Z'
+          }
+        }
+      }
+    }
+
+    const result = await buildDbQueryTool({ 'entrez/ncbi': adapter }, agentDir).execute(
+      'call-repeated-cursor',
+      {
+        database: 'entrez/ncbi',
+        domain: 'gene',
+        rawQuery: 'BRCA1',
+        limit: 1,
+        maxPages: 3
+      },
+      undefined,
+      fakeCtx()
+    )
+
+    assert.equal(result.isError, true)
+    assert.match(result.content[0]?.text ?? '', /repeated pagination cursor/)
+    assert.equal(calls, 2)
   })
 })
 
@@ -1544,6 +5886,43 @@ test('default DB custom tools register bundled Entrez and query through the adap
                     idlist: ['91001', '91002']
                   }
                 }),
+                { status: 200 }
+              )
+            }
+            if (input.pathname.endsWith('/efetch.fcgi')) {
+              assert.equal(input.searchParams.get('db'), 'gene')
+              assert.equal(input.searchParams.get('id'), '91001,91002')
+              assert.equal(input.searchParams.get('retmode'), 'xml')
+              return new Response(
+                `<?xml version="1.0"?>
+                <Entrezgene-Set>
+                  <Entrezgene>
+                    <Entrezgene_track-info>
+                      <Gene-track>
+                        <Gene-track_geneid>91001</Gene-track_geneid>
+                      </Gene-track>
+                    </Entrezgene_track-info>
+                    <Entrezgene_gene>
+                      <Gene-ref>
+                        <Gene-ref_locus>BRCA1</Gene-ref_locus>
+                      </Gene-ref>
+                    </Entrezgene_gene>
+                    <Entrezgene_summary>BRCA1 participates in DNA repair.</Entrezgene_summary>
+                  </Entrezgene>
+                  <Entrezgene>
+                    <Entrezgene_track-info>
+                      <Gene-track>
+                        <Gene-track_geneid>91002</Gene-track_geneid>
+                      </Gene-track>
+                    </Entrezgene_track-info>
+                    <Entrezgene_gene>
+                      <Gene-ref>
+                        <Gene-ref_locus>BRCA2</Gene-ref_locus>
+                      </Gene-ref>
+                    </Entrezgene_gene>
+                    <Entrezgene_summary>BRCA2 participates in DNA repair.</Entrezgene_summary>
+                  </Entrezgene>
+                </Entrezgene-Set>`,
                 { status: 200 }
               )
             }
@@ -1597,7 +5976,7 @@ test('default DB custom tools register bundled Entrez and query through the adap
     )
 
     assert.equal(result.isError, undefined)
-    assert.equal(calls, 2)
+    assert.equal(calls, 3)
     const details = result.details as {
       mode: string
       rows?: Array<Record<string, unknown>>
@@ -1605,18 +5984,168 @@ test('default DB custom tools register bundled Entrez and query through the adap
     }
     assert.equal(details.mode, 'inline')
     assert.equal(details.rows?.[0]?.symbol, 'BRCA1')
+    assert.equal(details.rows?.[0]?.summary, 'BRCA1 participates in DNA repair.')
     assert.equal(details.rows?.[1]?.symbol, 'BRCA2')
+    assert.equal(details.rows?.[1]?.summary, 'BRCA2 participates in DNA repair.')
     assert.equal(details.provenance?.transportName, 'mock-default-entrez')
   })
 })
 
-test('DB connector runtime flag parser accepts explicit enabling values', () => {
-  assert.equal(isDbConnectorRuntimeEnabled(undefined), false)
-  assert.equal(isDbConnectorRuntimeEnabled('0'), false)
-  assert.equal(isDbConnectorRuntimeEnabled('1'), true)
-  assert.equal(isDbConnectorRuntimeEnabled('true'), true)
-  assert.equal(isDbConnectorRuntimeEnabled('yes'), true)
-  assert.equal(isDbConnectorRuntimeEnabled(true), true)
+test('default DB custom tools register bundled UniProt REST and query through the adapter', async () => {
+  await withHarness(async ({ agentDir }) => {
+    let calls = 0
+    const tools = buildDefaultDbCustomTools(agentDir, {
+      restJson: {
+        now: () => new Date('2026-09-18T00:00:00.000Z'),
+        sleep: async () => {},
+        transport: {
+          name: 'mock-default-uniprot-rest',
+          async fetch(input) {
+            calls += 1
+            assert.equal(input.hostname, 'rest.uniprot.org')
+            assert.equal(input.pathname, '/uniprotkb/search')
+            assert.equal(input.searchParams.get('query'), 'gene_exact:BRCA1')
+            return new Response(
+              JSON.stringify({
+                results: [
+                  {
+                    primaryAccession: 'P38398',
+                    uniProtkbId: 'BRCA1_HUMAN',
+                    entryType: 'UniProtKB reviewed (Swiss-Prot)',
+                    proteinDescription: {
+                      recommendedName: {
+                        fullName: { value: 'Breast cancer type 1 susceptibility protein' }
+                      }
+                    },
+                    genes: [{ geneName: { value: 'BRCA1' } }],
+                    organism: { scientificName: 'Homo sapiens', taxonId: 9606 },
+                    sequence: {
+                      value: 'MDLSALRVEEVQNVINAMQKILECPICLELIKE',
+                      length: 1863,
+                      molWeight: 207721
+                    }
+                  }
+                ]
+              }),
+              {
+                status: 200,
+                headers: {
+                  'content-type': 'application/json',
+                  'x-total-results': '1',
+                  'x-uniprot-release': '2026_04'
+                }
+              }
+            )
+          }
+        }
+      }
+    })
+
+    const query = tools.find((tool) => tool.name === 'db_query')
+    assert.ok(query)
+    const result = await query.execute(
+      'call-default-uniprot',
+      {
+        database: 'rest-json/uniprot',
+        domain: 'protein',
+        filters: [{ field: 'gene_name', op: '=', value: 'BRCA1' }],
+        limit: 1
+      },
+      undefined,
+      fakeCtx()
+    )
+
+    assert.equal(result.isError, undefined)
+    assert.equal(calls, 1)
+    const details = result.details as {
+      mode: string
+      downloadManifestArtifact?: { path: string; format: string }
+      downloadManifestSummary?: {
+        rowCount: number
+        candidateCount: number
+        directUrlCount: number
+        landingPageCount: number
+        directoryCount: number
+        candidateFileCount: number
+        formats: string[]
+        kinds: string[]
+      }
+      rows?: Array<Record<string, unknown>>
+      provenance?: { database?: string; sourceVersion?: string; transportName?: string }
+    }
+    assert.equal(details.mode, 'inline')
+    assert.equal(details.provenance?.database, 'rest-json/uniprot')
+    assert.equal(details.provenance?.sourceVersion, '2026_04')
+    assert.equal(details.provenance?.transportName, 'mock-default-uniprot-rest')
+    assert.equal(details.rows?.[0]?.accession, 'P38398')
+    assert.equal(details.rows?.[0]?.entry_name, 'BRCA1_HUMAN')
+    assert.equal(details.rows?.[0]?.reviewed, true)
+    assert.equal(details.rows?.[0]?.protein_name, 'Breast cancer type 1 susceptibility protein')
+    assert.equal(details.rows?.[0]?.gene_name, 'BRCA1')
+    assert.equal(details.rows?.[0]?.url, 'https://www.uniprot.org/uniprotkb/P38398/entry')
+    assert.equal(
+      (details.rows?.[0]?.download_urls as { fasta?: string } | undefined)?.fasta,
+      'https://rest.uniprot.org/uniprotkb/P38398.fasta'
+    )
+    assert.equal(details.downloadManifestArtifact?.format, 'download_manifest_json')
+    assert.deepEqual(details.downloadManifestSummary, {
+      rowCount: 1,
+      candidateCount: 3,
+      directUrlCount: 3,
+      landingPageCount: 0,
+      directoryCount: 0,
+      candidateFileCount: 0,
+      formats: ['fasta', 'json', 'txt'],
+      kinds: ['uniprot_fasta', 'uniprot_json', 'uniprot_txt']
+    })
+    assert.equal(existsSync(details.downloadManifestArtifact?.path ?? ''), true)
+    const manifest = JSON.parse(
+      readFileSync(details.downloadManifestArtifact?.path ?? '', 'utf-8')
+    ) as {
+      rows: Array<{
+        download_files: Array<{ accession: string; kind: string; url: string }>
+      }>
+    }
+    assert.equal(manifest.rows[0]?.download_files[1]?.kind, 'uniprot_fasta')
+    assert.equal(
+      manifest.rows[0]?.download_files[1]?.url,
+      'https://rest.uniprot.org/uniprotkb/P38398.fasta'
+    )
+  })
+})
+
+test('catalog applies per-database query toggles to bundled connectors', async () => {
+  await withHarness(async ({ agentDir }) => {
+    const initial = listDbConnectorCatalog(agentDir).find(
+      (entry) => entry.manifest.id === 'entrez/ncbi'
+    )
+    assert.ok(initial)
+    assert.equal(initial.enabledForQuery, true)
+
+    setDbConnectorQueryEnabled(
+      initial.manifest.id,
+      initial.digest,
+      initial.trustTier,
+      false,
+      agentDir
+    )
+    const disabled = listDbConnectorCatalog(agentDir).find(
+      (entry) => entry.manifest.id === 'entrez/ncbi'
+    )
+    assert.equal(disabled?.enabledForQuery, false)
+
+    setDbConnectorQueryEnabled(
+      initial.manifest.id,
+      initial.digest,
+      initial.trustTier,
+      true,
+      agentDir
+    )
+    const enabled = listDbConnectorCatalog(agentDir).find(
+      (entry) => entry.manifest.id === 'entrez/ncbi'
+    )
+    assert.equal(enabled?.enabledForQuery, true)
+  })
 })
 
 test('db_query refuses disabled custom connectors and summarizes enabled mock adapter results', async () => {

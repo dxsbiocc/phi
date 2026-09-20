@@ -9,6 +9,7 @@ import {
   Settings,
   discoverAuthStorage,
   type CreateAgentSessionResult,
+  type CustomTool,
   type ExtensionFactory
 } from '@oh-my-pi/pi-coding-agent'
 import {
@@ -28,14 +29,14 @@ import {
 } from '@oh-my-pi/pi-coding-agent/thinking'
 import { authPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
 import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
-import { buildDefaultDbCustomTools, isDbConnectorRuntimeEnabled } from '../db/tools'
+import { buildDefaultDbCustomTools } from '../db/tools'
 import { buildLibraryCustomTools } from '../library/library-tools'
 import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
 import { buildAskUserQuestionCustomTools } from '../user-interaction-tools'
 import { isPhiAgentDefinition, type PhiAgentDefinition } from '../agents/definition'
 import { createAgentRunner, type AgentSessionLike } from '../agents/runner'
-import { resolveAgentTools } from '../agents/tool-resolution'
+import { buildScopedPhiToolMap, resolveAgentTools } from '../agents/tool-resolution'
 import { buildAgentTool } from '../agents/tool'
 import { createHostJobClient } from '../wrappers/composition/job-host-client'
 import { buildWrapperCompositionTools } from '../wrappers/composition/tools'
@@ -666,12 +667,29 @@ function serializeSessionState(result: CreateAgentSessionResult): unknown {
  * receives these directly.
  */
 function phiToolFunctions(
-  originSessionId: string
-): Map<string, ReturnType<typeof buildWrapperCompositionTools>[number]> {
-  // Wrapper runs are background jobs owned by the main process; these tools only talk to it.
-  // Each run is stamped with the session that started it, so its end can be reported there.
-  const jobs = createHostJobClient(requestHost, { originSessionId })
-  return new Map(buildWrapperCompositionTools(jobs).map((tool) => [tool.name, tool]))
+  originSessionId: string,
+  agentDir: string,
+  agentName: string
+): Map<string, CustomTool> {
+  let wrapperTools: CustomTool[] = []
+  let databaseTools: CustomTool[] = []
+  if (agentName === 'Wrapper') {
+    // Wrapper runs are background jobs owned by the main process; these tools only talk to it.
+    // Each run is stamped with the session that started it, so its end can be reported there.
+    const jobs = createHostJobClient(requestHost, { originSessionId })
+    wrapperTools = [...buildWrapperCompositionTools(jobs)]
+  }
+  if (agentName === 'Database') {
+    try {
+      databaseTools = buildDefaultDbCustomTools(agentDir)
+    } catch {
+      // A broken connector catalog must not prevent the specialist session from starting.
+    }
+  }
+  return buildScopedPhiToolMap(agentName, {
+    wrapper: wrapperTools,
+    database: databaseTools
+  })
 }
 
 /**
@@ -710,7 +728,7 @@ async function createPhiAgentSession(
 
   const { toolNames, customTools } = resolveAgentTools(
     definition.tools,
-    phiToolFunctions(sessionId)
+    phiToolFunctions(sessionId, agentDir, definition.name)
   )
   const parentSession = deps.parent()?.session
   const skills = loader
@@ -771,9 +789,9 @@ async function createSession(params: unknown): Promise<unknown> {
   // Never let a wrapper-catalog problem block an otherwise-ordinary chat
   // session from starting.
   // The main agent leads: it gets one delegation tool per scanned Phi agent,
-  // named after the agent (e.g. `Wrapper`), and none of the agents' own tool
-  // functions (wrapper_search, …), so their catalogs and logs stay out of the
-  // main conversation. Definitions come from the main process's scan.
+  // named after the agent (for example `Wrapper` or `Database`), and none of
+  // the specialists' own tool functions, so internal catalogs and query tools
+  // stay out of the main conversation. Definitions come from the main process's scan.
   const parentRef: { current?: CreateAgentSessionResult } = {}
   const phiAgents = Array.isArray(record.phiAgents)
     ? record.phiAgents.filter(isPhiAgentDefinition)
@@ -796,17 +814,6 @@ async function createSession(params: unknown): Promise<unknown> {
       })
     )
   )
-  let dbCustomTools: ReturnType<typeof buildDefaultDbCustomTools> = []
-  const enableDbConnectorTools =
-    isDbConnectorRuntimeEnabled(record.enableDbConnectorTools) ||
-    isDbConnectorRuntimeEnabled(process.env.PHI_ENABLE_DB_CONNECTOR_TOOLS)
-  if (enableDbConnectorTools) {
-    try {
-      dbCustomTools = buildDefaultDbCustomTools(agentDir)
-    } catch {
-      dbCustomTools = []
-    }
-  }
   const notebookCustomTools = buildNotebookCustomTools(async (request) =>
     requestHost('notebookTool.execute', request)
   )
@@ -816,7 +823,6 @@ async function createSession(params: unknown): Promise<unknown> {
   )
   const customTools = [
     ...agentCustomTools,
-    ...dbCustomTools,
     ...notebookCustomTools,
     ...libraryCustomTools,
     ...userInteractionCustomTools

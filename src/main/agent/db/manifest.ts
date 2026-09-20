@@ -161,6 +161,57 @@ function validateField(field: unknown, path: string, errors: string[]): void {
   }
 }
 
+function validateRecordIdentity(
+  identity: unknown,
+  path: string,
+  knownFields: Set<string>,
+  errors: string[]
+): void {
+  if (identity === undefined) return
+  if (!isRecord(identity)) {
+    errors.push(`${path}.identity 必须是对象`)
+    return
+  }
+  const stableIdFields = stringArray(identity.stableIdFields)
+  if (!stableIdFields || stableIdFields.length === 0) {
+    errors.push(`${path}.identity.stableIdFields 必须是非空字符串数组`)
+  } else {
+    for (const field of stableIdFields) {
+      if (!knownFields.has(field)) {
+        errors.push(`${path}.identity.stableIdFields 引用了未声明字段: ${field}`)
+      }
+    }
+  }
+  if (
+    identity.namespace !== undefined &&
+    (typeof identity.namespace !== 'string' || !identity.namespace.trim())
+  ) {
+    errors.push(`${path}.identity.namespace 必须是非空字符串`)
+  }
+  if (identity.primaryUrlTemplate !== undefined) {
+    if (typeof identity.primaryUrlTemplate !== 'string') {
+      errors.push(`${path}.identity.primaryUrlTemplate 必须是字符串`)
+    } else {
+      const tokens = [...identity.primaryUrlTemplate.matchAll(/\{([^{}]+)\}/g)].map(
+        (match) => match[1]
+      )
+      if (tokens.length === 0 || tokens.some((token) => token !== 'stable_id')) {
+        errors.push(`${path}.identity.primaryUrlTemplate 只支持 {stable_id} 占位符`)
+      }
+      try {
+        const parsed = new URL(
+          identity.primaryUrlTemplate.replaceAll('{stable_id}', 'example-identifier')
+        )
+        if (parsed.protocol !== 'https:') {
+          errors.push(`${path}.identity.primaryUrlTemplate 必须使用 https`)
+        }
+      } catch {
+        errors.push(`${path}.identity.primaryUrlTemplate 必须是合法 URL 模板`)
+      }
+    }
+  }
+}
+
 function validateRestJsonDomain(
   rest: unknown,
   path: string,
@@ -186,14 +237,29 @@ function validateRestJsonDomain(
   if (typeof request.path !== 'string' || !request.path.trim()) {
     errors.push(`${path}.rest.request.path 不能为空`)
   }
-  if (request.method !== undefined && request.method !== 'GET') {
-    errors.push(`${path}.rest.request.method Phase 1 只支持 GET`)
+  if (request.method !== undefined && request.method !== 'GET' && request.method !== 'POST') {
+    errors.push(`${path}.rest.request.method 只支持 GET 或 POST`)
+  }
+  if (request.idempotent !== undefined && typeof request.idempotent !== 'boolean') {
+    errors.push(`${path}.rest.request.idempotent 必须是布尔值`)
   }
   if (request.queryParams !== undefined && !primitiveRecord(request.queryParams)) {
     errors.push(`${path}.rest.request.queryParams 必须是字符串/数字/布尔值对象`)
   }
   if (request.filterParamMap !== undefined && !stringRecord(request.filterParamMap)) {
     errors.push(`${path}.rest.request.filterParamMap 必须是字符串对象`)
+  }
+  if (request.jsonBodyParamMap !== undefined && !stringRecord(request.jsonBodyParamMap)) {
+    errors.push(`${path}.rest.request.jsonBodyParamMap 必须是字符串对象`)
+  }
+  if (request.jsonBodyArrayFields !== undefined && !stringArray(request.jsonBodyArrayFields)) {
+    errors.push(`${path}.rest.request.jsonBodyArrayFields 必须是字符串数组`)
+  }
+  if (
+    request.jsonBodyOptionalFields !== undefined &&
+    !stringArray(request.jsonBodyOptionalFields)
+  ) {
+    errors.push(`${path}.rest.request.jsonBodyOptionalFields 必须是字符串数组`)
   }
   for (const key of ['rawQueryParam', 'limitParam', 'cursorParam']) {
     if (request[key] !== undefined && typeof request[key] !== 'string') {
@@ -323,6 +389,13 @@ function validateManifestShape(raw: unknown): { errors: string[]; manifest?: DbC
           )
         }
       }
+      const knownFields = new Set(stringArray(domain.commonFields) ?? [])
+      if (Array.isArray(domain.fields)) {
+        for (const field of domain.fields) {
+          if (isRecord(field) && typeof field.name === 'string') knownFields.add(field.name)
+        }
+      }
+      validateRecordIdentity(domain.identity, path, knownFields, errors)
       validateRestJsonDomain(
         domain.rest,
         path,

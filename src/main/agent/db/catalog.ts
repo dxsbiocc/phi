@@ -9,6 +9,7 @@ import type { DbConnectorCatalogEntry, DbConnectorManifest, DbTrustTier } from '
 import {
   getInstalledDbConnectorsDir,
   isCustomDbConnectorAllowed,
+  isDbConnectorQueryDisabled,
   ensureDbConnectorStorageDirs
 } from './store'
 
@@ -87,6 +88,7 @@ function catalogEntryFrom(
   try {
     const manifest = loadManifestFromDir(dir)
     const digest = canonicalDbConnectorDigest(manifest)
+    const disabled = isDbConnectorQueryDisabled(manifest.id, agentDir)
     return {
       manifest,
       trustTier: marker.trustTier,
@@ -94,7 +96,9 @@ function catalogEntryFrom(
       installedAt: marker.installedAt,
       digest,
       enabledForQuery:
-        marker.trustTier === 'bundled' || isCustomDbConnectorAllowed(manifest.id, digest, agentDir)
+        !disabled &&
+        (marker.trustTier === 'bundled' ||
+          isCustomDbConnectorAllowed(manifest.id, digest, agentDir))
     }
   } catch {
     return undefined

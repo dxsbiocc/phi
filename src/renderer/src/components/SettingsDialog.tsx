@@ -22,6 +22,7 @@ import {
 } from '@mui/material'
 import { PhiIcons } from '../icons'
 import type {
+  DbConnectorSettingsItem,
   DefaultProxyMode,
   ModelOption,
   PhiAppSettingsPatch,
@@ -33,6 +34,7 @@ import type { PermissionMode, Project, ThinkingLevel, ToolApprovalRequest } from
 import type { ThemeMode } from '../theme'
 import { accentAt, ACCENT_PALETTE } from '../theme'
 import { WrapperRemoteSettingsSection } from '../features/wrapper/components/WrapperRemoteSettings'
+import { DatabaseSettingsPanel } from '../features/databases/DatabaseSettingsPanel'
 import { PermissionSettingsSection } from './PermissionView'
 
 const AddIcon = PhiIcons.action.add
@@ -47,13 +49,22 @@ const ShieldIcon = PhiIcons.settings.permissions
 const DiagnosticsIcon = PhiIcons.settings.diagnostics
 const RemoteExecutionIcon = PhiIcons.settings.remoteExecution
 const GeneralIcon = PhiIcons.nav.settings
+const DatabaseIcon = PhiIcons.file.data
 const CheckIcon = PhiIcons.state.check
 
 export type SettingsCategory =
-  'general' | 'persona' | 'providers' | 'permissions' | 'remote' | 'diagnostics' | 'appearance'
+  | 'general'
+  | 'databases'
+  | 'persona'
+  | 'providers'
+  | 'permissions'
+  | 'remote'
+  | 'diagnostics'
+  | 'appearance'
 
 const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.Element }> = [
   { id: 'general', label: '通用', icon: <GeneralIcon fontSize="small" /> },
+  { id: 'databases', label: '数据库', icon: <DatabaseIcon fontSize="small" /> },
   { id: 'persona', label: '助手人设', icon: <PsychologyIcon fontSize="small" /> },
   { id: 'providers', label: 'Provider 配置', icon: <ProviderIcon fontSize="small" /> },
   { id: 'permissions', label: '权限', icon: <ShieldIcon fontSize="small" /> },
@@ -312,7 +323,6 @@ function GeneralSection({
   noProjectTaskFolder,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
-  enableDbConnectorTools,
   proxyTransportStatus,
   isSavingDefaultProxyMode,
   isSavingAppSettings,
@@ -324,7 +334,6 @@ function GeneralSection({
   noProjectTaskFolder: string
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
-  enableDbConnectorTools: boolean
   proxyTransportStatus: ProxyTransportStatus
   isSavingDefaultProxyMode: boolean
   isSavingAppSettings: boolean
@@ -467,24 +476,6 @@ function GeneralSection({
         />
         <Typography variant="caption" color="text.secondary" component="div" sx={{ ml: 5.25 }}>
           允许助手在合适时给出一句可直接继续的下一步建议。
-        </Typography>
-      </Box>
-
-      <Box>
-        <FormControlLabel
-          disabled={isSavingAppSettings}
-          control={
-            <Switch
-              checked={enableDbConnectorTools}
-              onChange={(event) =>
-                onUpdateAppSettings({ enableDbConnectorTools: event.target.checked })
-              }
-            />
-          }
-          label="生物数据库工具"
-        />
-        <Typography variant="caption" color="text.secondary" component="div" sx={{ ml: 5.25 }}>
-          默认开启，向新会话注册 db_search、db_domain、db_query、db_docs_search。
         </Typography>
       </Box>
     </Stack>
@@ -664,13 +655,17 @@ type SettingsDialogProps = {
   noProjectTaskFolder: string
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
-  enableDbConnectorTools: boolean
   proxyTransportStatus: ProxyTransportStatus
   isSavingDefaultProxyMode: boolean
   isSavingAppSettings: boolean
   onSelectDefaultProxyMode: (mode: DefaultProxyMode) => void
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
+  dbConnectors?: DbConnectorSettingsItem[]
+  isLoadingDbConnectors?: boolean
+  updatingDbConnectorId?: string | null
+  onRefreshDbConnectors?: () => Promise<void>
+  onSetDbConnectorEnabled?: (id: string, enabled: boolean) => Promise<void>
   themeMode: ThemeMode
   onSelectThemeMode: (mode: ThemeMode) => void
   category: SettingsCategory
@@ -703,13 +698,17 @@ function SettingsDialog({
   noProjectTaskFolder,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
-  enableDbConnectorTools,
   proxyTransportStatus,
   isSavingDefaultProxyMode,
   isSavingAppSettings,
   onSelectDefaultProxyMode,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
+  dbConnectors = [],
+  isLoadingDbConnectors = false,
+  updatingDbConnectorId = null,
+  onRefreshDbConnectors = async () => undefined,
+  onSetDbConnectorEnabled = async () => undefined,
   themeMode,
   onSelectThemeMode,
   category,
@@ -817,13 +816,21 @@ function SettingsDialog({
               noProjectTaskFolder={noProjectTaskFolder}
               preventSleepDuringRuns={preventSleepDuringRuns}
               nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
-              enableDbConnectorTools={enableDbConnectorTools}
               proxyTransportStatus={proxyTransportStatus}
               isSavingDefaultProxyMode={isSavingDefaultProxyMode}
               isSavingAppSettings={isSavingAppSettings}
               onSelectDefaultProxyMode={onSelectDefaultProxyMode}
               onUpdateAppSettings={onUpdateAppSettings}
               onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
+            />
+          )}
+          {category === 'databases' && (
+            <DatabaseSettingsPanel
+              connectors={dbConnectors}
+              isLoading={isLoadingDbConnectors}
+              updatingConnectorId={updatingDbConnectorId}
+              onRefresh={onRefreshDbConnectors}
+              onSetEnabled={onSetDbConnectorEnabled}
             />
           )}
           {category === 'persona' && (

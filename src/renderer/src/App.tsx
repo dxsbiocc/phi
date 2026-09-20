@@ -12,7 +12,6 @@ import {
 import { alpha } from '@mui/material/styles'
 import { GoSidebarCollapse, GoSidebarExpand, GoSync } from 'react-icons/go'
 import {
-  DEFAULT_DB_CONNECTOR_TOOLS_ENABLED,
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
   DEFAULT_PREVENT_SLEEP_DURING_RUNS,
   DEFAULT_PROXY_TRANSPORT_STATUS
@@ -112,6 +111,7 @@ import type { UserMessageRetryTarget } from './components/chat/ChatUserMessage'
 import type {
   AgentEventSummary,
   AnalysisNotebookFileChange,
+  DbConnectorSettingsItem,
   DefaultProxyMode,
   McpServerSummary,
   ModelOption,
@@ -630,12 +630,12 @@ function App(): React.JSX.Element {
   const [nextActionSuggestionsEnabled, setNextActionSuggestionsEnabled] = useState(
     DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED
   )
-  const [enableDbConnectorTools, setEnableDbConnectorTools] = useState(
-    DEFAULT_DB_CONNECTOR_TOOLS_ENABLED
-  )
   const [proxyTransportStatus, setProxyTransportStatus] = useState<ProxyTransportStatus>(
     DEFAULT_PROXY_TRANSPORT_STATUS
   )
+  const [dbConnectors, setDbConnectors] = useState<DbConnectorSettingsItem[]>([])
+  const [isLoadingDbConnectors, setIsLoadingDbConnectors] = useState(true)
+  const [updatingDbConnectorId, setUpdatingDbConnectorId] = useState<string | null>(null)
   const [isSavingDefaultProxyMode, setIsSavingDefaultProxyMode] = useState(false)
   const [isSavingAppSettings, setIsSavingAppSettings] = useState(false)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
@@ -707,7 +707,6 @@ function App(): React.JSX.Element {
     setNoProjectTaskFolder(settings.noProjectTaskFolder)
     setPreventSleepDuringRuns(settings.preventSleepDuringRuns)
     setNextActionSuggestionsEnabled(settings.nextActionSuggestionsEnabled)
-    setEnableDbConnectorTools(settings.enableDbConnectorTools)
     setProxyTransportStatus(settings.proxyTransportStatus)
   }, [])
 
@@ -730,6 +729,61 @@ function App(): React.JSX.Element {
       cancelled = true
     }
   }, [applyAppSettings, rendererApi, showSnackbarError])
+
+  const refreshDbConnectors = useCallback(async (): Promise<void> => {
+    setIsLoadingDbConnectors(true)
+    try {
+      setDbConnectors(await rendererApi.listDbConnectors())
+    } catch (error) {
+      showSnackbarError(error, '读取数据库设置失败')
+    } finally {
+      setIsLoadingDbConnectors(false)
+    }
+  }, [rendererApi, showSnackbarError])
+
+  useEffect(() => {
+    let cancelled = false
+    void rendererApi
+      .listDbConnectors()
+      .then((connectors) => {
+        if (!cancelled) {
+          setDbConnectors(connectors)
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          showSnackbarError(error, '读取数据库设置失败')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingDbConnectors(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [rendererApi, showSnackbarError])
+
+  const onSetDbConnectorEnabled = useCallback(
+    async (id: string, enabled: boolean): Promise<void> => {
+      const previous = dbConnectors
+      setDbConnectors((items) =>
+        items.map((item) => (item.id === id ? { ...item, enabledForQuery: enabled } : item))
+      )
+      setUpdatingDbConnectorId(id)
+      try {
+        setDbConnectors(await rendererApi.setDbConnectorEnabled(id, enabled))
+      } catch (error) {
+        setDbConnectors(previous)
+        showSnackbarError(error, '保存数据库设置失败')
+      } finally {
+        setUpdatingDbConnectorId(null)
+      }
+    },
+    [dbConnectors, rendererApi, showSnackbarError]
+  )
 
   const onSelectDefaultProxyMode = useCallback(
     async (mode: DefaultProxyMode): Promise<void> => {
@@ -778,7 +832,6 @@ function App(): React.JSX.Element {
       const previousNoProjectTaskFolder = noProjectTaskFolder
       const previousPreventSleepDuringRuns = preventSleepDuringRuns
       const previousNextActionSuggestionsEnabled = nextActionSuggestionsEnabled
-      const previousEnableDbConnectorTools = enableDbConnectorTools
 
       if (patch.noProjectTaskFolder !== undefined) {
         setNoProjectTaskFolder(patch.noProjectTaskFolder)
@@ -789,9 +842,6 @@ function App(): React.JSX.Element {
       if (patch.nextActionSuggestionsEnabled !== undefined) {
         setNextActionSuggestionsEnabled(patch.nextActionSuggestionsEnabled)
       }
-      if (patch.enableDbConnectorTools !== undefined) {
-        setEnableDbConnectorTools(patch.enableDbConnectorTools)
-      }
 
       setIsSavingAppSettings(true)
       try {
@@ -801,7 +851,6 @@ function App(): React.JSX.Element {
         setNoProjectTaskFolder(previousNoProjectTaskFolder)
         setPreventSleepDuringRuns(previousPreventSleepDuringRuns)
         setNextActionSuggestionsEnabled(previousNextActionSuggestionsEnabled)
-        setEnableDbConnectorTools(previousEnableDbConnectorTools)
         showSnackbarError(error, '保存通用设置失败')
       } finally {
         setIsSavingAppSettings(false)
@@ -809,7 +858,6 @@ function App(): React.JSX.Element {
     },
     [
       applyAppSettings,
-      enableDbConnectorTools,
       nextActionSuggestionsEnabled,
       noProjectTaskFolder,
       preventSleepDuringRuns,
@@ -3415,13 +3463,17 @@ function App(): React.JSX.Element {
           noProjectTaskFolder={noProjectTaskFolder}
           preventSleepDuringRuns={preventSleepDuringRuns}
           nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
-          enableDbConnectorTools={enableDbConnectorTools}
           proxyTransportStatus={proxyTransportStatus}
           isSavingDefaultProxyMode={isSavingDefaultProxyMode}
           isSavingAppSettings={isSavingAppSettings}
           onSelectDefaultProxyMode={onSelectDefaultProxyMode}
           onUpdateAppSettings={onUpdateAppSettings}
           onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
+          dbConnectors={dbConnectors}
+          isLoadingDbConnectors={isLoadingDbConnectors}
+          updatingDbConnectorId={updatingDbConnectorId}
+          onRefreshDbConnectors={refreshDbConnectors}
+          onSetDbConnectorEnabled={onSetDbConnectorEnabled}
           showOnboarding={showOnboarding}
           onCompleteOnboarding={onCompleteOnboarding}
           onSkipOnboarding={onSkipOnboarding}

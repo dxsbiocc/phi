@@ -154,11 +154,18 @@ test('listSkills reads project skills from the selected cwd', async () => {
     (skill) =>
       skill.name === 'anndata' && skill.filePath.includes(join('resources', 'skills', 'anndata'))
   )
+  const databaseConnectorSkill = projectASkills.find(
+    (skill) =>
+      skill.name === 'create-database-connector' &&
+      skill.filePath.includes(join('resources', 'skills', 'create-database-connector'))
+  )
 
   assert(projectASkills.some((skill) => skill.name === 'project-a-skill'))
   assert(bundledSkill)
+  assert(databaseConnectorSkill)
   assert.equal(bundledSkill.sourceCategory, 'system')
   assert.equal(bundledSkill.sourceCategoryLabel, 'System')
+  assert.equal(databaseConnectorSkill.sourceCategory, 'system')
   assert(
     projectASkills.some(
       (skill) => skill.name === 'project-a-phi-skill' && skill.scope === 'project'

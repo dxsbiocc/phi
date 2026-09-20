@@ -383,10 +383,10 @@ export async function executeDbHttpRequest(options: DbHttpRequestOptions): Promi
   const headersDigest = dbHeadersCacheDigest(headers)
   const idempotent = options.idempotent ?? init.method === 'GET'
   const cacheKey =
-    cacheTtlMs > 0 && idempotent && init.method === 'GET'
+    cacheTtlMs > 0 && idempotent
       ? dbResponseCacheKey({
           database: options.manifest.id,
-          method: init.method,
+          method,
           url: requestUrl.toString(),
           headersDigest,
           body: options.body
