@@ -680,6 +680,7 @@ function App(): React.JSX.Element {
     wrapperError,
     setSelectedWrapperId,
     refreshWrappers,
+    refreshRuns: refreshWrapperRuns,
     cancelWrapperRun,
     exportWrapperReproducibility
   } = useWrapperCatalog()
@@ -2694,9 +2695,11 @@ function App(): React.JSX.Element {
         subtitle: entry.id
       })
       // Runs the agent started while this view was closed (wrapper_run) only exist on disk.
-      void refreshWrappers()
+      // Reload just the runs: a full refresh flips the sidebar to its loading spinner and
+      // swaps the catalog, which repaints the whole view instead of only the detail page.
+      void refreshWrapperRuns()
     },
-    [openWorkspaceResourceTab, refreshWrappers, setSelectedWrapperId]
+    [openWorkspaceResourceTab, refreshWrapperRuns, setSelectedWrapperId]
   )
 
   const onCloseWorkspaceTab = useCallback(

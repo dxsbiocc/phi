@@ -10,6 +10,8 @@ export type WrapperCatalogState = {
   wrapperError: string | null
   setSelectedWrapperId: (id: string | null) => void
   refreshWrappers: () => Promise<void>
+  /** Reloads only the run list — no loading flag, no catalog swap, so nothing but the run views re-render. */
+  refreshRuns: () => Promise<void>
   cancelWrapperRun: (runId: string) => Promise<void>
   exportWrapperReproducibility: (runId: string) => Promise<void>
 }
@@ -51,6 +53,14 @@ export function useWrapperCatalog(): WrapperCatalogState {
       setWrapperError(err instanceof Error ? err.message : String(err))
     } finally {
       setIsLoadingWrappers(false)
+    }
+  }, [])
+
+  const refreshRuns = useCallback(async (): Promise<void> => {
+    try {
+      setRuns(await window.api.listWrapperRuns())
+    } catch {
+      // A failed quiet refresh keeps the runs already shown.
     }
   }, [])
 
@@ -102,6 +112,7 @@ export function useWrapperCatalog(): WrapperCatalogState {
     wrapperError,
     setSelectedWrapperId,
     refreshWrappers,
+    refreshRuns,
     cancelWrapperRun,
     exportWrapperReproducibility
   }
