@@ -8,6 +8,7 @@ import { tokenizeLocalPaths } from '../lib/localPaths'
 import { highlightLine, type SyntaxLanguage } from '../lib/syntaxHighlight'
 import { syntaxTokenColor } from '../lib/syntaxTheme'
 import { smilesExpressionFromInlineCode } from '../lib/moleculeExpressions'
+import { databaseWebPreviewKindFromString } from '../../../shared/databaseWebPreview'
 import {
   collectBareFileReferencePaths,
   inlineCodeBareFilePath,
@@ -24,6 +25,8 @@ import { normalizeHexColor, tokenizeMarkdownColors } from '../lib/markdownColors
 import { ColorCode, InlineCodeShell, MarkdownColorTokenView } from './markdown/MarkdownColorToken'
 import { LocalFileHoverPreview } from './markdown/MarkdownHoverPreview'
 import { MarkdownSmilesTokenView } from './markdown/MarkdownSmilesToken'
+import { StringNetworkPreview } from './markdown/StringNetworkPreview'
+import { KeggPathwayPreview } from './markdown/KeggPathwayPreview'
 import {
   HOVER_PREVIEW_OPEN_DELAY_MS,
   localPathTooltipSlotProps,
@@ -540,6 +543,16 @@ function MarkdownContentImpl({
               onOpenLocalPath={onOpenLocalPath}
             />
           )
+        }
+
+        if (typeof href === 'string') {
+          const databasePreviewKind = databaseWebPreviewKindFromString(href)
+          if (databasePreviewKind === 'string-network') {
+            return <StringNetworkPreview href={href} label={textFromNode(children) || href} />
+          }
+          if (databasePreviewKind === 'kegg-pathway') {
+            return <KeggPathwayPreview href={href} label={textFromNode(children) || href} />
+          }
         }
 
         return (

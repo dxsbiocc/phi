@@ -68,6 +68,7 @@ import {
   storeRemoteConnectionPassphrase
 } from './agent/wrappers/remote-credential-store'
 import { renderMoleculeSvg } from './molecule-renderer'
+import { previewDatabaseWebImage } from './database-web-preview'
 import {
   cancelToolApprovals,
   createApprovalExtension,
@@ -4469,6 +4470,9 @@ app.whenReady().then(() => {
       return renderMoleculeSvg(value, width, height)
     }
   )
+  ipcMain.handle('database:webImagePreview', async (_, sourceUrl: string) => {
+    return previewDatabaseWebImage(sourceUrl)
+  })
   ipcMain.handle('diagnostics:copy', async () => {
     const text = await createDiagnosticsText()
     clipboard.writeText(text)

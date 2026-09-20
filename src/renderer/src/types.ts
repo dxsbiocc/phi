@@ -448,6 +448,18 @@ export type FileHoverPreview = FileHoverPreviewBase &
       }
   )
 
+export type DatabaseWebPreviewKind = 'string-network' | 'kegg-pathway'
+
+export type DatabaseWebImagePreview = {
+  kind: DatabaseWebPreviewKind
+  label: string
+  sourceUrl: string
+  imageUrl: string
+  dataUrl: string
+  mimeType: 'image/png'
+  bytes: number
+}
+
 export interface FileTreeEntry {
   path: string
   name: string
@@ -721,6 +733,7 @@ export type RendererApi = {
   statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
   listDirectory: (path: string) => Promise<DirectoryListing>
   renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
+  previewDatabaseWebImage: (url: string) => Promise<DatabaseWebImagePreview>
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => () => void

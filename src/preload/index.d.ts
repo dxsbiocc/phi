@@ -246,6 +246,16 @@ type PreloadDirectoryListing = {
   truncated: boolean
 }
 
+type PreloadDatabaseWebImagePreview = {
+  kind: 'string-network' | 'kegg-pathway'
+  label: string
+  sourceUrl: string
+  imageUrl: string
+  dataUrl: string
+  mimeType: 'image/png'
+  bytes: number
+}
+
 type PreloadAnalysisNotebookSummary = {
   path: string
   relativePath: string
@@ -481,6 +491,7 @@ declare global {
       statLocalPaths: (cwd: string, paths: string[]) => Promise<PreloadLocalPathStat[]>
       listDirectory: (path: string) => Promise<PreloadDirectoryListing>
       renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
+      previewDatabaseWebImage: (url: string) => Promise<PreloadDatabaseWebImagePreview>
       copyDiagnostics: () => Promise<string>
       sendPrompt: (
         text: string,
