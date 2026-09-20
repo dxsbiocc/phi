@@ -584,6 +584,7 @@ type RendererAuthApi = {
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
   statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
   listDirectory: (path: string) => Promise<DirectoryListing>
+  renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => Unsubscribe
@@ -796,6 +797,8 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('files:statLocalPaths', cwd, paths),
   listDirectory: (path: string): Promise<DirectoryListing> =>
     ipcRenderer.invoke('files:listDirectory', path),
+  renderMoleculeSvg: (value: string, width: number, height: number): Promise<string> =>
+    ipcRenderer.invoke('molecules:renderSvg', value, width, height),
   copyDiagnostics: (): Promise<string> => ipcRenderer.invoke('diagnostics:copy'),
   sendPrompt: (text: string, target?: PromptTarget): Promise<PromptResult | null> =>
     ipcRenderer.invoke('agent:prompt', text, target),

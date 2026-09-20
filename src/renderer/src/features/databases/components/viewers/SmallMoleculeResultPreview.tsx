@@ -1,12 +1,8 @@
 import { Box, Chip, Stack, Typography } from '@mui/material'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { MainModule } from '@rdkit/rdkit'
 import type { DbResultViewerHint } from '../../../../../../shared/dbConnectorTypes'
-
-const rdkitWasmUrl = new URL(
-  '../../../../../../../node_modules/@rdkit/rdkit/dist/RDKit_minimal.wasm',
-  import.meta.url
-).href
+import { isRenderableMoleculeField } from '../../../../lib/moleculeExpressions'
+import { renderMoleculeSvg } from '../../../../lib/rdkitPreview'
 
 const CONFIDENCE_LABELS: Record<DbResultViewerHint['confidence'], string> = {
   high: '高置信',
@@ -14,37 +10,8 @@ const CONFIDENCE_LABELS: Record<DbResultViewerHint['confidence'], string> = {
   low: '低置信'
 }
 
-const RENDERABLE_FIELD_NAMES = new Set([
-  'smiles',
-  'canonicalsmiles',
-  'isomericsmiles',
-  'mol',
-  'molblock',
-  'molfile',
-  'sdf'
-])
-
-let rdkitModulePromise: Promise<MainModule> | null = null
-
-function loadRdkit(): Promise<MainModule> {
-  rdkitModulePromise ??= import('@rdkit/rdkit').then(({ default: initRDKitModule }) =>
-    initRDKitModule({
-      locateFile: (file: string) => (file.endsWith('.wasm') ? rdkitWasmUrl : file)
-    })
-  )
-  return rdkitModulePromise
-}
-
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-function normalizedField(field: string): string {
-  return field.toLowerCase().replace(/[^a-z0-9]/g, '')
-}
-
-function isRenderableMoleculeField(field: string): boolean {
-  return RENDERABLE_FIELD_NAMES.has(normalizedField(field))
 }
 
 function moleculeInput(
@@ -127,19 +94,10 @@ export function SmallMoleculeResultPreview({
     let cancelled = false
     if (!input) return
 
-    void loadRdkit()
-      .then((rdkit) => {
+    void renderMoleculeSvg(input.value, 320, 220)
+      .then((svg) => {
         if (cancelled) return
-        const molecule = rdkit.get_mol(input.value)
-        if (!molecule) {
-          setRenderState({ value: input.value, error: `RDKit 无法解析 ${input.field}` })
-          return
-        }
-        try {
-          setRenderState({ value: input.value, svg: molecule.get_svg(320, 220) })
-        } finally {
-          molecule.delete()
-        }
+        setRenderState({ value: input.value, svg })
       })
       .catch((loadError: unknown) => {
         if (cancelled) return
@@ -195,8 +153,17 @@ export function SmallMoleculeResultPreview({
             }}
           />
         ) : (
-          <Typography variant="caption" color={error ? 'error.main' : 'text.secondary'}>
-            {error ?? (input ? '正在加载 RDKit.js 结构预览...' : '没有可渲染的小分子结构字段')}
+          <Typography
+            variant="caption"
+            color={error ? 'error.main' : 'text.secondary'}
+            title={error}
+            sx={{ overflowWrap: 'anywhere' }}
+          >
+            {error
+              ? '结构预览加载失败'
+              : input
+                ? '正在加载 RDKit.js 结构预览...'
+                : '没有可渲染的小分子结构字段'}
           </Typography>
         )}
 

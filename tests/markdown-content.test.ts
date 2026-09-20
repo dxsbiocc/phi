@@ -93,6 +93,16 @@ test('markdown inline code renders pure hex colors with swatches', () => {
   assert.match(markup, /#0072B2/)
 })
 
+test('markdown inline code renders SMILES expressions with hover molecule previews', () => {
+  const smiles = 'NC(Cc1cc(I)c(Oc2ccc(O)c(I)c2)c(I)c1)C(=O)O'
+  const markup = renderMarkdown(`| 分子 | SMILES |\n| --- | --- |\n| L-T4 | \`${smiles}\` |`)
+
+  assert.match(markup, /data-phi-slot="markdown-smiles-token"/)
+  assert.match(markup, /data-phi-smiles-hover-preview="true"/)
+  assert.match(markup, /data-phi-molecule-expression="true"/)
+  assert.match(markup, /NC\(Cc1cc/)
+})
+
 test('markdown color swatches work inside emphasis and tables', () => {
   const markup = renderMarkdown(
     '**Blue #0072B2**\n\n| Name | Color |\n| --- | --- |\n| red | #D55E00 |'

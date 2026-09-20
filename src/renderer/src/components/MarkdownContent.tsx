@@ -7,6 +7,7 @@ import { useMarkdownPlugins } from '../lib/markdownMathPlugins'
 import { tokenizeLocalPaths } from '../lib/localPaths'
 import { highlightLine, type SyntaxLanguage } from '../lib/syntaxHighlight'
 import { syntaxTokenColor } from '../lib/syntaxTheme'
+import { smilesExpressionFromInlineCode } from '../lib/moleculeExpressions'
 import {
   collectBareFileReferencePaths,
   inlineCodeBareFilePath,
@@ -22,6 +23,7 @@ import {
 import { normalizeHexColor, tokenizeMarkdownColors } from '../lib/markdownColors'
 import { ColorCode, InlineCodeShell, MarkdownColorTokenView } from './markdown/MarkdownColorToken'
 import { LocalFileHoverPreview } from './markdown/MarkdownHoverPreview'
+import { MarkdownSmilesTokenView } from './markdown/MarkdownSmilesToken'
 import {
   HOVER_PREVIEW_OPEN_DELAY_MS,
   localPathTooltipSlotProps,
@@ -452,6 +454,9 @@ function InlineCode({
       />
     )
   }
+
+  const smiles = smilesExpressionFromInlineCode(codeText)
+  if (smiles) return <MarkdownSmilesTokenView smiles={smiles} />
 
   return <InlineCodeShell>{children}</InlineCodeShell>
 }

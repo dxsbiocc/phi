@@ -480,6 +480,7 @@ declare global {
       hoverPreviewFile: (path: string) => Promise<PreloadFileHoverPreview>
       statLocalPaths: (cwd: string, paths: string[]) => Promise<PreloadLocalPathStat[]>
       listDirectory: (path: string) => Promise<PreloadDirectoryListing>
+      renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
       copyDiagnostics: () => Promise<string>
       sendPrompt: (
         text: string,

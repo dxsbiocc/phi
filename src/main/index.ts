@@ -67,6 +67,7 @@ import {
   isRemoteCredentialStorageAvailable,
   storeRemoteConnectionPassphrase
 } from './agent/wrappers/remote-credential-store'
+import { renderMoleculeSvg } from './molecule-renderer'
 import {
   cancelToolApprovals,
   createApprovalExtension,
@@ -4462,6 +4463,12 @@ app.whenReady().then(() => {
   ipcMain.handle('files:listDirectory', async (_, dirPath: string) => {
     return createDirectoryListing(dirPath)
   })
+  ipcMain.handle(
+    'molecules:renderSvg',
+    async (_, value: unknown, width: unknown, height: unknown) => {
+      return renderMoleculeSvg(value, width, height)
+    }
+  )
   ipcMain.handle('diagnostics:copy', async () => {
     const text = await createDiagnosticsText()
     clipboard.writeText(text)
