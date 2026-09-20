@@ -769,6 +769,7 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
   private readonly listeners = new Set<(event: AgentSessionEvent) => void>()
   private readonly cleanupFns: Array<() => void> = []
   private readonly approvalAbortController = new AbortController()
+  private recovery: Promise<void> | null = null
   readonly sessionManager: RuntimeSessionManager
 
   constructor(
@@ -776,7 +777,8 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     private readonly sessionId: string,
     sessionManager: RuntimeSessionManager,
     state: WorkerSessionState,
-    private readonly toolCallHandlers: ToolCallHandler[]
+    private readonly toolCallHandlers: ToolCallHandler[],
+    private readonly recreate?: (current: RuntimeAgentSessionProxy) => Promise<WorkerSessionState>
   ) {
     this.runtimeSessionId = sessionId
     this.sessionManager = new ActiveRuntimeSessionManagerProxy(sessionManager, bridge, sessionId)
@@ -805,7 +807,24 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     return () => this.listeners.delete(listener)
   }
 
+  /**
+   * Sessions live only in the worker's memory. If the worker exited since this session
+   * was created (crash, idle stop), rebuild it in the new worker under the same id —
+   * resuming from the session file — instead of failing every later call with
+   * "Unknown session".
+   */
+  private async ensureLive(): Promise<void> {
+    if (!this.recreate || this.bridge.hasSession(this.sessionId)) return
+    this.recovery ??= this.recreate(this)
+      .then((state) => applySessionState(this, state))
+      .finally(() => {
+        this.recovery = null
+      })
+    await this.recovery
+  }
+
   async prompt(text: string, options?: RuntimePromptOptions): Promise<void> {
+    await this.ensureLive()
     options?.preflightResult?.(true)
     const state = await this.bridge.request<WorkerSessionState>('session.prompt', {
       sessionId: this.sessionId,
@@ -817,6 +836,8 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
 
   async abort(): Promise<void> {
     this.approvalAbortController.abort()
+    // A session the worker no longer holds has nothing running to abort.
+    if (this.recreate && !this.bridge.hasSession(this.sessionId)) return
     const state = await this.bridge.request<WorkerSessionState>('session.abort', {
       sessionId: this.sessionId
     })
@@ -828,12 +849,14 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     for (const cleanup of this.cleanupFns.splice(0)) {
       cleanup()
     }
+    if (this.recreate && !this.bridge.hasSession(this.sessionId)) return
     await this.bridge.request('session.dispose', {
       sessionId: this.sessionId
     })
   }
 
   async setModel(model: RuntimeModel): Promise<void> {
+    await this.ensureLive()
     const state = await this.bridge.request<WorkerSessionState>('session.setModel', {
       sessionId: this.sessionId,
       agentDir: getPhiAgentDir(),
@@ -844,12 +867,15 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
 
   setThinkingLevel(level: ThinkingLevel | undefined): void {
     this.thinkingLevel = level
-    void this.bridge
-      .request<WorkerSessionState>('session.setThinkingLevel', {
-        sessionId: this.sessionId,
-        level
-      })
+    void this.ensureLive()
+      .then(() =>
+        this.bridge.request<WorkerSessionState>('session.setThinkingLevel', {
+          sessionId: this.sessionId,
+          level
+        })
+      )
       .then((state) => applySessionState(this, state))
+      .catch(() => undefined)
   }
 
   private async resolveToolApproval(request: ToolApprovalRequest): Promise<void> {
@@ -920,7 +946,7 @@ export async function createRuntimeAgentSession(
   const toolCallHandlers = resourceLoader ? await resourceLoader.getToolCallHandlers() : []
   const sessionManager = options.sessionManager ?? createRuntimeSessionManager(cwd)
   const sessionId = randomUUID()
-  const created = await bridge.request<WorkerCreateSessionResult>('session.create', {
+  const createParams = {
     sessionId,
     cwd,
     agentDir,
@@ -938,13 +964,30 @@ export async function createRuntimeAgentSession(
       : undefined,
     enableToolApproval: toolCallHandlers.length > 0,
     phiAgents: options.phiAgents
-  })
+  }
+  const created = await bridge.request<WorkerCreateSessionResult>('session.create', createParams)
+  // Same params with the session's current model/thinking level, reopening its file when
+  // one exists so the conversation carries over into a replacement worker.
+  const recreate = async (current: RuntimeAgentSession): Promise<WorkerSessionState> => {
+    const file = current.sessionFile
+    const resumable = sessionManager.kind !== 'memory' && file && existsSync(file)
+    const result = await bridge.request<WorkerCreateSessionResult>('session.create', {
+      ...createParams,
+      model: current.model ?? createParams.model,
+      thinkingLevel: current.thinkingLevel ?? createParams.thinkingLevel,
+      sessionManager: resumable
+        ? { kind: 'open', cwd: current.sessionManager.getCwd(), path: file }
+        : createParams.sessionManager
+    })
+    return result.state
+  }
   const session = new RuntimeAgentSessionProxy(
     bridge,
     created.sessionId,
     sessionManager,
     created.state,
-    toolCallHandlers
+    toolCallHandlers,
+    recreate
   )
 
   return {

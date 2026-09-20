@@ -6,6 +6,7 @@ import { createInterface } from 'node:readline'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { writeAppLog } from '../app-logger'
 import { getPhiAgentDir } from '../runtime-paths'
 
 type PendingRequest = {
@@ -120,13 +121,41 @@ function createBridgeError(message: string, stack?: string): Error {
   return error
 }
 
+export type WorkerSpawner = (workerPath: string, agentDir: string) => ChildProcessWithoutNullStreams
+
+function spawnBunWorker(workerPath: string, agentDir: string): ChildProcessWithoutNullStreams {
+  return spawn('bun', [workerPath], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      PI_CODING_AGENT_DIR: agentDir,
+      OMP_APP_NAME: 'Phi'
+    },
+    stdio: ['pipe', 'pipe', 'pipe']
+  })
+}
+
 export class OmpBridge extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null
+  // Workers we stopped on purpose, so their exit is not reported as a crash.
+  private readonly stoppedChildren = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly pending = new Map<string, PendingRequest>()
   private readonly hostHandlers = new Map<string, HostRequestHandler>()
   private readonly activeSessions = new Set<string>()
   private idleTimer: NodeJS.Timeout | null = null
   private stderrTail = ''
+
+  constructor(private readonly spawnWorker: WorkerSpawner = spawnBunWorker) {
+    super()
+  }
+
+  /**
+   * Whether the running worker still holds this session. Sessions live only in the
+   * worker's memory, so a worker that exited (crash, idle stop) has lost all of them.
+   */
+  hasSession(sessionId: string): boolean {
+    return this.activeSessions.has(sessionId)
+  }
 
   request<T = unknown>(method: string, params?: unknown): Promise<T> {
     this.cancelIdleStop()
@@ -212,6 +241,7 @@ export class OmpBridge extends EventEmitter {
     this.cancelIdleStop()
     if (!child) return
 
+    this.stoppedChildren.add(child)
     child.kill()
     await new Promise<void>((resolve) => {
       child.once('exit', () => resolve())
@@ -226,15 +256,8 @@ export class OmpBridge extends EventEmitter {
 
     const workerPath = resolveWorkerPath()
     const agentDir = getPhiAgentDir()
-    const child = spawn('bun', [workerPath], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        PI_CODING_AGENT_DIR: agentDir,
-        OMP_APP_NAME: 'Phi'
-      },
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+    this.stderrTail = ''
+    const child = this.spawnWorker(workerPath, agentDir)
     this.child = child
 
     const stdout = createInterface({ input: child.stdout })
@@ -250,13 +273,29 @@ export class OmpBridge extends EventEmitter {
     })
 
     child.on('exit', (code, signal) => {
+      // A worker we replaced can exit after its successor started (stop() then a new
+      // request). It must not wipe the successor's sessions or fail its requests.
+      const superseded = this.child !== null && this.child !== child
+      const reason = `${signal ?? code ?? 'unknown'}`
+      if (!this.stoppedChildren.has(child)) {
+        writeAppLog({
+          level: 'error',
+          event: 'omp_worker_exited',
+          metadata: {
+            reason,
+            lostSessions: superseded ? 0 : this.activeSessions.size,
+            stderrTail: this.stderrTail.slice(-2000)
+          }
+        })
+      }
+      if (superseded) return
       if (this.child === child) {
         this.child = null
       }
       this.activeSessions.clear()
       this.rejectAll(
         createBridgeError(
-          `OMP worker exited (${signal ?? code ?? 'unknown'})${this.stderrTail ? `: ${this.stderrTail}` : ''}`
+          `OMP worker exited (${reason})${this.stderrTail ? `: ${this.stderrTail}` : ''}`
         )
       )
     })
