@@ -1,4 +1,5 @@
 import { Box, IconButton } from '@mui/material'
+import { alpha, useTheme } from '@mui/material/styles'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { type LocalPathKind } from '../MarkdownContent'
 import AgentExecutionCard from '../AgentExecutionCard'
@@ -6,6 +7,12 @@ import ToolCallCard from '../ToolCallCard'
 import ToolGroupCard from '../ToolGroupCard'
 import { WrapperPlanCard } from '../../features/wrapper/components/WrapperPlanCard'
 import { PhiIcons } from '../../icons'
+import {
+  centeredScrollTop,
+  groupIndexContainingItem,
+  runningAgentRuns,
+  virtualRowScrollTop
+} from '../../lib/agentRunsOverview'
 import { groupMessages, timestampMs, type RenderGroup } from '../../lib/chatRenderGroups'
 import {
   chatVirtualWindow,
@@ -13,15 +20,38 @@ import {
   type ChatVirtualItem,
   type ChatVirtualViewport
 } from '../../lib/chatVirtualization'
+import { useLostAgentRunsStore } from '../../stores/lostAgentRunsStore'
 import type { ChatItem, ChatMessage, NotebookCellJumpTarget } from '../../types'
+import AgentRunsOverview from './AgentRunsOverview'
 import { ChatBubble } from './ChatBubble'
-import { ChatProcessingGroup } from './ChatProcessingGroup'
+import { ChatProcessingGroup, type ChatFocusRequest } from './ChatProcessingGroup'
 import { type UserMessageRetryTarget, type UserMessageState } from './ChatUserMessage'
 import { type ChatContentResizeOptions } from './useCollapseResizeNotifier'
 
 const JumpToLatestIcon = PhiIcons.action.expand
 const BOTTOM_STICKINESS_THRESHOLD_PX = 48
 const USER_RESIZE_AUTO_SCROLL_SUPPRESSION_MS = 700
+// Locating a card opens a fold and scrolls; streaming output must not pull the view back meanwhile.
+const AGENT_LOCATE_AUTOSCROLL_SUPPRESSION_MS = 1500
+// The card may not be on screen yet: its row has to be scrolled into the virtual window and its
+// fold opened first. ~1 s of frames is plenty; give up quietly after that.
+const AGENT_LOCATE_MAX_FRAMES = 60
+// A fold takes a moment to finish opening; centre once more after it has.
+const AGENT_LOCATE_RECENTER_MS = 450
+const AGENT_LOCATE_FLASH_MS = 1400
+
+/** A brief outline on the card the user just asked to see. Skipped for users who avoid motion. */
+function flashElement(element: HTMLElement, color: string): void {
+  if (typeof element.animate !== 'function') return
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+  element.animate(
+    [
+      { boxShadow: `0 0 0 2px ${color}`, backgroundColor: alpha(color, 0.12) },
+      { boxShadow: `0 0 0 2px ${alpha(color, 0)}`, backgroundColor: alpha(color, 0) }
+    ],
+    { duration: AGENT_LOCATE_FLASH_MS, easing: 'ease-out' }
+  )
+}
 
 function distanceFromMessagesBottom(element: HTMLDivElement): number {
   return element.scrollHeight - element.scrollTop - element.clientHeight
@@ -182,6 +212,14 @@ const ChatMessageList = memo(function ChatMessageList({
   const suppressAutoScrollUntilRef = useRef(0)
   const lastMessageMarkerRef = useRef<MessageScrollMarker | null>(null)
   const virtualListRef = useRef<HTMLDivElement | null>(null)
+  const [focusRequest, setFocusRequest] = useState<ChatFocusRequest | null>(null)
+  const focusNonceRef = useRef(0)
+  const primaryColor = useTheme().palette.primary.main
+  const lostAgentRuns = useLostAgentRunsStore((state) => state.lost)
+  const runningAgents = useMemo(
+    () => runningAgentRuns(messages, lostAgentRuns),
+    [messages, lostAgentRuns]
+  )
   const virtualRowObserversRef = useRef<Map<string, ResizeObserver>>(new Map())
   const currentMessageMarker = useMemo(() => messageScrollMarker(messages), [messages])
   const renderGroups = useMemo(
@@ -304,6 +342,74 @@ const ChatMessageList = memo(function ChatMessageList({
     [scrollContainer]
   )
 
+  // Brings an agent's card into view from the running-agents overview. The card usually sits in a
+  // folded processing group inside a virtual list, so this asks the fold to open, scrolls the row
+  // into the virtual window, then (below) centres the card once it exists.
+  const locateAgentCard = useCallback(
+    (itemId: string): void => {
+      if (!scrollContainer) return
+      const groupIndex = groupIndexContainingItem(renderGroups, itemId)
+      if (groupIndex < 0) return
+      // Leave the bottom on purpose: otherwise streaming would pull the view straight back.
+      stickToBottomRef.current = false
+      setIsStuckToBottom(false)
+      suppressAutoScrollUntilRef.current = Date.now() + AGENT_LOCATE_AUTOSCROLL_SUPPRESSION_MS
+      focusNonceRef.current += 1
+      setFocusRequest({ itemId, nonce: focusNonceRef.current })
+      const listTop = chatVirtualListScrollTop(scrollContainer, virtualListRef.current)
+      scrollContainer.scrollTo({
+        top: virtualRowScrollTop(virtualCells.offsets, groupIndex, listTop)
+      })
+    },
+    [renderGroups, scrollContainer, virtualCells.offsets]
+  )
+
+  useEffect(() => {
+    if (!focusRequest || !scrollContainer) return undefined
+    const selector = `[data-agent-card-id="${CSS.escape(focusRequest.itemId)}"]`
+    let frame = 0
+    let attempts = 0
+    let recenterTimer: number | undefined
+    let lastTop: number | null = null
+
+    const center = (target: HTMLElement): void => {
+      const container = scrollContainer.getBoundingClientRect()
+      const rect = target.getBoundingClientRect()
+      lastTop = centeredScrollTop({
+        scrollTop: scrollContainer.scrollTop,
+        containerTop: container.top,
+        containerHeight: container.height,
+        elementTop: rect.top,
+        elementHeight: rect.height
+      })
+      scrollContainer.scrollTo({ top: lastTop })
+    }
+    const settle = (): void => {
+      const target = scrollContainer.querySelector<HTMLElement>(selector)
+      if (!target) {
+        if (attempts < AGENT_LOCATE_MAX_FRAMES) {
+          attempts += 1
+          frame = window.requestAnimationFrame(settle)
+        }
+        return
+      }
+      center(target)
+      flashElement(target, primaryColor)
+      recenterTimer = window.setTimeout(() => {
+        // Not if the user has taken over the scrolling in the meantime.
+        if (!target.isConnected || lastTop === null) return
+        if (Math.abs(scrollContainer.scrollTop - lastTop) > 4) return
+        center(target)
+      }, AGENT_LOCATE_RECENTER_MS)
+    }
+
+    frame = window.requestAnimationFrame(settle)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.clearTimeout(recenterTimer)
+    }
+  }, [focusRequest, primaryColor, scrollContainer])
+
   const onMessagesContentResize = useCallback(
     (options?: ChatContentResizeOptions): void => {
       if (!scrollContainer) return
@@ -420,6 +526,7 @@ const ChatMessageList = memo(function ChatMessageList({
         return (
           <ChatProcessingGroup
             items={group.items}
+            focusRequest={focusRequest}
             onGoSettings={onGoSettings}
             onOpenLocalPath={onOpenLocalPath}
             onJumpToNotebookCell={onJumpToNotebookCell}
@@ -477,6 +584,7 @@ const ChatMessageList = memo(function ChatMessageList({
     [
       cwd,
       currentRunStartedAt,
+      focusRequest,
       isGenerating,
       onEditUserMessage,
       onGoSettings,
@@ -525,6 +633,7 @@ const ChatMessageList = memo(function ChatMessageList({
           ) : null}
         </Box>
       </Box>
+      <AgentRunsOverview runs={runningAgents} onLocate={locateAgentCard} />
       {showJumpToLatest ? (
         <IconButton
           aria-label="回到最新消息"

@@ -8,20 +8,21 @@ import {
   Tooltip,
   Typography
 } from '@mui/material'
-import { memo, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { memo, useEffect, useState, type ReactNode } from 'react'
 import { PhiIcons, fileIconForPath } from '../icons'
-import type { AgentExecutionItem, AgentExecutionStep, ToolCallItem } from '../types'
+import type { AgentExecutionItem } from '../types'
 import {
   agentRunControlTarget,
   agentRunStatusText,
   isAgentRunGoneError,
   type AgentRunControlTarget
 } from '../lib/agentExecutionControl'
-import { toolActionKind } from '../lib/toolActions'
+import { agentRunLostKey, formatAgentDuration } from '../lib/agentRunsOverview'
+import { useLostAgentRunsStore } from '../stores/lostAgentRunsStore'
 import { formatBytes, outputPreviewText } from '../lib/toolOutputPresentation'
+import AgentStepRow from './AgentStepRow'
 import MarkdownContent, { type LocalPathKind } from './MarkdownContent'
-import { ToolActionIcon } from './ToolActionIcon'
-import { StatusIndicator, ToolCallDetail } from './ToolCallCard'
+import { StatusIndicator } from './ToolCallCard'
 import {
   useCollapseResizeNotifier,
   type ChatContentResizeHandler
@@ -33,18 +34,6 @@ const ChevronRightIcon = PhiIcons.action.back
 const ExpandLessIcon = PhiIcons.action.collapse
 const SendIcon = PhiIcons.action.send
 const StopIcon = PhiIcons.action.stop
-
-function formatDuration(durationMs: number): string {
-  const totalSeconds =
-    durationMs > 0 && durationMs < 1000 ? 1 : Math.max(0, Math.floor(durationMs / 1000))
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
-
-  if (hours > 0) return `${hours} 小时 ${minutes} 分钟 ${seconds} 秒`
-  if (minutes > 0) return `${minutes} 分钟 ${seconds} 秒`
-  return `${seconds} 秒`
-}
 
 function timestampMs(value?: string): number | null {
   if (!value) return null
@@ -66,78 +55,6 @@ function currentStepIndex(item: AgentExecutionItem): number {
   const runningIndex = item.steps.findIndex((step) => step.status === 'running')
   if (runningIndex >= 0) return runningIndex
   return item.steps.length > 0 ? item.steps.length - 1 : -1
-}
-
-function stepAsToolCall(step: AgentExecutionStep): ToolCallItem {
-  return {
-    id: step.id,
-    role: 'tool',
-    toolName: step.toolName,
-    argsPreview: step.argsPreview,
-    argsJson: step.argsJson,
-    output: step.output,
-    status: step.status,
-    ...(step.createdAt ? { createdAt: step.createdAt } : {}),
-    ...(step.completedAt ? { completedAt: step.completedAt } : {}),
-    ...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
-    ...(step.outputPath ? { outputPath: step.outputPath } : {}),
-    ...(step.outputBytes !== undefined ? { outputBytes: step.outputBytes } : {}),
-    ...(step.outputTruncated ? { outputTruncated: step.outputTruncated } : {}),
-    ...(step.outputArtifact ? { outputArtifact: step.outputArtifact } : {})
-  }
-}
-
-function AgentStepDetail({ step, cwd }: { step: AgentExecutionStep; cwd?: string }): ReactNode {
-  const item = useMemo(() => stepAsToolCall(step), [step])
-  const action = useMemo(
-    () => toolActionKind(step.toolName, step.argsPreview, step.argsJson),
-    [step.argsJson, step.argsPreview, step.toolName]
-  )
-
-  return (
-    <Box sx={{ minWidth: 0 }}>
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.75,
-          minWidth: 0,
-          px: 0.5,
-          py: 0.5,
-          color: 'text.secondary'
-        }}
-      >
-        <ToolActionIcon action={action} />
-        <Typography
-          component="span"
-          variant="body2"
-          sx={{ fontFamily: 'var(--font-mono)', color: 'text.primary', minWidth: 0 }}
-          noWrap
-        >
-          {step.toolName}
-        </Typography>
-        <Box sx={{ flex: 1, minWidth: 0 }} />
-        <StatusIndicator status={step.status} />
-      </Box>
-      {step.error ? (
-        <Typography
-          variant="caption"
-          component="div"
-          sx={{
-            px: 0.5,
-            pb: 0.75,
-            color: 'error.main',
-            fontFamily: 'var(--font-mono)',
-            overflowWrap: 'anywhere',
-            whiteSpace: 'pre-wrap'
-          }}
-        >
-          {step.error}
-        </Typography>
-      ) : null}
-      <ToolCallDetail item={item} cwd={cwd} />
-    </Box>
-  )
 }
 
 function errorText(error: unknown): string {
@@ -312,7 +229,16 @@ function AgentExecutionCard({
   const [expanded, setExpanded] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
   // The agent worker no longer has this run (e.g. Phi was restarted): stop offering controls.
-  const [lost, setLost] = useState(false)
+  // Remembered in a shared store, so the running-agents overview stops listing it too.
+  const lostKey =
+    item.agentRunId && item.agentSessionId
+      ? agentRunLostKey({ agentRunId: item.agentRunId, agentSessionId: item.agentSessionId })
+      : null
+  const lost = useLostAgentRunsStore((state) => lostKey !== null && state.lost.has(lostKey))
+  const markLost = useLostAgentRunsStore((state) => state.markLost)
+  const setLost = (): void => {
+    if (lostKey) markLost(lostKey)
+  }
   const [stopping, setStopping] = useState(false)
   const [stopError, setStopError] = useState('')
   const notifyContentResize = useCollapseResizeNotifier(onContentResize)
@@ -320,7 +246,7 @@ function AgentExecutionCard({
   const controlTarget = agentRunControlTarget(item, { lost })
   const stepIndex = currentStepIndex(item)
   const currentStep = stepIndex >= 0 ? item.steps[stepIndex] : null
-  const elapsed = formatDuration(elapsedMs(item, nowMs))
+  const elapsed = formatAgentDuration(elapsedMs(item, nowMs))
   const finalReport = item.finalReport
     ? outputPreviewText({
         output: item.finalReport,
@@ -346,14 +272,14 @@ function AgentExecutionCard({
     window.api
       .stopAgentRun(target.agentSessionId, target.agentRunId)
       .catch((error: unknown) => {
-        if (isAgentRunGoneError(error)) setLost(true)
+        if (isAgentRunGoneError(error)) setLost()
         else setStopError(errorText(error))
       })
       .finally(() => setStopping(false))
   }
 
   return (
-    <Box sx={{ alignSelf: 'stretch', minWidth: 0 }}>
+    <Box data-agent-card-id={item.id} sx={{ alignSelf: 'stretch', minWidth: 0, borderRadius: 1 }}>
       <Box
         role="button"
         tabIndex={0}
@@ -467,7 +393,12 @@ function AgentExecutionCard({
           {item.steps.length > 0 ? (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, minWidth: 0 }}>
               {item.steps.map((step) => (
-                <AgentStepDetail key={step.id} step={step} cwd={cwd} />
+                <AgentStepRow
+                  key={step.id}
+                  step={step}
+                  cwd={cwd}
+                  onContentResize={onContentResize}
+                />
               ))}
             </Box>
           ) : (
@@ -477,11 +408,7 @@ function AgentExecutionCard({
           )}
           <AgentSteerHistory item={item} />
           {controlTarget ? (
-            <AgentRunSteerBox
-              target={controlTarget}
-              toolCallId={item.id}
-              onGone={() => setLost(true)}
-            />
+            <AgentRunSteerBox target={controlTarget} toolCallId={item.id} onGone={setLost} />
           ) : null}
           {stopError ? (
             <Typography variant="caption" component="div" sx={{ mt: 0.5, color: 'error.main' }}>

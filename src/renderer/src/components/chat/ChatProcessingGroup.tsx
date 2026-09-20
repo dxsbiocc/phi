@@ -32,8 +32,13 @@ function sameItemsByReference<T>(a: T[], b: T[]): boolean {
   return true
 }
 
+/** Asks the conversation to show one item: the fold holding it opens, the list scrolls to it. */
+export type ChatFocusRequest = { itemId: string; nonce: number }
+
 export type ChatProcessingGroupProps = {
   items: ProcessingItem[]
+  /** Opens this fold when the item being located is inside it. */
+  focusRequest?: ChatFocusRequest | null
   onGoSettings: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
@@ -57,6 +62,7 @@ function processingGroupPropsEqual(
 ): boolean {
   return (
     sameItemsByReference(prev.items, next.items) &&
+    prev.focusRequest === next.focusRequest &&
     prev.onOpenLocalPath === next.onOpenLocalPath &&
     prev.cwd === next.cwd &&
     prev.isActive === next.isActive &&
@@ -68,6 +74,7 @@ function processingGroupPropsEqual(
 
 export const ChatProcessingGroup = memo(function ChatProcessingGroup({
   items,
+  focusRequest = null,
   onGoSettings,
   onOpenLocalPath,
   onJumpToNotebookCell,
@@ -79,6 +86,17 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
   durationMs
 }: ChatProcessingGroupProps): ReactNode {
   const [expanded, setExpanded] = useState(false)
+  // Adjusting state while rendering (not in an effect) opens the fold in the same pass that
+  // receives the request, so the card is mounted by the time the list goes looking for it.
+  const [handledFocusNonce, setHandledFocusNonce] = useState(0)
+  if (
+    focusRequest &&
+    focusRequest.nonce !== handledFocusNonce &&
+    items.some((item) => item.id === focusRequest.itemId)
+  ) {
+    setHandledFocusNonce(focusRequest.nonce)
+    setExpanded(true)
+  }
   const [fallbackStartedAtMs] = useState(() => Date.now())
   const [nowMs, setNowMs] = useState(() => Date.now())
   const notifyContentResize = useCollapseResizeNotifier(onContentResize)

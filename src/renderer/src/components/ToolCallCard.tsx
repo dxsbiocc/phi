@@ -28,6 +28,12 @@ function foldedToolHeadline(item: ToolCallItem, action: ReturnType<typeof toolAc
 
 type ToolCallCardProps = {
   item: ToolCallItem
+  /**
+   * Controlled expansion, for a card whose owner decides when it is open (a step of a delegated
+   * agent opens while it runs). Without it the card keeps its own state, folded to start with.
+   */
+  expanded?: boolean
+  onExpandedChange?: (expanded: boolean) => void
   cwd?: string
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
   onContentResize?: ChatContentResizeHandler
@@ -35,15 +41,19 @@ type ToolCallCardProps = {
 
 function ToolCallCard({
   item,
+  expanded: controlledExpanded,
+  onExpandedChange,
   cwd,
   onJumpToNotebookCell,
   onContentResize
 }: ToolCallCardProps): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false)
+  const [ownExpanded, setOwnExpanded] = useState(false)
+  const expanded = controlledExpanded ?? ownExpanded
   const stat = useMemo(() => (item.output ? diffStat(item.output) : null), [item.output])
   const notifyContentResize = useCollapseResizeNotifier(onContentResize)
   const toggle = (): void => {
-    setExpanded((value) => !value)
+    if (controlledExpanded === undefined) setOwnExpanded(!expanded)
+    onExpandedChange?.(!expanded)
     notifyContentResize()
   }
   const action = toolActionKind(item.toolName, item.argsPreview, item.argsJson)
@@ -177,7 +187,12 @@ function ToolCallCard({
 // reference is enough to skip re-rendering unrelated tool cards while a
 // sibling tool call/message is still streaming in.
 function toolCallCardPropsEqual(prev: ToolCallCardProps, next: ToolCallCardProps): boolean {
-  return prev.item === next.item && prev.cwd === next.cwd
+  return (
+    prev.item === next.item &&
+    prev.cwd === next.cwd &&
+    prev.expanded === next.expanded &&
+    prev.onExpandedChange === next.onExpandedChange
+  )
 }
 
 export default memo(ToolCallCard, toolCallCardPropsEqual)
