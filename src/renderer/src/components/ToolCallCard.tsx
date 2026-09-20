@@ -7,6 +7,7 @@ import { diffStat } from '../lib/toolOutput'
 import { ToolActionIcon } from './ToolActionIcon'
 import { notebookHeadline, notebookJumpTarget } from './tool-call/notebookToolSummaryModel'
 import { StatusIndicator } from './tool-call/StatusIndicator'
+import { ScrollableToolDetail } from './tool-call/ScrollableToolDetail'
 import { ToolCallDetail } from './tool-call/ToolCallDetail'
 import {
   useCollapseResizeNotifier,
@@ -34,6 +35,11 @@ type ToolCallCardProps = {
    */
   expanded?: boolean
   onExpandedChange?: (expanded: boolean) => void
+  /**
+   * Caps the height of the arguments and output, which then scroll (and follow a running call's
+   * output). Without it they take the room they need, as an ordinary tool call in the chat does.
+   */
+  detailMaxHeight?: number
   cwd?: string
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
   onContentResize?: ChatContentResizeHandler
@@ -43,6 +49,7 @@ function ToolCallCard({
   item,
   expanded: controlledExpanded,
   onExpandedChange,
+  detailMaxHeight,
   cwd,
   onJumpToNotebookCell,
   onContentResize
@@ -176,7 +183,17 @@ function ToolCallCard({
         onExiting={notifyContentResize}
         onExited={notifyContentResize}
       >
-        <ToolCallDetail item={item} cwd={cwd} />
+        {detailMaxHeight !== undefined ? (
+          <ScrollableToolDetail
+            maxHeight={detailMaxHeight}
+            follow={item.status === 'running'}
+            contentKey={item.output}
+          >
+            <ToolCallDetail item={item} cwd={cwd} />
+          </ScrollableToolDetail>
+        ) : (
+          <ToolCallDetail item={item} cwd={cwd} />
+        )}
       </Collapse>
     </Box>
   )
@@ -191,7 +208,8 @@ function toolCallCardPropsEqual(prev: ToolCallCardProps, next: ToolCallCardProps
     prev.item === next.item &&
     prev.cwd === next.cwd &&
     prev.expanded === next.expanded &&
-    prev.onExpandedChange === next.onExpandedChange
+    prev.onExpandedChange === next.onExpandedChange &&
+    prev.detailMaxHeight === next.detailMaxHeight
   )
 }
 
