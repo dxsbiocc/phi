@@ -767,6 +767,13 @@ declare global {
         cb: (progress: PreloadAnalysisNotebookCodeGenerationProgress) => void
       ) => () => void
       stopGeneration: () => Promise<void>
+      steerAgentRun: (
+        agentSessionId: string,
+        agentRunId: string,
+        message: string,
+        toolCallId?: string
+      ) => Promise<void>
+      stopAgentRun: (agentSessionId: string, agentRunId: string) => Promise<void>
       onAnalysisNotebookDraftChanged: (
         cb: (change: PreloadAnalysisNotebookDraftChange) => void
       ) => () => void

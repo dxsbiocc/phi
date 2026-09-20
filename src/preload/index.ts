@@ -721,6 +721,15 @@ type RendererAuthApi = {
     cb: (progress: AnalysisNotebookCodeGenerationProgress) => void
   ) => Unsubscribe
   stopGeneration: () => Promise<void>
+  /** Redirect a running agent shown on a delegation card. It reads the message after its current tool call. */
+  steerAgentRun: (
+    agentSessionId: string,
+    agentRunId: string,
+    message: string,
+    toolCallId?: string
+  ) => Promise<void>
+  /** Cancel a running agent shown on a delegation card. */
+  stopAgentRun: (agentSessionId: string, agentRunId: string) => Promise<void>
   onAnalysisNotebookDraftChanged: (cb: (change: AnalysisNotebookDraftChange) => void) => Unsubscribe
   onAnalysisNotebookFileChanged: (cb: (change: AnalysisNotebookFileChange) => void) => Unsubscribe
   onWrapperRunsChanged: (cb: (change: { runId: string }) => void) => Unsubscribe
@@ -982,6 +991,15 @@ const api: RendererAuthApi = {
     }
   },
   stopGeneration: (): Promise<void> => ipcRenderer.invoke('agent:stop'),
+  steerAgentRun: (
+    agentSessionId: string,
+    agentRunId: string,
+    message: string,
+    toolCallId?: string
+  ): Promise<void> =>
+    ipcRenderer.invoke('agent:steerRun', agentSessionId, agentRunId, message, toolCallId),
+  stopAgentRun: (agentSessionId: string, agentRunId: string): Promise<void> =>
+    ipcRenderer.invoke('agent:stopRun', agentSessionId, agentRunId),
   onAnalysisNotebookDraftChanged: (
     cb: (change: AnalysisNotebookDraftChange) => void
   ): Unsubscribe => {

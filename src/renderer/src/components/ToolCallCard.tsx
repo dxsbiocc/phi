@@ -23,6 +23,7 @@ import {
   toolArgsPreviewText
 } from '../lib/toolOutputPresentation'
 import { ToolActionIcon } from './ToolActionIcon'
+import { TimelineRail } from './chat/TimelineRail'
 import {
   useCollapseResizeNotifier,
   type ChatContentResizeHandler
@@ -308,16 +309,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
     : ''
 
   return (
-    <Box
-      sx={{
-        ml: 2.5,
-        pl: 1.5,
-        py: 1,
-        minWidth: 0,
-        borderLeft: 2,
-        borderColor: 'grey.800'
-      }}
-    >
+    <TimelineRail sx={{ py: 1 }}>
       {item.notebook ? <NotebookToolSummaryBlock notebook={item.notebook} /> : null}
       {target ? (
         <Box
@@ -496,7 +488,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
           <DiffAwareOutput text={outputPreview} cwd={cwd} />
         </Box>
       ) : null}
-    </Box>
+    </TimelineRail>
   )
 }
 

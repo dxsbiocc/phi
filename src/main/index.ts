@@ -1,3 +1,4 @@
+import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
 import type { WrapperRunFinishedEvent } from '../shared/wrapperRunNotice'
 import type { WrapperRun } from '../shared/wrapperTypes'
 import './agent-env'
@@ -107,10 +108,7 @@ import {
   readWrapperModuleDetails
 } from './agent/wrappers/composition/discovery'
 import { wrapperJobHostHandlers } from './agent/wrappers/composition/job-host-handlers'
-import {
-  shouldContinueConversation,
-  wrapperRunContinuationPrompt
-} from './agent/wrappers/composition/job-continue'
+import { shouldContinueConversation } from './agent/wrappers/composition/job-continue'
 import { deliverWrapperRunFinished } from './agent/wrappers/composition/job-notify'
 import { WrapperJobManager } from './agent/wrappers/composition/job-manager'
 import { markInterruptedCompositionRuns } from './agent/wrappers/composition/run-record'
@@ -118,6 +116,12 @@ import { resolveProjectRemoteTarget } from './agent/wrappers/remote-connection-r
 import { reconcileRemoteWrapperRuns } from './agent/wrappers/executor-slurm-reconcile'
 import { discoverPhiAgents } from './agent/agents/discovery'
 import { buildAgentLeaderPrompt } from './agent/agents/leader-prompt'
+import {
+  continuationPrompt,
+  shouldContinueAfterAgentRun,
+  type ContinuationEvent
+} from './agent/agents/run-continue'
+import { agentRunHostHandlers } from './agent/agents/run-host'
 import { buildWrapperReproducibilityBundle } from './agent/wrappers/reproducibility'
 import { cancelWrapperRun, cancelWrapperRunPlan, submitWrapperRunPlan } from './agent/wrappers/runs'
 import {
@@ -135,7 +139,7 @@ import {
   syncGeneratedDbConnectorDocs
 } from './agent/db/catalog'
 import { setDbConnectorQueryEnabled } from './agent/db/store'
-import { redactSensitiveText } from './agent/redaction'
+import { isSecretMetadataKey, redactSensitiveText } from './agent/redaction'
 import {
   emptyNotebookRegistry,
   initializeProjectAnalysis,
@@ -194,6 +198,7 @@ import {
   updateSessionManifest,
   type LastRunOutcome,
   type PhiSessionManifest,
+  type SessionEventInput,
   type SessionStatus,
   type StoredSessionEvent,
   type UnreadKind,
@@ -401,6 +406,7 @@ interface PromptRun {
   thinkingBlocks: Map<number, string>
   thinkingBlockStartedAtMs: Map<number, number>
   compactionReasons: Map<string, string>
+  agentToolCallIds: Set<string>
   sessionPath?: string | null
   session?: AgentSessionInstance
   done?: Promise<{ path: string | null; phiSessionId?: string; sessionGeneration: number } | null>
@@ -567,38 +573,124 @@ wrapperJobs.onChange((runId) => sendToAllWindows('wrappers:runsChanged', { runId
 // session is created and kept for the app's lifetime (a few short entries).
 const runtimeSessionOrigins = new Map<string, { sessionKey: string; cwd: string }>()
 
+// Both background wrapper runs and background agent runs report their end through these:
+// which Phi conversation a runtime session belongs to, the window, and the system notification.
+function resolveOriginSession(
+  originSessionId: string | undefined
+): { phiSessionId: string; cwd: string } | undefined {
+  if (!originSessionId) return undefined
+  const origin = runtimeSessionOrigins.get(originSessionId)
+  const phiSessionId = origin
+    ? getPhiSessionIdForKey(origin.sessionKey)
+    : findActivePromptRunByRuntimeSessionId(originSessionId)?.phiSessionId
+  return phiSessionId ? { phiSessionId, cwd: origin?.cwd ?? currentCwd } : undefined
+}
+
+function sendRunEventToWindow(payload: Record<string, unknown>): void {
+  sendToWindow(getActiveWindow(), 'agent:event', {
+    ...payload,
+    sessionPath: phiOnlySessionPath(String(payload.phiSessionId))
+  })
+}
+
+function showRunNotification({ title, body }: { title: string; body: string }): void {
+  if (!Notification.isSupported()) return
+  const notification = new Notification({ title, body })
+  notification.on('click', () => {
+    const window = getActiveWindow()
+    if (!window) return
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
+  })
+  notification.show()
+}
+
 wrapperJobs.onFinish((run, status) =>
   deliverWrapperRunFinished(run, status, {
-    resolveSession: (originSessionId) => {
-      if (!originSessionId) return undefined
-      const origin = runtimeSessionOrigins.get(originSessionId)
-      const phiSessionId = origin
-        ? getPhiSessionIdForKey(origin.sessionKey)
-        : findActivePromptRunByRuntimeSessionId(originSessionId)?.phiSessionId
-      return phiSessionId ? { phiSessionId, cwd: origin?.cwd ?? currentCwd } : undefined
-    },
+    resolveSession: resolveOriginSession,
     appendToSession: (phiSessionId, event) => appendSessionEvent(phiSessionId, { ...event }),
-    sendToWindow: (payload) =>
-      sendToWindow(getActiveWindow(), 'agent:event', {
-        ...payload,
-        sessionPath: phiOnlySessionPath(String(payload.phiSessionId))
-      }),
+    sendToWindow: sendRunEventToWindow,
     isAppFocused: () => BrowserWindow.getFocusedWindow() !== null,
     continueConversation: continueConversationAfterWrapperRun,
-    showOsNotification: ({ title, body }) => {
-      if (!Notification.isSupported()) return
-      const notification = new Notification({ title, body })
-      notification.on('click', () => {
-        const window = getActiveWindow()
-        if (!window) return
-        if (window.isMinimized()) window.restore()
-        window.show()
-        window.focus()
-      })
-      notification.show()
-    }
+    showOsNotification: showRunNotification
   })
 )
+
+// Background agent runs live in the agent worker, one registry per conversation; the worker
+// tells us here when one ends, or when the main agent has already collected its report.
+for (const [method, handler] of Object.entries(
+  agentRunHostHandlers({
+    resolveSession: resolveOriginSession,
+    appendToSession: (phiSessionId, event) => appendSessionEvent(phiSessionId, { ...event }),
+    sendToWindow: sendRunEventToWindow,
+    isAppFocused: () => BrowserWindow.getFocusedWindow() !== null,
+    continueConversation: continueConversationAfterAgentRun,
+    showOsNotification: showRunNotification,
+    redact: redactSensitiveText,
+    persistStepOutput: (phiSessionId, toolCallId, stepId, output) =>
+      persistToolOutput(phiSessionId, {
+        runId: 'agent-run',
+        toolCallId: `${toolCallId}-${stepId}`,
+        output,
+        inlineLimit: TOOL_OUTPUT_INLINE_LIMIT
+      }),
+    redactValue: redactStructuredValue,
+    markReported: (phiSessionId, agentRunId) => markAgentRunReported(phiSessionId, agentRunId),
+    clearReported: (phiSessionId, agentRunId) => clearAgentRunReported(phiSessionId, agentRunId)
+  })
+)) {
+  getOmpBridge().registerHostHandler(method, handler)
+}
+
+const MAX_AGENT_STEER_LENGTH = 4000
+
+/**
+ * Keeps what the user told a running agent on its card, so it is still there after switching
+ * conversations or restarting. Only called once the agent has accepted the message; recording it
+ * is an extra that must never turn a delivered message into a failure.
+ */
+function recordAgentSteer(
+  agentSessionId: unknown,
+  agentRunId: unknown,
+  toolCallId: unknown,
+  text: string
+): void {
+  if (typeof toolCallId !== 'string' || !toolCallId) return
+  try {
+    const origin = resolveOriginSession(typeof agentSessionId === 'string' ? agentSessionId : '')
+    if (!origin) return
+    const stored = appendSessionEvent(origin.phiSessionId, {
+      type: 'agent_execution_steered',
+      toolCallId,
+      ...(typeof agentRunId === 'string' ? { agentRunId } : {}),
+      text: redactSensitiveText(text)
+    })
+    sendRunEventToWindow({
+      source: 'phi',
+      ...stored,
+      phiSessionId: origin.phiSessionId,
+      cwd: origin.cwd
+    })
+  } catch (error) {
+    rememberErrorSummary(error)
+  }
+}
+
+async function requestAgentRunControl(
+  method: 'agentRun.steer' | 'agentRun.stop',
+  agentSessionId: unknown,
+  agentRunId: unknown,
+  message?: string
+): Promise<void> {
+  if (typeof agentSessionId !== 'string' || !agentSessionId) throw new Error('缺少 Agent 会话')
+  if (typeof agentRunId !== 'string' || !agentRunId) throw new Error('缺少 Agent 运行编号')
+  await getOmpBridge().request(method, {
+    sessionId: agentSessionId,
+    runId: agentRunId,
+    ...(message !== undefined ? { message } : {})
+  })
+}
 
 function optionalStringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key]
@@ -893,6 +985,20 @@ function extractAssistantText(message: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function redactStructuredValue(value: unknown, key = ''): unknown {
+  if (key && isSecretMetadataKey(key)) return '[redacted]'
+  if (typeof value === 'string') return redactSensitiveText(value)
+  if (Array.isArray(value)) return value.map((item) => redactStructuredValue(item))
+  if (!isRecord(value)) return value
+
+  return Object.fromEntries(
+    Object.entries(value).map(([entryKey, entryValue]) => [
+      entryKey,
+      redactStructuredValue(entryValue, entryKey)
+    ])
+  )
 }
 
 function assistantMessagesFrom(value: unknown): unknown[] {
@@ -1194,6 +1300,161 @@ function extractToolText(value: unknown): string {
   return value == null ? '' : String(value)
 }
 
+function isAgentToolName(toolName: unknown): toolName is string {
+  return typeof toolName === 'string' && /^[A-Z][A-Za-z0-9]*$/.test(toolName)
+}
+
+function detailsKind(value: unknown): string | undefined {
+  const details = detailsFromToolResult(value)
+  if (!isRecord(details)) return undefined
+  return typeof details.kind === 'string' ? details.kind : undefined
+}
+
+function agentNameFromDetails(value: unknown): string | undefined {
+  const details = detailsFromToolResult(value)
+  if (!isRecord(details)) return undefined
+  return typeof details.agent === 'string' && details.agent ? details.agent : undefined
+}
+
+function agentTaskFromArgs(args: unknown): string | undefined {
+  if (!isRecord(args)) return undefined
+  const task = args.task
+  return typeof task === 'string' && task.trim() ? task.trim() : undefined
+}
+
+function isAgentDelegationStart(summary: Record<string, unknown>): boolean {
+  return (
+    summary.type === 'tool_execution_start' &&
+    typeof summary.toolCallId === 'string' &&
+    isAgentToolName(summary.toolName) &&
+    agentTaskFromArgs(summary.args) !== undefined
+  )
+}
+
+function isAgentDelegationUpdate(run: PromptRun, summary: Record<string, unknown>): boolean {
+  if (summary.type !== 'tool_execution_update' || typeof summary.toolCallId !== 'string') {
+    return false
+  }
+  const kind = detailsKind(summary.partialResult)
+  return (
+    run.agentToolCallIds.has(summary.toolCallId) ||
+    kind === 'agent_step' ||
+    kind === 'agent_progress'
+  )
+}
+
+function isAgentDelegationEnd(run: PromptRun, summary: Record<string, unknown>): boolean {
+  if (summary.type !== 'tool_execution_end' || typeof summary.toolCallId !== 'string') {
+    return false
+  }
+  return (
+    detailsKind(summary.result) === 'agent_result' || run.agentToolCallIds.has(summary.toolCallId)
+  )
+}
+
+/**
+ * Which agent run, in which agent session, a delegation card is showing, so the card can steer
+ * or stop it. The run id comes from the delegation tool; the session is the one that owns it.
+ */
+function agentRunRefFrom(
+  run: PromptRun,
+  toolResult: unknown
+): { agentRunId?: string; agentSessionId?: string } {
+  const details = detailsFromToolResult(toolResult)
+  const agentRunId =
+    isRecord(details) && typeof details.agentRunId === 'string' && details.agentRunId
+      ? details.agentRunId
+      : isRecord(details) && details.kind === 'agent_started' && typeof details.runId === 'string'
+        ? details.runId
+        : undefined
+  const agentSessionId = run.session?.runtimeSessionId
+  return {
+    ...(agentRunId ? { agentRunId } : {}),
+    ...(agentRunId && typeof agentSessionId === 'string' ? { agentSessionId } : {})
+  }
+}
+
+function agentStepRecordFrom(value: unknown): Record<string, unknown> | null {
+  const details = detailsFromToolResult(value)
+  if (!isRecord(details) || details.kind !== 'agent_step' || !isRecord(details.step)) return null
+  return details.step
+}
+
+function agentToolStepId(step: Record<string, unknown>, parentToolCallId: string): string {
+  const value = step.id
+  return typeof value === 'string' && value ? value : `${parentToolCallId}:step`
+}
+
+function persistAgentStepOutput(
+  run: PromptRun,
+  parentToolCallId: string,
+  stepId: string,
+  output: string
+): ReturnType<typeof persistToolOutput> | null {
+  if (!output) return null
+  return persistToolOutput(run.phiSessionId, {
+    runId: run.runId,
+    toolCallId: `${parentToolCallId}-${stepId}`,
+    output,
+    inlineLimit: TOOL_OUTPUT_INLINE_LIMIT
+  })
+}
+
+function agentStepEventFromSummary(
+  run: PromptRun,
+  summary: Record<string, unknown>
+): SessionEventInput | null {
+  if (typeof summary.toolCallId !== 'string') return null
+  const parentToolCallId = summary.toolCallId
+  const step = agentStepRecordFrom(summary.partialResult)
+  if (!step) return null
+  const stepId = agentToolStepId(step, parentToolCallId)
+  const output = typeof step.output === 'string' ? step.output : ''
+  const persisted = persistAgentStepOutput(run, parentToolCallId, stepId, output)
+  const status =
+    step.status === 'done' || step.status === 'error' || step.status === 'running'
+      ? step.status
+      : 'running'
+  const completedAt = typeof step.completedAt === 'string' ? step.completedAt : undefined
+  const createdAt = typeof step.createdAt === 'string' ? step.createdAt : undefined
+  const error =
+    typeof step.error === 'string' && step.error
+      ? redactSensitiveText(step.error)
+      : status === 'error' && output
+        ? redactSensitiveText(output)
+        : undefined
+
+  return {
+    type: 'agent_execution_step',
+    runId: run.runId,
+    toolCallId: parentToolCallId,
+    agentName:
+      agentNameFromDetails(summary.partialResult) ??
+      (isAgentToolName(summary.toolName) ? summary.toolName : undefined),
+    ...agentRunRefFrom(run, summary.partialResult),
+    step: {
+      id: stepId,
+      toolName: typeof step.toolName === 'string' && step.toolName ? step.toolName : 'tool',
+      status,
+      ...(step.args !== undefined ? { args: redactStructuredValue(step.args) } : {}),
+      ...(persisted ? { output: persisted.outputPreview } : {}),
+      ...(persisted?.outputPath ? { outputPath: persisted.outputPath } : {}),
+      ...(persisted ? { outputBytes: persisted.outputBytes } : {}),
+      ...(persisted?.truncated ? { outputTruncated: true } : {}),
+      ...(persisted?.outputArtifact ? { outputArtifact: persisted.outputArtifact } : {}),
+      ...(error ? { error } : {}),
+      ...(createdAt ? { createdAt } : {}),
+      ...(completedAt ? { completedAt } : {})
+    },
+    ...createdAtFromSummary(summary)
+  }
+}
+
+function agentResultDetails(value: unknown): Record<string, unknown> | null {
+  const details = detailsFromToolResult(value)
+  return isRecord(details) && details.kind === 'agent_result' ? details : null
+}
+
 function isNotebookToolName(toolName: unknown): boolean {
   return typeof toolName === 'string' && toolName.startsWith('notebook.')
 }
@@ -1412,6 +1673,23 @@ function persistSessionEvent(
   }
 
   if (summary.type === 'tool_execution_start' && typeof summary.toolCallId === 'string') {
+    if (isAgentDelegationStart(summary)) {
+      run.agentToolCallIds.add(summary.toolCallId)
+      const task = agentTaskFromArgs(summary.args) ?? ''
+      const redactedArgs = redactStructuredValue(summary.args)
+      const event = {
+        type: 'agent_execution_started',
+        runId: run.runId,
+        toolCallId: summary.toolCallId,
+        agentName: typeof summary.toolName === 'string' ? summary.toolName : 'Agent',
+        task: redactSensitiveText(task),
+        args: redactedArgs,
+        ...createdAtFromSummary(summary)
+      }
+      appendSessionEvent(run.phiSessionId, event)
+      return event
+    }
+
     appendSessionEvent(run.phiSessionId, {
       type: 'tool_call_started',
       runId: run.runId,
@@ -1423,8 +1701,77 @@ function persistSessionEvent(
     return withRunId(summary)
   }
 
+  if (isAgentDelegationUpdate(run, summary)) {
+    const event = agentStepEventFromSummary(run, summary)
+    if (event) {
+      appendSessionEvent(run.phiSessionId, event)
+      return event
+    }
+    return withRunId(summary)
+  }
+
   if (summary.type !== 'tool_execution_end' || typeof summary.toolCallId !== 'string') {
     return withRunId(summary)
+  }
+
+  if (isAgentDelegationEnd(run, summary) && detailsKind(summary.result) === 'agent_started') {
+    // The agent carries on after this tool call returns. Its card stays running; its steps
+    // and its end reach the card later, from the agent worker (see agent/agents/run-host.ts).
+    run.agentToolCallIds.delete(summary.toolCallId)
+    const event = {
+      type: 'agent_execution_background',
+      runId: run.runId,
+      toolCallId: summary.toolCallId,
+      agentName:
+        agentNameFromDetails(summary.result) ??
+        (isAgentToolName(summary.toolName) ? summary.toolName : 'Agent'),
+      ...agentRunRefFrom(run, summary.result),
+      ...createdAtFromSummary(summary)
+    }
+    appendSessionEvent(run.phiSessionId, event)
+    return event
+  }
+
+  if (isAgentDelegationEnd(run, summary)) {
+    const output = extractToolText(summary.result)
+    const persisted = persistToolOutput(run.phiSessionId, {
+      runId: run.runId,
+      toolCallId: summary.toolCallId,
+      output,
+      inlineLimit: TOOL_OUTPUT_INLINE_LIMIT
+    })
+    const details = agentResultDetails(summary.result)
+    const agentName =
+      (typeof details?.agent === 'string' && details.agent) ||
+      (isAgentToolName(summary.toolName) ? summary.toolName : 'Agent')
+    const event = {
+      type: 'agent_execution_completed',
+      runId: run.runId,
+      toolCallId: summary.toolCallId,
+      agentName,
+      isError: summary.isError,
+      ...createdAtFromSummary(summary),
+      finalReport: persisted.outputPreview,
+      finalReportBytes: persisted.outputBytes,
+      finalReportTruncated: persisted.truncated,
+      ...(persisted.outputPath ? { finalReportPath: persisted.outputPath } : {}),
+      ...(persisted.outputArtifact ? { finalReportArtifact: persisted.outputArtifact } : {}),
+      ...(typeof details?.toolCalls === 'number' ? { toolCalls: details.toolCalls } : {}),
+      ...(summary.isError && output ? { error: redactSensitiveText(output) } : {})
+    }
+    run.agentToolCallIds.delete(summary.toolCallId)
+    appendSessionEvent(run.phiSessionId, event)
+    if (!persisted.truncated) return event
+    return {
+      ...event,
+      result: {
+        output: persisted.outputPreview,
+        outputPath: persisted.outputPath,
+        outputBytes: persisted.outputBytes,
+        truncated: true,
+        outputArtifact: persisted.outputArtifact
+      }
+    }
   }
 
   const output = extractToolText(summary.result)
@@ -1727,14 +2074,34 @@ function parsePromptTarget(input: unknown): PromptTargetInput | null {
   }
 }
 
-// Waking a conversation when a background wrapper run it started has ended. The policy and
-// the message are in job-continue.ts; this is the plumbing. State is per Phi conversation.
+// Waking a conversation when a background run it started has ended: a wrapper run, or a
+// specialist agent run. The policy and the message are in job-continue.ts and run-continue.ts;
+// this is the plumbing, shared by both so they count against one cap and can be reported in one
+// message. State is per Phi conversation.
 const automaticContinuations = new Map<string, number>()
-const pendingContinuations = new Map<string, WrapperRunFinishedEvent[]>()
+const pendingContinuations = new Map<string, ContinuationEvent[]>()
+// Agent runs whose report the main agent was already handed (agent_wait / agent_status), so no
+// wake-up repeats it. Wrapper has the same in `wrapperJobs.hasBeenReported`.
+const reportedAgentRuns = new Map<string, Set<string>>()
+
+function markAgentRunReported(phiSessionId: string, agentRunId: string): void {
+  reportedAgentRuns.set(
+    phiSessionId,
+    (reportedAgentRuns.get(phiSessionId) ?? new Set()).add(agentRunId)
+  )
+}
+
+function clearAgentRunReported(phiSessionId: string, agentRunId: string): void {
+  reportedAgentRuns.get(phiSessionId)?.delete(agentRunId)
+}
+
+function hasAgentRunBeenReported(phiSessionId: string, agentRunId: string): boolean {
+  return reportedAgentRuns.get(phiSessionId)?.has(agentRunId) === true
+}
 
 function startAutomaticContinuation(
   phiSessionId: string,
-  events: readonly WrapperRunFinishedEvent[]
+  events: readonly ContinuationEvent[]
 ): void {
   const manifest = findPhiSessionById(phiSessionId)
   if (!manifest) return
@@ -1750,7 +2117,7 @@ function startAutomaticContinuation(
       cwd: manifest.cwd,
       permissionMode: manifest.permissionMode
     },
-    text: wrapperRunContinuationPrompt(events),
+    text: continuationPrompt(events),
     promptTarget: null,
     automatic: true
   }).catch((error: unknown) => {
@@ -1785,6 +2152,31 @@ function continueConversationAfterWrapperRun(
     }
     return
   }
+  wakeConversation(phiSessionId, event)
+}
+
+function continueConversationAfterAgentRun(
+  phiSessionId: string,
+  event: AgentRunFinishedEvent
+): void {
+  const decision = shouldContinueAfterAgentRun({
+    state: event.state,
+    automaticCount: automaticContinuations.get(phiSessionId) ?? 0
+  })
+  if (!decision.continue) {
+    if (decision.reason === 'limit') {
+      writeAppLog({
+        event: 'agent_run_continue_limit',
+        metadata: { phiSessionId, agentRunId: event.agentRunId }
+      })
+    }
+    return
+  }
+  wakeConversation(phiSessionId, event)
+}
+
+/** Wakes the conversation now if it is idle, otherwise once the run in progress is over. */
+function wakeConversation(phiSessionId: string, event: ContinuationEvent): void {
   const manifest = findPhiSessionById(phiSessionId)
   if (!manifest) return
   if (hasActivePromptRun(createPhiSessionKey(manifest.sessionId, manifest.cwd))) {
@@ -1803,8 +2195,12 @@ function flushPendingContinuations(phiSessionId: string, runWasCancelled: boolea
   const queued = pendingContinuations.get(phiSessionId)
   if (!queued) return
   pendingContinuations.delete(phiSessionId)
-  // A run whose outcome Wrapper already reported during that turn (it waited for it) needs no announcement.
-  const events = queued.filter((event) => !wrapperJobs.hasBeenReported(event.wrapperRunId))
+  // A run whose outcome the agent was already handed during that turn (it waited for it) needs no announcement.
+  const events = queued.filter((event) =>
+    event.type === 'agent_run_finished'
+      ? !hasAgentRunBeenReported(phiSessionId, event.agentRunId)
+      : !wrapperJobs.hasBeenReported(event.wrapperRunId)
+  )
   if (runWasCancelled || events.length === 0) return
   try {
     startAutomaticContinuation(phiSessionId, events)
@@ -1863,6 +2259,7 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
     thinkingBlocks: new Map(),
     thinkingBlockStartedAtMs: new Map(),
     compactionReasons: new Map(),
+    agentToolCallIds: new Set(),
     sessionPath: stableSessionPath
   }
   setActivePromptRun(runSessionKey, promptRun)
@@ -3797,6 +4194,7 @@ async function getAgentSession(
         ),
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(agentScan.agents.length > 0 ? { phiAgents: agentScan.agents } : {}),
+        personaMarkdown: getPersonaMarkdown(),
         ...(model ? { model } : {})
       })
       if (typeof result.session.runtimeSessionId === 'string') {
@@ -4074,6 +4472,28 @@ app.whenReady().then(() => {
 
   ipcMain.handle('agent:stop', async () => {
     await stopActivePrompt()
+  })
+
+  // A delegation card steers or stops the run it shows. The card knows which agent session
+  // owns the run; the worker answers if the run is still there.
+  ipcMain.handle(
+    'agent:steerRun',
+    async (
+      _,
+      agentSessionId: unknown,
+      agentRunId: unknown,
+      message: unknown,
+      toolCallId?: unknown
+    ) => {
+      const text = typeof message === 'string' ? message.trim() : ''
+      if (!text) throw new Error('消息不能为空')
+      if (text.length > MAX_AGENT_STEER_LENGTH) throw new Error('消息过长')
+      await requestAgentRunControl('agentRun.steer', agentSessionId, agentRunId, text)
+      recordAgentSteer(agentSessionId, agentRunId, toolCallId, text)
+    }
+  )
+  ipcMain.handle('agent:stopRun', async (_, agentSessionId: unknown, agentRunId: unknown) => {
+    await requestAgentRunControl('agentRun.stop', agentSessionId, agentRunId)
   })
 
   ipcMain.handle('auth:status', async () => getAuthManager().getProviderStatuses())

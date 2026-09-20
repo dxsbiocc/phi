@@ -1,4 +1,4 @@
-import type { AgentEventSummary, ChatItem } from '../types'
+import type { AgentEventSummary, AgentExecutionItem, AgentExecutionStep, ChatItem } from '../types'
 import {
   chatItemFromPhiTimelineEvent,
   extractNotebookToolSummary,
@@ -77,10 +77,15 @@ function terminalToolStatusForRunEvent(eventType: string): 'done' | 'error' | nu
 function shouldFinalizeItemForRun(
   item: ChatItem,
   runId: string | undefined
-): item is Extract<ChatItem, { role: 'tool' | 'wrapper_plan' }> {
-  if ((item.role !== 'tool' && item.role !== 'wrapper_plan') || item.status !== 'running') {
+): item is Extract<ChatItem, { role: 'tool' | 'wrapper_plan' | 'agent_execution' }> {
+  if (
+    (item.role !== 'tool' && item.role !== 'wrapper_plan' && item.role !== 'agent_execution') ||
+    item.status !== 'running'
+  ) {
     return false
   }
+  // A background agent carries on after the chat run that started it; its own end completes it.
+  if (item.role === 'agent_execution' && item.background) return false
   return !runId || !item.runId || item.runId === runId
 }
 
@@ -131,6 +136,328 @@ function toolOutputMetadataFrom(
     outputTruncated: record.truncated === true ? true : undefined,
     outputArtifact
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isAgentToolName(toolName: unknown): toolName is string {
+  return typeof toolName === 'string' && /^[A-Z][A-Za-z0-9]*$/.test(toolName)
+}
+
+function detailsFromToolResult(value: unknown): unknown {
+  if (!isRecord(value)) return undefined
+  return value.details
+}
+
+function agentResultDetails(value: unknown): Record<string, unknown> | null {
+  const details = detailsFromToolResult(value)
+  return isRecord(details) && details.kind === 'agent_result' ? details : null
+}
+
+function agentStepDetails(value: unknown): Record<string, unknown> | null {
+  const details = detailsFromToolResult(value)
+  if (!isRecord(details) || details.kind !== 'agent_step' || !isRecord(details.step)) return null
+  return details.step
+}
+
+function outputArtifactFrom(value: unknown):
+  | {
+      kind: 'tool_output'
+      path: string
+      bytes: number
+    }
+  | undefined {
+  if (!isRecord(value)) return undefined
+  if (
+    value.kind !== 'tool_output' ||
+    typeof value.path !== 'string' ||
+    typeof value.bytes !== 'number'
+  ) {
+    return undefined
+  }
+  return { kind: 'tool_output', path: value.path, bytes: value.bytes }
+}
+
+function argsJsonFrom(value: unknown): string {
+  if (value === undefined) return ''
+  try {
+    return JSON.stringify(value, null, 2) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function agentTaskFromArgs(args: unknown): string | undefined {
+  if (!isRecord(args)) return undefined
+  return typeof args.task === 'string' && args.task.trim() ? args.task.trim() : undefined
+}
+
+function agentExecutionItemFromStart(event: AgentEventSummary): AgentExecutionItem | null {
+  const toolCallId = event.toolCallId
+  const agentName =
+    event.agentName ?? (isAgentToolName(event.toolName) ? event.toolName : undefined)
+  if (!toolCallId || !agentName) return null
+  const task = typeof event.task === 'string' ? event.task : (agentTaskFromArgs(event.args) ?? '')
+  const args = event.args ?? (task ? { task } : undefined)
+  const argsJson = argsJsonFrom(args)
+  return {
+    id: toolCallId,
+    role: 'agent_execution',
+    ...runIdField(event.runId),
+    agentName,
+    task,
+    argsPreview: task || toolArgsPreview(args),
+    argsJson,
+    status: 'running',
+    steps: [],
+    ...createdAtField(event.createdAt)
+  }
+}
+
+type AgentExecutionStepUpdate = Partial<AgentExecutionStep> &
+  Pick<AgentExecutionStep, 'id' | 'toolName' | 'status'>
+
+function agentStepUpdateFromEvent(event: AgentEventSummary): AgentExecutionStepUpdate | null {
+  const record =
+    event.type === 'agent_execution_step'
+      ? isRecord(event.step)
+        ? event.step
+        : null
+      : agentStepDetails(event.partialResult)
+  if (!record) return null
+
+  const id =
+    typeof record.id === 'string' && record.id
+      ? record.id
+      : event.toolCallId
+        ? `${event.toolCallId}:step`
+        : ''
+  if (!id) return null
+  const toolName = typeof record.toolName === 'string' && record.toolName ? record.toolName : 'tool'
+  const status =
+    record.status === 'done' || record.status === 'error' || record.status === 'running'
+      ? record.status
+      : 'running'
+  const args = record.args
+  const argsJson = argsJsonFrom(args)
+  const output = typeof record.output === 'string' ? record.output : ''
+  const artifact = outputArtifactFrom(record.outputArtifact)
+  const createdAt =
+    typeof record.createdAt === 'string'
+      ? record.createdAt
+      : status === 'running'
+        ? event.createdAt
+        : undefined
+  const completedAt =
+    typeof record.completedAt === 'string'
+      ? record.completedAt
+      : status !== 'running'
+        ? event.createdAt
+        : undefined
+  const durationMs =
+    typeof record.durationMs === 'number'
+      ? record.durationMs
+      : createdAt && completedAt
+        ? durationBetween(createdAt, { ...event, createdAt: completedAt })
+        : undefined
+
+  return {
+    id,
+    toolName,
+    status,
+    ...(args !== undefined ? { argsPreview: toolArgsPreview(args), argsJson } : {}),
+    ...(output ? { output } : {}),
+    ...(typeof record.outputPath === 'string' ? { outputPath: record.outputPath } : {}),
+    ...(typeof record.outputBytes === 'number' ? { outputBytes: record.outputBytes } : {}),
+    ...(record.outputTruncated === true ? { outputTruncated: true } : {}),
+    ...(artifact ? { outputArtifact: artifact } : {}),
+    ...(typeof record.error === 'string' && record.error ? { error: record.error } : {}),
+    ...createdAtField(createdAt),
+    ...completedAtField(completedAt),
+    ...(durationMs !== undefined ? { durationMs } : {})
+  }
+}
+
+function findAgentExecutionIndex(next: ChatItem[], toolCallId: string | undefined): number {
+  if (!toolCallId) return -1
+  return next.findIndex((item) => item.role === 'agent_execution' && item.id === toolCallId)
+}
+
+function ensureAgentExecutionItem(next: ChatItem[], event: AgentEventSummary): number {
+  const existingIndex = findAgentExecutionIndex(next, event.toolCallId)
+  if (existingIndex >= 0) return existingIndex
+  const started = agentExecutionItemFromStart(event)
+  if (started) {
+    next.push(started)
+    return next.length - 1
+  }
+  const id = event.toolCallId ?? `agent-${event.runId ?? next.length}`
+  next.push({
+    id,
+    role: 'agent_execution',
+    ...runIdField(event.runId),
+    agentName: event.agentName ?? (isAgentToolName(event.toolName) ? event.toolName : 'Agent'),
+    task: '',
+    argsPreview: '',
+    argsJson: '',
+    status: 'running',
+    steps: [],
+    ...createdAtField(event.createdAt)
+  })
+  return next.length - 1
+}
+
+function mergeAgentStep(
+  current: AgentExecutionStep | undefined,
+  incoming: AgentExecutionStepUpdate
+): AgentExecutionStep {
+  const createdAt = incoming.createdAt ?? current?.createdAt
+  const completedAt = incoming.completedAt ?? current?.completedAt
+  const mergedDurationMs =
+    incoming.durationMs ??
+    (createdAt && completedAt
+      ? durationBetween(createdAt, { type: 'agent_step', createdAt: completedAt })
+      : undefined) ??
+    current?.durationMs
+  return {
+    id: incoming.id,
+    toolName: incoming.toolName || current?.toolName || 'tool',
+    argsPreview: incoming.argsPreview ?? current?.argsPreview ?? '',
+    argsJson: incoming.argsJson ?? current?.argsJson ?? '',
+    output: incoming.output ?? current?.output ?? '',
+    status: incoming.status,
+    ...createdAtField(createdAt),
+    ...completedAtField(completedAt),
+    ...(mergedDurationMs !== undefined ? { durationMs: mergedDurationMs } : {}),
+    ...((incoming.outputPath ?? current?.outputPath)
+      ? { outputPath: incoming.outputPath ?? current?.outputPath }
+      : {}),
+    ...((incoming.outputBytes ?? current?.outputBytes)
+      ? { outputBytes: incoming.outputBytes ?? current?.outputBytes }
+      : {}),
+    ...((incoming.outputTruncated ?? current?.outputTruncated)
+      ? { outputTruncated: incoming.outputTruncated ?? current?.outputTruncated }
+      : {}),
+    ...((incoming.outputArtifact ?? current?.outputArtifact)
+      ? { outputArtifact: incoming.outputArtifact ?? current?.outputArtifact }
+      : {}),
+    ...((incoming.error ?? current?.error) ? { error: incoming.error ?? current?.error } : {})
+  }
+}
+
+function agentRunRefFields(event: AgentEventSummary): {
+  agentRunId?: string
+  agentSessionId?: string
+} {
+  return {
+    ...(typeof event.agentRunId === 'string' && event.agentRunId
+      ? { agentRunId: event.agentRunId }
+      : {}),
+    ...(typeof event.agentSessionId === 'string' && event.agentSessionId
+      ? { agentSessionId: event.agentSessionId }
+      : {})
+  }
+}
+
+function applyAgentExecutionBackground(next: ChatItem[], event: AgentEventSummary): boolean {
+  if (event.type !== 'agent_execution_background') return false
+  const index = ensureAgentExecutionItem(next, event)
+  const current = next[index]
+  if (current.role !== 'agent_execution') return true
+  next[index] = { ...current, ...agentRunRefFields(event), background: true }
+  return true
+}
+
+function applyAgentExecutionSteered(next: ChatItem[], event: AgentEventSummary): boolean {
+  if (event.type !== 'agent_execution_steered') return false
+  const text = typeof event.text === 'string' ? event.text.trim() : ''
+  if (!text) return true
+  const index = ensureAgentExecutionItem(next, event)
+  const current = next[index]
+  if (current.role !== 'agent_execution') return true
+  next[index] = {
+    ...current,
+    steers: [...(current.steers ?? []), { text, ...createdAtField(event.createdAt) }]
+  }
+  return true
+}
+
+function applyAgentExecutionStep(next: ChatItem[], event: AgentEventSummary): boolean {
+  if (
+    event.type !== 'agent_execution_step' &&
+    !(event.type === 'tool_execution_update' && agentStepDetails(event.partialResult))
+  ) {
+    return false
+  }
+  const incoming = agentStepUpdateFromEvent(event)
+  if (!incoming) return false
+  const index = ensureAgentExecutionItem(next, event)
+  const current = next[index]
+  if (current.role !== 'agent_execution') return true
+  const stepIndex = current.steps.findIndex((step) => step.id === incoming.id)
+  const steps =
+    stepIndex >= 0
+      ? current.steps.map((step, currentIndex) =>
+          currentIndex === stepIndex ? mergeAgentStep(step, incoming) : step
+        )
+      : [...current.steps, mergeAgentStep(undefined, incoming)]
+  next[index] = {
+    ...current,
+    ...agentRunRefFields(event),
+    steps,
+    status:
+      incoming.status === 'error'
+        ? 'running'
+        : current.status === 'done' || current.status === 'error'
+          ? current.status
+          : 'running'
+  }
+  return true
+}
+
+function applyAgentExecutionCompleted(next: ChatItem[], event: AgentEventSummary): boolean {
+  const details = agentResultDetails(event.result)
+  if (
+    event.type !== 'agent_execution_completed' &&
+    !(event.type === 'tool_execution_end' && details)
+  ) {
+    return false
+  }
+  const index = ensureAgentExecutionItem(next, event)
+  const current = next[index]
+  if (current.role !== 'agent_execution') return true
+  const finalReport =
+    typeof event.finalReport === 'string' ? event.finalReport : extractToolText(event.result)
+  const completedAt = event.createdAt
+  const durationMs = durationBetween(current.createdAt, event)
+  const artifact = outputArtifactFrom(event.finalReportArtifact)
+  next[index] = {
+    ...current,
+    agentName:
+      event.agentName ?? (typeof details?.agent === 'string' ? details.agent : current.agentName),
+    status: event.isError ? 'error' : 'done',
+    ...(event.cancelled === true ? { cancelled: true } : {}),
+    ...(finalReport ? { finalReport } : {}),
+    ...(typeof event.finalReportPath === 'string'
+      ? { finalReportPath: event.finalReportPath }
+      : {}),
+    ...(typeof event.finalReportBytes === 'number'
+      ? { finalReportBytes: event.finalReportBytes }
+      : {}),
+    ...(event.finalReportTruncated === true ? { finalReportTruncated: true } : {}),
+    ...(artifact ? { finalReportArtifact: artifact } : {}),
+    ...(typeof event.toolCalls === 'number'
+      ? { toolCalls: event.toolCalls }
+      : typeof details?.toolCalls === 'number'
+        ? { toolCalls: details.toolCalls }
+        : {}),
+    ...(event.isError && (event.error || finalReport) ? { error: event.error || finalReport } : {}),
+    ...completedAtField(completedAt),
+    ...(durationMs !== undefined ? { durationMs } : {})
+  }
+  return true
 }
 
 export function createAgentEventReducerState(
@@ -223,6 +550,35 @@ export function reduceAgentEventState(
       ...createdAtField(event.createdAt)
     })
     nextId += 1
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
+  if (
+    event.type === 'agent_execution_started' ||
+    (event.type === 'tool_execution_start' &&
+      isAgentToolName(event.toolName) &&
+      agentTaskFromArgs(event.args) !== undefined)
+  ) {
+    const item = agentExecutionItemFromStart(event)
+    if (item && !next.some((current) => current.id === item.id)) {
+      next.push(item)
+    }
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
+  if (applyAgentExecutionBackground(next, event)) {
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
+  if (applyAgentExecutionSteered(next, event)) {
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
+  if (applyAgentExecutionStep(next, event)) {
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
+  if (applyAgentExecutionCompleted(next, event)) {
     return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
   }
 

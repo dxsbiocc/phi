@@ -17,9 +17,22 @@ tools:
 skills:
   - create-wrapper
   - nextflow
+delegation_mode: required-first
+fallback:
+  after_failures: 1
+  tools:
+    - bash
+    - eval
+    - edit
+    - write
+  match:
+    - nextflow
+    - nf-core
+    - resources/wrappers
 delegation: |
   Delegate here whenever the user wants to find, list or compare wrappers, check what a wrapper needs, run a wrapper or pipeline on their data, check on or stop a run, debug a failed run, or create or change a wrapper.
   Do not run nextflow, nf-core or docker commands for wrappers yourself, do not edit files under resources/wrappers, and do not answer from memory which wrappers exist or what parameters they take: ask Wrapper.
+  If Wrapper returns blocked or failed after attempting its tools, the main agent may use its declared fallback tools only for the failed subtask and must state the degradation and provenance.
   Runs go to the background: Wrapper starts the run, returns at once with a run id, and does not wait for the pipeline. Tell the user it is running and where the outputs will appear (they can also watch it on the Wrappers page), then end your turn. You do not need to wait or poll: when the run ends, Phi wakes you with a message wrapped in <phi_wrapper_run_finished> (it is from Phi, not the user) carrying the outcome and the output directory, and you continue with the user's request from there. If nothing should happen afterwards, say "don't continue when it finishes" in the task. If the very next step needs the results within this same turn, say so ("run it, wait until it finishes, then ...") and Wrapper will wait. To look at a run later, delegate "report the status of run <id>" (or "stop run <id>").
   Include a container-runtime preference if the user has one (singularity instead of docker). General questions such as "what is a wrapper?" can be answered directly.
 ---

@@ -1,5 +1,14 @@
+import { agentRunNotice, type AgentRunFinishedEvent } from '../../../shared/agentRunNotice'
 import { wrapperRunNotice, type WrapperRunFinishedEvent } from '../../../shared/wrapperRunNotice'
 import type { ChatItem, NotebookToolSummary, RunLifecycleItem } from '../types'
+import {
+  agentExecutionFromTimelineEvent,
+  agentExecutionIndex,
+  applyAgentBackgroundTimelineEvent,
+  applyAgentCompletedTimelineEvent,
+  applyAgentSteeredTimelineEvent,
+  applyAgentStepTimelineEvent
+} from './agentExecutionRestore'
 import { messagesForUserRetryTarget } from './chatRetry'
 
 const WRAPPER_TOOL_PREFIX = 'wrapper_'
@@ -258,10 +267,12 @@ function terminalToolStatusForRunEvent(type: string | undefined): 'done' | 'erro
 function shouldFinalizeRestoredToolForRun(
   item: ChatItem,
   runId: string | undefined
-): item is Extract<ChatItem, { role: 'tool' }> {
+): item is Extract<ChatItem, { role: 'tool' | 'agent_execution' }> {
   return (
-    item.role === 'tool' &&
+    (item.role === 'tool' || item.role === 'agent_execution') &&
     item.status === 'running' &&
+    // A background agent carries on after the chat run that started it; its own end completes it.
+    !(item.role === 'agent_execution' && item.background) &&
     (!runId || !item.runId || item.runId === runId)
   )
 }
@@ -420,6 +431,15 @@ export function chatItemFromPhiTimelineEvent(event: {
       ...createdAtField(event.createdAt)
     }
   }
+  if (event.type === 'agent_run_finished') {
+    const notice = agentRunNotice(event as unknown as AgentRunFinishedEvent)
+    return {
+      id,
+      role: 'warning',
+      content: `${notice.title}\n${notice.body}`,
+      ...createdAtField(event.createdAt)
+    }
+  }
   return null
 }
 
@@ -552,6 +572,16 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
       isError?: boolean
       durationMs?: number
       createdAt?: string
+      agentName?: string
+      task?: string
+      step?: unknown
+      finalReport?: string
+      finalReportPath?: string
+      finalReportBytes?: number
+      finalReportTruncated?: boolean
+      finalReportArtifact?: unknown
+      toolCalls?: number
+      error?: string
       fromProviderId?: string
       fromModelId?: string
       toProviderId?: string
@@ -572,6 +602,34 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
       if (lifecycleItem) {
         finalizeRestoredRunningToolsForRun(items, message)
         items.push(lifecycleItem)
+      }
+
+      if (message.type === 'agent_execution_started') {
+        const item = agentExecutionFromTimelineEvent(message)
+        if (item && agentExecutionIndex(items, item.id) < 0) {
+          items.push(item)
+        }
+        continue
+      }
+
+      if (message.type === 'agent_execution_background') {
+        applyAgentBackgroundTimelineEvent(items, message)
+        continue
+      }
+
+      if (message.type === 'agent_execution_steered') {
+        applyAgentSteeredTimelineEvent(items, message)
+        continue
+      }
+
+      if (message.type === 'agent_execution_step') {
+        applyAgentStepTimelineEvent(items, message)
+        continue
+      }
+
+      if (message.type === 'agent_execution_completed') {
+        applyAgentCompletedTimelineEvent(items, message)
+        continue
       }
 
       if (message.type === 'tool_call_started' && typeof message.toolCallId === 'string') {

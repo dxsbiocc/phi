@@ -1,6 +1,7 @@
 import { Alert, AlertTitle, Box, Button, Collapse, IconButton, Typography } from '@mui/material'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import MarkdownContent, { type LocalPathKind } from '../MarkdownContent'
+import AgentExecutionCard from '../AgentExecutionCard'
 import ToolCallCard, { StatusIndicator } from '../ToolCallCard'
 import ToolGroupCard from '../ToolGroupCard'
 import { WrapperPlanCard } from '../../features/wrapper/components/WrapperPlanCard'
@@ -23,6 +24,7 @@ import {
 } from '../../lib/chatVirtualization'
 import type { ChatItem, ChatMessage, NotebookCellJumpTarget } from '../../types'
 import { ThinkingBlock } from './ThinkingBlock'
+import { TimelineRail } from './TimelineRail'
 import {
   ChatUserMessage,
   type UserMessageRetryTarget,
@@ -298,7 +300,7 @@ const ProcessingGroup = memo(function ProcessingGroup({
         onExiting={notifyContentResize}
         onExited={notifyContentResize}
       >
-        <Box sx={{ ml: 2.5, pl: 1.5, minWidth: 0, borderLeft: 2, borderColor: 'grey.800' }}>
+        <TimelineRail active={isProcessingActive}>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5 }}>
             {groupedItems.map((group) => {
               if (group.kind === 'tool-group') {
@@ -340,6 +342,17 @@ const ProcessingGroup = memo(function ProcessingGroup({
                   />
                 )
               }
+              if (group.item.role === 'agent_execution') {
+                return (
+                  <AgentExecutionCard
+                    key={group.key}
+                    item={group.item}
+                    cwd={cwd}
+                    onOpenLocalPath={onOpenLocalPath}
+                    onContentResize={onContentResize}
+                  />
+                )
+              }
               if (group.item.role === 'wrapper_plan') {
                 return <WrapperPlanCard key={group.key} item={group.item} />
               }
@@ -370,7 +383,7 @@ const ProcessingGroup = memo(function ProcessingGroup({
               <ExpandLessIcon fontSize="small" />
             </IconButton>
           </Box>
-        </Box>
+        </TimelineRail>
       </Collapse>
     </Box>
   )
@@ -776,6 +789,16 @@ const ChatMessageList = memo(function ChatMessageList({
             item={group.item}
             cwd={cwd}
             onJumpToNotebookCell={onJumpToNotebookCell}
+            onContentResize={onMessagesContentResize}
+          />
+        )
+      }
+      if (group.item.role === 'agent_execution') {
+        return (
+          <AgentExecutionCard
+            item={group.item}
+            cwd={cwd}
+            onOpenLocalPath={onOpenLocalPath}
             onContentResize={onMessagesContentResize}
           />
         )

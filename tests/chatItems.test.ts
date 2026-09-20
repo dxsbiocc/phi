@@ -210,6 +210,107 @@ test('chatItemsFromSessionMessages restores Phi tool and approval timeline event
   ])
 })
 
+test('chatItemsFromSessionMessages restores structured agent executions from Phi timeline events', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'agent_execution_started',
+      eventId: 'event-agent-start',
+      runId: 'run-1',
+      toolCallId: 'agent-1',
+      agentName: 'Wrapper',
+      task: 'run fastqc',
+      args: { task: 'run fastqc', apiKey: '[redacted]' },
+      createdAt: '2026-09-20T00:00:00.000Z'
+    },
+    {
+      source: 'phi',
+      type: 'agent_execution_step',
+      eventId: 'event-step-start',
+      runId: 'run-1',
+      toolCallId: 'agent-1',
+      agentName: 'Wrapper',
+      step: {
+        id: 'inner-1',
+        toolName: 'wrapper_search',
+        status: 'running',
+        args: { query: 'fastqc' },
+        createdAt: '2026-09-20T00:00:01.000Z'
+      },
+      createdAt: '2026-09-20T00:00:01.000Z'
+    },
+    {
+      source: 'phi',
+      type: 'agent_execution_step',
+      eventId: 'event-step-end',
+      runId: 'run-1',
+      toolCallId: 'agent-1',
+      agentName: 'Wrapper',
+      step: {
+        id: 'inner-1',
+        toolName: 'wrapper_search',
+        status: 'done',
+        output: 'found fastqc',
+        outputPath: '/tmp/out.txt',
+        outputBytes: 120000,
+        outputTruncated: true,
+        outputArtifact: { kind: 'tool_output', path: '/tmp/out.txt', bytes: 120000 },
+        completedAt: '2026-09-20T00:00:03.000Z'
+      },
+      createdAt: '2026-09-20T00:00:03.000Z'
+    },
+    {
+      source: 'phi',
+      type: 'agent_execution_completed',
+      eventId: 'event-agent-end',
+      runId: 'run-1',
+      toolCallId: 'agent-1',
+      agentName: 'Wrapper',
+      finalReport: 'FastQC completed.',
+      finalReportBytes: 17,
+      toolCalls: 1,
+      isError: false,
+      createdAt: '2026-09-20T00:00:05.000Z'
+    }
+  ])
+
+  assert.deepEqual(items, [
+    {
+      id: 'agent-1',
+      role: 'agent_execution',
+      runId: 'run-1',
+      agentName: 'Wrapper',
+      task: 'run fastqc',
+      argsPreview: 'run fastqc',
+      argsJson: '{\n  "task": "run fastqc",\n  "apiKey": "[redacted]"\n}',
+      status: 'done',
+      steps: [
+        {
+          id: 'inner-1',
+          toolName: 'wrapper_search',
+          argsPreview: 'fastqc',
+          argsJson: '{\n  "query": "fastqc"\n}',
+          output: 'found fastqc',
+          status: 'done',
+          createdAt: '2026-09-20T00:00:01.000Z',
+          completedAt: '2026-09-20T00:00:03.000Z',
+          durationMs: 2000,
+          outputPath: '/tmp/out.txt',
+          outputBytes: 120000,
+          outputTruncated: true,
+          outputArtifact: { kind: 'tool_output', path: '/tmp/out.txt', bytes: 120000 }
+        }
+      ],
+      createdAt: '2026-09-20T00:00:00.000Z',
+      completedAt: '2026-09-20T00:00:05.000Z',
+      durationMs: 5000,
+      finalReport: 'FastQC completed.',
+      finalReportBytes: 17,
+      toolCalls: 1
+    }
+  ])
+})
+
 test('chatItemsFromSessionMessages finalizes restored running tools on interrupted runs', () => {
   const items = chatItemsFromSessionMessages([
     {
@@ -806,4 +907,159 @@ test('a failed background wrapper run is restored with its cause and a next step
   assert.match(content, /^Wrapper 运行失败\n/)
   assert.match(content, /137/)
   assert.match(content, /让 Wrapper 查看/)
+})
+
+test('chatItemsFromSessionMessages restores the notice for a finished background agent run', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'agent_run_finished',
+      eventId: 'event-agent-done',
+      createdAt: '2026-09-20T10:03:00.000Z',
+      agentRunId: 'run_2',
+      agent: 'Database',
+      state: 'error',
+      task: 'look up TP53 in ClinVar',
+      elapsedSeconds: 125,
+      error: 'The Database agent failed: connector offline'
+    }
+  ])
+  assert.equal(items.length, 1)
+  assert.equal(items[0].role, 'warning')
+  assert.equal(items[0].id, 'event-agent-done')
+  const content = (items[0] as { content: string }).content
+  assert.match(content, /^Database 后台任务失败\n/)
+  assert.match(content, /TP53/)
+  assert.match(content, /connector offline/)
+  assert.match(content, /2 分 5 秒/)
+  assert.match(content, /run_2/)
+})
+
+// ── restoring agent cards: background runs ───────────────────────────────
+
+const RESTORED_AGENT_EVENTS = [
+  {
+    source: 'phi',
+    type: 'agent_execution_started',
+    eventId: 'e1',
+    runId: 'run-1',
+    toolCallId: 'call-1',
+    agentName: 'Wrapper',
+    task: 'align the reads',
+    createdAt: '2026-09-20T10:00:00.000Z'
+  },
+  {
+    source: 'phi',
+    type: 'agent_execution_background',
+    eventId: 'e2',
+    runId: 'run-1',
+    toolCallId: 'call-1',
+    agentName: 'Wrapper',
+    agentRunId: 'run_3',
+    agentSessionId: 'runtime-9',
+    createdAt: '2026-09-20T10:00:01.000Z'
+  },
+  {
+    source: 'phi',
+    type: 'run_completed',
+    eventId: 'e3',
+    runId: 'run-1',
+    createdAt: '2026-09-20T10:00:05.000Z'
+  }
+]
+
+test('a restored background card is still running after its chat run completed', () => {
+  const items = chatItemsFromSessionMessages(RESTORED_AGENT_EVENTS)
+  const card = items.find((item) => item.role === 'agent_execution') as unknown as Record<
+    string,
+    unknown
+  >
+  assert.equal(card.status, 'running')
+  assert.equal(card.background, true)
+  assert.equal(card.agentRunId, 'run_3')
+  assert.equal(card.agentSessionId, 'runtime-9')
+})
+
+test('a restored background card gets its later steps and completion', () => {
+  const items = chatItemsFromSessionMessages([
+    ...RESTORED_AGENT_EVENTS,
+    {
+      source: 'phi',
+      type: 'agent_execution_step',
+      eventId: 'e4',
+      toolCallId: 'call-1',
+      agentName: 'Wrapper',
+      agentRunId: 'run_3',
+      step: { id: 's1', toolName: 'wrapper_run', status: 'done', output: 'ok' }
+    },
+    {
+      source: 'phi',
+      type: 'agent_execution_completed',
+      eventId: 'e5',
+      toolCallId: 'call-1',
+      agentName: 'Wrapper',
+      isError: false,
+      finalReport: 'Aligned.',
+      createdAt: '2026-09-20T10:03:00.000Z'
+    }
+  ])
+  const card = items.find((item) => item.role === 'agent_execution') as unknown as {
+    status: string
+    steps: unknown[]
+    finalReport?: string
+  }
+  assert.equal(card.status, 'done')
+  assert.equal(card.steps.length, 1)
+  assert.equal(card.finalReport, 'Aligned.')
+})
+
+test('a restored foreground card is still finished by its chat run', () => {
+  const items = chatItemsFromSessionMessages([RESTORED_AGENT_EVENTS[0], RESTORED_AGENT_EVENTS[2]])
+  const card = items.find((item) => item.role === 'agent_execution') as unknown as {
+    status: string
+  }
+  assert.equal(card.status, 'done')
+})
+
+test('a restored cancelled background card is cancelled, not failed', () => {
+  const items = chatItemsFromSessionMessages([
+    ...RESTORED_AGENT_EVENTS,
+    {
+      source: 'phi',
+      type: 'agent_execution_completed',
+      eventId: 'e5',
+      toolCallId: 'call-1',
+      agentName: 'Wrapper',
+      isError: false,
+      cancelled: true,
+      createdAt: '2026-09-20T10:03:00.000Z'
+    }
+  ])
+  const card = items.find((item) => item.role === 'agent_execution') as unknown as {
+    status: string
+    cancelled?: boolean
+    error?: string
+  }
+  assert.equal(card.status, 'done')
+  assert.equal(card.cancelled, true)
+  assert.equal(card.error, undefined)
+})
+
+test('a restored card keeps the user’s steering messages', () => {
+  const items = chatItemsFromSessionMessages([
+    ...RESTORED_AGENT_EVENTS,
+    {
+      source: 'phi',
+      type: 'agent_execution_steered',
+      eventId: 'e6',
+      toolCallId: 'call-1',
+      agentRunId: 'run_3',
+      text: 'use hg38',
+      createdAt: '2026-09-20T10:01:00.000Z'
+    }
+  ])
+  const card = items.find((item) => item.role === 'agent_execution') as unknown as {
+    steers?: Array<{ text: string; createdAt?: string }>
+  }
+  assert.deepEqual(card.steers, [{ text: 'use hg38', createdAt: '2026-09-20T10:01:00.000Z' }])
 })

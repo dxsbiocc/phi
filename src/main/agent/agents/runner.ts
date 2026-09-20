@@ -8,21 +8,44 @@
 export interface AgentSessionLike {
   subscribe(listener: (event: unknown) => void): () => void
   prompt(text: string): Promise<void>
+  /** Queues a message that reaches the agent mid-run, after its current tool call. */
+  steer?(text: string): Promise<void>
   abort(): Promise<void>
   dispose(): Promise<void> | void
   getLastAssistantMessage():
     { stopReason?: string; errorMessage?: string; content?: unknown } | undefined
 }
 
+/** What a caller can do to a run while it is in flight. */
+export interface AgentRunControl {
+  steer(text: string): Promise<void>
+}
+
 export interface AgentRunRequest {
   task: string
   signal?: AbortSignal
   onProgress?: (line: string) => void
+  onToolStep?: (step: AgentRunToolStep) => void
+  /** Called once the session exists, so the caller can steer the run from then on. */
+  onControl?: (control: AgentRunControl) => void
 }
 
 export interface AgentRunResult {
   text: string
   toolCalls: number
+}
+
+export type AgentToolStepStatus = 'running' | 'done' | 'error'
+
+export interface AgentRunToolStep {
+  id: string
+  toolName: string
+  status: AgentToolStepStatus
+  args?: unknown
+  output?: string
+  error?: string
+  createdAt?: string
+  completedAt?: string
 }
 
 export class AgentCancelledError extends Error {
@@ -64,6 +87,42 @@ export function extractAssistantText(message: unknown): string {
     .join('')
 }
 
+function textFromToolContentParts(content: unknown[]): string {
+  return content
+    .map((part) => {
+      if (!isRecord(part)) return ''
+      const text = part.text
+      return typeof text === 'string' ? text : ''
+    })
+    .join('')
+}
+
+function extractToolText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return textFromToolContentParts(value)
+  if (isRecord(value)) {
+    if (Array.isArray(value.content)) {
+      const text = textFromToolContentParts(value.content)
+      if (text) return text
+    }
+    if (typeof value.output === 'string') return value.output
+    if (typeof value.text === 'string') return value.text
+    try {
+      return JSON.stringify(value, null, 2)
+    } catch {
+      return String(value)
+    }
+  }
+  return value == null ? '' : String(value)
+}
+
+function errorTextFromToolResult(value: unknown): string {
+  if (!isRecord(value)) return ''
+  if (typeof value.errorMessage === 'string') return value.errorMessage
+  if (typeof value.error === 'string') return value.error
+  return ''
+}
+
 const PREVIEW_ARG_KEYS = ['id', 'run_id', 'query', 'command', 'path', 'file_path', 'pattern']
 
 /** One short line describing a tool call, e.g. `wrapper_run nf-core/modules/fastqc`. */
@@ -77,6 +136,20 @@ export function describeToolStart(toolName: string, args: unknown): string {
   return line.length > MAX_PROGRESS_LENGTH ? `${line.slice(0, MAX_PROGRESS_LENGTH - 1)}…` : line
 }
 
+function eventString(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined
+}
+
+function eventToolCallId(event: Record<string, unknown>, fallback: string): string {
+  return eventString(event.toolCallId) ?? eventString(event.id) ?? fallback
+}
+
+function optionalCreatedAt(
+  value: string | undefined
+): { createdAt: string } | Record<string, never> {
+  return value ? { createdAt: value } : {}
+}
+
 export function createAgentRunner(deps: {
   /** Agent name, used in error messages. */
   agent: string
@@ -85,18 +158,74 @@ export function createAgentRunner(deps: {
 }): (request: AgentRunRequest) => Promise<AgentRunResult> {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
-  return async ({ task, signal, onProgress }) => {
+  return async ({ task, signal, onProgress, onToolStep, onControl }) => {
     if (signal?.aborted) throw new AgentCancelledError(deps.agent)
 
     const session = await deps.createSession()
+    onControl?.({
+      steer: async (text) => {
+        if (!session.steer) throw new Error(`The ${deps.agent} agent cannot be steered.`)
+        await session.steer(text)
+      }
+    })
     let toolCalls = 0
     let cancelled = false
     let timedOut = false
+    const startedAtByToolCallId = new Map<string, string | undefined>()
 
     const unsubscribe = session.subscribe((event) => {
-      if (!isRecord(event) || event.type !== 'tool_execution_start') return
-      toolCalls += 1
-      onProgress?.(describeToolStart(String(event.toolName ?? 'tool'), event.args))
+      if (!isRecord(event)) return
+      if (event.type === 'tool_execution_start') {
+        toolCalls += 1
+        const toolName = String(event.toolName ?? 'tool')
+        const id = eventToolCallId(event, `${toolName}-${toolCalls}`)
+        const createdAt = eventString(event.createdAt)
+        startedAtByToolCallId.set(id, createdAt)
+        if (onToolStep) {
+          onToolStep({
+            id,
+            toolName,
+            status: 'running',
+            args: event.args,
+            ...optionalCreatedAt(createdAt)
+          })
+        } else {
+          onProgress?.(describeToolStart(toolName, event.args))
+        }
+        return
+      }
+
+      if (event.type === 'tool_execution_update') {
+        const toolName = String(event.toolName ?? 'tool')
+        const id = eventToolCallId(event, `${toolName}-${toolCalls + 1}`)
+        const output = extractToolText(event.partialResult)
+        if (!output || !onToolStep) return
+        onToolStep({
+          id,
+          toolName,
+          status: 'running',
+          output,
+          ...optionalCreatedAt(startedAtByToolCallId.get(id))
+        })
+        return
+      }
+
+      if (event.type === 'tool_execution_end') {
+        const toolName = String(event.toolName ?? 'tool')
+        const id = eventToolCallId(event, `${toolName}-${toolCalls + 1}`)
+        const output = extractToolText(event.result)
+        const isError = event.isError === true
+        const completedAt = eventString(event.createdAt)
+        onToolStep?.({
+          id,
+          toolName,
+          status: isError ? 'error' : 'done',
+          output,
+          ...(isError ? { error: errorTextFromToolResult(event.result) || output } : {}),
+          ...optionalCreatedAt(startedAtByToolCallId.get(id)),
+          ...(completedAt ? { completedAt } : {})
+        })
+      }
     })
 
     const stop = (): void => {

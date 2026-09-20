@@ -1,4 +1,5 @@
 import type {
+  AgentExecutionItem,
   ChatItem,
   ChatMessage,
   RunLifecycleItem,
@@ -6,10 +7,12 @@ import type {
   WrapperPlanItem
 } from '../types'
 
-export type VisibleChatItem = ChatMessage | ToolCallItem | WrapperPlanItem
+export type VisibleChatItem = ChatMessage | ToolCallItem | WrapperPlanItem | AgentExecutionItem
 
 export type ProcessingItem =
-  ToolCallItem | (ChatMessage & { role: 'assistant' | 'error' | 'warning' | 'thinking' })
+  | ToolCallItem
+  | AgentExecutionItem
+  | (ChatMessage & { role: 'assistant' | 'error' | 'warning' | 'thinking' })
 
 export type RenderGroup =
   | { kind: 'tool-group'; key: string; items: ToolCallItem[] }
@@ -67,7 +70,9 @@ function isProcessingItem(message: ChatItem): message is ProcessingItem {
 }
 
 function isProcessingArtifact(message: ChatItem): boolean {
-  return message.role === 'tool' || message.role === 'thinking'
+  return (
+    message.role === 'tool' || message.role === 'thinking' || message.role === 'agent_execution'
+  )
 }
 
 export function timestampMs(value?: string): number | null {
@@ -230,7 +235,16 @@ export function processingGroupStatus(
   isActive: boolean
 ): ToolCallItem['status'] | null {
   const tools = items.filter((item): item is ToolCallItem => item.role === 'tool')
-  if (isActive || tools.some((item) => item.status === 'running')) return 'running'
+  const agentExecutions = items.filter(
+    (item): item is AgentExecutionItem => item.role === 'agent_execution'
+  )
+  if (
+    isActive ||
+    tools.some((item) => item.status === 'running') ||
+    agentExecutions.some((item) => item.status === 'running')
+  ) {
+    return 'running'
+  }
   return null
 }
 

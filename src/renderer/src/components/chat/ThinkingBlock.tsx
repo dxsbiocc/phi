@@ -5,6 +5,7 @@ import {
   useCollapseResizeNotifier,
   type ChatContentResizeHandler
 } from './useCollapseResizeNotifier'
+import { TimelineRail } from './TimelineRail'
 
 const ChevronRightIcon = PhiIcons.action.back
 const PsychologyIcon = PhiIcons.state.thinking
@@ -89,7 +90,7 @@ export function ThinkingBlock({
         onExiting={notifyContentResize}
         onExited={notifyContentResize}
       >
-        <Box sx={{ ml: 2.5, pl: 1.5, py: 1, minWidth: 0, borderLeft: 2, borderColor: 'grey.800' }}>
+        <TimelineRail sx={{ py: 1 }}>
           <Typography
             variant="body2"
             sx={{
@@ -101,7 +102,7 @@ export function ThinkingBlock({
           >
             {content}
           </Typography>
-        </Box>
+        </TimelineRail>
       </Collapse>
     </Box>
   )

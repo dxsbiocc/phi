@@ -11,9 +11,15 @@ import type {
 } from '../../shared/appSettingsTypes'
 import type { DbConnectorSettingsItem } from '../../shared/dbConnectorTypes'
 import type { RemoteHpcSettings } from '../../shared/wrapperRemoteTypes'
+import type { AgentExecutionItem } from './lib/agentExecutionTypes'
 
 export type { DefaultProxyMode, PhiAppSettings, PhiAppSettingsPatch, ProxyTransportStatus }
 export type { DbConnectorSettingsItem }
+export type {
+  AgentExecutionItem,
+  AgentExecutionStep,
+  AgentExecutionSteer
+} from './lib/agentExecutionTypes'
 
 export type MessageRole = 'user' | 'assistant' | 'error' | 'warning' | 'thinking'
 
@@ -99,7 +105,8 @@ export interface WrapperPlanItem {
   durationMs?: number
 }
 
-export type ChatItem = ChatMessage | ToolCallItem | RunLifecycleItem | WrapperPlanItem
+export type ChatItem =
+  ChatMessage | ToolCallItem | RunLifecycleItem | WrapperPlanItem | AgentExecutionItem
 
 export interface ProviderAuthStatus {
   providerId: string
@@ -897,6 +904,27 @@ export interface AgentEventSummary {
   partialResult?: unknown
   result?: unknown
   isError?: boolean
+  agentName?: string
+  agentRunId?: string
+  agentSessionId?: string
+  /** Why an agent run ended in error (agent_execution_completed). */
+  error?: string
+  /** An agent run was stopped rather than failing (agent_execution_completed). */
+  cancelled?: boolean
+  /** What the user told a running agent (agent_execution_steered). */
+  text?: string
+  task?: string
+  step?: unknown
+  finalReport?: string
+  finalReportPath?: string
+  finalReportBytes?: number
+  finalReportTruncated?: boolean
+  finalReportArtifact?: {
+    kind: 'tool_output'
+    path: string
+    bytes: number
+  }
+  toolCalls?: number
   reason?: string
   action?: string
   aborted?: boolean

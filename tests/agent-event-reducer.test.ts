@@ -515,6 +515,105 @@ test('tool execution update previews long partial output in live timeline', () =
   assert.doesNotMatch(tool.output, /PARTIAL_TAIL/)
 })
 
+test('agent execution events build a structured agent card in the live timeline', () => {
+  const started = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'agent_execution_started',
+    runId: 'run-1',
+    toolCallId: 'agent-1',
+    agentName: 'Wrapper',
+    task: 'run fastqc',
+    args: { task: 'run fastqc', token: '[redacted]' },
+    createdAt: '2026-09-20T00:00:00.000Z'
+  })
+  const stepStarted = reduceAgentEventState(started, {
+    type: 'agent_execution_step',
+    runId: 'run-1',
+    toolCallId: 'agent-1',
+    agentName: 'Wrapper',
+    step: {
+      id: 'inner-1',
+      toolName: 'wrapper_search',
+      status: 'running',
+      args: { query: 'fastqc' },
+      createdAt: '2026-09-20T00:00:01.000Z'
+    },
+    createdAt: '2026-09-20T00:00:01.000Z'
+  })
+  const stepDone = reduceAgentEventState(stepStarted, {
+    type: 'agent_execution_step',
+    runId: 'run-1',
+    toolCallId: 'agent-1',
+    agentName: 'Wrapper',
+    step: {
+      id: 'inner-1',
+      toolName: 'wrapper_search',
+      status: 'done',
+      output: 'found fastqc',
+      outputPath: '/tmp/phi/tool-outputs/agent-1-inner-1.txt',
+      outputBytes: 120000,
+      outputTruncated: true,
+      outputArtifact: {
+        kind: 'tool_output',
+        path: '/tmp/phi/tool-outputs/agent-1-inner-1.txt',
+        bytes: 120000
+      },
+      completedAt: '2026-09-20T00:00:03.000Z'
+    },
+    createdAt: '2026-09-20T00:00:03.000Z'
+  })
+  const completed = reduceAgentEventState(stepDone, {
+    type: 'agent_execution_completed',
+    runId: 'run-1',
+    toolCallId: 'agent-1',
+    agentName: 'Wrapper',
+    finalReport: 'FastQC completed.',
+    finalReportBytes: 17,
+    toolCalls: 1,
+    isError: false,
+    createdAt: '2026-09-20T00:00:05.000Z'
+  })
+
+  assert.deepEqual(completed.messages, [
+    {
+      id: 'agent-1',
+      role: 'agent_execution',
+      runId: 'run-1',
+      agentName: 'Wrapper',
+      task: 'run fastqc',
+      argsPreview: 'run fastqc',
+      argsJson: '{\n  "task": "run fastqc",\n  "token": "[redacted]"\n}',
+      status: 'done',
+      steps: [
+        {
+          id: 'inner-1',
+          toolName: 'wrapper_search',
+          argsPreview: 'fastqc',
+          argsJson: '{\n  "query": "fastqc"\n}',
+          output: 'found fastqc',
+          status: 'done',
+          createdAt: '2026-09-20T00:00:01.000Z',
+          completedAt: '2026-09-20T00:00:03.000Z',
+          durationMs: 2000,
+          outputPath: '/tmp/phi/tool-outputs/agent-1-inner-1.txt',
+          outputBytes: 120000,
+          outputTruncated: true,
+          outputArtifact: {
+            kind: 'tool_output',
+            path: '/tmp/phi/tool-outputs/agent-1-inner-1.txt',
+            bytes: 120000
+          }
+        }
+      ],
+      createdAt: '2026-09-20T00:00:00.000Z',
+      completedAt: '2026-09-20T00:00:05.000Z',
+      durationMs: 5000,
+      finalReport: 'FastQC completed.',
+      finalReportBytes: 17,
+      toolCalls: 1
+    }
+  ])
+})
+
 test('a finished background wrapper run shows up live as a visible timeline notice', () => {
   const state = reduceAgentEventState(createAgentEventReducerState(), {
     type: 'wrapper_run_finished',
@@ -531,4 +630,234 @@ test('a finished background wrapper run shows up live as a visible timeline noti
   assert.equal(state.messages[0].role, 'warning')
   assert.match((state.messages[0] as { content: string }).content, /^Wrapper 运行已完成/)
   assert.match((state.messages[0] as { content: string }).content, /wrun_abc/)
+})
+
+test('a finished background agent run shows up live as a visible timeline notice', () => {
+  const state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'agent_run_finished',
+    eventId: 'event-agent-done',
+    agentRunId: 'run_1',
+    agent: 'Wrapper',
+    state: 'done',
+    task: 'align the reads',
+    elapsedSeconds: 60,
+    report: 'Aligned.'
+  })
+
+  assert.equal(state.messages.length, 1)
+  assert.equal(state.messages[0].role, 'warning')
+  const content = (state.messages[0] as { content: string }).content
+  assert.match(content, /^Wrapper 后台任务已完成/)
+  assert.match(content, /align the reads/)
+  assert.match(content, /run_1/)
+  assert.doesNotMatch(content, /Aligned\./, 'the report is for the agent, not the notice')
+})
+
+// ── agent cards: run refs, background runs ───────────────────────────────
+
+function reduceAll(
+  events: Array<Record<string, unknown>>
+): ReturnType<typeof createAgentEventReducerState> {
+  return events.reduce(
+    (state, event) => reduceAgentEventState(state, event as never),
+    createAgentEventReducerState()
+  )
+}
+
+const agentCard = (
+  state: ReturnType<typeof createAgentEventReducerState>
+): Record<string, unknown> =>
+  state.messages.find((item) => item.role === 'agent_execution') as unknown as Record<
+    string,
+    unknown
+  >
+
+const STARTED = {
+  type: 'agent_execution_started',
+  runId: 'run-1',
+  toolCallId: 'call-1',
+  agentName: 'Wrapper',
+  task: 'align the reads',
+  createdAt: '2026-09-20T10:00:00.000Z'
+}
+
+test('agent steps tell the card which agent run and session it can steer', () => {
+  const state = reduceAll([
+    STARTED,
+    {
+      type: 'agent_execution_step',
+      runId: 'run-1',
+      toolCallId: 'call-1',
+      agentName: 'Wrapper',
+      agentRunId: 'run_3',
+      agentSessionId: 'runtime-9',
+      step: { id: 's1', toolName: 'read', status: 'running' }
+    }
+  ])
+  const card = agentCard(state)
+  assert.equal(card.agentRunId, 'run_3')
+  assert.equal(card.agentSessionId, 'runtime-9')
+  assert.equal(card.background, undefined)
+  assert.equal(card.status, 'running')
+})
+
+test('a background agent card keeps running when the chat run that started it completes', () => {
+  const state = reduceAll([
+    STARTED,
+    {
+      type: 'agent_execution_background',
+      runId: 'run-1',
+      toolCallId: 'call-1',
+      agentName: 'Wrapper',
+      agentRunId: 'run_3',
+      agentSessionId: 'runtime-9'
+    },
+    { type: 'run_completed', runId: 'run-1', createdAt: '2026-09-20T10:00:05.000Z' }
+  ])
+  const card = agentCard(state)
+  assert.equal(card.background, true)
+  assert.equal(card.agentRunId, 'run_3')
+  assert.equal(card.status, 'running')
+})
+
+test('a foreground agent card is still finished when its chat run completes', () => {
+  const state = reduceAll([
+    STARTED,
+    { type: 'run_completed', runId: 'run-1', createdAt: '2026-09-20T10:00:05.000Z' }
+  ])
+  assert.equal(agentCard(state).status, 'done')
+})
+
+test('a background card receives its later steps and its completion', () => {
+  const state = reduceAll([
+    STARTED,
+    {
+      type: 'agent_execution_background',
+      runId: 'run-1',
+      toolCallId: 'call-1',
+      agentName: 'Wrapper',
+      agentRunId: 'run_3',
+      agentSessionId: 'runtime-9'
+    },
+    { type: 'run_completed', runId: 'run-1' },
+    {
+      type: 'agent_execution_step',
+      toolCallId: 'call-1',
+      agentName: 'Wrapper',
+      agentRunId: 'run_3',
+      agentSessionId: 'runtime-9',
+      step: { id: 's1', toolName: 'wrapper_run', status: 'done', output: 'ok' }
+    },
+    {
+      type: 'agent_execution_completed',
+      toolCallId: 'call-1',
+      agentName: 'Wrapper',
+      agentRunId: 'run_3',
+      isError: false,
+      finalReport: 'Aligned.',
+      toolCalls: 2,
+      createdAt: '2026-09-20T10:03:00.000Z'
+    }
+  ])
+  const card = agentCard(state) as {
+    status: string
+    steps: unknown[]
+    finalReport?: string
+    background?: boolean
+  }
+  assert.equal(card.status, 'done')
+  assert.equal(card.steps.length, 1)
+  assert.equal(card.finalReport, 'Aligned.')
+  assert.equal(card.background, true)
+})
+
+test('a background card that ends in error shows the failure', () => {
+  const state = reduceAll([
+    STARTED,
+    {
+      type: 'agent_execution_background',
+      toolCallId: 'call-1',
+      agentName: 'Wrapper',
+      agentRunId: 'run_3'
+    },
+    {
+      type: 'agent_execution_completed',
+      toolCallId: 'call-1',
+      agentName: 'Wrapper',
+      isError: true,
+      error: 'The Wrapper agent failed: boom'
+    }
+  ])
+  const card = agentCard(state) as { status: string; error?: string }
+  assert.equal(card.status, 'error')
+  assert.match(card.error ?? '', /boom/)
+})
+
+// ── agent cards: cancelled runs and the user's steering messages ─────────
+
+test('a cancelled background card ends as cancelled, not as a failure', () => {
+  const state = reduceAll([
+    STARTED,
+    {
+      type: 'agent_execution_background',
+      toolCallId: 'call-1',
+      agentName: 'Wrapper',
+      agentRunId: 'run_3'
+    },
+    {
+      type: 'agent_execution_completed',
+      toolCallId: 'call-1',
+      agentName: 'Wrapper',
+      isError: false,
+      cancelled: true,
+      createdAt: '2026-09-20T10:03:00.000Z'
+    }
+  ])
+  const card = agentCard(state) as { status: string; cancelled?: boolean; error?: string }
+  assert.equal(card.status, 'done')
+  assert.equal(card.cancelled, true)
+  assert.equal(card.error, undefined)
+})
+
+test('the user’s steering messages are kept on the card in order', () => {
+  const state = reduceAll([
+    STARTED,
+    {
+      type: 'agent_execution_background',
+      toolCallId: 'call-1',
+      agentName: 'Wrapper',
+      agentRunId: 'run_3'
+    },
+    {
+      type: 'agent_execution_steered',
+      toolCallId: 'call-1',
+      agentRunId: 'run_3',
+      text: 'use hg38',
+      createdAt: '2026-09-20T10:01:00.000Z'
+    },
+    {
+      type: 'agent_execution_steered',
+      toolCallId: 'call-1',
+      agentRunId: 'run_3',
+      text: 'skip QC',
+      createdAt: '2026-09-20T10:02:00.000Z'
+    }
+  ])
+  const card = agentCard(state) as {
+    steers?: Array<{ text: string; createdAt?: string }>
+    status: string
+  }
+  assert.deepEqual(card.steers, [
+    { text: 'use hg38', createdAt: '2026-09-20T10:01:00.000Z' },
+    { text: 'skip QC', createdAt: '2026-09-20T10:02:00.000Z' }
+  ])
+  assert.equal(card.status, 'running')
+})
+
+test('a steering message without text is ignored', () => {
+  const state = reduceAll([
+    STARTED,
+    { type: 'agent_execution_steered', toolCallId: 'call-1', agentRunId: 'run_3', text: '  ' }
+  ])
+  assert.equal((agentCard(state) as { steers?: unknown }).steers, undefined)
 })

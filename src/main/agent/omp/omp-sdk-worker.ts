@@ -35,9 +35,19 @@ import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
 import { buildAskUserQuestionCustomTools } from '../user-interaction-tools'
 import { isPhiAgentDefinition, type PhiAgentDefinition } from '../agents/definition'
+import { controlAgentRun } from '../agents/run-control'
+import { AGENT_RUN_HOST_METHODS } from '../agents/run-host'
+import { AgentRunRegistry } from '../agents/registry'
+import { buildAgentRunTools } from '../agents/run-tools'
 import { createAgentRunner, type AgentSessionLike } from '../agents/runner'
 import { buildScopedPhiToolMap, resolveAgentTools } from '../agents/tool-resolution'
 import { buildAgentTool } from '../agents/tool'
+import { createSpecialistFallbackExtension } from '../agents/fallback-policy'
+import { AGENT_REPORT_PROTOCOL } from '../agents/report'
+import {
+  buildPhiMainSystemPrompt,
+  filterPersonaContextFile
+} from '../main-system-prompt'
 import { createHostJobClient } from '../wrappers/composition/job-host-client'
 import { buildWrapperCompositionTools } from '../wrappers/composition/tools'
 
@@ -66,6 +76,10 @@ type RuntimeContext = {
 
 type SessionEntry = {
   result: CreateAgentSessionResult
+  /** The runs of this session's specialist agents; stopped with the session. */
+  agentRuns?: AgentRunRegistry
+  /** Stops telling the main process about those runs (used when the session goes away). */
+  stopAgentRunNotices?: () => void
 }
 
 type WorkerPromptOptions = {
@@ -746,7 +760,7 @@ async function createPhiAgentSession(
     ...(parentSession?.thinkingLevel ? { thinkingLevel: parentSession.thinkingLevel } : {}),
     ...(loader ? { resourceLoader: loader } : {}),
     ...(skills ? { skills } : {}),
-    appendSystemPrompt: definition.systemPrompt,
+    appendSystemPrompt: `${definition.systemPrompt}\n\n${AGENT_REPORT_PROTOCOL}`,
     ...(customTools.length > 0 ? { customTools } : {}),
     toolNames,
     restrictToolNames: true,
@@ -767,13 +781,28 @@ async function createSession(params: unknown): Promise<unknown> {
   const settings = await Settings.init({ cwd, agentDir })
   const sessionManager = await makeSessionManager(record.sessionManager, cwd, agentDir)
   const noTools = record.noTools === 'all' || record.noTools === true
+  const personaMarkdown = stringValue(record.personaMarkdown).trim()
+  const phiAgents = Array.isArray(record.phiAgents)
+    ? record.phiAgents.filter(isPhiAgentDefinition)
+    : []
+  // One registry per conversation: parallel and background delegations share its limits,
+  // and the run tools and controlled-fallback policy below act on it.
+  const agentRuns = new AgentRunRegistry()
+  const extensionFactories = [
+    ...(phiAgents.length > 0 ? [createSpecialistFallbackExtension(phiAgents, agentRuns)] : []),
+    ...(record.enableToolApproval ? [createBridgeToolApprovalExtension(sessionId)] : [])
+  ]
   const resources = isRecord(record.resourceOptions)
     ? new DefaultResourceLoader({
         ...resourceOptions({ ...record.resourceOptions, cwd, agentDir }),
         settingsManager: SettingsManager.create(cwd, agentDir),
-        extensionFactories: record.enableToolApproval
-          ? [createBridgeToolApprovalExtension(sessionId)]
-          : undefined
+        ...(personaMarkdown
+          ? {
+              agentsFilesOverride: (base) =>
+                filterPersonaContextFile(base, join(agentDir, 'AGENTS.md'))
+            }
+          : {}),
+        ...(extensionFactories.length > 0 ? { extensionFactories } : {})
       })
     : undefined
 
@@ -793,9 +822,6 @@ async function createSession(params: unknown): Promise<unknown> {
   // the specialists' own tool functions, so internal catalogs and query tools
   // stay out of the main conversation. Definitions come from the main process's scan.
   const parentRef: { current?: CreateAgentSessionResult } = {}
-  const phiAgents = Array.isArray(record.phiAgents)
-    ? record.phiAgents.filter(isPhiAgentDefinition)
-    : []
   const agentCustomTools = phiAgents.map((definition) =>
     buildAgentTool(
       definition,
@@ -811,9 +837,41 @@ async function createSession(params: unknown): Promise<unknown> {
             enableToolApproval: Boolean(record.enableToolApproval),
             parent: () => parentRef.current
           })
-      })
+      }),
+      agentRuns
     )
   )
+  const agentRunTools = phiAgents.length > 0 ? buildAgentRunTools(agentRuns) : []
+  // A background run outlives the tool call that started it, so its end is reported to the
+  // main process, which owns the conversation: it notes it in the timeline and can wake the
+  // main agent. A run whose report the agent already collected is reported as such, so it
+  // is not announced a second time. Foreground runs are never announced: the agent waited.
+  const stopAgentRunNotices = agentRuns.subscribe({
+    onFinish: (run) => {
+      if (!run.background) return
+      void requestHost(AGENT_RUN_HOST_METHODS.finished, {
+        originSessionId: sessionId,
+        run
+      }).catch(() => undefined)
+    },
+    // Its steps go to the card that shows it; a foreground run's steps already do, through
+    // the tool call that is waiting on it.
+    onStep: (run, step) => {
+      if (!run.background) return
+      void requestHost(AGENT_RUN_HOST_METHODS.step, {
+        originSessionId: sessionId,
+        run: { id: run.id, agent: run.agent, toolCallId: run.toolCallId },
+        step
+      }).catch(() => undefined)
+    },
+    onReported: (run) => {
+      if (!run.background) return
+      void requestHost(AGENT_RUN_HOST_METHODS.reported, {
+        originSessionId: sessionId,
+        runId: run.id
+      }).catch(() => undefined)
+    }
+  })
   const notebookCustomTools = buildNotebookCustomTools(async (request) =>
     requestHost('notebookTool.execute', request)
   )
@@ -823,6 +881,7 @@ async function createSession(params: unknown): Promise<unknown> {
   )
   const customTools = [
     ...agentCustomTools,
+    ...agentRunTools,
     ...notebookCustomTools,
     ...libraryCustomTools,
     ...userInteractionCustomTools
@@ -836,6 +895,10 @@ async function createSession(params: unknown): Promise<unknown> {
     modelRegistry: ctx.modelRegistry,
     sessionManager,
     thinkingLevel: configuredThinkingLevel(record.thinkingLevel),
+    systemPrompt: (defaultPrompt) =>
+      buildPhiMainSystemPrompt(defaultPrompt, {
+        ...(personaMarkdown ? { personaMarkdown } : {})
+      }),
     ...(modelBySelector(ctx, record.model) ? { model: modelBySelector(ctx, record.model) } : {}),
     ...(resources ? { resourceLoader: resources } : {}),
     ...(customTools.length > 0 ? { customTools } : {}),
@@ -860,7 +923,7 @@ async function createSession(params: unknown): Promise<unknown> {
     sendEvent('sessionEvent', event, { sessionId })
     sendEvent('sessionState', serializeSessionState(result), { sessionId })
   })
-  sessions.set(sessionId, { result })
+  sessions.set(sessionId, { result, agentRuns, stopAgentRunNotices })
   return {
     sessionId,
     state: serializeSessionState(result)
@@ -899,6 +962,15 @@ async function promptSession(params: unknown): Promise<unknown> {
   return serializeSessionState(result)
 }
 
+/** A delegation card steers or stops the agent run it shows (see agent/agents/run-control.ts). */
+async function controlSessionAgentRun(
+  action: 'steer' | 'stop',
+  params: unknown
+): Promise<{ ok: true }> {
+  const record = isRecord(params) ? params : {}
+  return controlAgentRun(sessions.get(stringValue(record.sessionId))?.agentRuns, action, record)
+}
+
 async function abortSession(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const result = getSession(record.sessionId)
@@ -910,6 +982,11 @@ async function disposeSession(params: unknown): Promise<void> {
   const record = isRecord(params) ? params : {}
   const sessionId = stringValue(record.sessionId)
   const result = getSession(sessionId)
+  // Background runs outlive their tool call, not their conversation. Stopping them is the
+  // session going away, not news, so it is not announced.
+  const entry = sessions.get(sessionId)
+  entry?.stopAgentRunNotices?.()
+  entry?.agentRuns?.stopAll()
   sessions.delete(sessionId)
   await result.session.dispose()
 }
@@ -1000,6 +1077,10 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return abortSession(params)
     case 'session.dispose':
       return disposeSession(params)
+    case 'agentRun.steer':
+      return controlSessionAgentRun('steer', params)
+    case 'agentRun.stop':
+      return controlSessionAgentRun('stop', params)
     case 'session.setModel':
       return setSessionModel(params)
     case 'session.setThinkingLevel':

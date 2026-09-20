@@ -397,6 +397,10 @@ test('the bundled Database agent owns the biological database tools', () => {
   assert.match(database.systemPrompt, /bulk download/i)
   assert.match(database.systemPrompt, /skill:\/\/create-database-connector/)
   assert.ok(database.delegation && database.delegation.length > 0)
+  assert.equal(database.delegationMode, 'required-first')
+  assert.equal(database.fallback?.afterFailures, 1)
+  assert.deepEqual(database.fallback?.tools, ['bash', 'eval', 'web_search'])
+  assert.ok(database.fallback?.match.includes('rest.uniprot.org'))
   for (const toolName of ['db_search', 'db_domain', 'db_docs_search', 'db_query']) {
     assert.doesNotMatch(database.delegation ?? '', new RegExp(`\\b${toolName}\\b`))
   }
@@ -425,6 +429,8 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
   assert.match(prompt, /cannot (see|ask)/i)
   assert.match(prompt, /nextflow/i)
   assert.match(prompt, /do not/i)
+  assert.match(prompt, /required-first/i)
+  assert.match(prompt, /controlled fallback/i)
   // The leader never learns the specialist's own tool functions.
   for (const name of [
     'wrapper_search',
@@ -504,7 +510,13 @@ test('the tool passes the trimmed task to the runner and returns its report', as
     JSON.stringify(result.content),
     JSON.stringify([{ type: 'text', text: 'Ran fastqc; outputs in /tmp/out.' }])
   )
-  assert.deepEqual(result.details, { kind: 'agent_result', agent: 'Wrapper', toolCalls: 3 })
+  assert.deepEqual(result.details, {
+    kind: 'agent_result',
+    agent: 'Wrapper',
+    status: 'completed',
+    missingInputs: [],
+    toolCalls: 3
+  })
 })
 
 test('the tool rejects a missing, blank or oversized task without running the agent', async () => {
@@ -534,6 +546,52 @@ test('the tool forwards runner progress to onUpdate as text updates', async () =
     undefined as never
   )
   assert.deepEqual(updates, ['wrapper_search fastqc', 'wrapper_run nf-core/modules/fastqc'])
+})
+
+test('the delegation tool forwards structured runner steps to onUpdate details', async () => {
+  const updates: Array<{ text: string; details: unknown }> = []
+  const tool = buildAgentTool(WRAPPER, async ({ onToolStep }) => {
+    onToolStep?.({
+      id: 'step-1',
+      toolName: 'wrapper_search',
+      status: 'running',
+      args: { query: 'fastqc' },
+      createdAt: '2026-09-20T00:00:00.000Z'
+    })
+    onToolStep?.({
+      id: 'step-1',
+      toolName: 'wrapper_search',
+      status: 'done',
+      output: 'found fastqc',
+      completedAt: '2026-09-20T00:00:01.000Z'
+    })
+    return { text: 'done', toolCalls: 1 }
+  })
+
+  await tool.execute(
+    'call',
+    { task: 'go' },
+    (partial: { content: Array<{ text: string }>; details?: unknown }) =>
+      updates.push({ text: partial.content[0].text, details: partial.details }),
+    undefined as never
+  )
+
+  assert.deepEqual(
+    updates.map((update) => update.text),
+    ['wrapper_search fastqc', 'wrapper_search 完成']
+  )
+  assert.deepEqual(updates[0].details, {
+    kind: 'agent_step',
+    agent: 'Wrapper',
+    agentRunId: 'run_1',
+    step: {
+      id: 'step-1',
+      toolName: 'wrapper_search',
+      status: 'running',
+      args: { query: 'fastqc' },
+      createdAt: '2026-09-20T00:00:00.000Z'
+    }
+  })
 })
 
 test('the tool turns failures, cancellation, timeouts and empty reports into errors naming the agent', async () => {
@@ -665,6 +723,69 @@ test('the runner counts tool starts and reports them as progress', async () => {
   })
   assert.equal(result.toolCalls, 2)
   assert.deepEqual(lines, ['wrapper_search fastqc', 'wrapper_run nf-core/modules/fastqc'])
+})
+
+test('the runner emits structured tool step updates when requested', async () => {
+  const session = fakeSession({
+    onPrompt: (emit) => {
+      emit({
+        type: 'tool_execution_start',
+        toolCallId: 'inner-1',
+        toolName: 'wrapper_search',
+        args: { query: 'fastqc' },
+        createdAt: '2026-09-20T00:00:00.000Z'
+      })
+      emit({
+        type: 'tool_execution_update',
+        toolCallId: 'inner-1',
+        toolName: 'wrapper_search',
+        partialResult: { output: 'searching' }
+      })
+      emit({
+        type: 'tool_execution_end',
+        toolCallId: 'inner-1',
+        toolName: 'wrapper_search',
+        result: { output: 'found fastqc' },
+        isError: false,
+        createdAt: '2026-09-20T00:00:02.000Z'
+      })
+    }
+  })
+  const progress: string[] = []
+  const steps: unknown[] = []
+
+  const result = await createAgentRunner({ agent: 'Wrapper', createSession: async () => session })({
+    task: 'go',
+    onProgress: (line) => progress.push(line),
+    onToolStep: (step) => steps.push(step)
+  })
+
+  assert.equal(result.toolCalls, 1)
+  assert.deepEqual(progress, [])
+  assert.deepEqual(steps, [
+    {
+      id: 'inner-1',
+      toolName: 'wrapper_search',
+      status: 'running',
+      args: { query: 'fastqc' },
+      createdAt: '2026-09-20T00:00:00.000Z'
+    },
+    {
+      id: 'inner-1',
+      toolName: 'wrapper_search',
+      status: 'running',
+      output: 'searching',
+      createdAt: '2026-09-20T00:00:00.000Z'
+    },
+    {
+      id: 'inner-1',
+      toolName: 'wrapper_search',
+      status: 'done',
+      output: 'found fastqc',
+      createdAt: '2026-09-20T00:00:00.000Z',
+      completedAt: '2026-09-20T00:00:02.000Z'
+    }
+  ])
 })
 
 test('the runner surfaces a model error from the final assistant message and still disposes', async () => {

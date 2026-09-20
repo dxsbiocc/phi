@@ -3,6 +3,9 @@ import * as jobContinue from '../src/main/agent/wrappers/composition/job-continu
 import { MAX_AUTOMATIC_CONTINUATIONS } from '../src/main/agent/wrappers/composition/job-continue'
 import { deliverWrapperRunFinished } from '../src/main/agent/wrappers/composition/job-notify'
 import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
+import { isSecretMetadataKey } from '../src/main/agent/redaction'
+import * as agentRunContinue from '../src/main/agent/agents/run-continue'
+import { agentRunHostHandlers } from '../src/main/agent/agents/run-host'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
@@ -95,6 +98,9 @@ class FakeSession {
 
 type Handler = (_event: unknown, ...args: unknown[]) => unknown
 type HarnessResult = {
+  hostHandlers: Map<string, (params: unknown) => Promise<unknown>>
+  bridgeRequests: Array<{ method: string; params: unknown }>
+  failBridgeRequests: (error: Error | undefined) => void
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
   sessions: FakeSession[]
   deleted: string[]
@@ -156,6 +162,9 @@ async function harness(
   let appFocused = true
   const reportedWrapperRuns = new Set<string>()
   const wrapperJobFinishListeners: Array<(run: unknown, status: unknown) => void> = []
+  const hostHandlers = new Map<string, (params: unknown) => Promise<unknown>>()
+  const bridgeRequests: Array<{ method: string; params: unknown }> = []
+  let bridgeFailure: Error | undefined
   const osNotifications: Array<{ title: string; body: string }> = []
   const persistedToolOutputs: Array<Record<string, unknown>> = []
   const revealedPaths: string[] = []
@@ -1223,8 +1232,22 @@ async function harness(
       }
     },
     './agent/omp/omp-bridge': {
-      getOmpBridge: (): { registerHostHandler: () => () => void } => ({
-        registerHostHandler: () => () => {}
+      getOmpBridge: (): {
+        registerHostHandler: (
+          method: string,
+          handler: (params: unknown) => Promise<unknown>
+        ) => () => void
+        request: (method: string, params: unknown) => Promise<unknown>
+      } => ({
+        registerHostHandler: (method, handler) => {
+          hostHandlers.set(method, handler)
+          return () => hostHandlers.delete(method)
+        },
+        request: async (method, params) => {
+          bridgeRequests.push({ method, params })
+          if (bridgeFailure) throw bridgeFailure
+          return { ok: true }
+        }
       })
     },
     './agent/notebook/notebook-code-generation': notebookCodeGeneration,
@@ -1355,6 +1378,9 @@ async function harness(
         cancel(): Promise<{ ok: true }> {
           return Promise.resolve({ ok: true })
         }
+        adoptRemoteRuns(): Promise<number> {
+          return Promise.resolve(0)
+        }
         hasBeenReported(runId: string): boolean {
           return reportedWrapperRuns.has(runId)
         }
@@ -1379,6 +1405,8 @@ async function harness(
         discoverPhiAgents({ ...options, homeDir: '/nonexistent-home' })
     },
     './agent/agents/leader-prompt': { buildAgentLeaderPrompt },
+    './agent/agents/run-continue': agentRunContinue,
+    './agent/agents/run-host': { agentRunHostHandlers },
     './agent/wrappers/composition/discovery': {
       listWrapperCompositionCatalog: (): unknown[] => []
     },
@@ -1386,6 +1414,11 @@ async function harness(
       isRemoteCredentialStorageAvailable: (): boolean => false,
       storeRemoteConnectionPassphrase: (): void => {},
       deleteRemoteConnectionPassphrase: (): void => {}
+    },
+    './agent/wrappers/remote-connection-resolver': {
+      resolveProjectRemoteTarget: (): { reason: string } => ({
+        reason: 'remote execution is mocked out in main-integration.test.ts'
+      })
     },
     './agent/diagnostics': { formatDiagnostics },
     './agent/app-logger': {
@@ -1467,6 +1500,7 @@ async function harness(
       }
     },
     './agent/redaction': {
+      isSecretMetadataKey,
       redactSensitiveText: (text: string): string =>
         text
           .replace(/\borg-[A-Za-z0-9_-]+(?:<[^>\s]+>)?/g, '[redacted]')
@@ -1634,6 +1668,11 @@ async function harness(
     updatedSessionManifests,
     appendedSessionEvents,
     wrapperJobFinishListeners,
+    hostHandlers,
+    bridgeRequests,
+    failBridgeRequests: (error: Error | undefined): void => {
+      bridgeFailure = error
+    },
     osNotifications,
     reportedWrapperRuns,
     setAppFocused: (focused: boolean): void => {
@@ -5164,4 +5203,435 @@ test('main IPC: only the runs nobody has reported are included in a wake-up', as
 
   assert.doesNotMatch(session.promptTexts[1], /wrun_1/)
   assert.match(session.promptTexts[1], /wrun_2/)
+})
+
+// ── automatic continuation after a background agent run ───────────────────
+
+const AGENT_WOKEN = /<phi_agent_run_finished>/
+
+const agentRunFinished = (
+  app: Awaited<ReturnType<typeof harness>>,
+  runtimeSessionId: string,
+  overrides: Record<string, unknown> = {}
+): Promise<unknown> => {
+  const handler = app.hostHandlers.get('agentRun.finished')
+  assert.ok(handler, 'the main process registers agentRun.finished')
+  return handler({
+    originSessionId: runtimeSessionId,
+    run: {
+      id: 'run_1',
+      agent: 'Wrapper',
+      task: 'align the reads',
+      state: 'done',
+      background: true,
+      startedAt: 1_000,
+      completedAt: 61_000,
+      toolCalls: 4,
+      report: 'Aligned. BAMs are in /data/bam.',
+      ...overrides
+    }
+  })
+}
+
+test('main IPC: a background agent run that ends is noted in the conversation and wakes it with its report', async () => {
+  const { app, session } = await idleConversation()
+  const before = app.events.length
+
+  await agentRunFinished(app, session.runtimeSessionId)
+  await waitUntil(() => session.promptTexts.length === 2)
+
+  const persisted = app.appendedSessionEvents.filter(
+    (entry) => (entry.event as { type?: string }).type === 'agent_run_finished'
+  )
+  assert.equal(persisted.length, 1)
+  assert.equal((persisted[0].event as { agentRunId: string }).agentRunId, 'run_1')
+  assert.equal(
+    app.events
+      .slice(before)
+      .filter((entry) => (entry.data as { type?: string }).type === 'agent_run_finished').length,
+    1
+  )
+
+  assert.match(session.promptTexts[1], AGENT_WOKEN)
+  assert.match(session.promptTexts[1], /run_1 · Wrapper · done/)
+  assert.match(session.promptTexts[1], /BAMs are in \/data\/bam\./)
+  assert.equal(app.sessions.length, 1)
+})
+
+test('main IPC: an agent run that ends while the conversation is busy waits for the busy run to finish', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  await app.invoke('projects:newSession', '/projects/agent-continue', 'ask')
+  const first = app.invoke('agent:prompt', 'work on something')
+  await tick()
+
+  await agentRunFinished(app, session.runtimeSessionId)
+  await tick()
+  assert.equal(session.promptTexts.length, 1, 'must not interrupt the run in progress')
+
+  session.finish.resolve()
+  await first
+  await waitUntil(() => session.promptTexts.length === 2)
+  assert.match(session.promptTexts[1], AGENT_WOKEN)
+})
+
+test('main IPC: a run the agent already collected with agent_wait does not wake the conversation again', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  await app.invoke('projects:newSession', '/projects/agent-continue', 'ask')
+  const first = app.invoke('agent:prompt', 'start it and wait for it')
+  await tick()
+
+  await agentRunFinished(app, session.runtimeSessionId)
+  await app.hostHandlers.get('agentRun.reported')?.({
+    originSessionId: session.runtimeSessionId,
+    runId: 'run_1'
+  })
+  session.finish.resolve()
+  await first
+  await tick()
+  await tick()
+
+  assert.equal(session.promptTexts.length, 1)
+})
+
+test('main IPC: a stale receipt for a reused run id does not swallow a later run', async () => {
+  const { app, session } = await idleConversation()
+  await app.hostHandlers.get('agentRun.reported')?.({
+    originSessionId: session.runtimeSessionId,
+    runId: 'run_1'
+  })
+  await agentRunFinished(app, session.runtimeSessionId)
+  await waitUntil(() => session.promptTexts.length === 2)
+  assert.match(session.promptTexts[1], /run_1/)
+})
+
+test('main IPC: only the agent runs nobody collected are in a wake-up', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  await app.invoke('projects:newSession', '/projects/agent-continue', 'ask')
+  const first = app.invoke('agent:prompt', 'work')
+  await tick()
+
+  await agentRunFinished(app, session.runtimeSessionId)
+  await agentRunFinished(app, session.runtimeSessionId, { id: 'run_2', report: 'Second report.' })
+  await app.hostHandlers.get('agentRun.reported')?.({
+    originSessionId: session.runtimeSessionId,
+    runId: 'run_1'
+  })
+  session.finish.resolve()
+  await first
+  await waitUntil(() => session.promptTexts.length === 2)
+
+  assert.doesNotMatch(session.promptTexts[1], /run_1/)
+  assert.match(session.promptTexts[1], /run_2/)
+})
+
+test('main IPC: stopping the busy run drops the pending agent wake-up', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  await app.invoke('projects:newSession', '/projects/agent-continue', 'ask')
+  const first = app.invoke('agent:prompt', 'work')
+  await tick()
+
+  await agentRunFinished(app, session.runtimeSessionId)
+  await app.invoke('agent:stop')
+  await first
+  await tick()
+  await tick()
+
+  assert.equal(session.promptTexts.length, 1)
+})
+
+test('main IPC: a cancelled agent run is noted but does not wake anything', async () => {
+  const { app, session } = await idleConversation()
+  await agentRunFinished(app, session.runtimeSessionId, { state: 'cancelled', report: undefined })
+  await tick()
+  await tick()
+
+  assert.equal(
+    app.appendedSessionEvents.filter(
+      (entry) => (entry.event as { type?: string }).type === 'agent_run_finished'
+    ).length,
+    1
+  )
+  assert.equal(session.promptTexts.length, 1)
+})
+
+test('main IPC: agent and wrapper runs share one wake-up cap, and one wake-up can carry both', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  await app.invoke('projects:newSession', '/projects/agent-continue', 'ask')
+  const first = app.invoke('agent:prompt', 'work')
+  await tick()
+
+  await agentRunFinished(app, session.runtimeSessionId)
+  app.wrapperJobFinishListeners[0](FINISHED_RUN(session.runtimeSessionId), { elapsedSeconds: 1 })
+  session.finish.resolve()
+  await first
+  await waitUntil(() => session.promptTexts.length === 2)
+
+  assert.match(session.promptTexts[1], AGENT_WOKEN)
+  assert.match(session.promptTexts[1], WOKEN)
+})
+
+test('main IPC: a run that ends while Phi is in the background raises a system notification too', async () => {
+  const { app, session } = await idleConversation()
+  app.setAppFocused(false)
+  await agentRunFinished(app, session.runtimeSessionId)
+  assert.equal(app.osNotifications.length, 1)
+  assert.equal(app.osNotifications[0].title, 'Wrapper 后台任务已完成')
+})
+
+// ── the agent card: run ids, background start, background progress, steer/stop ───
+
+function agentDelegationSession(extraEvents: unknown[]): {
+  factory: (cwd: string, file: string) => Promise<FakeSession>
+  session: () => FakeSession
+} {
+  let created: FakeSession | undefined
+  return {
+    session: () => created as FakeSession,
+    factory: async (_cwd, file) => {
+      const session = new FakeSession(file)
+      session.toolEvents = [
+        {
+          type: 'tool_execution_start',
+          toolCallId: 'call-1',
+          toolName: 'Wrapper',
+          args: { task: 'align the reads', background: true }
+        },
+        ...extraEvents
+      ]
+      created = session
+      return session
+    }
+  }
+}
+
+const persistedTypes = (app: Awaited<ReturnType<typeof harness>>): string[] =>
+  app.appendedSessionEvents.map((entry) => String((entry.event as { type?: string }).type))
+
+test('main IPC: a foreground agent step tells the card which run and session it belongs to', async () => {
+  const delegation = agentDelegationSession([
+    {
+      type: 'tool_execution_update',
+      toolCallId: 'call-1',
+      toolName: 'Wrapper',
+      partialResult: {
+        content: [{ type: 'text', text: 'read /a.nf' }],
+        details: {
+          kind: 'agent_step',
+          agent: 'Wrapper',
+          agentRunId: 'run_1',
+          step: { id: 's1', toolName: 'read', status: 'running', args: { path: '/a.nf' } }
+        }
+      }
+    }
+  ])
+  const app = await harness(delegation.factory)
+  await app.invoke('agent:prompt', 'go')
+
+  const step = app.appendedSessionEvents
+    .map((entry) => entry.event as Record<string, unknown>)
+    .find((event) => event.type === 'agent_execution_step')
+  assert.ok(step)
+  assert.equal(step.agentRunId, 'run_1')
+  assert.equal(step.agentSessionId, delegation.session().runtimeSessionId)
+})
+
+test('main IPC: starting an agent in the background leaves its card running instead of completing it', async () => {
+  const delegation = agentDelegationSession([
+    {
+      type: 'tool_execution_end',
+      toolCallId: 'call-1',
+      toolName: 'Wrapper',
+      result: {
+        content: [
+          { type: 'text', text: 'Started the Wrapper agent in the background as run run_1.' }
+        ],
+        details: { kind: 'agent_started', agent: 'Wrapper', runId: 'run_1' }
+      },
+      isError: false
+    }
+  ])
+  const app = await harness(delegation.factory)
+  await app.invoke('agent:prompt', 'go')
+
+  assert.ok(!persistedTypes(app).includes('agent_execution_completed'))
+  const marker = app.appendedSessionEvents
+    .map((entry) => entry.event as Record<string, unknown>)
+    .find((event) => event.type === 'agent_execution_background')
+  assert.ok(marker)
+  assert.equal(marker.toolCallId, 'call-1')
+  assert.equal(marker.agentName, 'Wrapper')
+  assert.equal(marker.agentRunId, 'run_1')
+  assert.equal(marker.agentSessionId, delegation.session().runtimeSessionId)
+  assert.ok(
+    app.events.some(
+      (event) => (event.data as { type?: string }).type === 'agent_execution_background'
+    ),
+    'the window hears about it'
+  )
+})
+
+test('main IPC: a foreground agent still completes its card as before', async () => {
+  const delegation = agentDelegationSession([
+    {
+      type: 'tool_execution_end',
+      toolCallId: 'call-1',
+      toolName: 'Wrapper',
+      result: {
+        content: [{ type: 'text', text: 'All done.' }],
+        details: { kind: 'agent_result', agent: 'Wrapper', toolCalls: 2 }
+      },
+      isError: false
+    }
+  ])
+  const app = await harness(delegation.factory)
+  await app.invoke('agent:prompt', 'go')
+  assert.ok(persistedTypes(app).includes('agent_execution_completed'))
+  assert.ok(!persistedTypes(app).includes('agent_execution_background'))
+})
+
+test('main IPC: a background run’s steps and end reach its card after the turn is over', async () => {
+  const delegation = agentDelegationSession([
+    {
+      type: 'tool_execution_end',
+      toolCallId: 'call-1',
+      toolName: 'Wrapper',
+      result: {
+        content: [{ type: 'text', text: 'Started.' }],
+        details: { kind: 'agent_started', agent: 'Wrapper', runId: 'run_1' }
+      },
+      isError: false
+    }
+  ])
+  const app = await harness(delegation.factory)
+  await app.invoke('projects:newSession', '/projects/agent-card', 'ask')
+  await app.invoke('agent:prompt', 'go')
+  await tick()
+  const runtime = delegation.session().runtimeSessionId
+
+  await app.hostHandlers.get('agentRun.step')?.({
+    originSessionId: runtime,
+    run: { id: 'run_1', agent: 'Wrapper', toolCallId: 'call-1' },
+    step: { id: 's1', toolName: 'wrapper_run', status: 'done', output: 'x'.repeat(50) }
+  })
+  await agentRunFinished(app, runtime, { toolCallId: 'call-1' })
+  await tick()
+
+  const events = app.appendedSessionEvents.map((entry) => entry.event as Record<string, unknown>)
+  const step = events.find((event) => event.type === 'agent_execution_step' && event.agentRunId)
+  assert.ok(step, 'the background step is on the card')
+  assert.equal(step.toolCallId, 'call-1')
+  assert.ok(
+    app.persistedToolOutputs.some(
+      (entry) => (entry.input as { output?: string }).output === 'x'.repeat(50)
+    )
+  )
+  const completed = events.find((event) => event.type === 'agent_execution_completed')
+  assert.ok(completed, 'the card is completed when the run ends')
+  assert.equal(completed.toolCallId, 'call-1')
+  assert.equal(completed.finalReport, 'Aligned. BAMs are in /data/bam.')
+})
+
+test('main IPC: the card’s steer and stop reach the run in the agent worker', async () => {
+  const app = await harness()
+  await app.invoke('agent:steerRun', 'runtime-7', 'run_3', '  use the mouse genome  ')
+  await app.invoke('agent:stopRun', 'runtime-7', 'run_3')
+  assert.deepEqual(app.bridgeRequests, [
+    {
+      method: 'agentRun.steer',
+      params: { sessionId: 'runtime-7', runId: 'run_3', message: 'use the mouse genome' }
+    },
+    { method: 'agentRun.stop', params: { sessionId: 'runtime-7', runId: 'run_3' } }
+  ])
+})
+
+test('main IPC: steering and stopping refuse malformed requests without asking the worker', async () => {
+  const app = await harness()
+  await assert.rejects(app.invoke('agent:steerRun', '', 'run_1', 'hi'))
+  await assert.rejects(app.invoke('agent:steerRun', 'runtime-7', '', 'hi'))
+  await assert.rejects(app.invoke('agent:steerRun', 'runtime-7', 'run_1', '   '))
+  await assert.rejects(app.invoke('agent:steerRun', 'runtime-7', 'run_1', 'x'.repeat(5000)))
+  await assert.rejects(app.invoke('agent:stopRun', 'runtime-7', 42))
+  assert.deepEqual(app.bridgeRequests, [])
+})
+
+test('main IPC: a steering message is recorded on the card once the agent has accepted it', async () => {
+  const { app, session } = await idleConversation()
+  const before = app.events.length
+
+  await app.invoke(
+    'agent:steerRun',
+    session.runtimeSessionId,
+    'run_3',
+    '  use the mouse genome  ',
+    'call-1'
+  )
+
+  const recorded = app.appendedSessionEvents
+    .map((entry) => entry.event as Record<string, unknown>)
+    .filter((event) => event.type === 'agent_execution_steered')
+  assert.equal(recorded.length, 1)
+  assert.equal(recorded[0].toolCallId, 'call-1')
+  assert.equal(recorded[0].agentRunId, 'run_3')
+  assert.equal(recorded[0].text, 'use the mouse genome')
+
+  const pushed = app.events
+    .slice(before)
+    .filter((entry) => (entry.data as { type?: string }).type === 'agent_execution_steered')
+  assert.equal(pushed.length, 1)
+  assert.equal(pushed[0].channel, 'agent:event')
+  assert.match(String((pushed[0].data as { sessionPath?: string }).sessionPath), /phi-/)
+})
+
+test('main IPC: a steering message is redacted before it is stored', async () => {
+  const { app, session } = await idleConversation()
+  await app.invoke(
+    'agent:steerRun',
+    session.runtimeSessionId,
+    'run_3',
+    'use key ak-abcdefgh12345 please',
+    'call-1'
+  )
+  const recorded = app.appendedSessionEvents
+    .map((entry) => entry.event as Record<string, unknown>)
+    .find((event) => event.type === 'agent_execution_steered')
+  assert.ok(recorded)
+  assert.doesNotMatch(String(recorded.text), /ak-abcdefgh/)
+})
+
+test('main IPC: a steering message the agent did not accept is not recorded', async () => {
+  const { app, session } = await idleConversation()
+  app.failBridgeRequests(new Error('Run run_3 is no longer running.'))
+  await assert.rejects(
+    app.invoke('agent:steerRun', session.runtimeSessionId, 'run_3', 'hello', 'call-1'),
+    /no longer running/
+  )
+  assert.equal(
+    app.appendedSessionEvents.some(
+      (entry) => (entry.event as { type?: string }).type === 'agent_execution_steered'
+    ),
+    false
+  )
+})
+
+test('main IPC: steering still works when there is no conversation or card to record it on', async () => {
+  const { app, session } = await idleConversation()
+  await app.invoke('agent:steerRun', 'runtime-unknown', 'run_3', 'hello', 'call-1')
+  await app.invoke('agent:steerRun', session.runtimeSessionId, 'run_3', 'hello')
+  assert.equal(app.bridgeRequests.length, 2)
+  assert.equal(
+    app.appendedSessionEvents.some(
+      (entry) => (entry.event as { type?: string }).type === 'agent_execution_steered'
+    ),
+    false
+  )
 })

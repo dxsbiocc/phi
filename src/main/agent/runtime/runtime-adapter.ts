@@ -290,6 +290,8 @@ export type CreateAgentSessionOptions = {
   resourceLoader?: RuntimeResourceLoader
   /** Phi agents scanned by the main process; the worker exposes each as a delegation tool. */
   phiAgents?: PhiAgentDefinition[]
+  /** Phi-managed user persona, injected explicitly into the main system prompt. */
+  personaMarkdown?: string
 }
 
 type RuntimeSnapshot = {
@@ -961,7 +963,8 @@ export async function createRuntimeAgentSession(
       ? serializableResourceOptions(resourceLoader.options)
       : undefined,
     enableToolApproval: toolCallHandlers.length > 0,
-    phiAgents: options.phiAgents
+    phiAgents: options.phiAgents,
+    personaMarkdown: options.personaMarkdown
   }
   const created = await bridge.request<WorkerCreateSessionResult>('session.create', createParams)
   // Same params with the session's current model/thinking level, reopening its file when

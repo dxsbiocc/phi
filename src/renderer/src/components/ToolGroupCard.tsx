@@ -10,6 +10,7 @@ import {
   useCollapseResizeNotifier,
   type ChatContentResizeHandler
 } from './chat/useCollapseResizeNotifier'
+import { TimelineRail } from './chat/TimelineRail'
 
 const ChevronRightIcon = PhiIcons.action.back
 
@@ -269,7 +270,7 @@ function ToolGroupCard({
           // (that would need two clicks to reach the same detail).
           <ToolCallDetail item={items[0]} cwd={cwd} />
         ) : (
-          <Box sx={{ ml: 2.5, pl: 1.5, minWidth: 0, borderLeft: 2, borderColor: 'grey.800' }}>
+          <TimelineRail>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5 }}>
               {items.map((item) => (
                 <ToolCallCard
@@ -281,7 +282,7 @@ function ToolGroupCard({
                 />
               ))}
             </Box>
-          </Box>
+          </TimelineRail>
         )}
       </Collapse>
     </Box>

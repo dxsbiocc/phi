@@ -21,6 +21,8 @@ const legacyOversizedFiles = new Set([
   'src/renderer/src/App.tsx',
   // Temporary legacy exception: split as part of the notebook canvas boundary cleanup.
   'src/renderer/src/features/analysis/notebook/NotebookCanvas.tsx',
+  // Temporary legacy exception: existing wrapper workspace shell predates feature-boundary checks.
+  'src/renderer/src/features/wrapper/WrapperView.tsx',
   'src/renderer/src/icons.ts'
 ])
 

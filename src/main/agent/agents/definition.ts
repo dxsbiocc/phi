@@ -9,6 +9,16 @@ import { parse as parseYaml } from 'yaml'
  * never confused.
  */
 export type PhiAgentSource = 'phi' | 'compat'
+export type PhiAgentDelegationMode = 'required-first' | 'preferred' | 'optional'
+
+export interface PhiAgentFallback {
+  /** Number of consecutive failed/blocked runs required before generic tools may take over. */
+  afterFailures: number
+  /** Main-agent tools that may be used as the fallback route. */
+  tools: string[]
+  /** Case-insensitive tokens matched against the generic tool's serialized input. */
+  match: string[]
+}
 
 export interface PhiAgentDefinition {
   /** Capitalised, e.g. `Wrapper`. Also the name of the delegation tool. */
@@ -20,6 +30,10 @@ export interface PhiAgentDefinition {
   skills: string[]
   /** Guidance for the delegating (main) agent: when and how to hand work over. */
   delegation?: string
+  /** Whether this specialist must get the first attempt for matching work. */
+  delegationMode?: PhiAgentDelegationMode
+  /** Controlled generic-tool fallback after specialist failure. */
+  fallback?: PhiAgentFallback
   systemPrompt: string
   source: PhiAgentSource
   filePath: string
@@ -95,6 +109,26 @@ function stringList(value: unknown): string[] | undefined {
   ]
 }
 
+function delegationMode(value: unknown): PhiAgentDelegationMode | undefined {
+  return value === 'required-first' || value === 'preferred' || value === 'optional'
+    ? value
+    : undefined
+}
+
+function fallbackPolicy(value: unknown, fail: (message: string) => never): PhiAgentFallback | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) return fail('fallback must be a YAML object.')
+  const afterFailures = value.after_failures
+  if (!Number.isInteger(afterFailures) || (afterFailures as number) < 1) {
+    return fail('fallback.after_failures must be a positive integer.')
+  }
+  const tools = stringList(value.tools)
+  const match = stringList(value.match)
+  if (!tools?.length) return fail('fallback.tools must contain at least one tool name.')
+  if (!match?.length) return fail('fallback.match must contain at least one target token.')
+  return { afterFailures: afterFailures as number, tools, match }
+}
+
 function splitFrontmatter(content: string): { frontmatter: string; body: string } | undefined {
   const match = content.match(/^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/)
   return match ? { frontmatter: match[1], body: content.slice(match[0].length) } : undefined
@@ -163,12 +197,19 @@ export function parsePhiAgent(
   if (!systemPrompt) return fail('The system prompt (the Markdown body) is empty.')
 
   const delegation = typeof fm.delegation === 'string' ? fm.delegation.trim() : ''
+  const mode = delegationMode(fm.delegation_mode)
+  if (fm.delegation_mode !== undefined && !mode) {
+    return fail('delegation_mode must be required-first, preferred, or optional.')
+  }
+  const fallback = fallbackPolicy(fm.fallback, fail)
   return {
     name,
     description,
     tools,
     skills: stringList(fm.skills) ?? [],
     ...(delegation ? { delegation } : {}),
+    ...(mode ? { delegationMode: mode } : {}),
+    ...(fallback ? { fallback } : {}),
     systemPrompt,
     source,
     filePath
@@ -189,6 +230,13 @@ export function isPhiAgentDefinition(value: unknown): value is PhiAgentDefinitio
     typeof value.systemPrompt === 'string' &&
     (value.source === 'phi' || value.source === 'compat') &&
     typeof value.filePath === 'string' &&
-    (value.delegation === undefined || typeof value.delegation === 'string')
+    (value.delegation === undefined || typeof value.delegation === 'string') &&
+    (value.delegationMode === undefined || delegationMode(value.delegationMode) !== undefined) &&
+    (value.fallback === undefined ||
+      (isRecord(value.fallback) &&
+        Number.isInteger(value.fallback.afterFailures) &&
+        (value.fallback.afterFailures as number) > 0 &&
+        strings(value.fallback.tools) &&
+        strings(value.fallback.match)))
   )
 }
