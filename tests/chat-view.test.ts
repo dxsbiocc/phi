@@ -29,7 +29,10 @@ import {
   replaceInputReferenceRange
 } from '../src/renderer/src/lib/inputReferences'
 import { toolActionKind } from '../src/renderer/src/lib/toolActions'
-import { suggestedNextActionPlaceholderFromMessages } from '../src/renderer/src/lib/suggestedNextAction'
+import {
+  suggestedNextActionPlaceholderFromMessages,
+  suggestedNextActionToAccept
+} from '../src/renderer/src/lib/suggestedNextAction'
 import type {
   AgentUserInteractionRequest,
   ChatItem,
@@ -1424,4 +1427,25 @@ test('chat view shows an error state for a failed wrapper plan tool call, with n
   assert.match(markup, /wrapper 计划创建失败/)
   // The chat item itself never carries plan detail — only an id once resolved.
   assert.doesNotMatch(markup, /fastq-qc|multiqc|nextflow/i)
+})
+
+test('Tab on an empty input accepts the suggested next action as real text', () => {
+  const tab = {
+    key: 'Tab',
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+    ctrlKey: false,
+    isComposing: false
+  }
+  assert.equal(
+    suggestedNextActionToAccept(tab, '', '列出当前可用的 wrappers'),
+    '列出当前可用的 wrappers'
+  )
+  // Only when there is a suggestion and nothing typed yet, and only for a plain Tab.
+  assert.equal(suggestedNextActionToAccept(tab, '', null), null)
+  assert.equal(suggestedNextActionToAccept(tab, 'draft', '列出当前可用的 wrappers'), null)
+  assert.equal(suggestedNextActionToAccept({ ...tab, key: 'Enter' }, '', 'x'), null)
+  assert.equal(suggestedNextActionToAccept({ ...tab, shiftKey: true }, '', 'x'), null)
+  assert.equal(suggestedNextActionToAccept({ ...tab, isComposing: true }, '', 'x'), null)
 })

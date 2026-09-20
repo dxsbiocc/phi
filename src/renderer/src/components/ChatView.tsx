@@ -42,7 +42,10 @@ import {
   mergeInputFileReferences,
   parseInputFileReferences
 } from '../lib/inputReferences'
-import { suggestedNextActionPlaceholderFromMessages } from '../lib/suggestedNextAction'
+import {
+  suggestedNextActionPlaceholderFromMessages,
+  suggestedNextActionToAccept
+} from '../lib/suggestedNextAction'
 import type {
   AgentUserInteractionRequest,
   AgentUserInteractionResponse,
@@ -542,6 +545,24 @@ function ChatView({
               }
               onKeyDown={(event) => {
                 if (fileReferenceMenu.onKeyDown(event)) {
+                  return
+                }
+
+                const acceptedSuggestion = suggestedNextActionToAccept(
+                  {
+                    key: event.key,
+                    shiftKey: event.shiftKey,
+                    altKey: event.altKey,
+                    metaKey: event.metaKey,
+                    ctrlKey: event.ctrlKey,
+                    isComposing: event.nativeEvent.isComposing
+                  },
+                  input,
+                  suggestedNextAction
+                )
+                if (acceptedSuggestion) {
+                  event.preventDefault()
+                  onInputChange(acceptedSuggestion)
                   return
                 }
 
