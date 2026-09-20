@@ -4046,53 +4046,59 @@ test(
 
     await app.invoke('agent:prompt', 'run tool')
 
-    assert.deepEqual(app.appendedSessionEvents, [
-      {
-        sessionId: 'phi-1',
-        event: {
-          type: 'user_message',
-          runId: 'run-2',
-          content: 'run tool'
-        }
-      },
-      {
-        sessionId: 'phi-1',
-        event: {
-          type: 'tool_call_started',
-          runId: 'run-2',
-          toolCallId: 'tool-1',
-          toolName: 'bash',
-          args: { command: 'printf long' }
-        }
-      },
-      {
-        sessionId: 'phi-1',
-        event: {
-          type: 'tool_call_completed',
-          runId: 'run-2',
-          toolCallId: 'tool-1',
-          toolName: 'bash',
-          isError: false,
-          output: 'abcdefgh\n...saved',
-          outputBytes: 16,
-          outputTruncated: true,
-          outputPath: '/tool-outputs/tool-1.txt',
-          outputArtifact: {
-            kind: 'tool_output',
-            path: '/tool-outputs/tool-1.txt',
-            bytes: 16
+    assert.deepEqual(
+      app.appendedSessionEvents.map((entry) => ({
+        ...entry,
+        event: withoutTimestamp(entry.event as Record<string, unknown>)
+      })),
+      [
+        {
+          sessionId: 'phi-1',
+          event: {
+            type: 'user_message',
+            runId: 'run-2',
+            content: 'run tool'
+          }
+        },
+        {
+          sessionId: 'phi-1',
+          event: {
+            type: 'tool_call_started',
+            runId: 'run-2',
+            toolCallId: 'tool-1',
+            toolName: 'bash',
+            args: { command: 'printf long' }
+          }
+        },
+        {
+          sessionId: 'phi-1',
+          event: {
+            type: 'tool_call_completed',
+            runId: 'run-2',
+            toolCallId: 'tool-1',
+            toolName: 'bash',
+            isError: false,
+            output: 'abcdefgh\n...saved',
+            outputBytes: 16,
+            outputTruncated: true,
+            outputPath: '/tool-outputs/tool-1.txt',
+            outputArtifact: {
+              kind: 'tool_output',
+              path: '/tool-outputs/tool-1.txt',
+              bytes: 16
+            }
+          }
+        },
+        {
+          sessionId: 'phi-1',
+          event: {
+            type: 'assistant_message_finalized',
+            runId: 'run-2',
+            content: 'assistant final'
           }
         }
-      },
-      {
-        sessionId: 'phi-1',
-        event: {
-          type: 'assistant_message_finalized',
-          runId: 'run-2',
-          content: 'assistant final'
-        }
-      }
-    ])
+      ]
+    )
     assert.deepEqual(app.persistedToolOutputs, [
       {
         sessionId: 'phi-1',
@@ -4274,6 +4280,18 @@ test('main IPC: assistant failures preserve thinking timing in Phi timeline', as
   })
 })
 
+/**
+ * The SDK's events carry no time, so the main process stamps the ones it forwards and stores.
+ * Tests that compare a whole event check the stamp is a real time and compare the rest.
+ */
+function withoutTimestamp<T extends Record<string, unknown>>(event: T): Omit<T, 'createdAt'> {
+  const { createdAt, ...rest } = event
+  if (createdAt !== undefined) {
+    assert.ok(Number.isFinite(Date.parse(String(createdAt))), 'the timestamp is a real time')
+  }
+  return rest
+}
+
 test('main IPC: context compaction events are persisted as timeline notices', async () => {
   const app = await harness(async (_cwd, file) => {
     const session = new FakeSession(file)
@@ -4303,7 +4321,7 @@ test('main IPC: context compaction events are persisted as timeline notices', as
   const event = app.appendedSessionEvents.find(
     (entry) => (entry.event as { type?: string }).type === 'context_compacted'
   )?.event as Record<string, unknown> | undefined
-  assert.deepEqual(event, {
+  assert.deepEqual(withoutTimestamp(event ?? {}), {
     type: 'context_compacted',
     runId: 'run-2',
     action: 'remote',
@@ -5634,4 +5652,58 @@ test('main IPC: steering still works when there is no conversation or card to re
     ),
     false
   )
+})
+
+// ── timing: the SDK's tool events carry no timestamp ─────────────────────
+
+test('main IPC: a delegated agent’s live events are timed even though the SDK’s events carry no time', async () => {
+  const delegation = agentDelegationSession([
+    {
+      type: 'tool_execution_end',
+      toolCallId: 'call-1',
+      toolName: 'Wrapper',
+      result: {
+        content: [{ type: 'text', text: 'All done.' }],
+        details: { kind: 'agent_result', agent: 'Wrapper', toolCalls: 2 }
+      },
+      isError: false
+    }
+  ])
+  const app = await harness(delegation.factory)
+  await app.invoke('agent:prompt', 'go')
+
+  const live = (type: string): { createdAt?: string } | undefined =>
+    app.events
+      .map((entry) => entry.data as { type?: string; createdAt?: string })
+      .find((data) => data.type === type)
+  const started = live('agent_execution_started')
+  const completed = live('agent_execution_completed')
+  assert.ok(started && completed)
+  assert.ok(Number.isFinite(Date.parse(started.createdAt ?? '')), 'the card knows when it started')
+  assert.ok(Number.isFinite(Date.parse(completed.createdAt ?? '')), 'and when it ended')
+  assert.ok(
+    Date.parse(completed.createdAt as string) >= Date.parse(started.createdAt as string),
+    'in order'
+  )
+})
+
+test('main IPC: an event that already carries a time keeps it', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      {
+        type: 'tool_execution_start',
+        toolCallId: 'call-1',
+        toolName: 'Wrapper',
+        args: { task: 'align' },
+        createdAt: '2026-09-20T01:02:03.000Z'
+      }
+    ]
+    return session
+  })
+  await app.invoke('agent:prompt', 'go')
+  const started = app.events
+    .map((entry) => entry.data as { type?: string; createdAt?: string })
+    .find((data) => data.type === 'agent_execution_started')
+  assert.equal(started?.createdAt, '2026-09-20T01:02:03.000Z')
 })

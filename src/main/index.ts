@@ -1263,6 +1263,18 @@ function summaryTimestampMs(summary: Record<string, unknown>): number {
   return Date.now()
 }
 
+/**
+ * The SDK's session events carry no timestamp. Without one the chat cannot tell when a tool call or
+ * a delegated agent started, so a card would time itself at 0 seconds however long it ran. The
+ * conversation's store stamps its own copy when it writes, but the live event sent to the window is
+ * the one before that, so it gets its time here. An event that already has one keeps it.
+ */
+function withEventTimestamp(summary: Record<string, unknown>): Record<string, unknown> {
+  return Object.keys(createdAtFromSummary(summary)).length > 0
+    ? summary
+    : { ...summary, createdAt: new Date().toISOString() }
+}
+
 function createdAtFromSummary(
   summary: Record<string, unknown>
 ): { createdAt: string } | Record<string, never> {
@@ -4224,8 +4236,9 @@ async function getAgentSession(
         }
       }
 
-      result.session.subscribe((summary) => {
+      result.session.subscribe((rawSummary) => {
         if (!lifecycle.isCurrentGeneration(generation)) return
+        const summary = withEventTimestamp(rawSummary)
         const run = getActivePromptRun(sessionKey)
         const persistedSummary = run ? persistSessionEvent(run, summary) : summary
         const targetWindow = getActiveWindow()

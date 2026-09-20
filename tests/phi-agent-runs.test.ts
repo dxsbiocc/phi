@@ -820,3 +820,75 @@ test('controlAgentRun explains why a run cannot be controlled', async () => {
   await assert.rejects(controlAgentRun(registry, 'steer', { runId: done.id }), /message/)
   await assert.rejects(controlAgentRun(registry, 'stop', {}), /runId/)
 })
+
+// ── timing steps: the SDK's events carry no time ─────────────────────────
+
+function emittingSession(script: (emit: (event: unknown) => void) => void): AgentSessionLike {
+  const listeners = new Set<(event: unknown) => void>()
+  return {
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    prompt: async () => {
+      script((event) => listeners.forEach((listener) => listener(event)))
+    },
+    abort: async () => undefined,
+    dispose: async () => undefined,
+    getLastAssistantMessage: () => ({ stopReason: 'stop', content: [{ type: 'text', text: 'ok' }] })
+  }
+}
+
+test('the runner times a step itself, since the SDK’s events carry no time', async () => {
+  const clock = ['2026-09-20T10:00:00.000Z', '2026-09-20T10:00:05.000Z', '2026-09-20T10:00:09.000Z']
+  let tick = 0
+  const steps: Array<{ id: string; status: string; createdAt?: string; completedAt?: string }> = []
+  await createAgentRunner({
+    agent: 'Wrapper',
+    now: () => clock[Math.min(tick++, clock.length - 1)],
+    createSession: async () =>
+      emittingSession((emit) => {
+        emit({ type: 'tool_execution_start', toolCallId: 't1', toolName: 'bash', args: {} })
+        emit({
+          type: 'tool_execution_update',
+          toolCallId: 't1',
+          toolName: 'bash',
+          partialResult: 'x'
+        })
+        emit({ type: 'tool_execution_end', toolCallId: 't1', toolName: 'bash', result: 'done' })
+      })
+  })({ task: 'go', onToolStep: (step) => steps.push(step) })
+
+  const [start, update, end] = steps
+  assert.equal(start.createdAt, '2026-09-20T10:00:00.000Z')
+  assert.equal(update.createdAt, '2026-09-20T10:00:00.000Z', 'an update keeps the step’s own start')
+  assert.equal(end.createdAt, '2026-09-20T10:00:00.000Z')
+  assert.equal(end.completedAt, '2026-09-20T10:00:05.000Z')
+})
+
+test('a time the event already carries is used as it is', async () => {
+  const steps: Array<{ createdAt?: string; completedAt?: string }> = []
+  await createAgentRunner({
+    agent: 'Wrapper',
+    now: () => '2099-01-01T00:00:00.000Z',
+    createSession: async () =>
+      emittingSession((emit) => {
+        emit({
+          type: 'tool_execution_start',
+          toolCallId: 't1',
+          toolName: 'bash',
+          args: {},
+          createdAt: '2026-01-01T00:00:00.000Z'
+        })
+        emit({
+          type: 'tool_execution_end',
+          toolCallId: 't1',
+          toolName: 'bash',
+          result: 'x',
+          createdAt: '2026-01-01T00:00:03.000Z'
+        })
+      })
+  })({ task: 'go', onToolStep: (step) => steps.push(step) })
+  assert.equal(steps[0].createdAt, '2026-01-01T00:00:00.000Z')
+  assert.equal(steps[1].completedAt, '2026-01-01T00:00:03.000Z')
+})

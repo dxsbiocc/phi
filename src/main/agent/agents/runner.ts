@@ -155,8 +155,14 @@ export function createAgentRunner(deps: {
   agent: string
   createSession: () => Promise<AgentSessionLike>
   timeoutMs?: number
+  /**
+   * The current time as an ISO string. The SDK's events carry none, so a step is timed here:
+   * without a start time a card cannot tell how long the step ran.
+   */
+  now?: () => string
 }): (request: AgentRunRequest) => Promise<AgentRunResult> {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const now = deps.now ?? ((): string => new Date().toISOString())
 
   return async ({ task, signal, onProgress, onToolStep, onControl }) => {
     if (signal?.aborted) throw new AgentCancelledError(deps.agent)
@@ -179,7 +185,7 @@ export function createAgentRunner(deps: {
         toolCalls += 1
         const toolName = String(event.toolName ?? 'tool')
         const id = eventToolCallId(event, `${toolName}-${toolCalls}`)
-        const createdAt = eventString(event.createdAt)
+        const createdAt = eventString(event.createdAt) ?? now()
         startedAtByToolCallId.set(id, createdAt)
         if (onToolStep) {
           onToolStep({
@@ -215,7 +221,7 @@ export function createAgentRunner(deps: {
         const id = eventToolCallId(event, `${toolName}-${toolCalls + 1}`)
         const output = extractToolText(event.result)
         const isError = event.isError === true
-        const completedAt = eventString(event.createdAt)
+        const completedAt = eventString(event.createdAt) ?? now()
         onToolStep?.({
           id,
           toolName,
