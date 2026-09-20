@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 
 import { getPhiAgentDir } from '../../runtime-paths'
@@ -10,8 +10,16 @@ import {
   listWrapperRuns,
   writeWrapperRun
 } from '../store'
-import type { WrapperOutputRecord, WrapperRun, WrapperRunProgress, WrapperRunState } from '../types'
+import type {
+  WrapperExecutor,
+  WrapperOutputRecord,
+  WrapperRun,
+  WrapperRunProgress,
+  WrapperRunState
+} from '../types'
 import type { WrapperCompositionEntry } from './discovery'
+import type { RemoteJobSnapshot } from './remote-job'
+import { resolveRemoteOutDir } from './remote-config'
 import { resolveOutputPaths } from './validate'
 
 /**
@@ -23,7 +31,7 @@ import { resolveOutputPaths } from './validate'
  * problem block or fail the run itself.
  */
 
-export type CompositionRunOutcome = 'completed' | 'failed' | 'cancelled'
+export type CompositionRunOutcome = 'completed' | 'failed' | 'cancelled' | 'lost'
 
 const TERMINAL_STATES: WrapperRunState[] = ['completed', 'failed', 'cancelled', 'lost']
 
@@ -79,32 +87,56 @@ export function startCompositionRun(input: {
   profile: string
   originSessionId?: string
   continueWhenDone?: boolean
+  /** Set for a run on a remote host: where it will live and which executor name it gets. */
+  remote?: {
+    host: string
+    workspaceRoot: string
+    executor: WrapperExecutor
+    connectionId: string
+    projectId: string
+  }
   agentDir?: string
 }): WrapperRun {
   const { entry, params, profile } = input
   const agentDir = input.agentDir ?? getPhiAgentDir()
   const now = new Date().toISOString()
+  const runId = `wrun_${randomUUID()}`
+  const remoteRunDir = input.remote
+    ? `${input.remote.workspaceRoot.replace(/\/+$/, '')}/wrappers/runs/${runId}`
+    : undefined
   const declaredOutdir = typeof params.outdir === 'string' ? params.outdir : ''
-  const outDir = !declaredOutdir
-    ? ''
-    : isAbsolute(declaredOutdir)
-      ? declaredOutdir
-      : resolve(entry.componentDir, declaredOutdir)
+  const outDir = remoteRunDir
+    ? resolveRemoteOutDir(params.outdir, remoteRunDir)
+    : !declaredOutdir
+      ? ''
+      : isAbsolute(declaredOutdir)
+        ? declaredOutdir
+        : resolve(entry.componentDir, declaredOutdir)
 
   const run: WrapperRun = {
-    runId: `wrun_${randomUUID()}`,
+    runId,
     planId: '',
     revision: 1,
     state: 'running',
     actor: 'agent',
     wrapper: wrapperIdentity(entry.manifest.id),
     trustTier: 'bundled',
-    executor: 'local',
+    executor: input.remote?.executor ?? 'local',
     profile,
     nextflowProfile: profile,
     cwd: entry.componentDir,
     outDir,
     origin: 'composition',
+    ...(input.remote && remoteRunDir
+      ? {
+          remote: {
+            host: input.remote.host,
+            runDir: remoteRunDir,
+            connectionId: input.remote.connectionId,
+            projectId: input.remote.projectId
+          }
+        }
+      : {}),
     ...(input.originSessionId ? { originSessionId: input.originSessionId } : {}),
     ...(input.continueWhenDone === false ? { continueWhenDone: false } : {}),
     createdAt: now,
@@ -167,11 +199,13 @@ export function finishCompositionRun(input: {
   output: string
   missingOutputs: string[]
   progress?: WrapperRunProgress
+  /** Outputs already collected elsewhere (a remote run); otherwise they are looked up on the local disk. */
+  outputs?: WrapperOutputRecord[]
   agentDir?: string
 }): WrapperRun {
   const { run, entry, params, outcome } = input
   const agentDir = input.agentDir ?? getPhiAgentDir()
-  const outputs = outputRecords(entry, params)
+  const outputs = input.outputs ?? outputRecords(entry, params)
   const completedAt = new Date().toISOString()
 
   writeRunFile(run.runId, agentDir, 'outputs.json', outputs)
@@ -194,21 +228,64 @@ export function finishCompositionRun(input: {
   })
 }
 
+/** The run's fate cannot be confirmed (e.g. its remote host is unreachable): `lost`, not `failed`. */
+export function markCompositionRunLost(run: WrapperRun, agentDir?: string): WrapperRun {
+  return recordTransition(run, agentDir ?? getPhiAgentDir(), 'lost', {
+    completedAt: new Date().toISOString()
+  })
+}
+
 /** A cancel was requested for a live run; Nextflow is being stopped. */
 export function markCompositionRunCancelling(run: WrapperRun, agentDir?: string): WrapperRun {
   return recordTransition(run, agentDir ?? getPhiAgentDir(), 'cancelling')
 }
 
+const REMOTE_SNAPSHOT_FILE = 'remote.json'
+
+/** Persists what is needed to resume watching a remote run after a restart. */
+export function writeCompositionRemoteSnapshot(
+  runId: string,
+  snapshot: RemoteJobSnapshot,
+  agentDir: string = getPhiAgentDir()
+): void {
+  writeRunFile(runId, agentDir, REMOTE_SNAPSHOT_FILE, snapshot)
+}
+
+export function readCompositionRemoteSnapshot(
+  runId: string,
+  agentDir: string = getPhiAgentDir()
+): RemoteJobSnapshot | undefined {
+  try {
+    return JSON.parse(
+      readFileSync(join(getWrapperRunsDir(agentDir), runId, REMOTE_SNAPSHOT_FILE), 'utf-8')
+    ) as RemoteJobSnapshot
+  } catch {
+    return undefined
+  }
+}
+
+/** A non-terminal remote run that left a snapshot can be picked up again, so it is not "interrupted". */
+export function isResumableRemoteRun(run: WrapperRun, agentDir: string): boolean {
+  return (
+    run.origin === 'composition' &&
+    run.remote !== undefined &&
+    !TERMINAL_STATES.includes(run.state) &&
+    readCompositionRemoteSnapshot(run.runId, agentDir) !== undefined
+  )
+}
+
 /**
  * Startup pass: a composition run still in a non-terminal state belongs to a
  * process that no longer exists (the app or worker quit mid-run), so nobody
- * will ever finish it. It is marked `lost` — not `failed`, because its real
+ * will ever finish it. (A remote run with a snapshot is left alone: it still runs on the
+ * cluster and is resumed by the job manager.) It is marked `lost` — not `failed`, because its real
  * outcome is unknown. Returns how many runs were changed.
  */
 export function markInterruptedCompositionRuns(agentDir: string = getPhiAgentDir()): number {
   let changed = 0
   for (const run of listWrapperRuns(agentDir)) {
     if (run.origin !== 'composition' || TERMINAL_STATES.includes(run.state)) continue
+    if (isResumableRemoteRun(run, agentDir)) continue
     recordTransition(run, agentDir, 'lost', { completedAt: new Date().toISOString() })
     changed += 1
   }

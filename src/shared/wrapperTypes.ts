@@ -169,6 +169,16 @@ export interface WrapperRunProgress {
   current?: string
 }
 
+/** Where a remote run lives; what is needed to find it again, never credentials. */
+export interface WrapperRunRemote {
+  host: string
+  /** Absolute run directory on the remote host. */
+  runDir: string
+  /** The saved connection and project that were used, so a restart can reconnect to the same host. */
+  connectionId?: string
+  projectId?: string
+}
+
 export interface WrapperRun {
   runId: string
   runName?: string
@@ -193,6 +203,8 @@ export interface WrapperRun {
    * `planId` is empty and there is no `plan.json`. Absent on runs created from a plan.
    */
   origin?: 'composition'
+  /** Set when the run executes on a remote host; `outDir` and output paths are then remote paths. */
+  remote?: WrapperRunRemote
   /**
    * Whether Phi should wake the conversation that started this run once it ends. Only
    * `false` opts out; absent means yes (the default for runs the agent starts).

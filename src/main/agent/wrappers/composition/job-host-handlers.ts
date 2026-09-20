@@ -28,7 +28,10 @@ export function wrapperJobHostHandlers(
       return jobs.start({
         id: requireString(params, 'id'),
         overrides,
-        profile: requireString(params, 'profile'),
+        ...(isRecord(params) && typeof params.profile === 'string' && params.profile
+          ? { profile: params.profile }
+          : {}),
+        ...(isRecord(params) && params.target === 'remote' ? { target: 'remote' as const } : {}),
         ...(typeof origin === 'string' && origin ? { originSessionId: origin } : {}),
         ...(isRecord(params) && params.continueWhenDone === false
           ? { continueWhenDone: false }

@@ -25,6 +25,8 @@ export interface WrapperJobStatus {
   /** Set once the run has ended. */
   outputs?: WrapperOutputRecord[]
   missingOutputs?: string[]
+  /** Set for a run on a remote host; `outDir` and output paths are then paths on that host. */
+  remote?: { host: string; runDir: string }
 }
 
 export interface WrapperJobSummary {
@@ -42,7 +44,10 @@ export interface WrapperJobClient {
   start(input: {
     id: string
     overrides: Record<string, unknown>
-    profile: string
+    /** Omitted means the target's default: docker locally, the connection's runtime on a remote. */
+    profile?: string
+    /** Where to run. Default `local`; `remote` uses the project's saved HPC connection. */
+    target?: 'local' | 'remote'
     /** The runtime session whose agent started this run; used to tell that conversation when it ends. */
     originSessionId?: string
     /** `false` opts out of waking that conversation when the run ends. Anything else means yes. */

@@ -74,8 +74,11 @@ export function validateWrapperParams(
   manifest: WrapperCompositionManifest,
   defaults: Record<string, unknown>,
   overrides: Record<string, unknown>,
-  componentDir: string
+  componentDir: string,
+  /** `false` for a run on another machine, where a local path check would be meaningless. */
+  options: { checkInputPaths?: boolean } = {}
 ): string[] {
+  const checkInputPaths = options.checkInputPaths ?? true
   const merged = { ...defaults, ...overrides }
   const errors: string[] = []
 
@@ -97,7 +100,7 @@ export function validateWrapperParams(
     const problem =
       checkType(key, param, value) ??
       checkConstraints(key, param, value) ??
-      checkInputPath(key, param, value, componentDir)
+      (checkInputPaths ? checkInputPath(key, param, value, componentDir) : undefined)
     if (problem) errors.push(problem)
   }
 

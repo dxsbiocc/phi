@@ -43,6 +43,8 @@ export interface RemoteRunStatus {
   outcome: RemoteRunOutcome
   /** Present once the process has exited and recorded its exit code. */
   exitCode?: number
+  /** The scheduler's own state name when it ended badly (e.g. `TIMEOUT`, `OUT_OF_MEMORY`). */
+  detail?: string
 }
 
 export interface RemoteLaunchSpec {
@@ -93,7 +95,7 @@ export interface RemoteControllerOptions {
 
 export const LOG_STDOUT = 'logs/stdout.log'
 export const LOG_STDERR = 'logs/stderr.log'
-const EXIT_CODE_FILE = 'exit_code'
+export const EXIT_CODE_FILE = 'exit_code'
 const PID_FILE = 'pid'
 
 export function joinRemote(dir: string, ...parts: string[]): string {
@@ -161,6 +163,51 @@ export function buildDetachedLaunchCommand(remoteRunDir: string): string {
   ].join(' && ')
 }
 
+/**
+ * State of a `detached_ssh` run from the remote's own evidence: is the pid alive, else
+ * what exit code did the launch script record. Free functions (not just `SshExecRunner`
+ * methods) so a caller that manages its own session, e.g. to reconnect after a dropped
+ * link, can use them.
+ */
+export async function readDetachedStatus(
+  session: RemoteSshSession,
+  handle: RemoteJobHandle
+): Promise<RemoteRunStatus> {
+  if (handle.pid === undefined) return { outcome: 'lost' }
+  const alive = await session.exec(`kill -0 ${handle.pid} 2>/dev/null && echo alive || echo dead`)
+  if (alive.stdout.trim() === 'alive') {
+    return { outcome: 'running' }
+  }
+
+  const exitCodePath = joinRemote(handle.remoteRunDir, EXIT_CODE_FILE)
+  if (!(await session.exists(exitCodePath))) {
+    // Process is gone but never recorded an exit code — e.g. the host
+    // rebooted, or the SSH-visible process table doesn't match what we
+    // launched. Matches the design doc: "if state cannot be confirmed,
+    // mark the run lost, not failed".
+    return { outcome: 'lost' }
+  }
+  const raw = (await session.readTextFile(exitCodePath)).trim()
+  const exitCode = Number.parseInt(raw, 10)
+  if (!Number.isFinite(exitCode)) return { outcome: 'lost' }
+  return { outcome: exitCode === 0 ? 'completed' : 'failed', exitCode }
+}
+
+/**
+ * Signals the whole process group of a `detached_ssh` run. `setsid` made the launched
+ * process its own session/group leader, so its pid doubles as the process group id:
+ * `kill -<pid>` takes the whole Nextflow + child job tree with it, not just the top shell.
+ * Never throws for a run that is already gone.
+ */
+export async function signalDetachedRun(
+  session: RemoteSshSession,
+  handle: RemoteJobHandle,
+  signal: 'TERM' | 'KILL'
+): Promise<void> {
+  if (handle.pid === undefined) return
+  await session.exec(`kill -${signal} -${handle.pid} 2>/dev/null || true`)
+}
+
 /** The `detached_ssh` controller — see module doc comment above. */
 export class SshExecRunner implements RemoteRunner {
   private readonly connection: RemoteConnectionConfig
@@ -208,25 +255,7 @@ export class SshExecRunner implements RemoteRunner {
   }
 
   async status(handle: RemoteJobHandle): Promise<RemoteRunStatus> {
-    if (handle.pid === undefined) return { outcome: 'lost' }
-    const session = await this.getSession()
-    const alive = await session.exec(`kill -0 ${handle.pid} 2>/dev/null && echo alive || echo dead`)
-    if (alive.stdout.trim() === 'alive') {
-      return { outcome: 'running' }
-    }
-
-    const exitCodePath = joinRemote(handle.remoteRunDir, EXIT_CODE_FILE)
-    if (!(await session.exists(exitCodePath))) {
-      // Process is gone but never recorded an exit code — e.g. the host
-      // rebooted, or the SSH-visible process table doesn't match what we
-      // launched. Matches the design doc: "if state cannot be confirmed,
-      // mark the run lost, not failed".
-      return { outcome: 'lost' }
-    }
-    const raw = (await session.readTextFile(exitCodePath)).trim()
-    const exitCode = Number.parseInt(raw, 10)
-    if (!Number.isFinite(exitCode)) return { outcome: 'lost' }
-    return { outcome: exitCode === 0 ? 'completed' : 'failed', exitCode }
+    return readDetachedStatus(await this.getSession(), handle)
   }
 
   async tailLog(handle: RemoteJobHandle, stream: 'stdout' | 'stderr' = 'stdout'): Promise<string> {
@@ -235,12 +264,7 @@ export class SshExecRunner implements RemoteRunner {
   }
 
   async cancel(handle: RemoteJobHandle): Promise<void> {
-    if (handle.pid === undefined) return
-    const session = await this.getSession()
-    // setsid made the launched process its own session/group leader, so its
-    // pid doubles as the process group id — `kill -<pid>` takes the whole
-    // Nextflow + child job tree with it, not just the top shell wrapper.
-    await session.exec(`kill -TERM -${handle.pid} 2>/dev/null || true`)
+    await signalDetachedRun(await this.getSession(), handle, 'TERM')
   }
 
   async close(): Promise<void> {

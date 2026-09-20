@@ -3,6 +3,7 @@
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
 import type { WrapperCompositionManifest } from '../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
+import type { RemoteHpcSettings } from '../shared/wrapperRemoteTypes'
 import type { WrapperRun, WrapperRunPlan } from '../shared/wrapperTypes'
 import type {
   AgentUserInteractionRequest,
@@ -58,6 +59,7 @@ type PreloadProjectRemoteConnection = {
   username: string
   privateKeyPath: string
   hasPassphrase?: boolean
+  hpc?: RemoteHpcSettings
 }
 
 type PreloadProject = {

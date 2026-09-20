@@ -139,7 +139,7 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTo
     name: 'wrapper_run',
     label: 'Run Wrapper',
     description:
-      "Start one wrapper by id in the BACKGROUND, merging the given parameter overrides into its default params.json, and return immediately with a run id. It launches a real local Nextflow run that keeps going by itself; follow it with wrapper_status, block on it with wrapper_wait, stop it with wrapper_cancel. Choose `profile` based on what the user has available or prefers: docker (default) or singularity for container runtimes, conda to build/reuse a conda environment from the module's environment.yml instead.",
+      'Start one wrapper by id in the BACKGROUND, merging the given parameter overrides into its default params.json, and return immediately with a run id. It launches a real Nextflow run that keeps going by itself; follow it with wrapper_status, block on it with wrapper_wait, stop it with wrapper_cancel. `target` picks where it runs: "local" (default) is this machine; "remote" is the project\'s saved HPC cluster, where Nextflow starts on the login node and submits every step to the scheduler. For a remote run every kind:input path MUST be a path on the cluster (Phi checks it exists there; local paths do not work), outputs stay on the cluster, and it survives Phi being closed. Choose `profile` based on what the user has available or prefers: docker (default locally) or singularity (default on the cluster) for container runtimes, conda to build/reuse a conda environment from the module\'s environment.yml instead.',
     parameters: {
       type: 'object',
       required: ['id'],
@@ -150,11 +150,17 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTo
           description:
             'Parameter overrides merged into the wrapper default params.json, e.g. {"reads": "...", "outdir": "..."}. Only kind:input/kind:output params normally need overriding.'
         },
+        target: {
+          type: 'string',
+          enum: ['local', 'remote'],
+          description:
+            '"local" (default): run on this machine. "remote": run on the project\'s saved HPC cluster; input paths must then be paths on the cluster. Use remote when the user says to run on the cluster/HPC/server, or when the data lives there.'
+        },
         profile: {
           type: 'string',
           enum: [...WRAPPER_EXECUTION_PROFILES],
           description:
-            'Execution profile: "docker" (default) or "singularity" run the tool in a container; "conda" builds/reuses a conda environment instead. Ask the user which is available if unsure — do not assume Docker is installed.'
+            'Execution profile: "docker" or "singularity" run the tool in a container; "conda" builds/reuses a conda environment instead. Omit it to use the default (docker locally, the cluster connection\'s configured runtime remotely). Ask the user which is available if unsure — do not assume Docker is installed.'
         },
         continue_when_done: {
           type: 'boolean',
@@ -169,23 +175,27 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTo
       if (!id) return errorResult('Missing required parameter: id')
       const overrides = isRecord(params) && isRecord(params.params) ? params.params : {}
       const profile =
-        isRecord(params) && typeof params.profile === 'string' ? params.profile : 'docker'
+        isRecord(params) && typeof params.profile === 'string' ? params.profile : undefined
+      const target =
+        isRecord(params) && params.target === 'remote' ? ('remote' as const) : undefined
 
       const continueWhenDone =
         isRecord(params) && params.continue_when_done === false ? false : undefined
       const started = await jobs.start({
         id,
         overrides,
-        profile,
+        ...(profile ? { profile } : {}),
+        ...(target ? { target } : {}),
         ...(continueWhenDone === false ? { continueWhenDone } : {})
       })
       if (!started.ok) return errorResult(started.error)
-      const { runId, outDir } = started.status
+      const { runId, outDir, remote } = started.status
+      const where = remote ? ` on ${remote.host}` : ''
       return {
         content: [
           {
             type: 'text',
-            text: `Started wrapper run ${runId} (${id}, profile ${profile}) in the background. Output directory: ${outDir}. ${
+            text: `Started wrapper run ${runId} (${id}, profile ${started.status.profile}${where}) in the background. Output directory${remote ? ` (on ${remote.host})` : ''}: ${outDir}. ${
               continueWhenDone === false
                 ? 'The conversation will NOT be woken when it ends.'
                 : 'When it ends Phi wakes the main agent with the outcome, so you do not need to wait for it.'

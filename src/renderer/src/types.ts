@@ -10,6 +10,7 @@ import type {
   ProxyTransportStatus
 } from '../../shared/appSettingsTypes'
 import type { DbConnectorSettingsItem } from '../../shared/dbConnectorTypes'
+import type { RemoteHpcSettings } from '../../shared/wrapperRemoteTypes'
 
 export type { DefaultProxyMode, PhiAppSettings, PhiAppSettingsPatch, ProxyTransportStatus }
 export type { DbConnectorSettingsItem }
@@ -259,6 +260,7 @@ export interface ProjectRemoteConnection {
   username: string
   privateKeyPath: string
   hasPassphrase?: boolean
+  hpc?: RemoteHpcSettings
 }
 
 export interface Project {

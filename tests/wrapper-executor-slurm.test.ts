@@ -234,10 +234,18 @@ test('SbatchRunner.status reports completed/failed from scontrol once the job le
   assert.deepEqual(await runner.status(handle), { outcome: 'completed', exitCode: 0 })
 
   cluster.finish(handle.jobId!, 'FAILED', 1)
-  assert.deepEqual(await runner.status(handle), { outcome: 'failed', exitCode: 1 })
+  assert.deepEqual(await runner.status(handle), {
+    outcome: 'failed',
+    exitCode: 1,
+    detail: 'FAILED'
+  })
 
   cluster.finish(handle.jobId!, 'OUT_OF_MEMORY', 137)
-  assert.deepEqual(await runner.status(handle), { outcome: 'failed', exitCode: 137 })
+  assert.deepEqual(await runner.status(handle), {
+    outcome: 'failed',
+    exitCode: 137,
+    detail: 'OUT_OF_MEMORY'
+  })
 })
 
 test('SbatchRunner.status still reports completed/failed via sacct when a real-world broken slurmdbd makes sacct fail — matches a real cluster tested manually, where sacct is unconditionally broken', async () => {
@@ -279,7 +287,11 @@ test('SbatchRunner.cancel scancels the job and is a no-op without a jobId', asyn
   const handle = await runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH)
 
   await runner.cancel(handle)
-  assert.deepEqual(await runner.status(handle), { outcome: 'failed', exitCode: 0 })
+  assert.deepEqual(await runner.status(handle), {
+    outcome: 'failed',
+    exitCode: 0,
+    detail: 'CANCELLED'
+  })
 
   await runner.cancel({ ...handle, jobId: undefined })
 })

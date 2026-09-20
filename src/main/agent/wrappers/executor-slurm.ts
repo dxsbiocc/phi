@@ -157,6 +157,74 @@ function parseScontrolShowJob(stdout: string): { state: string; exitCode?: numbe
   return { state: stateMatch[1], exitCode: Number.isFinite(exitCode ?? NaN) ? exitCode : undefined }
 }
 
+/**
+ * State of a Slurm job from the scheduler's own evidence: `squeue` while it is queued or running,
+ * then `scontrol show job`, then `sacct` (in that order; see `parseScontrolShowJob` for why).
+ * Free functions (not just `SbatchRunner` methods) so a caller that manages its own session,
+ * e.g. to reconnect after a dropped link, can use them.
+ */
+export async function readSlurmJobStatus(
+  session: RemoteSshSession,
+  jobId: string | undefined
+): Promise<RemoteRunStatus> {
+  if (jobId === undefined) return { outcome: 'lost' }
+
+  // Still queued or running: squeue only lists active jobs, so any
+  // output at all means "not finished yet" — the exact state
+  // (PENDING/RUNNING/CONFIGURING/…) doesn't matter to our 4-state model.
+  const queued = await session.exec(`squeue -h -j ${jobId} -o %T 2>/dev/null`)
+  if (queued.stdout.trim().length > 0) {
+    return { outcome: 'running' }
+  }
+
+  // Fallen out of the queue — ask for the final state. scontrol first:
+  // it only needs slurmctld (always running), whereas sacct needs a
+  // working slurmdbd connection that real clusters sometimes don't have
+  // (see parseScontrolShowJob's doc comment). Only fall back to sacct
+  // when scontrol's short retention window has already passed.
+  const control = await session.exec(`scontrol show job ${jobId} 2>/dev/null`)
+  let parsed = parseScontrolShowJob(control.stdout)
+  if (!parsed) {
+    // sacct lists the job plus `.batch`/`.extern` sub-steps;
+    // parseSacctLine picks the exact job-id row.
+    const acct = await session.exec(
+      `sacct -n -P -j ${jobId} --format=JobID,State,ExitCode 2>/dev/null`
+    )
+    parsed = parseSacctLine(acct.stdout, jobId)
+  }
+  if (!parsed) {
+    // Neither squeue, scontrol, nor sacct know this job — accounting may
+    // not be enabled, scontrol's retention window already passed, or
+    // both. Same "don't guess" rule as the design doc's reconciliation
+    // guidance for detached_ssh.
+    return { outcome: 'lost' }
+  }
+  if (parsed.state.startsWith('COMPLETED')) {
+    return { outcome: 'completed', exitCode: parsed.exitCode ?? 0 }
+  }
+  if (FAILED_STATES.some((state) => parsed.state.startsWith(state))) {
+    return { outcome: 'failed', exitCode: parsed.exitCode, detail: parsed.state }
+  }
+  // An sacct state we don't recognize, or a PENDING/RUNNING row that
+  // raced ahead of squeue falling behind — treat as still running rather
+  // than guessing a terminal outcome.
+  return { outcome: 'running' }
+}
+
+/**
+ * `scancel` a job. TERM (the default signal path) lets Nextflow shut down and cancel its own
+ * jobs; KILL is the last resort. Never throws for a job that is already gone.
+ */
+export async function signalSlurmJob(
+  session: RemoteSshSession,
+  jobId: string | undefined,
+  signal: 'TERM' | 'KILL'
+): Promise<void> {
+  if (jobId === undefined) return
+  const flag = signal === 'KILL' ? '--signal=KILL ' : ''
+  await session.exec(`scancel ${flag}${jobId} 2>/dev/null || true`)
+}
+
 /** The `sbatch` controller — see module doc comment above. */
 export class SbatchRunner implements RemoteRunner {
   private readonly options: RemoteControllerOptions
@@ -206,51 +274,7 @@ export class SbatchRunner implements RemoteRunner {
   }
 
   async status(handle: RemoteJobHandle): Promise<RemoteRunStatus> {
-    if (handle.jobId === undefined) return { outcome: 'lost' }
-    const session = await this.getSession()
-
-    // Still queued or running: squeue only lists active jobs, so any
-    // output at all means "not finished yet" — the exact state
-    // (PENDING/RUNNING/CONFIGURING/…) doesn't matter to our 4-state model.
-    const queued = await session.exec(`squeue -h -j ${handle.jobId} -o %T 2>/dev/null`)
-    if (queued.stdout.trim().length > 0) {
-      return { outcome: 'running' }
-    }
-
-    // Fallen out of the queue — ask for the final state. scontrol first:
-    // it only needs slurmctld (always running), whereas sacct needs a
-    // working slurmdbd connection that real clusters sometimes don't have
-    // (see parseScontrolShowJob's doc comment). Only fall back to sacct
-    // when scontrol's short retention window has already passed.
-    const control = await session.exec(`scontrol show job ${handle.jobId} 2>/dev/null`)
-    const fromControl = parseScontrolShowJob(control.stdout)
-
-    let parsed = fromControl
-    if (!parsed) {
-      // sacct lists the job plus `.batch`/`.extern` sub-steps;
-      // parseSacctLine picks the exact job-id row.
-      const acct = await session.exec(
-        `sacct -n -P -j ${handle.jobId} --format=JobID,State,ExitCode 2>/dev/null`
-      )
-      parsed = parseSacctLine(acct.stdout, handle.jobId)
-    }
-    if (!parsed) {
-      // Neither squeue, scontrol, nor sacct know this job — accounting may
-      // not be enabled, scontrol's retention window already passed, or
-      // both. Same "don't guess" rule as the design doc's reconciliation
-      // guidance for detached_ssh.
-      return { outcome: 'lost' }
-    }
-    if (parsed.state.startsWith('COMPLETED')) {
-      return { outcome: 'completed', exitCode: parsed.exitCode ?? 0 }
-    }
-    if (FAILED_STATES.some((state) => parsed.state.startsWith(state))) {
-      return { outcome: 'failed', exitCode: parsed.exitCode }
-    }
-    // An sacct state we don't recognize, or a PENDING/RUNNING row that
-    // raced ahead of squeue falling behind — treat as still running rather
-    // than guessing a terminal outcome.
-    return { outcome: 'running' }
+    return readSlurmJobStatus(await this.getSession(), handle.jobId)
   }
 
   async tailLog(handle: RemoteJobHandle, stream: 'stdout' | 'stderr' = 'stdout'): Promise<string> {
@@ -259,9 +283,7 @@ export class SbatchRunner implements RemoteRunner {
   }
 
   async cancel(handle: RemoteJobHandle): Promise<void> {
-    if (handle.jobId === undefined) return
-    const session = await this.getSession()
-    await session.exec(`scancel ${handle.jobId} 2>/dev/null || true`)
+    await signalSlurmJob(await this.getSession(), handle.jobId, 'TERM')
   }
 
   async close(): Promise<void> {

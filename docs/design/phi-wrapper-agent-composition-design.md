@@ -425,5 +425,73 @@ polling.
 - **Policy and message** are in `composition/job-continue.ts`; the queue and the call
   into `submitPromptRun` are in `index.ts`.
 
-Not built yet: the sidebar does not mark the conversation unread; runs do not survive
-quitting the app.
+Not built yet: the sidebar does not mark the conversation unread. Local runs do not
+survive quitting the app; remote runs do (next section).
+
+### Running on an HPC cluster (`target: "remote"`)
+
+`wrapper_run` takes `target: "local" | "remote"`. A remote run goes to the **HPC
+connection saved on the project** the chat belongs to (Wrappers page, remote settings)
+and uses the same job manager, run records, progress, notifications and wake-ups as a
+local run: `remote-job.ts` returns the same `WrapperProcess` the local runner does.
+
+- **Controller** (`composition/remote-controller.ts`; the connection's "Nextflow 主进程运行位置"). Two ways to host the Nextflow head process; everything after the launch (log streaming, outputs, reconnecting, cancel, reattach) is shared.
+  - `login` (default): started on the login node under `setsid` (`detached_ssh`), identified by its pid. With the `slurm` scheduler it then submits every task to Slurm itself.
+  - `sbatch` (`slurm-controller`): the head process is a Slurm job of its own (`job.sbatch`), identified by its job id, for sites that forbid long-lived processes on login nodes. It costs a queue wait before anything starts, and the cluster must allow a job to submit jobs (nested `sbatch`).
+  Phi only polls over SSH, so a dropped link or a closed app does not touch the run.
+- **Where things live** (`composition/remote-config.ts`): under the project's remote
+  workspace root, `wrappers/bundles/<hash>/` holds the wrapper source tree and
+  `wrappers/runs/<runId>/` holds `params.json`, `phi_remote.config`, `launch.sh`, `logs/`,
+  `work/` and `results/`.
+- **Source bundle** (`remote-bundle.ts`). A wrapper includes sources by relative path (a
+  subworkflow reaches `../../../../modules/...`), so the whole `resources/wrappers` tree
+  ships, content-addressed: uploaded once per version over SFTP, shared by every run, a
+  changed tree lands beside the old one. `tests/` is left out except `tests/data` for a
+  component whose default params point at it.
+- **Run config.** `phi_remote.config` is passed with `-c`, so it outranks the wrapper's own
+  config without touching any wrapper: `process.executor`, queue, `--account`, extra
+  `sbatch` flags, `executor.queueSize`, `singularity.cacheDir`. The profile is the
+  connection's runtime (`singularity` by default), which every wrapper already defines.
+- **Inputs are cluster paths.** Local paths are meaningless there. Phi checks each
+  `kind: input` exists on the cluster (a glob by its fixed directory) before launching and
+  does not move data. `outdir` defaults to the run directory's `results/`; outputs stay on
+  the cluster and are recorded with `location: 'remote'`.
+- **Cluster check.** Before uploading, Phi runs a short script over SSH: it loads the login
+  profile (so `module load` works), runs the connection's setup commands, and fails with the
+  setting to change if Nextflow (or `sbatch` for Slurm) is missing. A missing container
+  runtime only warns, since some sites provide it on compute nodes only. Failure reasons are
+  written to the run's `nextflow.log`, which is what `wrapper_status` shows the agent.
+- **A connection without HPC settings is refused**, so a run never falls back to executing
+  every task on the login node.
+- **Quitting and restarting.** On quit a remote run is *detached*, not cancelled; its record
+  stays `running` with a `remote.json` snapshot (pid, run directory, log offset). On the next
+  start `WrapperJobManager.adoptRemoteRuns` reattaches, replays the local log to rebuild
+  progress, and carries on from the saved offset. A run that cannot be reattached is `lost`
+  (outcome unknown), never `failed`; likewise when contact is lost for ~12 polls in a row
+  (each preceded by a reconnect attempt).
+- **Cancel** signals the head process (SIGTERM to the process group, or `scancel` for a Slurm
+  head job); Nextflow then cancels its own Slurm jobs. SIGKILL after a grace period.
+- **The head job's allocation** (`sbatch` controller). Defaults are 1 CPU, 4G and a 2-day time
+  limit, using the connection's queue and account; the connection's head-job options
+  (`controllerOptions`, e.g. `--time=7-00:00:00 --mem=8G`) come last and override them. The
+  time limit is set on purpose: a partition default of an hour or two would silently kill a
+  pipeline that is still running. A job Slurm ends for time or memory is reported with that
+  state and the flag to change, not just "failed".
+- **Who decides success under `sbatch`.** `launch.sh` records Nextflow's exit code in
+  `exit_code` and exits with it, and that file outranks the scheduler's view (a Nextflow
+  failure would otherwise be a `COMPLETED` job). Only when the job died without recording one
+  (time limit, out of memory, cancelled) does the scheduler's state decide, read as `squeue`,
+  then `scontrol show job`, then `sacct` (many clusters have no working `sacct`).
+
+Verified with real Nextflow and Docker against a "remote" that is a local bash session
+(modules, subworkflows with cross-directory includes, a two-run reattach), including the
+`sbatch` controller against a stand-in Slurm (`tests/helpers/fakeSlurm.ts`) that really runs
+the submitted script in the background and can really cancel it; unit tests cover the rest.
+**Not verified against a real SSH server or a real Slurm cluster**: real `sbatch`/`scontrol`
+output, nested submission, and Nextflow's own Slurm executor rest on the stand-in and on the
+generated config having been accepted by `nextflow config`. The `squeue → scontrol → sacct`
+status order was carried over from the older `SbatchRunner`, which was tried on a real cluster.
+
+Not built yet: pulling outputs back to the local machine (`location: 'remote'` paths cannot
+be opened from Phi); uploading local input files; PBS/LSF; a "test connection" button in the
+settings; cleaning up a Slurm head job's orphaned task jobs when Nextflow is killed hard.

@@ -1,9 +1,12 @@
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import type { RemoteHpcSettings } from '../../../../shared/wrapperRemoteTypes'
 import { getPhiAgentDir } from '../../runtime-paths'
+import { getBundledWrapperPackagesDir } from '../catalog'
+import type { ResolvedRemoteTarget } from '../remote-connection-resolver'
 import { getWrapperRunsDir, listWrapperRuns, readWrapperRun, writeWrapperRun } from '../store'
-import type { WrapperRun } from '../types'
+import type { WrapperExecutor, WrapperRun } from '../types'
 import {
   findWrapperCompositionEntry,
   readWrapperCompositionDag,
@@ -15,8 +18,10 @@ import {
   killAllWrapperProcesses,
   startWrapperComposition,
   type WrapperExecutionProfile,
-  type WrapperProcess
+  type WrapperProcess,
+  type WrapperRunResult
 } from './executor'
+import { DEFAULT_REMOTE_RUNTIME } from '../../../../shared/wrapperRemoteTypes'
 import {
   TERMINAL_RUN_STATES,
   type CancelJobResult,
@@ -27,9 +32,18 @@ import {
 } from './job-types'
 import { countDagProcesses, createProgressTracker, type ProgressTracker } from './progress'
 import {
+  attachRemoteWrapperComposition,
+  startRemoteWrapperComposition,
+  type RemoteJobSnapshot
+} from './remote-job'
+import {
   finishCompositionRun,
+  isResumableRemoteRun,
   markCompositionRunCancelling,
+  markCompositionRunLost,
+  readCompositionRemoteSnapshot,
   startCompositionRun,
+  writeCompositionRemoteSnapshot,
   type CompositionRunOutcome
 } from './run-record'
 import { findMissingPrimaryOutputs, validateWrapperParams } from './validate'
@@ -47,11 +61,25 @@ import { findMissingPrimaryOutputs, validateWrapperParams } from './validate'
 const LOG_FILE = 'nextflow.log'
 const LOG_TAIL_CHARS = 4000
 const DEFAULT_MAX_CONCURRENT = 3
+const DEFAULT_MAX_REMOTE_CONCURRENT = 10
 const DEFAULT_PROGRESS_THROTTLE_MS = 2000
+
+/** What a remote run needs to find its host: from the chat session that starts it, or (on resume) from the run record. */
+export interface RemoteTargetRequest {
+  originSessionId?: string
+  projectId?: string
+  connectionId?: string
+}
 
 export interface WrapperJobManagerOptions {
   agentDir?: () => string
+  /** Resolves the saved HPC connection for a remote run. Without it, remote runs are refused. */
+  resolveRemoteTarget?: (request: RemoteTargetRequest) => ResolvedRemoteTarget | { reason: string }
+  /** Local root the remote bundle is built from. Defaults to the bundled wrappers. */
+  wrappersRoot?: () => string
   maxConcurrent?: number
+  /** Cap on runs watched on remote hosts at once; they cost little locally. Default 10. */
+  maxRemoteConcurrent?: number
   killGraceMs?: number
   progressThrottleMs?: number
 }
@@ -61,6 +89,8 @@ interface LiveJob {
   entry: WrapperCompositionEntry
   params: Record<string, unknown>
   proc: WrapperProcess
+  /** True for a run on a remote host. */
+  remote: boolean
   tracker: ProgressTracker
   logPath: string
   startedMs: number
@@ -95,6 +125,16 @@ function readSummary(runsDir: string, runId: string): { missingOutputs?: string[
   }
 }
 
+/** The head process as a Slurm job is `slurm-controller`; on the login node it is `slurm` or `remote-background`. */
+function remoteExecutorName(hpc: RemoteHpcSettings | undefined): WrapperExecutor {
+  if (hpc?.controller === 'sbatch') return 'slurm-controller'
+  return hpc?.scheduler === 'slurm' ? 'slurm' : 'remote-background'
+}
+
+function remoteField(run: WrapperRun): { remote?: { host: string; runDir: string } } {
+  return run.remote ? { remote: { host: run.remote.host, runDir: run.remote.runDir } } : {}
+}
+
 export class WrapperJobManager implements WrapperJobClient {
   private readonly live = new Map<string, LiveJob>()
   private readonly reported = new Set<string>()
@@ -102,12 +142,19 @@ export class WrapperJobManager implements WrapperJobClient {
   private readonly finishListeners = new Set<(run: WrapperRun, status: WrapperJobStatus) => void>()
   private readonly agentDir: () => string
   private readonly maxConcurrent: number
+  private readonly maxRemoteConcurrent: number
+  private readonly resolveRemote:
+    NonNullable<WrapperJobManagerOptions['resolveRemoteTarget']> | undefined
+  private readonly wrappersRoot: () => string
   private readonly killGraceMs: number | undefined
   private readonly progressThrottleMs: number
 
   constructor(options: WrapperJobManagerOptions = {}) {
     this.agentDir = options.agentDir ?? getPhiAgentDir
     this.maxConcurrent = options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT
+    this.maxRemoteConcurrent = options.maxRemoteConcurrent ?? DEFAULT_MAX_REMOTE_CONCURRENT
+    this.resolveRemote = options.resolveRemoteTarget
+    this.wrappersRoot = options.wrappersRoot ?? getBundledWrapperPackagesDir
     this.killGraceMs = options.killGraceMs
     this.progressThrottleMs = options.progressThrottleMs ?? DEFAULT_PROGRESS_THROTTLE_MS
   }
@@ -152,11 +199,28 @@ export class WrapperJobManager implements WrapperJobClient {
   async start(input: {
     id: string
     overrides: Record<string, unknown>
-    profile: string
+    profile?: string
+    target?: 'local' | 'remote'
     originSessionId?: string
     continueWhenDone?: boolean
   }): Promise<StartJobResult> {
-    const { id, overrides, profile } = input
+    const { id, overrides } = input
+    let resolved: ResolvedRemoteTarget | undefined
+    if (input.target === 'remote') {
+      if (!this.resolveRemote) {
+        return {
+          ok: false,
+          error: 'Remote runs are not available: no HPC connection support here.'
+        }
+      }
+      const target = this.resolveRemote({ originSessionId: input.originSessionId })
+      if ('reason' in target) return { ok: false, error: target.reason }
+      resolved = target
+    }
+    const remote = resolved !== undefined
+    const profile =
+      input.profile ??
+      (resolved ? (resolved.target.hpc?.runtime ?? DEFAULT_REMOTE_RUNTIME) : 'docker')
     if (!(WRAPPER_EXECUTION_PROFILES as readonly string[]).includes(profile)) {
       return {
         ok: false,
@@ -167,17 +231,22 @@ export class WrapperJobManager implements WrapperJobClient {
     if (!entry) return { ok: false, error: `Wrapper not found: ${id}` }
 
     const defaults = readWrapperDefaultParams(entry.wrapperDir)
-    const errors = validateWrapperParams(entry.manifest, defaults, overrides, entry.componentDir)
+    // Input paths on a remote run live on the cluster; a local existence check would be wrong.
+    const errors = validateWrapperParams(entry.manifest, defaults, overrides, entry.componentDir, {
+      checkInputPaths: !remote
+    })
     if (errors.length > 0) {
       return {
         ok: false,
         error: `Invalid parameters for ${id}:\n${errors.map((error) => `- ${error}`).join('\n')}`
       }
     }
-    if (this.live.size >= this.maxConcurrent) {
+    const limit = remote ? this.maxRemoteConcurrent : this.maxConcurrent
+    const running = [...this.live.values()].filter((job) => job.remote === remote).length
+    if (running >= limit) {
       return {
         ok: false,
-        error: `Too many wrapper runs are already running (limit ${this.maxConcurrent}). Wait for one to finish or cancel it first.`
+        error: `Too many ${remote ? 'remote ' : ''}wrapper runs are already running (limit ${limit}). Wait for one to finish or cancel it first.`
       }
     }
 
@@ -191,6 +260,17 @@ export class WrapperJobManager implements WrapperJobClient {
         profile,
         originSessionId: input.originSessionId,
         continueWhenDone: input.continueWhenDone,
+        ...(resolved
+          ? {
+              remote: {
+                host: resolved.target.connection.host,
+                workspaceRoot: resolved.target.workspaceRoot,
+                executor: remoteExecutorName(resolved.target.hpc),
+                connectionId: resolved.connectionId,
+                projectId: resolved.projectId
+              }
+            }
+          : {}),
         agentDir
       })
     } catch (error) {
@@ -215,15 +295,22 @@ export class WrapperJobManager implements WrapperJobClient {
 
     let proc: WrapperProcess
     try {
-      proc = startWrapperComposition(
-        entry.wrapperDir,
-        overrides,
-        profile as WrapperExecutionProfile,
-        {
-          onOutput,
-          killGraceMs: this.killGraceMs
-        }
-      )
+      proc = resolved
+        ? startRemoteWrapperComposition({
+            runId: run.runId,
+            entry,
+            params,
+            profile,
+            target: resolved.target,
+            wrappersRoot: this.wrappersRoot(),
+            onOutput,
+            onSnapshot: (snapshot) => this.saveSnapshot(run.runId, snapshot),
+            killGraceMs: this.killGraceMs
+          })
+        : startWrapperComposition(entry.wrapperDir, overrides, profile as WrapperExecutionProfile, {
+            onOutput,
+            killGraceMs: this.killGraceMs
+          })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       finishCompositionRun({
@@ -240,24 +327,88 @@ export class WrapperJobManager implements WrapperJobClient {
       return { ok: false, error: `Could not start Nextflow: ${message}` }
     }
 
-    const started: LiveJob = {
-      run,
-      entry,
-      params,
-      proc,
-      tracker,
-      logPath,
+    const started = this.trackJob({ run, entry, params, proc, remote, tracker, logPath })
+    jobRef.current = started
+    this.emit(run.runId)
+    return { ok: true, status: this.liveStatus(started) }
+  }
+
+  private trackJob(input: {
+    run: WrapperRun
+    entry: WrapperCompositionEntry
+    params: Record<string, unknown>
+    proc: WrapperProcess
+    remote: boolean
+    tracker: ProgressTracker
+    logPath: string
+  }): LiveJob {
+    const job: LiveJob = {
+      ...input,
       startedMs: Date.now(),
       lastPersistMs: 0,
       cancelRequested: false,
       finalized: false,
       finished: Promise.resolve(undefined as never)
     }
-    jobRef.current = started
-    this.live.set(run.runId, started)
-    started.finished = proc.done.then((result) => this.finalize(started, result))
-    this.emit(run.runId)
-    return { ok: true, status: this.liveStatus(started) }
+    this.live.set(input.run.runId, job)
+    job.finished = input.proc.done.then((result) => this.finalize(job, result))
+    return job
+  }
+
+  private saveSnapshot(runId: string, snapshot: RemoteJobSnapshot): void {
+    try {
+      writeCompositionRemoteSnapshot(runId, snapshot, this.agentDir())
+    } catch {
+      // The snapshot only matters for resuming after a restart; never disturb the run for it.
+    }
+  }
+
+  /**
+   * Startup: picks up every remote run an earlier session left going and watches it to the
+   * end. A run that cannot be reattached (connection removed, host unreachable at startup)
+   * is recorded `lost` — its outcome is unknown, not a failure. Returns how many were adopted.
+   */
+  async adoptRemoteRuns(): Promise<number> {
+    const agentDir = this.agentDir()
+    let adopted = 0
+    for (const run of listWrapperRuns(agentDir)) {
+      if (this.live.has(run.runId) || !isResumableRemoteRun(run, agentDir)) continue
+      const entry = findWrapperCompositionEntry(run.wrapper.canonicalId)
+      const snapshot = readCompositionRemoteSnapshot(run.runId, agentDir)
+      const resolved = this.resolveRemote?.({
+        projectId: run.remote?.projectId,
+        connectionId: run.remote?.connectionId
+      }) ?? { reason: 'Remote runs are not available.' }
+      if (!entry || !snapshot || 'reason' in resolved) {
+        markCompositionRunLost(run, agentDir)
+        this.emit(run.runId)
+        continue
+      }
+
+      const logPath = join(getWrapperRunsDir(agentDir), run.runId, LOG_FILE)
+      const tracker = createProgressTracker({
+        total: countDagProcesses(readWrapperCompositionDag(run.wrapper.canonicalId))
+      })
+      // The local log holds everything delivered before the restart; replay it so counts carry on.
+      tracker.push(readTail(logPath, Number.MAX_SAFE_INTEGER))
+      const proc = attachRemoteWrapperComposition({
+        snapshot,
+        entry,
+        target: resolved.target,
+        onOutput: (chunk) => {
+          appendFileSync(logPath, chunk)
+          tracker.push(chunk)
+          const job = this.live.get(run.runId)
+          if (job) this.persistProgress(job)
+        },
+        onSnapshot: (next) => this.saveSnapshot(run.runId, next),
+        killGraceMs: this.killGraceMs
+      })
+      this.trackJob({ run, entry, params: snapshot.params, proc, remote: true, tracker, logPath })
+      this.emit(run.runId)
+      adopted += 1
+    }
+    return adopted
   }
 
   private persistProgress(job: LiveJob): void {
@@ -277,22 +428,29 @@ export class WrapperJobManager implements WrapperJobClient {
     }
   }
 
-  private finalize(
-    job: LiveJob,
-    result: { success: boolean; cancelled?: boolean; exitCode: number; output: string }
-  ): WrapperJobStatus {
+  private finalize(job: LiveJob, result: WrapperRunResult): WrapperJobStatus {
     const runId = job.run.runId
     if (job.finalized) return this.statusSync(runId) as WrapperJobStatus
     job.finalized = true
+    // Phi let go of a remote run that carries on remotely; its record stays `running` so the
+    // next start can pick it up again.
+    if (result.detached) {
+      this.live.delete(runId)
+      return this.statusSync(runId) as WrapperJobStatus
+    }
 
-    const missing = result.success
-      ? findMissingPrimaryOutputs(job.entry.manifest, job.params, job.entry.componentDir)
-      : []
+    const missing = result.remote
+      ? result.remote.missingOutputs
+      : result.success
+        ? findMissingPrimaryOutputs(job.entry.manifest, job.params, job.entry.componentDir)
+        : []
     const outcome: CompositionRunOutcome = result.cancelled
       ? 'cancelled'
-      : result.success && missing.length === 0
-        ? 'completed'
-        : 'failed'
+      : result.lost
+        ? 'lost'
+        : result.success && missing.length === 0
+          ? 'completed'
+          : 'failed'
     try {
       finishCompositionRun({
         run: job.run,
@@ -300,9 +458,11 @@ export class WrapperJobManager implements WrapperJobClient {
         params: job.params,
         outcome,
         exitCode: result.exitCode,
-        output: job.tracker.tail(),
+        output: result.output || job.tracker.tail(),
         missingOutputs: missing,
         progress: job.tracker.snapshot(),
+        // A remote run's outputs are on the cluster, out of reach of a local existsSync.
+        ...(result.remote ? { outputs: result.remote.outputs } : job.remote ? { outputs: [] } : {}),
         agentDir: this.agentDir()
       })
     } catch {
@@ -324,7 +484,8 @@ export class WrapperJobManager implements WrapperJobClient {
       startedAt: job.run.startedAt,
       elapsedSeconds: Math.max(0, Math.round((Date.now() - job.startedMs) / 1000)),
       progress: job.tracker.snapshot(),
-      logTail: job.tracker.tail(LOG_TAIL_CHARS)
+      logTail: job.tracker.tail(LOG_TAIL_CHARS),
+      ...remoteField(job.run)
     }
   }
 
@@ -352,7 +513,8 @@ export class WrapperJobManager implements WrapperJobClient {
       ...(run.outputs ? { outputs: run.outputs } : {}),
       ...(TERMINAL_RUN_STATES.includes(run.state)
         ? { missingOutputs: readSummary(runsDir, run.runId).missingOutputs ?? [] }
-        : {})
+        : {}),
+      ...remoteField(run)
     }
   }
 
@@ -439,6 +601,13 @@ export class WrapperJobManager implements WrapperJobClient {
     for (const job of [...this.live.values()]) {
       if (job.finalized) continue
       job.finalized = true
+      if (job.remote && job.proc.detach) {
+        // A remote run outlives the app: stop watching it, leave it running, and keep its
+        // record as it is so the next start reattaches (see adoptRemoteRuns).
+        job.proc.detach()
+        this.live.delete(job.run.runId)
+        continue
+      }
       job.proc.cancel()
       try {
         finishCompositionRun({

@@ -3,6 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 
+import type { WrapperOutputRecord } from '../types'
+
 /** Execution profile a wrapper can run under — see each `wrapper/nextflow.config`'s `profiles {}` block. */
 export const WRAPPER_EXECUTION_PROFILES = ['docker', 'singularity', 'conda'] as const
 export type WrapperExecutionProfile = (typeof WRAPPER_EXECUTION_PROFILES)[number]
@@ -84,6 +86,12 @@ export interface WrapperRunResult {
   exitCode: number
   /** Combined, tail-truncated stdout+stderr — enough to explain success/failure, not the full log. */
   output: string
+  /** Remote runs only: contact was lost, so the true outcome is unknown (the run may still be going). */
+  lost?: boolean
+  /** Remote runs only: Phi stopped watching but left the run going on the cluster. */
+  detached?: boolean
+  /** Remote runs only: outputs as found on the cluster (a local `existsSync` cannot see them). */
+  remote?: { outputs: WrapperOutputRecord[]; missingOutputs: string[] }
 }
 
 export interface RunWrapperOptions {
@@ -104,6 +112,12 @@ export interface WrapperProcess {
   done: Promise<WrapperRunResult>
   /** Stops Nextflow (SIGTERM to its process group, SIGKILL after the grace period). Idempotent. */
   cancel: () => void
+  /**
+   * Remote runs only: stop watching without stopping the run, which carries on on the
+   * cluster. `done` then resolves with `detached: true`. Absent for local runs, which
+   * cannot outlive the app.
+   */
+  detach?: () => void
 }
 
 const DEFAULT_KILL_GRACE_MS = 10_000

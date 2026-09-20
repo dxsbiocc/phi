@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { basename, join } from 'node:path'
+import type { RemoteHpcSettings } from '../../shared/wrapperRemoteTypes'
 import { getPhiAgentDir } from './runtime-paths'
 
 const PROJECTS_FILE = 'projects.json'
@@ -58,6 +59,8 @@ export interface ProjectRemoteConnection {
   privateKeyPath: string
   /** True when the key at `privateKeyPath` needs a passphrase to unlock. */
   hasPassphrase?: boolean
+  /** How wrappers should run on this host (scheduler, container runtime, setup). Absent means a plain host with defaults. */
+  hpc?: RemoteHpcSettings
 }
 
 export interface Project {

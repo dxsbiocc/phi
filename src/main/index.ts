@@ -50,6 +50,7 @@ import {
   createProject,
   deleteProject,
   assertProjectPathAvailable,
+  getProject,
   getProjectByCwd,
   listProjects,
   updateProjectPermissionMode,
@@ -113,6 +114,7 @@ import {
 import { deliverWrapperRunFinished } from './agent/wrappers/composition/job-notify'
 import { WrapperJobManager } from './agent/wrappers/composition/job-manager'
 import { markInterruptedCompositionRuns } from './agent/wrappers/composition/run-record'
+import { resolveProjectRemoteTarget } from './agent/wrappers/remote-connection-resolver'
 import { reconcileRemoteWrapperRuns } from './agent/wrappers/executor-slurm-reconcile'
 import { discoverPhiAgents } from './agent/agents/discovery'
 import { buildAgentLeaderPrompt } from './agent/agents/leader-prompt'
@@ -546,7 +548,15 @@ getOmpBridge().registerHostHandler('agentInteraction.request', handleAgentIntera
 
 // Background wrapper runs. The manager lives here, not in the agent worker: a run
 // must outlive any chat session, and the worker is stopped whenever it idles.
-const wrapperJobs = new WrapperJobManager()
+const wrapperJobs = new WrapperJobManager({
+  // A remote run goes to the HPC connection saved on the project the chat belongs to; a run
+  // being resumed after a restart names its project and connection itself.
+  resolveRemoteTarget: ({ originSessionId, projectId, connectionId }) => {
+    const cwd = originSessionId ? runtimeSessionOrigins.get(originSessionId)?.cwd : undefined
+    const project = projectId ? getProject(projectId) : getProjectByCwd(cwd ?? currentCwd)
+    return resolveProjectRemoteTarget(project, connectionId)
+  }
+})
 for (const [method, handler] of Object.entries(wrapperJobHostHandlers(wrapperJobs))) {
   getOmpBridge().registerHostHandler(method, handler)
 }
@@ -3964,6 +3974,22 @@ app.whenReady().then(() => {
       metadata: { error: error instanceof Error ? error.message : String(error) }
     })
   }
+  // Remote runs are the exception: they kept running on the cluster while Phi was closed, so
+  // watch them again (any that cannot be reached are recorded `lost`).
+  void wrapperJobs
+    .adoptRemoteRuns()
+    .then((adopted) => {
+      if (adopted > 0) {
+        writeAppLog({ event: 'wrapper_remote_runs_adopted', metadata: { count: adopted } })
+      }
+    })
+    .catch((error) => {
+      writeAppLog({
+        level: 'error',
+        event: 'wrapper_remote_run_adopt_failed',
+        metadata: { error: error instanceof Error ? error.message : String(error) }
+      })
+    })
   // Set app user model id for windows
   electronApp.setAppUserModelId(APP_ID)
 

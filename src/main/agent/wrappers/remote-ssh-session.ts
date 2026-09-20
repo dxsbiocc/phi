@@ -74,6 +74,8 @@ export interface RemoteSshSession {
   writeTextFile(remotePath: string, content: string): Promise<void>
   mkdirp(remotePath: string): Promise<void>
   exists(remotePath: string): Promise<boolean>
+  /** Copies one local file (any bytes) to `remotePath` over SFTP, replacing it. The parent directory must exist. */
+  uploadFile(localPath: string, remotePath: string): Promise<void>
   close(): Promise<void>
 }
 
@@ -279,6 +281,28 @@ export function buildSession(client: Client, execTimeoutMs: number): RemoteSshSe
     }
   }
 
+  function uploadFile(localPath: string, remotePath: string): Promise<void> {
+    // A binary-safe stream, unlike writeTextFile's heredoc: used for the wrapper
+    // source archive. SFTP is opened per call since uploads are rare (one per
+    // bundle version) and a long-lived channel would need its own lifecycle.
+    return new Promise((resolveUpload, reject) => {
+      client.sftp((err, sftp) => {
+        if (err) {
+          reject(new Error(`无法打开 SFTP 通道: ${err.message}`))
+          return
+        }
+        sftp.fastPut(localPath, remotePath, (putError) => {
+          sftp.end()
+          if (putError) {
+            reject(new Error(`远程上传文件失败: ${remotePath}\n${putError.message}`))
+            return
+          }
+          resolveUpload()
+        })
+      })
+    })
+  }
+
   async function close(): Promise<void> {
     await new Promise<void>((resolveClose) => {
       client.once('close', () => resolveClose())
@@ -286,5 +310,5 @@ export function buildSession(client: Client, execTimeoutMs: number): RemoteSshSe
     })
   }
 
-  return { exec, readTextFile, writeTextFile, mkdirp, exists, close }
+  return { exec, readTextFile, writeTextFile, mkdirp, exists, uploadFile, close }
 }

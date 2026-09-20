@@ -22,8 +22,11 @@ export function formatJobStatus(status: WrapperJobStatus): string {
   const lines = [
     `Run ${status.runId} — ${status.wrapperId}`,
     `State: ${status.state}${exit} · ${duration(status.elapsedSeconds)} · profile ${status.profile}`,
+    ...(status.remote
+      ? [`Host: ${status.remote.host} (run directory ${status.remote.runDir})`]
+      : []),
     progressLine(status),
-    `Output directory: ${status.outDir}`
+    `Output directory: ${status.outDir}${status.remote ? ` (on ${status.remote.host})` : ''}`
   ]
   if (status.outputs && status.outputs.length > 0) {
     lines.push('Outputs:')

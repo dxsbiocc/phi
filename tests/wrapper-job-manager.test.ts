@@ -503,10 +503,14 @@ test('host handlers validate what the worker sends and drive the manager end to 
     const handlers = wrapperJobHostHandlers(manager(sb))
 
     await assert.rejects(async () => handlers[WRAPPER_JOB_HOST_METHODS.start]({}), /id/)
-    await assert.rejects(
-      async () => handlers[WRAPPER_JOB_HOST_METHODS.start]({ id: WRAPPER_ID }),
-      /profile/
-    )
+    // `profile` is optional now (its default depends on where the run goes); `target: remote`
+    // reaches the manager, which here has no remote support and says so.
+    const refused = (await handlers[WRAPPER_JOB_HOST_METHODS.start]({
+      id: WRAPPER_ID,
+      target: 'remote'
+    })) as { ok: boolean; error?: string }
+    assert.equal(refused.ok, false)
+    assert.match(refused.error ?? '', /[Rr]emote/)
     await assert.rejects(async () => handlers[WRAPPER_JOB_HOST_METHODS.status]('nope'), /runId/)
 
     const started = (await handlers[WRAPPER_JOB_HOST_METHODS.start]({
