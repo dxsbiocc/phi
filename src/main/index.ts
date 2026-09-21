@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process'
 import {
   closeSync,
   existsSync,
+  mkdirSync,
   openSync,
   readdirSync,
   readSync,
@@ -60,6 +61,7 @@ import {
   updateProjectRemoteDefaults,
   type PermissionMode,
   type ModelSelection,
+  type Project,
   type ProjectRemoteConnection
 } from './agent/projects'
 import {
@@ -478,6 +480,62 @@ function getNoProjectTaskFolder(): string {
   return readAppSettings(AGENT_DIR).noProjectTaskFolder
 }
 
+type AnalysisWorkspaceContext = {
+  workingDirectory: string
+  name: string
+  project: Project | null
+}
+
+function realDirectoryPath(
+  path: string,
+  options: { create?: boolean; fallbackToResolved?: boolean } = {}
+): string | null {
+  try {
+    if (options.create) {
+      mkdirSync(path, { recursive: true })
+    }
+    const realPath = realpathSync(path)
+    return statSync(realPath).isDirectory() ? realPath : null
+  } catch {
+    return options.fallbackToResolved ? resolve(path) : null
+  }
+}
+
+function resolveAnalysisWorkspaceByCwd(cwd?: string): AnalysisWorkspaceContext | null {
+  const targetCwd = cwd ?? currentCwd
+  const project = getProjectByCwd(targetCwd)
+  if (project) {
+    assertProjectPathAvailable(project.workingDirectory)
+    return {
+      workingDirectory: project.workingDirectory,
+      name: project.name,
+      project
+    }
+  }
+
+  const noProjectTaskFolder = getNoProjectTaskFolder()
+  const noProjectWorkspaceRealPath = realDirectoryPath(noProjectTaskFolder, {
+    create: true,
+    fallbackToResolved: true
+  })
+  const targetRealPath = realDirectoryPath(targetCwd, {
+    create: resolve(targetCwd) === resolve(noProjectTaskFolder),
+    fallbackToResolved: resolve(targetCwd) === resolve(noProjectTaskFolder)
+  })
+  if (!targetRealPath) return null
+
+  const currentCwdRealPath = getProjectByCwd(currentCwd) ? null : realDirectoryPath(currentCwd)
+  if (targetRealPath !== noProjectWorkspaceRealPath && targetRealPath !== currentCwdRealPath) {
+    return null
+  }
+
+  return {
+    workingDirectory: targetRealPath,
+    name: basename(targetRealPath) || 'workspace',
+    project: null
+  }
+}
+
 let freshSessionCounter = 0
 // The session file currently active in the UI. undefined = a fresh, not-yet-persisted
 // chat (nothing appended to it yet, so no file exists and it won't show in the sidebar
@@ -545,8 +603,7 @@ const notebookSessionRegistry = new AnalysisNotebookSessionRegistry({
 const notebookExecutor = new AnalysisNotebookExecutor()
 const activeNotebookPathByProjectCwd = new Map<string, string>()
 const notebookToolExecutor = new AnalysisNotebookToolExecutor({
-  getProjectByCwd,
-  assertProjectPathAvailable,
+  resolveWorkspaceByCwd: resolveAnalysisWorkspaceByCwd,
   ensureJupyterServerReady,
   notebookSessionRegistry,
   notebookExecutor,
@@ -871,6 +928,44 @@ function emptyNotebookCompletionResult(
     metadata: {},
     status: 'error' as const,
     message
+  }
+}
+
+function stoppedJupyterStatus(
+  projectCwd: string | undefined,
+  message?: string
+): {
+  projectCwd: string
+  state: 'stopped'
+  hasEndpoint: false
+  message?: string
+} {
+  return {
+    projectCwd: projectCwd ?? '',
+    state: 'stopped' as const,
+    hasEndpoint: false,
+    ...(message ? { message } : {})
+  }
+}
+
+function emptyAnalysisRuntimeStatus(
+  projectCwd: string | undefined,
+  message?: string
+): {
+  server: ReturnType<typeof stoppedJupyterStatus>
+  notebooks: {
+    activeSessionCount: number
+    busySessionCount: number
+    sessions: unknown[]
+  }
+} {
+  return {
+    server: stoppedJupyterStatus(projectCwd, message),
+    notebooks: {
+      activeSessionCount: 0,
+      busySessionCount: 0,
+      sessions: []
+    }
   }
 }
 
@@ -2842,14 +2937,13 @@ async function generateAnalysisNotebookCode(
     throw new Error('请输入要生成的代码需求')
   }
 
-  const project = getProjectByCwd(cwd)
-  if (!project) {
-    throw new Error('请选择一个已添加的项目')
+  const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+  if (!workspace) {
+    throw new Error('请选择一个已添加的项目或当前 workspace')
   }
-  assertProjectPathAvailable(project.workingDirectory)
-  const file = openProjectNotebook(project.workingDirectory, notebookPath)
+  const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
   const runtime = await getAuthManager().getRuntime()
-  const modelSelection = input.model ?? project.defaultModel ?? selectedModel
+  const modelSelection = input.model ?? workspace.project?.defaultModel ?? selectedModel
   const resolvedModel = modelSelection
     ? resolveRuntimeModelSelection(runtime, modelSelection)
     : null
@@ -2862,7 +2956,7 @@ async function generateAnalysisNotebookCode(
   )
   const language = input.language || 'python'
   const references = await notebookAiReferencesWithKernelIntrospection({
-    projectCwd: project.workingDirectory,
+    projectCwd: workspace.workingDirectory,
     notebookPath: file.path,
     prompt,
     language,
@@ -2870,10 +2964,10 @@ async function generateAnalysisNotebookCode(
   })
   const sessionOptions = {
     modelRuntime: runtime,
-    cwd: project.workingDirectory,
+    cwd: workspace.workingDirectory,
     noTools: 'all' as const,
-    thinkingLevel: project.defaultThinkingLevel ?? selectedThinkingLevel,
-    sessionManager: createInMemoryRuntimeSessionManager(project.workingDirectory),
+    thinkingLevel: workspace.project?.defaultThinkingLevel ?? selectedThinkingLevel,
+    sessionManager: createInMemoryRuntimeSessionManager(workspace.workingDirectory),
     ...(resolvedModel ? { model: resolvedModel.model } : {})
   }
   let eventAssistantText = ''
@@ -4945,37 +5039,33 @@ app.whenReady().then(() => {
     }
   )
   ipcMain.handle('analysis:listNotebooks', async (_, cwd?: string) => {
-    const targetCwd = cwd ?? currentCwd
-    const project = getProjectByCwd(targetCwd)
-    if (!project) {
-      return emptyNotebookRegistry('选择一个项目后显示 notebooks')
+    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+    if (!workspace) {
+      return emptyNotebookRegistry('选择一个项目或当前 workspace 后显示 notebooks')
     }
-    assertProjectPathAvailable(project.workingDirectory)
-    const registry = listProjectNotebooks(project.workingDirectory)
+    const registry = listProjectNotebooks(workspace.workingDirectory)
     return {
-      projectCwd: project.workingDirectory,
-      projectName: project.name,
+      projectCwd: workspace.workingDirectory,
+      projectName: workspace.name,
       ...registry
     }
   })
   ipcMain.handle('analysis:initializeProject', async (_, cwd: string) => {
-    const project = getProjectByCwd(cwd)
-    if (!project) {
-      throw new Error('请选择一个已添加的项目')
+    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+    if (!workspace) {
+      throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    assertProjectPathAvailable(project.workingDirectory)
-    return initializeProjectAnalysis(project.workingDirectory)
+    return initializeProjectAnalysis(workspace.workingDirectory)
   })
   ipcMain.handle('analysis:openNotebook', async (_, cwd: string, notebookPath: string) => {
-    const project = getProjectByCwd(cwd)
-    if (!project) {
-      throw new Error('请选择一个已添加的项目')
+    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+    if (!workspace) {
+      throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    assertProjectPathAvailable(project.workingDirectory)
-    const file = notebookFileWatcher.watch(project.workingDirectory, notebookPath)
-    activeNotebookPathByProjectCwd.set(project.workingDirectory, file.path)
+    const file = notebookFileWatcher.watch(workspace.workingDirectory, notebookPath)
+    activeNotebookPathByProjectCwd.set(workspace.workingDirectory, file.path)
     notebookToolExecutor.syncDraft({
-      cwd: project.workingDirectory,
+      cwd: workspace.workingDirectory,
       path: file.path,
       document: file.document,
       savedRevision: file.savedRevision,
@@ -4986,16 +5076,15 @@ app.whenReady().then(() => {
   ipcMain.handle(
     'analysis:saveNotebook',
     async (_, cwd: string, input: SaveProjectNotebookInput) => {
-      const project = getProjectByCwd(cwd)
-      if (!project) {
-        throw new Error('请选择一个已添加的项目')
+      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+      if (!workspace) {
+        throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      assertProjectPathAvailable(project.workingDirectory)
-      const file = saveProjectNotebook(project.workingDirectory, input)
-      notebookFileWatcher.noteLocalWrite(project.workingDirectory, file)
-      activeNotebookPathByProjectCwd.set(project.workingDirectory, file.path)
+      const file = saveProjectNotebook(workspace.workingDirectory, input)
+      notebookFileWatcher.noteLocalWrite(workspace.workingDirectory, file)
+      activeNotebookPathByProjectCwd.set(workspace.workingDirectory, file.path)
       notebookToolExecutor.syncDraft({
-        cwd: project.workingDirectory,
+        cwd: workspace.workingDirectory,
         path: file.path,
         document: file.document,
         savedRevision: file.savedRevision,
@@ -5013,15 +5102,14 @@ app.whenReady().then(() => {
       document: NotebookDocument,
       savedRevision?: string
     ) => {
-      const project = getProjectByCwd(cwd)
-      if (!project) {
-        throw new Error('请选择一个已添加的项目')
+      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+      if (!workspace) {
+        throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      assertProjectPathAvailable(project.workingDirectory)
-      const file = openProjectNotebook(project.workingDirectory, notebookPath)
-      activeNotebookPathByProjectCwd.set(project.workingDirectory, file.path)
+      const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
+      activeNotebookPathByProjectCwd.set(workspace.workingDirectory, file.path)
       return notebookToolExecutor.syncDraft({
-        cwd: project.workingDirectory,
+        cwd: workspace.workingDirectory,
         path: file.path,
         document,
         savedRevision,
@@ -5030,102 +5118,93 @@ app.whenReady().then(() => {
     }
   )
   ipcMain.handle('analysis:createNotebook', async (_, cwd: string, relativePath?: string) => {
-    const project = getProjectByCwd(cwd)
-    if (!project) {
-      throw new Error('请选择一个已添加的项目')
+    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+    if (!workspace) {
+      throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    assertProjectPathAvailable(project.workingDirectory)
-    const file = createProjectNotebook(project.workingDirectory, relativePath)
-    notebookFileWatcher.watchFile(project.workingDirectory, file)
-    activeNotebookPathByProjectCwd.set(project.workingDirectory, file.path)
+    const file = createProjectNotebook(workspace.workingDirectory, relativePath)
+    notebookFileWatcher.watchFile(workspace.workingDirectory, file)
+    activeNotebookPathByProjectCwd.set(workspace.workingDirectory, file.path)
     return file
   })
   ipcMain.handle('analysis:closeNotebook', async (_, cwd: string, notebookPath: string) => {
-    const project = getProjectByCwd(cwd)
-    if (!project) {
-      throw new Error('请选择一个已添加的项目')
+    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+    if (!workspace) {
+      throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    assertProjectPathAvailable(project.workingDirectory)
-    const file = openProjectNotebook(project.workingDirectory, notebookPath)
-    await notebookSessionRegistry.closeSession(project.workingDirectory, file.path)
-    if (activeNotebookPathByProjectCwd.get(project.workingDirectory) === file.path) {
-      activeNotebookPathByProjectCwd.delete(project.workingDirectory)
+    const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
+    await notebookSessionRegistry.closeSession(workspace.workingDirectory, file.path)
+    if (activeNotebookPathByProjectCwd.get(workspace.workingDirectory) === file.path) {
+      activeNotebookPathByProjectCwd.delete(workspace.workingDirectory)
     }
-    notebookFileWatcher.unwatchFile(project.workingDirectory, file)
-    return closeProjectNotebook(project.workingDirectory, notebookPath)
+    notebookFileWatcher.unwatchFile(workspace.workingDirectory, file)
+    return closeProjectNotebook(workspace.workingDirectory, notebookPath)
   })
   ipcMain.handle('analysis:deleteNotebook', async (_, cwd: string, notebookPath: string) => {
-    const project = getProjectByCwd(cwd)
-    if (!project) {
-      throw new Error('请选择一个已添加的项目')
+    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+    if (!workspace) {
+      throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    assertProjectPathAvailable(project.workingDirectory)
-    const file = openProjectNotebook(project.workingDirectory, notebookPath)
-    await notebookSessionRegistry.closeSession(project.workingDirectory, file.path)
-    if (activeNotebookPathByProjectCwd.get(project.workingDirectory) === file.path) {
-      activeNotebookPathByProjectCwd.delete(project.workingDirectory)
+    const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
+    await notebookSessionRegistry.closeSession(workspace.workingDirectory, file.path)
+    if (activeNotebookPathByProjectCwd.get(workspace.workingDirectory) === file.path) {
+      activeNotebookPathByProjectCwd.delete(workspace.workingDirectory)
     }
-    notebookFileWatcher.unwatchFile(project.workingDirectory, file)
-    return deleteProjectNotebook(project.workingDirectory, notebookPath)
+    notebookFileWatcher.unwatchFile(workspace.workingDirectory, file)
+    return deleteProjectNotebook(workspace.workingDirectory, notebookPath)
   })
   ipcMain.handle('analysis:listKernels', async (_, cwd?: string) => {
     if (cwd) {
-      const project = getProjectByCwd(cwd)
-      if (!project) {
-        throw new Error('请选择一个已添加的项目')
+      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+      if (!workspace) {
+        return detectConfiguredAnalysisKernels()
       }
-      assertProjectPathAvailable(project.workingDirectory)
     }
     return detectConfiguredAnalysisKernels()
   })
   ipcMain.handle('analysis:jupyterStatus', async (_, cwd: string) => {
-    const project = getProjectByCwd(cwd)
-    if (!project) {
-      throw new Error('请选择一个已添加的项目')
+    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+    if (!workspace) {
+      return stoppedJupyterStatus(cwd, '请选择一个已添加的项目或当前 workspace')
     }
-    assertProjectPathAvailable(project.workingDirectory)
-    return jupyterServerRegistry.status(project.workingDirectory)
+    return jupyterServerRegistry.status(workspace.workingDirectory)
   })
   ipcMain.handle('analysis:jupyterRuntimeStatus', async (_, cwd: string) => {
-    const project = getProjectByCwd(cwd)
-    if (!project) {
-      throw new Error('请选择一个已添加的项目')
+    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+    if (!workspace) {
+      return emptyAnalysisRuntimeStatus(cwd, '请选择一个已添加的项目或当前 workspace')
     }
-    assertProjectPathAvailable(project.workingDirectory)
     return {
-      server: jupyterServerRegistry.status(project.workingDirectory),
-      notebooks: notebookSessionRegistry.projectSummary(project.workingDirectory)
+      server: jupyterServerRegistry.status(workspace.workingDirectory),
+      notebooks: notebookSessionRegistry.projectSummary(workspace.workingDirectory)
     }
   })
   ipcMain.handle('analysis:startJupyter', async (_, cwd: string) => {
-    const project = getProjectByCwd(cwd)
-    if (!project) {
-      throw new Error('请选择一个已添加的项目')
+    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+    if (!workspace) {
+      throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    assertProjectPathAvailable(project.workingDirectory)
-    return jupyterServerRegistry.start(project.workingDirectory)
+    return jupyterServerRegistry.start(workspace.workingDirectory)
   })
   ipcMain.handle('analysis:stopJupyter', async (_, cwd: string) => {
-    const project = getProjectByCwd(cwd)
-    if (!project) {
-      throw new Error('请选择一个已添加的项目')
+    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+    if (!workspace) {
+      throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    assertProjectPathAvailable(project.workingDirectory)
-    await notebookSessionRegistry.closeProject(project.workingDirectory)
-    notebookFileWatcher.unwatchProject(project.workingDirectory)
-    return jupyterServerRegistry.stop(project.workingDirectory)
+    await notebookSessionRegistry.closeProject(workspace.workingDirectory)
+    notebookFileWatcher.unwatchProject(workspace.workingDirectory)
+    return jupyterServerRegistry.stop(workspace.workingDirectory)
   })
   ipcMain.handle(
     'analysis:notebookSessionStatus',
     async (_, cwd: string, notebookPath: string, document: NotebookDocument) => {
-      const project = getProjectByCwd(cwd)
-      if (!project) {
-        throw new Error('请选择一个已添加的项目')
+      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+      if (!workspace) {
+        throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      assertProjectPathAvailable(project.workingDirectory)
-      const file = openProjectNotebook(project.workingDirectory, notebookPath)
+      const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
       return notebookSessionRegistry.status({
-        projectCwd: project.workingDirectory,
+        projectCwd: workspace.workingDirectory,
         notebookPath: file.path,
         document,
         kernels: detectConfiguredAnalysisKernels()
@@ -5135,14 +5214,13 @@ app.whenReady().then(() => {
   ipcMain.handle(
     'analysis:ensureNotebookSession',
     async (_, cwd: string, notebookPath: string, document: NotebookDocument) => {
-      const project = getProjectByCwd(cwd)
-      if (!project) {
-        throw new Error('请选择一个已添加的项目')
+      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+      if (!workspace) {
+        throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      assertProjectPathAvailable(project.workingDirectory)
-      const file = openProjectNotebook(project.workingDirectory, notebookPath)
+      const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
       return notebookSessionRegistry.ensureSession({
-        projectCwd: project.workingDirectory,
+        projectCwd: workspace.workingDirectory,
         notebookPath: file.path,
         document,
         kernels: detectConfiguredAnalysisKernels()
@@ -5150,24 +5228,22 @@ app.whenReady().then(() => {
     }
   )
   ipcMain.handle('analysis:closeNotebookSession', async (_, cwd: string, notebookPath: string) => {
-    const project = getProjectByCwd(cwd)
-    if (!project) {
-      throw new Error('请选择一个已添加的项目')
+    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+    if (!workspace) {
+      throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    assertProjectPathAvailable(project.workingDirectory)
-    const file = openProjectNotebook(project.workingDirectory, notebookPath)
-    return notebookSessionRegistry.closeSession(project.workingDirectory, file.path)
+    const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
+    return notebookSessionRegistry.closeSession(workspace.workingDirectory, file.path)
   })
   ipcMain.handle(
     'analysis:interruptNotebookExecution',
     async (_, cwd: string, notebookPath: string) => {
-      const project = getProjectByCwd(cwd)
-      if (!project) {
-        throw new Error('请选择一个已添加的项目')
+      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+      if (!workspace) {
+        throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      assertProjectPathAvailable(project.workingDirectory)
-      const file = openProjectNotebook(project.workingDirectory, notebookPath)
-      return notebookSessionRegistry.interruptSession(project.workingDirectory, file.path)
+      const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
+      return notebookSessionRegistry.interruptSession(workspace.workingDirectory, file.path)
     }
   )
   ipcMain.handle(
@@ -5183,12 +5259,11 @@ app.whenReady().then(() => {
         cursorPosition: number
       }
     ) => {
-      const project = getProjectByCwd(cwd)
-      if (!project) {
-        throw new Error('请选择一个已添加的项目')
+      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+      if (!workspace) {
+        throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      assertProjectPathAvailable(project.workingDirectory)
-      const file = openProjectNotebook(project.workingDirectory, input.path)
+      const file = openProjectNotebook(workspace.workingDirectory, input.path)
       const cell = input.document.cells.find((item) => item.id === input.cellId)
       const cursorPosition = Number.isFinite(input.cursorPosition)
         ? Math.max(0, Math.min(input.cursorPosition, input.source.length))
@@ -5199,12 +5274,12 @@ app.whenReady().then(() => {
 
       const staticCompletion = isPythonNotebookDocument(input.document)
         ? completeNotebookPythonStaticCompletion({
-            projectCwd: project.workingDirectory,
+            projectCwd: workspace.workingDirectory,
             source: input.source,
             cursorPosition
           })
         : null
-      const target = notebookSessionRegistry.executionTarget(project.workingDirectory, file.path)
+      const target = notebookSessionRegistry.executionTarget(workspace.workingDirectory, file.path)
       if (!target) {
         return (
           staticCompletion ??
@@ -5242,12 +5317,11 @@ app.whenReady().then(() => {
         lineLength?: number
       }
     ) => {
-      const project = getProjectByCwd(cwd)
-      if (!project) {
-        throw new Error('请选择一个已添加的项目')
+      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+      if (!workspace) {
+        throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      assertProjectPathAvailable(project.workingDirectory)
-      openProjectNotebook(project.workingDirectory, input.path)
+      openProjectNotebook(workspace.workingDirectory, input.path)
       const cell = input.document.cells.find((item) => item.id === input.cellId)
       if (!cell || cell.cellType !== 'code') {
         return {
@@ -5259,7 +5333,7 @@ app.whenReady().then(() => {
       }
 
       return formatNotebookCellSource({
-        projectCwd: project.workingDirectory,
+        projectCwd: workspace.workingDirectory,
         source: input.source,
         language: input.language,
         lineLength: input.lineLength
@@ -5282,29 +5356,28 @@ app.whenReady().then(() => {
   ipcMain.handle(
     'analysis:executeNotebookCell',
     async (_, cwd: string, notebookPath: string, document: NotebookDocument, cellId: string) => {
-      const project = getProjectByCwd(cwd)
-      if (!project) {
-        throw new Error('请选择一个已添加的项目')
+      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+      if (!workspace) {
+        throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      assertProjectPathAvailable(project.workingDirectory)
-      const file = openProjectNotebook(project.workingDirectory, notebookPath)
+      const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
       const kernels = detectConfiguredAnalysisKernels()
       let sessionStatus = await notebookSessionRegistry.ensureSession({
-        projectCwd: project.workingDirectory,
+        projectCwd: workspace.workingDirectory,
         notebookPath: file.path,
         document,
         kernels
       })
-      let target = notebookSessionRegistry.executionTarget(project.workingDirectory, file.path)
+      let target = notebookSessionRegistry.executionTarget(workspace.workingDirectory, file.path)
       if (!target) {
-        await ensureJupyterServerReady(project.workingDirectory)
+        await ensureJupyterServerReady(workspace.workingDirectory)
         sessionStatus = await notebookSessionRegistry.ensureSession({
-          projectCwd: project.workingDirectory,
+          projectCwd: workspace.workingDirectory,
           notebookPath: file.path,
           document,
           kernels
         })
-        target = notebookSessionRegistry.executionTarget(project.workingDirectory, file.path)
+        target = notebookSessionRegistry.executionTarget(workspace.workingDirectory, file.path)
       }
       if (!target) {
         throw new Error(sessionStatus.message ?? '请先连接 notebook kernel')
@@ -5316,7 +5389,7 @@ app.whenReady().then(() => {
       }
 
       notebookSessionRegistry.updateSessionState(
-        project.workingDirectory,
+        workspace.workingDirectory,
         file.path,
         'busy',
         'Notebook kernel 正在执行'
@@ -5334,14 +5407,14 @@ app.whenReady().then(() => {
           metadata: notebookCellMetadataWithExecutionDuration(cell.metadata, execution)
         })
         notebookToolExecutor.syncDraft({
-          cwd: project.workingDirectory,
+          cwd: workspace.workingDirectory,
           path: file.path,
           document: nextDocument,
           source: 'renderer'
         })
         const nextSessionStatus =
           notebookSessionRegistry.updateSessionState(
-            project.workingDirectory,
+            workspace.workingDirectory,
             file.path,
             execution.state === 'error' ? 'error' : 'idle',
             execution.state === 'error' ? 'Cell 执行出错' : 'Cell 执行完成'
@@ -5353,7 +5426,7 @@ app.whenReady().then(() => {
         }
       } catch (error) {
         notebookSessionRegistry.updateSessionState(
-          project.workingDirectory,
+          workspace.workingDirectory,
           file.path,
           'error',
           error instanceof Error ? error.message : String(error)

@@ -65,7 +65,7 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
         name: 'notebook.list',
         label: 'List Notebooks',
         description:
-          'List .ipynb notebooks in the current project. Use this before opening or modifying a notebook when the path is unknown.',
+          'List .ipynb notebooks in the current project or ordinary workspace. Use this before opening or modifying a notebook when the path is unknown.',
         parameters: {
           type: 'object',
           properties: {}
@@ -80,14 +80,14 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
         name: 'notebook.read',
         label: 'Read Notebook',
         description:
-          'Read the current in-memory notebook draft for a project notebook. Opens the notebook into the live agent workspace on first use. Cell summaries use one-based cellNumber values for human-facing order; use the stable id field as cellId when editing, deleting, or running a cell.',
+          'Read the current in-memory notebook draft for a workspace notebook. Opens the notebook into the live agent workspace on first use. Cell summaries use one-based cellNumber values for human-facing order; use the stable id field as cellId when editing, deleting, or running a cell.',
         parameters: {
           type: 'object',
           required: ['path'],
           properties: {
             path: {
               type: 'string',
-              description: 'Project-relative or absolute path to a .ipynb notebook.'
+              description: 'Workspace-relative or absolute path to a .ipynb notebook.'
             },
             includeOutputs: {
               type: 'boolean',
@@ -110,7 +110,7 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
           type: 'object',
           required: ['path', 'source'],
           properties: {
-            path: { type: 'string', description: 'Project-relative or absolute notebook path.' },
+            path: { type: 'string', description: 'Workspace-relative or absolute notebook path.' },
             source: { type: 'string', description: 'Cell source content.' },
             cellType: {
               type: 'string',
@@ -147,7 +147,7 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
           type: 'object',
           required: ['path', 'cellId', 'source'],
           properties: {
-            path: { type: 'string', description: 'Project-relative or absolute notebook path.' },
+            path: { type: 'string', description: 'Workspace-relative or absolute notebook path.' },
             cellId: {
               type: 'string',
               description:
@@ -176,7 +176,7 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
           type: 'object',
           required: ['path', 'cellId'],
           properties: {
-            path: { type: 'string', description: 'Project-relative or absolute notebook path.' },
+            path: { type: 'string', description: 'Workspace-relative or absolute notebook path.' },
             cellId: {
               type: 'string',
               description:
@@ -194,12 +194,12 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
         name: 'notebook.run_cell',
         label: 'Run Notebook Cell',
         description:
-          'Run one code cell through the Phi app-managed Jupyter server for the current project and update the live in-memory notebook draft with execution count, outputs, and duration metadata. Do not assume localhost:8888 or ask the user to restart an external JupyterLab; the host app starts or attaches the correct project server.',
+          'Run one code cell through the Phi app-managed Jupyter server for the current project or ordinary workspace and update the live in-memory notebook draft with execution count, outputs, and duration metadata. Do not assume localhost:8888 or ask the user to restart an external JupyterLab; the host app starts or attaches the correct workspace server.',
         parameters: {
           type: 'object',
           required: ['path', 'cellId'],
           properties: {
-            path: { type: 'string', description: 'Project-relative or absolute notebook path.' },
+            path: { type: 'string', description: 'Workspace-relative or absolute notebook path.' },
             cellId: {
               type: 'string',
               description:
@@ -217,12 +217,12 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
         name: 'notebook.save',
         label: 'Save Notebook',
         description:
-          'Save the live in-memory notebook draft back to its .ipynb file. Use after notebook edits that should persist in the project.',
+          'Save the live in-memory notebook draft back to its .ipynb file. Use after notebook edits that should persist in the workspace.',
         parameters: {
           type: 'object',
           required: ['path'],
           properties: {
-            path: { type: 'string', description: 'Project-relative or absolute notebook path.' }
+            path: { type: 'string', description: 'Workspace-relative or absolute notebook path.' }
           }
         },
         approval: 'write'

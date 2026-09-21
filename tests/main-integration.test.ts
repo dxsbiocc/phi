@@ -2613,7 +2613,8 @@ test('main IPC: analysis notebooks use the active project working directory', as
     outputsDir: string
   }
 
-  assert.equal(ordinary.message, '选择一个项目后显示 notebooks')
+  assert.equal(ordinary.projectCwd, '/workspace')
+  assert.equal(ordinary.message, undefined)
   assert.equal(registry.projectCwd, '/projects/research')
   assert.equal(registry.projectName, 'Project /projects/research')
   assert.deepEqual(
@@ -2664,7 +2665,29 @@ test('main IPC: analysis notebook files use the selected project service', async
   assert.equal(deleted.relativePath, 'notebooks/qc.ipynb')
 })
 
-test('main IPC: analysis kernel diagnostics require a known project when cwd is provided', async () => {
+test('main IPC: analysis notebook files also support the ordinary workspace', async () => {
+  const app = await harness()
+
+  const created = (await app.invoke('analysis:createNotebook', '/workspace')) as {
+    path: string
+    relativePath: string
+  }
+  const opened = (await app.invoke(
+    'analysis:openNotebook',
+    '/workspace',
+    created.relativePath
+  )) as {
+    path: string
+    relativePath: string
+  }
+
+  assert.equal(created.path, '/workspace/notebooks/Untitled.ipynb')
+  assert.equal(created.relativePath, 'notebooks/Untitled.ipynb')
+  assert.equal(opened.path, '/workspace/notebooks/Untitled.ipynb')
+  assert.equal(opened.relativePath, 'notebooks/Untitled.ipynb')
+})
+
+test('main IPC: analysis kernel diagnostics tolerate a missing project cwd', async () => {
   const app = await harness()
 
   const diagnostics = (await app.invoke('analysis:listKernels', '/projects/research')) as {
@@ -2677,7 +2700,17 @@ test('main IPC: analysis kernel diagnostics require a known project when cwd is 
   assert.equal(diagnostics.jupyterServer.version, '2.14.0')
   assert.equal(diagnostics.hasPythonKernel, true)
   assert.equal(diagnostics.hasRKernel, false)
-  await assert.rejects(app.invoke('analysis:listKernels', '/missing/project'), /请选择/)
+  const missingProjectDiagnostics = (await app.invoke(
+    'analysis:listKernels',
+    '/missing/project'
+  )) as {
+    jupyterServer: { available: boolean; version: string }
+    hasPythonKernel: boolean
+    hasRKernel: boolean
+  }
+  assert.equal(missingProjectDiagnostics.jupyterServer.available, true)
+  assert.equal(missingProjectDiagnostics.jupyterServer.version, '2.14.0')
+  assert.equal(missingProjectDiagnostics.hasPythonKernel, true)
 })
 
 test('main IPC: analysis Jupyter server lifecycle uses the selected project', async () => {
@@ -2708,6 +2741,41 @@ test('main IPC: analysis Jupyter server lifecycle uses the selected project', as
     { action: 'stop', cwd: '/projects/research' }
   ])
   await assert.rejects(app.invoke('analysis:startJupyter', '/missing/project'), /请选择/)
+})
+
+test('main IPC: read-only Jupyter status returns an empty state for a missing project cwd', async () => {
+  const app = await harness()
+
+  const status = (await app.invoke('analysis:jupyterStatus', '/missing/project')) as {
+    projectCwd: string
+    state: string
+    hasEndpoint: boolean
+    message?: string
+  }
+  const runtime = (await app.invoke('analysis:jupyterRuntimeStatus', '/missing/project')) as {
+    server: { projectCwd: string; state: string; hasEndpoint: boolean; message?: string }
+    notebooks: { activeSessionCount: number; busySessionCount: number; sessions: unknown[] }
+  }
+
+  assert.deepEqual(status, {
+    projectCwd: '/missing/project',
+    state: 'stopped',
+    hasEndpoint: false,
+    message: '请选择一个已添加的项目或当前 workspace'
+  })
+  assert.deepEqual(runtime, {
+    server: {
+      projectCwd: '/missing/project',
+      state: 'stopped',
+      hasEndpoint: false,
+      message: '请选择一个已添加的项目或当前 workspace'
+    },
+    notebooks: {
+      activeSessionCount: 0,
+      busySessionCount: 0,
+      sessions: []
+    }
+  })
 })
 
 test('main IPC: analysis Jupyter runtime status combines server and notebook sessions', async () => {

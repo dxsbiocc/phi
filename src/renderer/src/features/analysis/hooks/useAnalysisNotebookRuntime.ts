@@ -35,7 +35,6 @@ import {
 export function useAnalysisNotebookRuntime({
   rendererApi,
   getActiveCwd,
-  projectsRef,
   showSnackbar,
   onNavigateToNotebookView
 }: AnalysisNotebookRuntimeDeps): AnalysisNotebookRuntimeState {
@@ -99,6 +98,11 @@ export function useAnalysisNotebookRuntime({
     }
   }, [activeAnalysisNotebook])
 
+  const getActiveAnalysisCwd = useCallback((): string | null => {
+    const cwd = getActiveCwd()
+    return cwd || null
+  }, [getActiveCwd])
+
   const refreshAnalysisNotebooks = useCallback(async (): Promise<void> => {
     const request = ++analysisNotebooksRequestRef.current
     const cwd = getActiveCwd()
@@ -133,7 +137,12 @@ export function useAnalysisNotebookRuntime({
   const refreshAnalysisNotebookSessionStatus = useCallback(
     async (file: AnalysisNotebookFile): Promise<void> => {
       const request = ++analysisNotebookSessionRequestRef.current
-      const cwd = getActiveCwd()
+      const cwd = getActiveAnalysisCwd()
+      if (!cwd) {
+        setAnalysisNotebookSessionStatus(null)
+        setAnalysisNotebookSessionError(null)
+        return
+      }
       setAnalysisNotebookSessionError(null)
       try {
         const status = await rendererApi.getAnalysisNotebookSessionStatus(
@@ -141,7 +150,10 @@ export function useAnalysisNotebookRuntime({
           file.path,
           file.document
         )
-        if (request !== analysisNotebookSessionRequestRef.current || cwd !== getActiveCwd()) {
+        if (
+          request !== analysisNotebookSessionRequestRef.current ||
+          cwd !== getActiveAnalysisCwd()
+        ) {
           return
         }
         setAnalysisNotebookSessionStatus(status)
@@ -153,20 +165,28 @@ export function useAnalysisNotebookRuntime({
         )
       }
     },
-    [getActiveCwd, rendererApi]
+    [getActiveAnalysisCwd, rendererApi]
   )
 
   const onOpenAnalysisNotebook = useCallback(
     async (path: string): Promise<AnalysisNotebookFile | null> => {
       const request = ++analysisNotebookOpenRequestRef.current
-      const cwd = getActiveCwd()
+      const cwd = getActiveAnalysisCwd()
+      if (!cwd) {
+        setIsOpeningAnalysisNotebook(false)
+        setAnalysisNotebookContentError(null)
+        setAnalysisNotebookSessionError(null)
+        setAnalysisNotebookSessionStatus(null)
+        showSnackbar('请先选择一个 workspace 后再打开 notebook', 'warning')
+        return null
+      }
       setIsOpeningAnalysisNotebook(true)
       setAnalysisNotebookContentError(null)
       setAnalysisNotebookSessionError(null)
       setAnalysisNotebookSessionStatus(null)
       try {
         const file = await rendererApi.openAnalysisNotebook(cwd, path)
-        if (request !== analysisNotebookOpenRequestRef.current || cwd !== getActiveCwd()) {
+        if (request !== analysisNotebookOpenRequestRef.current || cwd !== getActiveAnalysisCwd()) {
           return null
         }
         setActiveAnalysisNotebook(file)
@@ -182,7 +202,7 @@ export function useAnalysisNotebookRuntime({
         }
       }
     },
-    [getActiveCwd, refreshAnalysisNotebookSessionStatus, rendererApi]
+    [getActiveAnalysisCwd, refreshAnalysisNotebookSessionStatus, rendererApi, showSnackbar]
   )
 
   const activateCachedAnalysisNotebook = useCallback(
@@ -355,6 +375,7 @@ export function useAnalysisNotebookRuntime({
     const cwd = getActiveCwd()
     if (!cwd) {
       setAnalysisJupyterStatus(null)
+      setAnalysisJupyterError(null)
       return
     }
 
@@ -414,9 +435,8 @@ export function useAnalysisNotebookRuntime({
 
   const refreshAnalysisJupyterRuntimeStatus = useCallback(async (): Promise<void> => {
     const request = ++analysisJupyterRuntimeRequestRef.current
-    const cwd = getActiveCwd()
-    const project = projectsRef.current.find((item) => item.workingDirectory === cwd)
-    if (!cwd || !project) {
+    const cwd = getActiveAnalysisCwd()
+    if (!cwd) {
       setAnalysisJupyterRuntimeStatus(null)
       setAnalysisJupyterRuntimeError(null)
       return
@@ -435,7 +455,7 @@ export function useAnalysisNotebookRuntime({
             server: await rendererApi.getAnalysisJupyterStatus(cwd),
             notebooks: { activeSessionCount: 0, busySessionCount: 0, sessions: [] }
           }
-      if (request !== analysisJupyterRuntimeRequestRef.current || cwd !== getActiveCwd()) {
+      if (request !== analysisJupyterRuntimeRequestRef.current || cwd !== getActiveAnalysisCwd()) {
         return
       }
       setAnalysisJupyterRuntimeStatus(status)
@@ -445,7 +465,10 @@ export function useAnalysisNotebookRuntime({
       if (missingJupyterRuntimeHandler(error)) {
         try {
           const server = await rendererApi.getAnalysisJupyterStatus(cwd)
-          if (request !== analysisJupyterRuntimeRequestRef.current || cwd !== getActiveCwd()) {
+          if (
+            request !== analysisJupyterRuntimeRequestRef.current ||
+            cwd !== getActiveAnalysisCwd()
+          ) {
             return
           }
           setAnalysisJupyterRuntimeStatus({
@@ -471,7 +494,7 @@ export function useAnalysisNotebookRuntime({
         setIsLoadingAnalysisJupyterRuntime(false)
       }
     }
-  }, [getActiveCwd, projectsRef, rendererApi])
+  }, [getActiveAnalysisCwd, rendererApi])
 
   const onStartAnalysisJupyter = useCallback(
     async (cwd: string): Promise<void> => {
