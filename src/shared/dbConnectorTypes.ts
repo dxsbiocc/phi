@@ -12,6 +12,12 @@ export interface DbConnectorAuth {
   envVar?: string
   paramName?: string
   headerName?: string
+  /** When true, queries fail fast if the env/settings secret is missing. */
+  required?: boolean
+  /** Human-facing label for settings UI, e.g. NCBI API key. */
+  label?: string
+  /** Where users can request a free/academic key. */
+  signupUrl?: string
 }
 
 export interface DbConnectorRateLimit {
@@ -46,6 +52,11 @@ export interface DbRestJsonRequestMapping {
   queryParams?: Record<string, string | number | boolean>
   filterParamMap?: Record<string, string>
   jsonBodyParamMap?: Record<string, string>
+  /**
+   * Rendered JSON body string fields with `{filter:x}`, `{rawQuery}`, `{limit}`, `{cursor}` tokens.
+   * Useful for GraphQL `query` bodies without exposing raw GraphQL to the agent.
+   */
+  jsonBodyTemplates?: Record<string, string>
   jsonBodyArrayFields?: string[]
   jsonBodyOptionalFields?: string[]
   rawQueryParam?: string
@@ -58,6 +69,15 @@ export interface DbRestJsonResponseMapping {
   totalRowsPath?: string
   nextCursorPath?: string
   fieldMap?: Record<string, string>
+  /** Response body format. Defaults to json. Use tsv for tab-delimited text APIs. */
+  format?: 'json' | 'tsv'
+  /** When format is tsv, treat the first line as a header row (default true). */
+  tsvHasHeader?: boolean
+  /**
+   * Explicit TSV column names when the response has no header, or to override header names.
+   * Mapped to row object keys in order.
+   */
+  tsvColumns?: string[]
 }
 
 export interface DbRestJsonDomainConfig {
@@ -68,6 +88,18 @@ export interface DbRestJsonDomainConfig {
 export interface DbSparqlDomainConfig {
   query: string
   prefixes?: Record<string, string>
+}
+
+export type DbOntologyOperation = 'lookup' | 'search' | 'children' | 'parents' | 'ancestors'
+
+export interface DbOntologyDomainConfig {
+  /** OLS ontology short id, for example go, hp, doid, mesh. */
+  ontologyId: string
+  operation: DbOntologyOperation
+  /** Optional OBO prefix used to build IRIs from compact ids (GO, HP, DOID, MESH). */
+  idPrefix?: string
+  /** Optional IRI prefix template; `{local_id}` is replaced with underscore form such as GO_0006915. */
+  iriTemplate?: string
 }
 
 export interface DbRecordIdentity {
@@ -85,6 +117,7 @@ export interface DbDomainManifest {
   identity?: DbRecordIdentity
   rest?: DbRestJsonDomainConfig
   sparql?: DbSparqlDomainConfig
+  ontology?: DbOntologyDomainConfig
 }
 
 export interface DbXrefEndpoint {
@@ -124,6 +157,19 @@ export interface DbConnectorCatalogEntry {
   enabledForQuery: boolean
 }
 
+export interface DbConnectorAuthSettings {
+  type: DbConnectorAuth['type']
+  envVar?: string
+  required: boolean
+  label?: string
+  signupUrl?: string
+  configured: boolean
+  configuredFromEnv: boolean
+  configuredInStore: boolean
+  /** True when OS safeStorage encryption is available for settings-backed secrets. */
+  storageAvailable: boolean
+}
+
 export interface DbConnectorSettingsItem {
   id: string
   name: string
@@ -134,6 +180,7 @@ export interface DbConnectorSettingsItem {
   installedAt: string
   domainCount: number
   domains: Array<{ id: string; summary: string }>
+  auth?: DbConnectorAuthSettings
 }
 
 export interface DbManifestParseResult {
@@ -255,6 +302,52 @@ export interface DbDownloadManifestSummary {
   kinds: string[]
 }
 
+export interface DbDownloadPlan {
+  status: 'ready' | 'needs_verification'
+  directUrlCount: number
+  toolName: 'db_download'
+  toolArgs: {
+    manifestPath: string
+    maxFiles: number
+  }
+  suggestedOutputDir: string
+  notes: string[]
+}
+
+export interface DbDownloadedFile {
+  rowIndex: number
+  accession?: string
+  kind?: string
+  url: string
+  sourcePath: string
+  path: string
+  filename: string
+  bytes: number
+  sha256: string
+}
+
+export interface DbDownloadSkippedFile {
+  rowIndex?: number
+  accession?: string
+  kind?: string
+  url?: string
+  reason: string
+}
+
+export interface DbDownloadToolDetails {
+  kind: 'db_download_result'
+  status: 'complete' | 'partial' | 'empty' | 'failed'
+  manifestPath: string
+  outputDir: string
+  requestedCount: number
+  downloadedCount: number
+  skippedCount: number
+  failedCount: number
+  files: DbDownloadedFile[]
+  skipped: DbDownloadSkippedFile[]
+  failures: DbDownloadSkippedFile[]
+}
+
 export type DbResultViewerKind = 'protein_structure' | 'small_molecule' | 'interaction_network'
 
 export type DbResultViewerLibrary = 'molstar' | 'rdkit-js' | 'cytoscape-js'
@@ -280,6 +373,8 @@ export type DbQueryToolDetails =
       artifacts?: DbQueryArtifact[]
       downloadManifestArtifact?: DbQueryArtifact
       downloadManifestSummary?: DbDownloadManifestSummary
+      downloadInstructions?: string[]
+      downloadPlan?: DbDownloadPlan
       provenance: DbQueryProvenance
       resolvedQuery?: DbResolvedQuery
     }
@@ -295,6 +390,8 @@ export type DbQueryToolDetails =
       csvArtifact?: DbQueryArtifact
       downloadManifestArtifact?: DbQueryArtifact
       downloadManifestSummary?: DbDownloadManifestSummary
+      downloadInstructions?: string[]
+      downloadPlan?: DbDownloadPlan
       outputPath: string
       outputArtifact: { kind: 'tool_output'; path: string; bytes: number }
       provenance: DbQueryProvenance

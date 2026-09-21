@@ -3,12 +3,15 @@ import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 import { readAppSettings } from '../app-settings'
 import { getPhiAgentDir } from '../runtime-paths'
 import { EntrezAdapter } from './adapters/entrez-adapter'
+import { KeggAdapter } from './adapters/kegg-adapter'
+import { OntologyAdapter } from './adapters/ontology-adapter'
 import { RestJsonAdapter } from './adapters/rest-json-adapter'
 import { SparqlAdapter } from './adapters/sparql-adapter'
 import { UniProtAdapter } from './adapters/uniprot-adapter'
 import { getDbProxyTransport } from './egress-transport'
 import { findDbConnectorCatalogEntry, listDbConnectorCatalog } from './catalog'
 import { buildDbQueryToolDetails } from './result-writer'
+import { buildDbDownloadTool } from './tool-download'
 import { docsSearchResults } from './tool-docs-search'
 import { resolveDbQueryInput } from './tool-query-resolution'
 import { DbHttpError, type DbEgressTransport, type DbSleep } from './policy'
@@ -18,6 +21,7 @@ import type {
   DbAdapterQueryResult,
   DbConnectorCatalogEntry,
   DbQueryParams,
+  DbQueryToolDetails,
   DbQueryToolErrorCode,
   DbQueryToolErrorDetails
 } from './manifest-types'
@@ -38,6 +42,27 @@ export interface DefaultDbAdapterOptions {
     now?: () => Date
   }
   sparql?: {
+    transport?: DbEgressTransport
+    proxyTransport?: DbEgressTransport
+    sleep?: DbSleep
+    timeoutMs?: number
+    now?: () => Date
+  }
+  ontology?: {
+    transport?: DbEgressTransport
+    proxyTransport?: DbEgressTransport
+    sleep?: DbSleep
+    timeoutMs?: number
+    now?: () => Date
+  }
+  kegg?: {
+    transport?: DbEgressTransport
+    proxyTransport?: DbEgressTransport
+    sleep?: DbSleep
+    timeoutMs?: number
+    now?: () => Date
+  }
+  download?: {
     transport?: DbEgressTransport
     proxyTransport?: DbEgressTransport
     sleep?: DbSleep
@@ -184,6 +209,105 @@ function dbQueryErrorDetails(error: unknown): DbQueryToolErrorDetails {
   return localDbQueryErrorDetails('query_failed', dbQueryErrorContent(error))
 }
 
+function compactDbRow(
+  row: Record<string, unknown>,
+  omitDownloadFields: boolean
+): Record<string, unknown> {
+  const compact: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(row)) {
+    if (omitDownloadFields && (key === 'download_files' || key === 'download_urls')) continue
+    compact[key] = compactDbValue(value)
+  }
+  return compact
+}
+
+function compactDbValue(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') {
+    return value.length > 1200 ? `${value.slice(0, 1200)}…[truncated ${value.length} chars]` : value
+  }
+  if (Array.isArray(value)) {
+    if (depth >= 2) return `[array:${value.length}]`
+    const items = value.slice(0, 20).map((item) => compactDbValue(item, depth + 1))
+    return value.length > 20 ? [...items, `[${value.length - 20} more]`] : items
+  }
+  if (isRecord(value)) {
+    if (depth >= 2) return `[object:${Object.keys(value).length}]`
+    const entries = Object.entries(value)
+    const compact: Record<string, unknown> = {}
+    for (const [key, item] of entries.slice(0, 20)) compact[key] = compactDbValue(item, depth + 1)
+    if (entries.length > 20) compact._omittedKeys = entries.length - 20
+    return compact
+  }
+  return value
+}
+
+function compactArtifacts(details: DbQueryToolDetails): Array<Record<string, unknown>> | undefined {
+  const artifacts = 'artifacts' in details ? details.artifacts : undefined
+  return artifacts?.map((artifact) => ({
+    format: artifact.format,
+    path: artifact.path,
+    bytes: artifact.bytes,
+    ...(artifact.rowCount === undefined ? {} : { rowCount: artifact.rowCount })
+  }))
+}
+
+function buildDbQueryToolContent(details: DbQueryToolDetails): string {
+  const hasDownloadManifest = Boolean(details.downloadManifestArtifact)
+  const rows =
+    details.mode === 'inline'
+      ? details.rows.map((row) => compactDbRow(row, hasDownloadManifest))
+      : details.sampleRows.map((row) => compactDbRow(row, hasDownloadManifest))
+  const content = {
+    kind: 'db_query_result_content',
+    mode: details.mode,
+    summary: details.summary,
+    provenance: {
+      database: details.provenance.database,
+      domain: details.provenance.domain,
+      retrievedAt: details.provenance.retrievedAt,
+      ...(details.provenance.pagesFetched === undefined
+        ? {}
+        : { pagesFetched: details.provenance.pagesFetched })
+    },
+    ...(details.resolvedQuery
+      ? {
+          resolvedQuery: {
+            database: details.resolvedQuery.database,
+            domain: details.resolvedQuery.domain,
+            inferred: details.resolvedQuery.inferred,
+            ...(details.resolvedQuery.input ? { input: details.resolvedQuery.input } : {}),
+            ...(details.resolvedQuery.filters ? { filters: details.resolvedQuery.filters } : {}),
+            ...(details.resolvedQuery.rawQuery ? { rawQuery: details.resolvedQuery.rawQuery } : {})
+          }
+        }
+      : {}),
+    [details.mode === 'inline' ? 'rows' : 'sampleRows']: rows,
+    ...(details.mode === 'artifact'
+      ? {
+          artifact: {
+            format: details.artifact.format,
+            path: details.artifact.path,
+            bytes: details.artifact.bytes,
+            rowCount: details.artifact.rowCount
+          }
+        }
+      : {}),
+    ...(details.viewerHints ? { viewerHints: details.viewerHints } : {}),
+    ...(hasDownloadManifest
+      ? {
+          download: {
+            manifestPath: details.downloadManifestArtifact?.path,
+            summary: details.downloadManifestSummary,
+            plan: details.downloadPlan,
+            instructions: details.downloadInstructions
+          }
+        }
+      : {}),
+    ...(compactArtifacts(details) ? { artifacts: compactArtifacts(details) } : {})
+  }
+  return JSON.stringify(content)
+}
+
 export function buildDbSearchTool(agentDir: string = getPhiAgentDir()): CustomTool {
   return {
     name: 'db_search',
@@ -287,7 +411,7 @@ export function buildDbQueryTool(
   return {
     name: 'db_query',
     label: 'Query Database',
-    description: `Run a read-only structured query against an enabled biological database connector. ${DB_TOOL_ROUTING_HINT} Use filters or rawQuery from the user intent; large results are written to an artifact and summarized.`,
+    description: `Run a read-only structured query against an enabled biological database connector. ${DB_TOOL_ROUTING_HINT} Use filters or rawQuery from the user intent; large results are written to an artifact and summarized. GEO, SRA, UniProt, and similar domains may return download_files plus a download_manifest_json artifact. If downloadPlan.status is "ready" and the user asked to download source data, call db_download with downloadManifestArtifact.path; db_query itself only resolves metadata and URLs.`,
     parameters: {
       type: 'object',
       properties: {
@@ -385,7 +509,7 @@ export function buildDbQueryTool(
           resolvedQuery: resolved.resolvedQuery
         })
         return {
-          content: [{ type: 'text', text: JSON.stringify(details, null, 2) }],
+          content: [{ type: 'text', text: buildDbQueryToolContent(details) }],
           details,
           ...(details.mode === 'artifact'
             ? {
@@ -450,12 +574,14 @@ export function buildDbDocsSearchTool(agentDir: string = getPhiAgentDir()): Cust
 
 export function buildDbCustomTools(
   adapters: Record<string, DbAdapter> = {},
-  agentDir: string = getPhiAgentDir()
+  agentDir: string = getPhiAgentDir(),
+  options: Pick<DefaultDbAdapterOptions, 'download'> = {}
 ): CustomTool[] {
   return [
     buildDbSearchTool(agentDir),
     buildDbDomainTool(agentDir),
     buildDbQueryTool(adapters, agentDir),
+    buildDbDownloadTool(agentDir, options.download),
     buildDbDocsSearchTool(agentDir)
   ]
 }
@@ -470,10 +596,14 @@ export function buildDefaultDbAdapters(
       adapters[entry.manifest.id] = new EntrezAdapter(entry.manifest, options.entrez)
     } else if (entry.manifest.id === 'rest-json/uniprot') {
       adapters[entry.manifest.id] = new UniProtAdapter(entry.manifest, options.restJson)
+    } else if (entry.manifest.id === 'rest-json/kegg') {
+      adapters[entry.manifest.id] = new KeggAdapter(entry.manifest, options.kegg)
     } else if (entry.manifest.protocolFamily === 'rest-json') {
       adapters[entry.manifest.id] = new RestJsonAdapter(entry.manifest, options.restJson)
     } else if (entry.manifest.protocolFamily === 'sparql') {
       adapters[entry.manifest.id] = new SparqlAdapter(entry.manifest, options.sparql)
+    } else if (entry.manifest.protocolFamily === 'ontology') {
+      adapters[entry.manifest.id] = new OntologyAdapter(entry.manifest, options.ontology)
     }
   }
   return adapters
@@ -483,5 +613,5 @@ export function buildDefaultDbCustomTools(
   agentDir: string = getPhiAgentDir(),
   options: DefaultDbAdapterOptions = {}
 ): CustomTool[] {
-  return buildDbCustomTools(buildDefaultDbAdapters(agentDir, options), agentDir)
+  return buildDbCustomTools(buildDefaultDbAdapters(agentDir, options), agentDir, options)
 }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -376,7 +376,13 @@ test('the bundled Database agent owns only biological database tools', () => {
   const database = agents.find((agent) => agent.name === 'Database')
   assert.ok(database, 'resources/agents/Database.md should define Database')
   assert.equal(database.source, 'phi')
-  assert.deepEqual(database.tools, ['db_search', 'db_domain', 'db_docs_search', 'db_query'])
+  assert.deepEqual(database.tools, [
+    'db_search',
+    'db_domain',
+    'db_docs_search',
+    'db_query',
+    'db_download'
+  ])
   for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit', 'eval', 'web_search']) {
     assert.ok(!database.tools.includes(tool), `Database must not have system tool ${tool}`)
   }
@@ -387,6 +393,8 @@ test('the bundled Database agent owns only biological database tools', () => {
   assert.match(database.systemPrompt, /bulk download/i)
   assert.match(database.systemPrompt, /before (?:the )?first tool call/i)
   assert.match(database.systemPrompt, /candidate routes/i)
+  assert.match(database.systemPrompt, /exact public-accession/i)
+  assert.match(database.systemPrompt, /Do not call `db_search` or `db_domain` first/i)
   assert.match(database.systemPrompt, /do not repeat/i)
   assert.doesNotMatch(database.systemPrompt, /skill:\/\/create-database-connector/)
   assert.ok(database.delegation && database.delegation.length > 0)
@@ -394,9 +402,53 @@ test('the bundled Database agent owns only biological database tools', () => {
   assert.equal(database.fallback?.afterFailures, 1)
   assert.deepEqual(database.fallback?.tools, ['bash', 'eval', 'web_search'])
   assert.ok(database.fallback?.match.includes('rest.uniprot.org'))
-  for (const toolName of ['db_search', 'db_domain', 'db_docs_search', 'db_query']) {
+  for (const toolName of ['db_search', 'db_domain', 'db_docs_search', 'db_query', 'db_download']) {
     assert.doesNotMatch(database.delegation ?? '', new RegExp(`\\b${toolName}\\b`))
   }
+})
+
+test('the bundled Visualization agent routes template previews through omics visualization', () => {
+  const { agents, diagnostics } = discoverPhiAgents({
+    cwd: '/nonexistent/cwd',
+    agentDir: '/nonexistent/agentdir',
+    bundledDir: REPO_AGENTS_DIR,
+    homeDir: '/nonexistent/home'
+  })
+  assert.deepEqual(diagnostics, [])
+  const visualization = agents.find((agent) => agent.name === 'Visualization')
+  assert.ok(visualization, 'resources/agents/Visualization.md should define Visualization')
+  assert.equal(visualization.source, 'phi')
+  for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit']) {
+    assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
+  }
+  assert.deepEqual(visualization.skills, ['omics-visualization'])
+  assert.equal(existsSync(join(REPO_SKILLS_DIR, 'omics-visualization', 'SKILL.md')), true)
+  assert.equal(visualization.delegationMode, 'required-first')
+  assert.equal(visualization.fallback?.afterFailures, 1)
+  assert.deepEqual(visualization.fallback?.tools, ['bash', 'eval'])
+  assert.ok(visualization.fallback?.match.includes('resources/skills/omics-visualization'))
+  assert.match(visualization.delegation ?? '', /show a few templates/i)
+  assert.match(visualization.delegation ?? '', /preview/i)
+  assert.match(visualization.delegation ?? '', /directly drawing with Python\/R/i)
+  assert.match(visualization.systemPrompt, /skill:\/\/omics-visualization/)
+  assert.match(visualization.systemPrompt, /preview-selection mode/i)
+  assert.match(visualization.systemPrompt, /Markdown image/i)
+  assert.match(visualization.systemPrompt, /template_id/)
+  assert.match(visualization.systemPrompt, /absolute path/i)
+  assert.match(visualization.systemPrompt, /Do not copy the skill's `references\/`/)
+  assert.match(
+    visualization.systemPrompt,
+    /sourcing the installed read-only `scripts\/lib\/common\.R`/
+  )
+  assert.match(visualization.systemPrompt, /Do not invent template ids/i)
+
+  const skillText = readFileSync(join(REPO_SKILLS_DIR, 'omics-visualization', 'SKILL.md'), 'utf-8')
+  assert.match(skillText, /Do not copy `references\/`, `references\/palettes\/`, or catalog files/)
+  const commonR = readFileSync(
+    join(REPO_SKILLS_DIR, 'omics-visualization', 'scripts', 'lib', 'common.R'),
+    'utf-8'
+  )
+  assert.match(commonR, /OMICS_VISUALIZATION_SKILL_ROOT/)
 })
 
 // ── the leader prompt ─────────────────────────────────────────────────────
@@ -416,10 +468,12 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
   assert.match(prompt, /^<phi_agents>/)
   assert.match(prompt, /<\/phi_agents>$/)
   assert.match(prompt, /- Database: /)
+  assert.match(prompt, /- Visualization: /)
   assert.match(prompt, /- Wrapper: /)
   assert.match(prompt, /self-contained/i)
   assert.match(prompt, /absolute/i)
   assert.match(prompt, /cannot (see|ask)/i)
+  assert.match(prompt, /show a few templates/i)
   assert.match(prompt, /nextflow/i)
   assert.match(prompt, /do not/i)
   assert.match(prompt, /required-first/i)
@@ -433,7 +487,8 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
     'db_search',
     'db_domain',
     'db_docs_search',
-    'db_query'
+    'db_query',
+    'db_download'
   ]) {
     assert.ok(!new RegExp(`\\b${name}\\b`).test(prompt), `leader prompt must not mention ${name}`)
   }

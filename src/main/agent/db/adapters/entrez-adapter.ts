@@ -16,7 +16,11 @@ import {
   isEntrezFastaDomain
 } from './entrez-params'
 import { addFastaSequences } from './entrez-fasta'
-import { addGeoFetchDetails } from './entrez-geo'
+import {
+  addGeoDirectoryListingDownloadFiles,
+  addGeoFetchDetails,
+  geoDirectoryListingRequests
+} from './entrez-geo'
 import { addPubmedFetchDetails } from './entrez-pubmed'
 import { addSraFetchDetails } from './entrez-sra'
 import { normalizeEntrezSummaryRow } from './entrez-summary'
@@ -134,12 +138,20 @@ export class EntrezAdapter implements DbAdapter {
     const rowsWithFetch = fetchResponse
       ? addEntrezFetchFields(params.domain, rows, await fetchResponse.response.text())
       : rows
-    const projectedRows = rowsWithFetch.map((row) =>
-      projectDbRow(normalizeDbRecord(row, this.manifest.id, domain), params.fields)
+    const geoDirectoryResult =
+      params.domain === 'geo'
+        ? await this.addGeoDirectoryDownloadFiles(rowsWithFetch, context)
+        : { rows: rowsWithFetch, responses: [] }
+    const provenance = combineEntrezQueryResponses(
+      response,
+      summaryResponse,
+      fetchResponse,
+      ...geoDirectoryResult.responses
     )
-    const provenance = combineEntrezQueryResponses(response, summaryResponse, fetchResponse)
     return {
-      rows: projectedRows,
+      rows: geoDirectoryResult.rows.map((row) =>
+        projectDbRow(normalizeDbRecord(row, this.manifest.id, domain), params.fields)
+      ),
       totalRows: searchResult.totalRows,
       truncated: Boolean(searchResult.nextCursor),
       nextCursor: searchResult.nextCursor,
@@ -154,6 +166,56 @@ export class EntrezAdapter implements DbAdapter {
         transportName: provenance.transportName,
         defaultProxyMode: provenance.defaultProxyMode
       }
+    }
+  }
+
+  private async addGeoDirectoryDownloadFiles(
+    rows: Record<string, unknown>[],
+    context: DbAdapterQueryContext
+  ): Promise<{ rows: Record<string, unknown>[]; responses: EntrezQueryResponse[] }> {
+    const responses: EntrezQueryResponse[] = []
+    const manifest = geoDownloadManifest(this.manifest)
+    const enrichedRows: Record<string, unknown>[] = []
+    for (const row of rows) {
+      let enriched = row
+      for (const request of geoDirectoryListingRequests(row)) {
+        try {
+          const response = await executeDbHttpRequest({
+            manifest,
+            path: request.url,
+            method: 'GET',
+            defaultProxyMode: context.defaultProxyMode,
+            transport: this.options.transport,
+            proxyTransport: context.proxyTransport ?? this.options.proxyTransport,
+            sleep: this.options.sleep,
+            timeoutMs: this.options.timeoutMs,
+            idempotent: true
+          })
+          responses.push(response)
+          enriched = addGeoDirectoryListingDownloadFiles(
+            enriched,
+            request,
+            await response.response.text()
+          )
+        } catch {
+          // GEO download directories are optional enrichment. Keep metadata and inferred candidates.
+        }
+      }
+      enrichedRows.push(enriched)
+    }
+    return { rows: enrichedRows, responses }
+  }
+}
+
+function geoDownloadManifest(manifest: DbConnectorManifest): DbConnectorManifest {
+  return {
+    ...manifest,
+    auth: { type: 'none' },
+    networkPolicy: {
+      ...manifest.networkPolicy,
+      allowedHosts: Array.from(
+        new Set([...manifest.networkPolicy.allowedHosts, 'ftp.ncbi.nlm.nih.gov'])
+      )
     }
   }
 }

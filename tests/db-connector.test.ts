@@ -13,8 +13,18 @@ import {
 } from '../src/main/agent/db/adapters/entrez-adapter'
 import {
   RestJsonAdapter,
-  buildRestJsonRequest
+  buildRestJsonRequest,
+  parseTsvPayload
 } from '../src/main/agent/db/adapters/rest-json-adapter'
+import { OntologyAdapter } from '../src/main/agent/db/adapters/ontology-adapter'
+import { KeggAdapter, buildKeggRequestPath } from '../src/main/agent/db/adapters/kegg-adapter'
+import {
+  keggListRowsToRecords,
+  normalizeKeggCompoundRow,
+  normalizeKeggGeneRow,
+  parseKeggFlatRecords,
+  parseKeggListText
+} from '../src/main/agent/db/adapters/kegg-parser'
 import { SparqlAdapter, buildSparqlQuery } from '../src/main/agent/db/adapters/sparql-adapter'
 import {
   UniProtAdapter,
@@ -36,6 +46,7 @@ import type {
   DbAdapterQueryResult,
   DbConnectorManifest,
   DbDownloadFileCandidate,
+  DbDownloadToolDetails,
   DbQueryParams,
   DbQueryToolDetails,
   DbResolvedQuery,
@@ -55,6 +66,7 @@ import {
   getDbConnectorAuditLogPath,
   getDbConnectorFieldGlossaryPath,
   getDbConnectorNavigatorSkillPath,
+  getDbConnectorResultsDir,
   setDbConnectorQueryEnabled
 } from '../src/main/agent/db/store'
 import {
@@ -62,6 +74,7 @@ import {
   buildDbDocsSearchTool,
   buildDbQueryTool,
   buildDbSearchTool,
+  buildDefaultDbAdapters,
   buildDefaultDbCustomTools
 } from '../src/main/agent/db/tools'
 
@@ -291,7 +304,7 @@ test('db_docs_search returns ranked manifest docs, fields, and xref hints', asyn
 
     const domainSearch = await tool.execute(
       'call-docs-2',
-      { keyword: 'Gene records', domain: 'gene', limit: 2 },
+      { keyword: 'Gene records', database: 'entrez/ncbi', domain: 'gene', limit: 2 },
       undefined,
       fakeCtx()
     )
@@ -524,6 +537,23 @@ test('result writer keeps small results inline and writes large results to artif
       formats: ['txt'],
       kinds: ['series_matrix']
     })
+    assert.equal(geoInline.downloadPlan?.status, 'needs_verification')
+    assert.equal(geoInline.downloadPlan?.directUrlCount, 0)
+    assert.equal(geoInline.downloadPlan?.toolName, 'db_download')
+    assert.equal(
+      geoInline.downloadPlan?.toolArgs.manifestPath,
+      geoInline.downloadManifestArtifact.path
+    )
+    assert.ok(
+      geoInline.downloadInstructions?.some((instruction) =>
+        instruction.includes('download_manifest_json artifact')
+      )
+    )
+    assert.ok(
+      geoInline.downloadInstructions?.some((instruction) =>
+        instruction.includes('series_matrix_directory')
+      )
+    )
     assert.equal(existsSync(geoInline.downloadManifestArtifact.path), true)
     const inlineManifest = JSON.parse(
       readFileSync(geoInline.downloadManifestArtifact.path, 'utf-8')
@@ -538,6 +568,47 @@ test('result writer keeps small results inline and writes large results to artif
     assert.equal(inlineManifest.rows[0]?.accession, 'GSE2553')
     assert.equal(inlineManifest.rows[0]?.download_files[0]?.kind, 'series_matrix')
     assert.equal(inlineManifest.rows[0]?.download_files[0]?.url, geoDownloadFiles[0].url)
+
+    const directGeoDownloadFiles = [
+      {
+        kind: 'supplementary_file',
+        accession: 'GSE2553',
+        url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/suppl/GSE2553_processed_data_file_1.xls.gz',
+        filename: 'GSE2553_processed_data_file_1.xls.gz',
+        format: 'xls',
+        compression: 'gzip',
+        availability: 'direct_url',
+        source: 'geo_directory_listing'
+      }
+    ] satisfies DbDownloadFileCandidate[]
+    const geoDirect = buildDbQueryToolDetails(
+      {
+        rows: [
+          {
+            accession: 'GSE2553',
+            title: 'Breast cancer series',
+            download_files: directGeoDownloadFiles
+          }
+        ],
+        truncated: false,
+        provenance: { ...provenance, domain: 'geo' }
+      },
+      { agentDir, fileStem: 'geo-direct-download', resolvedQuery }
+    )
+    assert.equal(geoDirect.downloadManifestSummary?.directUrlCount, 1)
+    assert.equal(geoDirect.downloadPlan?.status, 'ready')
+    assert.equal(geoDirect.downloadPlan?.directUrlCount, 1)
+    assert.equal(geoDirect.downloadPlan?.toolName, 'db_download')
+    assert.equal(
+      geoDirect.downloadPlan?.toolArgs.manifestPath,
+      geoDirect.downloadManifestArtifact?.path
+    )
+    assert.equal(geoDirect.downloadPlan?.toolArgs.maxFiles, 20)
+    assert.ok(
+      geoDirect.downloadInstructions?.some((instruction) =>
+        instruction.includes('direct_url entries suitable')
+      )
+    )
 
     const incompleteDownloadFiles = buildDbQueryToolDetails(
       {
@@ -653,6 +724,8 @@ test('result writer keeps small results inline and writes large results to artif
       artifacts: Array<{ format: string }>
       downloadManifestArtifact: { format: string }
       downloadManifestSummary: { candidateCount: number; candidateFileCount: number }
+      downloadInstructions?: string[]
+      downloadPlan?: { status: string; toolName: string; toolArgs: { manifestPath: string } }
     }
     assert.deepEqual(
       geoMetadata.artifacts.map((artifact) => artifact.format),
@@ -661,6 +734,13 @@ test('result writer keeps small results inline and writes large results to artif
     assert.equal(geoMetadata.downloadManifestArtifact.format, 'download_manifest_json')
     assert.equal(geoMetadata.downloadManifestSummary.candidateCount, 30)
     assert.equal(geoMetadata.downloadManifestSummary.candidateFileCount, 30)
+    assert.ok(
+      geoMetadata.downloadInstructions?.some((instruction) =>
+        instruction.includes('download_manifest_json artifact')
+      )
+    )
+    assert.equal(geoMetadata.downloadPlan?.status, 'needs_verification')
+    assert.equal(geoMetadata.downloadPlan?.toolName, 'db_download')
   })
 })
 
@@ -744,7 +824,11 @@ test('db_query writes download manifest artifacts from adapter download_files', 
       formats: ['html'],
       kinds: ['sra_run_browser']
     })
-    assert.match(result.content[0]?.text ?? '', /"downloadManifestSummary"/)
+    const compactContent = result.content[0]?.text ?? ''
+    assert.match(compactContent, /"kind":"db_query_result_content"/)
+    assert.match(compactContent, /"download":/)
+    assert.match(compactContent, /"toolName":"db_download"/)
+    assert.ok(compactContent.length < JSON.stringify(details, null, 2).length)
     assert.equal(existsSync(details.downloadManifestArtifact?.path ?? ''), true)
     const manifest = JSON.parse(
       readFileSync(details.downloadManifestArtifact?.path ?? '', 'utf-8')
@@ -761,6 +845,102 @@ test('db_query writes download manifest artifacts from adapter download_files', 
     assert.deepEqual(manifest.rows[0]?.download_files, downloadFiles)
     assert.equal(manifest.resolvedQuery.database, 'entrez/ncbi')
     assert.equal(manifest.resolvedQuery.domain, 'sra')
+  })
+})
+
+test('db_download fetches direct_url files from a db_query download manifest without bash', async () => {
+  await withHarness(async ({ agentDir }) => {
+    const resultDir = getDbConnectorResultsDir(agentDir)
+    mkdirSync(resultDir, { recursive: true })
+    const manifestPath = join(resultDir, 'geo.download-manifest.json')
+    writeFileSync(
+      manifestPath,
+      `${JSON.stringify(
+        {
+          kind: 'db_query_download_manifest',
+          generatedAt: '2026-09-21T00:00:00.000Z',
+          summary: {
+            rowCount: 1,
+            returnedRows: 1,
+            truncated: false,
+            fields: ['accession', 'download_files'],
+            warnings: []
+          },
+          provenance: {
+            database: 'entrez/ncbi',
+            domain: 'geo',
+            retrievedAt: '2026-09-21T00:00:00.000Z'
+          },
+          rows: [
+            {
+              rowIndex: 0,
+              accession: 'GSE2553',
+              title: 'GEO test',
+              download_files: [
+                {
+                  kind: 'supplementary_file',
+                  accession: 'GSE2553',
+                  url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/suppl/GSE2553_processed_data_file_1.xls.gz',
+                  filename: 'GSE2553_processed_data_file_1.xls.gz',
+                  format: 'xls',
+                  availability: 'direct_url',
+                  source: 'geo_directory_listing'
+                },
+                {
+                  kind: 'supplementary_directory',
+                  accession: 'GSE2553',
+                  url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/suppl/',
+                  format: 'directory',
+                  availability: 'directory',
+                  source: 'derived_from_gse_accession'
+                }
+              ]
+            }
+          ]
+        },
+        null,
+        2
+      )}\n`,
+      'utf-8'
+    )
+
+    const payload = 'downloaded GEO supplementary data\n'
+    const tools = buildDefaultDbCustomTools(agentDir, {
+      download: {
+        sleep: async () => {},
+        transport: {
+          name: 'mock-db-download',
+          async fetch(input) {
+            assert.equal(input.hostname, 'ftp.ncbi.nlm.nih.gov')
+            assert.equal(input.pathname.endsWith('/GSE2553_processed_data_file_1.xls.gz'), true)
+            return new Response(payload, {
+              status: 200,
+              headers: { 'content-type': 'application/octet-stream' }
+            })
+          }
+        }
+      }
+    })
+    const download = tools.find((tool) => tool.name === 'db_download')
+    assert.ok(download)
+
+    const result = await download.execute(
+      'call-db-download',
+      { manifestPath, maxFiles: 5 },
+      undefined,
+      fakeCtx()
+    )
+
+    assert.equal(result.isError, undefined)
+    const details = result.details as DbDownloadToolDetails
+    assert.equal(details.status, 'complete')
+    assert.equal(details.downloadedCount, 1)
+    assert.equal(details.failedCount, 0)
+    assert.equal(details.skippedCount, 1)
+    assert.equal(details.skipped[0]?.reason, 'not_direct_url')
+    assert.equal(details.files[0]?.filename, 'GSE2553_processed_data_file_1.xls.gz')
+    assert.equal(readFileSync(details.files[0]?.path ?? '', 'utf-8'), payload)
+    assert.match(details.files[0]?.sha256 ?? '', /^sha256:[0-9a-f]{64}$/)
   })
 })
 
@@ -4510,6 +4690,47 @@ test('Entrez adapter fetches NCBI GEO DataSets text details through efetch', asy
     transport: {
       name: 'mock-ncbi-geo',
       async fetch(input) {
+        if (input.hostname === 'ftp.ncbi.nlm.nih.gov') {
+          if (input.pathname.endsWith('/matrix/')) {
+            return new Response(
+              `<!DOCTYPE HTML>
+<html><body><pre>Name Last modified Size <hr>
+<a href="GSE2553-GPL1977_series_matrix.txt.gz">GSE2553-GPL1977_series_matrix.txt.gz</a> 2026-07-07 00:52 4.1K
+<a href="GSE2553-GPL2019_series_matrix.txt.gz">GSE2553-GPL2019_series_matrix.txt.gz</a> 2026-07-07 00:52 2.7K
+</pre></body></html>`,
+              { status: 200 }
+            )
+          }
+          if (input.pathname.endsWith('/soft/')) {
+            return new Response(
+              `<!DOCTYPE HTML>
+<html><body><pre>Name Last modified Size <hr>
+<a href="GSE2553_family.soft.gz">GSE2553_family.soft.gz</a> 2026-07-07 00:52 24M
+</pre></body></html>`,
+              { status: 200 }
+            )
+          }
+          if (input.pathname.endsWith('/miniml/')) {
+            return new Response(
+              `<!DOCTYPE HTML>
+<html><body><pre>Name Last modified Size <hr>
+<a href="GSE2553_family.xml.tgz">GSE2553_family.xml.tgz</a> 2026-07-07 00:52 18M
+</pre></body></html>`,
+              { status: 200 }
+            )
+          }
+          if (input.pathname.endsWith('/suppl/')) {
+            return new Response(
+              `<!DOCTYPE HTML>
+<html><body><pre>Name Last modified Size <hr>
+<a href="GSE2553_processed_data_file_1.xls.gz">GSE2553_processed_data_file_1.xls.gz</a> 2021-07-13 12:17 8.3M
+<a href="GSE2553_processed_data_file_2.xls.gz">GSE2553_processed_data_file_2.xls.gz</a> 2021-07-13 12:17 12M
+</pre></body></html>`,
+              { status: 200 }
+            )
+          }
+          throw new Error(`Unexpected GEO FTP listing path: ${input.pathname}`)
+        }
         assert.equal(input.hostname, 'eutils.ncbi.nlm.nih.gov')
         if (input.pathname.endsWith('/esearch.fcgi')) {
           assert.equal(input.searchParams.get('db'), 'gds')
@@ -4622,7 +4843,9 @@ Series\t\tAccession: GSE2553\tID: 200002553`,
     supplementary_dir: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/suppl/',
     raw_tar: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/suppl/GSE2553_RAW.tar'
   })
-  assert.deepEqual(geo.rows[0].download_files, [
+  const geoDownloadFiles = geo.rows[0].download_files as DbDownloadFileCandidate[]
+  assert.ok(Array.isArray(geoDownloadFiles))
+  assert.deepEqual(geoDownloadFiles.slice(0, 6), [
     {
       kind: 'series_matrix',
       label: 'Series Matrix',
@@ -4647,20 +4870,24 @@ Series\t\tAccession: GSE2553\tID: 200002553`,
       label: 'SOFT Family',
       accession: 'GSE2553',
       url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/soft/GSE2553_family.soft.gz',
+      filename: 'GSE2553_family.soft.gz',
       format: 'soft',
       compression: 'gzip',
-      availability: 'candidate_file',
-      source: 'derived_from_gse_accession'
+      size: 25165824,
+      availability: 'direct_url',
+      source: 'geo_directory_listing'
     },
     {
       kind: 'miniml_family',
       label: 'MINiML Family',
       accession: 'GSE2553',
       url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/miniml/GSE2553_family.xml.tgz',
+      filename: 'GSE2553_family.xml.tgz',
       format: 'xml',
       compression: 'tgz',
-      availability: 'candidate_file',
-      source: 'derived_from_gse_accession'
+      size: 18874368,
+      availability: 'direct_url',
+      source: 'geo_directory_listing'
     },
     {
       kind: 'supplementary_directory',
@@ -4681,9 +4908,52 @@ Series\t\tAccession: GSE2553\tID: 200002553`,
       source: 'derived_from_gse_accession'
     }
   ])
+  assert.deepEqual(
+    geoDownloadFiles.find((file) => file.filename === 'GSE2553-GPL1977_series_matrix.txt.gz'),
+    {
+      kind: 'series_matrix',
+      label: 'Series Matrix',
+      accession: 'GSE2553',
+      url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/matrix/GSE2553-GPL1977_series_matrix.txt.gz',
+      filename: 'GSE2553-GPL1977_series_matrix.txt.gz',
+      format: 'txt',
+      compression: 'gzip',
+      size: 4198,
+      availability: 'direct_url',
+      source: 'geo_directory_listing'
+    }
+  )
+  assert.deepEqual(
+    geoDownloadFiles.find((file) => file.filename === 'GSE2553_processed_data_file_1.xls.gz'),
+    {
+      kind: 'supplementary_file',
+      label: 'Supplementary File',
+      accession: 'GSE2553',
+      url: 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE2nnn/GSE2553/suppl/GSE2553_processed_data_file_1.xls.gz',
+      filename: 'GSE2553_processed_data_file_1.xls.gz',
+      format: 'xls',
+      compression: 'gzip',
+      size: 8703181,
+      availability: 'direct_url',
+      source: 'geo_directory_listing'
+    }
+  )
+  assert.deepEqual(
+    geoDownloadFiles
+      .filter((file) => file.source === 'geo_directory_listing')
+      .map((file) => [file.kind, file.filename]),
+    [
+      ['soft_family', 'GSE2553_family.soft.gz'],
+      ['miniml_family', 'GSE2553_family.xml.tgz'],
+      ['series_matrix', 'GSE2553-GPL1977_series_matrix.txt.gz'],
+      ['series_matrix', 'GSE2553-GPL2019_series_matrix.txt.gz'],
+      ['supplementary_file', 'GSE2553_processed_data_file_1.xls.gz'],
+      ['supplementary_file', 'GSE2553_processed_data_file_2.xls.gz']
+    ]
+  )
   assert.equal(geo.rows[0].geo2r_available, true)
   assert.equal(geo.rows[0].published_date, '2005/10/11')
-  assert.equal(geo.provenance.attempts, 3)
+  assert.equal(geo.provenance.attempts, 7)
   assert.equal(geo.provenance.transportName, 'mock-ncbi-geo')
 })
 
@@ -6073,6 +6343,7 @@ test('default DB custom tools register bundled Entrez and query through the adap
         ['db_search', 'read'],
         ['db_domain', 'read'],
         ['db_query', 'read'],
+        ['db_download', 'read'],
         ['db_docs_search', 'read']
       ]
     )
@@ -6230,6 +6501,262 @@ test('default DB custom tools register bundled UniProt REST and query through th
   })
 })
 
+test('bundled catalog includes Phase 1 expansion connectors and default adapters', async () => {
+  await withHarness(({ agentDir }) => {
+    const expectedIds = [
+      'entrez/ncbi',
+      'ontology/chebi',
+      'ontology/doid',
+      'ontology/go',
+      'ontology/hpo',
+      'ontology/mesh',
+      'rest-json/alphafold',
+      'rest-json/bindingdb',
+      'rest-json/biogrid',
+      'rest-json/cbioportal',
+      'rest-json/chembl',
+      'rest-json/clinicaltrials',
+      'rest-json/clinpgx',
+      'rest-json/ensembl',
+      'rest-json/europepmc',
+      'rest-json/gdc',
+      'rest-json/gnomad',
+      'rest-json/gtex',
+      'rest-json/gwas-catalog',
+      'rest-json/hpa',
+      'rest-json/interpro',
+      'rest-json/jaspar',
+      'rest-json/kegg',
+      'rest-json/monarch',
+      'rest-json/mygene',
+      'rest-json/myvariant',
+      'rest-json/omnipath',
+      'rest-json/openfda',
+      'rest-json/opentargets',
+      'rest-json/pdbe',
+      'rest-json/pubchem',
+      'rest-json/reactome',
+      'rest-json/string',
+      'rest-json/uniprot',
+      'rest-json/zinc',
+      'sparql/uniprot',
+      'sparql/wikipathways'
+    ]
+    const catalog = listDbConnectorCatalog(agentDir)
+    const ids = catalog.map((entry) => entry.manifest.id).sort()
+    for (const id of expectedIds) {
+      assert.ok(ids.includes(id), `missing bundled connector ${id}`)
+      const entry = catalog.find((candidate) => candidate.manifest.id === id)
+      assert.equal(entry?.trustTier, 'bundled')
+      assert.equal(entry?.enabledForQuery, true)
+      assert.ok((entry?.manifest.domains.length ?? 0) > 0)
+    }
+
+    const adapters = buildDefaultDbAdapters(agentDir)
+    for (const id of expectedIds) {
+      assert.ok(adapters[id], `missing default adapter for ${id}`)
+    }
+    assert.equal(adapters['rest-json/cbioportal']?.constructor.name, 'RestJsonAdapter')
+    assert.equal(adapters['sparql/wikipathways']?.constructor.name, 'SparqlAdapter')
+    assert.equal(adapters['rest-json/uniprot']?.constructor.name, 'UniProtAdapter')
+    assert.equal(adapters['ontology/go']?.constructor.name, 'OntologyAdapter')
+    assert.equal(adapters['rest-json/kegg']?.constructor.name, 'KeggAdapter')
+
+    const docs = buildGeneratedDbConnectorDocs(catalog, new Date('2026-09-20T00:00:00.000Z'))
+    assert.match(docs.navigatorSkillMarkdown, /rest-json\/cbioportal/)
+    assert.match(docs.navigatorSkillMarkdown, /rest-json\/pdbe/)
+    assert.match(docs.navigatorSkillMarkdown, /ontology\/go/)
+    assert.match(docs.navigatorSkillMarkdown, /rest-json\/kegg/)
+    assert.match(docs.navigatorSkillMarkdown, /rest-json\/opentargets/)
+    assert.match(docs.navigatorSkillMarkdown, /rest-json\/gnomad/)
+    assert.match(docs.navigatorSkillMarkdown, /rest-json\/biogrid/)
+    assert.match(docs.navigatorSkillMarkdown, /rest-json\/monarch/)
+    assert.match(docs.navigatorSkillMarkdown, /rest-json\/clinicaltrials/)
+    assert.match(docs.navigatorSkillMarkdown, /ontology\/chebi/)
+    assert.match(docs.navigatorSkillMarkdown, /Recommended Entity Query Paths/)
+    assert.match(docs.navigatorSkillMarkdown, /Ensembl Navigation/)
+    assert.match(docs.navigatorSkillMarkdown, /drug_label_by_name/)
+    assert.match(
+      docs.navigatorSkillMarkdown,
+      /Pathway\/Interaction|Cancer\/Expression|Compound\/Drug|Ontology|Variation\/Clinical/
+    )
+    assert.match(docs.navigatorSkillMarkdown, /sparql\/wikipathways\/pathway_by_gene/)
+  })
+})
+
+test('KEGG parser structures Biopython-style flat files and find list rows', () => {
+  const geneText = [
+    'ENTRY       hsa:7157            CDS       T01001',
+    'NAME        TP53, BCC7, LFS1, P53, TRP53',
+    'DEFINITION  tumor protein p53',
+    'ORTHOLOGY   K04451  Tumor protein p53',
+    'ORGANISM    hsa  Homo sapiens (human)',
+    'PATHWAY     hsa04110  Cell cycle',
+    '            hsa04115  p53 signaling pathway',
+    'DBLINKS     NCBI-GeneID: 7157',
+    '            UniProt: P04637',
+    '///'
+  ].join('\n')
+  const [gene] = parseKeggFlatRecords(geneText).map(normalizeKeggGeneRow)
+  assert.equal(gene.entry, 'hsa:7157')
+  assert.equal(gene.gene_symbol, 'TP53')
+  assert.deepEqual(gene.aliases, ['BCC7', 'LFS1', 'P53', 'TRP53'])
+  assert.equal(gene.definition, 'tumor protein p53')
+  assert.deepEqual(gene.orthology_ids, ['K04451'])
+  assert.equal(gene.organism_id, 'hsa')
+  assert.deepEqual(gene.pathway_ids, ['hsa04110', 'hsa04115'])
+  assert.deepEqual(gene.dblinks, [
+    { database: 'NCBI-GeneID', ids: ['7157'] },
+    { database: 'UniProt', ids: ['P04637'] }
+  ])
+
+  const compoundText = [
+    'ENTRY       C00002                      Compound',
+    'NAME        ATP;',
+    "            Adenosine 5'-triphosphate",
+    'FORMULA     C10H16N5O13P3',
+    'EXACT_MASS  506.9957',
+    'PATHWAY     map00230  Purine metabolism',
+    'ENZYME      2.7.1.25        2.7.4.1',
+    '///'
+  ].join('\n')
+  const [compound] = parseKeggFlatRecords(compoundText).map(normalizeKeggCompoundRow)
+  assert.equal(compound.entry, 'C00002')
+  assert.equal(compound.preferred_name, 'ATP')
+  assert.deepEqual(compound.name, ['ATP', "Adenosine 5'-triphosphate"])
+  assert.equal(compound.formula, 'C10H16N5O13P3')
+  assert.equal(compound.exact_mass, '506.9957')
+  assert.deepEqual(compound.pathway_ids, ['map00230'])
+
+  const findRows = keggListRowsToRecords(
+    parseKeggListText('hsa:7157\tTP53, P53; tumor protein p53\nhsa:7158\tOTHER; other gene\n')
+  )
+  assert.equal(findRows[0]?.id, 'hsa:7157')
+  assert.equal(findRows[0]?.gene_symbol, 'TP53')
+  assert.deepEqual(findRows[0]?.aliases, ['P53'])
+  assert.equal(findRows[0]?.definition, 'tumor protein p53')
+})
+
+test('KEGG adapter queries find and get endpoints with structured parsing', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/rest-json/kegg/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true, parsed.errors.join('\n'))
+  const adapter = new KeggAdapter(parsed.manifest as DbConnectorManifest, {
+    transport: {
+      name: 'mock-kegg',
+      async fetch(input) {
+        if (input.pathname.includes('/find/genes/')) {
+          return new Response('hsa:7157\tTP53, P53; tumor protein p53\n', { status: 200 })
+        }
+        if (input.pathname.includes('/get/hsa:7157')) {
+          return new Response(
+            [
+              'ENTRY       hsa:7157            CDS       T01001',
+              'NAME        TP53',
+              'DEFINITION  tumor protein p53',
+              'PATHWAY     hsa04115  p53 signaling pathway',
+              '///'
+            ].join('\n'),
+            { status: 200 }
+          )
+        }
+        return new Response(`missing ${input.pathname}`, { status: 404 })
+      }
+    }
+  })
+
+  assert.equal(
+    buildKeggRequestPath(parsed.manifest!.domains[0], {
+      domain: 'find_genes',
+      filters: [{ field: 'query', op: '=', value: 'TP53' }],
+      limit: 10
+    }),
+    '/find/genes/TP53'
+  )
+
+  const found = await adapter.query({
+    domain: 'find_genes',
+    filters: [{ field: 'query', op: '=', value: 'TP53' }],
+    limit: 10
+  })
+  assert.equal(found.rows[0]?.id, 'hsa:7157')
+  assert.equal(found.rows[0]?.gene_symbol, 'TP53')
+
+  const gene = await adapter.query({
+    domain: 'gene',
+    filters: [{ field: 'entry', op: '=', value: 'hsa:7157' }],
+    limit: 5
+  })
+  assert.equal(gene.rows[0]?.entry, 'hsa:7157')
+  assert.equal(gene.rows[0]?.definition, 'tumor protein p53')
+  assert.deepEqual(gene.rows[0]?.pathway_ids, ['hsa04115'])
+})
+
+test('ontology adapter looks up and searches OLS terms with mock transport', async () => {
+  const parsed = parseDbConnectorManifest(
+    readFileSync('resources/db-connectors/ontology/go/connector.yaml', 'utf-8')
+  )
+  assert.equal(parsed.valid, true, parsed.errors.join('\n'))
+  const adapter = new OntologyAdapter(parsed.manifest as DbConnectorManifest, {
+    transport: {
+      name: 'mock-ontology-go',
+      async fetch(input) {
+        if (input.pathname.endsWith('/search') || input.pathname.includes('/search')) {
+          return new Response(
+            JSON.stringify({
+              response: {
+                numFound: 1,
+                docs: [
+                  {
+                    obo_id: 'GO:0006915',
+                    iri: 'http://purl.obolibrary.org/obo/GO_0006915',
+                    label: 'apoptotic process',
+                    description: ['A programmed cell death process.'],
+                    ontology_name: 'go'
+                  }
+                ]
+              }
+            }),
+            { status: 200 }
+          )
+        }
+        if (input.pathname.includes('/terms/')) {
+          return new Response(
+            JSON.stringify({
+              obo_id: 'GO:0006915',
+              iri: 'http://purl.obolibrary.org/obo/GO_0006915',
+              label: 'apoptotic process',
+              description: ['A programmed cell death process.'],
+              synonym: ['apoptosis'],
+              ontology_name: 'go'
+            }),
+            { status: 200 }
+          )
+        }
+        return new Response('not found', { status: 404 })
+      }
+    }
+  })
+
+  const lookup = await adapter.query({
+    domain: 'term',
+    filters: [{ field: 'id', op: '=', value: 'GO:0006915' }],
+    limit: 5
+  })
+  assert.equal(lookup.rows[0]?.obo_id, 'GO:0006915')
+  assert.equal(lookup.rows[0]?.label, 'apoptotic process')
+  assert.equal(lookup.provenance.database, 'ontology/go')
+
+  const search = await adapter.query({
+    domain: 'search',
+    filters: [{ field: 'q', op: '=', value: 'apoptosis' }],
+    limit: 5
+  })
+  assert.equal(search.totalRows, 1)
+  assert.equal(search.rows[0]?.obo_id, 'GO:0006915')
+})
+
 test('catalog applies per-database query toggles to bundled connectors', async () => {
   await withHarness(async ({ agentDir }) => {
     const initial = listDbConnectorCatalog(agentDir).find(
@@ -6366,5 +6893,496 @@ test('db_query refuses disabled custom connectors and summarizes enabled mock ad
     assert.equal(proxyFailureDetails.attempts, 0)
     assert.equal(proxyFailureDetails.safeDetails?.transportName, 'proxy')
     assert.equal(proxyFailureDetails.safeDetails?.redactedUrl, 'https://api.example.org/v1/genes')
+  })
+})
+
+test('rest-json jsonBodyTemplates build GraphQL POST bodies from filters', () => {
+  const parsed = parseDbConnectorManifest(
+    [
+      'phiDbConnectorVersion: 1',
+      'id: rest-json/graphql-toy',
+      'name: GraphQL Toy',
+      'protocolFamily: rest-json',
+      'curationTier: curated',
+      'baseUrl: https://api.example.org',
+      'networkPolicy:',
+      '  allowedHosts: [api.example.org]',
+      'auth:',
+      '  type: none',
+      'domains:',
+      '  - id: variant',
+      '    summary: GraphQL variant lookup',
+      '    commonFields: [variant_id]',
+      '    rest:',
+      '      request:',
+      '        method: POST',
+      '        path: /api',
+      '        idempotent: true',
+      '        jsonBodyTemplates:',
+      '          query: \'{ variant(variantId: "{filter:variantId}") { variant_id } }\'',
+      '      response:',
+      '        rowsPath: data.variant',
+      '    fields:',
+      '      - name: variantId',
+      '        type: string'
+    ].join('\n')
+  )
+  assert.equal(parsed.valid, true)
+  const domain = parsed.manifest!.domains[0]
+  const request = buildRestJsonRequest(domain, {
+    domain: 'variant',
+    limit: 10,
+    filters: [{ field: 'variantId', op: '=', value: '17-7676154-G-A' }]
+  })
+  assert.equal(request.method, 'POST')
+  assert.equal(request.path, '/api')
+  assert.deepEqual(JSON.parse(request.body ?? '{}'), {
+    query: '{ variant(variantId: "17-7676154-G-A") { variant_id } }'
+  })
+
+  const escaped = buildRestJsonRequest(domain, {
+    domain: 'variant',
+    limit: 10,
+    filters: [{ field: 'variantId', op: '=', value: '1-1-A-T" } evil' }]
+  })
+  assert.deepEqual(JSON.parse(escaped.body ?? '{}'), {
+    query: '{ variant(variantId: "1-1-A-T\\" } evil") { variant_id } }'
+  })
+})
+
+test('bundled Open Targets GraphQL templates keep nested braces and substitute filters', async () => {
+  await withHarness(({ agentDir }) => {
+    const entry = listDbConnectorCatalog(agentDir).find(
+      (candidate) => candidate.manifest.id === 'rest-json/opentargets'
+    )
+    assert.ok(entry)
+    const domain = entry!.manifest.domains.find((candidate) => candidate.id === 'search')
+    assert.ok(domain)
+    const request = buildRestJsonRequest(domain!, {
+      domain: 'search',
+      limit: 7,
+      filters: [{ field: 'q', op: '=', value: 'TP53' }]
+    })
+    const body = JSON.parse(request.body ?? '{}') as { query: string }
+    assert.match(body.query, /queryString: "TP53"/)
+    assert.match(body.query, /page: \{ index: 0, size: 7 \}/)
+    assert.match(body.query, /hits \{ id name entity description score \}/)
+
+    const paged = buildRestJsonRequest(domain!, {
+      domain: 'search',
+      limit: 5,
+      cursor: '2',
+      filters: [{ field: 'q', op: '=', value: 'BRCA1' }]
+    })
+    assert.match(JSON.parse(paged.body ?? '{}').query, /page: \{ index: 2, size: 5 \}/)
+
+    assert.ok(entry!.manifest.domains.some((candidate) => candidate.id === 'evidence'))
+    assert.ok(entry!.manifest.domains.some((candidate) => candidate.id === 'associated_targets'))
+  })
+})
+
+test('gnomAD region and GTEx eQTL domains render expected requests', async () => {
+  await withHarness(({ agentDir }) => {
+    const gnomad = listDbConnectorCatalog(agentDir).find(
+      (candidate) => candidate.manifest.id === 'rest-json/gnomad'
+    )
+    const region = gnomad?.manifest.domains.find((candidate) => candidate.id === 'region')
+    assert.ok(region)
+    const regionRequest = buildRestJsonRequest(region!, {
+      domain: 'region',
+      limit: 10,
+      filters: [
+        { field: 'chrom', op: '=', value: '17' },
+        { field: 'start', op: '=', value: 7660000 },
+        { field: 'stop', op: '=', value: 7670000 }
+      ]
+    })
+    const regionBody = JSON.parse(regionRequest.body ?? '{}') as { query: string }
+    assert.match(regionBody.query, /chrom: "17"/)
+    assert.match(regionBody.query, /start: 7660000/)
+    assert.match(regionBody.query, /stop: 7670000/)
+
+    const gtex = listDbConnectorCatalog(agentDir).find(
+      (candidate) => candidate.manifest.id === 'rest-json/gtex'
+    )
+    const eqtl = gtex?.manifest.domains.find((candidate) => candidate.id === 'single_tissue_eqtl')
+    assert.ok(eqtl)
+    const eqtlRequest = buildRestJsonRequest(eqtl!, {
+      domain: 'single_tissue_eqtl',
+      limit: 25,
+      filters: [
+        { field: 'gencodeId', op: '=', value: 'ENSG00000139618.17' },
+        { field: 'tissueSiteDetailId', op: '=', value: 'Whole_Blood' }
+      ]
+    })
+    assert.equal(eqtlRequest.path, '/association/singleTissueEqtl')
+    assert.equal(eqtlRequest.searchParams.get('gencodeId'), 'ENSG00000139618.17')
+    assert.equal(eqtlRequest.searchParams.get('tissueSiteDetailId'), 'Whole_Blood')
+    assert.equal(eqtlRequest.searchParams.get('itemsPerPage'), '25')
+
+    const bindingdb = listDbConnectorCatalog(agentDir).find(
+      (candidate) => candidate.manifest.id === 'rest-json/bindingdb'
+    )
+    const ligands = bindingdb?.manifest.domains.find(
+      (candidate) => candidate.id === 'ligands_by_uniprot'
+    )
+    assert.ok(ligands)
+    const ligandsRequest = buildRestJsonRequest(ligands!, {
+      domain: 'ligands_by_uniprot',
+      limit: 10,
+      filters: [
+        { field: 'uniprot', op: '=', value: 'P04637' },
+        { field: 'cutoff', op: '=', value: 10000 }
+      ]
+    })
+    assert.equal(ligandsRequest.path, '/getLigandsByUniprots')
+    assert.equal(ligandsRequest.searchParams.get('uniprot'), 'P04637')
+    assert.equal(ligandsRequest.searchParams.get('cutoff'), '10000')
+  })
+})
+
+test('Phase 2 expansion connectors parse and expose BioGRID required auth metadata', async () => {
+  await withHarness(({ agentDir }) => {
+    const catalog = listDbConnectorCatalog(agentDir)
+    const opentargets = catalog.find((entry) => entry.manifest.id === 'rest-json/opentargets')
+    const gnomad = catalog.find((entry) => entry.manifest.id === 'rest-json/gnomad')
+    const biogrid = catalog.find((entry) => entry.manifest.id === 'rest-json/biogrid')
+    assert.ok(opentargets)
+    assert.ok(gnomad)
+    assert.ok(biogrid)
+    assert.equal(biogrid?.manifest.auth?.envVar, 'BIOGRID_API_KEY')
+    assert.equal(biogrid?.manifest.auth?.required, true)
+    assert.equal(biogrid?.manifest.auth?.paramName, 'accesskey')
+    assert.ok(opentargets?.manifest.domains.some((domain) => domain.id === 'associated_diseases'))
+    assert.ok(gnomad?.manifest.domains.some((domain) => domain.rest?.request.jsonBodyTemplates))
+  })
+})
+
+test('DB credential store encrypts secrets and resolveDbAuthSecret prefers env', async () => {
+  await withHarness(async ({ agentDir }) => {
+    const {
+      clearDbConnectorSecret,
+      hasDbConnectorSecret,
+      readDbConnectorSecret,
+      resolveDbAuthSecret,
+      storeDbConnectorSecret
+    } = await import('../src/main/agent/db/credential-store')
+
+    const fakeSafeStorage = {
+      isEncryptionAvailable: () => true,
+      encryptString: (plainText: string) => Buffer.from(`enc:${plainText}`, 'utf8'),
+      decryptString: (encrypted: Buffer) => {
+        const text = encrypted.toString('utf8')
+        assert.ok(text.startsWith('enc:'))
+        return text.slice(4)
+      }
+    }
+
+    storeDbConnectorSecret('BIOGRID_API_KEY', 'secret-key', agentDir, fakeSafeStorage)
+    assert.equal(hasDbConnectorSecret('BIOGRID_API_KEY', agentDir), true)
+    assert.equal(readDbConnectorSecret('BIOGRID_API_KEY', agentDir, fakeSafeStorage), 'secret-key')
+    assert.equal(resolveDbAuthSecret('BIOGRID_API_KEY', agentDir, fakeSafeStorage), 'secret-key')
+
+    process.env.BIOGRID_API_KEY = 'from-env'
+    assert.equal(resolveDbAuthSecret('BIOGRID_API_KEY', agentDir, fakeSafeStorage), 'from-env')
+    delete process.env.BIOGRID_API_KEY
+
+    clearDbConnectorSecret('BIOGRID_API_KEY', agentDir)
+    assert.equal(hasDbConnectorSecret('BIOGRID_API_KEY', agentDir), false)
+  })
+})
+
+test('required BioGRID auth fails fast without a configured key', async () => {
+  await withHarness(async ({ agentDir }) => {
+    delete process.env.BIOGRID_API_KEY
+    const entry = listDbConnectorCatalog(agentDir).find(
+      (candidate) => candidate.manifest.id === 'rest-json/biogrid'
+    )
+    assert.ok(entry)
+    await assert.rejects(
+      () =>
+        executeDbHttpRequest({
+          manifest: entry!.manifest,
+          path: '/interactions',
+          searchParams: new URLSearchParams({ format: 'json', geneList: 'TP53' }),
+          method: 'GET',
+          headers: { accept: 'application/json' },
+          defaultProxyMode: 'disabled',
+          transport: {
+            name: 'direct',
+            fetch: async () => {
+              throw new Error('should not fetch without auth')
+            }
+          }
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof DbHttpError)
+        assert.equal(error.code, 'DB_AUTH_REQUIRED')
+        assert.match(error.message, /BIOGRID_API_KEY/)
+        return true
+      }
+    )
+  })
+})
+
+test('rest-json TSV response parsing and adapter query', async () => {
+  const rows = parseTsvPayload(
+    ['ENTITYA\tENTITYB\tTYPE', 'P04637\tP38398\tphosphorylation', 'P00533\tP04626\tbinding'].join(
+      '\n'
+    ),
+    { format: 'tsv', tsvHasHeader: true }
+  )
+  assert.equal(rows.length, 2)
+  assert.equal(rows[0]?.ENTITYA, 'P04637')
+  assert.equal(rows[1]?.TYPE, 'binding')
+
+  const withoutHeader = parseTsvPayload('a\tb\n1\t2', {
+    format: 'tsv',
+    tsvHasHeader: false,
+    tsvColumns: ['left', 'right']
+  })
+  assert.deepEqual(withoutHeader, [
+    { left: 'a', right: 'b' },
+    { left: '1', right: '2' }
+  ])
+
+  const manifest: DbConnectorManifest = {
+    phiDbConnectorVersion: 1,
+    id: 'rest-json/tsv-fixture',
+    name: 'TSV Fixture',
+    protocolFamily: 'rest-json',
+    curationTier: 'curated',
+    baseUrl: 'https://api.example.org',
+    networkPolicy: { allowedHosts: ['api.example.org'], allowRedirects: false },
+    domains: [
+      {
+        id: 'edges',
+        summary: 'TSV edges',
+        commonFields: ['ENTITYA', 'ENTITYB', 'TYPE'],
+        fields: [
+          { name: 'ENTITYA', type: 'string' },
+          { name: 'ENTITYB', type: 'string' },
+          { name: 'TYPE', type: 'string' }
+        ],
+        rest: {
+          request: { path: '/edges.tsv' },
+          response: { format: 'tsv', tsvHasHeader: true }
+        }
+      }
+    ]
+  }
+  const adapter = new RestJsonAdapter(manifest, {
+    now: () => new Date('2026-09-20T00:00:00.000Z'),
+    sleep: async () => {},
+    transport: {
+      name: 'mock-tsv',
+      async fetch() {
+        return new Response('ENTITYA\tENTITYB\tTYPE\nP04637\tQ00987\tinhibition\n', {
+          status: 200,
+          headers: { 'content-type': 'text/tab-separated-values' }
+        })
+      }
+    }
+  })
+  const result = await adapter.query({ domain: 'edges', limit: 10 })
+  assert.equal(result.rows.length, 1)
+  assert.equal(result.rows[0]?.ENTITYA, 'P04637')
+  assert.equal(result.rows[0]?.TYPE, 'inhibition')
+})
+
+test('optimization deepen: OmniPath/AlphaFold/HPA/EuropePMC/OpenFDA domains and contracts', async () => {
+  await withHarness(async ({ agentDir }) => {
+    const catalog = listDbConnectorCatalog(agentDir)
+    const omnipath = catalog.find((entry) => entry.manifest.id === 'rest-json/omnipath')
+    const alphafold = catalog.find((entry) => entry.manifest.id === 'rest-json/alphafold')
+    const hpa = catalog.find((entry) => entry.manifest.id === 'rest-json/hpa')
+    const europepmc = catalog.find((entry) => entry.manifest.id === 'rest-json/europepmc')
+    const openfda = catalog.find((entry) => entry.manifest.id === 'rest-json/openfda')
+    assert.ok(omnipath && alphafold && hpa && europepmc && openfda)
+
+    for (const id of ['interactions', 'signor', 'enz_sub', 'annotations', 'intercell']) {
+      assert.ok(
+        omnipath!.manifest.domains.some((domain) => domain.id === id),
+        `missing omnipath domain ${id}`
+      )
+    }
+    assert.ok(alphafold!.manifest.domains.some((domain) => domain.id === 'structure_summary'))
+    assert.ok(hpa!.manifest.domains.some((domain) => domain.id === 'search_pathology'))
+    assert.ok(europepmc!.manifest.domains.some((domain) => domain.id === 'citations'))
+    assert.ok(europepmc!.manifest.domains.some((domain) => domain.id === 'references'))
+    assert.ok(openfda!.manifest.domains.some((domain) => domain.id === 'drug_label_by_name'))
+    assert.ok(openfda!.manifest.domains.some((domain) => domain.id === 'drug_event_by_name'))
+
+    const byName = openfda!.manifest.domains.find((domain) => domain.id === 'drug_label_by_name')
+    const request = buildRestJsonRequest(byName!, {
+      domain: 'drug_label_by_name',
+      limit: 5,
+      filters: [{ field: 'name', op: '=', value: 'aspirin' }]
+    })
+    assert.equal(request.path, '/drug/label.json')
+    assert.match(request.searchParams.get('search') ?? '', /openfda\.brand_name:"aspirin"/)
+    assert.match(request.searchParams.get('search') ?? '', /openfda\.generic_name:"aspirin"/)
+    assert.match(request.searchParams.get('search') ?? '', / OR /)
+    assert.equal(request.searchParams.get('limit'), '5')
+
+    const quotedName = buildRestJsonRequest(byName!, {
+      domain: 'drug_label_by_name',
+      limit: 1,
+      filters: [{ field: 'name', op: '=', value: 'foo"bar' }]
+    })
+    assert.match(quotedName.searchParams.get('search') ?? '', /openfda\.brand_name:"foo\\"bar"/)
+
+    const bindingdb = catalog.find((entry) => entry.manifest.id === 'rest-json/bindingdb')
+    const clinpgx = catalog.find((entry) => entry.manifest.id === 'rest-json/clinpgx')
+    const zinc = catalog.find((entry) => entry.manifest.id === 'rest-json/zinc')
+    assert.ok(bindingdb && clinpgx && zinc)
+
+    const bindingAdapter = new RestJsonAdapter(bindingdb!.manifest, {
+      now: () => new Date('2026-09-20T00:00:00.000Z'),
+      sleep: async () => {},
+      transport: {
+        name: 'mock-bindingdb',
+        async fetch() {
+          return new Response(
+            JSON.stringify({
+              getLigandsByUniprotsResponse: {
+                affinities: [
+                  {
+                    monomerid: '123',
+                    smile: 'CCO',
+                    affinity_type: 'Ki',
+                    affinity: '10',
+                    pmid: '1',
+                    doi: '10.1/x'
+                  }
+                ]
+              }
+            }),
+            { status: 200 }
+          )
+        }
+      }
+    })
+    const bindingResult = await bindingAdapter.query({
+      domain: 'ligands_by_uniprot',
+      limit: 10,
+      filters: [{ field: 'uniprot', op: '=', value: 'P04637' }]
+    })
+    assert.equal(bindingResult.rows[0]?.monomerid, '123')
+    assert.equal(bindingResult.rows[0]?.smile, 'CCO')
+
+    const clinpgxAdapter = new RestJsonAdapter(clinpgx!.manifest, {
+      now: () => new Date('2026-09-20T00:00:00.000Z'),
+      sleep: async () => {},
+      transport: {
+        name: 'mock-clinpgx',
+        async fetch() {
+          return new Response(
+            JSON.stringify({
+              data: [{ objCls: 'Gene', id: 'PA128', name: 'CYP2D6', symbol: 'CYP2D6' }]
+            }),
+            { status: 200 }
+          )
+        }
+      }
+    })
+    const clinpgxResult = await clinpgxAdapter.query({
+      domain: 'search',
+      limit: 10,
+      rawQuery: 'CYP2D6'
+    })
+    assert.equal(clinpgxResult.rows[0]?.symbol, 'CYP2D6')
+    assert.equal(clinpgxResult.rows[0]?.objCls, 'Gene')
+
+    const zincAdapter = new RestJsonAdapter(zinc!.manifest, {
+      now: () => new Date('2026-09-20T00:00:00.000Z'),
+      sleep: async () => {},
+      transport: {
+        name: 'mock-zinc',
+        async fetch() {
+          return new Response(
+            JSON.stringify({
+              zinc_id: 'ZINC000000000053',
+              preferred_name: 'aspirin',
+              smiles: 'CC(=O)Oc1ccccc1C(=O)O',
+              inchikey: 'BSYNRYMUTXKLSE-UHFFFAOYSA-N'
+            }),
+            { status: 200 }
+          )
+        }
+      }
+    })
+    const zincResult = await zincAdapter.query({
+      domain: 'substance',
+      limit: 1,
+      filters: [{ field: 'zinc_id', op: '=', value: 'ZINC000000000053' }]
+    })
+    assert.equal(zincResult.rows[0]?.zinc_id, 'ZINC000000000053')
+    assert.equal(zincResult.rows[0]?.preferred_name, 'aspirin')
+
+    const openfdaAdapter = new RestJsonAdapter(openfda!.manifest, {
+      now: () => new Date('2026-09-20T00:00:00.000Z'),
+      sleep: async () => {},
+      transport: {
+        name: 'mock-openfda',
+        async fetch() {
+          return new Response(
+            JSON.stringify({
+              meta: { results: { total: 1 } },
+              results: [
+                {
+                  id: 'label-1',
+                  effective_time: '20200101',
+                  openfda: {
+                    brand_name: ['ASPIRIN'],
+                    generic_name: ['aspirin'],
+                    manufacturer_name: ['Example']
+                  },
+                  indications_and_usage: ['Pain'],
+                  warnings: ['Bleeding']
+                }
+              ]
+            }),
+            { status: 200 }
+          )
+        }
+      }
+    })
+    const openfdaResult = await openfdaAdapter.query({
+      domain: 'drug_label_by_name',
+      limit: 5,
+      filters: [{ field: 'name', op: '=', value: 'aspirin' }]
+    })
+    assert.equal(openfdaResult.rows[0]?.id, 'label-1')
+    assert.deepEqual(openfdaResult.rows[0]?.brand_name, ['ASPIRIN'])
+    assert.equal(openfdaResult.totalRows, 1)
+
+    const emptyDetails = buildDbQueryToolDetails(
+      {
+        rows: [],
+        truncated: false,
+        provenance: {
+          database: 'rest-json/openfda',
+          domain: 'drug_label_by_name',
+          retrievedAt: '2026-09-20T00:00:00.000Z'
+        }
+      },
+      {
+        agentDir,
+        resolvedQuery: {
+          database: 'rest-json/openfda',
+          domain: 'drug_label_by_name',
+          inferred: true,
+          targetSource: 'heuristic',
+          predicateSource: 'heuristic',
+          input: { source: 'query', text: 'aspirin label' },
+          filters: [{ field: 'name', op: '=', value: 'aspirin' }],
+          reasons: []
+        }
+      }
+    )
+    assert.equal(emptyDetails.summary.returnedRows, 0)
+    assert.match(emptyDetails.summary.warnings.join(' '), /No rows returned/)
+    assert.match(emptyDetails.summary.warnings.join(' '), /drug_label_by_name/)
   })
 })
