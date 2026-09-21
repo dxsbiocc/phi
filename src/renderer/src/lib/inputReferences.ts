@@ -7,6 +7,14 @@ export type InputFileReferenceQuery = {
   query: string
 }
 
+export type InputInvocationReferenceQuery = {
+  kind: InputInvocationReferenceKind
+  start: number
+  end: number
+  query: string
+  operator: '$' | '/prompts:' | '/agent:'
+}
+
 export type InputReferenceReplacement = {
   value: string
   cursor: number
@@ -14,6 +22,19 @@ export type InputReferenceReplacement = {
 
 export type ParsedInputFileReferences = {
   references: string[]
+  body: string
+}
+
+export type InputInvocationReferenceKind = 'agent' | 'skill'
+
+export type InputInvocationReference = {
+  kind: InputInvocationReferenceKind
+  name: string
+  text: string
+}
+
+export type ParsedInputInvocationReferences = {
+  references: InputInvocationReference[]
   body: string
 }
 
@@ -26,6 +47,16 @@ const INPUT_FILE_REFERENCE_STOP_CHARS = /[\s`]/
 const INPUT_FILE_REFERENCE_LABEL = '引用文件：'
 const INPUT_FILE_REFERENCE_BULLET_PATTERN = /^\s*-\s*`([^`]+)`\s*$/
 const INPUT_FILE_REFERENCE_INLINE_PATTERN = /`([^`]+)`/g
+const PROMPT_AGENT_REFERENCE_PATTERN = /^\/prompts:([A-Za-z0-9._-]+)$/
+const AGENT_REFERENCE_PATTERN = /^\/agent:([A-Za-z0-9._-]+)$/
+const PHI_AGENT_REFERENCE_PATTERN = /^调用智能体：([A-Z][A-Za-z0-9]*)$/
+const SKILL_REFERENCE_PATTERN = /^\$([A-Za-z0-9:_+.-]+)$/
+const INPUT_INVOCATION_REFERENCE_STOP_CHARS = /[\s`]/
+const INPUT_INVOCATION_REFERENCE_OPERATORS = [
+  { operator: '/prompts:', kind: 'agent' },
+  { operator: '/agent:', kind: 'agent' },
+  { operator: '$', kind: 'skill' }
+] as const
 
 function quotedPath(path: string): string {
   return `\`${path}\``
@@ -58,6 +89,10 @@ function removeInputReferenceQuery(input: string, range: InputFileReferenceQuery
   }
 
   return `${before}${after}`
+}
+
+function isInputReferenceBoundary(input: string, index: number): boolean {
+  return index === 0 || /\s/.test(input[index - 1] ?? '')
 }
 
 function normalizeInputFileReferencePath(path: string): string | null {
@@ -113,6 +148,34 @@ export function findActiveInputFileReference(
   }
 }
 
+export function findActiveInputInvocationReference(
+  input: string,
+  cursorIndex: number
+): InputInvocationReferenceQuery | null {
+  const cursor = Math.max(0, Math.min(cursorIndex, input.length))
+  const beforeCursor = input.slice(0, cursor)
+  let activeQuery: InputInvocationReferenceQuery | null = null
+
+  for (const { operator, kind } of INPUT_INVOCATION_REFERENCE_OPERATORS) {
+    const start = beforeCursor.lastIndexOf(operator)
+    if (start === -1 || !isInputReferenceBoundary(input, start)) continue
+
+    const query = input.slice(start + operator.length, cursor)
+    if (INPUT_INVOCATION_REFERENCE_STOP_CHARS.test(query)) continue
+    if (activeQuery && start < activeQuery.start) continue
+
+    activeQuery = {
+      kind,
+      start,
+      end: cursor,
+      query,
+      operator
+    }
+  }
+
+  return activeQuery
+}
+
 export function inputFileReferenceDirectoryPath(cwd: string, query: string): string | null {
   const parts = splitInputFileReferenceQuery(query)
   if (!cwd || !parts) return null
@@ -149,6 +212,25 @@ export function replaceInputReferenceRange(
   return {
     value,
     cursor: before.length + leadingSeparator.length + trimmedReference.length
+  }
+}
+
+export function removeInputInvocationReferenceRange(
+  input: string,
+  range: InputInvocationReferenceQuery
+): InputReferenceReplacement {
+  const before = input.slice(0, range.start)
+  let after = input.slice(range.end)
+  if (!before) {
+    after = after.replace(/^\s+/, '')
+  } else if (/\s$/.test(before) && /^\s/.test(after)) {
+    after = after.replace(/^\s+/, '')
+  }
+
+  const value = `${before}${after}`
+  return {
+    value,
+    cursor: Math.min(range.start, value.length)
   }
 }
 
@@ -216,6 +298,112 @@ export function composeInputWithFileReferences(references: string[], body: strin
 
 export function mergeInputFileReferences(existing: string[], next: string[]): string[] {
   return uniqueReferences([...existing, ...next])
+}
+
+function uniqueInvocationReferences(
+  references: InputInvocationReference[]
+): InputInvocationReference[] {
+  const seen = new Set<string>()
+  const unique: InputInvocationReference[] = []
+  for (const reference of references) {
+    const key = `${reference.kind}:${reference.name}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(reference)
+  }
+  return unique
+}
+
+function inputInvocationReferenceFromLine(
+  line: string,
+  skills: readonly Pick<SkillSummary, 'name'>[],
+  promptAgents: readonly Pick<PromptAgentSummary, 'name' | 'source' | 'trigger'>[]
+): InputInvocationReference | null {
+  const trimmed = line.trim()
+  const skillMatch = SKILL_REFERENCE_PATTERN.exec(trimmed)
+  if (skillMatch) {
+    const name = skillMatch[1] ?? ''
+    if (skills.some((skill) => skill.name === name)) {
+      return { kind: 'skill', name, text: `$${name}` }
+    }
+  }
+
+  const promptAgentMatch = PROMPT_AGENT_REFERENCE_PATTERN.exec(trimmed)
+  if (promptAgentMatch) {
+    const name = promptAgentMatch[1] ?? ''
+    const agent = promptAgents.find((candidate) => candidate.name === name)
+    if (agent) {
+      return { kind: 'agent', name, text: agent.trigger || `/prompts:${name}` }
+    }
+  }
+
+  const agentMatch = AGENT_REFERENCE_PATTERN.exec(trimmed)
+  if (agentMatch) {
+    const name = agentMatch[1] ?? ''
+    const agent = promptAgents.find((candidate) => candidate.name === name)
+    if (agent) {
+      return {
+        kind: 'agent',
+        name,
+        text:
+          agent.source === 'phi-agent' ? `调用智能体：${name}` : agent.trigger || `/prompts:${name}`
+      }
+    }
+  }
+
+  const phiAgentMatch = PHI_AGENT_REFERENCE_PATTERN.exec(trimmed)
+  if (phiAgentMatch) {
+    const name = phiAgentMatch[1] ?? ''
+    if (
+      promptAgents.some((candidate) => candidate.name === name && candidate.source === 'phi-agent')
+    ) {
+      return { kind: 'agent', name, text: `调用智能体：${name}` }
+    }
+  }
+
+  return null
+}
+
+export function parseInputInvocationReferences(
+  input: string,
+  skills: readonly Pick<SkillSummary, 'name'>[] = [],
+  promptAgents: readonly Pick<PromptAgentSummary, 'name' | 'source' | 'trigger'>[] = []
+): ParsedInputInvocationReferences {
+  const references: InputInvocationReference[] = []
+  const bodyLines: string[] = []
+
+  for (const line of input.split('\n')) {
+    const reference = inputInvocationReferenceFromLine(line, skills, promptAgents)
+    if (reference) {
+      references.push(reference)
+      continue
+    }
+    bodyLines.push(line)
+  }
+
+  const unique = uniqueInvocationReferences(references)
+  const body = bodyLines.join('\n')
+  return {
+    references: unique,
+    body: unique.length > 0 ? trimLeadingBodyBoundaryNewlines(body) : body
+  }
+}
+
+export function composeInputWithInvocationReferences(
+  references: readonly InputInvocationReference[],
+  body: string
+): string {
+  const referenceText = references.map((reference) => reference.text).join('\n')
+  if (!referenceText) return body
+  if (body.length === 0) return referenceText
+  return `${referenceText}\n${body}`
+}
+
+export function mergeInputInvocationReferences(
+  existing: readonly InputInvocationReference[],
+  next: readonly InputInvocationReference[]
+): InputInvocationReference[] {
+  return uniqueInvocationReferences([...existing, ...next])
 }
 
 export function inputFileReferencePathsFromDroppedFiles(
@@ -311,8 +499,9 @@ export function formatSkillPromptReference(skill: Pick<SkillSummary, 'name'>): s
 }
 
 export function formatPromptAgentReference(
-  agent: Pick<PromptAgentSummary, 'name' | 'trigger'>
+  agent: Pick<PromptAgentSummary, 'name' | 'trigger'> & Partial<Pick<PromptAgentSummary, 'source'>>
 ): string {
+  if (agent.source === 'phi-agent') return `调用智能体：${agent.name}`
   return agent.trigger || `/prompts:${agent.name}`
 }
 

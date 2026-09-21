@@ -44,10 +44,7 @@ import { buildScopedPhiToolMap, resolveAgentTools } from '../agents/tool-resolut
 import { buildAgentTool } from '../agents/tool'
 import { createSpecialistFallbackExtension } from '../agents/fallback-policy'
 import { AGENT_REPORT_PROTOCOL } from '../agents/report'
-import {
-  buildPhiMainSystemPrompt,
-  filterPersonaContextFile
-} from '../main-system-prompt'
+import { buildPhiMainSystemPrompt, filterPersonaContextFile } from '../main-system-prompt'
 import { createHostJobClient } from '../wrappers/composition/job-host-client'
 import { buildWrapperCompositionTools } from '../wrappers/composition/tools'
 
@@ -838,7 +835,8 @@ async function createSession(params: unknown): Promise<unknown> {
             parent: () => parentRef.current
           })
       }),
-      agentRuns
+      agentRuns,
+      { cwd }
     )
   )
   const agentRunTools = phiAgents.length > 0 ? buildAgentRunTools(agentRuns) : []

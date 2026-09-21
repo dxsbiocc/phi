@@ -1,9 +1,12 @@
 export type LocalPathToken =
   { kind: 'text'; text: string } | { kind: 'path'; text: string; absolutePath: string }
 
-const LOCAL_PATH_PATTERN = /((?:\/|\.{1,2}\/)[^\s"'`<>)\]]+)/g
+const LOCAL_PATH_PATTERN =
+  /((?:\/|\.{1,2}\/)[^\s"'`<>)\]]+|(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)+[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z][A-Za-z0-9_-]{0,15})/g
 const TRAILING_PUNCTUATION = /[.,;:!?，。；：！？]+$/
 const ABSOLUTE_PATH_BOUNDARY = /[\s([{]/
+const RELATIVE_PATH_BOUNDARY = /[\s([{"'`]/
+const RELATIVE_FILE_LEAF_PATTERN = /^[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z][A-Za-z0-9_-]{0,15}$/
 
 function trimTrailingPunctuation(path: string): { path: string; suffix: string } {
   const match = TRAILING_PUNCTUATION.exec(path)
@@ -36,8 +39,23 @@ function normalizePath(path: string): string {
 
 export function resolveLocalPath(path: string, cwd: string): string | null {
   if (path.startsWith('/')) return normalizePath(path)
-  if (!cwd || (!path.startsWith('./') && !path.startsWith('../'))) return null
+  if (!cwd) return null
+  if (path.startsWith('./') || path.startsWith('../')) {
+    return normalizePath(`${cwd.replace(/\/+$/, '')}/${path}`)
+  }
+  if (!isPlainRelativeFilePath(path)) return null
   return normalizePath(`${cwd.replace(/\/+$/, '')}/${path}`)
+}
+
+function isPlainRelativeFilePath(path: string): boolean {
+  if (!path || path.includes('\\') || /\s/.test(path)) return false
+  if (!path.includes('/')) return false
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(path)) return false
+
+  const parts = path.split('/')
+  if (parts.some((part) => !part || part === '.' || part === '..')) return false
+
+  return RELATIVE_FILE_LEAF_PATTERN.test(parts[parts.length - 1] ?? '')
 }
 
 export function tokenizeLocalPaths(text: string, cwd: string): LocalPathToken[] {
@@ -48,6 +66,15 @@ export function tokenizeLocalPaths(text: string, cwd: string): LocalPathToken[] 
     const raw = match[0]
     const index = match.index ?? 0
     if (raw.startsWith('/') && index > 0 && !ABSOLUTE_PATH_BOUNDARY.test(text[index - 1])) {
+      continue
+    }
+    if (
+      !raw.startsWith('/') &&
+      !raw.startsWith('./') &&
+      !raw.startsWith('../') &&
+      index > 0 &&
+      !RELATIVE_PATH_BOUNDARY.test(text[index - 1])
+    ) {
       continue
     }
     const { path, suffix } = trimTrailingPunctuation(raw)
@@ -68,4 +95,12 @@ export function tokenizeLocalPaths(text: string, cwd: string): LocalPathToken[] 
     tokens.push({ kind: 'text', text: text.slice(lastIndex) })
   }
   return tokens.length > 0 ? tokens : [{ kind: 'text', text }]
+}
+
+export function collectLocalPathTokenPaths(text: string, cwd: string): string[] {
+  const paths = new Set<string>()
+  for (const token of tokenizeLocalPaths(text, cwd)) {
+    if (token.kind === 'path') paths.add(token.absolutePath)
+  }
+  return [...paths]
 }

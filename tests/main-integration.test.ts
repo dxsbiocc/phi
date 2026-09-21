@@ -1779,11 +1779,12 @@ test('main IPC: DB connector tools stay behind Database agent and toggles remain
   // Phi's own scan feeds the leader prompt, and the same definitions go to the worker.
   assert.match(appendSystemPrompt?.join('\n') ?? '', /<phi_agents>/)
   assert.match(appendSystemPrompt?.join('\n') ?? '', /- Database: /)
+  assert.match(appendSystemPrompt?.join('\n') ?? '', /- Visualization: /)
   assert.match(appendSystemPrompt?.join('\n') ?? '', /- Wrapper: /)
   const phiAgents = app.createdAgentOptions[0].phiAgents as Array<{ name: string }> | undefined
   assert.deepEqual(
     phiAgents?.map((agent) => agent.name),
-    ['Database', 'Wrapper']
+    ['Database', 'Visualization', 'Wrapper']
   )
 
   const connectors = (await app.invoke('db:listConnectors')) as Array<{ id: string }>

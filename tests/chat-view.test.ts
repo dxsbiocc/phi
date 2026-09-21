@@ -17,15 +17,18 @@ import {
   composeInputWithFileReferences,
   filterInputFileReferenceCandidates,
   findActiveInputFileReference,
+  findActiveInputInvocationReference,
   formatInputFileReferences,
   formatInputFileReferenceTarget,
   formatPromptAgentReference,
   formatPluginPromptReference,
   formatSkillPromptReference,
+  parseInputInvocationReferences,
   inputFileReferencePathsFromDroppedFiles,
   inputFileReferenceDirectoryPath,
   inputFileReferenceLeafQuery,
   parseInputFileReferences,
+  removeInputInvocationReferenceRange,
   replaceInputReferenceRange
 } from '../src/renderer/src/lib/inputReferences'
 import { toolActionKind } from '../src/renderer/src/lib/toolActions'
@@ -37,6 +40,8 @@ import type {
   AgentUserInteractionRequest,
   ChatItem,
   PermissionMode,
+  PromptAgentSummary,
+  SkillSummary,
   ToolApprovalRequest,
   ToolCallItem
 } from '../src/renderer/src/types'
@@ -54,6 +59,8 @@ function renderChat(
     canQueue?: boolean
     pendingUserInteraction?: AgentUserInteractionRequest | null
     queuedPrompts?: Array<{ id: string; text: string }>
+    skills?: SkillSummary[]
+    promptAgents?: PromptAgentSummary[]
   } = {}
 ): string {
   const theme = createTheme()
@@ -83,6 +90,8 @@ function renderChat(
           name: 'Kimi Coding',
           thinkingLevels: ['low', 'medium', 'high']
         },
+        skills: options.skills ?? [],
+        promptAgents: options.promptAgents ?? [],
         onSelectModel: () => undefined,
         thinkingLevel: 'high',
         onSelectThinkingLevel: () => undefined,
@@ -229,6 +238,14 @@ test('chat view formats add-menu references for prompt input', () => {
     '/prompts:executor'
   )
   assert.equal(
+    formatPromptAgentReference({
+      name: 'Visualization',
+      source: 'phi-agent',
+      trigger: '调用智能体：Visualization'
+    }),
+    '调用智能体：Visualization'
+  )
+  assert.equal(
     formatPluginPromptReference({ name: 'Bio Plugin', source: 'npm:@phi/bio' }),
     '引用插件：Bio Plugin（npm:@phi/bio）'
   )
@@ -236,6 +253,88 @@ test('chat view formats add-menu references for prompt input', () => {
     appendInputReference('先分析数据', '$omics-visualization'),
     '先分析数据\n$omics-visualization'
   )
+  assert.deepEqual(
+    parseInputInvocationReferences(
+      '$omics-visualization\n/prompts:analyst\n调用智能体：Visualization\n正文',
+      [{ name: 'omics-visualization' }],
+      [
+        { name: 'analyst', source: 'codex-prompt', trigger: '/prompts:analyst' },
+        {
+          name: 'Visualization',
+          source: 'phi-agent',
+          trigger: '调用智能体：Visualization'
+        }
+      ]
+    ),
+    {
+      references: [
+        { kind: 'skill', name: 'omics-visualization', text: '$omics-visualization' },
+        { kind: 'agent', name: 'analyst', text: '/prompts:analyst' },
+        { kind: 'agent', name: 'Visualization', text: '调用智能体：Visualization' }
+      ],
+      body: '正文'
+    }
+  )
+  assert.deepEqual(
+    parseInputInvocationReferences(
+      '/agent:Visualization\n正文',
+      [],
+      [
+        {
+          name: 'Visualization',
+          source: 'phi-agent',
+          trigger: '调用智能体：Visualization'
+        }
+      ]
+    ),
+    {
+      references: [{ kind: 'agent', name: 'Visualization', text: '调用智能体：Visualization' }],
+      body: '正文'
+    }
+  )
+})
+
+test('chat view resolves skill and agent shortcut queries in prompt input', () => {
+  assert.deepEqual(findActiveInputInvocationReference('$ann', 4), {
+    kind: 'skill',
+    start: 0,
+    end: 4,
+    query: 'ann',
+    operator: '$'
+  })
+  assert.deepEqual(findActiveInputInvocationReference('用 $ann 读取', 6), {
+    kind: 'skill',
+    start: 2,
+    end: 6,
+    query: 'ann',
+    operator: '$'
+  })
+  assert.deepEqual(findActiveInputInvocationReference('/prompts:ana', 12), {
+    kind: 'agent',
+    start: 0,
+    end: 12,
+    query: 'ana',
+    operator: '/prompts:'
+  })
+  assert.deepEqual(findActiveInputInvocationReference('/agent:Vis', 10), {
+    kind: 'agent',
+    start: 0,
+    end: 10,
+    query: 'Vis',
+    operator: '/agent:'
+  })
+  assert.equal(findActiveInputInvocationReference('price$ann', 9), null)
+  assert.equal(findActiveInputInvocationReference('$ann data', 9), null)
+
+  const replacement = removeInputInvocationReferenceRange('使用 $ann 整理数据', {
+    kind: 'skill',
+    start: 3,
+    end: 7,
+    query: 'ann',
+    operator: '$'
+  })
+  assert.equal(replacement.value, '使用 整理数据')
+  assert.equal(replacement.cursor, 3)
 })
 
 test('chat view resolves @ file reference queries in prompt input', () => {
@@ -449,6 +548,110 @@ test('chat view parses and renders file references as cards', () => {
   assert.match(messageMarkup, /border-radius:18px/)
   assert.doesNotMatch(messageMarkup, />CSV</)
   assert.doesNotMatch(messageMarkup, /引用文件：/)
+})
+
+test('chat composer renders agent and skill references as chips', () => {
+  const markup = renderChat([], {
+    input: '$anndata\n/prompts:analyst\n调用智能体：Visualization\n整理一下数据',
+    skills: [
+      {
+        id: '/skills/anndata/SKILL.md',
+        name: 'anndata',
+        description: 'AnnData skill',
+        filePath: '/skills/anndata/SKILL.md',
+        source: 'bundled',
+        scope: 'user',
+        sourceCategory: 'system',
+        sourceCategoryLabel: 'System',
+        disabled: false
+      }
+    ],
+    promptAgents: [
+      {
+        id: '/prompts/analyst.md',
+        name: 'analyst',
+        description: 'Analyst prompt',
+        source: 'codex-prompt',
+        trigger: '/prompts:analyst'
+      },
+      {
+        id: '/agents/Visualization.md',
+        name: 'Visualization',
+        description: 'Visualization agent',
+        source: 'phi-agent',
+        trigger: '调用智能体：Visualization'
+      }
+    ]
+  })
+
+  assert.match(markup, /data-phi-slot="composer-reference-chips"/)
+  assert.equal(markup.match(/data-phi-reference-kind="skill"/g)?.length ?? 0, 1)
+  assert.equal(markup.match(/data-phi-reference-kind="agent"/g)?.length ?? 0, 2)
+  assert.match(markup, />anndata</)
+  assert.match(markup, />analyst</)
+  assert.match(markup, />Visualization</)
+  assert.match(markup, /整理一下数据/)
+  assert.doesNotMatch(markup, />\$anndata</)
+  assert.doesNotMatch(markup, /\/prompts:analyst/)
+  assert.doesNotMatch(markup, /调用智能体：Visualization/)
+})
+
+test('chat composer offers skill and agent shortcut reference candidates', () => {
+  const skillMarkup = renderChat([], {
+    input: '$ann',
+    skills: [
+      {
+        id: '/skills/anndata/SKILL.md',
+        name: 'anndata',
+        description: 'AnnData skill',
+        filePath: '/skills/anndata/SKILL.md',
+        source: 'bundled',
+        scope: 'user',
+        sourceCategory: 'system',
+        sourceCategoryLabel: 'System',
+        disabled: false
+      },
+      {
+        id: '/skills/scanpy/SKILL.md',
+        name: 'scanpy',
+        description: 'Scanpy skill',
+        filePath: '/skills/scanpy/SKILL.md',
+        source: 'bundled',
+        scope: 'user',
+        sourceCategory: 'system',
+        sourceCategoryLabel: 'System',
+        disabled: false
+      }
+    ]
+  })
+  assert.match(skillMarkup, /aria-label="引用 Skill 或智能体"/)
+  assert.match(skillMarkup, />\$ann</)
+  assert.match(skillMarkup, />anndata</)
+  assert.doesNotMatch(skillMarkup, />scanpy</)
+
+  const agentMarkup = renderChat([], {
+    input: '/agent:Vis',
+    promptAgents: [
+      {
+        id: '/agents/Visualization.md',
+        name: 'Visualization',
+        description: 'Visualization agent',
+        source: 'phi-agent',
+        trigger: '调用智能体：Visualization'
+      },
+      {
+        id: '/prompts/analyst.md',
+        name: 'analyst',
+        description: 'Analyst prompt',
+        source: 'codex-prompt',
+        trigger: '/prompts:analyst'
+      }
+    ]
+  })
+  assert.match(agentMarkup, /aria-label="引用 Skill 或智能体"/)
+  assert.match(agentMarkup, />\/agent:Vis</)
+  assert.match(agentMarkup, />Visualization</)
+  assert.doesNotMatch(agentMarkup, />analyst</)
 })
 
 test('chat view keeps user messages right aligned inside virtual rows', () => {
@@ -1317,6 +1520,15 @@ test('chat view keeps compact stop control the same size as other compact contro
 
   assert.match(compactMarkup, /data-phi-composer-action="stop" data-phi-composer-size="32"/)
   assert.match(regularMarkup, /data-phi-composer-action="stop" data-phi-composer-size="40"/)
+})
+
+test('agent execution details scroll instead of flattening every child step into the chat flow', () => {
+  const source = readFileSync('src/renderer/src/components/AgentExecutionCard.tsx', 'utf8')
+
+  assert.match(source, /data-phi-agent-execution-scroll="true"/)
+  assert.match(source, /maxHeight: AGENT_EXECUTION_DETAIL_MAX_HEIGHT/)
+  assert.match(source, /overflowY: 'auto'/)
+  assert.match(source, /aria-label="折叠 Agent 执行"[\s\S]*<ExpandLessIcon/)
 })
 
 test('chat view keeps next-run controls enabled and shows stop while the current session is busy', () => {
