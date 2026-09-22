@@ -25,7 +25,8 @@
     "build:mac": "npm run build && electron-builder --mac",
     "build:linux": "npm run build && electron-builder --linux",
     "test": "node --import ./scripts/test-loader.mjs --test tests/*.test.ts",
-    "smoke:wrappers": "node --import ./scripts/test-loader.mjs scripts/smoke-wrappers.mjs"
+    "smoke:wrappers": "node --import ./scripts/test-loader.mjs scripts/smoke-wrappers.mjs",
+    "usage:report": "node --import ./scripts/test-loader.mjs scripts/agent-usage-report.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",

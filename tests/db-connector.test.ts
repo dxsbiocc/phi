@@ -6341,6 +6341,7 @@ test('default DB custom tools register bundled Entrez and query through the adap
       tools.map((tool) => [tool.name, tool.approval]),
       [
         ['db_search', 'read'],
+        ['db_resolve', 'read'],
         ['db_domain', 'read'],
         ['db_query', 'read'],
         ['db_download', 'read'],

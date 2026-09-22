@@ -679,7 +679,8 @@ function scoreDbQueryTarget(
   return score
 }
 
-function inferQueryPredicate(
+/** The filters or rawQuery that look `queryText` up in one known domain. */
+export function inferQueryPredicate(
   database: string,
   domain: string,
   queryText: string
@@ -1293,8 +1294,19 @@ function looksLikeClinvarAccession(value: string): boolean {
   return /^(VCV|RCV|SCV)\d+$/i.test(value)
 }
 
-function uniprotAccessionFromText(value: string): string | undefined {
-  return value.match(/\b(?:[A-NR-Z][0-9][A-Z0-9]{3}[0-9]|[A-Z][0-9][A-Z0-9]{3}[0-9]-\d+)\b/)?.[0]
+/**
+ * UniProt's accession format, with an optional isoform suffix: O/P/Q accessions (P04637,
+ * Q9Y6K9), the other six-character ones (B7Z1M6) and the ten-character A0A024R161 form. The
+ * letter required after the second character of the non-O/P/Q forms is what keeps a KEGG
+ * compound such as C00031 from reading as a protein.
+ */
+export const UNIPROT_ACCESSION_PATTERN =
+  '(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2})(?:-\\d+)?'
+
+const UNIPROT_ACCESSION_IN_TEXT = new RegExp(`\\b${UNIPROT_ACCESSION_PATTERN}\\b`)
+
+export function uniprotAccessionFromText(value: string): string | undefined {
+  return value.match(UNIPROT_ACCESSION_IN_TEXT)?.[0]
 }
 
 function sanitizeOpenFdaName(value: string): string {

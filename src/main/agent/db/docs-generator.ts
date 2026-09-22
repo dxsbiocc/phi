@@ -73,7 +73,7 @@ export function buildDbNavigatorSkillMarkdown(
     '',
     `Generated: ${generatedAt.toISOString()}`,
     '',
-    'Use this skill only to decide where to look. Actual database access must go through `db_search`, `db_domain`, `db_docs_search`, `db_query`, and `db_download`.',
+    'Use this skill only to decide where to look. Actual database access must go through `db_search`, `db_resolve`, `db_domain`, `db_docs_search`, `db_query`, and `db_download`.',
     '',
     'When the user asks about NCBI Entrez, PubMed, ClinVar, Ensembl, UniProt, cBioPortal, PDBe, STRING, PubChem, Reactome, ChEMBL, Human Protein Atlas, GDC, WikiPathways, Gene Ontology, HPO, Disease Ontology, MeSH, AlphaFold, Europe PMC, MyGene, InterPro, KEGG, genes, variants, proteins, pathways, compounds, ontology terms, accessions, or biological database records, infer the database/domain yourself and route through `db_*` tools before falling back to general web search. Do not ask the user to name the tool function.',
     '',

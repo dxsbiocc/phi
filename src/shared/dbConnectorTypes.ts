@@ -189,8 +189,21 @@ export interface DbManifestParseResult {
   manifest?: DbConnectorManifest
 }
 
-export type DbFilterOp =
-  '=' | '!=' | '>' | '<' | '>=' | '<=' | 'in' | 'between' | 'like' | 'is_null'
+/** The operators a filter may use; the db_query schema and the adapters share this list. */
+export const DB_FILTER_OPS = [
+  '=',
+  '!=',
+  '>',
+  '<',
+  '>=',
+  '<=',
+  'in',
+  'between',
+  'like',
+  'is_null'
+] as const
+
+export type DbFilterOp = (typeof DB_FILTER_OPS)[number]
 
 export interface DbFilter {
   field: string

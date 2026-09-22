@@ -19,9 +19,19 @@ export function resolveAgentTools(
 
 export function buildScopedPhiToolMap(
   agentName: string,
-  groups: { wrapper: readonly CustomTool[]; database: readonly CustomTool[] }
+  groups: {
+    wrapper: readonly CustomTool[]
+    database: readonly CustomTool[]
+    visualization?: readonly CustomTool[]
+  }
 ): Map<string, CustomTool> {
   const tools =
-    agentName === 'Wrapper' ? groups.wrapper : agentName === 'Database' ? groups.database : []
+    agentName === 'Wrapper'
+      ? groups.wrapper
+      : agentName === 'Database'
+        ? groups.database
+        : agentName === 'Visualization'
+          ? (groups.visualization ?? [])
+          : []
   return new Map(tools.map((tool) => [tool.name, tool]))
 }

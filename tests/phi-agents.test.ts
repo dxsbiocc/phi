@@ -378,6 +378,7 @@ test('the bundled Database agent owns only biological database tools', () => {
   assert.equal(database.source, 'phi')
   assert.deepEqual(database.tools, [
     'db_search',
+    'db_resolve',
     'db_domain',
     'db_docs_search',
     'db_query',
@@ -402,7 +403,14 @@ test('the bundled Database agent owns only biological database tools', () => {
   assert.equal(database.fallback?.afterFailures, 1)
   assert.deepEqual(database.fallback?.tools, ['bash', 'eval', 'web_search'])
   assert.ok(database.fallback?.match.includes('rest.uniprot.org'))
-  for (const toolName of ['db_search', 'db_domain', 'db_docs_search', 'db_query', 'db_download']) {
+  for (const toolName of [
+    'db_search',
+    'db_resolve',
+    'db_domain',
+    'db_docs_search',
+    'db_query',
+    'db_download'
+  ]) {
     assert.doesNotMatch(database.delegation ?? '', new RegExp(`\\b${toolName}\\b`))
   }
 })

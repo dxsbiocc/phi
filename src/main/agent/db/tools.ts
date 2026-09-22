@@ -13,9 +13,22 @@ import { findDbConnectorCatalogEntry, listDbConnectorCatalog } from './catalog'
 import { buildDbQueryToolDetails } from './result-writer'
 import { buildDbDownloadTool } from './tool-download'
 import { docsSearchResults } from './tool-docs-search'
+import { buildDbResolveTool } from './tool-resolve'
+import {
+  buildDbDocsSearchContent,
+  buildDbDomainContent,
+  buildDbSearchContent,
+  parseDbDomainDetail
+} from './tool-output'
 import { resolveDbQueryInput } from './tool-query-resolution'
 import { DbHttpError, type DbEgressTransport, type DbSleep } from './policy'
 import { DB_STANDARD_RECORD_FIELDS } from './adapters/types'
+import { DB_FILTER_OPS } from '../../../shared/dbConnectorTypes'
+import {
+  enrichDbQueryErrorMessage,
+  unknownDatabaseMessage,
+  unknownDomainMessage
+} from './tool-query-hints'
 import type { DbAdapter, DbAdapterQueryContext } from './adapters/types'
 import type {
   DbAdapterQueryResult,
@@ -327,7 +340,7 @@ export function buildDbSearchTool(agentDir: string = getPhiAgentDir()): CustomTo
       const record = isRecord(params) ? params : {}
       const query = typeof record.query === 'string' ? record.query.trim().toLowerCase() : ''
       const queryTerms = query.split(/\s+/).filter(Boolean)
-      const results = listDbConnectorCatalog(agentDir)
+      const matched = listDbConnectorCatalog(agentDir)
         .filter((entry) => {
           if (
             typeof record.protocolFamily === 'string' &&
@@ -349,12 +362,15 @@ export function buildDbSearchTool(agentDir: string = getPhiAgentDir()): CustomTo
         .map((entry) => ({ entry, score: catalogSearchScore(entry, queryTerms) }))
         .filter(({ score }) => score > 0)
         .sort((left, right) => right.score - left.score)
-        .map(({ entry }) => catalogSearchItem(entry))
+        .map(({ entry }) => entry)
+      const results = matched.map(catalogSearchItem)
       return {
         content: [
           {
             type: 'text',
-            text: results.length ? JSON.stringify(results, null, 2) : '没有找到匹配的数据库连接器。'
+            text: results.length
+              ? buildDbSearchContent(matched, queryTerms)
+              : '没有找到匹配的数据库连接器。'
           }
         ],
         details: { kind: 'db_search_results', results }
@@ -367,13 +383,20 @@ export function buildDbDomainTool(agentDir: string = getPhiAgentDir()): CustomTo
   return {
     name: 'db_domain',
     label: 'Describe Database Domain',
-    description: `Get fields and summary for one biological database domain before querying. ${DB_TOOL_ROUTING_HINT}`,
+    description:
+      'Get the summary, identity contract and fields of one database domain before querying it. Common fields are given in full and the rest by name; pass detail "all" for every field in full.',
     parameters: {
       type: 'object',
       required: ['database', 'domain'],
       properties: {
         database: { type: 'string' },
-        domain: { type: 'string' }
+        domain: { type: 'string' },
+        detail: {
+          type: 'string',
+          enum: ['common', 'all'],
+          description:
+            'Default "common": common fields in full, other fields by name. "all": every field in full.'
+        }
       }
     },
     approval: 'read',
@@ -399,7 +422,15 @@ export function buildDbDomainTool(agentDir: string = getPhiAgentDir()): CustomTo
         fields: domain.fields ?? [],
         identity: domain.identity
       }
-      return { content: [{ type: 'text', text: JSON.stringify(details, null, 2) }], details }
+      return {
+        content: [
+          {
+            type: 'text',
+            text: buildDbDomainContent(database, domain, parseDbDomainDetail(record.detail))
+          }
+        ],
+        details
+      }
     }
   }
 }
@@ -411,21 +442,55 @@ export function buildDbQueryTool(
   return {
     name: 'db_query',
     label: 'Query Database',
-    description: `Run a read-only structured query against an enabled biological database connector. ${DB_TOOL_ROUTING_HINT} Use filters or rawQuery from the user intent; large results are written to an artifact and summarized. GEO, SRA, UniProt, and similar domains may return download_files plus a download_manifest_json artifact. If downloadPlan.status is "ready" and the user asked to download source data, call db_download with downloadManifestArtifact.path; db_query itself only resolves metadata and URLs.`,
+    description:
+      "Run a read-only, bounded query against one domain of one database connector. `database` and `domain` are required: take them from db_search, db_resolve or db_domain. Use `filters` with field names from db_domain, or `rawQuery` for the database's native syntax, never both. Large results are written to an artifact and summarized. GEO, SRA, UniProt and similar domains may also return a download manifest; db_query only resolves metadata and URLs, so call db_download with downloadManifestArtifact.path to fetch files when the user asked for them.",
     parameters: {
       type: 'object',
+      required: ['database', 'domain'],
       properties: {
-        database: { type: 'string' },
-        domain: { type: 'string' },
-        query: { type: 'string' },
-        term: { type: 'string' },
-        keyword: { type: 'string' },
-        filters: { type: 'array' },
-        fields: { type: 'array', items: { type: 'string' } },
-        limit: { type: 'integer', default: 50, maximum: 500 },
+        database: {
+          type: 'string',
+          description: 'Connector id, for example "rest-json/uniprot" or "entrez/ncbi".'
+        },
+        domain: {
+          type: 'string',
+          description: 'Domain id inside that connector, for example "protein" or "geo".'
+        },
+        filters: {
+          type: 'array',
+          description:
+            'Portable predicates, ANDed together. Field names come from db_domain; each domain accepts only some of them.',
+          items: {
+            type: 'object',
+            required: ['field', 'op'],
+            properties: {
+              field: { type: 'string' },
+              op: { type: 'string', enum: [...DB_FILTER_OPS] },
+              value: {
+                description:
+                  'String, number or boolean; an array for "in"; a two-element array for "between"; omit for "is_null".',
+                anyOf: [
+                  { type: 'string' },
+                  { type: 'number' },
+                  { type: 'boolean' },
+                  { type: 'array', items: { anyOf: [{ type: 'string' }, { type: 'number' }] } }
+                ]
+              }
+            }
+          }
+        },
+        fields: {
+          type: 'array',
+          items: { type: 'string' },
+          description: "Fields to return; omit for the domain's common fields."
+        },
+        limit: { type: 'integer', default: 50, minimum: 1, maximum: 500 },
         maxPages: { type: 'integer', default: 1, minimum: 1, maximum: MAX_DB_QUERY_PAGES },
-        cursor: { type: 'string' },
-        rawQuery: { type: 'string' }
+        cursor: { type: 'string', description: 'nextCursor from a previous truncated result.' },
+        rawQuery: {
+          type: 'string',
+          description: 'Native query syntax of the database. Cannot be combined with filters.'
+        }
       }
     },
     approval: 'read',
@@ -445,7 +510,7 @@ export function buildDbQueryTool(
         catalog.find((candidate) => candidate.manifest.id === database) ??
         findDbConnectorCatalogEntry(database, agentDir)
       if (!entry) {
-        const message = `未找到数据库连接器: ${database}`
+        const message = unknownDatabaseMessage(database, catalog)
         return {
           content: [{ type: 'text', text: message }],
           isError: true,
@@ -458,6 +523,14 @@ export function buildDbQueryTool(
           content: [{ type: 'text', text: message }],
           isError: true,
           details: localDbQueryErrorDetails('connector_not_enabled', message)
+        }
+      }
+      if (!entry.manifest.domains.some((candidate) => candidate.id === domain)) {
+        const message = unknownDomainMessage(entry, domain)
+        return {
+          content: [{ type: 'text', text: message }],
+          isError: true,
+          details: localDbQueryErrorDetails('invalid_query', message)
         }
       }
       if (resolved.filters !== undefined && resolved.rawQuery !== undefined) {
@@ -521,10 +594,14 @@ export function buildDbQueryTool(
             : {})
         }
       } catch (error) {
+        const message = enrichDbQueryErrorMessage(dbQueryErrorContent(error))
         return {
-          content: [{ type: 'text', text: dbQueryErrorContent(error) }],
+          content: [{ type: 'text', text: message }],
           isError: true,
-          details: dbQueryErrorDetails(error)
+          details:
+            error instanceof DbHttpError
+              ? dbQueryErrorDetails(error)
+              : localDbQueryErrorDetails('query_failed', message)
         }
       }
     }
@@ -535,7 +612,8 @@ export function buildDbDocsSearchTool(agentDir: string = getPhiAgentDir()): Cust
   return {
     name: 'db_docs_search',
     label: 'Search Database Docs',
-    description: `Search DB connector docs, domain summaries, field glossary, synonyms, namespaces, and xref hints from installed connector manifests. ${DB_TOOL_ROUTING_HINT}`,
+    description:
+      'Search connector docs, domain summaries, field names, synonyms, namespaces and cross-reference hints from the installed connector manifests.',
     parameters: {
       type: 'object',
       properties: {
@@ -563,7 +641,7 @@ export function buildDbDocsSearchTool(agentDir: string = getPhiAgentDir()): Cust
         content: [
           {
             type: 'text',
-            text: results.length ? JSON.stringify(results, null, 2) : '没有找到匹配的数据库文档。'
+            text: results.length ? buildDbDocsSearchContent(results) : '没有找到匹配的数据库文档。'
           }
         ],
         details: { kind: 'db_docs_search_results', query, database, domain, results }
@@ -579,6 +657,7 @@ export function buildDbCustomTools(
 ): CustomTool[] {
   return [
     buildDbSearchTool(agentDir),
+    buildDbResolveTool(agentDir),
     buildDbDomainTool(agentDir),
     buildDbQueryTool(adapters, agentDir),
     buildDbDownloadTool(agentDir, options.download),
