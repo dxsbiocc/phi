@@ -42,6 +42,7 @@ import {
   runProgressLabel,
   runStateColor,
   runStateLabel,
+  wrapperProviderColor,
   wrapperTierLabel
 } from './lib/wrapperView'
 import type { LocalPathKind } from '../../components/MarkdownContent'
@@ -489,18 +490,33 @@ function WrapperTierGroupAccordion({
                 >
                   {entry.summary}
                 </Typography>
-                <Typography
-                  noWrap
-                  color="text.secondary"
-                  sx={{
-                    mt: 0.25,
-                    fontSize: '0.72rem',
-                    fontWeight: 700,
-                    lineHeight: 1.25
-                  }}
-                >
-                  {provider}
-                </Typography>
+                <Stack direction="row" spacing={0.5} sx={{ mt: 0.25, alignItems: 'center' }}>
+                  <Box
+                    sx={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      flexShrink: 0,
+                      bgcolor: (theme) => {
+                        const providerColor = wrapperProviderColor(provider)
+                        return providerColor === 'default'
+                          ? theme.palette.text.disabled
+                          : theme.palette[providerColor].main
+                      }
+                    }}
+                  />
+                  <Typography
+                    noWrap
+                    color="text.secondary"
+                    sx={{
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      lineHeight: 1.25
+                    }}
+                  >
+                    {provider}
+                  </Typography>
+                </Stack>
               </Box>
             </ListItemButton>
           )
@@ -809,7 +825,7 @@ export function WrapperDetail({
               <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
                 <Chip
                   size="small"
-                  color="primary"
+                  color={wrapperProviderColor(parseWrapperCompositionId(selected.id).provider)}
                   label={parseWrapperCompositionId(selected.id).provider}
                 />
                 <Chip

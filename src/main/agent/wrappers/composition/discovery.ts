@@ -90,6 +90,12 @@ function loadCatalog(): WrapperCompositionEntry[] {
     }
   }
 
+  // readdirSync order is filesystem-dependent, not alphabetical — sort by id
+  // so entries from the same tool family (`bowtie2-align`/`bowtie2-build`,
+  // `samtools-*`, ...) land next to each other in the UI's flat per-tier
+  // list, since the id convention already hyphenates the family prefix in.
+  entries.sort((a, b) => a.manifest.id.localeCompare(b.manifest.id))
+
   return entries
 }
 

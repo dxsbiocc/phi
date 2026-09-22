@@ -29,8 +29,21 @@ export function parseWrapperCompositionId(id: string): {
 export function wrapperTierLabel(tier: string): string {
   if (tier === 'modules') return '模块'
   if (tier === 'subworkflows') return '子流程'
-  if (tier === 'workflows') return '完整流水线'
+  if (tier === 'workflows') return '工作流'
   return tier
+}
+
+/**
+ * Distinguishes a wrapper's provenance at a glance: `nf-core` (vendored
+ * upstream, pinned biocontainer) vs `local` (Phi's own scripts, no pinned
+ * environment yet) vs anything else future providers add. Same MUI Chip
+ * `color` vocabulary as `runStateColor` below, so callers just pass it to a
+ * `<Chip color={...}>` or look up the matching palette key for custom sx.
+ */
+export function wrapperProviderColor(provider: string): 'primary' | 'secondary' | 'default' {
+  if (provider === 'nf-core') return 'primary'
+  if (provider === 'local') return 'secondary'
+  return 'default'
 }
 
 export function runStateLabel(state: WrapperRun['state']): string {
