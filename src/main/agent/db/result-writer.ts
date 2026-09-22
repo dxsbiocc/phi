@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import { getSessionDir } from '../session/session-store'
 import { getDbConnectorResultsDir } from './store'
+import { detectDbResultViewerHints } from './result-viewer-hints'
 import type {
   DbAdapterQueryResult,
+  DbDownloadPlan,
   DbDownloadFileAvailability,
   DbDownloadFileCandidate,
   DbDownloadManifestSummary,
@@ -18,6 +20,7 @@ import type {
 const INLINE_ROW_LIMIT = 25
 const INLINE_CHAR_LIMIT = 20_000
 const SAMPLE_ROW_LIMIT = 5
+const DEFAULT_DOWNLOAD_PLAN_MAX_FILES = 20
 const DOWNLOAD_FILE_AVAILABILITIES = new Set<DbDownloadFileAvailability>([
   'candidate_file',
   'directory',
@@ -54,6 +57,11 @@ interface DownloadManifest {
   provenance: DbAdapterQueryResult['provenance']
   resolvedQuery?: DbResolvedQuery
   rows: DownloadManifestRow[]
+}
+
+interface DirectDownloadEntry {
+  url: string
+  filename: string
 }
 
 function ensureDir(path: string): void {
@@ -146,15 +154,69 @@ function downloadFileCandidates(value: unknown): DbDownloadFileCandidate[] {
   return value.filter(isDbDownloadFileCandidate).map((candidate) => ({ ...candidate }))
 }
 
-function summaryFrom(result: DbAdapterQueryResult): DbResultSummary {
+function summaryFrom(
+  result: DbAdapterQueryResult,
+  options: BuildDbQueryToolDetailsOptions = { agentDir: '' }
+): DbResultSummary {
+  const warnings: string[] = []
+  if (result.rows.length === 0) {
+    warnings.push(emptyResultWarning(result, options.resolvedQuery))
+  }
   return {
     rowCount: result.totalRows ?? result.rows.length,
     returnedRows: result.rows.length,
     truncated: result.truncated,
     ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
     fields: resultFields(result.rows),
-    warnings: []
+    warnings
   }
+}
+
+function emptyResultWarning(result: DbAdapterQueryResult, resolvedQuery?: DbResolvedQuery): string {
+  const database = result.provenance.database
+  const domain = result.provenance.domain
+  const input = resolvedQuery?.input?.text?.trim()
+  const filterHint =
+    resolvedQuery?.filters?.map((filter) => `${filter.field}=${String(filter.value)}`).join(', ') ??
+    resolvedQuery?.rawQuery
+
+  const parts = [
+    `No rows returned from ${database}/${domain}.`,
+    input ? `Resolved input: ${input}.` : undefined,
+    filterHint ? `Query predicate: ${filterHint}.` : undefined
+  ]
+
+  if (database === 'rest-json/openfda') {
+    parts.push(
+      'Prefer drug_label_by_name / drug_event_by_name for brand/generic names, or Lucene fields like openfda.generic_name:"aspirin".'
+    )
+  } else if (database === 'rest-json/bindingdb') {
+    parts.push(
+      'Confirm UniProt accession and optional nM cutoff; BindingDB may return empty for sparse targets.'
+    )
+  } else if (database === 'rest-json/zinc') {
+    parts.push(
+      'Use ZINC IDs like ZINC000000000053, or substance_search with preferred_name / inchikey.'
+    )
+  } else if (database === 'rest-json/clinpgx') {
+    parts.push(
+      'Try clinpgx/search for free text, or exact gene symbols / drug names on dedicated domains.'
+    )
+  } else if (database === 'rest-json/ensembl') {
+    parts.push(
+      'Prefer primary paths: gene/lookup_symbol for HGNC symbols, lookup_id for ENS* IDs, sequence_id for FASTA, variation/vep_id/vep_hgvs for variants. Avoid info_*/ga4gh_* unless explicitly requested.'
+    )
+  } else if (database === 'rest-json/alphafold') {
+    parts.push(
+      'AlphaFold prediction requires a UniProt accession; use structure_summary for broader 3D-Beacons coverage.'
+    )
+  } else {
+    parts.push(
+      'Check identifiers/filters with db_domain, or try a broader search domain when available.'
+    )
+  }
+
+  return parts.filter(Boolean).join(' ')
 }
 
 function shouldInline(result: DbAdapterQueryResult): boolean {
@@ -219,6 +281,82 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
+function filenameFromUrl(url: string): string | undefined {
+  try {
+    const filename = basename(decodeURIComponent(new URL(url).pathname))
+    return filename && filename !== '/' ? filename : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function safeDownloadFilename(value: string, fallback: string): string {
+  const filename = [...value]
+    .map((char) => (char.charCodeAt(0) < 32 || '\\/:*?"<>|'.includes(char) ? '_' : char))
+    .join('')
+    .replace(/^\.+$/, '')
+    .trim()
+  return filename || fallback
+}
+
+function uniqueFilename(filename: string, seen: Map<string, number>): string {
+  const count = seen.get(filename) ?? 0
+  seen.set(filename, count + 1)
+  if (count === 0) return filename
+  const dot = filename.lastIndexOf('.')
+  if (dot <= 0) return `${filename}-${count + 1}`
+  return `${filename.slice(0, dot)}-${count + 1}${filename.slice(dot)}`
+}
+
+function directDownloadEntries(manifest: DownloadManifest): DirectDownloadEntry[] {
+  const entries: DirectDownloadEntry[] = []
+  const filenames = new Map<string, number>()
+  manifest.rows.forEach((row, rowIndex) => {
+    row.download_files.forEach((candidate, candidateIndex) => {
+      if (candidate.availability !== 'direct_url') return
+      const url = optionalString(candidate.url)
+      if (!url) return
+      const fallback = `${row.accession ?? `row-${rowIndex + 1}`}-download-${candidateIndex + 1}`
+      const filename = uniqueFilename(
+        safeDownloadFilename(
+          optionalString(candidate.filename) ?? filenameFromUrl(url) ?? fallback,
+          fallback
+        ),
+        filenames
+      )
+      entries.push({ url, filename })
+    })
+  })
+  return entries
+}
+
+function buildDownloadPlan(
+  artifact: DbQueryArtifact,
+  manifest: DownloadManifest,
+  summary: DbDownloadManifestSummary
+): DbDownloadPlan {
+  const outputDir = join(dirname(artifact.path), 'downloads')
+  const directEntries = directDownloadEntries(manifest)
+  const notes = [
+    'db_query resolves metadata and download URLs only; Database agents should call db_download with the manifest path instead of using shell.',
+    summary.candidateFileCount > 0 || summary.directoryCount > 0
+      ? 'candidate_file and directory entries remain discovery hints and should be checked before transfer.'
+      : undefined
+  ].filter((note): note is string => note !== undefined)
+
+  return {
+    status: directEntries.length > 0 ? 'ready' : 'needs_verification',
+    directUrlCount: directEntries.length,
+    toolName: 'db_download',
+    toolArgs: {
+      manifestPath: artifact.path,
+      maxFiles: DEFAULT_DOWNLOAD_PLAN_MAX_FILES
+    },
+    suggestedOutputDir: outputDir,
+    notes
+  }
+}
+
 function summarizeDownloadManifest(manifest: DownloadManifest): DbDownloadManifestSummary {
   const formats = new Set<string>()
   const kinds = new Set<string>()
@@ -263,6 +401,33 @@ function summarizeDownloadManifest(manifest: DownloadManifest): DbDownloadManife
   return summary
 }
 
+function downloadInstructions(
+  artifact: DbQueryArtifact,
+  summary: DbDownloadManifestSummary
+): string[] {
+  const kinds = summary.kinds.length > 0 ? summary.kinds.join(', ') : 'download files'
+  const instructions = [
+    `Download candidates are available in the download_manifest_json artifact at ${artifact.path}.`,
+    `The manifest contains ${summary.candidateCount} candidate downloads across ${summary.rowCount} result row(s); candidate kinds: ${kinds}.`
+  ]
+  if (summary.directUrlCount > 0) {
+    instructions.push(
+      `${summary.directUrlCount} candidate(s) are direct_url entries suitable for db_download. Call db_download with this manifest path when the user asked to fetch files.`
+    )
+  }
+  if (summary.candidateFileCount > 0 || summary.directoryCount > 0) {
+    instructions.push(
+      'Candidate files and directories are inferred source URLs; verify network availability before claiming a file was downloaded.'
+    )
+  }
+  if (summary.kinds.includes('series_matrix')) {
+    instructions.push(
+      'For GEO expression analysis, prefer the series_matrix candidate when present; if it 404s, inspect the series_matrix_directory because multi-platform GSE records often use platform-suffixed files such as GSEnnn-GPLnnn_series_matrix.txt.gz.'
+    )
+  }
+  return instructions
+}
+
 function writeDownloadManifestArtifact(
   dir: string,
   fileStem: string,
@@ -290,7 +455,8 @@ export function buildDbQueryToolDetails(
   result: DbAdapterQueryResult,
   options: BuildDbQueryToolDetailsOptions
 ): DbQueryToolDetails {
-  const summary = summaryFrom(result)
+  const summary = summaryFrom(result, options)
+  const viewerHints = detectDbResultViewerHints(result)
   const downloadManifest = buildDownloadManifest(result, summary, options.resolvedQuery)
   const downloadManifestSummary = downloadManifest
     ? summarizeDownloadManifest(downloadManifest)
@@ -306,16 +472,27 @@ export function buildDbQueryToolDetails(
         downloadManifest
       )
     }
+    const instructions =
+      downloadManifestArtifact && downloadManifestSummary
+        ? downloadInstructions(downloadManifestArtifact, downloadManifestSummary)
+        : undefined
+    const downloadPlan =
+      downloadManifestArtifact && downloadManifestSummary && downloadManifest
+        ? buildDownloadPlan(downloadManifestArtifact, downloadManifest, downloadManifestSummary)
+        : undefined
     return {
       kind: 'db_query_result',
       mode: 'inline',
       summary,
       rows: result.rows,
+      ...(viewerHints.length > 0 ? { viewerHints } : {}),
       ...(downloadManifestArtifact
         ? {
             artifacts: [downloadManifestArtifact],
             downloadManifestArtifact,
-            downloadManifestSummary
+            downloadManifestSummary,
+            downloadInstructions: instructions,
+            downloadPlan
           }
         : {}),
       provenance: result.provenance,
@@ -371,18 +548,34 @@ export function buildDbQueryToolDetails(
     )
     artifacts.push(downloadManifestArtifact)
   }
+  const instructions =
+    downloadManifestArtifact && downloadManifestSummary
+      ? downloadInstructions(downloadManifestArtifact, downloadManifestSummary)
+      : undefined
+  const downloadPlan =
+    downloadManifestArtifact && downloadManifestSummary && downloadManifest
+      ? buildDownloadPlan(downloadManifestArtifact, downloadManifest, downloadManifestSummary)
+      : undefined
 
   const metadata = {
     kind: 'db_query_metadata',
     summary,
     provenance: result.provenance,
     ...(options.resolvedQuery ? { resolvedQuery: options.resolvedQuery } : {}),
+    ...(viewerHints.length > 0 ? { viewerHints } : {}),
     schema: {
       fields: metadataSchema(result.rows, fields)
     },
     artifacts,
     primaryArtifact: artifact,
-    ...(downloadManifestArtifact ? { downloadManifestArtifact, downloadManifestSummary } : {})
+    ...(downloadManifestArtifact
+      ? {
+          downloadManifestArtifact,
+          downloadManifestSummary,
+          downloadInstructions: instructions,
+          downloadPlan
+        }
+      : {})
   }
   const metadataJson = `${JSON.stringify(metadata, null, 2)}\n`
   const metadataHash = createHash('sha256').update(metadataJson).digest('hex')
@@ -403,11 +596,19 @@ export function buildDbQueryToolDetails(
     mode: 'artifact',
     summary,
     sampleRows: result.rows.slice(0, SAMPLE_ROW_LIMIT),
+    ...(viewerHints.length > 0 ? { viewerHints } : {}),
     artifact,
     artifacts,
     metadataArtifact,
     ...(csvArtifact ? { csvArtifact } : {}),
-    ...(downloadManifestArtifact ? { downloadManifestArtifact, downloadManifestSummary } : {}),
+    ...(downloadManifestArtifact
+      ? {
+          downloadManifestArtifact,
+          downloadManifestSummary,
+          downloadInstructions: instructions,
+          downloadPlan
+        }
+      : {}),
     outputPath: jsonlPath,
     outputArtifact: { kind: 'tool_output', path: jsonlPath, bytes },
     provenance: result.provenance,

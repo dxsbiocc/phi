@@ -7,11 +7,15 @@ baseUrl: https://eutils.ncbi.nlm.nih.gov/entrez/eutils
 networkPolicy:
   allowedHosts:
     - eutils.ncbi.nlm.nih.gov
+    - ftp.ncbi.nlm.nih.gov
   allowRedirects: false
 auth:
   type: api_key_query_param
   envVar: NCBI_API_KEY
   paramName: api_key
+  required: false
+  label: NCBI API key
+  signupUrl: https://www.ncbi.nlm.nih.gov/account/settings/
 rateLimit:
   withAuth:
     requestsPerSecond: 10
@@ -463,7 +467,7 @@ domains:
         description: Derived GEO Series download URLs for matrix, SOFT, MINiML, supplementary, and raw archive files when a GSE accession is available.
       - name: download_files
         type: array
-        description: Structured GEO Series download candidates using the shared download-file schema (kind, accession, url, format, availability, source, and optional compression metadata), derived from a GSE accession.
+        description: Structured GEO Series download candidates using the shared download-file schema (kind, accession, url, format, availability, source, and optional filename/size/compression metadata), derived from a GSE accession and enriched from official GEO matrix/SOFT/MINiML/supplementary directory listings when available.
       - name: geo2r_available
         type: boolean
         description: Whether GEO2R is available for this record, when reported by NCBI.

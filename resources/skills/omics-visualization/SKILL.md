@@ -1,0 +1,249 @@
+---
+name: omics-visualization
+description: >-
+  Render, adapt, and audit publication-ready scientific figures from omics
+  result tables and matrices using bundled canonical plotting templates and a
+  Nature-style emphasis on claim, hierarchy, restraint, and final-size
+  readability. Use when the user has transcriptomics, proteomics,
+  metabolomics, enrichment, survival, network, or related omics data and asks
+  to choose, create, revise, or export scatter, heatmap, bar, distribution,
+  line, network, flow, hierarchy, clustering dendrogram, pathway-ring,
+  gene-structure, or ideogram figures. Also trigger on 组学绘图、科研配图、论文图表、
+  聚类树、通路环图、应力布局, SVG散点, 图标柱状图, 多通路富集热图, 通路分组富集热图, 富集点图, GO点图, 表达热图, 免疫相关热图, 关联点阵, 平行集合图, 泰森多边形, 条形甜甜圈, 环状比例图, 免疫棒棒糖, 环形棒棒糖, 基因结构, 核型图, 感兴趣基因, 火山图放大, UpSet, 韦恩图, Venn, 饱和突变热图, ΔΔG热图, oncoprint, 突变瀑布图, 基因组变异热图, 分块聚类热图, NMF相关热图, 环状热图, 相关气泡热图, 对角线分割热图, 环形UMAP, UMAP环图, 三元图, 三元相图, 相关散点矩阵, ggpairs, pairs plot, 泳道图, 游泳图, 脊线图, 山脊图, joyplot, RidgePlot, 基因组覆盖度, coverage track, locus browser, HiChIP, 突变棒棒糖, 蛋白棒棒糖, g3viz, MutationMapper, 蒲公英图, dandelion, Circos, 基因组环图, 共线性, synteny, 弦图, chord diagram, 基因组热图, 嵌套缩放, nested circos. Do not use for upstream statistical analysis,
+  generic business dashboards, AI-generated illustrations, or creating and
+  maintaining reusable template libraries.
+---
+
+# Omics Visualization
+
+Use the bundled template library to create, revise, and audit figures from
+existing omics results. Visualization is for making a data pattern,
+distribution, comparison, or uncertainty easier to inspect and communicate; do
+not make a chart merely because a chart was requested. Select templates from
+the catalogs, not from memory. The selected canonical template determines the
+implementation language.
+
+Default to a Nature-style scientific figure: one defensible claim, the
+smallest sufficient visual vocabulary, restrained color, readable typography at
+the final physical size, and no decorative encodings. Treat this as a design
+philosophy unless the user gives journal-specific submission rules.
+
+## Route
+
+Phi gives the Visualization agent three tools for the mechanical steps:
+`viz_route`, `viz_prepare` and `viz_render`. The equivalent commands are shown in
+brackets for use without them.
+
+1. State the visualization purpose before choosing a chart: what should become
+   easier to see, compare, verify, or question after plotting? If the purpose is
+   unclear, infer the smallest honest purpose from the user's request and data;
+   ask only when several purposes would require materially different figures.
+2. Inspect the user's data and scientific context. Continue only after the
+   observation unit, relevant columns, comparison structure, and intended
+   message are understood. Take a compact distribution snapshot: row/column
+   count, variable types, categorical cardinality/order, numeric range/skew,
+   missing/non-finite values, zeros/sparsity, duplicated identifiers, and any
+   pairing, time, hierarchy, genomic interval, network, or matrix structure.
+   `viz_route` returns the columns and their types; look at the values yourself
+   when the figure depends on them.
+3. Write or infer a one-sentence figure claim before selecting geometry. A
+   single composite glyph (for example a circular tree inset in a polar track)
+   is still one template. Follow **Multi-panel composition** only for labelled
+   a/b/c figures that combine several plots with distinct evidence roles.
+4. Shortlist templates with `viz_route` (data path, purpose, mode)
+   [`python3 scripts/route_template.py --input <table.tsv> --query "<user purpose>" --mode preview --json`].
+   It profiles the table against
+   [references/template_contracts.json](references/template_contracts.json) and
+   scans recognized companion files in the input directory (`nodes.tsv`,
+   `links.tsv`, `rowInfo.tsv`, `colInfo.tsv`, `enrichment.tsv`, `cytoband.tsv`,
+   `domains.tsv`, `karyotype.tsv`; pass `sidecar_dir` when they live elsewhere),
+   reporting whether their IDs align. Alignment warnings lower confidence; they
+   do not authorize silent filtering, reordering, imputation, or upstream
+   statistical analysis. A high-confidence result is a shortlist, not permission
+   to skip step 6.
+5. If the router is low confidence, if several viable templates would change
+   the scientific reading, or if the output is publication-critical, read
+   [references/plots.yaml](references/plots.yaml) and then only the relevant
+   family catalog under `references/catalog/`. Compare `use_when`, `avoid_when`,
+   and `input_shape`. When two templates of one family look alike, read
+   [references/mis-routes.md](references/mis-routes.md). If one template clearly
+   matches the purpose, distribution, claim, and data contract, proceed with it
+   and record the reason. If several viable templates would trade off
+   overview/detail, show up to four candidates with their preview
+   (`preview_markdown` from `viz_route`), `id`, why it fits, why it might
+   mislead, and expected input shape; let the user choose among those material
+   alternatives.
+6. Select one canonical template and make a project-local copy with
+   `viz_prepare`. It returns the template's purpose, the tables it takes, its R
+   dependencies, and the CONFIG and DATA PREPARATION sections with their line
+   numbers; read the PLOT lines only when the geometry must change. [Without the
+   tool: read the template's `plot.R` in full, and any helper it sources, before
+   modifying or executing it. Current templates use
+   [scripts/lib/common.R](scripts/lib/common.R).]
+7. Pick colors from [references/palettes.yaml](references/palettes.yaml).
+   Copy hex from that file or from
+   [references/palettes/colors.json](references/palettes/colors.json).
+   Do not invent hex codes. Prefer `Qualitative.Safe` for discrete groups,
+   `Quantitative.BluGrn` for heatmaps, and `Diverging.RdBu` for signed values,
+   unless the user names a palette or asks to match OmicsAgent (`Brand.Algolia`)
+   or an existing figure. Reserve saturated color for the focal comparison and
+   keep secondary marks neutral when the template permits it.
+8. Keep the working copy project-local: under the
+   active Phi project working directory, not the input data file's parent
+   directory. Treat data directories outside the
+   project as read-only inputs even if the shell can technically write there.
+   Keep generated figures, adapted source files, scratch files, reports, and QA
+   artifacts under the project working directory so Phi can preview/open them.
+   If no output directory is specified, create a concise directory such as
+   `visualizations/<short-task-name>/` or `plots/<short-task-name>/` inside the
+   project. `viz_prepare` and `viz_render` refuse paths outside the project, and
+   `viz_prepare` points the copy at the installed read-only `scripts/lib/common.R`
+   by absolute path [by hand: source that helper by absolute path, or copy only
+   the helper and set `OMICS_VISUALIZATION_SKILL_ROOT` to the installed skill
+   root]. Do not copy `references/`, `references/palettes/`, or catalog files into
+   the project merely to make palette lookup work; choose palette ids from the
+   installed references and leave those catalog resources in the skill. Do not
+   edit the installed skill copy during an ordinary plotting task.
+9. Adapt the visible source directly:
+   - edit `CONFIG` for column mappings, labels, and ordinary presentation
+     (`circular`, `outer = "bar"` vs `"point"`, hole, inset, SVG file).
+     A layout flag or a different glyph file is not a new template id.
+   - edit `DATA PREPARATION` when the input shape differs;
+   - edit `PLOT` for structural visual changes.
+   Do not introduce an external plotting configuration DSL.
+   Do not add a sibling template that only changes `layout`, `circular`,
+   an algorithm alias (kk / fr / lgl), or the SVG glyph file.
+10. Set the final output size before polishing. For manuscript-like output,
+   read [references/nature-figure-principles.md](references/nature-figure-principles.md)
+   and apply only the parts relevant to the selected template.
+11. Render with `viz_render` (the prepared script, the input table(s), an output
+   `.png`, `.pdf` or `.svg`) [run `Rscript plot.R <input> <output>` as documented
+   at the top of the script]. If dependencies are missing, report them; do not
+   install packages without authorization and do not silently switch
+   implementations.
+12. `viz_render` runs the lightweight artifact QA and names the checks that
+   failed [`python3 scripts/qa_single_plot.py <artifact.png-or.svg> --json`]. That
+   only shows the file is sound: inspect the rendered artifact at final size and
+   correct labels, scales, legends, clipping, overlaps, spacing, and misleading
+   encodings, then rerun until the output and source agree.
+Routing is complete only when the chosen template, its input assumptions,
+implementation language, sourced helpers, and runnable project-local copy are
+known. When the contract router is used, delivery notes should include the
+recommended template id, confidence, decisive matched shape, and any listed
+risk that had to be checked. Delivery is complete only after the final rendered
+artifact has passed lightweight QA and visual inspection.
+
+## Efficient use
+
+- Use `viz_route` (`scripts/route_template.py`) as the fast path for preview-mode and
+  common result-table shapes. Trust high-confidence contract recommendations
+  enough to avoid reading unrelated family catalogs, but still confirm the
+  selected template's contract (`viz_prepare`) before rendering.
+- Trust `references/plots.yaml` and the family catalogs for low-confidence,
+  publication, or novel shapes. Do not search the template scripts by text
+  unless a catalog entry is missing, stale, or internally inconsistent.
+- When adding or editing routing contracts, run
+  `python3 scripts/validate_template_contracts.py --json` before delivery.
+  The validator must pass with no errors; warnings require an explicit note.
+  Use the text report with `--max-missing-per-family 3` to prioritize future
+  contract coverage without manually scanning the whole catalog.
+- When the user names an exact template id, or the data shape leaves one clear
+  candidate, proceed without a candidate-selection pause.
+- Do not render every candidate. Use shipped previews for material alternatives,
+  then run only the chosen project-local source.
+- Prefer `CONFIG` edits, label tightening, scale changes, and legend pruning
+  before touching the `PLOT` section. Structural rewrites are for misleading
+  geometry, not ordinary polish.
+- Keep final QA proportional: single plots get `qa_single_plot.py` plus a
+  final-size visual inspection; labelled multi-panel figures also get the
+  Patchwork geometry audit.
+
+## Nature-style figure defaults
+
+- Argument first: every figure should answer one claim or one bounded
+  comparison. Remove panels, labels, encodings, and legends that do not help a
+  reader evaluate that claim.
+- Restraint over decoration: no ornamental gradients, busy backgrounds,
+  gratuitous icons, or palette changes that encode nothing. Use whitespace and
+  alignment as the main organizing devices.
+- Typography is judged at final size. Use concise sentence-case labels with
+  units; avoid local panel titles when the caption can carry the narrative.
+  As a practical default, keep tick labels at least 6 pt, axis and legend text
+  at least 7 pt, and panel letters 8-10 pt bold.
+- Hierarchy should be visible before details. Give the decisive evidence the
+  most space or clearest contrast; make controls, references, and secondary
+  strata quieter but still legible.
+- Encodings must be biologically and statistically honest. Prefer effect size
+  plus uncertainty when supplied; avoid summary bars for distributions when a
+  raw-point, interval, boxplot, violin, raincloud, or ridge template better
+  exposes the data shape.
+- Template choice follows the data. Do not force a requested chart type when
+  the distribution snapshot shows it would hide sample size, censoring,
+  sparsity, outliers, paired structure, or uncertainty that the figure purpose
+  depends on; recommend a better-fitting catalog template and explain the
+  tradeoff.
+- Color must survive reduction and color-vision checks. Use catalog palettes,
+  avoid rainbow/jet and pure red-green dependence, and add redundant shape,
+  linetype, label, or ordering when color carries a critical distinction.
+
+## Confusable templates
+
+Read [references/mis-routes.md](references/mis-routes.md) when two templates of one
+family look alike or the router's pick and the user's wording disagree. It lists
+the confusable pairs and the geometry that separates them. Confirm against the
+family catalog either way.
+
+## Multi-panel figures
+
+For a labelled multi-panel figure, figure assembly, or rearrangement of several
+plots, follow [references/multipanel-workflow.md](references/multipanel-workflow.md).
+Its delivery bar: every panel has a distinct evidence role, the rendered geometry
+audit passes, and the final-size visual inspection finds no unresolved clipping,
+collision, hierarchy, or reading-order defect.
+
+## Language boundary
+
+Do not search for or create a duplicate bundled implementation in another
+language. If the user explicitly requires a language not represented by the
+selected canonical template, state that limitation and create a project-local
+implementation only when it is necessary to satisfy the request; do not add it
+to the bundled library as a second canonical template.
+
+## Scientific integrity
+
+- Do not invent sample sizes, statistical tests, p-values, adjusted p-values,
+  effect sizes, uncertainty, group mappings, or biological interpretations.
+- Do not silently filter, aggregate, impute, clip, coerce, or sample data.
+  Report every material transformation and its before-and-after row count.
+- Preserve identifiers and biological units. Flag duplicated identifiers,
+  missing values, non-finite values, invalid ranges, and ambiguous columns
+  before plotting.
+- Distinguish raw from adjusted p-values and technical from biological
+  replicates. Do not infer biological importance from visual or statistical
+  separation alone.
+- If the figure requires upstream analysis that has not been performed,
+  identify that prerequisite instead of fabricating results.
+- Display clustering (dist + hclust on a supplied matrix) is allowed when
+  that is the figure (`tree-dendrogram`, clustered heatmaps). Do not present
+  it as an independent statistical result, and do not invent the matrix.
+- Use catalog palettes. Do not invent hex. Do not interpolate hex when a
+  palette is too short; `palette_colors()` appends unused Qualitative then
+  Brand colours. Do not use Artwork or Concept palettes unless the user
+  asks for a decorative theme.
+- Plot canvases are transparent. A dark editor makes empty alpha look black;
+  that is not a black background and must not be “fixed.”
+
+## Delivery
+
+Return the final rendered figure and the exact project-local source used to
+create it. Include the visualization purpose, selected template ID, selection
+rationale, input-to-column mapping, material transformations, and unresolved
+limitations in a concise handoff. Prefer SVG or PDF for editable scientific
+graphics and add a PNG preview when useful. Do not claim rendering or visual
+validation when either step was blocked.
+
+## Scope
+
+This skill applies existing templates to real data and revises or audits the
+resulting figures. Creating, cataloging, testing, or maintaining reusable
+templates belongs to a template-authoring workflow, not this skill.

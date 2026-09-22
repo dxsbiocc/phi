@@ -93,6 +93,44 @@ test('markdown inline code renders pure hex colors with swatches', () => {
   assert.match(markup, /#0072B2/)
 })
 
+test('markdown inline code renders SMILES expressions with hover molecule previews', () => {
+  const smiles = 'NC(Cc1cc(I)c(Oc2ccc(O)c(I)c2)c(I)c1)C(=O)O'
+  const markup = renderMarkdown(`| 分子 | SMILES |\n| --- | --- |\n| L-T4 | \`${smiles}\` |`)
+
+  assert.match(markup, /data-phi-slot="markdown-smiles-token"/)
+  assert.match(markup, /data-phi-smiles-hover-preview="true"/)
+  assert.match(markup, /data-phi-molecule-expression="true"/)
+  assert.match(markup, /NC\(Cc1cc/)
+})
+
+test('markdown inline code leaves GEO matrix filenames as plain code, not molecule previews', () => {
+  const markup = renderMarkdown('Download `GSE180012_raw_counts_GRCh38.txt.gz` into workspace.')
+
+  assert.doesNotMatch(markup, /data-phi-slot="markdown-smiles-token"/)
+  assert.doesNotMatch(markup, /data-phi-smiles-hover-preview="true"/)
+  assert.doesNotMatch(markup, /data-phi-molecule-expression="true"/)
+  assert.doesNotMatch(markup, /data-phi-slot="local-file-link"/)
+  assert.match(markup, />GSE180012_raw_counts_GRCh38\.txt\.gz<\/code>/)
+})
+
+test('markdown links render STRING network urls as hover webpage previews', () => {
+  const markup = renderMarkdown(
+    '完整 STRING 网络可视化：https://string-db.org/network/9606.ENSP00000281030'
+  )
+
+  assert.match(markup, /data-phi-slot="database-web-preview-link"/)
+  assert.match(markup, /data-phi-database-kind="string-network"/)
+  assert.match(markup, /https:\/\/string-db\.org\/network\/9606\.ENSP00000281030/)
+})
+
+test('markdown links render KEGG pathway urls as hover webpage previews', () => {
+  const markup = renderMarkdown('KEGG 通路：https://www.kegg.jp/pathway/hsa04110')
+
+  assert.match(markup, /data-phi-slot="database-web-preview-link"/)
+  assert.match(markup, /data-phi-database-kind="kegg-pathway"/)
+  assert.match(markup, /https:\/\/www\.kegg\.jp\/pathway\/hsa04110/)
+})
+
 test('markdown color swatches work inside emphasis and tables', () => {
   const markup = renderMarkdown(
     '**Blue #0072B2**\n\n| Name | Color |\n| --- | --- |\n| red | #D55E00 |'
@@ -188,6 +226,77 @@ test('markdown file links use tiered hover previews without embedding media inli
   assert.match(markup, /data-phi-file-kind="image"/)
   assert.match(markup, /data-phi-file-kind="pdf"/)
   assert.doesNotMatch(markup, /data-phi-slot="local-file-hover-image"/)
+})
+
+test('markdown relative workspace paths render as clickable hover preview links', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(MarkdownContent, {
+        text: 'Output `omics_viz/THRSP_network_omics.png`, see [PNG](omics_viz/THRSP_network_omics.png), and open omics_viz/THRSP_network_omics.png.',
+        cwd: '/Users/example/project'
+      })
+    )
+  )
+
+  const absolutePath = '/Users/example/project/omics_viz/THRSP_network_omics.png'
+  assert.equal(markup.match(/data-phi-slot="local-file-link"/g)?.length ?? 0, 3)
+  assert.equal(markup.match(/data-phi-slot="local-file-hover-preview"/g)?.length ?? 0, 3)
+  assert.match(markup, new RegExp(`data-phi-path="${absolutePath}"`))
+  assert.match(markup, new RegExp(`data-phi-hover-preview-path="${absolutePath}"`))
+  assert.match(markup, /data-phi-file-kind="image"/)
+  assert.match(markup, /打开文件 \/Users\/example\/project\/omics_viz\/THRSP_network_omics\.png/)
+  assert.doesNotMatch(markup, /href="omics_viz\/THRSP_network_omics\.png"/)
+})
+
+test('markdown leaves project-external absolute paths as non-clickable text', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(MarkdownContent, {
+        text: 'External output /Users/example/data/plots/volcano.png, [PNG](/Users/example/data/plots/volcano.png), and `/Users/example/data/plots/volcano.png`.',
+        cwd: '/Users/example/project'
+      })
+    )
+  )
+
+  assert.doesNotMatch(markup, /data-phi-slot="local-file-link"/)
+  assert.doesNotMatch(markup, /data-phi-hover-preview-path/)
+  assert.doesNotMatch(markup, /data-phi-path="\/Users\/example\/data\/plots\/volcano\.png"/)
+  assert.match(markup, /\/Users\/example\/data\/plots\/volcano\.png/)
+  assert.match(markup, /PNG/)
+})
+
+test('markdown local image syntax renders a local preview container', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(MarkdownContent, {
+        text: '推荐模板：![Volcano template](/Users/example/project/resources/skills/omics-visualization/scripts/scatter/volcano/preview.png)',
+        cwd: '/Users/example/project'
+      })
+    )
+  )
+
+  assert.match(markup, /data-phi-slot="local-markdown-image"/)
+  assert.match(
+    markup,
+    /data-phi-path="\/Users\/example\/project\/resources\/skills\/omics-visualization\/scripts\/scatter\/volcano\/preview\.png"/
+  )
+  assert.match(markup, /data-phi-slot="local-file-link"/)
+  assert.match(markup, />Volcano template<\/span><\/button>/)
+  assert.doesNotMatch(markup, /<img[^>]+src="\/Users\/example\/project/)
+})
+
+test('markdown remote image syntax still renders an image element', () => {
+  const markup = renderMarkdown('![External plot](https://example.com/plot.png)')
+
+  assert.match(markup, /<img/)
+  assert.match(markup, /src="https:\/\/example\.com\/plot\.png"/)
+  assert.match(markup, /alt="External plot"/)
 })
 
 test('markdown current-directory links render directory icons', () => {

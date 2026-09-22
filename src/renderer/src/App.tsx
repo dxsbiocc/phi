@@ -113,6 +113,8 @@ import type {
   AnalysisNotebookFileChange,
   DbConnectorSettingsItem,
   DefaultProxyMode,
+  EnvironmentSnapshot,
+  EnvironmentToolId,
   McpServerSummary,
   ModelOption,
   PhiAppSettings,
@@ -636,6 +638,10 @@ function App(): React.JSX.Element {
   const [dbConnectors, setDbConnectors] = useState<DbConnectorSettingsItem[]>([])
   const [isLoadingDbConnectors, setIsLoadingDbConnectors] = useState(true)
   const [updatingDbConnectorId, setUpdatingDbConnectorId] = useState<string | null>(null)
+  const [environmentSnapshot, setEnvironmentSnapshot] = useState<EnvironmentSnapshot | null>(null)
+  const [isLoadingEnvironment, setIsLoadingEnvironment] = useState(true)
+  const [isRedetectingEnvironment, setIsRedetectingEnvironment] = useState(false)
+  const [showEnvironmentSummary, setShowEnvironmentSummary] = useState(false)
   const [isSavingDefaultProxyMode, setIsSavingDefaultProxyMode] = useState(false)
   const [isSavingAppSettings, setIsSavingAppSettings] = useState(false)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
@@ -680,6 +686,7 @@ function App(): React.JSX.Element {
     wrapperError,
     setSelectedWrapperId,
     refreshWrappers,
+    refreshRuns: refreshWrapperRuns,
     cancelWrapperRun,
     exportWrapperReproducibility
   } = useWrapperCatalog()
@@ -784,6 +791,58 @@ function App(): React.JSX.Element {
     },
     [dbConnectors, rendererApi, showSnackbarError]
   )
+
+  useEffect(() => {
+    let cancelled = false
+    void rendererApi
+      .getEnvironment()
+      .then((result) => {
+        if (cancelled) return
+        setEnvironmentSnapshot(result.snapshot)
+        setShowEnvironmentSummary(result.showSummary)
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          showSnackbarError(error, '读取工作台环境失败')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingEnvironment(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [rendererApi, showSnackbarError])
+
+  const onRedetectEnvironment = useCallback(async (): Promise<void> => {
+    setIsRedetectingEnvironment(true)
+    try {
+      setEnvironmentSnapshot(await rendererApi.redetectEnvironment())
+    } catch (error) {
+      showSnackbarError(error, '重新检测环境失败')
+    } finally {
+      setIsRedetectingEnvironment(false)
+    }
+  }, [rendererApi, showSnackbarError])
+
+  const onSetEnvironmentToolPath = useCallback(
+    async (toolId: EnvironmentToolId, path: string | null): Promise<void> => {
+      setEnvironmentSnapshot(await rendererApi.setEnvironmentToolPath(toolId, path))
+    },
+    [rendererApi]
+  )
+
+  const onDismissEnvironmentSummary = useCallback(async (): Promise<void> => {
+    setShowEnvironmentSummary(false)
+    try {
+      setEnvironmentSnapshot(await rendererApi.dismissEnvironmentSummary())
+    } catch (error) {
+      showSnackbarError(error, '关闭环境摘要失败')
+    }
+  }, [rendererApi, showSnackbarError])
 
   const onSelectDefaultProxyMode = useCallback(
     async (mode: DefaultProxyMode): Promise<void> => {
@@ -2694,9 +2753,11 @@ function App(): React.JSX.Element {
         subtitle: entry.id
       })
       // Runs the agent started while this view was closed (wrapper_run) only exist on disk.
-      void refreshWrappers()
+      // Reload just the runs: a full refresh flips the sidebar to its loading spinner and
+      // swaps the catalog, which repaints the whole view instead of only the detail page.
+      void refreshWrapperRuns()
     },
-    [openWorkspaceResourceTab, refreshWrappers, setSelectedWrapperId]
+    [openWorkspaceResourceTab, refreshWrapperRuns, setSelectedWrapperId]
   )
 
   const onCloseWorkspaceTab = useCallback(
@@ -3469,6 +3530,13 @@ function App(): React.JSX.Element {
           onSelectDefaultProxyMode={onSelectDefaultProxyMode}
           onUpdateAppSettings={onUpdateAppSettings}
           onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
+          environmentSnapshot={environmentSnapshot}
+          isLoadingEnvironment={isLoadingEnvironment}
+          isRedetectingEnvironment={isRedetectingEnvironment}
+          onRedetectEnvironment={onRedetectEnvironment}
+          onSetEnvironmentToolPath={onSetEnvironmentToolPath}
+          showEnvironmentSummary={showEnvironmentSummary}
+          onDismissEnvironmentSummary={onDismissEnvironmentSummary}
           dbConnectors={dbConnectors}
           isLoadingDbConnectors={isLoadingDbConnectors}
           updatingDbConnectorId={updatingDbConnectorId}

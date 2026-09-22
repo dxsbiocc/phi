@@ -7,7 +7,7 @@ import {
   type NotebookCellType,
   type NotebookDocument
 } from '../../../shared/notebookDocument'
-import { detectAnalysisKernels } from './analysis-kernels'
+import { detectConfiguredAnalysisKernels } from '../environment/index'
 import { AnalysisNotebookExecutor } from './analysis-jupyter-execution'
 import { AnalysisNotebookSessionRegistry } from './analysis-jupyter-sessions'
 import { listProjectNotebooks } from './analysis-notebooks'
@@ -18,7 +18,7 @@ import {
 } from './analysis-notebook-files'
 import type { NotebookToolRequest } from './notebook-tools'
 
-type ProjectRef = {
+type NotebookWorkspaceRef = {
   workingDirectory: string
   name?: string
 }
@@ -55,8 +55,7 @@ type NotebookToolResult = {
 }
 
 type ConstructorOptions = {
-  getProjectByCwd: (cwd: string) => ProjectRef | null | undefined
-  assertProjectPathAvailable: (cwd: string) => void
+  resolveWorkspaceByCwd: (cwd: string) => NotebookWorkspaceRef | null | undefined
   ensureJupyterServerReady: (projectCwd: string) => Promise<void>
   notebookSessionRegistry: AnalysisNotebookSessionRegistry
   notebookExecutor: AnalysisNotebookExecutor
@@ -171,8 +170,7 @@ function notebookCellMetadataWithExecutionDuration(
 }
 
 export class AnalysisNotebookToolExecutor {
-  private readonly getProjectByCwd: ConstructorOptions['getProjectByCwd']
-  private readonly assertProjectPathAvailable: ConstructorOptions['assertProjectPathAvailable']
+  private readonly resolveWorkspaceByCwd: ConstructorOptions['resolveWorkspaceByCwd']
   private readonly ensureJupyterServerReady: ConstructorOptions['ensureJupyterServerReady']
   private readonly notebookSessionRegistry: AnalysisNotebookSessionRegistry
   private readonly notebookExecutor: AnalysisNotebookExecutor
@@ -181,8 +179,7 @@ export class AnalysisNotebookToolExecutor {
   private readonly aliases = new Map<string, string>()
 
   constructor(options: ConstructorOptions) {
-    this.getProjectByCwd = options.getProjectByCwd
-    this.assertProjectPathAvailable = options.assertProjectPathAvailable
+    this.resolveWorkspaceByCwd = options.resolveWorkspaceByCwd
     this.ensureJupyterServerReady = options.ensureJupyterServerReady
     this.notebookSessionRegistry = options.notebookSessionRegistry
     this.notebookExecutor = options.notebookExecutor
@@ -190,7 +187,7 @@ export class AnalysisNotebookToolExecutor {
   }
 
   async execute(request: NotebookToolRequest): Promise<NotebookToolResult> {
-    const project = this.projectForCwd(request.cwd)
+    const project = this.workspaceForCwd(request.cwd)
     const params = isRecord(request.params) ? request.params : {}
     switch (request.action) {
       case 'list':
@@ -219,7 +216,7 @@ export class AnalysisNotebookToolExecutor {
     savedRevision?: string
     source?: NotebookDraftChangeSource
   }): NotebookDraftChange {
-    const project = this.projectForCwd(input.cwd)
+    const project = this.workspaceForCwd(input.cwd)
     const state = this.stateFor(project, input.path)
     state.document = input.document
     if (input.savedRevision) state.savedRevision = input.savedRevision
@@ -228,11 +225,10 @@ export class AnalysisNotebookToolExecutor {
     })
   }
 
-  private projectForCwd(cwd: string): ProjectRef {
-    const project = this.getProjectByCwd(cwd)
-    if (!project) throw new Error('请选择一个已添加的项目')
-    this.assertProjectPathAvailable(project.workingDirectory)
-    return project
+  private workspaceForCwd(cwd: string): NotebookWorkspaceRef {
+    const workspace = this.resolveWorkspaceByCwd(cwd)
+    if (!workspace) throw new Error('请选择一个已添加的项目或当前 workspace')
+    return workspace
   }
 
   private aliasKey(projectCwd: string, notebookPath: string): string {
@@ -243,7 +239,7 @@ export class AnalysisNotebookToolExecutor {
     return `${projectCwd}\0${notebookPath}`
   }
 
-  private stateFor(project: ProjectRef, notebookPath: string): NotebookWorkspaceState {
+  private stateFor(project: NotebookWorkspaceRef, notebookPath: string): NotebookWorkspaceState {
     const alias = this.aliases.get(this.aliasKey(project.workingDirectory, notebookPath))
     if (alias) {
       const existing = this.states.get(alias)
@@ -270,7 +266,7 @@ export class AnalysisNotebookToolExecutor {
     return state
   }
 
-  private list(project: ProjectRef): NotebookToolResult {
+  private list(project: NotebookWorkspaceRef): NotebookToolResult {
     const registry = listProjectNotebooks(project.workingDirectory)
     return {
       kind: 'notebook_list',
@@ -289,7 +285,7 @@ export class AnalysisNotebookToolExecutor {
     }
   }
 
-  private read(project: ProjectRef, params: Record<string, unknown>): NotebookToolResult {
+  private read(project: NotebookWorkspaceRef, params: Record<string, unknown>): NotebookToolResult {
     const state = this.stateFor(project, stringValue(params.path, 'path'))
     const includeOutputs = optionalBoolean(params.includeOutputs, true)
     return {
@@ -303,7 +299,10 @@ export class AnalysisNotebookToolExecutor {
     }
   }
 
-  private insertCell(project: ProjectRef, params: Record<string, unknown>): NotebookToolResult {
+  private insertCell(
+    project: NotebookWorkspaceRef,
+    params: Record<string, unknown>
+  ): NotebookToolResult {
     const state = this.stateFor(project, stringValue(params.path, 'path'))
     const beforeCellId = optionalString(params.beforeCellId)
     const afterCellId = optionalString(params.afterCellId)
@@ -343,7 +342,10 @@ export class AnalysisNotebookToolExecutor {
     }
   }
 
-  private updateCell(project: ProjectRef, params: Record<string, unknown>): NotebookToolResult {
+  private updateCell(
+    project: NotebookWorkspaceRef,
+    params: Record<string, unknown>
+  ): NotebookToolResult {
     const state = this.stateFor(project, stringValue(params.path, 'path'))
     const cellId = stringValue(params.cellId, 'cellId')
     const patch: Parameters<typeof updateNotebookCell>[2] = {
@@ -371,7 +373,10 @@ export class AnalysisNotebookToolExecutor {
     }
   }
 
-  private deleteCell(project: ProjectRef, params: Record<string, unknown>): NotebookToolResult {
+  private deleteCell(
+    project: NotebookWorkspaceRef,
+    params: Record<string, unknown>
+  ): NotebookToolResult {
     const state = this.stateFor(project, stringValue(params.path, 'path'))
     const cellId = stringValue(params.cellId, 'cellId')
     const cellIndex = state.document.cells.findIndex((item) => item.id === cellId)
@@ -393,7 +398,7 @@ export class AnalysisNotebookToolExecutor {
   }
 
   private async runCell(
-    project: ProjectRef,
+    project: NotebookWorkspaceRef,
     params: Record<string, unknown>
   ): Promise<NotebookToolResult> {
     const state = this.stateFor(project, stringValue(params.path, 'path'))
@@ -402,7 +407,7 @@ export class AnalysisNotebookToolExecutor {
     if (!cell) throw new Error(`Notebook cell not found: ${cellId}`)
     if (cell.cellType !== 'code') throw new Error('只能运行 code cell')
 
-    const kernels = detectAnalysisKernels()
+    const kernels = detectConfiguredAnalysisKernels()
     let sessionStatus = await this.notebookSessionRegistry.ensureSession({
       projectCwd: project.workingDirectory,
       notebookPath: state.file.path,
@@ -496,7 +501,7 @@ export class AnalysisNotebookToolExecutor {
     }
   }
 
-  private save(project: ProjectRef, params: Record<string, unknown>): NotebookToolResult {
+  private save(project: NotebookWorkspaceRef, params: Record<string, unknown>): NotebookToolResult {
     const state = this.stateFor(project, stringValue(params.path, 'path'))
     const saved = saveProjectNotebook(project.workingDirectory, {
       path: state.file.path,
@@ -518,7 +523,7 @@ export class AnalysisNotebookToolExecutor {
   }
 
   private emitDraftChanged(
-    project: ProjectRef,
+    project: NotebookWorkspaceRef,
     state: NotebookWorkspaceState,
     source: NotebookDraftChangeSource,
     metadata: NotebookDraftChangeMetadata = {}

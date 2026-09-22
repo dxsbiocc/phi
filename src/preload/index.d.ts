@@ -15,6 +15,11 @@ import type {
   PhiAppSettingsPatch
 } from '../shared/appSettingsTypes'
 import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
+import type {
+  EnvironmentGetResult,
+  EnvironmentSnapshot,
+  EnvironmentToolId
+} from '../shared/environmentTypes'
 
 type PreloadSessionSummary = {
   path: string
@@ -239,6 +244,16 @@ type PreloadDirectoryListing = {
   rootLabel: string
   entries: PreloadFileTreeEntry[]
   truncated: boolean
+}
+
+type PreloadDatabaseWebImagePreview = {
+  kind: 'string-network' | 'kegg-pathway'
+  label: string
+  sourceUrl: string
+  imageUrl: string
+  dataUrl: string
+  mimeType: 'image/png'
+  bytes: number
 }
 
 type PreloadAnalysisNotebookSummary = {
@@ -475,6 +490,8 @@ declare global {
       hoverPreviewFile: (path: string) => Promise<PreloadFileHoverPreview>
       statLocalPaths: (cwd: string, paths: string[]) => Promise<PreloadLocalPathStat[]>
       listDirectory: (path: string) => Promise<PreloadDirectoryListing>
+      renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
+      previewDatabaseWebImage: (url: string) => Promise<PreloadDatabaseWebImagePreview>
       copyDiagnostics: () => Promise<string>
       sendPrompt: (
         text: string,
@@ -590,6 +607,14 @@ declare global {
       getAppSettings: () => Promise<PhiAppSettings>
       updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
       updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
+      getEnvironment: () => Promise<EnvironmentGetResult>
+      redetectEnvironment: () => Promise<EnvironmentSnapshot>
+      dismissEnvironmentSummary: () => Promise<EnvironmentSnapshot>
+      setEnvironmentToolPath: (
+        toolId: EnvironmentToolId,
+        path: string | null
+      ) => Promise<EnvironmentSnapshot>
+      pickEnvironmentBinary: () => Promise<string | null>
       listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
       setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
       listModels: () => Promise<

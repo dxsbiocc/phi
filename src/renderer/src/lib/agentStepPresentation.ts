@@ -37,3 +37,20 @@ export function stepAsToolCall(step: AgentExecutionStep): ToolCallItem {
     ...(step.outputArtifact ? { outputArtifact: step.outputArtifact } : {})
   }
 }
+
+/** The tallest a step's arguments and output grow before the panel scrolls instead. */
+export const AGENT_STEP_DETAIL_MAX_HEIGHT_PX = 320
+
+const FOLLOW_THRESHOLD_PX = 24
+
+/**
+ * Whether a scrollable view is at its end, give or take a few pixels. A step's output that is
+ * still streaming is followed only while the user has not scrolled up to read something.
+ */
+export function isScrolledToEnd(view: {
+  scrollTop: number
+  clientHeight: number
+  scrollHeight: number
+}): boolean {
+  return view.scrollHeight - view.scrollTop - view.clientHeight <= FOLLOW_THRESHOLD_PX
+}

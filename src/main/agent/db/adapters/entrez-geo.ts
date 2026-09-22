@@ -25,11 +25,16 @@ interface GeoDownloadUrls {
   raw_tar: string
 }
 
+export interface GeoDirectoryListingRequest {
+  kind: 'matrix' | 'soft' | 'miniml' | 'supplementary'
+  url: string
+}
+
 interface GeoDownloadFile extends DbDownloadFileCandidate {
   label: string
   accession: string
   format: string
-  source: 'derived_from_gse_accession'
+  source: 'derived_from_gse_accession' | 'geo_directory_listing'
 }
 
 interface GeoFetchDetails {
@@ -186,6 +191,55 @@ export function addGeoDownloadUrls(
   details.download_files ??= geoSeriesDownloadFiles(downloadUrls, accession)
 }
 
+export function geoDirectoryListingRequests(
+  row: Record<string, unknown>
+): GeoDirectoryListingRequest[] {
+  const urls = isRecord(row.download_urls) ? row.download_urls : {}
+  const requests: GeoDirectoryListingRequest[] = []
+  const matrix = firstString(urls.matrix_dir)
+  const soft = firstString(urls.soft_dir)
+  const miniml = firstString(urls.miniml_dir)
+  const supplementary = firstString(urls.supplementary_dir)
+  if (matrix) requests.push({ kind: 'matrix', url: matrix })
+  if (soft) requests.push({ kind: 'soft', url: soft })
+  if (miniml) requests.push({ kind: 'miniml', url: miniml })
+  if (supplementary) requests.push({ kind: 'supplementary', url: supplementary })
+  return requests
+}
+
+export function addGeoDirectoryListingDownloadFiles(
+  row: Record<string, unknown>,
+  request: GeoDirectoryListingRequest,
+  html: string
+): Record<string, unknown> {
+  const accession = firstString(row.series_accession, row.accession)?.toUpperCase()
+  if (!accession) return row
+  const listedFiles = geoDirectoryListingDownloadFiles(html, request, accession)
+  if (listedFiles.length === 0) return row
+
+  const existing = Array.isArray(row.download_files)
+    ? row.download_files.filter((candidate): candidate is DbDownloadFileCandidate =>
+        isRecord(candidate)
+      )
+    : []
+  const merged = [...existing]
+  const urlIndexes = new Map<string, number>()
+  merged.forEach((candidate, index) => {
+    const url = firstString(candidate.url)
+    if (url) urlIndexes.set(url, index)
+  })
+  for (const file of listedFiles) {
+    const existingIndex = urlIndexes.get(file.url)
+    if (existingIndex !== undefined) {
+      merged[existingIndex] = { ...merged[existingIndex], ...file }
+      continue
+    }
+    urlIndexes.set(file.url, merged.length)
+    merged.push(file)
+  }
+  return { ...row, download_files: merged }
+}
+
 function geoSeriesDownloadUrls(accession: string | undefined): GeoDownloadUrls | undefined {
   const series = accession?.match(/^(GSE)(\d+)$/i)
   if (!series) return undefined
@@ -272,6 +326,131 @@ function geoSeriesDownloadFiles(
       source: 'derived_from_gse_accession'
     }
   ]
+}
+
+function geoDirectoryListingDownloadFiles(
+  html: string,
+  request: GeoDirectoryListingRequest,
+  accession: string
+): GeoDownloadFile[] {
+  return geoDirectoryListingEntries(html, request.url).flatMap((entry) => {
+    const file = geoDirectoryEntryDownloadFile(entry, request.kind, accession)
+    return file ? [file] : []
+  })
+}
+
+interface GeoDirectoryListingEntry {
+  filename: string
+  url: string
+  size?: number
+}
+
+function geoDirectoryListingEntries(
+  html: string,
+  directoryUrl: string
+): GeoDirectoryListingEntry[] {
+  const entries: GeoDirectoryListingEntry[] = []
+  for (const line of html.split(/\r?\n/)) {
+    const href = line.match(/<a\s+href="([^"]+)"/i)?.[1]
+    if (!href || href.startsWith('/') || href.startsWith('?') || href === '../') continue
+    if (/parent directory/i.test(line)) continue
+    const filename = normalizeXmlText(href)
+    if (!filename || filename.endsWith('/')) continue
+    const size = parseDirectorySize(
+      line.match(/<\/a>\s*(?:\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})?\s*([0-9.]+\s*[KMGT]?|-)\s*$/i)?.[1]
+    )
+    entries.push({
+      filename,
+      url: new URL(href, directoryUrl).toString(),
+      ...(size === undefined ? {} : { size })
+    })
+  }
+  return entries
+}
+
+function geoDirectoryEntryDownloadFile(
+  entry: GeoDirectoryListingEntry,
+  directoryKind: GeoDirectoryListingRequest['kind'],
+  accession: string
+): GeoDownloadFile | undefined {
+  const filename = entry.filename
+  const format = geoFileFormat(filename)
+  const compression = geoFileCompression(filename)
+  const base = {
+    accession,
+    url: entry.url,
+    filename,
+    format,
+    ...(compression ? { compression } : {}),
+    ...(entry.size === undefined ? {} : { size: entry.size }),
+    availability: 'direct_url' as const,
+    source: 'geo_directory_listing' as const
+  }
+
+  if (directoryKind === 'matrix') {
+    return {
+      ...base,
+      kind: filename.match(/_series_matrix\.txt\.gz$/i) ? 'series_matrix' : 'series_matrix_file',
+      label: 'Series Matrix'
+    }
+  }
+  if (directoryKind === 'soft') {
+    return {
+      ...base,
+      kind: filename.match(/_family\.soft\.gz$/i) ? 'soft_family' : 'soft_file',
+      label: 'SOFT Family'
+    }
+  }
+  if (directoryKind === 'miniml') {
+    return {
+      ...base,
+      kind: filename.match(/_family\.xml\.tgz$/i) ? 'miniml_family' : 'miniml_file',
+      label: 'MINiML Family'
+    }
+  }
+  return {
+    ...base,
+    kind: filename.match(/_RAW\.tar$/i) ? 'raw_tar' : 'supplementary_file',
+    label: filename.match(/_RAW\.tar$/i) ? 'Raw Supplementary Archive' : 'Supplementary File'
+  }
+}
+
+function geoFileCompression(filename: string): string | undefined {
+  if (filename.match(/\.tgz$/i)) return 'tgz'
+  if (filename.match(/\.tar\.gz$/i)) return 'gzip'
+  if (filename.match(/\.gz$/i)) return 'gzip'
+  if (filename.match(/\.zip$/i)) return 'zip'
+  return undefined
+}
+
+function geoFileFormat(filename: string): string {
+  const withoutCompression = filename
+    .replace(/\.tar\.gz$/i, '.tar')
+    .replace(/\.tgz$/i, '.xml')
+    .replace(/\.(?:gz|zip)$/i, '')
+  const match = withoutCompression.match(/\.([A-Za-z0-9]+)$/)
+  return match?.[1]?.toLowerCase() ?? 'file'
+}
+
+function parseDirectorySize(value: string | undefined): number | undefined {
+  const text = value?.trim()
+  if (!text || text === '-') return undefined
+  const match = text.match(/^([0-9]+(?:\.[0-9]+)?)\s*([KMGT])?$/i)
+  if (!match) return undefined
+  const amount = Number(match[1])
+  if (!Number.isFinite(amount)) return undefined
+  const unit = match[2]?.toUpperCase()
+  const multiplier =
+    unit === 'T'
+      ? 1024 ** 4
+      : unit === 'G'
+        ? 1024 ** 3
+        : unit === 'M'
+          ? 1024 ** 2
+          : unit === 'K'
+            ? 1024
+            : 1
+  return Math.round(amount * multiplier)
 }
 
 function geoSeriesBucket(accession: string): string {

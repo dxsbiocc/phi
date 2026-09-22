@@ -159,13 +159,21 @@ test('listSkills reads project skills from the selected cwd', async () => {
       skill.name === 'create-database-connector' &&
       skill.filePath.includes(join('resources', 'skills', 'create-database-connector'))
   )
+  const omicsVisualizationSkill = projectASkills.find(
+    (skill) =>
+      skill.name === 'omics-visualization' &&
+      skill.filePath.includes(join('resources', 'skills', 'omics-visualization'))
+  )
 
   assert(projectASkills.some((skill) => skill.name === 'project-a-skill'))
   assert(bundledSkill)
   assert(databaseConnectorSkill)
+  assert(omicsVisualizationSkill)
   assert.equal(bundledSkill.sourceCategory, 'system')
   assert.equal(bundledSkill.sourceCategoryLabel, 'System')
   assert.equal(databaseConnectorSkill.sourceCategory, 'system')
+  assert.equal(omicsVisualizationSkill.sourceCategory, 'system')
+  assert.equal(omicsVisualizationSkill.sourceCategoryLabel, 'System')
   assert(
     projectASkills.some(
       (skill) => skill.name === 'project-a-phi-skill' && skill.scope === 'project'
@@ -249,8 +257,16 @@ test('listPromptAgents reads prompt agents from the selected cwd', async () => {
   assert(projectANames.includes('user-agent'))
   assert(projectANames.includes('codex-agent'))
   assert(projectANames.includes('codex-toml-agent'))
+  assert(projectANames.includes('Visualization'))
+  assert(projectANames.includes('Database'))
+  assert(projectANames.includes('Wrapper'))
   assert.equal(
     projectAAgents.find((agent) => agent.name === 'project-a-agent')?.trigger,
     '/prompts:project-a-agent'
+  )
+  assert.equal(projectAAgents.find((agent) => agent.name === 'Visualization')?.source, 'phi-agent')
+  assert.equal(
+    projectAAgents.find((agent) => agent.name === 'Visualization')?.trigger,
+    '调用智能体：Visualization'
   )
 })

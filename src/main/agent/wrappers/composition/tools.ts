@@ -8,6 +8,7 @@ import {
 import { WRAPPER_EXECUTION_PROFILES } from './executor'
 import { formatJobList, formatJobStatus } from './job-format'
 import type { WrapperJobClient } from './job-types'
+import { rankWrapperEntries } from './search'
 
 /**
  * The generic, progressively-loaded `wrapper_*` tools described in
@@ -38,39 +39,36 @@ export function buildWrapperCompositionSearchTool(): CustomTool {
         query: {
           type: 'string',
           description:
-            'Keyword to match against id, name, or summary. Omit to list everything installed.'
+            'Keywords to match against id, name, or summary, e.g. "rna seq alignment". Every word must match; if none does, the best partial matches are returned. Omit to list everything installed.'
         }
       }
     },
     approval: 'read',
     async execute(_toolCallId, params) {
-      const query =
-        isRecord(params) && typeof params.query === 'string'
-          ? params.query.trim().toLowerCase()
-          : ''
-      const results = listWrapperCompositionCatalog()
-        .filter((entry) => {
-          if (!query) return true
-          const haystack =
-            `${entry.manifest.id} ${entry.manifest.name} ${entry.manifest.summary}`.toLowerCase()
-          return haystack.includes(query)
-        })
-        .map((entry) => ({
-          id: entry.manifest.id,
-          name: entry.manifest.name,
-          summary: entry.manifest.summary
-        }))
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text:
-              results.length > 0 ? JSON.stringify(results, null, 2) : 'No matching wrappers found.'
-          }
-        ],
-        details: { kind: 'wrapper_search_results', results }
+      const query = isRecord(params) && typeof params.query === 'string' ? params.query : ''
+      const outcome = rankWrapperEntries(listWrapperCompositionCatalog(), query)
+      const results = outcome.entries.map((entry) => ({
+        id: entry.manifest.id,
+        name: entry.manifest.name,
+        summary: entry.manifest.summary
+      }))
+      if (results.length === 0) {
+        return {
+          content: [{ type: 'text', text: 'No matching wrappers found.' }],
+          details: { kind: 'wrapper_search_results', results }
+        }
       }
+
+      const content: Array<{ type: 'text'; text: string }> = [
+        { type: 'text', text: JSON.stringify(results) }
+      ]
+      if (!outcome.matchedAll) {
+        content.push({
+          type: 'text',
+          text: `Partial matches only: no wrapper matched every word. Nothing matched: ${outcome.unmatchedWords.join(', ') || '(each word matched some wrapper, none matched all)'}.`
+        })
+      }
+      return { content, details: { kind: 'wrapper_search_results', results } }
     }
   }
 }
@@ -104,9 +102,7 @@ export function buildWrapperCompositionInspectTool(): CustomTool {
       const defaultParams = readWrapperDefaultParams(entry.wrapperDir)
 
       return {
-        content: [
-          { type: 'text', text: JSON.stringify({ ...entry.manifest, defaultParams }, null, 2) }
-        ],
+        content: [{ type: 'text', text: JSON.stringify({ ...entry.manifest, defaultParams }) }],
         details: { kind: 'wrapper_manifest', manifest: entry.manifest, defaultParams }
       }
     }

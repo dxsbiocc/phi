@@ -319,6 +319,30 @@ test('analysis notebook selection can open notebooks missing from controlled wor
   assert.match(appSource, /onOpenNotebookWorkspaceFile\(path\)/)
 })
 
+test('analysis notebook runtime lets the active workspace open notebooks', () => {
+  const runtimeSource = readFileSync(
+    resolve(
+      process.cwd(),
+      'src/renderer/src/features/analysis/hooks/useAnalysisNotebookRuntime.ts'
+    ),
+    'utf8'
+  )
+
+  assert.match(runtimeSource, /const getActiveAnalysisCwd = useCallback/)
+  assert.match(
+    runtimeSource,
+    /onOpenAnalysisNotebook[\s\S]*const cwd = getActiveAnalysisCwd\(\)[\s\S]*if \(!cwd\)[\s\S]*showSnackbar\('请先选择一个 workspace 后再打开 notebook', 'warning'\)[\s\S]*return null/
+  )
+  assert.match(
+    runtimeSource,
+    /refreshAnalysisNotebookSessionStatus[\s\S]*const cwd = getActiveAnalysisCwd\(\)[\s\S]*if \(!cwd\)[\s\S]*return/
+  )
+  assert.match(
+    runtimeSource,
+    /refreshAnalysisJupyterRuntimeStatus[\s\S]*const cwd = getActiveAnalysisCwd\(\)[\s\S]*if \(!cwd\)[\s\S]*return/
+  )
+})
+
 test('analysis view renders notebook registry empty and loading states', () => {
   const empty = renderAnalysisView({
     initialLeftPanel: 'notebooks',
@@ -956,11 +980,11 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(mainSource, /buildNotebookCodeGenerationPrompt/)
   assert.match(
     mainSource,
-    /const modelSelection = input\.model \?\? project\.defaultModel \?\? selectedModel/
+    /const modelSelection = input\.model \?\? workspace\.project\?\.defaultModel \?\? selectedModel/
   )
   assert.match(
     mainSource,
-    /thinkingLevel: project\.defaultThinkingLevel \?\? selectedThinkingLevel/
+    /thinkingLevel: workspace\.project\?\.defaultThinkingLevel \?\? selectedThinkingLevel/
   )
   assert.match(notebookCodeGenerationSource, /notebookContextReferencePrompt\(input\.references\)/)
   assert.match(mainSource, /return \{ source, language, cells \}/)

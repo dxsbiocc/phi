@@ -6,9 +6,11 @@ import { WORKSPACE_DIR } from './session/sessions'
 import {
   createRuntimeResourceLoader,
   createRuntimeSettingsManager,
+  getBundledAgentsDir,
   type RuntimeResourceLoader
 } from './runtime/runtime-adapter'
 import { getGlobalMcpConfigPaths, getPhiAgentDir, getProjectMcpConfigPaths } from './runtime-paths'
+import { discoverPhiAgents } from './agents/discovery'
 
 const AGENT_DIR = getPhiAgentDir()
 
@@ -412,6 +414,20 @@ function listCodexPromptAgents(): PromptAgentSummary[] {
   return [...promptAgents, ...configuredAgents]
 }
 
+function phiAgentToPromptAgentSummary(agent: {
+  name: string
+  description: string
+  filePath: string
+}): PromptAgentSummary {
+  return {
+    id: agent.filePath,
+    name: agent.name,
+    description: agent.description,
+    source: 'phi-agent',
+    trigger: `调用智能体：${agent.name}`
+  }
+}
+
 export async function listSkills(cwd = WORKSPACE_DIR): Promise<SkillSummary[]> {
   const loader = createResourceLoader(cwd)
   await loader.reload()
@@ -521,6 +537,14 @@ export async function listPromptAgents(cwd = WORKSPACE_DIR): Promise<PromptAgent
   for (const prompt of promptListFromResource(loader.getPrompts())) {
     const agent = toPromptAgentSummary(prompt)
     if (agent) addAgent(agent)
+  }
+
+  for (const agent of discoverPhiAgents({
+    cwd,
+    agentDir: AGENT_DIR,
+    bundledDir: getBundledAgentsDir()
+  }).agents) {
+    addAgent(phiAgentToPromptAgentSummary(agent))
   }
 
   for (const agent of listCodexPromptAgents()) {

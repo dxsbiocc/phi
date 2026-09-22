@@ -50,8 +50,8 @@ function createExecutor(
   onDraftChanged?: ConstructorParameters<typeof AnalysisNotebookToolExecutor>[0]['onDraftChanged']
 ): AnalysisNotebookToolExecutor {
   return new AnalysisNotebookToolExecutor({
-    getProjectByCwd: (cwd) => (cwd === root ? { workingDirectory: root, name: 'test' } : null),
-    assertProjectPathAvailable: () => undefined,
+    resolveWorkspaceByCwd: (cwd) =>
+      cwd === root ? { workingDirectory: root, name: 'test' } : null,
     ensureJupyterServerReady: async () => undefined,
     notebookSessionRegistry: new AnalysisNotebookSessionRegistry({ getConnection: () => null }),
     notebookExecutor: new AnalysisNotebookExecutor(),

@@ -10,11 +10,18 @@ import type {
   ProxyTransportStatus
 } from '../../shared/appSettingsTypes'
 import type { DbConnectorSettingsItem } from '../../shared/dbConnectorTypes'
+import type {
+  EnvironmentGetResult,
+  EnvironmentSnapshot,
+  EnvironmentToolId,
+  EnvironmentToolState
+} from '../../shared/environmentTypes'
 import type { RemoteHpcSettings } from '../../shared/wrapperRemoteTypes'
 import type { AgentExecutionItem } from './lib/agentExecutionTypes'
 
 export type { DefaultProxyMode, PhiAppSettings, PhiAppSettingsPatch, ProxyTransportStatus }
 export type { DbConnectorSettingsItem }
+export type { EnvironmentGetResult, EnvironmentSnapshot, EnvironmentToolId, EnvironmentToolState }
 export type {
   AgentExecutionItem,
   AgentExecutionStep,
@@ -441,6 +448,18 @@ export type FileHoverPreview = FileHoverPreviewBase &
       }
   )
 
+export type DatabaseWebPreviewKind = 'string-network' | 'kegg-pathway'
+
+export type DatabaseWebImagePreview = {
+  kind: DatabaseWebPreviewKind
+  label: string
+  sourceUrl: string
+  imageUrl: string
+  dataUrl: string
+  mimeType: 'image/png'
+  bytes: number
+}
+
 export interface FileTreeEntry {
   path: string
   name: string
@@ -713,6 +732,8 @@ export type RendererApi = {
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
   statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
   listDirectory: (path: string) => Promise<DirectoryListing>
+  renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
+  previewDatabaseWebImage: (url: string) => Promise<DatabaseWebImagePreview>
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => () => void
@@ -732,6 +753,14 @@ export type RendererApi = {
   getAppSettings: () => Promise<PhiAppSettings>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
   updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
+  getEnvironment: () => Promise<EnvironmentGetResult>
+  redetectEnvironment: () => Promise<EnvironmentSnapshot>
+  dismissEnvironmentSummary: () => Promise<EnvironmentSnapshot>
+  setEnvironmentToolPath: (
+    toolId: EnvironmentToolId,
+    path: string | null
+  ) => Promise<EnvironmentSnapshot>
+  pickEnvironmentBinary: () => Promise<string | null>
   listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
   setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
   listModels: () => Promise<ModelOption[]>

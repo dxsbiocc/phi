@@ -35,7 +35,9 @@ import type { ThemeMode } from '../theme'
 import { accentAt, ACCENT_PALETTE } from '../theme'
 import { WrapperRemoteSettingsSection } from '../features/wrapper/components/WrapperRemoteSettings'
 import { DatabaseSettingsPanel } from '../features/databases/DatabaseSettingsPanel'
+import { EnvironmentSettingsPanel } from '../features/environment/components/EnvironmentSettingsPanel'
 import { PermissionSettingsSection } from './PermissionView'
+import type { EnvironmentSnapshot, EnvironmentToolId } from '../types'
 
 const AddIcon = PhiIcons.action.add
 const CloseIcon = PhiIcons.action.close
@@ -54,6 +56,7 @@ const CheckIcon = PhiIcons.state.check
 
 export type SettingsCategory =
   | 'general'
+  | 'environment'
   | 'databases'
   | 'persona'
   | 'providers'
@@ -64,6 +67,7 @@ export type SettingsCategory =
 
 const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.Element }> = [
   { id: 'general', label: '通用', icon: <GeneralIcon fontSize="small" /> },
+  { id: 'environment', label: '环境', icon: <RemoteExecutionIcon fontSize="small" /> },
   { id: 'databases', label: '数据库', icon: <DatabaseIcon fontSize="small" /> },
   { id: 'persona', label: '助手人设', icon: <PsychologyIcon fontSize="small" /> },
   { id: 'providers', label: 'Provider 配置', icon: <ProviderIcon fontSize="small" /> },
@@ -661,6 +665,11 @@ type SettingsDialogProps = {
   onSelectDefaultProxyMode: (mode: DefaultProxyMode) => void
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
+  environmentSnapshot: EnvironmentSnapshot | null
+  isLoadingEnvironment: boolean
+  isRedetectingEnvironment: boolean
+  onRedetectEnvironment: () => Promise<void>
+  onSetEnvironmentToolPath: (toolId: EnvironmentToolId, path: string | null) => Promise<void>
   dbConnectors?: DbConnectorSettingsItem[]
   isLoadingDbConnectors?: boolean
   updatingDbConnectorId?: string | null
@@ -704,6 +713,11 @@ function SettingsDialog({
   onSelectDefaultProxyMode,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
+  environmentSnapshot,
+  isLoadingEnvironment,
+  isRedetectingEnvironment,
+  onRedetectEnvironment,
+  onSetEnvironmentToolPath,
   dbConnectors = [],
   isLoadingDbConnectors = false,
   updatingDbConnectorId = null,
@@ -822,6 +836,15 @@ function SettingsDialog({
               onSelectDefaultProxyMode={onSelectDefaultProxyMode}
               onUpdateAppSettings={onUpdateAppSettings}
               onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
+            />
+          )}
+          {category === 'environment' && (
+            <EnvironmentSettingsPanel
+              snapshot={environmentSnapshot}
+              loading={isLoadingEnvironment}
+              redetecting={isRedetectingEnvironment}
+              onRedetect={onRedetectEnvironment}
+              onSavePath={onSetEnvironmentToolPath}
             />
           )}
           {category === 'databases' && (

@@ -327,6 +327,7 @@ export class AgentRunRegistry {
     try {
       const result = await input.runner({
         task: input.task,
+        runId: record.snapshot.id,
         signal: record.controller.signal,
         onProgress: (line) => {
           this.patch(record, { lastStep: line })

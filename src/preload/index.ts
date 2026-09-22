@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { DatabaseWebImagePreview } from '../shared/databaseWebPreview'
 
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) because WrapperRunPlan/WrapperRun are large, evolving
@@ -20,6 +21,11 @@ import type {
   PhiAppSettingsPatch
 } from '../shared/appSettingsTypes'
 import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
+import type {
+  EnvironmentGetResult,
+  EnvironmentSnapshot,
+  EnvironmentToolId
+} from '../shared/environmentTypes'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
@@ -579,6 +585,8 @@ type RendererAuthApi = {
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
   statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
   listDirectory: (path: string) => Promise<DirectoryListing>
+  renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
+  previewDatabaseWebImage: (url: string) => Promise<DatabaseWebImagePreview>
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => Unsubscribe
@@ -598,6 +606,14 @@ type RendererAuthApi = {
   getAppSettings: () => Promise<PhiAppSettings>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
   updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
+  getEnvironment: () => Promise<EnvironmentGetResult>
+  redetectEnvironment: () => Promise<EnvironmentSnapshot>
+  dismissEnvironmentSummary: () => Promise<EnvironmentSnapshot>
+  setEnvironmentToolPath: (
+    toolId: EnvironmentToolId,
+    path: string | null
+  ) => Promise<EnvironmentSnapshot>
+  pickEnvironmentBinary: () => Promise<string | null>
   listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
   setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
   listModels: () => Promise<ModelOption[]>
@@ -783,6 +799,10 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('files:statLocalPaths', cwd, paths),
   listDirectory: (path: string): Promise<DirectoryListing> =>
     ipcRenderer.invoke('files:listDirectory', path),
+  renderMoleculeSvg: (value: string, width: number, height: number): Promise<string> =>
+    ipcRenderer.invoke('molecules:renderSvg', value, width, height),
+  previewDatabaseWebImage: (url: string): Promise<DatabaseWebImagePreview> =>
+    ipcRenderer.invoke('database:webImagePreview', url),
   copyDiagnostics: (): Promise<string> => ipcRenderer.invoke('diagnostics:copy'),
   sendPrompt: (text: string, target?: PromptTarget): Promise<PromptResult | null> =>
     ipcRenderer.invoke('agent:prompt', text, target),
@@ -821,6 +841,16 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('settings:update', patch),
   updateDefaultProxyMode: (mode: DefaultProxyMode): Promise<PhiAppSettings> =>
     ipcRenderer.invoke('settings:updateDefaultProxyMode', mode),
+  getEnvironment: (): Promise<EnvironmentGetResult> => ipcRenderer.invoke('environment:get'),
+  redetectEnvironment: (): Promise<EnvironmentSnapshot> =>
+    ipcRenderer.invoke('environment:redetect'),
+  dismissEnvironmentSummary: (): Promise<EnvironmentSnapshot> =>
+    ipcRenderer.invoke('environment:dismissSummary'),
+  setEnvironmentToolPath: (
+    toolId: EnvironmentToolId,
+    path: string | null
+  ): Promise<EnvironmentSnapshot> => ipcRenderer.invoke('environment:setToolPath', toolId, path),
+  pickEnvironmentBinary: (): Promise<string | null> => ipcRenderer.invoke('environment:pickBinary'),
   listDbConnectors: (): Promise<DbConnectorSettingsItem[]> =>
     ipcRenderer.invoke('db:listConnectors'),
   setDbConnectorEnabled: (id: string, enabled: boolean): Promise<DbConnectorSettingsItem[]> =>

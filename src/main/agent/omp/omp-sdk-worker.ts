@@ -40,14 +40,13 @@ import { AGENT_RUN_HOST_METHODS } from '../agents/run-host'
 import { AgentRunRegistry } from '../agents/registry'
 import { buildAgentRunTools } from '../agents/run-tools'
 import { createAgentRunner, type AgentSessionLike } from '../agents/runner'
+import { appendAgentUsageRecord, pruneAgentUsageLogs } from '../agents/usage-log'
 import { buildScopedPhiToolMap, resolveAgentTools } from '../agents/tool-resolution'
 import { buildAgentTool } from '../agents/tool'
 import { createSpecialistFallbackExtension } from '../agents/fallback-policy'
 import { AGENT_REPORT_PROTOCOL } from '../agents/report'
-import {
-  buildPhiMainSystemPrompt,
-  filterPersonaContextFile
-} from '../main-system-prompt'
+import { buildPhiMainSystemPrompt, filterPersonaContextFile } from '../main-system-prompt'
+import { buildVisualizationTools } from '../visualization/tools'
 import { createHostJobClient } from '../wrappers/composition/job-host-client'
 import { buildWrapperCompositionTools } from '../wrappers/composition/tools'
 
@@ -700,9 +699,12 @@ function phiToolFunctions(
       // A broken connector catalog must not prevent the specialist session from starting.
     }
   }
+  // The figure tools only run local scripts and write inside the delegating session's project.
+  const visualizationTools = agentName === 'Visualization' ? buildVisualizationTools() : []
   return buildScopedPhiToolMap(agentName, {
     wrapper: wrapperTools,
-    database: databaseTools
+    database: databaseTools,
+    visualization: visualizationTools
   })
 }
 
@@ -822,11 +824,14 @@ async function createSession(params: unknown): Promise<unknown> {
   // the specialists' own tool functions, so internal catalogs and query tools
   // stay out of the main conversation. Definitions come from the main process's scan.
   const parentRef: { current?: CreateAgentSessionResult } = {}
+  if (phiAgents.length > 0) pruneAgentUsageLogs(agentDir)
   const agentCustomTools = phiAgents.map((definition) =>
     buildAgentTool(
       definition,
       createAgentRunner({
         agent: definition.name,
+        // What each delegation cost, for judging prompt and tool changes; see agents/usage.ts.
+        onUsage: (record) => appendAgentUsageRecord(agentDir, { ...record, sessionId }),
         createSession: () =>
           createPhiAgentSession(definition, {
             sessionId,
@@ -838,7 +843,8 @@ async function createSession(params: unknown): Promise<unknown> {
             parent: () => parentRef.current
           })
       }),
-      agentRuns
+      agentRuns,
+      { cwd }
     )
   )
   const agentRunTools = phiAgents.length > 0 ? buildAgentRunTools(agentRuns) : []

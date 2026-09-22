@@ -3,8 +3,10 @@ import {
   ButtonBase,
   Chip,
   CircularProgress,
+  ClickAwayListener,
   IconButton,
-  Popover,
+  Paper,
+  Popper,
   Tooltip,
   Typography
 } from '@mui/material'
@@ -18,6 +20,7 @@ import {
   type AgentRunOverviewEntry
 } from '../../lib/agentRunsOverview'
 import { useLostAgentRunsStore } from '../../stores/lostAgentRunsStore'
+import { useHoverIntent } from './useHoverIntent'
 
 const AgentIcon = PhiIcons.entity.agent
 const StopIcon = PhiIcons.action.stop
@@ -148,15 +151,27 @@ type AgentRunsOverviewProps = {
   onLocate: (id: string) => void
 }
 
+// Long enough that sweeping the pointer across the corner does not flash the list open, short
+// enough to feel immediate. The close delay lets the pointer cross the gap to the list.
+const HOVER_OPEN_DELAY_MS = 120
+const HOVER_CLOSE_DELAY_MS = 220
+
 /**
- * A small button over the chat's top-right corner that says how many agents are running and,
- * on click, lists them with what each is doing, a way to stop it, and a way to jump to its
- * card in the conversation. Renders nothing while no agent is running.
+ * A small button over the chat's top-right corner that says how many agents are running. Resting
+ * the pointer on it (or clicking it, which keeps it open) shows a list of them with what each is
+ * doing, a way to stop it, and a way to jump to its card in the conversation. Renders nothing
+ * while no agent is running.
  */
 function AgentRunsOverview({ runs, onLocate }: AgentRunsOverviewProps): ReactNode {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
+  const [pinned, setPinned] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
-  const open = anchor !== null && runs.length > 0
+  const hover = useHoverIntent({
+    openDelayMs: HOVER_OPEN_DELAY_MS,
+    closeDelayMs: HOVER_CLOSE_DELAY_MS
+  })
+  const open = (hover.hovering || pinned) && runs.length > 0
+  const { reset: resetHover } = hover
 
   useEffect(() => {
     if (!open) return undefined
@@ -164,100 +179,127 @@ function AgentRunsOverview({ runs, onLocate }: AgentRunsOverviewProps): ReactNod
     return () => window.clearInterval(timer)
   }, [open])
 
+  useEffect(() => {
+    if (!open) return undefined
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      setPinned(false)
+      resetHover()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [open, resetHover])
+
   if (runs.length === 0) return null
 
-  const close = (): void => setAnchor(null)
+  const close = (): void => {
+    setPinned(false)
+    resetHover()
+  }
 
   return (
-    <>
-      <ButtonBase
-        onClick={(event) => {
-          // The clock only ticks while the list is open, so bring it up to date first.
-          setNowMs(Date.now())
-          setAnchor(event.currentTarget)
-        }}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-label={`${agentRunOverviewLabel(runs.length)}，查看详情`}
-        sx={{
-          position: 'absolute',
-          top: 12,
-          right: 16,
-          zIndex: 3,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.75,
-          height: 28,
-          px: 1.25,
-          borderRadius: 14,
-          color: 'text.primary',
-          bgcolor: 'background.paper',
-          border: 1,
-          borderColor: 'divider',
-          boxShadow: 1,
-          '&:hover': { borderColor: 'primary.main' },
-          '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
-        }}
-      >
-        <CircularProgress
-          size={12}
-          thickness={5}
-          color="inherit"
-          aria-hidden="true"
-          sx={{
-            color: 'primary.main',
-            '@media (prefers-reduced-motion: reduce)': { animation: 'none' }
+    <ClickAwayListener onClickAway={close}>
+      {/* Wraps the button and its list so a click on either is not "away". */}
+      <Box sx={{ display: 'contents' }}>
+        <ButtonBase
+          ref={setAnchor}
+          onMouseEnter={hover.onEnter}
+          onMouseLeave={hover.onLeave}
+          onClick={() => {
+            if (pinned) {
+              close()
+              return
+            }
+            // The clock only ticks while the list is open, so bring it up to date first.
+            setNowMs(Date.now())
+            setPinned(true)
           }}
-        />
-        <Typography variant="caption" sx={{ fontWeight: 600, lineHeight: 1 }}>
-          {agentRunOverviewLabel(runs.length)}
-        </Typography>
-      </ButtonBase>
-      <Popover
-        open={open}
-        anchorEl={anchor}
-        onClose={close}
-        // The chat keeps scrolling behind it, and locking scroll would shift its layout.
-        disableScrollLock
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-        slotProps={{
-          paper: {
-            sx: {
-              mt: 0.75,
+          aria-haspopup="true"
+          aria-expanded={open}
+          aria-label={`${agentRunOverviewLabel(runs.length)}，查看详情`}
+          sx={{
+            position: 'absolute',
+            top: 12,
+            right: 16,
+            zIndex: 3,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.75,
+            height: 28,
+            px: 1.25,
+            borderRadius: 14,
+            color: 'text.primary',
+            bgcolor: 'background.paper',
+            border: 1,
+            borderColor: open ? 'primary.main' : 'divider',
+            boxShadow: 1,
+            '&:hover': { borderColor: 'primary.main' },
+            '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
+          }}
+        >
+          <CircularProgress
+            size={12}
+            thickness={5}
+            color="inherit"
+            aria-hidden="true"
+            sx={{
+              color: 'primary.main',
+              '@media (prefers-reduced-motion: reduce)': { animation: 'none' }
+            }}
+          />
+          <Typography variant="caption" sx={{ fontWeight: 600, lineHeight: 1 }}>
+            {agentRunOverviewLabel(runs.length)}
+          </Typography>
+        </ButtonBase>
+        {/* A Popper, not a Popover: a Popover puts a page-wide backdrop under itself, which
+            would take the hover away from the button the moment it opened. Rendered in place
+            (not in a portal) so the keyboard reaches the list right after the button. */}
+        <Popper
+          open={open}
+          anchorEl={anchor}
+          placement="bottom-end"
+          disablePortal
+          modifiers={[{ name: 'offset', options: { offset: [0, 4] } }]}
+          sx={{ zIndex: 4 }}
+        >
+          <Paper
+            elevation={8}
+            onMouseEnter={hover.onEnter}
+            onMouseLeave={hover.onLeave}
+            sx={{
               width: 'min(420px, calc(100vw - 32px))',
               maxHeight: '60vh',
               p: 0.75,
               overflowY: 'auto'
-            }
-          }
-        }}
-      >
-        <Typography
-          variant="caption"
-          component="div"
-          sx={{ px: 1, pt: 0.5, pb: 0.5, color: 'text.secondary', fontWeight: 600 }}
-        >
-          运行中的 Agent
-        </Typography>
-        <Box
-          component="ul"
-          sx={{ m: 0, p: 0, display: 'flex', flexDirection: 'column', gap: 0.25 }}
-        >
-          {runs.map((run) => (
-            <AgentRunRow
-              key={run.id}
-              run={run}
-              nowMs={nowMs}
-              onLocate={(id) => {
-                close()
-                onLocate(id)
-              }}
-            />
-          ))}
-        </Box>
-      </Popover>
-    </>
+            }}
+          >
+            <Typography
+              variant="caption"
+              component="div"
+              sx={{ px: 1, pt: 0.5, pb: 0.5, color: 'text.secondary', fontWeight: 600 }}
+            >
+              运行中的 Agent
+            </Typography>
+            <Box
+              component="ul"
+              sx={{ m: 0, p: 0, display: 'flex', flexDirection: 'column', gap: 0.25 }}
+            >
+              {runs.map((run) => (
+                <AgentRunRow
+                  key={run.id}
+                  run={run}
+                  nowMs={nowMs}
+                  onLocate={(id) => {
+                    close()
+                    onLocate(id)
+                  }}
+                />
+              ))}
+            </Box>
+          </Paper>
+        </Popper>
+      </Box>
+    </ClickAwayListener>
   )
 }
 

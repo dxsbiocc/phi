@@ -214,6 +214,34 @@ test('file preview panel renders csv files as spreadsheet grids', () => {
   assert.doesNotMatch(markup, /data-phi-syntax-language/)
 })
 
+test('file preview panel renders PDB files with a Molstar structure preview and source text', () => {
+  const markup = renderPanel({
+    status: 'ready',
+    file: {
+      path: '/Users/example/project/structures/1tup.pdb',
+      name: '1tup.pdb',
+      displayPath: 'structures/1tup.pdb',
+      rootPath: '/Users/example/project',
+      rootLabel: 'project',
+      kind: 'text',
+      mimeType: 'text/plain',
+      content:
+        'HEADER    DNA BINDING PROTEIN                     11-JUL-95   1TUP\nATOM      1  N   SER A   1      37.667  28.688  54.322  1.00 40.83           N',
+      bytes: 144,
+      previewBytes: 144,
+      truncated: false
+    }
+  })
+
+  assert.match(markup, /data-phi-molecular-structure-file-preview="true"/)
+  assert.match(markup, /data-phi-molecular-structure-format="pdb"/)
+  assert.match(markup, /Mol\*/)
+  assert.match(markup, /正在加载 Mol\* 结构预览/)
+  assert.match(markup, /data-phi-syntax-language="plain"/)
+  assert.match(markup, /DNA BINDING PROTEIN/)
+  assert.match(markup, /ATOM/)
+})
+
 test('file preview panel renders tsv files as spreadsheet grids', () => {
   const markup = renderPanel({
     status: 'ready',

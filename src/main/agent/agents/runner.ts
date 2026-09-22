@@ -4,6 +4,8 @@
  * testable with a fake — see tests/phi-agents.test.ts.
  */
 
+import { AgentUsageCollector, type AgentRunStatus, type AgentRunUsageRecord } from './usage'
+
 /** The slice of the SDK's AgentSession this runner relies on. */
 export interface AgentSessionLike {
   subscribe(listener: (event: unknown) => void): () => void
@@ -23,6 +25,8 @@ export interface AgentRunControl {
 
 export interface AgentRunRequest {
   task: string
+  /** The registry's id for this run; carried into the usage record. */
+  runId?: string
   signal?: AbortSignal
   onProgress?: (line: string) => void
   onToolStep?: (step: AgentRunToolStep) => void
@@ -160,12 +164,23 @@ export function createAgentRunner(deps: {
    * without a start time a card cannot tell how long the step ran.
    */
   now?: () => string
+  /** Called once when a run ends, however it ends, with what it cost. A throwing sink is ignored. */
+  onUsage?: (record: AgentRunUsageRecord) => void
+  /** Milliseconds, for durations; defaults to `Date.now`. */
+  clock?: () => number
 }): (request: AgentRunRequest) => Promise<AgentRunResult> {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const now = deps.now ?? ((): string => new Date().toISOString())
 
-  return async ({ task, signal, onProgress, onToolStep, onControl }) => {
+  return async ({ task, runId, signal, onProgress, onToolStep, onControl }) => {
     if (signal?.aborted) throw new AgentCancelledError(deps.agent)
+
+    const usage = new AgentUsageCollector({
+      agent: deps.agent,
+      task,
+      ...(runId ? { runId } : {}),
+      ...(deps.clock ? { clock: deps.clock } : {})
+    })
 
     const session = await deps.createSession()
     onControl?.({
@@ -181,12 +196,17 @@ export function createAgentRunner(deps: {
 
     const unsubscribe = session.subscribe((event) => {
       if (!isRecord(event)) return
+      if (event.type === 'message_end') {
+        usage.assistantMessage(event.message)
+        return
+      }
       if (event.type === 'tool_execution_start') {
         toolCalls += 1
         const toolName = String(event.toolName ?? 'tool')
         const id = eventToolCallId(event, `${toolName}-${toolCalls}`)
         const createdAt = eventString(event.createdAt) ?? now()
         startedAtByToolCallId.set(id, createdAt)
+        usage.toolStarted(id, toolName, event.args)
         if (onToolStep) {
           onToolStep({
             id,
@@ -222,6 +242,11 @@ export function createAgentRunner(deps: {
         const output = extractToolText(event.result)
         const isError = event.isError === true
         const completedAt = eventString(event.createdAt) ?? now()
+        usage.toolEnded(id, {
+          resultChars: output.length,
+          isError,
+          ...(isError ? { errorText: errorTextFromToolResult(event.result) || output } : {})
+        })
         onToolStep?.({
           id,
           toolName,
@@ -247,6 +272,8 @@ export function createAgentRunner(deps: {
       stop()
     }, timeoutMs)
 
+    let status: AgentRunStatus = 'failed'
+    let reportText = ''
     try {
       await session.prompt(task)
       if (cancelled) throw new AgentCancelledError(deps.agent)
@@ -256,12 +283,25 @@ export function createAgentRunner(deps: {
       if (message?.stopReason === 'error') {
         throw new Error(message.errorMessage || 'The agent stopped with a model error.')
       }
-      return { text: extractAssistantText(message), toolCalls }
+      reportText = extractAssistantText(message)
+      status = 'completed'
+      return { text: reportText, toolCalls }
     } catch (error) {
-      if (cancelled) throw new AgentCancelledError(deps.agent)
-      if (timedOut) throw new AgentTimeoutError(deps.agent, timeoutMs)
+      if (cancelled) {
+        status = 'cancelled'
+        throw new AgentCancelledError(deps.agent)
+      }
+      if (timedOut) {
+        status = 'timeout'
+        throw new AgentTimeoutError(deps.agent, timeoutMs)
+      }
       throw error
     } finally {
+      try {
+        deps.onUsage?.(usage.finish(status, reportText))
+      } catch {
+        // Recording usage must not change how the run ends.
+      }
       clearTimeout(timer)
       signal?.removeEventListener('abort', onAbort)
       unsubscribe()

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { agentStepExpanded, stepAsToolCall } from '../src/renderer/src/lib/agentStepPresentation'
+import {
+  agentStepExpanded,
+  isScrolledToEnd,
+  stepAsToolCall
+} from '../src/renderer/src/lib/agentStepPresentation'
 import type { AgentExecutionStep } from '../src/renderer/src/lib/agentExecutionTypes'
 
 const step = (overrides: Partial<AgentExecutionStep> = {}): AgentExecutionStep => ({
@@ -71,4 +75,19 @@ test('optional parts of a step are left out, not set to undefined', () => {
   for (const key of ['createdAt', 'completedAt', 'durationMs', 'outputPath', 'outputBytes']) {
     assert.equal(key in item, false, key)
   }
+})
+
+// ── following a step's output while it streams ───────────────────────────
+
+test('a view scrolled to the end (or nearly) is following the output', () => {
+  assert.equal(isScrolledToEnd({ scrollTop: 680, clientHeight: 320, scrollHeight: 1000 }), true)
+  assert.equal(isScrolledToEnd({ scrollTop: 670, clientHeight: 320, scrollHeight: 1000 }), true)
+})
+
+test('a view the user scrolled up is not followed', () => {
+  assert.equal(isScrolledToEnd({ scrollTop: 400, clientHeight: 320, scrollHeight: 1000 }), false)
+})
+
+test('content that fits without scrolling counts as being at the end', () => {
+  assert.equal(isScrolledToEnd({ scrollTop: 0, clientHeight: 320, scrollHeight: 200 }), true)
 })

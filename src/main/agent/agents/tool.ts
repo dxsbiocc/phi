@@ -13,6 +13,10 @@ const MAX_TASK_LENGTH = 20000
 
 export type AgentRunner = (request: AgentRunRequest) => Promise<AgentRunResult>
 
+export interface AgentToolOptions {
+  cwd?: string
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -45,6 +49,45 @@ function reportForMain(run: AgentRunSnapshot): string {
   return `${metadata.join('\n')}\n\n${report}`.trim()
 }
 
+function isVisualizationAgent(definition: PhiAgentDefinition): boolean {
+  return (
+    definition.name === 'Visualization' ||
+    definition.skills.includes('omics-visualization') ||
+    definition.description.toLowerCase().includes('omics')
+  )
+}
+
+function projectBoundaryDescription(
+  definition: PhiAgentDefinition,
+  options: AgentToolOptions
+): string {
+  const cwd = options.cwd?.trim()
+  if (!cwd || !isVisualizationAgent(definition)) return ''
+
+  return `\n\nProject output boundary for Visualization: generated figures, copied template source, scratch scripts, reports, and QA artifacts must be written under the current project working directory (${cwd}). Treat data paths outside that directory as read-only inputs. If no output directory is specified, use a new directory under ${cwd}/visualizations/ or ${cwd}/plots/.`
+}
+
+function taskWithProjectBoundary(
+  definition: PhiAgentDefinition,
+  task: string,
+  options: AgentToolOptions
+): string {
+  const cwd = options.cwd?.trim()
+  if (!cwd || !isVisualizationAgent(definition)) return task
+
+  return [
+    'Phi execution context:',
+    `- Current project working directory (cwd): ${cwd}`,
+    '- All generated files must stay under this cwd so Phi can preview and open them.',
+    '- Treat input/data paths outside cwd as read-only. Do not create sibling plots, scripts, or reports beside external input data.',
+    '- If the user did not specify an output directory, create a concise subdirectory under cwd, for example visualizations/<short-task-name>/ or plots/<short-task-name>/.',
+    '- Return cwd-contained artifact paths in the final report.',
+    '',
+    'Delegated task:',
+    task
+  ].join('\n')
+}
+
 /**
  * The delegation tool for one scanned agent. The tool IS the agent: it is
  * named exactly `definition.name` (e.g. `Wrapper`), so the main agent hands
@@ -58,13 +101,14 @@ function reportForMain(run: AgentRunSnapshot): string {
 export function buildAgentTool(
   definition: PhiAgentDefinition,
   runner: AgentRunner,
-  registry: AgentRunRegistry = new AgentRunRegistry()
+  registry: AgentRunRegistry = new AgentRunRegistry(),
+  options: AgentToolOptions = {}
 ): CustomTool {
   const { name } = definition
   return {
     name,
     label: name,
-    description: `${definition.description}\n\nHands the task to the ${name} agent, a specialist with its own tools and its own session. It cannot see this conversation and cannot ask the user questions, so write \`task\` as a complete, self-contained request: absolute file paths, where outputs should go, and any user preferences. It returns a short report. Independent tasks can be delegated in the same turn and run in parallel; set \`background\` to carry on while it works.`,
+    description: `${definition.description}\n\nHands the task to the ${name} agent, a specialist with its own tools and its own session. It cannot see this conversation and cannot ask the user questions, so write \`task\` as a complete, self-contained request: absolute file paths, where outputs should go, and any user preferences. It returns a short report. Independent tasks can be delegated in the same turn and run in parallel; set \`background\` to carry on while it works.${projectBoundaryDescription(definition, options)}`,
     parameters: {
       type: 'object',
       required: ['task'],
@@ -96,12 +140,13 @@ export function buildAgentTool(
         )
       }
       const background = isRecord(params) && params.background === true
+      const delegatedTask = taskWithProjectBoundary(definition, task, options)
 
       let handle
       try {
         handle = registry.launch({
           agent: name,
-          task,
+          task: delegatedTask,
           runner,
           background,
           ...(signal ? { signal } : {}),

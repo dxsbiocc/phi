@@ -9,7 +9,11 @@ registerHooks({
     try {
       return nextResolve(specifier, context)
     } catch (error) {
-      if (error.code !== 'ERR_MODULE_NOT_FOUND' || !specifier.startsWith('.')) throw error
+      // A bare directory import ('../environment') throws ERR_UNSUPPORTED_DIR_IMPORT rather
+      // than ERR_MODULE_NOT_FOUND; both should fall through to the index.ts lookup below.
+      const retryable =
+        error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'ERR_UNSUPPORTED_DIR_IMPORT'
+      if (!retryable || !specifier.startsWith('.')) throw error
       for (const suffix of ['.ts', '.tsx', '/index.ts']) {
         const url = new URL(`${specifier}${suffix}`, context.parentURL)
         if (existsSync(fileURLToPath(url))) return { url: url.href, shortCircuit: true }

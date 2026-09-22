@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 
 import type { WrapperOutputRecord } from '../types'
+import { getActiveToolPath } from '../../environment'
 
 /** Execution profile a wrapper can run under — see each `wrapper/nextflow.config`'s `profiles {}` block. */
 export const WRAPPER_EXECUTION_PROFILES = ['docker', 'singularity', 'conda'] as const
@@ -43,12 +44,17 @@ function condaEnvBinCandidates(name: string): string[] {
 /**
  * Electron apps don't reliably inherit a dev shell's PATH (conda-activated
  * envs in particular), so beyond `process.env.PATH` this also checks common
- * conda env locations. Set `NEXTFLOW_BIN` to skip the search entirely.
+ * conda env locations. Preference order:
+ * 1. `NEXTFLOW_BIN`
+ * 2. Phi environment settings (`~/.phi/environment.json` active path)
+ * 3. `which nextflow` / conda env bins
  */
 export function findNextflowBinary(): string {
   if (process.env.NEXTFLOW_BIN && existsSync(process.env.NEXTFLOW_BIN)) {
     return process.env.NEXTFLOW_BIN
   }
+  const configured = getActiveToolPath('nextflow')
+  if (configured && existsSync(configured)) return configured
   try {
     const found = execFileSync('which', ['nextflow'], { encoding: 'utf-8' }).trim()
     if (found) return found
@@ -57,9 +63,7 @@ export function findNextflowBinary(): string {
   }
   const candidates = condaEnvBinCandidates('nextflow')
   if (candidates.length > 0) return candidates[0]
-  throw new Error(
-    'Could not locate a nextflow binary. Set the NEXTFLOW_BIN environment variable to its absolute path.'
-  )
+  throw new Error('未找到 Nextflow。请在设置 → 环境中指定路径，或设置 NEXTFLOW_BIN 环境变量。')
 }
 
 /**

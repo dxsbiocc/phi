@@ -1,12 +1,15 @@
 import { Box, Button, Divider, Link, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
-import { Fragment, isValidElement, memo, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, isValidElement, memo, useEffect, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { PhiIcons, directoryIconForPath, fileIconForPath } from '../icons'
 import { useMarkdownPlugins } from '../lib/markdownMathPlugins'
-import { tokenizeLocalPaths } from '../lib/localPaths'
+import { collectLocalPathTokenPaths, tokenizeLocalPaths } from '../lib/localPaths'
 import { highlightLine, type SyntaxLanguage } from '../lib/syntaxHighlight'
 import { syntaxTokenColor } from '../lib/syntaxTheme'
+import { smilesExpressionFromInlineCode } from '../lib/moleculeExpressions'
+import { databaseWebPreviewKindFromString } from '../../../shared/databaseWebPreview'
+import type { FilePreview } from '../types'
 import {
   collectBareFileReferencePaths,
   inlineCodeBareFilePath,
@@ -22,6 +25,9 @@ import {
 import { normalizeHexColor, tokenizeMarkdownColors } from '../lib/markdownColors'
 import { ColorCode, InlineCodeShell, MarkdownColorTokenView } from './markdown/MarkdownColorToken'
 import { LocalFileHoverPreview } from './markdown/MarkdownHoverPreview'
+import { MarkdownSmilesTokenView } from './markdown/MarkdownSmilesToken'
+import { StringNetworkPreview } from './markdown/StringNetworkPreview'
+import { KeggPathwayPreview } from './markdown/KeggPathwayPreview'
 import {
   HOVER_PREVIEW_OPEN_DELAY_MS,
   localPathTooltipSlotProps,
@@ -79,6 +85,28 @@ function languageFromCodeChild(children: ReactNode): string | null {
 
   const match = /language-([^\s]+)/.exec(child.props.className ?? '')
   return match?.[1] ?? null
+}
+
+function normalizeDirectoryPath(path: string): string {
+  return path.replace(/\/+$/, '')
+}
+
+function isPathInsideDirectory(path: string, directory: string): boolean {
+  const normalizedDirectory = normalizeDirectoryPath(directory)
+  if (!normalizedDirectory) return false
+  return path === normalizedDirectory || path.startsWith(`${normalizedDirectory}/`)
+}
+
+function renderableLocalPathKind(
+  text: string,
+  absolutePath: string,
+  cwd: string,
+  localPathKinds: ReadonlyMap<string, LocalPathKind>
+): LocalPathKind | null {
+  if (isPathInsideDirectory(absolutePath, cwd)) {
+    return localPathKindForReference(text, absolutePath, cwd, true)
+  }
+  return localPathKinds.get(absolutePath) ?? null
 }
 
 function syntaxLanguageForMarkdownCode(language: string | null): SyntaxLanguage {
@@ -341,6 +369,146 @@ function LocalPathButton({
   )
 }
 
+function MarkdownImage({
+  src,
+  alt,
+  cwd,
+  localPathKinds,
+  onOpenLocalPath
+}: {
+  src?: string
+  alt?: string
+  cwd: string
+  localPathKinds: ReadonlyMap<string, LocalPathKind>
+  onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
+}): React.JSX.Element | null {
+  const localPath = localHrefToPath(src, cwd)
+  const pathKind = localPath
+    ? renderableLocalPathKind(alt || localPath, localPath, cwd, localPathKinds)
+    : null
+  const [previewState, setPreviewState] = useState<{ path: string; preview: FilePreview } | null>(
+    null
+  )
+  const preview = previewState?.path === localPath ? previewState.preview : null
+
+  useEffect(() => {
+    if (
+      !localPath ||
+      pathKind !== 'file' ||
+      typeof window === 'undefined' ||
+      !window.api?.previewFile
+    ) {
+      return
+    }
+
+    let cancelled = false
+
+    window.api
+      .previewFile(localPath)
+      .then((result) => {
+        if (!cancelled) setPreviewState({ path: localPath, preview: result })
+      })
+      .catch((error) => {
+        console.error('Failed to preview markdown image:', error)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [localPath, pathKind])
+
+  if (!localPath) {
+    if (!src) return null
+    return (
+      <Box
+        component="img"
+        src={src}
+        alt={alt ?? ''}
+        sx={{
+          display: 'block',
+          maxWidth: '100%',
+          maxHeight: 360,
+          my: 1,
+          borderRadius: 1,
+          objectFit: 'contain'
+        }}
+      />
+    )
+  }
+
+  if (!pathKind) {
+    return <InlineCodeShell>{alt || localPath}</InlineCodeShell>
+  }
+
+  const fallback = (
+    <LocalPathButton
+      text={alt || localPath}
+      absolutePath={localPath}
+      pathKind={pathKind}
+      onOpenLocalPath={onOpenLocalPath}
+    />
+  )
+
+  return (
+    <Box
+      component="span"
+      data-phi-slot="local-markdown-image"
+      data-phi-path={localPath}
+      sx={{ display: 'block', my: 1, maxWidth: '100%' }}
+    >
+      {preview?.kind === 'image' ? (
+        <Box
+          component="button"
+          type="button"
+          aria-label={`打开文件 ${localPath}`}
+          onClick={() => {
+            if (onOpenLocalPath) {
+              onOpenLocalPath(localPath, 'file')
+              return
+            }
+
+            void window.api.revealPath(localPath).catch((error) => {
+              console.error('Failed to reveal markdown image:', error)
+            })
+          }}
+          sx={{
+            display: 'block',
+            p: 0,
+            maxWidth: '100%',
+            border: 0,
+            bgcolor: 'transparent',
+            cursor: 'pointer',
+            textAlign: 'left',
+            '&:focus-visible': {
+              outline: '2px solid',
+              outlineColor: 'primary.main',
+              outlineOffset: 2
+            }
+          }}
+        >
+          <Box
+            component="img"
+            src={preview.dataUrl}
+            alt={alt ?? preview.name}
+            sx={{
+              display: 'block',
+              maxWidth: '100%',
+              maxHeight: 360,
+              objectFit: 'contain',
+              borderRadius: 1,
+              border: 1,
+              borderColor: 'divider',
+              bgcolor: 'background.default'
+            }}
+          />
+        </Box>
+      ) : (
+        fallback
+      )}
+    </Box>
+  )
+}
+
 function renderDecoratedText(
   text: string,
   cwd: string,
@@ -352,14 +520,19 @@ function renderDecoratedText(
 
   tokenizeLocalPaths(text, cwd).forEach((token, pathIndex) => {
     if (token.kind === 'path') {
+      const pathKind = renderableLocalPathKind(token.text, token.absolutePath, cwd, localPathKinds)
       nodes.push(
-        <LocalPathButton
-          key={`${keyPrefix}-path-${pathIndex}-${token.absolutePath}`}
-          text={token.text}
-          absolutePath={token.absolutePath}
-          pathKind={localPathKindForReference(token.text, token.absolutePath, cwd, true)}
-          onOpenLocalPath={onOpenLocalPath}
-        />
+        pathKind ? (
+          <LocalPathButton
+            key={`${keyPrefix}-path-${pathIndex}-${token.absolutePath}`}
+            text={token.text}
+            absolutePath={token.absolutePath}
+            pathKind={pathKind}
+            onOpenLocalPath={onOpenLocalPath}
+          />
+        ) : (
+          token.text
+        )
       )
       return
     }
@@ -427,15 +600,17 @@ function InlineCode({
   if (color) return <ColorCode color={color} />
   const localPath = inlineCodeFilePath(codeText, cwd)
   if (localPath) {
-    const pathKind = localPathKindForReference(codeText, localPath, cwd, true)
-    return (
-      <LocalPathButton
-        text={codeText}
-        absolutePath={localPath}
-        pathKind={pathKind}
-        onOpenLocalPath={onOpenLocalPath}
-      />
-    )
+    const pathKind = renderableLocalPathKind(codeText, localPath, cwd, localPathKinds)
+    if (pathKind) {
+      return (
+        <LocalPathButton
+          text={codeText}
+          absolutePath={localPath}
+          pathKind={pathKind}
+          onOpenLocalPath={onOpenLocalPath}
+        />
+      )
+    }
   }
 
   const bareLocalPath = inlineCodeBareFilePath(codeText, cwd)
@@ -453,6 +628,9 @@ function InlineCode({
     )
   }
 
+  const smiles = smilesExpressionFromInlineCode(codeText)
+  if (smiles) return <MarkdownSmilesTokenView smiles={smiles} />
+
   return <InlineCodeShell>{children}</InlineCodeShell>
 }
 
@@ -469,11 +647,16 @@ function MarkdownContentImpl({
   onOpenLocalPath,
   enableMath = false
 }: MarkdownContentProps): React.JSX.Element {
-  const bareFileReferencePaths = useMemo(
-    () => collectBareFileReferencePaths(text, cwd),
+  const localPathReferencePaths = useMemo(
+    () => [
+      ...new Set([
+        ...collectBareFileReferencePaths(text, cwd),
+        ...collectLocalPathTokenPaths(text, cwd)
+      ])
+    ],
     [cwd, text]
   )
-  const localPathKinds = useLocalPathKinds(cwd, bareFileReferencePaths)
+  const localPathKinds = useLocalPathKinds(cwd, localPathReferencePaths)
   const { remarkPlugins, rehypePlugins } = useMarkdownPlugins(enableMath)
 
   const components = useMemo<Components>(
@@ -526,15 +709,29 @@ function MarkdownContentImpl({
       a: ({ href, children }) => {
         const localPath = localHrefToPath(href, cwd)
         if (localPath) {
-          const pathKind = localPathKindForReference(textFromNode(children), localPath, cwd, true)
-          return (
-            <LocalPathButton
-              text={textFromNode(children)}
-              absolutePath={localPath}
-              pathKind={pathKind}
-              onOpenLocalPath={onOpenLocalPath}
-            />
-          )
+          const label = textFromNode(children)
+          const pathKind = renderableLocalPathKind(label, localPath, cwd, localPathKinds)
+          if (pathKind) {
+            return (
+              <LocalPathButton
+                text={label}
+                absolutePath={localPath}
+                pathKind={pathKind}
+                onOpenLocalPath={onOpenLocalPath}
+              />
+            )
+          }
+          return <>{renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}</>
+        }
+
+        if (typeof href === 'string') {
+          const databasePreviewKind = databaseWebPreviewKindFromString(href)
+          if (databasePreviewKind === 'string-network') {
+            return <StringNetworkPreview href={href} label={textFromNode(children) || href} />
+          }
+          if (databasePreviewKind === 'kegg-pathway') {
+            return <KeggPathwayPreview href={href} label={textFromNode(children) || href} />
+          }
         }
 
         return (
@@ -543,6 +740,15 @@ function MarkdownContentImpl({
           </Link>
         )
       },
+      img: ({ src, alt }) => (
+        <MarkdownImage
+          src={src}
+          alt={alt}
+          cwd={cwd}
+          localPathKinds={localPathKinds}
+          onOpenLocalPath={onOpenLocalPath}
+        />
+      ),
       hr: () => <Divider sx={{ my: 1.5 }} />,
       pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
       code: ({ className, children }) =>

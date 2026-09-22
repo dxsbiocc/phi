@@ -1,7 +1,11 @@
 import { Typography } from '@mui/material'
 import { memo, useMemo, useState, type ReactNode } from 'react'
 import type { AgentExecutionStep } from '../types'
-import { agentStepExpanded, stepAsToolCall } from '../lib/agentStepPresentation'
+import {
+  AGENT_STEP_DETAIL_MAX_HEIGHT_PX,
+  agentStepExpanded,
+  stepAsToolCall
+} from '../lib/agentStepPresentation'
 import ToolCallCard from './ToolCallCard'
 import { type ChatContentResizeHandler } from './chat/useCollapseResizeNotifier'
 
@@ -27,6 +31,7 @@ function AgentStepRow({ step, cwd, onContentResize }: AgentStepRowProps): ReactN
         cwd={cwd}
         expanded={agentStepExpanded(step, userChoice)}
         onExpandedChange={setUserChoice}
+        detailMaxHeight={AGENT_STEP_DETAIL_MAX_HEIGHT_PX}
         onContentResize={onContentResize}
       />
       {step.error ? (
