@@ -21,6 +21,14 @@ import { WrapperJobManager } from '../src/main/agent/wrappers/composition/job-ma
 import { validateWrapperParams } from '../src/main/agent/wrappers/composition/validate'
 
 const EXPECTED_MODULE_WRAPPER_IDS = [
+  'local/modules/differential-expression-deseq2',
+  'local/modules/differential-expression-edger',
+  'local/modules/differential-expression-limma',
+  'local/modules/differential-expression-qc',
+  'local/modules/differential-expression-timeseries',
+  'local/modules/differential-expression-visualization-heatmap',
+  'local/modules/differential-expression-visualization-pca',
+  'local/modules/differential-expression-visualization-volcano',
   'nf-core/modules/bedtools-genomecov',
   'nf-core/modules/bowtie2-align',
   'nf-core/modules/bowtie2-build',
