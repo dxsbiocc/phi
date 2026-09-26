@@ -124,6 +124,8 @@ const EXPECTED_MODULE_WRAPPER_IDS = [
   'nf-core/modules/custom-gtffilter',
   'nf-core/modules/custom-matrixfilter',
   'nf-core/modules/custom-multiqccustombiotype',
+  'nf-core/modules/custom-orfcollapse',
+  'nf-core/modules/custom-orfmerge',
   'nf-core/modules/custom-orfnormalise',
   'nf-core/modules/custom-pcaclustering',
   'nf-core/modules/custom-resolvetaxonomy',
