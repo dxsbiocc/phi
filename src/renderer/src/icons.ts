@@ -712,7 +712,7 @@ export const PhiIcons = {
     openExternal: createPhiIcon('OpenExternal', FiExternalLink),
     quick: createPhiIcon('Quick', FiZap),
     run: createPhiIcon('Run', FiPlay),
-    refresh: createPhiIcon('Refresh', GoSync),
+    refresh: createPhiIcon('Refresh', GoSync, { defaultStrokeWidth: null }),
     save: createPhiIcon('Save', FiSave),
     saveKey: createPhiIcon('SaveKey', FiKey),
     search: createPhiIcon('Search', FiSearch),

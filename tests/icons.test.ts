@@ -5,6 +5,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { IconType } from 'react-icons'
 import { FiExternalLink } from 'react-icons/fi'
+import { GoSync } from 'react-icons/go'
 import { SiJupyter } from 'react-icons/si'
 import { TbFolderOpen, TbListTree } from 'react-icons/tb'
 import {
@@ -279,6 +280,14 @@ test('auto permission icon is visually balanced with other permission icons', ()
   const markup = renderToStaticMarkup(createElement(PhiIcons.state.auto, { fontSize: 'small' }))
 
   assert.match(markup, /transform:scale\(1\.16\)/)
+})
+
+test('refresh icon keeps the native GoSync stroke weight', () => {
+  const native = renderToStaticMarkup(createElement(GoSync))
+  const refresh = renderToStaticMarkup(createElement(PhiIcons.action.refresh))
+
+  assert.match(refresh, /stroke-width="0"/)
+  assert.equal(refresh.match(/<path d="([^"]+)"/)?.[1], native.match(/<path d="([^"]+)"/)?.[1])
 })
 
 test('language file icon kinds render non-empty icons', () => {

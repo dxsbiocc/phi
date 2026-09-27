@@ -51,7 +51,7 @@ export function DatabaseSettingsPanel({
               aria-label="刷新数据库"
               disabled={isLoading}
               onClick={() => void onRefresh()}
-              sx={{ width: 40, height: 40, border: 1, borderColor: 'divider' }}
+              sx={{ width: 40, height: 40, color: 'text.secondary' }}
             >
               <RefreshIcon fontSize="small" />
             </IconButton>

@@ -21,6 +21,7 @@ import {
   ToggleButtonGroup,
   Typography
 } from '@mui/material'
+import { GoPlus, GoSync } from 'react-icons/go'
 import { PhiIcons } from '../icons'
 import type {
   DbConnectorSettingsItem,
@@ -45,7 +46,8 @@ const CloseIcon = PhiIcons.action.close
 const ContentCopyIcon = PhiIcons.action.copy
 const KeyIcon = PhiIcons.entity.apiKey
 const LogoutIcon = PhiIcons.action.logout
-const RefreshIcon = PhiIcons.action.refresh
+const RefreshIcon = GoSync
+const AddToolbarIcon = GoPlus
 const PaletteIcon = PhiIcons.settings.appearance
 const ProviderIcon = PhiIcons.settings.providers
 const PsychologyIcon = PhiIcons.settings.persona
@@ -273,9 +275,9 @@ function ProvidersSection({
             <IconButton
               aria-label="刷新状态"
               onClick={() => void onRefresh()}
-              sx={{ width: 40, height: 40, border: 1, borderColor: 'divider' }}
+              sx={{ width: 40, height: 40, color: 'text.secondary' }}
             >
-              <RefreshIcon fontSize="small" />
+              <RefreshIcon size={19} />
             </IconButton>
           </Tooltip>
           <Tooltip title="添加 Provider">
@@ -283,9 +285,9 @@ function ProvidersSection({
               aria-label="添加 Provider"
               color="primary"
               onClick={onOpenAddProvider}
-              sx={{ width: 40, height: 40, border: 1, borderColor: 'divider' }}
+              sx={{ width: 40, height: 40 }}
             >
-              <AddIcon fontSize="small" />
+              <AddToolbarIcon size={28} />
             </IconButton>
           </Tooltip>
         </Stack>
@@ -750,8 +752,6 @@ function SettingsDialog({
           height: 36,
           color: 'text.secondary',
           bgcolor: 'background.paper',
-          border: 1,
-          borderColor: 'divider',
           '&:hover': {
             bgcolor: 'action.hover',
             color: 'text.primary'
