@@ -28,14 +28,13 @@ import type {
   DefaultProxyMode,
   ModelOption,
   PhiAppSettingsPatch,
-  ProjectRemoteConnection,
   ProviderAuthStatus,
   ProxyTransportStatus
 } from '../types'
 import type { PermissionMode, Project, ThinkingLevel, ToolApprovalRequest } from '../types'
 import type { ThemeMode } from '../theme'
 import { accentAt, ACCENT_PALETTE } from '../theme'
-import { WrapperRemoteSettingsSection } from '../features/wrapper/components/WrapperRemoteSettings'
+import { RemoteHostSettingsSection } from '../features/wrapper/components/RemoteHostSettings'
 import { DatabaseSettingsPanel } from '../features/databases/DatabaseSettingsPanel'
 import { EnvironmentSettingsPanel } from '../features/environment/components/EnvironmentSettingsPanel'
 import { PermissionSettingsSection } from './PermissionView'
@@ -638,16 +637,6 @@ type SettingsDialogProps = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => void
-  updatingRemoteProjectId: string | null
-  onUpdateProjectRemoteConnection: (
-    projectId: string,
-    connectionId: string,
-    patch: ProjectRemoteConnection | null
-  ) => Promise<void>
-  onUpdateProjectRemoteDefaults: (
-    projectId: string,
-    defaults: { defaultRemoteConnectionId?: string | null; remoteWorkspaceRoot?: string | null }
-  ) => Promise<void>
   onOpenApprovalSession: (path: string) => void
   onRespondApproval: (requestId: string, approved: boolean) => void
   onCopyDiagnostics: () => Promise<string>
@@ -692,9 +681,6 @@ function SettingsDialog({
   updatingProjectId,
   onUpdateProjectPermissionMode,
   onUpdateProjectDefaults,
-  updatingRemoteProjectId,
-  onUpdateProjectRemoteConnection,
-  onUpdateProjectRemoteDefaults,
   onOpenApprovalSession,
   onRespondApproval,
   onCopyDiagnostics,
@@ -875,14 +861,7 @@ function SettingsDialog({
               onRespondApproval={onRespondApproval}
             />
           )}
-          {category === 'remote' && (
-            <WrapperRemoteSettingsSection
-              projects={projects}
-              updatingProjectId={updatingRemoteProjectId}
-              onUpdateRemoteConnection={onUpdateProjectRemoteConnection}
-              onUpdateRemoteDefaults={onUpdateProjectRemoteDefaults}
-            />
-          )}
+          {category === 'remote' && <RemoteHostSettingsSection />}
           {category === 'diagnostics' && (
             <DiagnosticsSection onCopyDiagnostics={onCopyDiagnostics} />
           )}

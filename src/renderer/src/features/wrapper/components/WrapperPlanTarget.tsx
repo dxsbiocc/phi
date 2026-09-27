@@ -61,12 +61,14 @@ export function WrapperPlanTargetActions({
   busy,
   isUnsubmitted,
   submitBlockReason,
+  remoteConfigured = true,
   onRetarget
 }: {
   plan: WrapperRunPlan
   busy: boolean
   isUnsubmitted: boolean
   submitBlockReason?: string
+  remoteConfigured?: boolean
   onRetarget: (request: WrapperRetargetRequest) => void
 }): React.JSX.Element {
   const localProject = plan.targetSelection?.projectLocation.kind === 'local'
@@ -99,6 +101,10 @@ export function WrapperPlanTargetActions({
         (hasLocalInputs ? (
           <Typography variant="caption" color="text.secondary">
             改用远程服务器需重新创建计划，并填写服务器上的输入路径。
+          </Typography>
+        ) : !remoteConfigured ? (
+          <Typography variant="caption" color="text.secondary">
+            先选择服务器和工作目录，再改用远程运行。
           </Typography>
         ) : (
           <Button

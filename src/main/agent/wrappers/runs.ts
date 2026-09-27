@@ -196,7 +196,7 @@ export function resolveRemoteSubmitOptions(
     const resolved = project ? resolveProjectRemoteSubmitOptions(project, agentDir) : undefined
     if (!resolved) {
       return {
-        reason: '缺少远程连接信息：提交时未指定，项目中也未配置远程工作目录/默认连接'
+        reason: '缺少远程计算目标：请先在该项目的 Wrapper 页面设置服务器和工作目录'
       }
     }
     return resolved

@@ -16,7 +16,6 @@ import type {
   PhiAppSettingsPatch,
   PermissionMode,
   Project,
-  ProjectRemoteConnection,
   ProviderAuthStatus,
   ProxyTransportStatus,
   RendererApi,
@@ -59,16 +58,6 @@ export type AppDialogsProps = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => void
-  updatingRemoteProjectId: string | null
-  onUpdateProjectRemoteConnection: (
-    projectId: string,
-    connectionId: string,
-    patch: ProjectRemoteConnection | null
-  ) => Promise<void>
-  onUpdateProjectRemoteDefaults: (
-    projectId: string,
-    defaults: { defaultRemoteConnectionId?: string | null; remoteWorkspaceRoot?: string | null }
-  ) => Promise<void>
   onOpenApprovalSession: (path: string) => void
   onRespondToolApproval: (requestId: string, approved: boolean) => Promise<void>
   themeMode: ThemeMode
@@ -148,9 +137,6 @@ export default function AppDialogs({
   updatingPermissionProjectId,
   onUpdateProjectPermissionMode,
   onUpdateProjectDefaults,
-  updatingRemoteProjectId,
-  onUpdateProjectRemoteConnection,
-  onUpdateProjectRemoteDefaults,
   onOpenApprovalSession,
   onRespondToolApproval,
   themeMode,
@@ -234,9 +220,6 @@ export default function AppDialogs({
         onUpdateProjectDefaults={(projectId, defaults) => {
           void onUpdateProjectDefaults(projectId, defaults)
         }}
-        updatingRemoteProjectId={updatingRemoteProjectId}
-        onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
-        onUpdateProjectRemoteDefaults={onUpdateProjectRemoteDefaults}
         onOpenApprovalSession={onOpenApprovalSession}
         onRespondApproval={onRespondToolApproval}
         onCopyDiagnostics={() => rendererApi.copyDiagnostics()}

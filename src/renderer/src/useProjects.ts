@@ -153,6 +153,7 @@ export function useProjects(
         setProjects((prev) => prev.map((item) => (item.id === project.id ? project : item)))
       } catch (error) {
         showSnackbarError(error, '更新远程执行默认设置失败')
+        throw error
       } finally {
         setUpdatingRemoteProjectId(null)
       }

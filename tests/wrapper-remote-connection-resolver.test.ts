@@ -101,6 +101,26 @@ test('SSH project always resolves its bound host and canonical directory', () =>
     assert.equal(selected.target.workspaceRoot, '/data/project')
     assert.equal(selected.target.hpc?.scheduler, 'local')
     assert.equal(selected.connectionId, host.id)
+    const runtime: ProjectRemoteConnection = {
+      id: 'runtime',
+      label: 'Slurm runtime',
+      hostProfileId: host.id,
+      hpc: { scheduler: 'slurm', controller: 'sbatch', runtime: 'singularity' }
+    }
+    const configured = resolveProjectRemoteTarget(
+      {
+        ...sshProject,
+        remoteConnections: [runtime],
+        defaultRemoteConnectionId: runtime.id,
+        remoteWorkspaceRoot: '/different/local-project-value'
+      },
+      undefined,
+      agentDir
+    )
+    assert.ok('target' in configured)
+    assert.equal(configured.target.workspaceRoot, '/data/project')
+    assert.equal(configured.target.hpc?.scheduler, 'slurm')
+    assert.equal(configured.target.hpc?.controller, 'sbatch')
     const wrongConnection: ProjectRemoteConnection = {
       id: 'other',
       label: 'Other',
@@ -152,7 +172,7 @@ test('remote target requires project, workspace, connection and HPC settings', (
           agentDir
         ) as { reason: string }
       ).reason,
-      /远程工作目录/
+      /服务器工作目录/
     )
     assert.match(
       (resolveProjectRemoteTarget(project(connection), 'other', agentDir) as { reason: string })

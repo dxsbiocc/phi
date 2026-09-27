@@ -256,11 +256,7 @@ export class WrapperJobManager implements WrapperJobClient {
       })
       return { ok: false, error: decision.reason }
     }
-    const shouldResolveRemote =
-      input.target === 'remote' ||
-      (input.target !== 'local' &&
-        (project?.location.kind === 'ssh' ||
-          Boolean(project?.defaultRemoteConnectionId && project.remoteWorkspaceRoot)))
+    const shouldResolveRemote = input.target === 'remote' || project?.location.kind === 'ssh'
     let resolved: ResolvedRemoteTarget | undefined
     if (shouldResolveRemote) {
       if (!this.resolveRemote) {

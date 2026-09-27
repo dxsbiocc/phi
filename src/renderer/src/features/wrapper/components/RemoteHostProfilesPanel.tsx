@@ -65,7 +65,6 @@ export function RemoteHostProfilesPanel({
   draft,
   busy,
   error,
-  doctorState,
   hostDoctorStates,
   onDraftChange,
   onOpenAdd,
@@ -84,7 +83,6 @@ export function RemoteHostProfilesPanel({
   draft: RemoteHostDraft
   busy: boolean
   error: string | null
-  doctorState: RemoteDoctorUiState
   hostDoctorStates: Record<string, RemoteDoctorUiState>
   onDraftChange: (draft: RemoteHostDraft) => void
   onOpenAdd: () => void
@@ -205,7 +203,7 @@ export function RemoteHostProfilesPanel({
                                     ? 'success'
                                     : 'default'
                             }
-                            disabled={busy || doctorState.phase === 'running'}
+                            disabled={busy || checking}
                             onClick={() => onTest(host)}
                             sx={{
                               width: 44,
@@ -243,7 +241,7 @@ export function RemoteHostProfilesPanel({
                         <span>
                           <IconButton
                             aria-label={`编辑 ${host.label}`}
-                            disabled={busy || doctorState.phase === 'running'}
+                            disabled={busy || checking}
                             onClick={() => onOpenEdit(host)}
                             sx={{ width: 44, height: 44 }}
                           >
@@ -256,7 +254,7 @@ export function RemoteHostProfilesPanel({
                           <span>
                             <IconButton
                               aria-label={`删除 ${host.label}`}
-                              disabled={busy || doctorState.phase === 'running'}
+                              disabled={busy || checking}
                               onClick={() => onDelete(host.id)}
                               sx={{ width: 44, height: 44 }}
                             >

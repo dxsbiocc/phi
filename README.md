@@ -35,7 +35,7 @@ should tell testers to expect the standard macOS warning flow for local builds.
 
 ## Remote Projects (Internal Beta)
 
-**Wrappers → 远程执行** lists hosts discovered from `~/.ssh/config` alongside older
+**Settings → 远程** lists hosts discovered from `~/.ssh/config` alongside older
 Phi server records. Discovered hosts are immediately available when creating a remote
 project. **添加服务器** writes a new `Host` entry to `~/.ssh/config`; editing a
 discovered host updates its entry there. Phi validates the resulting OpenSSH
@@ -46,12 +46,14 @@ itself. Password login is not yet supported: use non-interactive key or
 `ssh-agent` authentication and a trusted host key in `known_hosts`. Then create a
 project with **Remote server** and an absolute, readable and writable directory
 on that server. Testing a project connection checks its directory and reports
-missing server tools. To run a Wrapper, configure the project's remote HPC target
-and make its inputs available at remote paths.
+missing server tools. A remote project always runs its Wrappers on its bound
+server and project path; its Wrapper page offers Slurm and runtime settings.
 
-Unconfigured local projects stay out of the remote server list. Their optional
-remote Wrapper settings can be expanded separately; a local project is never
-silently converted into a remote project.
+The remote settings page manages servers only. A local project stays local even
+when it has a saved server compute target. The target can be configured from the
+Wrapper page or a run plan, and is used only when remote execution is explicitly
+requested. Local inputs must already exist at mapped server paths; Phi does not
+upload project data automatically.
 
 In a remote project, the usual `read`, `glob`, `grep`, `write`, `edit`, and `bash` agent
 tools operate on the server. File browsing and small result previews also read from

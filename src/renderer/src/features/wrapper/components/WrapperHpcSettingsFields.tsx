@@ -5,22 +5,29 @@ import type { HpcDraft } from '../lib/remoteHpcDraft'
 interface Props {
   value: HpcDraft
   onChange: (next: HpcDraft) => void
+  advancedOnly?: boolean
 }
 
 /** Site-specific scheduler, controller and runtime settings for one project binding. */
-export function WrapperHpcSettingsFields({ value, onChange }: Props): React.JSX.Element {
+export function WrapperHpcSettingsFields({
+  value,
+  onChange,
+  advancedOnly = false
+}: Props): React.JSX.Element {
   const slurm = value.scheduler === 'slurm'
   const monoInput = {
     '& input, & textarea': { fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }
   }
   return (
     <Stack spacing={2}>
-      <Box>
-        <Typography variant="subtitle2">运行方式</Typography>
-        <Typography variant="caption" color="text.secondary">
-          Nextflow 在该主机上启动，关闭 Phi 后仍会继续运行。
-        </Typography>
-      </Box>
+      {!advancedOnly && (
+        <Box>
+          <Typography variant="subtitle2">运行方式</Typography>
+          <Typography variant="caption" color="text.secondary">
+            Nextflow 在该主机上启动，关闭 Phi 后仍会继续运行。
+          </Typography>
+        </Box>
+      )}
       <TextField
         select
         size="small"
@@ -37,7 +44,7 @@ export function WrapperHpcSettingsFields({ value, onChange }: Props): React.JSX.
         }
       >
         <MenuItem value="login">登录节点（后台常驻）</MenuItem>
-        <MenuItem value="sbatch">作为 Slurm 作业提交</MenuItem>
+        {slurm && <MenuItem value="sbatch">作为 Slurm 作业提交</MenuItem>}
       </TextField>
       {value.controller === 'sbatch' && (
         <TextField
@@ -50,38 +57,40 @@ export function WrapperHpcSettingsFields({ value, onChange }: Props): React.JSX.
           sx={monoInput}
         />
       )}
-      <Stack direction="row" spacing={1.5}>
-        <TextField
-          select
-          size="small"
-          fullWidth
-          label="任务调度"
-          value={value.scheduler}
-          onChange={(event) =>
-            onChange({ ...value, scheduler: event.target.value as HpcDraft['scheduler'] })
-          }
-          helperText={
-            slurm ? '每个步骤作为 Slurm 作业提交' : '步骤直接在该主机运行（无调度器的服务器）'
-          }
-        >
-          <MenuItem value="slurm">Slurm 集群</MenuItem>
-          <MenuItem value="local">直接在该主机运行</MenuItem>
-        </TextField>
-        <TextField
-          select
-          size="small"
-          fullWidth
-          label="软件环境"
-          value={value.runtime}
-          onChange={(event) =>
-            onChange({ ...value, runtime: event.target.value as HpcDraft['runtime'] })
-          }
-        >
-          <MenuItem value="singularity">Singularity / Apptainer</MenuItem>
-          <MenuItem value="conda">Conda</MenuItem>
-          <MenuItem value="docker">Docker</MenuItem>
-        </TextField>
-      </Stack>
+      {!advancedOnly && (
+        <Stack direction="row" spacing={1.5}>
+          <TextField
+            select
+            size="small"
+            fullWidth
+            label="任务调度"
+            value={value.scheduler}
+            onChange={(event) =>
+              onChange({ ...value, scheduler: event.target.value as HpcDraft['scheduler'] })
+            }
+            helperText={
+              slurm ? '每个步骤作为 Slurm 作业提交' : '步骤直接在该主机运行（无调度器的服务器）'
+            }
+          >
+            <MenuItem value="slurm">Slurm 集群</MenuItem>
+            <MenuItem value="local">直接在该主机运行</MenuItem>
+          </TextField>
+          <TextField
+            select
+            size="small"
+            fullWidth
+            label="软件环境"
+            value={value.runtime}
+            onChange={(event) =>
+              onChange({ ...value, runtime: event.target.value as HpcDraft['runtime'] })
+            }
+          >
+            <MenuItem value="singularity">Singularity / Apptainer</MenuItem>
+            <MenuItem value="conda">Conda</MenuItem>
+            <MenuItem value="docker">Docker</MenuItem>
+          </TextField>
+        </Stack>
+      )}
       {slurm && (
         <>
           <Stack direction="row" spacing={1.5}>

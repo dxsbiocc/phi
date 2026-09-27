@@ -120,7 +120,7 @@ async function withDeadline<T>(task: Promise<T>, timeoutMs: number): Promise<T> 
   }
 }
 
-/** One visible check at a time; stale replies cannot replace a newer target. */
+/** One check per controller; stale replies cannot replace a newer target. */
 export function createRemoteDoctorUiController(
   request: RemoteDoctorRequest,
   onChange: (state: RemoteDoctorUiState) => void,
@@ -183,5 +183,56 @@ export function createRemoteDoctorUiController(
       state = { phase: 'idle' }
     },
     getState: () => state
+  }
+}
+
+/** Host rows can check independently while duplicate clicks on one host share the same request. */
+export function createRemoteHostDoctorUiController(
+  request: RemoteDoctorRequest,
+  onChange: (hostId: string, state: RemoteDoctorUiState) => void,
+  timeoutMs = 90_000
+): {
+  check(target: RemoteDoctorTarget): Promise<void>
+  invalidate(hostId?: string): void
+  dispose(): void
+  getState(hostId: string): RemoteDoctorUiState
+} {
+  const controllers = new Map<
+    string,
+    { key: string; controller: ReturnType<typeof createRemoteDoctorUiController> }
+  >()
+
+  function invalidateHost(hostId: string): void {
+    const current = controllers.get(hostId)
+    if (!current) return
+    current.controller.invalidate()
+    controllers.delete(hostId)
+  }
+
+  return {
+    check(target) {
+      const key = remoteDoctorTargetKey(target)
+      const hostId = remoteHostIdFromDoctorKey(key)
+      if (!hostId) throw new Error('服务器连接测试需要 SSH 主机目标')
+      const current = controllers.get(hostId)
+      if (current?.key === key) return current.controller.check(target)
+      if (current) invalidateHost(hostId)
+      const controller = createRemoteDoctorUiController(
+        request,
+        (state) => onChange(hostId, state),
+        timeoutMs
+      )
+      controllers.set(hostId, { key, controller })
+      return controller.check(target)
+    },
+    invalidate(hostId) {
+      if (hostId) invalidateHost(hostId)
+      else for (const id of [...controllers.keys()]) invalidateHost(id)
+    },
+    dispose() {
+      for (const { controller } of controllers.values()) controller.dispose()
+      controllers.clear()
+    },
+    getState: (hostId) => controllers.get(hostId)?.controller.getState() ?? { phase: 'idle' }
   }
 }

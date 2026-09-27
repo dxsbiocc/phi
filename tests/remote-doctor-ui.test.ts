@@ -11,6 +11,7 @@ import { RemoteHostDialog } from '../src/renderer/src/features/wrapper/component
 import { RemoteProjectConnectionRow } from '../src/renderer/src/features/wrapper/components/RemoteProjectConnectionRow'
 import {
   createRemoteDoctorUiController,
+  createRemoteHostDoctorUiController,
   remoteHostCheckPresentation,
   remoteHostIdFromDoctorKey,
   withHostDoctorState,
@@ -70,6 +71,60 @@ test('testing and retesting a saved host coalesces duplicate clicks', async () =
     states.map((state) => state.phase),
     ['running', 'done', 'running', 'done']
   )
+})
+
+test('different SSH hosts test concurrently without replacing each other', async () => {
+  const first = deferred<RemoteDoctorReport>()
+  const second = deferred<RemoteDoctorReport>()
+  const calls: string[] = []
+  const states: Record<string, RemoteDoctorUiState> = {}
+  const controller = createRemoteHostDoctorUiController(
+    async (hostId) => {
+      calls.push(hostId)
+      return hostId === 'host-1' ? first.promise : second.promise
+    },
+    (hostId, state) => {
+      if (state.phase === 'idle') delete states[hostId]
+      else states[hostId] = state
+    }
+  )
+  const otherTarget = remoteHostDoctorTarget('host-2', 'gpu')
+  const firstCheck = controller.check(hostTarget)
+  const duplicate = controller.check(hostTarget)
+  const secondCheck = controller.check(otherTarget)
+  await Promise.resolve()
+  assert.deepEqual(calls, ['host-1', 'host-2'])
+  assert.equal(controller.getState('host-1').phase, 'running')
+  assert.equal(controller.getState('host-2').phase, 'running')
+
+  second.resolve({ ...report, hostProfileId: 'host-2' })
+  await secondCheck
+  assert.equal(states['host-2']?.phase, 'done')
+  assert.equal(states['host-1']?.phase, 'running')
+  first.resolve(report)
+  await Promise.all([firstCheck, duplicate])
+  assert.equal(states['host-1']?.phase, 'done')
+  assert.equal(calls.length, 2)
+  controller.dispose()
+})
+
+test('invalidating one host leaves another host check running', async () => {
+  const first = deferred<RemoteDoctorReport>()
+  const second = deferred<RemoteDoctorReport>()
+  const controller = createRemoteHostDoctorUiController(
+    (hostId) => (hostId === 'host-1' ? first.promise : second.promise),
+    () => undefined
+  )
+  const firstCheck = controller.check(hostTarget)
+  const secondCheck = controller.check(remoteHostDoctorTarget('host-2', 'gpu'))
+  controller.invalidate('host-1')
+  second.resolve({ ...report, hostProfileId: 'host-2' })
+  await secondCheck
+  first.resolve(report)
+  await firstCheck
+  assert.equal(controller.getState('host-1').phase, 'idle')
+  assert.equal(controller.getState('host-2').phase, 'done')
+  controller.dispose()
 })
 
 test('failed and timed-out checks show safe messages and can be retried', async () => {
@@ -280,7 +335,6 @@ test('server card lists discovered aliases and keeps configuration fields in the
     },
     busy: false,
     error: null,
-    doctorState: { phase: 'idle' as const },
     hostDoctorStates: {},
     onDraftChange: () => undefined,
     onOpenAdd: () => undefined,
@@ -315,6 +369,19 @@ test('server card lists discovered aliases and keeps configuration fields in the
   )
   assert.match(failedMarkup, /aria-label="连接失败，重新测试 gpu"/)
   assert.match(failedMarkup, /MuiIconButton-colorError/)
+  const labKey = remoteDoctorTargetKey(remoteHostDoctorTarget('host-1', 'lab-hpc'))
+  const runningMarkup = render(
+    createElement(RemoteHostProfilesPanel, {
+      ...props,
+      hostDoctorStates: { 'host-1': { phase: 'running', key: labKey } }
+    })
+  )
+  const runningButton = runningMarkup.match(/<button[^>]*aria-label="正在测试 Lab"[^>]*>/)?.[0]
+  const otherButton = runningMarkup.match(/<button[^>]*aria-label="测试 gpu"[^>]*>/)?.[0]
+  assert.ok(runningButton)
+  assert.ok(otherButton)
+  assert.match(runningButton, /disabled/)
+  assert.doesNotMatch(otherButton, /disabled/)
   const failedCard = RemoteHostProfilesPanel({
     ...props,
     hostDoctorStates: {
@@ -353,7 +420,6 @@ test('server card routes add, edit, delete and test clicks to their own actions'
     },
     busy: false,
     error: null,
-    doctorState: { phase: 'idle' as const },
     hostDoctorStates: {},
     onDraftChange: () => undefined,
     onOpenAdd: () => {

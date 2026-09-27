@@ -30,6 +30,7 @@ import {
 import type { WrapperCompositionManifest } from '../../../../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../../../../shared/wrapperModuleDetailsTypes'
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
+import type { Project, ProjectRemoteConnection } from '../../types'
 import { PhiIcons } from '../../icons'
 import { buildWrapperParamsFlowGraph } from './lib/wrapperFlow'
 import { parseWrapperNextflowDag } from './lib/wrapperNextflowDag'
@@ -47,6 +48,7 @@ import {
 import type { LocalPathKind } from '../../components/MarkdownContent'
 import { WrapperFlowDiagram } from './components/WrapperFlowDiagram'
 import { WrapperRunResultActions } from './components/WrapperRunResultActions'
+import { WrapperExecutionTargetControl } from './components/WrapperExecutionTargetControl'
 import { useWrapperCatalog } from './hooks/useWrapperCatalog'
 
 const RefreshIcon = PhiIcons.action.refresh
@@ -100,6 +102,18 @@ export interface WrapperDetailProps {
   onOpenRemoteResult?: (run: WrapperRun, path: string, pathKind: LocalPathKind) => void
   onExportReproducibility?: (runId: string) => void
   onCancelRun?: (runId: string) => void
+  project?: Project
+  updatingRemoteProjectId?: string | null
+  onUpdateProjectRemoteConnection?: (
+    projectId: string,
+    connectionId: string,
+    patch: ProjectRemoteConnection
+  ) => Promise<void>
+  onUpdateProjectRemoteDefaults?: (
+    projectId: string,
+    defaults: { defaultRemoteConnectionId?: string | null; remoteWorkspaceRoot?: string | null }
+  ) => Promise<void>
+  onOpenRemoteSettings?: () => void
 }
 
 export interface WrapperViewContentProps extends WrapperDetailProps {
@@ -685,7 +699,12 @@ export function WrapperDetail({
   onOpenLocalPath,
   onOpenRemoteResult,
   onExportReproducibility,
-  onCancelRun
+  onCancelRun,
+  project,
+  updatingRemoteProjectId,
+  onUpdateProjectRemoteConnection,
+  onUpdateProjectRemoteDefaults,
+  onOpenRemoteSettings
 }: WrapperDetailProps): React.JSX.Element {
   const selected = useMemo(
     () => catalog.find((entry) => entry.id === selectedId),
@@ -838,6 +857,18 @@ export function WrapperDetail({
               </Stack>
             </Box>
           </Stack>
+
+          {project && (
+            <Box sx={{ mt: 2 }}>
+              <WrapperExecutionTargetControl
+                project={project}
+                busy={updatingRemoteProjectId === project.id}
+                onUpdateRemoteConnection={onUpdateProjectRemoteConnection}
+                onUpdateRemoteDefaults={onUpdateProjectRemoteDefaults}
+                onOpenRemoteSettings={onOpenRemoteSettings}
+              />
+            </Box>
+          )}
 
           <Divider sx={{ my: 4 }} />
 
@@ -1085,6 +1116,11 @@ export function WrapperViewContent({
   onOpenRemoteResult,
   onExportReproducibility,
   onCancelRun,
+  project,
+  updatingRemoteProjectId,
+  onUpdateProjectRemoteConnection,
+  onUpdateProjectRemoteDefaults,
+  onOpenRemoteSettings,
   onStartSidebarResize
 }: WrapperViewContentProps): React.JSX.Element {
   const selected = catalog.find((entry) => entry.id === selectedId) ?? null
@@ -1110,6 +1146,11 @@ export function WrapperViewContent({
           onOpenRemoteResult={onOpenRemoteResult}
           onExportReproducibility={onExportReproducibility}
           onCancelRun={onCancelRun}
+          project={project}
+          updatingRemoteProjectId={updatingRemoteProjectId}
+          onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
+          onUpdateProjectRemoteDefaults={onUpdateProjectRemoteDefaults}
+          onOpenRemoteSettings={onOpenRemoteSettings}
         />
       </DetailPage>
     </>

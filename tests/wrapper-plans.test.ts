@@ -277,7 +277,26 @@ test("createWrapperRunPlan uses a profile's declared nextflowProfile for -profil
   })
 })
 
-// --- Phase 2: resolveExecutor's "project default" tier -------------------
+// --- Local projects use remote settings only after an explicit remote request. ---
+
+test('a saved server never changes a local project plan into a remote plan by default', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    writeFastqPair(projectDir, 'S1')
+    configureProjectRemote(agentDir, projectDir)
+
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: fastqQcWrapper(agentDir, projectDir),
+      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
+      cwd: projectDir,
+      agentDir
+    })
+
+    assert.equal(plan.state, 'valid', plan.validation.errors.join('; '))
+    assert.equal(plan.executor, 'local')
+    assert.equal(plan.targetSelection?.target, 'local')
+  })
+})
 
 test('createWrapperRunPlan resolves the sbatch-controller profile when the project has remote execution configured', () => {
   withProjectHarness(({ agentDir, projectDir }) => {
@@ -290,7 +309,8 @@ test('createWrapperRunPlan resolves the sbatch-controller profile when the proje
       wrapper,
       params: { reads: 'data/*_{R1,R2}.fastq.gz' },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
 
     assert.equal(plan.executor, 'slurm-controller', plan.validation.errors.join('; '))
@@ -326,7 +346,8 @@ test("createWrapperRunPlan trusts a remote plan's input paths verbatim — no lo
       wrapper: wrapperWithFasta,
       params: { reads: 'data/*_{R1,R2}.fastq.gz', fasta: remoteFastaPath },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
 
     assert.equal(plan.executor, 'slurm-controller')
@@ -349,7 +370,8 @@ test('legacy plan maps an explicit local input to the saved server path and reta
       wrapper: fastqQcWrapper(agentDir, projectDir),
       params: { reads: { source: 'local', path: 'data/*_{R1,R2}.fastq.gz' } },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
     assert.equal(plan.state, 'valid', plan.validation.errors.join('; '))
     assert.equal(plan.params.reads, '/cluster/project-data/data/*_{R1,R2}.fastq.gz')
@@ -363,7 +385,8 @@ test('legacy plan maps an explicit local input to the saved server path and reta
       wrapper: fastqQcWrapper(agentDir, projectDir),
       params: { reads: sameName },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
     assert.equal(remoteString.state, 'valid')
     assert.equal(remoteString.inputs[0]?.source, 'remote')
@@ -395,7 +418,8 @@ test('createWrapperRunPlan rejects a configured remote target without a compatib
       wrapper: noRemoteProfileWrapper,
       params: { reads: 'data/*_{R1,R2}.fastq.gz' },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
 
     assert.equal(plan.state, 'invalid')
@@ -429,11 +453,12 @@ test('createWrapperRunPlan rejects partial remote settings instead of silently r
       wrapper,
       params: { reads: 'data/*_{R1,R2}.fastq.gz' },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
 
     assert.equal(plan.state, 'invalid')
-    assert.match(plan.validation.errors.join('; '), /远程工作目录/)
+    assert.match(plan.validation.errors.join('; '), /服务器工作目录/)
   })
 })
 
@@ -452,7 +477,8 @@ test('createWrapperRunPlan does not require heavy-workload acknowledgement once 
       wrapper: heavyWrapper,
       params: { reads: 'data/*_{R1,R2}.fastq.gz' },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
 
     assert.equal(plan.executor, 'slurm-controller')
@@ -658,7 +684,8 @@ test('local fallback creates a validated revision with an explicit durable confi
       wrapper,
       params: { reads: 'data/*_{R1,R2}.fastq.gz' },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
     assert.equal(remote.executor, 'slurm-controller')
     assert.throws(

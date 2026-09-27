@@ -105,6 +105,68 @@ function renderView(overrides: Partial<Parameters<typeof WrapperViewContent>[0]>
   )
 }
 
+test('a local project offers server compute only inside the Wrapper view', () => {
+  const project: Project = {
+    id: 'local-project',
+    name: 'Local work',
+    location: { kind: 'local', path: '/tmp/project', realPath: '/tmp/project' },
+    workingDirectory: '/tmp/project',
+    permissionMode: 'ask',
+    createdAt: '2026-09-27T00:00:00.000Z'
+  }
+  const local = renderView({ project })
+  assert.match(local, /设置远程计算/)
+  assert.match(local, /本地项目仍默认在本机运行/)
+
+  const remote = renderView({
+    project: {
+      ...project,
+      location: {
+        kind: 'ssh',
+        hostProfileId: 'host-a',
+        remoteRoot: '/data/project',
+        canonicalRoot: '/data/project'
+      }
+    }
+  })
+  assert.doesNotMatch(remote, /设置远程计算/)
+  assert.match(remote, /Wrapper 运行方式/)
+  assert.match(remote, /Wrapper 自动在本项目服务器运行/)
+})
+
+test('a local plan waits for a saved server before offering remote retarget', () => {
+  const plan = {
+    planId: 'plan-local',
+    revision: 1,
+    state: 'valid',
+    inputs: [],
+    targetSelection: {
+      projectId: 'local-project',
+      projectLocation: { kind: 'local', path: '/tmp/project', realPath: '/tmp/project' },
+      target: 'local',
+      reason: '本地项目默认在本机运行。'
+    }
+  } as WrapperRunPlan
+  const renderActions = (remoteConfigured: boolean): string =>
+    renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme: createTheme() },
+        createElement(WrapperPlanTargetActions, {
+          plan,
+          busy: false,
+          isUnsubmitted: true,
+          remoteConfigured,
+          onRetarget: () => undefined
+        })
+      )
+    )
+
+  assert.match(renderActions(false), /先选择服务器和工作目录/)
+  assert.doesNotMatch(renderActions(false), /改用远程服务器并重新校验计划/)
+  assert.match(renderActions(true), /改用远程服务器并重新校验计划/)
+})
+
 test('wrapper view shows an empty state when no wrappers are found', () => {
   const markup = renderView({ catalog: [], selectedId: null })
   assert.match(markup, /没有发现任何 wrapper/)

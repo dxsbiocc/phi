@@ -102,20 +102,20 @@ export function resolveProjectRemoteTarget(
   }
   if (!project.remoteWorkspaceRoot) {
     return {
-      reason: `项目 "${project.name}" 还没有设置远程工作目录（remoteWorkspaceRoot）。请先在 Wrappers 页的远程设置里配置。`
+      reason: `项目 "${project.name}" 还没有设置服务器工作目录。请在该项目的 Wrapper 页面选择“设置远程计算”。`
     }
   }
   const wanted = connectionId ?? project.defaultRemoteConnectionId
   const connection = project.remoteConnections?.find((candidate) => candidate.id === wanted)
   if (!connection) {
     return {
-      reason: `项目 "${project.name}" 没有可用的远程连接${wanted ? `（找不到 ${wanted}）` : '，也没有设置默认连接'}。请先在 Wrappers 页的远程设置里添加。`
+      reason: `项目 "${project.name}" 没有可用的远程计算目标${wanted ? `（找不到 ${wanted}）` : ''}。请在该项目的 Wrapper 页面选择“设置远程计算”。`
     }
   }
   if (!connection.hpc) {
     // Without this, Nextflow would run every step on the login node itself: never the intent.
     return {
-      reason: `连接 "${connection.label}" 还没有设置运行方式（用 Slurm 调度，还是直接在该主机上运行）。请先在 Wrappers 页的远程设置里编辑该连接并保存。`
+      reason: `计算目标 "${connection.label}" 还没有设置运行方式。请在该项目的 Wrapper 页面选择“设置远程计算”。`
     }
   }
   try {

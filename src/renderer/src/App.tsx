@@ -3286,6 +3286,11 @@ function App(): React.JSX.Element {
         onOpenRemoteResult={onOpenWrapperResult}
         onExportReproducibility={(runId) => void exportWrapperReproducibility(runId)}
         onCancelRun={(runId) => void cancelWrapperRun(runId)}
+        project={activeProject ?? undefined}
+        updatingRemoteProjectId={updatingRemoteProjectId}
+        onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
+        onUpdateProjectRemoteDefaults={onUpdateProjectRemoteDefaults}
+        onOpenRemoteSettings={() => openSettings('remote')}
       />
     ) : null
   ) : (
@@ -3906,9 +3911,6 @@ function App(): React.JSX.Element {
           updatingPermissionProjectId={updatingPermissionProjectId}
           onUpdateProjectPermissionMode={onUpdateProjectPermissionMode}
           onUpdateProjectDefaults={onUpdateProjectDefaults}
-          updatingRemoteProjectId={updatingRemoteProjectId}
-          onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
-          onUpdateProjectRemoteDefaults={onUpdateProjectRemoteDefaults}
           onOpenApprovalSession={onOpenApprovalSession}
           onRespondToolApproval={onRespondToolApproval}
           themeMode={themeMode}

@@ -93,10 +93,8 @@ function resolvePlanTarget(
     realPath: input.cwd
   }
   const wantsRemote =
-    input.explicitTarget !== 'local' &&
-    (location.kind === 'ssh' ||
-      input.explicitTarget === 'remote' ||
-      Boolean(project?.defaultRemoteConnectionId || project?.remoteWorkspaceRoot))
+    input.explicitTarget === 'remote' ||
+    (location.kind === 'ssh' && input.explicitTarget !== 'local')
   const remote =
     wantsRemote && project
       ? resolveProjectRemoteTarget(project, input.connectionId, agentDir)

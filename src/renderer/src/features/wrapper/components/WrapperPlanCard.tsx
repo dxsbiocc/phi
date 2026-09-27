@@ -1,11 +1,11 @@
 import { Box, Button, CircularProgress, Collapse, Paper, Stack, Typography } from '@mui/material'
 import { memo, useEffect, useState } from 'react'
 import type { WrapperPlanItem } from '../../../types'
-import type { Project } from '../../../lib/projectTypes'
 import type { WrapperRun, WrapperRunPlan } from '../../../../../shared/wrapperTypes'
 import { PhiIcons } from '../../../icons'
 import { buildWrapperFlowGraph } from '../lib/wrapperFlow'
 import { parseSamplesheetCsv } from '../lib/wrapperSamplesheet'
+import { useWrapperPlanProject } from '../hooks/useWrapperPlanProject'
 import {
   resolveWrapperCancelTarget,
   runStateLabel,
@@ -14,6 +14,7 @@ import {
   wrapperPlanSubmitConfirmation
 } from '../lib/wrapperView'
 import { WrapperFlowDiagram } from './WrapperFlowDiagram'
+import { WrapperExecutionTargetControl } from './WrapperExecutionTargetControl'
 import {
   WrapperPlanTargetActions,
   WrapperPlanTargetDetails,
@@ -170,52 +171,13 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
 
   const plan = loadState.plan?.planId === item.planId ? loadState.plan : undefined
   const setPlan = (next: WrapperRunPlan | undefined): void => setLoadState({ plan: next })
-  const [targetProject, setTargetProject] = useState<Project | undefined>(undefined)
-  const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null)
-  const targetProjectLoaded =
-    !plan?.targetSelection?.projectId || loadedProjectId === plan.targetSelection.projectId
-
-  useEffect(() => {
-    const projectId = plan?.targetSelection?.projectId
-    if (!projectId) return
-    let cancelled = false
-    let latestConnection: Project['remoteConnection']
-    const unsubscribe = window.api.onRemoteProjectConnectionChanged((change) => {
-      if (change.projectId !== projectId) return
-      latestConnection = change.state
-      setTargetProject((current) =>
-        current?.id === projectId
-          ? { ...current, remoteConnection: change.state, remoteReachability: change.state.phase }
-          : current
-      )
-    })
-    const load = (): void => {
-      void window.api
-        .listProjects()
-        .then((projects) => {
-          if (cancelled) return
-          const found = projects.find((project) => project.id === projectId)
-          setTargetProject(
-            found && latestConnection
-              ? {
-                  ...found,
-                  remoteConnection: latestConnection,
-                  remoteReachability: latestConnection.phase
-                }
-              : found
-          )
-          setLoadedProjectId(projectId)
-        })
-        .catch(() => {
-          if (!cancelled) setLoadedProjectId(projectId)
-        })
-    }
-    load()
-    return (): void => {
-      cancelled = true
-      unsubscribe()
-    }
-  }, [plan?.targetSelection?.projectId])
+  const {
+    targetProject,
+    localTargetProject,
+    targetProjectLoaded,
+    needsRemoteSetup,
+    refreshLocalTargetProject
+  } = useWrapperPlanProject(plan)
 
   const [samplesheets, setSamplesheets] = useState<Record<string, string>>({})
 
@@ -451,11 +413,25 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
           </Stack>
         )}
 
+        {localTargetProject &&
+          isUnsubmitted &&
+          (plan.targetSelection?.target === 'local' || needsRemoteSetup) && (
+            <WrapperExecutionTargetControl
+              project={localTargetProject}
+              compact
+              busy={busy}
+              onSaved={refreshLocalTargetProject}
+            />
+          )}
+
         <WrapperPlanTargetActions
           plan={plan}
           busy={busy}
           isUnsubmitted={isUnsubmitted}
           submitBlockReason={submitBlockReason}
+          remoteConfigured={Boolean(
+            localTargetProject?.defaultRemoteConnectionId && localTargetProject.remoteWorkspaceRoot
+          )}
           onRetarget={retarget}
         />
 

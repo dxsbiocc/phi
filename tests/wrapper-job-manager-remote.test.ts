@@ -234,6 +234,7 @@ test('local project keeps local default and can explicitly select its saved remo
       const remoteProject = {
         ...localProject,
         remoteWorkspaceRoot: env.remoteRoot,
+        defaultRemoteConnectionId: 'conn1',
         remoteConnections: [
           {
             id: 'conn1',
@@ -248,10 +249,24 @@ test('local project keeps local default and can explicitly select its saved remo
         checkRemoteEnvironment: async () => readyDoctor(env)
       })
       const remoteGff = join(env.remoteRoot, 'genome.gff3')
-      copyFileSync(
-        join(process.cwd(), 'resources/wrappers/modules/nf-core/gffread/tests/data/genome.gff3'),
-        remoteGff
+      const localGff = join(
+        process.cwd(),
+        'resources/wrappers/modules/nf-core/gffread/tests/data/genome.gff3'
       )
+      copyFileSync(localGff, remoteGff)
+      const stillLocal = await remoteManager.start({
+        id: WRAPPER_ID,
+        overrides: { gff: localGff, outdir: join(sb.root, 'local-with-remote-saved') },
+        originSessionId: 'runtime-local'
+      })
+      assert.equal(stillLocal.ok, true, JSON.stringify(stillLocal))
+      if (stillLocal.ok) {
+        assert.equal(stillLocal.status.remote, undefined)
+        assert.equal(
+          (await remoteManager.wait(stillLocal.status.runId, 10_000))?.state,
+          'completed'
+        )
+      }
       const selected = await remoteManager.start({
         id: WRAPPER_ID,
         overrides: { gff: remoteGff },

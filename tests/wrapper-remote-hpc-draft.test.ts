@@ -71,6 +71,13 @@ test('queue size must be a positive whole number', () => {
   assert.match(hpcDraftError({ ...EMPTY_HPC_DRAFT, queueSize: '2.5' }) ?? '', /排队/)
 })
 
+test('direct server execution cannot submit the Nextflow head as a Slurm job', () => {
+  assert.match(
+    hpcDraftError({ ...EMPTY_HPC_DRAFT, scheduler: 'local', controller: 'sbatch' }) ?? '',
+    /不能提交为 Slurm 作业/
+  )
+})
+
 test('cache dir and nextflow path must be absolute when given', () => {
   assert.match(
     hpcDraftError({ ...EMPTY_HPC_DRAFT, singularityCacheDir: 'relative/dir' }) ?? '',

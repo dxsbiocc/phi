@@ -135,7 +135,7 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTo
     name: 'wrapper_run',
     label: 'Run Wrapper',
     description:
-      'Start one wrapper by id in the BACKGROUND, merging the given parameter overrides into its default params.json, and return immediately with a run id. It launches a real Nextflow run that keeps going by itself; follow it with wrapper_status, block on it with wrapper_wait, stop it with wrapper_cancel. In an SSH project the target defaults to that project server and explicit "local" is rejected; in a local project the default is local unless a remote target is configured. For a remote run every kind:input path MUST be a path on the server (Phi checks it exists there; local paths do not work), outputs stay on the server, and it survives Phi being closed. Choose `profile` based on what the user has available or prefers: docker (default locally) or singularity (default on the server) for container runtimes, conda to build/reuse a conda environment from the module\'s environment.yml instead.',
+      'Start one wrapper by id in the BACKGROUND, merging the given parameter overrides into its default params.json, and return immediately with a run id. It launches a real Nextflow run that keeps going by itself; follow it with wrapper_status, block on it with wrapper_wait, stop it with wrapper_cancel. In an SSH project the target defaults to that project server and explicit "local" is rejected; in a local project the target defaults to local, and "remote" uses its saved server. For a remote run every kind:input path MUST be a path on the server (Phi checks it exists there; local paths do not work), outputs stay on the server, and it survives Phi being closed. Choose `profile` based on what the user has available or prefers: docker (default locally) or singularity (default on the server) for container runtimes, conda to build/reuse a conda environment from the module\'s environment.yml instead.',
     parameters: {
       type: 'object',
       required: ['id'],
@@ -150,7 +150,7 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTo
           type: 'string',
           enum: ['local', 'remote'],
           description:
-            'Omit to use the project default: SSH projects run on their bound server; local projects run locally unless configured otherwise. "local" is rejected in an SSH project. "remote" uses the project server or saved remote connection.'
+            'Omit to use the project location: SSH projects run on their bound server; local projects run locally. "local" is rejected in an SSH project. "remote" uses the project server or saved remote connection.'
         },
         profile: {
           type: 'string',
