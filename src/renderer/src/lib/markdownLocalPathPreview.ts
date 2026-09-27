@@ -91,11 +91,13 @@ function rememberLocalPathStats(cwd: string, stats: LocalPathStat[]): void {
 
 export function useLocalPathKinds(
   cwd: string,
-  paths: string[]
+  paths: string[],
+  enabled = true
 ): ReadonlyMap<string, LocalPathKind> {
   const [revision, setRevision] = useState(0)
 
   useEffect(() => {
+    if (!enabled) return
     const pendingPaths = paths.filter((path) => cachedLocalPathStat(cwd, path) === null)
     if (pendingPaths.length === 0) return
 
@@ -116,11 +118,12 @@ export function useLocalPathKinds(
     return () => {
       cancelled = true
     }
-  }, [cwd, paths])
+  }, [cwd, enabled, paths])
 
   return useMemo(() => {
     void revision
     const kinds = new Map<string, LocalPathKind>()
+    if (!enabled) return kinds
     for (const path of paths) {
       const kind = cachedLocalPathStat(cwd, path)
       if (kind === 'file' || kind === 'directory') {
@@ -128,5 +131,5 @@ export function useLocalPathKinds(
       }
     }
     return kinds
-  }, [cwd, paths, revision])
+  }, [cwd, enabled, paths, revision])
 }

@@ -1,9 +1,18 @@
-import { Box, Button, Divider, Link, Tooltip, Typography } from '@mui/material'
+import { Box, Button, Divider, Link, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { Fragment, isValidElement, memo, useEffect, useMemo, useState, type ReactNode } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
-import { PhiIcons, directoryIconForPath, fileIconForPath } from '../icons'
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
+import { PhiIcons } from '../icons'
 import { useMarkdownPlugins } from '../lib/markdownMathPlugins'
+import {
+  remotePathInsideRoot,
+  remotePathWithinProjectUri,
+  tokenizeRemoteWorkspaceUris
+} from '../../../shared/remoteWorkspacePath'
+import {
+  useRemoteProjectFileContext,
+  type RemoteProjectFileContextValue
+} from '../lib/remoteProjectFileContext'
 import { collectLocalPathTokenPaths, tokenizeLocalPaths } from '../lib/localPaths'
 import { highlightLine, type SyntaxLanguage } from '../lib/syntaxHighlight'
 import { syntaxTokenColor } from '../lib/syntaxTheme'
@@ -16,7 +25,6 @@ import {
   inlineCodeFilePath,
   localHrefToPath,
   localPathKindForReference,
-  localPathLabel,
   matchedBareFileReference,
   stripLineReference,
   tokenizeBareFileReferences,
@@ -24,15 +32,11 @@ import {
 } from '../lib/markdownLocalPathReferences'
 import { normalizeHexColor, tokenizeMarkdownColors } from '../lib/markdownColors'
 import { ColorCode, InlineCodeShell, MarkdownColorTokenView } from './markdown/MarkdownColorToken'
-import { LocalFileHoverPreview } from './markdown/MarkdownHoverPreview'
+import { LocalPathButton } from './markdown/LocalPathButton'
 import { MarkdownSmilesTokenView } from './markdown/MarkdownSmilesToken'
 import { StringNetworkPreview } from './markdown/StringNetworkPreview'
 import { KeggPathwayPreview } from './markdown/KeggPathwayPreview'
-import {
-  HOVER_PREVIEW_OPEN_DELAY_MS,
-  localPathTooltipSlotProps,
-  useLocalPathKinds
-} from '../lib/markdownLocalPathPreview'
+import { useLocalPathKinds } from '../lib/markdownLocalPathPreview'
 
 export type { LocalPathKind } from '../lib/markdownLocalPathReferences'
 const ContentCopyIcon = PhiIcons.action.copy
@@ -101,8 +105,17 @@ function renderableLocalPathKind(
   text: string,
   absolutePath: string,
   cwd: string,
-  localPathKinds: ReadonlyMap<string, LocalPathKind>
+  localPathKinds: ReadonlyMap<string, LocalPathKind>,
+  remoteProject?: RemoteProjectFileContextValue | null
 ): LocalPathKind | null {
+  if (remoteProject) {
+    return remoteProject.hostAlias &&
+      remotePathInsideRoot(absolutePath, remoteProject.canonicalRoot)
+      ? text.trim().endsWith('/') || absolutePath === remoteProject.canonicalRoot
+        ? 'directory'
+        : 'file'
+      : null
+  }
   if (isPathInsideDirectory(absolutePath, cwd)) {
     return localPathKindForReference(text, absolutePath, cwd, true)
   }
@@ -249,126 +262,6 @@ function CodeBlock({ children }: { children?: ReactNode }): React.JSX.Element {
   )
 }
 
-function LocalPathButton({
-  text,
-  absolutePath,
-  pathKind = 'file',
-  onOpenLocalPath
-}: {
-  text: string
-  absolutePath: string
-  pathKind?: LocalPathKind
-  onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
-}): React.JSX.Element {
-  const label = localPathLabel(text, absolutePath)
-  const pathIcon =
-    pathKind === 'directory' ? directoryIconForPath(absolutePath) : fileIconForPath(absolutePath)
-  const LocalFileIcon = pathIcon.Icon
-  const supportsHoverPreview = pathKind === 'file'
-  const [hoverPreviewActive, setHoverPreviewActive] = useState(false)
-  const button = (
-    <Tooltip
-      title={
-        supportsHoverPreview ? (
-          <LocalFileHoverPreview absolutePath={absolutePath} shouldLoad={hoverPreviewActive} />
-        ) : (
-          absolutePath
-        )
-      }
-      placement="top-start"
-      arrow
-      slotProps={localPathTooltipSlotProps}
-      enterDelay={HOVER_PREVIEW_OPEN_DELAY_MS}
-      leaveDelay={80}
-      onOpen={() => {
-        if (supportsHoverPreview) setHoverPreviewActive(true)
-      }}
-      onClose={() => {
-        if (supportsHoverPreview) setHoverPreviewActive(false)
-      }}
-    >
-      <Box
-        component="button"
-        type="button"
-        data-phi-slot="local-file-link"
-        data-phi-file-kind={pathIcon.kind}
-        data-phi-path={absolutePath}
-        aria-label={`${pathKind === 'directory' ? '打开目录' : '打开文件'} ${absolutePath}`}
-        onClick={() => {
-          if (onOpenLocalPath) {
-            onOpenLocalPath(absolutePath, pathKind)
-            return
-          }
-
-          void window.api.revealPath(absolutePath).catch((error) => {
-            console.error('Failed to reveal local path:', error)
-          })
-        }}
-        sx={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 0.45,
-          maxWidth: '100%',
-          minWidth: 0,
-          px: 0.25,
-          py: 0,
-          mx: 0.1,
-          border: 0,
-          borderRadius: 0.75,
-          bgcolor: 'transparent',
-          color: 'primary.main',
-          font: 'inherit',
-          fontWeight: 500,
-          lineHeight: 'inherit',
-          verticalAlign: 'baseline',
-          cursor: 'pointer',
-          overflowWrap: 'normal',
-          textDecoration: 'none',
-          '&:hover': {
-            bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
-            color: 'primary.dark'
-          },
-          '&:focus-visible': {
-            outline: '2px solid',
-            outlineColor: 'primary.main',
-            outlineOffset: 2
-          }
-        }}
-      >
-        <LocalFileIcon fontSize="inherit" sx={{ color: pathIcon.color, fontSize: '1em' }} />
-        <Box
-          component="span"
-          sx={{
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap'
-          }}
-        >
-          {label}
-        </Box>
-      </Box>
-    </Tooltip>
-  )
-
-  if (!supportsHoverPreview) return button
-
-  return (
-    <Box
-      component="span"
-      data-phi-slot="local-file-hover-preview"
-      data-phi-hover-preview-path={absolutePath}
-      sx={{
-        display: 'inline',
-        maxWidth: '100%',
-        minWidth: 0
-      }}
-    >
-      {button}
-    </Box>
-  )
-}
-
 function MarkdownImage({
   src,
   alt,
@@ -382,9 +275,14 @@ function MarkdownImage({
   localPathKinds: ReadonlyMap<string, LocalPathKind>
   onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
 }): React.JSX.Element | null {
-  const localPath = localHrefToPath(src, cwd)
+  const remoteProject = useRemoteProjectFileContext()
+  const explicitRemotePath =
+    remoteProject && src
+      ? remotePathWithinProjectUri(src, remoteProject.hostAlias, remoteProject.canonicalRoot)
+      : null
+  const localPath = explicitRemotePath ?? localHrefToPath(src, cwd)
   const pathKind = localPath
-    ? renderableLocalPathKind(alt || localPath, localPath, cwd, localPathKinds)
+    ? renderableLocalPathKind(alt || localPath, localPath, cwd, localPathKinds, remoteProject)
     : null
   const [previewState, setPreviewState] = useState<{ path: string; preview: FilePreview } | null>(
     null
@@ -393,6 +291,7 @@ function MarkdownImage({
 
   useEffect(() => {
     if (
+      remoteProject ||
       !localPath ||
       pathKind !== 'file' ||
       typeof window === 'undefined' ||
@@ -415,7 +314,19 @@ function MarkdownImage({
     return () => {
       cancelled = true
     }
-  }, [localPath, pathKind])
+  }, [localPath, pathKind, remoteProject])
+
+  if (remoteProject) {
+    return localPath && pathKind ? (
+      <LocalPathButton
+        text={alt || src || localPath}
+        absolutePath={localPath}
+        pathKind={pathKind}
+      />
+    ) : (
+      <InlineCodeShell>{alt || src || ''}</InlineCodeShell>
+    )
+  }
 
   if (!localPath) {
     if (!src) return null
@@ -514,50 +425,73 @@ function renderDecoratedText(
   cwd: string,
   keyPrefix: string,
   localPathKinds: ReadonlyMap<string, LocalPathKind>,
-  onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
+  onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void,
+  remoteProject?: RemoteProjectFileContextValue | null
 ): ReactNode[] {
   const nodes: ReactNode[] = []
-
-  tokenizeLocalPaths(text, cwd).forEach((token, pathIndex) => {
-    if (token.kind === 'path') {
-      const pathKind = renderableLocalPathKind(token.text, token.absolutePath, cwd, localPathKinds)
+  const remoteTokens = remoteProject
+    ? tokenizeRemoteWorkspaceUris(text, remoteProject.hostAlias, remoteProject.canonicalRoot)
+    : [{ kind: 'text' as const, text }]
+  remoteTokens.forEach((remoteToken, remoteIndex) => {
+    if (remoteToken.kind === 'path') {
       nodes.push(
-        pathKind ? (
-          <LocalPathButton
-            key={`${keyPrefix}-path-${pathIndex}-${token.absolutePath}`}
-            text={token.text}
-            absolutePath={token.absolutePath}
-            pathKind={pathKind}
-            onOpenLocalPath={onOpenLocalPath}
-          />
-        ) : (
-          token.text
-        )
+        <LocalPathButton
+          key={`${keyPrefix}-remote-${remoteIndex}`}
+          text={remoteToken.text}
+          absolutePath={remoteToken.path}
+          pathKind={remoteToken.text.endsWith('/') ? 'directory' : 'file'}
+          onOpenLocalPath={onOpenLocalPath}
+        />
       )
       return
     }
-
-    tokenizeBareFileReferences(token.text, cwd, localPathKinds).forEach((fileToken, fileIndex) => {
-      if (fileToken.kind === 'path') {
+    tokenizeLocalPaths(remoteToken.text, cwd).forEach((token, pathIndex) => {
+      if (token.kind === 'path') {
+        const pathKind = renderableLocalPathKind(
+          token.text,
+          token.absolutePath,
+          cwd,
+          localPathKinds,
+          remoteProject
+        )
         nodes.push(
-          <LocalPathButton
-            key={`${keyPrefix}-file-${pathIndex}-${fileIndex}-${fileToken.absolutePath}`}
-            text={fileToken.text}
-            absolutePath={fileToken.absolutePath}
-            pathKind={fileToken.pathKind}
-            onOpenLocalPath={onOpenLocalPath}
-          />
+          pathKind ? (
+            <LocalPathButton
+              key={`${keyPrefix}-path-${remoteIndex}-${pathIndex}-${token.absolutePath}`}
+              text={token.text}
+              absolutePath={token.absolutePath}
+              pathKind={pathKind}
+              onOpenLocalPath={onOpenLocalPath}
+            />
+          ) : (
+            token.text
+          )
         )
         return
       }
-
-      nodes.push(
-        ...tokenizeMarkdownColors(fileToken.text).map((colorToken, colorIndex) => (
-          <MarkdownColorTokenView
-            key={`${keyPrefix}-color-${pathIndex}-${fileIndex}-${colorIndex}`}
-            token={colorToken}
-          />
-        ))
+      tokenizeBareFileReferences(token.text, cwd, localPathKinds).forEach(
+        (fileToken, fileIndex) => {
+          if (fileToken.kind === 'path') {
+            nodes.push(
+              <LocalPathButton
+                key={`${keyPrefix}-file-${remoteIndex}-${pathIndex}-${fileIndex}-${fileToken.absolutePath}`}
+                text={fileToken.text}
+                absolutePath={fileToken.absolutePath}
+                pathKind={fileToken.pathKind}
+                onOpenLocalPath={onOpenLocalPath}
+              />
+            )
+            return
+          }
+          nodes.push(
+            ...tokenizeMarkdownColors(fileToken.text).map((colorToken, colorIndex) => (
+              <MarkdownColorTokenView
+                key={`${keyPrefix}-color-${remoteIndex}-${pathIndex}-${fileIndex}-${colorIndex}`}
+                token={colorToken}
+              />
+            ))
+          )
+        }
       )
     })
   })
@@ -569,15 +503,23 @@ function renderInlineChildren(
   children: ReactNode,
   cwd: string,
   localPathKinds: ReadonlyMap<string, LocalPathKind>,
-  onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
+  onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void,
+  remoteProject?: RemoteProjectFileContextValue | null
 ): ReactNode {
   if (typeof children === 'string') {
-    return renderDecoratedText(children, cwd, 'inline', localPathKinds, onOpenLocalPath)
+    return renderDecoratedText(
+      children,
+      cwd,
+      'inline',
+      localPathKinds,
+      onOpenLocalPath,
+      remoteProject
+    )
   }
   if (Array.isArray(children)) {
     return children.map((child, index) => (
       <Fragment key={index}>
-        {renderInlineChildren(child, cwd, localPathKinds, onOpenLocalPath)}
+        {renderInlineChildren(child, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
       </Fragment>
     ))
   }
@@ -588,19 +530,33 @@ function InlineCode({
   children,
   cwd,
   localPathKinds,
-  onOpenLocalPath
+  onOpenLocalPath,
+  remoteProject
 }: {
   children?: ReactNode
   cwd: string
   localPathKinds: ReadonlyMap<string, LocalPathKind>
   onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
+  remoteProject?: RemoteProjectFileContextValue | null
 }): React.JSX.Element {
   const codeText = textFromNode(children)
   const color = normalizeHexColor(codeText)
   if (color) return <ColorCode color={color} />
+  const explicitRemotePath = remoteProject
+    ? remotePathWithinProjectUri(codeText, remoteProject.hostAlias, remoteProject.canonicalRoot)
+    : null
+  if (explicitRemotePath) {
+    return <LocalPathButton text={codeText} absolutePath={explicitRemotePath} pathKind="file" />
+  }
   const localPath = inlineCodeFilePath(codeText, cwd)
   if (localPath) {
-    const pathKind = renderableLocalPathKind(codeText, localPath, cwd, localPathKinds)
+    const pathKind = renderableLocalPathKind(
+      codeText,
+      localPath,
+      cwd,
+      localPathKinds,
+      remoteProject
+    )
     if (pathKind) {
       return (
         <LocalPathButton
@@ -647,6 +603,7 @@ function MarkdownContentImpl({
   onOpenLocalPath,
   enableMath = false
 }: MarkdownContentProps): React.JSX.Element {
+  const remoteProject = useRemoteProjectFileContext()
   const localPathReferencePaths = useMemo(
     () => [
       ...new Set([
@@ -656,14 +613,22 @@ function MarkdownContentImpl({
     ],
     [cwd, text]
   )
-  const localPathKinds = useLocalPathKinds(cwd, localPathReferencePaths)
+  const statPathKinds = useLocalPathKinds(cwd, localPathReferencePaths, !remoteProject)
+  const localPathKinds = useMemo<ReadonlyMap<string, LocalPathKind>>(() => {
+    if (!remoteProject) return statPathKinds
+    const kinds = new Map<string, LocalPathKind>()
+    for (const path of collectBareFileReferencePaths(text, cwd)) {
+      if (remotePathInsideRoot(path, remoteProject.canonicalRoot)) kinds.set(path, 'file')
+    }
+    return kinds
+  }, [cwd, remoteProject, statPathKinds, text])
   const { remarkPlugins, rehypePlugins } = useMarkdownPlugins(enableMath)
 
   const components = useMemo<Components>(
     () => ({
       p: ({ children }) => (
         <Typography variant="body1" sx={{ my: 1, fontSize: 'inherit', lineHeight: 'inherit' }}>
-          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
+          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
         </Typography>
       ),
       h1: ({ children }) => (
@@ -693,24 +658,48 @@ function MarkdownContentImpl({
       ),
       li: ({ children }) => (
         <Typography component="li" sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}>
-          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
+          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
         </Typography>
       ),
       strong: ({ children }) => (
         <Box component="strong" sx={{ fontWeight: 700 }}>
-          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
+          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
         </Box>
       ),
       em: ({ children }) => (
         <Box component="em" sx={{ fontStyle: 'italic' }}>
-          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
+          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
         </Box>
       ),
       a: ({ href, children }) => {
+        if (remoteProject && !href) return <InlineCodeShell>{children}</InlineCodeShell>
+        if (remoteProject && typeof href === 'string') {
+          const remotePath = remotePathWithinProjectUri(
+            href,
+            remoteProject.hostAlias,
+            remoteProject.canonicalRoot
+          )
+          if (remotePath) {
+            return (
+              <LocalPathButton
+                text={textFromNode(children) || href}
+                absolutePath={remotePath}
+                pathKind={href.endsWith('/') ? 'directory' : 'file'}
+              />
+            )
+          }
+          if (href.startsWith('ssh://')) return <InlineCodeShell>{children}</InlineCodeShell>
+        }
         const localPath = localHrefToPath(href, cwd)
         if (localPath) {
           const label = textFromNode(children)
-          const pathKind = renderableLocalPathKind(label, localPath, cwd, localPathKinds)
+          const pathKind = renderableLocalPathKind(
+            label,
+            localPath,
+            cwd,
+            localPathKinds,
+            remoteProject
+          )
           if (pathKind) {
             return (
               <LocalPathButton
@@ -721,7 +710,11 @@ function MarkdownContentImpl({
               />
             )
           }
-          return <>{renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}</>
+          return (
+            <>
+              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
+            </>
+          )
         }
 
         if (typeof href === 'string') {
@@ -757,7 +750,12 @@ function MarkdownContentImpl({
             {children}
           </Box>
         ) : (
-          <InlineCode cwd={cwd} localPathKinds={localPathKinds} onOpenLocalPath={onOpenLocalPath}>
+          <InlineCode
+            cwd={cwd}
+            localPathKinds={localPathKinds}
+            onOpenLocalPath={onOpenLocalPath}
+            remoteProject={remoteProject}
+          >
             {children}
           </InlineCode>
         ),
@@ -799,16 +797,16 @@ function MarkdownContentImpl({
       ),
       th: ({ children }) => (
         <Box component="th" sx={{ fontWeight: 700 }}>
-          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
+          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
         </Box>
       ),
       td: ({ children }) => (
         <Box component="td">
-          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath)}
+          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
         </Box>
       )
     }),
-    [cwd, localPathKinds, onOpenLocalPath]
+    [cwd, localPathKinds, onOpenLocalPath, remoteProject]
   )
 
   return (
@@ -826,6 +824,13 @@ function MarkdownContentImpl({
     >
       <ReactMarkdown
         skipHtml
+        urlTransform={(value, key) =>
+          remoteProject &&
+          key === 'href' &&
+          remotePathWithinProjectUri(value, remoteProject.hostAlias, remoteProject.canonicalRoot)
+            ? value
+            : defaultUrlTransform(value)
+        }
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}
         components={components}

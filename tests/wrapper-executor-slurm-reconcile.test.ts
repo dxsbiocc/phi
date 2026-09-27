@@ -10,6 +10,7 @@ import {
   updateProjectRemoteConnection,
   updateProjectRemoteDefaults
 } from '../src/main/agent/projects'
+import { saveRemoteHostProfile } from '../src/main/agent/remote-hosts'
 import { RUNTIME_AGENT_DIR_ENV } from '../src/main/agent/runtime-paths'
 import { reconcileRemoteWrapperRuns } from '../src/main/agent/wrappers/executor-slurm-reconcile'
 import type {
@@ -18,6 +19,7 @@ import type {
 } from '../src/main/agent/wrappers/remote-ssh-session'
 import {
   getWrapperRunsDir,
+  readWrapperRunEvents,
   readWrapperRun,
   writeWrapperRun
 } from '../src/main/agent/wrappers/store'
@@ -33,13 +35,40 @@ import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
 class FakeSlurmHost implements RemoteSshSession {
   files = new Map<string, string>()
   execLog: string[] = []
+  alivePolls = 0
+  exitOnLastAlive?: string
+  activeSlurmJob = false
 
   constructor(private readonly outcome: { state: string; exitCode: number } | 'untracked') {}
 
   async exec(command: string): Promise<RemoteExecResult> {
     this.execLog.push(command)
-    if (command.startsWith('squeue ')) {
+    if (command.startsWith('kill -0 ')) {
+      const alive = this.alivePolls > 0
+      this.alivePolls = Math.max(0, this.alivePolls - 1)
+      if (alive && this.alivePolls === 0 && this.exitOnLastAlive) {
+        this.files.set(this.exitOnLastAlive, '0\n')
+      }
+      return { stdout: alive ? 'alive\n' : 'dead\n', stderr: '', code: 0, signal: null }
+    }
+    if (command.startsWith('kill -TERM -') || command.startsWith('kill -KILL -')) {
+      this.alivePolls = 0
       return { stdout: '', stderr: '', code: 0, signal: null }
+    }
+    if (command.startsWith('ps -ww -o args= -p ')) {
+      const runIdFile = [...this.files.keys()].find((path) =>
+        path.endsWith('/.phi-launch-claim/run-id')
+      )
+      const remoteRunDir = runIdFile?.slice(0, -'/.phi-launch-claim/run-id'.length)
+      return {
+        stdout: remoteRunDir ? `bash ${remoteRunDir}/launch.sh\n` : '',
+        stderr: '',
+        code: remoteRunDir ? 0 : 1,
+        signal: null
+      }
+    }
+    if (command.startsWith('squeue ')) {
+      return { stdout: this.activeSlurmJob ? 'RUNNING\n' : '', stderr: '', code: 0, signal: null }
     }
     if (command.startsWith('scontrol show job ')) {
       if (this.outcome === 'untracked') {
@@ -51,7 +80,7 @@ class FakeSlurmHost implements RemoteSshSession {
         }
       }
       return {
-        stdout: `JobId=1 JobName=phi-test\n   JobState=${this.outcome.state} Reason=None\n   ExitCode=${this.outcome.exitCode}:0\n`,
+        stdout: `JobId=1 JobName=phi-${[...this.files.entries()].find(([path]) => path.endsWith('/.phi-launch-claim/run-id'))?.[1].trim() ?? 'test'}\n   JobState=${this.outcome.state} Reason=None\n   ExitCode=${this.outcome.exitCode}:0\n`,
         stderr: '',
         code: 0,
         signal: null
@@ -61,6 +90,7 @@ class FakeSlurmHost implements RemoteSshSession {
       return { stdout: '', stderr: '', code: 0, signal: null }
     }
     if (command.startsWith('scancel ')) {
+      this.activeSlurmJob = false
       return { stdout: '', stderr: '', code: 0, signal: null }
     }
     throw new Error(`FakeSlurmHost: unhandled command: ${command}`)
@@ -113,14 +143,14 @@ function configureProjectRemote(agentDir: string, projectDir: string): void {
     workingDirectory: projectDir,
     permissionMode: 'ask'
   })
-  const keyPath = join(projectDir, 'id_ed25519')
-  writeFileSync(keyPath, 'FAKE-KEY', 'utf-8')
+  const host = saveRemoteHostProfile(
+    { label: 'Lab HPC', hostAlias: 'lab-hpc.example.edu' },
+    agentDir
+  )
   updateProjectRemoteConnection(project.id, 'conn1', {
     id: 'conn1',
     label: 'Lab HPC',
-    host: 'lab-hpc.example.edu',
-    username: 'agent',
-    privateKeyPath: keyPath
+    hostProfileId: host.id
   })
   updateProjectRemoteDefaults(project.id, {
     defaultRemoteConnectionId: 'conn1',
@@ -164,13 +194,14 @@ function writeRemoteSnapshot(
   agentDir: string,
   runId: string,
   remoteRunDir: string,
-  jobId: string
+  jobId?: string,
+  launchUnknown?: true
 ): void {
   const runDir = join(getWrapperRunsDir(agentDir), runId)
   mkdirSync(runDir, { recursive: true })
   writeFileSync(
     join(runDir, 'remote.snapshot.json'),
-    `${JSON.stringify({ remoteRunDir, jobId })}\n`,
+    `${JSON.stringify({ remoteRunDir, ...(jobId ? { jobId } : {}), ...(launchUnknown ? { launchUnknown } : {}) })}\n`,
     'utf-8'
   )
 }
@@ -196,6 +227,172 @@ test('reconcileRemoteWrapperRuns finalizes a running run whose remote job alread
     const report = finalRun?.outputs?.find((output) => output.id === 'report')
     assert.equal(report?.exists, true)
     assert.equal(report?.location, 'remote')
+  }))
+
+test('restart collects Slurm reports from the run snapshot external output root', () =>
+  withProjectHarness(async ({ agentDir, projectDir }) => {
+    configureProjectRemote(agentDir, projectDir)
+    const run = writeSlurmControllerRun(agentDir, projectDir)
+    const remoteRunDir = `/cluster/facility/lab/WorkSpace/wrappers/runs/${run.runId}`
+    const outputRoot = '/scratch/phi-restarted-reports'
+    writeWrapperRun(
+      {
+        ...run,
+        outDir: outputRoot,
+        remote: {
+          host: 'lab-hpc.example.edu',
+          runDir: remoteRunDir,
+          outputRoot,
+          workspaceRoot: '/cluster/facility/lab/WorkSpace',
+          externalOutputAuthorized: true
+        }
+      },
+      agentDir
+    )
+    writeRemoteSnapshot(agentDir, run.runId, remoteRunDir, '999')
+    const host = new FakeSlurmHost({ state: 'COMPLETED', exitCode: 0 })
+    host.files.set(`${outputRoot}/results/multiqc_report.html`, '<html></html>')
+
+    await reconcileRemoteWrapperRuns({ agentDir, connectImpl: async () => host, pollIntervalMs: 1 })
+
+    const report = readWrapperRun(run.runId, agentDir)?.outputs?.find(
+      (output) => output.id === 'report'
+    )
+    assert.equal(report?.path, `${outputRoot}/results/multiqc_report.html`)
+    assert.equal(report?.exists, true)
+  }))
+
+test('a lost Slurm run without a local job ID recovers the remote receipt', () =>
+  withProjectHarness(async ({ agentDir, projectDir }) => {
+    configureProjectRemote(agentDir, projectDir)
+    const run = writeSlurmControllerRun(agentDir, projectDir, {
+      state: 'lost',
+      launchUnknown: true
+    })
+    const remoteRunDir = `/cluster/facility/lab/WorkSpace/wrappers/runs/${run.runId}`
+    writeRemoteSnapshot(agentDir, run.runId, remoteRunDir, undefined, true)
+    const cluster = new FakeSlurmHost({ state: 'COMPLETED', exitCode: 0 })
+    cluster.files.set(`${remoteRunDir}/job_id`, '999\n')
+    cluster.files.set(`${remoteRunDir}/output/results/multiqc_report.html`, '<html></html>')
+    await reconcileRemoteWrapperRuns({
+      agentDir,
+      connectImpl: async () => cluster,
+      pollIntervalMs: 1
+    })
+    assert.equal(readWrapperRun(run.runId, agentDir)?.state, 'completed')
+    assert.equal(
+      cluster.execLog.some((command) => command.startsWith('sbatch ')),
+      false
+    )
+  }))
+
+test('a bound run ID can recover a remote receipt even when the local snapshot is missing', () =>
+  withProjectHarness(async ({ agentDir, projectDir }) => {
+    configureProjectRemote(agentDir, projectDir)
+    const run = writeSlurmControllerRun(agentDir, projectDir)
+    const remoteRunDir = `/cluster/facility/lab/WorkSpace/wrappers/runs/${run.runId}`
+    writeWrapperRun(
+      {
+        ...run,
+        remote: { host: 'lab-hpc.example.edu', runDir: remoteRunDir }
+      },
+      agentDir
+    )
+    const cluster = new FakeSlurmHost({ state: 'COMPLETED', exitCode: 0 })
+    cluster.files.set(`${remoteRunDir}/job_id`, '999\n')
+    cluster.files.set(`${remoteRunDir}/output/results/multiqc_report.html`, '<html></html>')
+    await reconcileRemoteWrapperRuns({
+      agentDir,
+      connectImpl: async () => cluster,
+      pollIntervalMs: 1
+    })
+    assert.equal(readWrapperRun(run.runId, agentDir)?.state, 'completed')
+  }))
+
+test('a detached run resumes from its PID and exit code after restart', () =>
+  withProjectHarness(async ({ agentDir, projectDir }) => {
+    configureProjectRemote(agentDir, projectDir)
+    const run = writeSlurmControllerRun(agentDir, projectDir, {
+      executor: 'remote-background',
+      profile: 'remote-background',
+      state: 'lost',
+      launchUnknown: true
+    })
+    const remoteRunDir = `/cluster/facility/lab/WorkSpace/wrappers/runs/${run.runId}`
+    writeRemoteSnapshot(agentDir, run.runId, remoteRunDir, undefined, true)
+    const cluster = new FakeSlurmHost('untracked')
+    cluster.files.set(`${remoteRunDir}/pid`, '1234\n')
+    cluster.files.set(`${remoteRunDir}/output/results/multiqc_report.html`, '<html></html>')
+    cluster.alivePolls = 1
+    cluster.exitOnLastAlive = `${remoteRunDir}/exit_code`
+    await reconcileRemoteWrapperRuns({
+      agentDir,
+      connectImpl: async () => cluster,
+      pollIntervalMs: 1
+    })
+    const finished = readWrapperRun(run.runId, agentDir)
+    assert.equal(finished?.state, 'completed')
+    assert.equal(finished?.launchUnknown, undefined)
+    assert.ok(
+      readWrapperRunEvents(run.runId, agentDir).some(
+        (event) => event.type === 'run_state_changed' && event.state === 'running'
+      )
+    )
+    assert.equal(
+      cluster.execLog.some((command) => /sbatch |setsid bash/.test(command)),
+      false
+    )
+  }))
+
+test('an unreachable host leaves a lost snapshot available for later reconciliation', () =>
+  withProjectHarness(async ({ agentDir, projectDir }) => {
+    configureProjectRemote(agentDir, projectDir)
+    const run = writeSlurmControllerRun(agentDir, projectDir, {
+      state: 'lost',
+      launchUnknown: true
+    })
+    const remoteRunDir = `/cluster/facility/lab/WorkSpace/wrappers/runs/${run.runId}`
+    writeRemoteSnapshot(agentDir, run.runId, remoteRunDir, '999', true)
+    await reconcileRemoteWrapperRuns({
+      agentDir,
+      connectImpl: async () => {
+        throw new Error('network unavailable')
+      }
+    })
+    assert.equal(readWrapperRun(run.runId, agentDir)?.state, 'lost')
+    const cluster = new FakeSlurmHost({ state: 'COMPLETED', exitCode: 0 })
+    cluster.files.set(`${remoteRunDir}/output/results/multiqc_report.html`, '<html></html>')
+    await reconcileRemoteWrapperRuns({
+      agentDir,
+      connectImpl: async () => cluster,
+      pollIntervalMs: 1
+    })
+    assert.equal(readWrapperRun(run.runId, agentDir)?.state, 'completed')
+  }))
+
+test('an unconfirmed remote launch stays lost and never becomes a definite failure', () =>
+  withProjectHarness(async ({ agentDir, projectDir }) => {
+    configureProjectRemote(agentDir, projectDir)
+    const run = writeSlurmControllerRun(agentDir, projectDir, {
+      state: 'lost',
+      launchUnknown: true
+    })
+    const remoteRunDir = `/cluster/facility/lab/WorkSpace/wrappers/runs/${run.runId}`
+    writeRemoteSnapshot(agentDir, run.runId, remoteRunDir, undefined, true)
+    const cluster = new FakeSlurmHost('untracked')
+    await reconcileRemoteWrapperRuns({
+      agentDir,
+      connectImpl: async () => cluster,
+      pollIntervalMs: 1
+    })
+    const saved = readWrapperRun(run.runId, agentDir)
+    assert.equal(saved?.state, 'lost')
+    assert.equal(saved?.launchUnknown, true)
+    assert.match(saved?.launchDiagnostic ?? '', /没有 PID|无法确认/)
+    assert.equal(
+      cluster.execLog.some((command) => /sbatch |setsid bash/.test(command)),
+      false
+    )
   }))
 
 test('reconcileRemoteWrapperRuns marks a run lost when there is no remote snapshot to reconnect from', () =>
@@ -230,13 +427,15 @@ test('reconcileRemoteWrapperRuns marks a run lost when the project remote config
     assert.equal(readWrapperRun(run.runId, agentDir)?.state, 'lost')
   }))
 
-test('reconcileRemoteWrapperRuns reissues scancel and finalizes a cancelling run as cancelled', () =>
+test('reconcileRemoteWrapperRuns accepts a cancelled scheduler result without reissuing scancel', () =>
   withProjectHarness(async ({ agentDir, projectDir }) => {
     configureProjectRemote(agentDir, projectDir)
     const run = writeSlurmControllerRun(agentDir, projectDir, { state: 'cancelling' })
     const remoteRunDir = `/cluster/facility/lab/WorkSpace/wrappers/runs/${run.runId}`
     writeRemoteSnapshot(agentDir, run.runId, remoteRunDir, '999')
     const cluster = new FakeSlurmHost({ state: 'CANCELLED', exitCode: 0 })
+    cluster.files.set(`${remoteRunDir}/.phi-launch-claim/run-id`, `${run.runId}\n`)
+    cluster.files.set(`${remoteRunDir}/job_id`, '999\n')
 
     await reconcileRemoteWrapperRuns({
       agentDir,
@@ -246,7 +445,49 @@ test('reconcileRemoteWrapperRuns reissues scancel and finalizes a cancelling run
 
     const finalRun = readWrapperRun(run.runId, agentDir)
     assert.equal(finalRun?.state, 'cancelled')
-    assert.ok(cluster.execLog.some((command) => command.startsWith('scancel 999')))
+    assert.ok(
+      !cluster.execLog.some((command) => command.startsWith('scancel 999')),
+      'an already cancelled job does not need another signal'
+    )
+  }))
+
+test('restart reissues cancellation only for the bound running Slurm job', () =>
+  withProjectHarness(async ({ agentDir, projectDir }) => {
+    configureProjectRemote(agentDir, projectDir)
+    const run = writeSlurmControllerRun(agentDir, projectDir, { state: 'cancelling' })
+    const remoteRunDir = `/cluster/facility/lab/WorkSpace/wrappers/runs/${run.runId}`
+    writeRemoteSnapshot(agentDir, run.runId, remoteRunDir, '999')
+    const host = new FakeSlurmHost({ state: 'CANCELLED', exitCode: 1 })
+    host.activeSlurmJob = true
+    host.files.set(`${remoteRunDir}/.phi-launch-claim/run-id`, `${run.runId}\n`)
+    host.files.set(`${remoteRunDir}/job_id`, '999\n')
+
+    await reconcileRemoteWrapperRuns({ agentDir, connectImpl: async () => host, pollIntervalMs: 1 })
+
+    assert.equal(readWrapperRun(run.runId, agentDir)?.state, 'cancelled')
+    assert.equal(host.execLog.filter((command) => command.startsWith('scancel 999')).length, 1)
+  }))
+
+test('restart confirms a detached process group stopped after a bound cancel signal', () =>
+  withProjectHarness(async ({ agentDir, projectDir }) => {
+    configureProjectRemote(agentDir, projectDir)
+    const run = writeSlurmControllerRun(agentDir, projectDir, {
+      state: 'cancelling',
+      executor: 'remote-background'
+    })
+    const remoteRunDir = `/cluster/facility/lab/WorkSpace/wrappers/runs/${run.runId}`
+    const runDir = join(getWrapperRunsDir(agentDir), run.runId)
+    mkdirSync(runDir, { recursive: true })
+    writeFileSync(join(runDir, 'remote.snapshot.json'), JSON.stringify({ remoteRunDir, pid: 4242 }))
+    const host = new FakeSlurmHost('untracked')
+    host.alivePolls = 4
+    host.files.set(`${remoteRunDir}/.phi-launch-claim/run-id`, `${run.runId}\n`)
+    host.files.set(`${remoteRunDir}/pid`, '4242\n')
+
+    await reconcileRemoteWrapperRuns({ agentDir, connectImpl: async () => host, pollIntervalMs: 1 })
+
+    assert.equal(readWrapperRun(run.runId, agentDir)?.state, 'cancelled')
+    assert.equal(host.execLog.filter((command) => command.startsWith('kill -TERM -4242')).length, 1)
   }))
 
 test('reconcileRemoteWrapperRuns leaves already-terminal and non-slurm-controller runs untouched', () =>
@@ -261,6 +502,10 @@ test('reconcileRemoteWrapperRuns leaves already-terminal and non-slurm-controlle
       profile: 'local',
       state: 'running'
     })
+    const compositionRun = writeSlurmControllerRun(agentDir, projectDir, {
+      origin: 'composition',
+      state: 'running'
+    })
 
     await reconcileRemoteWrapperRuns({
       agentDir,
@@ -271,4 +516,5 @@ test('reconcileRemoteWrapperRuns leaves already-terminal and non-slurm-controlle
 
     assert.equal(readWrapperRun(completedRun.runId, agentDir)?.state, 'completed')
     assert.equal(readWrapperRun(localRun.runId, agentDir)?.state, 'running')
+    assert.equal(readWrapperRun(compositionRun.runId, agentDir)?.state, 'running')
   }))

@@ -1,6 +1,12 @@
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
 import type { WrapperRunFinishedEvent } from '../shared/wrapperRunNotice'
-import type { WrapperRun } from '../shared/wrapperTypes'
+import { declaredExternalOutputRoot } from '../shared/wrapperResultTypes'
+import { hoverMediaPreviewType, mediaPreviewType } from './file-preview-media'
+import type {
+  WrapperRetargetRequest,
+  WrapperRun,
+  WrapperSubmitConfirmation
+} from '../shared/wrapperTypes'
 import './agent-env'
 import { execFile } from 'node:child_process'
 import {
@@ -55,6 +61,7 @@ import {
   getProject,
   getProjectByCwd,
   listProjects,
+  subscribeRemoteProjectConnection,
   updateProjectPermissionMode,
   updateProjectDefaults,
   updateProjectRemoteConnection,
@@ -65,16 +72,52 @@ import {
   type ProjectRemoteConnection
 } from './agent/projects'
 import {
-  deleteRemoteConnectionPassphrase,
-  isRemoteCredentialStorageAvailable,
-  storeRemoteConnectionPassphrase
-} from './agent/wrappers/remote-credential-store'
+  deleteRemoteHostProfile,
+  getRemoteHostProfile,
+  listAvailableRemoteHostProfiles,
+  saveRemoteHostProfile
+} from './agent/remote-hosts'
+import { listOpenSshHosts } from './agent/ssh-config-discovery'
+import { saveOpenSshHost } from './agent/ssh-config-editor'
+import { sshConfigHostId, type OpenSshHostInput } from '../shared/remoteHostProfile'
+import { remoteDoctor } from './agent/remote-doctor'
+import { RemoteProjectConnectionTracker } from './agent/remote-project-connection'
+import { createCheckedRemoteProject } from './agent/remote-project-create'
+import { loadRemoteProjectInstructions } from './agent/remote-project-instructions'
+import {
+  remoteBashApprovalScope,
+  resolveRemoteBashContext,
+  resolveRemoteWorkspacePath
+} from './agent/remote-workspace-boundary'
+import { readRemoteWorkspacePath } from './agent/remote-workspace-read'
+import {
+  listRemoteWorkspaceDirectory,
+  previewRemoteWorkspaceFile
+} from './agent/remote-workspace-file-ui'
+import { remoteGlob, remoteGrep } from './agent/remote-workspace-search'
+import { RemoteWorkspaceBashManager, type RemoteBashRequest } from './agent/remote-workspace-bash'
+import type { RemoteWriteRequest } from './agent/remote-workspace-write'
+import {
+  RemoteWorkspaceMutationManager,
+  RemoteWorkspaceReadBasis,
+  type RemoteEditRequest
+} from './agent/remote-workspace-edit'
+import {
+  ensureRemoteProjectAnchor,
+  isRemoteProjectAnchorPath,
+  remoteProjectAnchorPath
+} from './agent/remote-project-anchor'
+import type { RemoteDoctorOptions } from '../shared/remoteDoctorTypes'
+import type { ProjectLocation, RemoteProjectCreateInput } from '../shared/projectLocation'
 import { renderMoleculeSvg } from './molecule-renderer'
 import { previewDatabaseWebImage } from './database-web-preview'
 import {
+  bashApprovalDigest,
+  editApprovalDigest,
   cancelToolApprovals,
   createApprovalExtension,
-  resolveToolApproval
+  resolveToolApproval,
+  writeApprovalDigest
 } from './agent/tool-approval'
 import {
   canRequestAgentUserInteraction,
@@ -95,10 +138,13 @@ import {
 import { installPlugin, listPlugins, removePlugin } from './agent/plugins'
 import {
   deleteSkill,
+  listGlobalMcpServers,
+  listGlobalSkills,
   listMcpServers,
   listPromptAgents,
   listSkills,
   readSkillContent,
+  readGlobalSkillContent,
   setSkillDisabled
 } from './agent/resources'
 import {
@@ -118,7 +164,15 @@ import { WrapperJobManager } from './agent/wrappers/composition/job-manager'
 import { markInterruptedCompositionRuns } from './agent/wrappers/composition/run-record'
 import { resolveProjectRemoteTarget } from './agent/wrappers/remote-connection-resolver'
 import { reconcileRemoteWrapperRuns } from './agent/wrappers/executor-slurm-reconcile'
+import { listWrapperResultDirectory } from './agent/wrappers/remote-results'
+import { previewWrapperResult, readWrapperResultRange } from './agent/wrappers/remote-result-read'
+import {
+  downloadWrapperResultToPath,
+  validateWrapperResultDownloadRequest
+} from './agent/wrappers/remote-result-download'
 import { discoverPhiAgents } from './agent/agents/discovery'
+import { loadRemoteWrapperAgent } from './agent/agents/remote-wrapper-agent'
+import { BackgroundAgentApprovalTracker } from './agent/agents/background-approval'
 import { buildAgentLeaderPrompt } from './agent/agents/leader-prompt'
 import {
   continuationPrompt,
@@ -127,6 +181,7 @@ import {
 } from './agent/agents/run-continue'
 import { agentRunHostHandlers } from './agent/agents/run-host'
 import { buildWrapperReproducibilityBundle } from './agent/wrappers/reproducibility'
+import { retargetWrapperRunPlan } from './agent/wrappers/plans'
 import { cancelWrapperRun, cancelWrapperRunPlan, submitWrapperRunPlan } from './agent/wrappers/runs'
 import {
   listWrapperRuns,
@@ -384,6 +439,9 @@ type CurrentSessionPayload = {
   path: string | null
   phiSessionId?: string
   cwd: string
+  displayCwd: string
+  projectId?: string
+  projectLocation?: ProjectLocation
   sessionGeneration: number
   permissionMode: PermissionMode
   status: SessionStatus
@@ -503,6 +561,7 @@ function realDirectoryPath(
 
 function resolveAnalysisWorkspaceByCwd(cwd?: string): AnalysisWorkspaceContext | null {
   const targetCwd = cwd ?? currentCwd
+  if (isRemoteProjectAnchorPath(targetCwd, AGENT_DIR)) return null
   const project = getProjectByCwd(targetCwd)
   if (project) {
     assertProjectPathAvailable(project.workingDirectory)
@@ -559,6 +618,110 @@ let sessionSwitchRequest = 0
 const promptQueues = new Map<string, Promise<void>>()
 const promptGenerations = new Map<string, number>()
 const activePromptRuns = new Map<string, PromptRun>()
+const approvedRemoteBashCalls = new Map<
+  string,
+  { projectId: string; approvedCwd: string; approvalDigest: string; expiresAt: number }
+>()
+const approvedRemoteWriteCalls = new Map<
+  string,
+  { projectId: string; approvedCwd: string; approvalDigest: string; expiresAt: number }
+>()
+const approvedRemoteEditCalls = new Map<
+  string,
+  { projectId: string; approvedCwd: string; approvalDigest: string; expiresAt: number }
+>()
+
+function remoteBashApprovalKey(sessionId: string, toolCallId: string): string {
+  return `${sessionId}:${toolCallId}`
+}
+
+function requireRemoteBashApproval(request: RemoteBashRequest): void {
+  const manifest = findPhiSessionById(request.sessionId)
+  if (!manifest || manifest.projectId !== request.projectId) {
+    throw new Error('远程命令会话归属无效')
+  }
+  if (manifest.permissionMode !== 'ask') return
+  const project = getProject(request.projectId)
+  const host =
+    project?.location.kind === 'ssh'
+      ? getRemoteHostProfile(project.location.hostProfileId)
+      : undefined
+  if (!project || project.location.kind !== 'ssh' || !host) {
+    throw new Error('远程项目的 SSH 服务器档案不可用')
+  }
+  const expectedCwd = `ssh://${host.hostAlias}${project.location.canonicalRoot}`
+  const key = remoteBashApprovalKey(request.sessionId, request.toolCallId)
+  const approved = approvedRemoteBashCalls.get(key)
+  approvedRemoteBashCalls.delete(key)
+  if (
+    !approved ||
+    approved.projectId !== request.projectId ||
+    approved.approvedCwd !== expectedCwd ||
+    approved.approvalDigest !== bashApprovalDigest(request as unknown as Record<string, unknown>) ||
+    approved.expiresAt < Date.now()
+  ) {
+    throw new Error('远程命令尚未获得本次会话的批准')
+  }
+}
+
+function requireRemoteWriteApproval(request: RemoteWriteRequest): void {
+  const manifest = findPhiSessionById(request.sessionId)
+  if (!manifest || manifest.projectId !== request.projectId) {
+    throw new Error('远程写入会话归属无效')
+  }
+  if (manifest.permissionMode !== 'ask') return
+  const project = getProject(request.projectId)
+  const host =
+    project?.location.kind === 'ssh'
+      ? getRemoteHostProfile(project.location.hostProfileId)
+      : undefined
+  if (!project || project.location.kind !== 'ssh' || !host) {
+    throw new Error('远程项目的 SSH 服务器档案不可用')
+  }
+  const expectedCwd = `ssh://${host.hostAlias}${project.location.canonicalRoot}`
+  const key = remoteBashApprovalKey(request.sessionId, request.toolCallId)
+  const approved = approvedRemoteWriteCalls.get(key)
+  approvedRemoteWriteCalls.delete(key)
+  if (
+    !approved ||
+    approved.projectId !== request.projectId ||
+    approved.approvedCwd !== expectedCwd ||
+    approved.approvalDigest !==
+      writeApprovalDigest(request as unknown as Record<string, unknown>) ||
+    approved.expiresAt < Date.now()
+  ) {
+    throw new Error('远程写入尚未获得本次会话的批准')
+  }
+}
+
+function requireRemoteEditApproval(request: RemoteEditRequest): void {
+  const manifest = findPhiSessionById(request.sessionId)
+  if (!manifest || manifest.projectId !== request.projectId) {
+    throw new Error('远程编辑会话归属无效')
+  }
+  if (manifest.permissionMode !== 'ask') return
+  const project = getProject(request.projectId)
+  const host =
+    project?.location.kind === 'ssh'
+      ? getRemoteHostProfile(project.location.hostProfileId)
+      : undefined
+  if (!project || project.location.kind !== 'ssh' || !host) {
+    throw new Error('远程项目的 SSH 服务器档案不可用')
+  }
+  const expectedCwd = `ssh://${host.hostAlias}${project.location.canonicalRoot}`
+  const key = remoteBashApprovalKey(request.sessionId, request.toolCallId)
+  const approved = approvedRemoteEditCalls.get(key)
+  approvedRemoteEditCalls.delete(key)
+  if (
+    !approved ||
+    approved.projectId !== request.projectId ||
+    approved.approvedCwd !== expectedCwd ||
+    approved.approvalDigest !== editApprovalDigest(request as unknown as Record<string, unknown>) ||
+    approved.expiresAt < Date.now()
+  ) {
+    throw new Error('远程编辑尚未获得本次会话的批准')
+  }
+}
 const phiSessionIdsByKey = new Map<string, string>()
 const sessionKeyAliases = new Map<string, string>()
 const sessionModelSelections = new Map<string, ModelSelection>()
@@ -579,8 +742,17 @@ function withNextActionRecommendationInstruction(prompt: string): string {
   return `${prompt}\n\n${NEXT_ACTION_RECOMMENDATION_INSTRUCTION}`
 }
 
+const backgroundAgentApprovals = new BackgroundAgentApprovalTracker({
+  readManifest: findPhiSessionById,
+  appendEvent: appendSessionEvent,
+  updateManifest: updateSessionManifest,
+  onEvent: (sessionId, event) =>
+    sendRunEventToWindow({ source: 'phi', ...event, phiSessionId: sessionId }),
+  onChange: notifySessionChanged
+})
 const runnerRegistry = new SessionRunnerRegistry({
-  onSessionEvent: broadcastSessionTimelineEvent
+  onSessionEvent: broadcastSessionTimelineEvent,
+  onRunSettled: (sessionId) => backgroundAgentApprovals.afterParentRunSettled(sessionId)
 })
 
 function syncPreventSleepBlocker(): void {
@@ -616,16 +788,173 @@ getOmpBridge().registerHostHandler('notebookTool.execute', (params) =>
   notebookToolExecutor.execute(params as Parameters<typeof notebookToolExecutor.execute>[0])
 )
 getOmpBridge().registerHostHandler('agentInteraction.request', handleAgentInteractionRequest)
+const remoteConnectionTracker = new RemoteProjectConnectionTracker()
+const wrapperResultReadControllers = new Map<string, AbortController>()
+const wrapperResultDownloads = new Map<
+  string,
+  { controller: AbortController; phase: 'downloading' | 'verifying' | 'saving' }
+>()
+subscribeRemoteProjectConnection((projectId, state) => {
+  sendToAllWindows('projects:remoteConnectionChanged', { projectId, state })
+})
+function remoteRequestProjectId(params: unknown): string {
+  if (typeof params !== 'object' || params === null) return ''
+  const projectId = (params as Record<string, unknown>).projectId
+  return typeof projectId === 'string' ? projectId : ''
+}
+async function runWrapperResultRead<T>(
+  request: unknown,
+  read: (request: unknown, options: { signal: AbortSignal }) => Promise<T>
+): Promise<T> {
+  const requestId =
+    typeof request === 'object' && request !== null
+      ? (request as Record<string, unknown>).requestId
+      : undefined
+  if (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(requestId)) {
+    throw new Error('Wrapper 结果读取请求 ID 无效')
+  }
+  if (wrapperResultReadControllers.has(requestId)) {
+    throw new Error('Wrapper 结果读取请求 ID 正在使用')
+  }
+  const controller = new AbortController()
+  wrapperResultReadControllers.set(requestId, controller)
+  try {
+    return await remoteConnectionTracker.observe(remoteRequestProjectId(request), async () => {
+      try {
+        const result = await read(request, { signal: controller.signal })
+        controller.signal.throwIfAborted()
+        return result
+      } catch (error) {
+        if (controller.signal.aborted) throw new Error('Wrapper 结果读取已取消')
+        throw error
+      }
+    })
+  } finally {
+    wrapperResultReadControllers.delete(requestId)
+  }
+}
+function scheduleRemoteProjectCheck(sessionId: string, projectId: string): void {
+  void remoteConnectionTracker.check(sessionId, projectId).catch((error) => {
+    writeAppLog({
+      level: 'warn',
+      event: 'remote_project_connection_check_failed',
+      sessionId,
+      metadata: { projectId, reason: error instanceof Error ? error.message : '检查未完成' }
+    })
+  })
+}
+getOmpBridge().registerHostHandler('remoteWorkspace.resolvePath', (params) =>
+  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
+    resolveRemoteWorkspacePath(params)
+  )
+)
+getOmpBridge().registerHostHandler('remoteWorkspace.resolveBashContext', (params) =>
+  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
+    resolveRemoteBashContext(params)
+  )
+)
+const remoteReadBasis = new RemoteWorkspaceReadBasis()
+getOmpBridge().registerHostHandler('remoteWorkspace.read', (params) =>
+  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
+    readRemoteWorkspacePath(params, {
+      onFileRead: (authorized, content) =>
+        remoteReadBasis.record(
+          authorized.sessionId,
+          authorized.projectId,
+          authorized.hostAlias,
+          authorized.path,
+          content
+        )
+    })
+  )
+)
+getOmpBridge().registerHostHandler('remoteWorkspace.glob', (params) =>
+  remoteConnectionTracker.observe(remoteRequestProjectId(params), () => remoteGlob(params))
+)
+getOmpBridge().registerHostHandler('remoteWorkspace.grep', (params) =>
+  remoteConnectionTracker.observe(remoteRequestProjectId(params), () => remoteGrep(params))
+)
+const remoteBashManager = new RemoteWorkspaceBashManager({ beforeRun: requireRemoteBashApproval })
+const remoteMutationManager = new RemoteWorkspaceMutationManager({
+  basis: remoteReadBasis,
+  beforeWrite: requireRemoteWriteApproval,
+  beforeEdit: requireRemoteEditApproval
+})
+getOmpBridge().registerHostHandler('remoteWorkspace.write', (params) =>
+  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
+    remoteMutationManager.write(params)
+  )
+)
+getOmpBridge().registerHostHandler('remoteWorkspace.cancelWrite', (params) =>
+  remoteMutationManager.cancel(params)
+)
+getOmpBridge().registerHostHandler('remoteWorkspace.edit', (params) =>
+  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
+    remoteMutationManager.edit(params)
+  )
+)
+getOmpBridge().registerHostHandler('remoteWorkspace.cancelEdit', (params) =>
+  remoteMutationManager.cancel(params)
+)
+getOmpBridge().registerHostHandler('remoteWorkspace.bash', (params) =>
+  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
+    remoteBashManager.run(params)
+  )
+)
+getOmpBridge().registerHostHandler('remoteWorkspace.cancelBash', (params) =>
+  remoteBashManager.cancel(params)
+)
 
 // Background wrapper runs. The manager lives here, not in the agent worker: a run
 // must outlive any chat session, and the worker is stopped whenever it idles.
 const wrapperJobs = new WrapperJobManager({
+  resolveProjectForRun: (originSessionId) => {
+    const origin = resolveOriginSession(originSessionId)
+    const manifest = origin ? findPhiSessionById(origin.phiSessionId) : null
+    if (!manifest) return undefined
+    return manifest.projectId ? getProject(manifest.projectId) : null
+  },
   // A remote run goes to the HPC connection saved on the project the chat belongs to; a run
   // being resumed after a restart names its project and connection itself.
   resolveRemoteTarget: ({ originSessionId, projectId, connectionId }) => {
-    const cwd = originSessionId ? runtimeSessionOrigins.get(originSessionId)?.cwd : undefined
-    const project = projectId ? getProject(projectId) : getProjectByCwd(cwd ?? currentCwd)
+    const origin = resolveOriginSession(originSessionId)
+    const manifest = origin ? findPhiSessionById(origin.phiSessionId) : null
+    const project = projectId
+      ? getProject(projectId)
+      : manifest?.projectId
+        ? getProject(manifest.projectId)
+        : undefined
     return resolveProjectRemoteTarget(project, connectionId)
+  },
+  checkRemoteEnvironment: async ({ project, resolved, profile }) => {
+    const hostProfileId =
+      project.location.kind === 'ssh'
+        ? project.location.hostProfileId
+        : project.remoteConnections?.find((connection) => connection.id === resolved.connectionId)
+            ?.hostProfileId
+    if (!hostProfileId) throw new Error('找不到 Wrapper 运行连接的服务器档案')
+    const hpc = resolved.target.hpc ?? { scheduler: 'local' as const }
+    const controller = hpc.controller ?? 'login'
+    const report = await remoteDoctor(
+      hostProfileId,
+      resolved.target.workspaceRoot,
+      {
+        scope: 'full',
+        scheduler: hpc.scheduler,
+        controller,
+        runtime: profile,
+        ...(hpc.nextflowBin ? { nextflowBin: hpc.nextflowBin } : {})
+      },
+      { deferToolChecksToLaunch: Boolean(hpc.setupCommands?.length) }
+    )
+    return {
+      report,
+      remotePath: resolved.target.workspaceRoot,
+      scheduler: hpc.scheduler,
+      controller,
+      runtime: profile,
+      deferToolChecksToLaunch: Boolean(hpc.setupCommands?.length)
+    }
   }
 })
 for (const [method, handler] of Object.entries(wrapperJobHostHandlers(wrapperJobs))) {
@@ -671,8 +1000,11 @@ function showRunNotification({ title, body }: { title: string; body: string }): 
   notification.show()
 }
 
-wrapperJobs.onFinish((run, status) =>
-  deliverWrapperRunFinished(run, status, {
+wrapperJobs.onFinish((run, status) => {
+  if (status.state === 'lost' && run.remote?.projectId) {
+    remoteConnectionTracker.noteRemoteRunLost(run.remote.projectId)
+  }
+  return deliverWrapperRunFinished(run, status, {
     resolveSession: resolveOriginSession,
     appendToSession: (phiSessionId, event) => appendSessionEvent(phiSessionId, { ...event }),
     sendToWindow: sendRunEventToWindow,
@@ -680,7 +1012,7 @@ wrapperJobs.onFinish((run, status) =>
     continueConversation: continueConversationAfterWrapperRun,
     showOsNotification: showRunNotification
   })
-)
+})
 
 // Background agent runs live in the agent worker, one registry per conversation; the worker
 // tells us here when one ends, or when the main agent has already collected its report.
@@ -832,7 +1164,7 @@ async function handleAgentInteractionRequest(params: unknown): Promise<unknown> 
   }
 
   const interactionId = createRunId()
-  const project = getProjectByCwd(run.cwd)
+  const project = run.projectId ? getProject(run.projectId) : getProjectByCwd(run.cwd)
   runnerRegistry.markNeedsInput(run.phiSessionId, interactionId, {
     kind: 'ask_user_question',
     message: questions[0].question
@@ -845,7 +1177,7 @@ async function handleAgentInteractionRequest(params: unknown): Promise<unknown> 
       sessionPath: phiOnlySessionPath(run.phiSessionId),
       sessionGeneration: run.sessionGeneration,
       runId: run.runId,
-      cwd: run.cwd,
+      cwd: project?.location.kind === 'ssh' ? project.location.remoteRoot : run.cwd,
       ...(project?.name ? { projectName: project.name } : {})
     },
     window
@@ -2350,7 +2682,7 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
   const runLifecycle = getLifecycleForKey(runSessionKey)
   const runSessionGeneration = runLifecycle.currentGeneration
   const runSnapshot = input.snapshot
-  const project = getProjectByCwd(runSnapshot.cwd)
+  const project = projectForSession(runSessionKey, runSnapshot)
   const phiSessionId = ensurePhiSessionId(runSessionKey, runSnapshot, normalizedText)
   const stableSessionPath = phiOnlySessionPath(phiSessionId)
   // A real user message starts the automatic wake-up count over.
@@ -2638,6 +2970,14 @@ function getSessionStatusPayload(
   return { status: 'idle', unreadKind: null }
 }
 
+function projectForSession(
+  sessionKey: string,
+  snapshot: Pick<SessionSnapshot, 'path' | 'cwd'>
+): Project | undefined {
+  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
+  return manifest?.projectId ? getProject(manifest.projectId) : getProjectByCwd(snapshot.cwd)
+}
+
 function resolveSessionModelSelection(
   sessionKey: string,
   snapshot: SessionSnapshot
@@ -2647,7 +2987,7 @@ function resolveSessionModelSelection(
     return sessionModelSelections.get(canonicalKey) ?? null
   }
   const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
-  return manifest?.model ?? getProjectByCwd(snapshot.cwd)?.defaultModel ?? selectedModel
+  return manifest?.model ?? projectForSession(sessionKey, snapshot)?.defaultModel ?? selectedModel
 }
 
 function resolveSessionThinkingLevel(sessionKey: string, snapshot: SessionSnapshot): ThinkingLevel {
@@ -2658,7 +2998,7 @@ function resolveSessionThinkingLevel(sessionKey: string, snapshot: SessionSnapsh
   const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
   return (
     manifest?.thinkingLevel ??
-    getProjectByCwd(snapshot.cwd)?.defaultThinkingLevel ??
+    projectForSession(sessionKey, snapshot)?.defaultThinkingLevel ??
     selectedThinkingLevel
   )
 }
@@ -2672,7 +3012,9 @@ function resolveSessionPermissionMode(
     return sessionPermissionModes.get(canonicalKey) ?? 'auto'
   }
   const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
-  return manifest?.permissionMode ?? getProjectByCwd(snapshot.cwd)?.permissionMode ?? 'auto'
+  return (
+    manifest?.permissionMode ?? projectForSession(sessionKey, snapshot)?.permissionMode ?? 'auto'
+  )
 }
 
 function ensurePhiSessionId(
@@ -2732,6 +3074,32 @@ function createPhiManagedSession(
   linkPhiManagedSessionKey(key, cwd, session.sessionId)
   sessionPermissionModes.set(resolveSessionKeyAlias(key), permissionMode)
   return { path, sessionId: session.sessionId, permissionMode }
+}
+
+function createRemoteManagedSession(projectId: string): {
+  path: string
+  sessionId: string
+  cwd: string
+  permissionMode: PermissionMode
+} {
+  const project = getProject(projectId)
+  if (!project || project.location.kind !== 'ssh') throw new Error('远程项目不存在')
+  const cwd = ensureRemoteProjectAnchor(project.id)
+  const session = createPhiSession({
+    kind: 'project',
+    projectId: project.id,
+    projectLocation: project.location,
+    cwd,
+    cwdRealPath: cwd,
+    permissionMode: project.permissionMode,
+    ...(project.defaultModel ? { model: project.defaultModel } : {}),
+    ...(project.defaultThinkingLevel ? { thinkingLevel: project.defaultThinkingLevel } : {})
+  })
+  const path = phiOnlySessionPath(session.sessionId)
+  const key = createPhiSessionKey(session.sessionId, cwd)
+  linkPhiManagedSessionKey(key, cwd, session.sessionId)
+  sessionPermissionModes.set(resolveSessionKeyAlias(key), project.permissionMode)
+  return { path, sessionId: session.sessionId, cwd, permissionMode: project.permissionMode }
 }
 
 // Turns a free-text description of the desired assistant into a persona markdown file
@@ -3164,10 +3532,18 @@ function currentLocalPathScope(): LocalPathScope {
   }
 }
 
+function isRemoteResourceScope(cwd?: string): boolean {
+  return (
+    isRemoteProjectAnchorPath(currentCwd, AGENT_DIR) ||
+    (typeof cwd === 'string' && isRemoteProjectAnchorPath(cwd, AGENT_DIR))
+  )
+}
+
 function isLocalFilePathAllowed(
   target: string,
   scope: LocalPathScope = currentLocalPathScope()
 ): boolean {
+  if (isRemoteProjectAnchorPath(target, AGENT_DIR)) return false
   const agentDir = resolve(AGENT_DIR)
   const roots = [agentDir, scope.cwd, scope.cwdRealPath].filter(
     (root): root is string => typeof root === 'string' && root.length > 0
@@ -3180,6 +3556,7 @@ function getLocalPathScope(target: string): {
   rootLabel: string
   displayPath: string
 } | null {
+  if (isRemoteProjectAnchorPath(target, AGENT_DIR)) return null
   const cwd = resolve(currentCwd)
   const agentDir = resolve(AGENT_DIR)
   const relativeCwdPath = relative(cwd, target)
@@ -3216,7 +3593,11 @@ function assertLocalFilePathAllowed(
     throw new Error(`只能${actionLabel} Phi 保存的文件或当前项目内的文件`)
   }
   const inspectedTarget = options.resolveSymlinks ? realpathSync(target) : target
-  if (!isLocalFilePathAllowed(inspectedTarget)) {
+  if (
+    !isLocalFilePathAllowed(inspectedTarget) ||
+    (existsSync(inspectedTarget) &&
+      isRemoteProjectAnchorPath(realpathSync(inspectedTarget), AGENT_DIR))
+  ) {
     throw new Error(`只能${actionLabel} Phi 保存的文件或当前项目内的文件`)
   }
   return inspectedTarget
@@ -3355,23 +3736,6 @@ type FileHoverPreviewPayload = FilePreviewBasePayload &
       }
   )
 
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-
-function mediaPreviewType(
-  bytes: Buffer
-): { kind: 'image'; mimeType: 'image/png' } | { kind: 'pdf'; mimeType: 'application/pdf' } | null {
-  if (
-    bytes.length >= PNG_SIGNATURE.length &&
-    bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
-  ) {
-    return { kind: 'image', mimeType: 'image/png' }
-  }
-  if (bytes.subarray(0, 5).toString('ascii') === '%PDF-') {
-    return { kind: 'pdf', mimeType: 'application/pdf' }
-  }
-  return null
-}
-
 function filePreviewBasePayload(
   target: string,
   stats: { size: number },
@@ -3401,31 +3765,6 @@ function spreadsheetHoverPreviewType(
   if (name.endsWith('.csv')) return { format: 'csv', mimeType: 'text/csv' }
   if (name.endsWith('.tsv') || name.endsWith('.tab')) {
     return { format: 'tsv', mimeType: 'text/tab-separated-values' }
-  }
-  return null
-}
-
-function hoverMediaPreviewType(
-  bytes: Buffer
-):
-  | { kind: 'image'; mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' }
-  | { kind: 'pdf'; mimeType: 'application/pdf' }
-  | null {
-  const fullPreviewType = mediaPreviewType(bytes)
-  if (fullPreviewType) return fullPreviewType
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-    return { kind: 'image', mimeType: 'image/jpeg' }
-  }
-  const signature = bytes.subarray(0, 6).toString('ascii')
-  if (signature === 'GIF87a' || signature === 'GIF89a') {
-    return { kind: 'image', mimeType: 'image/gif' }
-  }
-  if (
-    bytes.length >= 12 &&
-    bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
-    bytes.subarray(8, 12).toString('ascii') === 'WEBP'
-  ) {
-    return { kind: 'image', mimeType: 'image/webp' }
   }
   return null
 }
@@ -3932,10 +4271,17 @@ function getCurrentSessionPayload(): CurrentSessionPayload {
   const manifest = findPhiManifestForSession(currentSessionKey, currentSessionPath, currentCwd)
   const phiSessionId = manifest?.sessionId ?? getPhiSessionIdForKey(currentSessionKey)
   const path = phiSessionId ? phiOnlySessionPath(phiSessionId) : (currentSessionPath ?? null)
+  const project = manifest?.projectId ? getProject(manifest.projectId) : getProjectByCwd(currentCwd)
+  const projectLocation = manifest?.projectLocation ?? project?.location
   return {
     path,
     ...(phiSessionId ? { phiSessionId } : {}),
     cwd: currentCwd,
+    displayCwd: projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : currentCwd,
+    ...(manifest?.projectId || project?.id
+      ? { projectId: manifest?.projectId ?? project?.id }
+      : {}),
+    ...(projectLocation ? { projectLocation } : {}),
     sessionGeneration: getCurrentLifecycle().currentGeneration,
     permissionMode: currentPermissionMode,
     ...getSessionStatusPayload(currentSessionKey, currentSessionPath, currentCwd)
@@ -4009,8 +4355,12 @@ async function createDiagnosticsText(): Promise<string> {
       settledValue([], () => getAuthManager().getProviderStatuses()),
       settledValue([], () => listProjects()),
       settledValue([], () => listSessions()),
-      settledValue([], () => listSkills(currentCwd)),
-      settledValue([], () => listMcpServers(currentCwd)),
+      settledValue([], () =>
+        isRemoteResourceScope() ? listGlobalSkills() : listSkills(currentCwd)
+      ),
+      settledValue([], () =>
+        isRemoteResourceScope() ? listGlobalMcpServers() : listMcpServers(currentCwd)
+      ),
       settledValue([], () => listPlugins()),
       settledValue(null, () => resolveSessionModelSelection(currentSessionKey, currentSnapshot)),
       settledValue(selectedThinkingLevel, () =>
@@ -4042,7 +4392,7 @@ async function createDiagnosticsText(): Promise<string> {
     currentSession: {
       path: currentSessionPath ?? null,
       ...(phiSessionId ? { phiSessionId } : {}),
-      cwd: currentCwd,
+      cwd: getCurrentSessionPayload().displayCwd,
       permissionMode: currentPermissionMode,
       status: currentSummary?.status,
       unreadKind: currentSummary?.unreadKind,
@@ -4092,6 +4442,8 @@ async function stopActivePrompt(): Promise<void> {
   }
 
   run.cancelled = true
+  remoteBashManager.cancelSession(run.phiSessionId)
+  remoteMutationManager.cancelSession(run.phiSessionId)
   runnerRegistry.stopRun(run.phiSessionId)
   cancelPendingRunWaits()
   if (run.session) {
@@ -4100,6 +4452,8 @@ async function stopActivePrompt(): Promise<void> {
 }
 
 async function stopAllPromptRuns(): Promise<void> {
+  remoteBashManager.cancelAll()
+  remoteMutationManager.cancelAll()
   for (const [sessionKey, run] of activePromptRuns) {
     advancePromptGeneration(sessionKey)
     run.cancelled = true
@@ -4134,6 +4488,9 @@ async function disposeAndSwitchSession(
 ): Promise<{
   path: string | null
   cwd: string
+  displayCwd: string
+  projectId?: string
+  projectLocation?: ProjectLocation
   sessionGeneration: number
   permissionMode: PermissionMode
 }> {
@@ -4174,6 +4531,40 @@ async function getAgentSession(
       if (!lifecycle.isCurrentGeneration(generation)) {
         throw new StaleSessionError()
       }
+      const sessionManifest = findPhiManifestForSession(
+        sessionKey,
+        creationSnapshot.path,
+        creationSnapshot.cwd
+      )
+      const project = sessionManifest?.projectId
+        ? getProject(sessionManifest.projectId)
+        : getProjectByCwd(creationSnapshot.cwd)
+      const remoteProject =
+        sessionManifest?.projectLocation?.kind === 'ssh' &&
+        typeof sessionManifest.projectId === 'string'
+          ? { projectId: sessionManifest.projectId, location: sessionManifest.projectLocation }
+          : null
+      if (
+        !remoteProject &&
+        (project?.location?.kind === 'ssh' ||
+          isRemoteProjectAnchorPath(creationSnapshot.cwd, AGENT_DIR))
+      ) {
+        throw new Error('远程项目旧会话缺少服务器位置绑定，已拒绝在本机执行工具；请新建远程会话')
+      }
+      if (
+        remoteProject &&
+        (!project ||
+          project.location.kind !== 'ssh' ||
+          resolve(creationSnapshot.cwd) !== resolve(remoteProjectAnchorPath(project.id)) ||
+          remoteProject.projectId !== project.id ||
+          project.location.hostProfileId !== remoteProject.location.hostProfileId ||
+          project.location.canonicalRoot !== remoteProject.location.canonicalRoot)
+      ) {
+        throw new Error('远程项目会话归属无效，请重新选择项目')
+      }
+      const remoteContextFiles = remoteProject
+        ? await loadRemoteProjectInstructions(remoteProject.location)
+        : null
       const runtime = await getAuthManager().getRuntime()
       if (!lifecycle.isCurrentGeneration(generation)) {
         throw new StaleSessionError()
@@ -4220,15 +4611,20 @@ async function getAgentSession(
       )
 
       let resourceLoader: RuntimeResourceLoader | undefined
-      const notebookPrompt = notebookAgentRuntimePrompt(creationSnapshot.cwd)
+      const notebookPrompt = remoteProject ? null : notebookAgentRuntimePrompt(creationSnapshot.cwd)
       // Phi scans its own agent definitions (plus legacy layouts for compatibility).
       // The same scan feeds the leader prompt here and the delegation tools the
       // worker builds, so the two can never disagree.
-      const agentScan = discoverPhiAgents({
-        cwd: creationSnapshot.cwd,
-        agentDir: AGENT_DIR,
-        bundledDir: getBundledAgentsDir()
-      })
+      const remoteWrapperAgent = remoteProject
+        ? loadRemoteWrapperAgent(getBundledAgentsDir())
+        : undefined
+      const agentScan = remoteProject
+        ? { agents: remoteWrapperAgent ? [remoteWrapperAgent] : [], diagnostics: [] }
+        : discoverPhiAgents({
+            cwd: creationSnapshot.cwd,
+            agentDir: AGENT_DIR,
+            bundledDir: getBundledAgentsDir()
+          })
       for (const diagnostic of agentScan.diagnostics) {
         writeAppLog({
           event: 'agent_definition_invalid',
@@ -4240,55 +4636,175 @@ async function getAgentSession(
         ...(notebookPrompt ? [notebookPrompt] : []),
         ...(agentLeaderPrompt ? [agentLeaderPrompt] : [])
       ]
-      const shouldLoadBundledSkills = existsSync(getBundledSkillsDir())
+      const shouldLoadBundledSkills = !remoteProject && existsSync(getBundledSkillsDir())
       const extensionFactories =
-        creationSnapshot.permissionMode === 'ask'
+        remoteProject || creationSnapshot.permissionMode === 'ask'
           ? [
               createApprovalExtension({
                 signal: sessionAbortController.signal,
-                getContext: () => {
+                ...(remoteProject
+                  ? {
+                      shouldGate: () =>
+                        findPhiSessionById(sessionManifest?.sessionId ?? '')?.permissionMode ===
+                        'ask'
+                    }
+                  : {}),
+                getContext: (event) => {
                   const run = getActivePromptRun(sessionKey)
-                  if (!run) return null
-                  const project = getProjectByCwd(creationSnapshot.cwd)
+                  const phiSessionId = run?.phiSessionId ?? sessionManifest?.sessionId
+                  if (!phiSessionId) return null
+                  const remoteHost =
+                    project?.location.kind === 'ssh'
+                      ? getRemoteHostProfile(project.location.hostProfileId)
+                      : undefined
+                  if (project?.location.kind === 'ssh' && !remoteHost) {
+                    throw new Error('远程项目的 SSH 服务器档案不可用')
+                  }
                   return {
-                    sessionId: run.phiSessionId,
-                    sessionPath: phiOnlySessionPath(run.phiSessionId),
-                    sessionGeneration: run.sessionGeneration,
-                    runId: run.runId,
-                    cwd: creationSnapshot.cwd,
+                    sessionId: phiSessionId,
+                    sessionPath: phiOnlySessionPath(phiSessionId),
+                    sessionGeneration: run?.sessionGeneration ?? generation,
+                    runId: event?.agentRunId ?? run?.runId ?? 'background-agent',
+                    cwd:
+                      project?.location.kind === 'ssh' && remoteHost
+                        ? `ssh://${remoteHost.hostAlias}${project.location.canonicalRoot}`
+                        : creationSnapshot.cwd,
+                    ...(project?.location.kind === 'ssh' && remoteHost
+                      ? {
+                          scopeNote: remoteBashApprovalScope(
+                            remoteHost.hostAlias,
+                            project.location.canonicalRoot
+                          ),
+                          writeScopeNote: `SSH ${remoteHost.hostAlias} · 项目 ${project.location.canonicalRoot}；新建文件或修改已读取且未变化的文件。`
+                        }
+                      : {}),
                     ...(project?.name ? { projectName: project.name } : {})
                   }
                 },
                 onApprovalRequested: (request) => {
                   if (!request.sessionId) return
-                  runnerRegistry.markNeedsApproval(request.sessionId, request.requestId, {
-                    toolName: request.toolName,
-                    summary: request.summary
-                  })
+                  if (request.agentRunId && request.cwd) {
+                    backgroundAgentApprovals.requested({
+                      sessionId: request.sessionId,
+                      agentRunId: request.agentRunId,
+                      approvalId: request.requestId,
+                      toolName: request.toolName,
+                      summary: request.summary,
+                      cwd: request.cwd
+                    })
+                  } else {
+                    runnerRegistry.markNeedsApproval(request.sessionId, request.requestId, {
+                      toolName: request.toolName,
+                      summary: request.summary
+                    })
+                  }
                 },
                 onApprovalResolved: (request, approved) => {
                   if (!request.sessionId) return
                   if (approved) {
-                    runnerRegistry.markApprovalApproved(request.sessionId, request.requestId)
+                    if (
+                      remoteProject &&
+                      request.toolName === 'bash' &&
+                      request.toolCallId &&
+                      request.approvalDigest &&
+                      request.cwd
+                    ) {
+                      approvedRemoteBashCalls.set(
+                        remoteBashApprovalKey(request.sessionId, request.toolCallId),
+                        {
+                          projectId: remoteProject.projectId,
+                          approvedCwd: request.cwd,
+                          approvalDigest: request.approvalDigest,
+                          expiresAt: Date.now() + 120_000
+                        }
+                      )
+                    }
+                    if (
+                      remoteProject &&
+                      request.toolName === 'write' &&
+                      request.toolCallId &&
+                      request.approvalDigest &&
+                      request.cwd
+                    ) {
+                      approvedRemoteWriteCalls.set(
+                        remoteBashApprovalKey(request.sessionId, request.toolCallId),
+                        {
+                          projectId: remoteProject.projectId,
+                          approvedCwd: request.cwd,
+                          approvalDigest: request.approvalDigest,
+                          expiresAt: Date.now() + 120_000
+                        }
+                      )
+                    }
+                    if (
+                      remoteProject &&
+                      request.toolName === 'edit' &&
+                      request.toolCallId &&
+                      request.approvalDigest &&
+                      request.cwd
+                    ) {
+                      approvedRemoteEditCalls.set(
+                        remoteBashApprovalKey(request.sessionId, request.toolCallId),
+                        {
+                          projectId: remoteProject.projectId,
+                          approvedCwd: request.cwd,
+                          approvalDigest: request.approvalDigest,
+                          expiresAt: Date.now() + 120_000
+                        }
+                      )
+                    }
+                    if (request.agentRunId) {
+                      backgroundAgentApprovals.resolved(request.requestId, 'approved')
+                    } else {
+                      runnerRegistry.markApprovalApproved(request.sessionId, request.requestId)
+                    }
                   } else {
-                    runnerRegistry.markApprovalDenied(request.sessionId, request.requestId)
+                    if (remoteProject && request.toolCallId) {
+                      approvedRemoteBashCalls.delete(
+                        remoteBashApprovalKey(request.sessionId, request.toolCallId)
+                      )
+                      approvedRemoteWriteCalls.delete(
+                        remoteBashApprovalKey(request.sessionId, request.toolCallId)
+                      )
+                      approvedRemoteEditCalls.delete(
+                        remoteBashApprovalKey(request.sessionId, request.toolCallId)
+                      )
+                    }
+                    if (request.agentRunId) {
+                      backgroundAgentApprovals.resolved(request.requestId, 'denied')
+                    } else {
+                      runnerRegistry.markApprovalDenied(request.sessionId, request.requestId)
+                    }
                   }
                 },
                 onApprovalCancelled: (request) => {
                   if (!request.sessionId) return
-                  runnerRegistry.markApprovalCancelled(request.sessionId, request.requestId)
+                  if (request.agentRunId) {
+                    backgroundAgentApprovals.resolved(request.requestId, 'cancelled')
+                  } else {
+                    runnerRegistry.markApprovalCancelled(request.sessionId, request.requestId)
+                  }
                 }
               })
             ]
           : []
       if (
+        remoteProject ||
         shouldLoadBundledSkills ||
         appendSystemPrompt.length > 0 ||
         extensionFactories.length > 0
       ) {
         resourceLoader = createRuntimeResourceLoader({
-          cwd: creationSnapshot.cwd,
+          cwd: remoteProject ? AGENT_DIR : creationSnapshot.cwd,
           agentDir: AGENT_DIR,
+          ...(remoteProject
+            ? {
+                noExtensions: true,
+                noPromptTemplates: true,
+                noThemes: true,
+                noContextFiles: true
+              }
+            : {}),
           ...(appendSystemPrompt.length > 0 ? { appendSystemPrompt } : {}),
           ...(extensionFactories.length > 0 ? { extensionFactories } : {})
         })
@@ -4308,6 +4824,16 @@ async function getAgentSession(
         ),
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(agentScan.agents.length > 0 ? { phiAgents: agentScan.agents } : {}),
+        projectBound: Boolean(project),
+        ...(remoteProject
+          ? {
+              remoteProject: {
+                ...remoteProject,
+                phiSessionId: sessionManifest?.sessionId ?? '',
+                contextFiles: remoteContextFiles ?? []
+              }
+            }
+          : {}),
         personaMarkdown: getPersonaMarkdown(),
         ...(model ? { model } : {})
       })
@@ -4463,8 +4989,8 @@ app.whenReady().then(() => {
       metadata: { error: error instanceof Error ? error.message : String(error) }
     })
   }
-  // Fire-and-forget: resumes any slurm-controller run left mid-flight by the
-  // previous app session (see executor-slurm-reconcile.ts's doc comment).
+  // Fire-and-forget: resumes remote Slurm and detached runs left mid-flight by
+  // the previous app session (see executor-slurm-reconcile.ts's doc comment).
   // Must never block startup — a network hiccup here shouldn't delay the window.
   void reconcileRemoteWrapperRuns().catch((error: unknown) => {
     writeAppLog({
@@ -4536,6 +5062,9 @@ app.whenReady().then(() => {
     return getLocalFileIconDataUrl(filePath)
   })
   ipcMain.handle('files:pickInput', async () => {
+    if (isRemoteProjectAnchorPath(currentCwd, AGENT_DIR)) {
+      throw new Error('远程项目文件选择暂不可用；不会打开本机会话目录')
+    }
     const window = getActiveWindow()
     const options: Electron.OpenDialogOptions = {
       defaultPath: currentCwd || undefined,
@@ -4548,6 +5077,85 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('files:preview', async (_, filePath: string) => {
     return createFilePreview(filePath)
+  })
+  ipcMain.handle('remoteWorkspace:preview', async (_, request: unknown) =>
+    remoteConnectionTracker.observe(remoteRequestProjectId(request), () =>
+      previewRemoteWorkspaceFile(request)
+    )
+  )
+  ipcMain.handle('remoteWorkspace:listDirectory', async (_, request: unknown) =>
+    remoteConnectionTracker.observe(remoteRequestProjectId(request), () =>
+      listRemoteWorkspaceDirectory(request)
+    )
+  )
+  ipcMain.handle('wrapperResults:listDirectory', async (_, request: unknown) =>
+    remoteConnectionTracker.observe(remoteRequestProjectId(request), () =>
+      listWrapperResultDirectory(request)
+    )
+  )
+  ipcMain.handle('wrapperResults:preview', async (_, request: unknown) =>
+    runWrapperResultRead(request, previewWrapperResult)
+  )
+  ipcMain.handle('wrapperResults:readRange', async (_, request: unknown) =>
+    runWrapperResultRead(request, readWrapperResultRange)
+  )
+  ipcMain.handle('wrapperResults:cancelRead', async (_, requestId: unknown) => {
+    if (typeof requestId !== 'string') throw new Error('Wrapper 结果读取请求 ID 无效')
+    const controller = wrapperResultReadControllers.get(requestId)
+    controller?.abort()
+    return controller !== undefined
+  })
+  ipcMain.handle('wrapperResults:download', async (event, request: unknown) => {
+    const checked = validateWrapperResultDownloadRequest(request)
+    const { requestId } = checked
+    if (wrapperResultDownloads.has(requestId)) throw new Error('Wrapper 下载请求 ID 正在使用')
+    const name = basename(checked.path!)
+    const window = BrowserWindow.fromWebContents?.(event.sender) ?? getActiveWindow()
+    const options: Electron.SaveDialogOptions = {
+      defaultPath: name && name !== '.' && name !== '..' ? name : 'remote-result'
+    }
+    const chosen = window
+      ? await dialog.showSaveDialog(window, options)
+      : await dialog.showSaveDialog(options)
+    if (chosen.canceled || !chosen.filePath) return { status: 'cancelled' as const }
+    if (wrapperResultDownloads.has(requestId)) throw new Error('Wrapper 下载请求 ID 正在使用')
+
+    const controller = new AbortController()
+    const active: {
+      controller: AbortController
+      phase: 'downloading' | 'verifying' | 'saving'
+    } = { controller, phase: 'downloading' }
+    wrapperResultDownloads.set(requestId, active)
+    try {
+      return await remoteConnectionTracker.observe(remoteRequestProjectId(request), async () => {
+        try {
+          return await downloadWrapperResultToPath(checked, chosen.filePath!, {
+            signal: controller.signal,
+            onProgress: (progress) => {
+              active.phase = progress.phase
+              try {
+                if (event.sender.isDestroyed?.()) controller.abort()
+                else event.sender.send?.('wrapperResults:downloadProgress', progress)
+              } catch {
+                controller.abort()
+              }
+            }
+          })
+        } catch (error) {
+          if (controller.signal.aborted) throw new Error('Wrapper 下载已取消')
+          throw error
+        }
+      })
+    } finally {
+      wrapperResultDownloads.delete(requestId)
+    }
+  })
+  ipcMain.handle('wrapperResults:cancelDownload', async (_, requestId: unknown) => {
+    if (typeof requestId !== 'string') throw new Error('Wrapper 下载请求 ID 无效')
+    const active = wrapperResultDownloads.get(requestId)
+    if (!active || active.phase === 'saving') return false
+    active.controller.abort()
+    return true
   })
   ipcMain.handle('files:hoverPreview', async (_, filePath: string) => {
     return createFileHoverPreview(filePath)
@@ -4825,10 +5433,18 @@ app.whenReady().then(() => {
       if (shouldBecomeCurrent) {
         acknowledgeSession(path, manifest.cwd)
       }
+      const project = manifest.projectId ? getProject(manifest.projectId) : undefined
+      const projectLocation = manifest.projectLocation ?? project?.location
+      if (shouldBecomeCurrent && projectLocation?.kind === 'ssh' && manifest.projectId) {
+        scheduleRemoteProjectCheck(manifest.sessionId, manifest.projectId)
+      }
       return {
         path,
         phiSessionId: manifest.sessionId,
         cwd: target.cwd,
+        displayCwd: projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : target.cwd,
+        ...(manifest.projectId ? { projectId: manifest.projectId } : {}),
+        ...(projectLocation ? { projectLocation } : {}),
         sessionGeneration: target.sessionGeneration,
         permissionMode: manifest.permissionMode,
         ...getSessionStatusPayload(targetKey, path, target.cwd),
@@ -4874,10 +5490,18 @@ app.whenReady().then(() => {
     }
     const sessionPath = session.sessionFile ?? path
     const phiSessionId = getPhiSessionIdForKey(targetKey)
+    const linkedManifest = phiSessionId
+      ? findPhiSessionById(phiSessionId)
+      : findPhiSessionByRuntimePath(sessionPath, target.cwd)
+    const project = linkedManifest?.projectId ? getProject(linkedManifest.projectId) : undefined
+    const projectLocation = linkedManifest?.projectLocation ?? project?.location
     return {
       path: phiSessionId ? phiOnlySessionPath(phiSessionId) : sessionPath,
       ...(phiSessionId ? { phiSessionId } : {}),
       cwd: target.cwd,
+      displayCwd: projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : target.cwd,
+      ...(linkedManifest?.projectId ? { projectId: linkedManifest.projectId } : {}),
+      ...(projectLocation ? { projectLocation } : {}),
       sessionGeneration: target.sessionGeneration,
       permissionMode,
       ...getSessionStatusPayload(targetKey, sessionPath, target.cwd),
@@ -4944,6 +5568,9 @@ app.whenReady().then(() => {
     async (_, name: string, workingDirectory: string, permissionMode: PermissionMode) =>
       createProject({ name, workingDirectory, permissionMode })
   )
+  ipcMain.handle('projects:createRemote', async (_, input: RemoteProjectCreateInput) =>
+    createCheckedRemoteProject(input)
+  )
   ipcMain.handle('projects:delete', async (_, id: string) => {
     deleteProject(id)
   })
@@ -4951,7 +5578,24 @@ app.whenReady().then(() => {
     'projects:updatePermissionMode',
     async (_, id: string, permissionMode: PermissionMode) => {
       const project = updateProjectPermissionMode(id, permissionMode)
-      if (project.workingDirectory === currentCwd) {
+      if (project.location?.kind === 'ssh') {
+        for (const manifest of listPhiSessions()) {
+          if (manifest.projectId === id) {
+            updateSessionManifest(manifest.sessionId, { permissionMode })
+          }
+        }
+        const selected = findPhiManifestForSession(
+          currentSessionKey,
+          currentSessionPath,
+          currentCwd
+        )
+        if (selected?.projectId === id) {
+          currentPermissionMode = permissionMode
+          sessionPermissionModes.set(resolveSessionKeyAlias(currentSessionKey), permissionMode)
+          notifySessionChanged()
+        }
+      }
+      if (project.location?.kind !== 'ssh' && project.workingDirectory === currentCwd) {
         currentPermissionMode = project.permissionMode
         await invalidateAgentSession()
       }
@@ -4980,41 +5624,97 @@ app.whenReady().then(() => {
       return updateProjectDefaults(id, defaults)
     }
   )
-  ipcMain.handle('projects:pickPrivateKeyFile', async () => {
-    const window = getActiveWindow()
-    const options: Electron.OpenDialogOptions = {
-      defaultPath: join(homedir(), '.ssh'),
-      properties: ['openFile']
+  ipcMain.handle('projects:listRemoteHosts', async () => listAvailableRemoteHostProfiles())
+  ipcMain.handle('projects:listOpenSshHosts', async () => listOpenSshHosts())
+  ipcMain.handle('projects:saveOpenSshHost', async (_, input: OpenSshHostInput) => {
+    if (!input || typeof input !== 'object') throw new Error('SSH 服务器配置无效')
+    if (input.originalAlias) {
+      const id = sshConfigHostId(input.originalAlias)
+      const inUse = listProjects().some(
+        (project) =>
+          (project.location.kind === 'ssh' && project.location.hostProfileId === id) ||
+          project.remoteConnections?.some((connection) => connection.hostProfileId === id)
+      )
+      if (inUse) {
+        const current = (await listOpenSshHosts()).find(
+          (host) => host.alias === input.originalAlias
+        )
+        if (
+          !current ||
+          current.hostname !== input.hostname ||
+          (current.user ?? '') !== (input.user ?? '') ||
+          current.port !== input.port
+        ) {
+          throw new Error('该服务器已绑定项目；更改地址、用户或端口前请先解除项目绑定')
+        }
+      }
     }
-    const result = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options)
-    return result.canceled ? null : (result.filePaths[0] ?? null)
+    const alias = await saveOpenSshHost(input)
+    const profile = getRemoteHostProfile(sshConfigHostId(alias))
+    if (!profile) throw new Error('SSH 配置已保存，但重新读取服务器失败；请刷新列表')
+    return profile
   })
-  ipcMain.handle('projects:isRemoteCredentialStorageAvailable', async () =>
-    isRemoteCredentialStorageAvailable()
+  ipcMain.handle(
+    'projects:saveRemoteHost',
+    async (
+      _,
+      input: {
+        id?: string
+        label: string
+        hostAlias: string
+        user?: string
+        port?: number
+        identityFile?: string
+      }
+    ) => {
+      const saved = input.id ? getRemoteHostProfile(input.id) : undefined
+      const inUse =
+        input.id &&
+        listProjects().some(
+          (project) =>
+            (project.location.kind === 'ssh' && project.location.hostProfileId === input.id) ||
+            project.remoteConnections?.some((connection) => connection.hostProfileId === input.id)
+        )
+      if (
+        saved &&
+        inUse &&
+        (saved.hostAlias !== input.hostAlias.trim() ||
+          (saved.user ?? '') !== (input.user?.trim() ?? '') ||
+          saved.port !== input.port)
+      ) {
+        throw new Error('该服务器已绑定项目；请先解除项目绑定，再修改地址或认证设置')
+      }
+      return saveRemoteHostProfile(input)
+    }
+  )
+  ipcMain.handle('projects:deleteRemoteHost', async (_, id: string) => {
+    if (
+      listProjects().some(
+        (project) =>
+          (project.location.kind === 'ssh' && project.location.hostProfileId === id) ||
+          project.remoteConnections?.some((connection) => connection.hostProfileId === id)
+      )
+    ) {
+      throw new Error('该服务器仍被项目使用，请先移除项目中的远程连接')
+    }
+    deleteRemoteHostProfile(id)
+  })
+  ipcMain.handle(
+    'remote:doctor',
+    async (_, hostProfileId: unknown, remotePath: unknown, options: unknown) => {
+      if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
+        throw new Error('SSH 服务器档案 ID 无效')
+      }
+      if (remotePath !== undefined && typeof remotePath !== 'string') {
+        throw new Error('远程目录路径无效')
+      }
+      return remoteDoctor(hostProfileId, remotePath, options as RemoteDoctorOptions)
+    }
   )
   ipcMain.handle(
     'projects:updateRemoteConnection',
-    async (
-      _,
-      id: string,
-      connectionId: string,
-      patch: ProjectRemoteConnection | null,
-      passphrase?: string | null
-    ) => {
-      const project = updateProjectRemoteConnection(id, connectionId, patch)
-      // Keep the credential store in sync with the connection record: removed
-      // entirely, or its passphrase explicitly cleared/rotated — see
-      // remote-credential-store.ts, which never lets projects.ts's plain
-      // projects.json hold the passphrase itself.
-      if (patch === null || passphrase === null) {
-        deleteRemoteConnectionPassphrase(connectionId)
-      } else if (passphrase) {
-        storeRemoteConnectionPassphrase(connectionId, passphrase)
-      }
-      return project
-    }
+    async (_, id: string, connectionId: string, patch: ProjectRemoteConnection | null) =>
+      updateProjectRemoteConnection(id, connectionId, patch)
   )
   ipcMain.handle(
     'projects:updateRemoteDefaults',
@@ -5030,6 +5730,35 @@ app.whenReady().then(() => {
   ipcMain.handle('projects:sessions', async (_, workingDirectory: string) =>
     listSessions(workingDirectory)
   )
+  ipcMain.handle('projects:sessionsById', async (_, projectId: string) => {
+    const project = getProject(projectId)
+    if (!project) throw new Error('项目不存在')
+    const cwd =
+      project.location.kind === 'ssh'
+        ? ensureRemoteProjectAnchor(project.id)
+        : project.workingDirectory
+    return listSessions(cwd)
+  })
+  ipcMain.handle('projects:newRemoteSession', async (_, projectId: string) => {
+    const session = createRemoteManagedSession(projectId)
+    const current = await disposeAndSwitchSession(session.path, session.cwd, session.permissionMode)
+    scheduleRemoteProjectCheck(session.sessionId, projectId)
+    return current
+  })
+  ipcMain.handle('projects:retryRemoteConnection', async (_, request: unknown) => {
+    if (
+      !request ||
+      typeof request !== 'object' ||
+      Array.isArray(request) ||
+      Object.keys(request).length !== 2 ||
+      typeof (request as Record<string, unknown>).sessionId !== 'string' ||
+      typeof (request as Record<string, unknown>).projectId !== 'string'
+    ) {
+      throw new Error('远程重连请求必须包含会话和项目 ID')
+    }
+    const { sessionId, projectId } = request as { sessionId: string; projectId: string }
+    return remoteConnectionTracker.check(sessionId, projectId)
+  })
   ipcMain.handle(
     'projects:newSession',
     async (_, workingDirectory: string, permissionMode: PermissionMode) => {
@@ -5480,27 +6209,128 @@ app.whenReady().then(() => {
       throw error
     }
   })
-  ipcMain.handle('skills:list', async (_, cwd?: string) => listSkills(cwd ?? currentCwd))
-  ipcMain.handle('skills:read', async (_, filePath: string, cwd?: string) =>
-    readSkillContent(filePath, cwd ?? currentCwd)
+  ipcMain.handle('skills:list', async (_, cwd?: string) =>
+    isRemoteResourceScope(cwd) ? listGlobalSkills() : listSkills(cwd ?? currentCwd)
   )
+  ipcMain.handle('skills:read', async (_, filePath: string, cwd?: string) => {
+    if (isRemoteResourceScope(cwd)) {
+      return readGlobalSkillContent(filePath)
+    }
+    return readSkillContent(filePath, cwd ?? currentCwd)
+  })
   ipcMain.handle(
     'skills:setDisabled',
-    async (_, filePath: string, disabled: boolean, cwd?: string) =>
-      setSkillDisabled(filePath, Boolean(disabled), cwd ?? currentCwd)
+    async (_, filePath: string, disabled: boolean, cwd?: string) => {
+      if (isRemoteResourceScope(cwd)) {
+        throw new Error('远程项目 Skills 暂不可用')
+      }
+      return setSkillDisabled(filePath, Boolean(disabled), cwd ?? currentCwd)
+    }
   )
-  ipcMain.handle('skills:delete', async (_, filePath: string, cwd?: string) =>
-    deleteSkill(filePath, cwd ?? currentCwd)
+  ipcMain.handle('skills:delete', async (_, filePath: string, cwd?: string) => {
+    if (isRemoteResourceScope(cwd)) {
+      throw new Error('远程项目 Skills 暂不可用')
+    }
+    return deleteSkill(filePath, cwd ?? currentCwd)
+  })
+  ipcMain.handle('agents:list', async (_, cwd?: string) =>
+    isRemoteResourceScope(cwd) ? [] : listPromptAgents(cwd ?? currentCwd)
   )
-  ipcMain.handle('agents:list', async (_, cwd?: string) => listPromptAgents(cwd ?? currentCwd))
-  ipcMain.handle('mcp:listServers', async (_, cwd?: string) => listMcpServers(cwd ?? currentCwd))
+  ipcMain.handle('mcp:listServers', async (_, cwd?: string) =>
+    isRemoteResourceScope(cwd) ? listGlobalMcpServers() : listMcpServers(cwd ?? currentCwd)
+  )
 
   ipcMain.handle('wrappers:getPlan', async (_, planId: string) => readWrapperPlan(planId))
+  ipcMain.handle('wrappers:retargetPlan', async (_, request: WrapperRetargetRequest) => {
+    if (
+      !request ||
+      typeof request !== 'object' ||
+      Object.keys(request).some(
+        (key) => !['planId', 'target', 'expectedRevision', 'confirmedLocalFallback'].includes(key)
+      ) ||
+      typeof request.planId !== 'string' ||
+      !request.planId ||
+      (request.target !== 'local' && request.target !== 'remote') ||
+      !Number.isSafeInteger(request.expectedRevision) ||
+      request.expectedRevision < 1 ||
+      (request.confirmedLocalFallback !== undefined &&
+        typeof request.confirmedLocalFallback !== 'boolean')
+    ) {
+      throw new Error('Wrapper 目标变更请求无效')
+    }
+    return retargetWrapperRunPlan(request)
+  })
   ipcMain.handle(
     'wrappers:submitPlan',
-    async (_, planId: string, heavyWorkloadAcknowledged?: boolean) => {
+    async (
+      _,
+      planId: string,
+      heavyWorkloadAcknowledged?: boolean,
+      confirmation?: WrapperSubmitConfirmation
+    ) => {
+      const plan = readWrapperPlan(planId)
+      const selected = plan?.targetSelection
+      if (selected) {
+        if (
+          !selected.projectLocation ||
+          !['local', 'ssh'].includes(selected.projectLocation.kind)
+        ) {
+          throw new Error('计划目标快照无效，请重新创建计划。')
+        }
+        if (
+          !confirmation ||
+          typeof confirmation !== 'object' ||
+          Object.keys(confirmation).some(
+            (key) =>
+              ![
+                'expectedRevision',
+                'target',
+                'projectId',
+                'hostProfileId',
+                'remoteRoot',
+                'externalOutputRoot'
+              ].includes(key)
+          ) ||
+          confirmation.expectedRevision !== plan.revision ||
+          confirmation.target !== selected.target ||
+          confirmation.projectId !== selected.projectId ||
+          confirmation.hostProfileId !== selected.hostProfileId ||
+          confirmation.remoteRoot !== selected.remoteRoot ||
+          confirmation.externalOutputRoot !==
+            (selected.target === 'remote'
+              ? declaredExternalOutputRoot(selected.remoteRoot, plan.params?.outdir)
+              : undefined)
+        ) {
+          throw new Error('计划执行目标已变化，请刷新计划卡后重新确认。')
+        }
+      }
+      if (isRemoteProjectAnchorPath(currentCwd, AGENT_DIR)) {
+        const manifest = findPhiManifestForSession(
+          currentSessionKey,
+          currentSessionPath,
+          currentCwd
+        )
+        if (
+          manifest?.projectLocation?.kind !== 'ssh' ||
+          plan?.targetSelection?.projectId !== manifest.projectId ||
+          plan.targetSelection.target !== 'remote'
+        ) {
+          throw new Error('远程项目只能提交绑定本项目服务器的 Wrapper 计划；不会在本机执行')
+        }
+      }
+      if (selected?.target === 'remote' && selected.projectLocation.kind === 'ssh') {
+        const current = listProjects().find((project) => project.id === selected.projectId)
+        if (current?.remoteConnection?.phase !== 'reachable') {
+          throw new Error(
+            current?.remoteConnection?.message ?? '服务器连接尚未就绪，请重连后再提交。'
+          )
+        }
+      }
       try {
-        return submitWrapperRunPlan(planId, { heavyWorkloadAcknowledged })
+        return submitWrapperRunPlan(planId, {
+          heavyWorkloadAcknowledged,
+          externalOutputRoot: confirmation?.externalOutputRoot
+        })
       } catch (error) {
         rememberErrorSummary(error)
         throw error
@@ -5629,7 +6459,7 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
-  // Stops every background wrapper run and records it cancelled (synchronously: we are exiting).
+  // Stop local wrapper runs; detach remote runs so the next app launch can resume watching them.
   wrapperJobs.shutdown()
   if (preventSleepBlockerId !== null && powerSaveBlocker.isStarted(preventSleepBlockerId)) {
     powerSaveBlocker.stop(preventSleepBlockerId)

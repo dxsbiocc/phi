@@ -1,5 +1,24 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { DatabaseWebImagePreview } from '../shared/databaseWebPreview'
+import type { RemoteWorkspaceFileRequest } from '../shared/remoteWorkspacePath'
+import type {
+  WrapperResultDirectoryRequest,
+  WrapperResultDownloadProgress,
+  WrapperResultDownloadResult,
+  WrapperResultRange,
+  WrapperResultRangeRequest,
+  WrapperResultReadRequest,
+  WrapperResultPreview
+} from '../shared/wrapperResultTypes'
+import type {
+  ProjectLocation,
+  RemoteProjectConnectionChange,
+  RemoteProjectConnectionRetryRequest,
+  RemoteProjectConnectionState,
+  RemoteProjectCreateInput,
+  RemoteProjectReachability
+} from '../shared/projectLocation'
+import type { OpenSshHostInput } from '../shared/remoteHostProfile'
 
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) because WrapperRunPlan/WrapperRun are large, evolving
@@ -10,7 +29,14 @@ import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
 import type { WrapperCompositionManifest } from '../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
 import type { RemoteHpcSettings } from '../shared/wrapperRemoteTypes'
-import type { WrapperRun, WrapperRunPlan } from '../shared/wrapperTypes'
+import type { RemoteDoctorOptions, RemoteDoctorReport } from '../shared/remoteDoctorTypes'
+import type {
+  WrapperRetargetRequest,
+  WrapperInputPathMapping,
+  WrapperRun,
+  WrapperRunPlan,
+  WrapperSubmitConfirmation
+} from '../shared/wrapperTypes'
 import type {
   AgentUserInteractionRequest,
   AgentUserInteractionResponse
@@ -133,6 +159,9 @@ type SessionSwitchResult = SessionRuntimeState & {
   path: string
   phiSessionId?: string
   cwd: string
+  displayCwd?: string
+  projectId?: string
+  projectLocation?: ProjectLocation
   sessionGeneration: number
   permissionMode: PermissionMode
   messages: unknown[]
@@ -142,6 +171,9 @@ type CurrentSession = SessionRuntimeState & {
   path: string | null
   phiSessionId?: string
   cwd: string
+  displayCwd?: string
+  projectId?: string
+  projectLocation?: ProjectLocation
   sessionGeneration: number
   permissionMode: PermissionMode
   messages?: unknown[]
@@ -167,19 +199,38 @@ type PermissionMode = 'auto' | 'ask' | 'full'
 type ProjectRemoteConnection = {
   id: string
   label: string
-  host: string
-  port?: number
-  username: string
-  privateKeyPath: string
-  hasPassphrase?: boolean
+  hostProfileId: string
   hpc?: RemoteHpcSettings
+  inputPathMapping?: WrapperInputPathMapping
+}
+
+type RemoteHostProfile = {
+  id: string
+  label: string
+  hostAlias: string
+  user?: string
+  port?: number
+  identityFile?: string
+  source?: 'ssh-config'
+}
+type OpenSshHost = {
+  alias: string
+  hostname?: string
+  user?: string
+  port?: number
+  identityFiles: string[]
 }
 
 type Project = {
   id: string
   name: string
+  location: ProjectLocation
   workingDirectory: string
   permissionMode: PermissionMode
+  pathAvailable?: boolean
+  remoteReachability?: RemoteProjectReachability
+  remoteConnection?: RemoteProjectConnectionState
+  remoteHostAlias?: string
   gitStatus?: {
     branch: string
     dirty: boolean
@@ -194,6 +245,7 @@ type Project = {
 
 type ToolApprovalRequest = {
   requestId: string
+  agentRunId?: string
   sessionId?: string
   sessionPath?: string
   sessionGeneration?: number
@@ -582,9 +634,20 @@ type RendererAuthApi = {
   getPathForFile: (file: File) => string
   onInputFilesDropped: (cb: (paths: string[]) => void) => Unsubscribe
   previewFile: (path: string) => Promise<FilePreview>
+  previewRemoteWorkspaceFile: (request: RemoteWorkspaceFileRequest) => Promise<FilePreview>
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
   statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
   listDirectory: (path: string) => Promise<DirectoryListing>
+  listRemoteWorkspaceDirectory: (request: RemoteWorkspaceFileRequest) => Promise<DirectoryListing>
+  listWrapperResultDirectory: (request: WrapperResultDirectoryRequest) => Promise<DirectoryListing>
+  previewWrapperResult: (request: WrapperResultReadRequest) => Promise<WrapperResultPreview>
+  readWrapperResultRange: (request: WrapperResultRangeRequest) => Promise<WrapperResultRange>
+  cancelWrapperResultRead: (requestId: string) => Promise<boolean>
+  downloadWrapperResult: (request: WrapperResultReadRequest) => Promise<WrapperResultDownloadResult>
+  cancelWrapperResultDownload: (requestId: string) => Promise<boolean>
+  onWrapperResultDownloadProgress: (
+    cb: (progress: WrapperResultDownloadProgress) => void
+  ) => Unsubscribe
   renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
   previewDatabaseWebImage: (url: string) => Promise<DatabaseWebImagePreview>
   copyDiagnostics: () => Promise<string>
@@ -642,6 +705,13 @@ type RendererAuthApi = {
     workingDirectory: string,
     permissionMode: PermissionMode
   ) => Promise<Project>
+  createRemoteProject: (input: RemoteProjectCreateInput) => Promise<Project>
+  retryRemoteProjectConnection: (
+    request: RemoteProjectConnectionRetryRequest
+  ) => Promise<RemoteProjectConnectionState>
+  onRemoteProjectConnectionChanged: (
+    cb: (change: RemoteProjectConnectionChange) => void
+  ) => Unsubscribe
   deleteProject: (id: string) => Promise<void>
   updateProjectPermissionMode: (id: string, permissionMode: PermissionMode) => Promise<Project>
   updateProjectDefaults: (
@@ -651,13 +721,27 @@ type RendererAuthApi = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => Promise<Project>
-  pickPrivateKeyFile: () => Promise<string | null>
-  isRemoteCredentialStorageAvailable: () => Promise<boolean>
+  listRemoteHosts: () => Promise<RemoteHostProfile[]>
+  listOpenSshHosts: () => Promise<OpenSshHost[]>
+  saveOpenSshHost: (input: OpenSshHostInput) => Promise<RemoteHostProfile>
+  saveRemoteHost: (input: {
+    id?: string
+    label: string
+    hostAlias: string
+    user?: string
+    port?: number
+    identityFile?: string
+  }) => Promise<RemoteHostProfile>
+  deleteRemoteHost: (id: string) => Promise<void>
+  remoteDoctor: (
+    hostProfileId: string,
+    remotePath?: string,
+    options?: RemoteDoctorOptions
+  ) => Promise<RemoteDoctorReport>
   updateProjectRemoteConnection: (
     id: string,
     connectionId: string,
-    patch: ProjectRemoteConnection | null,
-    passphrase?: string | null
+    patch: ProjectRemoteConnection | null
   ) => Promise<Project>
   updateProjectRemoteDefaults: (
     id: string,
@@ -667,10 +751,12 @@ type RendererAuthApi = {
     }
   ) => Promise<Project>
   listProjectSessions: (workingDirectory: string) => Promise<SessionSummary[]>
+  listProjectSessionsById: (projectId: string) => Promise<SessionSummary[]>
   createProjectSession: (
     workingDirectory: string,
     permissionMode: PermissionMode
   ) => Promise<CurrentSession>
+  createRemoteProjectSession: (projectId: string) => Promise<CurrentSession>
   listAnalysisNotebooks: (cwd?: string) => Promise<AnalysisNotebookRegistry>
   initializeProjectAnalysis: (cwd: string) => Promise<AnalysisProjectInitialization>
   openAnalysisNotebook: (cwd: string, path: string) => Promise<AnalysisNotebookFile>
@@ -763,7 +849,12 @@ type RendererAuthApi = {
   listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
   getWrapperPlan: (planId: string) => Promise<WrapperRunPlan | undefined>
-  submitWrapperPlan: (planId: string, heavyWorkloadAcknowledged?: boolean) => Promise<WrapperRun>
+  retargetWrapperPlan: (request: WrapperRetargetRequest) => Promise<WrapperRunPlan>
+  submitWrapperPlan: (
+    planId: string,
+    heavyWorkloadAcknowledged?: boolean,
+    confirmation?: WrapperSubmitConfirmation
+  ) => Promise<WrapperRun>
   cancelWrapperRunPlan: (planId: string) => Promise<WrapperRunPlan>
   listWrapperCatalog: () => Promise<WrapperCatalogEntry[]>
   addCustomWrapper: (sourceDir: string) => Promise<WrapperCatalogEntry>
@@ -793,12 +884,36 @@ const api: RendererAuthApi = {
     }
   },
   previewFile: (path: string): Promise<FilePreview> => ipcRenderer.invoke('files:preview', path),
+  previewRemoteWorkspaceFile: (request: RemoteWorkspaceFileRequest): Promise<FilePreview> =>
+    ipcRenderer.invoke('remoteWorkspace:preview', request),
   hoverPreviewFile: (path: string): Promise<FileHoverPreview> =>
     ipcRenderer.invoke('files:hoverPreview', path),
   statLocalPaths: (cwd: string, paths: string[]): Promise<LocalPathStat[]> =>
     ipcRenderer.invoke('files:statLocalPaths', cwd, paths),
   listDirectory: (path: string): Promise<DirectoryListing> =>
     ipcRenderer.invoke('files:listDirectory', path),
+  listRemoteWorkspaceDirectory: (request: RemoteWorkspaceFileRequest): Promise<DirectoryListing> =>
+    ipcRenderer.invoke('remoteWorkspace:listDirectory', request),
+  listWrapperResultDirectory: (request: WrapperResultDirectoryRequest): Promise<DirectoryListing> =>
+    ipcRenderer.invoke('wrapperResults:listDirectory', request),
+  previewWrapperResult: (request: WrapperResultReadRequest): Promise<WrapperResultPreview> =>
+    ipcRenderer.invoke('wrapperResults:preview', request),
+  readWrapperResultRange: (request: WrapperResultRangeRequest): Promise<WrapperResultRange> =>
+    ipcRenderer.invoke('wrapperResults:readRange', request),
+  cancelWrapperResultRead: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke('wrapperResults:cancelRead', requestId),
+  downloadWrapperResult: (
+    request: WrapperResultReadRequest
+  ): Promise<WrapperResultDownloadResult> => ipcRenderer.invoke('wrapperResults:download', request),
+  cancelWrapperResultDownload: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke('wrapperResults:cancelDownload', requestId),
+  onWrapperResultDownloadProgress: (
+    cb: (progress: WrapperResultDownloadProgress) => void
+  ): Unsubscribe => {
+    const handler = (_: unknown, progress: WrapperResultDownloadProgress): void => cb(progress)
+    ipcRenderer.on('wrapperResults:downloadProgress', handler)
+    return () => ipcRenderer.removeListener('wrapperResults:downloadProgress', handler)
+  },
   renderMoleculeSvg: (value: string, width: number, height: number): Promise<string> =>
     ipcRenderer.invoke('molecules:renderSvg', value, width, height),
   previewDatabaseWebImage: (url: string): Promise<DatabaseWebImagePreview> =>
@@ -890,6 +1005,19 @@ const api: RendererAuthApi = {
     permissionMode: PermissionMode
   ): Promise<Project> =>
     ipcRenderer.invoke('projects:create', name, workingDirectory, permissionMode),
+  createRemoteProject: (input: RemoteProjectCreateInput): Promise<Project> =>
+    ipcRenderer.invoke('projects:createRemote', input),
+  retryRemoteProjectConnection: (
+    request: RemoteProjectConnectionRetryRequest
+  ): Promise<RemoteProjectConnectionState> =>
+    ipcRenderer.invoke('projects:retryRemoteConnection', request),
+  onRemoteProjectConnectionChanged: (
+    cb: (change: RemoteProjectConnectionChange) => void
+  ): Unsubscribe => {
+    const handler = (_: unknown, change: RemoteProjectConnectionChange): void => cb(change)
+    ipcRenderer.on('projects:remoteConnectionChanged', handler)
+    return () => ipcRenderer.removeListener('projects:remoteConnectionChanged', handler)
+  },
   deleteProject: (id: string): Promise<void> => ipcRenderer.invoke('projects:delete', id),
   updateProjectPermissionMode: (id: string, permissionMode: PermissionMode): Promise<Project> =>
     ipcRenderer.invoke('projects:updatePermissionMode', id, permissionMode),
@@ -900,17 +1028,33 @@ const api: RendererAuthApi = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ): Promise<Project> => ipcRenderer.invoke('projects:updateDefaults', id, defaults),
-  pickPrivateKeyFile: (): Promise<string | null> =>
-    ipcRenderer.invoke('projects:pickPrivateKeyFile'),
-  isRemoteCredentialStorageAvailable: (): Promise<boolean> =>
-    ipcRenderer.invoke('projects:isRemoteCredentialStorageAvailable'),
+  listRemoteHosts: (): Promise<RemoteHostProfile[]> =>
+    ipcRenderer.invoke('projects:listRemoteHosts'),
+  listOpenSshHosts: (): Promise<OpenSshHost[]> => ipcRenderer.invoke('projects:listOpenSshHosts'),
+  saveOpenSshHost: (input: OpenSshHostInput): Promise<RemoteHostProfile> =>
+    ipcRenderer.invoke('projects:saveOpenSshHost', input),
+  saveRemoteHost: (input: {
+    id?: string
+    label: string
+    hostAlias: string
+    user?: string
+    port?: number
+    identityFile?: string
+  }): Promise<RemoteHostProfile> => ipcRenderer.invoke('projects:saveRemoteHost', input),
+  deleteRemoteHost: (id: string): Promise<void> =>
+    ipcRenderer.invoke('projects:deleteRemoteHost', id),
+  remoteDoctor: (
+    hostProfileId: string,
+    remotePath?: string,
+    options?: RemoteDoctorOptions
+  ): Promise<RemoteDoctorReport> =>
+    ipcRenderer.invoke('remote:doctor', hostProfileId, remotePath, options),
   updateProjectRemoteConnection: (
     id: string,
     connectionId: string,
-    patch: ProjectRemoteConnection | null,
-    passphrase?: string | null
+    patch: ProjectRemoteConnection | null
   ): Promise<Project> =>
-    ipcRenderer.invoke('projects:updateRemoteConnection', id, connectionId, patch, passphrase),
+    ipcRenderer.invoke('projects:updateRemoteConnection', id, connectionId, patch),
   updateProjectRemoteDefaults: (
     id: string,
     defaults: {
@@ -920,11 +1064,15 @@ const api: RendererAuthApi = {
   ): Promise<Project> => ipcRenderer.invoke('projects:updateRemoteDefaults', id, defaults),
   listProjectSessions: (workingDirectory: string): Promise<SessionSummary[]> =>
     ipcRenderer.invoke('projects:sessions', workingDirectory),
+  listProjectSessionsById: (projectId: string): Promise<SessionSummary[]> =>
+    ipcRenderer.invoke('projects:sessionsById', projectId),
   createProjectSession: (
     workingDirectory: string,
     permissionMode: PermissionMode
   ): Promise<CurrentSession> =>
     ipcRenderer.invoke('projects:newSession', workingDirectory, permissionMode),
+  createRemoteProjectSession: (projectId: string): Promise<CurrentSession> =>
+    ipcRenderer.invoke('projects:newRemoteSession', projectId),
   listAnalysisNotebooks: (cwd?: string): Promise<AnalysisNotebookRegistry> =>
     ipcRenderer.invoke('analysis:listNotebooks', cwd),
   initializeProjectAnalysis: (cwd: string): Promise<AnalysisProjectInitialization> =>
@@ -1148,8 +1296,14 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('mcp:listServers', cwd),
   getWrapperPlan: (planId: string): Promise<WrapperRunPlan | undefined> =>
     ipcRenderer.invoke('wrappers:getPlan', planId),
-  submitWrapperPlan: (planId: string, heavyWorkloadAcknowledged?: boolean): Promise<WrapperRun> =>
-    ipcRenderer.invoke('wrappers:submitPlan', planId, heavyWorkloadAcknowledged),
+  retargetWrapperPlan: (request: WrapperRetargetRequest): Promise<WrapperRunPlan> =>
+    ipcRenderer.invoke('wrappers:retargetPlan', request),
+  submitWrapperPlan: (
+    planId: string,
+    heavyWorkloadAcknowledged?: boolean,
+    confirmation?: WrapperSubmitConfirmation
+  ): Promise<WrapperRun> =>
+    ipcRenderer.invoke('wrappers:submitPlan', planId, heavyWorkloadAcknowledged, confirmation),
   cancelWrapperRunPlan: (planId: string): Promise<WrapperRunPlan> =>
     ipcRenderer.invoke('wrappers:cancelPlan', planId),
   listWrapperCatalog: (): Promise<WrapperCatalogEntry[]> =>

@@ -6,7 +6,18 @@ import { createTheme, ThemeProvider } from '@mui/material'
 
 import { WrapperViewContent } from '../src/renderer/src/features/wrapper/WrapperView'
 import { buildWrapperFlowGraph } from '../src/renderer/src/features/wrapper/lib/wrapperFlow'
-import { resolveWrapperCancelTarget } from '../src/renderer/src/features/wrapper/lib/wrapperView'
+import {
+  resolveWrapperCancelTarget,
+  wrapperPlanSubmitBlockReason,
+  wrapperPlanSubmitConfirmation,
+  wrapperPlanRetargetRequest,
+  wrapperPlanTargetLines
+} from '../src/renderer/src/features/wrapper/lib/wrapperView'
+import {
+  WrapperPlanTargetActions,
+  WrapperPlanTargetSummary
+} from '../src/renderer/src/features/wrapper/components/WrapperPlanTarget'
+import type { Project } from '../src/renderer/src/lib/projectTypes'
 import { readLegacyFastqQcWrapperManifest } from './helpers/wrapperFixtures'
 import type { WrapperCompositionManifest } from '../src/shared/wrapperCompositionManifestTypes'
 import type { WrapperManifest } from '../src/shared/wrapperManifestTypes'
@@ -102,7 +113,7 @@ test('wrapper view shows an empty state when no wrappers are found', () => {
 test('wrapper view groups catalog entries by tier', () => {
   const markup = renderView({ catalog: [moduleEntry(), workflowEntry()] })
   assert.match(markup, /模块/)
-  assert.match(markup, /完整流水线/)
+  assert.match(markup, /工作流/)
 })
 
 test('wrapper view run history shows state and links to the output directory', () => {
@@ -110,6 +121,46 @@ test('wrapper view run history shows state and links to the output directory', (
   assert.match(markup, /已完成/)
   assert.match(markup, /wrun_abc123/)
   assert.match(markup, /打开输出目录/)
+})
+
+test('remote run history opens its scoped directory and primary report without local reveal', () => {
+  const remoteRun = sampleRun({
+    executor: 'remote-background',
+    outDir: '/scratch/results-a',
+    remote: {
+      projectId: 'project-a',
+      hostProfileId: 'host-a',
+      host: 'cluster-a',
+      runDir: '/cluster/work/wrappers/runs/wrun_abc123',
+      outputRoot: '/scratch/results-a'
+    },
+    outputs: [
+      {
+        id: 'report',
+        path: '/scratch/results-a/report.html',
+        exists: true,
+        primary: true,
+        location: 'remote'
+      }
+    ]
+  })
+  const markup = renderView({
+    runs: [remoteRun],
+    onOpenRemoteResult: () => undefined,
+    onOpenLocalPath: () => {
+      throw new Error('remote results must never use local open')
+    }
+  })
+  assert.match(markup, /SSH cluster-a/)
+  assert.match(markup, /打开输出目录/)
+  assert.match(markup, /查看报告/)
+  const older = renderView({
+    runs: [
+      sampleRun({ ...remoteRun, remote: { host: 'cluster-a', runDir: remoteRun.remote!.runDir } })
+    ]
+  })
+  assert.match(older, /这条旧运行记录缺少远端结果授权信息/)
+  assert.doesNotMatch(older, /查看报告/)
 })
 
 test('wrapper view run history exposes a reproducibility export action', () => {
@@ -158,6 +209,172 @@ function planFixture(state: WrapperRunPlan['state']): Pick<WrapperRunPlan, 'plan
 function runFixture(state: WrapperRun['state']): Pick<WrapperRun, 'runId' | 'state'> {
   return { runId: 'wrun_abc123', state }
 }
+
+test('plan target summary and submit confirmation use the saved SSH target, not the local anchor', () => {
+  const location = {
+    kind: 'ssh' as const,
+    hostProfileId: 'host-a',
+    remoteRoot: '/home/project-link',
+    canonicalRoot: '/data/project'
+  }
+  const plan = {
+    planId: 'wplan-1',
+    revision: 3,
+    executor: 'slurm-controller',
+    profile: 'slurm-controller',
+    nextflowProfile: 'singularity',
+    outputDir: 'results/run-1',
+    resources: { cpus: 16, memory: '64 GB', time: '24h' },
+    inputs: [
+      {
+        id: 'reads',
+        userValue: '/data/project/reads/*.fastq.gz',
+        localPaths: [],
+        remotePaths: ['/data/project/reads/*.fastq.gz']
+      }
+    ],
+    targetSelection: {
+      projectId: 'project-a',
+      projectLocation: location,
+      target: 'remote',
+      reason: '远程项目固定使用自身服务器和项目目录。',
+      hostProfileId: 'host-a',
+      hostAlias: 'cluster-a',
+      connectionId: 'conn-a',
+      remoteRoot: '/data/project',
+      scheduler: 'slurm',
+      controller: 'sbatch',
+      runtime: 'singularity',
+      environmentCheckPending: true
+    }
+  } as WrapperRunPlan
+  const lines = wrapperPlanTargetLines(plan).join('\n')
+  assert.match(lines, /执行位置：远程服务器 cluster-a/)
+  assert.match(lines, /Slurm 控制作业/)
+  assert.match(lines, /Nextflow singularity/)
+  assert.match(lines, /输入 reads：\/data\/project\/reads/)
+  assert.match(lines, /输出位置：\/data\/project\/wrappers\/runs\/<运行 ID>\/output/)
+  const externalLines = wrapperPlanTargetLines({
+    ...plan,
+    params: { outdir: '/scratch/shared/report-output' }
+  }).join('\n')
+  assert.match(externalLines, /外部输出授权范围：\/scratch\/shared\/report-output（仅本次运行）/)
+  assert.equal(
+    wrapperPlanSubmitConfirmation({
+      ...plan,
+      params: { outdir: '/scratch/shared/report-output' }
+    }).externalOutputRoot,
+    '/scratch/shared/report-output'
+  )
+  const externalSummary = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(WrapperPlanTargetSummary, {
+        plan: { ...plan, params: { outdir: '/scratch/shared/report-output' } }
+      })
+    )
+  )
+  assert.match(externalSummary, /外部输出授权范围/)
+  assert.match(lines, /16 CPU · 64 GB/)
+  assert.deepEqual(wrapperPlanSubmitConfirmation(plan), {
+    expectedRevision: 3,
+    target: 'remote',
+    projectId: 'project-a',
+    hostProfileId: 'host-a',
+    remoteRoot: '/data/project'
+  })
+  const summary = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(WrapperPlanTargetSummary, { plan })
+    )
+  )
+  assert.match(summary, /远程服务器 cluster-a/)
+  const project = {
+    id: 'project-a',
+    location,
+    remoteHostAlias: 'cluster-a',
+    remoteConnection: { phase: 'offline' }
+  } as Project
+  assert.match(wrapperPlanSubmitBlockReason(plan, project, true) ?? '', /服务器连接尚未就绪/)
+  assert.match(wrapperPlanSubmitBlockReason(plan, project, false) ?? '', /正在确认/)
+  assert.equal(
+    wrapperPlanSubmitBlockReason(
+      plan,
+      {
+        ...project,
+        remoteConnection: { phase: 'reachable' }
+      },
+      true
+    ),
+    undefined
+  )
+  assert.match(
+    wrapperPlanSubmitBlockReason(
+      plan,
+      {
+        ...project,
+        remoteHostAlias: 'another-host',
+        remoteConnection: { phase: 'reachable' }
+      },
+      true
+    ) ?? '',
+    /服务器或目录已变化/
+  )
+})
+
+test('local fallback control shows confirmation and sends the exact plan revision', () => {
+  const plan = {
+    planId: 'wplan-fallback',
+    revision: 4,
+    executor: 'slurm-controller',
+    profile: 'slurm-controller',
+    inputs: [],
+    outputDir: 'results',
+    resources: {},
+    targetSelection: {
+      projectId: 'local-project',
+      projectLocation: { kind: 'local', path: '/local/project', realPath: '/local/project' },
+      target: 'remote',
+      reason: '已配置远程服务器',
+      hostAlias: 'cluster-a'
+    }
+  } as WrapperRunPlan
+  assert.deepEqual(wrapperPlanRetargetRequest(plan, 'local'), {
+    planId: 'wplan-fallback',
+    target: 'local',
+    expectedRevision: 4,
+    confirmedLocalFallback: true
+  })
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(WrapperPlanTargetActions, {
+        plan,
+        busy: false,
+        isUnsubmitted: true,
+        submitBlockReason: '服务器离线',
+        onRetarget: () => undefined
+      })
+    )
+  )
+  assert.match(markup, /确认改在本机运行/)
+  assert.match(markup, /服务器离线/)
+  assert.match(
+    wrapperPlanSubmitBlockReason(
+      plan,
+      {
+        id: 'local-project',
+        location: { kind: 'local', path: '/moved/project', realPath: '/moved/project' }
+      } as Project,
+      true
+    ) ?? '',
+    /项目目录已变化/
+  )
+})
 
 test('resolveWrapperCancelTarget targets the plan before submission', () => {
   for (const state of ['draft', 'valid', 'invalid'] as const) {

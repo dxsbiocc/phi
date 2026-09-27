@@ -47,3 +47,22 @@ export function buildPhiMainSystemPrompt(
     ...runtimePrompt
   ]
 }
+
+/** Present the SSH workspace, never the local SDK history anchor, to the model. */
+export function buildPhiRemoteProjectSystemPrompt(
+  defaultPrompt: string[],
+  anchorCwd: string,
+  remoteRoot: string,
+  options: { personaMarkdown?: string } = {}
+): string[] {
+  return [
+    ...buildPhiMainSystemPrompt(
+      defaultPrompt.map((block) => block.replaceAll(anchorCwd, remoteRoot)),
+      options
+    ),
+    `This conversation belongs to an SSH project at ${JSON.stringify(remoteRoot)}. ` +
+      'The read tool reads UTF-8 files and lists directories on that server. The bash tool runs bounded commands there with cwd pinned to the project root; shell commands can still access paths outside that root. ' +
+      'The glob and grep tools search files on the selected server with bounded results. The write tool creates files or updates files previously read in this conversation. The edit tool uses OMP replace arguments (path, old_string, new_string, replace_all) and also requires a prior read. Changes are refused if the remote content changed since that read. Delegate Wrapper runs and run control to the bundled Wrapper specialist; they use this project server by default. Other edit formats remain temporarily unavailable. ' +
+      'Never treat Phi session storage as project files or fall back to local execution.'
+  ]
+}

@@ -2,10 +2,15 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
+import type { RemoteHpcSettings } from '../../../shared/wrapperRemoteTypes'
+import { remoteDoctor } from '../remote-doctor'
 import { findWrapperCatalogEntry } from './catalog'
 import {
+  buildRemoteConfiguredLaunchScript,
+  buildRemoteNextflowConfig
+} from './composition/remote-config'
+import {
   joinRemote,
-  wrapWithExitCodeTrap,
   SshExecRunner,
   type ConnectImpl,
   type RemoteJobHandle,
@@ -16,16 +21,20 @@ import {
   failRun,
   pollUntilTerminal,
   transition,
+  transitionUnlessCancelled,
   writeRemoteRunSnapshot
 } from './executor-remote-run'
 import { buildRemoteNextflowLaunch } from './executor-slurm-submit'
+import { checkRemoteWrapperInputs } from './remote-input-check'
+import { RemoteLaunchUnknownError } from './remote-launch-claim'
 import {
   connectRemoteSshSession,
   shellQuote,
   type RemoteConnectionConfig,
   type RemoteSshSession
 } from './remote-ssh-session'
-import { readWrapperRun } from './store'
+import { readWrapperRun, writeWrapperRun } from './store'
+import { checkRemoteSubmitPreflight, executeRemoteLaunchPreflight } from './remote-submit-preflight'
 import type { WrapperRun, WrapperRunPlan } from './types'
 
 /**
@@ -51,6 +60,8 @@ export interface RunRemoteBackgroundWrapperOptions {
   /** Absolute remote path this run executes under, e.g. `<remoteWorkspaceRoot>/wrappers/runs/<runId>`. */
   remoteRunDir: string
   connection: RemoteConnectionConfig
+  hpc?: RemoteHpcSettings
+  doctorImpl?: typeof remoteDoctor
   /** Injectable so tests can fake the SSH session — see `executor-remote.ts`'s `RemoteControllerOptions`. */
   connectImpl?: ConnectImpl
   /** How often to poll `SshExecRunner.status()` while the process is running. Defaults to 15s. */
@@ -106,7 +117,31 @@ export async function runRemoteBackgroundWrapperExecution(
   const remoteWrapperDir = joinRemote(remoteRunDir, 'wrapper')
   const remoteOutDir = joinRemote(remoteRunDir, 'output')
 
-  transition(run, agentDir, 'provisioning')
+  let environment: Awaited<ReturnType<typeof checkRemoteSubmitPreflight>>
+  try {
+    environment = await checkRemoteSubmitPreflight({
+      run,
+      plan,
+      manifest: entry.manifest,
+      agentDir,
+      doctorImpl: options.doctorImpl,
+      remote: {
+        connection: options.connection,
+        remoteWorkspaceRoot: plan.targetSelection?.remoteRoot ?? remoteRunDir,
+        hpc: options.hpc,
+        connectImpl: options.connectImpl
+      }
+    })
+  } catch (error) {
+    const reason = `服务器提交前检查失败: ${error instanceof Error ? error.message : String(error)}`
+    return failRun({ ...run, environmentError: reason }, agentDir, reason)
+  }
+  if (environment.error) {
+    return failRun({ ...run, environmentError: environment.error }, agentDir, environment.error)
+  }
+  let provisioning = transition(run, agentDir, 'provisioning', {
+    ...(environment.warnings.length ? { environmentWarnings: environment.warnings } : {})
+  })
 
   let session: RemoteSshSession
   try {
@@ -119,12 +154,72 @@ export async function runRemoteBackgroundWrapperExecution(
     )
   }
 
+  if (plan.targetSelection?.target === 'remote') {
+    try {
+      const checked = await executeRemoteLaunchPreflight(
+        session,
+        environment.hpc,
+        plan.targetSelection.remoteRoot!
+      )
+      if (checked.error) {
+        await session.close().catch(() => undefined)
+        return failRun(
+          { ...provisioning, environmentError: checked.error },
+          agentDir,
+          checked.error
+        )
+      }
+      if (checked.warnings.length > 0) {
+        provisioning = {
+          ...provisioning,
+          environmentWarnings: [
+            ...new Set([...(provisioning.environmentWarnings ?? []), ...checked.warnings])
+          ]
+        }
+        writeWrapperRun(provisioning, agentDir)
+      }
+    } catch (error) {
+      await session.close().catch(() => undefined)
+      const reason = `服务器预检失败: ${error instanceof Error ? error.message : String(error)}`
+      return failRun({ ...provisioning, environmentError: reason }, agentDir, reason)
+    }
+  }
+
+  const references = run.inputReferences ?? plan.inputs
+  try {
+    const checked = await checkRemoteWrapperInputs(session, references)
+    if (checked.errors.length > 0) {
+      await session.close().catch(() => undefined)
+      return failRun(
+        { ...provisioning, inputErrors: checked.errors, inputWarnings: checked.warnings },
+        agentDir,
+        checked.errors.join('\n')
+      )
+    }
+    if (checked.warnings.length > 0) {
+      provisioning = { ...provisioning, inputWarnings: checked.warnings }
+      writeWrapperRun(provisioning, agentDir)
+    }
+  } catch (error) {
+    await session.close().catch(() => undefined)
+    return failRun(
+      {
+        ...provisioning,
+        inputErrors: [
+          `服务器输入核验失败: ${error instanceof Error ? error.message : String(error)}`
+        ]
+      },
+      agentDir,
+      `服务器输入核验失败: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+
   try {
     await uploadWrapperBundle(session, entry.installedPath, remoteWrapperDir)
   } catch (error) {
     await session.close()
     return failRun(
-      run,
+      provisioning,
       agentDir,
       `上传 wrapper 到远程失败: ${error instanceof Error ? error.message : String(error)}`
     )
@@ -133,22 +228,37 @@ export async function runRemoteBackgroundWrapperExecution(
   const launch = buildRemoteNextflowLaunch(entry.manifest, plan, remoteWrapperDir, remoteOutDir)
   const launchSpec: RemoteLaunchSpec = {
     remoteRunDir,
-    // Unlike sbatch (where Slurm itself is the source of truth for exit
-    // status), a detached SSH process must record its own exit code — see
-    // wrapWithExitCodeTrap's doc comment. SshExecRunner.status() depends on
-    // the exit_code file this produces.
-    launchScript: wrapWithExitCodeTrap(shellJoin(launch.command, launch.args)),
-    paramsJson: launch.paramsJson
+    // The shared script records the exit code even when setup fails, which is
+    // needed for detached status polling and gives Slurm the correct state.
+    launchScript: buildRemoteConfiguredLaunchScript({
+      runDir: remoteRunDir,
+      commands: [shellJoin(launch.command, launch.args)],
+      setupCommands: environment.hpc.setupCommands
+    }),
+    paramsJson: launch.paramsJson,
+    nextflowConfig: buildRemoteNextflowConfig(environment.hpc)
   }
 
-  const running = transition(run, agentDir, 'running', { startedAt: new Date().toISOString() })
+  const running = transition(provisioning, agentDir, 'running', {
+    startedAt: new Date().toISOString()
+  })
   const runner = new SshExecRunner({ connection: options.connection, connectImpl })
+  writeRemoteRunSnapshot(run.runId, agentDir, { remoteRunDir, launchUnknown: true })
 
   let handle: RemoteJobHandle
   try {
     handle = await runner.submit(running, plan, launchSpec)
   } catch (error) {
+    await runner.close().catch(() => undefined)
     await session.close()
+    if (error instanceof RemoteLaunchUnknownError) {
+      return transition(running, agentDir, 'lost', {
+        completedAt: new Date().toISOString(),
+        launchUnknown: true,
+        launchDiagnostic: error.message
+      })
+    }
+    writeRemoteRunSnapshot(run.runId, agentDir, { remoteRunDir })
     return failRun(
       running,
       agentDir,
@@ -156,20 +266,23 @@ export async function runRemoteBackgroundWrapperExecution(
     )
   }
 
-  // Enough to rebuild a RemoteJobHandle and resume polling after a restart
-  // — matches the `runs/<runId>/remote.snapshot.json` placeholder in the
-  // design doc's storage layout. Not yet read back by a reconciliation pass
-  // (that exists only for slurm-controller so far, see
-  // executor-slurm-reconcile.ts's doc comment) — a separate follow-up.
+  // Enough to rebuild a RemoteJobHandle and resume polling after a restart.
+  // The startup remote reconciliation pass reads the same snapshot for both controllers.
   writeRemoteRunSnapshot(run.runId, agentDir, { remoteRunDir, pid: handle.pid })
 
   try {
     const status = await pollUntilTerminal(runner, handle, pollIntervalMs)
+    const recorded = readWrapperRun(run.runId, agentDir)
+    if (recorded?.state === 'cancelled') return recorded
 
     if (status.outcome === 'completed') {
       const collecting = transition(running, agentDir, 'collecting')
-      const outputs = await collectRemoteOutputs(session, entry.manifest, remoteOutDir)
-      return transition(collecting, agentDir, 'completed', {
+      const outputs = await collectRemoteOutputs(
+        session,
+        entry.manifest,
+        run.remote?.outputRoot ?? remoteOutDir
+      )
+      return transitionUnlessCancelled(collecting, agentDir, 'completed', {
         completedAt: new Date().toISOString(),
         exitCode: status.exitCode,
         outputs
@@ -177,17 +290,19 @@ export async function runRemoteBackgroundWrapperExecution(
     }
 
     if (status.outcome === 'lost') {
-      return transition(running, agentDir, 'lost', { completedAt: new Date().toISOString() })
+      return transitionUnlessCancelled(running, agentDir, 'lost', {
+        completedAt: new Date().toISOString()
+      })
     }
 
-    // Same race as runSlurmWrapperExecution's: a concurrent cancelWrapperRun
-    // call may have moved the run to `cancelling` while this poll loop was
-    // waiting. Cancelling isn't wired up for remote-background yet (see
-    // runs.ts — REMOTE_CANCELLABLE_RUN_STATES only applies to
-    // slurm-controller), so this branch can't be hit today, but re-checking
-    // here keeps this orchestrator correct the moment it is.
+    // A cancel request alone does not prove the process was stopped by Phi.
     const current = readWrapperRun(run.runId, agentDir) ?? running
-    return transition(running, agentDir, current.state === 'cancelling' ? 'cancelled' : 'failed', {
+    const cancelled =
+      current.state === 'cancelling' &&
+      (current.cancelConfirmedAt !== undefined ||
+        status.exitCode === 143 ||
+        status.exitCode === 137)
+    return transitionUnlessCancelled(running, agentDir, cancelled ? 'cancelled' : 'failed', {
       completedAt: new Date().toISOString(),
       exitCode: status.exitCode
     })

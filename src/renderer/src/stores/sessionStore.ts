@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { ProjectLocation } from '../../../shared/projectLocation'
 import {
   type AgentEventReducerState,
   createAgentEventReducerState,
@@ -124,6 +125,9 @@ type SessionStoreState = {
   activeSessionPath: string | null
   activePhiSessionId: string | null
   activeCwd: string
+  activeDisplayCwd: string
+  activeProjectId: string | null
+  activeProjectLocation: ProjectLocation | null
   activeSessionGeneration: number
   activeAgentEventStateKey: string | null
   activeChatScrollResetKey: string
@@ -188,6 +192,9 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
   activeSessionPath: null,
   activePhiSessionId: null,
   activeCwd: '',
+  activeDisplayCwd: '',
+  activeProjectId: null,
+  activeProjectLocation: null,
   activeSessionGeneration: 0,
   activeAgentEventStateKey: null,
   activeChatScrollResetKey: sessionStateKey({
@@ -371,6 +378,9 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
       activeSessionPath: current.path,
       activePhiSessionId: currentPhiSessionId,
       activeCwd: current.cwd,
+      activeDisplayCwd: current.displayCwd ?? current.cwd,
+      activeProjectId: current.projectId ?? null,
+      activeProjectLocation: current.projectLocation ?? null,
       activeAgentEventStateKey: nextStateKey,
       activeChatScrollResetKey: shouldCarryActiveState
         ? state.activeChatScrollResetKey

@@ -7,6 +7,24 @@ export type FilePreviewPanelState =
   | { status: 'directory'; directory: DirectoryListing }
   | { status: 'error'; path: string; message: string; pathKind?: 'file' | 'directory' }
 
+export type FileDownloadState =
+  | {
+      status: 'running'
+      requestId: string
+      sourcePath: string
+      phase: 'choosing' | 'downloading' | 'verifying' | 'saving'
+      bytesDownloaded: number
+      totalBytes: number
+    }
+  | {
+      status: 'saved'
+      sourcePath: string
+      path: string
+      bytes: number
+      remoteDigestVerified?: boolean
+    }
+  | { status: 'error'; sourcePath: string; message: string }
+
 export function fileNameFromPath(path: string): string {
   return path.split('/').filter(Boolean).pop() ?? path
 }
@@ -48,6 +66,9 @@ export function previewTreeRootPath(state: FilePreviewPanelState): string {
 export function previewRootLabel(state: FilePreviewPanelState): string {
   if (state.status === 'ready') return state.file.rootLabel
   if (state.status === 'directory') return state.directory.rootLabel
+  if (state.path.startsWith('ssh://')) {
+    return /^ssh:\/\/([^/]+)/.exec(state.path)?.[1] ?? '远程文件'
+  }
   return fileNameFromPath(previewRootPath(state))
 }
 

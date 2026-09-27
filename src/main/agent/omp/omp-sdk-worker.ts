@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { editDiffString } from '@oh-my-pi/pi-natives'
 import { existsSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -19,6 +20,7 @@ import {
   type DefaultResourceLoaderOptions,
   type ResourceDiagnostic
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
+import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
 import { PluginManager } from '@oh-my-pi/pi-coding-agent/extensibility/plugins/manager'
 import type { InstalledPlugin } from '@oh-my-pi/pi-coding-agent/extensibility/plugins/types'
 import type { AuthStorage, CredentialOrigin, StoredAuthCredential } from '@oh-my-pi/pi-ai'
@@ -30,6 +32,18 @@ import {
 import { authPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
 import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
 import { buildDefaultDbCustomTools } from '../db/tools'
+import { buildRemoteWorkspaceReadTool } from '../remote-workspace-read-tool'
+import type { RemoteWorkspaceReadResult } from '../remote-workspace-read'
+import {
+  buildRemoteWorkspaceGlobTool,
+  buildRemoteWorkspaceGrepTool
+} from '../remote-workspace-search-tools'
+import type { RemoteGlobResult, RemoteGrepResult } from '../remote-workspace-search'
+import { buildRemoteWorkspaceBashTool } from '../remote-workspace-bash-tool'
+import type { RemoteBashResult } from '../remote-workspace-bash'
+import { buildRemoteWorkspaceWriteTool } from '../remote-workspace-write-tool'
+import type { RemoteMutationResult } from '../remote-workspace-edit'
+import { buildRemoteWorkspaceEditTool } from '../remote-workspace-edit-tool'
 import { buildLibraryCustomTools } from '../library/library-tools'
 import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
@@ -44,8 +58,18 @@ import { appendAgentUsageRecord, pruneAgentUsageLogs } from '../agents/usage-log
 import { buildScopedPhiToolMap, resolveAgentTools } from '../agents/tool-resolution'
 import { buildAgentTool } from '../agents/tool'
 import { createSpecialistFallbackExtension } from '../agents/fallback-policy'
+import { createProjectToolBoundaryExtension } from '../agents/project-tool-boundary'
+import { createRemoteUrlGuardExtension } from '../agents/remote-url-guard'
+import {
+  createRemoteProjectToolGuardExtension,
+  remoteWorkspaceToolsVerified
+} from '../agents/remote-project-tool-guard'
 import { AGENT_REPORT_PROTOCOL } from '../agents/report'
-import { buildPhiMainSystemPrompt, filterPersonaContextFile } from '../main-system-prompt'
+import {
+  buildPhiMainSystemPrompt,
+  buildPhiRemoteProjectSystemPrompt,
+  filterPersonaContextFile
+} from '../main-system-prompt'
 import { buildVisualizationTools } from '../visualization/tools'
 import { createHostJobClient } from '../wrappers/composition/job-host-client'
 import { buildWrapperCompositionTools } from '../wrappers/composition/tools'
@@ -636,7 +660,11 @@ async function makeSessionManager(
   return SessionManager.create(cwd, SessionManager.getDefaultSessionDir(cwd, agentDir))
 }
 
-function requestToolApproval(sessionId: string, event: UnknownRecord): Promise<unknown> {
+function requestToolApproval(
+  sessionId: string,
+  event: UnknownRecord,
+  agentRunId?: string
+): Promise<unknown> {
   const requestId = randomUUID()
   sendEvent(
     'toolApproval',
@@ -644,7 +672,8 @@ function requestToolApproval(sessionId: string, event: UnknownRecord): Promise<u
       requestId,
       toolCallId: stringValue(event.toolCallId, requestId),
       toolName: stringValue(event.toolName),
-      input: isRecord(event.input) ? event.input : {}
+      input: isRecord(event.input) ? event.input : {},
+      ...(agentRunId ? { agentRunId } : {})
     },
     { sessionId }
   )
@@ -653,10 +682,17 @@ function requestToolApproval(sessionId: string, event: UnknownRecord): Promise<u
   })
 }
 
-function createBridgeToolApprovalExtension(sessionId: string): ExtensionFactory {
+function createBridgeToolApprovalExtension(
+  sessionId: string,
+  agentRunId?: string
+): ExtensionFactory {
   return (pi) => {
     pi.on('tool_call', async (event) => {
-      const result = await requestToolApproval(sessionId, event as unknown as UnknownRecord)
+      const result = await requestToolApproval(
+        sessionId,
+        event as unknown as UnknownRecord,
+        agentRunId
+      )
       return result === null ? undefined : result
     })
   }
@@ -726,51 +762,100 @@ async function createPhiAgentSession(
     ctx: RuntimeContext
     resourceOptions: unknown
     enableToolApproval: boolean
+    agentRunId?: string
+    remoteRoot?: string
+    remoteContextFiles?: Array<{ path: string; content: string }>
+    remoteTools?: () => CustomTool[]
     parent: () => CreateAgentSessionResult | undefined
   }
 ): Promise<AgentSessionLike> {
   const { sessionId, cwd, agentDir, ctx } = deps
-  const settings = await Settings.init({ cwd, agentDir })
-  const loader = isRecord(deps.resourceOptions)
-    ? new DefaultResourceLoader({
-        ...resourceOptions({ ...deps.resourceOptions, cwd, agentDir }),
-        settingsManager: SettingsManager.create(cwd, agentDir),
-        extensionFactories: deps.enableToolApproval
-          ? [createBridgeToolApprovalExtension(sessionId)]
-          : undefined
-      })
-    : undefined
+  const sessionCwd = deps.remoteRoot ? agentDir : cwd
+  const settings = await Settings.init({ cwd: sessionCwd, agentDir })
+  const loader =
+    isRecord(deps.resourceOptions) || deps.remoteRoot
+      ? new DefaultResourceLoader({
+          ...resourceOptions({
+            ...(isRecord(deps.resourceOptions) ? deps.resourceOptions : {}),
+            cwd: sessionCwd,
+            agentDir,
+            ...(deps.remoteRoot
+              ? {
+                  noExtensions: true,
+                  noSkills: true,
+                  noPromptTemplates: true,
+                  noThemes: true,
+                  noContextFiles: true,
+                  appendSystemPrompt: []
+                }
+              : {})
+          }),
+          settingsManager: SettingsManager.create(sessionCwd, agentDir),
+          extensionFactories: [
+            ...(deps.remoteRoot ? [createRemoteProjectToolGuardExtension()] : []),
+            ...(deps.enableToolApproval
+              ? [createBridgeToolApprovalExtension(sessionId, deps.agentRunId)]
+              : [])
+          ]
+        })
+      : undefined
   if (loader) await loader.reload()
 
-  const { toolNames, customTools } = resolveAgentTools(
-    definition.tools,
-    phiToolFunctions(sessionId, agentDir, definition.name)
-  )
+  const availableTools = phiToolFunctions(sessionId, agentDir, definition.name)
+  for (const tool of deps.remoteTools?.() ?? []) availableTools.set(tool.name, tool)
+  const { toolNames, customTools } = resolveAgentTools(definition.tools, availableTools)
   const parentSession = deps.parent()?.session
-  const skills = loader
-    ? loader.getSkills().skills.filter((skill) => definition.skills.includes(skill.name))
-    : undefined
+  const skills = deps.remoteRoot
+    ? []
+    : loader
+      ? loader.getSkills().skills.filter((skill) => definition.skills.includes(skill.name))
+      : undefined
 
   const result = await createLegacyAgentSession({
-    cwd,
+    agentId: `phi-agent-${sessionId}-${randomUUID()}`,
+    agentDisplayName: definition.name,
+    cwd: sessionCwd,
     agentDir,
     settings,
     authStorage: ctx.authStorage,
     modelRegistry: ctx.modelRegistry,
-    sessionManager: SessionManager.inMemory(cwd),
+    sessionManager: SessionManager.inMemory(sessionCwd),
     ...(parentSession?.model ? { model: parentSession.model } : {}),
     ...(parentSession?.thinkingLevel ? { thinkingLevel: parentSession.thinkingLevel } : {}),
     ...(loader ? { resourceLoader: loader } : {}),
+    extensions: [createRemoteUrlGuardExtension()],
     ...(skills ? { skills } : {}),
-    appendSystemPrompt: `${definition.systemPrompt}\n\n${AGENT_REPORT_PROTOCOL}`,
+    appendSystemPrompt: `${definition.systemPrompt}${deps.remoteRoot ? `\n\nRemote project root: ${JSON.stringify(deps.remoteRoot)}.` : ''}\n\n${AGENT_REPORT_PROTOCOL}`,
     ...(customTools.length > 0 ? { customTools } : {}),
     toolNames,
     restrictToolNames: true,
     // Without this the restriction also drops our Phi tool functions.
     allowRestrictedCustomTools: true,
     enableMCP: false,
-    enableLsp: false
+    enableLsp: false,
+    ...(deps.remoteRoot
+      ? {
+          disableExtensionDiscovery: true,
+          includeWorkspaceTree: false,
+          contextFiles: deps.remoteContextFiles ?? [],
+          promptTemplates: [],
+          slashCommands: []
+        }
+      : {})
   })
+  if (deps.remoteRoot) {
+    await initializeExtensions(result.session, {
+      reportSendError: () =>
+        process.stderr.write('Phi remote specialist extension message failed\n'),
+      reportRuntimeError: () =>
+        process.stderr.write('Phi remote specialist extension handler failed\n')
+    })
+    const verified = remoteWorkspaceToolsVerified(result.session.getAllToolInfos())
+    if (!verified) {
+      await result.session.dispose()
+      throw new Error('远程专家文件/命令工具未覆盖本地实现；专家会话已拒绝启动')
+    }
+  }
   return result.session as unknown as AgentSessionLike
 }
 
@@ -779,8 +864,41 @@ async function createSession(params: unknown): Promise<unknown> {
   const sessionId = stringValue(record.sessionId, randomUUID())
   const cwd = stringValue(record.cwd, process.cwd())
   const agentDir = stringValue(record.agentDir, process.env.PI_CODING_AGENT_DIR)
+  const remoteRecord = isRecord(record.remoteProject) ? record.remoteProject : null
+  const remoteLocation =
+    remoteRecord && isRecord(remoteRecord.location) ? remoteRecord.location : null
+  const remoteRoot =
+    remoteLocation?.kind === 'ssh' &&
+    typeof remoteLocation.remoteRoot === 'string' &&
+    remoteLocation.remoteRoot.startsWith('/') &&
+    typeof remoteRecord?.projectId === 'string' &&
+    typeof remoteRecord.phiSessionId === 'string' &&
+    remoteRecord.phiSessionId.length > 0
+      ? remoteLocation.remoteRoot
+      : null
+  if (record.remoteProject !== undefined && !remoteRoot) {
+    throw new Error('Invalid remote project session context')
+  }
+  const remoteContextFiles =
+    remoteRoot &&
+    Array.isArray(remoteRecord?.contextFiles) &&
+    remoteRecord.contextFiles.length <= 3 &&
+    remoteRecord.contextFiles.every(
+      (file) =>
+        isRecord(file) &&
+        typeof file.path === 'string' &&
+        file.path.startsWith('ssh://') &&
+        typeof file.content === 'string' &&
+        Buffer.byteLength(file.content, 'utf-8') <= 64 * 1024
+    )
+      ? (remoteRecord.contextFiles as Array<{ path: string; content: string }>)
+      : null
+  if (remoteRoot && !remoteContextFiles) {
+    throw new Error('Invalid remote project instruction context')
+  }
   const ctx = await getContext(agentDir)
-  const settings = await Settings.init({ cwd, agentDir })
+  const settingsCwd = remoteRoot ? agentDir : cwd
+  const settings = await Settings.init({ cwd: settingsCwd, agentDir })
   const sessionManager = await makeSessionManager(record.sessionManager, cwd, agentDir)
   const noTools = record.noTools === 'all' || record.noTools === true
   const personaMarkdown = stringValue(record.personaMarkdown).trim()
@@ -791,22 +909,30 @@ async function createSession(params: unknown): Promise<unknown> {
   // and the run tools and controlled-fallback policy below act on it.
   const agentRuns = new AgentRunRegistry()
   const extensionFactories = [
+    ...(remoteRoot ? [createRemoteProjectToolGuardExtension()] : []),
+    createRemoteUrlGuardExtension(),
+    ...(record.projectBound && !remoteRoot ? [createProjectToolBoundaryExtension(cwd)] : []),
     ...(phiAgents.length > 0 ? [createSpecialistFallbackExtension(phiAgents, agentRuns)] : []),
     ...(record.enableToolApproval ? [createBridgeToolApprovalExtension(sessionId)] : [])
   ]
-  const resources = isRecord(record.resourceOptions)
-    ? new DefaultResourceLoader({
-        ...resourceOptions({ ...record.resourceOptions, cwd, agentDir }),
-        settingsManager: SettingsManager.create(cwd, agentDir),
-        ...(personaMarkdown
-          ? {
-              agentsFilesOverride: (base) =>
-                filterPersonaContextFile(base, join(agentDir, 'AGENTS.md'))
-            }
-          : {}),
-        ...(extensionFactories.length > 0 ? { extensionFactories } : {})
-      })
-    : undefined
+  const resources =
+    isRecord(record.resourceOptions) || extensionFactories.length > 0
+      ? new DefaultResourceLoader({
+          ...resourceOptions({
+            ...(isRecord(record.resourceOptions) ? record.resourceOptions : {}),
+            cwd: settingsCwd,
+            agentDir
+          }),
+          settingsManager: SettingsManager.create(settingsCwd, agentDir),
+          ...(personaMarkdown
+            ? {
+                agentsFilesOverride: (base) =>
+                  filterPersonaContextFile(base, join(agentDir, 'AGENTS.md'))
+              }
+            : {}),
+          ...(extensionFactories.length > 0 ? { extensionFactories } : {})
+        })
+      : undefined
 
   if (resources) {
     await resources.reload()
@@ -832,7 +958,7 @@ async function createSession(params: unknown): Promise<unknown> {
         agent: definition.name,
         // What each delegation cost, for judging prompt and tool changes; see agents/usage.ts.
         onUsage: (record) => appendAgentUsageRecord(agentDir, { ...record, sessionId }),
-        createSession: () =>
+        createSession: ({ runId }) =>
           createPhiAgentSession(definition, {
             sessionId,
             cwd,
@@ -840,6 +966,17 @@ async function createSession(params: unknown): Promise<unknown> {
             ctx,
             resourceOptions: record.resourceOptions,
             enableToolApproval: Boolean(record.enableToolApproval),
+            ...(runId ? { agentRunId: runId } : {}),
+            ...(remoteRoot
+              ? {
+                  remoteRoot,
+                  remoteContextFiles: remoteContextFiles ?? [],
+                  remoteTools: () =>
+                    customTools.filter((tool) =>
+                      ['read', 'bash', 'glob', 'grep', 'write', 'edit'].includes(tool.name)
+                    )
+                }
+              : {}),
             parent: () => parentRef.current
           })
       }),
@@ -886,6 +1023,126 @@ async function createSession(params: unknown): Promise<unknown> {
     requestHost('agentInteraction.request', request)
   )
   const customTools = [
+    ...(remoteRoot
+      ? [
+          buildRemoteWorkspaceEditTool(async (toolCallId, input, signal) => {
+            if (signal?.aborted) throw new Error('远程编辑在提交前已取消')
+            const requestId = randomUUID()
+            const identity = {
+              sessionId: remoteRecord?.phiSessionId,
+              projectId: remoteRecord?.projectId,
+              requestId
+            }
+            const cancel = (): void => {
+              void requestHost('remoteWorkspace.cancelEdit', identity).catch(() => undefined)
+            }
+            const pending = requestHost('remoteWorkspace.edit', {
+              ...identity,
+              toolCallId,
+              ...input
+            })
+            signal?.addEventListener('abort', cancel, { once: true })
+            if (signal?.aborted) cancel()
+            try {
+              const result = (await pending) as RemoteMutationResult
+              if (result.status !== 'updated') return result
+              const preview = editDiffString(result.oldText, result.newText, result.path)
+              return { ...result, ...preview }
+            } finally {
+              signal?.removeEventListener('abort', cancel)
+            }
+          })
+        ]
+      : []),
+    ...(remoteRoot
+      ? [
+          buildRemoteWorkspaceWriteTool(async (toolCallId, path, content, signal) => {
+            if (signal?.aborted) throw new Error('远程写入在提交前已取消')
+            const requestId = randomUUID()
+            const identity = {
+              sessionId: remoteRecord?.phiSessionId,
+              projectId: remoteRecord?.projectId,
+              requestId
+            }
+            const cancel = (): void => {
+              void requestHost('remoteWorkspace.cancelWrite', identity).catch(() => undefined)
+            }
+            const pending = requestHost('remoteWorkspace.write', {
+              ...identity,
+              toolCallId,
+              path,
+              content
+            })
+            signal?.addEventListener('abort', cancel, { once: true })
+            if (signal?.aborted) cancel()
+            try {
+              return (await pending) as RemoteMutationResult
+            } finally {
+              signal?.removeEventListener('abort', cancel)
+            }
+          })
+        ]
+      : []),
+    ...(remoteRoot
+      ? [
+          buildRemoteWorkspaceReadTool(
+            async (path) =>
+              (await requestHost('remoteWorkspace.read', {
+                sessionId: remoteRecord?.phiSessionId,
+                projectId: remoteRecord?.projectId,
+                path
+              })) as RemoteWorkspaceReadResult
+          )
+        ]
+      : []),
+    ...(remoteRoot
+      ? [
+          buildRemoteWorkspaceGlobTool(
+            async (input) =>
+              (await requestHost('remoteWorkspace.glob', {
+                ...input,
+                sessionId: remoteRecord?.phiSessionId,
+                projectId: remoteRecord?.projectId
+              })) as RemoteGlobResult
+          ),
+          buildRemoteWorkspaceGrepTool(
+            async (input) =>
+              (await requestHost('remoteWorkspace.grep', {
+                ...input,
+                sessionId: remoteRecord?.phiSessionId,
+                projectId: remoteRecord?.projectId
+              })) as RemoteGrepResult
+          )
+        ]
+      : []),
+    ...(remoteRoot
+      ? [
+          buildRemoteWorkspaceBashTool(async (toolCallId, input, signal) => {
+            if (signal?.aborted) throw new Error('远程命令在提交前已取消')
+            const requestId = randomUUID()
+            const identity = {
+              sessionId: remoteRecord?.phiSessionId,
+              projectId: remoteRecord?.projectId,
+              requestId
+            }
+            const cancel = (): void => {
+              void requestHost('remoteWorkspace.cancelBash', identity).catch(() => undefined)
+            }
+            const pending = requestHost('remoteWorkspace.bash', {
+              ...input,
+              ...identity,
+              toolCallId
+            })
+            signal?.addEventListener('abort', cancel, { once: true })
+            if (signal?.aborted) cancel()
+            try {
+              return (await pending) as RemoteBashResult
+            } finally {
+              signal?.removeEventListener('abort', cancel)
+            }
+          })
+        ]
+      : []),
     ...agentCustomTools,
     ...agentRunTools,
     ...notebookCustomTools,
@@ -894,7 +1151,11 @@ async function createSession(params: unknown): Promise<unknown> {
   ]
 
   const result = await createLegacyAgentSession({
-    cwd,
+    agentId: `phi-main-${sessionId}`,
+    agentDisplayName: 'Main',
+    // The session manager retains the private history anchor. SDK discovery uses
+    // Phi's global directory so it never treats that anchor as a project root.
+    cwd: settingsCwd,
     agentDir,
     settings,
     authStorage: ctx.authStorage,
@@ -902,12 +1163,27 @@ async function createSession(params: unknown): Promise<unknown> {
     sessionManager,
     thinkingLevel: configuredThinkingLevel(record.thinkingLevel),
     systemPrompt: (defaultPrompt) =>
-      buildPhiMainSystemPrompt(defaultPrompt, {
-        ...(personaMarkdown ? { personaMarkdown } : {})
-      }),
+      remoteRoot
+        ? buildPhiRemoteProjectSystemPrompt(defaultPrompt, cwd, remoteRoot, {
+            ...(personaMarkdown ? { personaMarkdown } : {})
+          })
+        : buildPhiMainSystemPrompt(defaultPrompt, {
+            ...(personaMarkdown ? { personaMarkdown } : {})
+          }),
     ...(modelBySelector(ctx, record.model) ? { model: modelBySelector(ctx, record.model) } : {}),
     ...(resources ? { resourceLoader: resources } : {}),
     ...(customTools.length > 0 ? { customTools } : {}),
+    ...(remoteRoot
+      ? {
+          enableMCP: false,
+          enableLsp: false,
+          disableExtensionDiscovery: true,
+          includeWorkspaceTree: false,
+          contextFiles: remoteContextFiles ?? [],
+          promptTemplates: [],
+          slashCommands: []
+        }
+      : {}),
     ...(noTools
       ? {
           enableMCP: false,
@@ -922,6 +1198,24 @@ async function createSession(params: unknown): Promise<unknown> {
         }
       : {})
   })
+
+  if (remoteRoot) {
+    await initializeExtensions(result.session, {
+      reportSendError: () => {
+        process.stderr.write('Phi remote extension message failed\n')
+      },
+      reportRuntimeError: () => {
+        process.stderr.write('Phi remote extension handler failed\n')
+      }
+    })
+  }
+
+  if (remoteRoot && !remoteWorkspaceToolsVerified(result.session.getAllToolInfos())) {
+    await result.session.dispose()
+    throw new Error(
+      '远程 read/bash/glob/grep/write/edit 工具未覆盖本地实现；远程会话已拒绝启动工具'
+    )
+  }
 
   parentRef.current = result
 

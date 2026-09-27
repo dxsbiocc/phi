@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -31,6 +40,13 @@ const TREE = {
   'modules/nf-core/fastqc/work/ab/cd/out.txt': 'stale run output',
   'subworkflows/nf-core/x/main.nf': 'workflow X {}',
   'README.md': 'not part of a bundle'
+}
+
+function activeBundleArtifacts(remote: string): string[] {
+  const bundles = join(remote, 'wrappers/bundles')
+  return existsSync(bundles)
+    ? readdirSync(bundles).filter((name) => /\.lock$|\.stale-|\.partial-|\.archive-/.test(name))
+    : []
 }
 
 test('bundle files are the runnable sources only, sorted, with posix relative paths', () => {
@@ -98,10 +114,182 @@ test('ensureRemoteBundle uploads once, unpacks the sources, and reuses the bundl
     assert.equal(existsSync(join(first.bundleDir, 'modules/nf-core/fastqc/.DS_Store')), false)
     // the shipped archive is not left behind
     assert.equal(existsSync(`${first.bundleDir}.tar.gz`), false)
+    assert.deepEqual(activeBundleArtifacts(remote), [])
+    const marker = JSON.parse(readFileSync(join(first.bundleDir, '.phi-bundle-complete'), 'utf8'))
+    assert.equal(marker.hash, first.hash)
+    assert.equal(marker.files.length, collectBundleFiles(src.root).length)
 
     const second = await ensureRemoteBundle(session, { localRoot: src.root, workspaceRoot: remote })
     assert.equal(second.hash, first.hash)
     assert.equal(session.uploads.length, 1, 'an unchanged bundle must not be uploaded again')
+  } finally {
+    src.cleanup()
+    rmSync(remote, { recursive: true, force: true })
+  }
+})
+
+test('concurrent callers on the same host transfer a bundle only once', async () => {
+  const src = makeTree(TREE)
+  const remote = mkdtempSync(join(tmpdir(), 'phi-bundle-remote-'))
+  try {
+    const firstSession = createLocalShellSession()
+    const secondSession = createLocalShellSession()
+    const [first, second] = await Promise.all([
+      ensureRemoteBundle(firstSession, { localRoot: src.root, workspaceRoot: remote }),
+      ensureRemoteBundle(secondSession, { localRoot: src.root, workspaceRoot: remote })
+    ])
+    assert.deepEqual(second, first)
+    assert.equal(firstSession.uploads.length + secondSession.uploads.length, 1)
+    assert.deepEqual(activeBundleArtifacts(remote), [])
+  } finally {
+    src.cleanup()
+    rmSync(remote, { recursive: true, force: true })
+  }
+})
+
+test('a lock abandoned by a disconnected uploader is reclaimed before retry', async () => {
+  const src = makeTree(TREE)
+  const remote = mkdtempSync(join(tmpdir(), 'phi-bundle-remote-'))
+  try {
+    const hash = hashBundleFiles(src.root, collectBundleFiles(src.root))
+    const lockDir = join(remote, 'wrappers/bundles', `${hash}.lock`)
+    mkdirSync(lockDir, { recursive: true })
+    writeFileSync(join(lockDir, 'owner'), 'disconnected')
+    const old = new Date(Date.now() - 120_000)
+    utimesSync(lockDir, old, old)
+    const session = createLocalShellSession()
+    const result = await ensureRemoteBundle(session, { localRoot: src.root, workspaceRoot: remote })
+    assert.equal(result.hash, hash)
+    assert.equal(session.uploads.length, 1)
+    assert.deepEqual(activeBundleArtifacts(remote), [])
+  } finally {
+    src.cleanup()
+    rmSync(remote, { recursive: true, force: true })
+  }
+})
+
+test('large server scans use the session bounded command path when available', async () => {
+  const src = makeTree(TREE)
+  const remote = mkdtempSync(join(tmpdir(), 'phi-bundle-remote-'))
+  try {
+    const session = createLocalShellSession()
+    const direct = session.exec
+    let bounded = 0
+    session.execBounded = async (command, options) => {
+      bounded += 1
+      assert.ok(options.timeoutMs >= 120_000)
+      assert.ok(options.maxOutputBytes <= 8192)
+      return { ...(await direct(command)), stdoutTruncated: false, stderrTruncated: false }
+    }
+    await ensureRemoteBundle(session, { localRoot: src.root, workspaceRoot: remote })
+    assert.ok(bounded >= 3, 'remote verification and extraction use bounded commands')
+  } finally {
+    src.cleanup()
+    rmSync(remote, { recursive: true, force: true })
+  }
+})
+
+test('damaged content or a forged completion marker is repaired before reuse', async () => {
+  const src = makeTree(TREE)
+  const remote = mkdtempSync(join(tmpdir(), 'phi-bundle-remote-'))
+  try {
+    const session = createLocalShellSession()
+    const first = await ensureRemoteBundle(session, { localRoot: src.root, workspaceRoot: remote })
+    const main = join(first.bundleDir, 'modules/nf-core/fastqc/main.nf')
+    writeFileSync(main, 'tampered')
+    await ensureRemoteBundle(session, { localRoot: src.root, workspaceRoot: remote })
+    assert.equal(session.uploads.length, 2)
+    assert.equal(readFileSync(main, 'utf8'), TREE['modules/nf-core/fastqc/main.nf'])
+    writeFileSync(join(first.bundleDir, '.phi-bundle-complete'), '{"hash":"forged"}')
+    await ensureRemoteBundle(session, { localRoot: src.root, workspaceRoot: remote })
+    assert.equal(session.uploads.length, 3)
+    assert.equal(readFileSync(main, 'utf8'), TREE['modules/nf-core/fastqc/main.nf'])
+    writeFileSync(join(first.bundleDir, 'unexpected.txt'), 'not in manifest')
+    await ensureRemoteBundle(session, { localRoot: src.root, workspaceRoot: remote })
+    assert.equal(session.uploads.length, 4)
+    assert.equal(existsSync(join(first.bundleDir, 'unexpected.txt')), false)
+    assert.deepEqual(activeBundleArtifacts(remote), [])
+  } finally {
+    src.cleanup()
+    rmSync(remote, { recursive: true, force: true })
+  }
+})
+
+test('a source change after hashing cannot publish under the earlier content hash', async () => {
+  const src = makeTree(TREE)
+  const remote = mkdtempSync(join(tmpdir(), 'phi-bundle-remote-'))
+  try {
+    const session = createLocalShellSession()
+    const oldHash = hashBundleFiles(src.root, collectBundleFiles(src.root))
+    const realMkdir = session.mkdirp
+    session.mkdirp = async (path) => {
+      await realMkdir(path)
+      writeFileSync(join(src.root, 'modules/nf-core/fastqc/main.nf'), 'changed after snapshot')
+    }
+    await assert.rejects(
+      ensureRemoteBundle(session, { localRoot: src.root, workspaceRoot: remote }),
+      /校验失败/
+    )
+    assert.equal(existsSync(join(remote, 'wrappers/bundles', oldHash)), false)
+    assert.deepEqual(activeBundleArtifacts(remote), [])
+  } finally {
+    src.cleanup()
+    rmSync(remote, { recursive: true, force: true })
+  }
+})
+
+test('an interrupted transfer cannot overwrite an already available version', async () => {
+  const src = makeTree(TREE)
+  const remote = mkdtempSync(join(tmpdir(), 'phi-bundle-remote-'))
+  try {
+    const session = createLocalShellSession()
+    const first = await ensureRemoteBundle(session, { localRoot: src.root, workspaceRoot: remote })
+    const source = join(src.root, 'modules/nf-core/fastqc/main.nf')
+    writeFileSync(source, 'process V2 {}')
+    const secondHash = hashBundleFiles(src.root, collectBundleFiles(src.root))
+    const realUpload = session.uploadFile
+    session.uploadFile = async (local, target) => {
+      await realUpload(local, target)
+      throw new Error('SSH upload interrupted')
+    }
+    await assert.rejects(
+      ensureRemoteBundle(session, { localRoot: src.root, workspaceRoot: remote }),
+      /upload interrupted/
+    )
+    assert.equal(existsSync(join(remote, 'wrappers/bundles', secondHash)), false)
+    assert.equal(
+      readFileSync(join(first.bundleDir, 'modules/nf-core/fastqc/main.nf'), 'utf8'),
+      TREE['modules/nf-core/fastqc/main.nf']
+    )
+    assert.deepEqual(activeBundleArtifacts(remote), [])
+    session.uploadFile = realUpload
+    const second = await ensureRemoteBundle(session, { localRoot: src.root, workspaceRoot: remote })
+    assert.equal(second.hash, secondHash)
+  } finally {
+    src.cleanup()
+    rmSync(remote, { recursive: true, force: true })
+  }
+})
+
+test('corrupted extracted files never receive a published completion marker', async () => {
+  const src = makeTree(TREE)
+  const remote = mkdtempSync(join(tmpdir(), 'phi-bundle-remote-'))
+  try {
+    const session = createLocalShellSession()
+    const realWrite = session.writeTextFile
+    session.writeTextFile = async (path, content) => {
+      await realWrite(path, content)
+      if (path.endsWith('/.phi-bundle-complete')) {
+        writeFileSync(join(dirname(path), 'modules/nf-core/fastqc/main.nf'), 'corrupt transfer')
+      }
+    }
+    await assert.rejects(
+      ensureRemoteBundle(session, { localRoot: src.root, workspaceRoot: remote }),
+      /校验失败/
+    )
+    const hash = hashBundleFiles(src.root, collectBundleFiles(src.root))
+    assert.equal(existsSync(join(remote, 'wrappers/bundles', hash)), false)
+    assert.deepEqual(activeBundleArtifacts(remote), [])
   } finally {
     src.cleanup()
     rmSync(remote, { recursive: true, force: true })

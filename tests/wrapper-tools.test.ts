@@ -189,10 +189,27 @@ test('an execute tool call with invalid params creates an invalid plan and repor
   })
 })
 
-test('generated execute-tool schema matches the manifest parameter schema exactly', async () => {
+test('generated execute-tool schema preserves options and allows explicit input provenance', async () => {
   await withHarness(({ agentDir, projectDir }) => {
     const entry = installLegacyFastqQcWrapper(agentDir, projectDir)
     const tool = buildWrapperExecuteTool(entry, agentDir)
-    assert.deepEqual(tool.parameters, entry.manifest.parameters.schema)
+    const schema = tool.parameters as Record<string, unknown>
+    const original = entry.manifest.parameters.schema
+    assert.equal(schema.type, original.type)
+    assert.deepEqual(schema.required, original.required)
+    const properties = schema.properties as Record<string, unknown>
+    const originalProperties = original.properties as Record<string, unknown>
+    assert.deepEqual(properties.threads, originalProperties.threads)
+    const reads = properties.reads as { anyOf: unknown[] }
+    assert.deepEqual(reads.anyOf[0], originalProperties.reads)
+    assert.deepEqual(reads.anyOf[1], {
+      type: 'object',
+      required: ['source', 'path'],
+      additionalProperties: false,
+      properties: {
+        source: { type: 'string', enum: ['local', 'remote'] },
+        path: { type: 'string', minLength: 1 }
+      }
+    })
   })
 })

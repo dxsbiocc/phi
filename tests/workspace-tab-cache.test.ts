@@ -8,10 +8,12 @@ import {
 import {
   cacheWorkspaceFilePreviewState,
   removeWorkspaceFilePreviewState,
+  workspaceFileRoute,
   type WorkspaceFilePreviewCache
 } from '../src/renderer/src/useWorkspaceFileTabs'
 import type { FilePreviewPanelState } from '../src/renderer/src/features/file-preview/FilePreviewPanel'
 import type { AnalysisNotebookFile } from '../src/renderer/src/types'
+import { shouldClearWorkspaceFilesForRemoteSwitch } from '../src/renderer/src/lib/workspacePaths'
 
 const readyPreview: FilePreviewPanelState = {
   status: 'ready',
@@ -76,6 +78,55 @@ test('workspace file preview cache is keyed by the rendered path', () => {
 
   assert.equal(removed['/project/src/App.tsx'], undefined)
   assert.equal(removed['/project/src'], directoryPreview)
+})
+
+test('remote project switches invalidate file previews while local navigation keeps them', () => {
+  const clusterA = 'project-a:cluster-a:/data/project'
+  const clusterB = 'project-b:cluster-b:/data/project'
+  assert.equal(shouldClearWorkspaceFilesForRemoteSwitch(null, clusterA), true)
+  assert.equal(shouldClearWorkspaceFilesForRemoteSwitch(clusterA, clusterB), true)
+  assert.equal(shouldClearWorkspaceFilesForRemoteSwitch(clusterA, null), true)
+  assert.equal(shouldClearWorkspaceFilesForRemoteSwitch(clusterA, clusterA), false)
+  assert.equal(shouldClearWorkspaceFilesForRemoteSwitch(null, null), false)
+})
+
+test('wrapper result URIs use run-scoped APIs and never become local file previews', () => {
+  const resultScope = {
+    projectId: 'project-a',
+    hostProfileId: 'host-a',
+    runId: 'wrun_a',
+    hostAlias: 'cluster-a',
+    scope: 'output' as const,
+    root: '/scratch/results-a'
+  }
+  const projectScope = {
+    sessionId: 'session-a',
+    projectId: 'project-a',
+    hostAlias: 'cluster-a',
+    canonicalRoot: '/cluster/work'
+  }
+  assert.deepEqual(
+    workspaceFileRoute('ssh://cluster-a/scratch/results-a/report.html', resultScope, projectScope),
+    {
+      kind: 'wrapper-result',
+      request: {
+        projectId: 'project-a',
+        hostProfileId: 'host-a',
+        runId: 'wrun_a',
+        scope: 'output',
+        path: 'report.html'
+      }
+    }
+  )
+  assert.equal(
+    workspaceFileRoute('ssh://cluster-a/cluster/work/readme.md', resultScope, projectScope).kind,
+    'remote-project'
+  )
+  assert.equal(workspaceFileRoute('/local/readme.md', resultScope, projectScope).kind, 'local')
+  assert.throws(() => workspaceFileRoute('ssh://cluster-b/etc/passwd', resultScope, projectScope))
+  assert.throws(() =>
+    workspaceFileRoute('ssh://cluster-a/scratch/results-a/report.html', null, null)
+  )
 })
 
 test('analysis notebook cache resolves absolute and relative tab paths', () => {

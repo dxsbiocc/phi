@@ -11,7 +11,8 @@ export type ToolTarget = {
 export function toolTargetFromArgs(
   toolName: string,
   argsJson: string | undefined,
-  cwd: string
+  cwd: string,
+  options: { allowBareFileName?: boolean } = {}
 ): ToolTarget | null {
   if (!TARGET_TOOLS.has(toolName) || !argsJson) return null
 
@@ -29,6 +30,10 @@ export function toolTargetFromArgs(
   )
   if (!label) return null
 
-  const absolutePath = resolveLocalPath(label, cwd)
+  const absolutePath =
+    resolveLocalPath(label, cwd) ??
+    (options.allowBareFileName && /^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(label)
+      ? `${cwd.replace(/\/+$/, '')}/${label}`
+      : null)
   return absolutePath ? { label, absolutePath } : null
 }

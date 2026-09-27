@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
 import {
   buildRemoteLaunchScript,
+  buildRemoteConfiguredLaunchScript,
   buildRemotePreflightScript,
   buildRemoteSbatchScript,
   buildRemoteNextflowConfig,
   remoteRunLayout
 } from '../src/main/agent/wrappers/composition/remote-config'
+import { controllerFor } from '../src/main/agent/wrappers/composition/remote-controller'
 
 test('slurm settings become process and executor config', () => {
   const config = buildRemoteNextflowConfig({
@@ -106,6 +108,26 @@ test('launch script runs setup commands first and honors an explicit nextflow pa
   assert.match(script, /'\/opt\/nf\/bin\/nextflow' 'run'/)
 })
 
+test('shared remote launch runs setup in the head process and records setup failure', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'phi-shared-launch-'))
+  try {
+    const file = join(dir, 'launch.sh')
+    writeFileSync(
+      file,
+      buildRemoteConfiguredLaunchScript({
+        runDir: dir,
+        setupCommands: ['echo SETUP >> setup.marker', 'false'],
+        commands: ['echo MUST_NOT_RUN >> setup.marker']
+      })
+    )
+    assert.throws(() => execFileSync('bash', [file], { cwd: dir, stdio: 'ignore' }))
+    assert.equal(readFileSync(join(dir, 'setup.marker'), 'utf8'), 'SETUP\n')
+    assert.equal(readFileSync(join(dir, 'exit_code'), 'utf8').trim(), '1')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('a failing setup command stops the launch and is recorded as the exit code', () => {
   const dir = mkdtempSync(join(tmpdir(), 'phi-launch-'))
   try {
@@ -148,12 +170,13 @@ test('the launch script loads the login profile first so `module load` works in 
 
 function runPreflight(
   hpc: Parameters<typeof buildRemotePreflightScript>[0]['hpc'],
-  env: NodeJS.ProcessEnv = {}
+  env: NodeJS.ProcessEnv = {},
+  workspaceRoot?: string
 ): { code: number; stdout: string; stderr: string } {
   const dir = mkdtempSync(join(tmpdir(), 'phi-preflight-'))
   try {
     const file = join(dir, 'preflight.sh')
-    writeFileSync(file, buildRemotePreflightScript({ hpc, profile: 'singularity' }))
+    writeFileSync(file, buildRemotePreflightScript({ hpc, profile: 'singularity', workspaceRoot }))
     try {
       const stdout = execFileSync('bash', [file], {
         env: { PATH: '/usr/bin:/bin', HOME: dir, ...env },
@@ -186,25 +209,79 @@ test('preflight fails when slurm is chosen but sbatch is missing', () => {
   assert.match(result.stderr, /sbatch/)
 })
 
-test('preflight passes when nextflow is there, and only warns about a missing container runtime', () => {
+test('preflight warns about a runtime missing on the Slurm login node', () => {
   const result = runPreflight({
-    scheduler: 'local',
+    scheduler: 'slurm',
     runtime: 'singularity',
-    nextflowBin: '/bin/sh'
+    nextflowBin: '/bin/sh',
+    setupCommands: ['sbatch() { :; }', 'squeue() { :; }', 'scontrol() { :; }', 'scancel() { :; }']
   })
   assert.equal(result.code, 0, result.stderr)
   assert.match(result.stdout, /WARN.*(singularity|apptainer)/i)
 })
 
-test('preflight runs the setup commands first, so a module can supply the tools', () => {
+test('preflight runs setup commands first so a module can supply the local runtime', () => {
   const result = runPreflight({
     scheduler: 'local',
-    runtime: 'conda',
+    runtime: 'singularity',
     nextflowBin: '/bin/sh',
-    setupCommands: ['echo SETUP-RAN']
+    setupCommands: ['echo SETUP-RAN', 'singularity() { :; }']
   })
   assert.equal(result.code, 0, result.stderr)
   assert.match(result.stdout, /SETUP-RAN/)
+})
+
+test('preflight blocks a server work directory without write permission', () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-readonly-workspace-'))
+  chmodSync(root, 0o500)
+  try {
+    const result = runPreflight(
+      { scheduler: 'local', nextflowBin: '/bin/sh', setupCommands: ['singularity() { :; }'] },
+      {},
+      root
+    )
+    assert.notEqual(result.code, 0)
+    assert.match(result.stderr, /工作目录.*权限/)
+  } finally {
+    chmodSync(root, 0o700)
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a site requiring sbatch cannot silently launch the head process on the login node', () => {
+  assert.throws(
+    () => controllerFor({ scheduler: 'local', controller: 'sbatch' }),
+    /必须使用 Slurm 调度/
+  )
+  assert.ok(controllerFor({ scheduler: 'slurm', controller: 'sbatch' }))
+})
+
+test('sbatch preflight warns about compute-only tools without running setup on login', () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-sbatch-preflight-'))
+  const bin = join(root, 'bin')
+  mkdirSync(bin)
+  try {
+    for (const command of ['sbatch', 'squeue', 'scontrol', 'scancel']) {
+      const file = join(bin, command)
+      writeFileSync(file, '#!/bin/sh\nexit 0\n')
+      chmodSync(file, 0o755)
+    }
+    const result = runPreflight(
+      {
+        scheduler: 'slurm',
+        controller: 'sbatch',
+        nextflowBin: '/not-on-login/nextflow',
+        setupCommands: ['false']
+      },
+      { PATH: `${bin}:/bin` },
+      root
+    )
+    assert.equal(result.code, 0, result.stderr)
+    assert.match(result.stdout, /WARN.*Nextflow/)
+    assert.match(result.stdout, /WARN.*singularity/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test("the launch script exits with Nextflow's own code, so a scheduler sees a failed run as failed", () => {

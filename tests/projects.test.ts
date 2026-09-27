@@ -17,6 +17,7 @@ import {
   updateProjectRemoteDefaults,
   updateProjectWrapperDefault
 } from '../src/main/agent/projects'
+import { saveRemoteHostProfile } from '../src/main/agent/remote-hosts'
 
 function withPhiDir<T>(callback: (paths: { phiDir: string; root: string }) => T): T {
   const previous = process.env.PI_CODING_AGENT_DIR
@@ -185,21 +186,18 @@ test('project remote connections are added, replaced, and removed independently 
       workingDirectory: projectDir,
       permissionMode: 'ask'
     })
+    const host = saveRemoteHostProfile({ label: 'Lab HPC', hostAlias: 'lab-hpc' })
 
     const withConnection = updateProjectRemoteConnection(project.id, 'conn1', {
       id: 'conn1',
       label: 'Lab HPC',
-      host: 'lab-hpc.example.edu',
-      username: 'agent',
-      privateKeyPath: '/home/user/.ssh/id_ed25519'
+      hostProfileId: host.id
     })
     assert.deepEqual(withConnection.remoteConnections, [
       {
         id: 'conn1',
         label: 'Lab HPC',
-        host: 'lab-hpc.example.edu',
-        username: 'agent',
-        privateKeyPath: '/home/user/.ssh/id_ed25519'
+        hostProfileId: host.id
       }
     ])
 
@@ -207,10 +205,7 @@ test('project remote connections are added, replaced, and removed independently 
     const replaced = updateProjectRemoteConnection(project.id, 'conn1', {
       id: 'conn1',
       label: 'Lab HPC (renamed)',
-      host: 'lab-hpc.example.edu',
-      username: 'agent',
-      privateKeyPath: '/home/user/.ssh/id_ed25519',
-      hasPassphrase: true
+      hostProfileId: host.id
     })
     assert.equal(replaced.remoteConnections?.length, 1)
     assert.equal(replaced.remoteConnections?.[0].label, 'Lab HPC (renamed)')
@@ -228,6 +223,55 @@ test('project remote connections are added, replaced, and removed independently 
     assert.equal(removed.defaultRemoteConnectionId, undefined)
     // remoteWorkspaceRoot is independent state — untouched by removing a connection.
     assert.equal(removed.remoteWorkspaceRoot, '/data/lab/.phi')
+  })
+})
+
+test('only local projects can save a valid local-root to server-root input mapping', () => {
+  withPhiDir(({ root, phiDir }) => {
+    const projectDir = join(root, 'demo')
+    mkdirSync(projectDir)
+    const project = createProject({
+      name: 'Demo',
+      workingDirectory: projectDir,
+      permissionMode: 'ask'
+    })
+    const host = saveRemoteHostProfile({ label: 'Cluster', hostAlias: 'cluster-a' })
+    const patch = {
+      id: 'conn1',
+      label: 'Cluster',
+      hostProfileId: host.id,
+      inputPathMapping: {
+        localRoot: `${projectDir}/data/..`,
+        remoteRoot: '/cluster/project/data/..'
+      }
+    }
+    const saved = updateProjectRemoteConnection(project.id, patch.id, patch)
+    assert.deepEqual(saved.remoteConnections?.[0]?.inputPathMapping, {
+      localRoot: projectDir,
+      remoteRoot: '/cluster/project'
+    })
+    assert.throws(
+      () =>
+        updateProjectRemoteConnection(project.id, patch.id, {
+          ...patch,
+          inputPathMapping: { localRoot: 'relative', remoteRoot: '/cluster/project' }
+        }),
+      /本地映射根/
+    )
+    const sshRecord = {
+      ...project,
+      location: {
+        kind: 'ssh',
+        hostProfileId: host.id,
+        remoteRoot: '/remote/work',
+        canonicalRoot: '/remote/work'
+      }
+    }
+    writeFileSync(join(phiDir, 'projects.json'), JSON.stringify([sshRecord]))
+    assert.throws(
+      () => updateProjectRemoteConnection(project.id, patch.id, patch),
+      /远程项目不能配置/
+    )
   })
 })
 

@@ -1,27 +1,28 @@
-import { useEffect, useState } from 'react'
 import {
   Alert,
   Box,
   Button,
-  Chip,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Divider,
-  FormControlLabel,
-  IconButton,
   MenuItem,
   Paper,
   Select,
   Stack,
-  Switch,
   TextField,
-  Tooltip,
   Typography
 } from '@mui/material'
+import { useEffect, useMemo, useState } from 'react'
+
+import type {
+  OpenSshHost,
+  Project,
+  ProjectRemoteConnection,
+  RemoteHostProfile
+} from '../../../types'
 import { PhiIcons } from '../../../icons'
-import type { Project, ProjectRemoteConnection } from '../../../types'
 import {
   EMPTY_HPC_DRAFT,
   hpcDraftError,
@@ -29,259 +30,90 @@ import {
   hpcSettingsFromDraft,
   type HpcDraft
 } from '../lib/remoteHpcDraft'
+import {
+  createRemoteDoctorUiController,
+  remoteConnectionDoctorTarget,
+  remoteDoctorTargetKey,
+  remoteHostDoctorTarget,
+  withHostDoctorState,
+  type RemoteDoctorUiState
+} from '../lib/remoteDoctorUi'
+import { RemoteHostProfilesPanel, type RemoteHostDraft } from './RemoteHostProfilesPanel'
+import { RemoteProjectConnectionRow } from './RemoteProjectConnectionRow'
+import { WrapperHpcSettingsFields } from './WrapperHpcSettingsFields'
 
 const AddIcon = PhiIcons.action.add
-const DeleteIcon = PhiIcons.action.delete
-const EditIcon = PhiIcons.action.edit
-const ServerIcon = PhiIcons.settings.remoteExecution
 
-/**
- * Local draft state for the add/edit dialog — mirrors `ProjectRemoteConnection`
- * plus the passphrase bookkeeping that field doesn't carry (the record only
- * ever stores `hasPassphrase`, never the passphrase itself — see
- * `remote-credential-store.ts`).
- */
 interface ConnectionDraft {
   id: string
   label: string
-  host: string
-  port: string
-  username: string
-  privateKeyPath: string
-  needsPassphrase: boolean
-  /** Empty means "leave the stored passphrase untouched" when editing a connection that already had one. */
-  passphraseInput: string
+  hostProfileId: string
   hpc: HpcDraft
+  localInputRoot: string
+  remoteInputRoot: string
 }
 
 const EMPTY_DRAFT: ConnectionDraft = {
   id: '',
   label: '',
-  host: '',
-  port: '',
-  username: '',
-  privateKeyPath: '',
-  needsPassphrase: false,
-  passphraseInput: '',
-  hpc: EMPTY_HPC_DRAFT
+  hostProfileId: '',
+  hpc: EMPTY_HPC_DRAFT,
+  localInputRoot: '',
+  remoteInputRoot: ''
 }
 
 function draftFromConnection(connection: ProjectRemoteConnection): ConnectionDraft {
   return {
     id: connection.id,
     label: connection.label,
-    host: connection.host,
-    port: connection.port ? String(connection.port) : '',
-    username: connection.username,
-    privateKeyPath: connection.privateKeyPath,
-    needsPassphrase: !!connection.hasPassphrase,
-    passphraseInput: '',
-    hpc: hpcDraftFromSettings(connection.hpc)
+    hostProfileId: connection.hostProfileId ?? '',
+    hpc: hpcDraftFromSettings(connection.hpc),
+    localInputRoot: connection.inputPathMapping?.localRoot ?? '',
+    remoteInputRoot: connection.inputPathMapping?.remoteRoot ?? ''
   }
 }
 
-function draftValidationError(
-  draft: ConnectionDraft,
-  wasPassphraseAlreadyStored: boolean
-): string | null {
+function draftValidationError(draft: ConnectionDraft): string | null {
   if (!draft.label.trim()) return '请填写连接名称'
-  if (!draft.host.trim()) return '请填写主机地址'
-  if (!draft.username.trim()) return '请填写用户名'
-  if (!draft.privateKeyPath.trim()) return '请选择 SSH 私钥文件'
-  if (draft.port && !/^\d+$/.test(draft.port)) return '端口必须是数字'
-  if (draft.needsPassphrase && !draft.passphraseInput && !wasPassphraseAlreadyStored) {
-    return '已开启口令保护，请输入密钥口令'
+  if (!draft.hostProfileId) return '请选择 SSH 服务器'
+  if (Boolean(draft.localInputRoot) !== Boolean(draft.remoteInputRoot)) {
+    return '本机根与服务器根需要同时填写'
+  }
+  if (draft.localInputRoot && !draft.localInputRoot.startsWith('/')) {
+    return '本机映射根必须是绝对路径'
+  }
+  if (draft.remoteInputRoot && !draft.remoteInputRoot.startsWith('/')) {
+    return '服务器映射根必须是 POSIX 绝对路径'
   }
   return hpcDraftError(draft.hpc)
-}
-
-interface HpcSettingsFieldsProps {
-  value: HpcDraft
-  onChange: (next: HpcDraft) => void
-}
-
-/** How wrappers run on this host: scheduler, container runtime and the site-specific bits. */
-function HpcSettingsFields({ value, onChange }: HpcSettingsFieldsProps): React.JSX.Element {
-  const slurm = value.scheduler === 'slurm'
-  const monoInput = {
-    '& input, & textarea': { fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }
-  }
-  return (
-    <Stack spacing={2}>
-      <Box>
-        <Typography variant="subtitle2">运行方式</Typography>
-        <Typography variant="caption" color="text.secondary">
-          Nextflow 在该主机（登录节点）上启动，关闭 Phi 后仍会继续运行。
-        </Typography>
-      </Box>
-      <TextField
-        select
-        size="small"
-        fullWidth
-        label="Nextflow 主进程运行位置"
-        value={value.controller}
-        onChange={(event) =>
-          onChange({ ...value, controller: event.target.value as HpcDraft['controller'] })
-        }
-        helperText={
-          value.controller === 'login'
-            ? '在登录节点后台常驻，最简单；前提是集群允许登录节点跑长时间的轻量进程'
-            : '作为一个 Slurm 作业提交，适合禁止登录节点常驻进程的集群；排队时也要等'
-        }
-      >
-        <MenuItem value="login">登录节点（后台常驻）</MenuItem>
-        <MenuItem value="sbatch">作为 Slurm 作业提交</MenuItem>
-      </TextField>
-      {value.controller === 'sbatch' && (
-        <TextField
-          size="small"
-          fullWidth
-          label="主进程作业的额外 sbatch 参数"
-          value={value.controllerOptions}
-          onChange={(event) => onChange({ ...value, controllerOptions: event.target.value })}
-          placeholder="--time=7-00:00:00 --mem=8G"
-          helperText="默认申请 1 核、4G、2 天；流程会比这更久，或分区限制不同，就在这里覆盖"
-          sx={monoInput}
-        />
-      )}
-      <Stack direction="row" spacing={1.5}>
-        <TextField
-          select
-          size="small"
-          fullWidth
-          label="任务调度"
-          value={value.scheduler}
-          onChange={(event) =>
-            onChange({ ...value, scheduler: event.target.value as HpcDraft['scheduler'] })
-          }
-          helperText={
-            slurm ? '每个步骤作为 Slurm 作业提交' : '步骤直接在该主机上运行（无调度器的服务器）'
-          }
-        >
-          <MenuItem value="slurm">Slurm 集群</MenuItem>
-          <MenuItem value="local">直接在该主机上运行</MenuItem>
-        </TextField>
-        <TextField
-          select
-          size="small"
-          fullWidth
-          label="软件环境"
-          value={value.runtime}
-          onChange={(event) =>
-            onChange({ ...value, runtime: event.target.value as HpcDraft['runtime'] })
-          }
-          helperText="集群上通常用 Singularity"
-        >
-          <MenuItem value="singularity">Singularity / Apptainer</MenuItem>
-          <MenuItem value="conda">Conda</MenuItem>
-          <MenuItem value="docker">Docker</MenuItem>
-        </TextField>
-      </Stack>
-      {slurm && (
-        <>
-          <Stack direction="row" spacing={1.5}>
-            <TextField
-              size="small"
-              fullWidth
-              label="队列（partition）"
-              value={value.queue}
-              onChange={(event) => onChange({ ...value, queue: event.target.value })}
-              placeholder="留空用集群默认队列"
-            />
-            <TextField
-              size="small"
-              fullWidth
-              label="账号（account）"
-              value={value.account}
-              onChange={(event) => onChange({ ...value, account: event.target.value })}
-            />
-          </Stack>
-          <Stack direction="row" spacing={1.5}>
-            <TextField
-              size="small"
-              fullWidth
-              label="额外 sbatch 参数"
-              value={value.clusterOptions}
-              onChange={(event) => onChange({ ...value, clusterOptions: event.target.value })}
-              placeholder="--qos=normal"
-              sx={monoInput}
-            />
-            <TextField
-              size="small"
-              label="最多同时排队作业数"
-              value={value.queueSize}
-              onChange={(event) => onChange({ ...value, queueSize: event.target.value })}
-              placeholder="不限制"
-              sx={{ minWidth: 150 }}
-            />
-          </Stack>
-        </>
-      )}
-      <TextField
-        size="small"
-        fullWidth
-        label="Singularity 镜像缓存目录"
-        value={value.singularityCacheDir}
-        onChange={(event) => onChange({ ...value, singularityCacheDir: event.target.value })}
-        placeholder="/shared/lab/singularity"
-        helperText="建议设成共享的可写目录，避免每个用户各下载一份镜像"
-        sx={monoInput}
-      />
-      <TextField
-        size="small"
-        fullWidth
-        label="Nextflow 路径"
-        value={value.nextflowBin}
-        onChange={(event) => onChange({ ...value, nextflowBin: event.target.value })}
-        placeholder="已在 PATH 中就留空"
-        sx={monoInput}
-      />
-      <TextField
-        size="small"
-        fullWidth
-        multiline
-        minRows={2}
-        label="启动前执行的命令"
-        value={value.setupText}
-        onChange={(event) => onChange({ ...value, setupText: event.target.value })}
-        placeholder={'module load java\nmodule load nextflow'}
-        helperText="每行一条，在启动 Nextflow 前运行"
-        sx={monoInput}
-      />
-    </Stack>
-  )
 }
 
 interface ConnectionDialogProps {
   open: boolean
   draft: ConnectionDraft
-  isNew: boolean
-  wasPassphraseAlreadyStored: boolean
-  credentialStorageAvailable: boolean | null
+  hosts: RemoteHostProfile[]
   busy: boolean
   error: string | null
   onChange: (next: ConnectionDraft) => void
-  onPickKeyFile: () => void
   onCancel: () => void
   onSave: () => void
+  allowInputMapping: boolean
 }
 
 function ConnectionDialog({
   open,
   draft,
-  isNew,
-  wasPassphraseAlreadyStored,
-  credentialStorageAvailable,
+  hosts,
   busy,
   error,
   onChange,
-  onPickKeyFile,
   onCancel,
-  onSave
+  onSave,
+  allowInputMapping
 }: ConnectionDialogProps): React.JSX.Element {
   return (
     <Dialog open={open} onClose={onCancel} maxWidth="sm" fullWidth>
-      <DialogTitle>{isNew ? '添加远程连接' : '编辑远程连接'}</DialogTitle>
+      <DialogTitle>{draft.id ? '编辑远程连接' : '添加远程连接'}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 0.5 }}>
           <TextField
@@ -292,91 +124,51 @@ function ConnectionDialog({
             onChange={(event) => onChange({ ...draft, label: event.target.value })}
             placeholder="例如：实验室 HPC"
           />
-          <Stack direction="row" spacing={1.5}>
-            <TextField
-              label="主机地址"
-              size="small"
-              fullWidth
-              value={draft.host}
-              onChange={(event) => onChange({ ...draft, host: event.target.value })}
-              placeholder="lab-hpc.example.edu"
-            />
-            <TextField
-              label="端口"
-              size="small"
-              sx={{ width: 96 }}
-              value={draft.port}
-              onChange={(event) => onChange({ ...draft, port: event.target.value })}
-              placeholder="22"
-            />
-          </Stack>
           <TextField
-            label="用户名"
+            select
+            label="SSH 服务器"
             size="small"
             fullWidth
-            value={draft.username}
-            onChange={(event) => onChange({ ...draft, username: event.target.value })}
+            value={draft.hostProfileId}
+            onChange={(event) => onChange({ ...draft, hostProfileId: event.target.value })}
+            helperText="使用你在 ~/.ssh/config 中配置的主机别名和认证方式"
+          >
+            <MenuItem value="">请选择服务器</MenuItem>
+            {hosts.map((host) => (
+              <MenuItem key={host.id} value={host.id}>
+                {host.label} · {host.hostAlias}
+              </MenuItem>
+            ))}
+          </TextField>
+          <Divider />
+          <WrapperHpcSettingsFields
+            value={draft.hpc}
+            onChange={(hpc) => onChange({ ...draft, hpc })}
           />
-          <Box>
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-              SSH 私钥文件
-            </Typography>
-            <Stack direction="row" spacing={1}>
+          {allowInputMapping && (
+            <>
+              <Divider />
+              <Typography variant="body2" color="text.secondary">
+                本地输入路径映射到服务器已有数据；Phi 不会上传文件。
+              </Typography>
               <TextField
+                label="本机输入根目录"
                 size="small"
                 fullWidth
-                value={draft.privateKeyPath}
-                slotProps={{ input: { readOnly: true } }}
-                placeholder="~/.ssh/id_ed25519"
-                sx={{ '& input': { fontFamily: 'var(--font-mono)', fontSize: '0.8rem' } }}
+                value={draft.localInputRoot}
+                onChange={(event) => onChange({ ...draft, localInputRoot: event.target.value })}
+                placeholder="/Users/me/project/data"
               />
-              <Button
-                variant="outlined"
+              <TextField
+                label="服务器对应根目录"
                 size="small"
-                onClick={onPickKeyFile}
-                sx={{ flexShrink: 0 }}
-              >
-                浏览…
-              </Button>
-            </Stack>
-          </Box>
-
-          <Divider />
-
-          <FormControlLabel
-            control={
-              <Switch
-                checked={draft.needsPassphrase}
-                disabled={credentialStorageAvailable === false}
-                onChange={(event) =>
-                  onChange({ ...draft, needsPassphrase: event.target.checked, passphraseInput: '' })
-                }
+                fullWidth
+                value={draft.remoteInputRoot}
+                onChange={(event) => onChange({ ...draft, remoteInputRoot: event.target.value })}
+                placeholder="/data/lab/project"
               />
-            }
-            label="私钥需要口令"
-          />
-          {credentialStorageAvailable === false && (
-            <Alert severity="warning" variant="outlined">
-              当前系统不支持加密存储密钥口令，请使用无口令的 SSH 密钥。
-            </Alert>
+            </>
           )}
-          {draft.needsPassphrase && credentialStorageAvailable !== false && (
-            <TextField
-              label="密钥口令"
-              type="password"
-              size="small"
-              fullWidth
-              value={draft.passphraseInput}
-              onChange={(event) => onChange({ ...draft, passphraseInput: event.target.value })}
-              placeholder={wasPassphraseAlreadyStored ? '留空则不修改已保存的口令' : ''}
-              helperText="口令会通过系统密钥串加密保存，不会明文写入项目配置文件"
-            />
-          )}
-
-          <Divider />
-
-          <HpcSettingsFields value={draft.hpc} onChange={(hpc) => onChange({ ...draft, hpc })} />
-
           {error && <Alert severity="error">{error}</Alert>}
         </Stack>
       </DialogContent>
@@ -398,8 +190,7 @@ interface WrapperRemoteSettingsProps {
   onUpdateRemoteConnection: (
     projectId: string,
     connectionId: string,
-    patch: ProjectRemoteConnection | null,
-    passphrase?: string | null
+    patch: ProjectRemoteConnection | null
   ) => Promise<void>
   onUpdateRemoteDefaults: (
     projectId: string,
@@ -407,99 +198,266 @@ interface WrapperRemoteSettingsProps {
   ) => Promise<void>
 }
 
-/**
- * Project-scoped SSH/Slurm remote execution settings — the UI surface for
- * `projects.ts`'s `remoteConnections`/`defaultRemoteConnectionId`/
- * `remoteWorkspaceRoot`, which until now only existed as functions callable
- * from code/tests. See docs/design/phi-wrapper-technical-design.md's
- * "Project state stores references" — this is where a user actually fills
- * those references in, rather than an agent or a test doing it for them.
- */
+/** Global OpenSSH aliases and project-specific wrapper execution settings. */
 export function WrapperRemoteSettingsSection({
   projects,
   updatingProjectId,
   onUpdateRemoteConnection,
   onUpdateRemoteDefaults
 }: WrapperRemoteSettingsProps): React.JSX.Element {
+  const [hosts, setHosts] = useState<RemoteHostProfile[]>([])
+  const [openSshHosts, setOpenSshHosts] = useState<OpenSshHost[]>([])
+  const [configLoading, setConfigLoading] = useState(true)
+  const [configError, setConfigError] = useState<string | null>(null)
+  const [hostDraft, setHostDraft] = useState<RemoteHostDraft>({
+    id: '',
+    label: '',
+    hostAlias: '',
+    hostname: '',
+    user: '',
+    port: '',
+    identityFile: '',
+    source: 'ssh-config'
+  })
+  const [hostDialogOpen, setHostDialogOpen] = useState(false)
+  const [hostBusy, setHostBusy] = useState(false)
+  const [hostError, setHostError] = useState<string | null>(null)
   const [dialogProjectId, setDialogProjectId] = useState<string | null>(null)
+  const [showUnconfiguredLocalProjects, setShowUnconfiguredLocalProjects] = useState(false)
   const [draft, setDraft] = useState<ConnectionDraft>(EMPTY_DRAFT)
-  const [wasPassphraseAlreadyStored, setWasPassphraseAlreadyStored] = useState(false)
   const [dialogBusy, setDialogBusy] = useState(false)
   const [dialogError, setDialogError] = useState<string | null>(null)
-  const [credentialStorageAvailable, setCredentialStorageAvailable] = useState<boolean | null>(null)
   const [workspaceRootDrafts, setWorkspaceRootDrafts] = useState<Record<string, string>>({})
+  const [doctorState, setDoctorState] = useState<RemoteDoctorUiState>({ phase: 'idle' })
+  const [hostDoctorStates, setHostDoctorStates] = useState<Record<string, RemoteDoctorUiState>>({})
+  const doctorController = useMemo(
+    () =>
+      createRemoteDoctorUiController(
+        (hostProfileId, remotePath, options) =>
+          window.api.remoteDoctor(hostProfileId, remotePath, options),
+        (state) => {
+          setDoctorState(state)
+          setHostDoctorStates((previous) => withHostDoctorState(previous, state))
+        }
+      ),
+    []
+  )
 
   useEffect(() => {
-    if (dialogProjectId === null) return
+    return (): void => doctorController.dispose()
+  }, [doctorController])
+
+  useEffect(() => {
+    if (doctorState.phase === 'idle') return
+    const keys = new Set(
+      hosts.map((host) => remoteDoctorTargetKey(remoteHostDoctorTarget(host.id, host.hostAlias)))
+    )
+    for (const project of projects) {
+      const remotePath = workspaceRootDrafts[project.id] ?? project.remoteWorkspaceRoot ?? ''
+      for (const connection of project.remoteConnections ?? []) {
+        const host = hosts.find((item) => item.id === connection.hostProfileId)
+        if (host)
+          keys.add(
+            remoteDoctorTargetKey(
+              remoteConnectionDoctorTarget(project.id, connection, host.hostAlias, remotePath)
+            )
+          )
+      }
+    }
+    if (!keys.has(doctorState.key)) doctorController.invalidate()
+  }, [doctorController, doctorState, hosts, projects, workspaceRootDrafts])
+
+  useEffect(() => {
     let cancelled = false
     window.api
-      .isRemoteCredentialStorageAvailable()
-      .then((available) => {
-        if (!cancelled) setCredentialStorageAvailable(available)
+      .listRemoteHosts()
+      .then((items) => {
+        if (!cancelled) setHosts(items)
       })
-      .catch(() => {
-        if (!cancelled) setCredentialStorageAvailable(false)
+      .catch((error: unknown) => {
+        if (!cancelled) setHostError(error instanceof Error ? error.message : String(error))
       })
     return (): void => {
       cancelled = true
     }
-  }, [dialogProjectId])
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    window.api
+      .listOpenSshHosts()
+      .then((items) => {
+        if (!cancelled) setOpenSshHosts(items)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setConfigError(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => {
+        if (!cancelled) setConfigLoading(false)
+      })
+    return (): void => {
+      cancelled = true
+    }
+  }, [])
+
+  async function reloadOpenSshHosts(): Promise<void> {
+    setConfigLoading(true)
+    setConfigError(null)
+    try {
+      const [profiles, discovered] = await Promise.all([
+        window.api.listRemoteHosts(),
+        window.api.listOpenSshHosts()
+      ])
+      setHosts(profiles)
+      setOpenSshHosts(discovered)
+      setHostDoctorStates({})
+    } catch (error) {
+      setConfigError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setConfigLoading(false)
+    }
+  }
+
+  async function saveHost(): Promise<void> {
+    setHostBusy(true)
+    setHostError(null)
+    try {
+      const rawPort = hostDraft.port.trim()
+      if (rawPort && !/^\d+$/.test(rawPort)) throw new Error('SSH 端口必须为 1–65535 的整数')
+      const connectionFields = {
+        ...(hostDraft.user.trim() ? { user: hostDraft.user.trim() } : {}),
+        ...(rawPort ? { port: Number(rawPort) } : {}),
+        ...(hostDraft.identityFile.trim() ? { identityFile: hostDraft.identityFile.trim() } : {})
+      }
+      if (hostDraft.source === 'ssh-config') {
+        await window.api.saveOpenSshHost({
+          ...(hostDraft.id ? { originalAlias: hostDraft.hostAlias } : {}),
+          alias: hostDraft.hostAlias,
+          hostname: hostDraft.hostname,
+          ...connectionFields
+        })
+        await reloadOpenSshHosts()
+      } else {
+        const profile = await window.api.saveRemoteHost({
+          id: hostDraft.id,
+          label: hostDraft.label,
+          hostAlias: hostDraft.hostAlias,
+          ...connectionFields
+        })
+        setHosts((prev) => [...prev.filter((item) => item.id !== profile.id), profile])
+      }
+      doctorController.invalidate()
+      setHostDoctorStates({})
+      setHostDraft({
+        id: '',
+        label: '',
+        hostAlias: '',
+        hostname: '',
+        user: '',
+        port: '',
+        identityFile: '',
+        source: 'ssh-config'
+      })
+      setHostDialogOpen(false)
+    } catch (error) {
+      setHostError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setHostBusy(false)
+    }
+  }
+
+  async function removeHost(id: string): Promise<void> {
+    setHostBusy(true)
+    setHostError(null)
+    try {
+      await window.api.deleteRemoteHost(id)
+      setHosts((prev) => prev.filter((item) => item.id !== id))
+      doctorController.invalidate()
+      setHostDoctorStates((previous) => {
+        const next = { ...previous }
+        delete next[id]
+        return next
+      })
+    } catch (error) {
+      setHostError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setHostBusy(false)
+    }
+  }
+
+  function openAddHost(): void {
+    setHostDraft({
+      id: '',
+      label: '',
+      hostAlias: '',
+      hostname: '',
+      user: '',
+      port: '',
+      identityFile: '',
+      source: 'ssh-config'
+    })
+    setHostError(null)
+    setHostDialogOpen(true)
+  }
+
+  function openEditHost(host: RemoteHostProfile): void {
+    const configured = openSshHosts.find((item) => item.alias === host.hostAlias)
+    setHostDraft({
+      id: host.id,
+      label: host.label,
+      hostAlias: host.hostAlias,
+      hostname: configured?.hostname ?? host.hostAlias,
+      user: host.user ?? configured?.user ?? '',
+      port: host.port === undefined ? String(configured?.port ?? '') : String(host.port),
+      identityFile: host.identityFile ?? configured?.identityFiles[0] ?? '',
+      source: host.source === 'ssh-config' ? 'ssh-config' : 'phi'
+    })
+    setHostError(null)
+    setHostDialogOpen(true)
+  }
+
+  function closeHostDialog(): void {
+    if (hostBusy) return
+    setHostDialogOpen(false)
+    setHostError(null)
+  }
 
   function openAddDialog(projectId: string): void {
     setDialogProjectId(projectId)
     setDraft(EMPTY_DRAFT)
-    setWasPassphraseAlreadyStored(false)
     setDialogError(null)
   }
 
   function openEditDialog(projectId: string, connection: ProjectRemoteConnection): void {
     setDialogProjectId(projectId)
     setDraft(draftFromConnection(connection))
-    setWasPassphraseAlreadyStored(!!connection.hasPassphrase)
     setDialogError(null)
   }
 
-  function closeDialog(): void {
-    setDialogProjectId(null)
-    setDialogError(null)
-  }
-
-  async function handlePickKeyFile(): Promise<void> {
-    const path = await window.api.pickPrivateKeyFile()
-    if (path) setDraft((prev) => ({ ...prev, privateKeyPath: path }))
-  }
-
-  async function handleSaveConnection(): Promise<void> {
+  async function saveConnection(): Promise<void> {
     if (!dialogProjectId) return
-    const validationError = draftValidationError(draft, wasPassphraseAlreadyStored)
+    const validationError = draftValidationError(draft)
     if (validationError) {
       setDialogError(validationError)
       return
     }
-
-    const isNew = !draft.id
-    const connectionId = isNew ? crypto.randomUUID() : draft.id
+    const connectionId = draft.id || crypto.randomUUID()
     const patch: ProjectRemoteConnection = {
       id: connectionId,
       label: draft.label.trim(),
-      host: draft.host.trim(),
-      port: draft.port ? Number(draft.port) : undefined,
-      username: draft.username.trim(),
-      privateKeyPath: draft.privateKeyPath.trim(),
-      hasPassphrase: draft.needsPassphrase || undefined,
-      hpc: hpcSettingsFromDraft(draft.hpc)
+      hostProfileId: draft.hostProfileId,
+      hpc: hpcSettingsFromDraft(draft.hpc),
+      ...(draft.localInputRoot && draft.remoteInputRoot
+        ? {
+            inputPathMapping: { localRoot: draft.localInputRoot, remoteRoot: draft.remoteInputRoot }
+          }
+        : {})
     }
-    const passphrase = !draft.needsPassphrase
-      ? null
-      : draft.passphraseInput
-        ? draft.passphraseInput
-        : undefined
-
     setDialogBusy(true)
     setDialogError(null)
     try {
-      await onUpdateRemoteConnection(dialogProjectId, connectionId, patch, passphrase)
-      closeDialog()
+      await onUpdateRemoteConnection(dialogProjectId, connectionId, patch)
+      setDialogProjectId(null)
     } catch (error) {
       setDialogError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -507,218 +465,205 @@ export function WrapperRemoteSettingsSection({
     }
   }
 
-  function handleRemoveConnection(projectId: string, connectionId: string): void {
-    void onUpdateRemoteConnection(projectId, connectionId, null, null)
-  }
+  const unconfiguredLocalProjectIds = new Set(
+    projects
+      .filter(
+        (project) =>
+          project.location?.kind !== 'ssh' &&
+          !project.remoteConnections?.length &&
+          !project.remoteWorkspaceRoot
+      )
+      .map((project) => project.id)
+  )
+  const visibleProjects = projects.filter(
+    (project) => showUnconfiguredLocalProjects || !unconfiguredLocalProjectIds.has(project.id)
+  )
 
   return (
     <Stack spacing={3}>
       <Box>
-        <Typography variant="h5">远程执行</Typography>
+        <Typography variant="h5">远程</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75, maxWidth: 760 }}>
-          配置项目提交 wrapper 到远程 Slurm 集群时使用的 SSH
-          连接与远程工作目录。私钥文件保留在磁盘原位，Phi
-          不会复制密钥内容；口令通过系统密钥串加密保存。
+          直接使用 ~/.ssh/config 中的主机；新增和编辑会同步写回该文件。
         </Typography>
       </Box>
+
+      <RemoteHostProfilesPanel
+        hosts={hosts}
+        openSshHosts={openSshHosts}
+        configLoading={configLoading}
+        configError={configError}
+        dialogOpen={hostDialogOpen}
+        draft={hostDraft}
+        busy={hostBusy}
+        error={hostError}
+        doctorState={doctorState}
+        hostDoctorStates={hostDoctorStates}
+        onDraftChange={setHostDraft}
+        onOpenAdd={openAddHost}
+        onOpenEdit={openEditHost}
+        onCloseDialog={closeHostDialog}
+        onReloadConfig={() => void reloadOpenSshHosts()}
+        onSave={() => void saveHost()}
+        onDelete={(id) => void removeHost(id)}
+        onTest={(host) =>
+          void doctorController.check(remoteHostDoctorTarget(host.id, host.hostAlias))
+        }
+      />
+
+      {unconfiguredLocalProjectIds.size > 0 && (
+        <Button
+          size="small"
+          variant="text"
+          onClick={() => setShowUnconfiguredLocalProjects((value) => !value)}
+          sx={{ alignSelf: 'flex-start' }}
+        >
+          {showUnconfiguredLocalProjects
+            ? '收起本地项目的远程 Wrapper 设置'
+            : `为本地项目配置远程 Wrapper（${unconfiguredLocalProjectIds.size}）`}
+        </Button>
+      )}
 
       {projects.length === 0 ? (
         <Alert severity="info" variant="outlined">
           还没有项目
         </Alert>
       ) : (
-        <Stack spacing={2}>
-          {projects.map((project) => {
-            const connections = project.remoteConnections ?? []
-            const busy = updatingProjectId === project.id
-            const workspaceRootDraft =
-              workspaceRootDrafts[project.id] ?? project.remoteWorkspaceRoot ?? ''
-
-            return (
-              <Paper
-                key={project.id}
-                variant="outlined"
-                sx={{ borderRadius: 1, overflow: 'hidden' }}
-              >
-                <Box sx={{ px: 2.5, py: 2 }}>
-                  <Stack
-                    direction="row"
-                    spacing={1}
-                    sx={{ alignItems: 'center', justifyContent: 'space-between' }}
-                  >
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                        {project.name}
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ fontFamily: 'var(--font-mono)' }}
-                      >
-                        {project.workingDirectory}
-                      </Typography>
-                    </Box>
-                    <Button
-                      size="small"
-                      startIcon={<AddIcon />}
-                      disabled={busy}
-                      onClick={() => openAddDialog(project.id)}
-                    >
-                      添加连接
-                    </Button>
-                  </Stack>
-                </Box>
-                <Divider />
-
-                <Box sx={{ px: 2.5, py: 2 }}>
-                  {connections.length === 0 ? (
-                    <Typography variant="body2" color="text.secondary">
-                      还没有配置远程连接
+        visibleProjects.map((project) => {
+          const connections = project.remoteConnections ?? []
+          const busy = updatingProjectId === project.id
+          const workspaceRootDraft =
+            workspaceRootDrafts[project.id] ?? project.remoteWorkspaceRoot ?? ''
+          return (
+            <Paper key={project.id} variant="outlined" sx={{ overflow: 'hidden' }}>
+              <Box sx={{ px: 2.5, py: 2 }}>
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  sx={{ alignItems: 'center', justifyContent: 'space-between' }}
+                >
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                      {project.name}
                     </Typography>
-                  ) : (
-                    <Stack spacing={1}>
-                      {connections.map((connection) => (
-                        <Stack
-                          key={connection.id}
-                          direction="row"
-                          spacing={1}
-                          sx={{ alignItems: 'center' }}
-                        >
-                          <ServerIcon fontSize="small" color="action" />
-                          <Box sx={{ minWidth: 0, flex: 1 }}>
-                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                              {connection.label}
-                            </Typography>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ fontFamily: 'var(--font-mono)' }}
-                            >
-                              {connection.username}@{connection.host}
-                              {connection.port ? `:${connection.port}` : ''}
-                            </Typography>
-                          </Box>
-                          {connection.id === project.defaultRemoteConnectionId && (
-                            <Chip size="small" label="默认" color="primary" variant="outlined" />
-                          )}
-                          {connection.hasPassphrase && (
-                            <Tooltip title="私钥需要口令">
-                              <Chip size="small" label="已加锁" variant="outlined" />
-                            </Tooltip>
-                          )}
-                          <Tooltip title="编辑">
-                            <span>
-                              <IconButton
-                                size="small"
-                                disabled={busy}
-                                onClick={() => openEditDialog(project.id, connection)}
-                              >
-                                <EditIcon fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                          <Tooltip title="删除">
-                            <span>
-                              <IconButton
-                                size="small"
-                                disabled={busy}
-                                onClick={() => handleRemoveConnection(project.id, connection.id)}
-                              >
-                                <DeleteIcon fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                        </Stack>
-                      ))}
-                    </Stack>
-                  )}
-
-                  <Box
-                    sx={{
-                      display: 'grid',
-                      gridTemplateColumns: { xs: '1fr', sm: 'minmax(220px, 320px) 1fr' },
-                      gap: 1.5,
-                      mt: 2.5
-                    }}
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ fontFamily: 'var(--font-mono)' }}
+                    >
+                      {project.workingDirectory}
+                    </Typography>
+                  </Box>
+                  <Button
+                    size="small"
+                    startIcon={<AddIcon />}
+                    disabled={busy || hosts.length === 0}
+                    onClick={() => openAddDialog(project.id)}
                   >
-                    <Box>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ display: 'block', mb: 0.75 }}
-                      >
-                        默认连接
-                      </Typography>
-                      <Select
-                        size="small"
-                        fullWidth
-                        displayEmpty
-                        value={project.defaultRemoteConnectionId ?? ''}
-                        disabled={busy || connections.length === 0}
-                        onChange={(event) =>
-                          void onUpdateRemoteDefaults(project.id, {
-                            defaultRemoteConnectionId: event.target.value || null
-                          })
-                        }
-                      >
-                        <MenuItem value="">未设置</MenuItem>
-                        {connections.map((connection) => (
+                    添加连接
+                  </Button>
+                </Stack>
+              </Box>
+              <Divider />
+              <Box sx={{ px: 2.5, py: 2 }}>
+                {connections.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">
+                    还没有配置远程连接
+                  </Typography>
+                ) : (
+                  <Stack spacing={1}>
+                    {connections.map((connection) => {
+                      const host = hosts.find((item) => item.id === connection.hostProfileId)
+                      return (
+                        <RemoteProjectConnectionRow
+                          key={connection.id}
+                          projectId={project.id}
+                          connection={connection}
+                          host={host}
+                          remotePath={workspaceRootDraft}
+                          isDefault={connection.id === project.defaultRemoteConnectionId}
+                          busy={busy}
+                          doctorState={doctorState}
+                          onTest={(target) => void doctorController.check(target)}
+                          onEdit={() => openEditDialog(project.id, connection)}
+                          onDelete={() =>
+                            void onUpdateRemoteConnection(project.id, connection.id, null)
+                          }
+                        />
+                      )
+                    })}
+                  </Stack>
+                )}
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 2.5 }}>
+                  <Box sx={{ minWidth: 220 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      默认连接
+                    </Typography>
+                    <Select
+                      size="small"
+                      fullWidth
+                      displayEmpty
+                      value={project.defaultRemoteConnectionId ?? ''}
+                      disabled={busy || connections.length === 0}
+                      onChange={(event) =>
+                        void onUpdateRemoteDefaults(project.id, {
+                          defaultRemoteConnectionId: event.target.value || null
+                        })
+                      }
+                    >
+                      <MenuItem value="">未设置</MenuItem>
+                      {connections
+                        .filter((connection) =>
+                          hosts.some((host) => host.id === connection.hostProfileId)
+                        )
+                        .map((connection) => (
                           <MenuItem key={connection.id} value={connection.id}>
                             {connection.label}
                           </MenuItem>
                         ))}
-                      </Select>
-                    </Box>
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ display: 'block', mb: 0.75 }}
-                      >
-                        远程工作目录
-                      </Typography>
-                      <TextField
-                        size="small"
-                        fullWidth
-                        disabled={busy}
-                        value={workspaceRootDraft}
-                        onChange={(event) =>
-                          setWorkspaceRootDrafts((prev) => ({
-                            ...prev,
-                            [project.id]: event.target.value
-                          }))
-                        }
-                        onBlur={() => {
-                          const trimmed = workspaceRootDraft.trim()
-                          if (trimmed === (project.remoteWorkspaceRoot ?? '')) return
-                          void onUpdateRemoteDefaults(project.id, {
-                            remoteWorkspaceRoot: trimmed || null
-                          })
-                        }}
-                        placeholder="/cluster/facility/<lab>/WorkSpace"
-                        sx={{ '& input': { fontFamily: 'var(--font-mono)', fontSize: '0.82rem' } }}
-                      />
-                    </Box>
+                    </Select>
                   </Box>
-                </Box>
-              </Paper>
-            )
-          })}
-        </Stack>
+                  <TextField
+                    size="small"
+                    fullWidth
+                    label="远程工作目录"
+                    disabled={busy}
+                    value={workspaceRootDraft}
+                    onChange={(event) =>
+                      setWorkspaceRootDrafts((prev) => ({
+                        ...prev,
+                        [project.id]: event.target.value
+                      }))
+                    }
+                    onBlur={() => {
+                      const trimmed = workspaceRootDraft.trim()
+                      if (trimmed === (project.remoteWorkspaceRoot ?? '')) return
+                      void onUpdateRemoteDefaults(project.id, {
+                        remoteWorkspaceRoot: trimmed || null
+                      })
+                    }}
+                    placeholder="/cluster/lab/workspace"
+                    sx={{ '& input': { fontFamily: 'var(--font-mono)' } }}
+                  />
+                </Stack>
+              </Box>
+            </Paper>
+          )
+        })
       )}
 
       <ConnectionDialog
         open={dialogProjectId !== null}
         draft={draft}
-        isNew={!draft.id}
-        wasPassphraseAlreadyStored={wasPassphraseAlreadyStored}
-        credentialStorageAvailable={credentialStorageAvailable}
+        hosts={hosts}
         busy={dialogBusy}
         error={dialogError}
         onChange={setDraft}
-        onPickKeyFile={() => void handlePickKeyFile()}
-        onCancel={closeDialog}
-        onSave={() => void handleSaveConnection()}
+        onCancel={() => setDialogProjectId(null)}
+        onSave={() => void saveConnection()}
+        allowInputMapping={
+          projects.find((project) => project.id === dialogProjectId)?.location.kind === 'local'
+        }
       />
     </Stack>
   )

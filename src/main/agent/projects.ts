@@ -1,11 +1,25 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { basename, join } from 'node:path'
+import { basename, join, posix, resolve } from 'node:path'
+import type {
+  ProjectLocation,
+  RemoteProjectConnectionState,
+  RemoteProjectReachability
+} from '../../shared/projectLocation'
 import type { RemoteHpcSettings } from '../../shared/wrapperRemoteTypes'
+import type { WrapperInputPathMapping } from '../../shared/wrapperTypes'
+import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './remote-hosts'
 import { getPhiAgentDir } from './runtime-paths'
+import type { ConnectImpl } from './wrappers/executor-remote'
+import { validateInputPathMapping } from './wrappers/path-mapping'
+import { connectRemoteSshSession, shellQuote } from './wrappers/remote-ssh-session'
 
 const PROJECTS_FILE = 'projects.json'
+const remoteConnectionByProjectId = new Map<string, RemoteProjectConnectionState>()
+const remoteConnectionListeners = new Set<
+  (projectId: string, state: RemoteProjectConnectionState) => void
+>()
 
 export type PermissionMode = 'auto' | 'ask' | 'full'
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -39,37 +53,27 @@ export interface ProjectWrapperDefault {
   }
 }
 
-/**
- * A saved SSH target for remote wrapper execution — see
- * docs/design/phi-wrapper-technical-design.md's "Project state stores
- * references, not wrapper definitions". Deliberately holds no secret
- * material: `privateKeyPath` points at a key file already on disk (Phi
- * never copies or stores key bytes itself), and a passphrase — if the key
- * needs one — lives only in the OS keychain via `remote-credential-store.ts`
- * (Electron `safeStorage`), never in this JSON-on-disk `projects.json`
- * record. See `remote-connection-resolver.ts` for turning this plus the
- * stored passphrase into an actual `RemoteConnectionConfig`.
- */
+/** Project-specific HPC settings bound to a Phi-owned OpenSSH host profile. */
 export interface ProjectRemoteConnection {
   id: string
   label: string
-  host: string
-  port?: number
-  username: string
-  privateKeyPath: string
-  /** True when the key at `privateKeyPath` needs a passphrase to unlock. */
-  hasPassphrase?: boolean
-  /** How wrappers should run on this host (scheduler, container runtime, setup). Absent means a plain host with defaults. */
+  hostProfileId: string
   hpc?: RemoteHpcSettings
+  inputPathMapping?: WrapperInputPathMapping
 }
 
 export interface Project {
   id: string
   name: string
+  location: ProjectLocation
+  /** Legacy local-project display fields. For SSH projects these contain remote paths only. */
   workingDirectory: string
   workingDirectoryRealPath: string
   permissionMode: PermissionMode
   pathAvailable: boolean
+  remoteReachability?: RemoteProjectReachability
+  remoteConnection?: RemoteProjectConnectionState
+  remoteHostAlias?: string
   defaultModel?: ModelSelection
   defaultThinkingLevel?: ThinkingLevel
   gitStatus?: ProjectGitStatus
@@ -103,10 +107,31 @@ function resolveProjectRealPath(workingDirectory: string): string {
 }
 
 function normalizeProjectAvailability(project: Project): Project {
-  try {
+  if (project.location.kind === 'ssh') {
+    const profile = getRemoteHostProfile(project.location.hostProfileId)
+    const connection = profile
+      ? (remoteConnectionByProjectId.get(project.id) ?? { phase: 'unchecked' as const })
+      : {
+          phase: 'configuration_failed' as const,
+          message: 'SSH 服务器档案不可用',
+          suggestion: '在远程设置中恢复服务器档案后重试。'
+        }
     return {
       ...project,
-      workingDirectoryRealPath: realpathSync(project.workingDirectory),
+      // This legacy flag describes local filesystem paths; remote reachability is separate.
+      pathAvailable: true,
+      remoteReachability: connection.phase,
+      remoteConnection: connection,
+      remoteHostAlias: profile?.hostAlias,
+      gitStatus: undefined
+    }
+  }
+  try {
+    const realPath = realpathSync(project.location.path)
+    return {
+      ...project,
+      location: { ...project.location, realPath },
+      workingDirectoryRealPath: realPath,
       pathAvailable: true
     }
   } catch {
@@ -118,6 +143,18 @@ function normalizeProjectAvailability(project: Project): Project {
   }
 }
 
+function withProjectLocation(project: Project): Project {
+  if (project.location?.kind === 'ssh' || project.location?.kind === 'local') return project
+  return {
+    ...project,
+    location: {
+      kind: 'local',
+      path: project.workingDirectory,
+      realPath: project.workingDirectoryRealPath
+    }
+  }
+}
+
 function readProjects(): Project[] {
   const projectsPath = getProjectsPath()
   if (!existsSync(projectsPath)) {
@@ -125,7 +162,7 @@ function readProjects(): Project[] {
   }
   try {
     const raw = JSON.parse(readFileSync(projectsPath, 'utf-8'))
-    return Array.isArray(raw) ? raw : []
+    return Array.isArray(raw) ? raw.map((project) => withProjectLocation(project as Project)) : []
   } catch {
     return []
   }
@@ -171,7 +208,10 @@ export function listProjects(): Project[] {
     .map(normalizeProjectAvailability)
     .map((project) => ({
       ...project,
-      gitStatus: project.pathAvailable ? readProjectGitStatus(project.workingDirectory) : undefined
+      gitStatus:
+        project.location.kind === 'local' && project.pathAvailable
+          ? readProjectGitStatus(project.workingDirectory)
+          : undefined
     }))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
@@ -181,6 +221,17 @@ export function getProject(id: string): Project | undefined {
 }
 
 export function getProjectByCwd(cwd: string): Project | undefined {
+  const projects = readProjects()
+  const localProjects = projects.filter((project) => project.location.kind === 'local')
+  const exact = localProjects.find((project) => project.workingDirectory === cwd)
+  if (exact) return exact
+  if (
+    projects.some(
+      (project) => project.location.kind === 'ssh' && project.location.remoteRoot === cwd
+    )
+  ) {
+    return undefined
+  }
   let realPath: string | undefined
   try {
     realPath = realpathSync(cwd)
@@ -188,17 +239,26 @@ export function getProjectByCwd(cwd: string): Project | undefined {
     realPath = undefined
   }
 
-  return readProjects().find(
-    (project) =>
-      project.workingDirectory === cwd ||
-      (realPath !== undefined && project.workingDirectoryRealPath === realPath)
+  return localProjects.find(
+    (project) => realPath !== undefined && project.workingDirectoryRealPath === realPath
   )
 }
 
 export function assertProjectPathAvailable(workingDirectory: string): void {
-  const project = readProjects().find((item) => item.workingDirectory === workingDirectory)
+  const projects = readProjects()
+  const project = projects.find(
+    (item) => item.location.kind === 'local' && item.workingDirectory === workingDirectory
+  )
   if (project && !normalizeProjectAvailability(project).pathAvailable) {
     throw new Error('项目路径不可用，请移除或重新添加该项目')
+  }
+  if (
+    !project &&
+    projects.some(
+      (item) => item.location.kind === 'ssh' && item.location.remoteRoot === workingDirectory
+    )
+  ) {
+    throw new Error('远程项目不能作为本地目录打开')
   }
 }
 
@@ -212,7 +272,7 @@ export function updateProjectPermissionMode(id: string, permissionMode: Permissi
   const project = { ...projects[index], permissionMode }
   projects[index] = project
   writeProjects(projects)
-  return project
+  return normalizeProjectAvailability(project)
 }
 
 export function updateProjectDefaults(
@@ -239,7 +299,7 @@ export function updateProjectDefaults(
   }
   projects[index] = project
   writeProjects(projects)
-  return project
+  return normalizeProjectAvailability(project)
 }
 
 export function createProject(input: {
@@ -249,13 +309,24 @@ export function createProject(input: {
 }): Project {
   const workingDirectoryRealPath = resolveProjectRealPath(input.workingDirectory)
   const projects = readProjects()
-  if (projects.some((project) => project.workingDirectoryRealPath === workingDirectoryRealPath)) {
+  if (
+    projects.some(
+      (project) =>
+        project.location.kind === 'local' &&
+        project.workingDirectoryRealPath === workingDirectoryRealPath
+    )
+  ) {
     throw new Error('项目已存在')
   }
 
   const project: Project = {
     id: randomUUID(),
     name: input.name.trim() || basename(input.workingDirectory) || '未命名项目',
+    location: {
+      kind: 'local',
+      path: input.workingDirectory,
+      realPath: workingDirectoryRealPath
+    },
     workingDirectory: input.workingDirectory,
     workingDirectoryRealPath,
     permissionMode: input.permissionMode,
@@ -265,6 +336,104 @@ export function createProject(input: {
   projects.push(project)
   writeProjects(projects)
   return project
+}
+
+/** Canonicalize on the server; a remote path must never enter local realpath or Git operations. */
+export async function createRemoteProject(
+  input: {
+    name: string
+    hostProfileId: string
+    remoteRoot: string
+    permissionMode: PermissionMode
+  },
+  options: { connectImpl?: ConnectImpl } = {}
+): Promise<Project> {
+  const profile = getRemoteHostProfile(input.hostProfileId)
+  if (!profile) throw new Error('SSH 服务器档案不存在')
+  const remoteRoot = input.remoteRoot
+  if (!remoteRoot.startsWith('/') || /[\r\n\0]/.test(remoteRoot)) {
+    throw new Error('远程项目目录必须是服务器上的绝对路径')
+  }
+  const session = await (options.connectImpl ?? connectRemoteSshSession)({
+    ...remoteConnectionConfigForProfile(profile)
+  })
+  let canonicalRoot: string
+  try {
+    const result = await session.exec(`cd ${shellQuote(remoteRoot)} && pwd -P`)
+    canonicalRoot = result.stdout.replace(/\r?\n$/, '')
+    if (result.code !== 0 || !canonicalRoot.startsWith('/') || /[\r\n\0]/.test(canonicalRoot)) {
+      throw new Error('无法在服务器上确认项目目录')
+    }
+  } finally {
+    await session.close()
+  }
+  canonicalRoot = posix.normalize(canonicalRoot)
+  const projects = readProjects()
+  if (
+    projects.some(
+      (project) =>
+        project.location.kind === 'ssh' &&
+        project.location.hostProfileId === input.hostProfileId &&
+        project.location.canonicalRoot === canonicalRoot
+    )
+  ) {
+    throw new Error('该服务器上的项目目录已存在')
+  }
+
+  const project: Project = {
+    id: randomUUID(),
+    name: input.name.trim() || posix.basename(canonicalRoot) || '未命名项目',
+    location: {
+      kind: 'ssh',
+      hostProfileId: input.hostProfileId,
+      remoteRoot,
+      canonicalRoot
+    },
+    workingDirectory: remoteRoot,
+    workingDirectoryRealPath: canonicalRoot,
+    permissionMode: input.permissionMode,
+    pathAvailable: true,
+    createdAt: new Date().toISOString()
+  }
+  projects.push(project)
+  writeProjects(projects)
+  setRemoteProjectConnectionState(project.id, { phase: 'reachable' })
+  return normalizeProjectAvailability(project)
+}
+
+export function setRemoteProjectConnectionState(
+  id: string,
+  state: RemoteProjectConnectionState
+): void {
+  const project = getProject(id)
+  if (!project || project.location.kind !== 'ssh') throw new Error('远程项目不存在')
+  remoteConnectionByProjectId.set(id, state)
+  for (const listener of remoteConnectionListeners) {
+    try {
+      listener(id, state)
+    } catch {
+      // A status observer must not change a file or command operation's result.
+    }
+  }
+}
+
+export function subscribeRemoteProjectConnection(
+  listener: (projectId: string, state: RemoteProjectConnectionState) => void
+): () => void {
+  remoteConnectionListeners.add(listener)
+  return () => remoteConnectionListeners.delete(listener)
+}
+
+export function renameProject(id: string, name: string): Project {
+  const projects = readProjects()
+  const index = projects.findIndex((project) => project.id === id)
+  if (index < 0) throw new Error('项目不存在')
+  const trimmed = name.trim()
+  if (!trimmed) throw new Error('项目名称不能为空')
+  const updated = { ...projects[index], name: trimmed }
+  projects[index] = updated
+  writeProjects(projects)
+  return updated
 }
 
 export function updateProjectWrapperDefault(
@@ -294,7 +463,7 @@ export function updateProjectWrapperDefault(
   return project
 }
 
-/** Adds or replaces (by `connection.id`) one saved SSH target. Pass `null` to remove it — also clears `defaultRemoteConnectionId` if it pointed at the removed entry. Does not touch any stored passphrase; see `remote-credential-store.ts`, which the caller should clean up separately when actually removing a connection. */
+/** Adds or replaces one project binding to an OpenSSH host profile. */
 export function updateProjectRemoteConnection(
   id: string,
   connectionId: string,
@@ -311,14 +480,34 @@ export function updateProjectRemoteConnection(
     (connection) => connection.id !== connectionId
   )
   if (patch !== null) {
-    remoteConnections.push(patch)
+    if (!getRemoteHostProfile(patch.hostProfileId)) {
+      throw new Error('所选 SSH 服务器档案不存在，请先添加服务器')
+    }
+    if (patch.inputPathMapping) {
+      if (project.location.kind !== 'local') {
+        throw new Error('远程项目不能配置本机输入路径映射')
+      }
+      const mappingErrors = validateInputPathMapping(patch.inputPathMapping)
+      if (mappingErrors.length > 0) throw new Error(mappingErrors.join('；'))
+    }
+    remoteConnections.push({
+      ...patch,
+      ...(patch.inputPathMapping
+        ? {
+            inputPathMapping: {
+              localRoot: resolve(patch.inputPathMapping.localRoot),
+              remoteRoot: posix.normalize(patch.inputPathMapping.remoteRoot)
+            }
+          }
+        : {})
+    })
   } else if (project.defaultRemoteConnectionId === connectionId) {
     delete project.defaultRemoteConnectionId
   }
   project.remoteConnections = remoteConnections
   projects[index] = project
   writeProjects(projects)
-  return project
+  return normalizeProjectAvailability(project)
 }
 
 export function updateProjectRemoteDefaults(
@@ -345,11 +534,12 @@ export function updateProjectRemoteDefaults(
   }
   projects[index] = project
   writeProjects(projects)
-  return project
+  return normalizeProjectAvailability(project)
 }
 
 // Removes the project shortcut only — its working directory and any session
 // history under it (discoverable by cwd regardless of this registry) are untouched.
 export function deleteProject(id: string): void {
   writeProjects(readProjects().filter((project) => project.id !== id))
+  remoteConnectionByProjectId.delete(id)
 }

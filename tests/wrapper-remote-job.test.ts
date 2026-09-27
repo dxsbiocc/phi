@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -15,6 +15,7 @@ import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-ses
 import { installFakeSlurm, type FakeSlurm } from './helpers/fakeSlurm'
 import { createLocalShellSession, installSetsidShim } from './helpers/localShellSession'
 import {
+  FAKE_NEXTFLOW,
   FAKE_NEXTFLOW_TREE,
   bundledEntry,
   isAlive,
@@ -39,14 +40,14 @@ async function withHarness(
   sb.useFake()
   const restore = installSetsidShim(mkdtempSync(join(tmpdir(), 'phi-shim-')))
   const remoteRoot = mkdtempSync(join(tmpdir(), 'phi-remote-root-'))
-  const session = createLocalShellSession()
+  const session = createLocalShellSession(remoteRoot)
   const harness: Harness = {
     session,
     remoteRoot,
     output: [],
     snapshots: [],
     target: {
-      connection: { host: 'h', username: 'u', privateKey: 'k' },
+      connection: { host: 'h' },
       workspaceRoot: remoteRoot,
       hpc: { scheduler: 'local', nextflowBin: process.env.NEXTFLOW_BIN },
       connectImpl: async () => session,
@@ -112,6 +113,36 @@ test('a remote run ships the bundle, launches Nextflow detached, streams its log
   })
 })
 
+test('a completed run drains a 10 MiB log through bounded pages without losing lines', async () => {
+  await withSandbox(async (sb) => {
+    await withHarness(sb, async (h) => {
+      sb.useFake(
+        FAKE_NEXTFLOW.replace(
+          "console.log('[SUCCESS] completed=1 failed=0 cached=0')",
+          "process.stdout.write(('x'.repeat(1023) + '\\n').repeat(10240)); console.log('[SUCCESS] completed=1 failed=0 cached=0')"
+        )
+      )
+      const exec = h.session.exec
+      let largest = 0
+      h.session.exec = async (command) => {
+        const result = await exec(command)
+        if (command.includes('MIME::Base64')) {
+          largest = Math.max(largest, Buffer.byteLength(result.stdout, 'utf8'))
+        }
+        return result
+      }
+      const result = await start(h).done
+      assert.equal(result.success, true, result.output)
+      const output = h.output.join('')
+      assert.ok(Buffer.byteLength(output, 'utf8') > 10 * 1024 * 1024)
+      assert.match(output, /\[SUCCESS\] completed=1 failed=0 cached=0/)
+      const logPath = `${h.remoteRoot}/wrappers/runs/wrun_t1/logs/stdout.log`
+      assert.equal(h.snapshots.at(-1)?.logOffset, Buffer.byteLength(readFileSync(logPath)))
+      assert.ok(largest <= 256 * 1024)
+    })
+  })
+})
+
 test('an input path missing on the cluster is reported before anything is launched', async () => {
   await withSandbox(async (sb) => {
     await withHarness(sb, async (h) => {
@@ -120,6 +151,71 @@ test('an input path missing on the cluster is reported before anything is launch
       assert.match(result.output, /gff.*\/no\/such\/annotation\.gff3/)
       assert.equal(h.snapshots.length, 0, 'nothing may have been launched')
       assert.equal(existsSync(`${h.remoteRoot}/wrappers/runs/wrun_t1/launch.sh`), false)
+    })
+  })
+})
+
+test('repeating a composition run ID observes the existing detached process', async () => {
+  await withSandbox(async (sb) => {
+    await withHarness(sb, async (h) => {
+      assert.equal((await start(h).done).success, true)
+      assert.equal((await start(h).done).success, true)
+      assert.equal(
+        h.session.commands.filter((command) => command.includes('setsid bash')).length,
+        1
+      )
+      assert.equal(h.session.uploads.length, 1)
+    })
+  })
+})
+
+test('a detached launch reply lost after execution recovers its PID without relaunching', async () => {
+  await withSandbox(async (sb) => {
+    await withHarness(sb, async (h) => {
+      const original = h.session.exec
+      let dropped = false
+      h.session.exec = async (command) => {
+        if (!dropped && command.includes('setsid bash')) {
+          dropped = true
+          await original(command)
+          throw new Error('SSH reply dropped after launch')
+        }
+        return original(command)
+      }
+      const result = await start(h).done
+      assert.equal(result.success, true, result.output)
+      assert.equal(dropped, true)
+      assert.equal(
+        h.session.commands.filter((command) => command.includes('setsid bash')).length,
+        1
+      )
+      assert.ok(h.snapshots.at(-1)?.pid)
+    })
+  })
+})
+
+test('a disconnect before detached launch retains an unknown snapshot and never retries', async () => {
+  await withSandbox(async (sb) => {
+    await withHarness(sb, async (h) => {
+      const original = h.session.exec
+      let dropped = false
+      h.session.exec = async (command) => {
+        if (!dropped && command.includes('setsid bash')) {
+          dropped = true
+          h.session.commands.push(command)
+          throw new Error('SSH disconnected before launch')
+        }
+        return original(command)
+      }
+      const first = await start(h).done
+      assert.equal(first.lost, true)
+      assert.equal(h.snapshots.at(-1)?.launchUnknown, true)
+      const second = await start(h).done
+      assert.equal(second.lost, true)
+      assert.equal(
+        h.session.commands.filter((command) => command.includes('setsid bash')).length,
+        1
+      )
     })
   })
 })
@@ -156,6 +252,77 @@ test('cancel stops the remote process group and resolves as cancelled', async ()
   })
 })
 
+test('cancelling run A leaves concurrent run B alive', async () => {
+  await withSandbox(async (sb) => {
+    await withHarness(sb, async (h) => {
+      sb.useFake(FAKE_NEXTFLOW_TREE)
+      process.env.FAKE_NF_MS = '30000'
+      const first = start(h, {}, 'wrun_cancel_a')
+      await waitFor(() =>
+        h.snapshots.some((snapshot) => snapshot.runId === 'wrun_cancel_a' && snapshot.pid)
+      )
+      const second = start(h, {}, 'wrun_cancel_b')
+      await waitFor(() =>
+        h.snapshots.some((snapshot) => snapshot.runId === 'wrun_cancel_b' && snapshot.pid)
+      )
+      const aPid = h.snapshots.find(
+        (snapshot) => snapshot.runId === 'wrun_cancel_a' && snapshot.pid
+      )!.pid!
+      const bPid = h.snapshots.find(
+        (snapshot) => snapshot.runId === 'wrun_cancel_b' && snapshot.pid
+      )!.pid!
+      try {
+        first.cancel()
+        assert.equal((await first.done).cancelled, true)
+        assert.equal(isAlive(aPid), false)
+        assert.equal(isAlive(bPid), true)
+      } finally {
+        second.cancel()
+        await second.done
+      }
+    })
+  })
+})
+
+test('an unconfirmed cancel signal never turns a vanished run into cancelled', async () => {
+  await withSandbox(async (sb) => {
+    await withHarness(sb, async (h) => {
+      sb.useFake(FAKE_NEXTFLOW_TREE)
+      process.env.FAKE_NF_MS = '30000'
+      const proc = start(h, {}, 'wrun_cancel_unknown')
+      await waitFor(() => h.snapshots.some((snapshot) => snapshot.pid))
+      const pid = h.snapshots.find(
+        (snapshot) => snapshot.runId === 'wrun_cancel_unknown' && snapshot.pid
+      )!.pid!
+      const exec = h.session.exec.bind(h.session)
+      let signalAttempted = false
+      h.session.exec = async (command) => {
+        if (command.startsWith('kill -TERM -')) {
+          signalAttempted = true
+          throw new Error('SSH link dropped before signal reply')
+        }
+        if (signalAttempted && command.startsWith('kill -0 ')) {
+          return { stdout: 'dead\n', stderr: '', code: 0, signal: null }
+        }
+        return exec(command)
+      }
+      try {
+        proc.cancel()
+        await waitFor(() => signalAttempted)
+        const result = await proc.done
+        assert.equal(result.lost, true)
+        assert.equal(result.cancelled, undefined)
+      } finally {
+        try {
+          process.kill(-pid, 'SIGKILL')
+        } catch {
+          // The test may already have stopped the process group.
+        }
+      }
+    })
+  })
+})
+
 test('cancelling before the launch never starts the run', async () => {
   await withSandbox(async (sb) => {
     await withHarness(sb, async (h) => {
@@ -179,6 +346,8 @@ test('detach leaves the run going remotely and attach picks it up without repeat
       assert.equal(detached.detached, true)
       const snapshot = h.snapshots.at(-1)!
       assert.ok(isAlive(snapshot.pid!), 'the remote run must survive the app letting go of it')
+      assert.match(snapshot.logFileIdentity ?? '', /^[0-9]+:[0-9]+$/)
+      assert.ok(snapshot.logOffset > 0)
 
       const second: string[] = []
       const resumed = attachRemoteWrapperComposition({
@@ -196,6 +365,42 @@ test('detach leaves the run going remotely and attach picks it up without repeat
         /GFFREAD/,
         'lines already delivered before the detach are not replayed'
       )
+    })
+  })
+})
+
+test('attached runs show truncation and rotation diagnostics before resuming logs', async () => {
+  await withSandbox(async (sb) => {
+    await withHarness(sb, async (h) => {
+      assert.equal((await start(h).done).success, true)
+      const prior = h.snapshots.at(-1)!
+      const logPath = `${h.remoteRoot}/wrappers/runs/wrun_t1/logs/stdout.log`
+      writeFileSync(logPath, 'new\n')
+      const truncatedOutput: string[] = []
+      const updated: RemoteJobSnapshot[] = []
+      const truncated = attachRemoteWrapperComposition({
+        snapshot: prior,
+        entry: bundledEntry(),
+        target: h.target,
+        onOutput: (text) => truncatedOutput.push(text),
+        onSnapshot: (value) => updated.push(value)
+      })
+      assert.equal((await truncated.done).success, true)
+      assert.match(truncatedOutput.join(''), /偏移.*超出/)
+      assert.match(truncatedOutput.join(''), /new\n/)
+      const current = updated.at(-1)!
+      renameSync(logPath, `${logPath}.1`)
+      writeFileSync(logPath, 'rotated\n')
+      const rotatedOutput: string[] = []
+      const rotated = attachRemoteWrapperComposition({
+        snapshot: current,
+        entry: bundledEntry(),
+        target: h.target,
+        onOutput: (text) => rotatedOutput.push(text)
+      })
+      assert.equal((await rotated.done).success, true)
+      assert.match(rotatedOutput.join(''), /轮转/)
+      assert.match(rotatedOutput.join(''), /rotated\n/)
     })
   })
 })
@@ -294,14 +499,15 @@ test('the cluster check runs before anything is launched and reports what is mis
   })
 })
 
-test('the cluster check lets a healthy host through and puts its warnings in the log', async () => {
+test('the cluster check blocks direct host execution without its runtime', async () => {
   await withSandbox(async (sb) => {
     await withHarness(
       sb,
       async (h) => {
         const result = await start(h, {}, 'wrun_t1', 'singularity').done
-        assert.equal(result.success, true, result.output)
-        assert.match(h.output.join(''), /WARN.*(singularity|apptainer)/i)
+        assert.equal(result.success, false)
+        assert.match(result.output, /(singularity|apptainer).*不可用/i)
+        assert.equal(h.snapshots.length, 0)
       },
       (nextflowBin) => ({
         skipPreflight: false,
@@ -325,7 +531,7 @@ async function withSlurm(
       (h) => fn(h, slurm),
       (nextflowBin) => ({
         hpc: {
-          scheduler: 'local',
+          scheduler: 'slurm',
           controller: 'sbatch',
           nextflowBin,
           ...(controllerOptions ? { controllerOptions } : {})
@@ -351,6 +557,65 @@ test('sbatch controller: the head process is submitted as a Slurm job and the ru
       assert.ok(directives.includes('--job-name=phi-wrun_t1'))
       assert.ok(directives.some((d) => d.endsWith('/logs/stdout.log')))
       assert.equal(result.remote?.outputs.find((o) => o.primary)?.exists, true)
+    })
+  })
+})
+
+test('sbatch receipt write lost after submission recovers the saved job ID', async () => {
+  await withSandbox(async (sb) => {
+    await withSlurm(sb, async (h) => {
+      const write = h.session.writeTextFile
+      let dropped = false
+      h.session.writeTextFile = async (path, content) => {
+        await write(path, content)
+        if (!dropped && path.endsWith('/job_id')) {
+          dropped = true
+          throw new Error('SSH reply dropped after job ID was saved')
+        }
+      }
+      const result = await start(h).done
+      assert.equal(result.success, true, result.output)
+      assert.equal(dropped, true)
+      assert.equal(h.session.commands.filter((command) => command.startsWith('sbatch ')).length, 1)
+      assert.ok(h.snapshots.at(-1)?.jobId)
+    })
+  })
+})
+
+test('sbatch reply lost before job ID stays unknown, then recovers by exit code', async () => {
+  await withSandbox(async (sb) => {
+    await withSlurm(sb, async (h) => {
+      process.env.FAKE_NF_MS = '1000'
+      const original = h.session.exec
+      let dropped = false
+      h.session.exec = async (command) => {
+        if (!dropped && command.startsWith('sbatch ')) {
+          dropped = true
+          await original(command)
+          throw new Error('SSH reply dropped before job ID')
+        }
+        return original(command)
+      }
+      const first = await start(h).done
+      assert.equal(first.lost, true)
+      assert.equal(h.snapshots.at(-1)?.launchUnknown, true)
+      await waitFor(() => existsSync(`${h.remoteRoot}/wrappers/runs/wrun_t1/exit_code`))
+      const second = await start(h).done
+      assert.equal(second.success, true, second.output)
+      assert.equal(h.session.commands.filter((command) => command.startsWith('sbatch ')).length, 1)
+    })
+  })
+})
+
+test('Slurm preflight warns when the selected runtime may exist only on compute nodes', async () => {
+  await withSandbox(async (sb) => {
+    await withSlurm(sb, async (h) => {
+      h.target.skipPreflight = false
+      h.target.hpc = { ...h.target.hpc!, controller: 'login' }
+      const result = await start(h, {}, 'wrun_t1', 'singularity').done
+      assert.equal(result.success, true, result.output)
+      assert.match(h.output.join(''), /WARN.*(singularity|apptainer)/i)
+      assert.match(h.output.join(''), /登录节点持续运行|sbatch 控制方式/)
     })
   })
 })
@@ -405,7 +670,11 @@ test("sbatch controller: a refused submission is reported with the scheduler's r
         assert.equal(result.success, false)
         assert.match(result.output, /Invalid account/)
         assert.match(h.output.join(''), /Invalid account/)
-        assert.equal(h.snapshots.length, 0)
+        assert.equal(h.snapshots.at(-1)?.jobId, undefined)
+        assert.match(
+          readFileSync(`${h.remoteRoot}/wrappers/runs/wrun_t1/launch_error`, 'utf8'),
+          /Invalid account/
+        )
       } finally {
         delete process.env.FAKE_SLURM_REJECT
       }

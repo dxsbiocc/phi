@@ -157,7 +157,7 @@ function optionalCreatedAt(
 export function createAgentRunner(deps: {
   /** Agent name, used in error messages. */
   agent: string
-  createSession: () => Promise<AgentSessionLike>
+  createSession: (request: { runId?: string }) => Promise<AgentSessionLike>
   timeoutMs?: number
   /**
    * The current time as an ISO string. The SDK's events carry none, so a step is timed here:
@@ -182,7 +182,7 @@ export function createAgentRunner(deps: {
       ...(deps.clock ? { clock: deps.clock } : {})
     })
 
-    const session = await deps.createSession()
+    const session = await deps.createSession({ ...(runId ? { runId } : {}) })
     onControl?.({
       steer: async (text) => {
         if (!session.steer) throw new Error(`The ${deps.agent} agent cannot be steered.`)

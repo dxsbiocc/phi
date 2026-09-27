@@ -16,8 +16,59 @@ import type {
   EnvironmentToolId,
   EnvironmentToolState
 } from '../../shared/environmentTypes'
-import type { RemoteHpcSettings } from '../../shared/wrapperRemoteTypes'
+import type {
+  RemoteProjectConnectionChange,
+  RemoteProjectConnectionRetryRequest,
+  RemoteProjectConnectionState,
+  RemoteProjectCreateInput
+} from '../../shared/projectLocation'
+import type { OpenSshHostInput } from '../../shared/remoteHostProfile'
+import type { RemoteWorkspaceFileRequest } from '../../shared/remoteWorkspacePath'
+import type {
+  WrapperResultDirectoryRequest,
+  WrapperResultDownloadProgress,
+  WrapperResultDownloadResult,
+  WrapperResultRange,
+  WrapperResultRangeRequest,
+  WrapperResultReadRequest,
+  WrapperResultPreview
+} from '../../shared/wrapperResultTypes'
+import type {
+  ProjectRemoteConnection,
+  RemoteHostProfile,
+  RemoteHostProfileInput,
+  OpenSshHost
+} from './features/wrapper/lib/remoteConnectionTypes'
+export type {
+  ProjectRemoteConnection,
+  RemoteHostProfile,
+  OpenSshHost
+} from './features/wrapper/lib/remoteConnectionTypes'
 import type { AgentExecutionItem } from './lib/agentExecutionTypes'
+import type { Project } from './lib/projectTypes'
+export type { Project } from './lib/projectTypes'
+import type {
+  CurrentSession,
+  PermissionMode,
+  PromptResult,
+  PromptTarget,
+  SessionSummary,
+  SessionSwitchResult,
+  ToolApprovalRequest
+} from './lib/sessionTypes'
+export type {
+  CurrentSession,
+  LastRunOutcome,
+  PermissionMode,
+  PromptResult,
+  PromptTarget,
+  SessionRuntimeState,
+  SessionStatus,
+  SessionSummary,
+  SessionSwitchResult,
+  ToolApprovalRequest,
+  UnreadKind
+} from './lib/sessionTypes'
 
 export type { DefaultProxyMode, PhiAppSettings, PhiAppSettingsPatch, ProxyTransportStatus }
 export type { DbConnectorSettingsItem }
@@ -164,20 +215,6 @@ export interface AuthProgressEvent {
 }
 
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-export type SessionStatus =
-  'idle' | 'running' | 'needs_approval' | 'needs_input' | 'failed' | 'completed_unread'
-export type UnreadKind = 'completed' | 'failed' | 'approval' | 'input'
-export type LastRunOutcome = 'completed' | 'failed' | 'interrupted' | 'stopped'
-
-export interface SessionRuntimeState {
-  status: SessionStatus
-  unreadKind: UnreadKind | null
-  lastRunOutcome?: LastRunOutcome
-  currentRunId?: string
-  currentRunStartedAt?: string
-  lastActivityAt?: string
-}
-
 export type AgentUserInteractionOption = {
   label: string
   description: string
@@ -218,92 +255,6 @@ export type AgentUserInteractionResponse = {
   cancelled?: boolean
   globalNote?: string
   error?: string
-}
-
-export interface SessionSummary extends SessionRuntimeState {
-  path: string
-  id: string
-  name?: string
-  created: string
-  modified: string
-  messageCount: number
-  firstMessage: string
-  phiSessionId?: string
-}
-
-export interface SessionSwitchResult extends SessionRuntimeState {
-  path: string
-  phiSessionId?: string
-  cwd: string
-  sessionGeneration: number
-  permissionMode: PermissionMode
-  messages: unknown[]
-}
-
-export interface CurrentSession extends SessionRuntimeState {
-  path: string | null
-  phiSessionId?: string
-  cwd: string
-  sessionGeneration: number
-  permissionMode: PermissionMode
-  messages?: unknown[]
-}
-
-export interface PromptResult {
-  path: string | null
-  phiSessionId?: string
-  sessionGeneration: number
-}
-
-export interface PromptTarget {
-  path: string | null
-  phiSessionId?: string
-  cwd: string
-  sessionGeneration: number
-  suppressUserMessageEvent?: boolean
-  retryUserMessageId?: string
-}
-
-export type PermissionMode = 'auto' | 'ask' | 'full'
-
-export interface ProjectRemoteConnection {
-  id: string
-  label: string
-  host: string
-  port?: number
-  username: string
-  privateKeyPath: string
-  hasPassphrase?: boolean
-  hpc?: RemoteHpcSettings
-}
-
-export interface Project {
-  id: string
-  name: string
-  workingDirectory: string
-  permissionMode: PermissionMode
-  gitStatus?: {
-    branch: string
-    dirty: boolean
-  }
-  defaultModel?: { providerId: string; modelId: string }
-  defaultThinkingLevel?: ThinkingLevel
-  remoteConnections?: ProjectRemoteConnection[]
-  defaultRemoteConnectionId?: string
-  remoteWorkspaceRoot?: string
-  createdAt: string
-}
-
-export interface ToolApprovalRequest {
-  requestId: string
-  sessionId?: string
-  sessionPath?: string
-  sessionGeneration?: number
-  runId?: string
-  cwd?: string
-  projectName?: string
-  toolName: string
-  summary: string
 }
 
 export type PluginKind = 'extension' | 'skill' | 'prompt' | 'theme' | 'package'
@@ -360,7 +311,7 @@ export interface McpServerSummary {
   status: 'configured'
 }
 
-export type FilePreviewKind = 'text' | 'image' | 'pdf'
+export type FilePreviewKind = 'text' | 'image' | 'pdf' | 'metadata'
 
 interface FilePreviewBase {
   path: string
@@ -385,7 +336,7 @@ export type FilePreview = FilePreviewBase &
       }
     | {
         kind: 'image'
-        mimeType: 'image/png'
+        mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
         dataUrl: string
         content?: never
       }
@@ -394,6 +345,13 @@ export type FilePreview = FilePreviewBase &
         mimeType: 'application/pdf'
         dataUrl: string
         content?: never
+      }
+    | {
+        kind: 'metadata'
+        mimeType: string
+        reason: 'large_file' | 'binary'
+        content?: never
+        dataUrl?: never
       }
   )
 
@@ -729,9 +687,20 @@ export type RendererApi = {
   getPathForFile: (file: File) => string
   onInputFilesDropped: (cb: (paths: string[]) => void) => () => void
   previewFile: (path: string) => Promise<FilePreview>
+  previewRemoteWorkspaceFile: (request: RemoteWorkspaceFileRequest) => Promise<FilePreview>
+  previewWrapperResult: (request: WrapperResultReadRequest) => Promise<WrapperResultPreview>
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
   statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
   listDirectory: (path: string) => Promise<DirectoryListing>
+  listRemoteWorkspaceDirectory: (request: RemoteWorkspaceFileRequest) => Promise<DirectoryListing>
+  listWrapperResultDirectory: (request: WrapperResultDirectoryRequest) => Promise<DirectoryListing>
+  readWrapperResultRange: (request: WrapperResultRangeRequest) => Promise<WrapperResultRange>
+  cancelWrapperResultRead: (requestId: string) => Promise<boolean>
+  downloadWrapperResult: (request: WrapperResultReadRequest) => Promise<WrapperResultDownloadResult>
+  cancelWrapperResultDownload: (requestId: string) => Promise<boolean>
+  onWrapperResultDownloadProgress: (
+    cb: (progress: WrapperResultDownloadProgress) => void
+  ) => () => void
   renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
   previewDatabaseWebImage: (url: string) => Promise<DatabaseWebImagePreview>
   copyDiagnostics: () => Promise<string>
@@ -789,6 +758,13 @@ export type RendererApi = {
     workingDirectory: string,
     permissionMode: PermissionMode
   ) => Promise<Project>
+  createRemoteProject: (input: RemoteProjectCreateInput) => Promise<Project>
+  retryRemoteProjectConnection: (
+    request: RemoteProjectConnectionRetryRequest
+  ) => Promise<RemoteProjectConnectionState>
+  onRemoteProjectConnectionChanged: (
+    cb: (change: RemoteProjectConnectionChange) => void
+  ) => () => void
   deleteProject: (id: string) => Promise<void>
   updateProjectPermissionMode: (id: string, permissionMode: PermissionMode) => Promise<Project>
   updateProjectDefaults: (
@@ -798,13 +774,15 @@ export type RendererApi = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => Promise<Project>
-  pickPrivateKeyFile: () => Promise<string | null>
-  isRemoteCredentialStorageAvailable: () => Promise<boolean>
+  listRemoteHosts: () => Promise<RemoteHostProfile[]>
+  listOpenSshHosts: () => Promise<OpenSshHost[]>
+  saveOpenSshHost: (input: OpenSshHostInput) => Promise<RemoteHostProfile>
+  saveRemoteHost: (input: RemoteHostProfileInput) => Promise<RemoteHostProfile>
+  deleteRemoteHost: (id: string) => Promise<void>
   updateProjectRemoteConnection: (
     id: string,
     connectionId: string,
-    patch: ProjectRemoteConnection | null,
-    passphrase?: string | null
+    patch: ProjectRemoteConnection | null
   ) => Promise<Project>
   updateProjectRemoteDefaults: (
     id: string,
@@ -814,10 +792,12 @@ export type RendererApi = {
     }
   ) => Promise<Project>
   listProjectSessions: (workingDirectory: string) => Promise<SessionSummary[]>
+  listProjectSessionsById: (projectId: string) => Promise<SessionSummary[]>
   createProjectSession: (
     workingDirectory: string,
     permissionMode: PermissionMode
   ) => Promise<CurrentSession>
+  createRemoteProjectSession: (projectId: string) => Promise<CurrentSession>
   listAnalysisNotebooks: (cwd?: string) => Promise<AnalysisNotebookRegistry>
   initializeProjectAnalysis: (cwd: string) => Promise<AnalysisProjectInitialization>
   openAnalysisNotebook: (cwd: string, path: string) => Promise<AnalysisNotebookFile>

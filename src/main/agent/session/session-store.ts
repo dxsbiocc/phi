@@ -10,6 +10,7 @@ import {
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
+import type { ProjectLocation } from '../../../shared/projectLocation'
 import { getPhiAgentDir } from '../runtime-paths'
 
 export type SessionKind = 'ordinary' | 'project'
@@ -30,6 +31,7 @@ export interface PhiSessionManifest {
   sessionId: string
   kind: SessionKind
   projectId: string | null
+  projectLocation?: ProjectLocation
   cwd: string
   cwdRealPath: string
   title?: string
@@ -52,6 +54,7 @@ export interface PhiSessionManifest {
 export interface CreatePhiSessionInput {
   kind: SessionKind
   projectId?: string | null
+  projectLocation?: ProjectLocation
   cwd: string
   cwdRealPath: string
   title?: string
@@ -152,6 +155,7 @@ function writeManifest(manifest: PhiSessionManifest): void {
 function withoutUndefinedOptionalFields(manifest: PhiSessionManifest): PhiSessionManifest {
   const next = { ...manifest }
   if (next.title === undefined) delete next.title
+  if (next.projectLocation === undefined) delete next.projectLocation
   if (next.runtimeSessionPath === undefined) delete next.runtimeSessionPath
   if (next.model === undefined) delete next.model
   if (next.thinkingLevel === undefined) delete next.thinkingLevel
@@ -163,6 +167,9 @@ function withoutUndefinedOptionalFields(manifest: PhiSessionManifest): PhiSessio
 }
 
 export function createPhiSession(input: CreatePhiSessionInput): PhiSessionRecord {
+  if (input.projectLocation?.kind === 'ssh' && (input.kind !== 'project' || !input.projectId)) {
+    throw new Error('远程项目会话必须绑定项目 ID')
+  }
   const sessionId = randomUUID()
   const dir = getSessionDir(sessionId)
   const timestamp = nowIso()
@@ -171,6 +178,7 @@ export function createPhiSession(input: CreatePhiSessionInput): PhiSessionRecord
     sessionId,
     kind: input.kind,
     projectId: input.projectId ?? null,
+    ...(input.projectLocation ? { projectLocation: input.projectLocation } : {}),
     cwd: input.cwd,
     cwdRealPath: input.cwdRealPath,
     ...(input.title ? { title: input.title } : {}),

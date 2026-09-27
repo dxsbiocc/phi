@@ -2,7 +2,13 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
+import type { RemoteHpcSettings } from '../../../shared/wrapperRemoteTypes'
+import { remoteDoctor } from '../remote-doctor'
 import { findWrapperCatalogEntry } from './catalog'
+import {
+  buildRemoteConfiguredLaunchScript,
+  buildRemoteNextflowConfig
+} from './composition/remote-config'
 import {
   joinRemote,
   type ConnectImpl,
@@ -14,17 +20,21 @@ import {
   failRun,
   pollUntilTerminal,
   transition,
+  transitionUnlessCancelled,
   writeRemoteRunSnapshot
 } from './executor-remote-run'
 import { SbatchRunner } from './executor-slurm'
 import type { WrapperManifest } from './manifest-types'
+import { checkRemoteWrapperInputs } from './remote-input-check'
+import { RemoteLaunchUnknownError } from './remote-launch-claim'
 import {
   connectRemoteSshSession,
   shellQuote,
   type RemoteConnectionConfig,
   type RemoteSshSession
 } from './remote-ssh-session'
-import { readWrapperRun } from './store'
+import { readWrapperRun, writeWrapperRun } from './store'
+import { checkRemoteSubmitPreflight, executeRemoteLaunchPreflight } from './remote-submit-preflight'
 import type { WrapperRun, WrapperRunPlan } from './types'
 
 /**
@@ -42,6 +52,8 @@ export interface RunSlurmWrapperOptions {
   /** Absolute remote path this run executes under, e.g. `<remoteWorkspaceRoot>/wrappers/runs/<runId>`. */
   remoteRunDir: string
   connection: RemoteConnectionConfig
+  hpc?: RemoteHpcSettings
+  doctorImpl?: typeof remoteDoctor
   /** Injectable so tests can fake the SSH session — see `executor-remote.ts`'s `RemoteControllerOptions`. */
   connectImpl?: ConnectImpl
   /** How often to poll `SbatchRunner.status()` while the job is queued/running. Defaults to 15s. */
@@ -71,7 +83,9 @@ export function buildRemoteNextflowLaunch(
     '-params-file',
     'params.json',
     '-profile',
-    plan.nextflowProfile ?? plan.profile
+    plan.nextflowProfile ?? plan.profile,
+    '-c',
+    'nextflow.config'
   ]
   const params: Record<string, unknown> = { ...plan.params }
   if (params.outdir === undefined) {
@@ -133,7 +147,31 @@ export async function runSlurmWrapperExecution(
   const remoteWrapperDir = joinRemote(remoteRunDir, 'wrapper')
   const remoteOutDir = joinRemote(remoteRunDir, 'output')
 
-  transition(run, agentDir, 'provisioning')
+  let environment: Awaited<ReturnType<typeof checkRemoteSubmitPreflight>>
+  try {
+    environment = await checkRemoteSubmitPreflight({
+      run,
+      plan,
+      manifest: entry.manifest,
+      agentDir,
+      doctorImpl: options.doctorImpl,
+      remote: {
+        connection: options.connection,
+        remoteWorkspaceRoot: plan.targetSelection?.remoteRoot ?? remoteRunDir,
+        hpc: options.hpc,
+        connectImpl: options.connectImpl
+      }
+    })
+  } catch (error) {
+    const reason = `服务器提交前检查失败: ${error instanceof Error ? error.message : String(error)}`
+    return failRun({ ...run, environmentError: reason }, agentDir, reason)
+  }
+  if (environment.error) {
+    return failRun({ ...run, environmentError: environment.error }, agentDir, environment.error)
+  }
+  let provisioning = transition(run, agentDir, 'provisioning', {
+    ...(environment.warnings.length ? { environmentWarnings: environment.warnings } : {})
+  })
 
   let session: RemoteSshSession
   try {
@@ -146,12 +184,72 @@ export async function runSlurmWrapperExecution(
     )
   }
 
+  if (plan.targetSelection?.target === 'remote') {
+    try {
+      const checked = await executeRemoteLaunchPreflight(
+        session,
+        environment.hpc,
+        plan.targetSelection.remoteRoot!
+      )
+      if (checked.error) {
+        await session.close().catch(() => undefined)
+        return failRun(
+          { ...provisioning, environmentError: checked.error },
+          agentDir,
+          checked.error
+        )
+      }
+      if (checked.warnings.length > 0) {
+        provisioning = {
+          ...provisioning,
+          environmentWarnings: [
+            ...new Set([...(provisioning.environmentWarnings ?? []), ...checked.warnings])
+          ]
+        }
+        writeWrapperRun(provisioning, agentDir)
+      }
+    } catch (error) {
+      await session.close().catch(() => undefined)
+      const reason = `服务器预检失败: ${error instanceof Error ? error.message : String(error)}`
+      return failRun({ ...provisioning, environmentError: reason }, agentDir, reason)
+    }
+  }
+
+  const references = run.inputReferences ?? plan.inputs
+  try {
+    const checked = await checkRemoteWrapperInputs(session, references)
+    if (checked.errors.length > 0) {
+      await session.close().catch(() => undefined)
+      return failRun(
+        { ...provisioning, inputErrors: checked.errors, inputWarnings: checked.warnings },
+        agentDir,
+        checked.errors.join('\n')
+      )
+    }
+    if (checked.warnings.length > 0) {
+      provisioning = { ...provisioning, inputWarnings: checked.warnings }
+      writeWrapperRun(provisioning, agentDir)
+    }
+  } catch (error) {
+    await session.close().catch(() => undefined)
+    return failRun(
+      {
+        ...provisioning,
+        inputErrors: [
+          `服务器输入核验失败: ${error instanceof Error ? error.message : String(error)}`
+        ]
+      },
+      agentDir,
+      `服务器输入核验失败: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+
   try {
     await uploadWrapperBundle(session, entry.installedPath, remoteWrapperDir)
   } catch (error) {
     await session.close()
     return failRun(
-      run,
+      provisioning,
       agentDir,
       `上传 wrapper 到远程失败: ${error instanceof Error ? error.message : String(error)}`
     )
@@ -160,18 +258,36 @@ export async function runSlurmWrapperExecution(
   const launch = buildRemoteNextflowLaunch(entry.manifest, plan, remoteWrapperDir, remoteOutDir)
   const launchSpec: RemoteLaunchSpec = {
     remoteRunDir,
-    launchScript: `${shellJoin(launch.command, launch.args)}\n`,
-    paramsJson: launch.paramsJson
+    launchScript: buildRemoteConfiguredLaunchScript({
+      runDir: remoteRunDir,
+      commands: [shellJoin(launch.command, launch.args)],
+      setupCommands: environment.hpc.setupCommands
+    }),
+    paramsJson: launch.paramsJson,
+    nextflowConfig: buildRemoteNextflowConfig(environment.hpc),
+    hpc: environment.hpc
   }
 
-  const running = transition(run, agentDir, 'running', { startedAt: new Date().toISOString() })
+  const running = transition(provisioning, agentDir, 'running', {
+    startedAt: new Date().toISOString()
+  })
   const runner = new SbatchRunner({ connection: options.connection, connectImpl })
+  writeRemoteRunSnapshot(run.runId, agentDir, { remoteRunDir, launchUnknown: true })
 
   let handle: RemoteJobHandle
   try {
     handle = await runner.submit(running, plan, launchSpec)
   } catch (error) {
+    await runner.close().catch(() => undefined)
     await session.close()
+    if (error instanceof RemoteLaunchUnknownError) {
+      return transition(running, agentDir, 'lost', {
+        completedAt: new Date().toISOString(),
+        launchUnknown: true,
+        launchDiagnostic: error.message
+      })
+    }
+    writeRemoteRunSnapshot(run.runId, agentDir, { remoteRunDir })
     return failRun(
       running,
       agentDir,
@@ -187,11 +303,17 @@ export async function runSlurmWrapperExecution(
 
   try {
     const status = await pollUntilTerminal(runner, handle, pollIntervalMs)
+    const recorded = readWrapperRun(run.runId, agentDir)
+    if (recorded?.state === 'cancelled') return recorded
 
     if (status.outcome === 'completed') {
       const collecting = transition(running, agentDir, 'collecting')
-      const outputs = await collectRemoteOutputs(session, entry.manifest, remoteOutDir)
-      return transition(collecting, agentDir, 'completed', {
+      const outputs = await collectRemoteOutputs(
+        session,
+        entry.manifest,
+        run.remote?.outputRoot ?? remoteOutDir
+      )
+      return transitionUnlessCancelled(collecting, agentDir, 'completed', {
         completedAt: new Date().toISOString(),
         exitCode: status.exitCode,
         outputs
@@ -199,7 +321,9 @@ export async function runSlurmWrapperExecution(
     }
 
     if (status.outcome === 'lost') {
-      return transition(running, agentDir, 'lost', { completedAt: new Date().toISOString() })
+      return transitionUnlessCancelled(running, agentDir, 'lost', {
+        completedAt: new Date().toISOString()
+      })
     }
 
     // A concurrent `cancelWrapperRun` call may have moved the run to
@@ -210,7 +334,13 @@ export async function runSlurmWrapperExecution(
     // so without this check a user-requested cancellation would land as
     // `failed`, not the `cancelled` the design doc's state diagram promises.
     const current = readWrapperRun(run.runId, agentDir) ?? running
-    return transition(running, agentDir, current.state === 'cancelling' ? 'cancelled' : 'failed', {
+    const cancelled =
+      current.state === 'cancelling' &&
+      (current.cancelConfirmedAt !== undefined ||
+        status.detail?.startsWith('CANCELLED') === true ||
+        status.exitCode === 143 ||
+        status.exitCode === 137)
+    return transitionUnlessCancelled(running, agentDir, cancelled ? 'cancelled' : 'failed', {
       completedAt: new Date().toISOString(),
       exitCode: status.exitCode
     })

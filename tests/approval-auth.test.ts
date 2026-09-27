@@ -89,7 +89,12 @@ type AuthInteractionLike = {
 }
 
 type ToolHandler = (
-  event: { toolName: string; input: Record<string, unknown> },
+  event: {
+    toolName: string
+    input: Record<string, unknown>
+    toolCallId?: string
+    agentRunId?: string
+  },
   ctx: { signal?: AbortSignal }
 ) => Promise<unknown>
 
@@ -141,8 +146,14 @@ const { __electronMock } = (await import('electron')) as unknown as {
   __electronMock: ElectronMock
 }
 const { AuthManager } = await import('../src/main/agent/auth-manager')
-const { cancelToolApprovals, createApprovalExtension, resolveToolApproval } =
-  await import('../src/main/agent/tool-approval')
+const {
+  bashApprovalDigest,
+  editApprovalDigest,
+  writeApprovalDigest,
+  cancelToolApprovals,
+  createApprovalExtension,
+  resolveToolApproval
+} = await import('../src/main/agent/tool-approval')
 
 async function registerApprovalHandler(signal?: AbortSignal): Promise<ToolHandler> {
   let handler: ToolHandler | undefined
@@ -205,6 +216,193 @@ test('tool approval resolves and cleans up accepted requests', async () => {
   assert.equal(window.listenerCount('closed'), 0)
   assert.equal(window.webContents.listenerCount('did-start-navigation'), 0)
   resolveToolApproval(request.requestId, false)
+})
+
+test('remote Bash approval shows host, pinned cwd, scope warning and exact command', async () => {
+  const window = new FakeWindow()
+  __electronMock.setFocusedWindow(window)
+  let handler: ToolHandler | undefined
+  const extension = createApprovalExtension({
+    getContext: () => ({
+      sessionId: 'phi-remote',
+      runId: 'run-1',
+      cwd: 'ssh://cluster-a/data/project',
+      projectName: 'Cluster project',
+      scopeNote: 'SSH cluster-a · cwd /data/project；Shell 命令可访问项目目录之外。'
+    })
+  })
+  if (typeof extension !== 'function') {
+    await extension.factory({
+      on(eventName: string, candidate: ToolHandler): void {
+        if (eventName === 'tool_call') handler = candidate
+      }
+    } as never)
+  }
+  assert.ok(handler)
+  const pending = handler(
+    {
+      toolName: 'bash',
+      toolCallId: 'tool-1',
+      input: { command: 'printf marker', env: { TOKEN: 'private-value' }, timeout: 30 }
+    },
+    {}
+  )
+  const request = window.webContents.sent[0].payload as {
+    requestId: string
+    toolCallId: string
+    command: string
+    approvalDigest: string
+    cwd: string
+    summary: string
+  }
+  assert.equal(request.toolCallId, 'tool-1')
+  assert.equal(request.command, 'printf marker')
+  assert.equal(
+    request.approvalDigest,
+    bashApprovalDigest({ command: 'printf marker', env: { TOKEN: 'private-value' }, timeout: 30 })
+  )
+  assert.equal(request.cwd, 'ssh://cluster-a/data/project')
+  assert.match(request.summary, /Shell 命令可访问项目目录之外/)
+  assert.match(request.summary, /printf marker/)
+  assert.match(request.summary, /env keys: TOKEN/)
+  assert.doesNotMatch(request.summary, /private-value/)
+  resolveToolApproval(request.requestId, false)
+  await pending
+})
+
+test('Bash approval digest binds environment and timeout independent of env key order', () => {
+  const approved = bashApprovalDigest({ command: 'echo ok', env: { B: '2', A: '1' }, timeout: 30 })
+  assert.equal(
+    approved,
+    bashApprovalDigest({ command: 'echo ok', env: { A: '1', B: '2' }, timeout: 30 })
+  )
+  assert.notEqual(
+    approved,
+    bashApprovalDigest({ command: 'echo ok', env: { A: 'changed', B: '2' }, timeout: 30 })
+  )
+  assert.notEqual(
+    approved,
+    bashApprovalDigest({ command: 'echo ok', env: { A: '1', B: '2' }, timeout: 60 })
+  )
+})
+
+test('remote write approval shows host and path while binding exact content', async () => {
+  const window = new FakeWindow()
+  __electronMock.setFocusedWindow(window)
+  let handler: ToolHandler | undefined
+  const extension = createApprovalExtension({
+    getContext: () => ({
+      sessionId: 'phi-remote',
+      runId: 'run-1',
+      cwd: 'ssh://cluster-a/data/project',
+      writeScopeNote: 'SSH cluster-a · 项目 /data/project；仅创建新文件，不覆盖已有目标。'
+    })
+  })
+  if (typeof extension !== 'function') {
+    await extension.factory({
+      on(eventName: string, candidate: ToolHandler): void {
+        if (eventName === 'tool_call') handler = candidate
+      }
+    } as never)
+  }
+  assert.ok(handler)
+  const pending = handler(
+    {
+      toolName: 'write',
+      toolCallId: 'tool-write',
+      input: { path: 'new.txt', content: 'private file content' }
+    },
+    {}
+  )
+  const request = window.webContents.sent[0].payload as {
+    requestId: string
+    approvalDigest: string
+    summary: string
+    cwd: string
+  }
+  assert.equal(request.cwd, 'ssh://cluster-a/data/project')
+  assert.match(request.summary, /cluster-a/)
+  assert.match(request.summary, /new\.txt/)
+  assert.doesNotMatch(request.summary, /private file content/)
+  assert.equal(
+    request.approvalDigest,
+    writeApprovalDigest({ path: 'new.txt', content: 'private file content' })
+  )
+  assert.notEqual(
+    request.approvalDigest,
+    writeApprovalDigest({ path: 'new.txt', content: 'changed' })
+  )
+  resolveToolApproval(request.requestId, false)
+  await pending
+})
+
+test('remote edit approval binds old/new text without showing file content', async () => {
+  const window = new FakeWindow()
+  __electronMock.setFocusedWindow(window)
+  let handler: ToolHandler | undefined
+  const extension = createApprovalExtension({
+    getContext: () => ({
+      sessionId: 'phi-remote',
+      runId: 'run-1',
+      cwd: 'ssh://cluster-a/data/project',
+      writeScopeNote: 'SSH cluster-a · 项目 /data/project；修改已读取且未变化的文件。'
+    })
+  })
+  if (typeof extension !== 'function') {
+    await extension.factory({
+      on(eventName: string, candidate: ToolHandler): void {
+        if (eventName === 'tool_call') handler = candidate
+      }
+    } as never)
+  }
+  assert.ok(handler)
+  const input = { path: 'existing.txt', old_string: 'private old', new_string: 'private new' }
+  const pending = handler(
+    { toolName: 'edit', toolCallId: 'tool-edit', agentRunId: 'wrapper-run-1', input },
+    {}
+  )
+  const request = window.webContents.sent[0].payload as {
+    requestId: string
+    agentRunId?: string
+    approvalDigest: string
+    summary: string
+    cwd: string
+  }
+  assert.match(request.summary, /cluster-a/)
+  assert.equal(request.agentRunId, 'wrapper-run-1')
+  assert.match(request.summary, /existing\.txt/)
+  assert.doesNotMatch(request.summary, /private old|private new/)
+  assert.equal(request.approvalDigest, editApprovalDigest(input))
+  assert.notEqual(request.approvalDigest, editApprovalDigest({ ...input, new_string: 'changed' }))
+  resolveToolApproval(request.requestId, false)
+  await pending
+})
+
+test('a remote approval hook follows the current ask/auto/full policy without session recreation', async () => {
+  const window = new FakeWindow()
+  __electronMock.setFocusedWindow(window)
+  let ask = false
+  let handler: ToolHandler | undefined
+  const extension = createApprovalExtension({ shouldGate: () => ask })
+  if (typeof extension !== 'function') {
+    await extension.factory({
+      on(eventName: string, candidate: ToolHandler): void {
+        if (eventName === 'tool_call') handler = candidate
+      }
+    } as never)
+  }
+  assert.ok(handler)
+  assert.equal(
+    await handler({ toolName: 'write', input: { path: 'note.txt', content: 'safe' } }, {}),
+    undefined
+  )
+  assert.equal(window.webContents.sent.length, 0)
+  ask = true
+  const pending = handler({ toolName: 'write', input: { path: 'note.txt', content: 'safe' } }, {})
+  assert.equal(window.webContents.sent.length, 1)
+  const request = window.webContents.sent[0].payload as { requestId: string }
+  resolveToolApproval(request.requestId, false)
+  assert.deepEqual(await pending, { block: true, reason: '用户拒绝了该操作' })
 })
 
 test('tool approval cancellation denies pending requests and ignores late responses', async () => {

@@ -401,7 +401,7 @@ test('the bundled Database agent owns only biological database tools', () => {
   assert.ok(database.delegation && database.delegation.length > 0)
   assert.equal(database.delegationMode, 'required-first')
   assert.equal(database.fallback?.afterFailures, 1)
-  assert.deepEqual(database.fallback?.tools, ['bash', 'eval', 'web_search'])
+  assert.deepEqual(database.fallback?.tools, ['bash', 'eval', 'web_search', 'download_file'])
   assert.ok(database.fallback?.match.includes('rest.uniprot.org'))
   for (const toolName of [
     'db_search',
@@ -795,6 +795,19 @@ test('the runner prompts a fresh session with the task and returns the last assi
   assert.deepEqual(session.prompts, ['wrap seqkit stats'])
   assert.equal(result.text, 'Report body')
   assert.equal(session.disposed, 1)
+})
+
+test('the runner passes its agent run id into the specialist session for approval routing', async () => {
+  const session = fakeSession()
+  let createdFor: string | undefined
+  await createAgentRunner({
+    agent: 'Wrapper',
+    createSession: async ({ runId }) => {
+      createdFor = runId
+      return session
+    }
+  })({ task: 'inspect remote file', runId: 'wrapper-run-1' })
+  assert.equal(createdFor, 'wrapper-run-1')
 })
 
 test('the runner counts tool starts and reports them as progress', async () => {

@@ -1,6 +1,12 @@
 import { Box, Typography } from '@mui/material'
 import { useMemo, type ReactNode } from 'react'
 import { tokenizeLocalPaths } from '../../lib/localPaths'
+import {
+  remotePathInsideRoot,
+  remoteWorkspaceUri,
+  tokenizeRemoteWorkspaceUris
+} from '../../../../shared/remoteWorkspacePath'
+import { useRemoteProjectFileContext } from '../../lib/remoteProjectFileContext'
 
 function LocalPathOutputButton({
   text,
@@ -9,12 +15,22 @@ function LocalPathOutputButton({
   text: string
   absolutePath: string
 }): ReactNode {
+  const remoteProject = useRemoteProjectFileContext()
+  const remoteUri =
+    remoteProject?.hostAlias && remotePathInsideRoot(absolutePath, remoteProject.canonicalRoot)
+      ? remoteWorkspaceUri(remoteProject.hostAlias, absolutePath)
+      : null
+  if (remoteProject && !remoteUri) return <span>{text}</span>
   return (
     <Box
       component="button"
       type="button"
-      title={absolutePath}
+      title={remoteUri ?? absolutePath}
       onClick={() => {
+        if (remoteProject && remoteUri) {
+          remoteProject.openPath(remoteUri, 'file')
+          return
+        }
         void window.api.revealPath(absolutePath).catch((error) => {
           console.error('Failed to reveal tool output path:', error)
         })
@@ -43,17 +59,32 @@ function LocalPathOutputButton({
 }
 
 function LocalPathOutputText({ text, cwd }: { text: string; cwd?: string }): ReactNode {
-  return tokenizeLocalPaths(text, cwd ?? '').map((token, index) =>
-    token.kind === 'path' ? (
-      <LocalPathOutputButton
-        key={`${token.absolutePath}-${index}`}
-        text={token.text}
-        absolutePath={token.absolutePath}
-      />
-    ) : (
-      <span key={index}>{token.text}</span>
+  const remoteProject = useRemoteProjectFileContext()
+  const remoteTokens = remoteProject
+    ? tokenizeRemoteWorkspaceUris(text, remoteProject.hostAlias, remoteProject.canonicalRoot)
+    : [{ kind: 'text' as const, text }]
+  return remoteTokens.flatMap((remoteToken, remoteIndex) => {
+    if (remoteToken.kind === 'path') {
+      return [
+        <LocalPathOutputButton
+          key={`remote-${remoteIndex}`}
+          text={remoteToken.text}
+          absolutePath={remoteToken.path}
+        />
+      ]
+    }
+    return tokenizeLocalPaths(remoteToken.text, cwd ?? '').map((token, index) =>
+      token.kind === 'path' ? (
+        <LocalPathOutputButton
+          key={`${remoteIndex}-${token.absolutePath}-${index}`}
+          text={token.text}
+          absolutePath={token.absolutePath}
+        />
+      ) : (
+        <span key={`${remoteIndex}-${index}`}>{token.text}</span>
+      )
     )
-  )
+  })
 }
 
 export function DiffAwareOutput({ text, cwd }: { text: string; cwd?: string }): ReactNode {

@@ -10,7 +10,8 @@ import {
   Tooltip,
   Typography
 } from '@mui/material'
-import { memo, useEffect, useState, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, useState, type ReactNode } from 'react'
+import type { WrapperRun } from '../../../../shared/wrapperTypes'
 import { PhiIcons } from '../../icons'
 import { isAgentRunGoneError } from '../../lib/agentExecutionControl'
 import {
@@ -19,6 +20,7 @@ import {
   formatAgentDuration,
   type AgentRunOverviewEntry
 } from '../../lib/agentRunsOverview'
+import { runProgressLabel, runStateLabel } from '../../features/wrapper/lib/wrapperView'
 import { useLostAgentRunsStore } from '../../stores/lostAgentRunsStore'
 import { useHoverIntent } from './useHoverIntent'
 
@@ -37,11 +39,12 @@ function elapsedMs(startedAt: string | undefined, nowMs: number): number {
 
 type AgentRunRowProps = {
   run: AgentRunOverviewEntry
+  wrapperRun?: WrapperRun
   nowMs: number
   onLocate: (id: string) => void
 }
 
-function AgentRunRow({ run, nowMs, onLocate }: AgentRunRowProps): ReactNode {
+function AgentRunRow({ run, wrapperRun, nowMs, onLocate }: AgentRunRowProps): ReactNode {
   const markLost = useLostAgentRunsStore((state) => state.markLost)
   const [stopping, setStopping] = useState(false)
   const [error, setError] = useState('')
@@ -65,6 +68,13 @@ function AgentRunRow({ run, nowMs, onLocate }: AgentRunRowProps): ReactNode {
     `步骤 ${run.stepCount}`,
     ...(run.currentStep ? [`当前：${run.currentStep}`] : [])
   ].join(' · ')
+  const wrapperDetail = run.wrapperRunId
+    ? [
+        `Nextflow：${run.wrapperRunId}`,
+        ...(wrapperRun ? [runStateLabel(wrapperRun.state)] : ['查询中']),
+        ...(wrapperRun ? [runProgressLabel(wrapperRun)].filter(Boolean) : [])
+      ].join(' · ')
+    : ''
 
   return (
     <Box component="li" sx={{ listStyle: 'none', minWidth: 0 }}>
@@ -118,6 +128,17 @@ function AgentRunRow({ run, nowMs, onLocate }: AgentRunRowProps): ReactNode {
             >
               {detail}
             </Typography>
+            {wrapperDetail ? (
+              <Typography
+                variant="caption"
+                component="div"
+                noWrap
+                sx={{ color: 'text.secondary', fontFamily: 'var(--font-mono)' }}
+                title={wrapperDetail}
+              >
+                {wrapperDetail}
+              </Typography>
+            ) : null}
           </Box>
         </ButtonBase>
         {run.control ? (
@@ -155,6 +176,7 @@ type AgentRunsOverviewProps = {
 // enough to feel immediate. The close delay lets the pointer cross the gap to the list.
 const HOVER_OPEN_DELAY_MS = 120
 const HOVER_CLOSE_DELAY_MS = 220
+const WRAPPER_RUN_POLL_INTERVAL_MS = 2000
 
 /**
  * A small button over the chat's top-right corner that says how many agents are running. Resting
@@ -166,12 +188,17 @@ function AgentRunsOverview({ runs, onLocate }: AgentRunsOverviewProps): ReactNod
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [pinned, setPinned] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const [wrapperRuns, setWrapperRuns] = useState<ReadonlyMap<string, WrapperRun>>(() => new Map())
   const hover = useHoverIntent({
     openDelayMs: HOVER_OPEN_DELAY_MS,
     closeDelayMs: HOVER_CLOSE_DELAY_MS
   })
   const open = (hover.hovering || pinned) && runs.length > 0
   const { reset: resetHover } = hover
+  const wrapperRunIds = useMemo(
+    () => [...new Set(runs.map((run) => run.wrapperRunId).filter((id): id is string => !!id))],
+    [runs]
+  )
 
   useEffect(() => {
     if (!open) return undefined
@@ -189,6 +216,44 @@ function AgentRunsOverview({ runs, onLocate }: AgentRunsOverviewProps): ReactNod
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [open, resetHover])
+
+  useEffect(() => {
+    if (wrapperRunIds.length === 0) {
+      return undefined
+    }
+
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    const poll = (): void => {
+      Promise.all(
+        wrapperRunIds.map(async (runId) => {
+          try {
+            return [runId, await window.api.getWrapperRun(runId)] as const
+          } catch {
+            return [runId, undefined] as const
+          }
+        })
+      )
+        .then((results) => {
+          if (cancelled) return
+          const next = new Map<string, WrapperRun>()
+          for (const [runId, run] of results) {
+            if (run) next.set(runId, run)
+          }
+          setWrapperRuns(next)
+        })
+        .finally(() => {
+          if (!cancelled) timer = setTimeout(poll, WRAPPER_RUN_POLL_INTERVAL_MS)
+        })
+    }
+    poll()
+
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [wrapperRunIds])
 
   if (runs.length === 0) return null
 
@@ -288,6 +353,7 @@ function AgentRunsOverview({ runs, onLocate }: AgentRunsOverviewProps): ReactNod
                 <AgentRunRow
                   key={run.id}
                   run={run}
+                  wrapperRun={run.wrapperRunId ? wrapperRuns.get(run.wrapperRunId) : undefined}
                   nowMs={nowMs}
                   onLocate={(id) => {
                     close()

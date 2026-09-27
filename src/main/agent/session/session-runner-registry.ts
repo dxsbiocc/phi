@@ -38,6 +38,7 @@ interface MutableSessionRun extends SessionRun {
 export interface SessionRunnerRegistryOptions {
   maxActiveRuns?: number
   onSessionEvent?: (sessionId: string, event: StoredSessionEvent) => void
+  onRunSettled?: (sessionId: string) => void
 }
 
 const DEFAULT_MAX_ACTIVE_RUNS = 4
@@ -61,10 +62,12 @@ export class SessionRunnerRegistry {
   private readonly maxActiveRuns: number
   private readonly activeRuns = new Map<string, MutableSessionRun>()
   private readonly onSessionEvent?: (sessionId: string, event: StoredSessionEvent) => void
+  private readonly onRunSettled?: (sessionId: string) => void
 
   constructor(options: SessionRunnerRegistryOptions = {}) {
     this.maxActiveRuns = options.maxActiveRuns ?? DEFAULT_MAX_ACTIVE_RUNS
     this.onSessionEvent = options.onSessionEvent
+    this.onRunSettled = options.onRunSettled
   }
 
   private appendEvent(sessionId: string, event: SessionEventInput): StoredSessionEvent {
@@ -202,6 +205,11 @@ export class SessionRunnerRegistry {
       .finally(() => {
         if (this.activeRuns.get(input.sessionId) === run) {
           this.activeRuns.delete(input.sessionId)
+        }
+        try {
+          this.onRunSettled?.(input.sessionId)
+        } catch {
+          // A sidebar update must never turn a completed run into a rejected promise.
         }
       })
 

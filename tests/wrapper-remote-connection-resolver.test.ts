@@ -1,240 +1,196 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
 import type { Project, ProjectRemoteConnection } from '../src/main/agent/projects'
+import { saveRemoteHostProfile } from '../src/main/agent/remote-hosts'
 import {
   resolveProjectRemoteSubmitOptions,
   resolveProjectRemoteTarget,
   resolveRemoteConnectionConfig
 } from '../src/main/agent/wrappers/remote-connection-resolver'
 
-function withAgentDir<T>(callback: (agentDir: string, root: string) => T): T {
-  const root = mkdtempSync(join(tmpdir(), 'phi-remote-connection-resolver-'))
+function withAgentDir<T>(fn: (agentDir: string) => T): T {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-host-resolver-'))
   try {
-    return callback(join(root, '.phi-home'), root)
+    return fn(agentDir)
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    rmSync(agentDir, { recursive: true, force: true })
   }
 }
 
-function writeKeyFile(root: string, content = 'FAKE-PRIVATE-KEY'): string {
-  const path = join(root, 'id_ed25519')
-  writeFileSync(path, content, 'utf-8')
-  return path
-}
-
-const BASE_CONNECTION: Omit<ProjectRemoteConnection, 'privateKeyPath'> = {
-  id: 'conn1',
-  label: 'Lab HPC',
-  host: 'lab-hpc.example.edu',
-  username: 'agent'
-}
-
-function baseProject(overrides: Partial<Project> = {}): Project {
+function project(connection: ProjectRemoteConnection): Project {
   return {
-    id: 'proj1',
-    name: 'demo',
-    workingDirectory: '/tmp/demo',
-    workingDirectoryRealPath: '/tmp/demo',
+    id: 'project-1',
+    name: 'Project',
+    location: { kind: 'local', path: '/project', realPath: '/project' },
+    workingDirectory: '/project',
+    workingDirectoryRealPath: '/project',
     permissionMode: 'ask',
     pathAvailable: true,
-    createdAt: new Date().toISOString(),
-    ...overrides
+    createdAt: '2026-09-24T00:00:00.000Z',
+    remoteConnections: [connection],
+    defaultRemoteConnectionId: connection.id,
+    remoteWorkspaceRoot: '/cluster/lab/.phi'
   }
 }
 
-test('resolveRemoteConnectionConfig reads the key file and omits passphrase when the key does not need one', () => {
-  withAgentDir((agentDir, root) => {
-    const privateKeyPath = writeKeyFile(root)
-    const connection: ProjectRemoteConnection = { ...BASE_CONNECTION, privateKeyPath }
-
-    const config = resolveRemoteConnectionConfig(connection, agentDir)
-
-    assert.equal(config.host, 'lab-hpc.example.edu')
-    assert.equal(config.username, 'agent')
-    assert.equal(config.privateKey, 'FAKE-PRIVATE-KEY')
-    assert.equal(config.passphrase, undefined)
-  })
-})
-
-test('resolveRemoteConnectionConfig throws a specific error when the key file is missing', () => {
-  withAgentDir((agentDir, root) => {
+test('remote connection carries a saved host profile and its OpenSSH overrides', () => {
+  withAgentDir((agentDir) => {
+    const host = saveRemoteHostProfile(
+      {
+        label: 'Cluster',
+        hostAlias: 'lab-hpc',
+        user: 'scientist',
+        port: 22022,
+        identityFile: '/tmp/lab-key'
+      },
+      agentDir
+    )
     const connection: ProjectRemoteConnection = {
-      ...BASE_CONNECTION,
-      privateKeyPath: join(root, 'does-not-exist')
+      id: 'connection-1',
+      label: 'Slurm',
+      hostProfileId: host.id,
+      hpc: { scheduler: 'slurm' }
     }
-
-    assert.throws(() => resolveRemoteConnectionConfig(connection, agentDir), /私钥文件/)
+    assert.deepEqual(resolveRemoteConnectionConfig(connection, agentDir), {
+      host: 'lab-hpc',
+      user: 'scientist',
+      port: 22022,
+      identityFile: '/tmp/lab-key'
+    })
+    const options = resolveProjectRemoteSubmitOptions(project(connection), agentDir)
+    assert.deepEqual(options?.connection, {
+      host: 'lab-hpc',
+      user: 'scientist',
+      port: 22022,
+      identityFile: '/tmp/lab-key'
+    })
+    assert.equal(options?.remoteWorkspaceRoot, '/cluster/lab/.phi')
   })
 })
 
-test('resolveRemoteConnectionConfig throws a specific error when a passphrase is required but not available', () => {
-  withAgentDir((agentDir, root) => {
-    const privateKeyPath = writeKeyFile(root)
+test('SSH project always resolves its bound host and canonical directory', () => {
+  withAgentDir((agentDir) => {
+    const host = saveRemoteHostProfile(
+      { label: 'Cluster', hostAlias: 'cluster-a', user: 'scientist', port: 22022 },
+      agentDir
+    )
+    const other = saveRemoteHostProfile({ label: 'Other', hostAlias: 'cluster-b' }, agentDir)
+    const sshProject: Project = {
+      ...project({ id: 'unused', label: 'Unused', hostProfileId: host.id }),
+      location: {
+        kind: 'ssh',
+        hostProfileId: host.id,
+        remoteRoot: '/home/me/project-link',
+        canonicalRoot: '/data/project'
+      },
+      remoteConnections: [],
+      defaultRemoteConnectionId: undefined,
+      remoteWorkspaceRoot: undefined
+    }
+    const selected = resolveProjectRemoteTarget(sshProject, undefined, agentDir)
+    assert.ok('target' in selected)
+    assert.deepEqual(selected.target.connection, {
+      host: 'cluster-a',
+      user: 'scientist',
+      port: 22022
+    })
+    assert.equal(selected.target.workspaceRoot, '/data/project')
+    assert.equal(selected.target.hpc?.scheduler, 'local')
+    assert.equal(selected.connectionId, host.id)
+    const wrongConnection: ProjectRemoteConnection = {
+      id: 'other',
+      label: 'Other',
+      hostProfileId: other.id,
+      hpc: { scheduler: 'slurm' }
+    }
+    const refused = resolveProjectRemoteTarget(
+      { ...sshProject, remoteConnections: [wrongConnection], defaultRemoteConnectionId: 'other' },
+      undefined,
+      agentDir
+    )
+    assert.ok('reason' in refused)
+    assert.match(refused.reason, /另一台服务器/)
+  })
+})
+
+test('removed or old-format host bindings fail with a reconfiguration reason', () => {
+  withAgentDir((agentDir) => {
     const connection: ProjectRemoteConnection = {
-      ...BASE_CONNECTION,
-      privateKeyPath,
-      hasPassphrase: true
+      id: 'connection-1',
+      label: 'Old',
+      hostProfileId: 'missing',
+      hpc: { scheduler: 'slurm' }
     }
-
-    // No safeStorage/keychain access under the plain `node --test` runner —
-    // the passphrase can never be found, same as a real keychain-locked host.
-    assert.throws(() => resolveRemoteConnectionConfig(connection, agentDir), /密钥口令/)
+    assert.throws(() => resolveRemoteConnectionConfig(connection, agentDir), /重新配置/)
+    const result = resolveProjectRemoteTarget(project(connection), undefined, agentDir)
+    assert.ok('reason' in result)
+    assert.match(result.reason, /重新配置/)
   })
 })
 
-test('resolveProjectRemoteSubmitOptions returns undefined when the project has no remoteWorkspaceRoot', () => {
-  withAgentDir((agentDir, root) => {
-    const privateKeyPath = writeKeyFile(root)
-    const project = baseProject({
-      remoteConnections: [{ ...BASE_CONNECTION, privateKeyPath }],
-      defaultRemoteConnectionId: 'conn1'
-      // remoteWorkspaceRoot intentionally omitted
-    })
-
-    assert.equal(resolveProjectRemoteSubmitOptions(project, agentDir), undefined)
+test('remote target requires project, workspace, connection and HPC settings', () => {
+  withAgentDir((agentDir) => {
+    const host = saveRemoteHostProfile({ label: 'Server', hostAlias: 'server' }, agentDir)
+    const connection: ProjectRemoteConnection = {
+      id: 'connection-1',
+      label: 'Direct',
+      hostProfileId: host.id
+    }
+    assert.match(
+      (resolveProjectRemoteTarget(undefined, undefined, agentDir) as { reason: string }).reason,
+      /项目/
+    )
+    assert.match(
+      (
+        resolveProjectRemoteTarget(
+          { ...project(connection), remoteWorkspaceRoot: undefined },
+          undefined,
+          agentDir
+        ) as { reason: string }
+      ).reason,
+      /远程工作目录/
+    )
+    assert.match(
+      (resolveProjectRemoteTarget(project(connection), 'other', agentDir) as { reason: string })
+        .reason,
+      /找不到/
+    )
+    assert.match(
+      (resolveProjectRemoteTarget(project(connection), undefined, agentDir) as { reason: string })
+        .reason,
+      /运行方式/
+    )
   })
 })
 
-test('resolveProjectRemoteSubmitOptions returns undefined when defaultRemoteConnectionId does not match any saved connection', () => {
-  withAgentDir((agentDir, root) => {
-    const privateKeyPath = writeKeyFile(root)
-    const project = baseProject({
-      remoteConnections: [{ ...BASE_CONNECTION, privateKeyPath }],
-      defaultRemoteConnectionId: 'some-other-id',
-      remoteWorkspaceRoot: '/data/lab/.phi'
-    })
-
-    assert.equal(resolveProjectRemoteSubmitOptions(project, agentDir), undefined)
-  })
-})
-
-test('resolveProjectRemoteSubmitOptions resolves the default connection when everything is configured', () => {
-  withAgentDir((agentDir, root) => {
-    const privateKeyPath = writeKeyFile(root)
-    const project = baseProject({
-      remoteConnections: [{ ...BASE_CONNECTION, privateKeyPath }],
-      defaultRemoteConnectionId: 'conn1',
-      remoteWorkspaceRoot: '/data/lab/.phi'
-    })
-
-    const resolved = resolveProjectRemoteSubmitOptions(project, agentDir)
-
-    assert.ok(resolved)
-    assert.equal(resolved?.remoteWorkspaceRoot, '/data/lab/.phi')
-    assert.equal(resolved?.connection.host, 'lab-hpc.example.edu')
-  })
-})
-
-test('resolveProjectRemoteSubmitOptions still throws (does not swallow) when the matched connection is broken', () => {
-  withAgentDir((agentDir, root) => {
-    const project = baseProject({
-      remoteConnections: [{ ...BASE_CONNECTION, privateKeyPath: join(root, 'missing-key') }],
-      defaultRemoteConnectionId: 'conn1',
-      remoteWorkspaceRoot: '/data/lab/.phi'
-    })
-
-    assert.throws(() => resolveProjectRemoteSubmitOptions(project, agentDir), /私钥文件/)
-  })
-})
-
-// ── resolveProjectRemoteTarget ────────────────────────────────────────────
-
-test('resolveProjectRemoteTarget returns the default connection with its HPC settings', () => {
-  withAgentDir((agentDir, root) => {
-    const privateKeyPath = writeKeyFile(root)
-    const hpc = { scheduler: 'slurm' as const, queue: 'cpu', runtime: 'singularity' as const }
-    const project = baseProject({
-      remoteWorkspaceRoot: '/data/lab/.phi',
-      defaultRemoteConnectionId: 'conn1',
-      remoteConnections: [{ ...BASE_CONNECTION, privateKeyPath, hpc }]
-    })
-
-    const resolved = resolveProjectRemoteTarget(project, undefined, agentDir)
-    assert.ok('target' in resolved)
-    assert.equal(resolved.target.connection.host, 'lab-hpc.example.edu')
-    assert.equal(resolved.target.workspaceRoot, '/data/lab/.phi')
-    assert.deepEqual(resolved.target.hpc, hpc)
-    assert.equal(resolved.connectionId, 'conn1')
-    assert.equal(resolved.projectId, 'proj1')
-  })
-})
-
-test('resolveProjectRemoteTarget can pick a specific saved connection, for resuming a run', () => {
-  withAgentDir((agentDir, root) => {
-    const privateKeyPath = writeKeyFile(root)
-    const project = baseProject({
-      remoteWorkspaceRoot: '/w',
-      defaultRemoteConnectionId: 'conn1',
-      remoteConnections: [
-        { ...BASE_CONNECTION, privateKeyPath, hpc: { scheduler: 'slurm' } },
-        {
-          ...BASE_CONNECTION,
-          id: 'conn2',
-          host: 'other.example.edu',
-          privateKeyPath,
-          hpc: { scheduler: 'local' }
-        }
-      ]
-    })
-    const resolved = resolveProjectRemoteTarget(project, 'conn2', agentDir)
-    assert.ok('target' in resolved)
-    assert.equal(resolved.target.connection.host, 'other.example.edu')
-  })
-})
-
-test('resolveProjectRemoteTarget explains each way a project can lack a usable remote', () => {
-  withAgentDir((agentDir, root) => {
-    const privateKeyPath = writeKeyFile(root)
-    const noRoot = resolveProjectRemoteTarget(
-      baseProject({
-        defaultRemoteConnectionId: 'conn1',
-        remoteConnections: [{ ...BASE_CONNECTION, privateKeyPath }]
-      }),
-      undefined,
+test('a project can select a non-default host binding without leaking credentials', () => {
+  withAgentDir((agentDir) => {
+    const first = saveRemoteHostProfile({ label: 'A', hostAlias: 'host-a' }, agentDir)
+    const second = saveRemoteHostProfile({ label: 'B', hostAlias: 'host-b' }, agentDir)
+    const connection: ProjectRemoteConnection = {
+      id: 'default',
+      label: 'Default',
+      hostProfileId: first.id,
+      hpc: { scheduler: 'slurm' }
+    }
+    const alternate: ProjectRemoteConnection = {
+      id: 'alternate',
+      label: 'Alternate',
+      hostProfileId: second.id,
+      hpc: { scheduler: 'local' }
+    }
+    const selected = resolveProjectRemoteTarget(
+      { ...project(connection), remoteConnections: [connection, alternate] },
+      'alternate',
       agentDir
     )
-    assert.ok('reason' in noRoot)
-    assert.match(noRoot.reason, /远程工作目录|remoteWorkspaceRoot|workspace/i)
-
-    const noConnection = resolveProjectRemoteTarget(
-      baseProject({ remoteWorkspaceRoot: '/w' }),
-      undefined,
-      agentDir
-    )
-    assert.ok('reason' in noConnection)
-    assert.match(noConnection.reason, /连接|connection/i)
-
-    const missingKey = resolveProjectRemoteTarget(
-      baseProject({
-        remoteWorkspaceRoot: '/w',
-        defaultRemoteConnectionId: 'conn1',
-        remoteConnections: [
-          { ...BASE_CONNECTION, privateKeyPath: join(root, 'gone'), hpc: { scheduler: 'slurm' } }
-        ]
-      }),
-      undefined,
-      agentDir
-    )
-    assert.ok('reason' in missingKey)
-    assert.match(missingKey.reason, /私钥/)
-
-    const noHpc = resolveProjectRemoteTarget(
-      baseProject({
-        remoteWorkspaceRoot: '/w',
-        defaultRemoteConnectionId: 'conn1',
-        remoteConnections: [{ ...BASE_CONNECTION, privateKeyPath }]
-      }),
-      undefined,
-      agentDir
-    )
-    assert.ok('reason' in noHpc)
-    assert.match(noHpc.reason, /运行方式/)
-
-    const noProject = resolveProjectRemoteTarget(undefined, undefined, agentDir)
-    assert.ok('reason' in noProject)
+    assert.ok('target' in selected)
+    assert.equal(selected.target.connection.host, 'host-b')
+    assert.equal(selected.connectionId, 'alternate')
+    assert.deepEqual(Object.keys(selected.target.connection), ['host'])
   })
 })

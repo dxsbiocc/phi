@@ -49,8 +49,24 @@ test('remote settings section shows an empty state with no projects', () => {
   assert.match(markup, /还没有项目/)
 })
 
-test('remote settings section shows "no connections yet" for a project with none configured', () => {
+test('remote settings keeps an unconfigured local project out of the server list', () => {
   const markup = renderSection([baseProject()])
+  assert.match(markup, /为本地项目配置远程 Wrapper/)
+  assert.doesNotMatch(markup, /还没有配置远程连接/)
+  assert.doesNotMatch(markup, /\/tmp\/demo/)
+})
+
+test('remote settings shows an SSH project even before it has Wrapper settings', () => {
+  const markup = renderSection([
+    baseProject({
+      location: {
+        kind: 'ssh',
+        hostProfileId: 'ssh-config:lab',
+        remoteRoot: '/data/lab',
+        canonicalRoot: '/data/lab'
+      }
+    })
+  ])
   assert.match(markup, /还没有配置远程连接/)
   assert.match(markup, /添加连接/)
 })
@@ -62,10 +78,8 @@ test('remote settings section lists configured connections and marks the default
         {
           id: 'conn1',
           label: 'Lab HPC',
-          host: 'lab-hpc.example.edu',
-          username: 'agent',
-          privateKeyPath: '/home/agent/.ssh/id_ed25519',
-          hasPassphrase: true
+          hostProfileId: 'host-1',
+          inputPathMapping: { localRoot: '/tmp/demo/data', remoteRoot: '/cluster/data' }
         }
       ],
       defaultRemoteConnectionId: 'conn1',
@@ -73,7 +87,8 @@ test('remote settings section lists configured connections and marks the default
     })
   ])
   assert.match(markup, /Lab HPC/)
-  assert.match(markup, /agent@lab-hpc\.example\.edu/)
+  assert.match(markup, /需重新配置 SSH 服务器/)
   assert.match(markup, /默认/)
-  assert.match(markup, /已加锁/)
+  assert.match(markup, /输入映射：\/tmp\/demo\/data → \/cluster\/data/)
+  assert.doesNotMatch(markup, /私钥需要口令/)
 })

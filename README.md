@@ -7,12 +7,14 @@ and the Pi Coding Agent SDK.
 The renderer calls a typed preload API; the main process owns model authentication,
 agent sessions, project directories, tool approvals, and package resources. Phi stores
 its configuration and conversation history in `~/.phi`, separately from the Pi CLI.
-Ordinary conversations use `~/.phi/workspace`; project conversations use the selected
-project directory. MCP listings show configuration, not a live connectivity check.
+Ordinary conversations use `~/.phi/workspace`; local project conversations use the
+selected directory. Remote project conversations keep their history locally while
+project file and command operations use the selected SSH server. MCP listings show
+configuration, not a live connectivity check.
 
 ## Internal Beta Scope
 
-This beta is for local project-bound agent work: multiple conversations can keep
+This beta is for project-bound agent work: multiple conversations can keep
 running, project sessions default to approval mode, resources are visible, and support
 diagnostics can be copied without full chat or tool output. It is not a public
 distribution build, a full plugin marketplace, a Git client, or a dedicated OMX
@@ -31,7 +33,47 @@ Unsigned or locally built macOS apps may show Gatekeeper/security prompts. For t
 beta, formal signing, notarization, and automatic updates are deferred; release notes
 should tell testers to expect the standard macOS warning flow for local builds.
 
-## Phi Wrapper (Phase 1)
+## Remote Projects (Internal Beta)
+
+**Wrappers → 远程执行** lists hosts discovered from `~/.ssh/config` alongside older
+Phi server records. Discovered hosts are immediately available when creating a remote
+project. **添加服务器** writes a new `Host` entry to `~/.ssh/config`; editing a
+discovered host updates its entry there. Phi validates the resulting OpenSSH
+configuration before atomically replacing it and keeps a private backup next to the
+file. The form contains only alias, address, user, port and local private-key path;
+blank optional fields keep OpenSSH defaults. Phi stores the key **path**, not the key
+itself. Password login is not yet supported: use non-interactive key or
+`ssh-agent` authentication and a trusted host key in `known_hosts`. Then create a
+project with **Remote server** and an absolute, readable and writable directory
+on that server. Testing a project connection checks its directory and reports
+missing server tools. To run a Wrapper, configure the project's remote HPC target
+and make its inputs available at remote paths.
+
+Unconfigured local projects stay out of the remote server list. Their optional
+remote Wrapper settings can be expanded separately; a local project is never
+silently converted into a remote project.
+
+In a remote project, the usual `read`, `glob`, `grep`, `write`, `edit`, and `bash` agent
+tools operate on the server. File browsing and small result previews also read from
+the server; downloading a result requires an explicit save action. File edits and
+commands still follow the project's approval setting. The window, conversations,
+model calls, approval history, and run records remain on this computer in `~/.phi`.
+The local session directory is metadata storage, never a copy of the remote project.
+
+If the network or server is unavailable, Phi reports the connection problem and
+keeps the local conversation and draft. It does not execute the operation locally.
+After an uncertain write, command, or submission, check the server or run record
+before retrying; Phi does not automatically repeat it. Closing Phi detaches a remote
+Wrapper run. A submitted Slurm job remains managed by Slurm; use an explicit cancel
+action to stop it. Remote Notebook/Jupyter, project Skills/MCP, and Git operations
+are outside this beta's remote project support.
+
+The remote workflow has automated coverage and a local SSH identity check. Acceptance
+on a user-managed SSH host and a real Slurm cluster is still pending. See the
+[E01 validation record](docs/roadmap/remote-e01-validation.md) before treating this
+as a verified remote beta release.
+
+## Phi Wrapper
 
 Phi Wrapper is a reproducible execution layer for bioinformatics and other heavy
 command-line tools: fixed, verified wrapper definitions the agent can call instead of
@@ -39,11 +81,12 @@ assembling ad hoc shell commands. It has its own sidebar entry ("Wrappers"), its
 storage under `~/.phi/wrappers`, and its own chat-timeline plan/run cards, independent
 of ordinary tool calls.
 
-Phase 1 is entirely local — there is no remote/HPC execution, no signed registry, and
-no CLI yet; those arrive in later phases. What works today: one bundled demo wrapper
-(`phi/ngs/fastq-qc`), asking the agent to prepare a run plan, reviewing and submitting
-it from the chat card, and watching a real local Nextflow run execute with live
-per-step status. See [`docs/design/phi-wrapper-product-prd.md`](docs/design/phi-wrapper-product-prd.md)
+Wrapper runs can target the local computer or a configured SSH server. On a remote
+target, the Nextflow controller can run detached on the login host or as a Slurm
+head job. Phi records status and logs for reattachment after the app reopens. It
+also offers remote result browsing, bounded previews, and explicit downloads.
+Real external-host and Slurm acceptance remains pending as noted above. See
+[`docs/design/phi-wrapper-product-prd.md`](docs/design/phi-wrapper-product-prd.md)
 for the full phased scope and [`docs/design/phi-wrapper-authoring-guide.md`](docs/design/phi-wrapper-authoring-guide.md)
 for how to point Phi at your own wrapper during development.
 

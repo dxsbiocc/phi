@@ -4,6 +4,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider, type Theme } from '@mui/material'
 import MarkdownContent from '../src/renderer/src/components/MarkdownContent'
+import { RemoteProjectFileContext } from '../src/renderer/src/lib/remoteProjectFileContext'
 import { createAppTheme } from '../src/renderer/src/theme'
 
 function renderMarkdown(text: string, theme: Theme = createTheme(), enableMath?: boolean): string {
@@ -414,6 +415,37 @@ test('markdown local file links open as preview links while web links remain ext
   assert.match(markup, /hash file/)
   assert.match(markup, /href="https:\/\/openai.com"/)
   assert.match(markup, /target="_blank"/)
+})
+
+test('remote project markdown links use SSH file panel targets without local hover or reveal', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(
+        RemoteProjectFileContext.Provider,
+        {
+          value: {
+            hostAlias: 'cluster-a',
+            canonicalRoot: '/data/project',
+            openPath: () => undefined
+          }
+        },
+        createElement(MarkdownContent, {
+          cwd: '/data/project',
+          text: 'See /data/project/note.txt and ssh://cluster-a/data/project/result.txt. [open](ssh://cluster-a/data/project/link.txt) [other](ssh://cluster-b/data/project/secret.txt)'
+        })
+      )
+    )
+  )
+  assert.match(markup, /data-phi-slot="remote-file-link"/)
+  assert.match(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/note\.txt"/)
+  assert.match(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/result\.txt"/)
+  assert.match(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/link\.txt"/)
+  assert.doesNotMatch(markup, /data-phi-slot="local-file-hover-preview"/)
+  assert.doesNotMatch(markup, /href="ssh:\/\/cluster-b/)
+  assert.doesNotMatch(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/secret\.txt"/)
+  assert.doesNotMatch(markup, /remote-project-anchors/)
 })
 
 test('markdown code blocks do not linkify paths inside code', () => {

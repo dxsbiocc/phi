@@ -6,7 +6,8 @@ import {
   buildSbatchScript,
   normalizeSlurmMemory,
   normalizeSlurmTime,
-  parseSbatchJobId
+  parseSbatchJobId,
+  signalSlurmJob
 } from '../src/main/agent/wrappers/executor-slurm'
 import type { RemoteLaunchSpec } from '../src/main/agent/wrappers/executor-remote'
 import type {
@@ -14,6 +15,13 @@ import type {
   RemoteSshSession
 } from '../src/main/agent/wrappers/remote-ssh-session'
 import type { WrapperRun, WrapperRunPlan } from '../src/main/agent/wrappers/types'
+import type { RemoteFileChunk } from '../src/main/agent/wrappers/remote-ssh-log'
+import {
+  RemoteLaunchRejectedError,
+  RemoteLaunchUnknownError
+} from '../src/main/agent/wrappers/remote-launch-claim'
+import { fakeLaunchClaimCommand } from './helpers/fakeLaunchClaims'
+import { fakeRemoteLogChunk } from './helpers/fakeRemoteLogChunk'
 
 const RUN_DIR = '/home/lab/.phi/wrappers/runs/wrun_test'
 
@@ -61,9 +69,15 @@ const FIXTURE_LAUNCH: RemoteLaunchSpec = {
  */
 class FakeSlurmCluster implements RemoteSshSession {
   files = new Map<string, string>()
+  claims = new Set<string>()
   /** jobId -> final state (undefined while still queued/running) */
   jobs = new Map<string, { state: string; exitCode: number } | undefined>()
+  jobNames = new Map<string, string>()
   closed = false
+  submitCommands = 0
+  submitFault: 'before' | 'after' | undefined
+  receiptFault = false
+  rejectSubmit = false
   /** Set false to simulate scontrol's retention window having passed for every job. */
   scontrolKnowsJob = true
   /** Set true to simulate a cluster whose sacct is unconditionally broken (no working slurmdbd). */
@@ -71,9 +85,23 @@ class FakeSlurmCluster implements RemoteSshSession {
   private nextJobId = 5000
 
   async exec(command: string): Promise<RemoteExecResult> {
+    const claim = fakeLaunchClaimCommand(command, this.claims)
+    if (claim) return claim
     if (command.startsWith('sbatch ')) {
+      this.submitCommands += 1
+      const fault = this.submitFault
+      this.submitFault = undefined
+      if (fault === 'before') throw new Error('SSH closed before sbatch')
+      if (this.rejectSubmit) {
+        return { stdout: '', stderr: 'Invalid account', code: 1, signal: null }
+      }
       const jobId = String(this.nextJobId++)
       this.jobs.set(jobId, undefined)
+      this.jobNames.set(
+        jobId,
+        `phi-${this.files.get(`${RUN_DIR}/.phi-launch-claim/run-id`)?.trim() ?? 'wrun_test'}`
+      )
+      if (fault === 'after') throw new Error('SSH closed after sbatch')
       return { stdout: `Submitted batch job ${jobId}\n`, stderr: '', code: 0, signal: null }
     }
     if (command.startsWith('squeue ')) {
@@ -85,7 +113,7 @@ class FakeSlurmCluster implements RemoteSshSession {
     if (command.startsWith('scontrol show job ')) {
       const jobId = command.match(/^scontrol show job (\d+)/)?.[1]
       const outcome = jobId !== undefined ? this.jobs.get(jobId) : undefined
-      if (jobId === undefined || outcome === undefined || !this.scontrolKnowsJob) {
+      if (jobId === undefined || !this.jobs.has(jobId) || !this.scontrolKnowsJob) {
         return {
           stdout: '',
           stderr: 'scontrol: error: Invalid job id specified\n',
@@ -94,7 +122,7 @@ class FakeSlurmCluster implements RemoteSshSession {
         }
       }
       return {
-        stdout: `JobId=${jobId} JobName=phi-test\n   JobState=${outcome.state} Reason=None Dependency=(null)\n   ExitCode=${outcome.exitCode}:0\n`,
+        stdout: `JobId=${jobId} JobName=${this.jobNames.get(jobId) ?? 'phi-wrun_test'}\n   JobState=${outcome?.state ?? 'RUNNING'} Reason=None Dependency=(null)\n   ExitCode=${outcome?.exitCode ?? 0}:0\n`,
         stderr: '',
         code: 0,
         signal: null
@@ -139,8 +167,19 @@ class FakeSlurmCluster implements RemoteSshSession {
     return content
   }
 
+  async readFileChunk(
+    path: string,
+    options: Parameters<NonNullable<RemoteSshSession['readFileChunk']>>[1]
+  ): Promise<RemoteFileChunk> {
+    return fakeRemoteLogChunk(this.files, path, options)
+  }
+
   async writeTextFile(remotePath: string, content: string): Promise<void> {
     this.files.set(remotePath, content)
+    if (remotePath.endsWith('/job_id') && this.receiptFault) {
+      this.receiptFault = false
+      throw new Error('SSH closed before job ID reply')
+    }
   }
 
   async mkdirp(): Promise<void> {
@@ -148,7 +187,7 @@ class FakeSlurmCluster implements RemoteSshSession {
   }
 
   async exists(remotePath: string): Promise<boolean> {
-    return this.files.has(remotePath)
+    return this.files.has(remotePath) || this.claims.has(remotePath)
   }
 
   async close(): Promise<void> {
@@ -164,7 +203,7 @@ class FakeSlurmCluster implements RemoteSshSession {
 function makeRunner(): { runner: SbatchRunner; cluster: FakeSlurmCluster } {
   const cluster = new FakeSlurmCluster()
   const runner = new SbatchRunner({
-    connection: { host: 'lab-hpc.example.edu', username: 'agent', privateKey: 'fake' },
+    connection: { host: 'lab-hpc.example.edu' },
     connectImpl: async () => cluster
   })
   return { runner, cluster }
@@ -201,6 +240,28 @@ test('buildSbatchScript embeds job name, redirect paths, and resource directives
   assert.match(script, /\nbash launch\.sh\n$/)
 })
 
+test('buildSbatchScript carries the selected queue, account and head-job options', () => {
+  const script = buildSbatchScript(FIXTURE_RUN, FIXTURE_PLAN, RUN_DIR, {
+    scheduler: 'slurm',
+    controller: 'sbatch',
+    queue: 'cpu',
+    account: 'lab1',
+    controllerOptions: '--qos=normal --time=3-00:00:00'
+  })
+  assert.match(script, /#SBATCH --partition=cpu\n/)
+  assert.match(script, /#SBATCH --account=lab1\n/)
+  assert.match(script, /#SBATCH --qos=normal\n/)
+  assert.match(script, /#SBATCH --time=3-00:00:00\n/)
+  assert.throws(
+    () =>
+      buildSbatchScript(FIXTURE_RUN, FIXTURE_PLAN, RUN_DIR, {
+        scheduler: 'slurm',
+        queue: 'cpu\n#SBATCH --chdir=/tmp'
+      }),
+    /非法字符/
+  )
+})
+
 test('buildSbatchScript omits a resource directive it cannot normalize rather than emitting a bad flag', () => {
   const plan = { resources: { memory: 'a lot' } } as WrapperRunPlan
   const script = buildSbatchScript(FIXTURE_RUN, plan, RUN_DIR)
@@ -217,6 +278,57 @@ test('SbatchRunner.submit uploads the bundle and the sbatch script, returns a jo
   assert.equal(typeof handle.jobId, 'string')
   assert.equal(cluster.files.get(`${RUN_DIR}/launch.sh`), FIXTURE_LAUNCH.launchScript)
   assert.ok(cluster.files.get(`${RUN_DIR}/job.sbatch`)?.includes('bash launch.sh'))
+})
+
+test('a lost sbatch reply without a durable job ID remains unknown and never resubmits', async () => {
+  const { runner, cluster } = makeRunner()
+  cluster.submitFault = 'after'
+  await assert.rejects(
+    runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH),
+    RemoteLaunchUnknownError
+  )
+  await assert.rejects(
+    runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH),
+    RemoteLaunchUnknownError
+  )
+  assert.equal(cluster.submitCommands, 1)
+  assert.equal(cluster.jobs.size, 1)
+})
+
+test('a receipt write lost after sbatch is recovered from the saved job ID', async () => {
+  const { runner, cluster } = makeRunner()
+  cluster.receiptFault = true
+  const first = await runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH)
+  const second = await runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH)
+  assert.equal(first.jobId, second.jobId)
+  assert.equal(cluster.submitCommands, 1)
+})
+
+test('a disconnect before sbatch leaves the claim unknown without creating a job', async () => {
+  const { runner, cluster } = makeRunner()
+  cluster.submitFault = 'before'
+  await assert.rejects(
+    runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH),
+    RemoteLaunchUnknownError
+  )
+  await assert.rejects(
+    runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH),
+    RemoteLaunchUnknownError
+  )
+  assert.equal(cluster.submitCommands, 1)
+  assert.equal(cluster.jobs.size, 0)
+})
+
+test('a definite sbatch rejection is saved and a duplicate is not submitted', async () => {
+  const { runner, cluster } = makeRunner()
+  cluster.rejectSubmit = true
+  await assert.rejects(
+    runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH),
+    RemoteLaunchRejectedError
+  )
+  await assert.rejects(runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH), /Invalid account/)
+  assert.equal(cluster.submitCommands, 1)
+  assert.match(cluster.files.get(`${RUN_DIR}/launch_error`) ?? '', /Invalid account/)
 })
 
 test('SbatchRunner.status reports running while squeue still lists the job', async () => {
@@ -282,6 +394,23 @@ test('SbatchRunner.status reports lost when neither squeue, scontrol, nor sacct 
   assert.deepEqual(status, { outcome: 'lost' })
 })
 
+test('SbatchRunner.status uses a saved exit code when the job ID reply was lost', async () => {
+  const { runner, cluster } = makeRunner()
+  cluster.files.set(`${RUN_DIR}/exit_code`, '0\n')
+  assert.deepEqual(await runner.status({ runId: FIXTURE_RUN.runId, remoteRunDir: RUN_DIR }), {
+    outcome: 'completed',
+    exitCode: 0
+  })
+})
+
+test('SbatchRunner.status prefers the head process exit code over a terminal scheduler label', async () => {
+  const { runner, cluster } = makeRunner()
+  const handle = await runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH)
+  cluster.finish(handle.jobId!, 'FAILED', 1)
+  cluster.files.set(`${RUN_DIR}/exit_code`, '0\n')
+  assert.deepEqual(await runner.status(handle), { outcome: 'completed', exitCode: 0 })
+})
+
 test('SbatchRunner.cancel scancels the job and is a no-op without a jobId', async () => {
   const { runner } = makeRunner()
   const handle = await runner.submit(FIXTURE_RUN, FIXTURE_PLAN, FIXTURE_LAUNCH)
@@ -294,6 +423,27 @@ test('SbatchRunner.cancel scancels the job and is a no-op without a jobId', asyn
   })
 
   await runner.cancel({ ...handle, jobId: undefined })
+})
+
+test('Slurm cancellation uses the saved run ID and cannot scancel a sibling job', async () => {
+  const host = new FakeSlurmCluster()
+  const a = { runId: 'wrun_a', remoteRunDir: `${RUN_DIR}-a`, jobId: '5001' }
+  const b = { runId: 'wrun_b', remoteRunDir: `${RUN_DIR}-b`, jobId: '5002' }
+  for (const handle of [a, b]) {
+    host.files.set(`${handle.remoteRunDir}/.phi-launch-claim/run-id`, `${handle.runId}\n`)
+    host.files.set(`${handle.remoteRunDir}/job_id`, `${handle.jobId}\n`)
+    host.jobs.set(handle.jobId, undefined)
+    host.jobNames.set(handle.jobId, `phi-${handle.runId}`)
+  }
+  await signalSlurmJob(host, a, 'TERM')
+  assert.equal(host.jobs.get(a.jobId)?.state, 'CANCELLED')
+  assert.equal(host.jobs.get(b.jobId), undefined)
+  await assert.rejects(signalSlurmJob(host, { ...a, jobId: b.jobId }, 'TERM'), /回执不一致/)
+  assert.equal(host.jobs.get(b.jobId), undefined)
+  // Scheduler IDs can be reused; the current job name must still identify A.
+  host.files.set(`${a.remoteRunDir}/job_id`, `${b.jobId}\n`)
+  await assert.rejects(signalSlurmJob(host, { ...a, jobId: b.jobId }, 'TERM'), /不再属于/)
+  assert.equal(host.jobs.get(b.jobId), undefined)
 })
 
 test('SbatchRunner.tailLog reads the sbatch --output/--error redirected log files', async () => {

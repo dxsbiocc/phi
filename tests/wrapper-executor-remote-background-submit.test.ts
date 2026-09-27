@@ -14,9 +14,11 @@ import type {
 import { getWrapperRunsDir, writeWrapperRun } from '../src/main/agent/wrappers/store'
 import type { WrapperRun, WrapperRunPlan } from '../src/main/agent/wrappers/types'
 import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
+import { fakeLaunchClaimCommand } from './helpers/fakeLaunchClaims'
+import type { RemoteDoctorReport } from '../src/shared/remoteDoctorTypes'
 
 const REMOTE_RUN_DIR_PREFIX = '/data/lab/.phi/wrappers/runs'
-const FAKE_CONNECTION = { host: 'lab-hpc.example.edu', username: 'agent', privateKey: 'fake' }
+const FAKE_CONNECTION = { host: 'lab-hpc.example.edu' }
 
 /**
  * In-memory fake `RemoteSshSession` covering exactly what
@@ -31,24 +33,47 @@ const FAKE_CONNECTION = { host: 'lab-hpc.example.edu', username: 'agent', privat
  */
 class FakeDetachedHost implements RemoteSshSession {
   files = new Map<string, string>()
+  claims = new Set<string>()
+  launchCommands = 0
+  launchFault: 'before' | 'after' | undefined
   private processes = new Map<number, boolean>()
   private nextPid = 5000
   closed = false
 
   constructor(
     private readonly remoteRunDir: string,
-    private readonly outcome: { exitCode: number } | 'lost'
+    private readonly outcome: { exitCode: number } | 'lost',
+    private readonly inputProbeCode?: number
   ) {}
 
   async exec(command: string): Promise<RemoteExecResult> {
+    const claim = fakeLaunchClaimCommand(command, this.claims)
+    if (claim) return claim
+    if (command.startsWith('bash -c ') && command.includes('#!/usr/bin/env bash')) {
+      return { stdout: '', stderr: '', code: 0, signal: null }
+    }
+    if (command.startsWith('bash -c ')) {
+      return {
+        stdout: this.inputProbeCode === undefined ? '/cluster/data\0' : '',
+        stderr: '',
+        code: this.inputProbeCode ?? 0,
+        signal: null
+      }
+    }
     // Checked first: the composite launch line also *starts with* `mkdir -p`
     // — a plain startsWith check below would shadow it.
     if (command.includes('setsid bash')) {
+      this.launchCommands += 1
+      const fault = this.launchFault
+      this.launchFault = undefined
+      if (fault === 'before') throw new Error('SSH closed before detached launch')
       const pid = this.nextPid++
       this.processes.set(pid, false)
       if (this.outcome !== 'lost') {
         this.files.set(`${this.remoteRunDir}/exit_code`, `${this.outcome.exitCode}`)
       }
+      this.files.set(`${this.remoteRunDir}/pid`, `${pid}`)
+      if (fault === 'after') throw new Error('SSH closed after detached launch')
       return { stdout: `${pid}\n`, stderr: '', code: 0, signal: null }
     }
     if (command.startsWith('mkdir -p')) {
@@ -82,7 +107,7 @@ class FakeDetachedHost implements RemoteSshSession {
   }
 
   async exists(remotePath: string): Promise<boolean> {
-    return this.files.has(remotePath)
+    return this.files.has(remotePath) || this.claims.has(remotePath)
   }
 
   async close(): Promise<void> {
@@ -122,7 +147,20 @@ async function createRemoteBackgroundPlan(
     cwd: projectDir,
     agentDir
   })
-  return { ...localPlan, executor: 'remote-background', profile: 'remote-background' }
+  const reads = '/cluster/data/*_{R1,R2}.fastq.gz'
+  return {
+    ...localPlan,
+    executor: 'remote-background',
+    profile: 'remote-background',
+    params: { ...localPlan.params, reads },
+    inputs: localPlan.inputs.map((input) => ({
+      ...input,
+      source: 'remote' as const,
+      userValue: reads,
+      localPaths: [],
+      remotePaths: [reads]
+    }))
+  }
 }
 
 function runFromPlan(plan: WrapperRunPlan): WrapperRun {
@@ -164,6 +202,7 @@ test('runRemoteBackgroundWrapperExecution uploads the wrapper bundle, launches u
     })
 
     assert.equal(result.state, 'completed')
+    assert.match(result.inputWarnings?.join('\n') ?? '', /尚未确认匹配文件/)
     assert.equal(result.exitCode, 0)
     assert.ok(result.outputs && result.outputs.length >= 2)
     const report = result.outputs?.find((o) => o.id === 'report')
@@ -182,8 +221,13 @@ test('runRemoteBackgroundWrapperExecution uploads the wrapper bundle, launches u
     // tracks exit status).
     const launchScript = cluster.files.get(`${remoteRunDir}/launch.sh`) ?? ''
     assert.match(launchScript, /'nextflow' 'run'/)
-    assert.match(launchScript, /echo \$\? > 'exit_code'/)
+    assert.match(launchScript, /echo "\$rc" > 'exit_code'/)
     assert.ok(cluster.files.has(`${remoteRunDir}/params.json`))
+    assert.match(
+      cluster.files.get(`${remoteRunDir}/nextflow.config`) ?? '',
+      /process\.executor = 'local'/
+    )
+    assert.match(cluster.files.get(`${remoteRunDir}/launch.sh`) ?? '', /'-c' 'nextflow\.config'/)
 
     // Reconnect metadata, for a future reconciliation pass.
     const snapshotPath = join(getWrapperRunsDir(agentDir), run.runId, 'remote.snapshot.json')
@@ -192,6 +236,149 @@ test('runRemoteBackgroundWrapperExecution uploads the wrapper bundle, launches u
     assert.equal(typeof snapshot.pid, 'number')
 
     assert.equal(cluster.closed, true)
+  }))
+
+test('a saved external output root is used to collect remote reports', () =>
+  withHarness(async ({ agentDir, projectDir }) => {
+    const plan = await createRemoteBackgroundPlan(agentDir, projectDir)
+    const outputRoot = '/scratch/phi-run-reports'
+    const configured = { ...plan, params: { ...plan.params, outdir: outputRoot } }
+    const run = runFromPlan(configured)
+    const remoteRunDir = `${REMOTE_RUN_DIR_PREFIX}/${run.runId}`
+    run.outDir = outputRoot
+    run.remote = {
+      host: FAKE_CONNECTION.host,
+      runDir: remoteRunDir,
+      workspaceRoot: '/data/lab/.phi',
+      outputRoot,
+      externalOutputAuthorized: true
+    }
+    const cluster = new FakeDetachedHost(remoteRunDir, { exitCode: 0 })
+    cluster.files.set(`${outputRoot}/results/multiqc_report.html`, '<html></html>')
+
+    const result = await runRemoteBackgroundWrapperExecution(run, configured, {
+      agentDir,
+      remoteRunDir,
+      connection: FAKE_CONNECTION,
+      connectImpl: async () => cluster,
+      pollIntervalMs: 1
+    })
+
+    assert.equal(result.state, 'completed')
+    const report = result.outputs?.find((output) => output.id === 'report')
+    assert.equal(report?.path, `${outputRoot}/results/multiqc_report.html`)
+    assert.equal(report?.exists, true)
+  }))
+
+test('permission-denied remote input stops detached launch before any bundle upload', () =>
+  withHarness(async ({ agentDir, projectDir }) => {
+    const plan = await createRemoteBackgroundPlan(agentDir, projectDir)
+    const run = runFromPlan(plan)
+    run.inputReferences = [
+      {
+        id: 'reads',
+        kind: 'path',
+        source: 'remote',
+        userValue: '/cluster/denied.fq',
+        localPaths: [],
+        remotePaths: ['/cluster/denied.fq']
+      }
+    ]
+    const remoteRunDir = `${REMOTE_RUN_DIR_PREFIX}/${run.runId}`
+    const cluster = new FakeDetachedHost(remoteRunDir, { exitCode: 0 }, 42)
+    const result = await runRemoteBackgroundWrapperExecution(run, plan, {
+      agentDir,
+      remoteRunDir,
+      connection: FAKE_CONNECTION,
+      connectImpl: async () => cluster
+    })
+    assert.equal(result.state, 'failed')
+    assert.match(
+      result.inputErrors?.join('\n') ?? '',
+      /reads.*无读取或进入权限.*\/cluster\/denied\.fq/
+    )
+    assert.equal(cluster.files.size, 0)
+    assert.equal(cluster.closed, true)
+  }))
+
+test('an uncertain detached launch is persisted without a second process', () =>
+  withHarness(async ({ agentDir, projectDir }) => {
+    const plan = await createRemoteBackgroundPlan(agentDir, projectDir)
+    const run = runFromPlan(plan)
+    const remoteRunDir = `${REMOTE_RUN_DIR_PREFIX}/${run.runId}`
+    const cluster = new FakeDetachedHost(remoteRunDir, { exitCode: 0 })
+    cluster.launchFault = 'before'
+    const result = await runRemoteBackgroundWrapperExecution(run, plan, {
+      agentDir,
+      remoteRunDir,
+      connection: FAKE_CONNECTION,
+      connectImpl: async () => cluster
+    })
+    assert.equal(result.state, 'lost')
+    assert.equal(result.launchUnknown, true)
+    const snapshot = JSON.parse(
+      readFileSync(join(getWrapperRunsDir(agentDir), run.runId, 'remote.snapshot.json'), 'utf8')
+    )
+    assert.equal(snapshot.launchUnknown, true)
+    assert.equal(cluster.launchCommands, 1)
+    assert.equal(cluster.processes.size, 0)
+  }))
+
+test('fresh Doctor blocks direct host execution when its selected runtime is unavailable', () =>
+  withHarness(async ({ agentDir, projectDir }) => {
+    const base = await createRemoteBackgroundPlan(agentDir, projectDir)
+    const plan: WrapperRunPlan = {
+      ...base,
+      targetSelection: {
+        projectId: 'project-a',
+        projectLocation: { kind: 'local', path: projectDir, realPath: projectDir },
+        target: 'remote',
+        reason: '已选择服务器',
+        hostProfileId: 'host-a',
+        hostAlias: FAKE_CONNECTION.host,
+        connectionId: 'connection-a',
+        remoteRoot: '/data/lab/.phi',
+        scheduler: 'local',
+        controller: 'login',
+        runtime: 'docker'
+      }
+    }
+    const run = runFromPlan(plan)
+    const remoteRunDir = `${REMOTE_RUN_DIR_PREFIX}/${run.runId}`
+    const cluster = new FakeDetachedHost(remoteRunDir, { exitCode: 0 })
+    const checks = [
+      'ssh',
+      'sftp',
+      'path',
+      'path_read',
+      'path_write',
+      'shell',
+      'nextflow',
+      'java',
+      'runtime'
+    ].map((id) => ({
+      id,
+      status: id === 'runtime' ? ('error' as const) : ('ok' as const),
+      message: id === 'runtime' ? 'Docker 不可用' : id
+    }))
+    const report: RemoteDoctorReport = {
+      hostProfileId: 'host-a',
+      checkedAt: new Date().toISOString(),
+      ok: false,
+      checks
+    }
+    const result = await runRemoteBackgroundWrapperExecution(run, plan, {
+      agentDir,
+      remoteRunDir,
+      connection: FAKE_CONNECTION,
+      hpc: { scheduler: 'local', controller: 'login', runtime: 'docker' },
+      connectImpl: async () => cluster,
+      doctorImpl: async () => report
+    })
+    assert.equal(result.state, 'failed')
+    assert.match(result.environmentError ?? '', /Docker 不可用/)
+    assert.equal(cluster.files.size, 0)
+    assert.equal(cluster.closed, false)
   }))
 
 test('runRemoteBackgroundWrapperExecution fails the run when the wrapper is not installed', () =>

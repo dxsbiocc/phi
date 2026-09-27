@@ -1,4 +1,4 @@
-import { Alert, Box, CircularProgress, Typography } from '@mui/material'
+import { Alert, Box, Button, CircularProgress, Typography } from '@mui/material'
 import { spreadsheetPreviewModel } from '../../../lib/spreadsheetPreview'
 import { formatBytes } from '../../../lib/toolOutputPresentation'
 import type { DirectoryListing } from '../../../types'
@@ -14,12 +14,14 @@ type FilePreviewBodyProps = {
   state: FilePreviewPanelState
   onOpenFile: (path: string) => void
   onListDirectory: (path: string) => Promise<DirectoryListing>
+  onDownloadFile?: (path: string) => void
 }
 
 export function FilePreviewBody({
   state,
   onOpenFile,
-  onListDirectory
+  onListDirectory,
+  onDownloadFile
 }: FilePreviewBodyProps): React.JSX.Element {
   if (state.status === 'loading') {
     return (
@@ -68,6 +70,29 @@ export function FilePreviewBody({
 
   if (state.file.kind === 'image' || state.file.kind === 'pdf') {
     return <MediaPreview file={state.file} />
+  }
+
+  if (state.file.kind === 'metadata') {
+    return (
+      <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+        <Typography variant="body2">大小：{formatBytes(state.file.bytes)}</Typography>
+        <Typography variant="body2">类型：{state.file.mimeType}</Typography>
+        <Alert severity="info" variant="outlined">
+          {state.file.reason === 'large_file'
+            ? '文件较大，预览仅显示元数据；完整文件仍保留在服务器上。'
+            : '此二进制文件暂不能直接预览，原文件保留在服务器上。'}
+        </Alert>
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={!onDownloadFile}
+          onClick={() => onDownloadFile?.(state.file.path)}
+          sx={{ alignSelf: 'flex-start' }}
+        >
+          下载文件
+        </Button>
+      </Box>
+    )
   }
 
   const spreadsheetModel = spreadsheetPreviewModel(state.file)

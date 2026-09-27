@@ -8,6 +8,7 @@ import test from 'node:test'
 import {
   SshExecRunner,
   buildDetachedLaunchCommand,
+  signalDetachedRun,
   wrapWithExitCodeTrap,
   type RemoteLaunchSpec
 } from '../src/main/agent/wrappers/executor-remote'
@@ -16,6 +17,10 @@ import type {
   RemoteSshSession
 } from '../src/main/agent/wrappers/remote-ssh-session'
 import type { WrapperRun, WrapperRunPlan } from '../src/main/agent/wrappers/types'
+import type { RemoteFileChunk } from '../src/main/agent/wrappers/remote-ssh-log'
+import { RemoteLaunchUnknownError } from '../src/main/agent/wrappers/remote-launch-claim'
+import { fakeLaunchClaimCommand } from './helpers/fakeLaunchClaims'
+import { fakeRemoteLogChunk } from './helpers/fakeRemoteLogChunk'
 
 const RUN_DIR = '/home/lab/.phi/wrappers/runs/wrun_test'
 
@@ -55,19 +60,31 @@ const FIXTURE_LAUNCH: RemoteLaunchSpec = {
  */
 class FakeRemoteHost implements RemoteSshSession {
   files = new Map<string, string>()
+  claims = new Set<string>()
   /** pid -> alive */
   processes = new Map<number, boolean>()
+  processDirs = new Map<number, string>()
   closed = false
+  launchCommands = 0
+  launchFault: 'before' | 'after' | undefined
   private nextPid = 1000
 
   async exec(command: string): Promise<RemoteExecResult> {
+    const claim = fakeLaunchClaimCommand(command, this.claims)
+    if (claim) return claim
     // Checked first: the multi-command launch line (built by
     // buildDetachedLaunchCommand) also *starts with* `mkdir -p`, so a
     // plain startsWith check below would shadow it.
     if (command.includes('setsid bash')) {
+      this.launchCommands += 1
+      const fault = this.launchFault
+      this.launchFault = undefined
+      if (fault === 'before') throw new Error('SSH closed before launch')
       const pid = this.nextPid++
       this.processes.set(pid, true)
+      this.processDirs.set(pid, RUN_DIR)
       this.files.set(`${RUN_DIR}/${PID_RELATIVE}`, `${pid}`)
+      if (fault === 'after') throw new Error('SSH closed after launch')
       return { stdout: `${pid}\n`, stderr: '', code: 0, signal: null }
     }
     if (command.startsWith('mkdir -p')) {
@@ -77,6 +94,16 @@ class FakeRemoteHost implements RemoteSshSession {
       const pid = Number.parseInt(command.split(' ')[2], 10)
       const alive = this.processes.get(pid) === true
       return { stdout: alive ? 'alive\n' : 'dead\n', stderr: '', code: 0, signal: null }
+    }
+    if (command.startsWith('ps -ww -o args= -p ')) {
+      const pid = Number(command.slice('ps -ww -o args= -p '.length))
+      const dir = this.processDirs.get(pid)
+      return {
+        stdout: dir ? `bash ${dir}/launch.sh\n` : '',
+        stderr: '',
+        code: dir ? 0 : 1,
+        signal: null
+      }
     }
     if (command.startsWith('kill -TERM -')) {
       const pid = Number.parseInt(command.slice('kill -TERM -'.length), 10)
@@ -92,6 +119,13 @@ class FakeRemoteHost implements RemoteSshSession {
     return content
   }
 
+  async readFileChunk(
+    path: string,
+    options: Parameters<NonNullable<RemoteSshSession['readFileChunk']>>[1]
+  ): Promise<RemoteFileChunk> {
+    return fakeRemoteLogChunk(this.files, path, options)
+  }
+
   async writeTextFile(remotePath: string, content: string): Promise<void> {
     this.files.set(remotePath, content)
   }
@@ -101,7 +135,7 @@ class FakeRemoteHost implements RemoteSshSession {
   }
 
   async exists(remotePath: string): Promise<boolean> {
-    return this.files.has(remotePath)
+    return this.files.has(remotePath) || this.claims.has(remotePath)
   }
 
   async close(): Promise<void> {
@@ -120,7 +154,7 @@ const PID_RELATIVE = 'pid'
 function makeRunner(): { runner: SshExecRunner; host: FakeRemoteHost } {
   const host = new FakeRemoteHost()
   const runner = new SshExecRunner({
-    connection: { host: 'lab-hpc.example.edu', username: 'agent', privateKey: 'fake' },
+    connection: { host: 'lab-hpc.example.edu' },
     connectImpl: async () => host
   })
   return { runner, host }
@@ -152,6 +186,30 @@ test('SshExecRunner.submit uploads the launch bundle and returns a pid handle', 
   assert.equal(host.files.get(`${RUN_DIR}/params.json`), FIXTURE_LAUNCH.paramsJson)
 })
 
+test('a lost detached reply recovers the existing PID without issuing a second launch', async () => {
+  const { runner, host } = makeRunner()
+  host.launchFault = 'after'
+  const first = await runner.submit(FIXTURE_RUN, {} as WrapperRunPlan, FIXTURE_LAUNCH)
+  const second = await runner.submit(FIXTURE_RUN, {} as WrapperRunPlan, FIXTURE_LAUNCH)
+  assert.equal(first.pid, second.pid)
+  assert.equal(host.launchCommands, 1)
+})
+
+test('a disconnect before detached launch stays unknown and a duplicate does not relaunch', async () => {
+  const { runner, host } = makeRunner()
+  host.launchFault = 'before'
+  await assert.rejects(
+    runner.submit(FIXTURE_RUN, {} as WrapperRunPlan, FIXTURE_LAUNCH),
+    RemoteLaunchUnknownError
+  )
+  await assert.rejects(
+    runner.submit(FIXTURE_RUN, {} as WrapperRunPlan, FIXTURE_LAUNCH),
+    RemoteLaunchUnknownError
+  )
+  assert.equal(host.launchCommands, 1)
+  assert.equal(host.processes.size, 0)
+})
+
 test('SshExecRunner.status reports running while the process is alive', async () => {
   const { runner } = makeRunner()
   const handle = await runner.submit(FIXTURE_RUN, {} as WrapperRunPlan, FIXTURE_LAUNCH)
@@ -169,6 +227,22 @@ test('SshExecRunner.status reports completed/failed from the recorded exit code'
 
   host.finish(handle.pid!, 1)
   assert.deepEqual(await runner.status(handle), { outcome: 'failed', exitCode: 1 })
+})
+
+test('SshExecRunner.status trusts a recorded exit over a lingering PID', async () => {
+  const { runner, host } = makeRunner()
+  const handle = await runner.submit(FIXTURE_RUN, {} as WrapperRunPlan, FIXTURE_LAUNCH)
+  host.files.set(`${RUN_DIR}/exit_code`, '0\n')
+  assert.equal(host.processes.get(handle.pid!), true)
+  assert.deepEqual(await runner.status(handle), { outcome: 'completed', exitCode: 0 })
+})
+
+test('SshExecRunner.status allows the shell a brief interval to record its exit', async () => {
+  const { runner, host } = makeRunner()
+  const handle = await runner.submit(FIXTURE_RUN, {} as WrapperRunPlan, FIXTURE_LAUNCH)
+  host.processes.set(handle.pid!, false)
+  setTimeout(() => host.files.set(`${RUN_DIR}/exit_code`, '0\n'), 150)
+  assert.deepEqual(await runner.status(handle), { outcome: 'completed', exitCode: 0 })
 })
 
 test('SshExecRunner.status reports lost when the process is gone without an exit code', async () => {
@@ -189,6 +263,27 @@ test('SshExecRunner.cancel kills the process group and is a no-op without a pid'
   await runner.cancel({ ...handle, pid: undefined })
 })
 
+test('detached cancellation is bound to one run ID and process group', async () => {
+  const host = new FakeRemoteHost()
+  const a = { runId: 'wrun_a', remoteRunDir: `${RUN_DIR}-a`, pid: 1001 }
+  const b = { runId: 'wrun_b', remoteRunDir: `${RUN_DIR}-b`, pid: 1002 }
+  for (const handle of [a, b]) {
+    host.files.set(`${handle.remoteRunDir}/.phi-launch-claim/run-id`, `${handle.runId}\n`)
+    host.files.set(`${handle.remoteRunDir}/pid`, `${handle.pid}\n`)
+    host.processes.set(handle.pid, true)
+    host.processDirs.set(handle.pid, handle.remoteRunDir)
+  }
+  await signalDetachedRun(host, a, 'TERM')
+  assert.equal(host.processes.get(a.pid), false)
+  assert.equal(host.processes.get(b.pid), true)
+  await assert.rejects(signalDetachedRun(host, { ...a, pid: b.pid }, 'TERM'), /回执不一致/)
+  assert.equal(host.processes.get(b.pid), true)
+  // Even a stale receipt copied over A must not target a reused PID now running B.
+  host.files.set(`${a.remoteRunDir}/pid`, `${b.pid}\n`)
+  await assert.rejects(signalDetachedRun(host, { ...a, pid: b.pid }, 'TERM'), /不再属于/)
+  assert.equal(host.processes.get(b.pid), true)
+})
+
 test('SshExecRunner.tailLog returns empty string until the log file exists', async () => {
   const { runner, host } = makeRunner()
   const handle = await runner.submit(FIXTURE_RUN, {} as WrapperRunPlan, FIXTURE_LAUNCH)
@@ -201,7 +296,7 @@ test('SshExecRunner.tailLog returns empty string until the log file exists', asy
 
 test('SshExecRunner.close is a no-op when nothing ever connected', async () => {
   const runner = new SshExecRunner({
-    connection: { host: 'unused', username: 'agent', privateKey: 'fake' },
+    connection: { host: 'unused' },
     connectImpl: async () => {
       throw new Error('should never connect')
     }

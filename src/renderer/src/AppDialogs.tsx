@@ -1,8 +1,10 @@
+import { useState } from 'react'
 import { Alert, Snackbar } from '@mui/material'
 import SettingsDialog, { type SettingsCategory } from './components/SettingsDialog'
 import AddProviderDialog from './components/AddProviderDialog'
 import OnboardingDialog from './components/OnboardingDialog'
-import NewProjectDialog from './components/NewProjectDialog'
+import NewProjectDialog from './features/project/NewProjectPanel'
+import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import type { ThemeMode } from './theme'
 import type {
   ActiveAuthPrompt,
@@ -61,8 +63,7 @@ export type AppDialogsProps = {
   onUpdateProjectRemoteConnection: (
     projectId: string,
     connectionId: string,
-    patch: ProjectRemoteConnection | null,
-    passphrase?: string | null
+    patch: ProjectRemoteConnection | null
   ) => Promise<void>
   onUpdateProjectRemoteDefaults: (
     projectId: string,
@@ -117,6 +118,7 @@ export type AppDialogsProps = {
     workingDirectory: string,
     permissionMode: PermissionMode
   ) => Promise<void>
+  onCreateRemoteProject: (input: RemoteProjectCreateInput) => Promise<void>
 
   snackbarNotice: SnackbarNotice | null
   setSnackbarNotice: (notice: SnackbarNotice | null) => void
@@ -191,6 +193,7 @@ export default function AppDialogs({
   isNewProjectDialogOpen,
   setIsNewProjectDialogOpen,
   onCreateProject,
+  onCreateRemoteProject,
   snackbarNotice,
   setSnackbarNotice,
   isChatWorkspaceView,
@@ -199,11 +202,18 @@ export default function AppDialogs({
   sidebarWidth,
   macTitlebarHeight
 }: AppDialogsProps): React.JSX.Element {
+  const [returnToNewProject, setReturnToNewProject] = useState(false)
   return (
     <>
       <SettingsDialog
         open={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
+        onClose={() => {
+          setIsSettingsOpen(false)
+          if (returnToNewProject) {
+            setReturnToNewProject(false)
+            setIsNewProjectDialogOpen(true)
+          }
+        }}
         category={settingsCategory}
         onCategoryChange={setSettingsCategory}
         providers={providerStatuses}
@@ -298,6 +308,13 @@ export default function AppDialogs({
         onClose={() => setIsNewProjectDialogOpen(false)}
         onPickDirectory={() => rendererApi.pickProjectDirectory()}
         onCreate={onCreateProject}
+        onCreateRemote={onCreateRemoteProject}
+        onOpenRemoteSettings={() => {
+          setReturnToNewProject(true)
+          setIsNewProjectDialogOpen(false)
+          setSettingsCategory('remote')
+          setIsSettingsOpen(true)
+        }}
       />
 
       <Snackbar

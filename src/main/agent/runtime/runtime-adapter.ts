@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
+import type { ProjectLocation } from '../../../shared/projectLocation'
 import { getOmpBridge, type OmpBridge } from '../omp/omp-bridge'
 import {
   getAdditionalProjectResourcePaths,
@@ -163,6 +164,7 @@ type ToolCallEvent = {
   toolCallId?: string
   toolName: string
   input: Record<string, unknown>
+  agentRunId?: string
 }
 
 type ToolCallContext = {
@@ -290,6 +292,14 @@ export type CreateAgentSessionOptions = {
   resourceLoader?: RuntimeResourceLoader
   /** Phi agents scanned by the main process; the worker exposes each as a delegation tool. */
   phiAgents?: PhiAgentDefinition[]
+  /** Restrict explicit file paths in project sessions to the selected project. */
+  projectBound?: boolean
+  remoteProject?: {
+    phiSessionId: string
+    projectId: string
+    location: Extract<ProjectLocation, { kind: 'ssh' }>
+    contextFiles: Array<{ path: string; content: string }>
+  }
   /** Phi-managed user persona, injected explicitly into the main system prompt. */
   personaMarkdown?: string
 }
@@ -318,6 +328,7 @@ type ToolApprovalRequest = {
   toolCallId?: string
   toolName?: string
   input?: Record<string, unknown>
+  agentRunId?: string
 }
 
 function dedupePaths(paths: string[]): string[] {
@@ -884,7 +895,8 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
       type: 'tool_call',
       toolCallId: request.toolCallId ?? request.requestId,
       toolName: request.toolName ?? '',
-      input: request.input ?? {}
+      input: request.input ?? {},
+      ...(request.agentRunId ? { agentRunId: request.agentRunId } : {})
     }
     const context: ToolCallContext = {
       signal: this.approvalAbortController.signal
@@ -964,6 +976,8 @@ export async function createRuntimeAgentSession(
       : undefined,
     enableToolApproval: toolCallHandlers.length > 0,
     phiAgents: options.phiAgents,
+    projectBound: options.projectBound,
+    remoteProject: options.remoteProject,
     personaMarkdown: options.personaMarkdown
   }
   const created = await bridge.request<WorkerCreateSessionResult>('session.create', createParams)

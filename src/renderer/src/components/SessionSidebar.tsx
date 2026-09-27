@@ -30,6 +30,7 @@ type SessionSidebarProps = {
   sessions: SessionSummary[]
   activeSessionPath: string | null
   activeCwd: string
+  activeProjectId?: string | null
   projects: Project[]
   projectSessionRefreshKey: number
   onNewChat: () => void
@@ -39,8 +40,15 @@ type SessionSidebarProps = {
   onDeleteSession: (path: string) => void
   onStartProjectChat: (project: Project) => void
   onDeleteProject: (project: Project) => void
-  onFetchProjectSessions: (workingDirectory: string) => Promise<SessionSummary[]>
-  getSessionRuntimeState?: (path: string, cwd: string) => SessionRuntimeState | null
+  onFetchProjectSessions: (
+    workingDirectory: string,
+    projectId?: string
+  ) => Promise<SessionSummary[]>
+  getSessionRuntimeState?: (
+    path: string,
+    cwd: string,
+    phiSessionId?: string | null
+  ) => SessionRuntimeState | null
 }
 
 function SessionSidebar({
@@ -51,6 +59,7 @@ function SessionSidebar({
   sessions,
   activeSessionPath,
   activeCwd,
+  activeProjectId = null,
   projects,
   projectSessionRefreshKey,
   onNewChat,
@@ -72,7 +81,8 @@ function SessionSidebar({
     projectExpansionOverrides,
     mode,
     projects,
-    activeCwd
+    activeCwd,
+    activeProjectId
   )
   const [nowMs, setNowMs] = useState(() => Date.now())
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))

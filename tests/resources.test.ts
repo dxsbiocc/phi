@@ -132,6 +132,38 @@ test('listMcpServers reads MCP config from the selected cwd', async () => {
   )
 })
 
+test('remote resource catalog keeps global Skills and MCP without reading an anchor project', async () => {
+  const { listGlobalMcpServers, listGlobalSkills, readGlobalSkillContent } =
+    await import('../src/main/agent/resources')
+  const anchor = join(agentDir, 'remote-project-anchors', 'remote-project')
+  mkdirSync(join(anchor, '.phi', 'skills', 'anchor-skill'), { recursive: true })
+  writeFileSync(
+    join(anchor, '.phi', 'skills', 'anchor-skill', 'SKILL.md'),
+    '---\ndescription: Anchor must be ignored\n---\n# Fake\n'
+  )
+  writeFileSync(
+    join(anchor, '.mcp.json'),
+    JSON.stringify({ mcpServers: { anchorServer: { command: 'never-run' } } })
+  )
+
+  const skills = await listGlobalSkills()
+  assert(skills.some((skill) => skill.name === 'user-skill'))
+  assert.equal(
+    skills.some((skill) => skill.name === 'anchor-skill'),
+    false
+  )
+  assert.deepEqual(
+    (await listGlobalMcpServers()).map((server) => server.name),
+    ['userServer']
+  )
+  const globalFile = join(agentDir, 'skills', 'user-skill', 'SKILL.md')
+  assert.match((await readGlobalSkillContent(globalFile)).content, /User skill/)
+  await assert.rejects(
+    readGlobalSkillContent(join(anchor, '.phi', 'skills', 'anchor-skill', 'SKILL.md')),
+    /远程项目级 Skill 暂不可用/
+  )
+})
+
 test('runtime resource loader includes bundled skills from resources/skills', async () => {
   const { createRuntimeResourceLoader, getBundledSkillsDir } =
     await import('../src/main/agent/runtime/runtime-adapter')

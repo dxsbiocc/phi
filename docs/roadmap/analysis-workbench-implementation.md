@@ -411,6 +411,12 @@ Verification:
 
 Goal: support HPC-oriented execution without syncing large datasets to the local machine.
 
+The separate remote project/Wrapper plan (`.omx/plans/remote-wrapper-capability.md`)
+has implemented SSH-backed project files, commands, Wrapper execution, result
+preview, and explicit download. Its E01 external-host/Slurm acceptance remains
+pending. This analysis-workbench phase still covers integration of those services
+with Notebook artifacts; remote Notebook/Jupyter kernels are deferred.
+
 - Add global SSH host profiles under `~/.phi`.
 - Let project analysis config reference profile ids and explicit local/remote path mappings.
 - Run remote workflow commands through a controlled workflow runner.

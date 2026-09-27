@@ -487,11 +487,15 @@ Verified with real Nextflow and Docker against a "remote" that is a local bash s
 (modules, subworkflows with cross-directory includes, a two-run reattach), including the
 `sbatch` controller against a stand-in Slurm (`tests/helpers/fakeSlurm.ts`) that really runs
 the submitted script in the background and can really cancel it; unit tests cover the rest.
-**Not verified against a real SSH server or a real Slurm cluster**: real `sbatch`/`scontrol`
+**Not verified against an external SSH host or a real Slurm cluster**: real `sbatch`/`scontrol`
 output, nested submission, and Nextflow's own Slurm executor rest on the stand-in and on the
 generated config having been accepted by `nextflow config`. The `squeue → scontrol → sacct`
 status order was carried over from the older `SbatchRunner`, which was tried on a real cluster.
 
-Not built yet: pulling outputs back to the local machine (`location: 'remote'` paths cannot
-be opened from Phi); uploading local input files; PBS/LSF; a "test connection" button in the
-settings; cleaning up a Slurm head job's orphaned task jobs when Nextflow is killed hard.
+Since the original composition implementation, the remote project work added a
+Phi-owned OpenSSH host profile and connection test, same-name remote file/command
+tools, bounded remote result browsing and previews, and explicit result download.
+These paths have automated coverage but still need external-host acceptance. Remote
+input files are not uploaded automatically. PBS/LSF and cleanup of orphaned Slurm
+task jobs after a hard-killed Nextflow head remain outside this implementation.
+The validation record is in `docs/roadmap/remote-e01-validation.md`.

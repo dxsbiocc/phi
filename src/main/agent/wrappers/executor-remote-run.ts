@@ -13,6 +13,7 @@ import {
   appendWrapperAuditEvent,
   appendWrapperRunEvent,
   getWrapperRunsDir,
+  readWrapperRun,
   writeWrapperRun
 } from './store'
 import type { WrapperOutputRecord, WrapperRun, WrapperRunState } from './types'
@@ -64,6 +65,19 @@ export function transition(
     agentDir
   )
   return updated
+}
+
+/** A verified cancel may finish while an older poll is awaiting SSH or outputs. */
+export function transitionUnlessCancelled(
+  run: WrapperRun,
+  agentDir: string,
+  state: WrapperRunState,
+  patch: Partial<WrapperRun> = {}
+): WrapperRun {
+  const current = readWrapperRun(run.runId, agentDir)
+  return current?.state === 'cancelled'
+    ? current
+    : transition(current ?? run, agentDir, state, patch)
 }
 
 export function failRun(run: WrapperRun, agentDir: string, reason: string): WrapperRun {
@@ -119,6 +133,8 @@ export async function pollUntilTerminal(
 /** What `readRemoteRunSnapshot` needs to rebuild a `RemoteJobHandle` for a run submitted in a prior app session. */
 export interface RemoteRunSnapshot {
   remoteRunDir: string
+  /** No second launch is allowed while this claim's outcome is uncertain. */
+  launchUnknown?: true
   /** Set by the `sbatch` controller. Exactly one of jobId/pid is set. */
   jobId?: string
   /** Set by the `detached_ssh` controller. Exactly one of jobId/pid is set. */
@@ -148,8 +164,8 @@ export function writeRemoteRunSnapshot(
 /**
  * Reads back the snapshot a submit orchestrator writes right after its
  * controller accepts the job — enough to rebuild a `RemoteJobHandle` and
- * resume polling after a restart. Used by `executor-slurm-reconcile.ts`'s
- * startup reconciliation pass and by `runs.ts`'s `cancelWrapperRun` (to find
+ * resume polling after a restart. Used by the startup remote reconciliation
+ * pass and by `runs.ts`'s `cancelWrapperRun` (to find
  * the job id/pid to cancel for an already-running remote run).
  */
 export function readRemoteRunSnapshot(

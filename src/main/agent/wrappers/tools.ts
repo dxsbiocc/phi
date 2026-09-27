@@ -175,12 +175,34 @@ export function buildWrapperExecuteTool(
   agentDir: string = getPhiAgentDir()
 ): CustomTool {
   const { manifest, trustTier } = entry
+  const sourceProperties = manifest.parameters.schema.properties
+  const properties =
+    sourceProperties && typeof sourceProperties === 'object' && !Array.isArray(sourceProperties)
+      ? { ...(sourceProperties as Record<string, unknown>) }
+      : {}
+  for (const input of manifest.inputs) {
+    const original = properties[input.id]
+    properties[input.id] = {
+      anyOf: [
+        original ?? { type: 'string' },
+        {
+          type: 'object',
+          required: ['source', 'path'],
+          additionalProperties: false,
+          properties: {
+            source: { type: 'string', enum: ['local', 'remote'] },
+            path: { type: 'string', minLength: 1 }
+          }
+        }
+      ]
+    }
+  }
 
   return {
     name: wrapperToolName(manifest.id),
     label: manifest.name,
     description: `${manifest.summary} (${manifest.id}@${manifest.version}, ${trustTier}). Creates a run plan — it does not submit or execute anything. The user reviews and submits the resulting plan card themselves.`,
-    parameters: manifest.parameters.schema,
+    parameters: { ...manifest.parameters.schema, properties },
     approval: 'write',
     async execute(_toolCallId, params, _onUpdate, ctx: CustomToolContext) {
       try {

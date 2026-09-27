@@ -12,6 +12,7 @@ import {
 } from '../store'
 import type {
   WrapperExecutor,
+  WrapperInputResolution,
   WrapperOutputRecord,
   WrapperRun,
   WrapperRunProgress,
@@ -19,7 +20,7 @@ import type {
 } from '../types'
 import type { WrapperCompositionEntry } from './discovery'
 import type { RemoteJobSnapshot } from './remote-job'
-import { resolveRemoteOutDir } from './remote-config'
+import { resolveRemoteOutputRoot } from '../remote-result-paths'
 import { resolveOutputPaths } from './validate'
 
 /**
@@ -84,8 +85,11 @@ function recordTransition(
 export function startCompositionRun(input: {
   entry: WrapperCompositionEntry
   params: Record<string, unknown>
+  inputReferences?: WrapperInputResolution[]
+  environmentWarnings?: string[]
   profile: string
   originSessionId?: string
+  targetReason?: string
   continueWhenDone?: boolean
   /** Set for a run on a remote host: where it will live and which executor name it gets. */
   remote?: {
@@ -94,6 +98,7 @@ export function startCompositionRun(input: {
     executor: WrapperExecutor
     connectionId: string
     projectId: string
+    hostProfileId: string
   }
   agentDir?: string
 }): WrapperRun {
@@ -105,8 +110,17 @@ export function startCompositionRun(input: {
     ? `${input.remote.workspaceRoot.replace(/\/+$/, '')}/wrappers/runs/${runId}`
     : undefined
   const declaredOutdir = typeof params.outdir === 'string' ? params.outdir : ''
-  const outDir = remoteRunDir
-    ? resolveRemoteOutDir(params.outdir, remoteRunDir)
+  const output =
+    remoteRunDir && input.remote
+      ? resolveRemoteOutputRoot(
+          remoteRunDir,
+          input.remote.workspaceRoot,
+          params.outdir ?? 'results',
+          false
+        )
+      : undefined
+  const outDir = output
+    ? output.path
     : !declaredOutdir
       ? ''
       : isAbsolute(declaredOutdir)
@@ -127,13 +141,21 @@ export function startCompositionRun(input: {
     cwd: entry.componentDir,
     outDir,
     origin: 'composition',
+    ...(input.inputReferences?.length ? { inputReferences: input.inputReferences } : {}),
+    ...(input.environmentWarnings?.length
+      ? { environmentWarnings: input.environmentWarnings }
+      : {}),
+    ...(input.targetReason ? { targetReason: input.targetReason } : {}),
     ...(input.remote && remoteRunDir
       ? {
           remote: {
             host: input.remote.host,
             runDir: remoteRunDir,
             connectionId: input.remote.connectionId,
-            projectId: input.remote.projectId
+            projectId: input.remote.projectId,
+            hostProfileId: input.remote.hostProfileId,
+            workspaceRoot: input.remote.workspaceRoot,
+            outputRoot: output?.path
           }
         }
       : {}),
@@ -229,15 +251,32 @@ export function finishCompositionRun(input: {
 }
 
 /** The run's fate cannot be confirmed (e.g. its remote host is unreachable): `lost`, not `failed`. */
-export function markCompositionRunLost(run: WrapperRun, agentDir?: string): WrapperRun {
+export function markCompositionRunLost(
+  run: WrapperRun,
+  agentDir?: string,
+  reason?: string
+): WrapperRun {
   return recordTransition(run, agentDir ?? getPhiAgentDir(), 'lost', {
-    completedAt: new Date().toISOString()
+    completedAt: new Date().toISOString(),
+    ...(reason ? { launchDiagnostic: reason } : {})
   })
 }
 
 /** A cancel was requested for a live run; Nextflow is being stopped. */
 export function markCompositionRunCancelling(run: WrapperRun, agentDir?: string): WrapperRun {
-  return recordTransition(run, agentDir ?? getPhiAgentDir(), 'cancelling')
+  return recordTransition(run, agentDir ?? getPhiAgentDir(), 'cancelling', {
+    completedAt: undefined,
+    launchDiagnostic: undefined
+  })
+}
+
+/** A previously unknown remote run was observed alive again. */
+export function markCompositionRunRunning(run: WrapperRun, agentDir?: string): WrapperRun {
+  return recordTransition(run, agentDir ?? getPhiAgentDir(), 'running', {
+    completedAt: undefined,
+    launchUnknown: undefined,
+    launchDiagnostic: undefined
+  })
 }
 
 const REMOTE_SNAPSHOT_FILE = 'remote.json'
@@ -269,7 +308,7 @@ export function isResumableRemoteRun(run: WrapperRun, agentDir: string): boolean
   return (
     run.origin === 'composition' &&
     run.remote !== undefined &&
-    !TERMINAL_STATES.includes(run.state) &&
+    (run.state === 'lost' || !TERMINAL_STATES.includes(run.state)) &&
     readCompositionRemoteSnapshot(run.runId, agentDir) !== undefined
   )
 }

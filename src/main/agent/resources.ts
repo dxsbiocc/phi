@@ -442,6 +442,19 @@ export async function listSkills(cwd = WORKSPACE_DIR): Promise<SkillSummary[]> {
     )
 }
 
+/** Global catalog only; never scan a remote project's local SDK anchor. */
+export async function listGlobalSkills(): Promise<SkillSummary[]> {
+  return (await listSkills(AGENT_DIR)).filter((skill) => skill.scope !== 'project')
+}
+
+export async function readGlobalSkillContent(filePath: string): Promise<SkillContent> {
+  const available = await listGlobalSkills()
+  if (!available.some((skill) => resolve(skill.filePath) === resolve(filePath))) {
+    throw new Error('远程项目级 Skill 暂不可用')
+  }
+  return readSkillContent(filePath, AGENT_DIR)
+}
+
 async function findCatalogSkill(
   filePath: string,
   cwd = WORKSPACE_DIR
@@ -554,8 +567,7 @@ export async function listPromptAgents(cwd = WORKSPACE_DIR): Promise<PromptAgent
   return agents.sort((left, right) => left.name.localeCompare(right.name))
 }
 
-export async function listMcpServers(cwd = WORKSPACE_DIR): Promise<McpServerSummary[]> {
-  const configPaths = [...getGlobalMcpConfigPaths(AGENT_DIR), ...getProjectMcpConfigPaths(cwd)]
+async function listMcpServersFromPaths(configPaths: string[]): Promise<McpServerSummary[]> {
   const seen = new Set<string>()
   const servers: McpServerSummary[] = []
 
@@ -572,4 +584,15 @@ export async function listMcpServers(cwd = WORKSPACE_DIR): Promise<McpServerSumm
   }
 
   return servers.sort((left, right) => left.name.localeCompare(right.name))
+}
+
+export async function listGlobalMcpServers(): Promise<McpServerSummary[]> {
+  return listMcpServersFromPaths(getGlobalMcpConfigPaths(AGENT_DIR))
+}
+
+export async function listMcpServers(cwd = WORKSPACE_DIR): Promise<McpServerSummary[]> {
+  return listMcpServersFromPaths([
+    ...getGlobalMcpConfigPaths(AGENT_DIR),
+    ...getProjectMcpConfigPaths(cwd)
+  ])
 }

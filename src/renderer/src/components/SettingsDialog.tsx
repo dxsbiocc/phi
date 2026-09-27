@@ -71,10 +71,10 @@ const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.E
   { id: 'general', label: '通用', icon: <GeneralIcon fontSize="small" /> },
   { id: 'environment', label: '环境', icon: <RemoteExecutionIcon fontSize="small" /> },
   { id: 'databases', label: '数据库', icon: <DatabaseIcon fontSize="small" /> },
-  { id: 'persona', label: '助手人设', icon: <PsychologyIcon fontSize="small" /> },
+  { id: 'persona', label: '助手', icon: <PsychologyIcon fontSize="small" /> },
   { id: 'providers', label: 'Provider', icon: <ProviderIcon fontSize="small" /> },
   { id: 'permissions', label: '权限', icon: <ShieldIcon fontSize="small" /> },
-  { id: 'remote', label: '远程执行', icon: <RemoteExecutionIcon fontSize="small" /> },
+  { id: 'remote', label: '远程', icon: <RemoteExecutionIcon fontSize="small" /> },
   { id: 'diagnostics', label: '诊断', icon: <ContentCopyIcon fontSize="small" /> },
   { id: 'appearance', label: '外观', icon: <PaletteIcon fontSize="small" /> }
 ]
@@ -133,7 +133,7 @@ function PersonaSection({
   return (
     <Stack spacing={2}>
       <Box>
-        <Typography variant="h5">助手人设</Typography>
+        <Typography variant="h5">助手</Typography>
         <Typography variant="body2" color="text.secondary">
           以 Markdown 形式描述助手的性格、说话风格与回答偏好，留空则使用默认设置。
         </Typography>
@@ -148,7 +148,7 @@ function PersonaSection({
         fullWidth
         multiline
         minRows={14}
-        placeholder={'# 助手人设\n\n性格：……\n说话风格：……\n回答偏好：……'}
+        placeholder={'# 助手\n\n性格：……\n说话风格：……\n回答偏好：……'}
         sx={{ '& textarea': { fontFamily: 'var(--font-mono)', fontSize: '0.9rem' } }}
       />
 
@@ -640,8 +640,7 @@ type SettingsDialogProps = {
   onUpdateProjectRemoteConnection: (
     projectId: string,
     connectionId: string,
-    patch: ProjectRemoteConnection | null,
-    passphrase?: string | null
+    patch: ProjectRemoteConnection | null
   ) => Promise<void>
   onUpdateProjectRemoteDefaults: (
     projectId: string,

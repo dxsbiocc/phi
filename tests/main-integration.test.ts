@@ -1,4 +1,6 @@
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
+import { loadRemoteWrapperAgent } from '../src/main/agent/agents/remote-wrapper-agent'
+import { BackgroundAgentApprovalTracker } from '../src/main/agent/agents/background-approval'
 import * as jobContinue from '../src/main/agent/wrappers/composition/job-continue'
 import { MAX_AUTOMATIC_CONTINUATIONS } from '../src/main/agent/wrappers/composition/job-continue'
 import { deliverWrapperRunFinished } from '../src/main/agent/wrappers/composition/job-notify'
@@ -17,6 +19,9 @@ import * as notebookCodeGeneration from '../src/main/agent/notebook/notebook-cod
 import * as lifecycle from '../src/main/agent/session/session-lifecycle'
 import * as notebookDocument from '../src/shared/notebookDocument'
 import * as sessionTitle from '../src/shared/sessionTitle'
+import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
+import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-preview-media'
+import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers/remote-result-download'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -27,6 +32,37 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 }
 
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+function fakeBashApprovalDigest(input: Record<string, unknown>): string {
+  const env =
+    input.env && typeof input.env === 'object' && !Array.isArray(input.env)
+      ? Object.fromEntries(
+          Object.entries(input.env).sort(([left], [right]) => left.localeCompare(right))
+        )
+      : input.env
+  return JSON.stringify({
+    command: input.command,
+    cwd: input.cwd,
+    timeout: input.timeout,
+    env,
+    pty: input.pty,
+    async: input.async
+  })
+}
+
+function fakeWriteApprovalDigest(input: Record<string, unknown>): string {
+  return JSON.stringify({ path: input.path, content: input.content, operation: 'write' })
+}
+
+function fakeEditApprovalDigest(input: Record<string, unknown>): string {
+  return JSON.stringify({
+    path: input.path,
+    old_string: input.old_string,
+    new_string: input.new_string,
+    replace_all: input.replace_all,
+    operation: 'edit'
+  })
+}
 
 type PromptOptions = {
   preflightResult?: (accepted: boolean) => void
@@ -108,6 +144,28 @@ type HarnessResult = {
   approvalOptions: Array<Record<string, unknown>>
   runnerEvents: Array<Record<string, unknown>>
   createdPhiSessions: Array<Record<string, unknown>>
+  remoteConnectionChecks: Array<{ sessionId: string; projectId: string }>
+  wrapperJobOptions: Record<string, unknown>
+  remoteResolverProjectIds: string[]
+  remoteDoctorCalls: Array<{ hostProfileId: string; remotePath?: string; options?: unknown }>
+  setWrapperPlan: (
+    plan:
+      | {
+          revision?: number
+          targetSelection?: {
+            projectId: string
+            target: string
+            hostProfileId?: string
+            remoteRoot?: string
+            projectLocation?: { kind: string }
+          }
+        }
+      | undefined
+  ) => void
+  setRemoteProjectPhase: (phase: 'reachable' | 'offline') => void
+  retargetRequests: Array<Record<string, unknown>>
+  submitPlanCalls: Array<{ planId: string; heavyWorkloadAcknowledged?: boolean }>
+  setRemoteConnectionCheck: (impl: () => Promise<{ phase: string }>) => void
   createdAgentOptions: Array<Record<string, unknown>>
   resourceLoaderOptions: Array<Record<string, unknown>>
   updatedProjectDefaults: Array<Record<string, unknown>>
@@ -137,6 +195,24 @@ type HarnessResult = {
     lineLength?: number
   }>
   openDialogOptions: Array<Record<string, unknown>>
+  saveDialogOptions: Array<Record<string, unknown>>
+  downloadCalls: Array<{ request: unknown; destination: string }>
+  setSaveDialogResult: (result: { canceled: boolean; filePath?: string }) => void
+  setDownloadImpl: (
+    impl: (
+      request: unknown,
+      destination: string,
+      options: {
+        signal: AbortSignal
+        onProgress?: (progress: {
+          requestId: string
+          phase: 'downloading' | 'verifying' | 'saving'
+          bytesDownloaded: number
+          totalBytes: number
+        }) => void
+      }
+    ) => Promise<unknown>
+  ) => void
   operationLog: Array<Record<string, unknown>>
   appSettingsUpdates: string[]
   dbConnectorEnabledUpdates: Array<{ id: string; digest: string; enabled: boolean }>
@@ -154,6 +230,30 @@ async function harness(
   const approvalOptions: Array<Record<string, unknown>> = []
   const runnerEvents: Array<Record<string, unknown>> = []
   const createdPhiSessions: Array<Record<string, unknown>> = []
+  const remoteConnectionChecks: Array<{ sessionId: string; projectId: string }> = []
+  const wrapperJobOptions: Record<string, unknown> = {}
+  const remoteResolverProjectIds: string[] = []
+  const remoteDoctorCalls: Array<{
+    hostProfileId: string
+    remotePath?: string
+    options?: unknown
+  }> = []
+  let wrapperPlan:
+    | {
+        revision?: number
+        targetSelection?: {
+          projectId: string
+          target: string
+          hostProfileId?: string
+          remoteRoot?: string
+          projectLocation?: { kind: string }
+        }
+      }
+    | undefined
+  let remoteProjectPhase: 'reachable' | 'offline' = 'reachable'
+  const retargetRequests: Array<Record<string, unknown>> = []
+  const submitPlanCalls: Array<{ planId: string; heavyWorkloadAcknowledged?: boolean }> = []
+  let remoteConnectionCheck: () => Promise<{ phase: string }> = async () => ({ phase: 'reachable' })
   const createdAgentOptions: Array<Record<string, unknown>> = []
   const resourceLoaderOptions: Array<Record<string, unknown>> = []
   const updatedProjectDefaults: Array<Record<string, unknown>> = []
@@ -190,6 +290,19 @@ async function harness(
     lineLength?: number
   }> = []
   const openDialogOptions: Array<Record<string, unknown>> = []
+  const saveDialogOptions: Array<Record<string, unknown>> = []
+  const downloadCalls: Array<{ request: unknown; destination: string }> = []
+  let downloadImpl: (
+    request: unknown,
+    destination: string,
+    options: { signal: AbortSignal; onProgress?: (progress: unknown) => void }
+  ) => Promise<unknown> = async (_request, destination) => ({
+    status: 'saved',
+    path: destination,
+    bytes: 3,
+    sha256: 'sha256:test',
+    remoteDigestVerified: true
+  })
   const operationLog: Array<Record<string, unknown>> = []
   const appSettingsUpdates: string[] = []
   const dbConnectorEnabledUpdates: Array<{ id: string; digest: string; enabled: boolean }> = []
@@ -206,6 +319,7 @@ async function harness(
     canceled: true,
     filePaths: []
   }
+  let saveDialogResult: { canceled: boolean; filePath?: string } = { canceled: true }
   const previewFiles = new Map<string, Buffer>([
     ['/projects/current/src/App.tsx', Buffer.from('export const app = true\n')],
     ['/projects/current/README.md', Buffer.from('# Project\n')],
@@ -661,6 +775,45 @@ async function harness(
   })
   const modules: Record<string, unknown> = {
     './agent-env': {},
+    './file-preview-media': { hoverMediaPreviewType, mediaPreviewType },
+    '../shared/wrapperResultTypes': { declaredExternalOutputRoot },
+    '../shared/remoteHostProfile': { sshConfigHostId: (alias: string) => `ssh-config:${alias}` },
+    './molecule-renderer': {
+      renderMoleculeSvg: async (): Promise<string> => '<svg xmlns="http://www.w3.org/2000/svg"/>'
+    },
+    './database-web-preview': {
+      previewDatabaseWebImage: async (): Promise<never> => {
+        throw new Error('Database web preview is mocked in main-integration.test.ts')
+      }
+    },
+    './agent/db/credential-store': {
+      clearDbConnectorSecret: (): void => {},
+      hasDbConnectorSecret: (): boolean => false,
+      isDbCredentialStorageAvailable: (): boolean => true,
+      resolveDbAuthSecret: (): undefined => undefined,
+      storeDbConnectorSecret: (): void => {}
+    },
+    './agent/environment': {
+      detectConfiguredAnalysisKernels: () => ({
+        jupyterServer: { available: true, command: 'jupyter', version: '2.14.0' },
+        kernels: [
+          {
+            name: 'python3',
+            displayName: 'Python 3',
+            language: 'python',
+            rawLanguage: 'python'
+          }
+        ],
+        preferredKernelName: 'python3',
+        hasPythonKernel: true,
+        hasRKernel: false,
+        messages: ['未检测到 R kernel。']
+      }),
+      dismissEnvironmentSummary: (): void => {},
+      getEnvironment: (): Record<string, never> => ({}),
+      redetectEnvironment: (): Record<string, never> => ({}),
+      setEnvironmentToolPath: (): Record<string, never> => ({})
+    },
     'node:child_process': {
       execFile: (
         file: string,
@@ -803,6 +956,13 @@ async function harness(
           const options = (args.length === 2 ? args[1] : args[0]) as Record<string, unknown>
           openDialogOptions.push(options)
           return openDialogResult
+        },
+        showSaveDialog: async (
+          ...args: unknown[]
+        ): Promise<{ canceled: boolean; filePath?: string }> => {
+          const options = (args.length === 2 ? args[1] : args[0]) as Record<string, unknown>
+          saveDialogOptions.push(options)
+          return saveDialogResult
         }
       },
       ipcMain: {
@@ -947,6 +1107,37 @@ async function harness(
       }
     },
     './agent/projects': {
+      subscribeRemoteProjectConnection: (): (() => void) => noop,
+      getProject: (id: string) => {
+        if (id === 'remote-project-1') {
+          return {
+            id,
+            name: 'Remote project',
+            location: {
+              kind: 'ssh',
+              hostProfileId: 'host-1',
+              remoteRoot: '/cluster/project',
+              canonicalRoot: '/canonical/project'
+            },
+            permissionMode: 'ask',
+            workingDirectory: '/cluster/project',
+            createdAt: '2026-09-24T00:00:00.000Z'
+          }
+        }
+        if (id.startsWith('project-/projects/')) {
+          const workingDirectory = id.slice('project-'.length)
+          return {
+            id,
+            name: `Project ${workingDirectory}`,
+            location: { kind: 'local', path: workingDirectory, realPath: workingDirectory },
+            workingDirectory,
+            workingDirectoryRealPath: workingDirectory,
+            permissionMode: 'ask',
+            createdAt: '2026-09-05T00:00:00.000Z'
+          }
+        }
+        return undefined
+      },
       assertProjectPathAvailable: (workingDirectory: string) => {
         if (workingDirectory.includes('missing-project')) throw new Error('项目路径不可用')
       },
@@ -954,11 +1145,25 @@ async function harness(
         {
           id: 'project-/projects/defaults',
           name: 'Project /projects/defaults',
+          location: { kind: 'local', path: '/projects/defaults', realPath: '/projects/defaults' },
           workingDirectory: '/projects/defaults',
           workingDirectoryRealPath: '/projects/defaults',
           permissionMode: 'ask',
           pathAvailable: true,
           createdAt: '2026-09-05T00:00:00.000Z'
+        },
+        {
+          id: 'remote-project-1',
+          location: {
+            kind: 'ssh',
+            hostProfileId: 'host-1',
+            remoteRoot: '/cluster/project',
+            canonicalRoot: '/canonical/project'
+          },
+          remoteConnection: {
+            phase: remoteProjectPhase,
+            message: remoteProjectPhase === 'offline' ? '服务器离线' : undefined
+          }
         }
       ],
       updateProjectDefaults: (id: string, defaults: Record<string, unknown>) => {
@@ -973,14 +1178,30 @@ async function harness(
           ...defaults
         }
       },
-      updateProjectPermissionMode: (id: string, permissionMode: string) => ({
-        id,
-        name: 'Project',
-        workingDirectory: '/projects/defaults',
-        permissionMode,
-        pathAvailable: true,
-        createdAt: '2026-09-05T00:00:00.000Z'
-      }),
+      updateProjectPermissionMode: (id: string, permissionMode: string) =>
+        id === 'remote-project-1'
+          ? {
+              id,
+              name: 'Remote project',
+              location: {
+                kind: 'ssh',
+                hostProfileId: 'host-1',
+                remoteRoot: '/cluster/project',
+                canonicalRoot: '/canonical/project'
+              },
+              workingDirectory: '/cluster/project',
+              permissionMode,
+              pathAvailable: true,
+              createdAt: '2026-09-24T00:00:00.000Z'
+            }
+          : {
+              id,
+              name: 'Project',
+              workingDirectory: '/projects/defaults',
+              permissionMode,
+              pathAvailable: true,
+              createdAt: '2026-09-05T00:00:00.000Z'
+            },
       updateProjectRemoteConnection: (id: string) => ({
         id,
         name: 'Project',
@@ -1254,6 +1475,9 @@ async function harness(
     '../shared/notebookDocument': notebookDocument,
     '../shared/sessionTitle': sessionTitle,
     './agent/tool-approval': {
+      bashApprovalDigest: fakeBashApprovalDigest,
+      writeApprovalDigest: fakeWriteApprovalDigest,
+      editApprovalDigest: fakeEditApprovalDigest,
       cancelToolApprovals: noop,
       createApprovalExtension: (options: Record<string, unknown>): Record<string, unknown> => {
         approvalOptions.push(options)
@@ -1279,6 +1503,33 @@ async function harness(
       removePlugin: async (): Promise<unknown[]> => []
     },
     './agent/resources': {
+      listGlobalSkills: async (): Promise<unknown[]> => [
+        {
+          id: '/isolated/skills/global/SKILL.md',
+          name: 'global',
+          description: 'global skill',
+          filePath: '/isolated/skills/global/SKILL.md',
+          source: 'user',
+          scope: 'user',
+          sourceCategory: 'user',
+          sourceCategoryLabel: 'User',
+          disabled: false
+        }
+      ],
+      readGlobalSkillContent: async (filePath: string): Promise<unknown> => {
+        if (filePath !== '/isolated/skills/global/SKILL.md') {
+          throw new Error('远程项目级 Skill 暂不可用')
+        }
+        return { filePath, content: '# global skill\n' }
+      },
+      listGlobalMcpServers: async (): Promise<unknown[]> => [
+        {
+          id: 'global-mcp',
+          name: 'global-mcp',
+          sourcePath: '/isolated/mcp.json',
+          status: 'configured'
+        }
+      ],
       listSkills: async (cwd: string): Promise<unknown[]> => [
         {
           id: `${cwd}:skill`,
@@ -1336,7 +1587,14 @@ async function harness(
       ]
     },
     './agent/wrappers/runs': {
-      submitWrapperRunPlan: (): never => {
+      submitWrapperRunPlan: (
+        planId: string,
+        options: { heavyWorkloadAcknowledged?: boolean }
+      ): never => {
+        submitPlanCalls.push({
+          planId,
+          heavyWorkloadAcknowledged: options.heavyWorkloadAcknowledged
+        })
         throw new Error('计划不存在: (mocked in main-integration.test.ts)')
       },
       cancelWrapperRunPlan: (): never => {
@@ -1346,11 +1604,57 @@ async function harness(
         throw new Error('run 不存在: (mocked in main-integration.test.ts)')
       }
     },
+    './agent/wrappers/remote-results': {
+      listWrapperResultDirectory: async (request: unknown): Promise<unknown> => request
+    },
+    './agent/wrappers/remote-result-read': {
+      previewWrapperResult: async (request: { path: string }): Promise<unknown> => ({
+        path: `ssh://cluster-one/canonical/project/${request.path}`,
+        rootPath: 'ssh://cluster-one/canonical/project',
+        kind: 'text',
+        mimeType: 'text/plain',
+        content: 'remote result',
+        bytes: 13,
+        previewBytes: 13,
+        truncated: false
+      }),
+      readWrapperResultRange: async (
+        request: { path: string },
+        options: { signal: AbortSignal }
+      ): Promise<unknown> => {
+        if (request.path === 'stall.bin') {
+          return new Promise((_resolve, reject) => {
+            options.signal.addEventListener('abort', () => reject(new Error('read aborted')), {
+              once: true
+            })
+          })
+        }
+        return { path: `ssh://cluster-one/canonical/project/${request.path}`, dataBase64: 'AA==' }
+      }
+    },
+    './agent/wrappers/remote-result-download': {
+      validateWrapperResultDownloadRequest,
+      downloadWrapperResultToPath: async (
+        request: unknown,
+        destination: string,
+        options: { signal: AbortSignal; onProgress?: (progress: unknown) => void }
+      ): Promise<unknown> => {
+        downloadCalls.push({ request, destination })
+        return downloadImpl(request, destination, options)
+      }
+    },
     './agent/wrappers/store': {
-      readWrapperPlan: (): undefined => undefined,
+      readWrapperPlan: () => wrapperPlan,
       listWrapperRuns: (): unknown[] => [],
       readWrapperRun: (): undefined => undefined,
       readWrapperPlanArtifact: (): undefined => undefined
+    },
+    './agent/wrappers/plans': {
+      retargetWrapperRunPlan: (request: Record<string, unknown>) => {
+        retargetRequests.push(request)
+        wrapperPlan = { ...wrapperPlan, revision: Number(wrapperPlan?.revision ?? 1) + 1 }
+        return wrapperPlan
+      }
     },
     './agent/wrappers/reproducibility': {
       buildWrapperReproducibilityBundle: (): never => {
@@ -1365,6 +1669,9 @@ async function harness(
     './agent/wrappers/composition/job-notify': { deliverWrapperRunFinished },
     './agent/wrappers/composition/job-manager': {
       WrapperJobManager: class {
+        constructor(options: Record<string, unknown>) {
+          Object.assign(wrapperJobOptions, options)
+        }
         onChange(): () => void {
           return (): void => {}
         }
@@ -1404,21 +1711,287 @@ async function harness(
       discoverPhiAgents: (options: Parameters<typeof discoverPhiAgents>[0]) =>
         discoverPhiAgents({ ...options, homeDir: '/nonexistent-home' })
     },
+    './agent/agents/remote-wrapper-agent': { loadRemoteWrapperAgent },
+    './agent/agents/background-approval': { BackgroundAgentApprovalTracker },
     './agent/agents/leader-prompt': { buildAgentLeaderPrompt },
     './agent/agents/run-continue': agentRunContinue,
     './agent/agents/run-host': { agentRunHostHandlers },
     './agent/wrappers/composition/discovery': {
       listWrapperCompositionCatalog: (): unknown[] => []
     },
-    './agent/wrappers/remote-credential-store': {
-      isRemoteCredentialStorageAvailable: (): boolean => false,
-      storeRemoteConnectionPassphrase: (): void => {},
-      deleteRemoteConnectionPassphrase: (): void => {}
+    './agent/remote-hosts': {
+      listRemoteHostProfiles: (): unknown[] => [],
+      listAvailableRemoteHostProfiles: (): unknown[] => [
+        { id: 'ssh-config:lab-hpc', label: 'lab-hpc', hostAlias: 'lab-hpc', source: 'ssh-config' }
+      ],
+      getRemoteHostProfile: (id: string) =>
+        id === 'host-1'
+          ? { id, label: 'Cluster', hostAlias: 'cluster-one' }
+          : id.startsWith('ssh-config:')
+            ? {
+                id,
+                label: id.slice('ssh-config:'.length),
+                hostAlias: id.slice('ssh-config:'.length),
+                source: 'ssh-config'
+              }
+            : undefined,
+      saveRemoteHostProfile: (input: { id?: string; label: string; hostAlias: string }) => ({
+        id: input.id ?? 'test-remote-host',
+        ...input
+      }),
+      deleteRemoteHostProfile: (): void => {}
+    },
+    './agent/ssh-config-discovery': {
+      listOpenSshHosts: async () => [
+        {
+          alias: 'lab-hpc',
+          hostname: 'compute.example.invalid',
+          user: 'scientist',
+          port: 22022,
+          identityFiles: ['/tmp/lab-key']
+        }
+      ]
+    },
+    './agent/ssh-config-editor': {
+      saveOpenSshHost: async (input: { alias: string }) => input.alias
+    },
+    './agent/remote-doctor': {
+      remoteDoctor: async (hostProfileId: string, remotePath?: string, options?: unknown) => {
+        remoteDoctorCalls.push({ hostProfileId, remotePath, options })
+        return {
+          hostProfileId,
+          checkedAt: '2026-09-24T00:00:00.000Z',
+          ok: true,
+          checks: [{ id: 'ssh', status: 'ok', message: remotePath ?? 'connected' }]
+        }
+      }
+    },
+    './agent/remote-project-create': {
+      createCheckedRemoteProject: async (input: Record<string, unknown>) => ({
+        id: 'remote-project-1',
+        name: input.name,
+        location: {
+          kind: 'ssh',
+          hostProfileId: input.hostProfileId,
+          remoteRoot: input.remoteRoot,
+          canonicalRoot: '/canonical/project'
+        },
+        workingDirectory: input.remoteRoot,
+        permissionMode: input.permissionMode
+      })
+    },
+    './agent/remote-project-instructions': {
+      loadRemoteProjectInstructions: async (): Promise<unknown[]> => [
+        { path: 'ssh://cluster-one/cluster/project/AGENTS.md', content: 'Remote instructions v1' }
+      ]
+    },
+    './agent/remote-project-connection': {
+      RemoteProjectConnectionTracker: class {
+        async check(sessionId: string, projectId: string): Promise<{ phase: string }> {
+          remoteConnectionChecks.push({ sessionId, projectId })
+          return remoteConnectionCheck()
+        }
+        async observe<T>(_projectId: string, operation: () => Promise<T>): Promise<T> {
+          return operation()
+        }
+        noteRemoteRunLost(): void {
+          return undefined
+        }
+      }
+    },
+    './agent/remote-workspace-boundary': {
+      remoteBashApprovalScope: (hostAlias: string, cwd: string) =>
+        `SSH ${hostAlias} · cwd ${cwd}；Shell 命令可访问项目目录之外，当前路径检查不是命令沙箱。`,
+      resolveRemoteWorkspacePath: async (request: Record<string, unknown>) => ({
+        ...request,
+        path: '/canonical/project/readme.md',
+        hostAlias: 'cluster-one'
+      }),
+      resolveRemoteBashContext: async (request: Record<string, unknown>) => ({
+        ...request,
+        cwd: '/canonical/project',
+        hostAlias: 'cluster-one',
+        approvalScope: 'SSH cluster-one · cwd /canonical/project；Shell 命令可访问项目目录之外'
+      })
+    },
+    './agent/remote-workspace-read': {
+      readRemoteWorkspacePath: async (request: Record<string, unknown>) => ({
+        kind: 'file',
+        path: 'ssh://cluster-one/canonical/project/readme.md',
+        content: `remote:${request.path}`,
+        fileSize: 13,
+        contentType: 'text/plain'
+      })
+    },
+    './agent/remote-workspace-file-ui': {
+      previewRemoteWorkspaceFile: async (request: Record<string, unknown>) => ({
+        path: 'ssh://cluster-one/canonical/project/readme.md',
+        name: 'readme.md',
+        displayPath: 'cluster-one/canonical/project/readme.md',
+        rootPath: 'ssh://cluster-one/canonical/project',
+        rootLabel: 'cluster-one',
+        kind: 'text',
+        mimeType: 'text/plain',
+        bytes: 7,
+        previewBytes: 7,
+        truncated: false,
+        content: `remote:${request.path}`
+      }),
+      listRemoteWorkspaceDirectory: async (request: Record<string, unknown>) => ({
+        path: 'ssh://cluster-one/canonical/project',
+        name: 'project',
+        displayPath: 'cluster-one/canonical/project',
+        rootPath: 'ssh://cluster-one/canonical/project',
+        rootLabel: 'cluster-one',
+        entries: [
+          {
+            path: 'ssh://cluster-one/canonical/project/readme.md',
+            name: 'readme.md',
+            displayPath: 'cluster-one/canonical/project/readme.md',
+            kind: 'file'
+          }
+        ],
+        truncated: false,
+        requestPath: request.path
+      })
+    },
+    './agent/remote-workspace-search': {
+      remoteGlob: async (request: Record<string, unknown>) => ({
+        paths: ['ssh://cluster-one/canonical/project/readme.md'],
+        content: `glob:${request.path}`,
+        truncated: false,
+        engine: 'rg',
+        gitignoreApplied: true
+      }),
+      remoteGrep: async (request: Record<string, unknown>) => ({
+        matches: [],
+        content: `grep:${request.pattern}`,
+        fileCount: 0,
+        matchCount: 0,
+        truncated: false,
+        engine: 'rg',
+        gitignoreApplied: true
+      })
+    },
+    './agent/remote-workspace-bash': {
+      RemoteWorkspaceBashManager: class {
+        constructor(
+          private readonly options: { beforeRun?: (request: Record<string, unknown>) => void }
+        ) {}
+        async run(request: Record<string, unknown>): Promise<unknown> {
+          this.options.beforeRun?.(request)
+          return {
+            status: 'completed',
+            hostAlias: 'cluster-one',
+            cwd: '/canonical/project',
+            exitCode: 0,
+            stdout: 'remote-ok',
+            stderr: '',
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            wallTimeMs: 1
+          }
+        }
+        cancel(): boolean {
+          return true
+        }
+        cancelSession(): void {
+          this.cancel()
+        }
+        cancelAll(): void {
+          this.cancel()
+        }
+      }
+    },
+    './agent/remote-workspace-write': {
+      RemoteWorkspaceWriteManager: class {
+        constructor(
+          private readonly options: { beforeWrite?: (request: Record<string, unknown>) => void }
+        ) {}
+        async create(request: Record<string, unknown>): Promise<unknown> {
+          this.options.beforeWrite?.(request)
+          return {
+            status: 'created',
+            path: `ssh://cluster-one/canonical/project/${request.path}`,
+            bytes: 2
+          }
+        }
+        cancel(): boolean {
+          return true
+        }
+        cancelSession(): void {
+          this.cancel()
+        }
+        cancelAll(): void {
+          this.cancel()
+        }
+      }
+    },
+    './agent/remote-workspace-edit': {
+      RemoteWorkspaceReadBasis: class {
+        readonly seen: Array<{
+          sessionId: string
+          projectId: string
+          hostAlias: string
+          path: string
+          content: string
+        }> = []
+        record(
+          sessionId: string,
+          projectId: string,
+          hostAlias: string,
+          path: string,
+          content: string
+        ): void {
+          this.seen.push({ sessionId, projectId, hostAlias, path, content })
+        }
+      },
+      RemoteWorkspaceMutationManager: class {
+        constructor(
+          private readonly options: {
+            beforeWrite?: (request: Record<string, unknown>) => void
+            beforeEdit?: (request: Record<string, unknown>) => void
+          }
+        ) {}
+        async write(request: Record<string, unknown>): Promise<unknown> {
+          this.options.beforeWrite?.(request)
+          return {
+            status: 'created',
+            path: `ssh://cluster-one/canonical/project/${request.path}`,
+            bytes: 2
+          }
+        }
+        async edit(request: Record<string, unknown>): Promise<unknown> {
+          this.options.beforeEdit?.(request)
+          return {
+            status: 'updated',
+            path: `ssh://cluster-one/canonical/project/${request.path}`,
+            bytes: 2,
+            oldText: request.old_string,
+            newText: request.new_string
+          }
+        }
+        cancel(): boolean {
+          return true
+        }
+        cancelSession(): void {
+          this.cancel()
+        }
+        cancelAll(): void {
+          this.cancel()
+        }
+      }
+    },
+    './agent/remote-project-anchor': {
+      remoteProjectAnchorPath: (id: string) => `/isolated/remote-project-anchors/${id}`,
+      ensureRemoteProjectAnchor: (id: string) => `/isolated/remote-project-anchors/${id}`,
+      isRemoteProjectAnchorPath: (path: string) => path.includes('/remote-project-anchors/')
     },
     './agent/wrappers/remote-connection-resolver': {
-      resolveProjectRemoteTarget: (): { reason: string } => ({
-        reason: 'remote execution is mocked out in main-integration.test.ts'
-      })
+      resolveProjectRemoteTarget: (project: { id?: string } | undefined): { reason: string } => {
+        if (project?.id) remoteResolverProjectIds.push(project.id)
+        return { reason: 'remote execution is mocked out in main-integration.test.ts' }
+      }
     },
     './agent/diagnostics': { formatDiagnostics },
     './agent/app-logger': {
@@ -1662,6 +2235,21 @@ async function harness(
     approvalOptions,
     runnerEvents,
     createdPhiSessions,
+    remoteConnectionChecks,
+    wrapperJobOptions,
+    remoteResolverProjectIds,
+    remoteDoctorCalls,
+    setWrapperPlan: (plan) => {
+      wrapperPlan = plan
+    },
+    setRemoteProjectPhase: (phase) => {
+      remoteProjectPhase = phase
+    },
+    retargetRequests,
+    submitPlanCalls,
+    setRemoteConnectionCheck: (impl) => {
+      remoteConnectionCheck = impl
+    },
     createdAgentOptions,
     resourceLoaderOptions,
     updatedProjectDefaults,
@@ -1691,11 +2279,19 @@ async function harness(
     notebookExecutionCalls,
     notebookFormatCalls,
     openDialogOptions,
+    saveDialogOptions,
+    downloadCalls,
     operationLog,
     appSettingsUpdates,
     dbConnectorEnabledUpdates,
     setOpenDialogResult: (result): void => {
       openDialogResult = result
+    },
+    setSaveDialogResult: (result): void => {
+      saveDialogResult = result
+    },
+    setDownloadImpl: (impl): void => {
+      downloadImpl = impl
     },
     copiedText: () => copiedText
   }
@@ -2161,6 +2757,136 @@ test('main IPC: local file open and directory listing stay inside allowed roots'
   )
 })
 
+test('remote file panel IPC uses the bound project request and never falls through local file IPC', async () => {
+  const app = await harness()
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const request = {
+    sessionId: String(app.createdPhiSessions[0]?.sessionId),
+    projectId: 'remote-project-1',
+    path: '/canonical/project/readme.md'
+  }
+  const preview = (await app.invoke('remoteWorkspace:preview', request)) as {
+    path: string
+    content: string
+    rootPath: string
+  }
+  assert.equal(preview.path, 'ssh://cluster-one/canonical/project/readme.md')
+  assert.equal(preview.content, 'remote:/canonical/project/readme.md')
+  assert.equal(preview.rootPath, 'ssh://cluster-one/canonical/project')
+  const listing = (await app.invoke('remoteWorkspace:listDirectory', {
+    ...request,
+    path: '/canonical/project'
+  })) as { requestPath: string; entries: Array<{ path: string }> }
+  assert.equal(listing.requestPath, '/canonical/project')
+  assert.equal(listing.entries[0]?.path, 'ssh://cluster-one/canonical/project/readme.md')
+  const resultRequest = {
+    projectId: 'remote-project-1',
+    hostProfileId: 'host-1',
+    runId: 'wrun_a',
+    scope: 'output',
+    path: ''
+  }
+  assert.deepEqual(await app.invoke('wrapperResults:listDirectory', resultRequest), resultRequest)
+  const resultPreview = (await app.invoke('wrapperResults:preview', {
+    ...resultRequest,
+    path: 'report.txt',
+    requestId: 'preview_001'
+  })) as { path: string; content: string }
+  assert.equal(resultPreview.path, 'ssh://cluster-one/canonical/project/report.txt')
+  assert.equal(resultPreview.content, 'remote result')
+  const resultRange = (await app.invoke('wrapperResults:readRange', {
+    ...resultRequest,
+    path: 'data.bin',
+    requestId: 'range_001',
+    offset: 0,
+    length: 1
+  })) as { dataBase64: string }
+  assert.equal(resultRange.dataBase64, 'AA==')
+  const pendingRead = app.invoke('wrapperResults:readRange', {
+    ...resultRequest,
+    path: 'stall.bin',
+    requestId: 'range_cancel_001',
+    offset: 0,
+    length: 1
+  })
+  assert.equal(await app.invoke('wrapperResults:cancelRead', 'range_cancel_001'), true)
+  await assert.rejects(pendingRead, /读取已取消/)
+  assert.equal(await app.invoke('wrapperResults:cancelRead', 'range_cancel_001'), false)
+  assert.equal(app.previewReadRequests.length, 0)
+  await assert.rejects(app.invoke('files:preview', preview.path), /只能预览绝对路径/)
+  await assert.rejects(app.invoke('files:listDirectory', listing.entries[0]?.path))
+  await assert.rejects(app.invoke('files:reveal', preview.path))
+})
+
+test('remote result download requires a save-dialog choice and routes progress and cancellation', async () => {
+  const app = await harness()
+  const request = {
+    projectId: 'remote-project-1',
+    hostProfileId: 'host-1',
+    runId: 'wrun_a',
+    scope: 'output',
+    path: 'report.html',
+    requestId: 'download_001'
+  }
+  assert.equal(app.downloadCalls.length, 0)
+  await assert.rejects(
+    app.invoke('wrapperResults:download', { ...request, destination: '/untrusted/path' }),
+    /只能指定已保存的运行/
+  )
+  assert.equal(app.saveDialogOptions.length, 0)
+  assert.deepEqual(await app.invoke('wrapperResults:download', request), { status: 'cancelled' })
+  assert.equal(app.downloadCalls.length, 0)
+  assert.equal(app.saveDialogOptions.at(-1)?.defaultPath, 'report.html')
+
+  app.setSaveDialogResult({ canceled: false, filePath: '/chosen/report.html' })
+  app.setDownloadImpl(async (_request, destination, options) => {
+    options.onProgress?.({
+      requestId: 'download_001',
+      phase: 'downloading',
+      bytesDownloaded: 2,
+      totalBytes: 3
+    })
+    return {
+      status: 'saved',
+      path: destination,
+      bytes: 3,
+      sha256: 'sha256:abc',
+      remoteDigestVerified: true
+    }
+  })
+  const saved = (await app.invoke('wrapperResults:download', request)) as { path: string }
+  assert.equal(saved.path, '/chosen/report.html')
+  assert.deepEqual(app.downloadCalls[0], { request, destination: '/chosen/report.html' })
+  assert.ok(
+    app.events.some(
+      (event) =>
+        event.channel === 'wrapperResults:downloadProgress' &&
+        (event.data as { bytesDownloaded?: number }).bytesDownloaded === 2
+    )
+  )
+  assert.equal(await app.invoke('wrapperResults:cancelDownload', 'download_001'), false)
+
+  const pendingRequest = { ...request, requestId: 'download_002' }
+  app.setDownloadImpl(async (_request, _destination, options) => {
+    options.onProgress?.({
+      requestId: 'download_002',
+      phase: 'downloading',
+      bytesDownloaded: 0,
+      totalBytes: 3
+    })
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(new Error('cancelled by user')), {
+        once: true
+      })
+    })
+  })
+  const pending = app.invoke('wrapperResults:download', pendingRequest)
+  await tick()
+  assert.equal(await app.invoke('wrapperResults:cancelDownload', 'download_002'), true)
+  await assert.rejects(pending, /下载已取消/)
+  assert.equal(await app.invoke('wrapperResults:cancelDownload', 'download_002'), false)
+})
+
 test('main IPC: diagnostics are copied without conversation or raw tool output', async () => {
   const app = await harness()
 
@@ -2201,6 +2927,846 @@ test('main IPC: unavailable project paths are blocked before creating a project 
     /项目路径不可用/
   )
   assert.equal(app.sessions.length, 0)
+})
+
+test('main IPC: remote doctor accepts a host profile before any project exists', async () => {
+  const app = await harness()
+  assert.deepEqual(await app.invoke('remote:doctor', 'host-1', '/cluster/work'), {
+    hostProfileId: 'host-1',
+    checkedAt: '2026-09-24T00:00:00.000Z',
+    ok: true,
+    checks: [{ id: 'ssh', status: 'ok', message: '/cluster/work' }]
+  })
+  await assert.rejects(app.invoke('remote:doctor', '', '/cluster/work'), /档案 ID 无效/)
+  await assert.rejects(app.invoke('remote:doctor', 'host-1', 42), /路径无效/)
+  assert.equal(app.sessions.length, 0)
+})
+
+test('main IPC lists OpenSSH configuration entries without creating Phi profiles', async () => {
+  const app = await harness()
+  assert.deepEqual(await app.invoke('projects:listOpenSshHosts'), [
+    {
+      alias: 'lab-hpc',
+      hostname: 'compute.example.invalid',
+      user: 'scientist',
+      port: 22022,
+      identityFiles: ['/tmp/lab-key']
+    }
+  ])
+  assert.deepEqual(await app.invoke('projects:listRemoteHosts'), [
+    { id: 'ssh-config:lab-hpc', label: 'lab-hpc', hostAlias: 'lab-hpc', source: 'ssh-config' }
+  ])
+})
+
+test('main IPC writes a new SSH host through the config editor and returns its selectable identity', async () => {
+  const app = await harness()
+  const result = (await app.invoke('projects:saveOpenSshHost', {
+    alias: 'new-lab',
+    hostname: 'compute.example.invalid',
+    user: 'scientist',
+    port: 22022
+  })) as { id: string; source: string }
+  assert.deepEqual(result, {
+    id: 'ssh-config:new-lab',
+    label: 'new-lab',
+    hostAlias: 'new-lab',
+    source: 'ssh-config'
+  })
+  await assert.rejects(app.invoke('projects:saveOpenSshHost', null), /配置无效/)
+})
+
+test('main IPC protects the target identity of a host bound to a remote project', async () => {
+  const app = await harness()
+  await assert.rejects(
+    app.invoke('projects:saveRemoteHost', {
+      id: 'host-1',
+      label: 'Cluster',
+      hostAlias: 'other-server',
+      user: 'scientist'
+    }),
+    /已绑定项目/
+  )
+  const updated = (await app.invoke('projects:saveRemoteHost', {
+    id: 'host-1',
+    label: 'Cluster',
+    hostAlias: 'cluster-one',
+    identityFile: '/tmp/new-key'
+  })) as { identityFile: string }
+  assert.equal(updated.identityFile, '/tmp/new-key')
+})
+
+test('main IPC: a remote project is registered without opening a local project session', async () => {
+  const app = await harness()
+  const project = (await app.invoke('projects:createRemote', {
+    name: 'Cluster',
+    hostProfileId: 'host-1',
+    remoteRoot: '/cluster/project',
+    permissionMode: 'ask'
+  })) as { id: string; location: { kind: string; remoteRoot: string } }
+  assert.equal(project.id, 'remote-project-1')
+  assert.deepEqual(project.location, {
+    kind: 'ssh',
+    hostProfileId: 'host-1',
+    remoteRoot: '/cluster/project',
+    canonicalRoot: '/canonical/project'
+  })
+  assert.equal(app.sessions.length, 0)
+})
+
+test('main IPC: remote project session is tied to its ID and a private anchor', async () => {
+  const app = await harness()
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    path: string
+    cwd: string
+    displayCwd: string
+    projectId: string
+    projectLocation: { kind: string; remoteRoot: string }
+  }
+  assert.equal(current.cwd, '/isolated/remote-project-anchors/remote-project-1')
+  assert.equal(current.displayCwd, '/cluster/project')
+  assert.equal(current.projectId, 'remote-project-1')
+  assert.equal(current.projectLocation.kind, 'ssh')
+  assert.equal(app.createdPhiSessions.at(-1)?.projectId, 'remote-project-1')
+  assert.equal(app.createdPhiSessions.at(-1)?.cwd, current.cwd)
+  assert.deepEqual(await app.invoke('projects:sessionsById', 'remote-project-1'), [])
+  await assert.rejects(
+    app.invoke('files:reveal', `${current.cwd}/AGENTS.md`),
+    /只能显示 Phi 保存的文件或当前项目内的文件/
+  )
+  assert.deepEqual(
+    await app.invoke('files:statLocalPaths', current.cwd, [`${current.cwd}/AGENTS.md`]),
+    [{ path: `${current.cwd}/AGENTS.md`, kind: 'missing' }]
+  )
+  assert.deepEqual(
+    ((await app.invoke('skills:list', current.cwd)) as Array<{ name: string }>).map(
+      (skill) => skill.name
+    ),
+    ['global']
+  )
+  assert.deepEqual(
+    ((await app.invoke('skills:list', '/projects/current')) as Array<{ name: string }>).map(
+      (skill) => skill.name
+    ),
+    ['global']
+  )
+  assert.deepEqual(await app.invoke('agents:list', current.cwd), [])
+  assert.deepEqual(
+    ((await app.invoke('mcp:listServers', current.cwd)) as Array<{ name: string }>).map(
+      (server) => server.name
+    ),
+    ['global-mcp']
+  )
+  assert.deepEqual(
+    ((await app.invoke('mcp:listServers', '/projects/current')) as Array<{ name: string }>).map(
+      (server) => server.name
+    ),
+    ['global-mcp']
+  )
+  assert.deepEqual(
+    await app.invoke('skills:read', '/isolated/skills/global/SKILL.md', current.cwd),
+    { filePath: '/isolated/skills/global/SKILL.md', content: '# global skill\n' }
+  )
+  await assert.rejects(app.invoke('files:pickInput'), /不会打开本机会话目录/)
+  await assert.rejects(app.invoke('analysis:initializeProject', current.cwd), /请选择/)
+  await assert.rejects(app.invoke('analysis:startJupyter', current.cwd), /请选择/)
+  assert.deepEqual(app.jupyterServerCalls, [])
+  assert.deepEqual(app.notebookSessionCalls, [])
+  await assert.rejects(
+    app.invoke('skills:read', `${current.cwd}/AGENTS.md`, current.cwd),
+    /暂不可用/
+  )
+  await assert.rejects(
+    app.invoke('skills:read', '/projects/current/.phi/skills/local/SKILL.md', '/projects/current'),
+    /暂不可用/
+  )
+  await assert.rejects(app.invoke('wrappers:submitPlan', 'plan-1'), /不会在本机执行/)
+  await app.invoke('sessions:create')
+  const restored = (await app.invoke('sessions:switch', current.path)) as {
+    projectId: string
+    displayCwd: string
+    cwd: string
+  }
+  assert.equal(restored.projectId, 'remote-project-1')
+  assert.equal(restored.displayCwd, '/cluster/project')
+  assert.equal(restored.cwd, current.cwd)
+})
+
+test(
+  'main IPC: offline remote session restores history without waiting for SSH and retries by IDs',
+  { timeout: 3000 },
+  async () => {
+    const app = await harness()
+    const pending = deferred<{ phase: string }>()
+    app.setRemoteConnectionCheck(() => pending.promise)
+    const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+      path: string
+      phiSessionId: string
+      projectId: string
+    }
+    assert.equal(current.projectId, 'remote-project-1')
+    assert.deepEqual(app.remoteConnectionChecks, [
+      { sessionId: current.phiSessionId, projectId: current.projectId }
+    ])
+
+    app.appendedSessionEvents.push({
+      sessionId: current.phiSessionId,
+      event: { type: 'user_message', content: 'saved while offline', runId: 'old-run' }
+    })
+    const restored = (await app.invoke('sessions:switch', current.path)) as {
+      projectId: string
+      messages: Array<{ content?: string }>
+    }
+    assert.equal(restored.projectId, current.projectId)
+    assert.equal(
+      restored.messages.some((message) => message.content === 'saved while offline'),
+      true
+    )
+    assert.equal(app.remoteConnectionChecks.length, 2)
+
+    await assert.rejects(
+      app.invoke('projects:retryRemoteConnection', {
+        sessionId: current.phiSessionId,
+        projectId: current.projectId,
+        hostAlias: 'untrusted-host'
+      }),
+      /必须包含会话和项目 ID/
+    )
+    const retry = app.invoke('projects:retryRemoteConnection', {
+      sessionId: current.phiSessionId,
+      projectId: current.projectId
+    })
+    assert.deepEqual(app.remoteConnectionChecks.at(-1), {
+      sessionId: current.phiSessionId,
+      projectId: current.projectId
+    })
+    pending.resolve({ phase: 'reachable' })
+    assert.deepEqual(await retry, { phase: 'reachable' })
+  }
+)
+
+test('an older SSH session without a saved remote location cannot start local anchor tools', async () => {
+  const app = await harness()
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  delete app.createdPhiSessions[0].projectLocation
+  await assert.rejects(
+    app.invoke('agent:prompt', 'read a project file'),
+    /远程项目旧会话缺少服务器位置绑定/
+  )
+  assert.equal(app.sessions.length, 0)
+})
+
+test('main IPC allows only a plan snapshotted for the active SSH project to reach submit', async () => {
+  const app = await harness()
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  app.setWrapperPlan({
+    revision: 1,
+    targetSelection: {
+      projectId: 'another-project',
+      target: 'remote',
+      projectLocation: { kind: 'ssh' }
+    }
+  })
+  await assert.rejects(
+    app.invoke('wrappers:submitPlan', 'plan-1', undefined, {
+      expectedRevision: 1,
+      target: 'remote',
+      projectId: 'another-project'
+    }),
+    /只能提交绑定本项目服务器/
+  )
+  app.setWrapperPlan({
+    revision: 1,
+    targetSelection: {
+      projectId: 'remote-project-1',
+      target: 'local',
+      projectLocation: { kind: 'ssh' }
+    }
+  })
+  await assert.rejects(
+    app.invoke('wrappers:submitPlan', 'plan-1', undefined, {
+      expectedRevision: 1,
+      target: 'local',
+      projectId: 'remote-project-1'
+    }),
+    /不会在本机执行/
+  )
+  app.setWrapperPlan({
+    revision: 2,
+    targetSelection: {
+      projectId: 'remote-project-1',
+      target: 'remote',
+      hostProfileId: 'host-1',
+      remoteRoot: '/canonical/project',
+      projectLocation: { kind: 'ssh' }
+    }
+  })
+  const confirmed = {
+    expectedRevision: 2,
+    target: 'remote',
+    projectId: 'remote-project-1',
+    hostProfileId: 'host-1',
+    remoteRoot: '/canonical/project'
+  }
+  await assert.rejects(
+    app.invoke('wrappers:submitPlan', 'plan-1', undefined, { ...confirmed, expectedRevision: 1 }),
+    /执行目标已变化/
+  )
+  app.setRemoteProjectPhase('offline')
+  await assert.rejects(
+    app.invoke('wrappers:submitPlan', 'plan-1', undefined, confirmed),
+    /服务器离线/
+  )
+  app.setRemoteProjectPhase('reachable')
+  await assert.rejects(
+    app.invoke('wrappers:submitPlan', 'plan-1', undefined, confirmed),
+    /计划不存在: \(mocked/
+  )
+  app.setWrapperPlan({
+    revision: 3,
+    params: { outdir: '/scratch/approved-output' },
+    targetSelection: {
+      projectId: 'remote-project-1',
+      target: 'remote',
+      hostProfileId: 'host-1',
+      remoteRoot: '/canonical/project',
+      projectLocation: { kind: 'ssh' }
+    }
+  })
+  const externalConfirmation = { ...confirmed, expectedRevision: 3 }
+  await assert.rejects(
+    app.invoke('wrappers:submitPlan', 'plan-1', undefined, externalConfirmation),
+    /执行目标已变化/
+  )
+  await assert.rejects(
+    app.invoke('wrappers:submitPlan', 'plan-1', undefined, {
+      ...externalConfirmation,
+      externalOutputRoot: '/scratch/other'
+    }),
+    /执行目标已变化/
+  )
+  await assert.rejects(
+    app.invoke('wrappers:submitPlan', 'plan-1', undefined, {
+      ...externalConfirmation,
+      externalOutputRoot: '/scratch/approved-output'
+    }),
+    /计划不存在: \(mocked/
+  )
+  assert.deepEqual(app.submitPlanCalls, [
+    { planId: 'plan-1', heavyWorkloadAcknowledged: undefined },
+    { planId: 'plan-1', heavyWorkloadAcknowledged: undefined }
+  ])
+})
+
+test('main IPC forwards an explicit local fallback request only with revision and confirmation', async () => {
+  const app = await harness()
+  await assert.rejects(
+    app.invoke('wrappers:retargetPlan', {
+      planId: 'plan-1',
+      target: 'local',
+      expectedRevision: 1,
+      host: 'other'
+    }),
+    /目标变更请求无效/
+  )
+  const request = {
+    planId: 'plan-1',
+    target: 'local',
+    expectedRevision: 1,
+    confirmedLocalFallback: true
+  }
+  app.setWrapperPlan({
+    revision: 1,
+    targetSelection: { projectId: 'local-project', target: 'remote' }
+  })
+  const updated = (await app.invoke('wrappers:retargetPlan', request)) as { revision: number }
+  assert.equal(updated.revision, 2)
+  assert.deepEqual(app.retargetRequests, [request])
+})
+
+test('main IPC: remote conversation uses its project identity and disables anchor resources', async () => {
+  const app = await harness()
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await app.invoke('agent:prompt', 'hello from the cluster project')
+  const options = app.createdAgentOptions.at(-1)
+  assert.ok(options)
+  assert.deepEqual(options.remoteProject, {
+    phiSessionId: app.createdPhiSessions[0]?.sessionId,
+    projectId: 'remote-project-1',
+    location: {
+      kind: 'ssh',
+      hostProfileId: 'host-1',
+      remoteRoot: '/cluster/project',
+      canonicalRoot: '/canonical/project'
+    },
+    contextFiles: [
+      { path: 'ssh://cluster-one/cluster/project/AGENTS.md', content: 'Remote instructions v1' }
+    ]
+  })
+  const remoteAgent = (
+    options.phiAgents as Array<{ name: string; tools: string[]; skills: string[] }>
+  )[0]
+  assert.equal(remoteAgent.name, 'Wrapper')
+  assert.deepEqual(remoteAgent.skills, [])
+  assert.deepEqual(remoteAgent.tools, [
+    'read',
+    'glob',
+    'grep',
+    'bash',
+    'write',
+    'edit',
+    'wrapper_search',
+    'wrapper_inspect',
+    'wrapper_run',
+    'wrapper_status',
+    'wrapper_wait',
+    'wrapper_cancel'
+  ])
+  const runtimeSessionId = app.sessions[0]?.runtimeSessionId
+  assert.ok(runtimeSessionId)
+  const resolveProjectForRun = app.wrapperJobOptions.resolveProjectForRun as
+    ((sessionId: string) => { id: string } | undefined) | undefined
+  const resolveRemoteTarget = app.wrapperJobOptions.resolveRemoteTarget as
+    ((request: { originSessionId: string }) => unknown) | undefined
+  assert.equal(resolveProjectForRun?.(runtimeSessionId)?.id, 'remote-project-1')
+  resolveRemoteTarget?.({ originSessionId: runtimeSessionId })
+  assert.equal(app.remoteResolverProjectIds.at(-1), 'remote-project-1')
+  const checkRemoteEnvironment = app.wrapperJobOptions.checkRemoteEnvironment as
+    | ((input: {
+        project: { id: string; location: { kind: string; hostProfileId: string } }
+        resolved: { target: { workspaceRoot: string; hpc: { scheduler: 'local' } } }
+        profile: 'singularity'
+      }) => Promise<unknown>)
+    | undefined
+  const boundProject = resolveProjectForRun?.(runtimeSessionId) as {
+    id: string
+    location: { kind: string; hostProfileId: string }
+  }
+  await checkRemoteEnvironment?.({
+    project: boundProject,
+    resolved: { target: { workspaceRoot: '/canonical/project', hpc: { scheduler: 'local' } } },
+    profile: 'singularity'
+  })
+  assert.deepEqual(app.remoteDoctorCalls.at(-1), {
+    hostProfileId: 'host-1',
+    remotePath: '/canonical/project',
+    options: { scope: 'full', scheduler: 'local', controller: 'login', runtime: 'singularity' }
+  })
+  const loader = app.resourceLoaderOptions.at(-1)
+  assert.equal(loader?.noContextFiles, true)
+  assert.equal(loader?.cwd, '/isolated')
+  assert.equal(loader?.noSkills, undefined)
+  assert.equal(loader?.noExtensions, true)
+  assert.equal(app.approvalOptions.length, 1)
+  const current = (await app.invoke('sessions:current')) as {
+    displayCwd: string
+    projectId: string
+  }
+  assert.equal(current.displayCwd, '/cluster/project')
+  assert.equal(current.projectId, 'remote-project-1')
+})
+
+test('main bridge exposes only ID-bound remote path and Bash context requests', async () => {
+  const app = await harness()
+  const pathHandler = app.hostHandlers.get('remoteWorkspace.resolvePath')
+  const bashHandler = app.hostHandlers.get('remoteWorkspace.resolveBashContext')
+  const readHandler = app.hostHandlers.get('remoteWorkspace.read')
+  const globHandler = app.hostHandlers.get('remoteWorkspace.glob')
+  const grepHandler = app.hostHandlers.get('remoteWorkspace.grep')
+  const bashRunHandler = app.hostHandlers.get('remoteWorkspace.bash')
+  const bashCancelHandler = app.hostHandlers.get('remoteWorkspace.cancelBash')
+  const writeHandler = app.hostHandlers.get('remoteWorkspace.write')
+  const writeCancelHandler = app.hostHandlers.get('remoteWorkspace.cancelWrite')
+  const editHandler = app.hostHandlers.get('remoteWorkspace.edit')
+  const editCancelHandler = app.hostHandlers.get('remoteWorkspace.cancelEdit')
+  assert.ok(pathHandler)
+  assert.ok(bashHandler)
+  assert.ok(readHandler)
+  assert.ok(globHandler)
+  assert.ok(grepHandler)
+  assert.ok(bashRunHandler)
+  assert.ok(bashCancelHandler)
+  assert.ok(writeHandler)
+  assert.ok(writeCancelHandler)
+  assert.ok(editHandler)
+  assert.ok(editCancelHandler)
+  assert.deepEqual(
+    await pathHandler({
+      sessionId: 'session-a',
+      projectId: 'remote-project-1',
+      path: 'readme.md',
+      mode: 'existing'
+    }),
+    {
+      sessionId: 'session-a',
+      projectId: 'remote-project-1',
+      path: '/canonical/project/readme.md',
+      mode: 'existing',
+      hostAlias: 'cluster-one'
+    }
+  )
+  assert.deepEqual(await bashHandler({ sessionId: 'session-a', projectId: 'remote-project-1' }), {
+    sessionId: 'session-a',
+    projectId: 'remote-project-1',
+    cwd: '/canonical/project',
+    hostAlias: 'cluster-one',
+    approvalScope: 'SSH cluster-one · cwd /canonical/project；Shell 命令可访问项目目录之外'
+  })
+  assert.deepEqual(
+    await readHandler({ sessionId: 'session-a', projectId: 'remote-project-1', path: 'readme.md' }),
+    {
+      kind: 'file',
+      path: 'ssh://cluster-one/canonical/project/readme.md',
+      content: 'remote:readme.md',
+      fileSize: 13,
+      contentType: 'text/plain'
+    }
+  )
+  assert.equal(
+    (
+      (await globHandler({
+        sessionId: 'session-a',
+        projectId: 'remote-project-1',
+        path: '*.md'
+      })) as { content: string }
+    ).content,
+    'glob:*.md'
+  )
+  assert.equal(
+    (
+      (await grepHandler({
+        sessionId: 'session-a',
+        projectId: 'remote-project-1',
+        pattern: 'marker'
+      })) as { content: string }
+    ).content,
+    'grep:marker'
+  )
+})
+
+test('remote ask-mode Bash needs a one-use approval tied to session, call and command', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.hold = true
+    return session
+  })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const prompt = app.invoke('agent:prompt', 'run a command')
+  await tick()
+  assert.equal(app.approvalOptions.length, 1)
+  const options = app.approvalOptions[0] as {
+    getContext: () => { cwd: string; scopeNote: string; sessionId: string }
+    onApprovalResolved: (
+      request: {
+        sessionId: string
+        requestId: string
+        toolCallId: string
+        toolName: string
+        command: string
+        approvalDigest: string
+        cwd: string
+      },
+      approved: boolean
+    ) => void
+  }
+  const context = options.getContext()
+  assert.equal(context.cwd, 'ssh://cluster-one/canonical/project')
+  assert.match(context.scopeNote, /Shell 命令可访问项目目录之外/)
+  const run = app.hostHandlers.get('remoteWorkspace.bash')
+  assert.ok(run)
+  const request = {
+    sessionId: context.sessionId,
+    projectId: 'remote-project-1',
+    requestId: 'remote-run-1',
+    toolCallId: 'tool-1',
+    command: 'printf remote-ok'
+  }
+  await assert.rejects(run(request), /尚未获得本次会话的批准/)
+  options.onApprovalResolved(
+    {
+      sessionId: context.sessionId,
+      requestId: 'approval-1',
+      toolCallId: 'tool-1',
+      toolName: 'bash',
+      command: request.command,
+      approvalDigest: fakeBashApprovalDigest(request),
+      cwd: context.cwd
+    },
+    true
+  )
+  assert.equal(((await run(request)) as { stdout: string }).stdout, 'remote-ok')
+  await assert.rejects(run(request), /尚未获得本次会话的批准/)
+  options.onApprovalResolved(
+    {
+      sessionId: context.sessionId,
+      requestId: 'approval-2',
+      toolCallId: 'tool-2',
+      toolName: 'bash',
+      command: 'printf safe',
+      approvalDigest: fakeBashApprovalDigest({ command: 'printf safe' }),
+      cwd: context.cwd
+    },
+    true
+  )
+  await assert.rejects(
+    run({ ...request, requestId: 'remote-run-2', toolCallId: 'tool-2', command: 'printf changed' }),
+    /尚未获得本次会话的批准/
+  )
+  options.onApprovalResolved(
+    {
+      sessionId: context.sessionId,
+      requestId: 'approval-3',
+      toolCallId: 'tool-3',
+      toolName: 'bash',
+      command: request.command,
+      approvalDigest: fakeBashApprovalDigest({ command: request.command, env: { TOKEN: 'safe' } }),
+      cwd: context.cwd
+    },
+    true
+  )
+  await assert.rejects(
+    run({
+      ...request,
+      requestId: 'remote-run-3',
+      toolCallId: 'tool-3',
+      env: { TOKEN: 'changed' }
+    }),
+    /尚未获得本次会话的批准/
+  )
+  await app.invoke('agent:stop')
+  await prompt
+})
+
+test('remote ask-mode write needs a one-use approval tied to host, path and content', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.hold = true
+    return session
+  })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const prompt = app.invoke('agent:prompt', 'create one file')
+  await tick()
+  const options = app.approvalOptions[0] as {
+    getContext: () => { cwd: string; writeScopeNote: string; sessionId: string }
+    onApprovalResolved: (
+      request: {
+        sessionId: string
+        requestId: string
+        toolCallId: string
+        toolName: string
+        approvalDigest: string
+        cwd: string
+      },
+      approved: boolean
+    ) => void
+  }
+  const context = options.getContext()
+  assert.equal(context.cwd, 'ssh://cluster-one/canonical/project')
+  assert.match(context.writeScopeNote, /新建文件或修改已读取且未变化的文件/)
+  const run = app.hostHandlers.get('remoteWorkspace.write')
+  assert.ok(run)
+  const request = {
+    sessionId: context.sessionId,
+    projectId: 'remote-project-1',
+    requestId: 'write-1',
+    toolCallId: 'tool-write-1',
+    path: 'new.txt',
+    content: 'ok'
+  }
+  await assert.rejects(run(request), /尚未获得本次会话的批准/)
+  options.onApprovalResolved(
+    {
+      sessionId: context.sessionId,
+      requestId: 'approval-write-1',
+      toolCallId: request.toolCallId,
+      toolName: 'write',
+      approvalDigest: fakeWriteApprovalDigest(request),
+      cwd: context.cwd
+    },
+    true
+  )
+  await assert.rejects(run({ ...request, path: 'other.txt' }), /尚未获得本次会话的批准/)
+  options.onApprovalResolved(
+    {
+      sessionId: context.sessionId,
+      requestId: 'approval-write-content',
+      toolCallId: request.toolCallId,
+      toolName: 'write',
+      approvalDigest: fakeWriteApprovalDigest(request),
+      cwd: context.cwd
+    },
+    true
+  )
+  await assert.rejects(run({ ...request, content: 'changed' }), /尚未获得本次会话的批准/)
+  options.onApprovalResolved(
+    {
+      sessionId: context.sessionId,
+      requestId: 'approval-write-2',
+      toolCallId: request.toolCallId,
+      toolName: 'write',
+      approvalDigest: fakeWriteApprovalDigest(request),
+      cwd: context.cwd
+    },
+    true
+  )
+  assert.equal(((await run(request)) as { status: string }).status, 'created')
+  await assert.rejects(run(request), /尚未获得本次会话的批准/)
+  await app.invoke('agent:stop')
+  await prompt
+})
+
+test('remote ask-mode edit binds path, replacement and one-use approval', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.hold = true
+    return session
+  })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const prompt = app.invoke('agent:prompt', 'edit one file')
+  await tick()
+  const options = app.approvalOptions[0] as {
+    getContext: () => { cwd: string; writeScopeNote: string; sessionId: string }
+    onApprovalResolved: (
+      request: {
+        sessionId: string
+        requestId: string
+        toolCallId: string
+        toolName: string
+        approvalDigest: string
+        cwd: string
+      },
+      approved: boolean
+    ) => void
+  }
+  const context = options.getContext()
+  const run = app.hostHandlers.get('remoteWorkspace.edit')
+  assert.ok(run)
+  const request = {
+    sessionId: context.sessionId,
+    projectId: 'remote-project-1',
+    requestId: 'edit-1',
+    toolCallId: 'tool-edit-1',
+    path: 'existing.txt',
+    old_string: 'before',
+    new_string: 'after'
+  }
+  await assert.rejects(run(request), /尚未获得本次会话的批准/)
+  const approve = (id: string): void =>
+    options.onApprovalResolved(
+      {
+        sessionId: context.sessionId,
+        requestId: id,
+        toolCallId: request.toolCallId,
+        toolName: 'edit',
+        approvalDigest: fakeEditApprovalDigest(request),
+        cwd: context.cwd
+      },
+      true
+    )
+  approve('approval-edit-1')
+  await assert.rejects(run({ ...request, new_string: 'changed' }), /尚未获得本次会话的批准/)
+  approve('approval-edit-2')
+  assert.equal(((await run(request)) as { status: string }).status, 'updated')
+  await assert.rejects(run(request), /尚未获得本次会话的批准/)
+  await app.invoke('agent:stop')
+  await prompt
+})
+
+test('remote background Wrapper approval keeps host, project, timeline and one-use ticket after the parent turn', async () => {
+  const app = await harness()
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await app.invoke('agent:prompt', 'inspect wrapper in the background')
+  const options = app.approvalOptions[0] as {
+    getContext: (event: { agentRunId?: string }) => {
+      sessionId: string
+      sessionPath: string
+      runId: string
+      cwd: string
+      projectName: string
+      writeScopeNote: string
+    }
+    onApprovalRequested: (request: Record<string, unknown>) => void
+    onApprovalResolved: (request: Record<string, unknown>, approved: boolean) => void
+  }
+  const context = options.getContext({ agentRunId: 'wrapper-run-1' })
+  assert.equal(context.sessionId, app.createdPhiSessions[0]?.sessionId)
+  assert.equal(context.runId, 'wrapper-run-1')
+  assert.equal(context.cwd, 'ssh://cluster-one/canonical/project')
+  assert.equal(context.projectName, 'Remote project')
+  assert.doesNotMatch(context.writeScopeNote, /remote-project-anchors/)
+  const run = app.hostHandlers.get('remoteWorkspace.write')
+  assert.ok(run)
+  const input = {
+    sessionId: context.sessionId,
+    projectId: 'remote-project-1',
+    requestId: 'background-write-1',
+    toolCallId: 'background-tool-1',
+    path: 'note.txt',
+    content: 'safe'
+  }
+  const approval = {
+    sessionId: context.sessionId,
+    requestId: 'approval-background-1',
+    toolCallId: input.toolCallId,
+    agentRunId: 'wrapper-run-1',
+    toolName: 'write',
+    approvalDigest: fakeWriteApprovalDigest(input),
+    cwd: context.cwd,
+    summary: `${context.writeScopeNote}\nnote.txt`
+  }
+  options.onApprovalRequested(approval)
+  assert.equal(app.appendedSessionEvents.at(-1)?.event.type, 'approval_requested')
+  assert.equal(app.appendedSessionEvents.at(-1)?.event.runId, 'wrapper-run-1')
+  assert.equal(app.updatedSessionManifests.at(-1)?.patch.status, 'needs_approval')
+  options.onApprovalResolved(approval, false)
+  assert.equal(app.appendedSessionEvents.at(-1)?.event.type, 'approval_denied')
+  await assert.rejects(run(input), /尚未获得本次会话的批准/)
+
+  const allowed = { ...approval, requestId: 'approval-background-2' }
+  options.onApprovalRequested(allowed)
+  options.onApprovalResolved(allowed, true)
+  assert.equal(((await run(input)) as { status: string }).status, 'created')
+  await assert.rejects(run(input), /尚未获得本次会话的批准/)
+  assert.equal(app.appendedSessionEvents.at(-1)?.event.type, 'approval_approved')
+})
+
+test('remote project permission switches apply to existing sessions and host tickets', async () => {
+  const app = await harness()
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await app.invoke('agent:prompt', 'inspect a file')
+  const options = app.approvalOptions[0] as { shouldGate: () => boolean }
+  assert.ok(options)
+  assert.equal(options.shouldGate(), true)
+  const sessionId = String(app.createdPhiSessions[0]?.sessionId)
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const secondSessionId = String(app.createdPhiSessions[1]?.sessionId)
+  const run = app.hostHandlers.get('remoteWorkspace.write')
+  assert.ok(run)
+  const input = {
+    sessionId,
+    projectId: 'remote-project-1',
+    requestId: 'mode-write-1',
+    toolCallId: 'mode-tool-1',
+    path: 'new.txt',
+    content: 'safe'
+  }
+  await app.invoke('projects:updatePermissionMode', 'remote-project-1', 'full')
+  assert.equal(options.shouldGate(), false)
+  assert.equal(
+    app.updatedSessionManifests.some(
+      (entry) => entry.sessionId === secondSessionId && entry.patch.permissionMode === 'full'
+    ),
+    true
+  )
+  assert.equal(((await run(input)) as { status: string }).status, 'created')
+  await app.invoke('projects:updatePermissionMode', 'remote-project-1', 'auto')
+  assert.equal(options.shouldGate(), false)
+  assert.equal(
+    ((await run({ ...input, requestId: 'mode-write-2' })) as { status: string }).status,
+    'created'
+  )
+  await app.invoke('projects:updatePermissionMode', 'remote-project-1', 'ask')
+  assert.equal(options.shouldGate(), true)
+  await assert.rejects(run({ ...input, requestId: 'mode-write-3' }), /尚未获得本次会话的批准/)
 })
 
 test('main IPC: plugin operations write compact support log events', async () => {
@@ -2803,7 +4369,14 @@ test('main IPC: analysis Jupyter runtime status combines server and notebook ses
   assert.equal(status.notebooks.sessions[0]?.state, 'idle')
   assert.deepEqual(app.jupyterServerCalls, [{ action: 'status', cwd: '/projects/research' }])
   assert.deepEqual(app.notebookSessionCalls, [{ action: 'summary', cwd: '/projects/research' }])
-  await assert.rejects(app.invoke('analysis:jupyterRuntimeStatus', '/missing/project'), /请选择/)
+  const missing = (await app.invoke('analysis:jupyterRuntimeStatus', '/missing/project')) as {
+    server: { state: string; message: string }
+    notebooks: { activeSessionCount: number; sessions: unknown[] }
+  }
+  assert.equal(missing.server.state, 'stopped')
+  assert.match(missing.server.message, /请选择/)
+  assert.equal(missing.notebooks.activeSessionCount, 0)
+  assert.deepEqual(missing.notebooks.sessions, [])
 })
 
 test('main IPC: analysis notebook kernel session lifecycle uses the selected project', async () => {

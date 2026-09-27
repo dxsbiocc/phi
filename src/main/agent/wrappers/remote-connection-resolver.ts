@@ -1,10 +1,9 @@
-import { readFileSync } from 'node:fs'
-
 import type { Project, ProjectRemoteConnection } from '../projects'
+import type { RemoteHpcSettings } from '../../../shared/wrapperRemoteTypes'
+import { getRemoteHostProfile, remoteConnectionConfigForProfile } from '../remote-hosts'
 import { getPhiAgentDir } from '../runtime-paths'
 import type { RemoteTarget } from './composition/remote-job'
 import type { ConnectImpl } from './executor-remote'
-import { readRemoteConnectionPassphrase } from './remote-credential-store'
 import type { RemoteConnectionConfig } from './remote-ssh-session'
 
 /** Everything `runs.ts` needs to dispatch a `slurm-controller` submit — resolved either explicitly by the caller, or (via `resolveProjectRemoteSubmitOptions`) from a project's saved remote config. */
@@ -12,47 +11,19 @@ export interface RemoteSubmitOptions {
   connection: RemoteConnectionConfig
   /** Remote root Phi run directories are created under, e.g. `/data/lab/.phi`. */
   remoteWorkspaceRoot: string
+  hpc?: RemoteHpcSettings
   connectImpl?: ConnectImpl
   pollIntervalMs?: number
 }
 
-/**
- * Turns a saved `ProjectRemoteConnection` into an actual `RemoteConnectionConfig`
- * — reads the key file off disk and, if the key needs one, the passphrase out
- * of the OS keychain. Throws with a specific, user-facing reason rather than
- * returning undefined: unlike "this project has no remote config at all"
- * (see `resolveProjectRemoteSubmitOptions`), a connection that exists but is
- * broken (deleted key file, keychain entry gone) is worth surfacing
- * distinctly rather than folding into a generic "not configured" message.
- */
+/** Resolve a project binding to the OpenSSH host alias owned by Phi. */
 export function resolveRemoteConnectionConfig(
   connection: ProjectRemoteConnection,
   agentDir = getPhiAgentDir()
 ): RemoteConnectionConfig {
-  let privateKey: string
-  try {
-    privateKey = readFileSync(connection.privateKeyPath, 'utf-8')
-  } catch {
-    throw new Error(
-      `无法读取连接 "${connection.label}" 的 SSH 私钥文件: ${connection.privateKeyPath}`
-    )
-  }
-
-  let passphrase: string | undefined
-  if (connection.hasPassphrase) {
-    passphrase = readRemoteConnectionPassphrase(connection.id, agentDir)
-    if (passphrase === undefined) {
-      throw new Error(`未找到连接 "${connection.label}" 保存的密钥口令，请重新配置该连接`)
-    }
-  }
-
-  return {
-    host: connection.host,
-    port: connection.port,
-    username: connection.username,
-    privateKey,
-    passphrase
-  }
+  const profile = getRemoteHostProfile(connection.hostProfileId, agentDir)
+  if (!profile) throw new Error(`连接 "${connection.label}" 的 SSH 服务器档案不可用，请重新配置`)
+  return remoteConnectionConfigForProfile(profile)
 }
 
 /**
@@ -75,7 +46,8 @@ export function resolveProjectRemoteSubmitOptions(
 
   return {
     connection: resolveRemoteConnectionConfig(connection, agentDir),
-    remoteWorkspaceRoot: project.remoteWorkspaceRoot
+    remoteWorkspaceRoot: project.remoteWorkspaceRoot,
+    hpc: connection.hpc
   }
 }
 
@@ -84,13 +56,14 @@ export interface ResolvedRemoteTarget {
   target: RemoteTarget
   connectionId: string
   projectId: string
+  hostProfileId: string
 }
 
 /**
  * Resolves what a `wrapper_run` on a remote host connects to: the project's saved
  * connection (`connectionId`, else its default) with the connection's HPC settings.
  * Never throws: every way it can fail is a `reason` the agent can relay to the user,
- * including a saved connection that is broken (deleted key, keychain entry gone).
+ * including a saved connection whose host profile has been removed.
  */
 export function resolveProjectRemoteTarget(
   project: Project | undefined,
@@ -99,6 +72,33 @@ export function resolveProjectRemoteTarget(
 ): ResolvedRemoteTarget | { reason: string } {
   if (!project) {
     return { reason: '找不到这次运行所属的项目，无法确定要连接的远程主机。' }
+  }
+  if (project.location.kind === 'ssh') {
+    const hostProfile = getRemoteHostProfile(project.location.hostProfileId, agentDir)
+    if (!hostProfile) {
+      return { reason: '远程项目绑定的 SSH 服务器档案不可用，请先恢复服务器配置。' }
+    }
+    const wanted = connectionId ?? project.defaultRemoteConnectionId
+    const configured = project.remoteConnections?.find((candidate) => candidate.id === wanted)
+    if (wanted && wanted !== project.location.hostProfileId && !configured) {
+      return { reason: `远程项目的运行配置 ${wanted} 不存在，请重新选择。` }
+    }
+    if (configured && configured.hostProfileId !== project.location.hostProfileId) {
+      return { reason: '远程项目的 Wrapper 运行配置指向另一台服务器，请改用本项目绑定的服务器。' }
+    }
+    if (configured && !configured.hpc) {
+      return { reason: `连接 "${configured.label}" 尚未设置 Wrapper 运行方式。` }
+    }
+    return {
+      target: {
+        connection: remoteConnectionConfigForProfile(hostProfile),
+        workspaceRoot: project.location.canonicalRoot,
+        hpc: configured?.hpc ?? { scheduler: 'local' }
+      },
+      connectionId: configured?.id ?? project.location.hostProfileId,
+      projectId: project.id,
+      hostProfileId: project.location.hostProfileId
+    }
   }
   if (!project.remoteWorkspaceRoot) {
     return {
@@ -126,7 +126,8 @@ export function resolveProjectRemoteTarget(
         hpc: connection.hpc
       },
       connectionId: connection.id,
-      projectId: project.id
+      projectId: project.id,
+      hostProfileId: connection.hostProfileId
     }
   } catch (error) {
     return { reason: error instanceof Error ? error.message : String(error) }

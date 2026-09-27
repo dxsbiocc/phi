@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { PhiIcons } from '../../icons'
 import type { DirectoryListing } from '../../types'
 import { FilePreviewBody } from './components/FilePreviewBody'
+import { ResultDownloadStatus } from './components/ResultDownloadStatus'
 import {
   previewDisplayPath,
   previewFullPath,
@@ -12,6 +13,7 @@ import {
   previewTitle,
   type FilePreviewPanelState
 } from './lib/filePreviewState'
+import type { FileDownloadState } from './lib/filePreviewState'
 
 export type { FilePreviewPanelState } from './lib/filePreviewState'
 export { ProjectFileTree } from './components/ProjectFileTree'
@@ -58,9 +60,12 @@ type FilePreviewPanelProps = {
   state: FilePreviewPanelState
   layout?: 'sidecar' | 'workspace'
   onOpenFile: (path: string) => void
-  onOpenDefaultPath: (path: string) => void
-  onRevealPath: (path: string) => void
+  onOpenDefaultPath: (path: string, kind?: 'file' | 'directory') => void
+  onRevealPath: (path: string, kind?: 'file' | 'directory') => void
   onListDirectory: (path: string) => Promise<DirectoryListing>
+  onDownloadFile?: (path: string) => void
+  downloadState?: FileDownloadState | null
+  onCancelDownload?: () => void
 }
 
 function fileManagerLabel(): string {
@@ -216,13 +221,20 @@ function FilePathBreadcrumb({
 
 function FilePreviewActions({
   path,
+  pathKind,
   onOpenDefaultPath,
-  onRevealPath
+  onRevealPath,
+  onDownloadFile,
+  showDownloadAction
 }: {
   path: string
-  onOpenDefaultPath: (path: string) => void
-  onRevealPath: (path: string) => void
+  pathKind: 'file' | 'directory'
+  onOpenDefaultPath: (path: string, kind?: 'file' | 'directory') => void
+  onRevealPath: (path: string, kind?: 'file' | 'directory') => void
+  onDownloadFile?: (path: string) => void
+  showDownloadAction?: boolean
 }): React.JSX.Element {
+  const isRemote = path.startsWith('ssh://')
   const revealLabel = fileManagerLabel()
   const [defaultAppIcon, setDefaultAppIcon] = useState<{ path: string; src: string | null } | null>(
     null
@@ -232,7 +244,11 @@ function FilePreviewActions({
   useEffect(() => {
     let active = true
 
-    if (typeof window === 'undefined' || typeof window.api?.getFileIcon !== 'function') {
+    if (
+      isRemote ||
+      typeof window === 'undefined' ||
+      typeof window.api?.getFileIcon !== 'function'
+    ) {
       return () => {
         active = false
       }
@@ -250,7 +266,52 @@ function FilePreviewActions({
     return () => {
       active = false
     }
-  }, [path])
+  }, [isRemote, path])
+
+  if (isRemote) {
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.35, flexShrink: 0 }}>
+        <Tooltip title="复制远程路径" enterDelay={400}>
+          <IconButton
+            size="small"
+            aria-label="复制远程路径"
+            onClick={() => {
+              void navigator.clipboard.writeText(path).catch((error) => {
+                console.error('Failed to copy remote path:', error)
+              })
+            }}
+          >
+            <PhiIcons.action.copy sx={{ fontSize: 17 }} />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="在文件面板打开" enterDelay={400}>
+          <IconButton
+            size="small"
+            aria-label="在文件面板打开"
+            onClick={() => onOpenDefaultPath(path, pathKind)}
+          >
+            <DefaultOpenIcon sx={{ fontSize: 17 }} />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="在项目文件中定位" enterDelay={400}>
+          <IconButton
+            size="small"
+            aria-label="在项目文件中定位"
+            onClick={() => onRevealPath(path, pathKind)}
+          >
+            <FolderIcon sx={{ fontSize: 17 }} />
+          </IconButton>
+        </Tooltip>
+        {showDownloadAction && onDownloadFile ? (
+          <Tooltip title="下载到本机" enterDelay={400}>
+            <IconButton size="small" aria-label="下载远程文件" onClick={() => onDownloadFile(path)}>
+              <PhiIcons.action.download sx={{ fontSize: 17 }} />
+            </IconButton>
+          </Tooltip>
+        ) : null}
+      </Box>
+    )
+  }
 
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.35, flexShrink: 0 }}>
@@ -259,7 +320,7 @@ function FilePreviewActions({
           size="small"
           aria-label="默认应用打开"
           data-phi-file-open-default-button="true"
-          onClick={() => onOpenDefaultPath(path)}
+          onClick={() => onOpenDefaultPath(path, pathKind)}
           sx={{
             width: 34,
             height: 30,
@@ -298,7 +359,7 @@ function FilePreviewActions({
           size="small"
           aria-label={revealLabel}
           data-phi-file-reveal-button="true"
-          onClick={() => onRevealPath(path)}
+          onClick={() => onRevealPath(path, pathKind)}
           sx={{
             width: 34,
             height: 30,
@@ -323,13 +384,17 @@ export default function FilePreviewPanel({
   onOpenFile,
   onOpenDefaultPath,
   onRevealPath,
-  onListDirectory
+  onListDirectory,
+  onDownloadFile,
+  downloadState,
+  onCancelDownload
 }: FilePreviewPanelProps): React.JSX.Element {
   const path = previewFullPath(state)
   const displayPath = previewDisplayPath(state)
   const rootLabel = previewRootLabel(state)
   const previewIcon = previewIconForState(state)
   const isDirectoryState = state.status === 'directory'
+  const availableDownload = downloadState?.status === 'running' ? undefined : onDownloadFile
 
   return (
     <Box
@@ -370,10 +435,15 @@ export default function FilePreviewPanel({
         <FilePathBreadcrumb rootLabel={rootLabel} displayPath={displayPath} fullPath={path} />
         <FilePreviewActions
           path={path}
+          pathKind={isDirectoryState ? 'directory' : 'file'}
           onOpenDefaultPath={onOpenDefaultPath}
           onRevealPath={onRevealPath}
+          onDownloadFile={availableDownload}
+          showDownloadAction={state.status === 'ready' && state.file.kind !== 'metadata'}
         />
       </Box>
+
+      <ResultDownloadStatus state={downloadState} onCancel={onCancelDownload} />
 
       <Box
         data-phi-file-preview-content={isDirectoryState ? 'directory' : 'split'}
@@ -398,6 +468,7 @@ export default function FilePreviewPanel({
             state={state}
             onOpenFile={onOpenFile}
             onListDirectory={onListDirectory}
+            onDownloadFile={availableDownload}
           />
         </Box>
       </Box>
