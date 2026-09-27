@@ -207,7 +207,6 @@ export default function AppDialogs({
         category={settingsCategory}
         onCategoryChange={setSettingsCategory}
         providers={providerStatuses}
-        providerHints={providerHints}
         personaMarkdown={personaMarkdown}
         onSavePersonaMarkdown={onSavePersonaMarkdown}
         onRefresh={refreshAuthStatuses}

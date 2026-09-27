@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ActiveAuthPrompt, AuthInteractionEvent, ProviderAuthStatus } from './types'
+import { readableErrorMessage } from './lib/sessionNotifications'
 
 export type ProviderAuthState = {
   providerStatuses: ProviderAuthStatus[]
@@ -24,7 +25,10 @@ export type ProviderAuthState = {
   handleAuthInteractionEvent: (event: AuthInteractionEvent) => boolean
 }
 
-export function useProviderAuth(setIsBusy: (busy: boolean) => void): ProviderAuthState {
+export function useProviderAuth(
+  setIsBusy: (busy: boolean) => void,
+  notify: (message: string, severity: 'success' | 'error') => void
+): ProviderAuthState {
   const [providerStatuses, setProviderStatuses] = useState<ProviderAuthStatus[]>([])
   const [activePrompts, setActivePrompts] = useState<ActiveAuthPrompt[]>([])
   const [providerHints, setProviderHints] = useState<Record<string, string>>({})
@@ -63,15 +67,16 @@ export function useProviderAuth(setIsBusy: (busy: boolean) => void): ProviderAut
       try {
         const next = await window.api.loginApiKey(providerId, key)
         setProviderStatuses(next)
-        setProviderHints((prev) => ({
-          ...prev,
-          [providerId]: 'API Key 已提交（实际校验延后到发送消息时）'
-        }))
+        setProviderHints((prev) => ({ ...prev, [providerId]: '' }))
+        setIsProviderDialogOpen(false)
+        notify('API Key 已保存，使用时验证', 'success')
+      } catch (error) {
+        notify(`API Key 保存失败：${readableErrorMessage(error, '请重试')}`, 'error')
       } finally {
         setIsBusy(false)
       }
     },
-    [setIsBusy]
+    [notify, setIsBusy]
   )
 
   const submitProviderOAuth = useCallback(
@@ -80,23 +85,32 @@ export function useProviderAuth(setIsBusy: (busy: boolean) => void): ProviderAut
       try {
         const next = await window.api.loginOAuth(providerId)
         setProviderStatuses(next)
-        setProviderHints((prev) => ({
-          ...prev,
-          [providerId]: 'OAuth 已触发，授权状态会在对话中完成'
-        }))
+        setProviderHints((prev) => ({ ...prev, [providerId]: '' }))
+        setActivePrompts((prev) => prev.filter((item) => item.providerId !== providerId))
+        setIsProviderDialogOpen(false)
+        notify('Auth 登录成功', 'success')
+      } catch (error) {
+        setProviderHints((prev) => ({ ...prev, [providerId]: '' }))
+        notify(`Auth 登录失败：${readableErrorMessage(error, '请重试')}`, 'error')
       } finally {
         setIsBusy(false)
       }
     },
-    [setIsBusy]
+    [notify, setIsBusy]
   )
 
   const logoutProvider = useCallback(
     async (providerId: string): Promise<void> => {
-      await window.api.logout(providerId)
-      await refreshAuthStatuses()
+      try {
+        await window.api.logout(providerId)
+        await refreshAuthStatuses()
+        setProviderHints((prev) => ({ ...prev, [providerId]: '' }))
+        notify('Provider 已登出', 'success')
+      } catch (error) {
+        notify(`登出失败：${readableErrorMessage(error, '请重试')}`, 'error')
+      }
     },
-    [refreshAuthStatuses]
+    [notify, refreshAuthStatuses]
   )
 
   const onSubmitAuthPrompt = useCallback(

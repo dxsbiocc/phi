@@ -21,7 +21,7 @@ test('provider errors recognize insufficient balance responses as billing failur
 test('provider errors keep missing provider failures actionable as configuration issues', () => {
   const display = getProviderErrorDisplay('没有配置 Provider 或可用模型')
 
-  assert.equal(display.title, 'Provider 配置需要处理')
+  assert.equal(display.title, 'Provider 需要处理')
   assert.equal(display.showRawMessage, true)
   assert.equal(display.action, 'providerSettings')
   assert.equal(display.actionLabel, '去配置 Provider')
@@ -41,7 +41,7 @@ test('provider errors classify missing Kimi models as configuration issues', () 
     '404 Not found the model kimi-k2.5 or Permission denied (type=resource_not_found_error)'
   )
 
-  assert.equal(display.title, 'Provider 配置需要处理')
+  assert.equal(display.title, 'Provider 需要处理')
   assert.equal(display.showRawMessage, true)
   assert.equal(display.action, 'providerSettings')
 })

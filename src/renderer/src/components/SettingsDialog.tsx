@@ -16,6 +16,7 @@ import {
   Stack,
   Switch,
   TextField,
+  Tooltip,
   ToggleButton,
   ToggleButtonGroup,
   Typography
@@ -44,6 +45,7 @@ const CloseIcon = PhiIcons.action.close
 const ContentCopyIcon = PhiIcons.action.copy
 const KeyIcon = PhiIcons.entity.apiKey
 const LogoutIcon = PhiIcons.action.logout
+const RefreshIcon = PhiIcons.action.refresh
 const PaletteIcon = PhiIcons.settings.appearance
 const ProviderIcon = PhiIcons.settings.providers
 const PsychologyIcon = PhiIcons.settings.persona
@@ -70,7 +72,7 @@ const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.E
   { id: 'environment', label: '环境', icon: <RemoteExecutionIcon fontSize="small" /> },
   { id: 'databases', label: '数据库', icon: <DatabaseIcon fontSize="small" /> },
   { id: 'persona', label: '助手人设', icon: <PsychologyIcon fontSize="small" /> },
-  { id: 'providers', label: 'Provider 配置', icon: <ProviderIcon fontSize="small" /> },
+  { id: 'providers', label: 'Provider', icon: <ProviderIcon fontSize="small" /> },
   { id: 'permissions', label: '权限', icon: <ShieldIcon fontSize="small" /> },
   { id: 'remote', label: '远程执行', icon: <RemoteExecutionIcon fontSize="small" /> },
   { id: 'diagnostics', label: '诊断', icon: <ContentCopyIcon fontSize="small" /> },
@@ -163,11 +165,9 @@ function PersonaSection({
 
 function ProviderCard({
   provider,
-  hint,
   onLogout
 }: {
   provider: ProviderAuthStatus
-  hint?: string
   onLogout: (providerId: string) => void
 }): React.JSX.Element {
   return (
@@ -239,25 +239,17 @@ function ProviderCard({
           )}
         </Stack>
       </Stack>
-
-      {hint ? (
-        <Alert severity="info" variant="outlined" sx={{ mt: 1.25, py: 0.5 }}>
-          <Typography variant="body2">{hint}</Typography>
-        </Alert>
-      ) : null}
     </Paper>
   )
 }
 
 function ProvidersSection({
   providers,
-  providerHints,
   onRefresh,
   onOpenAddProvider,
   onLogout
 }: {
   providers: ProviderAuthStatus[]
-  providerHints: Record<string, string>
   onRefresh: () => Promise<void>
   onOpenAddProvider: () => void
   onLogout: (providerId: string) => void
@@ -275,19 +267,27 @@ function ProvidersSection({
           gap: 1
         }}
       >
-        <Typography variant="h5">Provider 配置</Typography>
+        <Typography variant="h5">Provider</Typography>
         <Stack direction="row" spacing={1}>
-          <Button variant="outlined" onClick={onRefresh} sx={{ minHeight: 44 }}>
-            刷新状态
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={onOpenAddProvider}
-            sx={{ minHeight: 44 }}
-          >
-            添加 Provider
-          </Button>
+          <Tooltip title="刷新状态">
+            <IconButton
+              aria-label="刷新状态"
+              onClick={() => void onRefresh()}
+              sx={{ width: 40, height: 40, border: 1, borderColor: 'divider' }}
+            >
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="添加 Provider">
+            <IconButton
+              aria-label="添加 Provider"
+              color="primary"
+              onClick={onOpenAddProvider}
+              sx={{ width: 40, height: 40, border: 1, borderColor: 'divider' }}
+            >
+              <AddIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
         </Stack>
       </Box>
 
@@ -309,11 +309,7 @@ function ProvidersSection({
         <Stack spacing={1}>
           {configuredProviders.map((provider) => (
             <Box key={provider.providerId}>
-              <ProviderCard
-                provider={provider}
-                hint={providerHints[provider.providerId]}
-                onLogout={onLogout}
-              />
+              <ProviderCard provider={provider} onLogout={onLogout} />
             </Box>
           ))}
         </Stack>
@@ -623,7 +619,6 @@ type SettingsDialogProps = {
   open: boolean
   onClose: () => void
   providers: ProviderAuthStatus[]
-  providerHints: Record<string, string>
   personaMarkdown: string | null
   onSavePersonaMarkdown: (markdown: string) => Promise<void>
   onRefresh: () => Promise<void>
@@ -685,7 +680,6 @@ function SettingsDialog({
   open,
   onClose,
   providers,
-  providerHints,
   personaMarkdown,
   onSavePersonaMarkdown,
   onRefresh,
@@ -865,7 +859,6 @@ function SettingsDialog({
           {category === 'providers' && (
             <ProvidersSection
               providers={providers}
-              providerHints={providerHints}
               onRefresh={onRefresh}
               onOpenAddProvider={onOpenAddProvider}
               onLogout={onLogout}

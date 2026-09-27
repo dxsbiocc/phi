@@ -116,7 +116,6 @@ import {
   FiMoreHorizontal,
   FiPlay,
   FiPlus,
-  FiRefreshCw,
   FiSave,
   FiSearch,
   FiSend,
@@ -131,7 +130,7 @@ import {
   FiXCircle,
   FiZap
 } from 'react-icons/fi'
-import { GoVerified } from 'react-icons/go'
+import { GoSync, GoVerified } from 'react-icons/go'
 import type { IconType } from 'react-icons'
 import {
   TbBrain,
@@ -713,7 +712,7 @@ export const PhiIcons = {
     openExternal: createPhiIcon('OpenExternal', FiExternalLink),
     quick: createPhiIcon('Quick', FiZap),
     run: createPhiIcon('Run', FiPlay),
-    refresh: createPhiIcon('Refresh', FiRefreshCw),
+    refresh: createPhiIcon('Refresh', GoSync),
     save: createPhiIcon('Save', FiSave),
     saveKey: createPhiIcon('SaveKey', FiKey),
     search: createPhiIcon('Search', FiSearch),
@@ -890,7 +889,7 @@ export const PHI_ICON_META = {
   'settings.diagnostics': { label: '诊断', Icon: PhiIcons.settings.diagnostics },
   'settings.permissions': { label: '权限', Icon: PhiIcons.settings.permissions },
   'settings.persona': { label: '助手人设', Icon: PhiIcons.settings.persona },
-  'settings.providers': { label: 'Provider 配置', Icon: PhiIcons.settings.providers },
+  'settings.providers': { label: 'Provider', Icon: PhiIcons.settings.providers },
   'file.archive': { label: '压缩包', Icon: PhiIcons.file.archive, color: 'text.secondary' },
   'file.audio': { label: '音频文件', Icon: PhiIcons.file.audio, color: 'secondary.main' },
   'file.binary': { label: '二进制文件', Icon: PhiIcons.file.binary, color: 'text.secondary' },

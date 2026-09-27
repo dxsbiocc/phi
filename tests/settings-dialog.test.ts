@@ -29,7 +29,6 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
     onCategoryChange: () => undefined,
     onClose: () => undefined,
     providers: [provider],
-    providerHints: {},
     personaMarkdown: null,
     onSavePersonaMarkdown: async () => undefined,
     onRefresh: async () => undefined,
@@ -127,8 +126,11 @@ test('settings dialog exposes environment toolchain detection', () => {
 test('settings dialog can open directly on provider configuration', () => {
   const markup = renderSettingsDialog({ category: 'providers' })
 
-  assert.match(markup, /Provider 配置/)
-  assert.match(markup, /添加 Provider/)
+  assert.match(markup, /Provider/)
+  assert.doesNotMatch(markup, /Provider 配置/)
+  assert.match(markup, /aria-label="刷新状态"/)
+  assert.match(markup, /aria-label="添加 Provider"/)
+  assert.doesNotMatch(markup, />刷新状态<|>添加 Provider</)
   assert.doesNotMatch(markup, /以 Markdown 形式描述助手/)
 })
 
@@ -160,7 +162,10 @@ test('settings dialog keeps configured provider rows information-dense', () => {
   assert.match(markup, /moonshot/)
   assert.match(markup, /API Key/)
   assert.match(markup, /已配置/)
-  assert.match(markup, /登出/)
+  assert.doesNotMatch(markup, /aria-label="Moonshot \(Kimi API\) Auth 登录"/)
+  assert.doesNotMatch(markup, /aria-label="DeepSeek Auth 登录"/)
+  assert.equal((markup.match(/>登出<\/button>/g) ?? []).length, 2)
+  assert.doesNotMatch(markup, /MuiAlert-root/)
 })
 
 test('settings dialog explains diagnostics as a privacy-safe support summary', () => {

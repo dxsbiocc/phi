@@ -1,15 +1,19 @@
 import {
   Alert,
   Box,
-  Button,
+  IconButton,
   Chip,
   FormControlLabel,
   Paper,
   Stack,
   Switch,
+  Tooltip,
   Typography
 } from '@mui/material'
+import { PhiIcons } from '../../icons'
 import type { DbConnectorSettingsItem } from '../../types'
+
+const RefreshIcon = PhiIcons.action.refresh
 
 export function DatabaseSettingsPanel({
   connectors,
@@ -41,16 +45,18 @@ export function DatabaseSettingsPanel({
             控制 Database agent 是否允许查询各个生物数据库。
           </Typography>
         </Box>
-        <Button
-          size="small"
-          variant="outlined"
-          disabled={isLoading}
-          onClick={() => {
-            void onRefresh()
-          }}
-        >
-          刷新
-        </Button>
+        <Tooltip title="刷新数据库">
+          <span>
+            <IconButton
+              aria-label="刷新数据库"
+              disabled={isLoading}
+              onClick={() => void onRefresh()}
+              sx={{ width: 40, height: 40, border: 1, borderColor: 'divider' }}
+            >
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+          </span>
+        </Tooltip>
       </Box>
 
       <Alert severity="info" variant="outlined">

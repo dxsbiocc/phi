@@ -128,8 +128,8 @@ export function getProviderErrorDisplay(message: string): ProviderErrorDisplay {
 
   if (matchesAnyPattern(rawMessage, CONFIGURATION_PATTERNS)) {
     return {
-      title: 'Provider 配置需要处理',
-      description: '当前请求没有可用的 Provider、模型或凭据。请检查 Provider 配置后重试。',
+      title: 'Provider 需要处理',
+      description: '当前请求没有可用的 Provider、模型或凭据。请检查 Provider 后重试。',
       rawMessage,
       showRawMessage: true,
       action: 'providerSettings',

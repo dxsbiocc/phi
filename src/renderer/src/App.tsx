@@ -951,7 +951,7 @@ function App(): React.JSX.Element {
     onSubmitAuthPrompt,
     onUpdatePromptValue,
     handleAuthInteractionEvent
-  } = useProviderAuth(setIsBusy)
+  } = useProviderAuth(setIsBusy, showSnackbar)
   const {
     models,
     availableModels,
