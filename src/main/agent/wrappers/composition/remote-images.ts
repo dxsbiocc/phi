@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import { createWriteStream, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { createWriteStream, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 import type { RemoteSshSession } from '../remote-ssh-session'
 import { shellQuote } from '../remote-ssh-session'
+import { collectIncludedFiles } from './includes'
 
 /**
  * Puts a wrapper's Singularity images into the cluster's cache before a run.
@@ -45,7 +46,6 @@ export interface StageImagesOptions {
   uploadTimeoutMs?: number
 }
 
-const INCLUDE = /include\s*\{[\s\S]*?\}\s*from\s*['"]([^'"]+)['"]/g
 const CONTAINER = /^\s*container\s+(['"])([\s\S]*?)\1/gm
 const IMAGE_URL = /https:\/\/[^'"\s}]+/
 const DEFAULT_REMOTE_TIMEOUT_MS = 30 * 60_000
@@ -59,36 +59,19 @@ export function singularityCacheFileName(url: string): string {
   return name.endsWith('.img') || name.endsWith('.sif') ? name : `${name}.img`
 }
 
-function resolveInclude(fromFile: string, target: string): string | undefined {
-  const base = resolve(dirname(fromFile), target)
-  for (const candidate of [base, `${base}.nf`, join(base, 'main.nf')]) {
-    if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
-  }
-  return undefined
-}
-
 /**
  * Every Singularity image URL reachable from a wrapper's `main.nf`, following
  * `include` statements. Containers named only by a Docker tag (no https URL)
  * are skipped: Nextflow builds those itself and there is no file to stage.
  */
 export function collectWrapperSingularityImages(wrapperMainNf: string): WrapperContainerImage[] {
-  const seenFiles = new Set<string>()
   const urls = new Set<string>()
-  const visit = (file: string): void => {
-    if (seenFiles.has(file)) return
-    seenFiles.add(file)
-    const text = readFileSync(file, 'utf-8')
-    for (const match of text.matchAll(CONTAINER)) {
+  for (const file of collectIncludedFiles(wrapperMainNf)) {
+    for (const match of readFileSync(file, 'utf-8').matchAll(CONTAINER)) {
       const url = IMAGE_URL.exec(match[2])?.[0]
       if (url) urls.add(url)
     }
-    for (const match of text.matchAll(INCLUDE)) {
-      const included = resolveInclude(file, match[1])
-      if (included) visit(included)
-    }
   }
-  visit(resolve(wrapperMainNf))
   return [...urls].sort().map((url) => ({ url, fileName: singularityCacheFileName(url) }))
 }
 

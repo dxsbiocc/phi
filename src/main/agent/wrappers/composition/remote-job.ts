@@ -29,6 +29,7 @@ import { readRemoteLogDelta, type RemoteLogCursor } from '../remote-log'
 import { cancelRemoteController, type RemoteCancelResult } from '../remote-cancel'
 import type { WrapperCompositionEntry } from './discovery'
 import type { WrapperProcess, WrapperRunResult } from './executor'
+import { componentBundleScope } from './includes'
 import { ensureRemoteBundle } from './remote-bundle'
 import { collectWrapperSingularityImages, stageSingularityImages } from './remote-images'
 import type { WrapperRunResources } from './resources'
@@ -637,7 +638,8 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
     if (prior) return prior
     const bundle = await ensureRemoteBundle(session, {
       localRoot: options.wrappersRoot,
-      workspaceRoot: target.workspaceRoot
+      workspaceRoot: target.workspaceRoot,
+      verifyScope: componentBundleScope(entry.componentDir, options.wrappersRoot)
     })
     const layout = remoteRunLayout({
       workspaceRoot: target.workspaceRoot,
