@@ -65,6 +65,29 @@ function checkInputPath(
 }
 
 /**
+ * Nextflow's `fromFilePairs` names each sample by the file name up to the first
+ * `{` or `[` of the glob. A brace or bracket before the last `*` of the file-name
+ * part (`L1{04,05}-*_R{1,2}.fq.gz`) therefore gives every file the same sample
+ * name and merges the samples — so reject it here, before anything is launched.
+ */
+function checkPairGlob(
+  key: string,
+  param: WrapperCompositionParam,
+  value: unknown
+): string | undefined {
+  if (param.type !== 'fastq_glob' || typeof value !== 'string') return undefined
+  const fileName = value.slice(value.lastIndexOf('/') + 1)
+  const lastStar = fileName.lastIndexOf('*')
+  const firstGroup = fileName.search(/[{[]/)
+  if (lastStar < 0 || firstGroup < 0 || firstGroup > lastStar) return undefined
+  return (
+    `${key}: "${fileName}" would merge several samples into one sample. Nextflow names a sample by the ` +
+    'file name up to the first { or [, so braces or brackets before the last * merge samples. ' +
+    'Use a glob such as /data/*_R{1,2}.fastq.gz, or start one run per group of samples.'
+  )
+}
+
+/**
  * Validates the merge of a wrapper's default params and the agent's
  * overrides. `componentDir` is the directory Nextflow is launched from, so
  * relative input paths resolve against it. Returns human-readable errors;
@@ -100,6 +123,7 @@ export function validateWrapperParams(
     const problem =
       checkType(key, param, value) ??
       checkConstraints(key, param, value) ??
+      checkPairGlob(key, param, value) ??
       (checkInputPaths ? checkInputPath(key, param, value, componentDir) : undefined)
     if (problem) errors.push(problem)
   }

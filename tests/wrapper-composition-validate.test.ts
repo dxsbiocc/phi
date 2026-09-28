@@ -152,3 +152,36 @@ test('findMissingPrimaryOutputs honours an absolute outdir override', () => {
     assert.deepEqual(findMissingPrimaryOutputs(manifest, { outdir }, dir), [])
   })
 })
+
+test('a paired-reads glob that picks samples with braces or brackets before the last * is rejected', () => {
+  const pairs: WrapperCompositionManifest = {
+    ...manifest,
+    params: {
+      reads: { kind: 'input', type: 'fastq_glob', required: true },
+      outdir: { kind: 'output', type: 'path', required: true }
+    }
+  }
+  const check = (reads: string): string[] =>
+    validateWrapperParams(pairs, {}, { reads, outdir: 'out' }, '/tmp', { checkInputPaths: false })
+
+  // Nextflow names each sample by the file name up to the first { or [, so these merge samples.
+  for (const reads of [
+    '/data/raw/L1MKG17071{04,05}-*.R{1,2}.raw.fastq.gz',
+    '/data/raw/L1MKG17071[01][0124-8]-*.R{1,2}.raw.fastq.gz'
+  ]) {
+    const errors = check(reads)
+    assert.equal(errors.length, 1, reads)
+    assert.match(errors[0], /reads/)
+    assert.match(errors[0], /one sample/)
+  }
+  // Braces only in the read-pair part, or brackets after the last *, keep samples apart.
+  for (const reads of [
+    '/data/raw/*_R{1,2}.fastq.gz',
+    '/data/raw/*.R{1,2}.raw.fastq.gz',
+    '/data/{run1,run2}/*_R{1,2}.fastq.gz',
+    '/data/raw/L1MKG*-HFD_Thrsp_KO[23].R{1,2}.raw.fastq.gz',
+    '/data/raw/sample_R{1,2}.fastq.gz'
+  ]) {
+    assert.deepEqual(check(reads), [], reads)
+  }
+})
