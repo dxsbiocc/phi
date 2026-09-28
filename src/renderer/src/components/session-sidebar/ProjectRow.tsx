@@ -40,12 +40,14 @@ type ProjectRowProps = {
   project: Project
   expanded: boolean
   refreshKey: number
+  searchSessions?: SessionSummary[]
   onToggleExpanded: () => void
   activeSessionPath: string | null
   onStartChat: () => void
   onSelectSession: (path: string) => void
   onRenameSession: (path: string, name: string) => void
   onDeleteSession: (path: string) => void
+  onExportSession: (session: SessionSummary) => void
   onDeleteProject: () => void
   onFetchSessions: (workingDirectory: string, projectId?: string) => Promise<SessionSummary[]>
   getSessionRuntimeState?: (
@@ -62,6 +64,7 @@ function projectRowPropsMatch(left: ProjectRowProps, right: ProjectRowProps): bo
     left.project === right.project &&
     left.expanded === right.expanded &&
     left.refreshKey === right.refreshKey &&
+    left.searchSessions === right.searchSessions &&
     left.activeSessionPath === right.activeSessionPath &&
     left.compactHoverPreview === right.compactHoverPreview
   )
@@ -71,12 +74,14 @@ function ProjectRowImpl({
   project,
   expanded,
   refreshKey,
+  searchSessions,
   onToggleExpanded,
   activeSessionPath,
   onStartChat,
   onSelectSession,
   onRenameSession,
   onDeleteSession,
+  onExportSession,
   onDeleteProject,
   onFetchSessions,
   getSessionRuntimeState,
@@ -90,13 +95,15 @@ function ProjectRowImpl({
   const gitStatusLabel = projectGitStatusLabel(project)
   const remoteSummary = projectLocationSummary(project)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
+  const sourceSessions = searchSessions ?? sessions ?? []
+  const sessionsReady = searchSessions !== undefined || sessions !== null
   const { orderedSessions, handleDragEnd } = useSessionOrder(
     isRemote ? `project:${project.id}` : `project:${project.workingDirectory}`,
-    sessions ?? []
+    sourceSessions
   )
 
   useEffect(() => {
-    if (!expanded) return
+    if (!expanded || searchSessions !== undefined) return
     let cancelled = false
     void onFetchSessions(project.workingDirectory, project.id).then((nextSessions) => {
       if (!cancelled) {
@@ -106,14 +113,14 @@ function ProjectRowImpl({
     return () => {
       cancelled = true
     }
-  }, [expanded, onFetchSessions, project.id, project.workingDirectory, refreshKey])
+  }, [expanded, onFetchSessions, project.id, project.workingDirectory, refreshKey, searchSessions])
 
   // This project's own ticking clock for live elapsed-time display, gated on
   // whether any of ITS sessions are actually active — separate from
   // SessionSidebar's own timer (which only covers the top-level conversation
   // list), since project sessions live in this component's own fetched
   // `sessions` state and aren't visible to the parent.
-  const hasActiveAttention = (sessions ?? []).some((session) => {
+  const hasActiveAttention = sourceSessions.some((session) => {
     const runtimeState =
       getSessionRuntimeState?.(session.path, project.workingDirectory, session.phiSessionId) ?? null
     const status = runtimeState?.status ?? session.status
@@ -263,11 +270,11 @@ function ProjectRowImpl({
             Skills/MCP 暂未支持。对话历史保存在 Phi 中。
           </Typography>
         )}
-        {sessions && sessions.length > 0 && (
+        {sessionsReady && orderedSessions.length > 0 && (
           <DndContext
-            sensors={sensors}
+            sensors={searchSessions === undefined ? sensors : []}
             collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
+            onDragEnd={searchSessions === undefined ? handleDragEnd : undefined}
           >
             <SortableContext
               items={orderedSessions.map((session) => session.path)}
@@ -287,15 +294,18 @@ function ProjectRowImpl({
                   isActive={session.path === activeSessionPath}
                   indent
                   nowMs={nowMs}
+                  compactHoverPreview={compactHoverPreview}
+                  onPreviewInteractionChange={onPreviewInteractionChange}
                   onSelect={() => onSelectSession(session.path)}
                   onRename={(name) => onRenameSession(session.path, name)}
                   onDelete={() => onDeleteSession(session.path)}
+                  onExport={() => onExportSession(session)}
                 />
               ))}
             </SortableContext>
           </DndContext>
         )}
-        {sessions && sessions.length === 0 && (
+        {sessionsReady && orderedSessions.length === 0 && (
           <Typography
             variant="body2"
             color="text.secondary"

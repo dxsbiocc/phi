@@ -247,7 +247,7 @@ test('current session keeps visible messages and scroll key when a fresh chat ma
 test('chat interactions are wired to acknowledge the active session marker', () => {
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
   const chatViewSource = readFileSync(
-    resolve(process.cwd(), 'src/renderer/src/components/ChatView.tsx'),
+    resolve(process.cwd(), 'src/renderer/src/features/chat/ChatView.tsx'),
     'utf8'
   )
 

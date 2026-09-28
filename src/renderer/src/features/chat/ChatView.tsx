@@ -1,4 +1,4 @@
-import { Box, IconButton, Paper, Stack, TextField, Typography } from '@mui/material'
+import { Box, Button, IconButton, Paper, Stack, TextField, Typography } from '@mui/material'
 import {
   useEffect,
   useId,
@@ -9,36 +9,39 @@ import {
   type FormEvent,
   type MouseEvent
 } from 'react'
-import { type LocalPathKind } from './MarkdownContent'
-import ToolApprovalDialog from './ToolApprovalDialog'
-import UserInteractionPanel from './UserInteractionPanel'
+import type { PromptImageInput } from '../../../../shared/promptImageTypes'
+import { PastedImagePreview } from './components/PastedImagePreview'
+import { usePastedImages } from './hooks/usePastedImages'
+import { type LocalPathKind } from '../../components/MarkdownContent'
+import ToolApprovalDialog from '../../components/ToolApprovalDialog'
+import UserInteractionPanel from '../../components/UserInteractionPanel'
 import {
   ModelSelectorControl,
   PermissionModeControl,
   ThinkingLevelControl
-} from './chat/ChatComposerControls'
-import { FileReferenceCards } from './chat/FileReferenceCards'
-import { InputAddControl, InputAddPanel } from './chat/InputAddMenu'
-import { InputFileReferenceMenu } from './chat/InputFileReferenceMenu'
-import { InputInvocationReferenceMenu } from './chat/InputInvocationReferenceMenu'
-import { InputReferenceChips } from './chat/InputReferenceChips'
-import ChatMessageList from './chat/ChatMessageList'
-import type { UserMessageRetryTarget } from './chat/ChatUserMessage'
+} from '../../components/chat/ChatComposerControls'
+import { FileReferenceCards } from '../../components/chat/FileReferenceCards'
+import { InputAddControl, InputAddPanel } from '../../components/chat/InputAddMenu'
+import { InputFileReferenceMenu } from '../../components/chat/InputFileReferenceMenu'
+import { InputInvocationReferenceMenu } from '../../components/chat/InputInvocationReferenceMenu'
+import { InputReferenceChips } from '../../components/chat/InputReferenceChips'
+import ChatMessageList from '../../components/chat/ChatMessageList'
+import type { UserMessageRetryTarget } from '../../components/chat/ChatUserMessage'
 import {
   COMPACT_COMPOSER_CONTROL_SIZE,
   REGULAR_COMPOSER_ACTION_SIZE,
   composerSurfaceSx
-} from './chat/composerControlStyles'
-import { useComposerFileDrop } from './chat/useComposerFileDrop'
-import { useInputFileReferenceMenu } from './chat/useInputFileReferenceMenu'
-import { useInputInvocationReferenceMenu } from './chat/useInputInvocationReferenceMenu'
-import { PhiIcons } from '../icons'
+} from '../../components/chat/composerControlStyles'
+import { useComposerFileDrop } from '../../components/chat/useComposerFileDrop'
+import { useInputFileReferenceMenu } from '../../components/chat/useInputFileReferenceMenu'
+import { useInputInvocationReferenceMenu } from '../../components/chat/useInputInvocationReferenceMenu'
+import { PhiIcons } from '../../icons'
 import {
   canNavigatePromptHistory,
   nextPromptHistoryCursor,
   promptHistoryFromMessages,
   type PromptHistoryDirection
-} from '../lib/promptHistory'
+} from '../../lib/promptHistory'
 import {
   appendInputReference,
   composeInputWithFileReferences,
@@ -48,11 +51,11 @@ import {
   parseInputInvocationReferences,
   parseInputFileReferences,
   type InputInvocationReference
-} from '../lib/inputReferences'
+} from '../../lib/inputReferences'
 import {
   suggestedNextActionPlaceholderFromMessages,
   suggestedNextActionToAccept
-} from '../lib/suggestedNextAction'
+} from '../../lib/suggestedNextAction'
 import type {
   AgentUserInteractionRequest,
   AgentUserInteractionResponse,
@@ -66,9 +69,9 @@ import type {
   SkillSummary,
   ThinkingLevel,
   ToolApprovalRequest
-} from '../types'
+} from '../../types'
 
-export { ThinkingBlock } from './chat/ThinkingBlock'
+export { ThinkingBlock } from '../../components/chat/ThinkingBlock'
 
 const SendIcon = PhiIcons.action.send
 const StopIcon = PhiIcons.action.stop
@@ -101,6 +104,9 @@ function isTextInputAtHistoryBoundary(
 type ViewProps = {
   messages: ChatItem[]
   input: string
+  images?: PromptImageInput[]
+  onImagesAdded?: (images: PromptImageInput[]) => void
+  onRemoveImage?: (index: number) => void
   messagesContainerRef?: (node: HTMLDivElement | null) => void
   scrollResetKey?: string
   canSend: boolean
@@ -117,12 +123,16 @@ type ViewProps = {
   onSelectThinkingLevel: (level: ThinkingLevel) => void
   onInputChange: (value: string) => void
   onRetryUserMessage?: (message: UserMessageRetryTarget) => Promise<void> | void
+  onForkUserMessage?: (messageId: string) => Promise<void> | void
   onOpenInputAddMenu?: () => void
   onPickInputFiles?: () => Promise<string[]>
   onGetPathForInputFile?: (file: File) => string
   onInputFilesDropped?: (cb: (paths: string[]) => void) => () => void
   onListInputDirectory?: (path: string) => Promise<DirectoryListing>
   onChatSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>
+  planReviewEnabled?: boolean
+  onTogglePlanReview?: () => void
+  disablePlanReview?: boolean
   onStopGeneration: () => Promise<void>
   onAcknowledgeActiveSession?: () => void
   onGoSettings: () => void
@@ -150,6 +160,9 @@ type ViewProps = {
 function ChatView({
   messages,
   input,
+  images = [],
+  onImagesAdded,
+  onRemoveImage,
   messagesContainerRef,
   scrollResetKey,
   canSend,
@@ -166,12 +179,16 @@ function ChatView({
   onSelectThinkingLevel,
   onInputChange,
   onRetryUserMessage,
+  onForkUserMessage,
   onOpenInputAddMenu,
   onPickInputFiles,
   onGetPathForInputFile,
   onInputFilesDropped,
   onListInputDirectory,
   onChatSubmit,
+  planReviewEnabled = false,
+  onTogglePlanReview,
+  disablePlanReview = false,
   onStopGeneration,
   onAcknowledgeActiveSession,
   onGoSettings,
@@ -532,6 +549,16 @@ function ChatView({
     [closeInputAddMenu, onChatSubmit]
   )
 
+  const {
+    pasteError,
+    isReading: isReadingPastedImage,
+    onPaste
+  } = usePastedImages({
+    images,
+    supportsImages: selectedModel?.supportsImages,
+    onImagesAdded
+  })
+
   return (
     <Box
       onPointerDownCapture={onAcknowledgeActiveSession}
@@ -549,6 +576,7 @@ function ChatView({
         onJumpToNotebookCell={onJumpToNotebookCell}
         onEditUserMessage={editUserMessage}
         onRetryUserMessage={retryUserMessage}
+        onForkUserMessage={onForkUserMessage}
         cwd={cwd}
       />
       <Box
@@ -655,6 +683,7 @@ function ChatView({
             onDragOver={composerDragHandlers.onDragOver}
             onDragLeave={composerDragHandlers.onDragLeave}
             onDrop={composerDragHandlers.onDrop}
+            onPaste={onPaste}
             aria-label="消息输入框"
             data-phi-file-drop-target="chat-composer"
             sx={composerSurfaceSx({
@@ -671,6 +700,7 @@ function ChatView({
               references={composerInvocationReferences}
               onRemove={removeInvocationReference}
             />
+            <PastedImagePreview images={images} error={pasteError} onRemove={onRemoveImage} />
             <TextField
               fullWidth
               multiline
@@ -748,7 +778,8 @@ function ChatView({
                   !event.shiftKey &&
                   !event.nativeEvent.isComposing &&
                   (canSend || canQueue) &&
-                  input.trim()
+                  (input.trim() || images.length > 0) &&
+                  !isReadingPastedImage
                 ) {
                   event.preventDefault()
                   event.currentTarget.closest('form')?.requestSubmit()
@@ -790,6 +821,21 @@ function ChatView({
                   onSelectPermissionMode={onSelectPermissionMode}
                   compact={compactComposerControls}
                 />
+                {onTogglePlanReview && (
+                  <Button
+                    type="button"
+                    size="small"
+                    variant={planReviewEnabled ? 'contained' : 'text'}
+                    aria-label="先计划并等待评审"
+                    aria-pressed={planReviewEnabled}
+                    title="先探索并提交计划，等你确认后再执行"
+                    disabled={disablePlanReview}
+                    onClick={onTogglePlanReview}
+                    sx={{ minWidth: 0, px: 1, flexShrink: 0, whiteSpace: 'nowrap' }}
+                  >
+                    先计划
+                  </Button>
+                )}
               </Box>
               <Box
                 sx={{
@@ -816,7 +862,9 @@ function ChatView({
                 {!isGenerating ? (
                   <IconButton
                     type="submit"
-                    disabled={!canSend || !input.trim()}
+                    disabled={
+                      !canSend || (!input.trim() && images.length === 0) || isReadingPastedImage
+                    }
                     aria-label="发送消息"
                     data-phi-composer-action="send"
                     data-phi-composer-size={actionControlSize}

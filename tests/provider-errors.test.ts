@@ -58,6 +58,15 @@ test('provider errors classify invalid authentication as configuration issue', (
   assert.equal(display.actionLabel, '去配置 Provider')
 })
 
+test('Cursor HTTP/2 transport failure is not presented as missing login credentials', () => {
+  const display = getProviderErrorDisplay(
+    'Cursor run transport could not negotiate HTTP/2 with https://api2.cursor.sh: "h2 is not supported". Front the provider with a local HTTP/2 bridge.'
+  )
+  assert.equal(display.title, 'Cursor HTTP/2 连接失败')
+  assert.equal(display.action, null)
+  assert.doesNotMatch(display.description, /凭据|API Key/)
+})
+
 test('provider errors classify rate limits without leaking account identifiers', () => {
   const display = getProviderErrorDisplay(
     '429 Your account org-930ebedfe4d54cf998034940e3c937c1<ak-fch4ix7rq6wi11c3z111> request reached organization max RPM: 3, please try again after 1 seconds retry-after-ms=1000 (type=rate_limit_reached_error)'
@@ -69,6 +78,24 @@ test('provider errors classify rate limits without leaking account identifiers',
   assert.doesNotMatch(display.rawMessage, /org-930/)
   assert.doesNotMatch(display.rawMessage, /ak-fch/)
   assert.match(display.rawMessage, /\[redacted\]/)
+})
+
+test('Cursor non-retryable usage cap is not described as a transient rate limit', () => {
+  const display = getProviderErrorDisplay(
+    'Connect error resource_exhausted: Error [details: aiserver.v1.ErrorDetails: {"error":"ERROR_RATE_LIMITED_CHANGEABLE","details":{"title":"You\'ve hit your usage limit","detail":"Switch to a different model or set a Spend Limit to continue with this model.","isRetryable":false}}]'
+  )
+  assert.equal(display.title, 'Cursor 用量上限已用尽')
+  assert.match(display.description, /切换模型/)
+  assert.match(display.description, /不可重试/)
+  assert.equal(display.action, null)
+  assert.equal(display.showRawMessage, false)
+})
+
+test('Cursor retryable rate limits retain the temporary limit guidance', () => {
+  const display = getProviderErrorDisplay(
+    'Connect error resource_exhausted: {"error":"ERROR_RATE_LIMITED_CHANGEABLE","isRetryable":true}'
+  )
+  assert.equal(display.title, '请求太频繁')
 })
 
 test('provider error redaction removes common inline secrets', () => {

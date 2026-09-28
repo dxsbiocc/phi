@@ -180,20 +180,37 @@ test('analysis view does not own the workspace side panel', () => {
   assert.doesNotMatch(markup, /workflows\/main\.nf/)
 })
 
-test('workspace side panel renders an empty state without a workspace', () => {
+test('terminal side panel shows only the terminal entry', () => {
   const markup = renderWorkspaceSidePanel()
 
   assert.match(markup, /data-phi-workspace-tools-side-panel="true"/)
+  assert.match(markup, /data-phi-workspace-side-panel-mode="terminal"/)
   assert.match(markup, /data-phi-workspace-side-panel-tool-card="terminal"/)
-  assert.match(markup, /data-phi-workspace-side-panel-tool-card="browser"/)
+  assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card="browser"/)
   assert.match(markup, /终端/)
-  assert.match(markup, /浏览器/)
+  assert.doesNotMatch(markup, /浏览器/)
   assert.doesNotMatch(markup, /data-phi-workspace-explorer-header="true"/)
   assert.doesNotMatch(markup, /刷新文件树/)
   assert.doesNotMatch(markup, /还没有工作空间/)
   assert.doesNotMatch(markup, /Variables/)
   assert.doesNotMatch(markup, /Artifacts/)
   assert.doesNotMatch(markup, /变量检查/)
+})
+
+test('browser side panel shows only the browser entry', () => {
+  const markup = renderWorkspaceSidePanel({ mode: 'browser' })
+
+  assert.match(markup, /data-phi-workspace-side-panel-mode="browser"/)
+  assert.match(markup, /data-phi-workspace-side-panel-tool-card="browser"/)
+  assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card="terminal"/)
+})
+
+test('workspace side panel shows jobs content instead of tool cards in jobs mode', () => {
+  const markup = renderWorkspaceSidePanel({ mode: 'jobs', children: '后台任务列表' })
+
+  assert.match(markup, /data-phi-workspace-side-panel-mode="jobs"/)
+  assert.match(markup, /后台任务列表/)
+  assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card=/)
 })
 
 test('workspace side panel does not render the workspace file tree', () => {

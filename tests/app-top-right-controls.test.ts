@@ -6,6 +6,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import { TopRightControls } from '../src/renderer/src/App'
+import type { WorkspaceSidePanelMode } from '../src/renderer/src/lib/workspaceSidePanelMode'
 import { workspaceSidebarModeIsExpanded } from '../src/renderer/src/lib/workspaceSidebar'
 import { workspaceScopeLabelForCwd } from '../src/renderer/src/lib/workspaceScope'
 
@@ -13,8 +14,8 @@ function renderControls(
   options: {
     showSidePanelRefresh?: boolean
     sidePanelRefreshDisabled?: boolean
-    showSidePanelToggle?: boolean
-    sidePanelCollapsed?: boolean
+    showSidePanelButtons?: boolean
+    activePanel?: WorkspaceSidePanelMode | null
   } = {}
 ): string {
   const theme = createTheme()
@@ -25,59 +26,88 @@ function renderControls(
       createElement(TopRightControls, {
         showSidePanelRefresh: options.showSidePanelRefresh ?? true,
         sidePanelRefreshDisabled: options.sidePanelRefreshDisabled ?? false,
-        sidePanelCollapsed: options.sidePanelCollapsed ?? false,
-        showSidePanelToggle: options.showSidePanelToggle ?? true,
+        activePanel: options.activePanel ?? null,
+        showSidePanelButtons: options.showSidePanelButtons ?? true,
         onRefreshSidePanel: () => undefined,
-        onToggleSidePanel: () => undefined
+        onTogglePanel: () => undefined
       })
     )
   )
 }
 
-test('workspace top-right controls render refresh and side-panel actions in one row', () => {
+test('workspace top-right controls place jobs, terminal, and browser side by side', () => {
   const markup = renderControls()
   const refreshIndex = markup.indexOf('aria-label="刷新文件树"')
-  const sidePanelIndex = markup.indexOf('aria-label="关闭右侧栏"')
+  const jobsIndex = markup.indexOf('aria-label="后台任务"')
+  const terminalIndex = markup.indexOf('aria-label="终端"')
+  const browserIndex = markup.indexOf('aria-label="浏览器"')
 
   assert.ok(refreshIndex >= 0)
-  assert.ok(sidePanelIndex > refreshIndex)
+  assert.ok(jobsIndex > refreshIndex)
+  assert.ok(terminalIndex > jobsIndex)
+  assert.ok(browserIndex > terminalIndex)
+  assert.match(markup, /data-phi-background-jobs-toggle-button="true"/)
+  assert.match(markup, /data-phi-terminal-toggle-button="true"/)
+  assert.match(markup, /data-phi-browser-toggle-button="true"/)
   assert.doesNotMatch(markup, /aria-label="最小化"/)
   assert.doesNotMatch(markup, /aria-label="右侧面板全屏"/)
+  assert.doesNotMatch(markup, /aria-label="展开右侧栏"/)
   assert.match(markup, /data-phi-top-right-controls="workspace"/)
   assert.match(markup, /data-phi-workspace-side-panel-refresh-button="true"/)
-  assert.match(markup, /data-phi-side-panel-toggle-button="expanded"/)
-  assert.match(markup, /data-phi-side-panel-toggle-icon="collapse"/)
-  assert.match(markup, /data-phi-side-panel-toggle-position="titlebar-flow"/)
-  assert.match(markup, /data-phi-side-panel-toggle-anchor="workspace-chrome"/)
 })
 
-test('workspace top-right controls keep the side panel action in place when collapsed', () => {
-  const markup = renderControls({ sidePanelCollapsed: true, showSidePanelRefresh: false })
+test('right-side buttons use Go icons and the left navigation color treatment', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const controlsSource = appSource.slice(
+    appSource.indexOf('export function TopRightControls'),
+    appSource.indexOf('function WorkspaceFileTabs')
+  )
 
-  assert.match(markup, /aria-label="展开右侧栏"/)
+  assert.match(
+    appSource,
+    /import \{ GoGlobe, GoStack, GoSync, GoTerminal \} from 'react-icons\/go'/
+  )
+  assert.match(controlsSource, /<GoStack aria-hidden focusable="false" size=\{20\}/)
+  assert.match(controlsSource, /<GoTerminal aria-hidden focusable="false" size=\{20\}/)
+  assert.match(controlsSource, /<GoGlobe aria-hidden focusable="false" size=\{20\}/)
+  assert.match(controlsSource, /color: active \? 'primary\.main' : 'text\.secondary'/)
+  assert.match(controlsSource, /bgcolor: 'action\.hover'/)
+  assert.doesNotMatch(controlsSource, /bgcolor: activePanel ===/)
+})
+
+test('workspace top-right controls mark only the open panel as pressed', () => {
+  const markup = renderControls({ activePanel: 'jobs', showSidePanelRefresh: false })
+
+  assert.match(markup, /aria-label="后台任务"/)
+  assert.match(markup, /aria-label="终端"/)
+  assert.match(markup, /aria-label="浏览器"/)
   assert.doesNotMatch(markup, /aria-label="刷新文件树"/)
-  assert.match(markup, /data-phi-side-panel-toggle-button="collapsed"/)
-  assert.match(markup, /data-phi-side-panel-toggle-icon="expand"/)
-  assert.match(markup, /data-phi-side-panel-toggle-position="titlebar-flow"/)
+  assert.match(markup, /aria-label="后台任务" aria-pressed="true"/)
+  assert.match(markup, /aria-label="终端" aria-pressed="false"/)
+  assert.match(markup, /aria-label="浏览器" aria-pressed="false"/)
 })
 
-test('workspace top-right controls can disable refresh without moving the side panel action', () => {
+test('workspace top-right controls can disable refresh without moving panel buttons', () => {
   const markup = renderControls({ sidePanelRefreshDisabled: true })
 
   assert.match(markup, /aria-label="刷新文件树"/)
   assert.match(markup, /disabled=""/)
-  assert.match(markup, /aria-label="关闭右侧栏"/)
+  assert.match(markup, /aria-label="后台任务"/)
+  assert.match(markup, /aria-label="终端"/)
+  assert.match(markup, /aria-label="浏览器"/)
 })
 
 test('workspace top-right controls hide refresh when the side panel is hidden', () => {
   const markup = renderControls({ showSidePanelRefresh: false })
 
   assert.doesNotMatch(markup, /aria-label="刷新文件树"/)
-  assert.match(markup, /aria-label="关闭右侧栏"/)
+  assert.match(markup, /aria-label="后台任务"/)
+  assert.match(markup, /aria-label="终端"/)
+  assert.match(markup, /aria-label="浏览器"/)
 })
 
 test('workspace top-right controls stay hidden when not requested', () => {
-  assert.equal(renderControls({ showSidePanelRefresh: false, showSidePanelToggle: false }), '')
+  assert.equal(renderControls({ showSidePanelRefresh: false, showSidePanelButtons: false }), '')
 })
 
 test('analysis workspace skips the blank outer titlebar', () => {
@@ -190,7 +220,8 @@ test('workspace top-right controls are app-level chrome, not notebook-only conte
   assert.match(appSource, /showSidePanelRefresh=\{false\}/)
   assert.match(appSource, /sidePanelRefreshDisabled=\{false\}/)
   assert.match(appSource, /onRefreshSidePanel=\{onRefreshWorkspaceSidePanel\}/)
-  assert.match(appSource, /onToggleSidePanel=\{onToggleWorkspaceSidePanel\}/)
+  assert.match(appSource, /onTogglePanel=\{onToggleWorkspaceSidePanel\}/)
+  assert.match(appSource, /toggleWorkspaceSidePanelMode\(current, mode\)/)
   assert.doesNotMatch(appSource, /showSidePanelFullscreen/)
   assert.doesNotMatch(appSource, /workspaceSidePanelFullscreen/)
   assert.doesNotMatch(appSource, /onToggleWorkspaceSidePanelFullscreen/)
@@ -198,8 +229,8 @@ test('workspace top-right controls are app-level chrome, not notebook-only conte
   assert.doesNotMatch(appSource, /FiMinimize2/)
   assert.match(appSource, /GoSync/)
   assert.match(appSource, /const RefreshIcon = GoSync/)
-  assert.match(appSource, /GoSidebarCollapse/)
-  assert.match(appSource, /GoSidebarExpand/)
+  assert.doesNotMatch(appSource, /GoSidebarCollapse/)
+  assert.doesNotMatch(appSource, /GoSidebarExpand/)
   assert.doesNotMatch(appSource, /TbLayoutSidebarRight/)
   assert.doesNotMatch(appSource, /<TopRightControls[\s\S]{0,400}onMinimize=/)
   assert.doesNotMatch(appSource, /FiMinus/)
@@ -210,7 +241,9 @@ test('workspace file previews and chats can show the shared right side panel', (
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
 
   assert.match(appSource, /data-phi-workspace-side-panel-shell="true"/)
-  assert.match(appSource, /!workspaceSidePanelCollapsed \? \([\s\S]*?<WorkspaceSidePanel/)
+  assert.match(appSource, /workspaceSidePanelMode \? \([\s\S]*?<WorkspaceSidePanel/)
+  assert.match(appSource, /mode=\{workspaceSidePanelMode\}/)
+  assert.match(appSource, /workspaceSidePanelMode === 'jobs' \? \([\s\S]*?<BackgroundJobsPanel/)
   assert.doesNotMatch(appSource, /<WorkspaceSidePanel[\s\S]{0,180}workspaceRootPath=/)
   assert.doesNotMatch(appSource, /<WorkspaceSidePanel[\s\S]{0,180}activeWorkspacePath=/)
   assert.doesNotMatch(
@@ -228,7 +261,7 @@ test('workspace session tabs do not stack stale file previews under chat', () =>
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
   const chatWorkspaceStart = appSource.indexOf('const chatWorkspaceContent = (')
   const activeAnalysisViewStart = appSource.indexOf(
-    'const activeAnalysisView = (',
+    'const activeAnalysisView =',
     chatWorkspaceStart
   )
   const chatWorkspaceSource = appSource.slice(chatWorkspaceStart, activeAnalysisViewStart)
@@ -264,7 +297,11 @@ test('workspace file opens keep the left sidebar matched to the source surface',
   assert.match(appSource, /const onOpenWorkspaceFileFromSidebar = useCallback/)
   assert.match(
     appSource,
-    /const onOpenWorkspaceFileFromSidebar = useCallback[\s\S]{0,260}setWorkspaceSidebarMode\('files'\)/
+    /const onOpenWorkspaceFileFromSidebar = useCallback[\s\S]{0,800}setWorkspaceSidebarMode\('files'\)/
+  )
+  assert.match(
+    appSource,
+    /const onOpenWorkspaceFileFromSidebar = useCallback[\s\S]{0,260}openRemoteWorkspacePath\(path, 'file'\)/
   )
   assert.match(
     appSource,
@@ -315,6 +352,8 @@ test('workspace files are available from the left sidebar activity item', () => 
   assert.match(sidebarSource, /workspaceSidebarMode === 'files'/)
   assert.match(sidebarSource, /data-phi-files-sidebar="true"/)
   assert.match(sidebarSource, /<WorkspaceFilesPane/)
+  assert.match(appSource, /workspaceRootPath=\{workspaceFilesRootPath\}/)
+  assert.doesNotMatch(sidebarSource, /远程项目文件浏览暂不可用/)
   assert.doesNotMatch(sidebarSource, /Tooltip title="刷新文件树"/)
   assert.doesNotMatch(sidebarSource, /aria-label="刷新文件树"/)
   assert.match(appSource, /onOpenWorkspaceFile=\{onOpenWorkspaceFileFromSidebar\}/)
@@ -326,7 +365,7 @@ test('workspace file titlebars reserve trailing app chrome only at the window ed
 
   assert.match(appSource, /FilePreviewTitleTab,/)
   assert.match(appSource, /const titlebarLeadingChromeReserveWidth = 220/)
-  assert.match(appSource, /const titlebarTrailingToggleChromeReserve = '56px'/)
+  assert.match(appSource, /const titlebarTrailingToggleChromeReserve = '120px'/)
   assert.match(
     appSource,
     /const workspaceFileHeaderLeadingChromeInsetWidth =\s*titlebarLeadingChromeReserveWidth - activityBarWidth/

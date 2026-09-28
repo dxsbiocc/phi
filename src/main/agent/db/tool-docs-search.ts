@@ -4,6 +4,7 @@ import type {
   DbFieldSchema,
   DbXrefRule
 } from './manifest-types'
+import { ensemblNavigationTier } from './ensembl-navigation'
 
 type DbDocsSearchKind = 'database' | 'domain' | 'field' | 'xref'
 
@@ -256,5 +257,22 @@ function scoreDocsCandidate(
       }
     }
   }
+
+  if (candidate.result.database === 'rest-json/ensembl' && candidate.result.kind === 'domain') {
+    const tier = ensemblNavigationTier(candidate.result.domain ?? '')
+    if (tier === 'primary') {
+      score += 25
+      matchReasons.add('ensembl:primary')
+    } else if (tier === 'meta' || tier === 'advanced') {
+      const asksAdvanced = tokens.some((token) =>
+        /^(ga4gh|beacon|info|compara|homology|genetree|cafe|archive|ontology|taxonomy)$/.test(token)
+      )
+      if (!asksAdvanced) {
+        score = Math.max(0, score - 40)
+        matchReasons.add('ensembl:demoted')
+      }
+    }
+  }
+
   return { score, matchReasons: Array.from(matchReasons).sort() }
 }

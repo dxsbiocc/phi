@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { editDiffString } from '@oh-my-pi/pi-natives'
-import { existsSync } from 'node:fs'
+import { cpSync, existsSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -21,6 +21,8 @@ import {
   type ResourceDiagnostic
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
+import { resolveApprovedPlan } from '@oh-my-pi/pi-coding-agent/plan-mode/approved-plan'
+import { listPlanFiles, readPlanFile } from '@oh-my-pi/pi-coding-agent/plan-mode/plan-files'
 import { PluginManager } from '@oh-my-pi/pi-coding-agent/extensibility/plugins/manager'
 import type { InstalledPlugin } from '@oh-my-pi/pi-coding-agent/extensibility/plugins/types'
 import type { AuthStorage, CredentialOrigin, StoredAuthCredential } from '@oh-my-pi/pi-ai'
@@ -30,8 +32,15 @@ import {
   type ConfiguredThinkingLevel
 } from '@oh-my-pi/pi-coding-agent/thinking'
 import { authPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
+import { createNextActionInstructionExtension } from './next-action-extension'
+import { cursorModelWithBridge } from './cursor-model-routing'
 import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
 import { buildDefaultDbCustomTools } from '../db/tools'
+import { buildProjectDownloadTool } from '../download/project-download-tool'
+import { buildPresentFilesTool } from '../deliverables/present-tool'
+import { enterPlanReviewMode, type PlanReviewChoice } from '../plan/plan-review-mode'
+import { planModeToolDecision } from '../plan/plan-tool-policy'
+import type { PresentedFile } from '../../../shared/presentedFileTypes'
 import { buildRemoteWorkspaceReadTool } from '../remote-workspace-read-tool'
 import type { RemoteWorkspaceReadResult } from '../remote-workspace-read'
 import {
@@ -106,6 +115,7 @@ type SessionEntry = {
 }
 
 type WorkerPromptOptions = {
+  images?: Array<{ type: 'image'; data: string; mimeType: string }>
   expandPromptTemplates?: boolean
   synthetic?: boolean
   userInitiated?: boolean
@@ -138,6 +148,7 @@ type RuntimeModelSummary = {
   id: string
   name: string
   reasoning: boolean
+  supportsImages: boolean
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>
 }
 
@@ -306,6 +317,7 @@ function serializeModel(model: Model): RuntimeModelSummary {
     id: model.id,
     name: model.name || model.id,
     reasoning: Boolean(model.reasoning),
+    supportsImages: model.input.includes('image'),
     ...(serializeThinkingMap(model) ? { thinkingLevelMap: serializeThinkingMap(model) } : {})
   }
 }
@@ -635,12 +647,22 @@ async function uninstallPlugin(params: unknown): Promise<void> {
   await manager.uninstall(stringValue(record.name))
 }
 
-function modelBySelector(ctx: RuntimeContext, modelLike: unknown): Model | undefined {
+async function modelBySelector(
+  ctx: RuntimeContext,
+  modelLike: unknown
+): Promise<Model | undefined> {
   if (!isRecord(modelLike)) return undefined
   const provider = stringValue(modelLike.provider)
   const modelId = stringValue(modelLike.id)
   if (!provider || !modelId) return undefined
-  return ctx.modelRegistry.find(provider, modelId)
+  const model = ctx.modelRegistry.find(provider, modelId)
+  return cursorModelWithBridge(model, async () => {
+    const response = await requestHost('cursorBridge.ensure', {})
+    if (!isRecord(response) || typeof response.baseUrl !== 'string') {
+      throw new Error('Cursor HTTP/2 桥接不可用')
+    }
+    return response.baseUrl
+  })
 }
 
 async function makeSessionManager(
@@ -694,6 +716,15 @@ function createBridgeToolApprovalExtension(
         agentRunId
       )
       return result === null ? undefined : result
+    })
+  }
+}
+
+function createPlanReviewToolGuardExtension(isPlanModeActive: () => boolean): ExtensionFactory {
+  return (pi) => {
+    pi.on('tool_call', async (event) => {
+      const decision = planModeToolDecision(isPlanModeActive(), event.toolName, event.input)
+      return decision.allowed ? undefined : { block: true, reason: decision.reason }
     })
   }
 }
@@ -908,7 +939,14 @@ async function createSession(params: unknown): Promise<unknown> {
   // One registry per conversation: parallel and background delegations share its limits,
   // and the run tools and controlled-fallback policy below act on it.
   const agentRuns = new AgentRunRegistry()
+  const parentRef: { current?: CreateAgentSessionResult } = {}
   const extensionFactories = [
+    createNextActionInstructionExtension(
+      async () => (await requestHost('settings.nextActionSuggestionsEnabled', {})) === true
+    ),
+    createPlanReviewToolGuardExtension(
+      () => parentRef.current?.session.getPlanModeState()?.enabled === true
+    ),
     ...(remoteRoot ? [createRemoteProjectToolGuardExtension()] : []),
     createRemoteUrlGuardExtension(),
     ...(record.projectBound && !remoteRoot ? [createProjectToolBoundaryExtension(cwd)] : []),
@@ -949,7 +987,6 @@ async function createSession(params: unknown): Promise<unknown> {
   // named after the agent (for example `Wrapper` or `Database`), and none of
   // the specialists' own tool functions, so internal catalogs and query tools
   // stay out of the main conversation. Definitions come from the main process's scan.
-  const parentRef: { current?: CreateAgentSessionResult } = {}
   if (phiAgents.length > 0) pruneAgentUsageLogs(agentDir)
   const agentCustomTools = phiAgents.map((definition) =>
     buildAgentTool(
@@ -1145,11 +1182,22 @@ async function createSession(params: unknown): Promise<unknown> {
       : []),
     ...agentCustomTools,
     ...agentRunTools,
+    ...(!remoteRoot
+      ? [
+          buildPresentFilesTool(
+            sessionId,
+            (request) =>
+              requestHost('deliverables.present', request) as Promise<{ files: PresentedFile[] }>
+          )
+        ]
+      : []),
+    buildProjectDownloadTool(cwd, agentDir),
     ...notebookCustomTools,
     ...libraryCustomTools,
     ...userInteractionCustomTools
   ]
 
+  const selectedModel = await modelBySelector(ctx, record.model)
   const result = await createLegacyAgentSession({
     agentId: `phi-main-${sessionId}`,
     agentDisplayName: 'Main',
@@ -1170,7 +1218,7 @@ async function createSession(params: unknown): Promise<unknown> {
         : buildPhiMainSystemPrompt(defaultPrompt, {
             ...(personaMarkdown ? { personaMarkdown } : {})
           }),
-    ...(modelBySelector(ctx, record.model) ? { model: modelBySelector(ctx, record.model) } : {}),
+    ...(selectedModel ? { model: selectedModel } : {}),
     ...(resources ? { resourceLoader: resources } : {}),
     ...(customTools.length > 0 ? { customTools } : {}),
     ...(remoteRoot
@@ -1240,6 +1288,9 @@ function getSession(sessionId: unknown): CreateAgentSessionResult {
 function promptOptions(value: unknown): WorkerPromptOptions | undefined {
   if (!isRecord(value)) return undefined
   const options: WorkerPromptOptions = {}
+  if (Array.isArray(value.images)) {
+    options.images = value.images as WorkerPromptOptions['images']
+  }
   if (typeof value.expandPromptTemplates === 'boolean') {
     options.expandPromptTemplates = value.expandPromptTemplates
   }
@@ -1262,6 +1313,42 @@ async function promptSession(params: unknown): Promise<unknown> {
   return serializeSessionState(result)
 }
 
+async function enterSessionPlanMode(params: unknown): Promise<{ enabled: true }> {
+  const record = isRecord(params) ? params : {}
+  const runtimeSessionId = stringValue(record.sessionId)
+  const { session } = getSession(runtimeSessionId)
+  const sessionManager = session.sessionManager
+  const localProtocolOptions = {
+    getArtifactsDir: () => sessionManager.getArtifactsDir(),
+    getSessionId: () => sessionManager.getSessionId()
+  }
+  await enterPlanReviewMode(
+    session,
+    async (title, planFilePath) => {
+      const proposal = await resolveApprovedPlan({
+        suppliedTitle: title,
+        statePlanFilePath: planFilePath,
+        readPlan: (path) =>
+          readPlanFile(path, { localProtocolOptions, cwd: sessionManager.getCwd() }),
+        listPlanFiles: () => listPlanFiles({ localProtocolOptions })
+      })
+      return {
+        title: proposal.title,
+        content: proposal.planContent,
+        planFilePath: proposal.planFilePath
+      }
+    },
+    async (proposal) =>
+      (await requestHost('planReview.request', {
+        runtimeSessionId,
+        title: proposal.title,
+        planContent: proposal.content,
+        planFilePath: proposal.planFilePath
+      })) as PlanReviewChoice
+  )
+  return { enabled: true }
+}
+
 /** A delegation card steers or stops the agent run it shows (see agent/agents/run-control.ts). */
 async function controlSessionAgentRun(
   action: 'steer' | 'stop',
@@ -1269,6 +1356,26 @@ async function controlSessionAgentRun(
 ): Promise<{ ok: true }> {
   const record = isRecord(params) ? params : {}
   return controlAgentRun(sessions.get(stringValue(record.sessionId))?.agentRuns, action, record)
+}
+
+async function listSessionAgentRuns(): Promise<unknown[]> {
+  return [...sessions.entries()].flatMap(([agentSessionId, entry]) =>
+    (entry.agentRuns?.list() ?? [])
+      .filter((run) => run.background)
+      .map((run) => ({
+        agentSessionId,
+        agentRunId: run.id,
+        agentName: run.agent,
+        task: run.task,
+        state: run.state,
+        background: run.background,
+        startedAt: run.startedAt,
+        ...(run.completedAt !== undefined ? { completedAt: run.completedAt } : {}),
+        ...(run.lastStep ? { lastStep: run.lastStep } : {}),
+        ...(run.toolCalls !== undefined ? { toolCalls: run.toolCalls } : {}),
+        ...(run.toolCallId ? { toolCallId: run.toolCallId } : {})
+      }))
+  )
 }
 
 async function abortSession(params: unknown): Promise<unknown> {
@@ -1296,7 +1403,7 @@ async function setSessionModel(params: unknown): Promise<unknown> {
   const result = getSession(record.sessionId)
   const agentDir = stringValue(record.agentDir, process.env.PI_CODING_AGENT_DIR)
   const ctx = await getContext(agentDir)
-  const model = modelBySelector(ctx, record.model)
+  const model = await modelBySelector(ctx, record.model)
   if (!model) throw new Error('Unknown model')
   await result.session.setModel(model)
   return serializeSessionState(result)
@@ -1344,6 +1451,65 @@ async function openSession(params: unknown): Promise<unknown> {
   return result
 }
 
+function userMessageText(message: unknown): string | null {
+  if (!isRecord(message) || message.role !== 'user') return null
+  if (message.synthetic === true) return null
+  if (typeof message.content === 'string') return message.content
+  if (!Array.isArray(message.content)) return null
+  return message.content
+    .filter((part) => isRecord(part) && part.type === 'text' && typeof part.text === 'string')
+    .map((part) => (part as { text: string }).text)
+    .join('')
+}
+
+async function forkSession(params: unknown): Promise<{ path: string }> {
+  const record = isRecord(params) ? params : {}
+  const path = stringValue(record.path)
+  const cwd = stringValue(record.cwd)
+  const userMessages = record.userMessages
+  const selectedIndex = record.selectedIndex
+  if (
+    !path ||
+    !cwd ||
+    !Array.isArray(userMessages) ||
+    !userMessages.every((value) => typeof value === 'string') ||
+    typeof selectedIndex !== 'number' ||
+    !Number.isInteger(selectedIndex) ||
+    selectedIndex < 0 ||
+    selectedIndex >= userMessages.length
+  ) {
+    throw new Error('无效的会话分叉请求')
+  }
+  const manager = await SessionManager.open(path, undefined, undefined, { initialCwd: cwd })
+  try {
+    const branch = manager.getBranch()
+    let searchFrom = 0
+    const matched: number[] = []
+    for (const text of userMessages) {
+      const index = branch.findIndex(
+        (entry, index) =>
+          index >= searchFrom && entry.type === 'message' && userMessageText(entry.message) === text
+      )
+      if (index < 0) throw new Error('会话历史与界面消息无法对应，请重新打开会话后重试')
+      matched.push(index)
+      searchFrom = index + 1
+    }
+    const nextUserIndex = matched[selectedIndex + 1]
+    const leaf = branch[(nextUserIndex ?? branch.length) - 1]
+    if (!leaf) throw new Error('无法定位会话分叉点')
+    const forkPath = manager.createBranchedSession(leaf.id)
+    if (!forkPath) throw new Error('无法保存分叉会话')
+    if (path.endsWith('.jsonl') && forkPath.endsWith('.jsonl')) {
+      const sourceArtifacts = path.slice(0, -6)
+      if (existsSync(sourceArtifacts))
+        cpSync(sourceArtifacts, forkPath.slice(0, -6), { recursive: true })
+    }
+    return { path: forkPath }
+  } finally {
+    await manager.close()
+  }
+}
+
 async function renameSession(params: unknown): Promise<void> {
   const record = isRecord(params) ? params : {}
   const path = stringValue(record.path)
@@ -1373,6 +1539,8 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return createSession(params)
     case 'session.prompt':
       return promptSession(params)
+    case 'session.plan.enter':
+      return enterSessionPlanMode(params)
     case 'session.abort':
       return abortSession(params)
     case 'session.dispose':
@@ -1381,6 +1549,8 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return controlSessionAgentRun('steer', params)
     case 'agentRun.stop':
       return controlSessionAgentRun('stop', params)
+    case 'agentRuns.list':
+      return listSessionAgentRuns()
     case 'session.setModel':
       return setSessionModel(params)
     case 'session.setThinkingLevel':
@@ -1391,6 +1561,8 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return listSessions(params)
     case 'sessions.open':
       return openSession(params)
+    case 'sessions.fork':
+      return forkSession(params)
     case 'sessions.rename':
       return renameSession(params)
     case 'toolApproval.result': {

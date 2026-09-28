@@ -16,6 +16,7 @@ export type ChatBubbleProps = {
   userMessageState?: UserMessageState
   onEditUserMessage?: (content: string) => void
   onRetryUserMessage?: (message: UserMessageRetryTarget) => void
+  onForkUserMessage?: (messageId: string) => void
   onGoSettings: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onContentResize?: ChatContentResizeHandler
@@ -33,7 +34,8 @@ function chatBubblePropsEqual(prev: ChatBubbleProps, next: ChatBubbleProps): boo
     prev.cwd === next.cwd &&
     prev.userMessageState === next.userMessageState &&
     prev.onEditUserMessage === next.onEditUserMessage &&
-    prev.onRetryUserMessage === next.onRetryUserMessage
+    prev.onRetryUserMessage === next.onRetryUserMessage &&
+    prev.onForkUserMessage === next.onForkUserMessage
   )
 }
 
@@ -42,6 +44,7 @@ export const ChatBubble = memo(function ChatBubble({
   userMessageState,
   onEditUserMessage,
   onRetryUserMessage,
+  onForkUserMessage,
   onGoSettings,
   onOpenLocalPath,
   onContentResize,
@@ -101,6 +104,7 @@ export const ChatBubble = memo(function ChatBubble({
         state={userMessageState}
         onEdit={onEditUserMessage}
         onRetry={onRetryUserMessage}
+        onFork={onForkUserMessage}
       />
     )
   }

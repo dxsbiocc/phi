@@ -150,6 +150,16 @@ Goal: make the internal beta comfortable without expanding scope.
 - Update README with internal beta scope, resettable data model notice, manual update expectations, and macOS security prompt notes.
 - Run `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` before beta handoff.
 
+## Experimental: DB Connector Core Prototype
+
+Goal: allow DB Connector implementation work without turning it into a broad public database product surface.
+
+- Keep the beta DB UI limited to a settings page for installed database connectors. The DB toolchain itself is always available; settings only enable or disable individual databases for `db_query`.
+- Allow core-only implementation under `src/main/agent/db/`, bundled connector manifests under `resources/db-connectors/`, and offline tests.
+- Agent runtime registration is always on for the core prototype so agents can actually use `db_search` without falling back to web/eval. Do not add an app-level feature toggle for DB Connector; use per-database query toggles instead.
+- The prototype should start with one bundled NCBI Entrez connector and avoid expanding to additional protocol families before `esummary`/`efetch`, result artifacts, policy tests, and documentation are stable.
+- Do not add plugin/MCP/federated database UI for this prototype.
+
 ## Deferred Until After Internal Beta
 
 - Public distribution, formal signing/notarization, and automatic updates.

@@ -16,6 +16,7 @@ type PendingInteraction = {
 export type AgentUserInteractionInput = {
   requestId?: string
   questions: AgentUserInteractionQuestion[]
+  planReview?: AgentUserInteractionRequest['planReview']
   sessionId?: string
   sessionPath?: string
   sessionGeneration?: number
@@ -76,6 +77,7 @@ export function waitForAgentUserInteraction(
     const request: AgentUserInteractionRequest = {
       requestId: input.requestId ?? randomUUID(),
       questions: input.questions,
+      ...(input.planReview ? { planReview: input.planReview } : {}),
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       ...(input.sessionPath ? { sessionPath: input.sessionPath } : {}),
       ...(typeof input.sessionGeneration === 'number'

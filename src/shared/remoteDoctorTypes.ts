@@ -1,7 +1,7 @@
 import type { RemoteContainerRuntime, RemoteController } from './wrapperRemoteTypes'
 
 export interface RemoteDoctorOptions {
-  scope?: 'workspace' | 'full'
+  scope?: 'connection' | 'workspace' | 'full'
   scheduler?: 'local' | 'slurm'
   controller?: RemoteController
   runtime?: RemoteContainerRuntime
@@ -22,4 +22,9 @@ export interface RemoteDoctorReport {
   checkedAt: string
   ok: boolean
   checks: RemoteDoctorCheck[]
+}
+
+export interface RemoteNextflowInstallResult {
+  path: string
+  alreadyInstalled: boolean
 }

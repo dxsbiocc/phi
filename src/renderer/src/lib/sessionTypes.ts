@@ -1,4 +1,5 @@
 import type { ProjectLocation } from '../../../shared/projectLocation'
+import type { PromptImageInput } from '../../../shared/promptImageTypes'
 
 export type SessionStatus =
   'idle' | 'running' | 'needs_approval' | 'needs_input' | 'failed' | 'completed_unread'
@@ -62,6 +63,8 @@ export interface PromptTarget {
   sessionGeneration: number
   suppressUserMessageEvent?: boolean
   retryUserMessageId?: string
+  images?: PromptImageInput[]
+  planMode?: boolean
 }
 
 export type PermissionMode = 'auto' | 'ask' | 'full'

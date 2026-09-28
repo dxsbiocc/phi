@@ -1,0 +1,144 @@
+phiDbConnectorVersion: 1
+id: rest-json/reactome
+name: Reactome
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://reactome.org/ContentService
+networkPolicy:
+  allowedHosts:
+    - reactome.org
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 5
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: query
+    summary: Fetch a Reactome database object by stable identifier or DB ID.
+    identity:
+      stableIdFields: [stId]
+      namespace: reactome.stable_id
+      primaryUrlTemplate: https://reactome.org/content/detail/{stable_id}
+    commonFields:
+      [dbId, stId, displayName, schemaClass, speciesName, summation, isInDisease, isInferred]
+    rest:
+      request:
+        path: /data/query/{filter:id}
+      response:
+        rowsPath: $
+    fields:
+      - name: id
+        type: string
+        description: Reactome stable ID (for example R-HSA-109581) or internal DB ID.
+        synonyms: [stid, stable_id, reactome_id]
+        namespace: reactome.stable_id
+      - name: stId
+        type: string
+        description: Reactome stable identifier.
+        namespace: reactome.stable_id
+      - name: displayName
+        type: string
+        description: Display name for the Reactome object.
+      - name: schemaClass
+        type: string
+        description: Reactome schema class such as Pathway or Reaction.
+  - id: search
+    summary: Search Reactome content by free-text query with optional species and type filters.
+    identity:
+      stableIdFields: [stId]
+      namespace: reactome.stable_id
+      primaryUrlTemplate: https://reactome.org/content/detail/{stable_id}
+    commonFields: [dbId, stId, name, type, species, compartmentNames]
+    rest:
+      request:
+        path: /search/query
+        rawQueryParam: query
+        filterParamMap:
+          { species: species, types: types, cluster: cluster, StartRow: StartRow, rows: rows }
+      response:
+        rowsPath: results.*.entries
+    fields:
+      - name: species
+        type: string
+        description: Species filter such as Homo sapiens.
+      - name: types
+        type: string
+        description: Comma-separated Reactome entry types such as Pathway,Reaction.
+      - name: stId
+        type: string
+        description: Reactome stable identifier for a search hit.
+        namespace: reactome.stable_id
+      - name: name
+        type: string
+        description: Hit display name.
+      - name: type
+        type: string
+        description: Hit type.
+  - id: pathways_for_entity
+    summary: Pathways containing a Reactome physical entity or event identifier.
+    identity:
+      stableIdFields: [stId]
+      namespace: reactome.stable_id
+      primaryUrlTemplate: https://reactome.org/content/detail/{stable_id}
+    commonFields: [dbId, stId, displayName, speciesName, hasDiagram, isInDisease]
+    rest:
+      request:
+        path: /data/pathways/low/entity/{filter:id}
+      response:
+        rowsPath: $
+    fields:
+      - name: id
+        type: string
+        description: Reactome entity or event identifier.
+        namespace: reactome.stable_id
+  - id: participants
+    summary: Participants in a Reactome event/pathway.
+    identity:
+      stableIdFields: [stId]
+      namespace: reactome.stable_id
+    commonFields: [dbId, stId, displayName, schemaClass, speciesName]
+    rest:
+      request:
+        path: /data/participants/{filter:id}
+      response:
+        rowsPath: $
+    fields:
+      - name: id
+        type: string
+        description: Reactome event or pathway identifier.
+        namespace: reactome.stable_id
+  - id: orthology
+    summary: Orthologous Reactome events for an identifier in a target species.
+    identity:
+      stableIdFields: [stId]
+      namespace: reactome.stable_id
+      primaryUrlTemplate: https://reactome.org/content/detail/{stable_id}
+    commonFields: [dbId, stId, displayName, speciesName, schemaClass]
+    rest:
+      request:
+        path: /data/orthology/{filter:id}/species/{filter:speciesId}
+      response:
+        rowsPath: $
+    fields:
+      - name: id
+        type: string
+        description: Source Reactome event identifier.
+        namespace: reactome.stable_id
+      - name: speciesId
+        type: string
+        description: Target Reactome species database ID (for example 48887 for Homo sapiens).
+        synonyms: [species, taxon]
+xref:
+  - from:
+      domain: search
+      field: stId
+      namespace: reactome.stable_id
+    to:
+      domain: query
+      field: id
+      namespace: reactome.stable_id

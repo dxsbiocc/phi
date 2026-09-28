@@ -1,0 +1,106 @@
+phiDbConnectorVersion: 1
+id: rest-json/monarch
+name: Monarch Initiative
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://api.monarchinitiative.org/v3/api
+networkPolicy:
+  allowedHosts:
+    - api.monarchinitiative.org
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 3
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: search
+    summary: Search Monarch entities (genes, diseases, phenotypes) by free text.
+    identity:
+      stableIdFields: [id]
+      namespace: monarch.entity
+      primaryUrlTemplate: https://monarchinitiative.org/entity/{stable_id}
+    commonFields: [id, name, category, description, xref]
+    rest:
+      request:
+        path: /search
+        rawQueryParam: q
+        limitParam: limit
+        filterParamMap: { category: category }
+      response:
+        rowsPath: items
+        totalRowsPath: total
+    fields:
+      - name: id
+        type: string
+        description: CURIE such as MONDO:0007947, HP:0001250, or HGNC:3603.
+      - name: name
+        type: string
+        description: Entity display name.
+      - name: category
+        type: string
+        description: Optional biolink category filter or result category.
+  - id: entity
+    summary: Fetch one Monarch entity by CURIE id.
+    identity:
+      stableIdFields: [id]
+      namespace: monarch.entity
+      primaryUrlTemplate: https://monarchinitiative.org/entity/{stable_id}
+    commonFields: [id, name, category, description, synonym, xref]
+    rest:
+      request:
+        path: /entity/{filter:id}
+      response:
+        rowsPath: $
+    fields:
+      - name: id
+        type: string
+        description: Entity CURIE (MONDO:, HP:, HGNC:, NCBIGene:, etc.).
+        synonyms: [curie, entity_id, query]
+  - id: associations
+    summary: Associations for an entity, optionally filtered by biolink category.
+    identity:
+      stableIdFields: [id]
+      namespace: monarch.association
+    commonFields: [id, subject, predicate, object, category, publications]
+    rest:
+      request:
+        path: /entity/{filter:id}/associations
+        limitParam: limit
+        filterParamMap: { category: category }
+      response:
+        rowsPath: items
+        totalRowsPath: total
+    fields:
+      - name: id
+        type: string
+        description: Subject entity CURIE.
+        synonyms: [entity_id, curie]
+      - name: category
+        type: string
+        description: >-
+          Association category such as biolink:GeneToPhenotypicFeatureAssociation,
+          biolink:DiseaseToPhenotypicFeatureAssociation, or biolink:GeneToDiseaseAssociation.
+      - name: subject
+        type: object
+        description: Association subject node.
+      - name: object
+        type: object
+        description: Association object node.
+      - name: predicate
+        type: string
+        description: Relationship predicate.
+xref:
+  - from:
+      domain: search
+      field: id
+      namespace: hpo.id
+    to:
+      database: ontology/hpo
+      domain: term
+      field: id
+      namespace: hpo.id

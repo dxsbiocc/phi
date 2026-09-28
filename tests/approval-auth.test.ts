@@ -218,6 +218,35 @@ test('tool approval resolves and cleans up accepted requests', async () => {
   resolveToolApproval(request.requestId, false)
 })
 
+test('plan drafts and proposal writes use the session sandbox without a second approval', async () => {
+  const handler = await registerApprovalHandler()
+  assert.equal(
+    await handler(
+      { toolName: 'write', input: { path: 'local://analysis-plan.md', content: '# Plan' } },
+      {}
+    ),
+    undefined
+  )
+  assert.equal(
+    await handler({ toolName: 'edit', input: { path: 'local://analysis-plan.md' } }, {}),
+    undefined
+  )
+  assert.equal(
+    await handler({ toolName: 'edit', input: { path: '[local://analysis-plan.md#ABCD]' } }, {}),
+    undefined
+  )
+  assert.equal(
+    await handler({ toolName: 'write', input: { path: 'xd://propose', content: 'analysis' } }, {}),
+    undefined
+  )
+  assert.match(
+    String(
+      (await handler({ toolName: 'write', input: { path: '/project/result.txt' } }, {}))?.reason
+    ),
+    /没有可用窗口/
+  )
+})
+
 test('remote Bash approval shows host, pinned cwd, scope warning and exact command', async () => {
   const window = new FakeWindow()
   __electronMock.setFocusedWindow(window)

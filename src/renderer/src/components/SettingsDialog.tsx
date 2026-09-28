@@ -660,6 +660,8 @@ type SettingsDialogProps = {
   updatingDbConnectorId?: string | null
   onRefreshDbConnectors?: () => Promise<void>
   onSetDbConnectorEnabled?: (id: string, enabled: boolean) => Promise<void>
+  onSetDbConnectorApiKey?: (id: string, apiKey: string) => Promise<void>
+  onClearDbConnectorApiKey?: (id: string) => Promise<void>
   themeMode: ThemeMode
   onSelectThemeMode: (mode: ThemeMode) => void
   category: SettingsCategory
@@ -704,6 +706,8 @@ function SettingsDialog({
   updatingDbConnectorId = null,
   onRefreshDbConnectors = async () => undefined,
   onSetDbConnectorEnabled = async () => undefined,
+  onSetDbConnectorApiKey = async () => undefined,
+  onClearDbConnectorApiKey = async () => undefined,
   themeMode,
   onSelectThemeMode,
   category,
@@ -833,6 +837,8 @@ function SettingsDialog({
               updatingConnectorId={updatingDbConnectorId}
               onRefresh={onRefreshDbConnectors}
               onSetEnabled={onSetDbConnectorEnabled}
+              onSetApiKey={onSetDbConnectorApiKey}
+              onClearApiKey={onClearDbConnectorApiKey}
             />
           )}
           {category === 'persona' && (

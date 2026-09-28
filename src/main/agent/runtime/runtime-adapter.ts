@@ -103,6 +103,7 @@ export interface RuntimeModel {
   id: string
   name: string
   reasoning: boolean
+  supportsImages?: boolean
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>
 }
 
@@ -119,6 +120,7 @@ export interface ModelRuntime {
 export type AgentSessionEvent = { type: string } & Record<string, unknown>
 export type RuntimePromptOptions = {
   preflightResult?: (accepted: boolean) => void
+  images?: Array<{ type: 'image'; data: string; mimeType: string }>
   expandPromptTemplates?: boolean
   synthetic?: boolean
   userInitiated?: boolean
@@ -543,9 +545,10 @@ function applySessionState(session: RuntimeAgentSessionProxy, state: WorkerSessi
 
 function runtimePromptOptionsForWorker(
   options: RuntimePromptOptions | undefined
-): Record<string, boolean> | undefined {
+): Record<string, unknown> | undefined {
   if (!options) return undefined
   const promptOptions = {
+    ...(options.images?.length ? { images: options.images } : {}),
     ...(typeof options.expandPromptTemplates === 'boolean'
       ? { expandPromptTemplates: options.expandPromptTemplates }
       : {}),

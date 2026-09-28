@@ -7,6 +7,10 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import SessionSidebar from '../src/renderer/src/components/SessionSidebar'
 import {
+  filterSessionSummaries,
+  normalizeSessionQuery
+} from '../src/renderer/src/features/session-search/lib/sessionFilter'
+import {
   activeCwdBelongsToProject,
   expandActiveProjectId,
   orderProjectsForSessionSelection,
@@ -16,6 +20,7 @@ import {
   sessionBeaconKind,
   sessionRunningBeaconSlotWidth
 } from '../src/renderer/src/lib/sessionBeacon'
+import { editableSessionTitle, sessionTitle } from '../src/renderer/src/lib/sessionSidebarShared'
 import {
   isSessionListSortedByActivityTime,
   orderSessionsForDisplay,
@@ -58,6 +63,7 @@ function renderSidebar(
         onSelectSession: () => undefined,
         onRenameSession: () => undefined,
         onDeleteSession: () => undefined,
+        onExportSession: () => undefined,
         onStartProjectChat: () => undefined,
         onDeleteProject: () => undefined,
         onFetchProjectSessions: async () => [],
@@ -180,6 +186,32 @@ test('session sidebar title ignores composer file reference metadata', () => {
   assert.doesNotMatch(markup, /引用文件：/)
 })
 
+test('session search matches titles and first messages without changing their order', () => {
+  const sessions = [
+    { ...baseSession, name: 'Alpha report', firstMessage: '开始分析' },
+    {
+      ...baseSession,
+      path: 'session-b',
+      id: 'session-b',
+      name: 'Beta',
+      firstMessage: '分析 ALPHA 数据'
+    },
+    { ...baseSession, path: 'session-c', id: 'session-c', name: 'Gamma', firstMessage: '无关内容' }
+  ]
+  const query = normalizeSessionQuery('  ＡＬＰＨＡ  ')
+  assert.equal(query, 'alpha')
+  assert.deepEqual(
+    filterSessionSummaries(sessions, query).map((session) => session.path),
+    ['session-a', 'session-b']
+  )
+  assert.equal(filterSessionSummaries(sessions, '').length, 3)
+  assert.equal(sessions.length, 3)
+})
+
+test('session sidebar leaves search to the top-left dialog', () => {
+  assert.doesNotMatch(renderSidebar([baseSession]), /aria-label="查找会话"/)
+})
+
 test('session sidebar does not show the running beacon for idle conversations', () => {
   const markup = renderSidebar([baseSession])
 
@@ -194,7 +226,6 @@ test('session sidebar renders the selected conversation as a pill row', () => {
     resolve(process.cwd(), 'src/renderer/src/components/session-sidebar/SessionRow.tsx'),
     'utf8'
   )
-
   assert.match(markup, /data-phi-session-row="active"/)
   assert.doesNotMatch(markup, /data-phi-session-active-icon="true"/)
   assert.match(markup, /border-radius:999px/)
@@ -204,7 +235,45 @@ test('session sidebar renders the selected conversation as a pill row', () => {
     rowSource,
     /className="session-actions"[\s\S]{0,240}bgcolor: 'background\.default'/
   )
-  assert.match(rowSource, /const sessionActionButtonSx = \{[\s\S]{0,160}bgcolor: 'transparent'/)
+  const actionStyles = rowSource
+    .split('const sessionActionButtonSx = {')[1]
+    ?.split('const sessionMenuItemSx')[0]
+  assert.ok(actionStyles)
+  assert.doesNotMatch(actionStyles, /border:|borderColor:|background\.paper|action\.selected/)
+})
+
+test('session rows keep rename, export, and delete inside one actions menu', () => {
+  const markup = renderSidebar([{ ...baseSession, phiSessionId: 'phi-1' }])
+  const rowSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/session-sidebar/SessionRow.tsx'),
+    'utf8'
+  )
+  const renameSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/session-actions/SessionRenamePanel.tsx'),
+    'utf8'
+  )
+
+  assert.match(markup, /aria-label="更多会话操作"/)
+  assert.doesNotMatch(markup, /aria-label="导出会话"/)
+  assert.doesNotMatch(markup, /aria-label="重命名"/)
+  const rowEnd = rowSource.indexOf('</ListItemButton>')
+  const actions = rowSource.indexOf('className="session-actions"')
+  assert.ok(rowEnd >= 0 && actions > rowEnd, 'more button must sit outside the conversation row')
+  assert.match(rowSource, /<GoPencil aria-hidden size=\{18\} \/>/)
+  assert.match(rowSource, /<GoDownload aria-hidden size=\{18\} \/>/)
+  assert.match(rowSource, /<GoTrash aria-hidden size=\{18\} \/>/)
+  assert.match(rowSource, /<MenuItem[\s\S]{0,100}disabled=\{exportDisabled\}/)
+  assert.match(rowSource, /<SessionRenamePanel[\s\S]{0,80}open=\{renameOpen\}/)
+  assert.match(renameSource, /<Dialog[\s\S]{0,100}open=\{open\}/)
+  assert.match(renameSource, /重命名聊天/)
+})
+
+test('rename dialog starts with the full conversation title', () => {
+  const longName = '长标题'.repeat(40)
+  const session = { ...baseSession, name: longName }
+
+  assert.equal(editableSessionTitle(session), longName)
+  assert.notEqual(sessionTitle(session), longName)
 })
 
 test('embedded session sidebar fills menu width without the window drag spacer', () => {

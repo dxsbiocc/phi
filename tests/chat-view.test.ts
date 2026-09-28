@@ -4,7 +4,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
-import ChatView, { ThinkingBlock } from '../src/renderer/src/components/ChatView'
+import ChatView, { ThinkingBlock } from '../src/renderer/src/features/chat/ChatView'
 import ToolCallCard from '../src/renderer/src/components/ToolCallCard'
 import ToolGroupCard from '../src/renderer/src/components/ToolGroupCard'
 import {
@@ -56,11 +56,17 @@ function renderChat(
     disableModelControls?: boolean
     compactComposerControls?: boolean
     input?: string
+    images?: Array<{ mimeType: 'image/png'; data: string }>
     canQueue?: boolean
     pendingUserInteraction?: AgentUserInteractionRequest | null
     queuedPrompts?: Array<{ id: string; text: string }>
     skills?: SkillSummary[]
     promptAgents?: PromptAgentSummary[]
+    onOpenLocalPath?: (path: string, kind: 'file' | 'directory') => void
+    onForkUserMessage?: (messageId: string) => void
+    planReviewEnabled?: boolean
+    disablePlanReview?: boolean
+    onTogglePlanReview?: () => void
   } = {}
 ): string {
   const theme = createTheme()
@@ -71,6 +77,7 @@ function renderChat(
       createElement(ChatView, {
         messages,
         input: options.input ?? '',
+        images: options.images,
         messagesContainerRef: () => undefined,
         canSend: true,
         canQueue: options.canQueue ?? false,
@@ -99,6 +106,11 @@ function renderChat(
         onChatSubmit: async (event) => event.preventDefault(),
         onStopGeneration: async () => undefined,
         onGoSettings: () => undefined,
+        onOpenLocalPath: options.onOpenLocalPath,
+        onForkUserMessage: options.onForkUserMessage,
+        planReviewEnabled: options.planReviewEnabled,
+        disablePlanReview: options.disablePlanReview,
+        onTogglePlanReview: options.onTogglePlanReview,
         permissionMode: options.permissionMode ?? 'auto',
         onSelectPermissionMode: () => undefined,
         disableModelControls: options.disableModelControls ?? false,
@@ -671,6 +683,101 @@ test('chat view shows copy and edit hover actions for normal user messages', () 
   assert.match(markup, /aria-label="复制消息"/)
   assert.match(markup, /aria-label="编辑消息"/)
   assert.doesNotMatch(markup, /aria-label="重试消息"/)
+})
+
+test('chat view offers a fork action for a completed image-only user message', () => {
+  const markup = renderChat(
+    [
+      {
+        id: 'image-event',
+        role: 'user',
+        content: '',
+        images: [{ mimeType: 'image/png', data: 'iVBORw0KGgo=' }]
+      }
+    ],
+    { onForkUserMessage: () => undefined }
+  )
+  assert.match(markup, /aria-label="从此消息分叉会话"/)
+})
+
+test('chat view previews a pasted image and permits an image-only message', () => {
+  const image = { mimeType: 'image/png' as const, data: 'iVBORw0KGgo=' }
+  const markup = renderChat([{ id: 'user-image', role: 'user', content: '', images: [image] }], {
+    images: [image]
+  })
+  assert.match(markup, /aria-label="待发送图片"/)
+  assert.match(markup, /aria-label="预览待发送图片 1"/)
+  assert.match(markup, /aria-label="移除图片 1"/)
+  assert.match(markup, /aria-label="预览消息图片 1"/)
+  assert.match(markup, /alt="消息图片 1"/)
+  assert.doesNotMatch(markup, /aria-label="编辑消息"/)
+})
+
+test('chat view shows each changed file with counts and an open action', () => {
+  const markup = renderChat(
+    [
+      { id: 'user-1', role: 'user', content: 'edit the result' },
+      {
+        id: 'changes-1',
+        role: 'workspace_changes',
+        files: [
+          {
+            path: '/project/result.txt',
+            displayPath: 'result.txt',
+            status: 'modified',
+            added: 2,
+            deleted: 1,
+            diff: {
+              sessionId: '11111111-1111-1111-1111-111111111111',
+              id: 'a'.repeat(64),
+              bytes: 32
+            }
+          }
+        ],
+        totalChanged: 1,
+        truncated: false
+      }
+    ],
+    { onOpenLocalPath: () => undefined }
+  )
+  assert.match(markup, /运行期间文件变化/)
+  assert.match(markup, /aria-label="预览改动文件 result\.txt"/)
+  assert.match(markup, /aria-label="查看 result\.txt 的本轮差异"/)
+  assert.match(markup, /\+2 \/ −1/)
+})
+
+test('chat view shows delivered files with a preview action and current-file notice', () => {
+  const markup = renderChat(
+    [
+      {
+        id: 'delivery-1',
+        role: 'presented_files',
+        files: [
+          {
+            path: '/project/report.pdf',
+            displayPath: 'report.pdf',
+            bytes: 123,
+            description: '报告'
+          }
+        ]
+      }
+    ],
+    { onOpenLocalPath: () => undefined }
+  )
+  assert.match(markup, /aria-label="交付文件"/)
+  assert.match(markup, /aria-label="预览交付文件 report.pdf"/)
+  assert.match(markup, /报告/)
+  assert.match(markup, /内容可能已更改/)
+})
+
+test('chat composer offers a selected and disabled plan review mode', () => {
+  const selected = renderChat([], { planReviewEnabled: true, onTogglePlanReview: () => undefined })
+  assert.match(selected, /aria-label="先计划并等待评审"/)
+  assert.match(selected, /aria-pressed="true"/)
+  const disabled = renderChat([], { disablePlanReview: true, onTogglePlanReview: () => undefined })
+  const button = disabled.match(/<button[^>]*aria-label="先计划并等待评审"[^>]*>/)?.[0]
+  assert.ok(button)
+  assert.match(button, /disabled/)
 })
 
 test('chat view shows only retry for failed user message turns', () => {
@@ -1445,7 +1552,7 @@ test('chat view uses the suggested next action as a passive placeholder', () => 
   assert.match(markup, /placeholder="继续生成验证图表。"/)
   assert.match(markup, /data-phi-placeholder-kind="suggested-next-action"/)
   assert.doesNotMatch(
-    readFileSync('src/renderer/src/components/ChatView.tsx', 'utf8'),
+    readFileSync('src/renderer/src/features/chat/ChatView.tsx', 'utf8'),
     /applySuggestedNextAction|onMouseDown=\{applySuggestedNextAction\}/
   )
 })
@@ -1494,7 +1601,7 @@ test('chat view uses icon-only composer controls when file preview is open', () 
 })
 
 test('chat view keeps compact composer icon buttons at the declared outer size', () => {
-  const chatViewSource = readFileSync('src/renderer/src/components/ChatView.tsx', 'utf8')
+  const chatViewSource = readFileSync('src/renderer/src/features/chat/ChatView.tsx', 'utf8')
   const controlStylesSource = readFileSync(
     'src/renderer/src/components/chat/composerControlStyles.ts',
     'utf8'
@@ -1557,6 +1664,24 @@ test('chat view renders tool approval inline instead of a modal dialog', () => {
   assert.match(markup, /执行终端命令/)
   assert.match(markup, /which R/)
   assert.doesNotMatch(markup, /role="dialog"/)
+})
+
+test('remote specialist approval shows the real host, project and path without the local anchor', () => {
+  const markup = renderChat([], {
+    pendingApproval: {
+      requestId: 'approval-remote',
+      sessionPath: '/phi/sessions/remote',
+      projectName: 'Cluster project',
+      cwd: 'ssh://cluster-a/project',
+      toolName: 'edit',
+      summary: 'SSH cluster-a · 项目 /project；修改已读取且未变化的文件。\nnote.txt'
+    }
+  })
+  assert.match(markup, /Cluster project/)
+  assert.match(markup, /ssh:\/\/cluster-a\/project/)
+  assert.match(markup, /note\.txt/)
+  assert.match(markup, /修改文件/)
+  assert.doesNotMatch(markup, /remote-project-anchors/)
 })
 
 test('chat view renders a user input request inline', () => {

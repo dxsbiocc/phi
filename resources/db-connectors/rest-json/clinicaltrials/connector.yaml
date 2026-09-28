@@ -1,0 +1,106 @@
+phiDbConnectorVersion: 1
+id: rest-json/clinicaltrials
+name: ClinicalTrials.gov
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://clinicaltrials.gov/api/v2
+networkPolicy:
+  allowedHosts:
+    - clinicaltrials.gov
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 3
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: studies
+    summary: Search clinical studies by condition, intervention, term, status, or phase.
+    identity:
+      stableIdFields: [nctId]
+      namespace: clinicaltrials.nct
+      primaryUrlTemplate: https://clinicaltrials.gov/study/{stable_id}
+    commonFields:
+      [nctId, briefTitle, officialTitle, overallStatus, phases, conditions, interventions]
+    rest:
+      request:
+        path: /studies
+        queryParams:
+          countTotal: true
+        filterParamMap:
+          {
+            cond: query.cond,
+            intr: query.intr,
+            term: query.term,
+            status: filter.overallStatus,
+            phase: filter.phase,
+            id: query.id
+          }
+        limitParam: pageSize
+        cursorParam: pageToken
+      response:
+        rowsPath: studies
+        totalRowsPath: totalCount
+        nextCursorPath: nextPageToken
+        fieldMap:
+          nctId: protocolSection.identificationModule.nctId
+          briefTitle: protocolSection.identificationModule.briefTitle
+          officialTitle: protocolSection.identificationModule.officialTitle
+          overallStatus: protocolSection.statusModule.overallStatus
+          phases: protocolSection.designModule.phases
+          conditions: protocolSection.conditionsModule.conditions
+          interventions: protocolSection.armsInterventionsModule.interventions
+    fields:
+      - name: cond
+        type: string
+        description: Condition / disease query (query.cond).
+        synonyms: [condition, disease, query]
+      - name: intr
+        type: string
+        description: Intervention / treatment query (query.intr).
+        synonyms: [intervention, drug, treatment]
+      - name: term
+        type: string
+        description: General free-text query (query.term).
+      - name: status
+        type: string
+        description: Overall status filter such as RECRUITING or COMPLETED (pipe-delimited allowed).
+      - name: phase
+        type: string
+        description: Phase filter such as PHASE3 (pipe-delimited allowed).
+      - name: nctId
+        type: string
+        description: NCT identifier.
+        namespace: clinicaltrials.nct
+  - id: study
+    summary: Fetch one study by NCT ID.
+    identity:
+      stableIdFields: [nctId]
+      namespace: clinicaltrials.nct
+      primaryUrlTemplate: https://clinicaltrials.gov/study/{stable_id}
+    commonFields:
+      [nctId, briefTitle, officialTitle, overallStatus, phases, conditions, interventions, eligibility]
+    rest:
+      request:
+        path: /studies/{filter:nctId}
+      response:
+        rowsPath: $
+        fieldMap:
+          nctId: protocolSection.identificationModule.nctId
+          briefTitle: protocolSection.identificationModule.briefTitle
+          officialTitle: protocolSection.identificationModule.officialTitle
+          overallStatus: protocolSection.statusModule.overallStatus
+          phases: protocolSection.designModule.phases
+          conditions: protocolSection.conditionsModule.conditions
+          interventions: protocolSection.armsInterventionsModule.interventions
+          eligibility: protocolSection.eligibilityModule
+    fields:
+      - name: nctId
+        type: string
+        description: NCT identifier such as NCT05123456.
+        synonyms: [id, nct, query]
+        namespace: clinicaltrials.nct

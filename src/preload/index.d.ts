@@ -4,7 +4,11 @@ import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
 import type { WrapperCompositionManifest } from '../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
 import type { RemoteHpcSettings } from '../shared/wrapperRemoteTypes'
-import type { RemoteDoctorOptions, RemoteDoctorReport } from '../shared/remoteDoctorTypes'
+import type {
+  RemoteDoctorOptions,
+  RemoteDoctorReport,
+  RemoteNextflowInstallResult
+} from '../shared/remoteDoctorTypes'
 import type {
   ProjectLocation,
   RemoteProjectConnectionChange,
@@ -14,6 +18,10 @@ import type {
   RemoteProjectReachability
 } from '../shared/projectLocation'
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
+import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
+import type { SessionExportResult } from '../shared/sessionExportTypes'
+import type { BackgroundAgentJob } from '../shared/backgroundJobTypes'
+import type { WorkspaceDiffReference } from '../shared/workspaceChangeTypes'
 import type {
   WrapperRetargetRequest,
   WrapperInputPathMapping,
@@ -73,6 +81,8 @@ type PreloadPromptTarget = {
   sessionGeneration: number
   suppressUserMessageEvent?: boolean
   retryUserMessageId?: string
+  images?: PromptImageInput[]
+  planMode?: boolean
 }
 
 type PreloadPromptResult = {
@@ -200,7 +210,7 @@ type PreloadFilePreview = {
   displayPath: string
   rootPath: string
   rootLabel: string
-  kind: 'text' | 'image' | 'pdf'
+  kind: 'text' | 'html' | 'image' | 'pdf'
   mimeType: string
   bytes: number
   previewBytes: number
@@ -213,8 +223,14 @@ type PreloadFilePreview = {
       dataUrl?: never
     }
   | {
+      kind: 'html'
+      mimeType: 'text/html'
+      content: string
+      dataUrl?: never
+    }
+  | {
       kind: 'image'
-      mimeType: 'image/png'
+      mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
       dataUrl: string
       content?: never
     }
@@ -562,6 +578,8 @@ declare global {
         text: string,
         target?: PreloadPromptTarget
       ) => Promise<PreloadPromptResult | null>
+      readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
+      readWorkspaceDiff: (ref: WorkspaceDiffReference) => Promise<string>
       onAgentEvent: (cb: (event: Record<string, unknown>) => void) => () => void
       onAgentUserInteractionRequest: (
         cb: (event: AgentUserInteractionRequest) => void
@@ -682,6 +700,8 @@ declare global {
       pickEnvironmentBinary: () => Promise<string | null>
       listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
       setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
+      setDbConnectorApiKey: (id: string, apiKey: string) => Promise<DbConnectorSettingsItem[]>
+      clearDbConnectorApiKey: (id: string) => Promise<DbConnectorSettingsItem[]>
       listModels: () => Promise<
         Array<{
           providerId: string
@@ -734,6 +754,10 @@ declare global {
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
       }>
+      forkSession: (
+        sourceId: string,
+        eventId: string
+      ) => Promise<{ path: string; phiSessionId: string }>
       switchSession: (path: string) => Promise<{
         path: string
         phiSessionId?: string
@@ -748,6 +772,7 @@ declare global {
       acknowledgeSession: (path: string) => Promise<PreloadSessionSummary | null>
       deleteSession: (path: string) => Promise<void>
       renameSession: (path: string, name: string) => Promise<void>
+      exportSession: (sessionId: string) => Promise<SessionExportResult | null>
       listProjects: () => Promise<PreloadProject[]>
       pickProjectDirectory: () => Promise<string | null>
       createProject: (
@@ -791,6 +816,7 @@ declare global {
         remotePath?: string,
         options?: RemoteDoctorOptions
       ) => Promise<RemoteDoctorReport>
+      installRemoteNextflow: (hostProfileId: string) => Promise<RemoteNextflowInstallResult>
       updateProjectRemoteConnection: (
         id: string,
         connectionId: string,
@@ -950,6 +976,7 @@ declare global {
       getWrapperCompositionDag: (id: string) => Promise<string | undefined>
       getWrapperCompositionModuleDetails: (id: string) => Promise<WrapperModuleDetails | undefined>
       listWrapperRuns: () => Promise<WrapperRun[]>
+      listAgentJobs: () => Promise<BackgroundAgentJob[]>
       getWrapperRun: (runId: string) => Promise<WrapperRun | undefined>
       cancelWrapperRun: (runId: string) => Promise<WrapperRun>
       getWrapperPlanArtifact: (planId: string, fileName: string) => Promise<string | undefined>

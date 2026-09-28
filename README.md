@@ -20,6 +20,36 @@ diagnostics can be copied without full chat or tool output. It is not a public
 distribution build, a full plugin marketplace, a Git client, or a dedicated OMX
 team/swarm dashboard.
 
+Local Git sessions show a bounded file-change summary after each run. It compares the
+working tree at run start and finish, so earlier edits are excluded; ignored files and
+non-Git folders are outside this summary. Existing files in the card open in Phi's
+file preview. Small text changes also keep a read-only per-file diff under the Phi
+session's artifacts; binary and large files show counts only when available.
+
+For a separate final report, figure, notebook, or data table, the agent can mark up to
+four existing local workspace files as deliverables. Phi keeps a delivery card in the
+conversation with file descriptions and preview actions. The card points to the
+current source files; it does not copy their contents or upload them. This action is
+not available for remote project files in the internal beta.
+
+For a task that needs a reviewed plan, select **先计划** in the chat composer before
+sending it. The agent can inspect the local workspace and draft a session-local plan,
+while this turn's working-tree writes remain blocked. The plan appears in the conversation for
+**继续执行** or **修改计划**; Phi records the choice, and approval restores the usual
+tools. Remote project conversations do not offer this mode in the beta.
+
+The activity bar's **后台任务** button combines running background Agent tasks and
+Wrapper runs, with progress, links back to their conversation or Wrapper page,
+and stop actions only where the existing runner supports cancellation. It also
+shows a short recent list while those run records remain available; this is a
+compact task view rather than an OMX team dashboard.
+
+Use a conversation row's export action to choose a local folder for a complete
+session backup. Phi creates a new subfolder containing its timeline, tool outputs,
+artifacts, underlying runtime history, and referenced image blobs. This export can
+contain secrets and thinking text; it does not copy project files or import back
+into Phi. Wait for the conversation to finish before exporting.
+
 Beta data is intentionally resettable. Phi-owned state lives under `~/.phi`, including
 sessions, project registry, logs, and tool output references. If the beta data model
 changes, removing `~/.phi` is the supported clean reset path; repositories themselves
@@ -48,6 +78,12 @@ project with **Remote server** and an absolute, readable and writable directory
 on that server. Testing a project connection checks its directory and reports
 missing server tools. A remote project always runs its Wrappers on its bound
 server and project path; its Wrapper page offers Slurm and runtime settings.
+The server list's **测试连接** checks SSH connectivity and authentication only.
+Use **检查运行环境** in Wrapper settings to inspect the project directory and
+Nextflow, Java, Slurm, and the selected runtime. Missing Nextflow offers a
+confirmed installation into the SSH account's `~/.local/bin` or the
+[official manual steps](https://docs.seqera.io/nextflow/install); Java, Slurm,
+and container runtimes remain administrator or user-managed.
 
 The remote settings page manages servers only. A local project stays local even
 when it has a saved server compute target. The target can be configured from the

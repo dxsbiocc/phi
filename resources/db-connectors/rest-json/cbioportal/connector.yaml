@@ -1,0 +1,216 @@
+phiDbConnectorVersion: 1
+id: rest-json/cbioportal
+name: cBioPortal
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://www.cbioportal.org/api
+networkPolicy:
+  allowedHosts:
+    - www.cbioportal.org
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 5
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: gene
+    summary: Look up a gene by Entrez Gene ID or Hugo gene symbol in cBioPortal.
+    identity:
+      stableIdFields: [entrezGeneId]
+      namespace: entrez.gene_id
+      primaryUrlTemplate: https://www.cbioportal.org/gene/{stable_id}
+    commonFields: [entrezGeneId, hugoGeneSymbol, type, geneticEntityId]
+    rest:
+      request:
+        path: /genes/{filter:geneId}
+      response:
+        rowsPath: $
+    fields:
+      - name: geneId
+        type: string
+        description: Entrez Gene ID or Hugo gene symbol used for lookup.
+        synonyms: [entrez_gene_id, hugo, symbol, gene_symbol]
+        namespace: hgnc.symbol
+      - name: entrezGeneId
+        type: number
+        description: Entrez Gene ID.
+        namespace: entrez.gene_id
+      - name: hugoGeneSymbol
+        type: string
+        description: Hugo gene symbol.
+        namespace: hgnc.symbol
+      - name: type
+        type: string
+        description: Gene type reported by cBioPortal.
+      - name: geneticEntityId
+        type: number
+        description: cBioPortal genetic entity identifier.
+  - id: studies
+    summary: List cBioPortal cancer studies with optional pagination.
+    identity:
+      stableIdFields: [studyId]
+      namespace: cbioportal.study_id
+      primaryUrlTemplate: https://www.cbioportal.org/study/summary?id={stable_id}
+    commonFields: [studyId, name, description, cancerTypeId, citation, pmid, allSampleCount]
+    rest:
+      request:
+        path: /studies
+        limitParam: pageSize
+        filterParamMap:
+          { pageNumber: pageNumber, projection: projection, direction: direction, sortBy: sortBy }
+      response:
+        rowsPath: $
+    fields:
+      - name: pageNumber
+        type: number
+        description: Zero-based page number for study listing.
+      - name: projection
+        type: string
+        description: Response detail level (ID, SUMMARY, DETAILED, META).
+      - name: studyId
+        type: string
+        description: cBioPortal study identifier.
+        namespace: cbioportal.study_id
+      - name: name
+        type: string
+        description: Study display name.
+      - name: description
+        type: string
+        description: Study description.
+      - name: cancerTypeId
+        type: string
+        description: Cancer type identifier.
+      - name: citation
+        type: string
+        description: Study citation text when available.
+      - name: pmid
+        type: string
+        description: PubMed ID for the study publication when available.
+        namespace: pubmed.pmid
+      - name: allSampleCount
+        type: number
+        description: Number of samples in the study.
+  - id: study
+    summary: Fetch one cBioPortal study by studyId.
+    identity:
+      stableIdFields: [studyId]
+      namespace: cbioportal.study_id
+      primaryUrlTemplate: https://www.cbioportal.org/study/summary?id={stable_id}
+    commonFields: [studyId, name, description, cancerTypeId, citation, pmid, allSampleCount]
+    rest:
+      request:
+        path: /studies/{filter:studyId}
+      response:
+        rowsPath: $
+    fields:
+      - name: studyId
+        type: string
+        description: cBioPortal study identifier.
+        synonyms: [study, study_id]
+        namespace: cbioportal.study_id
+  - id: molecular_profiles
+    summary: List molecular profiles available for a cBioPortal study.
+    identity:
+      stableIdFields: [molecularProfileId]
+      namespace: cbioportal.molecular_profile_id
+    commonFields:
+      [
+        molecularProfileId,
+        studyId,
+        name,
+        description,
+        molecularAlterationType,
+        datatype,
+        showProfileInAnalysisTab
+      ]
+    rest:
+      request:
+        path: /studies/{filter:studyId}/molecular-profiles
+        filterParamMap: { projection: projection, pageNumber: pageNumber, pageSize: pageSize }
+      response:
+        rowsPath: $
+    fields:
+      - name: studyId
+        type: string
+        description: cBioPortal study identifier.
+        namespace: cbioportal.study_id
+      - name: molecularProfileId
+        type: string
+        description: Molecular profile identifier.
+        namespace: cbioportal.molecular_profile_id
+      - name: molecularAlterationType
+        type: string
+        description: Alteration type such as MUTATION_EXTENDED or MRNA_EXPRESSION.
+      - name: datatype
+        type: string
+        description: Profile datatype.
+  - id: molecular_profile
+    summary: Fetch one molecular profile by molecularProfileId.
+    identity:
+      stableIdFields: [molecularProfileId]
+      namespace: cbioportal.molecular_profile_id
+    commonFields:
+      [molecularProfileId, studyId, name, description, molecularAlterationType, datatype]
+    rest:
+      request:
+        path: /molecular-profiles/{filter:molecularProfileId}
+      response:
+        rowsPath: $
+    fields:
+      - name: molecularProfileId
+        type: string
+        description: Molecular profile identifier.
+        synonyms: [profile, profile_id]
+        namespace: cbioportal.molecular_profile_id
+  - id: cancer_types
+    summary: List cancer types known to cBioPortal.
+    identity:
+      stableIdFields: [cancerTypeId]
+      namespace: cbioportal.cancer_type_id
+    commonFields: [cancerTypeId, name, dedicatedColor, shortName, parent]
+    rest:
+      request:
+        path: /cancer-types
+        limitParam: pageSize
+        filterParamMap: { pageNumber: pageNumber, projection: projection }
+      response:
+        rowsPath: $
+    fields:
+      - name: cancerTypeId
+        type: string
+        description: Cancer type identifier.
+        namespace: cbioportal.cancer_type_id
+      - name: name
+        type: string
+        description: Cancer type display name.
+      - name: shortName
+        type: string
+        description: Short cancer type label.
+      - name: parent
+        type: string
+        description: Parent cancer type identifier when available.
+xref:
+  - from:
+      domain: gene
+      field: hugoGeneSymbol
+      namespace: hgnc.symbol
+      species: '9606'
+    to:
+      domain: gene
+      field: entrezGeneId
+      namespace: entrez.gene_id
+      species: '9606'
+  - from:
+      domain: studies
+      field: pmid
+      namespace: pubmed.pmid
+    to:
+      database: entrez/ncbi
+      domain: pubmed
+      field: uid
+      namespace: pubmed.pmid

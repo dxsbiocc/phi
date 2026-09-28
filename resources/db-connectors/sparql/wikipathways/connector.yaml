@@ -1,0 +1,142 @@
+phiDbConnectorVersion: 1
+id: sparql/wikipathways
+name: WikiPathways SPARQL
+protocolFamily: sparql
+curationTier: curated
+baseUrl: https://sparql.wikipathways.org/sparql
+networkPolicy:
+  allowedHosts:
+    - sparql.wikipathways.org
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 3
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: pathway_by_gene
+    summary: Find WikiPathways pathways that contain a gene symbol (Homo sapiens curated template).
+    identity:
+      stableIdFields: [pathway_id]
+      namespace: wikipathways.pathway_id
+      primaryUrlTemplate: https://www.wikipathways.org/instance/{stable_id}
+    commonFields: [pathway_id, pathway_label, gene_symbol, organism]
+    sparql:
+      query: |
+        PREFIX wp: <http://vocabularies.wikipathways.org/wp#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX dcterms: <http://purl.org/dc/terms/>
+        SELECT DISTINCT ?pathway_id ?pathway_label ?gene_symbol ?organism WHERE {
+          ?geneProduct a wp:GeneProduct ;
+            rdfs:label ?gene_symbol ;
+            dcterms:isPartOf ?pathway .
+          ?pathway a wp:Pathway ;
+            rdfs:label ?pathway_label ;
+            wp:organismName ?organism .
+          FILTER (UCASE(STR(?gene_symbol)) = UCASE("{filter:gene_symbol}"))
+          FILTER (LCASE(STR(?organism)) = "homo sapiens")
+          BIND(REPLACE(STR(?pathway), "^.*[/#]", "") AS ?pathway_id)
+        }
+    fields:
+      - name: gene_symbol
+        type: string
+        description: Human gene symbol used to find pathways.
+        synonyms: [gene, symbol, hgnc_symbol]
+        namespace: hgnc.symbol
+      - name: pathway_id
+        type: string
+        description: WikiPathways pathway identifier such as WP554.
+        namespace: wikipathways.pathway_id
+      - name: pathway_label
+        type: string
+        description: Pathway title.
+      - name: organism
+        type: string
+        description: Organism name constrained to Homo sapiens in this curated template.
+  - id: pathway
+    summary: Look up one WikiPathways pathway by pathway identifier.
+    identity:
+      stableIdFields: [pathway_id]
+      namespace: wikipathways.pathway_id
+      primaryUrlTemplate: https://www.wikipathways.org/instance/{stable_id}
+    commonFields: [pathway_id, pathway_label, organism, description]
+    sparql:
+      query: |
+        PREFIX wp: <http://vocabularies.wikipathways.org/wp#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX dc: <http://purl.org/dc/elements/1.1/>
+        SELECT DISTINCT ?pathway_id ?pathway_label ?organism ?description WHERE {
+          ?pathway a wp:Pathway ;
+            rdfs:label ?pathway_label ;
+            wp:organismName ?organism .
+          OPTIONAL { ?pathway dc:description ?description . }
+          FILTER (STRENDS(STR(?pathway), "/{filter:pathway_id}") || STRENDS(STR(?pathway), "#{filter:pathway_id}"))
+          BIND("{filter:pathway_id}" AS ?pathway_id)
+        }
+    fields:
+      - name: pathway_id
+        type: string
+        description: WikiPathways pathway identifier such as WP554.
+        synonyms: [id, wpid]
+        namespace: wikipathways.pathway_id
+      - name: pathway_label
+        type: string
+        description: Pathway title.
+      - name: organism
+        type: string
+        description: Organism name.
+      - name: description
+        type: string
+        description: Pathway description when available.
+  - id: genes_in_pathway
+    summary: List gene products annotated in a WikiPathways pathway.
+    identity:
+      stableIdFields: [pathway_id, gene_symbol]
+      namespace: wikipathways.gene_membership
+    commonFields: [pathway_id, gene_symbol, gene_label]
+    sparql:
+      query: |
+        PREFIX wp: <http://vocabularies.wikipathways.org/wp#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX dcterms: <http://purl.org/dc/terms/>
+        SELECT DISTINCT ?pathway_id ?gene_symbol ?gene_label WHERE {
+          ?pathway a wp:Pathway .
+          FILTER (STRENDS(STR(?pathway), "/{filter:pathway_id}") || STRENDS(STR(?pathway), "#{filter:pathway_id}"))
+          ?geneProduct a wp:GeneProduct ;
+            rdfs:label ?gene_symbol ;
+            dcterms:isPartOf ?pathway .
+          OPTIONAL { ?geneProduct rdfs:label ?gene_label . }
+          BIND("{filter:pathway_id}" AS ?pathway_id)
+        }
+    fields:
+      - name: pathway_id
+        type: string
+        description: WikiPathways pathway identifier.
+        namespace: wikipathways.pathway_id
+      - name: gene_symbol
+        type: string
+        description: Gene product label/symbol in the pathway.
+        namespace: hgnc.symbol
+xref:
+  - from:
+      domain: pathway_by_gene
+      field: gene_symbol
+      namespace: hgnc.symbol
+      species: '9606'
+    to:
+      domain: pathway_by_gene
+      field: pathway_id
+      namespace: wikipathways.pathway_id
+      species: '9606'
+  - from:
+      domain: pathway_by_gene
+      field: pathway_id
+      namespace: wikipathways.pathway_id
+    to:
+      domain: genes_in_pathway
+      field: pathway_id
+      namespace: wikipathways.pathway_id

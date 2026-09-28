@@ -1,0 +1,198 @@
+phiDbConnectorVersion: 1
+id: rest-json/gtex
+name: GTEx
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://gtexportal.org/api/v2
+networkPolicy:
+  allowedHosts:
+    - gtexportal.org
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 3
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: gene
+    summary: Resolve a gene symbol or Ensembl ID to GTEx/GENCODE gene metadata.
+    identity:
+      stableIdFields: [gencodeId]
+      namespace: gencode.gene
+    commonFields:
+      [gencodeId, geneSymbol, geneType, chromosome, start, end, strand, description]
+    rest:
+      request:
+        path: /reference/gene
+        queryParams:
+          gencodeVersion: v26
+          genomeBuild: GRCh38/hg38
+        filterParamMap:
+          geneId: geneId
+      response:
+        rowsPath: data
+    fields:
+      - name: geneId
+        type: string
+        description: Gene symbol or Ensembl/GENCODE gene ID.
+        synonyms: [symbol, gene, ensembl, query]
+        namespace: hgnc.symbol
+      - name: gencodeId
+        type: string
+        description: Versioned GENCODE gene ID used by GTEx expression endpoints.
+      - name: geneSymbol
+        type: string
+        description: Gene symbol.
+        namespace: hgnc.symbol
+  - id: median_expression
+    summary: Median gene expression (TPM) across GTEx v8 tissues.
+    identity:
+      stableIdFields: [gencodeId, tissueSiteDetailId]
+      namespace: gtex.expression
+    commonFields:
+      [gencodeId, geneSymbol, tissueSiteDetailId, median, unit, datasetId]
+    rest:
+      request:
+        path: /expression/medianGeneExpression
+        queryParams:
+          datasetId: gtex_v8
+        filterParamMap:
+          gencodeId: gencodeId
+          tissueSiteDetailId: tissueSiteDetailId
+        limitParam: itemsPerPage
+        cursorParam: page
+      response:
+        rowsPath: data
+    fields:
+      - name: gencodeId
+        type: string
+        description: Versioned GENCODE ID from the gene domain (e.g. ENSG00000139618.17).
+        synonyms: [gene_id, ensembl]
+        namespace: gencode.gene
+      - name: tissueSiteDetailId
+        type: string
+        description: Optional tissue filter such as Liver or Whole_Blood.
+        synonyms: [tissue]
+      - name: median
+        type: number
+        description: Median TPM expression.
+  - id: single_tissue_eqtl
+    summary: Single-tissue eQTLs for a gene in one GTEx v8 tissue.
+    identity:
+      stableIdFields: [snpId, gencodeId, tissueSiteDetailId]
+      namespace: gtex.eqtl
+    commonFields:
+      [
+        snpId,
+        gencodeId,
+        geneSymbol,
+        tissueSiteDetailId,
+        pValue,
+        nes,
+        genomeBuild,
+        datasetId
+      ]
+    rest:
+      request:
+        path: /association/singleTissueEqtl
+        queryParams:
+          datasetId: gtex_v8
+        filterParamMap:
+          gencodeId: gencodeId
+          tissueSiteDetailId: tissueSiteDetailId
+        limitParam: itemsPerPage
+        cursorParam: page
+      response:
+        rowsPath: data
+    fields:
+      - name: gencodeId
+        type: string
+        description: Versioned GENCODE gene ID.
+        synonyms: [gene_id]
+        namespace: gencode.gene
+      - name: tissueSiteDetailId
+        type: string
+        description: Tissue site detail ID such as Whole_Blood or Liver.
+        synonyms: [tissue]
+      - name: snpId
+        type: string
+        description: Variant / SNP identifier for the eQTL.
+      - name: pValue
+        type: number
+        description: eQTL association p-value.
+      - name: nes
+        type: number
+        description: Normalized effect size.
+  - id: multi_tissue_eqtl
+    summary: Multi-tissue eQTL summary for a gene across GTEx v8 tissues.
+    identity:
+      stableIdFields: [snpId, gencodeId]
+      namespace: gtex.eqtl
+    commonFields:
+      [snpId, gencodeId, geneSymbol, pValue, nes, tissueSiteDetailId, datasetId]
+    rest:
+      request:
+        path: /association/multiTissueEqtl
+        queryParams:
+          datasetId: gtex_v8
+        filterParamMap:
+          gencodeId: gencodeId
+        limitParam: itemsPerPage
+        cursorParam: page
+      response:
+        rowsPath: data
+    fields:
+      - name: gencodeId
+        type: string
+        description: Versioned GENCODE gene ID.
+        synonyms: [gene_id]
+        namespace: gencode.gene
+      - name: snpId
+        type: string
+        description: Variant / SNP identifier.
+      - name: pValue
+        type: number
+        description: Association p-value.
+  - id: tissues
+    summary: List GTEx v8 tissue site detail IDs and sample counts.
+    identity:
+      stableIdFields: [tissueSiteDetailId]
+      namespace: gtex.tissue
+    commonFields:
+      [tissueSiteDetailId, tissueSiteDetail, colorHex, rnaSeqSampleCount]
+    rest:
+      request:
+        path: /dataset/tissueSiteDetail
+        queryParams:
+          datasetId: gtex_v8
+      response:
+        rowsPath: data
+    fields:
+      - name: tissueSiteDetailId
+        type: string
+        description: Tissue site detail identifier used in expression queries.
+xref:
+  - from:
+      domain: gene
+      field: gencodeId
+      namespace: gencode.gene
+      species: '9606'
+    to:
+      domain: median_expression
+      field: gencodeId
+      namespace: gencode.gene
+      species: '9606'
+  - from:
+      domain: gene
+      field: gencodeId
+      namespace: gencode.gene
+      species: '9606'
+    to:
+      domain: multi_tissue_eqtl
+      field: gencodeId
+      namespace: gencode.gene
+      species: '9606'

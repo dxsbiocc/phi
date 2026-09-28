@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { BrowserWindow } from 'electron'
 import type { InlineExtension } from './runtime/runtime-adapter'
+import { planModeToolDecision } from './plan/plan-tool-policy'
 
 export interface ToolApprovalRequest {
   requestId: string
@@ -221,6 +222,12 @@ export function createApprovalExtension(
     factory: (pi) => {
       pi.on('tool_call', async (event, ctx) => {
         if (!RISKY_TOOLS.has(event.toolName)) {
+          return undefined
+        }
+        if (
+          (event.toolName === 'write' || event.toolName === 'edit') &&
+          planModeToolDecision(true, event.toolName, event.input).allowed
+        ) {
           return undefined
         }
         if (options.shouldGate && !options.shouldGate()) return undefined

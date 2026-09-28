@@ -13,6 +13,7 @@ import {
 } from '@mui/material'
 import { useMemo, useState } from 'react'
 import { PhiIcons } from '../icons'
+import { PlanReviewPanel } from './PlanReviewPanel'
 import type {
   AgentUserInteractionAnswer,
   AgentUserInteractionRequest,
@@ -119,6 +120,8 @@ function UserInteractionPanel({
 }: UserInteractionPanelProps): React.JSX.Element {
   const initialDraft = useMemo(() => (request ? defaultDraft(request) : null), [request])
   const [draftState, setDraftState] = useState<DraftState | null>(null)
+
+  if (request?.planReview) return <PlanReviewPanel request={request} onRespond={onRespond} />
 
   if (!request || !initialDraft || request.questions.length === 0) {
     return <></>

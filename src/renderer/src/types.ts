@@ -23,6 +23,12 @@ import type {
   RemoteProjectCreateInput
 } from '../../shared/projectLocation'
 import type { OpenSshHostInput } from '../../shared/remoteHostProfile'
+import type {
+  WorkspaceChangeSummary,
+  WorkspaceDiffReference
+} from '../../shared/workspaceChangeTypes'
+import type { PromptImageInput, StoredPromptImage } from '../../shared/promptImageTypes'
+import type { SessionExportResult } from '../../shared/sessionExportTypes'
 import type { RemoteWorkspaceFileRequest } from '../../shared/remoteWorkspacePath'
 import type {
   WrapperResultDirectoryRequest,
@@ -45,6 +51,9 @@ export type {
   OpenSshHost
 } from './features/wrapper/lib/remoteConnectionTypes'
 import type { AgentExecutionItem } from './lib/agentExecutionTypes'
+import type { PlanReviewItem, PresentedFilesItem } from './features/chat/lib/planReviewTypes'
+export type { PlanReviewItem, PresentedFilesItem } from './features/chat/lib/planReviewTypes'
+import type { AuthInteractionEvent } from './lib/authTypes'
 import type { Project } from './lib/projectTypes'
 export type { Project } from './lib/projectTypes'
 import type {
@@ -69,6 +78,14 @@ export type {
   ToolApprovalRequest,
   UnreadKind
 } from './lib/sessionTypes'
+export type {
+  ActiveAuthPrompt,
+  AuthEvent,
+  AuthInteractionEvent,
+  AuthPrompt,
+  AuthPromptInteraction,
+  AuthPromptType
+} from './lib/authTypes'
 
 export type { DefaultProxyMode, PhiAppSettings, PhiAppSettingsPatch, ProxyTransportStatus }
 export type { DbConnectorSettingsItem }
@@ -78,7 +95,6 @@ export type {
   AgentExecutionStep,
   AgentExecutionSteer
 } from './lib/agentExecutionTypes'
-
 export type MessageRole = 'user' | 'assistant' | 'error' | 'warning' | 'thinking'
 
 export type Role = MessageRole
@@ -87,6 +103,7 @@ export interface ChatMessage {
   id: string
   role: Role
   content: string
+  images?: Array<PromptImageInput | StoredPromptImage>
   runId?: string
   createdAt?: string
   completedAt?: string
@@ -114,6 +131,7 @@ export interface ToolCallItem {
     bytes: number
   }
   notebook?: NotebookToolSummary
+  todo?: import('./lib/todoTypes').TodoSnapshot
 }
 
 export interface NotebookToolSummary {
@@ -143,6 +161,13 @@ export interface RunLifecycleItem {
   durationMs?: number
 }
 
+export interface WorkspaceChangeSummaryItem extends WorkspaceChangeSummary {
+  id: string
+  role: 'workspace_changes'
+  runId?: string
+  createdAt?: string
+}
+
 /**
  * A wrapper run plan created by a `wrapper_<id>` agent tool call (see
  * docs/design/phi-wrapper-technical-design.md, "Chat And UI Integration").
@@ -164,7 +189,14 @@ export interface WrapperPlanItem {
 }
 
 export type ChatItem =
-  ChatMessage | ToolCallItem | RunLifecycleItem | WrapperPlanItem | AgentExecutionItem
+  | ChatMessage
+  | ToolCallItem
+  | RunLifecycleItem
+  | WorkspaceChangeSummaryItem
+  | PresentedFilesItem
+  | PlanReviewItem
+  | WrapperPlanItem
+  | AgentExecutionItem
 
 export interface ProviderAuthStatus {
   providerId: string
@@ -179,28 +211,11 @@ export interface ProviderAuthStatus {
   statusText: string
 }
 
-export type AuthPromptType = 'text' | 'secret' | 'select' | 'manual_code'
-
-export interface AuthPrompt {
-  type: AuthPromptType
-  message: string
-  placeholder?: string
-  options?: ReadonlyArray<{ id: string; label: string; description?: string }>
-}
-
-export interface AuthPromptInteraction {
-  requestId: string
-  providerId: string
-  prompt: AuthPrompt
-  value: string
-}
-
-export type ActiveAuthPrompt = AuthPromptInteraction
-
 export interface ModelOption {
   providerId: string
   modelId: string
   name: string
+  supportsImages?: boolean
   thinkingLevels: ThinkingLevel[]
 }
 
@@ -231,6 +246,7 @@ export type AgentUserInteractionQuestion = {
 export type AgentUserInteractionRequest = {
   requestId: string
   questions: AgentUserInteractionQuestion[]
+  planReview?: { title: string; content: string; planFilePath: string }
   sessionId?: string
   sessionPath?: string
   sessionGeneration?: number
@@ -311,7 +327,7 @@ export interface McpServerSummary {
   status: 'configured'
 }
 
-export type FilePreviewKind = 'text' | 'image' | 'pdf' | 'metadata'
+export type FilePreviewKind = 'text' | 'html' | 'image' | 'pdf' | 'metadata'
 
 interface FilePreviewBase {
   path: string
@@ -331,6 +347,12 @@ export type FilePreview = FilePreviewBase &
     | {
         kind: 'text'
         mimeType: 'text/plain'
+        content: string
+        dataUrl?: never
+      }
+    | {
+        kind: 'html'
+        mimeType: 'text/html'
         content: string
         dataUrl?: never
       }
@@ -705,6 +727,8 @@ export type RendererApi = {
   previewDatabaseWebImage: (url: string) => Promise<DatabaseWebImagePreview>
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
+  readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
+  readWorkspaceDiff: (ref: WorkspaceDiffReference) => Promise<string>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => () => void
   onAgentUserInteractionRequest: (cb: (event: AgentUserInteractionRequest) => void) => () => void
   onAgentUserInteractionCancelled: (cb: () => void) => () => void
@@ -732,6 +756,8 @@ export type RendererApi = {
   pickEnvironmentBinary: () => Promise<string | null>
   listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
   setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
+  setDbConnectorApiKey: (id: string, apiKey: string) => Promise<DbConnectorSettingsItem[]>
+  clearDbConnectorApiKey: (id: string) => Promise<DbConnectorSettingsItem[]>
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>
@@ -747,10 +773,15 @@ export type RendererApi = {
   getCurrentSession: () => Promise<CurrentSession>
   updateCurrentSessionPermissionMode: (permissionMode: PermissionMode) => Promise<CurrentSession>
   createSession: () => Promise<CurrentSession>
+  forkSession: (
+    sourceId: string,
+    eventId: string
+  ) => Promise<{ path: string; phiSessionId: string }>
   switchSession: (path: string) => Promise<SessionSwitchResult | null>
   acknowledgeSession: (path: string) => Promise<SessionSummary | null>
   deleteSession: (path: string) => Promise<void>
   renameSession: (path: string, name: string) => Promise<void>
+  exportSession: (sessionId: string) => Promise<SessionExportResult | null>
   listProjects: () => Promise<Project[]>
   pickProjectDirectory: () => Promise<string | null>
   createProject: (
@@ -895,6 +926,9 @@ export interface AgentEventSummary {
   eventId?: string
   createdAt?: string
   runId?: string
+  files?: unknown
+  totalChanged?: number
+  truncated?: boolean
   durationMs?: number
   approvalId?: string
   sessionGeneration?: number
@@ -946,32 +980,3 @@ export interface AgentEventSummary {
   toModelId?: string
   toModelName?: string
 }
-
-export type AuthEvent =
-  | {
-      type: 'info'
-      message: string
-      links?: ReadonlyArray<{ url: string; label?: string }>
-    }
-  | { type: 'auth_url'; url: string; instructions?: string }
-  | {
-      type: 'device_code'
-      userCode: string
-      verificationUri: string
-      intervalSeconds?: number
-      expiresInSeconds?: number
-    }
-  | { type: 'progress'; message: string }
-
-export type AuthInteractionEvent =
-  | {
-      type: 'prompt'
-      requestId: string
-      providerId: string
-      prompt: AuthPrompt
-    }
-  | {
-      type: 'notify'
-      providerId: string
-      event: AuthEvent
-    }

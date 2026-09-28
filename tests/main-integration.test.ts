@@ -19,6 +19,8 @@ import * as notebookCodeGeneration from '../src/main/agent/notebook/notebook-cod
 import * as lifecycle from '../src/main/agent/session/session-lifecycle'
 import * as notebookDocument from '../src/shared/notebookDocument'
 import * as sessionTitle from '../src/shared/sessionTitle'
+import * as htmlReportPreview from '../src/shared/htmlReportPreview'
+import type { WorkspaceChangeSummary } from '../src/shared/workspaceChangeTypes'
 import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
 import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-preview-media'
 import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers/remote-result-download'
@@ -66,6 +68,7 @@ function fakeEditApprovalDigest(input: Record<string, unknown>): string {
 
 type PromptOptions = {
   preflightResult?: (accepted: boolean) => void
+  images?: Array<{ type: 'image'; data: string; mimeType: string }>
   expandPromptTemplates?: boolean
   synthetic?: boolean
   userInitiated?: boolean
@@ -80,7 +83,7 @@ class FakeSession {
   readonly log: string[] = []
   readonly promptTexts: string[] = []
   readonly promptOptions: PromptOptions[] = []
-  model?: { provider: string; id: string }
+  model?: { provider: string; id: string; supportsImages?: boolean }
   thinkingLevel?: string
   preflight = Promise.resolve()
   abortGate = Promise.resolve()
@@ -124,7 +127,7 @@ class FakeSession {
     this.log.push('dispose')
     this.disposed = true
   }
-  async setModel(model: { provider: string; id: string }): Promise<void> {
+  async setModel(model: { provider: string; id: string; supportsImages?: boolean }): Promise<void> {
     this.model = model
   }
   setThinkingLevel(level: string): void {
@@ -135,6 +138,8 @@ class FakeSession {
 type Handler = (_event: unknown, ...args: unknown[]) => unknown
 type HarnessResult = {
   hostHandlers: Map<string, (params: unknown) => Promise<unknown>>
+  setAgentInteractionResponse: (response: Record<string, unknown>) => void
+  setBridgeAgentJobs: (jobs: unknown[]) => void
   bridgeRequests: Array<{ method: string; params: unknown }>
   failBridgeRequests: (error: Error | undefined) => void
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
@@ -218,6 +223,11 @@ type HarnessResult = {
   dbConnectorEnabledUpdates: Array<{ id: string; digest: string; enabled: boolean }>
   setOpenDialogResult: (result: { canceled: boolean; filePaths: string[] }) => void
   copiedText: () => string
+  exportedSessions: Array<{ sessionId: string; destination: string }>
+  setWorkspaceChangeSummary: (summary: WorkspaceChangeSummary | null) => void
+  setWorkspaceDiffPatch: (patch: string | null) => void
+  savedWorkspaceDiff: () => string | undefined
+  tryFrameNavigation: (input: { isMainFrame: boolean; frameName?: string; url: string }) => boolean
 }
 
 async function harness(
@@ -263,6 +273,8 @@ async function harness(
   const reportedWrapperRuns = new Set<string>()
   const wrapperJobFinishListeners: Array<(run: unknown, status: unknown) => void> = []
   const hostHandlers = new Map<string, (params: unknown) => Promise<unknown>>()
+  let agentInteractionResponse: Record<string, unknown> = { answers: [] }
+  let bridgeAgentJobs: unknown[] = []
   const bridgeRequests: Array<{ method: string; params: unknown }> = []
   let bridgeFailure: Error | undefined
   const osNotifications: Array<{ title: string; body: string }> = []
@@ -272,6 +284,18 @@ async function harness(
   const fileIconRequests: string[] = []
   const execFileCalls: Array<{ file: string; args: string[] }> = []
   const previewReadRequests: Array<{ filePath: string; length: number }> = []
+  const exportedSessions: Array<{ sessionId: string; destination: string }> = []
+  let workspaceChangeSummary: WorkspaceChangeSummary | null = null
+  let workspaceDiffPatch: string | null = null
+  let savedWorkspaceDiff: string | undefined
+  let frameNavigationHandler:
+    | ((event: {
+        isMainFrame: boolean
+        frame: { name: string } | null
+        url: string
+        preventDefault: () => void
+      }) => void)
+    | undefined
   const appLogs: Array<Record<string, unknown>> = []
   const acknowledgedSessions: Array<{ file: string; cwd: string }> = []
   const jupyterServerCalls: Array<{ action: string; cwd: string }> = []
@@ -327,6 +351,12 @@ async function harness(
     ['/projects/current/notebooks/eda.ipynb', Buffer.from('{"nbformat":4,"cells":[]}')],
     ['/projects/current/large.txt', Buffer.alloc(320010, 'a')],
     ['/projects/current/plot.png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+    ['/projects/current/photo.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xd9])],
+    ['/projects/current/animation.gif', Buffer.from('GIF89a\x01\x00\x01\x00', 'binary')],
+    [
+      '/projects/current/chart.webp',
+      Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBP')])
+    ],
     [
       '/projects/current/large-plot.png',
       Buffer.concat([
@@ -335,6 +365,12 @@ async function harness(
       ])
     ],
     ['/projects/current/report.pdf', Buffer.from('%PDF-1.7\n')],
+    [
+      '/projects/current/report.html',
+      Buffer.from(
+        '<!doctype html><html><body><h1>QC report</h1><script>alert(1)</script></body></html>'
+      )
+    ],
     ['/projects/other/secret.txt', Buffer.from('secret\n')],
     ['/isolated/sessions/session-1/tool-outputs/out.txt', Buffer.from('saved output\n')],
     ['/projects/current/binary.dat', Buffer.from([0, 1, 2])]
@@ -493,6 +529,9 @@ async function harness(
         events.push({ channel, data })
       },
       setWindowOpenHandler: noop,
+      on: (name: string, handler: NonNullable<typeof frameNavigationHandler>): void => {
+        if (name === 'will-frame-navigate') frameNavigationHandler = handler
+      },
       setBackgroundThrottling: noop,
       isDestroyed: (): boolean => false
     }
@@ -777,6 +816,7 @@ async function harness(
     './agent-env': {},
     './file-preview-media': { hoverMediaPreviewType, mediaPreviewType },
     '../shared/wrapperResultTypes': { declaredExternalOutputRoot },
+    '../shared/htmlReportPreview': htmlReportPreview,
     '../shared/remoteHostProfile': { sshConfigHostId: (alias: string) => `ssh-config:${alias}` },
     './molecule-renderer': {
       renderMoleculeSvg: async (): Promise<string> => '<svg xmlns="http://www.w3.org/2000/svg"/>'
@@ -1057,6 +1097,13 @@ async function harness(
               reasoning: true
             },
             {
+              provider: 'openai',
+              id: 'gpt-vision-test',
+              name: 'GPT Vision Test',
+              reasoning: false,
+              supportsImages: true
+            },
+            {
               provider: 'kimi-code',
               id: 'kimi-k2.5',
               name: 'Kimi K2.5',
@@ -1076,7 +1123,8 @@ async function harness(
                   provider: providerId,
                   id: modelId,
                   name: modelId,
-                  reasoning: true
+                  reasoning: true,
+                  ...(modelId === 'gpt-vision-test' ? { supportsImages: true } : {})
                 }
         })
       })
@@ -1467,6 +1515,7 @@ async function harness(
         request: async (method, params) => {
           bridgeRequests.push({ method, params })
           if (bridgeFailure) throw bridgeFailure
+          if (method === 'agentRuns.list') return bridgeAgentJobs
           return { ok: true }
         }
       })
@@ -1492,7 +1541,7 @@ async function harness(
         request: Record<string, unknown>
       ): Promise<Record<string, unknown>> => ({
         requestId: request.requestId,
-        answers: []
+        ...agentInteractionResponse
       })
     },
     './agent/plugins': {
@@ -1765,6 +1814,18 @@ async function harness(
           checks: [{ id: 'ssh', status: 'ok', message: remotePath ?? 'connected' }]
         }
       }
+    },
+    './agent/remote-nextflow-install': {
+      installRemoteNextflow: async () => ({
+        path: '/home/scientist/.local/bin/nextflow',
+        alreadyInstalled: false
+      })
+    },
+    './agent/cursor-h2-bridge': {
+      createCursorH2Bridge: () => ({
+        ensure: async () => 'http://127.0.0.1:12345',
+        close: async () => undefined
+      })
     },
     './agent/remote-project-create': {
       createCheckedRemoteProject: async (input: Record<string, unknown>) => ({
@@ -2081,6 +2142,61 @@ async function harness(
     },
     './agent/session/session-lifecycle': lifecycle,
     './agent/session/session-runner-registry': { SessionRunnerRegistry: RunnerRegistry },
+    './agent/session/session-export': {
+      exportPhiSession: async (sessionId: string, destination: string) => {
+        exportedSessions.push({ sessionId, destination })
+        return {
+          path: `${destination}/phi-session-${sessionId}`,
+          fileCount: 5,
+          bytes: 123,
+          runtimeIncluded: true,
+          blobCount: 1
+        }
+      }
+    },
+    './agent/deliverables/present-files': {
+      validatePresentedFiles: (_cwd: string, value: unknown) => {
+        if (!Array.isArray(value)) throw new Error('Invalid delivery files')
+        return value
+      }
+    },
+    './agent/session/workspace-changes': {
+      beginWorkspaceChangeCapture: async (): Promise<object | null> =>
+        workspaceChangeSummary ? {} : null,
+      finishWorkspaceChangeCapture: async (
+        _baseline: unknown,
+        options?: { onTextDiff?: (name: string, patch: string) => Promise<unknown> }
+      ): Promise<WorkspaceChangeSummary | null> => {
+        if (!workspaceChangeSummary || !workspaceDiffPatch || !options?.onTextDiff) {
+          return workspaceChangeSummary
+        }
+        const first = workspaceChangeSummary.files[0]
+        const diff = await options.onTextDiff(first.displayPath, workspaceDiffPatch)
+        return {
+          ...workspaceChangeSummary,
+          files: [{ ...first, ...(diff ? { diff } : {}) }, ...workspaceChangeSummary.files.slice(1)]
+        } as WorkspaceChangeSummary
+      }
+    },
+    './agent/session/workspace-diffs': {
+      persistWorkspaceDiff: (sessionId: string, patch: string): unknown => {
+        savedWorkspaceDiff = patch
+        return { sessionId, id: 'd'.repeat(64), bytes: Buffer.byteLength(patch) }
+      },
+      readWorkspaceDiff: (ref: { id?: string }): string => {
+        if (ref.id !== 'd'.repeat(64) || !savedWorkspaceDiff) throw new Error('Missing diff')
+        return savedWorkspaceDiff
+      }
+    },
+    './agent/session/prompt-images': {
+      validatePromptImages: (value: unknown): unknown[] => (Array.isArray(value) ? value : []),
+      persistPromptImages: (sessionId: string, images: unknown[]): unknown[] =>
+        images.map(() => ({ sessionId, id: 'a'.repeat(64), mimeType: 'image/png' })),
+      readPromptImage: (): { mimeType: string; data: string } => ({
+        mimeType: 'image/png',
+        data: 'iVBORw0KGgo='
+      })
+    },
     './agent/session/session-store': {
       appendSessionEvent: (sessionId: string, event: Record<string, unknown>) => {
         appendedSessionEvents.push({ sessionId, event })
@@ -2229,7 +2345,27 @@ async function harness(
       assert.ok(handler, `Missing IPC handler ${channel}`)
       return handler({ sender: Window.getFocusedWindow()?.webContents }, ...args)
     },
+    setWorkspaceChangeSummary: (summary): void => {
+      workspaceChangeSummary = summary
+    },
+    setWorkspaceDiffPatch: (patch): void => {
+      workspaceDiffPatch = patch
+    },
+    savedWorkspaceDiff: (): string | undefined => savedWorkspaceDiff,
+    tryFrameNavigation: (input): boolean => {
+      let prevented = false
+      frameNavigationHandler?.({
+        isMainFrame: input.isMainFrame,
+        frame: input.frameName ? { name: input.frameName } : null,
+        url: input.url,
+        preventDefault: () => {
+          prevented = true
+        }
+      })
+      return prevented
+    },
     sessions,
+    exportedSessions,
     deleted,
     events,
     approvalOptions,
@@ -2257,6 +2393,12 @@ async function harness(
     appendedSessionEvents,
     wrapperJobFinishListeners,
     hostHandlers,
+    setAgentInteractionResponse: (response): void => {
+      agentInteractionResponse = response
+    },
+    setBridgeAgentJobs: (jobs): void => {
+      bridgeAgentJobs = jobs
+    },
     bridgeRequests,
     failBridgeRequests: (error: Error | undefined): void => {
       bridgeFailure = error
@@ -2314,16 +2456,18 @@ test(
   }
 )
 
-test('main IPC: agent prompt asks for explicit next-action recommendations without changing the saved user message', async () => {
+test('main IPC: user prompt stays verbatim while recommendation settings are read separately', async () => {
   const session = new FakeSession('fresh.jsonl')
   const app = await harness(async () => session)
 
   await app.invoke('agent:prompt', 'hello')
 
-  assert.equal(session.promptTexts.length, 1)
-  assert.match(session.promptTexts[0], /^hello\n\n<phi_next_action_instruction>/)
-  assert.match(session.promptTexts[0], /推荐下一步：<一句可以直接作为下一轮用户输入的中文操作>/)
+  assert.deepEqual(session.promptTexts, ['hello'])
   assert.equal(app.appendedSessionEvents[0].event.content, 'hello')
+  assert.equal(await app.hostHandlers.get('settings.nextActionSuggestionsEnabled')?.({}), true)
+  assert.deepEqual(await app.hostHandlers.get('cursorBridge.ensure')?.({}), {
+    baseUrl: 'http://127.0.0.1:12345'
+  })
 })
 
 test('main IPC: app settings exposes and updates default proxy mode', async () => {
@@ -2548,6 +2692,13 @@ test('main IPC: file preview is limited to project and Phi-owned files', async (
     previewBytes: number
     truncated: boolean
   }
+  const htmlPreview = (await app.invoke('files:preview', '/projects/current/report.html')) as {
+    kind: string
+    mimeType: string
+    content: string
+    previewBytes: number
+    truncated: boolean
+  }
 
   assert.equal(projectPreview.name, 'App.tsx')
   assert.equal(projectPreview.path, '/projects/current/src/App.tsx')
@@ -2572,6 +2723,22 @@ test('main IPC: file preview is limited to project and Phi-owned files', async (
   assert.equal(imagePreview.bytes, 8)
   assert.equal(imagePreview.previewBytes, 8)
   assert.equal(imagePreview.truncated, false)
+  for (const [name, mimeType] of [
+    ['photo.jpg', 'image/jpeg'],
+    ['animation.gif', 'image/gif'],
+    ['chart.webp', 'image/webp']
+  ]) {
+    const preview = (await app.invoke('files:preview', `/projects/current/${name}`)) as {
+      kind: string
+      mimeType: string
+      dataUrl: string
+      truncated: boolean
+    }
+    assert.equal(preview.kind, 'image')
+    assert.equal(preview.mimeType, mimeType)
+    assert.match(preview.dataUrl, new RegExp(`^data:${mimeType};base64,`))
+    assert.equal(preview.truncated, false)
+  }
   assert.equal(pdfPreview.kind, 'pdf')
   assert.equal(pdfPreview.mimeType, 'application/pdf')
   assert.match(pdfPreview.dataUrl, /^data:application\/pdf;base64,/)
@@ -2579,6 +2746,11 @@ test('main IPC: file preview is limited to project and Phi-owned files', async (
   assert.equal(pdfPreview.bytes, 9)
   assert.equal(pdfPreview.previewBytes, 9)
   assert.equal(pdfPreview.truncated, false)
+  assert.equal(htmlPreview.kind, 'html')
+  assert.equal(htmlPreview.mimeType, 'text/html')
+  assert.match(htmlPreview.content, /<h1>QC report<\/h1>/)
+  assert.equal(htmlPreview.previewBytes, Buffer.byteLength(htmlPreview.content))
+  assert.equal(htmlPreview.truncated, false)
   assert.deepEqual(
     app.previewReadRequests.find((request) => request.filePath === '/projects/current/large.txt'),
     { filePath: '/projects/current/large.txt', length: 320000 }
@@ -2596,6 +2768,27 @@ test('main IPC: file preview is limited to project and Phi-owned files', async (
     app.invoke('files:preview', '/projects/current/binary.dat'),
     /暂不支持预览二进制文件/
   )
+})
+
+test('main window prevents HTML report frames from navigating away', async () => {
+  const app = await harness()
+  assert.equal(
+    app.tryFrameNavigation({
+      isMainFrame: false,
+      frameName: htmlReportPreview.HTML_REPORT_FRAME_NAME,
+      url: 'https://example.invalid/collect'
+    }),
+    true
+  )
+  assert.equal(
+    app.tryFrameNavigation({
+      isMainFrame: false,
+      frameName: htmlReportPreview.HTML_REPORT_FRAME_NAME,
+      url: 'about:srcdoc'
+    }),
+    false
+  )
+  assert.equal(app.tryFrameNavigation({ isMainFrame: true, url: 'http://localhost:5173/' }), false)
 })
 
 test('main IPC: hover file preview is tiered and bounded', async () => {
@@ -5655,6 +5848,89 @@ test('main IPC: project agent sessions receive active notebook and app Jupyter c
   assert.match(notebookPrompt, /notebook\.run_cell/)
 })
 
+test('main IPC persists and broadcasts a bounded change summary after the run', async () => {
+  const app = await harness()
+  const summary: WorkspaceChangeSummary = {
+    files: [
+      {
+        path: '/workspace/result.txt',
+        displayPath: 'result.txt',
+        status: 'modified',
+        added: 2,
+        deleted: 1
+      }
+    ],
+    totalChanged: 1,
+    truncated: false
+  }
+  app.setWorkspaceChangeSummary(summary)
+  await app.invoke('agent:prompt', 'update the result')
+
+  const saved = app.appendedSessionEvents.find(
+    (entry) => (entry.event as { type?: string }).type === 'workspace_changes'
+  )?.event as Record<string, unknown> | undefined
+  assert.equal(saved?.runId, 'run-2')
+  assert.deepEqual(saved?.files, summary.files)
+  assert.equal(
+    app.events.some(
+      (entry) =>
+        entry.channel === 'agent:event' &&
+        (entry.data as { type?: string }).type === 'workspace_changes'
+    ),
+    true
+  )
+})
+
+test('main IPC stores a run diff separately and can read it after the run', async () => {
+  const app = await harness()
+  const patch = '@@ -1 +1 @@\n-before\n+after\n'
+  app.setWorkspaceChangeSummary({
+    files: [
+      {
+        path: '/workspace/result.txt',
+        displayPath: 'result.txt',
+        status: 'modified',
+        added: 1,
+        deleted: 1
+      }
+    ],
+    totalChanged: 1,
+    truncated: false
+  })
+  app.setWorkspaceDiffPatch(patch)
+  await app.invoke('agent:prompt', 'edit result')
+
+  const event = app.appendedSessionEvents.find(
+    (entry) => (entry.event as { type?: string }).type === 'workspace_changes'
+  )?.event as { files: Array<{ diff?: { sessionId: string; id: string; bytes: number } }> }
+  const ref = event.files[0].diff
+  assert.ok(ref)
+  assert.equal(ref.sessionId, 'phi-1')
+  assert.equal(app.savedWorkspaceDiff(), patch)
+  assert.equal(await app.invoke('workspaceChanges:readDiff', ref), patch)
+  assert.doesNotMatch(JSON.stringify(event), /@@ -1|-before|\+after/)
+})
+
+test('main IPC: pasted image is saved as a reference and reaches the vision model', async () => {
+  const app = await harness()
+  const image = { mimeType: 'image/png', data: 'iVBORw0KGgo=' }
+  await app.invoke('models:select', 'openai', 'gpt-vision-test')
+  await app.invoke('agent:prompt', '', { images: [image] })
+
+  assert.deepEqual(app.sessions[0].promptOptions[0].images, [{ type: 'image', ...image }])
+  const userEvent = app.appendedSessionEvents.find(
+    (entry) => (entry.event as { type?: string }).type === 'user_message'
+  )?.event as {
+    content: string
+    images: Array<{ sessionId: string; id: string; mimeType: string }>
+  }
+  assert.equal(userEvent.content, '')
+  assert.deepEqual(userEvent.images, [
+    { sessionId: 'phi-1', id: 'a'.repeat(64), mimeType: 'image/png' }
+  ])
+  assert.deepEqual(await app.invoke('agent:readPromptImage', userEvent.images[0]), image)
+})
+
 test(
   'main IPC: prompt text and tool events are persisted with large output previews',
   { timeout: 3000 },
@@ -6541,6 +6817,238 @@ test(
     await prompt
   }
 )
+
+test('main IPC exports only after the user chooses a destination folder', async () => {
+  const app = await harness()
+  await app.invoke('agent:prompt', 'private prompt')
+
+  await assert.rejects(app.invoke('sessions:export', 'missing'), /会话不存在/)
+
+  assert.equal(await app.invoke('sessions:export', 'phi-1'), null)
+  assert.deepEqual(app.exportedSessions, [])
+
+  app.setOpenDialogResult({ canceled: false, filePaths: ['/chosen/export-parent'] })
+  const result = (await app.invoke('sessions:export', 'phi-1')) as { path: string }
+  assert.equal(result.path, '/chosen/export-parent/phi-session-phi-1')
+  assert.deepEqual(app.exportedSessions, [
+    { sessionId: 'phi-1', destination: '/chosen/export-parent' }
+  ])
+  assert.equal(
+    app.appLogs.some((entry) => JSON.stringify(entry).includes('private prompt')),
+    false
+  )
+})
+
+test('main IPC rejects export while its conversation is running', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  const run = app.invoke('agent:prompt', 'still running')
+  await tick()
+  await assert.rejects(app.invoke('sessions:export', 'phi-1'), /运行结束/)
+  assert.deepEqual(app.exportedSessions, [])
+  await app.invoke('agent:stop')
+  await run
+})
+
+test('main host records final file delivery only for an active conversation', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  const prompt = app.invoke('agent:prompt', 'create report')
+  await tick()
+  const present = app.hostHandlers.get('deliverables.present')
+  assert.ok(present)
+  const files = [{ path: '/workspace/report.pdf', displayPath: 'report.pdf', bytes: 123 }]
+  const result = await present({
+    runtimeSessionId: session.runtimeSessionId,
+    toolCallId: 'present-1',
+    files
+  })
+  assert.deepEqual(result, { files })
+  const saved = app.appendedSessionEvents.find(
+    (entry) => (entry.event as { type?: string }).type === 'files_presented'
+  )
+  assert.ok(saved)
+  assert.equal(saved.event.type, 'files_presented')
+  assert.match(String(saved.event.runId), /^run-/)
+  assert.equal(saved.event.toolCallId, 'present-1')
+  assert.deepEqual(saved.event.files, files)
+  assert.equal(
+    app.events.some(
+      (entry) =>
+        entry.channel === 'agent:event' &&
+        (entry.data as { type?: string }).type === 'files_presented'
+    ),
+    true
+  )
+  await assert.rejects(
+    async () => present({ runtimeSessionId: 'unknown', toolCallId: 'present-2', files }),
+    /No active conversation/
+  )
+  await app.invoke('agent:stop')
+  await prompt
+})
+
+test('main plan review pauses the run and records approval in its conversation', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  const current = (await app.invoke('sessions:current')) as Record<string, unknown>
+  const prompt = app.invoke('agent:prompt', 'Analyze then write a report', {
+    ...current,
+    planMode: true
+  })
+  await tick()
+  assert.equal(
+    app.bridgeRequests.some((request) => request.method === 'session.plan.enter'),
+    true
+  )
+
+  app.setAgentInteractionResponse({
+    answers: [{ questionIndex: 0, question: 'plan_review', kind: 'option', answer: 'approve' }]
+  })
+  const review = app.hostHandlers.get('planReview.request')
+  assert.ok(review)
+  const result = await review({
+    runtimeSessionId: session.runtimeSessionId,
+    title: 'analysis-plan',
+    planContent: '# Analysis plan\n\n1. Inspect data\n2. Write report',
+    planFilePath: 'local://analysis-plan.md'
+  })
+  assert.deepEqual(result, { decision: 'approve' })
+  const planEvents = app.appendedSessionEvents
+    .filter((entry) => String(entry.event.type).startsWith('plan_review_'))
+    .map((entry) => entry.event)
+  assert.deepEqual(
+    planEvents.map((event) => event.type),
+    ['plan_review_submitted', 'plan_review_decided']
+  )
+  assert.equal(planEvents[1].decision, 'approve')
+  assert.equal(planEvents[0].reviewId, planEvents[1].reviewId)
+  assert.equal(
+    app.runnerEvents.some((event) => event.type === 'input_requested'),
+    true
+  )
+  assert.equal(
+    app.events.some(
+      (event) =>
+        event.channel === 'agent:event' &&
+        (event.data as { type?: string }).type === 'plan_review_decided'
+    ),
+    true
+  )
+  await assert.rejects(
+    async () =>
+      review({
+        runtimeSessionId: 'unknown',
+        title: 'plan',
+        planContent: '# Plan',
+        planFilePath: 'local://plan.md'
+      }),
+    /No active conversation/
+  )
+  await assert.rejects(
+    async () =>
+      review({
+        runtimeSessionId: session.runtimeSessionId,
+        title: 'too-large',
+        planContent: 'x'.repeat(65 * 1024),
+        planFilePath: 'local://too-large.md'
+      }),
+    /Invalid plan review request/
+  )
+  await app.invoke('agent:stop')
+  await prompt
+})
+
+test('main plan review refuses remote project sessions before starting a run', async () => {
+  const app = await harness()
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as Record<
+    string,
+    unknown
+  >
+  await assert.rejects(
+    app.invoke('agent:prompt', 'Analyze this server project', { ...current, planMode: true }),
+    /远程项目暂不支持计划评审/
+  )
+  assert.equal(
+    app.bridgeRequests.some((request) => request.method === 'session.plan.enter'),
+    false
+  )
+  assert.equal(
+    app.appendedSessionEvents.some((entry) => entry.event.type === 'user_message'),
+    false
+  )
+})
+
+test('main plan review preserves requested revisions in the session timeline', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  const prompt = app.invoke('agent:prompt', 'Draft a plan')
+  await tick()
+  app.setAgentInteractionResponse({
+    answers: [{ questionIndex: 0, question: 'plan_review', kind: 'option', answer: 'revise' }],
+    globalNote: 'Add a validation step'
+  })
+  const review = app.hostHandlers.get('planReview.request')
+  assert.ok(review)
+  assert.deepEqual(
+    await review({
+      runtimeSessionId: session.runtimeSessionId,
+      title: 'analysis-plan',
+      planContent: '# Analysis plan',
+      planFilePath: 'local://analysis-plan.md'
+    }),
+    { decision: 'revise', note: 'Add a validation step' }
+  )
+  const decided = app.appendedSessionEvents.find(
+    (entry) => entry.event.type === 'plan_review_decided'
+  )
+  assert.equal(decided?.event.decision, 'revise')
+  assert.equal(decided?.event.note, 'Add a validation step')
+  await app.invoke('agent:stop')
+  await prompt
+})
+
+test('main jobs list maps live Agent runs to their owning Phi conversations', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  const prompt = app.invoke('agent:prompt', 'Analyze samples')
+  await tick()
+  app.setBridgeAgentJobs([
+    {
+      agentSessionId: session.runtimeSessionId,
+      agentRunId: 'agent-run-1',
+      agentName: 'Database',
+      task: 'Search metadata',
+      state: 'running',
+      background: true,
+      startedAt: Date.now(),
+      lastStep: 'db_query',
+      report: 'private full report must not reach the job list'
+    },
+    {
+      agentSessionId: 'unknown',
+      agentRunId: 'agent-run-2',
+      agentName: 'Unknown',
+      task: 'Not owned by Phi',
+      state: 'running',
+      startedAt: Date.now()
+    }
+  ])
+  const jobs = (await app.invoke('jobs:listAgents')) as Array<Record<string, unknown>>
+  assert.equal(jobs.length, 1)
+  assert.equal(jobs[0].agentRunId, 'agent-run-1')
+  assert.equal(jobs[0].sessionPath, 'phi-session:phi-1')
+  assert.equal(jobs[0].sessionTitle, 'Analyze samples')
+  assert.equal(jobs[0].lastStep, 'db_query')
+  assert.equal('report' in jobs[0], false)
+  await app.invoke('agent:stop')
+  await prompt
+})
 
 test(
   'main IPC: deleting an idle active conversation removes its history',

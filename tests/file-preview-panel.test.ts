@@ -17,6 +17,7 @@ import {
   spreadsheetPreviewModel
 } from '../src/renderer/src/lib/spreadsheetPreview'
 import type { DirectoryListing } from '../src/renderer/src/types'
+import { htmlReportSrcDoc } from '../src/shared/htmlReportPreview'
 
 const readyPreviewState: FilePreviewPanelState = {
   status: 'ready',
@@ -160,6 +161,41 @@ test('remote HTML stays text and large results show metadata with a download ent
   assert.match(metadata, /下载文件/)
   assert.match(metadata, /disabled/)
   assert.doesNotMatch(metadata, /data:application\/pdf;base64/)
+})
+
+test('small local HTML reports render in an isolated static frame with a source view', () => {
+  const markup = renderPanel({
+    status: 'ready',
+    file: {
+      path: '/Users/example/project/report.html',
+      name: 'report.html',
+      displayPath: 'report.html',
+      rootPath: '/Users/example/project',
+      rootLabel: 'project',
+      kind: 'html',
+      mimeType: 'text/html',
+      content: '<h1>QC report</h1><script>alert(1)</script>',
+      bytes: 44,
+      previewBytes: 44,
+      truncated: false
+    }
+  })
+  assert.match(markup, /data-phi-html-report-preview="true"/)
+  assert.match(markup, /sandbox=""/)
+  assert.match(markup, /Content-Security-Policy/)
+  assert.match(markup, /script-src/)
+  assert.match(markup, /报告预览/)
+  assert.match(markup, /查看源码/)
+  assert.doesNotMatch(markup, /<script>alert\(1\)<\/script>/)
+})
+
+test('HTML report preview keeps the document doctype and applies restrictions before report markup', () => {
+  const document = htmlReportSrcDoc(
+    '<!doctype html><html><body><script>alert(1)</script></body></html>'
+  )
+  assert.match(document, /^<!doctype html><meta http-equiv="Content-Security-Policy"/)
+  assert.ok(document.indexOf('script-src') < document.indexOf('<script>'))
+  assert.match(document, /connect-src 'none'/)
 })
 
 test('remote result download controls show progress, cancellation and the selected saved path', () => {
@@ -470,6 +506,34 @@ test('file preview panel renders png image previews', () => {
   assert.match(markup, /src="data:image\/png;base64,iVBORw0KGgo="/)
   assert.match(markup, /alt="plot\.png"/)
   assert.doesNotMatch(markup, /data-phi-syntax-language/)
+})
+
+test('file preview panel renders JPEG, GIF, and WebP images in the same media viewer', () => {
+  for (const [name, mimeType] of [
+    ['photo.jpg', 'image/jpeg'],
+    ['animation.gif', 'image/gif'],
+    ['chart.webp', 'image/webp']
+  ] as const) {
+    const markup = renderPanel({
+      status: 'ready',
+      file: {
+        path: `/Users/example/project/${name}`,
+        name,
+        displayPath: name,
+        rootPath: '/Users/example/project',
+        rootLabel: 'project',
+        kind: 'image',
+        mimeType,
+        dataUrl: `data:${mimeType};base64,YQ==`,
+        bytes: 1,
+        previewBytes: 1,
+        truncated: false
+      }
+    })
+    assert.match(markup, /data-phi-media-preview="image"/)
+    assert.match(markup, new RegExp(`src="data:${mimeType};base64,YQ=="`))
+    assert.match(markup, new RegExp(`alt="${name.replace('.', '\\.')}"`))
+  }
 })
 
 test('file preview panel renders pdf previews', () => {

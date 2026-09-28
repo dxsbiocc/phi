@@ -14,6 +14,7 @@ export type AgentUserInteractionQuestion = {
 export type AgentUserInteractionRequest = {
   requestId: string
   questions: AgentUserInteractionQuestion[]
+  planReview?: { title: string; content: string; planFilePath: string }
   sessionId?: string
   sessionPath?: string
   sessionGeneration?: number

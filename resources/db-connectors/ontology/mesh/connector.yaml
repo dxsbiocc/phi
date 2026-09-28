@@ -1,0 +1,124 @@
+phiDbConnectorVersion: 1
+id: ontology/mesh
+name: MeSH (OLS)
+protocolFamily: ontology
+curationTier: curated
+baseUrl: https://www.ebi.ac.uk/ols4/api
+networkPolicy:
+  allowedHosts:
+    - www.ebi.ac.uk
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 5
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: term
+    summary: Look up a Medical Subject Headings term by MeSH id or IRI through EBI OLS.
+    identity:
+      stableIdFields: [obo_id]
+      namespace: mesh.id
+      primaryUrlTemplate: https://meshb.nlm.nih.gov/record/ui?ui={stable_id}
+    commonFields: [id, obo_id, iri, label, description, synonyms, ontology_id, is_obsolete]
+    ontology:
+      ontologyId: mesh
+      operation: lookup
+      idPrefix: MESH
+      iriTemplate: http://id.nlm.nih.gov/mesh/{local}
+    fields:
+      - name: id
+        type: string
+        description: MeSH identifier such as D000001 or MESH:D000001.
+        synonyms: [mesh_id, term_id, ui]
+        namespace: mesh.id
+      - name: obo_id
+        type: string
+        description: Compact identifier returned by OLS.
+        namespace: mesh.id
+      - name: label
+        type: string
+        description: Preferred MeSH heading.
+      - name: description
+        type: string
+        description: Scope note / definition when available.
+      - name: synonyms
+        type: array
+        description: Entry terms / synonyms.
+  - id: search
+    summary: Search MeSH terms by heading, entry term, or free text.
+    identity:
+      stableIdFields: [obo_id]
+      namespace: mesh.id
+      primaryUrlTemplate: https://meshb.nlm.nih.gov/record/ui?ui={stable_id}
+    commonFields: [id, obo_id, iri, label, description, synonyms, ontology_id, is_obsolete]
+    ontology:
+      ontologyId: mesh
+      operation: search
+      idPrefix: MESH
+    fields:
+      - name: q
+        type: string
+        description: Free-text MeSH search query.
+        synonyms: [query, term, keyword, heading]
+  - id: children
+    summary: Direct child terms of a MeSH heading in OLS.
+    identity:
+      stableIdFields: [obo_id]
+      namespace: mesh.id
+    commonFields: [id, obo_id, iri, label, description, synonyms, ontology_id]
+    ontology:
+      ontologyId: mesh
+      operation: children
+      idPrefix: MESH
+      iriTemplate: http://id.nlm.nih.gov/mesh/{local}
+    fields:
+      - name: id
+        type: string
+        description: Parent MeSH identifier.
+        namespace: mesh.id
+  - id: parents
+    summary: Direct parent terms of a MeSH heading in OLS.
+    identity:
+      stableIdFields: [obo_id]
+      namespace: mesh.id
+    commonFields: [id, obo_id, iri, label, description, synonyms, ontology_id]
+    ontology:
+      ontologyId: mesh
+      operation: parents
+      idPrefix: MESH
+      iriTemplate: http://id.nlm.nih.gov/mesh/{local}
+    fields:
+      - name: id
+        type: string
+        description: Child MeSH identifier.
+        namespace: mesh.id
+  - id: ancestors
+    summary: Hierarchical ancestor terms of a MeSH heading in OLS.
+    identity:
+      stableIdFields: [obo_id]
+      namespace: mesh.id
+    commonFields: [id, obo_id, iri, label, description, synonyms, ontology_id]
+    ontology:
+      ontologyId: mesh
+      operation: ancestors
+      idPrefix: MESH
+      iriTemplate: http://id.nlm.nih.gov/mesh/{local}
+    fields:
+      - name: id
+        type: string
+        description: Descendant MeSH identifier.
+        namespace: mesh.id
+xref:
+  - from:
+      domain: search
+      field: obo_id
+      namespace: mesh.id
+    to:
+      domain: term
+      field: id
+      namespace: mesh.id

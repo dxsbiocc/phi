@@ -1,0 +1,336 @@
+phiDbConnectorVersion: 1
+id: rest-json/kegg
+name: KEGG
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://rest.kegg.jp
+networkPolicy:
+  allowedHosts:
+    - rest.kegg.jp
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 3
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: find_genes
+    summary: Search KEGG genes by symbol or keyword (Biopython Bio.KEGG.REST.kegg_find genes).
+    identity:
+      stableIdFields: [id]
+      namespace: kegg.gene_id
+      primaryUrlTemplate: https://www.kegg.jp/entry/{stable_id}
+    commonFields: [id, entry, description, gene_symbol, aliases, definition]
+    rest:
+      request:
+        path: /find/genes/{filter:query}
+      response:
+        rowsPath: $
+    fields:
+      - name: query
+        type: string
+        description: Gene symbol or free-text query such as TP53.
+        synonyms: [gene, symbol, keyword]
+        namespace: hgnc.symbol
+      - name: id
+        type: string
+        description: KEGG gene identifier such as hsa:7157.
+        namespace: kegg.gene_id
+      - name: gene_symbol
+        type: string
+        description: Primary gene symbol parsed from the KEGG find description.
+        namespace: hgnc.symbol
+  - id: find_pathway
+    summary: Search KEGG pathways by keyword (Biopython kegg_find pathway).
+    identity:
+      stableIdFields: [id]
+      namespace: kegg.pathway_id
+      primaryUrlTemplate: https://www.kegg.jp/pathway/{stable_id}
+    commonFields: [id, entry, description]
+    rest:
+      request:
+        path: /find/pathway/{filter:query}
+      response:
+        rowsPath: $
+    fields:
+      - name: query
+        type: string
+        description: Pathway keyword such as apoptosis.
+        synonyms: [keyword, pathway]
+  - id: find_compound
+    summary: Search KEGG compounds by name or formula (Biopython kegg_find compound).
+    identity:
+      stableIdFields: [id]
+      namespace: kegg.compound_id
+      primaryUrlTemplate: https://www.kegg.jp/entry/{stable_id}
+    commonFields: [id, entry, description]
+    rest:
+      request:
+        path: /find/compound/{filter:query}
+      response:
+        rowsPath: $
+    fields:
+      - name: query
+        type: string
+        description: Compound name, synonym, or formula fragment.
+        synonyms: [name, compound, formula]
+  - id: list_pathways
+    summary: List KEGG pathways, optionally restricted to an organism code.
+    identity:
+      stableIdFields: [id]
+      namespace: kegg.pathway_id
+      primaryUrlTemplate: https://www.kegg.jp/pathway/{stable_id}
+    commonFields: [id, entry, description]
+    rest:
+      request:
+        path: /list/pathway
+        filterParamMap: { organism: organism, database: database }
+      response:
+        rowsPath: $
+    fields:
+      - name: organism
+        type: string
+        description: Optional organism code such as hsa. When omitted, lists reference pathway maps.
+        synonyms: [org, species]
+      - name: database
+        type: string
+        description: Optional override database name; defaults to pathway for this domain.
+  - id: gene
+    summary: Fetch and parse one KEGG gene flat-file entry (Biopython Bio.KEGG.Gene).
+    identity:
+      stableIdFields: [entry]
+      namespace: kegg.gene_id
+      primaryUrlTemplate: https://www.kegg.jp/entry/{stable_id}
+    commonFields:
+      [
+        entry,
+        entry_type,
+        name,
+        gene_symbol,
+        definition,
+        orthology,
+        orthology_ids,
+        organism_id,
+        organism_name,
+        position,
+        pathway,
+        pathway_ids,
+        motif,
+        dblinks
+      ]
+    rest:
+      request:
+        path: /get/{filter:entry}
+      response:
+        rowsPath: $
+    fields:
+      - name: entry
+        type: string
+        description: KEGG gene id such as hsa:7157.
+        synonyms: [id, gene_id]
+        namespace: kegg.gene_id
+      - name: gene_symbol
+        type: string
+        description: Primary gene name/symbol.
+        namespace: hgnc.symbol
+      - name: definition
+        type: string
+        description: Gene definition text.
+      - name: pathway_ids
+        type: array
+        description: Pathway identifiers linked from the gene record.
+        namespace: kegg.pathway_id
+  - id: pathway
+    summary: Fetch and parse one KEGG pathway flat-file entry.
+    identity:
+      stableIdFields: [entry]
+      namespace: kegg.pathway_id
+      primaryUrlTemplate: https://www.kegg.jp/pathway/{stable_id}
+    commonFields:
+      [
+        entry,
+        entry_type,
+        name,
+        preferred_name,
+        description,
+        class,
+        module,
+        disease,
+        drug,
+        organism,
+        gene,
+        compound,
+        enzyme,
+        reaction,
+        ko_pathway,
+        dblinks
+      ]
+    rest:
+      request:
+        path: /get/{filter:entry}
+      response:
+        rowsPath: $
+    fields:
+      - name: entry
+        type: string
+        description: Pathway id such as hsa04110 or map00010.
+        synonyms: [id, pathway_id]
+        namespace: kegg.pathway_id
+      - name: preferred_name
+        type: string
+        description: Pathway display name.
+      - name: description
+        type: string
+        description: Pathway description when present.
+  - id: compound
+    summary: Fetch and parse one KEGG compound flat-file entry (Biopython Bio.KEGG.Compound).
+    identity:
+      stableIdFields: [entry]
+      namespace: kegg.compound_id
+      primaryUrlTemplate: https://www.kegg.jp/entry/{stable_id}
+    commonFields:
+      [
+        entry,
+        entry_type,
+        name,
+        preferred_name,
+        formula,
+        exact_mass,
+        mol_weight,
+        pathway,
+        pathway_ids,
+        enzyme,
+        dblinks
+      ]
+    rest:
+      request:
+        path: /get/{filter:entry}
+      response:
+        rowsPath: $
+    fields:
+      - name: entry
+        type: string
+        description: Compound id such as C00002.
+        synonyms: [id, compound_id]
+        namespace: kegg.compound_id
+      - name: formula
+        type: string
+        description: Chemical formula.
+      - name: exact_mass
+        type: string
+        description: Exact mass / MASS field.
+  - id: enzyme
+    summary: Fetch and parse one KEGG enzyme flat-file entry (Biopython Bio.KEGG.Enzyme).
+    identity:
+      stableIdFields: [entry]
+      namespace: kegg.enzyme_id
+      primaryUrlTemplate: https://www.kegg.jp/entry/{stable_id}
+    commonFields:
+      [
+        entry,
+        entry_type,
+        name,
+        preferred_name,
+        classname,
+        sysname,
+        reaction,
+        substrate,
+        product,
+        inhibitor,
+        cofactor,
+        effector,
+        comment,
+        pathway,
+        pathway_ids,
+        genes,
+        disease,
+        dblinks
+      ]
+    rest:
+      request:
+        path: /get/{filter:entry}
+      response:
+        rowsPath: $
+    fields:
+      - name: entry
+        type: string
+        description: EC number such as 1.1.1.1.
+        synonyms: [id, ec, ec_number]
+        namespace: kegg.enzyme_id
+      - name: reaction
+        type: array
+        description: Reaction description strings.
+      - name: substrate
+        type: array
+        description: Substrate list.
+      - name: product
+        type: array
+        description: Product list.
+  - id: link
+    summary: List linked KEGG entries (Biopython kegg_link), for example pathway links for a gene.
+    identity:
+      stableIdFields: [id]
+      namespace: kegg.link_id
+    commonFields: [id, entry, description]
+    rest:
+      request:
+        path: /link/{filter:target}/{filter:source}
+      response:
+        rowsPath: $
+    fields:
+      - name: target
+        type: string
+        description: Target database such as pathway, genes, or compound.
+      - name: source
+        type: string
+        description: Source entry or database such as hsa:7157.
+  - id: conv
+    summary: Convert identifiers between KEGG and outside databases (Biopython kegg_conv).
+    identity:
+      stableIdFields: [id]
+      namespace: kegg.conv_id
+    commonFields: [id, entry, description]
+    rest:
+      request:
+        path: /conv/{filter:target}/{filter:source}
+      response:
+        rowsPath: $
+    fields:
+      - name: target
+        type: string
+        description: Target database such as uniprot, ncbi-geneid, or hsa.
+      - name: source
+        type: string
+        description: Source entry or database such as hsa:7157 or uniprot:P04637.
+xref:
+  - from:
+      domain: find_genes
+      field: gene_symbol
+      namespace: hgnc.symbol
+      species: '9606'
+    to:
+      domain: gene
+      field: entry
+      namespace: kegg.gene_id
+      species: '9606'
+  - from:
+      domain: gene
+      field: pathway_ids
+      namespace: kegg.pathway_id
+    to:
+      domain: pathway
+      field: entry
+      namespace: kegg.pathway_id
+  - from:
+      domain: compound
+      field: entry
+      namespace: kegg.compound_id
+    to:
+      database: rest-json/pubchem
+      domain: compound_by_name
+      field: name
+      namespace: pubchem.cid

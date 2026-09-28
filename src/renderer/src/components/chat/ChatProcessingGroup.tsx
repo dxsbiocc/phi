@@ -5,6 +5,9 @@ import { type LocalPathKind } from '../MarkdownContent'
 import ToolCallCard, { StatusIndicator } from '../ToolCallCard'
 import ToolGroupCard from '../ToolGroupCard'
 import { WrapperPlanCard } from '../../features/wrapper/components/WrapperPlanCard'
+import { WorkspaceChangesCard } from '../../features/chat/components/WorkspaceChangesCard'
+import { PresentedFilesCard } from '../../features/chat/components/PresentedFilesCard'
+import { PlanReviewCard } from '../../features/chat/components/PlanReviewCard'
 import { PhiIcons } from '../../icons'
 import {
   groupProcessingItems,
@@ -234,6 +237,31 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
               }
               if (group.item.role === 'wrapper_plan') {
                 return <WrapperPlanCard key={group.key} item={group.item} />
+              }
+              if (group.item.role === 'workspace_changes') {
+                return (
+                  <WorkspaceChangesCard
+                    key={group.key}
+                    item={group.item}
+                    onOpenFile={
+                      onOpenLocalPath ? (path) => onOpenLocalPath(path, 'file') : undefined
+                    }
+                  />
+                )
+              }
+              if (group.item.role === 'presented_files') {
+                return (
+                  <PresentedFilesCard
+                    key={group.key}
+                    item={group.item}
+                    onOpenFile={
+                      onOpenLocalPath ? (path) => onOpenLocalPath(path, 'file') : undefined
+                    }
+                  />
+                )
+              }
+              if (group.item.role === 'plan_review') {
+                return <PlanReviewCard key={group.key} item={group.item} cwd={cwd} />
               }
               return (
                 <ChatBubble

@@ -29,6 +29,12 @@ engine:
       executor: remote
       scheduler: slurm
       controller: sbatch
+    - id: remote-background
+      executor: remote
+      scheduler: none
+      controller: detached_ssh
+      containerRuntime: docker
+      nextflowProfile: docker
 
 steps:
   - id: fastqc

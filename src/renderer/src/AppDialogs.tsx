@@ -84,6 +84,8 @@ export type AppDialogsProps = {
   updatingDbConnectorId: string | null
   onRefreshDbConnectors: () => Promise<void>
   onSetDbConnectorEnabled: (id: string, enabled: boolean) => Promise<void>
+  onSetDbConnectorApiKey: (id: string, apiKey: string) => Promise<void>
+  onClearDbConnectorApiKey: (id: string) => Promise<void>
 
   showOnboarding: boolean
   onCompleteOnboarding: (description: string) => Promise<void>
@@ -163,6 +165,8 @@ export default function AppDialogs({
   updatingDbConnectorId,
   onRefreshDbConnectors,
   onSetDbConnectorEnabled,
+  onSetDbConnectorApiKey,
+  onClearDbConnectorApiKey,
   showOnboarding,
   onCompleteOnboarding,
   onSkipOnboarding,
@@ -243,6 +247,8 @@ export default function AppDialogs({
         updatingDbConnectorId={updatingDbConnectorId}
         onRefreshDbConnectors={onRefreshDbConnectors}
         onSetDbConnectorEnabled={onSetDbConnectorEnabled}
+        onSetDbConnectorApiKey={onSetDbConnectorApiKey}
+        onClearDbConnectorApiKey={onClearDbConnectorApiKey}
         themeMode={themeMode}
         onSelectThemeMode={setThemeMode}
       />

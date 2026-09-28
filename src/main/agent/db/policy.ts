@@ -60,6 +60,10 @@ export interface DbHttpRequestOptions {
   signal?: AbortSignal
   timeoutMs?: number
   maxResponseBytes?: number
+  /** Return the response body as a stream; the caller must enforce the byte limit while reading. */
+  streamResponse?: boolean
+  /** Return a redirect response so a caller can validate its next destination separately. */
+  allowRedirectResponse?: boolean
   cacheTtlMs?: number
   agentDir?: string
   now?: DbNow
@@ -199,7 +203,9 @@ export async function executeDbHttpRequest(options: DbHttpRequestOptions): Promi
   applyHeaderAuth(options.manifest.auth, headers)
   const timeoutMs = options.timeoutMs ?? DEFAULT_DB_REQUEST_TIMEOUT_MS
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_DB_RESPONSE_MAX_BYTES
-  const cacheTtlMs = options.cacheTtlMs ?? DEFAULT_DB_RESPONSE_CACHE_TTL_MS
+  const cacheTtlMs = options.streamResponse
+    ? 0
+    : (options.cacheTtlMs ?? DEFAULT_DB_RESPONSE_CACHE_TTL_MS)
   const sleep = options.sleep ?? defaultDbSleep
   const signal = options.signal
   const init: RequestInit = {
@@ -278,24 +284,29 @@ export async function executeDbHttpRequest(options: DbHttpRequestOptions): Promi
         signal,
         now
       })
-      const response = await enforceDbResponseSize(
-        await fetchWithPolicy({
-          manifest: options.manifest,
-          transport,
-          url: requestUrl,
-          init,
-          timeoutMs,
-          signal
-        }),
-        {
-          maxBytes: maxResponseBytes,
-          attempts,
-          redactedUrl,
-          transportName
-        }
-      )
+      const rawResponse = await fetchWithPolicy({
+        manifest: options.manifest,
+        transport,
+        url: requestUrl,
+        init,
+        timeoutMs,
+        signal
+      })
+      const response = options.streamResponse
+        ? enforceDbResponseHeaderSize(rawResponse, {
+            maxBytes: maxResponseBytes,
+            attempts,
+            redactedUrl,
+            transportName
+          })
+        : await enforceDbResponseSize(rawResponse, {
+            maxBytes: maxResponseBytes,
+            attempts,
+            redactedUrl,
+            transportName
+          })
       lastStatus = response.status
-      if (response.ok) {
+      if (response.ok || (options.allowRedirectResponse && isRedirect(response.status))) {
         if (cacheKey && cacheTtlMs > 0) {
           await writeDbResponseCache(cacheKey, response, cacheTtlMs, now)
         }
@@ -413,19 +424,7 @@ async function enforceDbResponseSize(
     transportName: string
   }
 ): Promise<Response> {
-  const contentLength = parseContentLength(response.headers.get('content-length'))
-  if (contentLength !== undefined && contentLength > options.maxBytes) {
-    throw new DbHttpError('DB connector response exceeded maximum size', {
-      code: 'DB_RESPONSE_TOO_LARGE',
-      retryable: false,
-      attempts: options.attempts,
-      status: response.status,
-      lastStatus: response.status,
-      redactedUrl: options.redactedUrl,
-      transportName: options.transportName
-    })
-  }
-
+  enforceDbResponseHeaderSize(response, options)
   const body = await response.arrayBuffer()
   if (body.byteLength > options.maxBytes) {
     throw new DbHttpError('DB connector response exceeded maximum size', {
@@ -444,6 +443,31 @@ async function enforceDbResponseSize(
     statusText: response.statusText,
     headers: response.headers
   })
+}
+
+function enforceDbResponseHeaderSize(
+  response: Response,
+  options: {
+    maxBytes: number
+    attempts: number
+    redactedUrl: string
+    transportName: string
+  }
+): Response {
+  const contentLength = parseContentLength(response.headers.get('content-length'))
+  if (contentLength !== undefined && contentLength > options.maxBytes) {
+    throw new DbHttpError('DB connector response exceeded maximum size', {
+      code: 'DB_RESPONSE_TOO_LARGE',
+      retryable: false,
+      attempts: options.attempts,
+      status: response.status,
+      lastStatus: response.status,
+      redactedUrl: options.redactedUrl,
+      transportName: options.transportName
+    })
+  }
+
+  return response
 }
 
 function parseContentLength(value: string | null): number | undefined {
@@ -497,8 +521,9 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   throwIfAborted(options.signal)
   const controller = new AbortController()
-  const abortFromCaller = (): void => controller.abort()
-  options.signal?.addEventListener('abort', abortFromCaller, { once: true })
+  const requestSignal = options.signal
+    ? AbortSignal.any([controller.signal, options.signal])
+    : controller.signal
 
   let timeout: ReturnType<typeof setTimeout> | undefined
   try {
@@ -513,12 +538,11 @@ async function fetchWithTimeout(
       maybeUnref.unref?.()
     })
     return await Promise.race([
-      transport.fetch(url, { ...init, signal: controller.signal }),
+      transport.fetch(url, { ...init, signal: requestSignal }),
       timeoutPromise
     ])
   } finally {
     if (timeout) clearTimeout(timeout)
-    options.signal?.removeEventListener('abort', abortFromCaller)
   }
 }
 

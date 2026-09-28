@@ -1,0 +1,343 @@
+phiDbConnectorVersion: 1
+id: rest-json/opentargets
+name: Open Targets
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://api.platform.opentargets.org/api/v4
+networkPolicy:
+  allowedHosts:
+    - api.platform.opentargets.org
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 3
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: search
+    summary: Search Open Targets entities (targets, diseases, drugs) by free text.
+    identity:
+      stableIdFields: [id]
+      namespace: opentargets.entity_id
+    commonFields: [id, name, entity, description, score]
+    rest:
+      request:
+        method: POST
+        path: /graphql
+        idempotent: true
+        jsonBodyTemplates:
+          query: >-
+            { search(queryString: "{filter:q}", page: { index: {cursor}, size: {limit} }) {
+              hits { id name entity description score }
+            } }
+      response:
+        rowsPath: data.search.hits
+    fields:
+      - name: q
+        type: string
+        description: Free-text search query (gene symbol, disease, drug name).
+        synonyms: [query, term, keyword]
+      - name: id
+        type: string
+        description: Open Targets entity identifier (Ensembl, EFO, ChEMBL, etc.).
+      - name: name
+        type: string
+        description: Display name for the hit.
+      - name: entity
+        type: string
+        description: Entity type such as target, disease, or drug.
+  - id: target
+    summary: Target profile by Ensembl gene ID, including tractability and pathways.
+    identity:
+      stableIdFields: [id]
+      namespace: ensembl.gene
+      primaryUrlTemplate: https://platform.opentargets.org/target/{stable_id}
+    commonFields:
+      [
+        id,
+        approvedSymbol,
+        approvedName,
+        biotype,
+        functionDescriptions,
+        pathways,
+        tractability
+      ]
+    rest:
+      request:
+        method: POST
+        path: /graphql
+        idempotent: true
+        jsonBodyTemplates:
+          query: >-
+            { target(ensemblId: "{filter:ensemblId}") {
+              id approvedSymbol approvedName biotype functionDescriptions
+              pathways { pathway pathwayId }
+              tractability { label modality value }
+            } }
+      response:
+        rowsPath: data.target
+        fieldMap:
+          id: id
+          approvedSymbol: approvedSymbol
+          approvedName: approvedName
+          biotype: biotype
+          functionDescriptions: functionDescriptions
+          pathways: pathways
+          tractability: tractability
+    fields:
+      - name: ensemblId
+        type: string
+        description: Ensembl gene ID such as ENSG00000141510.
+        synonyms: [id, gene_id, ensembl]
+        namespace: ensembl.gene
+      - name: approvedSymbol
+        type: string
+        description: HGNC approved gene symbol.
+        namespace: hgnc.symbol
+  - id: disease
+    summary: Disease profile by EFO / disease ID.
+    identity:
+      stableIdFields: [id]
+      namespace: efo.id
+      primaryUrlTemplate: https://platform.opentargets.org/disease/{stable_id}
+    commonFields: [id, name, description, therapeuticAreas, synonyms]
+    rest:
+      request:
+        method: POST
+        path: /graphql
+        idempotent: true
+        jsonBodyTemplates:
+          query: >-
+            { disease(efoId: "{filter:efoId}") {
+              id name description
+              therapeuticAreas { id name }
+              synonyms { terms }
+            } }
+      response:
+        rowsPath: data.disease
+        fieldMap:
+          id: id
+          name: name
+          description: description
+          therapeuticAreas: therapeuticAreas
+          synonyms: synonyms
+    fields:
+      - name: efoId
+        type: string
+        description: EFO or Open Targets disease identifier such as EFO_0000311.
+        synonyms: [id, disease_id, efo]
+        namespace: efo.id
+      - name: name
+        type: string
+        description: Disease name.
+  - id: associated_diseases
+    summary: Ranked disease associations for a target (Ensembl gene ID).
+    identity:
+      stableIdFields: [diseaseId]
+      namespace: efo.id
+    commonFields: [diseaseId, diseaseName, score, datasourceScores]
+    rest:
+      request:
+        method: POST
+        path: /graphql
+        idempotent: true
+        jsonBodyTemplates:
+          query: >-
+            { target(ensemblId: "{filter:ensemblId}") {
+              associatedDiseases(page: { index: {cursor}, size: {limit} }) {
+                rows {
+                  disease { id name }
+                  score
+                  datasourceScores { id score }
+                }
+              }
+            } }
+      response:
+        rowsPath: data.target.associatedDiseases.rows
+        fieldMap:
+          diseaseId: disease.id
+          diseaseName: disease.name
+          score: score
+          datasourceScores: datasourceScores
+    fields:
+      - name: ensemblId
+        type: string
+        description: Ensembl gene ID for the target.
+        synonyms: [id, gene_id]
+        namespace: ensembl.gene
+      - name: diseaseId
+        type: string
+        description: Disease ontology / EFO identifier.
+      - name: score
+        type: number
+        description: Overall association score.
+  - id: associated_targets
+    summary: Ranked target associations for a disease (EFO ID).
+    identity:
+      stableIdFields: [targetId]
+      namespace: ensembl.gene
+    commonFields: [targetId, approvedSymbol, score, datasourceScores]
+    rest:
+      request:
+        method: POST
+        path: /graphql
+        idempotent: true
+        jsonBodyTemplates:
+          query: >-
+            { disease(efoId: "{filter:efoId}") {
+              associatedTargets(page: { index: {cursor}, size: {limit} }) {
+                rows {
+                  target { id approvedSymbol }
+                  score
+                  datasourceScores { id score }
+                }
+              }
+            } }
+      response:
+        rowsPath: data.disease.associatedTargets.rows
+        fieldMap:
+          targetId: target.id
+          approvedSymbol: target.approvedSymbol
+          score: score
+          datasourceScores: datasourceScores
+    fields:
+      - name: efoId
+        type: string
+        description: EFO disease identifier.
+        synonyms: [id, disease_id, efo]
+        namespace: efo.id
+      - name: targetId
+        type: string
+        description: Ensembl gene ID of the associated target.
+        namespace: ensembl.gene
+      - name: score
+        type: number
+        description: Overall association score.
+  - id: evidence
+    summary: Evidence rows linking a target and disease (Ensembl + EFO).
+    identity:
+      stableIdFields: [id]
+      namespace: opentargets.evidence
+    commonFields:
+      [id, score, datasourceId, datatypeId, literature, diseaseFromSource, resourceScore]
+    rest:
+      request:
+        method: POST
+        path: /graphql
+        idempotent: true
+        jsonBodyTemplates:
+          query: >-
+            { disease(efoId: "{filter:efoId}") {
+              evidences(ensemblIds: ["{filter:ensemblId}"], size: {limit}) {
+                rows {
+                  id score datasourceId datatypeId literature
+                  diseaseFromSource targetFromSourceId resourceScore
+                  urls { niceName url }
+                }
+              }
+            } }
+      response:
+        rowsPath: data.disease.evidences.rows
+    fields:
+      - name: ensemblId
+        type: string
+        description: Ensembl gene ID for the target.
+        synonyms: [gene_id, target]
+        namespace: ensembl.gene
+      - name: efoId
+        type: string
+        description: EFO disease identifier.
+        synonyms: [disease_id, efo]
+        namespace: efo.id
+      - name: datasourceId
+        type: string
+        description: Evidence datasource identifier.
+      - name: score
+        type: number
+        description: Evidence score.
+  - id: drug
+    summary: Drug/molecule profile by ChEMBL ID with mechanisms and indications.
+    identity:
+      stableIdFields: [id]
+      namespace: chembl.molecule
+      primaryUrlTemplate: https://platform.opentargets.org/drug/{stable_id}
+    commonFields:
+      [
+        id,
+        name,
+        drugType,
+        maximumClinicalTrialPhase,
+        hasBeenWithdrawn,
+        mechanismsOfAction,
+        indications
+      ]
+    rest:
+      request:
+        method: POST
+        path: /graphql
+        idempotent: true
+        jsonBodyTemplates:
+          query: >-
+            { drug(chemblId: "{filter:chemblId}") {
+              id name drugType maximumClinicalTrialPhase hasBeenWithdrawn
+              mechanismsOfAction {
+                rows {
+                  mechanismOfAction
+                  targets { id approvedSymbol }
+                }
+              }
+              indications {
+                rows {
+                  disease { id name }
+                  maxPhaseForIndication
+                }
+              }
+            } }
+      response:
+        rowsPath: data.drug
+        fieldMap:
+          id: id
+          name: name
+          drugType: drugType
+          maximumClinicalTrialPhase: maximumClinicalTrialPhase
+          hasBeenWithdrawn: hasBeenWithdrawn
+          mechanismsOfAction: mechanismsOfAction.rows
+          indications: indications.rows
+    fields:
+      - name: chemblId
+        type: string
+        description: ChEMBL molecule identifier such as CHEMBL25.
+        synonyms: [id, chembl]
+        namespace: chembl.molecule
+xref:
+  - from:
+      domain: target
+      field: approvedSymbol
+      namespace: hgnc.symbol
+      species: '9606'
+    to:
+      database: rest-json/mygene
+      domain: query
+      field: symbol
+      namespace: hgnc.symbol
+      species: '9606'
+  - from:
+      domain: associated_diseases
+      field: diseaseId
+      namespace: efo.id
+    to:
+      domain: disease
+      field: efoId
+      namespace: efo.id
+  - from:
+      domain: associated_targets
+      field: targetId
+      namespace: ensembl.gene
+    to:
+      domain: target
+      field: ensemblId
+      namespace: ensembl.gene

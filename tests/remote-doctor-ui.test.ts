@@ -46,6 +46,10 @@ const report: RemoteDoctorReport = {
 
 const hostTarget = remoteHostDoctorTarget('host-1', 'lab-hpc')
 
+test('host test requests SSH connectivity only', () => {
+  assert.deepEqual(hostTarget.options, { scope: 'connection' })
+})
+
 test('testing and retesting a saved host coalesces duplicate clicks', async () => {
   const first = deferred<RemoteDoctorReport>()
   let calls = 0
@@ -240,6 +244,24 @@ test('host failures keep a scoped warning message for the icon tooltip', () => {
     tone: 'error',
     message: 'SSH 认证失败 — 检查密钥'
   })
+  assert.deepEqual(
+    remoteHostCheckPresentation(
+      {
+        phase: 'done',
+        key,
+        report: {
+          ...report,
+          ok: false,
+          checks: [
+            { id: 'ssh', status: 'ok', message: 'SSH 非交互连接成功' },
+            { id: 'nextflow', status: 'error', message: '未找到 Nextflow' }
+          ]
+        }
+      },
+      key
+    ),
+    { tone: 'success', message: 'SSH 连接成功。点击可重新测试。' }
+  )
   assert.equal(remoteHostCheckPresentation(failed, 'another-host').tone, 'idle')
   assert.equal(
     remoteHostCheckPresentation({ phase: 'failed', key, message: '测试超时' }, key).message,

@@ -76,11 +76,25 @@ function formatFilterValue(filter: Pick<DbFilter, 'field' | 'op' | 'value'>): st
   }
 }
 
+/** Escape a value for safe embedding inside a double-quoted Lucene/OpenFDA phrase. */
+export function escapeLuceneQuotedValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
 function primitiveToString(value: unknown, label: string): string {
   if (typeof value === 'string') return value
   if (typeof value === 'number' && Number.isFinite(value)) return String(value)
   if (typeof value === 'boolean') return String(value)
   throw new Error(`rest-json value for ${label} must be string, number, or boolean`)
+}
+
+/** Escape a value for safe embedding inside a GraphQL string literal. */
+export function escapeGraphqlStringLiteral(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
 }
 
 function primitiveToBodyValue(value: unknown, label: string): RestJsonBodyPrimitive {
@@ -108,34 +122,54 @@ function bodyValueFromFilter(
 function renderRestJsonTemplate(
   template: string,
   params: DbQueryParams,
-  options: { encodePathSegment: boolean }
+  options: {
+    encodePathSegment: boolean
+    escapeGraphqlStrings?: boolean
+    escapeLuceneQuotes?: boolean
+    /** When set, missing `{cursor}` uses this value instead of throwing (GraphQL page index). */
+    defaultCursor?: string
+  }
 ): RestJsonTemplateResult {
   const consumedFilters = new Set<string>()
   let consumedRawQuery = false
-  const value = template.replace(/\{([^{}]+)\}/g, (_match, rawToken: string) => {
-    const token = rawToken.trim()
-    let replacement: string
-    if (token === 'rawQuery') {
-      if (!params.rawQuery) throw new Error('rest-json template requires rawQuery')
-      consumedRawQuery = true
-      replacement = params.rawQuery
-    } else if (token === 'limit') {
-      replacement = String(params.limit)
-    } else if (token === 'cursor') {
-      if (!params.cursor) throw new Error('rest-json template requires cursor')
-      replacement = params.cursor
-    } else if (token.startsWith('filter:')) {
-      const field = token.slice('filter:'.length).trim()
-      if (!field) throw new Error('rest-json filter template is missing a field name')
-      const filter = params.filters?.find((candidate) => candidate.field === field)
-      if (!filter) throw new Error(`rest-json template requires filter: ${field}`)
-      consumedFilters.add(field)
-      replacement = formatFilterValue(filter)
-    } else {
-      throw new Error(`Unsupported rest-json template token: ${token}`)
+  const value = template.replace(
+    /\{(rawQuery|limit|cursor|filter:[^{}]+)\}/g,
+    (_match, rawToken: string) => {
+      const token = rawToken.trim()
+      let replacement: string
+      if (token === 'rawQuery') {
+        if (!params.rawQuery) throw new Error('rest-json template requires rawQuery')
+        consumedRawQuery = true
+        replacement = params.rawQuery
+      } else if (token === 'limit') {
+        replacement = String(params.limit)
+      } else if (token === 'cursor') {
+        if (params.cursor) {
+          replacement = params.cursor
+        } else if (options.defaultCursor !== undefined) {
+          replacement = options.defaultCursor
+        } else {
+          throw new Error('rest-json template requires cursor')
+        }
+      } else if (token.startsWith('filter:')) {
+        const field = token.slice('filter:'.length).trim()
+        if (!field) throw new Error('rest-json filter template is missing a field name')
+        const filter = params.filters?.find((candidate) => candidate.field === field)
+        if (!filter) throw new Error(`rest-json template requires filter: ${field}`)
+        consumedFilters.add(field)
+        replacement = formatFilterValue(filter)
+      } else {
+        throw new Error(`Unsupported rest-json template token: ${token}`)
+      }
+      if (options.escapeGraphqlStrings && token !== 'limit' && token !== 'cursor') {
+        replacement = escapeGraphqlStringLiteral(replacement)
+      }
+      if (options.escapeLuceneQuotes && token !== 'limit' && token !== 'cursor') {
+        replacement = escapeLuceneQuotedValue(replacement)
+      }
+      return options.encodePathSegment ? encodeURIComponent(replacement) : replacement
     }
-    return options.encodePathSegment ? encodeURIComponent(replacement) : replacement
-  })
+  )
   return { value, consumedFilters, consumedRawQuery }
 }
 
@@ -146,7 +180,8 @@ function restJsonRequestTemplates(domain: DbDomainManifest): string[] {
     request.path,
     ...Object.values(request.queryParams ?? {}).filter(
       (value): value is string => typeof value === 'string'
-    )
+    ),
+    ...Object.values(request.jsonBodyTemplates ?? {})
   ]
 }
 
@@ -177,7 +212,8 @@ function validateRestJsonQueryInputs(domain: DbDomainManifest, params: DbQueryPa
   const acceptedFields = new Set([
     ...templates.flatMap(restJsonTemplateFilterFields),
     ...Object.keys(request.filterParamMap ?? {}),
-    ...Object.values(request.jsonBodyParamMap ?? {})
+    ...Object.values(request.jsonBodyParamMap ?? {}),
+    ...Object.values(request.jsonBodyTemplates ?? {}).flatMap(restJsonTemplateFilterFields)
   ])
   for (const filter of filters) {
     if (!acceptedFields.has(filter.field)) {
@@ -215,7 +251,10 @@ export function buildRestJsonRequest(
   for (const [key, value] of Object.entries(rest.request.queryParams ?? {})) {
     const rendered =
       typeof value === 'string'
-        ? renderRestJsonTemplate(value, params, { encodePathSegment: false })
+        ? renderRestJsonTemplate(value, params, {
+            encodePathSegment: false,
+            escapeLuceneQuotes: /"[^"]*\{(?:rawQuery|filter:[^{}]+)\}/.test(value)
+          })
         : undefined
     if (rendered) {
       for (const field of rendered.consumedFilters) consumedFilters.add(field)
@@ -239,6 +278,17 @@ export function buildRestJsonRequest(
       forceArray: forceArrayFields.has(bodyKey)
     })
     consumedFilters.add(filterField)
+  }
+
+  for (const [bodyKey, template] of Object.entries(rest.request.jsonBodyTemplates ?? {})) {
+    const rendered = renderRestJsonTemplate(template, params, {
+      encodePathSegment: false,
+      escapeGraphqlStrings: true,
+      defaultCursor: '0'
+    })
+    for (const field of rendered.consumedFilters) consumedFilters.add(field)
+    consumedRawQuery = consumedRawQuery || rendered.consumedRawQuery
+    body[bodyKey] = rendered.value
   }
 
   if (params.rawQuery) {
@@ -294,7 +344,11 @@ export class RestJsonAdapter implements DbAdapter {
     if (!rest) throw new Error(`rest-json domain is missing request mapping: ${params.domain}`)
 
     const request = buildRestJsonRequest(domain, params)
-    const headers: Record<string, string> = { accept: 'application/json' }
+    const responseFormat = rest.response?.format ?? 'json'
+    const headers: Record<string, string> = {
+      accept:
+        responseFormat === 'tsv' ? 'text/tab-separated-values, text/plain, */*' : 'application/json'
+    }
     if (request.body !== undefined) headers['content-type'] = 'application/json'
     const response = await executeDbHttpRequest({
       manifest: this.manifest,
@@ -310,7 +364,10 @@ export class RestJsonAdapter implements DbAdapter {
       timeoutMs: this.options.timeoutMs,
       idempotent: request.method === 'GET' || rest.request.idempotent === true
     })
-    const payload = await response.response.json()
+    const payload =
+      responseFormat === 'tsv'
+        ? parseTsvPayload(await response.response.text(), rest.response)
+        : await response.response.json()
     const rows = rowsFromRestJsonPayload(payload, domain, this.manifest.id, params)
     return {
       rows: rows.rows,
@@ -332,6 +389,57 @@ export class RestJsonAdapter implements DbAdapter {
   }
 }
 
+/** Parse tab-separated text into row objects for rest-json `response.format: tsv`. */
+export function parseTsvPayload(
+  text: string,
+  response: DbRestJsonDomainConfig['response']
+): Record<string, unknown>[] {
+  const lines = text
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[ \u00a0]+$/g, ''))
+    .filter((line) => line.length > 0)
+  if (lines.length === 0) return []
+
+  const hasHeader = response?.tsvHasHeader !== false
+  const explicitColumns = response?.tsvColumns
+  let columns: string[]
+  let dataLines: string[]
+  if (explicitColumns && explicitColumns.length > 0 && !hasHeader) {
+    columns = explicitColumns
+    dataLines = lines
+  } else if (hasHeader) {
+    const headerCells = splitTsvLine(lines[0] ?? '')
+    columns =
+      explicitColumns && explicitColumns.length > 0
+        ? explicitColumns
+        : headerCells.map((cell, index) => cell || `column_${index + 1}`)
+    dataLines = lines.slice(1)
+  } else {
+    const width = splitTsvLine(lines[0] ?? '').length
+    columns =
+      explicitColumns && explicitColumns.length > 0
+        ? explicitColumns
+        : Array.from({ length: width }, (_, index) => `column_${index + 1}`)
+    dataLines = lines
+  }
+
+  return dataLines.map((line) => {
+    const cells = splitTsvLine(line)
+    const row: Record<string, unknown> = {}
+    for (let index = 0; index < columns.length; index += 1) {
+      const key = columns[index]
+      if (!key) continue
+      row[key] = cells[index] ?? ''
+    }
+    return row
+  })
+}
+
+function splitTsvLine(line: string): string[] {
+  return line.split('\t')
+}
+
 function rowsFromRestJsonPayload(
   payload: unknown,
   domain: DbDomainManifest,
@@ -345,18 +453,29 @@ function rowsFromRestJsonPayload(
 } {
   const rest = domain.rest as DbRestJsonDomainConfig
   const response = rest.response
-  const rawRows = readJsonPath(payload, response?.rowsPath ?? '$')
+  const rawRows =
+    response?.format === 'tsv'
+      ? Array.isArray(payload)
+        ? payload
+        : []
+      : readJsonPath(payload, response?.rowsPath ?? '$')
   const sourceRows = Array.isArray(rawRows) ? rawRows : rawRows === undefined ? [] : [rawRows]
   const mappedRows = sourceRows.map((row) =>
     projectDbRow(normalizeDbRecord(mapRestJsonRow(row, response), database, domain), params.fields)
   )
   const returnedRows = mappedRows.slice(0, params.limit)
-  const totalRows = parseOptionalNumber(
-    response?.totalRowsPath ? readJsonPath(payload, response.totalRowsPath) : undefined
-  )
-  let nextCursor = stringifyOptionalValue(
-    response?.nextCursorPath ? readJsonPath(payload, response.nextCursorPath) : undefined
-  )
+  const totalRows =
+    response?.format === 'tsv'
+      ? mappedRows.length
+      : parseOptionalNumber(
+          response?.totalRowsPath ? readJsonPath(payload, response.totalRowsPath) : undefined
+        )
+  let nextCursor =
+    response?.format === 'tsv'
+      ? undefined
+      : stringifyOptionalValue(
+          response?.nextCursorPath ? readJsonPath(payload, response.nextCursorPath) : undefined
+        )
   const clientTruncated = mappedRows.length > params.limit
   if (!nextCursor && clientTruncated && rest.request.cursorParam) {
     nextCursor = String((parseOptionalNumber(params.cursor) ?? 0) + params.limit)

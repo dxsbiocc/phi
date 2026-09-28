@@ -1,0 +1,128 @@
+phiDbConnectorVersion: 1
+id: rest-json/mygene
+name: MyGene.info
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://mygene.info/v3
+networkPolicy:
+  allowedHosts:
+    - mygene.info
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 8
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: query
+    summary: Query MyGene.info for genes by symbol, alias, or free-text query.
+    identity:
+      stableIdFields: [_id]
+      namespace: mygene.id
+      primaryUrlTemplate: https://mygene.info/v3/gene/{stable_id}
+    commonFields:
+      [
+        _id,
+        _score,
+        symbol,
+        name,
+        taxid,
+        entrezgene,
+        ensembl,
+        map_location,
+        alias,
+        summary,
+        type_of_gene
+      ]
+    rest:
+      request:
+        path: /query
+        rawQueryParam: q
+        limitParam: size
+        cursorParam: from
+        filterParamMap: { species: species, fields: fields, email: email }
+      response:
+        rowsPath: hits
+        totalRowsPath: total
+    fields:
+      - name: species
+        type: string
+        description: Species filter such as human or 9606.
+        namespace: ncbi.taxonomy_id
+      - name: _id
+        type: string
+        description: MyGene / Entrez gene identifier.
+        namespace: entrez.gene_id
+      - name: symbol
+        type: string
+        description: Gene symbol.
+        namespace: hgnc.symbol
+      - name: entrezgene
+        type: number
+        description: Entrez Gene ID.
+        namespace: entrez.gene_id
+      - name: ensembl
+        type: object
+        description: Ensembl cross-reference payload when requested.
+  - id: gene
+    summary: Fetch one annotated gene by Entrez Gene ID or MyGene id.
+    identity:
+      stableIdFields: [_id]
+      namespace: mygene.id
+      primaryUrlTemplate: https://mygene.info/v3/gene/{stable_id}
+    commonFields:
+      [
+        _id,
+        symbol,
+        name,
+        taxid,
+        entrezgene,
+        ensembl,
+        map_location,
+        alias,
+        summary,
+        type_of_gene,
+        genomic_pos,
+        go,
+        pathway
+      ]
+    rest:
+      request:
+        path: /gene/{filter:geneId}
+        filterParamMap: { fields: fields, email: email }
+      response:
+        rowsPath: $
+    fields:
+      - name: geneId
+        type: string
+        description: Entrez Gene ID or MyGene document id.
+        synonyms: [id, entrezgene, gene]
+        namespace: entrez.gene_id
+      - name: symbol
+        type: string
+        description: Gene symbol.
+        namespace: hgnc.symbol
+xref:
+  - from:
+      domain: query
+      field: symbol
+      namespace: hgnc.symbol
+      species: '9606'
+    to:
+      domain: gene
+      field: geneId
+      namespace: entrez.gene_id
+      species: '9606'
+  - from:
+      domain: gene
+      field: entrezgene
+      namespace: entrez.gene_id
+    to:
+      database: entrez/ncbi
+      domain: gene
+      field: uid
+      namespace: entrez.gene_id

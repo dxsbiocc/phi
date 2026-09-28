@@ -119,6 +119,31 @@ test('remote doctor checks a saved host and candidate directory before any proje
   })
 })
 
+test('connection-only check succeeds without probing SFTP, shell or Wrapper tools', async () => {
+  await fixture(async (agentDir, hostProfileId) => {
+    const fake = fakeSession()
+    const result = await remoteDoctor(
+      hostProfileId,
+      undefined,
+      { scope: 'connection' },
+      {
+        agentDir,
+        sftpAvailable: () => {
+          throw new Error('SFTP must not be checked for SSH connectivity')
+        },
+        connectImpl: async () => fake.session
+      }
+    )
+    assert.equal(result.ok, true)
+    assert.deepEqual(
+      result.checks.map((check) => check.id),
+      ['ssh']
+    )
+    assert.deepEqual(fake.commands, [])
+    assert.equal(fake.closed(), true)
+  })
+})
+
 test('remote doctor tests the same user, port and key used by project operations', async () => {
   await fixture(async (agentDir, hostProfileId) => {
     saveRemoteHostProfile(

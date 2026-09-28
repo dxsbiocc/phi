@@ -1,14 +1,17 @@
 import {
   appendFileSync,
+  copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
+  realpathSync,
   readFileSync,
   readdirSync,
   rmSync,
   writeFileSync
 } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, sep } from 'node:path'
 
 import type { ProjectLocation } from '../../../shared/projectLocation'
 import { getPhiAgentDir } from '../runtime-paths'
@@ -35,6 +38,7 @@ export interface PhiSessionManifest {
   cwd: string
   cwdRealPath: string
   title?: string
+  forkedFrom?: { sessionId: string; eventId: string }
   runtimeSessionPath?: string
   permissionMode: PermissionMode
   model?: ModelSelection
@@ -58,6 +62,7 @@ export interface CreatePhiSessionInput {
   cwd: string
   cwdRealPath: string
   title?: string
+  forkedFrom?: { sessionId: string; eventId: string }
   runtimeSessionPath?: string
   permissionMode: PermissionMode
   model?: ModelSelection
@@ -87,6 +92,12 @@ const SESSIONS_DIR = 'sessions'
 const TOOL_OUTPUTS_DIR = 'tool-outputs'
 const ARTIFACTS_DIR = 'artifacts'
 const DEFAULT_INLINE_TOOL_OUTPUT_CHARS = 20000
+const PROMPT_IMAGE_EXTENSIONS: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp'
+}
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -155,6 +166,7 @@ function writeManifest(manifest: PhiSessionManifest): void {
 function withoutUndefinedOptionalFields(manifest: PhiSessionManifest): PhiSessionManifest {
   const next = { ...manifest }
   if (next.title === undefined) delete next.title
+  if (next.forkedFrom === undefined) delete next.forkedFrom
   if (next.projectLocation === undefined) delete next.projectLocation
   if (next.runtimeSessionPath === undefined) delete next.runtimeSessionPath
   if (next.model === undefined) delete next.model
@@ -182,6 +194,7 @@ export function createPhiSession(input: CreatePhiSessionInput): PhiSessionRecord
     cwd: input.cwd,
     cwdRealPath: input.cwdRealPath,
     ...(input.title ? { title: input.title } : {}),
+    ...(input.forkedFrom ? { forkedFrom: input.forkedFrom } : {}),
     ...(input.runtimeSessionPath ? { runtimeSessionPath: input.runtimeSessionPath } : {}),
     permissionMode: input.permissionMode,
     ...(input.model ? { model: input.model } : {}),
@@ -306,6 +319,129 @@ export function readSessionEvents(sessionId: string): StoredSessionEvent[] {
     .map((line) => JSON.parse(line) as StoredSessionEvent)
 }
 
+function replaceForkReferences(value: unknown, sourceId: string, forkId: string): unknown {
+  if (Array.isArray(value))
+    return value.map((item) => replaceForkReferences(item, sourceId, forkId))
+  if (!value || typeof value !== 'object') return value
+  const sourceDir = getSessionDir(sourceId)
+  const forkDir = getSessionDir(forkId)
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      key === 'sessionId' && item === sourceId
+        ? forkId
+        : key === 'outputPreview' && typeof item === 'string'
+          ? item.replaceAll(`${sourceDir}${sep}`, `${forkDir}${sep}`)
+          : typeof item === 'string' &&
+              (key === 'path' || key.endsWith('Path')) &&
+              item.startsWith(`${sourceDir}/`)
+            ? `${forkDir}${item.slice(sourceDir.length)}`
+            : replaceForkReferences(item, sourceId, forkId)
+    ])
+  )
+}
+
+function referencedForkFiles(events: StoredSessionEvent[], sourceId: string): string[] {
+  const sourceDir = getSessionDir(sourceId)
+  const files = new Set<string>()
+  const visit = (value: unknown): void => {
+    if (typeof value === 'string') {
+      if (value.startsWith(`${sourceDir}${sep}`)) files.add(value)
+      return
+    }
+    if (!value || typeof value !== 'object') return
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    const record = value as Record<string, unknown>
+    if (
+      record.sessionId === sourceId &&
+      typeof record.id === 'string' &&
+      /^[0-9a-f]{64}$/.test(record.id) &&
+      typeof record.mimeType === 'string' &&
+      Object.hasOwn(PROMPT_IMAGE_EXTENSIONS, record.mimeType)
+    ) {
+      const extension = PROMPT_IMAGE_EXTENSIONS[record.mimeType]
+      files.add(join(sourceDir, ARTIFACTS_DIR, 'prompt-images', `${record.id}.${extension}`))
+    }
+    Object.values(record).forEach(visit)
+  }
+  events.forEach(visit)
+  return [...files]
+}
+
+export function forkPhiSession(
+  sourceId: string,
+  eventId: string,
+  runtimeSessionPath: string
+): PhiSessionRecord {
+  const source = findPhiSessionById(sourceId)
+  if (!source) throw new Error('来源会话不存在')
+  const events = readSessionEvents(sourceId)
+  const selected = events.findIndex(
+    (event) => event.eventId === eventId && event.type === 'user_message'
+  )
+  if (selected < 0) throw new Error('分叉消息不存在')
+  const nextUser = events.findIndex(
+    (event, index) => index > selected && event.type === 'user_message'
+  )
+  const included = events.slice(0, nextUser < 0 ? undefined : nextUser)
+  const fork = createPhiSession({
+    kind: source.kind,
+    projectId: source.projectId,
+    projectLocation: source.projectLocation,
+    cwd: source.cwd,
+    cwdRealPath: source.cwdRealPath,
+    title: source.title ? `${source.title}（分叉）` : '分叉会话',
+    runtimeSessionPath,
+    permissionMode: source.permissionMode,
+    model: source.model,
+    thinkingLevel: source.thinkingLevel,
+    forkedFrom: { sessionId: sourceId, eventId }
+  })
+  try {
+    const sourceDir = getSessionDir(sourceId)
+    const sourceRealDir = realpathSync(sourceDir)
+    for (const path of referencedForkFiles(included, sourceId)) {
+      const part = relative(sourceDir, path)
+      if (part.startsWith('..') || isAbsolute(part)) continue
+      if (
+        !part.startsWith(`${TOOL_OUTPUTS_DIR}${sep}`) &&
+        !part.startsWith(`${ARTIFACTS_DIR}${sep}`)
+      )
+        continue
+      if (!existsSync(path) || !lstatSync(path).isFile()) continue
+      const actualPart = relative(sourceRealDir, realpathSync(path))
+      if (actualPart.startsWith('..') || isAbsolute(actualPart)) continue
+      const destination = join(fork.dir, part)
+      ensureDir(join(destination, '..'))
+      copyFileSync(path, destination)
+    }
+    const ids = new Map(included.map((event) => [event.eventId, randomUUID()]))
+    for (const event of included) {
+      const copied = replaceForkReferences(event, sourceId, fork.sessionId) as StoredSessionEvent
+      const stored = {
+        ...copied,
+        eventId: ids.get(event.eventId),
+        sessionId: fork.sessionId,
+        ...(typeof copied.userMessageId === 'string' && ids.has(copied.userMessageId)
+          ? { userMessageId: ids.get(copied.userMessageId) }
+          : {})
+      }
+      appendFileSync(getMessagesPath(fork.sessionId), `${JSON.stringify(stored)}\n`, 'utf-8')
+    }
+    const manifest = updateSessionManifest(fork.sessionId, {
+      messageCount: included.length,
+      lastEventType: included.at(-1)?.type
+    })
+    return { ...fork, manifest }
+  } catch (error) {
+    deletePhiSession(fork.sessionId)
+    throw error
+  }
+}
+
 function recoverInterruptedManifest(manifest: PhiSessionManifest): PhiSessionManifest {
   const wasActive =
     manifest.status === 'running' ||
@@ -314,6 +450,25 @@ function recoverInterruptedManifest(manifest: PhiSessionManifest): PhiSessionMan
     manifest.currentRunId !== undefined ||
     manifest.currentRunStartedAt !== undefined
   if (!wasActive) return manifest
+
+  const pendingReviews = new Map<string, StoredSessionEvent>()
+  for (const event of readSessionEvents(manifest.sessionId)) {
+    if (event.type === 'plan_review_submitted' && typeof event.reviewId === 'string') {
+      pendingReviews.set(event.reviewId, event)
+    }
+    if (event.type === 'plan_review_decided' && typeof event.reviewId === 'string') {
+      pendingReviews.delete(event.reviewId)
+    }
+  }
+  for (const [reviewId, event] of pendingReviews) {
+    appendSessionEvent(manifest.sessionId, {
+      type: 'plan_review_decided',
+      reviewId,
+      ...(event.runId ? { runId: event.runId } : {}),
+      decision: 'cancel',
+      reason: 'app_restarted'
+    })
+  }
 
   appendSessionEvent(manifest.sessionId, {
     type: 'run_interrupted',

@@ -924,10 +924,13 @@ test('db_download fetches direct_url files from a db_query download manifest wit
     const download = tools.find((tool) => tool.name === 'db_download')
     assert.ok(download)
 
+    const updates: string[] = []
     const result = await download.execute(
       'call-db-download',
       { manifestPath, maxFiles: 5 },
-      undefined,
+      (update) => {
+        updates.push(update.content.map((part) => (part.type === 'text' ? part.text : '')).join(''))
+      },
       fakeCtx()
     )
 
@@ -941,7 +944,34 @@ test('db_download fetches direct_url files from a db_query download manifest wit
     assert.equal(details.files[0]?.filename, 'GSE2553_processed_data_file_1.xls.gz')
     assert.equal(readFileSync(details.files[0]?.path ?? '', 'utf-8'), payload)
     assert.match(details.files[0]?.sha256 ?? '', /^sha256:[0-9a-f]{64}$/)
+    assert.match(updates.at(-1) ?? '', /Downloaded 1\/1/)
   })
+})
+
+test('HTTP policy returns download bodies without buffering them', async () => {
+  const parsed = parseDbConnectorManifest(connectorYaml())
+  assert.equal(parsed.valid, true)
+  const manifest = parsed.manifest as DbConnectorManifest
+  const response = await executeDbHttpRequest({
+    manifest,
+    path: 'genes',
+    streamResponse: true,
+    cacheTtlMs: 0,
+    transport: {
+      async fetch() {
+        return new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.error(new Error('response body was read before the caller received it'))
+            }
+          }),
+          { status: 200 }
+        )
+      }
+    }
+  })
+  assert.equal(response.response.status, 200)
+  await assert.rejects(response.response.arrayBuffer(), /response body was read/)
 })
 
 test('retry policy classifies transient and deterministic failures', () => {

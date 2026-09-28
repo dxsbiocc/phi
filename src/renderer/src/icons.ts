@@ -95,24 +95,30 @@ import materialXmlSvg from '../../../node_modules/material-icon-theme/icons/xml.
 import materialYamlSvg from '../../../node_modules/material-icon-theme/icons/yaml.svg?raw'
 import materialZigSvg from '../../../node_modules/material-icon-theme/icons/zig.svg?raw'
 import {
+  FiAlertCircle,
   FiCheck,
   FiCheckCircle,
+  FiCheckSquare,
   FiChevronDown,
   FiChevronRight,
   FiChevronUp,
+  FiCircle,
   FiCopy,
   FiDownload,
   FiEdit3,
   FiExternalLink,
   FiFileText,
+  FiGitBranch,
   FiBarChart2,
   FiGlobe,
   FiKey,
+  FiLoader,
   FiLock,
   FiLogIn,
   FiLogOut,
   FiMessageCircle,
   FiMessageSquare,
+  FiMinusCircle,
   FiMoreHorizontal,
   FiPlay,
   FiPlus,
@@ -705,6 +711,7 @@ export const PhiIcons = {
     edit: createPhiIcon('Edit', FiEdit3),
     expand: createPhiIcon('Expand', FiChevronDown),
     format: createPhiIcon('Format', FiTool),
+    fork: createPhiIcon('Fork', FiGitBranch),
     login: createPhiIcon('Login', FiLogIn),
     logout: createPhiIcon('Logout', FiLogOut),
     more: createPhiIcon('More', FiMoreHorizontal),
@@ -729,6 +736,7 @@ export const PhiIcons = {
     project: createPhiIcon('Project', TbFolderOpen),
     provider: createPhiIcon('Provider', TbNetwork),
     skill: createPhiIcon('Skill', TbSchool),
+    todo: createPhiIcon('Todo', FiCheckSquare),
     wrapper: createPhiIcon('Wrapper', TbRoute)
   },
   nav: {
@@ -818,12 +826,16 @@ export const PhiIcons = {
     zig: createMaterialSvgIcon('FileZig', MATERIAL_ICON_NAME_BY_KIND.zig)
   },
   state: {
+    abandoned: createPhiIcon('Abandoned', FiMinusCircle),
     ask: createPhiIcon('Ask', FiLock),
     auto: createPhiIcon('Auto', TbGauge, { scale: 1.16 }),
+    blocked: createPhiIcon('Blocked', FiAlertCircle),
     check: createPhiIcon('Check', FiCheck),
     denied: createPhiIcon('Denied', FiXCircle),
     done: createPhiIcon('Done', FiCheckCircle),
     full: createPhiIcon('FullAccess', FiUnlock),
+    inProgress: createPhiIcon('InProgress', FiLoader),
+    pending: createPhiIcon('Pending', FiCircle),
     thinking: createPhiIcon('Thinking', TbBrain),
     verified: createPhiIcon('Verified', GoVerified)
   },

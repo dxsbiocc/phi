@@ -4,6 +4,7 @@ import { formatBytes } from '../../../lib/toolOutputPresentation'
 import type { DirectoryListing } from '../../../types'
 import type { FilePreviewPanelState } from '../lib/filePreviewState'
 import { CodePreview } from './CodePreview'
+import { HtmlReportPreview } from './HtmlReportPreview'
 import { MediaPreview } from './MediaPreview'
 import { molecularStructureFormatForPath } from '../lib/molecularStructureFiles'
 import { MolecularStructureFilePreview } from './MolecularStructureFilePreview'
@@ -70,6 +71,10 @@ export function FilePreviewBody({
 
   if (state.file.kind === 'image' || state.file.kind === 'pdf') {
     return <MediaPreview file={state.file} />
+  }
+
+  if (state.file.kind === 'html') {
+    return <HtmlReportPreview key={state.file.path} file={state.file} />
   }
 
   if (state.file.kind === 'metadata') {

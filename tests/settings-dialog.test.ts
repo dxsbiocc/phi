@@ -93,7 +93,39 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
           { id: 'gene', summary: 'Gene records' },
           { id: 'pubmed', summary: 'Literature records' },
           { id: 'clinvar', summary: 'Clinical variants' }
-        ]
+        ],
+        auth: {
+          type: 'api_key_query_param',
+          envVar: 'NCBI_API_KEY',
+          required: false,
+          label: 'NCBI API key',
+          signupUrl: 'https://www.ncbi.nlm.nih.gov/account/settings/',
+          configured: false,
+          configuredFromEnv: false,
+          configuredInStore: false,
+          storageAvailable: true
+        }
+      },
+      {
+        id: 'example/required-key',
+        name: 'Required Key DB',
+        protocolFamily: 'rest-json',
+        curationTier: 'curated',
+        trustTier: 'bundled',
+        enabledForQuery: true,
+        installedAt: 'bundled',
+        domainCount: 1,
+        domains: [{ id: 'record', summary: 'Records' }],
+        auth: {
+          type: 'api_key_header',
+          envVar: 'REQUIRED_DB_KEY',
+          required: true,
+          label: 'Required DB key',
+          configured: false,
+          configuredFromEnv: false,
+          configuredInStore: false,
+          storageAvailable: true
+        }
       }
     ],
     isLoadingDbConnectors: false,
@@ -202,12 +234,22 @@ test('settings dialog exposes database connector toggles in database settings', 
 
   assert.match(markup, /数据库/)
   assert.match(markup, /控制 Database agent 是否允许查询各个生物数据库/)
-  assert.match(markup, /Database agent 始终可以发现已安装的数据库/)
-  assert.match(markup, /关闭某个数据库后仍可查看说明，但不会执行查询/)
+  assert.match(markup, /Database agent 可发现已安装数据库/)
+  assert.match(markup, /关闭后仍可看说明但不会执行查询/)
   assert.doesNotMatch(markup, /\bdb_(?:search|domain|docs_search|query)\b/)
   assert.match(markup, /NCBI Entrez/)
-  assert.match(markup, /entrez\/ncbi/)
-  assert.match(markup, /启用查询/)
+  assert.match(markup, /3 个查询域/)
+  assert.match(markup, /Entrez/)
+  assert.match(markup, /API key/)
+  assert.match(markup, /MuiChip-colorSuccess/)
+  assert.match(markup, /Required Key DB/)
+  assert.match(markup, /MuiChip-colorError/)
+  assert.match(markup, /可选，配置后可提高速率限制/)
+  assert.match(markup, /为必填，点击展开后配置/)
+  assert.match(markup, /已启用查询，点击可关闭/)
+  assert.match(markup, /aria-expanded="false"/)
+  assert.doesNotMatch(markup, /详情\/API/)
+  assert.doesNotMatch(markup, /无需 API key/)
   assert.match(markup, /type="checkbox"/)
   assert.doesNotMatch(markup, /添加 Provider/)
 })

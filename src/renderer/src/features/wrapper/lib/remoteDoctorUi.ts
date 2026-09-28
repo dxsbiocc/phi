@@ -25,7 +25,12 @@ export type RemoteDoctorRequest = (
 ) => Promise<RemoteDoctorReport>
 
 export function remoteHostDoctorTarget(hostId: string, hostAlias: string): RemoteDoctorTarget {
-  return { identity: `host:${hostId}`, revision: hostAlias, hostProfileId: hostId }
+  return {
+    identity: `host:${hostId}`,
+    revision: hostAlias,
+    hostProfileId: hostId,
+    options: { scope: 'connection' }
+  }
 }
 
 export function remoteConnectionDoctorTarget(
@@ -90,18 +95,21 @@ export function remoteHostCheckPresentation(
   }
   if (state.phase === 'running') return { tone: 'running', message: '正在测试连接…' }
   if (state.phase === 'failed') return { tone: 'error', message: state.message }
-  const issues = state.report.checks.filter((check) => check.status !== 'ok')
+  const ssh = state.report.checks.find((check) => check.id === 'ssh')
+  if (ssh?.status === 'ok') {
+    return { tone: 'success', message: 'SSH 连接成功。点击可重新测试。' }
+  }
+  const issues = state.report.checks.filter((check) => check.id === 'ssh' && check.status !== 'ok')
   const errors = issues.filter((check) => check.status === 'error')
   const details = issues
     .slice(0, 4)
     .map((check) => `${check.message}${check.suggestion ? ` — ${check.suggestion}` : ''}`)
     .join('\n')
     .slice(0, 600)
-  if (!state.report.ok || errors.length > 0) {
+  if (!ssh || errors.length > 0) {
     return { tone: 'error', message: details || '连接检查未通过；请检查服务器设置。' }
   }
-  if (issues.length > 0) return { tone: 'warning', message: details }
-  return { tone: 'success', message: '连接检查通过。点击可重新测试。' }
+  return { tone: 'warning', message: details || ssh.message }
 }
 
 class UiTimeoutError extends Error {}

@@ -1,9 +1,9 @@
 import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
-import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import { readAppSettings } from '../app-settings'
+import { transferFile } from '../download/file-transfer'
 import { getDbProxyTransport } from './egress-transport'
 import { findDbConnectorCatalogEntry } from './catalog'
 import { DbHttpError, executeDbHttpRequest, type DbEgressTransport, type DbSleep } from './policy'
@@ -296,7 +296,7 @@ export function buildDbDownloadTool(
       }
     },
     approval: 'read',
-    async execute(_toolCallId, params, _onUpdate, _ctx, signal) {
+    async execute(_toolCallId, params, onUpdate, _ctx, signal) {
       const record = isRecord(params) ? params : {}
       const manifestPath = stringParam(record.manifestPath)
       if (!manifestPath) {
@@ -368,23 +368,45 @@ export function buildDbDownloadTool(
           }
           try {
             const url = new URL(entry.url)
-            const response = await executeDbHttpRequest({
-              manifest: downloadRequestManifest(manifest, agentDir, url),
-              path: entry.url,
-              method: 'GET',
-              defaultProxyMode: settings.defaultProxyMode,
-              transport: options.transport,
-              proxyTransport: options.proxyTransport ?? getDbProxyTransport(),
-              sleep: options.sleep,
-              timeoutMs: options.timeoutMs,
-              maxResponseBytes: maxFileBytes,
-              cacheTtlMs: 0,
+            let lastProgress = 0
+            const transferred = await transferFile({
+              url: entry.url,
+              destination: outputPath,
+              maxBytes: maxFileBytes,
               signal,
-              idempotent: true
+              ...(options.sleep ? { sleep: options.sleep } : {}),
+              onProgress(bytes, totalBytes) {
+                if (bytes - lastProgress < 1024 * 1024 && bytes !== totalBytes) return
+                lastProgress = bytes
+                onUpdate?.({
+                  content: [
+                    {
+                      type: 'text',
+                      text: `${entry.filename}: ${bytes}${totalBytes ? ` / ${totalBytes}` : ''} bytes`
+                    }
+                  ]
+                })
+              },
+              request: async (headers, requestSignal) => {
+                const result = await executeDbHttpRequest({
+                  manifest: downloadRequestManifest(manifest, agentDir, url),
+                  path: entry.url,
+                  method: 'GET',
+                  headers,
+                  defaultProxyMode: settings.defaultProxyMode,
+                  transport: options.transport,
+                  proxyTransport: options.proxyTransport ?? getDbProxyTransport(),
+                  sleep: options.sleep,
+                  timeoutMs: options.timeoutMs,
+                  maxResponseBytes: maxFileBytes,
+                  streamResponse: true,
+                  cacheTtlMs: 0,
+                  signal: requestSignal,
+                  idempotent: true
+                })
+                return result.response
+              }
             })
-            const body = Buffer.from(await response.response.arrayBuffer())
-            writeFileSync(outputPath, body)
-            const sha256 = createHash('sha256').update(body).digest('hex')
             files.push({
               rowIndex: entry.rowIndex,
               ...(entry.accession ? { accession: entry.accession } : {}),
@@ -393,8 +415,16 @@ export function buildDbDownloadTool(
               sourcePath: resolvedManifestPath,
               path: outputPath,
               filename: entry.filename,
-              bytes: body.byteLength,
-              sha256: `sha256:${sha256}`
+              bytes: transferred.bytes,
+              sha256: transferred.sha256
+            })
+            onUpdate?.({
+              content: [
+                {
+                  type: 'text',
+                  text: `Downloaded ${files.length}/${selectedEntries.length}: ${entry.filename}`
+                }
+              ]
             })
           } catch (error) {
             failures.push({

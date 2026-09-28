@@ -59,7 +59,9 @@ async function bounded<T>(operation: Promise<T>, timeoutMs: number): Promise<T> 
 function normalizedOptions(input: unknown): RemoteDoctorOptions {
   const value = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
   return {
-    ...(value.scope === 'workspace' || value.scope === 'full' ? { scope: value.scope } : {}),
+    ...(value.scope === 'connection' || value.scope === 'workspace' || value.scope === 'full'
+      ? { scope: value.scope }
+      : {}),
     ...(value.scheduler === 'local' || value.scheduler === 'slurm'
       ? { scheduler: value.scheduler }
       : {}),
@@ -188,17 +190,18 @@ export async function remoteDoctor(
   }
 
   checks.push({ id: 'ssh', status: 'ok', message: 'SSH 非交互连接成功' })
-  checks.push(
-    (dependencies.sftpAvailable ?? systemSftpAvailable)()
-      ? { id: 'sftp', status: 'ok', message: '系统 SFTP 程序可用' }
-      : {
-          id: 'sftp',
-          status: 'error',
-          message: '系统 SFTP 程序不可用',
-          suggestion: '确认系统可运行 sftp；远程 Wrapper 上传需要此程序。'
-        }
-  )
   try {
+    if (selected.scope === 'connection') return report(hostProfileId, checks, now)
+    checks.push(
+      (dependencies.sftpAvailable ?? systemSftpAvailable)()
+        ? { id: 'sftp', status: 'ok', message: '系统 SFTP 程序可用' }
+        : {
+            id: 'sftp',
+            status: 'error',
+            message: '系统 SFTP 程序不可用',
+            suggestion: '确认系统可运行 sftp；远程 Wrapper 上传需要此程序。'
+          }
+    )
     if (remotePath !== undefined) {
       if (!validRemotePath(remotePath)) {
         checks.push({

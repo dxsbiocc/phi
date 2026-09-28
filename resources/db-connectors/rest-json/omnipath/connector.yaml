@@ -1,0 +1,263 @@
+phiDbConnectorVersion: 1
+id: rest-json/omnipath
+name: OmniPath
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://omnipathdb.org
+networkPolicy:
+  allowedHosts:
+    - omnipathdb.org
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 2
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: interactions
+    summary: Directed/signed molecular interactions from OmniPath for one or more gene symbols.
+    commonFields:
+      [
+        source,
+        target,
+        source_genesymbol,
+        target_genesymbol,
+        is_directed,
+        is_stimulation,
+        is_inhibition,
+        consensus_direction,
+        consensus_stimulation,
+        consensus_inhibition,
+        sources,
+        references,
+        n_resources,
+        n_references
+      ]
+    rest:
+      request:
+        path: /interactions
+        queryParams:
+          genesymbols: '1'
+          format: json
+          fields: sources,references,curation_effort,n_resources,n_references
+        filterParamMap:
+          partners: partners
+          types: types
+          license: license
+          databases: databases
+      response:
+        rowsPath: $
+    fields:
+      - name: partners
+        type: string
+        description: Comma-separated gene symbols (e.g. TP53,MDM2).
+        synonyms: [genes, gene, symbols, query]
+      - name: types
+        type: string
+        description: Interaction type such as post_translational or transcriptional.
+      - name: databases
+        type: string
+        description: Optional resource filter such as Signor,SPIKE.
+      - name: license
+        type: string
+        description: License filter (academic or commercial).
+      - name: source_genesymbol
+        type: string
+        description: Source gene symbol.
+        namespace: hgnc.symbol
+      - name: target_genesymbol
+        type: string
+        description: Target gene symbol.
+        namespace: hgnc.symbol
+      - name: is_stimulation
+        type: boolean
+        description: Whether the edge is annotated as stimulation.
+      - name: is_inhibition
+        type: boolean
+        description: Whether the edge is annotated as inhibition.
+  - id: signor
+    summary: SIGNOR causal interactions served through OmniPath (databases=Signor).
+    commonFields:
+      [
+        source,
+        target,
+        source_genesymbol,
+        target_genesymbol,
+        is_directed,
+        is_stimulation,
+        is_inhibition,
+        sources,
+        references
+      ]
+    rest:
+      request:
+        path: /interactions
+        queryParams:
+          genesymbols: '1'
+          format: json
+          databases: Signor
+          fields: sources,references
+        filterParamMap:
+          partners: partners
+      response:
+        rowsPath: $
+    fields:
+      - name: partners
+        type: string
+        description: Comma-separated gene symbols (e.g. TP53).
+        synonyms: [genes, gene, symbols, query]
+      - name: source_genesymbol
+        type: string
+        description: Source gene symbol.
+        namespace: hgnc.symbol
+      - name: target_genesymbol
+        type: string
+        description: Target gene symbol.
+        namespace: hgnc.symbol
+  - id: enz_sub
+    summary: Enzyme–substrate PTM relationships (phosphorylation and related modifications).
+    commonFields:
+      [
+        enzyme,
+        enzyme_genesymbol,
+        substrate,
+        substrate_genesymbol,
+        residue_type,
+        residue_offset,
+        modification,
+        sources,
+        references
+      ]
+    rest:
+      request:
+        path: /enz_sub
+        queryParams:
+          genesymbols: '1'
+          format: json
+          fields: sources,references
+        filterParamMap:
+          partners: partners
+          enzymes: enzymes
+          substrates: substrates
+          modification: modification
+      response:
+        rowsPath: $
+    fields:
+      - name: partners
+        type: string
+        description: Gene symbols present as enzyme or substrate (e.g. TP53).
+        synonyms: [genes, gene, symbols, query]
+      - name: enzymes
+        type: string
+        description: Optional enzyme gene symbols.
+      - name: substrates
+        type: string
+        description: Optional substrate gene symbols.
+      - name: modification
+        type: string
+        description: Optional modification type such as phosphorylation.
+      - name: enzyme_genesymbol
+        type: string
+        description: Enzyme gene symbol.
+        namespace: hgnc.symbol
+      - name: substrate_genesymbol
+        type: string
+        description: Substrate gene symbol.
+        namespace: hgnc.symbol
+      - name: residue_offset
+        type: number
+        description: Modified residue position.
+  - id: annotations
+    summary: Molecule annotations from OmniPath resources (e.g. HPA_tissue, pathway membership).
+    commonFields: [uniprot, genesymbol, entity_type, source, label, value, record_id]
+    rest:
+      request:
+        path: /annotations
+        queryParams:
+          format: json
+        filterParamMap:
+          proteins: proteins
+          databases: databases
+          genesymbols: genesymbols
+      response:
+        rowsPath: $
+    fields:
+      - name: proteins
+        type: string
+        description: UniProt accessions or gene symbols (e.g. TP53 or P04637).
+        synonyms: [gene, genes, query, partners]
+      - name: databases
+        type: string
+        description: Annotation resource such as HPA_tissue or SignaLink_pathway.
+        synonyms: [database, source]
+      - name: genesymbols
+        type: string
+        description: Set to 1 to request gene symbols when supported.
+      - name: genesymbol
+        type: string
+        description: Gene symbol when returned.
+        namespace: hgnc.symbol
+      - name: uniprot
+        type: string
+        description: UniProt accession.
+        namespace: uniprot.accession
+      - name: label
+        type: string
+        description: Annotation key/label.
+      - name: value
+        type: string
+        description: Annotation value.
+  - id: intercell
+    summary: Intercellular communication roles (ligand/receptor/etc.) for proteins.
+    commonFields:
+      [
+        uniprot,
+        genesymbol,
+        category,
+        parent,
+        database,
+        aspect,
+        transmitter,
+        receiver,
+        secreted,
+        consensus_score
+      ]
+    rest:
+      request:
+        path: /intercell
+        queryParams:
+          format: json
+        filterParamMap:
+          proteins: proteins
+          categories: categories
+          databases: databases
+      response:
+        rowsPath: $
+    fields:
+      - name: proteins
+        type: string
+        description: UniProt accessions or gene symbols (e.g. TP53).
+        synonyms: [gene, genes, query, partners]
+      - name: categories
+        type: string
+        description: Optional category filter such as ligand or receptor.
+      - name: databases
+        type: string
+        description: Optional resource filter.
+      - name: genesymbol
+        type: string
+        description: Gene symbol.
+        namespace: hgnc.symbol
+      - name: category
+        type: string
+        description: Intercell category.
+      - name: transmitter
+        type: boolean
+        description: Whether annotated as a transmitter/ligand-like role.
+      - name: receiver
+        type: boolean
+        description: Whether annotated as a receiver/receptor-like role.

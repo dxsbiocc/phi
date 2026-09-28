@@ -1,7 +1,13 @@
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
+import type { BackgroundAgentJob } from '../shared/backgroundJobTypes'
 import type { WrapperRunFinishedEvent } from '../shared/wrapperRunNotice'
 import { declaredExternalOutputRoot } from '../shared/wrapperResultTypes'
-import { hoverMediaPreviewType, mediaPreviewType } from './file-preview-media'
+import {
+  hoverMediaPreviewType,
+  mediaPreviewType,
+  type PreviewImageMimeType
+} from './file-preview-media'
+import { shouldBlockHtmlReportNavigation } from '../shared/htmlReportPreview'
 import type {
   WrapperRetargetRequest,
   WrapperRun,
@@ -81,6 +87,8 @@ import { listOpenSshHosts } from './agent/ssh-config-discovery'
 import { saveOpenSshHost } from './agent/ssh-config-editor'
 import { sshConfigHostId, type OpenSshHostInput } from '../shared/remoteHostProfile'
 import { remoteDoctor } from './agent/remote-doctor'
+import { createCursorH2Bridge } from './agent/cursor-h2-bridge'
+import { installRemoteNextflow } from './agent/remote-nextflow-install'
 import { RemoteProjectConnectionTracker } from './agent/remote-project-connection'
 import { createCheckedRemoteProject } from './agent/remote-project-create'
 import { loadRemoteProjectInstructions } from './agent/remote-project-instructions'
@@ -197,6 +205,13 @@ import {
   listDbConnectorCatalog,
   syncGeneratedDbConnectorDocs
 } from './agent/db/catalog'
+import {
+  clearDbConnectorSecret,
+  hasDbConnectorSecret,
+  isDbCredentialStorageAvailable,
+  resolveDbAuthSecret,
+  storeDbConnectorSecret
+} from './agent/db/credential-store'
 import { setDbConnectorQueryEnabled } from './agent/db/store'
 import { isSecretMetadataKey, redactSensitiveText } from './agent/redaction'
 import {
@@ -243,6 +258,7 @@ import {
 } from './agent/notebook/notebook-code-generation'
 import { AnalysisNotebookToolExecutor } from './agent/notebook/notebook-tool-executor'
 import { getOmpBridge } from './agent/omp/omp-bridge'
+import { validatePresentedFiles } from './agent/deliverables/present-files'
 import {
   isStaleSessionError,
   StaleSessionError,
@@ -251,9 +267,22 @@ import {
   type SessionSnapshot
 } from './agent/session/session-lifecycle'
 import { SessionRunnerRegistry } from './agent/session/session-runner-registry'
+import { exportPhiSession } from './agent/session/session-export'
+import {
+  beginWorkspaceChangeCapture,
+  finishWorkspaceChangeCapture
+} from './agent/session/workspace-changes'
+import { persistWorkspaceDiff, readWorkspaceDiff } from './agent/session/workspace-diffs'
+import {
+  persistPromptImages,
+  readPromptImage,
+  validatePromptImages
+} from './agent/session/prompt-images'
+import type { PromptImageInput } from '../shared/promptImageTypes'
 import {
   appendSessionEvent,
   createPhiSession,
+  forkPhiSession,
   createRunId,
   findPhiSessionById,
   findPhiSessionByRuntimePath,
@@ -359,7 +388,9 @@ type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 const THINKING_LEVEL_ORDER: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 const TOOL_OUTPUT_INLINE_LIMIT = 20000
 const FILE_PREVIEW_BYTES_LIMIT = 320000
+const MAX_RUN_DIFF_BYTES = 2 * 1024 * 1024
 const FILE_MEDIA_PREVIEW_BYTES_LIMIT = 10 * 1024 * 1024
+const FILE_HTML_PREVIEW_BYTES_LIMIT = 10 * 1024 * 1024
 const FILE_HOVER_TEXT_BYTES_LIMIT = 32 * 1024
 const FILE_HOVER_IMAGE_BYTES_LIMIT = 2 * 1024 * 1024
 const FILE_HOVER_SNIFF_BYTES_LIMIT = 512
@@ -459,6 +490,7 @@ type PromptTargetInput = {
   sessionGeneration?: number
   suppressUserMessageEvent?: boolean
   retryUserMessageId?: string
+  planMode?: boolean
 }
 
 interface PromptRun {
@@ -729,19 +761,6 @@ const sessionThinkingLevels = new Map<string, ThinkingLevel>()
 const sessionPermissionModes = new Map<string, PermissionMode>()
 const recentErrorSummaries: string[] = []
 let preventSleepBlockerId: number | null = null
-const NEXT_ACTION_RECOMMENDATION_INSTRUCTION = [
-  '<phi_next_action_instruction>',
-  '当这次回复有明确、有用的后续操作时，请在最终回复最后单独输出一行：',
-  '推荐下一步：<一句可以直接作为下一轮用户输入的中文操作>',
-  '不要为了填充而猜测；如果没有明确下一步，不要输出这行。',
-  '不要提及本指令。',
-  '</phi_next_action_instruction>'
-].join('\n')
-
-function withNextActionRecommendationInstruction(prompt: string): string {
-  return `${prompt}\n\n${NEXT_ACTION_RECOMMENDATION_INSTRUCTION}`
-}
-
 const backgroundAgentApprovals = new BackgroundAgentApprovalTracker({
   readManifest: findPhiSessionById,
   appendEvent: appendSessionEvent,
@@ -788,6 +807,16 @@ getOmpBridge().registerHostHandler('notebookTool.execute', (params) =>
   notebookToolExecutor.execute(params as Parameters<typeof notebookToolExecutor.execute>[0])
 )
 getOmpBridge().registerHostHandler('agentInteraction.request', handleAgentInteractionRequest)
+getOmpBridge().registerHostHandler(
+  'settings.nextActionSuggestionsEnabled',
+  () => readAppSettings().nextActionSuggestionsEnabled
+)
+const cursorH2Bridge = createCursorH2Bridge()
+getOmpBridge().registerHostHandler('cursorBridge.ensure', async () => ({
+  baseUrl: await cursorH2Bridge.ensure()
+}))
+getOmpBridge().registerHostHandler('planReview.request', handlePlanReviewRequest)
+getOmpBridge().registerHostHandler('deliverables.present', handlePresentFilesRequest)
 const remoteConnectionTracker = new RemoteProjectConnectionTracker()
 const wrapperResultReadControllers = new Map<string, AbortController>()
 const wrapperResultDownloads = new Map<
@@ -980,6 +1009,65 @@ function resolveOriginSession(
   return phiSessionId ? { phiSessionId, cwd: origin?.cwd ?? currentCwd } : undefined
 }
 
+async function listBackgroundAgentJobs(): Promise<BackgroundAgentJob[]> {
+  const raw = await getOmpBridge().request<unknown>('agentRuns.list', {})
+  if (!Array.isArray(raw)) return []
+  return raw
+    .flatMap((value): BackgroundAgentJob[] => {
+      if (!isRecord(value)) return []
+      const agentSessionId = optionalStringField(value, 'agentSessionId')
+      const agentRunId = optionalStringField(value, 'agentRunId')
+      const agentName = optionalStringField(value, 'agentName')
+      const state = value.state
+      const startedAt = value.startedAt
+      if (
+        !agentSessionId ||
+        !agentRunId ||
+        !agentName ||
+        (state !== 'queued' &&
+          state !== 'running' &&
+          state !== 'done' &&
+          state !== 'error' &&
+          state !== 'cancelled') ||
+        typeof startedAt !== 'number' ||
+        !Number.isFinite(startedAt)
+      )
+        return []
+      const origin = resolveOriginSession(agentSessionId)
+      if (!origin) return []
+      const manifest = findPhiSessionById(origin.phiSessionId)
+      if (!manifest) return []
+      return [
+        {
+          agentSessionId,
+          agentRunId,
+          sessionId: origin.phiSessionId,
+          sessionPath: phiOnlySessionPath(origin.phiSessionId),
+          sessionTitle: messageContentTitleText(manifest.title) || '新对话',
+          agentName,
+          task: (optionalStringField(value, 'task') ?? '').slice(0, 300),
+          state,
+          background: value.background === true,
+          startedAt: new Date(startedAt).toISOString(),
+          ...(typeof value.completedAt === 'number' && Number.isFinite(value.completedAt)
+            ? { completedAt: new Date(value.completedAt).toISOString() }
+            : {}),
+          ...(optionalStringField(value, 'lastStep')
+            ? { lastStep: optionalStringField(value, 'lastStep')?.slice(0, 160) }
+            : {}),
+          ...(typeof value.toolCalls === 'number' && Number.isFinite(value.toolCalls)
+            ? { toolCalls: Math.max(0, Math.trunc(value.toolCalls)) }
+            : {}),
+          ...(optionalStringField(value, 'toolCallId')
+            ? { toolCallId: optionalStringField(value, 'toolCallId') }
+            : {})
+        }
+      ]
+    })
+    .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+    .slice(0, 50)
+}
+
 function sendRunEventToWindow(payload: Record<string, unknown>): void {
   sendToWindow(getActiveWindow(), 'agent:event', {
     ...payload,
@@ -1145,6 +1233,33 @@ function findActivePromptRunByRuntimeSessionId(runtimeSessionId: string): Prompt
   )
 }
 
+function handlePresentFilesRequest(params: unknown): {
+  files: ReturnType<typeof validatePresentedFiles>
+} {
+  const record = isRecord(params) ? params : {}
+  const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
+  const toolCallId = optionalStringField(record, 'toolCallId')
+  if (!runtimeSessionId || !toolCallId || toolCallId.length > 200) {
+    throw new Error('Invalid file delivery request')
+  }
+  const run = findActivePromptRunByRuntimeSessionId(runtimeSessionId)
+  if (!run || run.cancelled) throw new Error('No active conversation for file delivery')
+  const manifest = findPhiSessionById(run.phiSessionId)
+  const project = run.projectId ? getProject(run.projectId) : undefined
+  if (manifest?.projectLocation?.kind === 'ssh' || project?.location.kind === 'ssh') {
+    throw new Error('Remote project file delivery is not available')
+  }
+  const files = validatePresentedFiles(run.cwd, record.files)
+  const stored = appendSessionEvent(run.phiSessionId, {
+    type: 'files_presented',
+    runId: run.runId,
+    toolCallId,
+    files
+  })
+  broadcastSessionTimelineEvent(run.phiSessionId, stored)
+  return { files }
+}
+
 async function handleAgentInteractionRequest(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
@@ -1189,6 +1304,86 @@ async function handleAgentInteractionRequest(params: unknown): Promise<unknown> 
   }
   notifySessionChanged()
   return response
+}
+
+async function handlePlanReviewRequest(
+  params: unknown
+): Promise<{ decision: 'approve' | 'revise' | 'cancel'; note?: string }> {
+  const record = isRecord(params) ? params : {}
+  const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
+  const title = optionalStringField(record, 'title')?.trim()
+  const content = optionalStringField(record, 'planContent')
+  const planFilePath = optionalStringField(record, 'planFilePath')
+  if (
+    !runtimeSessionId ||
+    !title ||
+    title.length > 120 ||
+    !content?.trim() ||
+    Buffer.byteLength(content, 'utf8') > 64 * 1024 ||
+    !planFilePath ||
+    !/^local:\/\/[A-Za-z0-9_-]+\.md$/.test(planFilePath)
+  ) {
+    throw new Error('Invalid plan review request')
+  }
+  const run = findActivePromptRunByRuntimeSessionId(runtimeSessionId)
+  if (!run || run.cancelled) throw new Error('No active conversation for plan review')
+  const project = run.projectId ? getProject(run.projectId) : undefined
+  const manifest = findPhiSessionById(run.phiSessionId)
+  if (project?.location.kind === 'ssh' || manifest?.projectLocation?.kind === 'ssh') {
+    throw new Error('远程项目暂不支持计划评审')
+  }
+  const window = getActiveWindow()
+  if (!canRequestAgentUserInteraction(window)) throw new Error('没有可用窗口来评审计划')
+
+  const reviewId = createRunId()
+  const submitted = appendSessionEvent(run.phiSessionId, {
+    type: 'plan_review_submitted',
+    runId: run.runId,
+    reviewId,
+    title,
+    content,
+    planFilePath
+  })
+  broadcastSessionTimelineEvent(run.phiSessionId, submitted)
+  runnerRegistry.markNeedsInput(run.phiSessionId, reviewId, {
+    kind: 'plan_review',
+    message: title
+  })
+  notifySessionChanged()
+  const response = await waitForAgentUserInteraction(
+    {
+      requestId: reviewId,
+      questions: [],
+      planReview: { title, content, planFilePath },
+      sessionId: run.phiSessionId,
+      sessionPath: phiOnlySessionPath(run.phiSessionId),
+      sessionGeneration: run.sessionGeneration,
+      runId: run.runId,
+      cwd: run.cwd,
+      ...(project?.name ? { projectName: project.name } : {})
+    },
+    window
+  )
+  const answer = response.answers.find((item) => item.question === 'plan_review')?.answer
+  const decision = response.cancelled
+    ? 'cancel'
+    : answer === 'approve' || answer === 'revise'
+      ? answer
+      : 'cancel'
+  const note =
+    typeof response.globalNote === 'string' ? response.globalNote.trim().slice(0, 2000) : ''
+  if (decision === 'cancel') runnerRegistry.markInputCancelled(run.phiSessionId, reviewId)
+  else runnerRegistry.markInputAnswered(run.phiSessionId, reviewId)
+  const decided = appendSessionEvent(run.phiSessionId, {
+    type: 'plan_review_decided',
+    runId: run.runId,
+    reviewId,
+    decision,
+    ...(note && decision === 'revise' ? { note } : {})
+  })
+  broadcastSessionTimelineEvent(run.phiSessionId, decided)
+  notifySessionChanged()
+  return { decision, ...(note && decision === 'revise' ? { note } : {}) }
 }
 
 function delay(ms: number): Promise<void> {
@@ -1359,20 +1554,40 @@ function notebookAgentRuntimePrompt(projectCwd: string): string | null {
 }
 
 function dbConnectorSettingsItems(): DbConnectorSettingsItem[] {
-  return listDbConnectorCatalog(AGENT_DIR).map((entry) => ({
-    id: entry.manifest.id,
-    name: entry.manifest.name,
-    protocolFamily: entry.manifest.protocolFamily,
-    curationTier: entry.manifest.curationTier,
-    trustTier: entry.trustTier,
-    enabledForQuery: entry.enabledForQuery,
-    installedAt: entry.installedAt,
-    domainCount: entry.manifest.domains.length,
-    domains: entry.manifest.domains.map((domain) => ({
-      id: domain.id,
-      summary: domain.summary
-    }))
-  }))
+  const storageAvailable = isDbCredentialStorageAvailable()
+  return listDbConnectorCatalog(AGENT_DIR).map((entry) => {
+    const auth = entry.manifest.auth
+    const envVar = auth?.envVar
+    const authSettings =
+      auth && auth.type !== 'none' && envVar
+        ? {
+            type: auth.type,
+            envVar,
+            required: Boolean(auth.required),
+            ...(auth.label ? { label: auth.label } : {}),
+            ...(auth.signupUrl ? { signupUrl: auth.signupUrl } : {}),
+            configured: Boolean(resolveDbAuthSecret(envVar, AGENT_DIR)),
+            configuredFromEnv: Boolean(process.env[envVar]?.trim()),
+            configuredInStore: hasDbConnectorSecret(envVar, AGENT_DIR),
+            storageAvailable
+          }
+        : undefined
+    return {
+      id: entry.manifest.id,
+      name: entry.manifest.name,
+      protocolFamily: entry.manifest.protocolFamily,
+      curationTier: entry.manifest.curationTier,
+      trustTier: entry.trustTier,
+      enabledForQuery: entry.enabledForQuery,
+      installedAt: entry.installedAt,
+      domainCount: entry.manifest.domains.length,
+      domains: entry.manifest.domains.map((domain) => ({
+        id: domain.id,
+        summary: domain.summary
+      })),
+      ...(authSettings ? { auth: authSettings } : {})
+    }
+  })
 }
 
 function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEvent): void {
@@ -2517,7 +2732,8 @@ function parsePromptTarget(input: unknown): PromptTargetInput | null {
     ...(record.suppressUserMessageEvent === true ? { suppressUserMessageEvent: true } : {}),
     ...(typeof record.retryUserMessageId === 'string'
       ? { retryUserMessageId: record.retryUserMessageId }
-      : {})
+      : {}),
+    ...(record.planMode === true ? { planMode: true } : {})
   }
 }
 
@@ -2660,9 +2876,11 @@ interface SubmitPromptInput {
   sessionKey: string
   snapshot: SessionSnapshot & { permissionMode: PermissionMode }
   text: string
+  images?: PromptImageInput[]
   promptTarget: PromptTargetInput | null
   /** A prompt Phi sends on its own (e.g. a background run ended), not the user's words. */
   automatic?: boolean
+  planMode?: boolean
 }
 
 /**
@@ -2683,7 +2901,17 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
   const runSessionGeneration = runLifecycle.currentGeneration
   const runSnapshot = input.snapshot
   const project = projectForSession(runSessionKey, runSnapshot)
-  const phiSessionId = ensurePhiSessionId(runSessionKey, runSnapshot, normalizedText)
+  if (
+    input.planMode &&
+    (project?.location.kind === 'ssh' || isRemoteProjectAnchorPath(runSnapshot.cwd))
+  ) {
+    throw new Error('远程项目暂不支持计划评审')
+  }
+  const phiSessionId = ensurePhiSessionId(
+    runSessionKey,
+    runSnapshot,
+    normalizedText || (input.images?.length ? '图片' : undefined)
+  )
   const stableSessionPath = phiOnlySessionPath(phiSessionId)
   // A real user message starts the automatic wake-up count over.
   if (!input.automatic) automaticContinuations.delete(phiSessionId)
@@ -2691,6 +2919,7 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
   if (hasActivePromptRun(runSessionKey)) {
     throw new Error('会话正在运行')
   }
+  const storedImages = input.images?.length ? persistPromptImages(phiSessionId, input.images) : []
   const otherActiveProjectRuns = project
     ? countOtherActiveProjectRuns(project.id, runSessionKey)
     : 0
@@ -2717,13 +2946,15 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
       type: 'user_message_retry',
       runId,
       content: normalizedText,
+      ...(storedImages.length ? { images: storedImages } : {}),
       ...(promptTarget.retryUserMessageId ? { userMessageId: promptTarget.retryUserMessageId } : {})
     })
   } else {
     appendSessionEvent(phiSessionId, {
       type: 'user_message',
       runId,
-      content: normalizedText
+      content: normalizedText,
+      ...(storedImages.length ? { images: storedImages } : {})
     })
   }
   if (otherActiveProjectRuns > 0 && !input.automatic) {
@@ -2751,6 +2982,9 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
       return null
     }
 
+    const changeBaseline =
+      project?.location?.kind === 'ssh' ? null : await beginWorkspaceChangeCapture(runSnapshot.cwd)
+
     const registryRun = runnerRegistry.startRun({
       sessionId: phiSessionId,
       runId,
@@ -2776,6 +3010,14 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
         promptRun.session = session
 
         await applyNextRunConfiguration(session, runSessionKey, runSnapshot)
+        if (input.planMode) {
+          await getOmpBridge().request('session.plan.enter', {
+            sessionId: session.runtimeSessionId
+          })
+        }
+        if (input.images?.length && session.model?.supportsImages !== true) {
+          throw new Error('当前模型不支持图片，请切换到支持图片的模型后重试')
+        }
 
         if (
           signal.aborted ||
@@ -2788,10 +3030,16 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
         }
 
         try {
-          const promptText = readAppSettings().nextActionSuggestionsEnabled
-            ? withNextActionRecommendationInstruction(normalizedText)
-            : normalizedText
-          await session.prompt(promptText, {
+          await session.prompt(normalizedText, {
+            ...(input.images?.length
+              ? {
+                  images: input.images.map((image) => ({
+                    type: 'image' as const,
+                    data: image.data,
+                    mimeType: image.mimeType
+                  }))
+                }
+              : {}),
             preflightResult: (success) => {
               if (
                 success &&
@@ -2846,7 +3094,32 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
     })
     syncPreventSleepBlocker()
     void registryRun.done.then(syncPreventSleepBlocker, syncPreventSleepBlocker)
-    await registryRun.done
+    try {
+      await registryRun.done
+    } finally {
+      let savedDiffBytes = 0
+      const changes = await finishWorkspaceChangeCapture(changeBaseline, {
+        onTextDiff: async (_name, patch) => {
+          const bytes = Buffer.byteLength(patch, 'utf8')
+          if (savedDiffBytes + bytes > MAX_RUN_DIFF_BYTES) return null
+          const ref = persistWorkspaceDiff(phiSessionId, patch)
+          if (ref) savedDiffBytes += ref.bytes
+          return ref
+        }
+      })
+      if (changes && (changes.files.length > 0 || changes.truncated)) {
+        try {
+          const stored = appendSessionEvent(phiSessionId, {
+            type: 'workspace_changes',
+            runId,
+            ...changes
+          })
+          broadcastSessionTimelineEvent(phiSessionId, stored)
+        } catch (error) {
+          rememberErrorSummary(error)
+        }
+      }
+    }
     return promptRun.cancelled ? null : promptResult
   })
   promptRun.done = run
@@ -3700,8 +3973,13 @@ type FilePreviewPayload = FilePreviewBasePayload &
         content: string
       }
     | {
+        kind: 'html'
+        mimeType: 'text/html'
+        content: string
+      }
+    | {
         kind: 'image'
-        mimeType: 'image/png'
+        mimeType: PreviewImageMimeType
         dataUrl: string
       }
     | {
@@ -3792,7 +4070,7 @@ function createFilePreview(filePath: string): FilePreviewPayload {
       return {
         ...base,
         kind: 'image',
-        mimeType: 'image/png',
+        mimeType: mediaType.mimeType,
         dataUrl: `data:${mediaType.mimeType};base64,${mediaBytes.toString('base64')}`,
         previewBytes: mediaBytes.byteLength,
         truncated: false
@@ -3811,6 +4089,21 @@ function createFilePreview(filePath: string): FilePreviewPayload {
 
   if (previewBytes.includes(0)) {
     throw new Error('暂不支持预览二进制文件')
+  }
+
+  if (/\.html?$/i.test(target) && stats.size <= FILE_HTML_PREVIEW_BYTES_LIMIT) {
+    const htmlBytes =
+      previewBytes.byteLength === stats.size
+        ? previewBytes
+        : readFilePreviewBytes(target, stats.size)
+    return {
+      ...base,
+      kind: 'html',
+      mimeType: 'text/html',
+      content: htmlBytes.toString('utf8'),
+      previewBytes: htmlBytes.byteLength,
+      truncated: false
+    }
   }
 
   return {
@@ -4475,6 +4768,7 @@ function cleanupMainWindowRuntime(): void {
   notebookFileWatcher.dispose()
   jupyterServerRegistry.disposeAll()
   void invalidateAgentSession()
+  void cursorH2Bridge.close()
 }
 
 // A user-visible conversation switch points future getAgentSession() calls at a
@@ -4962,6 +5256,18 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  window.webContents.on('will-frame-navigate', (event) => {
+    if (
+      shouldBlockHtmlReportNavigation({
+        isMainFrame: event.isMainFrame,
+        frameName: event.frame?.name,
+        url: event.url
+      })
+    ) {
+      event.preventDefault()
+    }
+  })
+
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -5183,8 +5489,13 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('agent:prompt', async (_, text: string, targetInput?: unknown) => {
-    const normalizedText = text.trim()
-    if (!normalizedText) return null
+    const normalizedText = typeof text === 'string' ? text.trim() : ''
+    const images = validatePromptImages(
+      targetInput && typeof targetInput === 'object'
+        ? (targetInput as Record<string, unknown>).images
+        : undefined
+    )
+    if (!normalizedText && images.length === 0) return null
     const promptTarget = parsePromptTarget(targetInput)
     if (targetInput !== undefined) {
       await alignCurrentSessionToPromptTarget(targetInput)
@@ -5198,9 +5509,14 @@ app.whenReady().then(() => {
         permissionMode: currentPermissionMode
       },
       text: normalizedText,
-      promptTarget
+      images,
+      promptTarget,
+      planMode: promptTarget?.planMode === true
     })
   })
+
+  ipcMain.handle('agent:readPromptImage', async (_, ref: unknown) => readPromptImage(ref))
+  ipcMain.handle('workspaceChanges:readDiff', async (_, ref: unknown) => readWorkspaceDiff(ref))
 
   ipcMain.handle('agent:stop', async () => {
     await stopActivePrompt()
@@ -5302,6 +5618,39 @@ app.whenReady().then(() => {
     }
     return dbConnectorSettingsItems()
   })
+  ipcMain.handle('db:setConnectorApiKey', async (_, id: unknown, apiKey: unknown) => {
+    if (typeof id !== 'string' || !id.trim()) {
+      throw new Error('数据库 id 无效')
+    }
+    if (typeof apiKey !== 'string') {
+      throw new Error('API key 必须是字符串')
+    }
+    const entry = findDbConnectorCatalogEntry(id, AGENT_DIR)
+    if (!entry) {
+      throw new Error(`未找到数据库连接器: ${id}`)
+    }
+    const envVar = entry.manifest.auth?.envVar
+    if (!envVar || entry.manifest.auth?.type === 'none') {
+      throw new Error(`数据库 ${entry.manifest.id} 不需要 API key`)
+    }
+    storeDbConnectorSecret(envVar, apiKey, AGENT_DIR)
+    return dbConnectorSettingsItems()
+  })
+  ipcMain.handle('db:clearConnectorApiKey', async (_, id: unknown) => {
+    if (typeof id !== 'string' || !id.trim()) {
+      throw new Error('数据库 id 无效')
+    }
+    const entry = findDbConnectorCatalogEntry(id, AGENT_DIR)
+    if (!entry) {
+      throw new Error(`未找到数据库连接器: ${id}`)
+    }
+    const envVar = entry.manifest.auth?.envVar
+    if (!envVar || entry.manifest.auth?.type === 'none') {
+      throw new Error(`数据库 ${entry.manifest.id} 不需要 API key`)
+    }
+    clearDbConnectorSecret(envVar, AGENT_DIR)
+    return dbConnectorSettingsItems()
+  })
 
   ipcMain.handle('models:list', async () => {
     const runtime = await getAuthManager().getRuntime()
@@ -5309,6 +5658,7 @@ app.whenReady().then(() => {
       providerId: model.provider,
       modelId: model.id,
       name: model.name,
+      supportsImages: model.supportsImages ?? false,
       thinkingLevels: getSupportedThinkingLevels(model)
     }))
   })
@@ -5409,6 +5759,42 @@ app.whenReady().then(() => {
     const cwd = getNoProjectTaskFolder()
     const session = createPhiManagedSession(cwd, 'auto')
     return disposeAndSwitchSession(session.path, cwd, session.permissionMode)
+  })
+  ipcMain.handle('sessions:fork', async (_, sourceId: unknown, eventId: unknown) => {
+    if (typeof sourceId !== 'string' || typeof eventId !== 'string') {
+      throw new Error('无效的会话分叉请求')
+    }
+    const source = findPhiSessionById(sourceId)
+    if (!source) throw new Error('来源会话不存在')
+    if (
+      source.status === 'running' ||
+      source.status === 'needs_approval' ||
+      source.status === 'needs_input' ||
+      runnerRegistry.getActiveRun(sourceId)
+    ) {
+      throw new Error('请等待来源会话运行结束后再分叉')
+    }
+    if (!source.runtimeSessionPath) throw new Error('来源会话尚无可分叉的历史')
+    const events = readSessionEvents(sourceId)
+    const userMessages = events.filter((event) => event.type === 'user_message')
+    const selectedIndex = userMessages.findIndex((event) => event.eventId === eventId)
+    if (selectedIndex < 0) throw new Error('分叉消息不存在')
+    const result = await getOmpBridge().request<{ path: string }>('sessions.fork', {
+      path: source.runtimeSessionPath,
+      cwd: source.cwd,
+      userMessages: userMessages
+        .slice(0, selectedIndex + 2)
+        .map((event) => (typeof event.content === 'string' ? event.content : '')),
+      selectedIndex
+    })
+    try {
+      const fork = forkPhiSession(sourceId, eventId, result.path)
+      notifySessionChanged()
+      return { path: phiOnlySessionPath(fork.sessionId), phiSessionId: fork.sessionId }
+    } catch (error) {
+      deleteSession(result.path)
+      throw error
+    }
   })
   ipcMain.handle('sessions:switch', async (_, path: string) => {
     const request = ++sessionSwitchRequest
@@ -5550,6 +5936,28 @@ app.whenReady().then(() => {
       return
     }
     await renameSession(path, trimmedName)
+  })
+  ipcMain.handle('sessions:export', async (_, sessionId: unknown) => {
+    if (typeof sessionId !== 'string') throw new Error('会话编号无效')
+    const manifest = findPhiSessionById(sessionId)
+    if (!manifest) throw new Error('会话不存在')
+    if (runnerRegistry.getActiveRun(sessionId)) throw new Error('请等待会话运行结束后再导出')
+    const window = getActiveWindow()
+    const options: Electron.OpenDialogOptions = {
+      title: '选择会话导出的目标文件夹',
+      properties: ['openDirectory', 'createDirectory']
+    }
+    const choice = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    if (choice.canceled || !choice.filePaths[0]) return null
+    const result = await exportPhiSession(sessionId, choice.filePaths[0])
+    writeAppLog({
+      event: 'session_exported',
+      sessionId,
+      metadata: { fileCount: result.fileCount, bytes: result.bytes }
+    })
+    return result
   })
 
   ipcMain.handle('projects:list', async () => listProjects())
@@ -5711,6 +6119,12 @@ app.whenReady().then(() => {
       return remoteDoctor(hostProfileId, remotePath, options as RemoteDoctorOptions)
     }
   )
+  ipcMain.handle('remote:installNextflow', async (_, hostProfileId: unknown) => {
+    if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
+      throw new Error('SSH 服务器档案 ID 无效')
+    }
+    return installRemoteNextflow(hostProfileId)
+  })
   ipcMain.handle(
     'projects:updateRemoteConnection',
     async (_, id: string, connectionId: string, patch: ProjectRemoteConnection | null) =>
@@ -6371,6 +6785,7 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('wrappers:listRuns', async () => listWrapperRuns())
+  ipcMain.handle('jobs:listAgents', listBackgroundAgentJobs)
   ipcMain.handle('wrappers:getRun', async (_, runId: string) => readWrapperRun(runId))
   ipcMain.handle('wrappers:cancelRun', async (_, runId: string) => {
     try {

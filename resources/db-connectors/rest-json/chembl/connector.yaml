@@ -1,0 +1,245 @@
+phiDbConnectorVersion: 1
+id: rest-json/chembl
+name: ChEMBL
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://www.ebi.ac.uk/chembl/api/data
+networkPolicy:
+  allowedHosts:
+    - www.ebi.ac.uk
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 5
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: molecule
+    summary: Fetch one ChEMBL molecule by ChEMBL ID.
+    identity:
+      stableIdFields: [molecule_chembl_id]
+      namespace: chembl.molecule_id
+      primaryUrlTemplate: https://www.ebi.ac.uk/chembl/compound_report_card/{stable_id}/
+    commonFields:
+      [
+        molecule_chembl_id,
+        pref_name,
+        molecule_type,
+        max_phase,
+        oral,
+        parenteral,
+        topical,
+        first_approval,
+        usan_stem,
+        black_box_warning,
+        natural_product,
+        molecule_structures,
+        molecule_properties
+      ]
+    rest:
+      request:
+        path: /molecule/{filter:chembl_id}.json
+      response:
+        rowsPath: $
+    fields:
+      - name: chembl_id
+        type: string
+        description: ChEMBL molecule identifier such as CHEMBL25.
+        synonyms: [molecule_chembl_id, id]
+        namespace: chembl.molecule_id
+      - name: molecule_chembl_id
+        type: string
+        description: ChEMBL molecule identifier.
+        namespace: chembl.molecule_id
+      - name: pref_name
+        type: string
+        description: Preferred molecule name.
+      - name: molecule_type
+        type: string
+        description: Molecule type.
+      - name: max_phase
+        type: number
+        description: Highest clinical phase.
+  - id: molecule_search
+    summary: Search ChEMBL molecules by free-text query.
+    identity:
+      stableIdFields: [molecule_chembl_id]
+      namespace: chembl.molecule_id
+      primaryUrlTemplate: https://www.ebi.ac.uk/chembl/compound_report_card/{stable_id}/
+    commonFields:
+      [
+        molecule_chembl_id,
+        pref_name,
+        molecule_type,
+        max_phase,
+        molecule_structures,
+        molecule_properties
+      ]
+    rest:
+      request:
+        path: /molecule/search.json
+        rawQueryParam: q
+        limitParam: limit
+        cursorParam: offset
+      response:
+        rowsPath: molecules
+        totalRowsPath: page_meta.total_count
+    fields:
+      - name: molecule_chembl_id
+        type: string
+        description: ChEMBL molecule identifier.
+        namespace: chembl.molecule_id
+      - name: pref_name
+        type: string
+        description: Preferred molecule name.
+  - id: target
+    summary: Fetch one ChEMBL target by ChEMBL ID.
+    identity:
+      stableIdFields: [target_chembl_id]
+      namespace: chembl.target_id
+      primaryUrlTemplate: https://www.ebi.ac.uk/chembl/target_report_card/{stable_id}/
+    commonFields:
+      [
+        target_chembl_id,
+        pref_name,
+        target_type,
+        organism,
+        tax_id,
+        species_group_flag,
+        target_components
+      ]
+    rest:
+      request:
+        path: /target/{filter:chembl_id}.json
+      response:
+        rowsPath: $
+    fields:
+      - name: chembl_id
+        type: string
+        description: ChEMBL target identifier such as CHEMBL203.
+        synonyms: [target_chembl_id, id]
+        namespace: chembl.target_id
+      - name: target_chembl_id
+        type: string
+        description: ChEMBL target identifier.
+        namespace: chembl.target_id
+      - name: pref_name
+        type: string
+        description: Preferred target name.
+      - name: organism
+        type: string
+        description: Target organism.
+      - name: tax_id
+        type: number
+        description: NCBI taxonomy ID.
+        namespace: ncbi.taxonomy_id
+  - id: target_search
+    summary: Search ChEMBL targets by free-text query.
+    identity:
+      stableIdFields: [target_chembl_id]
+      namespace: chembl.target_id
+      primaryUrlTemplate: https://www.ebi.ac.uk/chembl/target_report_card/{stable_id}/
+    commonFields: [target_chembl_id, pref_name, target_type, organism, tax_id]
+    rest:
+      request:
+        path: /target/search.json
+        rawQueryParam: q
+        limitParam: limit
+        cursorParam: offset
+      response:
+        rowsPath: targets
+        totalRowsPath: page_meta.total_count
+    fields:
+      - name: target_chembl_id
+        type: string
+        description: ChEMBL target identifier.
+        namespace: chembl.target_id
+  - id: activity
+    summary: Bioactivity records filtered by molecule or target ChEMBL ID.
+    identity:
+      stableIdFields: [activity_id]
+      namespace: chembl.activity_id
+    commonFields:
+      [
+        activity_id,
+        assay_chembl_id,
+        molecule_chembl_id,
+        target_chembl_id,
+        standard_type,
+        standard_relation,
+        standard_value,
+        standard_units,
+        pchembl_value,
+        bao_label,
+        organism,
+        assay_type
+      ]
+    rest:
+      request:
+        path: /activity.json
+        limitParam: limit
+        cursorParam: offset
+        filterParamMap:
+          {
+            molecule_chembl_id: molecule_chembl_id,
+            target_chembl_id: target_chembl_id,
+            assay_chembl_id: assay_chembl_id,
+            standard_type: standard_type
+          }
+      response:
+        rowsPath: activities
+        totalRowsPath: page_meta.total_count
+    fields:
+      - name: molecule_chembl_id
+        type: string
+        description: Filter activities by molecule ChEMBL ID.
+        namespace: chembl.molecule_id
+      - name: target_chembl_id
+        type: string
+        description: Filter activities by target ChEMBL ID.
+        namespace: chembl.target_id
+      - name: assay_chembl_id
+        type: string
+        description: Filter activities by assay ChEMBL ID.
+      - name: standard_type
+        type: string
+        description: Activity type filter such as IC50 or Ki.
+      - name: activity_id
+        type: number
+        description: ChEMBL activity identifier.
+        namespace: chembl.activity_id
+      - name: standard_value
+        type: number
+        description: Standardized activity value.
+      - name: pchembl_value
+        type: number
+        description: pChEMBL value when available.
+xref:
+  - from:
+      domain: molecule_search
+      field: molecule_chembl_id
+      namespace: chembl.molecule_id
+    to:
+      domain: molecule
+      field: chembl_id
+      namespace: chembl.molecule_id
+  - from:
+      domain: target_search
+      field: target_chembl_id
+      namespace: chembl.target_id
+    to:
+      domain: target
+      field: chembl_id
+      namespace: chembl.target_id
+  - from:
+      domain: activity
+      field: molecule_chembl_id
+      namespace: chembl.molecule_id
+    to:
+      domain: molecule
+      field: chembl_id
+      namespace: chembl.molecule_id

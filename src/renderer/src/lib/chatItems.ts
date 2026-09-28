@@ -1,6 +1,11 @@
 import { agentRunNotice, type AgentRunFinishedEvent } from '../../../shared/agentRunNotice'
 import { wrapperRunNotice, type WrapperRunFinishedEvent } from '../../../shared/wrapperRunNotice'
 import type { ChatItem, NotebookToolSummary, RunLifecycleItem } from '../types'
+import { workspaceChangesItemFromPhiTimelineEvent } from '../features/chat/lib/workspaceChanges'
+import { presentedFilesItemFromPhiTimelineEvent } from '../features/chat/lib/presentedFiles'
+import { applyPlanReviewDecision, planReviewItemFromEvent } from '../features/chat/lib/planReview'
+import type { StoredPromptImage } from '../../../shared/promptImageTypes'
+import type { TodoPhaseSnapshot, TodoSnapshot, TodoTaskSnapshot } from './todoTypes'
 import {
   agentExecutionFromTimelineEvent,
   agentExecutionIndex,
@@ -13,6 +18,29 @@ import { messagesForUserRetryTarget } from './chatRetry'
 
 const WRAPPER_TOOL_PREFIX = 'wrapper_'
 const NOTEBOOK_TOOL_PREFIX = 'notebook.'
+const TODO_TOOL_NAME = 'todo'
+
+function storedPromptImages(value: unknown): StoredPromptImage[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((image): StoredPromptImage[] => {
+    if (!image || typeof image !== 'object') return []
+    const ref = image as Record<string, unknown>
+    if (
+      typeof ref.sessionId !== 'string' ||
+      typeof ref.id !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(ref.id) ||
+      !(
+        ref.mimeType === 'image/png' ||
+        ref.mimeType === 'image/jpeg' ||
+        ref.mimeType === 'image/gif' ||
+        ref.mimeType === 'image/webp'
+      )
+    ) {
+      return []
+    }
+    return [{ sessionId: ref.sessionId, id: ref.id, mimeType: ref.mimeType }]
+  })
+}
 
 /**
  * `wrapper_search`/`wrapper_inspect` (see src/main/agent/wrappers/tools.ts)
@@ -40,6 +68,11 @@ export function isWrapperToolName(toolName: string): boolean {
 
 export function isNotebookToolName(toolName: string): boolean {
   return toolName.startsWith(NOTEBOOK_TOOL_PREFIX)
+}
+
+/** The main agent's todo-list tool (see the sticky todo panel in TodoStepPanel). */
+export function isTodoToolName(toolName: string): boolean {
+  return toolName === TODO_TOOL_NAME
 }
 
 /**
@@ -140,6 +173,60 @@ export function extractNotebookToolSummary(result: unknown): NotebookToolSummary
   }
 }
 
+const TODO_TASK_STATUSES = new Set<TodoTaskSnapshot['status']>([
+  'pending',
+  'in_progress',
+  'completed',
+  'abandoned',
+  'blocked'
+])
+
+function isTodoTaskStatus(value: unknown): value is TodoTaskSnapshot['status'] {
+  return typeof value === 'string' && TODO_TASK_STATUSES.has(value as TodoTaskSnapshot['status'])
+}
+
+function todoTaskSnapshotFrom(value: unknown): TodoTaskSnapshot | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.content !== 'string' || !isTodoTaskStatus(record.status)) return undefined
+  return {
+    content: record.content,
+    status: record.status,
+    ...(typeof record.blocker === 'string' && record.blocker ? { blocker: record.blocker } : {})
+  }
+}
+
+function todoPhaseSnapshotFrom(value: unknown): TodoPhaseSnapshot | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.name !== 'string' || !Array.isArray(record.tasks)) return undefined
+  return {
+    name: record.name,
+    tasks: record.tasks
+      .map(todoTaskSnapshotFrom)
+      .filter((task): task is TodoTaskSnapshot => task !== undefined)
+  }
+}
+
+/**
+ * The `todo` tool (see @oh-my-pi/pi-coding-agent's TodoTool) returns
+ * `{ content: [...], details: { op, phases, storage } }`. The chat timeline
+ * only needs the phases/op snapshot to drive the sticky todo panel; the tool
+ * already returns the *whole* list on every call, not a diff.
+ */
+export function extractTodoSnapshot(result: unknown): TodoSnapshot | undefined {
+  const details = detailsFromToolResult(result)
+  if (!details || typeof details !== 'object') return undefined
+  const record = details as Record<string, unknown>
+  if (!Array.isArray(record.phases)) return undefined
+  return {
+    phases: record.phases
+      .map(todoPhaseSnapshotFrom)
+      .filter((phase): phase is TodoPhaseSnapshot => phase !== undefined),
+    ...(typeof record.op === 'string' && record.op ? { op: record.op } : {})
+  }
+}
+
 function toolOutputArtifactFrom(value: unknown):
   | {
       kind: 'tool_output'
@@ -232,6 +319,21 @@ function textFromContentParts(content: unknown): string {
       return ''
     })
     .join('')
+}
+
+/** Older Phi builds appended this guidance to the SDK's user message history. */
+function visibleRuntimeUserText(text: string): string {
+  const marker = '\n\n<phi_next_action_instruction>\n'
+  const start = text.lastIndexOf(marker)
+  if (start < 0) return text
+  const suffix = text.slice(start + 2)
+  if (
+    !suffix.includes('当这次回复有明确、有用的后续操作时') ||
+    !suffix.trimEnd().endsWith('</phi_next_action_instruction>')
+  ) {
+    return text
+  }
+  return text.slice(0, start)
 }
 
 function durationBetween(startedAt?: string, completedAt?: string): number | undefined {
@@ -521,7 +623,7 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
     const message = raw as { source?: string; role?: string; content?: unknown }
     if (message.source === 'phi') return false
     if (message.role === 'user') {
-      const text = textFromContentParts(message.content)
+      const text = visibleRuntimeUserText(textFromContentParts(message.content))
       return text.length > 0 && duplicateTextCounts.has(text)
     }
     if (message.role !== 'assistant' || !Array.isArray(message.content)) return false
@@ -560,6 +662,10 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
       userMessageId?: string
       preferPhiTimeline?: boolean
       content?: unknown
+      files?: unknown
+      totalChanged?: unknown
+      truncated?: unknown
+      images?: unknown
       toolCallId?: string
       toolName?: string
       args?: unknown
@@ -598,6 +704,22 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
     }
 
     if (message.source === 'phi') {
+      const planReview = planReviewItemFromEvent(message)
+      if (planReview) {
+        items.push(planReview)
+        continue
+      }
+      if (applyPlanReviewDecision(items, message)) continue
+      const presentedFiles = presentedFilesItemFromPhiTimelineEvent(message)
+      if (presentedFiles) {
+        items.push(presentedFiles)
+        continue
+      }
+      const workspaceChanges = workspaceChangesItemFromPhiTimelineEvent(message)
+      if (workspaceChanges) {
+        items.push(workspaceChanges)
+        continue
+      }
       const lifecycleItem = runLifecycleItemFromPhiTimelineEvent(message)
       if (lifecycleItem) {
         finalizeRestoredRunningToolsForRun(items, message)
@@ -674,6 +796,9 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
                       extractNotebookToolSummary({ details: message.details }) ?? current.notebook
                   }
                 : {}),
+              ...(isTodoToolName(current.toolName)
+                ? { todo: extractTodoSnapshot({ details: message.details }) ?? current.todo }
+                : {}),
               status: message.isError ? 'error' : 'done',
               ...completedAtField(message.createdAt),
               ...(durationMs !== undefined ? { durationMs } : {})
@@ -684,19 +809,23 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
       }
 
       if (message.type === 'user_message' && typeof message.content === 'string') {
+        const images = storedPromptImages(message.images)
         items.push({
           id: message.eventId ?? `user-${items.length}`,
           role: 'user',
           content: message.content,
+          ...(images.length ? { images } : {}),
           ...createdAtField(message.createdAt)
         })
         continue
       }
 
       if (message.type === 'user_message_retry') {
+        const retryImages = storedPromptImages(message.images)
         const nextItems = messagesForUserRetryTarget(items, {
           ...(typeof message.userMessageId === 'string' ? { id: message.userMessageId } : {}),
-          ...(typeof message.content === 'string' ? { content: message.content } : {})
+          ...(typeof message.content === 'string' ? { content: message.content } : {}),
+          ...(retryImages.length ? { imageIds: retryImages.map((image) => image.id) } : {})
         })
         if (nextItems !== items) {
           items.splice(0, items.length, ...nextItems)
@@ -740,7 +869,7 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
     }
 
     if (message.role === 'user') {
-      const text = textFromContentParts(message.content)
+      const text = visibleRuntimeUserText(textFromContentParts(message.content))
       if (consumeDuplicateText(text)) continue
       if (text) {
         items.push({ id: `user-${items.length}`, role: 'user', content: text })
@@ -800,6 +929,9 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
               ? {
                   notebook: extractNotebookToolSummary(message.content) ?? current.notebook
                 }
+              : {}),
+            ...(isTodoToolName(current.toolName)
+              ? { todo: extractTodoSnapshot(message.content) ?? current.todo }
               : {}),
             status: message.isError ? 'error' : 'done'
           }

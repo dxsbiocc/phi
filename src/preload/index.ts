@@ -19,6 +19,10 @@ import type {
   RemoteProjectReachability
 } from '../shared/projectLocation'
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
+import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
+import type { SessionExportResult } from '../shared/sessionExportTypes'
+import type { BackgroundAgentJob } from '../shared/backgroundJobTypes'
+import type { WorkspaceDiffReference } from '../shared/workspaceChangeTypes'
 
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) because WrapperRunPlan/WrapperRun are large, evolving
@@ -29,7 +33,11 @@ import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
 import type { WrapperCompositionManifest } from '../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
 import type { RemoteHpcSettings } from '../shared/wrapperRemoteTypes'
-import type { RemoteDoctorOptions, RemoteDoctorReport } from '../shared/remoteDoctorTypes'
+import type {
+  RemoteDoctorOptions,
+  RemoteDoctorReport,
+  RemoteNextflowInstallResult
+} from '../shared/remoteDoctorTypes'
 import type {
   WrapperRetargetRequest,
   WrapperInputPathMapping,
@@ -192,6 +200,8 @@ type PromptTarget = {
   sessionGeneration: number
   suppressUserMessageEvent?: boolean
   retryUserMessageId?: string
+  images?: PromptImageInput[]
+  planMode?: boolean
 }
 
 type PermissionMode = 'auto' | 'ask' | 'full'
@@ -314,7 +324,7 @@ type FilePreview = {
   displayPath: string
   rootPath: string
   rootLabel: string
-  kind: 'text' | 'image' | 'pdf'
+  kind: 'text' | 'html' | 'image' | 'pdf'
   mimeType: string
   bytes: number
   previewBytes: number
@@ -327,8 +337,14 @@ type FilePreview = {
       dataUrl?: never
     }
   | {
+      kind: 'html'
+      mimeType: 'text/html'
+      content: string
+      dataUrl?: never
+    }
+  | {
       kind: 'image'
-      mimeType: 'image/png'
+      mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
       dataUrl: string
       content?: never
     }
@@ -652,6 +668,8 @@ type RendererAuthApi = {
   previewDatabaseWebImage: (url: string) => Promise<DatabaseWebImagePreview>
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
+  readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
+  readWorkspaceDiff: (ref: WorkspaceDiffReference) => Promise<string>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => Unsubscribe
   onAgentUserInteractionRequest: (cb: (event: AgentUserInteractionRequest) => void) => Unsubscribe
   onAgentUserInteractionCancelled: (cb: () => void) => Unsubscribe
@@ -679,6 +697,8 @@ type RendererAuthApi = {
   pickEnvironmentBinary: () => Promise<string | null>
   listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
   setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
+  setDbConnectorApiKey: (id: string, apiKey: string) => Promise<DbConnectorSettingsItem[]>
+  clearDbConnectorApiKey: (id: string) => Promise<DbConnectorSettingsItem[]>
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<SelectedModel>
@@ -694,10 +714,15 @@ type RendererAuthApi = {
   getCurrentSession: () => Promise<CurrentSession>
   updateCurrentSessionPermissionMode: (permissionMode: PermissionMode) => Promise<CurrentSession>
   createSession: () => Promise<CurrentSession>
+  forkSession: (
+    sourceId: string,
+    eventId: string
+  ) => Promise<{ path: string; phiSessionId: string }>
   switchSession: (path: string) => Promise<SessionSwitchResult | null>
   acknowledgeSession: (path: string) => Promise<SessionSummary | null>
   deleteSession: (path: string) => Promise<void>
   renameSession: (path: string, name: string) => Promise<void>
+  exportSession: (sessionId: string) => Promise<SessionExportResult | null>
   listProjects: () => Promise<Project[]>
   pickProjectDirectory: () => Promise<string | null>
   createProject: (
@@ -738,6 +763,7 @@ type RendererAuthApi = {
     remotePath?: string,
     options?: RemoteDoctorOptions
   ) => Promise<RemoteDoctorReport>
+  installRemoteNextflow: (hostProfileId: string) => Promise<RemoteNextflowInstallResult>
   updateProjectRemoteConnection: (
     id: string,
     connectionId: string,
@@ -862,6 +888,7 @@ type RendererAuthApi = {
   getWrapperCompositionDag: (id: string) => Promise<string | undefined>
   getWrapperCompositionModuleDetails: (id: string) => Promise<WrapperModuleDetails | undefined>
   listWrapperRuns: () => Promise<WrapperRun[]>
+  listAgentJobs: () => Promise<BackgroundAgentJob[]>
   getWrapperRun: (runId: string) => Promise<WrapperRun | undefined>
   cancelWrapperRun: (runId: string) => Promise<WrapperRun>
   getWrapperPlanArtifact: (planId: string, fileName: string) => Promise<string | undefined>
@@ -921,6 +948,10 @@ const api: RendererAuthApi = {
   copyDiagnostics: (): Promise<string> => ipcRenderer.invoke('diagnostics:copy'),
   sendPrompt: (text: string, target?: PromptTarget): Promise<PromptResult | null> =>
     ipcRenderer.invoke('agent:prompt', text, target),
+  readPromptImage: (ref: StoredPromptImage): Promise<PromptImageInput> =>
+    ipcRenderer.invoke('agent:readPromptImage', ref),
+  readWorkspaceDiff: (ref: WorkspaceDiffReference): Promise<string> =>
+    ipcRenderer.invoke('workspaceChanges:readDiff', ref),
   onAgentEvent: (cb: (event: AgentEventSummary) => void): Unsubscribe => {
     const handler = (_: unknown, event: AgentEventSummary): void => {
       cb(event)
@@ -970,6 +1001,10 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('db:listConnectors'),
   setDbConnectorEnabled: (id: string, enabled: boolean): Promise<DbConnectorSettingsItem[]> =>
     ipcRenderer.invoke('db:setConnectorEnabled', id, enabled),
+  setDbConnectorApiKey: (id: string, apiKey: string): Promise<DbConnectorSettingsItem[]> =>
+    ipcRenderer.invoke('db:setConnectorApiKey', id, apiKey),
+  clearDbConnectorApiKey: (id: string): Promise<DbConnectorSettingsItem[]> =>
+    ipcRenderer.invoke('db:clearConnectorApiKey', id),
   listModels: (): Promise<ModelOption[]> => ipcRenderer.invoke('models:list'),
   selectModel: (providerId: string, modelId: string): Promise<void> =>
     ipcRenderer.invoke('models:select', providerId, modelId),
@@ -990,6 +1025,11 @@ const api: RendererAuthApi = {
   updateCurrentSessionPermissionMode: (permissionMode: PermissionMode): Promise<CurrentSession> =>
     ipcRenderer.invoke('sessions:updatePermissionMode', permissionMode),
   createSession: (): Promise<CurrentSession> => ipcRenderer.invoke('sessions:create'),
+  forkSession: (
+    sourceId: string,
+    eventId: string
+  ): Promise<{ path: string; phiSessionId: string }> =>
+    ipcRenderer.invoke('sessions:fork', sourceId, eventId),
   switchSession: (path: string): Promise<SessionSwitchResult | null> =>
     ipcRenderer.invoke('sessions:switch', path),
   acknowledgeSession: (path: string): Promise<SessionSummary | null> =>
@@ -997,6 +1037,8 @@ const api: RendererAuthApi = {
   deleteSession: (path: string): Promise<void> => ipcRenderer.invoke('sessions:delete', path),
   renameSession: (path: string, name: string): Promise<void> =>
     ipcRenderer.invoke('sessions:rename', path, name),
+  exportSession: (sessionId: string): Promise<SessionExportResult | null> =>
+    ipcRenderer.invoke('sessions:export', sessionId),
   listProjects: (): Promise<Project[]> => ipcRenderer.invoke('projects:list'),
   pickProjectDirectory: (): Promise<string | null> => ipcRenderer.invoke('projects:pickDirectory'),
   createProject: (
@@ -1049,6 +1091,8 @@ const api: RendererAuthApi = {
     options?: RemoteDoctorOptions
   ): Promise<RemoteDoctorReport> =>
     ipcRenderer.invoke('remote:doctor', hostProfileId, remotePath, options),
+  installRemoteNextflow: (hostProfileId: string): Promise<RemoteNextflowInstallResult> =>
+    ipcRenderer.invoke('remote:installNextflow', hostProfileId),
   updateProjectRemoteConnection: (
     id: string,
     connectionId: string,
@@ -1317,6 +1361,7 @@ const api: RendererAuthApi = {
   getWrapperCompositionModuleDetails: (id: string): Promise<WrapperModuleDetails | undefined> =>
     ipcRenderer.invoke('wrappers:getCompositionModuleDetails', id),
   listWrapperRuns: (): Promise<WrapperRun[]> => ipcRenderer.invoke('wrappers:listRuns'),
+  listAgentJobs: (): Promise<BackgroundAgentJob[]> => ipcRenderer.invoke('jobs:listAgents'),
   getWrapperRun: (runId: string): Promise<WrapperRun | undefined> =>
     ipcRenderer.invoke('wrappers:getRun', runId),
   cancelWrapperRun: (runId: string): Promise<WrapperRun> =>

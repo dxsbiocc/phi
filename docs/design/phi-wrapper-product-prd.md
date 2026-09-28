@@ -53,14 +53,14 @@ These hold across all three phases unless a phase note says otherwise:
 
 Phi already has an interactive analysis path: Jupyter-backed notebooks where the agent writes and runs Python/R code cell by cell against local kernels. Phi Wrapper is a second, deliberately different execution path. They are not competing implementations of the same feature; they serve different moments in a research workflow.
 
-| | Notebook analysis | Phi Wrapper |
-|---|---|---|
-| Code origin | Agent writes code live | Fixed, versioned, checked-in workflow |
-| Typical use | Explore, iterate, plot, debug a hypothesis | Run a known heavy/standard pipeline (QC, alignment, etc.) |
-| Reproducibility | Best-effort; depends on what the agent happened to write | Guaranteed by manifest + digests |
-| Resource profile | Light, interactive, in-process | Can be light, standard, heavy, or HPC-scale |
-| Environment | Whatever kernel/venv is active | Pinned by manifest (container/conda) |
-| Failure mode if wrong | Cheap to notice and rerun a cell | Expensive if a mis-specified run burns compute |
+|                       | Notebook analysis                                        | Phi Wrapper                                               |
+| --------------------- | -------------------------------------------------------- | --------------------------------------------------------- |
+| Code origin           | Agent writes code live                                   | Fixed, versioned, checked-in workflow                     |
+| Typical use           | Explore, iterate, plot, debug a hypothesis               | Run a known heavy/standard pipeline (QC, alignment, etc.) |
+| Reproducibility       | Best-effort; depends on what the agent happened to write | Guaranteed by manifest + digests                          |
+| Resource profile      | Light, interactive, in-process                           | Can be light, standard, heavy, or HPC-scale               |
+| Environment           | Whatever kernel/venv is active                           | Pinned by manifest (container/conda)                      |
+| Failure mode if wrong | Cheap to notice and rerun a cell                         | Expensive if a mis-specified run burns compute            |
 
 Guidance for the agent: prefer notebook analysis when the task is exploratory, needs custom logic, or produces small in-memory results; prefer a wrapper when a community-standard or lab-standard pipeline already exists for the task and reproducibility/resource cost matters. The agent should not silently choose a wrapper without the user seeing the plan card, and should not implement a hand-written substitute for a workflow that has a verified wrapper available. Where both are plausible, the agent asks or offers a choice rather than picking silently — do not add heuristics that guess this automatically in Phase 1; that can come later once we see how users actually choose.
 
@@ -201,7 +201,7 @@ Remote browsing streams previews over SSH. It does not imply downloading the fil
 
 ### Phase 1: Local Only
 
-In Phase 1 there is no remote connection model, so there is no resolver to run. Every plan executes with `executor: local`. `resourceClass: heavy` or `hpc` wrappers are not blocked from running locally, but the plan card surfaces a visible resource warning ("this is a heavy workload; Phase 1 has no remote execution") that the user must acknowledge before submit — this keeps the heavy-workload confirmation *concept* alive without requiring remote infrastructure to exist yet. The demo wrapper for Phase 1 (`fastq-qc`) is deliberately `resourceClass: light` so this warning path is rarely exercised in the reference flow, but the field and the check exist from the start.
+In Phase 1 there is no remote connection model, so there is no resolver to run. Every plan executes with `executor: local`. `resourceClass: heavy` or `hpc` wrappers are not blocked from running locally, but the plan card surfaces a visible resource warning ("this is a heavy workload; Phase 1 has no remote execution") that the user must acknowledge before submit — this keeps the heavy-workload confirmation _concept_ alive without requiring remote infrastructure to exist yet. The demo wrapper for Phase 1 (`fastq-qc`) is deliberately `resourceClass: light` so this warning path is rarely exercised in the reference flow, but the field and the check exist from the start.
 
 ### Phase 2: Remote-First Resolver
 

@@ -10,6 +10,7 @@ import {
   evaluateSpecialistFallback,
   type SpecialistToolCall
 } from '../src/main/agent/agents/fallback-policy'
+import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
 import { parseAgentReport } from '../src/main/agent/agents/report'
 import { AgentRunRegistry } from '../src/main/agent/agents/registry'
 import type { PhiAgentDefinition } from '../src/main/agent/agents/definition'
@@ -36,7 +37,7 @@ const DATABASE: PhiAgentDefinition = {
   delegationMode: 'required-first',
   fallback: {
     afterFailures: 1,
-    tools: ['bash', 'eval', 'web_search'],
+    tools: ['bash', 'eval', 'web_search', 'download_file'],
     match: ['rest.uniprot.org', 'eutils.ncbi.nlm.nih.gov']
   },
   systemPrompt: 'You are Database.',
@@ -63,6 +64,7 @@ test('Phi owns the main system identity while retaining OMP runtime instructions
   assert.match(rendered, /scientific research assistant/i)
   assert.match(rendered, /名字叫星河/)
   assert.match(rendered, /Keep this operational tool contract/)
+  assert.match(rendered, /present_files/)
   assert.doesNotMatch(rendered, /assistant for load-bearing changes in Oh My Pi/i)
   assert.ok(rendered.indexOf('Phi') < rendered.indexOf('名字叫星河'))
 })
@@ -218,6 +220,15 @@ test('the Phi-managed persona file is removed from generic context after explici
   assert.deepEqual(result.agentsFiles, [{ path: '/project/AGENTS.md', content: 'project rules' }])
 })
 
+test('leader prompt forbids duplicating an in-flight required-first specialist task', () => {
+  const prompt = buildAgentLeaderPrompt([DATABASE])
+
+  assert.match(prompt, /queued or running/)
+  assert.match(prompt, /never duplicate the same retrieval, download, plotting, or analysis/)
+  assert.match(prompt, /wait for that run, stop\/steer it/)
+  assert.match(prompt, /use download_file rather than shell/)
+})
+
 test('required-first blocks a matching generic tool until the specialist has failed', async () => {
   const registry = new AgentRunRegistry()
   const call: SpecialistToolCall = {
@@ -242,6 +253,34 @@ test('required-first blocks a matching generic tool until the specialist has fai
   const after = evaluateSpecialistFallback(call, [DATABASE], registry)
   assert.equal(after.allowed, true)
   assert.equal(after.agent, 'Database')
+})
+
+test('required-first Database fallback catches GEO download URLs before shell use', () => {
+  const registry = new AgentRunRegistry()
+  const databaseWithGeoFallback: PhiAgentDefinition = {
+    ...DATABASE,
+    fallback: {
+      afterFailures: 1,
+      tools: ['bash', 'eval', 'web_search'],
+      match: ['www.ncbi.nlm.nih.gov', 'ncbi.nlm.nih.gov/geo', 'geo/query', 'acc.cgi', 'gse']
+    }
+  }
+
+  const decision = evaluateSpecialistFallback(
+    {
+      toolName: 'bash',
+      input: {
+        command:
+          'curl -s "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE180012&targ=self&view=quick&form=text"'
+      }
+    },
+    [databaseWithGeoFallback],
+    registry
+  )
+
+  assert.equal(decision.allowed, false)
+  assert.equal(decision.agent, 'Database')
+  assert.match(decision.reason ?? '', /Database/)
 })
 
 test('project boundary blocks explicit shell and file paths outside the project', () => {
@@ -285,6 +324,38 @@ test('raw SDK ssh URLs are blocked before file or shell tools route them', () =>
     remoteUrlGuardDecision('write', { path: 'notes.md', content: 'ssh://example/path' }).allowed,
     true
   )
+})
+
+test('in-flight Database work blocks the main download tool for a GEO URL', async () => {
+  const registry = new AgentRunRegistry()
+  let finish!: () => void
+  const waiting = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  const handle = registry.launch({
+    agent: 'Database',
+    task: 'download GSE180012',
+    background: true,
+    runner: async () => {
+      await waiting
+      return { text: 'done', toolCalls: 1 }
+    }
+  })
+  const agent = {
+    ...DATABASE,
+    fallback: { ...DATABASE.fallback!, match: ['ncbi.nlm.nih.gov', 'gse'] }
+  }
+  const decision = evaluateSpecialistFallback(
+    {
+      toolName: 'download_file',
+      input: { url: 'https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE180012' }
+    },
+    [agent],
+    registry
+  )
+  assert.equal(decision.allowed, false)
+  finish()
+  await handle.done
 })
 
 test('successful specialist work does not unlock fallback, and unrelated shell work is unaffected', async () => {
