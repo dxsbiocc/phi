@@ -64,6 +64,16 @@ params:
     type: string
     required: false
     description: Advanced — required alongside formula. Either a resultsNames() coefficient (e.g. 'condition_treated_vs_control') or a limma-style contrast expression (e.g. 'groupKO - groupWT').
+  padj_threshold:
+    kind: option
+    type: number
+    required: false
+    description: Adjusted p-value cutoff for calling a gene differentially expressed (padj < this). Default 0.05; also used as DESeq2's independent-filtering alpha.
+  log2fc_threshold:
+    kind: option
+    type: number
+    required: false
+    description: Minimum absolute log2 fold change for a differentially expressed gene (|log2FoldChange| >= this). Default 1, i.e. a 2-fold change either way.
   prefix:
     kind: option
     type: string
@@ -92,6 +102,15 @@ outputs:
   model:
     type: file
     path: '${outdir}/deseq2_differential/${prefix}.deseq2.model.txt'
+  de_genes:
+    type: file
+    path: '${outdir}/deseq2_differential/${prefix}.deseq2.de_genes_filtered.tsv'
+  de_genes_up:
+    type: file
+    path: '${outdir}/deseq2_differential/${prefix}.deseq2.de_genes_filtered_up.tsv'
+  de_genes_down:
+    type: file
+    path: '${outdir}/deseq2_differential/${prefix}.deseq2.de_genes_filtered_down.tsv'
   dispersion_plot_pdf:
     type: file
     path: '${outdir}/deseq2_differential/${prefix}.deseq2.dispersion.pdf'

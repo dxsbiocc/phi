@@ -27,6 +27,11 @@ function checkType(
       ? undefined
       : `${key} must be an integer`
   }
+  if (param.type === 'number') {
+    return typeof value === 'number' && Number.isFinite(value)
+      ? undefined
+      : `${key} must be a number`
+  }
   if (param.type === 'boolean') {
     return typeof value === 'boolean' ? undefined : `${key} must be a boolean`
   }

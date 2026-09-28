@@ -185,3 +185,21 @@ test('a paired-reads glob that picks samples with braces or brackets before the 
     assert.deepEqual(check(reads), [], reads)
   }
 })
+
+test('number params take any finite number, integer params only whole ones', () => {
+  const numeric: WrapperCompositionManifest = {
+    ...manifest,
+    params: {
+      padj_threshold: { kind: 'option', type: 'number', required: false },
+      outdir: { kind: 'output', type: 'path', required: true }
+    }
+  }
+  const check = (value: unknown): string[] =>
+    validateWrapperParams(numeric, {}, { padj_threshold: value, outdir: 'out' }, '/tmp', {
+      checkInputPaths: false
+    })
+  assert.deepEqual(check(0.05), [])
+  assert.deepEqual(check(1), [])
+  assert.match(check('0.05')[0], /must be a number/)
+  assert.match(check(Number.NaN)[0], /must be a number/)
+})
