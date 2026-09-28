@@ -328,6 +328,7 @@ const EXPECTED_MODULE_WRAPPER_IDS = [
   'nf-core/modules/gatk4spark-applybqsr',
   'nf-core/modules/gatk4spark-baserecalibrator',
   'nf-core/modules/gatk4spark-markduplicates',
+  'nf-core/modules/gawk',
   'nf-core/modules/gffread',
   'nf-core/modules/glimpse-chunk',
   'nf-core/modules/glimpse-concordance',
@@ -450,6 +451,21 @@ const EXPECTED_MODULE_WRAPPER_IDS = [
   'nf-core/modules/pigz-uncompress',
   'nf-core/modules/pindel-pindel',
   'nf-core/modules/platypus',
+  'nf-core/modules/plink-bcf',
+  'nf-core/modules/plink-bmerge',
+  'nf-core/modules/plink-epistasis',
+  'nf-core/modules/plink-exclude',
+  'nf-core/modules/plink-extract',
+  'nf-core/modules/plink-fastepistasis',
+  'nf-core/modules/plink-genome',
+  'nf-core/modules/plink-gwas',
+  'nf-core/modules/plink-hwe',
+  'nf-core/modules/plink-indep',
+  'nf-core/modules/plink-indeppairwise',
+  'nf-core/modules/plink-ld',
+  'nf-core/modules/plink-missing',
+  'nf-core/modules/plink-recode',
+  'nf-core/modules/plink-vcf',
   'nf-core/modules/preseq-ccurve',
   'nf-core/modules/preseq-lcextrap',
   'nf-core/modules/qualimap-bamqc',
@@ -646,7 +662,7 @@ const EXPECTED_MODULE_WRAPPER_IDS = [
   'nf-core/subworkflows/quant-tximport-summarizedexperiment',
   'nf-core/subworkflows/quantify-pseudo-alignment',
   'nf-core/subworkflows/quantify-rsem',
-  'nf-core/workflows/rnaseq'
+  'nf-core/workflows/rnaseq',
 ]
 
 test('composition discovery finds wrappers from the modules/subworkflows/workflows resource layout', () => {
