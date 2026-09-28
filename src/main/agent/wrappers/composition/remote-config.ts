@@ -87,8 +87,11 @@ export function buildRemoteNextflowConfig(
   if (hpc.singularityCacheDir) {
     lines.push(`singularity.cacheDir = ${groovyString(hpc.singularityCacheDir)}`)
   }
+  const siteConfig = hpc.nextflowConfig?.trim()
+    ? `// Site settings from the connection.\n${hpc.nextflowConfig.trim()}\n`
+    : ''
   const resourceConfig = buildResourceConfig(resources)
-  return `${lines.join('\n')}\n${resourceConfig}`
+  return `${lines.join('\n')}\n${siteConfig}${resourceConfig}`
 }
 
 /**

@@ -161,6 +161,18 @@ export function WrapperHpcSettingsFields({
         helperText="每行一条，在启动 Nextflow 前运行"
         sx={monoInput}
       />
+      <TextField
+        size="small"
+        fullWidth
+        multiline
+        minRows={2}
+        label="附加 Nextflow 配置"
+        value={value.nextflowConfig}
+        onChange={(event) => onChange({ ...value, nextflowConfig: event.target.value })}
+        placeholder={"process.conda = '/shared/envs/rnaseq'"}
+        helperText="追加到这个连接的每次运行，例如计算节点不能联网时指定已建好的 conda 环境"
+        sx={monoInput}
+      />
     </Stack>
   )
 }

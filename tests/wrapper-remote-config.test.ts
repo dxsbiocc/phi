@@ -415,3 +415,14 @@ test('the remote run config carries per-run resources after the site settings', 
   assert.match(config, /memory = '48 GB'/)
   assert.doesNotMatch(buildRemoteNextflowConfig({ scheduler: 'slurm' }), /withName/)
 })
+
+test('connection-level Nextflow config comes after the site settings and before run resources', () => {
+  const config = buildRemoteNextflowConfig(
+    { scheduler: 'slurm', queue: 'cpu', nextflowConfig: "process.conda = '/shared/envs/rnaseq'" },
+    { memory: '40 GB' }
+  )
+  const queue = config.indexOf("process.queue = 'cpu'")
+  const site = config.indexOf("process.conda = '/shared/envs/rnaseq'")
+  const resources = config.indexOf("memory = '40 GB'")
+  assert.ok(queue >= 0 && queue < site && site < resources)
+})

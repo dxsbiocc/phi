@@ -107,3 +107,14 @@ test('head-job options must be sbatch flags', () => {
   assert.equal(hpcDraftError({ ...draft, controllerOptions: '--time=1-00:00:00 --qos long' }), null)
   assert.match(hpcDraftError({ ...draft, controllerOptions: 'time=1-00' }) ?? '', /以 - 开头/)
 })
+
+test('the connection-level Nextflow config round-trips and blank text is not saved', () => {
+  const config = "process.conda = '/shared/envs/rnaseq'\nsingularity.runOptions = '-B /data'"
+  const saved = hpcSettingsFromDraft({ ...EMPTY_HPC_DRAFT, nextflowConfig: `\n${config}\n\n` })
+  assert.equal(saved.nextflowConfig, config)
+  assert.equal(hpcDraftFromSettings(saved).nextflowConfig, config)
+  assert.equal(
+    'nextflowConfig' in hpcSettingsFromDraft({ ...EMPTY_HPC_DRAFT, nextflowConfig: '  \n ' }),
+    false
+  )
+})
