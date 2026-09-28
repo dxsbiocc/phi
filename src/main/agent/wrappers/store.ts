@@ -23,6 +23,11 @@ export function getInstalledWrappersDir(agentDir = getPhiAgentDir()): string {
   return join(getWrappersRootDir(agentDir), 'installed')
 }
 
+/** Where newer wrapper packs are dropped, one `<version>/` directory each — see `composition/packs.ts`. */
+export function getWrapperPacksDir(agentDir = getPhiAgentDir()): string {
+  return join(getWrappersRootDir(agentDir), 'packs')
+}
+
 export function getWrapperPlansDir(agentDir = getPhiAgentDir()): string {
   return join(getWrappersRootDir(agentDir), 'plans')
 }

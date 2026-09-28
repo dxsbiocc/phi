@@ -17,7 +17,7 @@
     "start": "electron-vite preview",
     "predev": "npm run sync:electron-icon",
     "dev": "electron-vite dev",
-    "build": "npm run typecheck && electron-vite build",
+    "build": "npm run typecheck && npm run wrappers:index && electron-vite build",
     "sync:electron-icon": "node scripts/sync-electron-dev-icon.mjs",
     "postinstall": "electron-builder install-app-deps && npm run sync:electron-icon",
     "build:unpack": "npm run build && electron-builder --dir",
@@ -26,6 +26,7 @@
     "build:linux": "npm run build && electron-builder --linux",
     "test": "node --import ./scripts/test-loader.mjs --test tests/*.test.ts",
     "smoke:wrappers": "node --import ./scripts/test-loader.mjs scripts/smoke-wrappers.mjs",
+    "wrappers:index": "node --import ./scripts/test-loader.mjs scripts/build-wrapper-pack-index.mjs",
     "usage:report": "node --import ./scripts/test-loader.mjs scripts/agent-usage-report.mjs"
   },
   "dependencies": {

@@ -5,7 +5,6 @@ import type { RemoteHpcSettings } from '../../../../shared/wrapperRemoteTypes'
 import type { WrapperManifestEngineProfile } from '../../../../shared/wrapperManifestTypes'
 import type { Project } from '../../projects'
 import { getPhiAgentDir } from '../../runtime-paths'
-import { getBundledWrapperPackagesDir } from '../catalog'
 import { resolveCompositionInputParams } from '../path-mapping'
 import type { ResolvedRemoteTarget } from '../remote-connection-resolver'
 import { chooseWrapperTarget, type WrapperTargetDoctorSnapshot } from '../target-policy'
@@ -13,6 +12,7 @@ import { getWrapperRunsDir, listWrapperRuns, readWrapperRun, writeWrapperRun } f
 import type { WrapperExecutor, WrapperRun } from '../types'
 import {
   findWrapperCompositionEntry,
+  getActiveWrapperPack,
   readWrapperCompositionDag,
   readWrapperDefaultParams,
   type WrapperCompositionEntry
@@ -87,7 +87,7 @@ export interface WrapperJobManagerOptions {
     resolved: ResolvedRemoteTarget
     profile: WrapperExecutionProfile
   }) => Promise<WrapperTargetDoctorSnapshot>
-  /** Local root the remote bundle is built from. Defaults to the bundled wrappers. */
+  /** Local root the remote bundle is built from. Defaults to the active wrapper pack. */
   wrappersRoot?: () => string
   maxConcurrent?: number
   /** Cap on runs watched on remote hosts at once; they cost little locally. Default 10. */
@@ -188,7 +188,7 @@ export class WrapperJobManager implements WrapperJobClient {
     this.resolveRemote = options.resolveRemoteTarget
     this.resolveProjectForRun = options.resolveProjectForRun
     this.checkRemoteEnvironment = options.checkRemoteEnvironment
-    this.wrappersRoot = options.wrappersRoot ?? getBundledWrapperPackagesDir
+    this.wrappersRoot = options.wrappersRoot ?? (() => getActiveWrapperPack().root)
     this.killGraceMs = options.killGraceMs
     this.progressThrottleMs = options.progressThrottleMs ?? DEFAULT_PROGRESS_THROTTLE_MS
   }
