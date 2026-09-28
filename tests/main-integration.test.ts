@@ -21,6 +21,7 @@ import * as notebookDocument from '../src/shared/notebookDocument'
 import * as sessionTitle from '../src/shared/sessionTitle'
 import * as htmlReportPreview from '../src/shared/htmlReportPreview'
 import type { WorkspaceChangeSummary } from '../src/shared/workspaceChangeTypes'
+import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
 import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
 import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-preview-media'
 import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers/remote-result-download'
@@ -95,7 +96,7 @@ class FakeSession {
   skipFinalAssistantMessage = false
   promptError?: Error
   materializedSessionFile?: string
-  contextUsage: { tokens: number; contextWindow: number; percent: number } | null = null
+  contextUsage: ContextUsageSnapshot | null = null
   contextUsageGate = Promise.resolve()
   autoCompactionOverrides: { enabled?: boolean; thresholdPercent?: 70 | 80 | 90 } = {}
   autoCompactionSettingsCalls = 0
@@ -4219,7 +4220,18 @@ test('main IPC: context usage follows the selected session and preserves unavail
   const app = await harness(async (_cwd, file) => {
     const session = new FakeSession(file)
     if (file === 'alpha.jsonl') {
-      session.contextUsage = { tokens: 24000, contextWindow: 200000, percent: 12 }
+      session.contextUsage = {
+        tokens: 24000,
+        contextWindow: 200000,
+        percent: 12,
+        categories: [
+          { id: 'systemPrompt', tokens: 1000 },
+          { id: 'toolDefinitions', tokens: 3000 },
+          { id: 'systemContext', tokens: 2000 },
+          { id: 'skills', tokens: 4000 },
+          { id: 'conversation', tokens: 14000 }
+        ]
+      }
     }
     return session
   })
@@ -4230,7 +4242,18 @@ test('main IPC: context usage follows the selected session and preserves unavail
     usage: FakeSession['contextUsage']
   }
   assert.equal(alpha.sessionPath, 'alpha.jsonl')
-  assert.deepEqual(alpha.usage, { tokens: 24000, contextWindow: 200000, percent: 12 })
+  assert.deepEqual(alpha.usage, {
+    tokens: 24000,
+    contextWindow: 200000,
+    percent: 12,
+    categories: [
+      { id: 'systemPrompt', tokens: 1000 },
+      { id: 'toolDefinitions', tokens: 3000 },
+      { id: 'systemContext', tokens: 2000 },
+      { id: 'skills', tokens: 4000 },
+      { id: 'conversation', tokens: 14000 }
+    ]
+  })
 
   await app.invoke('sessions:switch', 'beta.jsonl')
   const beta = (await app.invoke('sessions:contextUsage')) as {

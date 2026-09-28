@@ -51,6 +51,7 @@ import type {
   ContextCompactionSummary,
   ContextUsageSnapshot
 } from '../../../shared/contextUsageTypes'
+import { contextUsageSnapshot } from './context-usage-snapshot'
 import { buildRemoteWorkspaceReadTool } from '../remote-workspace-read-tool'
 import type { RemoteWorkspaceReadResult } from '../remote-workspace-read'
 import {
@@ -1342,22 +1343,12 @@ async function promptSession(params: unknown): Promise<unknown> {
 
 function sessionContextUsage(params: unknown): ContextUsageSnapshot | null {
   const record = isRecord(params) ? params : {}
-  const usage = getSession(record.sessionId).session.getContextUsage()
-  if (
-    !usage ||
-    !Number.isFinite(usage.tokens) ||
-    usage.tokens < 0 ||
-    !Number.isFinite(usage.contextWindow) ||
-    usage.contextWindow <= 0 ||
-    !Number.isFinite(usage.percent) ||
-    usage.percent < 0
-  ) {
-    return null
-  }
-  return {
-    tokens: usage.tokens,
-    contextWindow: usage.contextWindow,
-    percent: usage.percent
+  const session = getSession(record.sessionId).session
+  const usage = session.getContextUsage()
+  try {
+    return contextUsageSnapshot(usage, session.getContextBreakdown())
+  } catch {
+    return contextUsageSnapshot(usage)
   }
 }
 

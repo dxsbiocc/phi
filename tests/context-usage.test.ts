@@ -4,6 +4,8 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import { ContextUsageIndicator } from '../src/renderer/src/features/chat/components/ContextUsageIndicator'
+import { ContextUsageBreakdownPanel } from '../src/renderer/src/features/chat/components/ContextUsageBreakdownPanel'
+import { contextUsageCategories } from '../src/renderer/src/features/chat/lib/contextUsageBreakdown'
 import { contextUsagePresentation } from '../src/renderer/src/features/chat/lib/contextUsagePresentation'
 
 test('context usage displays the active model capacity without guessing when unavailable', () => {
@@ -39,28 +41,76 @@ test('composer indicator has an accessible percentage and unavailable state', ()
 
   assert.match(render(null), /上下文暂不可用/)
   const known = render({ tokens: 24000, contextWindow: 200000, percent: 12 })
-  assert.match(known, /上下文窗口/)
   assert.match(known, /24K \/ 200K \(12%\)/)
-  assert.match(known, /24K \/ 200K tokens/)
   assert.match(known, /data-phi-context-usage="available"/)
-  assert.match(known, /aria-label="上下文容量使用率"/)
+  assert.match(known, /aria-label="上下文用量：24K \/ 200K \(12%\)，点击查看详情"/)
+  assert.match(known, /aria-haspopup="dialog"/)
+  assert.match(known, /aria-valuenow="12"/)
+  assert.doesNotMatch(known, /LinearProgress|压缩上下文|FiPieChart/)
 })
 
-test('manual compaction action shows a disabled in-progress state', () => {
+test('context breakdown highlights the largest category and draws proportional segments', () => {
+  const usage = {
+    tokens: 10000,
+    contextWindow: 20000,
+    percent: 50,
+    categories: [
+      { id: 'systemPrompt' as const, tokens: 500 },
+      { id: 'toolDefinitions' as const, tokens: 1500 },
+      { id: 'systemContext' as const, tokens: 1000 },
+      { id: 'skills' as const, tokens: 2000 },
+      { id: 'conversation' as const, tokens: 5000 }
+    ]
+  }
+  assert.deepEqual(
+    contextUsageCategories(usage).map((category) => category.id),
+    ['conversation', 'skills', 'toolDefinitions', 'systemContext', 'systemPrompt']
+  )
+
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme: createTheme() },
-      createElement(ContextUsageIndicator, {
-        usage: { tokens: 24000, contextWindow: 200000, percent: 12 },
-        loading: false,
-        compacting: true,
-        onCompact: () => undefined
+      createElement(ContextUsageBreakdownPanel, { usage, loading: false })
+    )
+  )
+  assert.match(markup, /50% 已使用/)
+  assert.match(markup, /10K \/ 20K tokens/)
+  assert.match(markup, /data-phi-context-segment="conversation"/)
+  assert.match(markup, /data-phi-context-category="conversation"[\s\S]*对话 · 最多/)
+  assert.match(markup, /5K · 50%/)
+  assert.ok(
+    markup.indexOf('data-phi-context-category="conversation"') <
+      markup.indexOf('data-phi-context-category="skills"')
+  )
+})
+
+test('context breakdown names unavailable category data without guessing values', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(ContextUsageBreakdownPanel, {
+        usage: { tokens: 10000, contextWindow: 20000, percent: 50 },
+        loading: false
       })
     )
   )
+  assert.match(markup, /分类数据暂不可用/)
+  assert.doesNotMatch(markup, /data-phi-context-category=/)
+})
 
-  assert.match(markup, /data-phi-context-compact-action="true"/)
-  assert.match(markup, /正在压缩/)
-  assert.match(markup, /disabled=""/)
+test('context breakdown offers a close action for the clicked popover', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(ContextUsageBreakdownPanel, {
+        usage: null,
+        loading: false,
+        onClose: () => undefined
+      })
+    )
+  )
+  assert.match(markup, /aria-label="关闭上下文详情"/)
 })

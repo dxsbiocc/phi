@@ -1,71 +1,95 @@
-import { Box, Button, LinearProgress, Tooltip, Typography } from '@mui/material'
+import { Box, CircularProgress, IconButton, Popover, Tooltip } from '@mui/material'
+import { useId, useState } from 'react'
 import type { ContextUsageSnapshot } from '../../../../../shared/contextUsageTypes'
+import {
+  COMPOSER_ICON_SIZE,
+  compactComposerIconButtonSx
+} from '../../../components/chat/composerControlStyles'
 import { contextUsagePresentation } from '../lib/contextUsagePresentation'
-import { AutoCompactionSettingsButton } from './AutoCompactionSettingsButton'
-import type { ManualCompactionTarget } from '../../../../../shared/contextUsageTypes'
+import { ContextUsageBreakdownPanel } from './ContextUsageBreakdownPanel'
 
 export function ContextUsageIndicator({
   usage,
-  loading,
-  compacting = false,
-  compactDisabled = false,
-  autoCompactionTarget,
-  autoCompactionDisabled = false,
-  onCompact
+  loading
 }: {
   usage: ContextUsageSnapshot | null
   loading: boolean
-  compacting?: boolean
-  compactDisabled?: boolean
-  autoCompactionTarget?: ManualCompactionTarget
-  autoCompactionDisabled?: boolean
-  onCompact?: () => void
 }): React.JSX.Element {
   const presentation = contextUsagePresentation(usage, loading)
+  const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null)
+  const detailId = useId()
+  const open = Boolean(anchorEl)
   return (
-    <Box sx={{ width: '100%', minWidth: 0 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minHeight: 24 }}>
-        <Typography variant="caption" sx={{ color: 'text.secondary', flexShrink: 0 }}>
-          上下文窗口
-        </Typography>
-        <Tooltip title={presentation.detail} placement="top">
-          <Typography
-            role="status"
-            data-phi-context-usage={presentation.progress === null ? 'unavailable' : 'available'}
-            variant="caption"
-            sx={{ color: 'text.secondary', ml: 'auto', fontVariantNumeric: 'tabular-nums' }}
+    <>
+      <Tooltip
+        title={`${presentation.label}，点击查看详情`}
+        placement="top"
+        open={open ? false : undefined}
+      >
+        <IconButton
+          type="button"
+          size="small"
+          aria-label={`上下文用量：${presentation.label}，点击查看详情`}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-controls={open ? detailId : undefined}
+          data-phi-context-usage={presentation.progress === null ? 'unavailable' : 'available'}
+          onClick={(event) => setAnchorEl(event.currentTarget)}
+          sx={{ ...compactComposerIconButtonSx, color: 'text.secondary' }}
+        >
+          <Box
+            sx={{
+              position: 'relative',
+              display: 'inline-flex',
+              width: COMPOSER_ICON_SIZE,
+              height: COMPOSER_ICON_SIZE
+            }}
           >
-            {presentation.label}
-          </Typography>
-        </Tooltip>
-        {onCompact && (
-          <Button
-            type="button"
-            size="small"
-            aria-label="压缩当前会话上下文"
-            data-phi-context-compact-action="true"
-            disabled={compactDisabled || compacting}
-            onClick={onCompact}
-            sx={{ minWidth: 0, px: 0.75, py: 0.25, fontSize: '0.75rem', whiteSpace: 'nowrap' }}
-          >
-            {compacting ? '正在压缩…' : '压缩上下文'}
-          </Button>
-        )}
-        {autoCompactionTarget && (
-          <AutoCompactionSettingsButton
-            target={autoCompactionTarget}
-            disabled={autoCompactionDisabled}
-          />
-        )}
-      </Box>
-      {presentation.progress !== null && (
-        <LinearProgress
-          variant="determinate"
-          value={presentation.progress}
-          aria-label="上下文容量使用率"
-          sx={{ mt: 0.25, height: 4, borderRadius: 2, bgcolor: 'action.hover' }}
+            <CircularProgress
+              variant="determinate"
+              value={100}
+              size={COMPOSER_ICON_SIZE}
+              thickness={6}
+              aria-hidden="true"
+              sx={{ position: 'absolute', color: 'action.disabledBackground' }}
+            />
+            <CircularProgress
+              variant={loading ? 'indeterminate' : 'determinate'}
+              value={presentation.progress ?? 0}
+              size={COMPOSER_ICON_SIZE}
+              thickness={6}
+              aria-hidden="true"
+              sx={{ color: 'primary.main' }}
+            />
+          </Box>
+        </IconButton>
+      </Tooltip>
+      <Popover
+        open={open}
+        anchorEl={anchorEl}
+        onClose={() => setAnchorEl(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        slotProps={{
+          paper: {
+            id: detailId,
+            role: 'dialog',
+            'aria-label': '上下文用量详情',
+            sx: {
+              bgcolor: 'background.paper',
+              backgroundImage: 'none',
+              boxShadow: 'none',
+              borderRadius: 2
+            }
+          }
+        }}
+      >
+        <ContextUsageBreakdownPanel
+          usage={usage}
+          loading={loading}
+          onClose={() => setAnchorEl(null)}
         />
-      )}
-    </Box>
+      </Popover>
+    </>
   )
 }

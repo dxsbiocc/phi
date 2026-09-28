@@ -30,6 +30,7 @@ import { InputReferenceChips } from '../../components/chat/InputReferenceChips'
 import ChatMessageList from '../../components/chat/ChatMessageList'
 import type { UserMessageRetryTarget } from '../../components/chat/ChatUserMessage'
 import {
+  COMPOSER_ICON_SIZE,
   COMPACT_COMPOSER_CONTROL_SIZE,
   REGULAR_COMPOSER_ACTION_SIZE,
   composerSurfaceSx
@@ -38,6 +39,7 @@ import { useComposerFileDrop } from '../../components/chat/useComposerFileDrop'
 import { useInputFileReferenceMenu } from '../../components/chat/useInputFileReferenceMenu'
 import { useInputInvocationReferenceMenu } from '../../components/chat/useInputInvocationReferenceMenu'
 import { PhiIcons } from '../../icons'
+import { GoHourglass, GoPaperAirplane } from 'react-icons/go'
 import {
   canNavigatePromptHistory,
   nextPromptHistoryCursor,
@@ -75,7 +77,6 @@ import type {
 
 export { ThinkingBlock } from '../../components/chat/ThinkingBlock'
 
-const SendIcon = PhiIcons.action.send
 const StopIcon = PhiIcons.action.stop
 const CloseIcon = PhiIcons.action.close
 
@@ -120,8 +121,6 @@ type ViewProps = {
   contextUsageTarget?: ContextUsageTarget
   contextUsageRefreshKey?: number
   contextCompacting?: boolean
-  disableContextCompaction?: boolean
-  onCompactContext?: (target: ContextUsageTarget) => Promise<void> | void
   skills?: SkillSummary[]
   promptAgents?: PromptAgentSummary[]
   plugins?: PluginCatalogItem[]
@@ -181,8 +180,6 @@ function ChatView({
   contextUsageTarget,
   contextUsageRefreshKey = 0,
   contextCompacting = false,
-  disableContextCompaction = false,
-  onCompactContext,
   skills = [],
   promptAgents = [],
   plugins = [],
@@ -877,6 +874,12 @@ function ChatView({
                   disabled={disableModelControls}
                   compact={compactComposerControls}
                 />
+                {contextUsageTarget && (
+                  <ContextUsageIndicator
+                    usage={contextUsage.usage}
+                    loading={contextUsage.loading}
+                  />
+                )}
                 {!isGenerating ? (
                   <IconButton
                     type="submit"
@@ -894,17 +897,17 @@ function ChatView({
                       minHeight: actionControlSize,
                       p: 0,
                       flexShrink: 0,
-                      bgcolor: 'primary.main',
-                      color: 'background.default',
+                      bgcolor: 'transparent',
+                      color: 'primary.main',
                       transition: 'background-color 200ms',
-                      '&:hover': { bgcolor: 'primary.dark' },
+                      '&:hover': { bgcolor: 'action.hover' },
                       '&.Mui-disabled': {
-                        bgcolor: 'action.disabledBackground',
+                        bgcolor: 'transparent',
                         color: 'action.disabled'
                       }
                     }}
                   >
-                    <SendIcon fontSize="small" />
+                    <GoPaperAirplane size={COMPOSER_ICON_SIZE} aria-hidden="true" />
                   </IconButton>
                 ) : (
                   <>
@@ -922,17 +925,17 @@ function ChatView({
                         minHeight: actionControlSize,
                         p: 0,
                         flexShrink: 0,
-                        bgcolor: 'primary.main',
-                        color: 'background.default',
+                        bgcolor: 'transparent',
+                        color: 'primary.main',
                         transition: 'background-color 200ms',
-                        '&:hover': { bgcolor: 'primary.dark' },
+                        '&:hover': { bgcolor: 'action.hover' },
                         '&.Mui-disabled': {
-                          bgcolor: 'action.disabledBackground',
+                          bgcolor: 'transparent',
                           color: 'action.disabled'
                         }
                       }}
                     >
-                      <SendIcon fontSize="small" />
+                      <GoHourglass size={COMPOSER_ICON_SIZE} aria-hidden="true" />
                     </IconButton>
                     <IconButton
                       type="button"
@@ -956,34 +959,13 @@ function ChatView({
                         '&:hover': { bgcolor: 'error.dark' }
                       }}
                     >
-                      <StopIcon fontSize="small" />
+                      <StopIcon size={COMPOSER_ICON_SIZE} />
                     </IconButton>
                   </>
                 )}
               </Box>
             </Box>
           </Paper>
-          {contextUsageTarget && (
-            <Box sx={{ mt: 0.5, px: 1 }}>
-              <ContextUsageIndicator
-                usage={contextUsage.usage}
-                loading={contextUsage.loading}
-                compacting={contextCompacting}
-                compactDisabled={disableContextCompaction || !contextUsageTarget.sessionPath}
-                autoCompactionTarget={contextUsageTarget}
-                autoCompactionDisabled={
-                  isGenerating || contextCompacting || !contextUsageTarget.sessionPath
-                }
-                onCompact={
-                  onCompactContext
-                    ? () => {
-                        void onCompactContext(contextUsageTarget)
-                      }
-                    : undefined
-                }
-              />
-            </Box>
-          )}
         </Box>
       </Box>
     </Box>

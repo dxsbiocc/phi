@@ -1,7 +1,16 @@
+export type ContextUsageCategoryId =
+  'systemPrompt' | 'toolDefinitions' | 'systemContext' | 'skills' | 'conversation'
+
+export interface ContextUsageCategory {
+  id: ContextUsageCategoryId
+  tokens: number
+}
+
 export interface ContextUsageSnapshot {
   tokens: number
   contextWindow: number
   percent: number
+  categories?: ContextUsageCategory[]
 }
 
 export interface ContextCompactionDetails {

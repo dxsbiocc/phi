@@ -3613,14 +3613,6 @@ function App(): React.JSX.Element {
           }}
           contextUsageRefreshKey={contextUsageRefreshKey}
           contextCompacting={currentSessionIsCompacting}
-          disableContextCompaction={
-            currentSessionIsBusy ||
-            isSessionChanging ||
-            isBusy ||
-            !selectedModel ||
-            messages.length === 0
-          }
-          onCompactContext={onCompactContext}
           skills={skills}
           promptAgents={promptAgents}
           plugins={plugins}
@@ -4252,6 +4244,29 @@ function App(): React.JSX.Element {
           onSelectDefaultProxyMode={onSelectDefaultProxyMode}
           onUpdateAppSettings={onUpdateAppSettings}
           onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
+          autoCompactionTarget={{
+            sessionPath: activeSessionPath,
+            phiSessionId: activePhiSessionId ?? null,
+            sessionGeneration: activeSessionGeneration
+          }}
+          autoCompactionDisabled={
+            currentSessionIsBusy || currentSessionIsCompacting || isSessionChanging
+          }
+          contextCompacting={currentSessionIsCompacting}
+          compactDisabled={
+            currentSessionIsBusy ||
+            isSessionChanging ||
+            isBusy ||
+            !selectedModel ||
+            messages.length === 0
+          }
+          onCompactContext={() => {
+            void onCompactContext({
+              sessionPath: activeSessionPath,
+              phiSessionId: activePhiSessionId ?? null,
+              sessionGeneration: activeSessionGeneration
+            })
+          }}
           environmentSnapshot={environmentSnapshot}
           isLoadingEnvironment={isLoadingEnvironment}
           isRedetectingEnvironment={isRedetectingEnvironment}

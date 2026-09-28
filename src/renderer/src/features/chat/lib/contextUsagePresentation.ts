@@ -1,6 +1,6 @@
 import type { ContextUsageSnapshot } from '../../../../../shared/contextUsageTypes'
 
-function formatTokens(tokens: number): string {
+export function formatTokens(tokens: number): string {
   if (tokens < 1000) return String(Math.round(tokens))
   if (tokens < 1_000_000) return `${Number((tokens / 1000).toFixed(1))}K`
   return `${Number((tokens / 1_000_000).toFixed(1))}M`

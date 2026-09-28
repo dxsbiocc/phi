@@ -5,6 +5,8 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import ChatView, { ThinkingBlock } from '../src/renderer/src/features/chat/ChatView'
+import { ProviderModelIcon } from '../src/renderer/src/components/chat/ProviderModelIcon'
+import { composerSurfaceSx } from '../src/renderer/src/components/chat/composerControlStyles'
 import ToolCallCard from '../src/renderer/src/components/ToolCallCard'
 import ToolGroupCard from '../src/renderer/src/components/ToolGroupCard'
 import {
@@ -1567,20 +1569,22 @@ test('chat view uses the suggested next action as a passive placeholder', () => 
   )
 })
 
-test('chat composer reserves a separate context-usage status below its controls', () => {
+test('chat composer places context usage between the provider and send controls', () => {
   const markup = renderChat([], {
     contextUsageTarget: {
       sessionPath: 'phi-session:session-a',
       phiSessionId: 'session-a',
       sessionGeneration: 0
-    },
-    onCompactContext: () => undefined
+    }
   })
 
   assert.match(markup, /data-phi-context-usage="unavailable"/)
   assert.match(markup, /正在读取上下文/)
-  assert.match(markup, /aria-label="压缩当前会话上下文"/)
-  assert.match(markup, /aria-label="自动压缩设置"/)
+  const modelPosition = markup.indexOf('aria-label="选择模型')
+  const contextPosition = markup.indexOf('data-phi-context-usage="unavailable"')
+  const sendPosition = markup.indexOf('data-phi-composer-action="send"')
+  assert.ok(modelPosition >= 0 && modelPosition < contextPosition && contextPosition < sendPosition)
+  assert.doesNotMatch(markup, /aria-label="压缩当前会话上下文"|aria-label="自动压缩设置"/)
 })
 
 test('chat timeline shows compaction method, token counts and expandable full summary', () => {
@@ -1655,6 +1659,30 @@ test('chat view uses icon-only composer controls when file preview is open', () 
   assert.doesNotMatch(markup, />High</)
   assert.doesNotMatch(markup, />Kimi Coding</)
   assert.doesNotMatch(markup, /输入消息，Enter 发送/)
+})
+
+test('Cursor models display the Cursor provider icon', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(ProviderModelIcon, { providerId: 'cursor' })
+    )
+  )
+
+  assert.match(markup, /data-phi-provider-icon="cursor"/)
+  assert.match(markup, /aria-label="Cursor"[\s\S]*<svg/)
+})
+
+test('composer buttons stay fixed on hover and use matching action icon sizes', () => {
+  const surface = composerSurfaceSx({ compact: false, dragActive: false })
+  assert.match(JSON.stringify(surface), /MuiButton-root:hover[^}]*transform":"none"/)
+
+  const source = readFileSync('src/renderer/src/features/chat/ChatView.tsx', 'utf8')
+  assert.match(source, /<GoPaperAirplane size=\{COMPOSER_ICON_SIZE\}/)
+  assert.match(source, /<GoHourglass size=\{COMPOSER_ICON_SIZE\}/)
+  assert.match(source, /<StopIcon size=\{COMPOSER_ICON_SIZE\}/)
+  assert.match(source, /data-phi-composer-action="send"[\s\S]*?bgcolor: 'transparent'/)
 })
 
 test('chat view keeps compact composer icon buttons at the declared outer size', () => {

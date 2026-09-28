@@ -39,6 +39,8 @@ import { DatabaseSettingsPanel } from '../features/databases/DatabaseSettingsPan
 import { EnvironmentSettingsPanel } from '../features/environment/components/EnvironmentSettingsPanel'
 import { PermissionSettingsSection } from './PermissionView'
 import type { EnvironmentSnapshot, EnvironmentToolId } from '../types'
+import type { ManualCompactionTarget } from '../../../shared/contextUsageTypes'
+import { AutoCompactionSettingsSection } from '../features/chat/components/AutoCompactionSettingsSection'
 
 const AddIcon = PhiIcons.action.add
 const CloseIcon = PhiIcons.action.close
@@ -329,7 +331,12 @@ function GeneralSection({
   isSavingAppSettings,
   onSelectDefaultProxyMode,
   onUpdateAppSettings,
-  onPickNoProjectTaskFolder
+  onPickNoProjectTaskFolder,
+  autoCompactionTarget,
+  autoCompactionDisabled,
+  contextCompacting,
+  compactDisabled,
+  onCompactContext
 }: {
   defaultProxyMode: DefaultProxyMode
   noProjectTaskFolder: string
@@ -341,6 +348,11 @@ function GeneralSection({
   onSelectDefaultProxyMode: (mode: DefaultProxyMode) => void
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
+  autoCompactionTarget?: ManualCompactionTarget | null
+  autoCompactionDisabled?: boolean
+  contextCompacting?: boolean
+  compactDisabled?: boolean
+  onCompactContext?: () => void
 }): React.JSX.Element {
   const proxyStatusSeverity =
     proxyTransportStatus.controlledProxyAvailable || defaultProxyMode !== 'enabled'
@@ -355,7 +367,7 @@ function GeneralSection({
       <Box>
         <Typography variant="h5">通用</Typography>
         <Typography variant="body2" color="text.secondary">
-          控制应用级默认行为。
+          调整应用行为和当前会话设置。
         </Typography>
       </Box>
 
@@ -479,6 +491,14 @@ function GeneralSection({
           允许助手在合适时给出一句可直接继续的下一步建议。
         </Typography>
       </Box>
+
+      <AutoCompactionSettingsSection
+        target={autoCompactionTarget ?? null}
+        disabled={autoCompactionDisabled}
+        compacting={contextCompacting}
+        compactDisabled={compactDisabled}
+        onCompact={onCompactContext}
+      />
     </Stack>
   )
 }
@@ -650,6 +670,11 @@ type SettingsDialogProps = {
   onSelectDefaultProxyMode: (mode: DefaultProxyMode) => void
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
+  autoCompactionTarget?: ManualCompactionTarget | null
+  autoCompactionDisabled?: boolean
+  contextCompacting?: boolean
+  compactDisabled?: boolean
+  onCompactContext?: () => void
   environmentSnapshot: EnvironmentSnapshot | null
   isLoadingEnvironment: boolean
   isRedetectingEnvironment: boolean
@@ -696,6 +721,11 @@ function SettingsDialog({
   onSelectDefaultProxyMode,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
+  autoCompactionTarget,
+  autoCompactionDisabled,
+  contextCompacting,
+  compactDisabled,
+  onCompactContext,
   environmentSnapshot,
   isLoadingEnvironment,
   isRedetectingEnvironment,
@@ -819,6 +849,11 @@ function SettingsDialog({
               onSelectDefaultProxyMode={onSelectDefaultProxyMode}
               onUpdateAppSettings={onUpdateAppSettings}
               onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
+              autoCompactionTarget={autoCompactionTarget}
+              autoCompactionDisabled={autoCompactionDisabled}
+              contextCompacting={contextCompacting}
+              compactDisabled={compactDisabled}
+              onCompactContext={onCompactContext}
             />
           )}
           {category === 'environment' && (

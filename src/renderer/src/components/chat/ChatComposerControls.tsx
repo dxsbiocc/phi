@@ -19,7 +19,7 @@ import { useId, useMemo, useState, type ReactNode } from 'react'
 import { PERMISSION_MODE_ICON_META, PhiIcons } from '../../icons'
 import type { ModelOption, PermissionMode, ThinkingLevel } from '../../types'
 import { ProviderModelIcon } from './ProviderModelIcon'
-import { compactComposerIconButtonSx } from './composerControlStyles'
+import { COMPOSER_ICON_SIZE, compactComposerIconButtonSx } from './composerControlStyles'
 
 const BoltIcon = PhiIcons.action.quick
 const CheckIcon = PhiIcons.state.check
@@ -81,7 +81,7 @@ export function ThinkingLevelControl({
             aria-describedby={popoverId}
             sx={{ ...compactComposerIconButtonSx, color: 'text.secondary' }}
           >
-            <BoltIcon fontSize="small" />
+            <BoltIcon size={COMPOSER_ICON_SIZE} />
           </IconButton>
         ) : (
           <Button
@@ -89,7 +89,7 @@ export function ThinkingLevelControl({
             onClick={(event) => setAnchorEl(event.currentTarget)}
             disabled={disabled}
             aria-describedby={popoverId}
-            startIcon={<BoltIcon sx={{ fontSize: 16 }} />}
+            startIcon={<BoltIcon size={COMPOSER_ICON_SIZE} />}
             sx={{
               textTransform: 'none',
               color: 'text.secondary',
@@ -409,7 +409,7 @@ export function PermissionModeControl({
               color: selectedIcon.color ?? 'text.secondary'
             }}
           >
-            <SelectedPermissionIcon fontSize="small" />
+            <SelectedPermissionIcon size={COMPOSER_ICON_SIZE} />
           </IconButton>
         ) : (
           <Button
@@ -418,7 +418,7 @@ export function PermissionModeControl({
             aria-describedby={popoverId}
             disabled={disabled}
             onClick={(event) => setAnchorEl(event.currentTarget)}
-            startIcon={<SelectedPermissionIcon sx={{ fontSize: 18 }} />}
+            startIcon={<SelectedPermissionIcon size={COMPOSER_ICON_SIZE} />}
             sx={{
               textTransform: 'none',
               color: selectedIcon.color ?? 'text.secondary',

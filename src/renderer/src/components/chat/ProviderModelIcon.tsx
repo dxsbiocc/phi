@@ -3,6 +3,7 @@ import type { IconType } from 'react-icons'
 import {
   SiAnthropic,
   SiClaude,
+  SiCursor,
   SiDeepseek,
   SiGithubcopilot,
   SiGoogle,
@@ -18,6 +19,7 @@ import {
 } from 'react-icons/si'
 import { TbBrandOpenai } from 'react-icons/tb'
 import { PhiIcons } from '../../icons'
+import { COMPOSER_ICON_SIZE } from './composerControlStyles'
 
 const PsychologyIcon = PhiIcons.state.thinking
 
@@ -128,6 +130,13 @@ const PROVIDER_ICON_RULES: Array<ProviderIconMeta & { matches: string[] }> = [
     matches: ['xai', 'grok']
   },
   {
+    key: 'cursor',
+    label: 'Cursor',
+    color: 'text.primary',
+    Icon: SiCursor,
+    matches: ['cursor']
+  },
+  {
     key: 'copilot',
     label: 'GitHub Copilot',
     color: '#6E5494',
@@ -179,7 +188,7 @@ export function ProviderModelIcon({
           color,
           display: 'inline-flex',
           flexShrink: 0,
-          fontSize: '1.2rem',
+          fontSize: COMPOSER_ICON_SIZE,
           height: '1em',
           justifyContent: 'center',
           lineHeight: 0,
@@ -196,7 +205,7 @@ export function ProviderModelIcon({
       data-phi-provider-icon={meta.key}
       aria-label={meta.label}
       htmlColor={undefined}
-      size="1.2rem"
+      size={COMPOSER_ICON_SIZE}
       sx={{ color }}
     />
   )
