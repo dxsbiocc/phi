@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
-import { createElement, type ReactElement } from 'react'
+import { createElement, type ComponentProps, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import FilePreviewPanel, {
@@ -17,6 +17,7 @@ import {
   spreadsheetPreviewModel
 } from '../src/renderer/src/lib/spreadsheetPreview'
 import type { DirectoryListing } from '../src/renderer/src/types'
+import { htmlReportSrcDoc } from '../src/shared/htmlReportPreview'
 
 const readyPreviewState: FilePreviewPanelState = {
   status: 'ready',
@@ -65,7 +66,10 @@ function renderWithTheme(element: ReactElement): string {
   return renderToStaticMarkup(createElement(ThemeProvider, { theme: createTheme() }, element))
 }
 
-function renderPanel(state: FilePreviewPanelState): string {
+function renderPanel(
+  state: FilePreviewPanelState,
+  extras: Partial<ComponentProps<typeof FilePreviewPanel>> = {}
+): string {
   return renderWithTheme(
     createElement(FilePreviewPanel, {
       state,
@@ -80,7 +84,8 @@ function renderPanel(state: FilePreviewPanelState): string {
         rootLabel: 'project',
         entries: [],
         truncated: false
-      })
+      }),
+      ...extras
     })
   )
 }
@@ -115,6 +120,193 @@ test('file preview panel renders file content with line numbers', () => {
   assert.match(markup, />2<\/span>/)
   assert.match(markup, /const[\s\S]*answer[\s\S]*42/)
   assert.match(markup, /export[\s\S]*default[\s\S]*answer/)
+})
+
+test('remote HTML stays text and large results show metadata with a download entry', () => {
+  const html = renderPanel({
+    status: 'ready',
+    file: {
+      path: 'ssh://cluster-a/scratch/results-a/report.html',
+      name: 'report.html',
+      displayPath: 'cluster-a/scratch/results-a/report.html',
+      rootPath: 'ssh://cluster-a/scratch/results-a',
+      rootLabel: 'cluster-a',
+      kind: 'text',
+      mimeType: 'text/plain',
+      content: '<script>alert(1)</script>',
+      bytes: 25,
+      previewBytes: 25,
+      truncated: false
+    }
+  })
+  assert.match(html, /report\.html/)
+  assert.doesNotMatch(html, /<script>/)
+  const metadata = renderPanel({
+    status: 'ready',
+    file: {
+      path: 'ssh://cluster-a/scratch/results-a/large.pdf',
+      name: 'large.pdf',
+      displayPath: 'cluster-a/scratch/results-a/large.pdf',
+      rootPath: 'ssh://cluster-a/scratch/results-a',
+      rootLabel: 'cluster-a',
+      kind: 'metadata',
+      mimeType: 'application/pdf',
+      reason: 'large_file',
+      bytes: 12 * 1024 * 1024,
+      previewBytes: 0,
+      truncated: true
+    }
+  })
+  assert.match(metadata, /12 MB|12\.0 MB|12 MiB/)
+  assert.match(metadata, /下载文件/)
+  assert.match(metadata, /disabled/)
+  assert.doesNotMatch(metadata, /data:application\/pdf;base64/)
+})
+
+test('small local HTML reports render in an isolated static frame with a source view', () => {
+  const markup = renderPanel({
+    status: 'ready',
+    file: {
+      path: '/Users/example/project/report.html',
+      name: 'report.html',
+      displayPath: 'report.html',
+      rootPath: '/Users/example/project',
+      rootLabel: 'project',
+      kind: 'html',
+      mimeType: 'text/html',
+      content: '<h1>QC report</h1><script>alert(1)</script>',
+      bytes: 44,
+      previewBytes: 44,
+      truncated: false
+    }
+  })
+  assert.match(markup, /data-phi-html-report-preview="true"/)
+  assert.match(markup, /sandbox=""/)
+  assert.match(markup, /Content-Security-Policy/)
+  assert.match(markup, /script-src/)
+  assert.match(markup, /报告预览/)
+  assert.match(markup, /查看源码/)
+  assert.doesNotMatch(markup, /<script>alert\(1\)<\/script>/)
+})
+
+test('HTML report preview keeps the document doctype and applies restrictions before report markup', () => {
+  const document = htmlReportSrcDoc(
+    '<!doctype html><html><body><script>alert(1)</script></body></html>'
+  )
+  assert.match(document, /^<!doctype html><meta http-equiv="Content-Security-Policy"/)
+  assert.ok(document.indexOf('script-src') < document.indexOf('<script>'))
+  assert.match(document, /connect-src 'none'/)
+})
+
+test('remote result download controls show progress, cancellation and the selected saved path', () => {
+  const file: FilePreviewPanelState = {
+    status: 'ready',
+    file: {
+      path: 'ssh://cluster-a/scratch/results-a/report.html',
+      name: 'report.html',
+      displayPath: 'cluster-a/scratch/results-a/report.html',
+      rootPath: 'ssh://cluster-a/scratch/results-a',
+      rootLabel: 'cluster-a',
+      kind: 'text',
+      mimeType: 'text/plain',
+      content: 'report',
+      bytes: 6,
+      previewBytes: 6,
+      truncated: false
+    }
+  }
+  const readyToDownload = renderPanel(file, { onDownloadFile: () => undefined })
+  assert.match(readyToDownload, /aria-label="下载远程文件"/)
+  const running = renderPanel(file, {
+    onDownloadFile: () => undefined,
+    onCancelDownload: () => undefined,
+    downloadState: {
+      status: 'running',
+      requestId: 'download_001',
+      sourcePath: file.file.path,
+      phase: 'downloading',
+      bytesDownloaded: 3,
+      totalBytes: 6
+    }
+  })
+  assert.doesNotMatch(running, /aria-label="下载远程文件"/)
+  assert.match(running, /aria-label="下载进度"/)
+  assert.match(running, /取消下载/)
+  assert.match(running, /50%/)
+  const saved = renderPanel(file, {
+    onDownloadFile: () => undefined,
+    downloadState: {
+      status: 'saved',
+      sourcePath: file.file.path,
+      path: '/Users/example/Downloads/report.html',
+      bytes: 6,
+      remoteDigestVerified: false
+    }
+  })
+  assert.match(saved, /已保存/)
+  assert.match(saved, /\/Users\/example\/Downloads\/report\.html/)
+  assert.match(saved, /服务器未提供摘要/)
+})
+
+test('large remote result metadata enables its explicit download button when connected', () => {
+  const markup = renderPanel(
+    {
+      status: 'ready',
+      file: {
+        path: 'ssh://cluster-a/scratch/results-a/large.pdf',
+        name: 'large.pdf',
+        displayPath: 'cluster-a/scratch/results-a/large.pdf',
+        rootPath: 'ssh://cluster-a/scratch/results-a',
+        rootLabel: 'cluster-a',
+        kind: 'metadata',
+        mimeType: 'application/pdf',
+        reason: 'large_file',
+        bytes: 12 * 1024 * 1024,
+        previewBytes: 0,
+        truncated: true
+      }
+    },
+    { onDownloadFile: () => undefined }
+  )
+  assert.match(markup, /下载文件/)
+  assert.doesNotMatch(markup, /<button[^>]*disabled[^>]*>下载文件<\/button>/)
+})
+
+test('remote text preview keeps its SSH identity and replaces local file-manager actions', () => {
+  const markup = renderPanel({
+    status: 'ready',
+    file: {
+      path: 'ssh://cluster-a/data/project/note.txt',
+      name: 'note.txt',
+      displayPath: 'cluster-a/data/project/note.txt',
+      rootPath: 'ssh://cluster-a/data/project',
+      rootLabel: 'cluster-a',
+      kind: 'text',
+      mimeType: 'text/plain',
+      content: 'remote text',
+      bytes: 11,
+      previewBytes: 11,
+      truncated: false
+    }
+  })
+  assert.match(markup, /文件路径：cluster-a \/ data \/ project \/ note\.txt/)
+  assert.match(markup, /复制远程路径/)
+  assert.match(markup, /在文件面板打开/)
+  assert.match(markup, /在项目文件中定位/)
+  assert.doesNotMatch(markup, /默认应用打开|文件管理器中显示/)
+  assert.match(markup, /ssh:\/\/cluster-a\/data\/project\/note\.txt/)
+})
+
+test('remote loading and error previews keep the server label visible', () => {
+  const loading = renderPanel({ status: 'loading', path: 'ssh://cluster-a/data/project/note.txt' })
+  const error = renderPanel({
+    status: 'error',
+    path: 'ssh://cluster-a/data/project/note.txt',
+    message: '服务器不可达'
+  })
+  assert.match(loading, /文件路径：cluster-a \/ note\.txt/)
+  assert.match(error, /文件路径：cluster-a \/ note\.txt/)
+  assert.match(error, /服务器不可达/)
 })
 
 test('file preview panel keeps large json previews lightweight', () => {
@@ -314,6 +506,34 @@ test('file preview panel renders png image previews', () => {
   assert.match(markup, /src="data:image\/png;base64,iVBORw0KGgo="/)
   assert.match(markup, /alt="plot\.png"/)
   assert.doesNotMatch(markup, /data-phi-syntax-language/)
+})
+
+test('file preview panel renders JPEG, GIF, and WebP images in the same media viewer', () => {
+  for (const [name, mimeType] of [
+    ['photo.jpg', 'image/jpeg'],
+    ['animation.gif', 'image/gif'],
+    ['chart.webp', 'image/webp']
+  ] as const) {
+    const markup = renderPanel({
+      status: 'ready',
+      file: {
+        path: `/Users/example/project/${name}`,
+        name,
+        displayPath: name,
+        rootPath: '/Users/example/project',
+        rootLabel: 'project',
+        kind: 'image',
+        mimeType,
+        dataUrl: `data:${mimeType};base64,YQ==`,
+        bytes: 1,
+        previewBytes: 1,
+        truncated: false
+      }
+    })
+    assert.match(markup, /data-phi-media-preview="image"/)
+    assert.match(markup, new RegExp(`src="data:${mimeType};base64,YQ=="`))
+    assert.match(markup, new RegExp(`alt="${name.replace('.', '\\.')}"`))
+  }
 })
 
 test('file preview panel renders pdf previews', () => {

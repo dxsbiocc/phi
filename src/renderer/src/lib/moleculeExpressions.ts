@@ -10,6 +10,8 @@ const RENDERABLE_MOLECULE_FIELD_NAMES = new Set([
 
 const SMILES_ATOM_PATTERN = /(?:Br|Cl|[BCNOPSFIbcnops])/
 const SMILES_STRUCTURE_PATTERN = /[=#()[\]@+\-\\/0-9]/
+const SMILES_BRACKET_ATOM_PATTERN = /\[[^\]\s_]+\]/g
+const SMILES_CANDIDATE_PATTERN = /^[BCNOPSFIHbrclcnops0-9=#()@+\-\\/.%]+$/
 
 export function normalizedMoleculeField(field: string): string {
   return field.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -23,6 +25,8 @@ export function smilesExpressionFromInlineCode(value: string): string | null {
   const text = value.trim()
   if (text.length < 8 || text.length > 600) return null
   if (/\s/.test(text)) return null
+  const unbracketedCandidate = text.replace(SMILES_BRACKET_ATOM_PATTERN, 'C')
+  if (!SMILES_CANDIDATE_PATTERN.test(unbracketedCandidate)) return null
   if (!SMILES_ATOM_PATTERN.test(text) || !SMILES_STRUCTURE_PATTERN.test(text)) return null
   return text
 }

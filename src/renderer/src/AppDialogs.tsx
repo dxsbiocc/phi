@@ -1,8 +1,10 @@
+import { useState } from 'react'
 import { Alert, Snackbar } from '@mui/material'
 import SettingsDialog, { type SettingsCategory } from './components/SettingsDialog'
 import AddProviderDialog from './components/AddProviderDialog'
 import OnboardingDialog from './components/OnboardingDialog'
-import NewProjectDialog from './components/NewProjectDialog'
+import NewProjectDialog from './features/project/NewProjectPanel'
+import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import type { ThemeMode } from './theme'
 import type {
   ActiveAuthPrompt,
@@ -14,7 +16,6 @@ import type {
   PhiAppSettingsPatch,
   PermissionMode,
   Project,
-  ProjectRemoteConnection,
   ProviderAuthStatus,
   ProxyTransportStatus,
   RendererApi,
@@ -57,17 +58,6 @@ export type AppDialogsProps = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => void
-  updatingRemoteProjectId: string | null
-  onUpdateProjectRemoteConnection: (
-    projectId: string,
-    connectionId: string,
-    patch: ProjectRemoteConnection | null,
-    passphrase?: string | null
-  ) => Promise<void>
-  onUpdateProjectRemoteDefaults: (
-    projectId: string,
-    defaults: { defaultRemoteConnectionId?: string | null; remoteWorkspaceRoot?: string | null }
-  ) => Promise<void>
   onOpenApprovalSession: (path: string) => void
   onRespondToolApproval: (requestId: string, approved: boolean) => Promise<void>
   themeMode: ThemeMode
@@ -94,6 +84,8 @@ export type AppDialogsProps = {
   updatingDbConnectorId: string | null
   onRefreshDbConnectors: () => Promise<void>
   onSetDbConnectorEnabled: (id: string, enabled: boolean) => Promise<void>
+  onSetDbConnectorApiKey: (id: string, apiKey: string) => Promise<void>
+  onClearDbConnectorApiKey: (id: string) => Promise<void>
 
   showOnboarding: boolean
   onCompleteOnboarding: (description: string) => Promise<void>
@@ -117,6 +109,7 @@ export type AppDialogsProps = {
     workingDirectory: string,
     permissionMode: PermissionMode
   ) => Promise<void>
+  onCreateRemoteProject: (input: RemoteProjectCreateInput) => Promise<void>
 
   snackbarNotice: SnackbarNotice | null
   setSnackbarNotice: (notice: SnackbarNotice | null) => void
@@ -146,9 +139,6 @@ export default function AppDialogs({
   updatingPermissionProjectId,
   onUpdateProjectPermissionMode,
   onUpdateProjectDefaults,
-  updatingRemoteProjectId,
-  onUpdateProjectRemoteConnection,
-  onUpdateProjectRemoteDefaults,
   onOpenApprovalSession,
   onRespondToolApproval,
   themeMode,
@@ -175,6 +165,8 @@ export default function AppDialogs({
   updatingDbConnectorId,
   onRefreshDbConnectors,
   onSetDbConnectorEnabled,
+  onSetDbConnectorApiKey,
+  onClearDbConnectorApiKey,
   showOnboarding,
   onCompleteOnboarding,
   onSkipOnboarding,
@@ -191,6 +183,7 @@ export default function AppDialogs({
   isNewProjectDialogOpen,
   setIsNewProjectDialogOpen,
   onCreateProject,
+  onCreateRemoteProject,
   snackbarNotice,
   setSnackbarNotice,
   isChatWorkspaceView,
@@ -199,15 +192,21 @@ export default function AppDialogs({
   sidebarWidth,
   macTitlebarHeight
 }: AppDialogsProps): React.JSX.Element {
+  const [returnToNewProject, setReturnToNewProject] = useState(false)
   return (
     <>
       <SettingsDialog
         open={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
+        onClose={() => {
+          setIsSettingsOpen(false)
+          if (returnToNewProject) {
+            setReturnToNewProject(false)
+            setIsNewProjectDialogOpen(true)
+          }
+        }}
         category={settingsCategory}
         onCategoryChange={setSettingsCategory}
         providers={providerStatuses}
-        providerHints={providerHints}
         personaMarkdown={personaMarkdown}
         onSavePersonaMarkdown={onSavePersonaMarkdown}
         onRefresh={refreshAuthStatuses}
@@ -225,9 +224,6 @@ export default function AppDialogs({
         onUpdateProjectDefaults={(projectId, defaults) => {
           void onUpdateProjectDefaults(projectId, defaults)
         }}
-        updatingRemoteProjectId={updatingRemoteProjectId}
-        onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
-        onUpdateProjectRemoteDefaults={onUpdateProjectRemoteDefaults}
         onOpenApprovalSession={onOpenApprovalSession}
         onRespondApproval={onRespondToolApproval}
         onCopyDiagnostics={() => rendererApi.copyDiagnostics()}
@@ -251,6 +247,8 @@ export default function AppDialogs({
         updatingDbConnectorId={updatingDbConnectorId}
         onRefreshDbConnectors={onRefreshDbConnectors}
         onSetDbConnectorEnabled={onSetDbConnectorEnabled}
+        onSetDbConnectorApiKey={onSetDbConnectorApiKey}
+        onClearDbConnectorApiKey={onClearDbConnectorApiKey}
         themeMode={themeMode}
         onSelectThemeMode={setThemeMode}
       />
@@ -299,6 +297,13 @@ export default function AppDialogs({
         onClose={() => setIsNewProjectDialogOpen(false)}
         onPickDirectory={() => rendererApi.pickProjectDirectory()}
         onCreate={onCreateProject}
+        onCreateRemote={onCreateRemoteProject}
+        onOpenRemoteSettings={() => {
+          setReturnToNewProject(true)
+          setIsNewProjectDialogOpen(false)
+          setSettingsCategory('remote')
+          setIsSettingsOpen(true)
+        }}
       />
 
       <Snackbar

@@ -22,6 +22,23 @@ test('sessionDraftKey scopes Phi-managed sessions by stable session id', () => {
   )
 })
 
+test('remote project draft key survives reconnects without depending on the SDK anchor', () => {
+  const first = sessionDraftKey({
+    phiSessionId: 'remote-session-1',
+    path: 'phi-session:remote-session-1',
+    cwd: '/home/user/.phi/remote-project-anchors/project-a',
+    sessionGeneration: 1
+  })
+  const restored = sessionDraftKey({
+    phiSessionId: 'remote-session-1',
+    path: 'phi-session:remote-session-1',
+    cwd: '/home/user/.phi/remote-project-anchors/project-a',
+    sessionGeneration: 2
+  })
+  assert.equal(first, restored)
+  assert.equal(first, 'phi:remote-session-1')
+})
+
 test('sessionDraftKey keeps fresh sessions separated by generation', () => {
   assert.notEqual(
     sessionDraftKey({ path: null, cwd: '/workspace', sessionGeneration: 1 }),

@@ -1,0 +1,216 @@
+phiDbConnectorVersion: 1
+id: rest-json/string
+name: STRING
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://string-db.org/api
+networkPolicy:
+  allowedHosts:
+    - string-db.org
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 3
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: resolve
+    summary: Resolve a gene/protein identifier to STRING internal IDs for a species.
+    identity:
+      stableIdFields: [stringId]
+      namespace: string.protein_id
+      primaryUrlTemplate: https://string-db.org/network/{stable_id}
+    commonFields:
+      [queryItem, queryIndex, stringId, ncbiTaxonId, taxonName, preferredName, annotation]
+    rest:
+      request:
+        path: /json/resolve
+        filterParamMap:
+          { identifier: identifier, species: species, limit: limit, echo_query: echo_query }
+      response:
+        rowsPath: $
+    fields:
+      - name: identifier
+        type: string
+        description: Gene symbol, protein name, or other identifier to resolve.
+        synonyms: [gene, gene_symbol, protein, query]
+        namespace: hgnc.symbol
+      - name: species
+        type: number
+        description: NCBI taxonomy ID (default commonly 9606 for human).
+        synonyms: [taxon, taxon_id]
+        namespace: ncbi.taxonomy_id
+      - name: stringId
+        type: string
+        description: STRING protein identifier.
+        namespace: string.protein_id
+      - name: preferredName
+        type: string
+        description: Preferred display name in STRING.
+      - name: annotation
+        type: string
+        description: Short annotation text from STRING.
+  - id: network
+    summary: Protein-protein interaction network edges for one or more identifiers.
+    identity:
+      stableIdFields: [stringId_A, stringId_B]
+      namespace: string.edge_id
+    commonFields:
+      [
+        stringId_A,
+        stringId_B,
+        preferredName_A,
+        preferredName_B,
+        ncbiTaxonId_A,
+        ncbiTaxonId_B,
+        score,
+        nscore,
+        fscore,
+        pscore,
+        ascore,
+        escore,
+        dscore,
+        tscore
+      ]
+    rest:
+      request:
+        path: /json/network
+        filterParamMap:
+          {
+            identifiers: identifiers,
+            species: species,
+            required_score: required_score,
+            network_type: network_type,
+            add_nodes: add_nodes,
+            show_query_node_labels: show_query_node_labels
+          }
+      response:
+        rowsPath: $
+    fields:
+      - name: identifiers
+        type: string
+        description: One or more gene/protein identifiers separated by %0d or newlines as accepted by STRING.
+        synonyms: [genes, proteins, query]
+      - name: species
+        type: number
+        description: NCBI taxonomy ID.
+        namespace: ncbi.taxonomy_id
+      - name: required_score
+        type: number
+        description: Minimum combined score threshold (0-1000).
+      - name: network_type
+        type: string
+        description: Network type such as functional or physical.
+      - name: stringId_A
+        type: string
+        description: STRING identifier for interactor A.
+        namespace: string.protein_id
+      - name: stringId_B
+        type: string
+        description: STRING identifier for interactor B.
+        namespace: string.protein_id
+      - name: score
+        type: number
+        description: Combined interaction confidence score.
+  - id: interaction_partners
+    summary: Ranked interaction partners for one or more proteins.
+    identity:
+      stableIdFields: [stringId_A, stringId_B]
+      namespace: string.edge_id
+    commonFields:
+      [
+        stringId_A,
+        stringId_B,
+        preferredName_A,
+        preferredName_B,
+        ncbiTaxonId,
+        score,
+        nscore,
+        fscore,
+        pscore,
+        ascore,
+        escore,
+        dscore,
+        tscore
+      ]
+    rest:
+      request:
+        path: /json/interaction_partners
+        filterParamMap:
+          {
+            identifiers: identifiers,
+            species: species,
+            limit: limit,
+            required_score: required_score,
+            network_type: network_type
+          }
+      response:
+        rowsPath: $
+    fields:
+      - name: identifiers
+        type: string
+        description: Protein or gene identifiers to expand into partners.
+      - name: species
+        type: number
+        description: NCBI taxonomy ID.
+        namespace: ncbi.taxonomy_id
+      - name: limit
+        type: number
+        description: Maximum partners to return per query protein.
+  - id: enrichment
+    summary: Functional enrichment terms for a set of STRING proteins or gene symbols.
+    commonFields:
+      [
+        category,
+        term,
+        number_of_genes,
+        number_of_genes_in_background,
+        ncbiTaxonId,
+        inputGenes,
+        preferredNames,
+        p_value,
+        fdr,
+        description
+      ]
+    rest:
+      request:
+        path: /json/enrichment
+        filterParamMap:
+          { identifiers: identifiers, species: species, caller_identity: caller_identity }
+      response:
+        rowsPath: $
+    fields:
+      - name: identifiers
+        type: string
+        description: Set of gene/protein identifiers for enrichment.
+      - name: species
+        type: number
+        description: NCBI taxonomy ID.
+        namespace: ncbi.taxonomy_id
+      - name: category
+        type: string
+        description: Enrichment category such as Process, Function, Component, or KEGG.
+      - name: term
+        type: string
+        description: Enriched ontology or pathway term identifier.
+      - name: p_value
+        type: number
+        description: Enrichment p-value.
+      - name: fdr
+        type: number
+        description: False discovery rate.
+xref:
+  - from:
+      domain: resolve
+      field: preferredName
+      namespace: hgnc.symbol
+      species: '9606'
+    to:
+      domain: resolve
+      field: stringId
+      namespace: string.protein_id
+      species: '9606'

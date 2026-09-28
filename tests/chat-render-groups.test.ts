@@ -34,6 +34,90 @@ test('chat render groups leave wrapper plans as persistent artifacts', () => {
   assert.equal(groups.at(-1)?.key, 'plan-1')
 })
 
+test('chat render groups keep file changes visible after the processing fold', () => {
+  const messages: ChatItem[] = [
+    { id: 'user-1', role: 'user', content: 'edit result' },
+    { id: 'run-start', role: 'run', event: 'started', createdAt: '2026-09-11T00:00:00.000Z' },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      toolName: 'edit',
+      argsPreview: '{}',
+      argsJson: '{}',
+      output: 'done',
+      status: 'done'
+    },
+    { id: 'run-end', role: 'run', event: 'completed', createdAt: '2026-09-11T00:00:01.000Z' },
+    {
+      id: 'changes-1',
+      role: 'workspace_changes',
+      files: [
+        {
+          path: '/project/result.txt',
+          displayPath: 'result.txt',
+          status: 'modified',
+          added: 1,
+          deleted: 0
+        }
+      ],
+      totalChanged: 1,
+      truncated: false
+    }
+  ]
+  const groups = groupMessages(messages)
+  assert.equal(groups.at(-1)?.kind, 'single')
+  assert.equal(groups.at(-1)?.key, 'changes-1')
+})
+
+test('chat render groups keep delivered files outside the processing fold', () => {
+  const groups = groupMessages([
+    { id: 'user-1', role: 'user', content: 'make a report' },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      toolName: 'present_files',
+      argsPreview: '',
+      argsJson: '',
+      output: 'done',
+      status: 'done'
+    },
+    {
+      id: 'delivery-1',
+      role: 'presented_files',
+      files: [{ path: '/project/report.pdf', displayPath: 'report.pdf', bytes: 123 }]
+    },
+    { id: 'assistant-1', role: 'assistant', content: 'Report ready.' }
+  ])
+  assert.equal(groups.find((group) => group.key === 'delivery-1')?.kind, 'single')
+  assert.equal(groups.at(-1)?.key, 'assistant-1')
+})
+
+test('chat render groups keep a reviewed plan outside the processing fold', () => {
+  const groups = groupMessages([
+    { id: 'user-1', role: 'user', content: 'plan first' },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      toolName: 'write',
+      argsPreview: '',
+      argsJson: '',
+      output: '',
+      status: 'done'
+    },
+    {
+      id: 'plan-1',
+      role: 'plan_review',
+      reviewId: 'review-1',
+      title: 'Analysis',
+      content: '# Analysis',
+      planFilePath: 'local://analysis-plan.md',
+      status: 'approved'
+    }
+  ])
+  assert.equal(groups.at(-1)?.kind, 'single')
+  assert.equal(groups.at(-1)?.key, 'plan-1')
+})
+
 test('chat render groups keep streaming assistant text inside active processing turns', () => {
   const messages: ChatItem[] = [
     { id: 'user-1', role: 'user', content: 'do it' },

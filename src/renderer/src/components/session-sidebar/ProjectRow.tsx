@@ -22,11 +22,13 @@ import {
   useSessionOrder
 } from '../../lib/sessionSidebarShared'
 import type { Project, SessionRuntimeState, SessionSummary } from '../../types'
+import { projectLocationSummary } from '../../lib/projectTypes'
 import { SortableSessionRow } from './SessionRow'
 
 const AddCommentIcon = PhiIcons.action.addSession
 const ExpandMoreIcon = PhiIcons.action.expand
 const FolderIcon = PhiIcons.entity.folder
+const ServerIcon = PhiIcons.settings.remoteExecution
 const MoreHorizIcon = PhiIcons.action.more
 
 function projectGitStatusLabel(project: Project): string | null {
@@ -38,15 +40,21 @@ type ProjectRowProps = {
   project: Project
   expanded: boolean
   refreshKey: number
+  searchSessions?: SessionSummary[]
   onToggleExpanded: () => void
   activeSessionPath: string | null
   onStartChat: () => void
   onSelectSession: (path: string) => void
   onRenameSession: (path: string, name: string) => void
   onDeleteSession: (path: string) => void
+  onExportSession: (session: SessionSummary) => void
   onDeleteProject: () => void
-  onFetchSessions: (workingDirectory: string) => Promise<SessionSummary[]>
-  getSessionRuntimeState?: (path: string, cwd: string) => SessionRuntimeState | null
+  onFetchSessions: (workingDirectory: string, projectId?: string) => Promise<SessionSummary[]>
+  getSessionRuntimeState?: (
+    path: string,
+    cwd: string,
+    phiSessionId?: string | null
+  ) => SessionRuntimeState | null
   compactHoverPreview?: boolean
   onPreviewInteractionChange?: (active: boolean) => void
 }
@@ -56,6 +64,7 @@ function projectRowPropsMatch(left: ProjectRowProps, right: ProjectRowProps): bo
     left.project === right.project &&
     left.expanded === right.expanded &&
     left.refreshKey === right.refreshKey &&
+    left.searchSessions === right.searchSessions &&
     left.activeSessionPath === right.activeSessionPath &&
     left.compactHoverPreview === right.compactHoverPreview
   )
@@ -65,12 +74,14 @@ function ProjectRowImpl({
   project,
   expanded,
   refreshKey,
+  searchSessions,
   onToggleExpanded,
   activeSessionPath,
   onStartChat,
   onSelectSession,
   onRenameSession,
   onDeleteSession,
+  onExportSession,
   onDeleteProject,
   onFetchSessions,
   getSessionRuntimeState,
@@ -80,17 +91,21 @@ function ProjectRowImpl({
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const isRemote = project.location?.kind === 'ssh'
   const gitStatusLabel = projectGitStatusLabel(project)
+  const remoteSummary = projectLocationSummary(project)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
+  const sourceSessions = searchSessions ?? sessions ?? []
+  const sessionsReady = searchSessions !== undefined || sessions !== null
   const { orderedSessions, handleDragEnd } = useSessionOrder(
-    `project:${project.workingDirectory}`,
-    sessions ?? []
+    isRemote ? `project:${project.id}` : `project:${project.workingDirectory}`,
+    sourceSessions
   )
 
   useEffect(() => {
-    if (!expanded) return
+    if (!expanded || searchSessions !== undefined) return
     let cancelled = false
-    void onFetchSessions(project.workingDirectory).then((nextSessions) => {
+    void onFetchSessions(project.workingDirectory, project.id).then((nextSessions) => {
       if (!cancelled) {
         setSessions((previous) => preserveSessionListOrder(previous ?? [], nextSessions))
       }
@@ -98,15 +113,16 @@ function ProjectRowImpl({
     return () => {
       cancelled = true
     }
-  }, [expanded, onFetchSessions, project.workingDirectory, refreshKey])
+  }, [expanded, onFetchSessions, project.id, project.workingDirectory, refreshKey, searchSessions])
 
   // This project's own ticking clock for live elapsed-time display, gated on
   // whether any of ITS sessions are actually active — separate from
   // SessionSidebar's own timer (which only covers the top-level conversation
   // list), since project sessions live in this component's own fetched
   // `sessions` state and aren't visible to the parent.
-  const hasActiveAttention = (sessions ?? []).some((session) => {
-    const runtimeState = getSessionRuntimeState?.(session.path, project.workingDirectory) ?? null
+  const hasActiveAttention = sourceSessions.some((session) => {
+    const runtimeState =
+      getSessionRuntimeState?.(session.path, project.workingDirectory, session.phiSessionId) ?? null
     const status = runtimeState?.status ?? session.status
     return status === 'running' || status === 'needs_approval' || status === 'needs_input'
   })
@@ -145,7 +161,11 @@ function ProjectRowImpl({
           '&:hover .project-toggle-icon': { opacity: 1 }
         }}
       >
-        <FolderIcon fontSize="small" sx={{ mr: 1.5, flexShrink: 0, color: 'text.secondary' }} />
+        {isRemote ? (
+          <ServerIcon fontSize="small" sx={{ mr: 1.5, flexShrink: 0, color: 'text.secondary' }} />
+        ) : (
+          <FolderIcon fontSize="small" sx={{ mr: 1.5, flexShrink: 0, color: 'text.secondary' }} />
+        )}
         <Box sx={{ minWidth: 0, flex: 1 }}>
           <Box sx={{ display: 'inline-flex', maxWidth: '100%', alignItems: 'center', gap: 0.75 }}>
             <Typography component="span" noWrap sx={{ minWidth: 0, fontSize: ROW_LABEL_FONT_SIZE }}>
@@ -175,6 +195,15 @@ function ProjectRowImpl({
               {gitStatusLabel}
             </Typography>
           ) : null}
+          {remoteSummary && (
+            <Typography
+              component="div"
+              noWrap
+              sx={{ fontSize: ROW_META_FONT_SIZE, color: 'text.secondary' }}
+            >
+              {remoteSummary}
+            </Typography>
+          )}
         </Box>
         <Stack
           direction="row"
@@ -196,16 +225,18 @@ function ProjectRowImpl({
               <MoreHorizIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title="新对话">
-            <IconButton
-              size="small"
-              onClick={(event) => {
-                event.stopPropagation()
-                onStartChat()
-              }}
-            >
-              <AddCommentIcon fontSize="small" />
-            </IconButton>
+          <Tooltip title={isRemote ? '新对话（远程文件与命令工具已可用）' : '新对话'}>
+            <span>
+              <IconButton
+                size="small"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onStartChat()
+                }}
+              >
+                <AddCommentIcon fontSize="small" />
+              </IconButton>
+            </span>
           </Tooltip>
         </Stack>
       </ListItemButton>
@@ -229,11 +260,21 @@ function ProjectRowImpl({
       </Menu>
 
       <Collapse in={expanded} unmountOnExit>
-        {sessions && sessions.length > 0 && (
+        {isRemote && (
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ pl: 4, pr: 1, py: 0.75, fontSize: ROW_META_FONT_SIZE }}
+          >
+            远程读取、搜索、命令和文件新建、修改已可用；修改前需先读取。Git、Notebook 和项目级
+            Skills/MCP 暂未支持。对话历史保存在 Phi 中。
+          </Typography>
+        )}
+        {sessionsReady && orderedSessions.length > 0 && (
           <DndContext
-            sensors={sensors}
+            sensors={searchSessions === undefined ? sensors : []}
             collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
+            onDragEnd={searchSessions === undefined ? handleDragEnd : undefined}
           >
             <SortableContext
               items={orderedSessions.map((session) => session.path)}
@@ -244,20 +285,27 @@ function ProjectRowImpl({
                   key={session.path}
                   session={session}
                   runtimeState={
-                    getSessionRuntimeState?.(session.path, project.workingDirectory) ?? null
+                    getSessionRuntimeState?.(
+                      session.path,
+                      project.workingDirectory,
+                      session.phiSessionId
+                    ) ?? null
                   }
                   isActive={session.path === activeSessionPath}
                   indent
                   nowMs={nowMs}
+                  compactHoverPreview={compactHoverPreview}
+                  onPreviewInteractionChange={onPreviewInteractionChange}
                   onSelect={() => onSelectSession(session.path)}
                   onRename={(name) => onRenameSession(session.path, name)}
                   onDelete={() => onDeleteSession(session.path)}
+                  onExport={() => onExportSession(session)}
                 />
               ))}
             </SortableContext>
           </DndContext>
         )}
-        {sessions && sessions.length === 0 && (
+        {sessionsReady && orderedSessions.length === 0 && (
           <Typography
             variant="body2"
             color="text.secondary"

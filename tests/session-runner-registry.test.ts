@@ -238,6 +238,24 @@ test('runner emits persisted lifecycle events for live renderer updates', async 
   })
 })
 
+test('runner notifies background approval state after the parent run settles', async () => {
+  await withPhiDir(async () => {
+    const settled: string[] = []
+    const registry = new SessionRunnerRegistry({
+      onRunSettled: (sessionId) => settled.push(sessionId)
+    })
+    const sessionId = createTestSession()
+    const run = registry.startRun({
+      sessionId,
+      runId: createRunId(),
+      execute: async () => undefined
+    })
+    await run.done
+    assert.deepEqual(settled, [sessionId])
+    assert.equal(registry.getActiveRun(sessionId), null)
+  })
+})
+
 test('runner keeps an already recorded assistant failure from becoming completed', async () => {
   await withPhiDir(async () => {
     const registry = new SessionRunnerRegistry()

@@ -1,0 +1,98 @@
+phiDbConnectorVersion: 1
+id: rest-json/gwas-catalog
+name: GWAS Catalog
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://www.ebi.ac.uk/gwas/rest/api
+networkPolicy:
+  allowedHosts:
+    - www.ebi.ac.uk
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 3
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: snp
+    summary: SNP metadata from the GWAS Catalog by rsID.
+    identity:
+      stableIdFields: [rsId]
+      namespace: dbsnp.rsid
+      primaryUrlTemplate: https://www.ebi.ac.uk/gwas/variants/{stable_id}
+    commonFields: [rsId, functionalClass, lastUpdateDate]
+    rest:
+      request:
+        path: /singleNucleotidePolymorphisms/{filter:rsId}
+      response:
+        rowsPath: $
+    fields:
+      - name: rsId
+        type: string
+        description: dbSNP rsID such as rs7329174.
+        synonyms: [rsid, snp, query]
+        namespace: dbsnp.rsid
+  - id: snp_associations
+    summary: Trait associations reported for a SNP.
+    identity:
+      stableIdFields: [associationId]
+      namespace: gwas.association
+    commonFields:
+      [associationId, pvalue, riskFrequency, orPerCopyNum, betaNum, range, standardError]
+    rest:
+      request:
+        path: /singleNucleotidePolymorphisms/{filter:rsId}/associations
+      response:
+        rowsPath: _embedded.associations
+        fieldMap:
+          associationId: associationId
+          pvalue: pvalue
+          riskFrequency: riskFrequency
+          orPerCopyNum: orPerCopyNum
+          betaNum: betaNum
+          range: range
+          standardError: standardError
+    fields:
+      - name: rsId
+        type: string
+        description: dbSNP rsID.
+        synonyms: [rsid, snp]
+        namespace: dbsnp.rsid
+      - name: pvalue
+        type: number
+        description: Reported association p-value.
+  - id: trait_search
+    summary: Search EFO traits by name.
+    identity:
+      stableIdFields: [shortForm]
+      namespace: efo.id
+    commonFields: [efoId, trait, shortForm, uri]
+    rest:
+      request:
+        path: /efoTraits/search/findByEfoTrait
+        filterParamMap:
+          trait: trait
+        limitParam: size
+        cursorParam: page
+      response:
+        rowsPath: _embedded.efoTraits
+        fieldMap:
+          efoId: efoId
+          trait: trait
+          shortForm: shortForm
+          uri: uri
+    fields:
+      - name: trait
+        type: string
+        description: Trait name substring such as diabetes.
+        synonyms: [query, name, efo]
+      - name: shortForm
+        type: string
+        description: EFO short form identifier.
+      - name: efoId
+        type: string
+        description: Full EFO identifier when provided by the API.

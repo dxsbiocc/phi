@@ -6,19 +6,26 @@ import test from 'node:test'
 
 import {
   createProject,
+  type Project,
   updateProjectRemoteConnection,
   updateProjectRemoteDefaults
 } from '../src/main/agent/projects'
+import { saveRemoteHostProfile } from '../src/main/agent/remote-hosts'
 import { RUNTIME_AGENT_DIR_ENV } from '../src/main/agent/runtime-paths'
 import type { WrapperCatalogEntry } from '../src/main/agent/wrappers/catalog'
 import {
   createWrapperRunPlan,
   isWrapperPlanExpired,
+  retargetWrapperRunPlan,
   reviseWrapperRunPlan
 } from '../src/main/agent/wrappers/plans'
-import { readWrapperPlanArtifact } from '../src/main/agent/wrappers/store'
+import {
+  readGlobalWrapperAuditEvents,
+  readWrapperPlan,
+  readWrapperPlanArtifact
+} from '../src/main/agent/wrappers/store'
 import type { WrapperRunPlan } from '../src/main/agent/wrappers/types'
-import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
+import { installLegacyFastqQcWrapper, installLegacyRnaseqWrapper } from './helpers/wrapperFixtures'
 
 function withHarness<T>(callback: (harness: { agentDir: string; projectDir: string }) => T): T {
   const root = mkdtempSync(join(tmpdir(), 'phi-wrapper-plans-'))
@@ -60,17 +67,51 @@ function configureProjectRemote(agentDir: string, projectDir: string): void {
     workingDirectory: projectDir,
     permissionMode: 'ask'
   })
+  const host = saveRemoteHostProfile(
+    { label: 'Lab HPC', hostAlias: 'lab-hpc.example.edu' },
+    agentDir
+  )
   updateProjectRemoteConnection(project.id, 'conn1', {
     id: 'conn1',
     label: 'Lab HPC',
-    host: 'lab-hpc.example.edu',
-    username: 'agent',
-    privateKeyPath: join(projectDir, 'unused-key')
+    hostProfileId: host.id,
+    hpc: { scheduler: 'slurm', controller: 'sbatch' },
+    inputPathMapping: { localRoot: projectDir, remoteRoot: '/cluster/project-data' }
   })
   updateProjectRemoteDefaults(project.id, {
     defaultRemoteConnectionId: 'conn1',
     remoteWorkspaceRoot: '/cluster/facility/lab/WorkSpace'
   })
+}
+
+function registerSshProject(
+  agentDir: string,
+  hpc?: { scheduler: 'slurm'; controller: 'sbatch' }
+): Project {
+  const host = saveRemoteHostProfile({ label: 'Cluster', hostAlias: 'lab-hpc' }, agentDir)
+  const project: Project = {
+    id: 'ssh-project-1',
+    name: 'Remote',
+    location: {
+      kind: 'ssh',
+      hostProfileId: host.id,
+      remoteRoot: '/server/project-link',
+      canonicalRoot: '/data/project'
+    },
+    workingDirectory: '/server/project-link',
+    workingDirectoryRealPath: '/data/project',
+    permissionMode: 'ask',
+    pathAvailable: true,
+    createdAt: '2026-09-24T00:00:00.000Z',
+    ...(hpc
+      ? {
+          remoteConnections: [{ id: 'conn1', label: 'Slurm', hostProfileId: host.id, hpc }],
+          defaultRemoteConnectionId: 'conn1'
+        }
+      : {})
+  }
+  writeFileSync(join(agentDir, 'projects.json'), JSON.stringify([project]))
+  return project
 }
 
 function writeFastqPair(projectDir: string, sample: string): void {
@@ -236,7 +277,26 @@ test("createWrapperRunPlan uses a profile's declared nextflowProfile for -profil
   })
 })
 
-// --- Phase 2: resolveExecutor's "project default" tier -------------------
+// --- Local projects use remote settings only after an explicit remote request. ---
+
+test('a saved server never changes a local project plan into a remote plan by default', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    writeFastqPair(projectDir, 'S1')
+    configureProjectRemote(agentDir, projectDir)
+
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: fastqQcWrapper(agentDir, projectDir),
+      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
+      cwd: projectDir,
+      agentDir
+    })
+
+    assert.equal(plan.state, 'valid', plan.validation.errors.join('; '))
+    assert.equal(plan.executor, 'local')
+    assert.equal(plan.targetSelection?.target, 'local')
+  })
+})
 
 test('createWrapperRunPlan resolves the sbatch-controller profile when the project has remote execution configured', () => {
   withProjectHarness(({ agentDir, projectDir }) => {
@@ -249,10 +309,11 @@ test('createWrapperRunPlan resolves the sbatch-controller profile when the proje
       wrapper,
       params: { reads: 'data/*_{R1,R2}.fastq.gz' },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
 
-    assert.equal(plan.executor, 'slurm-controller')
+    assert.equal(plan.executor, 'slurm-controller', plan.validation.errors.join('; '))
     assert.equal(plan.profile, 'slurm-controller')
     assert.equal(plan.state, 'valid')
     assert.match(plan.commandPlan.command, /-profile slurm-controller$/)
@@ -285,7 +346,8 @@ test("createWrapperRunPlan trusts a remote plan's input paths verbatim — no lo
       wrapper: wrapperWithFasta,
       params: { reads: 'data/*_{R1,R2}.fastq.gz', fasta: remoteFastaPath },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
 
     assert.equal(plan.executor, 'slurm-controller')
@@ -299,7 +361,41 @@ test("createWrapperRunPlan trusts a remote plan's input paths verbatim — no lo
   })
 })
 
-test('createWrapperRunPlan falls back to local when the project has remote configured but the wrapper declares no sbatch-controller profile', () => {
+test('legacy plan maps an explicit local input to the saved server path and retains provenance', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    configureProjectRemote(agentDir, projectDir)
+    writeFastqPair(projectDir, 'S1')
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: fastqQcWrapper(agentDir, projectDir),
+      params: { reads: { source: 'local', path: 'data/*_{R1,R2}.fastq.gz' } },
+      cwd: projectDir,
+      agentDir,
+      explicitTarget: 'remote'
+    })
+    assert.equal(plan.state, 'valid', plan.validation.errors.join('; '))
+    assert.equal(plan.params.reads, '/cluster/project-data/data/*_{R1,R2}.fastq.gz')
+    assert.equal(plan.inputs[0]?.source, 'local')
+    assert.deepEqual(plan.inputs[0]?.localPaths, [join(projectDir, 'data/*_{R1,R2}.fastq.gz')])
+    assert.deepEqual(plan.inputs[0]?.remotePaths, ['/cluster/project-data/data/*_{R1,R2}.fastq.gz'])
+
+    const sameName = join(projectDir, 'data/*_{R1,R2}.fastq.gz')
+    const remoteString = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: fastqQcWrapper(agentDir, projectDir),
+      params: { reads: sameName },
+      cwd: projectDir,
+      agentDir,
+      explicitTarget: 'remote'
+    })
+    assert.equal(remoteString.state, 'valid')
+    assert.equal(remoteString.inputs[0]?.source, 'remote')
+    assert.deepEqual(remoteString.inputs[0]?.localPaths, [])
+    assert.deepEqual(remoteString.inputs[0]?.remotePaths, [sameName])
+  })
+})
+
+test('createWrapperRunPlan rejects a configured remote target without a compatible profile', () => {
   withProjectHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
     const wrapper = fastqQcWrapper(agentDir, projectDir)
@@ -322,14 +418,16 @@ test('createWrapperRunPlan falls back to local when the project has remote confi
       wrapper: noRemoteProfileWrapper,
       params: { reads: 'data/*_{R1,R2}.fastq.gz' },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
 
-    assert.equal(plan.executor, 'local')
+    assert.equal(plan.state, 'invalid')
+    assert.match(plan.validation.errors.join('; '), /远程 Profile/)
   })
 })
 
-test('createWrapperRunPlan falls back to local when the project has only partially configured remote execution', () => {
+test('createWrapperRunPlan rejects partial remote settings instead of silently running locally', () => {
   withProjectHarness(({ agentDir, projectDir }) => {
     writeFastqPair(projectDir, 'S1')
     const wrapper = fastqQcWrapper(agentDir, projectDir)
@@ -338,12 +436,14 @@ test('createWrapperRunPlan falls back to local when the project has only partial
       workingDirectory: projectDir,
       permissionMode: 'ask'
     })
+    const host = saveRemoteHostProfile(
+      { label: 'Lab HPC', hostAlias: 'lab-hpc.example.edu' },
+      agentDir
+    )
     updateProjectRemoteConnection(project.id, 'conn1', {
       id: 'conn1',
       label: 'Lab HPC',
-      host: 'lab-hpc.example.edu',
-      username: 'agent',
-      privateKeyPath: join(projectDir, 'unused-key')
+      hostProfileId: host.id
     })
     // defaultRemoteConnectionId set, but remoteWorkspaceRoot never configured.
     updateProjectRemoteDefaults(project.id, { defaultRemoteConnectionId: 'conn1' })
@@ -353,10 +453,12 @@ test('createWrapperRunPlan falls back to local when the project has only partial
       wrapper,
       params: { reads: 'data/*_{R1,R2}.fastq.gz' },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
 
-    assert.equal(plan.executor, 'local')
+    assert.equal(plan.state, 'invalid')
+    assert.match(plan.validation.errors.join('; '), /服务器工作目录/)
   })
 })
 
@@ -375,12 +477,123 @@ test('createWrapperRunPlan does not require heavy-workload acknowledgement once 
       wrapper: heavyWrapper,
       params: { reads: 'data/*_{R1,R2}.fastq.gz' },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
 
     assert.equal(plan.executor, 'slurm-controller')
     assert.equal(plan.requiresHeavyWorkloadAcknowledgement, undefined)
     assert.equal(plan.state, 'valid')
+  })
+})
+
+test('SSH project plans use their bound host and canonical path for ordinary SSH and Slurm', () => {
+  for (const mode of ['plain', 'slurm'] as const) {
+    withProjectHarness(({ agentDir, projectDir }) => {
+      const project = registerSshProject(
+        agentDir,
+        mode === 'slurm' ? { scheduler: 'slurm', controller: 'sbatch' } : undefined
+      )
+      const wrapper =
+        mode === 'slurm'
+          ? fastqQcWrapper(agentDir, projectDir)
+          : installLegacyRnaseqWrapper(agentDir, projectDir)
+      const params =
+        mode === 'slurm'
+          ? { reads: '/data/project/reads/*_{R1,R2}.fastq.gz' }
+          : {
+              input: '/data/project/samplesheet.csv',
+              fasta: '/data/project/reference.fa',
+              gtf: '/data/project/genes.gtf'
+            }
+      const plan = createWrapperRunPlan({
+        actor: 'agent',
+        wrapper,
+        params,
+        cwd: join(agentDir, 'remote-project-anchors', project.id),
+        projectId: project.id,
+        agentDir
+      })
+      assert.equal(plan.state, 'valid', plan.validation.errors.join('; '))
+      assert.equal(plan.executor, mode === 'slurm' ? 'slurm-controller' : 'remote-background')
+      assert.equal(plan.cwd, '/data/project')
+      assert.equal(plan.targetSelection?.projectId, project.id)
+      assert.equal(
+        plan.targetSelection?.hostProfileId,
+        project.location.kind === 'ssh' ? project.location.hostProfileId : ''
+      )
+      assert.equal(plan.targetSelection?.hostAlias, 'lab-hpc')
+      assert.equal(plan.targetSelection?.remoteRoot, '/data/project')
+      assert.equal(plan.targetSelection?.environmentCheckPending, true)
+      assert.equal(plan.requiresHeavyWorkloadAcknowledgement, undefined)
+      assert.throws(
+        () =>
+          retargetWrapperRunPlan(
+            {
+              planId: plan.planId,
+              target: 'local',
+              expectedRevision: plan.revision,
+              confirmedLocalFallback: true
+            },
+            agentDir
+          ),
+        /只有本地项目/
+      )
+    })
+  }
+})
+
+test('SSH project without a compatible remote profile is invalid and cannot fall back to local', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    const project = registerSshProject(agentDir)
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: fastqQcWrapper(agentDir, projectDir),
+      params: { reads: '/data/project/reads/*.fastq.gz' },
+      cwd: join(agentDir, 'remote-project-anchors', project.id),
+      projectId: project.id,
+      agentDir
+    })
+    assert.equal(plan.state, 'invalid')
+    assert.match(plan.validation.errors.join('; '), /远程 Profile/)
+    assert.equal(plan.targetSelection, undefined)
+  })
+})
+
+test('SSH project rejects an explicit local target while a local project may choose it', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    const remote = registerSshProject(agentDir)
+    const wrapper = installLegacyRnaseqWrapper(agentDir, projectDir)
+    const refused = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper,
+      params: {
+        input: '/data/project/samples.csv',
+        fasta: '/data/project/ref.fa',
+        gtf: '/data/project/genes.gtf'
+      },
+      cwd: join(agentDir, 'remote-project-anchors', remote.id),
+      projectId: remote.id,
+      explicitTarget: 'local',
+      agentDir
+    })
+    assert.equal(refused.state, 'invalid')
+    assert.match(refused.validation.errors.join('; '), /不能在本机执行/)
+  })
+  withProjectHarness(({ agentDir, projectDir }) => {
+    configureProjectRemote(agentDir, projectDir)
+    writeFastqPair(projectDir, 'S1')
+    const local = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: fastqQcWrapper(agentDir, projectDir),
+      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
+      cwd: projectDir,
+      explicitTarget: 'local',
+      agentDir
+    })
+    assert.equal(local.state, 'valid', local.validation.errors.join('; '))
+    assert.equal(local.executor, 'local')
+    assert.equal(local.targetSelection?.target, 'local')
   })
 })
 
@@ -407,6 +620,123 @@ test('reviseWrapperRunPlan keeps the same planId and bumps the revision', () => 
     assert.equal(revised.planId, initial.planId)
     assert.equal(revised.revision, 2)
     assert.equal((revised.params as { threads: number }).threads, 16)
+  })
+})
+
+test('revising an SSH plan preserves its saved host, profile and project identity', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    const project = registerSshProject(agentDir)
+    const wrapper = installLegacyRnaseqWrapper(agentDir, projectDir)
+    const params = {
+      input: '/data/project/samples.csv',
+      fasta: '/data/project/ref.fa',
+      gtf: '/data/project/genes.gtf'
+    }
+    const cwd = join(agentDir, 'remote-project-anchors', project.id)
+    const first = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper,
+      params,
+      cwd,
+      projectId: project.id,
+      agentDir
+    })
+    assert.equal(first.state, 'valid')
+    const revised = reviseWrapperRunPlan(
+      first.planId,
+      { ...params, aligner: 'hisat2' },
+      { actor: 'agent', wrapper, cwd, agentDir }
+    )
+    assert.equal(revised.revision, 2)
+    assert.equal(revised.executor, 'remote-background')
+    assert.deepEqual(revised.targetSelection, first.targetSelection)
+    assert.throws(
+      () =>
+        reviseWrapperRunPlan(first.planId, params, {
+          actor: 'agent',
+          wrapper,
+          cwd,
+          agentDir,
+          explicitTarget: 'local'
+        }),
+      /需要创建新计划/
+    )
+    const changed = {
+      ...project,
+      location: { ...project.location, canonicalRoot: '/data/changed' }
+    }
+    writeFileSync(join(agentDir, 'projects.json'), JSON.stringify([changed]))
+    assert.throws(
+      () => reviseWrapperRunPlan(first.planId, params, { actor: 'agent', wrapper, cwd, agentDir }),
+      /项目或服务器配置已变化/
+    )
+    assert.equal(readWrapperPlan(first.planId, agentDir)?.revision, 2)
+  })
+})
+
+test('local fallback creates a validated revision with an explicit durable confirmation', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    configureProjectRemote(agentDir, projectDir)
+    writeFastqPair(projectDir, 'S1')
+    const wrapper = fastqQcWrapper(agentDir, projectDir)
+    const remote = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper,
+      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
+      cwd: projectDir,
+      agentDir,
+      explicitTarget: 'remote'
+    })
+    assert.equal(remote.executor, 'slurm-controller')
+    assert.throws(
+      () =>
+        retargetWrapperRunPlan(
+          { planId: remote.planId, target: 'local', expectedRevision: 1 },
+          agentDir
+        ),
+      /需要明确确认/
+    )
+    const local = retargetWrapperRunPlan(
+      {
+        planId: remote.planId,
+        target: 'local',
+        expectedRevision: 1,
+        confirmedLocalFallback: true
+      },
+      agentDir
+    )
+    assert.equal(local.state, 'valid', local.validation.errors.join('; '))
+    assert.equal(local.revision, 2)
+    assert.equal(local.executor, 'local')
+    assert.equal(local.targetSelection?.target, 'local')
+    assert.match(local.targetSelection?.reason ?? '', /用户确认改在本机运行/)
+    assert.equal(local.targetChangeConfirmation?.fromRevision, 1)
+    assert.ok(local.targetChangeConfirmation?.confirmedAt)
+    assert.deepEqual(
+      readWrapperPlan(remote.planId, agentDir)?.targetChangeConfirmation,
+      local.targetChangeConfirmation
+    )
+    const audit = readGlobalWrapperAuditEvents(agentDir).find(
+      (event) => event.type === 'plan_confirmation_decision' && event.planId === remote.planId
+    )
+    assert.equal(audit?.actor, 'user')
+    assert.equal(audit?.detail?.confirmedLocalFallback, true)
+    assert.throws(
+      () =>
+        retargetWrapperRunPlan(
+          { planId: remote.planId, target: 'remote', expectedRevision: 1 },
+          agentDir
+        ),
+      /计划已更新/
+    )
+    assert.throws(
+      () =>
+        retargetWrapperRunPlan(
+          { planId: remote.planId, target: 'remote', expectedRevision: 2 },
+          agentDir
+        ),
+      /重新创建计划并填写服务器上的输入路径/
+    )
   })
 })
 

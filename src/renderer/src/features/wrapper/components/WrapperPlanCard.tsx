@@ -5,8 +5,21 @@ import type { WrapperRun, WrapperRunPlan } from '../../../../../shared/wrapperTy
 import { PhiIcons } from '../../../icons'
 import { buildWrapperFlowGraph } from '../lib/wrapperFlow'
 import { parseSamplesheetCsv } from '../lib/wrapperSamplesheet'
-import { resolveWrapperCancelTarget, runStateLabel, trustTierLabel } from '../lib/wrapperView'
+import { useWrapperPlanProject } from '../hooks/useWrapperPlanProject'
+import {
+  resolveWrapperCancelTarget,
+  runStateLabel,
+  trustTierLabel,
+  wrapperPlanSubmitBlockReason,
+  wrapperPlanSubmitConfirmation
+} from '../lib/wrapperView'
 import { WrapperFlowDiagram } from './WrapperFlowDiagram'
+import { WrapperExecutionTargetControl } from './WrapperExecutionTargetControl'
+import {
+  WrapperPlanTargetActions,
+  WrapperPlanTargetDetails,
+  WrapperPlanTargetSummary
+} from './WrapperPlanTarget'
 
 const DoneIcon = PhiIcons.state.done
 const DeniedIcon = PhiIcons.state.denied
@@ -146,7 +159,7 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
     window.api
       .getWrapperPlan(item.planId)
       .then((result) => {
-        if (!cancelled) setLoadState({ plan: result })
+        if (!cancelled) setLoadState(result ? { plan: result } : { error: '计划不存在或已删除' })
       })
       .catch((error: unknown) => {
         if (!cancelled) setLoadState({ error: errorMessage(error) })
@@ -156,8 +169,15 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
     }
   }, [item.planId])
 
-  const plan = loadState.plan
+  const plan = loadState.plan?.planId === item.planId ? loadState.plan : undefined
   const setPlan = (next: WrapperRunPlan | undefined): void => setLoadState({ plan: next })
+  const {
+    targetProject,
+    localTargetProject,
+    targetProjectLoaded,
+    needsRemoteSetup,
+    refreshLocalTargetProject
+  } = useWrapperPlanProject(plan)
 
   const [samplesheets, setSamplesheets] = useState<Record<string, string>>({})
 
@@ -274,14 +294,17 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
     run?.stepStates
   )
   const isUnsubmitted = plan.state === 'valid' || plan.state === 'invalid' || plan.state === 'draft'
+  const submitBlockReason = wrapperPlanSubmitBlockReason(plan, targetProject, targetProjectLoaded)
   const canSubmit =
     plan.state === 'valid' &&
     !busy &&
+    !submitBlockReason &&
     (!plan.requiresHeavyWorkloadAcknowledgement || heavyWorkloadAcknowledged)
   const cancelTarget = resolveWrapperCancelTarget(plan, run)
   const canCancel = !!cancelTarget && !busy
   const planStatusTone: 'pending' | 'positive' | 'negative' =
     plan.state === 'valid' ? 'positive' : plan.state === 'invalid' ? 'negative' : 'pending'
+  const currentPlanId = plan.planId
 
   async function runAction(action: () => Promise<WrapperRunPlan | void>): Promise<void> {
     setBusy(true)
@@ -289,7 +312,7 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
     try {
       const result = await action()
       if (result) setPlan(result)
-      else if (item.planId) setPlan(await window.api.getWrapperPlan(item.planId))
+      else setPlan(await window.api.getWrapperPlan(currentPlanId))
     } catch (error) {
       setActionError(errorMessage(error))
     } finally {
@@ -314,6 +337,14 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
     } finally {
       setBusy(false)
     }
+  }
+
+  function retarget(request: Parameters<typeof window.api.retargetWrapperPlan>[0]): void {
+    void runAction(async () => {
+      const updated = await window.api.retargetWrapperPlan(request)
+      setHeavyWorkloadAcknowledged(false)
+      return updated
+    })
   }
 
   const infoLine = [
@@ -347,6 +378,8 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
 
         <WrapperFlowDiagram graph={graph} height={130} />
 
+        <WrapperPlanTargetSummary plan={plan} />
+
         {plan.validation.errors.length > 0 && (
           <Typography
             variant="body2"
@@ -372,13 +405,35 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
             sx={{ alignItems: 'center', color: 'warning.main', flexWrap: 'wrap', rowGap: 0.5 }}
           >
             <Typography variant="caption" sx={{ color: 'inherit' }}>
-              重量级任务 · Phase 1 暂无远程执行环境，确认后将在本机运行
+              重量级任务将在本机运行，请确认本机资源与输入数据
             </Typography>
             <Button size="small" onClick={() => setHeavyWorkloadAcknowledged((prev) => !prev)}>
               {heavyWorkloadAcknowledged ? '已确认' : '确认在本地运行'}
             </Button>
           </Stack>
         )}
+
+        {localTargetProject &&
+          isUnsubmitted &&
+          (plan.targetSelection?.target === 'local' || needsRemoteSetup) && (
+            <WrapperExecutionTargetControl
+              project={localTargetProject}
+              compact
+              busy={busy}
+              onSaved={refreshLocalTargetProject}
+            />
+          )}
+
+        <WrapperPlanTargetActions
+          plan={plan}
+          busy={busy}
+          isUnsubmitted={isUnsubmitted}
+          submitBlockReason={submitBlockReason}
+          remoteConfigured={Boolean(
+            localTargetProject?.defaultRemoteConnectionId && localTargetProject.remoteWorkspaceRoot
+          )}
+          onRetarget={retarget}
+        />
 
         {plan.state === 'submitted' && plan.submittedRunId && (
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center', color: 'text.secondary' }}>
@@ -399,26 +454,38 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
             </Typography>
           </Stack>
         )}
+        {run?.inputWarnings?.map((warning) => (
+          <Typography key={warning} variant="caption" sx={{ color: 'warning.main' }}>
+            {warning}
+          </Typography>
+        ))}
+        {run?.inputErrors?.map((error) => (
+          <Typography key={error} variant="caption" sx={{ color: 'error.main' }}>
+            {error}
+          </Typography>
+        ))}
+        {run?.environmentWarnings?.map((warning) => (
+          <Typography key={warning} variant="caption" sx={{ color: 'warning.main' }}>
+            {warning}
+          </Typography>
+        ))}
+        {run?.environmentError && (
+          <Typography variant="caption" sx={{ color: 'error.main' }}>
+            {run.environmentError}
+          </Typography>
+        )}
+        {run?.launchDiagnostic && (
+          <Typography variant="caption" sx={{ color: 'warning.main' }}>
+            {run.launchDiagnostic}
+          </Typography>
+        )}
 
         <Collapse in={expanded}>
           <Stack spacing={0.5} sx={{ pt: 0.5, borderTop: 1, borderColor: 'divider', mt: 0.5 }}>
-            {plan.inputs.length > 0 && (
-              <Typography variant="caption" color="text.secondary">
-                输入：
-                {plan.inputs
-                  .map((input) => `${input.id}（${input.localPaths.length} 个文件）`)
-                  .join('，')}
-              </Typography>
-            )}
+            <WrapperPlanTargetDetails plan={plan} run={run} />
             {Object.entries(samplesheets).map(([inputId, csv]) => (
               <SamplesheetPreview key={inputId} inputId={inputId} csv={csv} />
             ))}
-            <Typography variant="caption" color="text.secondary">
-              输出目录：{plan.outputDir}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              资源：{plan.resources.cpus ?? '-'} CPU · {plan.resources.memory ?? '-'}
-            </Typography>
             <Typography
               variant="caption"
               sx={{
@@ -466,10 +533,10 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
             disabled={!canSubmit}
             onClick={() =>
               void runAction(async () => {
-                if (!item.planId) return
                 await window.api.submitWrapperPlan(
-                  item.planId,
-                  heavyWorkloadAcknowledged || undefined
+                  plan.planId,
+                  heavyWorkloadAcknowledged || undefined,
+                  wrapperPlanSubmitConfirmation(plan)
                 )
               })
             }

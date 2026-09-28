@@ -4,6 +4,8 @@ import { fileIconForPath } from '../../icons'
 import type { ToolCallItem } from '../../types'
 import { DbQueryResultPreview } from '../../features/databases/components/DbQueryResultPreview'
 import { toolTargetFromArgs } from '../../lib/toolTargets'
+import { remotePathInsideRoot, remoteWorkspaceUri } from '../../../../shared/remoteWorkspacePath'
+import { useRemoteProjectFileContext } from '../../lib/remoteProjectFileContext'
 import {
   formatBytes,
   isOutputPreviewTruncated,
@@ -16,9 +18,18 @@ import { NotebookToolSummaryBlock } from './NotebookToolSummary'
 import { DiffAwareOutput } from './ToolOutputText'
 
 export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string }): ReactNode {
+  const remoteProject = useRemoteProjectFileContext()
   const [showFullArgs, setShowFullArgs] = useState(false)
   const [showFullOutput, setShowFullOutput] = useState(false)
-  const target = toolTargetFromArgs(item.toolName, item.argsJson, cwd ?? '')
+  const target = toolTargetFromArgs(item.toolName, item.argsJson, cwd ?? '', {
+    allowBareFileName: Boolean(remoteProject)
+  })
+  const remoteTargetUri =
+    target &&
+    remoteProject?.hostAlias &&
+    remotePathInsideRoot(target.absolutePath, remoteProject.canonicalRoot)
+      ? remoteWorkspaceUri(remoteProject.hostAlias, target.absolutePath)
+      : null
   const targetIcon = target ? fileIconForPath(target.absolutePath) : null
   const TargetFileIcon = targetIcon?.Icon
   const hasSavedOutput = Boolean(item.outputTruncated && item.outputPath)
@@ -84,22 +95,36 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap'
               }}
-              title={target.absolutePath}
+              title={remoteTargetUri ?? target.absolutePath}
             >
-              {target.label}
+              {remoteProject?.hostAlias
+                ? `${remoteProject.hostAlias} · ${target.label}`
+                : target.label}
             </Typography>
           </Box>
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={() => {
-              void window.api.revealPath(target.absolutePath).catch((error) => {
-                console.error('Failed to reveal tool target:', error)
-              })
-            }}
-          >
-            在文件夹显示
-          </Button>
+          {remoteProject ? (
+            remoteTargetUri ? (
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => remoteProject.openPath(remoteTargetUri, 'file')}
+              >
+                在文件面板打开
+              </Button>
+            ) : null
+          ) : (
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => {
+                void window.api.revealPath(target.absolutePath).catch((error) => {
+                  console.error('Failed to reveal tool target:', error)
+                })
+              }}
+            >
+              在文件夹显示
+            </Button>
+          )}
         </Box>
       ) : null}
       {hasSavedOutput ? (

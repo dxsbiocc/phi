@@ -1,3 +1,4 @@
+import { resolveDbAuthSecret } from './credential-store'
 import type { DbConnectorAuth, DbConnectorManifest } from './manifest-types'
 import type { DbNow, DbSleep } from './policy'
 
@@ -34,5 +35,5 @@ function rateLimitFor(manifest: DbConnectorManifest): { requestsPerSecond: numbe
 }
 
 function dbRequestUsesAuth(auth: DbConnectorAuth | undefined): boolean {
-  return Boolean(auth && auth.type !== 'none' && auth.envVar && process.env[auth.envVar])
+  return Boolean(auth && auth.type !== 'none' && auth.envVar && resolveDbAuthSecret(auth.envVar))
 }

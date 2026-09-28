@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
+import type { ProjectLocation } from '../../../shared/projectLocation'
 import { getOmpBridge, type OmpBridge } from '../omp/omp-bridge'
 import {
   getAdditionalProjectResourcePaths,
@@ -102,6 +103,7 @@ export interface RuntimeModel {
   id: string
   name: string
   reasoning: boolean
+  supportsImages?: boolean
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>
 }
 
@@ -118,6 +120,7 @@ export interface ModelRuntime {
 export type AgentSessionEvent = { type: string } & Record<string, unknown>
 export type RuntimePromptOptions = {
   preflightResult?: (accepted: boolean) => void
+  images?: Array<{ type: 'image'; data: string; mimeType: string }>
   expandPromptTemplates?: boolean
   synthetic?: boolean
   userInitiated?: boolean
@@ -163,6 +166,7 @@ type ToolCallEvent = {
   toolCallId?: string
   toolName: string
   input: Record<string, unknown>
+  agentRunId?: string
 }
 
 type ToolCallContext = {
@@ -290,6 +294,14 @@ export type CreateAgentSessionOptions = {
   resourceLoader?: RuntimeResourceLoader
   /** Phi agents scanned by the main process; the worker exposes each as a delegation tool. */
   phiAgents?: PhiAgentDefinition[]
+  /** Restrict explicit file paths in project sessions to the selected project. */
+  projectBound?: boolean
+  remoteProject?: {
+    phiSessionId: string
+    projectId: string
+    location: Extract<ProjectLocation, { kind: 'ssh' }>
+    contextFiles: Array<{ path: string; content: string }>
+  }
   /** Phi-managed user persona, injected explicitly into the main system prompt. */
   personaMarkdown?: string
 }
@@ -318,6 +330,7 @@ type ToolApprovalRequest = {
   toolCallId?: string
   toolName?: string
   input?: Record<string, unknown>
+  agentRunId?: string
 }
 
 function dedupePaths(paths: string[]): string[] {
@@ -532,9 +545,10 @@ function applySessionState(session: RuntimeAgentSessionProxy, state: WorkerSessi
 
 function runtimePromptOptionsForWorker(
   options: RuntimePromptOptions | undefined
-): Record<string, boolean> | undefined {
+): Record<string, unknown> | undefined {
   if (!options) return undefined
   const promptOptions = {
+    ...(options.images?.length ? { images: options.images } : {}),
     ...(typeof options.expandPromptTemplates === 'boolean'
       ? { expandPromptTemplates: options.expandPromptTemplates }
       : {}),
@@ -884,7 +898,8 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
       type: 'tool_call',
       toolCallId: request.toolCallId ?? request.requestId,
       toolName: request.toolName ?? '',
-      input: request.input ?? {}
+      input: request.input ?? {},
+      ...(request.agentRunId ? { agentRunId: request.agentRunId } : {})
     }
     const context: ToolCallContext = {
       signal: this.approvalAbortController.signal
@@ -964,6 +979,8 @@ export async function createRuntimeAgentSession(
       : undefined,
     enableToolApproval: toolCallHandlers.length > 0,
     phiAgents: options.phiAgents,
+    projectBound: options.projectBound,
+    remoteProject: options.remoteProject,
     personaMarkdown: options.personaMarkdown
   }
   const created = await bridge.request<WorkerCreateSessionResult>('session.create', createParams)

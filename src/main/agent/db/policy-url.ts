@@ -1,3 +1,4 @@
+import { resolveDbAuthSecret } from './credential-store'
 import type { DbConnectorAuth, DbConnectorManifest } from './manifest-types'
 import { DbHttpError } from './policy-error'
 
@@ -6,6 +7,7 @@ type DbRequestSearchParams = URLSearchParams | Record<string, string | number | 
 const SECRET_QUERY_PARAM_NAMES = new Set([
   'api_key',
   'apikey',
+  'accesskey',
   'key',
   'token',
   'access_token',
@@ -89,9 +91,23 @@ export function validateDbRequestUrl(manifest: DbConnectorManifest, url: URL): v
 }
 
 export function applyHeaderAuth(auth: DbConnectorAuth | undefined, headers: Headers): void {
-  if (!auth?.envVar) return
-  const secret = process.env[auth.envVar]
-  if (!secret) return
+  if (!auth || auth.type === 'none' || !auth.envVar) return
+  const secret = resolveDbAuthSecret(auth.envVar)
+  if (!secret) {
+    if (auth.required) {
+      throw new DbHttpError(
+        `DB connector requires API key (${auth.envVar}). Configure it in Settings → Databases.`,
+        {
+          code: 'DB_AUTH_REQUIRED',
+          retryable: false,
+          attempts: 0,
+          redactedUrl: 'about:blank',
+          transportName: 'policy'
+        }
+      )
+    }
+    return
+  }
   if (auth.type === 'api_key_header') {
     headers.set(auth.headerName ?? 'X-API-Key', secret)
   } else if (auth.type === 'bearer_token') {
@@ -118,8 +134,23 @@ function appendPath(baseUrl: URL, path: string): URL {
 
 function applyQueryAuth(auth: DbConnectorAuth | undefined, url: URL): void {
   if (auth?.type !== 'api_key_query_param' || !auth.envVar || !auth.paramName) return
-  const secret = process.env[auth.envVar]
-  if (secret) url.searchParams.set(auth.paramName, secret)
+  const secret = resolveDbAuthSecret(auth.envVar)
+  if (!secret) {
+    if (auth.required) {
+      throw new DbHttpError(
+        `DB connector requires API key (${auth.envVar}). Configure it in Settings → Databases.`,
+        {
+          code: 'DB_AUTH_REQUIRED',
+          retryable: false,
+          attempts: 0,
+          redactedUrl: redactDbRequestUrl(url),
+          transportName: 'policy'
+        }
+      )
+    }
+    return
+  }
+  url.searchParams.set(auth.paramName, secret)
 }
 
 function isBlockedDbHostname(hostname: string): boolean {

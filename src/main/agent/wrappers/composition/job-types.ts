@@ -14,6 +14,7 @@ export interface WrapperJobStatus {
   wrapperId: string
   state: WrapperRunState
   profile: string
+  targetReason?: string
   outDir: string
   startedAt?: string
   completedAt?: string

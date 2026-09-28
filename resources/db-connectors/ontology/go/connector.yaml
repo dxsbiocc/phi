@@ -1,0 +1,124 @@
+phiDbConnectorVersion: 1
+id: ontology/go
+name: Gene Ontology (OLS)
+protocolFamily: ontology
+curationTier: curated
+baseUrl: https://www.ebi.ac.uk/ols4/api
+networkPolicy:
+  allowedHosts:
+    - www.ebi.ac.uk
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 5
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: term
+    summary: Look up a Gene Ontology term by GO id or IRI through EBI OLS.
+    identity:
+      stableIdFields: [obo_id]
+      namespace: go.id
+      primaryUrlTemplate: https://www.ebi.ac.uk/ols4/ontologies/go/classes?obo_id={stable_id}
+    commonFields: [id, obo_id, iri, label, description, synonyms, ontology_id, is_obsolete]
+    ontology:
+      ontologyId: go
+      operation: lookup
+      idPrefix: GO
+      iriTemplate: http://purl.obolibrary.org/obo/{local_id}
+    fields:
+      - name: id
+        type: string
+        description: GO identifier such as GO:0006915.
+        synonyms: [go_id, term_id, accession]
+        namespace: go.id
+      - name: obo_id
+        type: string
+        description: Compact OBO identifier.
+        namespace: go.id
+      - name: label
+        type: string
+        description: Preferred term label.
+      - name: description
+        type: string
+        description: Term definition text.
+      - name: synonyms
+        type: array
+        description: Synonym list.
+  - id: search
+    summary: Search Gene Ontology terms by label, synonym, or free text.
+    identity:
+      stableIdFields: [obo_id]
+      namespace: go.id
+      primaryUrlTemplate: https://www.ebi.ac.uk/ols4/ontologies/go/classes?obo_id={stable_id}
+    commonFields: [id, obo_id, iri, label, description, synonyms, ontology_id, is_obsolete]
+    ontology:
+      ontologyId: go
+      operation: search
+      idPrefix: GO
+    fields:
+      - name: q
+        type: string
+        description: Free-text search query.
+        synonyms: [query, term, keyword]
+  - id: children
+    summary: Direct child terms of a Gene Ontology term.
+    identity:
+      stableIdFields: [obo_id]
+      namespace: go.id
+    commonFields: [id, obo_id, iri, label, description, synonyms, ontology_id]
+    ontology:
+      ontologyId: go
+      operation: children
+      idPrefix: GO
+      iriTemplate: http://purl.obolibrary.org/obo/{local_id}
+    fields:
+      - name: id
+        type: string
+        description: Parent GO identifier.
+        namespace: go.id
+  - id: parents
+    summary: Direct parent terms of a Gene Ontology term.
+    identity:
+      stableIdFields: [obo_id]
+      namespace: go.id
+    commonFields: [id, obo_id, iri, label, description, synonyms, ontology_id]
+    ontology:
+      ontologyId: go
+      operation: parents
+      idPrefix: GO
+      iriTemplate: http://purl.obolibrary.org/obo/{local_id}
+    fields:
+      - name: id
+        type: string
+        description: Child GO identifier.
+        namespace: go.id
+  - id: ancestors
+    summary: Hierarchical ancestor terms of a Gene Ontology term.
+    identity:
+      stableIdFields: [obo_id]
+      namespace: go.id
+    commonFields: [id, obo_id, iri, label, description, synonyms, ontology_id]
+    ontology:
+      ontologyId: go
+      operation: ancestors
+      idPrefix: GO
+      iriTemplate: http://purl.obolibrary.org/obo/{local_id}
+    fields:
+      - name: id
+        type: string
+        description: Descendant GO identifier.
+        namespace: go.id
+xref:
+  - from:
+      domain: search
+      field: obo_id
+      namespace: go.id
+    to:
+      domain: term
+      field: id
+      namespace: go.id

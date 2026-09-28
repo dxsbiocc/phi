@@ -15,6 +15,64 @@ test('isWrapperToolName recognizes wrapper_<id> execute tool names only', () => 
   assert.equal(isWrapperToolName('wrap_per'), false)
 })
 
+test('session history restores declared final files as a separate card', () => {
+  const items = chatItemsFromSessionMessages([
+    { source: 'phi', type: 'user_message', eventId: 'user-1', content: 'make a report' },
+    {
+      source: 'phi',
+      type: 'files_presented',
+      eventId: 'delivery-1',
+      runId: 'run-1',
+      files: [
+        {
+          path: '/project/report.pdf',
+          displayPath: 'report.pdf',
+          bytes: 123,
+          description: 'Final report'
+        }
+      ]
+    }
+  ])
+  assert.equal(items.length, 2)
+  assert.deepEqual(items[1], {
+    id: 'delivery-1',
+    role: 'presented_files',
+    runId: 'run-1',
+    files: [
+      {
+        path: '/project/report.pdf',
+        displayPath: 'report.pdf',
+        bytes: 123,
+        description: 'Final report'
+      }
+    ]
+  })
+})
+
+test('session history restores a reviewed plan and the user decision', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'plan_review_submitted',
+      eventId: 'plan-event',
+      reviewId: 'review-1',
+      runId: 'run-1',
+      title: 'Analysis',
+      content: '# Analysis',
+      planFilePath: 'local://analysis-plan.md'
+    },
+    {
+      source: 'phi',
+      type: 'plan_review_decided',
+      reviewId: 'review-1',
+      decision: 'approve'
+    }
+  ])
+  assert.equal(items.length, 1)
+  assert.equal(items[0].role, 'plan_review')
+  if (items[0].role === 'plan_review') assert.equal(items[0].status, 'approved')
+})
+
 test('isWrapperToolName excludes wrapper_search/wrapper_inspect — they never produce a planId, so routing them through WrapperPlanCard would strand the card on "正在加载计划…" forever', () => {
   assert.equal(isWrapperToolName('wrapper_search'), false)
   assert.equal(isWrapperToolName('wrapper_inspect'), false)
@@ -449,6 +507,79 @@ test('chatItemsFromSessionMessages restores notebook details from runtime tool r
   })
 })
 
+test('chatItemsFromSessionMessages restores todo details from Phi timeline events', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'tool_call_started',
+      eventId: 'event-1',
+      toolCallId: 'call-1',
+      toolName: 'todo',
+      args: { op: 'init', list: [{ phase: 'Foundation', items: ['Read the CSV'] }] },
+      createdAt: '2026-09-10T00:00:00.000Z'
+    },
+    {
+      source: 'phi',
+      type: 'tool_call_completed',
+      eventId: 'event-2',
+      toolCallId: 'call-1',
+      toolName: 'todo',
+      output: 'Todo initialized',
+      details: {
+        op: 'init',
+        storage: 'session',
+        phases: [{ name: 'Foundation', tasks: [{ content: 'Read the CSV', status: 'pending' }] }]
+      },
+      isError: false,
+      createdAt: '2026-09-10T00:00:01.000Z'
+    }
+  ])
+
+  assert.equal(items.length, 1)
+  assert.equal(items[0].role, 'tool')
+  assert.deepEqual(items[0].todo, {
+    op: 'init',
+    phases: [{ name: 'Foundation', tasks: [{ content: 'Read the CSV', status: 'pending' }] }]
+  })
+})
+
+test('chatItemsFromSessionMessages restores todo details from runtime tool results', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      role: 'assistant',
+      content: [
+        {
+          type: 'toolCall',
+          id: 'call-1',
+          name: 'todo',
+          arguments: { op: 'done', task: 'Read the CSV' }
+        }
+      ]
+    },
+    {
+      role: 'toolResult',
+      toolCallId: 'call-1',
+      content: {
+        content: [{ type: 'text', text: 'Marked done' }],
+        details: {
+          op: 'done',
+          storage: 'session',
+          phases: [
+            { name: 'Foundation', tasks: [{ content: 'Read the CSV', status: 'completed' }] }
+          ]
+        }
+      }
+    }
+  ])
+
+  assert.equal(items.length, 1)
+  assert.equal(items[0].role, 'tool')
+  assert.deepEqual(items[0].todo, {
+    op: 'done',
+    phases: [{ name: 'Foundation', tasks: [{ content: 'Read the CSV', status: 'completed' }] }]
+  })
+})
+
 test('chatItemsFromSessionMessages restores run failure details', () => {
   const items = chatItemsFromSessionMessages([
     {
@@ -468,6 +599,98 @@ test('chatItemsFromSessionMessages restores run failure details', () => {
         '401 Invalid Authentication\nInvalid Authentication (type=invalid_authentication_error)'
     }
   ])
+})
+
+test('chatItemsFromSessionMessages restores a compact per-run file change summary', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'workspace_changes',
+      eventId: 'changes-1',
+      runId: 'run-1',
+      files: [
+        {
+          path: '/project/result.txt',
+          displayPath: 'result.txt',
+          status: 'modified',
+          added: 2,
+          deleted: 1,
+          diff: {
+            sessionId: '11111111-1111-1111-1111-111111111111',
+            id: 'a'.repeat(64),
+            bytes: 32
+          },
+          content: 'must not enter the chat item'
+        }
+      ],
+      totalChanged: 1,
+      truncated: false
+    }
+  ])
+  assert.deepEqual(items, [
+    {
+      id: 'changes-1',
+      role: 'workspace_changes',
+      runId: 'run-1',
+      files: [
+        {
+          path: '/project/result.txt',
+          displayPath: 'result.txt',
+          status: 'modified',
+          added: 2,
+          deleted: 1,
+          diff: {
+            sessionId: '11111111-1111-1111-1111-111111111111',
+            id: 'a'.repeat(64),
+            bytes: 32
+          }
+        }
+      ],
+      totalChanged: 1,
+      truncated: false
+    }
+  ])
+})
+
+test('chatItemsFromSessionMessages restores pasted image references without inlining image bytes', () => {
+  const image = {
+    sessionId: 'session-1',
+    id: 'a'.repeat(64),
+    mimeType: 'image/png'
+  }
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'user_message',
+      eventId: 'event-image',
+      content: '',
+      images: [{ ...image, data: 'do not inline' }]
+    }
+  ])
+  assert.deepEqual(items, [{ id: 'event-image', role: 'user', content: '', images: [image] }])
+})
+
+test('image-only retry keeps the original user image when the live bubble used a temporary id', () => {
+  const image = { sessionId: 'session-1', id: 'b'.repeat(64), mimeType: 'image/png' }
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'user_message',
+      eventId: 'persisted-user',
+      content: '',
+      images: [image]
+    },
+    { source: 'phi', type: 'run_failed', eventId: 'failed', errorMessage: 'try again' },
+    {
+      source: 'phi',
+      type: 'user_message_retry',
+      eventId: 'retry',
+      userMessageId: 'temporary-user',
+      content: '',
+      images: [image]
+    }
+  ])
+  assert.deepEqual(items, [{ id: 'persisted-user', role: 'user', content: '', images: [image] }])
 })
 
 test('chatItemsFromSessionMessages clears failed output after a persisted retry marker', () => {
@@ -621,6 +844,39 @@ test('chatItemsFromSessionMessages restores Phi text timeline and skips duplicat
     { id: 'event-user', role: 'user', content: 'phi user' },
     { id: 'event-assistant', role: 'assistant', content: 'phi assistant' }
   ])
+})
+
+test('legacy runtime prompt suffix does not create a second user bubble or expose Phi instructions', () => {
+  const userText = '你有哪些工具可以调用'
+  const oldRuntimeText = `${userText}\n\n<phi_next_action_instruction>\n当这次回复有明确、有用的后续操作时，请在最终回复最后单独输出一行：\n推荐下一步：<一句中文操作>\n</phi_next_action_instruction>`
+  const items = chatItemsFromSessionMessages([
+    { role: 'user', content: [{ type: 'text', text: oldRuntimeText }] },
+    {
+      source: 'phi',
+      preferPhiTimeline: true,
+      type: 'user_message',
+      eventId: 'event-user',
+      content: userText
+    },
+    {
+      source: 'phi',
+      preferPhiTimeline: true,
+      type: 'run_failed',
+      eventId: 'event-failed',
+      errorMessage: 'Provider 请求失败'
+    }
+  ])
+
+  assert.deepEqual(items, [
+    { id: 'event-user', role: 'user', content: userText },
+    { id: 'event-failed', role: 'error', content: 'Provider 请求失败' }
+  ])
+  assert.deepEqual(
+    chatItemsFromSessionMessages([
+      { role: 'user', content: [{ type: 'text', text: oldRuntimeText }] }
+    ]),
+    [{ id: 'user-0', role: 'user', content: userText }]
+  )
 })
 
 test('chatItemsFromSessionMessages skips assistant placeholder dots', () => {

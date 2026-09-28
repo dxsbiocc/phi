@@ -7,16 +7,48 @@ and the Pi Coding Agent SDK.
 The renderer calls a typed preload API; the main process owns model authentication,
 agent sessions, project directories, tool approvals, and package resources. Phi stores
 its configuration and conversation history in `~/.phi`, separately from the Pi CLI.
-Ordinary conversations use `~/.phi/workspace`; project conversations use the selected
-project directory. MCP listings show configuration, not a live connectivity check.
+Ordinary conversations use `~/.phi/workspace`; local project conversations use the
+selected directory. Remote project conversations keep their history locally while
+project file and command operations use the selected SSH server. MCP listings show
+configuration, not a live connectivity check.
 
 ## Internal Beta Scope
 
-This beta is for local project-bound agent work: multiple conversations can keep
+This beta is for project-bound agent work: multiple conversations can keep
 running, project sessions default to approval mode, resources are visible, and support
 diagnostics can be copied without full chat or tool output. It is not a public
 distribution build, a full plugin marketplace, a Git client, or a dedicated OMX
 team/swarm dashboard.
+
+Local Git sessions show a bounded file-change summary after each run. It compares the
+working tree at run start and finish, so earlier edits are excluded; ignored files and
+non-Git folders are outside this summary. Existing files in the card open in Phi's
+file preview. Small text changes also keep a read-only per-file diff under the Phi
+session's artifacts; binary and large files show counts only when available.
+
+For a separate final report, figure, notebook, or data table, the agent can mark up to
+four existing local workspace files as deliverables. Phi keeps a delivery card in the
+conversation with file descriptions and preview actions. The card points to the
+current source files; it does not copy their contents or upload them. This action is
+not available for remote project files in the internal beta.
+
+For a task that needs a reviewed plan, select **先计划** in the chat composer before
+sending it. The agent can inspect the local workspace and draft a session-local plan,
+while this turn's working-tree writes remain blocked. The plan appears in the conversation for
+**继续执行** or **修改计划**; Phi records the choice, and approval restores the usual
+tools. Remote project conversations do not offer this mode in the beta.
+
+The activity bar's **后台任务** button combines running background Agent tasks and
+Wrapper runs, with progress, links back to their conversation or Wrapper page,
+and stop actions only where the existing runner supports cancellation. It also
+shows a short recent list while those run records remain available; this is a
+compact task view rather than an OMX team dashboard.
+
+Use a conversation row's export action to choose a local folder for a complete
+session backup. Phi creates a new subfolder containing its timeline, tool outputs,
+artifacts, underlying runtime history, and referenced image blobs. This export can
+contain secrets and thinking text; it does not copy project files or import back
+into Phi. Wait for the conversation to finish before exporting.
 
 Beta data is intentionally resettable. Phi-owned state lives under `~/.phi`, including
 sessions, project registry, logs, and tool output references. If the beta data model
@@ -31,7 +63,55 @@ Unsigned or locally built macOS apps may show Gatekeeper/security prompts. For t
 beta, formal signing, notarization, and automatic updates are deferred; release notes
 should tell testers to expect the standard macOS warning flow for local builds.
 
-## Phi Wrapper (Phase 1)
+## Remote Projects (Internal Beta)
+
+**Settings → 远程** lists hosts discovered from `~/.ssh/config` alongside older
+Phi server records. Discovered hosts are immediately available when creating a remote
+project. **添加服务器** writes a new `Host` entry to `~/.ssh/config`; editing a
+discovered host updates its entry there. Phi validates the resulting OpenSSH
+configuration before atomically replacing it and keeps a private backup next to the
+file. The form contains only alias, address, user, port and local private-key path;
+blank optional fields keep OpenSSH defaults. Phi stores the key **path**, not the key
+itself. Password login is not yet supported: use non-interactive key or
+`ssh-agent` authentication and a trusted host key in `known_hosts`. Then create a
+project with **Remote server** and an absolute, readable and writable directory
+on that server. Testing a project connection checks its directory and reports
+missing server tools. A remote project always runs its Wrappers on its bound
+server and project path; its Wrapper page offers Slurm and runtime settings.
+The server list's **测试连接** checks SSH connectivity and authentication only.
+Use **检查运行环境** in Wrapper settings to inspect the project directory and
+Nextflow, Java, Slurm, and the selected runtime. Missing Nextflow offers a
+confirmed installation into the SSH account's `~/.local/bin` or the
+[official manual steps](https://docs.seqera.io/nextflow/install); Java, Slurm,
+and container runtimes remain administrator or user-managed.
+
+The remote settings page manages servers only. A local project stays local even
+when it has a saved server compute target. The target can be configured from the
+Wrapper page or a run plan, and is used only when remote execution is explicitly
+requested. Local inputs must already exist at mapped server paths; Phi does not
+upload project data automatically.
+
+In a remote project, the usual `read`, `glob`, `grep`, `write`, `edit`, and `bash` agent
+tools operate on the server. File browsing and small result previews also read from
+the server; downloading a result requires an explicit save action. File edits and
+commands still follow the project's approval setting. The window, conversations,
+model calls, approval history, and run records remain on this computer in `~/.phi`.
+The local session directory is metadata storage, never a copy of the remote project.
+
+If the network or server is unavailable, Phi reports the connection problem and
+keeps the local conversation and draft. It does not execute the operation locally.
+After an uncertain write, command, or submission, check the server or run record
+before retrying; Phi does not automatically repeat it. Closing Phi detaches a remote
+Wrapper run. A submitted Slurm job remains managed by Slurm; use an explicit cancel
+action to stop it. Remote Notebook/Jupyter, project Skills/MCP, and Git operations
+are outside this beta's remote project support.
+
+The remote workflow has automated coverage and a local SSH identity check. Acceptance
+on a user-managed SSH host and a real Slurm cluster is still pending. See the
+[E01 validation record](docs/roadmap/remote-e01-validation.md) before treating this
+as a verified remote beta release.
+
+## Phi Wrapper
 
 Phi Wrapper is a reproducible execution layer for bioinformatics and other heavy
 command-line tools: fixed, verified wrapper definitions the agent can call instead of
@@ -39,11 +119,12 @@ assembling ad hoc shell commands. It has its own sidebar entry ("Wrappers"), its
 storage under `~/.phi/wrappers`, and its own chat-timeline plan/run cards, independent
 of ordinary tool calls.
 
-Phase 1 is entirely local — there is no remote/HPC execution, no signed registry, and
-no CLI yet; those arrive in later phases. What works today: one bundled demo wrapper
-(`phi/ngs/fastq-qc`), asking the agent to prepare a run plan, reviewing and submitting
-it from the chat card, and watching a real local Nextflow run execute with live
-per-step status. See [`docs/design/phi-wrapper-product-prd.md`](docs/design/phi-wrapper-product-prd.md)
+Wrapper runs can target the local computer or a configured SSH server. On a remote
+target, the Nextflow controller can run detached on the login host or as a Slurm
+head job. Phi records status and logs for reattachment after the app reopens. It
+also offers remote result browsing, bounded previews, and explicit downloads.
+Real external-host and Slurm acceptance remains pending as noted above. See
+[`docs/design/phi-wrapper-product-prd.md`](docs/design/phi-wrapper-product-prd.md)
 for the full phased scope and [`docs/design/phi-wrapper-authoring-guide.md`](docs/design/phi-wrapper-authoring-guide.md)
 for how to point Phi at your own wrapper during development.
 

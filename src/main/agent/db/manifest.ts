@@ -87,6 +87,17 @@ function validateAuth(auth: unknown, errors: string[]): void {
   if (auth.headerName !== undefined && typeof auth.headerName !== 'string') {
     errors.push('auth.headerName 必须是字符串')
   }
+  if (auth.required !== undefined && typeof auth.required !== 'boolean') {
+    errors.push('auth.required 必须是布尔值')
+  }
+  if (auth.label !== undefined && typeof auth.label !== 'string') {
+    errors.push('auth.label 必须是字符串')
+  }
+  if (auth.signupUrl !== undefined) {
+    if (typeof auth.signupUrl !== 'string' || !/^https:\/\//i.test(auth.signupUrl)) {
+      errors.push('auth.signupUrl 必须是 https URL')
+    }
+  }
 }
 
 function validateNetworkPolicy(
@@ -252,6 +263,9 @@ function validateRestJsonDomain(
   if (request.jsonBodyParamMap !== undefined && !stringRecord(request.jsonBodyParamMap)) {
     errors.push(`${path}.rest.request.jsonBodyParamMap 必须是字符串对象`)
   }
+  if (request.jsonBodyTemplates !== undefined && !stringRecord(request.jsonBodyTemplates)) {
+    errors.push(`${path}.rest.request.jsonBodyTemplates 必须是字符串对象`)
+  }
   if (request.jsonBodyArrayFields !== undefined && !stringArray(request.jsonBodyArrayFields)) {
     errors.push(`${path}.rest.request.jsonBodyArrayFields 必须是字符串数组`)
   }
@@ -281,6 +295,15 @@ function validateRestJsonDomain(
   if (response.fieldMap !== undefined && !stringRecord(response.fieldMap)) {
     errors.push(`${path}.rest.response.fieldMap 必须是字符串对象`)
   }
+  if (response.format !== undefined && response.format !== 'json' && response.format !== 'tsv') {
+    errors.push(`${path}.rest.response.format 只支持 json 或 tsv`)
+  }
+  if (response.tsvHasHeader !== undefined && typeof response.tsvHasHeader !== 'boolean') {
+    errors.push(`${path}.rest.response.tsvHasHeader 必须是布尔值`)
+  }
+  if (response.tsvColumns !== undefined && !stringArray(response.tsvColumns)) {
+    errors.push(`${path}.rest.response.tsvColumns 必须是字符串数组`)
+  }
 }
 
 function validateSparqlDomain(
@@ -304,6 +327,50 @@ function validateSparqlDomain(
   }
   if (sparql.prefixes !== undefined && !stringRecord(sparql.prefixes)) {
     errors.push(`${path}.sparql.prefixes 必须是字符串对象`)
+  }
+}
+
+const ONTOLOGY_OPERATIONS = ['lookup', 'search', 'children', 'parents', 'ancestors'] as const
+
+function validateOntologyDomain(
+  ontology: unknown,
+  path: string,
+  protocolFamily: DbProtocolFamily,
+  errors: string[]
+): void {
+  if (ontology === undefined) {
+    if (protocolFamily === 'ontology') {
+      errors.push(`${path}.ontology 是 ontology connector 的必填配置`)
+    }
+    return
+  }
+  if (!isRecord(ontology)) {
+    errors.push(`${path}.ontology 必须是对象`)
+    return
+  }
+  if (typeof ontology.ontologyId !== 'string' || !/^[a-z0-9_-]+$/i.test(ontology.ontologyId)) {
+    errors.push(`${path}.ontology.ontologyId 必须是规范化字符串`)
+  }
+  if (
+    typeof ontology.operation !== 'string' ||
+    !ONTOLOGY_OPERATIONS.includes(ontology.operation as (typeof ONTOLOGY_OPERATIONS)[number])
+  ) {
+    errors.push(`${path}.ontology.operation 必须是以下之一: ${ONTOLOGY_OPERATIONS.join(', ')}`)
+  }
+  if (ontology.idPrefix !== undefined && typeof ontology.idPrefix !== 'string') {
+    errors.push(`${path}.ontology.idPrefix 必须是字符串`)
+  }
+  if (ontology.iriTemplate !== undefined) {
+    if (
+      typeof ontology.iriTemplate !== 'string' ||
+      !(
+        ontology.iriTemplate.includes('{local_id}') ||
+        ontology.iriTemplate.includes('{local}') ||
+        ontology.iriTemplate.includes('{curie}')
+      )
+    ) {
+      errors.push(`${path}.ontology.iriTemplate 必须包含 {local_id}、{local} 或 {curie} 占位符`)
+    }
   }
 }
 
@@ -406,6 +473,14 @@ function validateManifestShape(raw: unknown): { errors: string[]; manifest?: DbC
       )
       validateSparqlDomain(
         domain.sparql,
+        path,
+        typeof raw.protocolFamily === 'string'
+          ? (raw.protocolFamily as DbProtocolFamily)
+          : 'generic-http',
+        errors
+      )
+      validateOntologyDomain(
+        domain.ontology,
         path,
         typeof raw.protocolFamily === 'string'
           ? (raw.protocolFamily as DbProtocolFamily)

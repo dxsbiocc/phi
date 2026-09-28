@@ -16,24 +16,25 @@ import {
   Stack,
   Switch,
   TextField,
+  Tooltip,
   ToggleButton,
   ToggleButtonGroup,
   Typography
 } from '@mui/material'
+import { GoPlus, GoSync } from 'react-icons/go'
 import { PhiIcons } from '../icons'
 import type {
   DbConnectorSettingsItem,
   DefaultProxyMode,
   ModelOption,
   PhiAppSettingsPatch,
-  ProjectRemoteConnection,
   ProviderAuthStatus,
   ProxyTransportStatus
 } from '../types'
 import type { PermissionMode, Project, ThinkingLevel, ToolApprovalRequest } from '../types'
 import type { ThemeMode } from '../theme'
 import { accentAt, ACCENT_PALETTE } from '../theme'
-import { WrapperRemoteSettingsSection } from '../features/wrapper/components/WrapperRemoteSettings'
+import { RemoteHostSettingsSection } from '../features/wrapper/components/RemoteHostSettings'
 import { DatabaseSettingsPanel } from '../features/databases/DatabaseSettingsPanel'
 import { EnvironmentSettingsPanel } from '../features/environment/components/EnvironmentSettingsPanel'
 import { PermissionSettingsSection } from './PermissionView'
@@ -44,6 +45,8 @@ const CloseIcon = PhiIcons.action.close
 const ContentCopyIcon = PhiIcons.action.copy
 const KeyIcon = PhiIcons.entity.apiKey
 const LogoutIcon = PhiIcons.action.logout
+const RefreshIcon = GoSync
+const AddToolbarIcon = GoPlus
 const PaletteIcon = PhiIcons.settings.appearance
 const ProviderIcon = PhiIcons.settings.providers
 const PsychologyIcon = PhiIcons.settings.persona
@@ -69,10 +72,10 @@ const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.E
   { id: 'general', label: '通用', icon: <GeneralIcon fontSize="small" /> },
   { id: 'environment', label: '环境', icon: <RemoteExecutionIcon fontSize="small" /> },
   { id: 'databases', label: '数据库', icon: <DatabaseIcon fontSize="small" /> },
-  { id: 'persona', label: '助手人设', icon: <PsychologyIcon fontSize="small" /> },
-  { id: 'providers', label: 'Provider 配置', icon: <ProviderIcon fontSize="small" /> },
+  { id: 'persona', label: '助手', icon: <PsychologyIcon fontSize="small" /> },
+  { id: 'providers', label: 'Provider', icon: <ProviderIcon fontSize="small" /> },
   { id: 'permissions', label: '权限', icon: <ShieldIcon fontSize="small" /> },
-  { id: 'remote', label: '远程执行', icon: <RemoteExecutionIcon fontSize="small" /> },
+  { id: 'remote', label: '远程', icon: <RemoteExecutionIcon fontSize="small" /> },
   { id: 'diagnostics', label: '诊断', icon: <ContentCopyIcon fontSize="small" /> },
   { id: 'appearance', label: '外观', icon: <PaletteIcon fontSize="small" /> }
 ]
@@ -131,7 +134,7 @@ function PersonaSection({
   return (
     <Stack spacing={2}>
       <Box>
-        <Typography variant="h5">助手人设</Typography>
+        <Typography variant="h5">助手</Typography>
         <Typography variant="body2" color="text.secondary">
           以 Markdown 形式描述助手的性格、说话风格与回答偏好，留空则使用默认设置。
         </Typography>
@@ -146,7 +149,7 @@ function PersonaSection({
         fullWidth
         multiline
         minRows={14}
-        placeholder={'# 助手人设\n\n性格：……\n说话风格：……\n回答偏好：……'}
+        placeholder={'# 助手\n\n性格：……\n说话风格：……\n回答偏好：……'}
         sx={{ '& textarea': { fontFamily: 'var(--font-mono)', fontSize: '0.9rem' } }}
       />
 
@@ -163,11 +166,9 @@ function PersonaSection({
 
 function ProviderCard({
   provider,
-  hint,
   onLogout
 }: {
   provider: ProviderAuthStatus
-  hint?: string
   onLogout: (providerId: string) => void
 }): React.JSX.Element {
   return (
@@ -239,25 +240,17 @@ function ProviderCard({
           )}
         </Stack>
       </Stack>
-
-      {hint ? (
-        <Alert severity="info" variant="outlined" sx={{ mt: 1.25, py: 0.5 }}>
-          <Typography variant="body2">{hint}</Typography>
-        </Alert>
-      ) : null}
     </Paper>
   )
 }
 
 function ProvidersSection({
   providers,
-  providerHints,
   onRefresh,
   onOpenAddProvider,
   onLogout
 }: {
   providers: ProviderAuthStatus[]
-  providerHints: Record<string, string>
   onRefresh: () => Promise<void>
   onOpenAddProvider: () => void
   onLogout: (providerId: string) => void
@@ -275,19 +268,27 @@ function ProvidersSection({
           gap: 1
         }}
       >
-        <Typography variant="h5">Provider 配置</Typography>
+        <Typography variant="h5">Provider</Typography>
         <Stack direction="row" spacing={1}>
-          <Button variant="outlined" onClick={onRefresh} sx={{ minHeight: 44 }}>
-            刷新状态
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={onOpenAddProvider}
-            sx={{ minHeight: 44 }}
-          >
-            添加 Provider
-          </Button>
+          <Tooltip title="刷新状态">
+            <IconButton
+              aria-label="刷新状态"
+              onClick={() => void onRefresh()}
+              sx={{ width: 40, height: 40, color: 'text.secondary' }}
+            >
+              <RefreshIcon size={19} />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="添加 Provider">
+            <IconButton
+              aria-label="添加 Provider"
+              color="primary"
+              onClick={onOpenAddProvider}
+              sx={{ width: 40, height: 40 }}
+            >
+              <AddToolbarIcon size={28} />
+            </IconButton>
+          </Tooltip>
         </Stack>
       </Box>
 
@@ -309,11 +310,7 @@ function ProvidersSection({
         <Stack spacing={1}>
           {configuredProviders.map((provider) => (
             <Box key={provider.providerId}>
-              <ProviderCard
-                provider={provider}
-                hint={providerHints[provider.providerId]}
-                onLogout={onLogout}
-              />
+              <ProviderCard provider={provider} onLogout={onLogout} />
             </Box>
           ))}
         </Stack>
@@ -623,7 +620,6 @@ type SettingsDialogProps = {
   open: boolean
   onClose: () => void
   providers: ProviderAuthStatus[]
-  providerHints: Record<string, string>
   personaMarkdown: string | null
   onSavePersonaMarkdown: (markdown: string) => Promise<void>
   onRefresh: () => Promise<void>
@@ -641,17 +637,6 @@ type SettingsDialogProps = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => void
-  updatingRemoteProjectId: string | null
-  onUpdateProjectRemoteConnection: (
-    projectId: string,
-    connectionId: string,
-    patch: ProjectRemoteConnection | null,
-    passphrase?: string | null
-  ) => Promise<void>
-  onUpdateProjectRemoteDefaults: (
-    projectId: string,
-    defaults: { defaultRemoteConnectionId?: string | null; remoteWorkspaceRoot?: string | null }
-  ) => Promise<void>
   onOpenApprovalSession: (path: string) => void
   onRespondApproval: (requestId: string, approved: boolean) => void
   onCopyDiagnostics: () => Promise<string>
@@ -675,6 +660,8 @@ type SettingsDialogProps = {
   updatingDbConnectorId?: string | null
   onRefreshDbConnectors?: () => Promise<void>
   onSetDbConnectorEnabled?: (id: string, enabled: boolean) => Promise<void>
+  onSetDbConnectorApiKey?: (id: string, apiKey: string) => Promise<void>
+  onClearDbConnectorApiKey?: (id: string) => Promise<void>
   themeMode: ThemeMode
   onSelectThemeMode: (mode: ThemeMode) => void
   category: SettingsCategory
@@ -685,7 +672,6 @@ function SettingsDialog({
   open,
   onClose,
   providers,
-  providerHints,
   personaMarkdown,
   onSavePersonaMarkdown,
   onRefresh,
@@ -697,9 +683,6 @@ function SettingsDialog({
   updatingProjectId,
   onUpdateProjectPermissionMode,
   onUpdateProjectDefaults,
-  updatingRemoteProjectId,
-  onUpdateProjectRemoteConnection,
-  onUpdateProjectRemoteDefaults,
   onOpenApprovalSession,
   onRespondApproval,
   onCopyDiagnostics,
@@ -723,6 +706,8 @@ function SettingsDialog({
   updatingDbConnectorId = null,
   onRefreshDbConnectors = async () => undefined,
   onSetDbConnectorEnabled = async () => undefined,
+  onSetDbConnectorApiKey = async () => undefined,
+  onClearDbConnectorApiKey = async () => undefined,
   themeMode,
   onSelectThemeMode,
   category,
@@ -757,8 +742,6 @@ function SettingsDialog({
           height: 36,
           color: 'text.secondary',
           bgcolor: 'background.paper',
-          border: 1,
-          borderColor: 'divider',
           '&:hover': {
             bgcolor: 'action.hover',
             color: 'text.primary'
@@ -854,6 +837,8 @@ function SettingsDialog({
               updatingConnectorId={updatingDbConnectorId}
               onRefresh={onRefreshDbConnectors}
               onSetEnabled={onSetDbConnectorEnabled}
+              onSetApiKey={onSetDbConnectorApiKey}
+              onClearApiKey={onClearDbConnectorApiKey}
             />
           )}
           {category === 'persona' && (
@@ -865,7 +850,6 @@ function SettingsDialog({
           {category === 'providers' && (
             <ProvidersSection
               providers={providers}
-              providerHints={providerHints}
               onRefresh={onRefresh}
               onOpenAddProvider={onOpenAddProvider}
               onLogout={onLogout}
@@ -883,14 +867,7 @@ function SettingsDialog({
               onRespondApproval={onRespondApproval}
             />
           )}
-          {category === 'remote' && (
-            <WrapperRemoteSettingsSection
-              projects={projects}
-              updatingProjectId={updatingRemoteProjectId}
-              onUpdateRemoteConnection={onUpdateProjectRemoteConnection}
-              onUpdateRemoteDefaults={onUpdateProjectRemoteDefaults}
-            />
-          )}
+          {category === 'remote' && <RemoteHostSettingsSection />}
           {category === 'diagnostics' && (
             <DiagnosticsSection onCopyDiagnostics={onCopyDiagnostics} />
           )}

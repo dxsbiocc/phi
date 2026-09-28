@@ -30,8 +30,8 @@ import {
 import type { WrapperCompositionManifest } from '../../../../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../../../../shared/wrapperModuleDetailsTypes'
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
+import type { Project, ProjectRemoteConnection } from '../../types'
 import { PhiIcons } from '../../icons'
-import { resolveLocalPath } from '../../lib/localPaths'
 import { buildWrapperParamsFlowGraph } from './lib/wrapperFlow'
 import { parseWrapperNextflowDag } from './lib/wrapperNextflowDag'
 import { highlightLine } from '../../lib/syntaxHighlight'
@@ -42,10 +42,13 @@ import {
   runProgressLabel,
   runStateColor,
   runStateLabel,
+  wrapperProviderColor,
   wrapperTierLabel
 } from './lib/wrapperView'
 import type { LocalPathKind } from '../../components/MarkdownContent'
 import { WrapperFlowDiagram } from './components/WrapperFlowDiagram'
+import { WrapperRunResultActions } from './components/WrapperRunResultActions'
+import { WrapperExecutionTargetControl } from './components/WrapperExecutionTargetControl'
 import { useWrapperCatalog } from './hooks/useWrapperCatalog'
 
 const RefreshIcon = PhiIcons.action.refresh
@@ -96,8 +99,21 @@ export interface WrapperDetailProps {
   selectedId: string | null
   error: string | null
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
+  onOpenRemoteResult?: (run: WrapperRun, path: string, pathKind: LocalPathKind) => void
   onExportReproducibility?: (runId: string) => void
   onCancelRun?: (runId: string) => void
+  project?: Project
+  updatingRemoteProjectId?: string | null
+  onUpdateProjectRemoteConnection?: (
+    projectId: string,
+    connectionId: string,
+    patch: ProjectRemoteConnection
+  ) => Promise<void>
+  onUpdateProjectRemoteDefaults?: (
+    projectId: string,
+    defaults: { defaultRemoteConnectionId?: string | null; remoteWorkspaceRoot?: string | null }
+  ) => Promise<void>
+  onOpenRemoteSettings?: () => void
 }
 
 export interface WrapperViewContentProps extends WrapperDetailProps {
@@ -489,18 +505,33 @@ function WrapperTierGroupAccordion({
                 >
                   {entry.summary}
                 </Typography>
-                <Typography
-                  noWrap
-                  color="text.secondary"
-                  sx={{
-                    mt: 0.25,
-                    fontSize: '0.72rem',
-                    fontWeight: 700,
-                    lineHeight: 1.25
-                  }}
-                >
-                  {provider}
-                </Typography>
+                <Stack direction="row" spacing={0.5} sx={{ mt: 0.25, alignItems: 'center' }}>
+                  <Box
+                    sx={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      flexShrink: 0,
+                      bgcolor: (theme) => {
+                        const providerColor = wrapperProviderColor(provider)
+                        return providerColor === 'default'
+                          ? theme.palette.text.disabled
+                          : theme.palette[providerColor].main
+                      }
+                    }}
+                  />
+                  <Typography
+                    noWrap
+                    color="text.secondary"
+                    sx={{
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      lineHeight: 1.25
+                    }}
+                  >
+                    {provider}
+                  </Typography>
+                </Stack>
               </Box>
             </ListItemButton>
           )
@@ -666,8 +697,14 @@ export function WrapperDetail({
   selectedId,
   error,
   onOpenLocalPath,
+  onOpenRemoteResult,
   onExportReproducibility,
-  onCancelRun
+  onCancelRun,
+  project,
+  updatingRemoteProjectId,
+  onUpdateProjectRemoteConnection,
+  onUpdateProjectRemoteDefaults,
+  onOpenRemoteSettings
 }: WrapperDetailProps): React.JSX.Element {
   const selected = useMemo(
     () => catalog.find((entry) => entry.id === selectedId),
@@ -809,7 +846,7 @@ export function WrapperDetail({
               <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
                 <Chip
                   size="small"
-                  color="primary"
+                  color={wrapperProviderColor(parseWrapperCompositionId(selected.id).provider)}
                   label={parseWrapperCompositionId(selected.id).provider}
                 />
                 <Chip
@@ -820,6 +857,18 @@ export function WrapperDetail({
               </Stack>
             </Box>
           </Stack>
+
+          {project && (
+            <Box sx={{ mt: 2 }}>
+              <WrapperExecutionTargetControl
+                project={project}
+                busy={updatingRemoteProjectId === project.id}
+                onUpdateRemoteConnection={onUpdateProjectRemoteConnection}
+                onUpdateRemoteDefaults={onUpdateProjectRemoteDefaults}
+                onOpenRemoteSettings={onOpenRemoteSettings}
+              />
+            </Box>
+          )}
 
           <Divider sx={{ my: 4 }} />
 
@@ -1000,6 +1049,11 @@ export function WrapperDetail({
                     <Typography variant="body2" color="text.secondary">
                       {run.runId}
                     </Typography>
+                    {run.remote ? (
+                      <Typography variant="caption" color="text.secondary">
+                        SSH {run.remote.host}
+                      </Typography>
+                    ) : null}
                     <Typography variant="caption" color="text.secondary">
                       {new Date(run.createdAt).toLocaleString()}
                     </Typography>
@@ -1030,18 +1084,11 @@ export function WrapperDetail({
                         </IconButton>
                       </span>
                     </Tooltip>
-                    <Button
-                      size="small"
-                      onClick={() => {
-                        const absolutePath = resolveLocalPath(
-                          run.outDir.startsWith('/') ? run.outDir : `./${run.outDir}`,
-                          run.cwd
-                        )
-                        if (absolutePath) onOpenLocalPath?.(absolutePath, 'directory')
-                      }}
-                    >
-                      打开输出目录
-                    </Button>
+                    <WrapperRunResultActions
+                      run={run}
+                      onOpenLocalPath={onOpenLocalPath}
+                      onOpenRemoteResult={onOpenRemoteResult}
+                    />
                   </Stack>
                 ))}
             </Stack>
@@ -1066,8 +1113,14 @@ export function WrapperViewContent({
   onSelect,
   onRefresh,
   onOpenLocalPath,
+  onOpenRemoteResult,
   onExportReproducibility,
   onCancelRun,
+  project,
+  updatingRemoteProjectId,
+  onUpdateProjectRemoteConnection,
+  onUpdateProjectRemoteDefaults,
+  onOpenRemoteSettings,
   onStartSidebarResize
 }: WrapperViewContentProps): React.JSX.Element {
   const selected = catalog.find((entry) => entry.id === selectedId) ?? null
@@ -1090,8 +1143,14 @@ export function WrapperViewContent({
           selectedId={selectedId}
           error={error}
           onOpenLocalPath={onOpenLocalPath}
+          onOpenRemoteResult={onOpenRemoteResult}
           onExportReproducibility={onExportReproducibility}
           onCancelRun={onCancelRun}
+          project={project}
+          updatingRemoteProjectId={updatingRemoteProjectId}
+          onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
+          onUpdateProjectRemoteDefaults={onUpdateProjectRemoteDefaults}
+          onOpenRemoteSettings={onOpenRemoteSettings}
         />
       </DetailPage>
     </>
@@ -1101,12 +1160,14 @@ export function WrapperViewContent({
 interface WrapperViewProps {
   sidebarWidth: number
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
+  onOpenRemoteResult?: (run: WrapperRun, path: string, pathKind: LocalPathKind) => void
   onStartSidebarResize?: (event: MouseEvent<HTMLDivElement>) => void
 }
 
 export default function WrapperView({
   sidebarWidth,
   onOpenLocalPath,
+  onOpenRemoteResult,
   onStartSidebarResize
 }: WrapperViewProps): React.JSX.Element {
   const {
@@ -1131,6 +1192,7 @@ export default function WrapperView({
       onSelect={setSelectedWrapperId}
       onRefresh={() => void refreshWrappers()}
       onOpenLocalPath={onOpenLocalPath}
+      onOpenRemoteResult={onOpenRemoteResult}
       onExportReproducibility={(runId) => void exportWrapperReproducibility(runId)}
       onStartSidebarResize={onStartSidebarResize}
     />

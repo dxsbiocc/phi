@@ -1,9 +1,15 @@
 import { Box, IconButton, Tooltip } from '@mui/material'
-import { GoArrowLeft, GoArrowRight, GoSidebarCollapse, GoSidebarExpand } from 'react-icons/go'
+import {
+  GoArrowLeft,
+  GoArrowRight,
+  GoSearch,
+  GoSidebarCollapse,
+  GoSidebarExpand
+} from 'react-icons/go'
 
 /**
  * Sits to the right of the macOS traffic lights (MacWindowControls): a
- * sidebar collapse/expand toggle plus browser-style back/forward buttons
+ * sidebar toggle, session search, and browser-style back/forward buttons
  * over the app's own navigation history (see navigationHistory in App.tsx).
  *
  * Like MacWindowControls, this does NOT position itself or declare its own
@@ -14,6 +20,7 @@ import { GoArrowLeft, GoArrowRight, GoSidebarCollapse, GoSidebarExpand } from 'r
 export default function WindowNavigationControls({
   isSidebarOpen,
   onToggleSidebar,
+  onOpenSessionSearch,
   canGoBack,
   canGoForward,
   onGoBack,
@@ -21,6 +28,7 @@ export default function WindowNavigationControls({
 }: {
   isSidebarOpen: boolean
   onToggleSidebar: () => void
+  onOpenSessionSearch: () => void
   canGoBack: boolean
   canGoForward: boolean
   onGoBack: () => void
@@ -55,6 +63,16 @@ export default function WindowNavigationControls({
           sx={{ ...iconButtonSx, color: isSidebarOpen ? 'text.primary' : 'text.secondary' }}
         >
           <SidebarToggleIcon size={19} />
+        </IconButton>
+      </Tooltip>
+      <Tooltip title="查找会话">
+        <IconButton
+          size="small"
+          aria-label="查找会话"
+          onClick={onOpenSessionSearch}
+          sx={iconButtonSx}
+        >
+          <GoSearch size={19} />
         </IconButton>
       </Tooltip>
       <Tooltip title="后退">

@@ -19,6 +19,8 @@ export interface AgentRunOverviewEntry {
   stepCount: number
   /** The tool the agent is on (or was last on); absent before its first step. */
   currentStep?: string
+  /** A Wrapper run started by `wrapper_run`, when visible from the agent step output/args. */
+  wrapperRunId?: string
   /** What steer/stop address; null when the card does not know its run. */
   control: AgentRunControlTarget | null
 }
@@ -40,6 +42,25 @@ function currentStepName(item: AgentExecutionItem): string | undefined {
   return (running ?? item.steps.at(-1))?.toolName
 }
 
+const WRAPPER_RUN_ID_PATTERN = /\bwrun_[A-Za-z0-9_-]+\b/g
+
+function lastWrapperRunIdInText(text: string): string | undefined {
+  return [...text.matchAll(WRAPPER_RUN_ID_PATTERN)].at(-1)?.[0]
+}
+
+function latestWrapperRunId(item: AgentExecutionItem): string | undefined {
+  for (let index = item.steps.length - 1; index >= 0; index--) {
+    const step = item.steps[index]
+    if (!step || !step.toolName.startsWith('wrapper_')) continue
+    const found =
+      lastWrapperRunIdInText(step.output) ??
+      lastWrapperRunIdInText(step.argsJson) ??
+      lastWrapperRunIdInText(step.argsPreview)
+    if (found) return found
+  }
+  return undefined
+}
+
 export function runningAgentRuns(
   items: readonly ChatItem[],
   lost: ReadonlySet<string>
@@ -50,6 +71,7 @@ export function runningAgentRuns(
     const control = agentRunControlTarget(item)
     if (control && lost.has(agentRunLostKey(control))) continue
     const currentStep = currentStepName(item)
+    const wrapperRunId = latestWrapperRunId(item)
     entries.push({
       id: item.id,
       agentName: item.agentName,
@@ -58,6 +80,7 @@ export function runningAgentRuns(
       ...(item.createdAt ? { startedAt: item.createdAt } : {}),
       stepCount: item.steps.length,
       ...(currentStep ? { currentStep } : {}),
+      ...(wrapperRunId ? { wrapperRunId } : {}),
       control
     })
   }

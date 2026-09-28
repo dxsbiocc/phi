@@ -16,8 +16,76 @@ import type {
   EnvironmentToolId,
   EnvironmentToolState
 } from '../../shared/environmentTypes'
-import type { RemoteHpcSettings } from '../../shared/wrapperRemoteTypes'
+import type {
+  RemoteProjectConnectionChange,
+  RemoteProjectConnectionRetryRequest,
+  RemoteProjectConnectionState,
+  RemoteProjectCreateInput
+} from '../../shared/projectLocation'
+import type { OpenSshHostInput } from '../../shared/remoteHostProfile'
+import type {
+  WorkspaceChangeSummary,
+  WorkspaceDiffReference
+} from '../../shared/workspaceChangeTypes'
+import type { PromptImageInput, StoredPromptImage } from '../../shared/promptImageTypes'
+import type { SessionExportResult } from '../../shared/sessionExportTypes'
+import type { RemoteWorkspaceFileRequest } from '../../shared/remoteWorkspacePath'
+import type {
+  WrapperResultDirectoryRequest,
+  WrapperResultDownloadProgress,
+  WrapperResultDownloadResult,
+  WrapperResultRange,
+  WrapperResultRangeRequest,
+  WrapperResultReadRequest,
+  WrapperResultPreview
+} from '../../shared/wrapperResultTypes'
+import type {
+  ProjectRemoteConnection,
+  RemoteHostProfile,
+  RemoteHostProfileInput,
+  OpenSshHost
+} from './features/wrapper/lib/remoteConnectionTypes'
+export type {
+  ProjectRemoteConnection,
+  RemoteHostProfile,
+  OpenSshHost
+} from './features/wrapper/lib/remoteConnectionTypes'
 import type { AgentExecutionItem } from './lib/agentExecutionTypes'
+import type { PlanReviewItem, PresentedFilesItem } from './features/chat/lib/planReviewTypes'
+export type { PlanReviewItem, PresentedFilesItem } from './features/chat/lib/planReviewTypes'
+import type { AuthInteractionEvent } from './lib/authTypes'
+import type { Project } from './lib/projectTypes'
+export type { Project } from './lib/projectTypes'
+import type {
+  CurrentSession,
+  PermissionMode,
+  PromptResult,
+  PromptTarget,
+  SessionSummary,
+  SessionSwitchResult,
+  ToolApprovalRequest
+} from './lib/sessionTypes'
+export type {
+  CurrentSession,
+  LastRunOutcome,
+  PermissionMode,
+  PromptResult,
+  PromptTarget,
+  SessionRuntimeState,
+  SessionStatus,
+  SessionSummary,
+  SessionSwitchResult,
+  ToolApprovalRequest,
+  UnreadKind
+} from './lib/sessionTypes'
+export type {
+  ActiveAuthPrompt,
+  AuthEvent,
+  AuthInteractionEvent,
+  AuthPrompt,
+  AuthPromptInteraction,
+  AuthPromptType
+} from './lib/authTypes'
 
 export type { DefaultProxyMode, PhiAppSettings, PhiAppSettingsPatch, ProxyTransportStatus }
 export type { DbConnectorSettingsItem }
@@ -27,7 +95,6 @@ export type {
   AgentExecutionStep,
   AgentExecutionSteer
 } from './lib/agentExecutionTypes'
-
 export type MessageRole = 'user' | 'assistant' | 'error' | 'warning' | 'thinking'
 
 export type Role = MessageRole
@@ -36,6 +103,7 @@ export interface ChatMessage {
   id: string
   role: Role
   content: string
+  images?: Array<PromptImageInput | StoredPromptImage>
   runId?: string
   createdAt?: string
   completedAt?: string
@@ -63,6 +131,7 @@ export interface ToolCallItem {
     bytes: number
   }
   notebook?: NotebookToolSummary
+  todo?: import('./lib/todoTypes').TodoSnapshot
 }
 
 export interface NotebookToolSummary {
@@ -92,6 +161,13 @@ export interface RunLifecycleItem {
   durationMs?: number
 }
 
+export interface WorkspaceChangeSummaryItem extends WorkspaceChangeSummary {
+  id: string
+  role: 'workspace_changes'
+  runId?: string
+  createdAt?: string
+}
+
 /**
  * A wrapper run plan created by a `wrapper_<id>` agent tool call (see
  * docs/design/phi-wrapper-technical-design.md, "Chat And UI Integration").
@@ -113,7 +189,14 @@ export interface WrapperPlanItem {
 }
 
 export type ChatItem =
-  ChatMessage | ToolCallItem | RunLifecycleItem | WrapperPlanItem | AgentExecutionItem
+  | ChatMessage
+  | ToolCallItem
+  | RunLifecycleItem
+  | WorkspaceChangeSummaryItem
+  | PresentedFilesItem
+  | PlanReviewItem
+  | WrapperPlanItem
+  | AgentExecutionItem
 
 export interface ProviderAuthStatus {
   providerId: string
@@ -128,28 +211,11 @@ export interface ProviderAuthStatus {
   statusText: string
 }
 
-export type AuthPromptType = 'text' | 'secret' | 'select' | 'manual_code'
-
-export interface AuthPrompt {
-  type: AuthPromptType
-  message: string
-  placeholder?: string
-  options?: ReadonlyArray<{ id: string; label: string; description?: string }>
-}
-
-export interface AuthPromptInteraction {
-  requestId: string
-  providerId: string
-  prompt: AuthPrompt
-  value: string
-}
-
-export type ActiveAuthPrompt = AuthPromptInteraction
-
 export interface ModelOption {
   providerId: string
   modelId: string
   name: string
+  supportsImages?: boolean
   thinkingLevels: ThinkingLevel[]
 }
 
@@ -164,20 +230,6 @@ export interface AuthProgressEvent {
 }
 
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-export type SessionStatus =
-  'idle' | 'running' | 'needs_approval' | 'needs_input' | 'failed' | 'completed_unread'
-export type UnreadKind = 'completed' | 'failed' | 'approval' | 'input'
-export type LastRunOutcome = 'completed' | 'failed' | 'interrupted' | 'stopped'
-
-export interface SessionRuntimeState {
-  status: SessionStatus
-  unreadKind: UnreadKind | null
-  lastRunOutcome?: LastRunOutcome
-  currentRunId?: string
-  currentRunStartedAt?: string
-  lastActivityAt?: string
-}
-
 export type AgentUserInteractionOption = {
   label: string
   description: string
@@ -194,6 +246,7 @@ export type AgentUserInteractionQuestion = {
 export type AgentUserInteractionRequest = {
   requestId: string
   questions: AgentUserInteractionQuestion[]
+  planReview?: { title: string; content: string; planFilePath: string }
   sessionId?: string
   sessionPath?: string
   sessionGeneration?: number
@@ -218,92 +271,6 @@ export type AgentUserInteractionResponse = {
   cancelled?: boolean
   globalNote?: string
   error?: string
-}
-
-export interface SessionSummary extends SessionRuntimeState {
-  path: string
-  id: string
-  name?: string
-  created: string
-  modified: string
-  messageCount: number
-  firstMessage: string
-  phiSessionId?: string
-}
-
-export interface SessionSwitchResult extends SessionRuntimeState {
-  path: string
-  phiSessionId?: string
-  cwd: string
-  sessionGeneration: number
-  permissionMode: PermissionMode
-  messages: unknown[]
-}
-
-export interface CurrentSession extends SessionRuntimeState {
-  path: string | null
-  phiSessionId?: string
-  cwd: string
-  sessionGeneration: number
-  permissionMode: PermissionMode
-  messages?: unknown[]
-}
-
-export interface PromptResult {
-  path: string | null
-  phiSessionId?: string
-  sessionGeneration: number
-}
-
-export interface PromptTarget {
-  path: string | null
-  phiSessionId?: string
-  cwd: string
-  sessionGeneration: number
-  suppressUserMessageEvent?: boolean
-  retryUserMessageId?: string
-}
-
-export type PermissionMode = 'auto' | 'ask' | 'full'
-
-export interface ProjectRemoteConnection {
-  id: string
-  label: string
-  host: string
-  port?: number
-  username: string
-  privateKeyPath: string
-  hasPassphrase?: boolean
-  hpc?: RemoteHpcSettings
-}
-
-export interface Project {
-  id: string
-  name: string
-  workingDirectory: string
-  permissionMode: PermissionMode
-  gitStatus?: {
-    branch: string
-    dirty: boolean
-  }
-  defaultModel?: { providerId: string; modelId: string }
-  defaultThinkingLevel?: ThinkingLevel
-  remoteConnections?: ProjectRemoteConnection[]
-  defaultRemoteConnectionId?: string
-  remoteWorkspaceRoot?: string
-  createdAt: string
-}
-
-export interface ToolApprovalRequest {
-  requestId: string
-  sessionId?: string
-  sessionPath?: string
-  sessionGeneration?: number
-  runId?: string
-  cwd?: string
-  projectName?: string
-  toolName: string
-  summary: string
 }
 
 export type PluginKind = 'extension' | 'skill' | 'prompt' | 'theme' | 'package'
@@ -360,7 +327,7 @@ export interface McpServerSummary {
   status: 'configured'
 }
 
-export type FilePreviewKind = 'text' | 'image' | 'pdf'
+export type FilePreviewKind = 'text' | 'html' | 'image' | 'pdf' | 'metadata'
 
 interface FilePreviewBase {
   path: string
@@ -384,8 +351,14 @@ export type FilePreview = FilePreviewBase &
         dataUrl?: never
       }
     | {
+        kind: 'html'
+        mimeType: 'text/html'
+        content: string
+        dataUrl?: never
+      }
+    | {
         kind: 'image'
-        mimeType: 'image/png'
+        mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
         dataUrl: string
         content?: never
       }
@@ -394,6 +367,13 @@ export type FilePreview = FilePreviewBase &
         mimeType: 'application/pdf'
         dataUrl: string
         content?: never
+      }
+    | {
+        kind: 'metadata'
+        mimeType: string
+        reason: 'large_file' | 'binary'
+        content?: never
+        dataUrl?: never
       }
   )
 
@@ -729,13 +709,26 @@ export type RendererApi = {
   getPathForFile: (file: File) => string
   onInputFilesDropped: (cb: (paths: string[]) => void) => () => void
   previewFile: (path: string) => Promise<FilePreview>
+  previewRemoteWorkspaceFile: (request: RemoteWorkspaceFileRequest) => Promise<FilePreview>
+  previewWrapperResult: (request: WrapperResultReadRequest) => Promise<WrapperResultPreview>
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
   statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
   listDirectory: (path: string) => Promise<DirectoryListing>
+  listRemoteWorkspaceDirectory: (request: RemoteWorkspaceFileRequest) => Promise<DirectoryListing>
+  listWrapperResultDirectory: (request: WrapperResultDirectoryRequest) => Promise<DirectoryListing>
+  readWrapperResultRange: (request: WrapperResultRangeRequest) => Promise<WrapperResultRange>
+  cancelWrapperResultRead: (requestId: string) => Promise<boolean>
+  downloadWrapperResult: (request: WrapperResultReadRequest) => Promise<WrapperResultDownloadResult>
+  cancelWrapperResultDownload: (requestId: string) => Promise<boolean>
+  onWrapperResultDownloadProgress: (
+    cb: (progress: WrapperResultDownloadProgress) => void
+  ) => () => void
   renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
   previewDatabaseWebImage: (url: string) => Promise<DatabaseWebImagePreview>
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
+  readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
+  readWorkspaceDiff: (ref: WorkspaceDiffReference) => Promise<string>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => () => void
   onAgentUserInteractionRequest: (cb: (event: AgentUserInteractionRequest) => void) => () => void
   onAgentUserInteractionCancelled: (cb: () => void) => () => void
@@ -763,6 +756,8 @@ export type RendererApi = {
   pickEnvironmentBinary: () => Promise<string | null>
   listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
   setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
+  setDbConnectorApiKey: (id: string, apiKey: string) => Promise<DbConnectorSettingsItem[]>
+  clearDbConnectorApiKey: (id: string) => Promise<DbConnectorSettingsItem[]>
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>
@@ -778,10 +773,15 @@ export type RendererApi = {
   getCurrentSession: () => Promise<CurrentSession>
   updateCurrentSessionPermissionMode: (permissionMode: PermissionMode) => Promise<CurrentSession>
   createSession: () => Promise<CurrentSession>
+  forkSession: (
+    sourceId: string,
+    eventId: string
+  ) => Promise<{ path: string; phiSessionId: string }>
   switchSession: (path: string) => Promise<SessionSwitchResult | null>
   acknowledgeSession: (path: string) => Promise<SessionSummary | null>
   deleteSession: (path: string) => Promise<void>
   renameSession: (path: string, name: string) => Promise<void>
+  exportSession: (sessionId: string) => Promise<SessionExportResult | null>
   listProjects: () => Promise<Project[]>
   pickProjectDirectory: () => Promise<string | null>
   createProject: (
@@ -789,6 +789,13 @@ export type RendererApi = {
     workingDirectory: string,
     permissionMode: PermissionMode
   ) => Promise<Project>
+  createRemoteProject: (input: RemoteProjectCreateInput) => Promise<Project>
+  retryRemoteProjectConnection: (
+    request: RemoteProjectConnectionRetryRequest
+  ) => Promise<RemoteProjectConnectionState>
+  onRemoteProjectConnectionChanged: (
+    cb: (change: RemoteProjectConnectionChange) => void
+  ) => () => void
   deleteProject: (id: string) => Promise<void>
   updateProjectPermissionMode: (id: string, permissionMode: PermissionMode) => Promise<Project>
   updateProjectDefaults: (
@@ -798,13 +805,15 @@ export type RendererApi = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => Promise<Project>
-  pickPrivateKeyFile: () => Promise<string | null>
-  isRemoteCredentialStorageAvailable: () => Promise<boolean>
+  listRemoteHosts: () => Promise<RemoteHostProfile[]>
+  listOpenSshHosts: () => Promise<OpenSshHost[]>
+  saveOpenSshHost: (input: OpenSshHostInput) => Promise<RemoteHostProfile>
+  saveRemoteHost: (input: RemoteHostProfileInput) => Promise<RemoteHostProfile>
+  deleteRemoteHost: (id: string) => Promise<void>
   updateProjectRemoteConnection: (
     id: string,
     connectionId: string,
-    patch: ProjectRemoteConnection | null,
-    passphrase?: string | null
+    patch: ProjectRemoteConnection | null
   ) => Promise<Project>
   updateProjectRemoteDefaults: (
     id: string,
@@ -814,10 +823,12 @@ export type RendererApi = {
     }
   ) => Promise<Project>
   listProjectSessions: (workingDirectory: string) => Promise<SessionSummary[]>
+  listProjectSessionsById: (projectId: string) => Promise<SessionSummary[]>
   createProjectSession: (
     workingDirectory: string,
     permissionMode: PermissionMode
   ) => Promise<CurrentSession>
+  createRemoteProjectSession: (projectId: string) => Promise<CurrentSession>
   listAnalysisNotebooks: (cwd?: string) => Promise<AnalysisNotebookRegistry>
   initializeProjectAnalysis: (cwd: string) => Promise<AnalysisProjectInitialization>
   openAnalysisNotebook: (cwd: string, path: string) => Promise<AnalysisNotebookFile>
@@ -915,6 +926,9 @@ export interface AgentEventSummary {
   eventId?: string
   createdAt?: string
   runId?: string
+  files?: unknown
+  totalChanged?: number
+  truncated?: boolean
   durationMs?: number
   approvalId?: string
   sessionGeneration?: number
@@ -966,32 +980,3 @@ export interface AgentEventSummary {
   toModelId?: string
   toModelName?: string
 }
-
-export type AuthEvent =
-  | {
-      type: 'info'
-      message: string
-      links?: ReadonlyArray<{ url: string; label?: string }>
-    }
-  | { type: 'auth_url'; url: string; instructions?: string }
-  | {
-      type: 'device_code'
-      userCode: string
-      verificationUri: string
-      intervalSeconds?: number
-      expiresInSeconds?: number
-    }
-  | { type: 'progress'; message: string }
-
-export type AuthInteractionEvent =
-  | {
-      type: 'prompt'
-      requestId: string
-      providerId: string
-      prompt: AuthPrompt
-    }
-  | {
-      type: 'notify'
-      providerId: string
-      event: AuthEvent
-    }

@@ -697,6 +697,26 @@ test('wrapper_run passes continue_when_done to the job client; anything but fals
   )
 })
 
+test('wrapper_run forwards explicit local and remote targets without silently dropping local', async () => {
+  const seen: unknown[] = []
+  const client = {
+    start: async (input: unknown) => {
+      seen.push(input)
+      return { ok: false as const, error: 'stub' }
+    }
+  }
+  const tool = buildWrapperCompositionTools(client as never).find(
+    (entry) => entry.name === 'wrapper_run'
+  )!
+  await tool.execute('local', { id: WRAPPER_ID, target: 'local' })
+  await tool.execute('remote', { id: WRAPPER_ID, target: 'remote' })
+  await tool.execute('auto', { id: WRAPPER_ID })
+  assert.deepEqual(
+    seen.map((input) => (input as { target?: string }).target),
+    ['local', 'remote', undefined]
+  )
+})
+
 test('the host client and handlers carry continueWhenDone across the process boundary', async () => {
   const calls: unknown[] = []
   const client = createHostJobClient(async (_m, params) => {

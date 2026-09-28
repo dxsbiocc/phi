@@ -4,9 +4,11 @@ const RUN_TERMINAL_EVENTS = new Set(['run_completed', 'run_failed', 'run_interru
 
 export function shouldRefreshProjectGitStatusForAgentEvent(
   event: Pick<AgentEventSummary, 'type' | 'cwd'>,
-  projects: Pick<Project, 'workingDirectory'>[]
+  projects: (Pick<Project, 'workingDirectory'> & Partial<Pick<Project, 'location'>>)[]
 ): boolean {
   if (!RUN_TERMINAL_EVENTS.has(event.type)) return false
   if (!event.cwd) return false
-  return projects.some((project) => project.workingDirectory === event.cwd)
+  return projects.some(
+    (project) => project.location?.kind !== 'ssh' && project.workingDirectory === event.cwd
+  )
 }

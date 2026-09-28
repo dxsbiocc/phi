@@ -1,0 +1,85 @@
+phiDbConnectorVersion: 1
+id: rest-json/jaspar
+name: JASPAR
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://jaspar.elixir.no/api/v1
+networkPolicy:
+  allowedHosts:
+    - jaspar.elixir.no
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 3
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: matrix_search
+    summary: Search TF binding profiles by name, taxon, or collection.
+    identity:
+      stableIdFields: [matrix_id]
+      namespace: jaspar.matrix
+      primaryUrlTemplate: https://jaspar.elixir.no/matrix/{stable_id}
+    commonFields: [matrix_id, name, collection, base_id, version, species, tax_id]
+    rest:
+      request:
+        path: /matrix/
+        filterParamMap:
+          {
+            name: name,
+            tax_id: tax_id,
+            collection: collection,
+            tf_class: tf_class
+          }
+        limitParam: page_size
+        cursorParam: page
+      response:
+        rowsPath: results
+        totalRowsPath: count
+    fields:
+      - name: name
+        type: string
+        description: TF name filter such as CTCF.
+        synonyms: [tf, gene, query]
+      - name: tax_id
+        type: number
+        description: NCBI taxonomy ID (9606 for human).
+        synonyms: [taxon, species]
+        namespace: ncbi.taxonomy_id
+      - name: collection
+        type: string
+        description: Collection such as CORE.
+      - name: matrix_id
+        type: string
+        description: JASPAR matrix id such as MA0139.1.
+        namespace: jaspar.matrix
+  - id: matrix
+    summary: Fetch one TF binding profile (PFM and metadata) by matrix id.
+    identity:
+      stableIdFields: [matrix_id]
+      namespace: jaspar.matrix
+      primaryUrlTemplate: https://jaspar.elixir.no/matrix/{stable_id}
+    commonFields:
+      [matrix_id, name, collection, base_id, version, species, class, family, pfm, sequence_logo]
+    rest:
+      request:
+        path: /matrix/{filter:matrix_id}/
+      response:
+        rowsPath: $
+    fields:
+      - name: matrix_id
+        type: string
+        description: Matrix identifier such as MA0139.1.
+        synonyms: [id, matrix, query]
+        namespace: jaspar.matrix
+      - name: pfm
+        type: object
+        description: Position frequency matrix keyed by A/C/G/T.
+      - name: name
+        type: string
+        description: Transcription factor name.
+        namespace: hgnc.symbol

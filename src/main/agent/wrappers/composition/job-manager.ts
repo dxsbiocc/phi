@@ -2,9 +2,13 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { RemoteHpcSettings } from '../../../../shared/wrapperRemoteTypes'
+import type { WrapperManifestEngineProfile } from '../../../../shared/wrapperManifestTypes'
+import type { Project } from '../../projects'
 import { getPhiAgentDir } from '../../runtime-paths'
 import { getBundledWrapperPackagesDir } from '../catalog'
+import { resolveCompositionInputParams } from '../path-mapping'
 import type { ResolvedRemoteTarget } from '../remote-connection-resolver'
+import { chooseWrapperTarget, type WrapperTargetDoctorSnapshot } from '../target-policy'
 import { getWrapperRunsDir, listWrapperRuns, readWrapperRun, writeWrapperRun } from '../store'
 import type { WrapperExecutor, WrapperRun } from '../types'
 import {
@@ -41,6 +45,7 @@ import {
   isResumableRemoteRun,
   markCompositionRunCancelling,
   markCompositionRunLost,
+  markCompositionRunRunning,
   readCompositionRemoteSnapshot,
   startCompositionRun,
   writeCompositionRemoteSnapshot,
@@ -75,6 +80,13 @@ export interface WrapperJobManagerOptions {
   agentDir?: () => string
   /** Resolves the saved HPC connection for a remote run. Without it, remote runs are refused. */
   resolveRemoteTarget?: (request: RemoteTargetRequest) => ResolvedRemoteTarget | { reason: string }
+  /** `null` is a known ordinary session; `undefined` means its project identity cannot be proven. */
+  resolveProjectForRun?: (originSessionId?: string) => Project | null | undefined
+  checkRemoteEnvironment?: (input: {
+    project: Project
+    resolved: ResolvedRemoteTarget
+    profile: WrapperExecutionProfile
+  }) => Promise<WrapperTargetDoctorSnapshot>
   /** Local root the remote bundle is built from. Defaults to the bundled wrappers. */
   wrappersRoot?: () => string
   maxConcurrent?: number
@@ -131,6 +143,24 @@ function remoteExecutorName(hpc: RemoteHpcSettings | undefined): WrapperExecutor
   return hpc?.scheduler === 'slurm' ? 'slurm' : 'remote-background'
 }
 
+function compositionProfiles(
+  remote: boolean,
+  hpc?: RemoteHpcSettings
+): WrapperManifestEngineProfile[] {
+  return WRAPPER_EXECUTION_PROFILES.map((runtime) => ({
+    id: runtime,
+    executor: remote ? 'remote' : 'local',
+    ...(remote
+      ? {
+          scheduler: hpc?.scheduler === 'slurm' ? ('slurm' as const) : ('none' as const),
+          controller:
+            hpc?.controller === 'sbatch' ? ('sbatch' as const) : ('detached_ssh' as const),
+          containerRuntime: runtime
+        }
+      : {})
+  }))
+}
+
 function remoteField(run: WrapperRun): { remote?: { host: string; runDir: string } } {
   return run.remote ? { remote: { host: run.remote.host, runDir: run.remote.runDir } } : {}
 }
@@ -145,6 +175,8 @@ export class WrapperJobManager implements WrapperJobClient {
   private readonly maxRemoteConcurrent: number
   private readonly resolveRemote:
     NonNullable<WrapperJobManagerOptions['resolveRemoteTarget']> | undefined
+  private readonly resolveProjectForRun: WrapperJobManagerOptions['resolveProjectForRun']
+  private readonly checkRemoteEnvironment: WrapperJobManagerOptions['checkRemoteEnvironment']
   private readonly wrappersRoot: () => string
   private readonly killGraceMs: number | undefined
   private readonly progressThrottleMs: number
@@ -154,6 +186,8 @@ export class WrapperJobManager implements WrapperJobClient {
     this.maxConcurrent = options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT
     this.maxRemoteConcurrent = options.maxRemoteConcurrent ?? DEFAULT_MAX_REMOTE_CONCURRENT
     this.resolveRemote = options.resolveRemoteTarget
+    this.resolveProjectForRun = options.resolveProjectForRun
+    this.checkRemoteEnvironment = options.checkRemoteEnvironment
     this.wrappersRoot = options.wrappersRoot ?? getBundledWrapperPackagesDir
     this.killGraceMs = options.killGraceMs
     this.progressThrottleMs = options.progressThrottleMs ?? DEFAULT_PROGRESS_THROTTLE_MS
@@ -205,8 +239,26 @@ export class WrapperJobManager implements WrapperJobClient {
     continueWhenDone?: boolean
   }): Promise<StartJobResult> {
     const { id, overrides } = input
+    let targetReason: string | undefined
+    const entry = findWrapperCompositionEntry(id)
+    if (!entry) return { ok: false, error: `Wrapper not found: ${id}` }
+    const projectContext = this.resolveProjectForRun?.(input.originSessionId)
+    if (this.resolveProjectForRun && input.originSessionId && projectContext === undefined) {
+      return { ok: false, error: '无法确认 Wrapper 请求所属的会话或项目，已拒绝本机执行。' }
+    }
+    const project = projectContext ?? undefined
+    if (project?.location.kind === 'ssh' && input.target === 'local') {
+      const decision = chooseWrapperTarget({
+        projectLocation: project.location,
+        explicitTarget: 'local',
+        resourceClass: 'standard',
+        profiles: compositionProfiles(false)
+      })
+      return { ok: false, error: decision.reason }
+    }
+    const shouldResolveRemote = input.target === 'remote' || project?.location.kind === 'ssh'
     let resolved: ResolvedRemoteTarget | undefined
-    if (input.target === 'remote') {
+    if (shouldResolveRemote) {
       if (!this.resolveRemote) {
         return {
           ok: false,
@@ -218,6 +270,7 @@ export class WrapperJobManager implements WrapperJobClient {
       resolved = target
     }
     const remote = resolved !== undefined
+    let environmentWarnings: string[] = []
     const profile =
       input.profile ??
       (resolved ? (resolved.target.hpc?.runtime ?? DEFAULT_REMOTE_RUNTIME) : 'docker')
@@ -227,12 +280,93 @@ export class WrapperJobManager implements WrapperJobClient {
         error: `Invalid profile: ${profile}. Must be one of ${WRAPPER_EXECUTION_PROFILES.join(', ')}.`
       }
     }
-    const entry = findWrapperCompositionEntry(id)
-    if (!entry) return { ok: false, error: `Wrapper not found: ${id}` }
-
+    if (project) {
+      const hostProfileId = resolved
+        ? project.location.kind === 'ssh'
+          ? project.location.hostProfileId
+          : project.remoteConnections?.find((connection) => connection.id === resolved.connectionId)
+              ?.hostProfileId
+        : undefined
+      const remoteCandidate =
+        resolved && hostProfileId
+          ? {
+              hostProfileId,
+              hostAlias: resolved.target.connection.host,
+              connectionId: resolved.connectionId,
+              workspaceRoot: resolved.target.workspaceRoot,
+              hpc: {
+                ...resolved.target.hpc,
+                scheduler: resolved.target.hpc?.scheduler ?? 'local',
+                runtime: profile as WrapperExecutionProfile
+              }
+            }
+          : undefined
+      const policyInput = {
+        projectLocation: project.location,
+        explicitTarget: input.target,
+        selectedProfileId: profile,
+        resourceClass: 'standard' as const,
+        profiles: compositionProfiles(remote, resolved?.target.hpc),
+        remote: remoteCandidate
+      }
+      const preliminary = chooseWrapperTarget(policyInput)
+      if (preliminary.kind === 'blocked' && preliminary.code !== 'doctor_unavailable') {
+        return { ok: false, error: preliminary.reason }
+      }
+      let doctor: WrapperTargetDoctorSnapshot | undefined
+      if (resolved && this.checkRemoteEnvironment) {
+        try {
+          doctor = await this.checkRemoteEnvironment({
+            project,
+            resolved,
+            profile: profile as WrapperExecutionProfile
+          })
+        } catch (error) {
+          return {
+            ok: false,
+            error: `远程环境检查失败：${error instanceof Error ? error.message : String(error)}`
+          }
+        }
+      }
+      const decision = chooseWrapperTarget({ ...policyInput, doctor })
+      if (decision.kind === 'blocked') return { ok: false, error: decision.reason }
+      environmentWarnings =
+        doctor?.report.checks
+          .filter(
+            (check) =>
+              check.status === 'warning' &&
+              ['nextflow', 'java', 'runtime', 'login_controller'].includes(check.id)
+          )
+          .map((check) => `${check.message}${check.suggestion ? `；${check.suggestion}` : ''}`) ??
+        []
+      targetReason = decision.reason
+      if ((decision.target === 'remote') !== remote) {
+        return { ok: false, error: 'Wrapper 执行目标与项目策略不一致，已停止提交。' }
+      }
+    }
     const defaults = readWrapperDefaultParams(entry.wrapperDir)
+    const mapping =
+      resolved && project?.location.kind === 'local'
+        ? project.remoteConnections?.find((connection) => connection.id === resolved.connectionId)
+            ?.inputPathMapping
+        : undefined
+    const mapped = resolveCompositionInputParams(
+      entry.manifest,
+      { ...defaults, ...overrides },
+      {
+        remote,
+        projectLocation: project?.location,
+        mapping
+      }
+    )
+    if (mapped.errors.length > 0) {
+      return {
+        ok: false,
+        error: `Invalid input paths for ${id}:\n${mapped.errors.map((error) => `- ${error}`).join('\n')}`
+      }
+    }
     // Input paths on a remote run live on the cluster; a local existence check would be wrong.
-    const errors = validateWrapperParams(entry.manifest, defaults, overrides, entry.componentDir, {
+    const errors = validateWrapperParams(entry.manifest, {}, mapped.params, entry.componentDir, {
       checkInputPaths: !remote
     })
     if (errors.length > 0) {
@@ -251,13 +385,16 @@ export class WrapperJobManager implements WrapperJobClient {
     }
 
     const agentDir = this.agentDir()
-    const params = { ...defaults, ...overrides }
+    const params = mapped.params
     let run: WrapperRun
     try {
       run = startCompositionRun({
         entry,
         params,
+        inputReferences: mapped.inputs,
+        environmentWarnings,
         profile,
+        targetReason,
         originSessionId: input.originSessionId,
         continueWhenDone: input.continueWhenDone,
         ...(resolved
@@ -267,7 +404,8 @@ export class WrapperJobManager implements WrapperJobClient {
                 workspaceRoot: resolved.target.workspaceRoot,
                 executor: remoteExecutorName(resolved.target.hpc),
                 connectionId: resolved.connectionId,
-                projectId: resolved.projectId
+                projectId: resolved.projectId,
+                hostProfileId: resolved.hostProfileId
               }
             }
           : {}),
@@ -288,10 +426,12 @@ export class WrapperJobManager implements WrapperJobClient {
 
     const jobRef: { current?: LiveJob } = {}
     const onOutput = (chunk: string): void => {
+      if (jobRef.current?.finalized) return
       appendFileSync(logPath, chunk)
       tracker.push(chunk)
       if (jobRef.current) this.persistProgress(jobRef.current)
     }
+    for (const warning of environmentWarnings) onOutput(`警告：${warning}\n`)
 
     let proc: WrapperProcess
     try {
@@ -300,14 +440,17 @@ export class WrapperJobManager implements WrapperJobClient {
             runId: run.runId,
             entry,
             params,
+            inputReferences: mapped.inputs,
             profile,
             target: resolved.target,
             wrappersRoot: this.wrappersRoot(),
             onOutput,
-            onSnapshot: (snapshot) => this.saveSnapshot(run.runId, snapshot),
+            onSnapshot: (snapshot) => {
+              if (!jobRef.current?.finalized) this.saveSnapshot(run.runId, snapshot)
+            },
             killGraceMs: this.killGraceMs
           })
-        : startWrapperComposition(entry.wrapperDir, overrides, profile as WrapperExecutionProfile, {
+        : startWrapperComposition(entry.wrapperDir, params, profile as WrapperExecutionProfile, {
             onOutput,
             killGraceMs: this.killGraceMs
           })
@@ -368,10 +511,11 @@ export class WrapperJobManager implements WrapperJobClient {
    * end. A run that cannot be reattached (connection removed, host unreachable at startup)
    * is recorded `lost` — its outcome is unknown, not a failure. Returns how many were adopted.
    */
-  async adoptRemoteRuns(): Promise<number> {
+  async adoptRemoteRuns(onlyRunId?: string): Promise<number> {
     const agentDir = this.agentDir()
     let adopted = 0
     for (const run of listWrapperRuns(agentDir)) {
+      if (onlyRunId && run.runId !== onlyRunId) continue
       if (this.live.has(run.runId) || !isResumableRemoteRun(run, agentDir)) continue
       const entry = findWrapperCompositionEntry(run.wrapper.canonicalId)
       const snapshot = readCompositionRemoteSnapshot(run.runId, agentDir)
@@ -380,7 +524,25 @@ export class WrapperJobManager implements WrapperJobClient {
         connectionId: run.remote?.connectionId
       }) ?? { reason: 'Remote runs are not available.' }
       if (!entry || !snapshot || 'reason' in resolved) {
-        markCompositionRunLost(run, agentDir)
+        const reason = !entry
+          ? '重启后找不到 Wrapper 定义，无法核对远端运行'
+          : !snapshot
+            ? '重启后缺少远端运行快照'
+            : 'reason' in resolved
+              ? resolved.reason
+              : '无法核对远端运行'
+        markCompositionRunLost(run, agentDir, reason)
+        this.emit(run.runId)
+        continue
+      }
+      const expectedRunDir = `${resolved.target.workspaceRoot.replace(/\/+$/, '')}/wrappers/runs/${run.runId}`
+      if (
+        snapshot.runId !== run.runId ||
+        snapshot.remoteRunDir !== expectedRunDir ||
+        run.remote?.host !== resolved.target.connection.host ||
+        run.remote?.runDir !== expectedRunDir
+      ) {
+        markCompositionRunLost(run, agentDir, '远端运行快照与项目绑定的主机或目录不一致')
         this.emit(run.runId)
         continue
       }
@@ -396,15 +558,37 @@ export class WrapperJobManager implements WrapperJobClient {
         entry,
         target: resolved.target,
         onOutput: (chunk) => {
+          const job = this.live.get(run.runId)
+          if (job?.finalized) return
           appendFileSync(logPath, chunk)
           tracker.push(chunk)
-          const job = this.live.get(run.runId)
           if (job) this.persistProgress(job)
         },
-        onSnapshot: (next) => this.saveSnapshot(run.runId, next),
+        onSnapshot: (next) => {
+          if (!this.live.get(run.runId)?.finalized) this.saveSnapshot(run.runId, next)
+        },
+        onStatus: (status) => {
+          const job = this.live.get(run.runId)
+          if (job?.finalized || status.outcome !== 'running') return
+          if (!job || job.run.state !== 'lost' || job.cancelRequested) return
+          try {
+            job.run = markCompositionRunRunning(job.run, agentDir)
+            this.emit(run.runId)
+          } catch {
+            // Reconciliation evidence remains valid even if local persistence fails.
+          }
+        },
         killGraceMs: this.killGraceMs
       })
-      this.trackJob({ run, entry, params: snapshot.params, proc, remote: true, tracker, logPath })
+      this.trackJob({
+        run,
+        entry,
+        params: snapshot.params,
+        proc,
+        remote: true,
+        tracker,
+        logPath
+      })
       this.emit(run.runId)
       adopted += 1
     }
@@ -480,6 +664,7 @@ export class WrapperJobManager implements WrapperJobClient {
       wrapperId: job.run.wrapper.canonicalId,
       state: job.run.state,
       profile: job.run.profile,
+      ...(job.run.targetReason ? { targetReason: job.run.targetReason } : {}),
       outDir: job.run.outDir,
       startedAt: job.run.startedAt,
       elapsedSeconds: Math.max(0, Math.round((Date.now() - job.startedMs) / 1000)),
@@ -503,6 +688,7 @@ export class WrapperJobManager implements WrapperJobClient {
       wrapperId: run.wrapper.canonicalId,
       state: run.state,
       profile: run.profile,
+      ...(run.targetReason ? { targetReason: run.targetReason } : {}),
       outDir: run.outDir,
       ...(run.startedAt ? { startedAt: run.startedAt } : {}),
       ...(run.completedAt ? { completedAt: run.completedAt } : {}),
@@ -554,7 +740,18 @@ export class WrapperJobManager implements WrapperJobClient {
   }
 
   async cancel(runId: string): Promise<CancelJobResult> {
-    const job = this.live.get(runId)
+    let job = this.live.get(runId)
+    if (!job) {
+      const stored = readWrapperRun(runId, this.agentDir())
+      if (stored?.origin === 'composition' && stored.remote && stored.state === 'lost') {
+        await this.adoptRemoteRuns(runId)
+        job = this.live.get(runId)
+      }
+      if (!job && stored?.remote && ['completed', 'failed', 'cancelled'].includes(stored.state)) {
+        const status = this.statusSync(runId)
+        if (status) return { ok: true, status }
+      }
+    }
     if (!job) {
       const stored = readWrapperRun(runId, this.agentDir())
       return {
@@ -594,8 +791,8 @@ export class WrapperJobManager implements WrapperJobClient {
   }
 
   /**
-   * App is quitting: stop every live run and record it cancelled right now
-   * (synchronously — the process is about to exit).
+   * App is quitting: detach remote watchers without signalling their jobs;
+   * stop only local child processes before the main process exits.
    */
   shutdown(): void {
     for (const job of [...this.live.values()]) {

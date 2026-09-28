@@ -30,6 +30,7 @@ type SessionSidebarProps = {
   sessions: SessionSummary[]
   activeSessionPath: string | null
   activeCwd: string
+  activeProjectId?: string | null
   projects: Project[]
   projectSessionRefreshKey: number
   onNewChat: () => void
@@ -37,10 +38,18 @@ type SessionSidebarProps = {
   onSelectSession: (path: string) => void
   onRenameSession: (path: string, name: string) => void
   onDeleteSession: (path: string) => void
+  onExportSession: (session: SessionSummary) => void
   onStartProjectChat: (project: Project) => void
   onDeleteProject: (project: Project) => void
-  onFetchProjectSessions: (workingDirectory: string) => Promise<SessionSummary[]>
-  getSessionRuntimeState?: (path: string, cwd: string) => SessionRuntimeState | null
+  onFetchProjectSessions: (
+    workingDirectory: string,
+    projectId?: string
+  ) => Promise<SessionSummary[]>
+  getSessionRuntimeState?: (
+    path: string,
+    cwd: string,
+    phiSessionId?: string | null
+  ) => SessionRuntimeState | null
 }
 
 function SessionSidebar({
@@ -51,6 +60,7 @@ function SessionSidebar({
   sessions,
   activeSessionPath,
   activeCwd,
+  activeProjectId = null,
   projects,
   projectSessionRefreshKey,
   onNewChat,
@@ -58,6 +68,7 @@ function SessionSidebar({
   onSelectSession,
   onRenameSession,
   onDeleteSession,
+  onExportSession,
   onStartProjectChat,
   onDeleteProject,
   onFetchProjectSessions,
@@ -72,7 +83,8 @@ function SessionSidebar({
     projectExpansionOverrides,
     mode,
     projects,
-    activeCwd
+    activeCwd,
+    activeProjectId
   )
   const [nowMs, setNowMs] = useState(() => Date.now())
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
@@ -211,6 +223,7 @@ function SessionSidebar({
               onSelectSession={onSelectSession}
               onRenameSession={onRenameSession}
               onDeleteSession={onDeleteSession}
+              onExportSession={onExportSession}
               onDeleteProject={() => setDeleteProjectTarget(project)}
               onFetchSessions={onFetchProjectSessions}
               getSessionRuntimeState={getSessionRuntimeState}
@@ -219,7 +232,7 @@ function SessionSidebar({
             />
           ))}
 
-        {isConversationsMode && sessions.length > 0 && (
+        {isConversationsMode && orderedSessions.length > 0 && (
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -236,9 +249,12 @@ function SessionSidebar({
                   runtimeState={getSessionRuntimeState?.(session.path, activeCwd) ?? null}
                   isActive={session.path === activeSessionPath}
                   nowMs={nowMs}
+                  compactHoverPreview={compactHoverPreview}
+                  onPreviewInteractionChange={onPreviewInteractionChange}
                   onSelect={() => onSelectSession(session.path)}
                   onRename={(name) => onRenameSession(session.path, name)}
                   onDelete={() => setDeleteTarget(session)}
+                  onExport={() => onExportSession(session)}
                 />
               ))}
             </SortableContext>

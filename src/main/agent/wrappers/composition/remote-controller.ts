@@ -9,6 +9,11 @@ import {
   type RemoteRunStatus
 } from '../executor-remote'
 import { parseSbatchJobId, readSlurmJobStatus, signalSlurmJob } from '../executor-slurm'
+import {
+  REMOTE_JOB_ID_FILE,
+  REMOTE_LAUNCH_ERROR_FILE,
+  RemoteLaunchRejectedError
+} from '../remote-launch-claim'
 import { shellQuote, type RemoteSshSession } from '../remote-ssh-session'
 import { buildRemoteSbatchScript, type RemoteRunLayout } from './remote-config'
 
@@ -34,8 +39,12 @@ const loginNodeController: RunController = {
   async start(session, { layout }) {
     const started = await session.exec(buildDetachedLaunchCommand(layout.runDir))
     if (started.code !== 0) throw new Error(started.stderr || started.stdout)
-    const pid = Number.parseInt(started.stdout.trim(), 10)
-    return { pid: Number.isFinite(pid) ? pid : undefined }
+    const rawPid = started.stdout.trim()
+    const pid = Number(rawPid)
+    if (!/^[1-9][0-9]*$/.test(rawPid) || !Number.isSafeInteger(pid)) {
+      throw new Error('远程启动回执没有有效 PID')
+    }
+    return { pid }
   },
   status: readDetachedStatus,
   signal: signalDetachedRun
@@ -70,22 +79,31 @@ const sbatchController: RunController = {
     await session.writeTextFile(script, buildRemoteSbatchScript({ layout, runId, hpc }))
     const result = await session.exec(`sbatch ${shellQuote(script)}`)
     if (result.code !== 0) {
-      throw new Error(`sbatch refused the job: ${(result.stderr || result.stdout).trim()}`)
+      const reason = `sbatch refused the job: ${(result.stderr || result.stdout).trim()}`
+      await session.writeTextFile(
+        joinRemote(layout.runDir, REMOTE_LAUNCH_ERROR_FILE),
+        `${reason}\n`
+      )
+      throw new RemoteLaunchRejectedError(reason)
     }
     const jobId = parseSbatchJobId(result.stdout)
     if (jobId === undefined) {
       throw new Error(`could not read the job id from sbatch's reply: ${result.stdout.trim()}`)
     }
+    await session.writeTextFile(joinRemote(layout.runDir, REMOTE_JOB_ID_FILE), `${jobId}\n`)
     return {
       jobId,
       note: `Submitted Slurm controller job ${jobId}; Nextflow starts when the scheduler has room for it.`
     }
   },
   status: sbatchStatus,
-  signal: (session, handle, signal) => signalSlurmJob(session, handle.jobId, signal)
+  signal: signalSlurmJob
 }
 
 export function controllerFor(hpc: RemoteHpcSettings | undefined): RunController {
+  if (hpc?.controller === 'sbatch' && hpc.scheduler !== 'slurm') {
+    throw new Error('sbatch 控制方式必须使用 Slurm 调度')
+  }
   return hpc?.controller === 'sbatch' ? sbatchController : loginNodeController
 }
 

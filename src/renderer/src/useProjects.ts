@@ -1,5 +1,21 @@
-import { useCallback, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import type { RemoteProjectConnectionChange } from '../../shared/projectLocation'
 import type { PermissionMode, Project, ProjectRemoteConnection, ThinkingLevel } from './types'
+
+export function applyRemoteProjectConnectionChange(
+  projects: Project[],
+  change: RemoteProjectConnectionChange
+): Project[] {
+  return projects.map((project) =>
+    project.id === change.projectId && project.location.kind === 'ssh'
+      ? {
+          ...project,
+          remoteConnection: change.state,
+          remoteReachability: change.state.phase
+        }
+      : project
+  )
+}
 
 export type ProjectsState = {
   projects: Project[]
@@ -22,8 +38,7 @@ export type ProjectsState = {
   onUpdateProjectRemoteConnection: (
     projectId: string,
     connectionId: string,
-    patch: ProjectRemoteConnection | null,
-    passphrase?: string | null
+    patch: ProjectRemoteConnection | null
   ) => Promise<void>
   onUpdateProjectRemoteDefaults: (
     projectId: string,
@@ -43,6 +58,22 @@ export function useProjects(
     null
   )
   const [updatingRemoteProjectId, setUpdatingRemoteProjectId] = useState<string | null>(null)
+
+  useEffect(() => {
+    projectsRef.current = projects
+  }, [projects])
+
+  useEffect(
+    () =>
+      window.api.onRemoteProjectConnectionChanged((change) => {
+        setProjects((current) => {
+          const next = applyRemoteProjectConnectionChange(current, change)
+          projectsRef.current = next
+          return next
+        })
+      }),
+    []
+  )
 
   const refreshProjects = useCallback(async (): Promise<void> => {
     const list = await window.api.listProjects()
@@ -88,16 +119,14 @@ export function useProjects(
     async (
       projectId: string,
       connectionId: string,
-      patch: ProjectRemoteConnection | null,
-      passphrase?: string | null
+      patch: ProjectRemoteConnection | null
     ): Promise<void> => {
       setUpdatingRemoteProjectId(projectId)
       try {
         const project = await window.api.updateProjectRemoteConnection(
           projectId,
           connectionId,
-          patch,
-          passphrase
+          patch
         )
         setProjects((prev) => prev.map((item) => (item.id === project.id ? project : item)))
       } catch (error) {
@@ -124,6 +153,7 @@ export function useProjects(
         setProjects((prev) => prev.map((item) => (item.id === project.id ? project : item)))
       } catch (error) {
         showSnackbarError(error, '更新远程执行默认设置失败')
+        throw error
       } finally {
         setUpdatingRemoteProjectId(null)
       }

@@ -28,8 +28,16 @@ test('local path tokens preserve trailing punctuation as text', () => {
   ])
 })
 
-test('local path tokens ignore non-explicit relative words', () => {
+test('local path tokens recognize file-like relative paths but ignore ordinary words', () => {
   assert.deepEqual(tokenizeLocalPaths('Open src/App.tsx', '/Users/example/project'), [
-    { kind: 'text', text: 'Open src/App.tsx' }
+    { kind: 'text', text: 'Open ' },
+    {
+      kind: 'path',
+      text: 'src/App.tsx',
+      absolutePath: '/Users/example/project/src/App.tsx'
+    }
+  ])
+  assert.deepEqual(tokenizeLocalPaths('Open docs/setup guide', '/Users/example/project'), [
+    { kind: 'text', text: 'Open docs/setup guide' }
   ])
 })

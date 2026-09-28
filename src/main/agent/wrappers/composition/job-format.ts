@@ -25,6 +25,7 @@ export function formatJobStatus(status: WrapperJobStatus): string {
     ...(status.remote
       ? [`Host: ${status.remote.host} (run directory ${status.remote.runDir})`]
       : []),
+    ...(status.targetReason ? [`Target: ${status.targetReason}`] : []),
     progressLine(status),
     `Output directory: ${status.outDir}${status.remote ? ` (on ${status.remote.host})` : ''}`
   ]

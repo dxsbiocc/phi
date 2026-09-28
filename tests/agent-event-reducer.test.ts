@@ -7,6 +7,80 @@ import {
 import { INLINE_OUTPUT_PREVIEW_CHARS } from '../src/renderer/src/lib/toolOutputPresentation'
 import type { AgentEventSummary } from '../src/renderer/src/types'
 
+test('live run change summary appears once after its persisted event', () => {
+  const event: AgentEventSummary = {
+    source: 'phi',
+    type: 'workspace_changes',
+    eventId: 'changes-1',
+    runId: 'run-1',
+    files: [
+      {
+        path: '/project/result.txt',
+        displayPath: 'result.txt',
+        status: 'modified',
+        added: 1,
+        deleted: 0,
+        diff: {
+          sessionId: '11111111-1111-1111-1111-111111111111',
+          id: 'a'.repeat(64),
+          bytes: 32
+        }
+      }
+    ],
+    totalChanged: 1,
+    truncated: false
+  }
+  const first = reduceAgentEventState(createAgentEventReducerState(), event)
+  const replay = reduceAgentEventState(first, event)
+  assert.equal(first.messages.length, 1)
+  assert.deepEqual(replay.messages, first.messages)
+  assert.equal(first.messages[0].role, 'workspace_changes')
+})
+
+test('live file delivery appears once when its persisted event is replayed', () => {
+  const event: AgentEventSummary = {
+    source: 'phi',
+    type: 'files_presented',
+    eventId: 'delivery-1',
+    runId: 'run-1',
+    files: [{ path: '/project/report.pdf', displayPath: 'report.pdf', bytes: 123 }]
+  }
+  const first = reduceAgentEventState(createAgentEventReducerState(), event)
+  const replay = reduceAgentEventState(first, event)
+  assert.deepEqual(replay.messages, first.messages)
+  assert.deepEqual(first.messages[0], {
+    id: 'delivery-1',
+    role: 'presented_files',
+    runId: 'run-1',
+    files: [{ path: '/project/report.pdf', displayPath: 'report.pdf', bytes: 123 }]
+  })
+})
+
+test('live plan review updates its card instead of adding another message', () => {
+  const submitted = reduceAgentEventState(createAgentEventReducerState(), {
+    source: 'phi',
+    type: 'plan_review_submitted',
+    eventId: 'plan-event',
+    reviewId: 'review-1',
+    title: 'Analysis',
+    content: '# Analysis',
+    planFilePath: 'local://analysis-plan.md'
+  })
+  const decided = reduceAgentEventState(submitted, {
+    source: 'phi',
+    type: 'plan_review_decided',
+    reviewId: 'review-1',
+    decision: 'revise',
+    note: 'Add tests'
+  })
+  assert.equal(decided.messages.length, 1)
+  assert.equal(decided.messages[0].role, 'plan_review')
+  if (decided.messages[0].role === 'plan_review') {
+    assert.equal(decided.messages[0].status, 'revise')
+    assert.equal(decided.messages[0].note, 'Add tests')
+  }
+})
+
 test('assistant text deltas survive StrictMode-style reducer replay', () => {
   const initial = createAgentEventReducerState([
     { id: 'user-1', role: 'user', content: 'stop check' }
@@ -435,6 +509,64 @@ test('tool execution end keeps persisted output metadata in live timeline', () =
         kind: 'tool_output',
         path: '/tmp/phi/tool-outputs/tool-1.txt',
         bytes: 100000
+      },
+      status: 'done'
+    }
+  ])
+})
+
+test('a todo tool call attaches its phases snapshot for the sticky todo panel', () => {
+  const started = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'tool_execution_start',
+    toolCallId: 'tool-1',
+    toolName: 'todo',
+    args: { op: 'start', task: 'Fit the model' }
+  })
+  const completed = reduceAgentEventState(started, {
+    type: 'tool_execution_end',
+    toolCallId: 'tool-1',
+    toolName: 'todo',
+    result: {
+      content: [{ type: 'text', text: 'Todo updated' }],
+      details: {
+        op: 'start',
+        storage: 'session',
+        phases: [
+          {
+            name: 'Foundation',
+            tasks: [
+              { content: 'Read the CSV', status: 'completed' },
+              { content: 'Fit the model', status: 'in_progress' }
+            ]
+          }
+        ]
+      }
+    }
+  })
+
+  assert.deepEqual(completed.messages, [
+    {
+      id: 'tool-1',
+      role: 'tool',
+      toolName: 'todo',
+      argsPreview: 'start',
+      argsJson: '{\n  "op": "start",\n  "task": "Fit the model"\n}',
+      output: 'Todo updated',
+      outputPath: undefined,
+      outputBytes: undefined,
+      outputTruncated: undefined,
+      outputArtifact: undefined,
+      todo: {
+        op: 'start',
+        phases: [
+          {
+            name: 'Foundation',
+            tasks: [
+              { content: 'Read the CSV', status: 'completed' },
+              { content: 'Fit the model', status: 'in_progress' }
+            ]
+          }
+        ]
       },
       status: 'done'
     }

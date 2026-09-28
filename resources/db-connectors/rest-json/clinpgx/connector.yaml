@@ -1,0 +1,134 @@
+phiDbConnectorVersion: 1
+id: rest-json/clinpgx
+name: ClinPGx (PharmGKB)
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://api.pharmgkb.org/v1
+networkPolicy:
+  allowedHosts:
+    - api.pharmgkb.org
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 2
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: search
+    summary: Search PharmGKB / ClinPGx entities by free text.
+    identity:
+      stableIdFields: [objCls, id]
+      namespace: pharmgkb.entity
+    commonFields: [objCls, id, name, symbol]
+    rest:
+      request:
+        path: /search
+        rawQueryParam: q
+        limitParam: size
+        cursorParam: page
+      response:
+        rowsPath: data
+    fields:
+      - name: objCls
+        type: string
+        description: Object class such as Gene, Drug, or ClinicalAnnotation.
+      - name: id
+        type: string
+        description: PharmGKB accession.
+      - name: name
+        type: string
+        description: Display name when present.
+  - id: gene
+    summary: Pharmacogene metadata by HGNC symbol.
+    identity:
+      stableIdFields: [id]
+      namespace: pharmgkb.gene
+      primaryUrlTemplate: https://www.pharmgkb.org/gene/{stable_id}
+    commonFields: [id, symbol, name, chromosome, hasGuideline, hasClinicalAnnotation, cpicGene]
+    rest:
+      request:
+        path: /data/gene
+        filterParamMap: { symbol: symbol }
+      response:
+        rowsPath: data
+    fields:
+      - name: symbol
+        type: string
+        description: Gene symbol such as CYP2D6.
+        synonyms: [gene, query]
+        namespace: hgnc.symbol
+      - name: hasGuideline
+        type: boolean
+        description: Whether CPIC/DPWG-style guidelines exist.
+      - name: hasClinicalAnnotation
+        type: boolean
+        description: Whether clinical annotations exist.
+  - id: drug
+    summary: Drug record by name with synonyms and identifiers.
+    identity:
+      stableIdFields: [id]
+      namespace: pharmgkb.drug
+      primaryUrlTemplate: https://www.pharmgkb.org/chemical/{stable_id}
+    commonFields: [id, name, genericNames, tradeNames, rxNormId, atcCodes]
+    rest:
+      request:
+        path: /data/drug
+        filterParamMap: { name: name }
+      response:
+        rowsPath: data
+    fields:
+      - name: name
+        type: string
+        description: Drug name such as warfarin.
+        synonyms: [drug, query]
+  - id: clinical_annotation
+    summary: Clinical annotations linking gene and/or drug with evidence level.
+    identity:
+      stableIdFields: [id]
+      namespace: pharmgkb.clinical_annotation
+    commonFields: [id, level, gene, drug, phenotype, significance, variants, url]
+    rest:
+      request:
+        path: /data/clinicalAnnotation
+        filterParamMap: { gene: gene, drug: drug, level: level }
+      response:
+        rowsPath: data
+    fields:
+      - name: gene
+        type: string
+        description: Optional gene symbol filter.
+        synonyms: [symbol]
+        namespace: hgnc.symbol
+      - name: drug
+        type: string
+        description: Optional drug name filter.
+      - name: level
+        type: string
+        description: Evidence level such as 1A, 1B, 2A, 2B, 3, or 4.
+  - id: guideline
+    summary: CPIC/DPWG dosing guidelines for a gene and/or drug.
+    identity:
+      stableIdFields: [id]
+      namespace: pharmgkb.guideline
+    commonFields: [id, name, genes, chemicals, source, url]
+    rest:
+      request:
+        path: /data/guideline
+        filterParamMap: { gene: gene, drug: drug, source: source }
+      response:
+        rowsPath: data
+    fields:
+      - name: gene
+        type: string
+        description: Optional gene symbol.
+        namespace: hgnc.symbol
+      - name: drug
+        type: string
+        description: Optional drug name.
+      - name: source
+        type: string
+        description: Guideline source such as CPIC or DPWG.

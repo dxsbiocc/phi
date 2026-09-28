@@ -81,6 +81,31 @@ test('an entry carries what the overview shows and what steering needs', () => {
   assert.deepEqual(entry.control, { agentRunId: 'run_1', agentSessionId: 'runtime-1' })
 })
 
+test('a wrapper agent entry carries the latest visible Nextflow run id', () => {
+  const [entry] = runningAgentRuns(
+    [
+      card({
+        steps: [
+          step({
+            id: 's1',
+            toolName: 'wrapper_run',
+            output: 'Started wrapper run wrun_fastqc_1 in the background.'
+          }),
+          step({
+            id: 's2',
+            toolName: 'wrapper_status',
+            argsJson: '{"run_id":"wrun_fastqc_1"}',
+            output: 'state: running'
+          })
+        ]
+      })
+    ],
+    new Set()
+  )
+
+  assert.equal(entry.wrapperRunId, 'wrun_fastqc_1')
+})
+
 test('the current step is the last one when none is running, and absent before the first', () => {
   const [finishedSteps] = runningAgentRuns(
     [card({ steps: [step({ toolName: 'read' }), step({ id: 's2', toolName: 'grep' })] })],

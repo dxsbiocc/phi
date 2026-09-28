@@ -1,4 +1,7 @@
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Box,
   Button,
   IconButton,
@@ -20,6 +23,7 @@ import { compactComposerIconButtonSx } from './composerControlStyles'
 
 const BoltIcon = PhiIcons.action.quick
 const CheckIcon = PhiIcons.state.check
+const ExpandIcon = PhiIcons.action.expand
 
 const THINKING_LEVEL_ORDER: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
@@ -29,6 +33,10 @@ const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
   high: 'High',
   xhigh: 'X-High',
   max: 'Max'
+}
+
+function modelMatchesQuery(option: ModelOption, query: string): boolean {
+  return `${option.name} ${option.providerId} ${option.modelId}`.toLowerCase().includes(query)
 }
 
 export function ThinkingLevelControl({
@@ -148,16 +156,16 @@ export function ModelSelectorControl({
 }): ReactNode {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [query, setQuery] = useState('')
+  const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
   const popoverId = useId()
+  const defaultProviderId = models.some((option) => option.providerId === selectedModel?.providerId)
+    ? (selectedModel?.providerId ?? null)
+    : (models[0]?.providerId ?? null)
 
   const grouped = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     const filtered = normalizedQuery
-      ? models.filter((option) =>
-          `${option.name} ${option.providerId} ${option.modelId}`
-            .toLowerCase()
-            .includes(normalizedQuery)
-        )
+      ? models.filter((option) => modelMatchesQuery(option, normalizedQuery))
       : models
 
     const byProvider = new Map<string, ModelOption[]>()
@@ -169,9 +177,25 @@ export function ModelSelectorControl({
     return [...byProvider.entries()]
   }, [models, query])
 
+  const handleOpen = (event: React.MouseEvent<HTMLElement>): void => {
+    setExpandedProviderId(defaultProviderId)
+    setAnchorEl(event.currentTarget)
+  }
+
+  const handleQueryChange = (value: string): void => {
+    setQuery(value)
+    const normalizedQuery = value.trim().toLowerCase()
+    setExpandedProviderId(
+      normalizedQuery
+        ? (models.find((option) => modelMatchesQuery(option, normalizedQuery))?.providerId ?? null)
+        : defaultProviderId
+    )
+  }
+
   const handleClose = (): void => {
     setAnchorEl(null)
     setQuery('')
+    setExpandedProviderId(null)
   }
   const label = selectedModel ? selectedModel.name : '自动选择'
 
@@ -181,7 +205,7 @@ export function ModelSelectorControl({
         {compact ? (
           <IconButton
             size="small"
-            onClick={(event) => setAnchorEl(event.currentTarget)}
+            onClick={handleOpen}
             disabled={disabled}
             aria-describedby={popoverId}
             aria-label={`选择模型：${label}`}
@@ -192,7 +216,7 @@ export function ModelSelectorControl({
         ) : (
           <Button
             size="small"
-            onClick={(event) => setAnchorEl(event.currentTarget)}
+            onClick={handleOpen}
             disabled={disabled}
             aria-describedby={popoverId}
             aria-label="选择模型"
@@ -218,8 +242,7 @@ export function ModelSelectorControl({
           </Button>
         )}
       </Tooltip>
-      {/* A plain search field + list rendered directly in the Popover's own Paper,
-          avoiding nested floating listboxes that can overlap near screen edges. */}
+      {/* Search and provider groups stay inside the Popover's Paper. */}
       <Popover
         id={popoverId}
         open={!disabled && Boolean(anchorEl)}
@@ -228,7 +251,15 @@ export function ModelSelectorControl({
         anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
         transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         slotProps={{
-          paper: { sx: { width: 280, maxHeight: 360, display: 'flex', flexDirection: 'column' } }
+          paper: {
+            sx: {
+              width: 280,
+              height: 'min(360px, calc(100vh - 32px))',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden'
+            }
+          }
         }}
       >
         <Box sx={{ p: 1, flexShrink: 0 }}>
@@ -238,46 +269,78 @@ export function ModelSelectorControl({
             size="small"
             placeholder="搜索模型"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => handleQueryChange(event.target.value)}
           />
         </Box>
-        <List dense sx={{ overflowY: 'auto', flex: 1, minHeight: 0, pt: 0 }}>
+        <Box sx={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
           {models.length === 0 ? (
             <Typography variant="body2" color="text.secondary" sx={{ px: 2, py: 1 }}>
               无可用模型 — 请先在设置中配置 Provider
             </Typography>
+          ) : grouped.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ px: 2, py: 1 }}>
+              没有匹配的模型
+            </Typography>
           ) : (
             grouped.map(([providerId, options]) => (
-              <Box key={providerId}>
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ px: 2, pt: 1, display: 'block' }}
+              <Accordion
+                key={providerId}
+                expanded={expandedProviderId === providerId}
+                onChange={(_, expanded) => setExpandedProviderId(expanded ? providerId : null)}
+                disableGutters
+                elevation={0}
+                square
+                sx={{
+                  '&:before': { display: 'none' },
+                  '&.Mui-expanded': { m: 0 },
+                  borderBottom: 1,
+                  borderColor: 'divider'
+                }}
+              >
+                <AccordionSummary
+                  expandIcon={<ExpandIcon fontSize="small" />}
+                  sx={{
+                    minHeight: 38,
+                    px: 1.5,
+                    '&.Mui-expanded': { minHeight: 38 },
+                    '& .MuiAccordionSummary-content': { my: 0.75 },
+                    '& .MuiAccordionSummary-content.Mui-expanded': { my: 0.75 }
+                  }}
                 >
-                  {providerId}
-                </Typography>
-                {options.map((option) => (
-                  <ListItemButton
-                    key={`${option.providerId}/${option.modelId}`}
-                    selected={
-                      selectedModel?.providerId === option.providerId &&
-                      selectedModel?.modelId === option.modelId
-                    }
-                    onClick={() => {
-                      onSelectModel(option)
-                      handleClose()
-                    }}
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {providerId}
+                  </Typography>
+                </AccordionSummary>
+                <AccordionDetails sx={{ p: 0 }}>
+                  <List
+                    dense
+                    disablePadding
+                    sx={{ maxHeight: 180, overflowY: 'auto', overscrollBehavior: 'contain' }}
                   >
-                    <ListItemIcon sx={{ minWidth: 30 }}>
-                      <ProviderModelIcon providerId={option.providerId} />
-                    </ListItemIcon>
-                    <ListItemText primary={option.name} />
-                  </ListItemButton>
-                ))}
-              </Box>
+                    {options.map((option) => (
+                      <ListItemButton
+                        key={`${option.providerId}/${option.modelId}`}
+                        selected={
+                          selectedModel?.providerId === option.providerId &&
+                          selectedModel?.modelId === option.modelId
+                        }
+                        onClick={() => {
+                          onSelectModel(option)
+                          handleClose()
+                        }}
+                      >
+                        <ListItemIcon sx={{ minWidth: 30 }}>
+                          <ProviderModelIcon providerId={option.providerId} />
+                        </ListItemIcon>
+                        <ListItemText primary={option.name} />
+                      </ListItemButton>
+                    ))}
+                  </List>
+                </AccordionDetails>
+              </Accordion>
             ))
           )}
-        </List>
+        </Box>
       </Popover>
     </>
   )

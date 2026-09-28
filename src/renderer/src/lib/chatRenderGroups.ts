@@ -4,10 +4,20 @@ import type {
   ChatMessage,
   RunLifecycleItem,
   ToolCallItem,
+  PresentedFilesItem,
+  PlanReviewItem,
+  WorkspaceChangeSummaryItem,
   WrapperPlanItem
 } from '../types'
 
-export type VisibleChatItem = ChatMessage | ToolCallItem | WrapperPlanItem | AgentExecutionItem
+export type VisibleChatItem =
+  | ChatMessage
+  | ToolCallItem
+  | WrapperPlanItem
+  | AgentExecutionItem
+  | WorkspaceChangeSummaryItem
+  | PresentedFilesItem
+  | PlanReviewItem
 
 export type ProcessingItem =
   | ToolCallItem
@@ -66,7 +76,14 @@ function isProcessingItem(message: ChatItem): message is ProcessingItem {
   // transient tool noise to collapse — never sweep it into a processing
   // group. See docs/design/phi-wrapper-technical-design.md, "Chat And UI
   // Integration".
-  return message.role !== 'user' && message.role !== 'run' && message.role !== 'wrapper_plan'
+  return (
+    message.role !== 'user' &&
+    message.role !== 'run' &&
+    message.role !== 'wrapper_plan' &&
+    message.role !== 'workspace_changes' &&
+    message.role !== 'presented_files' &&
+    message.role !== 'plan_review'
+  )
 }
 
 function isProcessingArtifact(message: ChatItem): boolean {
@@ -85,9 +102,9 @@ function itemStartedAtMs(item: ChatItem): number | null {
   if (isRunLifecycleItem(item)) return timestampMs(item.createdAt)
 
   const createdAt = timestampMs(item.createdAt)
-  const completedAt = timestampMs(item.completedAt)
+  const completedAt = timestampMs('completedAt' in item ? item.completedAt : undefined)
   const durationStart =
-    completedAt !== null && typeof item.durationMs === 'number'
+    completedAt !== null && 'durationMs' in item && typeof item.durationMs === 'number'
       ? Math.max(0, completedAt - item.durationMs)
       : null
 
@@ -129,7 +146,9 @@ function lastRunTerminalDurationMs(items: ChatItem[]): number | undefined {
 function itemCompletedAtMs(item: ChatItem): number | null {
   if (isRunLifecycleItem(item)) return timestampMs(item.createdAt)
 
-  return timestampMs(item.completedAt) ?? timestampMs(item.createdAt)
+  return (
+    timestampMs('completedAt' in item ? item.completedAt : undefined) ?? timestampMs(item.createdAt)
+  )
 }
 
 function minTimestamp(items: ChatItem[]): number | undefined {

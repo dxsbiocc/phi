@@ -1,4 +1,5 @@
 import type { WrapperManifestStep } from './wrapperManifestTypes'
+import type { ProjectLocation } from './projectLocation'
 
 // Phi Wrapper core types.
 //
@@ -81,11 +82,25 @@ export interface WrapperInputResolution {
   id: string
   kind: 'path' | 'glob' | 'samplesheet'
   userValue: string
+  /** Explicit provenance; legacy strings on a remote run mean remote paths. */
+  source?: 'local' | 'remote'
   localPaths: string[]
-  /** Populated once Phase 2 remote path mapping exists; empty in Phase 1. */
+  /** Final server paths passed to Nextflow, never inferred from local existence. */
   remotePaths?: string[]
+  /** Server-side root whose real path must still contain the input after symlinks resolve. */
+  allowedRemoteRoot?: string
   /** Populated once a container profile needs it; empty when unused. */
   containerPaths?: string[]
+}
+
+export interface WrapperInputReference {
+  source: 'local' | 'remote'
+  path: string
+}
+
+export interface WrapperInputPathMapping {
+  localRoot: string
+  remoteRoot: string
 }
 
 export interface WrapperCommandPlanPreview {
@@ -110,19 +125,41 @@ export interface WrapperRunPlan {
   /** Snapshotted from the manifest at plan-creation time; see `wrapperFlow.ts` for how it's rendered. */
   steps?: WrapperManifestStep[]
   trustTier: WrapperTrustTier
-  /** Phase 1 is always "local"; the field is typed for the full union from the start. */
+  /** The selected local or remote execution mode. */
   executor: WrapperExecutor
   /** A Phi engine profile id (`manifest.engine.profiles[].id`) — see `nextflowProfile` for the actual Nextflow `-profile` value. */
   profile: string
   /** The literal value passed to Nextflow's `-profile` flag — see `WrapperManifestEngineProfile.nextflowProfile`'s doc comment. Optional only for backward compatibility with plans persisted before this field existed; falls back to `profile` wherever it's consumed. */
   nextflowProfile?: string
   resourceClass: WrapperResourceClass
-  /** Set when resourceClass is heavy/hpc and there is no remote to redirect to (Phase 1). */
+  /** Immutable target identity selected when the plan was created; absent on older saved plans. */
+  targetSelection?: {
+    projectId: string
+    projectLocation: ProjectLocation
+    target: 'local' | 'remote'
+    reason: string
+    hostProfileId?: string
+    hostAlias?: string
+    connectionId?: string
+    remoteRoot?: string
+    scheduler?: 'local' | 'slurm'
+    controller?: 'login' | 'sbatch'
+    runtime?: 'singularity' | 'conda' | 'docker'
+    environmentCheckPending?: boolean
+  }
+  /** Explicit local fallback from a remote target, recorded with the revised plan. */
+  targetChangeConfirmation?: {
+    from: 'remote'
+    to: 'local'
+    fromRevision: number
+    confirmedAt: string
+  }
+  /** Set when a heavy/hpc plan selects local execution and needs explicit acknowledgement. */
   requiresHeavyWorkloadAcknowledgement?: boolean
   heavyWorkloadAcknowledged?: boolean
   params: Record<string, unknown>
   inputs: WrapperInputResolution[]
-  /** Project directory the plan was created against — `outputDir` is relative to this. */
+  /** Local project directory or canonical SSH project root; never Phi's local remote-session anchor. */
   cwd: string
   outputDir: string
   resources: WrapperResourceRequest
@@ -136,6 +173,23 @@ export interface WrapperRunPlan {
   /** Plan revisions become stale on a TTL or when upstream state changes. */
   expiresAt?: string
   submittedRunId?: string
+}
+
+export interface WrapperRetargetRequest {
+  planId: string
+  target: 'local' | 'remote'
+  expectedRevision: number
+  confirmedLocalFallback?: boolean
+}
+
+export interface WrapperSubmitConfirmation {
+  expectedRevision: number
+  target: 'local' | 'remote'
+  projectId?: string
+  hostProfileId?: string
+  remoteRoot?: string
+  /** Exact external output directory shown before this plan was submitted. */
+  externalOutputRoot?: string
 }
 
 export interface WrapperOutputRecord {
@@ -174,6 +228,14 @@ export interface WrapperRunRemote {
   host: string
   /** Absolute run directory on the remote host. */
   runDir: string
+  /** Identity selected when the run was created; never supplied by the renderer on read. */
+  hostProfileId?: string
+  /** Run storage root, fixed at submission time. */
+  workspaceRoot?: string
+  /** Final output directory, fixed at submission time even when it lies outside workspaceRoot. */
+  outputRoot?: string
+  /** An external output root was shown in the submitted plan and explicitly scoped to this run. */
+  externalOutputAuthorized?: boolean
   /** The saved connection and project that were used, so a restart can reconnect to the same host. */
   connectionId?: string
   projectId?: string
@@ -198,6 +260,23 @@ export interface WrapperRun {
   /** Snapshotted from the plan — the executor's weblog listener matches Nextflow process names against these. */
   steps?: WrapperManifestStep[]
   originSessionId?: string
+  /** Why the composition run used this execution target. */
+  targetReason?: string
+  /** Input source and final server path, retained after the plan/tool call ends. */
+  inputReferences?: WrapperInputResolution[]
+  /** Warnings from bounded remote input checks, such as an unexpanded glob. */
+  inputWarnings?: string[]
+  /** Failed server-side input checks, shown with parameter names and remote paths. */
+  inputErrors?: string[]
+  /** Fresh submit-time checks that need user attention but did not block scheduling. */
+  environmentWarnings?: string[]
+  /** Blocking reason from the fresh remote environment check. */
+  environmentError?: string
+  /** The remote launch claim exists but Phi cannot yet prove whether it started. */
+  launchUnknown?: boolean
+  launchDiagnostic?: string
+  /** Remote controller stopped after Phi's verified cancel signal; request alone is not proof. */
+  cancelConfirmedAt?: string
   /**
    * Set on runs started by the agent-composition layer (`wrapper_run`), which has no plan:
    * `planId` is empty and there is no `plan.json`. Absent on runs created from a plan.

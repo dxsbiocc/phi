@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { persistPromptImages } from '../src/main/agent/session/prompt-images'
 
 import {
   appendSessionEvent,
   createPhiSession,
+  forkPhiSession,
   createRunId,
   getSessionDir,
   listPhiSessions,
@@ -63,6 +65,58 @@ test('createPhiSession creates a stable session directory and manifest', () => {
       readFileSync(join(session.dir, 'manifest.json'), 'utf-8')
     ) as typeof session.manifest
     assert.equal(rawManifest.sessionId, session.sessionId)
+  })
+})
+
+test('forkPhiSession copies history through the selected turn and owns its attachments', () => {
+  withPhiDir(() => {
+    const source = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      permissionMode: 'ask'
+    })
+    const [image] = persistPromptImages(source.sessionId, [
+      { mimeType: 'image/png', data: 'iVBORw0KGgo=' }
+    ])
+    const first = appendSessionEvent(source.sessionId, {
+      type: 'user_message',
+      content: 'first',
+      images: [image]
+    })
+    appendSessionEvent(source.sessionId, {
+      type: 'assistant_message_finalized',
+      content: 'answer',
+      outputPath: join(source.dir, 'tool-outputs', 'result.txt')
+    })
+    const second = appendSessionEvent(source.sessionId, { type: 'user_message', content: 'second' })
+    writeFileSync(join(source.dir, 'tool-outputs', 'result.txt'), 'saved output')
+
+    const fork = forkPhiSession(source.sessionId, first.eventId, '/runtime/fork.jsonl')
+    const forkEvents = readSessionEvents(fork.sessionId)
+    assert.deepEqual(
+      forkEvents.map((event) => event.type),
+      ['user_message', 'assistant_message_finalized']
+    )
+    assert.equal(fork.manifest.forkedFrom?.sessionId, source.sessionId)
+    assert.equal(fork.manifest.forkedFrom?.eventId, first.eventId)
+    assert.equal(fork.manifest.runtimeSessionPath, '/runtime/fork.jsonl')
+    assert.equal(forkEvents[0].sessionId, fork.sessionId)
+    assert.equal(
+      (forkEvents[0].images as Array<{ sessionId: string }>)[0].sessionId,
+      fork.sessionId
+    )
+    assert.equal(existsSync(join(fork.dir, 'artifacts', 'prompt-images', `${image.id}.png`)), true)
+    assert.notEqual(forkEvents[0].eventId, first.eventId)
+    assert.equal(forkEvents[1].outputPath, join(fork.dir, 'tool-outputs', 'result.txt'))
+    assert.equal(
+      readFileSync(join(fork.dir, 'tool-outputs', 'result.txt'), 'utf-8'),
+      'saved output'
+    )
+    assert.equal(readSessionEvents(source.sessionId).length, 3)
+    const latestFork = forkPhiSession(source.sessionId, second.eventId, '/runtime/latest.jsonl')
+    assert.equal(readSessionEvents(latestFork.sessionId).length, 3)
+    assert.equal(latestFork.manifest.forkedFrom?.eventId, second.eventId)
   })
 })
 
@@ -227,5 +281,33 @@ test('recoverInterruptedPhiSessions recovers stale active sessions after restart
 
     recoverInterruptedPhiSessions()
     assert.equal(readSessionEvents(session.sessionId).length, 1)
+  })
+})
+
+test('recovery closes an unanswered plan review instead of leaving its card pending', () => {
+  withPhiDir(() => {
+    const session = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      permissionMode: 'auto'
+    })
+    appendSessionEvent(session.sessionId, {
+      type: 'plan_review_submitted',
+      runId: 'run-1',
+      reviewId: 'review-1',
+      title: 'Analysis',
+      content: '# Analysis',
+      planFilePath: 'local://analysis-plan.md'
+    })
+    updateSessionManifest(session.sessionId, { status: 'needs_input', currentRunId: 'run-1' })
+    recoverInterruptedPhiSessions()
+    assert.deepEqual(
+      readSessionEvents(session.sessionId).map((event) => event.type),
+      ['plan_review_submitted', 'plan_review_decided', 'run_interrupted']
+    )
+    assert.equal(readSessionEvents(session.sessionId)[1].decision, 'cancel')
+    recoverInterruptedPhiSessions()
+    assert.equal(readSessionEvents(session.sessionId).length, 3)
   })
 })

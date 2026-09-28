@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent
+} from 'react'
 import {
   Box,
   Button,
@@ -9,22 +17,32 @@ import {
   Tooltip,
   Typography
 } from '@mui/material'
-import { alpha } from '@mui/material/styles'
-import { GoSidebarCollapse, GoSidebarExpand, GoSync } from 'react-icons/go'
+import { alpha, type SxProps, type Theme } from '@mui/material/styles'
+import { GoGlobe, GoStack, GoSync, GoTerminal } from 'react-icons/go'
 import {
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
   DEFAULT_PREVENT_SLEEP_DURING_RUNS,
   DEFAULT_PROXY_TRANSPORT_STATUS
 } from '../../shared/appSettingsTypes'
 import type { WrapperCompositionManifest } from '../../shared/wrapperCompositionManifestTypes'
-import ChatView from './components/ChatView'
+import type { WrapperRun } from '../../shared/wrapperTypes'
+import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
+import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
+import ChatView from './features/chat/ChatView'
+import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
 import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
+import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
+import { BackgroundJobsPanel } from './features/jobs/BackgroundJobsPanel'
 import type { LocalPathKind } from './components/MarkdownContent'
 import { PluginDetail } from './features/plugin/PluginView'
 import { usePluginCatalog } from './features/plugin/hooks/usePluginCatalog'
 import { WrapperDetail } from './features/wrapper/WrapperView'
 import { useWrapperCatalog } from './features/wrapper/hooks/useWrapperCatalog'
+import {
+  wrapperResultBelongsToProject,
+  wrapperResultScopeForPath
+} from './features/wrapper/lib/resultFiles'
 import { SkillDetail } from './features/skill/SkillView'
 import { useSkillCatalog } from './features/skill/hooks/useSkillCatalog'
 import { McpDetail } from './features/mcp/McpView'
@@ -59,7 +77,21 @@ import {
   sessionAgentEventStates
 } from './stores/sessionStore'
 import { getRendererApi } from './lib/rendererApi'
-import { absoluteWorkspacePath, fileNameFromPath, filePreviewStatePath } from './lib/workspacePaths'
+import {
+  absoluteWorkspacePath,
+  fileNameFromPath,
+  filePreviewStatePath,
+  shouldClearWorkspaceFilesForRemoteSwitch
+} from './lib/workspacePaths'
+import {
+  remotePathInsideRoot,
+  remotePathWithinProjectUri,
+  remoteWorkspaceUri
+} from '../../shared/remoteWorkspacePath'
+import { RemoteProjectFileContext } from './lib/remoteProjectFileContext'
+import { RemoteConnectionNotice } from './features/project/components/RemoteConnectionNotice'
+import { shouldRetryRemoteReads } from './features/project/lib/remoteConnectionUi'
+import type { RemoteProjectReachability } from '../../shared/projectLocation'
 import { chatItemsFromSessionMessages } from './lib/chatItems'
 import { messagesForUserRetry } from './lib/chatRetry'
 import { getAppShortcutAction } from './lib/appShortcuts'
@@ -98,6 +130,10 @@ import {
   type WorkspaceTab
 } from './lib/workspaceResourceTabs'
 import { workspaceSidebarModeIsExpanded, type WorkspaceSidebarMode } from './lib/workspaceSidebar'
+import {
+  toggleWorkspaceSidePanelMode,
+  type WorkspaceSidePanelMode
+} from './lib/workspaceSidePanelMode'
 import { PhiIcons, fileIconForPath, directoryIconForPath } from './icons'
 import {
   idleSessionRuntimeState,
@@ -142,6 +178,8 @@ type SendPromptOptions = {
   appendUserMessage?: boolean
   retryUserMessageId?: string
   suppressUserMessageEvent?: boolean
+  images?: PromptImageInput[]
+  planMode?: boolean
 }
 
 const activityBarWidth = 48
@@ -155,7 +193,7 @@ const titlebarChromeTopOffset = '10px'
 const titlebarChromeHorizontalInset = '14px'
 const titlebarChromeIconButtonSize = 28
 const titlebarLeadingChromeReserveWidth = 220
-const titlebarTrailingToggleChromeReserve = '56px'
+const titlebarTrailingToggleChromeReserve = '120px'
 const workspaceFileHeaderLeadingChromeInsetWidth =
   titlebarLeadingChromeReserveWidth - activityBarWidth
 const workspaceFileHeaderLeadingChromeInset = `${workspaceFileHeaderLeadingChromeInsetWidth}px`
@@ -171,20 +209,19 @@ const RefreshIcon = GoSync
 export function TopRightControls({
   showSidePanelRefresh,
   sidePanelRefreshDisabled,
-  sidePanelCollapsed,
-  showSidePanelToggle,
+  activePanel,
+  showSidePanelButtons,
   onRefreshSidePanel,
-  onToggleSidePanel
+  onTogglePanel
 }: {
   showSidePanelRefresh: boolean
   sidePanelRefreshDisabled: boolean
-  sidePanelCollapsed: boolean
-  showSidePanelToggle: boolean
+  activePanel: WorkspaceSidePanelMode | null
+  showSidePanelButtons: boolean
   onRefreshSidePanel: () => void
-  onToggleSidePanel: () => void
+  onTogglePanel: (mode: WorkspaceSidePanelMode) => void
 }): React.JSX.Element | null {
-  if (!showSidePanelRefresh && !showSidePanelToggle) return null
-  const SidePanelToggleIcon = sidePanelCollapsed ? GoSidebarExpand : GoSidebarCollapse
+  if (!showSidePanelRefresh && !showSidePanelButtons) return null
 
   const buttonSx = {
     width: titlebarChromeIconButtonSize,
@@ -201,6 +238,15 @@ export function TopRightControls({
       color: 'text.disabled'
     }
   } as const
+  const panelButtonSx = (active: boolean): SxProps<Theme> => ({
+    ...buttonSx,
+    color: active ? 'primary.main' : 'text.secondary',
+    '&:hover': {
+      bgcolor: 'action.hover',
+      color: active ? 'primary.main' : 'text.primary'
+    },
+    '& svg': { color: 'inherit', display: 'block' }
+  })
 
   return (
     <Box
@@ -230,24 +276,45 @@ export function TopRightControls({
           </span>
         </Tooltip>
       ) : null}
-      {showSidePanelToggle ? (
-        <Tooltip title={sidePanelCollapsed ? '展开右侧栏' : '关闭右侧栏'}>
+      {showSidePanelButtons ? (
+        <Tooltip title="后台任务">
           <IconButton
-            data-phi-side-panel-toggle-button={sidePanelCollapsed ? 'collapsed' : 'expanded'}
-            data-phi-side-panel-toggle-icon={sidePanelCollapsed ? 'expand' : 'collapse'}
-            data-phi-side-panel-toggle-position="titlebar-flow"
-            data-phi-side-panel-toggle-anchor="workspace-chrome"
+            data-phi-background-jobs-toggle-button="true"
             size="small"
-            color="default"
-            aria-label={sidePanelCollapsed ? '展开右侧栏' : '关闭右侧栏'}
-            onClick={onToggleSidePanel}
-            sx={{
-              ...buttonSx,
-              bgcolor: sidePanelCollapsed ? 'transparent' : 'action.selected',
-              color: sidePanelCollapsed ? 'text.secondary' : 'text.primary'
-            }}
+            aria-label="后台任务"
+            aria-pressed={activePanel === 'jobs'}
+            onClick={() => onTogglePanel('jobs')}
+            sx={panelButtonSx(activePanel === 'jobs')}
           >
-            <SidePanelToggleIcon size={19} />
+            <GoStack aria-hidden focusable="false" size={20} />
+          </IconButton>
+        </Tooltip>
+      ) : null}
+      {showSidePanelButtons ? (
+        <Tooltip title="终端">
+          <IconButton
+            data-phi-terminal-toggle-button="true"
+            size="small"
+            aria-label="终端"
+            aria-pressed={activePanel === 'terminal'}
+            onClick={() => onTogglePanel('terminal')}
+            sx={panelButtonSx(activePanel === 'terminal')}
+          >
+            <GoTerminal aria-hidden focusable="false" size={20} />
+          </IconButton>
+        </Tooltip>
+      ) : null}
+      {showSidePanelButtons ? (
+        <Tooltip title="浏览器">
+          <IconButton
+            data-phi-browser-toggle-button="true"
+            size="small"
+            aria-label="浏览器"
+            aria-pressed={activePanel === 'browser'}
+            onClick={() => onTogglePanel('browser')}
+            sx={panelButtonSx(activePanel === 'browser')}
+          >
+            <GoGlobe aria-hidden focusable="false" size={20} />
           </IconButton>
         </Tooltip>
       ) : null}
@@ -533,6 +600,9 @@ function App(): React.JSX.Element {
     activePhiSessionId,
     setActivePhiSessionId,
     activeCwd,
+    activeDisplayCwd,
+    activeProjectId,
+    activeProjectLocation,
     activeSessionGeneration,
     activeChatScrollResetKey,
     projectSessionRefreshKey,
@@ -568,6 +638,7 @@ function App(): React.JSX.Element {
   } = useSessionStore()
   const messages = agentEventState.messages
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false)
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('general')
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [sidebarWidth, setSidebarWidth] = useState(navigationPaneWidth)
@@ -645,6 +716,8 @@ function App(): React.JSX.Element {
   const [isSavingDefaultProxyMode, setIsSavingDefaultProxyMode] = useState(false)
   const [isSavingAppSettings, setIsSavingAppSettings] = useState(false)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
+  const [exportTarget, setExportTarget] = useState<SessionSummary | null>(null)
+  const [isExportingSession, setIsExportingSession] = useState(false)
   const isSendingRef = useRef(false)
   const currentSessionIsBusyRef = useRef(false)
   const sessionRequestRef = useRef(0)
@@ -652,6 +725,7 @@ function App(): React.JSX.Element {
   const projectSidebarSelectionRequestRef = useRef(0)
   const rendererApi = useMemo(() => getRendererApi(), [])
   const getActiveCwd = useCallback(() => useSessionStore.getState().activeCwd, [])
+  const getActiveProjectId = useCallback(() => useSessionStore.getState().activeProjectId, [])
 
   const {
     plugins,
@@ -708,6 +782,12 @@ function App(): React.JSX.Element {
     },
     [showSnackbar]
   )
+
+  const blockRemoteLocalFileAction = useCallback((): boolean => {
+    if (useSessionStore.getState().activeProjectLocation?.kind !== 'ssh') return false
+    showSnackbarError(new Error('远程项目的文件操作暂不可用'), '远程项目的文件操作暂不可用')
+    return true
+  }, [showSnackbarError])
 
   const applyAppSettings = useCallback((settings: PhiAppSettings): void => {
     setDefaultProxyMode(settings.defaultProxyMode)
@@ -790,6 +870,36 @@ function App(): React.JSX.Element {
       }
     },
     [dbConnectors, rendererApi, showSnackbarError]
+  )
+
+  const onSetDbConnectorApiKey = useCallback(
+    async (id: string, apiKey: string): Promise<void> => {
+      setUpdatingDbConnectorId(id)
+      try {
+        setDbConnectors(await rendererApi.setDbConnectorApiKey(id, apiKey))
+      } catch (error) {
+        showSnackbarError(error, '保存数据库 API key 失败')
+        throw error
+      } finally {
+        setUpdatingDbConnectorId(null)
+      }
+    },
+    [rendererApi, showSnackbarError]
+  )
+
+  const onClearDbConnectorApiKey = useCallback(
+    async (id: string): Promise<void> => {
+      setUpdatingDbConnectorId(id)
+      try {
+        setDbConnectors(await rendererApi.clearDbConnectorApiKey(id))
+      } catch (error) {
+        showSnackbarError(error, '清除数据库 API key 失败')
+        throw error
+      } finally {
+        setUpdatingDbConnectorId(null)
+      }
+    },
+    [rendererApi, showSnackbarError]
   )
 
   useEffect(() => {
@@ -951,7 +1061,7 @@ function App(): React.JSX.Element {
     onSubmitAuthPrompt,
     onUpdatePromptValue,
     handleAuthInteractionEvent
-  } = useProviderAuth(setIsBusy)
+  } = useProviderAuth(setIsBusy, showSnackbar)
   const {
     models,
     availableModels,
@@ -976,16 +1086,39 @@ function App(): React.JSX.Element {
     onUpdateProjectRemoteDefaults
   } = useProjects(showSnackbarError)
 
+  const getActiveRemoteProject = useCallback(() => {
+    const state = useSessionStore.getState()
+    if (state.activeProjectLocation?.kind !== 'ssh') return null
+    const project = projectsRef.current.find((item) => item.id === state.activeProjectId)
+    if (!state.activePhiSessionId || !state.activeProjectId || !project?.remoteHostAlias) {
+      return null
+    }
+    return {
+      sessionId: state.activePhiSessionId,
+      projectId: state.activeProjectId,
+      hostAlias: project.remoteHostAlias,
+      canonicalRoot: state.activeProjectLocation.canonicalRoot
+    }
+  }, [projectsRef])
+
   const {
     filePreview,
     setFilePreview,
     filePreviewCache,
     clearCachedFilePreview,
+    clearFileWorkspace,
     workspaceFileTabs,
     setWorkspaceFileTabs,
     activeWorkspaceFilePath,
     setActiveWorkspaceFilePath,
     filePreviewRequestRef,
+    activeWrapperResultScope,
+    isActiveWrapperResultUri,
+    openWrapperResultPath,
+    cancelActiveWrapperResultRead,
+    fileDownload,
+    downloadWrapperResultFile,
+    cancelActiveWrapperResultDownload,
     loadFilePreview,
     previewFilePath,
     previewDirectoryPath,
@@ -995,6 +1128,8 @@ function App(): React.JSX.Element {
   } = useWorkspaceFileTabs({
     rendererApi,
     getActiveCwd,
+    getActiveProjectId,
+    getActiveRemoteProject,
     showSnackbarError,
     setIsSidebarOpen,
     setActiveView: navigateToView
@@ -1059,7 +1194,9 @@ function App(): React.JSX.Element {
     showSnackbar,
     onNavigateToNotebookView
   })
-  const [workspaceSidePanelCollapsed, setWorkspaceSidePanelCollapsed] = useState(true)
+  const [workspaceSidePanelMode, setWorkspaceSidePanelMode] =
+    useState<WorkspaceSidePanelMode | null>(null)
+  const workspaceSidePanelCollapsed = workspaceSidePanelMode === null
   const [workspaceSidePanelWidth, setWorkspaceSidePanelWidth] = useState(
     workspaceSidePanelWidthDefault
   )
@@ -1274,6 +1411,24 @@ function App(): React.JSX.Element {
     setProjectSessionRefreshKey((key) => key + 1)
   }
 
+  const onExportSession = (session: SessionSummary): void => {
+    if (session.phiSessionId) setExportTarget(session)
+  }
+
+  const confirmExportSession = async (): Promise<void> => {
+    if (!exportTarget?.phiSessionId || isExportingSession) return
+    setIsExportingSession(true)
+    try {
+      const result = await rendererApi.exportSession(exportTarget.phiSessionId)
+      setExportTarget(null)
+      if (result) showSnackbar(`会话已导出到 ${result.path}`, 'success')
+    } catch (error) {
+      showSnackbarError(error, '导出会话失败')
+    } finally {
+      setIsExportingSession(false)
+    }
+  }
+
   const showActiveConversationInSidebar = useCallback((): void => {
     projectSidebarSelectionRequestRef.current += 1
     setWorkspaceSidebarMode('conversations')
@@ -1282,6 +1437,7 @@ function App(): React.JSX.Element {
 
   const onOpenNotebookWorkspaceFile = useCallback(
     (path: string, options: { revealConversationSidebar?: boolean } = {}): void => {
+      if (blockRemoteLocalFileAction()) return
       const normalizedPath = absoluteWorkspacePath(useSessionStore.getState().activeCwd, path)
       const title = fileNameFromPath(normalizedPath)
       filePreviewRequestRef.current += 1
@@ -1350,6 +1506,7 @@ function App(): React.JSX.Element {
       })
     },
     [
+      blockRemoteLocalFileAction,
       activateCachedAnalysisNotebook,
       filePreviewRequestRef,
       onOpenAnalysisNotebook,
@@ -1370,10 +1527,13 @@ function App(): React.JSX.Element {
       const request = ++sessionRequestRef.current
       setIsSessionChanging(true)
       try {
-        const current = await rendererApi.createProjectSession(
-          project.workingDirectory,
-          project.permissionMode
-        )
+        const current =
+          project.location?.kind === 'ssh'
+            ? await rendererApi.createRemoteProjectSession(project.id)
+            : await rendererApi.createProjectSession(
+                project.workingDirectory,
+                project.permissionMode
+              )
         if (request !== sessionRequestRef.current) return
         setWorkspaceSidebarMode('projects')
         applyCurrentSession(
@@ -1422,18 +1582,30 @@ function App(): React.JSX.Element {
     await onStartProjectChat(project)
   }
 
+  const onCreateRemoteProject = async (input: RemoteProjectCreateInput): Promise<void> => {
+    await rendererApi.createRemoteProject(input)
+    await refreshProjects()
+    setWorkspaceSidebarMode('projects')
+  }
+
   const onDeleteProjectEntry = async (project: Project): Promise<void> => {
     await rendererApi.deleteProject(project.id)
     await refreshProjects()
   }
 
   const onFetchProjectSessions = useCallback(
-    async (workingDirectory: string): Promise<SessionSummary[]> =>
-      mergeSessionSummariesRuntimeState(
-        await rendererApi.listProjectSessions(workingDirectory),
-        workingDirectory
-      ),
-    [mergeSessionSummariesRuntimeState, rendererApi]
+    async (workingDirectory: string, projectId?: string): Promise<SessionSummary[]> => {
+      const project = projectId
+        ? projectsRef.current.find((item) => item.id === projectId)
+        : undefined
+      if (projectId && !project) return []
+      const sessions =
+        project?.location.kind === 'ssh'
+          ? await rendererApi.listProjectSessionsById(project.id)
+          : await rendererApi.listProjectSessions(workingDirectory)
+      return mergeSessionSummariesRuntimeState(sessions, workingDirectory)
+    },
+    [mergeSessionSummariesRuntimeState, rendererApi, projectsRef]
   )
 
   const onOpenApprovalSession = (path: string): void => {
@@ -1770,6 +1942,47 @@ function App(): React.JSX.Element {
     sessionGeneration: activeSessionGeneration
   })
   const input = draftInputs[activeDraftKey] ?? ''
+  const [planReviewByDraft, setPlanReviewByDraft] = useState<Record<string, boolean>>({})
+  const planReviewEnabled = planReviewByDraft[activeDraftKey] === true
+  const togglePlanReview = useCallback((): void => {
+    setPlanReviewByDraft((previous) => ({
+      ...previous,
+      [activeDraftKey]: previous[activeDraftKey] !== true
+    }))
+  }, [activeDraftKey])
+  const [draftImagesBySession, setDraftImagesBySession] = useState<
+    Record<string, PromptImageInput[]>
+  >({})
+  const inputImages = draftImagesBySession[activeDraftKey] ?? []
+  const addInputImages = useCallback(
+    (images: PromptImageInput[]): void => {
+      setDraftImagesBySession((prev) => ({
+        ...prev,
+        [activeDraftKey]: [...(prev[activeDraftKey] ?? []), ...images].slice(0, MAX_PROMPT_IMAGES)
+      }))
+    },
+    [activeDraftKey]
+  )
+  const removeInputImage = useCallback(
+    (index: number): void => {
+      setDraftImagesBySession((prev) => {
+        const next = (prev[activeDraftKey] ?? []).filter((_, imageIndex) => imageIndex !== index)
+        const updated = { ...prev }
+        if (next.length) updated[activeDraftKey] = next
+        else delete updated[activeDraftKey]
+        return updated
+      })
+    },
+    [activeDraftKey]
+  )
+  const clearInputImages = useCallback((): void => {
+    setDraftImagesBySession((prev) => {
+      if (!prev[activeDraftKey]) return prev
+      const updated = { ...prev }
+      delete updated[activeDraftKey]
+      return updated
+    })
+  }, [activeDraftKey])
   const setActiveInput = useCallback(
     (value: string): void => {
       setDraftInputs((prev) => updateSessionDraft(prev, activeDraftKey, value))
@@ -1828,7 +2041,12 @@ function App(): React.JSX.Element {
       target: PromptTarget,
       options: SendPromptOptions = {}
     ): Promise<boolean> => {
-      if (!text.trim() || isSendingRef.current) {
+      const images = options.images ?? []
+      if ((!text.trim() && images.length === 0) || isSendingRef.current) {
+        return false
+      }
+      if (images.length && selectedModel?.supportsImages === false) {
+        showSnackbarError(new Error('当前模型不支持图片，请切换到支持图片的模型'), '无法发送图片')
         return false
       }
       const readiness = getPromptReadiness({
@@ -1852,7 +2070,12 @@ function App(): React.JSX.Element {
       } else if (options.appendUserMessage !== false) {
         updateMessages((prev) => [
           ...prev,
-          { id: `user-${Date.now()}`, role: 'user', content: text }
+          {
+            id: `user-${Date.now()}`,
+            role: 'user',
+            content: text,
+            ...(images.length ? { images } : {})
+          }
         ])
       }
       setIsSendingMessage(true)
@@ -1863,12 +2086,18 @@ function App(): React.JSX.Element {
           options.suppressUserMessageEvent
             ? {
                 ...target,
+                ...(images.length ? { images } : {}),
+                ...(options.planMode ? { planMode: true } : {}),
                 suppressUserMessageEvent: true,
                 ...(options.retryUserMessageId
                   ? { retryUserMessageId: options.retryUserMessageId }
                   : {})
               }
-            : target
+            : {
+                ...target,
+                ...(images.length ? { images } : {}),
+                ...(options.planMode ? { planMode: true } : {})
+              }
         )
         if (
           !result ||
@@ -1943,6 +2172,12 @@ function App(): React.JSX.Element {
           return true
         }
         showSnackbarError(error, '发送消息失败')
+        if (images.length && options.appendUserMessage !== false) {
+          setDraftImagesBySession((prev) =>
+            prev[activeDraftKey]?.length ? prev : { ...prev, [activeDraftKey]: images }
+          )
+          setDraftInputs((prev) => updateSessionDraft(prev, activeDraftKey, text))
+        }
         return true
       } finally {
         if (
@@ -1965,6 +2200,7 @@ function App(): React.JSX.Element {
       refreshSessions,
       rendererApi,
       selectedModel,
+      setDraftInputs,
       setActivePhiSessionId,
       setActiveSessionPath,
       setActiveWorkspaceTabKey,
@@ -1978,7 +2214,12 @@ function App(): React.JSX.Element {
   const onChatSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
     const text = input.trim()
-    if (!text) return
+    const images = inputImages
+    if (!text && images.length === 0) return
+    if (images.length && selectedModel?.supportsImages === false) {
+      showSnackbarError(new Error('当前模型不支持图片，请切换到支持图片的模型'), '无法发送图片')
+      return
+    }
     const target: PromptTarget = {
       path: useSessionStore.getState().activeSessionPath,
       phiSessionId: useSessionStore.getState().activePhiSessionId ?? undefined,
@@ -1986,11 +2227,15 @@ function App(): React.JSX.Element {
       sessionGeneration: useSessionStore.getState().activeSessionGeneration
     }
     if (currentSessionIsBusy || isSendingRef.current) {
-      queuePromptText(text, target)
+      queuePromptText(text, target, { images, planMode: planReviewEnabled })
+      clearInputImages()
+      setPlanReviewByDraft((previous) => ({ ...previous, [activeDraftKey]: false }))
       return
     }
     setActiveInput('')
-    await sendPromptText(text, target)
+    clearInputImages()
+    setPlanReviewByDraft((previous) => ({ ...previous, [activeDraftKey]: false }))
+    await sendPromptText(text, target, { images, planMode: planReviewEnabled })
   }
 
   const onStopGeneration = async (): Promise<void> => {
@@ -2039,6 +2284,78 @@ function App(): React.JSX.Element {
     [getActiveCwd, previewFilePath, showActiveConversationInSidebar]
   )
 
+  const openRemoteWorkspacePath = useCallback(
+    (path: string, kind: LocalPathKind): void => {
+      const scope = getActiveRemoteProject()
+      if (!scope) {
+        showSnackbarError(new Error('远程服务器档案或会话不可用'), '无法打开远程文件')
+        return
+      }
+      const uri = path.startsWith('ssh://')
+        ? path
+        : remotePathInsideRoot(path, scope.canonicalRoot)
+          ? remoteWorkspaceUri(scope.hostAlias, path)
+          : null
+      if (!uri || !remotePathWithinProjectUri(uri, scope.hostAlias, scope.canonicalRoot)) {
+        showSnackbarError(new Error('远程路径不属于当前项目'), '无法打开远程文件')
+        return
+      }
+      setWorkspaceSidebarMode('files')
+      setIsSidebarOpen(true)
+      setActiveWorkspaceTabKey(workspaceFileTabKey(uri))
+      if (kind === 'directory') previewDirectoryPath(uri)
+      else previewFilePath(uri)
+    },
+    [getActiveRemoteProject, previewDirectoryPath, previewFilePath, showSnackbarError]
+  )
+
+  const openActiveWrapperResultPath = useCallback(
+    (path: string, kind: LocalPathKind): boolean => {
+      if (
+        !wrapperResultBelongsToProject(
+          activeWrapperResultScope,
+          useSessionStore.getState().activeProjectId
+        ) ||
+        !isActiveWrapperResultUri(path)
+      ) {
+        return false
+      }
+      setWorkspaceSidebarMode('files')
+      setIsSidebarOpen(true)
+      setActiveWorkspaceTabKey(workspaceFileTabKey(path))
+      if (kind === 'directory') previewDirectoryPath(path)
+      else previewFilePath(path)
+      return true
+    },
+    [activeWrapperResultScope, isActiveWrapperResultUri, previewDirectoryPath, previewFilePath]
+  )
+
+  const onOpenWrapperResult = useCallback(
+    (run: WrapperRun, path: string, kind: LocalPathKind): void => {
+      if (
+        !run.remote?.projectId ||
+        run.remote.projectId !== useSessionStore.getState().activeProjectId
+      ) {
+        showSnackbarError(new Error('请先进入这次运行所属的项目'), '无法打开远程结果')
+        return
+      }
+      const scope = wrapperResultScopeForPath(run, path)
+      if (!scope) {
+        showSnackbarError(new Error('运行记录缺少该结果路径的授权范围'), '无法打开远程结果')
+        return
+      }
+      try {
+        const uri = openWrapperResultPath(scope, path, kind)
+        setWorkspaceSidebarMode('files')
+        setIsSidebarOpen(true)
+        setActiveWorkspaceTabKey(workspaceFileTabKey(uri))
+      } catch (error) {
+        showSnackbarError(error, '无法打开远程结果')
+      }
+    },
+    [openWrapperResultPath, showSnackbarError]
+  )
+
   const previewDirectoryPathInWorkspaceTab = useCallback(
     (path: string): void => {
       const normalizedPath = absoluteWorkspacePath(getActiveCwd(), path)
@@ -2051,6 +2368,11 @@ function App(): React.JSX.Element {
 
   const onOpenWorkspaceFileFromSidebar = useCallback(
     (path: string): void => {
+      if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
+        openRemoteWorkspacePath(path, 'file')
+        return
+      }
+      if (blockRemoteLocalFileAction()) return
       const normalizedPath = absoluteWorkspacePath(getActiveCwd(), path)
       setWorkspaceSidebarMode('files')
       setIsSidebarOpen(true)
@@ -2061,22 +2383,46 @@ function App(): React.JSX.Element {
       }
       previewFilePath(path)
     },
-    [getActiveCwd, onOpenNotebookWorkspaceFile, previewFilePath]
+    [
+      blockRemoteLocalFileAction,
+      getActiveCwd,
+      onOpenNotebookWorkspaceFile,
+      openRemoteWorkspacePath,
+      previewFilePath
+    ]
   )
 
   const onOpenFilePreview = useCallback(
     (path: string): void => {
+      if (openActiveWrapperResultPath(path, 'file')) return
+      if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
+        openRemoteWorkspacePath(path, 'file')
+        return
+      }
+      if (blockRemoteLocalFileAction()) return
       if (isNotebookFilePath(path)) {
         onOpenNotebookWorkspaceFile(path)
         return
       }
       previewFilePathInWorkspaceTab(path)
     },
-    [onOpenNotebookWorkspaceFile, previewFilePathInWorkspaceTab]
+    [
+      blockRemoteLocalFileAction,
+      onOpenNotebookWorkspaceFile,
+      openActiveWrapperResultPath,
+      openRemoteWorkspacePath,
+      previewFilePathInWorkspaceTab
+    ]
   )
 
   const onOpenLocalPath = useCallback(
     (path: string, pathKind: LocalPathKind): void => {
+      if (openActiveWrapperResultPath(path, pathKind)) return
+      if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
+        openRemoteWorkspacePath(path, pathKind)
+        return
+      }
+      if (blockRemoteLocalFileAction()) return
       if (pathKind === 'directory') {
         previewDirectoryPathInWorkspaceTab(path)
         return
@@ -2087,18 +2433,59 @@ function App(): React.JSX.Element {
       }
       previewFilePathInWorkspaceTab(path)
     },
-    [onOpenNotebookWorkspaceFile, previewDirectoryPathInWorkspaceTab, previewFilePathInWorkspaceTab]
+    [
+      blockRemoteLocalFileAction,
+      onOpenNotebookWorkspaceFile,
+      openActiveWrapperResultPath,
+      openRemoteWorkspacePath,
+      previewDirectoryPathInWorkspaceTab,
+      previewFilePathInWorkspaceTab
+    ]
   )
 
   const onOpenDefaultPreviewPath = useCallback(
-    (path: string): void => {
+    (path: string, kind: LocalPathKind = 'file'): void => {
+      if (openActiveWrapperResultPath(path, kind)) return
+      if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
+        openRemoteWorkspacePath(path, kind)
+        return
+      }
+      if (blockRemoteLocalFileAction()) return
       if (isNotebookFilePath(path)) {
         onOpenNotebookWorkspaceFile(path)
         return
       }
       openPathWithSystemDefault(path)
     },
-    [onOpenNotebookWorkspaceFile, openPathWithSystemDefault]
+    [
+      blockRemoteLocalFileAction,
+      onOpenNotebookWorkspaceFile,
+      openActiveWrapperResultPath,
+      openPathWithSystemDefault,
+      openRemoteWorkspacePath
+    ]
+  )
+
+  const onRetryRemoteConnection = useCallback((): void => {
+    const state = useSessionStore.getState()
+    if (!state.activePhiSessionId || !state.activeProjectId) {
+      showSnackbarError(new Error('远程项目会话不可用'), '无法重新连接')
+      return
+    }
+    void rendererApi
+      .retryRemoteProjectConnection({
+        sessionId: state.activePhiSessionId,
+        projectId: state.activeProjectId
+      })
+      .catch((error) => showSnackbarError(error, '无法重新连接'))
+  }, [rendererApi, showSnackbarError])
+
+  const onRevealPreviewPathInWorkspace = useCallback(
+    (path: string, kind: LocalPathKind = 'file'): void => {
+      if (path.startsWith('ssh://')) setWorkspaceSidebarMode('files')
+      onRevealPreviewPath(path, kind)
+    },
+    [onRevealPreviewPath]
   )
 
   const onOpenInputAddMenu = useCallback((): void => {
@@ -2130,8 +2517,8 @@ function App(): React.JSX.Element {
     activeView === 'chat' || activeView === 'projects' || activeView === 'analysis'
   const isWorkspaceView = isChatWorkspaceView || isResourceWorkspaceView
   const isAnalysisWorkspaceView = activeView === 'analysis'
-  const onToggleWorkspaceSidePanel = useCallback((): void => {
-    setWorkspaceSidePanelCollapsed((value) => !value)
+  const onToggleWorkspaceSidePanel = useCallback((mode: WorkspaceSidePanelMode): void => {
+    setWorkspaceSidePanelMode((current) => toggleWorkspaceSidePanelMode(current, mode))
   }, [])
   const onRefreshWorkspaceSidePanel = useCallback((): void => {
     setWorkspaceSidePanelTreeRevision((value) => value + 1)
@@ -2174,8 +2561,66 @@ function App(): React.JSX.Element {
       ) ?? null)
     : null
   const activeProject = activeCwd
-    ? (projects.find((project) => project.workingDirectory === activeCwd) ?? null)
+    ? (projects.find((project) => project.id === activeProjectId) ??
+      projects.find(
+        (project) => project.location?.kind !== 'ssh' && project.workingDirectory === activeCwd
+      ) ??
+      null)
     : null
+  const activeRemoteConnection =
+    activeProjectLocation?.kind === 'ssh' ? activeProject?.remoteConnection : undefined
+  const previousRemoteConnectionPhaseRef = useRef<RemoteProjectReachability | null>(null)
+  useEffect(() => {
+    const phase =
+      activeProjectLocation?.kind === 'ssh' ? (activeRemoteConnection?.phase ?? 'unchecked') : null
+    const previous = previousRemoteConnectionPhaseRef.current
+    previousRemoteConnectionPhaseRef.current = phase
+    if (!phase || !shouldRetryRemoteReads(previous, phase)) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      setWorkspaceSidePanelTreeRevision((value) => value + 1)
+      const currentScope = getActiveRemoteProject()
+      if (
+        filePreview?.status === 'error' &&
+        currentScope &&
+        remotePathWithinProjectUri(
+          filePreview.path,
+          currentScope.hostAlias,
+          currentScope.canonicalRoot
+        )
+      ) {
+        loadFilePreview(filePreview.path, filePreview.pathKind ?? 'file')
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeProjectLocation?.kind,
+    activeRemoteConnection?.phase,
+    filePreview,
+    getActiveRemoteProject,
+    loadFilePreview
+  ])
+  const activeRemoteFileScope =
+    activeProjectLocation?.kind === 'ssh' && activeProject?.remoteHostAlias
+      ? {
+          hostAlias: activeProject.remoteHostAlias,
+          canonicalRoot: activeProjectLocation.canonicalRoot
+        }
+      : null
+  const workspaceFilesRootPath =
+    activeProjectLocation?.kind === 'ssh'
+      ? activeRemoteFileScope
+        ? remoteWorkspaceUri(activeRemoteFileScope.hostAlias, activeRemoteFileScope.canonicalRoot)
+        : ''
+      : activeCwd
+  const remoteFileIdentity =
+    activeProjectLocation?.kind === 'ssh'
+      ? `${activeProjectId ?? ''}:${activeRemoteFileScope?.hostAlias ?? ''}:${activeProjectLocation.canonicalRoot}`
+      : null
+  const previousRemoteFileIdentityRef = useRef<string | null>(null)
   const currentSessionTab = useMemo<WorkspaceSessionTab>(
     () => ({
       key: workspaceSessionTabKey(activeSessionPath, activeSessionGeneration),
@@ -2184,7 +2629,7 @@ function App(): React.JSX.Element {
       title: activeSession
         ? sessionDisplayTitle(activeSession)
         : (titleFromMessages(messages) ?? truncateSessionTitle('新对话')),
-      subtitle: workspaceScopeLabelForCwd(activeCwd, projects),
+      subtitle: activeProject?.name ?? workspaceScopeLabelForCwd(activeCwd, projects),
       sessionPath: activeSessionPath,
       sessionGeneration: activeSessionGeneration,
       sidebarMode: activeProject ? 'projects' : 'conversations'
@@ -2199,6 +2644,48 @@ function App(): React.JSX.Element {
       projects
     ]
   )
+  useLayoutEffect(() => {
+    const previous = previousRemoteFileIdentityRef.current
+    if (!shouldClearWorkspaceFilesForRemoteSwitch(previous, remoteFileIdentity)) {
+      previousRemoteFileIdentityRef.current = remoteFileIdentity
+      return
+    }
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      clearFileWorkspace()
+      setActiveWorkspaceTabKey(currentSessionTab.key)
+      if (activeView === 'analysis') navigateToView('chat')
+      previousRemoteFileIdentityRef.current = remoteFileIdentity
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeView, clearFileWorkspace, currentSessionTab.key, navigateToView, remoteFileIdentity])
+  useLayoutEffect(() => {
+    if (
+      !activeWrapperResultScope ||
+      wrapperResultBelongsToProject(activeWrapperResultScope, activeProjectId)
+    )
+      return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      clearFileWorkspace()
+      setActiveWorkspaceTabKey(currentSessionTab.key)
+      if (activeView === 'analysis') navigateToView('chat')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeProjectId,
+    activeView,
+    activeWrapperResultScope,
+    clearFileWorkspace,
+    currentSessionTab.key,
+    navigateToView
+  ])
   const workspaceFileWorkspaceTabs = useMemo<WorkspaceFileWorkspaceTab[]>(
     () =>
       workspaceFileTabs.map((tab) => ({
@@ -2285,7 +2772,18 @@ function App(): React.JSX.Element {
   const onRetryUserMessage = useCallback(
     async (message: UserMessageRetryTarget): Promise<void> => {
       const text = message.content.trim()
-      if (!text) return
+      let images: PromptImageInput[]
+      try {
+        images = await Promise.all(
+          (message.images ?? []).map((image) =>
+            'data' in image ? Promise.resolve(image) : rendererApi.readPromptImage(image)
+          )
+        )
+      } catch (error) {
+        showSnackbarError(error, '无法重试图片消息')
+        return
+      }
+      if (!text && images.length === 0) return
       const state = useSessionStore.getState()
       const target: PromptTarget = {
         path: state.activeSessionPath,
@@ -2296,7 +2794,8 @@ function App(): React.JSX.Element {
       const sendOptions: SendPromptOptions = {
         appendUserMessage: false,
         retryUserMessageId: message.id,
-        suppressUserMessageEvent: true
+        suppressUserMessageEvent: true,
+        images
       }
       if (currentSessionIsBusyRef.current || isSendingRef.current) {
         queuePromptText(text, target, sendOptions)
@@ -2304,7 +2803,29 @@ function App(): React.JSX.Element {
       }
       await sendPromptText(text, target, sendOptions)
     },
-    [queuePromptText, sendPromptText]
+    [queuePromptText, rendererApi, sendPromptText, showSnackbarError]
+  )
+  const forkInProgressRef = useRef(false)
+  const onForkUserMessage = useCallback(
+    async (eventId: string): Promise<void> => {
+      if (forkInProgressRef.current) return
+      const sourceId = useSessionStore.getState().activePhiSessionId
+      if (!sourceId) return
+      forkInProgressRef.current = true
+      try {
+        const fork = await rendererApi.forkSession(sourceId, eventId)
+        if (useSessionStore.getState().activePhiSessionId !== sourceId) {
+          void refreshSessions()
+          return
+        }
+        await onSelectSession(fork.path)
+      } catch (error) {
+        showSnackbarError(error, '无法分叉会话')
+      } finally {
+        forkInProgressRef.current = false
+      }
+    },
+    [onSelectSession, refreshSessions, rendererApi, showSnackbarError]
   )
   useEffect(() => {
     if (currentSessionIsBusy || isSessionChanging || isBusy || isSendingRef.current) return
@@ -2368,7 +2889,8 @@ function App(): React.JSX.Element {
     messages,
     showProjectSessionPlaceholder
   ])
-  const activeWorkspaceScopeLabel = workspaceScopeLabelForCwd(activeCwd, projects)
+  const activeWorkspaceScopeLabel =
+    activeProject?.name ?? workspaceScopeLabelForCwd(activeCwd, projects)
   const activePermissionMode = currentPermissionMode
   const showWorkspaceTabs =
     visibleWorkspaceTabs.length > 0 &&
@@ -2448,23 +2970,32 @@ function App(): React.JSX.Element {
       ? (filePreviewCache[activeWorkspaceFileTab.path] ?? null)
       : null
   const activeFilePreviewState =
-    activeWorkspaceFileTab && activeWorkspaceFileTab.kind !== 'notebook'
-      ? filePreview && filePreviewStatePath(filePreview) === activeWorkspaceFileTab.path
-        ? filePreview
-        : (cachedActiveFilePreview ??
-          (activeWorkspaceFileTab.pathKind === 'directory'
-            ? ({
-                status: 'loading',
-                path: activeWorkspaceFileTab.path,
-                pathKind: 'directory'
-              } satisfies FilePreviewPanelState)
-            : ({
-                status: 'loading',
-                path: activeWorkspaceFileTab.path
-              } satisfies FilePreviewPanelState)))
-      : null
+    activeWrapperResultScope &&
+    !wrapperResultBelongsToProject(activeWrapperResultScope, activeProjectId)
+      ? null
+      : activeWorkspaceFileTab && activeWorkspaceFileTab.kind !== 'notebook'
+        ? filePreview && filePreviewStatePath(filePreview) === activeWorkspaceFileTab.path
+          ? filePreview
+          : (cachedActiveFilePreview ??
+            (activeWorkspaceFileTab.pathKind === 'directory'
+              ? ({
+                  status: 'loading',
+                  path: activeWorkspaceFileTab.path,
+                  pathKind: 'directory'
+                } satisfies FilePreviewPanelState)
+              : ({
+                  status: 'loading',
+                  path: activeWorkspaceFileTab.path
+                } satisfies FilePreviewPanelState)))
+        : null
   const activeWorkspaceSidePanelPath =
-    activeWorkspaceFilePath ?? (filePreview ? filePreviewStatePath(filePreview) : null)
+    activeWrapperResultScope &&
+    !wrapperResultBelongsToProject(activeWrapperResultScope, activeProjectId)
+      ? null
+      : (activeWorkspaceFilePath ?? (filePreview ? filePreviewStatePath(filePreview) : null))
+  const activeResultPreview = activeFilePreviewState
+    ? isActiveWrapperResultUri(filePreviewStatePath(activeFilePreviewState))
+    : false
 
   const showCachedOrLoadFilePreview = useCallback(
     (tab: WorkspaceFileTab): void => {
@@ -2517,6 +3048,7 @@ function App(): React.JSX.Element {
 
       if (closingTab.path !== activeWorkspaceFilePath) {
         if (filePreview && filePreviewStatePath(filePreview) === closingTab.path) {
+          cancelActiveWrapperResultRead()
           filePreviewRequestRef.current += 1
           setFilePreview(null)
         }
@@ -2524,6 +3056,7 @@ function App(): React.JSX.Element {
       }
 
       const nextTab = remainingTabs.at(-1) ?? null
+      cancelActiveWrapperResultRead()
       if (!nextTab) {
         filePreviewRequestRef.current += 1
         setFilePreview(null)
@@ -2546,6 +3079,7 @@ function App(): React.JSX.Element {
     [
       activateCachedAnalysisNotebook,
       activeWorkspaceFilePath,
+      cancelActiveWrapperResultRead,
       clearCachedFilePreview,
       closeActiveNotebook,
       filePreview,
@@ -2760,6 +3294,19 @@ function App(): React.JSX.Element {
     [openWorkspaceResourceTab, refreshWrapperRuns, setSelectedWrapperId]
   )
 
+  const onOpenWrapperRunFromJobs = useCallback(
+    (canonicalId: string): void => {
+      const entry = wrapperCatalog.find((item) => item.id === canonicalId)
+      if (entry) {
+        onOpenWrapperTab(entry)
+        return
+      }
+      setWorkspaceSidebarMode('wrappers')
+      setIsSidebarOpen(true)
+    },
+    [onOpenWrapperTab, wrapperCatalog]
+  )
+
   const onCloseWorkspaceTab = useCallback(
     (tab: WorkspaceTab): void => {
       const closingIndex = visibleWorkspaceTabs.findIndex((item) => item.key === tab.key)
@@ -2948,8 +3495,14 @@ function App(): React.JSX.Element {
         selectedId={activeWorkspaceResourceTab.itemId}
         error={wrapperError}
         onOpenLocalPath={onOpenLocalPath}
+        onOpenRemoteResult={onOpenWrapperResult}
         onExportReproducibility={(runId) => void exportWrapperReproducibility(runId)}
         onCancelRun={(runId) => void cancelWrapperRun(runId)}
+        project={activeProject ?? undefined}
+        updatingRemoteProjectId={updatingRemoteProjectId}
+        onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
+        onUpdateProjectRemoteDefaults={onUpdateProjectRemoteDefaults}
+        onOpenRemoteSettings={() => openSettings('remote')}
       />
     ) : null
   ) : (
@@ -2959,55 +3512,88 @@ function App(): React.JSX.Element {
   )
 
   const activeChatView = (
-    <ChatView
-      messages={messages}
-      input={input}
-      scrollResetKey={activeChatScrollResetKey}
-      canSend={!isSessionChanging && !currentSessionIsBusy && !isBusy}
-      canQueue={!isSessionChanging && currentSessionIsBusy && !isBusy}
-      isGenerating={currentSessionIsBusy}
-      currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
-      models={availableModels}
-      selectedModel={selectedModel}
-      skills={skills}
-      promptAgents={promptAgents}
-      plugins={plugins}
-      onSelectModel={(model) => {
-        void onSelectModel(model)
-      }}
-      thinkingLevel={thinkingLevel}
-      onSelectThinkingLevel={(level) => {
-        void onSelectThinkingLevel(level)
-      }}
-      onInputChange={setActiveInput}
-      onRetryUserMessage={onRetryUserMessage}
-      onOpenInputAddMenu={onOpenInputAddMenu}
-      onPickInputFiles={onPickInputFiles}
-      onGetPathForInputFile={rendererApi.getPathForFile}
-      onInputFilesDropped={rendererApi.onInputFilesDropped}
-      onListInputDirectory={onListInputDirectory}
-      onChatSubmit={onChatSubmit}
-      onStopGeneration={onStopGeneration}
-      onAcknowledgeActiveSession={acknowledgeActiveSessionInteraction}
-      onGoSettings={onGoProviderSettings}
-      permissionMode={activePermissionMode}
-      onSelectPermissionMode={(mode) => {
-        void onSelectPermissionMode(mode)
-      }}
-      disablePermissionModeSelect={isSessionChanging}
-      disableModelControls={isSessionChanging}
-      pendingApproval={pendingApproval}
-      pendingUserInteraction={pendingUserInteraction}
-      queuedPrompts={activeQueuedPrompts.map((item) => ({ id: item.id, text: item.text }))}
-      onRespondApproval={onRespondToolApproval}
-      onRespondUserInteraction={onRespondAgentUserInteraction}
-      onRemoveQueuedPrompt={removeQueuedPrompt}
-      onOpenApprovalSession={onOpenApprovalSession}
-      onOpenLocalPath={onOpenLocalPath}
-      onJumpToNotebookCell={onJumpToAnalysisNotebookCell}
-      compactComposerControls={activeView === 'analysis'}
-      cwd={activeCwd}
-    />
+    <RemoteProjectFileContext.Provider
+      value={
+        activeProjectLocation?.kind === 'ssh'
+          ? {
+              hostAlias: activeRemoteFileScope?.hostAlias ?? '',
+              canonicalRoot: activeProjectLocation.canonicalRoot,
+              openPath: openRemoteWorkspacePath
+            }
+          : null
+      }
+    >
+      <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        {activeProjectLocation?.kind === 'ssh' ? (
+          <RemoteConnectionNotice
+            hostAlias={activeProject?.remoteHostAlias}
+            connection={activeRemoteConnection}
+            onRetry={onRetryRemoteConnection}
+          />
+        ) : null}
+        <ChatView
+          messages={messages}
+          input={input}
+          images={inputImages}
+          onImagesAdded={addInputImages}
+          onRemoveImage={removeInputImage}
+          scrollResetKey={activeChatScrollResetKey}
+          canSend={!isSessionChanging && !currentSessionIsBusy && !isBusy}
+          canQueue={!isSessionChanging && currentSessionIsBusy && !isBusy}
+          isGenerating={currentSessionIsBusy}
+          currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
+          models={availableModels}
+          selectedModel={selectedModel}
+          skills={skills}
+          promptAgents={promptAgents}
+          plugins={plugins}
+          onSelectModel={(model) => {
+            void onSelectModel(model)
+          }}
+          thinkingLevel={thinkingLevel}
+          onSelectThinkingLevel={(level) => {
+            void onSelectThinkingLevel(level)
+          }}
+          onInputChange={setActiveInput}
+          onRetryUserMessage={onRetryUserMessage}
+          onForkUserMessage={
+            currentSessionIsBusy || !activePhiSessionId ? undefined : onForkUserMessage
+          }
+          onOpenInputAddMenu={onOpenInputAddMenu}
+          onPickInputFiles={onPickInputFiles}
+          onGetPathForInputFile={rendererApi.getPathForFile}
+          onInputFilesDropped={rendererApi.onInputFilesDropped}
+          onListInputDirectory={onListInputDirectory}
+          onChatSubmit={onChatSubmit}
+          planReviewEnabled={planReviewEnabled}
+          onTogglePlanReview={togglePlanReview}
+          disablePlanReview={activeProjectLocation?.kind === 'ssh'}
+          onStopGeneration={onStopGeneration}
+          onAcknowledgeActiveSession={acknowledgeActiveSessionInteraction}
+          onGoSettings={onGoProviderSettings}
+          permissionMode={activePermissionMode}
+          onSelectPermissionMode={(mode) => {
+            void onSelectPermissionMode(mode)
+          }}
+          disablePermissionModeSelect={isSessionChanging}
+          disableModelControls={isSessionChanging}
+          pendingApproval={pendingApproval}
+          pendingUserInteraction={pendingUserInteraction}
+          queuedPrompts={activeQueuedPrompts.map((item) => ({
+            id: item.id,
+            text: item.text || `图片 ${item.sendOptions?.images?.length ?? 0} 张`
+          }))}
+          onRespondApproval={onRespondToolApproval}
+          onRespondUserInteraction={onRespondAgentUserInteraction}
+          onRemoveQueuedPrompt={removeQueuedPrompt}
+          onOpenApprovalSession={onOpenApprovalSession}
+          onOpenLocalPath={onOpenLocalPath}
+          onJumpToNotebookCell={onJumpToAnalysisNotebookCell}
+          compactComposerControls={activeView === 'analysis'}
+          cwd={activeDisplayCwd}
+        />
+      </Box>
+    </RemoteProjectFileContext.Provider>
   )
 
   const chatWorkspaceContent = (
@@ -3048,83 +3634,100 @@ function App(): React.JSX.Element {
     </>
   )
 
-  const activeAnalysisView = (
-    <AnalysisView
-      hideLeftRail
-      notebookRegistry={analysisNotebookRegistry}
-      notebookFile={activeAnalysisNotebook}
-      workspaceFileTabs={workspaceFileTabs}
-      activeWorkspaceFilePath={activeWorkspaceFilePath}
-      onSelectWorkspaceFileTab={onSelectWorkspaceFileTab}
-      onCloseWorkspaceFileTab={onCloseWorkspaceFileTab}
-      isLoadingNotebooks={isLoadingAnalysisNotebooks}
-      isOpeningNotebook={isOpeningAnalysisNotebook}
-      notebookError={analysisNotebookError}
-      notebookContentError={analysisNotebookContentError}
-      kernelDiagnostics={analysisKernelDiagnostics}
-      isLoadingKernels={isLoadingAnalysisKernels}
-      kernelError={analysisKernelError}
-      notebookSessionStatus={analysisNotebookSessionStatus}
-      isStartingNotebookSession={isStartingAnalysisNotebookSession}
-      notebookSessionError={analysisNotebookSessionError}
-      executingNotebookCellId={executingAnalysisCellId}
-      notebookCellExecutionError={analysisCellExecutionError}
-      agentFocus={analysisAgentFocus}
-      onRefreshNotebooks={() => {
-        void refreshAnalysisNotebooks()
-      }}
-      onStartNotebookSession={(file, document) => {
-        return onStartAnalysisNotebookSession(file, document)
-      }}
-      onSyncNotebookDraft={(file, document) => {
-        void onSyncAnalysisNotebookDraft(file, document)
-      }}
-      onStopNotebookSession={(file) => {
-        return onStopAnalysisNotebookSession(file)
-      }}
-      onRunNotebookCell={(file, document, cellId) => {
-        void onRunAnalysisNotebookCell(file, document, cellId)
-      }}
-      onStopNotebookCell={(file, cellId) => {
-        void onStopAnalysisNotebookCell(file, cellId)
-      }}
-      onCompleteNotebookCell={onCompleteAnalysisNotebookCell}
-      onFormatNotebookCell={onFormatAnalysisNotebookCell}
-      onGenerateNotebookCode={onGenerateAnalysisNotebookCode}
-      onNotebookCodeGenerationProgress={rendererApi.onAnalysisNotebookCodeGenerationProgress}
-      notebookAiModelOptions={availableModels}
-      notebookAiDefaultModel={notebookAiDefaultModel}
-      onPickNotebookContextFiles={onPickInputFiles}
-      onInitializeProjectAnalysis={(cwd) => {
-        void onInitializeProjectAnalysis(cwd)
-      }}
-      onOpenNotebook={(path) => {
-        onOpenNotebookWorkspaceFile(path)
-      }}
-      onCloseNotebook={() => {
-        closeActiveNotebook()
-        navigateToView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
-      }}
-      onSaveNotebook={(file, document) => {
-        void onSaveAnalysisNotebook(file, document)
-      }}
-      onCreateNotebook={(cwd) => {
-        void onCreateAnalysisNotebook(cwd)
-      }}
-    />
-  )
+  const activeAnalysisView =
+    activeProjectLocation?.kind === 'ssh' ? (
+      <Box sx={{ p: 3 }}>
+        <Typography variant="body2" color="text.secondary">
+          远程项目的 Notebook/Jupyter 暂不可用；不会打开本机会话目录。
+        </Typography>
+      </Box>
+    ) : (
+      <AnalysisView
+        hideLeftRail
+        notebookRegistry={analysisNotebookRegistry}
+        notebookFile={activeAnalysisNotebook}
+        workspaceFileTabs={workspaceFileTabs}
+        activeWorkspaceFilePath={activeWorkspaceFilePath}
+        onSelectWorkspaceFileTab={onSelectWorkspaceFileTab}
+        onCloseWorkspaceFileTab={onCloseWorkspaceFileTab}
+        isLoadingNotebooks={isLoadingAnalysisNotebooks}
+        isOpeningNotebook={isOpeningAnalysisNotebook}
+        notebookError={analysisNotebookError}
+        notebookContentError={analysisNotebookContentError}
+        kernelDiagnostics={analysisKernelDiagnostics}
+        isLoadingKernels={isLoadingAnalysisKernels}
+        kernelError={analysisKernelError}
+        notebookSessionStatus={analysisNotebookSessionStatus}
+        isStartingNotebookSession={isStartingAnalysisNotebookSession}
+        notebookSessionError={analysisNotebookSessionError}
+        executingNotebookCellId={executingAnalysisCellId}
+        notebookCellExecutionError={analysisCellExecutionError}
+        agentFocus={analysisAgentFocus}
+        onRefreshNotebooks={() => {
+          void refreshAnalysisNotebooks()
+        }}
+        onStartNotebookSession={(file, document) => {
+          return onStartAnalysisNotebookSession(file, document)
+        }}
+        onSyncNotebookDraft={(file, document) => {
+          void onSyncAnalysisNotebookDraft(file, document)
+        }}
+        onStopNotebookSession={(file) => {
+          return onStopAnalysisNotebookSession(file)
+        }}
+        onRunNotebookCell={(file, document, cellId) => {
+          void onRunAnalysisNotebookCell(file, document, cellId)
+        }}
+        onStopNotebookCell={(file, cellId) => {
+          void onStopAnalysisNotebookCell(file, cellId)
+        }}
+        onCompleteNotebookCell={onCompleteAnalysisNotebookCell}
+        onFormatNotebookCell={onFormatAnalysisNotebookCell}
+        onGenerateNotebookCode={onGenerateAnalysisNotebookCode}
+        onNotebookCodeGenerationProgress={rendererApi.onAnalysisNotebookCodeGenerationProgress}
+        notebookAiModelOptions={availableModels}
+        notebookAiDefaultModel={notebookAiDefaultModel}
+        onPickNotebookContextFiles={onPickInputFiles}
+        onInitializeProjectAnalysis={(cwd) => {
+          void onInitializeProjectAnalysis(cwd)
+        }}
+        onOpenNotebook={(path) => {
+          onOpenNotebookWorkspaceFile(path)
+        }}
+        onCloseNotebook={() => {
+          closeActiveNotebook()
+          navigateToView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
+        }}
+        onSaveNotebook={(file, document) => {
+          void onSaveAnalysisNotebook(file, document)
+        }}
+        onCreateNotebook={(cwd) => {
+          void onCreateAnalysisNotebook(cwd)
+        }}
+      />
+    )
 
   const activeWorkspaceFileTabContent = isWorkspaceFileWorkspaceTab(activeWorkspaceTab) ? (
     activeWorkspaceTab.kind === 'notebook' ? (
       activeAnalysisView
     ) : activeFilePreviewState ? (
       <FilePreviewPanel
+        key={
+          activeWrapperResultScope
+            ? `${activeWrapperResultScope.projectId}:${activeWrapperResultScope.runId}:${activeWrapperResultScope.scope}`
+            : 'project-file'
+        }
         layout="workspace"
         state={activeFilePreviewState}
         onOpenFile={onOpenFilePreview}
         onOpenDefaultPath={onOpenDefaultPreviewPath}
-        onRevealPath={onRevealPreviewPath}
+        onRevealPath={onRevealPreviewPathInWorkspace}
         onListDirectory={onListPreviewDirectory}
+        onDownloadFile={
+          activeResultPreview ? (path) => void downloadWrapperResultFile(path) : undefined
+        }
+        downloadState={activeResultPreview ? fileDownload : null}
+        onCancelDownload={activeResultPreview ? cancelActiveWrapperResultDownload : undefined}
       />
     ) : null
   ) : null
@@ -3194,6 +3797,7 @@ function App(): React.JSX.Element {
           onSelectSession={onOpenSessionFromSidebar}
           onRenameSession={onRenameSession}
           onDeleteSession={onDeleteSession}
+          onExportSession={onExportSession}
           onStartProjectChat={onStartProjectChatFromSidebar}
           onDeleteProjectEntry={onDeleteProjectEntry}
           onFetchProjectSessions={onFetchProjectSessions}
@@ -3210,7 +3814,11 @@ function App(): React.JSX.Element {
           activeWorkspaceTitle={activeWorkspaceTitle}
           activeWorkspaceScopeLabel={activeWorkspaceScopeLabel}
           workspaceSidebarMode={workspaceSidebarMode}
-          workspaceRootPath={activeCwd}
+          workspaceRootPath={workspaceFilesRootPath}
+          isRemoteProject={activeProjectLocation?.kind === 'ssh'}
+          remoteHostAlias={activeProject?.remoteHostAlias}
+          remoteConnection={activeRemoteConnection}
+          onRetryRemoteConnection={onRetryRemoteConnection}
           activeWorkspacePath={activeWorkspaceSidePanelPath}
           workspaceFileTreeRevision={workspaceSidePanelTreeRevision}
           onOpenWorkspaceFile={onOpenWorkspaceFileFromSidebar}
@@ -3256,6 +3864,7 @@ function App(): React.JSX.Element {
           sessions={sessions}
           activeSessionPath={activeSessionPath}
           activeCwd={activeCwd}
+          activeProjectId={activeProjectId}
           projects={projects}
           projectSessionRefreshKey={projectSessionRefreshKey}
           onNewChat={onNewChatFromSidebar}
@@ -3263,6 +3872,7 @@ function App(): React.JSX.Element {
           onSelectSession={onOpenSessionFromSidebar}
           onRenameSession={onRenameSession}
           onDeleteSession={onDeleteSession}
+          onExportSession={onExportSession}
           onStartProjectChat={onStartProjectChatFromSidebar}
           onDeleteProjectEntry={onDeleteProjectEntry}
           onFetchProjectSessions={onFetchProjectSessions}
@@ -3398,12 +4008,26 @@ function App(): React.JSX.Element {
                   <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>
                     {activeFilePreviewState ? (
                       <FilePreviewPanel
+                        key={
+                          activeWrapperResultScope
+                            ? `${activeWrapperResultScope.projectId}:${activeWrapperResultScope.runId}:${activeWrapperResultScope.scope}`
+                            : 'project-file'
+                        }
                         layout="workspace"
                         state={activeFilePreviewState}
                         onOpenFile={onOpenFilePreview}
                         onOpenDefaultPath={onOpenDefaultPreviewPath}
-                        onRevealPath={onRevealPreviewPath}
+                        onRevealPath={onRevealPreviewPathInWorkspace}
                         onListDirectory={onListPreviewDirectory}
+                        onDownloadFile={
+                          activeResultPreview
+                            ? (path) => void downloadWrapperResultFile(path)
+                            : undefined
+                        }
+                        downloadState={activeResultPreview ? fileDownload : null}
+                        onCancelDownload={
+                          activeResultPreview ? cancelActiveWrapperResultDownload : undefined
+                        }
                       />
                     ) : null}
                   </Box>
@@ -3419,7 +4043,7 @@ function App(): React.JSX.Element {
           <Box component="main" sx={{ flex: 1, minWidth: 0, height: '100vh' }} />
         )}
 
-        {!workspaceSidePanelCollapsed ? (
+        {workspaceSidePanelMode ? (
           <>
             <AppResizeSeparator
               label="调整工作区面板宽度"
@@ -3435,7 +4059,14 @@ function App(): React.JSX.Element {
                 minHeight: 0
               }}
             >
-              <WorkspaceSidePanel width={workspaceSidePanelWidth} />
+              <WorkspaceSidePanel width={workspaceSidePanelWidth} mode={workspaceSidePanelMode}>
+                {workspaceSidePanelMode === 'jobs' ? (
+                  <BackgroundJobsPanel
+                    onOpenSession={(path) => void onOpenSessionFromSidebar(path)}
+                    onOpenWrapper={onOpenWrapperRunFromJobs}
+                  />
+                ) : null}
+              </WorkspaceSidePanel>
             </Box>
           </>
         ) : null}
@@ -3464,6 +4095,7 @@ function App(): React.JSX.Element {
             <WindowNavigationControls
               isSidebarOpen={isSidebarOpen}
               onToggleSidebar={() => setIsSidebarOpen((value) => !value)}
+              onOpenSessionSearch={() => setIsSessionSearchOpen(true)}
               canGoBack={canGoBackInHistory}
               canGoForward={canGoForwardInHistory}
               onGoBack={goBackInHistory}
@@ -3487,12 +4119,26 @@ function App(): React.JSX.Element {
           <TopRightControls
             showSidePanelRefresh={false}
             sidePanelRefreshDisabled={false}
-            showSidePanelToggle
-            sidePanelCollapsed={workspaceSidePanelCollapsed}
+            showSidePanelButtons
+            activePanel={workspaceSidePanelMode}
             onRefreshSidePanel={onRefreshWorkspaceSidePanel}
-            onToggleSidePanel={onToggleWorkspaceSidePanel}
+            onTogglePanel={onToggleWorkspaceSidePanel}
           />
         </Box>
+
+        {isSessionSearchOpen && (
+          <SessionSearchPanel
+            key={JSON.stringify([
+              projectSessionRefreshKey,
+              projects.map((project) => [project.id, project.name, project.workingDirectory])
+            ])}
+            onClose={() => setIsSessionSearchOpen(false)}
+            sessions={sessions}
+            projects={projects}
+            onFetchProjectSessions={onFetchProjectSessions}
+            onSelectSession={onOpenSessionFromSidebar}
+          />
+        )}
 
         <AppDialogs
           rendererApi={rendererApi}
@@ -3513,9 +4159,6 @@ function App(): React.JSX.Element {
           updatingPermissionProjectId={updatingPermissionProjectId}
           onUpdateProjectPermissionMode={onUpdateProjectPermissionMode}
           onUpdateProjectDefaults={onUpdateProjectDefaults}
-          updatingRemoteProjectId={updatingRemoteProjectId}
-          onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
-          onUpdateProjectRemoteDefaults={onUpdateProjectRemoteDefaults}
           onOpenApprovalSession={onOpenApprovalSession}
           onRespondToolApproval={onRespondToolApproval}
           themeMode={themeMode}
@@ -3542,6 +4185,8 @@ function App(): React.JSX.Element {
           updatingDbConnectorId={updatingDbConnectorId}
           onRefreshDbConnectors={refreshDbConnectors}
           onSetDbConnectorEnabled={onSetDbConnectorEnabled}
+          onSetDbConnectorApiKey={onSetDbConnectorApiKey}
+          onClearDbConnectorApiKey={onClearDbConnectorApiKey}
           showOnboarding={showOnboarding}
           onCompleteOnboarding={onCompleteOnboarding}
           onSkipOnboarding={onSkipOnboarding}
@@ -3558,6 +4203,7 @@ function App(): React.JSX.Element {
           isNewProjectDialogOpen={isNewProjectDialogOpen}
           setIsNewProjectDialogOpen={setIsNewProjectDialogOpen}
           onCreateProject={onCreateProject}
+          onCreateRemoteProject={onCreateRemoteProject}
           snackbarNotice={snackbarNotice}
           setSnackbarNotice={setSnackbarNotice}
           isChatWorkspaceView={isChatWorkspaceView}
@@ -3565,6 +4211,12 @@ function App(): React.JSX.Element {
           activityBarWidth={activityBarWidth}
           sidebarWidth={sidebarWidth}
           macTitlebarHeight={macTitlebarHeight}
+        />
+        <SessionExportDialog
+          session={exportTarget}
+          busy={isExportingSession}
+          onClose={() => setExportTarget(null)}
+          onExport={() => void confirmExportSession()}
         />
       </Box>
     </ThemeProvider>

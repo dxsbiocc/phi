@@ -1,0 +1,118 @@
+phiDbConnectorVersion: 1
+id: rest-json/interpro
+name: InterPro
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://www.ebi.ac.uk/interpro/api
+networkPolicy:
+  allowedHosts:
+    - www.ebi.ac.uk
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 5
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: entry
+    summary: Fetch one InterPro entry by accession such as IPR000719.
+    identity:
+      stableIdFields: [accession]
+      namespace: interpro.entry_id
+      primaryUrlTemplate: https://www.ebi.ac.uk/interpro/entry/InterPro/{stable_id}/
+    commonFields: [accession, name, type, source_database, description, go_terms, counters]
+    rest:
+      request:
+        path: /entry/interpro/{filter:accession}
+      response:
+        rowsPath: $
+        fieldMap:
+          accession: metadata.accession
+          name: metadata.name
+          type: metadata.type
+          source_database: metadata.source_database
+          description: metadata.description
+          go_terms: metadata.go_terms
+          counters: metadata.counters
+    fields:
+      - name: accession
+        type: string
+        description: InterPro accession such as IPR000719.
+        synonyms: [id, interpro_id]
+        namespace: interpro.entry_id
+  - id: entry_search
+    summary: Search InterPro entries by free text.
+    identity:
+      stableIdFields: [accession]
+      namespace: interpro.entry_id
+      primaryUrlTemplate: https://www.ebi.ac.uk/interpro/entry/InterPro/{stable_id}/
+    commonFields: [accession, name, type, source_database, description]
+    rest:
+      request:
+        path: /entry/interpro
+        rawQueryParam: search
+        limitParam: page_size
+        cursorParam: cursor
+      response:
+        rowsPath: results
+        totalRowsPath: count
+        fieldMap:
+          accession: metadata.accession
+          name: metadata.name
+          type: metadata.type
+          source_database: metadata.source_database
+          description: metadata.description
+    fields:
+      - name: accession
+        type: string
+        description: InterPro accession.
+        namespace: interpro.entry_id
+      - name: name
+        type: string
+        description: Entry name.
+  - id: protein
+    summary: InterPro annotations for a UniProt protein accession.
+    identity:
+      stableIdFields: [accession]
+      namespace: uniprot.accession
+      primaryUrlTemplate: https://www.ebi.ac.uk/interpro/protein/UniProt/{stable_id}/
+    commonFields: [accession, name, source_organism, length, entry_integrated]
+    rest:
+      request:
+        path: /protein/uniprot/{filter:accession}
+      response:
+        rowsPath: $
+        fieldMap:
+          accession: metadata.accession
+          name: metadata.name
+          source_organism: metadata.source_organism
+          length: metadata.length
+          entry_integrated: entry_integrated
+    fields:
+      - name: accession
+        type: string
+        description: UniProt accession.
+        synonyms: [uniprot, uniprot_accession]
+        namespace: uniprot.accession
+xref:
+  - from:
+      domain: protein
+      field: accession
+      namespace: uniprot.accession
+    to:
+      database: rest-json/uniprot
+      domain: protein
+      field: accession
+      namespace: uniprot.accession
+  - from:
+      domain: entry_search
+      field: accession
+      namespace: interpro.entry_id
+    to:
+      domain: entry
+      field: accession
+      namespace: interpro.entry_id

@@ -2,15 +2,20 @@ import type { AgentEventSummary, AgentExecutionItem, AgentExecutionStep, ChatIte
 import {
   chatItemFromPhiTimelineEvent,
   extractNotebookToolSummary,
+  extractTodoSnapshot,
   extractToolText,
   extractWrapperPlanId,
   hasEquivalentErrorMessage,
   isDisplayableAssistantText,
   isNotebookToolName,
+  isTodoToolName,
   isWrapperToolName,
   runLifecycleItemFromPhiTimelineEvent,
   toolArgsPreview
 } from './chatItems'
+import { workspaceChangesItemFromPhiTimelineEvent } from '../features/chat/lib/workspaceChanges'
+import { presentedFilesItemFromPhiTimelineEvent } from '../features/chat/lib/presentedFiles'
+import { applyPlanReviewDecision, planReviewItemFromEvent } from '../features/chat/lib/planReview'
 import { outputPreviewText } from './toolOutputPresentation'
 
 export interface AgentEventReducerState {
@@ -520,6 +525,27 @@ export function reduceAgentEventState(
     next.push(lifecycleItem)
   }
 
+  const workspaceChanges = workspaceChangesItemFromPhiTimelineEvent(event)
+  if (workspaceChanges) {
+    if (!next.some((item) => item.id === workspaceChanges.id)) next.push(workspaceChanges)
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
+  const planReview = planReviewItemFromEvent(event)
+  if (planReview) {
+    if (!next.some((item) => item.id === planReview.id)) next.push(planReview)
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+  if (applyPlanReviewDecision(next, event)) {
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
+  const presentedFiles = presentedFilesItemFromPhiTimelineEvent(event)
+  if (presentedFiles) {
+    if (!next.some((item) => item.id === presentedFiles.id)) next.push(presentedFiles)
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
   const timelineItem = chatItemFromPhiTimelineEvent(event)
   if (timelineItem) {
     const isDuplicateError =
@@ -656,6 +682,9 @@ export function reduceAgentEventState(
             ? {
                 notebook: extractNotebookToolSummary(event.result) ?? current.notebook
               }
+            : {}),
+          ...(isTodoToolName(current.toolName)
+            ? { todo: extractTodoSnapshot(event.result) ?? current.todo }
             : {}),
           status: event.isError ? 'error' : 'done',
           ...completedAtField(event.createdAt),

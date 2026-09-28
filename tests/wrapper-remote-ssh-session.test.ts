@@ -1,39 +1,31 @@
 import assert from 'node:assert/strict'
-import { execSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { execSync, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
 import {
-  buildConnectConfig,
+  buildControlArgs,
+  buildExecArgs,
   buildExistsCommand,
+  buildMasterArgs,
   buildMkdirpCommand,
   buildReadTextFileCommand,
-  buildSession,
+  buildSftpArgs,
   buildTruncateLastByteCommand,
   buildWriteTextFileCommand,
-  DEFAULT_SSH_IDENT,
+  connectRemoteSshSession,
+  quoteSftpPath,
   shellQuote,
-  type RemoteConnectionConfig
+  validateHostAlias,
+  type OpenSshRuntime
 } from '../src/main/agent/wrappers/remote-ssh-session'
-import type { Client } from 'ssh2'
+import { RemoteSshConnectionError } from '../src/main/agent/wrappers/remote-ssh-diagnostics'
 
-/**
- * Runs a command exactly the way `remote-ssh-session.ts`'s real `exec()`
- * would send it to the remote shell — but through a REAL local `bash`,
- * not the in-memory fakes every other test in this suite uses. That
- * distinction matters: this project shipped with a fatal `& &&` bash
- * syntax error in `buildDetachedLaunchCommand` and a file-corrupting bug
- * in the heredoc writer, and 494 passing tests caught neither, because no
- * test had ever actually executed a generated command string. These tests
- * exist specifically to close that gap — see remote-ssh-session.ts's
- * `buildWriteTextFileCommand` doc comment for the bug this caught.
- */
 function runInRealBash(command: string): { stdout: string; code: number } {
   try {
-    const stdout = execSync(command, { shell: '/bin/bash', encoding: 'utf-8' })
-    return { stdout, code: 0 }
+    return { stdout: execSync(command, { shell: '/bin/bash', encoding: 'utf-8' }), code: 0 }
   } catch (error) {
     const err = error as { stdout?: string; status?: number }
     return { stdout: err.stdout ?? '', code: err.status ?? 1 }
@@ -41,7 +33,7 @@ function runInRealBash(command: string): { stdout: string; code: number } {
 }
 
 function withTempDir<T>(callback: (dir: string) => T): T {
-  const dir = mkdtempSync(join(tmpdir(), 'phi-remote-ssh-session-realbash-'))
+  const dir = mkdtempSync(join(tmpdir(), 'phi-remote-ssh-test-'))
   try {
     return callback(dir)
   } finally {
@@ -49,221 +41,364 @@ function withTempDir<T>(callback: (dir: string) => T): T {
   }
 }
 
-test('every generated command is syntactically valid bash (bash -n)', () => {
+test('generated remote file commands are valid shell and preserve text byte-for-byte', () => {
   withTempDir((dir) => {
-    const path = join(dir, 'file.txt')
+    const path = join(dir, "file with 'quotes'.txt")
+    const content = 'line with $VAR and `backticks`\n__PHI_EOF__\nlast line'
     const commands = [
       buildMkdirpCommand(dir),
       buildExistsCommand(path),
       buildReadTextFileCommand(path),
-      buildWriteTextFileCommand(path, 'hello\n').script,
+      buildWriteTextFileCommand(path, content).script,
       buildTruncateLastByteCommand(path)
     ]
     for (const command of commands) {
-      const result = runInRealBash(`bash -n -c ${shellQuote(command)}`)
-      assert.equal(result.code, 0, `expected valid syntax for: ${command}`)
+      assert.equal(runInRealBash(`bash -n -c ${shellQuote(command)}`).code, 0)
+    }
+    const { script, needsTruncate } = buildWriteTextFileCommand(path, content)
+    assert.equal(runInRealBash(script).code, 0)
+    if (needsTruncate) assert.equal(runInRealBash(buildTruncateLastByteCommand(path)).code, 0)
+    assert.equal(readFileSync(path, 'utf-8'), content)
+    assert.equal(runInRealBash(buildReadTextFileCommand(path)).stdout, content)
+    assert.equal(runInRealBash(buildExistsCommand(path)).code, 0)
+    assert.equal(runInRealBash(buildExistsCommand(join(dir, 'missing'))).code, 1)
+  })
+})
+
+test('OpenSSH arguments enforce known hosts and reject option-shaped aliases', () => {
+  const master = buildMasterArgs('lab-hpc', '/tmp/phi-ssh-test/master')
+  const exec = buildExecArgs('lab-hpc', '/tmp/phi-ssh-test/master', 'printf ok')
+  const sftp = buildSftpArgs('lab-hpc', '/tmp/phi-ssh-test/master')
+  const check = buildControlArgs('lab-hpc', '/tmp/phi-ssh-test/master', 'check')
+  const exit = buildControlArgs('lab-hpc', '/tmp/phi-ssh-test/master', 'exit')
+  for (const args of [master, exec, sftp, check, exit]) {
+    assert.ok(args.includes('BatchMode=yes'))
+    assert.ok(args.includes('StrictHostKeyChecking=yes'))
+    assert.ok(args.includes('ForwardAgent=no'))
+    assert.ok(args.includes('ClearAllForwardings=yes'))
+    assert.equal(args.includes('-F'), false)
+  }
+  assert.equal(master.at(-1), 'lab-hpc')
+  assert.equal(sftp.at(-1), 'lab-hpc')
+  assert.equal(exec.at(-1), 'printf ok')
+  assert.equal(exec.at(-2), 'lab-hpc')
+  for (const host of ['-oProxyCommand=evil', 'host;evil', 'host name', '']) {
+    assert.throws(() => validateHostAlias(host))
+  }
+  assert.equal(quoteSftpPath('a "quoted" path'), '"a \\"quoted\\" path"')
+  assert.throws(() => quoteSftpPath('bad\npath'))
+})
+
+test('manual user, port and key apply to master, commands, control and SFTP', () => {
+  const config = { host: 'lab-hpc', user: 'scientist', port: 22022, identityFile: '/tmp/lab-key' }
+  const commands = [
+    buildMasterArgs(config.host, '/tmp/master', config),
+    buildExecArgs(config.host, '/tmp/master', 'true', config),
+    buildControlArgs(config.host, '/tmp/master', 'check', config)
+  ]
+  for (const args of commands) {
+    assert.deepEqual(args.slice(args.indexOf('-l'), args.indexOf('-l') + 2), ['-l', 'scientist'])
+    assert.deepEqual(args.slice(args.indexOf('-p'), args.indexOf('-p') + 2), ['-p', '22022'])
+    assert.deepEqual(args.slice(args.indexOf('-i'), args.indexOf('-i') + 2), ['-i', '/tmp/lab-key'])
+    assert.ok(args.includes('StrictHostKeyChecking=yes'))
+    assert.ok(args.includes('BatchMode=yes'))
+  }
+  const sftp = buildSftpArgs(config.host, '/tmp/master', config)
+  assert.ok(sftp.includes('User=scientist'))
+  assert.deepEqual(sftp.slice(sftp.indexOf('-P'), sftp.indexOf('-P') + 2), ['-P', '22022'])
+  assert.deepEqual(sftp.slice(sftp.indexOf('-i'), sftp.indexOf('-i') + 2), ['-i', '/tmp/lab-key'])
+  assert.throws(
+    () => buildMasterArgs('lab-hpc', '/tmp/master', { host: 'lab-hpc', user: '-evil' }),
+    /用户名/
+  )
+  assert.throws(
+    () => buildMasterArgs('lab-hpc', '/tmp/master', { host: 'lab-hpc', port: 0 }),
+    /端口/
+  )
+})
+
+test('system OpenSSH resolves user, port, identity and jump host from a host alias', () => {
+  withTempDir((dir) => {
+    const config = join(dir, 'config')
+    writeFileSync(
+      config,
+      [
+        'Host lab-hpc',
+        '  HostName compute.example.invalid',
+        '  User scientist',
+        '  Port 22022',
+        `  IdentityFile ${join(dir, 'test-key')}`,
+        '  ProxyJump jump.example.invalid',
+        ''
+      ].join('\n')
+    )
+    const result = spawnSync(
+      'ssh',
+      ['-G', '-F', config, ...buildMasterArgs('lab-hpc', join(dir, 'master'))],
+      { encoding: 'utf-8' }
+    )
+    assert.equal(result.status, 0, result.stderr)
+    for (const line of [
+      'hostname compute.example.invalid',
+      'user scientist',
+      'port 22022',
+      `identityfile ${join(dir, 'test-key')}`,
+      'proxyjump jump.example.invalid',
+      'batchmode yes',
+      'stricthostkeychecking true',
+      'forwardagent no',
+      'clearallforwardings yes'
+    ]) {
+      assert.ok(result.stdout.split('\n').includes(line), `${line} missing from ssh -G output`)
     }
   })
 })
 
-test('buildMkdirpCommand actually creates the directory when run', () => {
-  withTempDir((dir) => {
-    const nested = join(dir, 'a', 'b', 'c')
-    const result = runInRealBash(buildMkdirpCommand(nested))
-    assert.equal(result.code, 0)
-    assert.equal(runInRealBash(buildExistsCommand(nested)).code, 0)
-  })
-})
+const localSftpServer = ['/usr/libexec/sftp-server', '/usr/lib/openssh/sftp-server'].find((path) =>
+  existsSync(path)
+)
 
-test('buildExistsCommand reports true/false via exit code, matching RemoteSshSession.exists', () => {
-  withTempDir((dir) => {
-    assert.equal(runInRealBash(buildExistsCommand(dir)).code, 0)
-    assert.equal(runInRealBash(buildExistsCommand(join(dir, 'nope'))).code, 1)
-  })
-})
-
-const CONTENT_CASES: Record<string, string> = {
-  trailingNewline: `line with 'quotes'\nand a $VAR and \`backticks\` and "double quotes"\n`,
-  noTrailingNewline: 'no trailing newline here',
-  emptyString: '',
-  multipleTrailingNewlines: 'a\nb\n\n\n',
-  jsonLike: `${JSON.stringify({ a: 1, b: [1, 2, 3] }, null, 2)}\n`,
-  containsHeredocMarkerLiterally: 'before\n__PHI_EOF__\nafter\n'
-}
-
-for (const [label, content] of Object.entries(CONTENT_CASES)) {
-  test(`writeTextFile's generated commands round-trip byte-for-byte in a real shell: ${label}`, () => {
+test(
+  'SFTP batch quoting transfers byte-exact files with spaces and quotes',
+  {
+    skip: !localSftpServer
+  },
+  () => {
     withTempDir((dir) => {
-      const path = join(dir, 'file.txt')
-      const { script, needsTruncate } = buildWriteTextFileCommand(path, content)
-
-      const writeResult = runInRealBash(script)
-      assert.equal(writeResult.code, 0, `write failed: ${writeResult.stdout}`)
-
-      if (needsTruncate) {
-        const truncateResult = runInRealBash(buildTruncateLastByteCommand(path))
-        assert.equal(truncateResult.code, 0)
-      }
-
-      const readResult = runInRealBash(buildReadTextFileCommand(path))
-      assert.equal(readResult.code, 0)
-      assert.equal(readResult.stdout, content)
-      // Cross-check against the filesystem directly too, not just `cat`'s stdout.
-      assert.equal(readFileSync(path, 'utf-8'), content)
+      const source = join(dir, `input 'single' "double".txt`)
+      const dest = join(dir, `output 'single' "double".txt`)
+      writeFileSync(source, 'hello sftp\n')
+      const result = spawnSync(
+        'sftp',
+        ['-q', '-D', localSftpServer as string, '-b', '-', 'localhost'],
+        { input: `put ${quoteSftpPath(source)} ${quoteSftpPath(dest)}\n`, encoding: 'utf-8' }
+      )
+      assert.equal(result.status, 0, result.stderr)
+      assert.equal(readFileSync(dest, 'utf-8'), 'hello sftp\n')
     })
-  })
-}
+  }
+)
 
-test('shellQuote neutralizes command substitution and expansion attempts', () => {
-  withTempDir((dir) => {
-    const maliciousLookingContent = '$(touch pwned); `touch pwned2`; $HOME; ${PATH}'
-    const path = join(dir, 'file.txt')
-    const { script } = buildWriteTextFileCommand(path, `${maliciousLookingContent}\n`)
+type SpawnRecord = { binary: string; args: string[] }
 
-    runInRealBash(script)
-
-    assert.equal(runInRealBash(buildExistsCommand(join(dir, 'pwned'))).code, 1)
-    assert.equal(runInRealBash(buildExistsCommand(join(dir, 'pwned2'))).code, 1)
-    assert.equal(readFileSync(path, 'utf-8'), `${maliciousLookingContent}\n`)
-  })
-})
-
-// --- ident (network-compatibility mitigation) ---------------------------
-//
-// See RemoteConnectionConfig.ident's doc comment: ssh2's own default ident
-// (SSH-2.0-ssh2js<version>) is the leading suspect for connections that
-// stalled mid-handshake against a real HPC cluster network, while plain
-// OpenSSH on the same network worked every time. buildConnectConfig is the
-// pure seam that lets this be verified without a real ssh2 Client/network.
-
-const BASE_CONNECTION: RemoteConnectionConfig = {
-  host: 'lab-hpc.example.edu',
-  username: 'agent',
-  privateKey: 'fake-key'
-}
-
-test("buildConnectConfig sends an OpenSSH-shaped ident by default, not ssh2's own", () => {
-  const config = buildConnectConfig(BASE_CONNECTION)
-  assert.equal(config.ident, DEFAULT_SSH_IDENT)
-  assert.match(DEFAULT_SSH_IDENT, /^OpenSSH_/)
-})
-
-test('buildConnectConfig respects an explicit ident override', () => {
-  const config = buildConnectConfig({ ...BASE_CONNECTION, ident: 'Custom_1.0' })
-  assert.equal(config.ident, 'Custom_1.0')
-})
-
-test('buildConnectConfig still forwards host/port/username/credentials/timeouts unchanged', () => {
-  const config = buildConnectConfig({
-    ...BASE_CONNECTION,
-    port: 2222,
-    passphrase: 'secret',
-    readyTimeoutMs: 5_000
-  })
-  assert.equal(config.host, 'lab-hpc.example.edu')
-  assert.equal(config.port, 2222)
-  assert.equal(config.username, 'agent')
-  assert.equal(config.privateKey, 'fake-key')
-  assert.equal(config.passphrase, 'secret')
-  assert.equal(config.readyTimeout, 5_000)
-})
-
-// --- exec() timeout ---------------------------------------------------
-//
-// Found by actually running this code against a real (flaky) cluster
-// network: when the underlying connection goes half-open mid-command (TCP
-// still "open" per the OS, but no data flowing), ssh2 never fires `close`
-// on the exec channel — the old code's exec() promise hung forever, no
-// error, no timeout, nothing. `readyTimeoutMs` only ever bounded the
-// initial handshake. These tests drive `buildSession` directly against a
-// minimal fake `Client` so the hang scenario is reproducible without a
-// real flaky network.
-
-interface FakeStreamControls {
-  stream: unknown
-  emitData: (chunk: Buffer) => void
-  emitClose: (code: number | null, signal: string | null) => void
-}
-
-function makeFakeStream(): FakeStreamControls {
-  const handlers: Record<string, Array<(...args: unknown[]) => void>> = {}
-  const stderrHandlers: Record<string, Array<(...args: unknown[]) => void>> = {}
-  const stderr = {
-    on(event: string, cb: (...args: unknown[]) => void) {
-      ;(stderrHandlers[event] ??= []).push(cb)
-      return stderr
+/** An actual child-process fake for the OpenSSH wire: command channels run local Bash. */
+function fakeOpenSsh(
+  options: {
+    checkFails?: boolean
+    slowExec?: boolean
+    startupError?: string
+    missingSsh?: boolean
+    execError?: string
+  } = {}
+): {
+  runtime: OpenSshRuntime
+  calls: SpawnRecord[]
+} {
+  const calls: SpawnRecord[] = []
+  const spawnImpl = (
+    binary: string,
+    args: string[],
+    spawnOptions: { stdio: ['pipe', 'pipe', 'pipe'] }
+  ): ChildProcessWithoutNullStreams => {
+    calls.push({ binary, args })
+    if (binary === 'ssh' && args.includes('-M')) {
+      if (options.missingSsh) return spawn('/missing-phi-ssh-test-binary', [], spawnOptions)
+      if (options.startupError) {
+        return spawn(
+          process.execPath,
+          ['-e', 'process.stderr.write(process.argv[1]); process.exit(255)', options.startupError],
+          spawnOptions
+        )
+      }
+      return spawn('/bin/sh', ['-c', 'exec sleep 30'], spawnOptions)
     }
+    if (binary === 'ssh' && args.includes('-O')) {
+      const action = args[args.indexOf('-O') + 1]
+      return spawn(
+        '/bin/sh',
+        [
+          '-c',
+          action === 'check' && (options.checkFails || options.startupError || options.missingSsh)
+            ? 'exit 1'
+            : 'exit 0'
+        ],
+        spawnOptions
+      )
+    }
+    if (binary === 'ssh') {
+      if (options.execError) {
+        return spawn(
+          process.execPath,
+          ['-e', 'process.stderr.write(process.argv[1]); process.exit(255)', options.execError],
+          spawnOptions
+        )
+      }
+      return spawn(
+        '/bin/bash',
+        ['-c', options.slowExec ? 'sleep 5' : (args.at(-1) ?? '')],
+        spawnOptions
+      )
+    }
+    if (binary === 'sftp') return spawn('/bin/cat', [], spawnOptions)
+    throw new Error(`unexpected binary ${binary}`)
   }
-  const stream = {
-    on(event: string, cb: (...args: unknown[]) => void) {
-      ;(handlers[event] ??= []).push(cb)
-      return stream
-    },
-    stderr
-  }
-  return {
-    stream,
-    emitData: (chunk) => handlers.data?.forEach((cb) => cb(chunk)),
-    emitClose: (code, signal) => handlers.close?.forEach((cb) => cb(code, signal))
-  }
+  return { runtime: { spawnImpl }, calls }
 }
 
-function makeFakeClient(
-  execImpl: (command: string, callback: (err: Error | undefined, stream: unknown) => void) => void
-): Client {
-  const fakeClient = {
-    exec: execImpl,
-    once: () => fakeClient,
-    end: () => true
+test('OpenSSH session uses one private master and executes file operations through it', async () => {
+  const fixture = fakeOpenSsh()
+  const session = await connectRemoteSshSession({ host: 'lab-hpc' }, fixture.runtime)
+  try {
+    const masterArgs = fixture.calls.find((call) => call.args.includes('-M'))?.args
+    assert.ok(masterArgs)
+    const controlPath = masterArgs[masterArgs.indexOf('-S') + 1]
+    assert.equal(statSync(controlPath.slice(0, controlPath.lastIndexOf('/'))).mode & 0o777, 0o700)
+
+    const result = await session.exec('printf hello')
+    assert.deepEqual(result, { stdout: 'hello', stderr: '', code: 0, signal: null })
+    const inputResult = await session.execWithInput?.('wc -c', 'α\nβ')
+    assert.equal(inputResult?.stdout.trim(), '5')
+    const dir = mkdtempSync(join(tmpdir(), 'phi-remote-session-'))
+    try {
+      const remoteDir = join(dir, 'nested')
+      const remoteFile = join(remoteDir, 'params.json')
+      await session.mkdirp(remoteDir)
+      await session.writeTextFile(remoteFile, '{"value":1}')
+      assert.equal(await session.exists(remoteFile), true)
+      assert.equal(await session.readTextFile(remoteFile), '{"value":1}')
+      await session.uploadFile(remoteFile, join(remoteDir, 'bundle.tar.gz'))
+      assert.ok(fixture.calls.some((call) => call.binary === 'sftp' && call.args.includes('-b')))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  } finally {
+    await session.close()
   }
-  return fakeClient as unknown as Client
-}
-
-test('exec() rejects with a clear error instead of hanging forever when client.exec itself never calls back', async () => {
-  const client = makeFakeClient(() => {
-    // Simulates the exec REQUEST itself getting lost on a dead connection.
-  })
-  const session = buildSession(client, 50)
-
-  await assert.rejects(() => session.exec('echo hi'), /远程命令执行超时/)
+  assert.ok(fixture.calls.some((call) => call.args.includes('exit') && call.args.includes('-O')))
+  assert.equal(
+    fixture.calls.some((call) => call.args.at(-1)?.startsWith('kill ')),
+    false
+  )
 })
 
-test('exec() rejects with a clear error instead of hanging forever when the channel opens but never closes', async () => {
-  const client = makeFakeClient((_command, callback) => {
-    const { stream } = makeFakeStream()
-    // Simulates the connection dying after the channel opened but before
-    // the command finished — exactly what was observed against a real
-    // cluster: `close` never fires.
-    callback(undefined, stream)
-  })
-  const session = buildSession(client, 50)
-
-  await assert.rejects(() => session.exec('echo hi'), /远程命令执行超时/)
+test('bounded OpenSSH exec keeps draining after output truncation and preserves exit status', async () => {
+  const fixture = fakeOpenSsh()
+  const session = await connectRemoteSshSession({ host: 'lab-hpc' }, fixture.runtime)
+  try {
+    assert.ok(session.execBounded)
+    const result = await session.execBounded('printf abcdef; printf error >&2; exit 7', {
+      timeoutMs: 2_000,
+      maxOutputBytes: 4
+    })
+    assert.equal(result.code, 7)
+    assert.equal(Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr), 4)
+    assert.equal(result.stdoutTruncated || result.stderrTruncated, true)
+  } finally {
+    await session.close()
+  }
 })
 
-test('exec() still resolves normally well within the timeout, and clears its timer', async () => {
-  const client = makeFakeClient((_command, callback) => {
-    const controls = makeFakeStream()
-    callback(undefined, controls.stream)
-    controls.emitData(Buffer.from('hello\n'))
-    controls.emitClose(0, null)
-  })
-  const session = buildSession(client, 10_000)
-
-  const result = await session.exec('echo hello')
-  assert.deepEqual(result, { stdout: 'hello\n', stderr: '', code: 0, signal: null })
+test('bounded OpenSSH exec aborts or times out without claiming the remote process stopped', async () => {
+  const fixture = fakeOpenSsh({ slowExec: true })
+  const session = await connectRemoteSshSession({ host: 'lab-hpc' }, fixture.runtime)
+  try {
+    assert.ok(session.execBounded)
+    const controller = new AbortController()
+    const pending = session.execBounded('sleep 5', {
+      timeoutMs: 5_000,
+      maxOutputBytes: 256,
+      signal: controller.signal
+    })
+    setTimeout(() => controller.abort(), 40)
+    await assert.rejects(pending, /SSH 调用已取消；远端命令结果可能尚未确认/)
+    await assert.rejects(
+      session.execBounded('sleep 5', { timeoutMs: 40, maxOutputBytes: 256 }),
+      /SSH 命令超时；远端命令结果可能尚未确认/
+    )
+  } finally {
+    await session.close()
+  }
 })
 
-test('exec() does not throw or double-settle if a close event arrives after the timeout already fired', async () => {
-  let lateClose: (() => void) | undefined
-  const client = makeFakeClient((_command, callback) => {
-    const controls = makeFakeStream()
-    callback(undefined, controls.stream)
-    lateClose = () => controls.emitClose(0, null)
-  })
-  const session = buildSession(client, 20)
+test('OpenSSH startup times out when the control master never becomes ready', async () => {
+  const fixture = fakeOpenSsh({ checkFails: true })
+  await assert.rejects(
+    () => connectRemoteSshSession({ host: 'lab-hpc', readyTimeoutMs: 120 }, fixture.runtime),
+    (error: unknown) => error instanceof RemoteSshConnectionError && error.code === 'timeout'
+  )
+  assert.ok(fixture.calls.some((call) => call.args.includes('exit') && call.args.includes('-O')))
+})
 
-  await assert.rejects(() => session.exec('echo hi'), /远程命令执行超时/)
-  // Should be a silent no-op, not an unhandled rejection or a crash.
-  assert.doesNotThrow(() => lateClose?.())
+test('unknown and changed host keys fail closed with distinct sanitized diagnoses', async () => {
+  const cases = [
+    [
+      'host_key_unknown',
+      'No ED25519 host key is known for lab and you have requested strict checking. Host key verification failed.'
+    ],
+    [
+      'host_key_changed',
+      'WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! Offending key in /private/key-path'
+    ]
+  ] as const
+  for (const [code, startupError] of cases) {
+    const fixture = fakeOpenSsh({ startupError })
+    await assert.rejects(
+      () => connectRemoteSshSession({ host: 'lab-hpc' }, fixture.runtime),
+      (error: unknown) =>
+        error instanceof RemoteSshConnectionError &&
+        error.code === code &&
+        !error.message.includes('/private/key-path')
+    )
+  }
+})
+
+test('missing system ssh is classified without exposing a process error', async () => {
+  const fixture = fakeOpenSsh({ missingSsh: true })
+  await assert.rejects(
+    () => connectRemoteSshSession({ host: 'lab-hpc' }, fixture.runtime),
+    (error: unknown) => error instanceof RemoteSshConnectionError && error.code === 'ssh_missing'
+  )
+})
+
+test('SSH exit 255 never exposes unknown raw transport diagnostics', async () => {
+  const fixture = fakeOpenSsh({ execError: 'private key path /secret/key and password hunter2' })
+  const session = await connectRemoteSshSession({ host: 'lab-hpc' }, fixture.runtime)
+  try {
+    await assert.rejects(
+      () => session.exec('printf ok'),
+      (error: unknown) =>
+        error instanceof RemoteSshConnectionError &&
+        error.code === 'unknown' &&
+        !error.message.includes('/secret/key') &&
+        !error.message.includes('hunter2')
+    )
+  } finally {
+    await session.close()
+  }
+})
+
+test('remote exec times out rather than leaving a pending promise forever', async () => {
+  const fixture = fakeOpenSsh({ slowExec: true })
+  const session = await connectRemoteSshSession(
+    { host: 'lab-hpc', execTimeoutMs: 40 },
+    fixture.runtime
+  )
+  try {
+    await assert.rejects(() => session.exec('sleep 5'), /超时/)
+  } finally {
+    await session.close()
+  }
+})
+
+test('closing the connection aborts an in-flight local SSH command with an unknown-result error', async () => {
+  const fixture = fakeOpenSsh({ slowExec: true })
+  const session = await connectRemoteSshSession({ host: 'lab-hpc' }, fixture.runtime)
+  const running = session.exec('sleep 5')
+  const rejection = assert.rejects(running, /SSH 连接已关闭；远端操作结果可能尚未确认/)
+  await session.close()
+  await rejection
+  assert.equal(
+    fixture.calls.some((call) => call.args.at(-1)?.startsWith('kill ')),
+    false
+  )
 })

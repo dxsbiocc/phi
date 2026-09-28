@@ -21,6 +21,7 @@ function renderControls(
       createElement(WindowNavigationControls, {
         isSidebarOpen: overrides.isSidebarOpen ?? true,
         onToggleSidebar: () => {},
+        onOpenSessionSearch: () => {},
         canGoBack: overrides.canGoBack ?? false,
         canGoForward: overrides.canGoForward ?? false,
         onGoBack: () => {},
@@ -30,14 +31,17 @@ function renderControls(
   )
 }
 
-test('the sidebar toggle and back/forward buttons are all present', () => {
+test('session search sits between the sidebar toggle and back button', () => {
   const markup = renderControls()
 
   assert.match(markup, /data-phi-window-navigation-controls="true"/)
   assert.match(markup, /aria-label="收起侧边栏"/)
   assert.match(markup, /data-phi-window-sidebar-toggle-icon="collapse"/)
+  assert.match(markup, /aria-label="查找会话"/)
   assert.match(markup, /aria-label="后退"/)
   assert.match(markup, /aria-label="前进"/)
+  assert.ok(markup.indexOf('aria-label="收起侧边栏"') < markup.indexOf('aria-label="查找会话"'))
+  assert.ok(markup.indexOf('aria-label="查找会话"') < markup.indexOf('aria-label="后退"'))
 })
 
 test('back/forward buttons are disabled when there is nowhere to go', () => {

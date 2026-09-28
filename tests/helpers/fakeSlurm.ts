@@ -56,7 +56,9 @@ if (command === 'sbatch') {
   const id = args[args.length - 1]
   const s = state(id)
   if (!s) process.exit(1)
-  console.log('JobId=' + id + ' JobState=' + s.state + ' Reason=None ExitCode=' + s.code + ':0')
+  const job = meta(id)
+  const name = job?.directives.find((directive) => directive.startsWith('--job-name='))?.slice('--job-name='.length) || 'unknown'
+  console.log('JobId=' + id + ' JobName=' + name + ' JobState=' + s.state + ' Reason=None ExitCode=' + s.code + ':0')
 } else if (command === 'scancel') {
   const id = args.filter((a) => !a.startsWith('-')).pop()
   const job = meta(id)

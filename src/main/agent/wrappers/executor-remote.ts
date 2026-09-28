@@ -5,6 +5,17 @@ import {
   type RemoteSshSession
 } from './remote-ssh-session'
 import type { WrapperRun, WrapperRunPlan } from './types'
+import type { RemoteHpcSettings } from '../../../shared/wrapperRemoteTypes'
+import { setTimeout as delay } from 'node:timers/promises'
+import {
+  claimRemoteLaunch,
+  observeRemoteLaunch,
+  RemoteLaunchRejectedError,
+  RemoteLaunchUnknownError,
+  verifyRemoteCancelTarget,
+  type RemoteLaunchObservation
+} from './remote-launch-claim'
+import { readRemoteLogTail } from './remote-log'
 
 /**
  * Remote execution, per docs/design/phi-wrapper-technical-design.md
@@ -53,7 +64,8 @@ export interface RemoteLaunchSpec {
   /**
    * Written as `launch.sh` and run via `setsid bash launch.sh`. Must record
    * its own exit code to the `exit_code` file in `remoteRunDir` on
-   * completion (even on signal death) — wrap it with `wrapWithExitCodeTrap`.
+   * completion; the shared configured launch script and `wrapWithExitCodeTrap`
+   * both provide this for detached runs.
    * Building the actual Nextflow invocation (the remote counterpart to
    * executor-nextflow.ts's `buildNextflowLaunch`) is a separate concern,
    * not this module's.
@@ -63,6 +75,8 @@ export interface RemoteLaunchSpec {
   paramsJson: string
   /** Written as `nextflow.config`, when the plan's profile needs one (e.g. `-profile slurm`). */
   nextflowConfig?: string
+  /** The selected run settings used for the head job's sbatch directives. */
+  hpc?: RemoteHpcSettings
 }
 
 /**
@@ -114,11 +128,7 @@ export async function readRemoteLog(
   stream: 'stdout' | 'stderr' = 'stdout'
 ): Promise<string> {
   const path = joinRemote(remoteRunDir, stream === 'stdout' ? LOG_STDOUT : LOG_STDERR)
-  if (!(await session.exists(path))) return ''
-  // TODO: this re-reads the whole file every call. Fine for a skeleton; a
-  // real UI polling loop will want an offset-based incremental tail
-  // (`tail -c +<offset>`) once run logs get large.
-  return session.readTextFile(path)
+  return readRemoteLogTail(session, path)
 }
 
 /**
@@ -164,8 +174,8 @@ export function buildDetachedLaunchCommand(remoteRunDir: string): string {
 }
 
 /**
- * State of a `detached_ssh` run from the remote's own evidence: is the pid alive, else
- * what exit code did the launch script record. Free functions (not just `SshExecRunner`
+ * State of a `detached_ssh` run from the remote's own evidence: a recorded
+ * exit code outranks a lingering process-table entry; otherwise check the PID. Free functions (not just `SshExecRunner`
  * methods) so a caller that manages its own session, e.g. to reconnect after a dropped
  * link, can use them.
  */
@@ -173,24 +183,31 @@ export async function readDetachedStatus(
   session: RemoteSshSession,
   handle: RemoteJobHandle
 ): Promise<RemoteRunStatus> {
-  if (handle.pid === undefined) return { outcome: 'lost' }
-  const alive = await session.exec(`kill -0 ${handle.pid} 2>/dev/null && echo alive || echo dead`)
-  if (alive.stdout.trim() === 'alive') {
-    return { outcome: 'running' }
-  }
-
   const exitCodePath = joinRemote(handle.remoteRunDir, EXIT_CODE_FILE)
-  if (!(await session.exists(exitCodePath))) {
-    // Process is gone but never recorded an exit code — e.g. the host
-    // rebooted, or the SSH-visible process table doesn't match what we
-    // launched. Matches the design doc: "if state cannot be confirmed,
-    // mark the run lost, not failed".
-    return { outcome: 'lost' }
+  const recordedExit = async (): Promise<RemoteRunStatus | undefined> => {
+    if (await session.exists(exitCodePath)) {
+      const raw = (await session.readTextFile(exitCodePath)).trim()
+      const exitCode = Number(raw)
+      if (/^[0-9]+$/.test(raw) && Number.isSafeInteger(exitCode)) {
+        return { outcome: exitCode === 0 ? 'completed' : 'failed', exitCode }
+      }
+    }
+    return undefined
   }
-  const raw = (await session.readTextFile(exitCodePath)).trim()
-  const exitCode = Number.parseInt(raw, 10)
-  if (!Number.isFinite(exitCode)) return { outcome: 'lost' }
-  return { outcome: exitCode === 0 ? 'completed' : 'failed', exitCode }
+  const saved = await recordedExit()
+  if (saved) return saved
+  if (handle.pid !== undefined) {
+    const alive = await session.exec(`kill -0 ${handle.pid} 2>/dev/null && echo alive || echo dead`)
+    if (alive.stdout.trim() === 'alive') return { outcome: 'running' }
+    // The shell writes exit_code just before exiting. A dead PID can briefly precede that write.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await delay(100)
+      const late = await recordedExit()
+      if (late) return late
+    }
+  }
+  // No process or durable exit code: the host may have rebooted. Never infer failure.
+  return { outcome: 'lost' }
 }
 
 /**
@@ -205,6 +222,14 @@ export async function signalDetachedRun(
   signal: 'TERM' | 'KILL'
 ): Promise<void> {
   if (handle.pid === undefined) return
+  if (!Number.isSafeInteger(handle.pid) || handle.pid <= 1) {
+    throw new Error('远程进程号无效，拒绝发送取消信号')
+  }
+  await verifyRemoteCancelTarget(session, handle.remoteRunDir, handle.runId, 'detached', handle.pid)
+  const process = await session.exec(`ps -ww -o args= -p ${handle.pid}`)
+  if (process.code !== 0 || !process.stdout.includes(`${handle.remoteRunDir}/launch.sh`)) {
+    throw new Error(`远程进程 ${handle.pid} 不再属于运行 ${handle.runId}，拒绝发送取消信号`)
+  }
   await session.exec(`kill -${signal} -${handle.pid} 2>/dev/null || true`)
 }
 
@@ -226,31 +251,96 @@ export class SshExecRunner implements RemoteRunner {
     return this.sessionPromise
   }
 
+  private handleFromObservation(
+    run: WrapperRun,
+    remoteRunDir: string,
+    observation: RemoteLaunchObservation
+  ): RemoteJobHandle | undefined {
+    return observation.kind === 'started'
+      ? { runId: run.runId, remoteRunDir, pid: observation.pid }
+      : undefined
+  }
+
   async submit(
     run: WrapperRun,
     _plan: WrapperRunPlan,
     launch: RemoteLaunchSpec
   ): Promise<RemoteJobHandle> {
     const session = await this.getSession()
-    await session.mkdirp(launch.remoteRunDir)
-    await session.writeTextFile(joinRemote(launch.remoteRunDir, 'launch.sh'), launch.launchScript)
-    await session.writeTextFile(joinRemote(launch.remoteRunDir, 'params.json'), launch.paramsJson)
-    if (launch.nextflowConfig !== undefined) {
-      await session.writeTextFile(
-        joinRemote(launch.remoteRunDir, 'nextflow.config'),
-        launch.nextflowConfig
+    let claimAttempted = false
+    try {
+      const before = await observeRemoteLaunch(session, launch.remoteRunDir, run.runId, 'detached')
+      const prior = this.handleFromObservation(run, launch.remoteRunDir, before)
+      if (prior) return prior
+      if (before.kind === 'rejected') throw new RemoteLaunchRejectedError(before.reason)
+      if (before.kind === 'unknown') {
+        throw new RemoteLaunchUnknownError(run.runId, launch.remoteRunDir, before.reason)
+      }
+      claimAttempted = true
+      if (!(await claimRemoteLaunch(session, launch.remoteRunDir, run.runId))) {
+        const existing = await observeRemoteLaunch(
+          session,
+          launch.remoteRunDir,
+          run.runId,
+          'detached'
+        )
+        const found = this.handleFromObservation(run, launch.remoteRunDir, existing)
+        if (found) return found
+        if (existing.kind === 'rejected') throw new RemoteLaunchRejectedError(existing.reason)
+        throw new RemoteLaunchUnknownError(run.runId, launch.remoteRunDir, '另一提交已声明该运行')
+      }
+      await session.mkdirp(joinRemote(launch.remoteRunDir, 'logs'))
+      await session.writeTextFile(joinRemote(launch.remoteRunDir, 'launch.sh'), launch.launchScript)
+      await session.writeTextFile(joinRemote(launch.remoteRunDir, 'params.json'), launch.paramsJson)
+      if (launch.nextflowConfig !== undefined) {
+        await session.writeTextFile(
+          joinRemote(launch.remoteRunDir, 'nextflow.config'),
+          launch.nextflowConfig
+        )
+      }
+      const result = await session.exec(buildDetachedLaunchCommand(launch.remoteRunDir))
+      if (result.code !== 0) throw new Error(result.stderr || result.stdout || '启动命令未返回 PID')
+      const rawPid = result.stdout.trim()
+      const pid = Number(rawPid)
+      if (!/^[1-9][0-9]*$/.test(rawPid) || !Number.isSafeInteger(pid)) {
+        throw new Error('远程启动回执没有有效 PID')
+      }
+      return { runId: run.runId, remoteRunDir: launch.remoteRunDir, pid }
+    } catch (error) {
+      if (
+        error instanceof RemoteLaunchUnknownError ||
+        error instanceof RemoteLaunchRejectedError ||
+        !claimAttempted
       )
-    }
-
-    const result = await session.exec(buildDetachedLaunchCommand(launch.remoteRunDir))
-    if (result.code !== 0) {
-      throw new Error(`远程启动失败（run ${run.runId}）: ${result.stderr || result.stdout}`)
-    }
-    const pid = Number.parseInt(result.stdout.trim(), 10)
-    return {
-      runId: run.runId,
-      remoteRunDir: launch.remoteRunDir,
-      pid: Number.isFinite(pid) ? pid : undefined
+        throw error
+      let fresh: RemoteSshSession | undefined
+      let rejected: string | undefined
+      try {
+        fresh = await this.connectImpl(this.connection)
+        const observed = await observeRemoteLaunch(
+          fresh,
+          launch.remoteRunDir,
+          run.runId,
+          'detached'
+        )
+        const found = this.handleFromObservation(run, launch.remoteRunDir, observed)
+        if (found) {
+          await session.close().catch(() => undefined)
+          this.sessionPromise = Promise.resolve(fresh)
+          return found
+        }
+        if (observed.kind === 'rejected') rejected = observed.reason
+      } catch {
+        // The claim still prevents a replay; the run remains unknown until the host is reachable.
+      }
+      await fresh?.close().catch(() => undefined)
+      this.sessionPromise = undefined
+      if (rejected) throw new RemoteLaunchRejectedError(rejected)
+      throw new RemoteLaunchUnknownError(
+        run.runId,
+        launch.remoteRunDir,
+        error instanceof Error ? error.message : String(error)
+      )
     }
   }
 
@@ -264,6 +354,7 @@ export class SshExecRunner implements RemoteRunner {
   }
 
   async cancel(handle: RemoteJobHandle): Promise<void> {
+    if (handle.pid === undefined || (await this.status(handle)).outcome !== 'running') return
     await signalDetachedRun(await this.getSession(), handle, 'TERM')
   }
 

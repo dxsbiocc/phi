@@ -29,11 +29,16 @@ export const plainSidebarRowSx = {
   '&.Mui-selected:hover': { backgroundColor: 'transparent !important' }
 } as const
 
-export function sessionTitle(session: SessionSummary): string {
-  const raw =
+export function editableSessionTitle(session: SessionSummary): string {
+  return (
     messageContentTitleText(session.name) ||
     messageContentTitleText(session.firstMessage) ||
     '新对话'
+  )
+}
+
+export function sessionTitle(session: SessionSummary): string {
+  const raw = editableSessionTitle(session)
   return raw.length > 60 ? `${raw.slice(0, 60)}…` : raw
 }
 

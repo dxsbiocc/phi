@@ -1,0 +1,53 @@
+# Agent-facing wrapper adapter for the vendored align_star subworkflow at
+# ../main.nf (STAR align -> coordinate-sort, index, samtools stats). Follows
+# the minimal contract in
+# docs/design/phi-wrapper-agent-composition-design.md section 3.
+#
+# star/genomegenerate is composed directly (not a wrapper, per section 6) so
+# callers supply a genome FASTA/GTF instead of a pre-built STAR index.
+id: local/subworkflows/align-star
+name: Align with STAR
+summary: Build a STAR index, align paired/single-end reads, and coordinate-sort/index/stats the resulting BAM.
+
+params:
+  reads_1:
+    kind: input
+    type: fastq
+    required: true
+    description: Read 1 FASTQ.
+  reads_2:
+    kind: input
+    type: fastq
+    required: true
+    description: Read 2 FASTQ.
+  fasta:
+    kind: input
+    type: fasta
+    required: true
+    description: Genome FASTA to build the STAR index from.
+  gtf:
+    kind: input
+    type: gtf
+    required: true
+    description: Gene annotation GTF, used both for the STAR index and alignment splice junctions.
+  star_ignore_sjdbgtf:
+    kind: option
+    type: boolean
+    required: false
+    description: When using a pre-built STAR index, don't re-extract splice junctions from the GTF.
+  skip_markduplicates:
+    kind: option
+    type: boolean
+    required: false
+    description: Skip duplicate marking on the aligned BAM.
+  outdir:
+    kind: output
+    type: path
+    required: true
+    description: Output directory for the STAR alignment, logs, and the sorted/indexed/stats BAM.
+
+outputs:
+  results:
+    type: directory
+    path: '${outdir}/align_star'
+    primary: true

@@ -1,0 +1,190 @@
+phiDbConnectorVersion: 1
+id: rest-json/pubchem
+name: PubChem PUG-REST
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://pubchem.ncbi.nlm.nih.gov/rest/pug
+networkPolicy:
+  allowedHosts:
+    - pubchem.ncbi.nlm.nih.gov
+  allowRedirects: false
+auth:
+  type: none
+rateLimit:
+  withoutAuth:
+    requestsPerSecond: 5
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: compound_by_name
+    summary: Look up PubChem compound properties by chemical name.
+    identity:
+      stableIdFields: [CID]
+      namespace: pubchem.cid
+      primaryUrlTemplate: https://pubchem.ncbi.nlm.nih.gov/compound/{stable_id}
+    commonFields:
+      [
+        CID,
+        MolecularFormula,
+        MolecularWeight,
+        CanonicalSMILES,
+        IsomericSMILES,
+        InChI,
+        InChIKey,
+        IUPACName,
+        XLogP,
+        ExactMass,
+        TPSA,
+        Complexity,
+        Charge,
+        HBondDonorCount,
+        HBondAcceptorCount,
+        RotatableBondCount
+      ]
+    rest:
+      request:
+        path: /compound/name/{filter:name}/property/MolecularFormula,MolecularWeight,CanonicalSMILES,IsomericSMILES,InChI,InChIKey,IUPACName,XLogP,ExactMass,TPSA,Complexity,Charge,HBondDonorCount,HBondAcceptorCount,RotatableBondCount/JSON
+      response:
+        rowsPath: PropertyTable.Properties
+    fields:
+      - name: name
+        type: string
+        description: Compound name, synonym, or trade name.
+        synonyms: [compound, chemical, drug, molecule]
+      - name: CID
+        type: number
+        description: PubChem Compound ID.
+        namespace: pubchem.cid
+      - name: MolecularFormula
+        type: string
+        description: Molecular formula.
+      - name: MolecularWeight
+        type: number
+        description: Molecular weight.
+      - name: CanonicalSMILES
+        type: string
+        description: Canonical SMILES.
+      - name: IsomericSMILES
+        type: string
+        description: Isomeric SMILES.
+      - name: InChIKey
+        type: string
+        description: InChIKey.
+      - name: IUPACName
+        type: string
+        description: IUPAC name.
+  - id: compound_by_cid
+    summary: Look up PubChem compound properties by CID.
+    identity:
+      stableIdFields: [CID]
+      namespace: pubchem.cid
+      primaryUrlTemplate: https://pubchem.ncbi.nlm.nih.gov/compound/{stable_id}
+    commonFields:
+      [
+        CID,
+        MolecularFormula,
+        MolecularWeight,
+        CanonicalSMILES,
+        IsomericSMILES,
+        InChI,
+        InChIKey,
+        IUPACName,
+        XLogP,
+        ExactMass,
+        TPSA,
+        Complexity,
+        Charge,
+        HBondDonorCount,
+        HBondAcceptorCount,
+        RotatableBondCount
+      ]
+    rest:
+      request:
+        path: /compound/cid/{filter:cid}/property/MolecularFormula,MolecularWeight,CanonicalSMILES,IsomericSMILES,InChI,InChIKey,IUPACName,XLogP,ExactMass,TPSA,Complexity,Charge,HBondDonorCount,HBondAcceptorCount,RotatableBondCount/JSON
+      response:
+        rowsPath: PropertyTable.Properties
+    fields:
+      - name: cid
+        type: string
+        description: PubChem Compound ID.
+        synonyms: [CID, compound_id]
+        namespace: pubchem.cid
+  - id: compound_by_smiles
+    summary: Look up PubChem compound properties by SMILES.
+    identity:
+      stableIdFields: [CID]
+      namespace: pubchem.cid
+      primaryUrlTemplate: https://pubchem.ncbi.nlm.nih.gov/compound/{stable_id}
+    commonFields:
+      [
+        CID,
+        MolecularFormula,
+        MolecularWeight,
+        CanonicalSMILES,
+        IsomericSMILES,
+        InChI,
+        InChIKey,
+        IUPACName
+      ]
+    rest:
+      request:
+        path: /compound/smiles/{filter:smiles}/property/MolecularFormula,MolecularWeight,CanonicalSMILES,IsomericSMILES,InChI,InChIKey,IUPACName/JSON
+      response:
+        rowsPath: PropertyTable.Properties
+    fields:
+      - name: smiles
+        type: string
+        description: SMILES string used for compound lookup.
+        synonyms: [canonical_smiles, isomeric_smiles]
+  - id: compound_synonyms
+    summary: Synonyms for a PubChem compound CID.
+    identity:
+      stableIdFields: [CID]
+      namespace: pubchem.cid
+      primaryUrlTemplate: https://pubchem.ncbi.nlm.nih.gov/compound/{stable_id}
+    commonFields: [CID, Synonym]
+    rest:
+      request:
+        path: /compound/cid/{filter:cid}/synonyms/JSON
+      response:
+        rowsPath: InformationList.Information
+        fieldMap:
+          CID: CID
+          Synonym: Synonym
+    fields:
+      - name: cid
+        type: string
+        description: PubChem Compound ID.
+        namespace: pubchem.cid
+      - name: Synonym
+        type: array
+        description: Synonym list for the compound.
+  - id: substance_by_sid
+    summary: PubChem substance record summary by SID.
+    identity:
+      stableIdFields: [SID]
+      namespace: pubchem.sid
+      primaryUrlTemplate: https://pubchem.ncbi.nlm.nih.gov/substance/{stable_id}
+    commonFields: [SID, SourceName, SourceID, Synonym]
+    rest:
+      request:
+        path: /substance/sid/{filter:sid}/synonyms/JSON
+      response:
+        rowsPath: InformationList.Information
+    fields:
+      - name: sid
+        type: string
+        description: PubChem Substance ID.
+        synonyms: [SID]
+        namespace: pubchem.sid
+xref:
+  - from:
+      domain: compound_by_name
+      field: CID
+      namespace: pubchem.cid
+    to:
+      domain: compound_synonyms
+      field: cid
+      namespace: pubchem.cid

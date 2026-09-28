@@ -1,4 +1,5 @@
 import { relative, sep } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import type { RemoteHpcSettings } from '../../../../shared/wrapperRemoteTypes'
 import {
@@ -15,7 +16,17 @@ import {
   type RemoteConnectionConfig,
   type RemoteSshSession
 } from '../remote-ssh-session'
-import type { WrapperOutputRecord } from '../types'
+import { checkRemoteWrapperInputs } from '../remote-input-check'
+import {
+  claimRemoteLaunch,
+  observeRemoteLaunch,
+  RemoteLaunchRejectedError,
+  type RemoteLaunchKind,
+  type RemoteLaunchObservation
+} from '../remote-launch-claim'
+import type { WrapperInputResolution, WrapperOutputRecord } from '../types'
+import { readRemoteLogDelta, type RemoteLogCursor } from '../remote-log'
+import { cancelRemoteController, type RemoteCancelResult } from '../remote-cancel'
 import type { WrapperCompositionEntry } from './discovery'
 import type { WrapperProcess, WrapperRunResult } from './executor'
 import { ensureRemoteBundle } from './remote-bundle'
@@ -65,12 +76,29 @@ export interface RemoteJobSnapshot {
   componentDir: string
   /** Bytes of `logs/stdout.log` already delivered to `onOutput`. */
   logOffset: number
+  logFileIdentity?: string
+  logPendingUtf8?: string
+  /** A claim exists but the remote start receipt was not confirmed. */
+  launchUnknown?: true
+  launchKind?: RemoteLaunchKind
+  profile?: string
+}
+
+interface RemoteLaunchMeta {
+  runId: string
+  wrapperId: string
+  profile: string
+  componentDir: string
+  params: Record<string, unknown>
+  launchKind: RemoteLaunchKind
 }
 
 interface CommonOptions {
   entry: WrapperCompositionEntry
   target: RemoteTarget
   onOutput?: (chunk: string) => void
+  /** Fresh scheduler/process evidence from a watcher, before log delivery. */
+  onStatus?: (status: RemoteRunStatus) => void
   /** Called after launch and whenever more log has been delivered; persist it to survive a restart. */
   onSnapshot?: (snapshot: RemoteJobSnapshot) => void
   /** Consecutive failed polls (after reconnect attempts) before the run is reported `lost`. Default 12. */
@@ -83,6 +111,8 @@ export interface StartRemoteOptions extends CommonOptions {
   runId: string
   /** Defaults merged with the caller's overrides. */
   params: Record<string, unknown>
+  /** Final server paths resolved from the selected project and input mappings. */
+  inputReferences?: WrapperInputResolution[]
   profile: string
   /** Local `resources/wrappers` root the bundle is built from. */
   wrappersRoot: string
@@ -95,8 +125,6 @@ export interface AttachRemoteOptions extends CommonOptions {
 const DEFAULT_POLL_MS = 5000
 const DEFAULT_MAX_POLL_FAILURES = 12
 const DEFAULT_KILL_GRACE_MS = 10_000
-const GLOB_CHARS = /[*?{[]/
-const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -164,33 +192,94 @@ function componentRelPath(entry: WrapperCompositionEntry, wrappersRoot: string):
 function resolveRemoteParams(
   entry: WrapperCompositionEntry,
   params: Record<string, unknown>,
-  layout: RemoteRunLayout
+  layout: Pick<RemoteRunLayout, 'runDir'>
 ): Record<string, unknown> {
   if (entry.manifest.params.outdir?.kind !== 'output') return { ...params }
   return { ...params, outdir: resolveRemoteOutDir(params.outdir, layout.runDir) }
 }
 
-/**
- * `kind: input` files must exist on the cluster. URLs are left to Nextflow, and a glob
- * is checked by its fixed directory prefix, since expanding one over SSH is not worth it.
- */
-async function findMissingRemoteInputs(
+const LAUNCH_META_FILE = 'launch-meta.json'
+
+function launchKind(target: RemoteTarget): RemoteLaunchKind {
+  return target.hpc?.controller === 'sbatch' ? 'sbatch' : 'detached'
+}
+
+function snapshotForObservation(
+  runId: string,
+  remoteRunDir: string,
+  meta: RemoteLaunchMeta,
+  observation: Extract<RemoteLaunchObservation, { kind: 'started' }>
+): RemoteJobSnapshot {
+  return {
+    runId,
+    remoteRunDir,
+    pid: observation.pid,
+    ...(observation.jobId ? { jobId: observation.jobId } : {}),
+    params: meta.params,
+    componentDir: meta.componentDir,
+    logOffset: 0,
+    launchKind: meta.launchKind,
+    profile: meta.profile
+  }
+}
+
+async function readMatchingLaunchMeta(
   session: RemoteSshSession,
+  runDir: string,
+  entry: WrapperCompositionEntry,
+  runId: string,
+  profile: string | undefined,
+  params: Record<string, unknown>,
+  kind: RemoteLaunchKind
+): Promise<RemoteLaunchMeta | undefined> {
+  const path = joinRemote(runDir, LAUNCH_META_FILE)
+  if (!(await session.exists(path))) return undefined
+  let parsed: Partial<RemoteLaunchMeta>
+  try {
+    parsed = JSON.parse(await session.readTextFile(path)) as Partial<RemoteLaunchMeta>
+  } catch {
+    return undefined
+  }
+  if (
+    parsed.runId !== runId ||
+    parsed.wrapperId !== entry.manifest.id ||
+    typeof parsed.profile !== 'string' ||
+    (profile !== undefined && parsed.profile !== profile) ||
+    parsed.launchKind !== kind ||
+    typeof parsed.componentDir !== 'string' ||
+    !isDeepStrictEqual(parsed.params, params)
+  )
+    return undefined
+  return parsed as RemoteLaunchMeta
+}
+
+function remoteInputs(
   entry: WrapperCompositionEntry,
   params: Record<string, unknown>,
-  layout: RemoteRunLayout
-): Promise<string[]> {
-  const missing: string[] = []
+  supplied?: WrapperInputResolution[]
+): WrapperInputResolution[] {
+  const inputs: WrapperInputResolution[] = []
   for (const [key, spec] of Object.entries(entry.manifest.params)) {
     const value = params[key]
     if (spec.kind !== 'input' || typeof value !== 'string' || value === '') continue
-    if (URL_SCHEME.test(value) || value.includes('${')) continue
-    const absolute = value.startsWith('/') ? value : joinRemote(layout.componentDir, value)
-    const globAt = absolute.search(GLOB_CHARS)
-    const target = globAt >= 0 ? absolute.slice(0, absolute.lastIndexOf('/', globAt) + 1) : absolute
-    if (!(await session.exists(target || '/'))) missing.push(`${key}: ${absolute}`)
+    const reference = supplied?.find((input) => input.id === key)
+    if (reference) {
+      if (!reference.remotePaths?.includes(value)) {
+        throw new Error(`输入 "${key}" 的最终服务器路径与运行参数不一致: ${value}`)
+      }
+      inputs.push(reference)
+      continue
+    }
+    inputs.push({
+      id: key,
+      kind: 'path',
+      source: 'remote',
+      userValue: value,
+      localPaths: [],
+      remotePaths: [value]
+    })
   }
-  return missing
+  return inputs
 }
 
 async function collectOutputs(
@@ -213,22 +302,6 @@ async function collectOutputs(
     if (output.primary && !exists) missingOutputs.push(`${output.id} (${output.path})`)
   }
   return { outputs, missingOutputs }
-}
-
-/** Reads what Nextflow wrote since `offset`, consuming whole lines only so a partial line is read again. */
-async function readNewLog(
-  session: RemoteSshSession,
-  runDir: string,
-  offset: number
-): Promise<{ text: string; offset: number }> {
-  const file = joinRemote(runDir, LOG_STDOUT)
-  const result = await session.exec(
-    `tail -c +${offset + 1} ${shellQuote(file)} 2>/dev/null || true`
-  )
-  const end = result.stdout.lastIndexOf('\n')
-  if (end < 0) return { text: '', offset }
-  const text = result.stdout.slice(0, end + 1)
-  return { text, offset: offset + Buffer.byteLength(text) }
 }
 
 async function readStderrTail(session: RemoteSshSession, runDir: string): Promise<string> {
@@ -261,49 +334,94 @@ async function watch(ctx: WatchContext, initial: RemoteSshSession): Promise<Wrap
   const controller = controllerForHandle(handle)
 
   let session = initial
-  let offset = snapshot.logOffset
+  let cursor: RemoteLogCursor = {
+    offset: snapshot.logOffset,
+    identity: snapshot.logFileIdentity,
+    pendingUtf8: snapshot.logPendingUtf8
+  }
   let failures = 0
+  let inconclusiveStatuses = 0
   let lastError = ''
-  let cancelSent = false
+  let cancellation: Promise<RemoteCancelResult | undefined> | undefined
 
-  const deliver = async (): Promise<void> => {
-    const chunk = await readNewLog(session, snapshot.remoteRunDir, offset)
-    if (chunk.text) {
-      offset = chunk.offset
-      options.onOutput?.(chunk.text)
-      options.onSnapshot?.({ ...snapshot, logOffset: offset })
+  const deliver = async (): Promise<number> => {
+    const delta = await readRemoteLogDelta(
+      session,
+      joinRemote(snapshot.remoteRunDir, LOG_STDOUT),
+      cursor
+    )
+    for (const diagnostic of delta.diagnostics) options.onOutput?.(`[Phi] ${diagnostic}\n`)
+    if (delta.text) options.onOutput?.(delta.text)
+    const changed =
+      delta.cursor.offset !== cursor.offset ||
+      delta.cursor.identity !== cursor.identity ||
+      delta.cursor.pendingUtf8 !== cursor.pendingUtf8
+    cursor = delta.cursor
+    if (changed || delta.diagnostics.length > 0) {
+      options.onSnapshot?.({
+        ...snapshot,
+        logOffset: cursor.offset,
+        logFileIdentity: cursor.identity,
+        logPendingUtf8: cursor.pendingUtf8
+      })
     }
+    return delta.bytesRead
   }
 
-  const stopRemote = async (): Promise<void> => {
-    if (cancelSent) return
-    cancelSent = true
+  const stopRemote = async (): Promise<RemoteCancelResult | undefined> => {
     try {
-      await controller.signal(session, handle, 'TERM')
-      const grace = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS
-      const deadline = Date.now() + grace
-      while (Date.now() < deadline) {
-        if ((await controller.status(session, handle)).outcome !== 'running') return
-        await sleep(Math.min(100, grace))
-      }
-      await controller.signal(session, handle, 'KILL')
-    } catch {
-      // Best effort: the poll loop reports whatever the run really did.
+      return await cancelRemoteController(
+        session,
+        handle,
+        options.killGraceMs ?? DEFAULT_KILL_GRACE_MS
+      )
+    } catch (error) {
+      options.onOutput?.(
+        `[Phi] 取消信号未能确认送达：${error instanceof Error ? error.message : String(error)}\n`
+      )
     }
+    return undefined
   }
-  control.onCancel = () => void stopRemote()
-  if (control.cancelled) await stopRemote()
+  const requestCancel = (): void => {
+    cancellation ??= stopRemote()
+  }
+  control.onCancel = requestCancel
+  if (control.cancelled) requestCancel()
 
   for (;;) {
     if (control.detached) return failure('', { detached: true })
     try {
       const status = await controller.status(session, handle)
+      options.onStatus?.(status)
       failures = 0
       await deliver()
-      if (control.cancelled && status.outcome !== 'running') {
-        return failure('', { cancelled: true })
+      if (status.outcome === 'lost' && inconclusiveStatuses < 2) {
+        inconclusiveStatuses += 1
+        await control.pause(150)
+        continue
+      }
+      if (status.outcome !== 'lost') inconclusiveStatuses = 0
+      if (control.cancelled && status.outcome !== 'running' && cancellation) {
+        const outcome = await cancellation
+        if (outcome?.kind === 'confirmed' && status.outcome !== 'completed') {
+          return failure('', { cancelled: true })
+        }
       }
       if (status.outcome !== 'running') {
+        // A completed job can leave a large final log; drain it through repeated bounded pages.
+        while ((await deliver()) > 0) {
+          if (control.detached) return failure('', { detached: true })
+        }
+        if (cursor.pendingUtf8) {
+          options.onOutput?.(Buffer.from(cursor.pendingUtf8, 'base64').toString('utf8'))
+          cursor = { ...cursor, pendingUtf8: undefined }
+          options.onSnapshot?.({
+            ...snapshot,
+            logOffset: cursor.offset,
+            logFileIdentity: cursor.identity,
+            logPendingUtf8: undefined
+          })
+        }
         return await finish(ctx, session, status)
       }
     } catch (error) {
@@ -372,7 +490,11 @@ async function runPreflight(
   session: RemoteSshSession,
   options: StartRemoteOptions
 ): Promise<WrapperRunResult | undefined> {
-  const script = buildRemotePreflightScript({ hpc: options.target.hpc, profile: options.profile })
+  const script = buildRemotePreflightScript({
+    hpc: options.target.hpc,
+    profile: options.profile,
+    workspaceRoot: options.target.workspaceRoot
+  })
   const result = await session.exec(`bash -c ${shellQuote(script)}`)
   if (result.code !== 0) {
     const reason = (result.stderr || result.stdout).trim()
@@ -389,13 +511,88 @@ async function runPreflight(
 async function launch(options: StartRemoteOptions, control: Control): Promise<WrapperRunResult> {
   const { entry, target } = options
   const connect = target.connectImpl ?? connectRemoteSshSession
-  const session = await connect(target.connection)
+  let session = await connect(target.connection)
+  const remoteRunDir = `${target.workspaceRoot.replace(/\/+$/, '')}/wrappers/runs/${options.runId}`
+  const kind = launchKind(target)
+  const expectedParams = resolveRemoteParams(entry, options.params, { runDir: remoteRunDir })
+  let componentDir = ''
+  const unknown = (reason: string): WrapperRunResult => {
+    options.onSnapshot?.({
+      runId: options.runId,
+      remoteRunDir,
+      pid: undefined,
+      params: expectedParams,
+      componentDir,
+      logOffset: 0,
+      launchUnknown: true,
+      launchKind: kind,
+      profile: options.profile
+    })
+    return reported(
+      options,
+      `远程运行 ${options.runId} 的启动结果未知：${reason}。已保留远程目录，请勿重复提交。`,
+      { lost: true }
+    )
+  }
+  const rejected = (reason: string): WrapperRunResult => {
+    options.onSnapshot?.({
+      runId: options.runId,
+      remoteRunDir,
+      pid: undefined,
+      params: expectedParams,
+      componentDir,
+      logOffset: 0,
+      launchKind: kind,
+      profile: options.profile
+    })
+    return reported(options, reason)
+  }
+  const handleObserved = async (
+    observation: RemoteLaunchObservation
+  ): Promise<WrapperRunResult | undefined> => {
+    if (observation.kind === 'unclaimed') return undefined
+    if (observation.kind === 'rejected') return rejected(observation.reason)
+    if (observation.kind === 'unknown') return unknown(observation.reason)
+    const meta = await readMatchingLaunchMeta(
+      session,
+      remoteRunDir,
+      entry,
+      options.runId,
+      options.profile,
+      expectedParams,
+      kind
+    )
+    if (!meta) return unknown('已找到远端回执，但启动参数记录缺失或不一致')
+    const snapshot = snapshotForObservation(options.runId, remoteRunDir, meta, observation)
+    options.onSnapshot?.(snapshot)
+    return watch(
+      { entry, target, options, control, snapshot, layout: { runDir: remoteRunDir } },
+      session
+    )
+  }
+  const recover = async (error: unknown): Promise<WrapperRunResult> => {
+    const reason = error instanceof Error ? error.message : String(error)
+    try {
+      const fresh = await connect(target.connection)
+      await session.close().catch(() => undefined)
+      session = fresh
+      const observation = await observeRemoteLaunch(session, remoteRunDir, options.runId, kind)
+      return (await handleObserved(observation)) ?? unknown(`连接恢复后未找到启动回执：${reason}`)
+    } catch {
+      return unknown(`无法重新连接服务器核对启动回执：${reason}`)
+    }
+  }
   try {
     if (control.cancelled) return failure('', { cancelled: true })
     if (!target.skipPreflight) {
       const failed = await runPreflight(session, options)
       if (failed) return failed
     }
+    const controller = controllerFor(target.hpc)
+    const prior = await handleObserved(
+      await observeRemoteLaunch(session, remoteRunDir, options.runId, kind)
+    )
+    if (prior) return prior
     const bundle = await ensureRemoteBundle(session, {
       localRoot: options.wrappersRoot,
       workspaceRoot: target.workspaceRoot
@@ -407,34 +604,70 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
       componentRelPath: componentRelPath(entry, options.wrappersRoot)
     })
     const params = resolveRemoteParams(entry, options.params, layout)
+    componentDir = layout.componentDir
 
-    const missing = await findMissingRemoteInputs(session, entry, params, layout)
-    if (missing.length > 0) {
+    const checked = await checkRemoteWrapperInputs(
+      session,
+      remoteInputs(entry, params, options.inputReferences),
+      { relativeBase: layout.componentDir }
+    )
+    for (const warning of checked.warnings) options.onOutput?.(`警告：${warning}\n`)
+    if (checked.errors.length > 0) {
       return reported(
         options,
-        `These input paths do not exist on ${target.connection.host}:\n${missing.map((line) => `- ${line}`).join('\n')}\nGive paths as they appear on the cluster.`
+        `服务器 ${target.connection.host} 的输入核验失败：\n${checked.errors.map((line) => `- ${line}`).join('\n')}`
       )
     }
     if (control.cancelled) return failure('', { cancelled: true })
-
-    await session.mkdirp(joinRemote(layout.runDir, 'logs'))
-    await session.writeTextFile(layout.paramsFile, JSON.stringify(params, null, 2))
-    await session.writeTextFile(
-      layout.configFile,
-      buildRemoteNextflowConfig(target.hpc ?? { scheduler: 'local' })
-    )
-    await session.writeTextFile(
-      joinRemote(layout.runDir, 'launch.sh'),
-      buildRemoteLaunchScript({ layout, profile: options.profile, hpc: target.hpc })
-    )
-    const controller = controllerFor(target.hpc)
-    const started = await controller
-      .start(session, { layout, runId: options.runId, hpc: target.hpc })
-      .catch((error: unknown) => {
-        const reason = error instanceof Error ? error.message : String(error)
-        return `Could not start the run on ${target.connection.host}: ${reason}`
-      })
-    if (typeof started === 'string') return reported(options, started)
+    options.onSnapshot?.({
+      runId: options.runId,
+      remoteRunDir: layout.runDir,
+      pid: undefined,
+      params,
+      componentDir,
+      logOffset: 0,
+      launchUnknown: true,
+      launchKind: kind,
+      profile: options.profile
+    })
+    let claimed: boolean
+    try {
+      claimed = await claimRemoteLaunch(session, layout.runDir, options.runId)
+    } catch (error) {
+      return recover(error)
+    }
+    if (!claimed) {
+      const existing = await handleObserved(
+        await observeRemoteLaunch(session, layout.runDir, options.runId, kind)
+      )
+      return existing ?? unknown('另一提交已声明该运行')
+    }
+    const meta: RemoteLaunchMeta = {
+      runId: options.runId,
+      wrapperId: entry.manifest.id,
+      profile: options.profile,
+      componentDir,
+      params,
+      launchKind: kind
+    }
+    let started: { pid?: number; jobId?: string; note?: string }
+    try {
+      await session.mkdirp(joinRemote(layout.runDir, 'logs'))
+      await session.writeTextFile(joinRemote(layout.runDir, LAUNCH_META_FILE), JSON.stringify(meta))
+      await session.writeTextFile(layout.paramsFile, JSON.stringify(params, null, 2))
+      await session.writeTextFile(
+        layout.configFile,
+        buildRemoteNextflowConfig(target.hpc ?? { scheduler: 'local' })
+      )
+      await session.writeTextFile(
+        joinRemote(layout.runDir, 'launch.sh'),
+        buildRemoteLaunchScript({ layout, profile: options.profile, hpc: target.hpc })
+      )
+      started = await controller.start(session, { layout, runId: options.runId, hpc: target.hpc })
+    } catch (error) {
+      if (error instanceof RemoteLaunchRejectedError) return rejected(error.message)
+      return recover(error)
+    }
     if (started.note) options.onOutput?.(`${started.note}\n`)
     const snapshot: RemoteJobSnapshot = {
       runId: options.runId,
@@ -442,8 +675,10 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
       pid: started.pid,
       ...(started.jobId !== undefined ? { jobId: started.jobId } : {}),
       params,
-      componentDir: layout.componentDir,
-      logOffset: 0
+      componentDir,
+      logOffset: 0,
+      launchKind: kind,
+      profile: options.profile
     }
     options.onSnapshot?.(snapshot)
     return await watch({ entry, target, options, control, snapshot, layout }, session)
@@ -472,7 +707,50 @@ export function attachRemoteWrapperComposition(options: AttachRemoteOptions): Wr
   const done = (async () => {
     const session = await connect(target.connection)
     try {
-      return await watch({ entry, target, options, control, snapshot, layout }, session)
+      let current = snapshot
+      if (snapshot.launchUnknown || (snapshot.pid === undefined && snapshot.jobId === undefined)) {
+        const kind = snapshot.launchKind ?? launchKind(target)
+        const observed = await observeRemoteLaunch(
+          session,
+          snapshot.remoteRunDir,
+          snapshot.runId,
+          kind
+        )
+        if (observed.kind === 'rejected') return reported(options, observed.reason)
+        if (observed.kind !== 'started') {
+          return reported(
+            options,
+            `远程运行 ${snapshot.runId} 状态仍未知：${observed.kind === 'unknown' ? observed.reason : '未找到启动声明'}。保留快照，稍后可再次对账。`,
+            { lost: true }
+          )
+        }
+        const meta = await readMatchingLaunchMeta(
+          session,
+          snapshot.remoteRunDir,
+          entry,
+          snapshot.runId,
+          snapshot.profile,
+          snapshot.params,
+          kind
+        )
+        if (!meta) {
+          return reported(options, '远程启动参数记录缺失或不一致，保留快照等待对账。', {
+            lost: true
+          })
+        }
+        current = {
+          ...snapshot,
+          pid: observed.pid,
+          jobId: observed.jobId,
+          params: meta.params,
+          componentDir: meta.componentDir,
+          launchKind: meta.launchKind,
+          profile: meta.profile,
+          launchUnknown: undefined
+        }
+        options.onSnapshot?.(current)
+      }
+      return await watch({ entry, target, options, control, snapshot: current, layout }, session)
     } finally {
       await session.close().catch(() => undefined)
     }

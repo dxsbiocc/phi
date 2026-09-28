@@ -93,6 +93,20 @@ export function getProviderErrorDisplay(message: string): ProviderErrorDisplay {
     }
   }
 
+  if (
+    /ERROR_RATE_LIMITED_CHANGEABLE/i.test(rawMessage) &&
+    /["']?isRetryable["']?\s*[:=]\s*false/i.test(rawMessage)
+  ) {
+    return {
+      title: 'Cursor 用量上限已用尽',
+      description:
+        'Cursor 已达到当前账户的模型用量上限，并标记此次请求不可重试。请切换模型，或在 Cursor 账户中调整 Spend Limit。',
+      rawMessage,
+      showRawMessage: false,
+      action: null
+    }
+  }
+
   if (isProviderBillingError(rawMessage)) {
     return {
       title: '账户余额不足',
@@ -126,10 +140,21 @@ export function getProviderErrorDisplay(message: string): ProviderErrorDisplay {
     }
   }
 
+  if (/Cursor run transport could not negotiate HTTP\/2|h2 is not supported/i.test(rawMessage)) {
+    return {
+      title: 'Cursor HTTP/2 连接失败',
+      description:
+        'Cursor 登录状态可能正常，但模型运行通道未能建立 HTTP/2 连接。Phi 会使用本机桥接；若仍失败，请检查网络代理后重试。',
+      rawMessage,
+      showRawMessage: false,
+      action: null
+    }
+  }
+
   if (matchesAnyPattern(rawMessage, CONFIGURATION_PATTERNS)) {
     return {
-      title: 'Provider 配置需要处理',
-      description: '当前请求没有可用的 Provider、模型或凭据。请检查 Provider 配置后重试。',
+      title: 'Provider 需要处理',
+      description: '当前请求没有可用的 Provider、模型或凭据。请检查 Provider 后重试。',
       rawMessage,
       showRawMessage: true,
       action: 'providerSettings',

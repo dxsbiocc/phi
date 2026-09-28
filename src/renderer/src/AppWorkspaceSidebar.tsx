@@ -7,9 +7,11 @@ import { RuntimeSidebar } from './features/runtime/RuntimeView'
 import { SkillSidebar } from './features/skill/SkillView'
 import { WrapperSidebar } from './features/wrapper/WrapperView'
 import { WorkspaceFilesPane } from './components/WorkspaceSidePanel'
+import { RemoteConnectionNotice } from './features/project/components/RemoteConnectionNotice'
 import type { AppView } from './App'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
 import type { WrapperCompositionManifest } from '../../shared/wrapperCompositionManifestTypes'
+import type { RemoteProjectConnectionState } from '../../shared/projectLocation'
 import type {
   AnalysisJupyterRuntimeStatus,
   DirectoryListing,
@@ -38,6 +40,10 @@ export type AppWorkspaceSidebarProps = {
   workspaceSidebarMode: WorkspaceSidebarMode
 
   workspaceRootPath: string
+  isRemoteProject: boolean
+  remoteHostAlias?: string
+  remoteConnection?: RemoteProjectConnectionState
+  onRetryRemoteConnection: () => void
   activeWorkspacePath: string | null
   workspaceFileTreeRevision: number
   onOpenWorkspaceFile: (path: string) => void
@@ -77,6 +83,7 @@ export type AppWorkspaceSidebarProps = {
   sessions: SessionSummary[]
   activeSessionPath: string | null
   activeCwd: string
+  activeProjectId: string | null
   projects: Project[]
   projectSessionRefreshKey: number
   onNewChat: () => Promise<void>
@@ -84,9 +91,13 @@ export type AppWorkspaceSidebarProps = {
   onSelectSession: (path: string) => Promise<void>
   onRenameSession: (path: string, name: string) => Promise<void>
   onDeleteSession: (path: string) => Promise<void>
+  onExportSession: (session: SessionSummary) => void
   onStartProjectChat: (project: Project) => Promise<void>
   onDeleteProjectEntry: (project: Project) => Promise<void>
-  onFetchProjectSessions: (workingDirectory: string) => Promise<SessionSummary[]>
+  onFetchProjectSessions: (
+    workingDirectory: string,
+    projectId?: string
+  ) => Promise<SessionSummary[]>
   getSessionRuntimeState: (
     path: string,
     cwd: string,
@@ -105,6 +116,10 @@ function AppWorkspaceSidebarImpl({
   activeWorkspaceScopeLabel,
   workspaceSidebarMode,
   workspaceRootPath,
+  isRemoteProject,
+  remoteHostAlias,
+  remoteConnection,
+  onRetryRemoteConnection,
   activeWorkspacePath,
   workspaceFileTreeRevision,
   onOpenWorkspaceFile,
@@ -138,6 +153,7 @@ function AppWorkspaceSidebarImpl({
   sessions,
   activeSessionPath,
   activeCwd,
+  activeProjectId,
   projects,
   projectSessionRefreshKey,
   onNewChat,
@@ -145,6 +161,7 @@ function AppWorkspaceSidebarImpl({
   onSelectSession,
   onRenameSession,
   onDeleteSession,
+  onExportSession,
   onStartProjectChat,
   onDeleteProjectEntry,
   onFetchProjectSessions,
@@ -259,28 +276,48 @@ function AppWorkspaceSidebarImpl({
           WebkitAppRegion: 'no-drag'
         }}
       >
-        <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
-          <WorkspaceFilesPane
-            rootPath={workspaceRootPath}
-            activePath={activeWorkspacePath}
-            treeRevision={workspaceFileTreeRevision}
-            onOpenFile={onOpenWorkspaceFile}
-            onListDirectory={onListWorkspaceDirectory}
+        {isRemoteProject ? (
+          <RemoteConnectionNotice
+            hostAlias={remoteHostAlias}
+            connection={remoteConnection}
+            onRetry={onRetryRemoteConnection}
+            compact
           />
+        ) : null}
+        <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
+          {isRemoteProject && !workspaceRootPath ? (
+            <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+              服务器档案或会话不可用，暂时无法显示远程文件。
+            </Typography>
+          ) : (
+            <WorkspaceFilesPane
+              rootPath={workspaceRootPath}
+              activePath={activeWorkspacePath}
+              treeRevision={workspaceFileTreeRevision}
+              onOpenFile={onOpenWorkspaceFile}
+              onListDirectory={onListWorkspaceDirectory}
+            />
+          )}
         </Box>
       </Box>
     ) : workspaceSidebarMode === 'runtime' ? (
-      <RuntimeSidebar
-        projectCwd={runtimeProjectCwd}
-        runtimeStatus={runtimeStatus}
-        isLoading={isRuntimeLoading}
-        onOpenNotebook={onOpenRuntimeNotebook}
-        closingNotebookPath={runtimeClosingNotebookPath}
-        onRefresh={onRefreshRuntime}
-        onStartJupyter={onStartRuntime}
-        onStopJupyter={onStopRuntime}
-        onStopNotebookKernel={onStopRuntimeNotebookKernel}
-      />
+      isRemoteProject ? (
+        <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+          远程项目的 Notebook/Jupyter 暂不可用。
+        </Typography>
+      ) : (
+        <RuntimeSidebar
+          projectCwd={runtimeProjectCwd}
+          runtimeStatus={runtimeStatus}
+          isLoading={isRuntimeLoading}
+          onOpenNotebook={onOpenRuntimeNotebook}
+          closingNotebookPath={runtimeClosingNotebookPath}
+          onRefresh={onRefreshRuntime}
+          onStartJupyter={onStartRuntime}
+          onStopJupyter={onStopRuntime}
+          onStopNotebookKernel={onStopRuntimeNotebookKernel}
+        />
+      )
     ) : workspaceSidebarMode === 'plugins' ? (
       <PluginSidebar
         plugins={plugins}
@@ -290,18 +327,45 @@ function AppWorkspaceSidebarImpl({
         onRefresh={onRefreshPlugins}
       />
     ) : workspaceSidebarMode === 'skills' ? (
-      <SkillSidebar
-        skills={skills}
-        isLoading={isLoadingSkills}
-        activeSkillId={activeSkillId}
-        onSelectSkill={onOpenSkill}
-      />
+      isRemoteProject ? (
+        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
+          <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+            远程项目级 Skills 暂未接通；下方仅显示全局 Skills。
+          </Typography>
+          <SkillSidebar
+            skills={skills}
+            isLoading={isLoadingSkills}
+            activeSkillId={activeSkillId}
+            onSelectSkill={onOpenSkill}
+          />
+        </Box>
+      ) : (
+        <SkillSidebar
+          skills={skills}
+          isLoading={isLoadingSkills}
+          activeSkillId={activeSkillId}
+          onSelectSkill={onOpenSkill}
+        />
+      )
     ) : workspaceSidebarMode === 'mcp' ? (
-      <McpSidebar
-        servers={mcpServers}
-        activeServerId={activeMcpServerId}
-        onSelectServer={onOpenMcpServer}
-      />
+      isRemoteProject ? (
+        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
+          <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+            远程项目级 MCP 暂未接通；下方仅显示全局配置。
+          </Typography>
+          <McpSidebar
+            servers={mcpServers}
+            activeServerId={activeMcpServerId}
+            onSelectServer={onOpenMcpServer}
+          />
+        </Box>
+      ) : (
+        <McpSidebar
+          servers={mcpServers}
+          activeServerId={activeMcpServerId}
+          onSelectServer={onOpenMcpServer}
+        />
+      )
     ) : workspaceSidebarMode === 'wrappers' ? (
       <WrapperSidebar
         catalog={wrapperCatalog}
@@ -316,6 +380,7 @@ function AppWorkspaceSidebarImpl({
         sessions={sessions}
         activeSessionPath={activeSessionPath}
         activeCwd={activeCwd}
+        activeProjectId={activeProjectId}
         projects={projects}
         projectSessionRefreshKey={projectSessionRefreshKey}
         onNewChat={() => {
@@ -331,6 +396,7 @@ function AppWorkspaceSidebarImpl({
         onDeleteSession={(path) => {
           void onDeleteSession(path)
         }}
+        onExportSession={onExportSession}
         onStartProjectChat={(project) => {
           void onStartProjectChat(project)
         }}

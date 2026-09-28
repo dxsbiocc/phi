@@ -90,6 +90,9 @@ export function hpcSettingsFromDraft(draft: HpcDraft): RemoteHpcSettings {
 
 /** The first problem with the draft, in the words shown to the user, or null. */
 export function hpcDraftError(draft: HpcDraft): string | null {
+  if (draft.scheduler === 'local' && draft.controller === 'sbatch') {
+    return '直接在服务器运行时，Nextflow 主进程不能提交为 Slurm 作业'
+  }
   if (draft.queueSize.trim()) {
     const size = Number(draft.queueSize)
     if (!Number.isInteger(size) || size <= 0) return '同时排队的作业数上限必须是正整数'

@@ -1,9 +1,13 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { BrowserWindow } from 'electron'
 import type { InlineExtension } from './runtime/runtime-adapter'
+import { planModeToolDecision } from './plan/plan-tool-policy'
 
 export interface ToolApprovalRequest {
   requestId: string
+  toolCallId?: string
+  agentRunId?: string
+  approvalDigest?: string
   sessionId?: string
   sessionPath?: string
   sessionGeneration?: number
@@ -11,6 +15,7 @@ export interface ToolApprovalRequest {
   cwd?: string
   projectName?: string
   toolName: string
+  command?: string
   summary: string
 }
 
@@ -20,8 +25,9 @@ type ApprovalWindow = BrowserWindow
 
 interface CreateApprovalExtensionOptions {
   signal?: AbortSignal
+  shouldGate?: () => boolean
   getWindow?: () => ApprovalWindow | null
-  getContext?: () => ToolApprovalContext | null
+  getContext?: (event: { agentRunId?: string }) => ToolApprovalContext | null
   onApprovalRequested?: (request: ToolApprovalRequest) => void
   onApprovalResolved?: (request: ToolApprovalRequest, approved: boolean) => void
   onApprovalCancelled?: (request: ToolApprovalRequest) => void
@@ -38,6 +44,8 @@ export interface ToolApprovalContext {
   runId: string
   cwd: string
   projectName?: string
+  scopeNote?: string
+  writeScopeNote?: string
 }
 
 interface ApprovalDecision {
@@ -49,12 +57,63 @@ const pendingApprovals = new Map<string, PendingApproval>()
 
 function summarizeToolCall(toolName: string, input: Record<string, unknown>): string {
   if (toolName === 'bash' || toolName === 'powershell') {
-    return typeof input.command === 'string' ? input.command : JSON.stringify(input)
+    if (typeof input.command !== 'string') return JSON.stringify(input)
+    return [
+      input.command,
+      ...(typeof input.cwd === 'string' ? [`cwd: ${input.cwd}`] : []),
+      ...(typeof input.timeout === 'number' ? [`timeout: ${input.timeout}s`] : []),
+      ...(input.env && typeof input.env === 'object' && !Array.isArray(input.env)
+        ? [`env keys: ${Object.keys(input.env).sort().join(', ')}`]
+        : [])
+    ].join('\n')
   }
   if (toolName === 'write' || toolName === 'edit') {
     return typeof input.path === 'string' ? input.path : JSON.stringify(input)
   }
   return JSON.stringify(input)
+}
+
+/** Bind an approval to every execution-affecting Bash argument, independent of key order. */
+export function bashApprovalDigest(input: Record<string, unknown>): string {
+  const env =
+    input.env && typeof input.env === 'object' && !Array.isArray(input.env)
+      ? Object.fromEntries(
+          Object.entries(input.env).sort(([left], [right]) => left.localeCompare(right))
+        )
+      : input.env
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        command: input.command,
+        cwd: input.cwd,
+        timeout: input.timeout,
+        env,
+        pty: input.pty,
+        async: input.async
+      })
+    )
+    .digest('hex')
+}
+
+/** A remote write approval is bound to both destination and exact UTF-8 content. */
+export function writeApprovalDigest(input: Record<string, unknown>): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ path: input.path, content: input.content, operation: 'write' }))
+    .digest('hex')
+}
+
+export function editApprovalDigest(input: Record<string, unknown>): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        path: input.path,
+        old_string: input.old_string,
+        new_string: input.new_string,
+        replace_all: input.replace_all,
+        operation: 'edit'
+      })
+    )
+    .digest('hex')
 }
 
 function getActiveWindow(): BrowserWindow | null {
@@ -165,6 +224,13 @@ export function createApprovalExtension(
         if (!RISKY_TOOLS.has(event.toolName)) {
           return undefined
         }
+        if (
+          (event.toolName === 'write' || event.toolName === 'edit') &&
+          planModeToolDecision(true, event.toolName, event.input).allowed
+        ) {
+          return undefined
+        }
+        if (options.shouldGate && !options.shouldGate()) return undefined
 
         if (options.signal?.aborted || ctx.signal?.aborted) {
           return { block: true, reason: createAbortErrorMessage(options.signal ?? ctx.signal) }
@@ -176,9 +242,11 @@ export function createApprovalExtension(
         }
 
         const requestId = randomUUID()
-        const context = options.getContext?.() ?? null
+        const context = options.getContext?.(event) ?? null
         const request: ToolApprovalRequest = {
           requestId,
+          ...(typeof event.toolCallId === 'string' ? { toolCallId: event.toolCallId } : {}),
+          ...(typeof event.agentRunId === 'string' ? { agentRunId: event.agentRunId } : {}),
           ...(context
             ? {
                 sessionId: context.sessionId,
@@ -192,7 +260,31 @@ export function createApprovalExtension(
               }
             : {}),
           toolName: event.toolName,
-          summary: summarizeToolCall(event.toolName, event.input)
+          ...(event.toolName === 'bash' && typeof event.input.command === 'string'
+            ? {
+                command: event.input.command,
+                approvalDigest: bashApprovalDigest(event.input)
+              }
+            : {}),
+          ...(event.toolName === 'write' &&
+          typeof event.input.path === 'string' &&
+          typeof event.input.content === 'string'
+            ? { approvalDigest: writeApprovalDigest(event.input) }
+            : {}),
+          ...(event.toolName === 'edit' &&
+          typeof event.input.path === 'string' &&
+          typeof event.input.old_string === 'string' &&
+          typeof event.input.new_string === 'string'
+            ? { approvalDigest: editApprovalDigest(event.input) }
+            : {}),
+          summary: [
+            event.toolName === 'write' || event.toolName === 'edit'
+              ? context?.writeScopeNote
+              : context?.scopeNote,
+            summarizeToolCall(event.toolName, event.input)
+          ]
+            .filter(Boolean)
+            .join('\n')
         }
         options.onApprovalRequested?.(request)
         const decision = await waitForApproval(request, window, [options.signal, ctx.signal])

@@ -1,0 +1,92 @@
+phiDbConnectorVersion: 1
+id: rest-json/biogrid
+name: BioGRID
+protocolFamily: rest-json
+curationTier: curated
+baseUrl: https://webservice.thebiogrid.org
+networkPolicy:
+  allowedHosts:
+    - webservice.thebiogrid.org
+  allowRedirects: false
+auth:
+  type: api_key_query_param
+  envVar: BIOGRID_API_KEY
+  paramName: accesskey
+  required: true
+  label: BioGRID access key
+  signupUrl: https://webservice.thebiogrid.org/
+rateLimit:
+  withAuth:
+    requestsPerSecond: 2
+  withoutAuth:
+    requestsPerSecond: 1
+retryPolicy:
+  maxAttempts: 3
+  baseDelayMs: 500
+  maxDelayMs: 5000
+domains:
+  - id: interactions
+    summary: Physical or genetic interactions for gene symbols (requires BioGRID API key).
+    identity:
+      stableIdFields: [BIOGRID_INTERACTION_ID]
+      namespace: biogrid.interaction
+    commonFields:
+      [
+        BIOGRID_INTERACTION_ID,
+        OFFICIAL_SYMBOL_A,
+        OFFICIAL_SYMBOL_B,
+        ENTREZ_GENE_A,
+        ENTREZ_GENE_B,
+        EXPERIMENTAL_SYSTEM,
+        EXPERIMENTAL_SYSTEM_TYPE,
+        THROUGHPUT,
+        PUBMED_ID,
+        ORGANISM_A,
+        ORGANISM_B,
+        SCORE
+      ]
+    rest:
+      request:
+        path: /interactions
+        queryParams:
+          format: json
+          searchNames: true
+        filterParamMap:
+          geneList: geneList
+          taxId: taxId
+          max: max
+          evidenceList: evidenceList
+          experimentalSystemList: experimentalSystemList
+          throughputTag: throughputTag
+        limitParam: max
+      response:
+        rowsPath: $.*
+    fields:
+      - name: geneList
+        type: string
+        description: Gene symbol(s), pipe-separated for multiple (e. for TP53|MDM2).
+        synonyms: [gene, genes, symbols, query]
+        namespace: hgnc.symbol
+      - name: taxId
+        type: number
+        description: NCBI taxonomy ID (9606 for human).
+        synonyms: [taxon, species]
+        namespace: ncbi.taxonomy_id
+      - name: evidenceList
+        type: string
+        description: Evidence filter such as physical or genetic.
+      - name: OFFICIAL_SYMBOL_A
+        type: string
+        description: Official symbol for interactor A.
+        namespace: hgnc.symbol
+      - name: OFFICIAL_SYMBOL_B
+        type: string
+        description: Official symbol for interactor B.
+        namespace: hgnc.symbol
+      - name: EXPERIMENTAL_SYSTEM
+        type: string
+        description: Experimental system used to detect the interaction.
+      - name: PUBMED_ID
+        type: string
+        description: Supporting PubMed ID.
+        namespace: pubmed.id

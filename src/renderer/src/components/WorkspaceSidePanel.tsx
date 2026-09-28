@@ -1,9 +1,9 @@
+import type { ReactNode } from 'react'
 import { Box, Typography } from '@mui/material'
 import { PhiIcons } from '../icons'
+import type { WorkspaceSidePanelMode } from '../lib/workspaceSidePanelMode'
 import type { DirectoryListing } from '../types'
 import { ProjectFileTree } from '../features/file-preview/components/ProjectFileTree'
-
-export type WorkspaceSidePanelTab = 'files'
 
 const DirectoryTreeIcon = PhiIcons.entity.directoryTree
 const TerminalIcon = PhiIcons.tool.command
@@ -91,10 +91,19 @@ export function WorkspaceFilesPane({
   )
 }
 
-export function WorkspaceSidePanel({ width }: { width: number | string }): React.JSX.Element {
+export function WorkspaceSidePanel({
+  width,
+  mode = 'terminal',
+  children
+}: {
+  width: number | string
+  mode?: WorkspaceSidePanelMode
+  children?: ReactNode
+}): React.JSX.Element {
   return (
     <Box
-      data-phi-workspace-tools-side-panel="true"
+      data-phi-workspace-tools-side-panel={mode !== 'jobs' ? 'true' : undefined}
+      data-phi-workspace-side-panel-mode={mode}
       sx={{
         width,
         flexShrink: 0,
@@ -111,8 +120,13 @@ export function WorkspaceSidePanel({ width }: { width: number | string }): React
           theme.palette.mode === 'dark' ? theme.palette.background.default : '#FFFFFF'
       }}
     >
-      <WorkspaceToolCard kind="terminal" label="终端" Icon={TerminalIcon} />
-      <WorkspaceToolCard kind="browser" label="浏览器" Icon={BrowserIcon} />
+      {mode === 'jobs' ? (
+        children
+      ) : mode === 'terminal' ? (
+        <WorkspaceToolCard kind="terminal" label="终端" Icon={TerminalIcon} />
+      ) : (
+        <WorkspaceToolCard kind="browser" label="浏览器" Icon={BrowserIcon} />
+      )}
     </Box>
   )
 }

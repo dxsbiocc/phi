@@ -5,16 +5,20 @@ import {
   collectRemoteOutputs,
   pollUntilTerminal,
   readRemoteRunSnapshot,
-  transition
+  transition,
+  writeRemoteRunSnapshot
 } from './executor-remote-run'
+import { SshExecRunner } from './executor-remote'
 import { SbatchRunner } from './executor-slurm'
+import { observeRemoteLaunch } from './remote-launch-claim'
+import { cancelRemoteController } from './remote-cancel'
 import { connectRemoteSshSession, type RemoteSshSession } from './remote-ssh-session'
 import { resolveRemoteSubmitOptions } from './runs'
 import { appendWrapperAuditEvent, listWrapperRuns } from './store'
 import type { WrapperRun, WrapperRunState } from './types'
 
 /**
- * Startup reconciliation for `slurm-controller` runs — see the technical
+ * Startup reconciliation for remote controller runs — see the technical
  * design doc's "Monitoring And Recovery": "If the app closes or the network
  * disconnects, the remote job keeps running. On reconnect, Phi reconciles
  * status from run metadata and remote state." A run that was still
@@ -29,18 +33,16 @@ import type { WrapperRun, WrapperRunState } from './types'
  * config) is marked `lost`, never `failed` — the design doc is explicit
  * that an unconfirmed state must not be reported as a definite failure.
  *
- * `remote-background`/`SshExecRunner` runs aren't covered here yet — that
- * executor is now dispatched from `runs.ts` (see
- * `executor-remote-background-submit.ts`), so a `remote-background` run CAN
- * be left mid-flight by a restart, but resuming it is a separate follow-up,
- * not yet built.
+ * Both `slurm-controller` and detached SSH controllers use the same durable
+ * run ID and remote snapshot; no submit path is invoked during reconciliation.
  */
 const RECONCILABLE_STATES: WrapperRunState[] = [
   'provisioning',
   'queued',
   'running',
   'collecting',
-  'cancelling'
+  'cancelling',
+  'lost'
 ]
 
 export interface ReconcileRemoteWrapperRunsOptions {
@@ -51,7 +53,10 @@ export interface ReconcileRemoteWrapperRunsOptions {
 }
 
 function markLost(run: WrapperRun, agentDir: string, reason: string): void {
-  const lost = transition(run, agentDir, 'lost', { completedAt: new Date().toISOString() })
+  const lost = transition(run, agentDir, 'lost', {
+    completedAt: new Date().toISOString(),
+    launchDiagnostic: reason
+  })
   appendWrapperAuditEvent(
     {
       type: 'run_state_changed',
@@ -73,78 +78,170 @@ async function reconcileOneRun(
   connectImpl: ConnectImpl,
   pollIntervalMs: number
 ): Promise<void> {
-  const snapshot = readRemoteRunSnapshot(run.runId, agentDir)
-  if (!snapshot?.jobId) {
+  const storedSnapshot = readRemoteRunSnapshot(run.runId, agentDir)
+  const remoteRunDir = storedSnapshot?.remoteRunDir ?? run.remote?.runDir
+  if (!remoteRunDir) {
     markLost(run, agentDir, '重启后未找到远程运行快照，无法确认远程作业状态')
     return
   }
-
+  const snapshot = { ...storedSnapshot, remoteRunDir }
   const remote = resolveRemoteSubmitOptions(run, undefined, agentDir)
   if ('reason' in remote) {
     markLost(run, agentDir, `重启后无法重新连接远程主机：${remote.reason}`)
     return
   }
-
+  const expectedDir = joinRemote(remote.remoteWorkspaceRoot, 'wrappers', 'runs', run.runId)
+  if (
+    snapshot.remoteRunDir !== expectedDir ||
+    (run.remote && remote.connection.host !== run.remote.host)
+  ) {
+    markLost(run, agentDir, '远程快照目录与绑定的 run ID 不一致，拒绝改投其他位置')
+    return
+  }
+  const slurmHead = run.executor === 'slurm-controller'
   const wasCancelling = run.state === 'cancelling'
   const runnerConnectImpl = remote.connectImpl ?? connectImpl
-  const runner = new SbatchRunner({ connection: remote.connection, connectImpl: runnerConnectImpl })
-  const handle: RemoteJobHandle = {
-    runId: run.runId,
-    remoteRunDir: snapshot.remoteRunDir,
-    jobId: snapshot.jobId
-  }
-
-  let session: RemoteSshSession | undefined
+  const runner = slurmHead
+    ? new SbatchRunner({ connection: remote.connection, connectImpl: runnerConnectImpl })
+    : new SshExecRunner({ connection: remote.connection, connectImpl: runnerConnectImpl })
+  let probe: RemoteSshSession | undefined
+  let outputSession: RemoteSshSession | undefined
   try {
-    if (wasCancelling) {
-      // The cancel request may never have reached the scheduler before the
-      // app closed — reissuing is safe, `RemoteRunner.cancel` is documented
-      // as best-effort and a no-op for a job that's already gone.
-      await runner.cancel(handle)
+    probe = await runnerConnectImpl(remote.connection)
+    const observation = await observeRemoteLaunch(
+      probe,
+      snapshot.remoteRunDir,
+      run.runId,
+      slurmHead ? 'sbatch' : 'detached'
+    )
+    if (observation.kind === 'rejected') {
+      transition(run, agentDir, 'failed', {
+        completedAt: new Date().toISOString(),
+        launchUnknown: undefined,
+        launchDiagnostic: observation.reason
+      })
+      return
     }
-
-    const status = await pollUntilTerminal(runner, handle, remote.pollIntervalMs ?? pollIntervalMs)
+    if (observation.kind === 'unknown' && /run ID 不一致/.test(observation.reason)) {
+      markLost(run, agentDir, observation.reason)
+      return
+    }
+    const handle: RemoteJobHandle = {
+      runId: run.runId,
+      remoteRunDir: snapshot.remoteRunDir,
+      pid: observation.kind === 'started' ? (observation.pid ?? snapshot.pid) : snapshot.pid,
+      jobId: observation.kind === 'started' ? (observation.jobId ?? snapshot.jobId) : snapshot.jobId
+    }
+    if (handle.pid === undefined && handle.jobId === undefined && observation.kind !== 'started') {
+      markLost(
+        run,
+        agentDir,
+        observation.kind === 'unknown'
+          ? observation.reason
+          : '远端没有 PID、作业号或退出码，无法确认运行状态'
+      )
+      return
+    }
+    if (observation.kind === 'started') {
+      writeRemoteRunSnapshot(run.runId, agentDir, {
+        remoteRunDir: snapshot.remoteRunDir,
+        ...(handle.pid !== undefined ? { pid: handle.pid } : {}),
+        ...(handle.jobId !== undefined ? { jobId: handle.jobId } : {})
+      })
+    }
+    const firstStatus = await runner.status(handle)
+    let cancelDelivered = false
+    if (wasCancelling && firstStatus.outcome === 'running') {
+      // The previous process may have exited before its signal was sent.
+      // Both controllers verify the run ID and receipt before signalling.
+      const cancellation = await cancelRemoteController(probe, handle)
+      if (cancellation.kind === 'unknown') {
+        markLost(run, agentDir, '远程取消请求后无法确认进程或作业已停止')
+        return
+      }
+      cancelDelivered = cancellation.kind === 'confirmed'
+    }
+    let currentRun = run
+    if (firstStatus.outcome === 'running' && run.state === 'lost') {
+      currentRun = transition(run, agentDir, 'running', {
+        completedAt: undefined,
+        launchUnknown: undefined,
+        launchDiagnostic: undefined
+      })
+    }
+    const status =
+      firstStatus.outcome === 'running'
+        ? await pollUntilTerminal(runner, handle, remote.pollIntervalMs ?? pollIntervalMs)
+        : firstStatus
 
     if (status.outcome === 'completed') {
-      const entry = findWrapperCatalogEntry(run.wrapper.canonicalId, run.wrapper.version, agentDir)
+      const entry = findWrapperCatalogEntry(
+        currentRun.wrapper.canonicalId,
+        currentRun.wrapper.version,
+        agentDir
+      )
       if (!entry) {
         markLost(
-          run,
+          currentRun,
           agentDir,
-          `找不到已安装的 wrapper，无法收集远程输出: ${run.wrapper.canonicalId}@${run.wrapper.version}`
+          `找不到已安装的 wrapper，无法收集远程输出: ${currentRun.wrapper.canonicalId}@${currentRun.wrapper.version}`
         )
         return
       }
-      session = await runnerConnectImpl(remote.connection)
-      const remoteOutDir = joinRemote(snapshot.remoteRunDir, 'output')
-      const collecting = transition(run, agentDir, 'collecting')
-      const outputs = await collectRemoteOutputs(session, entry.manifest, remoteOutDir)
+      outputSession = await runnerConnectImpl(remote.connection)
+      const remoteOutDir =
+        currentRun.remote?.outputRoot ?? joinRemote(snapshot.remoteRunDir, 'output')
+      const collecting = transition(currentRun, agentDir, 'collecting')
+      const outputs = await collectRemoteOutputs(outputSession, entry.manifest, remoteOutDir)
       transition(collecting, agentDir, 'completed', {
         completedAt: new Date().toISOString(),
         exitCode: status.exitCode,
-        outputs
+        outputs,
+        launchUnknown: undefined,
+        launchDiagnostic: undefined
       })
       return
     }
 
     if (status.outcome === 'lost') {
-      transition(run, agentDir, 'lost', { completedAt: new Date().toISOString() })
+      if (wasCancelling && cancelDelivered && !slurmHead) {
+        transition(currentRun, agentDir, 'cancelled', {
+          completedAt: new Date().toISOString(),
+          launchUnknown: undefined,
+          launchDiagnostic: undefined,
+          cancelConfirmedAt: new Date().toISOString()
+        })
+        return
+      }
+      markLost(currentRun, agentDir, '远端进程或调度器未提供可确认的结束状态')
       return
     }
-
-    transition(run, agentDir, wasCancelling ? 'cancelled' : 'failed', {
-      completedAt: new Date().toISOString(),
-      exitCode: status.exitCode
-    })
+    const cancellationEvidence =
+      cancelDelivered ||
+      status.detail?.startsWith('CANCELLED') === true ||
+      (wasCancelling && (status.exitCode === 143 || status.exitCode === 137))
+    transition(
+      currentRun,
+      agentDir,
+      wasCancelling && cancellationEvidence ? 'cancelled' : 'failed',
+      {
+        completedAt: new Date().toISOString(),
+        exitCode: status.exitCode,
+        launchUnknown: undefined,
+        launchDiagnostic: undefined
+      }
+    )
   } finally {
-    await runner.close()
-    if (session) await session.close()
+    await runner.close().catch(() => undefined)
+    await probe?.close().catch(() => undefined)
+    await outputSession?.close().catch(() => undefined)
   }
 }
 
 /**
- * Resumes every `slurm-controller` run left mid-flight by the previous app
- * session. Meant to be called once, fire-and-forget, at startup (see
+ * Resumes old-plan Slurm and detached runs left mid-flight by the previous app
+ * session. This module retains its original file name but handles both
+ * controller types. Called fire-and-forget at startup (see
  * `index.ts`'s `app.whenReady()` handler) — a failure reconciling one run
  * must never block the others, so each run's own errors are caught and
  * turned into a `lost` state rather than rejecting the whole pass.
@@ -157,14 +254,23 @@ export async function reconcileRemoteWrapperRuns(
   const pollIntervalMs = options.pollIntervalMs ?? 15_000
 
   const runs = listWrapperRuns(agentDir).filter(
-    (run) => run.executor === 'slurm-controller' && RECONCILABLE_STATES.includes(run.state)
+    (run) =>
+      run.origin !== 'composition' &&
+      (run.executor === 'slurm-controller' ||
+        run.executor === 'slurm' ||
+        run.executor === 'remote-background') &&
+      RECONCILABLE_STATES.includes(run.state) &&
+      (run.state !== 'lost' ||
+        readRemoteRunSnapshot(run.runId, agentDir) !== undefined ||
+        run.remote?.runDir !== undefined)
   )
-
-  for (const run of runs) {
-    try {
-      await reconcileOneRun(run, agentDir, connectImpl, pollIntervalMs)
-    } catch (error) {
-      markLost(run, agentDir, error instanceof Error ? error.message : String(error))
-    }
-  }
+  await Promise.all(
+    runs.map(async (run) => {
+      try {
+        await reconcileOneRun(run, agentDir, connectImpl, pollIntervalMs)
+      } catch (error) {
+        markLost(run, agentDir, error instanceof Error ? error.message : String(error))
+      }
+    })
+  )
 }

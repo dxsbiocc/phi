@@ -1,9 +1,22 @@
 import { connectRemoteSshSession, shellQuote, type RemoteSshSession } from './remote-ssh-session'
+import type { RemoteHpcSettings } from '../../../shared/wrapperRemoteTypes'
+import { sbatchFlags } from './composition/remote-config'
+import {
+  claimRemoteLaunch,
+  observeRemoteLaunch,
+  REMOTE_JOB_ID_FILE,
+  REMOTE_LAUNCH_ERROR_FILE,
+  RemoteLaunchRejectedError,
+  RemoteLaunchUnknownError,
+  verifyRemoteCancelTarget,
+  type RemoteLaunchObservation
+} from './remote-launch-claim'
 import {
   joinRemote,
   readRemoteLog,
   LOG_STDOUT,
   LOG_STDERR,
+  EXIT_CODE_FILE,
   type ConnectImpl,
   type RemoteJobHandle,
   type RemoteLaunchSpec,
@@ -92,7 +105,8 @@ export function normalizeSlurmTime(time: string): string | undefined {
 export function buildSbatchScript(
   run: WrapperRun,
   plan: WrapperRunPlan,
-  remoteRunDir: string
+  remoteRunDir: string,
+  hpc?: RemoteHpcSettings
 ): string {
   const lines = [
     '#!/bin/bash',
@@ -107,6 +121,18 @@ export function buildSbatchScript(
   if (mem !== undefined) lines.push(`#SBATCH --mem=${mem}`)
   const wallTime = time !== undefined ? normalizeSlurmTime(time) : undefined
   if (wallTime !== undefined) lines.push(`#SBATCH --time=${wallTime}`)
+  for (const [flag, value] of [
+    ['--partition', hpc?.queue],
+    ['--account', hpc?.account]
+  ]) {
+    if (value) {
+      if (!/^[A-Za-z0-9_.-]+$/.test(value)) {
+        throw new Error(`${flag} 包含非法字符，请检查 Slurm 运行配置。`)
+      }
+      lines.push(`#SBATCH ${flag}=${value}`)
+    }
+  }
+  lines.push(...sbatchFlags(hpc?.controllerOptions).map((flag) => `#SBATCH ${flag}`))
   lines.push('', 'bash launch.sh')
   return `${lines.join('\n')}\n`
 }
@@ -217,10 +243,21 @@ export async function readSlurmJobStatus(
  */
 export async function signalSlurmJob(
   session: RemoteSshSession,
-  jobId: string | undefined,
+  handle: RemoteJobHandle,
   signal: 'TERM' | 'KILL'
 ): Promise<void> {
+  const { jobId } = handle
   if (jobId === undefined) return
+  if (!/^[1-9][0-9]*$/.test(jobId)) {
+    throw new Error('Slurm 作业号无效，拒绝发送取消信号')
+  }
+  await verifyRemoteCancelTarget(session, handle.remoteRunDir, handle.runId, 'sbatch', jobId)
+  const detail = await session.exec(`scontrol show job ${jobId}`)
+  const expectedName = `phi-${handle.runId.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+  const actualName = detail.stdout.match(/(?:^|\s)JobName=(\S+)/)?.[1]
+  if (detail.code !== 0 || actualName !== expectedName) {
+    throw new Error(`Slurm 作业 ${jobId} 不再属于运行 ${handle.runId}，拒绝发送取消信号`)
+  }
   const flag = signal === 'KILL' ? '--signal=KILL ' : ''
   await session.exec(`scancel ${flag}${jobId} 2>/dev/null || true`)
 }
@@ -243,38 +280,118 @@ export class SbatchRunner implements RemoteRunner {
     return this.sessionPromise
   }
 
+  private handleFromObservation(
+    run: WrapperRun,
+    remoteRunDir: string,
+    observation: RemoteLaunchObservation
+  ): RemoteJobHandle | undefined {
+    return observation.kind === 'started'
+      ? { runId: run.runId, remoteRunDir, jobId: observation.jobId }
+      : undefined
+  }
+
   async submit(
     run: WrapperRun,
     plan: WrapperRunPlan,
     launch: RemoteLaunchSpec
   ): Promise<RemoteJobHandle> {
     const session = await this.getSession()
-    await session.mkdirp(joinRemote(launch.remoteRunDir, 'logs'))
-    await session.writeTextFile(joinRemote(launch.remoteRunDir, 'launch.sh'), launch.launchScript)
-    await session.writeTextFile(joinRemote(launch.remoteRunDir, 'params.json'), launch.paramsJson)
-    if (launch.nextflowConfig !== undefined) {
+    let claimAttempted = false
+    try {
+      const before = await observeRemoteLaunch(session, launch.remoteRunDir, run.runId, 'sbatch')
+      const prior = this.handleFromObservation(run, launch.remoteRunDir, before)
+      if (prior) return prior
+      if (before.kind === 'rejected') throw new RemoteLaunchRejectedError(before.reason)
+      if (before.kind === 'unknown') {
+        throw new RemoteLaunchUnknownError(run.runId, launch.remoteRunDir, before.reason)
+      }
+      claimAttempted = true
+      if (!(await claimRemoteLaunch(session, launch.remoteRunDir, run.runId))) {
+        const existing = await observeRemoteLaunch(
+          session,
+          launch.remoteRunDir,
+          run.runId,
+          'sbatch'
+        )
+        const found = this.handleFromObservation(run, launch.remoteRunDir, existing)
+        if (found) return found
+        if (existing.kind === 'rejected') throw new RemoteLaunchRejectedError(existing.reason)
+        throw new RemoteLaunchUnknownError(run.runId, launch.remoteRunDir, '另一提交已声明该运行')
+      }
+      await session.mkdirp(joinRemote(launch.remoteRunDir, 'logs'))
+      await session.writeTextFile(joinRemote(launch.remoteRunDir, 'launch.sh'), launch.launchScript)
+      await session.writeTextFile(joinRemote(launch.remoteRunDir, 'params.json'), launch.paramsJson)
+      if (launch.nextflowConfig !== undefined) {
+        await session.writeTextFile(
+          joinRemote(launch.remoteRunDir, 'nextflow.config'),
+          launch.nextflowConfig
+        )
+      }
+      const sbatchPath = joinRemote(launch.remoteRunDir, 'job.sbatch')
       await session.writeTextFile(
-        joinRemote(launch.remoteRunDir, 'nextflow.config'),
-        launch.nextflowConfig
+        sbatchPath,
+        buildSbatchScript(run, plan, launch.remoteRunDir, launch.hpc)
+      )
+      const result = await session.exec(`sbatch ${shellQuote(sbatchPath)}`)
+      if (result.code !== 0) {
+        const reason = `sbatch 提交失败（run ${run.runId}）: ${result.stderr || result.stdout}`
+        await session.writeTextFile(
+          joinRemote(launch.remoteRunDir, REMOTE_LAUNCH_ERROR_FILE),
+          `${reason}\n`
+        )
+        throw new RemoteLaunchRejectedError(reason)
+      }
+      const jobId = parseSbatchJobId(result.stdout)
+      if (jobId === undefined) {
+        throw new Error(`无法解析 sbatch 返回的作业号（run ${run.runId}）: ${result.stdout}`)
+      }
+      await session.writeTextFile(joinRemote(launch.remoteRunDir, REMOTE_JOB_ID_FILE), `${jobId}\n`)
+      return { runId: run.runId, remoteRunDir: launch.remoteRunDir, jobId }
+    } catch (error) {
+      if (
+        error instanceof RemoteLaunchUnknownError ||
+        error instanceof RemoteLaunchRejectedError ||
+        !claimAttempted
+      )
+        throw error
+      let fresh: RemoteSshSession | undefined
+      let rejected: string | undefined
+      try {
+        fresh = await this.connectImpl(this.options.connection)
+        const observed = await observeRemoteLaunch(fresh, launch.remoteRunDir, run.runId, 'sbatch')
+        const found = this.handleFromObservation(run, launch.remoteRunDir, observed)
+        if (found) {
+          await session.close().catch(() => undefined)
+          this.sessionPromise = Promise.resolve(fresh)
+          return found
+        }
+        if (observed.kind === 'rejected') rejected = observed.reason
+      } catch {
+        // The claim still prevents a replay; the run remains unknown until the host is reachable.
+      }
+      await fresh?.close().catch(() => undefined)
+      this.sessionPromise = undefined
+      if (rejected) throw new RemoteLaunchRejectedError(rejected)
+      throw new RemoteLaunchUnknownError(
+        run.runId,
+        launch.remoteRunDir,
+        error instanceof Error ? error.message : String(error)
       )
     }
-
-    const sbatchPath = joinRemote(launch.remoteRunDir, 'job.sbatch')
-    await session.writeTextFile(sbatchPath, buildSbatchScript(run, plan, launch.remoteRunDir))
-
-    const result = await session.exec(`sbatch ${shellQuote(sbatchPath)}`)
-    if (result.code !== 0) {
-      throw new Error(`sbatch 提交失败（run ${run.runId}）: ${result.stderr || result.stdout}`)
-    }
-    const jobId = parseSbatchJobId(result.stdout)
-    if (jobId === undefined) {
-      throw new Error(`无法解析 sbatch 返回的作业号（run ${run.runId}）: ${result.stdout}`)
-    }
-    return { runId: run.runId, remoteRunDir: launch.remoteRunDir, jobId }
   }
 
   async status(handle: RemoteJobHandle): Promise<RemoteRunStatus> {
-    return readSlurmJobStatus(await this.getSession(), handle.jobId)
+    const session = await this.getSession()
+    const scheduler = await readSlurmJobStatus(session, handle.jobId)
+    if (scheduler.outcome === 'running') return scheduler
+    const exitPath = joinRemote(handle.remoteRunDir, EXIT_CODE_FILE)
+    if (!(await session.exists(exitPath))) return scheduler
+    const raw = (await session.readTextFile(exitPath)).trim()
+    if (!/^[0-9]+$/.test(raw)) return scheduler
+    const code = Number(raw)
+    return Number.isSafeInteger(code)
+      ? { outcome: code === 0 ? 'completed' : 'failed', exitCode: code }
+      : scheduler
   }
 
   async tailLog(handle: RemoteJobHandle, stream: 'stdout' | 'stderr' = 'stdout'): Promise<string> {
@@ -283,7 +400,8 @@ export class SbatchRunner implements RemoteRunner {
   }
 
   async cancel(handle: RemoteJobHandle): Promise<void> {
-    await signalSlurmJob(await this.getSession(), handle.jobId, 'TERM')
+    if (handle.jobId === undefined || (await this.status(handle)).outcome !== 'running') return
+    await signalSlurmJob(await this.getSession(), handle, 'TERM')
   }
 
   async close(): Promise<void> {

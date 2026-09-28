@@ -1,59 +1,21 @@
-import { Client, type ConnectConfig } from 'ssh2'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { chmod, mkdtemp, rm } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { isAbsolute, join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
-/**
- * Already-resolved connection material for one remote host. Callers resolve
- * `privateKey`/`passphrase` from the OS keychain (safeStorage) before
- * building this — this module never reads, stores, or logs credentials
- * itself, and a `RemoteConnectionConfig` should never be persisted as-is.
- */
+import { diagnoseSshConnectionFailure, RemoteSshConnectionError } from './remote-ssh-diagnostics'
+import type { RemoteFileChunk, RemoteFileChunkOptions } from './remote-ssh-log'
+
+/** OpenSSH host alias resolved by the user's SSH configuration. Never persist credentials here. */
 export interface RemoteConnectionConfig {
   host: string
+  user?: string
   port?: number
-  username: string
-  privateKey: string | Buffer
-  passphrase?: string
-  /** Defaults to 15s — long enough for a slow login node, short enough to fail fast on a dead host. */
+  identityFile?: string
   readyTimeoutMs?: number
-  /**
-   * Defaults to 30s. Bounds each individual `exec()` call, not just the
-   * initial handshake — without this, a connection that goes half-open
-   * mid-command (TCP still "open" per the OS, but no data flowing — the
-   * exact failure mode of a flaky VPN link to a real cluster, confirmed
-   * against one) leaves `exec()`'s promise pending forever: no error, no
-   * timeout, nothing, since ssh2 never fires `close` on a channel whose
-   * underlying connection just silently died. `readyTimeoutMs` alone does
-   * NOT cover this — it only guards the handshake before `ready` fires.
-   */
   execTimeoutMs?: number
-  /**
-   * SSH client identification string sent during the initial handshake
-   * (`SSH-2.0-<ident>` on the wire — ssh2 adds the `SSH-2.0-` prefix
-   * itself, see `buildConnectConfig`). Defaults to `DEFAULT_SSH_IDENT`
-   * rather than ssh2's own default (`SSH-2.0-ssh2js<version>`) — verified
-   * against a real HPC cluster network where connections consistently
-   * stalled part-way through the handshake (past `REQUEST_SUCCESS`, never
-   * reaching `ready`) with ssh2's default ident, while plain OpenSSH on the
-   * same network worked every time. The leading suspect, from protocol
-   * debug logs and raw-socket testing, is a firewall/security appliance
-   * fingerprinting the client ident as non-standard tooling rather than a
-   * real terminal client. Sending an OpenSSH-shaped ident is a best-effort
-   * mitigation for that specific failure mode, not a confirmed complete
-   * fix — a network that fingerprints deeper than the ident line (e.g. the
-   * KEX algorithm list) would need a different workaround. Override this
-   * only if a specific target network needs a different string.
-   */
-  ident?: string
 }
-
-/**
- * ssh2's own default ident (`SSH-2.0-ssh2js<version>`) unambiguously marks
- * the connection as this library, not a normal terminal client — see
- * `RemoteConnectionConfig.ident`'s doc comment for why that's a real,
- * previously-observed compatibility risk on at least one network. Kept as
- * a module constant (not inlined) so both `buildConnectConfig` and its
- * tests reference the exact same value.
- */
-export const DEFAULT_SSH_IDENT = 'OpenSSH_9.6'
 
 export interface RemoteExecResult {
   stdout: string
@@ -62,37 +24,127 @@ export interface RemoteExecResult {
   signal: string | null
 }
 
-/**
- * The primitive remote operations `executor-remote.ts`'s runners are built
- * from. Kept minimal and POSIX-shell-shaped (no native SFTP directory
- * recursion, no streaming) — everything here assumes a Linux/macOS remote,
- * matching the shell commands (`setsid`, `kill -0`, …) the design doc uses.
- */
+export interface RemoteExecBoundedResult extends RemoteExecResult {
+  stdoutTruncated: boolean
+  stderrTruncated: boolean
+}
+
+export interface RemoteExecBoundedOptions {
+  timeoutMs: number
+  maxOutputBytes: number
+  signal?: AbortSignal
+}
+
+/** The POSIX remote operations used by detached and Slurm wrapper runners. */
 export interface RemoteSshSession {
   exec(command: string): Promise<RemoteExecResult>
+  /** Optional transport-native page reader; the shared SSH log reader has a bounded exec fallback. */
+  readFileChunk?: (path: string, options: RemoteFileChunkOptions) => Promise<RemoteFileChunk>
+  execWithInput?: (command: string, input: string) => Promise<RemoteExecResult>
+  execBounded?: (
+    command: string,
+    options: RemoteExecBoundedOptions
+  ) => Promise<RemoteExecBoundedResult>
   readTextFile(remotePath: string): Promise<string>
   writeTextFile(remotePath: string, content: string): Promise<void>
   mkdirp(remotePath: string): Promise<void>
   exists(remotePath: string): Promise<boolean>
-  /** Copies one local file (any bytes) to `remotePath` over SFTP, replacing it. The parent directory must exist. */
   uploadFile(localPath: string, remotePath: string): Promise<void>
   close(): Promise<void>
 }
 
-/** POSIX single-quote escaping for safe shell interpolation of untrusted-ish paths/content. */
+type SpawnImpl = (
+  binary: string,
+  args: string[],
+  options: { stdio: ['pipe', 'pipe', 'pipe'] }
+) => ChildProcessWithoutNullStreams
+
+export interface OpenSshRuntime {
+  spawnImpl?: SpawnImpl
+  tempRoot?: string
+}
+
+const DEFAULT_READY_TIMEOUT_MS = 15_000
+const DEFAULT_EXEC_TIMEOUT_MS = 30_000
+const MAX_EXEC_OUTPUT_BYTES = 8 * 1024 * 1024
+const MAX_CONTROL_OUTPUT_BYTES = 64 * 1024
+const activeMasters = new Set<ChildProcessWithoutNullStreams>()
+
+process.once('exit', () => {
+  for (const master of activeMasters) master.kill('SIGTERM')
+})
+
+const SSH_OPTIONS = [
+  '-o',
+  'BatchMode=yes',
+  '-o',
+  'StrictHostKeyChecking=yes',
+  '-o',
+  'ForwardAgent=no',
+  '-o',
+  'ClearAllForwardings=yes',
+  '-o',
+  'ServerAliveInterval=10',
+  '-o',
+  'ServerAliveCountMax=3'
+] as const
+
+/** A host alias is one argv element, never a shell fragment or an SSH option. */
+export function validateHostAlias(host: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._@-]*$/.test(host)) {
+    throw new Error('SSH 主机别名只能包含字母、数字、点、下划线、@ 和连字符，且不能以选项开头')
+  }
+  return host
+}
+
+export function validateRemoteConnectionOverrides(
+  config: Pick<RemoteConnectionConfig, 'user' | 'port' | 'identityFile'>
+): Pick<RemoteConnectionConfig, 'user' | 'port' | 'identityFile'> {
+  const user = config.user?.trim()
+  if (user && !/^[A-Za-z0-9_][A-Za-z0-9._@-]{0,127}$/.test(user)) {
+    throw new Error('SSH 用户名无效')
+  }
+  if (
+    config.port !== undefined &&
+    (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535)
+  ) {
+    throw new Error('SSH 端口必须为 1–65535 的整数')
+  }
+  const identityInput = config.identityFile?.trim()
+  const identityFile = identityInput?.startsWith('~/')
+    ? join(homedir(), identityInput.slice(2))
+    : identityInput
+  if (identityFile && (!isAbsolute(identityFile) || /[\r\n\0]/.test(identityFile))) {
+    throw new Error('SSH 私钥路径必须是本机绝对路径')
+  }
+  return {
+    ...(user ? { user } : {}),
+    ...(config.port !== undefined ? { port: config.port } : {}),
+    ...(identityFile ? { identityFile } : {})
+  }
+}
+
+function connectionArgs(
+  config: Pick<RemoteConnectionConfig, 'user' | 'port' | 'identityFile'>,
+  transport: 'ssh' | 'sftp'
+): string[] {
+  const checked = validateRemoteConnectionOverrides(config)
+  return [
+    ...(checked.user
+      ? transport === 'ssh'
+        ? ['-l', checked.user]
+        : ['-o', `User=${checked.user}`]
+      : []),
+    ...(checked.port !== undefined
+      ? [transport === 'ssh' ? '-p' : '-P', String(checked.port)]
+      : []),
+    ...(checked.identityFile ? ['-i', checked.identityFile, '-o', 'IdentitiesOnly=yes'] : [])
+  ]
+}
+
 export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
-
-// --- pure command builders ---------------------------------------------
-//
-// Split out from `buildSession` below so they're runnable against a real
-// local `bash` in tests (see tests/wrapper-remote-ssh-session.test.ts) —
-// exactly the gap that let two real bugs (an invalid `& &&` sequence in
-// executor-remote.ts, and this file's own writeTextFile silently adding a
-// spurious trailing newline to any content that already ended in one) ship
-// with a fully green test suite: every existing test drove these through an
-// in-memory fake session that never actually invoked a shell.
 
 export function buildMkdirpCommand(remotePath: string): string {
   return `mkdir -p ${shellQuote(remotePath)}`
@@ -107,208 +159,482 @@ export function buildReadTextFileCommand(remotePath: string): string {
 }
 
 export interface WriteTextFileCommand {
-  /** Writes `content`, plus possibly one extra trailing newline — see `needsTruncate`. */
   script: string
-  /**
-   * True when `content` didn't already end in `\n`: the heredoc's marker
-   * line forces one extra trailing newline onto the file that a follow-up
-   * `truncate -s -1` (this module's `buildTruncateLastByteCommand`) must
-   * strip for the write to be byte-exact.
-   */
   needsTruncate: boolean
 }
 
-/**
- * Builds the heredoc script that writes `content` to `remotePath`.
- * Quoting the delimiter (`<<'MARKER'`) disables all shell expansion inside
- * the body, so `content` is written byte-for-byte regardless of `$`,
- * backticks, or quotes in it — only a line matching the marker itself
- * would confuse it, so the marker is picked to not collide.
- */
 export function buildWriteTextFileCommand(
   remotePath: string,
   content: string
 ): WriteTextFileCommand {
+  if (content.includes('\0')) throw new Error('远程文本文件不能包含 NUL 字节')
   let heredocMarker = '__PHI_EOF__'
   while (content.includes(heredocMarker)) {
     heredocMarker = `${heredocMarker}_${Math.random().toString(36).slice(2, 8)}`
   }
-  // The marker must start its own line, so the heredoc body needs a
-  // trailing newline regardless of whether `content` has one. When it
-  // already does, that's a no-op; when it doesn't, this writes one byte
-  // more than `content` actually has — the caller corrects that with
-  // `buildTruncateLastByteCommand` when `needsTruncate` is true.
   const endsWithNewline = content.endsWith('\n')
   const body = endsWithNewline ? content : `${content}\n`
-  const script = `cat > ${shellQuote(remotePath)} <<'${heredocMarker}'\n${body}${heredocMarker}\n`
-  return { script, needsTruncate: !endsWithNewline }
+  return {
+    script: `cat > ${shellQuote(remotePath)} <<'${heredocMarker}'\n${body}${heredocMarker}\n`,
+    needsTruncate: !endsWithNewline
+  }
 }
 
 export function buildTruncateLastByteCommand(remotePath: string): string {
   return `truncate -s -1 ${shellQuote(remotePath)}`
 }
 
-/**
- * Pure config builder — kept separate from `connectRemoteSshSession` so the
- * `ident` mitigation (and its default) is testable without a real `ssh2`
- * `Client`/network, matching this file's existing split between pure
- * command builders and the real-ssh2 glue (see the module doc comment
- * above `buildMkdirpCommand`).
- */
-export function buildConnectConfig(config: RemoteConnectionConfig): ConnectConfig {
-  return {
-    host: config.host,
-    port: config.port ?? 22,
-    username: config.username,
-    privateKey: config.privateKey,
-    passphrase: config.passphrase,
-    readyTimeout: config.readyTimeoutMs ?? 15_000,
-    // Belt-and-suspenders alongside execTimeoutMs below: an SSH-level
-    // keepalive lets ssh2 itself notice a dead connection (no response to
-    // 3 keepalive probes 15s apart) and emit a real `error`/`close` event,
-    // rather than relying solely on each exec() call's own timer.
-    keepaliveInterval: 15_000,
-    keepaliveCountMax: 3,
-    ident: config.ident ?? DEFAULT_SSH_IDENT
-  }
+export function buildMasterArgs(
+  host: string,
+  controlPath: string,
+  config: RemoteConnectionConfig = { host }
+): string[] {
+  return [
+    '-T',
+    '-M',
+    '-N',
+    '-S',
+    controlPath,
+    '-o',
+    'ControlPersist=no',
+    '-o',
+    'ConnectTimeout=15',
+    ...connectionArgs(config, 'ssh'),
+    ...SSH_OPTIONS,
+    validateHostAlias(host)
+  ]
 }
 
-/**
- * Real `ssh2`-backed implementation. Exported separately from the
- * `RemoteSshSession` interface so runners can accept an injected fake in
- * tests instead — see `executor-remote.ts`'s `RemoteControllerOptions.connectImpl`.
- */
-export function connectRemoteSshSession(config: RemoteConnectionConfig): Promise<RemoteSshSession> {
-  const client = new Client()
-  const connectConfig = buildConnectConfig(config)
+export function buildExecArgs(
+  host: string,
+  controlPath: string,
+  command: string,
+  config: RemoteConnectionConfig = { host }
+): string[] {
+  return [
+    '-T',
+    '-S',
+    controlPath,
+    ...connectionArgs(config, 'ssh'),
+    ...SSH_OPTIONS,
+    validateHostAlias(host),
+    command
+  ]
+}
 
-  return new Promise<RemoteSshSession>((resolveSession, reject) => {
-    client.once('error', reject)
-    client.once('ready', () => {
-      client.removeListener('error', reject)
-      resolveSession(buildSession(client, config.execTimeoutMs ?? 30_000))
+export function buildSftpArgs(
+  host: string,
+  controlPath: string,
+  config: RemoteConnectionConfig = { host }
+): string[] {
+  return [
+    '-q',
+    '-b',
+    '-',
+    '-o',
+    `ControlPath=${controlPath}`,
+    ...connectionArgs(config, 'sftp'),
+    ...SSH_OPTIONS,
+    validateHostAlias(host)
+  ]
+}
+
+export function buildControlArgs(
+  host: string,
+  controlPath: string,
+  action: 'check' | 'exit',
+  config: RemoteConnectionConfig = { host }
+): string[] {
+  return [
+    '-S',
+    controlPath,
+    '-O',
+    action,
+    ...connectionArgs(config, 'ssh'),
+    ...SSH_OPTIONS,
+    validateHostAlias(host)
+  ]
+}
+
+function connectionFailureFromResult(
+  stderr: string,
+  code: number | null
+): RemoteSshConnectionError | null {
+  if (code !== 255) return null
+  return new RemoteSshConnectionError(diagnoseSshConnectionFailure(stderr))
+}
+
+/** SFTP batch paths are quoted separately from the remote POSIX shell. */
+export function quoteSftpPath(value: string): string {
+  if (!value || /[\r\n\0]/.test(value)) throw new Error('SFTP 路径不能为空或包含换行/NUL')
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+}
+
+function runProcess(
+  spawnImpl: SpawnImpl,
+  binary: string,
+  args: string[],
+  timeoutMs: number,
+  maxBytes: number,
+  input?: string,
+  signal?: AbortSignal
+): Promise<RemoteExecResult> {
+  return new Promise((resolve, reject) => {
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = spawnImpl(binary, args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    } catch (error) {
+      reject(error)
+      return
+    }
+
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    let totalBytes = 0
+    let failure: Error | undefined
+    let finished = false
+    let force: ReturnType<typeof setTimeout> | undefined
+    const fail = (error: Error): void => {
+      failure ??= error
+      child.kill('SIGTERM')
+      force ??= setTimeout(() => {
+        if (!finished) child.kill('SIGKILL')
+      }, 2_000)
+      force.unref()
+    }
+    const onAbort = (): void => {
+      fail(new Error('SSH 连接已关闭；远端操作结果可能尚未确认'))
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    if (signal?.aborted) onAbort()
+    const timer = setTimeout(() => {
+      fail(new Error(`${binary} 超时；远端操作结果可能尚未确认`))
+    }, timeoutMs)
+
+    const collect = (target: Buffer[], chunk: Buffer): void => {
+      totalBytes += chunk.byteLength
+      if (totalBytes > maxBytes) {
+        fail(new Error(`${binary} 输出超过 ${maxBytes} 字节；远端操作结果可能尚未确认`))
+        return
+      }
+      target.push(chunk)
+    }
+    child.stdout.on('data', (chunk: Buffer) => collect(stdout, chunk))
+    child.stderr.on('data', (chunk: Buffer) => collect(stderr, chunk))
+    child.once('error', (error) => {
+      failure ??= error
     })
-    client.connect(connectConfig)
+    child.once('close', (code, exitSignal) => {
+      finished = true
+      clearTimeout(timer)
+      if (force) clearTimeout(force)
+      signal?.removeEventListener('abort', onAbort)
+      if (failure) {
+        reject(failure)
+        return
+      }
+      resolve({
+        stdout: Buffer.concat(stdout).toString('utf-8'),
+        stderr: Buffer.concat(stderr).toString('utf-8'),
+        code,
+        signal: exitSignal
+      })
+    })
+    child.stdin.on('error', () => undefined)
+    child.stdin.end(input)
+  })
+}
+
+/** Keep draining both pipes after the inline budget fills, so output size does not kill a command. */
+function runProcessBounded(
+  spawnImpl: SpawnImpl,
+  args: string[],
+  options: RemoteExecBoundedOptions
+): Promise<RemoteExecBoundedResult> {
+  return new Promise((resolve, reject) => {
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = spawnImpl('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    } catch (error) {
+      reject(error)
+      return
+    }
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    let captured = 0
+    let stdoutTruncated = false
+    let stderrTruncated = false
+    let failure: Error | undefined
+    let finished = false
+    let force: ReturnType<typeof setTimeout> | undefined
+    const fail = (error: Error): void => {
+      failure ??= error
+      child.kill('SIGTERM')
+      force ??= setTimeout(() => {
+        if (!finished) child.kill('SIGKILL')
+      }, 2_000)
+      force.unref()
+    }
+    const onAbort = (): void => fail(new Error('SSH 调用已取消；远端命令结果可能尚未确认'))
+    options.signal?.addEventListener('abort', onAbort, { once: true })
+    if (options.signal?.aborted) onAbort()
+    const timer = setTimeout(
+      () => fail(new Error('SSH 命令超时；远端命令结果可能尚未确认')),
+      options.timeoutMs
+    )
+    const collect = (target: Buffer[], chunk: Buffer, stream: 'stdout' | 'stderr'): void => {
+      const remaining = Math.max(0, options.maxOutputBytes - captured)
+      const kept = Math.min(chunk.byteLength, remaining)
+      if (kept > 0) target.push(chunk.subarray(0, kept))
+      captured += kept
+      if (kept < chunk.byteLength) {
+        if (stream === 'stdout') stdoutTruncated = true
+        else stderrTruncated = true
+      }
+    }
+    child.stdout.on('data', (chunk: Buffer) => collect(stdout, chunk, 'stdout'))
+    child.stderr.on('data', (chunk: Buffer) => collect(stderr, chunk, 'stderr'))
+    child.once('error', (error) => {
+      failure ??= error
+    })
+    child.once('close', (code, exitSignal) => {
+      finished = true
+      clearTimeout(timer)
+      if (force) clearTimeout(force)
+      options.signal?.removeEventListener('abort', onAbort)
+      if (failure) {
+        reject(failure)
+        return
+      }
+      resolve({
+        stdout: Buffer.concat(stdout).toString('utf-8'),
+        stderr: Buffer.concat(stderr).toString('utf-8'),
+        stdoutTruncated,
+        stderrTruncated,
+        code,
+        signal: exitSignal
+      })
+    })
+    child.stdin.on('error', () => undefined)
+    child.stdin.end()
   })
 }
 
 /**
- * Exported (not just used internally by `connectRemoteSshSession`) so the
- * exec-timeout behavior is unit-testable against a minimal fake `Client`,
- * without needing a real flaky network to reproduce a hung connection —
- * see tests/wrapper-remote-ssh-session.test.ts.
+ * Reuses a private OpenSSH master for command and SFTP channels. Adapted from
+ * deepseek-harness packages/ssh/ssh/src/index.ts at
+ * 00102833dfaee1da9f48a3a8eae9d34005a75218 (MIT, Copyright 2026 DeepSeek).
+ * The remote helper/RPC lifetime is intentionally absent: Phi's detached and
+ * scheduler-submitted runs continue after this connection closes.
  */
-export function buildSession(client: Client, execTimeoutMs: number): RemoteSshSession {
-  function exec(command: string): Promise<RemoteExecResult> {
-    return new Promise((resolveExec, reject) => {
-      let settled = false
-      const timer = setTimeout(() => {
-        if (settled) return
-        settled = true
-        reject(
-          new Error(
-            `远程命令执行超时（${execTimeoutMs}ms 内无响应，连接可能已失效）: ${command.slice(0, 200)}`
-          )
-        )
-      }, execTimeoutMs)
-
-      client.exec(command, (err, stream) => {
-        if (err) {
-          if (settled) return
-          settled = true
-          clearTimeout(timer)
-          reject(err)
-          return
-        }
-        let stdout = ''
-        let stderr = ''
-        stream
-          .on('data', (chunk: Buffer) => {
-            stdout += chunk.toString('utf-8')
-          })
-          .on('close', (code: number | null, signal: string | null) => {
-            if (settled) return
-            settled = true
-            clearTimeout(timer)
-            resolveExec({ stdout, stderr, code, signal })
-          })
-          .stderr.on('data', (chunk: Buffer) => {
-            stderr += chunk.toString('utf-8')
-          })
-      })
+export async function connectRemoteSshSession(
+  config: RemoteConnectionConfig,
+  runtime: OpenSshRuntime = {}
+): Promise<RemoteSshSession> {
+  const host = validateHostAlias(config.host)
+  const spawnImpl: SpawnImpl =
+    runtime.spawnImpl ?? ((binary, args, options) => spawn(binary, args, options))
+  const dir = await mkdtemp(join(runtime.tempRoot ?? '/tmp', 'phi-ssh-'))
+  await chmod(dir, 0o700)
+  const controlPath = join(dir, 'master')
+  const operations = new AbortController()
+  let master: ChildProcessWithoutNullStreams
+  try {
+    master = spawnImpl('ssh', buildMasterArgs(host, controlPath, config), {
+      stdio: ['pipe', 'pipe', 'pipe']
     })
+  } catch (error) {
+    await rm(dir, { recursive: true, force: true })
+    const diagnosis = diagnoseSshConnectionFailure(error)
+    if (diagnosis.code === 'ssh_missing') throw new RemoteSshConnectionError(diagnosis)
+    throw error
   }
+  master.stdin.on('error', () => undefined)
+  master.stdin.end()
+  master.stdout.resume()
+  activeMasters.add(master)
+  let masterClosed = false
+  let masterError = ''
+  let masterFailure: Error | undefined
+  master.stderr.on('data', (chunk: Buffer) => {
+    masterError = (masterError + chunk.toString('utf-8')).slice(-2_000)
+  })
+  master.once('error', (error) => {
+    masterFailure = error
+    masterError = error.message
+  })
+  master.once('close', () => {
+    masterClosed = true
+    activeMasters.delete(master)
+    operations.abort()
+  })
 
-  async function mkdirp(remotePath: string): Promise<void> {
-    const result = await exec(buildMkdirpCommand(remotePath))
-    if (result.code !== 0) {
-      throw new Error(`远程创建目录失败: ${remotePath}\n${result.stderr || result.stdout}`)
+  const execTimeout = config.execTimeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS
+  let closed = false
+  let closing: Promise<void> | undefined
+  const checkOpen = (): void => {
+    if (closed || masterClosed) throw new Error('SSH 连接已关闭；远端操作结果可能尚未确认')
+  }
+  const call = async (command: string): Promise<RemoteExecResult> => {
+    checkOpen()
+    let result: RemoteExecResult
+    try {
+      result = await runProcess(
+        spawnImpl,
+        'ssh',
+        buildExecArgs(host, controlPath, command, config),
+        execTimeout,
+        MAX_EXEC_OUTPUT_BYTES,
+        undefined,
+        operations.signal
+      )
+    } catch (error) {
+      const diagnosis = diagnoseSshConnectionFailure(error)
+      if (diagnosis.code === 'ssh_missing') throw new RemoteSshConnectionError(diagnosis)
+      throw error
     }
+    const failure = connectionFailureFromResult(result.stderr, result.code)
+    if (failure) throw failure
+    return result
   }
-
-  async function exists(remotePath: string): Promise<boolean> {
-    const result = await exec(buildExistsCommand(remotePath))
-    return result.code === 0
-  }
-
-  async function readTextFile(remotePath: string): Promise<string> {
-    // `cat` over the exec channel rather than a raw SFTP stream — these
-    // files (launch.sh, params.json, exit_code, logs) are all small and
-    // this avoids opening a second (SFTP) channel for the common path.
-    const result = await exec(buildReadTextFileCommand(remotePath))
-    if (result.code !== 0) {
-      throw new Error(`远程读取文件失败: ${remotePath}\n${result.stderr}`)
-    }
-    return result.stdout
-  }
-
-  async function writeTextFile(remotePath: string, content: string): Promise<void> {
-    // Heredoc via exec keeps this on the same channel as everything else
-    // and sidesteps SFTP write-stream lifecycle entirely.
-    const { script, needsTruncate } = buildWriteTextFileCommand(remotePath, content)
-    const result = await exec(script)
-    if (result.code !== 0) {
-      throw new Error(`远程写入文件失败: ${remotePath}\n${result.stderr}`)
-    }
-    if (needsTruncate) {
-      // Verified against a real (loopback) SSH server: without this, any
-      // content not already ending in `\n` round-trips with one silently
-      // appended — see buildWriteTextFileCommand's doc comment.
-      const trimResult = await exec(buildTruncateLastByteCommand(remotePath))
-      if (trimResult.code !== 0) {
-        throw new Error(`远程写入文件失败（截断多余换行符）: ${remotePath}\n${trimResult.stderr}`)
+  const close = (): Promise<void> => {
+    closing ??= (async () => {
+      closed = true
+      operations.abort()
+      if (!masterClosed) {
+        await runProcess(
+          spawnImpl,
+          'ssh',
+          buildControlArgs(host, controlPath, 'exit', config),
+          2_000,
+          MAX_CONTROL_OUTPUT_BYTES
+        ).catch(() => undefined)
+        if (!masterClosed) {
+          const stopped = new Promise<void>((resolve) => master.once('close', () => resolve()))
+          master.kill('SIGTERM')
+          await Promise.race([stopped, delay(2_000)])
+          if (!masterClosed) master.kill('SIGKILL')
+        }
       }
+      await rm(dir, { recursive: true, force: true })
+    })()
+    return closing
+  }
+
+  try {
+    const deadline = Date.now() + (config.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS)
+    let ready = false
+    while (Date.now() < deadline && !masterClosed) {
+      const check = await runProcess(
+        spawnImpl,
+        'ssh',
+        buildControlArgs(host, controlPath, 'check', config),
+        Math.min(2_000, Math.max(1, deadline - Date.now())),
+        MAX_CONTROL_OUTPUT_BYTES
+      ).catch(() => null)
+      if (check?.code === 0) {
+        ready = true
+        break
+      }
+      await delay(100)
     }
-  }
+    if (!ready) {
+      const diagnosis = diagnoseSshConnectionFailure(
+        masterFailure ?? (masterError || (masterClosed ? '' : 'timed out'))
+      )
+      throw new RemoteSshConnectionError(diagnosis)
+    }
 
-  function uploadFile(localPath: string, remotePath: string): Promise<void> {
-    // A binary-safe stream, unlike writeTextFile's heredoc: used for the wrapper
-    // source archive. SFTP is opened per call since uploads are rare (one per
-    // bundle version) and a long-lived channel would need its own lifecycle.
-    return new Promise((resolveUpload, reject) => {
-      client.sftp((err, sftp) => {
-        if (err) {
-          reject(new Error(`无法打开 SFTP 通道: ${err.message}`))
-          return
+    return {
+      exec: call,
+      async execWithInput(command, input) {
+        checkOpen()
+        const result = await runProcess(
+          spawnImpl,
+          'ssh',
+          buildExecArgs(host, controlPath, command, config),
+          execTimeout,
+          MAX_CONTROL_OUTPUT_BYTES,
+          input,
+          operations.signal
+        )
+        const failure = connectionFailureFromResult(result.stderr, result.code)
+        if (failure) throw failure
+        return result
+      },
+      async execBounded(command, options) {
+        checkOpen()
+        const signal = options.signal
+          ? AbortSignal.any([operations.signal, options.signal])
+          : operations.signal
+        let result: RemoteExecBoundedResult
+        try {
+          result = await runProcessBounded(
+            spawnImpl,
+            buildExecArgs(host, controlPath, command, config),
+            {
+              ...options,
+              signal
+            }
+          )
+        } catch (error) {
+          const diagnosis = diagnoseSshConnectionFailure(error)
+          if (diagnosis.code === 'ssh_missing') throw new RemoteSshConnectionError(diagnosis)
+          throw error
         }
-        sftp.fastPut(localPath, remotePath, (putError) => {
-          sftp.end()
-          if (putError) {
-            reject(new Error(`远程上传文件失败: ${remotePath}\n${putError.message}`))
-            return
-          }
-          resolveUpload()
-        })
-      })
-    })
+        const failure = connectionFailureFromResult(result.stderr, result.code)
+        if (failure) throw failure
+        return result
+      },
+      async readTextFile(remotePath) {
+        const result = await call(buildReadTextFileCommand(remotePath))
+        if (result.code !== 0) throw new Error(`远程读取文件失败: ${remotePath}\n${result.stderr}`)
+        return result.stdout
+      },
+      async writeTextFile(remotePath, content) {
+        const { script, needsTruncate } = buildWriteTextFileCommand(remotePath, content)
+        const result = await call(script)
+        if (result.code !== 0) throw new Error(`远程写入文件失败: ${remotePath}\n${result.stderr}`)
+        if (needsTruncate) {
+          const trim = await call(buildTruncateLastByteCommand(remotePath))
+          if (trim.code !== 0)
+            throw new Error(`远程写入文件末尾修正失败: ${remotePath}\n${trim.stderr}`)
+        }
+      },
+      async mkdirp(remotePath) {
+        const result = await call(buildMkdirpCommand(remotePath))
+        if (result.code !== 0) throw new Error(`远程创建目录失败: ${remotePath}\n${result.stderr}`)
+      },
+      async exists(remotePath) {
+        return (await call(buildExistsCommand(remotePath))).code === 0
+      },
+      async uploadFile(localPath, remotePath) {
+        checkOpen()
+        const batch = `put ${quoteSftpPath(localPath)} ${quoteSftpPath(remotePath)}\n`
+        let result: RemoteExecResult
+        try {
+          result = await runProcess(
+            spawnImpl,
+            'sftp',
+            buildSftpArgs(host, controlPath, config),
+            execTimeout,
+            MAX_CONTROL_OUTPUT_BYTES,
+            batch,
+            operations.signal
+          )
+        } catch (error) {
+          const diagnosis = diagnoseSshConnectionFailure(error)
+          if (diagnosis.code === 'ssh_missing') throw new RemoteSshConnectionError(diagnosis)
+          throw error
+        }
+        const failure = connectionFailureFromResult(result.stderr, result.code)
+        if (failure) throw failure
+        if (result.code !== 0) throw new Error(`远程上传文件失败: ${remotePath}`)
+      },
+      close
+    }
+  } catch (error) {
+    await close()
+    throw error
   }
-
-  async function close(): Promise<void> {
-    await new Promise<void>((resolveClose) => {
-      client.once('close', () => resolveClose())
-      client.end()
-    })
-  }
-
-  return { exec, readTextFile, writeTextFile, mkdirp, exists, uploadFile, close }
 }

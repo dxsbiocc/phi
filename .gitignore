@@ -12,3 +12,7 @@ out
 resources/wrappers/**/work/
 resources/wrappers/**/results/
 resources/wrappers/**/.nextflow/
+
+# Local agent-tool runtime state (progress tracking, screenshots) — not
+# project source.
+.omx/

@@ -34,6 +34,7 @@ const ChevronRightIcon = PhiIcons.action.back
 const ExpandLessIcon = PhiIcons.action.collapse
 const SendIcon = PhiIcons.action.send
 const StopIcon = PhiIcons.action.stop
+const AGENT_EXECUTION_DETAIL_MAX_HEIGHT = 'min(560px, calc(100vh - 220px))'
 
 function timestampMs(value?: string): number | null {
   if (!value) return null
@@ -367,101 +368,114 @@ function AgentExecutionCard({
         onExiting={notifyContentResize}
         onExited={notifyContentResize}
       >
-        <TimelineRail active={isRunning} sx={{ py: 1 }}>
-          {item.argsJson ? (
-            <Box sx={{ mb: 1.25, minWidth: 0 }}>
-              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-                委派任务参数
+        <Box
+          data-phi-agent-execution-scroll="true"
+          tabIndex={0}
+          sx={{
+            maxHeight: AGENT_EXECUTION_DETAIL_MAX_HEIGHT,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            pr: 0.5,
+            outline: 'none',
+            '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
+          }}
+        >
+          <TimelineRail active={isRunning} sx={{ py: 1 }}>
+            {item.argsJson ? (
+              <Box sx={{ mb: 1.25, minWidth: 0 }}>
+                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                  委派任务参数
+                </Typography>
+                <Typography
+                  component="pre"
+                  variant="body2"
+                  sx={{
+                    m: 0,
+                    mt: 0.5,
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.8rem',
+                    whiteSpace: 'pre-wrap',
+                    overflowWrap: 'anywhere',
+                    color: 'text.secondary'
+                  }}
+                >
+                  {item.argsJson}
+                </Typography>
+              </Box>
+            ) : null}
+            {item.steps.length > 0 ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, minWidth: 0 }}>
+                {item.steps.map((step) => (
+                  <AgentStepRow
+                    key={step.id}
+                    step={step}
+                    cwd={cwd}
+                    onContentResize={onContentResize}
+                  />
+                ))}
+              </Box>
+            ) : (
+              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                等待内部工具步骤。
               </Typography>
+            )}
+            <AgentSteerHistory item={item} />
+            {controlTarget ? (
+              <AgentRunSteerBox target={controlTarget} toolCallId={item.id} onGone={setLost} />
+            ) : null}
+            {stopError ? (
+              <Typography variant="caption" component="div" sx={{ mt: 0.5, color: 'error.main' }}>
+                {stopError}
+              </Typography>
+            ) : null}
+            {lost ? (
+              <Typography variant="caption" component="div" sx={{ mt: 1, color: 'text.secondary' }}>
+                这个 Agent 已不在运行（可能 Phi 重启过），没有更多进展会显示。
+              </Typography>
+            ) : null}
+            {finalReport ? (
+              <>
+                <Divider sx={{ my: 1.25 }} />
+                <SavedFinalReportBlock item={item} />
+                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                  最终报告
+                  {item.finalReportBytes ? ` · ${formatBytes(item.finalReportBytes)}` : ''}
+                  {item.finalReportTruncated ? ' · 已截断' : ''}
+                </Typography>
+                <Box sx={{ mt: 0.5 }}>
+                  <MarkdownContent text={finalReport} cwd={cwd} onOpenLocalPath={onOpenLocalPath} />
+                </Box>
+              </>
+            ) : null}
+            {item.error ? (
               <Typography
-                component="pre"
-                variant="body2"
+                variant="caption"
+                component="div"
                 sx={{
-                  m: 0,
-                  mt: 0.5,
+                  mt: 1,
+                  color: 'error.main',
                   fontFamily: 'var(--font-mono)',
-                  fontSize: '0.8rem',
                   whiteSpace: 'pre-wrap',
-                  overflowWrap: 'anywhere',
-                  color: 'text.secondary'
+                  overflowWrap: 'anywhere'
                 }}
               >
-                {item.argsJson}
+                {item.error}
               </Typography>
+            ) : null}
+            <Box sx={{ display: 'flex', justifyContent: 'flex-start', pt: 0.5 }}>
+              <Tooltip title="折叠 Agent 执行" enterDelay={400}>
+                <IconButton
+                  size="small"
+                  aria-label="折叠 Agent 执行"
+                  onClick={toggle}
+                  sx={{ width: 28, height: 28, color: 'text.secondary' }}
+                >
+                  <ExpandLessIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
             </Box>
-          ) : null}
-          {item.steps.length > 0 ? (
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, minWidth: 0 }}>
-              {item.steps.map((step) => (
-                <AgentStepRow
-                  key={step.id}
-                  step={step}
-                  cwd={cwd}
-                  onContentResize={onContentResize}
-                />
-              ))}
-            </Box>
-          ) : (
-            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-              等待内部工具步骤。
-            </Typography>
-          )}
-          <AgentSteerHistory item={item} />
-          {controlTarget ? (
-            <AgentRunSteerBox target={controlTarget} toolCallId={item.id} onGone={setLost} />
-          ) : null}
-          {stopError ? (
-            <Typography variant="caption" component="div" sx={{ mt: 0.5, color: 'error.main' }}>
-              {stopError}
-            </Typography>
-          ) : null}
-          {lost ? (
-            <Typography variant="caption" component="div" sx={{ mt: 1, color: 'text.secondary' }}>
-              这个 Agent 已不在运行（可能 Phi 重启过），没有更多进展会显示。
-            </Typography>
-          ) : null}
-          {finalReport ? (
-            <>
-              <Divider sx={{ my: 1.25 }} />
-              <SavedFinalReportBlock item={item} />
-              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-                最终报告
-                {item.finalReportBytes ? ` · ${formatBytes(item.finalReportBytes)}` : ''}
-                {item.finalReportTruncated ? ' · 已截断' : ''}
-              </Typography>
-              <Box sx={{ mt: 0.5 }}>
-                <MarkdownContent text={finalReport} cwd={cwd} onOpenLocalPath={onOpenLocalPath} />
-              </Box>
-            </>
-          ) : null}
-          {item.error ? (
-            <Typography
-              variant="caption"
-              component="div"
-              sx={{
-                mt: 1,
-                color: 'error.main',
-                fontFamily: 'var(--font-mono)',
-                whiteSpace: 'pre-wrap',
-                overflowWrap: 'anywhere'
-              }}
-            >
-              {item.error}
-            </Typography>
-          ) : null}
-          <Box sx={{ display: 'flex', justifyContent: 'flex-start', pt: 0.5 }}>
-            <Tooltip title="折叠 Agent 执行" enterDelay={400}>
-              <IconButton
-                size="small"
-                aria-label="折叠 Agent 执行"
-                onClick={toggle}
-                sx={{ width: 28, height: 28, color: 'text.secondary' }}
-              >
-                <ExpandLessIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          </Box>
-        </TimelineRail>
+          </TimelineRail>
+        </Box>
       </Collapse>
     </Box>
   )

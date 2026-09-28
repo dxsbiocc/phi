@@ -135,7 +135,7 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTo
     name: 'wrapper_run',
     label: 'Run Wrapper',
     description:
-      'Start one wrapper by id in the BACKGROUND, merging the given parameter overrides into its default params.json, and return immediately with a run id. It launches a real Nextflow run that keeps going by itself; follow it with wrapper_status, block on it with wrapper_wait, stop it with wrapper_cancel. `target` picks where it runs: "local" (default) is this machine; "remote" is the project\'s saved HPC cluster, where Nextflow starts on the login node and submits every step to the scheduler. For a remote run every kind:input path MUST be a path on the cluster (Phi checks it exists there; local paths do not work), outputs stay on the cluster, and it survives Phi being closed. Choose `profile` based on what the user has available or prefers: docker (default locally) or singularity (default on the cluster) for container runtimes, conda to build/reuse a conda environment from the module\'s environment.yml instead.',
+      'Start one wrapper by id in the BACKGROUND, merging the given parameter overrides into its default params.json, and return immediately with a run id. It launches a real Nextflow run that keeps going by itself; follow it with wrapper_status, block on it with wrapper_wait, stop it with wrapper_cancel. In an SSH project the target defaults to that project server and explicit "local" is rejected; in a local project the target defaults to local, and "remote" uses its saved server. For a remote run every kind:input path MUST be a path on the server (Phi checks it exists there; local paths do not work), outputs stay on the server, and it survives Phi being closed. Choose `profile` based on what the user has available or prefers: docker (default locally) or singularity (default on the server) for container runtimes, conda to build/reuse a conda environment from the module\'s environment.yml instead.',
     parameters: {
       type: 'object',
       required: ['id'],
@@ -144,13 +144,13 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTo
         params: {
           type: 'object',
           description:
-            'Parameter overrides merged into the wrapper default params.json, e.g. {"reads": "...", "outdir": "..."}. Only kind:input/kind:output params normally need overriding.'
+            'Parameter overrides merged into defaults. An input may be a server path string or {"source":"remote","path":"/server/file"}; use {"source":"local","path":"/local/file"} only when this local project has a saved local-root→server-root mapping. Phi maps paths but does not upload data. Output and option values keep their ordinary types.'
         },
         target: {
           type: 'string',
           enum: ['local', 'remote'],
           description:
-            '"local" (default): run on this machine. "remote": run on the project\'s saved HPC cluster; input paths must then be paths on the cluster. Use remote when the user says to run on the cluster/HPC/server, or when the data lives there.'
+            'Omit to use the project location: SSH projects run on their bound server; local projects run locally. "local" is rejected in an SSH project. "remote" uses the project server or saved remote connection.'
         },
         profile: {
           type: 'string',
@@ -173,7 +173,9 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTo
       const profile =
         isRecord(params) && typeof params.profile === 'string' ? params.profile : undefined
       const target =
-        isRecord(params) && params.target === 'remote' ? ('remote' as const) : undefined
+        isRecord(params) && (params.target === 'remote' || params.target === 'local')
+          ? params.target
+          : undefined
 
       const continueWhenDone =
         isRecord(params) && params.continue_when_done === false ? false : undefined
@@ -191,7 +193,7 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTo
         content: [
           {
             type: 'text',
-            text: `Started wrapper run ${runId} (${id}, profile ${started.status.profile}${where}) in the background. Output directory${remote ? ` (on ${remote.host})` : ''}: ${outDir}. ${
+            text: `Started wrapper run ${runId} (${id}, profile ${started.status.profile}${where}) in the background. ${started.status.targetReason ? `${started.status.targetReason} ` : ''}Output directory${remote ? ` (on ${remote.host})` : ''}: ${outDir}. ${
               continueWhenDone === false
                 ? 'The conversation will NOT be woken when it ends.'
                 : 'When it ends Phi wakes the main agent with the outcome, so you do not need to wait for it.'

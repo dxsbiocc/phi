@@ -16,10 +16,21 @@ fallback:
     - bash
     - eval
     - web_search
+    - download_file
   match:
     - api.ncbi.nlm.nih.gov
+    - www.ncbi.nlm.nih.gov
     - eutils.ncbi.nlm.nih.gov
     - ftp.ncbi.nlm.nih.gov
+    - ncbi.nlm.nih.gov/geo
+    - geo/query
+    - acc.cgi
+    - gse
+    - gsm
+    - gpl
+    - sra
+    - bioproject
+    - biosample
     - rest.uniprot.org
     - rest.ensembl.org
     - alphafold.ebi.ac.uk

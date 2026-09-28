@@ -6,6 +6,9 @@ import AgentExecutionCard from '../AgentExecutionCard'
 import ToolCallCard from '../ToolCallCard'
 import ToolGroupCard from '../ToolGroupCard'
 import { WrapperPlanCard } from '../../features/wrapper/components/WrapperPlanCard'
+import { WorkspaceChangesCard } from '../../features/chat/components/WorkspaceChangesCard'
+import { PresentedFilesCard } from '../../features/chat/components/PresentedFilesCard'
+import { PlanReviewCard } from '../../features/chat/components/PlanReviewCard'
 import { PhiIcons } from '../../icons'
 import {
   centeredScrollTop,
@@ -21,11 +24,13 @@ import {
   type ChatVirtualViewport
 } from '../../lib/chatVirtualization'
 import { useLostAgentRunsStore } from '../../stores/lostAgentRunsStore'
+import { latestTodoSnapshot } from '../../lib/todoPanel'
 import type { ChatItem, ChatMessage, NotebookCellJumpTarget } from '../../types'
 import AgentRunsOverview from './AgentRunsOverview'
 import { ChatBubble } from './ChatBubble'
 import { ChatProcessingGroup, type ChatFocusRequest } from './ChatProcessingGroup'
 import { type UserMessageRetryTarget, type UserMessageState } from './ChatUserMessage'
+import TodoStepPanel from './TodoStepPanel'
 import { type ChatContentResizeOptions } from './useCollapseResizeNotifier'
 
 const JumpToLatestIcon = PhiIcons.action.expand
@@ -181,6 +186,7 @@ export type ChatMessageListProps = {
   currentRunStartedAt?: string
   onEditUserMessage?: (content: string) => void
   onRetryUserMessage?: (message: UserMessageRetryTarget) => void
+  onForkUserMessage?: (messageId: string) => void
   onGoSettings: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
@@ -195,6 +201,7 @@ const ChatMessageList = memo(function ChatMessageList({
   currentRunStartedAt,
   onEditUserMessage,
   onRetryUserMessage,
+  onForkUserMessage,
   onGoSettings,
   onOpenLocalPath,
   onJumpToNotebookCell,
@@ -220,6 +227,7 @@ const ChatMessageList = memo(function ChatMessageList({
     () => runningAgentRuns(messages, lostAgentRuns),
     [messages, lostAgentRuns]
   )
+  const todoSnapshot = useMemo(() => latestTodoSnapshot(messages), [messages])
   const virtualRowObserversRef = useRef<Map<string, ResizeObserver>>(new Map())
   const currentMessageMarker = useMemo(() => messageScrollMarker(messages), [messages])
   const renderGroups = useMemo(
@@ -566,6 +574,25 @@ const ChatMessageList = memo(function ChatMessageList({
       if (group.item.role === 'wrapper_plan') {
         return <WrapperPlanCard item={group.item} />
       }
+      if (group.item.role === 'workspace_changes') {
+        return (
+          <WorkspaceChangesCard
+            item={group.item}
+            onOpenFile={onOpenLocalPath ? (path) => onOpenLocalPath(path, 'file') : undefined}
+          />
+        )
+      }
+      if (group.item.role === 'presented_files') {
+        return (
+          <PresentedFilesCard
+            item={group.item}
+            onOpenFile={onOpenLocalPath ? (path) => onOpenLocalPath(path, 'file') : undefined}
+          />
+        )
+      }
+      if (group.item.role === 'plan_review') {
+        return <PlanReviewCard item={group.item} cwd={cwd} />
+      }
       return (
         <ChatBubble
           message={group.item}
@@ -574,6 +601,7 @@ const ChatMessageList = memo(function ChatMessageList({
           }
           onEditUserMessage={onEditUserMessage}
           onRetryUserMessage={onRetryUserMessage}
+          onForkUserMessage={onForkUserMessage}
           onGoSettings={onGoSettings}
           onOpenLocalPath={onOpenLocalPath}
           onContentResize={onMessagesContentResize}
@@ -592,6 +620,7 @@ const ChatMessageList = memo(function ChatMessageList({
       onMessagesContentResize,
       onOpenLocalPath,
       onRetryUserMessage,
+      onForkUserMessage,
       renderGroups.length,
       userMessageStates
     ]
@@ -634,6 +663,7 @@ const ChatMessageList = memo(function ChatMessageList({
         </Box>
       </Box>
       <AgentRunsOverview runs={runningAgents} onLocate={locateAgentCard} />
+      <TodoStepPanel snapshot={todoSnapshot} />
       {showJumpToLatest ? (
         <IconButton
           aria-label="回到最新消息"

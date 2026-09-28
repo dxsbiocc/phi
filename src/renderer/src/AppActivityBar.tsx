@@ -194,6 +194,7 @@ export type AppActivityBarProps = {
   onSelectSession: (path: string) => Promise<void>
   onRenameSession: (path: string, name: string) => Promise<void>
   onDeleteSession: (path: string) => Promise<void>
+  onExportSession: (session: SessionSummary) => void
   onStartProjectChat: (project: Project) => Promise<void>
   onDeleteProjectEntry: (project: Project) => Promise<void>
   onFetchProjectSessions: (workingDirectory: string) => Promise<SessionSummary[]>
@@ -232,6 +233,7 @@ function AppActivityBarImpl({
   onSelectSession,
   onRenameSession,
   onDeleteSession,
+  onExportSession,
   onStartProjectChat,
   onDeleteProjectEntry,
   onFetchProjectSessions,
@@ -472,6 +474,10 @@ function AppActivityBarImpl({
             }}
             onDeleteSession={(path) => {
               void onDeleteSession(path)
+            }}
+            onExportSession={(session) => {
+              closeWorkspaceSidebarPreview()
+              onExportSession(session)
             }}
             onStartProjectChat={(project) => {
               closeWorkspaceSidebarPreview()

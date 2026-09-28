@@ -1,17 +1,19 @@
-import { memo, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { useSortable, type AnimateLayoutChanges } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import {
   Box,
+  Divider,
   IconButton,
   ListItemButton,
-  Stack,
-  TextField,
+  Menu,
+  MenuItem,
   Tooltip,
   Typography
 } from '@mui/material'
 import { alpha, type Theme } from '@mui/material/styles'
-import { PhiIcons } from '../../icons'
+import { GoDownload, GoKebabHorizontal, GoPencil, GoTrash } from 'react-icons/go'
+import { SessionRenamePanel } from '../../features/session-actions/SessionRenamePanel'
 import {
   sessionBeaconKind,
   sessionRunningBeaconSlotWidth,
@@ -21,27 +23,35 @@ import {
   plainSidebarRowSx,
   ROW_LABEL_FONT_SIZE,
   ROW_META_FONT_SIZE,
+  editableSessionTitle,
   sessionTitle
 } from '../../lib/sessionSidebarShared'
 import type { SessionRuntimeState, SessionSummary } from '../../types'
 
-const CheckIcon = PhiIcons.state.check
-const CloseIcon = PhiIcons.action.close
-const DeleteIcon = PhiIcons.action.delete
-const EditIcon = PhiIcons.action.edit
-
 const sessionActionButtonSx = {
-  width: 26,
-  height: 26,
-  p: 0,
-  borderRadius: 1.25,
-  bgcolor: 'transparent',
+  width: 30,
+  height: 30,
+  p: 0.5,
+  color: 'text.secondary',
   '&:hover': {
-    bgcolor: 'transparent'
+    bgcolor: 'transparent',
+    color: 'primary.main'
   },
-  '& svg': {
-    fontSize: 16
+  '&.Mui-focusVisible': {
+    outline: '2px solid',
+    outlineColor: 'primary.main',
+    outlineOffset: 1
   }
+} as const
+const sessionMenuItemSx = {
+  minHeight: 40,
+  mx: 0.5,
+  my: 0.25,
+  px: 1.25,
+  gap: 1.25,
+  borderRadius: 1,
+  fontSize: ROW_LABEL_FONT_SIZE,
+  '& svg': { flexShrink: 0 }
 } as const
 const animateSortableLayoutChanges: AnimateLayoutChanges = ({ isSorting, wasDragging }) =>
   isSorting || wasDragging
@@ -174,6 +184,9 @@ type SessionRowProps = {
   onSelect: () => void
   onRename: (name: string) => void
   onDelete: () => void
+  onExport?: () => void
+  compactHoverPreview?: boolean
+  onPreviewInteractionChange?: (active: boolean) => void
 }
 
 function sessionRuntimeStatesMatch(
@@ -225,6 +238,12 @@ function mergedSessionForDisplay({
 
 function sessionRowPropsMatch(left: SessionRowProps, right: SessionRowProps): boolean {
   if (left.isActive !== right.isActive || left.indent !== right.indent) return false
+  if (
+    left.compactHoverPreview !== right.compactHoverPreview ||
+    left.onPreviewInteractionChange !== right.onPreviewInteractionChange
+  ) {
+    return false
+  }
   if (!sessionSummariesMatch(left.session, right.session)) return false
   if (!sessionRuntimeStatesMatch(left.runtimeState, right.runtimeState)) return false
 
@@ -245,10 +264,14 @@ const SessionRow = memo(function SessionRow({
   nowMs,
   onSelect,
   onRename,
-  onDelete
+  onDelete,
+  onExport,
+  compactHoverPreview = false,
+  onPreviewInteractionChange
 }: SessionRowProps): React.JSX.Element {
-  const [isEditing, setIsEditing] = useState(false)
-  const [editingName, setEditingName] = useState(sessionTitle(session))
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [editingName, setEditingName] = useState('')
   const displaySession = mergedSessionForDisplay({ session, runtimeState })
   const hasAttentionWeight = Boolean(
     displaySession.status === 'needs_approval' ||
@@ -256,102 +279,87 @@ const SessionRow = memo(function SessionRow({
     displaySession.unreadKind
   )
 
+  const interactionOpen = menuAnchor !== null || renameOpen
+  const exportDisabled =
+    displaySession.status === 'running' ||
+    displaySession.status === 'needs_approval' ||
+    displaySession.status === 'needs_input'
+  const closeMenu = (): void => setMenuAnchor(null)
+  const openRename = (): void => {
+    closeMenu()
+    setEditingName(editableSessionTitle(session))
+    setRenameOpen(true)
+  }
   const commitRename = (): void => {
-    if (editingName.trim()) onRename(editingName.trim())
-    setIsEditing(false)
+    const nextName = editingName.trim()
+    if (!nextName) return
+    if (nextName !== editableSessionTitle(session)) onRename(nextName)
+    setRenameOpen(false)
   }
 
+  useEffect(() => {
+    if (!compactHoverPreview || !interactionOpen) return undefined
+    onPreviewInteractionChange?.(true)
+    return () => onPreviewInteractionChange?.(false)
+  }, [compactHoverPreview, interactionOpen, onPreviewInteractionChange])
+
   return (
-    <ListItemButton
-      selected={isActive}
-      data-phi-session-row={isActive ? 'active' : 'inactive'}
-      onClick={() => {
-        if (!isEditing) onSelect()
-      }}
-      sx={{
-        ...plainSidebarRowSx,
-        alignItems: 'center',
-        minHeight: 36,
-        py: 0.5,
-        pl: `${sessionRunningBeaconSlotWidth(indent)}px`,
-        pr: 1,
-        position: 'relative',
-        overflow: 'hidden',
-        border: 1,
-        borderColor: isActive
-          ? (theme: Theme) => alpha(theme.palette.primary.main, 0.5)
-          : 'transparent',
-        borderRadius: isActive ? '999px' : 1.5,
-        bgcolor: isActive
-          ? (theme: Theme) =>
-              alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)
-          : 'transparent',
-        boxShadow: 'none',
-        transition: 'border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease',
-        '&.Mui-selected': {
-          backgroundColor: isActive
-            ? (theme: Theme) =>
-                `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)} !important`
-            : 'transparent !important'
-        },
-        '&.Mui-selected:hover': {
-          backgroundColor: isActive
-            ? (theme: Theme) =>
-                `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)} !important`
-            : 'transparent !important'
-        },
-        '&:hover': {
-          backgroundColor: isActive
-            ? (theme: Theme) =>
-                `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)} !important`
-            : 'transparent !important'
-        },
-        '&:hover .session-actions': { opacity: 1 },
-        '&:hover .session-time': { opacity: 0 }
-      }}
-    >
-      <SessionAttentionBeacon session={displaySession} indent={indent} />
-      {isEditing ? (
-        <TextField
-          autoFocus
-          size="small"
-          fullWidth
-          value={editingName}
-          onClick={(event) => event.stopPropagation()}
-          onChange={(event) => setEditingName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') commitRename()
-            if (event.key === 'Escape') setIsEditing(false)
-          }}
-          slotProps={{
-            input: {
-              endAdornment: (
-                <Stack direction="row">
-                  <IconButton
-                    size="small"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      commitRename()
-                    }}
-                  >
-                    <CheckIcon fontSize="small" />
-                  </IconButton>
-                  <IconButton
-                    size="small"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      setIsEditing(false)
-                    }}
-                  >
-                    <CloseIcon fontSize="small" />
-                  </IconButton>
-                </Stack>
-              )
+    <>
+      <Box
+        data-phi-session-row-shell="true"
+        sx={{
+          position: 'relative',
+          '&:hover .session-actions, &:focus-within .session-actions': {
+            opacity: 1
+          },
+          '&:hover .session-time, &:focus-within .session-time': { opacity: 0 }
+        }}
+      >
+        <ListItemButton
+          selected={isActive}
+          data-phi-session-row={isActive ? 'active' : 'inactive'}
+          onClick={onSelect}
+          sx={{
+            ...plainSidebarRowSx,
+            alignItems: 'center',
+            minHeight: 36,
+            py: 0.5,
+            pl: `${sessionRunningBeaconSlotWidth(indent)}px`,
+            pr: 1,
+            position: 'relative',
+            overflow: 'hidden',
+            border: 1,
+            borderColor: isActive
+              ? (theme: Theme) => alpha(theme.palette.primary.main, 0.5)
+              : 'transparent',
+            borderRadius: isActive ? '999px' : 1.5,
+            bgcolor: isActive
+              ? (theme: Theme) =>
+                  alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)
+              : 'transparent',
+            boxShadow: 'none',
+            transition: 'border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease',
+            '&.Mui-selected': {
+              backgroundColor: isActive
+                ? (theme: Theme) =>
+                    `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)} !important`
+                : 'transparent !important'
+            },
+            '&.Mui-selected:hover': {
+              backgroundColor: isActive
+                ? (theme: Theme) =>
+                    `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)} !important`
+                : 'transparent !important'
+            },
+            '&:hover': {
+              backgroundColor: isActive
+                ? (theme: Theme) =>
+                    `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)} !important`
+                : 'transparent !important'
             }
           }}
-        />
-      ) : (
-        <>
+        >
+          <SessionAttentionBeacon session={displaySession} indent={indent} />
           <Box
             sx={{
               minWidth: 0,
@@ -385,54 +393,116 @@ const SessionRow = memo(function SessionRow({
                 color: sessionStatusLabel(displaySession)
                   ? sessionStatusColor(displaySession)
                   : 'text.secondary',
+                opacity: menuAnchor ? 0 : 1,
                 transition: 'opacity 0.15s ease'
               }}
             >
               {sessionSecondaryText(displaySession, nowMs)}
             </Typography>
           </Box>
-          <Stack
-            direction="row"
-            className="session-actions"
-            sx={{
-              position: 'absolute',
-              right: 6,
-              top: '50%',
-              transform: 'translateY(-50%)',
-              opacity: 0,
-              transition: 'opacity 0.15s ease',
-              flexShrink: 0
+        </ListItemButton>
+        <Box
+          className="session-actions"
+          sx={{
+            position: 'absolute',
+            right: 14,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            opacity: menuAnchor ? 1 : 0,
+            transition: 'opacity 0.15s ease',
+            zIndex: 1,
+            WebkitAppRegion: 'no-drag'
+          }}
+        >
+          <Tooltip title="更多操作">
+            <IconButton
+              size="small"
+              aria-label="更多会话操作"
+              aria-haspopup="menu"
+              aria-expanded={menuAnchor !== null}
+              sx={{
+                ...sessionActionButtonSx,
+                ...(menuAnchor && {
+                  color: 'primary.main'
+                })
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                setMenuAnchor(event.currentTarget)
+              }}
+            >
+              <GoKebabHorizontal aria-hidden size={18} />
+            </IconButton>
+          </Tooltip>
+        </Box>
+      </Box>
+      <Menu
+        anchorEl={menuAnchor}
+        open={menuAnchor !== null}
+        onClose={closeMenu}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        slotProps={{
+          paper: {
+            elevation: 8,
+            sx: {
+              width: 208,
+              py: 0.75,
+              borderRadius: 2,
+              border: 1,
+              borderColor: 'divider',
+              bgcolor: 'background.paper'
+            }
+          }
+        }}
+        sx={
+          compactHoverPreview ? { zIndex: (theme: Theme) => theme.zIndex.tooltip + 1 } : undefined
+        }
+      >
+        <MenuItem sx={sessionMenuItemSx} onClick={openRename}>
+          <GoPencil aria-hidden size={18} />
+          重命名
+        </MenuItem>
+        {session.phiSessionId && onExport && (
+          <MenuItem
+            disabled={exportDisabled}
+            title={exportDisabled ? '运行结束后可导出' : undefined}
+            sx={sessionMenuItemSx}
+            onClick={() => {
+              closeMenu()
+              onExport()
             }}
           >
-            <Tooltip title="重命名">
-              <IconButton
-                size="small"
-                sx={sessionActionButtonSx}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  setEditingName(sessionTitle(session))
-                  setIsEditing(true)
-                }}
-              >
-                <EditIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="删除">
-              <IconButton
-                size="small"
-                sx={sessionActionButtonSx}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onDelete()
-                }}
-              >
-                <DeleteIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          </Stack>
-        </>
-      )}
-    </ListItemButton>
+            <GoDownload aria-hidden size={18} />
+            导出会话
+          </MenuItem>
+        )}
+        <Divider sx={{ mx: 1, my: 0.75 }} />
+        <MenuItem
+          sx={{
+            ...sessionMenuItemSx,
+            color: 'error.main',
+            '&:hover': { bgcolor: (theme: Theme) => alpha(theme.palette.error.main, 0.08) }
+          }}
+          onClick={() => {
+            closeMenu()
+            onDelete()
+          }}
+        >
+          <GoTrash aria-hidden size={18} />
+          删除
+        </MenuItem>
+      </Menu>
+      <SessionRenamePanel
+        open={renameOpen}
+        title={editingName}
+        compactHoverPreview={compactHoverPreview}
+        onTitleChange={setEditingName}
+        onClose={() => setRenameOpen(false)}
+        onSave={commitRename}
+      />
+    </>
   )
 }, sessionRowPropsMatch)
 

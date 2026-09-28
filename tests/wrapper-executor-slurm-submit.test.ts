@@ -14,9 +14,11 @@ import type {
 import { getWrapperRunsDir, writeWrapperRun } from '../src/main/agent/wrappers/store'
 import type { WrapperRun, WrapperRunPlan } from '../src/main/agent/wrappers/types'
 import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
+import { fakeLaunchClaimCommand } from './helpers/fakeLaunchClaims'
+import type { RemoteDoctorReport } from '../src/shared/remoteDoctorTypes'
 
 const REMOTE_RUN_DIR_PREFIX = '/data/lab/.phi/wrappers/runs'
-const FAKE_CONNECTION = { host: 'lab-hpc.example.edu', username: 'agent', privateKey: 'fake' }
+const FAKE_CONNECTION = { host: 'lab-hpc.example.edu' }
 
 /**
  * In-memory fake `RemoteSshSession` covering exactly the commands
@@ -28,18 +30,48 @@ const FAKE_CONNECTION = { host: 'lab-hpc.example.edu', username: 'agent', privat
  */
 class FakeSlurmHost implements RemoteSshSession {
   files = new Map<string, string>()
+  claims = new Set<string>()
+  submitCommands = 0
+  submitFault: 'before' | 'after' | undefined
   private jobOutcomes = new Map<string, { state: string; exitCode: number }>()
   private nextJobId = 7000
   closed = false
 
-  constructor(private readonly defaultOutcome: { state: string; exitCode: number } | 'untracked') {}
+  constructor(
+    private readonly defaultOutcome: { state: string; exitCode: number } | 'untracked',
+    private readonly inputProbeCode?: number,
+    private readonly preflightCode = 0
+  ) {}
 
   async exec(command: string): Promise<RemoteExecResult> {
+    const claim = fakeLaunchClaimCommand(command, this.claims)
+    if (claim) return claim
+    if (command.startsWith('bash -c ') && command.includes('#!/usr/bin/env bash')) {
+      return {
+        stdout: '',
+        stderr: this.preflightCode ? '模块加载失败' : '',
+        code: this.preflightCode,
+        signal: null
+      }
+    }
+    if (command.startsWith('bash -c ')) {
+      return {
+        stdout: this.inputProbeCode === undefined ? '/cluster/data\0' : '',
+        stderr: '',
+        code: this.inputProbeCode ?? 0,
+        signal: null
+      }
+    }
     if (command.startsWith('sbatch ')) {
+      this.submitCommands += 1
+      const fault = this.submitFault
+      this.submitFault = undefined
+      if (fault === 'before') throw new Error('SSH closed before sbatch')
       const jobId = String(this.nextJobId++)
       if (this.defaultOutcome !== 'untracked') {
         this.jobOutcomes.set(jobId, this.defaultOutcome)
       }
+      if (fault === 'after') throw new Error('SSH closed after sbatch')
       return { stdout: `Submitted batch job ${jobId}\n`, stderr: '', code: 0, signal: null }
     }
     if (command.startsWith('squeue ')) {
@@ -95,7 +127,7 @@ class FakeSlurmHost implements RemoteSshSession {
   }
 
   async exists(remotePath: string): Promise<boolean> {
-    return this.files.has(remotePath)
+    return this.files.has(remotePath) || this.claims.has(remotePath)
   }
 
   async close(): Promise<void> {
@@ -121,7 +153,7 @@ function writeFastqPair(projectDir: string, sample: string): void {
   writeFileSync(join(projectDir, 'data', `${sample}_R2.fastq.gz`), 'r2')
 }
 
-/** A `slurm-controller` plan — `plans.ts` always produces `executor: 'local'` (Phase 2's resolver isn't built yet), so this hand-overrides it, same as the executor-slurm.ts fixtures do. */
+/** A remote plan with a server-side input snapshot for the fake cluster. */
 async function createSlurmPlan(agentDir: string, projectDir: string): Promise<WrapperRunPlan> {
   const entry = installLegacyFastqQcWrapper(agentDir, projectDir)
   writeFastqPair(projectDir, 'S1')
@@ -132,7 +164,20 @@ async function createSlurmPlan(agentDir: string, projectDir: string): Promise<Wr
     cwd: projectDir,
     agentDir
   })
-  return { ...localPlan, executor: 'slurm-controller', profile: 'slurm' }
+  const reads = '/cluster/data/*_{R1,R2}.fastq.gz'
+  return {
+    ...localPlan,
+    executor: 'slurm-controller',
+    profile: 'slurm',
+    params: { ...localPlan.params, reads },
+    inputs: localPlan.inputs.map((input) => ({
+      ...input,
+      source: 'remote' as const,
+      userValue: reads,
+      localPaths: [],
+      remotePaths: [reads]
+    }))
+  }
 }
 
 function runFromPlan(plan: WrapperRunPlan): WrapperRun {
@@ -174,6 +219,7 @@ test('runSlurmWrapperExecution uploads the wrapper bundle, submits via sbatch, a
     })
 
     assert.equal(result.state, 'completed')
+    assert.match(result.inputWarnings?.join('\n') ?? '', /尚未确认匹配文件/)
     assert.equal(result.exitCode, 0)
     assert.ok(result.outputs && result.outputs.length >= 2)
     const report = result.outputs?.find((o) => o.id === 'report')
@@ -191,6 +237,11 @@ test('runSlurmWrapperExecution uploads the wrapper bundle, submits via sbatch, a
     assert.match(cluster.files.get(`${remoteRunDir}/launch.sh`) ?? '', /'nextflow' 'run'/)
     assert.ok(cluster.files.get(`${remoteRunDir}/job.sbatch`)?.includes('bash launch.sh'))
     assert.ok(cluster.files.has(`${remoteRunDir}/params.json`))
+    assert.match(
+      cluster.files.get(`${remoteRunDir}/nextflow.config`) ?? '',
+      /process\.executor = 'slurm'/
+    )
+    assert.match(cluster.files.get(`${remoteRunDir}/launch.sh`) ?? '', /'-c' 'nextflow\.config'/)
 
     // Reconnect metadata, for a future reconciliation pass.
     const snapshotPath = join(getWrapperRunsDir(agentDir), run.runId, 'remote.snapshot.json')
@@ -199,6 +250,206 @@ test('runSlurmWrapperExecution uploads the wrapper bundle, submits via sbatch, a
     assert.equal(typeof snapshot.jobId, 'string')
 
     assert.equal(cluster.closed, true)
+  }))
+
+test('Slurm head jobs collect reports from the submitted external output scope', () =>
+  withHarness(async ({ agentDir, projectDir }) => {
+    const plan = await createSlurmPlan(agentDir, projectDir)
+    const outputRoot = '/scratch/phi-slurm-reports'
+    const configured = { ...plan, params: { ...plan.params, outdir: outputRoot } }
+    const run = runFromPlan(configured)
+    const remoteRunDir = `${REMOTE_RUN_DIR_PREFIX}/${run.runId}`
+    run.outDir = outputRoot
+    run.remote = {
+      host: FAKE_CONNECTION.host,
+      runDir: remoteRunDir,
+      workspaceRoot: '/data/lab/.phi',
+      outputRoot,
+      externalOutputAuthorized: true
+    }
+    const cluster = new FakeSlurmHost({ state: 'COMPLETED', exitCode: 0 })
+    cluster.files.set(`${outputRoot}/results/multiqc_report.html`, '<html></html>')
+
+    const result = await runSlurmWrapperExecution(run, configured, {
+      agentDir,
+      remoteRunDir,
+      connection: FAKE_CONNECTION,
+      connectImpl: async () => cluster,
+      pollIntervalMs: 1
+    })
+
+    const report = result.outputs?.find((output) => output.id === 'report')
+    assert.equal(result.state, 'completed')
+    assert.equal(report?.path, `${outputRoot}/results/multiqc_report.html`)
+    assert.equal(report?.exists, true)
+  }))
+
+test('fresh Doctor blocks missing Slurm and keeps a restored sbatch target', () =>
+  withHarness(async ({ agentDir, projectDir }) => {
+    const base = await createSlurmPlan(agentDir, projectDir)
+    const plan: WrapperRunPlan = {
+      ...base,
+      profile: 'slurm-controller',
+      nextflowProfile: 'slurm',
+      targetSelection: {
+        projectId: 'project-a',
+        projectLocation: { kind: 'local', path: projectDir, realPath: projectDir },
+        target: 'remote',
+        reason: '已选择集群',
+        hostProfileId: 'host-a',
+        hostAlias: FAKE_CONNECTION.host,
+        connectionId: 'connection-a',
+        remoteRoot: '/data/lab/.phi',
+        scheduler: 'slurm',
+        controller: 'sbatch',
+        runtime: 'singularity'
+      }
+    }
+    const run = runFromPlan(plan)
+    const cluster = new FakeSlurmHost({ state: 'COMPLETED', exitCode: 0 })
+    const checks = [
+      'ssh',
+      'sftp',
+      'path',
+      'path_read',
+      'path_write',
+      'shell',
+      'nextflow',
+      'java',
+      'slurm_submit',
+      'slurm_status',
+      'slurm_detail',
+      'slurm_cancel'
+    ].map((id) => ({
+      id,
+      status: id === 'slurm_submit' ? ('error' as const) : ('ok' as const),
+      message: id === 'slurm_submit' ? '未找到 sbatch' : id
+    }))
+    const report: RemoteDoctorReport = {
+      hostProfileId: 'host-a',
+      checkedAt: new Date().toISOString(),
+      ok: false,
+      checks
+    }
+    const result = await runSlurmWrapperExecution(run, plan, {
+      agentDir,
+      remoteRunDir: `${REMOTE_RUN_DIR_PREFIX}/${run.runId}`,
+      connection: FAKE_CONNECTION,
+      hpc: { scheduler: 'slurm', controller: 'sbatch', runtime: 'singularity' },
+      connectImpl: async () => cluster,
+      doctorImpl: async () => report
+    })
+    assert.equal(result.state, 'failed')
+    assert.match(result.environmentError ?? '', /sbatch/)
+    assert.equal(cluster.files.size, 0, 'no upload or sbatch is allowed')
+    assert.equal(cluster.closed, false, 'the execution session was never opened')
+
+    const ready: RemoteDoctorReport = {
+      ...report,
+      ok: true,
+      checks: checks.map((check) => ({
+        ...check,
+        status: ['nextflow', 'java'].includes(check.id) ? ('warning' as const) : ('ok' as const)
+      }))
+    }
+    const restored = new FakeSlurmHost({ state: 'COMPLETED', exitCode: 0 })
+    const second = runFromPlan(plan)
+    const submitted = await runSlurmWrapperExecution(second, plan, {
+      agentDir,
+      remoteRunDir: `${REMOTE_RUN_DIR_PREFIX}/${second.runId}`,
+      connection: FAKE_CONNECTION,
+      hpc: {
+        scheduler: 'slurm',
+        controller: 'sbatch',
+        runtime: 'singularity',
+        queue: 'cpu',
+        account: 'lab1',
+        controllerOptions: '--qos=normal'
+      },
+      connectImpl: async () => restored,
+      doctorImpl: async () => ready,
+      pollIntervalMs: 1
+    })
+    assert.equal(submitted.state, 'completed')
+    assert.match(submitted.environmentWarnings?.join('\n') ?? '', /nextflow|java/)
+    assert.match(
+      restored.files.get(`${REMOTE_RUN_DIR_PREFIX}/${second.runId}/nextflow.config`) ?? '',
+      /process\.executor = 'slurm'/
+    )
+    assert.match(
+      restored.files.get(`${REMOTE_RUN_DIR_PREFIX}/${second.runId}/job.sbatch`) ?? '',
+      /#SBATCH --partition=cpu[\s\S]*#SBATCH --account=lab1[\s\S]*#SBATCH --qos=normal/
+    )
+
+    const unavailable = new FakeSlurmHost({ state: 'COMPLETED', exitCode: 0 }, undefined, 1)
+    const third = runFromPlan(plan)
+    const refused = await runSlurmWrapperExecution(third, plan, {
+      agentDir,
+      remoteRunDir: `${REMOTE_RUN_DIR_PREFIX}/${third.runId}`,
+      connection: FAKE_CONNECTION,
+      hpc: {
+        scheduler: 'slurm',
+        controller: 'sbatch',
+        runtime: 'singularity',
+        setupCommands: ['module load nextflow']
+      },
+      connectImpl: async () => unavailable,
+      doctorImpl: async () => ready
+    })
+    assert.equal(refused.state, 'failed')
+    assert.match(refused.environmentError ?? '', /模块加载失败/)
+    assert.equal(unavailable.files.size, 0, 'failed setup stops before upload and sbatch')
+  }))
+
+test('missing remote input stops Slurm submission before any bundle upload', () =>
+  withHarness(async ({ agentDir, projectDir }) => {
+    const plan = await createSlurmPlan(agentDir, projectDir)
+    const run = runFromPlan(plan)
+    run.inputReferences = [
+      {
+        id: 'reads',
+        kind: 'path',
+        source: 'remote',
+        userValue: '/cluster/missing.fq',
+        localPaths: [],
+        remotePaths: ['/cluster/missing.fq']
+      }
+    ]
+    const cluster = new FakeSlurmHost({ state: 'COMPLETED', exitCode: 0 }, 41)
+    const result = await runSlurmWrapperExecution(run, plan, {
+      agentDir,
+      remoteRunDir: `${REMOTE_RUN_DIR_PREFIX}/${run.runId}`,
+      connection: FAKE_CONNECTION,
+      connectImpl: async () => cluster
+    })
+    assert.equal(result.state, 'failed')
+    assert.match(result.inputErrors?.join('\n') ?? '', /reads.*不存在.*\/cluster\/missing\.fq/)
+    assert.equal(cluster.files.size, 0)
+    assert.equal(cluster.closed, true)
+  }))
+
+test('an uncertain Slurm receipt is recorded as lost with a recoverable run snapshot', () =>
+  withHarness(async ({ agentDir, projectDir }) => {
+    const plan = await createSlurmPlan(agentDir, projectDir)
+    const run = runFromPlan(plan)
+    const remoteRunDir = `${REMOTE_RUN_DIR_PREFIX}/${run.runId}`
+    const cluster = new FakeSlurmHost({ state: 'COMPLETED', exitCode: 0 })
+    cluster.submitFault = 'after'
+    const result = await runSlurmWrapperExecution(run, plan, {
+      agentDir,
+      remoteRunDir,
+      connection: FAKE_CONNECTION,
+      connectImpl: async () => cluster
+    })
+    assert.equal(result.state, 'lost')
+    assert.equal(result.launchUnknown, true)
+    assert.match(result.launchDiagnostic ?? '', /请勿重复提交/)
+    const snapshot = JSON.parse(
+      readFileSync(join(getWrapperRunsDir(agentDir), run.runId, 'remote.snapshot.json'), 'utf8')
+    )
+    assert.equal(snapshot.remoteRunDir, remoteRunDir)
+    assert.equal(snapshot.launchUnknown, true)
+    assert.equal(cluster.submitCommands, 1)
   }))
 
 test('runSlurmWrapperExecution fails the run when the wrapper is not installed', () =>

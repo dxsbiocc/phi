@@ -4,6 +4,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   writeFileSync
 } from 'node:fs'
@@ -26,13 +27,34 @@ export interface LocalShellSession extends RemoteSshSession {
   closed: boolean
 }
 
-export function createLocalShellSession(): LocalShellSession {
+export function createLocalShellSession(remoteRoot?: string): LocalShellSession {
   const session: LocalShellSession = {
     commands: [],
     uploads: [],
     closed: false,
     exec(command: string): Promise<RemoteExecResult> {
       session.commands.push(command)
+      // The macOS test sandbox denies `ps`. Simulate its run-script identity
+      // result from the PID receipt; fake host tests separately cover reuse.
+      const inspectedPid = command.match(/^ps -ww -o args= -p ([1-9][0-9]*)$/)?.[1]
+      if (inspectedPid && remoteRoot) {
+        const runsDir = join(remoteRoot, 'wrappers', 'runs')
+        const runDir = existsSync(runsDir)
+          ? readdirSync(runsDir)
+              .map((name) => join(runsDir, name))
+              .find(
+                (path) =>
+                  existsSync(join(path, 'pid')) &&
+                  readFileSync(join(path, 'pid'), 'utf8').trim() === inspectedPid
+              )
+          : undefined
+        return Promise.resolve({
+          stdout: runDir ? `bash ${runDir}/launch.sh\n` : '',
+          stderr: '',
+          code: runDir ? 0 : 1,
+          signal: null
+        })
+      }
       return new Promise((resolve) => {
         const child = spawn('bash', ['-c', command], { stdio: ['ignore', 'pipe', 'pipe'] })
         let stdout = ''

@@ -125,21 +125,35 @@ export function buildRemoteLaunchScript(input: {
   ]
     .map(shellQuote)
     .join(' ')
+  return buildRemoteConfiguredLaunchScript({
+    runDir: layout.runDir,
+    commands: [`cd ${shellQuote(layout.componentDir)}`, nextflow],
+    setupCommands: setup
+  })
+}
 
+/** Shared by composition and legacy runners so saved setup executes in the actual head job. */
+export function buildRemoteConfiguredLaunchScript(input: {
+  runDir: string
+  commands: string[]
+  setupCommands?: string[]
+}): string {
   const body = [
     '(',
     ...LOGIN_ENVIRONMENT,
     '  set -e',
-    ...setup.map((line) => `  ${line}`),
+    ...(input.setupCommands ?? [])
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => `  ${line}`),
     '  export NXF_ANSI_LOG=false',
-    `  cd ${shellQuote(layout.componentDir)}`,
-    `  ${nextflow}`,
+    ...input.commands.map((line) => `  ${line}`),
     ')'
   ].join('\n')
   // Record the exit code, then exit with it: under `sbatch` the job's own state is the
   // scheduler's answer, and it must say FAILED when Nextflow failed.
   const trap = ['rc=$?', `echo "$rc" > ${shellQuote('exit_code')}`, 'exit "$rc"'].join('\n')
-  return `#!/usr/bin/env bash\ncd ${shellQuote(layout.runDir)}\n${body}\n${trap}\n`
+  return `#!/usr/bin/env bash\ncd ${shellQuote(input.runDir)}\n${body}\n${trap}\n`
 }
 
 /** Slurm job names: keep to characters that survive being parsed back out of `squeue`. */
@@ -152,7 +166,7 @@ function slurmJobName(runId: string): string {
  * (`--time 7-00:00:00`) is joined with `=`; anything before the first flag is dropped. Whitespace,
  * including newlines, only ever separates flags: nothing here can add a line that is not a directive.
  */
-function sbatchFlags(text: string | undefined): string[] {
+export function sbatchFlags(text: string | undefined): string[] {
   const flags: string[] = []
   for (const token of (text ?? '').split(/\s+/).filter(Boolean)) {
     if (token.startsWith('-')) flags.push(token)
@@ -204,40 +218,92 @@ export function buildRemoteSbatchScript(input: {
 export function buildRemotePreflightScript(input: {
   hpc: RemoteHpcSettings | undefined
   profile: string
+  workspaceRoot?: string
 }): string {
-  const { hpc, profile } = input
-  const setup = (hpc?.setupCommands ?? []).map((line) => line.trim()).filter(Boolean)
-  const nextflow = hpc?.nextflowBin || 'nextflow'
-  const runtimeTool: Record<string, string[]> = {
-    singularity: ['singularity', 'apptainer'],
-    docker: ['docker'],
-    conda: ['conda', 'mamba']
-  }
-  const wanted = runtimeTool[profile] ?? []
+  const { hpc, profile, workspaceRoot } = input
+  const batchHead = hpc?.controller === 'sbatch'
+  const setup = (batchHead ? [] : (hpc?.setupCommands ?? []))
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const {
+    nextflow,
+    requiresSbatch,
+    runtimeCandidates: wanted
+  } = remotePreflightRequirements(hpc, profile)
   const lines = [
     '#!/usr/bin/env bash',
     ...LOGIN_ENVIRONMENT.map((line) => line.trimStart()),
+    'set -e',
     ...setup,
+    ...(workspaceRoot
+      ? [
+          `if ! { test -d ${shellQuote(workspaceRoot)} && test -r ${shellQuote(workspaceRoot)} && test -w ${shellQuote(workspaceRoot)} && test -x ${shellQuote(workspaceRoot)}; }; then`,
+          `  echo ${shellQuote(`服务器工作目录不存在或没有读取、写入与进入权限: ${workspaceRoot}`)} >&2`,
+          '  exit 1',
+          'fi'
+        ]
+      : []),
     `if ! command -v ${shellQuote(nextflow)} >/dev/null 2>&1; then`,
-    `  echo ${shellQuote(`Nextflow was not found on the host ("${nextflow}"). Set the Nextflow path in the connection settings, or add a setup command such as "module load nextflow".`)} >&2`,
-    '  exit 1',
+    batchHead
+      ? `  echo ${shellQuote('WARN: 登录节点未找到 Nextflow；请确认 sbatch 计算节点的启动命令会提供它。')}`
+      : `  echo ${shellQuote(`Nextflow was not found on the host ("${nextflow}"). Set the Nextflow path in the connection settings, or add a setup command such as "module load nextflow".`)} >&2`,
+    ...(batchHead ? [] : ['  exit 1']),
+    'fi',
+    'if ! command -v java >/dev/null 2>&1; then',
+    batchHead
+      ? `  echo ${shellQuote('WARN: 登录节点未找到 Java；请确认 sbatch 计算节点的启动命令会提供它。')}`
+      : `  echo ${shellQuote('Java 未在服务器运行环境中找到；请配置 Java 或在启动命令中加载。')} >&2`,
+    ...(batchHead ? [] : ['  exit 1']),
     'fi'
   ]
-  if (hpc?.scheduler === 'slurm' || hpc?.controller === 'sbatch') {
+  if (hpc?.controller === 'sbatch' && hpc.scheduler !== 'slurm') {
     lines.push(
-      'if ! command -v sbatch >/dev/null 2>&1; then',
-      `  echo ${shellQuote('sbatch was not found on the host, but the connection is set to use Slurm. Check the scheduler and head-process settings, or add a setup command that puts Slurm on the PATH.')} >&2`,
-      '  exit 1',
-      'fi'
+      `echo ${shellQuote('sbatch 控制方式必须同时选择 Slurm 调度，已拒绝在登录节点执行。')} >&2`,
+      'exit 1'
     )
+  }
+  if (requiresSbatch) {
+    for (const command of ['sbatch', 'squeue', 'scontrol', 'scancel']) {
+      lines.push(
+        `if ! command -v ${command} >/dev/null 2>&1; then`,
+        `  echo ${shellQuote(`${command} 未在服务器运行环境中找到；当前配置选择了 Slurm，不会自动改为主机本地执行。`)} >&2`,
+        '  exit 1',
+        'fi'
+      )
+    }
   }
   if (wanted.length > 0) {
     const anyPresent = wanted.map((tool) => `command -v ${tool} >/dev/null 2>&1`).join(' || ')
     lines.push(
       `if ! { ${anyPresent}; }; then`,
-      `  echo ${shellQuote(`WARN: ${wanted.join(' / ')} was not found on the host for profile "${profile}"; the run only works if it is available where the tasks run.`)}`,
+      hpc?.scheduler === 'slurm'
+        ? `  echo ${shellQuote(`WARN: ${wanted.join(' / ')} 在登录节点未找到；请确认计算节点可运行所选 ${profile} profile。`)}`
+        : `  echo ${shellQuote(`${wanted.join(' / ')} 在主机上不可用，无法直接运行所选 ${profile} profile。`)} >&2`,
+      ...(hpc?.scheduler === 'slurm' ? [] : ['  exit 1']),
       'fi'
     )
   }
+  if (hpc?.scheduler === 'slurm' && hpc.controller !== 'sbatch') {
+    lines.push(
+      `echo ${shellQuote('WARN: Nextflow 控制进程将在登录节点持续运行；若集群禁止，请选择 sbatch 控制方式。')}`
+    )
+  }
   return `${lines.join('\n')}\n`
+}
+
+/** Shared tool selection for launch preflight and the read-only remote doctor. */
+export function remotePreflightRequirements(
+  hpc: RemoteHpcSettings | undefined,
+  profile: string
+): { nextflow: string; requiresSbatch: boolean; runtimeCandidates: string[] } {
+  const runtimeTool: Record<string, string[]> = {
+    singularity: ['singularity', 'apptainer'],
+    docker: ['docker'],
+    conda: ['conda', 'mamba']
+  }
+  return {
+    nextflow: hpc?.nextflowBin || 'nextflow',
+    requiresSbatch: hpc?.scheduler === 'slurm' || hpc?.controller === 'sbatch',
+    runtimeCandidates: runtimeTool[profile] ?? []
+  }
 }
