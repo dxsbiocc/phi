@@ -6,6 +6,7 @@ import test from 'node:test'
 import { createHostJobClient } from '../src/main/agent/wrappers/composition/job-host-client'
 import { wrapperJobHostHandlers } from '../src/main/agent/wrappers/composition/job-host-handlers'
 import { WrapperJobManager } from '../src/main/agent/wrappers/composition/job-manager'
+import { readLocalNextflowVersion } from '../src/main/agent/wrappers/composition/nextflow-version'
 import {
   WRAPPER_JOB_HOST_METHODS,
   type WrapperJobStatus
@@ -55,6 +56,8 @@ test('start returns at once with a running job while Nextflow is still going', a
     sb.useFake()
     process.env.FAKE_NF_MS = '1500'
     const m = manager(sb)
+    // The one-time Nextflow version check is not what this measures.
+    await readLocalNextflowVersion(process.env.NEXTFLOW_BIN as string)
 
     const began = Date.now()
     const status = await startJob(m, sb)
