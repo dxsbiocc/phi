@@ -147,6 +147,9 @@ export function buildRemoteConfiguredLaunchScript(input: {
       .filter(Boolean)
       .map((line) => `  ${line}`),
     '  export NXF_ANSI_LOG=false',
+    // The launcher otherwise curls nextflow.io for a newer version before every run,
+    // with no timeout of its own: minutes of silence on a slow or offline host.
+    '  export NXF_DISABLE_CHECK_LATEST=true',
     ...input.commands.map((line) => `  ${line}`),
     ')'
   ].join('\n')

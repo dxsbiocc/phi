@@ -94,6 +94,13 @@ test('launch script runs nextflow from the component dir with the run files and 
   assert.match(script, /echo "\$rc" > 'exit_code'/)
 })
 
+test('launch script skips the launcher version check that stalls on slow or offline hosts', () => {
+  const script = buildRemoteLaunchScript({ layout: LAYOUT, profile: 'docker', hpc: undefined })
+  const check = script.indexOf('export NXF_DISABLE_CHECK_LATEST=true')
+  assert.ok(check >= 0)
+  assert.ok(check < script.indexOf("'nextflow' 'run'"))
+})
+
 test('launch script runs setup commands first and honors an explicit nextflow path', () => {
   const script = buildRemoteLaunchScript({
     layout: LAYOUT,
