@@ -505,12 +505,17 @@ test('submitWrapperRunPlan dispatches a plan.ts-resolved slurm-controller plan e
     // Unlike slurmControllerPlan() above, this plan comes from the real
     // resolveExecutor() path (no hand-override) — proving plans.ts's
     // resolver and runs.ts's dispatch branch actually connect end to end.
+    // A local project stays local unless remote execution is explicitly
+    // requested (see plans.ts's resolvePlanTarget), so this plan asks for
+    // remote explicitly and lets the project's default connection resolve
+    // the rest.
     const plan = createWrapperRunPlan({
       actor: 'agent',
       wrapper,
       params: { reads: 'data/*_{R1,R2}.fastq.gz' },
       cwd: projectDir,
-      agentDir
+      agentDir,
+      explicitTarget: 'remote'
     })
     assert.equal(plan.executor, 'slurm-controller')
 
@@ -624,7 +629,7 @@ test('resolveRemoteSubmitOptions reports a generic reason when neither an overri
 
     assert.ok('reason' in resolved)
     if ('reason' in resolved) {
-      assert.match(resolved.reason, /缺少远程连接信息/)
+      assert.match(resolved.reason, /缺少远程计算目标/)
     }
   })
 })
