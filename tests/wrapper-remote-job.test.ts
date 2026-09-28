@@ -721,3 +721,64 @@ test('sbatch controller: detach leaves the job going and attach finishes it from
     })
   })
 })
+
+test('with singularity and a cache dir, the wrapper images are staged before launch; a failure only warns', async () => {
+  await withSandbox(async (sb) => {
+    const calls: Array<{ cacheDir: string; files: string[] }> = []
+    await withHarness(
+      sb,
+      async (h) => {
+        const result = await start(h, {}, 'wrun_images', 'singularity').done
+        assert.equal(result.success, true, result.output)
+        assert.equal(calls.length, 1)
+        assert.equal(calls[0].cacheDir, '/shared/singularity')
+        assert.ok(calls[0].files.length > 0)
+        assert.ok(calls[0].files.every((file) => file.endsWith('.img') || file.endsWith('.sif')))
+        const output = h.output.join('')
+        assert.match(
+          output,
+          /镜像 .*gffread.* 未能放入缓存 \/shared\/singularity（registry unreachable）/
+        )
+        // The run itself still started and finished.
+        assert.match(output, /GFFREAD/)
+      },
+      (nextflowBin) => ({
+        hpc: {
+          scheduler: 'local',
+          nextflowBin,
+          singularityCacheDir: '/shared/singularity'
+        },
+        stageImagesImpl: async (_session, options) => {
+          calls.push({ cacheDir: options.cacheDir, files: options.images.map((i) => i.fileName) })
+          return {
+            staged: [],
+            failed: options.images.map((i) => ({
+              fileName: i.fileName,
+              reason: 'registry unreachable'
+            }))
+          }
+        }
+      })
+    )
+  })
+})
+
+test('docker runs, or singularity without a cache dir, never stage images', async () => {
+  await withSandbox(async (sb) => {
+    let staged = 0
+    await withHarness(
+      sb,
+      async (h) => {
+        assert.equal((await start(h, {}, 'wrun_docker').done).success, true)
+        assert.equal((await start(h, {}, 'wrun_nocache', 'singularity').done).success, true)
+        assert.equal(staged, 0)
+      },
+      {
+        stageImagesImpl: async () => {
+          staged += 1
+          return { staged: [], failed: [] }
+        }
+      }
+    )
+  })
+})

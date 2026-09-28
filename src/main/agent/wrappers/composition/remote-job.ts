@@ -1,5 +1,4 @@
-import { relative, sep } from 'node:path'
-import type { WrapperRunResources } from './resources'
+import { join, relative, sep } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import type { RemoteHpcSettings } from '../../../../shared/wrapperRemoteTypes'
@@ -31,6 +30,8 @@ import { cancelRemoteController, type RemoteCancelResult } from '../remote-cance
 import type { WrapperCompositionEntry } from './discovery'
 import type { WrapperProcess, WrapperRunResult } from './executor'
 import { ensureRemoteBundle } from './remote-bundle'
+import { collectWrapperSingularityImages, stageSingularityImages } from './remote-images'
+import type { WrapperRunResources } from './resources'
 import { controllerFor, controllerForHandle } from './remote-controller'
 import {
   buildRemoteLaunchScript,
@@ -62,6 +63,8 @@ export interface RemoteTarget {
   /** Injectable so tests can hand back a fake session. */
   connectImpl?: ConnectImpl
   pollIntervalMs?: number
+  /** Injectable so tests need no registry; defaults to the real image staging. */
+  stageImagesImpl?: typeof stageSingularityImages
 }
 
 /** Enough to resume watching a run after the app restarted. Holds no credentials. */
@@ -510,6 +513,33 @@ async function runPreflight(
   return undefined
 }
 
+/**
+ * With Singularity and a cache directory, puts the wrapper's images into that
+ * cache first, so offline compute nodes never have to pull. Images that cannot
+ * be staged only warn: the nodes may be able to pull them after all.
+ */
+async function stageImagesForRun(
+  session: RemoteSshSession,
+  options: StartRemoteOptions
+): Promise<void> {
+  const cacheDir = options.target.hpc?.singularityCacheDir
+  if (options.profile !== 'singularity' || !cacheDir) return
+  const images = collectWrapperSingularityImages(join(options.entry.wrapperDir, 'main.nf'))
+  if (images.length === 0) return
+  const stage = options.target.stageImagesImpl ?? stageSingularityImages
+  try {
+    const { failed } = await stage(session, { images, cacheDir, onOutput: options.onOutput })
+    for (const { fileName, reason } of failed) {
+      options.onOutput?.(
+        `警告：镜像 ${fileName} 未能放入缓存 ${cacheDir}（${reason}）。计算节点无法联网时运行会失败，可手动把该文件放入缓存目录后重试。\n`
+      )
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    options.onOutput?.(`警告：检查镜像缓存 ${cacheDir} 失败（${reason}），将直接启动运行。\n`)
+  }
+}
+
 /** Launches the run remotely: connect, ship the bundle, check inputs, write files, start detached. */
 async function launch(options: StartRemoteOptions, control: Control): Promise<WrapperRunResult> {
   const { entry, target } = options
@@ -621,6 +651,7 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
         `服务器 ${target.connection.host} 的输入核验失败：\n${checked.errors.map((line) => `- ${line}`).join('\n')}`
       )
     }
+    await stageImagesForRun(session, options)
     if (control.cancelled) return failure('', { cancelled: true })
     options.onSnapshot?.({
       runId: options.runId,

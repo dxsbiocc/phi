@@ -49,7 +49,8 @@ export interface RemoteSshSession {
   writeTextFile(remotePath: string, content: string): Promise<void>
   mkdirp(remotePath: string): Promise<void>
   exists(remotePath: string): Promise<boolean>
-  uploadFile(localPath: string, remotePath: string): Promise<void>
+  /** `timeoutMs` overrides the session's exec timeout, for large files such as container images. */
+  uploadFile(localPath: string, remotePath: string, options?: { timeoutMs?: number }): Promise<void>
   close(): Promise<void>
 }
 
@@ -587,7 +588,7 @@ export async function connectRemoteSshSession(
       async exists(remotePath) {
         return (await call(buildExistsCommand(remotePath))).code === 0
       },
-      async uploadFile(localPath, remotePath) {
+      async uploadFile(localPath, remotePath, options) {
         checkOpen()
         const batch = `put ${quoteSftpPath(localPath)} ${quoteSftpPath(remotePath)}\n`
         let result: RemoteExecResult
@@ -596,7 +597,7 @@ export async function connectRemoteSshSession(
             spawnImpl,
             'sftp',
             buildSftpArgs(host, controlPath, config),
-            execTimeout,
+            options?.timeoutMs ?? execTimeout,
             MAX_CONTROL_OUTPUT_BYTES,
             batch,
             operations.signal
