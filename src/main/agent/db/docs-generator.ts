@@ -73,9 +73,9 @@ export function buildDbNavigatorSkillMarkdown(
     '',
     `Generated: ${generatedAt.toISOString()}`,
     '',
-    'Use this skill only to decide where to look. Actual database access must go through `db_search`, `db_resolve`, `db_domain`, `db_docs_search`, `db_query`, and `db_download`.',
+    'Use this skill only to decide where to look. Actual database access must go through `db_search`, `db_resolve`, `db_routes`, `db_domain`, `db_docs_search`, `db_query`, and `db_download`.',
     '',
-    'When the user asks about NCBI Entrez, PubMed, ClinVar, Ensembl, UniProt, cBioPortal, PDBe, STRING, PubChem, Reactome, ChEMBL, Human Protein Atlas, GDC, WikiPathways, Gene Ontology, HPO, Disease Ontology, MeSH, AlphaFold, Europe PMC, MyGene, InterPro, KEGG, genes, variants, proteins, pathways, compounds, ontology terms, accessions, or biological database records, infer the database/domain yourself and route through `db_*` tools before falling back to general web search. Do not ask the user to name the tool function.',
+    'When the user asks about NCBI Entrez, PubMed, ClinVar, Ensembl, UniProt, cBioPortal, PDBe, STRING, PubChem, Reactome, ChEMBL, Human Protein Atlas, GDC, WikiPathways, Gene Ontology, HPO, Disease Ontology, MeSH, AlphaFold, Europe PMC, MyGene, InterPro, KEGG, genes, variants, proteins, pathways, compounds, ontology terms, accessions, or biological database records, choose relevant databases first, then inspect matching functions and their inputs through `db_*` tools before querying. Do not ask the user to name the tool function.',
     '',
     '## Database Category Index',
     '',
@@ -93,7 +93,7 @@ export function buildDbNavigatorSkillMarkdown(
     ...(useCases.length > 0
       ? useCases
       : [
-          '- Start with `db_search` to find a database, then inspect fields with `db_domain` or `db_docs_search` before calling `db_query`.'
+          '- Choose databases with `db_search`, find relevant functions in each with `db_routes`, then inspect only selected functions with `db_domain` before calling `db_query`. Independent sources may run in parallel.'
         ]),
     '',
     '## Recommended Entity Query Paths',

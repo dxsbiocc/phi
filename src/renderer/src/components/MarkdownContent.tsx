@@ -288,6 +288,11 @@ function MarkdownImage({
     null
   )
   const preview = previewState?.path === localPath ? previewState.preview : null
+  const bundledTemplatePreview = Boolean(
+    localPath
+      ?.replaceAll('\\', '/')
+      .match(/\/skills\/omics-visualization\/scripts\/[^/]+\/[^/]+\/preview\.png$/)
+  )
 
   useEffect(() => {
     if (
@@ -365,6 +370,7 @@ function MarkdownImage({
       component="span"
       data-phi-slot="local-markdown-image"
       data-phi-path={localPath}
+      data-phi-example-preview={bundledTemplatePreview || undefined}
       sx={{ display: 'block', my: 1, maxWidth: '100%' }}
     >
       {preview?.kind === 'image' ? (
@@ -409,7 +415,7 @@ function MarkdownImage({
               borderRadius: 1,
               border: 1,
               borderColor: 'divider',
-              bgcolor: 'background.default'
+              bgcolor: bundledTemplatePreview ? '#fff' : 'background.default'
             }}
           />
         </Box>

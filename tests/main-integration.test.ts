@@ -25,6 +25,7 @@ import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
 import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
 import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-preview-media'
 import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers/remote-result-download'
+import { isInstalledFigurePreviewPath } from '../src/main/agent/visualization/examples'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -383,6 +384,16 @@ async function harness(
     filePaths: []
   }
   let saveDialogResult: { canceled: boolean; filePath?: string } = { canceled: true }
+  const bundledFigurePreview = path.join(
+    process.cwd(),
+    'resources',
+    'skills',
+    'omics-visualization',
+    'scripts',
+    'scatter',
+    'volcano',
+    'preview.png'
+  )
   const previewFiles = new Map<string, Buffer>([
     ['/projects/current/src/App.tsx', Buffer.from('export const app = true\n')],
     ['/projects/current/README.md', Buffer.from('# Project\n')],
@@ -390,6 +401,7 @@ async function harness(
     ['/projects/current/notebooks/eda.ipynb', Buffer.from('{"nbformat":4,"cells":[]}')],
     ['/projects/current/large.txt', Buffer.alloc(320010, 'a')],
     ['/projects/current/plot.png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+    [bundledFigurePreview, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
     ['/projects/current/photo.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xd9])],
     ['/projects/current/animation.gif', Buffer.from('GIF89a\x01\x00\x01\x00', 'binary')],
     [
@@ -424,6 +436,7 @@ async function harness(
       ]
     ],
     ['/projects/current/src', [{ name: 'App.tsx', kind: 'file' }]],
+    [path.join(process.cwd(), 'resources', 'skills', 'omics-visualization'), []],
     ['/isolated', [{ name: 'sessions', kind: 'directory' }]],
     ['/isolated/sessions', [{ name: 'session-1', kind: 'directory' }]],
     ['/isolated/sessions/session-1', [{ name: 'tool-outputs', kind: 'directory' }]],
@@ -1804,6 +1817,11 @@ async function harness(
         throw new Error('wrapper.yaml 校验失败: (mocked in main-integration.test.ts)')
       }
     },
+    './agent/visualization/examples': { isInstalledFigurePreviewPath },
+    './agent/visualization/tools': {
+      getBundledSkillRoot: () =>
+        path.join(process.cwd(), 'resources', 'skills', 'omics-visualization')
+    },
     // Real scan of the repo's bundled agents, but never the developer's own ~/.claude etc.
     './agent/agents/discovery': {
       discoverPhiAgents: (options: Parameters<typeof discoverPhiAgents>[0]) =>
@@ -2816,6 +2834,48 @@ test('main IPC: file preview is limited to project and Phi-owned files', async (
   await assert.rejects(
     app.invoke('files:preview', '/projects/current/binary.dat'),
     /暂不支持预览二进制文件/
+  )
+})
+
+test('main IPC: an installed template preview image is displayable outside the project', async () => {
+  const app = await harness()
+  await app.invoke('projects:newSession', '/projects/current', 'ask')
+  const previewPath = path.join(
+    process.cwd(),
+    'resources',
+    'skills',
+    'omics-visualization',
+    'scripts',
+    'scatter',
+    'volcano',
+    'preview.png'
+  )
+  assert.deepEqual(await app.invoke('files:statLocalPaths', '/projects/current', [previewPath]), [
+    { path: previewPath, kind: 'file' }
+  ])
+  const preview = (await app.invoke('files:preview', previewPath)) as {
+    kind: string
+    path: string
+    dataUrl: string
+  }
+  assert.equal(preview.kind, 'image')
+  assert.equal(preview.path, previewPath)
+  assert.match(preview.dataUrl, /^data:image\/png;base64,/)
+  await assert.rejects(
+    app.invoke(
+      'files:preview',
+      path.join(
+        process.cwd(),
+        'resources',
+        'skills',
+        'omics-visualization',
+        'scripts',
+        'scatter',
+        'volcano',
+        'plot.R'
+      )
+    ),
+    /只能预览 Phi 保存的文件或当前项目内的文件/
   )
 })
 

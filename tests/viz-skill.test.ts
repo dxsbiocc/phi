@@ -68,8 +68,10 @@ test('the rules that keep figures honest and project-bound are still in SKILL.md
 })
 
 test('SKILL.md tells the agent to use the visualization tools, and keeps the manual commands as a fallback', () => {
-  for (const tool of ['viz_route', 'viz_prepare', 'viz_render'])
+  for (const tool of ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render'])
     assert.match(SKILL, new RegExp(tool))
+  assert.match(SKILL, /existing\s+`preview\.png`/)
+  assert.match(SKILL, /Do not\s+create\s+simulated data/)
   assert.match(SKILL, /scripts\/route_template\.py/)
   assert.match(SKILL, /qa_single_plot\.py/)
 })
@@ -96,7 +98,7 @@ test('the moved multi-panel workflow links still resolve from its new home', () 
   }
 })
 
-test('the Visualization agent is given the three visualization tools and told how to use them', () => {
+test('the Visualization agent is given example, route, prepare and render tools', () => {
   const { agents, diagnostics } = discoverPhiAgents({
     cwd: '/nonexistent/cwd',
     agentDir: '/nonexistent/agentdir',
@@ -106,7 +108,7 @@ test('the Visualization agent is given the three visualization tools and told ho
   assert.deepEqual(diagnostics, [])
   const visualization = agents.find((agent) => agent.name === 'Visualization')
   assert.ok(visualization)
-  for (const tool of ['viz_route', 'viz_prepare', 'viz_render']) {
+  for (const tool of ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']) {
     assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
     assert.match(visualization.systemPrompt, new RegExp(tool))
   }

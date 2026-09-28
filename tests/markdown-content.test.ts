@@ -283,6 +283,7 @@ test('markdown local image syntax renders a local preview container', () => {
   )
 
   assert.match(markup, /data-phi-slot="local-markdown-image"/)
+  assert.match(markup, /data-phi-example-preview="true"/)
   assert.match(
     markup,
     /data-phi-path="\/Users\/example\/project\/resources\/skills\/omics-visualization\/scripts\/scatter\/volcano\/preview\.png"/

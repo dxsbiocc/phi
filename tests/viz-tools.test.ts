@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync
@@ -14,6 +15,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { buildScopedPhiToolMap } from '../src/main/agent/agents/tool-resolution'
+import { isInstalledFigurePreviewPath } from '../src/main/agent/visualization/examples'
 import type {
   ProcessOptions,
   ProcessResult,
@@ -91,11 +93,12 @@ async function invoke(
 
 // ── registration ──────────────────────────────────────────────────────────
 
-test('the visualization tools are route, prepare and render, read then write then write', () => {
+test('the visualization tools include read-only shipped examples before render tools', () => {
   const tools = buildVisualizationTools({ skillRoot: SKILL_ROOT })
   assert.deepEqual(
     tools.map((tool) => [tool.name, tool.approval]),
     [
+      ['viz_examples', 'read'],
       ['viz_route', 'read'],
       ['viz_prepare', 'write'],
       ['viz_render', 'write']
@@ -108,7 +111,7 @@ test('only the Visualization agent is given the visualization tools', () => {
   const groups = { wrapper: [], database: [], visualization: tools }
   assert.deepEqual(
     [...buildScopedPhiToolMap('Visualization', groups).keys()],
-    ['viz_route', 'viz_prepare', 'viz_render']
+    ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']
   )
   assert.equal(buildScopedPhiToolMap('Database', groups).has('viz_route'), false)
   assert.equal(buildScopedPhiToolMap('Wrapper', groups).has('viz_render'), false)
@@ -123,9 +126,97 @@ test('the tool schemas say what is required and bound the enums', () => {
   ): { required?: string[]; properties?: Record<string, { enum?: string[] }> } =>
     tools.find((tool) => tool.name === name)?.parameters as never
   assert.deepEqual(schema('viz_route').required?.slice().sort(), ['data_path', 'purpose'])
+  assert.deepEqual(schema('viz_examples').required, ['purpose'])
   assert.deepEqual(schema('viz_route').properties?.mode?.enum, ['preview', 'publication'])
   assert.deepEqual(schema('viz_prepare').required?.slice().sort(), ['template_id', 'workdir'])
   assert.deepEqual(schema('viz_render').required?.slice().sort(), ['inputs', 'output', 'script'])
+})
+
+test('viz_examples returns installed preview images without data, rendering, or project writes', async () => {
+  const box = sandbox()
+  try {
+    const { runner, calls } = fakeRunner(() => ({ stdout: 'should not run' }))
+    const preview = join(SKILL_ROOT, 'scripts', 'scatter', 'volcano', 'preview.png')
+    const original = readFileSync(preview)
+    const result = await invoke(runner, 'viz_examples', { purpose: 'volcano plot' }, box.cwd)
+    assert.equal(result.isError, undefined)
+    const body = result.json() as {
+      candidates: Array<{ template_id: string; preview: string; preview_markdown: string }>
+    }
+    const volcano = body.candidates.find((item) => item.template_id === 'scatter-volcano')
+    assert.ok(volcano)
+    assert.equal(volcano.preview, preview)
+    assert.equal(volcano.preview_markdown, `![scatter-volcano](${preview})`)
+    assert.equal(existsSync(volcano.preview), true)
+    assert.deepEqual(readFileSync(preview), original)
+    assert.deepEqual(readdirSync(box.cwd), [])
+    assert.equal(calls.length, 0)
+  } finally {
+    box.cleanup()
+  }
+})
+
+test('viz_examples recognizes a Chinese example request and keeps the shortlist bounded', async () => {
+  const box = sandbox()
+  try {
+    const result = await invoke(
+      undefined,
+      'viz_examples',
+      { purpose: '给我看几个火山图示例', top: 99 },
+      box.cwd
+    )
+    const body = result.json() as {
+      dataFitted: boolean
+      candidates: Array<{ template_id: string; preview: string }>
+    }
+    assert.equal(body.dataFitted, false)
+    assert.ok(body.candidates.some((item) => item.template_id === 'scatter-volcano'))
+    assert.ok(body.candidates.length <= 4)
+    assert.ok(body.candidates.every((item) => existsSync(item.preview)))
+  } finally {
+    box.cleanup()
+  }
+})
+
+test('only an installed template preview path is eligible for chat image preview', () => {
+  const preview = join(SKILL_ROOT, 'scripts', 'scatter', 'volcano', 'preview.png')
+  assert.equal(isInstalledFigurePreviewPath(preview, SKILL_ROOT), true)
+  assert.equal(isInstalledFigurePreviewPath(VOLCANO_DATA, SKILL_ROOT), false)
+  assert.equal(isInstalledFigurePreviewPath('/tmp/other/preview.png', SKILL_ROOT), false)
+})
+
+test('every catalog example points to an installed preview image', () => {
+  const catalog = JSON.parse(
+    readFileSync(join(SKILL_ROOT, 'references', 'template_contracts.json'), 'utf8')
+  ) as { templates: Array<{ id: string; preview: string }> }
+  assert.ok(catalog.templates.length > 0)
+  for (const template of catalog.templates) {
+    const preview = join(SKILL_ROOT, template.preview)
+    assert.equal(
+      isInstalledFigurePreviewPath(preview, SKILL_ROOT),
+      true,
+      `missing installed preview for ${template.id}`
+    )
+  }
+})
+
+test('viz_examples reports no matching installed example without creating a substitute', async () => {
+  const box = sandbox()
+  try {
+    const { runner, calls } = fakeRunner(() => ({ stdout: 'should not run' }))
+    const result = await invoke(
+      runner,
+      'viz_examples',
+      { purpose: 'zzzz-no-such-figure-family' },
+      box.cwd
+    )
+    const body = result.json() as { candidates: unknown[] }
+    assert.deepEqual(body.candidates, [])
+    assert.deepEqual(readdirSync(box.cwd), [])
+    assert.equal(calls.length, 0)
+  } finally {
+    box.cleanup()
+  }
 })
 
 // ── viz_route ─────────────────────────────────────────────────────────────

@@ -16,23 +16,24 @@ description: >-
 
 # Omics Visualization
 
-Use the bundled template library to create, revise, and audit figures from
-existing omics results. Visualization is for making a data pattern,
-distribution, comparison, or uncertainty easier to inspect and communicate; do
-not make a chart merely because a chart was requested. Select templates from
-the catalogs, not from memory. The selected canonical template determines the
-implementation language.
+Use bundled templates for existing omics results. Make a pattern, comparison,
+or uncertainty easier to inspect; select from catalogs, not memory. The chosen
+template determines the implementation language.
 
-Default to a Nature-style scientific figure: one defensible claim, the
-smallest sufficient visual vocabulary, restrained color, readable typography at
-the final physical size, and no decorative encodings. Treat this as a design
-philosophy unless the user gives journal-specific submission rules.
+Default to a Nature-style figure: one defensible claim, restrained color and
+readable type at final size, unless journal rules specify otherwise.
+
+## Installed examples without data
+
+Without user data, call `viz_examples` by purpose. Embed its existing
+`preview.png` via `preview_markdown` unchanged as a Markdown image; label it a
+template example. Show up to four; ask for choice or data. Do not create
+simulated data, render, copy, or replace it; report no match.
 
 ## Route
 
-Phi gives the Visualization agent three tools for the mechanical steps:
-`viz_route`, `viz_prepare` and `viz_render`. The equivalent commands are shown in
-brackets for use without them.
+Use `viz_examples` without data; otherwise use `viz_route`, `viz_prepare`,
+`viz_render`. CLI equivalents follow.
 
 1. State the visualization purpose before choosing a chart: what should become
    easier to see, compare, verify, or question after plotting? If the purpose is
@@ -68,11 +69,9 @@ brackets for use without them.
    and `input_shape`. When two templates of one family look alike, read
    [references/mis-routes.md](references/mis-routes.md). If one template clearly
    matches the purpose, distribution, claim, and data contract, proceed with it
-   and record the reason. If several viable templates would trade off
-   overview/detail, show up to four candidates with their preview
-   (`preview_markdown` from `viz_route`), `id`, why it fits, why it might
-   mislead, and expected input shape; let the user choose among those material
-   alternatives.
+   and record the reason. If alternatives change interpretation, show up to
+   four real previews (`preview_markdown`), fit, risks and required input;
+   let the user choose.
 6. Select one canonical template and make a project-local copy with
    `viz_prepare`. It returns the template's purpose, the tables it takes, its R
    dependencies, and the CONFIG and DATA PREPARATION sections with their line

@@ -2,6 +2,7 @@ import type { CustomTool, CustomToolContext } from '@oh-my-pi/pi-coding-agent'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { getBundledWrapperPackagesDir } from '../wrappers/catalog'
+import { findFigureExamples } from './examples'
 import { runProcess, type ProcessRunner } from './process'
 import { prepareTemplate } from './prepare'
 import { renderFigure } from './render'
@@ -58,6 +59,33 @@ function projectDir(ctx: CustomToolContext): string {
 export function buildVisualizationTools(options: VisualizationToolOptions = {}): CustomTool[] {
   const skillRoot = options.skillRoot ?? getBundledSkillRoot()
   const run = options.runner ?? runProcess
+
+  const examples: CustomTool = {
+    name: 'viz_examples',
+    label: 'Show Installed Figure Examples',
+    description:
+      "Find real preview.png images already shipped with omics-visualization templates. Use when the user asks to see examples or styles without providing a data table. This reads the installed catalog and images; it does not create sample data, simulate a plot, render a new figure, or write to the project. Embed the returned preview_markdown images unchanged and explain that they are template examples, not plots of the user's data.",
+    parameters: {
+      type: 'object',
+      required: ['purpose'],
+      properties: {
+        purpose: { type: 'string', description: 'Chart family or visual purpose to preview.' },
+        top: { type: 'integer', minimum: 1, maximum: 4, default: 4 }
+      }
+    },
+    approval: 'read',
+    async execute(_toolCallId, params) {
+      const record = isRecord(params) ? params : {}
+      const purpose = text(record.purpose)
+      if (!purpose) return failure('purpose is required.')
+      try {
+        const top = typeof record.top === 'number' ? record.top : 4
+        return success('viz_examples_result', findFigureExamples(skillRoot, purpose, top))
+      } catch (error) {
+        return failure(error instanceof Error ? error.message : String(error))
+      }
+    }
+  }
 
   const route: CustomTool = {
     name: 'viz_route',
@@ -206,5 +234,5 @@ export function buildVisualizationTools(options: VisualizationToolOptions = {}):
     }
   }
 
-  return [route, prepare, render]
+  return [examples, route, prepare, render]
 }

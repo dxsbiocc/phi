@@ -781,7 +781,7 @@ function phiToolFunctions(
   }
   if (agentName === 'Database') {
     try {
-      databaseTools = buildDefaultDbCustomTools(agentDir)
+      databaseTools = buildDefaultDbCustomTools(agentDir, {}, { enforceRouting: true })
     } catch {
       // A broken connector catalog must not prevent the specialist session from starting.
     }

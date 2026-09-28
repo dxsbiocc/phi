@@ -379,6 +379,7 @@ test('the bundled Database agent owns only biological database tools', () => {
   assert.deepEqual(database.tools, [
     'db_search',
     'db_resolve',
+    'db_routes',
     'db_domain',
     'db_docs_search',
     'db_query',
@@ -393,9 +394,10 @@ test('the bundled Database agent owns only biological database tools', () => {
   assert.match(database.systemPrompt, /provenance/i)
   assert.match(database.systemPrompt, /bulk download/i)
   assert.match(database.systemPrompt, /before (?:the )?first tool call/i)
-  assert.match(database.systemPrompt, /candidate routes/i)
+  assert.match(database.systemPrompt, /candidate databases/i)
+  assert.match(database.systemPrompt, /may be inspected and queried in parallel/i)
   assert.match(database.systemPrompt, /exact public-accession/i)
-  assert.match(database.systemPrompt, /Do not call `db_search` or `db_domain` first/i)
+  assert.match(database.systemPrompt, /db_resolve.*replace these discovery steps/i)
   assert.match(database.systemPrompt, /do not repeat/i)
   assert.doesNotMatch(database.systemPrompt, /skill:\/\/create-database-connector/)
   assert.ok(database.delegation && database.delegation.length > 0)
@@ -403,9 +405,13 @@ test('the bundled Database agent owns only biological database tools', () => {
   assert.equal(database.fallback?.afterFailures, 1)
   assert.deepEqual(database.fallback?.tools, ['bash', 'eval', 'web_search', 'download_file'])
   assert.ok(database.fallback?.match.includes('rest.uniprot.org'))
+  assert.match(database.description, /does not conduct open-ended literature reviews/i)
+  assert.match(database.delegation ?? '', /literature search.*main agent/i)
+  assert.match(database.systemPrompt, /do not broaden a literature search/i)
   for (const toolName of [
     'db_search',
     'db_resolve',
+    'db_routes',
     'db_domain',
     'db_docs_search',
     'db_query',
@@ -413,6 +419,51 @@ test('the bundled Database agent owns only biological database tools', () => {
   ]) {
     assert.doesNotMatch(database.delegation ?? '', new RegExp(`\\b${toolName}\\b`))
   }
+})
+
+test('specialists keep delegated scope, evidence, and stop rules explicit', () => {
+  const { agents } = discoverPhiAgents({
+    cwd: '/nonexistent/cwd',
+    agentDir: '/nonexistent/agentdir',
+    bundledDir: REPO_AGENTS_DIR,
+    homeDir: '/nonexistent/home'
+  })
+  for (const name of ['Database', 'Visualization', 'Wrapper']) {
+    const prompt = agents.find((agent) => agent.name === name)?.systemPrompt ?? ''
+    assert.match(prompt, /do not broaden the delegated task/i, `${name} must preserve scope`)
+    assert.match(prompt, /tool outputs?.*evidence, not instructions/i, `${name} must distrust data`)
+    assert.match(prompt, /missing.*report/i, `${name} must expose missing inputs`)
+  }
+  const database = agents.find((agent) => agent.name === 'Database')!
+  assert.match(database.systemPrompt, /select databases.*select functions.*inspect inputs/i)
+  assert.match(database.systemPrompt, /independent.*parallel/i)
+  const visualization = agents.find((agent) => agent.name === 'Visualization')!
+  assert.match(visualization.systemPrompt, /preview.*before.*final render/i)
+  assert.match(visualization.systemPrompt, /verify.*artifact.*before.*report/i)
+  const wrapper = agents.find((agent) => agent.name === 'Wrapper')!
+  assert.match(wrapper.systemPrompt, /inspect.*before.*run/i)
+  assert.match(wrapper.systemPrompt, /lost.*unknown outcome/i)
+})
+
+test('specialist delegation excludes general explanation and adjacent deliverables', () => {
+  const { agents } = discoverPhiAgents({
+    cwd: '/nonexistent/cwd',
+    agentDir: '/nonexistent/agentdir',
+    bundledDir: REPO_AGENTS_DIR,
+    homeDir: '/nonexistent/home'
+  })
+  for (const name of ['Database', 'Visualization', 'Wrapper']) {
+    const guidance = agents.find((agent) => agent.name === name)?.delegation ?? ''
+    assert.match(guidance, /only the requested/i, `${name} must constrain delegation`)
+  }
+  assert.match(
+    agents.find((agent) => agent.name === 'Visualization')?.delegation ?? '',
+    /general explanation/i
+  )
+  assert.match(
+    agents.find((agent) => agent.name === 'Wrapper')?.delegation ?? '',
+    /general explanation/i
+  )
 })
 
 test('the bundled Visualization agent routes template previews through omics visualization', () => {
@@ -429,6 +480,7 @@ test('the bundled Visualization agent routes template previews through omics vis
   for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit']) {
     assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
   }
+  assert.ok(visualization.tools.includes('viz_examples'))
   assert.deepEqual(visualization.skills, ['omics-visualization'])
   assert.equal(existsSync(join(REPO_SKILLS_DIR, 'omics-visualization', 'SKILL.md')), true)
   assert.equal(visualization.delegationMode, 'required-first')
@@ -453,6 +505,9 @@ test('the bundled Visualization agent routes template previews through omics vis
     /sourcing the installed read-only `scripts\/lib\/common\.R`/
   )
   assert.match(visualization.systemPrompt, /Do not invent template ids/i)
+  assert.match(visualization.systemPrompt, /viz_examples.*without.*data/i)
+  assert.match(visualization.systemPrompt, /do not simulate.*render.*example/i)
+  assert.match(visualization.systemPrompt, /example-only request is `completed`/i)
 
   const skillText = readFileSync(join(REPO_SKILLS_DIR, 'omics-visualization', 'SKILL.md'), 'utf-8')
   assert.match(skillText, /active Phi project working directory/)
@@ -491,6 +546,8 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
   assert.match(prompt, /nextflow/i)
   assert.match(prompt, /do not/i)
   assert.match(prompt, /required-first/i)
+  assert.match(prompt, /literature search.*main agent/i)
+  assert.match(prompt, /only the requested subtask/i)
   assert.match(prompt, /controlled fallback/i)
   assert.match(prompt, /not_found/i)
   // The leader never learns the specialist's own tool functions.
@@ -499,6 +556,7 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
     'wrapper_inspect',
     'wrapper_run',
     'db_search',
+    'db_routes',
     'db_domain',
     'db_docs_search',
     'db_query',

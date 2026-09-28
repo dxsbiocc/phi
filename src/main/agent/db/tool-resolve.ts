@@ -1,7 +1,7 @@
 import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 
 import { getPhiAgentDir } from '../runtime-paths'
-import { listDbConnectorCatalog } from './catalog'
+import { findDbConnectorCatalogEntry } from './catalog'
 import type { DbConnectorCatalogEntry, DbFilter } from './manifest-types'
 import { inferQueryPredicate, UNIPROT_ACCESSION_PATTERN } from './tool-query-resolution'
 
@@ -203,7 +203,7 @@ function buildMatch(
   kind: string,
   target: RouteTarget,
   id: string,
-  catalog: readonly DbConnectorCatalogEntry[]
+  findEntry: (database: string) => DbConnectorCatalogEntry | undefined
 ): DbResolveMatch {
   const base = {
     kind,
@@ -211,7 +211,7 @@ function buildMatch(
     domain: target.domain,
     ...(target.ambiguous ? { ambiguous: true as const } : {})
   }
-  const entry = catalog.find((candidate) => candidate.manifest.id === target.database)
+  const entry = findEntry(target.database)
   const unavailable = unavailableReason(entry, target.domain)
   if (unavailable) return { ...base, unavailable }
 
@@ -226,6 +226,15 @@ export function resolveDbIdentifier(
   input: string,
   catalog: readonly DbConnectorCatalogEntry[]
 ): DbResolveResult {
+  return resolveDbIdentifierUsing(input, (database) =>
+    catalog.find((candidate) => candidate.manifest.id === database)
+  )
+}
+
+function resolveDbIdentifierUsing(
+  input: string,
+  findEntry: (database: string) => DbConnectorCatalogEntry | undefined
+): DbResolveResult {
   const cleaned = cleanIdentifier(input)
   const kind = cleaned
     ? IDENTIFIER_KINDS.find((candidate) => candidate.pattern.test(cleaned))
@@ -236,7 +245,7 @@ export function resolveDbIdentifier(
   return {
     id,
     recognized: true,
-    matches: kind.targets.map((target) => buildMatch(kind.kind, target, id, catalog))
+    matches: kind.targets.map((target) => buildMatch(kind.kind, target, id, findEntry))
   }
 }
 
@@ -246,7 +255,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export function buildDbResolveTool(agentDir: string = getPhiAgentDir()): CustomTool {
+export function buildDbResolveTool(
+  agentDir: string = getPhiAgentDir(),
+  onResolved?: (database: string, domain: string) => void
+): CustomTool {
   return {
     name: 'db_resolve',
     label: 'Resolve Database Identifier',
@@ -268,7 +280,12 @@ export function buildDbResolveTool(agentDir: string = getPhiAgentDir()): CustomT
       if (!id) {
         return { content: [{ type: 'text', text: '缺少必填参数: id' }], isError: true }
       }
-      const result = resolveDbIdentifier(id, listDbConnectorCatalog(agentDir))
+      const result = resolveDbIdentifierUsing(id, (database) =>
+        findDbConnectorCatalogEntry(database, agentDir)
+      )
+      for (const match of result.matches) {
+        if (match.query && !match.unavailable) onResolved?.(match.database, match.domain)
+      }
       const text = result.recognized
         ? JSON.stringify({ id: result.id, matches: result.matches })
         : `"${result.id}" 不是可识别的标识符格式（可识别: ${SUPPORTED_KINDS}）。基因名、蛋白名或自由文本请用 db_search 查找数据库。`

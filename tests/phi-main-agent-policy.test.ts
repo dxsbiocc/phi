@@ -62,6 +62,7 @@ test('Phi owns the main system identity while retaining OMP runtime instructions
 
   assert.match(rendered, /You are the assistant running in Phi/i)
   assert.match(rendered, /scientific research assistant/i)
+  assert.match(rendered, /interpret the user's request before choosing tools or delegation/i)
   assert.match(rendered, /名字叫星河/)
   assert.match(rendered, /Keep this operational tool contract/)
   assert.match(rendered, /present_files/)
