@@ -21,6 +21,7 @@ import {
   type ResourceDiagnostic
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
+import { connectToServer, disconnectServer, listTools } from '@oh-my-pi/pi-coding-agent/mcp/client'
 import {
   DEFAULT_COMPACTION_METHOD_ORDER,
   resolveCompactionMethodOrder
@@ -45,6 +46,7 @@ import { buildPresentFilesTool } from '../deliverables/present-tool'
 import { enterPlanReviewMode, type PlanReviewChoice } from '../plan/plan-review-mode'
 import { planModeToolDecision } from '../plan/plan-tool-policy'
 import type { PresentedFile } from '../../../shared/presentedFileTypes'
+import { featuredMcpConnectors } from '../../../shared/mcpConnectorCatalog'
 import type {
   AutoCompactionDefaults,
   AutoCompactionOverrides,
@@ -1678,6 +1680,25 @@ async function renameSession(params: unknown): Promise<void> {
 
 async function handleRequest(method: string, params: unknown): Promise<unknown> {
   switch (method) {
+    case 'mcp.featuredTools': {
+      const id = isRecord(params) ? stringValue(params.id) : ''
+      const connector = featuredMcpConnectors.find(
+        (entry) => entry.id === id && entry.signIn === '无需登录'
+      )
+      if (!connector) throw new Error('该连接器需要授权，暂无法读取实际工具列表')
+      const signal = AbortSignal.timeout(12000)
+      const connection = await connectToServer(
+        connector.id,
+        { type: 'http', url: connector.url, timeout: 10000 },
+        { signal }
+      )
+      try {
+        const tools = await listTools(connection, { signal })
+        return tools.map((tool) => tool.name)
+      } finally {
+        await disconnectServer(connection).catch(() => undefined)
+      }
+    }
     case 'modelRuntime.snapshot':
       return modelRuntimeSnapshot(params)
     case 'modelRuntime.login':

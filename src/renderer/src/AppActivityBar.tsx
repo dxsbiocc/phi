@@ -10,7 +10,7 @@ import {
   GoGear,
   GoPackage,
   GoProject,
-  GoTools
+  GoWorkflow
 } from 'react-icons/go'
 import SessionSidebar from './components/SessionSidebar'
 import { PhiIcons } from './icons'
@@ -111,7 +111,7 @@ const NavFilesIcon = createActivityBarReactIcon(GoFileDirectory)
 const NavRuntimeIcon = createActivityBarPhiIcon(PhiIcons.nav.runtime)
 const NavPluginsIcon = createActivityBarReactIcon(GoPackage)
 const NavSkillsIcon = createActivityBarReactIcon(GoBook)
-const NavMcpIcon = createActivityBarReactIcon(GoTools)
+const NavMcpIcon = createActivityBarReactIcon(GoWorkflow)
 const NavWrappersIcon = createActivityBarReactIcon(GoContainer)
 const NavSettingsIcon = createActivityBarReactIcon(GoGear)
 
@@ -374,7 +374,7 @@ function AppActivityBarImpl({
             <NavSkillsIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-        <Tooltip title="MCP" placement="right">
+        <Tooltip title="连接器" placement="right">
           <IconButton
             size="small"
             color={isWorkspaceSidebarModeExpanded('mcp') ? 'primary' : 'default'}

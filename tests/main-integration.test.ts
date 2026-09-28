@@ -1560,6 +1560,7 @@ async function harness(
           bridgeRequests.push({ method, params })
           if (bridgeFailure) throw bridgeFailure
           if (method === 'agentRuns.list') return bridgeAgentJobs
+          if (method === 'mcp.featuredTools') return ['search_articles']
           return { ok: true }
         }
       })
@@ -1594,6 +1595,10 @@ async function harness(
       ],
       installPlugin: async (): Promise<unknown[]> => [],
       removePlugin: async (): Promise<unknown[]> => []
+    },
+    './agent/mcp-connectors': {
+      addRemoteMcpConnector: noop,
+      removeRemoteMcpConnector: noop
     },
     './agent/resources': {
       listGlobalSkills: async (): Promise<unknown[]> => [
@@ -3326,6 +3331,16 @@ test('main IPC: remote project session is tied to its ID and a private anchor', 
   assert.equal(restored.projectId, 'remote-project-1')
   assert.equal(restored.displayCwd, '/cluster/project')
   assert.equal(restored.cwd, current.cwd)
+})
+
+test('main IPC: featured MCP tools are read through the Bun worker', async () => {
+  const app = await harness()
+  assert.deepEqual(await app.invoke('mcp:featuredTools', 'pubmed'), ['search_articles'])
+  assert.deepEqual(app.bridgeRequests.at(-1), {
+    method: 'mcp.featuredTools',
+    params: { id: 'pubmed' }
+  })
+  await assert.rejects(app.invoke('mcp:featuredTools', null), /连接器标识无效/)
 })
 
 test(

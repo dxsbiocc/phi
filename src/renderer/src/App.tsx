@@ -3956,6 +3956,7 @@ function App(): React.JSX.Element {
           mcpServers={mcpServers}
           activeMcpServerId={activeMcpServerId}
           onOpenMcpServer={onOpenMcpServerTab}
+          onRefreshMcpServers={refreshMcpServers}
           wrapperCatalog={wrapperCatalog}
           selectedWrapperId={selectedWrapperId}
           isLoadingWrappers={isLoadingWrappers}

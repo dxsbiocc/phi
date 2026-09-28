@@ -340,7 +340,7 @@ test('workspace files are available from the left sidebar activity item', () => 
   assert.match(activitySource, /const NavFilesIcon = createActivityBarReactIcon\(GoFileDirectory\)/)
   assert.match(activitySource, /const NavPluginsIcon = createActivityBarReactIcon\(GoPackage\)/)
   assert.match(activitySource, /const NavSkillsIcon = createActivityBarReactIcon\(GoBook\)/)
-  assert.match(activitySource, /const NavMcpIcon = createActivityBarReactIcon\(GoTools\)/)
+  assert.match(activitySource, /const NavMcpIcon = createActivityBarReactIcon\(GoWorkflow\)/)
   assert.match(activitySource, /const NavWrappersIcon = createActivityBarReactIcon\(GoContainer\)/)
   assert.match(
     activitySource,

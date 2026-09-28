@@ -153,6 +153,7 @@ import {
   type RuntimeResourceLoader
 } from './agent/runtime/runtime-adapter'
 import { installPlugin, listPlugins, removePlugin } from './agent/plugins'
+import { addRemoteMcpConnector, removeRemoteMcpConnector } from './agent/mcp-connectors'
 import {
   deleteSkill,
   listGlobalMcpServers,
@@ -6979,6 +6980,16 @@ app.whenReady().then(() => {
   ipcMain.handle('mcp:listServers', async (_, cwd?: string) =>
     isRemoteResourceScope(cwd) ? listGlobalMcpServers() : listMcpServers(cwd ?? currentCwd)
   )
+  ipcMain.handle('mcp:addRemoteConnector', async (_, name: string, url: string) => {
+    addRemoteMcpConnector(name, url)
+  })
+  ipcMain.handle('mcp:removeRemoteConnector', async (_, name: string, url: string) => {
+    removeRemoteMcpConnector(name, url)
+  })
+  ipcMain.handle('mcp:featuredTools', async (_, id: string) => {
+    if (typeof id !== 'string') throw new Error('连接器标识无效')
+    return getOmpBridge().request<string[]>('mcp.featuredTools', { id })
+  })
 
   ipcMain.handle('wrappers:getPlan', async (_, planId: string) => readWrapperPlan(planId))
   ipcMain.handle('wrappers:retargetPlan', async (_, request: WrapperRetargetRequest) => {

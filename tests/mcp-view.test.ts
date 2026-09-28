@@ -1,0 +1,51 @@
+import assert from 'node:assert/strict'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { ThemeProvider, createTheme } from '@mui/material/styles'
+import test from 'node:test'
+import { McpSidebar } from '../src/renderer/src/features/mcp/McpView'
+import type { McpServerSummary } from '../src/renderer/src/features/mcp/lib/mcpTypes'
+
+test('connector sidebar groups installed services and labels disabled entries', () => {
+  const servers: McpServerSummary[] = [
+    {
+      id: 'pubmed',
+      name: 'pubmed',
+      url: 'https://pubmed.mcp.claude.com/mcp',
+      status: 'configured'
+    },
+    {
+      id: 'drive',
+      name: 'google-drive',
+      url: 'https://drivemcp.googleapis.com/mcp/v1',
+      status: 'configured'
+    },
+    {
+      id: 'disabled',
+      name: 'disabled-local-service',
+      command: 'local-server',
+      enabled: false,
+      status: 'configured'
+    }
+  ]
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(McpSidebar, {
+        servers,
+        activeServerId: 'drive',
+        onSelectServer: () => undefined
+      })
+    )
+  )
+
+  assert.match(markup, /生产力 · 1/)
+  assert.match(markup, /健康与生命科学 · 1/)
+  assert.match(markup, /其他 · 1/)
+  assert.match(markup, /3 个已安装/)
+  assert.match(markup, /disabled-local-service/)
+  assert.match(markup, /已停用/)
+  assert.match(markup, /google-drive\.svg/)
+  assert.match(markup, /pubmed\.svg/)
+})
