@@ -28,6 +28,7 @@ import type { WrapperCompositionManifest } from '../../shared/wrapperComposition
 import type { WrapperRun } from '../../shared/wrapperTypes'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
+import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
 import ChatView from './features/chat/ChatView'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
 import MacWindowControls from './components/MacWindowControls'
@@ -638,6 +639,9 @@ function App(): React.JSX.Element {
   } = useSessionStore()
   const messages = agentEventState.messages
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const compactingSessionKeysRef = useRef(new Set<string>())
+  const [compactingSessions, setCompactingSessions] = useState<Set<string>>(() => new Set())
+  const [contextUsageRefreshKey, setContextUsageRefreshKey] = useState(0)
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false)
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('general')
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
@@ -2213,6 +2217,18 @@ function App(): React.JSX.Element {
 
   const onChatSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
+    const current = useSessionStore.getState()
+    if (
+      compactingSessionKeysRef.current.has(
+        JSON.stringify([
+          current.activePhiSessionId ?? null,
+          current.activeSessionPath,
+          current.activeSessionGeneration
+        ])
+      )
+    ) {
+      return
+    }
     const text = input.trim()
     const images = inputImages
     if (!text && images.length === 0) return
@@ -2766,9 +2782,42 @@ function App(): React.JSX.Element {
   const activeSessionHasWork =
     sessionStatusIsBusy(activeSession) || sessionRuntimeStateIsBusy(activeSessionRuntimeState)
   const currentSessionIsBusy = isSendingMessage || activeSessionHasWork
+  const activeContextCompactionKey = JSON.stringify([
+    activePhiSessionId ?? null,
+    activeSessionPath,
+    activeSessionGeneration
+  ])
+  const currentSessionIsCompacting = compactingSessions.has(activeContextCompactionKey)
+  const onCompactContext = useCallback(
+    async (target: ManualCompactionTarget): Promise<void> => {
+      const key = JSON.stringify([
+        target.phiSessionId,
+        target.sessionPath,
+        target.sessionGeneration
+      ])
+      if (compactingSessionKeysRef.current.has(key)) return
+      compactingSessionKeysRef.current.add(key)
+      setCompactingSessions((previous) => new Set(previous).add(key))
+      try {
+        await rendererApi.compactCurrentSession(target)
+        showSnackbar('上下文已压缩', 'success')
+        setContextUsageRefreshKey((value) => value + 1)
+      } catch (error) {
+        showSnackbarError(error, '上下文压缩失败')
+      } finally {
+        compactingSessionKeysRef.current.delete(key)
+        setCompactingSessions((previous) => {
+          const next = new Set(previous)
+          next.delete(key)
+          return next
+        })
+      }
+    },
+    [rendererApi, showSnackbar, showSnackbarError]
+  )
   useEffect(() => {
-    currentSessionIsBusyRef.current = currentSessionIsBusy
-  }, [currentSessionIsBusy])
+    currentSessionIsBusyRef.current = currentSessionIsBusy || currentSessionIsCompacting
+  }, [currentSessionIsBusy, currentSessionIsCompacting])
   const onRetryUserMessage = useCallback(
     async (message: UserMessageRetryTarget): Promise<void> => {
       const text = message.content.trim()
@@ -2828,7 +2877,15 @@ function App(): React.JSX.Element {
     [onSelectSession, refreshSessions, rendererApi, showSnackbarError]
   )
   useEffect(() => {
-    if (currentSessionIsBusy || isSessionChanging || isBusy || isSendingRef.current) return
+    if (
+      currentSessionIsBusy ||
+      currentSessionIsCompacting ||
+      isSessionChanging ||
+      isBusy ||
+      isSendingRef.current
+    ) {
+      return
+    }
     const nextPrompt = activeQueuedPrompts[0]
     if (!nextPrompt) return
     const readiness = getPromptReadiness({
@@ -2863,6 +2920,7 @@ function App(): React.JSX.Element {
     activeQueuedPrompts,
     availableModels,
     currentSessionIsBusy,
+    currentSessionIsCompacting,
     isModelStateReady,
     isBusy,
     isSessionChanging,
@@ -3538,12 +3596,31 @@ function App(): React.JSX.Element {
           onImagesAdded={addInputImages}
           onRemoveImage={removeInputImage}
           scrollResetKey={activeChatScrollResetKey}
-          canSend={!isSessionChanging && !currentSessionIsBusy && !isBusy}
-          canQueue={!isSessionChanging && currentSessionIsBusy && !isBusy}
+          canSend={
+            !isSessionChanging && !currentSessionIsBusy && !currentSessionIsCompacting && !isBusy
+          }
+          canQueue={
+            !isSessionChanging && currentSessionIsBusy && !currentSessionIsCompacting && !isBusy
+          }
           isGenerating={currentSessionIsBusy}
           currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
           models={availableModels}
           selectedModel={selectedModel}
+          contextUsageTarget={{
+            sessionPath: activeSessionPath,
+            phiSessionId: activePhiSessionId ?? null,
+            sessionGeneration: activeSessionGeneration
+          }}
+          contextUsageRefreshKey={contextUsageRefreshKey}
+          contextCompacting={currentSessionIsCompacting}
+          disableContextCompaction={
+            currentSessionIsBusy ||
+            isSessionChanging ||
+            isBusy ||
+            !selectedModel ||
+            messages.length === 0
+          }
+          onCompactContext={onCompactContext}
           skills={skills}
           promptAgents={promptAgents}
           plugins={plugins}
@@ -3557,7 +3634,9 @@ function App(): React.JSX.Element {
           onInputChange={setActiveInput}
           onRetryUserMessage={onRetryUserMessage}
           onForkUserMessage={
-            currentSessionIsBusy || !activePhiSessionId ? undefined : onForkUserMessage
+            currentSessionIsBusy || currentSessionIsCompacting || !activePhiSessionId
+              ? undefined
+              : onForkUserMessage
           }
           onOpenInputAddMenu={onOpenInputAddMenu}
           onPickInputFiles={onPickInputFiles}
@@ -3575,8 +3654,8 @@ function App(): React.JSX.Element {
           onSelectPermissionMode={(mode) => {
             void onSelectPermissionMode(mode)
           }}
-          disablePermissionModeSelect={isSessionChanging}
-          disableModelControls={isSessionChanging}
+          disablePermissionModeSelect={isSessionChanging || currentSessionIsCompacting}
+          disableModelControls={isSessionChanging || currentSessionIsCompacting}
           pendingApproval={pendingApproval}
           pendingUserInteraction={pendingUserInteraction}
           queuedPrompts={activeQueuedPrompts.map((item) => ({

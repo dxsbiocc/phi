@@ -21,6 +21,10 @@ import {
   type ResourceDiagnostic
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
+import {
+  DEFAULT_COMPACTION_METHOD_ORDER,
+  resolveCompactionMethodOrder
+} from '@oh-my-pi/pi-coding-agent/session/compaction-methods'
 import { resolveApprovedPlan } from '@oh-my-pi/pi-coding-agent/plan-mode/approved-plan'
 import { listPlanFiles, readPlanFile } from '@oh-my-pi/pi-coding-agent/plan-mode/plan-files'
 import { PluginManager } from '@oh-my-pi/pi-coding-agent/extensibility/plugins/manager'
@@ -41,6 +45,12 @@ import { buildPresentFilesTool } from '../deliverables/present-tool'
 import { enterPlanReviewMode, type PlanReviewChoice } from '../plan/plan-review-mode'
 import { planModeToolDecision } from '../plan/plan-tool-policy'
 import type { PresentedFile } from '../../../shared/presentedFileTypes'
+import type {
+  AutoCompactionDefaults,
+  AutoCompactionOverrides,
+  ContextCompactionSummary,
+  ContextUsageSnapshot
+} from '../../../shared/contextUsageTypes'
 import { buildRemoteWorkspaceReadTool } from '../remote-workspace-read-tool'
 import type { RemoteWorkspaceReadResult } from '../remote-workspace-read'
 import {
@@ -84,6 +94,13 @@ import { createHostJobClient } from '../wrappers/composition/job-host-client'
 import { buildWrapperCompositionTools } from '../wrappers/composition/tools'
 
 type UnknownRecord = Record<string, unknown>
+type AutoCompactionBaseline = {
+  enabled: boolean
+  thresholdPercent: number
+  thresholdTokens: number
+  methodOrder: Array<(typeof DEFAULT_COMPACTION_METHOD_ORDER)[number]>
+}
+const autoCompactionBaselines = new WeakMap<Settings, AutoCompactionBaseline>()
 type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 type ProjectResourceName = 'extensions' | 'prompts' | 'skills' | 'themes'
 type SerializableResourceOptions = Omit<
@@ -929,7 +946,9 @@ async function createSession(params: unknown): Promise<unknown> {
   }
   const ctx = await getContext(agentDir)
   const settingsCwd = remoteRoot ? agentDir : cwd
-  const settings = await Settings.init({ cwd: settingsCwd, agentDir })
+  const baseSettings = await Settings.init({ cwd: settingsCwd, agentDir })
+  const settings = await baseSettings.cloneForCwd(settingsCwd)
+  applyAutoCompactionOverrides(settings, autoCompactionOverrides(record.autoCompaction))
   const sessionManager = await makeSessionManager(record.sessionManager, cwd, agentDir)
   const noTools = record.noTools === 'all' || record.noTools === true
   const personaMarkdown = stringValue(record.personaMarkdown).trim()
@@ -1268,7 +1287,15 @@ async function createSession(params: unknown): Promise<unknown> {
   parentRef.current = result
 
   result.session.subscribe((event) => {
-    sendEvent('sessionEvent', event, { sessionId })
+    const tokensAfter =
+      event.type === 'auto_compaction_end' && !event.aborted && !event.skipped
+        ? event.action === 'shake'
+          ? contextTokensNow(result.session)
+          : compactedTokensAfter(result.session)
+        : undefined
+    sendEvent('sessionEvent', tokensAfter === undefined ? event : { ...event, tokensAfter }, {
+      sessionId
+    })
     sendEvent('sessionState', serializeSessionState(result), { sessionId })
   })
   sessions.set(sessionId, { result, agentRuns, stopAgentRunNotices })
@@ -1311,6 +1338,145 @@ async function promptSession(params: unknown): Promise<unknown> {
   const result = getSession(record.sessionId)
   await result.session.prompt(stringValue(record.text), promptOptions(record.options))
   return serializeSessionState(result)
+}
+
+function sessionContextUsage(params: unknown): ContextUsageSnapshot | null {
+  const record = isRecord(params) ? params : {}
+  const usage = getSession(record.sessionId).session.getContextUsage()
+  if (
+    !usage ||
+    !Number.isFinite(usage.tokens) ||
+    usage.tokens < 0 ||
+    !Number.isFinite(usage.contextWindow) ||
+    usage.contextWindow <= 0 ||
+    !Number.isFinite(usage.percent) ||
+    usage.percent < 0
+  ) {
+    return null
+  }
+  return {
+    tokens: usage.tokens,
+    contextWindow: usage.contextWindow,
+    percent: usage.percent
+  }
+}
+
+function autoCompactionOverrides(value: unknown): AutoCompactionOverrides {
+  if (!isRecord(value)) return {}
+  return {
+    ...(typeof value.enabled === 'boolean' ? { enabled: value.enabled } : {}),
+    ...(value.thresholdPercent === 70 ||
+    value.thresholdPercent === 80 ||
+    value.thresholdPercent === 90
+      ? { thresholdPercent: value.thresholdPercent }
+      : {})
+  }
+}
+
+function applyAutoCompactionOverrides(
+  settings: Settings,
+  overrides: AutoCompactionOverrides
+): void {
+  let baseline = autoCompactionBaselines.get(settings)
+  if (!baseline) {
+    baseline = {
+      enabled: settings.get('compaction.enabled'),
+      thresholdPercent: settings.get('compaction.thresholdPercent'),
+      thresholdTokens: settings.get('compaction.thresholdTokens'),
+      methodOrder: [...settings.get('compaction.methodOrder')]
+    }
+    autoCompactionBaselines.set(settings, baseline)
+  }
+  settings.override('compaction.enabled', overrides.enabled ?? baseline.enabled)
+  settings.override(
+    'compaction.thresholdPercent',
+    overrides.thresholdPercent ?? baseline.thresholdPercent
+  )
+  // The SDK gives a fixed token limit precedence over a percentage preset.
+  settings.override(
+    'compaction.thresholdTokens',
+    overrides.thresholdPercent === undefined ? baseline.thresholdTokens : -1
+  )
+  if (
+    overrides.enabled === true &&
+    resolveCompactionMethodOrder(baseline.methodOrder).length === 0
+  ) {
+    settings.override('compaction.methodOrder', [...DEFAULT_COMPACTION_METHOD_ORDER])
+  } else {
+    settings.override('compaction.methodOrder', [...baseline.methodOrder])
+  }
+}
+
+async function readAutoCompactionDefaults(params: unknown): Promise<AutoCompactionDefaults> {
+  const record = isRecord(params) ? params : {}
+  const settings = await Settings.loadReadOnly({
+    cwd: stringValue(record.cwd, process.cwd()),
+    agentDir: stringValue(record.agentDir, process.env.PI_CODING_AGENT_DIR)
+  })
+  return {
+    enabled:
+      settings.get('compaction.enabled') &&
+      resolveCompactionMethodOrder(settings.get('compaction.methodOrder')).length > 0,
+    thresholdPercent: settings.get('compaction.thresholdPercent'),
+    thresholdTokens: settings.get('compaction.thresholdTokens')
+  }
+}
+
+function setSessionAutoCompactionSettings(params: unknown): AutoCompactionDefaults {
+  const record = isRecord(params) ? params : {}
+  const session = getSession(record.sessionId).session
+  applyAutoCompactionOverrides(session.settings, autoCompactionOverrides(record.overrides))
+  return {
+    enabled: session.autoCompactionEnabled,
+    thresholdPercent: session.settings.get('compaction.thresholdPercent'),
+    thresholdTokens: session.settings.get('compaction.thresholdTokens')
+  }
+}
+
+function contextTokensNow(session: CreateAgentSessionResult['session']): number | undefined {
+  try {
+    const tokens = session.getContextUsage()?.tokens
+    return typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= 0 ? tokens : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function compactedTokensAfter(session: CreateAgentSessionResult['session']): number | undefined {
+  try {
+    const leaf = session.sessionManager.getLeafEntry()
+    if (
+      leaf?.type === 'compaction' &&
+      typeof leaf.tokensAfter === 'number' &&
+      Number.isFinite(leaf.tokensAfter) &&
+      leaf.tokensAfter >= 0
+    ) {
+      return leaf.tokensAfter
+    }
+    return contextTokensNow(session)
+  } catch {
+    return undefined
+  }
+}
+
+async function compactSession(params: unknown): Promise<{
+  summary: ContextCompactionSummary
+  state: ReturnType<typeof serializeSessionState>
+}> {
+  const record = isRecord(params) ? params : {}
+  const entry = getSession(record.sessionId)
+  if (entry.session.isCompacting) throw new Error('上下文压缩正在进行')
+  const result = await entry.session.compact()
+  const tokensAfter = compactedTokensAfter(entry.session)
+  return {
+    summary: {
+      summary: result.summary,
+      ...(result.shortSummary ? { shortSummary: result.shortSummary } : {}),
+      tokensBefore: result.tokensBefore,
+      ...(tokensAfter === undefined ? {} : { tokensAfter })
+    },
+    state: serializeSessionState(entry)
+  }
 }
 
 async function enterSessionPlanMode(params: unknown): Promise<{ enabled: true }> {
@@ -1539,6 +1705,14 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return createSession(params)
     case 'session.prompt':
       return promptSession(params)
+    case 'session.contextUsage':
+      return sessionContextUsage(params)
+    case 'settings.autoCompactionDefaults':
+      return readAutoCompactionDefaults(params)
+    case 'session.setAutoCompactionSettings':
+      return setSessionAutoCompactionSettings(params)
+    case 'session.compact':
+      return compactSession(params)
     case 'session.plan.enter':
       return enterSessionPlanMode(params)
     case 'session.abort':

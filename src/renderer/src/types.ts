@@ -29,6 +29,13 @@ import type {
 } from '../../shared/workspaceChangeTypes'
 import type { PromptImageInput, StoredPromptImage } from '../../shared/promptImageTypes'
 import type { SessionExportResult } from '../../shared/sessionExportTypes'
+import type {
+  AutoCompactionApi,
+  ContextCompactionDetails,
+  CurrentContextUsage,
+  ManualCompactionOutcome,
+  ManualCompactionTarget
+} from '../../shared/contextUsageTypes'
 import type { RemoteWorkspaceFileRequest } from '../../shared/remoteWorkspacePath'
 import type {
   WrapperResultDirectoryRequest,
@@ -103,6 +110,7 @@ export interface ChatMessage {
   id: string
   role: Role
   content: string
+  contextCompaction?: ContextCompactionDetails
   images?: Array<PromptImageInput | StoredPromptImage>
   runId?: string
   createdAt?: string
@@ -698,7 +706,7 @@ export interface AnalysisNotebookFormatResult {
   message?: string
 }
 
-export type RendererApi = {
+export type RendererApi = AutoCompactionApi & {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
   toggleWindowFullscreen: () => Promise<void>
@@ -771,6 +779,8 @@ export type RendererApi = {
   completeOnboarding: (description: string) => Promise<string>
   listSessions: () => Promise<SessionSummary[]>
   getCurrentSession: () => Promise<CurrentSession>
+  getCurrentContextUsage: () => Promise<CurrentContextUsage>
+  compactCurrentSession: (target: ManualCompactionTarget) => Promise<ManualCompactionOutcome>
   updateCurrentSessionPermissionMode: (permissionMode: PermissionMode) => Promise<CurrentSession>
   createSession: () => Promise<CurrentSession>
   forkSession: (
@@ -916,6 +926,11 @@ export interface AgentMessage {
   role?: string
   stopReason?: string
   errorMessage?: string
+  summary?: string
+  shortSummary?: string
+  tokensBefore?: number
+  tokensAfter?: number
+  noticeText?: string
   content?: Array<{ type?: string; text?: string; thinking?: string }>
 }
 

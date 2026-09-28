@@ -22,6 +22,13 @@ import type { OpenSshHostInput } from '../shared/remoteHostProfile'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
 import type { BackgroundAgentJob } from '../shared/backgroundJobTypes'
+import type {
+  AutoCompactionSettingsPatch,
+  CurrentAutoCompactionSettings,
+  CurrentContextUsage,
+  ManualCompactionOutcome,
+  ManualCompactionTarget
+} from '../shared/contextUsageTypes'
 import type { WorkspaceDiffReference } from '../shared/workspaceChangeTypes'
 
 // Imported (unlike the other ambient types in this file, which are
@@ -712,6 +719,15 @@ type RendererAuthApi = {
   completeOnboarding: (description: string) => Promise<string>
   listSessions: () => Promise<SessionSummary[]>
   getCurrentSession: () => Promise<CurrentSession>
+  getCurrentContextUsage: () => Promise<CurrentContextUsage>
+  getAutoCompactionSettings: (
+    target: ManualCompactionTarget
+  ) => Promise<CurrentAutoCompactionSettings>
+  setAutoCompactionSettings: (
+    target: ManualCompactionTarget,
+    patch: AutoCompactionSettingsPatch
+  ) => Promise<CurrentAutoCompactionSettings>
+  compactCurrentSession: (target: ManualCompactionTarget) => Promise<ManualCompactionOutcome>
   updateCurrentSessionPermissionMode: (permissionMode: PermissionMode) => Promise<CurrentSession>
   createSession: () => Promise<CurrentSession>
   forkSession: (
@@ -1022,6 +1038,19 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('persona:completeOnboarding', description),
   listSessions: (): Promise<SessionSummary[]> => ipcRenderer.invoke('sessions:list'),
   getCurrentSession: (): Promise<CurrentSession> => ipcRenderer.invoke('sessions:current'),
+  getCurrentContextUsage: (): Promise<CurrentContextUsage> =>
+    ipcRenderer.invoke('sessions:contextUsage'),
+  getAutoCompactionSettings: (
+    target: ManualCompactionTarget
+  ): Promise<CurrentAutoCompactionSettings> =>
+    ipcRenderer.invoke('sessions:autoCompactionSettings', target),
+  setAutoCompactionSettings: (
+    target: ManualCompactionTarget,
+    patch: AutoCompactionSettingsPatch
+  ): Promise<CurrentAutoCompactionSettings> =>
+    ipcRenderer.invoke('sessions:autoCompactionSettings:set', target, patch),
+  compactCurrentSession: (target: ManualCompactionTarget): Promise<ManualCompactionOutcome> =>
+    ipcRenderer.invoke('sessions:compact', target),
   updateCurrentSessionPermissionMode: (permissionMode: PermissionMode): Promise<CurrentSession> =>
     ipcRenderer.invoke('sessions:updatePermissionMode', permissionMode),
   createSession: (): Promise<CurrentSession> => ipcRenderer.invoke('sessions:create'),

@@ -458,6 +458,36 @@ test('auto compaction end becomes a visible timeline item', () => {
   ])
 })
 
+test('persisted compaction event shows the same details live and after replay', () => {
+  const event: AgentEventSummary = {
+    source: 'phi',
+    type: 'context_compacted',
+    eventId: 'compact-1',
+    action: 'handoff',
+    reason: 'threshold',
+    tokensBefore: 24000,
+    tokensAfter: 5000,
+    summary: 'Complete summary',
+    shortSummary: 'Short summary'
+  }
+  const first = reduceAgentEventState(createAgentEventReducerState(), event)
+  const replay = reduceAgentEventState(first, event)
+
+  assert.equal(first.messages.length, 1)
+  assert.deepEqual(replay.messages, first.messages)
+  assert.equal(first.messages[0].role, 'warning')
+  if (first.messages[0].role === 'warning') {
+    assert.deepEqual(first.messages[0].contextCompaction, {
+      action: 'handoff',
+      reason: 'threshold',
+      tokensBefore: 24000,
+      tokensAfter: 5000,
+      summary: 'Complete summary',
+      shortSummary: 'Short summary'
+    })
+  }
+})
+
 test('skipped auto compaction stays out of the timeline', () => {
   const state = reduceAgentEventState(createAgentEventReducerState(), {
     type: 'auto_compaction_end',

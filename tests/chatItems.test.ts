@@ -1086,7 +1086,12 @@ test('chatItemsFromSessionMessages restores context compaction notices', () => {
       source: 'phi',
       type: 'context_compacted',
       eventId: 'event-compact',
-      shortSummary: 'Earlier work summarized.'
+      action: 'remote',
+      reason: 'threshold',
+      tokensBefore: 24000,
+      tokensAfter: 5000,
+      shortSummary: 'Earlier work summarized.',
+      summary: 'The complete summary remains available after reopening.'
     },
     {
       source: 'phi',
@@ -1098,12 +1103,52 @@ test('chatItemsFromSessionMessages restores context compaction notices', () => {
 
   assert.equal(items[0].role, 'warning')
   assert.match(items[0].content, /上下文已压缩/)
-  assert.match(items[0].content, /Earlier work summarized/)
+  assert.deepEqual(items[0].contextCompaction, {
+    action: 'remote',
+    reason: 'threshold',
+    tokensBefore: 24000,
+    tokensAfter: 5000,
+    shortSummary: 'Earlier work summarized.',
+    summary: 'The complete summary remains available after reopening.'
+  })
   assert.deepEqual(items[1], {
     id: 'event-compact-failed',
     role: 'error',
-    content: '上下文压缩失败：provider rejected summary'
+    content: '上下文压缩失败：provider rejected summary',
+    contextCompaction: { action: 'unknown' }
   })
+})
+
+test('session history distinguishes automatic tool cleanup from image rescue', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'context_shaken',
+      eventId: 'shake-1',
+      runId: 'run-1',
+      tokensAfter: 12000
+    },
+    {
+      source: 'phi',
+      type: 'context_maintenance_notice',
+      eventId: 'rescue-1',
+      runId: 'run-1',
+      noticeText: 'dropped 2 attached images so maintenance could make progress'
+    },
+    {
+      source: 'phi',
+      type: 'context_maintenance_notice',
+      eventId: 'rescue-error',
+      noticeLevel: 'error',
+      noticeText: 'provider rejected recovery'
+    }
+  ])
+
+  assert.equal(items.length, 3)
+  assert.match(items[0].content, /自动精简大型工具结果/)
+  assert.doesNotMatch(items[0].content, /上下文已压缩/)
+  assert.match(items[1].content, /移除了 2 张历史图片/)
+  assert.equal(items[2].role, 'error')
 })
 
 test('chatItemsFromSessionMessages restores model selection migration notices', () => {

@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
 import type { ProjectLocation } from '../../../shared/projectLocation'
+import type { AutoCompactionOverrides } from '../../../shared/contextUsageTypes'
 import { getPhiAgentDir } from '../runtime-paths'
 
 export type SessionKind = 'ordinary' | 'project'
@@ -43,6 +44,7 @@ export interface PhiSessionManifest {
   permissionMode: PermissionMode
   model?: ModelSelection
   thinkingLevel?: ThinkingLevel
+  autoCompaction?: AutoCompactionOverrides
   status: SessionStatus
   unreadKind: UnreadKind | null
   currentRunId?: string
@@ -67,6 +69,7 @@ export interface CreatePhiSessionInput {
   permissionMode: PermissionMode
   model?: ModelSelection
   thinkingLevel?: ThinkingLevel
+  autoCompaction?: AutoCompactionOverrides
 }
 
 export type SessionEventInput = Record<string, unknown> & {
@@ -171,6 +174,7 @@ function withoutUndefinedOptionalFields(manifest: PhiSessionManifest): PhiSessio
   if (next.runtimeSessionPath === undefined) delete next.runtimeSessionPath
   if (next.model === undefined) delete next.model
   if (next.thinkingLevel === undefined) delete next.thinkingLevel
+  if (next.autoCompaction === undefined) delete next.autoCompaction
   if (next.currentRunId === undefined) delete next.currentRunId
   if (next.currentRunStartedAt === undefined) delete next.currentRunStartedAt
   if (next.lastRunOutcome === undefined) delete next.lastRunOutcome
@@ -199,6 +203,7 @@ export function createPhiSession(input: CreatePhiSessionInput): PhiSessionRecord
     permissionMode: input.permissionMode,
     ...(input.model ? { model: input.model } : {}),
     ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
+    ...(input.autoCompaction ? { autoCompaction: input.autoCompaction } : {}),
     status: 'idle',
     unreadKind: null,
     messageCount: 0,
@@ -398,6 +403,7 @@ export function forkPhiSession(
     permissionMode: source.permissionMode,
     model: source.model,
     thinkingLevel: source.thinkingLevel,
+    autoCompaction: source.autoCompaction,
     forkedFrom: { sessionId: sourceId, eventId }
   })
   try {
