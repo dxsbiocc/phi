@@ -53,5 +53,8 @@ test('provider dialog renders the requested provider configuration immediately',
 test('provider dialog renders provider selection when no provider was requested', () => {
   const markup = renderDialog(null)
   assert.match(markup, /搜索 Provider/)
+  assert.match(markup, /aria-label="Provider 列表"/)
+  assert.match(markup, /Direct Provider/)
+  assert.ok(markup.indexOf('Provider 列表') < markup.indexOf('关闭'))
   assert.doesNotMatch(markup, /OAuth 登录/)
 })
