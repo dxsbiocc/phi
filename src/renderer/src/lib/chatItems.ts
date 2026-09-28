@@ -431,6 +431,10 @@ export function chatItemFromPhiTimelineEvent(event: {
   shortSummary?: unknown
   reason?: unknown
   action?: unknown
+  tokensBefore?: unknown
+  tokensAfter?: unknown
+  noticeText?: unknown
+  noticeLevel?: unknown
   errorMessage?: unknown
   createdAt?: string
   fromProviderId?: unknown
@@ -480,20 +484,56 @@ export function chatItemFromPhiTimelineEvent(event: {
     }
   }
   if (event.type === 'context_compacted') {
-    const rawSummary =
-      typeof event.shortSummary === 'string'
-        ? event.shortSummary
-        : typeof event.summary === 'string'
-          ? event.summary
-          : ''
-    const summary =
-      rawSummary.length > 0
-        ? `\n\n摘要：${rawSummary.length > 600 ? `${rawSummary.slice(0, 600)}...` : rawSummary}`
+    return {
+      id,
+      role: 'warning',
+      content: '上下文已压缩，较早内容已汇总给模型；聊天时间线会继续保留可见历史。',
+      contextCompaction: {
+        action: typeof event.action === 'string' ? event.action : 'unknown',
+        ...(typeof event.reason === 'string' ? { reason: event.reason } : {}),
+        ...(typeof event.tokensBefore === 'number' &&
+        Number.isFinite(event.tokensBefore) &&
+        event.tokensBefore >= 0
+          ? { tokensBefore: event.tokensBefore }
+          : {}),
+        ...(typeof event.tokensAfter === 'number' &&
+        Number.isFinite(event.tokensAfter) &&
+        event.tokensAfter >= 0
+          ? { tokensAfter: event.tokensAfter }
+          : {}),
+        ...(typeof event.summary === 'string' ? { summary: event.summary } : {}),
+        ...(typeof event.shortSummary === 'string' ? { shortSummary: event.shortSummary } : {})
+      },
+      ...runIdField(event.runId),
+      ...createdAtField(event.createdAt)
+    }
+  }
+  if (event.type === 'context_shaken') {
+    const after =
+      typeof event.tokensAfter === 'number' &&
+      Number.isFinite(event.tokensAfter) &&
+      event.tokensAfter >= 0
+        ? `，当前上下文约 ${Math.round(event.tokensAfter).toLocaleString('zh-CN')} tokens`
         : ''
     return {
       id,
       role: 'warning',
-      content: `上下文已压缩，较早内容已汇总给模型；聊天时间线会继续保留可见历史。${summary}`,
+      content: `SDK 已自动精简大型工具结果或文本块${after}。原文由 SDK 归档，聊天时间线仍保留可见历史。`,
+      ...runIdField(event.runId),
+      ...createdAtField(event.createdAt)
+    }
+  }
+  if (event.type === 'context_maintenance_notice') {
+    const raw = typeof event.noticeText === 'string' ? event.noticeText : ''
+    const images = raw.match(/dropped (\d+) attached images?/i)
+    const content = images
+      ? `SDK 为继续压缩，从模型上下文移除了 ${images[1]} 张历史图片；聊天记录中的图片仍可查看。`
+      : `SDK 上下文整理提示：${raw || '没有更多详情'}`
+    return {
+      id,
+      role: event.noticeLevel === 'error' ? 'error' : 'warning',
+      content,
+      ...runIdField(event.runId),
       ...createdAtField(event.createdAt)
     }
   }
@@ -503,6 +543,11 @@ export function chatItemFromPhiTimelineEvent(event: {
       id,
       role: 'error',
       content: `上下文压缩失败${error}`,
+      contextCompaction: {
+        action: typeof event.action === 'string' ? event.action : 'unknown',
+        ...(typeof event.reason === 'string' ? { reason: event.reason } : {})
+      },
+      ...runIdField(event.runId),
       ...createdAtField(event.createdAt)
     }
   }

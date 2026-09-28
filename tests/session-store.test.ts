@@ -68,6 +68,49 @@ test('createPhiSession creates a stable session directory and manifest', () => {
   })
 })
 
+test('automatic compaction overrides persist per session and follow a fork', () => {
+  withPhiDir(() => {
+    const first = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      permissionMode: 'auto'
+    })
+    const second = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      permissionMode: 'auto'
+    })
+    assert.equal(first.manifest.autoCompaction, undefined)
+    assert.equal(second.manifest.autoCompaction, undefined)
+
+    updateSessionManifest(first.sessionId, {
+      autoCompaction: { enabled: false, thresholdPercent: 70 }
+    })
+    const stored = listPhiSessions()
+    assert.deepEqual(
+      stored.find((session) => session.sessionId === first.sessionId)?.autoCompaction,
+      { enabled: false, thresholdPercent: 70 }
+    )
+    assert.equal(
+      stored.find((session) => session.sessionId === second.sessionId)?.autoCompaction,
+      undefined
+    )
+
+    const turn = appendSessionEvent(first.sessionId, { type: 'user_message', content: 'hello' })
+    const fork = forkPhiSession(first.sessionId, turn.eventId, '/runtime/fork.jsonl')
+    assert.deepEqual(fork.manifest.autoCompaction, { enabled: false, thresholdPercent: 70 })
+
+    updateSessionManifest(first.sessionId, { autoCompaction: undefined })
+    assert.equal(
+      listPhiSessions().find((session) => session.sessionId === first.sessionId)?.autoCompaction,
+      undefined
+    )
+    assert.deepEqual(fork.manifest.autoCompaction, { enabled: false, thresholdPercent: 70 })
+  })
+})
+
 test('forkPhiSession copies history through the selected turn and owns its attachments', () => {
   withPhiDir(() => {
     const source = createPhiSession({

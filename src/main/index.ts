@@ -1,5 +1,13 @@
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
 import type { BackgroundAgentJob } from '../shared/backgroundJobTypes'
+import type {
+  AutoCompactionOverrides,
+  AutoCompactionSettingsPatch,
+  CurrentAutoCompactionSettings,
+  CurrentContextUsage,
+  ManualCompactionOutcome,
+  ManualCompactionTarget
+} from '../shared/contextUsageTypes'
 import type { WrapperRunFinishedEvent } from '../shared/wrapperRunNotice'
 import { declaredExternalOutputRoot } from '../shared/wrapperResultTypes'
 import {
@@ -139,6 +147,7 @@ import {
   getBundledAgentsDir,
   getBundledSkillsDir,
   openRuntimeSessionManager,
+  readAutoCompactionDefaults,
   type ModelRuntime,
   type RuntimeModel,
   type RuntimeResourceLoader
@@ -650,6 +659,7 @@ let sessionSwitchRequest = 0
 const promptQueues = new Map<string, Promise<void>>()
 const promptGenerations = new Map<string, number>()
 const activePromptRuns = new Map<string, PromptRun>()
+const manualCompactionIds = new Set<string>()
 const approvedRemoteBashCalls = new Map<
   string,
   { projectId: string; approvedCwd: string; approvalDigest: string; expiresAt: number }
@@ -2228,12 +2238,70 @@ function persistCompletedThinkingBlocks(run: PromptRun, summary: Record<string, 
   run.thinkingBlockStartedAtMs.clear()
 }
 
+function persistSdkCompactionNotice(
+  phiSessionId: string,
+  runId: string | undefined,
+  summary: Record<string, unknown>
+): Record<string, unknown> | null {
+  if (
+    summary.type !== 'notice' ||
+    summary.source !== 'compaction' ||
+    typeof summary.message !== 'string'
+  ) {
+    return null
+  }
+  const stored = appendSessionEvent(phiSessionId, {
+    type: 'context_maintenance_notice',
+    ...(runId ? { runId } : {}),
+    ...createdAtFromSummary(summary),
+    noticeLevel: summary.level === 'error' ? 'error' : 'info',
+    noticeText: summary.message.slice(0, 1000)
+  })
+  return { source: 'phi', ...stored }
+}
+
+function persistSdkShakeEvent(
+  phiSessionId: string,
+  runId: string | undefined,
+  summary: Record<string, unknown>,
+  reason?: string
+): Record<string, unknown> | null {
+  if (summary.type !== 'auto_compaction_end' || summary.action !== 'shake' || summary.skipped) {
+    return null
+  }
+  const stored = appendSessionEvent(phiSessionId, {
+    type: summary.aborted || summary.errorMessage ? 'context_maintenance_notice' : 'context_shaken',
+    ...(runId ? { runId } : {}),
+    action: 'shake',
+    ...createdAtFromSummary(summary),
+    ...(reason ? { reason } : {}),
+    ...(summary.aborted || summary.errorMessage
+      ? {
+          noticeLevel: summary.aborted ? 'info' : 'warning',
+          noticeText:
+            typeof summary.errorMessage === 'string'
+              ? summary.errorMessage.slice(0, 1000)
+              : '自动精简已取消'
+        }
+      : {}),
+    ...(typeof summary.tokensAfter === 'number' &&
+    Number.isFinite(summary.tokensAfter) &&
+    summary.tokensAfter >= 0
+      ? { tokensAfter: summary.tokensAfter }
+      : {})
+  })
+  return { source: 'phi', ...stored }
+}
+
 function persistSessionEvent(
   run: PromptRun,
   summary: Record<string, unknown>
 ): Record<string, unknown> {
   const withRunId = (event: Record<string, unknown>): Record<string, unknown> =>
     typeof event.runId === 'string' ? event : { ...event, runId: run.runId }
+
+  const notice = persistSdkCompactionNotice(run.phiSessionId, run.runId, summary)
+  if (notice) return notice
 
   if (summary.type === 'auto_compaction_start' && typeof summary.action === 'string') {
     if (typeof summary.reason === 'string') {
@@ -2245,30 +2313,41 @@ function persistSessionEvent(
   if (summary.type === 'auto_compaction_end' && typeof summary.action === 'string') {
     const reason = run.compactionReasons.get(summary.action)
     run.compactionReasons.delete(summary.action)
-    if (!summary.skipped && !summary.aborted) {
-      const result = summary.result as
-        { summary?: unknown; shortSummary?: unknown; tokensBefore?: unknown } | undefined
-      appendSessionEvent(run.phiSessionId, {
-        type: 'context_compacted',
-        runId: run.runId,
-        action: summary.action,
-        ...createdAtFromSummary(summary),
-        ...(reason ? { reason } : {}),
-        ...(typeof result?.shortSummary === 'string' ? { shortSummary: result.shortSummary } : {}),
-        ...(typeof result?.summary === 'string' ? { summary: result.summary } : {}),
-        ...(typeof result?.tokensBefore === 'number' ? { tokensBefore: result.tokensBefore } : {})
-      })
-    } else if (summary.errorMessage) {
-      appendSessionEvent(run.phiSessionId, {
+    if (summary.action === 'shake') {
+      return (
+        persistSdkShakeEvent(run.phiSessionId, run.runId, summary, reason) ?? withRunId(summary)
+      )
+    }
+    if (summary.skipped) return withRunId(summary)
+    if (summary.aborted || summary.errorMessage) {
+      const stored = appendSessionEvent(run.phiSessionId, {
         type: 'context_compaction_failed',
         runId: run.runId,
         action: summary.action,
         ...createdAtFromSummary(summary),
         ...(reason ? { reason } : {}),
-        errorMessage: summary.errorMessage
+        errorMessage: typeof summary.errorMessage === 'string' ? summary.errorMessage : '已取消'
       })
+      return { source: 'phi', ...stored }
     }
-    return withRunId(summary)
+    const result = summary.result as
+      { summary?: unknown; shortSummary?: unknown; tokensBefore?: unknown } | undefined
+    const stored = appendSessionEvent(run.phiSessionId, {
+      type: 'context_compacted',
+      runId: run.runId,
+      action: summary.action,
+      ...createdAtFromSummary(summary),
+      ...(reason ? { reason } : {}),
+      ...(typeof result?.shortSummary === 'string' ? { shortSummary: result.shortSummary } : {}),
+      ...(typeof result?.summary === 'string' ? { summary: result.summary } : {}),
+      ...(typeof result?.tokensBefore === 'number' ? { tokensBefore: result.tokensBefore } : {}),
+      ...(typeof summary.tokensAfter === 'number' &&
+      Number.isFinite(summary.tokensAfter) &&
+      summary.tokensAfter >= 0
+        ? { tokensAfter: summary.tokensAfter }
+        : {})
+    })
+    return { source: 'phi', ...stored }
   }
 
   if (
@@ -2838,12 +2917,15 @@ function continueConversationAfterAgentRun(
   wakeConversation(phiSessionId, event)
 }
 
-/** Wakes the conversation now if it is idle, otherwise once the run in progress is over. */
+/** Wakes the conversation when its run or manual compaction has settled. */
 function wakeConversation(phiSessionId: string, event: ContinuationEvent): void {
   const manifest = findPhiSessionById(phiSessionId)
   if (!manifest) return
-  if (hasActivePromptRun(createPhiSessionKey(manifest.sessionId, manifest.cwd))) {
-    // Never interrupt a run in progress: wake the conversation when it is over.
+  if (
+    hasActivePromptRun(createPhiSessionKey(manifest.sessionId, manifest.cwd)) ||
+    manualCompactionIds.has(phiSessionId)
+  ) {
+    // Keep the report for the next turn after the active run or compaction finishes.
     pendingContinuations.set(phiSessionId, [
       ...(pendingContinuations.get(phiSessionId) ?? []),
       event
@@ -2912,6 +2994,9 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
     runSnapshot,
     normalizedText || (input.images?.length ? '图片' : undefined)
   )
+  if (manualCompactionIds.has(phiSessionId)) {
+    throw new Error('上下文压缩正在进行，请稍后发送消息')
+  }
   const stableSessionPath = phiOnlySessionPath(phiSessionId)
   // A real user message starts the automatic wake-up count over.
   if (!input.automatic) automaticContinuations.delete(phiSessionId)
@@ -4556,6 +4641,227 @@ async function getCurrentResolvedSessionIfReady(): Promise<AgentSessionResult | 
   }
 }
 
+async function getCurrentContextUsage(): Promise<CurrentContextUsage> {
+  const current = getCurrentSessionPayload()
+  const identity = {
+    sessionPath: current.path,
+    phiSessionId: current.phiSessionId ?? null,
+    sessionGeneration: current.sessionGeneration
+  }
+  const sessionKey = currentSessionKey
+  const snapshot: SessionSnapshot = {
+    path: currentSessionPath,
+    cwd: currentCwd,
+    permissionMode: currentPermissionMode
+  }
+  if (!runtimeSessionPathForSnapshot(sessionKey, snapshot)) {
+    return { ...identity, usage: null }
+  }
+
+  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
+  const result =
+    manifest?.projectLocation?.kind === 'ssh'
+      ? await getCurrentResolvedSessionIfReady()
+      : await getAgentSession(sessionKey, snapshot)
+  if (!result) return { ...identity, usage: null }
+  const usage = await result.session.getContextUsage()
+  const latest = getCurrentSessionPayload()
+  if (
+    latest.path !== identity.sessionPath ||
+    (latest.phiSessionId ?? null) !== identity.phiSessionId ||
+    latest.sessionGeneration !== identity.sessionGeneration
+  ) {
+    return { ...identity, usage: null }
+  }
+  return { ...identity, usage }
+}
+
+function currentAutoCompactionManifest(target: unknown): {
+  current: ReturnType<typeof getCurrentSessionPayload>
+  manifest: PhiSessionManifest
+  sessionKey: string
+} {
+  const current = getCurrentSessionPayload()
+  const requested = target as Partial<ManualCompactionTarget> | null
+  if (
+    !requested ||
+    requested.sessionPath !== current.path ||
+    (requested.phiSessionId ?? null) !== (current.phiSessionId ?? null) ||
+    requested.sessionGeneration !== current.sessionGeneration
+  ) {
+    throw new Error('会话已切换，请重新打开自动压缩设置')
+  }
+  const sessionKey = currentSessionKey
+  const manifest = findPhiManifestForSession(sessionKey, current.path ?? undefined, current.cwd)
+  if (!manifest) throw new Error('当前会话尚未建立设置记录')
+  return { current, manifest, sessionKey }
+}
+
+function autoCompactionSettingsPatch(value: unknown): AutoCompactionSettingsPatch {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('自动压缩设置无效')
+  }
+  const patch = value as Record<string, unknown>
+  if (Object.keys(patch).some((key) => key !== 'enabled' && key !== 'thresholdPercent')) {
+    throw new Error('自动压缩设置包含未知字段')
+  }
+  const result: AutoCompactionSettingsPatch = {}
+  if ('enabled' in patch) {
+    if (patch.enabled !== null && typeof patch.enabled !== 'boolean') {
+      throw new Error('自动压缩开关无效')
+    }
+    result.enabled = patch.enabled
+  }
+  if ('thresholdPercent' in patch) {
+    if (
+      patch.thresholdPercent !== null &&
+      patch.thresholdPercent !== 70 &&
+      patch.thresholdPercent !== 80 &&
+      patch.thresholdPercent !== 90
+    ) {
+      throw new Error('自动压缩阈值无效')
+    }
+    result.thresholdPercent = patch.thresholdPercent
+  }
+  return result
+}
+
+async function getCurrentAutoCompactionSettings(
+  target: unknown
+): Promise<CurrentAutoCompactionSettings> {
+  const { current, manifest } = currentAutoCompactionManifest(target)
+  const defaults = await readAutoCompactionDefaults(
+    manifest.projectLocation?.kind === 'ssh' ? AGENT_DIR : current.cwd,
+    AGENT_DIR
+  )
+  const latestManifest = currentAutoCompactionManifest(target).manifest
+  const overrides = latestManifest.autoCompaction ?? {}
+  return {
+    sessionPath: current.path,
+    phiSessionId: current.phiSessionId ?? null,
+    sessionGeneration: current.sessionGeneration,
+    enabled: overrides.enabled ?? defaults.enabled,
+    thresholdPercent: overrides.thresholdPercent ?? defaults.thresholdPercent,
+    defaults,
+    overrides
+  }
+}
+
+async function setCurrentAutoCompactionSettings(
+  target: unknown,
+  value: unknown
+): Promise<CurrentAutoCompactionSettings> {
+  const { manifest, sessionKey } = currentAutoCompactionManifest(target)
+  if (hasActivePromptRun(sessionKey) || manualCompactionIds.has(manifest.sessionId)) {
+    throw new Error('请等待当前会话运行结束后再修改自动压缩设置')
+  }
+  const patch = autoCompactionSettingsPatch(value)
+  const overrides: AutoCompactionOverrides = { ...(manifest.autoCompaction ?? {}) }
+  if (patch.enabled === null) delete overrides.enabled
+  else if (patch.enabled !== undefined) overrides.enabled = patch.enabled
+  if (patch.thresholdPercent === null) delete overrides.thresholdPercent
+  else if (patch.thresholdPercent !== undefined) {
+    overrides.thresholdPercent = patch.thresholdPercent
+  }
+  const lifecycle = getLifecycleForKey(sessionKey)
+  const record = lifecycle.currentRecord
+  const pending = Symbol('pending')
+  const ready = record ? await Promise.race([record.promise, Promise.resolve(pending)]) : pending
+  if (ready !== pending && record && lifecycle.isCurrent(record)) {
+    await ready.session.setAutoCompactionSettings(overrides)
+  }
+  updateSessionManifest(manifest.sessionId, {
+    autoCompaction: Object.keys(overrides).length > 0 ? overrides : undefined
+  })
+  notifySessionChanged()
+  return getCurrentAutoCompactionSettings(target)
+}
+
+async function compactCurrentSession(target: unknown): Promise<ManualCompactionOutcome> {
+  const current = getCurrentSessionPayload()
+  const requested = target as Partial<ManualCompactionTarget> | null
+  if (
+    !requested ||
+    requested.sessionPath !== current.path ||
+    (requested.phiSessionId ?? null) !== (current.phiSessionId ?? null) ||
+    requested.sessionGeneration !== current.sessionGeneration
+  ) {
+    throw new Error('会话已切换，请重新打开压缩操作')
+  }
+  const sessionKey = currentSessionKey
+  const snapshot: SessionSnapshot & { permissionMode: PermissionMode } = {
+    path: currentSessionPath,
+    cwd: currentCwd,
+    permissionMode: currentPermissionMode
+  }
+  if (!runtimeSessionPathForSnapshot(sessionKey, snapshot)) {
+    throw new Error('当前会话暂无可压缩的历史')
+  }
+  if (hasActivePromptRun(sessionKey)) throw new Error('请等待当前会话运行结束后再压缩')
+
+  const phiSessionId = ensurePhiSessionId(sessionKey, snapshot)
+  if (manualCompactionIds.has(phiSessionId)) throw new Error('上下文压缩正在进行')
+  manualCompactionIds.add(phiSessionId)
+  const sessionPath = phiOnlySessionPath(phiSessionId)
+  const sessionGeneration = getLifecycleForKey(sessionKey).currentGeneration
+  const broadcast = (event: StoredSessionEvent): void => {
+    sendToAllWindows('agent:event', {
+      source: 'phi',
+      ...event,
+      phiSessionId,
+      sessionPath,
+      sessionGeneration,
+      cwd: snapshot.cwd
+    })
+    notifySessionChanged()
+  }
+
+  try {
+    const { session } = await getAgentSession(sessionKey, snapshot)
+    let result: Awaited<ReturnType<typeof session.compact>>
+    try {
+      result = await session.compact()
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      try {
+        broadcast(
+          appendSessionEvent(phiSessionId, {
+            type: 'context_compaction_failed',
+            action: 'manual',
+            reason: 'user',
+            errorMessage: errorMessage.slice(0, 500)
+          })
+        )
+      } catch (persistError) {
+        rememberErrorSummary(persistError)
+      }
+      throw error
+    }
+
+    broadcast(
+      appendSessionEvent(phiSessionId, {
+        type: 'context_compacted',
+        action: 'manual',
+        reason: 'user',
+        summary: result.summary,
+        ...(result.shortSummary ? { shortSummary: result.shortSummary } : {}),
+        tokensBefore: result.tokensBefore,
+        ...(result.tokensAfter === undefined ? {} : { tokensAfter: result.tokensAfter })
+      })
+    )
+    return {
+      sessionPath,
+      phiSessionId,
+      tokensBefore: result.tokensBefore,
+      ...(result.tokensAfter === undefined ? {} : { tokensAfter: result.tokensAfter }),
+      ...(result.shortSummary ? { shortSummary: result.shortSummary } : {})
+    }
+  } finally {
+    manualCompactionIds.delete(phiSessionId)
+    flushPendingContinuations(phiSessionId, false)
+  }
+}
+
 function getCurrentSessionPayload(): CurrentSessionPayload {
   currentPermissionMode = resolveSessionPermissionMode(currentSessionKey, {
     path: currentSessionPath,
@@ -5111,6 +5417,9 @@ async function getAgentSession(
       const result = await createAgentSession({
         modelRuntime: runtime,
         thinkingLevel,
+        ...(sessionManifest?.autoCompaction
+          ? { autoCompaction: sessionManifest.autoCompaction }
+          : {}),
         cwd: creationSnapshot.cwd,
         sessionManager: createSessionManager(
           creationSnapshot.cwd,
@@ -5162,9 +5471,15 @@ async function getAgentSession(
         if (!lifecycle.isCurrentGeneration(generation)) return
         const summary = withEventTimestamp(rawSummary)
         const run = getActivePromptRun(sessionKey)
-        const persistedSummary = run ? persistSessionEvent(run, summary) : summary
-        const targetWindow = getActiveWindow()
         const phiSessionId = run?.phiSessionId ?? getPhiSessionIdForKey(sessionKey)
+        const persistedSummary = run
+          ? persistSessionEvent(run, summary)
+          : phiSessionId
+            ? (persistSdkCompactionNotice(phiSessionId, undefined, summary) ??
+              persistSdkShakeEvent(phiSessionId, undefined, summary) ??
+              summary)
+            : summary
+        const targetWindow = getActiveWindow()
         sendToWindow(targetWindow, 'agent:event', {
           ...persistedSummary,
           ...(phiSessionId ? { phiSessionId } : {}),
@@ -5191,6 +5506,8 @@ async function applyNextRunConfiguration(
   sessionKey: string,
   snapshot: SessionSnapshot
 ): Promise<void> {
+  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
+  await session.setAutoCompactionSettings(manifest?.autoCompaction ?? {})
   const runtime = await getAuthManager().getRuntime()
   const modelSelection = resolveSessionModelSelection(sessionKey, snapshot)
   if (modelSelection) {
@@ -5738,6 +6055,15 @@ app.whenReady().then(() => {
 
   ipcMain.handle('sessions:list', async () => listSessions(getNoProjectTaskFolder()))
   ipcMain.handle('sessions:current', async () => getCurrentSessionPayloadWithMessages())
+  ipcMain.handle('sessions:contextUsage', async () => getCurrentContextUsage())
+  ipcMain.handle('sessions:autoCompactionSettings', async (_, target: unknown) =>
+    getCurrentAutoCompactionSettings(target)
+  )
+  ipcMain.handle(
+    'sessions:autoCompactionSettings:set',
+    async (_, target: unknown, patch: unknown) => setCurrentAutoCompactionSettings(target, patch)
+  )
+  ipcMain.handle('sessions:compact', async (_, target: unknown) => compactCurrentSession(target))
   ipcMain.handle('sessions:updatePermissionMode', async (_, permissionMode: PermissionMode) => {
     currentPermissionMode = permissionMode
     sessionPermissionModes.set(resolveSessionKeyAlias(currentSessionKey), permissionMode)

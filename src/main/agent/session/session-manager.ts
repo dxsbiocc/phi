@@ -7,7 +7,7 @@ import {
 
 export type AgentEventSummary = Record<string, unknown>
 
-function summarizeEvent(event: AgentSessionEvent): Record<string, unknown> {
+export function summarizeEvent(event: AgentSessionEvent): Record<string, unknown> {
   const summary: Record<string, unknown> = {
     type: event.type
   }
@@ -18,6 +18,14 @@ function summarizeEvent(event: AgentSessionEvent): Record<string, unknown> {
 
   if ('message' in event) {
     summary.message = event.message
+  }
+
+  if ('source' in event) {
+    summary.source = event.source
+  }
+
+  if ('level' in event) {
+    summary.level = event.level
   }
 
   if ('toolCallId' in event) {
@@ -74,6 +82,10 @@ function summarizeEvent(event: AgentSessionEvent): Record<string, unknown> {
 
   if ('errorMessage' in event) {
     summary.errorMessage = event.errorMessage
+  }
+
+  if ('tokensAfter' in event) {
+    summary.tokensAfter = event.tokensAfter
   }
 
   return summary

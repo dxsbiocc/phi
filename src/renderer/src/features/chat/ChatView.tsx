@@ -11,7 +11,9 @@ import {
 } from 'react'
 import type { PromptImageInput } from '../../../../shared/promptImageTypes'
 import { PastedImagePreview } from './components/PastedImagePreview'
+import { ContextUsageIndicator } from './components/ContextUsageIndicator'
 import { usePastedImages } from './hooks/usePastedImages'
+import { useContextUsage, type ContextUsageTarget } from './hooks/useContextUsage'
 import { type LocalPathKind } from '../../components/MarkdownContent'
 import ToolApprovalDialog from '../../components/ToolApprovalDialog'
 import UserInteractionPanel from '../../components/UserInteractionPanel'
@@ -115,6 +117,11 @@ type ViewProps = {
   currentRunStartedAt?: string
   models: ModelOption[]
   selectedModel: ModelOption | null
+  contextUsageTarget?: ContextUsageTarget
+  contextUsageRefreshKey?: number
+  contextCompacting?: boolean
+  disableContextCompaction?: boolean
+  onCompactContext?: (target: ContextUsageTarget) => Promise<void> | void
   skills?: SkillSummary[]
   promptAgents?: PromptAgentSummary[]
   plugins?: PluginCatalogItem[]
@@ -171,6 +178,11 @@ function ChatView({
   currentRunStartedAt,
   models,
   selectedModel,
+  contextUsageTarget,
+  contextUsageRefreshKey = 0,
+  contextCompacting = false,
+  disableContextCompaction = false,
+  onCompactContext,
   skills = [],
   promptAgents = [],
   plugins = [],
@@ -208,6 +220,12 @@ function ChatView({
   onJumpToNotebookCell,
   cwd = ''
 }: ViewProps): React.JSX.Element {
+  const contextUsage = useContextUsage(
+    contextUsageTarget,
+    selectedModel ? `${selectedModel.providerId}/${selectedModel.modelId}` : null,
+    isGenerating || contextCompacting,
+    contextUsageRefreshKey
+  )
   const inputRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null)
   const promptHistory = useMemo(() => promptHistoryFromMessages(messages), [messages])
   const promptHistoryKey = useMemo(() => promptHistory.join('\u0000'), [promptHistory])
@@ -945,6 +963,27 @@ function ChatView({
               </Box>
             </Box>
           </Paper>
+          {contextUsageTarget && (
+            <Box sx={{ mt: 0.5, px: 1 }}>
+              <ContextUsageIndicator
+                usage={contextUsage.usage}
+                loading={contextUsage.loading}
+                compacting={contextCompacting}
+                compactDisabled={disableContextCompaction || !contextUsageTarget.sessionPath}
+                autoCompactionTarget={contextUsageTarget}
+                autoCompactionDisabled={
+                  isGenerating || contextCompacting || !contextUsageTarget.sessionPath
+                }
+                onCompact={
+                  onCompactContext
+                    ? () => {
+                        void onCompactContext(contextUsageTarget)
+                      }
+                    : undefined
+                }
+              />
+            </Box>
+          )}
         </Box>
       </Box>
     </Box>
