@@ -129,6 +129,8 @@ export interface AttachRemoteOptions extends CommonOptions {
 }
 
 const DEFAULT_POLL_MS = 5000
+const PREFLIGHT_TIMEOUT_MS = 180_000
+const PREFLIGHT_MAX_OUTPUT = 64 * 1024
 const DEFAULT_MAX_POLL_FAILURES = 12
 const DEFAULT_KILL_GRACE_MS = 10_000
 
@@ -501,7 +503,14 @@ async function runPreflight(
     profile: options.profile,
     workspaceRoot: options.target.workspaceRoot
   })
-  const result = await session.exec(`bash -c ${shellQuote(script)}`)
+  const command = `bash -c ${shellQuote(script)}`
+  // The check starts a JVM for `nextflow -version`: slow on a busy login node.
+  const result = session.execBounded
+    ? await session.execBounded(command, {
+        timeoutMs: PREFLIGHT_TIMEOUT_MS,
+        maxOutputBytes: PREFLIGHT_MAX_OUTPUT
+      })
+    : await session.exec(command)
   if (result.code !== 0) {
     const reason = (result.stderr || result.stdout).trim()
     return reported(

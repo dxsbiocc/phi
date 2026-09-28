@@ -20,6 +20,10 @@ export const FAKE_NEXTFLOW = `#!/usr/bin/env node
 const fs = require('fs')
 const path = require('path')
 const args = process.argv.slice(2)
+if (args[0] === '-version') {
+  console.log('      version 26.04.6 build 12646')
+  process.exit(0)
+}
 const params = JSON.parse(fs.readFileSync(args[args.indexOf('-params-file') + 1], 'utf8'))
 if (process.env.FAKE_NF_PIDFILE) fs.writeFileSync(process.env.FAKE_NF_PIDFILE, String(process.pid))
 const mode = process.env.FAKE_NF_MODE

@@ -17,9 +17,15 @@ import {
   readWrapperDefaultParams,
   type WrapperCompositionEntry
 } from './discovery'
+import {
+  isNextflowVersionSupported,
+  nextflowTooOldMessage,
+  readLocalNextflowVersion
+} from './nextflow-version'
 import { parseWrapperRunResources } from './resources'
 import {
   WRAPPER_EXECUTION_PROFILES,
+  findNextflowBinary,
   killAllWrapperProcesses,
   startWrapperComposition,
   type WrapperExecutionProfile,
@@ -283,6 +289,12 @@ export class WrapperJobManager implements WrapperJobClient {
       return {
         ok: false,
         error: `Invalid profile: ${profile}. Must be one of ${WRAPPER_EXECUTION_PROFILES.join(', ')}.`
+      }
+    }
+    if (!resolved) {
+      const version = await readLocalNextflowVersion(findNextflowBinary())
+      if (version && !isNextflowVersionSupported(version)) {
+        return { ok: false, error: nextflowTooOldMessage(version, '本机') }
       }
     }
     if (project) {

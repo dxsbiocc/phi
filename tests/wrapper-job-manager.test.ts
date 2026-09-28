@@ -884,3 +884,19 @@ test('a run without resources passes no extra config, and invalid resources star
     }
   })
 })
+
+test('a local Nextflow too old for the wrappers is refused before anything starts', async () => {
+  await withSandbox(async (sb) => {
+    sb.useFake("#!/bin/sh\necho '      version 22.10.6 build 5843'\n")
+    const m = manager(sb)
+    const result = await m.start({
+      id: WRAPPER_ID,
+      overrides: { outdir: sb.outdir },
+      profile: 'docker'
+    })
+    assert.equal(result.ok, false)
+    assert.match(result.ok ? '' : result.error, /22\.10\.6/)
+    assert.match(result.ok ? '' : result.error, /25\.04\.0/)
+    assert.equal(listWrapperRuns(sb.agentDir).length, 0)
+  })
+})

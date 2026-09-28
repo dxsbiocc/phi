@@ -1,4 +1,5 @@
 import type { RemoteHpcSettings } from '../../../../shared/wrapperRemoteTypes'
+import { MIN_NEXTFLOW_VERSION, nextflowTooOldMessage } from './nextflow-version'
 import { buildResourceConfig, type WrapperRunResources } from './resources'
 import { LOG_STDERR, LOG_STDOUT } from '../executor-remote'
 import { shellQuote } from '../remote-ssh-session'
@@ -226,6 +227,27 @@ export function buildRemoteSbatchScript(input: {
  * the run impossible, so those fail with the setting to change; a missing container runtime
  * only warns, since some sites provide it on the compute nodes only.
  */
+/**
+ * Refuses a Nextflow too old for the wrappers, when the host has one to ask.
+ * `-version` output that cannot be read (e.g. a first run that must download
+ * the runtime) is let through: the launch will report the real problem.
+ */
+function nextflowVersionCheck(nextflow: string): string[] {
+  const min = shellQuote(MIN_NEXTFLOW_VERSION)
+  const marker = '__NF_VERSION__'
+  const [before, after] = nextflowTooOldMessage(marker, '服务器上').split(marker)
+  return [
+    `if command -v ${shellQuote(nextflow)} >/dev/null 2>&1; then`,
+    '  nf_limit=""; command -v timeout >/dev/null 2>&1 && nf_limit="timeout 120"',
+    `  nf_version=$(NXF_DISABLE_CHECK_LATEST=true NXF_ANSI_LOG=false $nf_limit ${shellQuote(nextflow)} -version 2>/dev/null | sed -n 's/.*version \\([0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*\\).*/\\1/p' | head -n 1) || true`,
+    `  if [ -n "$nf_version" ] && [ "$(printf '%s\\n%s\\n' ${min} "$nf_version" | sort -V | head -n 1)" != ${min} ]; then`,
+    `    echo ${shellQuote(before)}"$nf_version"${shellQuote(after)} >&2`,
+    '    exit 1',
+    '  fi',
+    'fi'
+  ]
+}
+
 export function buildRemotePreflightScript(input: {
   hpc: RemoteHpcSettings | undefined
   profile: string
@@ -260,6 +282,7 @@ export function buildRemotePreflightScript(input: {
       : `  echo ${shellQuote(`Nextflow was not found on the host ("${nextflow}"). Set the Nextflow path in the connection settings, or add a setup command such as "module load nextflow".`)} >&2`,
     ...(batchHead ? [] : ['  exit 1']),
     'fi',
+    ...nextflowVersionCheck(nextflow),
     'if ! command -v java >/dev/null 2>&1; then',
     batchHead
       ? `  echo ${shellQuote('WARN: 登录节点未找到 Java；请确认 sbatch 计算节点的启动命令会提供它。')}`
