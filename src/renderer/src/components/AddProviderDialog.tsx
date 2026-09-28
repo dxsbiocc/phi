@@ -1,14 +1,18 @@
 import {
   Alert,
-  Autocomplete,
   Box,
   Button,
   CircularProgress,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Divider,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemText,
   MenuItem,
   Paper,
   Select,
@@ -16,7 +20,7 @@ import {
   TextField,
   Typography
 } from '@mui/material'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { PhiIcons } from '../icons'
 import type { ActiveAuthPrompt, ProviderAuthStatus } from '../types'
 
@@ -77,8 +81,28 @@ function AddProviderDialogContent({
   )
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(initialProviderId)
   const [apiKey, setApiKey] = useState('')
+  const [providerQuery, setProviderQuery] = useState('')
+  const providerListRef = useRef<HTMLUListElement>(null)
 
   const selectedProvider = providers.find((item) => item.providerId === selectedProviderId) ?? null
+  const normalizedQuery = providerQuery.trim().toLocaleLowerCase()
+  const visibleProviders = normalizedQuery
+    ? providers.filter((provider) =>
+        `${provider.name} ${provider.providerId}`.toLocaleLowerCase().includes(normalizedQuery)
+      )
+    : providers
+
+  const focusProviderOption = (index: number): void => {
+    const options = providerListRef.current?.querySelectorAll<HTMLButtonElement>('button')
+    options?.[index]?.focus()
+  }
+
+  const selectProvider = (provider: ProviderAuthStatus): void => {
+    setSelectedProviderId(provider.providerId)
+    setStep('configure')
+    onSelectProvider(provider)
+    setApiKey('')
+  }
 
   const renderPromptSection = (): React.JSX.Element | null => {
     if (!activePrompts.length) {
@@ -157,27 +181,95 @@ function AddProviderDialogContent({
         添加 Provider
       </DialogTitle>
 
-      <DialogContent sx={{ mt: 1 }}>
+      <DialogContent sx={{ pt: 1.5, pb: 1.5 }}>
         {step === 'select' ? (
-          <Box>
-            <Autocomplete
-              options={providers}
-              autoFocus
-              getOptionLabel={(provider) => `${provider.name}（${provider.providerId}）`}
-              onChange={(_, value) => {
-                if (!value) {
-                  return
-                }
-                setSelectedProviderId(value.providerId)
-                setStep('configure')
-                onSelectProvider(value)
-                setApiKey('')
+          <Stack spacing={1.5}>
+            <Box>
+              <Typography
+                component="label"
+                htmlFor="add-provider-search"
+                variant="body2"
+                sx={{ fontWeight: 600 }}
+              >
+                搜索 Provider
+              </Typography>
+              <TextField
+                id="add-provider-search"
+                autoFocus
+                fullWidth
+                value={providerQuery}
+                onChange={(event) => setProviderQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowDown' && visibleProviders.length > 0) {
+                    event.preventDefault()
+                    focusProviderOption(0)
+                  }
+                }}
+                placeholder="输入名称或 ID"
+                sx={{ mt: 0.75 }}
+              />
+            </Box>
+            <Box
+              sx={{
+                border: 1,
+                borderColor: 'divider',
+                borderRadius: 1,
+                overflow: 'hidden'
               }}
-              renderInput={(params) => (
-                <TextField {...params} label="搜索 Provider" placeholder="输入名称或 ID" />
-              )}
-            />
-          </Box>
+            >
+              <List
+                ref={providerListRef}
+                aria-label="Provider 列表"
+                sx={{ py: 0.5, maxHeight: 'min(42vh, 360px)', overflowY: 'auto' }}
+              >
+                {visibleProviders.map((provider, index) => (
+                  <ListItem key={provider.providerId} disablePadding>
+                    <ListItemButton
+                      component="button"
+                      type="button"
+                      onClick={() => selectProvider(provider)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                          event.preventDefault()
+                          focusProviderOption(
+                            Math.max(
+                              0,
+                              Math.min(
+                                visibleProviders.length - 1,
+                                index + (event.key === 'ArrowDown' ? 1 : -1)
+                              )
+                            )
+                          )
+                        }
+                      }}
+                      sx={{ minHeight: 56, mx: 0.5, px: 1.5, gap: 1 }}
+                    >
+                      <ListItemText
+                        primary={provider.name}
+                        secondary={provider.providerId}
+                        slotProps={{
+                          primary: { sx: { fontWeight: 600, overflowWrap: 'anywhere' } },
+                          secondary: {
+                            sx: { fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }
+                          }
+                        }}
+                      />
+                      {provider.configured ? (
+                        <Chip label="已配置" size="small" variant="outlined" />
+                      ) : null}
+                    </ListItemButton>
+                  </ListItem>
+                ))}
+                {visibleProviders.length === 0 ? (
+                  <ListItem sx={{ py: 3, justifyContent: 'center' }}>
+                    <Typography variant="body2" color="text.secondary">
+                      没有匹配的 Provider
+                    </Typography>
+                  </ListItem>
+                ) : null}
+              </List>
+            </Box>
+          </Stack>
         ) : null}
 
         {step === 'configure' && selectedProvider ? (
