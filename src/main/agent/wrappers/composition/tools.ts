@@ -162,6 +162,19 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTo
           type: 'boolean',
           description:
             'Default true: when the run ends, Phi wakes the main agent with the outcome so it can continue with the results. Set false only when the task says nothing should happen afterwards.'
+        },
+        resources: {
+          type: 'object',
+          description:
+            'Compute resources for every process of this run, replacing the wrapper defaults, which are sized for tiny test data (often 2-4 CPUs, 4-6 GB, 1 h). Set them for real data, e.g. a mammalian genome: STAR index build or alignment needs about {"cpus": 8, "memory": "40 GB", "time": "8h"}; BWA/HISAT2 alignment {"cpus": 8, "memory": "16 GB", "time": "6h"}. Keep within what the target machine or cluster node has.',
+          properties: {
+            cpus: { type: 'integer', minimum: 1, description: 'CPUs per process.' },
+            memory: {
+              type: 'string',
+              description: 'Memory per process with a unit, e.g. "40 GB".'
+            },
+            time: { type: 'string', description: 'Time limit per process, e.g. "4h" or "1d 6h".' }
+          }
         }
       }
     },
@@ -179,12 +192,14 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTo
 
       const continueWhenDone =
         isRecord(params) && params.continue_when_done === false ? false : undefined
+      const resources = isRecord(params) ? params.resources : undefined
       const started = await jobs.start({
         id,
         overrides,
         ...(profile ? { profile } : {}),
         ...(target ? { target } : {}),
-        ...(continueWhenDone === false ? { continueWhenDone } : {})
+        ...(continueWhenDone === false ? { continueWhenDone } : {}),
+        ...(resources !== undefined ? { resources } : {})
       })
       if (!started.ok) return errorResult(started.error)
       const { runId, outDir, remote } = started.status

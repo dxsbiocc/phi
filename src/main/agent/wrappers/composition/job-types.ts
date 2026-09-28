@@ -53,6 +53,8 @@ export interface WrapperJobClient {
     originSessionId?: string
     /** `false` opts out of waking that conversation when the run ends. Anything else means yes. */
     continueWhenDone?: boolean
+    /** cpus/memory/time for every process, over the wrapper's defaults. Validated by the manager. */
+    resources?: unknown
   }): Promise<StartJobResult>
   status(runId: string): Promise<WrapperJobStatus | undefined>
   /** Newest first. */

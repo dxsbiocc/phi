@@ -19,6 +19,7 @@ import type {
   WrapperRunState
 } from '../types'
 import type { ActiveWrapperPack, WrapperRunPack } from '../../../../shared/wrapperPackTypes'
+import type { WrapperRunResources } from './resources'
 import type { WrapperCompositionEntry } from './discovery'
 import type { RemoteJobSnapshot } from './remote-job'
 import { resolveRemoteOutputRoot } from '../remote-result-paths'
@@ -96,6 +97,8 @@ export function startCompositionRun(input: {
   originSessionId?: string
   targetReason?: string
   continueWhenDone?: boolean
+  /** Resources the run asked for, already validated. */
+  resources?: WrapperRunResources
   /** Set for a run on a remote host: where it will live and which executor name it gets. */
   remote?: {
     host: string
@@ -146,6 +149,7 @@ export function startCompositionRun(input: {
     cwd: entry.componentDir,
     outDir,
     origin: 'composition',
+    ...(input.resources ? { resources: input.resources } : {}),
     ...(entry.pack ? { pack: runPackOf(entry.pack) } : {}),
     ...(input.inputReferences?.length ? { inputReferences: input.inputReferences } : {}),
     ...(input.environmentWarnings?.length

@@ -17,6 +17,7 @@ import {
   readWrapperRun
 } from '../src/main/agent/wrappers/store'
 import {
+  FAKE_NEXTFLOW,
   WRAPPER_ID,
   isAlive,
   pidFileReady,
@@ -797,5 +798,89 @@ test('wrapper_run tells the agent whether the conversation will be woken when th
     })
     assert.match(text(quiet), /will NOT be woken/)
     for (const r of [woken, quiet]) await m.wait((r.details as { runId: string }).runId, 20_000)
+  })
+})
+
+// ── per-run resources ─────────────────────────────────────────────────────
+
+/** The stand-in nextflow, also recording its argv, the -c config it got and its env. */
+const RECORDING_NEXTFLOW = FAKE_NEXTFLOW.replace(
+  'const args = process.argv.slice(2)\n',
+  'const args = process.argv.slice(2)\n' +
+    "const ci = args.indexOf('-c')\n" +
+    "fs.writeFileSync(process.env.FAKE_NF_RECORD, JSON.stringify({ args, config: ci >= 0 ? fs.readFileSync(args[ci + 1], 'utf8') : null, noVersionCheck: process.env.NXF_DISABLE_CHECK_LATEST }))\n"
+)
+
+test('wrapper_run resources reach Nextflow as a run config and are kept on the run record', async () => {
+  await withSandbox(async (sb) => {
+    sb.useFake(RECORDING_NEXTFLOW)
+    const recordPath = join(sb.root, 'nextflow-call.json')
+    process.env.FAKE_NF_RECORD = recordPath
+    try {
+      const m = manager(sb)
+      const handlers = wrapperJobHostHandlers(m)
+      const client = createHostJobClient((method, params) => handlers[method](params))
+      const run = Object.fromEntries(
+        buildWrapperCompositionTools(client).map((tool) => [tool.name, tool])
+      ).wrapper_run
+
+      const result = await run.execute('call-1', {
+        id: WRAPPER_ID,
+        params: { outdir: sb.outdir },
+        profile: 'docker',
+        resources: { cpus: 8, memory: '40G', time: '4h' }
+      })
+      assert.equal((result as { isError?: boolean }).isError, undefined, text(result))
+      const runId = (result as { details: { runId: string } }).details.runId
+      assert.equal((await m.wait(runId, 20_000))?.state, 'completed')
+
+      const call = JSON.parse(readFileSync(recordPath, 'utf-8')) as {
+        args: string[]
+        config: string | null
+        noVersionCheck?: string
+      }
+      assert.ok(call.args.includes('-c'))
+      assert.match(call.config ?? '', /withName: '\.\*'/)
+      assert.match(call.config ?? '', /cpus = 8/)
+      assert.match(call.config ?? '', /memory = '40 GB'/)
+      assert.match(call.config ?? '', /time = '4h'/)
+      assert.equal(call.noVersionCheck, 'true')
+      assert.deepEqual(readWrapperRun(runId, sb.agentDir)?.resources, {
+        cpus: 8,
+        memory: '40 GB',
+        time: '4h'
+      })
+    } finally {
+      delete process.env.FAKE_NF_RECORD
+    }
+  })
+})
+
+test('a run without resources passes no extra config, and invalid resources start nothing', async () => {
+  await withSandbox(async (sb) => {
+    sb.useFake(RECORDING_NEXTFLOW)
+    const recordPath = join(sb.root, 'nextflow-call.json')
+    process.env.FAKE_NF_RECORD = recordPath
+    try {
+      const m = manager(sb)
+      const { runId } = await startJob(m, sb)
+      assert.equal((await m.wait(runId, 20_000))?.state, 'completed')
+      const call = JSON.parse(readFileSync(recordPath, 'utf-8')) as { args: string[] }
+      assert.equal(call.args.includes('-c'), false)
+      assert.equal(readWrapperRun(runId, sb.agentDir)?.resources, undefined)
+
+      const before = listWrapperRuns(sb.agentDir).length
+      const refused = await m.start({
+        id: WRAPPER_ID,
+        overrides: { outdir: sb.outdir },
+        profile: 'docker',
+        resources: { memory: '40' }
+      })
+      assert.equal(refused.ok, false)
+      assert.match(refused.ok ? '' : refused.error, /memory/)
+      assert.equal(listWrapperRuns(sb.agentDir).length, before)
+    } finally {
+      delete process.env.FAKE_NF_RECORD
+    }
   })
 })

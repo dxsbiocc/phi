@@ -404,3 +404,14 @@ test('preflight needs sbatch when the head process is a Slurm job, even for the 
   assert.notEqual(result.code, 0)
   assert.match(result.stderr, /sbatch/)
 })
+
+test('the remote run config carries per-run resources after the site settings', () => {
+  const config = buildRemoteNextflowConfig(
+    { scheduler: 'slurm', queue: 'cpu' },
+    { cpus: 12, memory: '48 GB', time: '8h' }
+  )
+  assert.ok(config.indexOf("process.queue = 'cpu'") < config.indexOf("withName: '.*'"))
+  assert.match(config, /cpus = 12/)
+  assert.match(config, /memory = '48 GB'/)
+  assert.doesNotMatch(buildRemoteNextflowConfig({ scheduler: 'slurm' }), /withName/)
+})

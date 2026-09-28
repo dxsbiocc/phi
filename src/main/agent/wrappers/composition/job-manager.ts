@@ -17,6 +17,7 @@ import {
   readWrapperDefaultParams,
   type WrapperCompositionEntry
 } from './discovery'
+import { parseWrapperRunResources } from './resources'
 import {
   WRAPPER_EXECUTION_PROFILES,
   killAllWrapperProcesses,
@@ -237,8 +238,12 @@ export class WrapperJobManager implements WrapperJobClient {
     target?: 'local' | 'remote'
     originSessionId?: string
     continueWhenDone?: boolean
+    resources?: unknown
   }): Promise<StartJobResult> {
     const { id, overrides } = input
+    const parsedResources = parseWrapperRunResources(input.resources)
+    if (!parsedResources.ok) return { ok: false, error: parsedResources.error }
+    const resources = parsedResources.resources
     let targetReason: string | undefined
     const entry = findWrapperCompositionEntry(id)
     if (!entry) return { ok: false, error: `Wrapper not found: ${id}` }
@@ -397,6 +402,7 @@ export class WrapperJobManager implements WrapperJobClient {
         targetReason,
         originSessionId: input.originSessionId,
         continueWhenDone: input.continueWhenDone,
+        ...(resources ? { resources } : {}),
         ...(resolved
           ? {
               remote: {
@@ -444,6 +450,7 @@ export class WrapperJobManager implements WrapperJobClient {
             profile,
             target: resolved.target,
             wrappersRoot: this.wrappersRoot(),
+            ...(resources ? { resources } : {}),
             onOutput,
             onSnapshot: (snapshot) => {
               if (!jobRef.current?.finalized) this.saveSnapshot(run.runId, snapshot)
@@ -452,7 +459,8 @@ export class WrapperJobManager implements WrapperJobClient {
           })
         : startWrapperComposition(entry.wrapperDir, params, profile as WrapperExecutionProfile, {
             onOutput,
-            killGraceMs: this.killGraceMs
+            killGraceMs: this.killGraceMs,
+            ...(resources ? { resources } : {})
           })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

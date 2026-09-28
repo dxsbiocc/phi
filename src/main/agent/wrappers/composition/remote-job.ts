@@ -1,4 +1,5 @@
 import { relative, sep } from 'node:path'
+import type { WrapperRunResources } from './resources'
 import { isDeepStrictEqual } from 'node:util'
 
 import type { RemoteHpcSettings } from '../../../../shared/wrapperRemoteTypes'
@@ -116,6 +117,8 @@ export interface StartRemoteOptions extends CommonOptions {
   profile: string
   /** Local `resources/wrappers` root the bundle is built from. */
   wrappersRoot: string
+  /** Overrides the wrapper's own cpus/memory/time for every process of this run. */
+  resources?: WrapperRunResources
 }
 
 export interface AttachRemoteOptions extends CommonOptions {
@@ -657,7 +660,7 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
       await session.writeTextFile(layout.paramsFile, JSON.stringify(params, null, 2))
       await session.writeTextFile(
         layout.configFile,
-        buildRemoteNextflowConfig(target.hpc ?? { scheduler: 'local' })
+        buildRemoteNextflowConfig(target.hpc ?? { scheduler: 'local' }, options.resources)
       )
       await session.writeTextFile(
         joinRemote(layout.runDir, 'launch.sh'),
