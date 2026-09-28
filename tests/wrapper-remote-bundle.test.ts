@@ -39,6 +39,8 @@ const TREE = {
   'modules/nf-core/fastqc/.DS_Store': 'junk',
   'modules/nf-core/fastqc/work/ab/cd/out.txt': 'stale run output',
   'subworkflows/nf-core/x/main.nf': 'workflow X {}',
+  // Shared conda env / Dockerfile a module reaches via ../../../../images/...
+  'images/differential-expression-r/environment.yml': 'name: de',
   'README.md': 'not part of a bundle'
 }
 
@@ -53,6 +55,7 @@ test('bundle files are the runnable sources only, sorted, with posix relative pa
   const { root, cleanup } = makeTree(TREE)
   try {
     assert.deepEqual(collectBundleFiles(root), [
+      'images/differential-expression-r/environment.yml',
       'modules/nf-core/fastqc/environment.yml',
       'modules/nf-core/fastqc/main.nf',
       'modules/nf-core/fastqc/wrapper/main.nf',

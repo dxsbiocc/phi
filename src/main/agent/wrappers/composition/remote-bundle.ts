@@ -16,7 +16,9 @@ import { shellQuote } from '../remote-ssh-session'
  * still using it keep working.
  */
 
-const BUNDLE_ROOTS = ['modules', 'subworkflows', 'workflows']
+// `images` holds shared conda env files and Dockerfiles that modules reference by
+// relative path (e.g. `../../../../images/differential-expression-r/environment.yml`).
+const BUNDLE_ROOTS = ['modules', 'subworkflows', 'workflows', 'images']
 /** Directories that are test fixtures or leftovers of local runs, never part of a runnable wrapper. */
 const SKIPPED_DIRS = new Set(['tests', 'work', 'results', '.git', 'node_modules', '__pycache__'])
 const SKIPPED_FILES = new Set(['.DS_Store', 'dag.mmd'])
