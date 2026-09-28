@@ -10,7 +10,7 @@ params:
     kind: input
     type: bam
     required: true
-    description: Coordinate- or name-sorted BAM file to count.
+    description: BAM file to count, or a glob matching several (one per sample; the sample name is the file name up to its first dot).
   gtf:
     kind: input
     type: gtf
@@ -40,6 +40,11 @@ params:
     type: boolean
     required: false
     description: Set true for single-end reads; false (default) adds -p for paired-end counting.
+  merge:
+    kind: option
+    type: boolean
+    required: false
+    description: Count all matched BAMs in one featureCounts call and also write merged.counts_matrix.tsv — gene_id plus one column per sample — ready for the DESeq2/edgeR/limma wrappers. Default false (one table per BAM).
 
 outputs:
   counts:

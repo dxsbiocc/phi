@@ -2,10 +2,11 @@
 # ../main.nf. Follows the minimal contract in
 # docs/design/phi-wrapper-agent-composition-design.md section 3.
 #
-# Composition: builds the index with the vendored bwa index module first.
+# Composition: uses a pre-built `index` as-is, or builds one with the vendored
+# bwa index module first.
 id: nf-core/modules/bwa-mem
 name: "BWA-MEM align"
-summary: "Align reads to a reference with BWA-MEM (builds the index first)."
+summary: "Align reads with BWA-MEM, against a pre-built index or one built from a reference FASTA."
 
 params:
   reads1:
@@ -18,11 +19,16 @@ params:
     type: file
     required: true
     description: "Reverse reads FASTQ (.fastq.gz)."
+  index:
+    kind: input
+    type: directory
+    required: false
+    description: "Pre-built BWA index directory (holding one set of *.amb/*.ann/*.bwt/*.pac/*.sa files). Preferred for large genomes; when set, no index is built."
   fasta:
     kind: input
     type: file
-    required: true
-    description: "Reference FASTA file."
+    required: false
+    description: "Reference FASTA file. Required only when `index` is not given (the index is then built from it)."
   outdir:
     kind: output
     type: path

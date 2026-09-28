@@ -3,11 +3,11 @@
 # the minimal contract in
 # docs/design/phi-wrapper-agent-composition-design.md section 3.
 #
-# star/genomegenerate is composed directly (not a wrapper, per section 6) so
-# callers supply a genome FASTA/GTF instead of a pre-built STAR index.
+# A pre-built STAR `index` is used as-is; without one, star/genomegenerate is
+# composed directly (not a wrapper, per section 6) to build it from FASTA/GTF.
 id: local/subworkflows/align-star
 name: Align with STAR
-summary: Build a STAR index, align paired/single-end reads, and coordinate-sort/index/stats the resulting BAM.
+summary: Align paired-end reads with STAR (pre-built or freshly built index), then coordinate-sort/index/stats the resulting BAM.
 
 params:
   reads_1:
@@ -20,11 +20,16 @@ params:
     type: fastq
     required: true
     description: Read 2 FASTQ.
+  index:
+    kind: input
+    type: directory
+    required: false
+    description: Pre-built STAR index directory (holding SA, SAindex, genomeParameters.txt). Preferred for large genomes; when set, no index is built.
   fasta:
     kind: input
     type: fasta
-    required: true
-    description: Genome FASTA to build the STAR index from.
+    required: false
+    description: Genome FASTA to build a STAR index from. Required only when `index` is not given; also used as samtools stats' reference when set.
   gtf:
     kind: input
     type: gtf

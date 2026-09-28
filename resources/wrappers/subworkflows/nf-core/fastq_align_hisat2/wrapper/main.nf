@@ -1,15 +1,8 @@
 #!/usr/bin/env nextflow
-// Thin agent-facing adapter over the vendored subworkflow at ../main.nf.
-// See docs/design/phi-wrapper-agent-composition-design.md section 1.
-//
-// FASTQ_ALIGN_HISAT2 expects a ready HISAT2 index and splice-sites file, so
-// this first runs the two modules that produce them — the same setup chain
-// nf-core's own subworkflow test uses (see ../tests/main.nf.test), and the
-// same one hisat2/align/wrapper/main.nf uses. Those modules are included
-// directly (section 6: never include another wrapper).
-//
-// Two explicit read-file params instead of one glob: Nextflow rejects glob
-// patterns for https:// sources. `reads_2` is optional (single-end when unset).
+// Thin agent-facing adapter over the vendored fastq_align_hisat2 subworkflow
+// at ../main.nf. A pre-built HISAT2 index (`index`) is used as-is; without
+// one, hisat2/build builds a splice-aware index from `fasta` + `gtf` first.
+// Splice sites always come from `gtf`.
 nextflow.enable.dsl = 2
 
 include { HISAT2_EXTRACTSPLICESITES } from '../../../../modules/nf-core/hisat2/extractsplicesites/main.nf'
@@ -18,33 +11,42 @@ include { FASTQ_ALIGN_HISAT2        } from '../main.nf'
 
 params.reads_1 = null
 params.reads_2 = null
+params.index   = null
 params.fasta   = null
 params.gtf     = null
 params.outdir  = null
 
 workflow {
-    ch_fasta = Channel.fromPath(params.fasta, checkIfExists: true)
-    ch_gtf   = Channel.fromPath(params.gtf, checkIfExists: true)
+    if (!params.index && !params.fasta) {
+        error "fastq-align-hisat2 needs either `index` (a pre-built HISAT2 index directory) or `fasta` to build one."
+    }
 
+    ch_gtf = Channel.fromPath(params.gtf, checkIfExists: true)
     HISAT2_EXTRACTSPLICESITES(ch_gtf.map { gtf -> [[id: gtf.baseName], gtf] })
 
-    ch_build_input = ch_fasta
-        .combine(ch_gtf)
-        .combine(HISAT2_EXTRACTSPLICESITES.out.txt.map { _meta, txt -> txt })
-        .map { fasta, gtf, splicesites -> [[id: fasta.baseName], fasta, gtf, splicesites] }
-
-    HISAT2_BUILD(ch_build_input, '1.GB')
+    if (params.index) {
+        ch_index = Channel.value([[id: 'hisat2_index'], file(params.index, checkIfExists: true)])
+    } else {
+        ch_build_input = Channel.fromPath(params.fasta, checkIfExists: true)
+            .combine(ch_gtf)
+            .combine(HISAT2_EXTRACTSPLICESITES.out.txt.map { _meta, txt -> txt })
+            .map { fasta, gtf, splicesites -> [[id: fasta.baseName], fasta, gtf, splicesites] }
+        HISAT2_BUILD(ch_build_input, '1.GB')
+        ch_index = HISAT2_BUILD.out.index
+    }
 
     def single_end = !params.reads_2
-    def reads      = [file(params.reads_1, checkIfExists: true)]
+    def read1      = file(params.reads_1, checkIfExists: true)
+    def reads      = [read1]
     if (!single_end) reads << file(params.reads_2, checkIfExists: true)
-    reads_ch = channel.of([[id: 'sample', single_end: single_end], reads])
+    def sample_id  = single_end ? read1.simpleName : read1.simpleName.replaceAll(/[._-]R?1$/, '')
+    reads_ch = channel.of([[id: sample_id, single_end: single_end], reads])
 
     ch_fasta_fai = channel.value([[:], [], []])
 
     FASTQ_ALIGN_HISAT2(
         reads_ch,
-        HISAT2_BUILD.out.index,
+        ch_index,
         HISAT2_EXTRACTSPLICESITES.out.txt,
         ch_fasta_fai,
         false
