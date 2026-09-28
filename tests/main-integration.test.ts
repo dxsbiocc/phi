@@ -95,6 +95,13 @@ class FakeSession {
   skipFinalAssistantMessage = false
   promptError?: Error
   materializedSessionFile?: string
+  contextUsage: { tokens: number; contextWindow: number; percent: number } | null = null
+  contextUsageGate = Promise.resolve()
+  autoCompactionOverrides: { enabled?: boolean; thresholdPercent?: 70 | 80 | 90 } = {}
+  autoCompactionSettingsCalls = 0
+  compactCalls = 0
+  compactGate = Promise.resolve()
+  compactError?: Error
   constructor(public sessionFile: string | undefined) {}
   subscribe(listener: (event: unknown) => void): () => void {
     this.listeners.push(listener)
@@ -122,6 +129,37 @@ class FakeSession {
     this.log.push('abort')
     await this.abortGate
     if (this.started) this.finish.resolve()
+  }
+  async getContextUsage(): Promise<{
+    tokens: number
+    contextWindow: number
+    percent: number
+  } | null> {
+    await this.contextUsageGate
+    return this.contextUsage
+  }
+  async setAutoCompactionSettings(overrides: {
+    enabled?: boolean
+    thresholdPercent?: 70 | 80 | 90
+  }): Promise<void> {
+    this.autoCompactionSettingsCalls += 1
+    this.autoCompactionOverrides = { ...overrides }
+  }
+  async compact(): Promise<{
+    summary: string
+    shortSummary: string
+    tokensBefore: number
+    tokensAfter?: number
+  }> {
+    this.compactCalls += 1
+    await this.compactGate
+    if (this.compactError) throw this.compactError
+    return {
+      summary: 'Earlier work was summarized.',
+      shortSummary: 'Earlier work',
+      tokensBefore: 24000,
+      ...(this.contextUsage ? { tokensAfter: this.contextUsage.tokens } : {})
+    }
   }
   dispose(): void {
     this.log.push('dispose')
@@ -1032,6 +1070,11 @@ async function harness(
       is: { dev: false }
     },
     './agent/runtime/runtime-adapter': {
+      readAutoCompactionDefaults: async (): Promise<{
+        enabled: boolean
+        thresholdPercent: number
+        thresholdTokens: number
+      }> => ({ enabled: true, thresholdPercent: -1, thresholdTokens: -1 }),
       createRuntimeResourceLoader: (options: Record<string, unknown>): unknown => {
         resourceLoaderOptions.push(options)
         return {
@@ -4172,6 +4215,355 @@ test('main IPC: prompt target controls the write destination even after another 
   assert.equal(app.appendedSessionEvents.at(-1)?.event.content, 'write to selected')
 })
 
+test('main IPC: context usage follows the selected session and preserves unavailable capacity', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    if (file === 'alpha.jsonl') {
+      session.contextUsage = { tokens: 24000, contextWindow: 200000, percent: 12 }
+    }
+    return session
+  })
+
+  await app.invoke('sessions:switch', 'alpha.jsonl')
+  const alpha = (await app.invoke('sessions:contextUsage')) as {
+    sessionPath: string | null
+    usage: FakeSession['contextUsage']
+  }
+  assert.equal(alpha.sessionPath, 'alpha.jsonl')
+  assert.deepEqual(alpha.usage, { tokens: 24000, contextWindow: 200000, percent: 12 })
+
+  await app.invoke('sessions:switch', 'beta.jsonl')
+  const beta = (await app.invoke('sessions:contextUsage')) as {
+    sessionPath: string | null
+    usage: FakeSession['contextUsage']
+  }
+  assert.equal(beta.sessionPath, 'beta.jsonl')
+  assert.equal(beta.usage, null)
+})
+
+test('main IPC: a Phi-managed conversation reads usage after its first turn', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.contextUsage = { tokens: 12000, contextWindow: 128000, percent: 9.375 }
+    return session
+  })
+
+  const created = (await app.invoke('sessions:create')) as { path: string }
+  await app.invoke('agent:prompt', 'hello')
+  const context = (await app.invoke('sessions:contextUsage')) as {
+    sessionPath: string | null
+    phiSessionId: string | null
+    usage: FakeSession['contextUsage']
+  }
+
+  assert.equal(context.sessionPath, created.path)
+  assert.ok(context.phiSessionId)
+  assert.deepEqual(context.usage, { tokens: 12000, contextWindow: 128000, percent: 9.375 })
+})
+
+test('main IPC: an empty Phi session has no usage and does not start a runtime', async () => {
+  const app = await harness()
+  const created = (await app.invoke('sessions:create')) as { path: string }
+  const before = app.sessions.length
+
+  const context = (await app.invoke('sessions:contextUsage')) as {
+    sessionPath: string | null
+    usage: FakeSession['contextUsage']
+  }
+
+  assert.equal(context.sessionPath, created.path)
+  assert.equal(context.usage, null)
+  assert.equal(app.sessions.length, before)
+})
+
+test('main IPC: a late usage result cannot be attributed to the next selected session', async () => {
+  const gate = deferred<void>()
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    if (file === 'alpha.jsonl') {
+      session.contextUsage = { tokens: 24000, contextWindow: 200000, percent: 12 }
+      session.contextUsageGate = gate.promise
+    }
+    return session
+  })
+
+  await app.invoke('sessions:switch', 'alpha.jsonl')
+  const pending = app.invoke('sessions:contextUsage')
+  await tick()
+  await app.invoke('sessions:switch', 'beta.jsonl')
+  gate.resolve()
+
+  const stale = (await pending) as {
+    sessionPath: string | null
+    usage: FakeSession['contextUsage']
+  }
+  assert.equal(stale.sessionPath, 'alpha.jsonl')
+  assert.equal(stale.usage, null)
+})
+
+function compactionTarget(current: unknown): {
+  sessionPath: string | null
+  phiSessionId: string | null
+  sessionGeneration: number
+} {
+  const session = current as {
+    path: string | null
+    phiSessionId?: string
+    sessionGeneration: number
+  }
+  return {
+    sessionPath: session.path,
+    phiSessionId: session.phiSessionId ?? null,
+    sessionGeneration: session.sessionGeneration
+  }
+}
+
+test('main IPC: automatic compaction settings stay with their session and use SDK defaults', async () => {
+  const app = await harness()
+  const first = (await app.invoke('sessions:create')) as { path: string }
+  const firstTarget = compactionTarget(await app.invoke('sessions:current'))
+  const defaults = (await app.invoke('sessions:autoCompactionSettings', firstTarget)) as {
+    enabled: boolean
+    thresholdPercent: number
+    overrides: Record<string, unknown>
+  }
+  assert.equal(defaults.enabled, true)
+  assert.equal(defaults.thresholdPercent, -1)
+  assert.deepEqual(defaults.overrides, {})
+
+  const firstSettings = (await app.invoke('sessions:autoCompactionSettings:set', firstTarget, {
+    enabled: false,
+    thresholdPercent: 70
+  })) as { enabled: boolean; thresholdPercent: number; overrides: Record<string, unknown> }
+  assert.equal(firstSettings.enabled, false)
+  assert.equal(firstSettings.thresholdPercent, 70)
+  assert.deepEqual(firstSettings.overrides, { enabled: false, thresholdPercent: 70 })
+  await app.invoke('agent:prompt', 'first conversation')
+  assert.deepEqual(app.createdAgentOptions[0].autoCompaction, {
+    enabled: false,
+    thresholdPercent: 70
+  })
+  assert.deepEqual(app.sessions[0].autoCompactionOverrides, {
+    enabled: false,
+    thresholdPercent: 70
+  })
+
+  await app.invoke('sessions:create')
+  const secondTarget = compactionTarget(await app.invoke('sessions:current'))
+  const secondDefaults = (await app.invoke('sessions:autoCompactionSettings', secondTarget)) as {
+    enabled: boolean
+    thresholdPercent: number
+  }
+  assert.equal(secondDefaults.enabled, true)
+  assert.equal(secondDefaults.thresholdPercent, -1)
+  await app.invoke('sessions:autoCompactionSettings:set', secondTarget, { thresholdPercent: 90 })
+  await app.invoke('agent:prompt', 'second conversation')
+  assert.deepEqual(app.sessions[1].autoCompactionOverrides, { thresholdPercent: 90 })
+  await app.invoke('sessions:autoCompactionSettings:set', secondTarget, { enabled: false })
+  assert.deepEqual(app.sessions[1].autoCompactionOverrides, {
+    enabled: false,
+    thresholdPercent: 90
+  })
+  assert.deepEqual(app.sessions[0].autoCompactionOverrides, {
+    enabled: false,
+    thresholdPercent: 70
+  })
+
+  await app.invoke('sessions:switch', first.path)
+  const restored = (await app.invoke(
+    'sessions:autoCompactionSettings',
+    compactionTarget(await app.invoke('sessions:current'))
+  )) as {
+    enabled: boolean
+    thresholdPercent: number
+  }
+  assert.equal(restored.enabled, false)
+  assert.equal(restored.thresholdPercent, 70)
+  await app.invoke(
+    'sessions:autoCompactionSettings:set',
+    compactionTarget(await app.invoke('sessions:current')),
+    { enabled: null, thresholdPercent: null }
+  )
+  const reset = (await app.invoke(
+    'sessions:autoCompactionSettings',
+    compactionTarget(await app.invoke('sessions:current'))
+  )) as {
+    enabled: boolean
+    thresholdPercent: number
+    overrides: Record<string, unknown>
+  }
+  assert.equal(reset.enabled, true)
+  assert.equal(reset.thresholdPercent, -1)
+  assert.deepEqual(reset.overrides, {})
+  assert.deepEqual(app.sessions[0].autoCompactionOverrides, {})
+})
+
+test('main IPC: automatic compaction settings reject invalid presets and stale targets', async () => {
+  const app = await harness()
+  await app.invoke('sessions:create')
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  await assert.rejects(
+    app.invoke('sessions:autoCompactionSettings:set', target, { thresholdPercent: 55 }),
+    /阈值无效/
+  )
+  await app.invoke('sessions:create')
+  await assert.rejects(
+    app.invoke('sessions:autoCompactionSettings:set', target, { enabled: false }),
+    /会话已切换/
+  )
+})
+
+test('main IPC: automatic compaction settings cannot change during a run', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.hold = true
+    return session
+  })
+  await app.invoke('sessions:create')
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const prompt = app.invoke('agent:prompt', 'hello')
+  await tick()
+  await assert.rejects(
+    app.invoke('sessions:autoCompactionSettings:set', target, { enabled: false }),
+    /运行结束/
+  )
+  app.sessions[0].finish.resolve()
+  await prompt
+})
+
+test('main IPC: manual compaction persists a notice without sending a chat message', async () => {
+  const app = await harness()
+  await app.invoke('sessions:create')
+  await app.invoke('agent:prompt', 'hello')
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  app.sessions[0].contextUsage = { tokens: 5000, contextWindow: 200000, percent: 2.5 }
+  const userMessagesBefore = app.appendedSessionEvents.filter(
+    (entry) => entry.event.type === 'user_message'
+  ).length
+
+  const result = (await app.invoke('sessions:compact', target)) as {
+    phiSessionId: string
+    tokensBefore: number
+    tokensAfter?: number
+  }
+
+  assert.equal(result.tokensBefore, 24000)
+  assert.equal(result.tokensAfter, 5000)
+  assert.equal(app.sessions[0].compactCalls, 1)
+  assert.equal(
+    app.appendedSessionEvents.filter((entry) => entry.event.type === 'user_message').length,
+    userMessagesBefore
+  )
+  const notice = app.appendedSessionEvents.find((entry) => entry.event.type === 'context_compacted')
+  assert.equal(notice?.sessionId, result.phiSessionId)
+  assert.deepEqual(withoutTimestamp(notice?.event ?? {}), {
+    type: 'context_compacted',
+    action: 'manual',
+    reason: 'user',
+    summary: 'Earlier work was summarized.',
+    shortSummary: 'Earlier work',
+    tokensBefore: 24000,
+    tokensAfter: 5000
+  })
+  assert.ok(
+    app.events.some(
+      (event) =>
+        event.channel === 'agent:event' &&
+        (event.data as { type?: string }).type === 'context_compacted'
+    )
+  )
+})
+
+test('main IPC: manual compaction rejects running and stale conversations', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.hold = true
+    return session
+  })
+  await app.invoke('sessions:create')
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const prompt = app.invoke('agent:prompt', 'hello')
+  await tick()
+  await assert.rejects(app.invoke('sessions:compact', target), /运行结束/)
+  app.sessions[0].finish.resolve()
+  await prompt
+  await app.invoke('sessions:switch', 'other.jsonl')
+  await assert.rejects(app.invoke('sessions:compact', target), /会话已切换/)
+  assert.equal(app.sessions[0].compactCalls, 0)
+})
+
+test('main IPC: manual compaction leaves an empty conversation untouched', async () => {
+  const app = await harness()
+  await app.invoke('sessions:create')
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const before = app.sessions.length
+
+  await assert.rejects(app.invoke('sessions:compact', target), /暂无可压缩的历史/)
+  assert.equal(app.sessions.length, before)
+  assert.equal(
+    app.appendedSessionEvents.some((entry) => entry.event.type === 'context_compacted'),
+    false
+  )
+})
+
+test('main IPC: manual compaction excludes duplicates and new prompts until it finishes', async () => {
+  const gate = deferred<void>()
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.compactGate = gate.promise
+    return session
+  })
+  await app.invoke('sessions:create')
+  await app.invoke('agent:prompt', 'hello')
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const compacting = app.invoke('sessions:compact', target)
+  await tick()
+
+  await assert.rejects(app.invoke('sessions:compact', target), /正在进行/)
+  await assert.rejects(app.invoke('agent:prompt', 'second'), /压缩正在进行/)
+  gate.resolve()
+  await compacting
+  assert.equal(app.sessions[0].compactCalls, 1)
+  assert.deepEqual(app.sessions[0].promptTexts, ['hello'])
+})
+
+test('main IPC: a background result waits until manual compaction ends before waking its conversation', async () => {
+  const gate = deferred<void>()
+  const { app, session } = await idleConversation()
+  session.compactGate = gate.promise
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const compacting = app.invoke('sessions:compact', target)
+  await tick()
+
+  await agentRunFinished(app, session.runtimeSessionId)
+  await tick()
+  assert.equal(session.promptTexts.length, 1)
+
+  gate.resolve()
+  await compacting
+  await waitUntil(() => session.promptTexts.length === 2)
+  assert.match(session.promptTexts[1], AGENT_WOKEN)
+})
+
+test('main IPC: a failed manual compaction records the reason and releases its lock', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.compactError = new Error('summary unavailable')
+    return session
+  })
+  await app.invoke('sessions:create')
+  await app.invoke('agent:prompt', 'hello')
+  const target = compactionTarget(await app.invoke('sessions:current'))
+
+  await assert.rejects(app.invoke('sessions:compact', target), /summary unavailable/)
+  const failure = app.appendedSessionEvents.find(
+    (entry) => entry.event.type === 'context_compaction_failed'
+  )
+  assert.equal((failure?.event as { errorMessage?: string })?.errorMessage, 'summary unavailable')
+  await assert.rejects(app.invoke('sessions:compact', target), /summary unavailable/)
+  assert.equal(app.sessions[0].compactCalls, 2)
+})
+
 test('main IPC: continuing a restored runtime conversation reuses its Phi session', async () => {
   const app = await harness()
 
@@ -6227,6 +6619,7 @@ test('main IPC: context compaction events are persisted as timeline notices', as
           shortSummary: 'Short compaction summary.',
           tokensBefore: 12345
         },
+        tokensAfter: 4200,
         aborted: false,
         willRetry: false
       }
@@ -6246,7 +6639,148 @@ test('main IPC: context compaction events are persisted as timeline notices', as
     reason: 'threshold',
     shortSummary: 'Short compaction summary.',
     summary: 'Full compaction summary.',
-    tokensBefore: 12345
+    tokensBefore: 12345,
+    tokensAfter: 4200
+  })
+  assert.ok(
+    app.events.some(
+      (entry) =>
+        entry.channel === 'agent:event' &&
+        (entry.data as { type?: string; eventId?: string }).type === 'context_compacted' &&
+        typeof (entry.data as { eventId?: string }).eventId === 'string'
+    )
+  )
+})
+
+test('main IPC: automatic shake and image rescue have accurate timeline notices', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      { type: 'auto_compaction_start', action: 'shake', reason: 'threshold' },
+      {
+        type: 'auto_compaction_end',
+        action: 'shake',
+        aborted: false,
+        skipped: false,
+        willRetry: false,
+        tokensAfter: 12000
+      },
+      {
+        type: 'notice',
+        source: 'compaction',
+        level: 'info',
+        message:
+          'Compaction dead-end recovery: dropped 2 attached images so maintenance could make progress.'
+      }
+    ]
+    return session
+  })
+
+  await app.invoke('agent:prompt', 'hello')
+
+  const shaken = app.appendedSessionEvents.find((entry) => entry.event.type === 'context_shaken')
+  assert.deepEqual(withoutTimestamp(shaken?.event ?? {}), {
+    type: 'context_shaken',
+    runId: 'run-2',
+    action: 'shake',
+    reason: 'threshold',
+    tokensAfter: 12000
+  })
+  const rescue = app.appendedSessionEvents.find(
+    (entry) => entry.event.type === 'context_maintenance_notice'
+  )
+  assert.match(String(rescue?.event.noticeText), /dropped 2 attached images/)
+  assert.equal(
+    app.appendedSessionEvents.some((entry) => entry.event.type === 'context_compacted'),
+    false
+  )
+})
+
+test('main IPC: maintenance notices remain visible when the SDK emits them after a run', async () => {
+  const app = await harness()
+  await app.invoke('agent:prompt', 'hello')
+
+  for (const listener of app.sessions[0].listeners) {
+    listener({
+      type: 'auto_compaction_end',
+      action: 'shake',
+      aborted: false,
+      skipped: false,
+      willRetry: false,
+      tokensAfter: 9000
+    })
+    listener({
+      type: 'notice',
+      source: 'compaction',
+      level: 'info',
+      message: 'dropped 1 attached image'
+    })
+  }
+
+  const shaken = app.appendedSessionEvents.find((entry) => entry.event.type === 'context_shaken')
+  const rescued = app.appendedSessionEvents.find(
+    (entry) => entry.event.type === 'context_maintenance_notice'
+  )
+  assert.equal(shaken?.event.tokensAfter, 9000)
+  assert.equal(shaken?.event.runId, undefined)
+  assert.match(String(rescued?.event.noticeText), /dropped 1 attached image/)
+})
+
+test('main IPC: failed automatic compaction is not reported as success', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      { type: 'auto_compaction_start', action: 'handoff', reason: 'threshold' },
+      {
+        type: 'auto_compaction_end',
+        action: 'handoff',
+        aborted: false,
+        skipped: false,
+        willRetry: false,
+        errorMessage: 'provider rejected summary'
+      }
+    ]
+    return session
+  })
+
+  await app.invoke('agent:prompt', 'hello')
+
+  assert.equal(
+    app.appendedSessionEvents.some((entry) => entry.event.type === 'context_compacted'),
+    false
+  )
+  const failure = app.appendedSessionEvents.find(
+    (entry) => entry.event.type === 'context_compaction_failed'
+  )
+  assert.equal(failure?.event.errorMessage, 'provider rejected summary')
+})
+
+test('main IPC: aborted automatic compaction records its failure reason', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      { type: 'auto_compaction_start', reason: 'threshold', action: 'handoff' },
+      {
+        type: 'auto_compaction_end',
+        action: 'handoff',
+        aborted: true,
+        willRetry: false
+      }
+    ]
+    return session
+  })
+
+  await app.invoke('agent:prompt', 'hello')
+
+  const event = app.appendedSessionEvents.find(
+    (entry) => entry.event.type === 'context_compaction_failed'
+  )?.event
+  assert.deepEqual(withoutTimestamp(event ?? {}), {
+    type: 'context_compaction_failed',
+    runId: 'run-2',
+    action: 'handoff',
+    reason: 'threshold',
+    errorMessage: '已取消'
   })
 })
 

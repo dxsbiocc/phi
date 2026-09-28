@@ -5,6 +5,12 @@ import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import type { ProjectLocation } from '../../../shared/projectLocation'
+import type {
+  AutoCompactionDefaults,
+  AutoCompactionOverrides,
+  ContextCompactionSummary,
+  ContextUsageSnapshot
+} from '../../../shared/contextUsageTypes'
 import { getOmpBridge, type OmpBridge } from '../omp/omp-bridge'
 import {
   getAdditionalProjectResourcePaths,
@@ -266,6 +272,9 @@ export interface RuntimeAgentSession {
   thinkingLevel?: ThinkingLevel
   subscribe(listener: (event: AgentSessionEvent) => void): () => void
   prompt(text: string, options?: RuntimePromptOptions): Promise<void>
+  getContextUsage(): Promise<ContextUsageSnapshot | null>
+  compact(): Promise<ContextCompactionSummary>
+  setAutoCompactionSettings(overrides: AutoCompactionOverrides): Promise<void>
   abort(): Promise<void>
   dispose(): Promise<void>
   setModel(model: RuntimeModel): Promise<void>
@@ -289,6 +298,7 @@ export type CreateAgentSessionOptions = {
   modelRuntime?: ModelRuntime
   model?: RuntimeModel
   thinkingLevel?: ThinkingLevel
+  autoCompaction?: AutoCompactionOverrides
   noTools?: 'all' | boolean
   sessionManager?: RuntimeSessionManager
   resourceLoader?: RuntimeResourceLoader
@@ -849,6 +859,31 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     applySessionState(this, state)
   }
 
+  async getContextUsage(): Promise<ContextUsageSnapshot | null> {
+    await this.ensureLive()
+    return this.bridge.request<ContextUsageSnapshot | null>('session.contextUsage', {
+      sessionId: this.sessionId
+    })
+  }
+
+  async compact(): Promise<ContextCompactionSummary> {
+    await this.ensureLive()
+    const result = await this.bridge.request<{
+      summary: ContextCompactionSummary
+      state: WorkerSessionState
+    }>('session.compact', { sessionId: this.sessionId })
+    applySessionState(this, result.state)
+    return result.summary
+  }
+
+  async setAutoCompactionSettings(overrides: AutoCompactionOverrides): Promise<void> {
+    await this.ensureLive()
+    await this.bridge.request('session.setAutoCompactionSettings', {
+      sessionId: this.sessionId,
+      overrides
+    })
+  }
+
   async abort(): Promise<void> {
     this.approvalAbortController.abort()
     // A session the worker no longer holds has nothing running to abort.
@@ -950,6 +985,13 @@ export function createModelRuntime(agentDir = getPhiAgentDir()): Promise<ModelRu
   return OmpModelRuntimeFacade.create(agentDir)
 }
 
+export function readAutoCompactionDefaults(
+  cwd: string,
+  agentDir = getPhiAgentDir()
+): Promise<AutoCompactionDefaults> {
+  return getOmpBridge().request('settings.autoCompactionDefaults', { cwd, agentDir })
+}
+
 export async function createRuntimeAgentSession(
   options: CreateAgentSessionOptions = {}
 ): Promise<CreateAgentSessionResult> {
@@ -968,6 +1010,7 @@ export async function createRuntimeAgentSession(
     agentDir,
     model: options.model,
     thinkingLevel: options.thinkingLevel,
+    autoCompaction: options.autoCompaction,
     noTools: options.noTools,
     sessionManager: {
       kind: sessionManager.kind,

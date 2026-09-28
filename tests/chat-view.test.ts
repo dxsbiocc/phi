@@ -67,6 +67,13 @@ function renderChat(
     planReviewEnabled?: boolean
     disablePlanReview?: boolean
     onTogglePlanReview?: () => void
+    contextUsageTarget?: {
+      sessionPath: string | null
+      phiSessionId: string | null
+      sessionGeneration: number
+    }
+    contextCompacting?: boolean
+    onCompactContext?: () => void
   } = {}
 ): string {
   const theme = createTheme()
@@ -97,6 +104,9 @@ function renderChat(
           name: 'Kimi Coding',
           thinkingLevels: ['low', 'medium', 'high']
         },
+        contextUsageTarget: options.contextUsageTarget,
+        contextCompacting: options.contextCompacting,
+        onCompactContext: options.onCompactContext,
         skills: options.skills ?? [],
         promptAgents: options.promptAgents ?? [],
         onSelectModel: () => undefined,
@@ -1555,6 +1565,53 @@ test('chat view uses the suggested next action as a passive placeholder', () => 
     readFileSync('src/renderer/src/features/chat/ChatView.tsx', 'utf8'),
     /applySuggestedNextAction|onMouseDown=\{applySuggestedNextAction\}/
   )
+})
+
+test('chat composer reserves a separate context-usage status below its controls', () => {
+  const markup = renderChat([], {
+    contextUsageTarget: {
+      sessionPath: 'phi-session:session-a',
+      phiSessionId: 'session-a',
+      sessionGeneration: 0
+    },
+    onCompactContext: () => undefined
+  })
+
+  assert.match(markup, /data-phi-context-usage="unavailable"/)
+  assert.match(markup, /正在读取上下文/)
+  assert.match(markup, /aria-label="压缩当前会话上下文"/)
+  assert.match(markup, /aria-label="自动压缩设置"/)
+})
+
+test('chat timeline shows compaction method, token counts and expandable full summary', () => {
+  const markup = renderChat([
+    {
+      id: 'compact-1',
+      role: 'warning',
+      content: '上下文已压缩，较早内容已汇总给模型；聊天时间线会继续保留可见历史。',
+      contextCompaction: {
+        action: 'remote',
+        tokensBefore: 24000,
+        tokensAfter: 5000,
+        shortSummary: '简短摘要',
+        summary: '完整摘要保留所有关键决策。'
+      }
+    },
+    {
+      id: 'compact-2',
+      role: 'error',
+      content: '上下文压缩失败：provider rejected summary',
+      contextCompaction: { action: 'manual' }
+    }
+  ])
+
+  assert.match(markup, /自动压缩 · 服务端/)
+  assert.match(markup, /压缩前 24,000 tokens → 压缩后 约 5,000 tokens/)
+  assert.match(markup, /<details/)
+  assert.match(markup, /查看完整摘要/)
+  assert.match(markup, /完整摘要保留所有关键决策。/)
+  assert.match(markup, /手动压缩/)
+  assert.match(markup, /provider rejected summary/)
 })
 
 test('chat view does not reuse the previous user action when the assistant only reports completion', () => {

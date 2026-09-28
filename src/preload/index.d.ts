@@ -21,6 +21,13 @@ import type { OpenSshHostInput } from '../shared/remoteHostProfile'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
 import type { BackgroundAgentJob } from '../shared/backgroundJobTypes'
+import type {
+  AutoCompactionSettingsPatch,
+  CurrentAutoCompactionSettings,
+  CurrentContextUsage,
+  ManualCompactionOutcome,
+  ManualCompactionTarget
+} from '../shared/contextUsageTypes'
 import type { WorkspaceDiffReference } from '../shared/workspaceChangeTypes'
 import type {
   WrapperRetargetRequest,
@@ -734,6 +741,15 @@ declare global {
         permissionMode: PreloadPermissionMode
         messages?: unknown[]
       }>
+      getCurrentContextUsage: () => Promise<CurrentContextUsage>
+      getAutoCompactionSettings: (
+        target: ManualCompactionTarget
+      ) => Promise<CurrentAutoCompactionSettings>
+      setAutoCompactionSettings: (
+        target: ManualCompactionTarget,
+        patch: AutoCompactionSettingsPatch
+      ) => Promise<CurrentAutoCompactionSettings>
+      compactCurrentSession: (target: ManualCompactionTarget) => Promise<ManualCompactionOutcome>
       updateCurrentSessionPermissionMode: (permissionMode: PreloadPermissionMode) => Promise<{
         path: string | null
         phiSessionId?: string
