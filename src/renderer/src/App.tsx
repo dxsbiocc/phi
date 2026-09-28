@@ -30,6 +30,7 @@ import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
 import ChatView from './features/chat/ChatView'
+import { HomeView } from './features/home/HomeView'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
 import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
@@ -1310,6 +1311,18 @@ function App(): React.JSX.Element {
   const onSelectSession = useCallback(
     async (path: string): Promise<void> => {
       if (path === useSessionStore.getState().activeSessionPath) {
+        const tabKey = workspaceSessionTabKey(
+          path,
+          useSessionStore.getState().activeSessionGeneration
+        )
+        setClosedWorkspaceSessionTabKeys((keys) => {
+          if (!keys.has(tabKey)) return keys
+          const nextKeys = new Set(keys)
+          nextKeys.delete(tabKey)
+          return nextKeys
+        })
+        setActiveWorkspaceTabKey(tabKey)
+        navigateToView('chat')
         await acknowledgeActiveSession({ force: true })
         return
       }
@@ -2750,6 +2763,9 @@ function App(): React.JSX.Element {
     workspaceFileWorkspaceTabs,
     workspaceTabs
   ])
+  const sidebarSelectedSessionPath = closedWorkspaceSessionTabKeys.has(currentSessionTab.key)
+    ? null
+    : activeSessionPath
   const effectiveActiveWorkspaceTabKey =
     activeWorkspaceTabKey ??
     (activeView === 'analysis' && activeWorkspaceFilePath
@@ -2929,6 +2945,7 @@ function App(): React.JSX.Element {
   ])
   const activeWorkspaceTitle = useMemo(() => {
     if (showProjectSessionPlaceholder) return '项目会话'
+    if (isChatWorkspaceView && visibleWorkspaceTabs.length === 0) return '首页'
     if (isResourceWorkspaceView) {
       return (
         activeWorkspaceResourceTab?.title ??
@@ -2945,7 +2962,8 @@ function App(): React.JSX.Element {
     isChatWorkspaceView,
     isResourceWorkspaceView,
     messages,
-    showProjectSessionPlaceholder
+    showProjectSessionPlaceholder,
+    visibleWorkspaceTabs.length
   ])
   const activeWorkspaceScopeLabel =
     activeProject?.name ?? workspaceScopeLabelForCwd(activeCwd, projects)
@@ -3705,6 +3723,19 @@ function App(): React.JSX.Element {
     </>
   )
 
+  const emptyWorkspaceContent = (
+    <HomeView
+      sessions={sessions}
+      lastClosedSessionPath={activeSessionPath}
+      onNewChat={() => void onNewChatFromSidebar()}
+      onShowProjects={() => {
+        setWorkspaceSidebarMode('projects')
+        setIsSidebarOpen(true)
+      }}
+      onOpenSession={(path) => void onOpenSessionFromSidebar(path)}
+    />
+  )
+
   const activeAnalysisView =
     activeProjectLocation?.kind === 'ssh' ? (
       <Box sx={{ p: 3 }}>
@@ -3859,7 +3890,7 @@ function App(): React.JSX.Element {
           clearWorkspaceSidebarPreviewCloseTimer={clearWorkspaceSidebarPreviewCloseTimer}
           closeWorkspaceSidebarPreview={closeWorkspaceSidebarPreview}
           sessions={sessions}
-          activeSessionPath={activeSessionPath}
+          activeSessionPath={sidebarSelectedSessionPath}
           activeCwd={activeCwd}
           projects={projects}
           projectSessionRefreshKey={projectSessionRefreshKey}
@@ -3933,7 +3964,7 @@ function App(): React.JSX.Element {
             void refreshWrappers()
           }}
           sessions={sessions}
-          activeSessionPath={activeSessionPath}
+          activeSessionPath={sidebarSelectedSessionPath}
           activeCwd={activeCwd}
           activeProjectId={activeProjectId}
           projects={projects}
@@ -4105,6 +4136,8 @@ function App(): React.JSX.Element {
                 </Box>
               ) : isAnalysisWorkspaceView ? (
                 activeAnalysisView
+              ) : activeView === 'chat' && visibleWorkspaceTabs.length === 0 ? (
+                emptyWorkspaceContent
               ) : (
                 chatWorkspaceContent
               )}
