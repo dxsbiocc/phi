@@ -2,6 +2,7 @@ import type { SxProps, Theme } from '@mui/material'
 
 export const COMPACT_COMPOSER_CONTROL_SIZE = 32
 export const REGULAR_COMPOSER_ACTION_SIZE = 40
+export const COMPOSER_ICON_SIZE = 18
 
 export function composerSurfaceSx({
   compact,
@@ -33,7 +34,8 @@ export function composerSurfaceSx({
         ? `0 0 0 3px ${theme.palette.mode === 'dark' ? 'rgba(50, 177, 194, 0.12)' : 'rgba(26, 153, 173, 0.12)'}`
         : 'none',
     transition: 'border-color 200ms, background-color 200ms, box-shadow 200ms',
-    '&:focus-within': { borderColor: 'primary.main' }
+    '&:focus-within': { borderColor: 'primary.main' },
+    '& .MuiButton-root:hover, & .MuiIconButton-root:hover': { transform: 'none' }
   }
 }
 

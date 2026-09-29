@@ -94,6 +94,13 @@ test('launch script runs nextflow from the component dir with the run files and 
   assert.match(script, /echo "\$rc" > 'exit_code'/)
 })
 
+test('launch script skips the launcher version check that stalls on slow or offline hosts', () => {
+  const script = buildRemoteLaunchScript({ layout: LAYOUT, profile: 'docker', hpc: undefined })
+  const check = script.indexOf('export NXF_DISABLE_CHECK_LATEST=true')
+  assert.ok(check >= 0)
+  assert.ok(check < script.indexOf("'nextflow' 'run'"))
+})
+
 test('launch script runs setup commands first and honors an explicit nextflow path', () => {
   const script = buildRemoteLaunchScript({
     layout: LAYOUT,
@@ -168,6 +175,14 @@ test('the launch script loads the login profile first so `module load` works in 
   assert.ok(profileAt < script.indexOf('module load nextflow'))
 })
 
+/** A stand-in `nextflow` that exists on PATH checks and reports a supported version. */
+const CURRENT_NEXTFLOW = (() => {
+  const file = join(mkdtempSync(join(tmpdir(), 'phi-current-nf-')), 'nextflow')
+  writeFileSync(file, "#!/bin/sh\necho '      version 26.04.6 build 12646'\n")
+  execFileSync('chmod', ['+x', file])
+  return file
+})()
+
 function runPreflight(
   hpc: Parameters<typeof buildRemotePreflightScript>[0]['hpc'],
   env: NodeJS.ProcessEnv = {},
@@ -204,7 +219,7 @@ test('preflight fails, naming the setting to fix, when nextflow is not there', (
 })
 
 test('preflight fails when slurm is chosen but sbatch is missing', () => {
-  const result = runPreflight({ scheduler: 'slurm', nextflowBin: '/bin/sh' })
+  const result = runPreflight({ scheduler: 'slurm', nextflowBin: CURRENT_NEXTFLOW })
   assert.notEqual(result.code, 0)
   assert.match(result.stderr, /sbatch/)
 })
@@ -213,7 +228,7 @@ test('preflight warns about a runtime missing on the Slurm login node', () => {
   const result = runPreflight({
     scheduler: 'slurm',
     runtime: 'singularity',
-    nextflowBin: '/bin/sh',
+    nextflowBin: CURRENT_NEXTFLOW,
     setupCommands: ['sbatch() { :; }', 'squeue() { :; }', 'scontrol() { :; }', 'scancel() { :; }']
   })
   assert.equal(result.code, 0, result.stderr)
@@ -224,7 +239,7 @@ test('preflight runs setup commands first so a module can supply the local runti
   const result = runPreflight({
     scheduler: 'local',
     runtime: 'singularity',
-    nextflowBin: '/bin/sh',
+    nextflowBin: CURRENT_NEXTFLOW,
     setupCommands: ['echo SETUP-RAN', 'singularity() { :; }']
   })
   assert.equal(result.code, 0, result.stderr)
@@ -236,7 +251,11 @@ test('preflight blocks a server work directory without write permission', () => 
   chmodSync(root, 0o500)
   try {
     const result = runPreflight(
-      { scheduler: 'local', nextflowBin: '/bin/sh', setupCommands: ['singularity() { :; }'] },
+      {
+        scheduler: 'local',
+        nextflowBin: CURRENT_NEXTFLOW,
+        setupCommands: ['singularity() { :; }']
+      },
       {},
       root
     )
@@ -393,7 +412,64 @@ test('a flag that could smuggle in a new script line is refused', () => {
 })
 
 test('preflight needs sbatch when the head process is a Slurm job, even for the local scheduler', () => {
-  const result = runPreflight({ scheduler: 'local', controller: 'sbatch', nextflowBin: '/bin/sh' })
+  const result = runPreflight({
+    scheduler: 'local',
+    controller: 'sbatch',
+    nextflowBin: CURRENT_NEXTFLOW
+  })
   assert.notEqual(result.code, 0)
   assert.match(result.stderr, /sbatch/)
+})
+
+test('the remote run config carries per-run resources after the site settings', () => {
+  const config = buildRemoteNextflowConfig(
+    { scheduler: 'slurm', queue: 'cpu' },
+    { cpus: 12, memory: '48 GB', time: '8h' }
+  )
+  assert.ok(config.indexOf("process.queue = 'cpu'") < config.indexOf("withName: '.*'"))
+  assert.match(config, /cpus = 12/)
+  assert.match(config, /memory = '48 GB'/)
+  assert.doesNotMatch(buildRemoteNextflowConfig({ scheduler: 'slurm' }), /withName/)
+})
+
+test('connection-level Nextflow config comes after the site settings and before run resources', () => {
+  const config = buildRemoteNextflowConfig(
+    { scheduler: 'slurm', queue: 'cpu', nextflowConfig: "process.conda = '/shared/envs/rnaseq'" },
+    { memory: '40 GB' }
+  )
+  const queue = config.indexOf("process.queue = 'cpu'")
+  const site = config.indexOf("process.conda = '/shared/envs/rnaseq'")
+  const resources = config.indexOf("memory = '40 GB'")
+  assert.ok(queue >= 0 && queue < site && site < resources)
+})
+
+test('preflight refuses a Nextflow too old for the wrappers, and lets an unreadable version through', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'phi-nf-version-'))
+  try {
+    const fakeNextflow = (name: string, output: string): string => {
+      const file = join(dir, name)
+      writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' ${JSON.stringify(output)}\n`)
+      execFileSync('chmod', ['+x', file])
+      return file
+    }
+    const run = (nextflowBin: string): ReturnType<typeof runPreflight> =>
+      runPreflight({
+        scheduler: 'local',
+        runtime: 'singularity',
+        nextflowBin,
+        setupCommands: ['singularity() { :; }']
+      })
+
+    const old = run(fakeNextflow('old', '      N E X T F L O W\n      version 22.10.6 build 5843'))
+    assert.notEqual(old.code, 0)
+    assert.match(old.stderr, /22\.10\.6/)
+    assert.match(old.stderr, /25\.04\.0/)
+    assert.match(old.stderr, /No such variable: versions/)
+
+    assert.equal(run(fakeNextflow('new', '      version 26.04.6 build 12646')).code, 0)
+    assert.equal(run(fakeNextflow('exact', '      version 25.04.0 build 1')).code, 0)
+    assert.equal(run(fakeNextflow('odd', 'Downloading nextflow dependencies...')).code, 0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

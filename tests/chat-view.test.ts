@@ -5,6 +5,8 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import ChatView, { ThinkingBlock } from '../src/renderer/src/features/chat/ChatView'
+import { ProviderModelIcon } from '../src/renderer/src/components/chat/ProviderModelIcon'
+import { composerSurfaceSx } from '../src/renderer/src/components/chat/composerControlStyles'
 import ToolCallCard from '../src/renderer/src/components/ToolCallCard'
 import ToolGroupCard from '../src/renderer/src/components/ToolGroupCard'
 import {
@@ -116,6 +118,7 @@ function renderChat(
         onChatSubmit: async (event) => event.preventDefault(),
         onStopGeneration: async () => undefined,
         onGoSettings: () => undefined,
+        onOpenBackgroundJobs: () => undefined,
         onOpenLocalPath: options.onOpenLocalPath,
         onForkUserMessage: options.onForkUserMessage,
         planReviewEnabled: options.planReviewEnabled,
@@ -753,7 +756,52 @@ test('chat view shows each changed file with counts and an open action', () => {
   assert.match(markup, /运行期间文件变化/)
   assert.match(markup, /aria-label="预览改动文件 result\.txt"/)
   assert.match(markup, /aria-label="查看 result\.txt 的本轮差异"/)
-  assert.match(markup, /\+2 \/ −1/)
+  assert.match(markup, />\+2<\/span>/)
+  assert.match(markup, />−1<\/span>/)
+})
+
+test('workspace changes show four files before expanding the rest', () => {
+  const markup = renderChat([
+    {
+      id: 'changes-compact',
+      role: 'workspace_changes',
+      files: Array.from({ length: 6 }, (_, index) => ({
+        path: `/project/result-${index}.txt`,
+        displayPath: `result-${index}.txt`,
+        status: 'added' as const,
+        added: index + 1,
+        deleted: 0
+      })),
+      totalChanged: 6,
+      truncated: false
+    }
+  ])
+
+  assert.equal((markup.match(/data-phi-workspace-change-row=/g) ?? []).length, 4)
+  assert.match(markup, /显示其余 2 项/)
+  assert.doesNotMatch(markup, /result-5\.txt/)
+})
+
+test('a truncated change list stays visibly marked while collapsed', () => {
+  const markup = renderChat([
+    {
+      id: 'changes-truncated',
+      role: 'workspace_changes',
+      files: [
+        {
+          path: '/project/report.txt',
+          displayPath: 'report.txt',
+          status: 'added',
+          added: 1,
+          deleted: 0
+        }
+      ],
+      totalChanged: 50,
+      truncated: true
+    }
+  ])
+
+  assert.match(markup, /列表截断/)
 })
 
 test('chat view shows delivered files with a preview action and current-file notice', () => {
@@ -776,8 +824,39 @@ test('chat view shows delivered files with a preview action and current-file not
   )
   assert.match(markup, /aria-label="交付文件"/)
   assert.match(markup, /aria-label="预览交付文件 report.pdf"/)
+  assert.match(markup, /data-phi-presented-file-row="true"/)
+  assert.match(markup, /<button[^>]*aria-label="预览交付文件 report\.pdf"/)
   assert.match(markup, /报告/)
   assert.match(markup, /内容可能已更改/)
+})
+
+test('chat view shows delivered files after a later tool call and closing reply', () => {
+  const markup = renderChat(
+    [
+      { id: 'user-1', role: 'user', content: 'make a figure' },
+      { id: 'summary-1', role: 'assistant', content: 'Two comparisons are complete.' },
+      {
+        id: 'delivery-1',
+        role: 'presented_files',
+        files: [{ path: '/project/figure.png', displayPath: 'figure.png', bytes: 123 }]
+      },
+      {
+        id: 'tool-1',
+        role: 'tool',
+        toolName: 'present_files',
+        argsPreview: '',
+        argsJson: '',
+        output: 'done',
+        status: 'done'
+      },
+      { id: 'assistant-final', role: 'assistant', content: 'Figure is ready.' }
+    ],
+    { onOpenLocalPath: () => undefined }
+  )
+
+  assert.match(markup, /Figure is ready/)
+  assert.match(markup, /aria-label="预览交付文件 figure\.png"/)
+  assert.ok(markup.indexOf('Figure is ready') < markup.indexOf('预览交付文件 figure.png'))
 })
 
 test('chat composer offers a selected and disabled plan review mode', () => {
@@ -1567,20 +1646,36 @@ test('chat view uses the suggested next action as a passive placeholder', () => 
   )
 })
 
-test('chat composer reserves a separate context-usage status below its controls', () => {
+test('chat composer places context usage between the provider and send controls', () => {
   const markup = renderChat([], {
     contextUsageTarget: {
       sessionPath: 'phi-session:session-a',
       phiSessionId: 'session-a',
       sessionGeneration: 0
-    },
-    onCompactContext: () => undefined
+    }
   })
 
   assert.match(markup, /data-phi-context-usage="unavailable"/)
   assert.match(markup, /正在读取上下文/)
-  assert.match(markup, /aria-label="压缩当前会话上下文"/)
-  assert.match(markup, /aria-label="自动压缩设置"/)
+  const modelPosition = markup.indexOf('aria-label="选择模型')
+  const contextPosition = markup.indexOf('data-phi-context-usage="unavailable"')
+  const sendPosition = markup.indexOf('data-phi-composer-action="send"')
+  assert.ok(modelPosition >= 0 && modelPosition < contextPosition && contextPosition < sendPosition)
+  assert.doesNotMatch(markup, /aria-label="压缩当前会话上下文"|aria-label="自动压缩设置"/)
+})
+
+test('finished background jobs render as one clickable line without the stored details', () => {
+  const markup = renderChat([
+    {
+      id: 'wrapper-done',
+      role: 'warning',
+      content: 'Wrapper 运行已完成\n输出目录：/data/qc\n运行编号：wrun_abc',
+      backgroundJobNotice: { state: 'completed' }
+    }
+  ])
+
+  assert.match(markup, /<button[^>]*>Wrapper 运行已完成 · 查看后台任务<\/button>/)
+  assert.doesNotMatch(markup, /\/data\/qc|wrun_abc/)
 })
 
 test('chat timeline shows compaction method, token counts and expandable full summary', () => {
@@ -1657,6 +1752,37 @@ test('chat view uses icon-only composer controls when file preview is open', () 
   assert.doesNotMatch(markup, /输入消息，Enter 发送/)
 })
 
+test('Cursor models display the Cursor provider icon', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(ProviderModelIcon, { providerId: 'cursor' })
+    )
+  )
+
+  assert.match(markup, /data-phi-provider-icon="cursor"/)
+  assert.match(markup, /aria-label="Cursor"[\s\S]*<svg/)
+})
+
+test('composer buttons stay fixed on hover and use matching action icon sizes', () => {
+  const surface = composerSurfaceSx({ compact: false, dragActive: false })
+  assert.match(JSON.stringify(surface), /MuiButton-root:hover[^}]*transform":"none"/)
+
+  const source = readFileSync('src/renderer/src/features/chat/ChatView.tsx', 'utf8')
+  assert.match(source, /<GoPaperAirplane size=\{COMPOSER_ICON_SIZE\}/)
+  assert.match(source, /<GoSquare size=\{COMPOSER_ICON_SIZE\}/)
+  assert.match(source, /data-phi-composer-action="send"[\s\S]*?bgcolor: 'transparent'/)
+  assert.doesNotMatch(source, /spinHourglass|GoHourglass/)
+
+  const modelControlSource = readFileSync(
+    'src/renderer/src/components/chat/ChatComposerControls.tsx',
+    'utf8'
+  ).split('export function ModelSelectorControl')[1]
+  assert.equal((modelControlSource.match(/disableRipple/g) ?? []).length, 2)
+  assert.match(modelControlSource, /'&:hover': \{ bgcolor: 'action.hover' \}/)
+})
+
 test('chat view keeps compact composer icon buttons at the declared outer size', () => {
   const chatViewSource = readFileSync('src/renderer/src/features/chat/ChatView.tsx', 'utf8')
   const controlStylesSource = readFileSync(
@@ -1678,12 +1804,18 @@ test('chat view keeps compact composer icon buttons at the declared outer size',
   )
 })
 
-test('chat view keeps compact stop control the same size as other compact controls', () => {
+test('chat view replaces send with one square stop control', () => {
   const compactMarkup = renderChat([], { compactComposerControls: true, isGenerating: true })
   const regularMarkup = renderChat([], { isGenerating: true })
 
   assert.match(compactMarkup, /data-phi-composer-action="stop" data-phi-composer-size="32"/)
   assert.match(regularMarkup, /data-phi-composer-action="stop" data-phi-composer-size="40"/)
+  assert.equal((regularMarkup.match(/data-phi-composer-action=/g) ?? []).length, 1)
+  assert.doesNotMatch(
+    regularMarkup,
+    /data-phi-composer-action="queue"|data-phi-composer-action="send"/
+  )
+  assert.match(regularMarkup, /title="运行中，点击停止生成"/)
 })
 
 test('agent execution details scroll instead of flattening every child step into the chat flow', () => {
@@ -1798,7 +1930,9 @@ test('chat view shows queued prompts above the composer while a session is busy'
     queuedPrompts: [{ id: 'queued-1', text: '排队的下一条问题' }]
   })
 
-  assert.match(markup, /aria-label="加入队列"/)
+  assert.match(markup, /placeholder="输入消息，Enter 加入队列，Shift\+Enter 换行"/)
+  assert.doesNotMatch(markup, /aria-label="加入队列"/)
+  assert.match(markup, /aria-label="停止生成"/)
   assert.match(markup, /消息队列/)
   assert.match(markup, /排队中 1 条/)
   assert.match(markup, /排队的下一条问题/)

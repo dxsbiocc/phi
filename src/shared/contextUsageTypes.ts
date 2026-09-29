@@ -1,7 +1,24 @@
+export type ContextUsageCategoryId =
+  | 'systemPrompt'
+  | 'toolDefinitions'
+  | 'systemTools'
+  | 'mcpTools'
+  | 'systemContext'
+  | 'skills'
+  | 'conversation'
+
+export interface ContextUsageCategory {
+  id: ContextUsageCategoryId
+  tokens: number
+}
+
 export interface ContextUsageSnapshot {
   tokens: number
   contextWindow: number
   percent: number
+  categories?: ContextUsageCategory[]
+  /** Full schema estimate for enabled MCP tools not directly sent to the model. */
+  deferredMcpTokens?: number
 }
 
 export interface ContextCompactionDetails {

@@ -130,6 +130,26 @@ test('listMcpServers reads MCP config from the selected cwd', async () => {
     projectAServers.find((server) => server.name === 'userServer')?.envKeys?.[0],
     'TOKEN'
   )
+  assert.equal(projectAServers.find((server) => server.name === 'userServer')?.managed, true)
+  assert.equal(projectAServers.find((server) => server.name === 'projectAServer')?.managed, false)
+})
+
+test('listMcpServers includes remote URL-only servers', async () => {
+  const { listGlobalMcpServers } = await import('../src/main/agent/resources')
+  const path = join(agentDir, 'mcp.json')
+  const original = readFileSync(path, 'utf8')
+  try {
+    writeFileSync(
+      path,
+      JSON.stringify({ mcpServers: { pubmed: { type: 'http', url: 'https://example.com/mcp' } } })
+    )
+    const servers = await listGlobalMcpServers()
+    assert.equal(servers[0]?.name, 'pubmed')
+    assert.equal(servers[0]?.url, 'https://example.com/mcp')
+    assert.equal(servers[0]?.transport, 'http')
+  } finally {
+    writeFileSync(path, original)
+  }
 })
 
 test('remote resource catalog keeps global Skills and MCP without reading an anchor project', async () => {

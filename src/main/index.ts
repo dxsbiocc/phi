@@ -16,6 +16,8 @@ import {
   type PreviewImageMimeType
 } from './file-preview-media'
 import { shouldBlockHtmlReportNavigation } from '../shared/htmlReportPreview'
+import { isInstalledFigurePreviewPath } from './agent/visualization/examples'
+import { getBundledSkillRoot } from './agent/visualization/tools'
 import type {
   WrapperRetargetRequest,
   WrapperRun,
@@ -153,6 +155,7 @@ import {
   type RuntimeResourceLoader
 } from './agent/runtime/runtime-adapter'
 import { installPlugin, listPlugins, removePlugin } from './agent/plugins'
+import { addRemoteMcpConnector, removeRemoteMcpConnector } from './agent/mcp-connectors'
 import {
   deleteSkill,
   listGlobalMcpServers,
@@ -512,6 +515,7 @@ interface PromptRun {
   sessionGeneration: number
   cancelled: boolean
   recordedFailureMessage?: string
+  stoppingPermanentProviderError?: boolean
   thinkingBlocks: Map<number, string>
   thinkingBlockStartedAtMs: Map<number, number>
   compactionReasons: Map<string, string>
@@ -1821,6 +1825,12 @@ function assistantErrorMessageFromEventSummary(summary: Record<string, unknown>)
   return null
 }
 
+function isPermanentProviderRegionError(message: unknown): message is string {
+  return (
+    typeof message === 'string' && /(?:not supported|not available) in your region/i.test(message)
+  )
+}
+
 function notebookCompletionCandidatesFromEventSummary(summary: Record<string, unknown>): unknown[] {
   const candidates: unknown[] = []
   const assistantMessageEvent = summary.assistantMessageEvent as
@@ -2395,7 +2405,7 @@ function persistSessionEvent(
           ? redactSensitiveText(assistantMessage.errorMessage)
           : '请求失败'
       persistCompletedThinkingBlocks(run, summary)
-      run.recordedFailureMessage = errorMessage
+      if (!run.stoppingPermanentProviderError) run.recordedFailureMessage = errorMessage
       return withRunId(summary)
     }
 
@@ -3902,6 +3912,12 @@ function isLocalFilePathAllowed(
   scope: LocalPathScope = currentLocalPathScope()
 ): boolean {
   if (isRemoteProjectAnchorPath(target, AGENT_DIR)) return false
+  if (
+    basename(target) === 'preview.png' &&
+    isInstalledFigurePreviewPath(target, getBundledSkillRoot())
+  ) {
+    return true
+  }
   const agentDir = resolve(AGENT_DIR)
   const roots = [agentDir, scope.cwd, scope.cwdRealPath].filter(
     (root): root is string => typeof root === 'string' && root.length > 0
@@ -5471,6 +5487,18 @@ async function getAgentSession(
         if (!lifecycle.isCurrentGeneration(generation)) return
         const summary = withEventTimestamp(rawSummary)
         const run = getActivePromptRun(sessionKey)
+        if (
+          run &&
+          summary.type === 'auto_retry_start' &&
+          isPermanentProviderRegionError(summary.errorMessage) &&
+          !run.stoppingPermanentProviderError
+        ) {
+          run.stoppingPermanentProviderError = true
+          run.recordedFailureMessage = redactSensitiveText(summary.errorMessage)
+          void abortSessionWithoutCancellingApprovals(result.session).catch((error) => {
+            rememberErrorSummary(error)
+          })
+        }
         const phiSessionId = run?.phiSessionId ?? getPhiSessionIdForKey(sessionKey)
         const persistedSummary = run
           ? persistSessionEvent(run, summary)
@@ -6979,6 +7007,16 @@ app.whenReady().then(() => {
   ipcMain.handle('mcp:listServers', async (_, cwd?: string) =>
     isRemoteResourceScope(cwd) ? listGlobalMcpServers() : listMcpServers(cwd ?? currentCwd)
   )
+  ipcMain.handle('mcp:addRemoteConnector', async (_, name: string, url: string) => {
+    addRemoteMcpConnector(name, url)
+  })
+  ipcMain.handle('mcp:removeRemoteConnector', async (_, name: string, url: string) => {
+    removeRemoteMcpConnector(name, url)
+  })
+  ipcMain.handle('mcp:featuredTools', async (_, id: string) => {
+    if (typeof id !== 'string') throw new Error('连接器标识无效')
+    return getOmpBridge().request<string[]>('mcp.featuredTools', { id })
+  })
 
   ipcMain.handle('wrappers:getPlan', async (_, planId: string) => readWrapperPlan(planId))
   ipcMain.handle('wrappers:retargetPlan', async (_, request: WrapperRetargetRequest) => {

@@ -790,6 +790,9 @@ test('a finished background wrapper run shows up live as a visible timeline noti
 
   assert.equal(state.messages.length, 1)
   assert.equal(state.messages[0].role, 'warning')
+  assert.deepEqual((state.messages[0] as { backgroundJobNotice?: unknown }).backgroundJobNotice, {
+    state: 'completed'
+  })
   assert.match((state.messages[0] as { content: string }).content, /^Wrapper 运行已完成/)
   assert.match((state.messages[0] as { content: string }).content, /wrun_abc/)
 })

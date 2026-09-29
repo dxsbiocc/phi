@@ -1,4 +1,4 @@
-import { relative, sep } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import type { RemoteHpcSettings } from '../../../../shared/wrapperRemoteTypes'
@@ -29,7 +29,10 @@ import { readRemoteLogDelta, type RemoteLogCursor } from '../remote-log'
 import { cancelRemoteController, type RemoteCancelResult } from '../remote-cancel'
 import type { WrapperCompositionEntry } from './discovery'
 import type { WrapperProcess, WrapperRunResult } from './executor'
+import { componentBundleScope } from './includes'
 import { ensureRemoteBundle } from './remote-bundle'
+import { collectWrapperSingularityImages, stageSingularityImages } from './remote-images'
+import type { WrapperRunResources } from './resources'
 import { controllerFor, controllerForHandle } from './remote-controller'
 import {
   buildRemoteLaunchScript,
@@ -61,6 +64,8 @@ export interface RemoteTarget {
   /** Injectable so tests can hand back a fake session. */
   connectImpl?: ConnectImpl
   pollIntervalMs?: number
+  /** Injectable so tests need no registry; defaults to the real image staging. */
+  stageImagesImpl?: typeof stageSingularityImages
 }
 
 /** Enough to resume watching a run after the app restarted. Holds no credentials. */
@@ -116,6 +121,8 @@ export interface StartRemoteOptions extends CommonOptions {
   profile: string
   /** Local `resources/wrappers` root the bundle is built from. */
   wrappersRoot: string
+  /** Overrides the wrapper's own cpus/memory/time for every process of this run. */
+  resources?: WrapperRunResources
 }
 
 export interface AttachRemoteOptions extends CommonOptions {
@@ -123,6 +130,8 @@ export interface AttachRemoteOptions extends CommonOptions {
 }
 
 const DEFAULT_POLL_MS = 5000
+const PREFLIGHT_TIMEOUT_MS = 180_000
+const PREFLIGHT_MAX_OUTPUT = 64 * 1024
 const DEFAULT_MAX_POLL_FAILURES = 12
 const DEFAULT_KILL_GRACE_MS = 10_000
 
@@ -495,7 +504,14 @@ async function runPreflight(
     profile: options.profile,
     workspaceRoot: options.target.workspaceRoot
   })
-  const result = await session.exec(`bash -c ${shellQuote(script)}`)
+  const command = `bash -c ${shellQuote(script)}`
+  // The check starts a JVM for `nextflow -version`: slow on a busy login node.
+  const result = session.execBounded
+    ? await session.execBounded(command, {
+        timeoutMs: PREFLIGHT_TIMEOUT_MS,
+        maxOutputBytes: PREFLIGHT_MAX_OUTPUT
+      })
+    : await session.exec(command)
   if (result.code !== 0) {
     const reason = (result.stderr || result.stdout).trim()
     return reported(
@@ -505,6 +521,33 @@ async function runPreflight(
   }
   if (result.stdout.trim()) options.onOutput?.(`${result.stdout.trimEnd()}\n`)
   return undefined
+}
+
+/**
+ * With Singularity and a cache directory, puts the wrapper's images into that
+ * cache first, so offline compute nodes never have to pull. Images that cannot
+ * be staged only warn: the nodes may be able to pull them after all.
+ */
+async function stageImagesForRun(
+  session: RemoteSshSession,
+  options: StartRemoteOptions
+): Promise<void> {
+  const cacheDir = options.target.hpc?.singularityCacheDir
+  if (options.profile !== 'singularity' || !cacheDir) return
+  const images = collectWrapperSingularityImages(join(options.entry.wrapperDir, 'main.nf'))
+  if (images.length === 0) return
+  const stage = options.target.stageImagesImpl ?? stageSingularityImages
+  try {
+    const { failed } = await stage(session, { images, cacheDir, onOutput: options.onOutput })
+    for (const { fileName, reason } of failed) {
+      options.onOutput?.(
+        `警告：镜像 ${fileName} 未能放入缓存 ${cacheDir}（${reason}）。计算节点无法联网时运行会失败，可手动把该文件放入缓存目录后重试。\n`
+      )
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    options.onOutput?.(`警告：检查镜像缓存 ${cacheDir} 失败（${reason}），将直接启动运行。\n`)
+  }
 }
 
 /** Launches the run remotely: connect, ship the bundle, check inputs, write files, start detached. */
@@ -595,7 +638,8 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
     if (prior) return prior
     const bundle = await ensureRemoteBundle(session, {
       localRoot: options.wrappersRoot,
-      workspaceRoot: target.workspaceRoot
+      workspaceRoot: target.workspaceRoot,
+      verifyScope: componentBundleScope(entry.componentDir, options.wrappersRoot)
     })
     const layout = remoteRunLayout({
       workspaceRoot: target.workspaceRoot,
@@ -618,6 +662,7 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
         `服务器 ${target.connection.host} 的输入核验失败：\n${checked.errors.map((line) => `- ${line}`).join('\n')}`
       )
     }
+    await stageImagesForRun(session, options)
     if (control.cancelled) return failure('', { cancelled: true })
     options.onSnapshot?.({
       runId: options.runId,
@@ -657,7 +702,7 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
       await session.writeTextFile(layout.paramsFile, JSON.stringify(params, null, 2))
       await session.writeTextFile(
         layout.configFile,
-        buildRemoteNextflowConfig(target.hpc ?? { scheduler: 'local' })
+        buildRemoteNextflowConfig(target.hpc ?? { scheduler: 'local' }, options.resources)
       )
       await session.writeTextFile(
         joinRemote(layout.runDir, 'launch.sh'),

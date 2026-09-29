@@ -16,7 +16,9 @@ import { shellQuote } from '../remote-ssh-session'
  * still using it keep working.
  */
 
-const BUNDLE_ROOTS = ['modules', 'subworkflows', 'workflows']
+// `images` holds shared conda env files and Dockerfiles that modules reference by
+// relative path (e.g. `../../../../images/differential-expression-r/environment.yml`).
+const BUNDLE_ROOTS = ['modules', 'subworkflows', 'workflows', 'images']
 /** Directories that are test fixtures or leftovers of local runs, never part of a runnable wrapper. */
 const SKIPPED_DIRS = new Set(['tests', 'work', 'results', '.git', 'node_modules', '__pycache__'])
 const SKIPPED_FILES = new Set(['.DS_Store', 'dag.mmd'])
@@ -41,7 +43,15 @@ use JSON::PP qw(decode_json);
 use Digest::SHA qw(sha256_hex);
 use File::Find;
 use Fcntl qw(S_IFMT S_IFREG S_IFDIR);
-my ($root, $digest, $hash) = @ARGV;
+my ($root, $digest, $hash, @scope) = @ARGV;
+# With a scope (relative directories), only files under it are read and checked for extras;
+# the manifest itself is still verified in full. No scope means the whole bundle.
+sub in_scope {
+  my ($path) = @_;
+  return 1 unless @scope;
+  for my $prefix (@scope) { return 1 if $path eq $prefix || index($path, "$prefix/") == 0; }
+  return 0;
+}
 my @root_stat = lstat($root);
 exit 10 unless @root_stat;
 exit 11 unless ($root_stat[2] & S_IFMT) == S_IFDIR && -r $root && -x $root;
@@ -58,11 +68,14 @@ my $manifest = eval { decode_json($raw) };
 exit 11 if $@ || ref($manifest) ne 'HASH' || $manifest->{version} != 1;
 exit 11 unless $manifest->{hash} eq $hash && ref($manifest->{files}) eq 'ARRAY';
 my %expected;
+my %listed;
 for my $file (@{$manifest->{files}}) {
   exit 11 unless ref($file) eq 'HASH';
   my $path = $file->{path};
   exit 11 unless defined($path) && $path ne '' && $path !~ m{^/|(?:^|/)\.\.(?:/|$)|\0};
-  exit 11 if $expected{$path}++;
+  exit 11 if $listed{$path}++;
+  next unless in_scope($path);
+  $expected{$path} = 1;
   my $name = "$root/$path";
   my @st = lstat($name);
   exit 11 unless @st && ($st[2] & S_IFMT) == S_IFREG && $st[7] == $file->{size};
@@ -85,7 +98,7 @@ eval { find({ no_chdir => 1, wanted => sub {
   if ($kind == S_IFREG) { $seen{$path} = 1; }
   elsif ($kind == S_IFDIR) { $bad = 1 unless -r $name && -x $name; }
   else { $bad = 1; }
-}}, $root) };
+}}, @scope ? (grep { -d $_ } map { "$root/$_" } @scope) : ($root)) };
 exit 11 if $@ || $bad || keys(%seen) != keys(%expected);
 for my $path (keys %expected) { exit 11 unless $seen{$path}; }
 exit 0;
@@ -169,11 +182,13 @@ async function verifyRemoteBundle(
   session: RemoteSshSession,
   bundleDir: string,
   hash: string,
-  digest: string
+  digest: string,
+  scope: string[] = []
 ): Promise<BundleState> {
+  const scopeArgs = scope.map((prefix) => ` ${shellQuote(prefix)}`).join('')
   const command = [
     'command -v perl >/dev/null 2>&1 || exit 12',
-    `perl -e ${shellQuote(VERIFY_PERL)} -- ${shellQuote(bundleDir)} ${shellQuote(digest)} ${shellQuote(hash)}`
+    `perl -e ${shellQuote(VERIFY_PERL)} -- ${shellQuote(bundleDir)} ${shellQuote(digest)} ${shellQuote(hash)}${scopeArgs}`
   ].join('\n')
   const result = session.execBounded
     ? await session.execBounded(command, {
@@ -212,7 +227,8 @@ async function acquireBundleLock(
   bundleDir: string,
   hash: string,
   digest: string,
-  token: string
+  token: string,
+  scope: string[]
 ): Promise<boolean> {
   const deadline = Date.now() + LOCK_WAIT_MS
   const owner = `${lockDir}/owner`
@@ -232,7 +248,8 @@ async function acquireBundleLock(
     if (result.code !== 17) {
       throw new Error(`服务器无法取得 Wrapper bundle 上传锁: ${lockDir}`)
     }
-    if ((await verifyRemoteBundle(session, bundleDir, hash, digest)) === 'valid') return false
+    if ((await verifyRemoteBundle(session, bundleDir, hash, digest, scope)) === 'valid')
+      return false
     const retired = `${lockDir}.stale-${token}`
     const reclaimed = await session.exec(
       `perl -e ${shellQuote(`my @s = lstat($ARGV[0]); exit(@s && time - $s[9] > ${LOCK_STALE_SECONDS} ? 0 : 1)`)} -- ${shellQuote(lockDir)} && mv ${shellQuote(lockDir)} ${shellQuote(retired)}`
@@ -297,8 +314,21 @@ export interface RemoteBundle {
 
 export async function ensureRemoteBundle(
   session: RemoteSshSession,
-  input: { localRoot: string; workspaceRoot: string }
+  input: {
+    localRoot: string
+    workspaceRoot: string
+    /**
+     * Directories (relative to the bundle root) whose files this run reads. Only these are
+     * re-hashed when checking a bundle, instead of every file: on cluster shared storage a
+     * full pass over a few thousand files outlasts any sensible timeout. The manifest is
+     * always checked in full, and a fresh upload is checked against the archive digest.
+     */
+    verifyScope?: string[]
+  }
 ): Promise<RemoteBundle> {
+  const scope = (input.verifyScope ?? []).filter(
+    (prefix) => prefix !== '' && !prefix.startsWith('/') && !prefix.split('/').includes('..')
+  )
   const files = collectBundleFiles(input.localRoot)
   if (files.length === 0) throw new Error(`没有可上传的 wrapper 源码: ${input.localRoot}`)
   const manifest = bundleSnapshot(input.localRoot, files)
@@ -306,7 +336,7 @@ export async function ensureRemoteBundle(
   const bundlesDir = `${input.workspaceRoot.replace(/\/+$/, '')}/wrappers/bundles`
   const bundleDir = `${bundlesDir}/${hash}`
   const bundle = { hash, bundleDir }
-  if ((await verifyRemoteBundle(session, bundleDir, hash, manifest.digest)) === 'valid') {
+  if ((await verifyRemoteBundle(session, bundleDir, hash, manifest.digest, scope)) === 'valid') {
     return bundle
   }
 
@@ -315,7 +345,15 @@ export async function ensureRemoteBundle(
   const lockDir = `${bundleDir}.lock`
   let ownsLock: boolean
   try {
-    ownsLock = await acquireBundleLock(session, lockDir, bundleDir, hash, manifest.digest, token)
+    ownsLock = await acquireBundleLock(
+      session,
+      lockDir,
+      bundleDir,
+      hash,
+      manifest.digest,
+      token,
+      scope
+    )
   } catch (error) {
     await releaseBundleLock(session, lockDir, token)
     throw error
@@ -341,13 +379,20 @@ export async function ensureRemoteBundle(
   const remoteArchive = `${bundleDir}.archive-${token}.tar.gz`
   const partial = `${bundleDir}.partial-${token}`
   try {
-    if ((await verifyRemoteBundle(session, bundleDir, hash, manifest.digest)) === 'valid') {
+    if ((await verifyRemoteBundle(session, bundleDir, hash, manifest.digest, scope)) === 'valid') {
       return bundle
     }
     tmp = mkdtempSync(join(tmpdir(), 'phi-bundle-'))
     const localArchive = join(tmp, `${hash}.tar.gz`)
     await buildArchive(input.localRoot, files, localArchive)
     await session.uploadFile(localArchive, remoteArchive)
+    const archiveDigest = createHash('sha256').update(readFileSync(localArchive)).digest('hex')
+    await checkedExec(
+      session,
+      `test "$(perl -MDigest::SHA -e 'print Digest::SHA->new(256)->addfile($ARGV[0])->hexdigest' ${shellQuote(remoteArchive)})" = ${shellQuote(archiveDigest)}`,
+      '上传的 wrapper 源码压缩包校验失败',
+      BUNDLE_COMMAND_TIMEOUT_MS
+    )
     await checkedExec(
       session,
       [
@@ -359,11 +404,11 @@ export async function ensureRemoteBundle(
       BUNDLE_COMMAND_TIMEOUT_MS
     )
     await session.writeTextFile(`${partial}/${COMPLETE_MARKER}`, manifest.text)
-    if ((await verifyRemoteBundle(session, partial, hash, manifest.digest)) !== 'valid') {
+    if ((await verifyRemoteBundle(session, partial, hash, manifest.digest, scope)) !== 'valid') {
       throw new Error('远程 Wrapper bundle 文件清单或内容校验失败')
     }
     await assertBundleLock(session, lockDir, token)
-    if ((await verifyRemoteBundle(session, bundleDir, hash, manifest.digest)) === 'valid') {
+    if ((await verifyRemoteBundle(session, bundleDir, hash, manifest.digest, scope)) === 'valid') {
       return bundle
     }
     const corrupt = `${bundleDir}.corrupt-${token}`
@@ -377,7 +422,7 @@ export async function ensureRemoteBundle(
       ].join('\n'),
       '远程发布 Wrapper bundle 失败'
     )
-    if ((await verifyRemoteBundle(session, bundleDir, hash, manifest.digest)) !== 'valid') {
+    if ((await verifyRemoteBundle(session, bundleDir, hash, manifest.digest, scope)) !== 'valid') {
       throw new Error('远程 Wrapper bundle 发布后校验失败')
     }
   } finally {

@@ -224,9 +224,27 @@ test('settings dialog exposes default proxy mode in general settings', () => {
   assert.match(markup, /更改/)
   assert.match(markup, /运行任务时防止系统休眠/)
   assert.match(markup, /提示词建议/)
+  assert.match(markup, /上下文压缩/)
+  assert.match(markup, /自动压缩设置仅作用于当前会话/)
+  assert.match(markup, /打开会话后可调整压缩设置/)
   assert.doesNotMatch(markup, /生物数据库工具/)
   assert.doesNotMatch(markup, /本地路径点击方式/)
   assert.doesNotMatch(markup, /添加 Provider/)
+})
+
+test('general settings shows current-session compaction controls', () => {
+  const markup = renderSettingsDialog({
+    category: 'general',
+    autoCompactionTarget: {
+      sessionPath: 'phi-session:session-a',
+      phiSessionId: 'session-a',
+      sessionGeneration: 0
+    },
+    onCompactContext: () => undefined
+  })
+
+  assert.match(markup, /正在读取自动压缩设置/)
+  assert.match(markup, /aria-label="压缩当前会话上下文"/)
 })
 
 test('settings dialog exposes database connector toggles in database settings', () => {

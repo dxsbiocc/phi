@@ -33,6 +33,7 @@ import {
 } from '../src/main/agent/db/adapters/uniprot-adapter'
 import {
   addCustomDbConnector,
+  findDbConnectorCatalogEntry,
   listDbConnectorCatalog,
   syncGeneratedDbConnectorDocs
 } from '../src/main/agent/db/catalog'
@@ -72,7 +73,9 @@ import {
 import {
   buildDbDomainTool,
   buildDbDocsSearchTool,
+  buildDbCustomTools,
   buildDbQueryTool,
+  buildDbRoutesTool,
   buildDbSearchTool,
   buildDefaultDbAdapters,
   buildDefaultDbCustomTools
@@ -213,6 +216,52 @@ test('custom connector catalog requires digest-bound allow-list before query is 
   })
 })
 
+test('connector lookup reuses unchanged manifests and refreshes one changed connector', async () => {
+  await withHarness(({ root, agentDir }) => {
+    const sourceDir = join(root, 'connector-src')
+    writeConnector(sourceDir)
+    const installed = addCustomDbConnector(sourceDir, agentDir)
+    const first = findDbConnectorCatalogEntry(installed.manifest.id, agentDir)
+    const second = findDbConnectorCatalogEntry(installed.manifest.id, agentDir)
+    assert.ok(first && second)
+    assert.equal(first.manifest, second.manifest)
+
+    writeFileSync(
+      join(installed.installedPath, 'connector.yaml'),
+      connectorYaml().replace('Gene records.', 'Updated gene records.'),
+      'utf-8'
+    )
+    const changed = findDbConnectorCatalogEntry(installed.manifest.id, agentDir)
+    assert.ok(changed)
+    assert.notEqual(changed.manifest, first.manifest)
+    assert.equal(changed.manifest.domains[0]?.summary, 'Updated gene records.')
+    assert.notEqual(changed.digest, first.digest)
+
+    allowCustomDbConnector(changed.manifest.id, changed.digest, agentDir)
+    const enabled = findDbConnectorCatalogEntry(changed.manifest.id, agentDir)
+    assert.ok(enabled)
+    assert.equal(enabled.manifest, changed.manifest)
+    assert.equal(enabled.enabledForQuery, true)
+  })
+})
+
+test('db_search returns a bounded database shortlist without domain routes', async () => {
+  await withHarness(async ({ agentDir }) => {
+    const result = await buildDbSearchTool(agentDir).execute(
+      'route-list',
+      { query: 'gene' },
+      undefined,
+      fakeCtx()
+    )
+    const databases = JSON.parse(result.content[0]?.text ?? '[]') as Array<{
+      id: string
+    }>
+    assert.ok(databases.length > 0)
+    assert.ok(databases.length <= 8)
+    assert.ok(databases.every((database) => !('domains' in database)))
+  })
+})
+
 test('db_search and db_domain expose connector/domain metadata', async () => {
   await withHarness(async ({ root, agentDir }) => {
     const sourceDir = join(root, 'connector-src')
@@ -221,7 +270,7 @@ test('db_search and db_domain expose connector/domain metadata', async () => {
 
     const search = await buildDbSearchTool(agentDir).execute(
       'call-1',
-      { query: 'gene' },
+      { query: 'gene', limit: 50 },
       undefined,
       fakeCtx()
     )
@@ -262,6 +311,37 @@ test('db_search and db_domain expose connector/domain metadata', async () => {
       namespace: 'ncbi.gene_id',
       primaryUrlTemplate: 'https://www.ncbi.nlm.nih.gov/gene/{stable_id}'
     })
+  })
+})
+
+test('db_domain query examples satisfy the selected REST function input contract', async () => {
+  await withHarness(async ({ agentDir }) => {
+    for (const [database, domainId] of [
+      ['rest-json/ensembl', 'lookup_symbol'],
+      ['rest-json/mygene', 'gene']
+    ]) {
+      const result = await buildDbDomainTool(agentDir).execute(
+        `domain-${domainId}`,
+        { database, domain: domainId },
+        undefined,
+        fakeCtx()
+      )
+      const content = JSON.parse(result.content[0]?.text ?? '{}') as {
+        queryInput: { example: { filters?: DbQueryParams['filters'] } }
+      }
+      const parsed = parseDbConnectorManifest(
+        readFileSync(join('resources/db-connectors', database, 'connector.yaml'), 'utf-8')
+      )
+      const domain = parsed.manifest?.domains.find((candidate) => candidate.id === domainId)
+      assert.ok(domain)
+      assert.doesNotThrow(() =>
+        buildRestJsonRequest(domain, {
+          domain: domainId,
+          filters: content.queryInput.example.filters,
+          limit: 1
+        })
+      )
+    }
   })
 })
 
@@ -346,7 +426,7 @@ test('generated DB connector docs include navigator guidance and field glossary 
     const docs = buildGeneratedDbConnectorDocs(entries, generatedAt)
     assert.match(docs.navigatorSkillMarkdown, /# DB Navigator/)
     assert.match(docs.navigatorSkillMarkdown, /db_search/)
-    assert.match(docs.navigatorSkillMarkdown, /infer the database\/domain yourself/)
+    assert.match(docs.navigatorSkillMarkdown, /choose relevant databases first/)
     assert.match(docs.navigatorSkillMarkdown, /Do not ask the user to name the tool function/)
     assert.match(docs.navigatorSkillMarkdown, /Do not make HTTP requests directly/)
     assert.match(docs.navigatorSkillMarkdown, /entrez\/ncbi/)
@@ -408,7 +488,7 @@ test('DB connector tool descriptions steer agents to route biological database i
     .map((tool) => tool.description)
     .join('\n')
 
-  assert.match(descriptions, /infer the database\/domain from the user intent/)
+  assert.match(descriptions, /first choose relevant databases/)
   assert.match(descriptions, /Prefer db_\* over general web search/)
   assert.match(descriptions, /user should not need to name tool functions/)
   assert.match(descriptions, /NCBI Entrez/)
@@ -417,7 +497,7 @@ test('DB connector tool descriptions steer agents to route biological database i
   assert.match(descriptions, /UniProt/)
 })
 
-test('db_search discovers UniProt from PDB structure field intent', async () => {
+test('database discovery and function routing find UniProt protein for PDB intent', async () => {
   await withHarness(async ({ agentDir }) => {
     const result = await buildDbSearchTool(agentDir).execute(
       'call-search-pdb',
@@ -427,17 +507,20 @@ test('db_search discovers UniProt from PDB structure field intent', async () => 
     )
     const details = result.details as {
       kind: string
-      results: Array<{ id: string; domains: Array<{ id: string }> }>
+      results: Array<{ id: string }>
     }
     assert.equal(details.kind, 'db_search_results')
-    assert.equal(
-      details.results.some(
-        (entry) =>
-          entry.id === 'rest-json/uniprot' &&
-          entry.domains.some((domain) => domain.id === 'protein')
-      ),
-      true
+    assert.ok(details.results.some((entry) => entry.id === 'rest-json/uniprot'))
+    const routes = await buildDbRoutesTool(agentDir).execute(
+      'call-routes-pdb',
+      { database: 'rest-json/uniprot', intent: 'PDB structure' },
+      undefined,
+      fakeCtx()
     )
+    const routeContent = JSON.parse(routes.content[0]?.text ?? '{}') as {
+      routes: Array<{ domain: string }>
+    }
+    assert.ok(routeContent.routes.some((route) => route.domain === 'protein'))
   })
 })
 
@@ -6372,6 +6455,7 @@ test('default DB custom tools register bundled Entrez and query through the adap
       [
         ['db_search', 'read'],
         ['db_resolve', 'read'],
+        ['db_routes', 'read'],
         ['db_domain', 'read'],
         ['db_query', 'read'],
         ['db_download', 'read'],
@@ -6924,6 +7008,208 @@ test('db_query refuses disabled custom connectors and summarizes enabled mock ad
     assert.equal(proxyFailureDetails.attempts, 0)
     assert.equal(proxyFailureDetails.safeDetails?.transportName, 'proxy')
     assert.equal(proxyFailureDetails.safeDetails?.redactedUrl, 'https://api.example.org/v1/genes')
+  })
+})
+
+test('default DB tools create the selected adapter only when it is queried', async () => {
+  await withHarness(async ({ root, agentDir }) => {
+    const tools = buildDefaultDbCustomTools(agentDir, {
+      restJson: {
+        transport: {
+          name: 'lazy-rest-json',
+          async fetch() {
+            return new Response(JSON.stringify({ data: [{ symbol: 'TP53' }] }), { status: 200 })
+          }
+        }
+      }
+    })
+    const sourceDir = join(root, 'connector-src')
+    writeConnector(sourceDir)
+    const entry = addCustomDbConnector(sourceDir, agentDir)
+    allowCustomDbConnector(entry.manifest.id, entry.digest, agentDir)
+    const query = tools.find((tool) => tool.name === 'db_query')
+    assert.ok(query)
+    const result = await query.execute(
+      'lazy-selected-query',
+      {
+        database: 'rest-json/toy',
+        domain: 'gene',
+        filters: [{ field: 'symbol', op: '=', value: 'TP53' }],
+        limit: 1
+      },
+      undefined,
+      fakeCtx()
+    )
+    assert.equal(result.isError, undefined)
+    assert.match(result.content[0]?.text ?? '', /TP53/)
+  })
+})
+
+test('Database session requires function discovery and inspection before an ordinary query', async () => {
+  await withHarness(async ({ root, agentDir }) => {
+    const sourceDir = join(root, 'connector-src')
+    writeConnector(sourceDir)
+    const entry = addCustomDbConnector(sourceDir, agentDir)
+    allowCustomDbConnector(entry.manifest.id, entry.digest, agentDir)
+    const tools = buildDefaultDbCustomTools(
+      agentDir,
+      {
+        restJson: {
+          transport: {
+            name: 'staged-query',
+            async fetch() {
+              return new Response(JSON.stringify({ data: [{ symbol: 'TP53' }] }), { status: 200 })
+            }
+          }
+        }
+      },
+      { enforceRouting: true }
+    )
+    const query = tools.find((tool) => tool.name === 'db_query')!
+    const routes = tools.find((tool) => tool.name === 'db_routes')!
+    const domain = tools.find((tool) => tool.name === 'db_domain')!
+    const args = {
+      database: 'rest-json/toy',
+      domain: 'gene',
+      filters: [{ field: 'symbol', op: '=', value: 'TP53' }]
+    }
+
+    const beforeRoutes = await query.execute('before-routes', args, undefined, fakeCtx())
+    assert.equal(beforeRoutes.isError, true)
+    assert.match(beforeRoutes.content[0]?.text ?? '', /db_routes/)
+
+    await routes.execute(
+      'select-gene-route',
+      { database: 'rest-json/toy', intent: 'gene symbol' },
+      undefined,
+      fakeCtx()
+    )
+    const beforeDomain = await query.execute('before-domain', args, undefined, fakeCtx())
+    assert.equal(beforeDomain.isError, true)
+    assert.match(beforeDomain.content[0]?.text ?? '', /db_domain/)
+
+    await domain.execute(
+      'inspect-gene-route',
+      { database: 'rest-json/toy', domain: 'gene' },
+      undefined,
+      fakeCtx()
+    )
+    const afterDomain = await query.execute('after-domain', args, undefined, fakeCtx())
+    assert.equal(afterDomain.isError, undefined)
+    assert.match(afterDomain.content[0]?.text ?? '', /TP53/)
+  })
+})
+
+test('selected database functions can be inspected and queried in parallel', async () => {
+  await withHarness(async ({ agentDir }) => {
+    const adapterFor = (database: string): DbAdapter => ({
+      async listDomains() {
+        return []
+      },
+      async describeDomain() {
+        return []
+      },
+      async query(params): Promise<DbAdapterQueryResult> {
+        return {
+          rows: [{ source: database }],
+          truncated: false,
+          provenance: { database, domain: params.domain, retrievedAt: '2026-09-28T00:00:00.000Z' }
+        }
+      }
+    })
+    const tools = buildDbCustomTools(
+      {
+        'entrez/ncbi': adapterFor('entrez/ncbi'),
+        'rest-json/uniprot': adapterFor('rest-json/uniprot')
+      },
+      agentDir,
+      { enforceRouting: true }
+    )
+    const routes = tools.find((tool) => tool.name === 'db_routes')!
+    const domain = tools.find((tool) => tool.name === 'db_domain')!
+    const query = tools.find((tool) => tool.name === 'db_query')!
+    await Promise.all([
+      routes.execute(
+        'ncbi-routes',
+        { database: 'entrez/ncbi', intent: 'gene symbol' },
+        undefined,
+        fakeCtx()
+      ),
+      routes.execute(
+        'uniprot-routes',
+        { database: 'rest-json/uniprot', intent: 'protein accession' },
+        undefined,
+        fakeCtx()
+      )
+    ])
+    const inspections = await Promise.all([
+      domain.execute(
+        'ncbi-domain',
+        { database: 'entrez/ncbi', domain: 'gene' },
+        undefined,
+        fakeCtx()
+      ),
+      domain.execute(
+        'uniprot-domain',
+        { database: 'rest-json/uniprot', domain: 'protein' },
+        undefined,
+        fakeCtx()
+      )
+    ])
+    assert.ok(inspections.every((result) => !result.isError))
+    const results = await Promise.all([
+      query.execute(
+        'ncbi-query',
+        { database: 'entrez/ncbi', domain: 'gene', rawQuery: 'TP53' },
+        undefined,
+        fakeCtx()
+      ),
+      query.execute(
+        'uniprot-query',
+        { database: 'rest-json/uniprot', domain: 'protein', rawQuery: 'TP53' },
+        undefined,
+        fakeCtx()
+      )
+    ])
+    assert.ok(results.every((result) => !result.isError))
+  })
+})
+
+test('exact identifier resolution permits its ready query without route discovery', async () => {
+  await withHarness(async ({ agentDir }) => {
+    const adapter: DbAdapter = {
+      async listDomains() {
+        return []
+      },
+      async describeDomain() {
+        return []
+      },
+      async query(params): Promise<DbAdapterQueryResult> {
+        return {
+          rows: [{ accession: 'P04637' }],
+          truncated: false,
+          provenance: {
+            database: 'rest-json/uniprot',
+            domain: params.domain,
+            retrievedAt: '2026-09-28T00:00:00.000Z'
+          }
+        }
+      }
+    }
+    const tools = buildDbCustomTools({ 'rest-json/uniprot': adapter }, agentDir, {
+      enforceRouting: true
+    })
+    const resolve = tools.find((tool) => tool.name === 'db_resolve')!
+    const query = tools.find((tool) => tool.name === 'db_query')!
+    const resolved = await resolve.execute('resolve-p04637', { id: 'P04637' }, undefined, fakeCtx())
+    const details = resolved.details as {
+      matches: Array<{ query?: Record<string, unknown> }>
+    }
+    const ready = details.matches.find((match) => match.query)?.query
+    assert.ok(ready)
+    const result = await query.execute('query-p04637', ready, undefined, fakeCtx())
+    assert.equal(result.isError, undefined)
+    assert.match(result.content[0]?.text ?? '', /P04637/)
   })
 })
 

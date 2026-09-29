@@ -6,6 +6,7 @@ import {
   reduceSessionRuntimeState,
   sessionRuntimeStateNeedsAcknowledgement,
   sessionRuntimeStateIsBusy,
+  sessionRuntimeStatePausesQueue,
   sessionRuntimeStatesEqual
 } from '../src/renderer/src/lib/sessionRuntimeState'
 import type { AgentEventSummary, SessionRuntimeState } from '../src/renderer/src/types'
@@ -105,6 +106,36 @@ test('runtime acknowledgement is only needed for terminal unread states', () => 
   assert.equal(sessionRuntimeStateNeedsAcknowledgement({ unreadKind: 'approval' }), false)
   assert.equal(sessionRuntimeStateNeedsAcknowledgement({ unreadKind: 'completed' }), true)
   assert.equal(sessionRuntimeStateNeedsAcknowledgement({ unreadKind: 'failed' }), true)
+})
+
+test('queued prompts pause after failed or stopped runs and resume after a successful run', () => {
+  const running = reduceSessionRuntimeState(idleSessionRuntimeState(), {
+    type: 'run_started',
+    runId: 'run-1'
+  })
+  const failed = reduceSessionRuntimeState(running, { type: 'run_failed', runId: 'run-1' })
+  assert.equal(sessionRuntimeStateIsBusy(failed), false)
+  assert.equal(sessionRuntimeStatePausesQueue(failed), true)
+  assert.equal(
+    sessionRuntimeStatePausesQueue({ status: 'idle', unreadKind: null, lastRunOutcome: 'stopped' }),
+    true
+  )
+  assert.equal(
+    sessionRuntimeStatePausesQueue({
+      status: 'idle',
+      unreadKind: null,
+      lastRunOutcome: 'interrupted'
+    }),
+    true
+  )
+  assert.equal(
+    sessionRuntimeStatePausesQueue({
+      status: 'completed_unread',
+      unreadKind: 'completed',
+      lastRunOutcome: 'completed'
+    }),
+    false
+  )
 })
 
 test("a finished background wrapper run does not change a conversation's run status", () => {

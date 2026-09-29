@@ -1,20 +1,23 @@
-# Agent-facing wrapper adapter composing two vendored modules: ../genomegenerate
-# (builds the STAR index) and ../align (aligns reads against it). STAR_ALIGN
-# has no standalone meaning without an index, so this wrapper always builds
-# one from the given fasta/gtf rather than requiring a pre-built index as
-# input — see wrapper/main.nf's doc comment for why this is still "one
-# wrapper, two vendored modules" rather than a subworkflow (section 6 of
-# docs/design/phi-wrapper-agent-composition-design.md).
+# Agent-facing wrapper adapter over ../align (STAR_ALIGN). A pre-built index
+# (`index`) is used as-is; without one, ../genomegenerate builds it from
+# `fasta` + `gtf` first — see wrapper/main.nf's doc comment for why this is
+# still "one wrapper, two vendored modules" rather than a subworkflow
+# (section 6 of docs/design/phi-wrapper-agent-composition-design.md).
 id: nf-core/modules/star-align
 name: STAR align
-summary: Build a STAR genome index and align FASTQ reads to it.
+summary: Align FASTQ reads with STAR, against a pre-built index or one built from a genome FASTA.
 
 params:
+  index:
+    kind: input
+    type: directory
+    required: false
+    description: Pre-built STAR index directory (the one holding SA, SAindex, genomeParameters.txt). Preferred for large genomes; when set, `fasta` is not needed and no index is built.
   fasta:
     kind: input
     type: file
-    required: true
-    description: Reference genome FASTA to build the STAR index from.
+    required: false
+    description: Reference genome FASTA to build a STAR index from. Required only when `index` is not given; building a mammalian index needs ~32 GB RAM and about an hour.
   gtf:
     kind: input
     type: file

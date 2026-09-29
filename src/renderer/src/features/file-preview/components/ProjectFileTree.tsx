@@ -24,6 +24,18 @@ type DirectoryLoadState =
   | { status: 'ready'; listing: DirectoryListing }
   | { status: 'error'; message: string }
 
+type RememberedTreeState = { expandedPaths: Set<string>; query: string; scrollTop: number }
+const rememberedTreeStates = new Map<string, RememberedTreeState>()
+const MAX_REMEMBERED_TREES = 50
+
+function rememberTreeState(key: string, state: RememberedTreeState): void {
+  rememberedTreeStates.delete(key)
+  rememberedTreeStates.set(key, state)
+  if (rememberedTreeStates.size > MAX_REMEMBERED_TREES) {
+    rememberedTreeStates.delete(rememberedTreeStates.keys().next().value!)
+  }
+}
+
 type ProjectFileTreeProps = {
   rootPath: string
   activePath: string
@@ -139,8 +151,14 @@ export function ProjectFileTree({
   initialListing,
   variant = 'sidebar'
 }: ProjectFileTreeProps): React.JSX.Element {
-  const [query, setQuery] = useState('')
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set([rootPath]))
+  const treeStateKey = `${variant}:${rootPath}`
+  const [query, setQuery] = useState(() => rememberedTreeStates.get(treeStateKey)?.query ?? '')
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
+    () => new Set(rememberedTreeStates.get(treeStateKey)?.expandedPaths ?? [rootPath])
+  )
+  const [savedScrollTop] = useState(() => rememberedTreeStates.get(treeStateKey)?.scrollTop ?? 0)
+  const savedScrollTopRef = useRef(savedScrollTop)
+  const restoredScrollRef = useRef(savedScrollTop === 0)
   const [directories, setDirectories] = useState<Record<string, DirectoryLoadState>>(() => ({
     [rootPath]:
       initialListing && initialListing.path === rootPath
@@ -149,6 +167,14 @@ export function ProjectFileTree({
   }))
   const normalizedQuery = query.trim().toLowerCase()
   const isStandalone = variant === 'standalone'
+
+  useEffect(() => {
+    rememberTreeState(treeStateKey, {
+      expandedPaths: new Set(expandedPaths),
+      query,
+      scrollTop: rememberedTreeStates.get(treeStateKey)?.scrollTop ?? savedScrollTopRef.current
+    })
+  }, [expandedPaths, query, treeStateKey])
 
   const loadDirectory = useCallback(
     (path: string): void => {
@@ -184,6 +210,19 @@ export function ProjectFileTree({
     loadDirectory(rootPath)
   }, [directories, loadDirectory, rootPath])
 
+  useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      for (const path of expandedPaths) {
+        if (path !== rootPath) ensureDirectoryLoaded(path)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [ensureDirectoryLoaded, expandedPaths, rootPath])
+
   const toggleDirectory = useCallback(
     (path: string): void => {
       const isExpanded = expandedPaths.has(path)
@@ -218,7 +257,7 @@ export function ProjectFileTree({
   const virtualListRef = useRef<HTMLDivElement | null>(null)
   const virtualRowObserversRef = useRef<Map<string, ResizeObserver>>(new Map())
   const [virtualViewport, setVirtualViewport] = useState<FileTreeVirtualViewport>({
-    scrollTop: 0,
+    scrollTop: savedScrollTop,
     viewportHeight: 0
   })
   const [virtualRowHeights, setVirtualRowHeights] = useState<Record<string, number>>({})
@@ -282,7 +321,27 @@ export function ProjectFileTree({
 
   const handleFileTreeScroll = useCallback((): void => {
     updateVirtualViewport()
-  }, [updateVirtualViewport])
+    if (!scrollContainer) return
+    const state = rememberedTreeStates.get(treeStateKey)
+    if (state) state.scrollTop = scrollContainer.scrollTop
+  }, [scrollContainer, treeStateKey, updateVirtualViewport])
+
+  useEffect(() => {
+    if (restoredScrollRef.current || !scrollContainer) return undefined
+    if (
+      [...expandedPaths].some(
+        (path) => !directories[path] || directories[path].status === 'loading'
+      )
+    ) {
+      return undefined
+    }
+    const frame = window.requestAnimationFrame(() => {
+      scrollContainer.scrollTop = savedScrollTopRef.current
+      updateVirtualViewport(scrollContainer)
+      restoredScrollRef.current = true
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [directories, expandedPaths, scrollContainer, updateVirtualViewport])
 
   useEffect(() => {
     if (!scrollContainer || typeof ResizeObserver === 'undefined') return undefined

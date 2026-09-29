@@ -1,6 +1,10 @@
 import { useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Box,
+  Button,
   Chip,
   Divider,
   InputAdornment,
@@ -14,10 +18,17 @@ import {
 import type { Theme } from '@mui/material/styles'
 import { PhiIcons } from '../../icons'
 import type { McpServerSummary } from '../../types'
+import {
+  featuredMcpConnectors,
+  mcpConnectorCategories
+} from '../../../../shared/mcpConnectorCatalog'
+import { McpConnectorCatalogDialog } from './components/McpConnectorCatalogDialog'
+import { ConnectorIcon } from './components/ConnectorIcon'
 
 const McpIcon = PhiIcons.entity.mcp
 const SearchIcon = PhiIcons.action.search
 const TerminalIcon = PhiIcons.tool.command
+const ExpandIcon = PhiIcons.action.expand
 
 type SidebarWidth = number | string
 
@@ -34,6 +45,7 @@ export type McpSidebarProps = {
   activeServerId: string | null
   sidebarWidth?: SidebarWidth
   onSelectServer: (server: McpServerSummary) => void
+  onRefreshServers?: () => Promise<void>
 }
 
 export type McpDetailProps = {
@@ -64,6 +76,10 @@ function selectedServerFromList(
   activeServerId: string | null
 ): McpServerSummary | null {
   return servers.find((server) => server.id === activeServerId) ?? servers[0] ?? null
+}
+
+function serverCategory(server: McpServerSummary): string {
+  return featuredMcpConnectors.find((connector) => connector.url === server.url)?.category ?? '其他'
 }
 
 function ResizeSeparator({
@@ -146,9 +162,15 @@ export function McpSidebar({
   servers,
   activeServerId,
   sidebarWidth = '100%',
-  onSelectServer
+  onSelectServer,
+  onRefreshServers
 }: McpSidebarProps): React.JSX.Element {
   const [query, setQuery] = useState('')
+  const [catalogOpen, setCatalogOpen] = useState(false)
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(() => {
+    const activeServer = servers.find((server) => server.id === activeServerId)
+    return activeServer ? serverCategory(activeServer) : null
+  })
   const normalizedQuery = query.trim().toLowerCase()
   const filteredServers = useMemo(() => {
     if (!normalizedQuery) return servers
@@ -156,6 +178,7 @@ export function McpSidebar({
       [
         server.name,
         server.command,
+        server.url,
         server.sourcePath,
         ...(server.args ?? []),
         ...(server.envKeys ?? [])
@@ -165,6 +188,22 @@ export function McpSidebar({
     )
   }, [normalizedQuery, servers])
   const selectedServer = selectedServerFromList(filteredServers, activeServerId)
+  const groups = useMemo(() => {
+    const categoryOrder: readonly string[] = [...mcpConnectorCategories, '其他']
+    return categoryOrder
+      .map((category) => ({
+        category,
+        entries: filteredServers.filter((server) => serverCategory(server) === category)
+      }))
+      .filter((group) => group.entries.length > 0)
+  }, [filteredServers])
+
+  const visibleCategory =
+    expandedCategory !== '' && groups.some((group) => group.category === expandedCategory)
+      ? expandedCategory
+      : expandedCategory === '' && !normalizedQuery
+        ? null
+        : (groups[0]?.category ?? null)
 
   return (
     <Box
@@ -184,13 +223,24 @@ export function McpSidebar({
       }}
     >
       <Box sx={{ px: 2, pb: 1.5, WebkitAppRegion: 'drag' }}>
-        <Typography variant="subtitle1" sx={{ display: 'block', mb: 1.5, fontWeight: 700 }}>
-          MCP
-        </Typography>
+        <Stack direction="row" sx={{ mb: 1.5, alignItems: 'center' }}>
+          <Typography variant="subtitle1" sx={{ flex: 1, fontWeight: 700 }}>
+            连接器
+          </Typography>
+          {onRefreshServers && (
+            <Button
+              size="small"
+              onClick={() => setCatalogOpen(true)}
+              sx={{ WebkitAppRegion: 'no-drag' }}
+            >
+              发现
+            </Button>
+          )}
+        </Stack>
         <TextField
           size="small"
           fullWidth
-          placeholder="搜索 MCP"
+          placeholder="搜索连接器"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           slotProps={{
@@ -208,8 +258,7 @@ export function McpSidebar({
 
       <Box sx={{ px: 2, pb: 1, WebkitAppRegion: 'no-drag' }}>
         <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
-          <Chip size="small" variant="outlined" label={`${servers.length} 个服务器`} />
-          <Chip size="small" color="success" variant="outlined" label="已配置" />
+          <Chip size="small" variant="outlined" label={`${servers.length} 个已安装`} />
         </Stack>
       </Box>
 
@@ -225,48 +274,77 @@ export function McpSidebar({
           WebkitAppRegion: 'no-drag'
         }}
       >
-        {filteredServers.map((server) => (
-          <ListItemButton
-            key={server.id}
-            selected={selectedServer?.id === server.id}
-            onClick={() => onSelectServer(server)}
-            sx={plainSidebarRowSx}
-          >
-            <Box
-              sx={{
-                width: 34,
-                height: 34,
-                mr: 1.25,
-                borderRadius: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                bgcolor: 'primary.main',
-                color: 'primary.contrastText',
-                flexShrink: 0
-              }}
+        {groups.length === 0 ? (
+          <Box sx={{ px: 2, py: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              {normalizedQuery ? '没有匹配的已安装连接器' : '尚未安装连接器。点击“发现”浏览目录。'}
+            </Typography>
+          </Box>
+        ) : (
+          groups.map((group) => (
+            <Accordion
+              key={group.category}
+              expanded={visibleCategory === group.category}
+              onChange={(_event, isExpanded) =>
+                setExpandedCategory(isExpanded ? group.category : '')
+              }
+              disableGutters
+              elevation={0}
+              sx={{ bgcolor: 'transparent', border: 0, '&::before': { display: 'none' } }}
             >
-              <McpIcon fontSize="small" />
-            </Box>
-            <ListItemText
-              primary={server.name}
-              secondary={server.command || server.sourcePath}
-              slotProps={{
-                primary: { noWrap: true, sx: { fontSize: '0.9rem', fontWeight: 600 } },
-                secondary: {
-                  sx: {
-                    fontSize: '0.8rem',
-                    display: '-webkit-box',
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden'
-                  }
-                }
-              }}
-            />
-          </ListItemButton>
-        ))}
+              <AccordionSummary
+                expandIcon={<ExpandIcon fontSize="small" />}
+                sx={{ minHeight: 44, px: 2, WebkitAppRegion: 'no-drag' }}
+              >
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>
+                  {group.category} · {group.entries.length}
+                </Typography>
+              </AccordionSummary>
+              <AccordionDetails sx={{ p: 0 }}>
+                {group.entries.map((server) => (
+                  <ListItemButton
+                    key={server.id}
+                    selected={selectedServer?.id === server.id}
+                    onClick={() => {
+                      setExpandedCategory(group.category)
+                      onSelectServer(server)
+                    }}
+                    sx={plainSidebarRowSx}
+                  >
+                    <Box sx={{ mr: 1.25 }}>
+                      <ConnectorIcon url={server.url} size={34} />
+                    </Box>
+                    <ListItemText
+                      primary={server.name}
+                      secondary={`${server.enabled === false ? '已停用 · ' : ''}${server.url || server.command || server.sourcePath || ''}`}
+                      slotProps={{
+                        primary: { noWrap: true, sx: { fontSize: '0.9rem', fontWeight: 600 } },
+                        secondary: {
+                          sx: {
+                            fontSize: '0.8rem',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden'
+                          }
+                        }
+                      }}
+                    />
+                  </ListItemButton>
+                ))}
+              </AccordionDetails>
+            </Accordion>
+          ))
+        )}
       </List>
+      {onRefreshServers && (
+        <McpConnectorCatalogDialog
+          open={catalogOpen}
+          servers={servers}
+          onClose={() => setCatalogOpen(false)}
+          onRefresh={onRefreshServers}
+        />
+      )}
     </Box>
   )
 }
@@ -277,21 +355,7 @@ export function McpDetail({ selectedServer }: McpDetailProps): React.JSX.Element
       {selectedServer ? (
         <Box sx={{ maxWidth: 860, px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
           <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
-            <Box
-              sx={{
-                width: 72,
-                height: 72,
-                borderRadius: 1,
-                bgcolor: 'primary.main',
-                color: 'primary.contrastText',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0
-              }}
-            >
-              <McpIcon />
-            </Box>
+            <ConnectorIcon url={selectedServer.url} size={72} />
             <Box sx={{ minWidth: 0, flex: 1 }}>
               <Typography variant="h4" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
                 {selectedServer.name}
@@ -301,6 +365,7 @@ export function McpDetail({ selectedServer }: McpDetailProps): React.JSX.Element
               </Typography>
               <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
                 <Chip size="small" color="success" label="已配置" />
+                {selectedServer.url && <Chip size="small" variant="outlined" label="远程 MCP" />}
                 {selectedServer.envKeys?.length ? (
                   <Chip
                     size="small"
@@ -317,7 +382,7 @@ export function McpDetail({ selectedServer }: McpDetailProps): React.JSX.Element
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
             <TerminalIcon fontSize="small" color="action" />
             <Typography variant="h6" sx={{ fontWeight: 700 }}>
-              命令
+              {selectedServer.url ? 'MCP 地址' : '命令'}
             </Typography>
           </Stack>
           <Typography
@@ -335,7 +400,7 @@ export function McpDetail({ selectedServer }: McpDetailProps): React.JSX.Element
               fontSize: '0.88rem'
             }}
           >
-            {commandLine(selectedServer) || '未配置命令'}
+            {selectedServer.url || commandLine(selectedServer) || '未配置命令'}
           </Typography>
 
           {selectedServer.envKeys?.length ? (

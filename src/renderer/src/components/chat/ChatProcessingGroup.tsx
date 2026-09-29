@@ -43,6 +43,7 @@ export type ChatProcessingGroupProps = {
   /** Opens this fold when the item being located is inside it. */
   focusRequest?: ChatFocusRequest | null
   onGoSettings: () => void
+  onOpenBackgroundJobs: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
   onContentResize?: ChatContentResizeHandler
@@ -66,6 +67,7 @@ function processingGroupPropsEqual(
   return (
     sameItemsByReference(prev.items, next.items) &&
     prev.focusRequest === next.focusRequest &&
+    prev.onOpenBackgroundJobs === next.onOpenBackgroundJobs &&
     prev.onOpenLocalPath === next.onOpenLocalPath &&
     prev.cwd === next.cwd &&
     prev.isActive === next.isActive &&
@@ -79,6 +81,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
   items,
   focusRequest = null,
   onGoSettings,
+  onOpenBackgroundJobs,
   onOpenLocalPath,
   onJumpToNotebookCell,
   onContentResize,
@@ -202,6 +205,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
                     key={group.key}
                     items={group.items}
                     onGoSettings={onGoSettings}
+                    onOpenBackgroundJobs={onOpenBackgroundJobs}
                     onOpenLocalPath={onOpenLocalPath}
                     onJumpToNotebookCell={onJumpToNotebookCell}
                     onContentResize={onContentResize}
@@ -268,6 +272,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
                   key={group.key}
                   message={group.item}
                   onGoSettings={onGoSettings}
+                  onOpenBackgroundJobs={onOpenBackgroundJobs}
                   onOpenLocalPath={onOpenLocalPath}
                   onContentResize={onContentResize}
                   cwd={cwd}

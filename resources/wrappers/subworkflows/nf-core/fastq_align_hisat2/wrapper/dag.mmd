@@ -1,17 +1,17 @@
 flowchart TB
     subgraph " "
     v0["channel.fromPath"]
-    v1["channel.fromPath"]
+    v5["channel.fromPath"]
     v10["hisat2_memory_input"]
     v13["channel.of"]
     v14["save_unaligned"]
     v20["ch_fasta_fai"]
     v21["index_format"]
     end
-    v3(["HISAT2_EXTRACTSPLICESITES"])
+    v2(["HISAT2_EXTRACTSPLICESITES"])
     subgraph " "
+    v3[" "]
     v4[" "]
-    v5[" "]
     v12[" "]
     v16[" "]
     v17[" "]
@@ -43,16 +43,16 @@ flowchart TB
     v29(( ))
     end
     end
-    v2(( ))
+    v1(( ))
     v6(( ))
+    v0 --> v1
     v0 --> v6
     v1 --> v2
-    v1 --> v6
+    v2 --> v4
     v2 --> v3
-    v3 --> v5
-    v3 --> v4
-    v3 --> v15
-    v3 --> v6
+    v2 --> v15
+    v2 --> v6
+    v5 --> v6
     v10 --> v11
     v6 --> v11
     v11 --> v15

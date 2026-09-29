@@ -40,6 +40,12 @@ export interface RemoteHpcSettings {
   nextflowBin?: string
   /** Shell lines run before Nextflow starts, e.g. `module load nextflow java`. */
   setupCommands?: string[]
+  /**
+   * Nextflow config appended to every run on this connection, for what only this site
+   * needs — e.g. `process.conda = '/shared/envs/rnaseq'` on a cluster whose compute
+   * nodes cannot download environments. Per-run resources still take precedence.
+   */
+  nextflowConfig?: string
 }
 
 export type RemoteController = 'login' | 'sbatch'

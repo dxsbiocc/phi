@@ -17,7 +17,7 @@ import {
   formatSkillPromptReference
 } from '../../lib/inputReferences'
 import type { PluginCatalogItem, PromptAgentSummary, SkillSummary } from '../../types'
-import { compactComposerIconButtonSx } from './composerControlStyles'
+import { COMPOSER_ICON_SIZE, compactComposerIconButtonSx } from './composerControlStyles'
 
 const AddIcon = PhiIcons.action.add
 const InputAgentIcon = PhiIcons.entity.agent
@@ -260,7 +260,7 @@ export function InputAddControl({
           '&:hover': { bgcolor: 'action.hover' }
         }}
       >
-        <AddIcon fontSize="small" />
+        <AddIcon size={COMPOSER_ICON_SIZE} />
       </IconButton>
     </Tooltip>
   )

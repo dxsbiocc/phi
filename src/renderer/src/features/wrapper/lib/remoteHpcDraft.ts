@@ -23,6 +23,8 @@ export interface HpcDraft {
   nextflowBin: string
   /** One shell command per line, run before Nextflow (e.g. `module load nextflow`). */
   setupText: string
+  /** Nextflow config appended to every run on this connection. */
+  nextflowConfig: string
 }
 
 export const EMPTY_HPC_DRAFT: HpcDraft = {
@@ -36,7 +38,8 @@ export const EMPTY_HPC_DRAFT: HpcDraft = {
   queueSize: '',
   singularityCacheDir: '',
   nextflowBin: '',
-  setupText: ''
+  setupText: '',
+  nextflowConfig: ''
 }
 
 export function hpcDraftFromSettings(hpc: RemoteHpcSettings | undefined): HpcDraft {
@@ -52,7 +55,8 @@ export function hpcDraftFromSettings(hpc: RemoteHpcSettings | undefined): HpcDra
     queueSize: hpc.queueSize ? String(hpc.queueSize) : '',
     singularityCacheDir: hpc.singularityCacheDir ?? '',
     nextflowBin: hpc.nextflowBin ?? '',
-    setupText: (hpc.setupCommands ?? []).join('\n')
+    setupText: (hpc.setupCommands ?? []).join('\n'),
+    nextflowConfig: hpc.nextflowConfig ?? ''
   }
 }
 
@@ -84,7 +88,8 @@ export function hpcSettingsFromDraft(draft: HpcDraft): RemoteHpcSettings {
       ? { singularityCacheDir: present(draft.singularityCacheDir) }
       : {}),
     ...(present(draft.nextflowBin) ? { nextflowBin: present(draft.nextflowBin) } : {}),
-    ...(setupCommands.length > 0 ? { setupCommands } : {})
+    ...(setupCommands.length > 0 ? { setupCommands } : {}),
+    ...(draft.nextflowConfig.trim() ? { nextflowConfig: draft.nextflowConfig.trim() } : {})
   }
 }
 

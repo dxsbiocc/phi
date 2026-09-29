@@ -12,6 +12,18 @@ selected directory. Remote project conversations keep their history locally whil
 project file and command operations use the selected SSH server. MCP listings show
 configuration, not a live connectivity check.
 
+The **Connectors** activity-bar entry shows installed MCP services in collapsible
+groups. **Discover** opens a directory of common productivity, communication, design,
+and life-science services, plus a custom HTTPS MCP URL form. Adding a connector saves
+it in Phi's global `~/.phi/mcp.json`; new local conversations load it through the MCP
+runtime. **Installed** means the configuration is saved, not that the server is
+connected or authorized. The public PubMed, bioRxiv, and Clinical Trials servers can
+be added now; services marked as requiring sign-in stay in the directory but cannot
+be added from it until Phi provides an authorization flow. Remote project conversations do not load MCP in
+this beta. Phi's built-in database connectors are a separate, direct-API capability.
+The directory reads the current tool list from each public MCP server when its detail
+page opens; services awaiting authorization do not display guessed tool lists.
+
 ## Internal Beta Scope
 
 This beta is for project-bound agent work: multiple conversations can keep
@@ -58,6 +70,11 @@ are not deleted by Phi project removal.
 Updates are manual during the internal beta. Pull or receive the next build from the
 project owner, install dependencies when needed, and rerun the verification commands
 below before handing a build to another tester.
+
+The local agent worker needs Bun 1.3.14 or newer for image reads: the Pi SDK uses
+`Bun.Image`, which older Bun versions do not provide. Check with `bun --version`
+and `bun -e 'console.log(typeof Bun.Image)'` when a valid local image is reported
+as undecodable.
 
 Unsigned or locally built macOS apps may show Gatekeeper/security prompts. For this
 beta, formal signing, notarization, and automatic updates are deferred; release notes

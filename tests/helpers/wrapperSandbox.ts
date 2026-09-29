@@ -20,6 +20,10 @@ export const FAKE_NEXTFLOW = `#!/usr/bin/env node
 const fs = require('fs')
 const path = require('path')
 const args = process.argv.slice(2)
+if (args[0] === '-version') {
+  console.log('      version 26.04.6 build 12646')
+  process.exit(0)
+}
 const params = JSON.parse(fs.readFileSync(args[args.indexOf('-params-file') + 1], 'utf8'))
 if (process.env.FAKE_NF_PIDFILE) fs.writeFileSync(process.env.FAKE_NF_PIDFILE, String(process.pid))
 const mode = process.env.FAKE_NF_MODE
@@ -103,10 +107,17 @@ export function isAlive(pid: number): boolean {
   }
 }
 
-export async function waitFor(condition: () => boolean, timeoutMs = 8000): Promise<void> {
+/**
+ * Polls until `condition` holds. These waits are on real child processes starting or
+ * dying, which under a loaded full test run (dozens of test files in parallel) can take
+ * several seconds; the generous default only costs time when a test is failing anyway.
+ */
+export async function waitFor(condition: () => boolean, timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (!condition()) {
-    if (Date.now() > deadline) throw new Error('timed out waiting for condition')
+    if (Date.now() > deadline) {
+      throw new Error(`timed out after ${timeoutMs} ms waiting for: ${String(condition)}`)
+    }
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
 }

@@ -12,6 +12,7 @@
 nextflow.enable.dsl = 2
 
 include { DESEQ2_DIFFERENTIAL } from '../main.nf'
+include { CUSTOM_FILTERDIFFERENTIALTABLE } from '../../../../nf-core/custom/filterdifferentialtable/main.nf'
 
 params.counts            = null
 params.samplesheet       = null
@@ -23,6 +24,9 @@ params.comparison        = null
 params.sample_id_col     = 'sample'
 params.gene_id_col       = 'gene_id'
 params.prefix            = 'de'
+// A gene is differentially expressed when |log2FC| >= log2fc_threshold and padj < padj_threshold.
+params.padj_threshold    = 0.05
+params.log2fc_threshold  = 1
 params.outdir            = null
 
 workflow {
@@ -52,4 +56,11 @@ workflow {
     lengths_ch = Channel.of([[], []])
 
     DESEQ2_DIFFERENTIAL(contrast_ch, matrix_ch, spikes_ch, lengths_ch)
+
+    // The filter module takes a linear fold change and applies it to |log2FoldChange|.
+    CUSTOM_FILTERDIFFERENTIALTABLE(
+        DESEQ2_DIFFERENTIAL.out.results,
+        Channel.value(['log2FoldChange', Math.pow(2, params.log2fc_threshold as double), '>=']),
+        Channel.value(['padj', params.padj_threshold, '<'])
+    )
 }

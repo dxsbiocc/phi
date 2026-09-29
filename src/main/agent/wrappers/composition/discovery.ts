@@ -2,8 +2,12 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 
-import { getBundledWrapperPackagesDir } from '../catalog'
 import { parseWrapperCompositionManifest, type WrapperCompositionManifest } from './manifest'
+import {
+  resolveActiveWrapperPack,
+  type ActiveWrapperPack,
+  type WrapperPackResolution
+} from './packs'
 import type {
   WrapperModuleDetails,
   WrapperModuleMeta,
@@ -14,8 +18,9 @@ import type {
  * Discovery for the agent-composition wrapper layout — see
  * docs/design/phi-wrapper-agent-composition-design.md section 4: scan
  * `modules/**\/wrapper/wrapper.yaml` and `subworkflows/**\/wrapper/wrapper.yaml`
- * under the same bundled-resources root the package-level catalog already
- * uses (`resources/wrappers/`, packaging-aware via `getBundledWrapperPackagesDir`).
+ * under the active wrapper pack root — the bundled `resources/wrappers/`
+ * (packaging-aware via `getBundledWrapperPackagesDir`) unless a verified newer
+ * overlay pack replaces it (see `packs.ts`).
  *
  * Extended with a third root, `workflows/**\/wrapper/wrapper.yaml`, beyond
  * what the design doc's own scan targets list — for a *complete* pipeline
@@ -33,6 +38,8 @@ export interface WrapperCompositionEntry {
   wrapperDir: string
   /** The module/subworkflow's own root directory (wrapperDir's parent). */
   componentDir: string
+  /** The pack this entry was discovered in; absent only on hand-built test entries. */
+  pack?: ActiveWrapperPack
 }
 
 const COMPONENT_ROOTS = ['modules', 'subworkflows', 'workflows']
@@ -70,20 +77,37 @@ function findWrapperYamlFiles(rootDir: string): string[] {
 }
 
 let cachedCatalog: WrapperCompositionEntry[] | undefined
+let cachedPackResolution: WrapperPackResolution | undefined
+
+/**
+ * The wrapper pack discovery reads from — the bundled pack, or a verified
+ * newer overlay pack (see `packs.ts`). Cached with the catalog; call
+ * `resetWrapperCompositionCatalogCache()` to re-resolve.
+ */
+export function getWrapperPackResolution(): WrapperPackResolution {
+  if (!cachedPackResolution) {
+    cachedPackResolution = resolveActiveWrapperPack()
+  }
+  return cachedPackResolution
+}
+
+export function getActiveWrapperPack(): ActiveWrapperPack {
+  return getWrapperPackResolution().active
+}
 
 function loadCatalog(): WrapperCompositionEntry[] {
-  const bundledRoot = getBundledWrapperPackagesDir()
+  const pack = getActiveWrapperPack()
   const entries: WrapperCompositionEntry[] = []
 
   for (const componentRoot of COMPONENT_ROOTS) {
-    const rootDir = join(bundledRoot, componentRoot)
+    const rootDir = join(pack.root, componentRoot)
     if (!existsSync(rootDir)) continue
 
     for (const wrapperYamlPath of findWrapperYamlFiles(rootDir)) {
       try {
         const manifest = parseWrapperCompositionManifest(readFileSync(wrapperYamlPath, 'utf-8'))
         const wrapperDir = join(wrapperYamlPath, '..')
-        entries.push({ manifest, wrapperDir, componentDir: join(wrapperDir, '..') })
+        entries.push({ manifest, wrapperDir, componentDir: join(wrapperDir, '..'), pack })
       } catch {
         // A malformed wrapper.yaml never blocks discovery of the others.
       }
@@ -235,4 +259,5 @@ export function readWrapperModuleDetails(id: string): WrapperModuleDetails | und
 
 export function resetWrapperCompositionCatalogCache(): void {
   cachedCatalog = undefined
+  cachedPackResolution = undefined
 }

@@ -30,6 +30,7 @@ import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
 import ChatView from './features/chat/ChatView'
+import { HomeView } from './features/home/HomeView'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
 import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
@@ -140,6 +141,7 @@ import {
   idleSessionRuntimeState,
   reduceSessionRuntimeState,
   sessionRuntimeStateIsBusy,
+  sessionRuntimeStatePausesQueue,
   sessionStatusIsBusy
 } from './lib/sessionRuntimeState'
 import { createAgentEventReducerState, reduceAgentEventState } from './lib/agentEventReducer'
@@ -638,6 +640,7 @@ function App(): React.JSX.Element {
     onRespondAgentUserInteraction
   } = useSessionStore()
   const messages = agentEventState.messages
+  const [chatScrollPositionStore] = useState(() => new Map<string, number>())
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const compactingSessionKeysRef = useRef(new Set<string>())
   const [compactingSessions, setCompactingSessions] = useState<Set<string>>(() => new Set())
@@ -1310,6 +1313,18 @@ function App(): React.JSX.Element {
   const onSelectSession = useCallback(
     async (path: string): Promise<void> => {
       if (path === useSessionStore.getState().activeSessionPath) {
+        const tabKey = workspaceSessionTabKey(
+          path,
+          useSessionStore.getState().activeSessionGeneration
+        )
+        setClosedWorkspaceSessionTabKeys((keys) => {
+          if (!keys.has(tabKey)) return keys
+          const nextKeys = new Set(keys)
+          nextKeys.delete(tabKey)
+          return nextKeys
+        })
+        setActiveWorkspaceTabKey(tabKey)
+        navigateToView('chat')
         await acknowledgeActiveSession({ force: true })
         return
       }
@@ -2536,6 +2551,9 @@ function App(): React.JSX.Element {
   const onToggleWorkspaceSidePanel = useCallback((mode: WorkspaceSidePanelMode): void => {
     setWorkspaceSidePanelMode((current) => toggleWorkspaceSidePanelMode(current, mode))
   }, [])
+  const onOpenBackgroundJobs = useCallback((): void => {
+    setWorkspaceSidePanelMode('jobs')
+  }, [])
   const onRefreshWorkspaceSidePanel = useCallback((): void => {
     setWorkspaceSidePanelTreeRevision((value) => value + 1)
   }, [])
@@ -2750,6 +2768,9 @@ function App(): React.JSX.Element {
     workspaceFileWorkspaceTabs,
     workspaceTabs
   ])
+  const sidebarSelectedSessionPath = closedWorkspaceSessionTabKeys.has(currentSessionTab.key)
+    ? null
+    : activeSessionPath
   const effectiveActiveWorkspaceTabKey =
     activeWorkspaceTabKey ??
     (activeView === 'analysis' && activeWorkspaceFilePath
@@ -2782,6 +2803,7 @@ function App(): React.JSX.Element {
   const activeSessionHasWork =
     sessionStatusIsBusy(activeSession) || sessionRuntimeStateIsBusy(activeSessionRuntimeState)
   const currentSessionIsBusy = isSendingMessage || activeSessionHasWork
+  const queuedPromptsPaused = sessionRuntimeStatePausesQueue(activeSessionRuntimeState)
   const activeContextCompactionKey = JSON.stringify([
     activePhiSessionId ?? null,
     activeSessionPath,
@@ -2879,6 +2901,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     if (
       currentSessionIsBusy ||
+      queuedPromptsPaused ||
       currentSessionIsCompacting ||
       isSessionChanging ||
       isBusy ||
@@ -2920,6 +2943,7 @@ function App(): React.JSX.Element {
     activeQueuedPrompts,
     availableModels,
     currentSessionIsBusy,
+    queuedPromptsPaused,
     currentSessionIsCompacting,
     isModelStateReady,
     isBusy,
@@ -2929,6 +2953,7 @@ function App(): React.JSX.Element {
   ])
   const activeWorkspaceTitle = useMemo(() => {
     if (showProjectSessionPlaceholder) return '项目会话'
+    if (isChatWorkspaceView && visibleWorkspaceTabs.length === 0) return '首页'
     if (isResourceWorkspaceView) {
       return (
         activeWorkspaceResourceTab?.title ??
@@ -2945,7 +2970,8 @@ function App(): React.JSX.Element {
     isChatWorkspaceView,
     isResourceWorkspaceView,
     messages,
-    showProjectSessionPlaceholder
+    showProjectSessionPlaceholder,
+    visibleWorkspaceTabs.length
   ])
   const activeWorkspaceScopeLabel =
     activeProject?.name ?? workspaceScopeLabelForCwd(activeCwd, projects)
@@ -3596,6 +3622,7 @@ function App(): React.JSX.Element {
           onImagesAdded={addInputImages}
           onRemoveImage={removeInputImage}
           scrollResetKey={activeChatScrollResetKey}
+          scrollPositionStore={chatScrollPositionStore}
           canSend={
             !isSessionChanging && !currentSessionIsBusy && !currentSessionIsCompacting && !isBusy
           }
@@ -3613,14 +3640,6 @@ function App(): React.JSX.Element {
           }}
           contextUsageRefreshKey={contextUsageRefreshKey}
           contextCompacting={currentSessionIsCompacting}
-          disableContextCompaction={
-            currentSessionIsBusy ||
-            isSessionChanging ||
-            isBusy ||
-            !selectedModel ||
-            messages.length === 0
-          }
-          onCompactContext={onCompactContext}
           skills={skills}
           promptAgents={promptAgents}
           plugins={plugins}
@@ -3650,6 +3669,7 @@ function App(): React.JSX.Element {
           onStopGeneration={onStopGeneration}
           onAcknowledgeActiveSession={acknowledgeActiveSessionInteraction}
           onGoSettings={onGoProviderSettings}
+          onOpenBackgroundJobs={onOpenBackgroundJobs}
           permissionMode={activePermissionMode}
           onSelectPermissionMode={(mode) => {
             void onSelectPermissionMode(mode)
@@ -3662,6 +3682,7 @@ function App(): React.JSX.Element {
             id: item.id,
             text: item.text || `图片 ${item.sendOptions?.images?.length ?? 0} 张`
           }))}
+          queuedPromptsPaused={queuedPromptsPaused}
           onRespondApproval={onRespondToolApproval}
           onRespondUserInteraction={onRespondAgentUserInteraction}
           onRemoveQueuedPrompt={removeQueuedPrompt}
@@ -3711,6 +3732,19 @@ function App(): React.JSX.Element {
         activeChatView
       )}
     </>
+  )
+
+  const emptyWorkspaceContent = (
+    <HomeView
+      sessions={sessions}
+      lastClosedSessionPath={activeSessionPath}
+      onNewChat={() => void onNewChatFromSidebar()}
+      onShowProjects={() => {
+        setWorkspaceSidebarMode('projects')
+        setIsSidebarOpen(true)
+      }}
+      onOpenSession={(path) => void onOpenSessionFromSidebar(path)}
+    />
   )
 
   const activeAnalysisView =
@@ -3867,7 +3901,7 @@ function App(): React.JSX.Element {
           clearWorkspaceSidebarPreviewCloseTimer={clearWorkspaceSidebarPreviewCloseTimer}
           closeWorkspaceSidebarPreview={closeWorkspaceSidebarPreview}
           sessions={sessions}
-          activeSessionPath={activeSessionPath}
+          activeSessionPath={sidebarSelectedSessionPath}
           activeCwd={activeCwd}
           projects={projects}
           projectSessionRefreshKey={projectSessionRefreshKey}
@@ -3933,6 +3967,7 @@ function App(): React.JSX.Element {
           mcpServers={mcpServers}
           activeMcpServerId={activeMcpServerId}
           onOpenMcpServer={onOpenMcpServerTab}
+          onRefreshMcpServers={refreshMcpServers}
           wrapperCatalog={wrapperCatalog}
           selectedWrapperId={selectedWrapperId}
           isLoadingWrappers={isLoadingWrappers}
@@ -3941,7 +3976,7 @@ function App(): React.JSX.Element {
             void refreshWrappers()
           }}
           sessions={sessions}
-          activeSessionPath={activeSessionPath}
+          activeSessionPath={sidebarSelectedSessionPath}
           activeCwd={activeCwd}
           activeProjectId={activeProjectId}
           projects={projects}
@@ -4113,6 +4148,8 @@ function App(): React.JSX.Element {
                 </Box>
               ) : isAnalysisWorkspaceView ? (
                 activeAnalysisView
+              ) : activeView === 'chat' && visibleWorkspaceTabs.length === 0 ? (
+                emptyWorkspaceContent
               ) : (
                 chatWorkspaceContent
               )}
@@ -4252,6 +4289,29 @@ function App(): React.JSX.Element {
           onSelectDefaultProxyMode={onSelectDefaultProxyMode}
           onUpdateAppSettings={onUpdateAppSettings}
           onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
+          autoCompactionTarget={{
+            sessionPath: activeSessionPath,
+            phiSessionId: activePhiSessionId ?? null,
+            sessionGeneration: activeSessionGeneration
+          }}
+          autoCompactionDisabled={
+            currentSessionIsBusy || currentSessionIsCompacting || isSessionChanging
+          }
+          contextCompacting={currentSessionIsCompacting}
+          compactDisabled={
+            currentSessionIsBusy ||
+            isSessionChanging ||
+            isBusy ||
+            !selectedModel ||
+            messages.length === 0
+          }
+          onCompactContext={() => {
+            void onCompactContext({
+              sessionPath: activeSessionPath,
+              phiSessionId: activePhiSessionId ?? null,
+              sessionGeneration: activeSessionGeneration
+            })
+          }}
           environmentSnapshot={environmentSnapshot}
           isLoadingEnvironment={isLoadingEnvironment}
           isRedetectingEnvironment={isRedetectingEnvironment}

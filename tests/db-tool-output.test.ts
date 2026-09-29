@@ -7,6 +7,7 @@ import test from 'node:test'
 import {
   buildDbDocsSearchTool,
   buildDbDomainTool,
+  buildDbRoutesTool,
   buildDbSearchTool
 } from '../src/main/agent/db/tools'
 
@@ -39,34 +40,27 @@ const ctx = {} as never
 interface SearchItem {
   id: string
   name?: string
-  domains: Array<{ id: string; summary?: string; match?: string[] }>
   enabled?: boolean
 }
 
 test('db_search content is compact and omits per-connector metadata the model does not route on', async () => {
   await withAgentDir(async (agentDir) => {
-    const result = await buildDbSearchTool(agentDir).execute('c1', {}, undefined, ctx)
+    const result = await buildDbSearchTool(agentDir).execute('c1', { limit: 50 }, undefined, ctx)
     const text = contentText(result)
     const items = assertCompactJson(text) as SearchItem[]
 
-    assert.ok(items.length > 10, 'bundled connectors should be listed')
+    assert.ok(items.length > 10, 'bundled connectors should be listed on explicit request')
     for (const item of items) {
       assert.deepEqual(
-        Object.keys(item).filter((key) => !['id', 'name', 'domains', 'enabled'].includes(key)),
+        Object.keys(item).filter((key) => !['id', 'name', 'enabled', 'reason'].includes(key)),
         [],
         `unexpected keys on ${item.id}`
       )
-      for (const domain of item.domains) {
-        assert.deepEqual(
-          Object.keys(domain).filter((key) => !['id', 'summary', 'match'].includes(key)),
-          [],
-          `unexpected keys on ${item.id}/${domain.id}`
-        )
-        assert.equal(domain.match, undefined, 'no query, so no per-field match hints')
-      }
+      assert.equal('domains' in item, false, 'database discovery must not expose domains')
     }
 
     const details = result.details as { results: unknown[] }
+    assert.ok(details.results.every((item) => !('domains' in (item as object))))
     const previousLength = JSON.stringify(details.results, null, 2).length
     assert.ok(
       text.length < previousLength * 0.5,
@@ -75,22 +69,42 @@ test('db_search content is compact and omits per-connector metadata the model do
   })
 })
 
-test('db_search content shows which common fields matched the query', async () => {
+test('db_routes narrows one database to matching functions without full domain schemas', async () => {
   await withAgentDir(async (agentDir) => {
-    const result = await buildDbSearchTool(agentDir).execute(
+    const result = await buildDbRoutesTool(agentDir).execute(
       'c2',
-      { query: 'PDB structure' },
+      { database: 'rest-json/uniprot', intent: 'PDB structure' },
       undefined,
       ctx
     )
-    const items = assertCompactJson(contentText(result)) as SearchItem[]
-    const protein = items
-      .find((item) => item.id === 'rest-json/uniprot')
-      ?.domains.find((domain) => domain.id === 'protein')
+    const content = assertCompactJson(contentText(result)) as {
+      database: string
+      routes: Array<{
+        domain: string
+        purpose: string
+        inputFields: string[]
+        matchedFields?: string[]
+      }>
+    }
+    assert.equal(content.database, 'rest-json/uniprot')
+    const protein = content.routes.find((route) => route.domain === 'protein')
+    assert.ok(protein)
+    assert.ok(protein.matchedFields?.includes('pdb_ids'))
+    assert.ok(content.routes.length <= 5)
+    assert.ok(content.routes.every((route) => !('fields' in route) && !('rest' in route)))
+  })
+})
 
-    assert.ok(protein, 'uniprot/protein should be discovered from PDB structure intent')
-    assert.ok(protein.match?.includes('pdb_ids'), `match was ${JSON.stringify(protein.match)}`)
-    assert.ok((protein.match?.length ?? 0) <= 8, 'match hints stay short')
+test('db_routes needs a chosen database and intent instead of listing every function', async () => {
+  await withAgentDir(async (agentDir) => {
+    const result = await buildDbRoutesTool(agentDir).execute(
+      'c2-missing',
+      { database: 'rest-json/ensembl' },
+      undefined,
+      ctx
+    )
+    assert.equal(result.isError, true)
+    assert.match(contentText(result), /intent/)
   })
 })
 
@@ -125,11 +139,65 @@ interface DomainContent {
   database: string
   domain: string
   summary: string
+  queryInput?: {
+    requiredFilters: string[]
+    optionalFilters: string[]
+    rawQueryAllowed: boolean
+    example: Record<string, unknown>
+  }
   identity?: { stableIdFields: string[] }
   standardFields: string[]
   commonFields: Array<{ name: string; type?: string; namespace?: string }>
   otherFields?: Array<string | { name: string; type?: string }>
 }
+
+test('db_domain exposes the required parameters for one selected function', async () => {
+  await withAgentDir(async (agentDir) => {
+    const result = await buildDbDomainTool(agentDir).execute(
+      'd-input',
+      { database: 'rest-json/ensembl', domain: 'lookup_symbol' },
+      undefined,
+      ctx
+    )
+    const content = assertCompactJson(contentText(result)) as DomainContent
+    assert.deepEqual(content.queryInput?.requiredFilters, ['species', 'symbol'])
+    assert.ok(content.queryInput?.optionalFilters.includes('expand'))
+    assert.equal(content.queryInput?.rawQueryAllowed, false)
+    assert.deepEqual(content.queryInput?.example, {
+      database: 'rest-json/ensembl',
+      domain: 'lookup_symbol',
+      filters: [
+        { field: 'species', op: '=', value: '<species>' },
+        { field: 'symbol', op: '=', value: '<symbol>' }
+      ]
+    })
+  })
+})
+
+test('db_domain distinguishes query inputs from result fields for MyGene and UniProt mapping', async () => {
+  await withAgentDir(async (agentDir) => {
+    const mygene = await buildDbDomainTool(agentDir).execute(
+      'd-mygene',
+      { database: 'rest-json/mygene', domain: 'gene' },
+      undefined,
+      ctx
+    )
+    const gene = assertCompactJson(contentText(mygene)) as DomainContent
+    assert.deepEqual(gene.queryInput?.requiredFilters, ['geneId'])
+    assert.ok(gene.queryInput?.optionalFilters.includes('fields'))
+
+    const mapping = await buildDbDomainTool(agentDir).execute(
+      'd-mapping',
+      { database: 'rest-json/uniprot', domain: 'id_mapping' },
+      undefined,
+      ctx
+    )
+    const mappingRoute = assertCompactJson(contentText(mapping)) as DomainContent
+    assert.deepEqual(mappingRoute.queryInput?.requiredFilters, ['to', 'ids'])
+    assert.deepEqual(mappingRoute.queryInput?.optionalFilters, ['from'])
+    assert.equal(mappingRoute.queryInput?.rawQueryAllowed, false)
+  })
+})
 
 test('db_domain content gives common fields in detail and the remaining fields by name only', async () => {
   await withAgentDir(async (agentDir) => {
@@ -227,7 +295,7 @@ test('db_docs_search content is compact and drops ranking internals', async () =
   await withAgentDir(async (agentDir) => {
     const result = await buildDbDocsSearchTool(agentDir).execute(
       'k1',
-      { query: 'gene symbol' },
+      { query: 'gene symbol', database: 'entrez/ncbi' },
       undefined,
       ctx
     )
@@ -255,5 +323,18 @@ test('db_docs_search content is compact and drops ranking internals', async () =
       text.length < previousLength * 0.6,
       `expected under 60% of the old ${previousLength} chars, got ${text.length}`
     )
+  })
+})
+
+test('db_docs_search cannot scan fields before a database is selected', async () => {
+  await withAgentDir(async (agentDir) => {
+    const result = await buildDbDocsSearchTool(agentDir).execute(
+      'docs-unscoped',
+      { query: 'gene' },
+      undefined,
+      ctx
+    )
+    assert.equal(result.isError, true)
+    assert.match(contentText(result), /database/)
   })
 })

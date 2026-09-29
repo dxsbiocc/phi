@@ -1,6 +1,15 @@
 import { Box, IconButton } from '@mui/material'
 import { alpha, useTheme } from '@mui/material/styles'
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
 import { type LocalPathKind } from '../MarkdownContent'
 import AgentExecutionCard from '../AgentExecutionCard'
 import ToolCallCard from '../ToolCallCard'
@@ -16,7 +25,12 @@ import {
   runningAgentRuns,
   virtualRowScrollTop
 } from '../../lib/agentRunsOverview'
-import { groupMessages, timestampMs, type RenderGroup } from '../../lib/chatRenderGroups'
+import {
+  activeProcessingGroupIndex,
+  groupMessages,
+  timestampMs,
+  type RenderGroup
+} from '../../lib/chatRenderGroups'
 import {
   chatVirtualWindow,
   normalizedChatVirtualRowHeight,
@@ -182,12 +196,14 @@ export type ChatMessageListProps = {
   messages: ChatItem[]
   messagesContainerRef?: (node: HTMLDivElement | null) => void
   scrollResetKey?: string
+  scrollPositionStore?: Map<string, number>
   isGenerating: boolean
   currentRunStartedAt?: string
   onEditUserMessage?: (content: string) => void
   onRetryUserMessage?: (message: UserMessageRetryTarget) => void
   onForkUserMessage?: (messageId: string) => void
   onGoSettings: () => void
+  onOpenBackgroundJobs: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
   cwd?: string
@@ -197,12 +213,14 @@ const ChatMessageList = memo(function ChatMessageList({
   messages,
   messagesContainerRef,
   scrollResetKey,
+  scrollPositionStore,
   isGenerating,
   currentRunStartedAt,
   onEditUserMessage,
   onRetryUserMessage,
   onForkUserMessage,
   onGoSettings,
+  onOpenBackgroundJobs,
   onOpenLocalPath,
   onJumpToNotebookCell,
   cwd = ''
@@ -214,8 +232,10 @@ const ChatMessageList = memo(function ChatMessageList({
   // in effects/callbacks. The ref stays the source of truth for synchronous
   // reads (e.g. inside onMessagesContentResize) where waiting for a re-render
   // would be too late.
-  const [isStuckToBottom, setIsStuckToBottom] = useState(true)
-  const stickToBottomRef = useRef(true)
+  const hasSavedScrollPosition =
+    scrollResetKey !== undefined && scrollPositionStore?.has(scrollResetKey) === true
+  const [isStuckToBottom, setIsStuckToBottom] = useState(!hasSavedScrollPosition)
+  const stickToBottomRef = useRef(!hasSavedScrollPosition)
   const suppressAutoScrollUntilRef = useRef(0)
   const lastMessageMarkerRef = useRef<MessageScrollMarker | null>(null)
   const virtualListRef = useRef<HTMLDivElement | null>(null)
@@ -230,9 +250,17 @@ const ChatMessageList = memo(function ChatMessageList({
   const todoSnapshot = useMemo(() => latestTodoSnapshot(messages), [messages])
   const virtualRowObserversRef = useRef<Map<string, ResizeObserver>>(new Map())
   const currentMessageMarker = useMemo(() => messageScrollMarker(messages), [messages])
+  const currentMessageMarkerRef = useRef(currentMessageMarker)
+  useLayoutEffect(() => {
+    currentMessageMarkerRef.current = currentMessageMarker
+  }, [currentMessageMarker])
   const renderGroups = useMemo(
     () => groupMessages(messages, { activeRun: isGenerating }),
     [isGenerating, messages]
+  )
+  const activeProcessingIndex = useMemo(
+    () => activeProcessingGroupIndex(renderGroups, isGenerating),
+    [isGenerating, renderGroups]
   )
   const userMessageStates = useMemo(() => failedUserMessageStates(messages), [messages])
   const virtualItems = useMemo<ChatGroupVirtualItem[]>(
@@ -241,7 +269,7 @@ const ChatMessageList = memo(function ChatMessageList({
   )
 
   const [virtualViewport, setVirtualViewport] = useState<ChatVirtualViewport>({
-    scrollTop: 0,
+    scrollTop: scrollResetKey !== undefined ? (scrollPositionStore?.get(scrollResetKey) ?? 0) : 0,
     viewportHeight: 0
   })
   const [virtualRowHeightState, setVirtualRowHeightState] = useState<{
@@ -346,8 +374,9 @@ const ChatMessageList = memo(function ChatMessageList({
       stickToBottomRef.current = true
       setIsStuckToBottom(true)
       setShowJumpToLatest(false)
+      if (scrollResetKey) scrollPositionStore?.delete(scrollResetKey)
     },
-    [scrollContainer]
+    [scrollContainer, scrollPositionStore, scrollResetKey]
   )
 
   // Brings an agent's card into view from the running-agents overview. The card usually sits in a
@@ -448,21 +477,40 @@ const ChatMessageList = memo(function ChatMessageList({
 
   const handleMessagesScroll = useCallback((): void => {
     updateScrollState()
-  }, [updateScrollState])
+    if (!scrollContainer || !scrollResetKey || !scrollPositionStore) return
+    if (stickToBottomRef.current) scrollPositionStore.delete(scrollResetKey)
+    else scrollPositionStore.set(scrollResetKey, scrollContainer.scrollTop)
+  }, [scrollContainer, scrollPositionStore, scrollResetKey, updateScrollState])
 
   const handleJumpToLatest = useCallback((): void => {
     scrollToLatest()
   }, [scrollToLatest])
 
-  useEffect(() => {
-    lastMessageMarkerRef.current = null
-    stickToBottomRef.current = true
+  useLayoutEffect(() => {
+    const savedTop = scrollResetKey ? scrollPositionStore?.get(scrollResetKey) : undefined
+    const restorePosition = savedTop !== undefined
+    lastMessageMarkerRef.current = restorePosition ? currentMessageMarkerRef.current : null
+    stickToBottomRef.current = !restorePosition
     suppressAutoScrollUntilRef.current = 0
     if (!scrollContainer) return undefined
 
-    const frame = window.requestAnimationFrame(() => scrollToLatest())
-    return () => window.cancelAnimationFrame(frame)
-  }, [scrollContainer, scrollResetKey, scrollToLatest])
+    const frame = window.requestAnimationFrame(() => {
+      if (restorePosition) {
+        scrollContainer.scrollTop = savedTop
+        setIsStuckToBottom(false)
+        setVirtualViewport({ scrollTop: savedTop, viewportHeight: scrollContainer.clientHeight })
+        updateScrollState(scrollContainer)
+      } else {
+        scrollToLatest()
+      }
+    })
+    return () => {
+      window.cancelAnimationFrame(frame)
+      if (!scrollResetKey || !scrollPositionStore) return
+      if (stickToBottomRef.current) scrollPositionStore.delete(scrollResetKey)
+      else scrollPositionStore.set(scrollResetKey, scrollContainer.scrollTop)
+    }
+  }, [scrollContainer, scrollPositionStore, scrollResetKey, scrollToLatest, updateScrollState])
 
   useEffect(() => {
     if (!scrollContainer) {
@@ -530,12 +578,13 @@ const ChatMessageList = memo(function ChatMessageList({
         )
       }
       if (group.kind === 'processing-group') {
-        const isActiveProcessingGroup = isGenerating && absoluteIndex === renderGroups.length - 1
+        const isActiveProcessingGroup = absoluteIndex === activeProcessingIndex
         return (
           <ChatProcessingGroup
             items={group.items}
             focusRequest={focusRequest}
             onGoSettings={onGoSettings}
+            onOpenBackgroundJobs={onOpenBackgroundJobs}
             onOpenLocalPath={onOpenLocalPath}
             onJumpToNotebookCell={onJumpToNotebookCell}
             onContentResize={onMessagesContentResize}
@@ -603,6 +652,7 @@ const ChatMessageList = memo(function ChatMessageList({
           onRetryUserMessage={onRetryUserMessage}
           onForkUserMessage={onForkUserMessage}
           onGoSettings={onGoSettings}
+          onOpenBackgroundJobs={onOpenBackgroundJobs}
           onOpenLocalPath={onOpenLocalPath}
           onContentResize={onMessagesContentResize}
           cwd={cwd}
@@ -613,15 +663,15 @@ const ChatMessageList = memo(function ChatMessageList({
       cwd,
       currentRunStartedAt,
       focusRequest,
-      isGenerating,
+      activeProcessingIndex,
       onEditUserMessage,
       onGoSettings,
+      onOpenBackgroundJobs,
       onJumpToNotebookCell,
       onMessagesContentResize,
       onOpenLocalPath,
       onRetryUserMessage,
       onForkUserMessage,
-      renderGroups.length,
       userMessageStates
     ]
   )
@@ -641,7 +691,12 @@ const ChatMessageList = memo(function ChatMessageList({
             minWidth: 0,
             px: 3,
             pt: 3,
-            pb: isGenerating ? 6 : 3
+            pb: isGenerating ? 6 : 3,
+            '@container phi-chat (max-width: 560px)': {
+              px: 1.25,
+              pt: 1.5,
+              pb: isGenerating ? 3 : 1.5
+            }
           }}
         >
           {virtualCells.beforeHeight > 0 ? (

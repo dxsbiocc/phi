@@ -18,6 +18,8 @@ import {
   ensureRemoteBundle,
   hashBundleFiles
 } from '../src/main/agent/wrappers/composition/remote-bundle'
+import { getBundledWrapperPackagesDir } from '../src/main/agent/wrappers/catalog'
+import { componentBundleScope } from '../src/main/agent/wrappers/composition/includes'
 import { createLocalShellSession } from './helpers/localShellSession'
 
 function makeTree(files: Record<string, string>): { root: string; cleanup: () => void } {
@@ -39,6 +41,8 @@ const TREE = {
   'modules/nf-core/fastqc/.DS_Store': 'junk',
   'modules/nf-core/fastqc/work/ab/cd/out.txt': 'stale run output',
   'subworkflows/nf-core/x/main.nf': 'workflow X {}',
+  // Shared conda env / Dockerfile a module reaches via ../../../../images/...
+  'images/differential-expression-r/environment.yml': 'name: de',
   'README.md': 'not part of a bundle'
 }
 
@@ -53,6 +57,7 @@ test('bundle files are the runnable sources only, sorted, with posix relative pa
   const { root, cleanup } = makeTree(TREE)
   try {
     assert.deepEqual(collectBundleFiles(root), [
+      'images/differential-expression-r/environment.yml',
       'modules/nf-core/fastqc/environment.yml',
       'modules/nf-core/fastqc/main.nf',
       'modules/nf-core/fastqc/wrapper/main.nf',
@@ -334,4 +339,98 @@ test('a failed remote unpack is reported, not silently treated as a bundle', asy
     src.cleanup()
     rmSync(remote, { recursive: true, force: true })
   }
+})
+
+test('a scoped check re-reads only the directories the run uses, but still catches a forged marker', async () => {
+  const src = makeTree(TREE)
+  const remote = mkdtempSync(join(tmpdir(), 'phi-bundle-remote-'))
+  try {
+    const session = createLocalShellSession()
+    const scope = ['modules/nf-core/fastqc']
+    const first = await ensureRemoteBundle(session, {
+      localRoot: src.root,
+      workspaceRoot: remote,
+      verifyScope: scope
+    })
+    assert.equal(session.uploads.length, 1)
+
+    // Outside the scope: not re-read, so the bundle is reused as is.
+    writeFileSync(join(first.bundleDir, 'subworkflows/nf-core/x/main.nf'), 'changed elsewhere')
+    await ensureRemoteBundle(session, {
+      localRoot: src.root,
+      workspaceRoot: remote,
+      verifyScope: scope
+    })
+    assert.equal(session.uploads.length, 1)
+
+    // Inside the scope: tampering is caught and the bundle is replaced.
+    const main = join(first.bundleDir, 'modules/nf-core/fastqc/main.nf')
+    writeFileSync(main, 'tampered')
+    await ensureRemoteBundle(session, {
+      localRoot: src.root,
+      workspaceRoot: remote,
+      verifyScope: scope
+    })
+    assert.equal(session.uploads.length, 2)
+    assert.equal(readFileSync(main, 'utf8'), TREE['modules/nf-core/fastqc/main.nf'])
+
+    // An extra file inside the scope, or a forged marker, is caught too.
+    writeFileSync(join(first.bundleDir, 'modules/nf-core/fastqc/extra.nf'), 'not in manifest')
+    await ensureRemoteBundle(session, {
+      localRoot: src.root,
+      workspaceRoot: remote,
+      verifyScope: scope
+    })
+    assert.equal(session.uploads.length, 3)
+    writeFileSync(join(first.bundleDir, '.phi-bundle-complete'), '{"hash":"forged"}')
+    await ensureRemoteBundle(session, {
+      localRoot: src.root,
+      workspaceRoot: remote,
+      verifyScope: scope
+    })
+    assert.equal(session.uploads.length, 4)
+    assert.deepEqual(activeBundleArtifacts(remote), [])
+  } finally {
+    src.cleanup()
+    rmSync(remote, { recursive: true, force: true })
+  }
+})
+
+test('an archive damaged in transfer is rejected before it is unpacked', async () => {
+  const src = makeTree(TREE)
+  const remote = mkdtempSync(join(tmpdir(), 'phi-bundle-remote-'))
+  try {
+    const session = createLocalShellSession()
+    const realUpload = session.uploadFile
+    session.uploadFile = async (local, target) => {
+      await realUpload(local, target)
+      writeFileSync(target, 'truncated archive')
+    }
+    await assert.rejects(
+      ensureRemoteBundle(session, {
+        localRoot: src.root,
+        workspaceRoot: remote,
+        verifyScope: ['modules/nf-core/fastqc']
+      }),
+      /压缩包校验失败/
+    )
+    const hash = hashBundleFiles(src.root, collectBundleFiles(src.root))
+    assert.equal(existsSync(join(remote, 'wrappers/bundles', hash)), false)
+    assert.deepEqual(activeBundleArtifacts(remote), [])
+  } finally {
+    src.cleanup()
+    rmSync(remote, { recursive: true, force: true })
+  }
+})
+
+test('a run bundle scope covers the component and every module it includes', () => {
+  const root = getBundledWrapperPackagesDir()
+  assert.deepEqual(componentBundleScope(join(root, 'modules/nf-core/star/align'), root), [
+    'modules/nf-core/star/align',
+    'modules/nf-core/star/genomegenerate'
+  ])
+  const scope = componentBundleScope(join(root, 'subworkflows/local/align_star'), root)
+  assert.ok(scope.includes('subworkflows/local/align_star'))
+  assert.ok(scope.includes('modules/nf-core/star/genomegenerate'))
+  assert.ok(scope.some((dir) => dir.startsWith('modules/nf-core/samtools/')))
 })

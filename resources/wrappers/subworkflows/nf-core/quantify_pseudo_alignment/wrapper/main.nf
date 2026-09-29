@@ -22,6 +22,7 @@ include { QUANTIFY_PSEUDO_ALIGNMENT } from '../main.nf'
 
 params.reads_1             = null
 params.reads_2             = null
+params.index               = null
 params.transcript_fasta    = null
 params.gtf                 = null
 params.samplesheet         = null
@@ -38,7 +39,13 @@ workflow {
     ch_transcript_fasta = channel.value(file(params.transcript_fasta, checkIfExists: true))
     ch_gtf              = channel.value(file(params.gtf, checkIfExists: true))
 
-    if (params.pseudo_aligner == 'salmon') {
+    if (params.index) {
+        def index = file(params.index, checkIfExists: true)
+        // KALLISTO_QUANT's index input is tuple(meta, index) — unlike Salmon's bare path.
+        ch_index = params.pseudo_aligner == 'salmon'
+            ? channel.value(index)
+            : channel.value([[id: 'kallisto_index'], index])
+    } else if (params.pseudo_aligner == 'salmon') {
         SALMON_INDEX([], ch_transcript_fasta)
         ch_index = SALMON_INDEX.out.index
     } else {

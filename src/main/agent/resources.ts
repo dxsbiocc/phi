@@ -39,7 +39,11 @@ export interface McpServerSummary {
   command?: string
   args?: string[]
   envKeys?: string[]
+  url?: string
+  transport?: string
   sourcePath?: string
+  managed?: boolean
+  enabled?: boolean
   status: 'configured'
 }
 
@@ -265,8 +269,10 @@ function toMcpServerSummary(
   const command = typeof value.command === 'string' ? value.command : undefined
   const args = toStringArray(value.args)
   const envKeys = isRecord(value.env) ? Object.keys(value.env).sort() : undefined
+  const url = stringValue(value.url)
+  const transport = stringValue(value.type)
 
-  if (!command && !args && !envKeys) return null
+  if (!command && !args && !envKeys && !url) return null
 
   return {
     id: `${sourcePath}:${name}`,
@@ -274,7 +280,11 @@ function toMcpServerSummary(
     command,
     args,
     envKeys,
+    url,
+    transport,
     sourcePath,
+    managed: sourcePath === getGlobalMcpConfigPaths(AGENT_DIR)[0],
+    enabled: value.enabled !== false,
     status: 'configured'
   }
 }

@@ -1,5 +1,6 @@
 import type { WrapperManifestStep } from './wrapperManifestTypes'
 import type { ProjectLocation } from './projectLocation'
+import type { WrapperRunPack } from './wrapperPackTypes'
 
 // Phi Wrapper core types.
 //
@@ -241,6 +242,15 @@ export interface WrapperRunRemote {
   projectId?: string
 }
 
+/** Compute resources requested for one run, overriding the wrapper's defaults for every process. */
+export interface WrapperRunResources {
+  cpus?: number
+  /** Nextflow memory string, e.g. "40 GB". */
+  memory?: string
+  /** Nextflow duration string, e.g. "4h" or "1d 6h". */
+  time?: string
+}
+
 export interface WrapperRun {
   runId: string
   runName?: string
@@ -282,6 +292,10 @@ export interface WrapperRun {
    * `planId` is empty and there is no `plan.json`. Absent on runs created from a plan.
    */
   origin?: 'composition'
+  /** Wrapper pack a composition run executed from — name, version, source and digest. */
+  pack?: WrapperRunPack
+  /** Resources the run asked for, when it overrode the wrapper's defaults. */
+  resources?: WrapperRunResources
   /** Set when the run executes on a remote host; `outDir` and output paths are then remote paths. */
   remote?: WrapperRunRemote
   /**

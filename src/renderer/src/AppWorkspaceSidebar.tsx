@@ -73,6 +73,7 @@ export type AppWorkspaceSidebarProps = {
   mcpServers: McpServerSummary[]
   activeMcpServerId: string | null
   onOpenMcpServer: (server: McpServerSummary) => void
+  onRefreshMcpServers: () => Promise<void>
 
   wrapperCatalog: WrapperCompositionManifest[]
   selectedWrapperId: string | null
@@ -145,6 +146,7 @@ function AppWorkspaceSidebarImpl({
   mcpServers,
   activeMcpServerId,
   onOpenMcpServer,
+  onRefreshMcpServers,
   wrapperCatalog,
   selectedWrapperId,
   isLoadingWrappers,
@@ -357,6 +359,7 @@ function AppWorkspaceSidebarImpl({
             servers={mcpServers}
             activeServerId={activeMcpServerId}
             onSelectServer={onOpenMcpServer}
+            onRefreshServers={onRefreshMcpServers}
           />
         </Box>
       ) : (
@@ -364,6 +367,7 @@ function AppWorkspaceSidebarImpl({
           servers={mcpServers}
           activeServerId={activeMcpServerId}
           onSelectServer={onOpenMcpServer}
+          onRefreshServers={onRefreshMcpServers}
         />
       )
     ) : workspaceSidebarMode === 'wrappers' ? (

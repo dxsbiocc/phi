@@ -35,6 +35,9 @@ export function wrapperJobHostHandlers(
         ...(typeof origin === 'string' && origin ? { originSessionId: origin } : {}),
         ...(isRecord(params) && params.continueWhenDone === false
           ? { continueWhenDone: false }
+          : {}),
+        ...(isRecord(params) && params.resources !== undefined
+          ? { resources: params.resources }
           : {})
       })
     },

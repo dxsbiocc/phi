@@ -2,7 +2,7 @@ flowchart TB
     subgraph " "
     v0["channel.fromPath"]
     v2["channel.fromPath"]
-    v8["channel.fromFilePairs"]
+    v9["channel.fromFilePairs"]
     v12["star_ignore_sjdbgtf"]
     end
     v4(["STAR_GENOMEGENERATE"])
@@ -33,7 +33,7 @@ flowchart TB
     v13(["STAR_ALIGN"])
     v1(( ))
     v3(( ))
-    v9(( ))
+    v8(( ))
     v10(( ))
     v0 --> v1
     v2 --> v3
@@ -42,11 +42,11 @@ flowchart TB
     v4 --> v7
     v4 --> v6
     v4 --> v5
-    v4 --> v10
-    v8 --> v9
+    v4 --> v8
+    v9 --> v10
     v12 --> v13
-    v3 --> v13
-    v9 --> v13
+    v1 --> v13
+    v8 --> v13
     v10 --> v13
     v13 --> v32
     v13 --> v31

@@ -49,7 +49,8 @@ export interface RemoteSshSession {
   writeTextFile(remotePath: string, content: string): Promise<void>
   mkdirp(remotePath: string): Promise<void>
   exists(remotePath: string): Promise<boolean>
-  uploadFile(localPath: string, remotePath: string): Promise<void>
+  /** `timeoutMs` overrides the session's exec timeout, for large files such as container images. */
+  uploadFile(localPath: string, remotePath: string, options?: { timeoutMs?: number }): Promise<void>
   close(): Promise<void>
 }
 
@@ -158,30 +159,14 @@ export function buildReadTextFileCommand(remotePath: string): string {
   return `cat ${shellQuote(remotePath)}`
 }
 
-export interface WriteTextFileCommand {
-  script: string
-  needsTruncate: boolean
-}
-
-export function buildWriteTextFileCommand(
-  remotePath: string,
-  content: string
-): WriteTextFileCommand {
-  if (content.includes('\0')) throw new Error('远程文本文件不能包含 NUL 字节')
-  let heredocMarker = '__PHI_EOF__'
-  while (content.includes(heredocMarker)) {
-    heredocMarker = `${heredocMarker}_${Math.random().toString(36).slice(2, 8)}`
-  }
-  const endsWithNewline = content.endsWith('\n')
-  const body = endsWithNewline ? content : `${content}\n`
-  return {
-    script: `cat > ${shellQuote(remotePath)} <<'${heredocMarker}'\n${body}${heredocMarker}\n`,
-    needsTruncate: !endsWithNewline
-  }
-}
-
-export function buildTruncateLastByteCommand(remotePath: string): string {
-  return `truncate -s -1 ${shellQuote(remotePath)}`
+/**
+ * The content goes over stdin, never into the command line: sshd hands the
+ * command to the remote shell as one argv string, and Linux rejects any single
+ * argument over 128 KiB (MAX_ARG_STRLEN) — which a wrapper bundle's file list
+ * easily exceeds. Stdin also keeps the bytes exact, trailing newline or not.
+ */
+export function buildWriteTextFileCommand(remotePath: string): string {
+  return `cat > ${shellQuote(remotePath)}`
 }
 
 export function buildMasterArgs(
@@ -475,7 +460,7 @@ export async function connectRemoteSshSession(
   const checkOpen = (): void => {
     if (closed || masterClosed) throw new Error('SSH 连接已关闭；远端操作结果可能尚未确认')
   }
-  const call = async (command: string): Promise<RemoteExecResult> => {
+  const call = async (command: string, input?: string): Promise<RemoteExecResult> => {
     checkOpen()
     let result: RemoteExecResult
     try {
@@ -485,7 +470,7 @@ export async function connectRemoteSshSession(
         buildExecArgs(host, controlPath, command, config),
         execTimeout,
         MAX_EXEC_OUTPUT_BYTES,
-        undefined,
+        input,
         operations.signal
       )
     } catch (error) {
@@ -592,14 +577,9 @@ export async function connectRemoteSshSession(
         return result.stdout
       },
       async writeTextFile(remotePath, content) {
-        const { script, needsTruncate } = buildWriteTextFileCommand(remotePath, content)
-        const result = await call(script)
+        if (content.includes('\0')) throw new Error('远程文本文件不能包含 NUL 字节')
+        const result = await call(buildWriteTextFileCommand(remotePath), content)
         if (result.code !== 0) throw new Error(`远程写入文件失败: ${remotePath}\n${result.stderr}`)
-        if (needsTruncate) {
-          const trim = await call(buildTruncateLastByteCommand(remotePath))
-          if (trim.code !== 0)
-            throw new Error(`远程写入文件末尾修正失败: ${remotePath}\n${trim.stderr}`)
-        }
       },
       async mkdirp(remotePath) {
         const result = await call(buildMkdirpCommand(remotePath))
@@ -608,7 +588,7 @@ export async function connectRemoteSshSession(
       async exists(remotePath) {
         return (await call(buildExistsCommand(remotePath))).code === 0
       },
-      async uploadFile(localPath, remotePath) {
+      async uploadFile(localPath, remotePath, options) {
         checkOpen()
         const batch = `put ${quoteSftpPath(localPath)} ${quoteSftpPath(remotePath)}\n`
         let result: RemoteExecResult
@@ -617,7 +597,7 @@ export async function connectRemoteSshSession(
             spawnImpl,
             'sftp',
             buildSftpArgs(host, controlPath, config),
-            execTimeout,
+            options?.timeoutMs ?? execTimeout,
             MAX_CONTROL_OUTPUT_BYTES,
             batch,
             operations.signal

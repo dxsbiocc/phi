@@ -9,11 +9,13 @@ import {
   AgentCancelledError,
   AgentTimeoutError,
   describeToolStart,
+  type AgentImage,
   type AgentRunControl,
   type AgentRunRequest,
   type AgentRunResult,
   type AgentRunToolStep
 } from './runner'
+import type { VisualizationWorkflow } from './tool-resolution'
 import { parseAgentReport, type AgentReportStatus } from './report'
 
 export type AgentRunState = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
@@ -76,6 +78,8 @@ export type AgentRunFn = (request: AgentRunRequest) => Promise<AgentRunResult>
 export interface AgentLaunchInput {
   agent: string
   task: string
+  images?: AgentImage[]
+  workflow?: VisualizationWorkflow
   runner: AgentRunFn
   background: boolean
   /** Cancels a foreground run when it fires. Ignored for background runs, which outlive their tool call. */
@@ -327,6 +331,8 @@ export class AgentRunRegistry {
     try {
       const result = await input.runner({
         task: input.task,
+        ...(input.images?.length ? { images: input.images } : {}),
+        ...(input.workflow ? { workflow: input.workflow } : {}),
         runId: record.snapshot.id,
         signal: record.controller.signal,
         onProgress: (line) => {
@@ -384,6 +390,7 @@ export class AgentRunRegistry {
   ): void {
     if (isFinalAgentRunState(record.snapshot.state)) return
     const wasRunning = record.snapshot.state === 'running'
+    record.input.images = undefined
     record.snapshot = { ...record.snapshot, ...outcome, completedAt: this.now() }
     record.detachSignal?.()
     if (wasRunning) this.active -= 1

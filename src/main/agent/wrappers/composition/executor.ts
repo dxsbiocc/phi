@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 
 import type { WrapperOutputRecord } from '../types'
+import { buildResourceConfig, type WrapperRunResources } from './resources'
 import { getActiveToolPath } from '../../environment'
 
 /** Execution profile a wrapper can run under — see each `wrapper/nextflow.config`'s `profiles {}` block. */
@@ -107,6 +108,8 @@ export interface RunWrapperOptions {
 export interface StartWrapperOptions extends RunWrapperOptions {
   /** Called with each chunk of Nextflow's combined stdout/stderr as it arrives. */
   onOutput?: (chunk: string) => void
+  /** Overrides the wrapper's own cpus/memory/time for every process of this run. */
+  resources?: WrapperRunResources
 }
 
 /** A running (or already finished) Nextflow process. */
@@ -195,14 +198,27 @@ export function startWrapperComposition(
     dirname(nextflowBin),
     ...(condaRoot ? [join(condaRoot, 'condabin'), join(condaRoot, 'bin')] : [])
   ]
-  const env = { ...process.env, PATH: `${pathDirs.join(':')}:${process.env.PATH ?? ''}` }
+  const env = {
+    ...process.env,
+    PATH: `${pathDirs.join(':')}:${process.env.PATH ?? ''}`,
+    // The launcher otherwise curls nextflow.io for a newer version, with no timeout.
+    NXF_DISABLE_CHECK_LATEST: 'true'
+  }
+
+  const args = ['run', 'wrapper/main.nf', '-params-file', paramsFilePath, '-profile', profile]
+  const resourceConfig = buildResourceConfig(options.resources)
+  if (resourceConfig) {
+    const configPath = join(tmpDir, 'resources.config')
+    writeFileSync(configPath, resourceConfig)
+    args.push('-c', configPath)
+  }
 
   installExitHook()
-  const child = spawn(
-    nextflowBin,
-    ['run', 'wrapper/main.nf', '-params-file', paramsFilePath, '-profile', profile],
-    { cwd: componentDir, env, detached: process.platform !== 'win32' }
-  )
+  const child = spawn(nextflowBin, args, {
+    cwd: componentDir,
+    env,
+    detached: process.platform !== 'win32'
+  })
   const pid = child.pid
   if (pid !== undefined) activeGroups.add(pid)
 

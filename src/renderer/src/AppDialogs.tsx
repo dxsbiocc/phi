@@ -5,6 +5,7 @@ import AddProviderDialog from './components/AddProviderDialog'
 import OnboardingDialog from './components/OnboardingDialog'
 import NewProjectDialog from './features/project/NewProjectPanel'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
+import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
 import type { ThemeMode } from './theme'
 import type {
   ActiveAuthPrompt,
@@ -72,6 +73,11 @@ export type AppDialogsProps = {
   onSelectDefaultProxyMode: (mode: DefaultProxyMode) => void
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
+  autoCompactionTarget: ManualCompactionTarget
+  autoCompactionDisabled: boolean
+  contextCompacting: boolean
+  compactDisabled: boolean
+  onCompactContext: () => void
   environmentSnapshot: EnvironmentSnapshot | null
   isLoadingEnvironment: boolean
   isRedetectingEnvironment: boolean
@@ -153,6 +159,11 @@ export default function AppDialogs({
   onSelectDefaultProxyMode,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
+  autoCompactionTarget,
+  autoCompactionDisabled,
+  contextCompacting,
+  compactDisabled,
+  onCompactContext,
   environmentSnapshot,
   isLoadingEnvironment,
   isRedetectingEnvironment,
@@ -237,6 +248,11 @@ export default function AppDialogs({
         onSelectDefaultProxyMode={onSelectDefaultProxyMode}
         onUpdateAppSettings={onUpdateAppSettings}
         onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
+        autoCompactionTarget={autoCompactionTarget}
+        autoCompactionDisabled={autoCompactionDisabled}
+        contextCompacting={contextCompacting}
+        compactDisabled={compactDisabled}
+        onCompactContext={onCompactContext}
         environmentSnapshot={environmentSnapshot}
         isLoadingEnvironment={isLoadingEnvironment}
         isRedetectingEnvironment={isRedetectingEnvironment}

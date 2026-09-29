@@ -4,7 +4,8 @@ flowchart TB
     v1["channel.of"]
     v2["channel.of"]
     v3["channel.of"]
-    v16["channel.empty"]
+    v15[" "]
+    v16[" "]
     end
     v4(["DESEQ2_DIFFERENTIAL"])
     subgraph " "
@@ -18,14 +19,17 @@ flowchart TB
     v12[" "]
     v13[" "]
     v14[" "]
-    v15[" "]
-    v17[" "]
+    v18[" "]
+    v19[" "]
+    v20[" "]
+    v21[" "]
     end
+    v17(["CUSTOM_FILTERDIFFERENTIALTABLE"])
     v0 --> v4
     v1 --> v4
     v2 --> v4
     v3 --> v4
-    v4 --> v15
+    v4 --> v17
     v4 --> v14
     v4 --> v13
     v4 --> v12
@@ -36,4 +40,9 @@ flowchart TB
     v4 --> v7
     v4 --> v6
     v4 --> v5
+    v15 --> v17
     v16 --> v17
+    v17 --> v21
+    v17 --> v20
+    v17 --> v19
+    v17 --> v18

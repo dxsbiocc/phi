@@ -5,7 +5,6 @@ import type { RemoteHpcSettings } from '../../../../shared/wrapperRemoteTypes'
 import type { WrapperManifestEngineProfile } from '../../../../shared/wrapperManifestTypes'
 import type { Project } from '../../projects'
 import { getPhiAgentDir } from '../../runtime-paths'
-import { getBundledWrapperPackagesDir } from '../catalog'
 import { resolveCompositionInputParams } from '../path-mapping'
 import type { ResolvedRemoteTarget } from '../remote-connection-resolver'
 import { chooseWrapperTarget, type WrapperTargetDoctorSnapshot } from '../target-policy'
@@ -13,12 +12,20 @@ import { getWrapperRunsDir, listWrapperRuns, readWrapperRun, writeWrapperRun } f
 import type { WrapperExecutor, WrapperRun } from '../types'
 import {
   findWrapperCompositionEntry,
+  getActiveWrapperPack,
   readWrapperCompositionDag,
   readWrapperDefaultParams,
   type WrapperCompositionEntry
 } from './discovery'
 import {
+  isNextflowVersionSupported,
+  nextflowTooOldMessage,
+  readLocalNextflowVersion
+} from './nextflow-version'
+import { parseWrapperRunResources } from './resources'
+import {
   WRAPPER_EXECUTION_PROFILES,
+  findNextflowBinary,
   killAllWrapperProcesses,
   startWrapperComposition,
   type WrapperExecutionProfile,
@@ -87,7 +94,7 @@ export interface WrapperJobManagerOptions {
     resolved: ResolvedRemoteTarget
     profile: WrapperExecutionProfile
   }) => Promise<WrapperTargetDoctorSnapshot>
-  /** Local root the remote bundle is built from. Defaults to the bundled wrappers. */
+  /** Local root the remote bundle is built from. Defaults to the active wrapper pack. */
   wrappersRoot?: () => string
   maxConcurrent?: number
   /** Cap on runs watched on remote hosts at once; they cost little locally. Default 10. */
@@ -188,7 +195,7 @@ export class WrapperJobManager implements WrapperJobClient {
     this.resolveRemote = options.resolveRemoteTarget
     this.resolveProjectForRun = options.resolveProjectForRun
     this.checkRemoteEnvironment = options.checkRemoteEnvironment
-    this.wrappersRoot = options.wrappersRoot ?? getBundledWrapperPackagesDir
+    this.wrappersRoot = options.wrappersRoot ?? (() => getActiveWrapperPack().root)
     this.killGraceMs = options.killGraceMs
     this.progressThrottleMs = options.progressThrottleMs ?? DEFAULT_PROGRESS_THROTTLE_MS
   }
@@ -237,8 +244,12 @@ export class WrapperJobManager implements WrapperJobClient {
     target?: 'local' | 'remote'
     originSessionId?: string
     continueWhenDone?: boolean
+    resources?: unknown
   }): Promise<StartJobResult> {
     const { id, overrides } = input
+    const parsedResources = parseWrapperRunResources(input.resources)
+    if (!parsedResources.ok) return { ok: false, error: parsedResources.error }
+    const resources = parsedResources.resources
     let targetReason: string | undefined
     const entry = findWrapperCompositionEntry(id)
     if (!entry) return { ok: false, error: `Wrapper not found: ${id}` }
@@ -278,6 +289,12 @@ export class WrapperJobManager implements WrapperJobClient {
       return {
         ok: false,
         error: `Invalid profile: ${profile}. Must be one of ${WRAPPER_EXECUTION_PROFILES.join(', ')}.`
+      }
+    }
+    if (!resolved) {
+      const version = await readLocalNextflowVersion(findNextflowBinary())
+      if (version && !isNextflowVersionSupported(version)) {
+        return { ok: false, error: nextflowTooOldMessage(version, '本机') }
       }
     }
     if (project) {
@@ -397,6 +414,7 @@ export class WrapperJobManager implements WrapperJobClient {
         targetReason,
         originSessionId: input.originSessionId,
         continueWhenDone: input.continueWhenDone,
+        ...(resources ? { resources } : {}),
         ...(resolved
           ? {
               remote: {
@@ -444,6 +462,7 @@ export class WrapperJobManager implements WrapperJobClient {
             profile,
             target: resolved.target,
             wrappersRoot: this.wrappersRoot(),
+            ...(resources ? { resources } : {}),
             onOutput,
             onSnapshot: (snapshot) => {
               if (!jobRef.current?.finalized) this.saveSnapshot(run.runId, snapshot)
@@ -452,7 +471,8 @@ export class WrapperJobManager implements WrapperJobClient {
           })
         : startWrapperComposition(entry.wrapperDir, params, profile as WrapperExecutionProfile, {
             onOutput,
-            killGraceMs: this.killGraceMs
+            killGraceMs: this.killGraceMs,
+            ...(resources ? { resources } : {})
           })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

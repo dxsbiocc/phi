@@ -2,13 +2,12 @@
 # ../main.nf. Follows the minimal contract in
 # docs/design/phi-wrapper-agent-composition-design.md section 3.
 #
-# This wrapper composes bowtie2/build + bowtie2/align internally (builds
-# the index from `fasta` first) — see ../wrapper/main.nf's own comment for
-# why: nf-core's own module tests build the index as a setup step too,
-# since there's no pre-built index in test-datasets to just point at.
+# Uses a pre-built `index` as-is, or composes bowtie2/build to build one from
+# `fasta` first. The default params.json builds one because there's no
+# pre-built index in test-datasets to point it at.
 id: nf-core/modules/bowtie2-align
 name: bowtie2 align
-summary: Align paired-end FASTQ reads to a reference genome with bowtie2.
+summary: Align paired-end FASTQ reads with bowtie2, against a pre-built index or one built from a genome FASTA.
 
 params:
   reads_1:
@@ -21,11 +20,16 @@ params:
     type: fastq
     required: true
     description: FASTQ file for read 2.
+  index:
+    kind: input
+    type: directory
+    required: false
+    description: Pre-built bowtie2 index directory (holding one set of *.bt2 / *.bt2l files). Preferred for large genomes; when set, `fasta` is not needed and no index is built.
   fasta:
     kind: input
     type: fasta
-    required: true
-    description: Reference genome FASTA to build the bowtie2 index from and align against.
+    required: false
+    description: Reference genome FASTA to build a bowtie2 index from. Required only when `index` is not given.
   outdir:
     kind: output
     type: path

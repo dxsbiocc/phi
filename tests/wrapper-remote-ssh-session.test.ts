@@ -13,7 +13,6 @@ import {
   buildMkdirpCommand,
   buildReadTextFileCommand,
   buildSftpArgs,
-  buildTruncateLastByteCommand,
   buildWriteTextFileCommand,
   connectRemoteSshSession,
   quoteSftpPath,
@@ -49,15 +48,12 @@ test('generated remote file commands are valid shell and preserve text byte-for-
       buildMkdirpCommand(dir),
       buildExistsCommand(path),
       buildReadTextFileCommand(path),
-      buildWriteTextFileCommand(path, content).script,
-      buildTruncateLastByteCommand(path)
+      buildWriteTextFileCommand(path)
     ]
     for (const command of commands) {
       assert.equal(runInRealBash(`bash -n -c ${shellQuote(command)}`).code, 0)
     }
-    const { script, needsTruncate } = buildWriteTextFileCommand(path, content)
-    assert.equal(runInRealBash(script).code, 0)
-    if (needsTruncate) assert.equal(runInRealBash(buildTruncateLastByteCommand(path)).code, 0)
+    execSync(buildWriteTextFileCommand(path), { shell: '/bin/bash', input: content })
     assert.equal(readFileSync(path, 'utf-8'), content)
     assert.equal(runInRealBash(buildReadTextFileCommand(path)).stdout, content)
     assert.equal(runInRealBash(buildExistsCommand(path)).code, 0)
@@ -279,6 +275,29 @@ test('OpenSSH session uses one private master and executes file operations throu
     fixture.calls.some((call) => call.args.at(-1)?.startsWith('kill ')),
     false
   )
+})
+
+test('writeTextFile streams content over stdin so large files never hit the argv limit', async () => {
+  const fixture = fakeOpenSsh()
+  const session = await connectRemoteSshSession({ host: 'lab-hpc' }, fixture.runtime)
+  const dir = mkdtempSync(join(tmpdir(), 'phi-remote-session-'))
+  try {
+    // A wrapper bundle's file list: well past Linux's 128 KiB single-argument limit.
+    const content = 'modules/nf-core/x/main.nf 0123456789abcdef\n'.repeat(8000)
+    const noTrailingNewline = 'last line without newline'
+    await session.writeTextFile(join(dir, 'manifest.txt'), content)
+    await session.writeTextFile(join(dir, 'tail.txt'), noTrailingNewline)
+    assert.equal(readFileSync(join(dir, 'manifest.txt'), 'utf-8'), content)
+    assert.equal(readFileSync(join(dir, 'tail.txt'), 'utf-8'), noTrailingNewline)
+    const writeCommands = fixture.calls
+      .filter((call) => call.binary === 'ssh' && call.args.at(-1)?.startsWith('cat > '))
+      .map((call) => call.args.at(-1) ?? '')
+    assert.equal(writeCommands.length, 2)
+    for (const command of writeCommands) assert.ok(command.length < 1024)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+    await session.close()
+  }
 })
 
 test('bounded OpenSSH exec keeps draining after output truncation and preserves exit status', async () => {
