@@ -1192,6 +1192,9 @@ test('chatItemsFromSessionMessages restores the notice for a finished background
   assert.equal(items.length, 1)
   assert.equal(items[0].role, 'warning')
   assert.equal(items[0].id, 'event-wrapper-done')
+  assert.deepEqual((items[0] as { backgroundJobNotice?: unknown }).backgroundJobNotice, {
+    state: 'completed'
+  })
   const content = (items[0] as { content: string }).content
   assert.match(content, /^Wrapper 运行已完成\n/)
   assert.match(content, /nf-core\/modules\/fastqc/)
@@ -1228,6 +1231,9 @@ test('chatItemsFromSessionMessages restores the notice for a finished background
   assert.equal(items.length, 1)
   assert.equal(items[0].role, 'warning')
   assert.equal(items[0].id, 'event-agent-done')
+  assert.deepEqual((items[0] as { backgroundJobNotice?: unknown }).backgroundJobNotice, {
+    state: 'failed'
+  })
   const content = (items[0] as { content: string }).content
   assert.match(content, /^Database 后台任务失败\n/)
   assert.match(content, /TP53/)

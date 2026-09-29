@@ -570,20 +570,25 @@ export function chatItemFromPhiTimelineEvent(event: {
     }
   }
   if (event.type === 'wrapper_run_finished') {
-    const notice = wrapperRunNotice(event as unknown as WrapperRunFinishedEvent)
+    const finished = event as unknown as WrapperRunFinishedEvent
+    const notice = wrapperRunNotice(finished)
     return {
       id,
       role: 'warning',
       content: `${notice.title}\n${notice.body}`,
+      backgroundJobNotice: { state: finished.state },
       ...createdAtField(event.createdAt)
     }
   }
   if (event.type === 'agent_run_finished') {
-    const notice = agentRunNotice(event as unknown as AgentRunFinishedEvent)
+    const finished = event as unknown as AgentRunFinishedEvent
+    const notice = agentRunNotice(finished)
+    const stateMap = { done: 'completed', error: 'failed', cancelled: 'cancelled' } as const
     return {
       id,
       role: 'warning',
       content: `${notice.title}\n${notice.body}`,
+      backgroundJobNotice: { state: stateMap[finished.state] },
       ...createdAtField(event.createdAt)
     }
   }

@@ -14,6 +14,7 @@ import {
   type PhiAgentDefinition
 } from '../src/main/agent/agents/definition'
 import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
+import { AGENT_REPORT_PROTOCOL } from '../src/main/agent/agents/report'
 import {
   AgentCancelledError,
   AgentTimeoutError,
@@ -508,11 +509,14 @@ test('the bundled Visualization agent routes template previews through omics vis
   assert.match(visualization.systemPrompt, /viz_examples.*without.*data/i)
   assert.match(visualization.systemPrompt, /do not simulate.*render.*example/i)
   assert.match(visualization.systemPrompt, /example-only request is `completed`/i)
+  assert.match(visualization.systemPrompt, /same cutoffs for Up\/Down\/None colors/i)
+  assert.match(visualization.systemPrompt, /counts based on adjusted P value alone distinct/i)
 
   const skillText = readFileSync(join(REPO_SKILLS_DIR, 'omics-visualization', 'SKILL.md'), 'utf-8')
   assert.match(skillText, /active Phi project working directory/)
   assert.match(skillText, /Treat data directories outside the\s+project as read-only inputs/)
   assert.match(skillText, /Do not copy `references\/`, `references\/palettes\/`, or catalog files/)
+  assert.match(skillText, /same values for point classification, cutoff lines, legend text/i)
   const commonR = readFileSync(
     join(REPO_SKILLS_DIR, 'omics-visualization', 'scripts', 'lib', 'common.R'),
     'utf-8'
@@ -550,6 +554,8 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
   assert.match(prompt, /only the requested subtask/i)
   assert.match(prompt, /controlled fallback/i)
   assert.match(prompt, /not_found/i)
+  assert.match(prompt, /new and modified user-facing files separately/i)
+  assert.match(prompt, /exact path and purpose/i)
   // The leader never learns the specialist's own tool functions.
   for (const name of [
     'wrapper_search',
@@ -564,6 +570,12 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
   ]) {
     assert.ok(!new RegExp(`\\b${name}\\b`).test(prompt), `leader prompt must not mention ${name}`)
   }
+})
+
+test('specialist reporting requires a verifiable file inventory', () => {
+  assert.match(AGENT_REPORT_PROTOCOL, /distinguish new files from modified files/i)
+  assert.match(AGENT_REPORT_PROTOCOL, /exact path of each user-facing result/i)
+  assert.match(AGENT_REPORT_PROTOCOL, /A top-level folder alone is not a file inventory/i)
 })
 
 // ── tool resolution ───────────────────────────────────────────────────────

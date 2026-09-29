@@ -10,6 +10,7 @@ import FilePreviewPanel, {
   ProjectFileTree,
   type FilePreviewPanelState
 } from '../src/renderer/src/features/file-preview/FilePreviewPanel'
+import { pdfObjectUrlFromDataUrl } from '../src/renderer/src/features/file-preview/lib/pdfObjectUrl'
 import {
   parseDelimitedText,
   spreadsheetColumnLabel,
@@ -555,9 +556,22 @@ test('file preview panel renders pdf previews', () => {
   })
 
   assert.match(markup, /data-phi-media-preview="pdf"/)
-  assert.match(markup, /src="data:application\/pdf;base64,JVBERi0="/)
   assert.match(markup, /aria-label="PDF 预览：report\.pdf"/)
+  assert.match(markup, /正在准备 PDF 预览/)
+  assert.doesNotMatch(markup, /src="data:application\/pdf;base64/)
   assert.doesNotMatch(markup, /data-phi-syntax-language/)
+})
+
+test('PDF preview uses a revocable local Blob URL instead of a blocked data frame', async () => {
+  const url = pdfObjectUrlFromDataUrl('data:application/pdf;base64,JVBERi0=')
+  try {
+    assert.match(url, /^blob:/)
+    const response = await fetch(url)
+    assert.equal(response.headers.get('content-type'), 'application/pdf')
+    assert.equal((await response.arrayBuffer()).byteLength, 5)
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 })
 
 test('file preview title tab renders in the top split area', () => {

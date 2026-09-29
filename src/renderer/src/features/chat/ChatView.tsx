@@ -112,6 +112,7 @@ type ViewProps = {
   onRemoveImage?: (index: number) => void
   messagesContainerRef?: (node: HTMLDivElement | null) => void
   scrollResetKey?: string
+  scrollPositionStore?: Map<string, number>
   canSend: boolean
   canQueue?: boolean
   isGenerating: boolean
@@ -142,6 +143,7 @@ type ViewProps = {
   onStopGeneration: () => Promise<void>
   onAcknowledgeActiveSession?: () => void
   onGoSettings: () => void
+  onOpenBackgroundJobs: () => void
   permissionMode: PermissionMode
   onSelectPermissionMode: (mode: PermissionMode) => void
   disablePermissionModeSelect?: boolean
@@ -171,6 +173,7 @@ function ChatView({
   onRemoveImage,
   messagesContainerRef,
   scrollResetKey,
+  scrollPositionStore,
   canSend,
   canQueue = false,
   isGenerating,
@@ -201,6 +204,7 @@ function ChatView({
   onStopGeneration,
   onAcknowledgeActiveSession,
   onGoSettings,
+  onOpenBackgroundJobs,
   permissionMode,
   onSelectPermissionMode,
   disablePermissionModeSelect = false,
@@ -578,15 +582,25 @@ function ChatView({
     <Box
       onPointerDownCapture={onAcknowledgeActiveSession}
       onFocusCapture={onAcknowledgeActiveSession}
-      sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+      sx={{
+        flex: 1,
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+        containerType: 'inline-size',
+        containerName: 'phi-chat'
+      }}
     >
       <ChatMessageList
         messages={messages}
         messagesContainerRef={messagesContainerRef}
         scrollResetKey={scrollResetKey}
+        scrollPositionStore={scrollPositionStore}
         isGenerating={isGenerating}
         currentRunStartedAt={currentRunStartedAt}
         onGoSettings={onGoSettings}
+        onOpenBackgroundJobs={onOpenBackgroundJobs}
         onOpenLocalPath={onOpenLocalPath}
         onJumpToNotebookCell={onJumpToNotebookCell}
         onEditUserMessage={editUserMessage}
@@ -599,7 +613,8 @@ function ChatView({
           px: 2,
           pt: 1.5,
           pb: 2,
-          flexShrink: 0
+          flexShrink: 0,
+          '@container phi-chat (max-width: 560px)': { px: 1, pt: 1, pb: 1 }
         }}
       >
         <Box component="form" onSubmit={handleChatSubmit} sx={{ maxWidth: 892, mx: 'auto' }}>

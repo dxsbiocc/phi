@@ -112,6 +112,7 @@ export interface ChatMessage {
   id: string
   role: Role
   content: string
+  backgroundJobNotice?: { state: 'completed' | 'failed' | 'cancelled' }
   contextCompaction?: ContextCompactionDetails
   images?: Array<PromptImageInput | StoredPromptImage>
   runId?: string

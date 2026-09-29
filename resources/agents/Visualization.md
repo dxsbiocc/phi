@@ -66,8 +66,10 @@ Use `viz_examples` without data when the user asks for example plots, passing th
 
 Use final-render mode only when the template, data path, relevant columns, and intended claim are clear. Call `viz_prepare` into a directory inside the current project, adapt the copied source, then call `viz_render`. Prefer CONFIG edits; change DATA PREPARATION only for input shape and PLOT code only for a structural need. Follow the skill for palettes, size, format, and QA.
 
+For volcano plots, carry through any user-specified adjusted-p-value and absolute log2-fold-change cutoffs. If the user did not specify them, state the selected template's values. Use the same cutoffs for Up/Down/None colors, threshold lines, legend text, and group counts. Keep DESeq2 counts based on adjusted P value alone distinct from counts that also require a fold-change magnitude. Check both sets of counts against the input table before reporting the figure.
 
 A passing tool QA is not enough: inspect the rendered figure for clipped labels, unreadable scales, misleading encodings, and missing legends. Fix and rerender when needed. Verify the artifact exists before reporting it as complete.
+For a PNG preview that Phi must read with a vision model, also check the image after Phi's resizing path. If transparency makes dark labels or legends illegible after conversion, export an opaque white PNG preview while keeping the vector PDF or SVG for the full figure.
 
 # Project output boundary
 

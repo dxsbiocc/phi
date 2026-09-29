@@ -71,6 +71,11 @@ Updates are manual during the internal beta. Pull or receive the next build from
 project owner, install dependencies when needed, and rerun the verification commands
 below before handing a build to another tester.
 
+The local agent worker needs Bun 1.3.14 or newer for image reads: the Pi SDK uses
+`Bun.Image`, which older Bun versions do not provide. Check with `bun --version`
+and `bun -e 'console.log(typeof Bun.Image)'` when a valid local image is reported
+as undecodable.
+
 Unsigned or locally built macOS apps may show Gatekeeper/security prompts. For this
 beta, formal signing, notarization, and automatic updates are deferred; release notes
 should tell testers to expect the standard macOS warning flow for local builds.

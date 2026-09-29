@@ -118,6 +118,7 @@ function renderChat(
         onChatSubmit: async (event) => event.preventDefault(),
         onStopGeneration: async () => undefined,
         onGoSettings: () => undefined,
+        onOpenBackgroundJobs: () => undefined,
         onOpenLocalPath: options.onOpenLocalPath,
         onForkUserMessage: options.onForkUserMessage,
         planReviewEnabled: options.planReviewEnabled,
@@ -755,7 +756,52 @@ test('chat view shows each changed file with counts and an open action', () => {
   assert.match(markup, /运行期间文件变化/)
   assert.match(markup, /aria-label="预览改动文件 result\.txt"/)
   assert.match(markup, /aria-label="查看 result\.txt 的本轮差异"/)
-  assert.match(markup, /\+2 \/ −1/)
+  assert.match(markup, />\+2<\/span>/)
+  assert.match(markup, />−1<\/span>/)
+})
+
+test('workspace changes show four files before expanding the rest', () => {
+  const markup = renderChat([
+    {
+      id: 'changes-compact',
+      role: 'workspace_changes',
+      files: Array.from({ length: 6 }, (_, index) => ({
+        path: `/project/result-${index}.txt`,
+        displayPath: `result-${index}.txt`,
+        status: 'added' as const,
+        added: index + 1,
+        deleted: 0
+      })),
+      totalChanged: 6,
+      truncated: false
+    }
+  ])
+
+  assert.equal((markup.match(/data-phi-workspace-change-row=/g) ?? []).length, 4)
+  assert.match(markup, /显示其余 2 项/)
+  assert.doesNotMatch(markup, /result-5\.txt/)
+})
+
+test('a truncated change list stays visibly marked while collapsed', () => {
+  const markup = renderChat([
+    {
+      id: 'changes-truncated',
+      role: 'workspace_changes',
+      files: [
+        {
+          path: '/project/report.txt',
+          displayPath: 'report.txt',
+          status: 'added',
+          added: 1,
+          deleted: 0
+        }
+      ],
+      totalChanged: 50,
+      truncated: true
+    }
+  ])
+
+  assert.match(markup, /列表截断/)
 })
 
 test('chat view shows delivered files with a preview action and current-file notice', () => {
@@ -778,8 +824,39 @@ test('chat view shows delivered files with a preview action and current-file not
   )
   assert.match(markup, /aria-label="交付文件"/)
   assert.match(markup, /aria-label="预览交付文件 report.pdf"/)
+  assert.match(markup, /data-phi-presented-file-row="true"/)
+  assert.match(markup, /<button[^>]*aria-label="预览交付文件 report\.pdf"/)
   assert.match(markup, /报告/)
   assert.match(markup, /内容可能已更改/)
+})
+
+test('chat view shows delivered files after a later tool call and closing reply', () => {
+  const markup = renderChat(
+    [
+      { id: 'user-1', role: 'user', content: 'make a figure' },
+      { id: 'summary-1', role: 'assistant', content: 'Two comparisons are complete.' },
+      {
+        id: 'delivery-1',
+        role: 'presented_files',
+        files: [{ path: '/project/figure.png', displayPath: 'figure.png', bytes: 123 }]
+      },
+      {
+        id: 'tool-1',
+        role: 'tool',
+        toolName: 'present_files',
+        argsPreview: '',
+        argsJson: '',
+        output: 'done',
+        status: 'done'
+      },
+      { id: 'assistant-final', role: 'assistant', content: 'Figure is ready.' }
+    ],
+    { onOpenLocalPath: () => undefined }
+  )
+
+  assert.match(markup, /Figure is ready/)
+  assert.match(markup, /aria-label="预览交付文件 figure\.png"/)
+  assert.ok(markup.indexOf('Figure is ready') < markup.indexOf('预览交付文件 figure.png'))
 })
 
 test('chat composer offers a selected and disabled plan review mode', () => {
@@ -1585,6 +1662,20 @@ test('chat composer places context usage between the provider and send controls'
   const sendPosition = markup.indexOf('data-phi-composer-action="send"')
   assert.ok(modelPosition >= 0 && modelPosition < contextPosition && contextPosition < sendPosition)
   assert.doesNotMatch(markup, /aria-label="压缩当前会话上下文"|aria-label="自动压缩设置"/)
+})
+
+test('finished background jobs render as one clickable line without the stored details', () => {
+  const markup = renderChat([
+    {
+      id: 'wrapper-done',
+      role: 'warning',
+      content: 'Wrapper 运行已完成\n输出目录：/data/qc\n运行编号：wrun_abc',
+      backgroundJobNotice: { state: 'completed' }
+    }
+  ])
+
+  assert.match(markup, /<button[^>]*>Wrapper 运行已完成 · 查看后台任务<\/button>/)
+  assert.doesNotMatch(markup, /\/data\/qc|wrun_abc/)
 })
 
 test('chat timeline shows compaction method, token counts and expandable full summary', () => {

@@ -28,7 +28,7 @@ type FileSnapshot =
 export type WorkspaceChangeBaseline = {
   root: string
   scopeRoot: string
-  head: string
+  head: string | null
   before: Map<string, FileSnapshot>
 }
 
@@ -89,7 +89,8 @@ function absoluteGitPath(root: string, scopeRoot: string, name: string): string 
   return insideRoot(root, path) && insideRoot(scopeRoot, path) ? path : null
 }
 
-async function changedTrackedPaths(root: string, head: string): Promise<string[]> {
+async function changedTrackedPaths(root: string, head: string | null): Promise<string[]> {
+  if (!head) return names(await gitText(root, ['ls-files', '-z']))
   return names(
     await gitText(root, [
       'diff',
@@ -128,7 +129,12 @@ async function readSnapshot(path: string, budget: { remaining: number }): Promis
   }
 }
 
-async function readHeadSnapshot(root: string, head: string, name: string): Promise<FileSnapshot> {
+async function readHeadSnapshot(
+  root: string,
+  head: string | null,
+  name: string
+): Promise<FileSnapshot> {
+  if (!head) return { kind: 'missing' }
   try {
     const bytes = await gitBytes(root, ['show', `${head}:${name}`])
     return bytes.length > MAX_TEXT_BYTES
@@ -229,7 +235,10 @@ export async function beginWorkspaceChangeCapture(
     const startedAt = Date.now()
     const root = await realpath((await gitText(cwd, ['rev-parse', '--show-toplevel'])).trim())
     const scopeRoot = await realpath(cwd)
-    const head = (await gitText(root, ['rev-parse', '--verify', 'HEAD'])).trim()
+    const head = await gitText(root, ['rev-parse', '--verify', 'HEAD']).then(
+      (value) => value.trim(),
+      () => null
+    )
     const [tracked, untracked] = await Promise.all([
       changedTrackedPaths(root, head),
       untrackedPaths(root)

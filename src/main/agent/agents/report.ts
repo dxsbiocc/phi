@@ -70,8 +70,9 @@ export function parseAgentReport(value: string): AgentReport {
 }
 
 export const AGENT_REPORT_PROTOCOL = `<phi_agent_reporting>
-End your final response with one machine-readable metadata block followed by the concise report for the main agent:
+Begin your final response with one machine-readable metadata block followed by a useful report for the main agent:
 <phi_agent_result>{"status":"completed|partial|not_found|blocked|failed","missingInputs":[],"nextAgent":null,"fallbackReason":null}</phi_agent_result>
 
 Use completed only when the delegated goal is complete. Use partial when useful work exists but the task should be delegated again with more context. Use not_found when valid queries exhausted the relevant specialist data sources without a matching record. Use blocked when the required capability/source is unavailable or not installed. Use failed when the attempted specialist operation failed. Put the human-readable report outside the metadata block. Do not wrap the JSON in a Markdown code fence.
+For tasks that create or change files, put the file inventory near the start of the report so truncation cannot hide it. Distinguish new files from modified files, list the exact path of each user-facing result and important supporting file, explain what each contains, and say what was verified. A top-level folder alone is not a file inventory. If there are too many auxiliary files to list, identify the primary files individually and give an exact path to a complete inventory. Never claim files are archived, downloadable, or ready when that was not verified.
 </phi_agent_reporting>`

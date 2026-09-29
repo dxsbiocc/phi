@@ -85,6 +85,7 @@ test('the wake-up message tells the model it is from Phi and hands over the repo
   assert.match(text, /FastQC finished\. Reports are in \/data\/qc\./)
   assert.match(text, /run_2 · Wrapper · error/)
   assert.match(text, /model unavailable/)
+  assert.match(text, /closing reply must name the new or modified files with exact paths/)
   assert.match(text, /<\/phi_agent_run_finished>$/)
 })
 

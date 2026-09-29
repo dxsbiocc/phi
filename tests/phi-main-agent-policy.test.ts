@@ -66,6 +66,8 @@ test('Phi owns the main system identity while retaining OMP runtime instructions
   assert.match(rendered, /名字叫星河/)
   assert.match(rendered, /Keep this operational tool contract/)
   assert.match(rendered, /present_files/)
+  assert.match(rendered, /A parent directory alone is not a file list/)
+  assert.match(rendered, /delivery card supplements the closing reply/)
   assert.doesNotMatch(rendered, /assistant for load-bearing changes in Oh My Pi/i)
   assert.ok(rendered.indexOf('Phi') < rendered.indexOf('名字叫星河'))
 })

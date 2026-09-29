@@ -639,6 +639,7 @@ function App(): React.JSX.Element {
     onRespondAgentUserInteraction
   } = useSessionStore()
   const messages = agentEventState.messages
+  const [chatScrollPositionStore] = useState(() => new Map<string, number>())
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const compactingSessionKeysRef = useRef(new Set<string>())
   const [compactingSessions, setCompactingSessions] = useState<Set<string>>(() => new Set())
@@ -2549,6 +2550,9 @@ function App(): React.JSX.Element {
   const onToggleWorkspaceSidePanel = useCallback((mode: WorkspaceSidePanelMode): void => {
     setWorkspaceSidePanelMode((current) => toggleWorkspaceSidePanelMode(current, mode))
   }, [])
+  const onOpenBackgroundJobs = useCallback((): void => {
+    setWorkspaceSidePanelMode('jobs')
+  }, [])
   const onRefreshWorkspaceSidePanel = useCallback((): void => {
     setWorkspaceSidePanelTreeRevision((value) => value + 1)
   }, [])
@@ -3614,6 +3618,7 @@ function App(): React.JSX.Element {
           onImagesAdded={addInputImages}
           onRemoveImage={removeInputImage}
           scrollResetKey={activeChatScrollResetKey}
+          scrollPositionStore={chatScrollPositionStore}
           canSend={
             !isSessionChanging && !currentSessionIsBusy && !currentSessionIsCompacting && !isBusy
           }
@@ -3660,6 +3665,7 @@ function App(): React.JSX.Element {
           onStopGeneration={onStopGeneration}
           onAcknowledgeActiveSession={acknowledgeActiveSessionInteraction}
           onGoSettings={onGoProviderSettings}
+          onOpenBackgroundJobs={onOpenBackgroundJobs}
           permissionMode={activePermissionMode}
           onSelectPermissionMode={(mode) => {
             void onSelectPermissionMode(mode)

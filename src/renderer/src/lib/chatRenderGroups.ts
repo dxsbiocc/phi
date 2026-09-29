@@ -92,6 +92,12 @@ function isProcessingArtifact(message: ChatItem): boolean {
   )
 }
 
+function isTurnTailFileItem(
+  message: ChatItem
+): message is PresentedFilesItem | WorkspaceChangeSummaryItem {
+  return message.role === 'presented_files' || message.role === 'workspace_changes'
+}
+
 export function timestampMs(value?: string): number | null {
   if (!value) return null
   const timestamp = Date.parse(value)
@@ -180,6 +186,7 @@ export function groupMessages(
   const flushTurn = (activeTurn = false): void => {
     if (turnItems.length === 0) return
 
+    const turnTailFiles = turnItems.filter(isTurnTailFileItem)
     const runStartedAtMs = firstRunStartedAtMs(turnItems)
     const runCompletedAtMs = lastRunTerminalAtMs(turnItems)
     const runDurationMs = lastRunTerminalDurationMs(turnItems)
@@ -200,22 +207,38 @@ export function groupMessages(
       }
       groups.push(
         ...turnItems
-          .filter(isVisibleChatItem)
+          .filter(
+            (item): item is VisibleChatItem => isVisibleChatItem(item) && !isTurnTailFileItem(item)
+          )
           .map((item) => ({ kind: 'single' as const, key: item.id, item }))
       )
+      groups.push(...turnTailFiles.map((item) => ({ kind: 'single' as const, key: item.id, item })))
       turnItems = []
       return
     }
 
     const keepStreamingTextInProcessing = activeTurn && runCompletedAtMs === undefined
+    const earlyPersistentItems = keepStreamingTextInProcessing
+      ? []
+      : turnItems
+          .slice(0, lastProcessingIndex + 1)
+          .filter(
+            (item): item is VisibleChatItem =>
+              isVisibleChatItem(item) && !isProcessingItem(item) && !isTurnTailFileItem(item)
+          )
     const processingItems = keepStreamingTextInProcessing
       ? turnItems.filter(isProcessingItem)
       : turnItems.slice(0, lastProcessingIndex + 1).filter(isProcessingItem)
     const trailingItems = keepStreamingTextInProcessing
       ? turnItems.filter(
-          (item): item is VisibleChatItem => isVisibleChatItem(item) && !isProcessingItem(item)
+          (item): item is VisibleChatItem =>
+            isVisibleChatItem(item) && !isProcessingItem(item) && !isTurnTailFileItem(item)
         )
-      : turnItems.slice(lastProcessingIndex + 1).filter(isVisibleChatItem)
+      : turnItems
+          .slice(lastProcessingIndex + 1)
+          .filter(
+            (item): item is VisibleChatItem => isVisibleChatItem(item) && !isTurnTailFileItem(item)
+          )
     if (processingItems.length > 0 || runStartedAtMs !== undefined) {
       groups.push({
         kind: 'processing-group',
@@ -227,7 +250,13 @@ export function groupMessages(
       })
     }
 
-    groups.push(...trailingItems.map((item) => ({ kind: 'single' as const, key: item.id, item })))
+    groups.push(
+      ...[...earlyPersistentItems, ...trailingItems, ...turnTailFiles].map((item) => ({
+        kind: 'single' as const,
+        key: item.id,
+        item
+      }))
+    )
     turnItems = []
   }
 

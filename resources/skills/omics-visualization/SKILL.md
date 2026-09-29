@@ -210,6 +210,7 @@ to the bundled library as a second canonical template.
 
 ## Scientific integrity
 
+- For volcano plots, state the adjusted-p-value and absolute log2-fold-change cutoffs. Use the same values for point classification, cutoff lines, legend text, and any reported Up/Down counts. Keep padj-only differential-expression counts distinct from counts that also apply a fold-change cutoff; neither threshold is universal, so honor the user's values or disclose the selected template's values.
 - Do not invent sample sizes, statistical tests, p-values, adjusted p-values,
   effect sizes, uncertainty, group mappings, or biological interpretations.
 - Do not silently filter, aggregate, impute, clip, coerce, or sample data.
@@ -229,8 +230,9 @@ to the bundled library as a second canonical template.
   palette is too short; `palette_colors()` appends unused Qualitative then
   Brand colours. Do not use Artwork or Concept palettes unless the user
   asks for a decorative theme.
-- Plot canvases are transparent. A dark editor makes empty alpha look black;
-  that is not a black background and must not be “fixed.”
+- Plot canvases default transparent; dark viewers may show black alpha. For a
+  newly rendered figure with hidden dark labels, export a white-backed PNG
+  preview and retain vector PDF/SVG. Never re-render shipped example PNGs.
 
 ## Delivery
 
