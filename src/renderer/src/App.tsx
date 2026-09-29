@@ -3453,6 +3453,22 @@ function App(): React.JSX.Element {
     ]
   )
 
+  const onRemoveMcpServer = useCallback(
+    async (server: McpServerSummary): Promise<void> => {
+      if (!server.managed || !server.url) throw new Error('此连接器不能从 Phi 中移除')
+      await window.api.removeRemoteMcpConnector(server.name, server.url)
+      await refreshMcpServers()
+      showSnackbar('已移除连接器', 'success')
+      if (
+        activeWorkspaceResourceTab?.kind === 'mcp' &&
+        activeWorkspaceResourceTab.itemId === server.id
+      ) {
+        onCloseWorkspaceTab(activeWorkspaceResourceTab)
+      }
+    },
+    [activeWorkspaceResourceTab, onCloseWorkspaceTab, refreshMcpServers, showSnackbar]
+  )
+
   const onStartSidebarResize = useCallback((event: MouseEvent<HTMLDivElement>): void => {
     event.preventDefault()
 
@@ -3571,7 +3587,7 @@ function App(): React.JSX.Element {
         onDeleteSkill={onDeleteSkill}
       />
     ) : activeWorkspaceResourceTab.kind === 'mcp' ? (
-      <McpDetail selectedServer={activeResourceMcpServer} />
+      <McpDetail selectedServer={activeResourceMcpServer} onRemoveServer={onRemoveMcpServer} />
     ) : activeWorkspaceResourceTab.kind === 'wrappers' ? (
       <WrapperDetail
         catalog={wrapperCatalog}

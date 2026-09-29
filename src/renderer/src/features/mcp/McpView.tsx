@@ -10,7 +10,6 @@ import {
   InputAdornment,
   List,
   ListItemButton,
-  ListItemText,
   Stack,
   TextField,
   Typography
@@ -27,10 +26,9 @@ import {
 } from '../../../../shared/mcpConnectorCatalog'
 import { McpConnectorCatalogDialog } from './components/McpConnectorCatalogDialog'
 import { ConnectorIcon } from './components/ConnectorIcon'
+import { McpDetailPanel as McpDetail, type McpDetailPanelProps } from './components/McpDetailPanel'
 
-const McpIcon = PhiIcons.entity.mcp
 const SearchIcon = PhiIcons.action.search
-const TerminalIcon = PhiIcons.tool.command
 const ExpandIcon = PhiIcons.action.expand
 
 type SidebarWidth = number | string
@@ -51,9 +49,7 @@ export type McpSidebarProps = {
   onRefreshServers?: () => Promise<void>
 }
 
-export type McpDetailProps = {
-  selectedServer: McpServerSummary | null
-}
+export type McpDetailProps = McpDetailPanelProps
 
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 const macTitlebarHeight = 44
@@ -149,10 +145,6 @@ const discoverButtonSx = (theme: Theme): SystemStyleObject<Theme> => {
   }
 }
 
-function commandLine(server: McpServerSummary): string {
-  return [server.command, ...(server.args ?? [])].filter(Boolean).join(' ')
-}
-
 function selectedServerFromList(
   servers: McpServerSummary[],
   activeServerId: string | null
@@ -160,8 +152,15 @@ function selectedServerFromList(
   return servers.find((server) => server.id === activeServerId) ?? null
 }
 
+function featuredConnectorForServer(server: McpServerSummary): FeaturedMcpConnector | undefined {
+  return featuredMcpConnectors.find(
+    (connector) =>
+      connector.url === server.url && (!connector.apiKey || connector.id === server.name)
+  )
+}
+
 function serverCategory(server: McpServerSummary): string {
-  return featuredMcpConnectors.find((connector) => connector.url === server.url)?.category ?? '其他'
+  return featuredConnectorForServer(server)?.category ?? '其他'
 }
 
 function managedApiKeyConnector(server: McpServerSummary): FeaturedMcpConnector | undefined {
@@ -410,26 +409,32 @@ export function McpSidebar({
                       setExpandedCategory(group.category)
                       onSelectServer(server)
                     }}
-                    sx={plainSidebarRowSx}
+                    sx={{ ...plainSidebarRowSx, alignItems: 'center' }}
                   >
                     <Box sx={{ mr: 1.25 }}>
                       <ConnectorIcon url={server.url} size={34} />
                     </Box>
-                    <ListItemText
-                      primary={server.name}
-                      secondary={`${server.enabled === false ? (managedApiKeyConnector(server) ? '本地密钥配置 · ' : '已停用 · ') : ''}${server.url || server.command || server.sourcePath || ''}`}
-                      slotProps={{
-                        primary: { noWrap: true, sx: { fontSize: '0.9rem', fontWeight: 600 } },
-                        secondary: {
-                          sx: {
-                            fontSize: '0.8rem',
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                            overflow: 'hidden'
-                          }
-                        }
-                      }}
+                    <Typography
+                      variant="body2"
+                      noWrap
+                      sx={{ flex: 1, minWidth: 0, fontWeight: 600 }}
+                    >
+                      {featuredConnectorForServer(server)?.name ?? server.name}
+                    </Typography>
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      color={
+                        server.enabled === false && !managedApiKeyConnector(server)
+                          ? 'warning'
+                          : 'success'
+                      }
+                      label={
+                        server.enabled === false && !managedApiKeyConnector(server)
+                          ? '已停用'
+                          : '已配置'
+                      }
+                      sx={{ ml: 1, flexShrink: 0 }}
                     />
                   </ListItemButton>
                 ))}
@@ -450,94 +455,7 @@ export function McpSidebar({
   )
 }
 
-export function McpDetail({ selectedServer }: McpDetailProps): React.JSX.Element {
-  const catalogConnector = selectedServer
-    ? featuredMcpConnectors.find((entry) => entry.url === selectedServer.url)
-    : undefined
-  return (
-    <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-      {selectedServer ? (
-        <Box sx={{ maxWidth: 860, px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
-          <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
-            <ConnectorIcon url={selectedServer.url} size={72} />
-            <Box sx={{ minWidth: 0, flex: 1 }}>
-              <Typography variant="h4" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
-                {selectedServer.name}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                {selectedServer.sourcePath ?? '本地配置'}
-              </Typography>
-              <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
-                <Chip size="small" color="success" label="已配置" />
-                {managedApiKeyConnector(selectedServer) && (
-                  <Chip size="small" variant="outlined" label="本地 API key" />
-                )}
-                {selectedServer.url && <Chip size="small" variant="outlined" label="远程 MCP" />}
-                {selectedServer.envKeys?.length ? (
-                  <Chip
-                    size="small"
-                    variant="outlined"
-                    label={`${selectedServer.envKeys.length} 个环境变量`}
-                  />
-                ) : null}
-              </Stack>
-            </Box>
-          </Stack>
-
-          {catalogConnector && (
-            <Typography color="text.secondary" sx={{ mt: 3 }}>
-              {catalogConnector.overview}
-            </Typography>
-          )}
-
-          <Divider sx={{ my: 4 }} />
-
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
-            <TerminalIcon fontSize="small" color="action" />
-            <Typography variant="h6" sx={{ fontWeight: 700 }}>
-              {selectedServer.url ? 'MCP 地址' : '命令'}
-            </Typography>
-          </Stack>
-          <Typography
-            component="code"
-            sx={{
-              display: 'block',
-              width: 'fit-content',
-              maxWidth: '100%',
-              px: 1.25,
-              py: 1,
-              borderRadius: 1,
-              bgcolor: 'action.hover',
-              overflowWrap: 'anywhere',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '0.88rem'
-            }}
-          >
-            {selectedServer.url || commandLine(selectedServer) || '未配置命令'}
-          </Typography>
-
-          {selectedServer.envKeys?.length ? (
-            <>
-              <Typography variant="h6" sx={{ fontWeight: 700, mt: 4, mb: 1 }}>
-                环境变量
-              </Typography>
-              <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
-                {selectedServer.envKeys.map((key) => (
-                  <Chip key={key} size="small" variant="outlined" label={key} />
-                ))}
-              </Stack>
-            </>
-          ) : null}
-        </Box>
-      ) : (
-        <Stack spacing={1} sx={{ height: '100%', alignItems: 'center', justifyContent: 'center' }}>
-          <McpIcon color="disabled" />
-          <Typography color="text.secondary">没有找到 MCP 服务器</Typography>
-        </Stack>
-      )}
-    </Box>
-  )
-}
+export { McpDetail }
 
 export default function McpView({
   servers,

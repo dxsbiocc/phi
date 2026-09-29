@@ -20,26 +20,21 @@ import {
 } from '../../../../../shared/mcpConnectorCatalog'
 import { PhiIcons } from '../../../icons'
 import type { McpServerSummary } from '../../../types'
+import {
+  cacheFeaturedToolNames,
+  cachedFeaturedToolNames,
+  clearFeaturedToolNames
+} from '../lib/featuredToolCache'
 import { ConnectorIcon } from './ConnectorIcon'
 import { McpApiKeyDialog } from './McpApiKeyDialog'
 import { McpFeaturedConnectorCard, type ConnectorAuthStatus } from './McpFeaturedConnectorCard'
-import { McpToolList } from './McpToolList'
+import { McpFeaturedConnectorDetails } from './McpFeaturedConnectorDetails'
 
 type CatalogPage = 'list' | 'detail' | 'custom'
 type CatalogGroup = '已配置' | (typeof mcpConnectorCategories)[number]
-const TOOL_LIST_CACHE_MS = 5 * 60_000
 const authConnectors = featuredMcpConnectors.filter(
   (connector) => connector.oauthAuthorizationOrigin || connector.apiKey
 )
-type CachedToolNames = { names: string[]; expiresAt: number }
-
-function freshTools(entry: CachedToolNames | undefined): entry is CachedToolNames {
-  return Boolean(entry && entry.expiresAt > Date.now())
-}
-
-function cacheTools(names: string[]): CachedToolNames {
-  return { names, expiresAt: Date.now() + TOOL_LIST_CACHE_MS }
-}
 
 function apiKeyErrorMessage(cause: unknown): string {
   const message = cause instanceof Error ? cause.message : String(cause)
@@ -87,13 +82,12 @@ export function McpConnectorCatalogDialog({
   const [toolsError, setToolsError] = useState<string | null>(null)
   const [authStatusById, setAuthStatusById] = useState<Record<string, ConnectorAuthStatus>>({})
   const toolRequestRef = useRef(0)
-  const toolListCacheRef = useRef(new Map<string, CachedToolNames>())
 
   useEffect(() => {
     if (!open) return
     let active = true
     for (const connector of authConnectors) {
-      const cachedTools = toolListCacheRef.current.get(connector.id)
+      const cachedTools = cachedFeaturedToolNames(connector.id)
       const status = connector.apiKey
         ? typeof window.api.getFeaturedMcpApiKeyStatus === 'function'
           ? window.api.getFeaturedMcpApiKeyStatus(connector.id)
@@ -101,10 +95,10 @@ export function McpConnectorCatalogDialog({
         : connector.oauthAuthorizationOrigin &&
             typeof window.api.getFeaturedMcpAuthStatus === 'function'
           ? window.api.getFeaturedMcpAuthStatus(connector.id)
-          : freshTools(cachedTools)
+          : cachedTools !== null
             ? Promise.resolve(true)
             : window.api.listFeaturedMcpTools(connector.id).then((names) => {
-                toolListCacheRef.current.set(connector.id, cacheTools(names))
+                cacheFeaturedToolNames(connector.id, names)
                 return true
               })
       void status
@@ -194,7 +188,7 @@ export function McpConnectorCatalogDialog({
       const connector = featuredMcpConnectors.find(
         (entry) => entry.url === server.url && (!entry.apiKey || entry.id === server.name)
       )
-      if (connector) toolListCacheRef.current.delete(connector.id)
+      if (connector) clearFeaturedToolNames(connector.id)
       if (connector?.apiKey) {
         toolRequestRef.current += 1
         setToolNames(null)
@@ -224,13 +218,13 @@ export function McpConnectorCatalogDialog({
     try {
       await window.api.authorizeFeaturedMcp(connector.id)
       setAuthStatusById((current) => ({ ...current, [connector.id]: 'authenticated' }))
-      toolListCacheRef.current.delete(connector.id)
+      clearFeaturedToolNames(connector.id)
       if (!matchingServer(connector, servers)) {
         await window.api.addRemoteMcpConnector(connector.id, connector.url)
         await onRefresh()
       }
       const names = await window.api.listFeaturedMcpTools(connector.id)
-      toolListCacheRef.current.set(connector.id, cacheTools(names))
+      cacheFeaturedToolNames(connector.id, names)
       setToolNames(names)
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause)
@@ -269,7 +263,7 @@ export function McpConnectorCatalogDialog({
         setApiKeyInput('')
         setAuthStatusById((current) => ({ ...current, [connector.id]: 'authenticated' }))
       }
-      toolListCacheRef.current.delete(connector.id)
+      clearFeaturedToolNames(connector.id)
       if (!matchingServer(connector, servers)) {
         await window.api.addRemoteMcpConnector(connector.id, connector.url)
         await onRefresh()
@@ -278,7 +272,7 @@ export function McpConnectorCatalogDialog({
       const request = ++toolRequestRef.current
       try {
         const names = await window.api.listFeaturedMcpTools(connector.id)
-        toolListCacheRef.current.set(connector.id, cacheTools(names))
+        cacheFeaturedToolNames(connector.id, names)
         if (
           request === toolRequestRef.current &&
           page === 'detail' &&
@@ -317,10 +311,10 @@ export function McpConnectorCatalogDialog({
       setToolsLoading(false)
       return
     }
-    if (refresh) toolListCacheRef.current.delete(connector.id)
-    const cached = toolListCacheRef.current.get(connector.id)
-    if (freshTools(cached)) {
-      setToolNames(cached.names)
+    if (refresh) clearFeaturedToolNames(connector.id)
+    const cached = cachedFeaturedToolNames(connector.id)
+    if (cached !== null) {
+      setToolNames(cached)
       setToolsLoading(false)
       return
     }
@@ -334,7 +328,7 @@ export function McpConnectorCatalogDialog({
       .listFeaturedMcpTools(connector.id)
       .then((names) => {
         if (request === toolRequestRef.current) {
-          toolListCacheRef.current.set(connector.id, cacheTools(names))
+          cacheFeaturedToolNames(connector.id, names)
           setToolNames(names)
         }
       })
@@ -560,203 +554,23 @@ export function McpConnectorCatalogDialog({
           <Divider />
           <Box sx={{ flex: 1, overflowY: 'auto', px: 3, py: 3 }}>
             {page === 'detail' && selected ? (
-              <>
-                <Stack
-                  direction={{ xs: 'column', sm: 'row' }}
-                  spacing={2}
-                  sx={{ alignItems: 'center', mb: 4 }}
-                >
-                  <ConnectorIcon connectorId={selected.id} />
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography variant="h4" sx={{ fontWeight: 700 }}>
-                      {selected.name}
-                    </Typography>
-                    <Typography color="text.secondary">{selected.description}</Typography>
-                  </Box>
-                  {selected.apiKey ? (
-                    <Stack direction="row" spacing={1}>
-                      {matchingServer(selected, servers) ? (
-                        <>
-                          <Button
-                            variant="outlined"
-                            disabled={busy !== null}
-                            onClick={() => openApiKeyDialog(selected)}
-                          >
-                            更换密钥
-                          </Button>
-                          {matchingServer(selected, servers)?.managed && (
-                            <Button
-                              color="error"
-                              variant="outlined"
-                              disabled={busy !== null}
-                              onClick={() => void remove(matchingServer(selected, servers)!)}
-                            >
-                              移除
-                            </Button>
-                          )}
-                        </>
-                      ) : (
-                        <Button
-                          variant="contained"
-                          disabled={busy !== null}
-                          onClick={() => openApiKeyDialog(selected)}
-                        >
-                          添加连接器
-                        </Button>
-                      )}
-                    </Stack>
-                  ) : selected.oauthAuthorizationOrigin ? (
-                    <Stack direction="row" spacing={1}>
-                      {selectedAuthStatus === 'authenticated' &&
-                      !matchingServer(selected, servers) ? (
-                        <Button
-                          variant="contained"
-                          disabled={busy !== null}
-                          onClick={() => void add(selected.id, selected.url)}
-                        >
-                          添加连接器
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="contained"
-                          disabled={busy !== null || selectedAuthStatus === 'checking'}
-                          onClick={() => void connectOAuth(selected)}
-                        >
-                          {selectedAuthStatus === 'authenticated' ? '重新授权' : '授权登录'}
-                        </Button>
-                      )}
-                      {matchingServer(selected, servers)?.managed && (
-                        <Button
-                          color="error"
-                          variant="outlined"
-                          disabled={busy !== null}
-                          onClick={() => void remove(matchingServer(selected, servers)!)}
-                        >
-                          移除
-                        </Button>
-                      )}
-                    </Stack>
-                  ) : matchingServer(selected, servers)?.managed ? (
-                    <Button
-                      color="error"
-                      variant="outlined"
-                      disabled={busy !== null}
-                      onClick={() => void remove(matchingServer(selected, servers)!)}
-                    >
-                      移除
-                    </Button>
-                  ) : selected.signIn === '需要登录' && !matchingServer(selected, servers) ? (
-                    <Button variant="outlined" disabled>
-                      授权登录暂不可用
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="contained"
-                      disabled={Boolean(matchingServer(selected, servers)) || busy !== null}
-                      onClick={() => void add(selected.id, selected.url)}
-                    >
-                      {matchingServer(selected, servers) ? '已配置' : '添加连接器'}
-                    </Button>
-                  )}
-                </Stack>
-                {selected.signIn === '需要登录' && !selected.oauthAuthorizationOrigin && (
-                  <Alert severity="warning" sx={{ mb: 3 }}>
-                    {selected.id === 'gmail'
-                      ? 'Gmail MCP 需要先在 Google Cloud 启用服务并为 Phi 配置 OAuth 客户端。Phi 目前尚未提供该配置，暂不能从目录授权或添加。'
-                      : selected.id === 'slack'
-                        ? 'Slack MCP 需要预先注册 Slack 应用并配置 OAuth 客户端。Phi 目前尚未提供该流程，暂不能从目录授权或添加。'
-                        : '此服务需要 OAuth 登录。Phi 尚未接入该授权流程，暂不能从目录添加使用。'}
-                  </Alert>
-                )}
-                {selected.id === 'composio' && (
-                  <Alert severity="info" sx={{ mb: 3 }}>
-                    登录 Composio 后，可在使用具体应用时逐个授权。第三方账号由 Composio 管理。
-                  </Alert>
-                )}
-                <Box sx={{ mb: 3 }}>
-                  <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
-                    服务介绍
-                  </Typography>
-                  <Typography color="text.secondary">{selected.overview}</Typography>
-                </Box>
-                {selected.apiKey && (
-                  <Alert severity="info" sx={{ mb: 3 }}>
-                    {selectedAuthStatus === 'authenticated'
-                      ? 'API key 已通过验证并加密保存在本机。需要更换时，点击右上角的「更换密钥」。'
-                      : '此连接器需要 API key。点击右上角的「添加连接器」进行验证和保存。'}
-                  </Alert>
-                )}
-                <McpToolList
-                  requiresSignIn={
-                    (selected.signIn === '需要登录' && !selected.oauthAuthorizationOrigin) ||
-                    Boolean(selected.apiKey && selectedAuthStatus !== 'authenticated')
-                  }
-                  signInMessage={
-                    selected.apiKey ? '验证并添加 API key 后可读取服务端工具。' : undefined
-                  }
-                  loading={toolsLoading}
-                  names={toolNames}
-                  error={toolsError}
-                  onRetry={() => openDetail(selected, true)}
-                />
-                <Divider sx={{ mb: 3 }} />
-                <Box
-                  sx={{
-                    display: 'grid',
-                    gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
-                    gap: 2
-                  }}
-                >
-                  <Box>
-                    <Typography variant="overline" color="text.secondary">
-                      提供方
-                    </Typography>
-                    <Typography>{selected.publisher}</Typography>
-                  </Box>
-                  <Box>
-                    <Typography variant="overline" color="text.secondary">
-                      MCP 地址
-                    </Typography>
-                    <Typography sx={{ overflowWrap: 'anywhere', fontFamily: 'monospace' }}>
-                      {selected.url}
-                    </Typography>
-                  </Box>
-                  <Box>
-                    <Typography variant="overline" color="text.secondary">
-                      类别
-                    </Typography>
-                    <Typography>{selected.category}</Typography>
-                  </Box>
-                  <Box>
-                    <Typography variant="overline" color="text.secondary">
-                      登录
-                    </Typography>
-                    <Typography>
-                      {selected.apiKey && selectedAuthStatus === 'authenticated'
-                        ? 'API key 已验证'
-                        : selected.oauthAuthorizationOrigin &&
-                            selectedAuthStatus === 'authenticated'
-                          ? '已登录'
-                          : selected.signIn}
-                    </Typography>
-                  </Box>
-                  <Box>
-                    <Typography variant="overline" color="text.secondary">
-                      更多信息
-                    </Typography>
-                    <Button
-                      component="a"
-                      href={selected.homepageUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      size="small"
-                      sx={{ pl: 0 }}
-                    >
-                      连接器说明 ↗
-                    </Button>
-                  </Box>
-                </Box>
-              </>
+              <McpFeaturedConnectorDetails
+                connector={selected}
+                server={matchingServer(selected, servers)}
+                authStatus={selectedAuthStatus}
+                busy={busy !== null}
+                toolNames={toolNames}
+                toolsLoading={toolsLoading}
+                toolsError={toolsError}
+                onAdd={() => void add(selected.id, selected.url)}
+                onRemove={() => {
+                  const server = matchingServer(selected, servers)
+                  if (server) void remove(server)
+                }}
+                onAuthorize={() => void connectOAuth(selected)}
+                onApiKey={() => openApiKeyDialog(selected)}
+                onRetry={() => openDetail(selected, true)}
+              />
             ) : page === 'custom' ? (
               <Stack spacing={2} sx={{ maxWidth: 620 }}>
                 <Typography variant="h5" sx={{ fontWeight: 700 }}>

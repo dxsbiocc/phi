@@ -3,7 +3,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ThemeProvider, createTheme } from '@mui/material/styles'
 import test from 'node:test'
-import { McpSidebar } from '../src/renderer/src/features/mcp/McpView'
+import { McpDetail, McpSidebar } from '../src/renderer/src/features/mcp/McpView'
 import type { McpServerSummary } from '../src/renderer/src/features/mcp/lib/mcpTypes'
 
 test('connector sidebar groups installed services and labels disabled entries', () => {
@@ -48,6 +48,8 @@ test('connector sidebar groups installed services and labels disabled entries', 
   assert.match(markup, /已停用/)
   assert.match(markup, /google-drive\.svg/)
   assert.match(markup, /pubmed\.svg/)
+  assert.doesNotMatch(markup, /https:\/\/pubmed\.mcp\.claude\.com\/mcp/)
+  assert.doesNotMatch(markup, /https:\/\/drivemcp\.googleapis\.com\/mcp\/v1/)
 })
 
 test('closing the connector detail leaves no installed row selected', () => {
@@ -78,4 +80,29 @@ test('closing the connector detail leaves no installed row selected', () => {
   )
 
   assert.equal(markup.match(/class="[^"]*Mui-selected[^"]*"/g)?.length ?? 0, 0)
+})
+
+test('installed connector detail retains its catalog introduction and MCP address', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(McpDetail, {
+        selectedServer: {
+          id: 'open-targets',
+          name: 'open-targets',
+          url: 'https://mcp.platform.opentargets.org/mcp',
+          sourcePath: '/tmp/mcp.json',
+          managed: true,
+          status: 'configured'
+        },
+        onRemoveServer: async () => undefined
+      })
+    )
+  )
+  assert.match(markup, /Open Targets Platform 整合公开数据/)
+  assert.match(markup, /https:\/\/mcp\.platform\.opentargets\.org\/mcp/)
+  assert.match(markup, /\/tmp\/mcp\.json/)
+  assert.match(markup, /移除/)
+  assert.match(markup, /服务端工具/)
 })
