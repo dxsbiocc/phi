@@ -23,11 +23,14 @@ row says bioconda.
 
 ## Summary
 
+The `docx` and `scvi-tools` skills were removed on 2026-09-29 (`docx`: npm
+`docx` has no conda package; `scvi-tools`: pulls PyTorch) and may return
+later with their own environments.
+
 ### `phi-python`
 
-Python 3.12 or newer. scanpy 1.12 and the conda-forge `scvi-tools` 1.5.1
-build both require it (`resources/skills/scanpy/SKILL.md` line 17;
-`scvi-tools` depends on `python >=3.12`).
+Python 3.12 or newer. scanpy 1.12 requires it
+(`resources/skills/scanpy/SKILL.md` line 17).
 
 Union of non-visualization skill needs, plus the tools named in step 3.2.
 Packages already pulled in by `scanpy` or `markitdown` on conda-forge are
@@ -36,13 +39,12 @@ still listed when a skill imports or documents them.
 | Conda package | Why it is in the union | Channel |
 |---|---|---|
 | `python` (>=3.12), `ipykernel` | interpreter; step 5.3 default Python kernel | conda-forge, all three |
-| `nodejs` | `docx` / `pptxgenjs` JS generation (see Node packages) | conda-forge, all three |
-| `pandoc` | `docx` SKILL.md text extraction | conda-forge, all three |
-| `poppler` | `pdftoppm` (pptx script; docx and pdf SKILL.md) | conda-forge, all three |
+| `nodejs` | `pptx` JS generation via `pptxgenjs` (that package depends on `nodejs`) | conda-forge, all three |
+| `poppler` | `pdftoppm` (pptx script; pdf SKILL.md) | conda-forge, all three |
 | `tesseract` | markitdown SKILL.md OCR troubleshooting | conda-forge and bioconda, all three |
-| `git` | office redlining validator | conda-forge, all three |
+| `git` | `pptx` and `xlsx` redlining validators (`scripts/office/validators/redlining.py`) | conda-forge, all three |
 | `coreutils` | `timeout` / `gtimeout` in `xlsx` recalc. Binary names unverified | conda-forge, all three |
-| `defusedxml`, `lxml`, `openpyxl`, `pillow` | docx / pptx / xlsx scripts | conda-forge, all three |
+| `defusedxml`, `lxml`, `openpyxl`, `pillow` | pptx (`defusedxml`, `lxml`, `pillow`) and xlsx (`defusedxml`, `lxml`, `openpyxl`) | conda-forge, all three |
 | `markitdown`, `requests`, `openai`, `python-dotenv` | markitdown scripts | conda-forge, all three |
 | `numpy`, `scipy`, `pandas`, `matplotlib`, `scikit-learn` | matplotlib, scikit-learn, scanpy, scvelo scripts | conda-forge, all three |
 | `rdkit` | rdkit scripts | conda-forge, all three |
@@ -57,7 +59,8 @@ still listed when a skill imports or documents them.
 | `shap` | shap skill | conda-forge, all three |
 | `pysam` | pysam skill | bioconda only, all three |
 | `scikit-survival` | scikit-survival skill (`import sksurv`) | conda-forge, all three |
-| `scvi-tools` | scvi-tools skill. Pulls `pytorch` | both channels, all three |
+
+`pandoc` is not in the union. Only the removed `docx` skill documented it.
 
 conda-forge `markitdown` 0.1.8 (noarch) already depends on `requests`,
 `pandas`, `lxml`, `openpyxl`, `defusedxml`, `beautifulsoup4`, `python-pptx`,
@@ -69,7 +72,7 @@ conda-forge `scanpy` 1.12.4 (noarch) already depends on `anndata`, `numpy`,
 `h5py`, `numba`, `umap-learn`, and `statsmodels`. It does not depend on
 `leidenalg`, `python-igraph`, `harmonypy`, or `bbknn`.
 
-Not proposed for `phi-python`: `scvi-tools[cuda]`, `anndata[dask,lazy]`,
+Not proposed for `phi-python`: `anndata[dask,lazy]`,
 `scanpy` plus `dask`, `rapids-singlecell`, and example-only installs in skill
 references (`category-encoders`, `imbalanced-learn`, a direct `umap-learn`
 install, `geopandas`, `momepy`, `plotly`, `pyvis`). `umap-learn` still arrives
@@ -132,7 +135,12 @@ Current executables, not a full lock:
 - `phi-nextflow`: bioconda `nextflow` (noarch, all three). The 26.04.6 build
   depends on `openjdk >=17,<26`, `coreutils`, and `curl`. The executor spawns
   `nextflow`, not `java`; Java is required because Nextflow is a JVM program
-  (`executor.ts` lines 133–135).
+  (`executor.ts` lines 133–135). Proposed in the same environment: bioconda
+  `nf-core` 4.1.0 and `nf-test` 0.9.5 (noarch). They solve on osx-arm64 with
+  `nextflow` 26.04.6: 167 packages, 378 MB total download, versus 19 packages
+  / 261 MB for `nextflow` alone. The nextflow skill documents both
+  (`SKILL.md` lines 43–49; nf-test in `references/testing.md`), and wrapper
+  module tests (`tests/main.nf.test`) are nf-test suites.
 - `phi-jupyter`: conda-forge `jupyter_server` (noarch, all three). It depends
   on `jupyter_core`, which provides the `jupyter` command the notebook
   spawns. Kernels stay in the analysis environments: `ipykernel` in
@@ -157,21 +165,18 @@ package; that filename was not verified by listing the archive.
 
 ### Open questions
 
-1. **`docx` (docx-js).** `resources/skills/docx/SKILL.md` line 59 tells the
-   agent to `npm install -g docx` and line 69 does `require('docx')`. There
-   is no `.js` file in the skill. No conda-forge or bioconda package named
-   `docx` or `node-docx` on osx-arm64. `pptxgenjs` is different: conda-forge
-   `pptxgenjs` 4.0.1 is noarch, depends on `nodejs`, and is on all three
-   platforms (`resources/skills/pptx/SKILL.md` line 231).
+1. **`docx` (docx-js).** Resolved on 2026-09-29 by removing the skill. npm
+   `docx` has no conda package. The skill may return later in its own
+   environment. `pptxgenjs` is different: conda-forge `pptxgenjs` 4.0.1 is
+   noarch, depends on `nodejs`, and is on all three platforms
+   (`resources/skills/pptx/SKILL.md` line 231).
 2. **Seven R packages have no conda build** (table above). A `viz` lock
    cannot cover those templates until they are packaged or vendored.
    `scripts/lib/common.R` lines 246–248 also say ggideogram 0.1.0 calls a
    ggplot2 internal that ggplot2 4.x removed. conda-forge `r-ggplot2` latest
    on the day of this search was 4.0.3.
-3. **`scvi-tools` in the shared env.** It is a real skill dependency and it
-   pulls PyTorch. Step 3.6 does not migrate it with the first `phi-python`
-   skills. A separate environment is the smaller lock; the union above is
-   what "all non-visualization skills" contains.
+3. **`scvi-tools` in the shared env.** Resolved on 2026-09-29 by removing
+   the skill. It pulls PyTorch. It may return later in its own environment.
 4. **Scanpy R interop is documented, not shipped.**
    `resources/skills/scanpy/references/r_interop.md` tells the agent to
    `Rscript` a conversion that needs `zellkonverter`, `SingleCellExperiment`,
@@ -184,9 +189,18 @@ package; that filename was not verified by listing the archive.
    present; whether `eng.traineddata` is inside it is unverified.
 6. **`coreutils` binary names** on macOS (`timeout` vs `gtimeout`) are
    unverified.
-7. **`nf-core` and `nf-test`** are documented by the nextflow skill, which
-   has no scripts. Both packages exist on osx-64 and linux-64 and were absent
-   on osx-arm64. Not part of `phi-python`.
+7. **`nf-core` and `nf-test`** are noarch on bioconda and solve on osx-arm64
+   together with `nextflow` 26.04.6. micromamba 2.1.1 requires a target
+   prefix (`-p`); the solve is otherwise the command below. Result: 167
+   packages, 378 MB total download, versus 19 packages / 261 MB for
+   `nextflow` alone. Versions: `nf-core` 4.1.0, `nf-test` 0.9.5. Proposed
+   contents of `phi-nextflow`, not `phi-python`. The nextflow skill and
+   wrapper module tests (`tests/main.nf.test`) use them.
+
+   ```text
+   micromamba create --no-rc --override-channels -c conda-forge -c bioconda \
+     --platform osx-arm64 --dry-run -p <prefix> nextflow nf-core nf-test
+   ```
 
 ## How the counts were produced
 
@@ -268,31 +282,6 @@ Standard-library imports and a skill's own modules are omitted below
 `route_template`).
 
 ## Skills
-
-### `docx` (15 Python files)
-
-**Python:** `defusedxml`, `lxml`.
-
-- `scripts/comment.py:23` — `import defusedxml.minidom`
-- `scripts/office/validators/base.py:8` — `import defusedxml.minidom`
-- `scripts/office/validators/base.py:9` — `import lxml.etree`
-
-The same pair is imported from the other `scripts/office/**` files in this
-skill. No pandas, no Node, no Pillow.
-
-**External commands:**
-
-| Command | Evidence | Conda |
-|---|---|---|
-| `soffice` | `scripts/office/soffice.py:37` `subprocess.run(["soffice"] + args, ...)`; `scripts/accept_changes.py:101` | host |
-| `gcc` | `scripts/office/soffice.py:60` `["gcc", "-shared", "-fPIC", "-o", ...]` | host; see summary |
-| `git` | `scripts/office/validators/redlining.py:140` `["git", "diff", ...]` | `git`, all three |
-
-**Documented in SKILL.md, not spawned by a script:**
-
-- `pandoc` — line 34, `pandoc --track-changes=all`
-- `pdftoppm` — line 44
-- Node package `docx` — lines 59 and 69, `npm install -g docx`, `require('docx')`
 
 ### `pptx` (16 Python files)
 
@@ -591,8 +580,7 @@ or `markitdown`.
 | `shap` | `SKILL.md:542` `uv pip install shap` | `shap` | all three |
 | `pysam` | `SKILL.md:30` `uv pip install pysam` | `pysam` | all three, bioconda only |
 | `scikit-survival` | examples `from sksurv...` (`SKILL.md:90`). No install line | `scikit-survival` (import `sksurv`) | all three |
-| `scvi-tools` | `SKILL.md:179` `uv pip install scvi-tools` | `scvi-tools` | all three. Depends on `pytorch` |
-| `nextflow` | `SKILL.md:48` `pip install nf-core` or `conda install -c bioconda nf-core` | `nf-core`, `nf-test` | osx-64 and linux-64 only; absent on osx-arm64 |
+| `nextflow` | `SKILL.md:48` `pip install nf-core` or `conda install -c bioconda nf-core` | `nf-core`, `nf-test` | all three. Proposed in `phi-nextflow` |
 | `pdf` | see the pdf section | `reportlab`, `pdfplumber`, `pypdf`, `poppler` | all three |
 | `create-database-connector`, `create-wrapper` | authoring docs for this repository (`node`, `npm`, `git`). Not skill runtime packages | — | — |
 
