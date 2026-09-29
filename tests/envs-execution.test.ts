@@ -225,7 +225,9 @@ test('environmentVariables applies sources in order and builds an isolated PATH'
     assert.equal(variables.DYLD_LIBRARY_PATH, undefined)
     assert.equal(
       variables.PATH,
-      [bin, shared, '/usr/bin', '/opt/libreoffice/program', '/bin', '/usr/sbin', '/sbin'].join(':')
+      // Activation entries outside the prefix (`shared`, `/usr/bin`) are dropped; `shared` comes
+      // back only as the directory of the `magick` host dependency.
+      [bin, '/opt/libreoffice/program', shared, '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(':')
     )
     for (const name of ['matplotlib', 'numba', 'xdg']) {
       assert.equal(statSync(join(cache, name)).isDirectory(), true)

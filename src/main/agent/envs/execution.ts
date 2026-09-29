@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { accessSync, constants, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 
 import Ajv from 'ajv'
@@ -128,7 +128,12 @@ function runtimeRoot(prefix: string): string {
   return dirname(dirname(prefix))
 }
 
-function environmentPath(metadata: EnvMetadata): string {
+function isInsideDirectory(entry: string, directory: string): boolean {
+  const relativePath = relative(directory, entry)
+  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))
+}
+
+function environmentPath(prefix: string, metadata: EnvMetadata): string {
   const entries: string[] = []
   const seen = new Set<string>()
   const add = (entry: string): void => {
@@ -136,7 +141,11 @@ function environmentPath(metadata: EnvMetadata): string {
     seen.add(entry)
     entries.push(entry)
   }
-  for (const entry of metadata.activation.pathPrepend) add(entry)
+  // Only the environment's own directories. `micromamba run` also prepends the runtime's
+  // `condabin`, which would expose micromamba itself to content if it ever existed.
+  for (const entry of metadata.activation.pathPrepend) {
+    if (isInsideDirectory(entry, prefix)) add(entry)
+  }
   for (const executable of Object.values(metadata.host)) add(dirname(executable))
   for (const entry of SYSTEM_PATH) add(entry)
   return entries.join(':')
@@ -413,7 +422,7 @@ export function environmentVariables(
   if (options.extraEnv) {
     for (const [name, value] of Object.entries(options.extraEnv)) variables[name] = value
   }
-  variables.PATH = environmentPath(env.metadata)
+  variables.PATH = environmentPath(env.prefix, env.metadata)
   return variables
 }
 

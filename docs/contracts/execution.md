@@ -65,7 +65,9 @@ may not set `PATH`, any `PYTHON*`, `R_*`, `CONDA_*`, `MAMBA_*`, `LD_*`, `DYLD_*`
 
 `PATH` is, in order:
 
-1. `metadata.activation.pathPrepend` (the environment's `bin` first);
+1. the entries of `metadata.activation.pathPrepend` that are inside the prefix (the
+   environment's `bin` first); entries outside it, such as the runtime `condabin` that
+   `micromamba run` adds, are dropped;
 2. the directories of the host dependencies recorded in `metadata.host` (for example the
    directory containing `soffice`), deduplicated;
 3. `/usr/bin:/bin:/usr/sbin:/sbin`.
