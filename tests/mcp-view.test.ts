@@ -43,7 +43,7 @@ test('connector sidebar groups installed services and labels disabled entries', 
   assert.match(markup, /生产力 · 1/)
   assert.match(markup, /健康与生命科学 · 1/)
   assert.match(markup, /其他 · 1/)
-  assert.match(markup, /3 个已安装/)
+  assert.match(markup, /3 个已配置/)
   assert.match(markup, /disabled-local-service/)
   assert.match(markup, /已停用/)
   assert.match(markup, /google-drive\.svg/)

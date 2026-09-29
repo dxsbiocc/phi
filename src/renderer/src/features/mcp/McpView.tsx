@@ -351,7 +351,7 @@ export function McpSidebar({
 
       <Box sx={{ px: 2, pb: 1, WebkitAppRegion: 'no-drag' }}>
         <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
-          <Chip size="small" variant="outlined" label={`${servers.length} 个已安装`} />
+          <Chip size="small" variant="outlined" label={`${servers.length} 个已配置`} />
         </Stack>
       </Box>
 
@@ -370,7 +370,7 @@ export function McpSidebar({
         {groups.length === 0 ? (
           <Box sx={{ px: 2, py: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              {normalizedQuery ? '没有匹配的已安装连接器' : '尚未安装连接器。点击“发现”浏览目录。'}
+              {normalizedQuery ? '没有匹配的已配置连接器' : '尚未配置连接器。点击“发现”浏览目录。'}
             </Typography>
           </Box>
         ) : (

@@ -25,7 +25,7 @@ import { McpFeaturedConnectorCard, type ConnectorAuthStatus } from './McpFeature
 import { McpToolList } from './McpToolList'
 
 type CatalogPage = 'list' | 'detail' | 'custom'
-type CatalogGroup = '已安装' | (typeof mcpConnectorCategories)[number]
+type CatalogGroup = '已配置' | (typeof mcpConnectorCategories)[number]
 const TOOL_LIST_CACHE_MS = 5 * 60_000
 type CachedToolNames = { names: string[]; expiresAt: number }
 
@@ -134,7 +134,7 @@ export function McpConnectorCatalogDialog({
       if (page === 'custom') {
         setCustomName('')
         setCustomUrl('')
-        setGroup('已安装')
+        setGroup('已配置')
         setPage('list')
       }
     } catch (cause) {
@@ -274,6 +274,7 @@ export function McpConnectorCatalogDialog({
         busy={busy !== null}
         onOpen={() => openDetail(connector)}
         onAdd={() => void add(connector.id, connector.url)}
+        onAuthorize={() => void connectNotion()}
       />
     )
   }
@@ -351,12 +352,12 @@ export function McpConnectorCatalogDialog({
           </Typography>
           <List disablePadding sx={{ overflowY: 'auto', flex: 1 }}>
             <ListItemButton
-              selected={group === '已安装' && page === 'list'}
-              onClick={() => openGroup('已安装')}
+              selected={group === '已配置' && page === 'list'}
+              onClick={() => openGroup('已配置')}
               sx={{ borderRadius: 1.5, mb: 1 }}
             >
               <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                已安装 · {servers.length}
+                已配置 · {servers.length}
               </Typography>
             </ListItemButton>
             <Divider sx={{ my: 1.5 }} />
@@ -497,8 +498,12 @@ export function McpConnectorCatalogDialog({
                   )}
                 </Stack>
                 {selected.signIn === '需要登录' && selected.id !== 'notion' && (
-                  <Alert severity="info" sx={{ mb: 3 }}>
-                    此服务需要 OAuth 登录。Phi 尚未接入该授权流程，暂不能从目录添加使用。
+                  <Alert severity="warning" sx={{ mb: 3 }}>
+                    {selected.id === 'gmail'
+                      ? 'Gmail MCP 需要先在 Google Cloud 启用服务并为 Phi 配置 OAuth 客户端。Phi 目前尚未提供该配置，暂不能从目录授权或添加。'
+                      : selected.id === 'slack'
+                        ? 'Slack MCP 需要预先注册 Slack 应用并配置 OAuth 客户端。Phi 目前尚未提供该流程，暂不能从目录授权或添加。'
+                        : '此服务需要 OAuth 登录。Phi 尚未接入该授权流程，暂不能从目录添加使用。'}
                   </Alert>
                 )}
                 <McpToolList
@@ -558,7 +563,7 @@ export function McpConnectorCatalogDialog({
                       size="small"
                       sx={{ pl: 0 }}
                     >
-                      官方连接器页面 ↗
+                      连接器说明 ↗
                     </Button>
                   </Box>
                 </Box>
@@ -595,9 +600,9 @@ export function McpConnectorCatalogDialog({
             ) : (
               <>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  {group === '已安装'
+                  {group === '已配置'
                     ? '这里列出已保存的连接器；配置状态不代表服务端已经连通。'
-                    : '按类别浏览常用 MCP 服务，已添加的连接器也会显示。'}
+                    : '按类别浏览常用 MCP 服务，已配置的连接器也会显示。'}
                 </Typography>
                 <Box
                   sx={{
@@ -606,11 +611,11 @@ export function McpConnectorCatalogDialog({
                     gap: 1.5
                   }}
                 >
-                  {group === '已安装'
+                  {group === '已配置'
                     ? filteredInstalled.map(installedCard)
                     : filteredFeatured.map((connector) => connectorCard(connector))}
                 </Box>
-                {(group === '已安装' ? filteredInstalled : filteredFeatured).length === 0 && (
+                {(group === '已配置' ? filteredInstalled : filteredFeatured).length === 0 && (
                   <Typography color="text.secondary" sx={{ mt: 2 }}>
                     {normalizedQuery ? '没有找到匹配的连接器' : '这个分组目前没有连接器'}
                   </Typography>
@@ -620,7 +625,7 @@ export function McpConnectorCatalogDialog({
                   color="text.secondary"
                   sx={{ display: 'block', mt: 2 }}
                 >
-                  添加会保存全局 MCP 配置；新建本地会话时加载。需要登录的服务还需完成授权。
+                  无需登录的服务可直接添加；需要登录的服务须先授权。暂不支持授权的服务无法从目录添加。
                 </Typography>
               </>
             )}

@@ -28,9 +28,9 @@ test('connected MCP tool list shows every server-provided name', () => {
   assert.match(markup, /刷新工具/)
 })
 
-test('unauthorized connector does not show guessed tool names', () => {
+test('connector with unverified authorization does not show guessed tool names', () => {
   const markup = render({ requiresSignIn: true, loading: false, names: null, error: null })
-  assert.match(markup, /尚未授权，无法读取/)
+  assert.match(markup, /尚未验证授权，无法读取/)
   assert.doesNotMatch(markup, /search_preprints/)
   assert.doesNotMatch(markup, /刷新工具/)
 })

@@ -50,7 +50,7 @@ export const featuredMcpConnectors: readonly FeaturedMcpConnector[] = [
     category: '沟通协作',
     signIn: '需要登录',
     url: 'https://gmailmcp.googleapis.com/mcp/v1',
-    homepageUrl: 'https://claude.com/marketplace/connectors/gmail'
+    homepageUrl: 'https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server'
   },
   {
     id: 'slack',
@@ -60,7 +60,7 @@ export const featuredMcpConnectors: readonly FeaturedMcpConnector[] = [
     category: '沟通协作',
     signIn: '需要登录',
     url: 'https://mcp.slack.com/mcp',
-    homepageUrl: 'https://claude.com/marketplace/connectors/slack'
+    homepageUrl: 'https://docs.slack.dev/ai/slack-mcp-server/'
   },
   {
     id: 'figma',
