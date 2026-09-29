@@ -3,6 +3,7 @@ import { useState, type ReactNode } from 'react'
 import { fileIconForPath } from '../../icons'
 import type { ToolCallItem } from '../../types'
 import { DbQueryResultPreview } from '../../features/databases/components/DbQueryResultPreview'
+import { webToolSummary } from '../../features/chat/lib/webToolSummary'
 import { toolTargetFromArgs } from '../../lib/toolTargets'
 import { remotePathInsideRoot, remoteWorkspaceUri } from '../../../../shared/remoteWorkspacePath'
 import { useRemoteProjectFileContext } from '../../lib/remoteProjectFileContext'
@@ -21,6 +22,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
   const remoteProject = useRemoteProjectFileContext()
   const [showFullArgs, setShowFullArgs] = useState(false)
   const [showFullOutput, setShowFullOutput] = useState(false)
+  const webSummary = webToolSummary(item.toolName, item.argsJson)
   const target = toolTargetFromArgs(item.toolName, item.argsJson, cwd ?? '', {
     allowBareFileName: Boolean(remoteProject)
   })
@@ -61,6 +63,16 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
 
   return (
     <TimelineRail sx={{ py: 1 }}>
+      {webSummary?.query ? (
+        <Box sx={{ mb: 1.25, minWidth: 0 }}>
+          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+            检索词
+          </Typography>
+          <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>
+            {webSummary.query}
+          </Typography>
+        </Box>
+      ) : null}
       {item.notebook ? <NotebookToolSummaryBlock notebook={item.notebook} /> : null}
       {item.toolName === 'db_query' && item.output ? (
         <DbQueryResultPreview output={item.output} />

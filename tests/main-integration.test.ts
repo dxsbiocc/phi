@@ -6541,6 +6541,201 @@ test(
   }
 )
 
+test('main IPC: provider-managed tool results are persisted and sent to the chat', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: 'provider-call-1',
+              name: 'web_fetch',
+              arguments: { url: 'https://example.com' }
+            },
+            { type: 'text', text: 'Here is the result.' }
+          ]
+        }
+      },
+      {
+        type: 'message_end',
+        message: {
+          role: 'toolResult',
+          toolCallId: 'provider-call-1',
+          content: [{ type: 'text', text: 'Fetched page' }],
+          isError: false
+        }
+      }
+    ]
+    return session
+  })
+
+  await app.invoke('agent:prompt', 'fetch a page')
+
+  const toolEvents = app.appendedSessionEvents
+    .map((entry) => entry.event as Record<string, unknown>)
+    .filter((event) => event.toolCallId === 'provider-call-1')
+  assert.deepEqual(
+    toolEvents.map((event) => event.type),
+    ['tool_call_started', 'tool_call_completed']
+  )
+  assert.equal(toolEvents[0].toolName, 'web_fetch')
+  assert.match(String(toolEvents[1].output), /Fetched/)
+  assert.ok(
+    app.events.some(
+      (event) =>
+        (event.data as { type?: string; toolCallId?: string }).type ===
+          'provider_tool_call_completed' &&
+        (event.data as { toolCallId?: string }).toolCallId === 'provider-call-1'
+    )
+  )
+})
+
+test('main IPC: hosted fetch is stored between the thinking and text blocks around it', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'before' },
+            { type: 'text', text: 'I will search.' },
+            {
+              type: 'toolCall',
+              id: 'hosted-1',
+              name: 'web_fetch',
+              arguments: { url: 'https://pubmed.ncbi.nlm.nih.gov/?term=MID1IP1' }
+            },
+            { type: 'thinking', thinking: 'after' },
+            { type: 'text', text: 'Here are the papers.' }
+          ]
+        }
+      },
+      {
+        type: 'message_end',
+        message: {
+          role: 'toolResult',
+          toolCallId: 'hosted-1',
+          content: [{ type: 'text', text: 'PubMed results' }]
+        }
+      }
+    ]
+    return session
+  })
+
+  await app.invoke('agent:prompt', 'find MID1IP1 papers')
+  const events = app.appendedSessionEvents.map((entry) => entry.event as Record<string, unknown>)
+  assert.deepEqual(
+    events.map((event) => event.type),
+    [
+      'user_message',
+      'assistant_thinking_completed',
+      'assistant_message_finalized',
+      'tool_call_started',
+      'assistant_thinking_completed',
+      'assistant_message_finalized',
+      'tool_call_completed'
+    ]
+  )
+  assert.equal(events[2].content, 'I will search.')
+  assert.equal(events[5].content, 'Here are the papers.')
+})
+
+test('main IPC: SDK tool execution is not duplicated by its message history', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'toolCall', id: 'sdk-call-1', name: 'bash', arguments: { command: 'pwd' } }
+          ]
+        }
+      },
+      {
+        type: 'tool_execution_start',
+        toolCallId: 'sdk-call-1',
+        toolName: 'bash',
+        args: { command: 'pwd' }
+      },
+      {
+        type: 'tool_execution_end',
+        toolCallId: 'sdk-call-1',
+        toolName: 'bash',
+        result: { content: [{ type: 'text', text: '/workspace' }] },
+        isError: false
+      },
+      {
+        type: 'message_end',
+        message: {
+          role: 'toolResult',
+          toolCallId: 'sdk-call-1',
+          content: [{ type: 'text', text: '/workspace' }]
+        }
+      }
+    ]
+    return session
+  })
+
+  await app.invoke('agent:prompt', 'show the directory')
+  const events = app.appendedSessionEvents
+    .map((entry) => entry.event as Record<string, unknown>)
+    .filter((event) => event.toolCallId === 'sdk-call-1')
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ['tool_call_started', 'tool_call_completed']
+  )
+  assert.equal(
+    app.events.some(
+      (event) => (event.data as { type?: string }).type === 'provider_tool_call_completed'
+    ),
+    false
+  )
+})
+
+test('main IPC: an SDK completion without a start still suppresses a hosted duplicate', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'toolCall', id: 'todo-1', name: 'todo', arguments: { todos: [] } }]
+        }
+      },
+      {
+        type: 'tool_execution_end',
+        toolCallId: 'todo-1',
+        toolName: 'todo',
+        result: { content: [{ type: 'text', text: 'updated' }] },
+        isError: false
+      },
+      {
+        type: 'message_end',
+        message: {
+          role: 'toolResult',
+          toolCallId: 'todo-1',
+          content: [{ type: 'text', text: 'updated' }]
+        }
+      }
+    ]
+    return session
+  })
+  await app.invoke('agent:prompt', 'update todo')
+  const completed = app.appendedSessionEvents
+    .map((entry) => entry.event as Record<string, unknown>)
+    .filter((event) => event.type === 'tool_call_completed' && event.toolCallId === 'todo-1')
+  assert.equal(completed.length, 1)
+})
+
 test('main IPC: current conversation permission mode affects the next run', async () => {
   const app = await harness()
 

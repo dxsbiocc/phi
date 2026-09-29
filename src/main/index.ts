@@ -520,6 +520,9 @@ interface PromptRun {
   thinkingBlockStartedAtMs: Map<number, number>
   compactionReasons: Map<string, string>
   agentToolCallIds: Set<string>
+  sdkToolCallIds: Set<string>
+  persistedToolCallIds: Set<string>
+  pendingProviderToolCalls: Map<string, { toolName: string; args: unknown; createdAt?: string }>
   sessionPath?: string | null
   session?: AgentSessionInstance
   done?: Promise<{ path: string | null; phiSessionId?: string; sessionGeneration: number } | null>
@@ -2248,6 +2251,84 @@ function persistCompletedThinkingBlocks(run: PromptRun, summary: Record<string, 
   run.thinkingBlockStartedAtMs.clear()
 }
 
+function persistAssistantContentInOrder(run: PromptRun, summary: Record<string, unknown>): void {
+  const message = summary.message as { content?: unknown }
+  const contentParts = Array.isArray(message.content) ? message.content : []
+  const orderedParts = contentParts.map((part, contentIndex) => ({
+    part,
+    contentIndex,
+    orphan: false
+  }))
+  for (const [contentIndex, content] of run.thinkingBlocks) {
+    if (isRecord(contentParts[contentIndex]) && contentParts[contentIndex].type === 'thinking') {
+      continue
+    }
+    orderedParts.push({ part: { type: 'thinking', thinking: content }, contentIndex, orphan: true })
+  }
+  orderedParts.sort(
+    (left, right) =>
+      left.contentIndex - right.contentIndex || Number(right.orphan) - Number(left.orphan)
+  )
+  const endedAtMs = summaryTimestampMs(summary)
+  let storedText = false
+  for (const { part, contentIndex } of orderedParts) {
+    if (!isRecord(part)) continue
+    if (part.type === 'thinking') {
+      const content = run.thinkingBlocks.get(contentIndex) ?? part.thinking
+      if (typeof content !== 'string' || !content) continue
+      const startedAtMs = run.thinkingBlockStartedAtMs.get(contentIndex)
+      appendSessionEvent(run.phiSessionId, {
+        type: 'assistant_thinking_completed',
+        runId: run.runId,
+        content,
+        ...createdAtFromSummary(summary),
+        ...(startedAtMs !== undefined ? { durationMs: Math.max(0, endedAtMs - startedAtMs) } : {})
+      })
+      continue
+    }
+    if (part.type === 'text' && typeof part.text === 'string' && part.text) {
+      storedText = true
+      appendSessionEvent(run.phiSessionId, {
+        type: 'assistant_message_finalized',
+        runId: run.runId,
+        content: part.text,
+        ...createdAtFromSummary(summary)
+      })
+      continue
+    }
+    if (part.type !== 'toolCall' || typeof part.id !== 'string') continue
+    const toolName = typeof part.name === 'string' ? part.name : 'tool'
+    run.pendingProviderToolCalls.set(part.id, {
+      toolName,
+      args: part.arguments,
+      ...createdAtFromSummary(summary)
+    })
+    if (run.persistedToolCallIds.has(part.id)) continue
+    run.persistedToolCallIds.add(part.id)
+    appendSessionEvent(run.phiSessionId, {
+      type: 'tool_call_started',
+      runId: run.runId,
+      toolCallId: part.id,
+      toolName,
+      args: part.arguments,
+      ...createdAtFromSummary(summary)
+    })
+  }
+  if (!storedText) {
+    const content = extractAssistantText(summary.message)
+    if (content) {
+      appendSessionEvent(run.phiSessionId, {
+        type: 'assistant_message_finalized',
+        runId: run.runId,
+        content,
+        ...createdAtFromSummary(summary)
+      })
+    }
+  }
+  run.thinkingBlocks.clear()
+  run.thinkingBlockStartedAtMs.clear()
+}
+
 function persistSdkCompactionNotice(
   phiSessionId: string,
   runId: string | undefined,
@@ -2409,21 +2490,60 @@ function persistSessionEvent(
       return withRunId(summary)
     }
 
-    persistCompletedThinkingBlocks(run, summary)
-
-    const content = extractAssistantText(summary.message)
-    if (content) {
-      appendSessionEvent(run.phiSessionId, {
-        type: 'assistant_message_finalized',
-        runId: run.runId,
-        content,
-        ...createdAtFromSummary(summary)
-      })
-    }
+    persistAssistantContentInOrder(run, summary)
     return withRunId(summary)
   }
 
+  if (
+    summary.type === 'message_end' &&
+    (summary.message as { role?: string } | undefined)?.role === 'toolResult'
+  ) {
+    const result = summary.message as {
+      toolCallId?: unknown
+      content?: unknown
+      isError?: unknown
+    }
+    const toolCallId = result.toolCallId
+    if (typeof toolCallId !== 'string') return withRunId(summary)
+    const pending = run.pendingProviderToolCalls.get(toolCallId)
+    run.pendingProviderToolCalls.delete(toolCallId)
+    if (!pending || run.sdkToolCallIds.has(toolCallId)) return withRunId(summary)
+
+    if (!run.persistedToolCallIds.has(toolCallId)) {
+      run.persistedToolCallIds.add(toolCallId)
+      appendSessionEvent(run.phiSessionId, {
+        type: 'tool_call_started',
+        runId: run.runId,
+        toolCallId,
+        toolName: pending.toolName,
+        args: pending.args,
+        ...(pending.createdAt ? { createdAt: pending.createdAt } : createdAtFromSummary(summary))
+      })
+    }
+    const persisted = persistToolOutput(run.phiSessionId, {
+      runId: run.runId,
+      toolCallId,
+      output: extractToolText(result.content),
+      inlineLimit: TOOL_OUTPUT_INLINE_LIMIT
+    })
+    const completed = appendSessionEvent(run.phiSessionId, {
+      type: 'tool_call_completed',
+      runId: run.runId,
+      toolCallId,
+      toolName: pending.toolName,
+      isError: result.isError === true,
+      ...createdAtFromSummary(summary),
+      output: persisted.outputPreview,
+      outputBytes: persisted.outputBytes,
+      outputTruncated: persisted.truncated,
+      ...(persisted.outputPath ? { outputPath: persisted.outputPath } : {}),
+      ...(persisted.outputArtifact ? { outputArtifact: persisted.outputArtifact } : {})
+    })
+    return { ...completed, type: 'provider_tool_call_completed', args: pending.args, source: 'phi' }
+  }
+
   if (summary.type === 'tool_execution_start' && typeof summary.toolCallId === 'string') {
+    run.sdkToolCallIds.add(summary.toolCallId)
     if (isAgentDelegationStart(summary)) {
       run.agentToolCallIds.add(summary.toolCallId)
       const task = agentTaskFromArgs(summary.args) ?? ''
@@ -2441,14 +2561,17 @@ function persistSessionEvent(
       return event
     }
 
-    appendSessionEvent(run.phiSessionId, {
-      type: 'tool_call_started',
-      runId: run.runId,
-      toolCallId: summary.toolCallId,
-      toolName: summary.toolName,
-      args: summary.args,
-      ...createdAtFromSummary(summary)
-    })
+    if (!run.persistedToolCallIds.has(summary.toolCallId)) {
+      run.persistedToolCallIds.add(summary.toolCallId)
+      appendSessionEvent(run.phiSessionId, {
+        type: 'tool_call_started',
+        runId: run.runId,
+        toolCallId: summary.toolCallId,
+        toolName: summary.toolName,
+        args: summary.args,
+        ...createdAtFromSummary(summary)
+      })
+    }
     return withRunId(summary)
   }
 
@@ -2464,6 +2587,8 @@ function persistSessionEvent(
   if (summary.type !== 'tool_execution_end' || typeof summary.toolCallId !== 'string') {
     return withRunId(summary)
   }
+
+  run.sdkToolCallIds.add(summary.toolCallId)
 
   if (isAgentDelegationEnd(run, summary) && detailsKind(summary.result) === 'agent_started') {
     // The agent carries on after this tool call returns. Its card stays running; its steps
@@ -3031,6 +3156,9 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
     thinkingBlockStartedAtMs: new Map(),
     compactionReasons: new Map(),
     agentToolCallIds: new Set(),
+    sdkToolCallIds: new Set(),
+    persistedToolCallIds: new Set(),
+    pendingProviderToolCalls: new Map(),
     sessionPath: stableSessionPath
   }
   setActivePromptRun(runSessionKey, promptRun)

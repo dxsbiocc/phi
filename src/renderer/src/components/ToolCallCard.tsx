@@ -3,6 +3,7 @@ import { memo, useMemo, useState } from 'react'
 import { PhiIcons } from '../icons'
 import type { NotebookCellJumpTarget, ToolCallItem } from '../types'
 import { toolActionKind } from '../lib/toolActions'
+import { webToolSummary } from '../features/chat/lib/webToolSummary'
 import { diffStat } from '../lib/toolOutput'
 import { ToolActionIcon } from './ToolActionIcon'
 import { notebookHeadline, notebookJumpTarget } from './tool-call/notebookToolSummaryModel'
@@ -64,7 +65,8 @@ function ToolCallCard({
     notifyContentResize()
   }
   const action = toolActionKind(item.toolName, item.argsPreview, item.argsJson)
-  const headline = foldedToolHeadline(item, action)
+  const headline =
+    webToolSummary(item.toolName, item.argsJson)?.headline ?? foldedToolHeadline(item, action)
   const showToolName = action !== 'command' && action !== 'python' && action !== 'notebook'
   const jumpTarget = notebookJumpTarget(item.notebook)
 
@@ -118,6 +120,7 @@ function ToolCallCard({
           component="span"
           variant="body2"
           noWrap
+          title={headline}
           sx={{
             fontFamily: showToolName ? 'var(--font-mono)' : 'inherit',
             flex: 1,

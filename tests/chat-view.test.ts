@@ -178,6 +178,19 @@ function renderToolCall(
   )
 }
 
+test('collapsed hosted fetch card names its PubMed query', () => {
+  const markup = renderToolCall({
+    id: 'fetch-1',
+    role: 'tool',
+    toolName: 'web_fetch',
+    argsPreview: 'https://pubmed.ncbi.nlm.nih.gov/?term=MID1IP1+OR+Mig12',
+    argsJson: JSON.stringify({ url: 'https://pubmed.ncbi.nlm.nih.gov/?term=MID1IP1+OR+Mig12' }),
+    output: 'results',
+    status: 'done'
+  })
+  assert.match(markup, /PubMed 检索：MID1IP1 OR Mig12/)
+})
+
 function renderThinkingBlock(content: string, durationMs?: number): string {
   const theme = createTheme()
   return renderToStaticMarkup(

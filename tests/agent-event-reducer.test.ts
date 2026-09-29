@@ -7,6 +7,99 @@ import {
 import { INLINE_OUTPUT_PREVIEW_CHARS } from '../src/renderer/src/lib/toolOutputPresentation'
 import type { AgentEventSummary } from '../src/renderer/src/types'
 
+test('provider-managed tool result appears as a completed tool card', () => {
+  const state = reduceAgentEventState(createAgentEventReducerState(), {
+    source: 'phi',
+    type: 'provider_tool_call_completed',
+    toolCallId: 'provider-call-1',
+    toolName: 'web_fetch',
+    args: { url: 'https://example.com' },
+    output: 'Fetched page',
+    isError: false,
+    runId: 'run-1'
+  })
+  assert.equal(state.messages.length, 1)
+  assert.deepEqual(state.messages[0], {
+    id: 'provider-call-1',
+    role: 'tool',
+    runId: 'run-1',
+    toolName: 'web_fetch',
+    argsPreview: 'https://example.com',
+    argsJson: '{\n  "url": "https://example.com"\n}',
+    output: 'Fetched page',
+    status: 'done'
+  })
+})
+
+test('hosted web calls stay between the streamed blocks that announced them', () => {
+  let state = createAgentEventReducerState()
+  state = reduceAgentEventState(state, { type: 'message_start', message: { role: 'assistant' } })
+  state = reduceAgentEventState(state, {
+    type: 'message_update',
+    message: { role: 'assistant' },
+    assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'before' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_update',
+    message: { role: 'assistant' },
+    assistantMessageEvent: {
+      type: 'toolcall_start',
+      contentIndex: 1,
+      partial: {
+        content: [
+          { type: 'thinking', thinking: 'before' },
+          {
+            type: 'toolCall',
+            id: 'fetch-1',
+            name: 'web_fetch',
+            arguments: { url: 'https://pubmed.ncbi.nlm.nih.gov/?term=MID1IP1' }
+          }
+        ]
+      }
+    }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_update',
+    message: { role: 'assistant' },
+    assistantMessageEvent: { type: 'thinking_delta', contentIndex: 2, delta: 'after' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_update',
+    message: { role: 'assistant' },
+    assistantMessageEvent: { type: 'text_delta', contentIndex: 3, delta: 'Answer' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'before' },
+        {
+          type: 'toolCall',
+          id: 'fetch-1',
+          name: 'web_fetch',
+          arguments: { url: 'https://pubmed.ncbi.nlm.nih.gov/?term=MID1IP1' }
+        },
+        { type: 'thinking', thinking: 'after' },
+        { type: 'text', text: 'Answer' }
+      ]
+    }
+  })
+  assert.deepEqual(
+    state.messages.map((item) => item.role),
+    ['thinking', 'tool', 'thinking', 'assistant']
+  )
+  state = reduceAgentEventState(state, {
+    type: 'provider_tool_call_completed',
+    toolCallId: 'fetch-1',
+    toolName: 'web_fetch',
+    args: { url: 'https://pubmed.ncbi.nlm.nih.gov/?term=MID1IP1' },
+    output: 'PubMed results'
+  })
+  assert.equal(state.messages.length, 4)
+  assert.equal(state.messages[1].role === 'tool' && state.messages[1].output, 'PubMed results')
+})
+
 test('live run change summary appears once after its persisted event', () => {
   const event: AgentEventSummary = {
     source: 'phi',

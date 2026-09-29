@@ -608,8 +608,54 @@ export function reduceAgentEventState(
     return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
   }
 
+  if (event.type === 'provider_tool_call_completed' && typeof event.toolCallId === 'string') {
+    const existingIndex = next.findIndex((item) => item.id === event.toolCallId)
+    const existing = existingIndex >= 0 ? next[existingIndex] : null
+    if (existing?.role === 'tool') {
+      next[existingIndex] = {
+        ...existing,
+        output: event.output ?? existing.output,
+        ...(event.outputPath ? { outputPath: event.outputPath } : {}),
+        ...(event.outputBytes !== undefined ? { outputBytes: event.outputBytes } : {}),
+        ...(event.outputTruncated !== undefined ? { outputTruncated: event.outputTruncated } : {}),
+        ...(event.outputArtifact ? { outputArtifact: event.outputArtifact } : {}),
+        status: event.isError ? 'error' : 'done',
+        ...completedAtField(event.createdAt)
+      }
+    } else if (existingIndex < 0) {
+      let argsJson = ''
+      try {
+        argsJson = JSON.stringify(event.args, null, 2) ?? ''
+      } catch {
+        argsJson = ''
+      }
+      next.push({
+        id: event.toolCallId,
+        role: 'tool',
+        ...runIdField(event.runId),
+        toolName: typeof event.toolName === 'string' ? event.toolName : 'tool',
+        argsPreview: toolArgsPreview(event.args),
+        argsJson,
+        output: event.output ?? '',
+        ...(event.outputPath ? { outputPath: event.outputPath } : {}),
+        ...(event.outputBytes !== undefined ? { outputBytes: event.outputBytes } : {}),
+        ...(event.outputTruncated !== undefined ? { outputTruncated: event.outputTruncated } : {}),
+        ...(event.outputArtifact ? { outputArtifact: event.outputArtifact } : {}),
+        status: event.isError ? 'error' : 'done',
+        ...createdAtField(event.createdAt),
+        ...completedAtField(event.createdAt)
+      })
+    }
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
   if (event.type === 'tool_execution_start' && typeof event.toolCallId === 'string') {
     const toolName = typeof event.toolName === 'string' ? event.toolName : 'tool'
+    const existingIndex = next.findIndex((item) => item.id === event.toolCallId)
+    if (existingIndex >= 0 && next[existingIndex].role === 'tool') {
+      next[existingIndex] = { ...next[existingIndex], status: 'running' }
+      return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+    }
     if (isWrapperToolName(toolName)) {
       next.push({
         id: event.toolCallId,
@@ -707,6 +753,47 @@ export function reduceAgentEventState(
 
   if (event.type === 'message_update' && event.message?.role === 'assistant') {
     const ame = event.assistantMessageEvent
+    if (ame?.type === 'toolcall_start' || ame?.type === 'toolcall_end') {
+      const contentIndex = ame.contentIndex ?? 0
+      const call = ame.partial?.content?.[contentIndex] ?? event.message.content?.[contentIndex]
+      if (call?.type === 'toolCall' && typeof call.id === 'string') {
+        const toolName = call.name ?? 'tool'
+        if (
+          isWrapperToolName(toolName) ||
+          (isAgentToolName(toolName) && agentTaskFromArgs(call.arguments) !== undefined)
+        ) {
+          return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+        }
+        let argsJson = ''
+        try {
+          argsJson = JSON.stringify(call.arguments, null, 2) ?? ''
+        } catch {
+          argsJson = ''
+        }
+        const existingIndex = next.findIndex((item) => item.id === call.id)
+        if (existingIndex >= 0 && next[existingIndex].role === 'tool') {
+          next[existingIndex] = {
+            ...next[existingIndex],
+            toolName,
+            argsPreview: toolArgsPreview(call.arguments),
+            argsJson
+          }
+        } else if (existingIndex < 0) {
+          next.push({
+            id: call.id,
+            role: 'tool',
+            ...runIdField(event.runId),
+            toolName,
+            argsPreview: toolArgsPreview(call.arguments),
+            argsJson,
+            output: '',
+            status: 'running',
+            ...createdAtField(event.createdAt)
+          })
+        }
+      }
+      return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+    }
     if (!ame || (ame.type !== 'text_delta' && ame.type !== 'thinking_delta')) {
       return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
     }

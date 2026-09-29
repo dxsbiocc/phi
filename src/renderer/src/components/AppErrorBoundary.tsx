@@ -26,7 +26,7 @@ function AppErrorFallback({
   onRetry: () => void
   onReload: () => void
 }): React.JSX.Element {
-  const details = [error.stack || error.message, componentStack].filter(Boolean).join('\n\n')
+  const details = [componentStack, error.stack || error.message].filter(Boolean).join('\n\n')
 
   return (
     <main
@@ -124,32 +124,9 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
     return { error: errorFromUnknown(error) }
   }
 
-  componentDidMount(): void {
-    window.addEventListener('error', this.handleWindowError)
-    window.addEventListener('unhandledrejection', this.handleUnhandledRejection)
-  }
-
-  componentWillUnmount(): void {
-    window.removeEventListener('error', this.handleWindowError)
-    window.removeEventListener('unhandledrejection', this.handleUnhandledRejection)
-  }
-
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error('Renderer render error:', error, info)
     this.setState({ componentStack: info.componentStack ?? '' })
-  }
-
-  private readonly handleWindowError = (event: ErrorEvent): void => {
-    if (!event.error) return
-    const error = errorFromUnknown(event.error)
-    console.error('Renderer window error:', error)
-    this.setState({ error, componentStack: '' })
-  }
-
-  private readonly handleUnhandledRejection = (event: PromiseRejectionEvent): void => {
-    const error = errorFromUnknown(event.reason)
-    console.error('Renderer unhandled rejection:', error)
-    this.setState({ error, componentStack: '' })
   }
 
   private readonly retryRender = (): void => {

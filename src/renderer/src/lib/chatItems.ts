@@ -4,7 +4,6 @@ import type { ChatItem, NotebookToolSummary, RunLifecycleItem } from '../types'
 import { workspaceChangesItemFromPhiTimelineEvent } from '../features/chat/lib/workspaceChanges'
 import { presentedFilesItemFromPhiTimelineEvent } from '../features/chat/lib/presentedFiles'
 import { applyPlanReviewDecision, planReviewItemFromEvent } from '../features/chat/lib/planReview'
-import type { StoredPromptImage } from '../../../shared/promptImageTypes'
 import type { TodoPhaseSnapshot, TodoSnapshot, TodoTaskSnapshot } from './todoTypes'
 import {
   agentExecutionFromTimelineEvent,
@@ -15,32 +14,18 @@ import {
   applyAgentStepTimelineEvent
 } from './agentExecutionRestore'
 import { messagesForUserRetryTarget } from './chatRetry'
+import {
+  appendRecoveredRuntimeToolsAfterThinking,
+  appendRecoveredRuntimeToolsBeforeAnswer,
+  appendRecoveredRuntimeToolsBeforeThinking,
+  recoverMissingRuntimeTools
+} from '../features/chat/lib/runtimeToolRecovery'
+import { storedPromptImages } from '../features/chat/lib/storedPromptImages'
+import { visibleRuntimeUserText } from '../features/chat/lib/runtimePromptText'
 
 const WRAPPER_TOOL_PREFIX = 'wrapper_'
 const NOTEBOOK_TOOL_PREFIX = 'notebook.'
 const TODO_TOOL_NAME = 'todo'
-
-function storedPromptImages(value: unknown): StoredPromptImage[] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((image): StoredPromptImage[] => {
-    if (!image || typeof image !== 'object') return []
-    const ref = image as Record<string, unknown>
-    if (
-      typeof ref.sessionId !== 'string' ||
-      typeof ref.id !== 'string' ||
-      !/^[0-9a-f]{64}$/.test(ref.id) ||
-      !(
-        ref.mimeType === 'image/png' ||
-        ref.mimeType === 'image/jpeg' ||
-        ref.mimeType === 'image/gif' ||
-        ref.mimeType === 'image/webp'
-      )
-    ) {
-      return []
-    }
-    return [{ sessionId: ref.sessionId, id: ref.id, mimeType: ref.mimeType }]
-  })
-}
 
 /**
  * `wrapper_search`/`wrapper_inspect` (see src/main/agent/wrappers/tools.ts)
@@ -319,21 +304,6 @@ function textFromContentParts(content: unknown): string {
       return ''
     })
     .join('')
-}
-
-/** Older Phi builds appended this guidance to the SDK's user message history. */
-function visibleRuntimeUserText(text: string): string {
-  const marker = '\n\n<phi_next_action_instruction>\n'
-  const start = text.lastIndexOf(marker)
-  if (start < 0) return text
-  const suffix = text.slice(start + 2)
-  if (
-    !suffix.includes('当这次回复有明确、有用的后续操作时') ||
-    !suffix.trimEnd().endsWith('</phi_next_action_instruction>')
-  ) {
-    return text
-  }
-  return text.slice(0, start)
 }
 
 function durationBetween(startedAt?: string, completedAt?: string): number | undefined {
@@ -690,6 +660,13 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
     ? messages.findIndex(isRuntimeMessageCoveredByPhi)
     : -1
 
+  const missingRuntimeToolsByAnswer = recoverMissingRuntimeTools(
+    messages,
+    runtimeCoveredFromIndex,
+    phiToolCallIds,
+    { textFromContentParts, toolArgsPreview, extractToolText }
+  )
+
   const consumeDuplicateText = (text: string): boolean => {
     const count = duplicateTextCounts.get(text) ?? 0
     if (count <= 0) return false
@@ -885,6 +862,13 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
 
       if (message.type === 'assistant_message_finalized' && typeof message.content === 'string') {
         if (!isDisplayableAssistantText(message.content)) continue
+        appendRecoveredRuntimeToolsBeforeAnswer(
+          items,
+          missingRuntimeToolsByAnswer,
+          message.content,
+          message.runId,
+          message.createdAt
+        )
         items.push({
           id: message.eventId ?? `assistant-${items.length}`,
           role: 'assistant',
@@ -895,6 +879,12 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
       }
 
       if (message.type === 'assistant_thinking_completed' && typeof message.content === 'string') {
+        appendRecoveredRuntimeToolsBeforeThinking(
+          items,
+          missingRuntimeToolsByAnswer,
+          message.runId,
+          message.createdAt
+        )
         items.push({
           id: message.eventId ?? `thinking-${items.length}`,
           role: 'thinking',
@@ -902,6 +892,12 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
           ...completedAtField(message.createdAt),
           ...(typeof message.durationMs === 'number' ? { durationMs: message.durationMs } : {})
         })
+        appendRecoveredRuntimeToolsAfterThinking(
+          items,
+          missingRuntimeToolsByAnswer,
+          message.runId,
+          message.createdAt
+        )
         continue
       }
 

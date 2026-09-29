@@ -931,7 +931,7 @@ test('chatItemsFromSessionMessages keeps runtime history that is missing from Ph
   ])
 })
 
-test('chatItemsFromSessionMessages skips the runtime suffix covered by the Phi timeline', () => {
+test('chatItemsFromSessionMessages restores missing tools while skipping duplicate runtime text', () => {
   const items = chatItemsFromSessionMessages([
     { role: 'user', content: [{ type: 'text', text: 'older user question' }] },
     { role: 'assistant', content: [{ type: 'text', text: 'older assistant answer' }] },
@@ -991,8 +991,137 @@ test('chatItemsFromSessionMessages skips the runtime suffix covered by the Phi t
       content: 'persisted thinking',
       durationMs: 3000
     },
+    {
+      id: 'call-runtime',
+      role: 'tool',
+      toolName: 'bash',
+      argsPreview: 'date',
+      argsJson: '{\n  "command": "date"\n}',
+      output: 'runtime output',
+      status: 'done'
+    },
     { id: 'event-assistant', role: 'assistant', content: 'current answer' }
   ])
+})
+
+test('chatItemsFromSessionMessages recovers a provider tool omitted from the Phi timeline', () => {
+  const items = chatItemsFromSessionMessages([
+    { role: 'user', content: [{ type: 'text', text: 'Find papers' }] },
+    {
+      role: 'assistant',
+      content: [
+        {
+          type: 'toolCall',
+          id: 'provider-call-1',
+          name: 'web_fetch',
+          arguments: { url: 'https://example.com' }
+        },
+        { type: 'text', text: 'Papers found.' }
+      ]
+    },
+    {
+      role: 'toolResult',
+      toolCallId: 'provider-call-1',
+      content: [{ type: 'text', text: 'Fetched page' }]
+    },
+    {
+      source: 'phi',
+      preferPhiTimeline: true,
+      type: 'user_message',
+      eventId: 'user-1',
+      content: 'Find papers'
+    },
+    {
+      source: 'phi',
+      preferPhiTimeline: true,
+      type: 'assistant_message_finalized',
+      eventId: 'answer-1',
+      content: 'Papers found.'
+    }
+  ])
+
+  assert.deepEqual(
+    items.map((item) => item.role),
+    ['user', 'tool', 'assistant']
+  )
+  assert.equal(items[1].id, 'provider-call-1')
+  assert.equal(items[1].role === 'tool' && items[1].output, 'Fetched page')
+})
+
+test('old hosted calls return to their positions between thinking blocks', () => {
+  const createdAt = '2026-09-29T03:24:50.462Z'
+  const items = chatItemsFromSessionMessages([
+    { role: 'user', content: [{ type: 'text', text: 'MID1IP1 papers' }] },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'before first' },
+        {
+          type: 'toolCall',
+          id: 'fetch-1',
+          name: 'web_fetch',
+          arguments: { url: 'https://example.com/?term=MID1IP1' }
+        },
+        { type: 'thinking', thinking: 'before second' },
+        {
+          type: 'toolCall',
+          id: 'fetch-2',
+          name: 'web_fetch',
+          arguments: { url: 'https://example.com/123' }
+        },
+        { type: 'text', text: 'Papers found.' }
+      ]
+    },
+    {
+      role: 'toolResult',
+      toolCallId: 'fetch-1',
+      content: [{ type: 'text', text: 'Search results' }]
+    },
+    { role: 'toolResult', toolCallId: 'fetch-2', content: [{ type: 'text', text: 'Article' }] },
+    {
+      source: 'phi',
+      preferPhiTimeline: true,
+      type: 'user_message',
+      eventId: 'user-1',
+      content: 'MID1IP1 papers'
+    },
+    {
+      source: 'phi',
+      preferPhiTimeline: true,
+      type: 'assistant_thinking_completed',
+      eventId: 'think-1',
+      runId: 'run-1',
+      createdAt,
+      content: 'before first'
+    },
+    {
+      source: 'phi',
+      preferPhiTimeline: true,
+      type: 'assistant_thinking_completed',
+      eventId: 'think-2',
+      runId: 'run-1',
+      createdAt,
+      content: 'before second'
+    },
+    {
+      source: 'phi',
+      preferPhiTimeline: true,
+      type: 'assistant_message_finalized',
+      eventId: 'answer-1',
+      runId: 'run-1',
+      createdAt,
+      content: 'Papers found.'
+    }
+  ])
+
+  assert.deepEqual(
+    items.map((item) => item.role),
+    ['user', 'thinking', 'tool', 'thinking', 'tool', 'assistant']
+  )
+  assert.deepEqual(
+    items.filter((item) => item.role === 'tool').map((item) => item.output),
+    ['Search results', 'Article']
+  )
 })
 
 test('chatItemsFromSessionMessages restores Phi thinking timeline events', () => {

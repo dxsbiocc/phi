@@ -77,6 +77,23 @@ test('tool detail surfaces saved output before the compact preview', () => {
   assert.doesNotMatch(markup, /完整输出已保存到/)
 })
 
+test('hosted PubMed fetch detail shows the decoded search terms', () => {
+  const item: ToolCallItem = {
+    id: 'fetch-1',
+    role: 'tool',
+    toolName: 'web_fetch',
+    argsPreview: 'https://pubmed.ncbi.nlm.nih.gov/?term=MID1IP1+OR+Mig12',
+    argsJson: JSON.stringify({ url: 'https://pubmed.ncbi.nlm.nih.gov/?term=MID1IP1+OR+Mig12' }),
+    output: 'results',
+    status: 'done'
+  }
+  const markup = renderToStaticMarkup(
+    createElement(ThemeProvider, { theme: createTheme() }, createElement(ToolCallDetail, { item }))
+  )
+  assert.match(markup, /检索词/)
+  assert.match(markup, /MID1IP1 OR Mig12/)
+})
+
 test('tool detail surfaces database viewer hints before raw DB JSON', () => {
   const item: ToolCallItem = {
     id: 'tool-1',
