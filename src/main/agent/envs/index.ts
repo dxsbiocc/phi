@@ -34,3 +34,14 @@ export type {
   PhiPlatform,
   SourcePackage
 } from './contract'
+
+export {
+  ensureRuntimeLayout,
+  getRuntimeRoot,
+  micromambaEnvironment,
+  renderMambarc,
+  runMicromamba,
+  writeMambarc
+} from './runtime'
+
+export type { RunMicromambaOptions, RuntimeLayout, RuntimeSettings } from './runtime'
