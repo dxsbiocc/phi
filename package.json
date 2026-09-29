@@ -28,6 +28,7 @@
     "build:mac": "npm run build && electron-builder --mac",
     "build:linux": "npm run build && electron-builder --linux",
     "test": "node --import ./scripts/test-loader.mjs --test tests/*.test.ts",
+    "test:runtime": "node --import ./scripts/test-loader.mjs --test tests/runtime/*.test.ts",
     "smoke:wrappers": "node --import ./scripts/test-loader.mjs scripts/smoke-wrappers.mjs",
     "wrappers:index": "node --import ./scripts/test-loader.mjs scripts/build-wrapper-pack-index.mjs",
     "runtime:fetch": "node scripts/runtime/fetch-micromamba.mjs",
