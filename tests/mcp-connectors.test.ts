@@ -24,6 +24,9 @@ test('curated connector directory has distinct HTTPS services in every group', (
       .map((connector) => connector.id),
     ['pubmed', 'biorxiv', 'clinical-trials']
   )
+  const composio = featuredMcpConnectors.find((connector) => connector.id === 'composio')
+  assert.equal(composio?.url, 'https://connect.composio.dev/mcp')
+  assert.equal(composio?.oauthAuthorizationOrigin, 'https://connect.composio.dev')
 })
 
 test('remote MCP connectors preserve unrelated configuration and remove only matching entries', () => {

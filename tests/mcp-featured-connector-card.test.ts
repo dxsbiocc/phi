@@ -47,6 +47,16 @@ test('a connector awaiting OAuth offers authorization instead of a config-only a
   assert.doesNotMatch(google, /aria-label="添加 Google Drive"/)
 })
 
+test('Composio uses the same independent login and install states', () => {
+  const connected = render('composio', true, true)
+  assert.match(connected, /已登录/)
+  assert.match(connected, /aria-label="已添加 Composio Connect"/)
+  const notAdded = render('composio', false, false)
+  assert.match(notAdded, /需登录/)
+  assert.match(notAdded, /aria-label="授权登录 Composio Connect"/)
+  assert.doesNotMatch(notAdded, /aria-label="添加 Composio Connect"/)
+})
+
 test('a saved OAuth connector without authorization is not marked complete', () => {
   const gmail = render('gmail', true, false)
   assert.match(gmail, /已配置但未验证授权 Gmail/)

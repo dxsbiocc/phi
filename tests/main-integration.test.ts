@@ -19,6 +19,7 @@ import * as notebookCodeGeneration from '../src/main/agent/notebook/notebook-cod
 import * as lifecycle from '../src/main/agent/session/session-lifecycle'
 import * as notebookDocument from '../src/shared/notebookDocument'
 import * as sessionTitle from '../src/shared/sessionTitle'
+import { featuredMcpConnectors } from '../src/shared/mcpConnectorCatalog'
 import * as htmlReportPreview from '../src/shared/htmlReportPreview'
 import type { WorkspaceChangeSummary } from '../src/shared/workspaceChangeTypes'
 import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
@@ -1582,6 +1583,7 @@ async function harness(
     './agent/notebook/notebook-code-generation': notebookCodeGeneration,
     '../shared/notebookDocument': notebookDocument,
     '../shared/sessionTitle': sessionTitle,
+    '../shared/mcpConnectorCatalog': { featuredMcpConnectors },
     './agent/tool-approval': {
       bashApprovalDigest: fakeBashApprovalDigest,
       writeApprovalDigest: fakeWriteApprovalDigest,
@@ -3407,19 +3409,37 @@ test('main IPC: featured MCP tools are read through the Bun worker', async () =>
     method: 'mcp.featuredAuthStatus',
     params: { id: 'notion' }
   })
-  await assert.rejects(app.invoke('mcp:featuredAuthStatus', 'gmail'), /暂只支持 Notion/)
+  assert.equal(await app.invoke('mcp:featuredAuthStatus', 'composio'), true)
+  assert.deepEqual(app.bridgeRequests.at(-1), {
+    method: 'mcp.featuredAuthStatus',
+    params: { id: 'composio' }
+  })
+  await assert.rejects(app.invoke('mcp:featuredAuthStatus', 'gmail'), /不支持登录状态查询/)
   await app.invoke('mcp:authorizeFeatured', 'notion')
   assert.deepEqual(app.bridgeRequests.at(-1), {
     method: 'mcp.authorizeFeatured',
     params: { id: 'notion' }
   })
-  await assert.rejects(app.invoke('mcp:authorizeFeatured', 'gmail'), /暂只支持 Notion/)
+  await app.invoke('mcp:authorizeFeatured', 'composio')
+  assert.deepEqual(app.bridgeRequests.at(-1), {
+    method: 'mcp.authorizeFeatured',
+    params: { id: 'composio' }
+  })
+  await assert.rejects(app.invoke('mcp:authorizeFeatured', 'gmail'), /不支持 OAuth 授权/)
   const openAuthUrl = app.hostHandlers.get('mcp.openAuthUrl')
   assert.ok(openAuthUrl)
-  await assert.rejects(openAuthUrl({ url: 'http://example.com/authorize' }), /Notion MCP/)
-  await assert.rejects(openAuthUrl({ url: 'https://example.com/authorize' }), /Notion MCP/)
-  await assert.rejects(openAuthUrl({ url: 'https://user:pass@mcp.notion.com/' }), /Notion MCP/)
-  await openAuthUrl({ url: 'https://mcp.notion.com/authorize' })
+  await assert.rejects(openAuthUrl({ id: 'notion', url: 'http://example.com/' }), /不匹配/)
+  await assert.rejects(openAuthUrl({ id: 'notion', url: 'https://example.com/' }), /不匹配/)
+  await assert.rejects(
+    openAuthUrl({ id: 'notion', url: 'https://user:pass@mcp.notion.com/' }),
+    /不匹配/
+  )
+  await assert.rejects(
+    openAuthUrl({ id: 'composio', url: 'https://mcp.notion.com/authorize' }),
+    /不匹配/
+  )
+  await openAuthUrl({ id: 'notion', url: 'https://mcp.notion.com/authorize' })
+  await openAuthUrl({ id: 'composio', url: 'https://connect.composio.dev/oauth/authorize' })
 })
 
 test(

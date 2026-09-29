@@ -1749,31 +1749,37 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
     case 'mcp.featuredTools': {
       const id = isRecord(params) ? stringValue(params.id) : ''
       const connector = featuredMcpConnectors.find((entry) => entry.id === id)
-      if (!connector || (connector.signIn === '需要登录' && id !== 'notion')) {
+      if (!connector || (connector.signIn === '需要登录' && !connector.oauthAuthorizationOrigin)) {
         throw new Error('该连接器需要授权，暂无法读取实际工具列表')
       }
-      const authStorage = id === 'notion' ? (await getContext()).authStorage : undefined
+      const authStorage = connector.oauthAuthorizationOrigin
+        ? (await getContext()).authStorage
+        : undefined
       if (authStorage && !authStorage.get(mcpOAuthCredentialId(connector.url))) {
-        throw new Error('请先授权登录 Notion')
+        throw new Error(`请先授权登录 ${connector.name}`)
       }
       return listFeaturedMcpTools(connector.id, connector.url, authStorage)
     }
     case 'mcp.featuredAuthStatus': {
       const id = isRecord(params) ? stringValue(params.id) : ''
-      const connector = featuredMcpConnectors.find((entry) => entry.id === id && id === 'notion')
-      if (!connector) throw new Error('暂只支持 Notion 登录状态')
+      const connector = featuredMcpConnectors.find(
+        (entry) => entry.id === id && entry.oauthAuthorizationOrigin
+      )
+      if (!connector) throw new Error('该连接器尚不支持登录状态查询')
       const { authStorage } = await getContext()
       return authStorage.get(mcpOAuthCredentialId(connector.url))?.type === 'oauth'
     }
     case 'mcp.authorizeFeatured': {
       const id = isRecord(params) ? stringValue(params.id) : ''
-      const connector = featuredMcpConnectors.find((entry) => entry.id === id && id === 'notion')
-      if (!connector) throw new Error('暂只支持 Notion 授权')
+      const connector = featuredMcpConnectors.find(
+        (entry) => entry.id === id && entry.oauthAuthorizationOrigin
+      )
+      if (!connector) throw new Error('该连接器尚不支持 OAuth 授权')
       const ctx = await getContext()
       await authorizeFeaturedMcp(
         connector.url,
         ctx.authStorage,
-        (url) => requestHost('mcp.openAuthUrl', { url }) as Promise<void>
+        (url) => requestHost('mcp.openAuthUrl', { id, url }) as Promise<void>
       )
       return undefined
     }

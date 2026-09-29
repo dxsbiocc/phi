@@ -19,7 +19,16 @@ export interface ToolApprovalRequest {
   summary: string
 }
 
-const RISKY_TOOLS = new Set(['bash', 'powershell', 'edit', 'write'])
+const RISKY_TOOLS = new Set([
+  'bash',
+  'powershell',
+  'edit',
+  'write',
+  'mcp__composio_multi_execute_tool',
+  'mcp__composio_manage_connections',
+  'mcp__composio_remote_workbench',
+  'mcp__composio_remote_bash_tool'
+])
 
 type ApprovalWindow = BrowserWindow
 
@@ -210,8 +219,8 @@ function addWindowUnavailableListener(window: ApprovalWindow, callback: () => vo
   }
 }
 
-// Gates bash/edit/write/powershell tool calls on an explicit approve/deny from the
-// renderer — read/grep/find/ls stay auto-approved since they can't change anything.
+// Gates local mutations and Composio execution/connection calls on an explicit
+// approve/deny from the renderer. Read-only tools stay auto-approved.
 // Used for projects whose permissionMode is 'ask' (see projects.ts).
 export function createApprovalExtension(
   options: CreateApprovalExtensionOptions = {}

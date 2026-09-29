@@ -7,6 +7,7 @@ export interface FeaturedMcpConnector {
   signIn: string
   url: string
   homepageUrl: string
+  oauthAuthorizationOrigin?: string
 }
 
 export const mcpConnectorCategories = ['生产力', '沟通协作', '设计创作', '健康与生命科学'] as const
@@ -30,7 +31,19 @@ export const featuredMcpConnectors: readonly FeaturedMcpConnector[] = [
     category: '生产力',
     signIn: '需要登录',
     url: 'https://mcp.notion.com/mcp',
-    homepageUrl: 'https://claude.com/marketplace/connectors/notion'
+    homepageUrl: 'https://claude.com/marketplace/connectors/notion',
+    oauthAuthorizationOrigin: 'https://mcp.notion.com'
+  },
+  {
+    id: 'composio',
+    name: 'Composio Connect',
+    description: '通过一个连接入口使用已授权的第三方应用',
+    publisher: 'Composio',
+    category: '生产力',
+    signIn: '需要登录',
+    url: 'https://connect.composio.dev/mcp',
+    homepageUrl: 'https://docs.composio.dev/docs/composio-connect',
+    oauthAuthorizationOrigin: 'https://connect.composio.dev'
   },
   {
     id: 'linear',

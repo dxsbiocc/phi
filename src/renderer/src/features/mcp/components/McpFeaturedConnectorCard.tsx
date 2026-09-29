@@ -23,7 +23,7 @@ export function McpFeaturedConnectorCard({
   onAuthorize: () => void
 }): React.JSX.Element {
   const requiresSignIn = connector.signIn === '需要登录'
-  const supportsAuthorization = connector.id === 'notion'
+  const supportsAuthorization = Boolean(connector.oauthAuthorizationOrigin)
   const authorized = !requiresSignIn || (supportsAuthorization && authStatus === 'authenticated')
   const loginLabel = !requiresSignIn
     ? null

@@ -27,10 +27,17 @@ import { McpToolList } from './McpToolList'
 type CatalogPage = 'list' | 'detail' | 'custom'
 type CatalogGroup = '已配置' | (typeof mcpConnectorCategories)[number]
 const TOOL_LIST_CACHE_MS = 5 * 60_000
+const oauthConnectors = featuredMcpConnectors.filter(
+  (connector) => connector.oauthAuthorizationOrigin
+)
 type CachedToolNames = { names: string[]; expiresAt: number }
 
 function freshTools(entry: CachedToolNames | undefined): entry is CachedToolNames {
   return Boolean(entry && entry.expiresAt > Date.now())
+}
+
+function cacheTools(names: string[]): CachedToolNames {
+  return { names, expiresAt: Date.now() + TOOL_LIST_CACHE_MS }
 }
 
 export interface McpConnectorCatalogDialogProps {
@@ -64,42 +71,50 @@ export function McpConnectorCatalogDialog({
   const [toolNames, setToolNames] = useState<string[] | null>(null)
   const [toolsLoading, setToolsLoading] = useState(false)
   const [toolsError, setToolsError] = useState<string | null>(null)
-  const [notionAuthStatus, setNotionAuthStatus] = useState<ConnectorAuthStatus>('checking')
+  const [authStatusById, setAuthStatusById] = useState<Record<string, ConnectorAuthStatus>>({})
   const toolRequestRef = useRef(0)
   const toolListCacheRef = useRef(new Map<string, CachedToolNames>())
 
   useEffect(() => {
     if (!open) return
     let active = true
-    const cachedNotionTools = toolListCacheRef.current.get('notion')
-    const status =
-      typeof window.api.getFeaturedMcpAuthStatus === 'function'
-        ? window.api.getFeaturedMcpAuthStatus('notion')
-        : freshTools(cachedNotionTools)
-          ? Promise.resolve(true)
-          : window.api.listFeaturedMcpTools('notion').then((names) => {
-              toolListCacheRef.current.set('notion', {
-                names,
-                expiresAt: Date.now() + TOOL_LIST_CACHE_MS
+    for (const connector of oauthConnectors) {
+      const cachedTools = toolListCacheRef.current.get(connector.id)
+      const status =
+        typeof window.api.getFeaturedMcpAuthStatus === 'function'
+          ? window.api.getFeaturedMcpAuthStatus(connector.id)
+          : freshTools(cachedTools)
+            ? Promise.resolve(true)
+            : window.api.listFeaturedMcpTools(connector.id).then((names) => {
+                toolListCacheRef.current.set(connector.id, cacheTools(names))
+                return true
               })
-              return true
-            })
-    void status
-      .then((authenticated) => {
-        if (active) setNotionAuthStatus(authenticated ? 'authenticated' : 'unauthenticated')
-      })
-      .catch((cause: unknown) => {
-        if (!active) return
-        const message = cause instanceof Error ? cause.message : String(cause)
-        setNotionAuthStatus(
-          message.includes('请先授权登录 Notion') ? 'unauthenticated' : 'unavailable'
-        )
-      })
+      void status
+        .then((authenticated) => {
+          if (active) {
+            setAuthStatusById((current) => ({
+              ...current,
+              [connector.id]: authenticated ? 'authenticated' : 'unauthenticated'
+            }))
+          }
+        })
+        .catch((cause: unknown) => {
+          if (!active) return
+          const message = cause instanceof Error ? cause.message : String(cause)
+          setAuthStatusById((current) => ({
+            ...current,
+            [connector.id]: message.includes(`请先授权登录 ${connector.name}`)
+              ? 'unauthenticated'
+              : 'unavailable'
+          }))
+        })
+    }
     return () => {
       active = false
     }
   }, [open])
   const selected = featuredMcpConnectors.find((connector) => connector.id === selectedId)
+  const selectedAuthStatus = authStatusById[selectedId] ?? 'checking'
   const normalizedQuery = query.trim().toLowerCase()
   const filteredFeatured = useMemo(
     () =>
@@ -161,31 +176,27 @@ export function McpConnectorCatalogDialog({
     }
   }
 
-  async function connectNotion(): Promise<void> {
-    const notion = featuredMcpConnectors.find((connector) => connector.id === 'notion')
-    if (!notion) return
+  async function connectOAuth(connector: FeaturedMcpConnector): Promise<void> {
+    if (!connector.oauthAuthorizationOrigin) return
     if (typeof window.api.authorizeFeaturedMcp !== 'function') {
       setError('授权接口尚未加载，请重启 Phi 后重试')
       return
     }
     toolRequestRef.current += 1
-    setBusy(notion.id)
+    setBusy(connector.id)
     setError(null)
     setToolsError(null)
     setToolsLoading(false)
     try {
-      await window.api.authorizeFeaturedMcp(notion.id)
-      setNotionAuthStatus('authenticated')
-      toolListCacheRef.current.delete(notion.id)
-      if (!matchingServer(notion, servers)) {
-        await window.api.addRemoteMcpConnector(notion.id, notion.url)
+      await window.api.authorizeFeaturedMcp(connector.id)
+      setAuthStatusById((current) => ({ ...current, [connector.id]: 'authenticated' }))
+      toolListCacheRef.current.delete(connector.id)
+      if (!matchingServer(connector, servers)) {
+        await window.api.addRemoteMcpConnector(connector.id, connector.url)
         await onRefresh()
       }
-      const names = await window.api.listFeaturedMcpTools(notion.id)
-      toolListCacheRef.current.set(notion.id, {
-        names,
-        expiresAt: Date.now() + TOOL_LIST_CACHE_MS
-      })
+      const names = await window.api.listFeaturedMcpTools(connector.id)
+      toolListCacheRef.current.set(connector.id, cacheTools(names))
       setToolNames(names)
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause)
@@ -206,7 +217,7 @@ export function McpConnectorCatalogDialog({
     setToolNames(null)
     setToolsError(null)
     const request = ++toolRequestRef.current
-    if (connector.signIn === '需要登录' && connector.id !== 'notion') {
+    if (connector.signIn === '需要登录' && !connector.oauthAuthorizationOrigin) {
       setToolsLoading(false)
       return
     }
@@ -227,10 +238,7 @@ export function McpConnectorCatalogDialog({
       .listFeaturedMcpTools(connector.id)
       .then((names) => {
         if (request === toolRequestRef.current) {
-          toolListCacheRef.current.set(connector.id, {
-            names,
-            expiresAt: Date.now() + TOOL_LIST_CACHE_MS
-          })
+          toolListCacheRef.current.set(connector.id, cacheTools(names))
           setToolNames(names)
         }
       })
@@ -251,7 +259,7 @@ export function McpConnectorCatalogDialog({
 
   function close(): void {
     toolRequestRef.current += 1
-    setNotionAuthStatus('checking')
+    setAuthStatusById({})
     setPage('list')
     onClose()
   }
@@ -270,11 +278,11 @@ export function McpConnectorCatalogDialog({
         key={key}
         connector={connector}
         installed={Boolean(matchingServer(connector, servers))}
-        authStatus={notionAuthStatus}
+        authStatus={authStatusById[connector.id] ?? 'checking'}
         busy={busy !== null}
         onOpen={() => openDetail(connector)}
         onAdd={() => void add(connector.id, connector.url)}
-        onAuthorize={() => void connectNotion()}
+        onAuthorize={() => void connectOAuth(connector)}
       />
     )
   }
@@ -454,14 +462,14 @@ export function McpConnectorCatalogDialog({
                     </Typography>
                     <Typography color="text.secondary">{selected.description}</Typography>
                   </Box>
-                  {selected.id === 'notion' ? (
+                  {selected.oauthAuthorizationOrigin ? (
                     <Stack direction="row" spacing={1}>
                       <Button
                         variant="contained"
-                        disabled={busy !== null || notionAuthStatus === 'checking'}
-                        onClick={() => void connectNotion()}
+                        disabled={busy !== null || selectedAuthStatus === 'checking'}
+                        onClick={() => void connectOAuth(selected)}
                       >
-                        {notionAuthStatus === 'authenticated' ? '重新授权' : '授权登录'}
+                        {selectedAuthStatus === 'authenticated' ? '重新授权' : '授权登录'}
                       </Button>
                       {matchingServer(selected, servers)?.managed && (
                         <Button
@@ -497,7 +505,7 @@ export function McpConnectorCatalogDialog({
                     </Button>
                   )}
                 </Stack>
-                {selected.signIn === '需要登录' && selected.id !== 'notion' && (
+                {selected.signIn === '需要登录' && !selected.oauthAuthorizationOrigin && (
                   <Alert severity="warning" sx={{ mb: 3 }}>
                     {selected.id === 'gmail'
                       ? 'Gmail MCP 需要先在 Google Cloud 启用服务并为 Phi 配置 OAuth 客户端。Phi 目前尚未提供该配置，暂不能从目录授权或添加。'
@@ -506,8 +514,15 @@ export function McpConnectorCatalogDialog({
                         : '此服务需要 OAuth 登录。Phi 尚未接入该授权流程，暂不能从目录添加使用。'}
                   </Alert>
                 )}
+                {selected.id === 'composio' && (
+                  <Alert severity="info" sx={{ mb: 3 }}>
+                    登录 Composio 后，可在使用具体应用时逐个授权。第三方账号由 Composio 管理。
+                  </Alert>
+                )}
                 <McpToolList
-                  requiresSignIn={selected.signIn === '需要登录' && selected.id !== 'notion'}
+                  requiresSignIn={
+                    selected.signIn === '需要登录' && !selected.oauthAuthorizationOrigin
+                  }
                   loading={toolsLoading}
                   names={toolNames}
                   error={toolsError}
@@ -546,7 +561,7 @@ export function McpConnectorCatalogDialog({
                       登录
                     </Typography>
                     <Typography>
-                      {selected.id === 'notion' && notionAuthStatus === 'authenticated'
+                      {selected.oauthAuthorizationOrigin && selectedAuthStatus === 'authenticated'
                         ? '已登录'
                         : selected.signIn}
                     </Typography>

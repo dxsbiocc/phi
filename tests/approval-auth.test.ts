@@ -218,6 +218,27 @@ test('tool approval resolves and cleans up accepted requests', async () => {
   resolveToolApproval(request.requestId, false)
 })
 
+test('Composio execution needs approval while discovery remains read-only', async () => {
+  const window = new FakeWindow()
+  __electronMock.setFocusedWindow(window)
+  const handler = await registerApprovalHandler()
+
+  assert.equal(
+    await handler({ toolName: 'mcp__composio_search_tools', input: { query: 'gmail' } }, {}),
+    undefined
+  )
+  assert.equal(window.webContents.sent.length, 0)
+
+  const pending = handler(
+    { toolName: 'mcp__composio_multi_execute_tool', input: { tools: ['GMAIL_SEND_EMAIL'] } },
+    {}
+  )
+  const request = window.webContents.sent[0].payload as { requestId: string; toolName: string }
+  assert.equal(request.toolName, 'mcp__composio_multi_execute_tool')
+  resolveToolApproval(request.requestId, false)
+  assert.deepEqual(await pending, { block: true, reason: '用户拒绝了该操作' })
+})
+
 test('plan drafts and proposal writes use the session sandbox without a second approval', async () => {
   const handler = await registerApprovalHandler()
   assert.equal(
