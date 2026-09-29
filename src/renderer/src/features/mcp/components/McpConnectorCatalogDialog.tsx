@@ -27,8 +27,8 @@ import { McpToolList } from './McpToolList'
 type CatalogPage = 'list' | 'detail' | 'custom'
 type CatalogGroup = '已配置' | (typeof mcpConnectorCategories)[number]
 const TOOL_LIST_CACHE_MS = 5 * 60_000
-const oauthConnectors = featuredMcpConnectors.filter(
-  (connector) => connector.oauthAuthorizationOrigin
+const authConnectors = featuredMcpConnectors.filter(
+  (connector) => connector.oauthAuthorizationOrigin || connector.apiKey
 )
 type CachedToolNames = { names: string[]; expiresAt: number }
 
@@ -66,6 +66,7 @@ export function McpConnectorCatalogDialog({
   const [query, setQuery] = useState('')
   const [customName, setCustomName] = useState('')
   const [customUrl, setCustomUrl] = useState('')
+  const [apiKeyInput, setApiKeyInput] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [toolNames, setToolNames] = useState<string[] | null>(null)
@@ -78,10 +79,14 @@ export function McpConnectorCatalogDialog({
   useEffect(() => {
     if (!open) return
     let active = true
-    for (const connector of oauthConnectors) {
+    for (const connector of authConnectors) {
       const cachedTools = toolListCacheRef.current.get(connector.id)
-      const status =
-        typeof window.api.getFeaturedMcpAuthStatus === 'function'
+      const status = connector.apiKey
+        ? typeof window.api.getFeaturedMcpApiKeyStatus === 'function'
+          ? window.api.getFeaturedMcpApiKeyStatus(connector.id)
+          : Promise.reject(new Error('本地密钥接口尚未加载'))
+        : connector.oauthAuthorizationOrigin &&
+            typeof window.api.getFeaturedMcpAuthStatus === 'function'
           ? window.api.getFeaturedMcpAuthStatus(connector.id)
           : freshTools(cachedTools)
             ? Promise.resolve(true)
@@ -122,9 +127,13 @@ export function McpConnectorCatalogDialog({
         (connector) =>
           (normalizedQuery.length > 0 || connector.category === group) &&
           (!normalizedQuery ||
-            [connector.name, connector.description, connector.category, connector.publisher].some(
-              (value) => value.toLowerCase().includes(normalizedQuery)
-            ))
+            [
+              connector.name,
+              connector.description,
+              connector.overview,
+              connector.category,
+              connector.publisher
+            ].some((value) => value.toLowerCase().includes(normalizedQuery)))
       ),
     [group, normalizedQuery]
   )
@@ -167,6 +176,9 @@ export function McpConnectorCatalogDialog({
       await window.api.removeRemoteMcpConnector(server.name, server.url)
       const connector = featuredMcpConnectors.find((entry) => entry.url === server.url)
       if (connector) toolListCacheRef.current.delete(connector.id)
+      if (connector?.apiKey) {
+        setAuthStatusById((current) => ({ ...current, [connector.id]: 'unauthenticated' }))
+      }
       await onRefresh()
       setPage('list')
     } catch (cause) {
@@ -210,14 +222,42 @@ export function McpConnectorCatalogDialog({
     }
   }
 
+  async function connectApiKey(connector: FeaturedMcpConnector): Promise<void> {
+    if (!connector.apiKey || !apiKeyInput.trim()) return
+    setBusy(connector.id)
+    setError(null)
+    setToolsError(null)
+    try {
+      await window.api.setFeaturedMcpApiKey(connector.id, apiKeyInput.trim())
+      setApiKeyInput('')
+      setAuthStatusById((current) => ({ ...current, [connector.id]: 'authenticated' }))
+      toolListCacheRef.current.delete(connector.id)
+      if (!matchingServer(connector, servers)) {
+        await window.api.addRemoteMcpConnector(connector.id, connector.url)
+        await onRefresh()
+      }
+      const names = await window.api.listFeaturedMcpTools(connector.id)
+      toolListCacheRef.current.set(connector.id, cacheTools(names))
+      setToolNames(names)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
   function openDetail(connector: FeaturedMcpConnector, refresh = false): void {
     setSelectedId(connector.id)
+    setApiKeyInput('')
     setPage('detail')
     setError(null)
     setToolNames(null)
     setToolsError(null)
     const request = ++toolRequestRef.current
-    if (connector.signIn === '需要登录' && !connector.oauthAuthorizationOrigin) {
+    if (
+      (connector.signIn === '需要登录' && !connector.oauthAuthorizationOrigin) ||
+      (connector.apiKey && authStatusById[connector.id] !== 'authenticated')
+    ) {
       setToolsLoading(false)
       return
     }
@@ -245,10 +285,15 @@ export function McpConnectorCatalogDialog({
       .catch((cause: unknown) => {
         if (request === toolRequestRef.current) {
           const message = cause instanceof Error ? cause.message : String(cause)
+          const staleCatalog =
+            connector.signIn === '无需登录' &&
+            message.includes('该连接器需要授权，暂无法读取实际工具列表')
           setToolsError(
-            /No handler registered for ['"]mcp:featuredTools['"]/.test(message)
-              ? '主进程尚未加载工具查询接口，请重新启动 Phi 后重试'
-              : message
+            staleCatalog
+              ? '运行时尚未加载新连接器，请重启 Phi 后重试'
+              : /No handler registered for ['"]mcp:featuredTools['"]/.test(message)
+                ? '主进程尚未加载工具查询接口，请重新启动 Phi 后重试'
+                : message
           )
         }
       })
@@ -260,6 +305,7 @@ export function McpConnectorCatalogDialog({
   function close(): void {
     toolRequestRef.current += 1
     setAuthStatusById({})
+    setApiKeyInput('')
     setPage('list')
     onClose()
   }
@@ -270,6 +316,7 @@ export function McpConnectorCatalogDialog({
     setPage('list')
     setQuery('')
     setError(null)
+    setApiKeyInput('')
   }
 
   function connectorCard(connector: FeaturedMcpConnector, key = connector.id): React.JSX.Element {
@@ -282,7 +329,9 @@ export function McpConnectorCatalogDialog({
         busy={busy !== null}
         onOpen={() => openDetail(connector)}
         onAdd={() => void add(connector.id, connector.url)}
-        onAuthorize={() => void connectOAuth(connector)}
+        onAuthorize={() =>
+          connector.apiKey ? openDetail(connector) : void connectOAuth(connector)
+        }
       />
     )
   }
@@ -462,7 +511,20 @@ export function McpConnectorCatalogDialog({
                     </Typography>
                     <Typography color="text.secondary">{selected.description}</Typography>
                   </Box>
-                  {selected.oauthAuthorizationOrigin ? (
+                  {selected.apiKey ? (
+                    <Stack direction="row" spacing={1}>
+                      {matchingServer(selected, servers)?.managed && (
+                        <Button
+                          color="error"
+                          variant="outlined"
+                          disabled={busy !== null}
+                          onClick={() => void remove(matchingServer(selected, servers)!)}
+                        >
+                          移除
+                        </Button>
+                      )}
+                    </Stack>
+                  ) : selected.oauthAuthorizationOrigin ? (
                     <Stack direction="row" spacing={1}>
                       <Button
                         variant="contained"
@@ -519,10 +581,59 @@ export function McpConnectorCatalogDialog({
                     登录 Composio 后，可在使用具体应用时逐个授权。第三方账号由 Composio 管理。
                   </Alert>
                 )}
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
+                    服务介绍
+                  </Typography>
+                  <Typography color="text.secondary">{selected.overview}</Typography>
+                </Box>
+                {selected.apiKey && (
+                  <Stack spacing={1.5} sx={{ mb: 3, maxWidth: 560 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                      API key
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      密钥加密保存在本机，由 Phi 直接连接官方托管 MCP；调用计入你的服务商账号额度。
+                    </Typography>
+                    <Button
+                      component="a"
+                      href={selected.apiKey.obtainUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      size="small"
+                      sx={{ alignSelf: 'flex-start', pl: 0 }}
+                    >
+                      前往 {selected.name} 获取 API key ↗
+                    </Button>
+                    <Stack direction="row" spacing={1}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        type="password"
+                        label={
+                          selectedAuthStatus === 'authenticated' ? '替换 API key' : '粘贴 API key'
+                        }
+                        value={apiKeyInput}
+                        onChange={(event) => setApiKeyInput(event.target.value)}
+                        autoComplete="off"
+                      />
+                      <Button
+                        variant="contained"
+                        disabled={busy !== null || !apiKeyInput.trim()}
+                        onClick={() => void connectApiKey(selected)}
+                        sx={{ flexShrink: 0 }}
+                      >
+                        {selectedAuthStatus === 'authenticated' ? '更新密钥' : '保存并连接'}
+                      </Button>
+                    </Stack>
+                  </Stack>
+                )}
                 <McpToolList
                   requiresSignIn={
-                    selected.signIn === '需要登录' && !selected.oauthAuthorizationOrigin
+                    (selected.signIn === '需要登录' && !selected.oauthAuthorizationOrigin) ||
+                    Boolean(selected.apiKey && selectedAuthStatus !== 'authenticated')
                   }
+                  signInMessage={selected.apiKey ? '保存 API key 后可读取服务端工具。' : undefined}
                   loading={toolsLoading}
                   names={toolNames}
                   error={toolsError}
@@ -561,9 +672,12 @@ export function McpConnectorCatalogDialog({
                       登录
                     </Typography>
                     <Typography>
-                      {selected.oauthAuthorizationOrigin && selectedAuthStatus === 'authenticated'
-                        ? '已登录'
-                        : selected.signIn}
+                      {selected.apiKey && selectedAuthStatus === 'authenticated'
+                        ? 'API key 已配置'
+                        : selected.oauthAuthorizationOrigin &&
+                            selectedAuthStatus === 'authenticated'
+                          ? '已登录'
+                          : selected.signIn}
                     </Typography>
                   </Box>
                   <Box>
@@ -635,13 +749,6 @@ export function McpConnectorCatalogDialog({
                     {normalizedQuery ? '没有找到匹配的连接器' : '这个分组目前没有连接器'}
                   </Typography>
                 )}
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ display: 'block', mt: 2 }}
-                >
-                  无需登录的服务可直接添加；需要登录的服务须先授权。暂不支持授权的服务无法从目录添加。
-                </Typography>
               </>
             )}
             {error && (

@@ -155,7 +155,20 @@ import {
   type RuntimeResourceLoader
 } from './agent/runtime/runtime-adapter'
 import { installPlugin, listPlugins, removePlugin } from './agent/plugins'
-import { addRemoteMcpConnector, removeRemoteMcpConnector } from './agent/mcp-connectors'
+import {
+  addRemoteMcpConnector,
+  disableFeaturedApiKeyAutoDiscovery,
+  removeRemoteMcpConnector
+} from './agent/mcp-connectors'
+import {
+  API_KEY_CONNECTOR_IDS,
+  apiKeyConnector,
+  clearFeaturedMcpApiKey,
+  featuredMcpApiKeyStatus,
+  isFeaturedMcpApiKeyInstalled,
+  readFeaturedMcpApiKey,
+  setFeaturedMcpApiKey
+} from './agent/mcp-key-credentials'
 import { featuredMcpConnectors } from '../shared/mcpConnectorCatalog'
 import {
   deleteSkill,
@@ -847,6 +860,24 @@ getOmpBridge().registerHostHandler('mcp.openAuthUrl', async (params) => {
   }
   await shell.openExternal(url.toString())
 })
+getOmpBridge().registerHostHandler('mcp.featuredApiKey', (params) => {
+  const id = (params as { id?: unknown } | null)?.id
+  if (typeof id !== 'string') throw new Error('连接器标识无效')
+  apiKeyConnector(id)
+  if (!isFeaturedMcpApiKeyInstalled(id)) return undefined
+  return readFeaturedMcpApiKey(id)
+})
+async function syncFeaturedMcpApiKeySessions(id: string): Promise<void> {
+  if (!API_KEY_CONNECTOR_IDS.some((connectorId) => connectorId === id)) return
+  try {
+    await getOmpBridge().request('mcp.syncFeaturedApiKeys', { id })
+  } catch {
+    // The worker may still hold the previous key. Stop it so a failed sync cannot
+    // leave a revoked or rotated credential usable in an existing session.
+    writeAppLog({ event: 'mcp_api_key_session_sync_failed', metadata: { connectorId: id } })
+    await getOmpBridge().stop()
+  }
+}
 const remoteConnectionTracker = new RemoteProjectConnectionTracker()
 const wrapperResultReadControllers = new Map<string, AbortController>()
 const wrapperResultDownloads = new Map<
@@ -7150,9 +7181,25 @@ app.whenReady().then(() => {
   )
   ipcMain.handle('mcp:addRemoteConnector', async (_, name: string, url: string) => {
     addRemoteMcpConnector(name, url)
+    await syncFeaturedMcpApiKeySessions(name)
   })
   ipcMain.handle('mcp:removeRemoteConnector', async (_, name: string, url: string) => {
     removeRemoteMcpConnector(name, url)
+    if (API_KEY_CONNECTOR_IDS.some((id) => id === name && apiKeyConnector(id).url === url)) {
+      clearFeaturedMcpApiKey(name)
+    }
+    await syncFeaturedMcpApiKeySessions(name)
+  })
+  ipcMain.handle('mcp:featuredApiKeyStatus', async (_, id: string) => featuredMcpApiKeyStatus(id))
+  ipcMain.handle('mcp:setFeaturedApiKey', async (_, id: string, key: string) => {
+    apiKeyConnector(id)
+    disableFeaturedApiKeyAutoDiscovery()
+    setFeaturedMcpApiKey(id, key)
+    if (isFeaturedMcpApiKeyInstalled(id)) await syncFeaturedMcpApiKeySessions(id)
+  })
+  ipcMain.handle('mcp:clearFeaturedApiKey', async (_, id: string) => {
+    clearFeaturedMcpApiKey(id)
+    await syncFeaturedMcpApiKeySessions(id)
   })
   ipcMain.handle('mcp:featuredTools', async (_, id: string) => {
     if (typeof id !== 'string') throw new Error('连接器标识无效')

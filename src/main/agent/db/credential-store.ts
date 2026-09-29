@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 
@@ -10,6 +10,7 @@ const CREDENTIALS_FILE = 'api-credentials.json'
 /** Electron's `safeStorage` shape, injectable for tests. */
 export interface SafeStorageLike {
   isEncryptionAvailable(): boolean
+  getSelectedStorageBackend?(): string
   encryptString(plainText: string): Buffer
   decryptString(encrypted: Buffer): string
 }
@@ -45,12 +46,17 @@ function writeStore(store: CredentialStore, agentDir: string): void {
   const path = getCredentialsPath(agentDir)
   const dir = dirname(path)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  writeFileSync(path, `${JSON.stringify(store, null, 2)}\n`, 'utf-8')
+  if (existsSync(path)) chmodSync(path, 0o600)
+  writeFileSync(path, `${JSON.stringify(store, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 })
 }
 
 export function isDbCredentialStorageAvailable(safeStorageImpl?: SafeStorageLike): boolean {
   try {
-    return (safeStorageImpl ?? getSafeStorage()).isEncryptionAvailable()
+    const safeStorage = safeStorageImpl ?? getSafeStorage()
+    return (
+      safeStorage.isEncryptionAvailable() &&
+      !(process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')
+    )
   } catch {
     return false
   }
@@ -74,7 +80,10 @@ export function storeDbConnectorSecret(
     throw new Error('API key 不能为空')
   }
   const safeStorage = safeStorageImpl ?? getSafeStorage()
-  if (!safeStorage.isEncryptionAvailable()) {
+  if (
+    !safeStorage.isEncryptionAvailable() ||
+    (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')
+  ) {
     throw new Error('当前系统不支持加密存储（safeStorage 不可用），无法保存数据库 API key')
   }
   const store = readStore(agentDir)
@@ -98,7 +107,11 @@ export function readDbConnectorSecret(
   if (encoded === undefined) return undefined
   try {
     const safeStorage = safeStorageImpl ?? getSafeStorage()
-    if (!safeStorage.isEncryptionAvailable()) return undefined
+    if (
+      !safeStorage.isEncryptionAvailable() ||
+      (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')
+    )
+      return undefined
     return safeStorage.decryptString(Buffer.from(encoded, 'base64'))
   } catch {
     return undefined

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { getPhiAgentDir } from './runtime-paths'
+import { API_KEY_CONNECTOR_IDS, apiKeyConnector } from './mcp-key-credentials'
 
 type McpConfig = Record<string, unknown> & { mcpServers?: Record<string, unknown> }
 
@@ -54,6 +55,24 @@ function validateUrl(value: string): string {
   return url.toString()
 }
 
+function isPhiManagedApiKeyEntry(
+  value: unknown,
+  url: string
+): value is {
+  type: 'http'
+  url: string
+  enabled: boolean
+} {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const entry = value as Record<string, unknown>
+  return (
+    Object.keys(entry).sort().join(',') === 'enabled,type,url' &&
+    entry.type === 'http' &&
+    entry.url === url &&
+    typeof entry.enabled === 'boolean'
+  )
+}
+
 export function addRemoteMcpConnector(
   name: string,
   url: string,
@@ -61,6 +80,16 @@ export function addRemoteMcpConnector(
 ): void {
   const validatedName = validateName(name)
   const validatedUrl = validateUrl(url)
+  const apiKeyConnectorEntry = (() => {
+    try {
+      return apiKeyConnector(validatedName)
+    } catch {
+      return undefined
+    }
+  })()
+  if (apiKeyConnectorEntry && validatedUrl !== apiKeyConnectorEntry.url) {
+    throw new Error('API key 连接器地址与官方地址不匹配')
+  }
   const path = configPath(agentDir)
   const config = readConfig(path)
   const servers = config.mcpServers ?? {}
@@ -71,6 +100,20 @@ export function addRemoteMcpConnector(
       typeof existing === 'object' &&
       (existing as Record<string, unknown>).url === validatedUrl
     ) {
+      if (apiKeyConnectorEntry) {
+        if (!isPhiManagedApiKeyEntry(existing, validatedUrl)) {
+          throw new Error(`已有名为 ${validatedName} 的自定义 MCP 配置，请先移除或重命名`)
+        }
+        if (existing.enabled) {
+          writeConfig(path, {
+            ...config,
+            mcpServers: {
+              ...servers,
+              [validatedName]: { type: 'http', url: validatedUrl, enabled: false }
+            }
+          })
+        }
+      }
       return
     }
     throw new Error(`已有名为 ${validatedName} 的 MCP 配置`)
@@ -79,9 +122,27 @@ export function addRemoteMcpConnector(
     ...config,
     mcpServers: {
       ...servers,
-      [validatedName]: { type: 'http', url: validatedUrl, enabled: true }
+      [validatedName]: { type: 'http', url: validatedUrl, enabled: !apiKeyConnectorEntry }
     }
   })
+}
+
+/** Upgrade older managed entries before Pi scans mcp.json. */
+export function disableFeaturedApiKeyAutoDiscovery(agentDir = getPhiAgentDir()): void {
+  const path = configPath(agentDir)
+  const config = readConfig(path)
+  const servers = config.mcpServers ?? {}
+  let changed = false
+  const updated = { ...servers }
+  for (const id of API_KEY_CONNECTOR_IDS) {
+    const entry = servers[id]
+    const connector = apiKeyConnector(id)
+    if (isPhiManagedApiKeyEntry(entry, connector.url) && entry.enabled) {
+      updated[id] = { type: 'http', url: connector.url, enabled: false }
+      changed = true
+    }
+  }
+  if (changed) writeConfig(path, { ...config, mcpServers: updated })
 }
 
 export function removeRemoteMcpConnector(

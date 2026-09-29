@@ -2,12 +2,14 @@ import { Alert, Button, Chip, CircularProgress, Stack, Typography } from '@mui/m
 
 export function McpToolList({
   requiresSignIn,
+  signInMessage,
   loading,
   names,
   error,
   onRetry
 }: {
   requiresSignIn: boolean
+  signInMessage?: string
   loading: boolean
   names: string[] | null
   error: string | null
@@ -27,7 +29,7 @@ export function McpToolList({
       </Stack>
       {requiresSignIn ? (
         <Typography color="text.secondary" sx={{ mb: 4 }}>
-          尚未验证授权，无法读取此服务当前提供的工具。
+          {signInMessage ?? '尚未验证授权，无法读取此服务当前提供的工具。'}
         </Typography>
       ) : loading ? (
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 4 }}>

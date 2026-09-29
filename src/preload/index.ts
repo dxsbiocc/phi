@@ -899,6 +899,9 @@ type RendererAuthApi = {
   listFeaturedMcpTools: (id: string) => Promise<string[]>
   getFeaturedMcpAuthStatus: (id: string) => Promise<boolean>
   authorizeFeaturedMcp: (id: string) => Promise<void>
+  getFeaturedMcpApiKeyStatus: (id: string) => Promise<boolean>
+  setFeaturedMcpApiKey: (id: string, key: string) => Promise<void>
+  clearFeaturedMcpApiKey: (id: string) => Promise<void>
   getWrapperPlan: (planId: string) => Promise<WrapperRunPlan | undefined>
   retargetWrapperPlan: (request: WrapperRetargetRequest) => Promise<WrapperRunPlan>
   submitWrapperPlan: (
@@ -1386,6 +1389,12 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('mcp:featuredAuthStatus', id),
   authorizeFeaturedMcp: (id: string): Promise<void> =>
     ipcRenderer.invoke('mcp:authorizeFeatured', id),
+  getFeaturedMcpApiKeyStatus: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('mcp:featuredApiKeyStatus', id),
+  setFeaturedMcpApiKey: (id: string, key: string): Promise<void> =>
+    ipcRenderer.invoke('mcp:setFeaturedApiKey', id, key),
+  clearFeaturedMcpApiKey: (id: string): Promise<void> =>
+    ipcRenderer.invoke('mcp:clearFeaturedApiKey', id),
   getWrapperPlan: (planId: string): Promise<WrapperRunPlan | undefined> =>
     ipcRenderer.invoke('wrappers:getPlan', planId),
   retargetWrapperPlan: (request: WrapperRetargetRequest): Promise<WrapperRunPlan> =>

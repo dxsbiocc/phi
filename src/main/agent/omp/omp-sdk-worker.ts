@@ -49,6 +49,13 @@ import { planModeToolDecision } from '../plan/plan-tool-policy'
 import type { PresentedFile } from '../../../shared/presentedFileTypes'
 import { featuredMcpConnectors } from '../../../shared/mcpConnectorCatalog'
 import { authorizeFeaturedMcp, listFeaturedMcpTools } from './featured-mcp-auth'
+import {
+  API_KEY_CONNECTOR_IDS,
+  apiKeyConnector,
+  featuredApiKeyMcpConfig,
+  isFeaturedMcpApiKeyInstalled
+} from '../mcp-key-credentials'
+import { disableFeaturedApiKeyAutoDiscovery } from '../mcp-connectors'
 import type {
   AutoCompactionDefaults,
   AutoCompactionOverrides,
@@ -135,6 +142,7 @@ type RuntimeContext = {
 
 type SessionEntry = {
   result: CreateAgentSessionResult
+  agentDir: string
   /** The runs of this session's specialist agents; stopped with the session. */
   agentRuns?: AgentRunRegistry
   /** Stops telling the main process about those runs (used when the session goes away). */
@@ -934,6 +942,41 @@ async function createPhiAgentSession(
   return result.session as unknown as AgentSessionLike
 }
 
+async function syncFeaturedApiKeysForSession(
+  result: CreateAgentSessionResult,
+  agentDir: string,
+  id?: string
+): Promise<void> {
+  const manager = result.mcpManager
+  if (!manager) return
+  const ids = id ? [id] : API_KEY_CONNECTOR_IDS
+  for (const connectorId of ids) {
+    const connector = apiKeyConnector(connectorId)
+    const existing = manager.getServerConfig(connectorId)
+    // Never replace an unrelated project server that happens to use the same name.
+    if (existing && (existing.type !== 'http' || existing.url !== connector.url)) continue
+    if (existing) await manager.disconnectServer(connectorId)
+    if (!isFeaturedMcpApiKeyInstalled(connectorId, agentDir)) continue
+    const key = await requestHost('mcp.featuredApiKey', { id: connectorId })
+    if (typeof key !== 'string' || !key) continue
+    try {
+      await manager.connectServers({ [connectorId]: featuredApiKeyMcpConfig(connectorId, key) }, {})
+    } catch {
+      // A failed connector must not prevent the ordinary chat session from starting.
+    }
+  }
+  await result.session.refreshMCPTools(manager.getTools())
+}
+
+async function syncFeaturedApiKeys(id?: string): Promise<void> {
+  if (id && !API_KEY_CONNECTOR_IDS.includes(id as (typeof API_KEY_CONNECTOR_IDS)[number])) return
+  await Promise.all(
+    [...sessions.values()].map((entry) =>
+      syncFeaturedApiKeysForSession(entry.result, entry.agentDir, id)
+    )
+  )
+}
+
 async function createSession(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const sessionId = stringValue(record.sessionId, randomUUID())
@@ -978,6 +1021,7 @@ async function createSession(params: unknown): Promise<unknown> {
   applyAutoCompactionOverrides(settings, autoCompactionOverrides(record.autoCompaction))
   const sessionManager = await makeSessionManager(record.sessionManager, cwd, agentDir)
   const noTools = record.noTools === 'all' || record.noTools === true
+  if (!remoteRoot && !noTools) disableFeaturedApiKeyAutoDiscovery(agentDir)
   const personaMarkdown = stringValue(record.personaMarkdown).trim()
   const phiAgents = Array.isArray(record.phiAgents)
     ? record.phiAgents.filter(isPhiAgentDefinition)
@@ -1294,6 +1338,8 @@ async function createSession(params: unknown): Promise<unknown> {
       : {})
   })
 
+  if (!remoteRoot && !noTools) await syncFeaturedApiKeysForSession(result, agentDir)
+
   if (remoteRoot) {
     await initializeExtensions(result.session, {
       reportSendError: () => {
@@ -1326,7 +1372,7 @@ async function createSession(params: unknown): Promise<unknown> {
     })
     sendEvent('sessionState', serializeSessionState(result), { sessionId })
   })
-  sessions.set(sessionId, { result, agentRuns, stopAgentRunNotices })
+  sessions.set(sessionId, { result, agentDir, agentRuns, stopAgentRunNotices })
   return {
     sessionId,
     state: serializeSessionState(result)
@@ -1758,7 +1804,23 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       if (authStorage && !authStorage.get(mcpOAuthCredentialId(connector.url))) {
         throw new Error(`请先授权登录 ${connector.name}`)
       }
-      return listFeaturedMcpTools(connector.id, connector.url, authStorage)
+      const apiKey = connector.apiKey
+        ? await requestHost('mcp.featuredApiKey', { id: connector.id })
+        : undefined
+      if (connector.apiKey && (typeof apiKey !== 'string' || !apiKey)) {
+        throw new Error(`请先保存 ${connector.name} API key 并添加连接器`)
+      }
+      return listFeaturedMcpTools(
+        connector.id,
+        connector.url,
+        authStorage,
+        typeof apiKey === 'string' ? apiKey : undefined
+      )
+    }
+    case 'mcp.syncFeaturedApiKeys': {
+      const id = isRecord(params) ? stringValue(params.id) : ''
+      await syncFeaturedApiKeys(id || undefined)
+      return undefined
     }
     case 'mcp.featuredAuthStatus': {
       const id = isRecord(params) ? stringValue(params.id) : ''

@@ -22,7 +22,8 @@ import { PhiIcons } from '../../icons'
 import type { McpServerSummary } from '../../types'
 import {
   featuredMcpConnectors,
-  mcpConnectorCategories
+  mcpConnectorCategories,
+  type FeaturedMcpConnector
 } from '../../../../shared/mcpConnectorCatalog'
 import { McpConnectorCatalogDialog } from './components/McpConnectorCatalogDialog'
 import { ConnectorIcon } from './components/ConnectorIcon'
@@ -161,6 +162,13 @@ function selectedServerFromList(
 
 function serverCategory(server: McpServerSummary): string {
   return featuredMcpConnectors.find((connector) => connector.url === server.url)?.category ?? '其他'
+}
+
+function managedApiKeyConnector(server: McpServerSummary): FeaturedMcpConnector | undefined {
+  if (server.enabled !== false) return undefined
+  return featuredMcpConnectors.find(
+    (connector) => connector.apiKey && connector.id === server.name && connector.url === server.url
+  )
 }
 
 function ResizeSeparator({
@@ -409,7 +417,7 @@ export function McpSidebar({
                     </Box>
                     <ListItemText
                       primary={server.name}
-                      secondary={`${server.enabled === false ? '已停用 · ' : ''}${server.url || server.command || server.sourcePath || ''}`}
+                      secondary={`${server.enabled === false ? (managedApiKeyConnector(server) ? '本地密钥配置 · ' : '已停用 · ') : ''}${server.url || server.command || server.sourcePath || ''}`}
                       slotProps={{
                         primary: { noWrap: true, sx: { fontSize: '0.9rem', fontWeight: 600 } },
                         secondary: {
@@ -443,6 +451,9 @@ export function McpSidebar({
 }
 
 export function McpDetail({ selectedServer }: McpDetailProps): React.JSX.Element {
+  const catalogConnector = selectedServer
+    ? featuredMcpConnectors.find((entry) => entry.url === selectedServer.url)
+    : undefined
   return (
     <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
       {selectedServer ? (
@@ -458,6 +469,9 @@ export function McpDetail({ selectedServer }: McpDetailProps): React.JSX.Element
               </Typography>
               <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
                 <Chip size="small" color="success" label="已配置" />
+                {managedApiKeyConnector(selectedServer) && (
+                  <Chip size="small" variant="outlined" label="本地 API key" />
+                )}
                 {selectedServer.url && <Chip size="small" variant="outlined" label="远程 MCP" />}
                 {selectedServer.envKeys?.length ? (
                   <Chip
@@ -469,6 +483,12 @@ export function McpDetail({ selectedServer }: McpDetailProps): React.JSX.Element
               </Stack>
             </Box>
           </Stack>
+
+          {catalogConnector && (
+            <Typography color="text.secondary" sx={{ mt: 3 }}>
+              {catalogConnector.overview}
+            </Typography>
+          )}
 
           <Divider sx={{ my: 4 }} />
 

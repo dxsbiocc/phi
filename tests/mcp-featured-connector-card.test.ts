@@ -62,3 +62,14 @@ test('a saved OAuth connector without authorization is not marked complete', () 
   assert.match(gmail, /已配置但未验证授权 Gmail/)
   assert.doesNotMatch(gmail, /aria-label="已添加 Gmail"/)
 })
+
+test('API key connectors offer setup before a key is saved and show completion afterward', () => {
+  const missingKey = render('tavily', false, false)
+  assert.match(missingKey, /需填写 API key/)
+  assert.match(missingKey, /aria-label="配置 Tavily"/)
+  assert.doesNotMatch(missingKey, /aria-label="已添加 Tavily"/)
+
+  const connected = render('tavily', true, true)
+  assert.match(connected, /已填写 API key/)
+  assert.match(connected, /aria-label="已添加 Tavily"/)
+})

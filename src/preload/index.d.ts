@@ -987,6 +987,9 @@ declare global {
       listFeaturedMcpTools: (id: string) => Promise<string[]>
       getFeaturedMcpAuthStatus: (id: string) => Promise<boolean>
       authorizeFeaturedMcp: (id: string) => Promise<void>
+      getFeaturedMcpApiKeyStatus: (id: string) => Promise<boolean>
+      setFeaturedMcpApiKey: (id: string, key: string) => Promise<void>
+      clearFeaturedMcpApiKey: (id: string) => Promise<void>
       getWrapperPlan: (planId: string) => Promise<WrapperRunPlan | undefined>
       retargetWrapperPlan: (request: WrapperRetargetRequest) => Promise<WrapperRunPlan>
       submitWrapperPlan: (

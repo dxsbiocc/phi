@@ -182,6 +182,7 @@ type HarnessResult = {
   setAgentInteractionResponse: (response: Record<string, unknown>) => void
   setBridgeAgentJobs: (jobs: unknown[]) => void
   bridgeRequests: Array<{ method: string; params: unknown }>
+  bridgeStopCount: () => number
   failBridgeRequests: (error: Error | undefined) => void
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
   sessions: FakeSession[]
@@ -317,6 +318,8 @@ async function harness(
   let agentInteractionResponse: Record<string, unknown> = { answers: [] }
   let bridgeAgentJobs: unknown[] = []
   const bridgeRequests: Array<{ method: string; params: unknown }> = []
+  let bridgeStops = 0
+  const mcpApiKeys = new Map<string, string>()
   let bridgeFailure: Error | undefined
   const osNotifications: Array<{ title: string; body: string }> = []
   const persistedToolOutputs: Array<Record<string, unknown>> = []
@@ -1565,6 +1568,7 @@ async function harness(
           handler: (params: unknown) => Promise<unknown>
         ) => () => void
         request: (method: string, params: unknown) => Promise<unknown>
+        stop: () => Promise<void>
       } => ({
         registerHostHandler: (method, handler) => {
           hostHandlers.set(method, handler)
@@ -1577,6 +1581,9 @@ async function harness(
           if (method === 'mcp.featuredTools') return ['search_articles']
           if (method === 'mcp.featuredAuthStatus') return true
           return { ok: true }
+        },
+        stop: async () => {
+          bridgeStops += 1
         }
       })
     },
@@ -1614,7 +1621,22 @@ async function harness(
     },
     './agent/mcp-connectors': {
       addRemoteMcpConnector: noop,
+      disableFeaturedApiKeyAutoDiscovery: noop,
       removeRemoteMcpConnector: noop
+    },
+    './agent/mcp-key-credentials': {
+      API_KEY_CONNECTOR_IDS: ['tavily', 'serpapi', 'firecrawl', 'browser-use'],
+      apiKeyConnector: (id: string) => {
+        if (!['tavily', 'serpapi', 'firecrawl', 'browser-use'].includes(id)) {
+          throw new Error('该连接器不支持 API key')
+        }
+        return featuredMcpConnectors.find((connector) => connector.id === id)
+      },
+      clearFeaturedMcpApiKey: (id: string) => mcpApiKeys.delete(id),
+      featuredMcpApiKeyStatus: (id: string) => mcpApiKeys.has(id),
+      isFeaturedMcpApiKeyInstalled: (id: string) => id === 'tavily',
+      readFeaturedMcpApiKey: (id: string) => mcpApiKeys.get(id),
+      setFeaturedMcpApiKey: (id: string, key: string) => mcpApiKeys.set(id, key)
     },
     './agent/resources': {
       listGlobalSkills: async (): Promise<unknown[]> => [
@@ -2470,6 +2492,7 @@ async function harness(
       bridgeAgentJobs = jobs
     },
     bridgeRequests,
+    bridgeStopCount: () => bridgeStops,
     failBridgeRequests: (error: Error | undefined): void => {
       bridgeFailure = error
     },
@@ -3440,6 +3463,36 @@ test('main IPC: featured MCP tools are read through the Bun worker', async () =>
   )
   await openAuthUrl({ id: 'notion', url: 'https://mcp.notion.com/authorize' })
   await openAuthUrl({ id: 'composio', url: 'https://connect.composio.dev/oauth/authorize' })
+})
+
+test('main IPC: API keys stay out of renderer responses and worker sync requests', async () => {
+  const app = await harness()
+  assert.equal(await app.invoke('mcp:featuredApiKeyStatus', 'tavily'), false)
+  await app.invoke('mcp:setFeaturedApiKey', 'tavily', 'private-test-key')
+  assert.equal(await app.invoke('mcp:featuredApiKeyStatus', 'tavily'), true)
+  assert.deepEqual(app.bridgeRequests.at(-1), {
+    method: 'mcp.syncFeaturedApiKeys',
+    params: { id: 'tavily' }
+  })
+  assert.equal(JSON.stringify(app.bridgeRequests).includes('private-test-key'), false)
+  assert.equal(
+    await app.hostHandlers.get('mcp.featuredApiKey')?.({ id: 'tavily' }),
+    'private-test-key'
+  )
+  await app.invoke('mcp:clearFeaturedApiKey', 'tavily')
+  assert.equal(await app.invoke('mcp:featuredApiKeyStatus', 'tavily'), false)
+  assert.equal(await app.hostHandlers.get('mcp.featuredApiKey')?.({ id: 'tavily' }), undefined)
+  await app.invoke('mcp:setFeaturedApiKey', 'tavily', 'second-test-key')
+  await app.invoke('mcp:removeRemoteConnector', 'tavily', 'https://mcp.tavily.com/mcp')
+  assert.equal(await app.invoke('mcp:featuredApiKeyStatus', 'tavily'), false)
+})
+
+test('main IPC: a saved API key remains saved if live worker refresh fails', async () => {
+  const app = await harness()
+  app.failBridgeRequests(new Error('worker unavailable'))
+  await app.invoke('mcp:setFeaturedApiKey', 'tavily', 'private-test-key')
+  assert.equal(await app.invoke('mcp:featuredApiKeyStatus', 'tavily'), true)
+  assert.equal(app.bridgeStopCount(), 1)
 })
 
 test(

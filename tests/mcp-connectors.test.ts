@@ -22,7 +22,11 @@ test('curated connector directory has distinct HTTPS services in every group', (
     featuredMcpConnectors
       .filter((connector) => connector.signIn === '无需登录')
       .map((connector) => connector.id),
-    ['pubmed', 'biorxiv', 'clinical-trials']
+    ['pubmed', 'biorxiv', 'clinical-trials', 'open-targets']
+  )
+  assert.equal(
+    featuredMcpConnectors.find((connector) => connector.id === 'open-targets')?.url,
+    'https://mcp.platform.opentargets.org/mcp'
   )
   const composio = featuredMcpConnectors.find((connector) => connector.id === 'composio')
   assert.equal(composio?.url, 'https://connect.composio.dev/mcp')

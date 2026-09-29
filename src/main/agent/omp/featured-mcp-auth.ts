@@ -7,6 +7,11 @@ import {
   mcpOAuthCredentialId,
   type MCPStoredOAuthCredential
 } from '@oh-my-pi/pi-coding-agent/mcp/oauth-flow'
+import {
+  API_KEY_CONNECTOR_IDS,
+  apiKeyConnector,
+  featuredApiKeyMcpConfig
+} from '../mcp-key-credentials'
 
 export async function authorizeFeaturedMcp(
   url: string,
@@ -46,11 +51,19 @@ export async function authorizeFeaturedMcp(
 export async function listFeaturedMcpTools(
   name: string,
   url: string,
-  authStorage?: AuthStorage
+  authStorage?: AuthStorage,
+  apiKey?: string
 ): Promise<string[]> {
+  if (API_KEY_CONNECTOR_IDS.some((id) => id === name)) {
+    if (!apiKey || apiKeyConnector(name).url !== url) {
+      throw new Error('该连接器需要已保存的 API key 和官方地址')
+    }
+  }
   const manager = new MCPManager(process.cwd())
   if (authStorage) manager.setAuthStorage(authStorage)
-  const config = await manager.prepareConfig({ type: 'http', url, timeout: 10_000 })
+  const config = await manager.prepareConfig(
+    apiKey ? featuredApiKeyMcpConfig(name, apiKey) : { type: 'http', url, timeout: 10_000 }
+  )
   const signal = AbortSignal.timeout(12_000)
   const connection = await connectToServer(name, config, { signal })
   try {

@@ -22,8 +22,8 @@ export function McpFeaturedConnectorCard({
   onAdd: () => void
   onAuthorize: () => void
 }): React.JSX.Element {
-  const requiresSignIn = connector.signIn === '需要登录'
-  const supportsAuthorization = Boolean(connector.oauthAuthorizationOrigin)
+  const requiresSignIn = connector.signIn !== '无需登录'
+  const supportsAuthorization = Boolean(connector.oauthAuthorizationOrigin || connector.apiKey)
   const authorized = !requiresSignIn || (supportsAuthorization && authStatus === 'authenticated')
   const loginLabel = !requiresSignIn
     ? null
@@ -32,12 +32,16 @@ export function McpFeaturedConnectorCard({
         ? '授权未验证'
         : '授权暂不可用'
       : authStatus === 'authenticated'
-        ? '已登录'
+        ? connector.apiKey
+          ? '已填写 API key'
+          : '已登录'
         : authStatus === 'checking'
           ? '检查中'
           : authStatus === 'unavailable'
             ? '状态不可用'
-            : '需登录'
+            : connector.apiKey
+              ? '需填写 API key'
+              : '需登录'
 
   return (
     <Box
@@ -110,7 +114,13 @@ export function McpFeaturedConnectorCard({
         </Box>
       ) : (
         <IconButton
-          aria-label={authorized ? `添加 ${connector.name}` : `授权登录 ${connector.name}`}
+          aria-label={
+            authorized
+              ? `添加 ${connector.name}`
+              : connector.apiKey
+                ? `配置 ${connector.name}`
+                : `授权登录 ${connector.name}`
+          }
           size="small"
           disabled={busy || (requiresSignIn && authStatus === 'checking')}
           onClick={(event) => {
@@ -130,7 +140,7 @@ export function McpFeaturedConnectorCard({
             borderRadius: 1.5
           }}
         >
-          {authorized ? (
+          {authorized || connector.apiKey ? (
             <GoPlus size={18} aria-hidden="true" />
           ) : (
             <GoLock size={18} aria-hidden="true" />
