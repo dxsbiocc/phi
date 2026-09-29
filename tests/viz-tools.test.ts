@@ -126,6 +126,10 @@ test('the tool schemas say what is required and bound the enums', () => {
   ): { required?: string[]; properties?: Record<string, { enum?: string[] }> } =>
     tools.find((tool) => tool.name === name)?.parameters as never
   assert.deepEqual(schema('viz_route').required?.slice().sort(), ['data_path', 'purpose'])
+  assert.match(
+    tools.find((tool) => tool.name === 'viz_route')?.description ?? '',
+    /new figure.*existing prepared script/i
+  )
   assert.deepEqual(schema('viz_examples').required, ['purpose'])
   assert.deepEqual(schema('viz_route').properties?.mode?.enum, ['preview', 'publication'])
   assert.deepEqual(schema('viz_prepare').required?.slice().sort(), ['template_id', 'workdir'])

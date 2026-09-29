@@ -30,23 +30,29 @@ Without user data, call `viz_examples` by purpose. Embed its existing
 template example. Show up to four; ask for choice or data. Do not create
 simulated data, render, copy, or replace it; report no match.
 
-## Route
+## Revise an existing figure
 
-Use `viz_examples` without data; otherwise use `viz_route`, `viz_prepare`,
-`viz_render`. CLI equivalents follow.
+For a prior figure, follow [revision workflow](references/revision-workflow.md):
+edit its script and palette; do not call `viz_route` or `viz_prepare` for colors.
+
+## Match a reference image
+
+For a new figure guided by a user image, follow
+[reference workflow](references/reference-figure-workflow.md). Inspect the image
+before routing. If editable source already exists, revise it instead.
+
+## New figure route
+
+Use `viz_route`, `viz_prepare`, `viz_render` for new figures.
 
 1. State the visualization purpose before choosing a chart: what should become
    easier to see, compare, verify, or question after plotting? If the purpose is
    unclear, infer the smallest honest purpose from the user's request and data;
    ask only when several purposes would require materially different figures.
-2. Inspect the user's data and scientific context. Continue only after the
-   observation unit, relevant columns, comparison structure, and intended
-   message are understood. Take a compact distribution snapshot: row/column
-   count, variable types, categorical cardinality/order, numeric range/skew,
-   missing/non-finite values, zeros/sparsity, duplicated identifiers, and any
-   pairing, time, hierarchy, genomic interval, network, or matrix structure.
-   `viz_route` returns the columns and their types; look at the values yourself
-   when the figure depends on them.
+2. Inspect the data's observation unit, columns, comparison, and claim. Check
+   row count, types, category order, ranges, missingness, zeros, duplicate IDs,
+   and any pairing, time, hierarchy, interval, network, or matrix structure.
+   `viz_route` gives column types; inspect values when the figure depends on them.
 3. Write or infer a one-sentence figure claim before selecting geometry. A
    single composite glyph (for example a circular tree inset in a polar track)
    is still one template. Follow **Multi-panel composition** only for labelled

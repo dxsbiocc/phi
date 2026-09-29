@@ -77,7 +77,12 @@ import { AgentRunRegistry } from '../agents/registry'
 import { buildAgentRunTools } from '../agents/run-tools'
 import { createAgentRunner, type AgentSessionLike } from '../agents/runner'
 import { appendAgentUsageRecord, pruneAgentUsageLogs } from '../agents/usage-log'
-import { buildScopedPhiToolMap, resolveAgentTools } from '../agents/tool-resolution'
+import {
+  buildScopedPhiToolMap,
+  resolveAgentTools,
+  visualizationToolNamesForWorkflow,
+  type VisualizationWorkflow
+} from '../agents/tool-resolution'
 import { buildAgentTool } from '../agents/tool'
 import { createSpecialistFallbackExtension } from '../agents/fallback-policy'
 import { createProjectToolBoundaryExtension } from '../agents/project-tool-boundary'
@@ -814,6 +819,7 @@ async function createPhiAgentSession(
     resourceOptions: unknown
     enableToolApproval: boolean
     agentRunId?: string
+    workflow?: VisualizationWorkflow
     remoteRoot?: string
     remoteContextFiles?: Array<{ path: string; content: string }>
     remoteTools?: () => CustomTool[]
@@ -854,7 +860,11 @@ async function createPhiAgentSession(
 
   const availableTools = phiToolFunctions(sessionId, agentDir, definition.name)
   for (const tool of deps.remoteTools?.() ?? []) availableTools.set(tool.name, tool)
-  const { toolNames, customTools } = resolveAgentTools(definition.tools, availableTools)
+  const declaredTools =
+    definition.name === 'Visualization'
+      ? visualizationToolNamesForWorkflow(definition.tools, deps.workflow)
+      : definition.tools
+  const { toolNames, customTools } = resolveAgentTools(declaredTools, availableTools)
   const parentSession = deps.parent()?.session
   const skills = deps.remoteRoot
     ? []
@@ -1017,7 +1027,7 @@ async function createSession(params: unknown): Promise<unknown> {
         agent: definition.name,
         // What each delegation cost, for judging prompt and tool changes; see agents/usage.ts.
         onUsage: (record) => appendAgentUsageRecord(agentDir, { ...record, sessionId }),
-        createSession: ({ runId }) =>
+        createSession: ({ runId, workflow }) =>
           createPhiAgentSession(definition, {
             sessionId,
             cwd,
@@ -1026,6 +1036,7 @@ async function createSession(params: unknown): Promise<unknown> {
             resourceOptions: record.resourceOptions,
             enableToolApproval: Boolean(record.enableToolApproval),
             ...(runId ? { agentRunId: runId } : {}),
+            ...(workflow ? { workflow } : {}),
             ...(remoteRoot
               ? {
                   remoteRoot,

@@ -91,7 +91,7 @@ export function buildVisualizationTools(options: VisualizationToolOptions = {}):
     name: 'viz_route',
     label: 'Route Figure Templates',
     description:
-      "Profile a result table and shortlist the bundled omics figure templates that fit it and the stated purpose. Returns the table's columns and up to six candidates, each with template_id, confidence, why it fits, risks, use_when / avoid_when, and a preview image path to embed as Markdown. Use it before choosing any template; never invent template ids. To show previews, embed each candidate's preview_markdown and stop for the user's choice.",
+      "For new figure selection, profile a result table and shortlist bundled omics templates that fit its purpose. Returns columns and up to six candidates with template_id, fit, risks, and preview_markdown. Use it before choosing a new template; never invent template ids. Do not call it for a small revision of an existing prepared script. To show previews, embed each candidate's preview_markdown and stop for the user's choice.",
     parameters: {
       type: 'object',
       required: ['data_path', 'purpose'],
@@ -145,7 +145,7 @@ export function buildVisualizationTools(options: VisualizationToolOptions = {}):
     name: 'viz_prepare',
     label: 'Prepare Figure Template',
     description:
-      "Copy one bundled template into a project directory as plot.R, with its helper path already fixed, and return what to edit: the template's purpose, the tables it takes, its R dependencies, and the CONFIG and DATA PREPARATION sections with their line numbers. Edit the copy with your file tools (CONFIG for columns and labels, DATA PREPARATION for the input shape; PLOT only for structural changes), then call viz_render. An existing copy is kept with your edits unless reset is true.",
+      'For a newly selected template, copy its plot.R into the project and return the input contract and editable CONFIG/DATA PREPARATION sections. Edit the copy, then call viz_render. For a revision of an existing prepared plot.R, read and edit that project copy directly; do not copy or reset the bundled template. An existing copy is kept with its edits unless reset is true.',
     parameters: {
       type: 'object',
       required: ['template_id', 'workdir'],

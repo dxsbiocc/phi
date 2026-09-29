@@ -12,6 +12,7 @@ Agent operating rules live in [SKILL.md](SKILL.md). This page is the human-facin
 
 - Recommend a plot from a two-level catalog (family → template), using `use_when` / `avoid_when` rather than a filename guess.
 - When the user only wants examples, show the installed `preview.png` files through `viz_examples`; no data simulation or rendering is needed.
+- For an existing figure, edit its prepared script and rerender with the original inputs. For a user reference image, inspect it before making a new data figure.
 - Use a lightweight contract router for preview-mode and common result-table shapes, so the agent can shortlist likely templates before opening full catalogs.
 - Inspect the distribution and data contract before recommending a template.
 - Show matching `preview.png` images when several candidates would change the scientific reading. Several candidates appear as a numbered list so you can compare them.

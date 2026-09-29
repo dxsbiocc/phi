@@ -5,17 +5,24 @@
  */
 
 import { AgentUsageCollector, type AgentRunStatus, type AgentRunUsageRecord } from './usage'
+import type { VisualizationWorkflow } from './tool-resolution'
 
 /** The slice of the SDK's AgentSession this runner relies on. */
 export interface AgentSessionLike {
   subscribe(listener: (event: unknown) => void): () => void
-  prompt(text: string): Promise<void>
+  prompt(text: string, options?: { images?: AgentImage[] }): Promise<void>
   /** Queues a message that reaches the agent mid-run, after its current tool call. */
   steer?(text: string): Promise<void>
   abort(): Promise<void>
   dispose(): Promise<void> | void
   getLastAssistantMessage():
     { stopReason?: string; errorMessage?: string; content?: unknown } | undefined
+}
+
+export interface AgentImage {
+  type: 'image'
+  data: string
+  mimeType: string
 }
 
 /** What a caller can do to a run while it is in flight. */
@@ -25,6 +32,8 @@ export interface AgentRunControl {
 
 export interface AgentRunRequest {
   task: string
+  images?: AgentImage[]
+  workflow?: VisualizationWorkflow
   /** The registry's id for this run; carried into the usage record. */
   runId?: string
   signal?: AbortSignal
@@ -157,7 +166,10 @@ function optionalCreatedAt(
 export function createAgentRunner(deps: {
   /** Agent name, used in error messages. */
   agent: string
-  createSession: (request: { runId?: string }) => Promise<AgentSessionLike>
+  createSession: (request: {
+    runId?: string
+    workflow?: VisualizationWorkflow
+  }) => Promise<AgentSessionLike>
   timeoutMs?: number
   /**
    * The current time as an ISO string. The SDK's events carry none, so a step is timed here:
@@ -172,7 +184,7 @@ export function createAgentRunner(deps: {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const now = deps.now ?? ((): string => new Date().toISOString())
 
-  return async ({ task, runId, signal, onProgress, onToolStep, onControl }) => {
+  return async ({ task, images, workflow, runId, signal, onProgress, onToolStep, onControl }) => {
     if (signal?.aborted) throw new AgentCancelledError(deps.agent)
 
     const usage = new AgentUsageCollector({
@@ -182,7 +194,10 @@ export function createAgentRunner(deps: {
       ...(deps.clock ? { clock: deps.clock } : {})
     })
 
-    const session = await deps.createSession({ ...(runId ? { runId } : {}) })
+    const session = await deps.createSession({
+      ...(runId ? { runId } : {}),
+      ...(workflow ? { workflow } : {})
+    })
     onControl?.({
       steer: async (text) => {
         if (!session.steer) throw new Error(`The ${deps.agent} agent cannot be steered.`)
@@ -275,7 +290,7 @@ export function createAgentRunner(deps: {
     let status: AgentRunStatus = 'failed'
     let reportText = ''
     try {
-      await session.prompt(task)
+      await session.prompt(task, images?.length ? { images } : undefined)
       if (cancelled) throw new AgentCancelledError(deps.agent)
       if (timedOut) throw new AgentTimeoutError(deps.agent, timeoutMs)
 

@@ -72,6 +72,18 @@ test('SKILL.md tells the agent to use the visualization tools, and keeps the man
     assert.match(SKILL, new RegExp(tool))
   assert.match(SKILL, /existing\s+`preview\.png`/)
   assert.match(SKILL, /Do not\s+create\s+simulated data/)
+  assert.match(SKILL, /^## Revise an existing figure/m)
+  assert.match(SKILL, /^## Match a reference image/m)
+  assert.match(SKILL, /do not.*`viz_route`.*`viz_prepare`/i)
+  const revision = readFileSync(join(SKILL_DIR, 'references', 'revision-workflow.md'), 'utf-8')
+  assert.match(revision, /For a color-only request/)
+  assert.match(revision, /Edit the smallest relevant lines/)
+  const reference = readFileSync(
+    join(SKILL_DIR, 'references', 'reference-figure-workflow.md'),
+    'utf-8'
+  )
+  assert.match(reference, /Inspect the actual attached image/i)
+  assert.match(reference, /Do not reuse plotted values/i)
   assert.match(SKILL, /scripts\/route_template\.py/)
   assert.match(SKILL, /qa_single_plot\.py/)
 })
