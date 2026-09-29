@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.node.json",
+  "include": ["scripts/**/*.ts"],
+  "compilerOptions": {
+    "composite": true,
+    "types": ["electron-vite/node", "electron"]
+  }
+}
