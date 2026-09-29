@@ -969,9 +969,7 @@ function App(): React.JSX.Element {
       if (mode === 'enabled' && !proxyTransportStatus.enabledModeAvailable) {
         setDefaultProxyMode('auto')
         setIsSavingDefaultProxyMode(true)
-        showSnackbar('DB_PROXY_UNAVAILABLE：受控代理通道不可用，已切换到自动选择。', 'warning', {
-          persistent: true
-        })
+        showSnackbar('DB_PROXY_UNAVAILABLE：受控代理通道不可用，已切换到自动选择。', 'warning')
         try {
           const settings = await rendererApi.updateDefaultProxyMode('auto')
           applyAppSettings(settings)

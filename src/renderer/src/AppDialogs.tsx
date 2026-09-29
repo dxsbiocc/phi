@@ -1,5 +1,9 @@
 import { useState } from 'react'
-import { Alert, Snackbar } from '@mui/material'
+import { Snackbar } from '@mui/material'
+import AppSnackbarCard, {
+  type SnackbarNotice,
+  type SnackbarSeverity
+} from './components/AppSnackbarCard'
 import SettingsDialog, { type SettingsCategory } from './components/SettingsDialog'
 import AddProviderDialog from './components/AddProviderDialog'
 import OnboardingDialog from './components/OnboardingDialog'
@@ -25,12 +29,14 @@ import type {
 } from './types'
 import { EnvironmentSummaryDialog } from './features/environment/components/EnvironmentSummaryDialog'
 
-export type SnackbarSeverity = 'error' | 'info' | 'success' | 'warning'
-export type SnackbarNotice = {
-  id: number
-  severity: SnackbarSeverity
-  message: string
-  persistent?: boolean
+export type { SnackbarNotice, SnackbarSeverity } from './components/AppSnackbarCard'
+
+const emptySnackbarNotice: SnackbarNotice = { id: 0, severity: 'info', message: '' }
+const snackbarDurationMs: Record<SnackbarSeverity, number> = {
+  success: 4000,
+  info: 5000,
+  warning: 8000,
+  error: 10000
 }
 
 export type AppDialogsProps = {
@@ -325,7 +331,11 @@ export default function AppDialogs({
       <Snackbar
         key={snackbarNotice?.id}
         open={Boolean(snackbarNotice)}
-        autoHideDuration={snackbarNotice?.persistent ? null : 6000}
+        autoHideDuration={
+          snackbarNotice && !snackbarNotice.persistent
+            ? snackbarDurationMs[snackbarNotice.severity]
+            : null
+        }
         onClose={(_, reason) => {
           if (reason === 'clickaway') return
           setSnackbarNotice(null)
@@ -342,19 +352,15 @@ export default function AppDialogs({
           transform: 'none',
           justifyContent: 'center',
           pointerEvents: 'none',
-          '& .MuiAlert-root': {
+          '& .PhiSnackbar-card': {
             pointerEvents: 'auto'
           }
         }}
       >
-        <Alert
-          severity={snackbarNotice?.severity ?? 'error'}
-          variant="filled"
+        <AppSnackbarCard
+          notice={snackbarNotice ?? emptySnackbarNotice}
           onClose={() => setSnackbarNotice(null)}
-          sx={{ maxWidth: 720, alignItems: 'center' }}
-        >
-          {snackbarNotice?.message}
-        </Alert>
+        />
       </Snackbar>
     </>
   )
