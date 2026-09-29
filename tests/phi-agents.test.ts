@@ -394,7 +394,7 @@ test('the bundled Database agent owns only biological database tools', () => {
     assert.ok(!database.tools.includes(tool), `Database must not have system tool ${tool}`)
   }
   assert.deepEqual(database.skills, [])
-  assert.equal(existsSync(join(REPO_SKILLS_DIR, 'create-database-connector', 'SKILL.md')), true)
+  assert.equal(existsSync(join(REPO_SKILLS_DIR, 'create-database-connector', 'SKILL.md')), false)
   assert.match(database.systemPrompt, /stable_id/)
   assert.match(database.systemPrompt, /provenance/i)
   assert.match(database.systemPrompt, /bulk download/i)

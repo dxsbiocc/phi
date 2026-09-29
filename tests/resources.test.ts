@@ -206,11 +206,6 @@ test('listSkills reads project skills from the selected cwd', async () => {
     (skill) =>
       skill.name === 'anndata' && skill.filePath.includes(join('resources', 'skills', 'anndata'))
   )
-  const databaseConnectorSkill = projectASkills.find(
-    (skill) =>
-      skill.name === 'create-database-connector' &&
-      skill.filePath.includes(join('resources', 'skills', 'create-database-connector'))
-  )
   const omicsVisualizationSkill = projectASkills.find(
     (skill) =>
       skill.name === 'omics-visualization' &&
@@ -219,11 +214,9 @@ test('listSkills reads project skills from the selected cwd', async () => {
 
   assert(projectASkills.some((skill) => skill.name === 'project-a-skill'))
   assert(bundledSkill)
-  assert(databaseConnectorSkill)
   assert(omicsVisualizationSkill)
   assert.equal(bundledSkill.sourceCategory, 'system')
   assert.equal(bundledSkill.sourceCategoryLabel, 'System')
-  assert.equal(databaseConnectorSkill.sourceCategory, 'system')
   assert.equal(omicsVisualizationSkill.sourceCategory, 'system')
   assert.equal(omicsVisualizationSkill.sourceCategoryLabel, 'System')
   assert(
