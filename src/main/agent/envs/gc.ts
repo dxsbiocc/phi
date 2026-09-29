@@ -2,6 +2,7 @@ import { lstatSync, readdirSync, realpathSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { removeTree } from './ensure'
+import { removeEnvironmentCache } from './execution'
 import { isLockedByLiveProcess, tryAcquireEnvironmentLock } from './lock'
 import {
   deleteEnvironmentEntry,
@@ -118,6 +119,7 @@ export function collectGarbage(
       const current = stillRemovable(root, envId)
       if (!current) continue
       removeTree(current.prefix)
+      removeEnvironmentCache(root, envId)
       deleteEnvironmentEntry(root, envId)
       removed.push(envId)
     } finally {
@@ -146,6 +148,7 @@ export function collectGarbage(
     try {
       if (readEnvironmentIndex(root).environments[name]) continue
       removeTree(directory)
+      removeEnvironmentCache(root, name)
       orphans.push(name)
     } finally {
       lock.release()

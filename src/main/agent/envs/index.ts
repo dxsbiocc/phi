@@ -85,3 +85,16 @@ export type {
   SourcePackageInstallOptions,
   SourcePackageProgress
 } from './source-packages'
+
+// execution
+export {
+  EXECUTION_CONTRACT_VERSION,
+  environmentCacheDir,
+  environmentVariables,
+  loadEnvironment,
+  removeEnvironmentCache,
+  resolveCommand,
+  runInEnvironment,
+  sanitizeHostEnvironment
+} from './execution'
+export type { EnvHandle, ExecutionOptions, RunOptions, RunResult } from './execution'
