@@ -1,6 +1,6 @@
 # Runtime and Content Distribution Implementation Plan
 
-Date: 2026-09-29 (rewritten per [runtime foundation](../design/phi-runtime-foundation.md) §8)
+Date: 2026-09-29 (rewritten per [runtime foundation](../design/phi-runtime-foundation.md) §8; same day: R source packages, docx and scvi-tools skills removed, nf-core and nf-test in `phi-nextflow`)
 Based on: [runtime foundation](../design/phi-runtime-foundation.md) (confirmed), [content distribution design](../design/phi-content-distribution-design.md), [decisions](../decisions/content-distribution.md).
 Chinese version: [content-distribution-implementation.zh-CN.md](content-distribution-implementation.zh-CN.md).
 
@@ -25,7 +25,7 @@ Chinese version: [content-distribution-implementation.zh-CN.md](content-distribu
 | Step | Layer | Goal | Contracts frozen | Done when | Est. | Beta |
 |---|---|---|---|---|---|---|
 | 0 | prep | cleanup and baselines, no new architecture | — | clean installer; dependency inventory and context baseline exist | 3 d | yes |
-| 1 | L0 + L1 | bundled micromamba, `~/.phi/runtime`, environments from locks | Environment | an environment built from a lock on a clean account; idempotent, read-only, collectable | 1.5 w | yes |
+| 1 | L0 + L1 | bundled micromamba, `~/.phi/runtime`, environments from locks | Environment | an environment built from a lock on a clean account; idempotent, read-only, collectable | 2 w | yes |
 | 2 | L2 | single execution primitive and isolation | Execution (`runInEnvironment`) | three isolation tests pass locally and in CI | 1 w | yes |
 | 3 | L3 | `skill_run` and script tools; skill scripts run in managed environments | Skill, `skill_run`, script tools | official skills run on a machine without a host Python scientific stack | 2.5 w | yes |
 | 4 | L4 | agent sessions bound to environments; visualization rewritten as a CLI plus script tools and removed from the engine | Agent definition, Artifact | visualization renders on a machine without host R; no visualization code in the engine | 3.5 w | yes |
@@ -61,12 +61,13 @@ New module: `src/main/agent/envs/`. The existing `src/main/agent/environment/`
 
 | ID | Scope | Main files | Acceptance | Est. |
 |---|---|---|---|---|
-| 1.1 | **Freeze Environment contract v1**: supported `environment.yml` fields, per-platform explicit lock format, `host:` section, `env.json` schema, `envId` rule, state machine | `docs/contracts/environment.schema.json`, `docs/contracts/env-metadata.schema.json` | schemas and fixtures validate | 1 d |
+| 1.1 | **Freeze Environment contract v1**: supported `environment.yml` fields, per-platform explicit lock format, `host:` section, `sourcePackages:` section (R source packages, foundation §3.5), `env.json` schema, `envId` rule, state machine | `docs/contracts/environment.schema.json`, `docs/contracts/env-metadata.schema.json` | schemas and fixtures validate | 1 d |
 | 1.2 | Bundle micromamba: `resources/runtime/manifest.json` (version, per-platform URL and sha256); `scripts/runtime/fetch-micromamba.mjs` downloads and verifies for build and dev; `extraResources`; `getMicromambaPath()` | `resources/runtime/`, `scripts/runtime/`, `electron-builder.yml`, `envs/paths.ts` | `micromamba --version` runs in dev and packaged builds | 2 d |
 | 1.3 | Runtime directory and invocation wrapper: create `~/.phi/runtime/{envs,pkgs,logs,state}`; generate `mambarc` (conda-forge, bioconda, strict, mirrors and proxy from settings); `micromamba(args)` pins `MAMBA_ROOT_PREFIX` and `--rc-file` and clears `CONDA_*` / `MAMBA_*` | `envs/runtime.ts` | on a machine with user conda, wrapped calls ignore `~/.condarc` (asserted) | 1.5 d |
 | 1.4 | Lock tooling: `scripts/runtime/lock-env.mjs` uses `micromamba --platform <p> --dry-run` to produce explicit locks for three platforms | `scripts/runtime/` | a python-only fixture spec yields three locks | 1.5 d |
-| 1.5 | `ensureEnvironment(spec, lock)`: compute `envId` → return if ready → file lock against concurrent builds → `micromamba create -p … -f lock` → capture activation snapshot → make prefix read-only → write `env.json` → update `state/environments.json`; progress events and logs | `envs/ensure.ts`, `envs/activation.ts`, `envs/index-store.ts` | fixture environment built on a clean account; repeated calls do not rebuild; writes into the prefix fail | 3 d |
+| 1.5 | `ensureEnvironment(spec, lock)`: compute `envId` → return if ready → file lock against concurrent builds → `micromamba create -p … -f lock` → install source packages (1.7) → capture activation snapshot → make prefix read-only → write `env.json` → update `state/environments.json`; progress events and logs | `envs/ensure.ts`, `envs/activation.ts`, `envs/index-store.ts` | fixture environment built on a clean account; repeated calls do not rebuild; writes into the prefix fail; any failed step removes the prefix and records `failed` | 3 d |
 | 1.6 | Reference counting, GC, doctor: record referrers; delete unreferenced environments; compare `micromamba list --json` with the lock and rebuild on drift | `envs/gc.ts`, `envs/doctor.ts` | tests for GC, drift detection, rebuild | 1.5 d |
+| 1.7 | Source packages (R): fetch the CRAN exact version or GitHub full-commit archive per `sourcePackages` → verify sha256 → cache at `~/.phi/runtime/sources/<sha256>` → `R CMD INSTALL` in declared order (no automatic dependencies) → record in `env.json`; only the environment's compilers are used | `envs/source-packages.ts` | a real install of a small pure-R package; tests for sha256 mismatch, missing dependency, cache hit without network | 2 d |
 
 ### Step 2 Execution primitive (L2)
 
@@ -87,7 +88,7 @@ New module: `src/main/agent/envs/`. The existing `src/main/agent/environment/`
 | 3.3 | `skill_run` core tool: resolution (skill → session binding → `phi-python` with a warning); if the environment is not ready, ask the user to build it with size and progress, never fall back to the host; approvals in ask mode; registered for the main agent and specialists | `src/main/agent/content/skill-run.ts` | unit tests plus one real run | 3 d |
 | 3.4 | Script-tool registration: generate `<toolPrefix>_<name>` tools from `scripts`; argument validation; `input-path` / `project-path` constraints; approval levels; execution through `runInEnvironment`; JSON output validation; read `<file>.phi-artifact.json` | `src/main/agent/content/script-tools.ts` | a fixture skill covers arguments, out-of-project paths, approvals, output validation, error exits | 3 d |
 | 3.5 | Migrate scanpy: declare its environment; SKILL.md script calls become `skill_run` | `resources/skills/scanpy/` | example runs without a host Python scientific stack | 1 d |
-| 3.6 | Migrate the remaining Python skills (docx, pptx, xlsx, pdf, markitdown, matplotlib, scikit-learn, scvelo, rdkit); LibreOffice as a host dependency; decide how `docx-js` is provided (candidates: pinned node_modules shipped with the skill, or npm-installed into the environment and frozen) | `resources/skills/` | every skill passes `validateSkill()` and runs one example via `skill_run` | 3 d |
+| 3.6 | Migrate the remaining Python skills (pptx, xlsx, pdf, markitdown, matplotlib, scikit-learn, scvelo, rdkit); LibreOffice as a host dependency | `resources/skills/` | every skill passes `validateSkill()` and runs one example via `skill_run` | 3 d |
 
 ### Step 4 Agents bound to environments; visualization leaves the engine (L4)
 
@@ -96,7 +97,7 @@ New module: `src/main/agent/envs/`. The existing `src/main/agent/environment/`
 | 4.1 | **Spike**: prototype Database, Wrapper, Visualization on omp `task` / registry; decide whether delegation moves to omp and whether duplicated parts of `agents/registry.ts` retire; record in the decision record | `src/main/agent/agents/` | decision record updated | 1 w |
 | 4.2 | **Freeze Agent-definition contract v1**: omp fields (`name`, `description`, `tools`, `spawns`, `model`, `thinkingLevel`) plus Phi `environment`, `visibility`, `skills`, `delegationMode`, `delegation`, `fallback` (legacy `delegation_mode` read as an alias); structured results via `outputSchema` | `docs/contracts/agent.schema.json`, `agents/definition.ts` | the three existing agents validate | 2 d |
 | 4.3 | bash injection extension: in bound sessions, merge `environmentVariables` into the bash call's `env` in the `tool_call` event | `src/main/agent/agents/`, `omp/omp-sdk-worker.ts` | `which python` points into the environment in bound sessions; the main agent's bash is unaffected | 2 d |
-| 4.4 | Create the plugin-shaped directory `resources/plugins/visualization/`: move in `resources/agents/Visualization.md` and `resources/skills/omics-visualization`; `viz` spec and locks under `environments/viz/` (covering the 159 R scripts and the Python scripts from the 0.5 inventory) | `resources/plugins/visualization/` | `viz` builds on all three platforms; all templates pass a smoke render | 4 d |
+| 4.4 | Create the plugin-shaped directory `resources/plugins/visualization/`: move in `resources/agents/Visualization.md` and `resources/skills/omics-visualization`; `viz` spec and locks under `environments/viz/` (covering the 159 R scripts and the Python scripts from the 0.5 inventory; the seven R packages without conda builds — gground, ggideogram, ggcor, linkET, ggsankey, ggsvg, ggmagnify — installed as pinned `sourcePackages`; settle the ggideogram / ggplot2 4.x incompatibility here) | `resources/plugins/visualization/` | `viz` builds on all three platforms; all templates pass a smoke render | 4 d |
 | 4.5 | **Freeze Artifact contract v1**: fields of `<file>.phi-artifact.json` (kind `figure` / `table` / `structure` / `molecule` / `network` / `report`, title, provenance); the engine presents artifacts | `docs/contracts/artifact.schema.json`, presentation layer | fixtures pass; existing db result viewers read artifacts | 2 d |
 | 4.6 | Rewrite visualization as the command-line program `scripts/viz.py` (subcommands `examples`, `route`, `prepare`, `render`): `route` calls the existing `route_template.py`; `prepare` and `examples` are ported from TypeScript to Python; `render` runs `Rscript` in the same environment plus QA and writes a `figure` artifact | `resources/plugins/visualization/skills/omics-visualization/scripts/` | tests per subcommand; outputs validate against their JSON Schemas | 4 d |
 | 4.7 | Declare four script tools in SKILL.md (`toolPrefix: viz`, names kept as `viz_examples`, `viz_route`, `viz_prepare`, `viz_render`); the Visualization agent declares `environment: plugin:viz`; workflow-based tool filtering moves into the agent's instructions; session creation ensures the environment or asks to build it | SKILL.md, `Visualization.md`, session creation | renders on a machine without host R; no regression on the visualization eval | 2 d |
@@ -109,7 +110,7 @@ Until step 6, `resources/plugins/visualization/` is mounted by temporary built-i
 
 | ID | Scope | Main files | Acceptance | Est. |
 |---|---|---|---|---|
-| 5.1 | `phi-nextflow` environment (nextflow + openjdk) used by default by the wrapper executor; explicit host nextflow kept via `customPaths` in `environment.json`, accepted only if it meets wrapper minimum versions and labelled "host (unmanaged)" | `wrappers/composition/executor.ts`, `environment/store.ts` | wrappers run without host nextflow; an outdated host nextflow is rejected | 2.5 d |
+| 5.1 | `phi-nextflow` environment (nextflow + openjdk + nf-core + nf-test; nf-core and nf-test are used to author and test wrapper modules, about 380 MB) used by default by the wrapper executor; explicit host nextflow kept via `customPaths` in `environment.json`, accepted only if it meets wrapper minimum versions and labelled "host (unmanaged)" | `wrappers/composition/executor.ts`, `environment/store.ts` | wrappers run without host nextflow; an outdated host nextflow is rejected | 2.5 d |
 | 5.2 | `-profile conda` sets `conda.useMicromamba = true`, the micromamba path, and `conda.cacheDir` under `~/.phi/runtime` | wrapper `nextflow.config` generation | `npm run smoke:wrappers` passes without host conda | 2 d |
 | 5.3 | Jupyter server in `phi-jupyter`; default kernels from `phi-python` (ipykernel) and `phi-r` (irkernel); existing host kernels listed as "host (unmanaged)", selectable only explicitly | `notebook/analysis-kernels.ts` | notebooks work without host jupyter; host kernels selectable but never default | 3 d |
 | 5.4 | MCP stdio servers start through `environmentVariables` (mechanism only; user-configured servers in `mcp.json` stay as they are) | MCP code | unit tests | 1 d |
@@ -176,7 +177,7 @@ design. Batches:
 
 ## 6. First iteration
 
-All of step 0, then 1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6 (about two weeks).
+All of step 0, then 1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6 → 1.7 (about two and a half weeks).
 
 Outcome: a clean installer and a dependency inventory; Phi has its own
 runtime and can build read-only, reproducible, collectable environments from

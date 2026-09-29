@@ -106,6 +106,9 @@ Every micromamba call sets:
 - **Host dependencies** conda cannot provide (LibreOffice on macOS, Docker,
   Singularity) are declared in a `host:` section; they are checked and their
   paths recorded, never installed.
+- **Source packages**: R packages without a conda build are declared in a
+  `sourcePackages:` section, installed from source when the environment is
+  built, and frozen together with the conda part (§3.5).
 
 ### 3.3 Metadata `.phi/env.json`
 
@@ -120,6 +123,7 @@ Every micromamba call sets:
   "micromambaVersion": "2.x",
   "activation": { "set": { "CONDA_PREFIX": "…", "JAVA_HOME": "…" }, "pathPrepend": ["…/bin"] },
   "host": { "soffice": "/Applications/LibreOffice.app/Contents/MacOS/soffice" },
+  "sourcePackages": [{ "language": "r", "name": "ggsankey", "source": "github", "ref": "…", "sha256": "…" }],
   "status": "ready"
 }
 ```
@@ -135,8 +139,10 @@ Every micromamba call sets:
 ### 3.4 Lifecycle
 
 - **ensure**: spec + lock → `envId` → return if ready; otherwise build (with
-  progress and logs) → capture activation → make the prefix read-only → mark
-  `ready`.
+  progress and logs): install the conda part from the lock → install source
+  packages (§3.5) → capture activation → make the prefix read-only → mark
+  `ready`. If any step fails, the whole prefix is removed and the state is
+  `failed`; no half-built environment is left behind.
 - **Read-only**: after creation the prefix is read-only, so an agent's
   `pip install` into it fails. Immutability is enforced by the file system,
   not by prompts.
@@ -145,6 +151,44 @@ Every micromamba call sets:
   are deleted. The package cache is trimmed by size separately.
 - **Repair**: doctor compares an environment with its lock and rebuilds on
   drift.
+
+### 3.5 Source packages
+
+For packages without a conda build; currently R only, from CRAN or GitHub.
+
+```yaml
+# Phi extension section in environment.yml (stripped before locking, never passed to micromamba)
+sourcePackages:
+  - language: r
+    name: ggsankey
+    source: github               # cran | github
+    repo: davidsjoberg/ggsankey  # github only
+    ref: 5a3b1c…                 # github: full commit sha; cran: exact version such as 1.2.3
+    sha256: 9f2e…                # sha256 of the source archive
+```
+
+Rules:
+
+- **Fully pinned**: GitHub accepts only full commit shas (no branches or
+  tags); CRAN accepts only exact versions (fetched from the CRAN archive);
+  every archive needs a sha256. The whole `sourcePackages` section is part of
+  the envId hash, so any change yields a new environment.
+- **No automatic dependencies**: installation uses `R CMD INSTALL`
+  (equivalent to `install.packages(..., repos = NULL, dependencies = FALSE)`).
+  Dependencies must come from the conda part or from earlier entries in the
+  same section. A missing dependency is an error, never fetched from the
+  network, so the environment is fully determined by its spec.
+- **Compilation**: packages with native code require the matching compiler
+  toolchain in the conda part (e.g. `compilers` alongside `r-base`); builds use
+  only the environment's compilers, never the host's.
+- **Cache and offline**: archives are cached at
+  `~/.phi/runtime/sources/<sha256>` and used only after verification; a cached
+  archive needs no network. Once the remote registry exists, archives can ship
+  with packages.
+- **Frozen**: activation is captured and the prefix made read-only only after
+  source packages are installed, so they cannot change afterwards.
+- **Recorded**: installed source packages (name, source, ref, sha256) are
+  written to `env.json` and checked by doctor.
 
 ## 4. L2 Execution primitive
 

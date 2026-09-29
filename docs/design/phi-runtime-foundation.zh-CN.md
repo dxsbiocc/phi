@@ -79,6 +79,7 @@
 - **锁文件**：每个平台一份 **explicit 锁**（`@EXPLICIT` 格式，逐行列出包的 URL 和 md5），由 CI 生成。客户端用 `micromamba create -p <prefix> -f <lock>` 安装，**不在客户端求解**：结果确定，而且只要包缓存里有，就可以离线安装。
 - 官方的基础环境和包环境必须带锁文件。用户项目环境没有预先生成的锁，就在本地求解一次，然后把求解结果导出为 explicit 锁保存下来，之后同样按锁安装。
 - **宿主依赖**（conda 提供不了的，如 macOS 上的 LibreOffice、Docker、Singularity）在规格的 `host:` 段声明，只检查是否存在、记录路径，不安装。
+- **源码包**：conda 上没有构建的 R 包，在规格的 `sourcePackages:` 段声明，建环境时从源码安装，装好后与 conda 部分一起冻结（§3.5）。
 
 ### 3.3 环境元数据 `.phi/env.json`
 
@@ -93,6 +94,7 @@
   "micromambaVersion": "2.x",
   "activation": { "set": { "CONDA_PREFIX": "…", "JAVA_HOME": "…" }, "pathPrepend": ["…/bin"] },
   "host": { "soffice": "/Applications/LibreOffice.app/Contents/MacOS/soffice" },
+  "sourcePackages": [{ "language": "r", "name": "ggsankey", "source": "github", "ref": "…", "sha256": "…" }],
   "status": "ready"
 }
 ```
@@ -102,10 +104,34 @@
 
 ### 3.4 生命周期
 
-- **确保存在（ensure）**：给定规格和锁 → 计算 envId → 已就绪就直接返回；否则构建（带进度和日志）→ 捕获激活快照 → 把前缀设为只读 → 标记 `ready`。
+- **确保存在（ensure）**：给定规格和锁 → 计算 envId → 已就绪就直接返回；否则构建（带进度和日志）：按锁文件安装 conda 部分 → 安装源码包（§3.5）→ 捕获激活快照 → 把前缀设为只读 → 标记 `ready`。任何一步失败，整个前缀删除，状态记为 `failed`，不留下半成品环境。
 - **只读**：环境建好后把前缀设为只读。agent 在环境里执行 `pip install` 会直接失败，从机制上保证环境不可变，不依赖提示词约束。
 - **引用计数与回收**：`environments.json` 记录每个环境被哪些包、插件、项目引用；没有引用的环境由 GC 删除。包缓存单独按容量清理。
 - **修复**：doctor 对比环境和锁文件，发现漂移就重建。
+
+### 3.5 源码包
+
+用于 conda 上没有构建的包，目前只支持 R（来自 CRAN 或 GitHub）。
+
+```yaml
+# environment.yml 中 Phi 的扩展段（生成锁文件时会被剥离，不传给 micromamba）
+sourcePackages:
+  - language: r
+    name: ggsankey
+    source: github               # cran | github
+    repo: davidsjoberg/ggsankey  # 仅 github
+    ref: 5a3b1c…                 # github 为完整的提交 sha；cran 为精确版本号，如 1.2.3
+    sha256: 9f2e…                # 源码归档的 sha256
+```
+
+规则：
+
+- **完全锁定**：GitHub 只接受完整的提交 sha（不接受分支或标签），CRAN 只接受精确版本（从 CRAN 归档地址下载）；每个归档都必须带 sha256。`sourcePackages` 整段计入 envId 的 hash，所以源码包的任何变化都会生成新环境。
+- **不自动拉依赖**：安装时使用 `R CMD INSTALL`（等价于 `install.packages(..., repos = NULL, dependencies = FALSE)`），源码包的依赖必须已经由 conda 部分提供，或者在同一段中排在它前面。缺少依赖会直接报错，不会从网络上补装，保证环境内容完全由规格决定。
+- **编译**：需要编译本地代码的包，要求 conda 部分包含相应的编译工具（如 `r-base` 配套的 `compilers`）；构建时只使用环境内的编译器，不使用本机的编译器。
+- **缓存与离线**：下载的归档缓存在 `~/.phi/runtime/sources/<sha256>`，校验通过后才会使用；缓存里有就不联网。以后远程 registry 上线后，这些归档可以和包一起提供。
+- **冻结**：源码包安装完成后才捕获激活快照、把前缀设为只读，所以之后不能再修改。
+- **记录**：已安装的源码包（名称、来源、ref、sha256）写入 `env.json`，doctor 核对时一并检查。
 
 ## 4. L2 执行原语
 

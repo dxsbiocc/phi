@@ -1,6 +1,6 @@
 # 运行时与内容分发实施计划
 
-日期：2026-09-29（按 [运行时基础设计](../design/phi-runtime-foundation.zh-CN.md) §8 重写）
+日期：2026-09-29（按 [运行时基础设计](../design/phi-runtime-foundation.zh-CN.md) §8 重写；同日补充：R 源码包、删除 docx 和 scvi-tools skill、`phi-nextflow` 纳入 nf-core 和 nf-test）
 依据：[运行时基础设计](../design/phi-runtime-foundation.zh-CN.md)（已确认）、[内容分发设计](../design/phi-content-distribution-design.zh-CN.md)、[决策记录](../decisions/content-distribution.zh-CN.md)。
 英文版：[content-distribution-implementation.md](content-distribution-implementation.md)。
 
@@ -17,7 +17,7 @@
 | 步骤 | 层 | 目标 | 冻结的契约 | 完成标准 | 估时 | beta |
 |---|---|---|---|---|---|---|
 | 0 | 准备 | 清理和基线，不涉及新架构 | — | 安装包干净；有依赖清单和上下文基线 | 3 天 | 是 |
-| 1 | L0 + L1 | 内置 micromamba、`~/.phi/runtime`、按锁文件建环境 | 环境 | 干净账户上按锁文件建出环境；可重复、只读、可回收 | 1.5 周 | 是 |
+| 1 | L0 + L1 | 内置 micromamba、`~/.phi/runtime`、按锁文件建环境 | 环境 | 干净账户上按锁文件建出环境；可重复、只读、可回收 | 2 周 | 是 |
 | 2 | L2 | 唯一的执行原语与隔离 | 执行（`runInEnvironment`） | 三项隔离测试在本地和 CI 通过 | 1 周 | 是 |
 | 3 | L3 | `skill_run` 和脚本工具，skill 脚本在受管理环境中运行 | Skill、`skill_run`、脚本工具 | 没有本机 Python 科学栈的机器上，官方 skill 能运行 | 2.5 周 | 是 |
 | 4 | L4 | agent 会话绑定环境；可视化改写为命令行程序加脚本工具，移出引擎 | Agent 定义、产物 | 没有本机 R 的机器上，可视化能出图；引擎中没有可视化代码 | 3.5 周 | 是 |
@@ -50,12 +50,13 @@
 
 | ID | 内容 | 主要涉及 | 验收 | 估时 |
 |---|---|---|---|---|
-| 1.1 | **冻结环境契约 v1**：`environment.yml` 支持的字段、各平台 explicit 锁文件格式、`host:` 段、`env.json` 元数据 schema、`envId` 计算规则、状态机 | `docs/contracts/environment.schema.json`、`docs/contracts/env-metadata.schema.json` | schema 与样例通过校验 | 1 天 |
+| 1.1 | **冻结环境契约 v1**：`environment.yml` 支持的字段、各平台 explicit 锁文件格式、`host:` 段、`sourcePackages:` 段（R 源码包，见基础设计 §3.5）、`env.json` 元数据 schema、`envId` 计算规则、状态机 | `docs/contracts/environment.schema.json`、`docs/contracts/env-metadata.schema.json` | schema 与样例通过校验 | 1 天 |
 | 1.2 | micromamba 打包：`resources/runtime/manifest.json`（版本、各平台 URL 和 sha256）；`scripts/runtime/fetch-micromamba.mjs` 在构建和开发时下载并校验；`extraResources`；`getMicromambaPath()` | `resources/runtime/`、`scripts/runtime/`、`electron-builder.yml`、`envs/paths.ts` | 开发模式和打包产物中都能执行 `micromamba --version` | 2 天 |
 | 1.3 | 运行时目录与调用封装：初始化 `~/.phi/runtime/{envs,pkgs,logs,state}`；生成 `mambarc`（conda-forge、bioconda、strict、镜像、代理取自设置）；`micromamba(args)` 封装固定 `MAMBA_ROOT_PREFIX`、`--rc-file`，并清除 `CONDA_*`、`MAMBA_*` 等变量 | `envs/runtime.ts` | 在装有用户 conda 的机器上，封装调用不读取 `~/.condarc`（测试断言） | 1.5 天 |
 | 1.4 | 锁文件工具：`scripts/runtime/lock-env.mjs` 用 `micromamba --platform <p> --dry-run` 为三个平台生成 explicit 锁 | `scripts/runtime/` | 一个只含 python 的样例规格生成三份锁 | 1.5 天 |
-| 1.5 | `ensureEnvironment(spec, lock)`：计算 `envId` → 已就绪直接返回 → 否则加文件锁防止并发重复构建 → `micromamba create -p … -f lock` → 捕获激活快照 → 前缀设为只读 → 写 `env.json` → 更新 `state/environments.json`；构建进度事件和日志 | `envs/ensure.ts`、`envs/activation.ts`、`envs/index-store.ts` | 干净账户上建出样例环境；重复调用不重建；向前缀写文件失败 | 3 天 |
+| 1.5 | `ensureEnvironment(spec, lock)`：计算 `envId` → 已就绪直接返回 → 否则加文件锁防止并发重复构建 → `micromamba create -p … -f lock` → 安装源码包（1.7）→ 捕获激活快照 → 前缀设为只读 → 写 `env.json` → 更新 `state/environments.json`；构建进度事件和日志 | `envs/ensure.ts`、`envs/activation.ts`、`envs/index-store.ts` | 干净账户上建出样例环境；重复调用不重建；向前缀写文件失败；任一步失败时前缀被删除、状态为 `failed` | 3 天 |
 | 1.6 | 引用计数、GC、doctor：记录引用方；删除无引用的环境；对比 `micromamba list --json` 与锁文件，发现漂移时重建 | `envs/gc.ts`、`envs/doctor.ts` | 测试覆盖回收、漂移检测和重建 | 1.5 天 |
+| 1.7 | 源码包安装（R）：按 `sourcePackages` 下载 CRAN 精确版本或 GitHub 完整提交 sha 的归档 → 校验 sha256 → 缓存到 `~/.phi/runtime/sources/<sha256>` → 按声明顺序 `R CMD INSTALL`（不自动拉依赖）→ 记录到 `env.json`；只使用环境内的编译器 | `envs/source-packages.ts` | 用一个纯 R 的小包做真实安装；覆盖 sha256 不符、缺少依赖、缓存命中不联网 | 2 天 |
 
 ### 步骤 2 执行原语（L2）
 
@@ -76,7 +77,7 @@
 | 3.3 | `skill_run` 核心工具：解析顺序（skill 声明 → 会话绑定 → `phi-python` 并提示）；环境未就绪时提示用户构建并显示大小和进度，不回落到本机；纳入 ask 模式审批；注册给主 agent 和专家 | `src/main/agent/content/skill-run.ts` | 单元测试加一次真实运行 | 3 天 |
 | 3.4 | 脚本工具注册：按 `scripts` 声明生成 `<toolPrefix>_<name>` 工具；参数校验；`input-path` / `project-path` 路径约束；审批级别；经 `runInEnvironment` 执行；输出 JSON 校验；读取 `<文件>.phi-artifact.json` | `src/main/agent/content/script-tools.ts` | 用一个样例 skill 覆盖参数、路径越界、审批、输出校验、错误退出 | 3 天 |
 | 3.5 | 迁移 scanpy：声明环境，SKILL.md 中的脚本调用改为 `skill_run` | `resources/skills/scanpy/` | 在没有本机 Python 科学栈的机器上跑通示例 | 1 天 |
-| 3.6 | 迁移其余 Python 类 skill（docx、pptx、xlsx、pdf、markitdown、matplotlib、scikit-learn、scvelo、rdkit）；LibreOffice 声明为宿主依赖；确定 `docx-js` 的提供方式（候选：随 skill 附带锁定版本的 node_modules，或在环境中用 npm 安装后固化） | `resources/skills/` | 每个 skill 通过 `validateSkill()`，并经 `skill_run` 跑通一个示例 | 3 天 |
+| 3.6 | 迁移其余 Python 类 skill（pptx、xlsx、pdf、markitdown、matplotlib、scikit-learn、scvelo、rdkit）；LibreOffice 声明为宿主依赖 | `resources/skills/` | 每个 skill 通过 `validateSkill()`，并经 `skill_run` 跑通一个示例 | 3 天 |
 
 ### 步骤 4 agent 绑定环境；可视化移出引擎（L4）
 
@@ -85,7 +86,7 @@
 | 4.1 | **调研**：在 omp 的 `task` / 注册表上给 Database、Wrapper、Visualization 做原型，决定专家委派是否迁移到 omp、`agents/registry.ts` 中重复的部分是否退役；结论写进决策记录 | `src/main/agent/agents/` | 决策记录更新 | 1 周 |
 | 4.2 | **冻结 Agent 定义契约 v1**：沿用 omp 字段（`name`、`description`、`tools`、`spawns`、`model`、`thinkingLevel`），加 Phi 的 `environment`、`visibility`、`skills`、`delegationMode`、`delegation`、`fallback`（旧的 `delegation_mode` 作为别名读取）；结构化结果用 `outputSchema` | `docs/contracts/agent.schema.json`、`agents/definition.ts` | 现有 3 个 agent 通过校验 | 2 天 |
 | 4.3 | bash 注入扩展：绑定了环境的会话里，在 `tool_call` 事件中把 `environmentVariables` 并入 bash 调用的 `env` 参数 | `src/main/agent/agents/`、`omp/omp-sdk-worker.ts` | 绑定会话里 `which python` 指向环境；主 agent 的 bash 不受影响 | 2 天 |
-| 4.4 | 建立插件形态的目录 `resources/plugins/visualization/`：把 `resources/agents/Visualization.md`、`resources/skills/omics-visualization` 移入；`viz` 环境的规格和锁文件放在 `environments/viz/`（按 0.5 的清单覆盖 159 个 R 脚本和 Python 脚本） | `resources/plugins/visualization/` | 三个平台都能建出 `viz` 环境；全部模板冒烟渲染通过 | 4 天 |
+| 4.4 | 建立插件形态的目录 `resources/plugins/visualization/`：把 `resources/agents/Visualization.md`、`resources/skills/omics-visualization` 移入；`viz` 环境的规格和锁文件放在 `environments/viz/`（按 0.5 的清单覆盖 159 个 R 脚本和 Python 脚本；没有 conda 构建的 7 个 R 包——gground、ggideogram、ggcor、linkET、ggsankey、ggsvg、ggmagnify——用 `sourcePackages` 锁定提交安装；ggideogram 与 ggplot2 4.x 的兼容问题在此确认处理方式） | `resources/plugins/visualization/` | 三个平台都能建出 `viz` 环境；全部模板冒烟渲染通过 | 4 天 |
 | 4.5 | **冻结产物契约 v1**：`<文件>.phi-artifact.json` 的字段（类型 `figure` / `table` / `structure` / `molecule` / `network` / `report`、标题、来源）；引擎按产物展示 | `docs/contracts/artifact.schema.json`、展示层 | 样例通过；现有 db 结果查看器可以读取产物 | 2 天 |
 | 4.6 | 可视化改写为命令行程序 `scripts/viz.py`（子命令 `examples`、`route`、`prepare`、`render`）：`route` 调用现有的 `route_template.py`；`prepare`、`examples` 从 TS 改写为 Python；`render` 在同一环境中调用 `Rscript` 并运行 QA，输出 `figure` 产物 | `resources/plugins/visualization/skills/omics-visualization/scripts/` | 四个子命令各有测试；输出通过 JSON Schema 校验 | 4 天 |
 | 4.7 | 在 SKILL.md 中声明 4 个脚本工具（`toolPrefix: viz`，工具名保持 `viz_examples`、`viz_route`、`viz_prepare`、`viz_render`）；Visualization agent 声明 `environment: plugin:viz`，原先按工作流过滤工具的逻辑移入 agent 指令；创建会话时确保环境就绪，否则提示构建 | SKILL.md、`Visualization.md`、会话创建 | 没有本机 R 的机器上出图；可视化评测不退化 | 2 天 |
@@ -98,7 +99,7 @@
 
 | ID | 内容 | 主要涉及 | 验收 | 估时 |
 |---|---|---|---|---|
-| 5.1 | `phi-nextflow` 环境（nextflow + openjdk），wrapper 执行器默认用它启动 nextflow；保留显式选用本机 nextflow：沿用 `environment.json` 的 `customPaths`，检查版本是否满足 wrapper 最低要求，满足才可用并标注"本机（不受管理）" | `wrappers/composition/executor.ts`、`environment/store.ts` | 本机没有 nextflow 时 wrapper 可运行；版本不足的本机 nextflow 被拒绝 | 2.5 天 |
+| 5.1 | `phi-nextflow` 环境（nextflow + openjdk + nf-core + nf-test；nf-core 和 nf-test 用于编写和测试 wrapper module，约 380 MB），wrapper 执行器默认用它启动 nextflow；保留显式选用本机 nextflow：沿用 `environment.json` 的 `customPaths`，检查版本是否满足 wrapper 最低要求，满足才可用并标注"本机（不受管理）" | `wrappers/composition/executor.ts`、`environment/store.ts` | 本机没有 nextflow 时 wrapper 可运行；版本不足的本机 nextflow 被拒绝 | 2.5 天 |
 | 5.2 | `-profile conda` 配置 `conda.useMicromamba = true`、micromamba 路径、`conda.cacheDir` 放在 `~/.phi/runtime` 下 | wrapper 的 `nextflow.config` 生成逻辑 | 没有本机 conda 时 `npm run smoke:wrappers` 通过 | 2 天 |
 | 5.3 | `phi-jupyter` 环境运行 Jupyter 服务端；默认内核来自 `phi-python`（ipykernel）和 `phi-r`（irkernel）；同时列出本机已有的内核，标注"本机（不受管理）"，只能显式选择 | `notebook/analysis-kernels.ts` | 本机没有 jupyter 时 notebook 可用；本机内核可选但不作为默认 | 3 天 |
 | 5.4 | MCP stdio 服务的启动走 `environmentVariables`（机制就绪；用户自己在 `mcp.json` 里配置的服务保持原样） | MCP 相关代码 | 单元测试 | 1 天 |
@@ -154,6 +155,6 @@
 
 ## 6. 第一个迭代
 
-步骤 0 全部，然后 1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6（约 2 周）。
+步骤 0 全部，然后 1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6 → 1.7（约 2.5 周）。
 
 完成后：安装包干净，有依赖清单；Phi 拥有自己的运行时，能在干净账户上按锁文件建出只读、可复现、可回收的环境，并且完全不读取用户的 conda 配置。
