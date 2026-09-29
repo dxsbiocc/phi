@@ -70,6 +70,6 @@ test('API key connectors offer setup before a key is saved and show completion a
   assert.doesNotMatch(missingKey, /aria-label="已添加 Tavily"/)
 
   const connected = render('tavily', true, true)
-  assert.match(connected, /已填写 API key/)
+  assert.match(connected, /已验证/)
   assert.match(connected, /aria-label="已添加 Tavily"/)
 })

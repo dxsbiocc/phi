@@ -10,6 +10,7 @@ import * as agentRunContinue from '../src/main/agent/agents/run-continue'
 import { agentRunHostHandlers } from '../src/main/agent/agents/run-host'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import * as path from 'node:path'
 import test from 'node:test'
@@ -184,6 +185,8 @@ type HarnessResult = {
   bridgeRequests: Array<{ method: string; params: unknown }>
   bridgeStopCount: () => number
   failBridgeRequests: (error: Error | undefined) => void
+  failMcpApiKeyValidation: (error: Error | undefined) => void
+  mcpApiKeyValidationCallCount: () => number
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
   sessions: FakeSession[]
   deleted: string[]
@@ -320,6 +323,8 @@ async function harness(
   const bridgeRequests: Array<{ method: string; params: unknown }> = []
   let bridgeStops = 0
   const mcpApiKeys = new Map<string, string>()
+  let mcpApiKeyValidationFailure: Error | undefined
+  let mcpApiKeyValidationCalls = 0
   let bridgeFailure: Error | undefined
   const osNotifications: Array<{ title: string; body: string }> = []
   const persistedToolOutputs: Array<Record<string, unknown>> = []
@@ -869,6 +874,7 @@ async function harness(
     quit: noop
   })
   const modules: Record<string, unknown> = {
+    'node:crypto': { createHash },
     './agent-env': {},
     './file-preview-media': { hoverMediaPreviewType, mediaPreviewType },
     '../shared/wrapperResultTypes': { declaredExternalOutputRoot },
@@ -1637,6 +1643,13 @@ async function harness(
       isFeaturedMcpApiKeyInstalled: (id: string) => id === 'tavily',
       readFeaturedMcpApiKey: (id: string) => mcpApiKeys.get(id),
       setFeaturedMcpApiKey: (id: string, key: string) => mcpApiKeys.set(id, key)
+    },
+    './agent/mcp-key-validation': {
+      McpApiKeyValidationError: class extends Error {},
+      validateFeaturedMcpApiKey: async () => {
+        mcpApiKeyValidationCalls += 1
+        if (mcpApiKeyValidationFailure) throw mcpApiKeyValidationFailure
+      }
     },
     './agent/resources': {
       listGlobalSkills: async (): Promise<unknown[]> => [
@@ -2496,6 +2509,10 @@ async function harness(
     failBridgeRequests: (error: Error | undefined): void => {
       bridgeFailure = error
     },
+    failMcpApiKeyValidation: (error: Error | undefined): void => {
+      mcpApiKeyValidationFailure = error
+    },
+    mcpApiKeyValidationCallCount: () => mcpApiKeyValidationCalls,
     osNotifications,
     reportedWrapperRuns,
     setAppFocused: (focused: boolean): void => {
@@ -3485,14 +3502,30 @@ test('main IPC: API keys stay out of renderer responses and worker sync requests
   await app.invoke('mcp:setFeaturedApiKey', 'tavily', 'second-test-key')
   await app.invoke('mcp:removeRemoteConnector', 'tavily', 'https://mcp.tavily.com/mcp')
   assert.equal(await app.invoke('mcp:featuredApiKeyStatus', 'tavily'), false)
+
+  await app.invoke('mcp:setFeaturedApiKey', 'serpapi', 'serp-test-key')
+  const checksAfterSave = app.mcpApiKeyValidationCallCount()
+  assert.equal(await app.invoke('mcp:featuredApiKeyStatus', 'serpapi'), true)
+  assert.equal(await app.invoke('mcp:featuredApiKeyStatus', 'serpapi'), true)
+  assert.equal(app.mcpApiKeyValidationCallCount(), checksAfterSave)
 })
 
 test('main IPC: a saved API key remains saved if live worker refresh fails', async () => {
   const app = await harness()
   app.failBridgeRequests(new Error('worker unavailable'))
-  await app.invoke('mcp:setFeaturedApiKey', 'tavily', 'private-test-key')
+  await assert.rejects(
+    app.invoke('mcp:setFeaturedApiKey', 'tavily', 'private-test-key'),
+    /本地修改已保存.*会话同步失败/
+  )
   assert.equal(await app.invoke('mcp:featuredApiKeyStatus', 'tavily'), true)
   assert.equal(app.bridgeStopCount(), 1)
+})
+
+test('main IPC: an API key is not saved before the provider verifies it', async () => {
+  const app = await harness()
+  app.failMcpApiKeyValidation(new Error('验证失败'))
+  await assert.rejects(app.invoke('mcp:setFeaturedApiKey', 'tavily', 'invalid-key'), /验证失败/)
+  assert.equal(await app.invoke('mcp:featuredApiKeyStatus', 'tavily'), false)
 })
 
 test(

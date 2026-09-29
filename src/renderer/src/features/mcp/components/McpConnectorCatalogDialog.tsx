@@ -21,6 +21,7 @@ import {
 import { PhiIcons } from '../../../icons'
 import type { McpServerSummary } from '../../../types'
 import { ConnectorIcon } from './ConnectorIcon'
+import { McpApiKeyDialog } from './McpApiKeyDialog'
 import { McpFeaturedConnectorCard, type ConnectorAuthStatus } from './McpFeaturedConnectorCard'
 import { McpToolList } from './McpToolList'
 
@@ -40,6 +41,14 @@ function cacheTools(names: string[]): CachedToolNames {
   return { names, expiresAt: Date.now() + TOOL_LIST_CACHE_MS }
 }
 
+function apiKeyErrorMessage(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : String(cause)
+  return message.replace(
+    /^Error invoking remote method ['"]mcp:setFeaturedApiKey['"]: (?:McpApiKeyValidationError|Error): /,
+    ''
+  )
+}
+
 export interface McpConnectorCatalogDialogProps {
   open: boolean
   servers: McpServerSummary[]
@@ -51,7 +60,9 @@ function matchingServer(
   connector: FeaturedMcpConnector,
   servers: McpServerSummary[]
 ): McpServerSummary | undefined {
-  return servers.find((server) => server.url === connector.url)
+  return servers.find(
+    (server) => server.url === connector.url && (!connector.apiKey || server.name === connector.id)
+  )
 }
 
 export function McpConnectorCatalogDialog({
@@ -67,6 +78,8 @@ export function McpConnectorCatalogDialog({
   const [customName, setCustomName] = useState('')
   const [customUrl, setCustomUrl] = useState('')
   const [apiKeyInput, setApiKeyInput] = useState('')
+  const [apiKeyDialogId, setApiKeyDialogId] = useState<string | null>(null)
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [toolNames, setToolNames] = useState<string[] | null>(null)
@@ -119,6 +132,10 @@ export function McpConnectorCatalogDialog({
     }
   }, [open])
   const selected = featuredMcpConnectors.find((connector) => connector.id === selectedId)
+  const apiKeyDialogConnector =
+    featuredMcpConnectors.find(
+      (connector) => connector.id === apiKeyDialogId && connector.apiKey
+    ) ?? null
   const selectedAuthStatus = authStatusById[selectedId] ?? 'checking'
   const normalizedQuery = query.trim().toLowerCase()
   const filteredFeatured = useMemo(
@@ -174,13 +191,18 @@ export function McpConnectorCatalogDialog({
     setError(null)
     try {
       await window.api.removeRemoteMcpConnector(server.name, server.url)
-      const connector = featuredMcpConnectors.find((entry) => entry.url === server.url)
+      const connector = featuredMcpConnectors.find(
+        (entry) => entry.url === server.url && (!entry.apiKey || entry.id === server.name)
+      )
       if (connector) toolListCacheRef.current.delete(connector.id)
       if (connector?.apiKey) {
+        toolRequestRef.current += 1
+        setToolNames(null)
+        setToolsError(null)
+        setToolsLoading(false)
         setAuthStatusById((current) => ({ ...current, [connector.id]: 'unauthenticated' }))
       }
       await onRefresh()
-      setPage('list')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -222,25 +244,59 @@ export function McpConnectorCatalogDialog({
     }
   }
 
+  function openApiKeyDialog(connector: FeaturedMcpConnector): void {
+    setApiKeyDialogId(connector.id)
+    setApiKeyInput('')
+    setApiKeyError(null)
+  }
+
+  function closeApiKeyDialog(): void {
+    setApiKeyDialogId(null)
+    setApiKeyInput('')
+    setApiKeyError(null)
+  }
+
   async function connectApiKey(connector: FeaturedMcpConnector): Promise<void> {
-    if (!connector.apiKey || !apiKeyInput.trim()) return
+    if (!connector.apiKey) return
+    const key = apiKeyInput.trim()
+    if (!key && authStatusById[connector.id] !== 'authenticated') return
     setBusy(connector.id)
-    setError(null)
+    setApiKeyError(null)
     setToolsError(null)
     try {
-      await window.api.setFeaturedMcpApiKey(connector.id, apiKeyInput.trim())
-      setApiKeyInput('')
-      setAuthStatusById((current) => ({ ...current, [connector.id]: 'authenticated' }))
+      if (key) {
+        await window.api.setFeaturedMcpApiKey(connector.id, key)
+        setApiKeyInput('')
+        setAuthStatusById((current) => ({ ...current, [connector.id]: 'authenticated' }))
+      }
       toolListCacheRef.current.delete(connector.id)
       if (!matchingServer(connector, servers)) {
         await window.api.addRemoteMcpConnector(connector.id, connector.url)
         await onRefresh()
       }
-      const names = await window.api.listFeaturedMcpTools(connector.id)
-      toolListCacheRef.current.set(connector.id, cacheTools(names))
-      setToolNames(names)
+      closeApiKeyDialog()
+      const request = ++toolRequestRef.current
+      try {
+        const names = await window.api.listFeaturedMcpTools(connector.id)
+        toolListCacheRef.current.set(connector.id, cacheTools(names))
+        if (
+          request === toolRequestRef.current &&
+          page === 'detail' &&
+          selectedId === connector.id
+        ) {
+          setToolNames(names)
+        }
+      } catch (cause) {
+        if (
+          request === toolRequestRef.current &&
+          page === 'detail' &&
+          selectedId === connector.id
+        ) {
+          setToolsError(cause instanceof Error ? cause.message : String(cause))
+        }
+      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setApiKeyError(apiKeyErrorMessage(cause))
     } finally {
       setBusy(null)
     }
@@ -306,6 +362,8 @@ export function McpConnectorCatalogDialog({
     toolRequestRef.current += 1
     setAuthStatusById({})
     setApiKeyInput('')
+    setApiKeyDialogId(null)
+    setApiKeyError(null)
     setPage('list')
     onClose()
   }
@@ -328,16 +386,20 @@ export function McpConnectorCatalogDialog({
         authStatus={authStatusById[connector.id] ?? 'checking'}
         busy={busy !== null}
         onOpen={() => openDetail(connector)}
-        onAdd={() => void add(connector.id, connector.url)}
+        onAdd={() =>
+          connector.apiKey ? openApiKeyDialog(connector) : void add(connector.id, connector.url)
+        }
         onAuthorize={() =>
-          connector.apiKey ? openDetail(connector) : void connectOAuth(connector)
+          connector.apiKey ? openApiKeyDialog(connector) : void connectOAuth(connector)
         }
       />
     )
   }
 
   function installedCard(server: McpServerSummary): React.JSX.Element {
-    const connector = featuredMcpConnectors.find((entry) => entry.url === server.url)
+    const connector = featuredMcpConnectors.find(
+      (entry) => entry.url === server.url && (!entry.apiKey || entry.id === server.name)
+    )
     if (connector) return connectorCard(connector, server.id)
     return (
       <Box
@@ -513,26 +575,56 @@ export function McpConnectorCatalogDialog({
                   </Box>
                   {selected.apiKey ? (
                     <Stack direction="row" spacing={1}>
-                      {matchingServer(selected, servers)?.managed && (
+                      {matchingServer(selected, servers) ? (
+                        <>
+                          <Button
+                            variant="outlined"
+                            disabled={busy !== null}
+                            onClick={() => openApiKeyDialog(selected)}
+                          >
+                            更换密钥
+                          </Button>
+                          {matchingServer(selected, servers)?.managed && (
+                            <Button
+                              color="error"
+                              variant="outlined"
+                              disabled={busy !== null}
+                              onClick={() => void remove(matchingServer(selected, servers)!)}
+                            >
+                              移除
+                            </Button>
+                          )}
+                        </>
+                      ) : (
                         <Button
-                          color="error"
-                          variant="outlined"
+                          variant="contained"
                           disabled={busy !== null}
-                          onClick={() => void remove(matchingServer(selected, servers)!)}
+                          onClick={() => openApiKeyDialog(selected)}
                         >
-                          移除
+                          添加连接器
                         </Button>
                       )}
                     </Stack>
                   ) : selected.oauthAuthorizationOrigin ? (
                     <Stack direction="row" spacing={1}>
-                      <Button
-                        variant="contained"
-                        disabled={busy !== null || selectedAuthStatus === 'checking'}
-                        onClick={() => void connectOAuth(selected)}
-                      >
-                        {selectedAuthStatus === 'authenticated' ? '重新授权' : '授权登录'}
-                      </Button>
+                      {selectedAuthStatus === 'authenticated' &&
+                      !matchingServer(selected, servers) ? (
+                        <Button
+                          variant="contained"
+                          disabled={busy !== null}
+                          onClick={() => void add(selected.id, selected.url)}
+                        >
+                          添加连接器
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="contained"
+                          disabled={busy !== null || selectedAuthStatus === 'checking'}
+                          onClick={() => void connectOAuth(selected)}
+                        >
+                          {selectedAuthStatus === 'authenticated' ? '重新授权' : '授权登录'}
+                        </Button>
+                      )}
                       {matchingServer(selected, servers)?.managed && (
                         <Button
                           color="error"
@@ -588,52 +680,20 @@ export function McpConnectorCatalogDialog({
                   <Typography color="text.secondary">{selected.overview}</Typography>
                 </Box>
                 {selected.apiKey && (
-                  <Stack spacing={1.5} sx={{ mb: 3, maxWidth: 560 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                      API key
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      密钥加密保存在本机，由 Phi 直接连接官方托管 MCP；调用计入你的服务商账号额度。
-                    </Typography>
-                    <Button
-                      component="a"
-                      href={selected.apiKey.obtainUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      size="small"
-                      sx={{ alignSelf: 'flex-start', pl: 0 }}
-                    >
-                      前往 {selected.name} 获取 API key ↗
-                    </Button>
-                    <Stack direction="row" spacing={1}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        type="password"
-                        label={
-                          selectedAuthStatus === 'authenticated' ? '替换 API key' : '粘贴 API key'
-                        }
-                        value={apiKeyInput}
-                        onChange={(event) => setApiKeyInput(event.target.value)}
-                        autoComplete="off"
-                      />
-                      <Button
-                        variant="contained"
-                        disabled={busy !== null || !apiKeyInput.trim()}
-                        onClick={() => void connectApiKey(selected)}
-                        sx={{ flexShrink: 0 }}
-                      >
-                        {selectedAuthStatus === 'authenticated' ? '更新密钥' : '保存并连接'}
-                      </Button>
-                    </Stack>
-                  </Stack>
+                  <Alert severity="info" sx={{ mb: 3 }}>
+                    {selectedAuthStatus === 'authenticated'
+                      ? 'API key 已通过验证并加密保存在本机。需要更换时，点击右上角的「更换密钥」。'
+                      : '此连接器需要 API key。点击右上角的「添加连接器」进行验证和保存。'}
+                  </Alert>
                 )}
                 <McpToolList
                   requiresSignIn={
                     (selected.signIn === '需要登录' && !selected.oauthAuthorizationOrigin) ||
                     Boolean(selected.apiKey && selectedAuthStatus !== 'authenticated')
                   }
-                  signInMessage={selected.apiKey ? '保存 API key 后可读取服务端工具。' : undefined}
+                  signInMessage={
+                    selected.apiKey ? '验证并添加 API key 后可读取服务端工具。' : undefined
+                  }
                   loading={toolsLoading}
                   names={toolNames}
                   error={toolsError}
@@ -673,7 +733,7 @@ export function McpConnectorCatalogDialog({
                     </Typography>
                     <Typography>
                       {selected.apiKey && selectedAuthStatus === 'authenticated'
-                        ? 'API key 已配置'
+                        ? 'API key 已验证'
                         : selected.oauthAuthorizationOrigin &&
                             selectedAuthStatus === 'authenticated'
                           ? '已登录'
@@ -759,6 +819,25 @@ export function McpConnectorCatalogDialog({
           </Box>
         </Box>
       </Box>
+      <McpApiKeyDialog
+        connector={apiKeyDialogConnector}
+        value={apiKeyInput}
+        verified={
+          apiKeyDialogConnector
+            ? authStatusById[apiKeyDialogConnector.id] === 'authenticated'
+            : false
+        }
+        installed={
+          apiKeyDialogConnector ? Boolean(matchingServer(apiKeyDialogConnector, servers)) : false
+        }
+        busy={busy !== null}
+        error={apiKeyError ? apiKeyErrorMessage(apiKeyError) : null}
+        onChange={setApiKeyInput}
+        onClose={closeApiKeyDialog}
+        onSubmit={() => {
+          if (apiKeyDialogConnector) void connectApiKey(apiKeyDialogConnector)
+        }}
+      />
     </Dialog>
   )
 }

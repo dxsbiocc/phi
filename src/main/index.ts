@@ -25,6 +25,7 @@ import type {
 } from '../shared/wrapperTypes'
 import './agent-env'
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   closeSync,
   existsSync,
@@ -164,11 +165,11 @@ import {
   API_KEY_CONNECTOR_IDS,
   apiKeyConnector,
   clearFeaturedMcpApiKey,
-  featuredMcpApiKeyStatus,
   isFeaturedMcpApiKeyInstalled,
   readFeaturedMcpApiKey,
   setFeaturedMcpApiKey
 } from './agent/mcp-key-credentials'
+import { McpApiKeyValidationError, validateFeaturedMcpApiKey } from './agent/mcp-key-validation'
 import { featuredMcpConnectors } from '../shared/mcpConnectorCatalog'
 import {
   deleteSkill,
@@ -867,6 +868,35 @@ getOmpBridge().registerHostHandler('mcp.featuredApiKey', (params) => {
   if (!isFeaturedMcpApiKeyInstalled(id)) return undefined
   return readFeaturedMcpApiKey(id)
 })
+const VERIFIED_API_KEY_CACHE_MS = 5 * 60_000
+const verifiedMcpApiKeys = new Map<string, { digest: string; expiresAt: number }>()
+function verificationExpiresAt(id: string): number {
+  // SerpApi's account API accepts keys only in a query parameter. Check it at
+  // most once per app process for an unchanged key to avoid repeated URL exposure.
+  return id === 'serpapi' ? Number.POSITIVE_INFINITY : Date.now() + VERIFIED_API_KEY_CACHE_MS
+}
+function apiKeyDigest(key: string): string {
+  return createHash('sha256').update(key).digest('hex')
+}
+async function featuredMcpApiKeyVerifiedStatus(id: string): Promise<boolean> {
+  const key = readFeaturedMcpApiKey(id)
+  if (!key) {
+    verifiedMcpApiKeys.delete(id)
+    return false
+  }
+  const digest = apiKeyDigest(key)
+  const cached = verifiedMcpApiKeys.get(id)
+  if (cached?.digest === digest && cached.expiresAt > Date.now()) return true
+  try {
+    await validateFeaturedMcpApiKey(id, key)
+  } catch (cause) {
+    verifiedMcpApiKeys.delete(id)
+    if (cause instanceof McpApiKeyValidationError && cause.kind === 'invalid') return false
+    throw cause
+  }
+  verifiedMcpApiKeys.set(id, { digest, expiresAt: verificationExpiresAt(id) })
+  return true
+}
 async function syncFeaturedMcpApiKeySessions(id: string): Promise<void> {
   if (!API_KEY_CONNECTOR_IDS.some((connectorId) => connectorId === id)) return
   try {
@@ -876,6 +906,7 @@ async function syncFeaturedMcpApiKeySessions(id: string): Promise<void> {
     // leave a revoked or rotated credential usable in an existing session.
     writeAppLog({ event: 'mcp_api_key_session_sync_failed', metadata: { connectorId: id } })
     await getOmpBridge().stop()
+    throw new Error('本地修改已保存，但运行中的会话同步失败并已停止；请重新打开对话后重试')
   }
 }
 const remoteConnectionTracker = new RemoteProjectConnectionTracker()
@@ -7187,18 +7218,27 @@ app.whenReady().then(() => {
     removeRemoteMcpConnector(name, url)
     if (API_KEY_CONNECTOR_IDS.some((id) => id === name && apiKeyConnector(id).url === url)) {
       clearFeaturedMcpApiKey(name)
+      verifiedMcpApiKeys.delete(name)
     }
     await syncFeaturedMcpApiKeySessions(name)
   })
-  ipcMain.handle('mcp:featuredApiKeyStatus', async (_, id: string) => featuredMcpApiKeyStatus(id))
+  ipcMain.handle('mcp:featuredApiKeyStatus', async (_, id: string) =>
+    featuredMcpApiKeyVerifiedStatus(id)
+  )
   ipcMain.handle('mcp:setFeaturedApiKey', async (_, id: string, key: string) => {
     apiKeyConnector(id)
+    await validateFeaturedMcpApiKey(id, key)
     disableFeaturedApiKeyAutoDiscovery()
     setFeaturedMcpApiKey(id, key)
+    verifiedMcpApiKeys.set(id, {
+      digest: apiKeyDigest(key.trim()),
+      expiresAt: verificationExpiresAt(id)
+    })
     if (isFeaturedMcpApiKeyInstalled(id)) await syncFeaturedMcpApiKeySessions(id)
   })
   ipcMain.handle('mcp:clearFeaturedApiKey', async (_, id: string) => {
     clearFeaturedMcpApiKey(id)
+    verifiedMcpApiKeys.delete(id)
     await syncFeaturedMcpApiKeySessions(id)
   })
   ipcMain.handle('mcp:featuredTools', async (_, id: string) => {

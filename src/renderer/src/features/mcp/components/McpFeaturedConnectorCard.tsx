@@ -33,7 +33,7 @@ export function McpFeaturedConnectorCard({
         : '授权暂不可用'
       : authStatus === 'authenticated'
         ? connector.apiKey
-          ? '已填写 API key'
+          ? '已验证'
           : '已登录'
         : authStatus === 'checking'
           ? '检查中'
@@ -122,7 +122,7 @@ export function McpFeaturedConnectorCard({
                 : `授权登录 ${connector.name}`
           }
           size="small"
-          disabled={busy || (requiresSignIn && authStatus === 'checking')}
+          disabled={busy || (requiresSignIn && !connector.apiKey && authStatus === 'checking')}
           onClick={(event) => {
             event.stopPropagation()
             if (authorized) onAdd()
