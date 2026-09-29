@@ -45,3 +45,21 @@ export {
 } from './runtime'
 
 export type { RunMicromambaOptions, RuntimeLayout, RuntimeSettings } from './runtime'
+
+export { captureActivation, diffActivation } from './activation'
+export type { ActivationSnapshot } from './activation'
+
+export { acquireEnvironmentLock, ensureEnvironment, removeTree } from './ensure'
+export type {
+  EnsureEnvironmentInput,
+  EnsureEnvironmentResult,
+  EnsureProgressEvent,
+  EnvironmentLock,
+  SourcePackageInstaller
+} from './ensure'
+
+export { probeHostRequirements } from './host'
+export type { HostProbeResult } from './host'
+
+export { readEnvironmentIndex, updateEnvironmentEntry } from './index-store'
+export type { EnvironmentEntryPatch, EnvironmentIndex, EnvironmentIndexEntry } from './index-store'
