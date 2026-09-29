@@ -20,3 +20,6 @@ resources/wrappers/index.json
 # Local agent-tool runtime state (progress tracking, screenshots) — not
 # project source.
 .omx/
+
+# Local db-vs-fetch evaluation results (scripts/eval/).
+eval-results/

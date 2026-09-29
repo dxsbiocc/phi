@@ -28,7 +28,8 @@
     "test": "node --import ./scripts/test-loader.mjs --test tests/*.test.ts",
     "smoke:wrappers": "node --import ./scripts/test-loader.mjs scripts/smoke-wrappers.mjs",
     "wrappers:index": "node --import ./scripts/test-loader.mjs scripts/build-wrapper-pack-index.mjs",
-    "usage:report": "node --import ./scripts/test-loader.mjs scripts/agent-usage-report.mjs"
+    "usage:report": "node --import ./scripts/test-loader.mjs scripts/agent-usage-report.mjs",
+    "eval:db": "bun scripts/eval/db-vs-fetch.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",
