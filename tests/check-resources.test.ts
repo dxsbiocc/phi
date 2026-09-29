@@ -14,6 +14,30 @@ test('resource check allows .DS_Store and the generated wrapper pack index', () 
   )
 })
 
+test('resource check allows fetched micromamba binaries and nothing else under resources/runtime', () => {
+  assert.deepEqual(
+    offendingResourcePaths([
+      'resources/runtime/micromamba/darwin-arm64/micromamba',
+      'resources/runtime/micromamba/darwin-x64/micromamba',
+      'resources/runtime/micromamba/linux-x64/micromamba',
+      'resources\\runtime\\micromamba\\linux-x64\\micromamba'
+    ]),
+    []
+  )
+  assert.deepEqual(
+    offendingResourcePaths([
+      'resources/runtime/manifest.json',
+      'resources/runtime/micromamba',
+      'resources/runtime/micromamba-extra'
+    ]),
+    [
+      'resources/runtime/manifest.json',
+      'resources/runtime/micromamba',
+      'resources/runtime/micromamba-extra'
+    ]
+  )
+})
+
 test('resource check rejects Nextflow leftovers and other untracked files', () => {
   const untracked = [
     'resources/wrappers/modules/local/differential-expression/deseq2/.nextflow/x',

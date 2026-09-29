@@ -369,7 +369,7 @@ function resourceDirCandidates(resourceName: string, appPath?: string): string[]
   return candidates
 }
 
-function getBundledResourceDir(resourceName: string): string {
+export function getBundledResourceDir(resourceName: string): string {
   const electronModule = nodeRequire('electron') as
     | {
         app?: {

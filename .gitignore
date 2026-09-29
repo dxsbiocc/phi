@@ -17,6 +17,10 @@ resources/wrappers/**/.nextflow/
 # the committed source of the pack's name and version.
 resources/wrappers/index.json
 
+# Micromamba binaries downloaded by `npm run runtime:fetch`. Version, URL, and
+# sha256 live in resources/runtime/manifest.json, which is committed.
+resources/runtime/micromamba/
+
 # Local agent-tool runtime state (progress tracking, screenshots) — not
 # project source.
 .omx/

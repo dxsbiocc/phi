@@ -1,0 +1,142 @@
+import assert from 'node:assert/strict'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+
+import { currentPhiPlatform, getMicromambaPath } from '../src/main/agent/envs/paths'
+import {
+  MICROMAMBA_PLATFORM_IDS,
+  fileSha256,
+  lookupMicromambaPlatform,
+  phiPlatformId
+} from '../scripts/runtime/fetch-micromamba.mjs'
+
+const repoRoot = process.cwd()
+
+const condaSubdirByPlatform: Record<string, string> = {
+  'darwin-arm64': 'osx-arm64',
+  'darwin-x64': 'osx-64',
+  'linux-x64': 'linux-64'
+}
+
+test('micromamba manifest lists the three bundled platforms', () => {
+  const manifest = JSON.parse(
+    readFileSync(join(repoRoot, 'resources', 'runtime', 'manifest.json'), 'utf8')
+  ) as {
+    micromamba: {
+      version: string
+      platforms: Record<string, { url: string; sha256: string }>
+    }
+  }
+
+  assert.equal(manifest.micromamba.version, '2.9.0-0')
+  assert.deepEqual(
+    Object.keys(manifest.micromamba.platforms).sort(),
+    [...MICROMAMBA_PLATFORM_IDS].sort()
+  )
+
+  for (const platformId of MICROMAMBA_PLATFORM_IDS) {
+    const release = lookupMicromambaPlatform(manifest, platformId)
+    const subdir = condaSubdirByPlatform[platformId]
+    assert.ok(release)
+    assert.equal(
+      release.url,
+      `https://github.com/mamba-org/micromamba-releases/releases/download/2.9.0-0/micromamba-${subdir}`
+    )
+    assert.match(release.sha256, /^[0-9a-f]{64}$/)
+    assert.equal(release.url.startsWith('https://'), true)
+  }
+
+  assert.equal(lookupMicromambaPlatform(manifest, 'win32-x64'), undefined)
+})
+
+test('platform ids map process.platform and process.arch', () => {
+  assert.equal(phiPlatformId('darwin', 'arm64'), 'darwin-arm64')
+  assert.equal(phiPlatformId('darwin', 'x64'), 'darwin-x64')
+  assert.equal(phiPlatformId('linux', 'x64'), 'linux-x64')
+  assert.equal(phiPlatformId('win32', 'x64'), undefined)
+  assert.equal(phiPlatformId('linux', 'arm64'), undefined)
+
+  assert.equal(currentPhiPlatform('darwin', 'arm64'), 'darwin-arm64')
+  assert.equal(currentPhiPlatform('darwin', 'x64'), 'darwin-x64')
+  assert.equal(currentPhiPlatform('linux', 'x64'), 'linux-x64')
+  assert.equal(currentPhiPlatform('win32', 'x64'), undefined)
+  assert.equal(currentPhiPlatform('linux', 'arm64'), undefined)
+  assert.equal(currentPhiPlatform(), phiPlatformId())
+})
+
+test('manifest lookup rejects an incomplete platform entry', () => {
+  const manifest = {
+    micromamba: {
+      platforms: {
+        'linux-x64': { url: 'https://example.test/micromamba' }
+      }
+    }
+  }
+  assert.equal(lookupMicromambaPlatform(manifest, 'linux-x64'), undefined)
+  assert.deepEqual(
+    lookupMicromambaPlatform(
+      {
+        micromamba: {
+          platforms: {
+            'linux-x64': {
+              url: 'https://example.test/micromamba',
+              sha256: 'ab'.repeat(32)
+            }
+          }
+        }
+      },
+      'linux-x64'
+    ),
+    { url: 'https://example.test/micromamba', sha256: 'ab'.repeat(32) }
+  )
+})
+
+test('fileSha256 hashes file bytes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-micromamba-sha-'))
+  try {
+    const filePath = join(root, 'payload')
+    writeFileSync(filePath, 'abc')
+    assert.equal(
+      fileSha256(filePath),
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+// Plain Node resolves bundled resources from the working directory: electron's
+// export outside the Electron process is the binary path, not app.
+test('getMicromambaPath resolves a binary under the working directory', () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-micromamba-path-'))
+  const previous = process.cwd()
+  try {
+    process.chdir(root)
+    // cwd() realpath differs from mkdtemp's path on macOS (/var -> /private/var).
+    const directory = join(process.cwd(), 'resources', 'runtime', 'micromamba', 'darwin-arm64')
+    const binary = join(directory, 'micromamba')
+    mkdirSync(directory, { recursive: true })
+    writeFileSync(binary, 'micromamba')
+    assert.equal(getMicromambaPath('darwin-arm64'), binary)
+  } finally {
+    process.chdir(previous)
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('getMicromambaPath reports how to fetch a missing binary', () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-micromamba-missing-'))
+  const previous = process.cwd()
+  try {
+    process.chdir(root)
+    assert.throws(
+      () => getMicromambaPath('linux-x64'),
+      /Bundled micromamba for linux-x64 is missing at .*micromamba; run npm run runtime:fetch/
+    )
+  } finally {
+    process.chdir(previous)
+    rmSync(root, { recursive: true, force: true })
+  }
+})
