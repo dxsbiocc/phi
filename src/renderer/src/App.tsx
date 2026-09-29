@@ -141,6 +141,7 @@ import {
   idleSessionRuntimeState,
   reduceSessionRuntimeState,
   sessionRuntimeStateIsBusy,
+  sessionRuntimeStatePausesQueue,
   sessionStatusIsBusy
 } from './lib/sessionRuntimeState'
 import { createAgentEventReducerState, reduceAgentEventState } from './lib/agentEventReducer'
@@ -2802,6 +2803,7 @@ function App(): React.JSX.Element {
   const activeSessionHasWork =
     sessionStatusIsBusy(activeSession) || sessionRuntimeStateIsBusy(activeSessionRuntimeState)
   const currentSessionIsBusy = isSendingMessage || activeSessionHasWork
+  const queuedPromptsPaused = sessionRuntimeStatePausesQueue(activeSessionRuntimeState)
   const activeContextCompactionKey = JSON.stringify([
     activePhiSessionId ?? null,
     activeSessionPath,
@@ -2899,6 +2901,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     if (
       currentSessionIsBusy ||
+      queuedPromptsPaused ||
       currentSessionIsCompacting ||
       isSessionChanging ||
       isBusy ||
@@ -2940,6 +2943,7 @@ function App(): React.JSX.Element {
     activeQueuedPrompts,
     availableModels,
     currentSessionIsBusy,
+    queuedPromptsPaused,
     currentSessionIsCompacting,
     isModelStateReady,
     isBusy,
@@ -3678,6 +3682,7 @@ function App(): React.JSX.Element {
             id: item.id,
             text: item.text || `图片 ${item.sendOptions?.images?.length ?? 0} 张`
           }))}
+          queuedPromptsPaused={queuedPromptsPaused}
           onRespondApproval={onRespondToolApproval}
           onRespondUserInteraction={onRespondAgentUserInteraction}
           onRemoveQueuedPrompt={removeQueuedPrompt}

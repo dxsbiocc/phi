@@ -22,6 +22,7 @@ import {
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
 import { connectToServer, disconnectServer, listTools } from '@oh-my-pi/pi-coding-agent/mcp/client'
+import { estimateToolSchemaTokens } from '@oh-my-pi/pi-coding-agent/modes/utils/context-usage'
 import {
   DEFAULT_COMPACTION_METHOD_ORDER,
   resolveCompactionMethodOrder
@@ -53,7 +54,7 @@ import type {
   ContextCompactionSummary,
   ContextUsageSnapshot
 } from '../../../shared/contextUsageTypes'
-import { contextUsageSnapshot } from './context-usage-snapshot'
+import { contextUsageSnapshot, partitionMcpTools } from './context-usage-snapshot'
 import { buildRemoteWorkspaceReadTool } from '../remote-workspace-read-tool'
 import type { RemoteWorkspaceReadResult } from '../remote-workspace-read'
 import {
@@ -183,6 +184,18 @@ const CURRENT_SDK_PROJECT_CONFIG_DIR_NAME = '.omp'
 const LEGACY_PROJECT_CONFIG_DIR_NAMES = ['.omp', '.pi'] as const
 const contexts = new Map<string, Promise<RuntimeContext>>()
 const sessions = new Map<string, SessionEntry>()
+type WorkerAgentSession = CreateAgentSessionResult['session']
+type ToolSchema = WorkerAgentSession['agent']['state']['tools'][number]
+const mcpUsageCache = new WeakMap<
+  WorkerAgentSession,
+  {
+    tokenizer: WorkerAgentSession['agent']['tokenizer']
+    directTools: ToolSchema[]
+    deferredTools: ToolSchema[]
+    directTokens: number
+    deferredTokens: number
+  }
+>()
 const pendingHostRequests = new Map<
   string,
   {
@@ -1359,10 +1372,51 @@ function sessionContextUsage(params: unknown): ContextUsageSnapshot | null {
   const session = getSession(record.sessionId).session
   const usage = session.getContextUsage()
   try {
-    return contextUsageSnapshot(usage, session.getContextBreakdown())
+    const firstPrompt = session.systemPrompt[0]
+    const firstSystemPromptTokens = firstPrompt?.startsWith('§ Phi Role')
+      ? session.agent.tokenizer.countTokens(firstPrompt)
+      : undefined
+    return contextUsageSnapshot(
+      usage,
+      session.getContextBreakdown(),
+      firstSystemPromptTokens,
+      sessionMcpUsage(session)
+    )
   } catch {
     return contextUsageSnapshot(usage)
   }
+}
+
+function sessionMcpUsage(session: WorkerAgentSession): {
+  directTokens: number
+  deferredTokens: number
+} {
+  const { directTools, deferredTools } = partitionMcpTools(
+    session.agent.state.tools,
+    session.getSelectedMCPToolNames(),
+    (name) => session.getToolByName(name)
+  )
+  const cached = mcpUsageCache.get(session)
+  const tokenizer = session.agent.tokenizer
+  if (
+    cached &&
+    cached.tokenizer === tokenizer &&
+    cached.directTools.length === directTools.length &&
+    cached.deferredTools.length === deferredTools.length &&
+    directTools.every((tool, index) => tool === cached.directTools[index]) &&
+    deferredTools.every((tool, index) => tool === cached.deferredTools[index])
+  ) {
+    return cached
+  }
+  const result = {
+    tokenizer,
+    directTools,
+    deferredTools,
+    directTokens: directTools.length ? estimateToolSchemaTokens(directTools, tokenizer) : 0,
+    deferredTokens: deferredTools.length ? estimateToolSchemaTokens(deferredTools, tokenizer) : 0
+  }
+  mcpUsageCache.set(session, result)
+  return result
 }
 
 function autoCompactionOverrides(value: unknown): AutoCompactionOverrides {

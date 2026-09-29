@@ -205,17 +205,27 @@ export function ModelSelectorControl({
         {compact ? (
           <IconButton
             size="small"
+            disableRipple
             onClick={handleOpen}
             disabled={disabled}
             aria-describedby={popoverId}
             aria-label={`选择模型：${label}`}
-            sx={{ ...compactComposerIconButtonSx, color: 'text.secondary' }}
+            sx={{
+              ...compactComposerIconButtonSx,
+              color: 'text.secondary',
+              '&.Mui-focusVisible': {
+                outline: '2px solid',
+                outlineColor: 'primary.main',
+                outlineOffset: 2
+              }
+            }}
           >
             <ProviderModelIcon providerId={selectedModel?.providerId} disabled={disabled} />
           </IconButton>
         ) : (
           <Button
             size="small"
+            disableRipple
             onClick={handleOpen}
             disabled={disabled}
             aria-describedby={popoverId}
@@ -230,7 +240,13 @@ export function ModelSelectorControl({
               minHeight: 32,
               maxWidth: 160,
               justifyContent: 'flex-start',
-              px: 1
+              px: 1,
+              '&:hover': { bgcolor: 'action.hover' },
+              '&.Mui-focusVisible': {
+                outline: '2px solid',
+                outlineColor: 'primary.main',
+                outlineOffset: 2
+              }
             }}
           >
             <Box

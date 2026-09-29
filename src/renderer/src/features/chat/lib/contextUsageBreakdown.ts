@@ -5,7 +5,9 @@ import type {
 
 const CATEGORY_META: Record<ContextUsageCategoryId, { label: string; color: string }> = {
   systemPrompt: { label: '系统提示词', color: '#9CA3AF' },
-  toolDefinitions: { label: '工具定义', color: '#9684E8' },
+  toolDefinitions: { label: '工具定义（未细分）', color: '#9684E8' },
+  systemTools: { label: '系统工具', color: '#9684E8' },
+  mcpTools: { label: 'MCP 工具', color: '#E8604C' },
   systemContext: { label: '系统上下文', color: '#42A574' },
   skills: { label: '技能', color: '#F1B562' },
   conversation: { label: '对话', color: '#DE807C' }
@@ -16,7 +18,7 @@ export function contextUsageCategories(usage: ContextUsageSnapshot | null): Arra
   label: string
   color: string
   tokens: number
-  usedPercent: number
+  windowPercent: number
 }> {
   if (!usage?.categories || usage.contextWindow <= 0) return []
   return usage.categories
@@ -24,7 +26,7 @@ export function contextUsageCategories(usage: ContextUsageSnapshot | null): Arra
     .map((category) => ({
       ...category,
       ...CATEGORY_META[category.id],
-      usedPercent: usage.tokens > 0 ? (category.tokens / usage.tokens) * 100 : 0
+      windowPercent: (category.tokens / usage.contextWindow) * 100
     }))
     .sort((left, right) => right.tokens - left.tokens)
 }

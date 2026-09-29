@@ -4299,9 +4299,11 @@ test('main IPC: context usage follows the selected session and preserves unavail
         tokens: 24000,
         contextWindow: 200000,
         percent: 12,
+        deferredMcpTokens: 8000,
         categories: [
           { id: 'systemPrompt', tokens: 1000 },
-          { id: 'toolDefinitions', tokens: 3000 },
+          { id: 'systemTools', tokens: 2500 },
+          { id: 'mcpTools', tokens: 500 },
           { id: 'systemContext', tokens: 2000 },
           { id: 'skills', tokens: 4000 },
           { id: 'conversation', tokens: 14000 }
@@ -4321,9 +4323,11 @@ test('main IPC: context usage follows the selected session and preserves unavail
     tokens: 24000,
     contextWindow: 200000,
     percent: 12,
+    deferredMcpTokens: 8000,
     categories: [
       { id: 'systemPrompt', tokens: 1000 },
-      { id: 'toolDefinitions', tokens: 3000 },
+      { id: 'systemTools', tokens: 2500 },
+      { id: 'mcpTools', tokens: 500 },
       { id: 'systemContext', tokens: 2000 },
       { id: 'skills', tokens: 4000 },
       { id: 'conversation', tokens: 14000 }
@@ -6962,6 +6966,58 @@ test('main IPC: assistant error message ends are restored after switching sessio
   assert.match(JSON.stringify(restored.messages), /request reached organization max RPM/)
   assert.doesNotMatch(JSON.stringify(restored.messages), /org-930/)
   assert.doesNotMatch(JSON.stringify(restored.messages), /ak-fch/)
+})
+
+test('main IPC: unsupported provider region stops automatic retry and fails the run', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.hold = true
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          stopReason: 'error',
+          errorMessage: 'This model provider is not supported in your region.'
+        }
+      },
+      {
+        type: 'auto_retry_start',
+        attempt: 1,
+        maxAttempts: 5,
+        delayMs: 30_000,
+        errorMessage: 'This model provider is not supported in your region.'
+      }
+    ]
+    const abort = session.abort.bind(session)
+    session.abort = async () => {
+      for (const listener of session.listeners) {
+        listener({
+          type: 'message_end',
+          message: { role: 'assistant', stopReason: 'error', errorMessage: 'Request was aborted' }
+        })
+      }
+      await abort()
+    }
+    return session
+  })
+
+  const prompt = app.invoke('agent:prompt', '测试连接')
+  const settled = await Promise.race([
+    prompt.then(() => true),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), 250))
+  ])
+  if (!settled) app.sessions[0].finish.resolve()
+  await prompt
+
+  assert.equal(settled, true, 'a permanent region denial should not wait through retry backoff')
+  assert.ok(app.sessions[0].log.includes('abort'))
+  assert.equal(app.appendedSessionEvents.at(-1)?.event.type, 'run_failed')
+  assert.match(
+    String(app.appendedSessionEvents.at(-1)?.event.errorMessage),
+    /not supported in your region/
+  )
 })
 
 test('main IPC: current session restores assistant error message ends after renderer refresh', async () => {

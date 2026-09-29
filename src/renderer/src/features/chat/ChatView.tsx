@@ -39,7 +39,7 @@ import { useComposerFileDrop } from '../../components/chat/useComposerFileDrop'
 import { useInputFileReferenceMenu } from '../../components/chat/useInputFileReferenceMenu'
 import { useInputInvocationReferenceMenu } from '../../components/chat/useInputInvocationReferenceMenu'
 import { PhiIcons } from '../../icons'
-import { GoHourglass, GoPaperAirplane } from 'react-icons/go'
+import { GoPaperAirplane, GoSquare } from 'react-icons/go'
 import {
   canNavigatePromptHistory,
   nextPromptHistoryCursor,
@@ -77,7 +77,6 @@ import type {
 
 export { ThinkingBlock } from '../../components/chat/ThinkingBlock'
 
-const StopIcon = PhiIcons.action.stop
 const CloseIcon = PhiIcons.action.close
 
 function textInputFromEventTarget(
@@ -152,6 +151,7 @@ type ViewProps = {
   pendingApproval: ToolApprovalRequest | null
   pendingUserInteraction: AgentUserInteractionRequest | null
   queuedPrompts?: Array<{ id: string; text: string }>
+  queuedPromptsPaused?: boolean
   onRespondApproval: (requestId: string, approved: boolean) => void
   onRespondUserInteraction: (
     requestId: string,
@@ -213,6 +213,7 @@ function ChatView({
   pendingApproval,
   pendingUserInteraction,
   queuedPrompts = [],
+  queuedPromptsPaused = false,
   onRespondApproval,
   onRespondUserInteraction,
   onRemoveQueuedPrompt,
@@ -246,7 +247,9 @@ function ChatView({
   )
   const defaultInputPlaceholder = compactComposerControls
     ? '输入消息'
-    : '输入消息，Enter 发送，Shift+Enter 换行'
+    : isGenerating && canQueue
+      ? '输入消息，Enter 加入队列，Shift+Enter 换行'
+      : '输入消息，Enter 发送，Shift+Enter 换行'
   const inputPlaceholder = suggestedNextAction ?? defaultInputPlaceholder
   const parsedComposerInput = useMemo(() => parseInputFileReferences(input), [input])
   const composerFileReferences = parsedComposerInput.references
@@ -635,7 +638,9 @@ function ChatView({
             >
               <Stack spacing={0.75}>
                 <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
-                  排队中 {queuedPrompts.length} 条
+                  {queuedPromptsPaused
+                    ? `已暂停 ${queuedPrompts.length} 条 · 发送新消息成功后继续`
+                    : `排队中 ${queuedPrompts.length} 条`}
                 </Typography>
                 {queuedPrompts.map((item) => (
                   <Box
@@ -925,58 +930,31 @@ function ChatView({
                     <GoPaperAirplane size={COMPOSER_ICON_SIZE} aria-hidden="true" />
                   </IconButton>
                 ) : (
-                  <>
-                    <IconButton
-                      type="submit"
-                      disabled={!canQueue || !input.trim()}
-                      aria-label="加入队列"
-                      data-phi-composer-action="queue"
-                      data-phi-composer-size={actionControlSize}
-                      sx={{
-                        boxSizing: 'border-box',
-                        width: actionControlSize,
-                        height: actionControlSize,
-                        minWidth: actionControlSize,
-                        minHeight: actionControlSize,
-                        p: 0,
-                        flexShrink: 0,
-                        bgcolor: 'transparent',
-                        color: 'primary.main',
-                        transition: 'background-color 200ms',
-                        '&:hover': { bgcolor: 'action.hover' },
-                        '&.Mui-disabled': {
-                          bgcolor: 'transparent',
-                          color: 'action.disabled'
-                        }
-                      }}
-                    >
-                      <GoHourglass size={COMPOSER_ICON_SIZE} aria-hidden="true" />
-                    </IconButton>
-                    <IconButton
-                      type="button"
-                      onClick={() => {
-                        void onStopGeneration()
-                      }}
-                      aria-label="停止生成"
-                      data-phi-composer-action="stop"
-                      data-phi-composer-size={actionControlSize}
-                      sx={{
-                        boxSizing: 'border-box',
-                        width: actionControlSize,
-                        height: actionControlSize,
-                        minWidth: actionControlSize,
-                        minHeight: actionControlSize,
-                        p: 0,
-                        flexShrink: 0,
-                        bgcolor: 'error.main',
-                        color: 'error.contrastText',
-                        transition: 'background-color 200ms',
-                        '&:hover': { bgcolor: 'error.dark' }
-                      }}
-                    >
-                      <StopIcon size={COMPOSER_ICON_SIZE} />
-                    </IconButton>
-                  </>
+                  <IconButton
+                    type="button"
+                    onClick={() => {
+                      void onStopGeneration()
+                    }}
+                    aria-label="停止生成"
+                    title="运行中，点击停止生成"
+                    data-phi-composer-action="stop"
+                    data-phi-composer-size={actionControlSize}
+                    sx={{
+                      boxSizing: 'border-box',
+                      width: actionControlSize,
+                      height: actionControlSize,
+                      minWidth: actionControlSize,
+                      minHeight: actionControlSize,
+                      p: 0,
+                      flexShrink: 0,
+                      bgcolor: 'transparent',
+                      color: 'primary.main',
+                      transition: 'background-color 200ms',
+                      '&:hover': { bgcolor: 'action.hover' }
+                    }}
+                  >
+                    <GoSquare size={COMPOSER_ICON_SIZE} aria-hidden="true" />
+                  </IconButton>
                 )}
               </Box>
             </Box>

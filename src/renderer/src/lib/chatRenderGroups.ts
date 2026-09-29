@@ -274,6 +274,16 @@ export function groupMessages(
   return groups
 }
 
+export function activeProcessingGroupIndex(groups: RenderGroup[], activeRun: boolean): number {
+  if (!activeRun) return -1
+  const lastUserIndex = groups.findLastIndex(
+    (group) => group.kind === 'single' && group.item.role === 'user'
+  )
+  return groups.findLastIndex(
+    (group, index) => index > lastUserIndex && group.kind === 'processing-group'
+  )
+}
+
 export function groupProcessingItems(items: ProcessingItem[]): RenderGroup[] {
   return groupConsecutiveTools(items)
 }

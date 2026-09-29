@@ -17,6 +17,7 @@ export function ContextUsageBreakdownPanel({
   const categories = contextUsageCategories(usage)
   const barDenominator = usage ? Math.max(usage.contextWindow, usage.tokens) : 1
   const freeTokens = usage ? Math.max(0, usage.contextWindow - usage.tokens) : 0
+  const freePercent = usage ? (freeTokens / usage.contextWindow) * 100 : 0
   const largestId = categories.find((category) => category.tokens > 0)?.id
 
   return (
@@ -118,13 +119,69 @@ export function ContextUsageBreakdownPanel({
                 color="text.secondary"
                 sx={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
               >
-                {formatTokens(category.tokens)} · {Math.round(category.usedPercent)}%
+                {formatTokens(category.tokens)} · {category.windowPercent.toFixed(1)}%
               </Typography>
             </Box>
           ))}
-          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
-            分类占比按已用上下文计算；分类用量为运行时估算值。
-          </Typography>
+          <Box
+            title="未使用容量包含自动压缩预留"
+            sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}
+          >
+            <Box
+              sx={{
+                width: 12,
+                height: 12,
+                flexShrink: 0,
+                borderRadius: 0.5,
+                bgcolor: 'action.disabledBackground'
+              }}
+            />
+            <Typography variant="body2" sx={{ flex: 1 }}>
+              未使用容量
+            </Typography>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ fontVariantNumeric: 'tabular-nums' }}
+            >
+              {formatTokens(freeTokens)} · {freePercent.toFixed(1)}%
+            </Typography>
+          </Box>
+          {usage?.deferredMcpTokens !== undefined && (
+            <Box
+              data-phi-context-deferred-mcp="true"
+              title="完整 schema 的潜在开销，不计入当前用量；目录提示可能计入系统上下文"
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                minWidth: 0,
+                pt: 0.75,
+                borderTop: 1,
+                borderColor: 'divider'
+              }}
+            >
+              <Box
+                sx={{
+                  width: 12,
+                  height: 12,
+                  flexShrink: 0,
+                  borderRadius: 0.5,
+                  bgcolor: 'text.disabled'
+                }}
+              />
+              <Typography variant="body2" sx={{ flex: 1 }}>
+                MCP 工具（未注入）
+              </Typography>
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ fontVariantNumeric: 'tabular-nums' }}
+              >
+                {formatTokens(usage.deferredMcpTokens)} · —
+              </Typography>
+            </Box>
+          )}
         </Box>
       ) : (
         <Typography variant="body2" color="text.secondary">

@@ -25,7 +25,12 @@ import {
   runningAgentRuns,
   virtualRowScrollTop
 } from '../../lib/agentRunsOverview'
-import { groupMessages, timestampMs, type RenderGroup } from '../../lib/chatRenderGroups'
+import {
+  activeProcessingGroupIndex,
+  groupMessages,
+  timestampMs,
+  type RenderGroup
+} from '../../lib/chatRenderGroups'
 import {
   chatVirtualWindow,
   normalizedChatVirtualRowHeight,
@@ -252,6 +257,10 @@ const ChatMessageList = memo(function ChatMessageList({
   const renderGroups = useMemo(
     () => groupMessages(messages, { activeRun: isGenerating }),
     [isGenerating, messages]
+  )
+  const activeProcessingIndex = useMemo(
+    () => activeProcessingGroupIndex(renderGroups, isGenerating),
+    [isGenerating, renderGroups]
   )
   const userMessageStates = useMemo(() => failedUserMessageStates(messages), [messages])
   const virtualItems = useMemo<ChatGroupVirtualItem[]>(
@@ -569,7 +578,7 @@ const ChatMessageList = memo(function ChatMessageList({
         )
       }
       if (group.kind === 'processing-group') {
-        const isActiveProcessingGroup = isGenerating && absoluteIndex === renderGroups.length - 1
+        const isActiveProcessingGroup = absoluteIndex === activeProcessingIndex
         return (
           <ChatProcessingGroup
             items={group.items}
@@ -654,7 +663,7 @@ const ChatMessageList = memo(function ChatMessageList({
       cwd,
       currentRunStartedAt,
       focusRequest,
-      isGenerating,
+      activeProcessingIndex,
       onEditUserMessage,
       onGoSettings,
       onOpenBackgroundJobs,
@@ -663,7 +672,6 @@ const ChatMessageList = memo(function ChatMessageList({
       onOpenLocalPath,
       onRetryUserMessage,
       onForkUserMessage,
-      renderGroups.length,
       userMessageStates
     ]
   )

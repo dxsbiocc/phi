@@ -515,6 +515,7 @@ interface PromptRun {
   sessionGeneration: number
   cancelled: boolean
   recordedFailureMessage?: string
+  stoppingPermanentProviderError?: boolean
   thinkingBlocks: Map<number, string>
   thinkingBlockStartedAtMs: Map<number, number>
   compactionReasons: Map<string, string>
@@ -1824,6 +1825,12 @@ function assistantErrorMessageFromEventSummary(summary: Record<string, unknown>)
   return null
 }
 
+function isPermanentProviderRegionError(message: unknown): message is string {
+  return (
+    typeof message === 'string' && /(?:not supported|not available) in your region/i.test(message)
+  )
+}
+
 function notebookCompletionCandidatesFromEventSummary(summary: Record<string, unknown>): unknown[] {
   const candidates: unknown[] = []
   const assistantMessageEvent = summary.assistantMessageEvent as
@@ -2398,7 +2405,7 @@ function persistSessionEvent(
           ? redactSensitiveText(assistantMessage.errorMessage)
           : '请求失败'
       persistCompletedThinkingBlocks(run, summary)
-      run.recordedFailureMessage = errorMessage
+      if (!run.stoppingPermanentProviderError) run.recordedFailureMessage = errorMessage
       return withRunId(summary)
     }
 
@@ -5480,6 +5487,18 @@ async function getAgentSession(
         if (!lifecycle.isCurrentGeneration(generation)) return
         const summary = withEventTimestamp(rawSummary)
         const run = getActivePromptRun(sessionKey)
+        if (
+          run &&
+          summary.type === 'auto_retry_start' &&
+          isPermanentProviderRegionError(summary.errorMessage) &&
+          !run.stoppingPermanentProviderError
+        ) {
+          run.stoppingPermanentProviderError = true
+          run.recordedFailureMessage = redactSensitiveText(summary.errorMessage)
+          void abortSessionWithoutCancellingApprovals(result.session).catch((error) => {
+            rememberErrorSummary(error)
+          })
+        }
         const phiSessionId = run?.phiSessionId ?? getPhiSessionIdForKey(sessionKey)
         const persistedSummary = run
           ? persistSessionEvent(run, summary)

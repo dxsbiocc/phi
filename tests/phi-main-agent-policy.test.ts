@@ -60,6 +60,8 @@ test('Phi owns the main system identity while retaining OMP runtime instructions
   })
   const rendered = prompt.join('\n\n')
 
+  assert.match(prompt[0], /^§ Phi Role/)
+  assert.match(prompt[2], /Keep this operational tool contract/)
   assert.match(rendered, /You are the assistant running in Phi/i)
   assert.match(rendered, /scientific research assistant/i)
   assert.match(rendered, /interpret the user's request before choosing tools or delegation/i)

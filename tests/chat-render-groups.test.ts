@@ -1,11 +1,27 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  activeProcessingGroupIndex,
   groupMessages,
   processingStatusText,
   type ProcessingItem
 } from '../src/renderer/src/lib/chatRenderGroups'
 import type { ChatItem } from '../src/renderer/src/types'
+
+test('an error card does not make a still running turn look completed', () => {
+  const groups = groupMessages(
+    [
+      { id: 'user-1', role: 'user', content: '测试连接' },
+      { id: 'run-1', role: 'run', event: 'started', createdAt: '2026-09-29T00:00:00.000Z' },
+      { id: 'error-1', role: 'error', content: 'Provider unavailable' }
+    ],
+    { activeRun: true }
+  )
+
+  assert.equal(groups.at(-1)?.key, 'error-1')
+  assert.equal(groups[activeProcessingGroupIndex(groups, true)]?.kind, 'processing-group')
+  assert.equal(activeProcessingGroupIndex(groups, false), -1)
+})
 
 test('chat render groups leave wrapper plans as persistent artifacts', () => {
   const messages: ChatItem[] = [

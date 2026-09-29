@@ -1771,9 +1771,16 @@ test('composer buttons stay fixed on hover and use matching action icon sizes', 
 
   const source = readFileSync('src/renderer/src/features/chat/ChatView.tsx', 'utf8')
   assert.match(source, /<GoPaperAirplane size=\{COMPOSER_ICON_SIZE\}/)
-  assert.match(source, /<GoHourglass size=\{COMPOSER_ICON_SIZE\}/)
-  assert.match(source, /<StopIcon size=\{COMPOSER_ICON_SIZE\}/)
+  assert.match(source, /<GoSquare size=\{COMPOSER_ICON_SIZE\}/)
   assert.match(source, /data-phi-composer-action="send"[\s\S]*?bgcolor: 'transparent'/)
+  assert.doesNotMatch(source, /spinHourglass|GoHourglass/)
+
+  const modelControlSource = readFileSync(
+    'src/renderer/src/components/chat/ChatComposerControls.tsx',
+    'utf8'
+  ).split('export function ModelSelectorControl')[1]
+  assert.equal((modelControlSource.match(/disableRipple/g) ?? []).length, 2)
+  assert.match(modelControlSource, /'&:hover': \{ bgcolor: 'action.hover' \}/)
 })
 
 test('chat view keeps compact composer icon buttons at the declared outer size', () => {
@@ -1797,12 +1804,18 @@ test('chat view keeps compact composer icon buttons at the declared outer size',
   )
 })
 
-test('chat view keeps compact stop control the same size as other compact controls', () => {
+test('chat view replaces send with one square stop control', () => {
   const compactMarkup = renderChat([], { compactComposerControls: true, isGenerating: true })
   const regularMarkup = renderChat([], { isGenerating: true })
 
   assert.match(compactMarkup, /data-phi-composer-action="stop" data-phi-composer-size="32"/)
   assert.match(regularMarkup, /data-phi-composer-action="stop" data-phi-composer-size="40"/)
+  assert.equal((regularMarkup.match(/data-phi-composer-action=/g) ?? []).length, 1)
+  assert.doesNotMatch(
+    regularMarkup,
+    /data-phi-composer-action="queue"|data-phi-composer-action="send"/
+  )
+  assert.match(regularMarkup, /title="运行中，点击停止生成"/)
 })
 
 test('agent execution details scroll instead of flattening every child step into the chat flow', () => {
@@ -1917,7 +1930,9 @@ test('chat view shows queued prompts above the composer while a session is busy'
     queuedPrompts: [{ id: 'queued-1', text: '排队的下一条问题' }]
   })
 
-  assert.match(markup, /aria-label="加入队列"/)
+  assert.match(markup, /placeholder="输入消息，Enter 加入队列，Shift\+Enter 换行"/)
+  assert.doesNotMatch(markup, /aria-label="加入队列"/)
+  assert.match(markup, /aria-label="停止生成"/)
   assert.match(markup, /消息队列/)
   assert.match(markup, /排队中 1 条/)
   assert.match(markup, /排队的下一条问题/)

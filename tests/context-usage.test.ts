@@ -78,11 +78,42 @@ test('context breakdown highlights the largest category and draws proportional s
   assert.match(markup, /10K \/ 20K tokens/)
   assert.match(markup, /data-phi-context-segment="conversation"/)
   assert.match(markup, /data-phi-context-category="conversation"[\s\S]*对话 · 最多/)
-  assert.match(markup, /5K · 50%/)
+  assert.match(markup, /5K · 25\.0%/)
+  assert.match(markup, /未使用容量/)
+  assert.match(markup, /title="未使用容量包含自动压缩预留"/)
   assert.ok(
     markup.indexOf('data-phi-context-category="conversation"') <
       markup.indexOf('data-phi-context-category="skills"')
   )
+})
+
+test('MCP breakdown distinguishes current window occupancy from deferred schema cost', () => {
+  const usage = {
+    tokens: 10000,
+    contextWindow: 20000,
+    percent: 50,
+    deferredMcpTokens: 8000,
+    categories: [
+      { id: 'systemPrompt' as const, tokens: 500 },
+      { id: 'systemTools' as const, tokens: 1200 },
+      { id: 'mcpTools' as const, tokens: 300 },
+      { id: 'systemContext' as const, tokens: 1000 },
+      { id: 'skills' as const, tokens: 2000 },
+      { id: 'conversation' as const, tokens: 5000 }
+    ]
+  }
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(ContextUsageBreakdownPanel, { usage, loading: false })
+    )
+  )
+  assert.match(markup, /data-phi-context-category="mcpTools"[\s\S]*MCP 工具/)
+  assert.match(markup, /300 · 1\.5%/)
+  assert.match(markup, /data-phi-context-deferred-mcp="true"[\s\S]*8K · —/)
+  assert.match(markup, /title="完整 schema 的潜在开销，不计入当前用量；目录提示可能计入系统上下文"/)
+  assert.doesNotMatch(markup, /未注入 MCP 是完整 schema 的潜在开销/)
 })
 
 test('context breakdown names unavailable category data without guessing values', () => {
