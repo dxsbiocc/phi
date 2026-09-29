@@ -1,4 +1,12 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
@@ -22,6 +30,11 @@ interface DbConnectorSourceMarker {
 const SOURCE_MARKER_FILE = '.source.json'
 const CONNECTOR_FILE = 'connector.yaml'
 const nodeRequire = createRequire(import.meta.url)
+// Discovery may inspect every connector, but unchanged YAML is parsed only once per process.
+const manifestCache = new Map<
+  string,
+  { stamp: string; manifest: DbConnectorManifest; digest: string }
+>()
 
 function ensureDir(path: string): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true })
@@ -54,14 +67,28 @@ function writeSourceMarker(dir: string, marker: DbConnectorSourceMarker): void {
   writeFileSync(join(dir, SOURCE_MARKER_FILE), `${JSON.stringify(marker, null, 2)}\n`, 'utf-8')
 }
 
-function loadManifestFromDir(dir: string): DbConnectorManifest {
+function cachedManifestFromDir(dir: string): { manifest: DbConnectorManifest; digest: string } {
   const manifestPath = join(dir, CONNECTOR_FILE)
   if (!existsSync(manifestPath)) throw new Error(`未找到 connector.yaml: ${manifestPath}`)
+  const stat = statSync(manifestPath, { bigint: true })
+  const stamp = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`
+  const cached = manifestCache.get(manifestPath)
+  if (cached?.stamp === stamp) return cached
   const result = parseDbConnectorManifest(readFileSync(manifestPath, 'utf-8'))
   if (!result.valid || !result.manifest) {
     throw new Error(`connector.yaml 校验失败 (${manifestPath}):\n${result.errors.join('\n')}`)
   }
-  return result.manifest
+  const entry = {
+    stamp,
+    manifest: result.manifest,
+    digest: canonicalDbConnectorDigest(result.manifest)
+  }
+  manifestCache.set(manifestPath, entry)
+  return entry
+}
+
+function loadManifestFromDir(dir: string): DbConnectorManifest {
+  return cachedManifestFromDir(dir).manifest
 }
 
 function findConnectorDirs(root: string): string[] {
@@ -86,8 +113,7 @@ function catalogEntryFrom(
   agentDir: string
 ): DbConnectorCatalogEntry | undefined {
   try {
-    const manifest = loadManifestFromDir(dir)
-    const digest = canonicalDbConnectorDigest(manifest)
+    const { manifest, digest } = cachedManifestFromDir(dir)
     const disabled = isDbConnectorQueryDisabled(manifest.id, agentDir)
     return {
       manifest,
@@ -149,7 +175,19 @@ export function findDbConnectorCatalogEntry(
   id: string,
   agentDir = getPhiAgentDir()
 ): DbConnectorCatalogEntry | undefined {
-  return listDbConnectorCatalog(agentDir).find((entry) => entry.manifest.id === id)
+  if (!/^[a-z0-9-]+\/[a-z0-9-]+$/.test(id)) return undefined
+  const bundledDir = join(getBundledDbConnectorsDir(), ...id.split('/'))
+  const bundled = catalogEntryFrom(
+    bundledDir,
+    { trustTier: 'bundled', installedAt: 'bundled' },
+    agentDir
+  )
+  if (bundled?.manifest.id === id) return bundled
+
+  const installedDir = join(getInstalledDbConnectorsDir(agentDir), ...id.split('/'))
+  const marker = readSourceMarker(installedDir)
+  const custom = marker ? catalogEntryFrom(installedDir, marker, agentDir) : undefined
+  return custom?.manifest.id === id ? custom : undefined
 }
 
 export function syncGeneratedDbConnectorDocs(agentDir = getPhiAgentDir()): WrittenDbConnectorDocs {

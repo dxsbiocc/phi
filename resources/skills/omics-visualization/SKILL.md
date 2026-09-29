@@ -16,36 +16,43 @@ description: >-
 
 # Omics Visualization
 
-Use the bundled template library to create, revise, and audit figures from
-existing omics results. Visualization is for making a data pattern,
-distribution, comparison, or uncertainty easier to inspect and communicate; do
-not make a chart merely because a chart was requested. Select templates from
-the catalogs, not from memory. The selected canonical template determines the
-implementation language.
+Use bundled templates for existing omics results. Make a pattern, comparison,
+or uncertainty easier to inspect; select from catalogs, not memory. The chosen
+template determines the implementation language.
 
-Default to a Nature-style scientific figure: one defensible claim, the
-smallest sufficient visual vocabulary, restrained color, readable typography at
-the final physical size, and no decorative encodings. Treat this as a design
-philosophy unless the user gives journal-specific submission rules.
+Default to a Nature-style figure: one defensible claim, restrained color and
+readable type at final size, unless journal rules specify otherwise.
 
-## Route
+## Installed examples without data
 
-Phi gives the Visualization agent three tools for the mechanical steps:
-`viz_route`, `viz_prepare` and `viz_render`. The equivalent commands are shown in
-brackets for use without them.
+Without user data, call `viz_examples` by purpose. Embed its existing
+`preview.png` via `preview_markdown` unchanged as a Markdown image; label it a
+template example. Show up to four; ask for choice or data. Do not create
+simulated data, render, copy, or replace it; report no match.
+
+## Revise an existing figure
+
+For a prior figure, follow [revision workflow](references/revision-workflow.md):
+edit its script and palette; do not call `viz_route` or `viz_prepare` for colors.
+
+## Match a reference image
+
+For a new figure guided by a user image, follow
+[reference workflow](references/reference-figure-workflow.md). Inspect the image
+before routing. If editable source already exists, revise it instead.
+
+## New figure route
+
+Use `viz_route`, `viz_prepare`, `viz_render` for new figures.
 
 1. State the visualization purpose before choosing a chart: what should become
    easier to see, compare, verify, or question after plotting? If the purpose is
    unclear, infer the smallest honest purpose from the user's request and data;
    ask only when several purposes would require materially different figures.
-2. Inspect the user's data and scientific context. Continue only after the
-   observation unit, relevant columns, comparison structure, and intended
-   message are understood. Take a compact distribution snapshot: row/column
-   count, variable types, categorical cardinality/order, numeric range/skew,
-   missing/non-finite values, zeros/sparsity, duplicated identifiers, and any
-   pairing, time, hierarchy, genomic interval, network, or matrix structure.
-   `viz_route` returns the columns and their types; look at the values yourself
-   when the figure depends on them.
+2. Inspect the data's observation unit, columns, comparison, and claim. Check
+   row count, types, category order, ranges, missingness, zeros, duplicate IDs,
+   and any pairing, time, hierarchy, interval, network, or matrix structure.
+   `viz_route` gives column types; inspect values when the figure depends on them.
 3. Write or infer a one-sentence figure claim before selecting geometry. A
    single composite glyph (for example a circular tree inset in a polar track)
    is still one template. Follow **Multi-panel composition** only for labelled
@@ -68,11 +75,9 @@ brackets for use without them.
    and `input_shape`. When two templates of one family look alike, read
    [references/mis-routes.md](references/mis-routes.md). If one template clearly
    matches the purpose, distribution, claim, and data contract, proceed with it
-   and record the reason. If several viable templates would trade off
-   overview/detail, show up to four candidates with their preview
-   (`preview_markdown` from `viz_route`), `id`, why it fits, why it might
-   mislead, and expected input shape; let the user choose among those material
-   alternatives.
+   and record the reason. If alternatives change interpretation, show up to
+   four real previews (`preview_markdown`), fit, risks and required input;
+   let the user choose.
 6. Select one canonical template and make a project-local copy with
    `viz_prepare`. It returns the template's purpose, the tables it takes, its R
    dependencies, and the CONFIG and DATA PREPARATION sections with their line
@@ -211,6 +216,7 @@ to the bundled library as a second canonical template.
 
 ## Scientific integrity
 
+- For volcano plots, state the adjusted-p-value and absolute log2-fold-change cutoffs. Use the same values for point classification, cutoff lines, legend text, and any reported Up/Down counts. Keep padj-only differential-expression counts distinct from counts that also apply a fold-change cutoff; neither threshold is universal, so honor the user's values or disclose the selected template's values.
 - Do not invent sample sizes, statistical tests, p-values, adjusted p-values,
   effect sizes, uncertainty, group mappings, or biological interpretations.
 - Do not silently filter, aggregate, impute, clip, coerce, or sample data.
@@ -230,8 +236,9 @@ to the bundled library as a second canonical template.
   palette is too short; `palette_colors()` appends unused Qualitative then
   Brand colours. Do not use Artwork or Concept palettes unless the user
   asks for a decorative theme.
-- Plot canvases are transparent. A dark editor makes empty alpha look black;
-  that is not a black background and must not be “fixed.”
+- Plot canvases default transparent; dark viewers may show black alpha. For a
+  newly rendered figure with hidden dark labels, export a white-backed PNG
+  preview and retain vector PDF/SVG. Never re-render shipped example PNGs.
 
 ## Delivery
 

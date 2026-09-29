@@ -66,6 +66,7 @@ export function agentRunContinuationPrompt(events: readonly AgentRunFinishedEven
     } you started ${events.length === 1 ? 'has' : 'have'} ended:`,
     ...events.map(describe),
     'Continue with what the user asked for, using these results.',
+    'If a completed report produced files, the closing reply must name the new or modified files with exact paths and purposes. A project directory or a delivery card alone is not enough; do not claim an output exists unless the report or a file check confirms it.',
     ...(anyFailed
       ? [
           'For a failed run, say why and propose the next step. Do not start it again unless the user asked for retries.'

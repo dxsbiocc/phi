@@ -38,6 +38,7 @@ export type ChatBubbleProps = {
   onRetryUserMessage?: (message: UserMessageRetryTarget) => void
   onForkUserMessage?: (messageId: string) => void
   onGoSettings: () => void
+  onOpenBackgroundJobs: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onContentResize?: ChatContentResizeHandler
   cwd?: string
@@ -55,7 +56,8 @@ function chatBubblePropsEqual(prev: ChatBubbleProps, next: ChatBubbleProps): boo
     prev.userMessageState === next.userMessageState &&
     prev.onEditUserMessage === next.onEditUserMessage &&
     prev.onRetryUserMessage === next.onRetryUserMessage &&
-    prev.onForkUserMessage === next.onForkUserMessage
+    prev.onForkUserMessage === next.onForkUserMessage &&
+    prev.onOpenBackgroundJobs === next.onOpenBackgroundJobs
   )
 }
 
@@ -66,6 +68,7 @@ export const ChatBubble = memo(function ChatBubble({
   onRetryUserMessage,
   onForkUserMessage,
   onGoSettings,
+  onOpenBackgroundJobs,
   onOpenLocalPath,
   onContentResize,
   cwd = ''
@@ -140,6 +143,18 @@ export const ChatBubble = memo(function ChatBubble({
   }
 
   if (message.role === 'warning') {
+    if (message.backgroundJobNotice) {
+      return (
+        <Button
+          size="small"
+          color={message.backgroundJobNotice.state === 'failed' ? 'error' : 'primary'}
+          onClick={onOpenBackgroundJobs}
+          sx={{ alignSelf: 'flex-start', textTransform: 'none' }}
+        >
+          {message.content.split('\n', 1)[0]} · 查看后台任务
+        </Button>
+      )
+    }
     return (
       <Alert severity="info" variant="outlined">
         <Typography variant="body2" sx={{ color: 'inherit', whiteSpace: 'pre-wrap' }}>

@@ -17,7 +17,9 @@ import { buildDbResolveTool } from './tool-resolve'
 import {
   buildDbDocsSearchContent,
   buildDbDomainContent,
+  buildDbRoutesContent,
   buildDbSearchContent,
+  dbRouteQueryInput,
   parseDbDomainDetail
 } from './tool-output'
 import { resolveDbQueryInput } from './tool-query-resolution'
@@ -84,10 +86,13 @@ export interface DefaultDbAdapterOptions {
   }
 }
 
+type DbAdapterFactory = (entry: DbConnectorCatalogEntry) => DbAdapter | undefined
+
 const DB_TOOL_ROUTING_HINT =
-  'For biological database lookup requests such as NCBI Entrez, PubMed, ClinVar, Ensembl, UniProt, genes, variants, proteins, nucleotide sequences, FASTA records, accessions, and field/schema lookup, infer the database/domain from the user intent and use the db_* tools automatically. Prefer db_* over general web search for structured database records; the user should not need to name tool functions.'
+  'For biological database lookup requests such as NCBI Entrez, PubMed, ClinVar, Ensembl, UniProt, genes, variants, proteins, sequences, and accessions, first choose relevant databases, then inspect matching functions and their inputs before querying. Prefer db_* over general web search for structured database records; the user should not need to name tool functions.'
 
 const MAX_DB_QUERY_PAGES = 10
+const catalogSearchTextCache = new WeakMap<DbConnectorCatalogEntry['manifest'], string>()
 
 async function queryDbAdapterPages(
   adapter: DbAdapter,
@@ -154,17 +159,14 @@ function catalogSearchItem(entry: DbConnectorCatalogEntry): Record<string, unkno
     protocolFamily: entry.manifest.protocolFamily,
     trustTier: entry.trustTier,
     curationTier: entry.manifest.curationTier,
-    enabledForQuery: entry.enabledForQuery,
-    domains: entry.manifest.domains.map((domain) => ({
-      id: domain.id,
-      summary: domain.summary,
-      commonFields: domain.commonFields
-    }))
+    enabledForQuery: entry.enabledForQuery
   }
 }
 
 function catalogSearchText(entry: DbConnectorCatalogEntry): string {
-  return [
+  const cached = catalogSearchTextCache.get(entry.manifest)
+  if (cached) return cached
+  const value = [
     entry.manifest.id,
     entry.manifest.name,
     ...entry.manifest.domains.flatMap((domain) => [
@@ -181,6 +183,8 @@ function catalogSearchText(entry: DbConnectorCatalogEntry): string {
   ]
     .join(' ')
     .toLowerCase()
+  catalogSearchTextCache.set(entry.manifest, value)
+  return value
 }
 
 function catalogSearchScore(entry: DbConnectorCatalogEntry, terms: string[]): number {
@@ -325,14 +329,15 @@ export function buildDbSearchTool(agentDir: string = getPhiAgentDir()): CustomTo
   return {
     name: 'db_search',
     label: 'Search Databases',
-    description: `Search installed Phi biological database connectors and domains. ${DB_TOOL_ROUTING_HINT} Start here when the user asks which biological database can answer a request, then use db_domain/db_docs_search/db_query.`,
+    description: `Choose which installed biological databases fit the user's evidence need. This first stage returns database identities only, never domain schemas. It shows at most 8 databases by default; raise limit if needed. ${DB_TOOL_ROUTING_HINT} After choosing one or more databases, call db_routes for each selected database.`,
     parameters: {
       type: 'object',
       properties: {
         query: { type: 'string' },
         protocolFamily: { type: 'string' },
         curationTier: { type: 'string' },
-        trustTier: { type: 'string' }
+        trustTier: { type: 'string' },
+        limit: { type: 'integer', default: 8, minimum: 1, maximum: 50 }
       }
     },
     approval: 'read',
@@ -340,6 +345,7 @@ export function buildDbSearchTool(agentDir: string = getPhiAgentDir()): CustomTo
       const record = isRecord(params) ? params : {}
       const query = typeof record.query === 'string' ? record.query.trim().toLowerCase() : ''
       const queryTerms = query.split(/\s+/).filter(Boolean)
+      const limit = Math.min(Math.max(1, Math.floor(numericParam(record.limit) ?? 8)), 50)
       const matched = listDbConnectorCatalog(agentDir)
         .filter((entry) => {
           if (
@@ -362,15 +368,14 @@ export function buildDbSearchTool(agentDir: string = getPhiAgentDir()): CustomTo
         .map((entry) => ({ entry, score: catalogSearchScore(entry, queryTerms) }))
         .filter(({ score }) => score > 0)
         .sort((left, right) => right.score - left.score)
+        .slice(0, limit)
         .map(({ entry }) => entry)
       const results = matched.map(catalogSearchItem)
       return {
         content: [
           {
             type: 'text',
-            text: results.length
-              ? buildDbSearchContent(matched, queryTerms)
-              : '没有找到匹配的数据库连接器。'
+            text: results.length ? buildDbSearchContent(matched) : '没有找到匹配的数据库连接器。'
           }
         ],
         details: { kind: 'db_search_results', results }
@@ -379,12 +384,72 @@ export function buildDbSearchTool(agentDir: string = getPhiAgentDir()): CustomTo
   }
 }
 
-export function buildDbDomainTool(agentDir: string = getPhiAgentDir()): CustomTool {
+export function buildDbRoutesTool(
+  agentDir: string = getPhiAgentDir(),
+  onRoutes?: (database: string, domains: string[]) => void
+): CustomTool {
+  return {
+    name: 'db_routes',
+    label: 'Find Database Functions',
+    description:
+      'Within one selected database, find functions matching the specific evidence or operation needed. Returns a small list of route purposes and input field names, without full schemas. Call it for each selected database; independent calls may run in parallel. Then inspect each chosen route with db_domain.',
+    parameters: {
+      type: 'object',
+      required: ['database', 'intent'],
+      properties: {
+        database: { type: 'string', description: 'One database id returned by db_search.' },
+        intent: { type: 'string', description: 'The specific function or evidence to retrieve.' },
+        limit: { type: 'integer', default: 5, minimum: 1, maximum: 10 }
+      }
+    },
+    approval: 'read',
+    async execute(_toolCallId, params) {
+      const record = isRecord(params) ? params : {}
+      const database = stringParam(record.database)
+      const intent = stringParam(record.intent)
+      if (!database || !intent) {
+        return {
+          content: [{ type: 'text', text: 'db_routes 需要已选定的 database 和具体 intent。' }],
+          isError: true
+        }
+      }
+      const entry = findDbConnectorCatalogEntry(database, agentDir)
+      if (!entry) {
+        return {
+          content: [{ type: 'text', text: `未找到数据库连接器: ${database}` }],
+          isError: true
+        }
+      }
+      const limit = Math.min(Math.max(1, Math.floor(numericParam(record.limit) ?? 5)), 10)
+      const content = buildDbRoutesContent(entry, intent, limit)
+      const result = JSON.parse(content) as {
+        database: string
+        routes: Array<{ domain: string }>
+      }
+      onRoutes?.(
+        database,
+        result.routes.map((route) => route.domain)
+      )
+      return {
+        content: [{ type: 'text', text: content }],
+        details: { kind: 'db_routes_results', ...result }
+      }
+    }
+  }
+}
+
+export function buildDbDomainTool(
+  agentDir: string = getPhiAgentDir(),
+  routing?: {
+    canInspect: (database: string, domain: string) => boolean
+    onInspected: (database: string, domain: string) => void
+  }
+): CustomTool {
   return {
     name: 'db_domain',
     label: 'Describe Database Domain',
     description:
-      'Get the summary, identity contract and fields of one database domain before querying it. Common fields are given in full and the rest by name; pass detail "all" for every field in full.',
+      'After db_routes selects a function, inspect only that domain for required filters, optional filters, an example db_query call, identity, and output fields. Independent chosen domains may be inspected in parallel. Pass detail "all" for every output field in full.',
     parameters: {
       type: 'object',
       required: ['database', 'domain'],
@@ -404,6 +469,12 @@ export function buildDbDomainTool(agentDir: string = getPhiAgentDir()): CustomTo
       const record = isRecord(params) ? params : {}
       const database = typeof record.database === 'string' ? record.database : ''
       const domainId = typeof record.domain === 'string' ? record.domain : ''
+      if (routing && !routing.canInspect(database, domainId)) {
+        return {
+          content: [{ type: 'text', text: `请先用 db_routes 选择 ${database} 中的功能。` }],
+          isError: true
+        }
+      }
       const entry = findDbConnectorCatalogEntry(database, agentDir)
       const domain = entry?.manifest.domains.find((candidate) => candidate.id === domainId)
       if (!entry || !domain) {
@@ -420,13 +491,20 @@ export function buildDbDomainTool(agentDir: string = getPhiAgentDir()): CustomTo
         commonFields: domain.commonFields,
         standardFields: [...DB_STANDARD_RECORD_FIELDS],
         fields: domain.fields ?? [],
-        identity: domain.identity
+        identity: domain.identity,
+        queryInput: dbRouteQueryInput(database, entry.manifest.protocolFamily, domain)
       }
+      routing?.onInspected(database, domainId)
       return {
         content: [
           {
             type: 'text',
-            text: buildDbDomainContent(database, domain, parseDbDomainDetail(record.detail))
+            text: buildDbDomainContent(
+              database,
+              entry.manifest.protocolFamily,
+              domain,
+              parseDbDomainDetail(record.detail)
+            )
           }
         ],
         details
@@ -437,13 +515,15 @@ export function buildDbDomainTool(agentDir: string = getPhiAgentDir()): CustomTo
 
 export function buildDbQueryTool(
   adapters: Record<string, DbAdapter>,
-  agentDir: string = getPhiAgentDir()
+  agentDir: string = getPhiAgentDir(),
+  createAdapter?: DbAdapterFactory,
+  routeStatus?: (database: string, domain: string) => 'ready' | 'unrouted' | 'uninspected'
 ): CustomTool {
   return {
     name: 'db_query',
     label: 'Query Database',
     description:
-      "Run a read-only, bounded query against one domain of one database connector. `database` and `domain` are required: take them from db_search, db_resolve or db_domain. Use `filters` with field names from db_domain, or `rawQuery` for the database's native syntax, never both. Large results are written to an artifact and summarized. GEO, SRA, UniProt and similar domains may also return a download manifest; db_query only resolves metadata and URLs, so call db_download with downloadManifestArtifact.path to fetch files when the user asked for them.",
+      'Run a read-only, bounded query against one selected database function. `database` and `domain` are required: use db_search → db_routes → db_domain to choose and inspect it, or use an exact db_resolve result. Follow db_domain.queryInput for required filters and the example; never combine filters with rawQuery. Independent selected queries may run in parallel. Large results are summarized in an artifact. GEO, SRA, UniProt and similar domains may return a download manifest; use db_download only when the user asked to fetch files.',
     parameters: {
       type: 'object',
       required: ['database', 'domain'],
@@ -496,7 +576,11 @@ export function buildDbQueryTool(
     approval: 'read',
     async execute(toolCallId, params) {
       const record = isRecord(params) ? params : {}
-      const catalog = listDbConnectorCatalog(agentDir)
+      const requestedDatabase = stringParam(record.database)
+      const requestedEntry = requestedDatabase
+        ? findDbConnectorCatalogEntry(requestedDatabase, agentDir)
+        : undefined
+      const catalog = requestedEntry ? [requestedEntry] : listDbConnectorCatalog(agentDir)
       const resolved = resolveDbQueryInput(record, catalog)
       if ('error' in resolved) {
         return {
@@ -506,9 +590,7 @@ export function buildDbQueryTool(
         }
       }
       const { database, domain } = resolved
-      const entry =
-        catalog.find((candidate) => candidate.manifest.id === database) ??
-        findDbConnectorCatalogEntry(database, agentDir)
+      const entry = catalog.find((candidate) => candidate.manifest.id === database)
       if (!entry) {
         const message = unknownDatabaseMessage(database, catalog)
         return {
@@ -533,6 +615,18 @@ export function buildDbQueryTool(
           details: localDbQueryErrorDetails('invalid_query', message)
         }
       }
+      const status = routeStatus?.(database, domain)
+      if (status && status !== 'ready') {
+        const message =
+          status === 'unrouted'
+            ? `请先用 db_routes 选择 ${database} 中的功能，再查看参数。`
+            : `请先用 db_domain 查看 ${database}/${domain} 的必填参数和示例。`
+        return {
+          content: [{ type: 'text', text: message }],
+          isError: true,
+          details: localDbQueryErrorDetails('invalid_query', message)
+        }
+      }
       if (resolved.filters !== undefined && resolved.rawQuery !== undefined) {
         const message = 'filters 与 rawQuery 不能同时使用。'
         return {
@@ -541,7 +635,11 @@ export function buildDbQueryTool(
           details: localDbQueryErrorDetails('invalid_query', message)
         }
       }
-      const adapter = adapters[database]
+      let adapter: DbAdapter | undefined = adapters[database]
+      if (!adapter && createAdapter) {
+        adapter = createAdapter(entry)
+        if (adapter) adapters[database] = adapter
+      }
       if (!adapter) {
         const message = `缺少数据库 adapter: ${database}`
         return {
@@ -613,9 +711,10 @@ export function buildDbDocsSearchTool(agentDir: string = getPhiAgentDir()): Cust
     name: 'db_docs_search',
     label: 'Search Database Docs',
     description:
-      'Search connector docs, domain summaries, field names, synonyms, namespaces and cross-reference hints from the installed connector manifests.',
+      'Search a selected database for a specific unresolved field, synonym, namespace or cross-reference. Requires database; use db_search and db_routes first rather than scanning every connector.',
     parameters: {
       type: 'object',
+      required: ['database'],
       properties: {
         query: { type: 'string' },
         keyword: { type: 'string' },
@@ -630,8 +729,21 @@ export function buildDbDocsSearchTool(agentDir: string = getPhiAgentDir()): Cust
       const query = stringParam(record.query) ?? stringParam(record.keyword) ?? ''
       const database = stringParam(record.database)
       const domain = stringParam(record.domain)
+      if (!database) {
+        return {
+          content: [{ type: 'text', text: 'db_docs_search 需要先选定 database。' }],
+          isError: true
+        }
+      }
       const limit = Math.min(Math.max(1, Math.floor(numericParam(record.limit) ?? 20)), 50)
-      const results = docsSearchResults(listDbConnectorCatalog(agentDir), {
+      const entry = findDbConnectorCatalogEntry(database, agentDir)
+      if (!entry) {
+        return {
+          content: [{ type: 'text', text: `未找到数据库连接器: ${database}` }],
+          isError: true
+        }
+      }
+      const results = docsSearchResults([entry], {
         query,
         database,
         domain,
@@ -653,16 +765,71 @@ export function buildDbDocsSearchTool(agentDir: string = getPhiAgentDir()): Cust
 export function buildDbCustomTools(
   adapters: Record<string, DbAdapter> = {},
   agentDir: string = getPhiAgentDir(),
-  options: Pick<DefaultDbAdapterOptions, 'download'> = {}
+  options: Pick<DefaultDbAdapterOptions, 'download'> & {
+    createAdapter?: DbAdapterFactory
+    enforceRouting?: boolean
+  } = {}
 ): CustomTool[] {
+  const routed = new Set<string>()
+  const inspected = new Set<string>()
+  const key = (database: string, domain: string): string => `${database}\0${domain}`
+  const routing = options.enforceRouting
+    ? {
+        canInspect: (database: string, domain: string) => routed.has(key(database, domain)),
+        onInspected: (database: string, domain: string) => {
+          inspected.add(key(database, domain))
+        }
+      }
+    : undefined
   return [
     buildDbSearchTool(agentDir),
-    buildDbResolveTool(agentDir),
-    buildDbDomainTool(agentDir),
-    buildDbQueryTool(adapters, agentDir),
+    buildDbResolveTool(
+      agentDir,
+      options.enforceRouting
+        ? (database, domain) => {
+            routed.add(key(database, domain))
+            inspected.add(key(database, domain))
+          }
+        : undefined
+    ),
+    buildDbRoutesTool(
+      agentDir,
+      options.enforceRouting
+        ? (database, domains) => {
+            for (const domain of domains) routed.add(key(database, domain))
+          }
+        : undefined
+    ),
+    buildDbDomainTool(agentDir, routing),
+    buildDbQueryTool(
+      adapters,
+      agentDir,
+      options.createAdapter,
+      options.enforceRouting
+        ? (database, domain) => {
+            const route = key(database, domain)
+            return inspected.has(route) ? 'ready' : routed.has(route) ? 'uninspected' : 'unrouted'
+          }
+        : undefined
+    ),
     buildDbDownloadTool(agentDir, options.download),
     buildDbDocsSearchTool(agentDir)
   ]
+}
+
+function createDefaultDbAdapter(
+  entry: DbConnectorCatalogEntry,
+  options: DefaultDbAdapterOptions
+): DbAdapter | undefined {
+  const { manifest } = entry
+  if (manifest.protocolFamily === 'entrez') return new EntrezAdapter(manifest, options.entrez)
+  if (manifest.id === 'rest-json/uniprot') return new UniProtAdapter(manifest, options.restJson)
+  if (manifest.id === 'rest-json/kegg') return new KeggAdapter(manifest, options.kegg)
+  if (manifest.protocolFamily === 'rest-json')
+    return new RestJsonAdapter(manifest, options.restJson)
+  if (manifest.protocolFamily === 'sparql') return new SparqlAdapter(manifest, options.sparql)
+  if (manifest.protocolFamily === 'ontology') return new OntologyAdapter(manifest, options.ontology)
+  return undefined
 }
 
 export function buildDefaultDbAdapters(
@@ -671,26 +838,20 @@ export function buildDefaultDbAdapters(
 ): Record<string, DbAdapter> {
   const adapters: Record<string, DbAdapter> = {}
   for (const entry of listDbConnectorCatalog(agentDir)) {
-    if (entry.manifest.protocolFamily === 'entrez') {
-      adapters[entry.manifest.id] = new EntrezAdapter(entry.manifest, options.entrez)
-    } else if (entry.manifest.id === 'rest-json/uniprot') {
-      adapters[entry.manifest.id] = new UniProtAdapter(entry.manifest, options.restJson)
-    } else if (entry.manifest.id === 'rest-json/kegg') {
-      adapters[entry.manifest.id] = new KeggAdapter(entry.manifest, options.kegg)
-    } else if (entry.manifest.protocolFamily === 'rest-json') {
-      adapters[entry.manifest.id] = new RestJsonAdapter(entry.manifest, options.restJson)
-    } else if (entry.manifest.protocolFamily === 'sparql') {
-      adapters[entry.manifest.id] = new SparqlAdapter(entry.manifest, options.sparql)
-    } else if (entry.manifest.protocolFamily === 'ontology') {
-      adapters[entry.manifest.id] = new OntologyAdapter(entry.manifest, options.ontology)
-    }
+    const adapter = createDefaultDbAdapter(entry, options)
+    if (adapter) adapters[entry.manifest.id] = adapter
   }
   return adapters
 }
 
 export function buildDefaultDbCustomTools(
   agentDir: string = getPhiAgentDir(),
-  options: DefaultDbAdapterOptions = {}
+  options: DefaultDbAdapterOptions = {},
+  routing: { enforceRouting?: boolean } = {}
 ): CustomTool[] {
-  return buildDbCustomTools(buildDefaultDbAdapters(agentDir, options), agentDir, options)
+  return buildDbCustomTools({}, agentDir, {
+    download: options.download,
+    createAdapter: (entry) => createDefaultDbAdapter(entry, options),
+    enforceRouting: routing.enforceRouting
+  })
 }

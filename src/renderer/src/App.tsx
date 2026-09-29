@@ -141,6 +141,7 @@ import {
   idleSessionRuntimeState,
   reduceSessionRuntimeState,
   sessionRuntimeStateIsBusy,
+  sessionRuntimeStatePausesQueue,
   sessionStatusIsBusy
 } from './lib/sessionRuntimeState'
 import { createAgentEventReducerState, reduceAgentEventState } from './lib/agentEventReducer'
@@ -639,6 +640,7 @@ function App(): React.JSX.Element {
     onRespondAgentUserInteraction
   } = useSessionStore()
   const messages = agentEventState.messages
+  const [chatScrollPositionStore] = useState(() => new Map<string, number>())
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const compactingSessionKeysRef = useRef(new Set<string>())
   const [compactingSessions, setCompactingSessions] = useState<Set<string>>(() => new Set())
@@ -2549,6 +2551,9 @@ function App(): React.JSX.Element {
   const onToggleWorkspaceSidePanel = useCallback((mode: WorkspaceSidePanelMode): void => {
     setWorkspaceSidePanelMode((current) => toggleWorkspaceSidePanelMode(current, mode))
   }, [])
+  const onOpenBackgroundJobs = useCallback((): void => {
+    setWorkspaceSidePanelMode('jobs')
+  }, [])
   const onRefreshWorkspaceSidePanel = useCallback((): void => {
     setWorkspaceSidePanelTreeRevision((value) => value + 1)
   }, [])
@@ -2798,6 +2803,7 @@ function App(): React.JSX.Element {
   const activeSessionHasWork =
     sessionStatusIsBusy(activeSession) || sessionRuntimeStateIsBusy(activeSessionRuntimeState)
   const currentSessionIsBusy = isSendingMessage || activeSessionHasWork
+  const queuedPromptsPaused = sessionRuntimeStatePausesQueue(activeSessionRuntimeState)
   const activeContextCompactionKey = JSON.stringify([
     activePhiSessionId ?? null,
     activeSessionPath,
@@ -2895,6 +2901,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     if (
       currentSessionIsBusy ||
+      queuedPromptsPaused ||
       currentSessionIsCompacting ||
       isSessionChanging ||
       isBusy ||
@@ -2936,6 +2943,7 @@ function App(): React.JSX.Element {
     activeQueuedPrompts,
     availableModels,
     currentSessionIsBusy,
+    queuedPromptsPaused,
     currentSessionIsCompacting,
     isModelStateReady,
     isBusy,
@@ -3614,6 +3622,7 @@ function App(): React.JSX.Element {
           onImagesAdded={addInputImages}
           onRemoveImage={removeInputImage}
           scrollResetKey={activeChatScrollResetKey}
+          scrollPositionStore={chatScrollPositionStore}
           canSend={
             !isSessionChanging && !currentSessionIsBusy && !currentSessionIsCompacting && !isBusy
           }
@@ -3660,6 +3669,7 @@ function App(): React.JSX.Element {
           onStopGeneration={onStopGeneration}
           onAcknowledgeActiveSession={acknowledgeActiveSessionInteraction}
           onGoSettings={onGoProviderSettings}
+          onOpenBackgroundJobs={onOpenBackgroundJobs}
           permissionMode={activePermissionMode}
           onSelectPermissionMode={(mode) => {
             void onSelectPermissionMode(mode)
@@ -3672,6 +3682,7 @@ function App(): React.JSX.Element {
             id: item.id,
             text: item.text || `图片 ${item.sendOptions?.images?.length ?? 0} 张`
           }))}
+          queuedPromptsPaused={queuedPromptsPaused}
           onRespondApproval={onRespondToolApproval}
           onRespondUserInteraction={onRespondAgentUserInteraction}
           onRemoveQueuedPrompt={removeQueuedPrompt}
@@ -3956,6 +3967,7 @@ function App(): React.JSX.Element {
           mcpServers={mcpServers}
           activeMcpServerId={activeMcpServerId}
           onOpenMcpServer={onOpenMcpServerTab}
+          onRefreshMcpServers={refreshMcpServers}
           wrapperCatalog={wrapperCatalog}
           selectedWrapperId={selectedWrapperId}
           isLoadingWrappers={isLoadingWrappers}

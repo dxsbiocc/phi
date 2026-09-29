@@ -207,7 +207,11 @@ type PreloadMcpServerSummary = {
   command?: string
   args?: string[]
   envKeys?: string[]
+  url?: string
+  transport?: string
   sourcePath?: string
+  managed?: boolean
+  enabled?: boolean
   status: 'configured'
 }
 
@@ -978,6 +982,9 @@ declare global {
       deleteSkill: (filePath: string, cwd?: string) => Promise<PreloadSkillSummary[]>
       listPromptAgents: (cwd?: string) => Promise<PreloadPromptAgentSummary[]>
       listMcpServers: (cwd?: string) => Promise<PreloadMcpServerSummary[]>
+      addRemoteMcpConnector: (name: string, url: string) => Promise<void>
+      removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
+      listFeaturedMcpTools: (id: string) => Promise<string[]>
       getWrapperPlan: (planId: string) => Promise<WrapperRunPlan | undefined>
       retargetWrapperPlan: (request: WrapperRetargetRequest) => Promise<WrapperRunPlan>
       submitWrapperPlan: (

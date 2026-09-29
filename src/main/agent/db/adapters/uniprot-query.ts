@@ -42,6 +42,10 @@ const UNIPROT_RANGE_FILTER_FIELDS = new Set([
   'date_modified',
   'date_sequence_modified'
 ])
+
+export function uniprotProteinFilterFields(): string[] {
+  return [...UNIPROT_STRING_FILTER_FIELDS, ...UNIPROT_RANGE_FILTER_FIELDS, 'reviewed']
+}
 const UNIPROT_STRING_FILTER_OPS = new Set<DbFilter['op']>(['=', 'like', 'in'])
 const UNIPROT_RANGE_FILTER_OPS = new Set<DbFilter['op']>(['=', '>', '>=', '<', '<=', 'between'])
 

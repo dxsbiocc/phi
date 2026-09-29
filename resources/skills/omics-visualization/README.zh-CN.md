@@ -104,7 +104,9 @@ Agent 不得凭训练数据推荐模板。预览模式和常见数据形态可�
 
 `circular` 以及 `outer = "bar"` / `"point"` 只改 CONFIG，不另开模板。`scatter-svg` / `bar-svg-icon` 的 SVG 文件也是 CONFIG。`graph-force` 使用已有 x/y（`layout = "manual"`）。由边表计算布局用 `graph-stress`。
 
-每个模板带 `plot.R`、示例数据和 `preview.png`。catalog 记录 `id`、别名、语言、状态，以及脚本期望的输入形态。
+每个模板带 `plot.R`、示例数据和 `preview.png`。用户只想看示例、尚无数据表时，用 `viz_examples` 直接展示内置的 `preview.png`，不模拟数据，也不重新绘制。catalog 记录 `id`、别名、语言、状态，以及脚本期望的输入形态。
+
+修改已生成的图时，读取项目中的原绘图脚本和输入数据并直接修订；用户给参考图要求新绘制时，先查看参考图，再以用户数据选择合适模板。
 
 配色见 [references/palettes.yaml](references/palettes.yaml)，完整色表在 [references/palettes/colors.json](references/palettes/colors.json)。默认：分组用 `Qualitative.Safe`，热图用 `Quantitative.BluGrn`，有正负的值用 `Diverging.RdBu`，对齐 OmicsAgent 产品时用 `Brand.Algolia`。
 

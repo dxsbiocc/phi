@@ -1,9 +1,11 @@
 import { DB_STANDARD_RECORD_FIELDS } from './adapters/types'
+import { uniprotProteinFilterFields } from './adapters/uniprot-query'
 import type { DbDocsSearchResult } from './tool-docs-search'
 import type {
   DbConnectorCatalogEntry,
   DbDomainManifest,
   DbFieldSchema,
+  DbProtocolFamily,
   DbRecordIdentity
 } from './manifest-types'
 
@@ -13,58 +15,165 @@ import type {
  * building need, as single-line JSON.
  */
 
-/** Common fields shown per domain as "why this matched"; enough to route, short enough to skim. */
-const MAX_MATCHED_FIELDS = 8
-
 export type DbDomainDetail = 'common' | 'all'
-
-interface SearchContentDomain {
-  id: string
-  summary: string
-  match?: string[]
-}
 
 interface SearchContentItem {
   id: string
   name: string
-  domains: SearchContentDomain[]
   enabled?: false
 }
 
-function matchedFields(commonFields: readonly string[], queryTerms: readonly string[]): string[] {
-  if (queryTerms.length === 0) return []
-  return commonFields
-    .map((field, order) => {
-      const lower = field.toLowerCase()
-      return { field, order, hits: queryTerms.filter((term) => lower.includes(term)).length }
-    })
-    .filter(({ hits }) => hits > 0)
-    .sort((left, right) => right.hits - left.hits || left.order - right.order)
-    .slice(0, MAX_MATCHED_FIELDS)
-    .map(({ field }) => field)
-}
-
-export function buildDbSearchContent(
-  entries: readonly DbConnectorCatalogEntry[],
-  queryTerms: readonly string[]
-): string {
-  const items = entries.map((entry): SearchContentItem => {
-    const domains = entry.manifest.domains.map((domain): SearchContentDomain => {
-      const match = matchedFields(domain.commonFields, queryTerms)
-      return {
-        id: domain.id,
-        summary: domain.summary,
-        ...(match.length > 0 ? { match } : {})
-      }
-    })
-    return {
+export function buildDbSearchContent(entries: readonly DbConnectorCatalogEntry[]): string {
+  return JSON.stringify(
+    entries.map((entry): SearchContentItem => ({
       id: entry.manifest.id,
       name: entry.manifest.name,
-      domains,
       ...(entry.enabledForQuery ? {} : { enabled: false as const })
-    }
+    }))
+  )
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)]
+}
+
+function templateFilters(template: string): string[] {
+  return [...template.matchAll(/\{filter:([^{}]+)\}/g)].map((match) => match[1].trim())
+}
+
+export interface DbRouteQueryInput {
+  requiredFilters: string[]
+  optionalFilters: string[]
+  rawQueryAllowed: boolean
+  example: Record<string, unknown>
+}
+
+/** Derive the model-facing input contract from the same mapping used by the adapter. */
+export function dbRouteQueryInput(
+  database: string,
+  protocolFamily: DbProtocolFamily,
+  domain: DbDomainManifest
+): DbRouteQueryInput {
+  const request = domain.rest?.request
+  const templates = request
+    ? [
+        request.path,
+        ...Object.values(request.queryParams ?? {}).filter(
+          (value): value is string => typeof value === 'string'
+        ),
+        ...Object.values(request.jsonBodyTemplates ?? {})
+      ]
+    : []
+  let required = unique([
+    ...templates.flatMap(templateFilters),
+    ...Object.entries(request?.jsonBodyParamMap ?? {})
+      .filter(([bodyKey]) => !request?.jsonBodyOptionalFields?.includes(bodyKey))
+      .map(([, field]) => field)
+  ])
+  let optional = unique([
+    ...Object.keys(request?.filterParamMap ?? {}),
+    ...Object.entries(request?.jsonBodyParamMap ?? {})
+      .filter(([bodyKey]) => request?.jsonBodyOptionalFields?.includes(bodyKey))
+      .map(([, field]) => field)
+  ]).filter((field) => !required.includes(field))
+  if (protocolFamily === 'ontology') {
+    required.push(domain.ontology?.operation === 'search' ? 'q' : 'id')
+  }
+  if (protocolFamily === 'sparql' && domain.sparql?.query) {
+    required = unique([...required, ...templateFilters(domain.sparql.query)])
+  }
+  if (database === 'rest-json/uniprot' && domain.id === 'protein') {
+    optional = unique([...optional, ...uniprotProteinFilterFields()])
+  }
+  if (database === 'rest-json/uniprot' && domain.id === 'id_mapping') {
+    required = ['to', 'ids']
+    optional = ['from']
+  }
+  const rawQueryAllowed =
+    protocolFamily !== 'rest-json' ||
+    (required.length === 0 &&
+      (Boolean(request?.rawQueryParam) ||
+        templates.some((template) => template.includes('{rawQuery}'))))
+  const example: Record<string, unknown> = { database, domain: domain.id }
+  if (required.length > 0) {
+    example.filters = required.map((field) => ({ field, op: '=', value: `<${field}>` }))
+  } else if (rawQueryAllowed) {
+    example.rawQuery = '<search term>'
+  }
+  return { requiredFilters: required, optionalFilters: optional, rawQueryAllowed, example }
+}
+
+export function buildDbRoutesContent(
+  entry: DbConnectorCatalogEntry,
+  intent: string,
+  limit: number
+): string {
+  const terms = intent
+    .toLowerCase()
+    .split(/[\s,;，；/]+/)
+    .filter(Boolean)
+  const matches = entry.manifest.domains
+    .map((domain, order) => {
+      const input = dbRouteQueryInput(entry.manifest.id, entry.manifest.protocolFamily, domain)
+      const searchable = [
+        domain.id,
+        domain.summary,
+        ...input.requiredFilters,
+        ...input.optionalFilters,
+        ...domain.commonFields,
+        ...(domain.fields ?? []).flatMap((field) => [
+          field.name,
+          field.description ?? '',
+          ...(field.synonyms ?? [])
+        ])
+      ]
+        .join(' ')
+        .toLowerCase()
+      return {
+        domain,
+        input,
+        order,
+        score: terms.filter((term) => searchable.includes(term)).length
+      }
+    })
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score || left.order - right.order)
+  return JSON.stringify({
+    database: entry.manifest.id,
+    intent,
+    totalMatches: matches.length,
+    routes: matches.slice(0, limit).map(({ domain, input }) => {
+      const rankedOptional = input.optionalFilters
+        .map((field, order) => ({
+          field,
+          order,
+          score: terms.filter((term) => field.toLowerCase().includes(term)).length
+        }))
+        .sort((left, right) => right.score - left.score || left.order - right.order)
+        .map(({ field }) => field)
+      const matchedFields = (domain.fields ?? [])
+        .map((field, order) => ({
+          name: field.name,
+          order,
+          score: terms.filter((term) =>
+            [field.name, field.description ?? '', ...(field.synonyms ?? [])]
+              .join(' ')
+              .toLowerCase()
+              .includes(term)
+          ).length
+        }))
+        .filter(({ score }) => score > 0)
+        .sort((left, right) => right.score - left.score || left.order - right.order)
+        .slice(0, 5)
+        .map(({ name }) => name)
+      return {
+        domain: domain.id,
+        purpose: domain.summary,
+        inputFields: unique([...input.requiredFilters, ...rankedOptional]).slice(0, 6),
+        ...(matchedFields.length > 0 ? { matchedFields } : {})
+      }
+    })
   })
-  return JSON.stringify(items)
 }
 
 interface FieldContent {
@@ -90,6 +199,7 @@ interface DomainContent {
   database: string
   domain: string
   summary: string
+  queryInput: DbRouteQueryInput
   identity?: DbRecordIdentity
   standardFields: readonly string[]
   commonFields: FieldContent[]
@@ -102,6 +212,7 @@ interface DomainContent {
  */
 export function buildDbDomainContent(
   database: string,
+  protocolFamily: DbProtocolFamily,
   domain: DbDomainManifest,
   detail: DbDomainDetail
 ): string {
@@ -112,6 +223,7 @@ export function buildDbDomainContent(
     database,
     domain: domain.id,
     summary: domain.summary,
+    queryInput: dbRouteQueryInput(database, protocolFamily, domain),
     ...(domain.identity ? { identity: domain.identity } : {}),
     standardFields: DB_STANDARD_RECORD_FIELDS,
     commonFields: domain.commonFields.map((name) => fieldContent(name, schemas.get(name))),

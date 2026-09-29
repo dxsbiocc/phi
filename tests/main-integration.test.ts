@@ -25,6 +25,7 @@ import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
 import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
 import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-preview-media'
 import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers/remote-result-download'
+import { isInstalledFigurePreviewPath } from '../src/main/agent/visualization/examples'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -383,6 +384,16 @@ async function harness(
     filePaths: []
   }
   let saveDialogResult: { canceled: boolean; filePath?: string } = { canceled: true }
+  const bundledFigurePreview = path.join(
+    process.cwd(),
+    'resources',
+    'skills',
+    'omics-visualization',
+    'scripts',
+    'scatter',
+    'volcano',
+    'preview.png'
+  )
   const previewFiles = new Map<string, Buffer>([
     ['/projects/current/src/App.tsx', Buffer.from('export const app = true\n')],
     ['/projects/current/README.md', Buffer.from('# Project\n')],
@@ -390,6 +401,7 @@ async function harness(
     ['/projects/current/notebooks/eda.ipynb', Buffer.from('{"nbformat":4,"cells":[]}')],
     ['/projects/current/large.txt', Buffer.alloc(320010, 'a')],
     ['/projects/current/plot.png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+    [bundledFigurePreview, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
     ['/projects/current/photo.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xd9])],
     ['/projects/current/animation.gif', Buffer.from('GIF89a\x01\x00\x01\x00', 'binary')],
     [
@@ -424,6 +436,7 @@ async function harness(
       ]
     ],
     ['/projects/current/src', [{ name: 'App.tsx', kind: 'file' }]],
+    [path.join(process.cwd(), 'resources', 'skills', 'omics-visualization'), []],
     ['/isolated', [{ name: 'sessions', kind: 'directory' }]],
     ['/isolated/sessions', [{ name: 'session-1', kind: 'directory' }]],
     ['/isolated/sessions/session-1', [{ name: 'tool-outputs', kind: 'directory' }]],
@@ -1560,6 +1573,7 @@ async function harness(
           bridgeRequests.push({ method, params })
           if (bridgeFailure) throw bridgeFailure
           if (method === 'agentRuns.list') return bridgeAgentJobs
+          if (method === 'mcp.featuredTools') return ['search_articles']
           return { ok: true }
         }
       })
@@ -1594,6 +1608,10 @@ async function harness(
       ],
       installPlugin: async (): Promise<unknown[]> => [],
       removePlugin: async (): Promise<unknown[]> => []
+    },
+    './agent/mcp-connectors': {
+      addRemoteMcpConnector: noop,
+      removeRemoteMcpConnector: noop
     },
     './agent/resources': {
       listGlobalSkills: async (): Promise<unknown[]> => [
@@ -1798,6 +1816,11 @@ async function harness(
       addCustomWrapper: (): never => {
         throw new Error('wrapper.yaml 校验失败: (mocked in main-integration.test.ts)')
       }
+    },
+    './agent/visualization/examples': { isInstalledFigurePreviewPath },
+    './agent/visualization/tools': {
+      getBundledSkillRoot: () =>
+        path.join(process.cwd(), 'resources', 'skills', 'omics-visualization')
     },
     // Real scan of the repo's bundled agents, but never the developer's own ~/.claude etc.
     './agent/agents/discovery': {
@@ -2814,6 +2837,48 @@ test('main IPC: file preview is limited to project and Phi-owned files', async (
   )
 })
 
+test('main IPC: an installed template preview image is displayable outside the project', async () => {
+  const app = await harness()
+  await app.invoke('projects:newSession', '/projects/current', 'ask')
+  const previewPath = path.join(
+    process.cwd(),
+    'resources',
+    'skills',
+    'omics-visualization',
+    'scripts',
+    'scatter',
+    'volcano',
+    'preview.png'
+  )
+  assert.deepEqual(await app.invoke('files:statLocalPaths', '/projects/current', [previewPath]), [
+    { path: previewPath, kind: 'file' }
+  ])
+  const preview = (await app.invoke('files:preview', previewPath)) as {
+    kind: string
+    path: string
+    dataUrl: string
+  }
+  assert.equal(preview.kind, 'image')
+  assert.equal(preview.path, previewPath)
+  assert.match(preview.dataUrl, /^data:image\/png;base64,/)
+  await assert.rejects(
+    app.invoke(
+      'files:preview',
+      path.join(
+        process.cwd(),
+        'resources',
+        'skills',
+        'omics-visualization',
+        'scripts',
+        'scatter',
+        'volcano',
+        'plot.R'
+      )
+    ),
+    /只能预览 Phi 保存的文件或当前项目内的文件/
+  )
+})
+
 test('main window prevents HTML report frames from navigating away', async () => {
   const app = await harness()
   assert.equal(
@@ -3326,6 +3391,16 @@ test('main IPC: remote project session is tied to its ID and a private anchor', 
   assert.equal(restored.projectId, 'remote-project-1')
   assert.equal(restored.displayCwd, '/cluster/project')
   assert.equal(restored.cwd, current.cwd)
+})
+
+test('main IPC: featured MCP tools are read through the Bun worker', async () => {
+  const app = await harness()
+  assert.deepEqual(await app.invoke('mcp:featuredTools', 'pubmed'), ['search_articles'])
+  assert.deepEqual(app.bridgeRequests.at(-1), {
+    method: 'mcp.featuredTools',
+    params: { id: 'pubmed' }
+  })
+  await assert.rejects(app.invoke('mcp:featuredTools', null), /连接器标识无效/)
 })
 
 test(
@@ -4224,9 +4299,11 @@ test('main IPC: context usage follows the selected session and preserves unavail
         tokens: 24000,
         contextWindow: 200000,
         percent: 12,
+        deferredMcpTokens: 8000,
         categories: [
           { id: 'systemPrompt', tokens: 1000 },
-          { id: 'toolDefinitions', tokens: 3000 },
+          { id: 'systemTools', tokens: 2500 },
+          { id: 'mcpTools', tokens: 500 },
           { id: 'systemContext', tokens: 2000 },
           { id: 'skills', tokens: 4000 },
           { id: 'conversation', tokens: 14000 }
@@ -4246,9 +4323,11 @@ test('main IPC: context usage follows the selected session and preserves unavail
     tokens: 24000,
     contextWindow: 200000,
     percent: 12,
+    deferredMcpTokens: 8000,
     categories: [
       { id: 'systemPrompt', tokens: 1000 },
-      { id: 'toolDefinitions', tokens: 3000 },
+      { id: 'systemTools', tokens: 2500 },
+      { id: 'mcpTools', tokens: 500 },
       { id: 'systemContext', tokens: 2000 },
       { id: 'skills', tokens: 4000 },
       { id: 'conversation', tokens: 14000 }
@@ -6887,6 +6966,58 @@ test('main IPC: assistant error message ends are restored after switching sessio
   assert.match(JSON.stringify(restored.messages), /request reached organization max RPM/)
   assert.doesNotMatch(JSON.stringify(restored.messages), /org-930/)
   assert.doesNotMatch(JSON.stringify(restored.messages), /ak-fch/)
+})
+
+test('main IPC: unsupported provider region stops automatic retry and fails the run', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.hold = true
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          stopReason: 'error',
+          errorMessage: 'This model provider is not supported in your region.'
+        }
+      },
+      {
+        type: 'auto_retry_start',
+        attempt: 1,
+        maxAttempts: 5,
+        delayMs: 30_000,
+        errorMessage: 'This model provider is not supported in your region.'
+      }
+    ]
+    const abort = session.abort.bind(session)
+    session.abort = async () => {
+      for (const listener of session.listeners) {
+        listener({
+          type: 'message_end',
+          message: { role: 'assistant', stopReason: 'error', errorMessage: 'Request was aborted' }
+        })
+      }
+      await abort()
+    }
+    return session
+  })
+
+  const prompt = app.invoke('agent:prompt', '测试连接')
+  const settled = await Promise.race([
+    prompt.then(() => true),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), 250))
+  ])
+  if (!settled) app.sessions[0].finish.resolve()
+  await prompt
+
+  assert.equal(settled, true, 'a permanent region denial should not wait through retry backoff')
+  assert.ok(app.sessions[0].log.includes('abort'))
+  assert.equal(app.appendedSessionEvents.at(-1)?.event.type, 'run_failed')
+  assert.match(
+    String(app.appendedSessionEvents.at(-1)?.event.errorMessage),
+    /not supported in your region/
+  )
 })
 
 test('main IPC: current session restores assistant error message ends after renderer refresh', async () => {

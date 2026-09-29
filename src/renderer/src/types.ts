@@ -28,6 +28,8 @@ import type {
   WorkspaceDiffReference
 } from '../../shared/workspaceChangeTypes'
 import type { PromptImageInput, StoredPromptImage } from '../../shared/promptImageTypes'
+import type { McpServerSummary } from './features/mcp/lib/mcpTypes'
+export type { McpServerSummary } from './features/mcp/lib/mcpTypes'
 import type { SessionExportResult } from '../../shared/sessionExportTypes'
 import type {
   AutoCompactionApi,
@@ -110,6 +112,7 @@ export interface ChatMessage {
   id: string
   role: Role
   content: string
+  backgroundJobNotice?: { state: 'completed' | 'failed' | 'cancelled' }
   contextCompaction?: ContextCompactionDetails
   images?: Array<PromptImageInput | StoredPromptImage>
   runId?: string
@@ -323,16 +326,6 @@ export interface PromptAgentSummary {
   description: string
   source: string
   trigger: string
-}
-
-export interface McpServerSummary {
-  id: string
-  name: string
-  command?: string
-  args?: string[]
-  envKeys?: string[]
-  sourcePath?: string
-  status: 'configured'
 }
 
 export type FilePreviewKind = 'text' | 'html' | 'image' | 'pdf' | 'metadata'
@@ -920,6 +913,9 @@ export type RendererApi = AutoCompactionApi & {
   deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
   listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
+  addRemoteMcpConnector: (name: string, url: string) => Promise<void>
+  removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
+  listFeaturedMcpTools: (id: string) => Promise<string[]>
 }
 
 export interface AgentMessage {

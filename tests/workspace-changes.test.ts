@@ -182,6 +182,34 @@ test('non-Git folders do not produce a misleading run summary', async () => {
   }
 })
 
+test('an unborn Git repository still records files created and changed during a run', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-workspace-unborn-'))
+  try {
+    execFileSync('git', ['init', '-q', root])
+    writeFileSync(join(root, 'existing.txt'), 'before\n')
+    writeFileSync(join(root, 'staged.txt'), 'staged before\n')
+    execFileSync('git', ['add', 'staged.txt'], { cwd: root })
+
+    const baseline = await beginWorkspaceChangeCapture(root)
+    assert.ok(baseline)
+    writeFileSync(join(root, 'existing.txt'), 'after\n')
+    writeFileSync(join(root, 'staged.txt'), 'staged after\n')
+    writeFileSync(join(root, 'result.tsv'), 'gene\tpadj\nTHRSP\t0.1\n')
+
+    const summary = await finishWorkspaceChangeCapture(baseline)
+    assert.deepEqual(
+      summary?.files.map((file) => [file.displayPath, file.status]),
+      [
+        ['existing.txt', 'modified'],
+        ['result.tsv', 'added'],
+        ['staged.txt', 'modified']
+      ]
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('change summaries cap the visible file list while retaining the total', async () => {
   await withRepo(async (root) => {
     const baseline = await beginWorkspaceChangeCapture(root)

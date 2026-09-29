@@ -1,11 +1,27 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  activeProcessingGroupIndex,
   groupMessages,
   processingStatusText,
   type ProcessingItem
 } from '../src/renderer/src/lib/chatRenderGroups'
 import type { ChatItem } from '../src/renderer/src/types'
+
+test('an error card does not make a still running turn look completed', () => {
+  const groups = groupMessages(
+    [
+      { id: 'user-1', role: 'user', content: '测试连接' },
+      { id: 'run-1', role: 'run', event: 'started', createdAt: '2026-09-29T00:00:00.000Z' },
+      { id: 'error-1', role: 'error', content: 'Provider unavailable' }
+    ],
+    { activeRun: true }
+  )
+
+  assert.equal(groups.at(-1)?.key, 'error-1')
+  assert.equal(groups[activeProcessingGroupIndex(groups, true)]?.kind, 'processing-group')
+  assert.equal(activeProcessingGroupIndex(groups, false), -1)
+})
 
 test('chat render groups leave wrapper plans as persistent artifacts', () => {
   const messages: ChatItem[] = [
@@ -32,6 +48,42 @@ test('chat render groups leave wrapper plans as persistent artifacts', () => {
 
   assert.equal(groups.at(-1)?.kind, 'single')
   assert.equal(groups.at(-1)?.key, 'plan-1')
+})
+
+test('an active turn shows an earlier wrapper plan only once', () => {
+  const groups = groupMessages(
+    [
+      { id: 'user-1', role: 'user', content: 'run wrapper' },
+      {
+        id: 'tool-1',
+        role: 'tool',
+        toolName: 'wrapper.fastq_qc',
+        argsPreview: '{}',
+        argsJson: '{}',
+        output: 'planning',
+        status: 'done'
+      },
+      {
+        id: 'plan-1',
+        role: 'wrapper_plan',
+        toolName: 'wrapper.fastq_qc',
+        planId: 'plan-1',
+        status: 'done'
+      },
+      {
+        id: 'tool-2',
+        role: 'tool',
+        toolName: 'read',
+        argsPreview: '{}',
+        argsJson: '{}',
+        output: 'reading',
+        status: 'running'
+      }
+    ],
+    { activeRun: true }
+  )
+
+  assert.equal(groups.filter((group) => group.key === 'plan-1').length, 1)
 })
 
 test('chat render groups keep file changes visible after the processing fold', () => {
@@ -89,7 +141,57 @@ test('chat render groups keep delivered files outside the processing fold', () =
     { id: 'assistant-1', role: 'assistant', content: 'Report ready.' }
   ])
   assert.equal(groups.find((group) => group.key === 'delivery-1')?.kind, 'single')
-  assert.equal(groups.at(-1)?.key, 'assistant-1')
+  assert.equal(groups.at(-1)?.key, 'delivery-1')
+})
+
+test('file deliveries remain at the turn tail when a later tool call follows their event', () => {
+  const groups = groupMessages([
+    { id: 'user-1', role: 'user', content: 'make a figure' },
+    { id: 'assistant-summary', role: 'assistant', content: 'The figure is ready.' },
+    {
+      id: 'delivery-1',
+      role: 'presented_files',
+      files: [{ path: '/project/figure.png', displayPath: 'figure.png', bytes: 123 }]
+    },
+    {
+      id: 'present-tool',
+      role: 'tool',
+      toolName: 'present_files',
+      argsPreview: '',
+      argsJson: '',
+      output: 'done',
+      status: 'done'
+    },
+    { id: 'assistant-final', role: 'assistant', content: 'Everything is done.' }
+  ])
+
+  assert.equal(groups.at(-2)?.key, 'assistant-final')
+  assert.equal(groups.at(-1)?.key, 'delivery-1')
+})
+
+test('changed files remain visible at the turn tail when a later tool call follows their event', () => {
+  const groups = groupMessages([
+    { id: 'user-1', role: 'user', content: 'edit a file' },
+    {
+      id: 'changes-1',
+      role: 'workspace_changes',
+      files: [{ path: '/project/data.tsv', displayPath: 'data.tsv', status: 'modified' }],
+      totalChanged: 1,
+      truncated: false
+    },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      toolName: 'read',
+      argsPreview: '',
+      argsJson: '',
+      output: 'done',
+      status: 'done'
+    },
+    { id: 'assistant-final', role: 'assistant', content: 'Updated.' }
+  ])
+
+  assert.equal(groups.at(-1)?.key, 'changes-1')
 })
 
 test('chat render groups keep a reviewed plan outside the processing fold', () => {

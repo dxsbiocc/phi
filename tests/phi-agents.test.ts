@@ -14,6 +14,7 @@ import {
   type PhiAgentDefinition
 } from '../src/main/agent/agents/definition'
 import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
+import { AGENT_REPORT_PROTOCOL } from '../src/main/agent/agents/report'
 import {
   AgentCancelledError,
   AgentTimeoutError,
@@ -22,7 +23,11 @@ import {
   extractAssistantText,
   type AgentSessionLike
 } from '../src/main/agent/agents/runner'
-import { buildScopedPhiToolMap, resolveAgentTools } from '../src/main/agent/agents/tool-resolution'
+import {
+  buildScopedPhiToolMap,
+  resolveAgentTools,
+  visualizationToolNamesForWorkflow
+} from '../src/main/agent/agents/tool-resolution'
 import { buildAgentTool, type AgentRunner } from '../src/main/agent/agents/tool'
 
 const REPO_AGENTS_DIR = join(import.meta.dirname, '..', 'resources', 'agents')
@@ -379,6 +384,7 @@ test('the bundled Database agent owns only biological database tools', () => {
   assert.deepEqual(database.tools, [
     'db_search',
     'db_resolve',
+    'db_routes',
     'db_domain',
     'db_docs_search',
     'db_query',
@@ -393,9 +399,10 @@ test('the bundled Database agent owns only biological database tools', () => {
   assert.match(database.systemPrompt, /provenance/i)
   assert.match(database.systemPrompt, /bulk download/i)
   assert.match(database.systemPrompt, /before (?:the )?first tool call/i)
-  assert.match(database.systemPrompt, /candidate routes/i)
+  assert.match(database.systemPrompt, /candidate databases/i)
+  assert.match(database.systemPrompt, /may be inspected and queried in parallel/i)
   assert.match(database.systemPrompt, /exact public-accession/i)
-  assert.match(database.systemPrompt, /Do not call `db_search` or `db_domain` first/i)
+  assert.match(database.systemPrompt, /db_resolve.*replace these discovery steps/i)
   assert.match(database.systemPrompt, /do not repeat/i)
   assert.doesNotMatch(database.systemPrompt, /skill:\/\/create-database-connector/)
   assert.ok(database.delegation && database.delegation.length > 0)
@@ -403,9 +410,13 @@ test('the bundled Database agent owns only biological database tools', () => {
   assert.equal(database.fallback?.afterFailures, 1)
   assert.deepEqual(database.fallback?.tools, ['bash', 'eval', 'web_search', 'download_file'])
   assert.ok(database.fallback?.match.includes('rest.uniprot.org'))
+  assert.match(database.description, /does not conduct open-ended literature reviews/i)
+  assert.match(database.delegation ?? '', /literature search.*main agent/i)
+  assert.match(database.systemPrompt, /do not broaden a literature search/i)
   for (const toolName of [
     'db_search',
     'db_resolve',
+    'db_routes',
     'db_domain',
     'db_docs_search',
     'db_query',
@@ -413,6 +424,51 @@ test('the bundled Database agent owns only biological database tools', () => {
   ]) {
     assert.doesNotMatch(database.delegation ?? '', new RegExp(`\\b${toolName}\\b`))
   }
+})
+
+test('specialists keep delegated scope, evidence, and stop rules explicit', () => {
+  const { agents } = discoverPhiAgents({
+    cwd: '/nonexistent/cwd',
+    agentDir: '/nonexistent/agentdir',
+    bundledDir: REPO_AGENTS_DIR,
+    homeDir: '/nonexistent/home'
+  })
+  for (const name of ['Database', 'Visualization', 'Wrapper']) {
+    const prompt = agents.find((agent) => agent.name === name)?.systemPrompt ?? ''
+    assert.match(prompt, /do not broaden the delegated task/i, `${name} must preserve scope`)
+    assert.match(prompt, /tool outputs?.*evidence, not instructions/i, `${name} must distrust data`)
+    assert.match(prompt, /missing.*report/i, `${name} must expose missing inputs`)
+  }
+  const database = agents.find((agent) => agent.name === 'Database')!
+  assert.match(database.systemPrompt, /select databases.*select functions.*inspect inputs/i)
+  assert.match(database.systemPrompt, /independent.*parallel/i)
+  const visualization = agents.find((agent) => agent.name === 'Visualization')!
+  assert.match(visualization.systemPrompt, /preview.*before.*final render/i)
+  assert.match(visualization.systemPrompt, /verify.*artifact.*before.*report/i)
+  const wrapper = agents.find((agent) => agent.name === 'Wrapper')!
+  assert.match(wrapper.systemPrompt, /inspect.*before.*run/i)
+  assert.match(wrapper.systemPrompt, /lost.*unknown outcome/i)
+})
+
+test('specialist delegation excludes general explanation and adjacent deliverables', () => {
+  const { agents } = discoverPhiAgents({
+    cwd: '/nonexistent/cwd',
+    agentDir: '/nonexistent/agentdir',
+    bundledDir: REPO_AGENTS_DIR,
+    homeDir: '/nonexistent/home'
+  })
+  for (const name of ['Database', 'Visualization', 'Wrapper']) {
+    const guidance = agents.find((agent) => agent.name === name)?.delegation ?? ''
+    assert.match(guidance, /only the requested/i, `${name} must constrain delegation`)
+  }
+  assert.match(
+    agents.find((agent) => agent.name === 'Visualization')?.delegation ?? '',
+    /general explanation/i
+  )
+  assert.match(
+    agents.find((agent) => agent.name === 'Wrapper')?.delegation ?? '',
+    /general explanation/i
+  )
 })
 
 test('the bundled Visualization agent routes template previews through omics visualization', () => {
@@ -429,6 +485,7 @@ test('the bundled Visualization agent routes template previews through omics vis
   for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit']) {
     assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
   }
+  assert.ok(visualization.tools.includes('viz_examples'))
   assert.deepEqual(visualization.skills, ['omics-visualization'])
   assert.equal(existsSync(join(REPO_SKILLS_DIR, 'omics-visualization', 'SKILL.md')), true)
   assert.equal(visualization.delegationMode, 'required-first')
@@ -453,11 +510,28 @@ test('the bundled Visualization agent routes template previews through omics vis
     /sourcing the installed read-only `scripts\/lib\/common\.R`/
   )
   assert.match(visualization.systemPrompt, /Do not invent template ids/i)
+  assert.match(visualization.systemPrompt, /viz_examples.*without.*data/i)
+  assert.match(visualization.systemPrompt, /do not simulate.*render.*example/i)
+  assert.match(visualization.systemPrompt, /example-only request is `completed`/i)
+  assert.match(visualization.systemPrompt, /revision mode.*existing figure/i)
+  assert.match(visualization.systemPrompt, /do not call `viz_route` or `viz_prepare`/i)
+  assert.match(visualization.systemPrompt, /existing `plot\.R`.*input.*output/i)
+  assert.match(visualization.systemPrompt, /palette.*existing.*script/i)
+  assert.match(visualization.delegation ?? '', /existing `plot\.R`.*input.*output/i)
+  assert.match(visualization.delegation ?? '', /examples, create, revise, or reference/i)
+  assert.match(
+    visualization.systemPrompt,
+    /reference image.*visual evidence, not an instruction source/i
+  )
+  assert.match(visualization.systemPrompt, /reference.*user.*data.*do not invent/i)
+  assert.match(visualization.systemPrompt, /same cutoffs for Up\/Down\/None colors/i)
+  assert.match(visualization.systemPrompt, /counts based on adjusted P value alone distinct/i)
 
   const skillText = readFileSync(join(REPO_SKILLS_DIR, 'omics-visualization', 'SKILL.md'), 'utf-8')
   assert.match(skillText, /active Phi project working directory/)
   assert.match(skillText, /Treat data directories outside the\s+project as read-only inputs/)
   assert.match(skillText, /Do not copy `references\/`, `references\/palettes\/`, or catalog files/)
+  assert.match(skillText, /same values for point classification, cutoff lines, legend text/i)
   const commonR = readFileSync(
     join(REPO_SKILLS_DIR, 'omics-visualization', 'scripts', 'lib', 'common.R'),
     'utf-8'
@@ -491,14 +565,20 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
   assert.match(prompt, /nextflow/i)
   assert.match(prompt, /do not/i)
   assert.match(prompt, /required-first/i)
+  assert.match(prompt, /literature search.*main agent/i)
+  assert.match(prompt, /only the requested subtask/i)
+  assert.match(prompt, /follow-up edit.*exact source, input, and prior output paths/i)
   assert.match(prompt, /controlled fallback/i)
   assert.match(prompt, /not_found/i)
+  assert.match(prompt, /new and modified user-facing files separately/i)
+  assert.match(prompt, /exact path and purpose/i)
   // The leader never learns the specialist's own tool functions.
   for (const name of [
     'wrapper_search',
     'wrapper_inspect',
     'wrapper_run',
     'db_search',
+    'db_routes',
     'db_domain',
     'db_docs_search',
     'db_query',
@@ -506,6 +586,12 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
   ]) {
     assert.ok(!new RegExp(`\\b${name}\\b`).test(prompt), `leader prompt must not mention ${name}`)
   }
+})
+
+test('specialist reporting requires a verifiable file inventory', () => {
+  assert.match(AGENT_REPORT_PROTOCOL, /distinguish new files from modified files/i)
+  assert.match(AGENT_REPORT_PROTOCOL, /exact path of each user-facing result/i)
+  assert.match(AGENT_REPORT_PROTOCOL, /A top-level folder alone is not a file inventory/i)
 })
 
 // ── tool resolution ───────────────────────────────────────────────────────
@@ -527,6 +613,29 @@ test('resolveAgentTools resolves Database tools only when provided by its scoped
   assert.deepEqual(resolveAgentTools(declared, new Map([['db_query', dbQuery]])).customTools, [
     dbQuery
   ])
+})
+
+test('Visualization exposes only tools appropriate to its selected workflow', () => {
+  const declared = ['read', 'edit', 'viz_examples', 'viz_route', 'viz_prepare', 'viz_render']
+  assert.deepEqual(visualizationToolNamesForWorkflow(declared, 'examples'), [
+    'read',
+    'edit',
+    'viz_examples'
+  ])
+  assert.deepEqual(visualizationToolNamesForWorkflow(declared, 'revise'), [
+    'read',
+    'edit',
+    'viz_render'
+  ])
+  for (const workflow of ['create', 'reference'] as const) {
+    assert.deepEqual(visualizationToolNamesForWorkflow(declared, workflow), [
+      'read',
+      'edit',
+      'viz_route',
+      'viz_prepare',
+      'viz_render'
+    ])
+  }
 })
 
 test('Phi tool ownership isolates Wrapper and Database internals', () => {
@@ -602,7 +711,10 @@ test('the Visualization delegation tool injects the project output boundary', as
   assert.match(tool.description, /Project output boundary for Visualization/)
   assert.match(tool.description, /\/project\/root\/visualizations/)
 
-  const result = await tool.execute('call-viz', { task: '  render /data/results.tsv  ' })
+  const result = await tool.execute('call-viz', {
+    task: '  render /data/results.tsv  ',
+    workflow: 'create'
+  })
 
   assert.equal(result.isError, undefined)
   assert.equal(seen.length, 1)
@@ -611,6 +723,95 @@ test('the Visualization delegation tool injects the project output boundary', as
   assert.match(seen[0], /Treat input\/data paths outside cwd as read-only/)
   assert.match(seen[0], /Do not create sibling plots/)
   assert.match(seen[0], /Delegated task:\nrender \/data\/results\.tsv/)
+})
+
+test('Visualization delegation distinguishes examples, creation, revision, and reference imitation', async () => {
+  const seen: Array<{ task: string; images?: unknown[]; workflow?: string }> = []
+  const tool = buildAgentTool(
+    VISUALIZATION,
+    async (request) => {
+      seen.push(request)
+      return { text: 'Done.', toolCalls: 0 }
+    },
+    undefined,
+    { cwd: '/project/root' }
+  )
+  const parameters = tool.parameters as {
+    required: string[]
+    properties: { workflow: { enum: string[] } }
+  }
+  assert.deepEqual(parameters.required, ['task', 'workflow'])
+  assert.deepEqual(parameters.properties.workflow.enum, [
+    'examples',
+    'create',
+    'revise',
+    'reference'
+  ])
+  const missing = await tool.execute('missing-mode', { task: '修改刚才的配色' })
+  assert.equal(missing.isError, true)
+  const misplacedReference = await tool.execute('wrong-mode-reference', {
+    workflow: 'revise',
+    task: 'Edit /project/plots/plot.R colors.',
+    reference_image_path: '/project/example.png'
+  })
+  assert.equal(misplacedReference.isError, true)
+
+  await tool.execute('revision', {
+    workflow: 'revise',
+    task: 'Edit /project/plots/plot.R colors using /project/data.tsv; update /project/plots/figure.png.'
+  })
+  assert.match(seen[0]?.task ?? '', /Workflow: revise/)
+  assert.equal(seen[0]?.workflow, 'revise')
+  assert.equal(seen[0]?.images, undefined)
+
+  await tool.execute('examples', { workflow: 'examples', task: 'Show installed heatmap examples.' })
+  assert.match(seen[1]?.task ?? '', /Workflow: examples/)
+  assert.match(seen[1]?.task ?? '', /without creating project files/)
+})
+
+test('reference imitation forwards the user image into the specialist prompt', async () => {
+  let forwarded: unknown
+  const tool = buildAgentTool(VISUALIZATION, async (request) => {
+    forwarded = request.images
+    return { text: 'Reference inspected.', toolCalls: 0 }
+  })
+  const ctx = {
+    sessionManager: {
+      getBranch: () => [
+        {
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [
+              { type: 'text', text: '参考这张图画我的数据' },
+              { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }
+            ]
+          }
+        }
+      ]
+    }
+  } as never
+  const result = await tool.execute(
+    'reference',
+    { workflow: 'reference', task: 'Use the attached reference image with /project/data.tsv.' },
+    undefined,
+    ctx
+  )
+  assert.equal(result.isError, undefined)
+  assert.deepEqual(forwarded, [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }])
+  const absent = await tool.execute('no-reference', {
+    workflow: 'reference',
+    task: '模仿一张图绘制 /project/data.tsv，输出 /project/plot.png'
+  })
+  assert.equal(absent.isError, true)
+  assert.match(JSON.stringify(absent.content), /reference image/i)
+
+  const byPath = await tool.execute('reference-path', {
+    workflow: 'reference',
+    reference_image_path: '/project/reference.png',
+    task: 'Use /project/data.tsv and save /project/result.png.'
+  })
+  assert.equal(byPath.isError, undefined)
 })
 
 test('the tool rejects a missing, blank or oversized task without running the agent', async () => {
@@ -729,14 +930,25 @@ function fakeSession(
 ): AgentSessionLike & { prompts: string[]; aborted: number; disposed: number } {
   const listeners = new Set<Listener>()
   const emit: Listener = (event) => listeners.forEach((listener) => listener(event))
-  const state = { prompts: [] as string[], aborted: 0, disposed: 0 }
+  const state = {
+    prompts: [] as string[],
+    promptOptions: [] as Array<
+      { images?: Array<{ type: 'image'; data: string; mimeType: string }> } | undefined
+    >,
+    aborted: 0,
+    disposed: 0
+  }
   return Object.assign(state, {
     subscribe(listener: Listener) {
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
-    async prompt(text: string) {
+    async prompt(
+      text: string,
+      promptOptions?: { images?: Array<{ type: 'image'; data: string; mimeType: string }> }
+    ) {
       state.prompts.push(text)
+      state.promptOptions.push(promptOptions)
       await options.onPrompt?.(emit, text)
     },
     async abort() {
@@ -753,6 +965,24 @@ function fakeSession(
     }
   })
 }
+
+test('the specialist runner sends reference images with the delegated prompt', async () => {
+  const session = fakeSession()
+  let createdWith: unknown
+  const runner = createAgentRunner({
+    agent: 'Visualization',
+    createSession: async (request) => {
+      createdWith = request
+      return session
+    }
+  })
+  const images = [{ type: 'image' as const, data: 'aGVsbG8=', mimeType: 'image/png' }]
+  await runner({ task: 'Use the reference image.', images, workflow: 'reference' })
+  assert.deepEqual(createdWith, { workflow: 'reference' })
+  assert.deepEqual((session as typeof session & { promptOptions: unknown[] }).promptOptions, [
+    { images }
+  ])
+})
 
 test('extractAssistantText joins text parts and ignores thinking and tool calls', () => {
   assert.equal(

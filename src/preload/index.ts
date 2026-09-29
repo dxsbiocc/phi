@@ -321,7 +321,11 @@ type McpServerSummary = {
   command?: string
   args?: string[]
   envKeys?: string[]
+  url?: string
+  transport?: string
   sourcePath?: string
+  managed?: boolean
+  enabled?: boolean
   status: 'configured'
 }
 
@@ -890,6 +894,9 @@ type RendererAuthApi = {
   deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
   listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
+  addRemoteMcpConnector: (name: string, url: string) => Promise<void>
+  removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
+  listFeaturedMcpTools: (id: string) => Promise<string[]>
   getWrapperPlan: (planId: string) => Promise<WrapperRunPlan | undefined>
   retargetWrapperPlan: (request: WrapperRetargetRequest) => Promise<WrapperRunPlan>
   submitWrapperPlan: (
@@ -1367,6 +1374,12 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('agents:list', cwd),
   listMcpServers: (cwd?: string): Promise<McpServerSummary[]> =>
     ipcRenderer.invoke('mcp:listServers', cwd),
+  addRemoteMcpConnector: (name: string, url: string): Promise<void> =>
+    ipcRenderer.invoke('mcp:addRemoteConnector', name, url),
+  removeRemoteMcpConnector: (name: string, url: string): Promise<void> =>
+    ipcRenderer.invoke('mcp:removeRemoteConnector', name, url),
+  listFeaturedMcpTools: (id: string): Promise<string[]> =>
+    ipcRenderer.invoke('mcp:featuredTools', id),
   getWrapperPlan: (planId: string): Promise<WrapperRunPlan | undefined> =>
     ipcRenderer.invoke('wrappers:getPlan', planId),
   retargetWrapperPlan: (request: WrapperRetargetRequest): Promise<WrapperRunPlan> =>

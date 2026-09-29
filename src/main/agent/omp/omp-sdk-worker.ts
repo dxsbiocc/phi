@@ -21,6 +21,8 @@ import {
   type ResourceDiagnostic
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
+import { connectToServer, disconnectServer, listTools } from '@oh-my-pi/pi-coding-agent/mcp/client'
+import { estimateToolSchemaTokens } from '@oh-my-pi/pi-coding-agent/modes/utils/context-usage'
 import {
   DEFAULT_COMPACTION_METHOD_ORDER,
   resolveCompactionMethodOrder
@@ -45,13 +47,14 @@ import { buildPresentFilesTool } from '../deliverables/present-tool'
 import { enterPlanReviewMode, type PlanReviewChoice } from '../plan/plan-review-mode'
 import { planModeToolDecision } from '../plan/plan-tool-policy'
 import type { PresentedFile } from '../../../shared/presentedFileTypes'
+import { featuredMcpConnectors } from '../../../shared/mcpConnectorCatalog'
 import type {
   AutoCompactionDefaults,
   AutoCompactionOverrides,
   ContextCompactionSummary,
   ContextUsageSnapshot
 } from '../../../shared/contextUsageTypes'
-import { contextUsageSnapshot } from './context-usage-snapshot'
+import { contextUsageSnapshot, partitionMcpTools } from './context-usage-snapshot'
 import { buildRemoteWorkspaceReadTool } from '../remote-workspace-read-tool'
 import type { RemoteWorkspaceReadResult } from '../remote-workspace-read'
 import {
@@ -75,7 +78,12 @@ import { AgentRunRegistry } from '../agents/registry'
 import { buildAgentRunTools } from '../agents/run-tools'
 import { createAgentRunner, type AgentSessionLike } from '../agents/runner'
 import { appendAgentUsageRecord, pruneAgentUsageLogs } from '../agents/usage-log'
-import { buildScopedPhiToolMap, resolveAgentTools } from '../agents/tool-resolution'
+import {
+  buildScopedPhiToolMap,
+  resolveAgentTools,
+  visualizationToolNamesForWorkflow,
+  type VisualizationWorkflow
+} from '../agents/tool-resolution'
 import { buildAgentTool } from '../agents/tool'
 import { createSpecialistFallbackExtension } from '../agents/fallback-policy'
 import { createProjectToolBoundaryExtension } from '../agents/project-tool-boundary'
@@ -176,6 +184,18 @@ const CURRENT_SDK_PROJECT_CONFIG_DIR_NAME = '.omp'
 const LEGACY_PROJECT_CONFIG_DIR_NAMES = ['.omp', '.pi'] as const
 const contexts = new Map<string, Promise<RuntimeContext>>()
 const sessions = new Map<string, SessionEntry>()
+type WorkerAgentSession = CreateAgentSessionResult['session']
+type ToolSchema = WorkerAgentSession['agent']['state']['tools'][number]
+const mcpUsageCache = new WeakMap<
+  WorkerAgentSession,
+  {
+    tokenizer: WorkerAgentSession['agent']['tokenizer']
+    directTools: ToolSchema[]
+    deferredTools: ToolSchema[]
+    directTokens: number
+    deferredTokens: number
+  }
+>()
 const pendingHostRequests = new Map<
   string,
   {
@@ -779,7 +799,7 @@ function phiToolFunctions(
   }
   if (agentName === 'Database') {
     try {
-      databaseTools = buildDefaultDbCustomTools(agentDir)
+      databaseTools = buildDefaultDbCustomTools(agentDir, {}, { enforceRouting: true })
     } catch {
       // A broken connector catalog must not prevent the specialist session from starting.
     }
@@ -812,6 +832,7 @@ async function createPhiAgentSession(
     resourceOptions: unknown
     enableToolApproval: boolean
     agentRunId?: string
+    workflow?: VisualizationWorkflow
     remoteRoot?: string
     remoteContextFiles?: Array<{ path: string; content: string }>
     remoteTools?: () => CustomTool[]
@@ -852,7 +873,11 @@ async function createPhiAgentSession(
 
   const availableTools = phiToolFunctions(sessionId, agentDir, definition.name)
   for (const tool of deps.remoteTools?.() ?? []) availableTools.set(tool.name, tool)
-  const { toolNames, customTools } = resolveAgentTools(definition.tools, availableTools)
+  const declaredTools =
+    definition.name === 'Visualization'
+      ? visualizationToolNamesForWorkflow(definition.tools, deps.workflow)
+      : definition.tools
+  const { toolNames, customTools } = resolveAgentTools(declaredTools, availableTools)
   const parentSession = deps.parent()?.session
   const skills = deps.remoteRoot
     ? []
@@ -1015,7 +1040,7 @@ async function createSession(params: unknown): Promise<unknown> {
         agent: definition.name,
         // What each delegation cost, for judging prompt and tool changes; see agents/usage.ts.
         onUsage: (record) => appendAgentUsageRecord(agentDir, { ...record, sessionId }),
-        createSession: ({ runId }) =>
+        createSession: ({ runId, workflow }) =>
           createPhiAgentSession(definition, {
             sessionId,
             cwd,
@@ -1024,6 +1049,7 @@ async function createSession(params: unknown): Promise<unknown> {
             resourceOptions: record.resourceOptions,
             enableToolApproval: Boolean(record.enableToolApproval),
             ...(runId ? { agentRunId: runId } : {}),
+            ...(workflow ? { workflow } : {}),
             ...(remoteRoot
               ? {
                   remoteRoot,
@@ -1346,10 +1372,51 @@ function sessionContextUsage(params: unknown): ContextUsageSnapshot | null {
   const session = getSession(record.sessionId).session
   const usage = session.getContextUsage()
   try {
-    return contextUsageSnapshot(usage, session.getContextBreakdown())
+    const firstPrompt = session.systemPrompt[0]
+    const firstSystemPromptTokens = firstPrompt?.startsWith('§ Phi Role')
+      ? session.agent.tokenizer.countTokens(firstPrompt)
+      : undefined
+    return contextUsageSnapshot(
+      usage,
+      session.getContextBreakdown(),
+      firstSystemPromptTokens,
+      sessionMcpUsage(session)
+    )
   } catch {
     return contextUsageSnapshot(usage)
   }
+}
+
+function sessionMcpUsage(session: WorkerAgentSession): {
+  directTokens: number
+  deferredTokens: number
+} {
+  const { directTools, deferredTools } = partitionMcpTools(
+    session.agent.state.tools,
+    session.getSelectedMCPToolNames(),
+    (name) => session.getToolByName(name)
+  )
+  const cached = mcpUsageCache.get(session)
+  const tokenizer = session.agent.tokenizer
+  if (
+    cached &&
+    cached.tokenizer === tokenizer &&
+    cached.directTools.length === directTools.length &&
+    cached.deferredTools.length === deferredTools.length &&
+    directTools.every((tool, index) => tool === cached.directTools[index]) &&
+    deferredTools.every((tool, index) => tool === cached.deferredTools[index])
+  ) {
+    return cached
+  }
+  const result = {
+    tokenizer,
+    directTools,
+    deferredTools,
+    directTokens: directTools.length ? estimateToolSchemaTokens(directTools, tokenizer) : 0,
+    deferredTokens: deferredTools.length ? estimateToolSchemaTokens(deferredTools, tokenizer) : 0
+  }
+  mcpUsageCache.set(session, result)
+  return result
 }
 
 function autoCompactionOverrides(value: unknown): AutoCompactionOverrides {
@@ -1678,6 +1745,25 @@ async function renameSession(params: unknown): Promise<void> {
 
 async function handleRequest(method: string, params: unknown): Promise<unknown> {
   switch (method) {
+    case 'mcp.featuredTools': {
+      const id = isRecord(params) ? stringValue(params.id) : ''
+      const connector = featuredMcpConnectors.find(
+        (entry) => entry.id === id && entry.signIn === '无需登录'
+      )
+      if (!connector) throw new Error('该连接器需要授权，暂无法读取实际工具列表')
+      const signal = AbortSignal.timeout(12000)
+      const connection = await connectToServer(
+        connector.id,
+        { type: 'http', url: connector.url, timeout: 10000 },
+        { signal }
+      )
+      try {
+        const tools = await listTools(connection, { signal })
+        return tools.map((tool) => tool.name)
+      } finally {
+        await disconnectServer(connection).catch(() => undefined)
+      }
+    }
     case 'modelRuntime.snapshot':
       return modelRuntimeSnapshot(params)
     case 'modelRuntime.login':

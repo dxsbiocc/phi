@@ -31,6 +31,16 @@ export function sessionRuntimeStateIsBusy(state: SessionRuntimeState | null | un
   return sessionStatusIsBusy(state)
 }
 
+export function sessionRuntimeStatePausesQueue(
+  state: SessionRuntimeState | null | undefined
+): boolean {
+  return (
+    state?.lastRunOutcome === 'failed' ||
+    state?.lastRunOutcome === 'stopped' ||
+    state?.lastRunOutcome === 'interrupted'
+  )
+}
+
 export function sessionRuntimeStateNeedsAcknowledgement(
   state: Pick<SessionRuntimeState, 'unreadKind'> | null | undefined
 ): boolean {
