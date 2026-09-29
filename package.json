@@ -14,6 +14,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json --composite false",
+    "typecheck:tests": "tsc --noEmit -p tsconfig.tests.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web && npm run typecheck:scripts",
     "prestart": "npm run sync:electron-icon && npm run runtime:fetch",
     "start": "electron-vite preview",

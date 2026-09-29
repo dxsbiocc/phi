@@ -339,7 +339,6 @@ function loadMinimal(): { spec: EnvironmentSpec; lockText: string } {
   const parsed = parseEnvironmentSpec(
     readFileSync(join(process.cwd(), 'tests/fixtures/envs/minimal/environment.yml'), 'utf8')
   )
-  assert.equal(parsed.ok, true)
   if (!parsed.ok) throw new Error(parsed.errors.join('; '))
   return {
     spec: parsed.spec,

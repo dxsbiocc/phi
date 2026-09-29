@@ -95,7 +95,6 @@ function loadRSource(): { spec: EnvironmentSpec; lockText: string } {
   const parsed = parseEnvironmentSpec(
     readFileSync(join(process.cwd(), 'tests/fixtures/envs/r-source/environment.yml'), 'utf8')
   )
-  assert.equal(parsed.ok, true)
   if (!parsed.ok) throw new Error(parsed.errors.join('; '))
   return {
     spec: parsed.spec,
@@ -130,7 +129,6 @@ test('r-source fixture pins praise and testit', () => {
   const parsed = parseEnvironmentSpec(
     readFileSync(join(process.cwd(), 'tests/fixtures/envs/r-source/environment.yml'), 'utf8')
   )
-  assert.equal(parsed.ok, true)
   if (!parsed.ok) throw new Error(parsed.errors.join('; '))
   assert.deepEqual(parsed.spec.sourcePackages, [CRAN, GITHUB])
 })
@@ -201,10 +199,9 @@ test('createSourcePackageInstaller rejects a non-r language', async () => {
   await withTemp('language', async (root) => {
     const install = createSourcePackageInstaller({ root })
     const pkg = { ...CRAN, language: 'python' as 'r' }
-    await assert.rejects(
-      () => install(join(root, 'prefix'), [pkg]),
-      /unsupported language 'python'/
-    )
+    await assert.rejects(async () => {
+      await install(join(root, 'prefix'), [pkg])
+    }, /unsupported language 'python'/)
   })
 })
 
