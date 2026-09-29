@@ -107,10 +107,17 @@ export function isAlive(pid: number): boolean {
   }
 }
 
-export async function waitFor(condition: () => boolean, timeoutMs = 8000): Promise<void> {
+/**
+ * Polls until `condition` holds. These waits are on real child processes starting or
+ * dying, which under a loaded full test run (dozens of test files in parallel) can take
+ * several seconds; the generous default only costs time when a test is failing anyway.
+ */
+export async function waitFor(condition: () => boolean, timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (!condition()) {
-    if (Date.now() > deadline) throw new Error('timed out waiting for condition')
+    if (Date.now() > deadline) {
+      throw new Error(`timed out after ${timeoutMs} ms waiting for: ${String(condition)}`)
+    }
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
 }
