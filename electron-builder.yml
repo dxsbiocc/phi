@@ -9,6 +9,11 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!**/.DS_Store'
+  - '!resources/**/.nextflow/**'
+  - '!resources/**/.nextflow.log*'
+  - '!resources/**/work/**'
+  - '!resources/**/results/**'
 asarUnpack:
   - resources/**
   - out/main/agent/omp-sdk-worker.ts

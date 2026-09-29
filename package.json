@@ -9,7 +9,8 @@
   "scripts": {
     "format": "prettier --write .",
     "check:architecture": "node scripts/check-frontend-boundaries.mjs",
-    "lint": "npm run check:architecture && eslint --cache .",
+    "check:resources": "node scripts/check-resources.mjs",
+    "lint": "npm run check:architecture && npm run check:resources && eslint --cache .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
