@@ -917,6 +917,8 @@ export type RendererApi = AutoCompactionApi & {
   addRemoteMcpConnector: (name: string, url: string) => Promise<void>
   removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
   listFeaturedMcpTools: (id: string) => Promise<string[]>
+  getFeaturedMcpAuthStatus: (id: string) => Promise<boolean>
+  authorizeFeaturedMcp: (id: string) => Promise<void>
 }
 
 export type { AgentMessage, AgentEventSummary } from './features/chat/lib/agentEventTypes'

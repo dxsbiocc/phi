@@ -834,6 +834,15 @@ getOmpBridge().registerHostHandler('cursorBridge.ensure', async () => ({
 }))
 getOmpBridge().registerHostHandler('planReview.request', handlePlanReviewRequest)
 getOmpBridge().registerHostHandler('deliverables.present', handlePresentFilesRequest)
+getOmpBridge().registerHostHandler('mcp.openAuthUrl', async (params) => {
+  const value = (params as { url?: unknown } | null)?.url
+  if (typeof value !== 'string') throw new Error('授权地址无效')
+  const url = new URL(value)
+  if (url.origin !== 'https://mcp.notion.com' || url.username || url.password) {
+    throw new Error('授权地址必须属于 Notion MCP')
+  }
+  await shell.openExternal(url.toString())
+})
 const remoteConnectionTracker = new RemoteProjectConnectionTracker()
 const wrapperResultReadControllers = new Map<string, AbortController>()
 const wrapperResultDownloads = new Map<
@@ -7144,6 +7153,14 @@ app.whenReady().then(() => {
   ipcMain.handle('mcp:featuredTools', async (_, id: string) => {
     if (typeof id !== 'string') throw new Error('连接器标识无效')
     return getOmpBridge().request<string[]>('mcp.featuredTools', { id })
+  })
+  ipcMain.handle('mcp:featuredAuthStatus', async (_, id: string) => {
+    if (id !== 'notion') throw new Error('暂只支持 Notion 登录状态')
+    return getOmpBridge().request<boolean>('mcp.featuredAuthStatus', { id })
+  })
+  ipcMain.handle('mcp:authorizeFeatured', async (_, id: string) => {
+    if (id !== 'notion') throw new Error('暂只支持 Notion 授权')
+    await getOmpBridge().request('mcp.authorizeFeatured', { id })
   })
 
   ipcMain.handle('wrappers:getPlan', async (_, planId: string) => readWrapperPlan(planId))

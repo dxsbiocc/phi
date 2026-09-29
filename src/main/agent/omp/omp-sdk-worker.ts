@@ -21,7 +21,7 @@ import {
   type ResourceDiagnostic
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
-import { connectToServer, disconnectServer, listTools } from '@oh-my-pi/pi-coding-agent/mcp/client'
+import { mcpOAuthCredentialId } from '@oh-my-pi/pi-coding-agent/mcp/oauth-flow'
 import { estimateToolSchemaTokens } from '@oh-my-pi/pi-coding-agent/modes/utils/context-usage'
 import {
   DEFAULT_COMPACTION_METHOD_ORDER,
@@ -48,6 +48,7 @@ import { enterPlanReviewMode, type PlanReviewChoice } from '../plan/plan-review-
 import { planModeToolDecision } from '../plan/plan-tool-policy'
 import type { PresentedFile } from '../../../shared/presentedFileTypes'
 import { featuredMcpConnectors } from '../../../shared/mcpConnectorCatalog'
+import { authorizeFeaturedMcp, listFeaturedMcpTools } from './featured-mcp-auth'
 import type {
   AutoCompactionDefaults,
   AutoCompactionOverrides,
@@ -1747,22 +1748,34 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
   switch (method) {
     case 'mcp.featuredTools': {
       const id = isRecord(params) ? stringValue(params.id) : ''
-      const connector = featuredMcpConnectors.find(
-        (entry) => entry.id === id && entry.signIn === '无需登录'
-      )
-      if (!connector) throw new Error('该连接器需要授权，暂无法读取实际工具列表')
-      const signal = AbortSignal.timeout(12000)
-      const connection = await connectToServer(
-        connector.id,
-        { type: 'http', url: connector.url, timeout: 10000 },
-        { signal }
-      )
-      try {
-        const tools = await listTools(connection, { signal })
-        return tools.map((tool) => tool.name)
-      } finally {
-        await disconnectServer(connection).catch(() => undefined)
+      const connector = featuredMcpConnectors.find((entry) => entry.id === id)
+      if (!connector || (connector.signIn === '需要登录' && id !== 'notion')) {
+        throw new Error('该连接器需要授权，暂无法读取实际工具列表')
       }
+      const authStorage = id === 'notion' ? (await getContext()).authStorage : undefined
+      if (authStorage && !authStorage.get(mcpOAuthCredentialId(connector.url))) {
+        throw new Error('请先授权登录 Notion')
+      }
+      return listFeaturedMcpTools(connector.id, connector.url, authStorage)
+    }
+    case 'mcp.featuredAuthStatus': {
+      const id = isRecord(params) ? stringValue(params.id) : ''
+      const connector = featuredMcpConnectors.find((entry) => entry.id === id && id === 'notion')
+      if (!connector) throw new Error('暂只支持 Notion 登录状态')
+      const { authStorage } = await getContext()
+      return authStorage.get(mcpOAuthCredentialId(connector.url))?.type === 'oauth'
+    }
+    case 'mcp.authorizeFeatured': {
+      const id = isRecord(params) ? stringValue(params.id) : ''
+      const connector = featuredMcpConnectors.find((entry) => entry.id === id && id === 'notion')
+      if (!connector) throw new Error('暂只支持 Notion 授权')
+      const ctx = await getContext()
+      await authorizeFeaturedMcp(
+        connector.url,
+        ctx.authStorage,
+        (url) => requestHost('mcp.openAuthUrl', { url }) as Promise<void>
+      )
+      return undefined
     }
     case 'modelRuntime.snapshot':
       return modelRuntimeSnapshot(params)

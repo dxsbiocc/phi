@@ -25,10 +25,19 @@ test('connected MCP tool list shows every server-provided name', () => {
   const markup = render({ requiresSignIn: false, loading: false, names, error: null })
   for (const name of names) assert.match(markup, new RegExp(name))
   assert.match(markup, /服务端工具 · 4/)
+  assert.match(markup, /刷新工具/)
 })
 
 test('unauthorized connector does not show guessed tool names', () => {
   const markup = render({ requiresSignIn: true, loading: false, names: null, error: null })
   assert.match(markup, /尚未授权，无法读取/)
   assert.doesNotMatch(markup, /search_preprints/)
+  assert.doesNotMatch(markup, /刷新工具/)
+})
+
+test('tool list distinguishes an unread server from an empty server', () => {
+  const unread = render({ requiresSignIn: false, loading: false, names: null, error: null })
+  const empty = render({ requiresSignIn: false, loading: false, names: [], error: null })
+  assert.match(unread, /尚未读取服务端工具/)
+  assert.match(empty, /服务端当前未公开工具/)
 })

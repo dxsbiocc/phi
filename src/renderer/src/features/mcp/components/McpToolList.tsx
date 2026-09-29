@@ -15,9 +15,16 @@ export function McpToolList({
 }): React.JSX.Element {
   return (
     <>
-      <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
-        服务端工具{names ? ` · ${names.length}` : ''}
-      </Typography>
+      <Stack direction="row" sx={{ mb: 1, alignItems: 'center' }}>
+        <Typography variant="h6" sx={{ flex: 1, fontWeight: 700 }}>
+          服务端工具{names ? ` · ${names.length}` : ''}
+        </Typography>
+        {names !== null && (
+          <Button size="small" disabled={loading} onClick={onRetry}>
+            刷新工具
+          </Button>
+        )}
+      </Stack>
       {requiresSignIn ? (
         <Typography color="text.secondary" sx={{ mb: 4 }}>
           尚未授权，无法读取此服务当前提供的工具。
@@ -33,7 +40,9 @@ export function McpToolList({
         </Alert>
       ) : (
         <Stack direction="row" sx={{ mb: 4, flexWrap: 'wrap', gap: 1 }}>
-          {names?.length ? (
+          {names === null ? (
+            <Typography color="text.secondary">尚未读取服务端工具。</Typography>
+          ) : names.length ? (
             names.map((name) => <Chip key={name} label={name} size="small" variant="outlined" />)
           ) : (
             <Typography color="text.secondary">服务端当前未公开工具。</Typography>

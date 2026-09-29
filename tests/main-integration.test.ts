@@ -1574,6 +1574,7 @@ async function harness(
           if (bridgeFailure) throw bridgeFailure
           if (method === 'agentRuns.list') return bridgeAgentJobs
           if (method === 'mcp.featuredTools') return ['search_articles']
+          if (method === 'mcp.featuredAuthStatus') return true
           return { ok: true }
         }
       })
@@ -3401,6 +3402,24 @@ test('main IPC: featured MCP tools are read through the Bun worker', async () =>
     params: { id: 'pubmed' }
   })
   await assert.rejects(app.invoke('mcp:featuredTools', null), /连接器标识无效/)
+  assert.equal(await app.invoke('mcp:featuredAuthStatus', 'notion'), true)
+  assert.deepEqual(app.bridgeRequests.at(-1), {
+    method: 'mcp.featuredAuthStatus',
+    params: { id: 'notion' }
+  })
+  await assert.rejects(app.invoke('mcp:featuredAuthStatus', 'gmail'), /暂只支持 Notion/)
+  await app.invoke('mcp:authorizeFeatured', 'notion')
+  assert.deepEqual(app.bridgeRequests.at(-1), {
+    method: 'mcp.authorizeFeatured',
+    params: { id: 'notion' }
+  })
+  await assert.rejects(app.invoke('mcp:authorizeFeatured', 'gmail'), /暂只支持 Notion/)
+  const openAuthUrl = app.hostHandlers.get('mcp.openAuthUrl')
+  assert.ok(openAuthUrl)
+  await assert.rejects(openAuthUrl({ url: 'http://example.com/authorize' }), /Notion MCP/)
+  await assert.rejects(openAuthUrl({ url: 'https://example.com/authorize' }), /Notion MCP/)
+  await assert.rejects(openAuthUrl({ url: 'https://user:pass@mcp.notion.com/' }), /Notion MCP/)
+  await openAuthUrl({ url: 'https://mcp.notion.com/authorize' })
 })
 
 test(
