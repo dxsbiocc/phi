@@ -1,0 +1,17 @@
+name: r-source
+channels:
+  - conda-forge
+dependencies:
+  - r-base=4.4
+sourcePackages:
+  - language: r
+    name: praise
+    source: cran
+    ref: 1.0.0
+    sha256: 5c035e74fd05dfa59b03afe0d5f4c53fbf34144e175e90c53d09c6baedf5debd
+  - language: r
+    name: testit
+    source: github
+    repo: yihui/testit
+    ref: 48a814e3b2f069a24de8e701e2379dfe6ec96c73
+    sha256: 63da38c42bd795724f4c2afc8e46f1280c60475fa22542749a77acfc4a50f2e5

@@ -1,11 +1,9 @@
 import {
   chmodSync,
-  closeSync,
   createWriteStream,
   existsSync,
   lstatSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -13,7 +11,6 @@ import {
   rmSync,
   unlinkSync,
   writeFileSync,
-  writeSync,
   type WriteStream
 } from 'node:fs'
 import { join } from 'node:path'
@@ -36,11 +33,11 @@ import {
   type SourcePackage
 } from './contract'
 import { probeHostRequirements } from './host'
+import { acquireEnvironmentLock, type EnvironmentLock } from './lock'
 import { updateEnvironmentEntry } from './index-store'
 import { ensureRuntimeLayout, runMicromamba, writeMambarc, type RuntimeSettings } from './runtime'
 import { envMetadataSchema } from './schemas'
-
-const LOCK_POLL_INTERVAL_MS = 500
+import { createSourcePackageInstaller } from './source-packages'
 
 const ajv = new Ajv({ allErrors: true, strict: false })
 const validateEnvMetadata = ajv.compile(envMetadataSchema)
@@ -80,10 +77,6 @@ export interface EnsureEnvironmentResult {
   metadata: EnvMetadata
   created: boolean
   hostMissing: string[]
-}
-
-export interface EnvironmentLock {
-  release(): void
 }
 
 interface PreparedEnvironment {
@@ -187,116 +180,6 @@ function prepare(input: EnsureEnvironmentInput): PreparedEnvironment {
     input.onProgress?.({ phase: 'done', message: `${envId} is ready` })
   }
   return prepared
-}
-
-function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new Error('environment build aborted'))
-      return
-    }
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
-    function onAbort(): void {
-      clearTimeout(timer)
-      reject(new Error('environment build aborted'))
-    }
-    signal?.addEventListener('abort', onAbort, { once: true })
-    if (signal?.aborted) onAbort()
-  })
-}
-
-interface LockHolder {
-  kind: 'missing' | 'stale' | 'held'
-  pid?: number
-}
-
-function readLockHolder(lockPath: string): LockHolder {
-  let text: string
-  try {
-    text = readFileSync(lockPath, 'utf8')
-  } catch (error) {
-    if (errorCode(error) === 'ENOENT') return { kind: 'missing' }
-    return { kind: 'stale' }
-  }
-  try {
-    const parsed = JSON.parse(text) as { pid?: unknown }
-    if (typeof parsed.pid === 'number' && Number.isInteger(parsed.pid) && parsed.pid > 0) {
-      return { kind: 'held', pid: parsed.pid }
-    }
-  } catch {
-    // Unreadable contents cannot be a live holder.
-  }
-  return { kind: 'stale' }
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return errorCode(error) === 'EPERM'
-  }
-}
-
-function removeLockFile(lockPath: string): void {
-  try {
-    unlinkSync(lockPath)
-  } catch (error) {
-    if (errorCode(error) !== 'ENOENT') throw error
-  }
-}
-
-function tryCreateLock(lockPath: string): boolean {
-  const payload = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })
-  let fd: number | undefined
-  try {
-    fd = openSync(lockPath, 'wx')
-    writeSync(fd, payload)
-    return true
-  } catch (error) {
-    if (errorCode(error) === 'EEXIST') return false
-    if (fd !== undefined) removeLockFile(lockPath)
-    throw error
-  } finally {
-    if (fd !== undefined) closeSync(fd)
-  }
-}
-
-export async function acquireEnvironmentLock(input: {
-  root: string
-  envId: string
-  signal?: AbortSignal
-  onWait?: () => void
-}): Promise<EnvironmentLock> {
-  const lockDir = join(input.root, 'state', 'locks')
-  mkdirSync(lockDir, { recursive: true })
-  const lockPath = join(lockDir, `${input.envId}.lock`)
-  let announced = false
-
-  for (;;) {
-    throwIfAborted(input.signal)
-    if (tryCreateLock(lockPath)) {
-      return {
-        release() {
-          removeLockFile(lockPath)
-        }
-      }
-    }
-    const holder = readLockHolder(lockPath)
-    if (holder.kind === 'missing') continue
-    if (holder.kind === 'stale' || holder.pid === undefined || !isPidAlive(holder.pid)) {
-      removeLockFile(lockPath)
-      continue
-    }
-    if (!announced) {
-      announced = true
-      input.onWait?.()
-    }
-    await delay(LOCK_POLL_INTERVAL_MS, input.signal)
-  }
 }
 
 /** Restore owner write permission without following symlinks, then delete the tree. */
@@ -422,16 +305,26 @@ async function precompilePython(input: EnsureEnvironmentInput, prefix: string): 
   }
 }
 
-async function installSourcePackages(input: EnsureEnvironmentInput, prefix: string): Promise<void> {
+async function installSourcePackages(
+  input: EnsureEnvironmentInput,
+  root: string,
+  prefix: string
+): Promise<void> {
   const packages = input.spec.sourcePackages ?? []
   if (packages.length === 0) return
   input.onProgress?.({
     phase: 'source-packages',
     message: `installing ${packages.length} source package(s)`
   })
-  if (!input.sourcePackageInstaller) throw new Error('source packages require step 1.7')
+  const installer =
+    input.sourcePackageInstaller ??
+    createSourcePackageInstaller({
+      root,
+      signal: input.signal,
+      onProgress: input.onProgress
+    })
   throwIfAborted(input.signal)
-  await input.sourcePackageInstaller(prefix, packages)
+  await installer(prefix, packages)
   throwIfAborted(input.signal)
 }
 
@@ -534,7 +427,7 @@ async function runBuild(
     markEntry(input, prepared, 'building')
     if (existsSync(prepared.prefix)) removeTree(prepared.prefix)
     await createFromLock(input, prepared)
-    await installSourcePackages(input, prepared.prefix)
+    await installSourcePackages(input, prepared.root, prepared.prefix)
     await precompilePython(input, prepared.prefix)
 
     input.onProgress?.({ phase: 'activation', message: 'capturing activation' })
@@ -574,6 +467,8 @@ async function runBuild(
     lock?.release()
   }
 }
+
+export { acquireEnvironmentLock, type EnvironmentLock } from './lock'
 
 export function ensureEnvironment(input: EnsureEnvironmentInput): Promise<EnsureEnvironmentResult> {
   let prepared: PreparedEnvironment

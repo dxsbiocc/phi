@@ -117,6 +117,15 @@ export function writeMambarc(root: string, settings: RuntimeSettings = {}): bool
   return true
 }
 
+/**
+ * Write the default mambarc only when none exists. Maintenance commands (list, clean)
+ * use this so they never replace the mirrors and proxy the app configured.
+ */
+export function ensureMambarc(root: string): void {
+  if (readTextIfExists(join(root, 'mambarc')) !== undefined) return
+  writeMambarc(root)
+}
+
 export function micromambaEnvironment(
   root: string,
   base: NodeJS.ProcessEnv = process.env

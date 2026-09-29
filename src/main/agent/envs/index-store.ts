@@ -185,3 +185,39 @@ export function updateEnvironmentEntry(
   writeIndex(root, { version: 1, environments: index.environments })
   return entry
 }
+
+/** Idempotent. An unknown `envId` throws. */
+export function addReferrer(root: string, envId: string, referrer: string): EnvironmentIndexEntry {
+  const index = readEnvironmentIndex(root)
+  const current = index.environments[envId]
+  if (!current) throw new Error(`unknown environment '${envId}'`)
+  if (current.referrers.includes(referrer)) return current
+  const entry: EnvironmentIndexEntry = {
+    ...current,
+    referrers: [...current.referrers, referrer],
+    updatedAt: new Date().toISOString()
+  }
+  index.environments[envId] = entry
+  writeIndex(root, index)
+  return entry
+}
+
+/** Idempotent. An unknown `envId` is left unchanged. */
+export function removeReferrer(root: string, envId: string, referrer: string): void {
+  const index = readEnvironmentIndex(root)
+  const current = index.environments[envId]
+  if (!current || !current.referrers.includes(referrer)) return
+  index.environments[envId] = {
+    ...current,
+    referrers: current.referrers.filter((item) => item !== referrer),
+    updatedAt: new Date().toISOString()
+  }
+  writeIndex(root, index)
+}
+
+export function deleteEnvironmentEntry(root: string, envId: string): void {
+  const index = readEnvironmentIndex(root)
+  if (!Object.hasOwn(index.environments, envId)) return
+  delete index.environments[envId]
+  writeIndex(root, index)
+}

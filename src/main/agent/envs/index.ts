@@ -36,6 +36,7 @@ export type {
 } from './contract'
 
 export {
+  ensureMambarc,
   ensureRuntimeLayout,
   getRuntimeRoot,
   micromambaEnvironment,
@@ -63,3 +64,24 @@ export type { HostProbeResult } from './host'
 
 export { readEnvironmentIndex, updateEnvironmentEntry } from './index-store'
 export type { EnvironmentEntryPatch, EnvironmentIndex, EnvironmentIndexEntry } from './index-store'
+
+// gc and doctor
+export { addReferrer, removeReferrer } from './index-store'
+export { collectGarbage, trimPackageCache } from './gc'
+export type { GarbageCollectionResult } from './gc'
+export { checkEnvironment, parseLockPackage, repairEnvironment } from './doctor'
+export type { EnvironmentCheck, LockPackage } from './doctor'
+
+// source packages
+export {
+  createSourcePackageInstaller,
+  fetchSourceArchive,
+  installRSourcePackages,
+  sourceArchiveUrls
+} from './source-packages'
+export type {
+  FetchSourceArchiveOptions,
+  SourceArchiveDownloader,
+  SourcePackageInstallOptions,
+  SourcePackageProgress
+} from './source-packages'
