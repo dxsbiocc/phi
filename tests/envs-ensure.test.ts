@@ -45,6 +45,9 @@ const MINIMAL_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 const DIGEST = 'ab'.repeat(32)
 
 function integrationSkipReason(): string | false {
+  if (process.env.PHI_RUNTIME_INTEGRATION !== '1') {
+    return 'network integration: set PHI_RUNTIME_INTEGRATION=1 (npm run test:runtime)'
+  }
   if (process.env.PHI_OFFLINE === '1') return 'PHI_OFFLINE=1; integration tests skipped'
   try {
     getMicromambaPath()

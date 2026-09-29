@@ -81,8 +81,6 @@ jobs:
           restore-keys: |
             micromamba-${{ runner.os }}-${{ runner.arch }}-
 
+      # Runs tests/runtime/*.test.ts and the envs integration tests (PHI_RUNTIME_INTEGRATION=1).
       - name: Runtime conformance suite
         run: npm run test:runtime
-
-      - name: Runtime unit tests
-        run: node --import ./scripts/test-loader.mjs --test tests/envs-*.test.ts
