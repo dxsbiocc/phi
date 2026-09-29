@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { currentPhiPlatform, getMicromambaPath } from '../src/main/agent/envs/paths'
+import { getMicromambaPath } from '../src/main/agent/envs/paths'
+import { findPlatform } from '../src/main/agent/envs/platform'
 import {
   MICROMAMBA_PLATFORM_IDS,
   fileSha256,
@@ -58,12 +59,12 @@ test('platform ids map process.platform and process.arch', () => {
   assert.equal(phiPlatformId('win32', 'x64'), undefined)
   assert.equal(phiPlatformId('linux', 'arm64'), undefined)
 
-  assert.equal(currentPhiPlatform('darwin', 'arm64'), 'darwin-arm64')
-  assert.equal(currentPhiPlatform('darwin', 'x64'), 'darwin-x64')
-  assert.equal(currentPhiPlatform('linux', 'x64'), 'linux-x64')
-  assert.equal(currentPhiPlatform('win32', 'x64'), undefined)
-  assert.equal(currentPhiPlatform('linux', 'arm64'), undefined)
-  assert.equal(currentPhiPlatform(), phiPlatformId())
+  assert.equal(findPlatform('darwin', 'arm64'), 'darwin-arm64')
+  assert.equal(findPlatform('darwin', 'x64'), 'darwin-x64')
+  assert.equal(findPlatform('linux', 'x64'), 'linux-x64')
+  assert.equal(findPlatform('win32', 'x64'), undefined)
+  assert.equal(findPlatform('linux', 'arm64'), undefined)
+  assert.equal(findPlatform(), phiPlatformId())
 })
 
 test('manifest lookup rejects an incomplete platform entry', () => {
