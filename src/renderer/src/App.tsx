@@ -125,6 +125,7 @@ import {
   workspaceResourceKindToSidebarMode,
   workspaceResourceTabKey,
   workspaceSessionTabKey,
+  visibleWorkspaceTabsForState,
   type WorkspaceFileWorkspaceTab,
   type WorkspaceResourceKind,
   type WorkspaceResourceTab,
@@ -688,6 +689,7 @@ function App(): React.JSX.Element {
   const [workspaceSidebarMode, setWorkspaceSidebarMode] =
     useState<WorkspaceSidebarMode>('conversations')
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>([])
+  const [sessionTabWasOpened, setSessionTabWasOpened] = useState(false)
   const [closedWorkspaceSessionTabKeys, setClosedWorkspaceSessionTabKeys] = useState<Set<string>>(
     () => new Set()
   )
@@ -1286,6 +1288,7 @@ function App(): React.JSX.Element {
       void refreshCurrentModelControls(request)
       startFreshChat()
       const tabKey = workspaceSessionTabKey(current.path, current.sessionGeneration)
+      setSessionTabWasOpened(true)
       setClosedWorkspaceSessionTabKeys((keys) => {
         if (!keys.has(tabKey)) return keys
         const nextKeys = new Set(keys)
@@ -1317,6 +1320,7 @@ function App(): React.JSX.Element {
           path,
           useSessionStore.getState().activeSessionGeneration
         )
+        setSessionTabWasOpened(true)
         setClosedWorkspaceSessionTabKeys((keys) => {
           if (!keys.has(tabKey)) return keys
           const nextKeys = new Set(keys)
@@ -1353,6 +1357,7 @@ function App(): React.JSX.Element {
         void refreshCurrentModelControls(request)
         void refreshSessions()
         const tabKey = workspaceSessionTabKey(result.path, result.sessionGeneration)
+        setSessionTabWasOpened(true)
         setClosedWorkspaceSessionTabKeys((keys) => {
           if (!keys.has(tabKey)) return keys
           const nextKeys = new Set(keys)
@@ -1424,6 +1429,10 @@ function App(): React.JSX.Element {
         )
         void refreshCurrentModelControls(request)
         replaceMessages([])
+        setSessionTabWasOpened(false)
+        setActiveWorkspaceTabKey((currentKey) =>
+          currentKey?.startsWith('session:') ? null : currentKey
+        )
       }
     }
     await refreshSessions()
@@ -1563,6 +1572,7 @@ function App(): React.JSX.Element {
         void refreshCurrentModelControls(request)
         startFreshChat()
         const tabKey = workspaceSessionTabKey(current.path, current.sessionGeneration)
+        setSessionTabWasOpened(true)
         setClosedWorkspaceSessionTabKeys((keys) => {
           if (!keys.has(tabKey)) return keys
           const nextKeys = new Set(keys)
@@ -2741,41 +2751,31 @@ function App(): React.JSX.Element {
     activeView === 'analysis' && workspaceSidebarMode === 'conversations'
   )
   const visibleWorkspaceTabs = useMemo(() => {
-    const staleFreshSessionKey =
-      currentSessionTab.sessionPath === null
-        ? null
-        : workspaceSessionTabKey(null, currentSessionTab.sessionGeneration)
-    const normalizedTabs = workspaceTabs.filter(
-      (tab) =>
-        tab.key !== staleFreshSessionKey &&
-        (shouldShowSessionWorkspaceTab || tab.kind !== 'session')
-    )
-    const normalizedTabsWithFiles = [...normalizedTabs, ...workspaceFileWorkspaceTabs]
-    if (!shouldShowSessionWorkspaceTab) return normalizedTabsWithFiles
-    if (closedWorkspaceSessionTabKeys.has(currentSessionTab.key)) return normalizedTabsWithFiles
-
-    const existingIndex = normalizedTabsWithFiles.findIndex(
-      (tab) => tab.key === currentSessionTab.key
-    )
-    if (existingIndex === -1) return [currentSessionTab, ...normalizedTabsWithFiles]
-    return normalizedTabsWithFiles.map((tab, index) =>
-      index === existingIndex ? { ...tab, ...currentSessionTab } : tab
-    )
+    return visibleWorkspaceTabsForState({
+      currentSessionTab,
+      workspaceTabs,
+      workspaceFileTabs: workspaceFileWorkspaceTabs,
+      closedSessionTabKeys: closedWorkspaceSessionTabKeys,
+      shouldShowSessionTab: shouldShowSessionWorkspaceTab,
+      sessionTabWasOpened
+    })
   }, [
     closedWorkspaceSessionTabKeys,
     currentSessionTab,
+    sessionTabWasOpened,
     shouldShowSessionWorkspaceTab,
     workspaceFileWorkspaceTabs,
     workspaceTabs
   ])
-  const sidebarSelectedSessionPath = closedWorkspaceSessionTabKeys.has(currentSessionTab.key)
-    ? null
-    : activeSessionPath
+  const sidebarSelectedSessionPath =
+    !sessionTabWasOpened || closedWorkspaceSessionTabKeys.has(currentSessionTab.key)
+      ? null
+      : activeSessionPath
   const effectiveActiveWorkspaceTabKey =
     activeWorkspaceTabKey ??
     (activeView === 'analysis' && activeWorkspaceFilePath
       ? workspaceFileTabKey(activeWorkspaceFilePath)
-      : activeView === 'chat'
+      : activeView === 'chat' && sessionTabWasOpened
         ? currentSessionTab.key
         : null)
   const activeWorkspaceTab =
@@ -3219,6 +3219,7 @@ function App(): React.JSX.Element {
     (tab: WorkspaceTab): void => {
       setActiveWorkspaceTabKey(tab.key)
       if (tab.kind === 'session') {
+        setSessionTabWasOpened(true)
         setClosedWorkspaceSessionTabKeys((keys) => {
           if (!keys.has(tab.key)) return keys
           const nextKeys = new Set(keys)
@@ -3397,6 +3398,7 @@ function App(): React.JSX.Element {
       if (closingIndex === -1) return
       const remainingTabs = visibleWorkspaceTabs.filter((item) => item.key !== tab.key)
       if (tab.kind === 'session') {
+        setSessionTabWasOpened(false)
         setClosedWorkspaceSessionTabKeys((keys) => {
           if (keys.has(tab.key)) return keys
           const nextKeys = new Set(keys)

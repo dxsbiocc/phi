@@ -59,6 +59,45 @@ export function workspaceSessionTabKey(path: string | null, sessionGeneration: n
   return path ? `session:${path}` : `session:fresh:${sessionGeneration}`
 }
 
+export function visibleWorkspaceTabsForState({
+  currentSessionTab,
+  workspaceTabs,
+  workspaceFileTabs,
+  closedSessionTabKeys,
+  shouldShowSessionTab,
+  sessionTabWasOpened
+}: {
+  currentSessionTab: WorkspaceSessionTab
+  workspaceTabs: WorkspaceTab[]
+  workspaceFileTabs: WorkspaceFileWorkspaceTab[]
+  closedSessionTabKeys: ReadonlySet<string>
+  shouldShowSessionTab: boolean
+  sessionTabWasOpened: boolean
+}): WorkspaceTab[] {
+  const staleFreshSessionKey =
+    currentSessionTab.sessionPath === null
+      ? null
+      : workspaceSessionTabKey(null, currentSessionTab.sessionGeneration)
+  const normalizedTabs = workspaceTabs.filter(
+    (tab) =>
+      tab.key !== staleFreshSessionKey &&
+      ((shouldShowSessionTab && sessionTabWasOpened) || tab.kind !== 'session')
+  )
+  const withFiles = [...normalizedTabs, ...workspaceFileTabs]
+  if (
+    !shouldShowSessionTab ||
+    !sessionTabWasOpened ||
+    closedSessionTabKeys.has(currentSessionTab.key)
+  ) {
+    return withFiles
+  }
+  const existingIndex = withFiles.findIndex((tab) => tab.key === currentSessionTab.key)
+  if (existingIndex === -1) return [currentSessionTab, ...withFiles]
+  return withFiles.map((tab, index) =>
+    index === existingIndex ? { ...tab, ...currentSessionTab } : tab
+  )
+}
+
 export function workspaceResourceTabKey(kind: WorkspaceResourceKind, itemId: string): string {
   return `${kind}:${itemId}`
 }

@@ -64,13 +64,21 @@ export function HomeView({
               textAlign: 'left',
               textTransform: 'none',
               border: 1,
-              borderColor: (theme) => alpha(theme.palette.primary.main, 0.28),
+              borderColor: 'divider',
               borderRadius: 3,
-              bgcolor: (theme) => alpha(theme.palette.primary.main, 0.07),
-              '&:hover': { bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12) }
+              bgcolor: 'background.paper',
+              color: 'text.primary',
+              '&:hover, &.Mui-focusVisible': {
+                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.07),
+                borderColor: (theme) => alpha(theme.palette.primary.main, 0.28),
+                '& .home-new-chat-icon': { color: 'primary.main' }
+              }
             }}
           >
-            <PhiIcons.action.addSession sx={{ fontSize: 26, flexShrink: 0 }} />
+            <PhiIcons.action.addSession
+              className="home-new-chat-icon"
+              sx={{ fontSize: 26, flexShrink: 0, color: 'text.secondary' }}
+            />
             <Box>
               <Typography sx={{ fontWeight: 700, color: 'text.primary' }}>新建对话</Typography>
               <Typography variant="body2" color="text.secondary">
