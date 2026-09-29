@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { getMicromambaPath } from '../src/main/agent/envs/paths'
+import { getMicromambaPath, micromambaCandidates } from '../src/main/agent/envs/paths'
 import { findPlatform } from '../src/main/agent/envs/platform'
 import {
   MICROMAMBA_PLATFORM_IDS,
@@ -125,6 +125,26 @@ test('getMicromambaPath resolves a binary under the working directory', () => {
     process.chdir(previous)
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('micromambaCandidates prefers the packaged resources path', () => {
+  const resourcesPath = '/Applications/Phi.app/Contents/Resources'
+  const bundledRuntimeDir = '/repo/resources/runtime'
+  assert.deepEqual(micromambaCandidates('darwin-arm64', { resourcesPath, bundledRuntimeDir }), [
+    join(resourcesPath, 'runtime', 'micromamba', 'darwin-arm64', 'micromamba'),
+    join(bundledRuntimeDir, 'micromamba', 'darwin-arm64', 'micromamba')
+  ])
+})
+
+test('micromambaCandidates omits the packaged path when resourcesPath is undefined', () => {
+  const bundledRuntimeDir = '/repo/resources/runtime'
+  assert.deepEqual(micromambaCandidates('linux-x64', { bundledRuntimeDir }), [
+    join(bundledRuntimeDir, 'micromamba', 'linux-x64', 'micromamba')
+  ])
+  assert.deepEqual(
+    micromambaCandidates('linux-x64', { resourcesPath: undefined, bundledRuntimeDir }),
+    [join(bundledRuntimeDir, 'micromamba', 'linux-x64', 'micromamba')]
+  )
 })
 
 test('getMicromambaPath reports how to fetch a missing binary', () => {
