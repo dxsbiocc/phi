@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import type { PromptAgentSummary, SkillSummary } from '../../../types'
+import { retainSelectedCatalogId } from '../../../lib/catalogSelection'
 
 export type SkillCatalogState = {
   skills: SkillSummary[]
@@ -25,9 +26,7 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
 
   const applySkills = useCallback((list: SkillSummary[]): void => {
     setSkills(list)
-    setActiveSkillId((current) =>
-      current && list.some((skill) => skill.id === current) ? current : (list[0]?.id ?? null)
-    )
+    setActiveSkillId((current) => retainSelectedCatalogId(current, list))
   }, [])
 
   const refreshSkills = useCallback(async (): Promise<void> => {

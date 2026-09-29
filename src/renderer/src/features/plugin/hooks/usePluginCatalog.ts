@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { PluginCatalogItem } from '../../../types'
+import { retainSelectedCatalogId } from '../../../lib/catalogSelection'
 
 export type PluginCatalogState = {
   plugins: PluginCatalogItem[]
@@ -26,7 +27,7 @@ export function usePluginCatalog(): PluginCatalogState {
     try {
       const list = await window.api.listPlugins()
       setPlugins(list)
-      setActivePluginId((current) => current ?? list[0]?.id ?? null)
+      setActivePluginId((current) => retainSelectedCatalogId(current, list))
     } finally {
       setIsLoadingPlugins(false)
     }

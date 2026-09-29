@@ -240,7 +240,7 @@ function selectedSkillFromList(
   skills: SkillSummary[],
   activeSkillId: string | null
 ): SkillSummary | null {
-  return skills.find((skill) => skill.id === activeSkillId) ?? skills[0] ?? null
+  return skills.find((skill) => skill.id === activeSkillId) ?? null
 }
 
 function stopSkillActionEvent(event: MouseEvent<HTMLElement>): void {

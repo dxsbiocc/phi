@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { WrapperCompositionManifest } from '../../../../../shared/wrapperCompositionManifestTypes'
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
+import { retainSelectedCatalogId } from '../../../lib/catalogSelection'
 
 export type WrapperCatalogState = {
   catalog: WrapperCompositionManifest[]
@@ -48,7 +49,7 @@ export function useWrapperCatalog(): WrapperCatalogState {
       ])
       setCatalog(catalogList)
       setRuns(runList)
-      setSelectedWrapperId((current) => current ?? catalogList[0]?.id ?? null)
+      setSelectedWrapperId((current) => retainSelectedCatalogId(current, catalogList))
     } catch (err) {
       setWrapperError(err instanceof Error ? err.message : String(err))
     } finally {

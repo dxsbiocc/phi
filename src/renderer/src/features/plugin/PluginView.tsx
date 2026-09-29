@@ -94,7 +94,7 @@ function selectedPluginFromList(
   plugins: PluginCatalogItem[],
   activePluginId: string | null
 ): PluginCatalogItem | null {
-  return plugins.find((plugin) => plugin.id === activePluginId) ?? plugins[0] ?? null
+  return plugins.find((plugin) => plugin.id === activePluginId) ?? null
 }
 
 function ResizeSeparator({

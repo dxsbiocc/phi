@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
-import PluginView from '../src/renderer/src/features/plugin/PluginView'
+import PluginView, { PluginSidebar } from '../src/renderer/src/features/plugin/PluginView'
 import type { PluginCatalogItem } from '../src/renderer/src/types'
 
 const plugin: PluginCatalogItem = {
@@ -66,4 +66,21 @@ test('plugin view shows source, installed state, and installed path', () => {
   assert.match(markup, /本地路径/)
   assert.match(markup, /\/Users\/example\/\.phi\/plugins\/@phi\/example/)
   assert.match(markup, /卸载/)
+})
+
+test('plugin sidebar has no selected row after its detail tab closes', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PluginSidebar, {
+        plugins: [plugin],
+        isLoading: false,
+        activePluginId: null,
+        onSelectPlugin: () => undefined,
+        onRefresh: () => undefined
+      })
+    )
+  )
+  assert.equal(markup.match(/class="[^"]*Mui-selected[^"]*"/g)?.length ?? 0, 0)
 })

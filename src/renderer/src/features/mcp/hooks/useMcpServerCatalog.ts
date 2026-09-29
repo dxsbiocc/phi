@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import type { McpServerSummary } from '../../../types'
+import { retainSelectedCatalogId } from '../../../lib/catalogSelection'
 
 export type McpServerCatalogState = {
   mcpServers: McpServerSummary[]
@@ -19,7 +20,7 @@ export function useMcpServerCatalog(getActiveCwd: () => string): McpServerCatalo
     const list = await window.api.listMcpServers(cwd)
     if (request !== mcpServersRequestRef.current || cwd !== getActiveCwd()) return
     setMcpServers(list)
-    setActiveMcpServerId((current) => current ?? list[0]?.id ?? null)
+    setActiveMcpServerId((current) => retainSelectedCatalogId(current, list))
   }, [getActiveCwd])
 
   return {

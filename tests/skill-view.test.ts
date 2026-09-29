@@ -102,6 +102,22 @@ test('skill sidebar keeps management actions out of the browsing list', () => {
   assert.doesNotMatch(markup, /启用技能|关闭技能/)
 })
 
+test('skill sidebar has no selected row after its detail tab closes', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(SkillSidebar, {
+        skills,
+        isLoading: false,
+        activeSkillId: null,
+        onSelectSkill: () => undefined
+      })
+    )
+  )
+  assert.equal(markup.match(/class="[^"]*Mui-selected[^"]*"/g)?.length ?? 0, 0)
+})
+
 test('skill sidebar keeps group headers fixed while expanded group content scrolls', () => {
   const markup = renderSkillSidebar()
 

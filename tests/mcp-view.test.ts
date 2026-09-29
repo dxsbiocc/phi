@@ -49,3 +49,33 @@ test('connector sidebar groups installed services and labels disabled entries', 
   assert.match(markup, /google-drive\.svg/)
   assert.match(markup, /pubmed\.svg/)
 })
+
+test('closing the connector detail leaves no installed row selected', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(McpSidebar, {
+        servers: [
+          {
+            id: 'biorxiv',
+            name: 'biorxiv',
+            url: 'https://hcls.mcp.claude.com/biorxiv/mcp',
+            status: 'configured'
+          },
+          {
+            id: 'pubmed',
+            name: 'pubmed',
+            url: 'https://pubmed.mcp.claude.com/mcp',
+            status: 'configured'
+          }
+        ],
+        activeServerId: null,
+        onSelectServer: () => undefined,
+        onRefreshServers: async () => undefined
+      })
+    )
+  )
+
+  assert.equal(markup.match(/class="[^"]*Mui-selected[^"]*"/g)?.length ?? 0, 0)
+})

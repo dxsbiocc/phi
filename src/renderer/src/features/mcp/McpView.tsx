@@ -15,7 +15,9 @@ import {
   TextField,
   Typography
 } from '@mui/material'
-import type { Theme } from '@mui/material/styles'
+import { alpha, type Theme } from '@mui/material/styles'
+import type { SystemStyleObject } from '@mui/system'
+import { GoPlus } from 'react-icons/go'
 import { PhiIcons } from '../../icons'
 import type { McpServerSummary } from '../../types'
 import {
@@ -57,15 +59,94 @@ const macTitlebarHeight = 44
 const contentTopGap = 8
 const plainSidebarRowSx = {
   alignItems: 'flex-start',
+  mx: 1,
+  my: 0.5,
+  px: 1.5,
   py: 1.25,
-  backgroundColor: 'transparent !important',
-  '&:hover': { backgroundColor: 'transparent !important' },
-  '&.Mui-selected': {
-    backgroundColor: 'transparent !important',
-    boxShadow: (theme: Theme) => `inset 3px 0 0 ${theme.palette.primary.main}`
+  borderRadius: 1.5,
+  border: '1px solid transparent',
+  backgroundColor: 'transparent',
+  transition: 'none',
+  '&:hover': {
+    backgroundColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.09),
+    borderColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.2)
   },
-  '&.Mui-selected:hover': { backgroundColor: 'transparent !important' }
+  '&.Mui-selected': {
+    backgroundColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.13),
+    borderColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.38)
+  },
+  '&.Mui-selected:hover': {
+    backgroundColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.17)
+  },
+  '@media (prefers-reduced-motion: reduce)': { transition: 'none' }
 } as const
+
+const discoverButtonSx = (theme: Theme): SystemStyleObject<Theme> => {
+  const accent = theme.palette.primary.main
+  return {
+    WebkitAppRegion: 'no-drag',
+    position: 'relative',
+    overflow: 'hidden',
+    flexShrink: 0,
+    minWidth: 46,
+    width: 46,
+    height: 46,
+    p: 0,
+    borderRadius: '999px',
+    border: 0,
+    backgroundColor: 'transparent',
+    color: accent,
+    boxShadow: 'none',
+    textTransform: 'none',
+    transform: 'none',
+    transition: 'none !important',
+    '& .discover-plus': {
+      position: 'absolute',
+      inset: 0,
+      display: 'grid',
+      placeItems: 'center',
+      opacity: 1,
+      pointerEvents: 'none'
+    },
+    '& .discover-plus svg': { fontSize: 26 },
+    '& .discover-label': {
+      position: 'absolute',
+      inset: 0,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 1.5,
+      opacity: 0,
+      whiteSpace: 'nowrap',
+      color: theme.palette.text.primary,
+      fontSize: '0.95rem',
+      fontWeight: 600,
+      pointerEvents: 'none'
+    },
+    '& .discover-dot': {
+      width: 7,
+      height: 7,
+      borderRadius: '50%',
+      backgroundColor: accent
+    },
+    '&:hover, &[aria-expanded="true"]': {
+      width: 128,
+      backgroundColor: alpha(accent, theme.palette.mode === 'dark' ? 0.12 : 0.06),
+      boxShadow: 'none',
+      transform: 'none'
+    },
+    '&:hover .discover-plus, &[aria-expanded="true"] .discover-plus': {
+      opacity: 0
+    },
+    '&:hover .discover-label, &[aria-expanded="true"] .discover-label': {
+      opacity: 1
+    },
+    '&.Mui-focusVisible': {
+      outline: `2px solid ${theme.palette.primary.main}`,
+      outlineOffset: 2
+    }
+  }
+}
 
 function commandLine(server: McpServerSummary): string {
   return [server.command, ...(server.args ?? [])].filter(Boolean).join(' ')
@@ -75,7 +156,7 @@ function selectedServerFromList(
   servers: McpServerSummary[],
   activeServerId: string | null
 ): McpServerSummary | null {
-  return servers.find((server) => server.id === activeServerId) ?? servers[0] ?? null
+  return servers.find((server) => server.id === activeServerId) ?? null
 }
 
 function serverCategory(server: McpServerSummary): string {
@@ -230,10 +311,22 @@ export function McpSidebar({
           {onRefreshServers && (
             <Button
               size="small"
+              variant="text"
+              disableRipple
+              aria-label="发现"
+              aria-haspopup="dialog"
+              aria-expanded={catalogOpen}
               onClick={() => setCatalogOpen(true)}
-              sx={{ WebkitAppRegion: 'no-drag' }}
+              sx={discoverButtonSx}
             >
-              发现
+              <Box className="discover-plus" aria-hidden="true">
+                <GoPlus />
+              </Box>
+              <Box className="discover-label" aria-hidden="true">
+                <Box className="discover-dot" />
+                发现
+                <Box className="discover-dot" />
+              </Box>
             </Button>
           )}
         </Stack>

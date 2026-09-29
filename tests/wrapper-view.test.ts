@@ -105,6 +105,11 @@ function renderView(overrides: Partial<Parameters<typeof WrapperViewContent>[0]>
   )
 }
 
+test('wrapper sidebar has no selected row after its detail tab closes', () => {
+  const markup = renderView({ selectedId: null })
+  assert.equal(markup.match(/class="[^"]*Mui-selected[^"]*"/g)?.length ?? 0, 0)
+})
+
 test('a local project offers server compute only inside the Wrapper view', () => {
   const project: Project = {
     id: 'local-project',
