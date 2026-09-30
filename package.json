@@ -10,6 +10,7 @@
     "format": "prettier --write .",
     "check:architecture": "node scripts/check-frontend-boundaries.mjs",
     "check:resources": "node scripts/check-resources.mjs",
+    "check:skills": "node --import ./scripts/test-loader.mjs scripts/content/check-skills.ts",
     "lint": "npm run check:architecture && npm run check:resources && eslint --cache .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
