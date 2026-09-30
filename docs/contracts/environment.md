@@ -1,6 +1,6 @@
 # Environment contract
 
-Version **1.1.0** (1.1.0 adds the `skill` scope; see § Changes). Normative schemas:
+Version **1.2.0** (1.1.0 adds the `skill` scope; 1.2.0 adds project environments and overrides; see § Changes). Normative schemas:
 
 - [environment.schema.json](environment.schema.json) — `environment.yml`
 - [env-metadata.schema.json](env-metadata.schema.json) — `.phi/env.json`
@@ -147,9 +147,79 @@ Path: `<prefix>/.phi/env.json`. Every field below is required. Use `{}` for `hos
 
 `absent` means no prefix yet. A failed build deletes the prefix and records `failed`; there is no half-built environment. Repair moves `drifted` (or a `ready` environment being rebuilt) to `building`. `building` does not go directly to `drifted`, and `failed` does not go directly to `ready`.
 
+## Project environments
+
+Official, plugin, and skill environments are read-only and never change for a
+project. A project that needs more packages gets its own **project environment**,
+created through `env_request` (runtime foundation §6.3) after the user confirms.
+
+### Files
+
+```text
+<project>/.phi/environments/<name>/environment.yml
+<project>/.phi/environments/<name>/locks/<platform>.txt
+<project>/.phi/environments.json
+```
+
+- `environment.yml` is the **base** environment's spec with the extra conda match
+  specs appended to `dependencies`, `name` set to `<name>`, and the base's
+  `sourcePackages` and `host` kept. Its channels are the base's channels; extras
+  cannot add channels or `pip` entries.
+- The lock is solved on the user's machine for the current platform only, by the
+  same dry-run export as official locks (one `@EXPLICIT` lock with a
+  `# download-bytes:` header). Other platforms have no lock; the environment is
+  not portable, and that is expected.
+- `<name>` is `<base name>-x<n>` (`viz-x1`, `python-x2`), with `n` one more than the
+  highest existing project environment of that base.
+- The envId uses scope `project` and, as owner, `p` followed by the first 10 hex
+  digits of the SHA-256 of the project's real path.
+
+### Overrides
+
+`environments.json` maps a reference to the project environment that replaces it
+in this project:
+
+```json
+{ "version": 1, "overrides": { "plugin:viz": "project:viz-x1" } }
+```
+
+Every resolution inside the project applies the overrides **once**, before
+anything else: a skill's `phi.environment`, an agent's `environment`, a session
+environment, and the `phi:python@1` fallback (skill contract § 3.3, agent contract
+§ 3). A second `env_request` for the same base extends the current project
+environment (its spec becomes the new base) and moves the override to the new
+name; the old project environment stays on disk until garbage collection. A
+missing or invalid `environments.json` means no overrides; an override naming a
+project environment that does not exist is reported and ignored.
+
+`project:<name>` references resolve only to `<project>/.phi/environments/<name>/`.
+
+### `env_request`
+
+A core tool for asking the user to add packages to an environment in this project.
+
+```ts
+env_request({ packages: string[], reason: string, environment?: string })
+```
+
+| Parameter     | Rule                                                                                                                                                       |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages`    | 1–20 conda match specs (`name`, `name=1.2`, `name>=1.2,<2`); no channel prefixes, no pip                                                                   |
+| `reason`      | 1–500 characters, shown to the user                                                                                                                        |
+| `environment` | the reference to extend. Optional in a bound agent session (default: the session's environment); required elsewhere (the main agent's bash is never bound) |
+
+Flow: the engine applies the project's overrides to `environment`, asks the user in
+the conversation (packages, reason, the environment being extended), and on
+confirmation solves the new spec, writes the files and the override, then builds
+the environment with the usual prompt-free progress (the user already agreed). In a
+bound session the binding switches to the new environment for the rest of the
+session. Result: `{ ref, envId, name, added: [...] }`, or an error saying the user
+declined, the solve failed (with the solver's message), or the build failed. The
+original environment is never modified.
+
 ## Versioning
 
-`ENVIRONMENT_CONTRACT_VERSION` is `1.1.0`. Per content distribution design §4.4:
+`ENVIRONMENT_CONTRACT_VERSION` is `1.2.0`. Per content distribution design §4.4:
 
 - Minor versions are additive only: new optional fields, no change to the meaning of existing fields.
 - A major version needs an ADR, a deprecation window of at least two app releases in which both versions are accepted, and a migration note.
@@ -160,3 +230,4 @@ The 1.0.0 schemas use `additionalProperties: false`. A conda key or typo that th
 ## Changes
 
 - **1.1.0** (2026-09-30): envId scope `skill` for a standalone skill's own environment (`./environment.yml`), with the skill name as owner. Additive: no existing id or file changes.
+- **1.2.0** (2026-09-30): project environments under `<project>/.phi/environments/`, solved locally for the current platform, and `environments.json` overrides applied before every resolution in the project. Additive: a project without `environments.json` resolves exactly as before.
