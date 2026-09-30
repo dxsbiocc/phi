@@ -1,13 +1,17 @@
-import { Box, Button, IconButton, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Button, IconButton, LinearProgress, Stack, Tooltip, Typography } from '@mui/material'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { BackgroundAgentJob } from '../../../../shared/backgroundJobTypes'
+import type { EnvironmentBuild } from '../../../../shared/environmentBuildTypes'
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
 import { PhiIcons } from '../../icons'
 import { formatAgentDuration } from '../../lib/agentRunsOverview'
 import { runProgressLabel, runStateLabel } from '../wrapper/lib/wrapperView'
 import {
   canStopUnifiedWrapperRun,
+  environmentBuildDetail,
+  environmentBuildPercent,
+  environmentBuildTitle,
   selectBackgroundJobs,
   type UnifiedBackgroundJob
 } from './lib/backgroundJobs'
@@ -27,12 +31,25 @@ function agentStateLabel(state: BackgroundAgentJob['state']): string {
 }
 
 function jobTitle(item: UnifiedBackgroundJob): string {
-  return item.kind === 'agent'
-    ? item.run.agentName
-    : item.run.runName || item.run.wrapper.shortId || item.run.wrapper.canonicalId
+  if (item.kind === 'environment') return environmentBuildTitle(item.build)
+  if (item.kind === 'agent') return item.run.agentName
+  return item.run.runName || item.run.wrapper.shortId || item.run.wrapper.canonicalId
+}
+
+function jobSource(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'environment') return '环境'
+  if (item.kind === 'agent') return item.run.sessionTitle
+  return 'Wrapper'
+}
+
+function jobSubtitle(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'environment') return item.build.envId
+  if (item.kind === 'agent') return item.run.task
+  return item.run.runId
 }
 
 function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
+  if (item.kind === 'environment') return environmentBuildDetail(item.build)
   if (item.kind === 'wrapper') {
     return [runStateLabel(item.run.state), runProgressLabel(item.run)].filter(Boolean).join(' · ')
   }
@@ -48,6 +65,28 @@ function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
     .join(' · ')
 }
 
+function canStopJob(item: UnifiedBackgroundJob): boolean {
+  if (item.kind === 'wrapper') return canStopUnifiedWrapperRun(item.run)
+  return item.active
+}
+
+function stopTooltip(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'environment') return '取消构建'
+  if (item.kind === 'agent') return '停止这个 Agent'
+  return '取消这个 Wrapper 运行'
+}
+
+function upsertEnvironmentBuild(
+  current: readonly EnvironmentBuild[],
+  build: EnvironmentBuild
+): EnvironmentBuild[] {
+  const index = current.findIndex((item) => item.envId === build.envId)
+  if (index === -1) return [build, ...current]
+  const next = current.slice()
+  next[index] = build
+  return next
+}
+
 export function BackgroundJobsPanel({
   onOpenSession,
   onOpenWrapper
@@ -57,12 +96,13 @@ export function BackgroundJobsPanel({
 }): React.JSX.Element {
   const [agentJobs, setAgentJobs] = useState<BackgroundAgentJob[]>([])
   const [wrapperRuns, setWrapperRuns] = useState<WrapperRun[]>([])
+  const [environmentBuilds, setEnvironmentBuilds] = useState<EnvironmentBuild[]>([])
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [stoppingKey, setStoppingKey] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const refreshingRef = useRef(false)
-  const jobs = selectBackgroundJobs(agentJobs, wrapperRuns)
+  const jobs = selectBackgroundJobs(agentJobs, wrapperRuns, environmentBuilds)
 
   const refresh = useCallback(async (): Promise<void> => {
     if (refreshingRef.current) return
@@ -73,14 +113,20 @@ export function BackgroundJobsPanel({
         setLoaded(true)
         return
       }
-      const [agents, wrappers] = await Promise.allSettled([
+      const [agents, wrappers, builds] = await Promise.allSettled([
         window.api.listAgentJobs(),
-        window.api.listWrapperRuns()
+        window.api.listWrapperRuns(),
+        typeof window.api.listEnvironmentBuilds === 'function'
+          ? window.api.listEnvironmentBuilds()
+          : Promise.resolve<EnvironmentBuild[]>([])
       ])
       if (agents.status === 'fulfilled') setAgentJobs(agents.value)
       if (wrappers.status === 'fulfilled') setWrapperRuns(wrappers.value)
+      if (builds.status === 'fulfilled') setEnvironmentBuilds(builds.value)
       setError(
-        agents.status === 'rejected' || wrappers.status === 'rejected'
+        agents.status === 'rejected' ||
+          wrappers.status === 'rejected' ||
+          builds.status === 'rejected'
           ? '部分任务状态暂时无法读取，稍后会自动重试。'
           : ''
       )
@@ -97,9 +143,16 @@ export function BackgroundJobsPanel({
     return () => window.clearInterval(timer)
   }, [refresh])
 
+  useEffect(() => {
+    if (typeof window.api.onEnvironmentBuildsChanged !== 'function') return undefined
+    return window.api.onEnvironmentBuildsChanged((build) => {
+      setEnvironmentBuilds((current) => upsertEnvironmentBuild(current, build))
+    })
+  }, [])
+
   const openJob = (item: UnifiedBackgroundJob): void => {
     if (item.kind === 'agent') onOpenSession(item.run.sessionPath)
-    else onOpenWrapper(item.run.wrapper.canonicalId)
+    else if (item.kind === 'wrapper') onOpenWrapper(item.run.wrapper.canonicalId)
   }
 
   const stopJob = async (item: UnifiedBackgroundJob): Promise<void> => {
@@ -108,8 +161,10 @@ export function BackgroundJobsPanel({
     try {
       if (item.kind === 'agent') {
         await window.api.stopAgentRun(item.run.agentSessionId, item.run.agentRunId)
-      } else {
+      } else if (item.kind === 'wrapper') {
         await window.api.cancelWrapperRun(item.run.runId)
+      } else {
+        await window.api.cancelEnvironmentBuild(item.build.envId)
       }
       await refresh()
     } catch (cause) {
@@ -120,56 +175,71 @@ export function BackgroundJobsPanel({
   }
 
   const renderRow = (item: UnifiedBackgroundJob): React.JSX.Element => {
-    const canStop = item.kind === 'agent' ? item.active : canStopUnifiedWrapperRun(item.run)
-    const source = item.kind === 'agent' ? item.run.sessionTitle : 'Wrapper'
-    const subtitle = item.kind === 'agent' ? item.run.task : item.run.runId
+    const canStop = canStopJob(item)
+    const showOpen = item.kind !== 'environment'
+    const title = jobTitle(item)
+    const subtitle = jobSubtitle(item)
+    const detail = jobDetail(item, nowMs)
+    const percent = item.kind === 'environment' ? environmentBuildPercent(item.build) : undefined
     return (
       <Box
         key={item.key}
         sx={{ border: 1, borderColor: 'divider', borderRadius: 1.5, p: 1, mb: 1 }}
       >
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="body2" noWrap sx={{ fontWeight: 700 }} title={jobTitle(item)}>
-            {jobTitle(item)}
+          <Typography variant="body2" noWrap sx={{ fontWeight: 700 }} title={title}>
+            {title}
           </Typography>
           <Typography
             variant="caption"
             color="text.secondary"
             noWrap
             component="div"
-            title={subtitle}
+            title={`${jobSource(item)} · ${subtitle}`}
           >
-            {source} · {subtitle}
+            {jobSource(item)} · {subtitle}
           </Typography>
           <Typography
             variant="caption"
             color="text.secondary"
             noWrap
             component="div"
-            title={jobDetail(item, nowMs)}
+            title={detail}
           >
-            {jobDetail(item, nowMs)}
+            {detail}
           </Typography>
-        </Box>
-        <Stack direction="row" spacing={1} sx={{ mt: 0.5, justifyContent: 'flex-end' }}>
-          <Button size="small" onClick={() => openJob(item)} aria-label={`查看 ${jobTitle(item)}`}>
-            查看
-          </Button>
-          {canStop && (
-            <Tooltip title={item.kind === 'agent' ? '停止这个 Agent' : '取消这个 Wrapper 运行'}>
-              <span>
-                <IconButton
-                  size="small"
-                  aria-label={`停止 ${jobTitle(item)}`}
-                  disabled={stoppingKey === item.key}
-                  onClick={() => void stopJob(item)}
-                >
-                  <StopIcon size={15} />
-                </IconButton>
-              </span>
-            </Tooltip>
+          {item.kind === 'environment' && item.active && (
+            <LinearProgress
+              variant={percent === undefined ? 'indeterminate' : 'determinate'}
+              value={percent ?? 0}
+              aria-label="环境构建进度"
+              sx={{ mt: 0.75, height: 2, borderRadius: 1 }}
+            />
           )}
-        </Stack>
+        </Box>
+        {(showOpen || canStop) && (
+          <Stack direction="row" spacing={1} sx={{ mt: 0.5, justifyContent: 'flex-end' }}>
+            {showOpen && (
+              <Button size="small" onClick={() => openJob(item)} aria-label={`查看 ${title}`}>
+                查看
+              </Button>
+            )}
+            {canStop && (
+              <Tooltip title={stopTooltip(item)}>
+                <span>
+                  <IconButton
+                    size="small"
+                    aria-label={item.kind === 'environment' ? '取消构建' : `停止 ${title}`}
+                    disabled={stoppingKey === item.key}
+                    onClick={() => void stopJob(item)}
+                  >
+                    <StopIcon size={15} />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            )}
+          </Stack>
+        )}
       </Box>
     )
   }

@@ -36,6 +36,7 @@ import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
 import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
 import { BackgroundJobsPanel } from './features/jobs/BackgroundJobsPanel'
+import { useEnvironmentBuildNotices } from './features/jobs/hooks/useEnvironmentBuildNotices'
 import type { LocalPathKind } from './components/MarkdownContent'
 import { PluginDetail } from './features/plugin/PluginView'
 import { usePluginCatalog } from './features/plugin/hooks/usePluginCatalog'
@@ -784,6 +785,7 @@ function App(): React.JSX.Element {
     },
     []
   )
+  useEnvironmentBuildNotices(showSnackbar)
 
   const showSnackbarError = useCallback(
     (error: unknown, fallback: string): void => {
