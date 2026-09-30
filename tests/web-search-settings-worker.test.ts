@@ -23,6 +23,8 @@ test(
         agentDir
       })
       assert.ok(initial.providers.length > 20)
+      const initialBrave = initial.providers.find((provider) => provider.id === 'brave')
+      assert.equal(initialBrave?.apiKeyStored, false)
       await assert.rejects(
         bridge.request('settings.webSearch.searxngEngines', { agentDir }),
         /保存 SearXNG 实例地址/
@@ -50,6 +52,45 @@ test(
       assert.ok(config.providers.webSearchExclude.includes('google'))
       assert.equal(config.searxng.endpoint, patch.searxngEndpoint)
       assert.equal(config.searxng.engines, patch.searxngEngines)
+
+      await assert.rejects(
+        bridge.request('settings.webSearch.apiKey.set', {
+          agentDir,
+          providerId: 'google',
+          key: 'not-allowed'
+        }),
+        /不接受 API Key/
+      )
+      await bridge.request('settings.webSearch.apiKey.set', {
+        agentDir,
+        providerId: 'brave',
+        key: 'test-brave-secret'
+      })
+      const withKey = await bridge.request<WebSearchSettings>('settings.webSearch.get', {
+        agentDir
+      })
+      assert.equal(
+        withKey.providers.find((provider) => provider.id === 'brave')?.apiKeyConfigured,
+        true
+      )
+      assert.equal(
+        withKey.providers.find((provider) => provider.id === 'brave')?.apiKeyStored,
+        true
+      )
+      assert.doesNotMatch(JSON.stringify(withKey), /test-brave-secret/)
+      assert.doesNotMatch(readFileSync(join(agentDir, 'config.yml'), 'utf8'), /test-brave-secret/)
+      await bridge.request('settings.webSearch.apiKey.clear', { agentDir, providerId: 'brave' })
+      const withoutKey = await bridge.request<WebSearchSettings>('settings.webSearch.get', {
+        agentDir
+      })
+      assert.equal(
+        withoutKey.providers.find((provider) => provider.id === 'brave')?.apiKeyConfigured,
+        initialBrave?.apiKeyConfigured
+      )
+      assert.equal(
+        withoutKey.providers.find((provider) => provider.id === 'brave')?.apiKeyStored,
+        false
+      )
     } finally {
       await bridge.stop()
       if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR

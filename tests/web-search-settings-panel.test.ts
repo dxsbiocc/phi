@@ -11,9 +11,22 @@ import type { WebSearchSettings } from '../src/shared/webSearchSettingsTypes'
 
 const settings: WebSearchSettings = {
   providers: [
-    { id: 'searxng', label: 'SearXNG', description: 'Self-hosted search' },
-    { id: 'exa', label: 'Exa', description: 'Search API' },
-    { id: 'google', label: 'Google', description: 'Public search' }
+    {
+      id: 'searxng',
+      label: 'SearXNG',
+      description: 'Self-hosted search',
+      access: 'self-hosted',
+      auth: 'endpoint'
+    },
+    {
+      id: 'exa',
+      label: 'Exa',
+      description: 'Search API',
+      access: 'free',
+      auth: 'optional',
+      apiKeyEnv: 'EXA_API_KEY'
+    },
+    { id: 'google', label: 'Google', description: 'Public search', access: 'free', auth: 'none' }
   ],
   orderedEnabledIds: ['searxng', 'exa'],
   searxngEndpoint: 'http://127.0.0.1:8888',
@@ -28,6 +41,9 @@ function renderEditor(snapshot = settings): string {
       createElement(WebSearchSettingsEditor, {
         settings: snapshot,
         onSave: async () => undefined,
+        onSetApiKey: async () => ({ apiKeyConfigured: true, apiKeyStored: true }),
+        onClearApiKey: async () => ({ apiKeyConfigured: false, apiKeyStored: false }),
+        onOpenProviderSettings: () => undefined,
         searxngCatalog: [
           { name: 'sogou', shortcut: 'sogou', categories: ['general'], enabled: false },
           { name: 'sogou wechat', shortcut: 'sogouw', categories: ['news'], enabled: true },
@@ -47,6 +63,9 @@ test('web search settings separate SearXNG engines from upstream providers', () 
   assert.match(markup, /aria-label="下移 SearXNG"/)
   assert.match(markup, />置顶<\/button>/)
   assert.match(markup, /上游搜索服务提供方（高级）/)
+  assert.match(markup, /免凭据可用/)
+  assert.match(markup, /自建实例/)
+  assert.match(markup, /免凭据后备可用/)
   assert.match(markup, /aria-label="选择 sogou wechat 引擎"/)
   assert.match(markup, /aria-label="选择 sogou 引擎"/)
   assert.match(markup, /默认关闭/)
@@ -65,6 +84,41 @@ test('SearXNG settings explain when its upstream provider is disabled', () => {
   assert.match(markup, /aria-label="启用 SearXNG 搜索"/)
   assert.match(markup, /SearXNG 服务提供方已关闭/)
   assert.match(markup, /限定引擎名称（可选）/)
+})
+
+test('provider groups explain cost and authentication before enabling a service', () => {
+  const markup = renderEditor({
+    ...settings,
+    providers: [
+      ...settings.providers,
+      {
+        id: 'brave',
+        label: 'Brave',
+        description: 'API search',
+        access: 'metered',
+        auth: 'api-key',
+        apiKeyEnv: 'BRAVE_API_KEY',
+        apiKeyConfigured: true,
+        apiKeyStored: true
+      },
+      {
+        id: 'codex',
+        label: 'OpenAI',
+        description: 'Account search',
+        access: 'metered',
+        auth: 'oauth'
+      }
+    ]
+  })
+
+  assert.match(markup, /账号或 API 服务/)
+  assert.match(markup, /可能有免费额度或需要付费/)
+  assert.match(markup, /需要 API Key/)
+  assert.match(markup, /BRAVE_API_KEY/)
+  assert.match(markup, /已配置 Key/)
+  assert.match(markup, /清除 Key/)
+  assert.match(markup, /需要账号授权/)
+  assert.match(markup, /到 Provider 设置授权/)
 })
 
 test('SearXNG engine picker lists only names returned by its instance', () => {

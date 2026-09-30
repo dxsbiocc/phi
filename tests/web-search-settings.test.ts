@@ -21,6 +21,14 @@ test('web search defaults expose OMP providers in their native order', () => {
     settings.providers.map((provider) => provider.id)
   )
   assert.equal(settings.searxngEndpoint, '')
+  assert.deepEqual(settings.providers.find((provider) => provider.id === 'brave')?.auth, 'api-key')
+  assert.equal(settings.providers.find((provider) => provider.id === 'brave')?.access, 'metered')
+  assert.equal(settings.providers.find((provider) => provider.id === 'codex')?.auth, 'oauth')
+  assert.equal(
+    settings.providers.find((provider) => provider.id === 'searxng')?.access,
+    'self-hosted'
+  )
+  assert.equal(settings.providers.find((provider) => provider.id === 'duckduckgo')?.access, 'free')
 })
 
 test('web search selection restores priority and excludes disabled providers', () => {

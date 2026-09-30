@@ -2634,11 +2634,21 @@ test('main IPC: web search settings are routed to the OMP worker', async () => {
   await app.invoke('settings:webSearch:get')
   await app.invoke('settings:webSearch:update', patch)
   await app.invoke('settings:webSearch:searxngEngines')
+  await app.invoke('settings:webSearch:apiKey:set', 'brave', 'test-key')
+  await app.invoke('settings:webSearch:apiKey:clear', 'brave')
 
-  assert.deepEqual(app.bridgeRequests.slice(-3), [
+  assert.deepEqual(app.bridgeRequests.slice(-5), [
     { method: 'settings.webSearch.get', params: { agentDir: '/isolated' } },
     { method: 'settings.webSearch.update', params: { agentDir: '/isolated', patch } },
-    { method: 'settings.webSearch.searxngEngines', params: { agentDir: '/isolated' } }
+    { method: 'settings.webSearch.searxngEngines', params: { agentDir: '/isolated' } },
+    {
+      method: 'settings.webSearch.apiKey.set',
+      params: { agentDir: '/isolated', providerId: 'brave', key: 'test-key' }
+    },
+    {
+      method: 'settings.webSearch.apiKey.clear',
+      params: { agentDir: '/isolated', providerId: 'brave' }
+    }
   ])
 })
 

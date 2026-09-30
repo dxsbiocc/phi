@@ -4,9 +4,98 @@ import {
 } from '@oh-my-pi/pi-coding-agent/web/search/types'
 import type {
   SearxngEngineOption,
+  WebSearchProviderOption,
   WebSearchSettings,
   WebSearchSettingsPatch
 } from '../../shared/webSearchSettingsTypes'
+
+type ProviderDetail = Pick<WebSearchProviderOption, 'access' | 'auth' | 'apiKeyEnv'> & {
+  apiKeyAuthId?: string
+  oauthAuthIds?: readonly string[]
+}
+
+// Keep this exhaustive against OMP's provider IDs. Pricing is deliberately a broad
+// access class: API plans may include free credits and change independently of Phi.
+export const WEB_SEARCH_PROVIDER_DETAILS = {
+  perplexity: {
+    access: 'free',
+    auth: 'optional',
+    apiKeyEnv: 'PERPLEXITY_API_KEY',
+    apiKeyAuthId: 'perplexity',
+    oauthAuthIds: ['perplexity']
+  },
+  gemini: {
+    access: 'metered',
+    auth: 'oauth-or-key',
+    apiKeyEnv: 'GEMINI_API_KEY',
+    apiKeyAuthId: 'google',
+    oauthAuthIds: ['google-gemini-cli', 'google-antigravity']
+  },
+  anthropic: {
+    access: 'metered',
+    auth: 'oauth-or-key',
+    apiKeyEnv: 'ANTHROPIC_API_KEY',
+    apiKeyAuthId: 'anthropic',
+    oauthAuthIds: ['anthropic']
+  },
+  codex: { access: 'metered', auth: 'oauth', oauthAuthIds: ['openai-codex'] },
+  xai: {
+    access: 'metered',
+    auth: 'oauth-or-key',
+    apiKeyEnv: 'XAI_API_KEY',
+    apiKeyAuthId: 'xai',
+    oauthAuthIds: ['xai-oauth']
+  },
+  zai: { access: 'metered', auth: 'api-key', apiKeyEnv: 'ZAI_API_KEY', apiKeyAuthId: 'zai' },
+  exa: { access: 'free', auth: 'optional', apiKeyEnv: 'EXA_API_KEY', apiKeyAuthId: 'exa' },
+  tinyfish: {
+    access: 'metered',
+    auth: 'api-key',
+    apiKeyEnv: 'TINYFISH_API_KEY',
+    apiKeyAuthId: 'tinyfish'
+  },
+  jina: { access: 'metered', auth: 'api-key', apiKeyEnv: 'JINA_API_KEY', apiKeyAuthId: 'jina' },
+  kagi: { access: 'metered', auth: 'api-key', apiKeyEnv: 'KAGI_API_KEY', apiKeyAuthId: 'kagi' },
+  tavily: {
+    access: 'metered',
+    auth: 'api-key',
+    apiKeyEnv: 'TAVILY_API_KEY',
+    apiKeyAuthId: 'tavily'
+  },
+  firecrawl: {
+    access: 'free',
+    auth: 'optional',
+    apiKeyEnv: 'FIRECRAWL_API_KEY',
+    apiKeyAuthId: 'firecrawl'
+  },
+  brave: { access: 'metered', auth: 'api-key', apiKeyEnv: 'BRAVE_API_KEY', apiKeyAuthId: 'brave' },
+  kimi: {
+    access: 'metered',
+    auth: 'oauth-or-key',
+    apiKeyEnv: 'KIMI_SEARCH_API_KEY',
+    apiKeyAuthId: 'kimi-code',
+    oauthAuthIds: ['kimi-code']
+  },
+  parallel: {
+    access: 'metered',
+    auth: 'api-key',
+    apiKeyEnv: 'PARALLEL_API_KEY',
+    apiKeyAuthId: 'parallel'
+  },
+  synthetic: {
+    access: 'metered',
+    auth: 'api-key',
+    apiKeyEnv: 'SYNTHETIC_API_KEY',
+    apiKeyAuthId: 'synthetic'
+  },
+  searxng: { access: 'self-hosted', auth: 'endpoint' },
+  startpage: { access: 'free', auth: 'none' },
+  duckduckgo: { access: 'free', auth: 'none' },
+  ecosia: { access: 'free', auth: 'none' },
+  google: { access: 'free', auth: 'none' },
+  mojeek: { access: 'free', auth: 'none' },
+  public: { access: 'free', auth: 'none' }
+} as const satisfies Record<SearchProviderId, ProviderDetail>
 
 const PROVIDER_IDS = SEARCH_PROVIDER_CHOICES.map((provider) => provider.value)
 const PROVIDER_ID_SET = new Set<string>(PROVIDER_IDS)
@@ -25,12 +114,15 @@ function knownIds(value: unknown): SearchProviderId[] {
   })
 }
 
-export function webSearchSettingsFromValues(values: {
-  order: unknown
-  excluded: unknown
-  endpoint: unknown
-  engines: unknown
-}): WebSearchSettings {
+export function webSearchSettingsFromValues(
+  values: {
+    order: unknown
+    excluded: unknown
+    endpoint: unknown
+    engines: unknown
+  },
+  authStatus: Record<string, { apiKeyConfigured?: boolean; oauthConfigured?: boolean }> = {}
+): WebSearchSettings {
   const excluded = new Set(knownIds(values.excluded))
   const preferred = knownIds(values.order).filter((id) => !excluded.has(id))
   const orderedEnabledIds = [
@@ -38,11 +130,18 @@ export function webSearchSettingsFromValues(values: {
     ...PROVIDER_IDS.filter((id) => !excluded.has(id) && !preferred.includes(id))
   ]
   return {
-    providers: SEARCH_PROVIDER_CHOICES.map(({ value, label, description }) => ({
-      id: value,
-      label,
-      description
-    })),
+    providers: SEARCH_PROVIDER_CHOICES.map(({ value, label, description }) => {
+      const detail: ProviderDetail = WEB_SEARCH_PROVIDER_DETAILS[value]
+      return {
+        id: value,
+        label,
+        description,
+        access: detail.access,
+        auth: detail.auth,
+        apiKeyEnv: detail.apiKeyEnv,
+        ...authStatus[value]
+      }
+    }),
     orderedEnabledIds,
     searxngEndpoint: typeof values.endpoint === 'string' ? values.endpoint : '',
     searxngEngines: typeof values.engines === 'string' ? values.engines : ''

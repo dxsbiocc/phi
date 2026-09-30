@@ -85,6 +85,7 @@ import { buildPaletteRecommendationTool } from '../palettes/tools'
 import {
   listSearxngEngines,
   normalizeWebSearchSettingsPatch,
+  WEB_SEARCH_PROVIDER_DETAILS,
   webSearchSettingsFromValues
 } from '../web-search-settings'
 import { buildNotebookCustomTools } from '../notebook/notebook-tools'
@@ -356,6 +357,47 @@ async function getContext(agentDirParam?: unknown): Promise<RuntimeContext> {
   })()
   contexts.set(key, promise)
   return promise
+}
+
+function webSearchAuthStatus(authStorage: AuthStorage): Record<
+  string,
+  {
+    apiKeyConfigured: boolean
+    apiKeyStored: boolean
+    oauthConfigured: boolean
+  }
+> {
+  return Object.fromEntries(
+    Object.entries(WEB_SEARCH_PROVIDER_DETAILS).map(([id, detail]) => {
+      const keyId = 'apiKeyAuthId' in detail ? detail.apiKeyAuthId : undefined
+      const oauthIds = 'oauthAuthIds' in detail ? detail.oauthAuthIds : []
+      const storedKey = keyId
+        ? authStorage
+            .listStoredCredentials(keyId)
+            .some((entry) => entry.credential.type === 'api_key')
+        : false
+      const envNames =
+        'apiKeyEnv' in detail
+          ? [
+              detail.apiKeyEnv,
+              ...(id === 'kimi' ? ['MOONSHOT_SEARCH_API_KEY'] : []),
+              ...(id === 'anthropic' ? ['ANTHROPIC_SEARCH_API_KEY'] : [])
+            ]
+          : []
+      const envKey = Boolean(
+        (keyId && authStorage.getCredentialOrigin(keyId)?.kind === 'env') ||
+        envNames.some((name) => Boolean(process.env[name]?.trim()))
+      )
+      return [
+        id,
+        {
+          apiKeyConfigured: storedKey || envKey,
+          apiKeyStored: storedKey,
+          oauthConfigured: oauthIds.some((provider) => authStorage.hasOAuth(provider))
+        }
+      ]
+    })
+  )
 }
 
 function serializeThinkingMap(
@@ -2006,12 +2048,16 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
         ? stringValue(params.agentDir, process.env.PI_CODING_AGENT_DIR)
         : stringValue(process.env.PI_CODING_AGENT_DIR)
       const settings = await Settings.loadReadOnly({ cwd: agentDir, agentDir })
-      return webSearchSettingsFromValues({
-        order: settings.get('providers.webSearchOrder'),
-        excluded: settings.get('providers.webSearchExclude'),
-        endpoint: settings.get('searxng.endpoint'),
-        engines: settings.get('searxng.engines')
-      })
+      const { authStorage } = await getContext(agentDir)
+      return webSearchSettingsFromValues(
+        {
+          order: settings.get('providers.webSearchOrder'),
+          excluded: settings.get('providers.webSearchExclude'),
+          endpoint: settings.get('searxng.endpoint'),
+          engines: settings.get('searxng.engines')
+        },
+        webSearchAuthStatus(authStorage)
+      )
     }
     case 'settings.webSearch.update': {
       const record = isRecord(params) ? params : {}
@@ -2025,12 +2071,59 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       await settings.flush()
       applyProviderGlobalsFromSettings(settings)
       const persisted = await Settings.loadReadOnly({ cwd: agentDir, agentDir })
-      return webSearchSettingsFromValues({
-        order: persisted.get('providers.webSearchOrder'),
-        excluded: persisted.get('providers.webSearchExclude'),
-        endpoint: persisted.get('searxng.endpoint'),
-        engines: persisted.get('searxng.engines')
-      })
+      const { authStorage } = await getContext(agentDir)
+      return webSearchSettingsFromValues(
+        {
+          order: persisted.get('providers.webSearchOrder'),
+          excluded: persisted.get('providers.webSearchExclude'),
+          endpoint: persisted.get('searxng.endpoint'),
+          engines: persisted.get('searxng.engines')
+        },
+        webSearchAuthStatus(authStorage)
+      )
+    }
+    case 'settings.webSearch.apiKey.set': {
+      const record = isRecord(params) ? params : {}
+      const providerId = record.providerId
+      const detail =
+        typeof providerId === 'string'
+          ? WEB_SEARCH_PROVIDER_DETAILS[providerId as keyof typeof WEB_SEARCH_PROVIDER_DETAILS]
+          : undefined
+      if (!detail || !('apiKeyAuthId' in detail)) throw new Error('该搜索服务不接受 API Key')
+      const key = record.key
+      if (typeof key !== 'string' || !key.trim() || key.length > 4096 || /[\r\n]/.test(key)) {
+        throw new Error('请输入有效的 API Key')
+      }
+      const { authStorage } = await getContext(record.agentDir)
+      const existing = authStorage
+        .listStoredCredentials(detail.apiKeyAuthId)
+        .filter((entry) => entry.credential.type !== 'api_key')
+        .map((entry) => entry.credential)
+      await authStorage.set(detail.apiKeyAuthId, [
+        ...existing,
+        { type: 'api_key', key: key.trim() }
+      ])
+      return webSearchAuthStatus(authStorage)[
+        providerId as keyof typeof WEB_SEARCH_PROVIDER_DETAILS
+      ]
+    }
+    case 'settings.webSearch.apiKey.clear': {
+      const record = isRecord(params) ? params : {}
+      const providerId = record.providerId
+      const detail =
+        typeof providerId === 'string'
+          ? WEB_SEARCH_PROVIDER_DETAILS[providerId as keyof typeof WEB_SEARCH_PROVIDER_DETAILS]
+          : undefined
+      if (!detail || !('apiKeyAuthId' in detail)) throw new Error('该搜索服务没有 API Key')
+      const { authStorage } = await getContext(record.agentDir)
+      for (const entry of authStorage.listStoredCredentials(detail.apiKeyAuthId)) {
+        if (entry.credential.type === 'api_key') {
+          await authStorage.removeCredential(detail.apiKeyAuthId, entry.id)
+        }
+      }
+      return webSearchAuthStatus(authStorage)[
+        providerId as keyof typeof WEB_SEARCH_PROVIDER_DETAILS
+      ]
     }
     case 'settings.webSearch.searxngEngines': {
       const agentDir = isRecord(params)

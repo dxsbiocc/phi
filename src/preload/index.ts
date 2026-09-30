@@ -63,6 +63,7 @@ import type {
 } from '../shared/appSettingsTypes'
 import type {
   SearxngEngineOption,
+  WebSearchKeyStatus,
   WebSearchSettings,
   WebSearchSettingsPatch
 } from '../shared/webSearchSettingsTypes'
@@ -706,6 +707,8 @@ type RendererAuthApi = {
   getWebSearchSettings: () => Promise<WebSearchSettings>
   updateWebSearchSettings: (patch: WebSearchSettingsPatch) => Promise<WebSearchSettings>
   listSearxngEngines: () => Promise<SearxngEngineOption[]>
+  setWebSearchApiKey: (providerId: string, key: string) => Promise<WebSearchKeyStatus>
+  clearWebSearchApiKey: (providerId: string) => Promise<WebSearchKeyStatus>
   updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
   getEnvironment: () => Promise<EnvironmentGetResult>
   redetectEnvironment: () => Promise<EnvironmentSnapshot>
@@ -1034,6 +1037,10 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('settings:webSearch:update', patch),
   listSearxngEngines: (): Promise<SearxngEngineOption[]> =>
     ipcRenderer.invoke('settings:webSearch:searxngEngines'),
+  setWebSearchApiKey: (providerId: string, key: string): Promise<WebSearchKeyStatus> =>
+    ipcRenderer.invoke('settings:webSearch:apiKey:set', providerId, key),
+  clearWebSearchApiKey: (providerId: string): Promise<WebSearchKeyStatus> =>
+    ipcRenderer.invoke('settings:webSearch:apiKey:clear', providerId),
   updateDefaultProxyMode: (mode: DefaultProxyMode): Promise<PhiAppSettings> =>
     ipcRenderer.invoke('settings:updateDefaultProxyMode', mode),
   getEnvironment: (): Promise<EnvironmentGetResult> => ipcRenderer.invoke('environment:get'),

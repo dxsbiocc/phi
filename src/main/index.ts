@@ -6222,6 +6222,16 @@ app.whenReady().then(() => {
   ipcMain.handle('settings:webSearch:searxngEngines', async () =>
     getOmpBridge().request('settings.webSearch.searxngEngines', { agentDir: AGENT_DIR })
   )
+  ipcMain.handle('settings:webSearch:apiKey:set', async (_, providerId: unknown, key: unknown) =>
+    getOmpBridge().request('settings.webSearch.apiKey.set', {
+      agentDir: AGENT_DIR,
+      providerId,
+      key
+    })
+  )
+  ipcMain.handle('settings:webSearch:apiKey:clear', async (_, providerId: unknown) =>
+    getOmpBridge().request('settings.webSearch.apiKey.clear', { agentDir: AGENT_DIR, providerId })
+  )
   ipcMain.handle('settings:updateDefaultProxyMode', async (_, mode: unknown) =>
     updateDefaultProxyMode(mode)
   )

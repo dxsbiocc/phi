@@ -10,17 +10,18 @@ import {
   IconButton,
   Paper,
   Stack,
-  Switch,
   TextField,
   Typography
 } from '@mui/material'
-import { GoChevronDown, GoChevronUp, GoSync } from 'react-icons/go'
+import { GoChevronDown, GoSync } from 'react-icons/go'
 import type {
   SearxngEngineOption,
+  WebSearchKeyStatus,
   WebSearchSettings,
   WebSearchSettingsPatch
 } from '../../../../shared/webSearchSettingsTypes'
 import { SearxngEnginePicker } from './components/SearxngEnginePicker'
+import { SearchProviderList } from './components/SearchProviderList'
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -30,12 +31,18 @@ export function WebSearchSettingsEditor({
   settings,
   onSave,
   onDirty,
-  searxngCatalog
+  searxngCatalog,
+  onSetApiKey,
+  onClearApiKey,
+  onOpenProviderSettings
 }: {
   settings: WebSearchSettings
   onSave: (patch: WebSearchSettingsPatch) => Promise<void>
   onDirty?: () => void
   searxngCatalog?: SearxngEngineOption[]
+  onSetApiKey?: (id: string, key: string) => Promise<WebSearchKeyStatus>
+  onClearApiKey?: (id: string) => Promise<WebSearchKeyStatus>
+  onOpenProviderSettings?: () => void
 }): React.JSX.Element {
   const [enabledIds, setEnabledIds] = useState(settings.orderedEnabledIds)
   const [endpoint, setEndpoint] = useState(settings.searxngEndpoint)
@@ -47,13 +54,6 @@ export function WebSearchSettingsEditor({
     enabledIds.join('\0') !== settings.orderedEnabledIds.join('\0') ||
     endpoint !== settings.searxngEndpoint ||
     engines !== settings.searxngEngines
-  const orderedProviders = [
-    ...enabledIds.flatMap((id) => {
-      const provider = settings.providers.find((item) => item.id === id)
-      return provider ? [provider] : []
-    }),
-    ...settings.providers.filter((provider) => !enabledIds.includes(provider.id))
-  ]
 
   function toggleProvider(id: string): void {
     onDirty?.()
@@ -147,88 +147,22 @@ export function WebSearchSettingsEditor({
           <Box>
             <Typography variant="subtitle2">上游搜索服务提供方（高级）</Typography>
             <Typography variant="caption" color="text.secondary">
-              OMP 服务提供方与上方的 SearXNG 实例引擎分开管理。
+              按免凭据、账号或 API 服务、自建实例分组；与上方的 SearXNG 实例引擎分开管理。
             </Typography>
           </Box>
         </AccordionSummary>
         <AccordionDetails sx={{ p: 1.5, pt: 0 }}>
-          <Paper variant="outlined" sx={{ borderRadius: 1, overflow: 'hidden' }}>
-            <Box sx={{ px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider' }}>
-              <Typography variant="body2" color="text.secondary">
-                已启用 {enabledIds.length} / {settings.providers.length} · 排在前面的服务优先使用
-              </Typography>
-            </Box>
-            <Box sx={{ maxHeight: 260, overflowY: 'auto' }}>
-              {orderedProviders.map((provider) => {
-                const index = enabledIds.indexOf(provider.id)
-                const enabled = index >= 0
-                return (
-                  <Box
-                    key={provider.id}
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 1,
-                      px: 1.5,
-                      py: 0.5,
-                      minHeight: 52,
-                      borderBottom: 1,
-                      borderColor: 'divider',
-                      '&:last-child': { borderBottom: 0 }
-                    }}
-                  >
-                    <Switch
-                      checked={enabled}
-                      disabled={saving || (enabled && enabledIds.length === 1)}
-                      onChange={() => toggleProvider(provider.id)}
-                      slotProps={{ input: { 'aria-label': `启用 ${provider.label} 搜索` } }}
-                    />
-                    <Box sx={{ minWidth: 0, flex: 1 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 600, lineHeight: 1.3 }}>
-                        {provider.label}
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ fontFamily: 'var(--font-mono)' }}
-                      >
-                        {provider.id}
-                      </Typography>
-                    </Box>
-                    {enabled && (
-                      <Stack direction="row" spacing={0.25}>
-                        {index > 0 && (
-                          <Button
-                            size="small"
-                            disabled={saving}
-                            onClick={() => prioritizeProvider(provider.id)}
-                          >
-                            置顶
-                          </Button>
-                        )}
-                        <IconButton
-                          size="small"
-                          aria-label={`上移 ${provider.label}`}
-                          disabled={saving || index === 0}
-                          onClick={() => moveProvider(provider.id, -1)}
-                        >
-                          <GoChevronUp size={18} />
-                        </IconButton>
-                        <IconButton
-                          size="small"
-                          aria-label={`下移 ${provider.label}`}
-                          disabled={saving || index === enabledIds.length - 1}
-                          onClick={() => moveProvider(provider.id, 1)}
-                        >
-                          <GoChevronDown size={18} />
-                        </IconButton>
-                      </Stack>
-                    )}
-                  </Box>
-                )
-              })}
-            </Box>
-          </Paper>
+          <SearchProviderList
+            providers={settings.providers}
+            enabledIds={enabledIds}
+            disabled={saving}
+            onToggle={toggleProvider}
+            onMove={moveProvider}
+            onPrioritize={prioritizeProvider}
+            onSetApiKey={onSetApiKey}
+            onClearApiKey={onClearApiKey}
+            onOpenProviderSettings={onOpenProviderSettings}
+          />
         </AccordionDetails>
       </Accordion>
 
@@ -251,7 +185,11 @@ export function WebSearchSettingsEditor({
   )
 }
 
-export function WebSearchSettingsPanel(): React.JSX.Element {
+export function WebSearchSettingsPanel({
+  onOpenProviderSettings
+}: {
+  onOpenProviderSettings?: () => void
+}): React.JSX.Element {
   const [settings, setSettings] = useState<WebSearchSettings | null>(null)
   const [revision, setRevision] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -333,6 +271,9 @@ export function WebSearchSettingsPanel(): React.JSX.Element {
         settings={settings}
         onSave={save}
         onDirty={() => setSaved(false)}
+        onSetApiKey={window.api.setWebSearchApiKey}
+        onClearApiKey={window.api.clearWebSearchApiKey}
+        onOpenProviderSettings={onOpenProviderSettings}
       />
     </Stack>
   )

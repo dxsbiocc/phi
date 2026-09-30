@@ -57,6 +57,7 @@ import type {
 } from '../shared/appSettingsTypes'
 import type {
   SearxngEngineOption,
+  WebSearchKeyStatus,
   WebSearchSettings,
   WebSearchSettingsPatch
 } from '../shared/webSearchSettingsTypes'
@@ -709,6 +710,8 @@ declare global {
       getWebSearchSettings: () => Promise<WebSearchSettings>
       updateWebSearchSettings: (patch: WebSearchSettingsPatch) => Promise<WebSearchSettings>
       listSearxngEngines: () => Promise<SearxngEngineOption[]>
+      setWebSearchApiKey: (providerId: string, key: string) => Promise<WebSearchKeyStatus>
+      clearWebSearchApiKey: (providerId: string) => Promise<WebSearchKeyStatus>
       updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
       getEnvironment: () => Promise<EnvironmentGetResult>
       redetectEnvironment: () => Promise<EnvironmentSnapshot>

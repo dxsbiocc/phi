@@ -894,7 +894,9 @@ function SettingsDialog({
               onLogout={onLogout}
             />
           )}
-          {category === 'web-search' && <WebSearchSettingsPanel />}
+          {category === 'web-search' && (
+            <WebSearchSettingsPanel onOpenProviderSettings={() => onCategoryChange('providers')} />
+          )}
           {category === 'permissions' && (
             <PermissionSettingsSection
               projects={projects}
