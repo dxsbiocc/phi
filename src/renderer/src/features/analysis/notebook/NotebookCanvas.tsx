@@ -1148,7 +1148,7 @@ export default function NotebookCanvas({
         !mod &&
         !event.altKey &&
         !event.shiftKey &&
-        !event.nativeEvent.isComposing &&
+        !event.isComposing &&
         !isNotebookTextEntryShortcutTarget(target)
       ) {
         const liveSelectedCellId =
