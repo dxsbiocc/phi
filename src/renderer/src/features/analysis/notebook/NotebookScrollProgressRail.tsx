@@ -4,6 +4,7 @@ import { alpha } from '@mui/material/styles'
 import remarkGfm from 'remark-gfm'
 import { plainMarkdownInlineText, type NotebookOutlineItem } from '../lib/notebookViewModel'
 import {
+  notebookFloatingActionCenterInset,
   notebookFloatingActionInset,
   notebookFloatingActionRailClearance
 } from './NotebookFloatingActions'
@@ -74,142 +75,152 @@ export default function NotebookScrollProgressRail({
         position: 'absolute',
         top: `${macTitlebarHeight + 72}px`,
         bottom: `${notebookFloatingActionInset + notebookFloatingActionRailClearance}px`,
-        right: 7,
+        right: notebookFloatingActionCenterInset,
+        transform: 'translateX(50%)',
         zIndex: 4,
         display: 'flex',
         alignItems: 'center',
-        pointerEvents: 'auto',
-        '&:hover .notebook-outline-popover': {
-          opacity: 1,
-          pointerEvents: 'auto',
-          transform: 'translate(0, -50%)'
-        }
+        justifyContent: 'center',
+        pointerEvents: 'none'
       }}
     >
-      <Stack spacing={1.05} data-phi-notebook-outline-markers="true" sx={{ alignItems: 'center' }}>
-        {outline.map((item) => {
-          const active = item.id === activeId
-          const plainTitle = plainMarkdownInlineText(item.title)
-          return (
-            <Box
-              key={item.id}
-              component="button"
-              type="button"
-              aria-label={`跳转到 ${plainTitle}`}
-              title={plainTitle}
-              data-phi-notebook-scroll-marker={active ? 'active' : 'idle'}
-              data-phi-notebook-outline-marker="true"
-              data-phi-notebook-outline-level={item.level}
-              onClick={() => onSelect(item)}
-              sx={{
-                width: active ? 3 : 2,
-                height: active ? 18 : 12,
-                p: 0,
-                border: 0,
-                borderRadius: 999,
-                bgcolor: active ? 'text.primary' : 'text.disabled',
-                opacity: active ? 1 : 0.72,
-                cursor: 'pointer',
-                transition: 'background-color 120ms ease, opacity 120ms ease',
-                '&:hover': {
-                  opacity: 1,
-                  bgcolor: 'text.primary'
-                },
-                '&:focus-visible': {
-                  outline: (theme) => `2px solid ${theme.palette.primary.main}`,
-                  outlineOffset: 2
-                }
-              }}
-            />
-          )
-        })}
-      </Stack>
       <Box
-        aria-hidden="true"
-        data-phi-notebook-outline-hover-bridge="true"
+        data-phi-notebook-outline-markers="true"
         sx={{
-          position: 'absolute',
-          top: '50%',
-          right: 18,
-          width: 18,
-          height: 'min(520px, calc(100vh - 96px))',
-          transform: 'translateY(-50%)'
-        }}
-      />
-      <Box
-        className="notebook-outline-popover"
-        data-phi-notebook-outline-popover="true"
-        sx={{
-          position: 'absolute',
-          top: '50%',
-          right: 28,
-          width: 320,
-          maxWidth: 'min(320px, calc(100vw - 96px))',
-          maxHeight: 'min(520px, calc(100vh - 96px))',
-          overflowY: 'auto',
-          p: 1,
-          border: 1,
-          borderColor: 'divider',
-          borderRadius: 2,
-          bgcolor: 'background.paper',
-          boxShadow: 4,
-          opacity: 0,
-          pointerEvents: 'none',
-          transform: 'translate(0, -50%)',
-          transition: 'opacity 130ms ease, transform 130ms ease'
+          position: 'relative',
+          display: 'flex',
+          pointerEvents: 'auto',
+          '&:hover .notebook-outline-popover': {
+            opacity: 1,
+            pointerEvents: 'auto',
+            transform: 'translate(0, -50%)'
+          }
         }}
       >
-        <Stack spacing={0.25}>
+        <Stack spacing={0.7} sx={{ alignItems: 'center', py: 0.25 }}>
           {outline.map((item) => {
             const active = item.id === activeId
             const plainTitle = plainMarkdownInlineText(item.title)
             return (
               <Box
                 key={item.id}
-                component="div"
-                role="button"
-                tabIndex={0}
+                component="button"
+                type="button"
                 aria-label={`跳转到 ${plainTitle}`}
                 title={plainTitle}
-                data-phi-notebook-outline-item="true"
-                data-phi-notebook-outline-active={active ? 'true' : 'false'}
+                data-phi-notebook-scroll-marker={active ? 'active' : 'idle'}
+                data-phi-notebook-outline-marker="true"
                 data-phi-notebook-outline-level={item.level}
                 onClick={() => onSelect(item)}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter' && event.key !== ' ') return
-                  event.preventDefault()
-                  onSelect(item)
-                }}
                 sx={{
-                  width: '100%',
-                  minHeight: 30,
+                  width: active ? 18 : 10,
+                  height: active ? 3 : 2,
+                  p: 0,
                   border: 0,
-                  borderRadius: 1,
-                  px: 1,
-                  py: 0.55,
-                  pl: 1 + Math.max(0, item.level - 1) * 1.35,
-                  bgcolor: active ? 'action.selected' : 'transparent',
-                  color: active ? 'primary.main' : 'text.primary',
+                  borderRadius: 999,
+                  bgcolor: active ? 'primary.main' : 'text.disabled',
                   cursor: 'pointer',
-                  font: 'inherit',
-                  textAlign: 'left',
-                  lineHeight: 1.35,
-                  overflowWrap: 'anywhere',
+                  transition: 'width 120ms ease, height 120ms ease, background-color 120ms ease',
                   '&:hover': {
-                    bgcolor: 'action.hover',
-                    color: 'primary.main'
+                    width: 22,
+                    height: 4,
+                    bgcolor: 'primary.main'
                   },
                   '&:focus-visible': {
                     outline: (theme) => `2px solid ${theme.palette.primary.main}`,
-                    outlineOffset: 1
+                    outlineOffset: 2
                   }
                 }}
-              >
-                <NotebookOutlineTitle item={item} />
-              </Box>
+              />
             )
           })}
         </Stack>
+        <Box
+          aria-hidden="true"
+          data-phi-notebook-outline-hover-bridge="true"
+          sx={{
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            right: '100%',
+            width: 6
+          }}
+        />
+        <Box
+          className="notebook-outline-popover"
+          data-phi-notebook-outline-popover="true"
+          sx={{
+            position: 'absolute',
+            top: '50%',
+            right: 'calc(100% + 4px)',
+            width: 320,
+            maxWidth: 'min(320px, calc(100vw - 96px))',
+            maxHeight: 'min(520px, calc(100vh - 96px))',
+            overflowY: 'auto',
+            p: 1,
+            border: 1,
+            borderColor: 'divider',
+            borderRadius: 2,
+            bgcolor: 'background.paper',
+            boxShadow: 4,
+            opacity: 0,
+            pointerEvents: 'none',
+            transform: 'translate(0, -50%)',
+            transition: 'opacity 130ms ease, transform 130ms ease'
+          }}
+        >
+          <Stack spacing={0.25}>
+            {outline.map((item) => {
+              const active = item.id === activeId
+              const plainTitle = plainMarkdownInlineText(item.title)
+              return (
+                <Box
+                  key={item.id}
+                  component="div"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`跳转到 ${plainTitle}`}
+                  title={plainTitle}
+                  data-phi-notebook-outline-item="true"
+                  data-phi-notebook-outline-active={active ? 'true' : 'false'}
+                  data-phi-notebook-outline-level={item.level}
+                  onClick={() => onSelect(item)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    onSelect(item)
+                  }}
+                  sx={{
+                    width: '100%',
+                    minHeight: 30,
+                    border: 0,
+                    borderRadius: 1,
+                    px: 1,
+                    py: 0.55,
+                    pl: 1 + Math.max(0, item.level - 1) * 1.35,
+                    bgcolor: active ? 'action.selected' : 'transparent',
+                    color: active ? 'primary.main' : 'text.primary',
+                    cursor: 'pointer',
+                    font: 'inherit',
+                    textAlign: 'left',
+                    lineHeight: 1.35,
+                    overflowWrap: 'anywhere',
+                    '&:hover': {
+                      bgcolor: 'action.hover',
+                      color: 'primary.main'
+                    },
+                    '&:focus-visible': {
+                      outline: (theme) => `2px solid ${theme.palette.primary.main}`,
+                      outlineOffset: 1
+                    }
+                  }}
+                >
+                  <NotebookOutlineTitle item={item} />
+                </Box>
+              )
+            })}
+          </Stack>
+        </Box>
       </Box>
     </Box>
   )

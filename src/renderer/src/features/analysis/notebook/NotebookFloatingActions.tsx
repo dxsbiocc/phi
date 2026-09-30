@@ -1,10 +1,30 @@
-import { Fab, Stack, Tooltip } from '@mui/material'
+import { useState } from 'react'
+import {
+  Fab,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
+  Stack,
+  Tooltip,
+  Typography
+} from '@mui/material'
 import { alpha, type Theme } from '@mui/material/styles'
 import { PhiIcons } from '../../../icons'
 import { hasLiveNotebookSession } from '../lib/notebookSession'
-import type { AnalysisNotebookFile, AnalysisNotebookSessionStatus } from '../../../types'
+import type {
+  AnalysisKernelDiagnostics,
+  AnalysisNotebookFile,
+  AnalysisNotebookSessionStatus
+} from '../../../types'
+import type { NotebookDocument } from '../../../../../shared/notebookDocument'
+import { NotebookKernelControl } from './NotebookKernelControl'
+import { notebookCommandLabel } from '../lib/notebookShortcuts'
 
 export const notebookFloatingActionInset = 28
+export const notebookFloatingActionSize = 34
+export const notebookFloatingActionCenterInset =
+  notebookFloatingActionInset + notebookFloatingActionSize / 2
 export const notebookFloatingActionRailClearance = 96
 
 export type NotebookFloatingActionAnchor = {
@@ -15,6 +35,7 @@ export type NotebookFloatingActionAnchor = {
 const SaveIcon = PhiIcons.action.save
 const StopIcon = PhiIcons.action.stop
 const FormatIcon = PhiIcons.action.format
+const SettingsIcon = PhiIcons.nav.settings
 
 export default function NotebookFloatingActions({
   hasDocument,
@@ -24,6 +45,12 @@ export default function NotebookFloatingActions({
   anchor,
   notebookFile,
   notebookSessionStatus,
+  kernelLabel,
+  kernelStatusLabel,
+  kernelStatusColor,
+  draftDocument,
+  kernelDiagnostics,
+  onKernelChange,
   onSave,
   onFormat,
   isFormatting = false,
@@ -36,16 +63,23 @@ export default function NotebookFloatingActions({
   anchor: NotebookFloatingActionAnchor
   notebookFile?: AnalysisNotebookFile | null
   notebookSessionStatus?: AnalysisNotebookSessionStatus | null
+  kernelLabel: string
+  kernelStatusLabel: string
+  kernelStatusColor: 'default' | 'primary' | 'success' | 'warning' | 'error'
+  draftDocument?: NotebookDocument | null
+  kernelDiagnostics?: AnalysisKernelDiagnostics | null
+  onKernelChange?: (kernelName: string) => void | Promise<void>
   onSave?: () => void
   onFormat?: () => void | Promise<void>
   isFormatting?: boolean
   onStopNotebookSession?: (file: AnalysisNotebookFile) => void | Promise<void>
 }): React.JSX.Element | null {
+  const [settingsAnchor, setSettingsAnchor] = useState<HTMLElement | null>(null)
   const canDisconnectNotebookSession = Boolean(
     notebookFile && onStopNotebookSession && hasLiveNotebookSession(notebookSessionStatus)
   )
 
-  if (!hasDocument && !canDisconnectNotebookSession) return null
+  if (!hasDocument) return null
 
   const fabSx = {
     width: 34,
@@ -67,6 +101,8 @@ export default function NotebookFloatingActions({
     }
   } as const
 
+  const closeSettingsMenu = (): void => setSettingsAnchor(null)
+
   return (
     <Stack
       data-phi-notebook-floating-actions="true"
@@ -82,73 +118,96 @@ export default function NotebookFloatingActions({
       }}
     >
       {hasDocument ? (
-        <Tooltip title={isFormatting ? '正在格式化 notebook' : '格式化 notebook'} placement="left">
-          <span>
-            <Fab
-              data-phi-notebook-floating-action="format"
-              size="small"
-              aria-label="格式化 notebook"
-              disabled={isOpening || isFormatting || !onFormat}
-              onClick={() => {
-                void onFormat?.()
-              }}
-              sx={fabSx}
-            >
-              <FormatIcon fontSize="small" />
-            </Fab>
-          </span>
-        </Tooltip>
+        <NotebookKernelControl
+          kernelLabel={kernelLabel}
+          kernelStatusLabel={kernelStatusLabel}
+          kernelStatusColor={kernelStatusColor}
+          draftDocument={draftDocument}
+          kernelDiagnostics={kernelDiagnostics}
+          onKernelChange={onKernelChange}
+        />
       ) : null}
       {hasDocument ? (
-        <Tooltip title={isDirty ? '保存 notebook' : '已保存'} placement="left">
-          <span>
-            <Fab
-              data-phi-notebook-save-state={isDirty ? 'unsaved' : 'saved'}
+        <>
+          <Tooltip title={isDirty ? '有未保存的修改' : 'Notebook 设置'} placement="left">
+            <span>
+              <Fab
+                data-phi-notebook-save-state={isDirty ? 'unsaved' : 'saved'}
+                data-phi-notebook-floating-action="settings"
+                size="small"
+                aria-label="Notebook 设置"
+                aria-haspopup="menu"
+                aria-expanded={settingsAnchor ? 'true' : undefined}
+                onClick={(event) => setSettingsAnchor(event.currentTarget)}
+                sx={{
+                  ...fabSx,
+                  bgcolor: isDirty ? 'warning.light' : 'background.paper',
+                  color: isDirty ? 'warning.dark' : 'text.secondary',
+                  '&:hover': {
+                    bgcolor: isDirty ? 'warning.light' : 'background.paper',
+                    color: isDirty ? 'warning.dark' : 'text.primary'
+                  }
+                }}
+              >
+                <SettingsIcon fontSize="small" />
+              </Fab>
+            </span>
+          </Tooltip>
+          <Menu
+            anchorEl={settingsAnchor}
+            open={Boolean(settingsAnchor)}
+            onClose={closeSettingsMenu}
+            anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+            transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+            slotProps={{ paper: { sx: { minWidth: 180 } } }}
+          >
+            <MenuItem
               data-phi-notebook-floating-action="save"
-              size="small"
-              aria-label="保存 notebook"
               disabled={!isDirty || isOpening}
-              onClick={onSave}
-              sx={{
-                ...fabSx,
-                bgcolor: isDirty ? 'warning.light' : 'background.paper',
-                color: isDirty ? 'warning.dark' : 'text.secondary',
-                '&:hover': {
-                  bgcolor: isDirty ? 'warning.light' : 'background.paper',
-                  color: isDirty ? 'warning.dark' : 'text.primary'
-                },
-                '&.Mui-disabled': {
-                  bgcolor: isDirty ? 'warning.light' : 'background.paper',
-                  color: isDirty ? 'warning.dark' : 'text.disabled',
-                  opacity: 0.82
-                }
-              }}
-            >
-              <SaveIcon fontSize="small" />
-            </Fab>
-          </span>
-        </Tooltip>
-      ) : null}
-      {canDisconnectNotebookSession ? (
-        <Tooltip title="断开 kernel" placement="left">
-          <span>
-            <Fab
-              data-phi-notebook-floating-action="disconnect-kernel"
-              size="small"
-              aria-label="断开 kernel"
-              disabled={Boolean(isStartingNotebookSession)}
               onClick={() => {
-                if (notebookFile) onStopNotebookSession?.(notebookFile)
-              }}
-              sx={{
-                ...fabSx,
-                color: 'warning.dark'
+                closeSettingsMenu()
+                onSave?.()
               }}
             >
-              <StopIcon fontSize="small" />
-            </Fab>
-          </span>
-        </Tooltip>
+              <ListItemIcon>
+                <SaveIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText primary={isDirty ? '保存 notebook' : '已保存'} />
+              <Typography variant="caption" color="text.secondary" sx={{ pl: 2 }}>
+                {notebookCommandLabel('save')}
+              </Typography>
+            </MenuItem>
+            <MenuItem
+              data-phi-notebook-floating-action="format"
+              disabled={isOpening || isFormatting || !onFormat}
+              onClick={() => {
+                closeSettingsMenu()
+                void onFormat?.()
+              }}
+            >
+              <ListItemIcon>
+                <FormatIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText primary={isFormatting ? '正在格式化 notebook' : '格式化 notebook'} />
+              <Typography variant="caption" color="text.secondary" sx={{ pl: 2 }}>
+                {notebookCommandLabel('format')}
+              </Typography>
+            </MenuItem>
+            <MenuItem
+              data-phi-notebook-floating-action="disconnect-kernel"
+              disabled={!canDisconnectNotebookSession || Boolean(isStartingNotebookSession)}
+              onClick={() => {
+                closeSettingsMenu()
+                if (notebookFile) void onStopNotebookSession?.(notebookFile)
+              }}
+            >
+              <ListItemIcon>
+                <StopIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText primary="断开 kernel" />
+            </MenuItem>
+          </Menu>
+        </>
       ) : null}
     </Stack>
   )

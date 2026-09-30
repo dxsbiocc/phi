@@ -356,6 +356,12 @@ test('analysis notebook runtime lets the active workspace open notebooks', () =>
   )
   assert.match(
     runtimeSource,
+    /const status = await rendererApi\.ensureAnalysisNotebookSession\(cwd, file\.path, document\)[\s\S]{0,240}refreshAnalysisJupyterRuntimeStatus\(\)/
+  )
+  assert.match(runtimeSource, /const read = \+\+analysisNotebookSessionReadRef\.current/)
+  assert.match(runtimeSource, /epoch !== analysisNotebookSessionEpochRef\.current/)
+  assert.match(
+    runtimeSource,
     /refreshAnalysisJupyterRuntimeStatus[\s\S]*const cwd = getActiveAnalysisCwd\(\)[\s\S]*if \(!cwd\)[\s\S]*return/
   )
 })
@@ -434,7 +440,8 @@ test('analysis view renders an opened notebook document', () => {
   assert.match(markup, /done/)
   assert.match(markup, /data-phi-notebook-save-state="saved"/)
   assert.match(markup, /data-phi-notebook-floating-actions="true"/)
-  assert.match(markup, /data-phi-notebook-floating-action="save"/)
+  assert.match(markup, /data-phi-notebook-floating-action="settings"/)
+  assert.match(markup, /aria-label="Notebook 设置"/)
   assert.doesNotMatch(markup, /data-phi-notebook-floating-action="refresh-kernels"/)
   assert.match(markup, /data-phi-notebook-outline="true"/)
   assert.match(markup, /data-phi-notebook-outline-popover="true"/)
@@ -629,7 +636,12 @@ test('analysis notebook cells reserve shift enter for running code cells', () =>
     ),
     'utf8'
   )
+  const canvasSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/analysis/notebook/NotebookCanvas.tsx'),
+    'utf8'
+  )
 
+  assert.match(cellSource, /if \(runAndAdvance\) onAdvanceCell\?\.\(cell\.id\)/)
   assert.match(cellSource, /const runCellFromKeyboard =/)
   assert.match(cellSource, /!event\.shiftKey && !event\.metaKey && !event\.ctrlKey/)
   assert.match(cellSource, /onKeyDown=\{runCellFromKeyboard\}/)
@@ -637,6 +649,13 @@ test('analysis notebook cells reserve shift enter for running code cells', () =>
   assert.match(codeSource, /onRun\?\.\(\)/)
   assert.match(editorSource, /key: 'Shift-Enter'[\s\S]*?return true/)
   assert.match(editorSource, /key: 'Mod-Enter'[\s\S]*?return true/)
+  assert.match(canvasSource, /key === 's'/)
+  assert.match(canvasSource, /const runAndAdvance = event\.shiftKey && !mod/)
+  assert.match(canvasSource, /setSelectedCellId\(nextCell\.id\)/)
+  assert.match(canvasSource, /event\.key === 'ArrowUp' \|\| event\.key === 'ArrowDown'/)
+  assert.match(canvasSource, /isNotebookTextEntryShortcutTarget\(target\)/)
+  assert.match(canvasSource, /setSelectedCellId\(adjacentCell\.id\)/)
+  assert.match(canvasSource, /scrollToNotebookCell\(adjacentCell\.id, 'nearest'\)/)
 })
 
 test('analysis view keeps code cell run action available while session status refreshes', () => {
@@ -893,12 +912,24 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(floatingActionsSource, /data-phi-notebook-floating-actions-inset/)
   assert.match(floatingActionsSource, /data-phi-notebook-floating-actions-position="fixed"/)
   assert.match(floatingActionsSource, /position: 'fixed'/)
+  assert.match(floatingActionsSource, /data-phi-notebook-floating-action="settings"/)
+  assert.match(floatingActionsSource, /data-phi-notebook-floating-action="save"/)
+  assert.match(floatingActionsSource, /data-phi-notebook-floating-action="format"/)
+  assert.match(
+    floatingActionsSource,
+    /<MenuItem[\s\S]{0,80}data-phi-notebook-floating-action="disconnect-kernel"/
+  )
+  assert.match(floatingActionsSource, /断开 kernel/)
+  assert.doesNotMatch(
+    floatingActionsSource,
+    /<Fab[\s\S]{0,160}data-phi-notebook-floating-action="disconnect-kernel"/
+  )
   assert.match(analysisSource, /const notebookCanvasRef = useRef<HTMLDivElement \| null>\(null\)/)
   assert.match(analysisSource, /getBoundingClientRect\(\)/)
   assert.match(analysisSource, /window\.innerWidth - rect\.right \+ notebookFloatingActionInset/)
   assert.match(analysisSource, /window\.innerHeight - rect\.bottom \+ notebookFloatingActionInset/)
   assert.match(analysisSource, /pt: \{ xs: 3\.5, md: 3\.75 \}/)
-  assert.match(analysisSource, /pb: 16/)
+  assert.match(analysisSource, /pb: 24/)
   assert.match(analysisSource, /onGenerateCode=\{openAiPrompt\}/)
   assert.match(notebookAiPromptDraftSource, /function acceptStagedNotebookCell/)
   assert.match(notebookAiPromptDraftSource, /function rejectStagedNotebookCell/)
@@ -1098,12 +1129,13 @@ test('analysis view exposes detected kernels in the notebook header', () => {
   assert.match(markup, /Python 3 \(python3\)/)
   assert.match(markup, /aria-label="Python 3 · not started"/)
 
-  const headerSource = readFileSync(
-    resolve(process.cwd(), 'src/renderer/src/features/analysis/components/NotebookHeader.tsx'),
+  const kernelControlSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/analysis/notebook/NotebookKernelControl.tsx'),
     'utf8'
   )
-  assert.match(headerSource, /kernelOptions\.map\(\(kernel\) =>/)
-  assert.match(headerSource, /kernelOptionLabel\(kernel\)/)
+  assert.match(kernelControlSource, /kernelOptions\.map\(\(kernel\) =>/)
+  assert.match(kernelControlSource, /kernelOptionLabel\(kernel\)/)
+  assert.match(markup, /data-phi-notebook-kernel-control="true"/)
 
   assert.match(markup, /data-phi-notebook-kernel-icon="python"/)
   assert.match(markup, /data-phi-material-icon="python"/)
@@ -1814,8 +1846,8 @@ test('analysis view renders notebook kernel session controls and status', () => 
   assert.doesNotMatch(disconnected, /aria-label="连接 kernel"/)
   assert.match(connected, /Kernel idle/)
   assert.match(connected, /data-phi-notebook-floating-actions="true"/)
-  assert.match(connected, /data-phi-notebook-floating-action="disconnect-kernel"/)
-  assert.match(connected, /断开/)
+  assert.doesNotMatch(connected, /data-phi-notebook-floating-action="disconnect-kernel"/)
+  assert.doesNotMatch(connected, /aria-label="断开 kernel"/)
 })
 
 test('analysis view auto-starts notebook sessions only when a kernel can be selected', () => {

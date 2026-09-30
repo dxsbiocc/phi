@@ -35,6 +35,9 @@ export function FileTreeRow({
       onClick={onClick}
       sx={{
         width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box',
         minHeight: 32,
         px: 1,
         py: 0.45,

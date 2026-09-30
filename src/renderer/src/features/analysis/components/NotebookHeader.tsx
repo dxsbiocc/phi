@@ -1,106 +1,30 @@
-import { useState, type MouseEvent } from 'react'
-import { Box, Button, Menu, MenuItem, Typography } from '@mui/material'
+import type { MouseEvent } from 'react'
+import { Box, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { PhiIcons, fileIconForPath } from '../../../icons'
-import {
-  kernelOptionLabel,
-  notebookLanguage,
-  notebookKernelName,
-  notebookTabLabel,
-  type NotebookListEntry
-} from '../lib/notebookViewModel'
-import type { AnalysisKernelDiagnostics, AnalysisKernelSummary } from '../../../types'
-import type { NotebookDocument } from '../../../../../shared/notebookDocument'
+import { notebookTabLabel, type NotebookListEntry } from '../lib/notebookViewModel'
 
 const CloseIcon = PhiIcons.action.close
-const ExpandIcon = PhiIcons.action.expand
 const NotebookIcon = PhiIcons.file.jupyter
-const PythonIcon = PhiIcons.file.python
-const RIcon = PhiIcons.file.r
 const macTitlebarHeight = 44
-
-function normalizedKernelIconKind(value: string | null | undefined): 'python' | 'r' | null {
-  const normalized = value?.trim().toLowerCase()
-  if (!normalized) return null
-  if (normalized === 'python' || normalized.startsWith('python') || normalized === 'py') {
-    return 'python'
-  }
-  if (normalized === 'r' || normalized === 'ir' || normalized.startsWith('r-')) return 'r'
-  return null
-}
-
-function notebookKernelIconKind(
-  kernel: AnalysisKernelSummary | undefined,
-  document: NotebookDocument | null | undefined,
-  fallbackLabel: string
-): 'python' | 'r' | 'jupyter' {
-  const candidates = kernel
-    ? [kernel.language, kernel.rawLanguage, kernel.name, kernel.displayName, fallbackLabel]
-    : [document ? notebookLanguage(document) : '', fallbackLabel]
-
-  for (const candidate of candidates) {
-    const iconKind = normalizedKernelIconKind(candidate)
-    if (iconKind) return iconKind
-  }
-  return 'jupyter'
-}
-
-function NotebookKernelIcon({
-  kind
-}: {
-  kind: ReturnType<typeof notebookKernelIconKind>
-}): React.JSX.Element {
-  if (kind === 'python') return <PythonIcon sx={{ fontSize: 14 }} />
-  if (kind === 'r') return <RIcon sx={{ fontSize: 14 }} />
-  return <NotebookIcon sx={{ fontSize: 14 }} />
-}
 
 export function NotebookHeader({
   activeNotebookPath,
   notebooks,
   hideNotebookTabs = false,
-  kernelLabel,
-  kernelStatusLabel,
-  kernelStatusColor,
-  draftDocument,
-  kernelDiagnostics,
-  onKernelChange,
   onSelectNotebook,
   onCloseNotebook
 }: {
   activeNotebookPath: string
   notebooks: NotebookListEntry[]
   hideNotebookTabs?: boolean
-  kernelLabel: string
-  kernelStatusLabel: string
-  kernelStatusColor: 'default' | 'primary' | 'success' | 'warning' | 'error'
-  draftDocument?: NotebookDocument | null
-  kernelDiagnostics?: AnalysisKernelDiagnostics | null
-  onKernelChange?: (kernelName: string) => void | Promise<void>
   onSelectNotebook?: (notebook: NotebookListEntry) => void
   onCloseNotebook?: (notebook: NotebookListEntry) => void
 }): React.JSX.Element {
-  const kernelOptions = kernelDiagnostics?.kernels ?? []
-  const selectedKernelName = draftDocument ? notebookKernelName(draftDocument) : ''
-  const selectedKernel = kernelOptions.find((kernel) => kernel.name === selectedKernelName)
-  const selectedKernelIsMissing = Boolean(
-    selectedKernelName && !kernelOptions.some((kernel) => kernel.name === selectedKernelName)
-  )
-  const canSelectKernel = Boolean(draftDocument && onKernelChange && kernelOptions.length > 0)
-  const [kernelMenuAnchor, setKernelMenuAnchor] = useState<HTMLElement | null>(null)
-  const kernelMenuOpen = Boolean(kernelMenuAnchor)
-  const selectedKernelLabel = selectedKernelIsMissing
-    ? kernelLabel
-    : selectedKernel
-      ? kernelOptionLabel(selectedKernel)
-      : selectedKernelName || 'Auto'
-  const kernelIconKind = notebookKernelIconKind(selectedKernel, draftDocument, kernelLabel)
-  const closeKernelMenu = (): void => setKernelMenuAnchor(null)
-  const chooseKernel = (kernelName: string): void => {
-    closeKernelMenu()
-    if (kernelName === selectedKernelName) return
-    void onKernelChange?.(kernelName)
+  if (hideNotebookTabs) {
+    return <Box data-phi-notebook-file-tabs-hidden="true" sx={{ display: 'none' }} />
   }
+
   return (
     <Box
       sx={{
@@ -108,141 +32,19 @@ export function NotebookHeader({
         flexShrink: 0,
         borderBottom: 1,
         borderColor: 'divider',
-        pl: 1.5,
-        pr: 15,
+        px: 1.5,
         display: 'flex',
         alignItems: 'center',
         gap: 1,
         WebkitAppRegion: 'drag'
       }}
     >
-      {hideNotebookTabs ? (
-        <Box data-phi-notebook-file-tabs-hidden="true" sx={{ flex: 1, minWidth: 0 }} />
-      ) : (
-        <NotebookFileTabs
-          activeNotebookPath={activeNotebookPath}
-          notebooks={notebooks}
-          onSelectNotebook={onSelectNotebook}
-          onCloseNotebook={onCloseNotebook}
-        />
-      )}
-      <Box
-        sx={{
-          display: { xs: 'none', md: 'flex' },
-          alignItems: 'center',
-          gap: 0.75,
-          minWidth: 0,
-          color: 'text.secondary',
-          WebkitAppRegion: 'no-drag'
-        }}
-      >
-        <Box
-          aria-label={kernelStatusLabel}
-          title={kernelStatusLabel}
-          data-phi-notebook-kernel-icon={kernelIconKind}
-          sx={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}
-        >
-          <NotebookKernelIcon kind={kernelIconKind} />
-          <Box
-            data-phi-notebook-kernel-status-dot={kernelStatusColor}
-            sx={{
-              position: 'absolute',
-              right: -2,
-              bottom: -2,
-              width: 6,
-              height: 6,
-              borderRadius: '50%',
-              border: 1,
-              borderColor: 'background.paper',
-              bgcolor:
-                kernelStatusColor === 'default' ? 'text.disabled' : `${kernelStatusColor}.main`
-            }}
-          />
-        </Box>
-        {kernelOptions.length > 0 && draftDocument ? (
-          <>
-            <Button
-              size="small"
-              data-phi-notebook-kernel-select="true"
-              data-phi-notebook-kernel-menu-button="true"
-              aria-label="选择 notebook kernel"
-              aria-haspopup="menu"
-              aria-expanded={kernelMenuOpen ? 'true' : undefined}
-              disabled={!canSelectKernel}
-              endIcon={<ExpandIcon sx={{ fontSize: 16 }} />}
-              onClick={(event) => {
-                setKernelMenuAnchor(event.currentTarget)
-              }}
-              sx={{
-                width: 170,
-                maxWidth: '20vw',
-                height: 24,
-                minWidth: 0,
-                px: 1,
-                border: 1,
-                borderColor: 'divider',
-                borderRadius: 1,
-                bgcolor: (theme) => alpha(theme.palette.background.paper, 0.72),
-                color: 'text.primary',
-                justifyContent: 'space-between',
-                textTransform: 'none',
-                fontSize: '0.74rem',
-                fontWeight: 600,
-                WebkitAppRegion: 'no-drag',
-                '& .MuiButton-endIcon': {
-                  ml: 0.35,
-                  mr: -0.2,
-                  color: 'text.secondary'
-                }
-              }}
-            >
-              <Typography
-                component="span"
-                noWrap
-                sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}
-              >
-                {selectedKernelLabel}
-              </Typography>
-            </Button>
-            <Menu
-              anchorEl={kernelMenuAnchor}
-              open={kernelMenuOpen}
-              onClose={closeKernelMenu}
-              slotProps={{
-                paper: {
-                  sx: {
-                    minWidth: 210,
-                    maxWidth: 320,
-                    WebkitAppRegion: 'no-drag'
-                  }
-                }
-              }}
-            >
-              {selectedKernelIsMissing ? (
-                <MenuItem disabled selected dense>
-                  {kernelLabel}
-                </MenuItem>
-              ) : null}
-              {kernelOptions.map((kernel) => (
-                <MenuItem
-                  key={kernel.name}
-                  dense
-                  selected={kernel.name === selectedKernelName}
-                  onClick={() => chooseKernel(kernel.name)}
-                >
-                  <Typography component="span" noWrap sx={{ fontSize: '0.82rem' }}>
-                    {kernelOptionLabel(kernel)}
-                  </Typography>
-                </MenuItem>
-              ))}
-            </Menu>
-          </>
-        ) : (
-          <Typography variant="caption" noWrap>
-            {kernelLabel}
-          </Typography>
-        )}
-      </Box>
+      <NotebookFileTabs
+        activeNotebookPath={activeNotebookPath}
+        notebooks={notebooks}
+        onSelectNotebook={onSelectNotebook}
+        onCloseNotebook={onCloseNotebook}
+      />
     </Box>
   )
 }

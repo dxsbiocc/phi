@@ -140,7 +140,11 @@ function FileTreeVirtualRowShell({
     [rowId, onMeasure]
   )
 
-  return <Box ref={onRowRef}>{children}</Box>
+  return (
+    <Box ref={onRowRef} sx={{ minWidth: 0, maxWidth: '100%' }}>
+      {children}
+    </Box>
+  )
 }
 
 export function ProjectFileTree({
@@ -401,15 +405,18 @@ export function ProjectFileTree({
       aria-label="项目目录树"
       sx={{
         height: '100%',
+        width: '100%',
         minHeight: 0,
+        minWidth: 0,
+        maxWidth: isStandalone ? '100%' : '42%',
         flex: isStandalone ? '1 1 auto' : '0 0 clamp(240px, 30%, 320px)',
-        maxWidth: isStandalone ? 'none' : '42%',
+        overflow: 'hidden',
         borderLeft: isStandalone ? 0 : 1,
         borderColor: 'divider',
         bgcolor: 'background.paper',
         display: 'flex',
         flexDirection: 'column',
-        flexShrink: 0
+        flexShrink: isStandalone ? 1 : 0
       }}
     >
       <Box sx={{ px: 1.5, pt: 1.25, pb: 1 }}>
@@ -433,7 +440,7 @@ export function ProjectFileTree({
       <Box
         ref={handleFileTreeContainerRef}
         onScroll={handleFileTreeScroll}
-        sx={{ flex: 1, minHeight: 0, overflow: 'auto', px: 0.75, pb: 0.75 }}
+        sx={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'auto', px: 0.75, pb: 0.75 }}
       >
         <FileTreeRootRow
           rootPath={rootPath}

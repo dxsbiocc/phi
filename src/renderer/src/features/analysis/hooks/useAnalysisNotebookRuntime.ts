@@ -86,6 +86,9 @@ export function useAnalysisNotebookRuntime({
   const analysisJupyterRequestRef = useRef(0)
   const analysisJupyterRuntimeRequestRef = useRef(0)
   const analysisNotebookSessionRequestRef = useRef(0)
+  const analysisNotebookSessionReadRef = useRef(0)
+  const analysisNotebookSessionEpochRef = useRef(0)
+  const isStartingNotebookSessionRef = useRef(false)
   const analysisCellExecutionRequestRef = useRef(0)
 
   useEffect(() => {
@@ -136,9 +139,14 @@ export function useAnalysisNotebookRuntime({
 
   const refreshAnalysisNotebookSessionStatus = useCallback(
     async (file: AnalysisNotebookFile): Promise<void> => {
-      const request = ++analysisNotebookSessionRequestRef.current
+      // Reads must not share the start/stop generation. Opening a notebook
+      // refreshes status and then auto-connects; sharing one counter let the
+      // read cancel the connect, and the auto-connect key then stayed latched.
+      const read = ++analysisNotebookSessionReadRef.current
+      const epoch = analysisNotebookSessionEpochRef.current
       const cwd = getActiveAnalysisCwd()
       if (!cwd) {
+        if (read !== analysisNotebookSessionReadRef.current) return
         setAnalysisNotebookSessionStatus(null)
         setAnalysisNotebookSessionError(null)
         return
@@ -151,14 +159,24 @@ export function useAnalysisNotebookRuntime({
           file.document
         )
         if (
-          request !== analysisNotebookSessionRequestRef.current ||
-          cwd !== getActiveAnalysisCwd()
+          read !== analysisNotebookSessionReadRef.current ||
+          epoch !== analysisNotebookSessionEpochRef.current ||
+          isStartingNotebookSessionRef.current ||
+          cwd !== getActiveAnalysisCwd() ||
+          activeAnalysisNotebookRef.current?.path !== file.path
         ) {
           return
         }
         setAnalysisNotebookSessionStatus(status)
       } catch (error) {
-        if (request !== analysisNotebookSessionRequestRef.current) return
+        if (
+          read !== analysisNotebookSessionReadRef.current ||
+          epoch !== analysisNotebookSessionEpochRef.current ||
+          isStartingNotebookSessionRef.current ||
+          activeAnalysisNotebookRef.current?.path !== file.path
+        ) {
+          return
+        }
         setAnalysisNotebookSessionStatus(null)
         setAnalysisNotebookSessionError(
           readableErrorMessage(error, '无法读取 notebook kernel 状态')
@@ -576,6 +594,7 @@ export function useAnalysisNotebookRuntime({
     ): Promise<void> => {
       const request = ++analysisNotebookSessionRequestRef.current
       const cwd = getActiveCwd()
+      isStartingNotebookSessionRef.current = true
       setIsStartingAnalysisNotebookSession(true)
       setAnalysisNotebookSessionError(null)
       try {
@@ -610,24 +629,28 @@ export function useAnalysisNotebookRuntime({
         if (request !== analysisNotebookSessionRequestRef.current || cwd !== getActiveCwd()) {
           return
         }
+        analysisNotebookSessionEpochRef.current += 1
         setAnalysisNotebookSessionStatus(status)
+        void refreshAnalysisJupyterRuntimeStatus()
       } catch (error) {
         if (request !== analysisNotebookSessionRequestRef.current) return
         setAnalysisNotebookSessionError(readableErrorMessage(error, '无法连接 notebook kernel'))
       } finally {
         if (request === analysisNotebookSessionRequestRef.current) {
+          isStartingNotebookSessionRef.current = false
           setIsStartingAnalysisNotebookSession(false)
           setIsStartingAnalysisJupyter(false)
         }
       }
     },
-    [analysisJupyterStatus, getActiveCwd, rendererApi]
+    [analysisJupyterStatus, getActiveCwd, refreshAnalysisJupyterRuntimeStatus, rendererApi]
   )
 
   const onStopAnalysisNotebookSession = useCallback(
     async (file: AnalysisNotebookFile): Promise<void> => {
       const request = ++analysisNotebookSessionRequestRef.current
       const cwd = getActiveCwd()
+      isStartingNotebookSessionRef.current = true
       setIsStartingAnalysisNotebookSession(true)
       setAnalysisNotebookSessionError(null)
       try {
@@ -635,17 +658,20 @@ export function useAnalysisNotebookRuntime({
         if (request !== analysisNotebookSessionRequestRef.current || cwd !== getActiveCwd()) {
           return
         }
+        analysisNotebookSessionEpochRef.current += 1
         setAnalysisNotebookSessionStatus(status)
+        void refreshAnalysisJupyterRuntimeStatus()
       } catch (error) {
         if (request !== analysisNotebookSessionRequestRef.current) return
         setAnalysisNotebookSessionError(readableErrorMessage(error, '无法断开 notebook kernel'))
       } finally {
         if (request === analysisNotebookSessionRequestRef.current) {
+          isStartingNotebookSessionRef.current = false
           setIsStartingAnalysisNotebookSession(false)
         }
       }
     },
-    [getActiveCwd, rendererApi]
+    [getActiveCwd, refreshAnalysisJupyterRuntimeStatus, rendererApi]
   )
 
   const onStopRuntimeNotebookSession = useCallback(
@@ -658,7 +684,10 @@ export function useAnalysisNotebookRuntime({
       try {
         const status = await rendererApi.closeAnalysisNotebookSession(cwd, notebookPath)
         if (cwd !== getActiveCwd()) return
-        setAnalysisNotebookSessionStatus(status)
+        if (activeAnalysisNotebookRef.current?.path === notebookPath) {
+          analysisNotebookSessionEpochRef.current += 1
+          setAnalysisNotebookSessionStatus(status)
+        }
         await refreshAnalysisJupyterRuntimeStatus()
       } catch (error) {
         if (cwd !== getActiveCwd()) return

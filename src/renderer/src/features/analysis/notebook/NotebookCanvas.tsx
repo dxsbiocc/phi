@@ -25,6 +25,11 @@ import {
 } from '../lib/notebookAiPromptDraft'
 import type { NotebookCanvasProps, PendingKernelSwitch } from '../lib/notebookCanvasTypes'
 import { notebookAiEmptyGenerationMessage, notebookAiPromptError } from '../lib/notebookAiErrors'
+import {
+  isNotebookCodeEditorShortcutTarget,
+  isNotebookPromptShortcutTarget,
+  isNotebookTextEntryShortcutTarget
+} from '../lib/notebookShortcuts'
 import { notebookAiGeneratedCellsFromResult } from '../lib/notebookAiGenerationResult'
 import { useNotebookAutoConnect } from '../lib/useNotebookAutoConnect'
 import {
@@ -409,7 +414,7 @@ export default function NotebookCanvas({
     (cellId: string, block: ScrollLogicalPosition): void => {
       const element = findOutlineCellElement(cellId)
       if (element) {
-        element.scrollIntoView({ block, behavior: 'smooth' })
+        element.scrollIntoView({ block, behavior: block === 'nearest' ? 'auto' : 'smooth' })
         return
       }
       if (!virtualCells.enabled) return
@@ -419,10 +424,21 @@ export default function NotebookCanvas({
       const listTop = notebookVirtualListScrollTop(scrollViewport, virtualListRef.current)
       const itemTop = virtualCells.offsets[index] ?? 0
       const itemHeight = virtualCells.heights[index] ?? 0
+      const cellTop = listTop + itemTop
+      const cellBottom = cellTop + itemHeight
+      if (block === 'nearest') {
+        const viewportTop = scrollViewport.scrollTop
+        const viewportBottom = viewportTop + scrollViewport.clientHeight
+        if (cellTop >= viewportTop && cellBottom <= viewportBottom) return
+        const targetTop =
+          cellTop < viewportTop ? cellTop : Math.max(0, cellBottom - scrollViewport.clientHeight)
+        scrollViewport.scrollTo({ top: targetTop, behavior: 'auto' })
+        return
+      }
       const targetTop =
         block === 'center'
-          ? listTop + itemTop - Math.max(0, (scrollViewport.clientHeight - itemHeight) / 2)
-          : listTop + itemTop
+          ? cellTop - Math.max(0, (scrollViewport.clientHeight - itemHeight) / 2)
+          : cellTop
       scrollViewport.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' })
     },
     [cellIndexById, findOutlineCellElement, virtualCells]
@@ -1082,6 +1098,13 @@ export default function NotebookCanvas({
   // read notebookFile/draftDocument directly, so NotebookCell needs their
   // real identity (not a blanket "ignore all functions") to avoid running a
   // stale document snapshot from a bailed-out memoized cell.
+  const onAdvanceCell = useCallback(
+    (cellId: string): void => {
+      const nextCell = cells[cells.findIndex((cell) => cell.id === cellId) + 1]
+      if (nextCell) setSelectedCellId(nextCell.id)
+    },
+    [cells]
+  )
   const onRunCell = useCallback(
     (cellId: string): void => {
       if (notebookFile && draftDocument) {
@@ -1090,6 +1113,86 @@ export default function NotebookCanvas({
     },
     [draftDocument, notebookFile, onRunNotebookCell]
   )
+  useEffect(() => {
+    const handleNotebookShortcut = (event: KeyboardEvent): void => {
+      const canvas = notebookCanvasRef.current
+      const target = event.target instanceof HTMLElement ? event.target : null
+      if (!canvas || !target || !canvas.contains(target) || !draftDocument || !notebookFile) return
+
+      const key = event.key.toLowerCase()
+      const mod = event.metaKey || event.ctrlKey
+      if (mod && !event.shiftKey && !event.altKey && key === 's') {
+        event.preventDefault()
+        event.stopPropagation()
+        if (isDirty && !isOpening) onSave()
+        return
+      }
+
+      if (mod && event.shiftKey && !event.altKey && key === 'f') {
+        if (isNotebookCodeEditorShortcutTarget(target) || isOpening || isFormattingNotebook) return
+        event.preventDefault()
+        event.stopPropagation()
+        void onFormatNotebook()
+        return
+      }
+
+      if (
+        (event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+        !mod &&
+        !event.altKey &&
+        !event.shiftKey &&
+        !event.nativeEvent.isComposing &&
+        !isNotebookTextEntryShortcutTarget(target)
+      ) {
+        const liveSelectedCellId =
+          selectedCellId && cells.some((cell) => cell.id === selectedCellId) ? selectedCellId : null
+        if (!liveSelectedCellId) return
+        const selectedIndex = cells.findIndex((cell) => cell.id === liveSelectedCellId)
+        const adjacentCell = cells[selectedIndex + (event.key === 'ArrowDown' ? 1 : -1)] ?? null
+        event.preventDefault()
+        event.stopPropagation()
+        if (!adjacentCell) return
+        setSelectedCellId(adjacentCell.id)
+        scrollToNotebookCell(adjacentCell.id, 'nearest')
+        return
+      }
+
+      if (key !== 'enter' || event.altKey || isNotebookPromptShortcutTarget(target)) return
+      const runInPlace = mod && !event.shiftKey
+      const runAndAdvance = event.shiftKey && !mod
+      if (!runInPlace && !runAndAdvance) return
+
+      const liveSelectedCellId =
+        selectedCellId && cells.some((cell) => cell.id === selectedCellId) ? selectedCellId : null
+      const selectedCell = cells.find((cell) => cell.id === liveSelectedCellId)
+      if (!liveSelectedCellId || selectedCell?.type !== 'code' || !canRunCells) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      onRunCell(liveSelectedCellId)
+      if (!runAndAdvance) return
+      const nextCell = cells[cells.findIndex((cell) => cell.id === liveSelectedCellId) + 1]
+      if (nextCell) setSelectedCellId(nextCell.id)
+    }
+
+    document.addEventListener('keydown', handleNotebookShortcut, true)
+    return () => {
+      document.removeEventListener('keydown', handleNotebookShortcut, true)
+    }
+  }, [
+    canRunCells,
+    cells,
+    draftDocument,
+    isDirty,
+    isFormattingNotebook,
+    isOpening,
+    notebookFile,
+    onFormatNotebook,
+    onRunCell,
+    onSave,
+    scrollToNotebookCell,
+    selectedCellId
+  ])
   const onStopCell = useCallback(
     (cellId: string): void => {
       if (notebookFile) {
@@ -1190,12 +1293,6 @@ export default function NotebookCanvas({
         activeNotebookPath={activeNotebookPath}
         notebooks={notebooks}
         hideNotebookTabs={hideNotebookTabs}
-        kernelLabel={kernelLabel}
-        kernelStatusLabel={kernelStatusLabel}
-        kernelStatusColor={kernelStatusColor}
-        draftDocument={draftDocument}
-        kernelDiagnostics={kernelDiagnostics}
-        onKernelChange={onKernelChange}
         onSelectNotebook={onSelectNotebook}
         onCloseNotebook={onCloseNotebook}
       />
@@ -1208,7 +1305,7 @@ export default function NotebookCanvas({
           overflowY: 'auto',
           px: { xs: 2, md: 4 },
           pt: { xs: 3.5, md: 3.75 },
-          pb: 16
+          pb: 24
         }}
       >
         <Box
@@ -1285,6 +1382,7 @@ export default function NotebookCanvas({
                       onMoveAiPrompt={isAiPreviewCell ? undefined : onMoveAiPrompt}
                       onSelectCell={isAiPreviewCell ? undefined : setSelectedCellId}
                       onRunCell={isAiPreviewCell ? undefined : onRunCell}
+                      onAdvanceCell={isAiPreviewCell ? undefined : onAdvanceCell}
                       onStopCell={isAiPreviewCell ? undefined : onStopCell}
                       canRunCells={canRunCells && !isAiPreviewCell}
                       notebookPath={notebookFile?.path}
@@ -1357,6 +1455,12 @@ export default function NotebookCanvas({
         anchor={floatingActionAnchor}
         notebookFile={notebookFile}
         notebookSessionStatus={notebookSessionStatus}
+        kernelLabel={kernelLabel}
+        kernelStatusLabel={kernelStatusLabel}
+        kernelStatusColor={kernelStatusColor}
+        draftDocument={draftDocument}
+        kernelDiagnostics={kernelDiagnostics}
+        onKernelChange={onKernelChange}
         onSave={onSave}
         onFormat={onFormatNotebook}
         isFormatting={isFormattingNotebook}

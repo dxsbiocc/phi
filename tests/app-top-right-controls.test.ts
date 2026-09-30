@@ -291,9 +291,9 @@ test('workspace file opens keep the left sidebar matched to the source surface',
     appSource,
     /const previewDirectoryPathInWorkspaceTab = useCallback[\s\S]{0,260}showActiveConversationInSidebar\(\)/
   )
-  assert.match(
+  assert.doesNotMatch(
     appSource,
-    /const onOpenNotebookWorkspaceFile = useCallback[\s\S]{0,420}showActiveConversationInSidebar\(\)/
+    /const onOpenNotebookWorkspaceFile = useCallback[\s\S]{0,700}showActiveConversationInSidebar\(\)/
   )
   assert.match(appSource, /const onOpenWorkspaceFileFromSidebar = useCallback/)
   assert.match(
@@ -306,7 +306,7 @@ test('workspace file opens keep the left sidebar matched to the source surface',
   )
   assert.match(
     appSource,
-    /onOpenNotebookWorkspaceFile\(path, \{ revealConversationSidebar: false \}\)/
+    /isNotebookFilePath\(path\)[\s\S]{0,120}onOpenNotebookWorkspaceFile\(path\)/
   )
   const selectFileTabStart = appSource.indexOf('const onSelectWorkspaceFileTab = useCallback')
   const closeFileTabStart = appSource.indexOf('const onCloseWorkspaceFileTab = useCallback')

@@ -1504,17 +1504,12 @@ function App(): React.JSX.Element {
   )
 
   const onOpenNotebookWorkspaceFile = useCallback(
-    (path: string, options: { revealConversationSidebar?: boolean } = {}): void => {
+    (path: string): void => {
       if (blockRemoteLocalFileAction()) return
       const normalizedPath = absoluteWorkspacePath(useSessionStore.getState().activeCwd, path)
       const title = fileNameFromPath(normalizedPath)
       filePreviewRequestRef.current += 1
       setFilePreview(null)
-      if (options.revealConversationSidebar ?? true) {
-        showActiveConversationInSidebar()
-      } else {
-        setIsSidebarOpen(true)
-      }
       setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
       setWorkspaceFileTabs((tabs) => {
         const nextTab: WorkspaceFileTab = {
@@ -1582,8 +1577,7 @@ function App(): React.JSX.Element {
       setActiveWorkspaceFilePath,
       setFilePreview,
       setWorkspaceFileTabs,
-      navigateToView,
-      showActiveConversationInSidebar
+      navigateToView
     ]
   )
 
@@ -2457,7 +2451,7 @@ function App(): React.JSX.Element {
       setIsSidebarOpen(true)
       setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
       if (isNotebookFilePath(path)) {
-        onOpenNotebookWorkspaceFile(path, { revealConversationSidebar: false })
+        onOpenNotebookWorkspaceFile(path)
         return
       }
       previewFilePath(path)

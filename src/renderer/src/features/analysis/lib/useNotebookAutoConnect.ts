@@ -42,6 +42,12 @@ export function useNotebookAutoConnect(input: {
     notebookSessionError
   } = input
   const autoConnectKeyRef = useRef<string | null>(null)
+  const sessionStatusForNotebook =
+    notebookSessionStatus &&
+    notebookFile &&
+    notebookSessionStatus.notebookPath !== notebookFile.path
+      ? null
+      : notebookSessionStatus
 
   useEffect(() => {
     if (
@@ -52,7 +58,7 @@ export function useNotebookAutoConnect(input: {
         hasStartHandler: Boolean(onStartNotebookSession),
         availableKernelCount: kernelDiagnostics?.kernels.length ?? 0,
         isStartingNotebookSession,
-        notebookSessionStatus,
+        notebookSessionStatus: sessionStatusForNotebook,
         lastAutoConnectKey: autoConnectKeyRef.current
       }) ||
       !notebookFile ||
@@ -70,7 +76,8 @@ export function useNotebookAutoConnect(input: {
     kernelDiagnostics?.kernels.length,
     notebookFile,
     notebookSessionStatus,
-    onStartNotebookSession
+    onStartNotebookSession,
+    sessionStatusForNotebook
   ])
 
   useEffect(() => {
@@ -80,7 +87,7 @@ export function useNotebookAutoConnect(input: {
       !draftDocument ||
       !onStartNotebookSession ||
       isStartingNotebookSession ||
-      hasLiveNotebookSession(notebookSessionStatus)
+      hasLiveNotebookSession(sessionStatusForNotebook)
     ) {
       return
     }
@@ -96,6 +103,7 @@ export function useNotebookAutoConnect(input: {
     onStartNotebookSession,
     isStartingNotebookSession,
     notebookSessionStatus,
+    sessionStatusForNotebook,
     autoConnectKey
   ])
 

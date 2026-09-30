@@ -269,7 +269,9 @@ function AppWorkspaceSidebarImpl({
         sx={{
           width: '100%',
           minWidth: 0,
+          maxWidth: '100%',
           height: '100%',
+          overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
           bgcolor: (muiTheme) =>
@@ -286,7 +288,7 @@ function AppWorkspaceSidebarImpl({
             compact
           />
         ) : null}
-        <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
+        <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex' }}>
           {isRemoteProject && !workspaceRootPath ? (
             <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
               服务器档案或会话不可用，暂时无法显示远程文件。
@@ -418,6 +420,10 @@ function AppWorkspaceSidebarImpl({
         className="app-sidebar-shell"
         sx={{
           width: sidebarWidth,
+          maxWidth: sidebarWidth,
+          minWidth: 0,
+          height: '100%',
+          overflow: 'hidden',
           flexShrink: 0,
           position: 'relative',
           zIndex: 1,

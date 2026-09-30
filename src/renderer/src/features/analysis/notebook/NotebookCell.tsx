@@ -27,6 +27,7 @@ import {
   notebookCellAccent,
   type CanvasCell
 } from '../lib/notebookViewModel'
+import { notebookCommandLabel } from '../lib/notebookShortcuts'
 import type { NotebookCellType } from '../../../../../shared/notebookDocument'
 import MarkdownContent from '../../../components/MarkdownContent'
 import NotebookCodeCellSource from './NotebookCodeCellSource'
@@ -91,6 +92,7 @@ type NotebookCellProps = {
   onMoveAiPrompt?: (targetCellId: string, placement: CellPlacement) => void
   onSelectCell?: (cellId: string) => void
   onRunCell?: (cellId: string) => void
+  onAdvanceCell?: (cellId: string) => void
   onStopCell?: (cellId: string) => void
   canRunCells?: boolean
   provisional?: boolean
@@ -125,6 +127,7 @@ function notebookCellPropsEqual(prev: NotebookCellProps, next: NotebookCellProps
     prev.onInsertBefore === next.onInsertBefore &&
     prev.onInsertAfter === next.onInsertAfter &&
     prev.onRunCell === next.onRunCell &&
+    prev.onAdvanceCell === next.onAdvanceCell &&
     prev.onStopCell === next.onStopCell &&
     prev.onMoveAiPrompt === next.onMoveAiPrompt
   )
@@ -147,6 +150,7 @@ function NotebookCellImpl({
   onMoveAiPrompt,
   onSelectCell,
   onRunCell,
+  onAdvanceCell,
   onStopCell,
   canRunCells = false,
   notebookPath,
@@ -181,14 +185,17 @@ function NotebookCellImpl({
       ? formatExecutionDuration(cell.executionDurationMs)
       : null
   const showExecutionMeta = isRunning || isCellActive
-  const primaryActionTitle = isRenderedMarkdown
+  const primaryActionLabel = isRenderedMarkdown
     ? '编辑 Markdown'
     : isRunning
       ? '停止 cell'
       : isCodeCell
         ? '运行 cell'
         : '此 cell 无需运行'
-  const primaryActionLabel = primaryActionTitle
+  const primaryActionTitle =
+    isCodeCell && !isRunning && !isRenderedMarkdown
+      ? `${primaryActionLabel}（${notebookCommandLabel('run-and-advance')} / ${notebookCommandLabel('run')}）`
+      : primaryActionLabel
   const isPrimaryActionDisabled = isRenderedMarkdown ? !editable : isRunning ? !canStop : !canRun
   const showPrimaryActionAccent = !isRunning && (isRenderedMarkdown || canRun)
   const runCellFromKeyboard = (event: React.KeyboardEvent<HTMLElement>): void => {
@@ -578,10 +585,28 @@ function NotebookCellImpl({
               autoFocus
               fullWidth
               multiline
-              minRows={isMarkdown ? 2 : 3}
+              minRows={1}
               value={cell.source}
               variant="standard"
               onChange={(event) => onSourceChange?.(cell.id, event.target.value)}
+              onKeyDown={(event) => {
+                if (
+                  !isMarkdown ||
+                  event.nativeEvent.isComposing ||
+                  event.key !== 'Enter' ||
+                  event.altKey
+                ) {
+                  return
+                }
+                const mod = event.metaKey || event.ctrlKey
+                const runAndAdvance = event.shiftKey && !mod
+                const runInPlace = mod && !event.shiftKey
+                if (!runAndAdvance && !runInPlace) return
+                event.preventDefault()
+                event.stopPropagation()
+                setIsEditing(false)
+                if (runAndAdvance) onAdvanceCell?.(cell.id)
+              }}
               onBlur={() => setIsEditing(false)}
               slotProps={{
                 input: {
@@ -612,8 +637,18 @@ function NotebookCellImpl({
                 if (editable) setIsEditing(true)
               }}
               onKeyDown={(event) => {
-                if (!editable) return
-                if (event.key === 'Enter' || event.key === ' ') {
+                if (!editable || event.nativeEvent.isComposing) return
+                const mod = event.metaKey || event.ctrlKey
+                if (event.key === 'Enter' && event.shiftKey && !mod) {
+                  event.preventDefault()
+                  onAdvanceCell?.(cell.id)
+                  return
+                }
+                if (event.key === 'Enter' && mod && !event.shiftKey) {
+                  event.preventDefault()
+                  return
+                }
+                if ((event.key === 'Enter' && !event.shiftKey && !mod) || event.key === ' ') {
                   event.preventDefault()
                   setIsEditing(true)
                 }
