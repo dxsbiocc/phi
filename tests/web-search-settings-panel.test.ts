@@ -6,7 +6,14 @@ import { createTheme, ThemeProvider } from '@mui/material'
 
 import { WebSearchSettingsEditor } from '../src/renderer/src/features/settings/WebSearchSettingsPanel'
 import { SearxngEnginePicker } from '../src/renderer/src/features/settings/components/SearxngEnginePicker'
-import { filterSearxngEngines } from '../src/renderer/src/features/settings/lib/searxngEngines'
+import { webSearchSettingsFromValues } from '../src/main/agent/web-search-settings'
+import {
+  filterSearxngEngines,
+  listSearxngEnginePage,
+  mergeSearxngEngines,
+  SEARXNG_DEFAULT_ENGINES,
+  toggleSearxngEngine
+} from '../src/renderer/src/features/settings/lib/searxngEngines'
 import type { WebSearchSettings } from '../src/shared/webSearchSettingsTypes'
 
 const settings: WebSearchSettings = {
@@ -33,7 +40,16 @@ const settings: WebSearchSettings = {
   searxngEngines: 'sogou wechat'
 }
 
-function renderEditor(snapshot = settings): string {
+const instanceCatalog = [
+  { name: 'sogou', shortcut: 'sogou', categories: ['general'], enabled: false },
+  { name: 'sogou wechat', shortcut: 'sogouw', categories: ['news'], enabled: true },
+  { name: 'bitbucket', categories: ['it'], enabled: false }
+]
+
+function renderEditor(
+  snapshot = settings,
+  catalog: typeof instanceCatalog | null = instanceCatalog
+): string {
   return renderToStaticMarkup(
     createElement(
       ThemeProvider,
@@ -44,11 +60,7 @@ function renderEditor(snapshot = settings): string {
         onSetApiKey: async () => ({ apiKeyConfigured: true, apiKeyStored: true }),
         onClearApiKey: async () => ({ apiKeyConfigured: false, apiKeyStored: false }),
         onOpenProviderSettings: () => undefined,
-        searxngCatalog: [
-          { name: 'sogou', shortcut: 'sogou', categories: ['general'], enabled: false },
-          { name: 'sogou wechat', shortcut: 'sogouw', categories: ['news'], enabled: true },
-          { name: 'bitbucket', categories: ['it'], enabled: false }
-        ]
+        searxngCatalog: catalog ?? undefined
       })
     )
   )
@@ -62,15 +74,15 @@ test('web search settings separate SearXNG engines from upstream providers', () 
   assert.match(markup, /aria-label="上移 Exa"/)
   assert.match(markup, /aria-label="下移 SearXNG"/)
   assert.match(markup, />置顶<\/button>/)
-  assert.match(markup, /上游搜索服务提供方（高级）/)
+  assert.match(markup, /搜索服务来源/)
   assert.match(markup, /免凭据可用/)
   assert.match(markup, /自建实例/)
   assert.match(markup, /免凭据后备可用/)
-  assert.match(markup, /aria-label="选择 sogou wechat 引擎"/)
-  assert.match(markup, /aria-label="选择 sogou 引擎"/)
+  assert.match(markup, /aria-label="启用 sogou wechat 引擎"/)
+  assert.match(markup, /aria-label="启用 sogou 引擎"/)
   assert.match(markup, /默认关闭/)
   assert.match(markup, />仅此<\/button>/)
-  const defaultOffInput = markup.match(/<input[^>]*aria-label="选择 sogou 引擎"[^>]*>/)?.[0]
+  const defaultOffInput = markup.match(/<input[^>]*aria-label="启用 sogou 引擎"[^>]*>/)?.[0]
   assert.ok(defaultOffInput)
   assert.doesNotMatch(defaultOffInput, /\bdisabled\b/)
   assert.match(markup, /http:\/\/127\.0\.0\.1:8888/)
@@ -82,8 +94,104 @@ test('SearXNG settings explain when its upstream provider is disabled', () => {
   const markup = renderEditor({ ...settings, orderedEnabledIds: ['exa', 'google'] })
 
   assert.match(markup, /aria-label="启用 SearXNG 搜索"/)
-  assert.match(markup, /SearXNG 服务提供方已关闭/)
+  assert.match(markup, /SearXNG 搜索来源已关闭/)
   assert.match(markup, /限定引擎名称（可选）/)
+})
+
+test('the paged catalog shows its full count and default-off Sogou switches before adding an instance', () => {
+  const markup = renderEditor(
+    {
+      ...settings,
+      searxngEndpoint: '',
+      searxngEngines: ''
+    },
+    null
+  )
+
+  assert.match(markup, />添加实例<\/button>/)
+  assert.match(markup, /尚未添加实例；可以先选择引擎/)
+  assert.equal(SEARXNG_DEFAULT_ENGINES.length, 352)
+  assert.match(markup, /全部 352 个引擎/)
+  for (const preset of SEARXNG_DEFAULT_ENGINES.filter((engine) =>
+    engine.name.startsWith('sogou')
+  )) {
+    const input = markup.match(
+      new RegExp(`<input[^>]*aria-label="启用 ${preset.name} 引擎"[^>]*>`)
+    )?.[0]
+    assert.ok(input, `${preset.name} must be visible`)
+    assert.doesNotMatch(input, /\bdisabled\b/)
+    assert.doesNotMatch(input, /\bchecked\b/)
+  }
+  assert.ok(SEARXNG_DEFAULT_ENGINES.some((engine) => engine.inactive))
+  assert.doesNotMatch(markup, /placeholder="http:\/\/127\.0\.0\.1:8888"/)
+})
+
+test('search, status filters, and pagination cover the full SearXNG catalog', () => {
+  const options = {
+    query: 'sogou',
+    selection: 'all' as const,
+    status: 'default-off' as const,
+    selectedNames: new Set<string>(),
+    rowsPerPage: 2,
+    nameOrder: 'original' as const
+  }
+  const first = listSearxngEnginePage(SEARXNG_DEFAULT_ENGINES, { ...options, page: 0 })
+  const second = listSearxngEnginePage(SEARXNG_DEFAULT_ENGINES, { ...options, page: 1 })
+
+  assert.equal(first.total, 4)
+  assert.deepEqual(
+    first.rows.map((engine) => engine.name),
+    ['sogou', 'sogou images']
+  )
+  assert.deepEqual(
+    second.rows.map((engine) => engine.name),
+    ['sogou videos', 'sogou wechat']
+  )
+  assert.equal(second.page, 1)
+  assert.equal(listSearxngEnginePage(SEARXNG_DEFAULT_ENGINES, { ...options, page: 99 }).page, 1)
+  const selected = listSearxngEnginePage(SEARXNG_DEFAULT_ENGINES, {
+    ...options,
+    query: '',
+    selection: 'selected',
+    status: 'all',
+    selectedNames: new Set(['sogou']),
+    page: 0
+  })
+  assert.deepEqual(
+    selected.rows.map((engine) => engine.name),
+    ['sogou']
+  )
+  assert.ok(
+    listSearxngEnginePage(SEARXNG_DEFAULT_ENGINES, {
+      ...options,
+      query: '',
+      selection: 'unavailable',
+      status: 'admin-required',
+      page: 0
+    }).total > 0
+  )
+})
+
+test('every built-in web_search provider is rendered directly in the settings list', () => {
+  const all = webSearchSettingsFromValues({
+    order: [],
+    excluded: [],
+    endpoint: undefined,
+    engines: undefined
+  })
+  const markup = renderEditor(all, null)
+
+  assert.equal(all.providers.length, 23)
+  for (const provider of all.providers) {
+    assert.match(markup, new RegExp(`aria-label="启用 ${provider.label} 搜索"`))
+  }
+  assert.doesNotMatch(markup, /上游搜索服务提供方（高级）/)
+})
+
+test('a default-disabled Sogou engine can be explicitly selected', () => {
+  assert.equal(toggleSearxngEngine([], [], 'sogou'), 'sogou')
+  assert.equal(toggleSearxngEngine([], ['google'], 'sogou'), 'google,sogou')
+  assert.equal(toggleSearxngEngine(['sogou'], [], 'sogou'), null)
 })
 
 test('provider groups explain cost and authentication before enabling a service', () => {
@@ -121,14 +229,13 @@ test('provider groups explain cost and authentication before enabling a service'
   assert.match(markup, /到 Provider 设置授权/)
 })
 
-test('SearXNG engine picker lists only names returned by its instance', () => {
+test('SearXNG engine picker marks upstream entries absent from an instance as unavailable', () => {
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme: createTheme() },
       createElement(SearxngEnginePicker, {
         endpoint: 'http://127.0.0.1:8888',
-        savedEndpoint: 'http://127.0.0.1:8888',
         engines: '',
         onChange: () => undefined,
         catalog: [{ name: 'sogou wechat', categories: ['news'], enabled: true }]
@@ -137,7 +244,18 @@ test('SearXNG engine picker lists only names returned by its instance', () => {
   )
 
   assert.match(markup, /sogou wechat/)
+  assert.match(markup, /实例未提供/)
   assert.doesNotMatch(markup, /xAI/)
+})
+
+test('an instance can make an upstream inactive engine available', () => {
+  const inactive = SEARXNG_DEFAULT_ENGINES.find((engine) => engine.inactive)
+  assert.ok(inactive)
+  const merged = mergeSearxngEngines([{ name: inactive.name, categories: [], enabled: false }])
+  const available = merged.find((engine) => engine.name === inactive.name)
+  assert.equal(available?.available, true)
+  assert.equal(available?.inactive, false)
+  assert.equal(merged.find((engine) => engine.name === 'sogou')?.available, false)
 })
 
 test('SearXNG engine filter finds ordinary Sogou and its WeChat variant', () => {

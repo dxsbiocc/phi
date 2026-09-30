@@ -1,8 +1,5 @@
 import { useEffect, useState } from 'react'
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -10,10 +7,9 @@ import {
   IconButton,
   Paper,
   Stack,
-  TextField,
   Typography
 } from '@mui/material'
-import { GoChevronDown, GoSync } from 'react-icons/go'
+import { GoPlus, GoSync } from 'react-icons/go'
 import type {
   SearxngEngineOption,
   WebSearchKeyStatus,
@@ -21,6 +17,7 @@ import type {
   WebSearchSettingsPatch
 } from '../../../../shared/webSearchSettingsTypes'
 import { SearxngEnginePicker } from './components/SearxngEnginePicker'
+import { SearxngInstanceDialog } from './components/SearxngInstanceDialog'
 import { SearchProviderList } from './components/SearchProviderList'
 
 function errorMessage(error: unknown): string {
@@ -45,14 +42,13 @@ export function WebSearchSettingsEditor({
   onOpenProviderSettings?: () => void
 }): React.JSX.Element {
   const [enabledIds, setEnabledIds] = useState(settings.orderedEnabledIds)
-  const [endpoint, setEndpoint] = useState(settings.searxngEndpoint)
   const [engines, setEngines] = useState(settings.searxngEngines)
+  const [instanceDialogOpen, setInstanceDialogOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const defaultIds = settings.providers.map((provider) => provider.id)
   const hasChanges =
     enabledIds.join('\0') !== settings.orderedEnabledIds.join('\0') ||
-    endpoint !== settings.searxngEndpoint ||
     engines !== settings.searxngEngines
 
   function toggleProvider(id: string): void {
@@ -88,11 +84,25 @@ export function WebSearchSettingsEditor({
     try {
       await onSave({
         orderedEnabledIds: enabledIds,
-        searxngEndpoint: endpoint,
+        searxngEndpoint: settings.searxngEndpoint,
         searxngEngines: engines
       })
     } catch (cause) {
       setError(errorMessage(cause))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function saveInstance(nextEndpoint: string): Promise<void> {
+    setSaving(true)
+    try {
+      await onSave({
+        orderedEnabledIds: enabledIds,
+        searxngEndpoint: nextEndpoint,
+        searxngEngines: nextEndpoint ? engines : ''
+      })
+      setInstanceDialogOpen(false)
     } finally {
       setSaving(false)
     }
@@ -103,29 +113,30 @@ export function WebSearchSettingsEditor({
       <Box>
         <Typography variant="h6">网页搜索</Typography>
         <Typography variant="body2" color="text.secondary">
-          配置 SearXNG 实例内的搜索引擎，以及网页搜索使用的上游服务。
+          选择搜索来源；SearXNG 的引擎可单独选择，实例通过按钮添加。
         </Typography>
       </Box>
 
       <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 1 }}>
         <Stack spacing={1.5}>
-          <Typography variant="subtitle2">SearXNG 实例</Typography>
-          <TextField
-            fullWidth
-            size="small"
-            label="实例地址"
-            placeholder="http://127.0.0.1:8888"
-            value={endpoint}
-            disabled={saving}
-            onChange={(event) => {
-              onDirty?.()
-              setEndpoint(event.target.value)
-            }}
-            helperText="填写根地址；实例须启用 JSON 搜索接口。"
-          />
+          <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+            <Box>
+              <Typography variant="subtitle2">SearXNG 搜索源</Typography>
+              <Typography variant="caption" color="text.secondary">
+                {settings.searxngEndpoint || '尚未添加实例；可以先选择引擎'}
+              </Typography>
+            </Box>
+            <Button
+              size="small"
+              startIcon={settings.searxngEndpoint ? undefined : <GoPlus size={16} />}
+              disabled={saving}
+              onClick={() => setInstanceDialogOpen(true)}
+            >
+              {settings.searxngEndpoint ? '修改实例' : '添加实例'}
+            </Button>
+          </Stack>
           <SearxngEnginePicker
-            endpoint={endpoint}
-            savedEndpoint={settings.searxngEndpoint}
+            endpoint={settings.searxngEndpoint}
             engines={engines}
             onChange={(value) => {
               onDirty?.()
@@ -134,37 +145,46 @@ export function WebSearchSettingsEditor({
             disabled={saving}
             catalog={searxngCatalog}
           />
-          {!enabledIds.includes('searxng') && (
+          {!settings.searxngEndpoint && (
             <Alert severity="info">
-              SearXNG 服务提供方已关闭；如需使用，请在下方高级设置中启用。
+              当前没有 SearXNG 实例，所选引擎会保存，但搜索需添加实例后才能运行。
+            </Alert>
+          )}
+          {!enabledIds.includes('searxng') && (
+            <Alert
+              severity="info"
+              action={<Button onClick={() => toggleProvider('searxng')}>启用</Button>}
+            >
+              SearXNG 搜索来源已关闭。
             </Alert>
           )}
         </Stack>
       </Paper>
 
-      <Accordion disableGutters variant="outlined" sx={{ borderRadius: 1 }}>
-        <AccordionSummary expandIcon={<GoChevronDown size={18} />}>
-          <Box>
-            <Typography variant="subtitle2">上游搜索服务提供方（高级）</Typography>
-            <Typography variant="caption" color="text.secondary">
-              按免凭据、账号或 API 服务、自建实例分组；与上方的 SearXNG 实例引擎分开管理。
-            </Typography>
-          </Box>
-        </AccordionSummary>
-        <AccordionDetails sx={{ p: 1.5, pt: 0 }}>
-          <SearchProviderList
-            providers={settings.providers}
-            enabledIds={enabledIds}
-            disabled={saving}
-            onToggle={toggleProvider}
-            onMove={moveProvider}
-            onPrioritize={prioritizeProvider}
-            onSetApiKey={onSetApiKey}
-            onClearApiKey={onClearApiKey}
-            onOpenProviderSettings={onOpenProviderSettings}
-          />
-        </AccordionDetails>
-      </Accordion>
+      <Box>
+        <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
+          搜索服务来源
+        </Typography>
+        <SearchProviderList
+          providers={settings.providers}
+          enabledIds={enabledIds}
+          disabled={saving}
+          onToggle={toggleProvider}
+          onMove={moveProvider}
+          onPrioritize={prioritizeProvider}
+          onSetApiKey={onSetApiKey}
+          onClearApiKey={onClearApiKey}
+          onOpenProviderSettings={onOpenProviderSettings}
+        />
+      </Box>
+
+      {instanceDialogOpen && (
+        <SearxngInstanceDialog
+          initialEndpoint={settings.searxngEndpoint}
+          onClose={() => setInstanceDialogOpen(false)}
+          onSave={saveInstance}
+        />
+      )}
 
       {error && <Alert severity="error">{error}</Alert>}
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>

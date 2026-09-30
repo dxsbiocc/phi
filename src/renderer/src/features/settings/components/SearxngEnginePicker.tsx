@@ -1,18 +1,46 @@
 import { useEffect, useState } from 'react'
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
-  Checkbox,
   Chip,
   CircularProgress,
+  FormControl,
+  InputAdornment,
+  InputLabel,
+  MenuItem,
   Paper,
+  Select,
   Stack,
+  Switch,
+  Tab,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TablePagination,
+  TableRow,
+  TableSortLabel,
+  Tabs,
   TextField,
   Typography
 } from '@mui/material'
+import { GoChevronDown, GoSearch } from 'react-icons/go'
 import type { SearxngEngineOption } from '../../../../../shared/webSearchSettingsTypes'
-import { filterSearxngEngines } from '../lib/searxngEngines'
+import {
+  isSearxngEngineUnavailable,
+  listSearxngEnginePage,
+  mergeSearxngEngines,
+  SEARXNG_DEFAULT_ENGINES,
+  type SearxngDisplayEngine,
+  type SearxngSelectionFilter,
+  type SearxngStatusFilter,
+  toggleSearxngEngine
+} from '../lib/searxngEngines'
 
 function engineNames(value: string): string[] {
   return value
@@ -23,66 +51,94 @@ function engineNames(value: string): string[] {
 
 export function SearxngEnginePicker({
   endpoint,
-  savedEndpoint,
   engines,
   onChange,
   disabled = false,
   catalog
 }: {
   endpoint: string
-  savedEndpoint: string
   engines: string
   onChange: (value: string) => void
   disabled?: boolean
   catalog?: SearxngEngineOption[]
 }): React.JSX.Element {
-  const [loaded, setLoaded] = useState<SearxngEngineOption[] | null>(catalog ?? null)
+  const [loaded, setLoaded] = useState<SearxngDisplayEngine[]>(
+    catalog ? mergeSearxngEngines(catalog) : SEARXNG_DEFAULT_ENGINES
+  )
+  const [fromInstance, setFromInstance] = useState(Boolean(catalog))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
+  const [selectionFilter, setSelectionFilter] = useState<SearxngSelectionFilter>('all')
+  const [statusFilter, setStatusFilter] = useState<SearxngStatusFilter>('all')
+  const [page, setPage] = useState(0)
+  const [rowsPerPage, setRowsPerPage] = useState(10)
+  const [nameOrder, setNameOrder] = useState<'original' | 'asc' | 'desc'>('original')
   const selected = engineNames(engines)
-  const enabledNames = loaded?.filter((engine) => engine.enabled).map((engine) => engine.name) ?? []
+  const enabledNames = loaded
+    .filter((engine) => engine.enabled && !engine.inactive && engine.available !== false)
+    .map((engine) => engine.name)
   const effectiveSelected = selected.length ? selected : enabledNames
-  const unknownNames = selected.filter((name) => !loaded?.some((engine) => engine.name === name))
-  const endpointChanged = endpoint.trim().replace(/\/+$/, '') !== savedEndpoint.replace(/\/+$/, '')
-  const visibleEngines = loaded ? filterSearxngEngines(loaded, filter) : []
+  const selectedNames = new Set(effectiveSelected)
+  const unknownNames = fromInstance
+    ? selected.filter(
+        (name) => !loaded.some((engine) => engine.name === name && engine.available !== false)
+      )
+    : []
+  const availableEngines = loaded.filter((engine) => !isSearxngEngineUnavailable(engine))
+  const selectedCount = availableEngines.filter((engine) => selectedNames.has(engine.name)).length
+  const unavailableCount = loaded.length - availableEngines.length
+  const result = listSearxngEnginePage(loaded, {
+    query: filter,
+    selection: selectionFilter,
+    status: statusFilter,
+    selectedNames,
+    page,
+    rowsPerPage,
+    nameOrder
+  })
 
   async function refresh(): Promise<void> {
     setLoading(true)
     setError(null)
     try {
-      setLoaded(await window.api.listSearxngEngines())
+      setLoaded(mergeSearxngEngines(await window.api.listSearxngEngines()))
+      setFromInstance(true)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
+      setLoaded(SEARXNG_DEFAULT_ENGINES)
+      setFromInstance(false)
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    if (catalog || !savedEndpoint) return
+    if (catalog || !endpoint) return
     let active = true
     void window.api
       .listSearxngEngines()
       .then((result) => {
-        if (active) setLoaded(result)
+        if (active) {
+          setLoaded(mergeSearxngEngines(result))
+          setFromInstance(true)
+        }
       })
       .catch((cause: unknown) => {
-        if (active) setError(cause instanceof Error ? cause.message : String(cause))
+        if (active) {
+          setError(cause instanceof Error ? cause.message : String(cause))
+          setLoaded(SEARXNG_DEFAULT_ENGINES)
+          setFromInstance(false)
+        }
       })
     return () => {
       active = false
     }
-  }, [catalog, savedEndpoint])
+  }, [catalog, endpoint])
 
   function toggle(name: string): void {
-    const next = effectiveSelected.includes(name)
-      ? effectiveSelected.filter((item) => item !== name)
-      : [...effectiveSelected, name]
-    if (!next.length) return
-    const matchesDefault =
-      next.length === enabledNames.length && enabledNames.every((item) => next.includes(item))
-    onChange(matchesDefault ? '' : next.join(','))
+    const next = toggleSearxngEngine(selected, enabledNames, name)
+    if (next !== null) onChange(next)
   }
 
   return (
@@ -91,109 +147,223 @@ export function SearxngEnginePicker({
         <Box>
           <Typography variant="subtitle2">SearXNG 搜索引擎</Typography>
           <Typography variant="caption" color="text.secondary">
-            {selected.length ? `限定使用 ${selected.length} 个引擎` : '使用实例默认启用的引擎'}
+            {selected.length
+              ? `已选择 ${selected.length} 个引擎`
+              : endpoint
+                ? '使用实例默认启用的引擎'
+                : '添加实例后使用其默认引擎'}
           </Typography>
         </Box>
-        <Button
-          size="small"
-          disabled={disabled || loading || !savedEndpoint || endpointChanged || Boolean(catalog)}
-          onClick={() => void refresh()}
-        >
-          {loading ? '读取中' : '刷新引擎'}
-        </Button>
+        <Stack direction="row" spacing={0.5}>
+          {engines && (
+            <Button size="small" disabled={disabled} onClick={() => onChange('')}>
+              使用实例默认
+            </Button>
+          )}
+          <Button
+            size="small"
+            disabled={disabled || loading || !endpoint || Boolean(catalog)}
+            onClick={() => void refresh()}
+          >
+            {loading ? '读取中' : '刷新引擎'}
+          </Button>
+        </Stack>
       </Stack>
 
-      {!savedEndpoint && (
+      {!endpoint && (
         <Typography variant="body2" color="text.secondary">
-          保存实例地址后，即可读取该实例提供的搜索引擎。
-        </Typography>
-      )}
-      {endpointChanged && savedEndpoint && (
-        <Typography variant="body2" color="text.secondary">
-          地址已更改；保存后再刷新引擎列表。
+          已列出 SearXNG 上游默认配置中的全部 {loaded.length}{' '}
+          个引擎。默认关闭的开关可以手动打开；添加实例后会校验该实例实际提供哪些引擎。
         </Typography>
       )}
       {loading && <CircularProgress size={18} />}
-      {error && <Alert severity="warning">读取引擎失败：{error}。仍可手动填写名称。</Alert>}
-      {loaded && (
-        <TextField
-          fullWidth
-          size="small"
-          label="查找实例引擎"
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-          helperText={`当前实例列出 ${loaded.length} 个引擎`}
+      {error && (
+        <Alert severity="warning">
+          读取实例引擎失败：{error}。当前显示上游目录，实例可用性尚未确认。
+        </Alert>
+      )}
+      <Paper variant="outlined" sx={{ borderRadius: 1, overflow: 'hidden' }}>
+        <Tabs
+          value={selectionFilter}
+          onChange={(_, value: SearxngSelectionFilter) => {
+            setSelectionFilter(value)
+            setPage(0)
+          }}
+          variant="scrollable"
+          scrollButtons="auto"
+          aria-label="按选择状态筛选搜索引擎"
+          sx={{ px: 1, borderBottom: 1, borderColor: 'divider' }}
+        >
+          <Tab value="all" label={`全部 ${loaded.length}`} />
+          <Tab value="selected" label={`已选 ${selectedCount}`} />
+          <Tab value="unselected" label={`未选 ${availableEngines.length - selectedCount}`} />
+          <Tab value="unavailable" label={`不可用 ${unavailableCount}`} />
+        </Tabs>
+        <Stack
+          direction={{ xs: 'column', sm: 'row' }}
+          spacing={1}
+          sx={{ px: 1.5, py: 1.25, borderBottom: 1, borderColor: 'divider' }}
+        >
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel id="searxng-status-filter-label">默认状态</InputLabel>
+            <Select
+              labelId="searxng-status-filter-label"
+              label="默认状态"
+              value={statusFilter}
+              onChange={(event) => {
+                setStatusFilter(event.target.value as SearxngStatusFilter)
+                setPage(0)
+              }}
+            >
+              <MenuItem value="all">全部状态</MenuItem>
+              <MenuItem value="default-on">默认开启</MenuItem>
+              <MenuItem value="default-off">默认关闭</MenuItem>
+              <MenuItem value="admin-required">需实例配置</MenuItem>
+              <MenuItem value="instance-missing" disabled={!fromInstance}>
+                实例未提供
+              </MenuItem>
+            </Select>
+          </FormControl>
+          <TextField
+            fullWidth
+            size="small"
+            placeholder="搜索名称或快捷词"
+            value={filter}
+            onChange={(event) => {
+              setFilter(event.target.value)
+              setPage(0)
+            }}
+            slotProps={{
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <GoSearch size={17} />
+                  </InputAdornment>
+                )
+              }
+            }}
+          />
+        </Stack>
+        <TableContainer>
+          <Table size="small" sx={{ minWidth: 570 }} aria-label="SearXNG 搜索引擎列表">
+            <TableHead>
+              <TableRow sx={{ bgcolor: 'action.hover' }}>
+                <TableCell sx={{ width: 76 }}>使用</TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={nameOrder !== 'original'}
+                    direction={nameOrder === 'desc' ? 'desc' : 'asc'}
+                    onClick={() => {
+                      setNameOrder(nameOrder === 'asc' ? 'desc' : 'asc')
+                      setPage(0)
+                    }}
+                  >
+                    搜索引擎
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ width: 100 }}>快捷词</TableCell>
+                <TableCell sx={{ width: 122 }}>状态</TableCell>
+                <TableCell align="right" sx={{ width: 74 }}>
+                  操作
+                </TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {result.rows.map((engine) => {
+                const checked = selectedNames.has(engine.name)
+                const unavailable = isSearxngEngineUnavailable(engine)
+                const status =
+                  engine.available === false
+                    ? '实例未提供'
+                    : engine.inactive
+                      ? '需实例配置'
+                      : engine.enabled
+                        ? '默认开启'
+                        : '默认关闭'
+                return (
+                  <TableRow key={engine.name} hover>
+                    <TableCell padding="checkbox">
+                      <Switch
+                        size="small"
+                        checked={checked}
+                        disabled={
+                          disabled || unavailable || (checked && effectiveSelected.length === 1)
+                        }
+                        onChange={() => toggle(engine.name)}
+                        slotProps={{ input: { 'aria-label': `启用 ${engine.name} 引擎` } }}
+                      />
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>{engine.name}</TableCell>
+                    <TableCell>
+                      {engine.shortcut && (
+                        <Chip size="small" variant="outlined" label={engine.shortcut} />
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Chip
+                        size="small"
+                        label={status}
+                        color={unavailable ? 'default' : engine.enabled ? 'success' : 'warning'}
+                      />
+                    </TableCell>
+                    <TableCell align="right">
+                      <Button
+                        size="small"
+                        disabled={disabled || unavailable || engines === engine.name}
+                        onClick={() => onChange(engine.name)}
+                      >
+                        仅此
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+              {result.rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} align="center" sx={{ py: 3, color: 'text.secondary' }}>
+                    没有符合条件的搜索引擎
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        <TablePagination
+          component="div"
+          count={result.total}
+          page={result.page}
+          onPageChange={(_, nextPage) => setPage(nextPage)}
+          rowsPerPage={rowsPerPage}
+          onRowsPerPageChange={(event) => {
+            setRowsPerPage(Number(event.target.value))
+            setPage(0)
+          }}
+          rowsPerPageOptions={[10, 20, 50]}
+          labelRowsPerPage="每页"
+          labelDisplayedRows={({ from, to, count }) => `${from}–${to} / ${count}`}
         />
-      )}
-      {loaded && (
-        <Paper variant="outlined" sx={{ maxHeight: 205, overflowY: 'auto', borderRadius: 1 }}>
-          {visibleEngines.map((engine) => {
-            const checked = effectiveSelected.includes(engine.name)
-            return (
-              <Box
-                key={engine.name}
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1,
-                  px: 1,
-                  minHeight: 44,
-                  borderBottom: 1,
-                  borderColor: 'divider',
-                  '&:last-child': { borderBottom: 0 }
-                }}
-              >
-                <Checkbox
-                  size="small"
-                  checked={checked}
-                  disabled={
-                    disabled || endpointChanged || (checked && effectiveSelected.length === 1)
-                  }
-                  onChange={() => toggle(engine.name)}
-                  slotProps={{ input: { 'aria-label': `选择 ${engine.name} 引擎` } }}
-                />
-                <Typography variant="body2" sx={{ minWidth: 0, flex: 1 }}>
-                  {engine.name}
-                </Typography>
-                {engine.shortcut && (
-                  <Chip size="small" variant="outlined" label={engine.shortcut} />
-                )}
-                {!engine.enabled && (
-                  <Typography variant="caption" color="text.secondary">
-                    默认关闭
-                  </Typography>
-                )}
-                <Button
-                  size="small"
-                  disabled={disabled || endpointChanged || engines === engine.name}
-                  onClick={() => onChange(engine.name)}
-                >
-                  仅此
-                </Button>
-              </Box>
-            )
-          })}
-          {visibleEngines.length === 0 && (
-            <Typography variant="body2" color="text.secondary" sx={{ p: 1.5 }}>
-              {filter ? '没有匹配的引擎。' : '实例未列出搜索引擎。'}
-            </Typography>
-          )}
-        </Paper>
-      )}
+      </Paper>
 
-      {loaded && unknownNames.length > 0 && (
+      {unknownNames.length > 0 && (
         <Alert severity="warning">实例未列出已填写的引擎：{unknownNames.join('、')}</Alert>
       )}
 
-      <TextField
-        fullWidth
-        size="small"
-        label="限定引擎名称（可选）"
-        value={engines}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-        helperText="留空使用实例默认；多个名称用逗号分隔。标为“默认关闭”的引擎也可显式选择。"
-      />
+      <Accordion disableGutters variant="outlined" sx={{ borderRadius: 1 }}>
+        <AccordionSummary expandIcon={<GoChevronDown size={17} />}>
+          <Typography variant="body2">手动填写引擎名称（高级）</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <TextField
+            fullWidth
+            size="small"
+            label="限定引擎名称（可选）"
+            value={engines}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.value)}
+            helperText="留空使用实例默认；多个名称用逗号分隔。"
+          />
+        </AccordionDetails>
+      </Accordion>
     </Stack>
   )
 }

@@ -85,6 +85,16 @@ test('reordering writes only the necessary priority prefix', () => {
   assert.equal(normalized.engines, 'sogou wechat,duckduckgo')
 })
 
+test('SearXNG accepts a full explicit engine selection', () => {
+  const names = Array.from({ length: 85 }, (_, index) => `source ${index}`)
+  const normalized = normalizeWebSearchSettingsPatch({
+    orderedEnabledIds: ['searxng'],
+    searxngEndpoint: 'http://127.0.0.1:8888',
+    searxngEngines: names.join(',')
+  })
+  assert.equal(normalized.engines, names.join(','))
+})
+
 test('web search rejects invalid provider sets and SearXNG addresses', () => {
   const patch = {
     orderedEnabledIds: ['searxng'],
@@ -118,8 +128,9 @@ test('SearXNG engine choices come from the configured instance, not OMP provider
     requestedUrl = String(input)
     return Response.json({
       engines: [
-        { name: 'sogou', shortcut: 'sogou', categories: ['general'], enabled: false },
+        { name: 'sogou', shortcut: 'sogou', categories: ['general'], disabled: true },
         { name: 'sogou wechat', shortcut: 'sogouw', categories: ['news'], enabled: true },
+        { name: 'google', shortcut: 'go', categories: ['general'], disabled: false },
         { name: 'bitbucket', categories: ['it'], enabled: false },
         { name: 'sogou wechat', enabled: true },
         { enabled: true }
@@ -131,6 +142,7 @@ test('SearXNG engine choices come from the configured instance, not OMP provider
   assert.deepEqual(engines, [
     { name: 'sogou', shortcut: 'sogou', categories: ['general'], enabled: false },
     { name: 'sogou wechat', shortcut: 'sogouw', categories: ['news'], enabled: true },
+    { name: 'google', shortcut: 'go', categories: ['general'], enabled: true },
     { name: 'bitbucket', categories: ['it'], enabled: false }
   ])
   assert.ok(!engines.some((engine) => engine.name === 'xai'))

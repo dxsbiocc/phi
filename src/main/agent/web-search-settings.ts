@@ -194,7 +194,7 @@ export function normalizeWebSearchSettingsPatch(value: unknown): {
     .map((engine) => engine.trim())
     .filter(Boolean)
     .join(',')
-  if (engines.length > 512) throw new Error('SearXNG 内部引擎列表过长')
+  if (engines.length > 8192) throw new Error('SearXNG 内部引擎列表过长')
 
   const enabled = ids as SearchProviderId[]
   const enabledSet = new Set<string>(enabled)
@@ -291,7 +291,7 @@ export async function listSearxngEngines(
         categories: Array.isArray(entry.categories)
           ? entry.categories.filter((value): value is string => typeof value === 'string')
           : [],
-        enabled: entry.enabled === true
+        enabled: entry.enabled === true || (entry.enabled === undefined && entry.disabled === false)
       }
     ]
   })
