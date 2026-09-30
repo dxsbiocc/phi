@@ -7,6 +7,7 @@ import { createTheme, ThemeProvider } from '@mui/material'
 import { WebSearchSettingsEditor } from '../src/renderer/src/features/settings/WebSearchSettingsPanel'
 import { SearxngEnginePicker } from '../src/renderer/src/features/settings/components/SearxngEnginePicker'
 import { webSearchSettingsFromValues } from '../src/main/agent/web-search-settings'
+import { listSearchProviderPage } from '../src/renderer/src/features/settings/lib/searchProviderList'
 import {
   filterSearxngEngines,
   listSearxngEnginePage,
@@ -69,15 +70,15 @@ function renderEditor(
 test('web search settings separate SearXNG engines from upstream providers', () => {
   const markup = renderEditor()
 
-  assert.match(markup, /已启用 2 \/ 3/)
+  assert.match(markup, /2\/3 已启用/)
   assert.match(markup, /aria-label="启用 SearXNG 搜索"/)
-  assert.match(markup, /aria-label="上移 Exa"/)
-  assert.match(markup, /aria-label="下移 SearXNG"/)
-  assert.match(markup, />置顶<\/button>/)
-  assert.match(markup, /搜索服务来源/)
-  assert.match(markup, /免凭据可用/)
-  assert.match(markup, /自建实例/)
-  assert.match(markup, /免凭据后备可用/)
+  assert.match(markup, /aria-label="更多 Exa 操作"/)
+  assert.match(markup, /aria-label="更多 SearXNG 操作"/)
+  assert.match(markup, /优先级/)
+  assert.match(markup, /搜索服务/)
+  assert.match(markup, /免凭据/)
+  assert.match(markup, /自建/)
+  assert.match(markup, /可选 Key/)
   assert.match(markup, /aria-label="启用 sogou wechat 引擎"/)
   assert.match(markup, /aria-label="启用 sogou 引擎"/)
   assert.match(markup, /默认关闭/)
@@ -85,16 +86,16 @@ test('web search settings separate SearXNG engines from upstream providers', () 
   const defaultOffInput = markup.match(/<input[^>]*aria-label="启用 sogou 引擎"[^>]*>/)?.[0]
   assert.ok(defaultOffInput)
   assert.doesNotMatch(defaultOffInput, /\bdisabled\b/)
-  assert.match(markup, /http:\/\/127\.0\.0\.1:8888/)
+  assert.match(markup, /已连接/)
   assert.match(markup, /sogou wechat/)
-  assert.match(markup, /保存搜索设置/)
+  assert.match(markup, />保存<\/button>/)
 })
 
 test('SearXNG settings explain when its upstream provider is disabled', () => {
   const markup = renderEditor({ ...settings, orderedEnabledIds: ['exa', 'google'] })
 
   assert.match(markup, /aria-label="启用 SearXNG 搜索"/)
-  assert.match(markup, /SearXNG 搜索来源已关闭/)
+  assert.match(markup, /启用来源/)
   assert.match(markup, /限定引擎名称（可选）/)
 })
 
@@ -109,9 +110,9 @@ test('the paged catalog shows its full count and default-off Sogou switches befo
   )
 
   assert.match(markup, />添加实例<\/button>/)
-  assert.match(markup, /尚未添加实例；可以先选择引擎/)
+  assert.match(markup, /未连接/)
   assert.equal(SEARXNG_DEFAULT_ENGINES.length, 352)
-  assert.match(markup, /全部 352 个引擎/)
+  assert.match(markup, /全部 352/)
   for (const preset of SEARXNG_DEFAULT_ENGINES.filter((engine) =>
     engine.name.startsWith('sogou')
   )) {
@@ -172,7 +173,7 @@ test('search, status filters, and pagination cover the full SearXNG catalog', ()
   )
 })
 
-test('every built-in web_search provider is rendered directly in the settings list', () => {
+test('all built-in web_search providers are reachable through table pages', () => {
   const all = webSearchSettingsFromValues({
     order: [],
     excluded: [],
@@ -182,9 +183,27 @@ test('every built-in web_search provider is rendered directly in the settings li
   const markup = renderEditor(all, null)
 
   assert.equal(all.providers.length, 23)
-  for (const provider of all.providers) {
-    assert.match(markup, new RegExp(`aria-label="启用 ${provider.label} 搜索"`))
-  }
+  assert.match(markup, /全部 23/)
+  const pages = [0, 1, 2].flatMap((page) =>
+    listSearchProviderPage(all.providers, all.orderedEnabledIds, {
+      cost: 'all',
+      enabled: 'all',
+      query: '',
+      page,
+      rowsPerPage: 10
+    }).rows.map((provider) => provider.id)
+  )
+  assert.deepEqual(new Set(pages), new Set(all.providers.map((provider) => provider.id)))
+  assert.deepEqual(
+    listSearchProviderPage(all.providers, all.orderedEnabledIds, {
+      cost: 'metered',
+      enabled: 'all',
+      query: 'brave',
+      page: 0,
+      rowsPerPage: 10
+    }).rows.map((provider) => provider.id),
+    ['brave']
+  )
   assert.doesNotMatch(markup, /上游搜索服务提供方（高级）/)
 })
 
@@ -219,14 +238,12 @@ test('provider groups explain cost and authentication before enabling a service'
     ]
   })
 
-  assert.match(markup, /账号或 API 服务/)
-  assert.match(markup, /可能有免费额度或需要付费/)
-  assert.match(markup, /需要 API Key/)
-  assert.match(markup, /BRAVE_API_KEY/)
+  assert.match(markup, /账号 \/ API/)
+  assert.match(markup, /可能收费/)
+  assert.match(markup, /API Key/)
   assert.match(markup, /已配置 Key/)
-  assert.match(markup, /清除 Key/)
-  assert.match(markup, /需要账号授权/)
-  assert.match(markup, /到 Provider 设置授权/)
+  assert.match(markup, /更换 Key/)
+  assert.match(markup, /账号授权/)
 })
 
 test('SearXNG engine picker marks upstream entries absent from an instance as unavailable', () => {

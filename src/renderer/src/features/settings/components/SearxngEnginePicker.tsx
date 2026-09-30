@@ -9,6 +9,7 @@ import {
   Chip,
   CircularProgress,
   FormControl,
+  IconButton,
   InputAdornment,
   InputLabel,
   MenuItem,
@@ -27,9 +28,10 @@ import {
   TableSortLabel,
   Tabs,
   TextField,
+  Tooltip,
   Typography
 } from '@mui/material'
-import { GoChevronDown, GoSearch } from 'react-icons/go'
+import { GoChevronDown, GoSearch, GoSync } from 'react-icons/go'
 import type { SearxngEngineOption } from '../../../../../shared/webSearchSettingsTypes'
 import {
   isSearxngEngineUnavailable,
@@ -142,46 +144,55 @@ export function SearxngEnginePicker({
   }
 
   return (
-    <Stack spacing={1.25}>
-      <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
-        <Box>
-          <Typography variant="subtitle2">SearXNG 搜索引擎</Typography>
-          <Typography variant="caption" color="text.secondary">
-            {selected.length
-              ? `已选择 ${selected.length} 个引擎`
-              : endpoint
-                ? '使用实例默认启用的引擎'
-                : '添加实例后使用其默认引擎'}
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={0.5}>
-          {engines && (
-            <Button size="small" disabled={disabled} onClick={() => onChange('')}>
-              使用实例默认
-            </Button>
-          )}
-          <Button
-            size="small"
-            disabled={disabled || loading || !endpoint || Boolean(catalog)}
-            onClick={() => void refresh()}
-          >
-            {loading ? '读取中' : '刷新引擎'}
-          </Button>
+    <Stack spacing={1}>
+      {Boolean(endpoint) && (
+        <Stack
+          direction="row"
+          spacing={0.5}
+          sx={{ justifyContent: 'flex-end', alignItems: 'center' }}
+        >
+          <Tooltip title="刷新实例引擎">
+            <span>
+              <IconButton
+                size="small"
+                aria-label="刷新实例引擎"
+                disabled={disabled || loading || Boolean(catalog)}
+                onClick={() => void refresh()}
+              >
+                {loading ? <CircularProgress size={16} /> : <GoSync size={17} />}
+              </IconButton>
+            </span>
+          </Tooltip>
         </Stack>
-      </Stack>
-
-      {!endpoint && (
-        <Typography variant="body2" color="text.secondary">
-          已列出 SearXNG 上游默认配置中的全部 {loaded.length}{' '}
-          个引擎。默认关闭的开关可以手动打开；添加实例后会校验该实例实际提供哪些引擎。
-        </Typography>
       )}
-      {loading && <CircularProgress size={18} />}
-      {error && (
-        <Alert severity="warning">
-          读取实例引擎失败：{error}。当前显示上游目录，实例可用性尚未确认。
-        </Alert>
-      )}
+      <Paper variant="outlined" sx={{ borderRadius: 1, overflow: 'hidden' }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
+          {[
+            ['全部', loaded.length],
+            ['已选', selectedCount],
+            ['未选', availableEngines.length - selectedCount],
+            ['不可用', unavailableCount]
+          ].map(([label, count], index) => (
+            <Box
+              key={label}
+              sx={{
+                px: 1.5,
+                py: 1,
+                borderRight: index < 3 ? 1 : 0,
+                borderColor: 'divider'
+              }}
+            >
+              <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                {count}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {label}
+              </Typography>
+            </Box>
+          ))}
+        </Box>
+      </Paper>
+      {error && <Alert severity="warning">读取实例引擎失败：{error}</Alert>}
       <Paper variant="outlined" sx={{ borderRadius: 1, overflow: 'hidden' }}>
         <Tabs
           value={selectionFilter}
@@ -350,7 +361,7 @@ export function SearxngEnginePicker({
 
       <Accordion disableGutters variant="outlined" sx={{ borderRadius: 1 }}>
         <AccordionSummary expandIcon={<GoChevronDown size={17} />}>
-          <Typography variant="body2">手动填写引擎名称（高级）</Typography>
+          <Typography variant="body2">手动指定引擎</Typography>
         </AccordionSummary>
         <AccordionDetails>
           <TextField

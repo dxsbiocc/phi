@@ -7,8 +7,7 @@ import {
   DialogContent,
   DialogTitle,
   Stack,
-  TextField,
-  Typography
+  TextField
 } from '@mui/material'
 
 export function SearxngInstanceDialog({
@@ -51,11 +50,8 @@ export function SearxngInstanceDialog({
             value={endpoint}
             disabled={saving}
             onChange={(event) => setEndpoint(event.target.value)}
-            helperText="填写实例根地址。实例需提供 JSON 搜索接口和 /config 引擎列表。"
+            helperText="实例需支持 JSON 搜索和 /config"
           />
-          <Typography variant="body2" color="text.secondary">
-            添加后可从实例列表选择默认关闭的引擎；若实例将某引擎设为 inactive，则无法从 Phi 启用。
-          </Typography>
           {error && <Alert severity="error">{error}</Alert>}
         </Stack>
       </DialogContent>
