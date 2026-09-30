@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -238,6 +239,7 @@ export default function NotebookCanvas({
   projectCwd,
   onSaveNotebook,
   onSyncNotebookDraft,
+  onNotebookDirtyChange,
   onStartNotebookSession,
   onStopNotebookSession,
   onRunNotebookCell,
@@ -267,6 +269,12 @@ export default function NotebookCanvas({
   const virtualRowObserversRef = useRef<Map<string, ResizeObserver>>(new Map())
   const notebookDocumentKey = notebookFile?.path ?? activeNotebookPath ?? null
   const previousNotebookDocumentKeyRef = useRef<string | null>(notebookDocumentKey)
+  const latestDraftForFlushRef = useRef<{
+    file: NonNullable<NotebookCanvasProps['notebookFile']>
+    document: NotebookDocument
+    sync: NonNullable<NotebookCanvasProps['onSyncNotebookDraft']>
+  } | null>(null)
+  const lastReportedDirtyRef = useRef<{ path: string; dirty: boolean } | null>(null)
   const [virtualViewport, setVirtualViewport] =
     useState<NotebookVirtualViewport>(initialVirtualViewport)
   const [virtualRowHeightState, setVirtualRowHeightState] = useState<NotebookVirtualRowHeightState>(
@@ -676,6 +684,47 @@ export default function NotebookCanvas({
   const isDirty = Boolean(
     notebookFile && draftDocument && draftDocument.revision !== notebookFile.savedRevision
   )
+  useLayoutEffect(() => {
+    const path = notebookFile?.path
+    return () => {
+      const latest = latestDraftForFlushRef.current
+      if (
+        latest &&
+        latest.file.path === path &&
+        latest.document.revision !== latest.file.savedRevision
+      ) {
+        latest.sync(latest.file, latest.document)
+      }
+    }
+  }, [notebookFile?.path])
+
+  useLayoutEffect(() => {
+    if (
+      !notebookFile ||
+      !draftDocument ||
+      previousNotebookDocumentKeyRef.current !== notebookDocumentKey
+    ) {
+      return
+    }
+    latestDraftForFlushRef.current = onSyncNotebookDraft
+      ? { file: notebookFile, document: draftDocument, sync: onSyncNotebookDraft }
+      : null
+    if (
+      lastReportedDirtyRef.current?.path !== notebookFile.path ||
+      lastReportedDirtyRef.current.dirty !== isDirty
+    ) {
+      lastReportedDirtyRef.current = { path: notebookFile.path, dirty: isDirty }
+      onNotebookDirtyChange?.(notebookFile, isDirty)
+    }
+  }, [
+    draftDocument,
+    isDirty,
+    notebookDocumentKey,
+    notebookFile,
+    onNotebookDirtyChange,
+    onSyncNotebookDraft
+  ])
+
   const saveNotebookDocument = useCallback(
     async (document: NotebookDocument): Promise<void> => {
       if (notebookFile && onSaveNotebook) {

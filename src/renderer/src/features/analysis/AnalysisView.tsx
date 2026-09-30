@@ -98,6 +98,7 @@ export type AnalysisViewProps = {
   onCloseWorkspaceFileTab?: (tab: AnalysisWorkspaceFileTab) => void
   onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void | Promise<void>
   onSyncNotebookDraft?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
+  onNotebookDirtyChange?: (file: AnalysisNotebookFile, dirty: boolean) => void
   onCreateNotebook?: (cwd: string) => void
   chatPanel?: ReactNode
 }
@@ -181,6 +182,7 @@ export default function AnalysisView({
   onCloseWorkspaceFileTab,
   onSaveNotebook,
   onSyncNotebookDraft,
+  onNotebookDirtyChange,
   onCreateNotebook,
   chatPanel
 }: AnalysisViewProps = {}): React.JSX.Element {
@@ -351,6 +353,7 @@ export default function AnalysisView({
           agentFocus={agentFocus}
           onSaveNotebook={onSaveNotebook}
           onSyncNotebookDraft={onSyncNotebookDraft}
+          onNotebookDirtyChange={onNotebookDirtyChange}
           onStartNotebookSession={onStartNotebookSession}
           onStopNotebookSession={onStopNotebookSession}
           onRunNotebookCell={onRunNotebookCell}

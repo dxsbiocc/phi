@@ -1,7 +1,11 @@
 import { Box, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { PhiIcons } from '../icons'
-import type { WorkspaceTab, WorkspaceTabKind } from '../lib/workspaceResourceTabs'
+import type {
+  WorkspaceFileWorkspaceTab,
+  WorkspaceTab,
+  WorkspaceTabKind
+} from '../lib/workspaceResourceTabs'
 
 type ResourceIconComponent = typeof PhiIcons.nav.runtime
 
@@ -21,12 +25,16 @@ export function WorkspaceResourceTabs({
   tabs,
   activeKey,
   onSelect,
-  onClose
+  onClose,
+  connectorIcon,
+  fileIcon
 }: {
   tabs: WorkspaceTab[]
   activeKey: string | null
   onSelect: (tab: WorkspaceTab) => void
   onClose: (tab: WorkspaceTab) => void
+  connectorIcon?: (url?: string) => React.ReactNode
+  fileIcon?: (tab: WorkspaceFileWorkspaceTab) => React.ReactNode
 }): React.JSX.Element {
   return (
     <Box
@@ -107,7 +115,14 @@ export function WorkspaceResourceTabs({
                 }
             }}
           >
-            <Icon sx={{ flexShrink: 0, fontSize: 18 }} />
+            {tab.kind === 'mcp' && connectorIcon ? (
+              connectorIcon(tab.connectorUrl)
+            ) : (tab.kind === 'file' || tab.kind === 'directory' || tab.kind === 'notebook') &&
+              fileIcon ? (
+              fileIcon(tab)
+            ) : (
+              <Icon sx={{ flexShrink: 0, fontSize: 18 }} />
+            )}
             <Typography
               component="span"
               noWrap
@@ -121,6 +136,14 @@ export function WorkspaceResourceTabs({
             >
               {tab.title}
             </Typography>
+            {tab.kind === 'notebook' && tab.dirty && (
+              <Box
+                component="span"
+                role="img"
+                aria-label="未保存修改"
+                sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: 'warning.main' }}
+              />
+            )}
             <Box
               className="workspace-resource-tab-close"
               component="span"

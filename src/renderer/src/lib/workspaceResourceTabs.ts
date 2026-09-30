@@ -21,6 +21,7 @@ export type WorkspaceResourceTab = {
   itemId: string
   title: string
   subtitle?: string
+  connectorUrl?: string
 }
 
 export type WorkspaceFileWorkspaceTab = {
@@ -35,6 +36,7 @@ export type WorkspaceFileWorkspaceTab = {
   path: string
   pathKind: 'file' | 'directory'
   absolutePath: string
+  dirty?: boolean
 }
 
 export type WorkspaceTab = WorkspaceSessionTab | WorkspaceResourceTab | WorkspaceFileWorkspaceTab
@@ -98,8 +100,23 @@ export function visibleWorkspaceTabsForState({
   )
 }
 
-export function workspaceResourceTabKey(kind: WorkspaceResourceKind, itemId: string): string {
-  return `${kind}:${itemId}`
+export function workspaceResourceTabKey(kind: WorkspaceResourceKind): string {
+  return kind
+}
+
+export function upsertWorkspaceResourceTab(
+  tabs: WorkspaceTab[],
+  tab: WorkspaceTab
+): WorkspaceTab[] {
+  if (isWorkspaceResourceKind(tab.kind)) {
+    const firstIndex = tabs.findIndex((item) => item.kind === tab.kind)
+    const remaining = tabs.filter((item) => item.kind !== tab.kind)
+    remaining.splice(firstIndex < 0 ? remaining.length : firstIndex, 0, tab)
+    return remaining
+  }
+  const existingIndex = tabs.findIndex((item) => item.key === tab.key)
+  if (existingIndex === -1) return [...tabs, tab]
+  return tabs.map((item, index) => (index === existingIndex ? { ...item, ...tab } : item))
 }
 
 export function workspaceFileTabKey(path: string): string {

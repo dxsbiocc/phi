@@ -53,17 +53,38 @@ export type WorkspaceFileTabKind = 'notebook' | 'file' | 'directory'
 export type WorkspaceFileTab = AnalysisWorkspaceFileTab & {
   kind: WorkspaceFileTabKind
   pathKind: LocalPathKind
+  /** Modified notebooks stay open when the reusable preview slot changes. */
+  dirty?: boolean
+}
+
+export function upsertReusableWorkspaceFileTab(
+  tabs: WorkspaceFileTab[],
+  tab: WorkspaceFileTab
+): WorkspaceFileTab[] {
+  const existing = tabs.find((item) => item.path === tab.path)
+  if (existing?.dirty && tab.dirty !== false) {
+    return tabs.map((item) =>
+      item.path === tab.path ? { ...existing, ...tab, dirty: true } : item
+    )
+  }
+  const next = existing ? { ...existing, ...tab, dirty: tab.dirty ?? existing.dirty } : tab
+  const remaining = tabs.filter((item) => item.path !== tab.path && item.dirty)
+  return [...remaining, next]
 }
 export type WorkspaceFilePreviewCache = Record<string, FilePreviewPanelState>
+const MAX_FILE_PREVIEW_CACHE_ENTRIES = 16
 
 export function cacheWorkspaceFilePreviewState(
   cache: WorkspaceFilePreviewCache,
   state: FilePreviewPanelState
 ): WorkspaceFilePreviewCache {
-  return {
-    ...cache,
-    [filePreviewStatePath(state)]: state
-  }
+  const path = filePreviewStatePath(state)
+  const next = { ...cache }
+  delete next[path]
+  next[path] = state
+  const keys = Object.keys(next)
+  if (keys.length > MAX_FILE_PREVIEW_CACHE_ENTRIES) delete next[keys[0]]
+  return next
 }
 
 export function removeWorkspaceFilePreviewState(
@@ -200,11 +221,7 @@ export function useWorkspaceFileTabs({
   }, [abandonActiveWrapperResultDownload, cancelActiveWrapperResultRead])
 
   const upsertWorkspaceFileTab = useCallback((tab: WorkspaceFileTab): void => {
-    setWorkspaceFileTabs((tabs) => {
-      const existingIndex = tabs.findIndex((item) => item.path === tab.path)
-      if (existingIndex === -1) return [...tabs, tab]
-      return tabs.map((item, index) => (index === existingIndex ? { ...item, ...tab } : item))
-    })
+    setWorkspaceFileTabs((tabs) => upsertReusableWorkspaceFileTab(tabs, tab))
     setActiveWorkspaceFilePath(tab.path)
   }, [])
 
@@ -427,6 +444,11 @@ export function useWorkspaceFileTabs({
   const previewFilePath = useCallback(
     (path: string): void => {
       const normalizedPath = absoluteWorkspacePath(getActiveCwd(), path)
+      const alreadyVisible =
+        activeWorkspaceFilePath === normalizedPath &&
+        filePreview?.status !== 'error' &&
+        filePreview !== null &&
+        filePreviewStatePath(filePreview) === normalizedPath
       openWorkspaceTab({
         id: normalizedPath,
         path: normalizedPath,
@@ -436,14 +458,19 @@ export function useWorkspaceFileTabs({
         kind: 'file',
         pathKind: 'file'
       })
-      loadFilePreview(normalizedPath)
+      if (!alreadyVisible) loadFilePreview(normalizedPath)
     },
-    [getActiveCwd, loadFilePreview, openWorkspaceTab]
+    [activeWorkspaceFilePath, filePreview, getActiveCwd, loadFilePreview, openWorkspaceTab]
   )
 
   const previewDirectoryPath = useCallback(
     (path: string): void => {
       const normalizedPath = absoluteWorkspacePath(getActiveCwd(), path)
+      const alreadyVisible =
+        activeWorkspaceFilePath === normalizedPath &&
+        filePreview?.status !== 'error' &&
+        filePreview !== null &&
+        filePreviewStatePath(filePreview) === normalizedPath
       openWorkspaceTab({
         id: normalizedPath,
         path: normalizedPath,
@@ -453,9 +480,9 @@ export function useWorkspaceFileTabs({
         kind: 'directory',
         pathKind: 'directory'
       })
-      loadFilePreview(normalizedPath, 'directory')
+      if (!alreadyVisible) loadFilePreview(normalizedPath, 'directory')
     },
-    [getActiveCwd, loadFilePreview, openWorkspaceTab]
+    [activeWorkspaceFilePath, filePreview, getActiveCwd, loadFilePreview, openWorkspaceTab]
   )
 
   const openPathWithSystemDefault = useCallback(

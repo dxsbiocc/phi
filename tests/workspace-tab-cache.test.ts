@@ -8,7 +8,9 @@ import {
 import {
   cacheWorkspaceFilePreviewState,
   removeWorkspaceFilePreviewState,
+  upsertReusableWorkspaceFileTab,
   workspaceFileRoute,
+  type WorkspaceFileTab,
   type WorkspaceFilePreviewCache
 } from '../src/renderer/src/useWorkspaceFileTabs'
 import type { FilePreviewPanelState } from '../src/renderer/src/features/file-preview/FilePreviewPanel'
@@ -78,6 +80,56 @@ test('workspace file preview cache is keyed by the rendered path', () => {
 
   assert.equal(removed['/project/src/App.tsx'], undefined)
   assert.equal(removed['/project/src'], directoryPreview)
+})
+
+test('file preview cache keeps recent entries bounded', () => {
+  let cache: WorkspaceFilePreviewCache = {}
+  for (let index = 0; index < 20; index += 1) {
+    cache = cacheWorkspaceFilePreviewState(cache, {
+      ...readyPreview,
+      file: { ...readyPreview.file, path: `/project/file-${index}.ts` }
+    })
+  }
+  assert.equal(Object.keys(cache).length, 16)
+  assert.equal(cache['/project/file-0.ts'], undefined)
+  assert.ok(cache['/project/file-19.ts'])
+})
+
+test('one clean file preview is reused while modified notebooks keep their tabs', () => {
+  const tab = (
+    path: string,
+    kind: WorkspaceFileTab['kind'],
+    dirty?: boolean
+  ): WorkspaceFileTab => ({
+    id: path,
+    path,
+    name: path.split('/').at(-1)!,
+    status: path,
+    absolutePath: path,
+    kind,
+    pathKind: kind === 'directory' ? 'directory' : 'file',
+    ...(dirty === undefined ? {} : { dirty })
+  })
+  const first = tab('/project/one.ts', 'file')
+  const next = tab('/project/two.ts', 'file')
+  const dirtyNotebook = tab('/project/notes.ipynb', 'notebook', true)
+
+  assert.deepEqual(upsertReusableWorkspaceFileTab([first], next), [next])
+  assert.deepEqual(upsertReusableWorkspaceFileTab([dirtyNotebook, next], first), [
+    dirtyNotebook,
+    first
+  ])
+  assert.deepEqual(
+    upsertReusableWorkspaceFileTab([dirtyNotebook, first], tab(dirtyNotebook.path, 'notebook')),
+    [dirtyNotebook, first]
+  )
+  assert.deepEqual(
+    upsertReusableWorkspaceFileTab(
+      [dirtyNotebook, first],
+      tab(dirtyNotebook.path, 'notebook', false)
+    ),
+    [tab(dirtyNotebook.path, 'notebook', false)]
+  )
 })
 
 test('remote project switches invalidate file previews while local navigation keeps them', () => {

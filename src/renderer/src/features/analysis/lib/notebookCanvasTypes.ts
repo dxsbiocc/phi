@@ -49,6 +49,7 @@ export type NotebookCanvasProps = {
   projectCwd?: string | null
   onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void | Promise<void>
   onSyncNotebookDraft?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
+  onNotebookDirtyChange?: (file: AnalysisNotebookFile, dirty: boolean) => void
   onStartNotebookSession?: (
     file: AnalysisNotebookFile,
     document: NotebookDocument

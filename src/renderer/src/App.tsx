@@ -27,6 +27,7 @@ import {
 import type { WrapperCompositionManifest } from '../../shared/wrapperCompositionManifestTypes'
 import type { WrapperRun } from '../../shared/wrapperTypes'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
+import { featuredMcpConnectors } from '../../shared/mcpConnectorCatalog'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
 import ChatView from './features/chat/ChatView'
@@ -48,6 +49,7 @@ import {
 import { SkillDetail } from './features/skill/SkillView'
 import { useSkillCatalog } from './features/skill/hooks/useSkillCatalog'
 import { McpDetail } from './features/mcp/McpView'
+import { ConnectorIcon } from './features/mcp/components/ConnectorIcon'
 import { useMcpServerCatalog } from './features/mcp/hooks/useMcpServerCatalog'
 import { type SettingsCategory } from './components/SettingsDialog'
 import AppDialogs, { type SnackbarNotice } from './AppDialogs'
@@ -66,7 +68,11 @@ import { useThemeMode } from './useThemeMode'
 import { useProviderAuth } from './useProviderAuth'
 import { modelOptionFromSelection, useModelSelection } from './useModelSelection'
 import { useProjects } from './useProjects'
-import { useWorkspaceFileTabs, type WorkspaceFileTab } from './useWorkspaceFileTabs'
+import {
+  upsertReusableWorkspaceFileTab,
+  useWorkspaceFileTabs,
+  type WorkspaceFileTab
+} from './useWorkspaceFileTabs'
 import {
   useSessionStore,
   sessionStateKey,
@@ -120,6 +126,7 @@ import { workspaceScopeLabelForCwd } from './lib/workspaceScope'
 import {
   isWorkspaceFileTabKind,
   isWorkspaceResourceKind,
+  upsertWorkspaceResourceTab,
   workspaceFileTabKey,
   workspaceResourceKindLabel,
   workspaceResourceKindToSidebarMode,
@@ -431,6 +438,14 @@ function WorkspaceFileTabs({
             >
               {tab.name}
             </Typography>
+            {tab.dirty && (
+              <Box
+                component="span"
+                role="img"
+                aria-label="未保存修改"
+                sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: 'warning.main' }}
+              />
+            )}
             <Box
               className="workspace-file-tab-close"
               component="span"
@@ -552,9 +567,22 @@ function WorkspaceResourceHeader({
         activeKey={activeKey}
         onSelect={onSelect}
         onClose={onClose}
+        connectorIcon={renderConnectorTabIcon}
+        fileIcon={renderFileWorkspaceTabIcon}
       />
     </Box>
   )
+}
+
+function renderConnectorTabIcon(url?: string): React.JSX.Element {
+  return <ConnectorIcon url={url} size={20} />
+}
+
+function renderFileWorkspaceTabIcon(tab: WorkspaceFileWorkspaceTab): React.JSX.Element {
+  const icon =
+    tab.kind === 'directory' ? directoryIconForPath(tab.path, false) : fileIconForPath(tab.path)
+  const Icon = icon.Icon
+  return <Icon sx={{ flexShrink: 0, fontSize: 18, color: icon.color }} />
 }
 
 function AppResizeSeparator({
@@ -1461,6 +1489,20 @@ function App(): React.JSX.Element {
     setIsSidebarOpen(true)
   }, [])
 
+  const onNotebookDirtyChange = useCallback(
+    (file: { path: string }, dirty: boolean): void => {
+      setWorkspaceFileTabs((tabs) => {
+        const current = tabs.find((tab) => tab.kind === 'notebook' && tab.path === file.path)
+        if (!current || Boolean(current.dirty) === dirty) return tabs
+        const updated = { ...current, dirty }
+        return dirty
+          ? tabs.map((tab) => (tab.path === file.path ? updated : tab))
+          : upsertReusableWorkspaceFileTab(tabs, updated)
+      })
+    },
+    [setWorkspaceFileTabs]
+  )
+
   const onOpenNotebookWorkspaceFile = useCallback(
     (path: string, options: { revealConversationSidebar?: boolean } = {}): void => {
       if (blockRemoteLocalFileAction()) return
@@ -1484,9 +1526,7 @@ function App(): React.JSX.Element {
           kind: 'notebook',
           pathKind: 'file'
         }
-        return tabs.some((tab) => tab.path === normalizedPath)
-          ? tabs.map((tab) => (tab.path === normalizedPath ? { ...tab, ...nextTab } : tab))
-          : [...tabs, nextTab]
+        return upsertReusableWorkspaceFileTab(tabs, nextTab)
       })
       setActiveWorkspaceFilePath(normalizedPath)
       navigateToView('analysis')
@@ -2741,7 +2781,8 @@ function App(): React.JSX.Element {
         subtitle: tab.status,
         path: tab.path,
         pathKind: tab.pathKind,
-        absolutePath: tab.absolutePath ?? tab.path
+        absolutePath: tab.absolutePath ?? tab.path,
+        dirty: tab.dirty
       })),
     [workspaceFileTabs]
   )
@@ -3206,11 +3247,7 @@ function App(): React.JSX.Element {
   ])
 
   const upsertWorkspaceTab = useCallback((tab: WorkspaceTab): void => {
-    setWorkspaceTabs((tabs) => {
-      const existingIndex = tabs.findIndex((item) => item.key === tab.key)
-      if (existingIndex === -1) return [...tabs, tab]
-      return tabs.map((item, index) => (index === existingIndex ? { ...item, ...tab } : item))
-    })
+    setWorkspaceTabs((tabs) => upsertWorkspaceResourceTab(tabs, tab))
   }, [])
 
   const selectWorkspaceTab = useCallback(
@@ -3269,7 +3306,7 @@ function App(): React.JSX.Element {
     (tab: Omit<WorkspaceResourceTab, 'key'>): void => {
       const nextTab: WorkspaceResourceTab = {
         ...tab,
-        key: workspaceResourceTabKey(tab.kind, tab.itemId)
+        key: workspaceResourceTabKey(tab.kind)
       }
       upsertWorkspaceTab(nextTab)
       selectWorkspaceTab(nextTab)
@@ -3350,11 +3387,15 @@ function App(): React.JSX.Element {
   const onOpenMcpServerTab = useCallback(
     (server: McpServerSummary): void => {
       setActiveMcpServerId(server.id)
+      const connector = featuredMcpConnectors.find(
+        (entry) => entry.url === server.url && (!entry.apiKey || entry.id === server.name)
+      )
       openWorkspaceResourceTab({
         kind: 'mcp',
         itemId: server.id,
-        title: server.name,
-        subtitle: server.sourcePath ?? server.command
+        title: connector?.name ?? server.name,
+        subtitle: server.sourcePath ?? server.command,
+        connectorUrl: server.url
       })
     },
     [openWorkspaceResourceTab, setActiveMcpServerId]
@@ -3801,6 +3842,7 @@ function App(): React.JSX.Element {
         onSyncNotebookDraft={(file, document) => {
           void onSyncAnalysisNotebookDraft(file, document)
         }}
+        onNotebookDirtyChange={onNotebookDirtyChange}
         onStopNotebookSession={(file) => {
           return onStopAnalysisNotebookSession(file)
         }}
