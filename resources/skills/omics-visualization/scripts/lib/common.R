@@ -114,26 +114,26 @@ read_table_auto <- function(path) {
 })
 
 .palette_json_path <- local({
-    if (is.na(.common_r_path)) {
-        return(NA_character_)
-    }
     env_root <- Sys.getenv("OMICS_VISUALIZATION_SKILL_ROOT", unset = NA_character_)
-    roots <- c(
-        dirname(dirname(.common_r_path)),
-        dirname(dirname(dirname(.common_r_path))),
-        env_root
-    )
-    roots <- unique(roots[!is.na(roots) & nzchar(roots)])
-    for (root in roots) {
-        candidate <- file.path(root, "references", "palettes", "colors.json")
+    candidates <- character()
+    if (!is.na(env_root) && nzchar(env_root)) {
+        candidates <- c(candidates, file.path(
+            dirname(dirname(normalizePath(env_root, mustWork = FALSE))),
+            "palettes", "colors.json"
+        ))
+    }
+    if (!is.na(.common_r_path)) {
+        candidates <- c(candidates, file.path(
+            dirname(dirname(dirname(dirname(dirname(.common_r_path))))),
+            "palettes", "colors.json"
+        ))
+    }
+    for (candidate in unique(candidates)) {
         if (file.exists(candidate)) {
             return(candidate)
         }
     }
-    file.path(
-        dirname(dirname(dirname(.common_r_path))),
-        "references", "palettes", "colors.json"
-    )
+    if (length(candidates)) candidates[[1]] else NA_character_
 })
 
 .hex_key <- function(x) {
@@ -152,7 +152,7 @@ read_table_auto <- function(path) {
 load_palette_library <- function() {
     path <- .palette_json_path
     if (is.na(path) || !file.exists(path)) {
-        stop("Cannot find references/palettes/colors.json", call. = FALSE)
+        stop("Cannot find Phi resources/palettes/colors.json", call. = FALSE)
     }
     if (!requireNamespace("jsonlite", quietly = TRUE)) {
         stop("Missing R package(s): jsonlite", call. = FALSE)

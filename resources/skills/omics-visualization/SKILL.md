@@ -85,9 +85,9 @@ Use `viz_route`, `viz_prepare`, `viz_render` for new figures.
    tool: read the template's `plot.R` in full, and any helper it sources, before
    modifying or executing it. Current templates use
    [scripts/lib/common.R](scripts/lib/common.R).]
-7. Pick colors from [references/palettes.yaml](references/palettes.yaml).
+7. Pick colors from Phi's shared [palette index](../../palettes/palettes.yaml).
    Copy hex from that file or from
-   [references/palettes/colors.json](references/palettes/colors.json).
+   [full color catalog](../../palettes/colors.json).
    Do not invent hex codes. Prefer `Qualitative.Safe` for discrete groups,
    `Quantitative.BluGrn` for heatmaps, and `Diverging.RdBu` for signed values,
    unless the user names a palette or asks to match OmicsAgent (`Brand.Algolia`)
@@ -105,9 +105,9 @@ Use `viz_route`, `viz_prepare`, `viz_render` for new figures.
    `viz_prepare` points the copy at the installed read-only `scripts/lib/common.R`
    by absolute path [by hand: source that helper by absolute path, or copy only
    the helper and set `OMICS_VISUALIZATION_SKILL_ROOT` to the installed skill
-   root]. Do not copy `references/`, `references/palettes/`, or catalog files into
-   the project merely to make palette lookup work; choose palette ids from the
-   installed references and leave those catalog resources in the skill. Do not
+   root]. Do not copy `references/`, Phi's shared `resources/palettes/`, or catalog
+   files into the project merely to make palette lookup work; choose palette ids
+   from the installed shared catalog. Do not
    edit the installed skill copy during an ordinary plotting task.
 9. Adapt the visible source directly:
    - edit `CONFIG` for column mappings, labels, and ordinary presentation

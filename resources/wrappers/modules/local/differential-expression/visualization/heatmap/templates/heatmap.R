@@ -8,7 +8,7 @@
 # template's intent -- implemented with pheatmap, already proven in this
 # family's shared container, rather than that template's own
 # ComplexHeatmap dependency. See
-# resources/skills/omics-visualization/references/palettes.yaml
+# resources/palettes/palettes.yaml
 # (Diverging.RdBu) for where the palette comes from.
 
 ################################################
@@ -115,8 +115,8 @@ mat    <- mat[select, , drop = FALSE]
 ################################################
 ################################################
 
-# Diverging red/blue hexes from omics-visualization's Diverging.RdBu
-# catalog entry (references/palettes.yaml) -- for signed, zero-centered
+# Diverging red/blue hexes from Phi's Diverging.RdBu
+# catalog entry (resources/palettes/palettes.yaml) -- for signed, zero-centered
 # values, which row z-scores are.
 DIVERGING_RDBU <- rev(c("#b2182b", "#d6604d", "#f4a582", "#fddbc7", "#f7f7f7", "#d1e5f0", "#92c5de", "#4393c3", "#2166ac"))
 heatmap_colors <- colorRampPalette(DIVERGING_RDBU)(100)

@@ -807,27 +807,33 @@ function MarkdownContentImpl({
           {children}
         </Box>
       ),
-      table: ({ children }) => (
-        <Box sx={{ overflowX: 'auto', my: 1 }}>
-          <Box
-            component="table"
-            sx={{
-              borderCollapse: 'collapse',
-              '& th, & td': {
-                border: 1,
-                borderColor: 'grey.800',
-                px: 1.5,
-                py: 0.5,
-                fontSize: '0.88rem',
-                textAlign: 'left'
-              },
-              '& th': { bgcolor: 'rgba(148, 163, 184, 0.08)', fontWeight: 700 }
-            }}
-          >
-            {children}
+      table: ({ children }) => {
+        const colors = showColorPalettes ? paletteColorsFromText(textFromNode(children)) : []
+        return (
+          <Box sx={{ my: 1 }}>
+            {colors.length > 0 && <ColorPalette colors={colors} />}
+            <Box sx={{ overflowX: 'auto' }}>
+              <Box
+                component="table"
+                sx={{
+                  borderCollapse: 'collapse',
+                  '& th, & td': {
+                    border: 1,
+                    borderColor: 'grey.800',
+                    px: 1.5,
+                    py: 0.5,
+                    fontSize: '0.88rem',
+                    textAlign: 'left'
+                  },
+                  '& th': { bgcolor: 'rgba(148, 163, 184, 0.08)', fontWeight: 700 }
+                }}
+              >
+                {children}
+              </Box>
+            </Box>
           </Box>
-        </Box>
-      ),
+        )
+      },
       th: ({ children }) => (
         <Box component="th" sx={{ fontWeight: 700 }}>
           {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}

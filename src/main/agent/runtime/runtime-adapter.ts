@@ -395,6 +395,10 @@ export function getBundledSkillsDir(): string {
   return getBundledResourceDir('skills')
 }
 
+export function getBundledPalettesDir(): string {
+  return getBundledResourceDir('palettes')
+}
+
 /** Phi's own bundled agent definitions (`resources/agents`). */
 export function getBundledAgentsDir(): string {
   return getBundledResourceDir('agents')

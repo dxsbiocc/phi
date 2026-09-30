@@ -51,7 +51,7 @@ Agent 不得凭训练数据推荐模板。预览模式和常见数据形态可�
 
 ### 先复制，再改
 
-捆绑脚本是规范库。日常使用应只把选中的 `plot.R` 拷进项目并修改这个副本，`scripts/lib/common.R` 等只读 helper 优先用安装目录的绝对路径 `source()`。只有确实需要一次性修改 helper 时才复制 `common.R`。不要为了渲染把 `references/` 或 palette catalog 拷进项目；配色从安装目录里的 references 选择 palette id。不要改技能安装目录。没有隐藏的绘图配置语言：列名和标签改 `CONFIG`，变形和排序改 `DATA PREPARATION`，只有几何必须变时才改 `PLOT`。
+捆绑脚本是规范库。日常使用应只把选中的 `plot.R` 拷进项目并修改这个副本，`scripts/lib/common.R` 等只读 helper 优先用安装目录的绝对路径 `source()`。只有确实需要一次性修改 helper 时才复制 `common.R`。不要为了渲染把 `references/` 或 Phi 共享配色表拷进项目；配色从 `resources/palettes/` 选择 palette id。不要改技能安装目录。没有隐藏的绘图配置语言：列名和标签改 `CONFIG`，变形和排序改 `DATA PREPARATION`，只有几何必须变时才改 `PLOT`。
 
 ### 一种规范实现
 
@@ -108,7 +108,7 @@ Agent 不得凭训练数据推荐模板。预览模式和常见数据形态可�
 
 修改已生成的图时，读取项目中的原绘图脚本和输入数据并直接修订；用户给参考图要求新绘制时，先查看参考图，再以用户数据选择合适模板。
 
-配色见 [references/palettes.yaml](references/palettes.yaml)，完整色表在 [references/palettes/colors.json](references/palettes/colors.json)。默认：分组用 `Qualitative.Safe`，热图用 `Quantitative.BluGrn`，有正负的值用 `Diverging.RdBu`，对齐 OmicsAgent 产品时用 `Brand.Algolia`。
+配色见 Phi 共享的[推荐配色表](../../palettes/palettes.yaml)，完整色表在[颜色目录](../../palettes/colors.json)。主 agent 与本技能读取同一份文件。默认：分组用 `Qualitative.Safe`，热图用 `Quantitative.BluGrn`，有正负的值用 `Diverging.RdBu`，对齐 OmicsAgent 产品时用 `Brand.Algolia`。
 
 ## 目录结构
 
@@ -118,8 +118,6 @@ README.md / README.zh-CN.md      本说明
 references/
   template_contracts.json       常见形态的快速路由契约
   plots.yaml                     家族索引
-  palettes.yaml                  推荐配色
-  palettes/colors.json           完整 hex
   catalog/<family>.yaml          模板条目
   layouts.yaml                   多面板版式
   multipanel-composition.md
@@ -132,6 +130,9 @@ scripts/
   lib/common.R                   共用读写与保存
   <family>/<template>/plot.R
   layouts/<layout>/compose.R
+../../palettes/
+  palettes.yaml                  Phi 共享推荐配色
+  colors.json                    Phi 共享完整 hex
 ```
 
 ## 怎么用

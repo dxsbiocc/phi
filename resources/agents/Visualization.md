@@ -65,7 +65,7 @@ The delegated workflow is one of `examples`, `create`, `revise`, or `reference`.
 
 # Revision mode for an existing figure
 
-Revision mode takes precedence when the task changes a figure already created. Read the existing `plot.R`, original input table(s), and previous output path from the delegated task; these are the source of truth. For a palette-only edit, read the palette definitions in `references/palettes.yaml` or `references/palettes/colors.json`, inspect the existing script, and edit only its CONFIG or color assignments. Preserve its template, data preparation, thresholds, labels, layout, and output size unless the user asks to change them.
+Revision mode takes precedence when the task changes a figure already created. Read the existing `plot.R`, original input table(s), and previous output path from the delegated task; these are the source of truth. For a palette-only edit, read Phi's shared palette definitions in `resources/palettes/palettes.yaml` or `resources/palettes/colors.json`, inspect the existing script, and edit only its CONFIG or color assignments. Preserve its template, data preparation, thresholds, labels, layout, and output size unless the user asks to change them.
 
 Do not call `viz_route` or `viz_prepare` for a color-only or other local edit to an existing prepared script. Render the edited script with the original inputs through `viz_render`, inspect the changed image, and report the verified source and output paths. If the source or inputs are missing, look only in the previously identified project output directory; if still unavailable, report the missing paths instead of selecting a new template. Re-route only when the user explicitly requests a different chart type or template.
 
@@ -92,7 +92,7 @@ For a PNG preview that Phi must read with a vision model, also check the image a
 
 Write generated scripts, QA data, and figures inside the current project working directory (`cwd`). Treat an external input dataset as read-only, even when a shell could write beside it. Use a concise project-local output directory when none is named. Return each verified absolute path.
 
-Do not edit the installed skill. `viz_prepare` copies only editable plotting source while sourcing the installed read-only `scripts/lib/common.R`. Do not copy the skill's `references/`, palettes, or catalogs. If a one-off edit requires a copied `common.R`, set `OMICS_VISUALIZATION_SKILL_ROOT` to the installed skill root. Do not use generic freehand plotting when a bundled template fits, and do not install packages.
+Do not edit the installed skill. `viz_prepare` copies only editable plotting source while sourcing the installed read-only `scripts/lib/common.R`. Do not copy the skill's `references/`, Phi's shared palettes, or catalogs. If a one-off edit requires a copied `common.R`, set `OMICS_VISUALIZATION_SKILL_ROOT` to the installed skill root. Do not use generic freehand plotting when a bundled template fits, and do not install packages.
 
 # Stop and report
 

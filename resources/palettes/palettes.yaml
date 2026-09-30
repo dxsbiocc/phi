@@ -1,15 +1,14 @@
-# Palette index for omics-visualization.
+# Phi's shared palette index for main-agent recommendations and omics figures.
 # Hex values come from OmicsAgent frontend ColorPicker and the
 # loading.io curated collection (https://loading.io/color/feature/):
 #   frontend/src/components/common/colors.json
 #   plus Brand / Artwork / Qualitative / Concept / Diverging / Gradient /
 #   Quantitative / Aggregation palettes merged from ldpalettepicker.
-# Agents: read this file after choosing a template. Copy hex from `colors`
-# or look up any other name in references/palettes/colors.json.
+# Agents: copy hex from `recommended` or look up any other name in colors.json.
 # Do not invent hex codes. Do not use Artwork or Concept unless the user
 # asks for a decorative theme.
 
-source: "references/palettes/colors.json"
+source: "colors.json"
 origin: "OmicsAgent ColorPicker + loading.io/color/feature"
 
 # Default pick by encoding. Override only when the user names a palette

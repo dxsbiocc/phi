@@ -530,7 +530,7 @@ test('the bundled Visualization agent routes template previews through omics vis
   const skillText = readFileSync(join(REPO_SKILLS_DIR, 'omics-visualization', 'SKILL.md'), 'utf-8')
   assert.match(skillText, /active Phi project working directory/)
   assert.match(skillText, /Treat data directories outside the\s+project as read-only inputs/)
-  assert.match(skillText, /Do not copy `references\/`, `references\/palettes\/`, or catalog files/)
+  assert.match(skillText, /Do not copy `references\/`, Phi's shared `resources\/palettes\/`/)
   assert.match(skillText, /same values for point classification, cutoff lines, legend text/i)
   const commonR = readFileSync(
     join(REPO_SKILLS_DIR, 'omics-visualization', 'scripts', 'lib', 'common.R'),

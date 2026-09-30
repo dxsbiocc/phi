@@ -94,18 +94,19 @@ export function ColorPalette({ colors }: { colors: string[] }): React.JSX.Elemen
         maxWidth: '100%',
         width: 'max-content',
         overflowX: 'auto',
-        pt: 1.5,
-        pb: 1,
+        pt: 2,
+        pb: 2,
         pr: 2,
         my: 0.5,
         '& .phi-color-swatch:hover, & .phi-color-swatch:focus-visible': {
-          transform: 'scale(1.3)',
+          transform: 'scale(1.4)',
           zIndex: 3
         },
-        '& .phi-color-swatch:hover + .phi-color-swatch, & .phi-color-swatch:has(+ .phi-color-swatch:hover)': {
-          transform: 'scale(1.12)',
-          zIndex: 2
-        },
+        '& .phi-color-swatch:hover + .phi-color-swatch, & .phi-color-swatch:has(+ .phi-color-swatch:hover)':
+          {
+            transform: 'scale(1.12)',
+            zIndex: 2
+          },
         '@media (prefers-reduced-motion: reduce)': {
           '& .phi-color-swatch': { transition: 'none' }
         }
@@ -114,6 +115,7 @@ export function ColorPalette({ colors }: { colors: string[] }): React.JSX.Elemen
       {colors.map((color, index) => (
         <Tooltip
           key={`${color}-${index}`}
+          placement="top"
           title={copiedColor === color ? `已复制 ${color}` : color}
           slotProps={{
             tooltip: {
@@ -141,8 +143,8 @@ export function ColorPalette({ colors }: { colors: string[] }): React.JSX.Elemen
               appearance: 'none',
               position: 'relative',
               flexShrink: 0,
-              width: 44,
-              height: 52,
+              width: 56,
+              height: 72,
               ml: index === 0 ? 0 : -1,
               p: 0,
               border: 1,

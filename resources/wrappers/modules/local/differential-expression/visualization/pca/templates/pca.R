@@ -7,7 +7,7 @@
 # from resources/skills/omics-visualization's scatter/group template --
 # values and layout only, not sourced code, so this script stays
 # self-contained and runnable in its own container. See
-# resources/skills/omics-visualization/references/palettes.yaml
+# resources/palettes/palettes.yaml
 # (Qualitative.Safe) for where the point colors come from.
 
 ################################################
@@ -132,8 +132,8 @@ percentVar       <- round(100 * pca_result\$percentVar)
 ################################################
 ################################################
 
-# Colorblind-safe categorical hues from omics-visualization's
-# Qualitative.Safe catalog entry (references/palettes.yaml).
+# Colorblind-safe categorical hues from Phi's
+# Qualitative.Safe catalog entry (resources/palettes/palettes.yaml).
 QUALITATIVE_SAFE <- c("#88ccee", "#cc6677", "#ddcc77", "#117733", "#332288", "#aa4499",
                        "#44aa99", "#999933", "#882255", "#661100", "#6699cc", "#888888")
 

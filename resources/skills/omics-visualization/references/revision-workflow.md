@@ -10,8 +10,8 @@ script is the source of truth. Keep the original template and data mapping.
    known project output directory. If the source or inputs remain ambiguous,
    report the missing paths; do not start a new template selection.
 2. For a color-only request, inspect the current CONFIG and color assignments,
-   then read only `references/palettes.yaml` or
-   `references/palettes/colors.json`. Edit the smallest relevant lines in the
+   then read only Phi's shared `resources/palettes/palettes.yaml` or
+   `resources/palettes/colors.json`. Edit the smallest relevant lines in the
    project copy. Preserve data preparation, thresholds, group classification,
    labels, geometry, and export size unless the user also asked to change them.
 3. Do not call `viz_route`, `viz_examples`, or `viz_prepare` for this local

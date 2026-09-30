@@ -6,7 +6,7 @@
 # theme) adapted from resources/skills/omics-visualization's scatter/volcano
 # template -- values and layout only, not sourced code, so this script
 # stays self-contained and runnable in its own container. See
-# resources/skills/omics-visualization/references/palettes.yaml
+# resources/palettes/palettes.yaml
 # (Diverging.RdBu) for where the direction colors come from.
 
 ################################################
@@ -118,8 +118,8 @@ top_labels <- do.call(rbind, lapply(
 ################################################
 ################################################
 
-# Direction colors from omics-visualization's Diverging.RdBu catalog entry
-# (references/palettes.yaml) -- the conventional red-up/blue-down reading
+# Direction colors from Phi's Diverging.RdBu catalog entry
+# (resources/palettes/palettes.yaml) -- the conventional red-up/blue-down reading
 # for signed fold changes.
 direction_colors <- c(Down = "#2166ac", None = "grey70", Up = "#b2182b")
 

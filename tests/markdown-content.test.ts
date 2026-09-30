@@ -177,6 +177,18 @@ test('color palette appears for a multi-color paragraph but not isolated color m
   assert.doesNotMatch(otherSurface, /data-phi-slot="markdown-color-palette"/)
 })
 
+test('assistant color tables show a palette above the table', () => {
+  const markup = renderMarkdown(
+    '| 用途 | 色值 |\n| --- | --- |\n| 主色 | #e11d48 |\n| 辅色 | #f472b6 |\n| 点缀 | #fb923c |',
+    createTheme(),
+    false,
+    true
+  )
+
+  assert.equal((markup.match(/data-phi-slot="markdown-color-palette"/g) ?? []).length, 1)
+  assert.ok(markup.indexOf('data-phi-slot="markdown-color-palette"') < markup.indexOf('<table'))
+})
+
 test('math is left as literal text by default (chat, wrapper views, etc.)', () => {
   const markup = renderMarkdown('$$x^2 + y^2 = z^2$$')
 

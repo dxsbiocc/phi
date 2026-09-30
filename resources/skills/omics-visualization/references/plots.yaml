@@ -13,7 +13,7 @@
 # "fix" a black background.
 
 preview_background: "transparent"
-palettes: "references/palettes.yaml"
+palettes: "../../palettes/palettes.yaml"
 
 groups:
   scatter:

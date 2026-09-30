@@ -57,7 +57,7 @@ Preview PNGs are **transparent**. A dark editor composites empty alpha as black.
 
 ### Copy, then adapt
 
-Bundled scripts are the canonical library. Ordinary use copies the selected `plot.R` into the project and edits that copy, while sourcing installed read-only helpers such as `scripts/lib/common.R` by absolute path. Copy `common.R` only for a one-off helper edit. Do not copy `references/` or palette catalogs into the project just to render; choose palette ids from the installed references. The installed skill is not the working file. There is no hidden plotting DSL: change `CONFIG` for columns and labels, `DATA PREPARATION` for reshape or order, and `PLOT` only when the geometry must change.
+Bundled scripts are the canonical library. Ordinary use copies the selected `plot.R` into the project and edits that copy, while sourcing installed read-only helpers such as `scripts/lib/common.R` by absolute path. Copy `common.R` only for a one-off helper edit. Do not copy `references/` or Phi's shared palettes into the project just to render; choose palette ids from `resources/palettes/`. The installed skill is not the working file. There is no hidden plotting DSL: change `CONFIG` for columns and labels, `DATA PREPARATION` for reshape or order, and `PLOT` only when the geometry must change.
 
 ### One canonical implementation
 
@@ -114,7 +114,7 @@ About **149** single-plot templates in **12** families, plus a small layout set:
 
 Each template ships with `plot.R`, example data, and `preview.png`. Catalog entries record `id`, aliases, language, status, and the input shape the script expects.
 
-Palettes live in [references/palettes.yaml](references/palettes.yaml), with the full OmicsAgent set in [references/palettes/colors.json](references/palettes/colors.json). Defaults: `Qualitative.Safe` for groups, `Quantitative.BluGrn` for heatmaps, `Diverging.RdBu` for signed values, `Brand.Algolia` when matching the OmicsAgent product.
+Palettes live in Phi's shared [palette index](../../palettes/palettes.yaml), with the full OmicsAgent set in the [color catalog](../../palettes/colors.json). The main agent and this skill read the same files. Defaults: `Qualitative.Safe` for groups, `Quantitative.BluGrn` for heatmaps, `Diverging.RdBu` for signed values, `Brand.Algolia` when matching the OmicsAgent product.
 
 ## Layout of the skill
 
@@ -124,8 +124,6 @@ README.md / README.zh-CN.md      This introduction
 references/
   template_contracts.json         Fast routing contracts for common shapes
   plots.yaml                     Family index
-  palettes.yaml                  Recommended palettes
-  palettes/colors.json           Full hex catalog
   catalog/<family>.yaml          Template records
   layouts.yaml                   Multi-panel layouts
   multipanel-composition.md
@@ -138,6 +136,9 @@ scripts/
   lib/common.R                   Shared I/O and save helpers
   <family>/<template>/plot.R
   layouts/<layout>/compose.R
+../../palettes/
+  palettes.yaml                  Phi's shared recommended palettes
+  colors.json                    Phi's shared full hex catalog
 ```
 
 ## Using it

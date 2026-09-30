@@ -80,6 +80,7 @@ import { buildRemoteWorkspaceWriteTool } from '../remote-workspace-write-tool'
 import type { RemoteMutationResult } from '../remote-workspace-edit'
 import { buildRemoteWorkspaceEditTool } from '../remote-workspace-edit-tool'
 import { buildLibraryCustomTools } from '../library/library-tools'
+import { buildPaletteRecommendationTool } from '../palettes/tools'
 import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
 import { buildAskUserQuestionCustomTools } from '../user-interaction-tools'
@@ -1363,6 +1364,7 @@ async function createSession(params: unknown): Promise<unknown> {
     buildProjectDownloadTool(cwd, agentDir),
     ...notebookCustomTools,
     ...libraryCustomTools,
+    buildPaletteRecommendationTool(),
     ...userInteractionCustomTools
   ]
 

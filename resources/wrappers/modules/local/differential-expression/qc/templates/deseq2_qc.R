@@ -83,8 +83,8 @@ library(DESeq2)
 library(ggplot2)
 library(pheatmap)
 
-# Palette hexes copied from resources/skills/omics-visualization's
-# references/palettes.yaml (Quantitative.BluGrn, the skill's own heatmap
+# Palette hexes copied from Phi's resources/palettes/palettes.yaml
+# (Quantitative.BluGrn, the shared heatmap
 # default, and a legible dark hue from Qualitative.Safe for points/text on
 # white) -- values only, not code, so this script stays self-contained and
 # runnable in its own container.
