@@ -31,7 +31,9 @@ import {
   timestampMs,
   type RenderGroup
 } from '../../lib/chatRenderGroups'
+import { shouldCommitChatRowHeight, shouldFollowLatestContent } from '../../lib/chatScrollFollow'
 import {
+  chatVirtualMinimumRowCount,
   chatVirtualWindow,
   normalizedChatVirtualRowHeight,
   type ChatVirtualItem,
@@ -249,6 +251,21 @@ const ChatMessageList = memo(function ChatMessageList({
   )
   const todoSnapshot = useMemo(() => latestTodoSnapshot(messages), [messages])
   const virtualRowObserversRef = useRef<Map<string, ResizeObserver>>(new Map())
+  const pendingRowHeightsRef = useRef<Record<string, number>>({})
+  const rowHeightFrameRef = useRef<number | null>(null)
+  const scrollResetKeyRef = useRef(scrollResetKey)
+  scrollResetKeyRef.current = scrollResetKey
+  const seenScrollResetKeyRef = useRef(scrollResetKey)
+  if (seenScrollResetKeyRef.current !== scrollResetKey) {
+    seenScrollResetKeyRef.current = scrollResetKey
+    pendingRowHeightsRef.current = {}
+    if (rowHeightFrameRef.current !== null) {
+      window.cancelAnimationFrame(rowHeightFrameRef.current)
+      rowHeightFrameRef.current = null
+    }
+  }
+  const virtualizationEnabledRef = useRef(false)
+  const visibleRowKeysRef = useRef<ReadonlySet<string>>(new Set())
   const currentMessageMarker = useMemo(() => messageScrollMarker(messages), [messages])
   const currentMessageMarkerRef = useRef(currentMessageMarker)
   useLayoutEffect(() => {
@@ -306,6 +323,24 @@ const ChatMessageList = memo(function ChatMessageList({
     virtualRowHeights,
     virtualViewport.viewportHeight
   ])
+  virtualizationEnabledRef.current = virtualItems.length >= chatVirtualMinimumRowCount
+  visibleRowKeysRef.current = new Set(virtualCells.items.map(({ item }) => item.id))
+
+  const flushRowHeights = useCallback((): void => {
+    rowHeightFrameRef.current = null
+    const pending = pendingRowHeightsRef.current
+    const pendingKeys = Object.keys(pending)
+    if (pendingKeys.length === 0) return
+    pendingRowHeightsRef.current = {}
+    const resetKey = scrollResetKeyRef.current
+    setVirtualRowHeightState((current) => {
+      const base = current.resetKey === resetKey ? current.heights : {}
+      const changed =
+        current.resetKey !== resetKey || pendingKeys.some((key) => base[key] !== pending[key])
+      if (!changed) return current
+      return { resetKey, heights: { ...base, ...pending } }
+    })
+  }, [])
 
   const measureVirtualRow = useCallback(
     (groupKey: string, element: HTMLDivElement | null): void => {
@@ -316,24 +351,33 @@ const ChatMessageList = memo(function ChatMessageList({
       }
       if (!element) return
 
-      const updateHeight = (): void => {
+      const queueHeight = (): void => {
+        if (!element.isConnected) return
+        if (
+          !shouldCommitChatRowHeight({
+            virtualizationEnabled: virtualizationEnabledRef.current,
+            rowInWindow: visibleRowKeysRef.current.has(groupKey)
+          })
+        ) {
+          return
+        }
         const height = normalizedChatVirtualRowHeight(element.getBoundingClientRect().height)
-        setVirtualRowHeightState((current) => {
-          const currentHeights = current.resetKey === scrollResetKey ? current.heights : {}
-          if (current.resetKey === scrollResetKey && currentHeights[groupKey] === height) {
-            return current
-          }
-          return { resetKey: scrollResetKey, heights: { ...currentHeights, [groupKey]: height } }
-        })
+        if (pendingRowHeightsRef.current[groupKey] === height) return
+        pendingRowHeightsRef.current[groupKey] = height
+        if (rowHeightFrameRef.current !== null) return
+        rowHeightFrameRef.current = window.requestAnimationFrame(flushRowHeights)
       }
-      updateHeight()
 
-      if (typeof ResizeObserver === 'undefined') return
-      const observer = new ResizeObserver(updateHeight)
+      if (typeof ResizeObserver === 'undefined') {
+        queueHeight()
+        return
+      }
+      const observer = new ResizeObserver(queueHeight)
       observer.observe(element)
       virtualRowObserversRef.current.set(groupKey, observer)
+      queueHeight()
     },
-    [scrollResetKey]
+    [flushRowHeights]
   )
 
   useEffect(() => {
@@ -341,6 +385,10 @@ const ChatMessageList = memo(function ChatMessageList({
     return () => {
       for (const observer of observers.values()) observer.disconnect()
       observers.clear()
+      if (rowHeightFrameRef.current !== null) {
+        window.cancelAnimationFrame(rowHeightFrameRef.current)
+        rowHeightFrameRef.current = null
+      }
     }
   }, [])
 
@@ -451,18 +499,18 @@ const ChatMessageList = memo(function ChatMessageList({
     (options?: ChatContentResizeOptions): void => {
       if (!scrollContainer) return
 
-      if (options?.preserveScrollPosition && !stickToBottomRef.current) {
+      // Away from the tail, growing output stays below the fold. The one
+      // exception is the reader collapsing or expanding something already in
+      // view: keep that row from jumping under their cursor.
+      if (!stickToBottomRef.current) {
+        if (!options?.preserveScrollPosition) return
         suppressAutoScrollUntilRef.current = Date.now() + USER_RESIZE_AUTO_SCROLL_SUPPRESSION_MS
         updateScrollState(scrollContainer)
         return
       }
 
-      if (stickToBottomRef.current && Date.now() >= suppressAutoScrollUntilRef.current) {
-        scrollToLatest()
-        return
-      }
-
-      updateScrollState(scrollContainer)
+      if (Date.now() < suppressAutoScrollUntilRef.current) return
+      scrollToLatest()
     },
     [scrollContainer, scrollToLatest, updateScrollState]
   )
@@ -527,14 +575,19 @@ const ChatMessageList = memo(function ChatMessageList({
       currentMessageMarker.lastRole === 'user' &&
       currentMessageMarker.lastId !== previousMarker?.lastId
 
-    if (replacedMessages || userSubmittedMessage || stickToBottomRef.current) {
-      const frame = window.requestAnimationFrame(() => scrollToLatest())
-      return () => window.cancelAnimationFrame(frame)
+    if (
+      !shouldFollowLatestContent({
+        stuckToBottom: stickToBottomRef.current,
+        replacedMessages,
+        userSubmittedMessage
+      })
+    ) {
+      return undefined
     }
 
-    updateScrollState(scrollContainer)
-    return undefined
-  }, [currentMessageMarker, scrollContainer, scrollToLatest, updateScrollState])
+    const frame = window.requestAnimationFrame(() => scrollToLatest())
+    return () => window.cancelAnimationFrame(frame)
+  }, [currentMessageMarker, scrollContainer, scrollToLatest])
 
   useEffect(() => {
     if (!scrollContainer || typeof ResizeObserver === 'undefined') {
@@ -546,6 +599,7 @@ const ChatMessageList = memo(function ChatMessageList({
 
     let frame: number | null = null
     const scheduleResize = (): void => {
+      if (!stickToBottomRef.current) return
       if (frame !== null) {
         window.cancelAnimationFrame(frame)
       }
