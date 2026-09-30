@@ -159,7 +159,8 @@ import { installPlugin, listPlugins, removePlugin } from './agent/plugins'
 import {
   addRemoteMcpConnector,
   disableFeaturedApiKeyAutoDiscovery,
-  removeRemoteMcpConnector
+  removeRemoteMcpConnector,
+  setMcpConnectorEnabled
 } from './agent/mcp-connectors'
 import {
   API_KEY_CONNECTOR_IDS,
@@ -7222,6 +7223,24 @@ app.whenReady().then(() => {
     }
     await syncFeaturedMcpApiKeySessions(name)
   })
+  ipcMain.handle(
+    'mcp:setConnectorEnabled',
+    async (_, name: string, enabled: boolean, sourcePath?: string) => {
+      setMcpConnectorEnabled(
+        name,
+        Boolean(enabled),
+        typeof sourcePath === 'string' ? sourcePath : undefined
+      )
+      try {
+        await getOmpBridge().request('mcp.applyConnectorEnabled', { name })
+      } catch (error) {
+        if (!API_KEY_CONNECTOR_IDS.some((id) => id === name)) throw error
+        writeAppLog({ event: 'mcp_api_key_session_sync_failed', metadata: { connectorId: name } })
+        await getOmpBridge().stop()
+        throw new Error('本地修改已保存，但运行中的会话同步失败并已停止；请重新打开对话后重试')
+      }
+    }
+  )
   ipcMain.handle('mcp:featuredApiKeyStatus', async (_, id: string) =>
     featuredMcpApiKeyVerifiedStatus(id)
   )

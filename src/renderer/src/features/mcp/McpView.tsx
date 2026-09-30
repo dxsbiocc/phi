@@ -5,11 +5,9 @@ import {
   AccordionSummary,
   Box,
   Button,
-  Chip,
   Divider,
   InputAdornment,
   List,
-  ListItemButton,
   Stack,
   TextField,
   Typography
@@ -25,6 +23,7 @@ import {
   type FeaturedMcpConnector
 } from '../../../../shared/mcpConnectorCatalog'
 import { McpConnectorCatalogDialog } from './components/McpConnectorCatalogDialog'
+import { McpEnableSwitch } from './components/McpEnableSwitch'
 import { ConnectorIcon } from './components/ConnectorIcon'
 import { McpDetailPanel as McpDetail, type McpDetailPanelProps } from './components/McpDetailPanel'
 
@@ -163,13 +162,6 @@ function serverCategory(server: McpServerSummary): string {
   return featuredConnectorForServer(server)?.category ?? '其他'
 }
 
-function managedApiKeyConnector(server: McpServerSummary): FeaturedMcpConnector | undefined {
-  if (server.enabled !== false) return undefined
-  return featuredMcpConnectors.find(
-    (connector) => connector.apiKey && connector.id === server.name && connector.url === server.url
-  )
-}
-
 function ResizeSeparator({
   onMouseDown
 }: {
@@ -255,6 +247,8 @@ export function McpSidebar({
 }: McpSidebarProps): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [catalogOpen, setCatalogOpen] = useState(false)
+  const [pendingServerId, setPendingServerId] = useState<string | null>(null)
+  const [enabledOverride, setEnabledOverride] = useState<Record<string, boolean>>({})
   const [expandedCategory, setExpandedCategory] = useState<string | null>(() => {
     const activeServer = servers.find((server) => server.id === activeServerId)
     return activeServer ? serverCategory(activeServer) : null
@@ -285,6 +279,29 @@ export function McpSidebar({
       }))
       .filter((group) => group.entries.length > 0)
   }, [filteredServers])
+
+  async function setConnectorEnabled(server: McpServerSummary, enabled: boolean): Promise<void> {
+    if (pendingServerId === server.id) return
+    setEnabledOverride((current) => ({ ...current, [server.id]: enabled }))
+    setPendingServerId(server.id)
+    try {
+      await window.api.setMcpConnectorEnabled(server.name, enabled, server.sourcePath)
+      await onRefreshServers?.()
+      setEnabledOverride((current) => {
+        const next = { ...current }
+        delete next[server.id]
+        return next
+      })
+    } catch {
+      setEnabledOverride((current) => {
+        const next = { ...current }
+        delete next[server.id]
+        return next
+      })
+    } finally {
+      setPendingServerId(null)
+    }
+  }
 
   const visibleCategory =
     expandedCategory !== '' && groups.some((group) => group.category === expandedCategory)
@@ -356,12 +373,6 @@ export function McpSidebar({
         />
       </Box>
 
-      <Box sx={{ px: 2, pb: 1, WebkitAppRegion: 'no-drag' }}>
-        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
-          <Chip size="small" variant="outlined" label={`${servers.length} 个已配置`} />
-        </Stack>
-      </Box>
-
       <Divider />
 
       <List
@@ -401,43 +412,44 @@ export function McpSidebar({
                 </Typography>
               </AccordionSummary>
               <AccordionDetails sx={{ p: 0 }}>
-                {group.entries.map((server) => (
-                  <ListItemButton
-                    key={server.id}
-                    selected={selectedServer?.id === server.id}
-                    onClick={() => {
-                      setExpandedCategory(group.category)
-                      onSelectServer(server)
-                    }}
-                    sx={{ ...plainSidebarRowSx, alignItems: 'center' }}
-                  >
-                    <Box sx={{ mr: 1.25 }}>
-                      <ConnectorIcon url={server.url} size={34} />
-                    </Box>
-                    <Typography
-                      variant="body2"
-                      noWrap
-                      sx={{ flex: 1, minWidth: 0, fontWeight: 600 }}
+                {group.entries.map((server) => {
+                  const label = featuredConnectorForServer(server)?.name ?? server.name
+                  const active = enabledOverride[server.id] ?? server.enabled !== false
+                  return (
+                    <Box
+                      key={server.id}
+                      className={selectedServer?.id === server.id ? 'Mui-selected' : undefined}
+                      onClick={() => {
+                        setExpandedCategory(group.category)
+                        onSelectServer(server)
+                      }}
+                      sx={{
+                        ...plainSidebarRowSx,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1.25,
+                        cursor: 'pointer'
+                      }}
                     >
-                      {featuredConnectorForServer(server)?.name ?? server.name}
-                    </Typography>
-                    <Chip
-                      size="small"
-                      variant="outlined"
-                      color={
-                        server.enabled === false && !managedApiKeyConnector(server)
-                          ? 'warning'
-                          : 'success'
-                      }
-                      label={
-                        server.enabled === false && !managedApiKeyConnector(server)
-                          ? '已停用'
-                          : '已配置'
-                      }
-                      sx={{ ml: 1, flexShrink: 0 }}
-                    />
-                  </ListItemButton>
-                ))}
+                      <ConnectorIcon url={server.url} size={34} />
+                      <Typography
+                        variant="body2"
+                        noWrap
+                        sx={{ flex: 1, minWidth: 0, fontWeight: 600 }}
+                      >
+                        {label}
+                      </Typography>
+                      <McpEnableSwitch
+                        checked={active}
+                        disabled={pendingServerId === server.id}
+                        label={active ? `关闭 ${label}` : `启用 ${label}`}
+                        onChange={(enabled) => {
+                          void setConnectorEnabled(server, enabled)
+                        }}
+                      />
+                    </Box>
+                  )
+                })}
               </AccordionDetails>
             </Accordion>
           ))

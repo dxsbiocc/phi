@@ -212,6 +212,7 @@ type PreloadMcpServerSummary = {
   sourcePath?: string
   managed?: boolean
   enabled?: boolean
+  userDisabled?: boolean
   status: 'configured'
 }
 
@@ -984,6 +985,7 @@ declare global {
       listMcpServers: (cwd?: string) => Promise<PreloadMcpServerSummary[]>
       addRemoteMcpConnector: (name: string, url: string) => Promise<void>
       removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
+      setMcpConnectorEnabled: (name: string, enabled: boolean, sourcePath?: string) => Promise<void>
       listFeaturedMcpTools: (id: string) => Promise<string[]>
       getFeaturedMcpAuthStatus: (id: string) => Promise<boolean>
       authorizeFeaturedMcp: (id: string) => Promise<void>

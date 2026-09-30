@@ -326,6 +326,7 @@ type McpServerSummary = {
   sourcePath?: string
   managed?: boolean
   enabled?: boolean
+  userDisabled?: boolean
   status: 'configured'
 }
 
@@ -896,6 +897,7 @@ type RendererAuthApi = {
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
   addRemoteMcpConnector: (name: string, url: string) => Promise<void>
   removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
+  setMcpConnectorEnabled: (name: string, enabled: boolean, sourcePath?: string) => Promise<void>
   listFeaturedMcpTools: (id: string) => Promise<string[]>
   getFeaturedMcpAuthStatus: (id: string) => Promise<boolean>
   authorizeFeaturedMcp: (id: string) => Promise<void>
@@ -1384,6 +1386,8 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('mcp:addRemoteConnector', name, url),
   removeRemoteMcpConnector: (name: string, url: string): Promise<void> =>
     ipcRenderer.invoke('mcp:removeRemoteConnector', name, url),
+  setMcpConnectorEnabled: (name: string, enabled: boolean, sourcePath?: string): Promise<void> =>
+    ipcRenderer.invoke('mcp:setConnectorEnabled', name, enabled, sourcePath),
   listFeaturedMcpTools: (id: string): Promise<string[]> =>
     ipcRenderer.invoke('mcp:featuredTools', id),
   getFeaturedMcpAuthStatus: (id: string): Promise<boolean> =>

@@ -3,7 +3,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { addRemoteMcpConnector, removeRemoteMcpConnector } from '../src/main/agent/mcp-connectors'
+import {
+  addRemoteMcpConnector,
+  isInjectedMcpServer,
+  removeRemoteMcpConnector,
+  setMcpConnectorEnabled
+} from '../src/main/agent/mcp-connectors'
 import { featuredMcpConnectors, mcpConnectorCategories } from '../src/shared/mcpConnectorCatalog'
 
 test('curated connector directory has distinct HTTPS services in every group', () => {
@@ -78,6 +83,47 @@ test('remote MCP connectors preserve unrelated configuration and remove only mat
     removeRemoteMcpConnector('pubmed', 'https://pubmed.mcp.claude.com/mcp', agentDir)
     config = JSON.parse(readFileSync(path, 'utf8'))
     assert.deepEqual(Object.keys(config.mcpServers), ['local'])
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})
+
+test('connector switch disables a server without turning an API key entry on', () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-mcp-connectors-'))
+  const path = join(agentDir, 'mcp.json')
+  try {
+    writeFileSync(
+      path,
+      JSON.stringify({
+        settings: { keep: true },
+        mcpServers: {
+          notion: { type: 'http', url: 'https://mcp.notion.com/mcp', enabled: true },
+          tavily: { type: 'http', url: 'https://mcp.tavily.com/mcp', enabled: false },
+          local: { command: 'existing-server', enabled: false }
+        }
+      })
+    )
+
+    setMcpConnectorEnabled('notion', false, path, agentDir)
+    let config = JSON.parse(readFileSync(path, 'utf8'))
+    assert.deepEqual(config.disabledServers, ['notion'])
+    assert.equal(config.mcpServers.notion.enabled, false)
+    assert.equal(isInjectedMcpServer('notion', config.mcpServers.notion, true), false)
+    assert.deepEqual(config.settings, { keep: true })
+
+    setMcpConnectorEnabled('tavily', false, path, agentDir)
+    config = JSON.parse(readFileSync(path, 'utf8'))
+    assert.deepEqual(config.disabledServers, ['notion', 'tavily'])
+    assert.equal(config.mcpServers.tavily.enabled, false)
+
+    setMcpConnectorEnabled('tavily', true, path, agentDir)
+    setMcpConnectorEnabled('local', true, path, agentDir)
+    config = JSON.parse(readFileSync(path, 'utf8'))
+    assert.deepEqual(config.disabledServers, ['notion'])
+    assert.equal(config.mcpServers.tavily.enabled, false)
+    assert.equal(isInjectedMcpServer('tavily', config.mcpServers.tavily, false), true)
+    assert.equal(isInjectedMcpServer('tavily', config.mcpServers.tavily, true), false)
+    assert.equal(config.mcpServers.local.enabled, true)
   } finally {
     rmSync(agentDir, { recursive: true, force: true })
   }

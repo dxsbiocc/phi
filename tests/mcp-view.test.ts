@@ -6,7 +6,7 @@ import test from 'node:test'
 import { McpDetail, McpSidebar } from '../src/renderer/src/features/mcp/McpView'
 import type { McpServerSummary } from '../src/renderer/src/features/mcp/lib/mcpTypes'
 
-test('connector sidebar groups installed services and labels disabled entries', () => {
+test('connector sidebar groups installed services and toggles them with a switch', () => {
   const servers: McpServerSummary[] = [
     {
       id: 'pubmed',
@@ -43,9 +43,13 @@ test('connector sidebar groups installed services and labels disabled entries', 
   assert.match(markup, /生产力 · 1/)
   assert.match(markup, /健康与生命科学 · 1/)
   assert.match(markup, /其他 · 1/)
-  assert.match(markup, /3 个已配置/)
+  assert.doesNotMatch(markup, /个已配置/)
+  assert.doesNotMatch(markup, /已停用/)
+  assert.doesNotMatch(markup, /已配置/)
   assert.match(markup, /disabled-local-service/)
-  assert.match(markup, /已停用/)
+  assert.match(markup, /启用 disabled-local-service/)
+  assert.match(markup, /关闭 Google Drive/)
+  assert.match(markup, /关闭 PubMed/)
   assert.match(markup, /google-drive\.svg/)
   assert.match(markup, /pubmed\.svg/)
   assert.doesNotMatch(markup, /https:\/\/pubmed\.mcp\.claude\.com\/mcp/)

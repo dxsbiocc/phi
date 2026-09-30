@@ -4,13 +4,10 @@ import {
   Box,
   Button,
   Dialog,
-  Divider,
   IconButton,
-  InputAdornment,
   List,
   ListItemButton,
   Stack,
-  TextField,
   Typography
 } from '@mui/material'
 import {
@@ -22,17 +19,24 @@ import { PhiIcons } from '../../../icons'
 import type { McpServerSummary } from '../../../types'
 import { featuredAuthFailureNotice, featuredOAuthStatusFromError } from '../lib/featuredAuthStatus'
 import {
+  filterFeaturedConnectors,
+  type ConnectorInstallFilter,
+  type ConnectorSignInFilter,
+  type ConnectorSort
+} from '../lib/featuredConnectorFilters'
+import {
   cacheFeaturedToolNames,
   cachedFeaturedToolNames,
   clearFeaturedToolNames
 } from '../lib/featuredToolCache'
-import { ConnectorIcon } from './ConnectorIcon'
 import { McpApiKeyDialog } from './McpApiKeyDialog'
+import { McpConnectorCatalogToolbar } from './McpConnectorCatalogToolbar'
+import { McpCustomConnectorDialog } from './McpCustomConnectorDialog'
 import { McpFeaturedConnectorCard, type ConnectorAuthStatus } from './McpFeaturedConnectorCard'
 import { McpFeaturedConnectorDetails } from './McpFeaturedConnectorDetails'
 
-type CatalogPage = 'list' | 'detail' | 'custom'
-type CatalogGroup = '已配置' | (typeof mcpConnectorCategories)[number]
+type CatalogPage = 'list' | 'detail'
+type CatalogGroup = (typeof mcpConnectorCategories)[number]
 const authConnectors = featuredMcpConnectors.filter(
   (connector) => connector.oauthAuthorizationOrigin || connector.apiKey
 )
@@ -71,8 +75,11 @@ export function McpConnectorCatalogDialog({
   const [group, setGroup] = useState<CatalogGroup>('生产力')
   const [selectedId, setSelectedId] = useState('google-drive')
   const [query, setQuery] = useState('')
-  const [customName, setCustomName] = useState('')
-  const [customUrl, setCustomUrl] = useState('')
+  const [signInFilter, setSignInFilter] = useState<ConnectorSignInFilter>('all')
+  const [installFilter, setInstallFilter] = useState<ConnectorInstallFilter>('all')
+  const [sort, setSort] = useState<ConnectorSort>('default')
+  const [customOpen, setCustomOpen] = useState(false)
+  const [customError, setCustomError] = useState<string | null>(null)
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [apiKeyDialogId, setApiKeyDialogId] = useState<string | null>(null)
   const [apiKeyError, setApiKeyError] = useState<string | null>(null)
@@ -134,44 +141,22 @@ export function McpConnectorCatalogDialog({
   const normalizedQuery = query.trim().toLowerCase()
   const filteredFeatured = useMemo(
     () =>
-      featuredMcpConnectors.filter(
-        (connector) =>
-          (normalizedQuery.length > 0 || connector.category === group) &&
-          (!normalizedQuery ||
-            [
-              connector.name,
-              connector.description,
-              connector.overview,
-              connector.category,
-              connector.publisher
-            ].some((value) => value.toLowerCase().includes(normalizedQuery)))
-      ),
-    [group, normalizedQuery]
+      filterFeaturedConnectors(featuredMcpConnectors, {
+        category: group,
+        query,
+        signIn: signInFilter,
+        install: installFilter,
+        sort,
+        isInstalled: (connector) => Boolean(matchingServer(connector, servers))
+      }),
+    [group, installFilter, query, servers, signInFilter, sort]
   )
-  const filteredInstalled = useMemo(
-    () =>
-      servers.filter(
-        (server) =>
-          !normalizedQuery ||
-          [server.name, server.url, server.command, server.sourcePath].some((value) =>
-            value?.toLowerCase().includes(normalizedQuery)
-          )
-      ),
-    [normalizedQuery, servers]
-  )
-
   async function add(name: string, url: string): Promise<void> {
     setBusy(name)
     setError(null)
     try {
       await window.api.addRemoteMcpConnector(name, url)
       await onRefresh()
-      if (page === 'custom') {
-        setCustomName('')
-        setCustomUrl('')
-        setGroup('已配置')
-        setPage('list')
-      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -381,8 +366,27 @@ export function McpConnectorCatalogDialog({
     setApiKeyInput('')
     setApiKeyDialogId(null)
     setApiKeyError(null)
+    setCustomOpen(false)
+    setCustomError(null)
+    setSignInFilter('all')
+    setInstallFilter('all')
+    setSort('default')
     setPage('list')
     onClose()
+  }
+
+  async function addCustom(name: string, url: string): Promise<void> {
+    setBusy(name)
+    setCustomError(null)
+    try {
+      await window.api.addRemoteMcpConnector(name, url)
+      await onRefresh()
+      setCustomOpen(false)
+    } catch (cause) {
+      setCustomError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(null)
+    }
   }
 
   function openGroup(nextGroup: CatalogGroup): void {
@@ -415,42 +419,6 @@ export function McpConnectorCatalogDialog({
     )
   }
 
-  function installedCard(server: McpServerSummary): React.JSX.Element {
-    const connector = featuredMcpConnectors.find(
-      (entry) => entry.url === server.url && (!entry.apiKey || entry.id === server.name)
-    )
-    if (connector) return connectorCard(connector, server.id)
-    return (
-      <Box
-        key={server.id}
-        sx={{ p: 1.75, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}
-      >
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: 'flex-start' }}>
-          <ConnectorIcon url={server.url} />
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography sx={{ fontWeight: 700 }}>{server.name}</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
-              {server.url ?? server.command ?? '本地 MCP 服务'}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {server.enabled === false ? '已停用' : '已配置'}
-            </Typography>
-          </Box>
-          {server.managed && server.url && (
-            <Button
-              size="small"
-              color="error"
-              disabled={busy !== null}
-              onClick={() => void remove(server)}
-            >
-              移除
-            </Button>
-          )}
-        </Stack>
-      </Box>
-    )
-  }
-
   return (
     <Dialog
       open={open}
@@ -468,44 +436,81 @@ export function McpConnectorCatalogDialog({
         }
       }}
     >
-      <Box sx={{ display: 'flex', height: '100%', minHeight: 0, bgcolor: 'background.paper' }}>
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: '248px minmax(0, 1fr)',
+          gridTemplateRows: 'auto minmax(0, 1fr)',
+          height: '100%',
+          minHeight: 0,
+          bgcolor: 'background.paper'
+        }}
+      >
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            px: 3,
+            borderRight: 1,
+            borderColor: 'divider',
+            bgcolor: 'background.default'
+          }}
+        >
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>
+            连接器
+          </Typography>
+        </Box>
+        <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', px: 3, pt: 2.5, pb: 2 }}>
+          {page === 'list' ? (
+            <Typography variant="h5" sx={{ fontWeight: 700, flex: 1 }}>
+              {normalizedQuery ? '搜索结果' : group}
+            </Typography>
+          ) : (
+            <>
+              <Button onClick={() => openGroup(group)}>← 返回{group}</Button>
+              <Box sx={{ flex: 1 }} />
+            </>
+          )}
+          {page === 'list' && (
+            <Button
+              variant="contained"
+              startIcon={<PhiIcons.action.add size={16} />}
+              onClick={() => {
+                setCustomError(null)
+                setCustomOpen(true)
+              }}
+            >
+              添加
+            </Button>
+          )}
+          <IconButton
+            aria-label="关闭连接器目录"
+            onClick={close}
+            sx={{
+              width: 36,
+              height: 36,
+              p: 0,
+              flex: '0 0 36px',
+              borderRadius: 1.5,
+              '&:hover': { bgcolor: 'action.hover' }
+            }}
+          >
+            <PhiIcons.action.close size={18} />
+          </IconButton>
+        </Stack>
         <Box
           component="nav"
           aria-label="连接器分组"
           sx={{
-            width: 248,
-            flexShrink: 0,
+            minHeight: 0,
+            overflowY: 'auto',
+            px: 1.5,
             borderRight: 1,
             borderColor: 'divider',
-            bgcolor: 'background.default',
-            display: 'flex',
-            flexDirection: 'column',
-            minHeight: 0,
-            px: 1.5,
-            py: 2.5
+            bgcolor: 'background.default'
           }}
         >
-          <Typography variant="h6" sx={{ px: 1.5, mb: 2, fontWeight: 700 }}>
-            连接器
-          </Typography>
-          <List disablePadding sx={{ overflowY: 'auto', flex: 1 }}>
-            <ListItemButton
-              selected={group === '已配置' && page === 'list'}
-              onClick={() => openGroup('已配置')}
-              sx={{ borderRadius: 1.5, mb: 1 }}
-            >
-              <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                已配置 · {servers.length}
-              </Typography>
-            </ListItemButton>
-            <Divider sx={{ my: 1.5 }} />
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ px: 1.5, mb: 1, display: 'block' }}
-            >
-              发现
-            </Typography>
+          <List disablePadding>
             {mcpConnectorCategories.map((category) => (
               <ListItemButton
                 key={category}
@@ -521,62 +526,7 @@ export function McpConnectorCatalogDialog({
             ))}
           </List>
         </Box>
-
-        <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', px: 3, pt: 2.5, pb: 2 }}>
-            {page === 'list' ? (
-              <Typography variant="h5" sx={{ fontWeight: 700, flex: 1 }}>
-                {normalizedQuery ? '搜索结果' : group}
-              </Typography>
-            ) : (
-              <>
-                <Button onClick={() => openGroup(group)}>← 返回{group}</Button>
-                <Box sx={{ flex: 1 }} />
-              </>
-            )}
-            {page === 'list' && (
-              <>
-                <TextField
-                  size="small"
-                  placeholder="搜索连接器"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  slotProps={{
-                    input: {
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <PhiIcons.action.search fontSize="small" />
-                        </InputAdornment>
-                      )
-                    }
-                  }}
-                  sx={{ width: { xs: 180, md: 260 } }}
-                />
-                <Button
-                  variant="contained"
-                  startIcon={<PhiIcons.action.add size={16} />}
-                  onClick={() => setPage('custom')}
-                >
-                  添加
-                </Button>
-              </>
-            )}
-            <IconButton
-              aria-label="关闭连接器目录"
-              onClick={close}
-              sx={{
-                width: 36,
-                height: 36,
-                p: 0,
-                flex: '0 0 36px',
-                borderRadius: 1.5,
-                '&:hover': { bgcolor: 'action.hover' }
-              }}
-            >
-              <PhiIcons.action.close size={18} />
-            </IconButton>
-          </Stack>
-          <Divider />
+        <Box sx={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <Box sx={{ flex: 1, overflowY: 'auto', px: 3, py: 3 }}>
             {page === 'detail' && selected ? (
               <McpFeaturedConnectorDetails
@@ -598,42 +548,18 @@ export function McpConnectorCatalogDialog({
                 onApiKey={() => openApiKeyDialog(selected)}
                 onRetry={() => openDetail(selected, true)}
               />
-            ) : page === 'custom' ? (
-              <Stack spacing={2} sx={{ maxWidth: 620 }}>
-                <Typography variant="h5" sx={{ fontWeight: 700 }}>
-                  添加自定义 MCP 连接器
-                </Typography>
-                <Alert severity="info">
-                  这里仅保存服务地址。需要登录的服务仍需单独完成授权，保存配置不代表连接成功。
-                </Alert>
-                <TextField
-                  label="名称"
-                  value={customName}
-                  onChange={(event) => setCustomName(event.target.value)}
-                  helperText="使用字母、数字、下划线或连字符"
-                />
-                <TextField
-                  label="HTTPS MCP 地址"
-                  value={customUrl}
-                  onChange={(event) => setCustomUrl(event.target.value)}
-                  placeholder="https://example.com/mcp"
-                />
-                <Button
-                  variant="contained"
-                  disabled={busy !== null || !customName.trim() || !customUrl.trim()}
-                  onClick={() => void add(customName, customUrl)}
-                  sx={{ alignSelf: 'flex-start' }}
-                >
-                  保存 MCP 配置
-                </Button>
-              </Stack>
             ) : (
               <>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  {group === '已配置'
-                    ? '这里列出已保存的连接器；配置状态不代表服务端已经连通。'
-                    : '按类别浏览常用 MCP 服务，已配置的连接器也会显示。'}
-                </Typography>
+                <McpConnectorCatalogToolbar
+                  query={query}
+                  signIn={signInFilter}
+                  install={installFilter}
+                  sort={sort}
+                  onQueryChange={setQuery}
+                  onSignInChange={setSignInFilter}
+                  onInstallChange={setInstallFilter}
+                  onSortChange={setSort}
+                />
                 <Box
                   sx={{
                     display: 'grid',
@@ -641,13 +567,13 @@ export function McpConnectorCatalogDialog({
                     gap: 1.5
                   }}
                 >
-                  {group === '已配置'
-                    ? filteredInstalled.map(installedCard)
-                    : filteredFeatured.map((connector) => connectorCard(connector))}
+                  {filteredFeatured.map((connector) => connectorCard(connector))}
                 </Box>
-                {(group === '已配置' ? filteredInstalled : filteredFeatured).length === 0 && (
+                {filteredFeatured.length === 0 && (
                   <Typography color="text.secondary" sx={{ mt: 2 }}>
-                    {normalizedQuery ? '没有找到匹配的连接器' : '这个分组目前没有连接器'}
+                    {normalizedQuery || signInFilter !== 'all' || installFilter !== 'all'
+                      ? '没有符合条件的连接器'
+                      : '这个分组目前没有连接器'}
                   </Typography>
                 )}
               </>
@@ -660,6 +586,17 @@ export function McpConnectorCatalogDialog({
           </Box>
         </Box>
       </Box>
+      <McpCustomConnectorDialog
+        open={customOpen}
+        busy={busy !== null}
+        error={customError}
+        onClose={() => {
+          if (busy !== null) return
+          setCustomOpen(false)
+          setCustomError(null)
+        }}
+        onSubmit={(name, url) => void addCustom(name, url)}
+      />
       <McpApiKeyDialog
         connector={apiKeyDialogConnector}
         value={apiKeyInput}

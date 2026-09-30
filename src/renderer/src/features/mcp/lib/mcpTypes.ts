@@ -9,5 +9,6 @@ export interface McpServerSummary {
   sourcePath?: string
   managed?: boolean
   enabled?: boolean
+  userDisabled?: boolean
   status: 'configured'
 }

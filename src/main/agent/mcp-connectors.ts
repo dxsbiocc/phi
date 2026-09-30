@@ -3,7 +3,12 @@ import { dirname, join } from 'node:path'
 import { getPhiAgentDir } from './runtime-paths'
 import { API_KEY_CONNECTOR_IDS, apiKeyConnector } from './mcp-key-credentials'
 
-type McpConfig = Record<string, unknown> & { mcpServers?: Record<string, unknown> }
+const MCP_SERVER_NAME = /^[a-zA-Z0-9_.-]{1,100}$/
+
+type McpConfig = Record<string, unknown> & {
+  mcpServers?: Record<string, unknown>
+  disabledServers?: string[]
+}
 
 function configPath(agentDir: string): string {
   return join(agentDir, 'mcp.json')
@@ -166,4 +171,94 @@ export function removeRemoteMcpConnector(
   const remaining = { ...servers }
   delete remaining[validatedName]
   writeConfig(path, { ...config, mcpServers: remaining })
+}
+
+function disabledServerNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(
+    (item): item is string => typeof item === 'string' && MCP_SERVER_NAME.test(item)
+  )
+}
+
+function managedApiKeyEntry(name: string, value: unknown): boolean {
+  try {
+    return isPhiManagedApiKeyEntry(value, apiKeyConnector(name).url)
+  } catch {
+    return false
+  }
+}
+
+function ownedMcpConfigPath(sourcePath: string, agentDir: string): boolean {
+  const normalized = sourcePath.replaceAll('\\', '/')
+  if (normalized === configPath(agentDir).replaceAll('\\', '/')) return true
+  return (
+    normalized.endsWith('/.phi/mcp.json') ||
+    normalized.endsWith('/.mcp.json') ||
+    normalized.endsWith('/.omp/mcp.json') ||
+    normalized.endsWith('/.pi/mcp.json')
+  )
+}
+
+function setStoredEntryEnabled(config: McpConfig, name: string, enabled: boolean): boolean {
+  const entry = config.mcpServers?.[name]
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false
+  // API key entries must stay disabled in the file. Pi would otherwise connect
+  // them without the key; Phi injects that key in memory while the switch is on.
+  if (managedApiKeyEntry(name, entry)) return false
+  const record = entry as Record<string, unknown>
+  if ((record.enabled !== false) === enabled) return false
+  config.mcpServers![name] = { ...record, enabled }
+  return true
+}
+
+export function readMcpServerEntry(
+  name: string,
+  agentDir = getPhiAgentDir()
+): Record<string, unknown> | undefined {
+  const entry = readConfig(configPath(agentDir)).mcpServers?.[name]
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return undefined
+  return entry as Record<string, unknown>
+}
+
+/** Whether this connector's tools should be offered to the model. */
+export function isInjectedMcpServer(name: string, value: unknown, userDisabled: boolean): boolean {
+  if (userDisabled) return false
+  if (managedApiKeyEntry(name, value)) return true
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return (value as Record<string, unknown>).enabled !== false
+}
+
+export function readDisabledMcpServerNames(agentDir = getPhiAgentDir()): string[] {
+  return disabledServerNames(readConfig(configPath(agentDir)).disabledServers)
+}
+
+export function isMcpConnectorUserDisabled(name: string, agentDir = getPhiAgentDir()): boolean {
+  return readDisabledMcpServerNames(agentDir).includes(name)
+}
+
+/** User on/off switch. API key entries stay `enabled: false` so Pi does not connect them without the key. */
+export function setMcpConnectorEnabled(
+  name: string,
+  enabled: boolean,
+  sourcePath?: string,
+  agentDir = getPhiAgentDir()
+): void {
+  if (!MCP_SERVER_NAME.test(name)) throw new Error('连接器名称无效')
+  const userPath = configPath(agentDir)
+  const userConfig = readConfig(userPath)
+  const disabled = new Set(disabledServerNames(userConfig.disabledServers))
+  if (enabled) disabled.delete(name)
+  else disabled.add(name)
+  if (disabled.size > 0) userConfig.disabledServers = [...disabled].sort()
+  else delete userConfig.disabledServers
+
+  const entryPath = sourcePath && ownedMcpConfigPath(sourcePath, agentDir) ? sourcePath : undefined
+  const sameFile = !entryPath || entryPath === userPath
+  if (sameFile) setStoredEntryEnabled(userConfig, name, enabled)
+  writeConfig(userPath, userConfig)
+
+  if (entryPath && !sameFile) {
+    const config = readConfig(entryPath)
+    if (setStoredEntryEnabled(config, name, enabled)) writeConfig(entryPath, config)
+  }
 }

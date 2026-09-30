@@ -55,7 +55,11 @@ import {
   featuredApiKeyMcpConfig,
   isFeaturedMcpApiKeyInstalled
 } from '../mcp-key-credentials'
-import { disableFeaturedApiKeyAutoDiscovery } from '../mcp-connectors'
+import {
+  disableFeaturedApiKeyAutoDiscovery,
+  isMcpConnectorUserDisabled,
+  readMcpServerEntry
+} from '../mcp-connectors'
 import type {
   AutoCompactionDefaults,
   AutoCompactionOverrides,
@@ -958,6 +962,7 @@ async function syncFeaturedApiKeysForSession(
     if (existing && (existing.type !== 'http' || existing.url !== connector.url)) continue
     if (existing) await manager.disconnectServer(connectorId)
     if (!isFeaturedMcpApiKeyInstalled(connectorId, agentDir)) continue
+    if (isMcpConnectorUserDisabled(connectorId, agentDir)) continue
     const key = await requestHost('mcp.featuredApiKey', { id: connectorId })
     if (typeof key !== 'string' || !key) continue
     try {
@@ -967,6 +972,78 @@ async function syncFeaturedApiKeysForSession(
     }
   }
   await result.session.refreshMCPTools(manager.getTools())
+}
+
+type LiveMcpManager = {
+  disconnectServer(name: string): Promise<void>
+  connectServers(
+    configs: Record<string, Record<string, unknown>>,
+    sources: Record<string, unknown>
+  ): Promise<unknown>
+  getTools(): unknown
+}
+
+function liveMcpManager(result: CreateAgentSessionResult): LiveMcpManager | undefined {
+  const manager = result.mcpManager as Partial<LiveMcpManager> | undefined
+  if (
+    !manager ||
+    typeof manager.disconnectServer !== 'function' ||
+    typeof manager.connectServers !== 'function' ||
+    typeof manager.getTools !== 'function'
+  ) {
+    return undefined
+  }
+  return manager as LiveMcpManager
+}
+
+function injectableServerConfig(
+  entry: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  if (typeof entry.command === 'string') {
+    return {
+      type: 'stdio',
+      command: entry.command,
+      ...(Array.isArray(entry.args) ? { args: entry.args } : {}),
+      enabled: true
+    }
+  }
+  if (typeof entry.url !== 'string') return undefined
+  return {
+    type: entry.type === 'sse' ? 'sse' : 'http',
+    url: entry.url,
+    enabled: true,
+    timeout: typeof entry.timeout === 'number' ? entry.timeout : 10_000
+  }
+}
+
+async function applyConnectorEnabledForSession(
+  result: CreateAgentSessionResult,
+  agentDir: string,
+  name: string
+): Promise<void> {
+  if (API_KEY_CONNECTOR_IDS.includes(name as (typeof API_KEY_CONNECTOR_IDS)[number])) {
+    await syncFeaturedApiKeysForSession(result, agentDir, name)
+    return
+  }
+  const manager = liveMcpManager(result)
+  if (!manager) return
+  const entry = readMcpServerEntry(name, agentDir)
+  const disabled = isMcpConnectorUserDisabled(name, agentDir) || entry?.enabled === false
+  if (disabled) {
+    await manager.disconnectServer(name)
+  } else if (entry) {
+    const config = injectableServerConfig(entry)
+    if (config) await manager.connectServers({ [name]: config }, {})
+  }
+  await result.session.refreshMCPTools(manager.getTools() as never)
+}
+
+async function applyConnectorEnabled(name: string): Promise<void> {
+  await Promise.all(
+    [...sessions.values()].map((entry) =>
+      applyConnectorEnabledForSession(entry.result, entry.agentDir, name)
+    )
+  )
 }
 
 async function syncFeaturedApiKeys(id?: string): Promise<void> {
@@ -1821,6 +1898,12 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
     case 'mcp.syncFeaturedApiKeys': {
       const id = isRecord(params) ? stringValue(params.id) : ''
       await syncFeaturedApiKeys(id || undefined)
+      return undefined
+    }
+    case 'mcp.applyConnectorEnabled': {
+      const name = isRecord(params) ? stringValue(params.name) : ''
+      if (!name) return undefined
+      await applyConnectorEnabled(name)
       return undefined
     }
     case 'mcp.featuredAuthStatus': {

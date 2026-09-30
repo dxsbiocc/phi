@@ -35,6 +35,17 @@ test('connector with unverified authorization does not show guessed tool names',
   assert.doesNotMatch(markup, /刷新工具/)
 })
 
+test('a long tool list stays collapsed on three aligned columns', () => {
+  const names = Array.from({ length: 12 }, (_, index) => `tool_${index}`)
+  const markup = render({ requiresSignIn: false, loading: false, names, error: null })
+  assert.match(markup, /服务端工具 · 12/)
+  assert.match(markup, /tool_0/)
+  assert.match(markup, /tool_8/)
+  assert.doesNotMatch(markup, /tool_9/)
+  assert.match(markup, /显示全部/)
+  assert.match(markup, /repeat\(3, minmax\(0, 1fr\)\)/)
+})
+
 test('tool list distinguishes an unread server from an empty server', () => {
   const unread = render({ requiresSignIn: false, loading: false, names: null, error: null })
   const empty = render({ requiresSignIn: false, loading: false, names: [], error: null })

@@ -9,6 +9,7 @@ import {
   getBundledAgentsDir,
   type RuntimeResourceLoader
 } from './runtime/runtime-adapter'
+import { isInjectedMcpServer, readDisabledMcpServerNames } from './mcp-connectors'
 import { getGlobalMcpConfigPaths, getPhiAgentDir, getProjectMcpConfigPaths } from './runtime-paths'
 import { discoverPhiAgents } from './agents/discovery'
 
@@ -44,6 +45,7 @@ export interface McpServerSummary {
   sourcePath?: string
   managed?: boolean
   enabled?: boolean
+  userDisabled?: boolean
   status: 'configured'
 }
 
@@ -262,7 +264,8 @@ function toPromptAgentSummary(value: unknown): PromptAgentSummary | null {
 function toMcpServerSummary(
   name: string,
   value: unknown,
-  sourcePath: string
+  sourcePath: string,
+  userDisabled: boolean
 ): McpServerSummary | null {
   if (!isRecord(value)) return null
 
@@ -284,7 +287,8 @@ function toMcpServerSummary(
     transport,
     sourcePath,
     managed: sourcePath === getGlobalMcpConfigPaths(AGENT_DIR)[0],
-    enabled: value.enabled !== false,
+    enabled: isInjectedMcpServer(name, value, userDisabled),
+    userDisabled,
     status: 'configured'
   }
 }
@@ -580,13 +584,14 @@ export async function listPromptAgents(cwd = WORKSPACE_DIR): Promise<PromptAgent
 async function listMcpServersFromPaths(configPaths: string[]): Promise<McpServerSummary[]> {
   const seen = new Set<string>()
   const servers: McpServerSummary[] = []
+  const disabled = new Set(readDisabledMcpServerNames())
 
   for (const path of configPaths) {
     const serverMap = getServerMap(readJsonFile(path))
     if (!serverMap) continue
 
     for (const [name, value] of Object.entries(serverMap)) {
-      const server = toMcpServerSummary(name, value, path)
+      const server = toMcpServerSummary(name, value, path, disabled.has(name))
       if (!server || seen.has(server.id)) continue
       seen.add(server.id)
       servers.push(server)
