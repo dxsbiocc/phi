@@ -33,6 +33,23 @@ test('the build question names the skill, the environment, and the remaining dow
   )
 })
 
+test('an agent build question names the agent instead of a skill', () => {
+  assert.equal(
+    environmentBuildQuestion({
+      runtimeSessionId: 's',
+      ref: 'phi:python@1',
+      agent: 'Scanpy',
+      estimate: {
+        packages: 328,
+        cachedPackages: 12,
+        downloadBytes: 539211500,
+        remainingBytes: 500 * 1024 * 1024
+      }
+    }),
+    '智能体 Scanpy 需要环境 phi:python@1，尚未安装。现在构建吗？需下载约 500 MB（共 328 个包，已缓存 12）'
+  )
+})
+
 test('download sizes use MB below 1 GB and one decimal below 10', () => {
   assert.equal(formatDownloadBytes(1.5 * 1024 ** 3), '1.5 GB')
   assert.equal(formatDownloadBytes(12 * 1024 ** 3), '12 GB')

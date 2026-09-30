@@ -1,13 +1,12 @@
 import { basename } from 'node:path'
 
 import { getRuntimeRoot, type PhiPlatform } from '../envs'
-import { estimateBuild, type BuildEstimate } from '../envs/estimate'
 import type { ScriptTool, ValidatedSkill } from './skill'
 import type { EnvironmentBuilds } from './environment-builds'
+import { ensureEnvironmentReady, isBuilding, type ConfirmBuildRequest } from './environment-gate'
 import {
   EnvironmentNotReadyError,
   describeEnvironment,
-  readyEnvironment,
   resolveSkillEnvironment,
   runScriptTool,
   runSkillScript,
@@ -20,19 +19,14 @@ import {
 } from './index'
 import type { ScriptToolDescriptor } from './skill-tool-types'
 
+export type { ConfirmBuildRequest }
+
 export interface SkillNotReady {
   notReady: {
     ref: string
     envId: string
     message: string
   }
-}
-
-export interface ConfirmBuildRequest {
-  runtimeSessionId: string
-  ref: string
-  skill: string
-  estimate: BuildEstimate
 }
 
 export interface SkillHost {
@@ -109,18 +103,6 @@ export function createSkillHost({
     return validation.skill
   }
 
-  function building(envId: string): boolean {
-    return builds?.list().some((item) => item.envId === envId && item.state === 'building') ?? false
-  }
-
-  function failureReason(envId: string, error: unknown): string {
-    const entry = builds?.list().find((item) => item.envId === envId)
-    if (entry?.state === 'cancelled' || entry?.state === 'failed') {
-      return entry.error ?? (entry.state === 'cancelled' ? 'build cancelled' : 'build failed')
-    }
-    return error instanceof Error ? error.message : String(error)
-  }
-
   async function gateEnvironment(input: {
     skill: ValidatedSkill
     sessionEnvironment?: string
@@ -140,64 +122,30 @@ export function createSkillHost({
       // An unusable reference is reported by the executor in its own result shape.
       return { action: 'continue', warnings }
     }
-    try {
-      readyEnvironment(runtimeRoot, descriptor)
+    const outcome = await ensureEnvironmentReady({
+      root: runtimeRoot,
+      descriptor,
+      ref: choice.ref,
+      requester: { skill: input.skill.name },
+      ...(input.runtimeSessionId ? { runtimeSessionId: input.runtimeSessionId } : {}),
+      ...(builds ? { builds } : {}),
+      ...(confirmBuild ? { confirmBuild } : {}),
+      signal: input.signal
+    })
+    if (outcome.status === 'ready') return { action: 'continue', warnings }
+    if (outcome.status === 'aborted') return { action: 'aborted', envId: outcome.envId, warnings }
+    // Without a session to ask, the executor reports its own not-ready text.
+    if (
+      !isBuilding(builds, outcome.envId) &&
+      (!input.runtimeSessionId || !confirmBuild || !builds)
+    ) {
       return { action: 'continue', warnings }
-    } catch (error) {
-      if (!(error instanceof EnvironmentNotReadyError)) throw error
-      if (input.signal.aborted) return { action: 'aborted', envId: error.envId, warnings }
-      const join = building(error.envId)
-      const sessionId = input.runtimeSessionId
-      if (!join && (!sessionId || !confirmBuild || !builds)) {
-        return { action: 'continue', warnings }
-      }
-      if (!builds) return { action: 'continue', warnings }
-      try {
-        if (!join && sessionId && confirmBuild) {
-          const estimate = estimateBuild(runtimeRoot, descriptor.lockText)
-          const accepted = await untilAbort(
-            confirmBuild({
-              runtimeSessionId: sessionId,
-              ref: error.ref,
-              skill: input.skill.name,
-              estimate
-            }),
-            input.signal
-          )
-          if (!accepted) {
-            return {
-              action: 'notReady',
-              warnings,
-              notReady: {
-                ref: error.ref,
-                envId: error.envId,
-                message: `environment ${error.ref} is not built; the user declined to build it now`
-              }
-            }
-          }
-        }
-        await untilAbort(
-          builds.start(descriptor, {
-            ref: error.ref,
-            requestedBy: { skill: input.skill.name }
-          }),
-          input.signal
-        )
-        return { action: 'continue', warnings }
-      } catch (waitError) {
-        if (input.signal.aborted || isAbortError(waitError)) {
-          return { action: 'aborted', envId: error.envId, warnings }
-        }
-        return {
-          action: 'notReady',
-          warnings,
-          notReady: {
-            ref: error.ref,
-            envId: error.envId,
-            message: `environment ${error.ref} is not ready; ${failureReason(error.envId, waitError)}`
-          }
-        }
-      }
+    }
+    if (!builds) return { action: 'continue', warnings }
+    return {
+      action: 'notReady',
+      warnings,
+      notReady: { ref: outcome.ref, envId: outcome.envId, message: outcome.message }
     }
   }
 
@@ -384,34 +332,6 @@ function abortedRun(envId: string, warnings: string[]): SkillRunResult {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError'
-}
-
-function untilAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(abortError())
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = (): void => {
-      reject(abortError())
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-    promise.then(
-      (value) => {
-        signal.removeEventListener('abort', onAbort)
-        if (signal.aborted) reject(abortError())
-        else resolve(value)
-      },
-      (error: unknown) => {
-        signal.removeEventListener('abort', onAbort)
-        if (signal.aborted) reject(abortError())
-        else reject(error)
-      }
-    )
-  })
-}
-
-function abortError(): Error {
-  const error = new Error('aborted')
-  error.name = 'AbortError'
-  return error
 }
 
 function requireRecord(value: unknown): Record<string, unknown> {

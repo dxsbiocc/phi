@@ -23,7 +23,11 @@ function formatDownloadAmount(value: number): string {
 }
 
 export function environmentBuildQuestion(request: ConfirmBuildRequest): string {
-  return `技能 ${request.skill} 需要环境 ${request.ref}，尚未安装。现在构建吗？${environmentBuildSizeText(request.estimate)}`
+  const size = environmentBuildSizeText(request.estimate)
+  if (request.agent) {
+    return `智能体 ${request.agent} 需要环境 ${request.ref}，尚未安装。现在构建吗？${size}`
+  }
+  return `技能 ${request.skill} 需要环境 ${request.ref}，尚未安装。现在构建吗？${size}`
 }
 
 export function confirmedEnvironmentBuild(response: unknown): boolean {

@@ -37,7 +37,7 @@ export interface PhiAgentDefinition {
   tools: string[]
   /** Skill names the agent may use; empty means none. */
   skills: string[]
-  /** Environment reference. Parsed here; binding is a later step. */
+  /** Environment reference. A specialist session is bound to it before it starts. */
   environment?: string
   /** Model selectors (`provider/id`) tried in order. Absent: the parent's model. */
   model?: string[]

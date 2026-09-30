@@ -65,10 +65,17 @@ const STRICT_FORBIDDEN = new Set([
   'else'
 ])
 
+export interface SkillToolHostOptions {
+  runtimeSessionId?: string
+  /** Environment the specialist session is bound to. The skill's own ref still wins. */
+  sessionEnvironment?: string
+}
+
 export function buildSkillRunTool(
   request: SkillHostRequest,
-  runtimeSessionId?: string
+  runtimeSessionIdOrOptions?: string | SkillToolHostOptions
 ): CustomTool {
+  const options = skillHostOptions(runtimeSessionIdOrOptions)
   return {
     name: 'skill_run',
     label: 'Run Skill Script',
@@ -77,16 +84,22 @@ export function buildSkillRunTool(
     approval: 'exec',
     parameters: SKILL_RUN_PARAMETERS,
     async execute(_toolCallId, params, _onUpdate, ctx, signal) {
-      return runSkillTool(request, params, ctx.sessionManager.getCwd(), signal, runtimeSessionId)
+      return runSkillTool(request, params, ctx.sessionManager.getCwd(), signal, options)
     }
   }
+}
+
+function skillHostOptions(value: string | SkillToolHostOptions | undefined): SkillToolHostOptions {
+  if (typeof value === 'string') return { runtimeSessionId: value }
+  return value ?? {}
 }
 
 export function buildScriptTools(
   descriptors: readonly ScriptToolDescriptor[],
   request: SkillHostRequest,
-  runtimeSessionId?: string
+  runtimeSessionIdOrOptions?: string | SkillToolHostOptions
 ): CustomTool[] {
+  const options = skillHostOptions(runtimeSessionIdOrOptions)
   return descriptors.map((descriptor) => {
     const tool: CustomTool = {
       name: descriptor.name,
@@ -101,7 +114,7 @@ export function buildScriptTools(
           params,
           ctx.sessionManager.getCwd(),
           signal,
-          runtimeSessionId
+          options
         )
       }
     }
@@ -115,7 +128,7 @@ async function runSkillTool(
   params: unknown,
   cwd: string,
   signal: AbortSignal | undefined,
-  runtimeSessionId?: string
+  options: SkillToolHostOptions
 ): Promise<ToolResult> {
   const input = isRecord(params) ? params : {}
   const skill = typeof input.skill === 'string' ? input.skill : ''
@@ -132,7 +145,8 @@ async function runSkillTool(
   const body: Record<string, unknown> = { requestId, cwd, skill, script }
   if (isStringArray(input.args)) body.args = input.args
   if (typeof input.cwd === 'string') body.runCwd = input.cwd
-  if (runtimeSessionId) body.runtimeSessionId = runtimeSessionId
+  if (options.runtimeSessionId) body.runtimeSessionId = options.runtimeSessionId
+  if (options.sessionEnvironment) body.sessionEnvironment = options.sessionEnvironment
 
   try {
     const result = await callHost(request, 'skills.run', body, signal)
@@ -161,7 +175,7 @@ async function runScriptToolCall(
   params: unknown,
   cwd: string,
   signal: AbortSignal | undefined,
-  runtimeSessionId?: string
+  options: SkillToolHostOptions
 ): Promise<ToolResult> {
   const requestId = randomUUID()
   try {
@@ -173,7 +187,8 @@ async function runScriptToolCall(
         cwd,
         tool,
         args: params ?? {},
-        ...(runtimeSessionId ? { runtimeSessionId } : {})
+        ...(options.runtimeSessionId ? { runtimeSessionId: options.runtimeSessionId } : {}),
+        ...(options.sessionEnvironment ? { sessionEnvironment: options.sessionEnvironment } : {})
       },
       signal
     )

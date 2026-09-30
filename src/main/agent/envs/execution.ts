@@ -6,6 +6,7 @@ import { StringDecoder } from 'node:string_decoder'
 import Ajv from 'ajv'
 
 import { type EnvMetadata } from './contract'
+import { isReservedExecutionName } from './reserved-names'
 import { envMetadataSchema } from './schemas'
 
 export const EXECUTION_CONTRACT_VERSION = '1.0.0'
@@ -97,23 +98,10 @@ function keptHostName(name: string): boolean {
   return name.startsWith('LC_') || KEPT_HOST_NAMES.has(name)
 }
 
-function forbiddenExtraName(name: string): boolean {
-  return (
-    name === 'PATH' ||
-    name.startsWith('PYTHON') ||
-    name.startsWith('R_') ||
-    name.startsWith('CONDA_') ||
-    name.startsWith('MAMBA_') ||
-    name.startsWith('LD_') ||
-    name.startsWith('DYLD_') ||
-    name.startsWith('PHI_ENV_')
-  )
-}
-
 function rejectExtraEnv(extra: Record<string, string> | undefined): void {
   if (!extra) return
   for (const name of Object.keys(extra)) {
-    if (forbiddenExtraName(name)) throw new Error(`extraEnv cannot set ${name}`)
+    if (isReservedExecutionName(name)) throw new Error(`extraEnv cannot set ${name}`)
   }
 }
 

@@ -20,7 +20,12 @@ import {
   type DefaultResourceLoaderOptions,
   type ResourceDiagnostic
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
+import {
+  ExtensionRuntime,
+  loadExtensionFromFactory
+} from '@oh-my-pi/pi-coding-agent/extensibility/extensions/loader'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
+import { EventBus } from '@oh-my-pi/pi-coding-agent/utils/event-bus'
 import { mcpOAuthCredentialId } from '@oh-my-pi/pi-coding-agent/mcp/oauth-flow'
 import { estimateToolSchemaTokens } from '@oh-my-pi/pi-coding-agent/modes/utils/context-usage'
 import {
@@ -89,6 +94,7 @@ import {
 import { buildAgentTool } from '../agents/tool'
 import { createSpecialistFallbackExtension } from '../agents/fallback-policy'
 import { createProjectToolBoundaryExtension } from '../agents/project-tool-boundary'
+import { createEnvironmentBindingExtension } from '../agents/environment-binding'
 import { createRemoteUrlGuardExtension } from '../agents/remote-url-guard'
 import {
   createRemoteProjectToolGuardExtension,
@@ -869,6 +875,112 @@ function phiToolFunctions(
  * `model` is tried in order with the main session's selector lookup; otherwise
  * the parent's model is reused. `thinkingLevel` overrides the parent's level.
  */
+
+async function bindSpecialistEnvironment(
+  definition: PhiAgentDefinition,
+  deps: { sessionId: string; cwd: string; remoteRoot?: string }
+): Promise<{ ref: string; variables: Record<string, string> } | undefined> {
+  const ref = definition.environment
+  if (!ref) return undefined
+  if (deps.remoteRoot) {
+    throw new Error('environment binding is not supported for remote projects yet')
+  }
+  const result = await requestHost('environments.bindSession', {
+    runtimeSessionId: deps.sessionId,
+    ref,
+    agent: definition.name,
+    cwd: deps.cwd
+  })
+  if (!isRecord(result)) throw new Error('environments.bindSession returned an unexpected result')
+  if (isRecord(result.notReady)) {
+    const message = result.notReady.message
+    if (typeof message !== 'string' || message.length === 0) {
+      throw new Error('environments.bindSession returned an unexpected result')
+    }
+    throw new Error(message)
+  }
+  const boundRef = result.ref
+  const variables = stringRecord(result.variables)
+  if (typeof boundRef !== 'string' || boundRef.length === 0 || !variables) {
+    throw new Error('environments.bindSession returned an unexpected result')
+  }
+  return { ref: boundRef, variables }
+}
+
+function stringRecord(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined
+  const record: Record<string, string> = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item !== 'string') return undefined
+    record[key] = item
+  }
+  return record
+}
+
+function specialistToolCallFactories(
+  deps: {
+    sessionId: string
+    enableToolApproval: boolean
+    agentRunId?: string
+    remoteRoot?: string
+    parent: () => CreateAgentSessionResult | undefined
+  },
+  binding: { ref: string; variables: Record<string, string> } | undefined
+): ExtensionFactory[] {
+  // Order matters: omp gives every handler the original input and keeps the last
+  // non-empty result, and a block returns at once. Guards and approval run first,
+  // so the approval card shows the command the model wrote; the binding's rewrite
+  // is last, so it is the input that executes.
+  return [
+    ...(deps.remoteRoot ? [createRemoteProjectToolGuardExtension()] : []),
+    createRemoteUrlGuardExtension(),
+    createPlanReviewToolGuardExtension(
+      () => deps.parent()?.session.getPlanModeState()?.enabled === true
+    ),
+    ...(deps.enableToolApproval
+      ? [createBridgeToolApprovalExtension(deps.sessionId, deps.agentRunId)]
+      : []),
+    ...(binding
+      ? [createEnvironmentBindingExtension({ ref: binding.ref, variables: binding.variables })]
+      : [])
+  ]
+}
+
+/**
+ * Specialist sessions set `restrictToolNames`, and omp then loads none of the
+ * caller's extensions: neither the resource loader's factories nor inline
+ * `extensions` (verified against omp 18.1.10 — the session's runner is empty).
+ * Without this, a specialist's bash, edit, and write would skip approval and the
+ * guards, and a bound session would run bash on the host. Install the factories
+ * on the live runner. If some future omp already loaded tool_call handlers, leave
+ * them rather than attach twice (the binding would rewrite the command twice).
+ */
+async function installSpecialistToolCallExtensions(
+  session: {
+    extensionRunner?: { hasHandlers(eventType: string): boolean }
+  },
+  factories: readonly ExtensionFactory[],
+  cwd: string
+): Promise<void> {
+  const runner = session.extensionRunner
+  if (!runner) throw new Error('specialist tool guards could not be installed')
+  if (runner.hasHandlers('tool_call')) return
+  const extensions = (runner as { extensions?: unknown }).extensions
+  if (!Array.isArray(extensions)) throw new Error('specialist tool guards could not be installed')
+  const runtime = new ExtensionRuntime()
+  const eventBus = new EventBus()
+  for (let index = 0; index < factories.length; index += 1) {
+    const factory = factories[index]
+    if (!factory) continue
+    extensions.push(
+      await loadExtensionFromFactory(factory, cwd, eventBus, runtime, `<phi-specialist-${index}>`)
+    )
+  }
+  if (!runner.hasHandlers('tool_call')) {
+    throw new Error('specialist tool guards could not be installed')
+  }
+}
+
 async function createPhiAgentSession(
   definition: PhiAgentDefinition,
   deps: {
@@ -889,6 +1001,11 @@ async function createPhiAgentSession(
 ): Promise<AgentSessionLike> {
   const { sessionId, cwd, agentDir, ctx } = deps
   const sessionCwd = deps.remoteRoot ? agentDir : cwd
+  const binding = await bindSpecialistEnvironment(definition, deps)
+  const toolCallFactories = specialistToolCallFactories(deps, binding)
+  const skillHost = binding
+    ? { runtimeSessionId: sessionId, sessionEnvironment: binding.ref }
+    : sessionId
   const settings = await Settings.init({ cwd: sessionCwd, agentDir })
   const loader =
     isRecord(deps.resourceOptions) || deps.remoteRoot
@@ -909,12 +1026,7 @@ async function createPhiAgentSession(
               : {})
           }),
           settingsManager: SettingsManager.create(sessionCwd, agentDir),
-          extensionFactories: [
-            ...(deps.remoteRoot ? [createRemoteProjectToolGuardExtension()] : []),
-            ...(deps.enableToolApproval
-              ? [createBridgeToolApprovalExtension(sessionId, deps.agentRunId)]
-              : [])
-          ]
+          extensionFactories: toolCallFactories
         })
       : undefined
   if (loader) await loader.reload()
@@ -923,13 +1035,13 @@ async function createPhiAgentSession(
     sessionId,
     agentDir,
     definition.name,
-    deps.skillTools ? buildSkillRunTool(requestHost, sessionId) : undefined
+    deps.skillTools ? buildSkillRunTool(requestHost, skillHost) : undefined
   )
   for (const tool of deps.remoteTools?.() ?? []) availableTools.set(tool.name, tool)
   const attachedScriptTools = buildScriptTools(
     (deps.skillTools ?? []).filter((tool) => tool.attachTo.includes(definition.name)),
     requestHost,
-    sessionId
+    skillHost
   )
   for (const tool of attachedScriptTools) availableTools.set(tool.name, tool)
   const declaredTools =
@@ -987,7 +1099,6 @@ async function createPhiAgentSession(
     ...(model ? { model } : {}),
     ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(loader ? { resourceLoader: loader } : {}),
-    extensions: [createRemoteUrlGuardExtension()],
     ...(skills ? { skills } : {}),
     appendSystemPrompt: `${definition.systemPrompt}${deps.remoteRoot ? `\n\nRemote project root: ${JSON.stringify(deps.remoteRoot)}.` : ''}\n\n${AGENT_REPORT_PROTOCOL}`,
     ...(customTools.length > 0 ? { customTools } : {}),
@@ -1007,6 +1118,12 @@ async function createPhiAgentSession(
         }
       : {})
   })
+  try {
+    await installSpecialistToolCallExtensions(result.session, toolCallFactories, sessionCwd)
+  } catch (error) {
+    await result.session.dispose()
+    throw error
+  }
   if (deps.remoteRoot) {
     await initializeExtensions(result.session, {
       reportSendError: () =>

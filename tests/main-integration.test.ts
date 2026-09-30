@@ -1601,6 +1601,11 @@ async function harness(
         approvalFor: () => undefined
       })
     },
+    './agent/content/environment-gate': {
+      bindAgentSession: async (): Promise<unknown> => {
+        throw new Error('environment binding is mocked')
+      }
+    },
     './agent/content/environment-builds': {
       createEnvironmentBuilds: (): {
         list: () => unknown[]

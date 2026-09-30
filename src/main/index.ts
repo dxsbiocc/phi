@@ -138,6 +138,7 @@ import {
   writeApprovalDigest
 } from './agent/tool-approval'
 import { createEnvironmentBuilds } from './agent/content/environment-builds'
+import { bindAgentSession } from './agent/content/environment-gate'
 import { createSkillHost, type ConfirmBuildRequest } from './agent/content/skill-host'
 import { getRuntimeRoot } from './agent/envs/runtime'
 import {
@@ -849,6 +850,12 @@ getOmpBridge().registerHostHandler('skills.scriptTools', (params) => skillHost.s
 getOmpBridge().registerHostHandler('skills.run', (params) => skillHost.run(params))
 getOmpBridge().registerHostHandler('skills.scriptTool', (params) => skillHost.scriptTool(params))
 getOmpBridge().registerHostHandler('skills.cancel', (params) => skillHost.cancel(params))
+getOmpBridge().registerHostHandler('environments.bindSession', (params) =>
+  bindAgentSession(params, {
+    builds: environmentBuilds,
+    confirmBuild: (request) => confirmEnvironmentBuild(request)
+  })
+)
 getOmpBridge().registerHostHandler('agentInteraction.request', handleAgentInteractionRequest)
 getOmpBridge().registerHostHandler(
   'settings.nextActionSuggestionsEnabled',
