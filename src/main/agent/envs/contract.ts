@@ -9,7 +9,7 @@ import { environmentSpecSchema } from './schemas'
 export { PHI_PLATFORMS, condaSubdir, currentPlatform, findPlatform } from './platform'
 export type { PhiPlatform } from './platform'
 
-export const ENVIRONMENT_CONTRACT_VERSION = '1.0.0'
+export const ENVIRONMENT_CONTRACT_VERSION = '1.1.0'
 
 const ENV_NAME = /^[a-z][a-z0-9-]{0,62}$/
 
@@ -48,7 +48,8 @@ export interface CondaEnvironmentSpec {
 
 export type EnvStatus = 'absent' | 'building' | 'ready' | 'failed' | 'drifted'
 export type EnvKind = 'base' | 'package' | 'project'
-export type EnvScope = 'phi' | 'plugin' | 'project'
+/** `skill` (a standalone skill's own environment) was added in contract 1.1.0. */
+export type EnvScope = 'phi' | 'plugin' | 'project' | 'skill'
 
 export interface EnvMetadata {
   envId: string

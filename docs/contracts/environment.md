@@ -1,6 +1,6 @@
 # Environment contract
 
-Version **1.0.0**. Normative schemas:
+Version **1.1.0** (1.1.0 adds the `skill` scope; see § Changes). Normative schemas:
 
 - [environment.schema.json](environment.schema.json) — `environment.yml`
 - [env-metadata.schema.json](env-metadata.schema.json) — `.phi/env.json`
@@ -95,9 +95,10 @@ The reference token is the purpose (`python` in `phi:python@1`). The spec file's
 phi:     phi-<name>-<hash12>
 plugin:  plugin-<owner>-<name>-<hash12>
 project: project-<owner>-<name>-<hash12>
+skill:   skill-<owner>-<name>-<hash12>      (1.1.0; owner is the skill name)
 ```
 
-`owner` is required for `plugin` and `project` and, like `name`, must match `^[a-z][a-z0-9-]{0,62}$`; anything else is rejected so the id always matches the `env.json` pattern. `owner` is omitted for `phi` even when the caller passes one. Examples: `phi-python-3f9a1c2b7d10`, `plugin-visualization-viz-…`, `project-<short project id>-default-…`.
+`owner` is required for `plugin`, `project`, and `skill` and, like `name`, must match `^[a-z][a-z0-9-]{0,62}$`; anything else is rejected so the id always matches the `env.json` pattern. `owner` is omitted for `phi` even when the caller passes one. Examples: `phi-python-3f9a1c2b7d10`, `plugin-visualization-viz-…`, `project-<short project id>-default-…`.
 
 `<hash12>` is the first 12 hex characters of SHA-256 over the UTF-8 canonical JSON of:
 
@@ -148,10 +149,14 @@ Path: `<prefix>/.phi/env.json`. Every field below is required. Use `{}` for `hos
 
 ## Versioning
 
-`ENVIRONMENT_CONTRACT_VERSION` is `1.0.0`. Per content distribution design §4.4:
+`ENVIRONMENT_CONTRACT_VERSION` is `1.1.0`. Per content distribution design §4.4:
 
 - Minor versions are additive only: new optional fields, no change to the meaning of existing fields.
 - A major version needs an ADR, a deprecation window of at least two app releases in which both versions are accepted, and a migration note.
 - Metadata records the `1.x.x` version it was written for.
 
 The 1.0.0 schemas use `additionalProperties: false`. A conda key or typo that this version does not name fails validation instead of being forwarded. A later minor version adds an optional field by naming it in the schema.
+
+## Changes
+
+- **1.1.0** (2026-09-30): envId scope `skill` for a standalone skill's own environment (`./environment.yml`), with the skill name as owner. Additive: no existing id or file changes.

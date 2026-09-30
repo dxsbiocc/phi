@@ -31,13 +31,13 @@ follows the same order, small to large** (§8).
 
 ## 1. Current state
 
-| Consumer | How it gets a runtime today | Problem |
-|---|---|---|
-| skill scripts | agent `bash` runs host `python` / `Rscript` | depends on what the user installed; not reproducible |
-| `viz_render` | finds `Rscript`, `python3` on `PATH` | same; can only report "missing dependency" |
-| notebook kernels | host `jupyter kernelspec` | same |
-| wrappers (Nextflow) | host `nextflow`; `-profile conda` uses host conda | users must install nextflow and conda |
-| environment panel | `environment/detect.ts` probes host micromamba, nextflow, docker, singularity, jupyter, Rscript | can detect, cannot provide |
+| Consumer            | How it gets a runtime today                                                                     | Problem                                              |
+| ------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| skill scripts       | agent `bash` runs host `python` / `Rscript`                                                     | depends on what the user installed; not reproducible |
+| `viz_render`        | finds `Rscript`, `python3` on `PATH`                                                            | same; can only report "missing dependency"           |
+| notebook kernels    | host `jupyter kernelspec`                                                                       | same                                                 |
+| wrappers (Nextflow) | host `nextflow`; `-profile conda` uses host conda                                               | users must install nextflow and conda                |
+| environment panel   | `environment/detect.ts` probes host micromamba, nextflow, docker, singularity, jupyter, Rscript | can detect, cannot provide                           |
 
 Phi has no runtime of its own; everything depends on the host. That is the
 root of the problems above it.
@@ -87,18 +87,18 @@ Every micromamba call sets:
 
 ### 3.1 Kinds
 
-| Kind | Examples | Defined by | Mutability |
-|---|---|---|---|
-| base | `phi-python`, `phi-r`, `phi-nextflow`, `phi-jupyter` | Phi developers, shipped with the app or registry | immutable; a new version is a new environment |
-| package | the visualization plugin's `viz`; a skill's own environment | plugin or skill author | immutable |
-| project | extra packages a project needs | the user (requested by an agent, confirmed by the user) | immutable; adding dependencies creates a new environment |
+| Kind    | Examples                                                    | Defined by                                              | Mutability                                               |
+| ------- | ----------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------- |
+| base    | `phi-python`, `phi-r`, `phi-nextflow`, `phi-jupyter`        | Phi developers, shipped with the app or registry        | immutable; a new version is a new environment            |
+| package | the visualization plugin's `viz`; a skill's own environment | plugin or skill author                                  | immutable                                                |
+| project | extra packages a project needs                              | the user (requested by an agent, confirmed by the user) | immutable; adding dependencies creates a new environment |
 
 ### 3.2 Specs and locks
 
 - **Spec**: `environment.yml` (name, channels, dependencies; optional `pip:`).
 - **Lock**: one **explicit lock** per platform (`@EXPLICIT`, one URL + md5 per
   line), produced in CI. Clients install with `micromamba create -p <prefix>
-  -f <lock>` and **never solve**: results are deterministic and installable
+-f <lock>` and **never solve**: results are deterministic and installable
   offline from the cache.
 - Official base and package environments must ship locks. A user project
   environment without a prebuilt lock is solved locally once, exported as an
@@ -123,7 +123,9 @@ Every micromamba call sets:
   "micromambaVersion": "2.x",
   "activation": { "set": { "CONDA_PREFIX": "…", "JAVA_HOME": "…" }, "pathPrepend": ["…/bin"] },
   "host": { "soffice": "/Applications/LibreOffice.app/Contents/MacOS/soffice" },
-  "sourcePackages": [{ "language": "r", "name": "ggsankey", "source": "github", "ref": "…", "sha256": "…" }],
+  "sourcePackages": [
+    { "language": "r", "name": "ggsankey", "source": "github", "ref": "…", "sha256": "…" }
+  ],
   "status": "ready"
 }
 ```
@@ -161,10 +163,10 @@ For packages without a conda build; currently R only, from CRAN or GitHub.
 sourcePackages:
   - language: r
     name: ggsankey
-    source: github               # cran | github
-    repo: davidsjoberg/ggsankey  # github only
-    ref: 5a3b1c…                 # github: full commit sha; cran: exact version such as 1.2.3
-    sha256: 9f2e…                # sha256 of the source archive
+    source: github # cran | github
+    repo: davidsjoberg/ggsankey # github only
+    ref: 5a3b1c… # github: full commit sha; cran: exact version such as 1.2.3
+    sha256: 9f2e… # sha256 of the source archive
 ```
 
 Rules:
@@ -237,15 +239,15 @@ Every consumer executes through L2, with two exceptions:
 agents) **always** uses managed environments and never reuses the host, even
 when the host has the same tool.
 
-| Consumer | Today | Target |
-|---|---|---|
-| skill scripts | agent `bash` with host interpreters | declared script tools (§5.1) or `skill_run(skill, script, args)` → `runInEnvironment(skill environment)` |
-| specialist / plugin agent `bash` | host shell | the session is bound to an environment: a Phi extension rewrites bash calls in the `tool_call` event and merges `environmentVariables(agent environment)` into the bash `env` parameter (omp supports returning replacement input). `python x.py` then uses the environment's python |
-| domain tools (e.g. `viz_render`) | TypeScript tools inside the engine, `Rscript` from `PATH` | leave the engine; become command-line programs in the plugin, registered as script tools (§5.1); tool names unchanged |
-| MCP stdio servers | — | started with `environmentVariables` |
-| notebook kernels | host kernelspecs | Jupyter server in `phi-jupyter`; default kernels from managed analysis environments (`ipykernel` in `phi-python`, `irkernel` in `phi-r`); existing host kernels listed for explicit selection (§5.2) |
-| wrappers (Nextflow) | host `nextflow`, host conda | default `nextflow` and Java from `phi-nextflow`; `-profile conda` sets `conda.useMicromamba = true` with the bundled micromamba and `conda.cacheDir` under `~/.phi/runtime`; the user may explicitly point at a host nextflow (§5.2); Docker / Singularity remain host dependencies |
-| environment panel | probes host tools | shows managed environments (status, size, referrers, host dependencies); host probing kept only for host dependencies (Docker, Singularity, LibreOffice) and tools the user may explicitly choose (nextflow, Jupyter kernels) |
+| Consumer                         | Today                                                     | Target                                                                                                                                                                                                                                                                               |
+| -------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| skill scripts                    | agent `bash` with host interpreters                       | declared script tools (§5.1) or `skill_run(skill, script, args)` → `runInEnvironment(skill environment)`                                                                                                                                                                             |
+| specialist / plugin agent `bash` | host shell                                                | the session is bound to an environment: a Phi extension rewrites bash calls in the `tool_call` event and merges `environmentVariables(agent environment)` into the bash `env` parameter (omp supports returning replacement input). `python x.py` then uses the environment's python |
+| domain tools (e.g. `viz_render`) | TypeScript tools inside the engine, `Rscript` from `PATH` | leave the engine; become command-line programs in the plugin, registered as script tools (§5.1); tool names unchanged                                                                                                                                                                |
+| MCP stdio servers                | —                                                         | started with `environmentVariables`                                                                                                                                                                                                                                                  |
+| notebook kernels                 | host kernelspecs                                          | Jupyter server in `phi-jupyter`; default kernels from managed analysis environments (`ipykernel` in `phi-python`, `irkernel` in `phi-r`); existing host kernels listed for explicit selection (§5.2)                                                                                 |
+| wrappers (Nextflow)              | host `nextflow`, host conda                               | default `nextflow` and Java from `phi-nextflow`; `-profile conda` sets `conda.useMicromamba = true` with the bundled micromamba and `conda.cacheDir` under `~/.phi/runtime`; the user may explicitly point at a host nextflow (§5.2); Docker / Singularity remain host dependencies  |
+| environment panel                | probes host tools                                         | shows managed environments (status, size, referrers, host dependencies); host probing kept only for host dependencies (Docker, Singularity, LibreOffice) and tools the user may explicitly choose (nextflow, Jupyter kernels)                                                        |
 
 ### 5.1 Script tools
 
@@ -254,29 +256,34 @@ The engine holds no domain tools. Skills and plugins get typed tools by
 declaration, with no per-domain code.
 
 ```yaml
-# SKILL.md frontmatter (excerpt)
-environment: plugin:viz
-scripts:
-  - name: route
-    run: scripts/viz.py route
-    description: Profile a result table and shortlist fitting figure templates
-    args:                                    # JSON Schema
-      type: object
-      required: [data, purpose]
-      properties:
-        data: { type: string, format: input-path }     # read-only, must be inside the project
-        purpose: { type: string }
-    approval: read                           # read | write
-    output: schemas/route-result.json        # JSON Schema of the output
-  - name: render
-    run: scripts/viz.py render
-    args:
-      type: object
-      required: [script, output]
-      properties:
-        script: { type: string, format: project-path } # writable, must be inside the project
-        output: { type: string, format: project-path }
-    approval: write
+# SKILL.md frontmatter (excerpt). Phi fields live under the phi block; see docs/contracts/skill.md
+name: omics-visualization
+description: …
+phi:
+  environment: plugin:viz
+  scripts:
+    - name: route
+      run: [python, ./scripts/viz.py, route]
+      description: Profile a result table and shortlist fitting figure templates
+      args: # JSON Schema
+        type: object
+        required: [data, purpose]
+        additionalProperties: false
+        properties:
+          data: { type: string, format: input-path } # read-only, must be inside the project
+          purpose: { type: string }
+      approval: read # read | write
+      output: ./schemas/route-result.json # JSON Schema
+    - name: render
+      run: [python, ./scripts/viz.py, render]
+      args:
+        type: object
+        required: [script, output]
+        additionalProperties: false
+        properties:
+          script: { type: string, format: input-path }
+          output: { type: string, format: project-path } # writable, must be inside the project
+      approval: write
 ```
 
 Engine responsibilities (all generic):
@@ -316,12 +323,12 @@ paths, and graded approvals.
 
 ### 6.1 Who declares environments
 
-| Where | Syntax | Meaning |
-|---|---|---|
-| skill frontmatter | `environment: phi:python@1` / `environment: ./environment.yml` / `environment: plugin:viz` | where the skill's scripts and script tools run |
-| agent frontmatter | `environment: plugin:viz` | which environment the agent session's bash and core tools use |
-| plugin manifest | `environments: { viz: {...} }` | named environments shipped by the plugin, referenced by its skills and agents |
-| project | `.phi/environment.yml` (optional), referenced as `project:default` | extra dependencies for the project |
+| Where                         | Syntax                                                                                     | Meaning                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| skill frontmatter `phi` block | `environment: phi:python@1` / `environment: ./environment.yml` / `environment: plugin:viz` | where the skill's scripts and script tools run                                |
+| agent frontmatter             | `environment: plugin:viz`                                                                  | which environment the agent session's bash and core tools use                 |
+| plugin manifest               | `environments: { viz: {...} }`                                                             | named environments shipped by the plugin, referenced by its skills and agents |
+| project                       | `.phi/environment.yml` (optional), referenced as `project:default`                         | extra dependencies for the project                                            |
 
 `plugin:<name>` resolves only within the same plugin; cross-plugin references
 are not allowed.
@@ -378,12 +385,12 @@ dependencies:
 id: visualization
 type: plugin
 version: 1.0.0
-toolPrefix: viz                  # script tool prefix, see §10
+toolPrefix: viz # script tool prefix, see §10
 environments:
   viz:
     spec: environments/viz/environment.yml
     locks: environments/viz/locks/
-    host: []                     # host dependencies; none for this plugin
+    host: [] # host dependencies; none for this plugin
 components:
   agents: [agents/Visualization.md]
   skills: [skills/omics-visualization]
@@ -417,16 +424,16 @@ per-plugin special cases.
 
 Each step starts only after the previous one is complete and tested.
 
-| Step | Layer | Scope | Done when |
-|---|---|---|---|
-| 1 | L0 + L1 | bundle micromamba; `~/.phi/runtime` layout and `mambarc`; create from explicit locks, activation snapshot, read-only, index, GC | a python-only lock builds an environment on a clean account; repeated ensure does not rebuild |
-| 2 | L2 | `environmentVariables` / `runInEnvironment`; sanitisation; canary tests (interpreter location, negative import, clean machine) | all three isolation tests pass |
-| 3 | L3 | `skill_run`; first `phi-python`; migrate one skill (e.g. scanpy) | the skill works on a machine without a host Python scientific stack |
-| 4 | L4 | agent frontmatter `environment`; bash injection extension; visualization rewritten as the command-line program `scripts/viz.py`, declared as script tools, running in `viz`; `src/main/agent/visualization/` deleted from the engine | visualization renders on a machine without host R; no visualization code in the engine |
-| 5 | L3 | remaining consumers: notebook kernels (`phi-jupyter`), Nextflow (`phi-nextflow` + `conda.useMicromamba`), MCP stdio; explicit host versions (§5.2) | notebooks and wrappers work on a machine without host jupyter / nextflow / conda |
-| 6 | L5 | plugin layout and manifest; package the already rewritten visualization locally and install / run / uninstall it per §7.3 | the full plugin lifecycle works |
-| 7 | L6 | content distribution: units, catalogs, installer, registry (see the content distribution design) | per that design |
-| 8 | remote | remote / HPC: upload linux micromamba, build from locks remotely; offline clusters via package cache or conda-pack | step-3 skills run in an SSH project and on an offline cluster |
+| Step | Layer   | Scope                                                                                                                                                                                                                                | Done when                                                                                     |
+| ---- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| 1    | L0 + L1 | bundle micromamba; `~/.phi/runtime` layout and `mambarc`; create from explicit locks, activation snapshot, read-only, index, GC                                                                                                      | a python-only lock builds an environment on a clean account; repeated ensure does not rebuild |
+| 2    | L2      | `environmentVariables` / `runInEnvironment`; sanitisation; canary tests (interpreter location, negative import, clean machine)                                                                                                       | all three isolation tests pass                                                                |
+| 3    | L3      | `skill_run`; first `phi-python`; migrate one skill (e.g. scanpy)                                                                                                                                                                     | the skill works on a machine without a host Python scientific stack                           |
+| 4    | L4      | agent frontmatter `environment`; bash injection extension; visualization rewritten as the command-line program `scripts/viz.py`, declared as script tools, running in `viz`; `src/main/agent/visualization/` deleted from the engine | visualization renders on a machine without host R; no visualization code in the engine        |
+| 5    | L3      | remaining consumers: notebook kernels (`phi-jupyter`), Nextflow (`phi-nextflow` + `conda.useMicromamba`), MCP stdio; explicit host versions (§5.2)                                                                                   | notebooks and wrappers work on a machine without host jupyter / nextflow / conda              |
+| 6    | L5      | plugin layout and manifest; package the already rewritten visualization locally and install / run / uninstall it per §7.3                                                                                                            | the full plugin lifecycle works                                                               |
+| 7    | L6      | content distribution: units, catalogs, installer, registry (see the content distribution design)                                                                                                                                     | per that design                                                                               |
+| 8    | remote  | remote / HPC: upload linux micromamba, build from locks remotely; offline clusters via package cache or conda-pack                                                                                                                   | step-3 skills run in an SSH project and on an offline cluster                                 |
 
 Steps 1–6 are the kernel. After them, how skills, agents, plugins, wrappers,
 and notebooks use environments is fixed; outer distribution just moves files
@@ -457,23 +464,23 @@ on top of it.
 
 ## 10. Naming conventions
 
-| Object | Rule | Examples |
-|---|---|---|
-| core tools (engine) | snake_case, `<domain>_<verb>` | `skill_run`, `env_request`, `http_fetch`, `wrapper_search`, `agent_status` |
-| engine-reserved tool prefixes | not usable by content | `skill_`, `env_`, `http_`, `wrapper_`, `agent_`, `db_` (until retired), `mcp__` (omp MCP tools) |
-| script tools | `<toolPrefix>_<script name>`; `toolPrefix` declared in the package manifest, 2–12 lowercase letters or digits, unique in the registry, no clash with reserved prefixes | `viz_route`, `viz_render` |
-| package ids, skill names, plugin ids | kebab-case | `omics-visualization`, `visualization`, `protein-apis` |
-| agent names | PascalCase | `Visualization`, `Database`, `Wrapper` |
-| environment names | kebab-case; Phi-maintained environments use a `phi-` prefix and are named by purpose; plugin-local environments have no prefix | `phi-python`, `phi-r`, `phi-nextflow`, `phi-jupyter`; `viz` |
-| environment references | `<scope>:<name>[@<major>]`, or a relative path | `phi:python@1`, `plugin:viz`, `project:default`, `./environment.yml` |
-| envId | `<scope>-<owner>-<name>-<hash12>`; owner omitted for scope `phi` | `phi-python-3f9a1c2b7d10`, `plugin-visualization-viz-…`, `project-<short project id>-default-…` |
-| package manifest | `phi-package.yaml` for every type, distinguished by `type` | `type: skill` / `wrapper` / `mcp` / `plugin` |
-| frontmatter and manifest fields | camelCase, aligned with omp; legacy snake_case fields (e.g. `delegation_mode`) are read as aliases and the validator suggests migration | `thinkingLevel`, `outputSchema`, `attachTo`, `toolPrefix`, `delegationMode` |
-| script entry points | `scripts/<toolPrefix>.py`, subcommands named after the script tools | `scripts/viz.py route` |
-| artifact descriptors | `<file>.phi-artifact.json` | `fig.png.phi-artifact.json` |
-| contract files | `docs/contracts/<name>.schema.json` (kebab-case); prose specs `<name>.md` | `environment.schema.json`, `env-metadata.schema.json`, `execution.md` |
-| user directories | `~/.phi/runtime/` (micromamba root, environments, package cache), `~/.phi/packages/<type>/<id>/<version>/` (all packages, including plugins), `~/.phi/state/` (enablement and other state) | |
-| repository directories | `resources/runtime/environments/<env name>/`, `resources/plugins/<plugin id>/` | `resources/runtime/environments/phi-python/` |
+| Object                               | Rule                                                                                                                                                                                                                                                                                                  | Examples                                                                                        |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| core tools (engine)                  | snake_case, `<domain>_<verb>`                                                                                                                                                                                                                                                                         | `skill_run`, `env_request`, `http_fetch`, `wrapper_search`, `agent_status`                      |
+| engine-reserved tool prefixes        | not usable by content                                                                                                                                                                                                                                                                                 | `skill_`, `env_`, `http_`, `wrapper_`, `agent_`, `db_` (until retired), `mcp__` (omp MCP tools) |
+| script tools                         | `<toolPrefix>_<script name>`; `toolPrefix` declared in the package manifest, 2–12 lowercase letters or digits, unique in the registry, no clash with reserved prefixes                                                                                                                                | `viz_route`, `viz_render`                                                                       |
+| package ids, skill names, plugin ids | kebab-case                                                                                                                                                                                                                                                                                            | `omics-visualization`, `visualization`, `protein-apis`                                          |
+| agent names                          | PascalCase                                                                                                                                                                                                                                                                                            | `Visualization`, `Database`, `Wrapper`                                                          |
+| environment names                    | kebab-case; Phi-maintained environments use a `phi-` prefix and are named by purpose; plugin-local environments have no prefix                                                                                                                                                                        | `phi-python`, `phi-r`, `phi-nextflow`, `phi-jupyter`; `viz`                                     |
+| environment references               | `<scope>:<name>[@<major>]`, or a relative path                                                                                                                                                                                                                                                        | `phi:python@1`, `plugin:viz`, `project:default`, `./environment.yml`                            |
+| envId                                | `<scope>-<owner>-<name>-<hash12>`; owner omitted for scope `phi`                                                                                                                                                                                                                                      | `phi-python-3f9a1c2b7d10`, `plugin-visualization-viz-…`, `project-<short project id>-default-…` |
+| package manifest                     | `phi-package.yaml` for every type, distinguished by `type`                                                                                                                                                                                                                                            | `type: skill` / `wrapper` / `mcp` / `plugin`                                                    |
+| frontmatter and manifest fields      | camelCase, aligned with omp; exception: SKILL.md standard fields keep the Agent Skills spelling (`allowed-tools`, `disable-model-invocation`) and all Phi fields go under the `phi` block; legacy snake_case fields (e.g. `delegation_mode`) are read as aliases and the validator suggests migration | `thinkingLevel`, `outputSchema`, `attachTo`, `toolPrefix`, `delegationMode`                     |
+| script entry points                  | `scripts/<toolPrefix>.py`, subcommands named after the script tools                                                                                                                                                                                                                                   | `scripts/viz.py route`                                                                          |
+| artifact descriptors                 | `<file>.phi-artifact.json`                                                                                                                                                                                                                                                                            | `fig.png.phi-artifact.json`                                                                     |
+| contract files                       | `docs/contracts/<name>.schema.json` (kebab-case); prose specs `<name>.md`                                                                                                                                                                                                                             | `environment.schema.json`, `env-metadata.schema.json`, `execution.md`                           |
+| user directories                     | `~/.phi/runtime/` (micromamba root, environments, package cache), `~/.phi/packages/<type>/<id>/<version>/` (all packages, including plugins), `~/.phi/state/` (enablement and other state)                                                                                                            |                                                                                                 |
+| repository directories               | `resources/runtime/environments/<env name>/`, `resources/plugins/<plugin id>/`                                                                                                                                                                                                                        | `resources/runtime/environments/phi-python/`                                                    |
 
 The implementation plan follows §8:
 [content-distribution-implementation.md](../roadmap/content-distribution-implementation.md).
