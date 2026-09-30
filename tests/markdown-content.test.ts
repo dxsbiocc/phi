@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -159,6 +161,13 @@ test('assistant color lists render an interactive palette and preserve the liste
   )
 
   assert.equal((markup.match(/data-phi-slot="markdown-color-palette"/g) ?? []).length, 1)
+  assert.match(
+    readFileSync(
+      resolve(process.cwd(), 'src/renderer/src/components/markdown/MarkdownColorToken.tsx'),
+      'utf8'
+    ),
+    /px: 3/
+  )
   assert.match(markup, /aria-label="复制颜色 #E11D48"/)
   assert.match(markup, /aria-label="复制颜色 #F472B6"/)
   assert.match(markup, /aria-label="复制颜色 #FB923C"/)

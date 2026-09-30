@@ -96,7 +96,9 @@ export function ColorPalette({ colors }: { colors: string[] }): React.JSX.Elemen
         overflowX: 'auto',
         pt: 2,
         pb: 2,
-        pr: 2,
+        // Hover scales a 56px swatch to 1.4× from its center, so each side needs
+        // more than 12px or the first and last colors paint past the bubble edge.
+        px: 3,
         my: 0.5,
         '& .phi-color-swatch:hover, & .phi-color-swatch:focus-visible': {
           transform: 'scale(1.4)',
