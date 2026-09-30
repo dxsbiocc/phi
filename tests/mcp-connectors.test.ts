@@ -31,6 +31,19 @@ test('curated connector directory has distinct HTTPS services in every group', (
   const composio = featuredMcpConnectors.find((connector) => connector.id === 'composio')
   assert.equal(composio?.url, 'https://connect.composio.dev/mcp')
   assert.equal(composio?.oauthAuthorizationOrigin, 'https://connect.composio.dev')
+  assert.deepEqual(
+    featuredMcpConnectors
+      .filter((connector) => connector.oauthAuthorizationOrigin)
+      .map((connector) => [connector.id, connector.oauthAuthorizationOrigin]),
+    [
+      ['notion', 'https://mcp.notion.com'],
+      ['composio', 'https://connect.composio.dev'],
+      ['linear', 'https://mcp.linear.app'],
+      ['figma', 'https://www.figma.com'],
+      ['canva', 'https://mcp.canva.com'],
+      ['biorender', 'https://mcp.services.biorender.com']
+    ]
+  )
 })
 
 test('remote MCP connectors preserve unrelated configuration and remove only matching entries', () => {

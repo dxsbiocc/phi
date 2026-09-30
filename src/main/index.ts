@@ -7257,6 +7257,10 @@ app.whenReady().then(() => {
     }
     await getOmpBridge().request('mcp.authorizeFeatured', { id })
   })
+  ipcMain.handle('mcp:cancelFeaturedAuth', async (_, id: string) => {
+    if (typeof id !== 'string' || !id) return
+    await getOmpBridge().request('mcp.cancelFeaturedAuth', { id })
+  })
 
   ipcMain.handle('wrappers:getPlan', async (_, planId: string) => readWrapperPlan(planId))
   ipcMain.handle('wrappers:retargetPlan', async (_, request: WrapperRetargetRequest) => {

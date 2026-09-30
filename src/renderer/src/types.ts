@@ -919,6 +919,7 @@ export type RendererApi = AutoCompactionApi & {
   listFeaturedMcpTools: (id: string) => Promise<string[]>
   getFeaturedMcpAuthStatus: (id: string) => Promise<boolean>
   authorizeFeaturedMcp: (id: string) => Promise<void>
+  cancelFeaturedMcpAuth: (id: string) => Promise<void>
   getFeaturedMcpApiKeyStatus: (id: string) => Promise<boolean>
   setFeaturedMcpApiKey: (id: string, key: string) => Promise<void>
   clearFeaturedMcpApiKey: (id: string) => Promise<void>

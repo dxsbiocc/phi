@@ -13,15 +13,20 @@ import {
   featuredApiKeyMcpConfig
 } from '../mcp-key-credentials'
 
+const FEATURED_MCP_AUTH_TIMEOUT_MS = 2 * 60_000
+
 export async function authorizeFeaturedMcp(
   url: string,
   authStorage: AuthStorage,
-  openAuthUrl: (url: string) => Promise<void>
+  openAuthUrl: (url: string) => Promise<void>,
+  signal?: AbortSignal
 ): Promise<void> {
   const endpoints = await discoverOAuthEndpoints(url)
   if (!endpoints) throw new Error('此 MCP 服务未提供可用的 OAuth 授权信息')
 
   const openFailure = new AbortController()
+  const timeout = new AbortController()
+  const timer = setTimeout(() => timeout.abort('授权已超时'), FEATURED_MCP_AUTH_TIMEOUT_MS)
   const flow = new MCPOAuthFlow(
     {
       ...endpoints,
@@ -29,23 +34,27 @@ export async function authorizeFeaturedMcp(
       stripSameOriginResource: !endpoints.resource
     },
     {
-      signal: AbortSignal.any([AbortSignal.timeout(5 * 60_000), openFailure.signal]),
+      signal: AbortSignal.any([timeout.signal, openFailure.signal, ...(signal ? [signal] : [])]),
       onAuth: ({ url: authorizationUrl }) => {
         void openAuthUrl(authorizationUrl).catch((error: unknown) => openFailure.abort(error))
       }
     }
   )
-  const credentials = await flow.login()
-  const stored: MCPStoredOAuthCredential = {
-    type: 'oauth',
-    ...credentials,
-    tokenUrl: endpoints.tokenUrl,
-    clientId: flow.resolvedClientId,
-    clientSecret: flow.registeredClientSecret,
-    resource: flow.resource,
-    authorizationUrl: flow.authorizationUrl
+  try {
+    const credentials = await flow.login()
+    const stored: MCPStoredOAuthCredential = {
+      type: 'oauth',
+      ...credentials,
+      tokenUrl: endpoints.tokenUrl,
+      clientId: flow.resolvedClientId,
+      clientSecret: flow.registeredClientSecret,
+      resource: flow.resource,
+      authorizationUrl: flow.authorizationUrl
+    }
+    await authStorage.set(mcpOAuthCredentialId(url), stored)
+  } finally {
+    clearTimeout(timer)
   }
-  await authStorage.set(mcpOAuthCredentialId(url), stored)
 }
 
 export async function listFeaturedMcpTools(

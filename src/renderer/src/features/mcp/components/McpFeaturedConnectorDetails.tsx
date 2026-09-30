@@ -17,6 +17,8 @@ export function McpFeaturedConnectorDetails({
   onAdd,
   onRemove,
   onAuthorize,
+  onCancelAuthorize,
+  authorizing = false,
   onApiKey,
   onRetry
 }: {
@@ -31,6 +33,8 @@ export function McpFeaturedConnectorDetails({
   onAdd: () => void
   onRemove?: () => void
   onAuthorize: () => void
+  onCancelAuthorize?: () => void
+  authorizing?: boolean
   onApiKey: () => void
   onRetry: () => void
 }): React.JSX.Element {
@@ -53,16 +57,16 @@ export function McpFeaturedConnectorDetails({
   } else if (connector.oauthAuthorizationOrigin) {
     actions = (
       <Stack direction="row" spacing={1}>
-        {authStatus === 'authenticated' && !server ? (
+        {authorizing ? (
+          <Button variant="contained" onClick={onCancelAuthorize}>
+            取消授权
+          </Button>
+        ) : authStatus === 'authenticated' && !server ? (
           <Button variant="contained" disabled={busy} onClick={onAdd}>
             添加连接器
           </Button>
         ) : (
-          <Button
-            variant="contained"
-            disabled={busy || authStatus === 'checking'}
-            onClick={onAuthorize}
-          >
+          <Button variant="contained" disabled={busy} onClick={onAuthorize}>
             {authStatus === 'authenticated' ? '重新授权' : '授权登录'}
           </Button>
         )}
@@ -177,9 +181,11 @@ export function McpFeaturedConnectorDetails({
           <Typography>
             {connector.apiKey && authStatus === 'authenticated'
               ? 'API key 已验证'
-              : connector.oauthAuthorizationOrigin && authStatus === 'authenticated'
-                ? '已登录'
-                : connector.signIn}
+              : authorizing
+                ? '等待授权'
+                : connector.oauthAuthorizationOrigin && authStatus === 'authenticated'
+                  ? '已登录'
+                  : connector.signIn}
           </Typography>
         </Box>
         {server?.sourcePath && (

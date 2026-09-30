@@ -220,6 +220,7 @@ const pendingAuthPrompts = new Map<
     reject: (error: Error) => void
   }
 >()
+const featuredAuthAbort = new Map<string, AbortController>()
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -1831,6 +1832,11 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       const { authStorage } = await getContext()
       return authStorage.get(mcpOAuthCredentialId(connector.url))?.type === 'oauth'
     }
+    case 'mcp.cancelFeaturedAuth': {
+      const id = isRecord(params) ? stringValue(params.id) : ''
+      featuredAuthAbort.get(id)?.abort('授权已取消')
+      return undefined
+    }
     case 'mcp.authorizeFeatured': {
       const id = isRecord(params) ? stringValue(params.id) : ''
       const connector = featuredMcpConnectors.find(
@@ -1838,11 +1844,18 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       )
       if (!connector) throw new Error('该连接器尚不支持 OAuth 授权')
       const ctx = await getContext()
-      await authorizeFeaturedMcp(
-        connector.url,
-        ctx.authStorage,
-        (url) => requestHost('mcp.openAuthUrl', { id, url }) as Promise<void>
-      )
+      const cancel = new AbortController()
+      featuredAuthAbort.set(id, cancel)
+      try {
+        await authorizeFeaturedMcp(
+          connector.url,
+          ctx.authStorage,
+          (url) => requestHost('mcp.openAuthUrl', { id, url }) as Promise<void>,
+          cancel.signal
+        )
+      } finally {
+        featuredAuthAbort.delete(id)
+      }
       return undefined
     }
     case 'modelRuntime.snapshot':

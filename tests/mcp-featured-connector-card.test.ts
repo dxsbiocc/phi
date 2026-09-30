@@ -30,6 +30,7 @@ test('Notion shows login state independently of whether it was added', () => {
   const connected = render('notion', true, true)
   assert.match(connected, /已登录/)
   assert.match(connected, /aria-label="已添加 Notion"/)
+  assert.match(connected, /data-phi-connector-state="added"/)
   assert.doesNotMatch(connected, /aria-label="添加 Notion"/)
 
   const notAdded = render('notion', false, true)
@@ -45,6 +46,17 @@ test('a connector awaiting OAuth offers authorization instead of a config-only a
   const google = render('google-drive', false, false)
   assert.match(google, /授权暂不可用/)
   assert.doesNotMatch(google, /aria-label="添加 Google Drive"/)
+
+  for (const [id, name] of [
+    ['linear', 'Linear'],
+    ['figma', 'Figma'],
+    ['canva', 'Canva'],
+    ['biorender', 'BioRender']
+  ] as const) {
+    const markup = render(id, false, false)
+    assert.match(markup, new RegExp(`aria-label="授权登录 ${name}"`))
+    assert.doesNotMatch(markup, /授权暂不可用/)
+  }
 })
 
 test('Composio uses the same independent login and install states', () => {

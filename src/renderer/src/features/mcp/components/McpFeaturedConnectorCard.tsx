@@ -1,4 +1,5 @@
 import { Box, Chip, IconButton, Stack, Typography } from '@mui/material'
+import { alpha } from '@mui/material/styles'
 import { GoCheck, GoLock, GoPlus } from 'react-icons/go'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
 import { ConnectorIcon } from './ConnectorIcon'
@@ -10,17 +11,21 @@ export function McpFeaturedConnectorCard({
   installed,
   authStatus,
   busy,
+  authorizing = false,
   onOpen,
   onAdd,
-  onAuthorize
+  onAuthorize,
+  onCancel
 }: {
   connector: FeaturedMcpConnector
   installed: boolean
   authStatus: ConnectorAuthStatus
   busy: boolean
+  authorizing?: boolean
   onOpen: () => void
   onAdd: () => void
   onAuthorize: () => void
+  onCancel?: () => void
 }): React.JSX.Element {
   const requiresSignIn = connector.signIn !== '无需登录'
   const supportsAuthorization = Boolean(connector.oauthAuthorizationOrigin || connector.apiKey)
@@ -31,17 +36,19 @@ export function McpFeaturedConnectorCard({
       ? installed
         ? '授权未验证'
         : '授权暂不可用'
-      : authStatus === 'authenticated'
-        ? connector.apiKey
-          ? '已验证'
-          : '已登录'
-        : authStatus === 'checking'
-          ? '检查中'
-          : authStatus === 'unavailable'
-            ? '状态不可用'
-            : connector.apiKey
-              ? '需填写 API key'
-              : '需登录'
+      : authorizing
+        ? '等待授权'
+        : authStatus === 'authenticated'
+          ? connector.apiKey
+            ? '已验证'
+            : '已登录'
+          : authStatus === 'checking'
+            ? '检查中'
+            : authStatus === 'unavailable'
+              ? '状态不可用'
+              : connector.apiKey
+                ? '需填写 API key'
+                : '需登录'
 
   return (
     <Box
@@ -91,9 +98,20 @@ export function McpFeaturedConnectorCard({
         <Box
           role="img"
           aria-label={`已添加 ${connector.name}`}
-          sx={{ width: 34, height: 34, display: 'grid', placeItems: 'center', flexShrink: 0 }}
+          data-phi-connector-state="added"
+          sx={{
+            width: 34,
+            height: 34,
+            display: 'grid',
+            placeItems: 'center',
+            flexShrink: 0,
+            borderRadius: 1.5,
+            color: 'success.dark',
+            bgcolor: (theme) =>
+              alpha(theme.palette.success.main, theme.palette.mode === 'dark' ? 0.28 : 0.16)
+          }}
         >
-          <GoCheck size={21} aria-hidden="true" />
+          <GoCheck size={20} aria-hidden="true" />
         </Box>
       ) : requiresSignIn && !supportsAuthorization ? (
         <Box
@@ -115,17 +133,20 @@ export function McpFeaturedConnectorCard({
       ) : (
         <IconButton
           aria-label={
-            authorized
-              ? `添加 ${connector.name}`
-              : connector.apiKey
-                ? `配置 ${connector.name}`
-                : `授权登录 ${connector.name}`
+            authorizing
+              ? `取消授权 ${connector.name}`
+              : authorized
+                ? `添加 ${connector.name}`
+                : connector.apiKey
+                  ? `配置 ${connector.name}`
+                  : `授权登录 ${connector.name}`
           }
           size="small"
-          disabled={busy || (requiresSignIn && !connector.apiKey && authStatus === 'checking')}
+          disabled={!authorizing && busy}
           onClick={(event) => {
             event.stopPropagation()
-            if (authorized) onAdd()
+            if (authorizing) onCancel?.()
+            else if (authorized) onAdd()
             else onAuthorize()
           }}
           sx={{
@@ -140,11 +161,7 @@ export function McpFeaturedConnectorCard({
             borderRadius: 1.5
           }}
         >
-          {authorized || connector.apiKey ? (
-            <GoPlus size={18} aria-hidden="true" />
-          ) : (
-            <GoLock size={18} aria-hidden="true" />
-          )}
+          <GoPlus size={18} aria-hidden="true" />
         </IconButton>
       )}
     </Box>

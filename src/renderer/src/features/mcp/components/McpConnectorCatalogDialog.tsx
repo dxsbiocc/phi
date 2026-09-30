@@ -20,6 +20,7 @@ import {
 } from '../../../../../shared/mcpConnectorCatalog'
 import { PhiIcons } from '../../../icons'
 import type { McpServerSummary } from '../../../types'
+import { featuredAuthFailureNotice, featuredOAuthStatusFromError } from '../lib/featuredAuthStatus'
 import {
   cacheFeaturedToolNames,
   cachedFeaturedToolNames,
@@ -76,6 +77,7 @@ export function McpConnectorCatalogDialog({
   const [apiKeyDialogId, setApiKeyDialogId] = useState<string | null>(null)
   const [apiKeyError, setApiKeyError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [authorizingId, setAuthorizingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [toolNames, setToolNames] = useState<string[] | null>(null)
   const [toolsLoading, setToolsLoading] = useState(false)
@@ -115,9 +117,7 @@ export function McpConnectorCatalogDialog({
           const message = cause instanceof Error ? cause.message : String(cause)
           setAuthStatusById((current) => ({
             ...current,
-            [connector.id]: message.includes(`请先授权登录 ${connector.name}`)
-              ? 'unauthenticated'
-              : 'unavailable'
+            [connector.id]: featuredOAuthStatusFromError(message, connector.name)
           }))
         })
     }
@@ -204,14 +204,31 @@ export function McpConnectorCatalogDialog({
     }
   }
 
+  async function refreshOAuthStatus(connector: FeaturedMcpConnector): Promise<void> {
+    try {
+      const authenticated = await window.api.getFeaturedMcpAuthStatus(connector.id)
+      setAuthStatusById((current) => ({
+        ...current,
+        [connector.id]: authenticated ? 'authenticated' : 'unauthenticated'
+      }))
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setAuthStatusById((current) => ({
+        ...current,
+        [connector.id]: featuredOAuthStatusFromError(message, connector.name)
+      }))
+    }
+  }
+
   async function connectOAuth(connector: FeaturedMcpConnector): Promise<void> {
-    if (!connector.oauthAuthorizationOrigin) return
+    if (!connector.oauthAuthorizationOrigin || authorizingId) return
     if (typeof window.api.authorizeFeaturedMcp !== 'function') {
       setError('授权接口尚未加载，请重启 Phi 后重试')
       return
     }
     toolRequestRef.current += 1
-    setBusy(connector.id)
+    setAuthorizingId(connector.id)
+    setAuthStatusById((current) => ({ ...current, [connector.id]: 'unauthenticated' }))
     setError(null)
     setToolsError(null)
     setToolsLoading(false)
@@ -228,13 +245,16 @@ export function McpConnectorCatalogDialog({
       setToolNames(names)
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause)
-      setError(
-        /No handler registered for ['"]mcp:authorizeFeatured['"]/.test(message)
-          ? '主进程尚未加载授权接口，请重启 Phi 后重试'
-          : message
-      )
+      await refreshOAuthStatus(connector)
+      setError(featuredAuthFailureNotice(message))
     } finally {
-      setBusy(null)
+      setAuthorizingId((current) => (current === connector.id ? null : current))
+    }
+  }
+
+  function cancelOAuth(connector: FeaturedMcpConnector): void {
+    if (typeof window.api.cancelFeaturedMcpAuth === 'function') {
+      void window.api.cancelFeaturedMcpAuth(connector.id)
     }
   }
 
@@ -353,6 +373,9 @@ export function McpConnectorCatalogDialog({
   }
 
   function close(): void {
+    if (authorizingId && typeof window.api.cancelFeaturedMcpAuth === 'function') {
+      void window.api.cancelFeaturedMcpAuth(authorizingId)
+    }
     toolRequestRef.current += 1
     setAuthStatusById({})
     setApiKeyInput('')
@@ -379,7 +402,9 @@ export function McpConnectorCatalogDialog({
         installed={Boolean(matchingServer(connector, servers))}
         authStatus={authStatusById[connector.id] ?? 'checking'}
         busy={busy !== null}
+        authorizing={authorizingId === connector.id}
         onOpen={() => openDetail(connector)}
+        onCancel={() => cancelOAuth(connector)}
         onAdd={() =>
           connector.apiKey ? openApiKeyDialog(connector) : void add(connector.id, connector.url)
         }
@@ -559,6 +584,8 @@ export function McpConnectorCatalogDialog({
                 server={matchingServer(selected, servers)}
                 authStatus={selectedAuthStatus}
                 busy={busy !== null}
+                authorizing={authorizingId === selected.id}
+                onCancelAuthorize={() => cancelOAuth(selected)}
                 toolNames={toolNames}
                 toolsLoading={toolsLoading}
                 toolsError={toolsError}

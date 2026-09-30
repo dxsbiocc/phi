@@ -3,6 +3,7 @@ import { Alert, Box, Button, Chip, Divider, Stack, Typography } from '@mui/mater
 import { featuredMcpConnectors } from '../../../../../shared/mcpConnectorCatalog'
 import { PhiIcons } from '../../../icons'
 import type { McpServerSummary } from '../../../types'
+import { featuredAuthFailureNotice, featuredOAuthStatusFromError } from '../lib/featuredAuthStatus'
 import {
   cacheFeaturedToolNames,
   cachedFeaturedToolNames,
@@ -92,10 +93,15 @@ export function McpDetailPanel({
           }))
         }
       })
-      .catch(() => {
-        if (active) {
-          setAuthStatusById((current) => ({ ...current, [connector.id]: 'unavailable' }))
-        }
+      .catch((cause: unknown) => {
+        if (!active) return
+        const message = cause instanceof Error ? cause.message : String(cause)
+        setAuthStatusById((current) => ({
+          ...current,
+          [connector.id]: connector.oauthAuthorizationOrigin
+            ? featuredOAuthStatusFromError(message, connector.name)
+            : 'unavailable'
+        }))
       })
     return () => {
       active = false
@@ -157,7 +163,12 @@ export function McpDetailPanel({
       setAuthStatusById((current) => ({ ...current, [connector.id]: 'authenticated' }))
       refreshTools()
     } catch (cause) {
-      setError(errorMessage(cause))
+      const message = errorMessage(cause)
+      setError(featuredAuthFailureNotice(message))
+      setAuthStatusById((current) => ({
+        ...current,
+        [connector.id]: featuredOAuthStatusFromError(message, connector.name)
+      }))
     } finally {
       setBusy(false)
     }

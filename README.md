@@ -17,9 +17,10 @@ groups. **Discover** opens a directory of common productivity, communication, de
 and life-science services, plus a custom HTTPS MCP URL form. Adding a connector saves
 it in Phi's global `~/.phi/mcp.json`; new local conversations load it through the MCP
 runtime. **Installed** means the configuration is saved, not that the server is
-connected or authorized. The public PubMed, bioRxiv, and Clinical Trials servers can
-be added now; services marked as requiring sign-in stay in the directory but cannot
-be added from it until Phi provides an authorization flow. Remote project conversations do not load MCP in
+connected or authorized. Public servers and official MCP servers that publish OAuth can be authorized from
+the directory. API-key connectors ask for that key first. Google Drive, Gmail, and
+Slack stay listed, but their providers require a pre-registered OAuth client that
+Phi does not configure, so they cannot be authorized from the directory yet. Remote project conversations do not load MCP in
 this beta. Phi's built-in database connectors are a separate, direct-API capability.
 The directory reads the current tool list from each public MCP server when its detail
 page opens; services awaiting authorization do not display guessed tool lists.

@@ -63,7 +63,8 @@ export const featuredMcpConnectors: readonly FeaturedMcpConnector[] = [
     category: '生产力',
     signIn: '需要登录',
     url: 'https://mcp.linear.app/mcp',
-    homepageUrl: 'https://claude.com/marketplace/connectors/linear'
+    homepageUrl: 'https://claude.com/marketplace/connectors/linear',
+    oauthAuthorizationOrigin: 'https://mcp.linear.app'
   },
   {
     id: 'tavily',
@@ -151,7 +152,9 @@ export const featuredMcpConnectors: readonly FeaturedMcpConnector[] = [
     category: '设计创作',
     signIn: '需要登录',
     url: 'https://mcp.figma.com/mcp',
-    homepageUrl: 'https://claude.com/marketplace/connectors/figma'
+    homepageUrl: 'https://claude.com/marketplace/connectors/figma',
+    // Authorization is on the Figma site, not the MCP host.
+    oauthAuthorizationOrigin: 'https://www.figma.com'
   },
   {
     id: 'canva',
@@ -163,7 +166,8 @@ export const featuredMcpConnectors: readonly FeaturedMcpConnector[] = [
     category: '设计创作',
     signIn: '需要登录',
     url: 'https://mcp.canva.com/mcp',
-    homepageUrl: 'https://claude.com/marketplace/connectors/canva'
+    homepageUrl: 'https://claude.com/marketplace/connectors/canva',
+    oauthAuthorizationOrigin: 'https://mcp.canva.com'
   },
   {
     id: 'biorender',
@@ -175,7 +179,8 @@ export const featuredMcpConnectors: readonly FeaturedMcpConnector[] = [
     category: '设计创作',
     signIn: '需要登录',
     url: 'https://mcp.services.biorender.com/mcp',
-    homepageUrl: 'https://claude.com/marketplace/connectors/biorender'
+    homepageUrl: 'https://claude.com/marketplace/connectors/biorender',
+    oauthAuthorizationOrigin: 'https://mcp.services.biorender.com'
   },
   {
     id: 'pubmed',
