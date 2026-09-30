@@ -33,7 +33,7 @@ import {
   type SourcePackage
 } from './contract'
 import { probeHostRequirements } from './host'
-import { acquireEnvironmentLock, type EnvironmentLock } from './lock'
+import { acquireEnvironmentLock, acquirePackageCacheLock, type EnvironmentLock } from './lock'
 import { updateEnvironmentEntry } from './index-store'
 import { ensureRuntimeLayout, runMicromamba, writeMambarc, type RuntimeSettings } from './runtime'
 import { envMetadataSchema } from './schemas'
@@ -182,7 +182,12 @@ function prepare(input: EnsureEnvironmentInput): PreparedEnvironment {
   return prepared
 }
 
-/** Restore owner write permission without following symlinks, then delete the tree. */
+/**
+ * Delete a tree whose directories may be read-only. Only directories get owner write back:
+ * unlinking a file needs a writable parent, not a writable file. Files are never chmod'ed
+ * here because environment files are hard links into the shared package cache; restoring
+ * write on them would make the same files writable in every other environment.
+ */
 export function removeTree(target: string): void {
   let stat: ReturnType<typeof lstatSync>
   try {
@@ -197,9 +202,8 @@ export function removeTree(target: string): void {
 
 function grantOwnerWrite(target: string): void {
   const stat = lstatSync(target)
-  if (stat.isSymbolicLink()) return
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return
   if ((stat.mode & 0o200) === 0) chmodSync(target, (stat.mode & 0o777) | 0o200)
-  if (!stat.isDirectory()) return
   for (const name of readdirSync(target)) grantOwnerWrite(join(target, name))
 }
 
@@ -252,15 +256,27 @@ async function createFromLock(
   input.onProgress?.({ phase: 'create', message: 'micromamba create' })
   try {
     throwIfAborted(input.signal)
-    // micromamba 2.9.0: create --yes -p <prefix> -f <explicit lock>
-    const result = await runMicromamba(['create', '--yes', '-p', prepared.prefix, '-f', lockFile], {
+    const cacheLock = await acquirePackageCacheLock({
       root: prepared.root,
       signal: input.signal,
-      onOutput: (chunk) => {
-        logStream.write(chunk.text)
-        if (chunk.text.length > 0) input.onProgress?.({ phase: 'create', message: chunk.text })
+      onWait: () => {
+        input.onProgress?.({ phase: 'wait', message: 'waiting for the package cache' })
       }
     })
+    let result: Awaited<ReturnType<typeof runMicromamba>>
+    try {
+      // micromamba 2.9.0: create --yes -p <prefix> -f <explicit lock>
+      result = await runMicromamba(['create', '--yes', '-p', prepared.prefix, '-f', lockFile], {
+        root: prepared.root,
+        signal: input.signal,
+        onOutput: (chunk) => {
+          logStream.write(chunk.text)
+          if (chunk.text.length > 0) input.onProgress?.({ phase: 'create', message: chunk.text })
+        }
+      })
+    } finally {
+      cacheLock.release()
+    }
     if (input.signal?.aborted || result.code === null) throw new Error('environment build aborted')
     if (result.code !== 0) {
       const detail = (result.stderr.trim() || result.stdout.trim()).split('\n')[0]

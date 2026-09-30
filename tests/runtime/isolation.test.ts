@@ -25,6 +25,7 @@ import {
   type RunResult
 } from '../../src/main/agent/envs'
 import { getMicromambaPath } from '../../src/main/agent/envs/paths'
+import { createTestRuntimeRoot } from '../helpers/testRuntimeRoot'
 
 const SYSTEM_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'] as const
 const FORBIDDEN_PATH_TOKENS = ['homebrew', 'miniconda', 'conda', 'pyenv', '.local/bin'] as const
@@ -344,15 +345,8 @@ describe(
       async () => {
         const micromamba = getMicromambaPath()
         evidence(`micromamba=${micromamba}`)
-        const persistent = process.env.PHI_TEST_RUNTIME_ROOT
-        if (persistent) {
-          root = persistent
-          ownsRoot = false
-          mkdirSync(root, { recursive: true })
-        } else {
-          root = mkdtempSync(join(tmpdir(), 'phi-runtime-isolation-'))
-          ownsRoot = true
-        }
+        root = createTestRuntimeRoot('phi-runtime-isolation')
+        ownsRoot = true
         scratch = mkdtempSync(join(tmpdir(), 'phi-runtime-isolation-scratch-'))
         evidence(`runtime root=${root} ownsRoot=${ownsRoot}`)
         pythonEnv = await buildFixture('minimal')

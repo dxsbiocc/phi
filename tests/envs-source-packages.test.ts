@@ -33,6 +33,7 @@ import {
 } from '../src/main/agent/envs'
 import { requireEnvironmentCompiler } from '../src/main/agent/envs/source-packages'
 import { getMicromambaPath } from '../src/main/agent/envs/paths'
+import { createTestRuntimeRoot } from './helpers/testRuntimeRoot'
 
 const PRAISE_SHA256 = '5c035e74fd05dfa59b03afe0d5f4c53fbf34144e175e90c53d09c6baedf5debd'
 const TESTIT_SHA256 = '63da38c42bd795724f4c2afc8e46f1280c60475fa22542749a77acfc4a50f2e5'
@@ -224,15 +225,8 @@ describe(
       const fixture = loadRSource()
       spec = fixture.spec
       lockText = fixture.lockText
-      const persistent = process.env.PHI_TEST_RUNTIME_ROOT
-      if (persistent) {
-        root = persistent
-        ownsRoot = false
-        mkdirSync(root, { recursive: true })
-      } else {
-        root = mkdtempSync(join(tmpdir(), 'phi-rsource-runtime-'))
-        ownsRoot = true
-      }
+      root = createTestRuntimeRoot('phi-rsource-runtime')
+      ownsRoot = true
     })
 
     after(() => {

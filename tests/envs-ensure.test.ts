@@ -40,6 +40,7 @@ import {
   type PhiPlatform
 } from '../src/main/agent/envs'
 import { getMicromambaPath } from '../src/main/agent/envs/paths'
+import { createTestRuntimeRoot } from './helpers/testRuntimeRoot'
 
 const MINIMAL_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 const DIGEST = 'ab'.repeat(32)
@@ -386,15 +387,8 @@ describe(
       const fixture = loadMinimal()
       spec = fixture.spec
       lockText = fixture.lockText
-      const persistent = process.env.PHI_TEST_RUNTIME_ROOT
-      if (persistent) {
-        root = persistent
-        ownsRoot = false
-        mkdirSync(root, { recursive: true })
-      } else {
-        root = mkdtempSync(join(tmpdir(), 'phi-ensure-runtime-'))
-        ownsRoot = true
-      }
+      root = createTestRuntimeRoot('phi-ensure-runtime')
+      ownsRoot = true
     })
 
     after(() => {
@@ -521,6 +515,35 @@ describe(
         assert.equal(entry.status, 'failed')
         assert.equal(typeof entry.error, 'string')
         assert.ok(entry.error)
+      }
+    )
+
+    test(
+      'removing one environment leaves environments that share its package files read-only',
+      { timeout: 600_000 },
+      async () => {
+        // Same lock, different owner: a second envId whose files are hard links to the
+        // same package-cache inodes as the fixture environment.
+        const shared = await ensureEnvironment({
+          ...baseInput(),
+          scope: 'plugin',
+          owner: 'hardlink-probe',
+          kind: 'package'
+        })
+        const other = await ensureEnvironment(baseInput())
+        assert.notEqual(shared.envId, other.envId)
+        removeTree(shared.prefix)
+        assert.equal(existsSync(shared.prefix), false)
+        const writable: string[] = []
+        const walk = (directory: string): void => {
+          for (const entry of readdirSync(directory, { withFileTypes: true })) {
+            const full = join(directory, entry.name)
+            if (entry.isDirectory()) walk(full)
+            else if (entry.isFile() && (statSync(full).mode & 0o222) !== 0) writable.push(full)
+          }
+        }
+        walk(other.prefix)
+        assert.deepEqual(writable.slice(0, 5), [], 'files became writable in another environment')
       }
     )
   }

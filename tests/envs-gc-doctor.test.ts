@@ -39,6 +39,7 @@ import {
   type GarbageCollectionResult
 } from '../src/main/agent/envs'
 import { getMicromambaPath } from '../src/main/agent/envs/paths'
+import { createTestRuntimeRoot } from './helpers/testRuntimeRoot'
 
 const DIGEST = 'ab'.repeat(32)
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -390,15 +391,8 @@ describe(
         lockText,
         sourcePackages: spec.sourcePackages
       })
-      const persistent = process.env.PHI_TEST_RUNTIME_ROOT
-      if (persistent) {
-        root = persistent
-        ownsRoot = false
-        mkdirSync(root, { recursive: true })
-      } else {
-        root = mkdtempSync(join(tmpdir(), 'phi-gc-runtime-'))
-        ownsRoot = true
-      }
+      root = createTestRuntimeRoot('phi-gc-runtime')
+      ownsRoot = true
       removeTree(join(realpathSync(root), 'envs', envId))
       const result = await ensureEnvironment({
         root,

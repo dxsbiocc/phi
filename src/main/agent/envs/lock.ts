@@ -1,4 +1,12 @@
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs'
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeSync
+} from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -109,7 +117,30 @@ export async function acquireEnvironmentLock(input: {
   onWait?: () => void
 }): Promise<EnvironmentLock> {
   mkdirSync(join(input.root, 'state', 'locks'), { recursive: true })
-  const lockPath = environmentLockPath(input.root, input.envId)
+  return acquireLockFile(environmentLockPath(input.root, input.envId), input)
+}
+
+/**
+ * Serialises micromamba operations that write the shared package cache (`create`,
+ * `clean`). micromamba itself fails at once with "Could not set lock" when another
+ * process holds the cache, and its `lock_timeout` setting is not reliable. The lock file
+ * lives inside the (real) pkgs directory, so runtime roots that share one cache through a
+ * symlink are serialised too.
+ */
+export async function acquirePackageCacheLock(input: {
+  root: string
+  signal?: AbortSignal
+  onWait?: () => void
+}): Promise<EnvironmentLock> {
+  const pkgs = join(input.root, 'pkgs')
+  mkdirSync(pkgs, { recursive: true })
+  return acquireLockFile(join(realpathSync(pkgs), '.phi-cache.lock'), input)
+}
+
+async function acquireLockFile(
+  lockPath: string,
+  input: { signal?: AbortSignal; onWait?: () => void }
+): Promise<EnvironmentLock> {
   let announced = false
 
   for (;;) {

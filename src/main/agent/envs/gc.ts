@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { removeTree } from './ensure'
 import { removeEnvironmentCache } from './execution'
-import { isLockedByLiveProcess, tryAcquireEnvironmentLock } from './lock'
+import { acquirePackageCacheLock, isLockedByLiveProcess, tryAcquireEnvironmentLock } from './lock'
 import {
   deleteEnvironmentEntry,
   readEnvironmentIndex,
@@ -172,10 +172,16 @@ export async function trimPackageCache(
   const layout = ensureRuntimeLayout(root)
   const runtimeRoot = realpathSync(layout.root)
   ensureMambarc(runtimeRoot)
-  const result = await runMicromamba(['clean', '--tarballs', '--yes'], {
-    root: runtimeRoot,
-    signal: options.signal
-  })
+  const cacheLock = await acquirePackageCacheLock({ root: runtimeRoot, signal: options.signal })
+  let result: Awaited<ReturnType<typeof runMicromamba>>
+  try {
+    result = await runMicromamba(['clean', '--tarballs', '--yes'], {
+      root: runtimeRoot,
+      signal: options.signal
+    })
+  } finally {
+    cacheLock.release()
+  }
   if (options.signal?.aborted || result.code === null) throw new Error('package cache trim aborted')
   if (result.code !== 0) {
     const detail = (result.stderr.trim() || result.stdout.trim()).split('\n')[0]
