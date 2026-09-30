@@ -141,7 +141,7 @@ scripts/
 自己跑某个模板：
 
 ```bash
-Rscript scripts/bar/basic/plot.R scripts/bar/basic/example.tsv output.pdf
+skill_run({ skill: "omics-visualization", script: "bar/basic/plot.R", args: ["scripts/bar/basic/example.tsv", "output.pdf"] })
 ```
 
 依赖写在各脚本头部。缺包应报告，不要悄悄安装。

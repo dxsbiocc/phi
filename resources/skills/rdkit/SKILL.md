@@ -2,13 +2,11 @@
 name: rdkit
 description: Cheminformatics toolkit for fine-grained molecular control. SMILES/SDF parsing, descriptors (MW, LogP, TPSA), fingerprints, substructure search, 2D/3D generation, similarity, reactions. For standard workflows with simpler interface, use datamol (wrapper around RDKit). Use rdkit for advanced control, custom sanitization, specialized algorithms.
 license: BSD-3-Clause license
-allowed-tools:
-  - Read
-  - Write
-  - Edit
-  - Bash
-compatibility: Examples target RDKit 2026.03.x. Use conda-forge for the broadest binary support or PyPI package `rdkit` for supported platform wheels; `rdkit-pypi` is the legacy PyPI name.
+allowed-tools: Read Write Edit Bash
+compatibility: Examples target RDKit 2026.03.x. The skill runs in phi:python@1, where rdkit is already installed. rdkit-pypi is the legacy PyPI name.
 metadata: {"version": "1.1", "skill-author": "K-Dense Inc."}
+phi:
+  environment: phi:python@1
 ---
 
 # RDKit Cheminformatics Toolkit
@@ -17,24 +15,11 @@ metadata: {"version": "1.1", "skill-author": "K-Dense Inc."}
 
 RDKit is a comprehensive cheminformatics library providing Python APIs for molecular analysis and manipulation. This skill provides guidance for reading/writing molecular structures, calculating descriptors, fingerprinting, substructure searching, chemical reactions, 2D/3D coordinate generation, and molecular visualization. Use this skill for drug discovery, computational chemistry, and cheminformatics research tasks.
 
-**Current baseline (checked 2026-06-07):** RDKit **2026.03.3** is the latest GitHub/PyPI release (`rdkit` 2026.3.3 on PyPI). Official installation docs continue to recommend conda-forge for most users, while cross-platform PyPI wheels are published under the `rdkit` package name. `rdkit-pypi` is the old PyPI package name and should only appear when maintaining legacy environments.
+**Current baseline (checked 2026-06-07):** RDKit **2026.03.3** is the latest GitHub/PyPI release (`rdkit` 2026.3.3 on PyPI). `rdkit-pypi` is the old PyPI package name.
 
 ## Installation and Setup
 
-Use `uv` when installing into an existing Python environment:
-
-```bash
-uv pip install rdkit
-```
-
-For reproducible chemistry environments, especially when mixing compiled scientific packages, conda-forge remains the upstream recommendation:
-
-```bash
-conda create -c conda-forge -n my-rdkit-env rdkit
-conda activate my-rdkit-env
-```
-
-Avoid installing both conda `rdkit` and PyPI `rdkit`/`rdkit-pypi` into the same environment unless you are deliberately debugging packaging behavior. Mixed installs can make it unclear which binary extension is being imported.
+This skill runs in the managed `phi:python@1` environment; `rdkit` is already there. Do not install a second copy of `rdkit` or `rdkit-pypi` into this environment.
 
 ## Core Capabilities
 
@@ -828,5 +813,5 @@ Example scripts for common RDKit workflows:
 - `similarity_search.py` - Perform fingerprint-based similarity screening
 - `substructure_filter.py` - Filter molecules by substructure patterns
 
-These scripts can be executed directly or used as templates for custom workflows.
+Run them with `skill_run`, or use them as templates for custom workflows.
 

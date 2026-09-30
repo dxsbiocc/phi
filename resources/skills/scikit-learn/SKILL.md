@@ -3,8 +3,10 @@ name: scikit-learn
 description: Machine learning in Python with scikit-learn. Use when working with supervised learning (classification, regression), unsupervised learning (clustering, dimensionality reduction), model evaluation, hyperparameter tuning, preprocessing, or building ML pipelines. Provides comprehensive reference documentation for algorithms, preprocessing techniques, pipelines, and best practices.
 license: BSD-3-Clause license
 allowed-tools: Read Write Edit Bash
-compatibility: Requires Python 3.11+ and scikit-learn 1.7+. NumPy and SciPy are required dependencies. Optional matplotlib/seaborn for bundled example scripts that save plots.
+compatibility: Runs in phi:python@1, where scikit-learn, NumPy, SciPy, pandas, matplotlib, and seaborn are already installed.
 metadata: {"version": "1.1", "skill-author": "K-Dense Inc."}
+phi:
+  environment: phi:python@1
 ---
 
 # Scikit-learn
@@ -15,20 +17,7 @@ This skill provides comprehensive guidance for machine learning tasks using scik
 
 ## Installation
 
-Tested against **scikit-learn 1.8.0** (stable; December 2025). Requires **Python 3.11–3.14** (free-threaded CPython 3.14 wheels available in 1.8+).
-
-Install the PyPI package **`scikit-learn`** (not the deprecated `sklearn` package on PyPI). Import in code as `sklearn`.
-
-```bash
-# Install scikit-learn using uv
-uv pip install "scikit-learn>=1.7"
-
-# Optional: plotting utilities and bundled script dependencies
-uv pip install "scikit-learn[plots]" matplotlib seaborn
-
-# Commonly used with
-uv pip install pandas numpy
-```
+This skill runs in the managed `phi:python@1` environment; `scikit-learn`, `numpy`, `scipy`, `pandas`, `matplotlib`, and `seaborn` are already there. Import scikit-learn as `sklearn` (not the deprecated `sklearn` package on PyPI).
 
 Check your version:
 
@@ -155,7 +144,7 @@ Discover patterns in unlabeled data through clustering and dimensionality reduct
 **Dimensionality reduction:**
 - **Linear**: PCA, TruncatedSVD, NMF
 - **Manifold learning**: t-SNE, Isomap, LLE, MDS, ClassicalMDS (1.8+)
-- **External (install separately)**: UMAP (`umap-learn`)
+- **External**: UMAP (`umap-learn`, already in `phi:python@1`)
 - **Feature extraction**: FastICA, LatentDirichletAllocation
 
 **When to use:**
@@ -256,7 +245,7 @@ Build reproducible, production-ready ML workflows.
 Run a complete classification workflow with preprocessing, model comparison, hyperparameter tuning, and evaluation:
 
 ```bash
-uv run python scripts/classification_pipeline.py
+skill_run({ skill: "scikit-learn", script: "classification_pipeline.py" })
 ```
 
 This script demonstrates:
@@ -271,7 +260,7 @@ This script demonstrates:
 Perform clustering analysis with algorithm comparison and visualization:
 
 ```bash
-uv run python scripts/clustering_analysis.py
+skill_run({ skill: "scikit-learn", script: "clustering_analysis.py" })
 ```
 
 This script demonstrates:

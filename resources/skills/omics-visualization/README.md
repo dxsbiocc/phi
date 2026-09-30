@@ -147,7 +147,7 @@ In a compatible agent environment, invoke the **omics-visualization** skill when
 To run a template yourself:
 
 ```bash
-Rscript scripts/bar/basic/plot.R scripts/bar/basic/example.tsv output.pdf
+skill_run({ skill: "omics-visualization", script: "bar/basic/plot.R", args: ["scripts/bar/basic/example.tsv", "output.pdf"] })
 ```
 
 Required R packages are listed in each script header. Missing packages should be reported, not installed silently.

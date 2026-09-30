@@ -3,6 +3,8 @@ name: scanpy
 description: Standard single-cell RNA-seq analysis pipeline. Use for QC, normalization, dimensionality reduction (PCA/UMAP/t-SNE), clustering, differential expression, visualization, and converting R-friendly single-cell formats such as Seurat or SingleCellExperiment RDS files into h5ad for Scanpy. Best for exploratory scRNA-seq analysis with established workflows. For data format questions use anndata.
 license: BSD-3-Clause
 metadata: {"version": "1.3", "skill-author": "K-Dense Inc."}
+phi:
+  environment: phi:python@1
 ---
 
 # Scanpy: Single-Cell Analysis
@@ -13,23 +15,11 @@ Scanpy is a scalable Python toolkit for analyzing single-cell RNA-seq data, buil
 
 ## Installation
 
-Requires Python **3.12+** (scanpy 1.12 dropped Python ≤3.11) and anndata **≥0.10**.
+This skill runs in the managed `phi:python@1` environment; `scanpy`, `leidenalg`, `python-igraph`, `harmonypy`, `bbknn`, and `anndata` are already there.
 
-```bash
-uv pip install "scanpy[leiden]"
-```
+For large or out-of-core datasets, many functions support [Dask](https://docs.dask.org/) arrays (experimental); `dask` is not part of `phi:python@1`, so these paths are unavailable to the skill's scripts. See the [Using dask with Scanpy](https://scanpy.scverse.org/en/stable/tutorials/experimental/dask.html) tutorial. For GPU-accelerated scanpy-like operations, [rapids-singlecell](https://rapids-singlecell.readthedocs.io/) is a separate package and is not part of `phi:python@1`.
 
-The `[leiden]` extra installs `python-igraph` and `leidenalg`, required for Leiden clustering. For reproducible environments, pin a version: `uv pip install "scanpy[leiden]==1.12.1"`.
-
-For large or out-of-core datasets, many functions support [Dask](https://docs.dask.org/) arrays (experimental):
-
-```bash
-uv pip install "scanpy[leiden]" dask
-```
-
-See the [Using dask with Scanpy](https://scanpy.scverse.org/en/stable/tutorials/experimental/dask.html) tutorial. For GPU-accelerated scanpy-like operations, use [rapids-singlecell](https://rapids-singlecell.readthedocs.io/) as a separate package.
-
-If the input is an R-native single-cell object (`.rds`, `.RData`, Seurat, or SingleCellExperiment), first convert it to `.h5ad` with R tooling, then load it with Scanpy. Read `references/r_interop.md` for agent-run installation and conversion instructions across macOS, Linux, and Windows.
+If the input is an R-native single-cell object (`.rds`, `.RData`, Seurat, or SingleCellExperiment), first convert it to `.h5ad` with R tooling (a host dependency), then load it with Scanpy. Read `references/r_interop.md` for agent-run installation and conversion instructions across macOS, Linux, and Windows.
 
 For AnnData structure and I/O details, use the **anndata** skill.
 
@@ -49,47 +39,46 @@ This skill should be used when:
 
 This skill bundles ready-to-run CLI scripts in `scripts/` for every common step. **Run these instead of hand-writing scanpy code** — they handle file loading by extension, figure setup, sensible defaults, raw-count preservation, and progress logging. Each reads and writes `.h5ad`, so they chain together, and each has its own `--help`. Only drop down to writing scanpy code when a task isn't covered by a script or needs unusual customization.
 
-All scripts use a shared `scripts/_common.py` helper (loading, saving, figure config) — keep it alongside the others. Run from the skill directory or pass full paths; figures default to `./figures/`.
+All scripts use a shared `scripts/_common.py` helper (loading, saving, figure config). Run them with `skill_run`; it executes the absolute script path, so those imports keep working. Figures default to `./figures/`.
 
 | Script | Purpose | Typical call |
 |--------|---------|--------------|
-| `run_pipeline.py` | **Full workflow in one command**: load → QC → normalize → HVG → PCA → (batch) → UMAP → Leiden → markers | `python scripts/run_pipeline.py raw.h5ad -o processed.h5ad` |
-| `inspect_data.py` | Summarize an unknown dataset (shape, obs/var, layers, what's already computed, raw vs normalized) | `python scripts/inspect_data.py data.h5ad` |
-| `convert.py` | Load any format (10x dir/.h5, csv, loom, mtx) and write `.h5ad` | `python scripts/convert.py 10x_dir/ -o data.h5ad` |
-| `qc_analysis.py` | QC metrics, before/after plots, filtering, optional Scrublet doublets | `python scripts/qc_analysis.py raw.h5ad -o qc.h5ad --scrublet` |
-| `preprocess.py` | Normalize, log1p, HVG, optional scale/regress (keeps `counts` layer + `raw`) | `python scripts/preprocess.py qc.h5ad -o norm.h5ad` |
-| `reduce_dimensions.py` | PCA + variance plot, neighbors, UMAP, optional t-SNE | `python scripts/reduce_dimensions.py norm.h5ad -o red.h5ad` |
-| `batch_correct.py` | Integration: harmony / bbknn / combat | `python scripts/batch_correct.py red.h5ad -o int.h5ad --method harmony --batch-key sample` |
-| `cluster.py` | Leiden (or louvain) at one or many resolutions | `python scripts/cluster.py red.h5ad -o clu.h5ad --resolution 0.3 0.6 1.0` |
-| `find_markers.py` | `rank_genes_groups` + per-group CSVs + marker plots | `python scripts/find_markers.py clu.h5ad --groupby leiden -o clu.h5ad` |
-| `annotate.py` | Map clusters → cell types from JSON/CSV; optional marker reference dotplot | `python scripts/annotate.py clu.h5ad -o ann.h5ad --mapping map.json` |
-| `score_genes.py` | Score gene signatures (JSON) and/or cell-cycle phase | `python scripts/score_genes.py ann.h5ad -o scored.h5ad --gene-sets sigs.json` |
-| `pseudobulk.py` | Aggregate counts by sample × cell type → matrix for pydeseq2 | `python scripts/pseudobulk.py ann.h5ad --by sample cell_type --out-prefix pb` |
-| `subset.py` | Subset by obs values or gene list (optionally clear stale embeddings) | `python scripts/subset.py ann.h5ad -o tcells.h5ad --obs cell_type --keep "T cells"` |
-| `plot.py` | Generate umap/tsne/pca/violin/dotplot/heatmap/etc. from a processed object | `python scripts/plot.py ann.h5ad --kind dotplot --genes CD3D CD14 --groupby cell_type` |
+| `run_pipeline.py` | **Full workflow in one command**: load → QC → normalize → HVG → PCA → (batch) → UMAP → Leiden → markers | `skill_run({ skill: "scanpy", script: "run_pipeline.py", args: ["raw.h5ad", "-o", "processed.h5ad"] })` |
+| `inspect_data.py` | Summarize an unknown dataset (shape, obs/var, layers, what's already computed, raw vs normalized) | `skill_run({ skill: "scanpy", script: "inspect_data.py", args: ["data.h5ad"] })` |
+| `convert.py` | Load any format (10x dir/.h5, csv, loom, mtx) and write `.h5ad` | `skill_run({ skill: "scanpy", script: "convert.py", args: ["10x_dir/", "-o", "data.h5ad"] })` |
+| `qc_analysis.py` | QC metrics, before/after plots, filtering, optional Scrublet doublets | `skill_run({ skill: "scanpy", script: "qc_analysis.py", args: ["raw.h5ad", "-o", "qc.h5ad", "--scrublet"] })` |
+| `preprocess.py` | Normalize, log1p, HVG, optional scale/regress (keeps `counts` layer + `raw`) | `skill_run({ skill: "scanpy", script: "preprocess.py", args: ["qc.h5ad", "-o", "norm.h5ad"] })` |
+| `reduce_dimensions.py` | PCA + variance plot, neighbors, UMAP, optional t-SNE | `skill_run({ skill: "scanpy", script: "reduce_dimensions.py", args: ["norm.h5ad", "-o", "red.h5ad"] })` |
+| `batch_correct.py` | Integration: harmony / bbknn / combat | `skill_run({ skill: "scanpy", script: "batch_correct.py", args: ["red.h5ad", "-o", "int.h5ad", "--method", "harmony", "--batch-key", "sample"] })` |
+| `cluster.py` | Leiden (or louvain) at one or many resolutions | `skill_run({ skill: "scanpy", script: "cluster.py", args: ["red.h5ad", "-o", "clu.h5ad", "--resolution", "0.3", "0.6", "1.0"] })` |
+| `find_markers.py` | `rank_genes_groups` + per-group CSVs + marker plots | `skill_run({ skill: "scanpy", script: "find_markers.py", args: ["clu.h5ad", "--groupby", "leiden", "-o", "clu.h5ad"] })` |
+| `annotate.py` | Map clusters → cell types from JSON/CSV; optional marker reference dotplot | `skill_run({ skill: "scanpy", script: "annotate.py", args: ["clu.h5ad", "-o", "ann.h5ad", "--mapping", "map.json"] })` |
+| `score_genes.py` | Score gene signatures (JSON) and/or cell-cycle phase | `skill_run({ skill: "scanpy", script: "score_genes.py", args: ["ann.h5ad", "-o", "scored.h5ad", "--gene-sets", "sigs.json"] })` |
+| `pseudobulk.py` | Aggregate counts by sample × cell type → matrix for pydeseq2 | `skill_run({ skill: "scanpy", script: "pseudobulk.py", args: ["ann.h5ad", "--by", "sample", "cell_type", "--out-prefix", "pb"] })` |
+| `subset.py` | Subset by obs values or gene list (optionally clear stale embeddings) | `skill_run({ skill: "scanpy", script: "subset.py", args: ["ann.h5ad", "-o", "tcells.h5ad", "--obs", "cell_type", "--keep", "T cells"] })` |
+| `plot.py` | Generate umap/tsne/pca/violin/dotplot/heatmap/etc. from a processed object | `skill_run({ skill: "scanpy", script: "plot.py", args: ["ann.h5ad", "--kind", "dotplot", "--genes", "CD3D", "CD14", "--groupby", "cell_type"] })` |
 
 ### One-shot end-to-end run
 
 ```bash
 # Counts → clustered, marker-annotated object + figures + marker CSVs
-python scripts/run_pipeline.py raw.h5ad -o processed.h5ad \
-    --resolution 0.5 --n-top-genes 2000 --scrublet
+skill_run({ skill: "scanpy", script: "run_pipeline.py", args: ["raw.h5ad", "-o", "processed.h5ad", "--resolution", "0.5", "--n-top-genes", "2000", "--scrublet"] })
 # With multi-sample integration:
-python scripts/run_pipeline.py raw.h5ad -o processed.h5ad --batch-key sample --batch-method harmony
+skill_run({ skill: "scanpy", script: "run_pipeline.py", args: ["raw.h5ad", "-o", "processed.h5ad", "--batch-key", "sample", "--batch-method", "harmony"] })
 # Reproducible parameters via JSON (keys mirror flag names with underscores):
-python scripts/run_pipeline.py raw.h5ad -o processed.h5ad --config params.json
+skill_run({ skill: "scanpy", script: "run_pipeline.py", args: ["raw.h5ad", "-o", "processed.h5ad", "--config", "params.json"] })
 ```
 
 ### Step-by-step chain (when you need to inspect/iterate between stages)
 
 ```bash
-python scripts/qc_analysis.py        raw.h5ad  -o qc.h5ad   --scrublet
-python scripts/preprocess.py         qc.h5ad   -o norm.h5ad --n-top-genes 2000
-python scripts/reduce_dimensions.py  norm.h5ad -o red.h5ad  --n-pcs 40
-python scripts/cluster.py            red.h5ad  -o clu.h5ad  --resolution 0.3 0.5 0.8
-python scripts/find_markers.py       clu.h5ad  -o clu.h5ad  --groupby leiden --use-raw
+skill_run({ skill: "scanpy", script: "qc_analysis.py", args: ["raw.h5ad", "-o", "qc.h5ad", "--scrublet"] })
+skill_run({ skill: "scanpy", script: "preprocess.py", args: ["qc.h5ad", "-o", "norm.h5ad", "--n-top-genes", "2000"] })
+skill_run({ skill: "scanpy", script: "reduce_dimensions.py", args: ["norm.h5ad", "-o", "red.h5ad", "--n-pcs", "40"] })
+skill_run({ skill: "scanpy", script: "cluster.py", args: ["red.h5ad", "-o", "clu.h5ad", "--resolution", "0.3", "0.5", "0.8"] })
+skill_run({ skill: "scanpy", script: "find_markers.py", args: ["clu.h5ad", "-o", "clu.h5ad", "--groupby", "leiden", "--use-raw"] })
 # inspect results/markers/*.csv, decide labels, write a mapping JSON, then:
-python scripts/annotate.py           clu.h5ad  -o ann.h5ad  --mapping celltypes.json
+skill_run({ skill: "scanpy", script: "annotate.py", args: ["clu.h5ad", "-o", "ann.h5ad", "--mapping", "celltypes.json"] })
 ```
 
 The sections below document the underlying scanpy calls each script performs — read them when customizing beyond the script flags.
@@ -182,10 +171,10 @@ sc.pp.scrublet(adata)  # Core API since scanpy 1.10 (was scanpy.external.pp)
 adata = adata[~adata.obs['predicted_doublet'], :].copy()
 ```
 
-**Use the QC script for automated analysis** (run from the skill directory or pass the full path):
+**Use the QC script for automated analysis:**
 
 ```bash
-python skills/scanpy/scripts/qc_analysis.py input_file.h5ad --output filtered.h5ad
+skill_run({ skill: "scanpy", script: "qc_analysis.py", args: ["input_file.h5ad", "--output", "filtered.h5ad"] })
 ```
 
 ### 2. Normalization and Preprocessing

@@ -1,13 +1,12 @@
 ---
 name: matplotlib
 description: Low-level plotting library for full customization. Use when you need fine-grained control over every plot element, creating novel plot types, or integrating with specific scientific workflows. Export to PNG/PDF/SVG for publication. For quick statistical plots use seaborn; for interactive plots use plotly; for publication-ready multi-panel figures with journal styling, use scientific-visualization.
-allowed-tools:
-  - Read
-  - Write
-  - Bash
+allowed-tools: Read Write Bash
 license: https://github.com/matplotlib/matplotlib/tree/main/LICENSE
-compatibility: Requires Python 3.10+ and Matplotlib 3.10.x. Use `uv add matplotlib` in projects; interactive Jupyter widgets require `ipympl`.
+compatibility: Runs in phi:python@1, where Matplotlib, NumPy, SciPy, and pandas are already installed. Interactive Jupyter widgets (ipympl) are not included.
 metadata: {"version": "1.1", "skill-author": "K-Dense Inc."}
+phi:
+  environment: phi:python@1
 ---
 
 # Matplotlib
@@ -30,21 +29,11 @@ This skill should be used when:
 
 ## Setup
 
-For project work, install Matplotlib with uv:
+This skill runs in the managed `phi:python@1` environment; `matplotlib`, `numpy`, `scipy`, and `pandas` are already there.
 
-```bash
-uv add matplotlib
-```
+Interactive notebook widgets need `ipympl`, which is not part of `phi:python@1`; the environment is read-only, so installing it on the host does not make it available to the skill's scripts. Prefer static output.
 
-For notebook interactivity:
-
-```bash
-uv add matplotlib ipympl
-```
-
-Then enable the widget backend in Jupyter with `%matplotlib widget` or `%matplotlib ipympl`.
-
-Matplotlib 3.10 requires Python 3.10+ and NumPy 1.23+. Non-interactive file output works through backends such as Agg, PDF, and SVG. For GUI windows, Matplotlib auto-selects an available backend; if `TkAgg` fails in a uv-managed Python, update uv and Python builds with `uv self update` and `uv python upgrade --reinstall`, or install a Qt backend with `uv add pyside6`.
+Non-interactive file output works through backends such as Agg, PDF, and SVG. Scripts run headless (`MPLBACKEND=Agg`), so save figures to files instead of opening GUI windows.
 
 ## Core Concepts
 
@@ -334,7 +323,7 @@ Template script demonstrating various plot types with best practices. Use this a
 
 **Usage:**
 ```bash
-uv run python scripts/plot_template.py
+skill_run({ skill: "matplotlib", script: "plot_template.py" })
 ```
 
 ### `style_configurator.py`
@@ -342,7 +331,7 @@ Interactive utility to configure matplotlib style preferences and generate custo
 
 **Usage:**
 ```bash
-uv run python scripts/style_configurator.py
+skill_run({ skill: "matplotlib", script: "style_configurator.py" })
 ```
 
 ## Detailed References

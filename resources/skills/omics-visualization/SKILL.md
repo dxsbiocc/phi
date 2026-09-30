@@ -1,17 +1,9 @@
 ---
 name: omics-visualization
 description: >-
-  Render, adapt, and audit publication-ready scientific figures from omics
-  result tables and matrices using bundled canonical plotting templates and a
-  Nature-style emphasis on claim, hierarchy, restraint, and final-size
-  readability. Use when the user has transcriptomics, proteomics,
-  metabolomics, enrichment, survival, network, or related omics data and asks
-  to choose, create, revise, or export scatter, heatmap, bar, distribution,
-  line, network, flow, hierarchy, clustering dendrogram, pathway-ring,
-  gene-structure, or ideogram figures. Also trigger on 组学绘图、科研配图、论文图表、
-  聚类树、通路环图、应力布局, SVG散点, 图标柱状图, 多通路富集热图, 通路分组富集热图, 富集点图, GO点图, 表达热图, 免疫相关热图, 关联点阵, 平行集合图, 泰森多边形, 条形甜甜圈, 环状比例图, 免疫棒棒糖, 环形棒棒糖, 基因结构, 核型图, 感兴趣基因, 火山图放大, UpSet, 韦恩图, Venn, 饱和突变热图, ΔΔG热图, oncoprint, 突变瀑布图, 基因组变异热图, 分块聚类热图, NMF相关热图, 环状热图, 相关气泡热图, 对角线分割热图, 环形UMAP, UMAP环图, 三元图, 三元相图, 相关散点矩阵, ggpairs, pairs plot, 泳道图, 游泳图, 脊线图, 山脊图, joyplot, RidgePlot, 基因组覆盖度, coverage track, locus browser, HiChIP, 突变棒棒糖, 蛋白棒棒糖, g3viz, MutationMapper, 蒲公英图, dandelion, Circos, 基因组环图, 共线性, synteny, 弦图, chord diagram, 基因组热图, 嵌套缩放, nested circos. Do not use for upstream statistical analysis,
-  generic business dashboards, AI-generated illustrations, or creating and
-  maintaining reusable template libraries.
+  Render, adapt, and audit publication-ready omics figures from result tables and matrices with bundled templates. Nature-style: claim, hierarchy, restraint, final-size readability. Choose, create, revise, or export scatter, heatmap, bar, distribution, line, network, flow, hierarchy, clustering dendrogram, pathway-ring, gene-structure, or ideogram for transcriptomics, proteomics, metabolomics, enrichment, survival, network, or related omics. Trigger: 组学绘图、科研配图、论文图表、聚类树、通路环图、应力布局,SVG散点,图标柱状图,多通路富集热图,通路分组富集热图,富集点图,GO点图,表达热图,免疫相关热图,关联点阵,平行集合图,泰森多边形,条形甜甜圈,环状比例图,免疫棒棒糖,环形棒棒糖,基因结构,核型图,感兴趣基因,火山图放大,UpSet,韦恩图,Venn,饱和突变热图,ΔΔG热图,oncoprint,突变瀑布图,基因组变异热图,分块聚类热图,NMF相关热图,环状热图,相关气泡热图,对角线分割热图,环形UMAP,UMAP环图,三元图,三元相图,相关散点矩阵,ggpairs,pairs plot,泳道图,游泳图,脊线图,山脊图,joyplot,RidgePlot,基因组覆盖度,coverage track,locus browser,HiChIP,突变棒棒糖,蛋白棒棒糖,g3viz,MutationMapper,蒲公英图,dandelion,Circos,基因组环图,共线性,synteny,弦图,chord diagram,基因组热图,嵌套缩放,nested circos. Not for upstream analysis, business dashboards, AI-generated illustrations, or template libraries.
+phi:
+  environment: plugin:viz
 ---
 
 # Omics Visualization
@@ -58,7 +50,7 @@ Use `viz_route`, `viz_prepare`, `viz_render` for new figures.
    is still one template. Follow **Multi-panel composition** only for labelled
    a/b/c figures that combine several plots with distinct evidence roles.
 4. Shortlist templates with `viz_route` (data path, purpose, mode)
-   [`python3 scripts/route_template.py --input <table.tsv> --query "<user purpose>" --mode preview --json`].
+   [`skill_run({ skill: "omics-visualization", script: "route_template.py", args: ["--input", "<table.tsv>", "--query", "<user purpose>", "--mode", "preview", "--json"] })`].
    It profiles the table against
    [references/template_contracts.json](references/template_contracts.json) and
    scans recognized companion files in the input directory (`nodes.tsv`,
@@ -127,7 +119,7 @@ Use `viz_route`, `viz_prepare`, `viz_render` for new figures.
    install packages without authorization and do not silently switch
    implementations.
 12. `viz_render` runs the lightweight artifact QA and names the checks that
-   failed [`python3 scripts/qa_single_plot.py <artifact.png-or.svg> --json`]. That
+   failed [`skill_run({ skill: "omics-visualization", script: "qa_single_plot.py", args: ["<artifact.png-or.svg>", "--json"] })`]. That
    only shows the file is sound: inspect the rendered artifact at final size and
    correct labels, scales, legends, clipping, overlaps, spacing, and misleading
    encodings, then rerun until the output and source agree.
@@ -148,7 +140,7 @@ artifact has passed lightweight QA and visual inspection.
   publication, or novel shapes. Do not search the template scripts by text
   unless a catalog entry is missing, stale, or internally inconsistent.
 - When adding or editing routing contracts, run
-  `python3 scripts/validate_template_contracts.py --json` before delivery.
+  `skill_run({ skill: "omics-visualization", script: "validate_template_contracts.py", args: ["--json"] })` before delivery.
   The validator must pass with no errors; warnings require an explicit note.
   Use the text report with `--max-missing-per-family 3` to prioritize future
   contract coverage without manually scanning the whole catalog.

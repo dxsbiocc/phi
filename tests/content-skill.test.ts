@@ -604,15 +604,14 @@ test('scriptToolsOf prefixes the tool and resolves run paths and output schemas'
   assert.deepEqual(scriptToolsOf(attached.skill, { prefix: 'demo' })[0].attachTo, ['main', 'Bio'])
 })
 
-test('bundled scanpy fails only because environment is required', () => {
+test('bundled scanpy validates with phi:python@1', () => {
   const dir = fileURLToPath(new URL('../resources/skills/scanpy', import.meta.url))
   const result = validateSkill(dir)
-  assert.equal(result.ok, false)
-  assert.equal(result.skill, undefined)
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.errors, [])
   assert.deepEqual(result.warnings, [])
-  assert.deepEqual(texts(result), [
-    'phi.environment: environment is required when the skill has scripts'
-  ])
+  assert.ok(result.skill)
+  assert.equal(result.skill.phi?.environment, 'phi:python@1')
 })
 
 function skillMdBody(): string {
