@@ -28,6 +28,7 @@ import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
 import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-preview-media'
 import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers/remote-result-download'
 import { isInstalledFigurePreviewPath } from '../src/main/agent/visualization/examples'
+import * as localFileAccess from '../src/main/agent/local-file-access'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -432,6 +433,7 @@ async function harness(
       )
     ],
     ['/projects/other/secret.txt', Buffer.from('secret\n')],
+    ['/projects/saved/README.md', Buffer.from('# saved\n')],
     ['/isolated/sessions/session-1/tool-outputs/out.txt', Buffer.from('saved output\n')],
     ['/projects/current/binary.dat', Buffer.from([0, 1, 2])]
   ])
@@ -445,6 +447,7 @@ async function harness(
       ]
     ],
     ['/projects/current/src', [{ name: 'App.tsx', kind: 'file' }]],
+    ['/projects/saved', [{ name: 'README.md', kind: 'file' }]],
     [path.join(process.cwd(), 'resources', 'skills', 'omics-visualization'), []],
     ['/isolated', [{ name: 'sessions', kind: 'directory' }]],
     ['/isolated/sessions', [{ name: 'session-1', kind: 'directory' }]],
@@ -1334,6 +1337,7 @@ async function harness(
         createdAt: '2026-09-05T00:00:00.000Z',
         ...defaults
       }),
+      listLocalProjectAllowRoots: () => ['/projects/saved'],
       getProjectByCwd: (
         cwd: string
       ): {
@@ -2422,6 +2426,7 @@ async function harness(
         return { sessionId, ...patch }
       }
     },
+    './agent/local-file-access': localFileAccess,
     '../../resources/icon.png?asset': { default: '/icon.png' }
   }
   const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
@@ -3099,6 +3104,18 @@ test('main IPC: local file open and directory listing stay inside allowed roots'
   await assert.rejects(
     app.invoke('files:listDirectory', '/projects/other'),
     /只能列出 Phi 保存的文件或当前项目内的文件/
+  )
+
+  const savedListing = (await app.invoke('files:listDirectory', '/projects/saved')) as {
+    name: string
+    displayPath: string
+    entries: Array<{ name: string; path: string }>
+  }
+  assert.equal(savedListing.name, 'saved')
+  assert.equal(savedListing.displayPath, 'saved')
+  assert.deepEqual(
+    savedListing.entries.map((entry) => entry.path),
+    ['/projects/saved/README.md']
   )
 })
 
