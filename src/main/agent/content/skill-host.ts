@@ -1,6 +1,7 @@
 import { basename } from 'node:path'
 
 import { getRuntimeRoot, type PhiPlatform } from '../envs'
+import { collectArtifacts, type ReadArtifactOk } from './artifacts'
 import type { ScriptTool, ValidatedSkill } from './skill'
 import type { EnvironmentBuilds } from './environment-builds'
 import { ensureEnvironmentReady, isBuilding, type ConfirmBuildRequest } from './environment-gate'
@@ -27,6 +28,13 @@ export interface SkillNotReady {
     envId: string
     message: string
   }
+}
+
+export interface PresentArtifactsRequest {
+  runtimeSessionId: string
+  toolCallId: string
+  artifacts: ReadArtifactOk[]
+  envId: string
 }
 
 export interface SkillHost {
@@ -57,7 +65,8 @@ export function createSkillHost({
   environmentsDir,
   platform,
   builds,
-  confirmBuild
+  confirmBuild,
+  presentArtifacts
 }: {
   runtimeRoot?: string
   listSkillDirs: (cwd: string) => Promise<string[]>
@@ -65,6 +74,7 @@ export function createSkillHost({
   platform?: PhiPlatform
   builds?: EnvironmentBuilds
   confirmBuild?: (request: ConfirmBuildRequest) => Promise<boolean>
+  presentArtifacts?: (request: PresentArtifactsRequest) => Promise<void> | void
 }): SkillHost {
   const remembered = new Map<string, RememberedTool>()
   const runs = new Map<string, AbortController>()
@@ -262,6 +272,7 @@ export function createSkillHost({
       if (!entry) throw new Error(`unknown script tool '${toolName}'`)
       const sessionEnvironment = optionalString(record, 'sessionEnvironment')
       const runtimeSessionId = optionalSessionId(record)
+      const toolCallId = optionalString(record, 'toolCallId')
       const controller = begin(requestId)
       try {
         const gate = await gateEnvironment({
@@ -281,7 +292,7 @@ export function createSkillHost({
             warnings: gate.warnings
           }
         }
-        return await runScriptTool({
+        const result = await runScriptTool({
           root: runtimeRoot,
           projectDir: cwd,
           skill: entry.skill,
@@ -292,6 +303,34 @@ export function createSkillHost({
           ...(platform ? { platform } : {}),
           signal: controller.signal
         })
+        if (!result.ok) return result
+        const collected = collectArtifacts(cwd, result.output)
+        const presentWarnings: string[] = []
+        if (collected.artifacts.length > 0 && runtimeSessionId && toolCallId && presentArtifacts) {
+          try {
+            await presentArtifacts({
+              runtimeSessionId,
+              toolCallId,
+              artifacts: collected.artifacts,
+              envId: result.envId
+            })
+          } catch (error) {
+            // Artifact contract § 3: presentation problems are warnings; the call succeeded.
+            const message = error instanceof Error ? error.message : String(error)
+            presentWarnings.push(`artifacts were not presented: ${message}`)
+          }
+        }
+        return {
+          ok: true,
+          output: result.output,
+          envId: result.envId,
+          warnings: [...result.warnings, ...collected.warnings, ...presentWarnings],
+          presented: collected.artifacts.map((artifact) => artifact.relativePath),
+          presentedArtifacts: collected.artifacts.map((artifact) => ({
+            title: artifact.descriptor.title,
+            path: artifact.relativePath
+          }))
+        }
       } finally {
         end(requestId, controller)
       }

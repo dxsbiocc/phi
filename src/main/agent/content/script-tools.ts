@@ -21,8 +21,22 @@ ajv.addFormat('input-path', true)
 ajv.addFormat('project-path', true)
 const validators = new WeakMap<object, ValidateFunction>()
 
+export interface PresentedArtifactSummary {
+  title: string
+  path: string
+}
+
 export type ScriptToolResult =
-  | { ok: true; output: Record<string, unknown>; envId: string; warnings: string[] }
+  | {
+      ok: true
+      output: Record<string, unknown>
+      envId: string
+      warnings: string[]
+      /** Project-relative paths of the valid artifacts, in listed order. */
+      presented?: string[]
+      /** Titles for `presented`, in the same order. Not written back to the descriptor. */
+      presentedArtifacts?: PresentedArtifactSummary[]
+    }
   | { ok: false; error: string; envId?: string; warnings: string[] }
 
 export interface RunScriptToolInput {

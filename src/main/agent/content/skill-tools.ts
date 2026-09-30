@@ -107,14 +107,15 @@ export function buildScriptTools(
       description: descriptor.description,
       parameters: descriptor.parameters as CustomTool['parameters'],
       approval: descriptor.approval,
-      async execute(_toolCallId, params, _onUpdate, ctx, signal) {
+      async execute(toolCallId, params, _onUpdate, ctx, signal) {
         return runScriptToolCall(
           request,
           descriptor.name,
           params,
           ctx.sessionManager.getCwd(),
           signal,
-          options
+          options,
+          toolCallId
         )
       }
     }
@@ -175,7 +176,8 @@ async function runScriptToolCall(
   params: unknown,
   cwd: string,
   signal: AbortSignal | undefined,
-  options: SkillToolHostOptions
+  options: SkillToolHostOptions,
+  toolCallId: string
 ): Promise<ToolResult> {
   const requestId = randomUUID()
   try {
@@ -188,7 +190,8 @@ async function runScriptToolCall(
         tool,
         args: params ?? {},
         ...(options.runtimeSessionId ? { runtimeSessionId: options.runtimeSessionId } : {}),
-        ...(options.sessionEnvironment ? { sessionEnvironment: options.sessionEnvironment } : {})
+        ...(options.sessionEnvironment ? { sessionEnvironment: options.sessionEnvironment } : {}),
+        ...(toolCallId ? { toolCallId } : {})
       },
       signal
     )
@@ -252,9 +255,17 @@ function stderrTruncatedLabel(result: SkillRunResult): string {
 }
 
 function formatScriptSuccess(result: Extract<ScriptToolResult, { ok: true }>): string {
-  const json = JSON.stringify(result.output, null, 2)
-  if (result.warnings.length === 0) return json
-  return `${json}\n\nwarnings:\n${result.warnings.map((warning) => `- ${warning}`).join('\n')}`
+  const sections = [JSON.stringify(result.output, null, 2)]
+  const presented = result.presentedArtifacts ?? []
+  if (presented.length > 0) {
+    sections.push(
+      `artifacts:\n${presented.map((artifact) => `- ${artifact.title}: ${artifact.path}`).join('\n')}`
+    )
+  }
+  if (result.warnings.length > 0) {
+    sections.push(`warnings:\n${result.warnings.map((warning) => `- ${warning}`).join('\n')}`)
+  }
+  return sections.join('\n\n')
 }
 
 function errorResult(text: string): ToolResult {

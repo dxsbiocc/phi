@@ -881,6 +881,7 @@ async function harness(
     './file-preview-media': { hoverMediaPreviewType, mediaPreviewType },
     '../shared/wrapperResultTypes': { declaredExternalOutputRoot },
     '../shared/htmlReportPreview': htmlReportPreview,
+    '../shared/presentedFileTypes': { MAX_PRESENTED_FILES: 4 },
     '../shared/remoteHostProfile': { sshConfigHostId: (alias: string) => `ssh-config:${alias}` },
     './molecule-renderer': {
       renderMoleculeSvg: async (): Promise<string> => '<svg xmlns="http://www.w3.org/2000/svg"/>'
@@ -7851,6 +7852,48 @@ test('main host records final file delivery only for an active conversation', as
   await assert.rejects(
     async () => present({ runtimeSessionId: 'unknown', toolCallId: 'present-2', files }),
     /No active conversation/
+  )
+  await app.invoke('agent:stop')
+  await prompt
+})
+
+test('main host splits presented file batches into events of at most 4', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  const prompt = app.invoke('agent:prompt', 'create report')
+  await tick()
+  const present = app.hostHandlers.get('deliverables.present')
+  assert.ok(present)
+  const files = Array.from({ length: 5 }, (_, index) => ({
+    path: `/workspace/report-${index}.txt`,
+    displayPath: `report-${index}.txt`,
+    bytes: index + 1
+  }))
+  const result = await present({
+    runtimeSessionId: session.runtimeSessionId,
+    toolCallId: 'present-batch',
+    files
+  })
+  assert.deepEqual(result, { files })
+  const batches = app.appendedSessionEvents
+    .filter((entry) => (entry.event as { toolCallId?: string }).toolCallId === 'present-batch')
+    .map((entry) => (entry.event as { files: Array<{ displayPath: string }> }).files)
+  assert.deepEqual(
+    batches.map((batch) => batch.length),
+    [4, 1]
+  )
+  assert.equal(batches[0]?.[0]?.displayPath, 'report-0.txt')
+  assert.equal(batches[0]?.[3]?.displayPath, 'report-3.txt')
+  assert.equal(batches[1]?.[0]?.displayPath, 'report-4.txt')
+  assert.equal(
+    app.events.filter(
+      (entry) =>
+        entry.channel === 'agent:event' &&
+        (entry.data as { type?: string; toolCallId?: string }).type === 'files_presented' &&
+        (entry.data as { toolCallId?: string }).toolCallId === 'present-batch'
+    ).length,
+    2
   )
   await app.invoke('agent:stop')
   await prompt

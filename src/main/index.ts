@@ -139,7 +139,11 @@ import {
 } from './agent/tool-approval'
 import { createEnvironmentBuilds } from './agent/content/environment-builds'
 import { bindAgentSession } from './agent/content/environment-gate'
-import { createSkillHost, type ConfirmBuildRequest } from './agent/content/skill-host'
+import {
+  createSkillHost,
+  type ConfirmBuildRequest,
+  type PresentArtifactsRequest
+} from './agent/content/skill-host'
 import { getRuntimeRoot } from './agent/envs/runtime'
 import {
   BUILD_NOW,
@@ -280,6 +284,7 @@ import {
 import { AnalysisNotebookToolExecutor } from './agent/notebook/notebook-tool-executor'
 import { getOmpBridge } from './agent/omp/omp-bridge'
 import { validatePresentedFiles } from './agent/deliverables/present-files'
+import { MAX_PRESENTED_FILES, type PresentedFile } from '../shared/presentedFileTypes'
 import {
   isStaleSessionError,
   StaleSessionError,
@@ -844,7 +849,8 @@ const skillHost = createSkillHost({
     return skills.map((skill) => dirname(skill.filePath))
   },
   builds: environmentBuilds,
-  confirmBuild: (request) => confirmEnvironmentBuild(request)
+  confirmBuild: (request) => confirmEnvironmentBuild(request),
+  presentArtifacts: (request) => presentScriptArtifacts(request)
 })
 getOmpBridge().registerHostHandler('skills.scriptTools', (params) => skillHost.scriptTools(params))
 getOmpBridge().registerHostHandler('skills.run', (params) => skillHost.run(params))
@@ -1292,12 +1298,10 @@ function findActivePromptRunByRuntimeSessionId(runtimeSessionId: string): Prompt
   )
 }
 
-function handlePresentFilesRequest(params: unknown): {
-  files: ReturnType<typeof validatePresentedFiles>
-} {
-  const record = isRecord(params) ? params : {}
-  const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
-  const toolCallId = optionalStringField(record, 'toolCallId')
+function presentableRun(
+  runtimeSessionId: string | undefined,
+  toolCallId: string | undefined
+): { run: PromptRun; toolCallId: string } {
   if (!runtimeSessionId || !toolCallId || toolCallId.length > 200) {
     throw new Error('Invalid file delivery request')
   }
@@ -1308,15 +1312,48 @@ function handlePresentFilesRequest(params: unknown): {
   if (manifest?.projectLocation?.kind === 'ssh' || project?.location.kind === 'ssh') {
     throw new Error('Remote project file delivery is not available')
   }
+  return { run, toolCallId }
+}
+
+function recordPresentedFiles(run: PromptRun, toolCallId: string, files: PresentedFile[]): void {
+  for (let index = 0; index < files.length; index += MAX_PRESENTED_FILES) {
+    const batch = files.slice(index, index + MAX_PRESENTED_FILES)
+    const stored = appendSessionEvent(run.phiSessionId, {
+      type: 'files_presented',
+      runId: run.runId,
+      toolCallId,
+      files: batch
+    })
+    broadcastSessionTimelineEvent(run.phiSessionId, stored)
+  }
+}
+
+function handlePresentFilesRequest(params: unknown): {
+  files: ReturnType<typeof validatePresentedFiles>
+} {
+  const record = isRecord(params) ? params : {}
+  const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
+  const toolCallId = optionalStringField(record, 'toolCallId')
+  const { run, toolCallId: callId } = presentableRun(runtimeSessionId, toolCallId)
   const files = validatePresentedFiles(run.cwd, record.files)
-  const stored = appendSessionEvent(run.phiSessionId, {
-    type: 'files_presented',
-    runId: run.runId,
-    toolCallId,
-    files
-  })
-  broadcastSessionTimelineEvent(run.phiSessionId, stored)
+  recordPresentedFiles(run, callId, files)
   return { files }
+}
+
+function presentScriptArtifacts(request: PresentArtifactsRequest): void {
+  const { run, toolCallId } = presentableRun(request.runtimeSessionId, request.toolCallId)
+  const files: PresentedFile[] = request.artifacts.map((artifact) => ({
+    path: artifact.path,
+    displayPath: artifact.relativePath,
+    bytes: statSync(artifact.path).size,
+    description: artifact.descriptor.title,
+    artifact: {
+      kind: artifact.descriptor.kind,
+      title: artifact.descriptor.title,
+      envId: request.envId
+    }
+  }))
+  recordPresentedFiles(run, toolCallId, files)
 }
 
 async function confirmEnvironmentBuild(request: ConfirmBuildRequest): Promise<boolean> {

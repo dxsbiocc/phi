@@ -270,3 +270,31 @@ test('skill tools send the worker runtimeSessionId', async () => {
   assert.equal(calls[1]?.method, 'skills.scriptTool')
   assert.equal(calls[1]?.params.runtimeSessionId, 'runtime-1')
 })
+
+test('script tools send toolCallId and list presented artifacts after the JSON', async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+  const request: SkillHostRequest = async (method, params) => {
+    calls.push({ method, params: params as Record<string, unknown> })
+    return {
+      ok: true,
+      output: { artifacts: ['figures/plot.png', 'figures/missing.png'], value: 1 },
+      envId: 'env-1',
+      warnings: ['figures/missing.png: file does not exist'],
+      presented: ['figures/plot.png'],
+      presentedArtifacts: [{ title: 'Volcano plot', path: 'figures/plot.png' }]
+    }
+  }
+  const result = await execute(buildScriptTools([descriptor()], request)[0] as CustomTool, {
+    message: 'hi'
+  })
+  assert.equal(calls[0]?.params.toolCallId, 'call-1')
+  const output = JSON.stringify(
+    { artifacts: ['figures/plot.png', 'figures/missing.png'], value: 1 },
+    null,
+    2
+  )
+  assert.equal(
+    textOf(result),
+    `${output}\n\nartifacts:\n- Volcano plot: figures/plot.png\n\nwarnings:\n- figures/missing.png: file does not exist`
+  )
+})

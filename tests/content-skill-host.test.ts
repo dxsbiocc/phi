@@ -13,7 +13,14 @@ import {
 } from '../src/main/agent/content/skill-host'
 import { currentPlatform, type EnvHandle, type PhiPlatform } from '../src/main/agent/envs'
 import type { EnvironmentBuild } from '../src/shared/environmentBuildTypes'
-import { argvShell, copyMinimal, envIdFor, installReady, shell } from './helpers/fakeEnvironment'
+import {
+  argvShell,
+  copyMinimal,
+  envIdFor,
+  installReady,
+  shell,
+  shQuote
+} from './helpers/fakeEnvironment'
 
 function skillMarkdown(options: {
   name: string
@@ -648,4 +655,156 @@ test('a failed build is returned as not-ready with the build error', async () =>
       })
     }
   )
+})
+
+test('script tools present one valid artifact and warn about the invalid one', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-skill-artifacts-'))
+  try {
+    const projectDir = join(root, 'project')
+    const environmentsDir = join(root, 'environments')
+    mkdirSync(join(projectDir, 'figures'), { recursive: true })
+    copyMinimal(join(environmentsDir, 'phi-python'))
+    const platform = currentPlatform()
+    const dir = join(root, 'echo')
+    mkdirSync(join(dir, 'scripts'), { recursive: true })
+    writeFileSync(join(dir, 'scripts', 'echo.py'), 'print(1)\n')
+    writeFileSync(
+      join(dir, 'SKILL.md'),
+      skillMarkdown({
+        name: 'echo',
+        description: 'Echo script arguments as JSON.',
+        toolPrefix: 'echo',
+        scriptName: 'echo',
+        scriptDescription: 'Print the flags passed to the script as JSON.',
+        scriptFile: 'echo.py',
+        approval: 'read',
+        args: MESSAGE_ARGS
+      })
+    )
+    const plot = join(projectDir, 'figures', 'plot.png')
+    writeFileSync(plot, 'png')
+    const descriptorText = `${JSON.stringify({
+      contractVersion: '1.0.0',
+      kind: 'figure',
+      file: 'plot.png',
+      mediaType: 'image/png',
+      title: 'Volcano plot',
+      provenance: { createdAt: '2026-09-30T09:11:00Z', tool: 'viz_render' },
+      figure: { format: 'png' }
+    })}\n`
+    const descriptorPath = `${plot}.phi-artifact.json`
+    writeFileSync(descriptorPath, descriptorText)
+    const printer = join(root, 'print-artifacts.cjs')
+    const payload = JSON.stringify({
+      artifacts: ['figures/plot.png', 'figures/missing.png'],
+      value: 1
+    })
+    writeFileSync(printer, `process.stdout.write(${JSON.stringify(payload)})\n`)
+    const skill = validateSkill(dir)
+    assert.equal(skill.ok, true, JSON.stringify(skill.errors))
+    assert.ok(skill.skill)
+    const environment = describeEnvironment('phi:python@1', {
+      skill: skill.skill,
+      environmentsDir,
+      platform
+    })
+    installReady(root, environment, {
+      python: shell([`exec ${shQuote(process.execPath)} ${shQuote(printer)} "$@"`])
+    })
+    const presented: Array<{
+      runtimeSessionId: string
+      toolCallId: string
+      count: number
+      envId: string
+      path: string
+      title: string
+    }> = []
+    const host = createSkillHost({
+      runtimeRoot: root,
+      environmentsDir,
+      platform,
+      listSkillDirs: async () => [dir],
+      presentArtifacts: (request) => {
+        const artifact = request.artifacts[0]
+        presented.push({
+          runtimeSessionId: request.runtimeSessionId,
+          toolCallId: request.toolCallId,
+          count: request.artifacts.length,
+          envId: request.envId,
+          path: artifact?.relativePath ?? '',
+          title: artifact?.descriptor.title ?? ''
+        })
+        assert.equal('envId' in (artifact?.descriptor ?? {}), false)
+      }
+    })
+    await host.scriptTools({ cwd: projectDir })
+    const result = await host.scriptTool({
+      requestId: 'art-1',
+      cwd: projectDir,
+      tool: 'echo_echo',
+      args: { message: 'hi' },
+      runtimeSessionId: 'runtime-1',
+      toolCallId: 'call-1'
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.deepEqual(result.output.artifacts, ['figures/plot.png', 'figures/missing.png'])
+    assert.deepEqual(result.presented, ['figures/plot.png'])
+    assert.equal(result.warnings.length, 1)
+    assert.match(result.warnings[0] ?? '', /figures\/missing\.png/)
+    assert.match(result.warnings[0] ?? '', /does not exist/)
+    assert.equal(presented.length, 1)
+    assert.equal(presented[0]?.runtimeSessionId, 'runtime-1')
+    assert.equal(presented[0]?.toolCallId, 'call-1')
+    assert.equal(presented[0]?.count, 1)
+    assert.equal(presented[0]?.path, 'figures/plot.png')
+    assert.equal(presented[0]?.title, 'Volcano plot')
+    assert.equal(presented[0]?.envId, result.envId)
+    assert.equal(readFileSync(descriptorPath, 'utf8'), descriptorText)
+
+    await host.scriptTool({
+      requestId: 'art-2',
+      cwd: projectDir,
+      tool: 'echo_echo',
+      args: { message: 'hi' },
+      toolCallId: 'call-2'
+    })
+    await host.scriptTool({
+      requestId: 'art-3',
+      cwd: projectDir,
+      tool: 'echo_echo',
+      args: { message: 'hi' },
+      runtimeSessionId: 'runtime-1'
+    })
+    assert.equal(presented.length, 1)
+
+    // A presentation failure (for example no active conversation) must not fail the call.
+    const failingHost = createSkillHost({
+      runtimeRoot: root,
+      environmentsDir,
+      platform,
+      listSkillDirs: async () => [dir],
+      presentArtifacts: () => {
+        throw new Error('No active conversation for file delivery')
+      }
+    })
+    await failingHost.scriptTools({ cwd: projectDir })
+    const failed = await failingHost.scriptTool({
+      requestId: 'art-4',
+      cwd: projectDir,
+      tool: 'echo_echo',
+      args: { message: 'hi' },
+      runtimeSessionId: 'runtime-1',
+      toolCallId: 'call-4'
+    })
+    assert.equal(failed.ok, true)
+    if (!failed.ok) return
+    assert.ok(
+      failed.warnings.some((warning) =>
+        warning.includes('artifacts were not presented: No active conversation')
+      )
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
