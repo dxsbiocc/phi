@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Box, Stack } from '@mui/material'
 import { alpha } from '@mui/material/styles'
@@ -10,6 +11,17 @@ import {
 } from './NotebookFloatingActions'
 
 const macTitlebarHeight = 44
+const outlineMarkerActiveWidth = 22
+const outlineMarkerRestWidth = 10
+const outlineMarkerMinWidth = 6
+
+export function outlineMarkerWidth(distance: number): number {
+  if (distance <= 0) return outlineMarkerActiveWidth
+  const falloff = Math.exp(-distance * 0.35)
+  const wave = 0.42 + 0.58 * Math.abs(Math.sin(distance * 1.2))
+  const width = outlineMarkerMinWidth + 8 * falloff * wave
+  return Math.round(width * 10) / 10
+}
 
 function NotebookOutlineTitle({ item }: { item: NotebookOutlineItem }): React.JSX.Element {
   return (
@@ -65,6 +77,8 @@ export default function NotebookScrollProgressRail({
   activeId: string | null
   onSelect: (item: NotebookOutlineItem) => void
 }): React.JSX.Element | null {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+
   if (outline.length === 0) return null
 
   return (
@@ -97,9 +111,17 @@ export default function NotebookScrollProgressRail({
           }
         }}
       >
-        <Stack spacing={0.7} sx={{ alignItems: 'center', py: 0.25 }}>
-          {outline.map((item) => {
+        <Stack
+          spacing={0.7}
+          onMouseLeave={() => setHoveredIndex(null)}
+          sx={{ alignItems: 'flex-end', width: outlineMarkerActiveWidth, py: 0.25 }}
+        >
+          {outline.map((item, index) => {
             const active = item.id === activeId
+            const width =
+              hoveredIndex == null
+                ? outlineMarkerRestWidth
+                : outlineMarkerWidth(Math.abs(index - hoveredIndex))
             const plainTitle = plainMarkdownInlineText(item.title)
             return (
               <Box
@@ -111,20 +133,19 @@ export default function NotebookScrollProgressRail({
                 data-phi-notebook-scroll-marker={active ? 'active' : 'idle'}
                 data-phi-notebook-outline-marker="true"
                 data-phi-notebook-outline-level={item.level}
+                onMouseEnter={() => setHoveredIndex(index)}
                 onClick={() => onSelect(item)}
                 sx={{
-                  width: active ? 18 : 10,
-                  height: active ? 3 : 2,
+                  width,
+                  height: 2,
                   p: 0,
                   border: 0,
                   borderRadius: 999,
-                  bgcolor: active ? 'primary.main' : 'text.disabled',
+                  bgcolor: active ? 'text.primary' : 'text.disabled',
                   cursor: 'pointer',
-                  transition: 'width 120ms ease, height 120ms ease, background-color 120ms ease',
+                  transition: 'width 180ms ease, background-color 180ms ease',
                   '&:hover': {
-                    width: 22,
-                    height: 4,
-                    bgcolor: 'primary.main'
+                    bgcolor: 'text.primary'
                   },
                   '&:focus-visible': {
                     outline: (theme) => `2px solid ${theme.palette.primary.main}`,

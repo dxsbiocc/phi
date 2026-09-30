@@ -20,6 +20,7 @@ import {
   shouldAutoStartNotebookSession,
   upsertNotebookKernelSession
 } from '../src/renderer/src/features/analysis/lib/notebookSession'
+import { outlineMarkerWidth } from '../src/renderer/src/features/analysis/notebook/NotebookScrollProgressRail'
 import {
   displayMimes,
   metadataForMime,
@@ -586,6 +587,28 @@ test('analysis view renders large notebooks through a virtual cell window', () =
   assert.ok((markup.match(/data-phi-notebook-cell-number=/g)?.length ?? 0) < 30)
   assert.match(markup, /data-phi-notebook-cell-number="1"/)
   assert.doesNotMatch(markup, /data-phi-notebook-cell-number="30"/)
+})
+
+test('notebook outline markers wave around the hovered item', () => {
+  const active = outlineMarkerWidth(0)
+  const widths = [1, 2, 3, 4, 5, 6].map((distance) => outlineMarkerWidth(distance))
+  const source = readFileSync(
+    resolve(
+      process.cwd(),
+      'src/renderer/src/features/analysis/notebook/NotebookScrollProgressRail.tsx'
+    ),
+    'utf8'
+  )
+
+  assert.ok(widths.every((width) => width < active))
+  assert.ok(widths[0] > widths[widths.length - 1])
+  assert.equal(
+    widths.every((width, index) => index === 0 || width < widths[index - 1]),
+    false
+  )
+  assert.match(source, /hoveredIndex == null/)
+  assert.match(source, /outlineMarkerRestWidth/)
+  assert.doesNotMatch(source, /height: active/)
 })
 
 test('analysis notebook outline popover is hover-driven, not focus-sticky', () => {
