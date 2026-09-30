@@ -105,7 +105,8 @@ three standard-library scripts. No third-party Python import.
 | `r-cli` | 1 | only the ggideogram compatibility patch |
 | `r-ggextra` | 1 | import name `ggExtra` |
 | `r-ggridges`, `r-ggtern`, `r-ggvenn`, `r-graphlayouts` | 1 each | |
-| `r-hexbin`, `r-quantreg`, `r-sf`, `r-survival`, `r-survminer`, `r-waffle` | 1 each | |
+| `r-hexbin`, `r-quantreg`, `r-sf`, `r-survival`, `r-survminer` | 1 each | |
+| `r-waffle` | removed | Removed: `r-extrafont` depends on `r-rttf2pt1`, which has no osx-arm64 build; `scripts/bar/waffle/plot.R` is ggplot2 only. |
 | `r-yaml` | 1 | `layouts/validate_layouts.R` only |
 
 All of those conda names were found on all three platforms. `r-survival` is

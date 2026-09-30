@@ -17,7 +17,7 @@
 #   A PDF, PNG, or SVG waffle chart.
 #
 # Dependencies:
-#   ggplot2, readr, waffle
+#   ggplot2, readr
 #
 # Example:
 #   Rscript plot.R example.tsv output.pdf
@@ -70,7 +70,7 @@ config <- list(
     )
 )
 
-load_packages(c("ggplot2", "readr", "waffle"))
+load_packages(c("ggplot2", "readr"))
 
 # -----------------------------------------------------------------------------
 # DATA PREPARATION
@@ -95,18 +95,43 @@ fill_values <- c(
     "#009392", "#39b185", "#9ccb86", "#e9e29c", "#eeb479", "#e88471", "#cf597e"
 )
 
-p <- ggplot(df, aes(
-    fill = .data[[fill_col]],
-    values = .data[[value_col]]
+# geom_waffle(n_rows = 3, flip = TRUE) expands each count into unit cells.
+# Within a facet, cells run left to right in rows of 3, then the next row
+# up, in data order. The first category sits on the bottom. NA counts are
+# dropped, matching na.rm = TRUE.
+n_rows <- 3L
+panels <- split(
+    df,
+    interaction(df[[gender_col]], df[[cancer_col]], drop = TRUE)
+)
+cells <- lapply(panels, function(panel) {
+    panel <- panel[!is.na(panel[[value_col]]), , drop = FALSE]
+    if (!nrow(panel)) {
+        return(NULL)
+    }
+    index <- rep(seq_len(nrow(panel)), times = panel[[value_col]])
+    expanded <- panel[index, , drop = FALSE]
+    if (!nrow(expanded)) {
+        return(NULL)
+    }
+    step <- seq_len(nrow(expanded)) - 1L
+    expanded$x <- (step %% n_rows) + 1L
+    expanded$y <- (step %/% n_rows) + 1L
+    expanded
+})
+cells <- do.call(rbind, cells[!vapply(cells, is.null, logical(1))])
+
+p <- ggplot(cells, aes(
+    x = x,
+    y = y,
+    fill = .data[[fill_col]]
 )) +
-    geom_waffle(
-        n_rows = 3,
-        color = "white",
-        flip = TRUE,
-        na.rm = TRUE
-    ) +
+    geom_tile(color = "white") +
+    coord_equal() +
     scale_fill_manual(name = "Genes", values = fill_values) +
-    scale_x_discrete() +
+    # Cell positions are layout, not data: no breaks, labels, or grid lines.
+    scale_x_continuous(breaks = NULL) +
+    scale_y_continuous(breaks = NULL) +
     facet_grid(
         rows = vars(.data[[gender_col]]),
         cols = vars(.data[[cancer_col]]),
@@ -124,6 +149,8 @@ p <- ggplot(df, aes(
         axis.text.y = element_blank(),
         axis.ticks = element_blank(),
         strip.background.x = element_blank(),
+        # Panels are three cells wide; let the cancer labels overhang them.
+        strip.clip = "off",
         strip.background.y = element_rect(fill = "#ffc6c4"),
         panel.background = element_blank(),
         plot.background = element_blank(),
