@@ -110,6 +110,8 @@ export interface MinimalCustomShadows {
   card: string
   dropdown: string
   dialog: string
+  /** Small, mostly-vertical lift for sidebar rows on hover. */
+  listItem: string
 }
 
 export function buildCustomShadows(isDark: boolean): MinimalCustomShadows {
@@ -119,6 +121,7 @@ export function buildCustomShadows(isDark: boolean): MinimalCustomShadows {
   return {
     card: `0 0 2px rgba(${channel}, ${soft}), 0 12px 24px -4px rgba(${channel}, ${softer})`,
     dropdown: `0 0 2px rgba(${channel}, ${soft}), 0 20px 40px -4px rgba(${channel}, ${softer})`,
-    dialog: `0 0 2px rgba(${channel}, ${soft}), 0 24px 48px -12px rgba(${channel}, ${softer})`
+    dialog: `0 0 2px rgba(${channel}, ${soft}), 0 24px 48px -12px rgba(${channel}, ${softer})`,
+    listItem: `0 1px 2px rgba(${channel}, ${soft}), 0 4px 8px -2px rgba(${channel}, ${softer})`
   }
 }

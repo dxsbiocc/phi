@@ -340,7 +340,8 @@ const SessionRow = memo(function SessionRow({
                   alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)
               : 'transparent',
             boxShadow: 'none',
-            transition: 'border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease',
+            transition:
+              'border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease',
             '&.Mui-selected': {
               backgroundColor: isActive
                 ? (theme: Theme) =>
@@ -357,7 +358,10 @@ const SessionRow = memo(function SessionRow({
               backgroundColor: isActive
                 ? (theme: Theme) =>
                     `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)} !important`
-                : 'transparent !important'
+                : 'background.paper !important',
+              // plainSidebarRowSx forces a transparent resting background, so
+              // the lift only reads once hover paints the surface.
+              boxShadow: isActive ? 'none' : (theme: Theme) => theme.customShadows.listItem
             }
           }}
         >

@@ -73,7 +73,10 @@ export function createAppTheme(mode: EffectiveMode): Theme {
         : '0 2px 4px rgba(15, 42, 48, 0.08), 0 16px 32px -8px rgba(15, 42, 48, 0.16)',
       dialog: isDark
         ? '0 4px 8px rgba(0, 0, 0, 0.32), 0 24px 48px -12px rgba(0, 0, 0, 0.48)'
-        : '0 4px 8px rgba(15, 42, 48, 0.08), 0 24px 48px -12px rgba(15, 42, 48, 0.2)'
+        : '0 4px 8px rgba(15, 42, 48, 0.08), 0 24px 48px -12px rgba(15, 42, 48, 0.2)',
+      listItem: isDark
+        ? '0 1px 2px rgba(0, 0, 0, 0.36), 0 4px 8px -2px rgba(0, 0, 0, 0.28)'
+        : '0 1px 2px rgba(15, 42, 48, 0.1), 0 4px 8px -2px rgba(15, 42, 48, 0.08)'
     },
     transitions: {
       duration: {

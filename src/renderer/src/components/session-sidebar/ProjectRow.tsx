@@ -158,6 +158,13 @@ function ProjectRowImpl({
           // only nested SessionRows (indent prop) are meant to sit further in.
           marginLeft: 0,
           marginRight: 0,
+          transition: 'background-color 0.15s ease, box-shadow 0.15s ease',
+          // plainSidebarRowSx forces a transparent resting background, so the
+          // lift only reads once hover paints the surface.
+          '&:hover': {
+            backgroundColor: 'background.paper !important',
+            boxShadow: (theme: Theme) => theme.customShadows.listItem
+          },
           '&:hover .project-actions': { opacity: 1 },
           '&:hover .project-toggle-icon': { opacity: 1 }
         }}
