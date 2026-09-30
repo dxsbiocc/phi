@@ -176,6 +176,27 @@ test('assistant color lists render an interactive palette and preserve the liste
   assert.match(markup, /点缀/)
 })
 
+test('each list item with its own colors gets a palette on the next line', () => {
+  const markup = renderMarkdown(
+    '- Google: #4285F4 #EA4335 #FBBC05 #34A853\n- Okabe: #0072B2 #E69F00 #009E73 #D55E00',
+    createTheme(),
+    false,
+    true
+  )
+  const google = markup.indexOf('Google')
+  const okabe = markup.indexOf('Okabe')
+  const palettes = [...markup.matchAll(/data-phi-slot="markdown-color-palette"/g)].map(
+    (match) => match.index ?? -1
+  )
+
+  assert.equal(palettes.length, 2)
+  assert.ok(google >= 0 && google < palettes[0] && palettes[0] < okabe)
+  assert.ok(okabe < palettes[1])
+  assert.doesNotMatch(markup, /data-phi-slot="markdown-color-token"/)
+  assert.match(markup, /aria-label="复制颜色 #4285F4"/)
+  assert.match(markup, /aria-label="复制颜色 #0072B2"/)
+})
+
 test('color palette appears for a multi-color paragraph but not isolated color mentions', () => {
   const palette = renderMarkdown('推荐 #e11d48、#f472b6 和 #fb923c。', createTheme(), false, true)
   const isolated = renderMarkdown('主色 #e11d48，辅色 #f472b6。', createTheme(), false, true)

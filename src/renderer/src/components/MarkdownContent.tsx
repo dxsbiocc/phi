@@ -1,6 +1,15 @@
 import { Box, Button, Divider, Link, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
-import { Fragment, isValidElement, memo, useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  cloneElement,
+  Fragment,
+  isValidElement,
+  memo,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode
+} from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import { PhiIcons } from '../icons'
 import { useMarkdownPlugins } from '../lib/markdownMathPlugins'
@@ -90,6 +99,42 @@ function textFromNode(node: ReactNode): string {
   if (Array.isArray(node)) return node.map(textFromNode).join('')
   if (isValidElement<{ children?: ReactNode }>(node)) return textFromNode(node.props.children)
   return ''
+}
+
+function omitHexColorNodes(node: ReactNode): ReactNode {
+  if (typeof node === 'string') {
+    const next = node
+      .replace(
+        /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})(?![0-9a-fA-F])/g,
+        ''
+      )
+      .replace(/[ \t]{2,}/g, ' ')
+    return next.trim() ? next : null
+  }
+  if (Array.isArray(node)) return node.map(omitHexColorNodes)
+  if (!isValidElement<{ children?: ReactNode }>(node)) return node
+  if (normalizeHexColor(textFromNode(node).trim())) return null
+  if (node.props.children == null) return node
+  return cloneElement(node, undefined, omitHexColorNodes(node.props.children))
+}
+
+function renderPaletteLine(colors: string[]): React.JSX.Element {
+  return (
+    <Box component="span" sx={{ display: 'block' }}>
+      <ColorPalette colors={colors} />
+    </Box>
+  )
+}
+
+function listPaletteColors(children: ReactNode): string[] {
+  const items = Array.isArray(children) ? children : children == null ? [] : [children]
+  const leftover: string[] = []
+  for (const item of items) {
+    const text = textFromNode(item)
+    if (paletteColorsFromText(text).length >= 3) continue
+    leftover.push(text)
+  }
+  return paletteColorsFromText(leftover.join('\n'))
 }
 
 function languageFromCodeChild(children: ReactNode): string | null {
@@ -645,10 +690,11 @@ function MarkdownContentImpl({
     () => ({
       p: ({ children }) => {
         const colors = showColorPalettes ? paletteColorsFromText(textFromNode(children)) : []
+        const content = colors.length > 0 ? omitHexColorNodes(children) : children
         return (
           <Typography variant="body1" sx={{ my: 1, fontSize: 'inherit', lineHeight: 'inherit' }}>
-            {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
-            {colors.length > 0 && <ColorPalette colors={colors} />}
+            {renderInlineChildren(content, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
+            {colors.length > 0 && renderPaletteLine(colors)}
           </Typography>
         )
       },
@@ -668,7 +714,7 @@ function MarkdownContentImpl({
         </Typography>
       ),
       ul: ({ children }) => {
-        const colors = showColorPalettes ? paletteColorsFromText(textFromNode(children)) : []
+        const colors = showColorPalettes ? listPaletteColors(children) : []
         return (
           <>
             {colors.length > 0 && <ColorPalette colors={colors} />}
@@ -679,7 +725,7 @@ function MarkdownContentImpl({
         )
       },
       ol: ({ children }) => {
-        const colors = showColorPalettes ? paletteColorsFromText(textFromNode(children)) : []
+        const colors = showColorPalettes ? listPaletteColors(children) : []
         return (
           <>
             {colors.length > 0 && <ColorPalette colors={colors} />}
@@ -689,11 +735,18 @@ function MarkdownContentImpl({
           </>
         )
       },
-      li: ({ children }) => (
-        <Typography component="li" sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}>
-          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
-        </Typography>
-      ),
+      li: ({ children }) => {
+        const ownsPalette = !isValidElement(children)
+        const colors =
+          showColorPalettes && ownsPalette ? paletteColorsFromText(textFromNode(children)) : []
+        const content = colors.length > 0 ? omitHexColorNodes(children) : children
+        return (
+          <Typography component="li" sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}>
+            {renderInlineChildren(content, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
+            {colors.length > 0 && renderPaletteLine(colors)}
+          </Typography>
+        )
+      },
       strong: ({ children }) => (
         <Box component="strong" sx={{ fontWeight: 700 }}>
           {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
