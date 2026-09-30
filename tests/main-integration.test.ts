@@ -387,6 +387,8 @@ async function harness(
   const bundledFigurePreview = path.join(
     process.cwd(),
     'resources',
+    'plugins',
+    'visualization',
     'skills',
     'omics-visualization',
     'scripts',
@@ -436,7 +438,17 @@ async function harness(
       ]
     ],
     ['/projects/current/src', [{ name: 'App.tsx', kind: 'file' }]],
-    [path.join(process.cwd(), 'resources', 'skills', 'omics-visualization'), []],
+    [
+      path.join(
+        process.cwd(),
+        'resources',
+        'plugins',
+        'visualization',
+        'skills',
+        'omics-visualization'
+      ),
+      []
+    ],
     ['/isolated', [{ name: 'sessions', kind: 'directory' }]],
     ['/isolated/sessions', [{ name: 'session-1', kind: 'directory' }]],
     ['/isolated/sessions/session-1', [{ name: 'tool-outputs', kind: 'directory' }]],
@@ -1862,7 +1874,14 @@ async function harness(
     './agent/visualization/examples': { isInstalledFigurePreviewPath },
     './agent/visualization/tools': {
       getBundledSkillRoot: () =>
-        path.join(process.cwd(), 'resources', 'skills', 'omics-visualization')
+        path.join(
+          process.cwd(),
+          'resources',
+          'plugins',
+          'visualization',
+          'skills',
+          'omics-visualization'
+        )
     },
     // Real scan of the repo's bundled agents, but never the developer's own ~/.claude etc.
     './agent/agents/discovery': {
@@ -2633,7 +2652,7 @@ test('main IPC: DB connector tools stay behind Database agent and toggles remain
   const phiAgents = app.createdAgentOptions[0].phiAgents as Array<{ name: string }> | undefined
   assert.deepEqual(
     phiAgents?.map((agent) => agent.name),
-    ['Database', 'Visualization', 'Wrapper']
+    ['Database', 'Wrapper', 'Visualization']
   )
 
   const connectors = (await app.invoke('db:listConnectors')) as Array<{ id: string }>
@@ -2885,6 +2904,8 @@ test('main IPC: an installed template preview image is displayable outside the p
   const previewPath = path.join(
     process.cwd(),
     'resources',
+    'plugins',
+    'visualization',
     'skills',
     'omics-visualization',
     'scripts',
@@ -2909,6 +2930,8 @@ test('main IPC: an installed template preview image is displayable outside the p
       path.join(
         process.cwd(),
         'resources',
+        'plugins',
+        'visualization',
         'skills',
         'omics-visualization',
         'scripts',

@@ -22,7 +22,7 @@ fallback:
     - eval
   match:
     - omics-visualization
-    - resources/skills/omics-visualization
+    - plugins/visualization/skills/omics-visualization
     - visualization
     - template
     - preview

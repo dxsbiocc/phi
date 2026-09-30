@@ -1,6 +1,7 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { bundledPluginsDir, listBundledPlugins } from '../plugins/bundled'
 import { getBundledResourceDir } from '../runtime/runtime-adapter'
 import {
   computeEnvId,
@@ -62,6 +63,8 @@ export function describeEnvironment(
   ctx: {
     skill?: ValidatedSkill
     environmentsDir?: string
+    /** Bundled plugins root. Defaults to `resources/plugins`, same idea as `environmentsDir`. */
+    pluginsDir?: string
     platform?: PhiPlatform
   } = {}
 ): EnvironmentDescriptor {
@@ -87,7 +90,12 @@ export function describeEnvironment(
       if (!ctx.skill) throw new Error('./environment.yml requires a skill')
       return loadDescriptor(ref, 'skill', 'package', ctx.skill.name, ctx.skill.dir, platform)
     case 'plugin':
-      throw new Error('plugin environments are not supported yet (implementation plan step 6)')
+      return describePluginEnvironment(
+        ref,
+        parsed.name,
+        ctx.pluginsDir ?? bundledPluginsDir(),
+        platform
+      )
     case 'project':
       throw new Error('project environments are not supported yet (implementation plan step 4.9)')
   }
@@ -154,6 +162,38 @@ export function buildEnvironment(
 
 function absentOrNotReady(message: string): boolean {
   return message.includes('metadata is missing') || message.includes(' is not ready (status:')
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+function describePluginEnvironment(
+  ref: string,
+  name: string,
+  pluginsDir: string,
+  platform: PhiPlatform
+): EnvironmentDescriptor {
+  const matches = listBundledPlugins(pluginsDir).flatMap((plugin) => {
+    if (!plugin.environmentsDir) return []
+    const dir = join(plugin.environmentsDir, name)
+    return isDirectory(dir) ? [{ id: plugin.id, dir }] : []
+  })
+  if (matches.length === 0) {
+    throw new Error(`environment plugin:${name} is not available`)
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `environment plugin:${name} is provided by ${matches.map((match) => match.id).join(' and ')}`
+    )
+  }
+  const match = matches[0]
+  if (!match) throw new Error(`environment plugin:${name} is not available`)
+  return loadDescriptor(ref, 'plugin', 'package', match.id, match.dir, platform)
 }
 
 function loadDescriptor(

@@ -37,6 +37,24 @@ import { buildAgentTool, type AgentRunner } from '../src/main/agent/agents/tool'
 
 const REPO_AGENTS_DIR = join(import.meta.dirname, '..', 'resources', 'agents')
 const REPO_SKILLS_DIR = join(import.meta.dirname, '..', 'resources', 'skills')
+const REPO_VIZ_AGENT = join(
+  import.meta.dirname,
+  '..',
+  'resources',
+  'plugins',
+  'visualization',
+  'agents',
+  'Visualization.md'
+)
+const REPO_VIZ_SKILL_DIR = join(
+  import.meta.dirname,
+  '..',
+  'resources',
+  'plugins',
+  'visualization',
+  'skills',
+  'omics-visualization'
+)
 
 function agentMarkdown(fields: Record<string, string>, body = 'You are a specialist.'): string {
   const lines = Object.entries(fields).map(([key, value]) => `${key}: ${value}`)
@@ -405,7 +423,8 @@ test('discovery logs warnings without skipping the agent', () => {
     const { agents, diagnostics } = discoverPhiAgents({
       cwd: join(root, 'project'),
       agentDir: join(root, 'home', '.phi'),
-      homeDir: join(root, 'home')
+      homeDir: join(root, 'home'),
+      pluginAgentDirs: []
     })
     assert.deepEqual(
       agents.map((agent) => agent.name),
@@ -426,8 +445,13 @@ test('discovery logs warnings without skipping the agent', () => {
 })
 
 test('the bundled agents validate with no errors and no warnings', () => {
-  for (const name of ['Database', 'Visualization', 'Wrapper']) {
-    const result = validateAgent(join(REPO_AGENTS_DIR, `${name}.md`))
+  const files = [
+    join(REPO_AGENTS_DIR, 'Database.md'),
+    join(REPO_AGENTS_DIR, 'Wrapper.md'),
+    REPO_VIZ_AGENT
+  ]
+  for (const file of files) {
+    const result = validateAgent(file)
     assert.equal(
       result.ok,
       true,
@@ -509,7 +533,8 @@ test('discovery scans the Phi roots first and never reads a legacy directory as 
       cwd,
       agentDir,
       bundledDir: bundled,
-      homeDir: join(root, 'home')
+      homeDir: join(root, 'home'),
+      pluginAgentDirs: []
     })
     assert.deepEqual(
       agents.map((a) => [a.name, a.source]),
@@ -545,7 +570,12 @@ test('discovery is compatible with .omp, .pi and .claude agents, project and use
     put(root, 'home/.omp/agent/agents/scout.md', agentMarkdown({ name: 'scout', description: 's' }))
     put(root, 'home/.claude/agents/writer.md', agentMarkdown({ name: 'writer', description: 'w' }))
 
-    const { agents } = discoverPhiAgents({ cwd, agentDir: join(home, '.phi'), homeDir: home })
+    const { agents } = discoverPhiAgents({
+      cwd,
+      agentDir: join(home, '.phi'),
+      homeDir: home,
+      pluginAgentDirs: []
+    })
     assert.deepEqual(agents.map((a) => a.name).sort(), [
       'Planner',
       'Reviewer',
@@ -577,7 +607,8 @@ test('a Phi definition beats a compat one with the same name, and project beats 
       cwd,
       agentDir: join(home, '.phi'),
       bundledDir: join(root, 'bundled'),
-      homeDir: home
+      homeDir: home,
+      pluginAgentDirs: []
     })
     assert.equal(result.agents.length, 1)
     assert.equal(result.agents[0].description, 'user alpha')
@@ -591,7 +622,8 @@ test('a Phi definition beats a compat one with the same name, and project beats 
       cwd,
       agentDir: join(home, '.phi'),
       bundledDir: join(root, 'bundled'),
-      homeDir: home
+      homeDir: home,
+      pluginAgentDirs: []
     })
     assert.equal(result.agents[0].description, 'project alpha')
   })
@@ -614,7 +646,8 @@ test('an invalid definition becomes a diagnostic and never blocks the others', (
     const { agents, diagnostics } = discoverPhiAgents({
       cwd: join(root, 'project'),
       agentDir: join(root, 'home', '.phi'),
-      homeDir: join(root, 'home')
+      homeDir: join(root, 'home'),
+      pluginAgentDirs: []
     })
     assert.deepEqual(
       agents.map((a) => a.name),
@@ -630,7 +663,8 @@ test('missing directories are fine', () => {
     const result = discoverPhiAgents({
       cwd: join(root, 'nope'),
       agentDir: join(root, 'nope2'),
-      homeDir: join(root, 'nope3')
+      homeDir: join(root, 'nope3'),
+      pluginAgentDirs: []
     })
     assert.deepEqual(result, { agents: [], diagnostics: [] })
   })
@@ -789,18 +823,21 @@ test('the bundled Visualization agent routes template previews through omics vis
   })
   assert.deepEqual(diagnostics, [])
   const visualization = agents.find((agent) => agent.name === 'Visualization')
-  assert.ok(visualization, 'resources/agents/Visualization.md should define Visualization')
+  assert.ok(visualization, 'the visualization plugin should define Visualization')
+  assert.equal(visualization.filePath, REPO_VIZ_AGENT)
   assert.equal(visualization.source, 'phi')
   for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit']) {
     assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
   }
   assert.ok(visualization.tools.includes('viz_examples'))
   assert.deepEqual(visualization.skills, ['omics-visualization'])
-  assert.equal(existsSync(join(REPO_SKILLS_DIR, 'omics-visualization', 'SKILL.md')), true)
+  assert.equal(existsSync(join(REPO_VIZ_SKILL_DIR, 'SKILL.md')), true)
   assert.equal(visualization.delegationMode, 'required-first')
   assert.equal(visualization.fallback?.afterFailures, 1)
   assert.deepEqual(visualization.fallback?.tools, ['bash', 'eval'])
-  assert.ok(visualization.fallback?.match.includes('resources/skills/omics-visualization'))
+  assert.ok(
+    visualization.fallback?.match.includes('plugins/visualization/skills/omics-visualization')
+  )
   assert.match(visualization.delegation ?? '', /show a few templates/i)
   assert.match(visualization.delegation ?? '', /preview/i)
   assert.match(visualization.delegation ?? '', /directly drawing with Python\/R/i)
@@ -836,15 +873,12 @@ test('the bundled Visualization agent routes template previews through omics vis
   assert.match(visualization.systemPrompt, /same cutoffs for Up\/Down\/None colors/i)
   assert.match(visualization.systemPrompt, /counts based on adjusted P value alone distinct/i)
 
-  const skillText = readFileSync(join(REPO_SKILLS_DIR, 'omics-visualization', 'SKILL.md'), 'utf-8')
+  const skillText = readFileSync(join(REPO_VIZ_SKILL_DIR, 'SKILL.md'), 'utf-8')
   assert.match(skillText, /active Phi project working directory/)
   assert.match(skillText, /Treat data directories outside the\s+project as read-only inputs/)
   assert.match(skillText, /Do not copy `references\/`, `references\/palettes\/`, or catalog files/)
   assert.match(skillText, /same values for point classification, cutoff lines, legend text/i)
-  const commonR = readFileSync(
-    join(REPO_SKILLS_DIR, 'omics-visualization', 'scripts', 'lib', 'common.R'),
-    'utf-8'
-  )
+  const commonR = readFileSync(join(REPO_VIZ_SKILL_DIR, 'scripts', 'lib', 'common.R'), 'utf-8')
   assert.match(commonR, /OMICS_VISUALIZATION_SKILL_ROOT/)
 })
 

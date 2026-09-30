@@ -23,7 +23,14 @@ import type {
 } from '../src/main/agent/visualization/process'
 import { buildVisualizationTools } from '../src/main/agent/visualization/tools'
 
-const SKILL_ROOT = join(process.cwd(), 'resources', 'skills', 'omics-visualization')
+const SKILL_ROOT = join(
+  process.cwd(),
+  'resources',
+  'plugins',
+  'visualization',
+  'skills',
+  'omics-visualization'
+)
 const VOLCANO_DATA = join(SKILL_ROOT, 'scripts', 'scatter', 'volcano', 'example.tsv')
 
 function has(command: string): boolean {

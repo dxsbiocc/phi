@@ -11,7 +11,14 @@ import {
   patchBootstrap
 } from '../src/main/agent/visualization/template-source'
 
-const SKILL_ROOT = join(process.cwd(), 'resources', 'skills', 'omics-visualization')
+const SKILL_ROOT = join(
+  process.cwd(),
+  'resources',
+  'plugins',
+  'visualization',
+  'skills',
+  'omics-visualization'
+)
 
 function readTemplate(relative: string): string {
   return readFileSync(join(SKILL_ROOT, 'scripts', relative, 'plot.R'), 'utf-8')

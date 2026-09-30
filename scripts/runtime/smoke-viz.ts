@@ -4,7 +4,7 @@
 // Usage (needs the TS loader, so go through the npm script):
 //   npm run runtime:smoke:viz
 //   npm run runtime:smoke:viz -- --spec resources/plugins/visualization/environments/viz \
-//     --templates resources/skills/omics-visualization/scripts
+//     --templates resources/plugins/visualization/skills/omics-visualization/scripts
 //
 // The runtime root is PHI_TEST_RUNTIME_ROOT when that variable is set, otherwise
 // a fresh temporary directory. The prefix is left in place.
@@ -70,7 +70,10 @@ function repoRoot(): string {
 export function parseSmokeVizArgs(argv: readonly string[]): SmokeVizOptions {
   const root = repoRoot()
   let specDir = join(root, 'resources/plugins/visualization/environments/viz')
-  let templatesDir = join(root, 'resources/skills/omics-visualization/scripts')
+  let templatesDir = join(
+    root,
+    'resources/plugins/visualization/skills/omics-visualization/scripts'
+  )
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]

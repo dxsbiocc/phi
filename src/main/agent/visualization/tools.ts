@@ -1,7 +1,7 @@
 import type { CustomTool, CustomToolContext } from '@oh-my-pi/pi-coding-agent'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 
-import { getBundledWrapperPackagesDir } from '../wrappers/catalog'
+import { bundledPluginsDir } from '../plugins/bundled'
 import { findFigureExamples } from './examples'
 import { runProcess, type ProcessRunner } from './process'
 import { prepareTemplate } from './prepare'
@@ -17,9 +17,9 @@ import { routeTemplates, type RouteMode } from './route'
 
 const SKILL_NAME = 'omics-visualization'
 
-/** `resources/skills/omics-visualization`, beside `resources/wrappers` in dev, unpackaged and packaged builds. */
+/** `resources/plugins/visualization/skills/omics-visualization` in dev, unpackaged, and packaged builds. */
 export function getBundledSkillRoot(): string {
-  return join(dirname(getBundledWrapperPackagesDir()), 'skills', SKILL_NAME)
+  return join(bundledPluginsDir(), 'visualization', 'skills', SKILL_NAME)
 }
 
 export interface VisualizationToolOptions {

@@ -12,6 +12,7 @@ import type {
   ContextUsageSnapshot
 } from '../../../shared/contextUsageTypes'
 import { getOmpBridge, type OmpBridge } from '../omp/omp-bridge'
+import { listBundledPlugins } from '../plugins/bundled'
 import {
   getAdditionalProjectResourcePaths,
   getKnownProjectResourceBaseDir,
@@ -408,9 +409,16 @@ function pathIsInside(path: string, root: string): boolean {
   )
 }
 
+function bundledSkillDirectories(): string[] {
+  const directories = [getBundledSkillsDir()]
+  for (const plugin of listBundledPlugins()) {
+    if (plugin.skillsDir) directories.push(plugin.skillsDir)
+  }
+  return directories
+}
+
 function appendExistingBundledSkillPaths(paths: string[] | undefined): string[] | undefined {
-  const bundledSkillsDir = getBundledSkillsDir()
-  const bundledPaths = existsSync(bundledSkillsDir) ? [bundledSkillsDir] : []
+  const bundledPaths = bundledSkillDirectories().filter((path) => existsSync(path))
   const merged = dedupePaths([...bundledPaths, ...(paths ?? [])])
   return merged.length > 0 ? merged : paths
 }
@@ -434,12 +442,13 @@ function markBundledSystemSkills(options: ResourceLoaderOptions): ResourceLoader
     ...options,
     skillsOverride: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
       const resolved = existingOverride ? existingOverride(base) : base
-      const bundledSkillsDir = getBundledSkillsDir()
+      const bundledRoots = bundledSkillDirectories()
 
       return {
         ...resolved,
         skills: resolved.skills.map((skill) => {
-          if (!pathIsInside(skill.filePath, bundledSkillsDir)) return skill
+          const baseDir = bundledRoots.find((root) => pathIsInside(skill.filePath, root))
+          if (!baseDir) return skill
 
           return {
             ...skill,
@@ -449,7 +458,7 @@ function markBundledSystemSkills(options: ResourceLoaderOptions): ResourceLoader
               source: 'bundled',
               scope: 'user',
               origin: 'resources',
-              baseDir: bundledSkillsDir
+              baseDir
             }
           }
         })

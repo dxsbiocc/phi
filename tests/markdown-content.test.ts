@@ -276,7 +276,7 @@ test('markdown local image syntax renders a local preview container', () => {
       ThemeProvider,
       { theme: createTheme() },
       createElement(MarkdownContent, {
-        text: '推荐模板：![Volcano template](/Users/example/project/resources/skills/omics-visualization/scripts/scatter/volcano/preview.png)',
+        text: '推荐模板：![Volcano template](/Users/example/project/resources/plugins/visualization/skills/omics-visualization/scripts/scatter/volcano/preview.png)',
         cwd: '/Users/example/project'
       })
     )
@@ -286,7 +286,7 @@ test('markdown local image syntax renders a local preview container', () => {
   assert.match(markup, /data-phi-example-preview="true"/)
   assert.match(
     markup,
-    /data-phi-path="\/Users\/example\/project\/resources\/skills\/omics-visualization\/scripts\/scatter\/volcano\/preview\.png"/
+    /data-phi-path="\/Users\/example\/project\/resources\/plugins\/visualization\/skills\/omics-visualization\/scripts\/scatter\/volcano\/preview\.png"/
   )
   assert.match(markup, /data-phi-slot="local-file-link"/)
   assert.match(markup, />Volcano template<\/span><\/button>/)

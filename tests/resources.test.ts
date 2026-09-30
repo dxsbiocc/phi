@@ -209,7 +209,9 @@ test('listSkills reads project skills from the selected cwd', async () => {
   const omicsVisualizationSkill = projectASkills.find(
     (skill) =>
       skill.name === 'omics-visualization' &&
-      skill.filePath.includes(join('resources', 'skills', 'omics-visualization'))
+      skill.filePath.includes(
+        join('resources', 'plugins', 'visualization', 'skills', 'omics-visualization')
+      )
   )
 
   assert(projectASkills.some((skill) => skill.name === 'project-a-skill'))

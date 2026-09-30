@@ -5,7 +5,14 @@ import test from 'node:test'
 
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
 
-const SKILL_DIR = join(process.cwd(), 'resources', 'skills', 'omics-visualization')
+const SKILL_DIR = join(
+  process.cwd(),
+  'resources',
+  'plugins',
+  'visualization',
+  'skills',
+  'omics-visualization'
+)
 const SKILL = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf-8')
 const AGENTS_DIR = join(process.cwd(), 'resources', 'agents')
 

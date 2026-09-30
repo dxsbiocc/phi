@@ -232,8 +232,8 @@ test('describeEnvironment resolves phi, skill-local, plugin, and project refs', 
     assert.match(local.lockText, /@EXPLICIT/)
 
     assert.throws(
-      () => describeEnvironment('plugin:viz', { platform }),
-      /plugin environments are not supported yet \(implementation plan step 6\)/
+      () => describeEnvironment('plugin:viz', { platform, pluginsDir: join(root, 'plugins') }),
+      /environment plugin:viz is not available/
     )
     assert.throws(
       () => describeEnvironment('project:alpha', { platform }),
@@ -525,14 +525,14 @@ test('runScriptTool returns an error for an unsupported environment reference', 
     const result = await runScriptTool({
       root,
       projectDir,
-      skill: skillStub(join(root, 'echo'), 'echo', 'plugin:viz'),
+      skill: skillStub(join(root, 'echo'), 'echo', 'plugin:missing'),
       tool: makeTool(),
       args: {},
       platform: currentPlatform()
     })
     assert.deepEqual(result, {
       ok: false,
-      error: 'plugin environments are not supported yet (implementation plan step 6)',
+      error: 'environment plugin:missing is not available',
       warnings: []
     })
   })

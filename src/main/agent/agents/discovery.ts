@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { validateAgentFile, type PhiAgentDefinition, type PhiAgentSource } from './definition'
+import { listBundledPlugins } from '../plugins/bundled'
 import { PHI_PROJECT_CONFIG_DIR_NAME } from '../runtime-paths'
 
 /**
@@ -11,7 +12,7 @@ import { PHI_PROJECT_CONFIG_DIR_NAME } from '../runtime-paths'
  * Phi skills also honour legacy config directories. First definition of a name
  * wins, so a Phi agent always beats a compat one.
  *
- *   Phi     <cwd>/.phi/agents · <agentDir>/agents (~/.phi/agents) · bundled resources/agents
+ *   Phi     <cwd>/.phi/agents · <agentDir>/agents (~/.phi/agents) · bundled resources/agents · plugin agents/
  *   compat  <cwd>/{.omp,.pi,.claude}/agents · ~/.omp/agent/agents · ~/.pi/agent/agents · ~/.claude/agents
  */
 export interface PhiAgentDiscoveryOptions {
@@ -19,6 +20,11 @@ export interface PhiAgentDiscoveryOptions {
   agentDir: string
   /** Bundled `resources/agents` (resolved by the caller: it depends on packaging). */
   bundledDir?: string
+  /**
+   * Plugin `agents/` directories. Scanned after `bundledDir` and before compatibility
+   * roots. Omit to scan bundled plugins. Pass `[]` to skip them.
+   */
+  pluginAgentDirs?: readonly string[]
   homeDir?: string
 }
 
@@ -38,12 +44,18 @@ interface Root {
   source: PhiAgentSource
 }
 
+function pluginAgentDirectories(options: PhiAgentDiscoveryOptions): string[] {
+  if (options.pluginAgentDirs !== undefined) return [...options.pluginAgentDirs]
+  return listBundledPlugins().flatMap((plugin) => (plugin.agentsDir ? [plugin.agentsDir] : []))
+}
+
 function agentRoots(options: PhiAgentDiscoveryOptions): Root[] {
   const home = options.homeDir ?? homedir()
   const roots: Root[] = [
     { dir: join(options.cwd, PHI_PROJECT_CONFIG_DIR_NAME, 'agents'), source: 'phi' },
     { dir: join(options.agentDir, 'agents'), source: 'phi' },
-    ...(options.bundledDir ? [{ dir: options.bundledDir, source: 'phi' as const }] : [])
+    ...(options.bundledDir ? [{ dir: options.bundledDir, source: 'phi' as const }] : []),
+    ...pluginAgentDirectories(options).map((dir) => ({ dir, source: 'phi' as const }))
   ]
   const compat = [
     ...['.omp', '.pi', '.claude'].map((dir) => join(options.cwd, dir, 'agents')),
