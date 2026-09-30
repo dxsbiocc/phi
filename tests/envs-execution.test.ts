@@ -5,8 +5,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -320,6 +322,29 @@ test('runInEnvironment captures status, streams, and arguments without a shell',
     assert.deepEqual(result.truncated, { stdout: false, stderr: false })
     assert.equal(typeof result.durationMs, 'number')
     assert.ok(result.durationMs >= 0)
+  })
+})
+
+test('runInEnvironment finds commands when the runtime root is reached through a symlink', async () => {
+  await withTemp('symlinked-root', async (dir) => {
+    // Activation records real paths; the handle uses the symlinked spelling (macOS /var,
+    // or a symlinked ~/.phi). The environment's bin must still be on PATH.
+    const realRoot = join(dir, 'real')
+    mkdirSync(realRoot)
+    const linkedRoot = join(dir, 'linked')
+    symlinkSync(realRoot, linkedRoot)
+    const realPrefix = join(realpathSync(realRoot), 'envs', ENV_ID)
+    const env: EnvHandle = {
+      envId: ENV_ID,
+      prefix: join(linkedRoot, 'envs', ENV_ID),
+      metadata: metadata(ENV_ID, {
+        activation: { set: { CONDA_PREFIX: realPrefix }, pathPrepend: [join(realPrefix, 'bin')] }
+      })
+    }
+    writeScript(env, 'marker', 'echo found-marker')
+    const result = await runInEnvironment(env, ['marker'], { cwd: dir })
+    assert.equal(result.exitCode, 0, result.stderr)
+    assert.equal(result.stdout.trim(), 'found-marker')
   })
 })
 

@@ -1,5 +1,13 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { accessSync, constants, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import {
+  accessSync,
+  constants,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync
+} from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 
@@ -121,6 +129,14 @@ function isInsideDirectory(entry: string, directory: string): boolean {
   return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))
 }
 
+function realPathOrSelf(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
+}
+
 function environmentPath(prefix: string, metadata: EnvMetadata): string {
   const entries: string[] = []
   const seen = new Set<string>()
@@ -131,8 +147,11 @@ function environmentPath(prefix: string, metadata: EnvMetadata): string {
   }
   // Only the environment's own directories. `micromamba run` also prepends the runtime's
   // `condabin`, which would expose micromamba itself to content if it ever existed.
+  // Activation records real paths, while a handle may reach the prefix through a symlink
+  // (macOS /var -> /private/var, a symlinked ~/.phi), so compare against both spellings.
+  const prefixes = [prefix, realPathOrSelf(prefix)]
   for (const entry of metadata.activation.pathPrepend) {
-    if (isInsideDirectory(entry, prefix)) add(entry)
+    if (prefixes.some((candidate) => isInsideDirectory(entry, candidate))) add(entry)
   }
   for (const executable of Object.values(metadata.host)) add(dirname(executable))
   for (const entry of SYSTEM_PATH) add(entry)
