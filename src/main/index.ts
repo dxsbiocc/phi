@@ -150,6 +150,12 @@ import {
   environmentBuildQuestion
 } from './agent/content/environment-build-prompt'
 import {
+  ADD_PACKAGES,
+  confirmedEnvironmentRequest,
+  requestProjectEnvironment,
+  type EnvironmentRequestConfirm
+} from './agent/content/env-request'
+import {
   canRequestAgentUserInteraction,
   cancelAgentUserInteractions,
   resolveAgentUserInteraction,
@@ -861,6 +867,13 @@ getOmpBridge().registerHostHandler('environments.bindSession', (params) =>
     confirmBuild: (request) => confirmEnvironmentBuild(request)
   })
 )
+getOmpBridge().registerHostHandler('environments.request', (params) =>
+  requestProjectEnvironment(params, {
+    root: getRuntimeRoot(),
+    builds: environmentBuilds,
+    confirm: (request) => confirmEnvironmentRequest(request)
+  })
+)
 getOmpBridge().registerHostHandler('agentInteraction.request', handleAgentInteractionRequest)
 getOmpBridge().registerHostHandler(
   'settings.nextActionSuggestionsEnabled',
@@ -1371,6 +1384,27 @@ async function confirmEnvironmentBuild(request: ConfirmBuildRequest): Promise<bo
       ]
     })
     return confirmedEnvironmentBuild(response)
+  } catch {
+    return false
+  }
+}
+
+async function confirmEnvironmentRequest(request: EnvironmentRequestConfirm): Promise<boolean> {
+  try {
+    const response = await handleAgentInteractionRequest({
+      runtimeSessionId: request.runtimeSessionId,
+      questions: [
+        {
+          header: '环境',
+          question: request.question,
+          options: [
+            { label: ADD_PACKAGES, description: '求解并安装这些包' },
+            { label: '取消', description: '不添加这些包' }
+          ]
+        }
+      ]
+    })
+    return confirmedEnvironmentRequest(response)
   } catch {
     return false
   }

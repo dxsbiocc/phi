@@ -18,6 +18,7 @@ import {
   type EnvironmentSpec,
   type PhiPlatform
 } from '../envs'
+import { projectOwner } from '../envs/project-environments'
 import type { ValidatedSkill } from './skill'
 
 const LOCAL_ENVIRONMENT = './environment.yml'
@@ -66,6 +67,8 @@ export function describeEnvironment(
     /** Bundled plugins root. Defaults to `resources/plugins`, same idea as `environmentsDir`. */
     pluginsDir?: string
     platform?: PhiPlatform
+    /** Required for `project:<name>`. The environment lives in `<projectDir>/.phi/environments/`. */
+    projectDir?: string
   } = {}
 ): EnvironmentDescriptor {
   const parsed = parseEnvironmentRef(ref)
@@ -97,7 +100,15 @@ export function describeEnvironment(
         platform
       )
     case 'project':
-      throw new Error('project environments are not supported yet (implementation plan step 4.9)')
+      if (!ctx.projectDir) throw new Error('project environment requires a project directory')
+      return loadDescriptor(
+        ref,
+        'project',
+        'project',
+        projectOwner(ctx.projectDir),
+        join(ctx.projectDir, '.phi', 'environments', parsed.name),
+        platform
+      )
   }
 }
 

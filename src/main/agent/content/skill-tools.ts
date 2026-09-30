@@ -69,6 +69,11 @@ export interface SkillToolHostOptions {
   runtimeSessionId?: string
   /** Environment the specialist session is bound to. The skill's own ref still wins. */
   sessionEnvironment?: string
+  /**
+   * Live binding shared with `env_request`. `ref` is read on each call and wins
+   * over `sessionEnvironment`.
+   */
+  environmentBinding?: { ref: string }
 }
 
 export function buildSkillRunTool(
@@ -92,6 +97,12 @@ export function buildSkillRunTool(
 function skillHostOptions(value: string | SkillToolHostOptions | undefined): SkillToolHostOptions {
   if (typeof value === 'string') return { runtimeSessionId: value }
   return value ?? {}
+}
+
+function liveSessionEnvironment(options: SkillToolHostOptions): string | undefined {
+  const live = options.environmentBinding?.ref
+  if (typeof live === 'string' && live.length > 0) return live
+  return options.sessionEnvironment
 }
 
 export function buildScriptTools(
@@ -147,7 +158,8 @@ async function runSkillTool(
   if (isStringArray(input.args)) body.args = input.args
   if (typeof input.cwd === 'string') body.runCwd = input.cwd
   if (options.runtimeSessionId) body.runtimeSessionId = options.runtimeSessionId
-  if (options.sessionEnvironment) body.sessionEnvironment = options.sessionEnvironment
+  const sessionEnvironment = liveSessionEnvironment(options)
+  if (sessionEnvironment) body.sessionEnvironment = sessionEnvironment
 
   try {
     const result = await callHost(request, 'skills.run', body, signal)
@@ -190,7 +202,9 @@ async function runScriptToolCall(
         tool,
         args: params ?? {},
         ...(options.runtimeSessionId ? { runtimeSessionId: options.runtimeSessionId } : {}),
-        ...(options.sessionEnvironment ? { sessionEnvironment: options.sessionEnvironment } : {}),
+        ...(liveSessionEnvironment(options)
+          ? { sessionEnvironment: liveSessionEnvironment(options) }
+          : {}),
         ...(toolCallId ? { toolCallId } : {})
       },
       signal

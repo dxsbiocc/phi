@@ -9,7 +9,7 @@ import { environmentSpecSchema } from './schemas'
 export { PHI_PLATFORMS, condaSubdir, currentPlatform, findPlatform } from './platform'
 export type { PhiPlatform } from './platform'
 
-export const ENVIRONMENT_CONTRACT_VERSION = '1.1.0'
+export const ENVIRONMENT_CONTRACT_VERSION = '1.2.0'
 
 const ENV_NAME = /^[a-z][a-z0-9-]{0,62}$/
 

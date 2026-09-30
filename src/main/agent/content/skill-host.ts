@@ -4,6 +4,7 @@ import { basename, dirname, resolve } from 'node:path'
 import { listBundledPlugins, type BundledPlugin } from '../plugins/bundled'
 
 import { getRuntimeRoot, type PhiPlatform } from '../envs'
+import { applyOverrides } from '../envs/project-environments'
 import { collectArtifacts, type ReadArtifactOk } from './artifacts'
 import type { ScriptTool, ValidatedSkill } from './skill'
 import type { EnvironmentBuilds } from './environment-builds'
@@ -137,16 +138,19 @@ export function createSkillHost({
 
   async function gateEnvironment(input: {
     skill: ValidatedSkill
+    projectDir: string
     sessionEnvironment?: string
     runtimeSessionId?: string
     signal: AbortSignal
   }): Promise<EnvironmentGate> {
     const choice = resolveSkillEnvironment(input.skill, input.sessionEnvironment)
-    const warnings = choice.warnings
+    const applied = applyOverrides(choice.ref, input.projectDir)
+    const warnings = [...choice.warnings, ...applied.warnings]
     let descriptor: ReturnType<typeof describeEnvironment>
     try {
-      descriptor = describeEnvironment(choice.ref, {
+      descriptor = describeEnvironment(applied.ref, {
         skill: input.skill,
+        projectDir: input.projectDir,
         ...(environmentsDir ? { environmentsDir } : {}),
         ...(platform ? { platform } : {})
       })
@@ -157,7 +161,7 @@ export function createSkillHost({
     const outcome = await ensureEnvironmentReady({
       root: runtimeRoot,
       descriptor,
-      ref: choice.ref,
+      ref: applied.ref,
       requester: { skill: input.skill.name },
       ...(input.runtimeSessionId ? { runtimeSessionId: input.runtimeSessionId } : {}),
       ...(builds ? { builds } : {}),
@@ -254,6 +258,7 @@ export function createSkillHost({
       try {
         const gate = await gateEnvironment({
           skill,
+          projectDir: cwd,
           ...(sessionEnvironment !== undefined ? { sessionEnvironment } : {}),
           ...(runtimeSessionId !== undefined ? { runtimeSessionId } : {}),
           signal: controller.signal
@@ -306,6 +311,7 @@ export function createSkillHost({
       try {
         const gate = await gateEnvironment({
           skill: entry.skill,
+          projectDir: cwd,
           ...(sessionEnvironment !== undefined ? { sessionEnvironment } : {}),
           ...(runtimeSessionId !== undefined ? { runtimeSessionId } : {}),
           signal: controller.signal

@@ -101,6 +101,7 @@ import {
   buildPhiRemoteProjectSystemPrompt,
   filterPersonaContextFile
 } from '../main-system-prompt'
+import { buildEnvRequestTool } from '../content/env-request-tool'
 import { buildScriptTools, buildSkillRunTool } from '../content/skill-tools'
 import type { ScriptToolDescriptor } from '../content/skill-tool-types'
 import { createHostJobClient } from '../wrappers/composition/job-host-client'
@@ -931,9 +932,7 @@ function specialistToolCallFactories(
     ...(deps.enableToolApproval
       ? [createBridgeToolApprovalExtension(deps.sessionId, deps.agentRunId)]
       : []),
-    ...(binding
-      ? [createEnvironmentBindingExtension({ ref: binding.ref, variables: binding.variables })]
-      : [])
+    ...(binding ? [createEnvironmentBindingExtension(binding)] : [])
   ]
 }
 
@@ -992,10 +991,9 @@ async function createPhiAgentSession(
   const { sessionId, cwd, agentDir, ctx } = deps
   const sessionCwd = deps.remoteRoot ? agentDir : cwd
   const binding = await bindSpecialistEnvironment(definition, deps)
-  const toolCallFactories = specialistToolCallFactories(deps, binding)
-  const skillHost = binding
-    ? { runtimeSessionId: sessionId, sessionEnvironment: binding.ref }
-    : sessionId
+  const holder = binding ? { ref: binding.ref, variables: { ...binding.variables } } : undefined
+  const toolCallFactories = specialistToolCallFactories(deps, holder)
+  const skillHost = holder ? { runtimeSessionId: sessionId, environmentBinding: holder } : sessionId
   const settings = await Settings.init({ cwd: sessionCwd, agentDir })
   const loader =
     isRecord(deps.resourceOptions) || deps.remoteRoot
@@ -1034,10 +1032,19 @@ async function createPhiAgentSession(
     skillHost
   )
   for (const tool of attachedScriptTools) availableTools.set(tool.name, tool)
+  if (holder) {
+    const envRequest = buildEnvRequestTool(requestHost, {
+      runtimeSessionId: sessionId,
+      binding: holder,
+      agent: definition.name
+    })
+    availableTools.set(envRequest.name, envRequest)
+  }
   const declaredTools = [...definition.tools]
   for (const tool of attachedScriptTools) {
     if (!declaredTools.includes(tool.name)) declaredTools.push(tool.name)
   }
+  if (holder && !declaredTools.includes('env_request')) declaredTools.push('env_request')
   const { toolNames, customTools } = resolveAgentTools(declaredTools, availableTools)
   const parentSession = deps.parent()?.session
   const parentModel = parentSession?.model || undefined
@@ -1437,6 +1444,14 @@ async function createSession(params: unknown): Promise<unknown> {
     ...notebookCustomTools,
     ...libraryCustomTools,
     ...userInteractionCustomTools,
+    ...(!remoteRoot
+      ? [
+          buildEnvRequestTool(requestHost, {
+            runtimeSessionId: sessionId,
+            requireEnvironment: true
+          })
+        ]
+      : []),
     ...(skillTools
       ? [
           buildSkillRunTool(requestHost, sessionId),

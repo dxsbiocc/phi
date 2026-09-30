@@ -237,7 +237,7 @@ test('describeEnvironment resolves phi, skill-local, plugin, and project refs', 
     )
     assert.throws(
       () => describeEnvironment('project:alpha', { platform }),
-      /project environments are not supported yet \(implementation plan step 4\.9\)/
+      /project environment requires a project directory/
     )
     assert.throws(
       () => describeEnvironment('phi:python@2', { environmentsDir, platform }),

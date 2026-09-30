@@ -5,6 +5,7 @@ import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv'
 import Ajv2020 from 'ajv/dist/2020.js'
 
 import { runInEnvironment, type EnvHandle, type PhiPlatform, type RunResult } from '../envs'
+import { applyOverrides } from '../envs/project-environments'
 import type { ScriptTool, ValidatedSkill } from './skill'
 import {
   EnvironmentNotReadyError,
@@ -82,11 +83,13 @@ export async function runScriptTool(input: RunScriptToolInput): Promise<ScriptTo
   }
 
   const choice = resolveSkillEnvironment(input.skill, input.sessionEnvironment)
-  warnings.push(...choice.warnings)
+  const applied = applyOverrides(choice.ref, input.projectDir)
+  warnings.push(...choice.warnings, ...applied.warnings)
   let env: EnvHandle
   try {
-    const descriptor = describeEnvironment(choice.ref, {
+    const descriptor = describeEnvironment(applied.ref, {
       skill: input.skill,
+      projectDir: input.projectDir,
       environmentsDir: input.environmentsDir,
       platform: input.platform
     })

@@ -1614,6 +1614,14 @@ async function harness(
         approvalFor: () => undefined
       })
     },
+    './agent/content/env-request': {
+      ADD_PACKAGES: '添加',
+      confirmedEnvironmentRequest: (): boolean => false,
+      environmentRequestQuestion: (): string => 'add packages?',
+      requestProjectEnvironment: async (): Promise<unknown> => {
+        throw new Error('env_request is mocked')
+      }
+    },
     './agent/content/environment-gate': {
       bindAgentSession: async (): Promise<unknown> => {
         throw new Error('environment binding is mocked')

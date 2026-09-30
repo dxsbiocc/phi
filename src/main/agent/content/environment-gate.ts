@@ -1,4 +1,5 @@
 import { environmentVariables, getRuntimeRoot, type EnvHandle, type PhiPlatform } from '../envs'
+import { applyOverrides } from '../envs/project-environments'
 import { estimateBuild, type BuildEstimate } from '../envs/estimate'
 import type { EnvironmentBuilds } from './environment-builds'
 import {
@@ -22,7 +23,13 @@ export type EnvironmentReady =
   | { status: 'aborted'; envId: string }
 
 export type BoundSession =
-  | { ref: string; envId: string; variables: Record<string, string> }
+  | {
+      ref: string
+      envId: string
+      variables: Record<string, string>
+      /** Present only when an override was ignored. */
+      warnings?: string[]
+    }
   | { notReady: { ref: string; envId: string; message: string } }
 
 /**
@@ -133,16 +140,18 @@ export async function bindAgentSession(
   const runtimeSessionId = requireString(record, 'runtimeSessionId')
   const ref = requireString(record, 'ref')
   const agent = requireString(record, 'agent')
-  requireString(record, 'cwd')
+  const cwd = requireString(record, 'cwd')
+  const applied = applyOverrides(ref, cwd)
   const root = deps.root ?? getRuntimeRoot()
-  const descriptor = describeEnvironment(ref, {
+  const descriptor = describeEnvironment(applied.ref, {
+    projectDir: cwd,
     ...(deps.environmentsDir ? { environmentsDir: deps.environmentsDir } : {}),
     ...(deps.platform ? { platform: deps.platform } : {})
   })
   const outcome = await ensureEnvironmentReady({
     root,
     descriptor,
-    ref,
+    ref: applied.ref,
     requester: { agent },
     runtimeSessionId,
     ...(deps.builds ? { builds: deps.builds } : {}),
@@ -160,7 +169,8 @@ export async function bindAgentSession(
   return {
     ref: descriptor.ref,
     envId: outcome.handle.envId,
-    variables: environmentVariables(outcome.handle)
+    variables: environmentVariables(outcome.handle),
+    ...(applied.warnings.length > 0 ? { warnings: applied.warnings } : {})
   }
 }
 

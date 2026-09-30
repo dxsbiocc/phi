@@ -2,6 +2,7 @@ import { realpathSync, statSync } from 'node:fs'
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { runInEnvironment, type PhiPlatform, type RunResult } from '../envs'
+import { applyOverrides } from '../envs/project-environments'
 import type { ValidatedSkill } from './skill'
 import { describeEnvironment, readyEnvironment, resolveSkillEnvironment } from './environment-refs'
 
@@ -47,8 +48,10 @@ export async function runSkillScript(input: RunSkillScriptInput): Promise<SkillR
   const interpreter = interpreterFor(input.script)
   const cwd = resolveProjectCwd(input.projectDir, input.cwd)
   const choice = resolveSkillEnvironment(input.skill, input.sessionEnvironment)
-  const descriptor = describeEnvironment(choice.ref, {
+  const applied = applyOverrides(choice.ref, input.projectDir)
+  const descriptor = describeEnvironment(applied.ref, {
     skill: input.skill,
+    projectDir: input.projectDir,
     environmentsDir: input.environmentsDir,
     platform: input.platform
   })
@@ -59,7 +62,7 @@ export async function runSkillScript(input: RunSkillScriptInput): Promise<SkillR
     onOutput: input.onOutput,
     timeoutMs: input.timeoutMs
   })
-  return toSkillRunResult(run, choice.warnings)
+  return toSkillRunResult(run, [...choice.warnings, ...applied.warnings])
 }
 
 function interpreterFor(script: string): string {

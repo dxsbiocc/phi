@@ -57,15 +57,16 @@ export function rewriteBoundBashInput(
   }
 }
 
-export function createEnvironmentBindingExtension({
-  ref,
-  variables,
-  hostEnv = process.env
-}: EnvironmentBinding): ExtensionFactory {
+export function createEnvironmentBindingExtension(binding: EnvironmentBinding): ExtensionFactory {
   return (pi) => {
     pi.on('tool_call', (event) => {
       if (event.toolName !== 'bash') return undefined
-      const input = rewriteBoundBashInput(event.input, { ref, variables, hostEnv })
+      // Read the holder on every call so `env_request` can swap ref and variables.
+      const input = rewriteBoundBashInput(event.input, {
+        ref: binding.ref,
+        variables: binding.variables,
+        hostEnv: binding.hostEnv ?? process.env
+      })
       return input ? { input } : undefined
     })
   }
