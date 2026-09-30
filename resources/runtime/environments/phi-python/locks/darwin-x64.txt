@@ -3,6 +3,7 @@
 # platform: darwin-x64 (osx-64)
 # micromamba: 2.9.0
 # baseline: osx 10.15
+# download-bytes: 723698280
 @EXPLICIT
 https://conda.anaconda.org/bioconda/noarch/harmonypy-0.2.0-pyhdfd78af_0.conda#15bd54b9e0ca16fffb49113ef8a37fb9
 https://conda.anaconda.org/bioconda/osx-64/bbknn-1.6.0-py312h6e7b26e_5.conda#ca94c8035d59f06b1a07f3943119a811

@@ -65,7 +65,10 @@ const STRICT_FORBIDDEN = new Set([
   'else'
 ])
 
-export function buildSkillRunTool(request: SkillHostRequest): CustomTool {
+export function buildSkillRunTool(
+  request: SkillHostRequest,
+  runtimeSessionId?: string
+): CustomTool {
   return {
     name: 'skill_run',
     label: 'Run Skill Script',
@@ -74,14 +77,15 @@ export function buildSkillRunTool(request: SkillHostRequest): CustomTool {
     approval: 'exec',
     parameters: SKILL_RUN_PARAMETERS,
     async execute(_toolCallId, params, _onUpdate, ctx, signal) {
-      return runSkillTool(request, params, ctx.sessionManager.getCwd(), signal)
+      return runSkillTool(request, params, ctx.sessionManager.getCwd(), signal, runtimeSessionId)
     }
   }
 }
 
 export function buildScriptTools(
   descriptors: readonly ScriptToolDescriptor[],
-  request: SkillHostRequest
+  request: SkillHostRequest,
+  runtimeSessionId?: string
 ): CustomTool[] {
   return descriptors.map((descriptor) => {
     const tool: CustomTool = {
@@ -96,7 +100,8 @@ export function buildScriptTools(
           descriptor.name,
           params,
           ctx.sessionManager.getCwd(),
-          signal
+          signal,
+          runtimeSessionId
         )
       }
     }
@@ -109,7 +114,8 @@ async function runSkillTool(
   request: SkillHostRequest,
   params: unknown,
   cwd: string,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  runtimeSessionId?: string
 ): Promise<ToolResult> {
   const input = isRecord(params) ? params : {}
   const skill = typeof input.skill === 'string' ? input.skill : ''
@@ -126,6 +132,7 @@ async function runSkillTool(
   const body: Record<string, unknown> = { requestId, cwd, skill, script }
   if (isStringArray(input.args)) body.args = input.args
   if (typeof input.cwd === 'string') body.runCwd = input.cwd
+  if (runtimeSessionId) body.runtimeSessionId = runtimeSessionId
 
   try {
     const result = await callHost(request, 'skills.run', body, signal)
@@ -153,14 +160,21 @@ async function runScriptToolCall(
   tool: string,
   params: unknown,
   cwd: string,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  runtimeSessionId?: string
 ): Promise<ToolResult> {
   const requestId = randomUUID()
   try {
     const result = await callHost(
       request,
       'skills.scriptTool',
-      { requestId, cwd, tool, args: params ?? {} },
+      {
+        requestId,
+        cwd,
+        tool,
+        args: params ?? {},
+        ...(runtimeSessionId ? { runtimeSessionId } : {})
+      },
       signal
     )
     if (isScriptSuccess(result)) {

@@ -251,3 +251,22 @@ test('script tools copy the descriptor and set strict only for a compatible sche
   assert.equal(error.isError, true)
   assert.equal(textOf(error), 'disk full')
 })
+
+test('skill tools send the worker runtimeSessionId', async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+  const request: SkillHostRequest = async (method, params) => {
+    calls.push({ method, params: params as Record<string, unknown> })
+    if (method === 'skills.scriptTool') {
+      return { ok: true, output: { value: 1 }, envId: 'env-1', warnings: [] }
+    }
+    return skillRun()
+  }
+  await execute(buildSkillRunTool(request, 'runtime-1'), { skill: 'echo', script: 'run.py' })
+  await execute(buildScriptTools([descriptor()], request, 'runtime-1')[0] as CustomTool, {
+    message: 'hi'
+  })
+  assert.equal(calls[0]?.method, 'skills.run')
+  assert.equal(calls[0]?.params.runtimeSessionId, 'runtime-1')
+  assert.equal(calls[1]?.method, 'skills.scriptTool')
+  assert.equal(calls[1]?.params.runtimeSessionId, 'runtime-1')
+})

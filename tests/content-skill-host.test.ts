@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
 import { describeEnvironment, validateSkill } from '../src/main/agent/content'
-import { createSkillHost, type SkillHost } from '../src/main/agent/content/skill-host'
-import { currentPlatform } from '../src/main/agent/envs'
+import type { EnvironmentBuilds } from '../src/main/agent/content/environment-builds'
+import {
+  createSkillHost,
+  type ConfirmBuildRequest,
+  type SkillHost
+} from '../src/main/agent/content/skill-host'
+import { currentPlatform, type EnvHandle, type PhiPlatform } from '../src/main/agent/envs'
+import type { EnvironmentBuild } from '../src/shared/environmentBuildTypes'
 import { argvShell, copyMinimal, envIdFor, installReady, shell } from './helpers/fakeEnvironment'
 
 function skillMarkdown(options: {
@@ -71,7 +77,15 @@ function writeSkill(root: string, name: string, markdown: string, scriptFile: st
 
 async function withFixture(
   body: (fixture: Fixture) => Promise<void>,
-  options: { ready?: boolean } = {}
+  options: {
+    ready?: boolean
+    builds?: (ctx: {
+      root: string
+      environmentsDir: string
+      platform: PhiPlatform
+    }) => EnvironmentBuilds
+    confirmBuild?: (request: ConfirmBuildRequest) => Promise<boolean>
+  } = {}
 ): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'phi-skill-host-'))
   try {
@@ -168,7 +182,9 @@ async function withFixture(
       runtimeRoot: root,
       environmentsDir,
       platform,
-      listSkillDirs: async () => dirs
+      listSkillDirs: async () => dirs,
+      ...(options.builds ? { builds: options.builds({ root, environmentsDir, platform }) } : {}),
+      ...(options.confirmBuild ? { confirmBuild: options.confirmBuild } : {})
     })
     await body({ root, projectDir, environmentsDir, dirs, host })
   } finally {
@@ -328,5 +344,308 @@ test('skills.cancel aborts a sleeping script', { timeout: 20_000 }, async () => 
       assert.equal(result.exitCode, null)
     },
     { ready: true }
+  )
+})
+
+function buildingRecord(envId: string): EnvironmentBuild {
+  return {
+    envId,
+    ref: 'phi:python@1',
+    state: 'building',
+    phase: 'create',
+    message: 'downloading',
+    startedAt: '2026-09-30T00:00:00.000Z',
+    estimate: { packages: 2, cachedPackages: 0, downloadBytes: 100, remainingBytes: 100 },
+    progress: { packagesDone: 0, packages: 2, bytesDone: 0, bytesTotal: 100 }
+  }
+}
+
+function handleFor(root: string, envId: string): EnvHandle {
+  const metadata = JSON.parse(
+    readFileSync(join(root, 'envs', envId, '.phi', 'env.json'), 'utf8')
+  ) as EnvHandle['metadata']
+  return { envId, prefix: join(root, 'envs', envId), metadata }
+}
+
+function installPython(root: string, spec: Parameters<EnvironmentBuilds['start']>[0]): EnvHandle {
+  const printer = join(root, 'print-argv.cjs')
+  writeFileSync(
+    printer,
+    'process.stdout.write(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n")\n'
+  )
+  const envId = installReady(root, spec, {
+    python: argvShell(process.execPath, printer, join(root, 'ran'))
+  })
+  return handleFor(root, envId)
+}
+
+test('a running build is joined without asking again', async () => {
+  let confirmed = false
+  let started: () => void = () => undefined
+  const startedPromise = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  let finish: () => void = () => undefined
+  await withFixture(
+    async ({ host, projectDir }) => {
+      const pending = host.run({
+        requestId: 'join-1',
+        cwd: projectDir,
+        skill: 'echo',
+        script: 'echo.py',
+        runtimeSessionId: 'runtime-1'
+      })
+      await startedPromise
+      assert.equal(confirmed, false)
+      finish()
+      const result = await pending
+      assert.equal(isNotReady(result), false)
+      if (isNotReady(result)) return
+      assert.equal(result.exitCode, 0)
+    },
+    {
+      confirmBuild: async () => {
+        confirmed = true
+        return true
+      },
+      builds: ({ root, environmentsDir, platform }) => {
+        const spec = describeEnvironment('phi:python@1', { environmentsDir, platform })
+        return {
+          list: () => [buildingRecord(envIdFor(spec))],
+          cancel() {
+            throw new Error('the running build must keep going')
+          },
+          start(next) {
+            return new Promise((resolve) => {
+              finish = () => resolve(installPython(root, next))
+              started()
+            })
+          }
+        }
+      }
+    }
+  )
+})
+
+test('confirming a build installs the environment and runs the script', async () => {
+  const starts: string[] = []
+  await withFixture(
+    async ({ host, projectDir }) => {
+      const result = await host.run({
+        requestId: 'build-1',
+        cwd: projectDir,
+        skill: 'echo',
+        script: 'echo.py',
+        args: ['--limit', '2'],
+        runtimeSessionId: 'runtime-1'
+      })
+      assert.equal(isNotReady(result), false)
+      if (isNotReady(result)) return
+      assert.equal(result.exitCode, 0)
+      assert.equal(starts.length, 1)
+
+      await host.scriptTools({ cwd: projectDir })
+      const tool = await host.scriptTool({
+        requestId: 'build-tool',
+        cwd: projectDir,
+        tool: 'echo_echo',
+        args: { message: 'hi' },
+        runtimeSessionId: 'runtime-1'
+      })
+      assert.equal(tool.ok, true)
+    },
+    {
+      confirmBuild: async (request) => {
+        assert.equal(request.runtimeSessionId, 'runtime-1')
+        assert.equal(request.ref, 'phi:python@1')
+        assert.equal(request.skill, 'echo')
+        assert.equal(typeof request.estimate.packages, 'number')
+        assert.ok(request.estimate.packages > 0)
+        return true
+      },
+      builds: ({ root }) => ({
+        list: () => [],
+        cancel() {
+          return undefined
+        },
+        async start(spec) {
+          starts.push(spec.ref)
+          return installPython(root, spec)
+        }
+      })
+    }
+  )
+})
+
+test('declining a build reports that the user declined', async () => {
+  await withFixture(
+    async ({ host, projectDir }) => {
+      const result = await host.run({
+        requestId: 'no-1',
+        cwd: projectDir,
+        skill: 'echo',
+        script: 'echo.py',
+        runtimeSessionId: 'runtime-1'
+      })
+      assert.equal(isNotReady(result), true)
+      if (!isNotReady(result)) return
+      assert.equal(
+        result.notReady.message,
+        'environment phi:python@1 is not built; the user declined to build it now'
+      )
+
+      await host.scriptTools({ cwd: projectDir })
+      const tool = await host.scriptTool({
+        requestId: 'no-tool',
+        cwd: projectDir,
+        tool: 'echo_echo',
+        args: { message: 'hi' },
+        runtimeSessionId: 'runtime-1'
+      })
+      assert.equal(tool.ok, false)
+      if (!tool.ok) {
+        assert.equal(
+          tool.error,
+          'environment phi:python@1 is not built; the user declined to build it now'
+        )
+      }
+    },
+    {
+      confirmBuild: async () => false,
+      builds: () => ({
+        list: () => [],
+        cancel() {
+          return undefined
+        },
+        start() {
+          throw new Error('declined builds must not start')
+        }
+      })
+    }
+  )
+})
+
+test('without runtimeSessionId the call stays not-ready and does not build', async () => {
+  let asked = false
+  await withFixture(
+    async ({ host, projectDir }) => {
+      const result = await host.run({
+        requestId: 'plain',
+        cwd: projectDir,
+        skill: 'echo',
+        script: 'echo.py'
+      })
+      assert.equal(isNotReady(result), true)
+      if (!isNotReady(result)) return
+      assert.match(result.notReady.message, /user must build it first/)
+      assert.equal(asked, false)
+
+      await host.scriptTools({ cwd: projectDir })
+      const tool = await host.scriptTool({
+        requestId: 'plain-tool',
+        cwd: projectDir,
+        tool: 'echo_echo',
+        args: { message: 'hi' }
+      })
+      assert.equal(tool.ok, false)
+      if (!tool.ok) assert.equal(tool.error, 'environment phi:python@1 is not ready')
+    },
+    {
+      confirmBuild: async () => {
+        asked = true
+        return true
+      },
+      builds: () => ({
+        list: () => [],
+        cancel() {
+          return undefined
+        },
+        start() {
+          throw new Error('must not build without a runtime session')
+        }
+      })
+    }
+  )
+})
+
+test('aborting while a build is awaited returns aborted and leaves the build running', async () => {
+  let cancelled = false
+  let started: () => void = () => undefined
+  const startedPromise = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  let finish: (() => void) | undefined
+  let continued = false
+  await withFixture(
+    async ({ host, projectDir }) => {
+      const pending = host.run({
+        requestId: 'abort-build',
+        cwd: projectDir,
+        skill: 'echo',
+        script: 'echo.py',
+        runtimeSessionId: 'runtime-1'
+      })
+      await startedPromise
+      host.cancel({ requestId: 'abort-build' })
+      const result = await pending
+      assert.equal(isNotReady(result), false)
+      if (isNotReady(result)) return
+      assert.equal(result.terminated, 'aborted')
+      assert.equal(cancelled, false)
+      assert.equal(continued, false)
+      finish?.()
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(continued, true)
+    },
+    {
+      confirmBuild: async () => true,
+      builds: ({ root }) => ({
+        list: () => [],
+        cancel() {
+          cancelled = true
+        },
+        start(spec) {
+          return new Promise((resolve) => {
+            finish = () => {
+              continued = true
+              resolve(installPython(root, spec))
+            }
+            started()
+          })
+        }
+      })
+    }
+  )
+})
+
+test('a failed build is returned as not-ready with the build error', async () => {
+  await withFixture(
+    async ({ host, projectDir }) => {
+      const result = await host.run({
+        requestId: 'fail-1',
+        cwd: projectDir,
+        skill: 'echo',
+        script: 'echo.py',
+        runtimeSessionId: 'runtime-1'
+      })
+      assert.equal(isNotReady(result), true)
+      if (!isNotReady(result)) return
+      assert.equal(
+        result.notReady.message,
+        'environment phi:python@1 is not ready; solver exploded'
+      )
+    },
+    {
+      confirmBuild: async () => true,
+      builds: () => ({
+        list: () => [],
+        cancel() {
+          return undefined
+        },
+        start() {
+          return Promise.reject(new Error('solver exploded'))
+        }
+      })
+    }
   )
 })

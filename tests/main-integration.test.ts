@@ -1601,6 +1601,23 @@ async function harness(
         approvalFor: () => undefined
       })
     },
+    './agent/content/environment-builds': {
+      createEnvironmentBuilds: (): {
+        list: () => unknown[]
+        cancel: (envId: string) => void
+      } => ({
+        list: () => [],
+        cancel: () => undefined
+      })
+    },
+    './agent/content/environment-build-prompt': {
+      BUILD_NOW: '现在构建',
+      confirmedEnvironmentBuild: (): boolean => false,
+      environmentBuildQuestion: (): string => 'build?'
+    },
+    './agent/envs/runtime': {
+      getRuntimeRoot: (): string => '/isolated/runtime'
+    },
     './agent/tool-approval': {
       bashApprovalDigest: fakeBashApprovalDigest,
       writeApprovalDigest: fakeWriteApprovalDigest,

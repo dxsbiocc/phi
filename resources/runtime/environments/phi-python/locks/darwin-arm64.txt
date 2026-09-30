@@ -3,6 +3,7 @@
 # platform: darwin-arm64 (osx-arm64)
 # micromamba: 2.9.0
 # baseline: osx 11.0
+# download-bytes: 539211500
 @EXPLICIT
 https://conda.anaconda.org/bioconda/osx-arm64/bbknn-1.6.0-py312hab1d7d9_5.conda#a34cbe23bf180516d65b769cd01ec181
 https://conda.anaconda.org/bioconda/osx-arm64/harmonypy-2.0.2-py312h3e2f3f5_0.conda#3568a7ec72ff61ee4a7f3b5feaa0d0c4

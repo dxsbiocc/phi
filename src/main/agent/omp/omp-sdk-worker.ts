@@ -921,12 +921,13 @@ async function createPhiAgentSession(
     sessionId,
     agentDir,
     definition.name,
-    deps.skillTools ? buildSkillRunTool(requestHost) : undefined
+    deps.skillTools ? buildSkillRunTool(requestHost, sessionId) : undefined
   )
   for (const tool of deps.remoteTools?.() ?? []) availableTools.set(tool.name, tool)
   const attachedScriptTools = buildScriptTools(
     (deps.skillTools ?? []).filter((tool) => tool.attachTo.includes(definition.name)),
-    requestHost
+    requestHost,
+    sessionId
   )
   for (const tool of attachedScriptTools) availableTools.set(tool.name, tool)
   const declaredTools =
@@ -1305,10 +1306,11 @@ async function createSession(params: unknown): Promise<unknown> {
     ...userInteractionCustomTools,
     ...(skillTools
       ? [
-          buildSkillRunTool(requestHost),
+          buildSkillRunTool(requestHost, sessionId),
           ...buildScriptTools(
             skillTools.filter((tool) => tool.attachTo.includes('main')),
-            requestHost
+            requestHost,
+            sessionId
           )
         ]
       : [])

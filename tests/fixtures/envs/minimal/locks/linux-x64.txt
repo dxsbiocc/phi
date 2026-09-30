@@ -3,6 +3,7 @@
 # platform: linux-x64 (linux-64)
 # micromamba: 2.9.0
 # baseline: glibc 2.17, linux 4.18
+# download-bytes: 67844247
 @EXPLICIT
 https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda#a9f577daf3de00bca7c3c76c0ecbd1de
 https://conda.anaconda.org/conda-forge/linux-64/bzip2-1.0.8-hda65f42_10.conda#e675fabcf81499adc7edf58124fb1e01

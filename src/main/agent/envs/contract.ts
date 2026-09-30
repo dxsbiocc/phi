@@ -199,6 +199,20 @@ export function lockSha256(text: string): string {
   return createHash('sha256').update(normalizeLockText(text), 'utf8').digest('hex')
 }
 
+const DOWNLOAD_BYTES = /^# download-bytes: ([0-9]+)$/
+
+/** Bytes recorded by `scripts/runtime/lock-env.ts`, or `undefined` when the header is absent. */
+export function parseLockDownloadBytes(lockText: string): number | undefined {
+  for (const raw of lockLines(lockText)) {
+    const match = DOWNLOAD_BYTES.exec(raw.trim())
+    if (!match) continue
+    const bytes = Number(match[1])
+    if (!Number.isSafeInteger(bytes)) return undefined
+    return bytes
+  }
+  return undefined
+}
+
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((item) => canonicalJson(item)).join(',')}]`

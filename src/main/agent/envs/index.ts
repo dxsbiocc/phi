@@ -14,7 +14,8 @@ export {
   normalizeLockText,
   parseEnvironmentRef,
   parseEnvironmentSpec,
-  parseExplicitLock
+  parseExplicitLock,
+  parseLockDownloadBytes
 } from './contract'
 
 export type {

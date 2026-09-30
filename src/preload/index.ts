@@ -67,6 +67,7 @@ import type {
   EnvironmentSnapshot,
   EnvironmentToolId
 } from '../shared/environmentTypes'
+import type { EnvironmentBuild } from '../shared/environmentBuildTypes'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
@@ -913,6 +914,9 @@ type RendererAuthApi = {
   getWrapperCompositionDag: (id: string) => Promise<string | undefined>
   getWrapperCompositionModuleDetails: (id: string) => Promise<WrapperModuleDetails | undefined>
   listWrapperRuns: () => Promise<WrapperRun[]>
+  listEnvironmentBuilds: () => Promise<EnvironmentBuild[]>
+  cancelEnvironmentBuild: (envId: string) => Promise<void>
+  onEnvironmentBuildsChanged: (cb: (build: EnvironmentBuild) => void) => Unsubscribe
   listAgentJobs: () => Promise<BackgroundAgentJob[]>
   getWrapperRun: (runId: string) => Promise<WrapperRun | undefined>
   cancelWrapperRun: (runId: string) => Promise<WrapperRun>
@@ -1280,6 +1284,19 @@ const api: RendererAuthApi = {
     ipcRenderer.on('wrappers:runsChanged', handler)
     return () => {
       ipcRenderer.removeListener('wrappers:runsChanged', handler)
+    }
+  },
+  listEnvironmentBuilds: (): Promise<EnvironmentBuild[]> =>
+    ipcRenderer.invoke('environmentBuilds:list'),
+  cancelEnvironmentBuild: (envId: string): Promise<void> =>
+    ipcRenderer.invoke('environmentBuilds:cancel', envId),
+  onEnvironmentBuildsChanged: (cb: (build: EnvironmentBuild) => void): Unsubscribe => {
+    const handler = (_: unknown, build: EnvironmentBuild): void => {
+      cb(build)
+    }
+    ipcRenderer.on('environmentBuilds:changed', handler)
+    return () => {
+      ipcRenderer.removeListener('environmentBuilds:changed', handler)
     }
   },
   onAnalysisNotebookFileChanged: (

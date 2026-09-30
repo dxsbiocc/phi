@@ -61,6 +61,7 @@ import type {
   EnvironmentSnapshot,
   EnvironmentToolId
 } from '../shared/environmentTypes'
+import type { EnvironmentBuild } from '../shared/environmentBuildTypes'
 
 type PreloadSessionSummary = {
   path: string
@@ -1001,6 +1002,9 @@ declare global {
       getWrapperCompositionDag: (id: string) => Promise<string | undefined>
       getWrapperCompositionModuleDetails: (id: string) => Promise<WrapperModuleDetails | undefined>
       listWrapperRuns: () => Promise<WrapperRun[]>
+      listEnvironmentBuilds: () => Promise<EnvironmentBuild[]>
+      cancelEnvironmentBuild: (envId: string) => Promise<void>
+      onEnvironmentBuildsChanged: (cb: (build: EnvironmentBuild) => void) => () => void
       listAgentJobs: () => Promise<BackgroundAgentJob[]>
       getWrapperRun: (runId: string) => Promise<WrapperRun | undefined>
       cancelWrapperRun: (runId: string) => Promise<WrapperRun>

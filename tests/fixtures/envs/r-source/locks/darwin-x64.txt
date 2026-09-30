@@ -3,6 +3,7 @@
 # platform: darwin-x64 (osx-64)
 # micromamba: 2.9.0
 # baseline: osx 10.15
+# download-bytes: 185764416
 @EXPLICIT
 https://conda.anaconda.org/conda-forge/noarch/_r-mutex-1.0.1-anacondar_1.tar.bz2#19f9db5f4f1b7f5ef5f6d67207f25f38
 https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.7.22-hbd8a1cb_0.conda#0f51e2391ade309db462a55611263e9c

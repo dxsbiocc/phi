@@ -137,7 +137,14 @@ import {
   resolveToolApproval,
   writeApprovalDigest
 } from './agent/tool-approval'
-import { createSkillHost } from './agent/content/skill-host'
+import { createEnvironmentBuilds } from './agent/content/environment-builds'
+import { createSkillHost, type ConfirmBuildRequest } from './agent/content/skill-host'
+import { getRuntimeRoot } from './agent/envs/runtime'
+import {
+  BUILD_NOW,
+  confirmedEnvironmentBuild,
+  environmentBuildQuestion
+} from './agent/content/environment-build-prompt'
 import {
   canRequestAgentUserInteraction,
   cancelAgentUserInteractions,
@@ -824,11 +831,19 @@ const notebookFileWatcher = new AnalysisNotebookFileWatcher({
 getOmpBridge().registerHostHandler('notebookTool.execute', (params) =>
   notebookToolExecutor.execute(params as Parameters<typeof notebookToolExecutor.execute>[0])
 )
+const environmentBuilds = createEnvironmentBuilds({
+  root: getRuntimeRoot(),
+  onChange: (build) => {
+    sendToAllWindows('environmentBuilds:changed', build)
+  }
+})
 const skillHost = createSkillHost({
   listSkillDirs: async (cwd) => {
     const skills = await listSkills(cwd)
     return skills.map((skill) => dirname(skill.filePath))
-  }
+  },
+  builds: environmentBuilds,
+  confirmBuild: (request) => confirmEnvironmentBuild(request)
 })
 getOmpBridge().registerHostHandler('skills.scriptTools', (params) => skillHost.scriptTools(params))
 getOmpBridge().registerHostHandler('skills.run', (params) => skillHost.run(params))
@@ -1295,6 +1310,27 @@ function handlePresentFilesRequest(params: unknown): {
   })
   broadcastSessionTimelineEvent(run.phiSessionId, stored)
   return { files }
+}
+
+async function confirmEnvironmentBuild(request: ConfirmBuildRequest): Promise<boolean> {
+  try {
+    const response = await handleAgentInteractionRequest({
+      runtimeSessionId: request.runtimeSessionId,
+      questions: [
+        {
+          header: '环境',
+          question: environmentBuildQuestion(request),
+          options: [
+            { label: BUILD_NOW, description: '下载并安装这个环境' },
+            { label: '暂不', description: '这次先不安装' }
+          ]
+        }
+      ]
+    })
+    return confirmedEnvironmentBuild(response)
+  } catch {
+    return false
+  }
 }
 
 async function handleAgentInteractionRequest(params: unknown): Promise<unknown> {
@@ -7306,6 +7342,11 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('wrappers:listRuns', async () => listWrapperRuns())
+  ipcMain.handle('environmentBuilds:list', () => environmentBuilds.list())
+  ipcMain.handle('environmentBuilds:cancel', (_event, envId: unknown) => {
+    if (typeof envId !== 'string' || envId.length === 0) throw new Error('envId is required')
+    environmentBuilds.cancel(envId)
+  })
   ipcMain.handle('jobs:listAgents', listBackgroundAgentJobs)
   ipcMain.handle('wrappers:getRun', async (_, runId: string) => readWrapperRun(runId))
   ipcMain.handle('wrappers:cancelRun', async (_, runId: string) => {
