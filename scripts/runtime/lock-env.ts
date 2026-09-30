@@ -20,7 +20,29 @@ import {
   type CondaDependency,
   type PhiPlatform
 } from '../../src/main/agent/envs/contract'
-import { ensureRuntimeLayout, runMicromamba, writeMambarc } from '../../src/main/agent/envs/runtime'
+import {
+  ensureRuntimeLayout,
+  runMicromamba,
+  writeMambarc,
+  type CondaOverrides
+} from '../../src/main/agent/envs/runtime'
+
+/**
+ * Oldest systems a lock must support, used as virtual-package overrides so a lock does not
+ * depend on the machine that solved it (and so a macOS host can solve linux-64 at all:
+ * it has no glibc). glibc 2.17 matches the offline HPC clusters Phi targets.
+ */
+export const PLATFORM_BASELINES: Record<PhiPlatform, CondaOverrides> = {
+  'linux-x64': { glibc: '2.17', linux: '4.18' },
+  'darwin-arm64': { osx: '11.0' },
+  'darwin-x64': { osx: '10.15' }
+}
+
+export function baselineLabel(platform: PhiPlatform): string {
+  return Object.entries(PLATFORM_BASELINES[platform])
+    .map(([key, value]) => `${key} ${value}`)
+    .join(', ')
+}
 
 const SOLVE_ATTEMPTS = 3
 const SOLVE_TIMEOUT_MS = 300_000
@@ -65,6 +87,7 @@ export function explicitLockFromDryRun(json: unknown, meta: ExplicitLockMeta): s
     `# spec: ${meta.specPath}`,
     `# platform: ${meta.platform} (${meta.subdir})`,
     `# micromamba: ${meta.micromambaVersion}`,
+    `# baseline: ${baselineLabel(meta.platform)}`,
     '@EXPLICIT',
     ...lines,
     ''
@@ -232,7 +255,11 @@ async function solveDryRun(
 ): Promise<unknown> {
   let lastError = `micromamba solve produced no error text for ${platform}`
   for (let attempt = 1; attempt <= SOLVE_ATTEMPTS; attempt += 1) {
-    const result = await runMicromamba(args, { root, timeoutMs: SOLVE_TIMEOUT_MS })
+    const result = await runMicromamba(args, {
+      root,
+      timeoutMs: SOLVE_TIMEOUT_MS,
+      condaOverrides: PLATFORM_BASELINES[platform]
+    })
     if (result.code === 0) {
       try {
         const json = parseSolverJson(result.stdout)

@@ -45,7 +45,12 @@ export {
   writeMambarc
 } from './runtime'
 
-export type { RunMicromambaOptions, RuntimeLayout, RuntimeSettings } from './runtime'
+export type {
+  CondaOverrides,
+  RunMicromambaOptions,
+  RuntimeLayout,
+  RuntimeSettings
+} from './runtime'
 
 export { captureActivation, diffActivation } from './activation'
 export type { ActivationSnapshot } from './activation'

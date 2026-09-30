@@ -390,3 +390,29 @@ test(
     })
   }
 )
+
+test('runMicromamba passes only validated CONDA_OVERRIDE_* variables', async () => {
+  await withTemp('overrides', async (root) => {
+    const executable = writeExecutable(
+      root,
+      [
+        '#!/bin/sh',
+        'printf \'%s|%s|%s\' "${CONDA_OVERRIDE_GLIBC-unset}" "${CONDA_OVERRIDE_OSX-unset}" "${CONDA_OVERRIDE_CUDA-unset}" > overrides.txt',
+        'exit 0',
+        ''
+      ].join('\n')
+    )
+    const result = await runMicromamba(['info'], {
+      root,
+      executable,
+      baseEnv: { CONDA_OVERRIDE_CUDA: '12.0' },
+      condaOverrides: { glibc: '2.17' }
+    })
+    assert.equal(result.code, 0)
+    assert.equal(readFileSync(join(root, 'overrides.txt'), 'utf8'), '2.17|unset|unset')
+    await assert.rejects(
+      runMicromamba(['info'], { root, executable, condaOverrides: { glibc: '2.17; rm -rf /' } }),
+      /invalid conda override/
+    )
+  })
+})

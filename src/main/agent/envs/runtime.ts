@@ -60,6 +60,17 @@ export interface RunMicromambaOptions {
   baseEnv?: NodeJS.ProcessEnv
   /** Defaults to `getMicromambaPath()`. Tests may pass a stub executable. */
   executable?: string
+  /**
+   * Virtual-package overrides for solving another platform (CONDA_OVERRIDE_GLIBC, …).
+   * A macOS host has no glibc, so a linux-64 cross-solve needs `glibc` set.
+   */
+  condaOverrides?: CondaOverrides
+}
+
+export interface CondaOverrides {
+  glibc?: string
+  linux?: string
+  osx?: string
 }
 
 export function getRuntimeRoot(agentDir = getPhiAgentDir()): string {
@@ -217,6 +228,19 @@ export async function runMicromamba(
   })
 }
 
+const VERSION = /^[0-9]+(\.[0-9]+){0,3}$/
+
+function condaOverrideVariables(overrides: CondaOverrides | undefined): Record<string, string> {
+  const variables: Record<string, string> = {}
+  if (!overrides) return variables
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) continue
+    if (!VERSION.test(value)) throw new Error(`invalid conda override ${key}=${value}`)
+    variables[`CONDA_OVERRIDE_${key.toUpperCase()}`] = value
+  }
+  return variables
+}
+
 function keptEnvName(name: string): boolean {
   return name.startsWith('LC_') || KEPT_ENV_NAMES.has(name)
 }
@@ -268,7 +292,10 @@ function spawnMicromamba(
   try {
     return spawn(executable, micromambaInvocationArgs(options.root, args), {
       cwd: options.root,
-      env: micromambaEnvironment(options.root, options.baseEnv ?? process.env),
+      env: {
+        ...micromambaEnvironment(options.root, options.baseEnv ?? process.env),
+        ...condaOverrideVariables(options.condaOverrides)
+      },
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe']
     })

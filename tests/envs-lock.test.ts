@@ -8,6 +8,8 @@ import { PHI_PLATFORMS, parseExplicitLock } from '../src/main/agent/envs'
 import { getMicromambaPath } from '../src/main/agent/envs/paths'
 import { findPlatform } from '../src/main/agent/envs/platform'
 import {
+  PLATFORM_BASELINES,
+  baselineLabel,
   explicitLockFromDryRun,
   lockEnvironment,
   refusePipDependencies,
@@ -79,6 +81,7 @@ test('explicitLockFromDryRun unions FETCH and LINK, dedupes, and sorts', () => {
       '# spec: tests/fixtures/envs/minimal/environment.yml',
       '# platform: darwin-arm64 (osx-arm64)',
       '# micromamba: 2.9.0',
+      '# baseline: osx 11.0',
       '@EXPLICIT',
       `${URL_CA}#${MD5_C}`,
       `${URL_PYTHON}#${MD5_A}`,
@@ -198,3 +201,13 @@ test(
     }
   }
 )
+
+test('every platform has a solve baseline and linux targets glibc 2.17', () => {
+  assert.deepEqual(Object.keys(PLATFORM_BASELINES).sort(), [
+    'darwin-arm64',
+    'darwin-x64',
+    'linux-x64'
+  ])
+  assert.equal(PLATFORM_BASELINES['linux-x64'].glibc, '2.17')
+  assert.equal(baselineLabel('linux-x64'), 'glibc 2.17, linux 4.18')
+})
