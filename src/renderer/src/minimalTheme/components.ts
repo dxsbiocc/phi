@@ -58,10 +58,44 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
         root: ({ theme }) => ({
           boxShadow: 'none',
           border: `1px solid ${theme.palette.divider}`,
-          borderRadius: 8,
+          // Connected stacking: only the outer ends are rounded.
+          borderRadius: 0,
+          '&:first-of-type': {
+            borderTopLeftRadius: 12,
+            borderTopRightRadius: 12
+          },
+          '&:last-of-type': {
+            borderBottomLeftRadius: 12,
+            borderBottomRightRadius: 12
+          },
+          '&:not(:last-child)': { borderBottom: 0 },
           '&:before': { display: 'none' },
           '&.Mui-expanded': { margin: 0 }
         })
+      }
+    },
+    MuiAccordionSummary: {
+      styleOverrides: {
+        root: ({ theme }) => ({
+          minHeight: 48,
+          padding: '0 16px',
+          borderRadius: 'inherit',
+          transition: theme.transitions.create(['background-color']),
+          '&:hover': { backgroundColor: theme.palette.action.hover },
+          '&.Mui-expanded': { minHeight: 48 }
+        }),
+        content: {
+          margin: '12px 0',
+          '&.Mui-expanded': { margin: '12px 0' }
+        },
+        expandIconWrapper: ({ theme }) => ({
+          color: theme.palette.action.active
+        })
+      }
+    },
+    MuiAccordionDetails: {
+      styleOverrides: {
+        root: { padding: '0 16px 16px' }
       }
     },
 

@@ -10,9 +10,6 @@ import {
   type RefObject
 } from 'react'
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -35,6 +32,10 @@ import {
 } from '@mui/material'
 import { alpha, type Theme } from '@mui/material/styles'
 import MarkdownContent from '../../components/MarkdownContent'
+import {
+  SidebarAccordionGroup,
+  SIDEBAR_GROUP_HEADER_HEIGHT
+} from '../../components/SidebarAccordionGroup'
 import { PhiIcons } from '../../icons'
 import type { SkillSourceCategory, SkillSummary } from '../../types'
 import { skillMarkdownBody } from './lib/skillMarkdown'
@@ -43,7 +44,6 @@ const SkillIcon = PhiIcons.entity.skill
 const SearchIcon = PhiIcons.action.search
 const SystemBuiltInIcon = PhiIcons.state.verified
 const DeleteIcon = PhiIcons.action.delete
-const ExpandIcon = PhiIcons.action.expand
 
 type SidebarWidth = number | string
 
@@ -100,7 +100,6 @@ const skillScopeLabels: Record<SkillSummary['scope'], string> = {
   project: '项目',
   temporary: '临时'
 }
-const SKILL_ACCORDION_HEADER_HEIGHT = 34
 const SKILL_LIST_VERTICAL_PADDING = 16
 const SKILL_EXPANDED_BODY_MIN_HEIGHT = 96
 const validSkillSourceCategories = new Set<SkillSourceCategory>(skillSourceCategoryOrder)
@@ -232,7 +231,7 @@ function useExpandedSkillBodyMaxHeight(
 
   return Math.max(
     SKILL_EXPANDED_BODY_MIN_HEIGHT,
-    listHeight - groupCount * SKILL_ACCORDION_HEADER_HEIGHT - SKILL_LIST_VERTICAL_PADDING
+    listHeight - groupCount * SIDEBAR_GROUP_HEADER_HEIGHT - SKILL_LIST_VERTICAL_PADDING
   )
 }
 
@@ -581,128 +580,80 @@ export function SkillSidebar({
           </Stack>
         ) : skillSections.length > 0 ? (
           skillSections.map((section) => (
-            <Accordion
+            <SidebarAccordionGroup
               key={section.category}
               expanded={section.category === expandedCategory}
-              onChange={(_event, isExpanded) => handleExpandedChange(section.category, isExpanded)}
-              disableGutters
-              elevation={0}
-              slotProps={{
-                transition: { timeout: { enter: 200, exit: 120 } }
-              }}
-              sx={{
-                bgcolor: 'transparent',
-                border: 0,
-                '&::before': { display: 'none' }
-              }}
+              onExpandedChange={(isExpanded) => handleExpandedChange(section.category, isExpanded)}
+              title={section.label}
+              count={section.skills.length}
+              leading={
+                <Box
+                  sx={{
+                    width: 7,
+                    height: 7,
+                    mr: 0.75,
+                    borderRadius: 999,
+                    bgcolor: skillSourceCategoryMarkerColors[section.category],
+                    flexShrink: 0
+                  }}
+                />
+              }
+              titleExtras={
+                section.category === 'system' ? (
+                  <SystemBuiltInIcon
+                    title="系统内置"
+                    size={14}
+                    sx={{ color: 'info.main', flexShrink: 0, ml: 0.5 }}
+                  />
+                ) : null
+              }
+              expandedBodyMaxHeight={expandedBodyMaxHeight}
             >
-              <AccordionSummary
-                expandIcon={<ExpandIcon fontSize="small" />}
-                sx={{
-                  height: SKILL_ACCORDION_HEADER_HEIGHT,
-                  minHeight: `${SKILL_ACCORDION_HEADER_HEIGHT}px !important`,
-                  px: 2,
-                  py: 0,
-                  WebkitAppRegion: 'no-drag',
-                  '& .MuiAccordionSummary-content': {
-                    alignItems: 'center',
-                    my: 0.5,
-                    minWidth: 0
-                  }
-                }}
-              >
-                <Stack
-                  direction="row"
-                  spacing={0.75}
-                  sx={{ alignItems: 'center', minWidth: 0, width: '100%' }}
+              {section.skills.map((skill) => (
+                <ListItemButton
+                  key={skill.id}
+                  selected={selectedSkill?.id === skill.id}
+                  onClick={() => onSelectSkill(skill)}
+                  sx={plainSidebarRowSx}
                 >
                   <Box
                     sx={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: 999,
-                      bgcolor: skillSourceCategoryMarkerColors[section.category],
+                      width: 46,
+                      height: 46,
+                      mr: 1.5,
+                      borderRadius: 1.75,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      bgcolor: skill.disabled ? 'background.paper' : 'primary.main',
+                      border: skill.disabled ? 1 : 0,
+                      borderColor: 'divider',
+                      color: skill.disabled ? 'text.secondary' : 'primary.contrastText',
                       flexShrink: 0
                     }}
-                  />
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ display: 'block', fontWeight: 800, letterSpacing: 0 }}
                   >
-                    {section.label}
-                  </Typography>
-                  {section.category === 'system' ? (
-                    <SystemBuiltInIcon
-                      title="系统内置"
-                      size={14}
-                      sx={{ color: 'info.main', flexShrink: 0 }}
-                    />
-                  ) : null}
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ display: 'block', ml: 'auto !important', fontWeight: 700 }}
-                  >
-                    {section.skills.length}
-                  </Typography>
-                </Stack>
-              </AccordionSummary>
-              <AccordionDetails
-                sx={{
-                  p: 0,
-                  WebkitAppRegion: 'no-drag',
-                  ...(section.category === expandedCategory
-                    ? { maxHeight: expandedBodyMaxHeight, overflowY: 'auto' }
-                    : {})
-                }}
-              >
-                {section.skills.map((skill) => (
-                  <ListItemButton
-                    key={skill.id}
-                    selected={selectedSkill?.id === skill.id}
-                    onClick={() => onSelectSkill(skill)}
-                    sx={plainSidebarRowSx}
-                  >
-                    <Box
-                      sx={{
-                        width: 46,
-                        height: 46,
-                        mr: 1.5,
-                        borderRadius: 1.75,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        bgcolor: skill.disabled ? 'background.paper' : 'primary.main',
-                        border: skill.disabled ? 1 : 0,
-                        borderColor: 'divider',
-                        color: skill.disabled ? 'text.secondary' : 'primary.contrastText',
-                        flexShrink: 0
-                      }}
+                    <SkillIcon sx={{ fontSize: 28 }} />
+                  </Box>
+                  <Box sx={{ minWidth: 0, flex: 1 }}>
+                    <Typography
+                      noWrap
+                      title={skill.name}
+                      sx={{ fontSize: '0.92rem', fontWeight: 700, lineHeight: 1.25 }}
                     >
-                      <SkillIcon sx={{ fontSize: 28 }} />
-                    </Box>
-                    <Box sx={{ minWidth: 0, flex: 1 }}>
-                      <Typography
-                        noWrap
-                        title={skill.name}
-                        sx={{ fontSize: '0.92rem', fontWeight: 700, lineHeight: 1.25 }}
-                      >
-                        {skill.name}
-                      </Typography>
-                      <Typography
-                        noWrap
-                        title={skill.description || sourceLabel(skill)}
-                        color="text.secondary"
-                        sx={{ mt: 0.25, fontSize: '0.84rem', lineHeight: 1.25 }}
-                      >
-                        {skill.description || '这个技能没有提供说明。'}
-                      </Typography>
-                    </Box>
-                  </ListItemButton>
-                ))}
-              </AccordionDetails>
-            </Accordion>
+                      {skill.name}
+                    </Typography>
+                    <Typography
+                      noWrap
+                      title={skill.description || sourceLabel(skill)}
+                      color="text.secondary"
+                      sx={{ mt: 0.25, fontSize: '0.84rem', lineHeight: 1.25 }}
+                    >
+                      {skill.description || '这个技能没有提供说明。'}
+                    </Typography>
+                  </Box>
+                </ListItemButton>
+              ))}
+            </SidebarAccordionGroup>
           ))
         ) : (
           <Stack spacing={1} sx={{ py: 4, alignItems: 'center' }}>

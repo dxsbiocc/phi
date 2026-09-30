@@ -1,7 +1,4 @@
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -50,11 +47,14 @@ import { WrapperFlowDiagram } from './components/WrapperFlowDiagram'
 import { WrapperRunResultActions } from './components/WrapperRunResultActions'
 import { WrapperExecutionTargetControl } from './components/WrapperExecutionTargetControl'
 import { useWrapperCatalog } from './hooks/useWrapperCatalog'
+import {
+  SidebarAccordionGroup,
+  SIDEBAR_GROUP_HEADER_HEIGHT
+} from '../../components/SidebarAccordionGroup'
 
 const RefreshIcon = PhiIcons.action.refresh
 const ExportIcon = PhiIcons.action.download
 const WrapperEntityIcon = PhiIcons.entity.wrapper
-const ExpandIcon = PhiIcons.action.expand
 
 type SidebarWidth = number | string
 
@@ -277,11 +277,10 @@ function groupByTier(
 const DEFAULT_VISIBLE_ENTRY_COUNT = 20
 const LOAD_MORE_STEP = 20
 
-// Each AccordionSummary header is given exactly this height (not just a
-// `minHeight` — collapsed groups must be a known, fixed size so the
-// remaining space available to the expanded group's body can be computed
-// precisely; see `useExpandedBodyMaxHeight`).
-const ACCORDION_HEADER_HEIGHT = 34
+// Header height lives in the shared SidebarAccordionGroup — collapsed groups
+// must be a known, fixed size so the remaining space available to the
+// expanded group's body can be computed precisely (see
+// `useExpandedBodyMaxHeight`).
 // Matches the outer List's `py: 1` (MUI spacing unit is 8px), which eats
 // into the space available to the expanded group's body.
 const LIST_VERTICAL_PADDING = 16
@@ -314,7 +313,7 @@ function useExpandedBodyMaxHeight(
 
   return Math.max(
     EXPANDED_BODY_MIN_HEIGHT,
-    listHeight - groupCount * ACCORDION_HEADER_HEIGHT - LIST_VERTICAL_PADDING
+    listHeight - groupCount * SIDEBAR_GROUP_HEADER_HEIGHT - LIST_VERTICAL_PADDING
   )
 }
 
@@ -396,157 +395,119 @@ function WrapperTierGroupAccordion({
   const remainingCount = entries.length - visibleEntries.length
 
   return (
-    <Accordion
-      // Only one tier group is expanded at a time, and none of the three
-      // headers ever move — the sidebar's outer list does not scroll at
-      // all. The expanded group's own body is capped at a plain, measured
-      // `max-height` (see useExpandedBodyMaxHeight) with its own
-      // `overflow-y: auto`, so scrolling happens strictly inside that one
-      // box. This is deliberately NOT a flexbox/Collapse-internals trick —
-      // that fought MUI's own height animation and made content vanish.
+    // Only one tier group is expanded at a time, and none of the three
+    // headers ever move — the sidebar's outer list does not scroll at
+    // all. The expanded group's own body is capped at a plain, measured
+    // `max-height` (see useExpandedBodyMaxHeight) with its own
+    // `overflow-y: auto`, so scrolling happens strictly inside that one
+    // box. This is deliberately NOT a flexbox/Collapse-internals trick —
+    // that fought MUI's own height animation and made content vanish.
+    <SidebarAccordionGroup
       expanded={expanded}
-      onChange={(_event, isExpanded) => onExpandedChange(tier, isExpanded)}
-      disableGutters
-      elevation={0}
-      slotProps={{
-        transition: { timeout: { enter: 200, exit: 120 } }
-      }}
-      sx={{
-        bgcolor: 'transparent',
-        border: 0,
-        '&::before': { display: 'none' }
-      }}
+      onExpandedChange={(isExpanded) => onExpandedChange(tier, isExpanded)}
+      title={wrapperTierLabel(tier)}
+      count={entries.length}
+      expandedBodyMaxHeight={expandedBodyMaxHeight}
+      detailsRef={detailsRef}
     >
-      <AccordionSummary
-        expandIcon={<ExpandIcon fontSize="small" />}
-        sx={{
-          height: ACCORDION_HEADER_HEIGHT,
-          minHeight: `${ACCORDION_HEADER_HEIGHT}px !important`,
-          px: 2,
-          py: 0,
-          WebkitAppRegion: 'no-drag',
-          '& .MuiAccordionSummary-content': {
-            alignItems: 'center',
-            my: 0.5,
-            minWidth: 0
-          }
-        }}
-      >
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ display: 'block', fontWeight: 800, letterSpacing: 0 }}
-        >
-          {wrapperTierLabel(tier)} · {entries.length}
-        </Typography>
-      </AccordionSummary>
-      <AccordionDetails
-        ref={detailsRef}
-        sx={{
-          p: 0,
-          WebkitAppRegion: 'no-drag',
-          ...(expanded ? { maxHeight: expandedBodyMaxHeight, overflowY: 'auto' } : {})
-        }}
-      >
-        {entries.length === 0 ? (
-          <Box sx={{ px: 2, py: 1.5 }}>
-            <Typography variant="body2" color="text.disabled">
-              暂无{wrapperTierLabel(tier)} wrapper
-            </Typography>
-          </Box>
-        ) : null}
-        {visibleEntries.map((entry) => {
-          // The id's own name segment, not the author-chosen display name,
-          // is the trustworthy identifier — a manifest's `name` is free text
-          // and could be set to anything, including something misleading
-          // about which wrapper this actually is.
-          const { provider, name } = parseWrapperCompositionId(entry.id)
-          return (
-            <ListItemButton
-              key={entry.id}
-              selected={entry.id === selectedId}
-              onClick={() => onSelect(entry)}
-              sx={plainSidebarRowSx}
+      {entries.length === 0 ? (
+        <Box sx={{ px: 2, py: 1.5 }}>
+          <Typography variant="body2" color="text.disabled">
+            暂无{wrapperTierLabel(tier)} wrapper
+          </Typography>
+        </Box>
+      ) : null}
+      {visibleEntries.map((entry) => {
+        // The id's own name segment, not the author-chosen display name,
+        // is the trustworthy identifier — a manifest's `name` is free text
+        // and could be set to anything, including something misleading
+        // about which wrapper this actually is.
+        const { provider, name } = parseWrapperCompositionId(entry.id)
+        return (
+          <ListItemButton
+            key={entry.id}
+            selected={entry.id === selectedId}
+            onClick={() => onSelect(entry)}
+            sx={plainSidebarRowSx}
+          >
+            <Box
+              sx={{
+                width: 26,
+                height: 26,
+                mr: 1,
+                borderRadius: 0.75,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                bgcolor: 'primary.main',
+                color: 'primary.contrastText',
+                flexShrink: 0
+              }}
             >
-              <Box
+              <WrapperEntityIcon sx={{ fontSize: 15 }} />
+            </Box>
+            <Box sx={{ minWidth: 0, flex: 1 }}>
+              <Typography
+                noWrap
+                title={name}
                 sx={{
-                  width: 26,
-                  height: 26,
-                  mr: 1,
-                  borderRadius: 0.75,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  bgcolor: 'primary.main',
-                  color: 'primary.contrastText',
-                  flexShrink: 0
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  lineHeight: 1.25
                 }}
               >
-                <WrapperEntityIcon sx={{ fontSize: 15 }} />
-              </Box>
-              <Box sx={{ minWidth: 0, flex: 1 }}>
+                {name}
+              </Typography>
+              <Typography
+                noWrap
+                title={entry.summary}
+                color="text.secondary"
+                sx={{ mt: 0.25, fontSize: '0.75rem', lineHeight: 1.25 }}
+              >
+                {entry.summary}
+              </Typography>
+              <Stack direction="row" spacing={0.5} sx={{ mt: 0.25, alignItems: 'center' }}>
+                <Box
+                  sx={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    flexShrink: 0,
+                    bgcolor: (theme) => {
+                      const providerColor = wrapperProviderColor(provider)
+                      return providerColor === 'default'
+                        ? theme.palette.text.disabled
+                        : theme.palette[providerColor].main
+                    }
+                  }}
+                />
                 <Typography
                   noWrap
-                  title={name}
+                  color="text.secondary"
                   sx={{
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '0.82rem',
-                    fontWeight: 600,
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
                     lineHeight: 1.25
                   }}
                 >
-                  {name}
+                  {provider}
                 </Typography>
-                <Typography
-                  noWrap
-                  title={entry.summary}
-                  color="text.secondary"
-                  sx={{ mt: 0.25, fontSize: '0.75rem', lineHeight: 1.25 }}
-                >
-                  {entry.summary}
-                </Typography>
-                <Stack direction="row" spacing={0.5} sx={{ mt: 0.25, alignItems: 'center' }}>
-                  <Box
-                    sx={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: '50%',
-                      flexShrink: 0,
-                      bgcolor: (theme) => {
-                        const providerColor = wrapperProviderColor(provider)
-                        return providerColor === 'default'
-                          ? theme.palette.text.disabled
-                          : theme.palette[providerColor].main
-                      }
-                    }}
-                  />
-                  <Typography
-                    noWrap
-                    color="text.secondary"
-                    sx={{
-                      fontSize: '0.72rem',
-                      fontWeight: 700,
-                      lineHeight: 1.25
-                    }}
-                  >
-                    {provider}
-                  </Typography>
-                </Stack>
-              </Box>
-            </ListItemButton>
-          )
-        })}
-        {remainingCount > 0 ? (
-          <LoadMoreSentinel
-            rootRef={detailsRef}
-            tier={tier}
-            totalCount={entries.length}
-            remainingCount={remainingCount}
-            onLoadMore={onLoadMore}
-          />
-        ) : null}
-      </AccordionDetails>
-    </Accordion>
+              </Stack>
+            </Box>
+          </ListItemButton>
+        )
+      })}
+      {remainingCount > 0 ? (
+        <LoadMoreSentinel
+          rootRef={detailsRef}
+          tier={tier}
+          totalCount={entries.length}
+          remainingCount={remainingCount}
+          onLoadMore={onLoadMore}
+        />
+      ) : null}
+    </SidebarAccordionGroup>
   )
 }
 
