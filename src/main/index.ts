@@ -5427,7 +5427,10 @@ async function getAgentSession(
           })
       for (const diagnostic of agentScan.diagnostics) {
         writeAppLog({
-          event: 'agent_definition_invalid',
+          event:
+            diagnostic.level === 'warning'
+              ? 'agent_definition_warning'
+              : 'agent_definition_invalid',
           metadata: { filePath: diagnostic.filePath, message: diagnostic.message }
         })
       }

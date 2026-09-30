@@ -73,6 +73,7 @@ import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
 import { buildAskUserQuestionCustomTools } from '../user-interaction-tools'
 import { isPhiAgentDefinition, type PhiAgentDefinition } from '../agents/definition'
+import { selectAgentModel } from '../agents/model-selection'
 import { controlAgentRun } from '../agents/run-control'
 import { AGENT_RUN_HOST_METHODS } from '../agents/run-host'
 import { AgentRunRegistry } from '../agents/registry'
@@ -864,8 +865,9 @@ function phiToolFunctions(
  * toolbox, `skills` the only skills exposed. The session gets its own resource
  * loader (the SDK forbids sharing loaded extension instances across sessions)
  * whose approval extension is bound to the *parent's* sessionId, so its shell
- * and file writes are approved in the chat the user is looking at. The parent's
- * model and thinking level are reused.
+ * and file writes are approved in the chat the user is looking at. A declared
+ * `model` is tried in order with the main session's selector lookup; otherwise
+ * the parent's model is reused. `thinkingLevel` overrides the parent's level.
  */
 async function createPhiAgentSession(
   definition: PhiAgentDefinition,
@@ -939,6 +941,34 @@ async function createPhiAgentSession(
   }
   const { toolNames, customTools } = resolveAgentTools(declaredTools, availableTools)
   const parentSession = deps.parent()?.session
+  const parentModel = parentSession?.model || undefined
+  let model = parentModel
+  if (definition.model && definition.model.length > 0) {
+    const selection = await selectAgentModel(
+      definition.name,
+      definition.model,
+      async (selector) => {
+        const slash = selector.indexOf('/')
+        if (slash <= 0 || slash >= selector.length - 1) return undefined
+        try {
+          return await modelBySelector(ctx, {
+            provider: selector.slice(0, slash),
+            id: selector.slice(slash + 1)
+          })
+        } catch {
+          // An unusable selector (for example an unavailable Cursor bridge) falls
+          // through to the next one, then to the conversation's model.
+          return undefined
+        }
+      },
+      parentModel
+    )
+    if (selection.warning) process.stderr.write(`${selection.warning}\n`)
+    model = selection.model
+  }
+  const thinkingLevel = definition.thinkingLevel
+    ? (definition.thinkingLevel as ConfiguredThinkingLevel)
+    : parentSession?.thinkingLevel
   const skills = deps.remoteRoot
     ? []
     : loader
@@ -954,8 +984,8 @@ async function createPhiAgentSession(
     authStorage: ctx.authStorage,
     modelRegistry: ctx.modelRegistry,
     sessionManager: SessionManager.inMemory(sessionCwd),
-    ...(parentSession?.model ? { model: parentSession.model } : {}),
-    ...(parentSession?.thinkingLevel ? { thinkingLevel: parentSession.thinkingLevel } : {}),
+    ...(model ? { model } : {}),
+    ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(loader ? { resourceLoader: loader } : {}),
     extensions: [createRemoteUrlGuardExtension()],
     ...(skills ? { skills } : {}),

@@ -2,12 +2,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import {
-  PhiAgentParseError,
-  parsePhiAgent,
-  type PhiAgentDefinition,
-  type PhiAgentSource
-} from './definition'
+import { validateAgentFile, type PhiAgentDefinition, type PhiAgentSource } from './definition'
 import { PHI_PROJECT_CONFIG_DIR_NAME } from '../runtime-paths'
 
 /**
@@ -30,6 +25,7 @@ export interface PhiAgentDiscoveryOptions {
 export interface PhiAgentDiagnostic {
   filePath: string
   message: string
+  level: 'error' | 'warning'
 }
 
 export interface PhiAgentDiscoveryResult {
@@ -77,20 +73,31 @@ export function discoverPhiAgents(options: PhiAgentDiscoveryOptions): PhiAgentDi
 
   for (const root of agentRoots(options)) {
     for (const filePath of markdownFiles(root.dir)) {
+      let content: string
       try {
-        const agent = parsePhiAgent(filePath, readFileSync(filePath, 'utf-8'), root.source)
-        if (seen.has(agent.name)) continue
-        seen.add(agent.name)
-        agents.push(agent)
+        content = readFileSync(filePath, 'utf-8')
       } catch (error) {
         diagnostics.push({
           filePath,
-          message:
-            error instanceof PhiAgentParseError || error instanceof Error
-              ? error.message
-              : String(error)
+          level: 'error',
+          message: error instanceof Error ? error.message : String(error)
         })
+        continue
       }
+      const result = validateAgentFile(filePath, content, root.source)
+      if (!result.ok || !result.agent) {
+        for (const error of result.errors) {
+          diagnostics.push({ filePath, level: 'error', message: error.message })
+        }
+        continue
+      }
+      // Warnings stay on the agent and in the scan log; they do not skip the file.
+      for (const warning of result.warnings) {
+        diagnostics.push({ filePath, level: 'warning', message: warning.message })
+      }
+      if (seen.has(result.agent.name)) continue
+      seen.add(result.agent.name)
+      agents.push(result.agent)
     }
   }
   return { agents, diagnostics }

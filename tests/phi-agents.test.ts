@@ -6,13 +6,18 @@ import test from 'node:test'
 
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
 import {
+  AGENT_CONTRACT_VERSION,
+  PhiAgentParseError,
   isPhiAgentDefinition,
   isValidPhiAgentName,
   normalizeToolName,
   parsePhiAgent,
   toPhiAgentName,
+  validateAgent,
+  validateAgentFile,
   type PhiAgentDefinition
 } from '../src/main/agent/agents/definition'
+import { selectAgentModel } from '../src/main/agent/agents/model-selection'
 import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
 import { AGENT_REPORT_PROTOCOL } from '../src/main/agent/agents/report'
 import {
@@ -117,7 +122,9 @@ test('a native definition parses into a complete agent', () => {
     delegation: 'Delegate alpha work.',
     systemPrompt: 'System prompt body.',
     source: 'phi',
-    filePath: '/x/Alpha.md'
+    filePath: '/x/Alpha.md',
+    visibility: 'entry',
+    warnings: []
   })
 })
 
@@ -168,12 +175,314 @@ test('isPhiAgentDefinition guards the worker boundary', () => {
     skills: [],
     systemPrompt: 'p',
     source: 'phi',
-    filePath: '/x'
+    filePath: '/x',
+    visibility: 'entry',
+    warnings: []
   }
   assert.equal(isPhiAgentDefinition(good), true)
+  assert.equal(
+    isPhiAgentDefinition({
+      ...good,
+      environment: 'phi:python@1',
+      model: ['openai/gpt'],
+      thinkingLevel: 'low',
+      warnings: ['legacy alias']
+    }),
+    true
+  )
   assert.equal(isPhiAgentDefinition({ ...good, tools: 'read' }), false)
   assert.equal(isPhiAgentDefinition({ ...good, name: 'alpha' }), false)
+  assert.equal(isPhiAgentDefinition({ ...good, thinkingLevel: 'max' }), false)
+  assert.equal(isPhiAgentDefinition({ ...good, visibility: 'internal' }), false)
+  assert.equal(isPhiAgentDefinition({ ...good, model: 'openai/gpt' }), false)
   assert.equal(isPhiAgentDefinition(null), false)
+})
+
+function agentDocument(frontmatter: string, body = 'You are a specialist.'): string {
+  return `---\n${frontmatter.trim()}\n---\n${body}\n`
+}
+
+const PHI_FRONTMATTER = `name: Alpha
+description: Does alpha things.
+tools: [read, bash]`
+
+test('contract v1 accepts each field and rejects each broken rule', () => {
+  assert.equal(AGENT_CONTRACT_VERSION, '1.0.0')
+
+  const passing = validateAgentFile(
+    '/x/Alpha.md',
+    agentDocument(`
+name: Alpha
+description: ${'d'.repeat(1024)}
+tools: [read]
+skills: [one, two]
+environment: phi:python@1
+model:
+  - openai/gpt-4
+  - anthropic/claude
+thinkingLevel: high
+visibility: entry
+delegationMode: preferred
+delegation: Hand over alpha work.
+fallback:
+  afterFailures: 2
+  tools: [bash]
+  match: [ncbi]
+`),
+    'phi'
+  )
+  assert.equal(passing.ok, true, passing.errors.map((error) => error.message).join('\n'))
+  assert.deepEqual(passing.warnings, [])
+  assert.equal(passing.agent?.description.length, 1024)
+  assert.deepEqual(passing.agent?.skills, ['one', 'two'])
+  assert.equal(passing.agent?.environment, 'phi:python@1')
+  assert.deepEqual(passing.agent?.model, ['openai/gpt-4', 'anthropic/claude'])
+  assert.equal(passing.agent?.thinkingLevel, 'high')
+  assert.equal(passing.agent?.visibility, 'entry')
+  assert.equal(passing.agent?.delegationMode, 'preferred')
+  assert.equal(passing.agent?.fallback?.afterFailures, 2)
+
+  for (const level of ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const) {
+    const result = validateAgentFile(
+      '/x/Alpha.md',
+      agentDocument(`${PHI_FRONTMATTER}\nthinkingLevel: ${level}`),
+      'phi'
+    )
+    assert.equal(result.ok, true, level)
+    assert.equal(result.agent?.thinkingLevel, level)
+  }
+  for (const mode of ['required-first', 'preferred', 'optional'] as const) {
+    const result = validateAgentFile(
+      '/x/Alpha.md',
+      agentDocument(`${PHI_FRONTMATTER}\ndelegationMode: ${mode}`),
+      'phi'
+    )
+    assert.equal(result.ok, true, mode)
+    assert.equal(result.agent?.delegationMode, mode)
+  }
+  for (const ref of ['phi:python@1', 'plugin:viz', 'project:default']) {
+    const result = validateAgentFile(
+      '/x/Alpha.md',
+      agentDocument(`${PHI_FRONTMATTER}\nenvironment: ${ref}`),
+      'phi'
+    )
+    assert.equal(result.ok, true, ref)
+    assert.equal(result.agent?.environment, ref)
+  }
+
+  const stringModel = parsePhiAgent(
+    '/x/Alpha.md',
+    agentDocument(`${PHI_FRONTMATTER}\nmodel: openai/gpt-4`),
+    'phi'
+  )
+  assert.deepEqual(stringModel.model, ['openai/gpt-4'])
+
+  const omitted = parsePhiAgent('/x/Alpha.md', agentDocument(PHI_FRONTMATTER), 'phi')
+  assert.equal(omitted.visibility, 'entry')
+  assert.equal(omitted.environment, undefined)
+  assert.equal(omitted.model, undefined)
+  assert.equal(omitted.thinkingLevel, undefined)
+  assert.deepEqual(omitted.warnings, [])
+
+  const failures: Array<[string, RegExp]> = [
+    [`name: nope\ndescription: d\ntools: [read]`, /capitalised|Agent/i],
+    [`${PHI_FRONTMATTER.replace('Alpha', 'Beta')}`, /file name/i],
+    [`name: Alpha\ntools: [read]`, /description/i],
+    [`name: Alpha\ndescription: ${'d'.repeat(1025)}\ntools: [read]`, /1-1024/],
+    [`name: Alpha\ndescription: d\ntools: []`, /tools/i],
+    [`${PHI_FRONTMATTER}\nmodel: []`, /model/],
+    [`${PHI_FRONTMATTER}\nmodel: 1`, /model/],
+    [`${PHI_FRONTMATTER}\nthinkingLevel: max`, /thinkingLevel/],
+    [`${PHI_FRONTMATTER}\nskills: 1`, /skills/],
+    [`${PHI_FRONTMATTER}\nenvironment: phi:python`, /environment/],
+    [`${PHI_FRONTMATTER}\nenvironment: ./environment.yml`, /environment/],
+    [`${PHI_FRONTMATTER}\nvisibility: internal`, /reserved/],
+    [`${PHI_FRONTMATTER}\nvisibility: hidden`, /entry/],
+    [`${PHI_FRONTMATTER}\ndelegationMode: sometimes`, /delegationMode/],
+    [`${PHI_FRONTMATTER}\ndelegation: 1`, /delegation/],
+    [
+      `${PHI_FRONTMATTER}\nfallback:\n  afterFailures: 0\n  tools: [bash]\n  match: [ncbi]`,
+      /positive integer/
+    ],
+    [
+      `${PHI_FRONTMATTER}\nfallback:\n  afterFailures: 1\n  tools: []\n  match: [ncbi]`,
+      /fallback.tools/
+    ],
+    [`${PHI_FRONTMATTER}\nspawns: [Other]`, /reserved/],
+    [`${PHI_FRONTMATTER}\noutputSchema:\n  type: object`, /reserved/]
+  ]
+  for (const [frontmatter, pattern] of failures) {
+    const result = validateAgentFile('/x/Alpha.md', agentDocument(frontmatter), 'phi')
+    assert.equal(result.ok, false, frontmatter)
+    assert.equal(result.agent, undefined)
+    assert.ok(
+      result.errors.some((error) => pattern.test(error.message)),
+      `${frontmatter}\n${result.errors.map((error) => error.message).join('\n')}`
+    )
+  }
+
+  assert.throws(
+    () => parsePhiAgent('/x/Alpha.md', agentDocument('name: nope\ntools: []'), 'phi'),
+    (error: unknown) => {
+      assert.ok(error instanceof PhiAgentParseError)
+      assert.match(error.message, /name/i)
+      assert.match(error.message, /description/i)
+      assert.match(error.message, /tools/i)
+      return true
+    }
+  )
+})
+
+test('legacy aliases warn and name the new spelling; unknown keys warn and are ignored', () => {
+  const result = validateAgentFile(
+    '/x/Alpha.md',
+    agentDocument(`
+name: Alpha
+description: Does alpha things.
+tools: [read]
+delegation_mode: required-first
+extra: true
+fallback:
+  after_failures: 1
+  tools: [bash]
+  match: [ncbi]
+  note: leftover
+`),
+    'phi'
+  )
+  assert.equal(result.ok, true, result.errors.map((error) => error.message).join('\n'))
+  assert.equal(result.agent?.delegationMode, 'required-first')
+  assert.equal(result.agent?.fallback?.afterFailures, 1)
+  const messages = result.warnings.map((warning) => warning.message)
+  assert.ok(messages.some((message) => message.includes('delegationMode')))
+  assert.ok(messages.some((message) => message.includes('afterFailures')))
+  assert.ok(messages.some((message) => message.includes('extra')))
+  assert.ok(messages.some((message) => message.includes('note')))
+  assert.deepEqual(result.agent?.warnings, messages)
+})
+
+test('compatibility mode ignores Phi fields, including environment and spawns', () => {
+  const result = validateAgentFile(
+    '/p/.claude/agents/code-reviewer.md',
+    agentDocument(
+      `
+name: code-reviewer
+description: Reviews code.
+tools: Read, Bash
+environment: not-a-ref
+spawns: [Other]
+outputSchema:
+  type: object
+visibility: internal
+delegation_mode: not-a-mode
+skills: 12
+fallback: nope
+thinkingLevel: max
+model: openai/gpt-4
+`,
+      'Review the diff.'
+    ),
+    'compat'
+  )
+  assert.equal(result.ok, true, result.errors.map((error) => error.message).join('\n'))
+  assert.deepEqual(result.errors, [])
+  assert.deepEqual(result.warnings, [])
+  assert.equal(result.agent?.name, 'CodeReviewer')
+  assert.deepEqual(result.agent?.tools, ['read', 'bash'])
+  assert.equal(result.agent?.environment, undefined)
+  assert.equal(result.agent?.delegationMode, undefined)
+  assert.equal(result.agent?.visibility, 'entry')
+  assert.deepEqual(result.agent?.skills, [])
+  assert.equal(result.agent?.thinkingLevel, undefined)
+  assert.deepEqual(result.agent?.model, ['openai/gpt-4'])
+  assert.deepEqual(result.agent?.warnings, [])
+})
+
+test('discovery logs warnings without skipping the agent', () => {
+  withTree((root) => {
+    put(root, 'project/.phi/agents/Alpha.md', agentDocument(`${PHI_FRONTMATTER}\nextra: true`))
+    put(root, 'project/.phi/agents/Bad.md', agentDocument('name: Bad\ndescription: d\ntools: []'))
+    const { agents, diagnostics } = discoverPhiAgents({
+      cwd: join(root, 'project'),
+      agentDir: join(root, 'home', '.phi'),
+      homeDir: join(root, 'home')
+    })
+    assert.deepEqual(
+      agents.map((agent) => agent.name),
+      ['Alpha']
+    )
+    assert.ok(agents[0].warnings.some((warning) => warning.includes('extra')))
+    assert.ok(
+      diagnostics.some(
+        (diagnostic) => diagnostic.level === 'warning' && diagnostic.message.includes('extra')
+      )
+    )
+    assert.ok(
+      diagnostics.some(
+        (diagnostic) => diagnostic.level === 'error' && diagnostic.filePath.endsWith('Bad.md')
+      )
+    )
+  })
+})
+
+test('the bundled agents validate with no errors and no warnings', () => {
+  for (const name of ['Database', 'Visualization', 'Wrapper']) {
+    const result = validateAgent(join(REPO_AGENTS_DIR, `${name}.md`))
+    assert.equal(
+      result.ok,
+      true,
+      result.errors.map((error) => `${error.path}: ${error.message}`).join('\n')
+    )
+    assert.deepEqual(result.errors, [])
+    assert.deepEqual(result.warnings, [])
+    assert.deepEqual(result.agent?.warnings, [])
+    assert.equal(result.agent?.visibility, 'entry')
+    assert.equal(result.agent?.delegationMode, 'required-first')
+  }
+})
+
+test('selectAgentModel uses the first selector that resolves', async () => {
+  const calls: string[] = []
+  const parent = { provider: 'parent', id: 'p' }
+  const result = await selectAgentModel(
+    'Alpha',
+    ['missing/a', 'found/b', 'later/c'],
+    (selector) => {
+      calls.push(selector)
+      return selector === 'found/b' ? { provider: 'found', id: 'b' } : undefined
+    },
+    parent
+  )
+  assert.deepEqual(calls, ['missing/a', 'found/b'])
+  assert.deepEqual(result, { model: { provider: 'found', id: 'b' } })
+})
+
+test('selectAgentModel keeps the parent model when no selector resolves', async () => {
+  const parent = { provider: 'parent', id: 'p' }
+  let called = false
+  const absent = await selectAgentModel(
+    'Alpha',
+    undefined,
+    () => {
+      called = true
+      return undefined
+    },
+    parent
+  )
+  assert.equal(called, false)
+  assert.deepEqual(absent, { model: parent })
+
+  const missing = await selectAgentModel(
+    'Alpha',
+    ['missing/a', 'missing/b'],
+    () => undefined,
+    parent
+  )
+  assert.equal(missing.model, parent)
+  assert.equal(
+    missing.warning,
+    "Phi agent Alpha: model missing/a, missing/b not available; using the conversation's model"
+  )
 })
 
 // ── discovery ─────────────────────────────────────────────────────────────
@@ -656,7 +965,9 @@ const WRAPPER: PhiAgentDefinition = {
   skills: [],
   systemPrompt: 'p',
   source: 'phi',
-  filePath: '/x/Wrapper.md'
+  filePath: '/x/Wrapper.md',
+  visibility: 'entry',
+  warnings: []
 }
 
 const VISUALIZATION: PhiAgentDefinition = {
@@ -666,7 +977,9 @@ const VISUALIZATION: PhiAgentDefinition = {
   skills: ['omics-visualization'],
   systemPrompt: 'p',
   source: 'phi',
-  filePath: '/x/Visualization.md'
+  filePath: '/x/Visualization.md',
+  visibility: 'entry',
+  warnings: []
 }
 
 test('the delegation tool is named after the agent, so the agent is the tool', () => {

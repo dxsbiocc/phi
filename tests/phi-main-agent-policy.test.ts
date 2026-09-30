@@ -42,7 +42,9 @@ const DATABASE: PhiAgentDefinition = {
   },
   systemPrompt: 'You are Database.',
   source: 'phi',
-  filePath: '/agents/Database.md'
+  filePath: '/agents/Database.md',
+  visibility: 'entry',
+  warnings: []
 }
 
 test('Phi owns the main system identity while retaining OMP runtime instructions', () => {
