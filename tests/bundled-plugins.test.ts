@@ -96,6 +96,7 @@ test('plugin:viz resolves to the visualization plugin environment', () => {
   const visualization = listBundledPlugins().find((plugin) => plugin.id === 'visualization')
   assert.ok(visualization?.agentsDir)
   assert.ok(visualization.skillsDir)
+  assert.equal(visualization.toolPrefix, 'viz')
   assert.equal(
     visualization.environmentsDir,
     join(process.cwd(), 'resources', 'plugins', 'visualization', 'environments')

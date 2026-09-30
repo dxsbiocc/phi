@@ -1,4 +1,7 @@
-import { basename } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { basename, dirname, resolve } from 'node:path'
+
+import { listBundledPlugins, type BundledPlugin } from '../plugins/bundled'
 
 import { getRuntimeRoot, type PhiPlatform } from '../envs'
 import { collectArtifacts, type ReadArtifactOk } from './artifacts'
@@ -66,7 +69,8 @@ export function createSkillHost({
   platform,
   builds,
   confirmBuild,
-  presentArtifacts
+  presentArtifacts,
+  pluginsDir
 }: {
   runtimeRoot?: string
   listSkillDirs: (cwd: string) => Promise<string[]>
@@ -75,6 +79,8 @@ export function createSkillHost({
   builds?: EnvironmentBuilds
   confirmBuild?: (request: ConfirmBuildRequest) => Promise<boolean>
   presentArtifacts?: (request: PresentArtifactsRequest) => Promise<void> | void
+  /** Bundled plugins directory. Defaults to the installed plugins directory. */
+  pluginsDir?: string
 }): SkillHost {
   const remembered = new Map<string, RememberedTool>()
   const runs = new Map<string, AbortController>()
@@ -93,13 +99,29 @@ export function createSkillHost({
     if (runs.get(requestId) === controller) runs.delete(requestId)
   }
 
+  function owningPlugin(skillDir: string): BundledPlugin | undefined {
+    const parent = dirname(resolve(skillDir))
+    return listBundledPlugins(pluginsDir).find((plugin) => {
+      if (!plugin.skillsDir) return false
+      try {
+        return realpathSync(parent) === realpathSync(plugin.skillsDir)
+      } catch {
+        return resolve(parent) === resolve(plugin.skillsDir)
+      }
+    })
+  }
+
+  function prefixProblem(plugin: BundledPlugin): string {
+    return `plugin '${plugin.id}': ${plugin.toolPrefixProblem ?? 'phi-package.yaml is missing'}`
+  }
+
   async function resolveSkill(cwd: string, name: string): Promise<ValidatedSkill> {
     const dirs = await listSkillDirs(cwd)
     const dir = dirs.find((candidate) => basename(candidate) === name)
     if (!dir) throw new Error(`unknown skill '${name}'`)
     let validation: SkillValidationResult
     try {
-      validation = validateSkill(dir)
+      validation = validateSkill(dir, { insidePlugin: owningPlugin(dir) !== undefined })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       throw new Error(`invalid skill '${name}': ${message}`)
@@ -166,11 +188,17 @@ export function createSkillHost({
       const tools: ScriptToolDescriptor[] = []
       const problems: string[] = []
       const seenNames = new Set<string>()
+      const reportedPrefix = new Set<string>()
 
       for (const dir of dirs) {
+        const plugin = owningPlugin(dir)
+        if (plugin && !plugin.toolPrefix && !reportedPrefix.has(plugin.id)) {
+          reportedPrefix.add(plugin.id)
+          problems.push(prefixProblem(plugin))
+        }
         let validation: SkillValidationResult
         try {
-          validation = validateSkill(dir)
+          validation = validateSkill(dir, { insidePlugin: plugin !== undefined })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           problems.push(`invalid skill '${basename(dir)}': ${message}`)
@@ -187,7 +215,8 @@ export function createSkillHost({
         }
 
         const skill = validation.skill
-        const prefix = skill.phi?.toolPrefix
+        if (plugin && !plugin.toolPrefix) continue
+        const prefix = plugin?.toolPrefix ?? skill.phi?.toolPrefix
         if (!prefix) continue
         for (const tool of scriptToolsOf(skill, { prefix })) {
           if (seenNames.has(tool.name)) {

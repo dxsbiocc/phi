@@ -19,6 +19,16 @@ const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/
 const ARG_NAME = /^[a-z][a-z0-9_]*$/
 const SCRIPT_EXTENSIONS = new Set(['.py', '.R', '.r', '.sh', '.js', '.mjs', '.pl'])
 const RESERVED_TOOL_PREFIXES = new Set(['skill', 'env', 'http', 'wrapper', 'agent', 'db', 'mcp'])
+const TOOL_PREFIX_PATTERN = /^[a-z][a-z0-9]{1,11}$/
+
+/** Skill contract § 2.2: pattern and engine-reserved prefixes. */
+export function toolPrefixError(prefix: string): string | undefined {
+  if (!TOOL_PREFIX_PATTERN.test(prefix)) {
+    return `toolPrefix '${prefix}' does not match ^[a-z][a-z0-9]{1,11}$`
+  }
+  if (RESERVED_TOOL_PREFIXES.has(prefix)) return `toolPrefix '${prefix}' is reserved`
+  return undefined
+}
 const SCALAR_ARG_TYPES = new Set(['string', 'number', 'integer', 'boolean'])
 const PATH_FORMATS = new Set(['input-path', 'project-path'])
 const KNOWN_FRONTMATTER_KEYS = new Set([
@@ -267,8 +277,9 @@ export function validateSkill(
     if (insidePlugin && toolPrefix !== undefined) {
       fail('phi.toolPrefix', 'toolPrefix is rejected inside a plugin')
     }
-    if (typeof toolPrefix === 'string' && RESERVED_TOOL_PREFIXES.has(toolPrefix)) {
-      fail('phi.toolPrefix', `toolPrefix '${toolPrefix}' is reserved`)
+    if (typeof toolPrefix === 'string') {
+      const reserved = toolPrefixError(toolPrefix)
+      if (reserved?.endsWith('is reserved')) fail('phi.toolPrefix', reserved)
     }
 
     if (typeof fm.phi.environment === 'string' && fm.phi.environment.length > 0) {

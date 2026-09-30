@@ -5,7 +5,7 @@ import { readAppSettings } from '../app-settings'
 import { getDbProxyTransport } from '../db/egress-transport'
 import type { DbConnectorManifest } from '../db/manifest-types'
 import { executeDbHttpRequest, type DbEgressTransport } from '../db/policy'
-import { resolveInsideProject } from '../visualization/project-path'
+import { resolveInsideProject } from '../project-path'
 import { transferFile } from './file-transfer'
 
 const DEFAULT_MAX_BYTES = 250 * 1024 * 1024

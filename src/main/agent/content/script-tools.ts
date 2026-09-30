@@ -2,6 +2,7 @@ import { realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv'
+import Ajv2020 from 'ajv/dist/2020.js'
 
 import { runInEnvironment, type EnvHandle, type PhiPlatform, type RunResult } from '../envs'
 import type { ScriptTool, ValidatedSkill } from './skill'
@@ -15,10 +16,15 @@ import {
 const DEFAULT_TIMEOUT_SECONDS = 600
 const STDERR_TAIL = 2000
 
-const ajv = new Ajv({ allErrors: true, strict: false })
+const AJV_OPTIONS = { allErrors: true, strict: false } as const
+const DRAFT_2020 = 'https://json-schema.org/draft/2020-12/schema'
+const ajv = new Ajv(AJV_OPTIONS)
+const ajv2020 = new Ajv2020(AJV_OPTIONS)
 // Path formats are checked against the project tree, not by Ajv.
-ajv.addFormat('input-path', true)
-ajv.addFormat('project-path', true)
+for (const compiler of [ajv, ajv2020]) {
+  compiler.addFormat('input-path', true)
+  compiler.addFormat('project-path', true)
+}
 const validators = new WeakMap<object, ValidateFunction>()
 
 export interface PresentedArtifactSummary {
@@ -179,7 +185,8 @@ function validatorFor(schema: Record<string, unknown>): ValidateFunction {
   const key = schema as object
   const cached = validators.get(key)
   if (cached) return cached
-  const compiled = ajv.compile(schema)
+  const compiler = schema.$schema === DRAFT_2020 ? ajv2020 : ajv
+  const compiled = compiler.compile(schema)
   validators.set(key, compiled)
   return compiled
 }

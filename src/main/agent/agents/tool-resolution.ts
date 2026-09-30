@@ -1,23 +1,5 @@
 import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 
-export const VISUALIZATION_WORKFLOWS = ['examples', 'create', 'revise', 'reference'] as const
-export type VisualizationWorkflow = (typeof VISUALIZATION_WORKFLOWS)[number]
-
-/** Keep creation tools out of an existing-figure revision's model context. */
-export function visualizationToolNamesForWorkflow(
-  declared: readonly string[],
-  workflow: VisualizationWorkflow | undefined
-): string[] {
-  if (!workflow) return [...declared]
-  const allowed =
-    workflow === 'examples'
-      ? new Set(['viz_examples'])
-      : workflow === 'revise'
-        ? new Set(['viz_render'])
-        : new Set(['viz_route', 'viz_prepare', 'viz_render'])
-  return declared.filter((name) => !name.startsWith('viz_') || allowed.has(name))
-}
-
 /**
  * Splits an agent's declared tool names into what the SDK session needs:
  * every name (so a restricted session activates it) plus the actual tool
@@ -40,16 +22,9 @@ export function buildScopedPhiToolMap(
   groups: {
     wrapper: readonly CustomTool[]
     database: readonly CustomTool[]
-    visualization?: readonly CustomTool[]
   }
 ): Map<string, CustomTool> {
   const tools =
-    agentName === 'Wrapper'
-      ? groups.wrapper
-      : agentName === 'Database'
-        ? groups.database
-        : agentName === 'Visualization'
-          ? (groups.visualization ?? [])
-          : []
+    agentName === 'Wrapper' ? groups.wrapper : agentName === 'Database' ? groups.database : []
   return new Map(tools.map((tool) => [tool.name, tool]))
 }

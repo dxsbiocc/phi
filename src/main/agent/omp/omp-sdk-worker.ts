@@ -85,12 +85,7 @@ import { AgentRunRegistry } from '../agents/registry'
 import { buildAgentRunTools } from '../agents/run-tools'
 import { createAgentRunner, type AgentSessionLike } from '../agents/runner'
 import { appendAgentUsageRecord, pruneAgentUsageLogs } from '../agents/usage-log'
-import {
-  buildScopedPhiToolMap,
-  resolveAgentTools,
-  visualizationToolNamesForWorkflow,
-  type VisualizationWorkflow
-} from '../agents/tool-resolution'
+import { buildScopedPhiToolMap, resolveAgentTools } from '../agents/tool-resolution'
 import { buildAgentTool } from '../agents/tool'
 import { createSpecialistFallbackExtension } from '../agents/fallback-policy'
 import { createProjectToolBoundaryExtension } from '../agents/project-tool-boundary'
@@ -106,7 +101,6 @@ import {
   buildPhiRemoteProjectSystemPrompt,
   filterPersonaContextFile
 } from '../main-system-prompt'
-import { buildVisualizationTools } from '../visualization/tools'
 import { buildScriptTools, buildSkillRunTool } from '../content/skill-tools'
 import type { ScriptToolDescriptor } from '../content/skill-tool-types'
 import { createHostJobClient } from '../wrappers/composition/job-host-client'
@@ -854,12 +848,9 @@ function phiToolFunctions(
       // A broken connector catalog must not prevent the specialist session from starting.
     }
   }
-  // The figure tools only run local scripts and write inside the delegating session's project.
-  const visualizationTools = agentName === 'Visualization' ? buildVisualizationTools() : []
   const tools = buildScopedPhiToolMap(agentName, {
     wrapper: wrapperTools,
-    database: databaseTools,
-    visualization: visualizationTools
+    database: databaseTools
   })
   if (skillRun) tools.set(skillRun.name, skillRun)
   return tools
@@ -991,7 +982,6 @@ async function createPhiAgentSession(
     resourceOptions: unknown
     enableToolApproval: boolean
     agentRunId?: string
-    workflow?: VisualizationWorkflow
     remoteRoot?: string
     remoteContextFiles?: Array<{ path: string; content: string }>
     remoteTools?: () => CustomTool[]
@@ -1044,10 +1034,7 @@ async function createPhiAgentSession(
     skillHost
   )
   for (const tool of attachedScriptTools) availableTools.set(tool.name, tool)
-  const declaredTools =
-    definition.name === 'Visualization'
-      ? visualizationToolNamesForWorkflow(definition.tools, deps.workflow)
-      : [...definition.tools]
+  const declaredTools = [...definition.tools]
   for (const tool of attachedScriptTools) {
     if (!declaredTools.includes(tool.name)) declaredTools.push(tool.name)
   }
@@ -1249,7 +1236,7 @@ async function createSession(params: unknown): Promise<unknown> {
         agent: definition.name,
         // What each delegation cost, for judging prompt and tool changes; see agents/usage.ts.
         onUsage: (record) => appendAgentUsageRecord(agentDir, { ...record, sessionId }),
-        createSession: ({ runId, workflow }) =>
+        createSession: ({ runId }) =>
           createPhiAgentSession(definition, {
             sessionId,
             cwd,
@@ -1258,7 +1245,6 @@ async function createSession(params: unknown): Promise<unknown> {
             resourceOptions: record.resourceOptions,
             enableToolApproval: Boolean(record.enableToolApproval),
             ...(runId ? { agentRunId: runId } : {}),
-            ...(workflow ? { workflow } : {}),
             ...(remoteRoot
               ? {
                   remoteRoot,
@@ -1274,7 +1260,7 @@ async function createSession(params: unknown): Promise<unknown> {
           })
       }),
       agentRuns,
-      { cwd }
+      { cwd, ...(remoteRoot ? { remote: true } : {}) }
     )
   )
   const agentRunTools = phiAgents.length > 0 ? buildAgentRunTools(agentRuns) : []

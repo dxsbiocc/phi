@@ -16,8 +16,7 @@ import {
   type PreviewImageMimeType
 } from './file-preview-media'
 import { shouldBlockHtmlReportNavigation } from '../shared/htmlReportPreview'
-import { isInstalledFigurePreviewPath } from './agent/visualization/examples'
-import { getBundledSkillRoot } from './agent/visualization/tools'
+import { isBundledSkillPreviewPath } from './agent/plugins/bundled'
 import type {
   WrapperRetargetRequest,
   WrapperRun,
@@ -4140,12 +4139,7 @@ function isLocalFilePathAllowed(
   scope: LocalPathScope = currentLocalPathScope()
 ): boolean {
   if (isRemoteProjectAnchorPath(target, AGENT_DIR)) return false
-  if (
-    basename(target) === 'preview.png' &&
-    isInstalledFigurePreviewPath(target, getBundledSkillRoot())
-  ) {
-    return true
-  }
+  if (isBundledSkillPreviewPath(target)) return true
   const agentDir = resolve(AGENT_DIR)
   const roots = [agentDir, scope.cwd, scope.cwdRealPath].filter(
     (root): root is string => typeof root === 'string' && root.length > 0

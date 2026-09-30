@@ -4,6 +4,133 @@ description: >-
   Render, adapt, and audit publication-ready omics figures from result tables and matrices with bundled templates. Nature-style: claim, hierarchy, restraint, final-size readability. Choose, create, revise, or export scatter, heatmap, bar, distribution, line, network, flow, hierarchy, clustering dendrogram, pathway-ring, gene-structure, or ideogram for transcriptomics, proteomics, metabolomics, enrichment, survival, network, or related omics. Trigger: 组学绘图、科研配图、论文图表、聚类树、通路环图、应力布局,SVG散点,图标柱状图,多通路富集热图,通路分组富集热图,富集点图,GO点图,表达热图,免疫相关热图,关联点阵,平行集合图,泰森多边形,条形甜甜圈,环状比例图,免疫棒棒糖,环形棒棒糖,基因结构,核型图,感兴趣基因,火山图放大,UpSet,韦恩图,Venn,饱和突变热图,ΔΔG热图,oncoprint,突变瀑布图,基因组变异热图,分块聚类热图,NMF相关热图,环状热图,相关气泡热图,对角线分割热图,环形UMAP,UMAP环图,三元图,三元相图,相关散点矩阵,ggpairs,pairs plot,泳道图,游泳图,脊线图,山脊图,joyplot,RidgePlot,基因组覆盖度,coverage track,locus browser,HiChIP,突变棒棒糖,蛋白棒棒糖,g3viz,MutationMapper,蒲公英图,dandelion,Circos,基因组环图,共线性,synteny,弦图,chord diagram,基因组热图,嵌套缩放,nested circos. Not for upstream analysis, business dashboards, AI-generated illustrations, or template libraries.
 phi:
   environment: plugin:viz
+  attachTo:
+  - Visualization
+  scripts:
+  - name: examples
+    description: Find real preview.png images already shipped with omics-visualization templates. Use when the user asks to see examples or styles without providing a data table. This reads the installed catalog and images; it does not create sample data, simulate a plot, render a new figure, or write to the project. Embed the returned preview_markdown images unchanged and explain that they are template examples, not plots of the user's data.
+    run:
+    - python
+    - ./scripts/viz.py
+    - examples
+    args:
+      type: object
+      additionalProperties: false
+      required:
+      - purpose
+      properties:
+        purpose:
+          type: string
+          description: Chart family or visual purpose to preview.
+        top:
+          type: integer
+          minimum: 1
+          maximum: 4
+          default: 4
+    approval: read
+    output: ./schemas/viz-examples.json
+    timeoutSeconds: 120
+  - name: route
+    description: For new figure selection, profile a result table and shortlist bundled omics templates that fit its purpose. Returns columns and up to six candidates with template_id, fit, risks, and preview_markdown. Use it before choosing a new template; never invent template ids. Do not call it for a small revision of an existing prepared script. To show previews, embed each candidate's preview_markdown and stop for the user's choice. Data and scripts must be inside the project; copy external data in first.
+    run:
+    - python
+    - ./scripts/viz.py
+    - route
+    args:
+      type: object
+      additionalProperties: false
+      required:
+      - data_path
+      - purpose
+      properties:
+        data_path:
+          type: string
+          format: input-path
+          description: Path of the CSV/TSV result table inside the project (project-relative or absolute). It is only read.
+        purpose:
+          type: string
+          description: What the figure should show, for example "volcano plot of differential expression".
+        mode:
+          type: string
+          enum:
+          - preview
+          - publication
+          default: preview
+          description: '"publication" is stricter and expects the catalog entry to be confirmed by hand.'
+        top:
+          type: integer
+          minimum: 1
+          maximum: 6
+          default: 4
+        sidecar_dir:
+          type: string
+          format: input-path
+          description: Directory holding companion tables such as nodes.tsv or links.tsv, when not beside the data.
+    approval: read
+    output: ./schemas/viz-route.json
+    timeoutSeconds: 120
+  - name: prepare
+    description: For a newly selected template, copy its plot.R into the project and return the input contract and editable CONFIG/DATA PREPARATION sections. Edit the copy, then call viz_render. For a revision of an existing prepared plot.R, read and edit that project copy directly; do not copy or reset the bundled template. An existing copy is kept with its edits unless reset is true. Data and scripts must be inside the project; copy external data in first.
+    run:
+    - python
+    - ./scripts/viz.py
+    - prepare
+    args:
+      type: object
+      additionalProperties: false
+      required:
+      - template_id
+      - workdir
+      properties:
+        template_id:
+          type: string
+          description: A template_id from viz_route, for example "scatter-volcano".
+        workdir:
+          type: string
+          format: project-path
+          description: Directory for the copy, inside the project, for example "visualizations/volcano".
+        reset:
+          type: boolean
+          description: Discard an earlier copy and its edits and start again.
+    approval: write
+    output: ./schemas/viz-prepare.json
+    timeoutSeconds: 120
+  - name: render
+    description: 'Run a prepared plot.R on the input table(s) and write the figure, then check the file. The script, the inputs, and the output must be inside the project; copy external data in first. Returns the output path, format, size in pixels, and the QA result (failed check names). A missing R package or an R error comes back as a short message; do not install packages. A passing QA only means the file is sound: still look at the figure at final size for clipped labels, legends and misleading encodings.'
+    run:
+    - python
+    - ./scripts/viz.py
+    - render
+    args:
+      type: object
+      additionalProperties: false
+      required:
+      - script
+      - inputs
+      - output
+      properties:
+        script:
+          type: string
+          format: input-path
+          description: Path of the prepared plot.R (from viz_prepare).
+        inputs:
+          type: array
+          items:
+            type: string
+            format: input-path
+          description: Paths of the table(s) inside the project that the template takes, in the order viz_prepare listed them.
+        output:
+          type: string
+          format: project-path
+          description: 'Figure file to write: .png, .pdf or .svg, inside the project.'
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 900
+          default: 180
+    approval: write
+    output: ./schemas/viz-render.json
+    timeoutSeconds: 900
 ---
 
 # Omics Visualization
@@ -49,8 +176,7 @@ Use `viz_route`, `viz_prepare`, `viz_render` for new figures.
    single composite glyph (for example a circular tree inset in a polar track)
    is still one template. Follow **Multi-panel composition** only for labelled
    a/b/c figures that combine several plots with distinct evidence roles.
-4. Shortlist templates with `viz_route` (data path, purpose, mode)
-   [`skill_run({ skill: "omics-visualization", script: "route_template.py", args: ["--input", "<table.tsv>", "--query", "<user purpose>", "--mode", "preview", "--json"] })`].
+4. Shortlist templates with `viz_route` (data path, purpose, mode).
    It profiles the table against
    [references/template_contracts.json](references/template_contracts.json) and
    scans recognized companion files in the input directory (`nodes.tsv`,
@@ -119,7 +245,7 @@ Use `viz_route`, `viz_prepare`, `viz_render` for new figures.
    install packages without authorization and do not silently switch
    implementations.
 12. `viz_render` runs the lightweight artifact QA and names the checks that
-   failed [`skill_run({ skill: "omics-visualization", script: "qa_single_plot.py", args: ["<artifact.png-or.svg>", "--json"] })`]. That
+   failed. That
    only shows the file is sound: inspect the rendered artifact at final size and
    correct labels, scales, legends, clipping, overlaps, spacing, and misleading
    encodings, then rerun until the output and source agree.
@@ -132,7 +258,7 @@ artifact has passed lightweight QA and visual inspection.
 
 ## Efficient use
 
-- Use `viz_route` (`scripts/route_template.py`) as the fast path for preview-mode and
+- Use `viz_route` as the fast path for preview-mode and
   common result-table shapes. Trust high-confidence contract recommendations
   enough to avoid reading unrelated family catalogs, but still confirm the
   selected template's contract (`viz_prepare`) before rendering.
@@ -151,7 +277,7 @@ artifact has passed lightweight QA and visual inspection.
 - Prefer `CONFIG` edits, label tightening, scale changes, and legend pruning
   before touching the `PLOT` section. Structural rewrites are for misleading
   geometry, not ordinary polish.
-- Keep final QA proportional: single plots get `qa_single_plot.py` plus a
+- Keep final QA proportional: single plots get `viz_render`'s QA plus a
   final-size visual inspection; labelled multi-panel figures also get the
   Patchwork geometry audit.
 

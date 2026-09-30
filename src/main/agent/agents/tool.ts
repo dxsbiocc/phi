@@ -1,9 +1,9 @@
 import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
-import { isAbsolute } from 'node:path'
+import { readFileSync, statSync } from 'node:fs'
+import { extname, isAbsolute } from 'node:path'
 
 import type { PhiAgentDefinition } from './definition'
 import { AgentRunLimitError, AgentRunRegistry, type AgentRunSnapshot } from './registry'
-import { VISUALIZATION_WORKFLOWS, type VisualizationWorkflow } from './tool-resolution'
 import {
   describeToolStart,
   type AgentImage,
@@ -13,11 +13,21 @@ import {
 } from './runner'
 
 const MAX_TASK_LENGTH = 20000
+const MAX_FORWARDED_IMAGE_BYTES = 20 * 1024 * 1024
+const IMAGE_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp'
+}
 
 export type AgentRunner = (request: AgentRunRequest) => Promise<AgentRunResult>
 
 export interface AgentToolOptions {
   cwd?: string
+  /** Remote projects keep today's delegation tool: no local execution context and no image forwarding. */
+  remote?: boolean
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -52,18 +62,6 @@ function reportForMain(run: AgentRunSnapshot): string {
   return `${metadata.join('\n')}\n\n${report}`.trim()
 }
 
-function isVisualizationAgent(definition: PhiAgentDefinition): boolean {
-  return (
-    definition.name === 'Visualization' ||
-    definition.skills.includes('omics-visualization') ||
-    definition.description.toLowerCase().includes('omics')
-  )
-}
-
-function isVisualizationWorkflow(value: unknown): value is VisualizationWorkflow {
-  return VISUALIZATION_WORKFLOWS.some((workflow) => workflow === value)
-}
-
 function latestUserImages(context: unknown): AgentImage[] {
   if (!isRecord(context) || !isRecord(context.sessionManager)) return []
   const getBranch = context.sessionManager.getBranch
@@ -94,49 +92,66 @@ function latestUserImages(context: unknown): AgentImage[] {
   return []
 }
 
-function projectBoundaryDescription(
-  definition: PhiAgentDefinition,
-  options: AgentToolOptions
-): string {
-  const cwd = options.cwd?.trim()
-  if (!cwd || !isVisualizationAgent(definition)) return ''
-
-  return `\n\nProject output boundary for Visualization: generated figures, copied template source, scratch scripts, reports, and QA artifacts must be written under the current project working directory (${cwd}). Treat data paths outside that directory as read-only inputs. For new figures without an output directory, use ${cwd}/visualizations/ or ${cwd}/plots/; for revisions, reuse the existing project-local source and requested output path.`
+function imagePathsFrom(params: Record<string, unknown>): string[] | string {
+  if (params.image_paths === undefined) return []
+  if (!Array.isArray(params.image_paths)) return 'image_paths must be an absolute file path.'
+  const paths: string[] = []
+  for (const item of params.image_paths) {
+    if (typeof item !== 'string' || !isAbsolute(item.trim())) {
+      return 'image_paths must be an absolute file path.'
+    }
+    paths.push(item.trim())
+  }
+  return paths
 }
 
-function taskWithProjectBoundary(
-  definition: PhiAgentDefinition,
-  task: string,
-  options: AgentToolOptions,
-  workflow?: VisualizationWorkflow,
-  referenceImageAttached = false,
-  referenceImagePath?: string
-): string {
-  const cwd = options.cwd?.trim()
-  if (!isVisualizationAgent(definition)) return task
+function imageFromFile(filePath: string): AgentImage | string {
+  const mimeType = IMAGE_MIME[extname(filePath).toLowerCase()]
+  if (!mimeType) return `Cannot forward image file: ${filePath}`
+  try {
+    const stat = statSync(filePath)
+    if (!stat.isFile()) return `Cannot forward image file: ${filePath}`
+    if (stat.size > MAX_FORWARDED_IMAGE_BYTES) {
+      return `Image file is larger than 20 MB and cannot be forwarded: ${filePath}`
+    }
+    const data = readFileSync(filePath).toString('base64')
+    if (!data) return `Cannot forward image file: ${filePath}`
+    return { type: 'image', data, mimeType }
+  } catch {
+    return `Cannot forward image file: ${filePath}`
+  }
+}
 
+function executionContext(task: string, cwd: string | undefined, notes: string[]): string {
+  if (!cwd && notes.length === 0) return task
   return [
     'Phi execution context:',
-    ...(workflow ? [`- Workflow: ${workflow}`] : []),
-    ...(referenceImageAttached ? ['- The user reference image is attached to this prompt.'] : []),
-    ...(referenceImagePath ? [`- Reference image path: ${referenceImagePath}`] : []),
     ...(cwd
       ? [
           `- Current project working directory (cwd): ${cwd}`,
           '- All generated files must stay under this cwd so Phi can preview and open them.',
-          '- Treat input/data paths outside cwd as read-only. Do not create sibling plots, scripts, or reports beside external input data.',
-          workflow === 'examples'
-            ? '- Show shipped previews without creating project files.'
-            : workflow === 'revise'
-              ? '- Reuse the existing project-local script and the output path specified in the delegated task.'
-              : '- For a new figure without an output directory, use a concise subdirectory under cwd, such as visualizations/<short-task-name>/.',
-          '- Return cwd-contained artifact paths in the final report.'
+          '- Treat input/data paths outside cwd as read-only. Do not create sibling outputs beside external input data.',
+          '- Return cwd-contained paths in the final report.'
         ]
       : []),
+    ...notes,
     '',
     'Delegated task:',
     task
   ].join('\n')
+}
+
+function delegationDescription(definition: PhiAgentDefinition, options: AgentToolOptions): string {
+  const local = options.remote !== true
+  const cwd = options.cwd?.trim()
+  const images = local
+    ? ' Set `image_paths` to absolute paths of image files to forward, or `include_attached_images` to forward the latest user-attached images.'
+    : ''
+  const boundary =
+    local && cwd
+      ? `\n\nProject output boundary: generated files must stay under the current project working directory (${cwd}). Paths outside it are read-only inputs. Return cwd-contained paths.`
+      : ''
+  return `${definition.description}\n\nHands the task to the ${definition.name} agent, a specialist with its own tools and its own session. It cannot see this conversation and cannot ask the user questions, so write \`task\` as a complete, self-contained request: absolute file paths, where outputs should go, and any user preferences. It returns a short report. Independent tasks can be delegated in the same turn and run in parallel; set \`background\` to carry on while it works.${images}${boundary}`
 }
 
 /**
@@ -156,31 +171,30 @@ export function buildAgentTool(
   options: AgentToolOptions = {}
 ): CustomTool {
   const { name } = definition
-  const visualization = definition.name === 'Visualization'
+  const local = options.remote !== true
+  const cwd = options.cwd?.trim()
   return {
     name,
     label: name,
-    description: `${definition.description}\n\nHands the task to the ${name} agent, a specialist with its own tools and its own session. It cannot see this conversation and cannot ask the user questions, so write \`task\` as a complete, self-contained request: absolute file paths, where outputs should go, and any user preferences. It returns a short report. Independent tasks can be delegated in the same turn and run in parallel; set \`background\` to carry on while it works.${visualization ? ' Choose workflow: examples for shipped previews, create for a new data figure, revise for an existing project script, or reference to draw new data in the style of a user image. For revise, include the existing source, inputs, and output. For reference, set reference_image_path or the current/recent attached user image will be forwarded.' : ''}${projectBoundaryDescription(definition, options)}`,
+    description: delegationDescription(definition, options),
     parameters: {
       type: 'object',
-      required: visualization ? ['task', 'workflow'] : ['task'],
+      required: ['task'],
       properties: {
         task: {
           type: 'string',
           description: `Self-contained instruction for the ${name} agent.`
         },
-        ...(visualization
+        ...(local
           ? {
-              workflow: {
-                type: 'string',
-                enum: [...VISUALIZATION_WORKFLOWS],
-                description:
-                  'Choose exactly one: examples, create, revise, or reference. A color change to a previously created figure is revise.'
+              image_paths: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Absolute paths of image files to forward to the specialist.'
               },
-              reference_image_path: {
-                type: 'string',
-                description:
-                  'Absolute path to the user reference image for reference workflow. Omit when the image is attached to the conversation.'
+              include_attached_images: {
+                type: 'boolean',
+                description: 'Forward the latest user-attached images to the specialist.'
               }
             }
           : {}),
@@ -206,42 +220,39 @@ export function buildAgentTool(
           `task is too long (${task.length} characters; the limit is ${MAX_TASK_LENGTH}).`
         )
       }
-      const workflow = isRecord(params) ? params.workflow : undefined
-      if (visualization && !isVisualizationWorkflow(workflow)) {
-        return errorResult('Visualization workflow must be examples, create, revise, or reference.')
+      const record = isRecord(params) ? params : {}
+      let images: AgentImage[] = []
+      const notes: string[] = []
+      if (local) {
+        const paths = imagePathsFrom(record)
+        if (typeof paths === 'string') return errorResult(paths)
+        const loaded: AgentImage[] = []
+        for (const filePath of paths) {
+          const image = imageFromFile(filePath)
+          if (typeof image === 'string') return errorResult(image)
+          loaded.push(image)
+        }
+        const includeAttached = record.include_attached_images === true
+        const attached = includeAttached ? latestUserImages(ctx) : []
+        if (includeAttached && attached.length === 0 && paths.length === 0) {
+          return errorResult(
+            'The reference image is missing. Attach it or provide an image file path.'
+          )
+        }
+        images = [...loaded, ...attached]
+        if (paths.length > 0) notes.push(`- Image file paths: ${paths.join(', ')}`)
+        if (attached.length > 0) {
+          notes.push('- User-attached images are attached to this prompt.')
+        }
       }
-      const referenceImagePath =
-        isRecord(params) && typeof params.reference_image_path === 'string'
-          ? params.reference_image_path.trim()
-          : ''
-      if (referenceImagePath && !isAbsolute(referenceImagePath)) {
-        return errorResult('reference_image_path must be an absolute file path.')
-      }
-      if (referenceImagePath && workflow !== 'reference') {
-        return errorResult('reference_image_path is only valid for reference workflow.')
-      }
-      const images = workflow === 'reference' && !referenceImagePath ? latestUserImages(ctx) : []
-      if (workflow === 'reference' && !referenceImagePath && images.length === 0) {
-        return errorResult(
-          'The reference image is missing. Attach it or provide an image file path.'
-        )
-      }
-      const background = isRecord(params) && params.background === true
-      const delegatedTask = taskWithProjectBoundary(
-        definition,
-        task,
-        options,
-        isVisualizationWorkflow(workflow) ? workflow : undefined,
-        images.length > 0,
-        referenceImagePath || undefined
-      )
+      const background = record.background === true
+      const delegatedTask = executionContext(task, local ? cwd : undefined, notes)
 
       let handle
       try {
         handle = registry.launch({
           agent: name,
           task: delegatedTask,
-          ...(isVisualizationWorkflow(workflow) ? { workflow } : {}),
           ...(images.length > 0 ? { images } : {}),
           runner,
           background,

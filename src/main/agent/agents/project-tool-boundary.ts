@@ -1,6 +1,6 @@
 import type { ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
 
-import { resolveInsideProject } from '../visualization/project-path'
+import { resolveInsideProject } from '../project-path'
 
 const FILE_TOOLS = new Set(['read', 'write', 'edit', 'glob', 'grep', 'ast_edit', 'ast_grep'])
 const SHELL_TOOLS = new Set(['bash', 'powershell'])

@@ -18,7 +18,7 @@ const AGENTS_DIR = join(process.cwd(), 'resources', 'agents')
 
 // The skill is read whole by the Visualization agent on every delegation, so what is in it
 // is paid for every time. Long, situational material lives in references/ and is read on demand.
-const SKILL_BUDGET_BYTES = 16_500
+const SKILL_BUDGET_BYTES = 22_000
 
 test('SKILL.md stays within its budget', () => {
   assert.ok(
@@ -91,8 +91,9 @@ test('SKILL.md tells the agent to use the visualization tools, and keeps the man
   )
   assert.match(reference, /Inspect the actual attached image/i)
   assert.match(reference, /Do not reuse plotted values/i)
-  assert.match(SKILL, /scripts\/route_template\.py/)
-  assert.match(SKILL, /qa_single_plot\.py/)
+  assert.match(SKILL, /validate_template_contracts\.py/)
+  assert.doesNotMatch(SKILL, /script: "route_template\.py"/)
+  assert.doesNotMatch(SKILL, /script: "qa_single_plot\.py"/)
 })
 
 test('every relative link in SKILL.md points at a file that exists', () => {
@@ -127,8 +128,9 @@ test('the Visualization agent is given example, route, prepare and render tools'
   assert.deepEqual(diagnostics, [])
   const visualization = agents.find((agent) => agent.name === 'Visualization')
   assert.ok(visualization)
+  assert.equal(visualization.environment, 'plugin:viz')
   for (const tool of ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']) {
-    assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
+    assert.equal(visualization.tools.includes(tool), false)
     assert.match(visualization.systemPrompt, new RegExp(tool))
   }
   assert.ok(

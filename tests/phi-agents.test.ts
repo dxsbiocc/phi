@@ -28,11 +28,7 @@ import {
   extractAssistantText,
   type AgentSessionLike
 } from '../src/main/agent/agents/runner'
-import {
-  buildScopedPhiToolMap,
-  resolveAgentTools,
-  visualizationToolNamesForWorkflow
-} from '../src/main/agent/agents/tool-resolution'
+import { buildScopedPhiToolMap, resolveAgentTools } from '../src/main/agent/agents/tool-resolution'
 import { buildAgentTool, type AgentRunner } from '../src/main/agent/agents/tool'
 
 const REPO_AGENTS_DIR = join(import.meta.dirname, '..', 'resources', 'agents')
@@ -829,7 +825,10 @@ test('the bundled Visualization agent routes template previews through omics vis
   for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit']) {
     assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
   }
-  assert.ok(visualization.tools.includes('viz_examples'))
+  assert.equal(visualization.environment, 'plugin:viz')
+  for (const tool of ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']) {
+    assert.equal(visualization.tools.includes(tool), false, `${tool} arrives through attachTo`)
+  }
   assert.deepEqual(visualization.skills, ['omics-visualization'])
   assert.equal(existsSync(join(REPO_VIZ_SKILL_DIR, 'SKILL.md')), true)
   assert.equal(visualization.delegationMode, 'required-first')
@@ -958,29 +957,6 @@ test('resolveAgentTools resolves Database tools only when provided by its scoped
   ])
 })
 
-test('Visualization exposes only tools appropriate to its selected workflow', () => {
-  const declared = ['read', 'edit', 'viz_examples', 'viz_route', 'viz_prepare', 'viz_render']
-  assert.deepEqual(visualizationToolNamesForWorkflow(declared, 'examples'), [
-    'read',
-    'edit',
-    'viz_examples'
-  ])
-  assert.deepEqual(visualizationToolNamesForWorkflow(declared, 'revise'), [
-    'read',
-    'edit',
-    'viz_render'
-  ])
-  for (const workflow of ['create', 'reference'] as const) {
-    assert.deepEqual(visualizationToolNamesForWorkflow(declared, workflow), [
-      'read',
-      'edit',
-      'viz_route',
-      'viz_prepare',
-      'viz_render'
-    ])
-  }
-})
-
 test('Phi tool ownership isolates Wrapper and Database internals', () => {
   const wrapper = { name: 'wrapper_run' } as never
   const database = { name: 'db_query' } as never
@@ -1000,18 +976,6 @@ const WRAPPER: PhiAgentDefinition = {
   systemPrompt: 'p',
   source: 'phi',
   filePath: '/x/Wrapper.md',
-  visibility: 'entry',
-  warnings: []
-}
-
-const VISUALIZATION: PhiAgentDefinition = {
-  name: 'Visualization',
-  description: 'Specialist for template-guided omics visualization.',
-  tools: ['read', 'bash', 'write'],
-  skills: ['omics-visualization'],
-  systemPrompt: 'p',
-  source: 'phi',
-  filePath: '/x/Visualization.md',
   visibility: 'entry',
   warnings: []
 }
@@ -1048,36 +1012,12 @@ test('the tool passes the trimmed task to the runner and returns its report', as
   })
 })
 
-test('the Visualization delegation tool injects the project output boundary', async () => {
-  const seen: string[] = []
-  const runner: AgentRunner = async (request) => {
-    seen.push(request.task)
-    return { text: 'Rendered output in project.', toolCalls: 1 }
-  }
-  const tool = buildAgentTool(VISUALIZATION, runner, undefined, { cwd: '/project/root' })
-  assert.match(tool.description, /Project output boundary for Visualization/)
-  assert.match(tool.description, /\/project\/root\/visualizations/)
-
-  const result = await tool.execute('call-viz', {
-    task: '  render /data/results.tsv  ',
-    workflow: 'create'
-  })
-
-  assert.equal(result.isError, undefined)
-  assert.equal(seen.length, 1)
-  assert.match(seen[0], /Phi execution context:/)
-  assert.match(seen[0], /Current project working directory \(cwd\): \/project\/root/)
-  assert.match(seen[0], /Treat input\/data paths outside cwd as read-only/)
-  assert.match(seen[0], /Do not create sibling plots/)
-  assert.match(seen[0], /Delegated task:\nrender \/data\/results\.tsv/)
-})
-
-test('Visualization delegation distinguishes examples, creation, revision, and reference imitation', async () => {
-  const seen: Array<{ task: string; images?: unknown[]; workflow?: string }> = []
+test('local specialists get an execution context and image forwarding', async () => {
+  const seen: Array<{ task: string; images?: unknown[] }> = []
   const tool = buildAgentTool(
-    VISUALIZATION,
+    WRAPPER,
     async (request) => {
-      seen.push(request)
+      seen.push({ task: request.task, ...(request.images ? { images: request.images } : {}) })
       return { text: 'Done.', toolCalls: 0 }
     },
     undefined,
@@ -1085,42 +1025,44 @@ test('Visualization delegation distinguishes examples, creation, revision, and r
   )
   const parameters = tool.parameters as {
     required: string[]
-    properties: { workflow: { enum: string[] } }
+    properties: Record<string, unknown>
   }
-  assert.deepEqual(parameters.required, ['task', 'workflow'])
-  assert.deepEqual(parameters.properties.workflow.enum, [
-    'examples',
-    'create',
-    'revise',
-    'reference'
-  ])
-  const missing = await tool.execute('missing-mode', { task: '修改刚才的配色' })
+  assert.deepEqual(parameters.required, ['task'])
+  assert.equal('workflow' in parameters.properties, false)
+  assert.equal('image_paths' in parameters.properties, true)
+  assert.equal('include_attached_images' in parameters.properties, true)
+  assert.match(tool.description, /Project output boundary/)
+  assert.match(tool.description, /\/project\/root/)
+  assert.doesNotMatch(tool.description, /workflow/)
+
+  const result = await tool.execute('call-local', { task: '  render /data/results.tsv  ' })
+  assert.equal(result.isError, undefined)
+  assert.match(seen[0]?.task ?? '', /Phi execution context:/)
+  assert.match(seen[0]?.task ?? '', /Current project working directory \(cwd\): \/project\/root/)
+  assert.match(seen[0]?.task ?? '', /read-only/)
+  assert.match(seen[0]?.task ?? '', /cwd-contained paths/)
+  assert.match(seen[0]?.task ?? '', /Delegated task:\nrender \/data\/results\.tsv/)
+
+  const relative = await tool.execute('relative-image', {
+    task: 'Use the figure.',
+    image_paths: ['relative.png']
+  })
+  assert.equal(relative.isError, true)
+  assert.match(JSON.stringify(relative.content), /image_paths must be an absolute file path/)
+
+  const missing = await tool.execute('missing-image', {
+    task: 'Use the attached image.',
+    include_attached_images: true
+  })
   assert.equal(missing.isError, true)
-  const misplacedReference = await tool.execute('wrong-mode-reference', {
-    workflow: 'revise',
-    task: 'Edit /project/plots/plot.R colors.',
-    reference_image_path: '/project/example.png'
-  })
-  assert.equal(misplacedReference.isError, true)
-
-  await tool.execute('revision', {
-    workflow: 'revise',
-    task: 'Edit /project/plots/plot.R colors using /project/data.tsv; update /project/plots/figure.png.'
-  })
-  assert.match(seen[0]?.task ?? '', /Workflow: revise/)
-  assert.equal(seen[0]?.workflow, 'revise')
-  assert.equal(seen[0]?.images, undefined)
-
-  await tool.execute('examples', { workflow: 'examples', task: 'Show installed heatmap examples.' })
-  assert.match(seen[1]?.task ?? '', /Workflow: examples/)
-  assert.match(seen[1]?.task ?? '', /without creating project files/)
+  assert.match(JSON.stringify(missing.content), /reference image/i)
 })
 
-test('reference imitation forwards the user image into the specialist prompt', async () => {
+test('include_attached_images forwards the latest user image for any local specialist', async () => {
   let forwarded: unknown
-  const tool = buildAgentTool(VISUALIZATION, async (request) => {
+  const tool = buildAgentTool(WRAPPER, async (request) => {
     forwarded = request.images
-    return { text: 'Reference inspected.', toolCalls: 0 }
+    return { text: 'Seen.', toolCalls: 0 }
   })
   const ctx = {
     sessionManager: {
@@ -1130,7 +1072,7 @@ test('reference imitation forwards the user image into the specialist prompt', a
           message: {
             role: 'user',
             content: [
-              { type: 'text', text: '参考这张图画我的数据' },
+              { type: 'text', text: '参考这张图' },
               { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }
             ]
           }
@@ -1139,26 +1081,68 @@ test('reference imitation forwards the user image into the specialist prompt', a
     }
   } as never
   const result = await tool.execute(
-    'reference',
-    { workflow: 'reference', task: 'Use the attached reference image with /project/data.tsv.' },
+    'attached',
+    { task: 'Use the attached image.', include_attached_images: true },
     undefined,
     ctx
   )
   assert.equal(result.isError, undefined)
   assert.deepEqual(forwarded, [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }])
-  const absent = await tool.execute('no-reference', {
-    workflow: 'reference',
-    task: '模仿一张图绘制 /project/data.tsv，输出 /project/plot.png'
-  })
-  assert.equal(absent.isError, true)
-  assert.match(JSON.stringify(absent.content), /reference image/i)
+})
 
-  const byPath = await tool.execute('reference-path', {
-    workflow: 'reference',
-    reference_image_path: '/project/reference.png',
-    task: 'Use /project/data.tsv and save /project/result.png.'
-  })
-  assert.equal(byPath.isError, undefined)
+test('image_paths forwards an image file and remote projects keep the plain task', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'phi-agent-image-'))
+  const image = join(dir, 'ref.png')
+  writeFileSync(
+    image,
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64'
+    )
+  )
+  try {
+    let forwarded: unknown
+    let task = ''
+    const tool = buildAgentTool(
+      WRAPPER,
+      async (request) => {
+        forwarded = request.images
+        task = request.task
+        return { text: 'Seen.', toolCalls: 0 }
+      },
+      undefined,
+      { cwd: '/project/root' }
+    )
+    const result = await tool.execute('by-path', {
+      task: 'Match this image.',
+      image_paths: [image]
+    })
+    assert.equal(result.isError, undefined)
+    assert.equal((forwarded as Array<{ mimeType: string }>)[0]?.mimeType, 'image/png')
+    assert.match(task, new RegExp(image.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+
+    const remoteSeen: string[] = []
+    const remote = buildAgentTool(
+      WRAPPER,
+      async (request) => {
+        remoteSeen.push(request.task)
+        return { text: 'Remote.', toolCalls: 0 }
+      },
+      undefined,
+      { cwd: '/project/root', remote: true }
+    )
+    const remoteParameters = remote.parameters as { properties: Record<string, unknown> }
+    assert.equal('image_paths' in remoteParameters.properties, false)
+    assert.equal('workflow' in remoteParameters.properties, false)
+    await remote.execute('remote', {
+      task: 'Run on the remote project.',
+      image_paths: [image],
+      include_attached_images: true
+    })
+    assert.deepEqual(remoteSeen, ['Run on the remote project.'])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('the tool rejects a missing, blank or oversized task without running the agent', async () => {
@@ -1324,8 +1308,8 @@ test('the specialist runner sends reference images with the delegated prompt', a
     }
   })
   const images = [{ type: 'image' as const, data: 'aGVsbG8=', mimeType: 'image/png' }]
-  await runner({ task: 'Use the reference image.', images, workflow: 'reference' })
-  assert.deepEqual(createdWith, { workflow: 'reference' })
+  await runner({ task: 'Use the reference image.', images })
+  assert.deepEqual(createdWith, {})
   assert.deepEqual((session as typeof session & { promptOptions: unknown[] }).promptOptions, [
     { images }
   ])

@@ -1,4 +1,5 @@
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
+import { isBundledSkillPreviewPath } from '../src/main/agent/plugins/bundled'
 import { loadRemoteWrapperAgent } from '../src/main/agent/agents/remote-wrapper-agent'
 import { BackgroundAgentApprovalTracker } from '../src/main/agent/agents/background-approval'
 import * as jobContinue from '../src/main/agent/wrappers/composition/job-continue'
@@ -25,7 +26,6 @@ import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
 import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
 import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-preview-media'
 import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers/remote-result-download'
-import { isInstalledFigurePreviewPath } from '../src/main/agent/visualization/examples'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -1872,23 +1872,12 @@ async function harness(
         throw new Error('wrapper.yaml 校验失败: (mocked in main-integration.test.ts)')
       }
     },
-    './agent/visualization/examples': { isInstalledFigurePreviewPath },
-    './agent/visualization/tools': {
-      getBundledSkillRoot: () =>
-        path.join(
-          process.cwd(),
-          'resources',
-          'plugins',
-          'visualization',
-          'skills',
-          'omics-visualization'
-        )
-    },
     // Real scan of the repo's bundled agents, but never the developer's own ~/.claude etc.
     './agent/agents/discovery': {
       discoverPhiAgents: (options: Parameters<typeof discoverPhiAgents>[0]) =>
         discoverPhiAgents({ ...options, homeDir: '/nonexistent-home' })
     },
+    './agent/plugins/bundled': { isBundledSkillPreviewPath },
     './agent/agents/remote-wrapper-agent': { loadRemoteWrapperAgent },
     './agent/agents/background-approval': { BackgroundAgentApprovalTracker },
     './agent/agents/leader-prompt': { buildAgentLeaderPrompt },
