@@ -77,6 +77,7 @@ import {
   assertProjectPathAvailable,
   getProject,
   getProjectByCwd,
+  listLocalProjectAllowRoots,
   listProjects,
   subscribeRemoteProjectConnection,
   updateProjectPermissionMode,
@@ -88,6 +89,11 @@ import {
   type Project,
   type ProjectRemoteConnection
 } from './agent/projects'
+import {
+  isLocalFilePathAllowedByRoots,
+  isPathInsideRoot,
+  localFileAllowRoots
+} from './agent/local-file-access'
 import {
   deleteRemoteHostProfile,
   getRemoteHostProfile,
@@ -4091,11 +4097,6 @@ type LocalPathScope = {
   cwdRealPath?: string
 }
 
-function isPathInsideRoot(root: string, target: string): boolean {
-  const relativePath = relative(resolve(root), target)
-  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))
-}
-
 function currentLocalPathScope(): LocalPathScope {
   const project = getProjectByCwd(currentCwd)
   return {
@@ -4113,7 +4114,8 @@ function isRemoteResourceScope(cwd?: string): boolean {
 
 function isLocalFilePathAllowed(
   target: string,
-  scope: LocalPathScope = currentLocalPathScope()
+  scope: LocalPathScope = currentLocalPathScope(),
+  projectRoots: readonly string[] = []
 ): boolean {
   if (isRemoteProjectAnchorPath(target, AGENT_DIR)) return false
   if (
@@ -4122,30 +4124,50 @@ function isLocalFilePathAllowed(
   ) {
     return true
   }
-  const agentDir = resolve(AGENT_DIR)
-  const roots = [agentDir, scope.cwd, scope.cwdRealPath].filter(
-    (root): root is string => typeof root === 'string' && root.length > 0
+  return isLocalFilePathAllowedByRoots(
+    target,
+    localFileAllowRoots({
+      agentDir: resolve(AGENT_DIR),
+      sessionCwd: scope.cwd,
+      sessionCwdRealPath: scope.cwdRealPath,
+      projectRoots
+    })
   )
-  return roots.some((root) => isPathInsideRoot(root, target))
 }
 
-function getLocalPathScope(target: string): {
+function scopeForRoot(
+  root: string,
+  target: string
+): { rootPath: string; rootLabel: string; displayPath: string } | null {
+  const rootPath = resolve(root)
+  if (!isPathInsideRoot(rootPath, target)) return null
+  const relativePath = relative(rootPath, target)
+  return {
+    rootPath,
+    rootLabel: basename(rootPath) || rootPath,
+    displayPath: relativePath || basename(target)
+  }
+}
+
+function getLocalPathScope(
+  target: string,
+  projectRoots: readonly string[] = []
+): {
   rootPath: string
   rootLabel: string
   displayPath: string
 } | null {
   if (isRemoteProjectAnchorPath(target, AGENT_DIR)) return null
-  const cwd = resolve(currentCwd)
-  const agentDir = resolve(AGENT_DIR)
-  const relativeCwdPath = relative(cwd, target)
-  if (!relativeCwdPath.startsWith('..') && !isAbsolute(relativeCwdPath)) {
-    return {
-      rootPath: cwd,
-      rootLabel: basename(cwd) || cwd,
-      displayPath: relativeCwdPath || basename(target)
-    }
-  }
+  const cwdScope = scopeForRoot(currentCwd, target)
+  if (cwdScope) return cwdScope
 
+  const projectScope = projectRoots
+    .map((root) => scopeForRoot(root, target))
+    .filter((scope): scope is NonNullable<typeof scope> => scope !== null)
+    .sort((left, right) => right.rootPath.length - left.rootPath.length)[0]
+  if (projectScope) return projectScope
+
+  const agentDir = resolve(AGENT_DIR)
   const relativeAgentPath = relative(agentDir, target)
   if (!relativeAgentPath.startsWith('..') && !isAbsolute(relativeAgentPath)) {
     return {
@@ -4161,18 +4183,20 @@ function getLocalPathScope(target: string): {
 function assertLocalFilePathAllowed(
   filePath: string,
   actionLabel: string,
-  options: { resolveSymlinks?: boolean } = {}
+  options: { resolveSymlinks?: boolean; projectRoots?: readonly string[] } = {}
 ): string {
   if (!isAbsolute(filePath)) {
     throw new Error(`只能${actionLabel}绝对路径`)
   }
+  const projectRoots = options.projectRoots ?? listLocalProjectAllowRoots()
+  const scope = currentLocalPathScope()
   const target = resolve(filePath)
-  if (!isLocalFilePathAllowed(target)) {
+  if (!isLocalFilePathAllowed(target, scope, projectRoots)) {
     throw new Error(`只能${actionLabel} Phi 保存的文件或当前项目内的文件`)
   }
   const inspectedTarget = options.resolveSymlinks ? realpathSync(target) : target
   if (
-    !isLocalFilePathAllowed(inspectedTarget) ||
+    !isLocalFilePathAllowed(inspectedTarget, scope, projectRoots) ||
     (existsSync(inspectedTarget) &&
       isRemoteProjectAnchorPath(realpathSync(inspectedTarget), AGENT_DIR))
   ) {
@@ -4325,7 +4349,7 @@ function filePreviewBasePayload(
   previewBytes: number,
   truncated: boolean
 ): FilePreviewBasePayload {
-  const scope = getLocalPathScope(target)
+  const scope = getLocalPathScope(target, listLocalProjectAllowRoots())
   return {
     path: target,
     name: basename(target),
@@ -4682,7 +4706,12 @@ function createDirectoryListing(dirPath: string): {
   }>
   truncated: boolean
 } {
-  const target = assertLocalFilePathAllowed(dirPath, '列出', { resolveSymlinks: true })
+  const projectRoots = listLocalProjectAllowRoots()
+  const pathScope = currentLocalPathScope()
+  const target = assertLocalFilePathAllowed(dirPath, '列出', {
+    resolveSymlinks: true,
+    projectRoots
+  })
   const stats = statSync(target)
   if (!stats.isDirectory()) {
     throw new Error('只能列出文件夹内容')
@@ -4693,10 +4722,10 @@ function createDirectoryListing(dirPath: string): {
     let realEntryPath = entryPath
     try {
       realEntryPath = realpathSync(entryPath)
-      if (!isLocalFilePathAllowed(realEntryPath)) return []
+      if (!isLocalFilePathAllowed(realEntryPath, pathScope, projectRoots)) return []
       const entryStats = statSync(realEntryPath)
       if (!entryStats.isDirectory() && !entryStats.isFile()) return []
-      const scope = getLocalPathScope(entryPath)
+      const scope = getLocalPathScope(entryPath, projectRoots)
       return [
         {
           path: entryPath,
@@ -4714,7 +4743,7 @@ function createDirectoryListing(dirPath: string): {
     return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
   })
 
-  const scope = getLocalPathScope(target)
+  const scope = getLocalPathScope(target, projectRoots)
   return {
     path: target,
     name: basename(target) || target,

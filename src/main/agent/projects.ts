@@ -203,6 +203,24 @@ export function readProjectGitStatus(workingDirectory: string): ProjectGitStatus
   }
 }
 
+/** Local project directories the user already added. Does not read Git status. */
+export function listLocalProjectAllowRoots(): string[] {
+  const roots: string[] = []
+  for (const stored of readProjects()) {
+    if (stored.location.kind !== 'local') continue
+    const project = normalizeProjectAvailability(stored)
+    if (!project.pathAvailable) continue
+    roots.push(project.workingDirectory)
+    if (
+      project.workingDirectoryRealPath &&
+      project.workingDirectoryRealPath !== project.workingDirectory
+    ) {
+      roots.push(project.workingDirectoryRealPath)
+    }
+  }
+  return roots
+}
+
 export function listProjects(): Project[] {
   return readProjects()
     .map(normalizeProjectAvailability)
