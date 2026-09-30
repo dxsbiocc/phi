@@ -18,6 +18,15 @@ export function normalizeHexColor(value: string): string | null {
   return `#${trimmed.slice(1).toUpperCase()}`
 }
 
+export function paletteColorsFromText(value: string): string[] {
+  const colors = new Set<string>()
+  for (const match of value.matchAll(HEX_COLOR_PATTERN)) {
+    const color = normalizeHexColor(match[0])
+    if (color) colors.add(color)
+  }
+  return colors.size >= 3 ? [...colors] : []
+}
+
 export function extractLatexColorboxColors(value: string): string[] {
   const colors: string[] = []
 

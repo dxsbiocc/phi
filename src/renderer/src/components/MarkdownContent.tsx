@@ -30,8 +30,17 @@ import {
   tokenizeBareFileReferences,
   type LocalPathKind
 } from '../lib/markdownLocalPathReferences'
-import { normalizeHexColor, tokenizeMarkdownColors } from '../lib/markdownColors'
-import { ColorCode, InlineCodeShell, MarkdownColorTokenView } from './markdown/MarkdownColorToken'
+import {
+  normalizeHexColor,
+  paletteColorsFromText,
+  tokenizeMarkdownColors
+} from '../lib/markdownColors'
+import {
+  ColorCode,
+  ColorPalette,
+  InlineCodeShell,
+  MarkdownColorTokenView
+} from './markdown/MarkdownColorToken'
 import { LocalPathButton } from './markdown/LocalPathButton'
 import { MarkdownSmilesTokenView } from './markdown/MarkdownSmilesToken'
 import { StringNetworkPreview } from './markdown/StringNetworkPreview'
@@ -601,13 +610,15 @@ type MarkdownContentProps = {
   cwd?: string
   onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
   enableMath?: boolean // off by default -- see markdownMathPlugins.ts for why
+  showColorPalettes?: boolean
 }
 
 function MarkdownContentImpl({
   text,
   cwd = '',
   onOpenLocalPath,
-  enableMath = false
+  enableMath = false,
+  showColorPalettes = false
 }: MarkdownContentProps): React.JSX.Element {
   const remoteProject = useRemoteProjectFileContext()
   const localPathReferencePaths = useMemo(
@@ -632,11 +643,15 @@ function MarkdownContentImpl({
 
   const components = useMemo<Components>(
     () => ({
-      p: ({ children }) => (
-        <Typography variant="body1" sx={{ my: 1, fontSize: 'inherit', lineHeight: 'inherit' }}>
-          {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
-        </Typography>
-      ),
+      p: ({ children }) => {
+        const colors = showColorPalettes ? paletteColorsFromText(textFromNode(children)) : []
+        return (
+          <Typography variant="body1" sx={{ my: 1, fontSize: 'inherit', lineHeight: 'inherit' }}>
+            {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
+            {colors.length > 0 && <ColorPalette colors={colors} />}
+          </Typography>
+        )
+      },
       h1: ({ children }) => (
         <Typography variant="h6" component="h1" sx={{ mt: 2.5, mb: 1, fontWeight: 700 }}>
           {children}
@@ -652,16 +667,28 @@ function MarkdownContentImpl({
           {children}
         </Typography>
       ),
-      ul: ({ children }) => (
-        <Box component="ul" sx={{ my: 1, pl: 3, '& li': { mb: 0.5 } }}>
-          {children}
-        </Box>
-      ),
-      ol: ({ children }) => (
-        <Box component="ol" sx={{ my: 1, pl: 3, '& li': { mb: 0.5 } }}>
-          {children}
-        </Box>
-      ),
+      ul: ({ children }) => {
+        const colors = showColorPalettes ? paletteColorsFromText(textFromNode(children)) : []
+        return (
+          <>
+            {colors.length > 0 && <ColorPalette colors={colors} />}
+            <Box component="ul" sx={{ my: 1, pl: 3, '& li': { mb: 0.5 } }}>
+              {children}
+            </Box>
+          </>
+        )
+      },
+      ol: ({ children }) => {
+        const colors = showColorPalettes ? paletteColorsFromText(textFromNode(children)) : []
+        return (
+          <>
+            {colors.length > 0 && <ColorPalette colors={colors} />}
+            <Box component="ol" sx={{ my: 1, pl: 3, '& li': { mb: 0.5 } }}>
+              {children}
+            </Box>
+          </>
+        )
+      },
       li: ({ children }) => (
         <Typography component="li" sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}>
           {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
@@ -812,7 +839,7 @@ function MarkdownContentImpl({
         </Box>
       )
     }),
-    [cwd, localPathKinds, onOpenLocalPath, remoteProject]
+    [cwd, localPathKinds, onOpenLocalPath, remoteProject, showColorPalettes]
   )
 
   return (
@@ -855,7 +882,12 @@ function markdownContentPropsEqual(
   prev: MarkdownContentProps,
   next: MarkdownContentProps
 ): boolean {
-  return prev.text === next.text && prev.cwd === next.cwd && prev.enableMath === next.enableMath
+  return (
+    prev.text === next.text &&
+    prev.cwd === next.cwd &&
+    prev.enableMath === next.enableMath &&
+    prev.showColorPalettes === next.showColorPalettes
+  )
 }
 
 const MarkdownContent = memo(MarkdownContentImpl, markdownContentPropsEqual)

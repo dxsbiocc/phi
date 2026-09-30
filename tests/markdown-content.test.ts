@@ -7,9 +7,18 @@ import MarkdownContent from '../src/renderer/src/components/MarkdownContent'
 import { RemoteProjectFileContext } from '../src/renderer/src/lib/remoteProjectFileContext'
 import { createAppTheme } from '../src/renderer/src/theme'
 
-function renderMarkdown(text: string, theme: Theme = createTheme(), enableMath?: boolean): string {
+function renderMarkdown(
+  text: string,
+  theme: Theme = createTheme(),
+  enableMath?: boolean,
+  showColorPalettes?: boolean
+): string {
   return renderToStaticMarkup(
-    createElement(ThemeProvider, { theme }, createElement(MarkdownContent, { text, enableMath }))
+    createElement(
+      ThemeProvider,
+      { theme },
+      createElement(MarkdownContent, { text, enableMath, showColorPalettes })
+    )
   )
 }
 
@@ -139,6 +148,33 @@ test('markdown color swatches work inside emphasis and tables', () => {
 
   assert.match(markup, /style="background-color:#0072B2"/)
   assert.match(markup, /style="background-color:#D55E00"/)
+})
+
+test('assistant color lists render an interactive palette and preserve the listed colors', () => {
+  const markup = renderMarkdown(
+    '- 主色 `#e11d48`\n- 辅色 #f472b6\n- 点缀 #fb923c',
+    createTheme(),
+    false,
+    true
+  )
+
+  assert.equal((markup.match(/data-phi-slot="markdown-color-palette"/g) ?? []).length, 1)
+  assert.match(markup, /aria-label="复制颜色 #E11D48"/)
+  assert.match(markup, /aria-label="复制颜色 #F472B6"/)
+  assert.match(markup, /aria-label="复制颜色 #FB923C"/)
+  assert.match(markup, /主色/)
+  assert.match(markup, /辅色/)
+  assert.match(markup, /点缀/)
+})
+
+test('color palette appears for a multi-color paragraph but not isolated color mentions', () => {
+  const palette = renderMarkdown('推荐 #e11d48、#f472b6 和 #fb923c。', createTheme(), false, true)
+  const isolated = renderMarkdown('主色 #e11d48，辅色 #f472b6。', createTheme(), false, true)
+  const otherSurface = renderMarkdown('推荐 #e11d48、#f472b6 和 #fb923c。')
+
+  assert.equal((palette.match(/data-phi-slot="markdown-color-palette"/g) ?? []).length, 1)
+  assert.doesNotMatch(isolated, /data-phi-slot="markdown-color-palette"/)
+  assert.doesNotMatch(otherSurface, /data-phi-slot="markdown-color-palette"/)
 })
 
 test('math is left as literal text by default (chat, wrapper views, etc.)', () => {

@@ -188,7 +188,12 @@ export const ChatBubble = memo(function ChatBubble({
 
   return (
     <Box sx={{ alignSelf: 'stretch', minWidth: 0, px: 0.5 }}>
-      <MarkdownContent text={message.content} cwd={cwd} onOpenLocalPath={onOpenLocalPath} />
+      <MarkdownContent
+        text={message.content}
+        cwd={cwd}
+        onOpenLocalPath={onOpenLocalPath}
+        showColorPalettes
+      />
     </Box>
   )
 }, chatBubblePropsEqual)

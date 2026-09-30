@@ -1,5 +1,5 @@
-import { Box } from '@mui/material'
-import { Fragment, type ReactNode } from 'react'
+import { Box, Tooltip } from '@mui/material'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import type { MarkdownColorToken } from '../../lib/markdownColors'
 
 const inlineCodeSx = {
@@ -66,22 +66,96 @@ export function ColorCode({ color }: { color: string }): React.JSX.Element {
   )
 }
 
-function ColorPalettePreview({ colors }: { colors: string[] }): React.JSX.Element {
+export function ColorPalette({ colors }: { colors: string[] }): React.JSX.Element {
+  const [copiedColor, setCopiedColor] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!copiedColor) return
+    const timeout = window.setTimeout(() => setCopiedColor(null), 1800)
+    return () => window.clearTimeout(timeout)
+  }, [copiedColor])
+
+  async function copyColor(color: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(color)
+      setCopiedColor(color)
+    } catch {
+      // Clipboard permissions can vary by host; leave the color visible for manual copying.
+    }
+  }
+
   return (
     <Box
       component="span"
       data-phi-slot="markdown-color-palette"
       sx={{
-        display: 'inline-flex',
+        display: 'flex',
         alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: 0.75,
-        mx: 0.5,
-        verticalAlign: 'middle'
+        maxWidth: '100%',
+        width: 'max-content',
+        overflowX: 'auto',
+        pt: 1.5,
+        pb: 1,
+        pr: 2,
+        my: 0.5,
+        '& .phi-color-swatch:hover, & .phi-color-swatch:focus-visible': {
+          transform: 'scale(1.3)',
+          zIndex: 3
+        },
+        '& .phi-color-swatch:hover + .phi-color-swatch, & .phi-color-swatch:has(+ .phi-color-swatch:hover)': {
+          transform: 'scale(1.12)',
+          zIndex: 2
+        },
+        '@media (prefers-reduced-motion: reduce)': {
+          '& .phi-color-swatch': { transition: 'none' }
+        }
       }}
     >
       {colors.map((color, index) => (
-        <ColorCode key={`${color}-${index}`} color={color} />
+        <Tooltip
+          key={`${color}-${index}`}
+          title={copiedColor === color ? `已复制 ${color}` : color}
+          slotProps={{
+            tooltip: {
+              sx: {
+                bgcolor: 'background.paper',
+                color: 'text.primary',
+                border: 1,
+                borderColor: 'divider',
+                borderRadius: 1.5,
+                fontFamily: 'var(--font-mono)',
+                fontSize: 12,
+                boxShadow: 2
+              }
+            }
+          }}
+        >
+          <Box
+            component="button"
+            type="button"
+            className="phi-color-swatch"
+            data-color={color}
+            aria-label={`复制颜色 ${color}`}
+            onClick={() => void copyColor(color)}
+            sx={{
+              appearance: 'none',
+              position: 'relative',
+              flexShrink: 0,
+              width: 44,
+              height: 52,
+              ml: index === 0 ? 0 : -1,
+              p: 0,
+              border: 1,
+              borderColor: 'divider',
+              borderRadius: 1.5,
+              cursor: 'pointer',
+              boxShadow: 1,
+              transition: 'transform 220ms cubic-bezier(0.175, 0.885, 0.32, 1.1)',
+              '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
+            }}
+            style={{ backgroundColor: color }}
+          />
+        </Tooltip>
       ))}
     </Box>
   )
@@ -93,6 +167,6 @@ export function MarkdownColorTokenView({
   token: MarkdownColorToken
 }): React.JSX.Element {
   if (token.kind === 'color') return <ColorCode color={token.color} />
-  if (token.kind === 'palette') return <ColorPalettePreview colors={token.colors} />
+  if (token.kind === 'palette') return <ColorPalette colors={token.colors} />
   return <Fragment>{token.text}</Fragment>
 }
