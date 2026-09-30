@@ -1,5 +1,5 @@
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
-import type { BackgroundAgentJob } from '../shared/backgroundJobTypes'
+import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
 import type {
   AutoCompactionOverrides,
   AutoCompactionSettingsPatch,
@@ -1165,6 +1165,64 @@ async function listBackgroundAgentJobs(): Promise<BackgroundAgentJob[]> {
     })
     .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
     .slice(0, 50)
+}
+
+const SHELL_JOB_STATES = new Set(['queued', 'running', 'completed', 'failed', 'cancelled'])
+
+async function listBackgroundShellJobs(): Promise<BackgroundShellJob[]> {
+  const raw = await getOmpBridge().request<unknown>('shellJobs.list', {})
+  if (!Array.isArray(raw)) return []
+  return raw
+    .flatMap((value): BackgroundShellJob[] => {
+      if (!isRecord(value)) return []
+      const agentSessionId = optionalStringField(value, 'agentSessionId')
+      const jobId = optionalStringField(value, 'jobId')
+      const command = optionalStringField(value, 'command')
+      const state = value.state
+      const startedAt = value.startedAt
+      if (
+        !agentSessionId ||
+        !jobId ||
+        !command ||
+        typeof state !== 'string' ||
+        !SHELL_JOB_STATES.has(state) ||
+        typeof startedAt !== 'number' ||
+        !Number.isFinite(startedAt)
+      )
+        return []
+      const origin = resolveOriginSession(agentSessionId)
+      if (!origin) return []
+      const manifest = findPhiSessionById(origin.phiSessionId)
+      if (!manifest) return []
+      const startedAtIso = new Date(startedAt).toISOString()
+      const output = optionalStringField(value, 'output')?.slice(-160)
+      return [
+        {
+          agentSessionId,
+          jobId,
+          sessionId: origin.phiSessionId,
+          sessionPath: phiOnlySessionPath(origin.phiSessionId),
+          sessionTitle: messageContentTitleText(manifest.title) || '新对话',
+          command: command.slice(0, 300),
+          state: state as BackgroundShellJob['state'],
+          startedAt: startedAtIso,
+          ...(state !== 'queued' && state !== 'running' ? { completedAt: startedAtIso } : {}),
+          ...(output ? { output } : {})
+        }
+      ]
+    })
+    .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+    .slice(0, 50)
+}
+
+async function stopBackgroundShellJob(agentSessionId: unknown, jobId: unknown): Promise<void> {
+  if (typeof agentSessionId !== 'string' || !agentSessionId) throw new Error('缺少会话')
+  if (typeof jobId !== 'string' || !jobId) throw new Error('缺少后台命令编号')
+  const result = await getOmpBridge().request<{ ok?: boolean }>('shellJobs.cancel', {
+    sessionId: agentSessionId,
+    jobId
+  })
+  if (!result?.ok) throw new Error('这个后台命令已经结束')
 }
 
 function sendRunEventToWindow(payload: Record<string, unknown>): void {
@@ -7442,6 +7500,10 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('wrappers:listRuns', async () => listWrapperRuns())
   ipcMain.handle('jobs:listAgents', listBackgroundAgentJobs)
+  ipcMain.handle('jobs:listShell', listBackgroundShellJobs)
+  ipcMain.handle('jobs:stopShell', async (_, agentSessionId: unknown, jobId: unknown) => {
+    await stopBackgroundShellJob(agentSessionId, jobId)
+  })
   ipcMain.handle('wrappers:getRun', async (_, runId: string) => readWrapperRun(runId))
   ipcMain.handle('wrappers:cancelRun', async (_, runId: string) => {
     try {

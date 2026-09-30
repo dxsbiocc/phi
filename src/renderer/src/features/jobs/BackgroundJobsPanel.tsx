@@ -1,18 +1,22 @@
 import { Box, Button, IconButton, Stack, Tooltip, Typography } from '@mui/material'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { BackgroundAgentJob } from '../../../../shared/backgroundJobTypes'
+import type { BackgroundAgentJob, BackgroundShellJob } from '../../../../shared/backgroundJobTypes'
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
 import { PhiIcons } from '../../icons'
 import { formatAgentDuration } from '../../lib/agentRunsOverview'
 import { runProgressLabel, runStateLabel } from '../wrapper/lib/wrapperView'
 import {
+  backgroundJobTrayStartedAt,
   canStopUnifiedWrapperRun,
+  dismissBackgroundJobs,
+  dismissedBackgroundJobKeys,
   selectBackgroundJobs,
   type UnifiedBackgroundJob
 } from './lib/backgroundJobs'
 
 const StopIcon = PhiIcons.action.stop
+const ClearIcon = PhiIcons.action.delete
 const REFRESH_MS = 2000
 
 function agentStateLabel(state: BackgroundAgentJob['state']): string {
@@ -26,10 +30,21 @@ function agentStateLabel(state: BackgroundAgentJob['state']): string {
   return labels[state]
 }
 
+function shellStateLabel(state: BackgroundShellJob['state']): string {
+  const labels = {
+    queued: '排队中',
+    running: '运行中',
+    completed: '已完成',
+    failed: '失败',
+    cancelled: '已停止'
+  } satisfies Record<BackgroundShellJob['state'], string>
+  return labels[state]
+}
+
 function jobTitle(item: UnifiedBackgroundJob): string {
-  return item.kind === 'agent'
-    ? item.run.agentName
-    : item.run.runName || item.run.wrapper.shortId || item.run.wrapper.canonicalId
+  if (item.kind === 'agent') return item.run.agentName
+  if (item.kind === 'shell') return item.run.command
+  return item.run.runName || item.run.wrapper.shortId || item.run.wrapper.canonicalId
 }
 
 function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
@@ -38,6 +53,15 @@ function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
   }
   const startedAtMs = Date.parse(item.run.startedAt)
   const elapsed = Number.isFinite(startedAtMs) ? Math.max(0, nowMs - startedAtMs) : 0
+  if (item.kind === 'shell') {
+    return [
+      shellStateLabel(item.run.state),
+      item.active ? formatAgentDuration(elapsed) : undefined,
+      item.run.output
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  }
   return [
     agentStateLabel(item.run.state),
     item.active ? formatAgentDuration(elapsed) : undefined,
@@ -49,20 +73,30 @@ function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
 }
 
 export function BackgroundJobsPanel({
-  onOpenSession,
-  onOpenWrapper
+  onOpenSession
 }: {
   onOpenSession: (path: string) => void
-  onOpenWrapper: (canonicalId: string) => void
 }): React.JSX.Element {
   const [agentJobs, setAgentJobs] = useState<BackgroundAgentJob[]>([])
+  const [shellJobs, setShellJobs] = useState<BackgroundShellJob[]>([])
   const [wrapperRuns, setWrapperRuns] = useState<WrapperRun[]>([])
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [stoppingKey, setStoppingKey] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(
+    () => new Set(dismissedBackgroundJobKeys())
+  )
   const refreshingRef = useRef(false)
-  const jobs = selectBackgroundJobs(agentJobs, wrapperRuns)
+  const jobs = selectBackgroundJobs(
+    agentJobs,
+    wrapperRuns,
+    {
+      finishedAfter: backgroundJobTrayStartedAt(),
+      dismissedKeys
+    },
+    shellJobs
+  )
 
   const refresh = useCallback(async (): Promise<void> => {
     if (refreshingRef.current) return
@@ -73,14 +107,20 @@ export function BackgroundJobsPanel({
         setLoaded(true)
         return
       }
-      const [agents, wrappers] = await Promise.allSettled([
+      const [agents, shells, wrappers] = await Promise.allSettled([
         window.api.listAgentJobs(),
+        typeof window.api.listShellJobs === 'function'
+          ? window.api.listShellJobs()
+          : Promise.resolve([]),
         window.api.listWrapperRuns()
       ])
       if (agents.status === 'fulfilled') setAgentJobs(agents.value)
+      if (shells.status === 'fulfilled') setShellJobs(shells.value)
       if (wrappers.status === 'fulfilled') setWrapperRuns(wrappers.value)
       setError(
-        agents.status === 'rejected' || wrappers.status === 'rejected'
+        agents.status === 'rejected' ||
+          shells.status === 'rejected' ||
+          wrappers.status === 'rejected'
           ? '部分任务状态暂时无法读取，稍后会自动重试。'
           : ''
       )
@@ -97,9 +137,9 @@ export function BackgroundJobsPanel({
     return () => window.clearInterval(timer)
   }, [refresh])
 
-  const openJob = (item: UnifiedBackgroundJob): void => {
-    if (item.kind === 'agent') onOpenSession(item.run.sessionPath)
-    else onOpenWrapper(item.run.wrapper.canonicalId)
+  const clearRecent = (): void => {
+    dismissBackgroundJobs(jobs.recent.map((item) => item.key))
+    setDismissedKeys(new Set(dismissedBackgroundJobKeys()))
   }
 
   const stopJob = async (item: UnifiedBackgroundJob): Promise<void> => {
@@ -108,6 +148,8 @@ export function BackgroundJobsPanel({
     try {
       if (item.kind === 'agent') {
         await window.api.stopAgentRun(item.run.agentSessionId, item.run.agentRunId)
+      } else if (item.kind === 'shell') {
+        await window.api.stopShellJob(item.run.agentSessionId, item.run.jobId)
       } else {
         await window.api.cancelWrapperRun(item.run.runId)
       }
@@ -120,9 +162,11 @@ export function BackgroundJobsPanel({
   }
 
   const renderRow = (item: UnifiedBackgroundJob): React.JSX.Element => {
-    const canStop = item.kind === 'agent' ? item.active : canStopUnifiedWrapperRun(item.run)
-    const source = item.kind === 'agent' ? item.run.sessionTitle : 'Wrapper'
-    const subtitle = item.kind === 'agent' ? item.run.task : item.run.runId
+    const canStop = item.kind === 'wrapper' ? canStopUnifiedWrapperRun(item.run) : item.active
+    const canOpenSession = item.kind === 'agent' || item.kind === 'shell'
+    const source = item.kind === 'wrapper' ? 'Wrapper' : item.run.sessionTitle
+    const subtitle =
+      item.kind === 'agent' ? item.run.task : item.kind === 'shell' ? '后台命令' : item.run.runId
     return (
       <Box
         key={item.key}
@@ -151,25 +195,41 @@ export function BackgroundJobsPanel({
             {jobDetail(item, nowMs)}
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1} sx={{ mt: 0.5, justifyContent: 'flex-end' }}>
-          <Button size="small" onClick={() => openJob(item)} aria-label={`查看 ${jobTitle(item)}`}>
-            查看
-          </Button>
-          {canStop && (
-            <Tooltip title={item.kind === 'agent' ? '停止这个 Agent' : '取消这个 Wrapper 运行'}>
-              <span>
-                <IconButton
-                  size="small"
-                  aria-label={`停止 ${jobTitle(item)}`}
-                  disabled={stoppingKey === item.key}
-                  onClick={() => void stopJob(item)}
-                >
-                  <StopIcon size={15} />
-                </IconButton>
-              </span>
-            </Tooltip>
-          )}
-        </Stack>
+        {(canOpenSession || canStop) && (
+          <Stack direction="row" spacing={1} sx={{ mt: 0.5, justifyContent: 'flex-end' }}>
+            {canOpenSession && (
+              <Button
+                size="small"
+                onClick={() => onOpenSession(item.run.sessionPath)}
+                aria-label={`打开对话 ${jobTitle(item)}`}
+              >
+                打开对话
+              </Button>
+            )}
+            {canStop && (
+              <Tooltip
+                title={
+                  item.kind === 'agent'
+                    ? '停止这个 Agent'
+                    : item.kind === 'shell'
+                      ? '停止这个后台命令'
+                      : '取消这个 Wrapper 运行'
+                }
+              >
+                <span>
+                  <IconButton
+                    size="small"
+                    aria-label={`停止 ${jobTitle(item)}`}
+                    disabled={stoppingKey === item.key}
+                    onClick={() => void stopJob(item)}
+                  >
+                    <StopIcon size={15} />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            )}
+          </Stack>
+        )}
       </Box>
     )
   }
@@ -208,13 +268,20 @@ export function BackgroundJobsPanel({
         {loaded && jobs.active.map(renderRow)}
         {loaded && jobs.recent.length > 0 && (
           <>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ display: 'block', mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider', alignItems: 'center' }}
             >
-              最近结束
-            </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
+                最近结束
+              </Typography>
+              <Tooltip title="从这里清掉，运行记录仍留在工具页">
+                <IconButton size="small" aria-label="清除最近结束" onClick={clearRecent}>
+                  <ClearIcon size={15} />
+                </IconButton>
+              </Tooltip>
+            </Stack>
             {jobs.recent.map(renderRow)}
           </>
         )}

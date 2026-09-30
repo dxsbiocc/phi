@@ -21,7 +21,7 @@ import type {
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
-import type { BackgroundAgentJob } from '../shared/backgroundJobTypes'
+import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
 import type {
   AutoCompactionSettingsPatch,
   CurrentAutoCompactionSettings,
@@ -920,6 +920,8 @@ type RendererAuthApi = {
   getWrapperCompositionModuleDetails: (id: string) => Promise<WrapperModuleDetails | undefined>
   listWrapperRuns: () => Promise<WrapperRun[]>
   listAgentJobs: () => Promise<BackgroundAgentJob[]>
+  listShellJobs: () => Promise<BackgroundShellJob[]>
+  stopShellJob: (agentSessionId: string, jobId: string) => Promise<void>
   getWrapperRun: (runId: string) => Promise<WrapperRun | undefined>
   cancelWrapperRun: (runId: string) => Promise<WrapperRun>
   getWrapperPlanArtifact: (planId: string, fileName: string) => Promise<string | undefined>
@@ -1426,6 +1428,9 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('wrappers:getCompositionModuleDetails', id),
   listWrapperRuns: (): Promise<WrapperRun[]> => ipcRenderer.invoke('wrappers:listRuns'),
   listAgentJobs: (): Promise<BackgroundAgentJob[]> => ipcRenderer.invoke('jobs:listAgents'),
+  listShellJobs: (): Promise<BackgroundShellJob[]> => ipcRenderer.invoke('jobs:listShell'),
+  stopShellJob: (agentSessionId: string, jobId: string): Promise<void> =>
+    ipcRenderer.invoke('jobs:stopShell', agentSessionId, jobId),
   getWrapperRun: (runId: string): Promise<WrapperRun | undefined> =>
     ipcRenderer.invoke('wrappers:getRun', runId),
   cancelWrapperRun: (runId: string): Promise<WrapperRun> =>

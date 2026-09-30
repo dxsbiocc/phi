@@ -1707,6 +1707,36 @@ async function controlSessionAgentRun(
   return controlAgentRun(sessions.get(stringValue(record.sessionId))?.agentRuns, action, record)
 }
 
+function listSessionShellJobs(): unknown[] {
+  return [...sessions.entries()].flatMap(([agentSessionId, entry]) => {
+    const manager = entry.result.session.asyncJobManager
+    if (!manager) return []
+    return manager.getAllJobs().flatMap((job) => {
+      if (job.type !== 'bash') return []
+      const output = (job.errorText || job.resultText || '').trim()
+      return [
+        {
+          agentSessionId,
+          jobId: job.id,
+          state: job.queued && job.status === 'running' ? 'queued' : job.status,
+          command: job.label,
+          startedAt: job.startTime,
+          ...(output ? { output: output.slice(-400) } : {})
+        }
+      ]
+    })
+  })
+}
+
+function cancelSessionShellJob(params: unknown): { ok: boolean } {
+  const record = isRecord(params) ? params : {}
+  const entry = sessions.get(stringValue(record.sessionId))
+  const jobId = stringValue(record.jobId)
+  const manager = entry?.result.session.asyncJobManager
+  if (!entry || !jobId || !manager) return { ok: false }
+  return { ok: manager.cancel(jobId) }
+}
+
 async function listSessionAgentRuns(): Promise<unknown[]> {
   return [...sessions.entries()].flatMap(([agentSessionId, entry]) =>
     (entry.agentRuns?.list() ?? [])
@@ -1979,6 +2009,10 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return controlSessionAgentRun('stop', params)
     case 'agentRuns.list':
       return listSessionAgentRuns()
+    case 'shellJobs.list':
+      return listSessionShellJobs()
+    case 'shellJobs.cancel':
+      return cancelSessionShellJob(params)
     case 'session.setModel':
       return setSessionModel(params)
     case 'session.setThinkingLevel':

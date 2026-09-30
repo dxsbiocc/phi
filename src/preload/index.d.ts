@@ -20,7 +20,7 @@ import type {
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
-import type { BackgroundAgentJob } from '../shared/backgroundJobTypes'
+import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
 import type {
   AutoCompactionSettingsPatch,
   CurrentAutoCompactionSettings,
@@ -1008,6 +1008,8 @@ declare global {
       getWrapperCompositionModuleDetails: (id: string) => Promise<WrapperModuleDetails | undefined>
       listWrapperRuns: () => Promise<WrapperRun[]>
       listAgentJobs: () => Promise<BackgroundAgentJob[]>
+      listShellJobs: () => Promise<BackgroundShellJob[]>
+      stopShellJob: (agentSessionId: string, jobId: string) => Promise<void>
       getWrapperRun: (runId: string) => Promise<WrapperRun | undefined>
       cancelWrapperRun: (runId: string) => Promise<WrapperRun>
       getWrapperPlanArtifact: (planId: string, fileName: string) => Promise<string | undefined>

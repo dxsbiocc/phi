@@ -3418,19 +3418,6 @@ function App(): React.JSX.Element {
     [openWorkspaceResourceTab, refreshWrapperRuns, setSelectedWrapperId]
   )
 
-  const onOpenWrapperRunFromJobs = useCallback(
-    (canonicalId: string): void => {
-      const entry = wrapperCatalog.find((item) => item.id === canonicalId)
-      if (entry) {
-        onOpenWrapperTab(entry)
-        return
-      }
-      setWorkspaceSidebarMode('wrappers')
-      setIsSidebarOpen(true)
-    },
-    [onOpenWrapperTab, wrapperCatalog]
-  )
-
   const onCloseWorkspaceTab = useCallback(
     (tab: WorkspaceTab): void => {
       const closingIndex = visibleWorkspaceTabs.findIndex((item) => item.key === tab.key)
@@ -4237,7 +4224,6 @@ function App(): React.JSX.Element {
                 {workspaceSidePanelMode === 'jobs' ? (
                   <BackgroundJobsPanel
                     onOpenSession={(path) => void onOpenSessionFromSidebar(path)}
-                    onOpenWrapper={onOpenWrapperRunFromJobs}
                   />
                 ) : null}
               </WorkspaceSidePanel>
