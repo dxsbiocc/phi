@@ -91,6 +91,40 @@ than plain URL fetching and about twice as slow (design Appendix A).
     `phi-package.yaml` for every package type; camelCase fields aligned with
     omp; all packages under `~/.phi/packages/<type>/<id>/<version>/`.
 
+14. **Specialist delegation stays on Phi's runtime; omp `task` is for
+    orchestration** (step 4.1 spike, 2026-09-30, omp 18.1.10). A spike ran a
+    real omp `task` subagent from a Phi-shaped parent session. Findings:
+    - A parent's in-process `customTools` (how Phi builds `viz_*`, wrapper,
+      database, and script tools, each closing over `requestHost`) are **not**
+      visible to the subagent ("tool not found").
+    - A tool registered by an **extension** (`pi.registerTool`) **is** visible
+      and runs in the parent process, closures intact. A parent extension's
+      `tool_call` hook also sees every subagent call. Both hold only while the
+      parent session does not set `restrictToolNames`, because omp forwards
+      prepared extensions only then.
+    - Subagents run with `tools.approvalMode: "yolo"`. Phi's ask-mode approvals
+      still apply, but only through that forwarded extension hook, and the hook
+      loses Phi's run context (`agentRunId`, the chat card).
+    - Agents are discovered only from `.omp/agents` directories and omp
+      plugins, not from Phi's scanned definitions.
+    - omp has no per-agent environment binding.
+
+    Moving Phi's three specialists onto `task` would therefore mean
+    re-registering every Phi tool through an extension and scoping it per
+    agent. It would also mean rebuilding what `agents/registry.ts` and the UI
+    already provide: per-conversation limits, background runs with chat cards
+    and the jobs panel, steer, the report protocol, fallback policy, usage
+    logs, remote-project guards, and parent-bound approvals. That is a
+    rewrite with beta risk and little user-visible gain.
+
+    Decision: the beta keeps Phi's delegation runtime, and nothing in
+    `agents/registry.ts` retires now. The Agent-definition contract (4.2) uses
+    omp's field names (`name`, `description`, `tools`, `spawns`, `model`,
+    `thinkingLevel`) so definitions stay loadable by omp. Orchestration
+    (decision 10) uses omp `task` / `hub` with Phi tools provided through a
+    tool-registering extension and an unrestricted orchestrator session; its
+    adapter must restore run context for approvals.
+
 ## Consequences
 
 - The internal beta roadmap changes: catalog install / enable / disable for
@@ -103,9 +137,8 @@ than plain URL fetching and about twice as slow (design Appendix A).
   beta; plugins, content distribution, and remote / HPC (steps 6–8) follow.
   Data access and orchestration are side tracks. Each contract is frozen when
   its layer is complete.
-- The omp spike (step 4.1, before the Agent-definition contract freezes) must decide whether Phi's specialist delegation moves onto omp's
-  `task` / registry, which would retire duplicated parts of
-  `agents/registry.ts`.
+- The omp spike (step 4.1) is done: specialist delegation stays on Phi's
+  runtime (decision 14); `agents/registry.ts` is kept.
 - Content authors get one validator and one package format; engine changes
   are gated by the conformance suite.
 
