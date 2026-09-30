@@ -62,6 +62,19 @@ export function createAppTheme(mode: EffectiveMode): Theme {
     shape: {
       borderRadius: 8
     },
+    // Surfaced on the Theme type by the minimal theme's module augmentation;
+    // defined here too so both theme families honor the same contract.
+    customShadows: {
+      card: isDark
+        ? '0 1px 2px rgba(0, 0, 0, 0.32), 0 8px 16px -4px rgba(0, 0, 0, 0.24)'
+        : '0 1px 2px rgba(15, 42, 48, 0.08), 0 8px 16px -4px rgba(15, 42, 48, 0.08)',
+      dropdown: isDark
+        ? '0 2px 4px rgba(0, 0, 0, 0.32), 0 16px 32px -8px rgba(0, 0, 0, 0.4)'
+        : '0 2px 4px rgba(15, 42, 48, 0.08), 0 16px 32px -8px rgba(15, 42, 48, 0.16)',
+      dialog: isDark
+        ? '0 4px 8px rgba(0, 0, 0, 0.32), 0 24px 48px -12px rgba(0, 0, 0, 0.48)'
+        : '0 4px 8px rgba(15, 42, 48, 0.08), 0 24px 48px -12px rgba(15, 42, 48, 0.2)'
+    },
     transitions: {
       duration: {
         shortest: 150,

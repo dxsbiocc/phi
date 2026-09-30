@@ -44,14 +44,16 @@ const sessionActionButtonSx = {
   }
 } as const
 const sessionMenuItemSx = {
-  minHeight: 40,
+  minHeight: 36,
   mx: 0.5,
   my: 0.25,
-  px: 1.25,
-  gap: 1.25,
+  px: 1.5,
+  py: 1,
+  gap: 1.5,
   borderRadius: 1,
   fontSize: ROW_LABEL_FONT_SIZE,
-  '& svg': { flexShrink: 0 }
+  fontWeight: 500,
+  '& svg': { flexShrink: 0, color: 'action.active' }
 } as const
 const animateSortableLayoutChanges: AnimateLayoutChanges = ({ isSorting, wasDragging }) =>
   isSorting || wasDragging
@@ -445,14 +447,11 @@ const SessionRow = memo(function SessionRow({
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
         slotProps={{
           paper: {
-            elevation: 8,
+            elevation: 0,
             sx: {
               width: 208,
-              py: 0.75,
-              borderRadius: 2,
-              border: 1,
-              borderColor: 'divider',
-              bgcolor: 'background.paper'
+              borderRadius: 1.5,
+              boxShadow: (theme: Theme) => theme.customShadows.dropdown
             }
           }
         }}
@@ -483,6 +482,7 @@ const SessionRow = memo(function SessionRow({
           sx={{
             ...sessionMenuItemSx,
             color: 'error.main',
+            '& svg': { flexShrink: 0, color: 'error.main' },
             '&:hover': { bgcolor: (theme: Theme) => alpha(theme.palette.error.main, 0.08) }
           }}
           onClick={() => {

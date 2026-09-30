@@ -179,7 +179,11 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
       styleOverrides: {
         paper: ({ theme }) => ({
           borderRadius: 12,
-          boxShadow: theme.customShadows.dropdown
+          boxShadow: theme.customShadows.dropdown,
+          // Frosted glass: translucent surface + backdrop blur.
+          backgroundColor: alpha(theme.palette.background.paper, isDark ? 0.85 : 0.9),
+          backdropFilter: 'blur(20px) saturate(1.5)',
+          WebkitBackdropFilter: 'blur(20px) saturate(1.5)'
         }),
         list: { padding: 8 }
       }
@@ -188,7 +192,10 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
       styleOverrides: {
         paper: ({ theme }) => ({
           borderRadius: 12,
-          boxShadow: theme.customShadows.dropdown
+          boxShadow: theme.customShadows.dropdown,
+          backgroundColor: alpha(theme.palette.background.paper, isDark ? 0.85 : 0.9),
+          backdropFilter: 'blur(20px) saturate(1.5)',
+          WebkitBackdropFilter: 'blur(20px) saturate(1.5)'
         })
       }
     },
@@ -259,11 +266,6 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
           padding: '6px 10px'
         },
         arrow: { color: inkPrimary }
-      }
-    },
-    MuiBackdrop: {
-      styleOverrides: {
-        root: { backgroundColor: alpha(MINIMAL_GREY[900], 0.48) }
       }
     },
     MuiSnackbarContent: {

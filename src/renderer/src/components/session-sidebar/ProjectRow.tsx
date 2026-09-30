@@ -12,7 +12,7 @@ import {
   Tooltip,
   Typography
 } from '@mui/material'
-import type { Theme } from '@mui/material/styles'
+import { alpha, type Theme } from '@mui/material/styles'
 import { PhiIcons } from '../../icons'
 import { preserveSessionListOrder } from '../../lib/sessionOrder'
 import {
@@ -30,6 +30,7 @@ const ExpandMoreIcon = PhiIcons.action.expand
 const FolderIcon = PhiIcons.entity.folder
 const ServerIcon = PhiIcons.settings.remoteExecution
 const MoreHorizIcon = PhiIcons.action.more
+const DeleteIcon = PhiIcons.action.delete
 
 function projectGitStatusLabel(project: Project): string | null {
   if (!project.gitStatus) return null
@@ -245,16 +246,41 @@ function ProjectRowImpl({
         anchorEl={menuAnchor}
         open={menuAnchor !== null}
         onClose={closeProjectMenu}
+        slotProps={{
+          paper: {
+            elevation: 0,
+            sx: {
+              minWidth: 160,
+              borderRadius: 1.5,
+              boxShadow: (theme: Theme) => theme.customShadows.dropdown
+            }
+          }
+        }}
         sx={
           compactHoverPreview ? { zIndex: (theme: Theme) => theme.zIndex.tooltip + 1 } : undefined
         }
       >
         <MenuItem
+          sx={{
+            minHeight: 36,
+            mx: 0.5,
+            my: 0.25,
+            px: 1.5,
+            py: 1,
+            gap: 1.5,
+            borderRadius: 1,
+            fontSize: ROW_LABEL_FONT_SIZE,
+            fontWeight: 500,
+            color: 'error.main',
+            '& svg': { flexShrink: 0, color: 'error.main' },
+            '&:hover': { bgcolor: (theme: Theme) => alpha(theme.palette.error.main, 0.08) }
+          }}
           onClick={() => {
             closeProjectMenu()
             onDeleteProject()
           }}
         >
+          <DeleteIcon aria-hidden fontSize="small" />
           删除项目
         </MenuItem>
       </Menu>
