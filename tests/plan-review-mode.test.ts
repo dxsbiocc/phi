@@ -126,7 +126,9 @@ test('plan tool guard blocks workspace mutations and hidden device calls', () =>
     ['edit', { path: 'src/index.ts' }],
     ['bash', { command: 'git status' }],
     ['download_file', { url: 'https://example.invalid' }],
-    ['write', { path: 'xd://resolve' }]
+    ['write', { path: 'xd://resolve' }],
+    ['skill_run', { skill: 'echo', script: 'run.py' }],
+    ['plot_save', { dest: 'out.txt' }]
   ] as const) {
     assert.equal(planModeToolDecision(true, name, input).allowed, false)
   }

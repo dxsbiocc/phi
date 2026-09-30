@@ -1582,6 +1582,25 @@ async function harness(
     './agent/notebook/notebook-code-generation': notebookCodeGeneration,
     '../shared/notebookDocument': notebookDocument,
     '../shared/sessionTitle': sessionTitle,
+    './agent/content/skill-host': {
+      createSkillHost: (): {
+        scriptTools: (params: unknown) => Promise<{ tools: unknown[]; problems: string[] }>
+        run: (params: unknown) => Promise<unknown>
+        scriptTool: (params: unknown) => Promise<unknown>
+        cancel: (params: unknown) => void
+        approvalFor: (toolName: string, input: unknown) => undefined
+      } => ({
+        scriptTools: async () => ({ tools: [], problems: [] }),
+        run: async () => {
+          throw new Error('skill host is mocked')
+        },
+        scriptTool: async () => {
+          throw new Error('skill host is mocked')
+        },
+        cancel: () => undefined,
+        approvalFor: () => undefined
+      })
+    },
     './agent/tool-approval': {
       bashApprovalDigest: fakeBashApprovalDigest,
       writeApprovalDigest: fakeWriteApprovalDigest,

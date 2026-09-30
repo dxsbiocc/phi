@@ -137,6 +137,7 @@ import {
   resolveToolApproval,
   writeApprovalDigest
 } from './agent/tool-approval'
+import { createSkillHost } from './agent/content/skill-host'
 import {
   canRequestAgentUserInteraction,
   cancelAgentUserInteractions,
@@ -823,6 +824,16 @@ const notebookFileWatcher = new AnalysisNotebookFileWatcher({
 getOmpBridge().registerHostHandler('notebookTool.execute', (params) =>
   notebookToolExecutor.execute(params as Parameters<typeof notebookToolExecutor.execute>[0])
 )
+const skillHost = createSkillHost({
+  listSkillDirs: async (cwd) => {
+    const skills = await listSkills(cwd)
+    return skills.map((skill) => dirname(skill.filePath))
+  }
+})
+getOmpBridge().registerHostHandler('skills.scriptTools', (params) => skillHost.scriptTools(params))
+getOmpBridge().registerHostHandler('skills.run', (params) => skillHost.run(params))
+getOmpBridge().registerHostHandler('skills.scriptTool', (params) => skillHost.scriptTool(params))
+getOmpBridge().registerHostHandler('skills.cancel', (params) => skillHost.cancel(params))
 getOmpBridge().registerHostHandler('agentInteraction.request', handleAgentInteractionRequest)
 getOmpBridge().registerHostHandler(
   'settings.nextActionSuggestionsEnabled',
@@ -5395,6 +5406,7 @@ async function getAgentSession(
           ? [
               createApprovalExtension({
                 signal: sessionAbortController.signal,
+                classifyTool: (toolName, input) => skillHost.approvalFor(toolName, input),
                 ...(remoteProject
                   ? {
                       shouldGate: () =>

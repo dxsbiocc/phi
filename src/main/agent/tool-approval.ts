@@ -28,6 +28,15 @@ interface CreateApprovalExtensionOptions {
   shouldGate?: () => boolean
   getWindow?: () => ApprovalWindow | null
   getContext?: (event: { agentRunId?: string }) => ToolApprovalContext | null
+  /**
+   * Extra gate for tools the host classifies per call (`skill_run`, script tools).
+   * `exec` and `write` are approved like `bash`. `read` and `undefined` leave the
+   * built-in risky-tool list unchanged.
+   */
+  classifyTool?: (
+    toolName: string,
+    input: Record<string, unknown>
+  ) => 'exec' | 'read' | 'write' | undefined
   onApprovalRequested?: (request: ToolApprovalRequest) => void
   onApprovalResolved?: (request: ToolApprovalRequest, approved: boolean) => void
   onApprovalCancelled?: (request: ToolApprovalRequest) => void
@@ -54,6 +63,20 @@ interface ApprovalDecision {
 }
 
 const pendingApprovals = new Map<string, PendingApproval>()
+
+function summarizeSkillRun(input: Record<string, unknown>): string {
+  const skill = typeof input.skill === 'string' ? input.skill : ''
+  const script = typeof input.script === 'string' ? input.script : ''
+  const args = Array.isArray(input.args)
+    ? input.args.filter((item): item is string => typeof item === 'string')
+    : []
+  return [`${skill}/${script}`, ...args].join(' ')
+}
+
+function summarizeClassifiedToolCall(toolName: string, input: Record<string, unknown>): string {
+  if (toolName === 'skill_run') return summarizeSkillRun(input)
+  return JSON.stringify(input)
+}
 
 function summarizeToolCall(toolName: string, input: Record<string, unknown>): string {
   if (toolName === 'bash' || toolName === 'powershell') {
@@ -210,9 +233,10 @@ function addWindowUnavailableListener(window: ApprovalWindow, callback: () => vo
   }
 }
 
-// Gates bash/edit/write/powershell tool calls on an explicit approve/deny from the
-// renderer — read/grep/find/ls stay auto-approved since they can't change anything.
-// Used for projects whose permissionMode is 'ask' (see projects.ts).
+// Gates bash/edit/write/powershell — and skill tools classified as exec or write —
+// on an explicit approve/deny from the renderer. read/grep/find/ls, and script
+// tools classified as read, stay auto-approved. Used for projects whose
+// permissionMode is 'ask' (see projects.ts).
 export function createApprovalExtension(
   options: CreateApprovalExtensionOptions = {}
 ): InlineExtension {
@@ -221,7 +245,8 @@ export function createApprovalExtension(
     hidden: true,
     factory: (pi) => {
       pi.on('tool_call', async (event, ctx) => {
-        if (!RISKY_TOOLS.has(event.toolName)) {
+        const classified = options.classifyTool?.(event.toolName, event.input)
+        if (classified !== 'exec' && classified !== 'write' && !RISKY_TOOLS.has(event.toolName)) {
           return undefined
         }
         if (
@@ -281,7 +306,9 @@ export function createApprovalExtension(
             event.toolName === 'write' || event.toolName === 'edit'
               ? context?.writeScopeNote
               : context?.scopeNote,
-            summarizeToolCall(event.toolName, event.input)
+            classified === 'exec' || classified === 'write'
+              ? summarizeClassifiedToolCall(event.toolName, event.input)
+              : summarizeToolCall(event.toolName, event.input)
           ]
             .filter(Boolean)
             .join('\n')

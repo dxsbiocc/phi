@@ -100,6 +100,8 @@ import {
   filterPersonaContextFile
 } from '../main-system-prompt'
 import { buildVisualizationTools } from '../visualization/tools'
+import { buildScriptTools, buildSkillRunTool } from '../content/skill-tools'
+import type { ScriptToolDescriptor } from '../content/skill-tool-types'
 import { createHostJobClient } from '../wrappers/composition/job-host-client'
 import { buildWrapperCompositionTools } from '../wrappers/composition/tools'
 
@@ -779,6 +781,45 @@ function serializeSessionState(result: CreateAgentSessionResult): unknown {
   }
 }
 
+function isScriptToolDescriptor(value: unknown): value is ScriptToolDescriptor {
+  if (!isRecord(value)) return false
+  if (typeof value.name !== 'string' || typeof value.description !== 'string') return false
+  if (!isRecord(value.parameters)) return false
+  if (!Array.isArray(value.attachTo) || value.attachTo.some((item) => typeof item !== 'string')) {
+    return false
+  }
+  if (typeof value.skill !== 'string') return false
+  return value.approval === 'read' || value.approval === 'write'
+}
+
+async function loadSkillScriptTools(cwd: string): Promise<ScriptToolDescriptor[] | undefined> {
+  try {
+    const result = await requestHost('skills.scriptTools', { cwd })
+    if (!isRecord(result) || !Array.isArray(result.tools)) {
+      throw new Error('skills.scriptTools returned an unexpected result')
+    }
+    const tools: ScriptToolDescriptor[] = []
+    for (const entry of result.tools) {
+      if (!isScriptToolDescriptor(entry)) {
+        throw new Error('skills.scriptTools returned an invalid tool')
+      }
+      tools.push(entry)
+    }
+    if (Array.isArray(result.problems)) {
+      for (const problem of result.problems) {
+        if (typeof problem === 'string' && problem.length > 0) {
+          process.stderr.write(`Phi skill tool: ${problem}\n`)
+        }
+      }
+    }
+    return tools
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    process.stderr.write(`Phi skill tools unavailable: ${message}\n`)
+    return undefined
+  }
+}
+
 /**
  * The Phi tool functions an agent definition may list in `tools:`. Built fresh
  * per agent session so each one binds to that session. Add a provider here to
@@ -788,7 +829,8 @@ function serializeSessionState(result: CreateAgentSessionResult): unknown {
 function phiToolFunctions(
   originSessionId: string,
   agentDir: string,
-  agentName: string
+  agentName: string,
+  skillRun?: CustomTool
 ): Map<string, CustomTool> {
   let wrapperTools: CustomTool[] = []
   let databaseTools: CustomTool[] = []
@@ -807,11 +849,13 @@ function phiToolFunctions(
   }
   // The figure tools only run local scripts and write inside the delegating session's project.
   const visualizationTools = agentName === 'Visualization' ? buildVisualizationTools() : []
-  return buildScopedPhiToolMap(agentName, {
+  const tools = buildScopedPhiToolMap(agentName, {
     wrapper: wrapperTools,
     database: databaseTools,
     visualization: visualizationTools
   })
+  if (skillRun) tools.set(skillRun.name, skillRun)
+  return tools
 }
 
 /**
@@ -837,6 +881,7 @@ async function createPhiAgentSession(
     remoteRoot?: string
     remoteContextFiles?: Array<{ path: string; content: string }>
     remoteTools?: () => CustomTool[]
+    skillTools?: ScriptToolDescriptor[]
     parent: () => CreateAgentSessionResult | undefined
   }
 ): Promise<AgentSessionLike> {
@@ -872,12 +917,25 @@ async function createPhiAgentSession(
       : undefined
   if (loader) await loader.reload()
 
-  const availableTools = phiToolFunctions(sessionId, agentDir, definition.name)
+  const availableTools = phiToolFunctions(
+    sessionId,
+    agentDir,
+    definition.name,
+    deps.skillTools ? buildSkillRunTool(requestHost) : undefined
+  )
   for (const tool of deps.remoteTools?.() ?? []) availableTools.set(tool.name, tool)
+  const attachedScriptTools = buildScriptTools(
+    (deps.skillTools ?? []).filter((tool) => tool.attachTo.includes(definition.name)),
+    requestHost
+  )
+  for (const tool of attachedScriptTools) availableTools.set(tool.name, tool)
   const declaredTools =
     definition.name === 'Visualization'
       ? visualizationToolNamesForWorkflow(definition.tools, deps.workflow)
-      : definition.tools
+      : [...definition.tools]
+  for (const tool of attachedScriptTools) {
+    if (!declaredTools.includes(tool.name)) declaredTools.push(tool.name)
+  }
   const { toolNames, customTools } = resolveAgentTools(declaredTools, availableTools)
   const parentSession = deps.parent()?.session
   const skills = deps.remoteRoot
@@ -1033,6 +1091,8 @@ async function createSession(params: unknown): Promise<unknown> {
   // named after the agent (for example `Wrapper` or `Database`), and none of
   // the specialists' own tool functions, so internal catalogs and query tools
   // stay out of the main conversation. Definitions come from the main process's scan.
+  // Local only. A failed listing is logged and registers nothing; it must not block the session.
+  const skillTools = remoteRoot ? undefined : await loadSkillScriptTools(cwd)
   if (phiAgents.length > 0) pruneAgentUsageLogs(agentDir)
   const agentCustomTools = phiAgents.map((definition) =>
     buildAgentTool(
@@ -1061,6 +1121,7 @@ async function createSession(params: unknown): Promise<unknown> {
                     )
                 }
               : {}),
+            ...(skillTools ? { skillTools } : {}),
             parent: () => parentRef.current
           })
       }),
@@ -1241,7 +1302,16 @@ async function createSession(params: unknown): Promise<unknown> {
     buildProjectDownloadTool(cwd, agentDir),
     ...notebookCustomTools,
     ...libraryCustomTools,
-    ...userInteractionCustomTools
+    ...userInteractionCustomTools,
+    ...(skillTools
+      ? [
+          buildSkillRunTool(requestHost),
+          ...buildScriptTools(
+            skillTools.filter((tool) => tool.attachTo.includes('main')),
+            requestHost
+          )
+        ]
+      : [])
   ]
 
   const selectedModel = await modelBySelector(ctx, record.model)
