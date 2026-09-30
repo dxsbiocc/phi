@@ -15,7 +15,11 @@ import {
   notebookAiContextMentionAtCursor,
   notebookAiPromptWithContextReference
 } from '../src/renderer/src/features/analysis/lib/notebookAiContextMentions'
-import { shouldAutoStartNotebookSession } from '../src/renderer/src/features/analysis/lib/notebookSession'
+import {
+  pendingNotebookKernelSession,
+  shouldAutoStartNotebookSession,
+  upsertNotebookKernelSession
+} from '../src/renderer/src/features/analysis/lib/notebookSession'
 import {
   displayMimes,
   metadataForMime,
@@ -1491,6 +1495,13 @@ test('analysis view renders notebook outputs by mime type', () => {
   assert.match(markup, /data-phi-notebook-output-vega-canvas="true"/)
   assert.match(markup, /data-phi-notebook-output-vega-container-width="true"/)
   assert.match(markup, /data-phi-notebook-output-vega-loading="true"/)
+  assert.match(markup, /data-phi-notebook-output-vega-toolbar="true"/)
+  assert.match(markup, /aria-label="下载图片"/)
+  assert.match(markup, /aria-haspopup="menu"/)
+  assert.match(markup, /aria-label="放大"/)
+  assert.match(markup, /aria-label="缩小"/)
+  assert.match(markup, /aria-label="重置坐标"/)
+  assert.match(markup, /aria-label="关闭悬停提示"/)
   assert.doesNotMatch(markup, /&lt;altair\.Chart&gt;/)
   assert.match(markup, /data-phi-notebook-output-kind="application\/vnd\.plotly\.v1\+json"/)
   assert.match(markup, /data-phi-notebook-output-active-mime="application\/vnd\.plotly\.v1\+json"/)
@@ -1850,6 +1861,39 @@ test('analysis view renders notebook kernel session controls and status', () => 
   assert.doesNotMatch(connected, /aria-label="断开 kernel"/)
 })
 
+test('pending notebook kernel appears in the runtime list before the session exists', () => {
+  const pending = pendingNotebookKernelSession({
+    projectCwd: '/project',
+    notebookPath: '/project/notebooks/eda.ipynb',
+    document: {
+      nbformat: 4,
+      nbformatMinor: 5,
+      metadata: { kernelspec: { name: 'python3', display_name: 'Python 3.10 (test venv)' } },
+      cells: [],
+      extra: {},
+      revision: '1'
+    },
+    kernels: [
+      {
+        name: 'python3',
+        displayName: 'Python 3.10 (test venv)',
+        language: 'python',
+        rawLanguage: 'python'
+      }
+    ]
+  })
+  const status = upsertNotebookKernelSession(null, pending, {
+    projectCwd: '/project',
+    state: 'ready',
+    hasEndpoint: true
+  })
+
+  assert.equal(pending.sessionId, undefined)
+  assert.equal(pending.state, 'busy')
+  assert.equal(pending.kernelDisplayName, 'Python 3.10 (test venv)')
+  assert.equal(status?.notebooks.sessions[0]?.notebookPath, '/project/notebooks/eda.ipynb')
+})
+
 test('analysis view auto-starts notebook sessions only when a kernel can be selected', () => {
   const autoConnectKey = '/project/notebooks/real.ipynb:python3'
 
@@ -1912,6 +1956,33 @@ test('analysis view auto-starts notebook sessions only when a kernel can be sele
       lastAutoConnectKey: autoConnectKey
     }),
     false
+  )
+  assert.equal(
+    shouldAutoStartNotebookSession({
+      autoConnectKey,
+      hasNotebookFile: true,
+      hasDocument: true,
+      hasStartHandler: true,
+      availableKernelCount: 1,
+      requestedKernelName: 'python3',
+      notebookSessionStatus: {
+        projectCwd: '/project',
+        notebookPath: '/project/notebooks/real.ipynb',
+        kernelName: 'ir',
+        kernelDisplayName: 'R',
+        sessionId: 'session-1',
+        state: 'idle'
+      },
+      lastAutoConnectKey: null
+    }),
+    true
+  )
+  assert.match(
+    readFileSync(
+      resolve(process.cwd(), 'src/renderer/src/features/analysis/notebook/NotebookCanvas.tsx'),
+      'utf8'
+    ),
+    /draftNotebookPath === notebookFile\.path/
   )
 })
 

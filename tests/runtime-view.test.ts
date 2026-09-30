@@ -108,7 +108,7 @@ test('runtime sidebar shows global Jupyter Server before Notebook Kernels', () =
   assert.match(markup, />R</)
   assert.match(markup, /eda\.ipynb/)
   assert.match(markup, /Python 3/)
-  assert.doesNotMatch(markup, /idle\.ipynb/)
+  assert.match(markup, /idle\.ipynb/)
   assert.doesNotMatch(markup, /正在执行/)
   assert.doesNotMatch(markup, /已连接/)
   assert.doesNotMatch(markup, /Ready · Research/)

@@ -163,6 +163,14 @@ test('settings dialog can open directly on provider configuration', () => {
   assert.doesNotMatch(markup, /以 Markdown 形式描述助手/)
 })
 
+test('settings dialog has a dedicated web search category', () => {
+  const markup = renderSettingsDialog({ category: 'web-search' })
+
+  assert.match(markup, /网页搜索/)
+  assert.match(markup, /读取设置/)
+  assert.doesNotMatch(markup, /尚未配置任何 Provider/)
+})
+
 test('settings dialog keeps configured provider rows information-dense', () => {
   const markup = renderSettingsDialog({
     category: 'providers',

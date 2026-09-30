@@ -31,6 +31,11 @@ import {
   requireRendererApiMethod,
   waitForRendererDelay
 } from '../lib/analysisNotebookRuntimeUtils'
+import {
+  dropUnconfirmedNotebookKernelSession,
+  pendingNotebookKernelSession,
+  upsertNotebookKernelSession
+} from '../lib/notebookSession'
 
 export function useAnalysisNotebookRuntime({
   rendererApi,
@@ -597,6 +602,21 @@ export function useAnalysisNotebookRuntime({
       isStartingNotebookSessionRef.current = true
       setIsStartingAnalysisNotebookSession(true)
       setAnalysisNotebookSessionError(null)
+      // Drop any in-flight sidebar refresh so it cannot replace this row
+      // with a snapshot from before the kernel connect started.
+      analysisJupyterRuntimeRequestRef.current += 1
+      setAnalysisJupyterRuntimeStatus((current) =>
+        upsertNotebookKernelSession(
+          current,
+          pendingNotebookKernelSession({
+            projectCwd: cwd,
+            notebookPath: file.path,
+            document,
+            kernels: analysisKernelDiagnostics?.kernels
+          }),
+          analysisJupyterStatus
+        )
+      )
       try {
         let jupyterStatus = analysisJupyterStatus
         if (!jupyterServerIsReady(jupyterStatus)) {
@@ -634,6 +654,9 @@ export function useAnalysisNotebookRuntime({
         void refreshAnalysisJupyterRuntimeStatus()
       } catch (error) {
         if (request !== analysisNotebookSessionRequestRef.current) return
+        setAnalysisJupyterRuntimeStatus((current) =>
+          dropUnconfirmedNotebookKernelSession(current, file.path)
+        )
         setAnalysisNotebookSessionError(readableErrorMessage(error, '无法连接 notebook kernel'))
       } finally {
         if (request === analysisNotebookSessionRequestRef.current) {
@@ -643,7 +666,13 @@ export function useAnalysisNotebookRuntime({
         }
       }
     },
-    [analysisJupyterStatus, getActiveCwd, refreshAnalysisJupyterRuntimeStatus, rendererApi]
+    [
+      analysisJupyterStatus,
+      analysisKernelDiagnostics,
+      getActiveCwd,
+      refreshAnalysisJupyterRuntimeStatus,
+      rendererApi
+    ]
   )
 
   const onStopAnalysisNotebookSession = useCallback(

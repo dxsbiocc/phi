@@ -61,6 +61,11 @@ import type {
   PhiAppSettings,
   PhiAppSettingsPatch
 } from '../shared/appSettingsTypes'
+import type {
+  SearxngEngineOption,
+  WebSearchSettings,
+  WebSearchSettingsPatch
+} from '../shared/webSearchSettingsTypes'
 import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
 import type {
   EnvironmentGetResult,
@@ -698,6 +703,9 @@ type RendererAuthApi = {
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => Unsubscribe
   getAppSettings: () => Promise<PhiAppSettings>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
+  getWebSearchSettings: () => Promise<WebSearchSettings>
+  updateWebSearchSettings: (patch: WebSearchSettingsPatch) => Promise<WebSearchSettings>
+  listSearxngEngines: () => Promise<SearxngEngineOption[]>
   updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
   getEnvironment: () => Promise<EnvironmentGetResult>
   redetectEnvironment: () => Promise<EnvironmentSnapshot>
@@ -826,6 +834,8 @@ type RendererAuthApi = {
   listAnalysisKernels: (cwd?: string) => Promise<AnalysisKernelDiagnostics>
   getAnalysisJupyterStatus: (cwd: string) => Promise<JupyterServerStatus>
   getAnalysisJupyterRuntimeStatus: (cwd: string) => Promise<AnalysisJupyterRuntimeStatus>
+  publishNotebookOutputFrame: (html: string) => Promise<string>
+  releaseNotebookOutputFrame: (url: string) => Promise<void>
   startAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
   stopAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
   getAnalysisNotebookSessionStatus: (
@@ -1018,6 +1028,12 @@ const api: RendererAuthApi = {
   getAppSettings: (): Promise<PhiAppSettings> => ipcRenderer.invoke('settings:get'),
   updateAppSettings: (patch: PhiAppSettingsPatch): Promise<PhiAppSettings> =>
     ipcRenderer.invoke('settings:update', patch),
+  getWebSearchSettings: (): Promise<WebSearchSettings> =>
+    ipcRenderer.invoke('settings:webSearch:get'),
+  updateWebSearchSettings: (patch: WebSearchSettingsPatch): Promise<WebSearchSettings> =>
+    ipcRenderer.invoke('settings:webSearch:update', patch),
+  listSearxngEngines: (): Promise<SearxngEngineOption[]> =>
+    ipcRenderer.invoke('settings:webSearch:searxngEngines'),
   updateDefaultProxyMode: (mode: DefaultProxyMode): Promise<PhiAppSettings> =>
     ipcRenderer.invoke('settings:updateDefaultProxyMode', mode),
   getEnvironment: (): Promise<EnvironmentGetResult> => ipcRenderer.invoke('environment:get'),
@@ -1195,6 +1211,10 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('analysis:jupyterStatus', cwd),
   getAnalysisJupyterRuntimeStatus: (cwd: string): Promise<AnalysisJupyterRuntimeStatus> =>
     ipcRenderer.invoke('analysis:jupyterRuntimeStatus', cwd),
+  publishNotebookOutputFrame: (html: string): Promise<string> =>
+    ipcRenderer.invoke('analysis:publishNotebookOutputFrame', html),
+  releaseNotebookOutputFrame: (url: string): Promise<void> =>
+    ipcRenderer.invoke('analysis:releaseNotebookOutputFrame', url),
   startAnalysisJupyter: (cwd: string): Promise<JupyterServerStatus> =>
     ipcRenderer.invoke('analysis:startJupyter', cwd),
   stopAnalysisJupyter: (cwd: string): Promise<JupyterServerStatus> =>

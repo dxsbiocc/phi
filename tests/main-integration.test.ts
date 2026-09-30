@@ -1598,6 +1598,10 @@ async function harness(
       })
     },
     './agent/notebook/notebook-code-generation': notebookCodeGeneration,
+    './agent/notebook/notebook-output-protocol': {
+      registerNotebookOutputScheme: noop,
+      installNotebookOutputProtocol: noop
+    },
     '../shared/notebookDocument': notebookDocument,
     '../shared/sessionTitle': sessionTitle,
     '../shared/mcpConnectorCatalog': { featuredMcpConnectors },
@@ -2617,6 +2621,25 @@ test('main IPC: app settings exposes and updates default proxy mode', async () =
     proxyTransportStatus: expectedStatus
   })
   assert.deepEqual(app.appSettingsUpdates, ['enabled'])
+})
+
+test('main IPC: web search settings are routed to the OMP worker', async () => {
+  const app = await harness()
+  const patch = {
+    orderedEnabledIds: ['searxng', 'exa'],
+    searxngEndpoint: 'http://127.0.0.1:8888',
+    searxngEngines: 'sogou wechat'
+  }
+
+  await app.invoke('settings:webSearch:get')
+  await app.invoke('settings:webSearch:update', patch)
+  await app.invoke('settings:webSearch:searxngEngines')
+
+  assert.deepEqual(app.bridgeRequests.slice(-3), [
+    { method: 'settings.webSearch.get', params: { agentDir: '/isolated' } },
+    { method: 'settings.webSearch.update', params: { agentDir: '/isolated', patch } },
+    { method: 'settings.webSearch.searxngEngines', params: { agentDir: '/isolated' } }
+  ])
 })
 
 test('main IPC: DB connector tools stay behind Database agent and toggles remain per connector', async () => {

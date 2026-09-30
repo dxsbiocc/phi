@@ -262,6 +262,9 @@ export default function NotebookCanvas({
   agentFocus
 }: NotebookCanvasProps): React.JSX.Element {
   const [draftDocument, setDraftDocument] = useState<NotebookDocument | null>(initialDocument)
+  const [draftNotebookPath, setDraftNotebookPath] = useState<string | null>(
+    notebookFile?.path ?? null
+  )
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null)
   const [agentHighlightedCellId, setAgentHighlightedCellId] = useState<string | null>(null)
   const [aiPromptDraft, setAiPromptDraft] = useState<NotebookAiPromptDraft | null>(null)
@@ -531,10 +534,12 @@ export default function NotebookCanvas({
   useEffect(() => {
     const notebookChanged = previousNotebookDocumentKeyRef.current !== notebookDocumentKey
     previousNotebookDocumentKeyRef.current = notebookDocumentKey
+    const notebookPath = notebookFile?.path ?? null
     let cancelled = false
     queueMicrotask(() => {
       if (!cancelled) {
         setDraftDocument(initialDocument)
+        setDraftNotebookPath(notebookPath)
         setSelectedCellId(null)
         if (notebookChanged) setAiPromptDraft(null)
       }
@@ -542,7 +547,7 @@ export default function NotebookCanvas({
     return () => {
       cancelled = true
     }
-  }, [initialDocument, notebookDocumentKey])
+  }, [initialDocument, notebookDocumentKey, notebookFile?.path])
 
   useEffect(() => {
     if (!onNotebookCodeGenerationProgress) return undefined
@@ -665,15 +670,17 @@ export default function NotebookCanvas({
     onFormatNotebookCell
   })
   const selectedKernelName = draftDocument ? notebookKernelName(draftDocument) : ''
+  const draftMatchesOpenNotebook = Boolean(notebookFile && draftNotebookPath === notebookFile.path)
   const autoConnectKey =
-    notebookFile && draftDocument
+    notebookFile && draftDocument && draftMatchesOpenNotebook
       ? `${notebookFile.path}:${selectedKernelName || notebookLanguage(draftDocument)}`
       : null
   const { autoConnectKeyRef } = useNotebookAutoConnect({
     autoConnectKey,
     notebookFile,
-    draftDocument,
+    draftDocument: draftMatchesOpenNotebook ? draftDocument : null,
     onStartNotebookSession,
+    requestedKernelName: selectedKernelName || undefined,
     kernelDiagnostics,
     isStartingNotebookSession,
     notebookSessionStatus,

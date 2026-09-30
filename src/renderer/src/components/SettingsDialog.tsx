@@ -37,6 +37,7 @@ import { accentAt, ACCENT_PALETTE } from '../theme'
 import { RemoteHostSettingsSection } from '../features/wrapper/components/RemoteHostSettings'
 import { DatabaseSettingsPanel } from '../features/databases/DatabaseSettingsPanel'
 import { EnvironmentSettingsPanel } from '../features/environment/components/EnvironmentSettingsPanel'
+import { WebSearchSettingsPanel } from '../features/settings/WebSearchSettingsPanel'
 import { PermissionSettingsSection } from './PermissionView'
 import type { EnvironmentSnapshot, EnvironmentToolId } from '../types'
 import type { ManualCompactionTarget } from '../../../shared/contextUsageTypes'
@@ -51,6 +52,7 @@ const RefreshIcon = GoSync
 const AddToolbarIcon = GoPlus
 const PaletteIcon = PhiIcons.settings.appearance
 const ProviderIcon = PhiIcons.settings.providers
+const SearchIcon = PhiIcons.action.search
 const PsychologyIcon = PhiIcons.settings.persona
 const ShieldIcon = PhiIcons.settings.permissions
 const DiagnosticsIcon = PhiIcons.settings.diagnostics
@@ -65,6 +67,7 @@ export type SettingsCategory =
   | 'databases'
   | 'persona'
   | 'providers'
+  | 'web-search'
   | 'permissions'
   | 'remote'
   | 'diagnostics'
@@ -76,6 +79,7 @@ const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.E
   { id: 'databases', label: '数据库', icon: <DatabaseIcon fontSize="small" /> },
   { id: 'persona', label: '助手', icon: <PsychologyIcon fontSize="small" /> },
   { id: 'providers', label: 'Provider', icon: <ProviderIcon fontSize="small" /> },
+  { id: 'web-search', label: '网页搜索', icon: <SearchIcon fontSize="small" /> },
   { id: 'permissions', label: '权限', icon: <ShieldIcon fontSize="small" /> },
   { id: 'remote', label: '远程', icon: <RemoteExecutionIcon fontSize="small" /> },
   { id: 'diagnostics', label: '诊断', icon: <ContentCopyIcon fontSize="small" /> },
@@ -890,6 +894,7 @@ function SettingsDialog({
               onLogout={onLogout}
             />
           )}
+          {category === 'web-search' && <WebSearchSettingsPanel />}
           {category === 'permissions' && (
             <PermissionSettingsSection
               projects={projects}

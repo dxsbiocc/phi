@@ -16,6 +16,10 @@ import {
   type PreviewImageMimeType
 } from './file-preview-media'
 import { shouldBlockHtmlReportNavigation } from '../shared/htmlReportPreview'
+import {
+  installNotebookOutputProtocol,
+  registerNotebookOutputScheme
+} from './agent/notebook/notebook-output-protocol'
 import { isInstalledFigurePreviewPath } from './agent/visualization/examples'
 import { getBundledSkillRoot } from './agent/visualization/tools'
 import type {
@@ -5913,10 +5917,13 @@ function createWindow(): void {
   }
 }
 
+registerNotebookOutputScheme()
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
+  installNotebookOutputProtocol()
   applyDockIcon()
 
   const removedLogs = cleanupOldLogs()
@@ -6206,6 +6213,15 @@ app.whenReady().then(() => {
     syncPreventSleepBlocker()
     return settings
   })
+  ipcMain.handle('settings:webSearch:get', async () =>
+    getOmpBridge().request('settings.webSearch.get', { agentDir: AGENT_DIR })
+  )
+  ipcMain.handle('settings:webSearch:update', async (_, patch: unknown) =>
+    getOmpBridge().request('settings.webSearch.update', { agentDir: AGENT_DIR, patch })
+  )
+  ipcMain.handle('settings:webSearch:searxngEngines', async () =>
+    getOmpBridge().request('settings.webSearch.searxngEngines', { agentDir: AGENT_DIR })
+  )
   ipcMain.handle('settings:updateDefaultProxyMode', async (_, mode: unknown) =>
     updateDefaultProxyMode(mode)
   )

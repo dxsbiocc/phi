@@ -256,10 +256,27 @@ function specFromVegaEmbedCall(html: string): ExtractedVegaSpec | null {
   return null
 }
 
+// Altair 6 passes the spec as the first argument of an inline loader:
+// `(function (spec, embedOpt) { ... })({...spec...}, {"mode":"vega-lite"})`.
+function specFromRuntimeArgument(html: string): ExtractedVegaSpec | null {
+  const callPattern = /\}\s*\)\s*\(\s*\{/g
+  for (const match of html.matchAll(callPattern)) {
+    const objectStart = match.index + match[0].lastIndexOf('{')
+    const spec = parseBalancedJsonObject(html, objectStart)
+    if (!spec) continue
+    const mime = schemaMime(spec)
+    if (mime) return { mime, spec }
+  }
+  return null
+}
+
 export function extractVegaSpecFromHtml(html: string): ExtractedVegaSpec | null {
-  if (!/vega(?:-lite|Embed)|application\/vnd\.vega/i.test(html)) return null
+  if (!/vega(?:-lite|-embed|Embed)|application\/vnd\.vega/i.test(html)) return null
   return (
-    specFromScriptTag(html) ?? specFromJavaScriptAssignment(html) ?? specFromVegaEmbedCall(html)
+    specFromScriptTag(html) ??
+    specFromJavaScriptAssignment(html) ??
+    specFromVegaEmbedCall(html) ??
+    specFromRuntimeArgument(html)
   )
 }
 

@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Box, Typography } from '@mui/material'
+import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
+import { Box, IconButton, Menu, MenuItem, Tooltip, Typography } from '@mui/material'
 import { alpha, useTheme } from '@mui/material/styles'
+import { GoCircleSlash, GoDownload, GoEye, GoSync, GoZoomIn, GoZoomOut } from 'react-icons/go'
+import { changeset, type View } from 'vega'
 import type { EmbedOptions, VisualizationSpec } from 'vega-embed'
+import { Handler } from 'vega-tooltip'
 import type { JsonObject } from '../../../../../shared/notebookDocument'
 import NotebookPreOutput from './NotebookPreOutput'
 import {
@@ -20,6 +23,107 @@ function usesContainerWidth(spec: JsonObject): boolean {
   return containerWidth(spec) === 'container'
 }
 
+const zoomInFactor = 1 / 1.4
+const zoomOutFactor = 1.4
+
+export function zoomNumericDomain(
+  domain: readonly number[],
+  factor: number
+): [number, number] | null {
+  if (domain.length < 2) return null
+  const start = domain[0]
+  const end = domain[1]
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start === end) return null
+  const anchor = (start + end) / 2
+  return [anchor + (start - anchor) * factor, anchor + (end - anchor) * factor]
+}
+
+function numericDomain(domain: unknown): number[] {
+  if (!Array.isArray(domain)) return []
+  return domain.filter((item): item is number => typeof item === 'number' && Number.isFinite(item))
+}
+
+function selectionPrefix(view: View): string | null {
+  const signals = view.getState().signals ?? {}
+  const name = Object.keys(signals).find((item) => item.endsWith('_tuple_fields'))
+  return name ? name.slice(0, -'_tuple_fields'.length) : null
+}
+
+function zoomChartView(view: View, factor: number): void {
+  const xScale = view.scale('x') as { domain?: () => unknown } | null
+  const yScale = view.scale('y') as { domain?: () => unknown } | null
+  const xNext = zoomNumericDomain(numericDomain(xScale?.domain?.()), factor)
+  const yNext = zoomNumericDomain(numericDomain(yScale?.domain?.()), factor)
+  if (!xNext && !yNext) return
+
+  const prefix = selectionPrefix(view)
+  if (prefix && xNext && yNext) {
+    const fields = view.signal(`${prefix}_tuple_fields`)
+    const store = `${prefix}_store`
+    const existing = view.data(store)
+    let change = changeset()
+    if (Array.isArray(existing)) {
+      for (const row of existing) change = change.remove(row)
+    }
+    view.change(store, change.insert({ unit: '', fields, values: [xNext, yNext] }))
+    view.signal(`${prefix}_x`, xNext)
+    view.signal(`${prefix}_y`, yNext)
+  } else {
+    const xMutable = xScale as { domain: (value?: unknown) => unknown } | null
+    const yMutable = yScale as { domain: (value?: unknown) => unknown } | null
+    if (xNext && xMutable?.domain) xMutable.domain(xNext)
+    if (yNext && yMutable?.domain) yMutable.domain(yNext)
+  }
+  void view.runAsync()
+}
+
+function ChartModeButton({
+  label,
+  disabled,
+  buttonRef,
+  menu,
+  onClick,
+  children
+}: {
+  label: string
+  disabled: boolean
+  buttonRef?: Ref<HTMLButtonElement>
+  menu?: boolean
+  onClick: () => void
+  children: ReactNode
+}): React.JSX.Element {
+  return (
+    <Tooltip title={label} enterDelay={300}>
+      <span>
+        <IconButton
+          ref={buttonRef}
+          type="button"
+          size="small"
+          disabled={disabled}
+          aria-label={label}
+          aria-haspopup={menu ? 'menu' : undefined}
+          data-phi-notebook-output-vega-action={label}
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={onClick}
+          sx={{
+            width: 32,
+            height: 32,
+            p: 0,
+            borderRadius: 0.75,
+            color: 'text.secondary',
+            bgcolor: 'transparent',
+            '&:hover': {
+              bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08)
+            }
+          }}
+        >
+          {children}
+        </IconButton>
+      </span>
+    </Tooltip>
+  )
+}
+
 export function NotebookVegaOutput({
   mime,
   metadata,
@@ -30,8 +134,14 @@ export function NotebookVegaOutput({
   spec: JsonObject
 }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const viewRef = useRef<View | null>(null)
+  const initialStateRef = useRef<ReturnType<View['getState']> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isRendering, setIsRendering] = useState(true)
+  const downloadButtonRef = useRef<HTMLButtonElement | null>(null)
+  const [viewReady, setViewReady] = useState(false)
+  const [tooltipEnabled, setTooltipEnabled] = useState(true)
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false)
   const theme = useTheme()
   const specText = useMemo(() => prettyJson(spec), [spec])
   const shouldRemeasureContainer = useMemo(() => usesContainerWidth(spec), [spec])
@@ -43,8 +153,11 @@ export function NotebookVegaOutput({
     let cancelled = false
     let finalize: (() => void) | undefined
     let resizeObserver: ResizeObserver | undefined
+    viewRef.current = null
+    initialStateRef.current = null
     setError(null)
     setIsRendering(true)
+    setViewReady(false)
 
     void import('vega-embed')
       .then(async (module) => {
@@ -54,7 +167,10 @@ export function NotebookVegaOutput({
           actions: false,
           mode: vegaMode(mime),
           renderer: 'canvas',
-          tooltip: true
+          tooltip: true,
+          // The app page forbids eval. Vega's AST interpreter draws the chart
+          // without compiling expressions through `new Function`.
+          ast: true
         }
         if (theme.palette.mode === 'dark') {
           embedOptions.theme = 'dark'
@@ -87,11 +203,15 @@ export function NotebookVegaOutput({
           })
           resizeObserver.observe(container)
         }
+        viewRef.current = result.view
+        initialStateRef.current = result.view.getState()
+        setTooltipEnabled(true)
         finalize = () => {
           resizeObserver?.disconnect()
           result.finalize()
         }
         setIsRendering(false)
+        setViewReady(true)
       })
       .catch((cause: unknown) => {
         if (cancelled) return
@@ -101,10 +221,56 @@ export function NotebookVegaOutput({
 
     return () => {
       cancelled = true
+      viewRef.current = null
+      initialStateRef.current = null
       resizeObserver?.disconnect()
       finalize?.()
     }
   }, [metadata?.height, metadata?.width, mime, shouldRemeasureContainer, spec, theme.palette.mode])
+
+  function resetChartZoom(): void {
+    const view = viewRef.current
+    const initialState = initialStateRef.current
+    if (!view || !initialState) return
+    const width = view.width()
+    const height = view.height()
+    view.setState(initialState)
+    view.width(width).height(height).resize()
+    void view.runAsync()
+  }
+
+  function zoomChart(factor: number): void {
+    const view = viewRef.current
+    if (!view) return
+    zoomChartView(view, factor)
+  }
+
+  function toggleChartTooltip(): void {
+    const view = viewRef.current
+    if (!view) return
+    const next = !tooltipEnabled
+    setTooltipEnabled(next)
+    view.tooltip(next ? new Handler().call : () => undefined)
+  }
+
+  function exportChart(format: 'png' | 'svg'): void {
+    setDownloadMenuOpen(false)
+    const view = viewRef.current
+    if (!view) return
+    void view
+      .toImageURL(format, format === 'png' ? 2 : 1)
+      .then((url) => {
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `notebook-chart.${format}`
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+      })
+      .catch((cause: unknown) => {
+        console.error('Failed to export notebook chart:', cause)
+      })
+  }
 
   return (
     <Box
@@ -113,13 +279,75 @@ export function NotebookVegaOutput({
       data-phi-notebook-output-width={metadata?.width}
       data-phi-notebook-output-height={metadata?.height}
       sx={{
-        border: 1,
-        borderColor: (paletteTheme) => alpha(paletteTheme.palette.text.primary, 0.1),
-        borderRadius: 1.25,
         overflow: 'hidden',
-        bgcolor: 'background.paper'
+        position: 'relative',
+        bgcolor: 'transparent',
+        '&:hover .notebook-output-hover-actions, &:focus-within .notebook-output-hover-actions': {
+          opacity: 1,
+          pointerEvents: 'auto'
+        }
       }}
     >
+      <Box
+        data-phi-notebook-output-vega-toolbar="true"
+        className="notebook-output-hover-actions"
+        sx={{
+          alignItems: 'center',
+          display: 'flex',
+          gap: 0,
+          position: 'absolute',
+          top: 6,
+          right: 6,
+          zIndex: 2,
+          opacity: downloadMenuOpen ? 1 : 0,
+          pointerEvents: downloadMenuOpen ? 'auto' : 'none',
+          transition: 'opacity 140ms ease',
+          px: 0.25,
+          py: 0.25,
+          borderRadius: 1,
+          bgcolor: (paletteTheme) => alpha(paletteTheme.palette.background.paper, 0.94)
+        }}
+      >
+        <ChartModeButton
+          label="下载图片"
+          disabled={!viewReady}
+          menu
+          buttonRef={downloadButtonRef}
+          onClick={() => setDownloadMenuOpen(true)}
+        >
+          <GoDownload size={20} />
+        </ChartModeButton>
+        <Menu
+          anchorEl={downloadButtonRef.current}
+          open={downloadMenuOpen}
+          onClose={() => setDownloadMenuOpen(false)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        >
+          <MenuItem onClick={() => exportChart('png')}>PNG</MenuItem>
+          <MenuItem onClick={() => exportChart('svg')}>SVG</MenuItem>
+        </Menu>
+        <ChartModeButton label="放大" disabled={!viewReady} onClick={() => zoomChart(zoomInFactor)}>
+          <GoZoomIn size={20} />
+        </ChartModeButton>
+        <ChartModeButton
+          label="缩小"
+          disabled={!viewReady}
+          onClick={() => zoomChart(zoomOutFactor)}
+        >
+          <GoZoomOut size={20} />
+        </ChartModeButton>
+        <ChartModeButton label="重置坐标" disabled={!viewReady} onClick={resetChartZoom}>
+          <GoSync size={20} />
+        </ChartModeButton>
+        <ChartModeButton
+          label={tooltipEnabled ? '关闭悬停提示' : '显示悬停提示'}
+          disabled={!viewReady}
+          onClick={toggleChartTooltip}
+        >
+          {tooltipEnabled ? <GoCircleSlash size={20} /> : <GoEye size={20} />}
+        </ChartModeButton>
+      </Box>
       <Box
         sx={{
           minHeight: 260,
@@ -135,10 +363,7 @@ export function NotebookVegaOutput({
             shouldRemeasureContainer ? 'true' : undefined
           }
           sx={{
-            minHeight: 236,
-            '& canvas, & svg': {
-              maxWidth: '100%'
-            }
+            minHeight: 236
           }}
         />
         {isRendering && !error ? (

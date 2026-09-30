@@ -12,6 +12,7 @@ import {
 import { alpha } from '@mui/material/styles'
 import { GoSync } from 'react-icons/go'
 import { PhiIcons } from '../../icons'
+import { isListedNotebookKernel } from '../analysis/lib/notebookSession'
 import type {
   AnalysisJupyterRuntimeStatus,
   AnalysisNotebookKernelState,
@@ -117,7 +118,7 @@ export function RuntimeSidebar({
 }: RuntimeSidebarProps): React.JSX.Element {
   const server = runtimeStatus?.server ?? null
   const notebooks = runtimeStatus?.notebooks ?? null
-  const notebookSessions = (notebooks?.sessions ?? []).filter((session) => session.state === 'busy')
+  const notebookSessions = (notebooks?.sessions ?? []).filter(isListedNotebookKernel)
   const runningKernelCount = notebookSessions.length
   const actionBusy = isLoading
   const showStopServerAction = server?.state === 'ready' || server?.state === 'starting'

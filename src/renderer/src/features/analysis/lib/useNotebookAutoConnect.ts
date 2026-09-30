@@ -30,6 +30,7 @@ export function useNotebookAutoConnect(input: {
   isStartingNotebookSession?: boolean
   notebookSessionStatus?: AnalysisNotebookSessionStatus | null
   notebookSessionError?: string | null
+  requestedKernelName?: string
 }): { autoConnectKeyRef: MutableRefObject<string | null> } {
   const {
     autoConnectKey,
@@ -39,7 +40,8 @@ export function useNotebookAutoConnect(input: {
     kernelDiagnostics,
     isStartingNotebookSession,
     notebookSessionStatus,
-    notebookSessionError
+    notebookSessionError,
+    requestedKernelName
   } = input
   const autoConnectKeyRef = useRef<string | null>(null)
   const sessionStatusForNotebook =
@@ -59,6 +61,7 @@ export function useNotebookAutoConnect(input: {
         availableKernelCount: kernelDiagnostics?.kernels.length ?? 0,
         isStartingNotebookSession,
         notebookSessionStatus: sessionStatusForNotebook,
+        requestedKernelName,
         lastAutoConnectKey: autoConnectKeyRef.current
       }) ||
       !notebookFile ||
@@ -77,6 +80,7 @@ export function useNotebookAutoConnect(input: {
     notebookFile,
     notebookSessionStatus,
     onStartNotebookSession,
+    requestedKernelName,
     sessionStatusForNotebook
   ])
 

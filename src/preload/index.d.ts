@@ -55,6 +55,11 @@ import type {
   PhiAppSettings,
   PhiAppSettingsPatch
 } from '../shared/appSettingsTypes'
+import type {
+  SearxngEngineOption,
+  WebSearchSettings,
+  WebSearchSettingsPatch
+} from '../shared/webSearchSettingsTypes'
 import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
 import type {
   EnvironmentGetResult,
@@ -701,6 +706,9 @@ declare global {
       ) => () => void
       getAppSettings: () => Promise<PhiAppSettings>
       updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
+      getWebSearchSettings: () => Promise<WebSearchSettings>
+      updateWebSearchSettings: (patch: WebSearchSettingsPatch) => Promise<WebSearchSettings>
+      listSearxngEngines: () => Promise<SearxngEngineOption[]>
       updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
       getEnvironment: () => Promise<EnvironmentGetResult>
       redetectEnvironment: () => Promise<EnvironmentSnapshot>
@@ -900,6 +908,8 @@ declare global {
       listAnalysisKernels: (cwd?: string) => Promise<PreloadAnalysisKernelDiagnostics>
       getAnalysisJupyterStatus: (cwd: string) => Promise<PreloadJupyterServerStatus>
       getAnalysisJupyterRuntimeStatus: (cwd: string) => Promise<PreloadAnalysisJupyterRuntimeStatus>
+      publishNotebookOutputFrame: (html: string) => Promise<string>
+      releaseNotebookOutputFrame: (url: string) => Promise<void>
       startAnalysisJupyter: (cwd: string) => Promise<PreloadJupyterServerStatus>
       stopAnalysisJupyter: (cwd: string) => Promise<PreloadJupyterServerStatus>
       getAnalysisNotebookSessionStatus: (

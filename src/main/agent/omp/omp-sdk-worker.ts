@@ -30,6 +30,7 @@ import {
 import { resolveApprovedPlan } from '@oh-my-pi/pi-coding-agent/plan-mode/approved-plan'
 import { listPlanFiles, readPlanFile } from '@oh-my-pi/pi-coding-agent/plan-mode/plan-files'
 import { PluginManager } from '@oh-my-pi/pi-coding-agent/extensibility/plugins/manager'
+import { applyProviderGlobalsFromSettings } from '@oh-my-pi/pi-coding-agent/config/provider-globals'
 import type { InstalledPlugin } from '@oh-my-pi/pi-coding-agent/extensibility/plugins/types'
 import type { AuthStorage, CredentialOrigin, StoredAuthCredential } from '@oh-my-pi/pi-ai'
 import type { Model } from '@oh-my-pi/pi-ai/types'
@@ -81,6 +82,11 @@ import type { RemoteMutationResult } from '../remote-workspace-edit'
 import { buildRemoteWorkspaceEditTool } from '../remote-workspace-edit-tool'
 import { buildLibraryCustomTools } from '../library/library-tools'
 import { buildPaletteRecommendationTool } from '../palettes/tools'
+import {
+  listSearxngEngines,
+  normalizeWebSearchSettingsPatch,
+  webSearchSettingsFromValues
+} from '../web-search-settings'
 import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
 import { buildAskUserQuestionCustomTools } from '../user-interaction-tools'
@@ -1995,6 +2001,49 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return sessionContextUsage(params)
     case 'settings.autoCompactionDefaults':
       return readAutoCompactionDefaults(params)
+    case 'settings.webSearch.get': {
+      const agentDir = isRecord(params)
+        ? stringValue(params.agentDir, process.env.PI_CODING_AGENT_DIR)
+        : stringValue(process.env.PI_CODING_AGENT_DIR)
+      const settings = await Settings.loadReadOnly({ cwd: agentDir, agentDir })
+      return webSearchSettingsFromValues({
+        order: settings.get('providers.webSearchOrder'),
+        excluded: settings.get('providers.webSearchExclude'),
+        endpoint: settings.get('searxng.endpoint'),
+        engines: settings.get('searxng.engines')
+      })
+    }
+    case 'settings.webSearch.update': {
+      const record = isRecord(params) ? params : {}
+      const agentDir = stringValue(record.agentDir, process.env.PI_CODING_AGENT_DIR)
+      const next = normalizeWebSearchSettingsPatch(record.patch)
+      const settings = await Settings.init({ cwd: agentDir, agentDir })
+      settings.set('providers.webSearchOrder', next.order)
+      settings.set('providers.webSearchExclude', next.excluded)
+      settings.set('searxng.endpoint', next.endpoint)
+      settings.set('searxng.engines', next.engines)
+      await settings.flush()
+      applyProviderGlobalsFromSettings(settings)
+      const persisted = await Settings.loadReadOnly({ cwd: agentDir, agentDir })
+      return webSearchSettingsFromValues({
+        order: persisted.get('providers.webSearchOrder'),
+        excluded: persisted.get('providers.webSearchExclude'),
+        endpoint: persisted.get('searxng.endpoint'),
+        engines: persisted.get('searxng.engines')
+      })
+    }
+    case 'settings.webSearch.searxngEngines': {
+      const agentDir = isRecord(params)
+        ? stringValue(params.agentDir, process.env.PI_CODING_AGENT_DIR)
+        : stringValue(process.env.PI_CODING_AGENT_DIR)
+      const settings = await Settings.loadReadOnly({ cwd: agentDir, agentDir })
+      return listSearxngEngines({
+        endpoint: settings.get('searxng.endpoint'),
+        token: settings.get('searxng.token'),
+        basicUsername: settings.get('searxng.basicUsername'),
+        basicPassword: settings.get('searxng.basicPassword')
+      })
+    }
     case 'session.setAutoCompactionSettings':
       return setSessionAutoCompactionSettings(params)
     case 'session.compact':
