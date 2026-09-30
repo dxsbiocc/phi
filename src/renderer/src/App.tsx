@@ -64,6 +64,7 @@ import { WorkspaceSidePanel } from './components/WorkspaceSidePanel'
 import { useAnalysisNotebookRuntime } from './features/analysis/hooks/useAnalysisNotebookRuntime'
 import { WorkspaceResourceTabs } from './components/WorkspaceResourceTabs'
 import { createAppTheme } from './theme'
+import { createMinimalTheme } from './minimalTheme'
 import { useThemeMode } from './useThemeMode'
 import { useProviderAuth } from './useProviderAuth'
 import { modelOptionFromSelection, useModelSelection } from './useModelSelection'
@@ -621,8 +622,18 @@ function AppResizeSeparator({
 }
 
 function App(): React.JSX.Element {
-  const { mode: themeMode, effectiveMode, setMode: setThemeMode } = useThemeMode()
-  const theme = useMemo(() => createAppTheme(effectiveMode), [effectiveMode])
+  const {
+    mode: themeMode,
+    effectiveMode,
+    setMode: setThemeMode,
+    family: themeFamily,
+    setFamily: setThemeFamily
+  } = useThemeMode()
+  const theme = useMemo(
+    () =>
+      themeFamily === 'minimal' ? createMinimalTheme(effectiveMode) : createAppTheme(effectiveMode),
+    [themeFamily, effectiveMode]
+  )
 
   const {
     sessions,
@@ -4317,6 +4328,8 @@ function App(): React.JSX.Element {
           onRespondToolApproval={onRespondToolApproval}
           themeMode={themeMode}
           setThemeMode={setThemeMode}
+          themeFamily={themeFamily}
+          setThemeFamily={setThemeFamily}
           defaultProxyMode={defaultProxyMode}
           noProjectTaskFolder={noProjectTaskFolder}
           preventSleepDuringRuns={preventSleepDuringRuns}

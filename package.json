@@ -47,6 +47,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
+    "@fontsource-variable/dm-sans": "^5.3.0",
     "@mui/material": "^9.4.0",
     "@oh-my-pi/pi-coding-agent": "18.1.10",
     "@rdkit/rdkit": "^2026.3.6",
@@ -93,6 +94,7 @@
     "vite": "^7.2.6"
   },
   "trustedDependencies": [
-    "protobufjs"
+    "protobufjs",
+    "electron"
   ]
 }

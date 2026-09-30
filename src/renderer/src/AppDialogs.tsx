@@ -11,6 +11,7 @@ import NewProjectDialog from './features/project/NewProjectPanel'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
 import type { ThemeMode } from './theme'
+import type { ThemeFamily } from './useThemeMode'
 import type {
   ActiveAuthPrompt,
   DbConnectorSettingsItem,
@@ -69,6 +70,8 @@ export type AppDialogsProps = {
   onRespondToolApproval: (requestId: string, approved: boolean) => Promise<void>
   themeMode: ThemeMode
   setThemeMode: (mode: ThemeMode) => void
+  themeFamily: ThemeFamily
+  setThemeFamily: (family: ThemeFamily) => void
   defaultProxyMode: DefaultProxyMode
   noProjectTaskFolder: string
   preventSleepDuringRuns: boolean
@@ -155,6 +158,8 @@ export default function AppDialogs({
   onRespondToolApproval,
   themeMode,
   setThemeMode,
+  themeFamily,
+  setThemeFamily,
   defaultProxyMode,
   noProjectTaskFolder,
   preventSleepDuringRuns,
@@ -273,6 +278,8 @@ export default function AppDialogs({
         onClearDbConnectorApiKey={onClearDbConnectorApiKey}
         themeMode={themeMode}
         onSelectThemeMode={setThemeMode}
+        themeFamily={themeFamily}
+        onSelectThemeFamily={setThemeFamily}
       />
 
       <EnvironmentSummaryDialog
