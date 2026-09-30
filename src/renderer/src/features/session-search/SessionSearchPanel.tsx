@@ -43,7 +43,9 @@ export function SessionSearchPanel({
   onSelectSession
 }: SessionSearchPanelProps): React.JSX.Element {
   const [query, setQuery] = useState('')
-  const [selectedIndex, setSelectedIndex] = useState(0)
+  // No default selection: nothing is highlighted until the user arrows into
+  // the list or hovers an entry. Enter only opens an explicit selection.
+  const [selectedIndex, setSelectedIndex] = useState(-1)
   const [snapshot, setSnapshot] = useState<ProjectSessionSnapshot>({
     sessionsByProjectId: {},
     pending: projects.length,
@@ -134,20 +136,26 @@ export function SessionSearchPanel({
           value={query}
           onChange={(event) => {
             setQuery(event.target.value)
-            setSelectedIndex(0)
+            setSelectedIndex(-1)
             setSelectionError(null)
           }}
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
               event.preventDefault()
-              setSelectedIndex((index) =>
-                results.length === 0
-                  ? 0
-                  : (index + (event.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length
-              )
-            } else if (event.key === 'Enter' && results.length > 0) {
+              setSelectedIndex((index) => {
+                if (results.length === 0) return -1
+                if (index < 0) return event.key === 'ArrowDown' ? 0 : results.length - 1
+                return (
+                  (index + (event.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length
+                )
+              })
+            } else if (
+              event.key === 'Enter' &&
+              selectedIndex >= 0 &&
+              selectedIndex < results.length
+            ) {
               event.preventDefault()
-              void selectSession(results[Math.min(selectedIndex, results.length - 1)].session.path)
+              void selectSession(results[selectedIndex].session.path)
             }
           }}
           slotProps={{

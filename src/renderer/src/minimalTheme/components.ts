@@ -15,16 +15,9 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
   const inkOnDark = isDark ? MINIMAL_GREY[800] : '#FFFFFF'
 
   return {
-    MuiCssBaseline: {
-      styleOverrides: {
-        '::-webkit-scrollbar': { width: 6, height: 6 },
-        '::-webkit-scrollbar-thumb': {
-          backgroundColor: alpha(MINIMAL_GREY[500], 0.32),
-          borderRadius: 8
-        },
-        '::-webkit-scrollbar-track': { backgroundColor: 'transparent' }
-      }
-    },
+    // NOTE: no global ::-webkit-scrollbar styling here on purpose — styled
+    // scrollbars on macOS stop being overlay scrollbars and become classic
+    // always-visible ones, which reads as "scrollbar is stuck on".
 
     // -- Surfaces -----------------------------------------------------------
 
@@ -253,6 +246,13 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
     },
     MuiDialog: {
       styleOverrides: {
+        // Lighter, grey-tinted scrim — scoped to Dialog's own backdrop so
+        // menus/popovers keep their transparent click-capture layer.
+        root: {
+          '& .MuiBackdrop-root': {
+            backgroundColor: isDark ? alpha('#000000', 0.4) : alpha(MINIMAL_GREY[900], 0.32)
+          }
+        },
         paper: ({ theme }) => ({
           borderRadius: 16,
           boxShadow: theme.customShadows.dialog
