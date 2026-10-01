@@ -14,7 +14,9 @@ export const WRAPPER_ID = 'nf-core/modules/gffread'
 /**
  * A stand-in `nextflow`. Modes (FAKE_NF_MODE): `fail` exits 1; `hang` prints a
  * process line and never exits; anything else prints process lines, waits
- * FAKE_NF_MS (default 200) and writes the wrapper's primary output.
+ * FAKE_NF_MS (default 200) and writes the wrapper's primary output. With
+ * FAKE_NF_GATE set, it instead waits until that file exists, so a test can hold
+ * the pipeline open for as long as it needs (see Sandbox.releaseGate).
  */
 export const FAKE_NEXTFLOW = `#!/usr/bin/env node
 const fs = require('fs')
@@ -36,12 +38,20 @@ if (mode === 'fail') {
   setInterval(() => {}, 1000)
 } else {
   console.log('[PROCESS 87/ef5c73] GFFREAD (genome)')
-  setTimeout(() => {
+  const finish = () => {
     fs.mkdirSync(path.join(params.outdir, 'gffread'), { recursive: true })
     fs.writeFileSync(path.join(params.outdir, 'gffread', 'out.gtf'), 'x')
     console.log('[SUCCESS] completed=1 failed=0 cached=0')
     process.exit(0)
-  }, Number(process.env.FAKE_NF_MS || 200))
+  }
+  const gate = process.env.FAKE_NF_GATE
+  if (gate) {
+    setInterval(() => {
+      if (fs.existsSync(gate)) finish()
+    }, 20)
+  } else {
+    setTimeout(finish, Number(process.env.FAKE_NF_MS || 200))
+  }
 }
 `
 
@@ -63,6 +73,9 @@ export interface Sandbox {
   outdir: string
   pidFile: string
   useFake: (script?: string) => void
+  /** Hold the fake pipeline open (FAKE_NF_GATE) until `releaseGate` is called. */
+  holdGate: () => void
+  releaseGate: () => void
 }
 
 const ENV_KEYS = [
@@ -70,7 +83,8 @@ const ENV_KEYS = [
   'PI_CODING_AGENT_DIR',
   'FAKE_NF_PIDFILE',
   'FAKE_NF_MODE',
-  'FAKE_NF_MS'
+  'FAKE_NF_MS',
+  'FAKE_NF_GATE'
 ]
 
 export async function withSandbox(fn: (sandbox: Sandbox) => Promise<void>): Promise<void> {
@@ -86,6 +100,12 @@ export async function withSandbox(fn: (sandbox: Sandbox) => Promise<void>): Prom
       writeFileSync(bin, script)
       chmodSync(bin, 0o755)
       process.env.NEXTFLOW_BIN = bin
+    },
+    holdGate: () => {
+      process.env.FAKE_NF_GATE = join(root, 'nf.gate')
+    },
+    releaseGate: () => {
+      writeFileSync(join(root, 'nf.gate'), '')
     }
   }
   process.env.PI_CODING_AGENT_DIR = sandbox.agentDir
@@ -123,6 +143,30 @@ export async function waitFor(condition: () => boolean, timeoutMs = 30_000): Pro
       throw new Error(`timed out after ${timeoutMs} ms waiting for: ${String(condition)}`)
     }
     await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
+/**
+ * Fails with `what` if `promise` has not settled by the deadline. For calls that must not
+ * wait on a gated pipeline: the bound is only there so a regression fails with a clear
+ * message instead of hanging until the runner's test timeout, so keep it generous.
+ */
+export async function settlesWithin<T>(
+  promise: Promise<T>,
+  what: string,
+  timeoutMs = 60_000
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${what} (still pending after ${timeoutMs} ms)`)),
+      timeoutMs
+    )
+  })
+  try {
+    return await Promise.race([promise, deadline])
+  } finally {
+    clearTimeout(timer)
   }
 }
 

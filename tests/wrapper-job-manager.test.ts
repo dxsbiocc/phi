@@ -6,7 +6,6 @@ import test from 'node:test'
 import { createHostJobClient } from '../src/main/agent/wrappers/composition/job-host-client'
 import { wrapperJobHostHandlers } from '../src/main/agent/wrappers/composition/job-host-handlers'
 import { WrapperJobManager } from '../src/main/agent/wrappers/composition/job-manager'
-import { readLocalNextflowVersion } from '../src/main/agent/wrappers/composition/nextflow-version'
 import {
   WRAPPER_JOB_HOST_METHODS,
   type WrapperJobStatus
@@ -22,6 +21,7 @@ import {
   WRAPPER_ID,
   isAlive,
   pidFileReady,
+  settlesWithin,
   waitFor,
   withSandbox,
   type Sandbox
@@ -54,14 +54,13 @@ async function startJob(
 test('start returns at once with a running job while Nextflow is still going', async () => {
   await withSandbox(async (sb) => {
     sb.useFake()
-    process.env.FAKE_NF_MS = '1500'
+    // The pipeline cannot finish until the gate opens, so start resolving at all proves it
+    // did not wait — no wall-clock bound that a loaded machine could blow.
+    sb.holdGate()
     const m = manager(sb)
-    // The one-time Nextflow version check is not what this measures.
-    await readLocalNextflowVersion(process.env.NEXTFLOW_BIN as string)
 
-    const began = Date.now()
-    const status = await startJob(m, sb)
-    assert.ok(Date.now() - began < 1000, 'start must not wait for the pipeline')
+    const status = await settlesWithin(startJob(m, sb), 'start must not wait for the pipeline')
+    assert.equal(existsSync(join(sb.outdir, 'gffread', 'out.gtf')), false)
 
     assert.equal(status.state, 'running')
     assert.match(status.runId, /^wrun_/)
@@ -69,6 +68,7 @@ test('start returns at once with a running job while Nextflow is still going', a
     assert.equal(status.profile, 'docker')
     assert.equal(readWrapperRun(status.runId, sb.agentDir)?.state, 'running')
 
+    sb.releaseGate()
     const done = await m.wait(status.runId, 20_000)
     assert.equal(done?.state, 'completed')
   })
@@ -322,16 +322,15 @@ test('the composition toolset is search, inspect, run, status, wait and cancel',
 test('wrapper_run returns immediately with a run id and leaves the run in the background', async () => {
   await withSandbox(async (sb) => {
     sb.useFake()
-    process.env.FAKE_NF_MS = '1500'
+    // Held open until released: the tool returning at all proves it left the run running.
+    sb.holdGate()
     const m = manager(sb)
     const tools = toolsFor(m)
 
-    const began = Date.now()
-    const result = await tools.wrapper_run.execute('call', {
-      id: WRAPPER_ID,
-      params: { outdir: sb.outdir }
-    })
-    assert.ok(Date.now() - began < 1000)
+    const result = await settlesWithin(
+      tools.wrapper_run.execute('call', { id: WRAPPER_ID, params: { outdir: sb.outdir } }),
+      'wrapper_run must not wait for the pipeline'
+    )
 
     assert.equal(result.isError, undefined)
     const runId = (result.details as { runId: string }).runId
@@ -340,7 +339,8 @@ test('wrapper_run returns immediately with a run id and leaves the run in the ba
     assert.match(text(result), /background/i)
     assert.equal(readWrapperRun(runId, sb.agentDir)?.state, 'running')
 
-    await m.wait(runId, 20_000)
+    sb.releaseGate()
+    assert.equal((await m.wait(runId, 20_000))?.state, 'completed')
   })
 })
 
