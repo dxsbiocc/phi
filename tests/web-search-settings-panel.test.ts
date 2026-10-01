@@ -82,7 +82,6 @@ test('web search settings separate SearXNG engines from upstream providers', () 
   assert.match(markup, /aria-label="启用 sogou wechat 引擎"/)
   assert.match(markup, /aria-label="启用 sogou 引擎"/)
   assert.match(markup, /默认关闭/)
-  assert.match(markup, />仅此<\/button>/)
   const defaultOffInput = markup.match(/<input[^>]*aria-label="启用 sogou 引擎"[^>]*>/)?.[0]
   assert.ok(defaultOffInput)
   assert.doesNotMatch(defaultOffInput, /\bdisabled\b/)
@@ -96,7 +95,6 @@ test('SearXNG settings explain when its upstream provider is disabled', () => {
 
   assert.match(markup, /aria-label="启用 SearXNG 搜索"/)
   assert.match(markup, /启用来源/)
-  assert.match(markup, /限定引擎名称（可选）/)
 })
 
 test('the paged catalog shows its full count and default-off Sogou switches before adding an instance', () => {
@@ -110,9 +108,10 @@ test('the paged catalog shows its full count and default-off Sogou switches befo
   )
 
   assert.match(markup, />添加实例<\/button>/)
-  assert.match(markup, /未连接/)
+  assert.match(markup, /未配置/)
   assert.equal(SEARXNG_DEFAULT_ENGINES.length, 352)
-  assert.match(markup, /全部 352/)
+  assert.match(markup, /全部/)
+  assert.match(markup, /<span class="[^"]*">352<\/span>/)
   for (const preset of SEARXNG_DEFAULT_ENGINES.filter((engine) =>
     engine.name.startsWith('sogou')
   )) {
@@ -183,7 +182,12 @@ test('all built-in web_search providers are reachable through table pages', () =
   const markup = renderEditor(all, null)
 
   assert.equal(all.providers.length, 23)
-  assert.match(markup, /全部 23/)
+  assert.match(markup, /<span class="[^"]*">23<\/span>/)
+  for (const provider of all.providers.filter(
+    (item) => item.auth === 'api-key' || item.auth === 'oauth-or-key' || item.auth === 'optional'
+  )) {
+    assert.ok(provider.apiKeyUrl, `${provider.id} should link to its key console`)
+  }
   const pages = [0, 1, 2].flatMap((page) =>
     listSearchProviderPage(all.providers, all.orderedEnabledIds, {
       cost: 'all',

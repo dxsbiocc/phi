@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   Alert,
   Button,
+  Card,
   Chip,
   Dialog,
   DialogActions,
@@ -13,7 +14,6 @@ import {
   InputLabel,
   Menu,
   MenuItem,
-  Paper,
   Select,
   Stack,
   Switch,
@@ -39,6 +39,7 @@ import {
   type SearchProviderCostFilter,
   type SearchProviderEnabledFilter
 } from '../lib/searchProviderList'
+import { TabLabel } from './TabCountBadge'
 
 function authDescription(provider: WebSearchProviderOption): string {
   switch (provider.auth) {
@@ -149,7 +150,7 @@ export function SearchProviderList({
 
   return (
     <>
-      <Paper variant="outlined" sx={{ borderRadius: 1, overflow: 'hidden' }}>
+      <Card>
         <Tabs
           value={costFilter}
           onChange={(_, value: SearchProviderCostFilter) => {
@@ -159,26 +160,43 @@ export function SearchProviderList({
           variant="scrollable"
           scrollButtons="auto"
           aria-label="按费用类型筛选搜索服务"
-          sx={{ px: 1, borderBottom: 1, borderColor: 'divider' }}
+          sx={{ px: 3, borderBottom: 1, borderColor: 'divider' }}
         >
-          <Tab value="all" label={`全部 ${providers.length}`} />
+          <Tab value="all" label={<TabLabel text="全部" count={providers.length} />} />
           <Tab
             value="free"
-            label={`免凭据 ${providers.filter((provider) => provider.access === 'free').length}`}
+            label={
+              <TabLabel
+                text="免凭据"
+                count={providers.filter((provider) => provider.access === 'free').length}
+                tone="success"
+              />
+            }
           />
           <Tab
             value="metered"
-            label={`账号 / API ${providers.filter((provider) => provider.access === 'metered').length}`}
+            label={
+              <TabLabel
+                text="账号 / API"
+                count={providers.filter((provider) => provider.access === 'metered').length}
+                tone="warning"
+              />
+            }
           />
           <Tab
             value="self-hosted"
-            label={`自建 ${providers.filter((provider) => provider.access === 'self-hosted').length}`}
+            label={
+              <TabLabel
+                text="自建"
+                count={providers.filter((provider) => provider.access === 'self-hosted').length}
+              />
+            }
           />
         </Tabs>
         <Stack
           direction={{ xs: 'column', sm: 'row' }}
-          spacing={1}
-          sx={{ px: 1.5, py: 1.25, borderBottom: 1, borderColor: 'divider' }}
+          spacing={2}
+          sx={{ px: 3, py: 2.5, borderBottom: 1, borderColor: 'divider', alignItems: 'center' }}
         >
           <FormControl size="small" sx={{ minWidth: 145 }}>
             <InputLabel id="web-search-enabled-filter-label">启用状态</InputLabel>
@@ -217,7 +235,15 @@ export function SearchProviderList({
           />
         </Stack>
         <TableContainer>
-          <Table size="small" sx={{ minWidth: 620 }} aria-label="网页搜索服务来源列表">
+          <Table
+            size="small"
+            sx={{
+              minWidth: 620,
+              '& th:first-of-type, & td:first-of-type': { pl: 3 },
+              '& th:last-of-type, & td:last-of-type': { pr: 3 }
+            }}
+            aria-label="网页搜索服务来源列表"
+          >
             <TableHead>
               <TableRow sx={{ bgcolor: 'action.hover' }}>
                 <TableCell sx={{ width: 68 }}>使用</TableCell>
@@ -342,8 +368,9 @@ export function SearchProviderList({
           rowsPerPageOptions={[5, 10, 20]}
           labelRowsPerPage="每页"
           labelDisplayedRows={({ from, to, count }) => `${from}–${to} / ${count}`}
+          sx={{ '& .MuiTablePagination-toolbar': { pl: 3 } }}
         />
-      </Paper>
+      </Card>
       {error && <Alert severity="error">{error}</Alert>}
       <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={closeMenu}>
         {menuProvider && menuIndex > 0 && (
@@ -429,23 +456,32 @@ export function SearchProviderList({
       >
         <DialogTitle>{keyProvider?.label} API Key</DialogTitle>
         <DialogContent>
-          <TextField
-            autoFocus
-            fullWidth
-            type="password"
-            label="API Key"
-            value={key}
-            onChange={(event) => setKey(event.target.value)}
-            helperText={
-              keyProvider?.apiKeyEnv ? `全局凭据 · 也可设置 ${keyProvider.apiKeyEnv}` : '全局凭据'
-            }
-            sx={{ mt: 1 }}
-          />
-          {error && (
-            <Alert severity="error" sx={{ mt: 1 }}>
-              {error}
-            </Alert>
-          )}
+          <Stack spacing={1.5} sx={{ pt: 1 }}>
+            {keyProvider?.apiKeyUrl && (
+              <Button
+                component="a"
+                href={keyProvider.apiKeyUrl}
+                target="_blank"
+                rel="noreferrer"
+                size="small"
+                sx={{ alignSelf: 'flex-start', pl: 0 }}
+              >
+                前往 {keyProvider.label} 获取 Key ↗
+              </Button>
+            )}
+            <TextField
+              autoFocus
+              fullWidth
+              type="password"
+              label="API Key"
+              value={key}
+              onChange={(event) => setKey(event.target.value)}
+              helperText={
+                keyProvider?.apiKeyEnv ? `全局凭据 · 也可设置 ${keyProvider.apiKeyEnv}` : '全局凭据'
+              }
+            />
+            {error && <Alert severity="error">{error}</Alert>}
+          </Stack>
         </DialogContent>
         <DialogActions>
           <Button

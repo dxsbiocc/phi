@@ -1,11 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Alert,
-  Box,
-  Button,
+  Card,
   Chip,
   CircularProgress,
   FormControl,
@@ -13,7 +9,6 @@ import {
   InputAdornment,
   InputLabel,
   MenuItem,
-  Paper,
   Select,
   Stack,
   Switch,
@@ -28,10 +23,9 @@ import {
   TableSortLabel,
   Tabs,
   TextField,
-  Tooltip,
-  Typography
+  Tooltip
 } from '@mui/material'
-import { GoChevronDown, GoSearch, GoSync } from 'react-icons/go'
+import { GoSearch, GoSync } from 'react-icons/go'
 import type { SearxngEngineOption } from '../../../../../shared/webSearchSettingsTypes'
 import {
   isSearxngEngineUnavailable,
@@ -43,6 +37,7 @@ import {
   type SearxngStatusFilter,
   toggleSearxngEngine
 } from '../lib/searxngEngines'
+import { TabLabel } from './TabCountBadge'
 
 function engineNames(value: string): string[] {
   return value
@@ -56,13 +51,15 @@ export function SearxngEnginePicker({
   engines,
   onChange,
   disabled = false,
-  catalog
+  catalog,
+  onConnectionChange
 }: {
   endpoint: string
   engines: string
   onChange: (value: string) => void
   disabled?: boolean
   catalog?: SearxngEngineOption[]
+  onConnectionChange?: (reachable: boolean) => void
 }): React.JSX.Element {
   const [loaded, setLoaded] = useState<SearxngDisplayEngine[]>(
     catalog ? mergeSearxngEngines(catalog) : SEARXNG_DEFAULT_ENGINES
@@ -106,10 +103,12 @@ export function SearxngEnginePicker({
     try {
       setLoaded(mergeSearxngEngines(await window.api.listSearxngEngines()))
       setFromInstance(true)
+      onConnectionChange?.(true)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
       setLoaded(SEARXNG_DEFAULT_ENGINES)
       setFromInstance(false)
+      onConnectionChange?.(false)
     } finally {
       setLoading(false)
     }
@@ -124,6 +123,7 @@ export function SearxngEnginePicker({
         if (active) {
           setLoaded(mergeSearxngEngines(result))
           setFromInstance(true)
+          onConnectionChange?.(true)
         }
       })
       .catch((cause: unknown) => {
@@ -131,12 +131,13 @@ export function SearxngEnginePicker({
           setError(cause instanceof Error ? cause.message : String(cause))
           setLoaded(SEARXNG_DEFAULT_ENGINES)
           setFromInstance(false)
+          onConnectionChange?.(false)
         }
       })
     return () => {
       active = false
     }
-  }, [catalog, endpoint])
+  }, [catalog, endpoint, onConnectionChange])
 
   function toggle(name: string): void {
     const next = toggleSearxngEngine(selected, enabledNames, name)
@@ -144,56 +145,9 @@ export function SearxngEnginePicker({
   }
 
   return (
-    <Stack spacing={1}>
-      {Boolean(endpoint) && (
-        <Stack
-          direction="row"
-          spacing={0.5}
-          sx={{ justifyContent: 'flex-end', alignItems: 'center' }}
-        >
-          <Tooltip title="刷新实例引擎">
-            <span>
-              <IconButton
-                size="small"
-                aria-label="刷新实例引擎"
-                disabled={disabled || loading || Boolean(catalog)}
-                onClick={() => void refresh()}
-              >
-                {loading ? <CircularProgress size={16} /> : <GoSync size={17} />}
-              </IconButton>
-            </span>
-          </Tooltip>
-        </Stack>
-      )}
-      <Paper variant="outlined" sx={{ borderRadius: 1, overflow: 'hidden' }}>
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
-          {[
-            ['全部', loaded.length],
-            ['已选', selectedCount],
-            ['未选', availableEngines.length - selectedCount],
-            ['不可用', unavailableCount]
-          ].map(([label, count], index) => (
-            <Box
-              key={label}
-              sx={{
-                px: 1.5,
-                py: 1,
-                borderRight: index < 3 ? 1 : 0,
-                borderColor: 'divider'
-              }}
-            >
-              <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
-                {count}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {label}
-              </Typography>
-            </Box>
-          ))}
-        </Box>
-      </Paper>
+    <Stack spacing={2}>
       {error && <Alert severity="warning">读取实例引擎失败：{error}</Alert>}
-      <Paper variant="outlined" sx={{ borderRadius: 1, overflow: 'hidden' }}>
+      <Card>
         <Tabs
           value={selectionFilter}
           onChange={(_, value: SearxngSelectionFilter) => {
@@ -203,17 +157,32 @@ export function SearxngEnginePicker({
           variant="scrollable"
           scrollButtons="auto"
           aria-label="按选择状态筛选搜索引擎"
-          sx={{ px: 1, borderBottom: 1, borderColor: 'divider' }}
+          sx={{ px: 3, borderBottom: 1, borderColor: 'divider' }}
         >
-          <Tab value="all" label={`全部 ${loaded.length}`} />
-          <Tab value="selected" label={`已选 ${selectedCount}`} />
-          <Tab value="unselected" label={`未选 ${availableEngines.length - selectedCount}`} />
-          <Tab value="unavailable" label={`不可用 ${unavailableCount}`} />
+          <Tab value="all" label={<TabLabel text="全部" count={loaded.length} />} />
+          <Tab
+            value="selected"
+            label={<TabLabel text="已选" count={selectedCount} tone="success" />}
+          />
+          <Tab
+            value="unselected"
+            label={
+              <TabLabel
+                text="未选"
+                count={availableEngines.length - selectedCount}
+                tone="warning"
+              />
+            }
+          />
+          <Tab
+            value="unavailable"
+            label={<TabLabel text="不可用" count={unavailableCount} tone="error" />}
+          />
         </Tabs>
         <Stack
           direction={{ xs: 'column', sm: 'row' }}
-          spacing={1}
-          sx={{ px: 1.5, py: 1.25, borderBottom: 1, borderColor: 'divider' }}
+          spacing={2}
+          sx={{ px: 3, py: 2.5, borderBottom: 1, borderColor: 'divider', alignItems: 'center' }}
         >
           <FormControl size="small" sx={{ minWidth: 160 }}>
             <InputLabel id="searxng-status-filter-label">默认状态</InputLabel>
@@ -254,9 +223,31 @@ export function SearxngEnginePicker({
               }
             }}
           />
+          {Boolean(endpoint) && (
+            <Tooltip title="刷新实例引擎">
+              <span>
+                <IconButton
+                  size="small"
+                  aria-label="刷新实例引擎"
+                  disabled={disabled || loading || Boolean(catalog)}
+                  onClick={() => void refresh()}
+                >
+                  {loading ? <CircularProgress size={16} /> : <GoSync size={17} />}
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
         </Stack>
         <TableContainer>
-          <Table size="small" sx={{ minWidth: 570 }} aria-label="SearXNG 搜索引擎列表">
+          <Table
+            size="small"
+            sx={{
+              minWidth: 570,
+              '& th:first-of-type, & td:first-of-type': { pl: 3 },
+              '& th:last-of-type, & td:last-of-type': { pr: 3 }
+            }}
+            aria-label="SearXNG 搜索引擎列表"
+          >
             <TableHead>
               <TableRow sx={{ bgcolor: 'action.hover' }}>
                 <TableCell sx={{ width: 76 }}>使用</TableCell>
@@ -274,9 +265,6 @@ export function SearxngEnginePicker({
                 </TableCell>
                 <TableCell sx={{ width: 100 }}>快捷词</TableCell>
                 <TableCell sx={{ width: 122 }}>状态</TableCell>
-                <TableCell align="right" sx={{ width: 74 }}>
-                  操作
-                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -317,21 +305,12 @@ export function SearxngEnginePicker({
                         color={unavailable ? 'default' : engine.enabled ? 'success' : 'warning'}
                       />
                     </TableCell>
-                    <TableCell align="right">
-                      <Button
-                        size="small"
-                        disabled={disabled || unavailable || engines === engine.name}
-                        onClick={() => onChange(engine.name)}
-                      >
-                        仅此
-                      </Button>
-                    </TableCell>
                   </TableRow>
                 )
               })}
               {result.rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} align="center" sx={{ py: 3, color: 'text.secondary' }}>
+                  <TableCell colSpan={4} align="center" sx={{ py: 3, color: 'text.secondary' }}>
                     没有符合条件的搜索引擎
                   </TableCell>
                 </TableRow>
@@ -352,29 +331,13 @@ export function SearxngEnginePicker({
           rowsPerPageOptions={[10, 20, 50]}
           labelRowsPerPage="每页"
           labelDisplayedRows={({ from, to, count }) => `${from}–${to} / ${count}`}
+          sx={{ '& .MuiTablePagination-toolbar': { pl: 3 } }}
         />
-      </Paper>
+      </Card>
 
       {unknownNames.length > 0 && (
         <Alert severity="warning">实例未列出已填写的引擎：{unknownNames.join('、')}</Alert>
       )}
-
-      <Accordion disableGutters variant="outlined" sx={{ borderRadius: 1 }}>
-        <AccordionSummary expandIcon={<GoChevronDown size={17} />}>
-          <Typography variant="body2">手动指定引擎</Typography>
-        </AccordionSummary>
-        <AccordionDetails>
-          <TextField
-            fullWidth
-            size="small"
-            label="限定引擎名称（可选）"
-            value={engines}
-            disabled={disabled}
-            onChange={(event) => onChange(event.target.value)}
-            helperText="留空使用实例默认；多个名称用逗号分隔。"
-          />
-        </AccordionDetails>
-      </Accordion>
     </Stack>
   )
 }

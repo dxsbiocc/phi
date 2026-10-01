@@ -45,6 +45,9 @@ export function WebSearchSettingsEditor({
 }): React.JSX.Element {
   const [enabledIds, setEnabledIds] = useState(settings.orderedEnabledIds)
   const [engines, setEngines] = useState(settings.searxngEngines)
+  const [instanceReachable, setInstanceReachable] = useState<boolean | null>(() =>
+    searxngCatalog ? true : null
+  )
   const [instanceDialogOpen, setInstanceDialogOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -111,10 +114,10 @@ export function WebSearchSettingsEditor({
   }
 
   return (
-    <Stack spacing={1.5}>
+    <Stack spacing={4}>
       <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
         <Typography variant="h6">网页搜索</Typography>
-        <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
           {onRefresh && (
             <IconButton aria-label="刷新网页搜索设置" size="small" onClick={onRefresh}>
               <GoSync size={17} />
@@ -141,19 +144,33 @@ export function WebSearchSettingsEditor({
         </Stack>
       </Stack>
 
-      <Stack spacing={1}>
+      <Stack spacing={2.5}>
         <Stack
           direction="row"
           sx={{ alignItems: 'center', justifyContent: 'space-between', gap: 1 }}
         >
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', minWidth: 0 }}>
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', minWidth: 0 }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
               SearXNG
             </Typography>
             <Chip
               size="small"
-              label={settings.searxngEndpoint ? '已连接' : '未连接'}
-              color={settings.searxngEndpoint ? 'success' : 'default'}
+              label={
+                !settings.searxngEndpoint
+                  ? '未配置'
+                  : instanceReachable === null
+                    ? '检查中'
+                    : instanceReachable
+                      ? '已连接'
+                      : '连接失败'
+              }
+              color={
+                settings.searxngEndpoint && instanceReachable
+                  ? 'success'
+                  : settings.searxngEndpoint && instanceReachable === false
+                    ? 'warning'
+                    : 'default'
+              }
             />
             {!enabledIds.includes('searxng') && (
               <Button size="small" onClick={() => toggleProvider('searxng')}>
@@ -161,7 +178,7 @@ export function WebSearchSettingsEditor({
               </Button>
             )}
           </Stack>
-          <Stack direction="row" spacing={0.5}>
+          <Stack direction="row" spacing={1}>
             {engines && (
               <Button
                 size="small"
@@ -194,11 +211,12 @@ export function WebSearchSettingsEditor({
           }}
           disabled={saving}
           catalog={searxngCatalog}
+          onConnectionChange={setInstanceReachable}
         />
       </Stack>
 
       <Box>
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 0.75 }}>
+        <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', mb: 2.5 }}>
           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
             搜索服务
           </Typography>
