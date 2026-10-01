@@ -88,7 +88,8 @@ export class InMemoryBrowserEngine implements BrowserEngine {
         isLoading: false,
         canGoBack: false,
         canGoForward: false,
-        documentRevision: 0
+        documentRevision: 0,
+        navigationRevision: 0
       },
       history: ['about:blank'],
       historyIndex: 0,
@@ -119,20 +120,25 @@ export class InMemoryBrowserEngine implements BrowserEngine {
     tab.actions.push({ command: { ...command }, at: this.#now() })
 
     switch (command.type) {
-      case 'navigate':
-        this.#navigate(handle, tab, command.url, true)
+      case 'navigate': {
+        const navigationRevision = ++tab.state.navigationRevision
+        this.#navigate(handle, tab, command.url, true, navigationRevision)
         break
+      }
       case 'history': {
+        const navigationRevision = ++tab.state.navigationRevision
         const nextIndex = tab.historyIndex + (command.direction === 'back' ? -1 : 1)
         if (nextIndex >= 0 && nextIndex < tab.history.length) {
           tab.historyIndex = nextIndex
-          this.#commit(handle, tab, tab.history[nextIndex])
+          this.#commit(handle, tab, tab.history[nextIndex], navigationRevision)
         }
         break
       }
-      case 'reload':
-        this.#commit(handle, tab, tab.state.url)
+      case 'reload': {
+        const navigationRevision = ++tab.state.navigationRevision
+        this.#commit(handle, tab, tab.state.url, navigationRevision)
         break
+      }
       case 'stop':
         if (tab.state.isLoading) this.emitLoading(handle, false)
         break
@@ -205,16 +211,36 @@ export class InMemoryBrowserEngine implements BrowserEngine {
     return cloneViewport(this.#requiredTab(handle).viewport)
   }
 
-  emitLoading(handle: EngineTabHandle, isLoading: boolean): void {
+  emitLoading(handle: EngineTabHandle, isLoading: boolean, navigationRevision?: number): void {
     const tab = this.#requiredTab(handle)
-    tab.state.isLoading = isLoading
-    this.#publish({ type: 'loadingChanged', handle, isLoading, at: this.#now() })
+    const revision = navigationRevision ?? tab.state.navigationRevision
+    if (revision >= tab.state.navigationRevision) {
+      tab.state.navigationRevision = revision
+      tab.state.isLoading = isLoading
+    }
+    this.#publish({
+      type: 'loadingChanged',
+      handle,
+      isLoading,
+      navigationRevision: revision,
+      at: this.#now()
+    })
   }
 
-  emitTitle(handle: EngineTabHandle, title: string): void {
+  emitTitle(handle: EngineTabHandle, title: string, navigationRevision?: number): void {
     const tab = this.#requiredTab(handle)
-    tab.state.title = title
-    this.#publish({ type: 'titleChanged', handle, title, at: this.#now() })
+    const revision = navigationRevision ?? tab.state.navigationRevision
+    if (revision >= tab.state.navigationRevision) {
+      tab.state.navigationRevision = revision
+      tab.state.title = title
+    }
+    this.#publish({
+      type: 'titleChanged',
+      handle,
+      title,
+      navigationRevision: revision,
+      at: this.#now()
+    })
   }
 
   emitCrash(handle: EngineTabHandle, reason: string): void {
@@ -224,10 +250,60 @@ export class InMemoryBrowserEngine implements BrowserEngine {
 
   emitLoadFailure(
     handle: EngineTabHandle,
-    input: { url: string; errorCode: string; message: string }
+    input: { url: string; errorCode: string; message: string; navigationRevision?: number }
   ): void {
-    this.#requiredTab(handle)
-    this.#publish({ type: 'loadFailed', handle, ...input, at: this.#now() })
+    const tab = this.#requiredTab(handle)
+    const navigationRevision = input.navigationRevision ?? tab.state.navigationRevision
+    if (navigationRevision >= tab.state.navigationRevision) {
+      tab.state.navigationRevision = navigationRevision
+      tab.state.isLoading = false
+    }
+    this.#publish({
+      type: 'loadFailed',
+      handle,
+      url: input.url,
+      errorCode: input.errorCode,
+      message: input.message,
+      navigationRevision,
+      at: this.#now()
+    })
+  }
+
+  emitNavigationCommitted(
+    handle: EngineTabHandle,
+    input: {
+      url: string
+      documentRevision?: number
+      navigationRevision?: number
+      canGoBack: boolean
+      canGoForward: boolean
+    }
+  ): void {
+    const tab = this.#requiredTab(handle)
+    const navigationRevision = input.navigationRevision ?? tab.state.navigationRevision
+    const documentRevision = input.documentRevision ?? tab.state.documentRevision
+    const isNewerPair =
+      navigationRevision > tab.state.navigationRevision
+        ? documentRevision >= tab.state.documentRevision
+        : navigationRevision === tab.state.navigationRevision &&
+          documentRevision > tab.state.documentRevision
+    if (isNewerPair) {
+      tab.state.navigationRevision = navigationRevision
+      tab.state.documentRevision = documentRevision
+      tab.state.url = input.url
+      tab.state.canGoBack = input.canGoBack
+      tab.state.canGoForward = input.canGoForward
+    }
+    this.#publish({
+      type: 'navigationCommitted',
+      handle,
+      url: input.url,
+      documentRevision,
+      navigationRevision,
+      canGoBack: input.canGoBack,
+      canGoForward: input.canGoForward,
+      at: this.#now()
+    })
   }
 
   emitPopup(
@@ -244,17 +320,28 @@ export class InMemoryBrowserEngine implements BrowserEngine {
     })
   }
 
-  #navigate(handle: EngineTabHandle, tab: InMemoryTab, url: string, addToHistory: boolean): void {
+  #navigate(
+    handle: EngineTabHandle,
+    tab: InMemoryTab,
+    url: string,
+    addToHistory: boolean,
+    navigationRevision: number
+  ): void {
     if (addToHistory) {
       tab.history.splice(tab.historyIndex + 1)
       tab.history.push(url)
       tab.historyIndex = tab.history.length - 1
     }
-    this.#commit(handle, tab, url)
+    this.#commit(handle, tab, url, navigationRevision)
   }
 
-  #commit(handle: EngineTabHandle, tab: InMemoryTab, url: string): void {
-    this.emitLoading(handle, true)
+  #commit(
+    handle: EngineTabHandle,
+    tab: InMemoryTab,
+    url: string,
+    navigationRevision: number
+  ): void {
+    this.emitLoading(handle, true, navigationRevision)
     tab.state.url = url
     tab.state.documentRevision += 1
     tab.state.canGoBack = tab.historyIndex > 0
@@ -264,11 +351,12 @@ export class InMemoryBrowserEngine implements BrowserEngine {
       handle,
       url,
       documentRevision: tab.state.documentRevision,
+      navigationRevision,
       canGoBack: tab.state.canGoBack,
       canGoForward: tab.state.canGoForward,
       at: this.#now()
     })
-    this.emitLoading(handle, false)
+    this.emitLoading(handle, false, navigationRevision)
   }
 
   #requiredTab(handle: EngineTabHandle): InMemoryTab {

@@ -36,7 +36,8 @@ test('creates a deterministic blank tab', async () => {
     isLoading: false,
     canGoBack: false,
     canGoForward: false,
-    documentRevision: 0
+    documentRevision: 0,
+    navigationRevision: 0
   })
 })
 
@@ -56,7 +57,8 @@ test('navigates with deterministic document revisions', async () => {
     isLoading: false,
     canGoBack: true,
     canGoForward: false,
-    documentRevision: 2
+    documentRevision: 2,
+    navigationRevision: 2
   })
 })
 
@@ -90,6 +92,7 @@ test('reloads and stops a tab', async () => {
   assert.equal(stopped.ok && stopped.state.isLoading, false)
   assert.equal(reloaded.ok, true)
   assert.equal(reloaded.ok && reloaded.state.documentRevision, 2)
+  assert.equal(reloaded.ok && reloaded.state.navigationRevision, 2)
   assert.deepEqual(
     engine.recordedActions(handle).map((entry) => entry.command.type),
     ['navigate', 'stop', 'reload']
@@ -203,8 +206,8 @@ test('publishes explicit load, title, and crash events', async () => {
   engine.emitLoading(handle, false)
 
   assert.deepEqual(events, [
-    { type: 'loadingChanged', handle, isLoading: true, at: 42 },
-    { type: 'titleChanged', handle, title: 'Example', at: 42 },
+    { type: 'loadingChanged', handle, isLoading: true, navigationRevision: 0, at: 42 },
+    { type: 'titleChanged', handle, title: 'Example', navigationRevision: 0, at: 42 },
     { type: 'crashed', handle, reason: 'killed', at: 42 }
   ])
 })
@@ -223,24 +226,24 @@ test('publishes navigation events in commit order with monotonic revisions', asy
   assert.deepEqual(
     events.map((event) =>
       event.type === 'navigationCommitted'
-        ? `${event.type}:${event.documentRevision}`
+        ? `${event.type}:${event.navigationRevision}:${event.documentRevision}`
         : event.type === 'loadingChanged'
-          ? `${event.type}:${event.isLoading}`
+          ? `${event.type}:${event.navigationRevision}:${event.isLoading}`
           : event.type
     ),
     [
-      'loadingChanged:true',
-      'navigationCommitted:1',
-      'loadingChanged:false',
-      'loadingChanged:true',
-      'navigationCommitted:2',
-      'loadingChanged:false',
-      'loadingChanged:true',
-      'navigationCommitted:3',
-      'loadingChanged:false',
-      'loadingChanged:true',
-      'navigationCommitted:4',
-      'loadingChanged:false'
+      'loadingChanged:1:true',
+      'navigationCommitted:1:1',
+      'loadingChanged:1:false',
+      'loadingChanged:2:true',
+      'navigationCommitted:2:2',
+      'loadingChanged:2:false',
+      'loadingChanged:3:true',
+      'navigationCommitted:3:3',
+      'loadingChanged:3:false',
+      'loadingChanged:4:true',
+      'navigationCommitted:4:4',
+      'loadingChanged:4:false'
     ]
   )
 })
@@ -270,8 +273,10 @@ test('preserves document revision at history boundaries', async () => {
 
   assert.equal(back.ok, true)
   assert.equal(back.ok && back.state.documentRevision, 0)
+  assert.equal(back.ok && back.state.navigationRevision, 1)
   assert.equal(forward.ok, true)
   assert.equal(forward.ok && forward.state.documentRevision, 0)
+  assert.equal(forward.ok && forward.state.navigationRevision, 2)
 })
 
 test('assigns and clears a tab viewport', async () => {

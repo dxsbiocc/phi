@@ -22,6 +22,7 @@ export interface EngineTabState {
   canGoBack: boolean
   canGoForward: boolean
   documentRevision: number
+  navigationRevision: number
 }
 
 export interface EngineTargetDescriptor {
@@ -71,23 +72,27 @@ export type EngineEvent =
   | (EngineEventBase & {
       type: 'loadingChanged'
       isLoading: boolean
+      navigationRevision: number
     })
   | (EngineEventBase & {
       type: 'navigationCommitted'
       url: string
       documentRevision: number
+      navigationRevision: number
       canGoBack: boolean
       canGoForward: boolean
     })
   | (EngineEventBase & {
       type: 'titleChanged'
       title: string
+      navigationRevision: number
     })
   | (EngineEventBase & {
       type: 'loadFailed'
       url: string
       errorCode: string
       message: string
+      navigationRevision: number
     })
   | (EngineEventBase & {
       type: 'crashed'
