@@ -32,6 +32,8 @@ export interface EnvironmentToolState {
   /** Short human detail (e.g. kernel counts). */
   detail?: string
   messages?: string[]
+  /** Set when the active path is a host tool the user chose explicitly instead of a managed one. */
+  management?: 'host-unmanaged'
 }
 
 export interface EnvironmentSnapshot {

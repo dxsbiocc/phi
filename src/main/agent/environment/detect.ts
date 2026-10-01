@@ -24,7 +24,8 @@ export const HOST_UNMANAGED = 'host (unmanaged)'
  * `EnvironmentToolState` keep working. Only a custom nextflow sets it today; wrappers use
  * the managed `phi:nextflow@1` environment unless one is chosen.
  */
-export type ManagedToolState = EnvironmentToolState & { management?: 'host-unmanaged' }
+/** Kept as an alias: `management` now lives on `EnvironmentToolState` itself. */
+export type ManagedToolState = EnvironmentToolState
 
 export type CommandRunner = (command: string, args: string[]) => string
 

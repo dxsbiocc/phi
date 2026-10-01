@@ -823,7 +823,14 @@ function syncPreventSleepBlocker(): void {
     preventSleepBlockerId = null
   }
 }
-const jupyterServerRegistry = new JupyterServerRegistry()
+const environmentBuilds = createEnvironmentBuilds({
+  root: getRuntimeRoot(),
+  onChange: (build) => {
+    sendToAllWindows('environmentBuilds:changed', build)
+  }
+})
+// The notebook server joins builds started elsewhere (chat prompt or the environment panel).
+const jupyterServerRegistry = new JupyterServerRegistry({ managed: { builds: environmentBuilds } })
 const notebookSessionRegistry = new AnalysisNotebookSessionRegistry({
   getConnection: (projectCwd) => jupyterServerRegistry.connection(projectCwd)
 })
@@ -842,12 +849,6 @@ const notebookFileWatcher = new AnalysisNotebookFileWatcher({
 getOmpBridge().registerHostHandler('notebookTool.execute', (params) =>
   notebookToolExecutor.execute(params as Parameters<typeof notebookToolExecutor.execute>[0])
 )
-const environmentBuilds = createEnvironmentBuilds({
-  root: getRuntimeRoot(),
-  onChange: (build) => {
-    sendToAllWindows('environmentBuilds:changed', build)
-  }
-})
 const skillHost = createSkillHost({
   listSkillDirs: async (cwd) => {
     const skills = await listSkills(cwd)
@@ -1014,6 +1015,12 @@ getOmpBridge().registerHostHandler('remoteWorkspace.cancelBash', (params) =>
 // Background wrapper runs. The manager lives here, not in the agent worker: a run
 // must outlive any chat session, and the worker is stopped whenever it idles.
 const wrapperJobs = new WrapperJobManager({
+  // Local runs use phi:nextflow@1; a missing environment is offered for building in the chat
+  // that started the run.
+  nextflowLaunch: {
+    builds: environmentBuilds,
+    confirmBuild: (request) => confirmEnvironmentBuild(request)
+  },
   resolveProjectForRun: (originSessionId) => {
     const origin = resolveOriginSession(originSessionId)
     const manifest = origin ? findPhiSessionById(origin.phiSessionId) : null

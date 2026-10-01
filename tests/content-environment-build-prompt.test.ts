@@ -68,3 +68,15 @@ test('only an explicit 现在构建 answer confirms the build', () => {
   assert.equal(confirmedEnvironmentBuild({ error: 'no window', answers: [] }), false)
   assert.equal(confirmedEnvironmentBuild(undefined), false)
 })
+
+test('a wrapper run names the wrapper in the build question', () => {
+  assert.match(
+    environmentBuildQuestion({
+      runtimeSessionId: 's',
+      ref: 'phi:nextflow@1',
+      wrapper: 'nf-core/modules/gffread',
+      estimate: { packages: 166, cachedPackages: 0 }
+    }),
+    /^Wrapper nf-core\/modules\/gffread 需要环境 phi:nextflow@1/
+  )
+})

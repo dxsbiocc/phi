@@ -442,7 +442,7 @@ test('the job manager asks to build phi:nextflow@1 in the originating chat', asy
             cancel: () => undefined
           },
           confirmBuild: (request) => {
-            asked.push(`${request.runtimeSessionId} ${request.ref} ${request.skill ?? ''}`)
+            asked.push(`${request.runtimeSessionId} ${request.ref} ${request.wrapper ?? ''}`)
             return Promise.resolve(false)
           }
         }

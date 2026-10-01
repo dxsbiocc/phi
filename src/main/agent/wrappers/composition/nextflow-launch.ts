@@ -175,7 +175,7 @@ async function resolveManagedLaunch(
     descriptor,
     ref: NEXTFLOW_ENVIRONMENT_REF,
     // The build prompt names a skill or an agent; the wrapper id stands in for the skill.
-    requester: context.wrapperId ? { skill: context.wrapperId } : {},
+    requester: context.wrapperId ? { wrapper: context.wrapperId } : {},
     ...(context.runtimeSessionId ? { runtimeSessionId: context.runtimeSessionId } : {}),
     ...(context.builds ? { builds: context.builds } : {}),
     ...(context.confirmBuild ? { confirmBuild: context.confirmBuild } : {}),

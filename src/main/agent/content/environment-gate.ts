@@ -14,6 +14,8 @@ export interface ConfirmBuildRequest {
   ref: string
   skill?: string
   agent?: string
+  /** A wrapper run (Nextflow environment), named in the build prompt. */
+  wrapper?: string
   estimate: BuildEstimate
 }
 
@@ -41,7 +43,7 @@ export async function ensureEnvironmentReady(input: {
   root: string
   descriptor: EnvironmentDescriptor
   ref: string
-  requester: { skill?: string; agent?: string }
+  requester: { skill?: string; agent?: string; wrapper?: string }
   runtimeSessionId?: string
   builds?: EnvironmentBuilds
   confirmBuild?: (request: ConfirmBuildRequest) => Promise<boolean>
@@ -83,6 +85,7 @@ export async function ensureEnvironmentReady(input: {
       }
       if (input.requester.skill) request.skill = input.requester.skill
       if (input.requester.agent) request.agent = input.requester.agent
+      if (input.requester.wrapper) request.wrapper = input.requester.wrapper
       const accepted = await untilAbort(input.confirmBuild(request), input.signal)
       if (!accepted) {
         return {
@@ -93,9 +96,10 @@ export async function ensureEnvironmentReady(input: {
         }
       }
     }
-    const requestedBy: { skill?: string; agent?: string } = {}
+    const requestedBy: { skill?: string; agent?: string; wrapper?: string } = {}
     if (input.requester.skill) requestedBy.skill = input.requester.skill
     if (input.requester.agent) requestedBy.agent = input.requester.agent
+    if (input.requester.wrapper) requestedBy.wrapper = input.requester.wrapper
     const handle = await untilAbort(
       builds.start(input.descriptor, {
         ref: missing.ref,

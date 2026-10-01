@@ -24,6 +24,9 @@ function formatDownloadAmount(value: number): string {
 
 export function environmentBuildQuestion(request: ConfirmBuildRequest): string {
   const size = environmentBuildSizeText(request.estimate)
+  if (request.wrapper) {
+    return `Wrapper ${request.wrapper} 需要环境 ${request.ref}，尚未安装。现在构建吗？${size}`
+  }
   if (request.agent) {
     return `智能体 ${request.agent} 需要环境 ${request.ref}，尚未安装。现在构建吗？${size}`
   }
