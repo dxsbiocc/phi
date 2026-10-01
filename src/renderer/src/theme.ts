@@ -1,4 +1,6 @@
-import { createTheme, type Theme } from '@mui/material'
+import { createTheme, darken, lighten, type Theme } from '@mui/material'
+
+import { createMinimalTheme, type SemanticScale } from './minimalTheme'
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type EffectiveMode = 'light' | 'dark'
@@ -30,17 +32,38 @@ const SUCCESS = ACCENT_PALETTE[5]
 const ERROR = ACCENT_PALETTE[2]
 const WARNING = ACCENT_PALETTE[7]
 
+// Derives the five-shade scale the shared component styles expect (lighter tint
+// backgrounds through darker text shades) from a single accent color.
+function accentScale(main: string): SemanticScale {
+  return {
+    lighter: lighten(main, 0.85),
+    light: lighten(main, 0.35),
+    main,
+    dark: darken(main, 0.2),
+    darker: darken(main, 0.45)
+  }
+}
+
+// The default family is a color-only variant: Minimal provides the typography,
+// shadows, shape, and component styles; this family swaps in the accent palette,
+// teal-tinted neutrals, and its dark teal chrome.
 export function createAppTheme(mode: EffectiveMode): Theme {
   const isDark = mode === 'dark'
+  const base = createMinimalTheme(mode)
 
-  return createTheme({
+  return createTheme(base, {
     palette: {
-      mode,
-      primary: { main: PRIMARY, contrastText: '#FFFFFF' },
-      secondary: { main: isDark ? '#33515A' : '#D7E4E6' },
-      success: { main: SUCCESS, contrastText: '#FFFFFF' },
-      error: { main: ERROR, contrastText: '#FFFFFF' },
-      warning: { main: WARNING, contrastText: '#1A1500' },
+      primary: { ...accentScale(PRIMARY), contrastText: '#FFFFFF' },
+      secondary: {
+        ...accentScale(isDark ? '#33515A' : '#D7E4E6'),
+        // Explicit because palette overrides merge post-augmentation: the pale
+        // light-mode secondary needs dark text, not Minimal's white.
+        contrastText: isDark ? '#FFFFFF' : '#0F2A30'
+      },
+      info: { ...accentScale(isDark ? '#29B6F6' : '#0288D1'), contrastText: '#FFFFFF' },
+      success: { ...accentScale(SUCCESS), contrastText: '#FFFFFF' },
+      error: { ...accentScale(ERROR), contrastText: '#FFFFFF' },
+      warning: { ...accentScale(WARNING), contrastText: '#1A1500' },
       background: {
         default: isDark ? '#0B262D' : '#FFFFFF',
         paper: isDark ? '#123640' : '#FFFFFF'
@@ -53,69 +76,6 @@ export function createAppTheme(mode: EffectiveMode): Theme {
       action: {
         hover: isDark ? 'rgba(241, 246, 246, 0.06)' : 'rgba(46, 159, 179, 0.06)',
         selected: isDark ? 'rgba(46, 159, 179, 0.22)' : 'rgba(46, 159, 179, 0.10)'
-      }
-    },
-    typography: {
-      fontFamily:
-        "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif"
-    },
-    shape: {
-      borderRadius: 8
-    },
-    // Surfaced on the Theme type by the minimal theme's module augmentation;
-    // defined here too so both theme families honor the same contract.
-    customShadows: {
-      card: isDark
-        ? '0 1px 2px rgba(0, 0, 0, 0.32), 0 8px 16px -4px rgba(0, 0, 0, 0.24)'
-        : '0 1px 2px rgba(15, 42, 48, 0.08), 0 8px 16px -4px rgba(15, 42, 48, 0.08)',
-      dropdown: isDark
-        ? '0 2px 4px rgba(0, 0, 0, 0.32), 0 16px 32px -8px rgba(0, 0, 0, 0.4)'
-        : '0 2px 4px rgba(15, 42, 48, 0.08), 0 16px 32px -8px rgba(15, 42, 48, 0.16)',
-      dialog: isDark
-        ? '0 4px 8px rgba(0, 0, 0, 0.32), 0 24px 48px -12px rgba(0, 0, 0, 0.48)'
-        : '0 4px 8px rgba(15, 42, 48, 0.08), 0 24px 48px -12px rgba(15, 42, 48, 0.2)',
-      listItem: isDark
-        ? '0 1px 2px rgba(0, 0, 0, 0.36), 0 4px 8px -2px rgba(0, 0, 0, 0.28)'
-        : '0 1px 2px rgba(15, 42, 48, 0.1), 0 4px 8px -2px rgba(15, 42, 48, 0.08)'
-    },
-    transitions: {
-      duration: {
-        shortest: 150,
-        shorter: 200,
-        short: 250,
-        standard: 250,
-        complex: 300,
-        enteringScreen: 250,
-        leavingScreen: 200
-      }
-    },
-    components: {
-      MuiButton: {
-        styleOverrides: {
-          root: {
-            textTransform: 'none',
-            transition: 'all 0.2s ease',
-            ':hover': {
-              transform: 'translateY(-1px)'
-            }
-          }
-        }
-      },
-      MuiListItemButton: {
-        styleOverrides: {
-          root: {
-            transition: 'background-color 0.15s ease',
-            borderRadius: 6,
-            margin: '0 8px 2px'
-          }
-        }
-      },
-      MuiIconButton: {
-        styleOverrides: {
-          root: {
-            transition: 'all 0.2s ease'
-          }
-        }
       }
     }
   })

@@ -1,9 +1,24 @@
-import { alpha, type ThemeOptions } from '@mui/material'
+import { alpha, type Theme, type ThemeOptions } from '@mui/material'
 
 import { pxToRem } from './typography'
 import { MINIMAL_GREY, SEMANTIC_SCALES, type SemanticColor } from './tokens'
 
 const SEMANTIC_COLORS = Object.keys(SEMANTIC_SCALES) as SemanticColor[]
+
+// Soft variants read their scale from the active palette so non-Minimal theme
+// families can re-color every component by swapping palette values only.
+function paletteScale(
+  theme: Theme,
+  color: SemanticColor
+): { main: string; light: string; lighter: string; darker: string } {
+  const scale = theme.palette[color]
+  return {
+    main: scale.main,
+    light: scale.light,
+    lighter: scale.lighter ?? scale.light,
+    darker: scale.darker ?? scale.dark
+  }
+}
 
 /**
  * Component overrides for the Minimal style. Coverage is driven by what the
@@ -133,15 +148,14 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
         // Soft button: tinted background + dark-shade text.
         ...SEMANTIC_COLORS.map((color) => ({
           props: { variant: 'soft' as const, color },
-          style: {
-            backgroundColor: isDark
-              ? alpha(SEMANTIC_SCALES[color].main, 0.16)
-              : SEMANTIC_SCALES[color].lighter,
-            color: isDark ? SEMANTIC_SCALES[color].light : SEMANTIC_SCALES[color].darker,
-            '&:hover': {
-              backgroundColor: isDark
-                ? alpha(SEMANTIC_SCALES[color].main, 0.32)
-                : SEMANTIC_SCALES[color].light
+          style: ({ theme }: { theme: Theme }) => {
+            const scale = paletteScale(theme, color)
+            return {
+              backgroundColor: isDark ? alpha(scale.main, 0.16) : scale.lighter,
+              color: isDark ? scale.light : scale.darker,
+              '&:hover': {
+                backgroundColor: isDark ? alpha(scale.main, 0.32) : scale.light
+              }
             }
           }
         }))
@@ -190,11 +204,12 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
         },
         ...SEMANTIC_COLORS.map((color) => ({
           props: { variant: 'soft' as const, color },
-          style: {
-            backgroundColor: isDark
-              ? alpha(SEMANTIC_SCALES[color].main, 0.16)
-              : SEMANTIC_SCALES[color].lighter,
-            color: isDark ? SEMANTIC_SCALES[color].light : SEMANTIC_SCALES[color].darker
+          style: ({ theme }: { theme: Theme }) => {
+            const scale = paletteScale(theme, color)
+            return {
+              backgroundColor: isDark ? alpha(scale.main, 0.16) : scale.lighter,
+              color: isDark ? scale.light : scale.darker
+            }
           }
         }))
       ]
@@ -322,13 +337,14 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
       // Alert only supports the four feedback colors.
       variants: (['success', 'info', 'warning', 'error'] as const).map((color) => ({
         props: { variant: 'standard' as const, color },
-        style: {
-          backgroundColor: isDark
-            ? alpha(SEMANTIC_SCALES[color].main, 0.16)
-            : SEMANTIC_SCALES[color].lighter,
-          color: isDark ? SEMANTIC_SCALES[color].light : SEMANTIC_SCALES[color].darker,
-          '& .MuiAlert-icon': {
-            color: isDark ? SEMANTIC_SCALES[color].light : SEMANTIC_SCALES[color].main
+        style: ({ theme }: { theme: Theme }) => {
+          const scale = paletteScale(theme, color)
+          return {
+            backgroundColor: isDark ? alpha(scale.main, 0.16) : scale.lighter,
+            color: isDark ? scale.light : scale.darker,
+            '& .MuiAlert-icon': {
+              color: isDark ? scale.light : scale.main
+            }
           }
         }
       }))
