@@ -1,6 +1,6 @@
 # Plugin contract
 
-contractVersion: 1.0.0
+contractVersion: 1.1.0
 
 A plugin is a **composite capability**: one or more specialist agents, the skills
 they use, and the environments they run in, installed and removed as one unit.
@@ -33,9 +33,7 @@ needs at run time live under `skills/<name>/` (scripts, references, assets) or
 
 ## 2. `phi-package.yaml`
 
-UTF-8 YAML. Unknown top-level keys are errors (a later minor version may add
-optional ones, for example the distribution fields of content distribution design
-§5.1: `minAppVersion`, `requires`, `dependsOn`, `files`).
+UTF-8 YAML. Unknown top-level keys are errors. Since 1.1.0 the shared distribution fields of the [package contract](package.md) § 1 (`minAppVersion`, `requires`, `dependsOn`, `files`) are also accepted, with the meaning that contract gives them.
 
 | Field           | Required | Rule                                                                                                                                                                                                                                |
 | --------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -123,3 +121,7 @@ repository and before every install or upgrade.
 `contractVersion` follows the content distribution design §4.4: minor versions are
 additive only (new optional fields, allowing a reserved directory or value); anything
 else needs a decision record and a deprecation window.
+
+## Changes
+
+- **1.1.0** (2026-10-02): accepts the package contract's shared distribution fields (`minAppVersion`, `requires`, `dependsOn`, `files`). Additive.
