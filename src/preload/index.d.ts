@@ -70,6 +70,12 @@ import type {
   PhiPluginListItem,
   PhiPluginMutationResult
 } from '../shared/phiPluginTypes'
+import type {
+  InstalledPackageView,
+  PackageInstallPlanView,
+  PackageManagerType,
+  PackageRegistryView
+} from '../shared/packageManagerTypes'
 
 type PreloadSessionSummary = {
   path: string
@@ -992,6 +998,21 @@ declare global {
       installPhiPluginFromDirectory: (path: string) => Promise<PhiPluginMutationResult>
       setPhiPluginEnabled: (id: string, enabled: boolean) => Promise<PhiPluginMutationResult>
       uninstallPhiPlugin: (id: string) => Promise<PhiPluginMutationResult>
+      readPackageRegistry: (dir: string) => Promise<PackageRegistryView>
+      planPackageInstall: (
+        dir: string,
+        type: PackageManagerType,
+        id: string,
+        version?: string
+      ) => Promise<PackageInstallPlanView>
+      installPackage: (
+        dir: string,
+        type: PackageManagerType,
+        id: string,
+        version?: string
+      ) => Promise<InstalledPackageView[]>
+      uninstallPackage: (type: PackageManagerType, id: string) => Promise<InstalledPackageView[]>
+      listInstalledPackages: () => Promise<InstalledPackageView[]>
       listSkills: (cwd?: string) => Promise<PreloadSkillSummary[]>
       readSkillContent: (filePath: string, cwd?: string) => Promise<PreloadSkillContent>
       setSkillDisabled: (

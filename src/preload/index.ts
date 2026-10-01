@@ -76,6 +76,12 @@ import type {
   PhiPluginListItem,
   PhiPluginMutationResult
 } from '../shared/phiPluginTypes'
+import type {
+  InstalledPackageView,
+  PackageInstallPlanView,
+  PackageManagerType,
+  PackageRegistryView
+} from '../shared/packageManagerTypes'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
@@ -908,6 +914,21 @@ type RendererAuthApi = {
   installPhiPluginFromDirectory: (path: string) => Promise<PhiPluginMutationResult>
   setPhiPluginEnabled: (id: string, enabled: boolean) => Promise<PhiPluginMutationResult>
   uninstallPhiPlugin: (id: string) => Promise<PhiPluginMutationResult>
+  readPackageRegistry: (dir: string) => Promise<PackageRegistryView>
+  planPackageInstall: (
+    dir: string,
+    type: PackageManagerType,
+    id: string,
+    version?: string
+  ) => Promise<PackageInstallPlanView>
+  installPackage: (
+    dir: string,
+    type: PackageManagerType,
+    id: string,
+    version?: string
+  ) => Promise<InstalledPackageView[]>
+  uninstallPackage: (type: PackageManagerType, id: string) => Promise<InstalledPackageView[]>
+  listInstalledPackages: () => Promise<InstalledPackageView[]>
   listSkills: (cwd?: string) => Promise<SkillSummary[]>
   readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
   setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string) => Promise<SkillSummary[]>
@@ -1422,6 +1443,25 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('phiPlugins:setEnabled', id, enabled),
   uninstallPhiPlugin: (id: string): Promise<PhiPluginMutationResult> =>
     ipcRenderer.invoke('phiPlugins:uninstall', id),
+  readPackageRegistry: (dir: string): Promise<PackageRegistryView> =>
+    ipcRenderer.invoke('packages:registry', dir),
+  planPackageInstall: (
+    dir: string,
+    type: PackageManagerType,
+    id: string,
+    version?: string
+  ): Promise<PackageInstallPlanView> => ipcRenderer.invoke('packages:plan', dir, type, id, version),
+  installPackage: (
+    dir: string,
+    type: PackageManagerType,
+    id: string,
+    version?: string
+  ): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('packages:install', dir, type, id, version),
+  uninstallPackage: (type: PackageManagerType, id: string): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('packages:uninstall', type, id),
+  listInstalledPackages: (): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('packages:listInstalled'),
   listSkills: (cwd?: string): Promise<SkillSummary[]> => ipcRenderer.invoke('skills:list', cwd),
   readSkillContent: (filePath: string, cwd?: string): Promise<SkillContent> =>
     ipcRenderer.invoke('skills:read', filePath, cwd),

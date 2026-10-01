@@ -12,6 +12,7 @@ import type {
   ContextUsageSnapshot
 } from '../../../shared/contextUsageTypes'
 import { getOmpBridge, type OmpBridge } from '../omp/omp-bridge'
+import { listActiveSkillPackages } from '../packages/store'
 import { loadedPlugins } from '../plugins/loader'
 import {
   getAdditionalProjectResourcePaths,
@@ -417,6 +418,7 @@ function installedPluginSkillDirectories(agentDir?: string): Array<{ dir: string
 
 function runtimeSkillDirectories(agentDir?: string): string[] {
   return [
+    ...listActiveSkillPackages(agentDir).map((entry) => dirname(entry.dir)),
     getBundledSkillsDir(),
     ...installedPluginSkillDirectories(agentDir).map((plugin) => dirname(plugin.dir))
   ]
@@ -452,39 +454,61 @@ function markBundledSystemSkills(options: ResourceLoaderOptions): ResourceLoader
       const resolved = existingOverride ? existingOverride(base) : base
       const bundledRoot = getBundledSkillsDir()
       const pluginRoots = installedPluginSkillDirectories(options.agentDir)
-
-      return {
-        ...resolved,
-        skills: resolved.skills.map((skill) => {
-          if (pathIsInside(skill.filePath, bundledRoot)) {
-            return {
-              ...skill,
-              sourceInfo: {
-                ...skill.sourceInfo,
-                path: skill.filePath,
-                source: 'bundled',
-                scope: 'user',
-                origin: 'resources',
-                baseDir: bundledRoot
-              }
-            }
-          }
-
-          const plugin = pluginRoots.find(({ dir }) => pathIsInside(skill.filePath, dir))
-          if (!plugin) return skill
-
+      const installedPackages = listActiveSkillPackages(options.agentDir)
+      const installedNames = new Set(installedPackages.map((entry) => entry.id))
+      const skills = resolved.skills.map((skill) => {
+        const installedPackage = installedPackages.find(({ dir }) =>
+          pathIsInside(skill.filePath, dir)
+        )
+        if (installedPackage) {
           return {
             ...skill,
             sourceInfo: {
               ...skill.sourceInfo,
               path: skill.filePath,
-              source: 'phi-plugin',
-              scope: 'user',
-              origin: plugin.id,
-              baseDir: plugin.dir
+              source: 'installed-package',
+              scope: 'user' as const,
+              origin: installedPackage.id,
+              baseDir: installedPackage.dir
             }
           }
-        })
+        }
+
+        if (pathIsInside(skill.filePath, bundledRoot)) {
+          return {
+            ...skill,
+            sourceInfo: {
+              ...skill.sourceInfo,
+              path: skill.filePath,
+              source: 'bundled',
+              scope: 'user' as const,
+              origin: 'resources',
+              baseDir: bundledRoot
+            }
+          }
+        }
+
+        const plugin = pluginRoots.find(({ dir }) => pathIsInside(skill.filePath, dir))
+        if (!plugin) return skill
+
+        return {
+          ...skill,
+          sourceInfo: {
+            ...skill.sourceInfo,
+            path: skill.filePath,
+            source: 'phi-plugin',
+            scope: 'user' as const,
+            origin: plugin.id,
+            baseDir: plugin.dir
+          }
+        }
+      })
+
+      return {
+        ...resolved,
+        skills: skills.filter(
+          (skill) => !(installedNames.has(skill.name) && pathIsInside(skill.filePath, bundledRoot))
+        )
       }
     }
   }

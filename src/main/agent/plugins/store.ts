@@ -177,7 +177,8 @@ function environmentDirectory(specPath: string): string {
 export function copyPluginPackage(
   sourceDir: string,
   manifest: PhiPluginManifest,
-  agentDir = getPhiAgentDir()
+  agentDir = getPhiAgentDir(),
+  sourceMetadata?: string
 ): string {
   const sourceRoot = resolve(sourceDir)
   const target = pluginVersionDir(manifest.id, manifest.version, agentDir)
@@ -193,6 +194,7 @@ export function copyPluginPackage(
   mkdirSync(temporary, { recursive: false })
 
   const paths = new Set<string>(['phi-package.yaml'])
+  if (manifest.files) paths.add(manifest.files)
   if (existsSync(join(sourceRoot, 'README.md'))) paths.add('README.md')
   for (const file of manifest.components.agents ?? []) paths.add(file)
   for (const directory of manifest.components.skills ?? []) paths.add(directory)
@@ -204,6 +206,9 @@ export function copyPluginPackage(
   try {
     for (const path of [...paths].sort((left, right) => left.localeCompare(right))) {
       copyAllowlistedPath(sourceRoot, temporary, path)
+    }
+    if (sourceMetadata !== undefined) {
+      writeFileSync(join(temporary, '.source.json'), sourceMetadata, 'utf8')
     }
     renameSync(temporary, target)
     return target

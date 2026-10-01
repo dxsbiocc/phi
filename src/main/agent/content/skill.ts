@@ -184,7 +184,7 @@ export function scriptToolsOf(skill: ValidatedSkill, options: { prefix: string }
 
 export function validateSkill(
   dir: string,
-  options?: { insidePlugin?: boolean }
+  options?: { insidePlugin?: boolean; expectedName?: string }
 ): SkillValidationResult {
   const insidePlugin = options?.insidePlugin === true
   const errors: SkillProblem[] = []
@@ -226,7 +226,7 @@ export function validateSkill(
     }
   }
 
-  const dirName = basename(skillDir)
+  const dirName = options?.expectedName ?? basename(skillDir)
   let name: string | undefined
   if (fm.name === undefined) {
     fail('name', 'name is required')
@@ -235,7 +235,14 @@ export function validateSkill(
   } else {
     name = fm.name
     if (!SKILL_NAME.test(name)) fail('name', 'name must match ^[a-z0-9][a-z0-9-]{0,63}$')
-    if (name !== dirName) fail('name', `name '${name}' must equal the directory name '${dirName}'`)
+    if (name !== dirName) {
+      fail(
+        'name',
+        options?.expectedName
+          ? `name '${name}' must equal package id '${dirName}'`
+          : `name '${name}' must equal the directory name '${dirName}'`
+      )
+    }
   }
 
   let description: string | undefined

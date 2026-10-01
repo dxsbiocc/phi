@@ -14,7 +14,8 @@ import { discoverPhiAgents } from './agents/discovery'
 
 const AGENT_DIR = getPhiAgentDir()
 
-export type SkillSourceCategory = 'system' | 'third-party' | 'user' | 'generated'
+export type SkillSourceCategory =
+  'system' | 'installed-package' | 'third-party' | 'user' | 'generated'
 
 export interface SkillSummary {
   id: string
@@ -109,15 +110,17 @@ function promptAgentTrigger(name: string): string {
 
 const SKILL_SOURCE_CATEGORY_LABELS: Record<SkillSourceCategory, string> = {
   system: 'System',
+  'installed-package': 'Installed package',
   'third-party': 'Plugin',
   user: 'User',
   generated: 'Agent'
 }
 const SKILL_SOURCE_CATEGORY_ORDER: Record<SkillSourceCategory, number> = {
   system: 0,
-  'third-party': 1,
-  user: 2,
-  generated: 3
+  'installed-package': 1,
+  'third-party': 2,
+  user: 3,
+  generated: 4
 }
 
 function normalizedPath(value: string | undefined): string {
@@ -138,6 +141,10 @@ function classifySkillSource(skill: {
   const source = skill.sourceInfo.source.toLowerCase()
   const origin = skill.sourceInfo.origin?.toLowerCase() ?? ''
   const haystack = `${filePath} ${baseDir} ${source} ${origin}`
+
+  if (source === 'installed-package' || haystack.includes('/packages/skill/')) {
+    return 'installed-package'
+  }
 
   if (
     haystack.includes('/.agents/skills/') ||
@@ -521,6 +528,9 @@ export async function setSkillDisabled(
   if (sourceCategory === 'system') {
     throw new Error('System skills cannot be modified')
   }
+  if (sourceCategory === 'installed-package') {
+    throw new Error('Installed package skills cannot be modified directly')
+  }
 
   const content = readFileSync(skill.filePath, 'utf-8')
   writeFileSync(
@@ -539,6 +549,9 @@ export async function deleteSkill(filePath: string, cwd = WORKSPACE_DIR): Promis
   }
   if (sourceCategory === 'third-party') {
     throw new Error('Plugin skills must be removed from the plugin manager')
+  }
+  if (sourceCategory === 'installed-package') {
+    throw new Error('Installed package skills must be removed from the package manager')
   }
 
   rmSync(dirname(skill.filePath), { recursive: true, force: false })

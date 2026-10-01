@@ -193,6 +193,14 @@ import {
   type PluginNamespace
 } from './agent/plugins/loader'
 import { validatePlugin, type PluginProblem } from './agent/plugins/validate'
+import {
+  cleanupStalePackageStaging,
+  installPackages as installRegistryPackages,
+  listInstalledPackages as listRegistryPackages,
+  planInstall as planRegistryInstall,
+  readRegistry as readPackageRegistry,
+  uninstallPackage as uninstallRegistryPackage
+} from './agent/packages/installer'
 import { addRemoteMcpConnector, removeRemoteMcpConnector } from './agent/mcp-connectors'
 import { scriptToolName, validateSkill } from './agent/content/skill'
 import {
@@ -973,7 +981,7 @@ async function installedPluginNamespace(): Promise<PluginNamespace> {
   )
   const toolPrefixes = skills.flatMap((skill) => {
     try {
-      const result = validateSkill(dirname(skill.filePath))
+      const result = validateSkill(dirname(skill.filePath), { expectedName: skill.name })
       return result.skill?.phi?.toolPrefix ? [result.skill.phi.toolPrefix] : []
     } catch {
       return []
@@ -6029,6 +6037,15 @@ app.whenReady().then(async () => {
   applyDockIcon()
 
   const removedLogs = cleanupOldLogs()
+  try {
+    cleanupStalePackageStaging({ agentDir: AGENT_DIR })
+  } catch (error) {
+    writeAppLog({
+      level: 'error',
+      event: 'package_staging_cleanup_failed',
+      metadata: { error: error instanceof Error ? error.message : String(error) }
+    })
+  }
   writeAppLog({ event: 'app_started', metadata: { removedOldLogs: removedLogs } })
   // Bundled plugins: install missing ones before agent scans (a file copy), then upgrade in
   // the background, because an upgrade may first build the new environment it switches to.
@@ -7571,6 +7588,96 @@ app.whenReady().then(async () => {
       return failedPhiPluginMutation(
         'uninstall',
         `插件卸载失败：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  })
+  ipcMain.handle('packages:registry', async (_, dir: unknown) => {
+    if (typeof dir !== 'string' || dir.trim().length === 0) {
+      throw new Error('注册表目录无效')
+    }
+    try {
+      return readPackageRegistry(dir)
+    } catch (error) {
+      throw new Error(
+        `读取软件包注册表失败：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  })
+  ipcMain.handle(
+    'packages:plan',
+    async (_, dir: unknown, type: unknown, id: unknown, version?: unknown) => {
+      if (
+        typeof dir !== 'string' ||
+        (type !== 'skill' && type !== 'plugin') ||
+        typeof id !== 'string' ||
+        (version !== undefined && typeof version !== 'string')
+      ) {
+        throw new Error('软件包安装计划参数无效')
+      }
+      try {
+        return planRegistryInstall(
+          readPackageRegistry(dir),
+          { type, id, ...(version ? { version } : {}) },
+          { agentDir: AGENT_DIR, appVersion: app.getVersion() }
+        )
+      } catch (error) {
+        throw new Error(
+          `生成软件包安装计划失败：${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+    }
+  )
+  ipcMain.handle(
+    'packages:install',
+    async (_, dir: unknown, type: unknown, id: unknown, version?: unknown) => {
+      if (
+        typeof dir !== 'string' ||
+        (type !== 'skill' && type !== 'plugin') ||
+        typeof id !== 'string' ||
+        (version !== undefined && typeof version !== 'string')
+      ) {
+        throw new Error('软件包安装参数无效')
+      }
+      try {
+        const plan = planRegistryInstall(
+          readPackageRegistry(dir),
+          { type, id, ...(version ? { version } : {}) },
+          { agentDir: AGENT_DIR, appVersion: app.getVersion() }
+        )
+        const result = await installRegistryPackages(plan, {
+          agentDir: AGENT_DIR,
+          runtimeRoot: getRuntimeRoot(),
+          names: await installedPluginNamespace(),
+          build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+        })
+        await invalidateAgentSession()
+        return result
+      } catch (error) {
+        throw new Error(`安装软件包失败：${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+  )
+  ipcMain.handle('packages:uninstall', async (_, type: unknown, id: unknown) => {
+    if ((type !== 'skill' && type !== 'plugin') || typeof id !== 'string') {
+      throw new Error('软件包卸载参数无效')
+    }
+    try {
+      const result = uninstallRegistryPackage(type, id, {
+        agentDir: AGENT_DIR,
+        runtimeRoot: getRuntimeRoot()
+      })
+      await invalidateAgentSession()
+      return result
+    } catch (error) {
+      throw new Error(`卸载软件包失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  })
+  ipcMain.handle('packages:listInstalled', async () => {
+    try {
+      return listRegistryPackages({ agentDir: AGENT_DIR })
+    } catch (error) {
+      throw new Error(
+        `读取已安装软件包失败：${error instanceof Error ? error.message : String(error)}`
       )
     }
   })

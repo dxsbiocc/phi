@@ -1708,6 +1708,27 @@ async function harness(
     './agent/plugins/validate': {
       validatePlugin: (): unknown => ({ ok: false, errors: [], warnings: [] })
     },
+    './agent/packages/installer': {
+      cleanupStalePackageStaging: (): string[] => [],
+      readRegistry: (dir: string): unknown => ({
+        id: dir,
+        dir,
+        schemaVersion: 1,
+        generatedAt: '2026-10-02T00:00:00.000Z',
+        packages: []
+      }),
+      planInstall: (registry: unknown, request: Record<string, unknown>): unknown => ({
+        registry,
+        root: { type: request.type, id: request.id, version: request.version ?? '1.0.0' },
+        packages: [],
+        totalSize: 0,
+        environments: [],
+        agentDir: '/isolated'
+      }),
+      installPackages: async (): Promise<unknown[]> => [],
+      uninstallPackage: (): unknown[] => [],
+      listInstalledPackages: (): unknown[] => []
+    },
     './agent/content/skill': {
       validateSkill: (): unknown => ({ ok: true, errors: [], warnings: [] })
     },
@@ -4238,6 +4259,29 @@ test('main IPC: plugin operations write compact support log events', async () =>
     ),
     true
   )
+})
+
+test('main IPC exposes local package registry planning and lifecycle channels', async () => {
+  const app = await harness()
+
+  const registry = (await app.invoke('packages:registry', '/registry')) as {
+    id: string
+    schemaVersion: number
+  }
+  assert.equal(registry.id, '/registry')
+  assert.equal(registry.schemaVersion, 1)
+  const plan = (await app.invoke(
+    'packages:plan',
+    '/registry',
+    'skill',
+    'alpha-skill',
+    '1.0.0'
+  )) as { root: { type: string; id: string; version: string } }
+  assert.deepEqual(plan.root, { type: 'skill', id: 'alpha-skill', version: '1.0.0' })
+  assert.deepEqual(await app.invoke('packages:install', '/registry', 'skill', 'alpha-skill'), [])
+  assert.deepEqual(await app.invoke('packages:listInstalled'), [])
+  assert.deepEqual(await app.invoke('packages:uninstall', 'skill', 'alpha-skill'), [])
+  await assert.rejects(app.invoke('packages:plan', '', 'wrapper', '', undefined), /参数无效/)
 })
 
 test(

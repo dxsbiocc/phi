@@ -58,6 +58,8 @@ export interface PluginLoaderOptions {
 
 export interface PluginInstallOptions extends PluginLoaderOptions {
   source?: PluginSource
+  /** Installer-owned metadata written into the atomic package copy. */
+  sourceMetadata?: string
 }
 
 export interface PluginBuildOptions {
@@ -350,7 +352,7 @@ export function installPlugin(
 
   const platform = resolvedPlatform(options)
   const runtimeRoot = resolvedRuntimeRoot(options)
-  const copiedDir = copyPluginPackage(fromDir, candidate.manifest, agentDir)
+  const copiedDir = copyPluginPackage(fromDir, candidate.manifest, agentDir, options.sourceMetadata)
   const copiedValidation = validatePlugin(copiedDir)
   if (!copiedValidation.ok || !copiedValidation.plugin) {
     removePluginVersion(candidate.manifest.id, candidate.manifest.version, agentDir)
@@ -429,7 +431,7 @@ export async function upgradePlugin(
   const builder = options.build
   const gc = options.garbageCollect ?? collectGarbage
 
-  const copiedDir = copyPluginPackage(fromDir, candidate.manifest, agentDir)
+  const copiedDir = copyPluginPackage(fromDir, candidate.manifest, agentDir, options.sourceMetadata)
   const copiedValidation = validatePlugin(copiedDir)
   if (!copiedValidation.ok || !copiedValidation.plugin) {
     removePluginVersion(candidate.manifest.id, candidate.manifest.version, agentDir)

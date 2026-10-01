@@ -4,14 +4,14 @@
  * deep-equal to this object.
  */
 
-export const PLUGIN_CONTRACT_VERSION = '1.0.0'
+export const PLUGIN_CONTRACT_VERSION = '1.1.0'
 
 export const pluginManifestSchema = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   $id: 'https://phi.local/contracts/plugin.schema.json',
   title: 'Phi plugin manifest (phi-package.yaml, type: plugin)',
   description:
-    'Plugin contract 1.0.0 (docs/contracts/plugin.md). Path existence, cross-component rules, uniqueness, and reserved prefixes are enforced in code.',
+    'Plugin contract 1.1.0 (docs/contracts/plugin.md). Path existence, cross-component rules, uniqueness, and reserved prefixes are enforced in code.',
   type: 'object',
   required: [
     'schemaVersion',
@@ -65,6 +65,37 @@ export const pluginManifestSchema = {
           }
         }
       }
+    },
+    minAppVersion: {
+      type: 'string',
+      pattern: '^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
+    },
+    requires: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        coreTools: {
+          type: 'array',
+          items: { type: 'string', pattern: '^[a-z][a-z0-9_]*$' },
+          uniqueItems: true
+        }
+      }
+    },
+    dependsOn: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'type', 'version'],
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string', pattern: '^[a-z][a-z0-9-]{1,63}$' },
+          type: { enum: ['skill', 'plugin'] },
+          version: { type: 'string', minLength: 1 }
+        }
+      }
+    },
+    files: {
+      const: 'files.json'
     }
   }
 }
@@ -78,6 +109,16 @@ export interface PhiPluginEnvironmentDeclaration {
   spec: string
 }
 
+export interface PhiPluginRequirements {
+  coreTools?: string[]
+}
+
+export interface PhiPluginDependency {
+  id: string
+  type: 'skill' | 'plugin'
+  version: string
+}
+
 export interface PhiPluginManifest {
   schemaVersion: 1
   id: string
@@ -88,4 +129,8 @@ export interface PhiPluginManifest {
   toolPrefix: string
   components: PhiPluginComponents
   environments?: Record<string, PhiPluginEnvironmentDeclaration>
+  minAppVersion?: string
+  requires?: PhiPluginRequirements
+  dependsOn?: PhiPluginDependency[]
+  files?: 'files.json'
 }

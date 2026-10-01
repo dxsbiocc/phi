@@ -38,6 +38,7 @@
     "runtime:lock": "node --import ./scripts/test-loader.mjs scripts/runtime/lock-env.ts",
     "runtime:smoke": "node --import ./scripts/test-loader.mjs scripts/runtime/smoke-env.ts",
     "runtime:smoke:viz": "node --import ./scripts/test-loader.mjs scripts/runtime/smoke-viz.ts",
+    "registry:build": "node --import ./scripts/test-loader.mjs scripts/packages/build-registry.ts",
     "usage:report": "node --import ./scripts/test-loader.mjs scripts/agent-usage-report.mjs",
     "eval:db": "bun scripts/eval/db-vs-fetch.ts"
   },

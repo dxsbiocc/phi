@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import Ajv2020, { type ErrorObject } from 'ajv/dist/2020.js'
+import semver from 'semver'
 import { parse as parseYaml } from 'yaml'
 
 import { validateAgentFile, type PhiAgentDefinition } from '../agents/definition'
@@ -66,6 +67,22 @@ export function validatePlugin(dir: string): PluginValidationResult {
 
   const manifest = readManifest(pluginDir, fail)
   if (!manifest) return finish(errors, warnings)
+
+  if (!semver.valid(manifest.version)) {
+    fail('version', `'${manifest.version}' is not a valid semantic version`)
+  }
+  if (manifest.minAppVersion && !semver.valid(manifest.minAppVersion)) {
+    fail('minAppVersion', `'${manifest.minAppVersion}' is not a valid semantic version`)
+  }
+
+  for (const [index, dependency] of (manifest.dependsOn ?? []).entries()) {
+    if (!semver.validRange(dependency.version)) {
+      fail(
+        `dependsOn[${index}].version`,
+        `'${dependency.version}' is not a valid semantic version range`
+      )
+    }
+  }
 
   for (const reserved of RESERVED_DIRECTORIES) {
     if (existsSync(join(pluginDir, reserved))) {

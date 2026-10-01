@@ -138,11 +138,73 @@ function assertInvalid(dir: string, patterns: RegExp[]): PluginValidationResult 
 }
 
 test('the runtime schema is an exact copy of the frozen published schema', () => {
-  assert.equal(PLUGIN_CONTRACT_VERSION, '1.0.0')
+  assert.equal(PLUGIN_CONTRACT_VERSION, '1.1.0')
   const published = JSON.parse(
     readFileSync(join(REPO_ROOT, 'docs', 'contracts', 'plugin.schema.json'), 'utf8')
   ) as unknown
   assert.deepEqual(pluginManifestSchema, published)
+})
+
+test('the manifest accepts the package contract distribution fields', () => {
+  const dir = pluginFixture((manifest) => {
+    manifest.minAppVersion = '0.9.0'
+    manifest.requires = { coreTools: ['skill_run', 'env_request'] }
+    manifest.dependsOn = [
+      { id: 'shared-skill', type: 'skill', version: '^1.2.0' },
+      { id: 'base-plugin', type: 'plugin', version: '>=2.0.0 <3' }
+    ]
+    manifest.files = 'files.json'
+  })
+
+  const result = assertValid(dir)
+  assert.equal(result.plugin?.manifest.minAppVersion, '0.9.0')
+  assert.deepEqual(result.plugin?.manifest.requires?.coreTools, ['skill_run', 'env_request'])
+  assert.deepEqual(result.plugin?.manifest.dependsOn, [
+    { id: 'shared-skill', type: 'skill', version: '^1.2.0' },
+    { id: 'base-plugin', type: 'plugin', version: '>=2.0.0 <3' }
+  ])
+  assert.equal(result.plugin?.manifest.files, 'files.json')
+})
+
+test('the manifest validates every package contract distribution field', () => {
+  const dir = pluginFixture()
+  const document = {
+    ...validManifest(),
+    minAppVersion: '01.0.0',
+    requires: {
+      coreTools: ['Skill-Run', 'Skill-Run'],
+      extra: true
+    },
+    dependsOn: [
+      { id: 'Bad_ID', type: 'wrapper', version: '', extra: true },
+      { id: 'missing-fields' }
+    ],
+    files: 'other.json'
+  }
+  write(join(dir, 'phi-package.yaml'), stringifyYaml(document))
+
+  assertInvalid(dir, [
+    /^minAppVersion:/,
+    /^requires\.coreTools:/,
+    /^requires\.coreTools\[0\]:/,
+    /^requires\.extra:/,
+    /^dependsOn\[0\]\.id:/,
+    /^dependsOn\[0\]\.type:/,
+    /^dependsOn\[0\]\.version:/,
+    /^dependsOn\[0\]\.extra:/,
+    /^dependsOn\[1\]\.type: is required/,
+    /^dependsOn\[1\]\.version: is required/,
+    /^files:/
+  ])
+})
+
+test('the manifest rejects a non-empty dependency version that is not a semver range', () => {
+  const dir = pluginFixture((manifest) => {
+    manifest.dependsOn = [{ id: 'shared-skill', type: 'skill', version: 'not a range' }]
+  })
+  assertInvalid(dir, [
+    /^dependsOn\[0\]\.version: 'not a range' is not a valid semantic version range/
+  ])
 })
 
 test('a complete plugin returns its validated components and environments', () => {

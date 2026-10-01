@@ -2,6 +2,7 @@ import { realpathSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
 
 import { loadedPlugins, type LoadedPlugin } from '../plugins/loader'
+import { installedSkillPackageIdForDir } from '../packages/store'
 
 import { getRuntimeRoot, type PhiPlatform } from '../envs'
 import { applyOverrides } from '../envs/project-environments'
@@ -120,11 +121,17 @@ export function createSkillHost({
 
   async function resolveSkill(cwd: string, name: string): Promise<ResolvedSkill> {
     const dirs = await listSkillDirs(cwd)
-    const dir = dirs.find((candidate) => basename(candidate) === name)
+    const dir = dirs.find(
+      (candidate) =>
+        basename(candidate) === name || installedSkillPackageIdForDir(candidate, agentDir) === name
+    )
     if (!dir) throw new Error(`unknown skill '${name}'`)
     let validation: SkillValidationResult
     try {
-      validation = validateSkill(dir, { insidePlugin: owningPlugin(dir) !== undefined })
+      validation = validateSkill(dir, {
+        insidePlugin: owningPlugin(dir) !== undefined,
+        expectedName: installedSkillPackageIdForDir(dir, agentDir)
+      })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       throw new Error(`invalid skill '${name}': ${message}`)
@@ -203,7 +210,10 @@ export function createSkillHost({
         const plugin = owningPlugin(dir)
         let validation: SkillValidationResult
         try {
-          validation = validateSkill(dir, { insidePlugin: plugin !== undefined })
+          validation = validateSkill(dir, {
+            insidePlugin: plugin !== undefined,
+            expectedName: installedSkillPackageIdForDir(dir, agentDir)
+          })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           problems.push(`invalid skill '${basename(dir)}': ${message}`)
