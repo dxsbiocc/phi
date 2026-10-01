@@ -17,10 +17,16 @@
 //   npm run smoke:wrappers -- fastqc samtools         # only ids containing these
 //   npm run smoke:wrappers -- --preview               # + nextflow -preview
 //   npm run smoke:wrappers -- --run --profile docker  # + real runs (slow)
+//   npm run smoke:wrappers -- --run --profile conda --prepare gffread
+//                                                     # build phi:nextflow@1 first if needed
 //   npm run smoke:wrappers -- --json report.json      # machine-readable report
 //
 // Exit code is 1 when any wrapper has an error; warnings do not fail the run.
-// `nextflow` is found via NEXTFLOW_BIN, PATH, or a conda env (see executor.ts).
+// `nextflow` comes from the managed phi:nextflow@1 environment under the runtime root
+// (PI_CODING_AGENT_DIR/runtime, default ~/.phi/runtime); `--prepare` builds it when it
+// is missing. NEXTFLOW_BIN or a custom path in environment.json opts into a host
+// nextflow instead (version-checked, "host (unmanaged)"). See nextflow-launch.ts.
+// `--profile conda` runs on the bundled micromamba (conda-profile.ts), not host conda.
 
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -47,8 +53,9 @@ const { listWrapperCompositionCatalog, readWrapperDefaultParams } = await import
   src('discovery.ts')
 )
 const { checkWrapperStatic, collectRemoteUrls, probeUrl } = await import(src('smoke.ts'))
-const { findNextflowBinary, runWrapperComposition, WRAPPER_EXECUTION_PROFILES } = await import(
-  src('executor.ts')
+const { runWrapperComposition, WRAPPER_EXECUTION_PROFILES } = await import(src('executor.ts'))
+const { describeNextflowLaunch, resolveNextflowLaunch, NEXTFLOW_ENVIRONMENT_REF } = await import(
+  src('nextflow-launch.ts')
 )
 const { findMissingPrimaryOutputs } = await import(src('validate.ts'))
 
@@ -60,6 +67,7 @@ function parseArgs(argv) {
     offline: false,
     preview: false,
     run: false,
+    prepare: false,
     profile: 'docker',
     timeoutMin: 20,
     jobs: 8,
@@ -75,6 +83,7 @@ function parseArgs(argv) {
     if (arg === '--offline') options.offline = true
     else if (arg === '--preview') options.preview = true
     else if (arg === '--run') options.run = true
+    else if (arg === '--prepare') options.prepare = true
     else if (arg === '--profile') options.profile = value()
     else if (arg === '--timeout-min') options.timeoutMin = Number(value())
     else if (arg === '--jobs') options.jobs = Number(value())
@@ -127,8 +136,24 @@ function cleanNewArtifacts(componentDir, before) {
   }
 }
 
-function nextflowEnv(nextflowBin) {
-  return { ...process.env, PATH: `${dirname(nextflowBin)}:${process.env.PATH ?? ''}` }
+/** Resolves the nextflow launch; with --prepare, builds phi:nextflow@1 first when it is missing. */
+async function resolveLaunch(options) {
+  const first = await resolveNextflowLaunch({ profile: options.profile })
+  if (first.ok || !options.prepare) return first
+  const { describeEnvironment, buildEnvironment } = await import(
+    new URL('../src/main/agent/content/environment-refs.ts', import.meta.url).href
+  )
+  const { ensureMambarc, ensureRuntimeLayout, getRuntimeRoot } = await import(
+    new URL('../src/main/agent/envs/index.ts', import.meta.url).href
+  )
+  const root = getRuntimeRoot()
+  ensureRuntimeLayout(root)
+  ensureMambarc(root)
+  console.log(`Building ${NEXTFLOW_ENVIRONMENT_REF} under ${root} ...`)
+  const started = Date.now()
+  await buildEnvironment(root, describeEnvironment(NEXTFLOW_ENVIRONMENT_REF))
+  console.log(`Built in ${Math.round((Date.now() - started) / 1000)}s`)
+  return resolveNextflowLaunch({ profile: options.profile })
 }
 
 function runCapture(bin, args, options) {
@@ -151,16 +176,16 @@ function lastLines(text, count) {
 
 // --- tiers -----------------------------------------------------------------
 
-async function checkPreview(entry, nextflowBin) {
+async function checkPreview(entry, launch) {
   const before = snapshotDir(entry.componentDir)
   const paramsDir = mkdtempSync(join(tmpdir(), 'phi-smoke-preview-'))
   try {
     const paramsFile = join(paramsDir, 'params.json')
     writeFileSync(paramsFile, JSON.stringify(readWrapperDefaultParams(entry.wrapperDir)))
     const result = await runCapture(
-      nextflowBin,
+      launch.command,
       ['run', 'wrapper/main.nf', '-params-file', paramsFile, '-preview'],
-      { cwd: entry.componentDir, env: nextflowEnv(nextflowBin) }
+      { cwd: entry.componentDir, env: launch.env }
     )
     return result.code === 0
       ? []
@@ -171,13 +196,14 @@ async function checkPreview(entry, nextflowBin) {
   }
 }
 
-async function checkRun(entry, options) {
+async function checkRun(entry, options, launch) {
   const before = snapshotDir(entry.componentDir)
   const outRoot = mkdtempSync(join(tmpdir(), 'phi-smoke-out-'))
   const overrides = {}
   if (entry.manifest.params.outdir?.kind === 'output') overrides.outdir = join(outRoot, 'results')
   try {
     const result = await runWrapperComposition(entry.wrapperDir, overrides, options.profile, {
+      launch,
       signal: AbortSignal.timeout(options.timeoutMin * 60_000)
     })
     if (!result.success) {
@@ -217,13 +243,16 @@ if (options.filters.length > 0) {
 }
 if (entries.length === 0) fail('No wrappers matched.')
 
-let nextflowBin
+let launch
 if (options.preview || options.run) {
   try {
-    nextflowBin = findNextflowBinary()
+    const resolved = await resolveLaunch(options)
+    if (!resolved.ok) fail(resolved.error)
+    launch = resolved.launch
   } catch (err) {
     fail(String(err.message ?? err))
   }
+  console.log(describeNextflowLaunch(launch))
   if (options.run && options.profile === 'docker' && !dockerIsUp()) {
     fail('--run --profile docker needs a running Docker daemon (docker info failed).')
   }
@@ -270,9 +299,9 @@ for (const [index, entry] of entries.entries()) {
   if (failedEarlier) continue // a wrapper that fails static/URL checks would only fail slowly here
   process.stdout.write(`[${index + 1}/${entries.length}] ${label(entry)} `)
   const started = Date.now()
-  if (options.preview) add(entry, await checkPreview(entry, nextflowBin))
+  if (options.preview) add(entry, await checkPreview(entry, launch))
   const previewOk = !report.get(label(entry)).issues.some((issue) => issue.level === 'error')
-  if (options.run && previewOk) add(entry, await checkRun(entry, options))
+  if (options.run && previewOk) add(entry, await checkRun(entry, options, launch))
   console.log(`(${Math.round((Date.now() - started) / 1000)}s)`)
 }
 

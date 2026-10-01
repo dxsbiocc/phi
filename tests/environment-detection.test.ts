@@ -4,9 +4,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { detectEnvironmentTools, probeCustomToolPath } from '../src/main/agent/environment/detect'
+import {
+  HOST_UNMANAGED,
+  detectEnvironmentTools,
+  probeCustomToolPath,
+  type ManagedToolState
+} from '../src/main/agent/environment/detect'
 import {
   dismissEnvironmentSummary,
+  getCustomToolPath,
   getEnvironment,
   mergeDetectedWithCustoms,
   redetectEnvironment,
@@ -70,7 +76,9 @@ test('mergeDetectedWithCustoms prefers validated custom paths', () => {
       { nextflow: fakeBin },
       {
         runner: (command, args) => {
-          if (command === fakeBin && args[0] === '-version') return 'nextflow version 23'
+          if (command === fakeBin && args[0] === '-version') {
+            return '      version 25.10.0 build 10289'
+          }
           throw new Error('unexpected')
         }
       }
@@ -122,16 +130,55 @@ test('setEnvironmentToolPath stores custom nextflow path after probe', () => {
     const snapshot = setEnvironmentToolPath('nextflow', fakeBin, agentDir, {
       which: () => undefined,
       runner: (command, args) => {
-        if (command === fakeBin && args[0] === '-version') return 'nextflow version test'
+        if (command === fakeBin && args[0] === '-version') return '      version 26.04.6 build 1'
         // Fresh detect for other tools — allow failures as missing
         throw new Error('missing')
       }
     })
-    const nextflow = snapshot.tools.find((tool) => tool.id === 'nextflow')
+    const nextflow = snapshot.tools.find((tool) => tool.id === 'nextflow') as
+      ManagedToolState | undefined
     assert.equal(nextflow?.source, 'custom')
     assert.equal(nextflow?.status, 'ready')
     assert.equal(nextflow?.activePath, fakeBin)
+    assert.equal(nextflow?.detectedVersion, '26.04.6')
+    assert.equal(nextflow?.management, 'host-unmanaged')
+    assert.equal(nextflow?.detail, HOST_UNMANAGED)
+    assert.equal(getCustomToolPath('nextflow', agentDir), fakeBin)
   } finally {
     rmSync(agentDir, { recursive: true, force: true })
   }
+})
+
+test('a custom nextflow older than the wrapper minimum is invalid and cannot be set', () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-env-old-nf-'))
+  const fakeBin = join(agentDir, 'old-nextflow')
+  try {
+    writeFileSync(fakeBin, '#!/bin/sh\n')
+    const runner = (command: string, args: string[]): string => {
+      if (command === fakeBin && args[0] === '-version') return '      version 22.10.6 build 5843'
+      throw new Error('missing')
+    }
+    const probed = probeCustomToolPath('nextflow', fakeBin, { runner })
+    assert.equal(probed.status, 'invalid')
+    assert.equal(probed.management, undefined)
+    assert.match(probed.messages?.[0] ?? '', /22\.10\.6/)
+    assert.match(probed.messages?.[0] ?? '', /25\.04\.0/)
+
+    assert.throws(
+      () =>
+        setEnvironmentToolPath('nextflow', fakeBin, agentDir, { which: () => undefined, runner }),
+      /22\.10\.6.*25\.04\.0/
+    )
+    assert.equal(getCustomToolPath('nextflow', agentDir), undefined)
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})
+
+test('a custom nextflow whose version cannot be read is invalid', () => {
+  const probed = probeCustomToolPath('nextflow', process.execPath, {
+    runner: () => 'N E X T F L O W\n'
+  })
+  assert.equal(probed.status, 'invalid')
+  assert.match(probed.messages?.[0] ?? '', /无法从 nextflow -version 读出版本/)
 })

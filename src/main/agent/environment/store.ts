@@ -237,3 +237,15 @@ export function getActiveToolPath(
   if (tool?.status === 'ready' && tool.activePath) return tool.activePath
   return undefined
 }
+
+/**
+ * The path the user set explicitly for a tool (`customPaths`), whether or not it is
+ * currently valid. Unlike {@link getActiveToolPath} this ignores auto-detected paths:
+ * wrappers use a host nextflow only when the user chose one (runtime foundation §5.2).
+ */
+export function getCustomToolPath(
+  toolId: EnvironmentToolId,
+  agentDir = getPhiAgentDir()
+): string | undefined {
+  return normalizeCustomPaths(readPersisted(agentDir).customPaths)[toolId]
+}

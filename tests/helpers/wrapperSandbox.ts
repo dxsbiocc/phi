@@ -47,6 +47,10 @@ if (mode === 'fail') {
 
 /** A shell "nextflow" that leaves a background grandchild, to prove the whole process group dies. */
 export const FAKE_NEXTFLOW_TREE = `#!/bin/sh
+if [ "$1" = "-version" ]; then
+  echo '      version 26.04.6 build 12646'
+  exit 0
+fi
 echo $$ > "$FAKE_NF_PIDFILE"
 sleep 300 &
 echo $! > "$FAKE_NF_PIDFILE.child"

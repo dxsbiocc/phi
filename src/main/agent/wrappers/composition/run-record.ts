@@ -99,6 +99,8 @@ export function startCompositionRun(input: {
   continueWhenDone?: boolean
   /** Resources the run asked for, already validated. */
   resources?: WrapperRunResources
+  /** Local runs: which nextflow ran (`nextflowLaunchRecord`), kept in `nextflow.json`. */
+  nextflow?: Record<string, string>
   /** Set for a run on a remote host: where it will live and which executor name it gets. */
   remote?: {
     host: string
@@ -177,6 +179,7 @@ export function startCompositionRun(input: {
   }
   writeWrapperRun(run, agentDir)
   writeRunFile(run.runId, agentDir, 'params.json', params)
+  if (input.nextflow) writeRunFile(run.runId, agentDir, 'nextflow.json', input.nextflow)
   appendWrapperRunEvent(
     run.runId,
     { type: 'run_created', timestamp: now, wrapperId: run.wrapper.canonicalId, profile },

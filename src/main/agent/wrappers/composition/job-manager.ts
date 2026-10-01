@@ -18,14 +18,15 @@ import {
   type WrapperCompositionEntry
 } from './discovery'
 import {
-  isNextflowVersionSupported,
-  nextflowTooOldMessage,
-  readLocalNextflowVersion
-} from './nextflow-version'
+  describeNextflowLaunch,
+  nextflowLaunchRecord,
+  resolveNextflowLaunch,
+  type NextflowLaunch,
+  type NextflowLaunchContext
+} from './nextflow-launch'
 import { parseWrapperRunResources } from './resources'
 import {
   WRAPPER_EXECUTION_PROFILES,
-  findNextflowBinary,
   killAllWrapperProcesses,
   startWrapperComposition,
   type WrapperExecutionProfile,
@@ -101,6 +102,16 @@ export interface WrapperJobManagerOptions {
   maxRemoteConcurrent?: number
   killGraceMs?: number
   progressThrottleMs?: number
+  /**
+   * How a local run finds `nextflow` (managed `phi:nextflow@1` unless a host nextflow was
+   * chosen). Pass the app's environment builds and build prompt so a missing environment
+   * can be built from the chat that started the run; without them the run fails with the
+   * gate's not-ready message.
+   */
+  nextflowLaunch?: Omit<
+    NextflowLaunchContext,
+    'profile' | 'runtimeSessionId' | 'wrapperId' | 'signal'
+  >
 }
 
 interface LiveJob {
@@ -168,6 +179,11 @@ function compositionProfiles(
   }))
 }
 
+function requireLaunch(launch: NextflowLaunch | undefined): NextflowLaunch {
+  if (!launch) throw new Error('Nextflow was not resolved for a local run')
+  return launch
+}
+
 function remoteField(run: WrapperRun): { remote?: { host: string; runDir: string } } {
   return run.remote ? { remote: { host: run.remote.host, runDir: run.remote.runDir } } : {}
 }
@@ -187,6 +203,7 @@ export class WrapperJobManager implements WrapperJobClient {
   private readonly wrappersRoot: () => string
   private readonly killGraceMs: number | undefined
   private readonly progressThrottleMs: number
+  private readonly nextflowLaunch: WrapperJobManagerOptions['nextflowLaunch']
 
   constructor(options: WrapperJobManagerOptions = {}) {
     this.agentDir = options.agentDir ?? getPhiAgentDir
@@ -198,6 +215,7 @@ export class WrapperJobManager implements WrapperJobClient {
     this.wrappersRoot = options.wrappersRoot ?? (() => getActiveWrapperPack().root)
     this.killGraceMs = options.killGraceMs
     this.progressThrottleMs = options.progressThrottleMs ?? DEFAULT_PROGRESS_THROTTLE_MS
+    this.nextflowLaunch = options.nextflowLaunch
   }
 
   onChange(listener: (runId: string) => void): () => void {
@@ -289,12 +307,6 @@ export class WrapperJobManager implements WrapperJobClient {
       return {
         ok: false,
         error: `Invalid profile: ${profile}. Must be one of ${WRAPPER_EXECUTION_PROFILES.join(', ')}.`
-      }
-    }
-    if (!resolved) {
-      const version = await readLocalNextflowVersion(findNextflowBinary())
-      if (version && !isNextflowVersionSupported(version)) {
-        return { ok: false, error: nextflowTooOldMessage(version, '本机') }
       }
     }
     if (project) {
@@ -400,6 +412,24 @@ export class WrapperJobManager implements WrapperJobClient {
         error: `Too many ${remote ? 'remote ' : ''}wrapper runs are already running (limit ${limit}). Wait for one to finish or cancel it first.`
       }
     }
+    // Remote runs keep the remote host's nextflow.
+    let launch: NextflowLaunch | undefined
+    if (!resolved) {
+      const found = await resolveNextflowLaunch({
+        ...this.nextflowLaunch,
+        profile,
+        wrapperId: id,
+        ...(input.originSessionId ? { runtimeSessionId: input.originSessionId } : {})
+      })
+      if (!found.ok) return { ok: false, error: found.error }
+      launch = found.launch
+      if (launch.source === 'host') {
+        environmentWarnings = [
+          ...environmentWarnings,
+          `${describeNextflowLaunch(launch)}：不是 Phi 管理的环境，结果不保证可复现`
+        ]
+      }
+    }
 
     const agentDir = this.agentDir()
     const params = mapped.params
@@ -415,6 +445,7 @@ export class WrapperJobManager implements WrapperJobClient {
         originSessionId: input.originSessionId,
         continueWhenDone: input.continueWhenDone,
         ...(resources ? { resources } : {}),
+        ...(launch ? { nextflow: nextflowLaunchRecord(launch) } : {}),
         ...(resolved
           ? {
               remote: {
@@ -450,6 +481,7 @@ export class WrapperJobManager implements WrapperJobClient {
       if (jobRef.current) this.persistProgress(jobRef.current)
     }
     for (const warning of environmentWarnings) onOutput(`警告：${warning}\n`)
+    if (launch?.source === 'managed') onOutput(`${describeNextflowLaunch(launch)}\n`)
 
     let proc: WrapperProcess
     try {
@@ -470,6 +502,7 @@ export class WrapperJobManager implements WrapperJobClient {
             killGraceMs: this.killGraceMs
           })
         : startWrapperComposition(entry.wrapperDir, params, profile as WrapperExecutionProfile, {
+            launch: requireLaunch(launch),
             onOutput,
             killGraceMs: this.killGraceMs,
             ...(resources ? { resources } : {})

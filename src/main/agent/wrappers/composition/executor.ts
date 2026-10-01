@@ -1,11 +1,16 @@
-import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
-import { dirname, join, sep } from 'node:path'
+import { spawn } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 
 import type { WrapperOutputRecord } from '../types'
+import { condaProfileSetup, prepareCondaProfile, withCondaProfileEnv } from './conda-profile'
+import {
+  resolveNextflowLaunch,
+  type NextflowLaunch,
+  type NextflowLaunchContext
+} from './nextflow-launch'
 import { buildResourceConfig, type WrapperRunResources } from './resources'
-import { getActiveToolPath } from '../../environment'
 
 /** Execution profile a wrapper can run under — see each `wrapper/nextflow.config`'s `profiles {}` block. */
 export const WRAPPER_EXECUTION_PROFILES = ['docker', 'singularity', 'conda'] as const
@@ -16,73 +21,11 @@ export type WrapperExecutionProfile = (typeof WRAPPER_EXECUTION_PROFILES)[number
  * docs/design/phi-wrapper-agent-composition-design.md section 5/7:
  * `nextflow run wrapper/main.nf -params-file wrapper/params.json`, with
  * agent-supplied overrides merged into the wrapper's own default params.
+ *
+ * Which `nextflow` runs, and with which environment, is decided by
+ * `resolveNextflowLaunch` (managed `phi:nextflow@1` by default, an explicitly chosen
+ * host nextflow otherwise). The host PATH is never searched.
  */
-
-function findExecutable(dir: string, name: string): string | undefined {
-  const candidate = join(dir, name)
-  return existsSync(candidate) ? candidate : undefined
-}
-
-function condaEnvBinCandidates(name: string): string[] {
-  const envRoots = ['miniconda3', 'anaconda3', 'miniforge3'].map((d) => join(homedir(), d, 'envs'))
-  const found: string[] = []
-  for (const root of envRoots) {
-    if (!existsSync(root)) continue
-    let envNames: string[]
-    try {
-      envNames = readdirSync(root)
-    } catch {
-      continue
-    }
-    for (const envName of envNames) {
-      const bin = findExecutable(join(root, envName, 'bin'), name)
-      if (bin) found.push(bin)
-    }
-  }
-  return found
-}
-
-/**
- * Electron apps don't reliably inherit a dev shell's PATH (conda-activated
- * envs in particular), so beyond `process.env.PATH` this also checks common
- * conda env locations. Preference order:
- * 1. `NEXTFLOW_BIN`
- * 2. Phi environment settings (`~/.phi/environment.json` active path)
- * 3. `which nextflow` / conda env bins
- */
-export function findNextflowBinary(): string {
-  if (process.env.NEXTFLOW_BIN && existsSync(process.env.NEXTFLOW_BIN)) {
-    return process.env.NEXTFLOW_BIN
-  }
-  const configured = getActiveToolPath('nextflow')
-  if (configured && existsSync(configured)) return configured
-  try {
-    const found = execFileSync('which', ['nextflow'], { encoding: 'utf-8' }).trim()
-    if (found) return found
-  } catch {
-    // fall through to conda env search
-  }
-  const candidates = condaEnvBinCandidates('nextflow')
-  if (candidates.length > 0) return candidates[0]
-  throw new Error('未找到 Nextflow。请在设置 → 环境中指定路径，或设置 NEXTFLOW_BIN 环境变量。')
-}
-
-/**
- * If `binPath` lives inside a conda env (`.../<condaRoot>/envs/<name>/bin/<exe>`),
- * returns `<condaRoot>` — so callers can also put `<condaRoot>/condabin` and
- * `<condaRoot>/bin` on PATH. The `conda` executable itself lives there, not
- * inside the env's own `bin/`, which is where `-profile conda` needs it:
- * Nextflow shells out to `conda`/`mamba` to build/reuse each process's
- * `conda "${moduleDir}/environment.yml"` environment.
- */
-function condaRootFromEnvBin(binPath: string): string | undefined {
-  const parts = binPath.split(sep)
-  const binIndex = parts.lastIndexOf('bin')
-  if (binIndex >= 2 && parts[binIndex - 2] === 'envs') {
-    return parts.slice(0, binIndex - 2).join(sep)
-  }
-  return undefined
-}
 
 export interface WrapperRunResult {
   success: boolean
@@ -110,6 +53,15 @@ export interface StartWrapperOptions extends RunWrapperOptions {
   onOutput?: (chunk: string) => void
   /** Overrides the wrapper's own cpus/memory/time for every process of this run. */
   resources?: WrapperRunResources
+  /** The `nextflow` to spawn and its environment, from `resolveNextflowLaunch`. */
+  launch: NextflowLaunch
+}
+
+export interface RunWrapperCompositionOptions extends RunWrapperOptions {
+  /** Resolved with `resolveNextflowLaunch` when absent. */
+  launch?: NextflowLaunch
+  /** Passed to `resolveNextflowLaunch` when `launch` is absent. */
+  launchContext?: Omit<NextflowLaunchContext, 'profile' | 'signal'>
 }
 
 /** A running (or already finished) Nextflow process. */
@@ -160,13 +112,14 @@ function installExitHook(): void {
  * `wrapper/` adapter directory (containing wrapper.yaml/main.nf/params.json);
  * Nextflow is launched with cwd set to its parent (the module/subworkflow
  * root), matching the fixed command's own relative path (`wrapper/main.nf`).
- * Throws synchronously for an unknown profile or when no Nextflow can be found.
+ * Throws synchronously for an unknown profile, or for the conda profile when the
+ * bundled micromamba is missing.
  */
 export function startWrapperComposition(
   wrapperDir: string,
   overrides: Record<string, unknown>,
   profile: WrapperExecutionProfile = 'docker',
-  options: StartWrapperOptions = {}
+  options: StartWrapperOptions
 ): WrapperProcess {
   if (!WRAPPER_EXECUTION_PROFILES.includes(profile)) {
     throw new Error(
@@ -182,7 +135,10 @@ export function startWrapperComposition(
     }
   }
 
-  const nextflowBin = findNextflowBinary()
+  const { launch } = options
+  // Built before anything is written, so a missing micromamba throws with nothing to clean up.
+  const conda = profile === 'conda' ? condaProfileSetup(launch.runtimeRoot) : undefined
+  if (conda) prepareCondaProfile(conda, launch.runtimeRoot)
   const defaultParams = JSON.parse(
     readFileSync(join(wrapperDir, 'params.json'), 'utf-8')
   ) as Record<string, unknown>
@@ -193,19 +149,16 @@ export function startWrapperComposition(
   writeFileSync(paramsFilePath, JSON.stringify(mergedParams, null, 2))
 
   const componentDir = dirname(wrapperDir)
-  const condaRoot = condaRootFromEnvBin(nextflowBin)
-  const pathDirs = [
-    dirname(nextflowBin),
-    ...(condaRoot ? [join(condaRoot, 'condabin'), join(condaRoot, 'bin')] : [])
-  ]
-  const env = {
-    ...process.env,
-    PATH: `${pathDirs.join(':')}:${process.env.PATH ?? ''}`,
-    // The launcher otherwise curls nextflow.io for a newer version, with no timeout.
-    NXF_DISABLE_CHECK_LATEST: 'true'
-  }
+  // The launch env already sets NXF_DISABLE_CHECK_LATEST: the launcher otherwise curls
+  // nextflow.io for a newer version, with no timeout.
+  const env = conda ? withCondaProfileEnv(launch.env, conda) : launch.env
 
   const args = ['run', 'wrapper/main.nf', '-params-file', paramsFilePath, '-profile', profile]
+  if (conda) {
+    const configPath = join(tmpDir, 'conda.config')
+    writeFileSync(configPath, conda.config)
+    args.push('-c', configPath)
+  }
   const resourceConfig = buildResourceConfig(options.resources)
   if (resourceConfig) {
     const configPath = join(tmpDir, 'resources.config')
@@ -214,7 +167,7 @@ export function startWrapperComposition(
   }
 
   installExitHook()
-  const child = spawn(nextflowBin, args, {
+  const child = spawn(launch.command, args, {
     cwd: componentDir,
     env,
     detached: process.platform !== 'win32'
@@ -274,7 +227,25 @@ export async function runWrapperComposition(
   wrapperDir: string,
   overrides: Record<string, unknown>,
   profile: WrapperExecutionProfile = 'docker',
-  options: RunWrapperOptions = {}
+  options: RunWrapperCompositionOptions = {}
 ): Promise<WrapperRunResult> {
-  return startWrapperComposition(wrapperDir, overrides, profile, options).done
+  if (options.signal?.aborted) {
+    return { success: false, cancelled: true, exitCode: -1, output: '' }
+  }
+  let launch = options.launch
+  if (!launch) {
+    const resolved = await resolveNextflowLaunch({
+      ...options.launchContext,
+      profile,
+      ...(options.signal ? { signal: options.signal } : {})
+    })
+    if (!resolved.ok) return { success: false, exitCode: -1, output: resolved.error }
+    launch = resolved.launch
+  }
+  const { signal, killGraceMs } = options
+  return startWrapperComposition(wrapperDir, overrides, profile, {
+    launch,
+    ...(signal ? { signal } : {}),
+    ...(killGraceMs !== undefined ? { killGraceMs } : {})
+  }).done
 }

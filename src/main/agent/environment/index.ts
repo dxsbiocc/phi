@@ -1,6 +1,8 @@
 export {
+  HOST_UNMANAGED,
   detectEnvironmentTools,
   probeCustomToolPath,
+  type ManagedToolState,
   type CommandRunner,
   type DetectEnvironmentOptions,
   type WhichResolver
@@ -8,6 +10,7 @@ export {
 export {
   dismissEnvironmentSummary,
   getActiveToolPath,
+  getCustomToolPath,
   getEnvironment,
   getEnvironmentPath,
   mergeDetectedWithCustoms,

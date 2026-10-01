@@ -10,6 +10,21 @@ import {
   type EnvironmentToolState
 } from '../../../shared/environmentTypes'
 import { detectAnalysisKernels } from '../notebook/analysis-kernels'
+import {
+  MIN_NEXTFLOW_VERSION,
+  isNextflowVersionSupported,
+  parseNextflowVersion
+} from '../wrappers/composition/nextflow-version'
+
+/** Label for a tool the user pointed Phi at explicitly; Phi does not manage it (§5.2). */
+export const HOST_UNMANAGED = 'host (unmanaged)'
+
+/**
+ * A tool state plus how it is managed. `management` is additive: readers that only know
+ * `EnvironmentToolState` keep working. Only a custom nextflow sets it today; wrappers use
+ * the managed `phi:nextflow@1` environment unless one is chosen.
+ */
+export type ManagedToolState = EnvironmentToolState & { management?: 'host-unmanaged' }
 
 export type CommandRunner = (command: string, args: string[]) => string
 
@@ -272,7 +287,7 @@ export function probeCustomToolPath(
   id: EnvironmentToolId,
   absolutePath: string,
   options: DetectEnvironmentOptions = {}
-): EnvironmentToolState {
+): ManagedToolState {
   const runner = options.runner ?? defaultRunner
   const label = ENVIRONMENT_TOOL_LABELS[id]
   if (!absolutePath || !existsSync(absolutePath)) {
@@ -307,7 +322,7 @@ export function probeCustomToolPath(
       detail = `${diagnostics.kernels.length} 个 kernel`
       messages = diagnostics.messages.length ? diagnostics.messages : undefined
     } else if (id === 'nextflow') {
-      version = probeVersion(runner, absolutePath, ['-version'])
+      return probeCustomNextflow(runner, absolutePath)
     } else if (id === 'docker' || id === 'singularity' || id === 'micromamba') {
       version =
         probeVersion(runner, absolutePath, ['--version']) ??
@@ -340,4 +355,40 @@ export function probeCustomToolPath(
 
 export function dirnameOfBinary(path: string): string {
   return dirname(path)
+}
+
+/**
+ * A custom nextflow is accepted only when `-version` reports at least the wrappers'
+ * minimum; it is then labelled {@link HOST_UNMANAGED}. Too old or unreadable is invalid,
+ * and the wrapper executor refuses it too instead of falling back.
+ */
+function probeCustomNextflow(runner: CommandRunner, absolutePath: string): ManagedToolState {
+  const label = ENVIRONMENT_TOOL_LABELS.nextflow
+  const output = runner(absolutePath, ['-version'])
+  const version = parseNextflowVersion(output)
+  if (!version || !isNextflowVersionSupported(version)) {
+    return {
+      id: 'nextflow',
+      label,
+      status: 'invalid',
+      activePath: absolutePath,
+      source: 'custom',
+      ...(version ? { detectedVersion: version } : {}),
+      messages: [
+        version
+          ? `该 Nextflow 版本是 ${version}，Wrapper 需要 ${MIN_NEXTFLOW_VERSION} 或更新的版本`
+          : `无法从 nextflow -version 读出版本，Wrapper 需要 ${MIN_NEXTFLOW_VERSION} 或更新的版本`
+      ]
+    }
+  }
+  return {
+    id: 'nextflow',
+    label,
+    status: 'ready',
+    activePath: absolutePath,
+    source: 'custom',
+    detectedVersion: version,
+    detail: HOST_UNMANAGED,
+    management: 'host-unmanaged'
+  }
 }
