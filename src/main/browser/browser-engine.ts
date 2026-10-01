@@ -1,0 +1,114 @@
+import type {
+  BrowserCapabilities,
+  BrowserErrorCode,
+  BrowserScreenshot,
+  BrowserViewport
+} from '../../shared/browserTypes'
+
+declare const engineTabHandleBrand: unique symbol
+
+export type EngineTabHandle = string & {
+  readonly [engineTabHandleBrand]: 'EngineTabHandle'
+}
+
+export interface EngineTabInput {
+  partition: string
+}
+
+export interface EngineTabState {
+  url: string
+  title: string
+  isLoading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+  documentRevision: number
+}
+
+export interface EngineTargetDescriptor {
+  tagName: string
+  inputType?: string
+  role?: string
+  accessibleLabel?: string
+  formMethod?: string
+  formAction?: string
+  editable: boolean
+  submitsForm: boolean
+}
+
+export type EngineCommand =
+  | { type: 'navigate'; url: string }
+  | { type: 'history'; direction: 'back' | 'forward' }
+  | { type: 'reload' | 'stop' | 'screenshot' }
+  | { type: 'click'; x: number; y: number }
+  | { type: 'typeText'; text: string }
+  | { type: 'keypress'; key: string }
+  | { type: 'scroll'; deltaX: number; deltaY: number }
+  | { type: 'describeTarget'; x: number; y: number }
+
+export interface EngineError {
+  code: BrowserErrorCode
+  message: string
+}
+
+export type EngineResult =
+  | {
+      ok: true
+      state: EngineTabState
+      screenshot?: BrowserScreenshot
+      target?: EngineTargetDescriptor
+    }
+  | {
+      ok: false
+      error: EngineError
+    }
+
+interface EngineEventBase {
+  handle: EngineTabHandle
+  at: number
+}
+
+export type EngineEvent =
+  | (EngineEventBase & {
+      type: 'loadingChanged'
+      isLoading: boolean
+    })
+  | (EngineEventBase & {
+      type: 'navigationCommitted'
+      url: string
+      documentRevision: number
+      canGoBack: boolean
+      canGoForward: boolean
+    })
+  | (EngineEventBase & {
+      type: 'titleChanged'
+      title: string
+    })
+  | (EngineEventBase & {
+      type: 'loadFailed'
+      url: string
+      errorCode: string
+      message: string
+    })
+  | (EngineEventBase & {
+      type: 'crashed'
+      reason: string
+    })
+  | (EngineEventBase & {
+      type: 'popupRequested'
+      url: string
+      method: 'GET' | 'POST' | 'other'
+    })
+
+export interface BrowserEngine {
+  capabilities(): BrowserCapabilities
+  createTab(input: EngineTabInput): Promise<EngineTabHandle>
+  execute(
+    handle: EngineTabHandle,
+    command: EngineCommand,
+    signal?: AbortSignal
+  ): Promise<EngineResult>
+  setViewport(handle: EngineTabHandle, viewport: BrowserViewport | null): Promise<void>
+  subscribe(listener: (event: EngineEvent) => void): () => void
+  disposeTab(handle: EngineTabHandle): Promise<void>
+  dispose(): Promise<void>
+}
