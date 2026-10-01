@@ -29,7 +29,7 @@
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "npm run build && electron-builder --mac",
     "build:linux": "npm run build && electron-builder --linux",
-    "test": "node --import ./scripts/test-loader.mjs --test tests/*.test.ts",
+    "test": "node --import ./scripts/test-loader.mjs --test --test-timeout=300000 --test-force-exit tests/*.test.ts",
     "test:runtime": "PHI_RUNTIME_INTEGRATION=1 node --import ./scripts/test-loader.mjs --test tests/runtime/*.test.ts tests/envs-*.test.ts",
     "smoke:wrappers": "node --import ./scripts/test-loader.mjs scripts/smoke-wrappers.mjs",
     "wrappers:index": "node --import ./scripts/test-loader.mjs scripts/build-wrapper-pack-index.mjs",
