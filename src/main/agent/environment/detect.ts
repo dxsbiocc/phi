@@ -6,6 +6,9 @@ import { dirname, join, sep } from 'node:path'
 import {
   ENVIRONMENT_TOOL_IDS,
   ENVIRONMENT_TOOL_LABELS,
+  type EnvironmentHostDependency,
+  type EnvironmentHostKernel,
+  type EnvironmentHostTool,
   type EnvironmentToolId,
   type EnvironmentToolState
 } from '../../../shared/environmentTypes'
@@ -255,6 +258,191 @@ function detectRscript(runner: CommandRunner, which: WhichResolver): Environment
   const path = managed ?? resolveNamedBinary(['Rscript'], which)
   if (!path) return missingTool('rscript')
   return readyTool('rscript', path, probeVersion(runner, path, ['--version']))
+}
+
+function hostDependency(
+  id: EnvironmentHostDependency['id'],
+  label: string,
+  path: string | undefined,
+  runner: CommandRunner,
+  versionArgs: string[],
+  detail?: string
+): EnvironmentHostDependency {
+  if (!path) return { id, label, status: 'missing' }
+  const version = probeVersion(runner, path, versionArgs)
+  if (!version) {
+    return {
+      id,
+      label,
+      status: 'unavailable',
+      path,
+      messages: ['已找到命令，但无法读取版本或执行检查。']
+    }
+  }
+  return {
+    id,
+    label,
+    status: 'ready',
+    path,
+    ...(version ? { version } : {}),
+    ...(detail ? { detail } : {})
+  }
+}
+
+/** Host-only dependencies are checked and reported; Phi never installs them. */
+export function detectHostDependencies(
+  options: DetectEnvironmentOptions = {}
+): EnvironmentHostDependency[] {
+  const runner = options.runner ?? defaultRunner
+  const which = options.which ?? defaultWhich
+
+  const dockerPath = resolveNamedBinary(['docker'], which)
+  let docker: EnvironmentHostDependency
+  if (!dockerPath) {
+    docker = { id: 'docker', label: 'Docker', status: 'missing' }
+  } else {
+    try {
+      const serverVersion = runner(dockerPath, ['info', '--format', '{{.ServerVersion}}']).trim()
+      docker = {
+        id: 'docker',
+        label: 'Docker',
+        status: 'ready',
+        path: dockerPath,
+        ...(serverVersion ? { version: serverVersion.split('\n')[0]?.trim() } : {})
+      }
+    } catch (error) {
+      docker = {
+        id: 'docker',
+        label: 'Docker',
+        status: 'unavailable',
+        path: dockerPath,
+        version: probeVersion(runner, dockerPath, ['--version']),
+        messages: [
+          `Docker 命令可用，但无法连接 daemon：${error instanceof Error ? error.message : String(error)}`
+        ]
+      }
+    }
+  }
+
+  const singularityPath = resolveNamedBinary(['apptainer', 'singularity'], which)
+  const singularityName = singularityPath?.split(sep).pop()
+  const singularity = hostDependency(
+    'singularity',
+    'Singularity / Apptainer',
+    singularityPath,
+    runner,
+    ['--version'],
+    singularityName ? `检测到 ${singularityName}` : undefined
+  )
+
+  const libreOfficePath =
+    firstExisting([
+      '/Applications/LibreOffice.app/Contents/MacOS/soffice',
+      '/usr/lib/libreoffice/program/soffice'
+    ]) ?? resolveNamedBinary(['soffice'], which)
+  const libreOffice = hostDependency('libreoffice', 'LibreOffice', libreOfficePath, runner, [
+    '--version'
+  ])
+
+  return [docker, singularity, libreOffice]
+}
+
+function hostKernels(
+  diagnostics: ReturnType<typeof detectAnalysisKernels>
+): EnvironmentHostKernel[] {
+  return diagnostics.kernels.map((kernel) => ({
+    id: kernel.name,
+    displayName: kernel.displayName,
+    language: kernel.rawLanguage,
+    ...(kernel.resourceDir ? { path: kernel.resourceDir } : {})
+  }))
+}
+
+function probeHostKernelSpecs(runner: CommandRunner, jupyterPath: string): EnvironmentHostKernel[] {
+  try {
+    const payload = JSON.parse(runner(jupyterPath, ['kernelspec', 'list', '--json'])) as {
+      kernelspecs?: Record<
+        string,
+        { resource_dir?: unknown; spec?: { display_name?: unknown; language?: unknown } }
+      >
+    }
+    if (!payload.kernelspecs || typeof payload.kernelspecs !== 'object') return []
+    return Object.entries(payload.kernelspecs)
+      .map(([id, value]) => ({
+        id,
+        displayName:
+          typeof value.spec?.display_name === 'string' && value.spec.display_name.trim()
+            ? value.spec.display_name.trim()
+            : id,
+        language:
+          typeof value.spec?.language === 'string' && value.spec.language.trim()
+            ? value.spec.language.trim()
+            : 'unknown',
+        ...(typeof value.resource_dir === 'string' && value.resource_dir
+          ? { path: value.resource_dir }
+          : {})
+      }))
+      .sort((left, right) => left.displayName.localeCompare(right.displayName))
+  } catch {
+    return []
+  }
+}
+
+/** Optional host versions. They are always labelled unmanaged and never become defaults. */
+export function detectEnvironmentHostTools(
+  tools: EnvironmentToolState[],
+  customPaths: Partial<Record<EnvironmentToolId, string>>,
+  options: DetectEnvironmentOptions = {}
+): EnvironmentHostTool[] {
+  const runner = options.runner ?? defaultRunner
+  const nextflow = tools.find((tool) => tool.id === 'nextflow')
+  const customNextflow = customPaths.nextflow
+  const nextflowTool: EnvironmentHostTool = {
+    id: 'nextflow',
+    label: 'Nextflow',
+    status: customNextflow
+      ? (nextflow?.status ?? 'invalid')
+      : nextflow?.status === 'ready'
+        ? 'not-configured'
+        : 'missing',
+    management: 'host-unmanaged',
+    selected: Boolean(customNextflow && nextflow?.status === 'ready'),
+    ...(customNextflow ? { path: customNextflow } : {}),
+    ...(nextflow?.detectedPath ? { detectedPath: nextflow.detectedPath } : {}),
+    ...(nextflow?.detectedVersion ? { version: nextflow.detectedVersion } : {}),
+    ...(nextflow?.detail ? { detail: nextflow.detail } : {}),
+    ...(nextflow?.messages ? { messages: nextflow.messages } : {})
+  }
+
+  const jupyter = tools.find((tool) => tool.id === 'jupyter')
+  const jupyterPath = jupyter?.activePath ?? jupyter?.detectedPath
+  const diagnostics = jupyterPath ? detectAnalysisKernels(runner, jupyterPath) : undefined
+  const detectedKernels = diagnostics ? hostKernels(diagnostics) : []
+  const kernels =
+    detectedKernels.length > 0 || !jupyterPath
+      ? detectedKernels
+      : probeHostKernelSpecs(runner, jupyterPath)
+  const jupyterTool: EnvironmentHostTool = {
+    id: 'jupyter',
+    label: 'Jupyter kernels',
+    status: kernels.length > 0 ? 'ready' : (jupyter?.status ?? 'missing'),
+    management: 'host-unmanaged',
+    selected: jupyter?.source === 'custom',
+    ...(jupyter?.source === 'custom' && jupyter.activePath ? { path: jupyter.activePath } : {}),
+    ...(jupyter?.detectedPath ? { detectedPath: jupyter.detectedPath } : {}),
+    ...(diagnostics?.jupyterServer.version
+      ? { version: diagnostics.jupyterServer.version }
+      : jupyter?.detectedVersion
+        ? { version: jupyter.detectedVersion }
+        : {}),
+    detail: kernels.length > 0 ? `${kernels.length} 个本机 kernel` : '未检测到本机 kernel',
+    ...(kernels.length === 0 && diagnostics?.messages.length
+      ? { messages: diagnostics.messages }
+      : {}),
+    kernels
+  }
+
+  return [nextflowTool, jupyterTool]
 }
 
 export interface DetectEnvironmentOptions {

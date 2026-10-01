@@ -58,6 +58,9 @@ import type {
 import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
 import type {
   EnvironmentGetResult,
+  ManagedEnvironmentCleanResult,
+  ManagedEnvironmentEntry,
+  ManagedEnvironmentRemoveResult,
   EnvironmentSnapshot,
   EnvironmentToolId
 } from '../shared/environmentTypes'
@@ -710,6 +713,11 @@ declare global {
         path: string | null
       ) => Promise<EnvironmentSnapshot>
       pickEnvironmentBinary: () => Promise<string | null>
+      listManagedEnvironments: (projectCwd?: string) => Promise<ManagedEnvironmentEntry[]>
+      buildManagedEnvironment: (ref: string, projectCwd?: string) => Promise<{ envId: string }>
+      rebuildManagedEnvironment: (envId: string) => Promise<void>
+      removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
+      cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
       listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
       setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
       setDbConnectorApiKey: (id: string, apiKey: string) => Promise<DbConnectorSettingsItem[]>

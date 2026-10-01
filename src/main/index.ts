@@ -259,9 +259,11 @@ import {
 } from './agent/notebook/analysis-notebook-files'
 import { AnalysisNotebookFileWatcher } from './agent/notebook/analysis-notebook-watch'
 import {
+  createManagedEnvironmentActions,
   detectConfiguredAnalysisKernels,
   dismissEnvironmentSummary,
   getEnvironment,
+  listManagedEnvironments,
   redetectEnvironment,
   setEnvironmentToolPath
 } from './agent/environment'
@@ -828,6 +830,15 @@ const environmentBuilds = createEnvironmentBuilds({
   onChange: (build) => {
     sendToAllWindows('environmentBuilds:changed', build)
   }
+})
+const managedEnvironmentActions = createManagedEnvironmentActions({
+  root: getRuntimeRoot(),
+  builds: environmentBuilds,
+  catalog: (projectDir) =>
+    listManagedEnvironments({
+      ...(projectDir ? { projectDir } : {}),
+      builds: environmentBuilds.list()
+    })
 })
 // The notebook server joins builds started elsewhere (chat prompt or the environment panel).
 const jupyterServerRegistry = new JupyterServerRegistry({ managed: { builds: environmentBuilds } })
@@ -6209,6 +6220,41 @@ app.whenReady().then(() => {
       : await dialog.showOpenDialog(options)
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
+  ipcMain.handle('managedEnvironments:list', async (_, projectCwd: unknown) => {
+    try {
+      return await managedEnvironmentActions.list(projectCwd)
+    } catch (error) {
+      throw new Error(`读取托管环境失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  })
+  ipcMain.handle('managedEnvironments:build', async (_, ref: unknown, projectCwd: unknown) => {
+    try {
+      return managedEnvironmentActions.build(ref, projectCwd)
+    } catch (error) {
+      throw new Error(`启动环境构建失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  })
+  ipcMain.handle('managedEnvironments:rebuild', async (_, envId: unknown) => {
+    try {
+      await managedEnvironmentActions.rebuild(envId)
+    } catch (error) {
+      throw new Error(`重新构建环境失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  })
+  ipcMain.handle('managedEnvironments:remove', async (_, envId: unknown) => {
+    try {
+      return await managedEnvironmentActions.remove(envId)
+    } catch (error) {
+      throw new Error(`删除环境失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  })
+  ipcMain.handle('managedEnvironments:clean', async () => {
+    try {
+      return await managedEnvironmentActions.clean()
+    } catch (error) {
+      throw new Error(`清理环境失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  })
 
   ipcMain.handle('db:listConnectors', async () => dbConnectorSettingsItems())
   ipcMain.handle('db:setConnectorEnabled', async (_, id: unknown, enabled: unknown) => {
@@ -7382,7 +7428,8 @@ app.whenReady().then(() => {
       try {
         return submitWrapperRunPlan(planId, {
           heavyWorkloadAcknowledged,
-          externalOutputRoot: confirmation?.externalOutputRoot
+          externalOutputRoot: confirmation?.externalOutputRoot,
+          nextflowLaunch: { builds: environmentBuilds }
         })
       } catch (error) {
         rememberErrorSummary(error)

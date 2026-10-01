@@ -6,6 +6,8 @@ import test from 'node:test'
 
 import {
   HOST_UNMANAGED,
+  detectEnvironmentHostTools,
+  detectHostDependencies,
   detectEnvironmentTools,
   probeCustomToolPath,
   type ManagedToolState
@@ -60,6 +62,77 @@ test('detectEnvironmentTools marks tools ready from injected which/runner', () =
   assert.equal(byId.singularity?.status, 'missing')
 })
 
+test('host dependency probing requires a reachable Docker daemon and reports versions', () => {
+  const dependencies = detectHostDependencies({
+    which: (name) => {
+      if (name === 'docker') return '/usr/local/bin/docker'
+      if (name === 'apptainer') return '/usr/local/bin/apptainer'
+      if (name === 'soffice') return '/Applications/LibreOffice.app/Contents/MacOS/soffice'
+      return undefined
+    },
+    runner: (command, args) => {
+      if (command.endsWith('/docker') && args[0] === 'info') return '27.2.1\n'
+      if (command.endsWith('/apptainer')) return 'apptainer version 1.3.5\n'
+      if (command.endsWith('/soffice')) return 'LibreOffice 24.8.1.2\n'
+      throw new Error(`unexpected ${command} ${args.join(' ')}`)
+    }
+  })
+
+  assert.deepEqual(
+    dependencies.map(({ id, status, version }) => ({ id, status, version })),
+    [
+      { id: 'docker', status: 'ready', version: '27.2.1' },
+      { id: 'singularity', status: 'ready', version: 'apptainer version 1.3.5' },
+      { id: 'libreoffice', status: 'ready', version: 'LibreOffice 24.8.1.2' }
+    ]
+  )
+})
+
+test('host dependency probing distinguishes a Docker CLI from a reachable daemon', () => {
+  const dependencies = detectHostDependencies({
+    which: (name) => (name === 'docker' ? '/usr/local/bin/docker' : undefined),
+    runner: (_command, args) => {
+      if (args[0] === '--version') return 'Docker version 27.2.1'
+      throw new Error('Cannot connect to the Docker daemon')
+    }
+  })
+  const docker = dependencies.find((dependency) => dependency.id === 'docker')
+  assert.equal(docker?.status, 'unavailable')
+  assert.equal(docker?.version, 'Docker version 27.2.1')
+  assert.match(docker?.messages?.[0] ?? '', /daemon/)
+})
+
+test('host kernels remain discoverable without a host Jupyter Server', () => {
+  const options = {
+    which: (name: string) => (name === 'jupyter' ? '/opt/jupyter' : undefined),
+    runner: (_command: string, args: string[]): string => {
+      if (args.join(' ') === 'kernelspec list --json') {
+        return JSON.stringify({
+          kernelspecs: {
+            lab: {
+              resource_dir: '/host/kernels/lab',
+              spec: { display_name: 'Lab Python', language: 'python' }
+            }
+          }
+        })
+      }
+      throw new Error('Jupyter Server is not installed')
+    }
+  }
+  const tools = detectEnvironmentTools(options)
+  const hostTools = detectEnvironmentHostTools(tools, {}, options)
+  const jupyter = hostTools.find((tool) => tool.id === 'jupyter')
+  assert.equal(jupyter?.status, 'ready')
+  assert.deepEqual(jupyter?.kernels, [
+    {
+      id: 'lab',
+      displayName: 'Lab Python',
+      language: 'python',
+      path: '/host/kernels/lab'
+    }
+  ])
+})
+
 test('mergeDetectedWithCustoms prefers validated custom paths', () => {
   const agentDir = mkdtempSync(join(tmpdir(), 'phi-env-merge-'))
   const fakeBin = join(agentDir, 'custom-nextflow')
@@ -103,6 +176,8 @@ test('environment store scans once then dismisses summary', () => {
   try {
     const first = getEnvironment(agentDir)
     assert.equal(first.snapshot.firstScanCompleted, true)
+    assert.equal(first.snapshot.hostDependencies.length, 3)
+    assert.equal(first.snapshot.hostTools.length, 2)
     assert.equal(first.showSummary, true)
 
     const second = getEnvironment(agentDir)

@@ -57,6 +57,8 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
       scannedAt: '2026-01-01T00:00:00.000Z',
       firstScanCompleted: true,
       summaryDismissed: true,
+      hostDependencies: [],
+      hostTools: [],
       tools: [
         {
           id: 'nextflow',

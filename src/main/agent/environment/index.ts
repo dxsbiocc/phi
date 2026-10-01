@@ -1,6 +1,8 @@
 export {
   HOST_UNMANAGED,
+  detectEnvironmentHostTools,
   detectEnvironmentTools,
+  detectHostDependencies,
   probeCustomToolPath,
   type ManagedToolState,
   type CommandRunner,
@@ -19,6 +21,13 @@ export {
   scanAndPersistEnvironment,
   setEnvironmentToolPath
 } from './store'
+export { listManagedEnvironments } from './managed'
+export type {
+  ListManagedEnvironmentsOptions,
+  ManagedEnvironmentConsumerDeclaration
+} from './managed'
+export { createManagedEnvironmentActions } from './actions'
+export type { ManagedEnvironmentActionDependencies, ManagedEnvironmentActions } from './actions'
 
 import { detectAnalysisKernels, listAnalysisKernels } from '../notebook/analysis-kernels'
 import { getActiveToolPath } from './store'

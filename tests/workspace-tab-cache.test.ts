@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   cacheAnalysisNotebookFile,
+  notebookEnvironmentErrorMessage,
   removeAnalysisNotebookFileCacheEntry
 } from '../src/renderer/src/features/analysis/lib/analysisNotebookRuntimeUtils'
 import {
@@ -144,4 +145,22 @@ test('analysis notebook cache resolves absolute and relative tab paths', () => {
 
   assert.equal(removed.get('/project/notebooks/eda.ipynb'), undefined)
   assert.equal(removed.get('notebooks/eda.ipynb'), undefined)
+})
+
+test('notebook environment errors point to the managed environment settings section', () => {
+  assert.equal(
+    notebookEnvironmentErrorMessage(new Error('环境 phi:python@1 尚未构建。'), '运行失败'),
+    '环境 phi:python@1 尚未构建。 请前往“设置 → 环境”的“托管环境”构建后重试。'
+  )
+  assert.equal(
+    notebookEnvironmentErrorMessage(new Error('kernel 启动失败'), '运行失败'),
+    'kernel 启动失败'
+  )
+  assert.equal(
+    notebookEnvironmentErrorMessage(
+      new Error('environment phi:python@1 is not ready; the user must build it first'),
+      '运行失败'
+    ),
+    'environment phi:python@1 is not ready; the user must build it first 请前往“设置 → 环境”的“托管环境”构建后重试。'
+  )
 })

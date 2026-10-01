@@ -899,6 +899,19 @@ async function harness(
       storeDbConnectorSecret: (): void => {}
     },
     './agent/environment': {
+      createManagedEnvironmentActions: () => ({
+        list: async () => [],
+        build: () => ({ envId: 'phi-python-0123456789ab' }),
+        rebuild: async () => undefined,
+        remove: async () => ({ removed: true, bytesFreed: 0 }),
+        clean: async () => ({
+          removed: [],
+          orphans: [],
+          skipped: [],
+          logsRemoved: 0,
+          bytesFreed: 0
+        })
+      }),
       detectConfiguredAnalysisKernels: () => ({
         jupyterServer: { available: true, command: 'jupyter', version: '2.14.0' },
         kernels: [
@@ -916,6 +929,7 @@ async function harness(
       }),
       dismissEnvironmentSummary: (): void => {},
       getEnvironment: (): Record<string, never> => ({}),
+      listManagedEnvironments: async () => [],
       redetectEnvironment: (): Record<string, never> => ({}),
       setEnvironmentToolPath: (): Record<string, never> => ({})
     },
