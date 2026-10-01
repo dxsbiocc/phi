@@ -1,4 +1,21 @@
 import { execFileSync } from 'node:child_process'
+import { readdirSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { getRuntimeRoot } from '../envs'
+import {
+  HOST_KERNEL_LABEL,
+  NOT_BUILT_KERNEL_LABEL,
+  hostKernelName,
+  managedEnvironmentState,
+  syncHostKernels,
+  syncManagedKernels,
+  type ManagedEnvironmentContext,
+  type ManagedKernelState
+} from './managed-kernels'
+
+export const JUPYTER_ENVIRONMENT_REF = 'phi:jupyter@1'
+export const DEFAULT_KERNEL_NAME = 'phi-python'
 
 export type AnalysisKernelLanguage = 'python' | 'r' | 'other'
 
@@ -9,6 +26,16 @@ export interface AnalysisKernelSummary {
   rawLanguage: string
   resourceDir?: string
   executable?: string
+  /** `managed`: from a Phi environment. `host`: found on the host, used only when picked. */
+  source?: 'managed' | 'host'
+  /** `host (unmanaged)` or `not built`; shown next to the display name. */
+  label?: string
+  /** Managed kernels whose environment is not built are listed as `not-built`. */
+  status?: 'ready' | 'not-built'
+  /** The environment a managed kernel runs in. */
+  environment?: { ref: string; envId?: string }
+  /** The host kernelspec name of a host kernel (its listed name is `host-<name>`). */
+  hostName?: string
 }
 
 export interface JupyterServerStatus {
@@ -16,6 +43,9 @@ export interface JupyterServerStatus {
   command: 'jupyter'
   version?: string
   error?: string
+  /** True when the server runs from `phi:jupyter@1`. */
+  managed?: boolean
+  environment?: { ref: string; envId?: string }
 }
 
 export interface AnalysisKernelDiagnostics {
@@ -85,7 +115,9 @@ function normalizeKernel(name: string, raw: RawKernelspec): AnalysisKernelSummar
     language: normalizeLanguage(rawLanguage),
     rawLanguage,
     resourceDir: firstString(raw.resource_dir),
-    executable: executableFromArgv(spec.argv)
+    executable: executableFromArgv(spec.argv),
+    source: 'host',
+    label: HOST_KERNEL_LABEL
   }
 }
 
@@ -163,6 +195,133 @@ export function detectAnalysisKernels(
     preferredKernelName: preferredKernel(kernels),
     hasPythonKernel,
     hasRKernel,
+    messages
+  }
+}
+
+export interface ListAnalysisKernelsOptions extends Partial<ManagedEnvironmentContext> {
+  /** Host `jupyter` used to find host kernels; `null` skips host kernels. */
+  hostJupyterCommand?: string | null
+  hostRunner?: CommandRunner
+}
+
+function jupyterServerVersion(prefix: string): string | undefined {
+  try {
+    const record = readdirSync(join(prefix, 'conda-meta')).find((file) =>
+      /^jupyter_server-\d[^-]*-.*\.json$/.test(file)
+    )
+    return record?.split('-')[1]
+  } catch {
+    return undefined
+  }
+}
+
+function managedJupyterServerStatus(ctx: ManagedEnvironmentContext): JupyterServerStatus {
+  const state = managedEnvironmentState(JUPYTER_ENVIRONMENT_REF, ctx)
+  if ('notBuilt' in state) {
+    return {
+      available: false,
+      command: 'jupyter',
+      managed: true,
+      environment: {
+        ref: JUPYTER_ENVIRONMENT_REF,
+        ...(state.notBuilt.envId ? { envId: state.notBuilt.envId } : {})
+      },
+      error: state.notBuilt.message
+    }
+  }
+  const version = jupyterServerVersion(state.handle.prefix)
+  return {
+    available: true,
+    command: 'jupyter',
+    managed: true,
+    environment: { ref: JUPYTER_ENVIRONMENT_REF, envId: state.handle.envId },
+    ...(version ? { version } : {})
+  }
+}
+
+function managedKernelSummary(state: ManagedKernelState): AnalysisKernelSummary {
+  const { definition } = state
+  const summary: AnalysisKernelSummary = {
+    name: definition.name,
+    displayName: definition.displayName,
+    language: normalizeLanguage(definition.language),
+    rawLanguage: definition.language,
+    source: 'managed',
+    status: state.status,
+    environment: {
+      ref: definition.ref,
+      ...(state.envId ? { envId: state.envId } : {})
+    }
+  }
+  if (state.status === 'ready') {
+    summary.resourceDir = state.resourceDir
+    summary.executable = state.spec.argv[0]
+  } else {
+    summary.label = NOT_BUILT_KERNEL_LABEL
+  }
+  return summary
+}
+
+function hostKernelSummaries(
+  root: string,
+  options: ListAnalysisKernelsOptions
+): AnalysisKernelSummary[] {
+  if (options.hostJupyterCommand === null) return []
+  const host = detectAnalysisKernels(options.hostRunner, options.hostJupyterCommand ?? 'jupyter')
+  const candidates = host.kernels.map((kernel) => ({
+    ...kernel,
+    displayName: `${kernel.displayName} · ${HOST_KERNEL_LABEL}`
+  }))
+  const written = syncHostKernels(root, candidates, options.baseEnv ?? process.env)
+  return candidates.flatMap((kernel) => {
+    const name = hostKernelName(kernel.name)
+    if (!written.has(name)) return []
+    return [
+      {
+        ...kernel,
+        name,
+        hostName: kernel.name,
+        source: 'host' as const,
+        label: HOST_KERNEL_LABEL,
+        status: 'ready' as const
+      }
+    ]
+  })
+}
+
+/**
+ * The notebook kernel list: managed kernels first (`phi-python` is the default, even before it
+ * is built), then host kernels as `host-<name>`, labelled `host (unmanaged)` and never
+ * preferred. Writes the kernelspecs the managed server reads.
+ */
+export function listAnalysisKernels(
+  options: ListAnalysisKernelsOptions = {}
+): AnalysisKernelDiagnostics {
+  const ctx: ManagedEnvironmentContext = { ...options, root: options.root ?? getRuntimeRoot() }
+  const messages: string[] = []
+  const jupyterServer = managedJupyterServerStatus(ctx)
+  if (jupyterServer.error) messages.push(jupyterServer.error)
+
+  const managed = syncManagedKernels(ctx).map(managedKernelSummary)
+  for (const kernel of managed) {
+    if (kernel.status === 'not-built') {
+      messages.push(`${kernel.displayName}: ${NOT_BUILT_KERNEL_LABEL}`)
+    }
+  }
+  let host: AnalysisKernelSummary[] = []
+  try {
+    host = hostKernelSummaries(ctx.root, options)
+  } catch (error) {
+    messages.push(`无法读取 host kernel: ${errorMessage(error)}`)
+  }
+  const kernels = [...managed, ...host]
+  return {
+    jupyterServer,
+    kernels,
+    preferredKernelName: DEFAULT_KERNEL_NAME,
+    hasPythonKernel: kernels.some((kernel) => kernel.language === 'python'),
+    hasRKernel: kernels.some((kernel) => kernel.language === 'r'),
     messages
   }
 }

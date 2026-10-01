@@ -59,3 +59,31 @@ test('listAnalysisPythonPackages falls back to python3 when python is unavailabl
     ['numpy']
   )
 })
+
+test('listAnalysisPythonPackages asks the managed phi-python interpreter first, with its variables', () => {
+  const calls: { command: string; env?: Record<string, string> }[] = []
+  const runner: PythonPackageListRunner = (command, _args, options) => {
+    calls.push({ command, env: options.env })
+    return {
+      status: 0,
+      stdout: JSON.stringify({
+        packages: [{ name: 'numpy', kind: 'package', source: 'third-party' }]
+      }),
+      stderr: ''
+    }
+  }
+  const result = listAnalysisPythonPackages(
+    { projectCwd: process.cwd() },
+    {
+      runner,
+      managedPython: () => ({
+        command: '/runtime/envs/phi-python-x/bin/python',
+        env: { PHI_ENV_ID: 'x' }
+      })
+    }
+  )
+  assert.equal(result.status, 'ok')
+  assert.deepEqual(calls, [
+    { command: '/runtime/envs/phi-python-x/bin/python', env: { PHI_ENV_ID: 'x' } }
+  ])
+})

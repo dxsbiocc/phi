@@ -1,0 +1,7 @@
+name: ipykernel
+description: Smallest Python kernel environment for the managed notebook integration test.
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - ipykernel

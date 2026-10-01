@@ -1,0 +1,9 @@
+name: phi-jupyter
+description: Jupyter Server that hosts notebook sessions; kernels run in the analysis environments.
+channels:
+  - conda-forge
+dependencies:
+  # The server process. jupyter_server pulls jupyter_core (the `jupyter`
+  # command) and jupyter_client (kernel management). No JupyterLab UI.
+  - python=3.12
+  - jupyter_server
