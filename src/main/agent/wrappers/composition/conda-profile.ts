@@ -38,6 +38,13 @@ export interface CondaProfileSetup {
   micromamba: string
 }
 
+export interface PreparedNextflowProfile {
+  /** Complete environment for the Nextflow child. */
+  env: Record<string, string>
+  /** Extra Nextflow config for `-profile conda`; absent for every other profile. */
+  config?: string
+}
+
 export function condaProfileSetup(
   runtimeRoot: string,
   micromamba: string = getMicromambaPath()
@@ -59,6 +66,22 @@ export function condaProfileSetup(
 export function prepareCondaProfile(setup: CondaProfileSetup, runtimeRoot: string): void {
   mkdirSync(setup.cacheDir, { recursive: true })
   ensureMambarc(runtimeRoot)
+}
+
+/**
+ * Applies Phi-owned runtime setup for a local Nextflow profile. Both composition and
+ * plan-based runners call this so `-profile conda` cannot drift between launch paths.
+ */
+export function prepareNextflowProfile(
+  profile: string,
+  runtimeRoot: string,
+  env: Record<string, string>,
+  micromamba?: string
+): PreparedNextflowProfile {
+  if (profile !== 'conda') return { env }
+  const setup = condaProfileSetup(runtimeRoot, micromamba)
+  prepareCondaProfile(setup, runtimeRoot)
+  return { env: withCondaProfileEnv(env, setup), config: setup.config }
 }
 
 export function renderCondaProfileConfig(cacheDir: string): string {

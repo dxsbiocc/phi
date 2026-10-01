@@ -39,6 +39,7 @@ import {
   type EnvironmentSpec,
   type PhiPlatform
 } from '../src/main/agent/envs'
+import { linkScriptFailureFromOutput } from '../src/main/agent/envs/ensure'
 import { getMicromambaPath } from '../src/main/agent/envs/paths'
 import { createTestRuntimeRoot } from './helpers/testRuntimeRoot'
 
@@ -336,6 +337,79 @@ test('ensureEnvironment rejects an invalid lock before creating a prefix', async
     assert.equal(readdirSync(join(root, 'envs')).length, 0)
     assert.equal(existsSync(join(root, 'state', 'environments.json')), false)
   })
+})
+
+test('ensureEnvironment fails when micromamba hides a failed post-link script', async () => {
+  await withTemp('post-link-failure', async (root) => {
+    const resourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+    const fakeMicromamba = join(root, 'runtime', 'micromamba', currentPlatform(), 'micromamba')
+    mkdirSync(dirname(fakeMicromamba), { recursive: true })
+    writeFileSync(
+      fakeMicromamba,
+      `#!/bin/sh
+printf "%s\\n" "warning  libmamba Executing post-link script for package 'bioconductor-genomeinfodbdata'." >&2
+printf "%s\\n" "/private/tmp/prefix/bin/.bioconductor-genomeinfodbdata-post-link.sh: line 2: installBiocDataPackage.sh: command not found" >&2
+exit 0
+`,
+      { mode: 0o755 }
+    )
+    Object.defineProperty(process, 'resourcesPath', {
+      configurable: true,
+      value: root
+    })
+
+    const spec: EnvironmentSpec = {
+      name: 'post-link-failure',
+      channels: ['bioconda'],
+      dependencies: ['bioconductor-genomeinfodbdata=1.2.13']
+    }
+    const lockText =
+      '@EXPLICIT\nhttps://conda.anaconda.org/bioconda/noarch/bioconductor-genomeinfodbdata-1.2.13-r44hdfd78af_0.tar.bz2#06d453df3bc59956a3ffac7674652f44\n'
+    const envId = envIdFor(spec, lockText)
+    const prefix = join(realpathSync(root), 'envs', envId)
+    const phases: string[] = []
+
+    try {
+      await assert.rejects(
+        () =>
+          ensureEnvironment({
+            root,
+            scope: 'phi',
+            kind: 'base',
+            spec,
+            lockText,
+            onProgress: (event) => phases.push(event.phase)
+          }),
+        /micromamba post-link script failed for package 'bioconductor-genomeinfodbdata': installBiocDataPackage\.sh: command not found/
+      )
+    } finally {
+      if (resourcesPathDescriptor) {
+        Object.defineProperty(process, 'resourcesPath', resourcesPathDescriptor)
+      } else {
+        Reflect.deleteProperty(process, 'resourcesPath')
+      }
+    }
+
+    assert.equal(existsSync(prefix), false)
+    assert.ok(phases.includes('failed'))
+    const entry = readEnvironmentIndex(realpathSync(root)).environments[envId]
+    assert.equal(entry.status, 'failed')
+    assert.equal(
+      entry.error,
+      "micromamba post-link script failed for package 'bioconductor-genomeinfodbdata': installBiocDataPackage.sh: command not found"
+    )
+  })
+})
+
+test('link-script warnings without shell failure diagnostics stay warnings', () => {
+  const output = [
+    'warning  libmamba Security Warning: This transaction includes executing package scripts.',
+    "warning  libmamba Executing post-link script for package 'demo'.",
+    'demo configured an optional feature',
+    "warning  libmamba Executing pre-unlink script for package 'old-demo'."
+  ].join('\n')
+
+  assert.equal(linkScriptFailureFromOutput(output), undefined)
 })
 
 function loadMinimal(): { spec: EnvironmentSpec; lockText: string } {

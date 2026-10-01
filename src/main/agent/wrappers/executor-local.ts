@@ -4,8 +4,14 @@ import { join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
 import { findWrapperCatalogEntry } from './catalog'
+import { prepareNextflowProfile } from './composition/conda-profile'
+import {
+  nextflowLaunchRecord,
+  resolveNextflowLaunch,
+  type NextflowLaunchContext
+} from './composition/nextflow-launch'
 import { checkLocalDoctor } from './doctor'
-import { buildNextflowLaunch } from './executor-nextflow'
+import { buildNextflowInvocation } from './executor-nextflow'
 import {
   appendWrapperAuditEvent,
   appendWrapperRunEvent,
@@ -23,11 +29,17 @@ export interface RunLocalWrapperOptions {
   agentDir?: string
   spawnImpl?: SpawnImpl
   /**
-   * Injectable so tests can simulate "Nextflow/Docker present" without
-   * either actually being installed — matches `spawnImpl`'s role. Defaults
-   * to the real `checkLocalDoctor`, which genuinely shells out.
+   * Injectable so tests can simulate host runtime checks (currently Docker)
+   * without it actually being installed. Defaults to the real local doctor.
    */
   doctorImpl?: typeof checkLocalDoctor
+  /** Managed/explicit-host Nextflow resolution inputs. No runtime session means no build prompt. */
+  nextflowLaunch?: Omit<
+    NextflowLaunchContext,
+    'profile' | 'runtimeSessionId' | 'wrapperId' | 'signal'
+  >
+  /** Bundled micromamba override used by tests for the conda-profile setup. */
+  micromambaPath?: string
 }
 
 function ensureDir(path: string): void {
@@ -79,8 +91,16 @@ function transition(
   return updated
 }
 
-function failRun(run: WrapperRun, agentDir: string, reason: string): WrapperRun {
-  const failed = transition(run, agentDir, 'failed', { completedAt: new Date().toISOString() })
+function failRun(
+  run: WrapperRun,
+  agentDir: string,
+  reason: string,
+  patch: Partial<WrapperRun> = {}
+): WrapperRun {
+  const failed = transition(run, agentDir, 'failed', {
+    ...patch,
+    completedAt: new Date().toISOString()
+  })
   appendWrapperAuditEvent(
     {
       type: 'run_state_changed',
@@ -126,6 +146,15 @@ export async function runLocalWrapperExecution(
     )
   }
   const manifest = entry.manifest
+  const nextflowProfile = plan.nextflowProfile ?? plan.profile
+  const resolved = await resolveNextflowLaunch({
+    ...options.nextflowLaunch,
+    profile: nextflowProfile,
+    wrapperId: run.wrapper.canonicalId
+  })
+  if (!resolved.ok) {
+    return failRun(run, agentDir, resolved.error, { environmentError: resolved.error })
+  }
 
   const requiresDocker =
     manifest.engine.profiles.find((profile) => profile.id === run.profile)?.containerRuntime ===
@@ -147,19 +176,43 @@ export async function runLocalWrapperExecution(
   const absoluteOutDir = join(run.cwd, run.outDir)
   ensureDir(absoluteOutDir)
 
+  let preparedProfile: ReturnType<typeof prepareNextflowProfile>
+  try {
+    preparedProfile = prepareNextflowProfile(
+      nextflowProfile,
+      resolved.launch.runtimeRoot,
+      resolved.launch.env,
+      options.micromambaPath
+    )
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    return failRun(run, agentDir, reason, { environmentError: reason })
+  }
+
   let weblog: WeblogListenerHandle | undefined
   if (run.steps && run.steps.length > 0) {
     weblog = await startWeblogListener(run.runId, run.steps, agentDir)
   }
 
-  const launch = buildNextflowLaunch(
+  const invocation = buildNextflowInvocation(
     manifest,
     plan,
     entry.installedPath,
     absoluteOutDir,
     weblog?.url
   )
-  writeFileSync(join(runDir, 'params.json'), launch.paramsJson, 'utf-8')
+  writeFileSync(join(runDir, 'params.json'), invocation.paramsJson, 'utf-8')
+  writeFileSync(
+    join(runDir, 'nextflow.json'),
+    `${JSON.stringify(nextflowLaunchRecord(resolved.launch), null, 2)}\n`,
+    'utf-8'
+  )
+
+  if (preparedProfile.config) {
+    const configPath = join(runDir, 'conda.config')
+    writeFileSync(configPath, preparedProfile.config, 'utf-8')
+    invocation.args.push('-c', configPath)
+  }
 
   transition(run, agentDir, 'provisioning')
   const running = transition(run, agentDir, 'running', { startedAt: new Date().toISOString() })
@@ -167,8 +220,9 @@ export async function runLocalWrapperExecution(
   const exitCode = await new Promise<number>((resolve) => {
     let child: ChildProcess
     try {
-      child = spawnImpl(launch.command, launch.args, {
+      child = spawnImpl(resolved.launch.command, invocation.args, {
         cwd: runDir,
+        env: preparedProfile.env,
         stdio: ['ignore', 'pipe', 'pipe']
       })
     } catch {

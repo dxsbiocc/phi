@@ -89,6 +89,56 @@ interface PreparedEnvironment {
   ready?: EnsureEnvironmentResult
 }
 
+export interface LinkScriptFailure {
+  action: 'pre-link' | 'post-link' | 'pre-unlink'
+  packageName: string
+  detail: string
+}
+
+const LINK_SCRIPT_START =
+  /^\s*warning\s+libmamba\s+Executing (pre-link|post-link|pre-unlink) script for package '([^']+)'\.\s*$/
+const LIBMAMBA_LOG_LINE = /^\s*(?:trace|debug|info|warning|error|critical)\s+libmamba\b/
+const SCRIPT_FAILURE_PATTERNS = [
+  /:\s*line \d+:\s*(.+?: command not found)\s*$/,
+  /:\s*line \d+:\s*(.+?: Permission denied)\s*$/,
+  /(.+?: syntax error(?: near unexpected token.*)?)\s*$/,
+  /(.+?: unbound variable)\s*$/,
+  /(.+?: Bad substitution)\s*$/,
+  /(.+? is not recognized as an internal or external command.*)\s*$/,
+  /(The system cannot find the (?:file|path) specified\.?)\s*$/i
+]
+
+// "No such file or directory" is deliberately not a failure: scripts commonly remove or
+// probe paths that may be absent and carry on.
+/**
+ * micromamba 2.9.0 logs link-script execution but can still exit zero when the
+ * script's shell exits nonzero. Keep detection scoped to output following that
+ * marker so unrelated transaction warnings remain warnings.
+ */
+export function linkScriptFailureFromOutput(output: string): LinkScriptFailure | undefined {
+  let active: Omit<LinkScriptFailure, 'detail'> | undefined
+  for (const line of output.split(/\r?\n/)) {
+    const started = line.match(LINK_SCRIPT_START)
+    if (started) {
+      active = {
+        action: started[1] as LinkScriptFailure['action'],
+        packageName: started[2]
+      }
+      continue
+    }
+    if (!active) continue
+    if (LIBMAMBA_LOG_LINE.test(line)) {
+      active = undefined
+      continue
+    }
+    for (const pattern of SCRIPT_FAILURE_PATTERNS) {
+      const failure = line.match(pattern)
+      if (failure) return { ...active, detail: failure[1].trim() }
+    }
+  }
+  return undefined
+}
+
 function errorCode(error: unknown): string | undefined {
   if (error instanceof Error && 'code' in error) return String(error.code)
   return undefined
@@ -278,6 +328,13 @@ async function createFromLock(
       cacheLock.release()
     }
     if (input.signal?.aborted || result.code === null) throw new Error('environment build aborted')
+    const scriptFailure =
+      linkScriptFailureFromOutput(result.stderr) ?? linkScriptFailureFromOutput(result.stdout)
+    if (scriptFailure) {
+      throw new Error(
+        `micromamba ${scriptFailure.action} script failed for package '${scriptFailure.packageName}': ${scriptFailure.detail}`
+      )
+    }
     if (result.code !== 0) {
       const detail = (result.stderr.trim() || result.stdout.trim()).split('\n')[0]
       throw new Error(

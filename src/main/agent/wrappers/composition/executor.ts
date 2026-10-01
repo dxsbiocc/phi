@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import type { WrapperOutputRecord } from '../types'
-import { condaProfileSetup, prepareCondaProfile, withCondaProfileEnv } from './conda-profile'
+import { prepareNextflowProfile } from './conda-profile'
 import {
   resolveNextflowLaunch,
   type NextflowLaunch,
@@ -137,8 +137,7 @@ export function startWrapperComposition(
 
   const { launch } = options
   // Built before anything is written, so a missing micromamba throws with nothing to clean up.
-  const conda = profile === 'conda' ? condaProfileSetup(launch.runtimeRoot) : undefined
-  if (conda) prepareCondaProfile(conda, launch.runtimeRoot)
+  const preparedProfile = prepareNextflowProfile(profile, launch.runtimeRoot, launch.env)
   const defaultParams = JSON.parse(
     readFileSync(join(wrapperDir, 'params.json'), 'utf-8')
   ) as Record<string, unknown>
@@ -151,12 +150,12 @@ export function startWrapperComposition(
   const componentDir = dirname(wrapperDir)
   // The launch env already sets NXF_DISABLE_CHECK_LATEST: the launcher otherwise curls
   // nextflow.io for a newer version, with no timeout.
-  const env = conda ? withCondaProfileEnv(launch.env, conda) : launch.env
+  const env = preparedProfile.env
 
   const args = ['run', 'wrapper/main.nf', '-params-file', paramsFilePath, '-profile', profile]
-  if (conda) {
+  if (preparedProfile.config) {
     const configPath = join(tmpDir, 'conda.config')
-    writeFileSync(configPath, conda.config)
+    writeFileSync(configPath, preparedProfile.config)
     args.push('-c', configPath)
   }
   const resourceConfig = buildResourceConfig(options.resources)

@@ -3,27 +3,26 @@ import { join } from 'node:path'
 import type { WrapperManifest } from './manifest-types'
 import type { WrapperRunPlan } from './types'
 
-export interface NextflowLaunchPlan {
-  command: string
+export interface NextflowInvocation {
   args: string[]
   /** Written to `params.json` in the run directory before launch. */
   paramsJson: string
 }
 
 /**
- * Builds the Nextflow invocation for one plan — pure and engine-specific,
- * so it's reusable by a Phase 2 remote executor without duplicating this
- * logic. Never generates workflow code, only the fixed entrypoint's launch
- * arguments (see technical design's Execution Model: "Workflow code is
- * fixed").
+ * Builds the arguments for one plan — pure and engine-specific. Launcher
+ * resolution is deliberately separate so local execution always uses an
+ * absolute managed/explicit-host command while remote executors keep their
+ * own command construction. Never generates workflow code, only the fixed
+ * entrypoint's arguments (see technical design's Execution Model).
  */
-export function buildNextflowLaunch(
+export function buildNextflowInvocation(
   manifest: WrapperManifest,
   plan: WrapperRunPlan,
   installedPath: string,
   absoluteOutDir: string,
   weblogUrl?: string
-): NextflowLaunchPlan {
+): NextflowInvocation {
   const entrypointPath = join(installedPath, manifest.engine.entrypoint)
   const args = [
     'run',
@@ -43,7 +42,6 @@ export function buildNextflowLaunch(
   }
 
   return {
-    command: 'nextflow',
     args,
     paramsJson: JSON.stringify(params, null, 2)
   }

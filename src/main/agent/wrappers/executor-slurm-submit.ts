@@ -63,7 +63,7 @@ export interface RunSlurmWrapperOptions {
 // --- remote-specific pieces --------------------------------------------------
 
 /**
- * Remote counterpart to `executor-nextflow.ts`'s `buildNextflowLaunch` —
+ * Remote counterpart to `executor-nextflow.ts`'s `buildNextflowInvocation` —
  * same shape, but paths are joined with `/` (`joinRemote`) instead of
  * `node:path`'s `join`, which would emit `\`-separated paths on a Windows
  * Phi host for what is always a POSIX remote path. No `weblogUrl` param:
