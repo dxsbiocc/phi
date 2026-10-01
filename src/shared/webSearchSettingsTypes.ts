@@ -5,6 +5,7 @@ export interface WebSearchProviderOption {
   access: 'free' | 'metered' | 'self-hosted'
   auth: 'none' | 'optional' | 'api-key' | 'oauth-or-key' | 'oauth' | 'endpoint'
   apiKeyEnv?: string
+  apiKeyUrl?: string
   apiKeyConfigured?: boolean
   apiKeyStored?: boolean
   oauthConfigured?: boolean

@@ -9,18 +9,23 @@ import type {
   WebSearchSettingsPatch
 } from '../../shared/webSearchSettingsTypes'
 
-type ProviderDetail = Pick<WebSearchProviderOption, 'access' | 'auth' | 'apiKeyEnv'> & {
+type ProviderDetail = Pick<
+  WebSearchProviderOption,
+  'access' | 'auth' | 'apiKeyEnv' | 'apiKeyUrl'
+> & {
   apiKeyAuthId?: string
   oauthAuthIds?: readonly string[]
 }
 
 // Keep this exhaustive against OMP's provider IDs. Pricing is deliberately a broad
 // access class: API plans may include free credits and change independently of Phi.
+// apiKeyUrl points at each provider's console page for creating a key.
 export const WEB_SEARCH_PROVIDER_DETAILS = {
   perplexity: {
     access: 'free',
     auth: 'optional',
     apiKeyEnv: 'PERPLEXITY_API_KEY',
+    apiKeyUrl: 'https://www.perplexity.ai/settings/api',
     apiKeyAuthId: 'perplexity',
     oauthAuthIds: ['perplexity']
   },
@@ -28,6 +33,7 @@ export const WEB_SEARCH_PROVIDER_DETAILS = {
     access: 'metered',
     auth: 'oauth-or-key',
     apiKeyEnv: 'GEMINI_API_KEY',
+    apiKeyUrl: 'https://aistudio.google.com/apikey',
     apiKeyAuthId: 'google',
     oauthAuthIds: ['google-gemini-cli', 'google-antigravity']
   },
@@ -35,6 +41,7 @@ export const WEB_SEARCH_PROVIDER_DETAILS = {
     access: 'metered',
     auth: 'oauth-or-key',
     apiKeyEnv: 'ANTHROPIC_API_KEY',
+    apiKeyUrl: 'https://console.anthropic.com/settings/keys',
     apiKeyAuthId: 'anthropic',
     oauthAuthIds: ['anthropic']
   },
@@ -43,36 +50,71 @@ export const WEB_SEARCH_PROVIDER_DETAILS = {
     access: 'metered',
     auth: 'oauth-or-key',
     apiKeyEnv: 'XAI_API_KEY',
+    apiKeyUrl: 'https://console.x.ai',
     apiKeyAuthId: 'xai',
     oauthAuthIds: ['xai-oauth']
   },
-  zai: { access: 'metered', auth: 'api-key', apiKeyEnv: 'ZAI_API_KEY', apiKeyAuthId: 'zai' },
-  exa: { access: 'free', auth: 'optional', apiKeyEnv: 'EXA_API_KEY', apiKeyAuthId: 'exa' },
+  zai: {
+    access: 'metered',
+    auth: 'api-key',
+    apiKeyEnv: 'ZAI_API_KEY',
+    apiKeyUrl: 'https://z.ai/manage-apikey/apikey-list',
+    apiKeyAuthId: 'zai'
+  },
+  exa: {
+    access: 'free',
+    auth: 'optional',
+    apiKeyEnv: 'EXA_API_KEY',
+    apiKeyUrl: 'https://dashboard.exa.ai/api-keys',
+    apiKeyAuthId: 'exa'
+  },
   tinyfish: {
     access: 'metered',
     auth: 'api-key',
     apiKeyEnv: 'TINYFISH_API_KEY',
+    apiKeyUrl: 'https://agent.tinyfish.ai/api-keys',
     apiKeyAuthId: 'tinyfish'
   },
-  jina: { access: 'metered', auth: 'api-key', apiKeyEnv: 'JINA_API_KEY', apiKeyAuthId: 'jina' },
-  kagi: { access: 'metered', auth: 'api-key', apiKeyEnv: 'KAGI_API_KEY', apiKeyAuthId: 'kagi' },
+  jina: {
+    access: 'metered',
+    auth: 'api-key',
+    apiKeyEnv: 'JINA_API_KEY',
+    apiKeyUrl: 'https://jina.ai/api-dashboard',
+    apiKeyAuthId: 'jina'
+  },
+  kagi: {
+    access: 'metered',
+    auth: 'api-key',
+    apiKeyEnv: 'KAGI_API_KEY',
+    apiKeyUrl: 'https://kagi.com/settings?p=api',
+    apiKeyAuthId: 'kagi'
+  },
   tavily: {
     access: 'metered',
     auth: 'api-key',
     apiKeyEnv: 'TAVILY_API_KEY',
+    apiKeyUrl: 'https://app.tavily.com/home',
     apiKeyAuthId: 'tavily'
   },
   firecrawl: {
     access: 'free',
     auth: 'optional',
     apiKeyEnv: 'FIRECRAWL_API_KEY',
+    apiKeyUrl: 'https://www.firecrawl.dev/app/api-keys',
     apiKeyAuthId: 'firecrawl'
   },
-  brave: { access: 'metered', auth: 'api-key', apiKeyEnv: 'BRAVE_API_KEY', apiKeyAuthId: 'brave' },
+  brave: {
+    access: 'metered',
+    auth: 'api-key',
+    apiKeyEnv: 'BRAVE_API_KEY',
+    apiKeyUrl: 'https://api.search.brave.com/app/keys',
+    apiKeyAuthId: 'brave'
+  },
   kimi: {
     access: 'metered',
     auth: 'oauth-or-key',
     apiKeyEnv: 'KIMI_SEARCH_API_KEY',
+    apiKeyUrl: 'https://www.kimi.com/code/console',
     apiKeyAuthId: 'kimi-code',
     oauthAuthIds: ['kimi-code']
   },
@@ -80,12 +122,14 @@ export const WEB_SEARCH_PROVIDER_DETAILS = {
     access: 'metered',
     auth: 'api-key',
     apiKeyEnv: 'PARALLEL_API_KEY',
+    apiKeyUrl: 'https://platform.parallel.ai',
     apiKeyAuthId: 'parallel'
   },
   synthetic: {
     access: 'metered',
     auth: 'api-key',
     apiKeyEnv: 'SYNTHETIC_API_KEY',
+    apiKeyUrl: 'https://synthetic.new',
     apiKeyAuthId: 'synthetic'
   },
   searxng: { access: 'self-hosted', auth: 'endpoint' },
@@ -139,6 +183,7 @@ export function webSearchSettingsFromValues(
         access: detail.access,
         auth: detail.auth,
         apiKeyEnv: detail.apiKeyEnv,
+        apiKeyUrl: detail.apiKeyUrl,
         ...authStatus[value]
       }
     }),
