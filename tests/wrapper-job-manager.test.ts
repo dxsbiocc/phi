@@ -224,10 +224,12 @@ test('wait returns the still-running status when the timeout passes first', asyn
     const m = manager(sb, { killGraceMs: 300 })
     const { runId } = await startJob(m, sb)
 
+    // The hung pipeline never ends, so wait settling at all proves its timeout fired; load
+    // can only delay that, never bring it early, so the lower bound is the real check.
     const began = Date.now()
-    const status = await m.wait(runId, 300)
+    const status = await settlesWithin(m.wait(runId, 300), 'wait must give up at its timeout')
     assert.equal(status?.state, 'running')
-    assert.ok(Date.now() - began >= 250 && Date.now() - began < 3000)
+    assert.ok(Date.now() - began >= 250)
 
     await m.cancel(runId)
     await m.wait(runId, 10_000)
