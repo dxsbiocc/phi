@@ -389,8 +389,8 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
     MuiTabs: {
       styleOverrides: {
         indicator: {
-          height: 4,
-          borderRadius: 4,
+          height: 2,
+          borderRadius: 2,
           backgroundColor: inkPrimary
         }
       }
@@ -401,9 +401,9 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
           textTransform: 'none',
           fontSize: pxToRem(14),
           fontWeight: 600,
-          minHeight: 48,
+          minHeight: 40,
           minWidth: 'auto',
-          padding: '12px 0',
+          padding: '10px 0',
           '&:not(:last-of-type)': { marginRight: 24 },
           '&.Mui-selected': { color: inkPrimary }
         }
