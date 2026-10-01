@@ -296,7 +296,7 @@ test('published schemas match the runtime constants', () => {
   ) as unknown
   assert.deepEqual(spec, environmentSpecSchema)
   assert.deepEqual(metadata, envMetadataSchema)
-  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.2.0')
+  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.2.1')
 })
 
 test('env.json metadata matching the contract validates', () => {
@@ -374,5 +374,13 @@ test('skill scope envIds carry the skill name as owner (contract 1.1.0)', () => 
   assert.throws(() =>
     computeEnvId({ scope: 'skill', name: 'scanpy', platform: 'darwin-arm64', lockText })
   )
-  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.2.0')
+  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.2.1')
+})
+
+test('a phi environment named phi-<x> does not repeat the prefix in its id', () => {
+  const base = { scope: 'phi' as const, platform: 'darwin-arm64' as const, lockText: '@EXPLICIT\n' }
+  const official = computeEnvId({ ...base, name: 'phi-python' })
+  const plain = computeEnvId({ ...base, name: 'python' })
+  assert.match(official, /^phi-python-[0-9a-f]{12}$/)
+  assert.equal(official, plain)
 })

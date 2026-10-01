@@ -9,7 +9,7 @@ import { environmentSpecSchema } from './schemas'
 export { PHI_PLATFORMS, condaSubdir, currentPlatform, findPlatform } from './platform'
 export type { PhiPlatform } from './platform'
 
-export const ENVIRONMENT_CONTRACT_VERSION = '1.2.0'
+export const ENVIRONMENT_CONTRACT_VERSION = '1.2.1'
 
 const ENV_NAME = /^[a-z][a-z0-9-]{0,62}$/
 
@@ -266,7 +266,12 @@ export function computeEnvId(input: EnvIdInput): string {
     sourcePackages: (input.sourcePackages ?? []).map(canonicalSourcePackage)
   })
   const hash12 = createHash('sha256').update(canonical, 'utf8').digest('hex').slice(0, 12)
-  if (input.scope === 'phi') return `phi-${input.name}-${hash12}`
+  // Official specs are named `phi-python`, `phi-r`, …: the id is `phi-python-<hash12>`,
+  // not `phi-phi-python-…` (environment contract § envId).
+  if (input.scope === 'phi') {
+    const name = input.name.startsWith('phi-') ? input.name.slice(4) : input.name
+    return `phi-${name}-${hash12}`
+  }
   return `${input.scope}-${input.owner}-${input.name}-${hash12}`
 }
 
