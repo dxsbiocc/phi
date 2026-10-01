@@ -182,7 +182,7 @@ function skillToggleDisabledReason(skill: SkillSummary): string | null {
 function skillDeleteDisabledReason(skill: SkillSummary): string | null {
   const category = skillSourceCategory(skill)
   if (category === 'system') return '系统内置技能不可卸载'
-  if (category === 'third-party') return '第三方技能请通过插件管理卸载'
+  if (category === 'third-party') return '第三方技能请通过开发者扩展管理卸载'
   return null
 }
 

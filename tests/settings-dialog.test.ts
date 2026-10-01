@@ -209,6 +209,16 @@ test('settings dialog explains diagnostics as a privacy-safe support summary', (
   assert.doesNotMatch(markup, /添加 Provider/)
 })
 
+test('settings dialog exposes developer extensions under advanced settings', () => {
+  const markup = renderSettingsDialog({ category: 'advanced' })
+
+  assert.match(markup, />高级</)
+  assert.match(markup, /开发者扩展/)
+  assert.match(markup, /Pi runtime/)
+  assert.match(markup, /没有找到开发者扩展/)
+  assert.doesNotMatch(markup, /没有找到插件/)
+})
+
 test('settings dialog exposes default proxy mode in general settings', () => {
   const markup = renderSettingsDialog({ category: 'general', defaultProxyMode: 'enabled' })
 

@@ -172,7 +172,7 @@ export type AppActivityBarProps = {
   onSelectWorkspaceView: (view: 'chat' | 'projects') => void
   onSelectWorkspaceSidebarMode: (mode: WorkspaceSidebarMode) => void
   refreshAnalysisJupyterRuntimeStatus: () => Promise<void>
-  refreshPlugins: () => Promise<void>
+  onOpenPhiPlugins: () => void
   refreshSkills: () => Promise<void>
   refreshMcpServers: () => Promise<void>
   setIsSettingsOpen: (open: boolean) => void
@@ -206,6 +206,7 @@ export type AppActivityBarProps = {
 }
 
 function AppActivityBarImpl({
+  activeView,
   isWorkspaceSidebarModeExpanded,
   shouldUseWorkspaceSidebarPreview,
   openWorkspaceSidebarPreview,
@@ -213,7 +214,7 @@ function AppActivityBarImpl({
   onSelectWorkspaceView,
   onSelectWorkspaceSidebarMode,
   refreshAnalysisJupyterRuntimeStatus,
-  refreshPlugins,
+  onOpenPhiPlugins,
   refreshSkills,
   refreshMcpServers,
   setIsSettingsOpen,
@@ -351,12 +352,9 @@ function AppActivityBarImpl({
         <Tooltip title="插件" placement="right">
           <IconButton
             size="small"
-            color={isWorkspaceSidebarModeExpanded('plugins') ? 'primary' : 'default'}
-            sx={activityBarButtonSx(isWorkspaceSidebarModeExpanded('plugins'))}
-            onClick={() => {
-              onSelectWorkspaceSidebarMode('plugins')
-              void refreshPlugins()
-            }}
+            color={activeView === 'plugins' ? 'primary' : 'default'}
+            sx={activityBarButtonSx(activeView === 'plugins')}
+            onClick={onOpenPhiPlugins}
           >
             <NavPluginsIcon fontSize="small" />
           </IconButton>

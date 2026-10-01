@@ -71,7 +71,11 @@ import type {
   EnvironmentToolId
 } from '../shared/environmentTypes'
 import type { EnvironmentBuild } from '../shared/environmentBuildTypes'
-import type { PhiPluginListItem, PhiPluginMutationResult } from '../shared/phiPluginTypes'
+import type {
+  PhiPluginInstallPreview,
+  PhiPluginListItem,
+  PhiPluginMutationResult
+} from '../shared/phiPluginTypes'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
@@ -899,6 +903,8 @@ type RendererAuthApi = {
   installPlugin: (source: string) => Promise<PluginCatalogItem[]>
   removePlugin: (source: string) => Promise<PluginCatalogItem[]>
   listPhiPlugins: () => Promise<PhiPluginListItem[]>
+  pickPhiPluginDirectory: () => Promise<string | null>
+  previewPhiPluginDirectory: (path: string) => Promise<PhiPluginInstallPreview>
   installPhiPluginFromDirectory: (path: string) => Promise<PhiPluginMutationResult>
   setPhiPluginEnabled: (id: string, enabled: boolean) => Promise<PhiPluginMutationResult>
   uninstallPhiPlugin: (id: string) => Promise<PhiPluginMutationResult>
@@ -1406,6 +1412,10 @@ const api: RendererAuthApi = {
   removePlugin: (source: string): Promise<PluginCatalogItem[]> =>
     ipcRenderer.invoke('plugins:remove', source),
   listPhiPlugins: (): Promise<PhiPluginListItem[]> => ipcRenderer.invoke('phiPlugins:list'),
+  pickPhiPluginDirectory: (): Promise<string | null> =>
+    ipcRenderer.invoke('phiPlugins:pickDirectory'),
+  previewPhiPluginDirectory: (path: string): Promise<PhiPluginInstallPreview> =>
+    ipcRenderer.invoke('phiPlugins:previewDirectory', path),
   installPhiPluginFromDirectory: (path: string): Promise<PhiPluginMutationResult> =>
     ipcRenderer.invoke('phiPlugins:installFromDirectory', path),
   setPhiPluginEnabled: (id: string, enabled: boolean): Promise<PhiPluginMutationResult> =>

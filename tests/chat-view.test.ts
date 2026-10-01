@@ -285,7 +285,7 @@ test('chat view formats add-menu references for prompt input', () => {
   )
   assert.equal(
     formatPluginPromptReference({ name: 'Bio Plugin', source: 'npm:@phi/bio' }),
-    '引用插件：Bio Plugin（npm:@phi/bio）'
+    '引用开发者扩展：Bio Plugin（npm:@phi/bio）'
   )
   assert.equal(
     appendInputReference('先分析数据', '$omics-visualization'),
@@ -1639,7 +1639,10 @@ test('chat view shows current permission mode in the composer', () => {
 test('chat view shows add-context control before permissions', () => {
   const markup = renderChat([])
 
-  assert.match(markup, /aria-label="添加文件、智能体、Skill 或插件"[\s\S]*aria-label="选择权限模式/)
+  assert.match(
+    markup,
+    /aria-label="添加文件、智能体、Skill 或开发者扩展"[\s\S]*aria-label="选择权限模式/
+  )
 })
 
 test('chat view uses the suggested next action as a passive placeholder', () => {

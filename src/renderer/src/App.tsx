@@ -38,8 +38,8 @@ import { SessionSearchPanel } from './features/session-search/SessionSearchPanel
 import { BackgroundJobsPanel } from './features/jobs/BackgroundJobsPanel'
 import { useEnvironmentBuildNotices } from './features/jobs/hooks/useEnvironmentBuildNotices'
 import type { LocalPathKind } from './components/MarkdownContent'
-import { PluginDetail } from './features/plugin/PluginView'
-import { usePluginCatalog } from './features/plugin/hooks/usePluginCatalog'
+import { useDeveloperExtensionCatalog } from './features/developer-extensions/hooks/useDeveloperExtensionCatalog'
+import PhiPluginsView from './features/phi-plugin/PhiPluginsView'
 import { WrapperDetail } from './features/wrapper/WrapperView'
 import { useWrapperCatalog } from './features/wrapper/hooks/useWrapperCatalog'
 import {
@@ -161,7 +161,6 @@ import type {
   PhiAppSettings,
   PhiAppSettingsPatch,
   PermissionMode,
-  PluginCatalogItem,
   PromptTarget,
   Project,
   ProxyTransportStatus,
@@ -737,17 +736,7 @@ function App(): React.JSX.Element {
   const getActiveCwd = useCallback(() => useSessionStore.getState().activeCwd, [])
   const getActiveProjectId = useCallback(() => useSessionStore.getState().activeProjectId, [])
 
-  const {
-    plugins,
-    activePluginId,
-    isLoadingPlugins,
-    busyPluginSource,
-    pluginOperationError,
-    setActivePluginId,
-    refreshPlugins,
-    installPlugin: onInstallPlugin,
-    removePlugin: onRemovePlugin
-  } = usePluginCatalog()
+  const { extensions: plugins, refreshExtensions: refreshPlugins } = useDeveloperExtensionCatalog()
   const {
     skills,
     promptAgents,
@@ -1937,9 +1926,6 @@ function App(): React.JSX.Element {
       if (workspaceSidebarMode === 'runtime') {
         void refreshAnalysisJupyterRuntimeStatus()
       }
-      if (workspaceSidebarMode === 'plugins') {
-        void refreshPlugins()
-      }
       if (workspaceSidebarMode === 'skills') {
         void refreshSkills()
       }
@@ -1960,7 +1946,6 @@ function App(): React.JSX.Element {
     refreshAnalysisJupyterStatus,
     refreshAnalysisNotebooks,
     refreshMcpServers,
-    refreshPlugins,
     refreshProjects,
     refreshSkills,
     workspaceSidebarMode
@@ -2534,10 +2519,8 @@ function App(): React.JSX.Element {
   const onOpenInputAddMenu = useCallback((): void => {
     void refreshSkills()
     void refreshPromptAgents()
-    if (plugins.length === 0) {
-      void refreshPlugins()
-    }
-  }, [plugins.length, refreshPlugins, refreshPromptAgents, refreshSkills])
+    void refreshPlugins()
+  }, [refreshPlugins, refreshPromptAgents, refreshSkills])
 
   const onPickInputFiles = useCallback(async (): Promise<string[]> => {
     try {
@@ -3245,10 +3228,8 @@ function App(): React.JSX.Element {
       }
 
       setWorkspaceSidebarMode(workspaceResourceKindToSidebarMode(tab.kind))
-      setIsSidebarOpen(true)
-      if (tab.kind === 'plugins') {
-        setActivePluginId(tab.itemId)
-      } else if (tab.kind === 'skills') {
+      setIsSidebarOpen(tab.kind !== 'plugins')
+      if (tab.kind === 'skills') {
         setActiveSkillId(tab.itemId)
       } else if (tab.kind === 'mcp') {
         setActiveMcpServerId(tab.itemId)
@@ -3263,7 +3244,6 @@ function App(): React.JSX.Element {
       onSelectSession,
       onSelectWorkspaceFileTab,
       setActiveMcpServerId,
-      setActivePluginId,
       setActiveSkillId,
       setSelectedWrapperId
     ]
@@ -3281,18 +3261,13 @@ function App(): React.JSX.Element {
     [selectWorkspaceTab, upsertWorkspaceTab]
   )
 
-  const onOpenPluginTab = useCallback(
-    (plugin: PluginCatalogItem): void => {
-      setActivePluginId(plugin.id)
-      openWorkspaceResourceTab({
-        kind: 'plugins',
-        itemId: plugin.id,
-        title: plugin.name,
-        subtitle: plugin.source
-      })
-    },
-    [openWorkspaceResourceTab, setActivePluginId]
-  )
+  const onOpenPhiPlugins = useCallback((): void => {
+    openWorkspaceResourceTab({
+      kind: 'plugins',
+      itemId: 'installed',
+      title: '插件'
+    })
+  }, [openWorkspaceResourceTab])
 
   const onOpenSkillTab = useCallback(
     (skill: SkillSummary): void => {
@@ -3420,9 +3395,7 @@ function App(): React.JSX.Element {
       // bar* wouldn't otherwise clear its sidebar highlight even when the
       // tab wasn't the active one. Without this, the sidebar keeps showing
       // an item selected indefinitely after its last tab closes.
-      if (tab.kind === 'plugins' && activePluginId === tab.itemId) {
-        setActivePluginId(null)
-      } else if (tab.kind === 'skills' && activeSkillId === tab.itemId) {
+      if (tab.kind === 'skills' && activeSkillId === tab.itemId) {
         setActiveSkillId(null)
       } else if (tab.kind === 'mcp' && activeMcpServerId === tab.itemId) {
         setActiveMcpServerId(null)
@@ -3442,7 +3415,6 @@ function App(): React.JSX.Element {
     },
     [
       activeMcpServerId,
-      activePluginId,
       activeSkillId,
       effectiveActiveWorkspaceTabKey,
       navigateToView,
@@ -3450,7 +3422,6 @@ function App(): React.JSX.Element {
       selectWorkspaceTab,
       selectedWrapperId,
       setActiveMcpServerId,
-      setActivePluginId,
       setActiveSkillId,
       setSelectedWrapperId,
       visibleWorkspaceTabs
@@ -3541,10 +3512,6 @@ function App(): React.JSX.Element {
     void acknowledgeActiveSession()
   }, [acknowledgeActiveSession])
 
-  const activeResourcePlugin =
-    activeWorkspaceResourceTab?.kind === 'plugins'
-      ? (plugins.find((plugin) => plugin.id === activeWorkspaceResourceTab.itemId) ?? null)
-      : null
   const activeResourceSkill =
     activeWorkspaceResourceTab?.kind === 'skills'
       ? (skills.find((skill) => skill.id === activeWorkspaceResourceTab.itemId) ?? null)
@@ -3556,17 +3523,7 @@ function App(): React.JSX.Element {
 
   const activeWorkspaceResourceContent = activeWorkspaceResourceTab ? (
     activeWorkspaceResourceTab.kind === 'plugins' ? (
-      <PluginDetail
-        selectedPlugin={activeResourcePlugin}
-        busySource={busyPluginSource}
-        operationError={pluginOperationError}
-        onInstall={(source) => {
-          void onInstallPlugin(source)
-        }}
-        onRemove={(source) => {
-          void onRemovePlugin(source)
-        }}
-      />
+      <PhiPluginsView />
     ) : activeWorkspaceResourceTab.kind === 'skills' ? (
       <SkillDetail
         selectedSkill={activeResourceSkill}
@@ -3894,7 +3851,7 @@ function App(): React.JSX.Element {
           onSelectWorkspaceView={onSelectWorkspaceView}
           onSelectWorkspaceSidebarMode={onSelectWorkspaceSidebarMode}
           refreshAnalysisJupyterRuntimeStatus={refreshAnalysisJupyterRuntimeStatus}
-          refreshPlugins={refreshPlugins}
+          onOpenPhiPlugins={onOpenPhiPlugins}
           refreshSkills={refreshSkills}
           refreshMcpServers={refreshMcpServers}
           setIsSettingsOpen={setIsSettingsOpen}
@@ -3956,13 +3913,6 @@ function App(): React.JSX.Element {
           }}
           onStopRuntimeNotebookKernel={(notebookPath) => {
             void onStopRuntimeNotebookSession(notebookPath)
-          }}
-          plugins={plugins}
-          activePluginId={activePluginId}
-          isLoadingPlugins={isLoadingPlugins}
-          onOpenPlugin={onOpenPluginTab}
-          onRefreshPlugins={() => {
-            void refreshPlugins()
           }}
           skills={skills}
           activeSkillId={activeSkillId}

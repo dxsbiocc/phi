@@ -58,7 +58,9 @@ export function isRuntimeSupportedPluginSource(source: string): boolean {
 
 function assertRuntimeSupportedPluginSource(source: string): void {
   if (!isRuntimeSupportedPluginSource(source)) {
-    throw new Error('插件源格式不受支持。请使用 npm 包名、npm: 包名或 runtime 支持的 git: 源。')
+    throw new Error(
+      '开发者扩展源格式不受支持。请使用 npm 包名、npm: 包名或 runtime 支持的 git: 源。'
+    )
   }
 }
 

@@ -20,6 +20,7 @@ import * as lifecycle from '../src/main/agent/session/session-lifecycle'
 import * as notebookDocument from '../src/shared/notebookDocument'
 import * as sessionTitle from '../src/shared/sessionTitle'
 import * as htmlReportPreview from '../src/shared/htmlReportPreview'
+import * as phiPluginProblems from '../src/shared/phiPluginProblems'
 import type { WorkspaceChangeSummary } from '../src/shared/workspaceChangeTypes'
 import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
 import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
@@ -881,6 +882,7 @@ async function harness(
     './file-preview-media': { hoverMediaPreviewType, mediaPreviewType },
     '../shared/wrapperResultTypes': { declaredExternalOutputRoot },
     '../shared/htmlReportPreview': htmlReportPreview,
+    '../shared/phiPluginProblems': phiPluginProblems,
     '../shared/presentedFileTypes': { MAX_PRESENTED_FILES: 4 },
     '../shared/remoteHostProfile': { sshConfigHostId: (alias: string) => `ssh-config:${alias}` },
     './molecule-renderer': {

@@ -508,5 +508,5 @@ export function formatPromptAgentReference(
 export function formatPluginPromptReference(
   plugin: Pick<PluginCatalogItem, 'name' | 'source'>
 ): string {
-  return `引用插件：${plugin.name}（${plugin.source}）`
+  return `引用开发者扩展：${plugin.name}（${plugin.source}）`
 }

@@ -7,6 +7,13 @@ export interface PhiPluginListItem {
   source: 'bundled' | 'local'
   installedAt: string
   directory: string
+  agents: string[]
+  skills: string[]
+  scriptTools: string[]
+  environments: Array<{
+    name: string
+    ref: string
+  }>
 }
 
 export interface PhiPluginProblemView {
@@ -20,5 +27,17 @@ export interface PhiPluginProblemView {
 export interface PhiPluginMutationResult {
   ok: boolean
   plugins: PhiPluginListItem[]
+  problems: PhiPluginProblemView[]
+}
+
+export interface PhiPluginInstallPreview {
+  ok: boolean
+  path: string
+  action?: 'install' | 'upgrade' | 'same-or-older'
+  id?: string
+  version?: string
+  title?: string
+  summary?: string
+  installedVersion?: string
   problems: PhiPluginProblemView[]
 }

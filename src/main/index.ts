@@ -10,10 +10,12 @@ import type {
 } from '../shared/contextUsageTypes'
 import type { WrapperRunFinishedEvent } from '../shared/wrapperRunNotice'
 import type {
+  PhiPluginInstallPreview,
   PhiPluginListItem,
   PhiPluginMutationResult,
   PhiPluginProblemView
 } from '../shared/phiPluginTypes'
+import { localizePhiPluginProblemMessage } from '../shared/phiPluginProblems'
 import { declaredExternalOutputRoot } from '../shared/wrapperResultTypes'
 import {
   hoverMediaPreviewType,
@@ -192,7 +194,7 @@ import {
 } from './agent/plugins/loader'
 import { validatePlugin, type PluginProblem } from './agent/plugins/validate'
 import { addRemoteMcpConnector, removeRemoteMcpConnector } from './agent/mcp-connectors'
-import { validateSkill } from './agent/content/skill'
+import { scriptToolName, validateSkill } from './agent/content/skill'
 import {
   deleteSkill,
   listGlobalMcpServers,
@@ -898,7 +900,17 @@ function phiPluginListItems(): PhiPluginListItem[] {
     enabled: plugin.enabled,
     source: plugin.source,
     installedAt: plugin.installedAt,
-    directory: plugin.dir
+    directory: plugin.dir,
+    agents: plugin.agents.map((agent) => agent.name).sort(),
+    skills: plugin.skills.map((skill) => skill.name).sort(),
+    scriptTools: plugin.skills
+      .flatMap((skill) =>
+        (skill.phi?.scripts ?? []).map((script) => scriptToolName(plugin.toolPrefix, script.name))
+      )
+      .sort(),
+    environments: Object.keys(plugin.environments)
+      .sort()
+      .map((name) => ({ name, ref: `plugin:${name}` }))
   }))
 }
 
@@ -906,7 +918,7 @@ function phiPluginProblemView(problem: PluginProblem): PhiPluginProblemView {
   const label = problem.level === 'error' ? '错误' : '警告'
   return {
     ...problem,
-    displayMessage: `${label}（${problem.path}）：${problem.message}`
+    displayMessage: `${label}（${problem.path}）：${localizePhiPluginProblemMessage(problem.message)}`
   }
 }
 
@@ -924,6 +936,32 @@ function failedPhiPluginMutation(path: string, message: string): PhiPluginMutati
     errors: [{ level: 'error', path, message }],
     warnings: []
   })
+}
+
+function phiPluginInstallPreview(path: string): PhiPluginInstallPreview {
+  const validation = validatePlugin(path)
+  const problems = [...validation.errors, ...validation.warnings].map(phiPluginProblemView)
+  if (!validation.ok || !validation.plugin) return { ok: false, path, problems }
+
+  const { manifest } = validation.plugin
+  const existing = listInstalledPlugins({ agentDir: AGENT_DIR }).find(
+    (plugin) => plugin.id === manifest.id
+  )
+  return {
+    ok: true,
+    path,
+    action: !existing
+      ? 'install'
+      : semver.gt(manifest.version, existing.version)
+        ? 'upgrade'
+        : 'same-or-older',
+    id: manifest.id,
+    version: manifest.version,
+    title: manifest.title,
+    summary: manifest.summary,
+    ...(existing ? { installedVersion: existing.version } : {}),
+    problems
+  }
 }
 
 async function installedPluginNamespace(): Promise<PluginNamespace> {
@@ -7411,6 +7449,44 @@ app.whenReady().then(async () => {
     }
   })
   ipcMain.handle('phiPlugins:list', async () => phiPluginListItems())
+  ipcMain.handle('phiPlugins:pickDirectory', async () => {
+    const window = getActiveWindow()
+    const options: Electron.OpenDialogOptions = {
+      title: '选择 Phi 插件目录',
+      properties: ['openDirectory']
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+  ipcMain.handle('phiPlugins:previewDirectory', async (_, path: unknown) => {
+    if (typeof path !== 'string' || path.trim().length === 0) {
+      return {
+        ok: false,
+        path: '',
+        problems: [
+          phiPluginProblemView({ level: 'error', path: 'path', message: '请选择有效的插件目录' })
+        ]
+      } satisfies PhiPluginInstallPreview
+    }
+    try {
+      return phiPluginInstallPreview(path)
+    } catch (error) {
+      rememberErrorSummary(error)
+      return {
+        ok: false,
+        path,
+        problems: [
+          phiPluginProblemView({
+            level: 'error',
+            path: 'preview',
+            message: `插件检查失败：${error instanceof Error ? error.message : String(error)}`
+          })
+        ]
+      } satisfies PhiPluginInstallPreview
+    }
+  })
   ipcMain.handle('phiPlugins:installFromDirectory', async (_, path: unknown) => {
     if (typeof path !== 'string' || path.trim().length === 0) {
       return failedPhiPluginMutation('path', '请选择有效的插件目录')

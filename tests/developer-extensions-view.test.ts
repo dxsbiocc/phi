@@ -3,14 +3,17 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
-import PluginView, { PluginSidebar } from '../src/renderer/src/features/plugin/PluginView'
+import {
+  DeveloperExtensionsManager,
+  DeveloperExtensionsSidebar
+} from '../src/renderer/src/features/developer-extensions/DeveloperExtensionsView'
 import type { PluginCatalogItem } from '../src/renderer/src/types'
 
-const plugin: PluginCatalogItem = {
+const extension: PluginCatalogItem = {
   id: 'plugin-1',
   name: '@phi/example',
   source: 'npm:@phi/example',
-  description: 'Example plugin',
+  description: 'Example developer extension',
   author: 'Phi',
   kind: 'package',
   homepageUrl: 'https://pi.dev/packages/%40phi/example',
@@ -18,11 +21,11 @@ const plugin: PluginCatalogItem = {
   installed: false
 }
 
-function renderPluginView(
+function renderDeveloperExtensionsManager(
   operationError: string | null,
-  pluginOverride: Partial<PluginCatalogItem> = {}
+  extensionOverride: Partial<PluginCatalogItem> = {}
 ): string {
-  const selectedPlugin = { ...plugin, ...pluginOverride }
+  const selectedExtension = { ...extension, ...extensionOverride }
   const theme = createTheme({
     components: { MuiDialog: { defaultProps: { disablePortal: true } } }
   })
@@ -30,32 +33,31 @@ function renderPluginView(
     createElement(
       ThemeProvider,
       { theme },
-      createElement(PluginView, {
-        plugins: [selectedPlugin],
+      createElement(DeveloperExtensionsManager, {
+        extensions: [selectedExtension],
         isLoading: false,
-        activePluginId: selectedPlugin.id,
+        activeExtensionId: selectedExtension.id,
         busySource: null,
         operationError,
-        sidebarWidth: 320,
-        onSelectPlugin: () => undefined,
+        onSelectExtension: () => undefined,
         onInstall: () => undefined,
         onRemove: () => undefined,
-        onRefresh: () => undefined,
-        onStartSidebarResize: () => undefined
+        onRefresh: () => undefined
       })
     )
   )
 }
 
-test('plugin view keeps operation failures visible in the selected plugin detail', () => {
-  const markup = renderPluginView('install failed')
+test('developer extensions view keeps operation failures visible in the selected detail', () => {
+  const markup = renderDeveloperExtensionsManager('install failed')
   assert.match(markup, /install failed/)
   assert.match(markup, /npm:@phi\/example/)
   assert.match(markup, /安装/)
+  assert.match(markup, /开发者扩展/)
 })
 
-test('plugin view shows source, installed state, and installed path', () => {
-  const markup = renderPluginView(null, {
+test('developer extensions view shows source, installed state, and installed path', () => {
+  const markup = renderDeveloperExtensionsManager(null, {
     installed: true,
     installedPath: '/Users/example/.phi/plugins/@phi/example'
   })
@@ -68,16 +70,16 @@ test('plugin view shows source, installed state, and installed path', () => {
   assert.match(markup, /卸载/)
 })
 
-test('plugin sidebar has no selected row after its detail tab closes', () => {
+test('developer extensions sidebar has no selected row after its detail closes', () => {
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme: createTheme() },
-      createElement(PluginSidebar, {
-        plugins: [plugin],
+      createElement(DeveloperExtensionsSidebar, {
+        extensions: [extension],
         isLoading: false,
-        activePluginId: null,
-        onSelectPlugin: () => undefined,
+        activeExtensionId: null,
+        onSelectExtension: () => undefined,
         onRefresh: () => undefined
       })
     )

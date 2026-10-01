@@ -37,6 +37,7 @@ import { accentAt, ACCENT_PALETTE } from '../theme'
 import { RemoteHostSettingsSection } from '../features/wrapper/components/RemoteHostSettings'
 import { DatabaseSettingsPanel } from '../features/databases/DatabaseSettingsPanel'
 import { EnvironmentSettingsPanel } from '../features/environment/components/EnvironmentSettingsPanel'
+import DeveloperExtensionsView from '../features/developer-extensions/DeveloperExtensionsView'
 import { PermissionSettingsSection } from './PermissionView'
 import type { EnvironmentSnapshot, EnvironmentToolId } from '../types'
 import type { ManualCompactionTarget } from '../../../shared/contextUsageTypes'
@@ -57,6 +58,7 @@ const DiagnosticsIcon = PhiIcons.settings.diagnostics
 const RemoteExecutionIcon = PhiIcons.settings.remoteExecution
 const GeneralIcon = PhiIcons.nav.settings
 const DatabaseIcon = PhiIcons.file.data
+const AdvancedIcon = PhiIcons.entity.plugin
 const CheckIcon = PhiIcons.state.check
 
 export type SettingsCategory =
@@ -68,6 +70,7 @@ export type SettingsCategory =
   | 'permissions'
   | 'remote'
   | 'diagnostics'
+  | 'advanced'
   | 'appearance'
 
 const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.Element }> = [
@@ -79,6 +82,7 @@ const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.E
   { id: 'permissions', label: '权限', icon: <ShieldIcon fontSize="small" /> },
   { id: 'remote', label: '远程', icon: <RemoteExecutionIcon fontSize="small" /> },
   { id: 'diagnostics', label: '诊断', icon: <ContentCopyIcon fontSize="small" /> },
+  { id: 'advanced', label: '高级', icon: <AdvancedIcon fontSize="small" /> },
   { id: 'appearance', label: '外观', icon: <PaletteIcon fontSize="small" /> }
 ]
 
@@ -906,6 +910,7 @@ function SettingsDialog({
           {category === 'diagnostics' && (
             <DiagnosticsSection onCopyDiagnostics={onCopyDiagnostics} />
           )}
+          {category === 'advanced' && <DeveloperExtensionsView />}
           {category === 'appearance' && (
             <AppearanceSection mode={themeMode} onSelectMode={onSelectThemeMode} />
           )}
