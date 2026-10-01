@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { validateAgent } from '../../src/main/agent/agents/definition'
-import { listBundledPlugins } from '../../src/main/agent/plugins/bundled'
+import { validatePlugin } from '../../src/main/agent/plugins/validate'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
 
@@ -23,12 +23,15 @@ const files: Array<{ label: string; path: string }> = agentFiles(
   path: join(root, 'resources', 'agents', name)
 }))
 
-for (const plugin of listBundledPlugins(join(root, 'resources', 'plugins'))) {
-  if (!plugin.agentsDir) continue
-  for (const name of agentFiles(plugin.agentsDir)) {
+for (const id of readdirSync(join(root, 'resources', 'plugins')).sort()) {
+  const pluginDir = join(root, 'resources', 'plugins', id)
+  const result = validatePlugin(pluginDir)
+  if (!result.plugin) continue
+  for (const component of result.plugin.manifest.components.agents ?? []) {
+    const name = component.slice('agents/'.length)
     files.push({
-      label: `${plugin.id}/${name}`,
-      path: join(plugin.agentsDir, name)
+      label: `${id}/${name}`,
+      path: join(pluginDir, component)
     })
   }
 }

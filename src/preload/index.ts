@@ -71,6 +71,7 @@ import type {
   EnvironmentToolId
 } from '../shared/environmentTypes'
 import type { EnvironmentBuild } from '../shared/environmentBuildTypes'
+import type { PhiPluginListItem, PhiPluginMutationResult } from '../shared/phiPluginTypes'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
@@ -897,6 +898,10 @@ type RendererAuthApi = {
   listPlugins: () => Promise<PluginCatalogItem[]>
   installPlugin: (source: string) => Promise<PluginCatalogItem[]>
   removePlugin: (source: string) => Promise<PluginCatalogItem[]>
+  listPhiPlugins: () => Promise<PhiPluginListItem[]>
+  installPhiPluginFromDirectory: (path: string) => Promise<PhiPluginMutationResult>
+  setPhiPluginEnabled: (id: string, enabled: boolean) => Promise<PhiPluginMutationResult>
+  uninstallPhiPlugin: (id: string) => Promise<PhiPluginMutationResult>
   listSkills: (cwd?: string) => Promise<SkillSummary[]>
   readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
   setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string) => Promise<SkillSummary[]>
@@ -1400,6 +1405,13 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('plugins:install', source),
   removePlugin: (source: string): Promise<PluginCatalogItem[]> =>
     ipcRenderer.invoke('plugins:remove', source),
+  listPhiPlugins: (): Promise<PhiPluginListItem[]> => ipcRenderer.invoke('phiPlugins:list'),
+  installPhiPluginFromDirectory: (path: string): Promise<PhiPluginMutationResult> =>
+    ipcRenderer.invoke('phiPlugins:installFromDirectory', path),
+  setPhiPluginEnabled: (id: string, enabled: boolean): Promise<PhiPluginMutationResult> =>
+    ipcRenderer.invoke('phiPlugins:setEnabled', id, enabled),
+  uninstallPhiPlugin: (id: string): Promise<PhiPluginMutationResult> =>
+    ipcRenderer.invoke('phiPlugins:uninstall', id),
   listSkills: (cwd?: string): Promise<SkillSummary[]> => ipcRenderer.invoke('skills:list', cwd),
   readSkillContent: (filePath: string, cwd?: string): Promise<SkillContent> =>
     ipcRenderer.invoke('skills:read', filePath, cwd),

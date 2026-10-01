@@ -43,6 +43,7 @@ export interface ManagedStdioEntry {
 export interface ManagedEnvironmentRequest {
   ref: string
   projectDir?: string
+  pluginId?: string
 }
 
 export interface ResolvedManagedEnvironment {
@@ -61,7 +62,7 @@ export interface EnvironmentLookup {
   /** Runtime root that holds `envs/<envId>`. */
   root: string
   environmentsDir?: string
-  pluginsDir?: string
+  agentDir?: string
   platform?: PhiPlatform
 }
 
@@ -126,7 +127,8 @@ export function resolveManagedEnvironment(
     : { ref: request.ref, warnings: [] }
   const descriptor = describeEnvironment(overridden.ref, {
     environmentsDir: lookup.environmentsDir,
-    pluginsDir: lookup.pluginsDir,
+    agentDir: lookup.agentDir,
+    pluginId: request.pluginId,
     platform: lookup.platform,
     projectDir: request.projectDir
   })

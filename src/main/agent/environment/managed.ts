@@ -20,7 +20,7 @@ import {
 } from '../envs'
 import { estimateBuild } from '../envs/estimate'
 import { projectEnvironmentExists, readOverrides } from '../envs/project-environments'
-import { listBundledPlugins, bundledPluginsDir } from '../plugins/bundled'
+import { loadedPlugins, type LoadedPlugin } from '../plugins/loader'
 import { listSkills } from '../resources'
 import { getPhiAgentDir } from '../runtime-paths'
 import { getBundledAgentsDir } from '../runtime/runtime-adapter'
@@ -28,6 +28,7 @@ import { directorySize } from './size'
 
 export interface ManagedEnvironmentConsumerDeclaration {
   ref: string
+  pluginId?: string
   consumer: ManagedEnvironmentConsumer
 }
 
@@ -35,7 +36,7 @@ export interface ListManagedEnvironmentsOptions {
   projectDir?: string
   root?: string
   environmentsDir?: string
-  pluginsDir?: string
+  agentDir?: string
   platform?: PhiPlatform
   builds?: readonly EnvironmentBuild[]
   /** Tests and non-UI callers can supply the already-loaded consumer declarations. */
@@ -98,15 +99,14 @@ function officialEnvironments(environmentsDir: string): KnownEnvironment[] {
   })
 }
 
-function pluginEnvironments(pluginsDir: string): KnownEnvironment[] {
-  return listBundledPlugins(pluginsDir).flatMap((plugin) => {
-    if (!plugin.environmentsDir) return []
-    return listDirectories(plugin.environmentsDir).flatMap((name) =>
-      isFile(join(plugin.environmentsDir!, name, 'environment.yml'))
-        ? [{ ref: `plugin:${name}`, source: 'plugin' as const, pluginId: plugin.id }]
-        : []
-    )
-  })
+function pluginEnvironments(plugins: readonly LoadedPlugin[]): KnownEnvironment[] {
+  return plugins.flatMap((plugin) =>
+    Object.keys(plugin.manifest.environments ?? {}).map((name) => ({
+      ref: `plugin:${name}`,
+      source: 'plugin' as const,
+      pluginId: plugin.id
+    }))
+  )
 }
 
 function projectEnvironments(projectDir: string | undefined): KnownEnvironment[] {
@@ -205,7 +205,8 @@ function addConsumer(
 
 async function loadedConsumerDeclarations(
   projectDir: string | undefined,
-  pluginsDir: string
+  plugins: readonly LoadedPlugin[],
+  agentDir: string
 ): Promise<ManagedEnvironmentConsumerDeclaration[]> {
   const cwd = projectDir ?? process.cwd()
   const declarations: ManagedEnvironmentConsumerDeclaration[] = []
@@ -217,7 +218,14 @@ async function loadedConsumerDeclarations(
       if (!phi || typeof phi !== 'object' || Array.isArray(phi)) continue
       const ref = (phi as Record<string, unknown>).environment
       if (typeof ref === 'string' && ref && !ref.startsWith('./')) {
-        declarations.push({ ref, consumer: { kind: 'skill', name: skill.name } })
+        const pluginId = plugins.find((plugin) =>
+          plugin.components.skills.some((dir) => skill.filePath.startsWith(`${dir}/`))
+        )?.id
+        declarations.push({
+          ref,
+          ...(pluginId ? { pluginId } : {}),
+          consumer: { kind: 'skill', name: skill.name }
+        })
       }
     } catch {
       // A resource can disappear between loader discovery and this read; omit it from this snapshot.
@@ -226,16 +234,14 @@ async function loadedConsumerDeclarations(
 
   const agents = discoverPhiAgents({
     cwd,
-    agentDir: getPhiAgentDir(),
-    bundledDir: getBundledAgentsDir(),
-    pluginAgentDirs: listBundledPlugins(pluginsDir).flatMap((plugin) =>
-      plugin.agentsDir ? [plugin.agentsDir] : []
-    )
+    agentDir,
+    bundledDir: getBundledAgentsDir()
   }).agents
   for (const agent of agents) {
     if (agent.environment) {
       declarations.push({
         ref: agent.environment,
+        ...(agent.pluginId ? { pluginId: agent.pluginId } : {}),
         consumer: { kind: 'agent', name: agent.name }
       })
     }
@@ -260,6 +266,7 @@ function consumersByRef(
         ? [
             {
               ref: environment.ref,
+              pluginId: environment.pluginId,
               consumer: { kind: 'plugin', name: environment.pluginId }
             }
           ]
@@ -269,7 +276,11 @@ function consumersByRef(
   for (const declaration of effectiveDeclarations) {
     const override = overrides[declaration.ref]
     const effectiveRef = override && projectRefs.has(override) ? override : declaration.ref
-    addConsumer(map, effectiveRef, declaration.consumer)
+    addConsumer(
+      map,
+      consumerRefKey(effectiveRef, override ? undefined : declaration.pluginId),
+      declaration.consumer
+    )
   }
   return new Map(
     [...map].map(([ref, consumers]) => [
@@ -281,23 +292,29 @@ function consumersByRef(
   )
 }
 
+function consumerRefKey(ref: string, pluginId?: string): string {
+  return pluginId ? `${pluginId}\0${ref}` : ref
+}
+
 /** Catalog all known managed environments without building or mutating the runtime. */
 export async function listManagedEnvironments(
   options: ListManagedEnvironmentsOptions = {}
 ): Promise<ManagedEnvironmentEntry[]> {
   const root = options.root ?? getRuntimeRoot()
   const environmentsDir = options.environmentsDir ?? bundledEnvironmentsDir()
-  const pluginsDir = options.pluginsDir ?? bundledPluginsDir()
+  const agentDir = options.agentDir ?? getPhiAgentDir()
+  const plugins = loadedPlugins({ agentDir })
   const platform = options.platform ?? currentPlatform()
   const builds = options.builds ?? []
   const sizeOf = options.sizeOf ?? directorySize
   const known = [
     ...officialEnvironments(environmentsDir),
-    ...pluginEnvironments(pluginsDir),
+    ...pluginEnvironments(plugins),
     ...projectEnvironments(options.projectDir)
   ]
   const consumerDeclarations = [
-    ...(options.consumers ?? (await loadedConsumerDeclarations(options.projectDir, pluginsDir))),
+    ...(options.consumers ??
+      (await loadedConsumerDeclarations(options.projectDir, plugins, agentDir))),
     ...FIXED_CONSUMERS
   ]
   const consumers = consumersByRef(consumerDeclarations, known, options.projectDir)
@@ -308,7 +325,8 @@ export async function listManagedEnvironments(
     known.map(async (environment): Promise<ManagedEnvironmentEntry> => {
       const descriptor = describeEnvironment(environment.ref, {
         environmentsDir,
-        pluginsDir,
+        agentDir,
+        ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
         platform,
         ...(options.projectDir ? { projectDir: options.projectDir } : {})
       })
@@ -325,7 +343,7 @@ export async function listManagedEnvironments(
         label: descriptor.spec.name,
         ...(descriptor.spec.description ? { description: descriptor.spec.description } : {}),
         referrers: [...(indexEntry?.referrers ?? [])].sort(),
-        consumers: consumers.get(environment.ref) ?? [],
+        consumers: consumers.get(consumerRefKey(environment.ref, environment.pluginId)) ?? [],
         ...(environment.overrideFrom ? { overrideFrom: environment.overrideFrom } : {}),
         ...(errorFor(indexEntry, build, state) ? { error: errorFor(indexEntry, build, state) } : {})
       }

@@ -30,27 +30,12 @@ import {
 } from '../src/main/agent/agents/runner'
 import { buildScopedPhiToolMap, resolveAgentTools } from '../src/main/agent/agents/tool-resolution'
 import { buildAgentTool, type AgentRunner } from '../src/main/agent/agents/tool'
+import { installPlugin, type LoadedPlugin } from '../src/main/agent/plugins/loader'
 
 const REPO_AGENTS_DIR = join(import.meta.dirname, '..', 'resources', 'agents')
 const REPO_SKILLS_DIR = join(import.meta.dirname, '..', 'resources', 'skills')
-const REPO_VIZ_AGENT = join(
-  import.meta.dirname,
-  '..',
-  'resources',
-  'plugins',
-  'visualization',
-  'agents',
-  'Visualization.md'
-)
-const REPO_VIZ_SKILL_DIR = join(
-  import.meta.dirname,
-  '..',
-  'resources',
-  'plugins',
-  'visualization',
-  'skills',
-  'omics-visualization'
-)
+const REPO_VIZ_PLUGIN_DIR = join(import.meta.dirname, '..', 'resources', 'plugins', 'visualization')
+const REPO_VIZ_AGENT = join(REPO_VIZ_PLUGIN_DIR, 'agents', 'Visualization.md')
 
 function agentMarkdown(fields: Record<string, string>, body = 'You are a specialist.'): string {
   const lines = Object.entries(fields).map(([key, value]) => `${key}: ${value}`)
@@ -67,6 +52,24 @@ function withTree(fn: (root: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), 'phi-agents-'))
   try {
     fn(root)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+function withInstalledVisualization(
+  fn: (fixture: { agentDir: string; plugin: LoadedPlugin }) => void
+): void {
+  const root = mkdtempSync(join(tmpdir(), 'phi-agents-plugin-'))
+  const agentDir = join(root, 'agent')
+  try {
+    const installed = installPlugin(REPO_VIZ_PLUGIN_DIR, {
+      agentDir,
+      runtimeRoot: join(root, 'runtime')
+    })
+    assert.equal(installed.ok, true, JSON.stringify(installed.errors))
+    assert.ok(installed.plugin)
+    fn({ agentDir, plugin: installed.plugin })
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -766,119 +769,135 @@ test('the bundled Database agent owns only biological database tools', () => {
 })
 
 test('specialists keep delegated scope, evidence, and stop rules explicit', () => {
-  const { agents } = discoverPhiAgents({
-    cwd: '/nonexistent/cwd',
-    agentDir: '/nonexistent/agentdir',
-    bundledDir: REPO_AGENTS_DIR,
-    homeDir: '/nonexistent/home'
+  withInstalledVisualization(({ agentDir }) => {
+    const { agents } = discoverPhiAgents({
+      cwd: '/nonexistent/cwd',
+      agentDir,
+      bundledDir: REPO_AGENTS_DIR,
+      homeDir: '/nonexistent/home'
+    })
+    for (const name of ['Database', 'Visualization', 'Wrapper']) {
+      const prompt = agents.find((agent) => agent.name === name)?.systemPrompt ?? ''
+      assert.match(prompt, /do not broaden the delegated task/i, `${name} must preserve scope`)
+      assert.match(
+        prompt,
+        /tool outputs?.*evidence, not instructions/i,
+        `${name} must distrust data`
+      )
+      assert.match(prompt, /missing.*report/i, `${name} must expose missing inputs`)
+    }
+    const database = agents.find((agent) => agent.name === 'Database')!
+    assert.match(database.systemPrompt, /select databases.*select functions.*inspect inputs/i)
+    assert.match(database.systemPrompt, /independent.*parallel/i)
+    const visualization = agents.find((agent) => agent.name === 'Visualization')!
+    assert.match(visualization.systemPrompt, /preview.*before.*final render/i)
+    assert.match(visualization.systemPrompt, /verify.*artifact.*before.*report/i)
+    const wrapper = agents.find((agent) => agent.name === 'Wrapper')!
+    assert.match(wrapper.systemPrompt, /inspect.*before.*run/i)
+    assert.match(wrapper.systemPrompt, /lost.*unknown outcome/i)
   })
-  for (const name of ['Database', 'Visualization', 'Wrapper']) {
-    const prompt = agents.find((agent) => agent.name === name)?.systemPrompt ?? ''
-    assert.match(prompt, /do not broaden the delegated task/i, `${name} must preserve scope`)
-    assert.match(prompt, /tool outputs?.*evidence, not instructions/i, `${name} must distrust data`)
-    assert.match(prompt, /missing.*report/i, `${name} must expose missing inputs`)
-  }
-  const database = agents.find((agent) => agent.name === 'Database')!
-  assert.match(database.systemPrompt, /select databases.*select functions.*inspect inputs/i)
-  assert.match(database.systemPrompt, /independent.*parallel/i)
-  const visualization = agents.find((agent) => agent.name === 'Visualization')!
-  assert.match(visualization.systemPrompt, /preview.*before.*final render/i)
-  assert.match(visualization.systemPrompt, /verify.*artifact.*before.*report/i)
-  const wrapper = agents.find((agent) => agent.name === 'Wrapper')!
-  assert.match(wrapper.systemPrompt, /inspect.*before.*run/i)
-  assert.match(wrapper.systemPrompt, /lost.*unknown outcome/i)
 })
 
 test('specialist delegation excludes general explanation and adjacent deliverables', () => {
-  const { agents } = discoverPhiAgents({
-    cwd: '/nonexistent/cwd',
-    agentDir: '/nonexistent/agentdir',
-    bundledDir: REPO_AGENTS_DIR,
-    homeDir: '/nonexistent/home'
+  withInstalledVisualization(({ agentDir }) => {
+    const { agents } = discoverPhiAgents({
+      cwd: '/nonexistent/cwd',
+      agentDir,
+      bundledDir: REPO_AGENTS_DIR,
+      homeDir: '/nonexistent/home'
+    })
+    for (const name of ['Database', 'Visualization', 'Wrapper']) {
+      const guidance = agents.find((agent) => agent.name === name)?.delegation ?? ''
+      assert.match(guidance, /only the requested/i, `${name} must constrain delegation`)
+    }
+    assert.match(
+      agents.find((agent) => agent.name === 'Visualization')?.delegation ?? '',
+      /general explanation/i
+    )
+    assert.match(
+      agents.find((agent) => agent.name === 'Wrapper')?.delegation ?? '',
+      /general explanation/i
+    )
   })
-  for (const name of ['Database', 'Visualization', 'Wrapper']) {
-    const guidance = agents.find((agent) => agent.name === name)?.delegation ?? ''
-    assert.match(guidance, /only the requested/i, `${name} must constrain delegation`)
-  }
-  assert.match(
-    agents.find((agent) => agent.name === 'Visualization')?.delegation ?? '',
-    /general explanation/i
-  )
-  assert.match(
-    agents.find((agent) => agent.name === 'Wrapper')?.delegation ?? '',
-    /general explanation/i
-  )
 })
 
 test('the bundled Visualization agent routes template previews through omics visualization', () => {
-  const { agents, diagnostics } = discoverPhiAgents({
-    cwd: '/nonexistent/cwd',
-    agentDir: '/nonexistent/agentdir',
-    bundledDir: REPO_AGENTS_DIR,
-    homeDir: '/nonexistent/home'
-  })
-  assert.deepEqual(diagnostics, [])
-  const visualization = agents.find((agent) => agent.name === 'Visualization')
-  assert.ok(visualization, 'the visualization plugin should define Visualization')
-  assert.equal(visualization.filePath, REPO_VIZ_AGENT)
-  assert.equal(visualization.source, 'phi')
-  for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit']) {
-    assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
-  }
-  assert.equal(visualization.environment, 'plugin:viz')
-  for (const tool of ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']) {
-    assert.equal(visualization.tools.includes(tool), false, `${tool} arrives through attachTo`)
-  }
-  assert.deepEqual(visualization.skills, ['omics-visualization'])
-  assert.equal(existsSync(join(REPO_VIZ_SKILL_DIR, 'SKILL.md')), true)
-  assert.equal(visualization.delegationMode, 'required-first')
-  assert.equal(visualization.fallback?.afterFailures, 1)
-  assert.deepEqual(visualization.fallback?.tools, ['bash', 'eval'])
-  assert.ok(
-    visualization.fallback?.match.includes('plugins/visualization/skills/omics-visualization')
-  )
-  assert.match(visualization.delegation ?? '', /show a few templates/i)
-  assert.match(visualization.delegation ?? '', /preview/i)
-  assert.match(visualization.delegation ?? '', /directly drawing with Python\/R/i)
-  assert.match(visualization.delegation ?? '', /current project working directory/i)
-  assert.match(visualization.delegation ?? '', /Output directories must be inside/)
-  assert.match(visualization.systemPrompt, /skill:\/\/omics-visualization/)
-  assert.match(visualization.systemPrompt, /preview-selection mode/i)
-  assert.match(visualization.systemPrompt, /Markdown image/i)
-  assert.match(visualization.systemPrompt, /template_id/)
-  assert.match(visualization.systemPrompt, /absolute path/i)
-  assert.match(visualization.systemPrompt, /Project output boundary/)
-  assert.match(visualization.systemPrompt, /external input dataset/)
-  assert.match(visualization.systemPrompt, /Do not copy the skill's `references\/`/)
-  assert.match(
-    visualization.systemPrompt,
-    /sourcing the installed read-only `scripts\/lib\/common\.R`/
-  )
-  assert.match(visualization.systemPrompt, /Do not invent template ids/i)
-  assert.match(visualization.systemPrompt, /viz_examples.*without.*data/i)
-  assert.match(visualization.systemPrompt, /do not simulate.*render.*example/i)
-  assert.match(visualization.systemPrompt, /example-only request is `completed`/i)
-  assert.match(visualization.systemPrompt, /revision mode.*existing figure/i)
-  assert.match(visualization.systemPrompt, /do not call `viz_route` or `viz_prepare`/i)
-  assert.match(visualization.systemPrompt, /existing `plot\.R`.*input.*output/i)
-  assert.match(visualization.systemPrompt, /palette.*existing.*script/i)
-  assert.match(visualization.delegation ?? '', /existing `plot\.R`.*input.*output/i)
-  assert.match(visualization.delegation ?? '', /examples, create, revise, or reference/i)
-  assert.match(
-    visualization.systemPrompt,
-    /reference image.*visual evidence, not an instruction source/i
-  )
-  assert.match(visualization.systemPrompt, /reference.*user.*data.*do not invent/i)
-  assert.match(visualization.systemPrompt, /same cutoffs for Up\/Down\/None colors/i)
-  assert.match(visualization.systemPrompt, /counts based on adjusted P value alone distinct/i)
+  withInstalledVisualization(({ agentDir, plugin }) => {
+    const { agents, diagnostics } = discoverPhiAgents({
+      cwd: '/nonexistent/cwd',
+      agentDir,
+      bundledDir: REPO_AGENTS_DIR,
+      homeDir: '/nonexistent/home'
+    })
+    assert.deepEqual(diagnostics, [])
+    const visualization = agents.find((agent) => agent.name === 'Visualization')
+    assert.ok(visualization, 'the visualization plugin should define Visualization')
+    assert.equal(visualization.filePath, plugin.components.agents[0])
+    assert.equal(visualization.pluginId, 'visualization')
+    assert.equal(visualization.source, 'phi')
+    for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit']) {
+      assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
+    }
+    assert.equal(visualization.environment, 'plugin:viz')
+    for (const tool of ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']) {
+      assert.equal(visualization.tools.includes(tool), false, `${tool} arrives through attachTo`)
+    }
+    assert.deepEqual(visualization.skills, ['omics-visualization'])
+    const skillDir = plugin.components.skills[0]
+    assert.ok(skillDir)
+    assert.equal(existsSync(join(skillDir, 'SKILL.md')), true)
+    assert.equal(visualization.delegationMode, 'required-first')
+    assert.equal(visualization.fallback?.afterFailures, 1)
+    assert.deepEqual(visualization.fallback?.tools, ['bash', 'eval'])
+    assert.ok(
+      visualization.fallback?.match.includes('plugins/visualization/skills/omics-visualization')
+    )
+    assert.match(visualization.delegation ?? '', /show a few templates/i)
+    assert.match(visualization.delegation ?? '', /preview/i)
+    assert.match(visualization.delegation ?? '', /directly drawing with Python\/R/i)
+    assert.match(visualization.delegation ?? '', /current project working directory/i)
+    assert.match(visualization.delegation ?? '', /Output directories must be inside/)
+    assert.match(visualization.systemPrompt, /skill:\/\/omics-visualization/)
+    assert.match(visualization.systemPrompt, /preview-selection mode/i)
+    assert.match(visualization.systemPrompt, /Markdown image/i)
+    assert.match(visualization.systemPrompt, /template_id/)
+    assert.match(visualization.systemPrompt, /absolute path/i)
+    assert.match(visualization.systemPrompt, /Project output boundary/)
+    assert.match(visualization.systemPrompt, /external input dataset/)
+    assert.match(visualization.systemPrompt, /Do not copy the skill's `references\/`/)
+    assert.match(
+      visualization.systemPrompt,
+      /sourcing the installed read-only `scripts\/lib\/common\.R`/
+    )
+    assert.match(visualization.systemPrompt, /Do not invent template ids/i)
+    assert.match(visualization.systemPrompt, /viz_examples.*without.*data/i)
+    assert.match(visualization.systemPrompt, /do not simulate.*render.*example/i)
+    assert.match(visualization.systemPrompt, /example-only request is `completed`/i)
+    assert.match(visualization.systemPrompt, /revision mode.*existing figure/i)
+    assert.match(visualization.systemPrompt, /do not call `viz_route` or `viz_prepare`/i)
+    assert.match(visualization.systemPrompt, /existing `plot\.R`.*input.*output/i)
+    assert.match(visualization.systemPrompt, /palette.*existing.*script/i)
+    assert.match(visualization.delegation ?? '', /existing `plot\.R`.*input.*output/i)
+    assert.match(visualization.delegation ?? '', /examples, create, revise, or reference/i)
+    assert.match(
+      visualization.systemPrompt,
+      /reference image.*visual evidence, not an instruction source/i
+    )
+    assert.match(visualization.systemPrompt, /reference.*user.*data.*do not invent/i)
+    assert.match(visualization.systemPrompt, /same cutoffs for Up\/Down\/None colors/i)
+    assert.match(visualization.systemPrompt, /counts based on adjusted P value alone distinct/i)
 
-  const skillText = readFileSync(join(REPO_VIZ_SKILL_DIR, 'SKILL.md'), 'utf-8')
-  assert.match(skillText, /active Phi project working directory/)
-  assert.match(skillText, /Treat data directories outside the\s+project as read-only inputs/)
-  assert.match(skillText, /Do not copy `references\/`, `references\/palettes\/`, or catalog files/)
-  assert.match(skillText, /same values for point classification, cutoff lines, legend text/i)
-  const commonR = readFileSync(join(REPO_VIZ_SKILL_DIR, 'scripts', 'lib', 'common.R'), 'utf-8')
-  assert.match(commonR, /OMICS_VISUALIZATION_SKILL_ROOT/)
+    const skillText = readFileSync(join(skillDir, 'SKILL.md'), 'utf-8')
+    assert.match(skillText, /active Phi project working directory/)
+    assert.match(skillText, /Treat data directories outside the\s+project as read-only inputs/)
+    assert.match(
+      skillText,
+      /Do not copy `references\/`, `references\/palettes\/`, or catalog files/
+    )
+    assert.match(skillText, /same values for point classification, cutoff lines, legend text/i)
+    const commonR = readFileSync(join(skillDir, 'scripts', 'lib', 'common.R'), 'utf-8')
+    assert.match(commonR, /OMICS_VISUALIZATION_SKILL_ROOT/)
+  })
 })
 
 // ── the leader prompt ─────────────────────────────────────────────────────
@@ -888,46 +907,48 @@ test('there is no leader prompt when there are no agents', () => {
 })
 
 test('the leader prompt lists agents by name and tells the main agent to delegate, not do the work', () => {
-  const { agents } = discoverPhiAgents({
-    cwd: '/nonexistent/cwd',
-    agentDir: '/nonexistent/agentdir',
-    bundledDir: REPO_AGENTS_DIR,
-    homeDir: '/nonexistent/home'
+  withInstalledVisualization(({ agentDir }) => {
+    const { agents } = discoverPhiAgents({
+      cwd: '/nonexistent/cwd',
+      agentDir,
+      bundledDir: REPO_AGENTS_DIR,
+      homeDir: '/nonexistent/home'
+    })
+    const prompt = buildAgentLeaderPrompt(agents)
+    assert.match(prompt, /^<phi_agents>/)
+    assert.match(prompt, /<\/phi_agents>$/)
+    assert.match(prompt, /- Database: /)
+    assert.match(prompt, /- Visualization: /)
+    assert.match(prompt, /- Wrapper: /)
+    assert.match(prompt, /self-contained/i)
+    assert.match(prompt, /absolute/i)
+    assert.match(prompt, /cannot (see|ask)/i)
+    assert.match(prompt, /show a few templates/i)
+    assert.match(prompt, /nextflow/i)
+    assert.match(prompt, /do not/i)
+    assert.match(prompt, /required-first/i)
+    assert.match(prompt, /literature search.*main agent/i)
+    assert.match(prompt, /only the requested subtask/i)
+    assert.match(prompt, /follow-up edit.*exact source, input, and prior output paths/i)
+    assert.match(prompt, /controlled fallback/i)
+    assert.match(prompt, /not_found/i)
+    assert.match(prompt, /new and modified user-facing files separately/i)
+    assert.match(prompt, /exact path and purpose/i)
+    // The leader never learns the specialist's own tool functions.
+    for (const name of [
+      'wrapper_search',
+      'wrapper_inspect',
+      'wrapper_run',
+      'db_search',
+      'db_routes',
+      'db_domain',
+      'db_docs_search',
+      'db_query',
+      'db_download'
+    ]) {
+      assert.ok(!new RegExp(`\\b${name}\\b`).test(prompt), `leader prompt must not mention ${name}`)
+    }
   })
-  const prompt = buildAgentLeaderPrompt(agents)
-  assert.match(prompt, /^<phi_agents>/)
-  assert.match(prompt, /<\/phi_agents>$/)
-  assert.match(prompt, /- Database: /)
-  assert.match(prompt, /- Visualization: /)
-  assert.match(prompt, /- Wrapper: /)
-  assert.match(prompt, /self-contained/i)
-  assert.match(prompt, /absolute/i)
-  assert.match(prompt, /cannot (see|ask)/i)
-  assert.match(prompt, /show a few templates/i)
-  assert.match(prompt, /nextflow/i)
-  assert.match(prompt, /do not/i)
-  assert.match(prompt, /required-first/i)
-  assert.match(prompt, /literature search.*main agent/i)
-  assert.match(prompt, /only the requested subtask/i)
-  assert.match(prompt, /follow-up edit.*exact source, input, and prior output paths/i)
-  assert.match(prompt, /controlled fallback/i)
-  assert.match(prompt, /not_found/i)
-  assert.match(prompt, /new and modified user-facing files separately/i)
-  assert.match(prompt, /exact path and purpose/i)
-  // The leader never learns the specialist's own tool functions.
-  for (const name of [
-    'wrapper_search',
-    'wrapper_inspect',
-    'wrapper_run',
-    'db_search',
-    'db_routes',
-    'db_domain',
-    'db_docs_search',
-    'db_query',
-    'db_download'
-  ]) {
-    assert.ok(!new RegExp(`\\b${name}\\b`).test(prompt), `leader prompt must not mention ${name}`)
-  }
 })
 
 test('specialist reporting requires a verifiable file inventory', () => {

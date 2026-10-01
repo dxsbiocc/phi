@@ -13,7 +13,7 @@ const SAMPLE_MS = 1000
 
 export interface EnvironmentBuildStartOptions {
   ref: string
-  requestedBy?: { skill?: string; agent?: string; wrapper?: string }
+  requestedBy?: { skill?: string; agent?: string; wrapper?: string; plugin?: string }
 }
 
 export interface EnvironmentBuilds {

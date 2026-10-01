@@ -1,7 +1,7 @@
-import { readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 
-import { bundledPluginsDir, listBundledPlugins } from '../plugins/bundled'
+import { loadedPlugins } from '../plugins/loader'
 import { getBundledResourceDir } from '../runtime/runtime-adapter'
 import {
   computeEnvId,
@@ -64,8 +64,10 @@ export function describeEnvironment(
   ctx: {
     skill?: ValidatedSkill
     environmentsDir?: string
-    /** Bundled plugins root. Defaults to `resources/plugins`, same idea as `environmentsDir`. */
-    pluginsDir?: string
+    /** Owning installed plugin; required for private `plugin:` references. */
+    pluginId?: string
+    /** Phi agent directory override used by tests and isolated runtime instances. */
+    agentDir?: string
     platform?: PhiPlatform
     /** Required for `project:<name>`. The environment lives in `<projectDir>/.phi/environments/`. */
     projectDir?: string
@@ -93,12 +95,7 @@ export function describeEnvironment(
       if (!ctx.skill) throw new Error('./environment.yml requires a skill')
       return loadDescriptor(ref, 'skill', 'package', ctx.skill.name, ctx.skill.dir, platform)
     case 'plugin':
-      return describePluginEnvironment(
-        ref,
-        parsed.name,
-        ctx.pluginsDir ?? bundledPluginsDir(),
-        platform
-      )
+      return describePluginEnvironment(ref, parsed.name, ctx.pluginId, ctx.agentDir, platform)
     case 'project':
       if (!ctx.projectDir) throw new Error('project environment requires a project directory')
       return loadDescriptor(
@@ -175,36 +172,30 @@ function absentOrNotReady(message: string): boolean {
   return message.includes('metadata is missing') || message.includes(' is not ready (status:')
 }
 
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory()
-  } catch {
-    return false
-  }
-}
-
 function describePluginEnvironment(
   ref: string,
   name: string,
-  pluginsDir: string,
+  pluginId: string | undefined,
+  agentDir: string | undefined,
   platform: PhiPlatform
 ): EnvironmentDescriptor {
-  const matches = listBundledPlugins(pluginsDir).flatMap((plugin) => {
-    if (!plugin.environmentsDir) return []
-    const dir = join(plugin.environmentsDir, name)
-    return isDirectory(dir) ? [{ id: plugin.id, dir }] : []
-  })
-  if (matches.length === 0) {
+  if (!pluginId) {
+    throw new Error(`environment plugin:${name} requires a requesting plugin`)
+  }
+  const plugins = loadedPlugins(agentDir ? { agentDir } : {})
+  const plugin = plugins.find((candidate) => candidate.id === pluginId)
+  const declaration = plugin?.manifest.environments?.[name]
+  if (!plugin || !declaration) {
     throw new Error(`environment plugin:${name} is not available`)
   }
-  if (matches.length > 1) {
-    throw new Error(
-      `environment plugin:${name} is provided by ${matches.map((match) => match.id).join(' and ')}`
-    )
-  }
-  const match = matches[0]
-  if (!match) throw new Error(`environment plugin:${name} is not available`)
-  return loadDescriptor(ref, 'plugin', 'package', match.id, match.dir, platform)
+  return loadDescriptor(
+    ref,
+    'plugin',
+    'package',
+    plugin.id,
+    dirname(join(plugin.dir, declaration.spec)),
+    platform
+  )
 }
 
 function loadDescriptor(

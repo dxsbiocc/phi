@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -14,7 +14,7 @@ import {
 import { createSkillHost, type PresentArtifactsRequest } from '../src/main/agent/content/skill-host'
 import { currentPlatform, removeTree } from '../src/main/agent/envs'
 import { getMicromambaPath } from '../src/main/agent/envs/paths'
-import { listBundledPlugins } from '../src/main/agent/plugins/bundled'
+import { installPlugin } from '../src/main/agent/plugins/loader'
 import { createTestRuntimeRoot } from './helpers/testRuntimeRoot'
 
 const SKILL_DIR = join(
@@ -27,45 +27,9 @@ const SKILL_DIR = join(
 )
 const VOLCANO_DATA = join(SKILL_DIR, 'scripts', 'scatter', 'volcano', 'example.tsv')
 
-const SCRIPT = `---
-name: demo
-description: Demo plugin skill used to check tool prefixes.
-phi:
-  environment: phi:python@1
-  attachTo: [Visualization]
-  scripts:
-    - name: echo
-      description: Echo a message.
-      run: [python, ./scripts/echo.py]
-      args:
-        type: object
-        additionalProperties: false
-        properties:
-          message:
-            type: string
-      approval: read
----
-Demo.
-`
-
 function withTemp(body: (root: string) => Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'phi-viz-script-tools-'))
   return body(root).finally(() => rmSync(root, { recursive: true, force: true }))
-}
-
-function writePluginSkill(
-  root: string,
-  pluginId: string,
-  markdown: string,
-  packageYaml?: string
-): string {
-  const plugin = join(root, pluginId)
-  const skill = join(plugin, 'skills', 'demo')
-  mkdirSync(join(skill, 'scripts'), { recursive: true })
-  writeFileSync(join(skill, 'SKILL.md'), markdown)
-  writeFileSync(join(skill, 'scripts', 'echo.py'), 'print(1)\n')
-  if (packageYaml !== undefined) writeFileSync(join(plugin, 'phi-package.yaml'), packageYaml)
-  return skill
 }
 
 test('the bundled visualization skill yields four viz script tools for Visualization', async () => {
@@ -102,87 +66,39 @@ test('the bundled visualization skill yields four viz script tools for Visualiza
   assert.equal(renderArgs.inputs?.items?.format, 'input-path')
   assert.equal(renderArgs.output?.format, 'project-path')
 
-  const host = createSkillHost({ listSkillDirs: async () => [SKILL_DIR] })
-  const listed = await host.scriptTools({ cwd: '/tmp/project' })
-  assert.deepEqual(listed.problems, [])
-  assert.deepEqual(
-    listed.tools.map((tool) => tool.name),
-    ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']
-  )
-  for (const tool of listed.tools) {
-    assert.deepEqual(tool.attachTo, ['Visualization'])
-    assert.equal(tool.attachTo.includes('main'), false)
-  }
-
-  const { agents } = discoverPhiAgents({
-    cwd: '/nonexistent/cwd',
-    agentDir: '/nonexistent/agentdir',
-    bundledDir: join(process.cwd(), 'resources', 'agents'),
-    homeDir: '/nonexistent/home'
-  })
-  const visualization = agents.find((agent) => agent.name === 'Visualization')
-  assert.equal(visualization?.environment, 'plugin:viz')
-  assert.equal(
-    listBundledPlugins().find((plugin) => plugin.id === 'visualization')?.toolPrefix,
-    'viz'
-  )
-})
-
-test('a plugin skill that declares toolPrefix is an error and yields no tools', async () => {
   await withTemp(async (root) => {
-    const skill = writePluginSkill(
-      root,
-      'marked',
-      SCRIPT.replace('phi:\n', 'phi:\n  toolPrefix: demo\n'),
-      'schemaVersion: 1\nid: marked\ntype: plugin\ntoolPrefix: viz\n'
-    )
-    const host = createSkillHost({
-      pluginsDir: root,
-      listSkillDirs: async () => [skill]
+    const agentDir = join(root, 'agent')
+    const installed = installPlugin(join(process.cwd(), 'resources', 'plugins', 'visualization'), {
+      agentDir,
+      runtimeRoot: join(root, 'runtime')
     })
-    const listed = await host.scriptTools({ cwd: root })
-    assert.deepEqual(listed.tools, [])
-    assert.match(listed.problems.join('\n'), /toolPrefix is rejected inside a plugin/)
-  })
-})
-
-test('a missing or invalid phi-package.yaml reports a problem and yields no script tools', async () => {
-  await withTemp(async (root) => {
-    const missing = writePluginSkill(root, 'missing', SCRIPT)
-    const invalid = writePluginSkill(
-      root,
-      'invalid',
-      SCRIPT,
-      'schemaVersion: 1\nid: invalid\ntype: plugin\ntoolPrefix: skill\n'
-    )
+    assert.equal(installed.ok, true, JSON.stringify(installed.errors))
+    const skill = installed.plugin?.components.skills[0]
+    assert.ok(skill)
     const host = createSkillHost({
-      pluginsDir: root,
-      listSkillDirs: async () => [missing, invalid]
-    })
-    const listed = await host.scriptTools({ cwd: root })
-    assert.deepEqual(listed.tools, [])
-    assert.match(listed.problems.join('\n'), /plugin 'missing': phi-package.yaml is missing/)
-    assert.match(listed.problems.join('\n'), /plugin 'invalid': toolPrefix 'skill' is reserved/)
-  })
-})
-
-test('a valid plugin toolPrefix names the skill script tools', async () => {
-  await withTemp(async (root) => {
-    const skill = writePluginSkill(
-      root,
-      'marked',
-      SCRIPT,
-      'schemaVersion: 1\nid: marked\ntype: plugin\ntoolPrefix: viz\n'
-    )
-    const host = createSkillHost({
-      pluginsDir: root,
+      agentDir,
       listSkillDirs: async () => [skill]
     })
     const listed = await host.scriptTools({ cwd: root })
     assert.deepEqual(listed.problems, [])
-    assert.equal(listed.tools.length, 1)
-    assert.equal(listed.tools[0]?.name, 'viz_echo')
-    assert.deepEqual(listed.tools[0]?.attachTo, ['Visualization'])
+    assert.deepEqual(
+      listed.tools.map((tool) => tool.name),
+      ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']
+    )
+    for (const tool of listed.tools) {
+      assert.deepEqual(tool.attachTo, ['Visualization'])
+      assert.equal(tool.attachTo.includes('main'), false)
+    }
+
+    const { agents } = discoverPhiAgents({
+      cwd: join(root, 'project'),
+      agentDir,
+      bundledDir: join(process.cwd(), 'resources', 'agents'),
+      homeDir: join(root, 'home')
+    })
+    const visualization = agents.find((agent) => agent.name === 'Visualization')
+    assert.equal(visualization?.environment, 'plugin:viz')
+    assert.equal(visualization?.pluginId, 'visualization')
   })
 })
 
@@ -211,11 +127,24 @@ test(
     cpSync(VOLCANO_DATA, join(project, 'data', 'example.tsv'))
     const presented: PresentArtifactsRequest[] = []
     try {
-      const descriptor = describeEnvironment('plugin:viz', { platform: currentPlatform() })
+      const agentDir = join(root, 'agent')
+      const installed = installPlugin(
+        join(process.cwd(), 'resources', 'plugins', 'visualization'),
+        { agentDir, runtimeRoot: root }
+      )
+      assert.equal(installed.ok, true, JSON.stringify(installed.errors))
+      const installedSkill = installed.plugin?.components.skills[0]
+      assert.ok(installedSkill)
+      const descriptor = describeEnvironment('plugin:viz', {
+        agentDir,
+        pluginId: 'visualization',
+        platform: currentPlatform()
+      })
       await buildEnvironment(root, descriptor)
       const host = createSkillHost({
         runtimeRoot: root,
-        listSkillDirs: async () => [SKILL_DIR],
+        agentDir,
+        listSkillDirs: async () => [installedSkill],
         presentArtifacts: (request) => {
           presented.push(request)
         }

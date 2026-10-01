@@ -39,6 +39,8 @@ export interface PhiAgentDefinition {
   skills: string[]
   /** Environment reference. A specialist session is bound to it before it starts. */
   environment?: string
+  /** Owning installed Phi plugin. Required to resolve private `plugin:` environments. */
+  pluginId?: string
   /** Model selectors (`provider/id`) tried in order. Absent: the parent's model. */
   model?: string[]
   /** Overrides the delegating session's thinking level. */
@@ -587,6 +589,7 @@ export function isPhiAgentDefinition(value: unknown): value is PhiAgentDefinitio
     (value.delegation === undefined || typeof value.delegation === 'string') &&
     (value.delegationMode === undefined || isDelegationMode(value.delegationMode)) &&
     (value.environment === undefined || typeof value.environment === 'string') &&
+    (value.pluginId === undefined || typeof value.pluginId === 'string') &&
     (value.model === undefined || (strings(value.model) && value.model.length > 0)) &&
     (value.thinkingLevel === undefined || isThinkingLevel(value.thinkingLevel)) &&
     (value.fallback === undefined ||

@@ -42,7 +42,7 @@ export interface RequestProjectEnvironmentDeps {
   solve?: (input: SolveExplicitLockInput) => Promise<string>
   platform?: PhiPlatform
   environmentsDir?: string
-  pluginsDir?: string
+  agentDir?: string
   signal?: AbortSignal
 }
 
@@ -83,8 +83,9 @@ export async function requestProjectEnvironment(
   try {
     baseSpec = describeEnvironment(applied.ref, {
       projectDir,
+      ...(request.pluginId ? { pluginId: request.pluginId } : {}),
+      ...(deps.agentDir ? { agentDir: deps.agentDir } : {}),
       ...(deps.environmentsDir ? { environmentsDir: deps.environmentsDir } : {}),
-      ...(deps.pluginsDir ? { pluginsDir: deps.pluginsDir } : {}),
       ...(deps.platform ? { platform: deps.platform } : {})
     }).spec
   } catch (error) {
@@ -149,6 +150,7 @@ interface ValidRequest {
   packages: string[]
   reason: string
   environment: string
+  pluginId?: string
 }
 
 function validateRequest(params: unknown): ValidRequest {
@@ -165,7 +167,16 @@ function validateRequest(params: unknown): ValidRequest {
   if (parsed.kind === 'path') {
     throw new Error('environment must be phi:<name>@<major>, plugin:<name>, or project:<name>')
   }
-  return { runtimeSessionId, cwd, packages, reason, environment }
+  const pluginId =
+    typeof record.pluginId === 'string' && record.pluginId ? record.pluginId : undefined
+  return {
+    runtimeSessionId,
+    cwd,
+    packages,
+    reason,
+    environment,
+    ...(pluginId ? { pluginId } : {})
+  }
 }
 
 function validatePackages(value: unknown): string[] {

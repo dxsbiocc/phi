@@ -36,6 +36,8 @@ export interface RunSkillScriptInput {
   args?: string[]
   cwd?: string
   sessionEnvironment?: string
+  pluginId?: string
+  agentDir?: string
   environmentsDir?: string
   platform?: PhiPlatform
   signal?: AbortSignal
@@ -52,6 +54,8 @@ export async function runSkillScript(input: RunSkillScriptInput): Promise<SkillR
   const descriptor = describeEnvironment(applied.ref, {
     skill: input.skill,
     projectDir: input.projectDir,
+    pluginId: input.pluginId,
+    agentDir: input.agentDir,
     environmentsDir: input.environmentsDir,
     platform: input.platform
   })

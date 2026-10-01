@@ -1,9 +1,9 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { validateAgentFile, type PhiAgentDefinition, type PhiAgentSource } from './definition'
-import { listBundledPlugins } from '../plugins/bundled'
+import { loadedPlugins } from '../plugins/loader'
 import { PHI_PROJECT_CONFIG_DIR_NAME } from '../runtime-paths'
 
 /**
@@ -42,11 +42,21 @@ export interface PhiAgentDiscoveryResult {
 interface Root {
   dir: string
   source: PhiAgentSource
+  pluginId?: string
 }
 
-function pluginAgentDirectories(options: PhiAgentDiscoveryOptions): string[] {
-  if (options.pluginAgentDirs !== undefined) return [...options.pluginAgentDirs]
-  return listBundledPlugins().flatMap((plugin) => (plugin.agentsDir ? [plugin.agentsDir] : []))
+function pluginAgentRoots(options: PhiAgentDiscoveryOptions): Root[] {
+  if (options.pluginAgentDirs !== undefined) {
+    return options.pluginAgentDirs.map((dir) => ({ dir, source: 'phi' as const }))
+  }
+  const roots = new Map<string, Root>()
+  for (const plugin of loadedPlugins({ agentDir: options.agentDir })) {
+    for (const filePath of plugin.components.agents) {
+      const dir = dirname(filePath)
+      roots.set(`${plugin.id}\0${dir}`, { dir, source: 'phi', pluginId: plugin.id })
+    }
+  }
+  return [...roots.values()]
 }
 
 function agentRoots(options: PhiAgentDiscoveryOptions): Root[] {
@@ -55,7 +65,7 @@ function agentRoots(options: PhiAgentDiscoveryOptions): Root[] {
     { dir: join(options.cwd, PHI_PROJECT_CONFIG_DIR_NAME, 'agents'), source: 'phi' },
     { dir: join(options.agentDir, 'agents'), source: 'phi' },
     ...(options.bundledDir ? [{ dir: options.bundledDir, source: 'phi' as const }] : []),
-    ...pluginAgentDirectories(options).map((dir) => ({ dir, source: 'phi' as const }))
+    ...pluginAgentRoots(options)
   ]
   const compat = [
     ...['.omp', '.pi', '.claude'].map((dir) => join(options.cwd, dir, 'agents')),
@@ -109,7 +119,7 @@ export function discoverPhiAgents(options: PhiAgentDiscoveryOptions): PhiAgentDi
       }
       if (seen.has(result.agent.name)) continue
       seen.add(result.agent.name)
-      agents.push(result.agent)
+      agents.push(root.pluginId ? { ...result.agent, pluginId: root.pluginId } : result.agent)
     }
   }
   return { agents, diagnostics }

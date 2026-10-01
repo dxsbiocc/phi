@@ -871,7 +871,7 @@ function phiToolFunctions(
 async function bindSpecialistEnvironment(
   definition: PhiAgentDefinition,
   deps: { sessionId: string; cwd: string; remoteRoot?: string }
-): Promise<{ ref: string; variables: Record<string, string> } | undefined> {
+): Promise<{ ref: string; variables: Record<string, string>; pluginId?: string } | undefined> {
   const ref = definition.environment
   if (!ref) return undefined
   if (deps.remoteRoot) {
@@ -881,7 +881,8 @@ async function bindSpecialistEnvironment(
     runtimeSessionId: deps.sessionId,
     ref,
     agent: definition.name,
-    cwd: deps.cwd
+    cwd: deps.cwd,
+    ...(definition.pluginId ? { pluginId: definition.pluginId } : {})
   })
   if (!isRecord(result)) throw new Error('environments.bindSession returned an unexpected result')
   if (isRecord(result.notReady)) {
@@ -896,7 +897,11 @@ async function bindSpecialistEnvironment(
   if (typeof boundRef !== 'string' || boundRef.length === 0 || !variables) {
     throw new Error('environments.bindSession returned an unexpected result')
   }
-  return { ref: boundRef, variables }
+  return {
+    ref: boundRef,
+    variables,
+    ...(definition.pluginId ? { pluginId: definition.pluginId } : {})
+  }
 }
 
 function stringRecord(value: unknown): Record<string, string> | undefined {
@@ -917,7 +922,7 @@ function specialistToolCallFactories(
     remoteRoot?: string
     parent: () => CreateAgentSessionResult | undefined
   },
-  binding: { ref: string; variables: Record<string, string> } | undefined
+  binding: { ref: string; variables: Record<string, string>; pluginId?: string } | undefined
 ): ExtensionFactory[] {
   // Order matters: omp gives every handler the original input and keeps the last
   // non-empty result, and a block returns at once. Guards and approval run first,
@@ -991,9 +996,21 @@ async function createPhiAgentSession(
   const { sessionId, cwd, agentDir, ctx } = deps
   const sessionCwd = deps.remoteRoot ? agentDir : cwd
   const binding = await bindSpecialistEnvironment(definition, deps)
-  const holder = binding ? { ref: binding.ref, variables: { ...binding.variables } } : undefined
+  const holder = binding
+    ? {
+        ref: binding.ref,
+        variables: { ...binding.variables },
+        ...(binding.pluginId ? { pluginId: binding.pluginId } : {})
+      }
+    : undefined
   const toolCallFactories = specialistToolCallFactories(deps, holder)
-  const skillHost = holder ? { runtimeSessionId: sessionId, environmentBinding: holder } : sessionId
+  const skillHost = holder
+    ? {
+        runtimeSessionId: sessionId,
+        environmentBinding: holder,
+        ...(holder.pluginId ? { pluginId: holder.pluginId } : {})
+      }
+    : sessionId
   const settings = await Settings.init({ cwd: sessionCwd, agentDir })
   const loader =
     isRecord(deps.resourceOptions) || deps.remoteRoot

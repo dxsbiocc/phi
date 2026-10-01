@@ -136,6 +136,7 @@ export async function bindAgentSession(
     builds?: EnvironmentBuilds
     confirmBuild?: (request: ConfirmBuildRequest) => Promise<boolean>
     environmentsDir?: string
+    agentDir?: string
     platform?: PhiPlatform
     signal?: AbortSignal
   } = {}
@@ -144,11 +145,14 @@ export async function bindAgentSession(
   const runtimeSessionId = requireString(record, 'runtimeSessionId')
   const ref = requireString(record, 'ref')
   const agent = requireString(record, 'agent')
+  const pluginId = optionalString(record, 'pluginId')
   const cwd = requireString(record, 'cwd')
   const applied = applyOverrides(ref, cwd)
   const root = deps.root ?? getRuntimeRoot()
   const descriptor = describeEnvironment(applied.ref, {
     projectDir: cwd,
+    ...(pluginId ? { pluginId } : {}),
+    ...(deps.agentDir ? { agentDir: deps.agentDir } : {}),
     ...(deps.environmentsDir ? { environmentsDir: deps.environmentsDir } : {}),
     ...(deps.platform ? { platform: deps.platform } : {})
   })
@@ -244,4 +248,11 @@ function requireString(record: Record<string, unknown>, key: string): string {
   const value = record[key]
   if (typeof value !== 'string' || value.length === 0) throw new Error(`${key} is required`)
   return value
+}
+
+function optionalString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key]
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') throw new Error(`${key} must be a string`)
+  return value || undefined
 }

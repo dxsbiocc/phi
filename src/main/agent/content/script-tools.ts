@@ -53,6 +53,8 @@ export interface RunScriptToolInput {
   tool: ScriptTool
   args: unknown
   sessionEnvironment?: string
+  pluginId?: string
+  agentDir?: string
   environmentsDir?: string
   platform?: PhiPlatform
   signal?: AbortSignal
@@ -90,6 +92,8 @@ export async function runScriptTool(input: RunScriptToolInput): Promise<ScriptTo
     const descriptor = describeEnvironment(applied.ref, {
       skill: input.skill,
       projectDir: input.projectDir,
+      pluginId: input.pluginId,
+      agentDir: input.agentDir,
       environmentsDir: input.environmentsDir,
       platform: input.platform
     })

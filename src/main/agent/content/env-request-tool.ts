@@ -6,6 +6,7 @@ import type { SkillHostRequest } from './skill-tools'
 export interface EnvRequestBinding {
   ref: string
   variables: Record<string, string>
+  pluginId?: string
 }
 
 export interface EnvRequestToolOptions {
@@ -92,7 +93,8 @@ async function runEnvRequest(
       cwd,
       packages: input.packages,
       reason: input.reason,
-      environment
+      environment,
+      ...(options.binding?.pluginId ? { pluginId: options.binding.pluginId } : {})
     })
     if (isDeclined(result)) {
       return {
@@ -134,7 +136,8 @@ async function rebind(
     runtimeSessionId: options.runtimeSessionId,
     ref,
     agent: options.agent,
-    cwd
+    cwd,
+    ...(binding.pluginId ? { pluginId: binding.pluginId } : {})
   })
   if (!isRecord(bound)) return errorResult('environments.bindSession returned an unexpected result')
   if (isRecord(bound.notReady)) {

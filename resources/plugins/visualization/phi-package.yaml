@@ -1,4 +1,15 @@
 schemaVersion: 1
 id: visualization
 type: plugin
+version: 1.0.0
+title: 科研绘图
+summary: Template-guided, publication-ready omics figures with a dedicated agent.
 toolPrefix: viz
+components:
+  agents:
+    - agents/Visualization.md
+  skills:
+    - skills/omics-visualization
+environments:
+  viz:
+    spec: environments/viz/environment.yml

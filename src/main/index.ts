@@ -9,6 +9,11 @@ import type {
   ManualCompactionTarget
 } from '../shared/contextUsageTypes'
 import type { WrapperRunFinishedEvent } from '../shared/wrapperRunNotice'
+import type {
+  PhiPluginListItem,
+  PhiPluginMutationResult,
+  PhiPluginProblemView
+} from '../shared/phiPluginTypes'
 import { declaredExternalOutputRoot } from '../shared/wrapperResultTypes'
 import {
   hoverMediaPreviewType,
@@ -16,7 +21,7 @@ import {
   type PreviewImageMimeType
 } from './file-preview-media'
 import { shouldBlockHtmlReportNavigation } from '../shared/htmlReportPreview'
-import { isBundledSkillPreviewPath } from './agent/plugins/bundled'
+import { isPluginSkillPreviewPath } from './agent/plugins/preview'
 import type {
   WrapperRetargetRequest,
   WrapperRun,
@@ -50,6 +55,7 @@ import {
 } from 'electron'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import semver from 'semver'
 import { createAgentSession } from './agent/session/session-manager'
 import { getAuthManager } from './agent/auth-manager'
 import {
@@ -172,8 +178,21 @@ import {
   type RuntimeModel,
   type RuntimeResourceLoader
 } from './agent/runtime/runtime-adapter'
-import { installPlugin, listPlugins, removePlugin } from './agent/plugins'
+import { installPlugin as installDeveloperPlugin, listPlugins, removePlugin } from './agent/plugins'
+import { installBundledPlugins } from './agent/plugins/bundled-install'
+import {
+  installPlugin as installPhiPlugin,
+  listInstalledPlugins,
+  loadedPlugins,
+  setPluginEnabled,
+  uninstallPlugin as uninstallPhiPlugin,
+  upgradePlugin,
+  type PluginLifecycleResult,
+  type PluginNamespace
+} from './agent/plugins/loader'
+import { validatePlugin, type PluginProblem } from './agent/plugins/validate'
 import { addRemoteMcpConnector, removeRemoteMcpConnector } from './agent/mcp-connectors'
+import { validateSkill } from './agent/content/skill'
 import {
   deleteSkill,
   listGlobalMcpServers,
@@ -869,6 +888,71 @@ const skillHost = createSkillHost({
   confirmBuild: (request) => confirmEnvironmentBuild(request),
   presentArtifacts: (request) => presentScriptArtifacts(request)
 })
+
+function phiPluginListItems(): PhiPluginListItem[] {
+  return listInstalledPlugins({ agentDir: AGENT_DIR }).map((plugin) => ({
+    id: plugin.id,
+    version: plugin.version,
+    title: plugin.manifest.title,
+    summary: plugin.manifest.summary,
+    enabled: plugin.enabled,
+    source: plugin.source,
+    installedAt: plugin.installedAt,
+    directory: plugin.dir
+  }))
+}
+
+function phiPluginProblemView(problem: PluginProblem): PhiPluginProblemView {
+  const label = problem.level === 'error' ? '错误' : '警告'
+  return {
+    ...problem,
+    displayMessage: `${label}（${problem.path}）：${problem.message}`
+  }
+}
+
+function phiPluginMutation(result: PluginLifecycleResult): PhiPluginMutationResult {
+  return {
+    ok: result.ok,
+    plugins: phiPluginListItems(),
+    problems: [...result.errors, ...result.warnings].map(phiPluginProblemView)
+  }
+}
+
+function failedPhiPluginMutation(path: string, message: string): PhiPluginMutationResult {
+  return phiPluginMutation({
+    ok: false,
+    errors: [{ level: 'error', path, message }],
+    warnings: []
+  })
+}
+
+async function installedPluginNamespace(): Promise<PluginNamespace> {
+  const pluginSkillRoots = loadedPlugins({ agentDir: AGENT_DIR }).flatMap(
+    (plugin) => plugin.components.skills
+  )
+  const skills = (await listSkills(currentCwd)).filter(
+    (skill) => !pluginSkillRoots.some((root) => isPathInsideRoot(root, skill.filePath))
+  )
+  const toolPrefixes = skills.flatMap((skill) => {
+    try {
+      const result = validateSkill(dirname(skill.filePath))
+      return result.skill?.phi?.toolPrefix ? [result.skill.phi.toolPrefix] : []
+    } catch {
+      return []
+    }
+  })
+  const agents = discoverPhiAgents({
+    cwd: currentCwd,
+    agentDir: AGENT_DIR,
+    bundledDir: getBundledAgentsDir(),
+    pluginAgentDirs: []
+  }).agents
+  return {
+    agentNames: agents.map((agent) => agent.name),
+    skillNames: skills.map((skill) => skill.name),
+    toolPrefixes
+  }
+}
 getOmpBridge().registerHostHandler('skills.scriptTools', (params) => skillHost.scriptTools(params))
 getOmpBridge().registerHostHandler('skills.run', (params) => skillHost.run(params))
 getOmpBridge().registerHostHandler('skills.scriptTool', (params) => skillHost.scriptTool(params))
@@ -4191,7 +4275,7 @@ function isLocalFilePathAllowed(
   scope: LocalPathScope = currentLocalPathScope()
 ): boolean {
   if (isRemoteProjectAnchorPath(target, AGENT_DIR)) return false
-  if (isBundledSkillPreviewPath(target)) return true
+  if (isPluginSkillPreviewPath(target)) return true
   const agentDir = resolve(AGENT_DIR)
   const roots = [agentDir, scope.cwd, scope.cwdRealPath].filter(
     (root): root is string => typeof root === 'string' && root.length > 0
@@ -5903,11 +5987,47 @@ function createWindow(): void {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   applyDockIcon()
 
   const removedLogs = cleanupOldLogs()
   writeAppLog({ event: 'app_started', metadata: { removedOldLogs: removedLogs } })
+  // Bundled plugins: install missing ones before agent scans (a file copy), then upgrade in
+  // the background, because an upgrade may first build the new environment it switches to.
+  const bundledPluginOptions = async (): Promise<Parameters<typeof installBundledPlugins>[0]> => ({
+    agentDir: AGENT_DIR,
+    runtimeRoot: getRuntimeRoot(),
+    names: await installedPluginNamespace(),
+    build: (descriptor, options) => environmentBuilds.start(descriptor, options)
+  })
+  const logBundledPlugins = (result: Awaited<ReturnType<typeof installBundledPlugins>>): void => {
+    if (result.errors.length === 0) return
+    writeAppLog({
+      level: 'error',
+      event: 'phi_plugin_bundled_install_failed',
+      metadata: {
+        errors: result.errors.map((problem) => phiPluginProblemView(problem).displayMessage)
+      }
+    })
+  }
+  const logBundledPluginError = (error: unknown): void => {
+    writeAppLog({
+      level: 'error',
+      event: 'phi_plugin_bundled_install_failed',
+      metadata: { error: error instanceof Error ? error.message : String(error) }
+    })
+  }
+  try {
+    logBundledPlugins(
+      await installBundledPlugins({ ...(await bundledPluginOptions()), phase: 'install' })
+    )
+  } catch (error) {
+    logBundledPluginError(error)
+  }
+  void bundledPluginOptions()
+    .then((options) => installBundledPlugins({ ...options, phase: 'upgrade' }))
+    .then(logBundledPlugins)
+    .catch(logBundledPluginError)
   recoverInterruptedPhiSessions()
   try {
     ensureBundledWrappersInstalled()
@@ -7260,7 +7380,7 @@ app.whenReady().then(() => {
   ipcMain.handle('plugins:list', async () => listPlugins())
   ipcMain.handle('plugins:install', async (_, source: string) => {
     try {
-      const list = await installPlugin(source)
+      const list = await installDeveloperPlugin(source)
       writeAppLog({ event: 'plugin_installed', metadata: { source } })
       await invalidateAgentSession()
       return list
@@ -7288,6 +7408,94 @@ app.whenReady().then(() => {
         metadata: { source, error: error instanceof Error ? error.message : String(error) }
       })
       throw error
+    }
+  })
+  ipcMain.handle('phiPlugins:list', async () => phiPluginListItems())
+  ipcMain.handle('phiPlugins:installFromDirectory', async (_, path: unknown) => {
+    if (typeof path !== 'string' || path.trim().length === 0) {
+      return failedPhiPluginMutation('path', '请选择有效的插件目录')
+    }
+    try {
+      const validation = validatePlugin(path)
+      if (!validation.ok || !validation.plugin) {
+        return phiPluginMutation({
+          ok: false,
+          errors: validation.errors,
+          warnings: validation.warnings
+        })
+      }
+      const existing = listInstalledPlugins({ agentDir: AGENT_DIR }).find(
+        (plugin) => plugin.id === validation.plugin?.manifest.id
+      )
+      const names = await installedPluginNamespace()
+      let result: PluginLifecycleResult
+      if (!existing) {
+        result = installPhiPlugin(path, {
+          agentDir: AGENT_DIR,
+          runtimeRoot: getRuntimeRoot(),
+          names,
+          source: 'local'
+        })
+      } else if (semver.gt(validation.plugin.manifest.version, existing.version)) {
+        result = await upgradePlugin(path, {
+          agentDir: AGENT_DIR,
+          runtimeRoot: getRuntimeRoot(),
+          names,
+          source: 'local',
+          build: (descriptor, options) => environmentBuilds.start(descriptor, options)
+        })
+      } else {
+        return failedPhiPluginMutation(
+          'version',
+          `已安装 ${existing.id} ${existing.version}；请选择更高版本进行升级`
+        )
+      }
+      if (result.ok) await invalidateAgentSession()
+      return phiPluginMutation(result)
+    } catch (error) {
+      rememberErrorSummary(error)
+      return failedPhiPluginMutation(
+        'install',
+        `插件安装失败：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  })
+  ipcMain.handle('phiPlugins:setEnabled', async (_, id: unknown, enabled: unknown) => {
+    if (typeof id !== 'string' || id.length === 0 || typeof enabled !== 'boolean') {
+      return failedPhiPluginMutation('request', '插件标识或启用状态无效')
+    }
+    try {
+      const result = setPluginEnabled(id, enabled, {
+        agentDir: AGENT_DIR,
+        names: await installedPluginNamespace()
+      })
+      if (result.ok) await invalidateAgentSession()
+      return phiPluginMutation(result)
+    } catch (error) {
+      rememberErrorSummary(error)
+      return failedPhiPluginMutation(
+        'enabled',
+        `插件状态更新失败：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  })
+  ipcMain.handle('phiPlugins:uninstall', async (_, id: unknown) => {
+    if (typeof id !== 'string' || id.length === 0) {
+      return failedPhiPluginMutation('id', '插件标识无效')
+    }
+    try {
+      const result = uninstallPhiPlugin(id, {
+        agentDir: AGENT_DIR,
+        runtimeRoot: getRuntimeRoot()
+      })
+      if (result.ok) await invalidateAgentSession()
+      return phiPluginMutation(result)
+    } catch (error) {
+      rememberErrorSummary(error)
+      return failedPhiPluginMutation(
+        'uninstall',
+        `插件卸载失败：${error instanceof Error ? error.message : String(error)}`
+      )
     }
   })
   ipcMain.handle('skills:list', async (_, cwd?: string) =>

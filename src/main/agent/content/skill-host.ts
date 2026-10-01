@@ -1,7 +1,7 @@
 import { realpathSync } from 'node:fs'
-import { basename, dirname, resolve } from 'node:path'
+import { basename, resolve } from 'node:path'
 
-import { listBundledPlugins, type BundledPlugin } from '../plugins/bundled'
+import { loadedPlugins, type LoadedPlugin } from '../plugins/loader'
 
 import { getRuntimeRoot, type PhiPlatform } from '../envs'
 import { applyOverrides } from '../envs/project-environments'
@@ -52,6 +52,12 @@ export interface SkillHost {
 interface RememberedTool {
   skill: ValidatedSkill
   tool: ScriptTool
+  pluginId?: string
+}
+
+interface ResolvedSkill {
+  skill: ValidatedSkill
+  pluginId?: string
 }
 
 type EnvironmentGate =
@@ -71,7 +77,7 @@ export function createSkillHost({
   builds,
   confirmBuild,
   presentArtifacts,
-  pluginsDir
+  agentDir
 }: {
   runtimeRoot?: string
   listSkillDirs: (cwd: string) => Promise<string[]>
@@ -80,8 +86,8 @@ export function createSkillHost({
   builds?: EnvironmentBuilds
   confirmBuild?: (request: ConfirmBuildRequest) => Promise<boolean>
   presentArtifacts?: (request: PresentArtifactsRequest) => Promise<void> | void
-  /** Bundled plugins directory. Defaults to the installed plugins directory. */
-  pluginsDir?: string
+  /** Phi agent directory override used by tests and isolated runtime instances. */
+  agentDir?: string
 }): SkillHost {
   const remembered = new Map<string, RememberedTool>()
   const runs = new Map<string, AbortController>()
@@ -100,23 +106,19 @@ export function createSkillHost({
     if (runs.get(requestId) === controller) runs.delete(requestId)
   }
 
-  function owningPlugin(skillDir: string): BundledPlugin | undefined {
-    const parent = dirname(resolve(skillDir))
-    return listBundledPlugins(pluginsDir).find((plugin) => {
-      if (!plugin.skillsDir) return false
-      try {
-        return realpathSync(parent) === realpathSync(plugin.skillsDir)
-      } catch {
-        return resolve(parent) === resolve(plugin.skillsDir)
-      }
-    })
+  function owningPlugin(skillDir: string): LoadedPlugin | undefined {
+    return loadedPlugins(agentDir ? { agentDir } : {}).find((plugin) =>
+      plugin.components.skills.some((componentDir) => {
+        try {
+          return realpathSync(skillDir) === realpathSync(componentDir)
+        } catch {
+          return resolve(skillDir) === resolve(componentDir)
+        }
+      })
+    )
   }
 
-  function prefixProblem(plugin: BundledPlugin): string {
-    return `plugin '${plugin.id}': ${plugin.toolPrefixProblem ?? 'phi-package.yaml is missing'}`
-  }
-
-  async function resolveSkill(cwd: string, name: string): Promise<ValidatedSkill> {
+  async function resolveSkill(cwd: string, name: string): Promise<ResolvedSkill> {
     const dirs = await listSkillDirs(cwd)
     const dir = dirs.find((candidate) => basename(candidate) === name)
     if (!dir) throw new Error(`unknown skill '${name}'`)
@@ -133,7 +135,8 @@ export function createSkillHost({
         .join('; ')
       throw new Error(`invalid skill '${name}': ${detail || 'validation failed'}`)
     }
-    return validation.skill
+    const pluginId = owningPlugin(dir)?.id
+    return { skill: validation.skill, ...(pluginId ? { pluginId } : {}) }
   }
 
   async function gateEnvironment(input: {
@@ -141,6 +144,7 @@ export function createSkillHost({
     projectDir: string
     sessionEnvironment?: string
     runtimeSessionId?: string
+    pluginId?: string
     signal: AbortSignal
   }): Promise<EnvironmentGate> {
     const choice = resolveSkillEnvironment(input.skill, input.sessionEnvironment)
@@ -151,6 +155,8 @@ export function createSkillHost({
       descriptor = describeEnvironment(applied.ref, {
         skill: input.skill,
         projectDir: input.projectDir,
+        pluginId: input.pluginId,
+        agentDir,
         ...(environmentsDir ? { environmentsDir } : {}),
         ...(platform ? { platform } : {})
       })
@@ -192,14 +198,9 @@ export function createSkillHost({
       const tools: ScriptToolDescriptor[] = []
       const problems: string[] = []
       const seenNames = new Set<string>()
-      const reportedPrefix = new Set<string>()
 
       for (const dir of dirs) {
         const plugin = owningPlugin(dir)
-        if (plugin && !plugin.toolPrefix && !reportedPrefix.has(plugin.id)) {
-          reportedPrefix.add(plugin.id)
-          problems.push(prefixProblem(plugin))
-        }
         let validation: SkillValidationResult
         try {
           validation = validateSkill(dir, { insidePlugin: plugin !== undefined })
@@ -219,7 +220,6 @@ export function createSkillHost({
         }
 
         const skill = validation.skill
-        if (plugin && !plugin.toolPrefix) continue
         const prefix = plugin?.toolPrefix ?? skill.phi?.toolPrefix
         if (!prefix) continue
         for (const tool of scriptToolsOf(skill, { prefix })) {
@@ -236,7 +236,11 @@ export function createSkillHost({
             skill: skill.name,
             approval: tool.approval
           })
-          remembered.set(tool.name, { skill, tool })
+          remembered.set(tool.name, {
+            skill,
+            tool,
+            ...(plugin ? { pluginId: plugin.id } : {})
+          })
         }
       }
 
@@ -253,7 +257,9 @@ export function createSkillHost({
       const runCwd = optionalString(record, 'runCwd')
       const sessionEnvironment = optionalString(record, 'sessionEnvironment')
       const runtimeSessionId = optionalSessionId(record)
-      const skill = await resolveSkill(cwd, skillName)
+      const resolved = await resolveSkill(cwd, skillName)
+      const skill = resolved.skill
+      const pluginId = resolved.pluginId ?? optionalString(record, 'pluginId')
       const controller = begin(requestId)
       try {
         const gate = await gateEnvironment({
@@ -261,6 +267,7 @@ export function createSkillHost({
           projectDir: cwd,
           ...(sessionEnvironment !== undefined ? { sessionEnvironment } : {}),
           ...(runtimeSessionId !== undefined ? { runtimeSessionId } : {}),
+          ...(pluginId !== undefined ? { pluginId } : {}),
           signal: controller.signal
         })
         if (gate.action === 'aborted') return abortedRun(gate.envId, gate.warnings)
@@ -273,6 +280,8 @@ export function createSkillHost({
           ...(args ? { args } : {}),
           ...(runCwd !== undefined ? { cwd: runCwd } : {}),
           ...(sessionEnvironment !== undefined ? { sessionEnvironment } : {}),
+          ...(pluginId !== undefined ? { pluginId } : {}),
+          ...(agentDir !== undefined ? { agentDir } : {}),
           ...(environmentsDir ? { environmentsDir } : {}),
           ...(platform ? { platform } : {}),
           signal: controller.signal
@@ -305,6 +314,7 @@ export function createSkillHost({
       const entry = remembered.get(toolName)
       if (!entry) throw new Error(`unknown script tool '${toolName}'`)
       const sessionEnvironment = optionalString(record, 'sessionEnvironment')
+      const pluginId = entry.pluginId ?? optionalString(record, 'pluginId')
       const runtimeSessionId = optionalSessionId(record)
       const toolCallId = optionalString(record, 'toolCallId')
       const controller = begin(requestId)
@@ -314,6 +324,7 @@ export function createSkillHost({
           projectDir: cwd,
           ...(sessionEnvironment !== undefined ? { sessionEnvironment } : {}),
           ...(runtimeSessionId !== undefined ? { runtimeSessionId } : {}),
+          ...(pluginId !== undefined ? { pluginId } : {}),
           signal: controller.signal
         })
         if (gate.action === 'aborted') {
@@ -334,6 +345,8 @@ export function createSkillHost({
           tool: entry.tool,
           args: record.args,
           ...(sessionEnvironment !== undefined ? { sessionEnvironment } : {}),
+          ...(pluginId !== undefined ? { pluginId } : {}),
+          ...(agentDir !== undefined ? { agentDir } : {}),
           ...(environmentsDir ? { environmentsDir } : {}),
           ...(platform ? { platform } : {}),
           signal: controller.signal

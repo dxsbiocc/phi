@@ -1,5 +1,4 @@
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
-import { isBundledSkillPreviewPath } from '../src/main/agent/plugins/bundled'
 import { loadRemoteWrapperAgent } from '../src/main/agent/agents/remote-wrapper-agent'
 import { BackgroundAgentApprovalTracker } from '../src/main/agent/agents/background-approval'
 import * as jobContinue from '../src/main/agent/wrappers/composition/job-continue'
@@ -877,6 +876,7 @@ async function harness(
     quit: noop
   })
   const modules: Record<string, unknown> = {
+    semver: { gt: (left: string, right: string): boolean => left > right },
     './agent-env': {},
     './file-preview-media': { hoverMediaPreviewType, mediaPreviewType },
     '../shared/wrapperResultTypes': { declaredExternalOutputRoot },
@@ -1686,6 +1686,29 @@ async function harness(
       installPlugin: async (): Promise<unknown[]> => [],
       removePlugin: async (): Promise<unknown[]> => []
     },
+    './agent/plugins/bundled-install': {
+      installBundledPlugins: async (): Promise<unknown> => ({
+        installed: [],
+        upgraded: [],
+        skipped: [],
+        errors: [],
+        warnings: []
+      })
+    },
+    './agent/plugins/loader': {
+      listInstalledPlugins: (): unknown[] => [],
+      loadedPlugins: (): unknown[] => [],
+      installPlugin: (): unknown => ({ ok: true, errors: [], warnings: [] }),
+      upgradePlugin: async (): Promise<unknown> => ({ ok: true, errors: [], warnings: [] }),
+      setPluginEnabled: (): unknown => ({ ok: true, errors: [], warnings: [] }),
+      uninstallPlugin: (): unknown => ({ ok: true, errors: [], warnings: [] })
+    },
+    './agent/plugins/validate': {
+      validatePlugin: (): unknown => ({ ok: false, errors: [], warnings: [] })
+    },
+    './agent/content/skill': {
+      validateSkill: (): unknown => ({ ok: true, errors: [], warnings: [] })
+    },
     './agent/mcp-connectors': {
       addRemoteMcpConnector: noop,
       removeRemoteMcpConnector: noop
@@ -1897,9 +1920,24 @@ async function harness(
     // Real scan of the repo's bundled agents, but never the developer's own ~/.claude etc.
     './agent/agents/discovery': {
       discoverPhiAgents: (options: Parameters<typeof discoverPhiAgents>[0]) =>
-        discoverPhiAgents({ ...options, homeDir: '/nonexistent-home' })
+        discoverPhiAgents({
+          ...options,
+          homeDir: '/nonexistent-home',
+          ...(options.pluginAgentDirs === undefined
+            ? {
+                pluginAgentDirs: [
+                  path.join(process.cwd(), 'resources', 'plugins', 'visualization', 'agents')
+                ]
+              }
+            : {})
+        })
     },
-    './agent/plugins/bundled': { isBundledSkillPreviewPath },
+    './agent/plugins/preview': {
+      isPluginSkillPreviewPath: (target: string): boolean =>
+        target.includes(
+          path.join('resources', 'plugins', 'visualization', 'skills', 'omics-visualization')
+        ) && target.endsWith('preview.png')
+    },
     './agent/agents/remote-wrapper-agent': { loadRemoteWrapperAgent },
     './agent/agents/background-approval': { BackgroundAgentApprovalTracker },
     './agent/agents/leader-prompt': { buildAgentLeaderPrompt },

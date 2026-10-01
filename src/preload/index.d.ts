@@ -65,6 +65,7 @@ import type {
   EnvironmentToolId
 } from '../shared/environmentTypes'
 import type { EnvironmentBuild } from '../shared/environmentBuildTypes'
+import type { PhiPluginListItem, PhiPluginMutationResult } from '../shared/phiPluginTypes'
 
 type PreloadSessionSummary = {
   path: string
@@ -981,6 +982,10 @@ declare global {
       listPlugins: () => Promise<PreloadPluginCatalogItem[]>
       installPlugin: (source: string) => Promise<PreloadPluginCatalogItem[]>
       removePlugin: (source: string) => Promise<PreloadPluginCatalogItem[]>
+      listPhiPlugins: () => Promise<PhiPluginListItem[]>
+      installPhiPluginFromDirectory: (path: string) => Promise<PhiPluginMutationResult>
+      setPhiPluginEnabled: (id: string, enabled: boolean) => Promise<PhiPluginMutationResult>
+      uninstallPhiPlugin: (id: string) => Promise<PhiPluginMutationResult>
       listSkills: (cwd?: string) => Promise<PreloadSkillSummary[]>
       readSkillContent: (filePath: string, cwd?: string) => Promise<PreloadSkillContent>
       setSkillDisabled: (

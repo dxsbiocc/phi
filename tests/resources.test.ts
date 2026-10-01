@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { after } from 'node:test'
 
+import { installPlugin } from '../src/main/agent/plugins/loader'
+
 const tempRoot = mkdtempSync(join(tmpdir(), 'pi-resources-test-'))
 const agentDir = join(tempRoot, 'agent')
 const codexHome = join(tempRoot, 'codex')
@@ -108,6 +110,15 @@ writeFileSync(
 process.env.PI_CODING_AGENT_DIR = agentDir
 process.env.CODEX_HOME = codexHome
 
+const visualizationInstall = installPlugin(
+  join(process.cwd(), 'resources', 'plugins', 'visualization'),
+  { agentDir, runtimeRoot: join(tempRoot, 'runtime') }
+)
+assert.equal(visualizationInstall.ok, true, JSON.stringify(visualizationInstall.errors))
+assert.ok(visualizationInstall.plugin)
+const visualizationSkillDir = visualizationInstall.plugin.components.skills[0]
+assert.ok(visualizationSkillDir)
+
 after(() => {
   rmSync(tempRoot, { recursive: true, force: true })
 })
@@ -209,9 +220,7 @@ test('listSkills reads project skills from the selected cwd', async () => {
   const omicsVisualizationSkill = projectASkills.find(
     (skill) =>
       skill.name === 'omics-visualization' &&
-      skill.filePath.includes(
-        join('resources', 'plugins', 'visualization', 'skills', 'omics-visualization')
-      )
+      skill.filePath === join(visualizationSkillDir, 'SKILL.md')
   )
 
   assert(projectASkills.some((skill) => skill.name === 'project-a-skill'))
@@ -219,8 +228,8 @@ test('listSkills reads project skills from the selected cwd', async () => {
   assert(omicsVisualizationSkill)
   assert.equal(bundledSkill.sourceCategory, 'system')
   assert.equal(bundledSkill.sourceCategoryLabel, 'System')
-  assert.equal(omicsVisualizationSkill.sourceCategory, 'system')
-  assert.equal(omicsVisualizationSkill.sourceCategoryLabel, 'System')
+  assert.equal(omicsVisualizationSkill.sourceCategory, 'third-party')
+  assert.equal(omicsVisualizationSkill.sourceCategoryLabel, 'Plugin')
   assert(
     projectASkills.some(
       (skill) => skill.name === 'project-a-phi-skill' && skill.scope === 'project'

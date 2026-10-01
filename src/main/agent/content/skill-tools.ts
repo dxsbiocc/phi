@@ -67,6 +67,8 @@ const STRICT_FORBIDDEN = new Set([
 
 export interface SkillToolHostOptions {
   runtimeSessionId?: string
+  /** Plugin that owns the bound specialist session. */
+  pluginId?: string
   /** Environment the specialist session is bound to. The skill's own ref still wins. */
   sessionEnvironment?: string
   /**
@@ -160,6 +162,7 @@ async function runSkillTool(
   if (options.runtimeSessionId) body.runtimeSessionId = options.runtimeSessionId
   const sessionEnvironment = liveSessionEnvironment(options)
   if (sessionEnvironment) body.sessionEnvironment = sessionEnvironment
+  if (options.pluginId) body.pluginId = options.pluginId
 
   try {
     const result = await callHost(request, 'skills.run', body, signal)
@@ -205,6 +208,7 @@ async function runScriptToolCall(
         ...(liveSessionEnvironment(options)
           ? { sessionEnvironment: liveSessionEnvironment(options) }
           : {}),
+        ...(options.pluginId ? { pluginId: options.pluginId } : {}),
         ...(toolCallId ? { toolCallId } : {})
       },
       signal

@@ -1,22 +1,36 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
 import { describeEnvironment } from '../src/main/agent/content/environment-refs'
 import { currentPlatform } from '../src/main/agent/envs'
-import { listBundledPlugins } from '../src/main/agent/plugins/bundled'
-import { copyMinimal } from './helpers/fakeEnvironment'
+import { installPlugin, loadedPlugins, type LoadedPlugin } from '../src/main/agent/plugins/loader'
+import { isPluginSkillPreviewPath } from '../src/main/agent/plugins/preview'
+import { createRuntimeResourceLoader } from '../src/main/agent/runtime/runtime-adapter'
+
+const VISUALIZATION_SOURCE = join(process.cwd(), 'resources', 'plugins', 'visualization')
 
 function withTemp(body: (root: string) => void | Promise<void>): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), 'phi-bundled-plugins-'))
+  const root = mkdtempSync(join(tmpdir(), 'phi-installed-plugins-'))
   return Promise.resolve()
     .then(() => body(root))
-    .finally(() => {
-      rmSync(root, { recursive: true, force: true })
-    })
+    .finally(() => rmSync(root, { recursive: true, force: true }))
+}
+
+function installVisualization(root: string): {
+  agentDir: string
+  runtimeRoot: string
+  plugin: LoadedPlugin
+} {
+  const agentDir = join(root, 'agent')
+  const runtimeRoot = join(root, 'runtime')
+  const result = installPlugin(VISUALIZATION_SOURCE, { agentDir, runtimeRoot })
+  assert.equal(result.ok, true, JSON.stringify(result.errors))
+  assert.ok(result.plugin)
+  return { agentDir, runtimeRoot, plugin: result.plugin }
 }
 
 function writeAgent(dir: string, name: string, description: string): void {
@@ -27,118 +41,75 @@ function writeAgent(dir: string, name: string, description: string): void {
   )
 }
 
-test('listBundledPlugins keeps valid ids and only existing component directories', async () => {
+test('installed plugin metadata and components come from the installed copy', async () => {
   await withTemp((root) => {
-    writeFileSync(join(root, 'file-plugin'), '')
-    mkdirSync(join(root, 'Bad'))
-    mkdirSync(join(root, '9no'))
-    mkdirSync(join(root, 'has_underscore'))
-    mkdirSync(join(root, `a${'b'.repeat(64)}`))
-
-    const alpha = join(root, 'alpha')
-    mkdirSync(join(alpha, 'agents'), { recursive: true })
-    mkdirSync(join(alpha, 'skills'), { recursive: true })
-    mkdirSync(join(alpha, 'environments'), { recursive: true })
-    mkdirSync(join(alpha, 'mcp'), { recursive: true })
-
-    const beta = join(root, 'beta')
-    mkdirSync(beta)
-    writeFileSync(join(beta, 'agents'), 'not a directory')
-
-    const gamma = join(root, 'gamma', 'skills')
-    mkdirSync(gamma, { recursive: true })
-
-    assert.deepEqual(listBundledPlugins(root), [
-      {
-        id: 'alpha',
-        dir: alpha,
-        agentsDir: join(alpha, 'agents'),
-        skillsDir: join(alpha, 'skills'),
-        environmentsDir: join(alpha, 'environments')
-      },
-      { id: 'beta', dir: beta },
-      { id: 'gamma', dir: join(root, 'gamma'), skillsDir: gamma }
-    ])
-    assert.deepEqual(listBundledPlugins(join(root, 'missing')), [])
+    const { agentDir, plugin } = installVisualization(root)
+    const loaded = loadedPlugins({ agentDir })
+    assert.deepEqual(
+      loaded.map((item) => item.id),
+      ['visualization']
+    )
+    assert.equal(plugin.version, '1.0.0')
+    assert.equal(plugin.toolPrefix, 'viz')
+    assert.match(plugin.dir, /packages\/plugin\/visualization\/1\.0\.0$/)
+    assert.ok(plugin.components.agents.every((path) => path.startsWith(plugin.dir)))
+    assert.ok(plugin.components.skills.every((path) => path.startsWith(plugin.dir)))
   })
 })
 
-test('describeEnvironment resolves plugin refs from a plugins directory', async () => {
+test('plugin environment resolution requires the requesting installed plugin', async () => {
   await withTemp((root) => {
+    const { agentDir } = installVisualization(root)
     const platform = currentPlatform()
-    copyMinimal(join(root, 'alpha', 'environments', 'viz'))
-
-    const found = describeEnvironment('plugin:viz', { pluginsDir: root, platform })
+    const found = describeEnvironment('plugin:viz', {
+      agentDir,
+      pluginId: 'visualization',
+      platform
+    })
     assert.equal(found.ref, 'plugin:viz')
     assert.equal(found.scope, 'plugin')
-    assert.equal(found.owner, 'alpha')
+    assert.equal(found.owner, 'visualization')
     assert.equal(found.kind, 'package')
-    assert.equal(found.spec.name, 'minimal')
-    assert.equal(found.platform, platform)
+    assert.equal(found.spec.name, 'viz')
     assert.match(found.lockText, /@EXPLICIT/)
 
     assert.throws(
-      () => describeEnvironment('plugin:missing', { pluginsDir: root, platform }),
-      /environment plugin:missing is not available/
+      () => describeEnvironment('plugin:viz', { agentDir, platform }),
+      /requires a requesting plugin/
     )
-
-    copyMinimal(join(root, 'beta', 'environments', 'viz'))
     assert.throws(
-      () => describeEnvironment('plugin:viz', { pluginsDir: root, platform }),
-      /environment plugin:viz is provided by alpha and beta/
+      () =>
+        describeEnvironment('plugin:viz', {
+          agentDir,
+          pluginId: 'another-plugin',
+          platform
+        }),
+      /environment plugin:viz is not available/
     )
   })
 })
 
-test('plugin:viz resolves to the visualization plugin environment', () => {
-  const platform = currentPlatform()
-  const descriptor = describeEnvironment('plugin:viz', { platform })
-  const visualization = listBundledPlugins().find((plugin) => plugin.id === 'visualization')
-  assert.ok(visualization?.agentsDir)
-  assert.ok(visualization.skillsDir)
-  assert.equal(visualization.toolPrefix, 'viz')
-  assert.equal(
-    visualization.environmentsDir,
-    join(process.cwd(), 'resources', 'plugins', 'visualization', 'environments')
-  )
-  assert.equal(descriptor.ref, 'plugin:viz')
-  assert.equal(descriptor.scope, 'plugin')
-  assert.equal(descriptor.owner, 'visualization')
-  assert.equal(descriptor.kind, 'package')
-  assert.equal(descriptor.spec.name, 'viz')
-  assert.equal(descriptor.platform, platform)
-  assert.match(descriptor.lockText, /@EXPLICIT/)
-  assert.match(
-    descriptor.lockText,
-    /resources\/plugins\/visualization\/environments\/viz\/environment\.yml/
-  )
-})
-
-test('agent discovery finds Visualization from the plugin directory', () => {
-  const filePath = join(
-    process.cwd(),
-    'resources',
-    'plugins',
-    'visualization',
-    'agents',
-    'Visualization.md'
-  )
-  const { agents } = discoverPhiAgents({
-    cwd: '/nonexistent/cwd',
-    agentDir: '/nonexistent/agentdir',
-    bundledDir: join(process.cwd(), 'resources', 'agents'),
-    homeDir: '/nonexistent/home'
+test('agent discovery loads installed plugin agents and carries plugin identity', async () => {
+  await withTemp((root) => {
+    const { agentDir, plugin } = installVisualization(root)
+    const { agents } = discoverPhiAgents({
+      cwd: join(root, 'project'),
+      agentDir,
+      bundledDir: join(process.cwd(), 'resources', 'agents'),
+      homeDir: join(root, 'home')
+    })
+    const visualization = agents.find((agent) => agent.name === 'Visualization')
+    assert.ok(visualization)
+    assert.equal(visualization.source, 'phi')
+    assert.equal(visualization.pluginId, 'visualization')
+    assert.equal(visualization.filePath, plugin.components.agents[0])
   })
-  const visualization = agents.find((agent) => agent.name === 'Visualization')
-  assert.ok(visualization)
-  assert.equal(visualization.source, 'phi')
-  assert.equal(visualization.filePath, filePath)
 })
 
-test('a bundled agent keeps a name that a plugin agent also defines', async () => {
+test('a bundled agent keeps a name that an explicitly supplied plugin directory also defines', async () => {
   await withTemp((root) => {
     const bundled = join(root, 'bundled-agents')
-    const pluginAgents = join(root, 'plugins', 'alpha', 'agents')
+    const pluginAgents = join(root, 'plugin-agents')
     writeAgent(bundled, 'Alpha', 'from bundled')
     writeAgent(pluginAgents, 'Alpha', 'from plugin')
     writeAgent(pluginAgents, 'Beta', 'from plugin')
@@ -159,30 +130,30 @@ test('a bundled agent keeps a name that a plugin agent also defines', async () =
   })
 })
 
-test('skill loading lists omics-visualization as a bundled skill', async () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'phi-bundled-plugin-skills-'))
-  try {
-    const { createRuntimeResourceLoader } =
-      await import('../src/main/agent/runtime/runtime-adapter')
-    const { deleteSkill, listSkills } = await import('../src/main/agent/resources')
-    const skillsDir = listBundledPlugins().find(
-      (plugin) => plugin.id === 'visualization'
-    )?.skillsDir
-    assert.ok(skillsDir)
-    const loader = createRuntimeResourceLoader({ cwd, agentDir: cwd })
-    assert.equal(loader.options.additionalSkillPaths?.includes(skillsDir), true)
-
-    const skills = await listSkills(cwd)
-    const skill = skills.find(
-      (item) =>
-        item.name === 'omics-visualization' &&
-        item.filePath.includes(join('plugins', 'visualization', 'skills', 'omics-visualization'))
-    )
+test('runtime skill loading and preview access use installed plugin files', async () => {
+  await withTemp(async (root) => {
+    const { agentDir, plugin } = installVisualization(root)
+    const skillDir = plugin.components.skills[0]
+    assert.ok(skillDir)
+    const loader = createRuntimeResourceLoader({ cwd: join(root, 'project'), agentDir })
+    assert.equal(loader.options.additionalSkillPaths?.includes(dirname(skillDir)), true)
+    await loader.reload()
+    const skill = loader.getSkills().skills.find((item) => item.name === 'omics-visualization')
     assert.ok(skill)
-    assert.equal(skill.source, 'bundled')
-    assert.equal(skill.sourceCategory, 'system')
-    await assert.rejects(() => deleteSkill(skill.filePath, cwd), /System skills cannot be deleted/)
-  } finally {
-    rmSync(cwd, { recursive: true, force: true })
-  }
+    assert.equal(skill.sourceInfo.source, 'phi-plugin')
+    assert.equal(skill.sourceInfo.origin, 'visualization')
+
+    const installedPreview = join(skillDir, 'scripts', 'tree', 'basic', 'preview.png')
+    const sourcePreview = join(
+      VISUALIZATION_SOURCE,
+      'skills',
+      'omics-visualization',
+      'scripts',
+      'tree',
+      'basic',
+      'preview.png'
+    )
+    assert.equal(isPluginSkillPreviewPath(installedPreview, agentDir), true)
+    assert.equal(isPluginSkillPreviewPath(sourcePreview, agentDir), false)
+  })
 })

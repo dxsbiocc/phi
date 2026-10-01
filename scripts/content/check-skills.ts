@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { validateSkill } from '../../src/main/agent/content/skill'
-import { listBundledPlugins } from '../../src/main/agent/plugins/bundled'
+import { validatePlugin } from '../../src/main/agent/plugins/validate'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
 
@@ -34,12 +34,15 @@ const checks: SkillCheck[] = skillDirs(join(root, 'resources', 'skills')).map((n
   insidePlugin: false
 }))
 
-for (const plugin of listBundledPlugins(join(root, 'resources', 'plugins'))) {
-  if (!plugin.skillsDir) continue
-  for (const name of skillDirs(plugin.skillsDir)) {
+for (const id of skillDirs(join(root, 'resources', 'plugins'))) {
+  const pluginDir = join(root, 'resources', 'plugins', id)
+  const result = validatePlugin(pluginDir)
+  if (!result.plugin) continue
+  for (const component of result.plugin.manifest.components.skills ?? []) {
+    const name = component.slice('skills/'.length)
     checks.push({
-      label: `${plugin.id}/${name}`,
-      dir: join(plugin.skillsDir, name),
+      label: `${id}/${name}`,
+      dir: join(pluginDir, component),
       insidePlugin: true
     })
   }

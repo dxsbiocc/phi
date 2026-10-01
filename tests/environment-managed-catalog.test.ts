@@ -8,6 +8,7 @@ import { describeEnvironment } from '../src/main/agent/content/environment-refs'
 import { listManagedEnvironments } from '../src/main/agent/environment/managed'
 import { updateEnvironmentEntry } from '../src/main/agent/envs'
 import { writeOverrides } from '../src/main/agent/envs/project-environments'
+import { installPlugin } from '../src/main/agent/plugins/loader'
 import type { EnvironmentBuild } from '../src/shared/environmentBuildTypes'
 import { copyMinimal, envIdFor } from './helpers/fakeEnvironment'
 
@@ -37,19 +38,23 @@ test('managed catalog includes official, plugin, project, and orphaned environme
   const temp = mkdtempSync(join(tmpdir(), 'phi-managed-catalog-'))
   const root = join(temp, 'runtime')
   const environmentsDir = join(temp, 'official')
-  const pluginsDir = join(temp, 'plugins')
+  const agentDir = join(temp, 'agent')
   const projectDir = join(temp, 'project')
   try {
     mkdirSync(projectDir, { recursive: true })
     copyMinimal(join(environmentsDir, 'phi-python'), 'phi-python')
     copyMinimal(join(environmentsDir, 'phi-nextflow'), 'phi-nextflow')
-    copyMinimal(join(pluginsDir, 'visualization', 'environments', 'viz'), 'viz')
+    const installed = installPlugin(join(process.cwd(), 'resources', 'plugins', 'visualization'), {
+      agentDir,
+      runtimeRoot: root,
+      platform: 'darwin-arm64'
+    })
+    assert.equal(installed.ok, true, JSON.stringify(installed.errors))
     copyMinimal(join(projectDir, '.phi', 'environments', 'viz-x1'), 'viz-x1')
     writeOverrides(projectDir, { 'plugin:viz': 'project:viz-x1' })
 
     const pythonDescriptor = describeEnvironment('phi:python@1', {
       environmentsDir,
-      pluginsDir,
       platform: 'darwin-arm64'
     })
     const pythonId = envIdFor(pythonDescriptor)
@@ -60,7 +65,6 @@ test('managed catalog includes official, plugin, project, and orphaned environme
 
     const projectDescriptor = describeEnvironment('project:viz-x1', {
       environmentsDir,
-      pluginsDir,
       projectDir,
       platform: 'darwin-arm64'
     })
@@ -72,7 +76,8 @@ test('managed catalog includes official, plugin, project, and orphaned environme
 
     const pluginDescriptor = describeEnvironment('plugin:viz', {
       environmentsDir,
-      pluginsDir,
+      agentDir,
+      pluginId: 'visualization',
       platform: 'darwin-arm64'
     })
     const pluginBuild: EnvironmentBuild = {
@@ -101,14 +106,18 @@ test('managed catalog includes official, plugin, project, and orphaned environme
     const catalog = await listManagedEnvironments({
       root,
       environmentsDir,
-      pluginsDir,
+      agentDir,
       projectDir,
       platform: 'darwin-arm64',
       builds: [pluginBuild, staleFailedBuild],
       sizeOf: async () => 123,
       consumers: [
         { ref: 'phi:python@1', consumer: { kind: 'skill', name: 'scanpy' } },
-        { ref: 'plugin:viz', consumer: { kind: 'agent', name: 'Visualization' } }
+        {
+          ref: 'plugin:viz',
+          pluginId: 'visualization',
+          consumer: { kind: 'agent', name: 'Visualization' }
+        }
       ]
     })
 
