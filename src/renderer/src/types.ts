@@ -10,6 +10,7 @@ import type {
   ProxyTransportStatus
 } from '../../shared/appSettingsTypes'
 import type { DbConnectorSettingsItem } from '../../shared/dbConnectorTypes'
+import type { BrowserRendererBridge } from '../../shared/browserTypes'
 import type {
   EnvironmentGetResult,
   EnvironmentSnapshot,
@@ -701,6 +702,7 @@ export interface AnalysisNotebookFormatResult {
 }
 
 export type RendererApi = AutoCompactionApi & {
+  browser: BrowserRendererBridge
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
   toggleWindowFullscreen: () => Promise<void>

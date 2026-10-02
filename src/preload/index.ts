@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { DatabaseWebImagePreview } from '../shared/databaseWebPreview'
+import type { BrowserRendererBridge, BrowserRendererEventEnvelope } from '../shared/browserTypes'
 import type { RemoteWorkspaceFileRequest } from '../shared/remoteWorkspacePath'
 import type {
   WrapperResultDirectoryRequest,
@@ -658,6 +659,7 @@ type AnalysisNotebookCodeGenerationProgress = {
 }
 
 type RendererAuthApi = {
+  browser: BrowserRendererBridge
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
   toggleWindowFullscreen: () => Promise<void>
@@ -941,7 +943,30 @@ type RendererAuthApi = {
   exportWrapperReproducibility: (runId: string) => Promise<string | null>
 }
 
+const browserBridge: BrowserRendererBridge = {
+  execute: (command) => ipcRenderer.invoke('browser:execute', command),
+  snapshot: () => ipcRenderer.invoke('browser:snapshot'),
+  setViewport: (input) => ipcRenderer.invoke('browser:setViewport', input),
+  onEvent: (callback) => {
+    const handler = (_: unknown, envelope: BrowserRendererEventEnvelope): void => {
+      try {
+        void Promise.resolve(callback(envelope)).catch(() => undefined)
+      } catch {
+        return
+      }
+    }
+    let subscribed = true
+    ipcRenderer.on('browser:event', handler)
+    return () => {
+      if (!subscribed) return
+      subscribed = false
+      ipcRenderer.removeListener('browser:event', handler)
+    }
+  }
+}
+
 const api: RendererAuthApi = {
+  browser: browserBridge,
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   toggleWindowFullscreen: (): Promise<void> => ipcRenderer.invoke('window:toggle-fullscreen'),

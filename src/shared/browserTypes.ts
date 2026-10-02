@@ -124,6 +124,22 @@ export type BrowserCommand =
       expectedDocumentRevision: number
     }
 
+export type BrowserUiCommand = Extract<
+  BrowserCommand,
+  {
+    type:
+      | 'open'
+      | 'newTab'
+      | 'activate'
+      | 'close'
+      | 'navigate'
+      | 'history'
+      | 'reload'
+      | 'stop'
+      | 'restore'
+  }
+>
+
 export interface BrowserScreenshot {
   mediaType: 'image/png'
   data: string
@@ -152,3 +168,15 @@ export type BrowserWorkspaceEvent =
       error: BrowserError
       revision: number
     }
+
+export interface BrowserRendererEventEnvelope {
+  sessionId: string
+  event: BrowserWorkspaceEvent
+}
+
+export interface BrowserRendererBridge {
+  execute(command: BrowserUiCommand): Promise<BrowserOutcome>
+  snapshot(): Promise<BrowserWorkspaceSnapshot>
+  setViewport(input: { tabId: string; viewport: BrowserViewport | null }): Promise<void>
+  onEvent(cb: (envelope: BrowserRendererEventEnvelope) => void): () => void
+}

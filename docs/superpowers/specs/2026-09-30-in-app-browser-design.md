@@ -267,13 +267,37 @@ src/renderer/src/features/browser/
 The preload exposes a namespaced bridge:
 
 ```ts
+export type BrowserUiCommand = Extract<
+  BrowserCommand,
+  {
+    type:
+      | 'open'
+      | 'newTab'
+      | 'activate'
+      | 'close'
+      | 'navigate'
+      | 'history'
+      | 'reload'
+      | 'stop'
+      | 'restore'
+  }
+>
+
+export interface BrowserRendererEventEnvelope {
+  sessionId: string
+  event: BrowserWorkspaceEvent
+}
+
 export interface BrowserRendererBridge {
   execute(command: BrowserUiCommand): Promise<BrowserOutcome>
   snapshot(): Promise<BrowserWorkspaceSnapshot>
   setViewport(input: { tabId: string; viewport: BrowserViewport | null }): Promise<void>
-  onEvent(listener: (event: BrowserWorkspaceEvent) => void): () => void
+  onEvent(listener: (envelope: BrowserRendererEventEnvelope) => void): () => void
 }
 ```
+
+The envelope carries the trusted sessionId assigned by the main process so the renderer can ignore
+stale or background-session events after the visible conversation changes.
 
 Main-process IPC handlers derive the current window and Phi session from trusted application state. They validate the sender, command shape, string lengths, URL, bounds, numeric ranges, and tab ownership.
 
