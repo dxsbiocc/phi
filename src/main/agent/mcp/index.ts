@@ -2,6 +2,7 @@ export {
   MANAGED_MARKER_FIELD,
   McpCommandNotFoundError,
   managedStdioServer,
+  pendingManagedStdioServer,
   readManagedMarker,
   refreshManagedStdioServers,
   resolveManagedEnvironment

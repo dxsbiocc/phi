@@ -10,6 +10,14 @@ import { validatePlugin, type ValidatedPlugin } from '../plugins/validate'
 
 export const PACKAGE_CONTRACT_VERSION = '1.1.0'
 
+export const CONNECTOR_CATEGORIES = [
+  '生产力',
+  '沟通协作',
+  '设计创作',
+  '健康与生命科学',
+  '科研数据'
+] as const
+
 export const packageManifestSchema = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   $id: 'https://phi.local/contracts/package.schema.json',
@@ -89,6 +97,51 @@ export const packageManifestSchema = {
           }
         }
       }
+    },
+    connector: {
+      type: 'object',
+      required: ['transport', 'publisher', 'category'],
+      additionalProperties: false,
+      properties: {
+        transport: { enum: ['http', 'stdio'] },
+        publisher: { type: 'string', minLength: 1, maxLength: 80 },
+        category: { enum: CONNECTOR_CATEGORIES },
+        homepage: { type: 'string', pattern: '^https://\\S+$' },
+        url: { type: 'string', pattern: '^https://\\S+$' },
+        auth: { enum: ['none', 'oauth', 'header'] },
+        environment: {
+          type: 'string',
+          pattern: '^(?:phi:[a-z][a-z0-9-]{0,62}@(0|[1-9][0-9]*)|\\./environment\\.yml)$'
+        },
+        command: {
+          type: 'string',
+          minLength: 1,
+          pattern: '^(?:[A-Za-z0-9_+.-]+|\\./(?:[A-Za-z0-9_+.-]+/)*[A-Za-z0-9_+.-]+)$'
+        },
+        args: { type: 'array', items: { type: 'string' } }
+      },
+      allOf: [
+        {
+          if: { properties: { transport: { const: 'http' } }, required: ['transport'] },
+          then: {
+            required: ['url', 'auth'],
+            not: {
+              anyOf: [
+                { required: ['environment'] },
+                { required: ['command'] },
+                { required: ['args'] }
+              ]
+            }
+          }
+        },
+        {
+          if: { properties: { transport: { const: 'stdio' } }, required: ['transport'] },
+          then: {
+            required: ['environment', 'command'],
+            not: { anyOf: [{ required: ['url'] }, { required: ['auth'] }] }
+          }
+        }
+      ]
     }
   },
   allOf: [
@@ -99,21 +152,36 @@ export const packageManifestSchema = {
           anyOf: [
             { required: ['toolPrefix'] },
             { required: ['components'] },
-            { required: ['environments'] }
+            { required: ['environments'] },
+            { required: ['connector'] }
           ]
         }
       }
     },
     {
       if: { properties: { type: { const: 'plugin' } }, required: ['type'] },
-      then: { required: ['toolPrefix', 'components'] }
+      then: {
+        required: ['toolPrefix', 'components'],
+        not: { required: ['connector'] }
+      }
     },
     {
-      if: {
-        properties: { type: { enum: ['wrapper', 'mcp'] } },
-        required: ['type']
-      },
+      if: { properties: { type: { const: 'wrapper' } }, required: ['type'] },
       then: {
+        not: {
+          anyOf: [
+            { required: ['toolPrefix'] },
+            { required: ['components'] },
+            { required: ['environments'] },
+            { required: ['connector'] }
+          ]
+        }
+      }
+    },
+    {
+      if: { properties: { type: { const: 'mcp' } }, required: ['type'] },
+      then: {
+        required: ['connector'],
         not: {
           anyOf: [
             { required: ['toolPrefix'] },
@@ -162,8 +230,32 @@ export interface WrapperPackageManifest extends BasePackageManifest {
   type: 'wrapper'
 }
 
+export type ConnectorCategory = (typeof CONNECTOR_CATEGORIES)[number]
+
+interface BaseConnectorManifest {
+  publisher: string
+  category: ConnectorCategory
+  homepage?: string
+}
+
+export interface HttpConnectorManifest extends BaseConnectorManifest {
+  transport: 'http'
+  url: string
+  auth: 'none' | 'oauth' | 'header'
+}
+
+export interface StdioConnectorManifest extends BaseConnectorManifest {
+  transport: 'stdio'
+  environment: string
+  command: string
+  args?: string[]
+}
+
+export type ConnectorManifest = HttpConnectorManifest | StdioConnectorManifest
+
 export interface McpPackageManifest extends BasePackageManifest {
   type: 'mcp'
+  connector: ConnectorManifest
 }
 
 export type PackageManifest =
@@ -219,6 +311,18 @@ export function parsePackageManifestText(text: string): PackageManifest {
       throw new Error(`dependsOn[${index}].version: '${dependency.version}' is not a semver range`)
     }
   }
+  if (manifest.type === 'mcp' && manifest.connector.transport === 'stdio') {
+    const command = manifest.connector.command
+    if (
+      command.startsWith('./') &&
+      command
+        .slice(2)
+        .split('/')
+        .some((part) => part === '..')
+    ) {
+      throw new Error(`connector.command: '${command}' must stay inside the package`)
+    }
+  }
   return manifest
 }
 
@@ -249,17 +353,7 @@ export function validatePackage(dir: string): PackageValidationResult {
   }
 
   if (manifest.type === 'mcp') {
-    return finish(
-      [
-        {
-          level: 'error',
-          path: 'type',
-          message:
-            "package type 'mcp' is accepted by contract 1.1.0 but not implemented by this installer"
-        }
-      ],
-      []
-    )
+    return finish([], [], { dir: packageDir, manifest })
   }
 
   if (manifest.type === 'wrapper') {

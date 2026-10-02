@@ -4,27 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { addRemoteMcpConnector, removeRemoteMcpConnector } from '../src/main/agent/mcp-connectors'
-import { featuredMcpConnectors, mcpConnectorCategories } from '../src/shared/mcpConnectorCatalog'
-
-test('curated connector directory has distinct HTTPS services in every group', () => {
-  const ids = featuredMcpConnectors.map((connector) => connector.id)
-  const urls = featuredMcpConnectors.map((connector) => connector.url)
-  assert.equal(new Set(ids).size, ids.length)
-  assert.equal(new Set(urls).size, urls.length)
-  assert.ok(urls.every((url) => url.startsWith('https://')))
-  for (const category of mcpConnectorCategories) {
-    assert.ok(
-      featuredMcpConnectors.filter((connector) => connector.category === category).length >= 2,
-      category
-    )
-  }
-  assert.deepEqual(
-    featuredMcpConnectors
-      .filter((connector) => connector.signIn === '无需登录')
-      .map((connector) => connector.id),
-    ['pubmed', 'biorxiv', 'clinical-trials']
-  )
-})
 
 test('remote MCP connectors preserve unrelated configuration and remove only matching entries', () => {
   const agentDir = mkdtempSync(join(tmpdir(), 'phi-mcp-connectors-'))

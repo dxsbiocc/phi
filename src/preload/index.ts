@@ -88,6 +88,7 @@ import type {
   EnablementSnapshot
 } from '../shared/enablementTypes'
 import type { SkillContent, SkillSummary } from '../shared/skillTypes'
+import type { FeaturedMcpConnector } from '../shared/mcpConnectorCatalog'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
@@ -320,6 +321,9 @@ type PromptAgentSummary = {
 type McpServerSummary = {
   id: string
   name: string
+  connectorId?: string
+  packageId?: string
+  category?: string
   command?: string
   args?: string[]
   envKeys?: string[]
@@ -929,6 +933,14 @@ type RendererAuthApi = {
   deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
   listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
+  listMcpConnectorCatalog: () => Promise<FeaturedMcpConnector[]>
+  installMcpConnector: (
+    id: string,
+    version?: string,
+    registryDir?: string
+  ) => Promise<InstalledPackageView[]>
+  uninstallMcpConnector: (id: string) => Promise<InstalledPackageView[]>
+  buildMcpConnectorEnvironment: (id: string) => Promise<{ envId: string }>
   addRemoteMcpConnector: (name: string, url: string) => Promise<void>
   removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
   listFeaturedMcpTools: (id: string) => Promise<string[]>
@@ -1476,6 +1488,18 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('agents:list', cwd),
   listMcpServers: (cwd?: string): Promise<McpServerSummary[]> =>
     ipcRenderer.invoke('mcp:listServers', cwd),
+  listMcpConnectorCatalog: (): Promise<FeaturedMcpConnector[]> =>
+    ipcRenderer.invoke('mcp:listConnectorCatalog'),
+  installMcpConnector: (
+    id: string,
+    version?: string,
+    registryDir?: string
+  ): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('mcp:installConnector', id, version, registryDir),
+  uninstallMcpConnector: (id: string): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('mcp:uninstallConnector', id),
+  buildMcpConnectorEnvironment: (id: string): Promise<{ envId: string }> =>
+    ipcRenderer.invoke('mcp:buildConnectorEnvironment', id),
   addRemoteMcpConnector: (name: string, url: string): Promise<void> =>
     ipcRenderer.invoke('mcp:addRemoteConnector', name, url),
   removeRemoteMcpConnector: (name: string, url: string): Promise<void> =>

@@ -94,7 +94,7 @@ function registry(registryDir: string, packages: RegistryPackageEntry[]): LocalR
   }
 }
 
-test('rejects mcp installation as not implemented after accepting the package type', () => {
+test('plans MCP package installation through the generic package solver', () => {
   const { root, agentDir, registryDir } = sandbox()
   try {
     const source = registry(registryDir, [
@@ -110,9 +110,11 @@ test('rejects mcp installation as not implemented after accepting the package ty
         dependsOn: []
       }
     ])
-    assert.throws(
-      () => planInstall(source, { type: 'mcp', id: 'example-mcp' }, { agentDir }),
-      /MCP.*尚未实现/
+    const plan = planInstall(source, { type: 'mcp', id: 'example-mcp' }, { agentDir })
+    assert.deepEqual(plan.root, { type: 'mcp', id: 'example-mcp', version: '1.0.0' })
+    assert.deepEqual(
+      plan.packages.map((entry) => entry.id),
+      ['example-mcp']
     )
   } finally {
     rmSync(root, { recursive: true, force: true })

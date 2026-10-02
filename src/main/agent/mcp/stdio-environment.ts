@@ -1,4 +1,4 @@
-import { isAbsolute } from 'node:path'
+import { isAbsolute, relative, resolve } from 'node:path'
 
 import { describeEnvironment, readyEnvironment } from '../content/environment-refs'
 import type { PhiPlatform } from '../envs/contract'
@@ -29,6 +29,12 @@ export interface ManagedStdioMarker {
   /** The server's own arguments, without the `env -i` prefix. */
   args: string[]
   projectDir?: string
+  /** Installed MCP package context for package-local environments, commands, and arguments. */
+  packageId?: string
+  packageDir?: string
+  /** A pending entry is disabled until its environment becomes ready and refresh succeeds. */
+  pending?: true
+  desiredEnabled?: boolean
 }
 
 export interface ManagedStdioEntry {
@@ -37,6 +43,7 @@ export interface ManagedStdioEntry {
   args: string[]
   env: Record<string, string>
   cwd?: string
+  enabled?: boolean
   phiManaged: ManagedStdioMarker
 }
 
@@ -44,6 +51,8 @@ export interface ManagedEnvironmentRequest {
   ref: string
   projectDir?: string
   pluginId?: string
+  packageId?: string
+  packageDir?: string
 }
 
 export interface ResolvedManagedEnvironment {
@@ -72,6 +81,9 @@ export interface ManagedStdioServerOptions extends EnvironmentLookup {
   args?: readonly string[]
   cwd?: string
   projectDir?: string
+  packageId?: string
+  packageDir?: string
+  desiredEnabled?: boolean
   /** Host environment to sanitize. Defaults to `process.env`. */
   baseEnv?: NodeJS.ProcessEnv
 }
@@ -115,6 +127,9 @@ interface EntrySpec {
   args: readonly string[]
   cwd?: string
   projectDir?: string
+  packageId?: string
+  packageDir?: string
+  desiredEnabled?: boolean
 }
 
 /** `applyOverrides` (with a project), then `describeEnvironment` and `readyEnvironment`. */
@@ -129,6 +144,9 @@ export function resolveManagedEnvironment(
     environmentsDir: lookup.environmentsDir,
     agentDir: lookup.agentDir,
     pluginId: request.pluginId,
+    ...(request.packageId && request.packageDir
+      ? { mcpPackage: { id: request.packageId, dir: request.packageDir } }
+      : {}),
     platform: lookup.platform,
     projectDir: request.projectDir
   })
@@ -144,7 +162,12 @@ export function resolveManagedEnvironment(
 export function managedStdioServer(options: ManagedStdioServerOptions): ManagedStdioServer {
   const spec = validateSpec(options)
   const resolved = resolveManagedEnvironment(
-    { ref: spec.ref, projectDir: spec.projectDir },
+    {
+      ref: spec.ref,
+      projectDir: spec.projectDir,
+      packageId: spec.packageId,
+      packageDir: spec.packageDir
+    },
     options
   )
   return {
@@ -153,15 +176,58 @@ export function managedStdioServer(options: ManagedStdioServerOptions): ManagedS
   }
 }
 
+/**
+ * A disabled managed entry retained while its environment is absent. Refresh replaces it with
+ * the isolated `env -i` invocation as soon as the environment is ready.
+ */
+export function pendingManagedStdioServer(
+  options: ManagedStdioServerOptions,
+  pending: { ref: string; envId: string }
+): ManagedStdioServer {
+  const spec = validateSpec(options)
+  const marker = markerFor(spec, pending.ref, pending.envId, true)
+  const entry: ManagedStdioEntry = {
+    type: 'stdio',
+    command: ENV_EXECUTABLE,
+    args: ['-i', '/usr/bin/false'],
+    env: {},
+    enabled: false,
+    phiManaged: marker
+  }
+  if (spec.cwd !== undefined) entry.cwd = spec.cwd
+  return { entry, warnings: [] }
+}
+
 export function readManagedMarker(entry: unknown): ManagedStdioMarker | undefined {
   if (!isRecord(entry)) return undefined
   const marker = entry[MANAGED_MARKER_FIELD]
   if (!isRecord(marker) || marker.version !== MARKER_VERSION) return undefined
-  const { ref, effectiveRef, envId, command, args, projectDir } = marker
+  const {
+    ref,
+    effectiveRef,
+    envId,
+    command,
+    args,
+    projectDir,
+    packageId,
+    packageDir,
+    pending,
+    desiredEnabled
+  } = marker
   if (!isNonEmptyString(ref) || !isNonEmptyString(effectiveRef)) return undefined
   if (!isNonEmptyString(envId) || !isNonEmptyString(command)) return undefined
   if (!Array.isArray(args) || !args.every((arg) => typeof arg === 'string')) return undefined
   if (projectDir !== undefined && !isNonEmptyString(projectDir)) return undefined
+  if ((packageId === undefined) !== (packageDir === undefined)) return undefined
+  if (
+    packageId !== undefined &&
+    (typeof packageId !== 'string' || !/^[a-z][a-z0-9-]{1,63}$/.test(packageId))
+  ) {
+    return undefined
+  }
+  if (packageDir !== undefined && !isAbsolutePath(packageDir)) return undefined
+  if (pending !== undefined && pending !== true) return undefined
+  if (desiredEnabled !== undefined && typeof desiredEnabled !== 'boolean') return undefined
   const result: ManagedStdioMarker = {
     version: MARKER_VERSION,
     ref,
@@ -171,6 +237,12 @@ export function readManagedMarker(entry: unknown): ManagedStdioMarker | undefine
     args: [...args]
   }
   if (projectDir !== undefined) result.projectDir = projectDir
+  if (packageId !== undefined && packageDir !== undefined) {
+    result.packageId = packageId
+    result.packageDir = packageDir
+  }
+  if (pending === true) result.pending = true
+  if (desiredEnabled !== undefined) result.desiredEnabled = desiredEnabled
   return result
 }
 
@@ -213,19 +285,39 @@ function refreshEntry(
   resolve: ManagedEnvironmentResolver,
   baseEnv: NodeJS.ProcessEnv | undefined
 ): Record<string, unknown> | undefined {
-  const resolved = resolve({ ref: marker.ref, projectDir: marker.projectDir })
-  if (resolved.handle.envId === marker.envId && resolved.ref === marker.effectiveRef) {
+  const resolved = resolve({
+    ref: marker.ref,
+    projectDir: marker.projectDir,
+    packageId: marker.packageId,
+    packageDir: marker.packageDir
+  })
+  if (
+    marker.pending !== true &&
+    resolved.handle.envId === marker.envId &&
+    resolved.ref === marker.effectiveRef
+  ) {
     return undefined
   }
+  const desiredEnabled =
+    marker.pending === true
+      ? (marker.desiredEnabled ?? true)
+      : typeof entry.enabled === 'boolean'
+        ? entry.enabled
+        : marker.desiredEnabled
   const spec: EntrySpec = {
     ref: marker.ref,
     command: marker.command,
     args: marker.args,
     cwd: typeof entry.cwd === 'string' ? entry.cwd : undefined,
-    projectDir: marker.projectDir
+    projectDir: marker.projectDir,
+    packageId: marker.packageId,
+    packageDir: marker.packageDir,
+    desiredEnabled
   }
   // Keep the user's own settings on the entry (enabled, timeout, ...); replace ours.
-  return { ...entry, ...buildEntry(spec, resolved, baseEnv) }
+  const regenerated = { ...entry, ...buildEntry(spec, resolved, baseEnv) }
+  if (desiredEnabled !== undefined) regenerated.enabled = desiredEnabled
+  return regenerated
 }
 
 /**
@@ -242,28 +334,23 @@ function buildEntry(
 ): ManagedStdioEntry {
   const { handle } = resolved
   const variables = environmentVariables(handle, { baseEnv })
-  const command = resolveCommand(spec.command, variables.PATH ?? '')
+  const command = spec.command.startsWith('./')
+    ? resolvePackageCommand(spec.command, spec.packageDir)
+    : resolveCommand(spec.command, variables.PATH ?? '')
   if (!command) throw new McpCommandNotFoundError(handle.envId, spec.command)
-  const marker: ManagedStdioMarker = {
-    version: MARKER_VERSION,
-    ref: spec.ref,
-    effectiveRef: resolved.ref,
-    envId: handle.envId,
-    command: spec.command,
-    args: [...spec.args]
-  }
-  if (spec.projectDir !== undefined) marker.projectDir = spec.projectDir
+  const marker = markerFor(spec, resolved.ref, handle.envId, false)
   const assignments = Object.keys(variables)
     .sort()
     .map((name) => `${name}=${variables[name]}`)
   const entry: ManagedStdioEntry = {
     type: 'stdio',
     command: ENV_EXECUTABLE,
-    args: ['-i', ...assignments, command, ...spec.args],
+    args: ['-i', ...assignments, command, ...expandedArgs(spec.args, spec.packageDir)],
     env: {},
     phiManaged: marker
   }
   if (spec.cwd !== undefined) entry.cwd = spec.cwd
+  if (spec.desiredEnabled !== undefined) entry.enabled = spec.desiredEnabled
   return entry
 }
 
@@ -280,11 +367,71 @@ function validateSpec(options: ManagedStdioServerOptions): EntrySpec {
   if (options.projectDir !== undefined && !isAbsolutePath(options.projectDir)) {
     throw new Error(`project directory must be an absolute path: ${String(options.projectDir)}`)
   }
+  if ((options.packageId === undefined) !== (options.packageDir === undefined)) {
+    throw new Error('MCP package id and directory must be provided together')
+  }
+  if (options.packageId !== undefined && !/^[a-z][a-z0-9-]{1,63}$/.test(options.packageId)) {
+    throw new Error(`invalid MCP package id: ${options.packageId}`)
+  }
+  if (options.packageDir !== undefined && !isAbsolutePath(options.packageDir)) {
+    throw new Error(`MCP package directory must be an absolute path: ${options.packageDir}`)
+  }
+  if (options.command.startsWith('./') && options.packageDir === undefined) {
+    throw new Error('a package-relative MCP command requires a package directory')
+  }
   if (!isNonEmptyString(options.root)) throw new Error('runtime root is required')
   const spec: EntrySpec = { ref: options.ref, command: options.command, args }
   if (options.cwd !== undefined) spec.cwd = options.cwd
   if (options.projectDir !== undefined) spec.projectDir = options.projectDir
+  if (options.packageId !== undefined && options.packageDir !== undefined) {
+    spec.packageId = options.packageId
+    spec.packageDir = options.packageDir
+  }
+  if (options.desiredEnabled !== undefined) spec.desiredEnabled = options.desiredEnabled
   return spec
+}
+
+function markerFor(
+  spec: EntrySpec,
+  effectiveRef: string,
+  envId: string,
+  pending: boolean
+): ManagedStdioMarker {
+  const marker: ManagedStdioMarker = {
+    version: MARKER_VERSION,
+    ref: spec.ref,
+    effectiveRef,
+    envId,
+    command: spec.command,
+    args: [...spec.args]
+  }
+  if (spec.projectDir !== undefined) marker.projectDir = spec.projectDir
+  if (spec.packageId !== undefined && spec.packageDir !== undefined) {
+    marker.packageId = spec.packageId
+    marker.packageDir = spec.packageDir
+    marker.desiredEnabled = spec.desiredEnabled ?? true
+  }
+  if (pending) marker.pending = true
+  return marker
+}
+
+function expandedArgs(args: readonly string[], packageDir: string | undefined): string[] {
+  return args.map((arg) => {
+    if (!arg.includes('${package}')) return arg
+    if (!packageDir) throw new Error('${package} requires an MCP package directory')
+    return arg.replaceAll('${package}', packageDir)
+  })
+}
+
+function resolvePackageCommand(
+  command: string,
+  packageDir: string | undefined
+): string | undefined {
+  if (!packageDir) return undefined
+  const candidate = resolve(packageDir, command.slice(2))
+  const within = relative(packageDir, candidate)
+  if (!within || within.startsWith('..') || isAbsolute(within)) return undefined
+  return resolveCommand(candidate, '')
 }
 
 function isAbsolutePath(value: unknown): value is string {

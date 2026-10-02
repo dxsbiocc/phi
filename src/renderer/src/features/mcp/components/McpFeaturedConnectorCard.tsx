@@ -11,7 +11,8 @@ export function McpFeaturedConnectorCard({
   authStatus,
   busy,
   onOpen,
-  onAdd
+  onAdd,
+  onBuildEnvironment
 }: {
   connector: FeaturedMcpConnector
   installed: boolean
@@ -19,6 +20,7 @@ export function McpFeaturedConnectorCard({
   busy: boolean
   onOpen: () => void
   onAdd: () => void
+  onBuildEnvironment?: () => void
 }): React.JSX.Element {
   const loginLabel =
     connector.signIn !== '需要登录'
@@ -32,6 +34,8 @@ export function McpFeaturedConnectorCard({
             : authStatus === 'unavailable'
               ? '状态不可用'
               : '需登录'
+  const needsEnvironment = connector.environmentState === 'not-built'
+  const actionLabel = needsEnvironment ? `构建 ${connector.name} 环境` : `添加 ${connector.name}`
 
   return (
     <Box
@@ -68,6 +72,10 @@ export function McpFeaturedConnectorCard({
             {connector.publisher}
           </Typography>
           {loginLabel && <Chip size="small" variant="outlined" label={loginLabel} />}
+          {connector.unavailableReason && (
+            <Chip size="small" variant="outlined" label="需要新版 Phi" />
+          )}
+          {needsEnvironment && <Chip size="small" variant="outlined" label="环境未构建" />}
         </Stack>
       </Box>
       {installed ? (
@@ -80,12 +88,13 @@ export function McpFeaturedConnectorCard({
         </Box>
       ) : (
         <IconButton
-          aria-label={`添加 ${connector.name}`}
+          aria-label={actionLabel}
           size="small"
-          disabled={busy}
+          disabled={busy || Boolean(connector.unavailableReason)}
           onClick={(event) => {
             event.stopPropagation()
-            onAdd()
+            if (needsEnvironment) onBuildEnvironment?.()
+            else onAdd()
           }}
           sx={{
             width: 34,

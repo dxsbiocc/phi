@@ -73,7 +73,9 @@ export interface InstallerOptions {
   agentDir?: string
   appVersion?: string
   runtimeRoot?: string
+  environmentsDir?: string
   platform?: PhiPlatform
+  baseEnv?: NodeJS.ProcessEnv
   names?: PluginNamespace
   build?: PluginEnvironmentBuilder
   garbageCollect?: typeof collectGarbage

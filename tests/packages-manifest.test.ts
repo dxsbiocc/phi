@@ -127,7 +127,7 @@ test('rejects unknown fields and invalid dependency ranges', () => {
   )
 })
 
-test('accepts wrapper and mcp package manifests while the mcp installer remains unavailable', () => {
+test('accepts wrapper and valid http and stdio connector package manifests', () => {
   const wrapper = parseYaml(`
 schemaVersion: 1
 id: alpha-wrapper
@@ -137,19 +137,104 @@ title: Alpha
 summary: Alpha.
 `)
   assert.equal(parsePackageManifestText(stringifyYaml(wrapper)).type, 'wrapper')
-  const mcp = { ...wrapper, type: 'mcp', id: 'alpha-mcp' }
-  assert.equal(parsePackageManifestText(stringifyYaml(mcp)).type, 'mcp')
+
+  const http = {
+    ...wrapper,
+    type: 'mcp',
+    id: 'alpha-mcp',
+    connector: {
+      transport: 'http',
+      publisher: 'Phi',
+      category: '科研数据',
+      homepage: 'https://example.com/alpha',
+      url: 'https://example.com/mcp',
+      auth: 'oauth'
+    }
+  }
+  assert.deepEqual(parsePackageManifestText(stringifyYaml(http)).connector, http.connector)
+
+  const stdio = {
+    ...http,
+    connector: {
+      transport: 'stdio',
+      publisher: 'Phi',
+      category: '科研数据',
+      environment: './environment.yml',
+      command: './server/run.py',
+      args: ['--root', '${package}']
+    }
+  }
+  assert.deepEqual(parsePackageManifestText(stringifyYaml(stdio)).connector, stdio.connector)
 
   const root = mkdtempSync(join(tmpdir(), 'phi-package-mcp-'))
   try {
-    writeFileSync(join(root, 'phi-package.yaml'), stringifyYaml(mcp))
+    writeFileSync(join(root, 'phi-package.yaml'), stringifyYaml(http))
     const result = validatePackage(root)
-    assert.equal(result.ok, false)
-    assert.match(
-      result.errors.map((problem) => problem.message).join('\n'),
-      /mcp.*not implemented/i
-    )
+    assert.equal(result.ok, true, result.errors.map((problem) => problem.message).join('\n'))
+    assert.equal(result.package?.manifest.type, 'mcp')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('connector transport fields are conditional and connector keys are closed', () => {
+  const base = {
+    schemaVersion: 1,
+    id: 'alpha-mcp',
+    type: 'mcp',
+    version: '1.0.0',
+    title: 'Alpha',
+    summary: 'Alpha.',
+    connector: {
+      transport: 'http',
+      publisher: 'Phi',
+      category: '生产力',
+      url: 'https://example.com/mcp',
+      auth: 'none'
+    }
+  }
+
+  const invalidConnectors = [
+    { ...base.connector, url: 'http://example.com/mcp' },
+    { ...base.connector, category: '未知分类' },
+    { ...base.connector, environment: 'phi:python@1' },
+    { ...base.connector, secrets: ['TOKEN'] },
+    {
+      transport: 'stdio',
+      publisher: 'Phi',
+      category: '生产力',
+      environment: 'phi:python@1'
+    },
+    {
+      transport: 'stdio',
+      publisher: 'Phi',
+      category: '生产力',
+      environment: './other.yml',
+      command: 'python'
+    },
+    {
+      transport: 'stdio',
+      publisher: 'Phi',
+      category: '生产力',
+      environment: 'phi:python@1',
+      command: 'python',
+      auth: 'none'
+    },
+    {
+      transport: 'stdio',
+      publisher: 'Phi',
+      category: '生产力',
+      environment: 'phi:python@1',
+      command: './server/../outside'
+    }
+  ]
+
+  for (const connector of invalidConnectors) {
+    assert.throws(() => parsePackageManifestText(stringifyYaml({ ...base, connector })))
+  }
+
+  assert.throws(
+    () => parsePackageManifestText(stringifyYaml({ ...base, connector: undefined })),
+    /connector/
+  )
 })

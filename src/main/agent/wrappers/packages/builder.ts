@@ -88,6 +88,8 @@ export interface MaterializeWrapperRegistryOptions extends BuildWrapperPackageSo
   generatedAt?: string
   /** The combined build writes its own index after adding skills and plugins. */
   writeIndex?: boolean
+  /** Only selected packages need archives when reconciling an existing wrapper tree. */
+  includePackage?: (source: WrapperPackageSource) => boolean
 }
 
 export interface MaterializeWrapperRegistryResult extends BuildWrapperPackageSourcesResult {
@@ -195,7 +197,9 @@ export function materializeWrapperRegistry(
   const outDir = resolve(options.outDir)
   mkdirSync(outDir, { recursive: true })
   const built = buildWrapperPackageSources(options)
-  const entries = built.sources.map((source) => writeWrapperPackage(source, outDir))
+  const entries = built.sources
+    .filter((source) => options.includePackage?.(source) ?? true)
+    .map((source) => writeWrapperPackage(source, outDir))
   entries.sort(compareRegistryEntries)
   const index: WrapperRegistryIndex = { schemaVersion: 1, generatedAt, packages: entries }
   if (options.writeIndex !== false) {

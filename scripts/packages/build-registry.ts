@@ -1,6 +1,13 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
@@ -19,6 +26,7 @@ import {
 import {
   parsePackageManifestText,
   readPackageManifest,
+  validatePackage,
   type PackageDependency,
   type PackageManifest,
   type PackageRequirements,
@@ -96,14 +104,20 @@ export function buildRegistryWithReport(options: BuildRegistryOptions = {}): Reg
     throw new Error(`invalid generatedAt: ${generatedAt}`)
   rejectUntrackedResources(repoRoot)
 
-  const tracked = gitLines(repoRoot, [
-    'ls-files',
-    '-z',
-    '--',
-    'resources/plugins',
-    'resources/skills',
-    'resources/wrappers'
-  ])
+  // Package contract § 2: git-tracked files only.
+  const tracked = [
+    ...new Set(
+      gitLines(repoRoot, [
+        'ls-files',
+        '-z',
+        '--',
+        'resources/plugins',
+        'resources/skills',
+        'resources/connectors',
+        'resources/wrappers'
+      ])
+    )
+  ].sort(compareText)
   const roots = packageRoots(tracked)
   const sources = roots.map((root) => loadPackageSource(repoRoot, root, tracked))
 
@@ -168,14 +182,18 @@ function createBuildReport(
 function packageRoots(tracked: string[]): string[] {
   const roots = new Set<string>()
   for (const path of tracked) {
-    const match = /^(resources\/(?:plugins|skills)\/[^/]+)(?:\/|$)/.exec(path)
+    const match = /^(resources\/(?:connectors|plugins|skills)\/[^/]+)(?:\/|$)/.exec(path)
     if (match?.[1]) roots.add(match[1])
   }
   return [...roots].sort(compareText)
 }
 
 function loadPackageSource(repoRoot: string, root: string, tracked: string[]): PackageSource {
-  const type: PackageType = root.startsWith('resources/plugins/') ? 'plugin' : 'skill'
+  const type: PackageType = root.startsWith('resources/plugins/')
+    ? 'plugin'
+    : root.startsWith('resources/connectors/')
+      ? 'mcp'
+      : 'skill'
   const absoluteRoot = join(repoRoot, root)
   const relativeFiles = tracked
     .filter((path) => path.startsWith(`${root}/`))
@@ -203,7 +221,7 @@ function loadPackageSource(repoRoot: string, root: string, tracked: string[]): P
     manifest = generatedSkillManifest(absoluteRoot)
     files.set('phi-package.yaml', Buffer.from(stringifyYaml(manifest), 'utf8'))
   } else {
-    throw new Error(`plugin package is missing phi-package.yaml: ${root}`)
+    throw new Error(`${type} package is missing phi-package.yaml: ${root}`)
   }
 
   if (manifest.type !== type) {
@@ -220,8 +238,11 @@ function loadPackageSource(repoRoot: string, root: string, tracked: string[]): P
         `package id '${manifest.id}' must equal skill name '${result.skill?.name ?? ''}'`
       )
     }
-  } else {
+  } else if (type === 'plugin') {
     const result = validatePlugin(absoluteRoot)
+    if (!result.ok) throwValidation(root, result.errors)
+  } else {
+    const result = validatePackage(absoluteRoot)
     if (!result.ok) throwValidation(root, result.errors)
   }
   manifest = { ...manifest, files: 'files.json' }

@@ -146,6 +146,7 @@ import {
   writeApprovalDigest
 } from './agent/tool-approval'
 import { createEnvironmentBuilds } from './agent/content/environment-builds'
+import { getWrapperTreeOwnershipPath } from './agent/packages/wrapper-tree'
 import { bindAgentSession } from './agent/content/environment-gate'
 import {
   createSkillHost,
@@ -204,7 +205,16 @@ import {
   readRegistry as readPackageRegistry,
   uninstallPackage as uninstallRegistryPackage
 } from './agent/packages/installer'
-import { addRemoteMcpConnector, removeRemoteMcpConnector } from './agent/mcp-connectors'
+import {
+  addRemoteMcpConnector,
+  connectorEnvironmentBuildAction,
+  installCatalogConnector,
+  listConnectorCatalog,
+  refreshPersistedManagedStdioServers,
+  removeRemoteMcpConnector,
+  setMcpPackageEnabled,
+  uninstallCatalogConnector
+} from './agent/mcp-connectors'
 import { scriptToolName, validateSkill } from './agent/content/skill'
 import {
   deleteSkill,
@@ -437,6 +447,7 @@ let macLaunchServicesHandlers: Promise<MacLaunchServicesHandler[]> | null = null
 const macApplicationPathQueries = new Map<string, Promise<string[]>>()
 // Set by agent-env.ts before this module's own top-level code runs.
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
+const localPackageRegistryDirs = new Set<string>()
 
 app.setName(APP_NAME)
 
@@ -6121,6 +6132,31 @@ app.whenReady().then(async () => {
   })()
   migrateEnablementFromHistory(bundledSkillNames, { agentDir: AGENT_DIR })
   try {
+    const refreshed = refreshPersistedManagedStdioServers({
+      agentDir: AGENT_DIR,
+      runtimeRoot: getRuntimeRoot()
+    })
+    if (refreshed.failures.length > 0) {
+      writeAppLog({
+        level: 'warn',
+        event: 'mcp_managed_stdio_refresh_failed',
+        metadata: {
+          failures: refreshed.failures.map(({ name, ref, error }) => ({
+            name,
+            ref,
+            error: error.message
+          }))
+        }
+      })
+    }
+  } catch (error) {
+    writeAppLog({
+      level: 'warn',
+      event: 'mcp_managed_stdio_refresh_failed',
+      metadata: { error: error instanceof Error ? error.message : String(error) }
+    })
+  }
+  try {
     const registry = readPluginRegistry(AGENT_DIR)
     const global = getEnablementSnapshot({ agentDir: AGENT_DIR }).global
     const plugins = { ...registry.plugins }
@@ -6191,46 +6227,56 @@ app.whenReady().then(async () => {
     .then(logBundledPlugins)
     .catch(logBundledPluginError)
   recoverInterruptedPhiSessions()
-  try {
-    const bundledWrappers = await ensureBundledWrappersInstalled(AGENT_DIR, {
-      packageVersion: app.getVersion()
-    })
-    if (
-      bundledWrappers.diagnostics.unattributedIncludes.length > 0 ||
-      bundledWrappers.diagnostics.unattributedSupportFiles.length > 0
-    ) {
+  // Bundled wrappers: the first install (or the migration from the old pack) is awaited so
+  // wrapper tools find a tree; later updates run in the background, because a changed
+  // package rebuilds the temporary archives (~10 s) and each package is swapped atomically.
+  const installBundledWrappers = async (): Promise<void> => {
+    try {
+      const bundledWrappers = await ensureBundledWrappersInstalled(AGENT_DIR, {
+        packageVersion: app.getVersion()
+      })
+      if (
+        bundledWrappers.diagnostics.unattributedIncludes.length > 0 ||
+        bundledWrappers.diagnostics.unattributedSupportFiles.length > 0
+      ) {
+        writeAppLog({
+          level: 'warn',
+          event: 'wrapper_bundled_attribution_warning',
+          metadata: { ...bundledWrappers.diagnostics }
+        })
+      }
+      if (bundledWrappers.migratedCustom.length > 0) {
+        writeAppLog({
+          event: 'wrapper_custom_migrated',
+          metadata: { ids: bundledWrappers.migratedCustom }
+        })
+      }
+      if (bundledWrappers.migratedPackVersion) {
+        writeAppLog({
+          event: 'wrapper_legacy_pack_migrated',
+          metadata: { version: bundledWrappers.migratedPackVersion }
+        })
+      }
+      if (bundledWrappers.legacyPackWarnings.length > 0) {
+        writeAppLog({
+          level: 'warn',
+          event: 'wrapper_legacy_pack_rejected',
+          metadata: { rejected: bundledWrappers.legacyPackWarnings }
+        })
+      }
+      resetWrapperCompositionCatalogCache()
+    } catch (error) {
       writeAppLog({
-        level: 'warn',
-        event: 'wrapper_bundled_attribution_warning',
-        metadata: { ...bundledWrappers.diagnostics }
+        level: 'error',
+        event: 'wrapper_bundled_install_failed',
+        metadata: { error: error instanceof Error ? error.message : String(error) }
       })
     }
-    if (bundledWrappers.migratedCustom.length > 0) {
-      writeAppLog({
-        event: 'wrapper_custom_migrated',
-        metadata: { ids: bundledWrappers.migratedCustom }
-      })
-    }
-    if (bundledWrappers.migratedPackVersion) {
-      writeAppLog({
-        event: 'wrapper_legacy_pack_migrated',
-        metadata: { version: bundledWrappers.migratedPackVersion }
-      })
-    }
-    if (bundledWrappers.legacyPackWarnings.length > 0) {
-      writeAppLog({
-        level: 'warn',
-        event: 'wrapper_legacy_pack_rejected',
-        metadata: { rejected: bundledWrappers.legacyPackWarnings }
-      })
-    }
-    resetWrapperCompositionCatalogCache()
-  } catch (error) {
-    writeAppLog({
-      level: 'error',
-      event: 'wrapper_bundled_install_failed',
-      metadata: { error: error instanceof Error ? error.message : String(error) }
-    })
+  }
+  if (existsSync(getWrapperTreeOwnershipPath(AGENT_DIR))) {
+    void installBundledWrappers()
+  } else {
+    await installBundledWrappers()
   }
   // Fire-and-forget: resumes remote Slurm and detached runs left mid-flight by
   // the previous app session (see executor-slurm-reconcile.ts's doc comment).
@@ -7746,7 +7792,9 @@ app.whenReady().then(async () => {
       throw new Error('注册表目录无效')
     }
     try {
-      return readPackageRegistry(dir)
+      const registry = readPackageRegistry(dir)
+      localPackageRegistryDirs.add(registry.dir)
+      return registry
     } catch (error) {
       throw new Error(
         `读取软件包注册表失败：${error instanceof Error ? error.message : String(error)}`
@@ -7766,8 +7814,10 @@ app.whenReady().then(async () => {
         throw new Error('软件包安装计划参数无效')
       }
       try {
+        const registry = readPackageRegistry(dir)
+        localPackageRegistryDirs.add(registry.dir)
         return planRegistryInstall(
-          readPackageRegistry(dir),
+          registry,
           { type, id, ...(version ? { version } : {}) },
           { agentDir: AGENT_DIR, appVersion: app.getVersion() }
         )
@@ -7791,11 +7841,13 @@ app.whenReady().then(async () => {
         throw new Error('软件包安装参数无效')
       }
       try {
+        const registry = readPackageRegistry(dir)
+        localPackageRegistryDirs.add(registry.dir)
         const installedBefore = new Set(
           listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
         )
         const plan = planRegistryInstall(
-          readPackageRegistry(dir),
+          registry,
           { type, id, ...(version ? { version } : {}) },
           { agentDir: AGENT_DIR, appVersion: app.getVersion() }
         )
@@ -7811,6 +7863,13 @@ app.whenReady().then(async () => {
             !installedBefore.has(`${installed.type}:${installed.id}`)
           ) {
             setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
+          }
+          if (
+            installed.type === 'mcp' &&
+            !installedBefore.has(`${installed.type}:${installed.id}`)
+          ) {
+            setEnabled(`mcp:${installed.id}`, true, { agentDir: AGENT_DIR })
+            setMcpPackageEnabled(installed.id, true, AGENT_DIR)
           }
         }
         if (result.some((installed) => installed.type === 'wrapper')) {
@@ -7837,6 +7896,7 @@ app.whenReady().then(async () => {
         runtimeRoot: getRuntimeRoot()
       })
       if (type === 'wrapper') resetWrapperCompositionCatalogCache()
+      if (type === 'mcp') setEnabled(`mcp:${id}`, null, { agentDir: AGENT_DIR })
       await invalidateAgentSession()
       return result
     } catch (error) {
@@ -7885,6 +7945,14 @@ app.whenReady().then(async () => {
         )
       }
       if (value === null) setEnabled(item, null, { agentDir: AGENT_DIR, ...options })
+    } else if (item.startsWith('mcp:')) {
+      const packageId = item.slice('mcp:'.length)
+      const inherited = options.projectDir
+        ? getEnablementSnapshot({ agentDir: AGENT_DIR, ...options }).global[item]
+        : undefined
+      const desired = value ?? inherited ?? true
+      setEnabled(item, value, { agentDir: AGENT_DIR, ...options })
+      setMcpPackageEnabled(packageId, desired, AGENT_DIR)
     } else {
       setEnabled(item, value, { agentDir: AGENT_DIR, ...options })
     }
@@ -7918,9 +7986,88 @@ app.whenReady().then(async () => {
   ipcMain.handle('agents:list', async (_, cwd?: string) =>
     isRemoteResourceScope(cwd) ? [] : listPromptAgents(cwd ?? currentCwd)
   )
-  ipcMain.handle('mcp:listServers', async (_, cwd?: string) =>
-    isRemoteResourceScope(cwd) ? listGlobalMcpServers() : listMcpServers(cwd ?? currentCwd)
+  const connectorCatalog = (): ReturnType<typeof listConnectorCatalog> =>
+    listConnectorCatalog({
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion(),
+      runtimeRoot: getRuntimeRoot(),
+      registryDirs: [...localPackageRegistryDirs]
+    })
+  ipcMain.handle('mcp:listServers', async (_, cwd?: string) => {
+    const servers = await (isRemoteResourceScope(cwd)
+      ? listGlobalMcpServers()
+      : listMcpServers(cwd ?? currentCwd))
+    const catalog = connectorCatalog()
+    return servers.map((server) => {
+      const connector = catalog.find(
+        (entry) =>
+          entry.id === server.packageId || (server.url !== undefined && entry.url === server.url)
+      )
+      return connector
+        ? { ...server, connectorId: connector.id, category: connector.category }
+        : server
+    })
+  })
+  ipcMain.handle('mcp:listConnectorCatalog', async () => connectorCatalog())
+  ipcMain.handle(
+    'mcp:installConnector',
+    async (_, id: unknown, version?: unknown, registryDir?: unknown) => {
+      if (
+        typeof id !== 'string' ||
+        id.length === 0 ||
+        (version !== undefined && typeof version !== 'string') ||
+        (registryDir !== undefined && typeof registryDir !== 'string')
+      ) {
+        throw new Error('连接器安装参数无效')
+      }
+      const connector = connectorCatalog().find(
+        (entry) =>
+          entry.id === id &&
+          (version === undefined || entry.version === version) &&
+          (registryDir === undefined || entry.registryDir === registryDir)
+      )
+      if (!connector?.registryDir) throw new Error(`连接器目录中找不到 ${id}`)
+      if (connector.unavailableReason) throw new Error(connector.unavailableReason)
+      const result = await installCatalogConnector(
+        connector.registryDir,
+        connector.id,
+        connector.version,
+        {
+          agentDir: AGENT_DIR,
+          appVersion: app.getVersion(),
+          runtimeRoot: getRuntimeRoot()
+        }
+      )
+      setEnabled(`mcp:${connector.id}`, true, { agentDir: AGENT_DIR })
+      setMcpPackageEnabled(connector.id, true, AGENT_DIR)
+      await invalidateAgentSession()
+      return result
+    }
   )
+  ipcMain.handle('mcp:uninstallConnector', async (_, id: unknown) => {
+    if (typeof id !== 'string' || id.length === 0) throw new Error('连接器标识无效')
+    const result = uninstallCatalogConnector(id, {
+      agentDir: AGENT_DIR,
+      runtimeRoot: getRuntimeRoot()
+    })
+    setEnabled(`mcp:${id}`, null, { agentDir: AGENT_DIR })
+    await invalidateAgentSession()
+    return result
+  })
+  ipcMain.handle('mcp:buildConnectorEnvironment', async (_, id: unknown) => {
+    if (typeof id !== 'string' || id.length === 0) throw new Error('连接器标识无效')
+    const action = connectorEnvironmentBuildAction(id, {
+      agentDir: AGENT_DIR
+    })
+    const handle = await environmentBuilds.start(action.descriptor, action.options)
+    const refreshed = refreshPersistedManagedStdioServers({
+      agentDir: AGENT_DIR,
+      runtimeRoot: getRuntimeRoot()
+    })
+    const failure = refreshed.failures.find((entry) => entry.name === id)
+    if (failure) throw failure.error
+    return { envId: handle.envId }
+  })
   ipcMain.handle('mcp:addRemoteConnector', async (_, name: string, url: string) => {
     addRemoteMcpConnector(name, url)
   })
@@ -7929,15 +8076,28 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('mcp:featuredTools', async (_, id: string) => {
     if (typeof id !== 'string') throw new Error('连接器标识无效')
-    return getOmpBridge().request<string[]>('mcp.featuredTools', { id })
+    const connector = connectorCatalog().find((entry) => entry.id === id)
+    if (!connector?.url) throw new Error('连接器目录中找不到远程连接器')
+    return getOmpBridge().request<string[]>('mcp.featuredTools', {
+      id,
+      url: connector.url,
+      auth: connector.auth
+    })
   })
   ipcMain.handle('mcp:featuredAuthStatus', async (_, id: string) => {
     if (id !== 'notion') throw new Error('暂只支持 Notion 登录状态')
-    return getOmpBridge().request<boolean>('mcp.featuredAuthStatus', { id })
+    const connector = connectorCatalog().find((entry) => entry.id === id)
+    if (!connector?.url) throw new Error('连接器目录中找不到 Notion')
+    return getOmpBridge().request<boolean>('mcp.featuredAuthStatus', {
+      id,
+      url: connector.url
+    })
   })
   ipcMain.handle('mcp:authorizeFeatured', async (_, id: string) => {
     if (id !== 'notion') throw new Error('暂只支持 Notion 授权')
-    await getOmpBridge().request('mcp.authorizeFeatured', { id })
+    const connector = connectorCatalog().find((entry) => entry.id === id)
+    if (!connector?.url) throw new Error('连接器目录中找不到 Notion')
+    await getOmpBridge().request('mcp.authorizeFeatured', { id, url: connector.url })
   })
 
   ipcMain.handle('wrappers:getPlan', async (_, planId: string) => readWrapperPlan(planId))

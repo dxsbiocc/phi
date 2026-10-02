@@ -66,6 +66,8 @@ export function describeEnvironment(
     environmentsDir?: string
     /** Owning installed plugin; required for private `plugin:` references. */
     pluginId?: string
+    /** Owning installed MCP package; required for connector-local `./environment.yml`. */
+    mcpPackage?: { id: string; dir: string }
     /** Phi agent directory override used by tests and isolated runtime instances. */
     agentDir?: string
     platform?: PhiPlatform
@@ -90,7 +92,17 @@ export function describeEnvironment(
       )
     case 'path':
       if (parsed.path !== LOCAL_ENVIRONMENT) {
-        throw new Error('skill-local environment must be ./environment.yml')
+        throw new Error('package-local environment must be ./environment.yml')
+      }
+      if (ctx.mcpPackage) {
+        return loadDescriptor(
+          ref,
+          'mcp',
+          'package',
+          ctx.mcpPackage.id,
+          ctx.mcpPackage.dir,
+          platform
+        )
       }
       if (!ctx.skill) throw new Error('./environment.yml requires a skill')
       return loadDescriptor(ref, 'skill', 'package', ctx.skill.name, ctx.skill.dir, platform)

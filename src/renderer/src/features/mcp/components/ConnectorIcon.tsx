@@ -1,5 +1,4 @@
 import { Box } from '@mui/material'
-import { featuredMcpConnectors } from '../../../../../shared/mcpConnectorCatalog'
 import { PhiIcons } from '../../../icons'
 
 const icons: Record<string, string> = {
@@ -18,14 +17,12 @@ const icons: Record<string, string> = {
 
 export function ConnectorIcon({
   connectorId,
-  url,
   size = 48
 }: {
   connectorId?: string
-  url?: string
   size?: number
 }): React.JSX.Element {
-  const id = connectorId ?? featuredMcpConnectors.find((entry) => entry.url === url)?.id
+  const id = connectorId
   const source = id ? icons[id] : undefined
 
   return (

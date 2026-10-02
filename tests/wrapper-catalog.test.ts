@@ -6,8 +6,11 @@ import test from 'node:test'
 
 import {
   addCustomWrapper,
+  BUNDLED_WRAPPER_SOURCE_FINGERPRINT,
   ensureBundledWrappersInstalled,
+  fingerprintBundledWrapperSource,
   findWrapperCatalogEntry,
+  getBundledWrapperPackagesDir,
   listDefaultAgentToolWrappers,
   listWrapperCatalog
 } from '../src/main/agent/wrappers/catalog'
@@ -72,14 +75,18 @@ resources:
 }
 
 function writeBundledCompositionFixture(root: string, main = 'workflow {}\n'): void {
-  const wrapper = join(root, 'modules', 'acme', 'toy', 'wrapper')
+  writeBundledModuleFixture(root, 'toy', main)
+}
+
+function writeBundledModuleFixture(root: string, name: string, main = 'workflow {}\n'): void {
+  const wrapper = join(root, 'modules', 'acme', name, 'wrapper')
   mkdirSync(wrapper, { recursive: true })
   writeFileSync(join(wrapper, 'main.nf'), main)
   writeFileSync(join(wrapper, 'params.json'), '{}\n')
   writeFileSync(
     join(wrapper, 'wrapper.yaml'),
-    `id: acme/modules/toy
-name: Toy
+    `id: acme/modules/${name}
+name: ${name}
 summary: Small bundled wrapper fixture.
 params: {}
 outputs:
@@ -90,6 +97,13 @@ outputs:
 `
   )
 }
+
+test('bundled wrapper source fingerprint matches the shipped wrapper tree', () => {
+  assert.equal(
+    fingerprintBundledWrapperSource(getBundledWrapperPackagesDir()),
+    BUNDLED_WRAPPER_SOURCE_FINGERPRINT
+  )
+})
 
 test('bundled wrapper packages install idempotently into the assembled tree', async () => {
   const root = mkdtempSync(join(tmpdir(), 'phi-bundled-wrapper-'))
@@ -110,6 +124,83 @@ test('bundled wrapper packages install idempotently into the assembled tree', as
     const second = await ensureBundledWrappersInstalled(agentDir, { sourceRoot })
     assert.deepEqual(second.installed, [])
     assert.equal(second.packages.length, 1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('bundled wrapper packages skip unchanged payloads across app-version bumps', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-bundled-wrapper-version-bump-'))
+  const agentDir = join(root, 'agent')
+  const sourceRoot = join(root, 'source')
+  try {
+    writeBundledCompositionFixture(sourceRoot)
+    await ensureBundledWrappersInstalled(agentDir, {
+      sourceRoot,
+      packageVersion: '1.0.0'
+    })
+    const before = readFileSync(join(agentDir, 'wrappers', 'tree.json'), 'utf8')
+
+    const bumped = await ensureBundledWrappersInstalled(agentDir, {
+      sourceRoot,
+      packageVersion: '1.1.0'
+    })
+
+    assert.deepEqual(bumped.installed, [])
+    assert.equal(bumped.packages[0]?.version, '1.0.0')
+    assert.equal(readFileSync(join(agentDir, 'wrappers', 'tree.json'), 'utf8'), before)
+
+    rmSync(join(sourceRoot, 'modules', 'acme', 'toy'), { recursive: true, force: true })
+    const removed = await ensureBundledWrappersInstalled(agentDir, {
+      sourceRoot,
+      packageVersion: '1.2.0'
+    })
+    assert.deepEqual(removed.removed, ['module-acme-toy'])
+    assert.deepEqual(removed.packages, [])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('bundled wrapper app-version bump reinstalls only the changed package', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-bundled-wrapper-partial-bump-'))
+  const agentDir = join(root, 'agent')
+  const sourceRoot = join(root, 'source')
+  try {
+    writeBundledCompositionFixture(sourceRoot, 'workflow { v1 }\n')
+    writeBundledModuleFixture(sourceRoot, 'steady')
+    await ensureBundledWrappersInstalled(agentDir, {
+      sourceRoot,
+      packageVersion: '1.0.0'
+    })
+    const before = JSON.parse(readFileSync(join(agentDir, 'wrappers', 'tree.json'), 'utf8')) as {
+      packages: Record<string, { version: string; source: { sha256: string } }>
+    }
+
+    writeBundledCompositionFixture(sourceRoot, 'workflow { v2 }\n')
+    const bumped = await ensureBundledWrappersInstalled(agentDir, {
+      sourceRoot,
+      packageVersion: '1.1.0'
+    })
+    const after = JSON.parse(readFileSync(join(agentDir, 'wrappers', 'tree.json'), 'utf8')) as {
+      packages: Record<string, { version: string; source: { sha256: string } }>
+    }
+
+    assert.deepEqual(bumped.installed, ['module-acme-toy'])
+    assert.equal(after.packages['module-acme-toy'].version, '1.1.0')
+    assert.notEqual(
+      after.packages['module-acme-toy'].source.sha256,
+      before.packages['module-acme-toy'].source.sha256
+    )
+    assert.equal(after.packages['module-acme-steady'].version, '1.0.0')
+    assert.equal(
+      after.packages['module-acme-steady'].source.sha256,
+      before.packages['module-acme-steady'].source.sha256
+    )
+    assert.equal(
+      readFileSync(join(agentDir, 'wrappers', 'tree', 'modules/acme/toy/wrapper/main.nf'), 'utf8'),
+      'workflow { v2 }\n'
+    )
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

@@ -14,7 +14,6 @@ import {
   Typography
 } from '@mui/material'
 import {
-  featuredMcpConnectors,
   mcpConnectorCategories,
   type FeaturedMcpConnector
 } from '../../../../../shared/mcpConnectorCatalog'
@@ -44,7 +43,12 @@ function matchingServer(
   connector: FeaturedMcpConnector,
   servers: McpServerSummary[]
 ): McpServerSummary | undefined {
-  return servers.find((server) => server.url === connector.url)
+  return servers.find(
+    (server) =>
+      server.packageId === connector.id ||
+      server.connectorId === connector.id ||
+      (connector.url !== undefined && server.url === connector.url)
+  )
 }
 
 export function McpConnectorCatalogDialog({
@@ -54,6 +58,8 @@ export function McpConnectorCatalogDialog({
   onRefresh
 }: McpConnectorCatalogDialogProps): React.JSX.Element {
   const [page, setPage] = useState<CatalogPage>('list')
+  const [connectors, setConnectors] = useState<FeaturedMcpConnector[]>([])
+  const [catalogLoading, setCatalogLoading] = useState(true)
   const [group, setGroup] = useState<CatalogGroup>('生产力')
   const [selectedId, setSelectedId] = useState('google-drive')
   const [query, setQuery] = useState('')
@@ -71,6 +77,17 @@ export function McpConnectorCatalogDialog({
   useEffect(() => {
     if (!open) return
     let active = true
+    void window.api
+      .listMcpConnectorCatalog()
+      .then((entries) => {
+        if (active) setConnectors(entries)
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : String(cause))
+      })
+      .finally(() => {
+        if (active) setCatalogLoading(false)
+      })
     const cachedNotionTools = toolListCacheRef.current.get('notion')
     const status =
       typeof window.api.getFeaturedMcpAuthStatus === 'function'
@@ -99,11 +116,11 @@ export function McpConnectorCatalogDialog({
       active = false
     }
   }, [open])
-  const selected = featuredMcpConnectors.find((connector) => connector.id === selectedId)
+  const selected = connectors.find((connector) => connector.id === selectedId)
   const normalizedQuery = query.trim().toLowerCase()
   const filteredFeatured = useMemo(
     () =>
-      featuredMcpConnectors.filter(
+      connectors.filter(
         (connector) =>
           (normalizedQuery.length > 0 || connector.category === group) &&
           (!normalizedQuery ||
@@ -111,7 +128,7 @@ export function McpConnectorCatalogDialog({
               (value) => value.toLowerCase().includes(normalizedQuery)
             ))
       ),
-    [group, normalizedQuery]
+    [connectors, group, normalizedQuery]
   )
   const filteredInstalled = useMemo(
     () =>
@@ -125,18 +142,48 @@ export function McpConnectorCatalogDialog({
     [normalizedQuery, servers]
   )
 
-  async function add(name: string, url: string): Promise<void> {
-    setBusy(name)
+  async function refreshCatalog(): Promise<void> {
+    setConnectors(await window.api.listMcpConnectorCatalog())
+  }
+
+  async function addConnector(connector: FeaturedMcpConnector): Promise<void> {
+    setBusy(connector.id)
     setError(null)
     try {
-      await window.api.addRemoteMcpConnector(name, url)
+      await window.api.installMcpConnector(connector.id, connector.version, connector.registryDir)
       await onRefresh()
-      if (page === 'custom') {
-        setCustomName('')
-        setCustomUrl('')
-        setGroup('已安装')
-        setPage('list')
-      }
+      await refreshCatalog()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function addCustom(): Promise<void> {
+    setBusy(customName)
+    setError(null)
+    try {
+      await window.api.addRemoteMcpConnector(customName, customUrl)
+      await onRefresh()
+      setCustomName('')
+      setCustomUrl('')
+      setGroup('已安装')
+      setPage('list')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function buildEnvironment(connector: FeaturedMcpConnector): Promise<void> {
+    setBusy(connector.id)
+    setError(null)
+    try {
+      await window.api.buildMcpConnectorEnvironment(connector.id)
+      await onRefresh()
+      await refreshCatalog()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -145,14 +192,18 @@ export function McpConnectorCatalogDialog({
   }
 
   async function remove(server: McpServerSummary): Promise<void> {
-    if (!server.url) return
+    if (!server.packageId && !server.url) return
     setBusy(server.name)
     setError(null)
     try {
-      await window.api.removeRemoteMcpConnector(server.name, server.url)
-      const connector = featuredMcpConnectors.find((entry) => entry.url === server.url)
+      if (server.packageId) await window.api.uninstallMcpConnector(server.packageId)
+      else if (server.url) await window.api.removeRemoteMcpConnector(server.name, server.url)
+      const connector = connectors.find(
+        (entry) => entry.id === server.packageId || entry.url === server.url
+      )
       if (connector) toolListCacheRef.current.delete(connector.id)
       await onRefresh()
+      await refreshCatalog()
       setPage('list')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -162,7 +213,7 @@ export function McpConnectorCatalogDialog({
   }
 
   async function connectNotion(): Promise<void> {
-    const notion = featuredMcpConnectors.find((connector) => connector.id === 'notion')
+    const notion = connectors.find((connector) => connector.id === 'notion')
     if (!notion) return
     if (typeof window.api.authorizeFeaturedMcp !== 'function') {
       setError('授权接口尚未加载，请重启 Phi 后重试')
@@ -178,8 +229,9 @@ export function McpConnectorCatalogDialog({
       setNotionAuthStatus('authenticated')
       toolListCacheRef.current.delete(notion.id)
       if (!matchingServer(notion, servers)) {
-        await window.api.addRemoteMcpConnector(notion.id, notion.url)
+        await window.api.installMcpConnector(notion.id, notion.version, notion.registryDir)
         await onRefresh()
+        await refreshCatalog()
       }
       const names = await window.api.listFeaturedMcpTools(notion.id)
       toolListCacheRef.current.set(notion.id, {
@@ -269,17 +321,20 @@ export function McpConnectorCatalogDialog({
       <McpFeaturedConnectorCard
         key={key}
         connector={connector}
-        installed={Boolean(matchingServer(connector, servers))}
+        installed={connector.added || Boolean(matchingServer(connector, servers))}
         authStatus={notionAuthStatus}
         busy={busy !== null}
         onOpen={() => openDetail(connector)}
-        onAdd={() => void add(connector.id, connector.url)}
+        onAdd={() => void addConnector(connector)}
+        onBuildEnvironment={() => void buildEnvironment(connector)}
       />
     )
   }
 
   function installedCard(server: McpServerSummary): React.JSX.Element {
-    const connector = featuredMcpConnectors.find((entry) => entry.url === server.url)
+    const connector = connectors.find(
+      (entry) => entry.id === server.packageId || entry.url === server.url
+    )
     if (connector) return connectorCard(connector, server.id)
     return (
       <Box
@@ -287,7 +342,7 @@ export function McpConnectorCatalogDialog({
         sx={{ p: 1.75, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}
       >
         <Stack direction="row" spacing={1.5} sx={{ alignItems: 'flex-start' }}>
-          <ConnectorIcon url={server.url} />
+          <ConnectorIcon connectorId={server.connectorId ?? server.packageId} />
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography sx={{ fontWeight: 700 }}>{server.name}</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
@@ -297,7 +352,7 @@ export function McpConnectorCatalogDialog({
               {server.enabled === false ? '已停用' : '已配置'}
             </Typography>
           </Box>
-          {server.managed && server.url && (
+          {server.managed && (server.packageId || server.url) && (
             <Button
               size="small"
               color="error"
@@ -375,8 +430,7 @@ export function McpConnectorCatalogDialog({
                 sx={{ borderRadius: 1.5, mb: 0.5 }}
               >
                 <Typography variant="body2">
-                  {category} ·{' '}
-                  {featuredMcpConnectors.filter((entry) => entry.category === category).length}
+                  {category} · {connectors.filter((entry) => entry.category === category).length}
                 </Typography>
               </ListItemButton>
             ))}
@@ -482,6 +536,18 @@ export function McpConnectorCatalogDialog({
                     >
                       移除
                     </Button>
+                  ) : selected.unavailableReason ? (
+                    <Button variant="outlined" disabled>
+                      需要新版 Phi
+                    </Button>
+                  ) : selected.environmentState === 'not-built' ? (
+                    <Button
+                      variant="contained"
+                      disabled={busy !== null}
+                      onClick={() => void buildEnvironment(selected)}
+                    >
+                      构建环境
+                    </Button>
                   ) : selected.signIn === '需要登录' && !matchingServer(selected, servers) ? (
                     <Button variant="outlined" disabled>
                       授权登录暂不可用
@@ -490,7 +556,7 @@ export function McpConnectorCatalogDialog({
                     <Button
                       variant="contained"
                       disabled={Boolean(matchingServer(selected, servers)) || busy !== null}
-                      onClick={() => void add(selected.id, selected.url)}
+                      onClick={() => void addConnector(selected)}
                     >
                       {matchingServer(selected, servers) ? '已配置' : '添加连接器'}
                     </Button>
@@ -527,7 +593,7 @@ export function McpConnectorCatalogDialog({
                       MCP 地址
                     </Typography>
                     <Typography sx={{ overflowWrap: 'anywhere', fontFamily: 'monospace' }}>
-                      {selected.url}
+                      {selected.url ?? [selected.command, ...(selected.args ?? [])].join(' ')}
                     </Typography>
                   </Box>
                   <Box>
@@ -546,21 +612,23 @@ export function McpConnectorCatalogDialog({
                         : selected.signIn}
                     </Typography>
                   </Box>
-                  <Box>
-                    <Typography variant="overline" color="text.secondary">
-                      更多信息
-                    </Typography>
-                    <Button
-                      component="a"
-                      href={selected.homepageUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      size="small"
-                      sx={{ pl: 0 }}
-                    >
-                      官方连接器页面 ↗
-                    </Button>
-                  </Box>
+                  {selected.homepageUrl && (
+                    <Box>
+                      <Typography variant="overline" color="text.secondary">
+                        更多信息
+                      </Typography>
+                      <Button
+                        component="a"
+                        href={selected.homepageUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        size="small"
+                        sx={{ pl: 0 }}
+                      >
+                        官方连接器页面 ↗
+                      </Button>
+                    </Box>
+                  )}
                 </Box>
               </>
             ) : page === 'custom' ? (
@@ -586,7 +654,7 @@ export function McpConnectorCatalogDialog({
                 <Button
                   variant="contained"
                   disabled={busy !== null || !customName.trim() || !customUrl.trim()}
-                  onClick={() => void add(customName, customUrl)}
+                  onClick={() => void addCustom()}
                   sx={{ alignSelf: 'flex-start' }}
                 >
                   保存 MCP 配置
@@ -599,6 +667,7 @@ export function McpConnectorCatalogDialog({
                     ? '这里列出已保存的连接器；配置状态不代表服务端已经连通。'
                     : '按类别浏览常用 MCP 服务，已添加的连接器也会显示。'}
                 </Typography>
+                {catalogLoading && <Typography color="text.secondary">正在加载连接器…</Typography>}
                 <Box
                   sx={{
                     display: 'grid',
@@ -606,15 +675,17 @@ export function McpConnectorCatalogDialog({
                     gap: 1.5
                   }}
                 >
-                  {group === '已安装'
-                    ? filteredInstalled.map(installedCard)
-                    : filteredFeatured.map((connector) => connectorCard(connector))}
+                  {!catalogLoading &&
+                    (group === '已安装'
+                      ? filteredInstalled.map(installedCard)
+                      : filteredFeatured.map((connector) => connectorCard(connector)))}
                 </Box>
-                {(group === '已安装' ? filteredInstalled : filteredFeatured).length === 0 && (
-                  <Typography color="text.secondary" sx={{ mt: 2 }}>
-                    {normalizedQuery ? '没有找到匹配的连接器' : '这个分组目前没有连接器'}
-                  </Typography>
-                )}
+                {!catalogLoading &&
+                  (group === '已安装' ? filteredInstalled : filteredFeatured).length === 0 && (
+                    <Typography color="text.secondary" sx={{ mt: 2 }}>
+                      {normalizedQuery ? '没有找到匹配的连接器' : '这个分组目前没有连接器'}
+                    </Typography>
+                  )}
                 <Typography
                   variant="caption"
                   color="text.secondary"

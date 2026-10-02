@@ -9,7 +9,7 @@ import { environmentSpecSchema } from './schemas'
 export { PHI_PLATFORMS, condaSubdir, currentPlatform, findPlatform } from './platform'
 export type { PhiPlatform } from './platform'
 
-export const ENVIRONMENT_CONTRACT_VERSION = '1.2.1'
+export const ENVIRONMENT_CONTRACT_VERSION = '1.3.0'
 
 const ENV_NAME = /^[a-z][a-z0-9-]{0,62}$/
 
@@ -48,8 +48,8 @@ export interface CondaEnvironmentSpec {
 
 export type EnvStatus = 'absent' | 'building' | 'ready' | 'failed' | 'drifted'
 export type EnvKind = 'base' | 'package' | 'project'
-/** `skill` (a standalone skill's own environment) was added in contract 1.1.0. */
-export type EnvScope = 'phi' | 'plugin' | 'project' | 'skill'
+/** Package-owned scopes use the package id as the owner. */
+export type EnvScope = 'phi' | 'plugin' | 'project' | 'skill' | 'mcp'
 
 export interface EnvMetadata {
   envId: string

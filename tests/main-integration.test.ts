@@ -1640,6 +1640,10 @@ async function harness(
         approvalFor: () => undefined
       })
     },
+    './agent/packages/wrapper-tree': {
+      // No tree yet: startup awaits the (mocked) bundled wrapper install, as on a first run.
+      getWrapperTreeOwnershipPath: (): string => '/isolated/agent/wrappers/tree.json'
+    },
     './agent/content/env-request': {
       ADD_PACKAGES: '添加',
       confirmedEnvironmentRequest: (): boolean => false,
@@ -1776,7 +1780,47 @@ async function harness(
     },
     './agent/mcp-connectors': {
       addRemoteMcpConnector: noop,
-      removeRemoteMcpConnector: noop
+      removeRemoteMcpConnector: noop,
+      listConnectorCatalog: (): unknown[] => [
+        {
+          id: 'notion',
+          version: '1.0.0',
+          name: 'Notion',
+          description: 'Notion connector',
+          publisher: 'Notion',
+          category: '生产力',
+          signIn: '需要登录',
+          transport: 'http',
+          auth: 'oauth',
+          url: 'https://mcp.notion.com/mcp',
+          registryDir: '/bundled-connectors',
+          added: false
+        },
+        {
+          id: 'pubmed',
+          version: '1.0.0',
+          name: 'PubMed',
+          description: 'PubMed connector',
+          publisher: 'Anthropic',
+          category: '健康与生命科学',
+          signIn: '无需登录',
+          transport: 'http',
+          auth: 'none',
+          url: 'https://pubmed.mcp.claude.com/mcp',
+          registryDir: '/bundled-connectors',
+          added: false
+        }
+      ],
+      installCatalogConnector: async (): Promise<unknown[]> => [],
+      uninstallCatalogConnector: (): unknown[] => [],
+      connectorEnvironmentBuildAction: (): unknown => {
+        throw new Error('connector has no environment in this fixture')
+      },
+      refreshPersistedManagedStdioServers: (): unknown => {
+        operationLog.push({ type: 'refreshManagedStdioServers' })
+        return { config: {}, refreshed: [], failures: [], written: false }
+      },
+      setMcpPackageEnabled: (): boolean => true
     },
     './agent/resources': {
       listGlobalSkills: async (): Promise<unknown[]> => [
@@ -3607,19 +3651,23 @@ test('main IPC: featured MCP tools are read through the Bun worker', async () =>
   assert.deepEqual(await app.invoke('mcp:featuredTools', 'pubmed'), ['search_articles'])
   assert.deepEqual(app.bridgeRequests.at(-1), {
     method: 'mcp.featuredTools',
-    params: { id: 'pubmed' }
+    params: {
+      id: 'pubmed',
+      url: 'https://pubmed.mcp.claude.com/mcp',
+      auth: 'none'
+    }
   })
   await assert.rejects(app.invoke('mcp:featuredTools', null), /连接器标识无效/)
   assert.equal(await app.invoke('mcp:featuredAuthStatus', 'notion'), true)
   assert.deepEqual(app.bridgeRequests.at(-1), {
     method: 'mcp.featuredAuthStatus',
-    params: { id: 'notion' }
+    params: { id: 'notion', url: 'https://mcp.notion.com/mcp' }
   })
   await assert.rejects(app.invoke('mcp:featuredAuthStatus', 'gmail'), /暂只支持 Notion/)
   await app.invoke('mcp:authorizeFeatured', 'notion')
   assert.deepEqual(app.bridgeRequests.at(-1), {
     method: 'mcp.authorizeFeatured',
-    params: { id: 'notion' }
+    params: { id: 'notion', url: 'https://mcp.notion.com/mcp' }
   })
   await assert.rejects(app.invoke('mcp:authorizeFeatured', 'gmail'), /暂只支持 Notion/)
   const openAuthUrl = app.hostHandlers.get('mcp.openAuthUrl')
@@ -3628,6 +3676,11 @@ test('main IPC: featured MCP tools are read through the Bun worker', async () =>
   await assert.rejects(openAuthUrl({ url: 'https://example.com/authorize' }), /Notion MCP/)
   await assert.rejects(openAuthUrl({ url: 'https://user:pass@mcp.notion.com/' }), /Notion MCP/)
   await openAuthUrl({ url: 'https://mcp.notion.com/authorize' })
+})
+
+test('main startup refreshes managed stdio MCP entries', async () => {
+  const app = await harness()
+  assert.ok(app.operationLog.some((entry) => entry.type === 'refreshManagedStdioServers'))
 })
 
 test(

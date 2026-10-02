@@ -152,12 +152,18 @@ test('listMcpServers includes remote URL-only servers', async () => {
   try {
     writeFileSync(
       path,
-      JSON.stringify({ mcpServers: { pubmed: { type: 'http', url: 'https://example.com/mcp' } } })
+      JSON.stringify({
+        mcpServers: {
+          pubmed: { type: 'http', url: 'https://example.com/mcp', phiPackage: 'pubmed' }
+        }
+      })
     )
     const servers = await listGlobalMcpServers()
     assert.equal(servers[0]?.name, 'pubmed')
     assert.equal(servers[0]?.url, 'https://example.com/mcp')
     assert.equal(servers[0]?.transport, 'http')
+    assert.equal(servers[0]?.packageId, 'pubmed')
+    assert.equal(servers[0]?.connectorId, 'pubmed')
   } finally {
     writeFileSync(path, original)
   }

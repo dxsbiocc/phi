@@ -82,6 +82,7 @@ import type {
   EnablementSnapshot
 } from '../shared/enablementTypes'
 import type { SkillContent, SkillSummary } from '../shared/skillTypes'
+import type { FeaturedMcpConnector } from '../shared/mcpConnectorCatalog'
 
 type PreloadSessionSummary = {
   path: string
@@ -206,6 +207,9 @@ type PreloadPromptAgentSummary = {
 type PreloadMcpServerSummary = {
   id: string
   name: string
+  connectorId?: string
+  packageId?: string
+  category?: string
   command?: string
   args?: string[]
   envKeys?: string[]
@@ -1017,6 +1021,14 @@ declare global {
       deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
       listPromptAgents: (cwd?: string) => Promise<PreloadPromptAgentSummary[]>
       listMcpServers: (cwd?: string) => Promise<PreloadMcpServerSummary[]>
+      listMcpConnectorCatalog: () => Promise<FeaturedMcpConnector[]>
+      installMcpConnector: (
+        id: string,
+        version?: string,
+        registryDir?: string
+      ) => Promise<InstalledPackageView[]>
+      uninstallMcpConnector: (id: string) => Promise<InstalledPackageView[]>
+      buildMcpConnectorEnvironment: (id: string) => Promise<{ envId: string }>
       addRemoteMcpConnector: (name: string, url: string) => Promise<void>
       removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
       listFeaturedMcpTools: (id: string) => Promise<string[]>

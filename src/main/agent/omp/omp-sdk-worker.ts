@@ -52,7 +52,6 @@ import { buildPresentFilesTool } from '../deliverables/present-tool'
 import { enterPlanReviewMode, type PlanReviewChoice } from '../plan/plan-review-mode'
 import { planModeToolDecision } from '../plan/plan-tool-policy'
 import type { PresentedFile } from '../../../shared/presentedFileTypes'
-import { featuredMcpConnectors } from '../../../shared/mcpConnectorCatalog'
 import { authorizeFeaturedMcp, listFeaturedMcpTools } from './featured-mcp-auth'
 import type {
   AutoCompactionDefaults,
@@ -2020,31 +2019,39 @@ async function renameSession(params: unknown): Promise<void> {
 async function handleRequest(method: string, params: unknown): Promise<unknown> {
   switch (method) {
     case 'mcp.featuredTools': {
-      const id = isRecord(params) ? stringValue(params.id) : ''
-      const connector = featuredMcpConnectors.find((entry) => entry.id === id)
-      if (!connector || (connector.signIn === '需要登录' && id !== 'notion')) {
+      const record = isRecord(params) ? params : {}
+      const id = stringValue(record.id)
+      const url = stringValue(record.url)
+      const auth = stringValue(record.auth)
+      if (!id || !url.startsWith('https://') || (auth !== 'none' && id !== 'notion')) {
         throw new Error('该连接器需要授权，暂无法读取实际工具列表')
       }
       const authStorage = id === 'notion' ? (await getContext()).authStorage : undefined
-      if (authStorage && !authStorage.get(mcpOAuthCredentialId(connector.url))) {
+      if (authStorage && !authStorage.get(mcpOAuthCredentialId(url))) {
         throw new Error('请先授权登录 Notion')
       }
-      return listFeaturedMcpTools(connector.id, connector.url, authStorage)
+      return listFeaturedMcpTools(id, url, authStorage)
     }
     case 'mcp.featuredAuthStatus': {
-      const id = isRecord(params) ? stringValue(params.id) : ''
-      const connector = featuredMcpConnectors.find((entry) => entry.id === id && id === 'notion')
-      if (!connector) throw new Error('暂只支持 Notion 登录状态')
+      const record = isRecord(params) ? params : {}
+      const id = stringValue(record.id)
+      const url = stringValue(record.url)
+      if (id !== 'notion' || !url.startsWith('https://')) {
+        throw new Error('暂只支持 Notion 登录状态')
+      }
       const { authStorage } = await getContext()
-      return authStorage.get(mcpOAuthCredentialId(connector.url))?.type === 'oauth'
+      return authStorage.get(mcpOAuthCredentialId(url))?.type === 'oauth'
     }
     case 'mcp.authorizeFeatured': {
-      const id = isRecord(params) ? stringValue(params.id) : ''
-      const connector = featuredMcpConnectors.find((entry) => entry.id === id && id === 'notion')
-      if (!connector) throw new Error('暂只支持 Notion 授权')
+      const record = isRecord(params) ? params : {}
+      const id = stringValue(record.id)
+      const url = stringValue(record.url)
+      if (id !== 'notion' || !url.startsWith('https://')) {
+        throw new Error('暂只支持 Notion 授权')
+      }
       const ctx = await getContext()
       await authorizeFeaturedMcp(
-        connector.url,
+        url,
         ctx.authStorage,
         (url) => requestHost('mcp.openAuthUrl', { url }) as Promise<void>
       )

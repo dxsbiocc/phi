@@ -11,6 +11,7 @@ export interface TarEntry {
   type: 'file' | 'directory' | 'link' | 'other'
   data: Buffer
   size: number
+  mode: number
 }
 
 const BLOCK_SIZE = 512
@@ -49,6 +50,7 @@ export function parseTarGz(archive: Buffer): TarEntry[] {
     const prefix = readString(header, 345, 155)
     const headerPath = prefix ? `${prefix}/${name}` : name
     const size = readOctal(header, 124, 12, 'size')
+    const mode = readOctal(header, 100, 8, 'mode') & 0o777
     const typeFlag = String.fromCharCode(header[156] ?? 0)
     const dataStart = offset + BLOCK_SIZE
     const dataEnd = dataStart + size
@@ -75,7 +77,7 @@ export function parseTarGz(archive: Buffer): TarEntry[] {
     else if (typeFlag === '5') type = 'directory'
     else if (typeFlag === '1' || typeFlag === '2') type = 'link'
     else type = 'other'
-    entries.push({ path, type, data, size })
+    entries.push({ path, type, data, size, mode })
 
     offset = nextOffset
   }

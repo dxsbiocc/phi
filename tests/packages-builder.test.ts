@@ -90,6 +90,30 @@ description: Skill nested in the demo plugin.
   return dir
 }
 
+function writeConnector(root: string): string {
+  const dir = join(root, 'resources', 'connectors', 'demo-connector')
+  write(
+    join(dir, 'phi-package.yaml'),
+    stringifyYaml({
+      schemaVersion: 1,
+      id: 'demo-connector',
+      type: 'mcp',
+      version: '1.0.0',
+      title: 'Demo connector',
+      summary: 'Connector fixture for the local registry.',
+      connector: {
+        transport: 'http',
+        publisher: 'Phi',
+        category: '科研数据',
+        homepage: 'https://example.com/demo',
+        url: 'https://example.com/mcp',
+        auth: 'none'
+      }
+    })
+  )
+  return dir
+}
+
 function trackResources(root: string): void {
   execFileSync('git', ['add', 'resources'], { cwd: root })
 }
@@ -104,7 +128,7 @@ function build(root: string, outName = 'registry'): RegistryIndex {
 
 function registryEntry(
   index: RegistryIndex,
-  type: 'skill' | 'plugin' | 'wrapper',
+  type: 'skill' | 'plugin' | 'wrapper' | 'mcp',
   id: string
 ): RegistryIndexEntry {
   const entry = index.packages.find((candidate) => candidate.type === type && candidate.id === id)
@@ -564,4 +588,24 @@ test('computes deterministic wrapper dependencies from recursive includes and re
       entry.archive
     )
   }
+})
+
+test('packs tracked connector manifests as mcp packages', () => {
+  const root = temporaryRepository()
+  writeConnector(root)
+  trackResources(root)
+
+  const index = build(root)
+  const entry = registryEntry(index, 'mcp', 'demo-connector')
+  assert.equal(entry.type, 'mcp')
+  assert.deepEqual(
+    archiveEntries(root, 'registry', entry).map((item) => item.path),
+    ['files.json', 'phi-package.yaml']
+  )
+})
+
+test('an untracked connector is not packaged', () => {
+  const root = temporaryRepository()
+  writeConnector(root)
+  assert.throws(() => build(root), /untracked|leftover|not tracked/i)
 })

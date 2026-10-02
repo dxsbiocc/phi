@@ -8,6 +8,7 @@ import { getPhiAgentDir } from '../runtime-paths'
 import type { InstalledPackage, InstallerOptions, PackageSourceMetadata } from './installer-types'
 import { isSourceMetadata, packageKey } from './installer-utils'
 import { readPackageManifest, type PackageManifest, type PackageType } from './manifest'
+import { listActiveMcpPackages } from './mcp-store'
 import { listActiveSkillPackages } from './store'
 import { listInstalledWrapperPackages } from './wrapper-tree'
 
@@ -18,6 +19,10 @@ export function listInstalledPackages(
   const installed: InstalledPackage[] = []
   for (const entry of listActiveSkillPackages(agentDir)) {
     const item = installedPackageFromDir(entry.dir, 'skill')
+    if (item && item.id === entry.id && item.version === entry.version) installed.push(item)
+  }
+  for (const entry of listActiveMcpPackages(agentDir)) {
+    const item = installedPackageFromDir(entry.dir, 'mcp')
     if (item && item.id === entry.id && item.version === entry.version) installed.push(item)
   }
   for (const plugin of listInstalledPlugins({ agentDir })) {

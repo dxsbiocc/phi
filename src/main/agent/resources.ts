@@ -21,6 +21,9 @@ export type { SkillContent, SkillSourceCategory, SkillSummary } from '../../shar
 export interface McpServerSummary {
   id: string
   name: string
+  connectorId?: string
+  packageId?: string
+  category?: string
   command?: string
   args?: string[]
   envKeys?: string[]
@@ -228,12 +231,14 @@ function toMcpServerSummary(
   const envKeys = isRecord(value.env) ? Object.keys(value.env).sort() : undefined
   const url = stringValue(value.url)
   const transport = stringValue(value.type)
+  const packageId = stringValue(value.phiPackage)
 
   if (!command && !args && !envKeys && !url) return null
 
   return {
     id: `${sourcePath}:${name}`,
     name,
+    ...(packageId ? { connectorId: packageId, packageId } : {}),
     command,
     args,
     envKeys,

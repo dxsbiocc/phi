@@ -184,6 +184,15 @@ function declaredEnvironments(registry: LocalRegistry, packages: RegistryPackage
           environments.add(skill.frontmatter.phi.environment)
         }
       }
+      if (
+        entry.type === 'mcp' &&
+        isRecord(manifest) &&
+        isRecord(manifest.connector) &&
+        manifest.connector.transport === 'stdio' &&
+        typeof manifest.connector.environment === 'string'
+      ) {
+        environments.add(manifest.connector.environment)
+      }
     } catch {
       // Integrity and format errors are reported during fetch/stage; the plan can still be shown.
     }
@@ -192,11 +201,11 @@ function declaredEnvironments(registry: LocalRegistry, packages: RegistryPackage
 }
 
 function validateRequest(request: PackageRequest): void {
-  if (request.type === 'mcp') {
-    throw new Error('MCP 软件包清单已受支持，但此安装器尚未实现 MCP 安装')
-  }
   if (
-    (request.type !== 'skill' && request.type !== 'plugin' && request.type !== 'wrapper') ||
+    (request.type !== 'skill' &&
+      request.type !== 'plugin' &&
+      request.type !== 'wrapper' &&
+      request.type !== 'mcp') ||
     !/^[a-z][a-z0-9-]{1,63}$/.test(request.id)
   ) {
     throw new Error('软件包请求的 type 或 id 无效')

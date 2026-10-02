@@ -20,10 +20,7 @@ import type { SystemStyleObject } from '@mui/system'
 import { GoPlus } from 'react-icons/go'
 import { PhiIcons } from '../../icons'
 import type { McpServerSummary } from '../../types'
-import {
-  featuredMcpConnectors,
-  mcpConnectorCategories
-} from '../../../../shared/mcpConnectorCatalog'
+import { mcpConnectorCategories } from '../../../../shared/mcpConnectorCatalog'
 import { McpConnectorCatalogDialog } from './components/McpConnectorCatalogDialog'
 import { ConnectorIcon } from './components/ConnectorIcon'
 
@@ -160,7 +157,7 @@ function selectedServerFromList(
 }
 
 function serverCategory(server: McpServerSummary): string {
-  return featuredMcpConnectors.find((connector) => connector.url === server.url)?.category ?? '其他'
+  return server.category ?? '其他'
 }
 
 function ResizeSeparator({
@@ -405,7 +402,7 @@ export function McpSidebar({
                     sx={plainSidebarRowSx}
                   >
                     <Box sx={{ mr: 1.25 }}>
-                      <ConnectorIcon url={server.url} size={34} />
+                      <ConnectorIcon connectorId={server.connectorId} size={34} />
                     </Box>
                     <ListItemText
                       primary={server.name}
@@ -448,7 +445,7 @@ export function McpDetail({ selectedServer }: McpDetailProps): React.JSX.Element
       {selectedServer ? (
         <Box sx={{ maxWidth: 860, px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
           <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
-            <ConnectorIcon url={selectedServer.url} size={72} />
+            <ConnectorIcon connectorId={selectedServer.connectorId} size={72} />
             <Box sx={{ minWidth: 0, flex: 1 }}>
               <Typography variant="h4" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
                 {selectedServer.name}

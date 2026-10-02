@@ -101,7 +101,7 @@ export function stagePackage(
       if (item.type === 'directory') mkdirSync(target, { recursive: true })
       else {
         mkdirSync(dirname(target), { recursive: true })
-        writeFileSync(target, item.data, { flag: 'wx' })
+        writeFileSync(target, item.data, { flag: 'wx', mode: item.mode })
       }
     }
     verifyStagedPackage(dir, entry)

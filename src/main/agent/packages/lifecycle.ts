@@ -17,6 +17,16 @@ import {
   updateEnvironmentEntry
 } from '../envs'
 import {
+  installMcpPackageConfig,
+  readMcpConfig,
+  removeMcpPackageConfig,
+  writeMcpConfig
+} from '../mcp/package-config'
+import {
+  describeMcpPackageEnvironment,
+  type McpEnvironmentRecord
+} from '../mcp/package-environment'
+import {
   installPlugin,
   listInstalledPlugins,
   uninstallPlugin,
@@ -35,6 +45,12 @@ import type {
   StagedPackage
 } from './installer-types'
 import { readPackageManifest, validatePackage, type PackageType } from './manifest'
+import {
+  mcpPackagesDir,
+  mcpVersionDir,
+  readMcpPackagesRegistry,
+  writeMcpPackagesRegistry
+} from './mcp-store'
 import { planInstall } from './planning'
 import { cleanupStalePackageStaging, stagePackage } from './staging'
 import { readSkillsRegistry, skillPackagesDir, skillVersionDir, writeSkillsRegistry } from './store'
@@ -51,10 +67,6 @@ export async function installPackages(
   options: InstallerOptions = {}
 ): Promise<InstalledPackage[]> {
   const agentDir = options.agentDir ?? plan.agentDir ?? getPhiAgentDir()
-  const unsupported = plan.packages.find((entry) => entry.type === 'mcp')
-  if (unsupported) {
-    throw new Error(`MCP 软件包 ${unsupported.id} 已被清单接受，但此安装器尚未实现 MCP 安装`)
-  }
   cleanupStalePackageStaging({ agentDir, now: options.now })
   const stages: StagedPackage[] = []
   const installedNow: Array<{ type: PackageType; id: string }> = []
@@ -144,7 +156,8 @@ async function commitStagedPackage(
     return
   }
   if (staged.entry.type === 'mcp') {
-    throw new Error(`MCP 软件包 ${staged.entry.id} 已被清单接受，但此安装器尚未实现 MCP 安装`)
+    commitStagedMcpPackage(staged, options)
+    return
   }
   if (staged.entry.type === 'plugin') {
     const current = listInstalledPlugins({ agentDir: options.agentDir }).find(
@@ -235,7 +248,8 @@ function removeInstalledPackage(
     return
   }
   if (type === 'mcp') {
-    throw new Error(`MCP 软件包 ${id} 的安装与卸载尚未实现`)
+    removeInstalledMcpPackage(id, options)
+    return
   }
   if (type === 'plugin') {
     const result = uninstallPlugin(id, {
@@ -293,6 +307,120 @@ function skillEnvironment(
     platform: descriptor.platform,
     lockSha256: lockSha256(descriptor.lockText)
   }
+}
+
+function commitStagedMcpPackage(
+  staged: StagedPackage,
+  options: InstallerOptions & { agentDir: string }
+): void {
+  const manifest = readPackageManifest(staged.dir)
+  if (manifest.type !== 'mcp') throw new Error(`MCP 软件包 ${staged.entry.id} 清单类型无效`)
+  const target = mcpVersionDir(staged.entry.id, staged.entry.version, options.agentDir)
+  if (existsSync(target)) throw new Error(`MCP 软件包目标已存在: ${target}`)
+  const registry = readMcpPackagesRegistry(options.agentDir)
+  const previous = registry.packages[staged.entry.id]
+  const previousDir = previous
+    ? mcpVersionDir(staged.entry.id, previous.version, options.agentDir)
+    : undefined
+  const previousManifest = previousDir ? readPackageManifest(previousDir) : undefined
+  const runtimeRoot = options.runtimeRoot ?? getRuntimeRoot(options.agentDir)
+  const previousEnvironment =
+    previousDir && previousManifest?.type === 'mcp'
+      ? describeMcpPackageEnvironment(previousManifest, previousDir, options)
+      : undefined
+  const previousConfig = readMcpConfig(options.agentDir)
+
+  mkdirSync(dirname(target), { recursive: true })
+  writeSourceMetadata(staged.dir, staged.source)
+  renameSync(staged.dir, target)
+  const nextEnvironment = describeMcpPackageEnvironment(manifest, target, options)
+  try {
+    if (nextEnvironment) {
+      addMcpEnvironmentReference(runtimeRoot, manifest.id, nextEnvironment)
+    }
+    installMcpPackageConfig(manifest, target, {
+      agentDir: options.agentDir,
+      runtimeRoot,
+      environmentsDir: options.environmentsDir,
+      platform: options.platform,
+      baseEnv: options.baseEnv
+    })
+    writeMcpPackagesRegistry(
+      {
+        version: 1,
+        packages: {
+          ...registry.packages,
+          [staged.entry.id]: {
+            version: staged.entry.version,
+            installedAt: staged.source.installedAt
+          }
+        }
+      },
+      options.agentDir
+    )
+  } catch (error) {
+    writeMcpConfig(previousConfig, options.agentDir)
+    if (nextEnvironment && previousEnvironment?.envId !== nextEnvironment.envId) {
+      removeReferrer(runtimeRoot, nextEnvironment.envId, `mcp:${manifest.id}`)
+    }
+    rmSync(target, { recursive: true, force: true })
+    throw error
+  }
+
+  if (previousEnvironment && previousEnvironment.envId !== nextEnvironment?.envId) {
+    removeReferrer(runtimeRoot, previousEnvironment.envId, `mcp:${manifest.id}`)
+  }
+  if (previous && previous.version !== staged.entry.version) {
+    rmSync(mcpVersionDir(staged.entry.id, previous.version, options.agentDir), {
+      recursive: true,
+      force: true
+    })
+  }
+  if (previousEnvironment && previousEnvironment.envId !== nextEnvironment?.envId) {
+    ;(options.garbageCollect ?? collectGarbage)(runtimeRoot)
+  }
+}
+
+function removeInstalledMcpPackage(
+  id: string,
+  options: InstallerOptions & { agentDir: string }
+): void {
+  const registry = readMcpPackagesRegistry(options.agentDir)
+  const entry = registry.packages[id]
+  if (!entry) throw new Error(`MCP 软件包 ${id} 尚未安装`)
+  const dir = mcpVersionDir(id, entry.version, options.agentDir)
+  const manifest = readPackageManifest(dir)
+  if (manifest.type !== 'mcp') throw new Error(`MCP 软件包 ${id} 清单类型无效`)
+  const runtimeRoot = options.runtimeRoot ?? getRuntimeRoot(options.agentDir)
+  const environment = describeMcpPackageEnvironment(manifest, dir, options)
+  const packages = { ...registry.packages }
+  delete packages[id]
+  removeMcpPackageConfig(id, options.agentDir)
+  writeMcpPackagesRegistry({ version: 1, packages }, options.agentDir)
+  rmSync(join(mcpPackagesDir(options.agentDir), id), { recursive: true, force: true })
+  if (environment) {
+    removeReferrer(runtimeRoot, environment.envId, `mcp:${id}`)
+    ;(options.garbageCollect ?? collectGarbage)(runtimeRoot)
+  }
+}
+
+function addMcpEnvironmentReference(
+  runtimeRoot: string,
+  packageId: string,
+  environment: McpEnvironmentRecord
+): void {
+  if (!readEnvironmentIndex(runtimeRoot).environments[environment.envId]) {
+    updateEnvironmentEntry(runtimeRoot, environment.envId, {
+      name: environment.name,
+      kind: environment.kind,
+      platform: environment.platform,
+      prefix: join(runtimeRoot, 'envs', environment.envId),
+      status: 'absent',
+      lockSha256: environment.lockSha256,
+      referrers: []
+    })
+  }
+  addReferrer(runtimeRoot, environment.envId, `mcp:${packageId}`)
 }
 
 function addSkillEnvironmentReference(

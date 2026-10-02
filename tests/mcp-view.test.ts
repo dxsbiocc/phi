@@ -11,12 +11,16 @@ test('connector sidebar groups installed services and labels disabled entries', 
     {
       id: 'pubmed',
       name: 'pubmed',
+      connectorId: 'pubmed',
+      category: '健康与生命科学',
       url: 'https://pubmed.mcp.claude.com/mcp',
       status: 'configured'
     },
     {
       id: 'drive',
       name: 'google-drive',
+      connectorId: 'google-drive',
+      category: '生产力',
       url: 'https://drivemcp.googleapis.com/mcp/v1',
       status: 'configured'
     },

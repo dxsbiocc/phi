@@ -296,7 +296,7 @@ test('published schemas match the runtime constants', () => {
   ) as unknown
   assert.deepEqual(spec, environmentSpecSchema)
   assert.deepEqual(metadata, envMetadataSchema)
-  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.2.1')
+  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.3.0')
 })
 
 test('env.json metadata matching the contract validates', () => {
@@ -374,7 +374,22 @@ test('skill scope envIds carry the skill name as owner (contract 1.1.0)', () => 
   assert.throws(() =>
     computeEnvId({ scope: 'skill', name: 'scanpy', platform: 'darwin-arm64', lockText })
   )
-  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.2.1')
+  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.3.0')
+})
+
+test('mcp scope envIds carry the connector package id as owner (contract 1.3.0)', () => {
+  const lockText = `@EXPLICIT\n${PACKAGE_URL}\n`
+  const id = computeEnvId({
+    scope: 'mcp',
+    owner: 'local-search',
+    name: 'search',
+    platform: 'linux-x64',
+    lockText
+  })
+  assert.match(id, /^mcp-local-search-search-[0-9a-f]{12}$/)
+  assert.throws(() =>
+    computeEnvId({ scope: 'mcp', name: 'search', platform: 'linux-x64', lockText })
+  )
 })
 
 test('a phi environment named phi-<x> does not repeat the prefix in its id', () => {
