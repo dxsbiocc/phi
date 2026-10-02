@@ -1,6 +1,6 @@
 # Package contract
 
-contractVersion: 1.1.0
+contractVersion: 1.2.0
 
 A **package** is the unit Phi distributes: one skill, wrapper, MCP connector, or
 plugin, with a manifest, an exact file list, and a version. This contract defines
@@ -88,9 +88,30 @@ archive root (no leading directory), regular files only, including
 
 `archive` is a path relative to the index (a local directory registry) or an
 `https://` URL. `category` and `preview` are optional catalog metadata. A registry may
-list several versions of one package. A remote registry adds a detached ed25519
-signature of `index.json` (step 7 batch 4); a local directory registry is trusted as
-the user chose it.
+list several versions of one package.
+
+### 4.1 Signature (1.2.0)
+
+A registry may carry `index.sig.json` next to `index.json`:
+
+```json
+{ "version": 1, "keyId": "<16 hex>", "signature": "<base64>" }
+```
+
+`signature` is an ed25519 signature of the exact bytes of `index.json`; `keyId` is the
+first 16 hex characters of the SHA-256 of the raw 32-byte public key. The app embeds
+the trusted first-party public keys. Reading a registry gives it a **trust tier**:
+
+| Registry                                                                    | Tier         |
+| --------------------------------------------------------------------------- | ------------ |
+| the bundled registry shipped with the app                                   | `builtin`    |
+| valid signature by an embedded key                                          | `official`   |
+| no `index.sig.json`, or signed by a key Phi does not know                   | `imported`   |
+| `index.sig.json` unreadable, or an embedded key's signature does not verify | **rejected** |
+
+Archives are covered by the signature through their `sha256` in the index. A remote
+(`https://`) registry must be `official` (remote registries are not implemented yet);
+a local directory registry may be `imported`, because the user chose it.
 
 ## 5. Install
 
@@ -107,7 +128,9 @@ the user chose it.
    contract via the plugin loader).
 5. **Commit** — atomically rename into `~/.phi/packages/<type>/<id>/<version>/` and
    write `.source.json` there:
-   `{ "registry": "<registry id or path>", "id", "type", "version", "sha256", "installedAt", "installedBy": "user" | "dependency" }`.
+   `{ "registry": "<registry id or path>", "id", "type", "version", "sha256", "installedAt", "installedBy": "user" | "dependency", "trust": "builtin" | "official" | "imported" }`
+   (`trust` added in 1.2.0; a missing `trust` reads as `builtin` for the bundled
+   registry and `imported` otherwise).
    Plugins then go through the plugin loader's install or upgrade (plugin contract
    § 4). One active version per `type`/`id`.
 6. **Environments** are not built at install (built on first use, or from the
@@ -119,7 +142,25 @@ installed package depends on it; it removes the package, drops its environment
 references, and removes packages that were installed only as its dependencies and
 are no longer needed. A staging directory older than one day is removed on start.
 
-## 6. Versioning
+## 6. Registries, updates, and offline import (1.2.0)
+
+- **Known registries** are the bundled registry plus the ones the user added, kept in
+  `~/.phi/state/registries.json`:
+  `{ "version": 1, "registries": [{ "id": "<16 hex of sha256(path)>", "kind": "directory", "path": "<absolute>", "addedAt": "<ISO 8601>" }] }`.
+  They survive restarts; removing one never uninstalls what was installed from it.
+- **Updates are prompted, never silent.** An installed package has an update when a
+  known registry whose tier is not lower than the package's recorded `trust`
+  (`builtin` = `official` > `imported`) lists a higher version of the same `type`/`id`
+  that this app may install (`minAppVersion`, core tools). The registry recorded in
+  `.source.json` is preferred when several offer one. Packages the app keeps up to date
+  itself (bundled plugins and wrappers) are not listed. Updating is the § 5 upgrade.
+- **Offline import** installs a single package archive (§ 3) chosen by the user: the
+  archive's `phi-package.yaml` and `files.json` stand in for the index entry (its
+  SHA-256 and size are those of the file), the install runs § 5 with tier `imported`,
+  and `dependsOn` must be satisfied by installed packages or known registries.
+  Importing a whole registry is adding a directory registry.
+
+## 7. Versioning
 
 `contractVersion` follows the content distribution design §4.4: minor versions are
 additive only (a new package `type`, new optional fields); anything else needs a
@@ -128,3 +169,5 @@ decision record and a deprecation window.
 ## Changes
 
 - **1.1.0** (2026-10-02): package types `wrapper` and `mcp`. Additive.
+- **1.2.0** (2026-10-02): registry signature and trust tiers (§ 4.1), `trust` in
+  `.source.json`, known registries, prompted updates, offline import (§ 6). Additive.
