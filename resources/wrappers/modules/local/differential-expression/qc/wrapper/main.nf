@@ -15,6 +15,11 @@ params.outdir = null
 
 workflow {
     counts_ch = Channel.fromPath(params.counts, checkIfExists: true)
+    // The shared process also serves nf-core/rnaseq, which supplies real
+    // MultiQC headers. This direct adapter does not
+    // publish those optional fragments, so one existing small file supplies
+    // the two required path inputs.
+    support_file_ch = Channel.value(file("${projectDir}/params.json", checkIfExists: true))
 
-    DESEQ2_QC(counts_ch)
+    DESEQ2_QC(counts_ch, support_file_ch, support_file_ch)
 }

@@ -15,13 +15,11 @@ params:
     kind: option
     type: integer
     required: false
-    default: 2
     description: "Bases to trim from the left."
   trim_right:
     kind: option
     type: integer
     required: false
-    default: 2
     description: "Bases to trim from the right."
   outdir:
     kind: output

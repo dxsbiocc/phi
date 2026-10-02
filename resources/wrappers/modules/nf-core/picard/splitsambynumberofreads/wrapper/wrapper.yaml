@@ -15,7 +15,6 @@ params:
     kind: option
     type: integer
     required: false
-    default: 50
     description: "Maximum number of reads per output file."
   outdir:
     kind: output

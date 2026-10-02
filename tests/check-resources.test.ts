@@ -3,15 +3,17 @@ import test from 'node:test'
 
 import { offendingResourcePaths } from '../scripts/check-resources.mjs'
 
-test('resource check allows .DS_Store and the generated wrapper pack index', () => {
+test('resource check allows .DS_Store but no retired wrapper pack index', () => {
   assert.deepEqual(
     offendingResourcePaths([
       'resources/.DS_Store',
-      'resources/wrappers/modules/local/differential-expression/deseq2/.DS_Store',
-      'resources/wrappers/index.json'
+      'resources/wrappers/modules/local/differential-expression/deseq2/.DS_Store'
     ]),
     []
   )
+  assert.deepEqual(offendingResourcePaths(['resources/wrappers/index.json']), [
+    'resources/wrappers/index.json'
+  ])
 })
 
 test('resource check allows fetched micromamba binaries and nothing else under resources/runtime', () => {

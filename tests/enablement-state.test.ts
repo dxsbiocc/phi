@@ -82,6 +82,17 @@ test('source defaults keep only non-core bundled skills disabled', () => {
       isEnabled({ key: 'plugin:installed-plugin', source: 'installed-package' }, options),
       true
     )
+    assert.equal(isEnabled({ key: 'wrapper:fastqc', source: 'bundled' }, options), true)
+    assert.equal(
+      isEnabled({ key: 'wrapper:custom-tools', source: 'installed-package' }, options),
+      true
+    )
+    assert.equal(isEnabled({ key: 'mcp:pubmed', source: 'installed-package' }, options), true)
+
+    setEnabled('wrapper:fastqc', false, options)
+    setEnabled('mcp:pubmed', false, options)
+    assert.equal(isEnabled({ key: 'wrapper:fastqc', source: 'bundled' }, options), false)
+    assert.equal(isEnabled({ key: 'mcp:pubmed', source: 'installed-package' }, options), false)
   })
 })
 
@@ -222,6 +233,12 @@ test('invalid item keys, sources, and unavailable projects are rejected', () => 
       () => isEnabled({ key: 'skill:Bad Name', source: 'bundled' }, { agentDir, logger }),
       /Invalid enablement item key/
     )
+    for (const key of ['wrapper:Bad Name', 'mcp:a', 'unknown:valid-id']) {
+      assert.throws(
+        () => isEnabled({ key: key as 'wrapper:future', source: 'bundled' }, { agentDir, logger }),
+        /Invalid enablement item key/
+      )
+    }
     assert.throws(
       () =>
         isEnabled({ key: 'skill:scanpy', source: 'unknown' as 'bundled' }, { agentDir, logger }),

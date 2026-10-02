@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import { listWrapperCompositionCatalog } from '../src/main/agent/wrappers/composition/discovery'
 import { parseWrapperCompositionManifest } from '../src/main/agent/wrappers/composition/manifest'
+import { getBundledWrapperPackagesDir } from '../src/main/agent/wrappers/catalog'
 import {
   checkWrapperStatic,
   collectRemoteUrls,
@@ -156,15 +157,9 @@ test('a wrapper that includes another wrapper adapter is an error', () => {
   }
 })
 
-test('a wrapper without a primary output is an error', () => {
+test('a wrapper without a primary output is rejected by the manifest contract', () => {
   const noPrimary = MANIFEST.replace('primary: true', 'primary: false')
-  const { entry, cleanup } = makeFixture({ manifest: noPrimary })
-  try {
-    const errors = messages(checkWrapperStatic(entry), 'error')
-    assert.ok(errors.some((message) => message.includes('primary')))
-  } finally {
-    cleanup()
-  }
+  assert.throws(() => parseWrapperCompositionManifest(noPrimary), /primary/)
 })
 
 test('a missing dag.mmd is only a warning', () => {
@@ -287,7 +282,7 @@ test('probeUrl gives up after the retry budget on a persistent failure', async (
 })
 
 test('every bundled wrapper passes the static smoke checks', () => {
-  const entries = listWrapperCompositionCatalog()
+  const entries = listWrapperCompositionCatalog({ sourceRoot: getBundledWrapperPackagesDir() })
   assert.ok(entries.length > 0)
   const failures = entries.flatMap((entry) =>
     checkWrapperStatic(entry)

@@ -15,37 +15,31 @@ params:
     kind: option
     type: string
     required: false
-    default: "log2FoldChange"
     description: "Fold-change column name."
   fc_threshold:
     kind: option
     type: integer
     required: false
-    default: 2
     description: "Fold-change threshold."
   fc_cardinality:
     kind: option
     type: string
     required: false
-    default: ">="
     description: "Fold-change comparison operator."
   stat_column:
     kind: option
     type: string
     required: false
-    default: "padj"
     description: "Significance column name."
   stat_threshold:
     kind: option
     type: string
     required: false
-    default: "0.05"
     description: "Significance threshold."
   stat_cardinality:
     kind: option
     type: string
     required: false
-    default: "<="
     description: "Significance comparison operator."
   outdir:
     kind: output

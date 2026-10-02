@@ -1,7 +1,7 @@
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) — see the matching comment in preload/index.ts.
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
-import type { WrapperCompositionManifest } from '../shared/wrapperCompositionManifestTypes'
+import type { WrapperCompositionCatalogItem } from '../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
 import type { RemoteHpcSettings } from '../shared/wrapperRemoteTypes'
 import type {
@@ -1032,7 +1032,7 @@ declare global {
       cancelWrapperRunPlan: (planId: string) => Promise<WrapperRunPlan>
       listWrapperCatalog: () => Promise<WrapperCatalogEntry[]>
       addCustomWrapper: (sourceDir: string) => Promise<WrapperCatalogEntry>
-      listWrapperCompositionCatalog: () => Promise<WrapperCompositionManifest[]>
+      listWrapperCompositionCatalog: () => Promise<WrapperCompositionCatalogItem[]>
       getWrapperCompositionDag: (id: string) => Promise<string | undefined>
       getWrapperCompositionModuleDetails: (id: string) => Promise<WrapperModuleDetails | undefined>
       listWrapperRuns: () => Promise<WrapperRun[]>

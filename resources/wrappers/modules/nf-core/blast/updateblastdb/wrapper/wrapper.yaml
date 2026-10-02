@@ -10,7 +10,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "mito"
     description: "Name of the NCBI BLAST database (e.g. mito)."
   outdir:
     kind: output

@@ -22,7 +22,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "chr22"
     description: "Region to phase."
   outdir:
     kind: output

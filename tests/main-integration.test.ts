@@ -1995,7 +1995,15 @@ async function harness(
       reconcileRemoteWrapperRuns: (): Promise<void> => Promise.resolve()
     },
     './agent/wrappers/catalog': {
-      ensureBundledWrappersInstalled: (): unknown[] => [],
+      ensureBundledWrappersInstalled: () =>
+        Promise.resolve({
+          packages: [],
+          installed: [],
+          removed: [],
+          migratedCustom: [],
+          legacyPackWarnings: [],
+          diagnostics: { unattributedIncludes: [], unattributedSupportFiles: [] }
+        }),
       listWrapperCatalog: (): unknown[] => [],
       addCustomWrapper: (): never => {
         throw new Error('wrapper.yaml 校验失败: (mocked in main-integration.test.ts)')
@@ -2028,7 +2036,8 @@ async function harness(
     './agent/agents/run-continue': agentRunContinue,
     './agent/agents/run-host': { agentRunHostHandlers },
     './agent/wrappers/composition/discovery': {
-      listWrapperCompositionCatalog: (): unknown[] => []
+      listWrapperCompositionCatalogStatus: (): unknown[] => [],
+      resetWrapperCompositionCatalogCache: (): void => {}
     },
     './agent/remote-hosts': {
       listRemoteHostProfiles: (): unknown[] => [],
@@ -4381,8 +4390,16 @@ test('main IPC validates and stores global and project enablement', async () => 
       project: { 'skill:scanpy': false }
     }
   )
+  assert.deepEqual(
+    await app.invoke('enablement:set', 'wrapper:module-nf-core-fastqc', true, { type: 'global' }),
+    {
+      version: 1,
+      global: { 'skill:scanpy': true, 'wrapper:module-nf-core-fastqc': true },
+      project: {}
+    }
+  )
   await assert.rejects(
-    app.invoke('enablement:set', 'wrapper:fastqc', true, { type: 'global' }),
+    app.invoke('enablement:set', 'wrapper:FastQC', true, { type: 'global' }),
     /标识无效/
   )
   await assert.rejects(

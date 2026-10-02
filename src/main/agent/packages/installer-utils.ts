@@ -55,7 +55,10 @@ export function isSourceMetadata(value: unknown): value is PackageSourceMetadata
     isRecord(value) &&
     typeof value.registry === 'string' &&
     typeof value.id === 'string' &&
-    (value.type === 'skill' || value.type === 'plugin') &&
+    (value.type === 'skill' ||
+      value.type === 'plugin' ||
+      value.type === 'wrapper' ||
+      value.type === 'mcp') &&
     typeof value.version === 'string' &&
     typeof value.sha256 === 'string' &&
     typeof value.installedAt === 'string' &&

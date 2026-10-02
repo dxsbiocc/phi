@@ -45,7 +45,7 @@ export interface EnablementResolutionOptions extends EnablementOptions {
 }
 
 const SKILL_ID = /^[a-z0-9][a-z0-9-]{0,63}$/
-const PLUGIN_ID = /^[a-z][a-z0-9-]{1,63}$/
+const PACKAGE_ID = /^[a-z][a-z0-9-]{1,63}$/
 
 const defaultLogger: EnablementLogger = {
   info(message, metadata) {
@@ -105,7 +105,8 @@ function assertEnablementKey(key: string): asserts key is EnablementItemKey {
   const id = key.slice(separator + 1)
   const valid =
     separator > 0 &&
-    ((kind === 'skill' && SKILL_ID.test(id)) || (kind === 'plugin' && PLUGIN_ID.test(id)))
+    ((kind === 'skill' && SKILL_ID.test(id)) ||
+      (['plugin', 'wrapper', 'mcp'].includes(kind) && PACKAGE_ID.test(id)))
   if (!valid) throw new Error(`Invalid enablement item key: ${key}`)
 }
 
@@ -194,7 +195,7 @@ export function isEnabled(item: EnablementItem, options?: EnablementResolutionOp
   const globalValue = configuredValue(state.global, item.key)
   if (globalValue !== undefined) return globalValue
 
-  if (kind === 'plugin') return true
+  if (kind !== 'skill') return true
   return item.source !== 'bundled'
 }
 

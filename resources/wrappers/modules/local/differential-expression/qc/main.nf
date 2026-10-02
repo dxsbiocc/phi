@@ -1,8 +1,7 @@
 // Adapted from nf-core/rnaseq's DESEQ2_QC module (Harshil Patel, Gavin
 // Kelly; MIT license) -- rewritten to Nextflow's `template` mechanism to
-// match this family's other processes (deseq2, limma, timeseries), and
-// simplified to drop the upstream module's MultiQC section-header
-// composition, which this wrapper's outputs never surfaced.
+// match this family's other processes (deseq2, limma, timeseries). The
+// optional MultiQC fragments are retained for the full RNA-seq workflow.
 process DESEQ2_QC {
     label "process_medium"
 
@@ -14,12 +13,16 @@ process DESEQ2_QC {
 
     input:
     path counts
+    path pca_header_multiqc
+    path clustering_header_multiqc
 
     output:
     path "*.pdf"              , optional:true, emit: pdf
     path "*.RData"             , optional:true, emit: rdata
     path "*.pca.vals.txt"      , optional:true, emit: pca_txt
+    path "*pca.vals_mqc.tsv"   , optional:true, emit: pca_multiqc
     path "*.sample.dists.txt"  , optional:true, emit: dists_txt
+    path "*sample.dists_mqc.tsv", optional:true, emit: dists_multiqc
     path "*.log"               , optional:true, emit: log
     path "size_factors"        , optional:true, emit: size_factors
     path "versions.yml"        , emit: versions, topic: versions
@@ -35,8 +38,10 @@ process DESEQ2_QC {
     """
     touch ${prefix}.dds.RData
     touch ${prefix}.pca.vals.txt
+    touch sample.pca.vals_mqc.tsv
     touch ${prefix}.plots.pdf
     touch ${prefix}.sample.dists.txt
+    touch sample.sample.dists_mqc.tsv
     touch R_sessionInfo.log
 
     mkdir size_factors

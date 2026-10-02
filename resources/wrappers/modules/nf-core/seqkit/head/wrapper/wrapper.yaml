@@ -20,7 +20,6 @@ params:
     kind: option
     type: integer
     required: false
-    default: 100
     description: "Number of sequences to keep."
   outdir:
     kind: output

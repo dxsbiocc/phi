@@ -1,4 +1,4 @@
-export type PackageManagerType = 'skill' | 'plugin'
+export type PackageManagerType = 'skill' | 'plugin' | 'wrapper' | 'mcp'
 
 export interface PackageRegistryEntryView {
   id: string

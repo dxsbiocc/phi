@@ -43,7 +43,10 @@ function parseRegistryEntry(value: unknown, index: number): RegistryPackageEntry
   if (
     typeof entry.id !== 'string' ||
     !/^[a-z][a-z0-9-]{1,63}$/.test(entry.id) ||
-    (entry.type !== 'skill' && entry.type !== 'plugin') ||
+    (entry.type !== 'skill' &&
+      entry.type !== 'plugin' &&
+      entry.type !== 'wrapper' &&
+      entry.type !== 'mcp') ||
     typeof entry.version !== 'string' ||
     !semver.valid(entry.version) ||
     typeof entry.title !== 'string' ||
@@ -91,7 +94,10 @@ function parseDependencies(value: unknown, packageIndex: number): PackageDepende
       !isRecord(dependency) ||
       typeof dependency.id !== 'string' ||
       !/^[a-z][a-z0-9-]{1,63}$/.test(dependency.id) ||
-      (dependency.type !== 'skill' && dependency.type !== 'plugin') ||
+      (dependency.type !== 'skill' &&
+        dependency.type !== 'plugin' &&
+        dependency.type !== 'wrapper' &&
+        dependency.type !== 'mcp') ||
       typeof dependency.version !== 'string' ||
       !semver.validRange(dependency.version)
     ) {

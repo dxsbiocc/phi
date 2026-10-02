@@ -19,6 +19,9 @@ import {
 } from '../src/main/agent/wrappers/composition/tools'
 import { WrapperJobManager } from '../src/main/agent/wrappers/composition/job-manager'
 import { validateWrapperParams } from '../src/main/agent/wrappers/composition/validate'
+import { getBundledWrapperPackagesDir } from '../src/main/agent/wrappers/catalog'
+
+const DISCOVERY = { sourceRoot: getBundledWrapperPackagesDir() }
 
 const EXPECTED_MODULE_WRAPPER_IDS = [
   'local/modules/differential-expression-deseq2',
@@ -672,13 +675,13 @@ const EXPECTED_MODULE_WRAPPER_IDS = [
   'nf-core/subworkflows/quant-tximport-summarizedexperiment',
   'nf-core/subworkflows/quantify-pseudo-alignment',
   'nf-core/subworkflows/quantify-rsem',
-  'nf-core/workflows/rnaseq',
+  'nf-core/workflows/rnaseq'
 ]
 
 test('composition discovery finds wrappers from the modules/subworkflows/workflows resource layout', () => {
   resetWrapperCompositionCatalogCache()
 
-  const entries = listWrapperCompositionCatalog()
+  const entries = listWrapperCompositionCatalog(DISCOVERY)
   const ids = entries.map((entry) => entry.manifest.id)
   assert.equal(new Set(ids).size, ids.length, 'wrapper IDs must be unique')
   assert.deepEqual(
@@ -698,7 +701,7 @@ test('composition discovery finds wrappers from the modules/subworkflows/workflo
 test('composition discovery can find a wrapper by canonical id', () => {
   resetWrapperCompositionCatalogCache()
 
-  const entry = findWrapperCompositionEntry('nf-core/modules/star-align')
+  const entry = findWrapperCompositionEntry('nf-core/modules/star-align', DISCOVERY)
   assert.ok(entry)
   assert.equal(entry!.manifest.name, 'STAR align')
   assert.equal(entry!.manifest.params.reads.kind, 'input')
@@ -707,7 +710,7 @@ test('composition discovery can find a wrapper by canonical id', () => {
 test('readWrapperCompositionDag reads the pre-generated Nextflow DAG next to a wrapper', () => {
   resetWrapperCompositionCatalogCache()
 
-  const dag = readWrapperCompositionDag('nf-core/modules/fastqc')
+  const dag = readWrapperCompositionDag('nf-core/modules/fastqc', DISCOVERY)
   assert.ok(dag)
   assert.match(dag!, /^flowchart TB/)
   assert.match(dag!, /FASTQC/)
@@ -716,13 +719,13 @@ test('readWrapperCompositionDag reads the pre-generated Nextflow DAG next to a w
 test('readWrapperCompositionDag returns undefined for an unknown wrapper id', () => {
   resetWrapperCompositionCatalogCache()
 
-  assert.equal(readWrapperCompositionDag('nf-core/modules/does-not-exist'), undefined)
+  assert.equal(readWrapperCompositionDag('nf-core/modules/does-not-exist', DISCOVERY), undefined)
 })
 
 test('readWrapperModuleDetails reads real meta.yml/environment.yml next to a module', () => {
   resetWrapperCompositionCatalogCache()
 
-  const details = readWrapperModuleDetails('nf-core/modules/fastqc')
+  const details = readWrapperModuleDetails('nf-core/modules/fastqc', DISCOVERY)
   assert.ok(details)
   assert.equal(details!.meta?.description, 'Run FastQC on sequenced reads')
   assert.ok(details!.meta?.keywords?.includes('quality control'))
@@ -739,19 +742,19 @@ test('readWrapperModuleDetails reads real meta.yml/environment.yml next to a mod
 test('readWrapperModuleDetails returns undefined for a wrapper with neither file (the full pipeline)', () => {
   resetWrapperCompositionCatalogCache()
 
-  assert.equal(readWrapperModuleDetails('nf-core/workflows/rnaseq'), undefined)
+  assert.equal(readWrapperModuleDetails('nf-core/workflows/rnaseq', DISCOVERY), undefined)
 })
 
 test('readWrapperModuleDetails returns undefined for an unknown wrapper id', () => {
   resetWrapperCompositionCatalogCache()
 
-  assert.equal(readWrapperModuleDetails('nf-core/modules/does-not-exist'), undefined)
+  assert.equal(readWrapperModuleDetails('nf-core/modules/does-not-exist', DISCOVERY), undefined)
 })
 
 test('wrapper_search lists matching composition wrappers', async () => {
   resetWrapperCompositionCatalogCache()
 
-  const result = await buildWrapperCompositionSearchTool().execute('call-1', {
+  const result = await buildWrapperCompositionSearchTool(DISCOVERY).execute('call-1', {
     query: 'fastqc'
   })
 
@@ -765,13 +768,13 @@ test('wrapper_search lists matching composition wrappers', async () => {
   for (const item of details.results) {
     assert.match(`${item.id} ${item.name} ${item.summary}`.toLowerCase(), /fastqc/)
   }
-  assert.ok(details.results.length < listWrapperCompositionCatalog().length)
+  assert.ok(details.results.length < listWrapperCompositionCatalog(DISCOVERY).length)
 })
 
 test('wrapper_inspect returns the composition manifest plus default params', async () => {
   resetWrapperCompositionCatalogCache()
 
-  const result = await buildWrapperCompositionInspectTool().execute('call-1', {
+  const result = await buildWrapperCompositionInspectTool(DISCOVERY).execute('call-1', {
     id: 'nf-core/modules/fastqc'
   })
 
@@ -789,7 +792,9 @@ test('wrapper_inspect returns the composition manifest plus default params', asy
 
 test('composition tools expose the generic wrapper workflow only', () => {
   assert.deepEqual(
-    buildWrapperCompositionTools(new WrapperJobManager()).map((tool) => tool.name),
+    buildWrapperCompositionTools(new WrapperJobManager({ discovery: DISCOVERY }), DISCOVERY).map(
+      (tool) => tool.name
+    ),
     [
       'wrapper_search',
       'wrapper_inspect',
@@ -805,7 +810,7 @@ test('composition manifest parser rejects invalid param kinds', () => {
   assert.throws(
     () =>
       parseWrapperCompositionManifest(`
-id: acme/tools/bad
+id: acme/modules/bad
 name: Bad
 summary: Invalid
 params:
@@ -824,7 +829,7 @@ outputs:
 test('every bundled wrapper passes validation with its own default params', () => {
   resetWrapperCompositionCatalogCache()
 
-  for (const entry of listWrapperCompositionCatalog()) {
+  for (const entry of listWrapperCompositionCatalog(DISCOVERY)) {
     const defaults = JSON.parse(
       readFileSync(join(entry.wrapperDir, 'params.json'), 'utf-8')
     ) as Record<string, unknown>
@@ -838,7 +843,7 @@ test('every bundled wrapper passes validation with its own default params', () =
 
 test('wrapper_run rejects invalid params before launching Nextflow', async () => {
   resetWrapperCompositionCatalogCache()
-  const tool = buildWrapperCompositionRunTool(new WrapperJobManager())
+  const tool = buildWrapperCompositionRunTool(new WrapperJobManager({ discovery: DISCOVERY }))
 
   const unknown = await tool.execute('call-1', {
     id: 'nf-core/modules/fastqc',

@@ -1,4 +1,5 @@
-export type EnablementItemKey = `skill:${string}` | `plugin:${string}`
+export type EnablementItemKey =
+  `skill:${string}` | `plugin:${string}` | `wrapper:${string}` | `mcp:${string}`
 
 export type EnablementScope = { type: 'global' } | { type: 'project'; projectCwd: string }
 

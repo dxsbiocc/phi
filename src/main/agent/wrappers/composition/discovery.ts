@@ -1,13 +1,16 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, dirname, join, relative } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 
-import { parseWrapperCompositionManifest, type WrapperCompositionManifest } from './manifest'
+import type { WrapperCompositionCatalogItem } from '../../../../shared/wrapperCompositionManifestTypes'
+import { getEnablementSnapshot } from '../../enablement'
+import { getPhiAgentDir } from '../../runtime-paths'
 import {
-  resolveActiveWrapperPack,
-  type ActiveWrapperPack,
-  type WrapperPackResolution
-} from './packs'
+  readWrapperTreeRegistry,
+  wrapperTreeDir,
+  wrapperTreeRegistryPath
+} from '../../packages/wrapper-tree'
+import { parseWrapperCompositionManifest, type WrapperCompositionManifest } from './manifest'
 import type {
   WrapperModuleDetails,
   WrapperModuleMeta,
@@ -18,9 +21,9 @@ import type {
  * Discovery for the agent-composition wrapper layout — see
  * docs/design/phi-wrapper-agent-composition-design.md section 4: scan
  * `modules/**\/wrapper/wrapper.yaml` and `subworkflows/**\/wrapper/wrapper.yaml`
- * under the active wrapper pack root — the bundled `resources/wrappers/`
- * (packaging-aware via `getBundledWrapperPackagesDir`) unless a verified newer
- * overlay pack replaces it (see `packs.ts`).
+ * under the assembled installed tree, plus the same layout under
+ * `wrappers/custom/` for user-authored wrappers. Package ownership and
+ * enablement come from `wrappers/tree.json`.
  *
  * Extended with a third root, `workflows/**\/wrapper/wrapper.yaml`, beyond
  * what the design doc's own scan targets list — for a *complete* pipeline
@@ -38,8 +41,10 @@ export interface WrapperCompositionEntry {
   wrapperDir: string
   /** The module/subworkflow's own root directory (wrapperDir's parent). */
   componentDir: string
-  /** The pack this entry was discovered in; absent only on hand-built test entries. */
-  pack?: ActiveWrapperPack
+  /** Installed package owner; absent for user-authored wrappers. */
+  packageId?: string
+  /** Why agent tools must hide this wrapper. */
+  hiddenReason?: string
 }
 
 const COMPONENT_ROOTS = ['modules', 'subworkflows', 'workflows']
@@ -76,59 +81,155 @@ function findWrapperYamlFiles(rootDir: string): string[] {
   return results
 }
 
-let cachedCatalog: WrapperCompositionEntry[] | undefined
-let cachedPackResolution: WrapperPackResolution | undefined
-
-/**
- * The wrapper pack discovery reads from — the bundled pack, or a verified
- * newer overlay pack (see `packs.ts`). Cached with the catalog; call
- * `resetWrapperCompositionCatalogCache()` to re-resolve.
- */
-export function getWrapperPackResolution(): WrapperPackResolution {
-  if (!cachedPackResolution) {
-    cachedPackResolution = resolveActiveWrapperPack()
-  }
-  return cachedPackResolution
+export interface WrapperCompositionDiscoveryOptions {
+  agentDir?: string
+  projectDir?: string
+  /** Explicit source tree for tooling/tests that do not run desktop startup installation. */
+  sourceRoot?: string
 }
 
-export function getActiveWrapperPack(): ActiveWrapperPack {
-  return getWrapperPackResolution().active
+interface CachedCatalog {
+  agentDir: string
+  sourceRoot?: string
+  projectDir?: string
+  entries: WrapperCompositionEntry[]
+  packageEnabled: Map<string, boolean>
 }
 
-function loadCatalog(): WrapperCompositionEntry[] {
-  const pack = getActiveWrapperPack()
+let cachedCatalog: CachedCatalog | undefined
+
+function customWrappersDir(agentDir: string): string {
+  return join(dirname(wrapperTreeRegistryPath(agentDir)), 'custom')
+}
+
+function scanCompositionRoot(
+  root: string,
+  packageByPath?: ReadonlyMap<string, string>
+): WrapperCompositionEntry[] {
   const entries: WrapperCompositionEntry[] = []
-
   for (const componentRoot of COMPONENT_ROOTS) {
-    const rootDir = join(pack.root, componentRoot)
+    const rootDir = join(root, componentRoot)
     if (!existsSync(rootDir)) continue
-
     for (const wrapperYamlPath of findWrapperYamlFiles(rootDir)) {
       try {
         const manifest = parseWrapperCompositionManifest(readFileSync(wrapperYamlPath, 'utf-8'))
         const wrapperDir = join(wrapperYamlPath, '..')
-        entries.push({ manifest, wrapperDir, componentDir: join(wrapperDir, '..'), pack })
+        const path = relative(root, wrapperYamlPath).split('\\').join('/')
+        const packageId = packageByPath?.get(path)
+        entries.push({
+          manifest,
+          wrapperDir,
+          componentDir: join(wrapperDir, '..'),
+          ...(packageId ? { packageId } : {})
+        })
       } catch {
         // A malformed wrapper.yaml never blocks discovery of the others.
       }
     }
   }
-
-  // readdirSync order is filesystem-dependent, not alphabetical — sort by id
-  // so entries from the same tool family (`bowtie2-align`/`bowtie2-build`,
-  // `samtools-*`, ...) land next to each other in the UI's flat per-tier
-  // list, since the id convention already hyphenates the family prefix in.
-  entries.sort((a, b) => a.manifest.id.localeCompare(b.manifest.id))
-
   return entries
 }
 
-/** Cached after first call — call `resetWrapperCompositionCatalogCache()` in tests. */
-export function listWrapperCompositionCatalog(): WrapperCompositionEntry[] {
-  if (!cachedCatalog) {
-    cachedCatalog = loadCatalog()
+function loadCatalog(agentDir: string, projectDir?: string): CachedCatalog {
+  const registry = readWrapperTreeRegistry(agentDir)
+  const treeRoot = wrapperTreeDir(agentDir)
+  const packageByPath = new Map<string, string>()
+  const packageEnabled = new Map<string, boolean>()
+  const enablement = getEnablementSnapshot({ agentDir, ...(projectDir ? { projectDir } : {}) })
+  for (const [id, state] of Object.entries(registry.packages)) {
+    const key = `wrapper:${id}`
+    packageEnabled.set(id, enablement.project[key] ?? enablement.global[key] ?? true)
+    for (const path of state.paths) packageByPath.set(path, id)
+  }
+
+  const reasonCache = new Map<string, string | undefined>()
+  const unavailableReason = (id: string, visiting = new Set<string>()): string | undefined => {
+    if (reasonCache.has(id)) return reasonCache.get(id)
+    if (visiting.has(id)) return `Dependency cycle reaches ${id}.`
+    if (packageEnabled.get(id) === false) {
+      const reason = `Package ${id} is disabled.`
+      reasonCache.set(id, reason)
+      return reason
+    }
+    const state = registry.packages[id]
+    if (!state) return `Dependency package ${id} is not installed.`
+    const nextVisiting = new Set(visiting).add(id)
+    for (const dependency of state.manifest.dependsOn ?? []) {
+      if (dependency.type !== 'wrapper') continue
+      const dependencyReason = unavailableReason(dependency.id, nextVisiting)
+      if (!dependencyReason) continue
+      const reason = `Dependency ${dependency.id} is unavailable: ${dependencyReason}`
+      reasonCache.set(id, reason)
+      return reason
+    }
+    reasonCache.set(id, undefined)
+    return undefined
+  }
+
+  const packaged = scanCompositionRoot(treeRoot, packageByPath).map((entry) => {
+    if (!entry.packageId) {
+      return { ...entry, hiddenReason: 'Wrapper tree path has no package owner.' }
+    }
+    const hiddenReason = unavailableReason(entry.packageId)
+    return hiddenReason ? { ...entry, hiddenReason } : entry
+  })
+  const seenIds = new Set(packaged.map((entry) => entry.manifest.id))
+  const custom = scanCompositionRoot(customWrappersDir(agentDir)).filter(
+    (entry) => !seenIds.has(entry.manifest.id)
+  )
+  const entries = [...packaged, ...custom].sort((left, right) =>
+    left.manifest.id.localeCompare(right.manifest.id)
+  )
+  return { agentDir, projectDir, entries, packageEnabled }
+}
+
+function catalogFor(options: WrapperCompositionDiscoveryOptions = {}): CachedCatalog {
+  const agentDir = options.agentDir ?? getPhiAgentDir()
+  const sourceRoot = options.sourceRoot
+  const projectDir = options.projectDir
+  if (
+    !cachedCatalog ||
+    cachedCatalog.agentDir !== agentDir ||
+    cachedCatalog.sourceRoot !== sourceRoot ||
+    cachedCatalog.projectDir !== projectDir
+  ) {
+    cachedCatalog = sourceRoot
+      ? {
+          agentDir,
+          sourceRoot,
+          projectDir,
+          entries: scanCompositionRoot(sourceRoot).sort((left, right) =>
+            left.manifest.id.localeCompare(right.manifest.id)
+          ),
+          packageEnabled: new Map()
+        }
+      : loadCatalog(agentDir, projectDir)
   }
   return cachedCatalog
+}
+
+/** Only available wrappers are exposed to generic agent tools. */
+export function listWrapperCompositionCatalog(
+  options: WrapperCompositionDiscoveryOptions = {}
+): WrapperCompositionEntry[] {
+  return catalogFor(options).entries.filter((entry) => !entry.hiddenReason)
+}
+
+/** Includes disabled wrappers so the renderer can explain and change package enablement. */
+export function listWrapperCompositionCatalogStatus(
+  options: WrapperCompositionDiscoveryOptions = {}
+): WrapperCompositionCatalogItem[] {
+  const catalog = catalogFor(options)
+  return catalog.entries.map((entry) => ({
+    ...entry.manifest,
+    ...(entry.packageId
+      ? {
+          packageId: entry.packageId,
+          packageEnabled: catalog.packageEnabled.get(entry.packageId) !== false
+        }
+      : {}),
+    ...(entry.hiddenReason ? { hiddenReason: entry.hiddenReason } : {})
+  }))
 }
 
 /** A wrapper's `params.json` (the defaults every run starts from); {} when missing or unreadable. */
@@ -143,8 +244,11 @@ export function readWrapperDefaultParams(wrapperDir: string): Record<string, unk
   }
 }
 
-export function findWrapperCompositionEntry(id: string): WrapperCompositionEntry | undefined {
-  return listWrapperCompositionCatalog().find((entry) => entry.manifest.id === id)
+export function findWrapperCompositionEntry(
+  id: string,
+  options: WrapperCompositionDiscoveryOptions = {}
+): WrapperCompositionEntry | undefined {
+  return listWrapperCompositionCatalog(options).find((entry) => entry.manifest.id === id)
 }
 
 const DAG_FILE = 'dag.mmd'
@@ -157,8 +261,11 @@ const DAG_FILE = 'dag.mmd'
  * all). Returns `undefined` for a wrapper that predates that script or
  * whose generation failed; callers fall back to a generic structure view.
  */
-export function readWrapperCompositionDag(id: string): string | undefined {
-  const entry = findWrapperCompositionEntry(id)
+export function readWrapperCompositionDag(
+  id: string,
+  options: WrapperCompositionDiscoveryOptions = {}
+): string | undefined {
+  const entry = findWrapperCompositionEntry(id, options)
   if (!entry) return undefined
   const dagPath = join(entry.wrapperDir, DAG_FILE)
   if (!existsSync(dagPath)) return undefined
@@ -228,8 +335,11 @@ function parseModuleMeta(yamlText: string): WrapperModuleMeta | undefined {
  * `undefined` fields (not an error) when a file is missing, malformed, or
  * doesn't exist at all — full pipelines (`workflows/` tier) have neither.
  */
-export function readWrapperModuleDetails(id: string): WrapperModuleDetails | undefined {
-  const entry = findWrapperCompositionEntry(id)
+export function readWrapperModuleDetails(
+  id: string,
+  options: WrapperCompositionDiscoveryOptions = {}
+): WrapperModuleDetails | undefined {
+  const entry = findWrapperCompositionEntry(id, options)
   if (!entry) return undefined
 
   const metaPath = join(entry.componentDir, 'meta.yml')
@@ -259,5 +369,4 @@ export function readWrapperModuleDetails(id: string): WrapperModuleDetails | und
 
 export function resetWrapperCompositionCatalogCache(): void {
   cachedCatalog = undefined
-  cachedPackResolution = undefined
 }

@@ -26,10 +26,9 @@
 //
 // MODULE: Loaded from modules/local/
 //
-include { DESEQ2_QC as DESEQ2_QC_BAM_SALMON } from '../../../modules/local/deseq2_qc'
-include { DESEQ2_QC as DESEQ2_QC_RSEM        } from '../../../modules/local/deseq2_qc'
-include { DESEQ2_QC as DESEQ2_QC_PSEUDO      } from '../../../modules/local/deseq2_qc'
-include { deseq2QcScript                     } from '../../../modules/local/deseq2_qc'
+include { DESEQ2_QC as DESEQ2_QC_BAM_SALMON } from '../../../modules/local/differential-expression/qc'
+include { DESEQ2_QC as DESEQ2_QC_RSEM        } from '../../../modules/local/differential-expression/qc'
+include { DESEQ2_QC as DESEQ2_QC_PSEUDO      } from '../../../modules/local/differential-expression/qc'
 include { RUSTQC                              } from '../../../modules/nf-core/rustqc/main'
 
 //
@@ -117,7 +116,6 @@ workflow RNASEQ {
     def sample_status_header_multiqc = file("$projectDir/../assets/multiqc/sample_status_header.txt", checkIfExists: true)
     def ch_clustering_header_multiqc = file("$projectDir/../assets/multiqc/deseq2_clustering_header.txt", checkIfExists: true)
     def ch_biotypes_header_multiqc   = file("$projectDir/../assets/multiqc/biotypes_header.txt", checkIfExists: true)
-    def ch_deseq2_qc_script           = deseq2QcScript()
     def ch_transcript_fasta_placeholder = ch_pca_header_multiqc
 
     // Pre-build fasta_fai value channels for subworkflows that need [meta, fasta, fai]
@@ -446,8 +444,7 @@ workflow RNASEQ {
             DESEQ2_QC_RSEM (
                 QUANTIFY_RSEM.out.counts_gene_length_scaled.map { _meta, counts -> counts },
                 ch_pca_header_multiqc,
-                ch_clustering_header_multiqc,
-                ch_deseq2_qc_script
+                ch_clustering_header_multiqc
             )
             ch_multiqc_files = ch_multiqc_files.mix(DESEQ2_QC_RSEM.out.pca_multiqc.collect().map { file -> [[:], file] })
             ch_multiqc_files = ch_multiqc_files.mix(DESEQ2_QC_RSEM.out.dists_multiqc.collect().map { file -> [[:], file] })
@@ -477,8 +474,7 @@ workflow RNASEQ {
             DESEQ2_QC_BAM_SALMON (
                 QUANTIFY_BAM_SALMON.out.counts_gene_length_scaled.map { _meta, counts -> counts },
                 ch_pca_header_multiqc,
-                ch_clustering_header_multiqc,
-                ch_deseq2_qc_script
+                ch_clustering_header_multiqc
             )
             ch_multiqc_files = ch_multiqc_files.mix(DESEQ2_QC_BAM_SALMON.out.pca_multiqc.collect().map { file -> [[:], file] })
             ch_multiqc_files = ch_multiqc_files.mix(DESEQ2_QC_BAM_SALMON.out.dists_multiqc.collect().map { file -> [[:], file] })
@@ -802,8 +798,7 @@ workflow RNASEQ {
             DESEQ2_QC_PSEUDO (
                 ch_counts_gene_length_scaled.map { _meta, counts -> counts },
                 ch_pca_header_multiqc,
-                ch_clustering_header_multiqc,
-                ch_deseq2_qc_script
+                ch_clustering_header_multiqc
             )
             ch_multiqc_files = ch_multiqc_files.mix(DESEQ2_QC_PSEUDO.out.pca_multiqc.collect().map { file -> [[:], file] })
             ch_multiqc_files = ch_multiqc_files.mix(DESEQ2_QC_PSEUDO.out.dists_multiqc.collect().map { file -> [[:], file] })

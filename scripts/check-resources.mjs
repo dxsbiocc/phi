@@ -7,11 +7,10 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 
 // Untracked files under resources/ that lint accepts. Anything else is a run
 // leftover and must not ship. `.DS_Store` is macOS noise (also excluded from
-// packaging). `resources/wrappers/index.json` is written by `npm run wrappers:index`.
 // `resources/runtime/micromamba/` holds binaries from `npm run runtime:fetch`.
 const ALLOWED_UNTRACKED_RESOURCES = {
   basenames: new Set(['.DS_Store']),
-  paths: new Set(['resources/wrappers/index.json']),
+  paths: new Set(),
   prefixes: ['resources/runtime/micromamba/']
 }
 

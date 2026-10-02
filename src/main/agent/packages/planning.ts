@@ -192,8 +192,11 @@ function declaredEnvironments(registry: LocalRegistry, packages: RegistryPackage
 }
 
 function validateRequest(request: PackageRequest): void {
+  if (request.type === 'mcp') {
+    throw new Error('MCP 软件包清单已受支持，但此安装器尚未实现 MCP 安装')
+  }
   if (
-    (request.type !== 'skill' && request.type !== 'plugin') ||
+    (request.type !== 'skill' && request.type !== 'plugin' && request.type !== 'wrapper') ||
     !/^[a-z][a-z0-9-]{1,63}$/.test(request.id)
   ) {
     throw new Error('软件包请求的 type 或 id 无效')

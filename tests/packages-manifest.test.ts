@@ -37,7 +37,7 @@ function writeSkill(root: string, manifest: Record<string, unknown> = {}): strin
 }
 
 test('published package schema is the runtime schema', () => {
-  assert.equal(PACKAGE_CONTRACT_VERSION, '1.0.0')
+  assert.equal(PACKAGE_CONTRACT_VERSION, '1.1.0')
   const published = JSON.parse(
     readFileSync(resolve('docs/contracts/package.schema.json'), 'utf8')
   ) as unknown
@@ -94,7 +94,7 @@ test('preserves shared fields and delegates plugin validation', () => {
   }
 })
 
-test('rejects unknown fields, invalid dependency ranges, and reserved package types', () => {
+test('rejects unknown fields and invalid dependency ranges', () => {
   assert.throws(
     () =>
       parsePackageManifestText(
@@ -125,6 +125,9 @@ test('rejects unknown fields, invalid dependency ranges, and reserved package ty
       ),
     /not a semver range/
   )
+})
+
+test('accepts wrapper and mcp package manifests while the mcp installer remains unavailable', () => {
   const wrapper = parseYaml(`
 schemaVersion: 1
 id: alpha-wrapper
@@ -133,7 +136,20 @@ version: 1.0.0
 title: Alpha
 summary: Alpha.
 `)
-  assert.throws(() => parsePackageManifestText(stringifyYaml(wrapper)), /reserved.*not supported/)
+  assert.equal(parsePackageManifestText(stringifyYaml(wrapper)).type, 'wrapper')
   const mcp = { ...wrapper, type: 'mcp', id: 'alpha-mcp' }
-  assert.throws(() => parsePackageManifestText(stringifyYaml(mcp)), /reserved.*not supported/)
+  assert.equal(parsePackageManifestText(stringifyYaml(mcp)).type, 'mcp')
+
+  const root = mkdtempSync(join(tmpdir(), 'phi-package-mcp-'))
+  try {
+    writeFileSync(join(root, 'phi-package.yaml'), stringifyYaml(mcp))
+    const result = validatePackage(root)
+    assert.equal(result.ok, false)
+    assert.match(
+      result.errors.map((problem) => problem.message).join('\n'),
+      /mcp.*not implemented/i
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

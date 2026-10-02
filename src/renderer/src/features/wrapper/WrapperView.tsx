@@ -27,7 +27,10 @@ import {
   type ReactNode,
   type RefObject
 } from 'react'
-import type { WrapperCompositionManifest } from '../../../../shared/wrapperCompositionManifestTypes'
+import type {
+  WrapperCompositionCatalogItem,
+  WrapperCompositionManifest
+} from '../../../../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../../../../shared/wrapperModuleDetailsTypes'
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
 import type { Project, ProjectRemoteConnection } from '../../types'
@@ -49,6 +52,7 @@ import type { LocalPathKind } from '../../components/MarkdownContent'
 import { WrapperFlowDiagram } from './components/WrapperFlowDiagram'
 import { WrapperRunResultActions } from './components/WrapperRunResultActions'
 import { WrapperExecutionTargetControl } from './components/WrapperExecutionTargetControl'
+import { WrapperPackageControl } from './components/WrapperPackageControl'
 import { useWrapperCatalog } from './hooks/useWrapperCatalog'
 
 const RefreshIcon = PhiIcons.action.refresh
@@ -94,7 +98,7 @@ export interface WrapperSidebarProps {
 }
 
 export interface WrapperDetailProps {
-  catalog: WrapperCompositionManifest[]
+  catalog: WrapperCompositionCatalogItem[]
   runs: WrapperRun[]
   selectedId: string | null
   error: string | null
@@ -102,6 +106,8 @@ export interface WrapperDetailProps {
   onOpenRemoteResult?: (run: WrapperRun, path: string, pathKind: LocalPathKind) => void
   onExportReproducibility?: (runId: string) => void
   onCancelRun?: (runId: string) => void
+  packageEnablementBusy?: boolean
+  onSetPackageEnabled?: (packageId: string, enabled: boolean) => void
   project?: Project
   updatingRemoteProjectId?: string | null
   onUpdateProjectRemoteConnection?: (
@@ -700,6 +706,8 @@ export function WrapperDetail({
   onOpenRemoteResult,
   onExportReproducibility,
   onCancelRun,
+  packageEnablementBusy,
+  onSetPackageEnabled,
   project,
   updatingRemoteProjectId,
   onUpdateProjectRemoteConnection,
@@ -855,6 +863,13 @@ export function WrapperDetail({
                   label={wrapperTierLabel(parseWrapperCompositionId(selected.id).tier)}
                 />
               </Stack>
+              <Box sx={{ mt: 1.5 }}>
+                <WrapperPackageControl
+                  wrapper={selected}
+                  busy={packageEnablementBusy}
+                  onSetEnabled={onSetPackageEnabled}
+                />
+              </Box>
             </Box>
           </Stack>
 
@@ -1116,6 +1131,8 @@ export function WrapperViewContent({
   onOpenRemoteResult,
   onExportReproducibility,
   onCancelRun,
+  packageEnablementBusy,
+  onSetPackageEnabled,
   project,
   updatingRemoteProjectId,
   onUpdateProjectRemoteConnection,
@@ -1146,6 +1163,8 @@ export function WrapperViewContent({
           onOpenRemoteResult={onOpenRemoteResult}
           onExportReproducibility={onExportReproducibility}
           onCancelRun={onCancelRun}
+          packageEnablementBusy={packageEnablementBusy}
+          onSetPackageEnabled={onSetPackageEnabled}
           project={project}
           updatingRemoteProjectId={updatingRemoteProjectId}
           onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
@@ -1178,7 +1197,9 @@ export default function WrapperView({
     wrapperError,
     setSelectedWrapperId,
     refreshWrappers,
-    exportWrapperReproducibility
+    exportWrapperReproducibility,
+    packageEnablementBusy,
+    setPackageEnabled
   } = useWrapperCatalog()
 
   return (
@@ -1194,6 +1215,8 @@ export default function WrapperView({
       onOpenLocalPath={onOpenLocalPath}
       onOpenRemoteResult={onOpenRemoteResult}
       onExportReproducibility={(runId) => void exportWrapperReproducibility(runId)}
+      packageEnablementBusy={packageEnablementBusy}
+      onSetPackageEnabled={(packageId, enabled) => void setPackageEnabled(packageId, enabled)}
       onStartSidebarResize={onStartSidebarResize}
     />
   )

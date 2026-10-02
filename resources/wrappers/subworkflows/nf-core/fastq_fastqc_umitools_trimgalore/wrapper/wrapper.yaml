@@ -36,7 +36,7 @@ params:
     kind: option
     type: integer
     required: false
-    enum: [0, 1, 2]
+    enum: ["0", "1", "2"]
     description: Discard read 1 or 2 after UMI extraction (0 to keep both).
   min_trimmed_reads:
     kind: option

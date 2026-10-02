@@ -15,13 +15,11 @@ params:
     kind: option
     type: string
     required: false
-    default: "gene_id"
     description: "Feature ID column name."
   symbol_col:
     kind: option
     type: string
     required: false
-    default: "gene_name"
     description: "Gene symbol column name."
   outdir:
     kind: output

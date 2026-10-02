@@ -20,7 +20,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "base"
     description: "Depth mode (base, region or window)."
   outdir:
     kind: output

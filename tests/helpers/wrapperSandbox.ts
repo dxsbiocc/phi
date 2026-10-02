@@ -1,12 +1,27 @@
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import assert from 'node:assert/strict'
 
 import {
   findWrapperCompositionEntry,
   resetWrapperCompositionCatalogCache
 } from '../../src/main/agent/wrappers/composition/discovery'
+import { getBundledWrapperPackagesDir } from '../../src/main/agent/wrappers/catalog'
+import {
+  getWrapperTreeDir,
+  getWrapperTreeOwnershipPath
+} from '../../src/main/agent/packages/wrapper-tree'
 
 /** A bundled wrapper that needs no downloads: its default `gff` is a local fixture. */
 export const WRAPPER_ID = 'nf-core/modules/gffread'
@@ -87,6 +102,65 @@ const ENV_KEYS = [
   'FAKE_NF_GATE'
 ]
 
+function seedGffreadPackage(agentDir: string): void {
+  const tree = getWrapperTreeDir(agentDir)
+  const source = join(getBundledWrapperPackagesDir(), 'modules', 'nf-core', 'gffread')
+  const target = join(tree, 'modules', 'nf-core', 'gffread')
+  mkdirSync(join(target, '..'), { recursive: true })
+  cpSync(source, target, { recursive: true })
+  const paths: string[] = []
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name)
+      if (lstatSync(path).isDirectory()) walk(path)
+      else paths.push(relative(tree, path).split('\\').join('/'))
+    }
+  }
+  walk(target)
+  const id = 'module-nf-core-gffread'
+  const version = '1.0.0'
+  const installedAt = '2026-10-02T00:00:00.000Z'
+  const manifest = {
+    schemaVersion: 1,
+    id,
+    type: 'wrapper',
+    version,
+    title: 'nf-core/gffread module family',
+    summary: 'GffRead wrapper fixture.',
+    dependsOn: [],
+    files: 'files.json'
+  }
+  mkdirSync(join(getWrapperTreeOwnershipPath(agentDir), '..'), { recursive: true })
+  writeFileSync(
+    getWrapperTreeOwnershipPath(agentDir),
+    `${JSON.stringify(
+      {
+        version: 1,
+        packages: {
+          [id]: {
+            version,
+            title: manifest.title,
+            summary: manifest.summary,
+            manifest,
+            source: {
+              registry: 'test-fixture',
+              id,
+              type: 'wrapper',
+              version,
+              sha256: '0'.repeat(64),
+              installedAt,
+              installedBy: 'user'
+            },
+            paths: paths.sort()
+          }
+        }
+      },
+      null,
+      2
+    )}\n`
+  )
+}
+
 export async function withSandbox(fn: (sandbox: Sandbox) => Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'phi-wrapper-runs-'))
   const saved = { ...process.env }
@@ -110,6 +184,7 @@ export async function withSandbox(fn: (sandbox: Sandbox) => Promise<void>): Prom
   }
   process.env.PI_CODING_AGENT_DIR = sandbox.agentDir
   process.env.FAKE_NF_PIDFILE = sandbox.pidFile
+  seedGffreadPackage(sandbox.agentDir)
   resetWrapperCompositionCatalogCache()
   try {
     await fn(sandbox)

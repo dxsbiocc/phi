@@ -3,7 +3,8 @@ import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 import {
   findWrapperCompositionEntry,
   listWrapperCompositionCatalog,
-  readWrapperDefaultParams
+  readWrapperDefaultParams,
+  type WrapperCompositionDiscoveryOptions
 } from './discovery'
 import { WRAPPER_EXECUTION_PROFILES } from './executor'
 import { formatJobList, formatJobStatus } from './job-format'
@@ -27,7 +28,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export function buildWrapperCompositionSearchTool(): CustomTool {
+export function buildWrapperCompositionSearchTool(
+  discovery: WrapperCompositionDiscoveryOptions = {}
+): CustomTool {
   return {
     name: 'wrapper_search',
     label: 'Search Wrappers',
@@ -46,7 +49,7 @@ export function buildWrapperCompositionSearchTool(): CustomTool {
     approval: 'read',
     async execute(_toolCallId, params) {
       const query = isRecord(params) && typeof params.query === 'string' ? params.query : ''
-      const outcome = rankWrapperEntries(listWrapperCompositionCatalog(), query)
+      const outcome = rankWrapperEntries(listWrapperCompositionCatalog(discovery), query)
       const results = outcome.entries.map((entry) => ({
         id: entry.manifest.id,
         name: entry.manifest.name,
@@ -73,7 +76,9 @@ export function buildWrapperCompositionSearchTool(): CustomTool {
   }
 }
 
-export function buildWrapperCompositionInspectTool(): CustomTool {
+export function buildWrapperCompositionInspectTool(
+  discovery: WrapperCompositionDiscoveryOptions = {}
+): CustomTool {
   return {
     name: 'wrapper_inspect',
     label: 'Inspect Wrapper',
@@ -95,7 +100,7 @@ export function buildWrapperCompositionInspectTool(): CustomTool {
           isError: true
         }
       }
-      const entry = findWrapperCompositionEntry(id)
+      const entry = findWrapperCompositionEntry(id, discovery)
       if (!entry) {
         return { content: [{ type: 'text', text: `Wrapper not found: ${id}` }], isError: true }
       }
@@ -325,10 +330,13 @@ export function buildWrapperCompositionCancelTool(jobs: WrapperJobClient): Custo
   }
 }
 
-export function buildWrapperCompositionTools(jobs: WrapperJobClient): CustomTool[] {
+export function buildWrapperCompositionTools(
+  jobs: WrapperJobClient,
+  discovery: WrapperCompositionDiscoveryOptions = {}
+): CustomTool[] {
   return [
-    buildWrapperCompositionSearchTool(),
-    buildWrapperCompositionInspectTool(),
+    buildWrapperCompositionSearchTool(discovery),
+    buildWrapperCompositionInspectTool(discovery),
     buildWrapperCompositionRunTool(jobs),
     buildWrapperCompositionStatusTool(jobs),
     buildWrapperCompositionWaitTool(jobs),

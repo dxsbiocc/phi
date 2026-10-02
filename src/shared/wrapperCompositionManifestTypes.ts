@@ -4,9 +4,8 @@
 // subworkflow, or full pipeline under `resources/wrappers/`. This is the
 // live schema the agent's composition discovery
 // (`src/main/agent/wrappers/composition/discovery.ts`) actually parses;
-// it supersedes the older, fuller `WrapperManifest`
-// (`wrapperManifestTypes.ts`), which described a separately-versioned,
-// installable wrapper package that the composition layout replaced.
+// Package ownership and installation are represented separately by the
+// package manifest and assembled-tree ownership map.
 //
 // Defined here (not only in `composition/manifest.ts`) so the renderer can
 // share this exact shape via preload, the same way `wrapperManifestTypes.ts`
@@ -35,4 +34,18 @@ export interface WrapperCompositionManifest {
   summary: string
   params: Record<string, WrapperCompositionParam>
   outputs: Record<string, WrapperCompositionOutput>
+}
+
+/**
+ * Renderer-facing discovery metadata. The wrapper contract remains the
+ * manifest above; these fields describe the installed package that supplied
+ * it and why it may be unavailable to the agent.
+ */
+export interface WrapperCompositionCatalogItem extends WrapperCompositionManifest {
+  /** Absent for user-authored wrappers under wrappers/custom/. */
+  packageId?: string
+  /** The package's resolved global enablement. */
+  packageEnabled?: boolean
+  /** Set when this wrapper is hidden from agent tools. */
+  hiddenReason?: string
 }

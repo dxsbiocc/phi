@@ -27,7 +27,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "PRODH"
     description: "Gene to genotype (e.g. PRODH)."
   outdir:
     kind: output

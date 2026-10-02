@@ -9,6 +9,7 @@ import type { InstalledPackage, InstallerOptions, PackageSourceMetadata } from '
 import { isSourceMetadata, packageKey } from './installer-utils'
 import { readPackageManifest, type PackageManifest, type PackageType } from './manifest'
 import { listActiveSkillPackages } from './store'
+import { listInstalledWrapperPackages } from './wrapper-tree'
 
 export function listInstalledPackages(
   options: Pick<InstallerOptions, 'agentDir'> = {}
@@ -25,6 +26,7 @@ export function listInstalledPackages(
       installed.push({ ...item, enabled: plugin.enabled })
     }
   }
+  installed.push(...listInstalledWrapperPackages(agentDir))
   return installed.sort(
     (left, right) =>
       left.type.localeCompare(right.type) ||

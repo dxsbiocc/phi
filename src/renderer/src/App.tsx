@@ -761,11 +761,13 @@ function App(): React.JSX.Element {
     selectedWrapperId,
     isLoadingWrappers,
     wrapperError,
+    packageEnablementBusy,
     setSelectedWrapperId,
     refreshWrappers,
     refreshRuns: refreshWrapperRuns,
     cancelWrapperRun,
-    exportWrapperReproducibility
+    exportWrapperReproducibility,
+    setPackageEnabled
   } = useWrapperCatalog()
 
   const showSnackbar = useCallback(
@@ -3592,6 +3594,8 @@ function App(): React.JSX.Element {
         onOpenRemoteResult={onOpenWrapperResult}
         onExportReproducibility={(runId) => void exportWrapperReproducibility(runId)}
         onCancelRun={(runId) => void cancelWrapperRun(runId)}
+        packageEnablementBusy={packageEnablementBusy}
+        onSetPackageEnabled={(packageId, enabled) => void setPackageEnabled(packageId, enabled)}
         project={activeProject ?? undefined}
         updatingRemoteProjectId={updatingRemoteProjectId}
         onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}

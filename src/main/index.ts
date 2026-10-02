@@ -223,9 +223,10 @@ import {
   listWrapperCatalog
 } from './agent/wrappers/catalog'
 import {
-  listWrapperCompositionCatalog,
+  listWrapperCompositionCatalogStatus,
   readWrapperCompositionDag,
-  readWrapperModuleDetails
+  readWrapperModuleDetails,
+  resetWrapperCompositionCatalogCache
 } from './agent/wrappers/composition/discovery'
 import { wrapperJobHostHandlers } from './agent/wrappers/composition/job-host-handlers'
 import { shouldContinueConversation } from './agent/wrappers/composition/job-continue'
@@ -4352,7 +4353,8 @@ function isRemoteResourceScope(cwd?: string): boolean {
 function isEnablementItemKey(value: unknown): value is EnablementItemKey {
   return (
     typeof value === 'string' &&
-    (/^skill:[a-z0-9][a-z0-9-]{0,63}$/.test(value) || /^plugin:[a-z][a-z0-9-]{1,63}$/.test(value))
+    (/^skill:[a-z0-9][a-z0-9-]{0,63}$/.test(value) ||
+      /^(?:plugin|wrapper|mcp):[a-z][a-z0-9-]{1,63}$/.test(value))
   )
 }
 
@@ -6190,7 +6192,39 @@ app.whenReady().then(async () => {
     .catch(logBundledPluginError)
   recoverInterruptedPhiSessions()
   try {
-    ensureBundledWrappersInstalled()
+    const bundledWrappers = await ensureBundledWrappersInstalled(AGENT_DIR, {
+      packageVersion: app.getVersion()
+    })
+    if (
+      bundledWrappers.diagnostics.unattributedIncludes.length > 0 ||
+      bundledWrappers.diagnostics.unattributedSupportFiles.length > 0
+    ) {
+      writeAppLog({
+        level: 'warn',
+        event: 'wrapper_bundled_attribution_warning',
+        metadata: { ...bundledWrappers.diagnostics }
+      })
+    }
+    if (bundledWrappers.migratedCustom.length > 0) {
+      writeAppLog({
+        event: 'wrapper_custom_migrated',
+        metadata: { ids: bundledWrappers.migratedCustom }
+      })
+    }
+    if (bundledWrappers.migratedPackVersion) {
+      writeAppLog({
+        event: 'wrapper_legacy_pack_migrated',
+        metadata: { version: bundledWrappers.migratedPackVersion }
+      })
+    }
+    if (bundledWrappers.legacyPackWarnings.length > 0) {
+      writeAppLog({
+        level: 'warn',
+        event: 'wrapper_legacy_pack_rejected',
+        metadata: { rejected: bundledWrappers.legacyPackWarnings }
+      })
+    }
+    resetWrapperCompositionCatalogCache()
   } catch (error) {
     writeAppLog({
       level: 'error',
@@ -7724,8 +7758,9 @@ app.whenReady().then(async () => {
     async (_, dir: unknown, type: unknown, id: unknown, version?: unknown) => {
       if (
         typeof dir !== 'string' ||
-        (type !== 'skill' && type !== 'plugin') ||
+        (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
         typeof id !== 'string' ||
+        id.length === 0 ||
         (version !== undefined && typeof version !== 'string')
       ) {
         throw new Error('软件包安装计划参数无效')
@@ -7748,8 +7783,9 @@ app.whenReady().then(async () => {
     async (_, dir: unknown, type: unknown, id: unknown, version?: unknown) => {
       if (
         typeof dir !== 'string' ||
-        (type !== 'skill' && type !== 'plugin') ||
+        (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
         typeof id !== 'string' ||
+        id.length === 0 ||
         (version !== undefined && typeof version !== 'string')
       ) {
         throw new Error('软件包安装参数无效')
@@ -7777,6 +7813,9 @@ app.whenReady().then(async () => {
             setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
           }
         }
+        if (result.some((installed) => installed.type === 'wrapper')) {
+          resetWrapperCompositionCatalogCache()
+        }
         await invalidateAgentSession()
         return result
       } catch (error) {
@@ -7785,7 +7824,11 @@ app.whenReady().then(async () => {
     }
   )
   ipcMain.handle('packages:uninstall', async (_, type: unknown, id: unknown) => {
-    if ((type !== 'skill' && type !== 'plugin') || typeof id !== 'string') {
+    if (
+      (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
+      typeof id !== 'string' ||
+      id.length === 0
+    ) {
       throw new Error('软件包卸载参数无效')
     }
     try {
@@ -7793,6 +7836,7 @@ app.whenReady().then(async () => {
         agentDir: AGENT_DIR,
         runtimeRoot: getRuntimeRoot()
       })
+      if (type === 'wrapper') resetWrapperCompositionCatalogCache()
       await invalidateAgentSession()
       return result
     } catch (error) {
@@ -7844,6 +7888,7 @@ app.whenReady().then(async () => {
     } else {
       setEnabled(item, value, { agentDir: AGENT_DIR, ...options })
     }
+    if (item.startsWith('wrapper:')) resetWrapperCompositionCatalogCache()
     return getEnablementSnapshot({ agentDir: AGENT_DIR, ...options })
   })
   ipcMain.handle('skills:list', async (_, cwd?: string) =>
@@ -8003,7 +8048,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('wrappers:listCatalog', async () => listWrapperCatalog())
   ipcMain.handle('wrappers:listCompositionCatalog', async () =>
-    listWrapperCompositionCatalog().map((entry) => entry.manifest)
+    listWrapperCompositionCatalogStatus({ agentDir: AGENT_DIR })
   )
   ipcMain.handle('wrappers:getCompositionDag', async (_, id: string) =>
     readWrapperCompositionDag(id)

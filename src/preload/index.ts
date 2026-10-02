@@ -37,7 +37,7 @@ import type { WorkspaceDiffReference } from '../shared/workspaceChangeTypes'
 // them here and in index.d.ts would just be another place for the two to
 // drift out of sync.
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
-import type { WrapperCompositionManifest } from '../shared/wrapperCompositionManifestTypes'
+import type { WrapperCompositionCatalogItem } from '../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
 import type { RemoteHpcSettings } from '../shared/wrapperRemoteTypes'
 import type {
@@ -944,7 +944,7 @@ type RendererAuthApi = {
   cancelWrapperRunPlan: (planId: string) => Promise<WrapperRunPlan>
   listWrapperCatalog: () => Promise<WrapperCatalogEntry[]>
   addCustomWrapper: (sourceDir: string) => Promise<WrapperCatalogEntry>
-  listWrapperCompositionCatalog: () => Promise<WrapperCompositionManifest[]>
+  listWrapperCompositionCatalog: () => Promise<WrapperCompositionCatalogItem[]>
   getWrapperCompositionDag: (id: string) => Promise<string | undefined>
   getWrapperCompositionModuleDetails: (id: string) => Promise<WrapperModuleDetails | undefined>
   listWrapperRuns: () => Promise<WrapperRun[]>
@@ -1502,7 +1502,7 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('wrappers:listCatalog'),
   addCustomWrapper: (sourceDir: string): Promise<WrapperCatalogEntry> =>
     ipcRenderer.invoke('wrappers:addCustom', sourceDir),
-  listWrapperCompositionCatalog: (): Promise<WrapperCompositionManifest[]> =>
+  listWrapperCompositionCatalog: (): Promise<WrapperCompositionCatalogItem[]> =>
     ipcRenderer.invoke('wrappers:listCompositionCatalog'),
   getWrapperCompositionDag: (id: string): Promise<string | undefined> =>
     ipcRenderer.invoke('wrappers:getCompositionDag', id),

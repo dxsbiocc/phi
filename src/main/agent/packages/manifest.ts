@@ -8,21 +8,21 @@ import { parse as parseYaml } from 'yaml'
 import { validateSkill, type ValidatedSkill } from '../content/skill'
 import { validatePlugin, type ValidatedPlugin } from '../plugins/validate'
 
-export const PACKAGE_CONTRACT_VERSION = '1.0.0'
+export const PACKAGE_CONTRACT_VERSION = '1.1.0'
 
 export const packageManifestSchema = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   $id: 'https://phi.local/contracts/package.schema.json',
   title: 'Phi package manifest (phi-package.yaml)',
   description:
-    'Package contract 1.0.0 (docs/contracts/package.md). Type-specific path and component validation is enforced in code.',
+    'Package contract 1.1.0 (docs/contracts/package.md). Type-specific path and component validation is enforced in code.',
   type: 'object',
   required: ['schemaVersion', 'id', 'type', 'version', 'title', 'summary'],
   additionalProperties: false,
   properties: {
     schemaVersion: { const: 1 },
     id: { type: 'string', pattern: '^[a-z][a-z0-9-]{1,63}$' },
-    type: { enum: ['skill', 'plugin'] },
+    type: { enum: ['skill', 'plugin', 'wrapper', 'mcp'] },
     version: {
       type: 'string',
       pattern: '^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
@@ -52,7 +52,7 @@ export const packageManifestSchema = {
         additionalProperties: false,
         properties: {
           id: { type: 'string', pattern: '^[a-z][a-z0-9-]{1,63}$' },
-          type: { enum: ['skill', 'plugin'] },
+          type: { enum: ['skill', 'plugin', 'wrapper', 'mcp'] },
           version: { type: 'string', minLength: 1 }
         }
       }
@@ -107,11 +107,26 @@ export const packageManifestSchema = {
     {
       if: { properties: { type: { const: 'plugin' } }, required: ['type'] },
       then: { required: ['toolPrefix', 'components'] }
+    },
+    {
+      if: {
+        properties: { type: { enum: ['wrapper', 'mcp'] } },
+        required: ['type']
+      },
+      then: {
+        not: {
+          anyOf: [
+            { required: ['toolPrefix'] },
+            { required: ['components'] },
+            { required: ['environments'] }
+          ]
+        }
+      }
     }
   ]
 } as const
 
-export type PackageType = 'skill' | 'plugin'
+export type PackageType = 'skill' | 'plugin' | 'wrapper' | 'mcp'
 
 export interface PackageDependency {
   id: string
@@ -143,7 +158,16 @@ export interface SkillPackageManifest extends BasePackageManifest {
 export type PluginPackageManifest = BasePackageManifest &
   ValidatedPlugin['manifest'] & { type: 'plugin' }
 
-export type PackageManifest = SkillPackageManifest | PluginPackageManifest
+export interface WrapperPackageManifest extends BasePackageManifest {
+  type: 'wrapper'
+}
+
+export interface McpPackageManifest extends BasePackageManifest {
+  type: 'mcp'
+}
+
+export type PackageManifest =
+  SkillPackageManifest | PluginPackageManifest | WrapperPackageManifest | McpPackageManifest
 
 export interface PackageProblem {
   level: 'error' | 'warning'
@@ -176,10 +200,6 @@ export function parsePackageManifestText(text: string): PackageManifest {
     throw new Error(`YAML parse error: ${errorMessage(error)}`)
   }
   if (!isRecord(document)) throw new Error('phi-package.yaml must be a YAML mapping')
-  const rawType = document.type
-  if (rawType === 'wrapper' || rawType === 'mcp') {
-    throw new Error(`package type '${rawType}' is reserved and not supported by the v1 installer`)
-  }
   if (!validateManifestSchema(document)) {
     throw new Error(
       (validateManifestSchema.errors ?? [])
@@ -226,6 +246,24 @@ export function validatePackage(dir: string): PackageValidationResult {
     const result = validatePlugin(packageDir)
     if (!result.ok || !result.plugin) return finish(result.errors, result.warnings)
     return finish([], result.warnings, { dir: packageDir, manifest, plugin: result.plugin })
+  }
+
+  if (manifest.type === 'mcp') {
+    return finish(
+      [
+        {
+          level: 'error',
+          path: 'type',
+          message:
+            "package type 'mcp' is accepted by contract 1.1.0 but not implemented by this installer"
+        }
+      ],
+      []
+    )
+  }
+
+  if (manifest.type === 'wrapper') {
+    return finish([], [], { dir: packageDir, manifest })
   }
 
   const result = validateSkill(packageDir, { expectedName: manifest.id })

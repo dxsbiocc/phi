@@ -25,6 +25,11 @@ import {
   type PackageType
 } from '../../src/main/agent/packages/manifest'
 import { validatePlugin } from '../../src/main/agent/plugins/validate'
+import {
+  materializeWrapperRegistry,
+  type UnattributedWrapperInclude,
+  type WrapperPackageKind
+} from '../../src/main/agent/wrappers/packages/builder'
 
 export interface RegistryIndexEntry {
   id: string
@@ -48,6 +53,20 @@ export interface RegistryIndex {
   packages: RegistryIndexEntry[]
 }
 
+export interface RegistryBuildReport {
+  countsByType: Record<string, number>
+  sizesByType: Record<string, number>
+  wrapperCountsByKind: Record<WrapperPackageKind, number>
+  largestPackages: Array<Pick<RegistryIndexEntry, 'id' | 'type' | 'size'>>
+  unattributedIncludes: UnattributedWrapperInclude[]
+  unattributedSupportFiles: string[]
+}
+
+export interface RegistryBuildResult {
+  index: RegistryIndex
+  report: RegistryBuildReport
+}
+
 export interface BuildRegistryOptions {
   repoRoot?: string
   outDir?: string
@@ -64,10 +83,17 @@ const DEFAULT_VERSION = '1.0.0'
 const nodeRequire = createRequire(import.meta.url)
 
 export function buildRegistry(options: BuildRegistryOptions = {}): RegistryIndex {
+  return buildRegistryWithReport(options).index
+}
+
+export function buildRegistryWithReport(options: BuildRegistryOptions = {}): RegistryBuildResult {
   const repoRoot = resolve(
     options.repoRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..')
   )
   const outDir = resolve(repoRoot, options.outDir ?? 'dist/registry')
+  const generatedAt = options.generatedAt ?? new Date().toISOString()
+  if (!Number.isFinite(Date.parse(generatedAt)))
+    throw new Error(`invalid generatedAt: ${generatedAt}`)
   rejectUntrackedResources(repoRoot)
 
   const tracked = gitLines(repoRoot, [
@@ -75,20 +101,68 @@ export function buildRegistry(options: BuildRegistryOptions = {}): RegistryIndex
     '-z',
     '--',
     'resources/plugins',
-    'resources/skills'
+    'resources/skills',
+    'resources/wrappers'
   ])
   const roots = packageRoots(tracked)
   const sources = roots.map((root) => loadPackageSource(repoRoot, root, tracked))
 
   mkdirSync(outDir, { recursive: true })
 
-  const entries = sources.map((source) => writePackage(source, outDir)).sort(compareRegistryEntries)
-  const generatedAt = options.generatedAt ?? new Date().toISOString()
-  if (!Number.isFinite(Date.parse(generatedAt)))
-    throw new Error(`invalid generatedAt: ${generatedAt}`)
+  const wrappersPrefix = 'resources/wrappers/'
+  const wrapperResult = materializeWrapperRegistry({
+    wrappersRoot: join(repoRoot, 'resources', 'wrappers'),
+    outDir,
+    generatedAt,
+    files: tracked
+      .filter((path) => path.startsWith(wrappersPrefix))
+      .map((path) => path.slice(wrappersPrefix.length)),
+    writeIndex: false
+  })
+  const entries = [
+    ...sources.map((source) => writePackage(source, outDir)),
+    ...wrapperResult.index.packages
+  ].sort(compareRegistryEntries)
   const index: RegistryIndex = { schemaVersion: 1, generatedAt, packages: entries }
   writeFileSync(join(outDir, 'index.json'), `${JSON.stringify(index, null, 2)}\n`, 'utf8')
-  return index
+  return {
+    index,
+    report: createBuildReport(index, wrapperResult.sources, wrapperResult.diagnostics)
+  }
+}
+
+function createBuildReport(
+  index: RegistryIndex,
+  wrapperSources: Array<{ kind: WrapperPackageKind }>,
+  diagnostics: {
+    unattributedIncludes: UnattributedWrapperInclude[]
+    unattributedSupportFiles: string[]
+  }
+): RegistryBuildReport {
+  const countsByType: Record<string, number> = {}
+  const sizesByType: Record<string, number> = {}
+  for (const entry of index.packages) {
+    countsByType[entry.type] = (countsByType[entry.type] ?? 0) + 1
+    sizesByType[entry.type] = (sizesByType[entry.type] ?? 0) + entry.size
+  }
+  const wrapperCountsByKind: Record<WrapperPackageKind, number> = {
+    module: 0,
+    subworkflow: 0,
+    workflow: 0,
+    support: 0
+  }
+  for (const source of wrapperSources) wrapperCountsByKind[source.kind] += 1
+  return {
+    countsByType,
+    sizesByType,
+    wrapperCountsByKind,
+    largestPackages: [...index.packages]
+      .sort((left, right) => right.size - left.size || compareRegistryEntries(left, right))
+      .slice(0, 10)
+      .map(({ id, type, size }) => ({ id, type, size })),
+    unattributedIncludes: diagnostics.unattributedIncludes,
+    unattributedSupportFiles: diagnostics.unattributedSupportFiles
+  }
 }
 
 function packageRoots(tracked: string[]): string[] {
@@ -354,9 +428,36 @@ const entryScript = process.argv[1] ? resolve(process.argv[1]) : ''
 if (entryScript === fileURLToPath(import.meta.url)) {
   try {
     const outDir = parseOutArg(process.argv.slice(2))
-    const index = buildRegistry({ outDir })
+    const { index, report } = buildRegistryWithReport({ outDir })
     const totalSize = index.packages.reduce((sum, item) => sum + item.size, 0)
     console.log(`Built ${index.packages.length} packages (${totalSize} bytes).`)
+    for (const type of Object.keys(report.countsByType).sort(compareText)) {
+      console.log(
+        `  ${type}: ${report.countsByType[type]} packages (${report.sizesByType[type]} bytes)`
+      )
+    }
+    console.log(
+      `Wrapper kinds: ${Object.entries(report.wrapperCountsByKind)
+        .map(([kind, count]) => `${kind}=${count}`)
+        .join(', ')}`
+    )
+    console.log('Largest packages:')
+    for (const entry of report.largestPackages) {
+      console.log(`  ${entry.type}:${entry.id} ${entry.size} bytes`)
+    }
+    if (report.unattributedIncludes.length > 0) {
+      console.log(`Unattributed includes (${report.unattributedIncludes.length}):`)
+      for (const include of report.unattributedIncludes) {
+        console.log(
+          `  ${include.packageId}: ${include.from} -> ${include.target} (${include.reason})`
+        )
+      }
+    } else {
+      console.log('Unattributed includes: none')
+    }
+    if (report.unattributedSupportFiles.length > 0) {
+      console.log(`Unattributed support files: ${report.unattributedSupportFiles.join(', ')}`)
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error))
     process.exitCode = 1

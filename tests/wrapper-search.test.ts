@@ -7,6 +7,9 @@ import {
   buildWrapperCompositionInspectTool,
   buildWrapperCompositionSearchTool
 } from '../src/main/agent/wrappers/composition/tools'
+import { getBundledWrapperPackagesDir } from '../src/main/agent/wrappers/catalog'
+
+const DISCOVERY = { sourceRoot: getBundledWrapperPackagesDir() }
 
 function wrapper(
   id: string,
@@ -134,7 +137,7 @@ interface SearchContentResult {
 
 test('wrapper_search finds the RNA-seq pipeline from a natural multi-word query', async () => {
   resetWrapperCompositionCatalogCache()
-  const result = (await buildWrapperCompositionSearchTool().execute('w1', {
+  const result = (await buildWrapperCompositionSearchTool(DISCOVERY).execute('w1', {
     query: 'rna seq alignment'
   })) as SearchContentResult
 
@@ -144,7 +147,7 @@ test('wrapper_search finds the RNA-seq pipeline from a natural multi-word query'
 
 test('wrapper_search content is compact JSON and names the words that matched nothing', async () => {
   resetWrapperCompositionCatalogCache()
-  const result = (await buildWrapperCompositionSearchTool().execute('w2', {
+  const result = (await buildWrapperCompositionSearchTool(DISCOVERY).execute('w2', {
     query: 'rna seq nonexistentword'
   })) as SearchContentResult
 
@@ -157,7 +160,7 @@ test('wrapper_search content is compact JSON and names the words that matched no
 
 test('wrapper_search has no partial-match note when every word matched', async () => {
   resetWrapperCompositionCatalogCache()
-  const result = (await buildWrapperCompositionSearchTool().execute('w3', {
+  const result = (await buildWrapperCompositionSearchTool(DISCOVERY).execute('w3', {
     query: 'fastqc'
   })) as SearchContentResult
   assert.equal(result.content.length, 1)
@@ -165,7 +168,7 @@ test('wrapper_search has no partial-match note when every word matched', async (
 
 test('wrapper_search reports an empty result in plain text', async () => {
   resetWrapperCompositionCatalogCache()
-  const result = (await buildWrapperCompositionSearchTool().execute('w4', {
+  const result = (await buildWrapperCompositionSearchTool(DISCOVERY).execute('w4', {
     query: 'zzzz qqqq'
   })) as SearchContentResult
   assert.match(result.content[0].text ?? '', /No matching wrappers/)
@@ -173,7 +176,7 @@ test('wrapper_search reports an empty result in plain text', async () => {
 
 test('wrapper_inspect content is compact JSON', async () => {
   resetWrapperCompositionCatalogCache()
-  const result = (await buildWrapperCompositionInspectTool().execute('w5', {
+  const result = (await buildWrapperCompositionInspectTool(DISCOVERY).execute('w5', {
     id: 'nf-core/workflows/rnaseq'
   })) as SearchContentResult
   const text = result.content[0].text ?? ''

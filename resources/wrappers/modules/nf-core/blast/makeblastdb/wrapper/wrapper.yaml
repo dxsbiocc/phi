@@ -15,7 +15,6 @@ params:
     kind: option
     type: string
     required: false
-    default: nucl
     description: Database molecule type, "nucl" or "prot".
   outdir:
     kind: output

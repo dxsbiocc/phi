@@ -836,6 +836,7 @@ async function loadSkillScriptTools(cwd: string): Promise<ScriptToolDescriptor[]
 function phiToolFunctions(
   originSessionId: string,
   agentDir: string,
+  cwd: string,
   agentName: string,
   skillRun?: CustomTool
 ): Map<string, CustomTool> {
@@ -845,7 +846,7 @@ function phiToolFunctions(
     // Wrapper runs are background jobs owned by the main process; these tools only talk to it.
     // Each run is stamped with the session that started it, so its end can be reported there.
     const jobs = createHostJobClient(requestHost, { originSessionId })
-    wrapperTools = [...buildWrapperCompositionTools(jobs)]
+    wrapperTools = [...buildWrapperCompositionTools(jobs, { agentDir, projectDir: cwd })]
   }
   if (agentName === 'Database') {
     try {
@@ -1044,6 +1045,7 @@ async function createPhiAgentSession(
   const availableTools = phiToolFunctions(
     sessionId,
     agentDir,
+    sessionCwd,
     definition.name,
     deps.skillTools
       ? buildSkillRunTool(requestHost, {

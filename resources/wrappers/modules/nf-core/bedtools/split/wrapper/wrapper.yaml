@@ -15,7 +15,6 @@ params:
     kind: option
     type: integer
     required: false
-    default: 2
     description: "Number of output files."
   outdir:
     kind: output

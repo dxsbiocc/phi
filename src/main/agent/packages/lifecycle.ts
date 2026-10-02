@@ -38,12 +38,23 @@ import { readPackageManifest, validatePackage, type PackageType } from './manife
 import { planInstall } from './planning'
 import { cleanupStalePackageStaging, stagePackage } from './staging'
 import { readSkillsRegistry, skillPackagesDir, skillVersionDir, writeSkillsRegistry } from './store'
+import {
+  installStagedWrapperPackage,
+  installStagedWrapperPackages,
+  installedWrapperDependencies,
+  promoteInstalledWrapperPackage,
+  removeInstalledWrapperPackage
+} from './wrapper-tree'
 
 export async function installPackages(
   plan: InstallPlan,
   options: InstallerOptions = {}
 ): Promise<InstalledPackage[]> {
   const agentDir = options.agentDir ?? plan.agentDir ?? getPhiAgentDir()
+  const unsupported = plan.packages.find((entry) => entry.type === 'mcp')
+  if (unsupported) {
+    throw new Error(`MCP 软件包 ${unsupported.id} 已被清单接受，但此安装器尚未实现 MCP 安装`)
+  }
   cleanupStalePackageStaging({ agentDir, now: options.now })
   const stages: StagedPackage[] = []
   const installedNow: Array<{ type: PackageType; id: string }> = []
@@ -51,12 +62,24 @@ export async function installPackages(
     for (const entry of plan.packages) {
       stages.push(stagePackage(plan.registry, entry, agentDir, options.now))
     }
-    for (const staged of stages) {
+    for (let index = 0; index < stages.length;) {
+      const staged = stages[index]
+      if (staged.entry.type === 'wrapper') {
+        const wrappers: StagedPackage[] = []
+        while (stages[index]?.entry.type === 'wrapper') {
+          wrappers.push(stages[index])
+          index += 1
+        }
+        installStagedWrapperPackages(wrappers, agentDir)
+        installedNow.push(...wrappers.map((item) => ({ type: item.entry.type, id: item.entry.id })))
+        continue
+      }
       await commitStagedPackage(staged, {
         ...options,
         agentDir
       })
       installedNow.push({ type: staged.entry.type, id: staged.entry.id })
+      index += 1
     }
     promoteRootToUser(plan.root, agentDir)
     return listInstalledPackages({ agentDir })
@@ -103,7 +126,7 @@ export function uninstallPackage(
   const installed = listInstalledPackages({ agentDir })
   const target = installed.find((item) => item.type === type && item.id === id)
   if (!target) throw new Error(`软件包 ${type}:${id} 尚未安装`)
-  const dependent = dependentOn(packagesAvailableForPlanning(agentDir), target)
+  const dependent = dependentOn(packagesAvailableForPlanning(agentDir), target, agentDir)
   if (dependent) {
     throw new Error(`无法卸载 ${type}:${id}；软件包 ${dependent.type}:${dependent.id} 仍依赖它`)
   }
@@ -116,6 +139,13 @@ async function commitStagedPackage(
   staged: StagedPackage,
   options: InstallerOptions & { agentDir: string }
 ): Promise<void> {
+  if (staged.entry.type === 'wrapper') {
+    installStagedWrapperPackage(staged, options.agentDir)
+    return
+  }
+  if (staged.entry.type === 'mcp') {
+    throw new Error(`MCP 软件包 ${staged.entry.id} 已被清单接受，但此安装器尚未实现 MCP 安装`)
+  }
   if (staged.entry.type === 'plugin') {
     const current = listInstalledPlugins({ agentDir: options.agentDir }).find(
       (plugin) => plugin.id === staged.entry.id
@@ -200,6 +230,13 @@ function removeInstalledPackage(
   id: string,
   options: InstallerOptions & { agentDir: string }
 ): void {
+  if (type === 'wrapper') {
+    removeInstalledWrapperPackage(id, options.agentDir)
+    return
+  }
+  if (type === 'mcp') {
+    throw new Error(`MCP 软件包 ${id} 的安装与卸载尚未实现`)
+  }
   if (type === 'plugin') {
     const result = uninstallPlugin(id, {
       agentDir: options.agentDir,
@@ -285,7 +322,7 @@ function collectOrphanDependencies(options: InstallerOptions & { agentDir: strin
     const available = packagesAvailableForPlanning(options.agentDir)
     for (const candidate of managed) {
       if (candidate.installedBy !== 'dependency') continue
-      if (dependentOn(available, candidate)) continue
+      if (dependentOn(available, candidate, options.agentDir)) continue
       removeInstalledPackage(candidate.type, candidate.id, options)
       changed = true
       break
@@ -295,13 +332,17 @@ function collectOrphanDependencies(options: InstallerOptions & { agentDir: strin
 
 function dependentOn(
   installed: InstalledPackage[],
-  target: InstalledPackage
+  target: InstalledPackage,
+  agentDir: string
 ): InstalledPackage | undefined {
   return installed.find((candidate) => {
     if (candidate.type === target.type && candidate.id === target.id) return false
     try {
-      const manifest = readPackageManifest(candidate.dir)
-      return (manifest.dependsOn ?? []).some(
+      const dependencies =
+        candidate.type === 'wrapper'
+          ? installedWrapperDependencies(candidate.id, agentDir)
+          : (readPackageManifest(candidate.dir).dependsOn ?? [])
+      return dependencies.some(
         (dependency) => dependency.type === target.type && dependency.id === target.id
       )
     } catch {
@@ -315,6 +356,10 @@ function promoteRootToUser(root: InstallPlan['root'], agentDir: string): void {
     (item) => item.type === root.type && item.id === root.id && item.version === root.version
   )
   if (!installed || installed.installedBy === 'user') return
+  if (installed.type === 'wrapper') {
+    promoteInstalledWrapperPackage(installed.id, installed.version, agentDir)
+    return
+  }
   writeSourceMetadata(installed.dir, {
     registry: installed.registry,
     id: installed.id,

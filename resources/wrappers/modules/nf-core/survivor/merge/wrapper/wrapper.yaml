@@ -20,13 +20,11 @@ params:
     kind: option
     type: string
     required: false
-    default: "0.2"
     description: "Maximum breakpoint distance (fraction or bp)."
   min_callers:
     kind: option
     type: integer
     required: false
-    default: 1
     description: "Minimum supporting callers."
   outdir:
     kind: output

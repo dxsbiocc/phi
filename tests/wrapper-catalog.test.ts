@@ -11,6 +11,11 @@ import {
   listDefaultAgentToolWrappers,
   listWrapperCatalog
 } from '../src/main/agent/wrappers/catalog'
+import { buildLegacyWrapperPackIndex } from '../src/main/agent/wrappers/legacy-pack-migration'
+import {
+  listWrapperCompositionCatalog,
+  resetWrapperCompositionCatalogCache
+} from '../src/main/agent/wrappers/composition/discovery'
 
 function withAgentDir<T>(callback: (agentDir: string) => T): T {
   const root = mkdtempSync(join(tmpdir(), 'phi-wrapper-catalog-'))
@@ -56,25 +61,250 @@ outputs:
     label: Report
     type: html
     path: results/report.html
+    primary: true
 resources:
   defaults:
     cpus: 1
 `,
     'utf-8'
   )
+  writeFileSync(join(dir, 'main.nf'), 'workflow {}\n')
 }
 
-test('ensureBundledWrappersInstalled is empty after bundled packages move to composition discovery', () => {
-  withAgentDir((agentDir) => {
-    const first = ensureBundledWrappersInstalled(agentDir)
-    assert.deepEqual(first, [])
+function writeBundledCompositionFixture(root: string, main = 'workflow {}\n'): void {
+  const wrapper = join(root, 'modules', 'acme', 'toy', 'wrapper')
+  mkdirSync(wrapper, { recursive: true })
+  writeFileSync(join(wrapper, 'main.nf'), main)
+  writeFileSync(join(wrapper, 'params.json'), '{}\n')
+  writeFileSync(
+    join(wrapper, 'wrapper.yaml'),
+    `id: acme/modules/toy
+name: Toy
+summary: Small bundled wrapper fixture.
+params: {}
+outputs:
+  report:
+    type: path
+    path: results/report.txt
+    primary: true
+`
+  )
+}
 
-    const second = ensureBundledWrappersInstalled(agentDir)
-    assert.deepEqual(second, [])
+test('bundled wrapper packages install idempotently into the assembled tree', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-bundled-wrapper-'))
+  const agentDir = join(root, 'agent')
+  const sourceRoot = join(root, 'source')
+  try {
+    writeBundledCompositionFixture(sourceRoot)
+    const first = await ensureBundledWrappersInstalled(agentDir, {
+      sourceRoot,
+      generatedAt: '2026-10-02T00:00:00.000Z'
+    })
+    assert.deepEqual(first.installed, ['module-acme-toy'])
+    assert.equal(
+      readFileSync(join(agentDir, 'wrappers', 'tree', 'modules/acme/toy/wrapper/main.nf'), 'utf8'),
+      'workflow {}\n'
+    )
 
-    const catalog = listWrapperCatalog(agentDir)
-    assert.deepEqual(catalog, [])
-  })
+    const second = await ensureBundledWrappersInstalled(agentDir, { sourceRoot })
+    assert.deepEqual(second.installed, [])
+    assert.equal(second.packages.length, 1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('bundled migration converts the newest valid overlay and preserves custom wrappers', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-wrapper-pack-migration-'))
+  const agentDir = join(root, 'agent')
+  const sourceRoot = join(root, 'source')
+  const legacyCustomSource = join(root, 'legacy-custom')
+  const oldPackRoot = join(agentDir, 'wrappers', 'packs', '9.9.9')
+  const custom = join(agentDir, 'wrappers', 'custom', 'notes.txt')
+  try {
+    writeBundledCompositionFixture(sourceRoot, 'workflow { v1 }\n')
+    const retiredWrapper = join(sourceRoot, 'modules', 'acme', 'retired', 'wrapper')
+    mkdirSync(retiredWrapper, { recursive: true })
+    writeFileSync(join(retiredWrapper, 'main.nf'), 'workflow {}\n')
+    writeFileSync(join(retiredWrapper, 'params.json'), '{}\n')
+    writeFileSync(
+      join(retiredWrapper, 'wrapper.yaml'),
+      `id: acme/modules/retired
+name: Retired
+summary: Package removed by the next bundled version.
+params: {}
+outputs:
+  report:
+    type: path
+    path: results/report.txt
+    primary: true
+`
+    )
+    mkdirSync(legacyCustomSource, { recursive: true })
+    writeCustomWrapperFixture(legacyCustomSource)
+    addCustomWrapper(legacyCustomSource, agentDir)
+    writeBundledCompositionFixture(oldPackRoot, 'workflow { overlay }\n')
+    writeFileSync(
+      join(oldPackRoot, 'modules', 'acme', 'toy', 'wrapper', 'params.json'),
+      '{"threads": 2}\n'
+    )
+    writeFileSync(
+      join(oldPackRoot, 'modules', 'acme', 'toy', 'wrapper', 'wrapper.yaml'),
+      `id: acme/modules/toy
+name: Toy
+summary: Legacy default migration fixture.
+params:
+  threads:
+    kind: option
+    type: integer
+    default: 2
+outputs:
+  report:
+    type: path
+    path: results/report.txt
+    primary: true
+`
+    )
+    const overlayRetired = join(oldPackRoot, 'modules', 'acme', 'retired', 'wrapper')
+    mkdirSync(overlayRetired, { recursive: true })
+    writeFileSync(join(overlayRetired, 'main.nf'), 'workflow {}\n')
+    writeFileSync(join(overlayRetired, 'params.json'), '{}\n')
+    writeFileSync(
+      join(overlayRetired, 'wrapper.yaml'),
+      `id: acme/modules/retired
+name: Retired
+summary: Package removed by the next bundled version.
+params: {}
+outputs:
+  report:
+    type: path
+    path: results/report.txt
+    primary: true
+`
+    )
+    const overlaySubworkflow = join(oldPackRoot, 'subworkflows', 'acme', 'retired_flow')
+    mkdirSync(join(overlaySubworkflow, 'wrapper'), { recursive: true })
+    writeFileSync(
+      join(overlaySubworkflow, 'main.nf'),
+      "include { RETIRED } from '../../../modules/acme/retired/wrapper/main.nf'\nworkflow {}\n"
+    )
+    writeFileSync(
+      join(overlaySubworkflow, 'wrapper', 'main.nf'),
+      "include { RUN } from '../main.nf'\n"
+    )
+    writeFileSync(join(overlaySubworkflow, 'wrapper', 'params.json'), '{}\n')
+    writeFileSync(
+      join(overlaySubworkflow, 'wrapper', 'wrapper.yaml'),
+      `id: acme/subworkflows/retired-flow
+name: Retired flow
+summary: Dependent package removed by the next bundled version.
+params: {}
+outputs:
+  report:
+    type: path
+    path: results/report.txt
+    primary: true
+`
+    )
+    writeFileSync(
+      join(oldPackRoot, 'pack.json'),
+      `${JSON.stringify({ schemaVersion: 1, name: 'phi-wrappers', version: '9.9.9' })}\n`
+    )
+    writeFileSync(
+      join(oldPackRoot, 'index.json'),
+      `${JSON.stringify(buildLegacyWrapperPackIndex(oldPackRoot), null, 2)}\n`
+    )
+    mkdirSync(join(custom, '..'), { recursive: true })
+    writeFileSync(custom, 'user-authored\n')
+    const migrated = await ensureBundledWrappersInstalled(agentDir, {
+      sourceRoot,
+      packageVersion: '1.0.0'
+    })
+    assert.equal(migrated.migratedPackVersion, '9.9.9')
+    assert.equal(
+      readFileSync(join(agentDir, 'wrappers', 'tree', 'modules/acme/toy/wrapper/main.nf'), 'utf8'),
+      'workflow { overlay }\n'
+    )
+    assert.doesNotMatch(
+      readFileSync(
+        join(agentDir, 'wrappers', 'tree', 'modules/acme/toy/wrapper/wrapper.yaml'),
+        'utf8'
+      ),
+      /default:/
+    )
+    assert.deepEqual(migrated.migratedCustom, ['acme/tools/toy-wrapper'])
+    assert.equal(
+      existsSync(
+        join(
+          agentDir,
+          'wrappers',
+          'custom',
+          'modules',
+          'acme',
+          'toy-wrapper',
+          'wrapper',
+          'wrapper.yaml'
+        )
+      ),
+      true
+    )
+    resetWrapperCompositionCatalogCache()
+    assert.ok(
+      listWrapperCompositionCatalog({ agentDir }).some(
+        (entry) => entry.manifest.id === 'acme/modules/toy-wrapper'
+      )
+    )
+
+    writeBundledCompositionFixture(sourceRoot, 'workflow { v2 }\n')
+    rmSync(join(sourceRoot, 'modules', 'acme', 'retired'), { recursive: true, force: true })
+    const upgraded = await ensureBundledWrappersInstalled(agentDir, {
+      sourceRoot,
+      packageVersion: '1.1.0'
+    })
+    assert.deepEqual(upgraded.installed, ['module-acme-toy'])
+    assert.deepEqual(upgraded.removed, ['module-acme-retired', 'subworkflow-acme-retired-flow'])
+    assert.equal(
+      readFileSync(join(agentDir, 'wrappers', 'tree', 'modules/acme/toy/wrapper/main.nf'), 'utf8'),
+      'workflow { v2 }\n'
+    )
+    assert.equal(readFileSync(custom, 'utf8'), 'user-authored\n')
+    assert.equal(existsSync(join(oldPackRoot, 'index.json')), true)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('an intact but incompatible legacy overlay falls back to bundled source', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-wrapper-pack-fallback-'))
+  const agentDir = join(root, 'agent')
+  const sourceRoot = join(root, 'source')
+  const overlayRoot = join(agentDir, 'wrappers', 'packs', '2.0.0')
+  try {
+    writeBundledCompositionFixture(sourceRoot, 'workflow { bundled }\n')
+    writeBundledCompositionFixture(
+      overlayRoot,
+      "include { GONE } from '../missing/main.nf'\nworkflow {}\n"
+    )
+    writeFileSync(
+      join(overlayRoot, 'pack.json'),
+      `${JSON.stringify({ schemaVersion: 1, name: 'phi-wrappers', version: '2.0.0' })}\n`
+    )
+    writeFileSync(
+      join(overlayRoot, 'index.json'),
+      `${JSON.stringify(buildLegacyWrapperPackIndex(overlayRoot), null, 2)}\n`
+    )
+
+    const result = await ensureBundledWrappersInstalled(agentDir, { sourceRoot })
+    assert.equal(result.migratedPackVersion, undefined)
+    assert.ok(result.legacyPackWarnings.some((warning) => /conversion failed/.test(warning.reason)))
+    assert.equal(
+      readFileSync(join(agentDir, 'wrappers', 'tree', 'modules/acme/toy/wrapper/main.nf'), 'utf8'),
+      'workflow { bundled }\n'
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('addCustomWrapper installs a local wrapper folder as custom', () => {
@@ -124,7 +354,6 @@ test("addCustomWrapper copies the wrapper's real pipeline source, not just wrapp
 
 test('a custom wrapper is never returned by the default agent tools query', () => {
   withAgentDir((agentDir) => {
-    ensureBundledWrappersInstalled(agentDir)
     const sourceRoot = mkdtempSync(join(tmpdir(), 'phi-custom-wrapper-'))
     try {
       writeCustomWrapperFixture(sourceRoot)

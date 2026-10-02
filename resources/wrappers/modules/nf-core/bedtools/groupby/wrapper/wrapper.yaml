@@ -15,7 +15,6 @@ params:
     kind: option
     type: integer
     required: false
-    default: 5
     description: "1-based column number to summarise."
   outdir:
     kind: output
