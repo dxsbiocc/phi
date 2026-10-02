@@ -29,6 +29,9 @@ import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-previe
 import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers/remote-result-download'
 import { isInstalledFigurePreviewPath } from '../src/main/agent/visualization/examples'
 import * as localFileAccess from '../src/main/agent/local-file-access'
+import * as browserIpc from '../src/main/browser/browser-ipc'
+import * as browserWorkspaceRegistry from '../src/main/browser/browser-workspace-registry'
+import * as electronBrowserEngine from '../src/main/browser/electron-browser-engine'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -179,6 +182,16 @@ class FakeSession {
 }
 
 type Handler = (_event: unknown, ...args: unknown[]) => unknown
+type BrowserIntegrationView = {
+  options: { webPreferences: { partition: string; [key: string]: unknown } }
+  webContents: EventEmitter & {
+    loadedUrls: string[]
+    closeCalls: number
+    closeError: Error | null
+  }
+  bounds: Array<{ x: number; y: number; width: number; height: number }>
+  visibility: boolean[]
+}
 type HarnessResult = {
   hostHandlers: Map<string, (params: unknown) => Promise<unknown>>
   setAgentInteractionResponse: (response: Record<string, unknown>) => void
@@ -189,6 +202,7 @@ type HarnessResult = {
   failMcpApiKeyValidation: (error: Error | undefined) => void
   mcpApiKeyValidationCallCount: () => number
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
+  invokeFromForeign: (channel: string, ...args: unknown[]) => Promise<unknown>
   sessions: FakeSession[]
   deleted: string[]
   events: Array<{ channel: string; data: unknown }>
@@ -274,6 +288,10 @@ type HarnessResult = {
   setWorkspaceDiffPatch: (patch: string | null) => void
   savedWorkspaceDiff: () => string | undefined
   tryFrameNavigation: (input: { isMainFrame: boolean; frameName?: string; url: string }) => boolean
+  browserViews: BrowserIntegrationView[]
+  closeMainWindow: () => void
+  activateApp: () => void
+  browserWindowCount: () => number
 }
 
 async function harness(
@@ -380,6 +398,7 @@ async function harness(
   const operationLog: Array<Record<string, unknown>> = []
   const appSettingsUpdates: string[] = []
   const dbConnectorEnabledUpdates: Array<{ id: string; digest: string; enabled: boolean }> = []
+  const browserViews: BrowserIntegrationView[] = []
   let appDefaultProxyMode = 'auto'
   const appNoProjectTaskFolder = '/workspace'
   const appProxyTransportStatus = {
@@ -585,8 +604,109 @@ async function harness(
       runnerEvents.push({ type: 'input_cancelled', sessionId, interactionId })
     }
   }
+  class BrowserSession extends EventEmitter {
+    permissionCheckHandler: unknown
+    permissionRequestHandler: unknown
+
+    setPermissionCheckHandler(handler: unknown): void {
+      this.permissionCheckHandler = handler
+    }
+
+    setPermissionRequestHandler(handler: unknown): void {
+      this.permissionRequestHandler = handler
+    }
+  }
+
+  class BrowserContents extends EventEmitter {
+    readonly session = new BrowserSession()
+    readonly loadedUrls: string[] = []
+    readonly history: string[] = ['about:blank']
+    historyIndex = 0
+    closeCalls = 0
+    closeError: Error | null = null
+    readonly navigationHistory = {
+      canGoBack: (): boolean => this.historyIndex > 0,
+      canGoForward: (): boolean => this.historyIndex < this.history.length - 1,
+      goBack: (): void => {
+        if (this.historyIndex > 0) this.historyIndex -= 1
+      },
+      goForward: (): void => {
+        if (this.historyIndex < this.history.length - 1) this.historyIndex += 1
+      }
+    }
+
+    async loadURL(url: string): Promise<void> {
+      this.loadedUrls.push(url)
+      if (url === 'about:blank' && this.loadedUrls.length === 1) return
+      this.history.splice(this.historyIndex + 1)
+      this.history.push(url)
+      this.historyIndex = this.history.length - 1
+      this.emit('did-start-loading')
+      this.emit('did-frame-navigate', {}, url, 200, 'OK', true)
+      this.emit('page-title-updated', {}, `Title: ${url}`)
+      this.emit('did-stop-loading')
+    }
+
+    reload(): void {
+      this.emit('did-start-loading')
+      this.emit('did-frame-navigate', {}, this.history[this.historyIndex], 200, 'OK', true)
+      this.emit('did-stop-loading')
+    }
+
+    stop(): void {
+      this.emit('did-stop-loading')
+    }
+
+    close(): void {
+      this.closeCalls += 1
+      if (this.closeError) throw this.closeError
+    }
+
+    closeDevTools(): void {
+      return
+    }
+
+    async capturePage(): Promise<{ toPNG: () => Buffer }> {
+      return { toPNG: () => Buffer.from('png') }
+    }
+
+    sendInputEvent(): void {
+      return
+    }
+  }
+
+  class WebContentsView {
+    readonly webContents = new BrowserContents()
+    readonly bounds: Array<{ x: number; y: number; width: number; height: number }> = []
+    readonly visibility: boolean[] = []
+
+    constructor(readonly options: BrowserIntegrationView['options']) {
+      browserViews.push(this)
+    }
+
+    setBounds(bounds: { x: number; y: number; width: number; height: number }): void {
+      this.bounds.push({ ...bounds })
+    }
+
+    setVisible(visible: boolean): void {
+      this.visibility.push(visible)
+    }
+  }
+
   class Window extends EventEmitter {
     static windows: Window[] = []
+    readonly childViews: WebContentsView[] = []
+    minimized = false
+    visible = true
+    readonly contentView = {
+      addChildView: (view: WebContentsView): void => {
+        if (!this.childViews.includes(view)) this.childViews.push(view)
+      },
+      removeChildView: (view: WebContentsView): void => {
+        const index = this.childViews.indexOf(view)
+        if (index >= 0) this.childViews.splice(index, 1)
+      }
+    }
     webContents = {
       send: (channel: string, data: unknown): void => {
         operationLog.push({ type: 'webContents.send', channel, data })
@@ -614,14 +734,40 @@ async function harness(
     }
     close(): void {
       this.emit('close')
+      const index = Window.windows.indexOf(this)
+      if (index >= 0) Window.windows.splice(index, 1)
       this.emit('closed')
+    }
+    getContentBounds(): { x: number; y: number; width: number; height: number } {
+      return { x: 0, y: 0, width: 1200, height: 800 }
+    }
+    isMinimized(): boolean {
+      return this.minimized
+    }
+    isVisible(): boolean {
+      return this.visible
+    }
+    minimize(): void {
+      this.minimized = true
+      this.emit('minimize')
+    }
+    restore(): void {
+      this.minimized = false
+      this.emit('restore')
+    }
+    hide(): void {
+      this.visible = false
+      this.emit('hide')
     }
     isFullScreen = (): boolean => false
     setBackgroundColor = noop
     setFullScreen = noop
     setVibrancy = noop
     setWindowButtonVisibility = noop
-    show = noop
+    show = (): void => {
+      this.visible = true
+      this.emit('show')
+    }
     loadURL = noop
     loadFile = noop
   }
@@ -876,6 +1022,21 @@ async function harness(
     },
     quit: noop
   })
+  class MemoryBrowserCheckpointStore {
+    readonly values = new Map<string, unknown>()
+
+    load(sessionId: string): unknown {
+      return this.values.get(sessionId) ?? null
+    }
+
+    save(sessionId: string, checkpoint: unknown): void {
+      this.values.set(sessionId, structuredClone(checkpoint))
+    }
+
+    remove(sessionId: string): void {
+      this.values.delete(sessionId)
+    }
+  }
   const modules: Record<string, unknown> = {
     'node:crypto': { createHash },
     './agent-env': {},
@@ -1039,6 +1200,7 @@ async function harness(
     electron: {
       app,
       BrowserWindow: Window,
+      WebContentsView,
       shell: {
         openExternal: noop,
         openPath: async (filePath: string): Promise<string> => {
@@ -1091,6 +1253,12 @@ async function harness(
       nativeImage: { createFromPath: () => ({ isEmpty: () => false }) },
       nativeTheme: { shouldUseDarkColors: false }
     },
+    './browser/browser-ipc': browserIpc,
+    './browser/browser-checkpoints': {
+      FileSystemBrowserCheckpointStore: MemoryBrowserCheckpointStore
+    },
+    './browser/electron-browser-engine': electronBrowserEngine,
+    './browser/browser-workspace-registry': browserWorkspaceRegistry,
     '@electron-toolkit/utils': {
       electronApp: { setAppUserModelId: noop },
       optimizer: { watchWindowShortcuts: noop },
@@ -2459,6 +2627,19 @@ async function harness(
       assert.ok(handler, `Missing IPC handler ${channel}`)
       return handler({ sender: Window.getFocusedWindow()?.webContents }, ...args)
     },
+    invokeFromForeign: async (channel, ...args): Promise<unknown> => {
+      const handler = handlers.get(channel)
+      assert.ok(handler, `Missing IPC handler ${channel}`)
+      return handler(
+        {
+          sender: {
+            isDestroyed: (): boolean => false,
+            send: noop
+          }
+        },
+        ...args
+      )
+    },
     setWorkspaceChangeSummary: (summary): void => {
       workspaceChangeSummary = summary
     },
@@ -2466,6 +2647,14 @@ async function harness(
       workspaceDiffPatch = patch
     },
     savedWorkspaceDiff: (): string | undefined => savedWorkspaceDiff,
+    browserViews,
+    closeMainWindow: (): void => {
+      Window.getAllWindows()[0]?.close()
+    },
+    activateApp: (): void => {
+      app.emit('activate')
+    },
+    browserWindowCount: (): number => Window.getAllWindows().length,
     tryFrameNavigation: (input): boolean => {
       let prevented = false
       frameNavigationHandler?.({
@@ -2557,6 +2746,242 @@ async function harness(
     copiedText: () => copiedText
   }
 }
+
+test('main browser IPC routes the trusted renderer through the current Phi session', async () => {
+  const app = await harness()
+  const current = (await app.invoke('sessions:create')) as { phiSessionId: string }
+  const initial = (await app.invoke('browser:snapshot', {
+    sessionId: 'phi-forged'
+  })) as { sessionId: string; tabs: unknown[] }
+  assert.equal(initial.sessionId, current.phiSessionId)
+  assert.deepEqual(initial.tabs, [])
+  assert.equal(app.browserViews.length, 0)
+
+  const outcome = (await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'browser-open-1',
+    url: 'https://example.test',
+    sessionId: 'phi-forged',
+    actor: { kind: 'agent', sessionId: 'phi-forged' }
+  })) as { ok: boolean; snapshot: { sessionId: string } }
+
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.snapshot.sessionId, current.phiSessionId)
+  await assert.rejects(
+    app.invokeFromForeign('browser:snapshot'),
+    /Browser renderer is not authorized/
+  )
+})
+
+test('main browser IPC derives project partitions and applies only validated viewports', async () => {
+  const app = await harness()
+  await assert.rejects(app.invoke('browser:snapshot'), /Browser session is unavailable/)
+
+  const ordinary = (await app.invoke('sessions:create')) as { phiSessionId: string }
+  const ordinaryOpen = (await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'ordinary-open',
+    url: 'https://ordinary.example'
+  })) as { snapshot: { activeTabId: string } }
+  const ordinaryPartition = app.browserViews[0].options.webPreferences.partition
+  assert.doesNotMatch(ordinaryPartition, /persist:|workspace|projects\//)
+  assert.equal(ordinaryOpen.snapshot.activeTabId.length > 0, true)
+  assert.equal(ordinary.phiSessionId.length > 0, true)
+
+  const project = (await app.invoke('projects:newSession', '/projects/browser-project', 'ask')) as {
+    phiSessionId: string
+  }
+  const projectOpen = (await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'project-open',
+    url: 'https://project.example',
+    sessionId: ordinary.phiSessionId,
+    owner: { kind: 'ordinary' }
+  })) as { snapshot: { sessionId: string; activeTabId: string } }
+  assert.equal(projectOpen.snapshot.sessionId, project.phiSessionId)
+  const projectView = app.browserViews[1]
+  const projectPartition = projectView.options.webPreferences.partition
+  assert.notEqual(projectPartition, ordinaryPartition)
+  assert.doesNotMatch(projectPartition, /browser-project|projects\/|persist:/)
+
+  await app.invoke('browser:setViewport', {
+    tabId: projectOpen.snapshot.activeTabId,
+    viewport: { x: 10, y: 20, width: 300, height: 200 },
+    sessionId: ordinary.phiSessionId
+  })
+  assert.deepEqual(projectView.bounds.at(-1), { x: 10, y: 20, width: 300, height: 200 })
+  assert.equal(projectView.visibility.at(-1), true)
+  const beforeInvalid = projectView.bounds.length
+  await assert.rejects(
+    app.invoke('browser:setViewport', {
+      tabId: projectOpen.snapshot.activeTabId,
+      viewport: { x: 0, y: 0, width: Number.NaN, height: 200 }
+    }),
+    /Invalid browser request/
+  )
+  assert.equal(projectView.bounds.length, beforeInvalid)
+
+  const browserEvents = app.events.filter((event) => event.channel === 'browser:event')
+  assert.equal(browserEvents.length > 0, true)
+  assert.equal(
+    browserEvents.some(
+      (entry) => (entry.data as { sessionId?: string }).sessionId === project.phiSessionId
+    ),
+    true
+  )
+})
+
+test('main browser host handler trusts runtime origin and ignores forged agent identity', async () => {
+  const app = await harness()
+  const current = (await app.invoke('projects:newSession', '/projects/browser-agent', 'ask')) as {
+    phiSessionId: string
+  }
+  await app.invoke('agent:prompt', 'initialize runtime mapping')
+  const runtimeSessionId = app.sessions[0].runtimeSessionId
+  const execute = app.hostHandlers.get('browser.execute')
+  assert.ok(execute)
+
+  const outcome = (await execute({
+    originSessionId: runtimeSessionId,
+    runId: 'agent-run-1',
+    toolCallId: 'tool-call-1',
+    sessionId: 'phi-forged',
+    actor: { kind: 'human' },
+    command: {
+      type: 'open',
+      requestId: 'agent-open-1',
+      url: 'https://agent.example',
+      sessionId: 'phi-forged'
+    }
+  })) as { snapshot: { sessionId: string; tabs: Array<{ isAgentControlled: boolean }> } }
+  assert.equal(outcome.snapshot.sessionId, current.phiSessionId)
+  assert.equal(outcome.snapshot.tabs.at(-1)?.isAgentControlled, true)
+
+  await assert.rejects(
+    execute({
+      originSessionId: 'runtime-unknown',
+      runId: 'agent-run-1',
+      toolCallId: 'tool-call-1',
+      command: { type: 'newTab', requestId: 'unknown-open' }
+    }),
+    /Browser session is unavailable/
+  )
+})
+
+test('main browser cleanup restores idle metadata without loading pages after window reopen', async () => {
+  const app = await harness()
+  const current = (await app.invoke('sessions:create')) as {
+    path: string
+    phiSessionId: string
+  }
+  await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'delete-open',
+    url: 'https://delete.example'
+  })
+  const deletedView = app.browserViews[0]
+  await app.invoke('sessions:delete', current.path)
+  assert.equal(deletedView.webContents.closeCalls, 1)
+  assert.deepEqual(app.deleted, [current.path])
+
+  await app.invoke('sessions:create')
+  await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'window-open',
+    url: 'https://window.example'
+  })
+  const windowView = app.browserViews.at(-1)
+  assert.ok(windowView)
+  const viewCountBeforeClose = app.browserViews.length
+  app.closeMainWindow()
+  await tick()
+  assert.equal(windowView.webContents.closeCalls, 1)
+  assert.equal(app.browserWindowCount(), 0)
+
+  app.activateApp()
+  assert.equal(app.browserWindowCount(), 1)
+  const restored = (await app.invoke('browser:snapshot')) as {
+    activeTabId: string
+    tabs: Array<{ id: string; restorable?: boolean; url: string }>
+  }
+  assert.equal(restored.tabs.length, 1)
+  assert.equal(restored.tabs[0].restorable, true)
+  assert.equal(restored.tabs[0].url, 'https://window.example/')
+  assert.equal(app.browserViews.length, viewCountBeforeClose)
+
+  await app.invoke('browser:execute', {
+    type: 'restore',
+    requestId: 'restore-after-reopen',
+    tabId: restored.activeTabId
+  })
+  assert.equal(app.browserViews.length, viewCountBeforeClose + 1)
+  assert.equal(
+    app.browserViews.at(-1)?.webContents.loadedUrls.includes('https://window.example/'),
+    true
+  )
+})
+
+test('main browser cleanup failure permanently rejects browser recreation for the process', async () => {
+  const app = await harness()
+  await app.invoke('sessions:create')
+  await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'failed-window-open',
+    url: 'https://failed-window.example'
+  })
+  const failedView = app.browserViews[0]
+  failedView.webContents.closeError = new Error('raw window cleanup secret')
+  app.closeMainWindow()
+  await tick()
+  assert.equal(failedView.webContents.closeCalls, 1)
+  assert.equal(app.browserWindowCount(), 0)
+
+  app.activateApp()
+  assert.equal(app.browserWindowCount(), 1)
+  const viewCount = app.browserViews.length
+  for (const request of [
+    () => app.invoke('browser:snapshot'),
+    () =>
+      app.invoke('browser:execute', {
+        type: 'open',
+        requestId: 'must-not-recreate',
+        url: 'https://must-not-load.example'
+      })
+  ]) {
+    await assert.rejects(
+      request(),
+      (error: Error) =>
+        error.message === 'Browser request failed' &&
+        !error.message.includes('raw window cleanup secret')
+    )
+  }
+  assert.equal(app.browserViews.length, viewCount)
+  assert.equal(failedView.webContents.closeCalls, 1)
+})
+
+test('main browser session deletion keeps a cleanup tombstone without leaking raw errors', async () => {
+  const app = await harness()
+  const current = (await app.invoke('sessions:create')) as {
+    path: string
+    phiSessionId: string
+  }
+  await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'failed-delete-open',
+    url: 'https://cleanup.example'
+  })
+  app.browserViews[0].webContents.closeError = new Error('raw session cleanup secret')
+
+  await app.invoke('sessions:delete', current.path)
+  assert.deepEqual(app.deleted, [current.path])
+  await app.invoke('sessions:switch', current.path)
+  await assert.rejects(
+    app.invoke('browser:snapshot'),
+    (error: Error) =>
+      error.message === 'Browser request failed' &&
+      !error.message.includes('raw session cleanup secret')
+  )
+})
 
 test(
   'main IPC: stopping during SDK preflight never starts the cancelled model run',

@@ -5,6 +5,7 @@ import type {
   BrowserError,
   BrowserOutcome,
   BrowserTabSnapshot,
+  BrowserViewport,
   BrowserWorkspaceEvent,
   BrowserWorkspaceSnapshot
 } from '../../shared/browserTypes'
@@ -155,6 +156,26 @@ export class BrowserWorkspace {
 
   snapshot(): BrowserWorkspaceSnapshot {
     return cloneBrowserWorkspaceSnapshot(this.#currentSnapshot())
+  }
+
+  setViewport(tabId: string, viewport: BrowserViewport | null): Promise<void> {
+    const copiedViewport = viewport ? { ...viewport } : null
+    if (this.#disposed) return Promise.reject(new Error('Browser workspace is disposed'))
+    const run = this.#commandTail.then(async () => {
+      if (this.#disposed) throw new Error('Browser workspace is disposed')
+      const tab = this.#tabCollection.find(tabId)
+      if (!tab?.handle) throw new Error('Browser tab is not available for presentation')
+      try {
+        await this.#engine.setViewport(tab.handle, copiedViewport)
+      } catch {
+        throw new Error('Browser viewport could not be applied')
+      }
+    })
+    this.#commandTail = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
   }
 
   subscribe(listener: (event: BrowserWorkspaceEvent) => void): () => void {

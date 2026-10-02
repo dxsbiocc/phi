@@ -46,6 +46,7 @@ import {
   app,
   shell,
   BrowserWindow,
+  WebContentsView,
   clipboard,
   dialog,
   ipcMain,
@@ -54,6 +55,14 @@ import {
   Notification,
   powerSaveBlocker
 } from 'electron'
+import {
+  BrowserIpcCoordinator,
+  registerBrowserRendererIpc,
+  type BrowserIpcSession
+} from './browser/browser-ipc'
+import { FileSystemBrowserCheckpointStore } from './browser/browser-checkpoints'
+import { ElectronBrowserEngine } from './browser/electron-browser-engine'
+import { BrowserWorkspaceRegistry } from './browser/browser-workspace-registry'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { createAgentSession } from './agent/session/session-manager'
@@ -420,6 +429,101 @@ function applyDockIcon(): void {
 
 let mainWindow: BrowserWindow | null = null
 let mainWindowCleanupStarted = false
+type BrowserRegistryLifecycle = 'idle' | 'disposing' | 'failed'
+let browserWorkspaceRegistry: BrowserWorkspaceRegistry | null = null
+let browserWorkspaceRegistryLifecycle: BrowserRegistryLifecycle = 'idle'
+let browserWorkspaceRegistryDisposal: Promise<void> | null = null
+const browserCheckpointStore = new FileSystemBrowserCheckpointStore({ agentDir: AGENT_DIR })
+
+function browserPolicyContext(): { applicationOrigins?: string[] } {
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL
+  return rendererUrl ? { applicationOrigins: [rendererUrl] } : {}
+}
+
+function getBrowserWorkspaceRegistry(): BrowserWorkspaceRegistry {
+  if (mainWindowCleanupStarted || browserWorkspaceRegistryLifecycle !== 'idle') {
+    throw new Error('Browser workspace is unavailable')
+  }
+  browserWorkspaceRegistry ??= new BrowserWorkspaceRegistry({
+    engineFactory: () =>
+      new ElectronBrowserEngine({
+        WebContentsView,
+        getOwningWindow: () => {
+          const window = mainWindow
+          return window && !window.isDestroyed() ? window : null
+        },
+        policyContext: browserPolicyContext()
+      }),
+    policyContext: browserPolicyContext(),
+    checkpointStore: browserCheckpointStore
+  })
+  return browserWorkspaceRegistry
+}
+
+function cleanupBrowserWorkspaceRegistry(): void {
+  const registry = browserWorkspaceRegistry
+  if (!registry || browserWorkspaceRegistryLifecycle !== 'idle') return
+  browserWorkspaceRegistryLifecycle = 'disposing'
+  let disposal: Promise<void>
+  try {
+    disposal = registry.disposeAll()
+  } catch {
+    browserWorkspaceRegistryLifecycle = 'failed'
+    writeAppLog({ level: 'error', event: 'browser_registry_cleanup_failed' })
+    return
+  }
+  browserWorkspaceRegistryDisposal = disposal
+  void disposal.then(
+    () => {
+      if (browserWorkspaceRegistry !== registry || browserWorkspaceRegistryDisposal !== disposal) {
+        return
+      }
+      browserWorkspaceRegistry = null
+      browserWorkspaceRegistryDisposal = null
+      browserWorkspaceRegistryLifecycle = 'idle'
+    },
+    () => {
+      if (browserWorkspaceRegistry !== registry || browserWorkspaceRegistryDisposal !== disposal) {
+        return
+      }
+      browserWorkspaceRegistryLifecycle = 'failed'
+      writeAppLog({ level: 'error', event: 'browser_registry_cleanup_failed' })
+    }
+  )
+}
+
+function browserSessionForPhiId(phiSessionId: string): BrowserIpcSession | undefined {
+  const manifest = findPhiSessionById(phiSessionId)
+  if (!manifest) return undefined
+  const project = manifest.projectId ? getProject(manifest.projectId) : undefined
+  const location = manifest.projectLocation ?? project?.location
+  return {
+    sessionId: phiSessionId,
+    owner: location ? { kind: 'project', location } : { kind: 'ordinary' }
+  }
+}
+
+const browserIpcCoordinator = new BrowserIpcCoordinator({
+  getRegistry: getBrowserWorkspaceRegistry,
+  getTrustedRenderer: () => {
+    const window = mainWindow
+    return window && !window.isDestroyed() ? window.webContents : null
+  },
+  resolveHumanSession: () => {
+    const current = getCurrentSessionPayload()
+    if (!current.phiSessionId) return undefined
+    return {
+      sessionId: current.phiSessionId,
+      owner: current.projectLocation
+        ? { kind: 'project', location: current.projectLocation }
+        : { kind: 'ordinary' }
+    }
+  },
+  resolveAgentSession: (originSessionId) => {
+    const origin = resolveOriginSession(originSessionId)
+    return origin ? browserSessionForPhiId(origin.phiSessionId) : undefined
+  }
+})
 
 type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -1111,6 +1215,10 @@ function resolveOriginSession(
     : findActivePromptRunByRuntimeSessionId(originSessionId)?.phiSessionId
   return phiSessionId ? { phiSessionId, cwd: origin?.cwd ?? currentCwd } : undefined
 }
+
+getOmpBridge().registerHostHandler('browser.execute', (params) =>
+  browserIpcCoordinator.executeAgent(params)
+)
 
 async function listBackgroundAgentJobs(): Promise<BackgroundAgentJob[]> {
   const raw = await getOmpBridge().request<unknown>('agentRuns.list', {})
@@ -5381,6 +5489,7 @@ async function stopAllPromptRuns(): Promise<void> {
 function cleanupMainWindowRuntime(): void {
   if (mainWindowCleanupStarted) return
   mainWindowCleanupStarted = true
+  cleanupBrowserWorkspaceRegistry()
   void stopAllPromptRuns()
   notebookFileWatcher.dispose()
   jupyterServerRegistry.disposeAll()
@@ -5990,6 +6099,7 @@ app.whenReady().then(() => {
 
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
+  registerBrowserRendererIpc(ipcMain, browserIpcCoordinator)
   ipcMain.handle('window:close', () => {
     getActiveWindow()?.close()
   })
@@ -6576,13 +6686,14 @@ app.whenReady().then(() => {
     return acknowledgeSession(path, cwd)
   })
   ipcMain.handle('sessions:delete', async (_, path: string) => {
-    if (currentSessionPath === path) {
-      await disposeAndSwitchSession(undefined)
-    }
+    const deletionCwd = currentCwd
     const phiSessionId = phiSessionIdFromPath(path)
     const manifest = phiSessionId
       ? findPhiSessionById(phiSessionId)
-      : findPhiSessionByRuntimePath(path, currentCwd)
+      : findPhiSessionByRuntimePath(path, deletionCwd)
+    if (currentSessionPath === path) {
+      await disposeAndSwitchSession(undefined)
+    }
     // Let an aborted run finish persisting before unlinking its history; otherwise
     // the final SDK write can recreate a conversation the user just deleted.
     await waitForSessionCleanup({
@@ -6590,6 +6701,13 @@ app.whenReady().then(() => {
       cwd: manifest?.cwd ?? currentCwd,
       permissionMode: currentPermissionMode
     })
+    if (manifest?.sessionId && browserWorkspaceRegistry) {
+      try {
+        await browserWorkspaceRegistry.disposeSession(manifest.sessionId)
+      } catch {
+        writeAppLog({ level: 'error', event: 'browser_session_cleanup_failed' })
+      }
+    }
     deleteSession(path)
   })
   ipcMain.handle('sessions:rename', async (_, path: string, name: string) => {
