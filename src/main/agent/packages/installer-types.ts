@@ -2,6 +2,9 @@ import type { collectGarbage, PhiPlatform } from '../envs'
 import type { PluginEnvironmentBuilder, PluginNamespace } from '../plugins/loader'
 import type { PackageDependency, PackageRequirements, PackageType } from './manifest'
 
+export type RegistryTrust = 'builtin' | 'official' | 'imported'
+export type RegistryTrustTier = RegistryTrust
+
 export interface RegistryPackageEntry {
   id: string
   type: PackageType
@@ -21,6 +24,7 @@ export interface RegistryPackageEntry {
 export interface LocalRegistry {
   id: string
   dir: string
+  trust: RegistryTrustTier
   schemaVersion: 1
   generatedAt: string
   packages: RegistryPackageEntry[]
@@ -34,6 +38,9 @@ export interface PackageRequest {
 
 export interface PlannedPackage extends RegistryPackageEntry {
   installedBy: 'user' | 'dependency'
+  /** Offline import may resolve this entry from a different known registry. */
+  sourceRegistry?: LocalRegistry
+  sourceArchive?: string
 }
 
 export interface InstallPlan {
@@ -53,6 +60,7 @@ export interface PackageSourceMetadata {
   sha256: string
   installedAt: string
   installedBy: 'user' | 'dependency'
+  trust: RegistryTrustTier
 }
 
 export interface InstalledPackage {
@@ -66,6 +74,7 @@ export interface InstalledPackage {
   installedBy: 'user' | 'dependency'
   registry: string
   sha256: string
+  trust: RegistryTrustTier
   enabled?: boolean
 }
 

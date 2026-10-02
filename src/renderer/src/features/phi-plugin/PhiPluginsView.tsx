@@ -16,6 +16,7 @@ import {
 import type { PhiPluginInstallPreview } from '../../../../shared/phiPluginTypes'
 import { PhiIcons } from '../../icons'
 import { PhiPluginsCatalog } from './components/PhiPluginsCatalog'
+import { PhiPluginPackageCatalog } from './components/PhiPluginPackageCatalog'
 import { usePhiPlugins, type PhiPluginDisplayItem } from './hooks/usePhiPlugins'
 import { formatPhiPluginProblems, isSemanticUpgrade } from './lib/phiPlugins'
 
@@ -168,6 +169,11 @@ export function PhiPluginsView(): React.JSX.Element {
               {notice}
             </Alert>
           ) : null}
+
+          <PhiPluginPackageCatalog
+            installedIds={new Set(plugins.map((plugin) => plugin.id))}
+            onChanged={refresh}
+          />
 
           <PhiPluginsCatalog
             plugins={plugins}

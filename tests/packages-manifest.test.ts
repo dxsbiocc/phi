@@ -37,7 +37,7 @@ function writeSkill(root: string, manifest: Record<string, unknown> = {}): strin
 }
 
 test('published package schema is the runtime schema', () => {
-  assert.equal(PACKAGE_CONTRACT_VERSION, '1.1.0')
+  assert.equal(PACKAGE_CONTRACT_VERSION, '1.2.0')
   const published = JSON.parse(
     readFileSync(resolve('docs/contracts/package.schema.json'), 'utf8')
   ) as unknown

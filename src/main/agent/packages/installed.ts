@@ -6,7 +6,7 @@ import semver from 'semver'
 import { listInstalledPlugins } from '../plugins/loader'
 import { getPhiAgentDir } from '../runtime-paths'
 import type { InstalledPackage, InstallerOptions, PackageSourceMetadata } from './installer-types'
-import { isSourceMetadata, packageKey } from './installer-utils'
+import { normalizeSourceMetadata, packageKey } from './installer-utils'
 import { readPackageManifest, type PackageManifest, type PackageType } from './manifest'
 import { listActiveMcpPackages } from './mcp-store'
 import { listActiveSkillPackages } from './store'
@@ -56,6 +56,7 @@ export function packagesAvailableForPlanning(agentDir: string): InstalledPackage
       installedBy: 'user',
       registry: plugin.source,
       sha256: '',
+      trust: plugin.source === 'bundled' ? 'builtin' : 'imported',
       enabled: plugin.enabled
     }))
   return [...managed, ...loaderPlugins]
@@ -66,16 +67,18 @@ function installedPackageFromDir(
   expectedType: PackageType
 ): InstalledPackage | undefined {
   let manifest: PackageManifest
-  let source: PackageSourceMetadata
+  let source: PackageSourceMetadata | undefined
   try {
     manifest = readPackageManifest(dir)
-    source = JSON.parse(readFileSync(join(dir, '.source.json'), 'utf8')) as PackageSourceMetadata
+    source = normalizeSourceMetadata(
+      JSON.parse(readFileSync(join(dir, '.source.json'), 'utf8')) as unknown
+    )
   } catch {
     return undefined
   }
   if (
     manifest.type !== expectedType ||
-    !isSourceMetadata(source) ||
+    !source ||
     source.id !== manifest.id ||
     source.type !== manifest.type ||
     source.version !== manifest.version
@@ -92,6 +95,7 @@ function installedPackageFromDir(
     installedAt: source.installedAt,
     installedBy: source.installedBy,
     registry: source.registry,
-    sha256: source.sha256
+    sha256: source.sha256,
+    trust: source.trust
   }
 }

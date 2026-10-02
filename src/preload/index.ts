@@ -77,10 +77,13 @@ import type {
   PhiPluginMutationResult
 } from '../shared/phiPluginTypes'
 import type {
+  KnownPackageRegistryView,
+  OfflinePackageImportPreview,
   InstalledPackageView,
   PackageInstallPlanView,
   PackageManagerType,
-  PackageRegistryView
+  PackageRegistryView,
+  PackageUpdateView
 } from '../shared/packageManagerTypes'
 import type {
   EnablementItemKey,
@@ -906,7 +909,16 @@ type RendererAuthApi = {
   setPhiPluginEnabled: (id: string, enabled: boolean) => Promise<PhiPluginMutationResult>
   uninstallPhiPlugin: (id: string) => Promise<PhiPluginMutationResult>
   pickPackageRegistryDirectory: () => Promise<string | null>
+  pickPackageArchive: () => Promise<string | null>
   readPackageRegistry: (dir: string) => Promise<PackageRegistryView>
+  listPackageRegistries: () => Promise<KnownPackageRegistryView[]>
+  removePackageRegistry: (id: string) => Promise<KnownPackageRegistryView[]>
+  previewPackageImport: (path: string) => Promise<OfflinePackageImportPreview>
+  importPackage: (path: string) => Promise<InstalledPackageView[]>
+  listPackageUpdates: () => Promise<PackageUpdateView[]>
+  applyPackageUpdate: (type: PackageManagerType, id: string) => Promise<InstalledPackageView[]>
+  applyAllPackageUpdates: () => Promise<InstalledPackageView[]>
+  onPackageUpdatesAvailable: (cb: (updates: PackageUpdateView[]) => void) => Unsubscribe
   planPackageInstall: (
     dir: string,
     type: PackageManagerType,
@@ -1451,8 +1463,29 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('phiPlugins:uninstall', id),
   pickPackageRegistryDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke('packages:pickRegistryDirectory'),
+  pickPackageArchive: (): Promise<string | null> => ipcRenderer.invoke('packages:pickArchive'),
   readPackageRegistry: (dir: string): Promise<PackageRegistryView> =>
     ipcRenderer.invoke('packages:registry', dir),
+  listPackageRegistries: (): Promise<KnownPackageRegistryView[]> =>
+    ipcRenderer.invoke('packages:listRegistries'),
+  removePackageRegistry: (id: string): Promise<KnownPackageRegistryView[]> =>
+    ipcRenderer.invoke('packages:removeRegistry', id),
+  previewPackageImport: (path: string): Promise<OfflinePackageImportPreview> =>
+    ipcRenderer.invoke('packages:previewImport', path),
+  importPackage: (path: string): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('packages:import', path),
+  listPackageUpdates: (): Promise<PackageUpdateView[]> =>
+    ipcRenderer.invoke('packages:listUpdates'),
+  applyPackageUpdate: (type: PackageManagerType, id: string): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('packages:applyUpdate', type, id),
+  applyAllPackageUpdates: (): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('packages:applyAllUpdates'),
+  onPackageUpdatesAvailable: (cb: (updates: PackageUpdateView[]) => void): Unsubscribe => {
+    const listener = (_event: Electron.IpcRendererEvent, updates: PackageUpdateView[]): void =>
+      cb(updates)
+    ipcRenderer.on('packages:updatesAvailable', listener)
+    return () => ipcRenderer.removeListener('packages:updatesAvailable', listener)
+  },
   planPackageInstall: (
     dir: string,
     type: PackageManagerType,

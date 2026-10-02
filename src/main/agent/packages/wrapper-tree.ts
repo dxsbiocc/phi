@@ -21,7 +21,13 @@ import { getPhiAgentDir } from '../runtime-paths'
 import { collectIncludeReferences } from '../wrappers/composition/includes'
 import { parseWrapperCompositionManifest } from '../wrappers/composition/manifest'
 import type { InstalledPackage, PackageSourceMetadata, StagedPackage } from './installer-types'
-import { assertSafePackagePath, compareText, errorCode, isRecord } from './installer-utils'
+import {
+  assertSafePackagePath,
+  compareText,
+  errorCode,
+  isRecord,
+  normalizeSourceMetadata
+} from './installer-utils'
 import {
   readPackageManifest,
   type PackageDependency,
@@ -116,7 +122,8 @@ export function listInstalledWrapperPackages(agentDir = getPhiAgentDir()): Insta
       installedAt: state.source.installedAt,
       installedBy: state.source.installedBy,
       registry: state.source.registry,
-      sha256: state.source.sha256
+      sha256: state.source.sha256,
+      trust: state.source.trust
     }))
 }
 
@@ -485,7 +492,7 @@ function parsePackageState(
     throw new Error(`invalid wrapper tree package entry '${id}' in ${registryPath}`)
   }
   const manifest = value.manifest
-  const source = value.source
+  const source = normalizeSourceMetadata(value.source)
   if (
     typeof value.version !== 'string' ||
     !semver.valid(value.version) ||
@@ -525,19 +532,16 @@ function parsePackageState(
 }
 
 function isWrapperSource(
-  value: unknown,
+  value: PackageSourceMetadata | undefined,
   id: string,
   version: string
 ): value is PackageSourceMetadata {
   return (
-    isRecord(value) &&
-    typeof value.registry === 'string' &&
+    value !== undefined &&
     value.id === id &&
     value.type === 'wrapper' &&
     value.version === version &&
-    typeof value.sha256 === 'string' &&
-    typeof value.installedAt === 'string' &&
     Number.isFinite(Date.parse(value.installedAt)) &&
-    (value.installedBy === 'user' || value.installedBy === 'dependency')
+    (value.trust === 'builtin' || value.trust === 'official' || value.trust === 'imported')
   )
 }

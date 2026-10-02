@@ -45,10 +45,13 @@ import type {
   EnablementSnapshot
 } from '../../shared/enablementTypes'
 import type {
+  KnownPackageRegistryView,
+  OfflinePackageImportPreview,
   InstalledPackageView,
   PackageInstallPlanView,
   PackageManagerType,
-  PackageRegistryView
+  PackageRegistryView,
+  PackageUpdateView
 } from '../../shared/packageManagerTypes'
 import type { SkillContent, SkillSummary } from '../../shared/skillTypes'
 export type { SkillContent, SkillSourceCategory, SkillSummary } from '../../shared/skillTypes'
@@ -926,7 +929,16 @@ export type RendererApi = AutoCompactionApi & {
   installPlugin: (source: string) => Promise<PluginCatalogItem[]>
   removePlugin: (source: string) => Promise<PluginCatalogItem[]>
   pickPackageRegistryDirectory: () => Promise<string | null>
+  pickPackageArchive: () => Promise<string | null>
   readPackageRegistry: (dir: string) => Promise<PackageRegistryView>
+  listPackageRegistries: () => Promise<KnownPackageRegistryView[]>
+  removePackageRegistry: (id: string) => Promise<KnownPackageRegistryView[]>
+  previewPackageImport: (path: string) => Promise<OfflinePackageImportPreview>
+  importPackage: (path: string) => Promise<InstalledPackageView[]>
+  listPackageUpdates: () => Promise<PackageUpdateView[]>
+  applyPackageUpdate: (type: PackageManagerType, id: string) => Promise<InstalledPackageView[]>
+  applyAllPackageUpdates: () => Promise<InstalledPackageView[]>
+  onPackageUpdatesAvailable: (cb: (updates: PackageUpdateView[]) => void) => () => void
   planPackageInstall: (
     dir: string,
     type: PackageManagerType,

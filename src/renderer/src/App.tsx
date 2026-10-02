@@ -61,6 +61,7 @@ import FilePreviewPanel, {
 } from './features/file-preview/FilePreviewPanel'
 import AnalysisView, { type AnalysisWorkspaceFileTab } from './features/analysis/AnalysisView'
 import { WorkspaceSidePanel } from './components/WorkspaceSidePanel'
+import { PackageUpdateNotice } from './components/PackageUpdateNotice'
 import { useAnalysisNotebookRuntime } from './features/analysis/hooks/useAnalysisNotebookRuntime'
 import { WorkspaceResourceTabs } from './components/WorkspaceResourceTabs'
 import { createAppTheme } from './theme'
@@ -4010,6 +4011,11 @@ function App(): React.JSX.Element {
           onPickRegistryDirectory={() => rendererApi.pickPackageRegistryDirectory()}
           onReadRegistry={(dir) => rendererApi.readPackageRegistry(dir)}
           onInstallPackage={onInstallSkillPackage}
+          onApplyUpdate={async (entry) => {
+            await rendererApi.applyPackageUpdate('skill', entry.id)
+            await refreshSkills()
+            showSnackbar(`已更新「${entry.title}」`, 'success')
+          }}
         />
 
         {isWorkspaceView ? (
@@ -4376,6 +4382,7 @@ function App(): React.JSX.Element {
           onClose={() => setExportTarget(null)}
           onExport={() => void confirmExportSession()}
         />
+        <PackageUpdateNotice />
       </Box>
     </ThemeProvider>
   )

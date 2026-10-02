@@ -17,6 +17,7 @@ import {
   mcpConnectorCategories,
   type FeaturedMcpConnector
 } from '../../../../../shared/mcpConnectorCatalog'
+import type { PackageUpdateView } from '../../../../../shared/packageManagerTypes'
 import { PhiIcons } from '../../../icons'
 import type { McpServerSummary } from '../../../types'
 import { ConnectorIcon } from './ConnectorIcon'
@@ -59,6 +60,7 @@ export function McpConnectorCatalogDialog({
 }: McpConnectorCatalogDialogProps): React.JSX.Element {
   const [page, setPage] = useState<CatalogPage>('list')
   const [connectors, setConnectors] = useState<FeaturedMcpConnector[]>([])
+  const [updates, setUpdates] = useState<PackageUpdateView[]>([])
   const [catalogLoading, setCatalogLoading] = useState(true)
   const [group, setGroup] = useState<CatalogGroup>('生产力')
   const [selectedId, setSelectedId] = useState('google-drive')
@@ -77,10 +79,12 @@ export function McpConnectorCatalogDialog({
   useEffect(() => {
     if (!open) return
     let active = true
-    void window.api
-      .listMcpConnectorCatalog()
-      .then((entries) => {
-        if (active) setConnectors(entries)
+    void Promise.all([window.api.listMcpConnectorCatalog(), window.api.listPackageUpdates()])
+      .then(([entries, availableUpdates]) => {
+        if (active) {
+          setConnectors(entries)
+          setUpdates(availableUpdates)
+        }
       })
       .catch((cause: unknown) => {
         if (active) setError(cause instanceof Error ? cause.message : String(cause))
@@ -117,6 +121,9 @@ export function McpConnectorCatalogDialog({
     }
   }, [open])
   const selected = connectors.find((connector) => connector.id === selectedId)
+  const selectedUpdateAvailable = selected
+    ? updates.some((update) => update.type === 'mcp' && update.id === selected.id)
+    : false
   const normalizedQuery = query.trim().toLowerCase()
   const filteredFeatured = useMemo(
     () =>
@@ -143,7 +150,12 @@ export function McpConnectorCatalogDialog({
   )
 
   async function refreshCatalog(): Promise<void> {
-    setConnectors(await window.api.listMcpConnectorCatalog())
+    const [nextConnectors, nextUpdates] = await Promise.all([
+      window.api.listMcpConnectorCatalog(),
+      window.api.listPackageUpdates()
+    ])
+    setConnectors(nextConnectors)
+    setUpdates(nextUpdates)
   }
 
   async function addConnector(connector: FeaturedMcpConnector): Promise<void> {
@@ -317,11 +329,15 @@ export function McpConnectorCatalogDialog({
   }
 
   function connectorCard(connector: FeaturedMcpConnector, key = connector.id): React.JSX.Element {
+    const updateAvailable = updates.some(
+      (update) => update.type === 'mcp' && update.id === connector.id
+    )
     return (
       <McpFeaturedConnectorCard
         key={key}
         connector={connector}
         installed={connector.added || Boolean(matchingServer(connector, servers))}
+        updateAvailable={updateAvailable}
         authStatus={notionAuthStatus}
         busy={busy !== null}
         onOpen={() => openDetail(connector)}
@@ -527,6 +543,14 @@ export function McpConnectorCatalogDialog({
                         </Button>
                       )}
                     </Stack>
+                  ) : selectedUpdateAvailable ? (
+                    <Button
+                      variant="contained"
+                      disabled={busy !== null}
+                      onClick={() => void addConnector(selected)}
+                    >
+                      更新
+                    </Button>
                   ) : matchingServer(selected, servers)?.managed ? (
                     <Button
                       color="error"

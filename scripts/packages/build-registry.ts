@@ -1,13 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import {
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
@@ -33,6 +26,7 @@ import {
   type PackageType
 } from '../../src/main/agent/packages/manifest'
 import { validatePlugin } from '../../src/main/agent/plugins/validate'
+import { signRegistryIndex } from '../../src/main/agent/packages/signature'
 import {
   materializeWrapperRegistry,
   type UnattributedWrapperInclude,
@@ -79,6 +73,7 @@ export interface BuildRegistryOptions {
   repoRoot?: string
   outDir?: string
   generatedAt?: string
+  signKey?: string
 }
 
 interface PackageSource {
@@ -138,7 +133,14 @@ export function buildRegistryWithReport(options: BuildRegistryOptions = {}): Reg
     ...wrapperResult.index.packages
   ].sort(compareRegistryEntries)
   const index: RegistryIndex = { schemaVersion: 1, generatedAt, packages: entries }
-  writeFileSync(join(outDir, 'index.json'), `${JSON.stringify(index, null, 2)}\n`, 'utf8')
+  const indexBytes = Buffer.from(`${JSON.stringify(index, null, 2)}\n`, 'utf8')
+  writeFileSync(join(outDir, 'index.json'), indexBytes)
+  if (options.signKey) {
+    const signature = signRegistryIndex(indexBytes, readFileSync(resolve(options.signKey)))
+    writeFileSync(join(outDir, 'index.sig.json'), `${JSON.stringify(signature, null, 2)}\n`, 'utf8')
+  } else {
+    rmSync(join(outDir, 'index.sig.json'), { force: true })
+  }
   return {
     index,
     report: createBuildReport(index, wrapperResult.sources, wrapperResult.diagnostics)
@@ -437,19 +439,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function parseOutArg(argv: string[]): string | undefined {
-  const index = argv.indexOf('--out')
+function parseOptionalArg(argv: string[], name: string): string | undefined {
+  const index = argv.indexOf(name)
   if (index < 0) return undefined
   const value = argv[index + 1]
-  if (!value) throw new Error('--out requires a directory')
+  if (!value || value.startsWith('--')) throw new Error(`${name} requires a value`)
   return value
 }
 
 const entryScript = process.argv[1] ? resolve(process.argv[1]) : ''
 if (entryScript === fileURLToPath(import.meta.url)) {
   try {
-    const outDir = parseOutArg(process.argv.slice(2))
-    const { index, report } = buildRegistryWithReport({ outDir })
+    const argv = process.argv.slice(2)
+    const outDir = parseOptionalArg(argv, '--out')
+    const signKey = parseOptionalArg(argv, '--sign-key')
+    const { index, report } = buildRegistryWithReport({ outDir, signKey })
     const totalSize = index.packages.reduce((sum, item) => sum + item.size, 0)
     console.log(`Built ${index.packages.length} packages (${totalSize} bytes).`)
     for (const type of Object.keys(report.countsByType).sort(compareText)) {

@@ -72,7 +72,14 @@ export async function installPackages(
   const installedNow: Array<{ type: PackageType; id: string }> = []
   try {
     for (const entry of plan.packages) {
-      stages.push(stagePackage(plan.registry, entry, agentDir, options.now))
+      stages.push(
+        stagePackage(
+          entry.sourceRegistry ?? plan.registry,
+          entry.sourceArchive ? { ...entry, archive: entry.sourceArchive } : entry,
+          agentDir,
+          options.now
+        )
+      )
     }
     for (let index = 0; index < stages.length;) {
       const staged = stages[index]
@@ -495,7 +502,8 @@ function promoteRootToUser(root: InstallPlan['root'], agentDir: string): void {
     version: installed.version,
     sha256: installed.sha256,
     installedAt: installed.installedAt,
-    installedBy: 'user'
+    installedBy: 'user',
+    trust: installed.trust
   })
 }
 

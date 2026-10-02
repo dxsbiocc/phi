@@ -71,10 +71,13 @@ import type {
   PhiPluginMutationResult
 } from '../shared/phiPluginTypes'
 import type {
+  KnownPackageRegistryView,
+  OfflinePackageImportPreview,
   InstalledPackageView,
   PackageInstallPlanView,
   PackageManagerType,
-  PackageRegistryView
+  PackageRegistryView,
+  PackageUpdateView
 } from '../shared/packageManagerTypes'
 import type {
   EnablementItemKey,
@@ -990,7 +993,16 @@ declare global {
       setPhiPluginEnabled: (id: string, enabled: boolean) => Promise<PhiPluginMutationResult>
       uninstallPhiPlugin: (id: string) => Promise<PhiPluginMutationResult>
       pickPackageRegistryDirectory: () => Promise<string | null>
+      pickPackageArchive: () => Promise<string | null>
       readPackageRegistry: (dir: string) => Promise<PackageRegistryView>
+      listPackageRegistries: () => Promise<KnownPackageRegistryView[]>
+      removePackageRegistry: (id: string) => Promise<KnownPackageRegistryView[]>
+      previewPackageImport: (path: string) => Promise<OfflinePackageImportPreview>
+      importPackage: (path: string) => Promise<InstalledPackageView[]>
+      listPackageUpdates: () => Promise<PackageUpdateView[]>
+      applyPackageUpdate: (type: PackageManagerType, id: string) => Promise<InstalledPackageView[]>
+      applyAllPackageUpdates: () => Promise<InstalledPackageView[]>
+      onPackageUpdatesAvailable: (cb: (updates: PackageUpdateView[]) => void) => () => void
       planPackageInstall: (
         dir: string,
         type: PackageManagerType,

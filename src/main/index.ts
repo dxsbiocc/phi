@@ -198,11 +198,21 @@ import { validatePlugin, type PluginProblem } from './agent/plugins/validate'
 import { readPluginRegistry, writePluginRegistry } from './agent/plugins/store'
 import { getEnablementSnapshot, migrateEnablementFromHistory, setEnabled } from './agent/enablement'
 import {
+  addKnownRegistry,
+  applyPackageUpdate,
+  applyPackageUpdates,
   cleanupStalePackageStaging,
+  importOfflinePackage,
   installPackages as installRegistryPackages,
+  listKnownRegistries,
   listInstalledPackages as listRegistryPackages,
+  listPackageUpdates,
+  loadKnownRegistryIndexes,
   planInstall as planRegistryInstall,
+  previewOfflinePackageImport,
   readRegistry as readPackageRegistry,
+  removeKnownRegistry,
+  type PackageUpdate,
   uninstallPackage as uninstallRegistryPackage
 } from './agent/packages/installer'
 import {
@@ -447,7 +457,7 @@ let macLaunchServicesHandlers: Promise<MacLaunchServicesHandler[]> | null = null
 const macApplicationPathQueries = new Map<string, Promise<string[]>>()
 // Set by agent-env.ts before this module's own top-level code runs.
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
-const localPackageRegistryDirs = new Set<string>()
+let cachedPackageUpdates: PackageUpdate[] = []
 
 app.setName(APP_NAME)
 
@@ -459,6 +469,40 @@ function applyDockIcon(): void {
 
 let mainWindow: BrowserWindow | null = null
 let mainWindowCleanupStarted = false
+
+function loadPackageRegistries(): ReturnType<typeof loadKnownRegistryIndexes> {
+  return loadKnownRegistryIndexes({ agentDir: AGENT_DIR })
+}
+
+function packageUpdateViews(updates: readonly PackageUpdate[]): PackageUpdate[] {
+  return [...updates]
+}
+
+function refreshCachedPackageUpdates(): PackageUpdate[] {
+  const loaded = loadPackageRegistries()
+  cachedPackageUpdates = listPackageUpdates(loaded.registries, {
+    agentDir: AGENT_DIR,
+    appVersion: app.getVersion()
+  })
+  return cachedPackageUpdates
+}
+
+function scheduleStartupPackageUpdateCheck(): void {
+  setImmediate(() => {
+    try {
+      const updates = refreshCachedPackageUpdates()
+      if (updates.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('packages:updatesAvailable', packageUpdateViews(updates))
+      }
+    } catch (error) {
+      writeAppLog({
+        level: 'warn',
+        event: 'package_update_check_failed',
+        metadata: { error: error instanceof Error ? error.message : String(error) }
+      })
+    }
+  })
+}
 
 type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -7787,13 +7831,41 @@ app.whenReady().then(async () => {
       : await dialog.showOpenDialog(options)
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
+  ipcMain.handle('packages:pickArchive', async () => {
+    const window = getActiveWindow()
+    const options: Electron.OpenDialogOptions = {
+      title: '导入软件包',
+      properties: ['openFile'],
+      filters: [{ name: 'Phi 软件包', extensions: ['tar.gz'] }]
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+  ipcMain.handle('packages:listRegistries', async () => {
+    const result = listKnownRegistries({ agentDir: AGENT_DIR })
+    if (result.error) {
+      writeAppLog({
+        level: 'warn',
+        event: 'package_registries_invalid',
+        metadata: { error: result.error }
+      })
+    }
+    return result.registries
+  })
+  ipcMain.handle('packages:removeRegistry', async (_, id: unknown) => {
+    if (typeof id !== 'string') throw new Error('软件源标识无效')
+    removeKnownRegistry(id, { agentDir: AGENT_DIR })
+    return listKnownRegistries({ agentDir: AGENT_DIR }).registries
+  })
   ipcMain.handle('packages:registry', async (_, dir: unknown) => {
     if (typeof dir !== 'string' || dir.trim().length === 0) {
       throw new Error('注册表目录无效')
     }
     try {
       const registry = readPackageRegistry(dir)
-      localPackageRegistryDirs.add(registry.dir)
+      addKnownRegistry(registry.dir, { agentDir: AGENT_DIR })
       return registry
     } catch (error) {
       throw new Error(
@@ -7815,7 +7887,7 @@ app.whenReady().then(async () => {
       }
       try {
         const registry = readPackageRegistry(dir)
-        localPackageRegistryDirs.add(registry.dir)
+        addKnownRegistry(registry.dir, { agentDir: AGENT_DIR })
         return planRegistryInstall(
           registry,
           { type, id, ...(version ? { version } : {}) },
@@ -7842,7 +7914,7 @@ app.whenReady().then(async () => {
       }
       try {
         const registry = readPackageRegistry(dir)
-        localPackageRegistryDirs.add(registry.dir)
+        addKnownRegistry(registry.dir, { agentDir: AGENT_DIR })
         const installedBefore = new Set(
           listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
         )
@@ -7911,6 +7983,111 @@ app.whenReady().then(async () => {
         `读取已安装软件包失败：${error instanceof Error ? error.message : String(error)}`
       )
     }
+  })
+  ipcMain.handle('packages:previewImport', async (_, path: unknown) => {
+    if (typeof path !== 'string' || path.length === 0) throw new Error('离线软件包路径无效')
+    try {
+      return previewOfflinePackageImport(path, {
+        agentDir: AGENT_DIR,
+        appVersion: app.getVersion(),
+        registries: loadPackageRegistries().registries
+      })
+    } catch (error) {
+      throw new Error(
+        `读取离线软件包失败：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  })
+  ipcMain.handle('packages:import', async (_, path: unknown) => {
+    if (typeof path !== 'string' || path.length === 0) throw new Error('离线软件包路径无效')
+    const installedBefore = new Set(
+      listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
+    )
+    try {
+      const result = await importOfflinePackage(path, {
+        agentDir: AGENT_DIR,
+        appVersion: app.getVersion(),
+        runtimeRoot: getRuntimeRoot(),
+        registries: loadPackageRegistries().registries,
+        names: await installedPluginNamespace(),
+        build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+      })
+      for (const installed of result) {
+        if (
+          !installedBefore.has(`${installed.type}:${installed.id}`) &&
+          installed.type === 'skill'
+        ) {
+          setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
+        }
+        if (!installedBefore.has(`${installed.type}:${installed.id}`) && installed.type === 'mcp') {
+          setEnabled(`mcp:${installed.id}`, true, { agentDir: AGENT_DIR })
+          setMcpPackageEnabled(installed.id, true, AGENT_DIR)
+        }
+      }
+      if (result.some((installed) => installed.type === 'wrapper')) {
+        resetWrapperCompositionCatalogCache()
+      }
+      await invalidateAgentSession()
+      return result
+    } catch (error) {
+      throw new Error(`导入软件包失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  })
+  ipcMain.handle('packages:listUpdates', async () =>
+    packageUpdateViews(refreshCachedPackageUpdates())
+  )
+  ipcMain.handle('packages:applyUpdate', async (_, type: unknown, id: unknown) => {
+    if (
+      (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
+      typeof id !== 'string' ||
+      id.length === 0
+    ) {
+      throw new Error('软件包更新参数无效')
+    }
+    const loaded = loadPackageRegistries()
+    const updates = listPackageUpdates(loaded.registries, {
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion()
+    })
+    const update = updates.find((candidate) => candidate.type === type && candidate.id === id)
+    if (!update) throw new Error(`没有可用更新：${type}:${id}`)
+    const result = await applyPackageUpdate(update, loaded.registries, {
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion(),
+      runtimeRoot: getRuntimeRoot(),
+      names: await installedPluginNamespace(),
+      build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+    })
+    if (type === 'wrapper') resetWrapperCompositionCatalogCache()
+    cachedPackageUpdates = listPackageUpdates(loaded.registries, {
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion()
+    })
+    await invalidateAgentSession()
+    return result
+  })
+  ipcMain.handle('packages:applyAllUpdates', async () => {
+    const loaded = loadPackageRegistries()
+    const updates = listPackageUpdates(loaded.registries, {
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion()
+    })
+    const result = await applyPackageUpdates(updates, loaded.registries, {
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion(),
+      runtimeRoot: getRuntimeRoot(),
+      names: await installedPluginNamespace(),
+      build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+    })
+    if (updates.some((update) => update.type === 'wrapper')) {
+      resetWrapperCompositionCatalogCache()
+    }
+    cachedPackageUpdates = listPackageUpdates(loaded.registries, {
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion()
+    })
+    await invalidateAgentSession()
+    return result
   })
   ipcMain.handle('enablement:get', async (_, projectCwd?: unknown) => {
     if (projectCwd !== undefined && typeof projectCwd !== 'string') {
@@ -7991,7 +8168,7 @@ app.whenReady().then(async () => {
       agentDir: AGENT_DIR,
       appVersion: app.getVersion(),
       runtimeRoot: getRuntimeRoot(),
-      registryDirs: [...localPackageRegistryDirs]
+      registryDirs: loadPackageRegistries().registries.map((registry) => registry.dir)
     })
   ipcMain.handle('mcp:listServers', async (_, cwd?: string) => {
     const servers = await (isRemoteResourceScope(cwd)
@@ -8315,6 +8492,7 @@ app.whenReady().then(async () => {
   })
 
   createWindow()
+  scheduleStartupPackageUpdateCheck()
 
   app.on('activate', function () {
     applyDockIcon()

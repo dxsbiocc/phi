@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   writeFileSync
@@ -28,7 +29,8 @@ import type {
   InstalledPackage,
   InstallerOptions,
   LocalRegistry,
-  RegistryPackageEntry
+  RegistryPackageEntry,
+  RegistryTrustTier
 } from './packages/installer-types'
 import {
   parsePackageManifestText,
@@ -182,7 +184,8 @@ export async function installCatalogConnector(
   }
   const temporary = mkdtempSync(join(tmpdir(), 'phi-connector-registry-'))
   try {
-    const registry = materializeConnectorRegistry(packageDir, temporary, source)
+    const trust = isBundledConnectorSource(source) ? 'builtin' : 'imported'
+    const registry = materializeConnectorRegistry(packageDir, temporary, source, trust)
     return await installConnectorFromRegistry(registry, id, version, options)
   } finally {
     rmSync(temporary, { recursive: true, force: true })
@@ -359,7 +362,8 @@ function manifestFromRegistryEntry(
 function materializeConnectorRegistry(
   packageDir: string,
   outDir: string,
-  registryId: string
+  registryId: string,
+  trust: RegistryTrustTier
 ): LocalRegistry {
   const manifest = readPackageManifest(packageDir)
   if (manifest.type !== 'mcp') throw new Error(`连接器源不是 MCP 软件包: ${packageDir}`)
@@ -390,9 +394,18 @@ function materializeConnectorRegistry(
   return {
     id: registryId,
     dir: outDir,
+    trust,
     schemaVersion: 1,
     generatedAt: new Date(0).toISOString(),
     packages: [entry]
+  }
+}
+
+function isBundledConnectorSource(source: string): boolean {
+  try {
+    return realpathSync(source) === realpathSync(getBundledConnectorsDir())
+  } catch {
+    return false
   }
 }
 

@@ -112,7 +112,8 @@ export function stagePackage(
       version: entry.version,
       sha256: entry.sha256,
       installedAt: (now?.() ?? new Date()).toISOString(),
-      installedBy: entry.installedBy
+      installedBy: entry.installedBy,
+      trust: registry.trust
     }
     return { entry, dir, source }
   } catch (error) {

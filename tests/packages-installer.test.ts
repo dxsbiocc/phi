@@ -211,6 +211,14 @@ test('installs and discovers a skill and plugin from a built local registry', as
     const plugin = loadedPlugins({ agentDir })[0]
     assert.equal(plugin?.dir, pluginVersionDir('alpha-plugin', '1.0.0', agentDir))
     assert.equal(existsSync(join(plugin?.dir ?? '', '.source.json')), true)
+    assert.equal(
+      JSON.parse(readFileSync(join(plugin?.dir ?? '', '.source.json'), 'utf8')).trust,
+      'imported'
+    )
+    assert.deepEqual(
+      listInstalledPackages({ agentDir }).map((item) => item.trust),
+      ['imported', 'imported']
+    )
 
     const loader = createRuntimeResourceLoader({ cwd: root, agentDir })
     await loader.reload()
@@ -222,6 +230,31 @@ test('installs and discovers a skill and plugin from a built local registry', as
     uninstallPackage('plugin', 'alpha-plugin', { agentDir })
     uninstallPackage('skill', 'alpha-skill', { agentDir })
     assert.deepEqual(listInstalledPackages({ agentDir }), [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test('reads legacy source metadata as builtin only for the bundled registry', async () => {
+  const { root, agentDir, registryDir } = sandbox()
+  try {
+    const registry = writeIndex(registryDir, [skillEntry(registryDir, 'legacy-skill')])
+    await installPackages(
+      planInstall(registry, { type: 'skill', id: 'legacy-skill' }, { agentDir }),
+      { agentDir }
+    )
+    const installed = listInstalledPackages({ agentDir })[0]
+    assert(installed)
+    const sourcePath = join(installed.dir, '.source.json')
+    const source = JSON.parse(readFileSync(sourcePath, 'utf8')) as Record<string, unknown>
+    delete source.trust
+    source.registry = 'builtin'
+    writeFileSync(sourcePath, `${JSON.stringify(source, null, 2)}\n`)
+    assert.equal(listInstalledPackages({ agentDir })[0]?.trust, 'builtin')
+
+    source.registry = registryDir
+    writeFileSync(sourcePath, `${JSON.stringify(source, null, 2)}\n`)
+    assert.equal(listInstalledPackages({ agentDir })[0]?.trust, 'imported')
   } finally {
     cleanup(root)
   }

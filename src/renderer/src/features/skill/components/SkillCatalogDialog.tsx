@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Box,
@@ -10,6 +10,7 @@ import {
   Stack,
   Typography
 } from '@mui/material'
+import semver from 'semver'
 import type {
   PackageRegistryEntryView,
   PackageRegistryView
@@ -36,6 +37,7 @@ export type SkillCatalogDialogProps = {
   onPickRegistryDirectory?: () => Promise<string | null>
   onReadRegistry?: (dir: string) => Promise<PackageRegistryView>
   onInstallPackage?: (registryDir: string, entry: PackageRegistryEntryView) => Promise<void> | void
+  onApplyUpdate?: (entry: PackageRegistryEntryView) => Promise<void> | void
   onRefresh?: () => Promise<void> | void
 }
 
@@ -122,6 +124,7 @@ export function SkillCatalogDialog({
   onPickRegistryDirectory,
   onReadRegistry,
   onInstallPackage,
+  onApplyUpdate,
   onRefresh
 }: SkillCatalogDialogProps): React.JSX.Element {
   const [localRegistry, setLocalRegistry] = useState<PackageRegistryView | null>(null)
@@ -130,11 +133,76 @@ export function SkillCatalogDialog({
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [installedDuringSession, setInstalledDuringSession] = useState<Set<string>>(new Set())
+  const [updateIds, setUpdateIds] = useState<Set<string>>(new Set())
+  const [knownPackages, setKnownPackages] = useState<
+    Array<PackageRegistryEntryView & { registryDir: string }>
+  >([])
+
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    void window.api
+      .listPackageUpdates()
+      .then((updates) => {
+        if (active) {
+          setUpdateIds(
+            new Set(updates.filter((update) => update.type === 'skill').map((update) => update.id))
+          )
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    void window.api
+      .listPackageRegistries()
+      .then((registries) =>
+        Promise.all(
+          registries
+            .filter((item) => !item.error)
+            .map(async (item) => {
+              try {
+                return await window.api.readPackageRegistry(item.path)
+              } catch {
+                return null
+              }
+            })
+        )
+      )
+      .then((registries) => {
+        if (!active) return
+        const selected = new Map<string, PackageRegistryEntryView & { registryDir: string }>()
+        for (const registry of registries) {
+          if (!registry) continue
+          for (const entry of registrySkillPackages(registry)) {
+            const current = selected.get(entry.id)
+            if (!current || semver.gt(entry.version, current.version)) {
+              selected.set(entry.id, { ...entry, registryDir: registry.dir })
+            }
+          }
+        }
+        setKnownPackages(
+          [...selected.values()].sort((left, right) => left.title.localeCompare(right.title))
+        )
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [open])
 
   const displayedRegistry = registry === undefined ? localRegistry : registry
   const displayedRegistryDir = registryDir === undefined ? localRegistryDir : registryDir
   const bundledSkills = useMemo(() => bundledCatalogSkills(skills), [skills])
-  const packages = useMemo(() => registrySkillPackages(displayedRegistry), [displayedRegistry])
+  const packages = useMemo(
+    () => (displayedRegistry ? registrySkillPackages(displayedRegistry) : knownPackages),
+    [displayedRegistry, knownPackages]
+  )
   const installedPackageIds = useMemo(() => {
     const ids = new Set(installedDuringSession)
     for (const skill of skills) {
@@ -182,14 +250,24 @@ export function SkillCatalogDialog({
     }
   }
 
-  async function install(entry: PackageRegistryEntryView): Promise<void> {
-    if (!onInstallPackage || !displayedRegistryDir) return
+  async function install(
+    entry: PackageRegistryEntryView & { registryDir?: string }
+  ): Promise<void> {
+    const updating = updateIds.has(entry.id)
+    const sourceDir = displayedRegistryDir ?? entry.registryDir
+    if (updating ? !onApplyUpdate : !onInstallPackage || !sourceDir) return
     const key = `package:${entry.id}@${entry.version}`
     setBusyKey(key)
     setActionError(null)
     try {
-      await onInstallPackage(displayedRegistryDir, entry)
+      if (updating) await onApplyUpdate?.(entry)
+      else await onInstallPackage?.(sourceDir!, entry)
       setInstalledDuringSession((current) => new Set(current).add(entry.id))
+      setUpdateIds((current) => {
+        const next = new Set(current)
+        next.delete(entry.id)
+        return next
+      })
       await onRefresh?.()
     } catch (cause) {
       setActionError(`安装技能包失败：${errorMessage(cause)}`)
@@ -309,7 +387,7 @@ export function SkillCatalogDialog({
             </Stack>
           ) : !displayedRegistry ? (
             <Typography variant="body2" color="text.secondary">
-              尚未选择本地目录
+              已知软件源中没有可安装的技能包
             </Typography>
           ) : packages.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
@@ -320,6 +398,7 @@ export function SkillCatalogDialog({
               {packages.map((entry) => {
                 const key = `package:${entry.id}@${entry.version}`
                 const installed = installedPackageIds.has(entry.id)
+                const updateAvailable = installed && updateIds.has(entry.id)
                 return (
                   <CatalogCard
                     key={`${entry.id}@${entry.version}`}
@@ -329,11 +408,23 @@ export function SkillCatalogDialog({
                     action={
                       <Button
                         size="small"
-                        variant={installed ? 'outlined' : 'contained'}
-                        disabled={installed || busyKey !== null || !onInstallPackage}
+                        variant={installed && !updateAvailable ? 'outlined' : 'contained'}
+                        disabled={
+                          (installed && !updateAvailable) ||
+                          busyKey !== null ||
+                          (updateAvailable ? !onApplyUpdate : !onInstallPackage)
+                        }
                         onClick={() => void install(entry)}
                       >
-                        {installed ? '已安装' : busyKey === key ? '正在安装…' : '安装'}
+                        {busyKey === key
+                          ? updateAvailable
+                            ? '正在更新…'
+                            : '正在安装…'
+                          : updateAvailable
+                            ? '更新'
+                            : installed
+                              ? '已安装'
+                              : '安装'}
                       </Button>
                     }
                   />

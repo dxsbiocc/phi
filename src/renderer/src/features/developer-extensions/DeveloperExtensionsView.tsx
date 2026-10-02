@@ -1,5 +1,6 @@
 import { Box, Stack, Typography } from '@mui/material'
 import { DeveloperExtensionsManager } from './components/DeveloperExtensionsManager'
+import { PackageSourcesSection } from './components/PackageSourcesSection'
 import { useDeveloperExtensionCatalog } from './hooks/useDeveloperExtensionCatalog'
 
 export { DeveloperExtensionDetail } from './components/DeveloperExtensionDetail'
@@ -39,6 +40,7 @@ export default function DeveloperExtensionsView(): React.JSX.Element {
         onRemove={(source) => void removeExtension(source)}
         onRefresh={() => void refreshExtensions()}
       />
+      <PackageSourcesSection />
     </Stack>
   )
 }

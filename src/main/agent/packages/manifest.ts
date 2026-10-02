@@ -8,7 +8,7 @@ import { parse as parseYaml } from 'yaml'
 import { validateSkill, type ValidatedSkill } from '../content/skill'
 import { validatePlugin, type ValidatedPlugin } from '../plugins/validate'
 
-export const PACKAGE_CONTRACT_VERSION = '1.1.0'
+export const PACKAGE_CONTRACT_VERSION = '1.2.0'
 
 export const CONNECTOR_CATEGORIES = [
   '生产力',
@@ -23,7 +23,7 @@ export const packageManifestSchema = {
   $id: 'https://phi.local/contracts/package.schema.json',
   title: 'Phi package manifest (phi-package.yaml)',
   description:
-    'Package contract 1.1.0 (docs/contracts/package.md). Type-specific path and component validation is enforced in code.',
+    'Package contract 1.2.0 (docs/contracts/package.md). Type-specific path and component validation is enforced in code.',
   type: 'object',
   required: ['schemaVersion', 'id', 'type', 'version', 'title', 'summary'],
   additionalProperties: false,

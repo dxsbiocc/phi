@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import test from 'node:test'
@@ -10,6 +18,7 @@ import { stringify as stringifyYaml } from 'yaml'
 import { describeEnvironment } from '../src/main/agent/content/environment-refs'
 import {
   connectorEnvironmentBuildAction,
+  getBundledConnectorsDir,
   installCatalogConnector,
   listConnectorCatalog,
   refreshPersistedManagedStdioServers,
@@ -235,6 +244,7 @@ test('HTTP packages install, upgrade, and uninstall without touching user server
     listInstalledPackages({ agentDir: fixture.agentDir })[0]?.dir,
     join(fixture.agentDir, 'packages', 'mcp', 'remote-data', '1.0.0')
   )
+  assert.equal(listInstalledPackages({ agentDir: fixture.agentDir })[0]?.trust, 'imported')
 
   config.mcpServers.user = { command: 'user-server', enabled: true }
   writeFileSync(join(fixture.agentDir, 'mcp.json'), `${JSON.stringify(config)}\n`)
@@ -258,6 +268,25 @@ test('HTTP packages install, upgrade, and uninstall without touching user server
   config = readConfig(fixture.agentDir)
   assert.deepEqual(config.mcpServers, { user: { command: 'user-server', enabled: true } })
   assert.deepEqual(listInstalledPackages({ agentDir: fixture.agentDir }), [])
+})
+
+test('only the real bundled connector source installs with builtin trust', async () => {
+  const fixture = sandbox()
+  const bundledLink = join(fixture.root, 'bundled-connectors-link')
+  symlinkSync(
+    getBundledConnectorsDir(),
+    bundledLink,
+    process.platform === 'win32' ? 'junction' : 'dir'
+  )
+
+  await installCatalogConnector(bundledLink, 'pubmed', '1.0.0', installOptions(fixture))
+
+  const installed = listInstalledPackages({ agentDir: fixture.agentDir })[0]
+  assert.equal(installed?.trust, 'builtin')
+  assert.equal(
+    JSON.parse(readFileSync(join(installed?.dir ?? '', '.source.json'), 'utf8')).trust,
+    'builtin'
+  )
 })
 
 test('HTTP package install refuses to overwrite a same-name user server', async () => {

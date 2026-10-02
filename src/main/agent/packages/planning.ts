@@ -44,7 +44,7 @@ export function planInstall(
 
   const appVersion = options.appVersion ?? readAppVersion()
   if (!semver.valid(appVersion)) throw new Error(`应用版本无效: ${appVersion}`)
-  for (const entry of assignments.values()) checkCompatibility(entry, appVersion)
+  for (const entry of assignments.values()) checkPackageCompatibility(entry, appVersion)
   const ordered = dependencyOrder(assignments, rootEntry)
   const planned = ordered
     .filter((entry) => !isInstalledVersion(installed, entry))
@@ -148,7 +148,7 @@ function dependencyOrder(
   return ordered
 }
 
-function checkCompatibility(entry: RegistryPackageEntry, appVersion: string): void {
+export function checkPackageCompatibility(entry: RegistryPackageEntry, appVersion: string): void {
   if (entry.minAppVersion && semver.lt(appVersion, entry.minAppVersion)) {
     throw new Error(
       `软件包 ${entry.type}:${entry.id}@${entry.version} 需要应用版本 ${entry.minAppVersion}，当前为 ${appVersion}`
@@ -226,7 +226,7 @@ function addRequirement(requirements: Map<string, string[]>, key: string, range:
   if (!ranges.includes(range)) requirements.set(key, [...ranges, range])
 }
 
-function readAppVersion(): string {
+export function readAppVersion(): string {
   const path = fileURLToPath(new URL('../../../../package.json', import.meta.url))
   const value = JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown }
   if (typeof value.version !== 'string' || !semver.valid(value.version)) {

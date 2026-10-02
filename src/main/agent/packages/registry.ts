@@ -6,15 +6,27 @@ import semver from 'semver'
 import type { LocalRegistry, RegistryPackageEntry } from './installer-types'
 import type { PackageDependency, PackageRequirements } from './manifest'
 import { errorMessage, isRecord, packageVersionKey } from './installer-utils'
+import { parseRegistrySignature, verifyRegistryIndex, type TrustedRegistryKey } from './signature'
+import { TRUSTED_REGISTRY_KEYS } from './trusted-keys'
 
-export function readRegistry(dir: string): LocalRegistry {
+export interface ReadRegistryOptions {
+  builtin?: boolean
+  trustedKeys?: readonly TrustedRegistryKey[]
+}
+
+export function readRegistry(dir: string, options: ReadRegistryOptions = {}): LocalRegistry {
   const registryDir = resolve(dir)
+  let indexBytes: Buffer
   let value: unknown
   try {
-    value = JSON.parse(readFileSync(join(registryDir, 'index.json'), 'utf8')) as unknown
+    indexBytes = readFileSync(join(registryDir, 'index.json'))
+    value = JSON.parse(indexBytes.toString('utf8')) as unknown
   } catch (error) {
     throw new Error(`无法读取本地软件包注册表: ${errorMessage(error)}`)
   }
+  const trust = options.builtin
+    ? 'builtin'
+    : readRegistryTrust(registryDir, indexBytes, options.trustedKeys ?? TRUSTED_REGISTRY_KEYS)
   if (!isRecord(value) || value.schemaVersion !== 1 || !Array.isArray(value.packages)) {
     throw new Error('本地软件包注册表 index.json 格式无效')
   }
@@ -31,10 +43,37 @@ export function readRegistry(dir: string): LocalRegistry {
   return {
     id: registryDir,
     dir: registryDir,
+    trust,
     schemaVersion: 1,
     generatedAt: value.generatedAt,
     packages
   }
+}
+
+function readRegistryTrust(
+  registryDir: string,
+  indexBytes: Buffer,
+  trustedKeys: readonly TrustedRegistryKey[]
+): 'official' | 'imported' {
+  let text: string
+  try {
+    text = readFileSync(join(registryDir, 'index.sig.json'), 'utf8')
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return 'imported'
+    throw new Error(`无法读取注册表签名文件 index.sig.json: ${errorMessage(error)}`)
+  }
+
+  let signature: ReturnType<typeof parseRegistrySignature>
+  try {
+    signature = parseRegistrySignature(JSON.parse(text) as unknown)
+  } catch (error) {
+    throw new Error(`注册表签名文件被拒绝: ${errorMessage(error)}`)
+  }
+  return verifyRegistryIndex(indexBytes, signature, trustedKeys)
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error instanceof Error && 'code' in error ? String(error.code) : undefined
 }
 
 function parseRegistryEntry(value: unknown, index: number): RegistryPackageEntry {

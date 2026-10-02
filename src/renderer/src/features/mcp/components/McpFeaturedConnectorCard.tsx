@@ -1,5 +1,5 @@
 import { Box, Chip, IconButton, Stack, Typography } from '@mui/material'
-import { GoCheck, GoPlus } from 'react-icons/go'
+import { GoCheck, GoPlus, GoSync } from 'react-icons/go'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
 import { ConnectorIcon } from './ConnectorIcon'
 
@@ -8,6 +8,7 @@ export type ConnectorAuthStatus = 'checking' | 'authenticated' | 'unauthenticate
 export function McpFeaturedConnectorCard({
   connector,
   installed,
+  updateAvailable = false,
   authStatus,
   busy,
   onOpen,
@@ -16,6 +17,7 @@ export function McpFeaturedConnectorCard({
 }: {
   connector: FeaturedMcpConnector
   installed: boolean
+  updateAvailable?: boolean
   authStatus: ConnectorAuthStatus
   busy: boolean
   onOpen: () => void
@@ -35,7 +37,11 @@ export function McpFeaturedConnectorCard({
               ? '状态不可用'
               : '需登录'
   const needsEnvironment = connector.environmentState === 'not-built'
-  const actionLabel = needsEnvironment ? `构建 ${connector.name} 环境` : `添加 ${connector.name}`
+  const actionLabel = updateAvailable
+    ? `更新 ${connector.name}`
+    : needsEnvironment
+      ? `构建 ${connector.name} 环境`
+      : `添加 ${connector.name}`
 
   return (
     <Box
@@ -78,7 +84,7 @@ export function McpFeaturedConnectorCard({
           {needsEnvironment && <Chip size="small" variant="outlined" label="环境未构建" />}
         </Stack>
       </Box>
-      {installed ? (
+      {installed && !updateAvailable ? (
         <Box
           role="img"
           aria-label={`已添加 ${connector.name}`}
@@ -108,7 +114,11 @@ export function McpFeaturedConnectorCard({
             borderRadius: 1.5
           }}
         >
-          <GoPlus size={18} aria-hidden="true" />
+          {updateAvailable ? (
+            <GoSync size={18} aria-hidden="true" />
+          ) : (
+            <GoPlus size={18} aria-hidden="true" />
+          )}
         </IconButton>
       )}
     </Box>

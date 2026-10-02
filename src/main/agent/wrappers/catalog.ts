@@ -566,7 +566,10 @@ export async function ensureBundledWrappersInstalled(
         bundledPackageNeedsInstall(source, installedTree[source.manifest.id], marker, agentDir),
       ...(options.generatedAt ? { generatedAt: options.generatedAt } : {})
     })
-    const registry = { ...readRegistry(registryOutput), id: BUNDLED_REGISTRY_ID }
+    const registry = {
+      ...readRegistry(registryOutput, { builtin: true }),
+      id: BUNDLED_REGISTRY_ID
+    }
     const pending = registry.packages
     if (pending.length > 0) {
       const root = pending.at(-1)

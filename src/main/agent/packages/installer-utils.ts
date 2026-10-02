@@ -1,8 +1,14 @@
 import { createHash } from 'node:crypto'
 import { isAbsolute, relative, resolve, win32 } from 'node:path'
 
-import type { LocalRegistry, PackageSourceMetadata } from './installer-types'
+import type { LocalRegistry, PackageSourceMetadata, RegistryTrustTier } from './installer-types'
 import type { PackageType } from './manifest'
+
+type ReadablePackageSourceMetadata = Omit<PackageSourceMetadata, 'trust'> & {
+  trust?: RegistryTrustTier
+}
+
+const LEGACY_BUILTIN_REGISTRY_IDS = new Set(['builtin', 'bundled-wrappers'])
 
 export function assertSafePackagePath(path: string): void {
   const normalized = path.replaceAll('\\', '/')
@@ -50,7 +56,7 @@ export function sha256(value: Buffer): string {
   return createHash('sha256').update(value).digest('hex')
 }
 
-export function isSourceMetadata(value: unknown): value is PackageSourceMetadata {
+export function isSourceMetadata(value: unknown): value is ReadablePackageSourceMetadata {
   return (
     isRecord(value) &&
     typeof value.registry === 'string' &&
@@ -62,8 +68,24 @@ export function isSourceMetadata(value: unknown): value is PackageSourceMetadata
     typeof value.version === 'string' &&
     typeof value.sha256 === 'string' &&
     typeof value.installedAt === 'string' &&
-    (value.installedBy === 'user' || value.installedBy === 'dependency')
+    (value.installedBy === 'user' || value.installedBy === 'dependency') &&
+    (value.trust === undefined ||
+      value.trust === 'builtin' ||
+      value.trust === 'official' ||
+      value.trust === 'imported')
   )
+}
+
+export function normalizeSourceMetadata(value: unknown): PackageSourceMetadata | undefined {
+  if (!isSourceMetadata(value)) return undefined
+  return {
+    ...value,
+    trust: value.trust ?? legacySourceTrust(value.registry)
+  }
+}
+
+export function legacySourceTrust(registry: string): RegistryTrustTier {
+  return LEGACY_BUILTIN_REGISTRY_IDS.has(registry) ? 'builtin' : 'imported'
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

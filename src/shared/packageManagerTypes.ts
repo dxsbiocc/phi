@@ -1,4 +1,5 @@
 export type PackageManagerType = 'skill' | 'plugin' | 'wrapper' | 'mcp'
+export type PackageTrust = 'builtin' | 'official' | 'imported'
 
 export interface PackageRegistryEntryView {
   id: string
@@ -19,6 +20,7 @@ export interface PackageRegistryEntryView {
 export interface PackageRegistryView {
   id: string
   dir: string
+  trust: PackageTrust
   schemaVersion: 1
   generatedAt: string
   packages: PackageRegistryEntryView[]
@@ -44,5 +46,33 @@ export interface InstalledPackageView {
   installedBy: 'user' | 'dependency'
   registry: string
   sha256: string
+  trust: PackageTrust
   enabled?: boolean
+}
+
+export interface KnownPackageRegistryView {
+  id: string
+  kind: 'bundled' | 'directory'
+  path: string
+  addedAt?: string
+  removable: boolean
+  trust?: PackageTrust
+  packageCount?: number
+  error?: string
+}
+
+export interface PackageUpdateView {
+  id: string
+  type: PackageManagerType
+  title: string
+  currentVersion: string
+  newVersion: string
+  registryId: string
+  registryPath: string
+  trust: PackageTrust
+}
+
+export interface OfflinePackageImportPreview {
+  archivePath: string
+  plan: PackageInstallPlanView
 }

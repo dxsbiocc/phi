@@ -1139,6 +1139,7 @@ async function harness(
       },
       getBundledSkillsDir: (): string => path.join(process.cwd(), 'resources', 'skills'),
       getBundledAgentsDir: (): string => path.join(process.cwd(), 'resources', 'agents'),
+      getBundledResourceDir: (name: string): string => path.join(process.cwd(), 'resources', name),
       createInMemoryRuntimeSessionManager: (cwd: string): { file: string; cwd: string } => ({
         file: 'in-memory',
         cwd
@@ -1753,10 +1754,48 @@ async function harness(
       validatePlugin: (): unknown => ({ ok: false, errors: [], warnings: [] })
     },
     './agent/packages/installer': {
+      addKnownRegistry: noop,
+      removeKnownRegistry: (): boolean => true,
+      listKnownRegistries: (): unknown => ({
+        registries: [
+          {
+            id: 'builtin',
+            kind: 'bundled',
+            path: '/bundled-registry',
+            removable: false,
+            trust: 'builtin',
+            packageCount: 0
+          }
+        ]
+      }),
+      loadKnownRegistryIndexes: (): unknown => ({ registries: [], errors: [] }),
+      listPackageUpdates: (): unknown[] => [],
+      applyPackageUpdate: async (): Promise<unknown[]> => [],
+      applyPackageUpdates: async (): Promise<unknown[]> => [],
+      previewOfflinePackageImport: (archivePath: string): unknown => ({
+        archivePath,
+        plan: {
+          registry: {
+            id: archivePath,
+            dir: '/temporary',
+            trust: 'imported',
+            schemaVersion: 1,
+            generatedAt: '1970-01-01T00:00:00.000Z',
+            packages: []
+          },
+          root: { type: 'skill', id: 'offline-skill', version: '1.0.0' },
+          packages: [],
+          totalSize: 0,
+          environments: [],
+          agentDir: '/isolated'
+        }
+      }),
+      importOfflinePackage: async (): Promise<unknown[]> => [],
       cleanupStalePackageStaging: (): string[] => [],
       readRegistry: (dir: string): unknown => ({
         id: dir,
         dir,
+        trust: 'imported',
         schemaVersion: 1,
         generatedAt: '2026-10-02T00:00:00.000Z',
         packages: []
@@ -4415,6 +4454,35 @@ test('main IPC exposes local package registry planning and lifecycle channels', 
   })
   assert.deepEqual(await app.invoke('packages:listInstalled'), [])
   assert.deepEqual(await app.invoke('packages:uninstall', 'skill', 'alpha-skill'), [])
+  assert.deepEqual(await app.invoke('packages:listRegistries'), [
+    {
+      id: 'builtin',
+      kind: 'bundled',
+      path: '/bundled-registry',
+      removable: false,
+      trust: 'builtin',
+      packageCount: 0
+    }
+  ])
+  assert.deepEqual(await app.invoke('packages:removeRegistry', '0123456789abcdef'), [
+    {
+      id: 'builtin',
+      kind: 'bundled',
+      path: '/bundled-registry',
+      removable: false,
+      trust: 'builtin',
+      packageCount: 0
+    }
+  ])
+  app.setOpenDialogResult({ canceled: false, filePaths: ['/tmp/offline-skill.tar.gz'] })
+  assert.equal(await app.invoke('packages:pickArchive'), '/tmp/offline-skill.tar.gz')
+  const preview = (await app.invoke('packages:previewImport', '/tmp/offline-skill.tar.gz')) as {
+    plan: { root: { id: string } }
+  }
+  assert.equal(preview.plan.root.id, 'offline-skill')
+  assert.deepEqual(await app.invoke('packages:import', '/tmp/offline-skill.tar.gz'), [])
+  assert.deepEqual(await app.invoke('packages:listUpdates'), [])
+  await assert.rejects(app.invoke('packages:applyUpdate', 'skill', 'alpha-skill'), /没有可用更新/)
   await assert.rejects(app.invoke('packages:plan', '', 'wrapper', '', undefined), /参数无效/)
 })
 
