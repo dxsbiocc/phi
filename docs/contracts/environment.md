@@ -1,6 +1,6 @@
 # Environment contract
 
-Version **1.2.1** (1.1.0 adds the `skill` scope; 1.2.0 adds project environments and overrides; see § Changes). Normative schemas:
+Version **1.3.0** (1.1.0 adds the `skill` scope; 1.2.0 adds project environments and overrides; see § Changes). Normative schemas:
 
 - [environment.schema.json](environment.schema.json) — `environment.yml`
 - [env-metadata.schema.json](env-metadata.schema.json) — `.phi/env.json`
@@ -96,6 +96,7 @@ phi:     phi-<name>-<hash12>
 plugin:  plugin-<owner>-<name>-<hash12>
 project: project-<owner>-<name>-<hash12>
 skill:   skill-<owner>-<name>-<hash12>      (1.1.0; owner is the skill name)
+mcp:     mcp-<owner>-<name>-<hash12>        (1.3.0; owner is the connector package id)
 ```
 
 `owner` is required for `plugin`, `project`, and `skill` and, like `name`, must match `^[a-z][a-z0-9-]{0,62}$`; anything else is rejected so the id always matches the `env.json` pattern. `owner` is omitted for `phi` even when the caller passes one. For `phi`, a name that already starts with `phi-` (the official specs are named `phi-python`, `phi-r`, …) is used without that prefix, so the id is `phi-python-<hash12>`, never `phi-phi-python-…`. Examples: `phi-python-3f9a1c2b7d10`, `plugin-visualization-viz-…`, `project-<short project id>-default-…`.
@@ -219,7 +220,7 @@ original environment is never modified.
 
 ## Versioning
 
-`ENVIRONMENT_CONTRACT_VERSION` is `1.2.1`. Per content distribution design §4.4:
+`ENVIRONMENT_CONTRACT_VERSION` is `1.3.0`. Per content distribution design §4.4:
 
 - Minor versions are additive only: new optional fields, no change to the meaning of existing fields.
 - A major version needs an ADR, a deprecation window of at least two app releases in which both versions are accepted, and a migration note.
@@ -232,3 +233,4 @@ The 1.0.0 schemas use `additionalProperties: false`. A conda key or typo that th
 - **1.1.0** (2026-09-30): envId scope `skill` for a standalone skill's own environment (`./environment.yml`), with the skill name as owner. Additive: no existing id or file changes.
 - **1.2.0** (2026-09-30): project environments under `<project>/.phi/environments/`, solved locally for the current platform, and `environments.json` overrides applied before every resolution in the project. Additive: a project without `environments.json` resolves exactly as before.
 - **1.2.1** (2026-10-01): clarification — a `phi` environment whose name starts with `phi-` does not repeat the prefix in its id. Before this, `phi-python` produced `phi-phi-python-…`; no environment had shipped, so only development builds are orphaned (garbage collection removes them).
+- **1.3.0** (2026-10-02): envId scope `mcp` for a stdio connector package's own environment. Additive.

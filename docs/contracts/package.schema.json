@@ -76,6 +76,59 @@
           }
         }
       }
+    },
+    "connector": {
+      "type": "object",
+      "required": ["transport", "publisher", "category"],
+      "additionalProperties": false,
+      "properties": {
+        "transport": { "enum": ["http", "stdio"] },
+        "publisher": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "category": {
+          "enum": ["生产力", "沟通协作", "设计创作", "健康与生命科学", "科研数据"]
+        },
+        "homepage": { "type": "string", "pattern": "^https://\\S+$" },
+        "url": { "type": "string", "pattern": "^https://\\S+$" },
+        "auth": { "enum": ["none", "oauth", "header"] },
+        "environment": {
+          "type": "string",
+          "pattern": "^(?:phi:[a-z][a-z0-9-]{0,62}@(0|[1-9][0-9]*)|\\./environment\\.yml)$"
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?:[A-Za-z0-9_+.-]+|\\./(?:[A-Za-z0-9_+.-]+/)*[A-Za-z0-9_+.-]+)$"
+        },
+        "args": { "type": "array", "items": { "type": "string" } }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "transport": { "const": "http" } },
+            "required": ["transport"]
+          },
+          "then": {
+            "required": ["url", "auth"],
+            "not": {
+              "anyOf": [
+                { "required": ["environment"] },
+                { "required": ["command"] },
+                { "required": ["args"] }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "transport": { "const": "stdio" } },
+            "required": ["transport"]
+          },
+          "then": {
+            "required": ["environment", "command"],
+            "not": { "anyOf": [{ "required": ["url"] }, { "required": ["auth"] }] }
+          }
+        }
+      ]
     }
   },
   "allOf": [
@@ -86,21 +139,36 @@
           "anyOf": [
             { "required": ["toolPrefix"] },
             { "required": ["components"] },
-            { "required": ["environments"] }
+            { "required": ["environments"] },
+            { "required": ["connector"] }
           ]
         }
       }
     },
     {
       "if": { "properties": { "type": { "const": "plugin" } }, "required": ["type"] },
-      "then": { "required": ["toolPrefix", "components"] }
+      "then": {
+        "required": ["toolPrefix", "components"],
+        "not": { "required": ["connector"] }
+      }
     },
     {
-      "if": {
-        "properties": { "type": { "enum": ["wrapper", "mcp"] } },
-        "required": ["type"]
-      },
+      "if": { "properties": { "type": { "const": "wrapper" } }, "required": ["type"] },
       "then": {
+        "not": {
+          "anyOf": [
+            { "required": ["toolPrefix"] },
+            { "required": ["components"] },
+            { "required": ["environments"] },
+            { "required": ["connector"] }
+          ]
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "mcp" } }, "required": ["type"] },
+      "then": {
+        "required": ["connector"],
         "not": {
           "anyOf": [
             { "required": ["toolPrefix"] },
