@@ -1,6 +1,6 @@
 # Package contract
 
-contractVersion: 1.0.0
+contractVersion: 1.1.0
 
 A **package** is the unit Phi distributes: one skill, wrapper, MCP connector, or
 plugin, with a manifest, an exact file list, and a version. This contract defines
@@ -12,18 +12,18 @@ by later contracts and are rejected by v1 installers. See
 
 ## 1. `phi-package.yaml` (shared fields)
 
-| Field           | Required | Rule                                                                                                                         |
-| --------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `schemaVersion` | yes      | `1`                                                                                                                          |
-| `id`            | yes      | `^[a-z][a-z0-9-]{1,63}$`; unique per `type` within a registry                                                                |
-| `type`          | yes      | `skill` or `plugin` in v1 (`wrapper`, `mcp` reserved)                                                                        |
-| `version`       | yes      | semantic version `MAJOR.MINOR.PATCH` (optional `-prerelease`)                                                                |
-| `title`         | yes      | 1–80 characters                                                                                                              |
-| `summary`       | yes      | 1–300 characters                                                                                                             |
-| `minAppVersion` | no       | semantic version; an app older than this shows the package but refuses to install it                                         |
-| `requires`      | no       | `{ coreTools: [<tool name>…] }`: engine tools the package relies on (for example `skill_run`); a missing one refuses install |
-| `dependsOn`     | no       | `[{ id, type, version }]`: other packages, `version` a semver range (`^1.2.0`, `>=1.0.0 <2`); installed first if missing     |
-| `files`         | no       | `files.json`; when present the file list (§ 2) is authoritative                                                              |
+| Field           | Required | Rule                                                                                                                           |
+| --------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `schemaVersion` | yes      | `1`                                                                                                                            |
+| `id`            | yes      | `^[a-z][a-z0-9-]{1,63}$`; unique per `type` within a registry                                                                  |
+| `type`          | yes      | `skill`, `plugin`, `wrapper` (1.1.0, [wrapper contract](wrapper.md) § 3), or `mcp` (1.1.0, [connector contract](connector.md)) |
+| `version`       | yes      | semantic version `MAJOR.MINOR.PATCH` (optional `-prerelease`)                                                                  |
+| `title`         | yes      | 1–80 characters                                                                                                                |
+| `summary`       | yes      | 1–300 characters                                                                                                               |
+| `minAppVersion` | no       | semantic version; an app older than this shows the package but refuses to install it                                           |
+| `requires`      | no       | `{ coreTools: [<tool name>…] }`: engine tools the package relies on (for example `skill_run`); a missing one refuses install   |
+| `dependsOn`     | no       | `[{ id, type, version }]`: other packages, `version` a semver range (`^1.2.0`, `>=1.0.0 <2`); installed first if missing       |
+| `files`         | no       | `files.json`; when present the file list (§ 2) is authoritative                                                                |
 
 Type-specific fields follow:
 
@@ -32,6 +32,9 @@ Type-specific fields follow:
   skill must validate as a standalone skill (skill contract).
 - **`type: plugin`** — plugin contract § 2 (`toolPrefix`, `components`,
   `environments`).
+- **`type: wrapper`** (1.1.0) — files keep their wrapper-tree paths; installed into the
+  shared wrapper tree (wrapper contract § 3–4).
+- **`type: mcp`** (1.1.0) — the `connector` block (connector contract § 2).
 
 Unknown top-level keys are errors.
 
@@ -121,3 +124,7 @@ are no longer needed. A staging directory older than one day is removed on start
 `contractVersion` follows the content distribution design §4.4: minor versions are
 additive only (a new package `type`, new optional fields); anything else needs a
 decision record and a deprecation window.
+
+## Changes
+
+- **1.1.0** (2026-10-02): package types `wrapper` and `mcp`. Additive.

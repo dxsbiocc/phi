@@ -1,6 +1,6 @@
 # Enablement contract
 
-contractVersion: 1.0.0
+contractVersion: 1.1.0
 
 Installing content and **using** it are separate. Only enabled items reach the main
 agent, which keeps its prompt and tool routing small (the original goal of content
@@ -18,8 +18,8 @@ An item is identified by `<kind>:<id>`:
 | `skill`  | the skill's `name` | `skill:scanpy`         |
 | `plugin` | the plugin's `id`  | `plugin:visualization` |
 
-`wrapper:` and `mcp:` are reserved for the wrapper and connector catalogs (step 7
-batch 3).
+Since 1.1.0 also `wrapper:<package id>` (wrapper contract § 5) and `mcp:<package id>`
+(connector contract § 3).
 
 ## 2. State file
 
@@ -53,6 +53,8 @@ For an item in a project, the first defined value wins:
 | skills installed as packages, user-authored skills (`~/.phi/skills/`), project skills (`<project>/.phi/skills/`) | enabled                           |
 | bundled plugins                                                                                                  | enabled                           |
 | plugins installed as packages                                                                                    | enabled                           |
+| wrapper packages (bundled or installed) and user-authored wrappers (1.1.0)                                       | enabled                           |
+| connector packages the user added (1.1.0)                                                                        | enabled                           |
 
 The core list lives in one place in the engine and is shown in the UI as "built-in".
 
@@ -81,3 +83,7 @@ the session history Phi keeps. Everything else starts at its default.
 `contractVersion` follows the content distribution design §4.4: minor versions are
 additive only (new kinds, new sources with their defaults); anything else needs a
 decision record and a deprecation window.
+
+## Changes
+
+- **1.1.0** (2026-10-02): `wrapper:` and `mcp:` items with their defaults. Additive.
