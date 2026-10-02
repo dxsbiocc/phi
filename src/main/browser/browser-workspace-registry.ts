@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto'
 import { isAbsolute, normalize, parse, posix } from 'node:path'
 import type { ProjectLocation } from '../../shared/projectLocation'
 import type { BrowserPolicyContext } from './browser-policy'
+import type { BrowserCheckpointStore } from './browser-checkpoints'
 import type { BrowserEngine } from './browser-engine'
-import { BrowserWorkspace } from './browser-workspace'
+import { BrowserWorkspace, BrowserWorkspaceDisposalError } from './browser-workspace'
 
 export type BrowserWorkspaceOwner =
   { kind: 'ordinary' } | { kind: 'project'; location: ProjectLocation }
@@ -21,6 +22,20 @@ export interface BrowserEngineFactoryInput {
 export interface BrowserWorkspaceRegistryOptions {
   engineFactory: (input: BrowserEngineFactoryInput) => BrowserEngine | Promise<BrowserEngine>
   policyContext?: BrowserPolicyContext
+  checkpointStore?: BrowserCheckpointStore
+}
+
+export class BrowserWorkspaceRegistryCleanupError extends Error {
+  readonly failures: { engine: boolean; checkpoint: boolean }
+
+  constructor(error: unknown) {
+    super('Browser workspace cleanup failed')
+    this.name = 'BrowserWorkspaceRegistryCleanupError'
+    this.failures =
+      error instanceof BrowserWorkspaceDisposalError
+        ? { ...error.failures }
+        : { engine: true, checkpoint: false }
+  }
 }
 
 interface RegistryEntry {
@@ -83,6 +98,7 @@ function opaquePartition(identity: string): string {
 export class BrowserWorkspaceRegistry {
   readonly #engineFactory: BrowserWorkspaceRegistryOptions['engineFactory']
   readonly #policyContext: BrowserPolicyContext
+  readonly #checkpointStore?: BrowserCheckpointStore
   readonly #entries = new Map<string, RegistryEntry>()
   #disposed = false
   #disposeAllPromise: Promise<void> | null = null
@@ -92,6 +108,7 @@ export class BrowserWorkspaceRegistry {
     this.#policyContext = options.policyContext?.applicationOrigins
       ? { applicationOrigins: [...options.policyContext.applicationOrigins] }
       : {}
+    this.#checkpointStore = options.checkpointStore
   }
 
   async getOrCreate(registration: BrowserWorkspaceRegistration): Promise<BrowserWorkspace> {
@@ -174,7 +191,8 @@ export class BrowserWorkspaceRegistry {
         sessionId: entry.sessionId,
         partition: entry.partition,
         engine,
-        policyContext: this.#policyContext
+        policyContext: this.#policyContext,
+        checkpointStore: this.#checkpointStore
       })
       entry.workspace = workspace
       return workspace
@@ -191,16 +209,20 @@ export class BrowserWorkspaceRegistry {
     if (entry.cleanupPromise) return entry.cleanupPromise
     entry.disposalRequested = true
     entry.cleanupPromise = (async () => {
-      if (waitForCreation && entry.workspacePromise) {
-        try {
-          await entry.workspacePromise
-        } catch {
-          // Creation errors belong to getOrCreate; cleanup still owns any produced engine.
+      try {
+        if (waitForCreation && entry.workspacePromise) {
+          try {
+            await entry.workspacePromise
+          } catch {
+            // Creation errors belong to getOrCreate; cleanup still owns any produced engine.
+          }
         }
+        if (entry.workspace) await entry.workspace.dispose()
+        else if (entry.engine) await entry.engine.dispose()
+        if (this.#entries.get(entry.sessionId) === entry) this.#entries.delete(entry.sessionId)
+      } catch (error) {
+        throw new BrowserWorkspaceRegistryCleanupError(error)
       }
-      if (entry.workspace) await entry.workspace.dispose()
-      else if (entry.engine) await entry.engine.dispose()
-      if (this.#entries.get(entry.sessionId) === entry) this.#entries.delete(entry.sessionId)
     })()
     return entry.cleanupPromise
   }

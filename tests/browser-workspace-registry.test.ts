@@ -2,10 +2,15 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { BrowserCapabilities } from '../src/shared/browserTypes'
 import type { ProjectLocation } from '../src/shared/projectLocation'
-import type { BrowserEngine } from '../src/main/browser/browser-engine'
+import type { BrowserEngine, EngineTabHandle } from '../src/main/browser/browser-engine'
+import type {
+  BrowserCheckpoint,
+  BrowserCheckpointStore
+} from '../src/main/browser/browser-checkpoints'
 import { InMemoryBrowserEngine } from '../src/main/browser/in-memory-browser-engine'
 import {
   BrowserWorkspaceRegistry,
+  BrowserWorkspaceRegistryCleanupError,
   type BrowserEngineFactoryInput,
   type BrowserWorkspaceOwner
 } from '../src/main/browser/browser-workspace-registry'
@@ -228,6 +233,41 @@ test('defensively copies registry policy context before workspace creation', asy
   assert.equal(result.error.code, 'SCHEME_BLOCKED')
 })
 
+test('passes one checkpoint store through registry recreation without automatic navigation', async () => {
+  class SessionMemoryStore implements BrowserCheckpointStore {
+    readonly values = new Map<string, BrowserCheckpoint>()
+    load(sessionId: string): BrowserCheckpoint | null {
+      const value = this.values.get(sessionId)
+      return value ? structuredClone(value) : null
+    }
+    save(sessionId: string, value: BrowserCheckpoint): void {
+      this.values.set(sessionId, structuredClone(value))
+    }
+    remove(sessionId: string): void {
+      this.values.delete(sessionId)
+    }
+  }
+  const store = new SessionMemoryStore()
+  const firstRegistry = new BrowserWorkspaceRegistry({
+    checkpointStore: store,
+    engineFactory: () => new CountingEngine({ capabilities })
+  })
+  const first = await firstRegistry.getOrCreate({ sessionId: 'session-1', owner: ordinary })
+  await first.execute({ kind: 'human' }, { type: 'open', requestId: 'open-1', url: 'example.test' })
+  assert.equal(store.values.get('session-1')?.tabs[0].url, 'https://example.test/')
+  await firstRegistry.disposeAll()
+
+  const restoredEngine = new CountingEngine({ capabilities })
+  const secondRegistry = new BrowserWorkspaceRegistry({
+    checkpointStore: store,
+    engineFactory: () => restoredEngine
+  })
+  const restored = await secondRegistry.getOrCreate({ sessionId: 'session-1', owner: ordinary })
+  assert.equal(restored.snapshot().tabs[0].restorable, true)
+  assert.equal(restored.snapshot().tabs[0].url, 'https://example.test/')
+  assert.equal(restoredEngine.hasTab('engine-tab-1' as EngineTabHandle), false)
+})
+
 test('rejects reuse of one session ID with a conflicting owner identity', async () => {
   const { registry, calls } = createRegistryHarness()
   await registry.getOrCreate({ sessionId: 'session-1', owner: localA })
@@ -343,8 +383,14 @@ test('retains a tombstone when pending-factory engine cleanup fails', async () =
   resolveFactory(engine)
 
   await assert.rejects(creating, /disposed during creation/)
-  await assert.rejects(firstDispose, /pending cleanup failed/)
-  await assert.rejects(registry.disposeSession('session-1'), /pending cleanup failed/)
+  await assert.rejects(
+    firstDispose,
+    (error: BrowserWorkspaceRegistryCleanupError) =>
+      error.failures.engine === true &&
+      error.failures.checkpoint === false &&
+      !error.message.includes('pending cleanup failed')
+  )
+  await assert.rejects(registry.disposeSession('session-1'), /Browser workspace cleanup failed/)
   await assert.rejects(
     registry.getOrCreate({ sessionId: 'session-1', owner: ordinary }),
     /being disposed/
@@ -365,13 +411,85 @@ test('propagates workspace disposal failure and prevents unsafe recreation', asy
   const registry = new BrowserWorkspaceRegistry({ engineFactory: () => engine })
   await registry.getOrCreate({ sessionId: 'session-1', owner: ordinary })
 
-  await assert.rejects(registry.disposeSession('session-1'), /workspace cleanup failed/)
-  await assert.rejects(registry.disposeSession('session-1'), /workspace cleanup failed/)
+  await assert.rejects(
+    registry.disposeSession('session-1'),
+    (error: BrowserWorkspaceRegistryCleanupError) =>
+      error.failures.engine === true && error.failures.checkpoint === false
+  )
+  await assert.rejects(registry.disposeSession('session-1'), /Browser workspace cleanup failed/)
   await assert.rejects(
     registry.getOrCreate({ sessionId: 'session-1', owner: ordinary }),
     /being disposed/
   )
   assert.equal(engine.disposeCalls, 1)
+})
+
+test('preserves safe dual-failure categories across repeated session disposal', async () => {
+  class FailingStore implements BrowserCheckpointStore {
+    value: BrowserCheckpoint | null = null
+    removeCalls = 0
+    load(): BrowserCheckpoint | null {
+      return this.value ? structuredClone(this.value) : null
+    }
+    save(_sessionId: string, value: BrowserCheckpoint): void {
+      this.value = structuredClone(value)
+    }
+    remove(): void {
+      this.removeCalls += 1
+      throw new Error('raw checkpoint secret')
+    }
+  }
+  class DualFailureEngine extends InMemoryBrowserEngine {
+    disposeCalls = 0
+    override async dispose(): Promise<void> {
+      this.disposeCalls += 1
+      throw new Error('raw engine secret')
+    }
+  }
+  const store = new FailingStore()
+  const engine = new DualFailureEngine({ capabilities })
+  const registry = new BrowserWorkspaceRegistry({
+    checkpointStore: store,
+    engineFactory: () => engine
+  })
+  const workspace = await registry.getOrCreate({ sessionId: 'session-1', owner: ordinary })
+  await workspace.execute(
+    { kind: 'human' },
+    { type: 'open', requestId: 'open-1', url: 'example.test' }
+  )
+  await workspace.execute(
+    { kind: 'human' },
+    { type: 'close', requestId: 'close-1', tabId: 'browser-tab-1' }
+  )
+
+  const first = registry.disposeSession('session-1')
+  const repeated = registry.disposeSession('session-1')
+  assert.equal(first, repeated)
+  let firstError: unknown
+  let repeatedError: unknown
+  try {
+    await first
+  } catch (error) {
+    firstError = error
+  }
+  try {
+    await repeated
+  } catch (error) {
+    repeatedError = error
+  }
+
+  assert.equal(firstError, repeatedError)
+  assert.equal(firstError instanceof BrowserWorkspaceRegistryCleanupError, true)
+  const safe = firstError as BrowserWorkspaceRegistryCleanupError
+  assert.deepEqual(safe.failures, { engine: true, checkpoint: true })
+  assert.equal(JSON.stringify(safe).includes('raw engine secret'), false)
+  assert.equal(JSON.stringify(safe).includes('raw checkpoint secret'), false)
+  assert.equal(engine.disposeCalls, 1)
+  assert.equal(store.removeCalls, 2)
+  await assert.rejects(
+    registry.getOrCreate({ sessionId: 'session-1', owner: ordinary }),
+    /being disposed/
+  )
 })
 
 test('disposeAll cleans every workspace once and permanently closes the registry', async () => {
@@ -432,7 +550,16 @@ test('disposeAll attempts every entry and reports partial cleanup failure', asyn
   await registry.getOrCreate({ sessionId: 'good', owner: ordinary })
   await registry.getOrCreate({ sessionId: 'bad', owner: ordinary })
 
-  await assert.rejects(registry.disposeAll(), /Failed to dispose 1 browser workspace/)
+  await assert.rejects(
+    registry.disposeAll(),
+    (error: AggregateError) =>
+      error.message === 'Failed to dispose 1 browser workspace' &&
+      error.errors.length === 1 &&
+      error.errors[0] instanceof BrowserWorkspaceRegistryCleanupError &&
+      error.errors[0].failures.engine === true &&
+      error.errors[0].failures.checkpoint === false &&
+      !JSON.stringify(error.errors).includes('partial cleanup failed')
+  )
   await assert.rejects(registry.disposeAll(), /Failed to dispose 1 browser workspace/)
   assert.equal(good.disposeCalls, 1)
   assert.equal(bad.disposeCalls, 1)

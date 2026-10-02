@@ -49,6 +49,7 @@ export interface BrowserTabSnapshot {
   canGoForward: boolean
   isAgentControlled: boolean
   documentRevision: number
+  restorable?: boolean
   error?: BrowserError
 }
 
@@ -89,6 +90,7 @@ export type BrowserCommand =
     }
   | { type: 'reload' | 'stop'; requestId: string; tabId: string }
   | { type: 'snapshot'; requestId: string; tabId: string }
+  | { type: 'restore'; requestId: string; tabId: string }
   | {
       type: 'click'
       requestId: string

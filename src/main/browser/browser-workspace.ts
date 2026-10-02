@@ -18,9 +18,22 @@ import type {
   EngineError,
   EngineEvent,
   EngineResult,
-  EngineTabHandle,
   EngineTabState
 } from './browser-engine'
+import type { BrowserCheckpointStore } from './browser-checkpoints'
+import {
+  BrowserCheckpointCoordinator,
+  BrowserWorkspaceDisposalError
+} from './browser-checkpoint-coordinator'
+export { BrowserWorkspaceDisposalError } from './browser-checkpoint-coordinator'
+import {
+  BrowserTabCollection,
+  browserOriginOf,
+  cloneBrowserOutcome,
+  cloneBrowserWorkspaceSnapshot,
+  type BrowserTabRecord as TabRecord,
+  type RestoredTabBinding
+} from './browser-tab-collection'
 
 type BrowserUrlNormalizer = (input: string, context: BrowserPolicyContext) => BrowserUrlPolicyResult
 
@@ -33,12 +46,7 @@ export interface BrowserWorkspaceOptions {
   idFactory?: () => string
   now?: () => number
   recentRequestCap?: number
-}
-
-interface TabRecord {
-  handle: EngineTabHandle
-  snapshot: BrowserTabSnapshot
-  navigationRevision: number
+  checkpointStore?: BrowserCheckpointStore
 }
 
 interface CachedOutcome {
@@ -54,49 +62,6 @@ function normalizeRecentRequestCap(value: number | undefined): number {
     return DEFAULT_RECENT_REQUEST_CAP
   }
   return Math.min(MAX_RECENT_REQUEST_CAP, Math.floor(value))
-}
-
-function cloneError(error: BrowserError | undefined): BrowserError | undefined {
-  return error ? { ...error } : undefined
-}
-
-function cloneTab(tab: BrowserTabSnapshot): BrowserTabSnapshot {
-  return {
-    ...tab,
-    ...(tab.error ? { error: cloneError(tab.error) } : {})
-  }
-}
-
-function cloneWorkspaceSnapshot(snapshot: BrowserWorkspaceSnapshot): BrowserWorkspaceSnapshot {
-  return {
-    ...snapshot,
-    capabilities: { ...snapshot.capabilities },
-    tabs: snapshot.tabs.map(cloneTab)
-  }
-}
-
-function cloneOutcome(outcome: BrowserOutcome): BrowserOutcome {
-  if (!outcome.ok) {
-    return {
-      ok: false,
-      error: { ...outcome.error },
-      snapshot: cloneWorkspaceSnapshot(outcome.snapshot)
-    }
-  }
-  return {
-    ok: true,
-    snapshot: cloneWorkspaceSnapshot(outcome.snapshot),
-    ...(outcome.screenshot ? { screenshot: { ...outcome.screenshot } } : {})
-  }
-}
-
-function originOf(url: string): string | null {
-  try {
-    const origin = new URL(url).origin
-    return origin === 'null' ? null : origin
-  } catch {
-    return null
-  }
 }
 
 function engineError(error: EngineError): BrowserError {
@@ -124,13 +89,12 @@ export class BrowserWorkspace {
   readonly #idFactory: () => string
   readonly #now: () => number
   readonly #recentRequestCap: number
+  readonly #checkpointCoordinator?: BrowserCheckpointCoordinator
   readonly #listeners = new Set<(event: BrowserWorkspaceEvent) => void>()
   readonly #recentRequests = new Map<string, CachedOutcome>()
-  readonly #tabs: TabRecord[] = []
-  readonly #tabsByHandle = new Map<EngineTabHandle, TabRecord>()
+  readonly #tabCollection: BrowserTabCollection
   readonly #unsubscribeEngine: () => void
   readonly #lifecycle = new AbortController()
-  #activeTabId: string | null = null
   #revision = 0
   #nextId = 0
   #commandTail: Promise<void> = Promise.resolve()
@@ -147,9 +111,18 @@ export class BrowserWorkspace {
       : {}
     this.#normalizeUrl = options.normalizeUrl ?? normalizeBrowserUrl
     this.#idFactory = options.idFactory ?? (() => `browser-tab-${++this.#nextId}`)
+    this.#tabCollection = new BrowserTabCollection(this.#idFactory)
     this.#now = options.now ?? Date.now
     this.#recentRequestCap = normalizeRecentRequestCap(options.recentRequestCap)
+    this.#checkpointCoordinator = options.checkpointStore
+      ? new BrowserCheckpointCoordinator({
+          sessionId: this.#sessionId,
+          store: options.checkpointStore,
+          onError: (error) => this.#emit({ type: 'error', error, revision: this.#revision })
+        })
+      : undefined
     this.#unsubscribeEngine = this.#engine.subscribe((event) => this.#reduceEngineEvent(event))
+    this.#loadCheckpoint()
   }
 
   async execute(
@@ -181,7 +154,7 @@ export class BrowserWorkspace {
   }
 
   snapshot(): BrowserWorkspaceSnapshot {
-    return cloneWorkspaceSnapshot(this.#currentSnapshot())
+    return cloneBrowserWorkspaceSnapshot(this.#currentSnapshot())
   }
 
   subscribe(listener: (event: BrowserWorkspaceEvent) => void): () => void {
@@ -198,11 +171,35 @@ export class BrowserWorkspace {
     this.#listeners.clear()
     this.#recentRequests.clear()
     const pendingCommands = this.#commandTail
+    const engineDisposal = this.#engine.dispose()
     this.#disposePromise = (async () => {
-      await this.#engine.dispose()
+      let engineFailed = false
+      try {
+        await engineDisposal
+      } catch {
+        engineFailed = true
+      }
       await pendingCommands
+      let checkpointFailed = false
+      try {
+        this.#checkpointCoordinator?.flush()
+      } catch {
+        checkpointFailed = true
+      }
+      if (engineFailed || checkpointFailed) {
+        throw new BrowserWorkspaceDisposalError({
+          engine: engineFailed,
+          checkpoint: checkpointFailed
+        })
+      }
     })()
     return this.#disposePromise
+  }
+
+  #loadCheckpoint(): void {
+    const checkpoint = this.#checkpointCoordinator?.load()
+    if (!checkpoint) return
+    this.#tabCollection.loadRestored(checkpoint.tabs, checkpoint.activeTabId)
   }
 
   async #executeNow(
@@ -213,7 +210,7 @@ export class BrowserWorkspace {
   ): Promise<BrowserOutcome> {
     if (this.#disposed) return this.#failure(this.#disposedError())
     const cached = this.#recentRequests.get(requestKey)
-    if (cached) return cloneOutcome(cached.outcome)
+    if (cached) return cloneBrowserOutcome(cached.outcome)
 
     let outcome: BrowserOutcome
     if (signal?.aborted) {
@@ -261,9 +258,11 @@ export class BrowserWorkspace {
           signal
         )
       case 'snapshot':
-        return this.#findTab(command.tabId)
+        return this.#tabCollection.find(command.tabId)
           ? this.#success()
           : this.#failure(this.#tabNotFound(command.tabId))
+      case 'restore':
+        return this.#restore(command.tabId, actor.kind === 'agent', signal)
       default:
         return this.#failure({
           code: 'CAPABILITY_UNAVAILABLE',
@@ -295,28 +294,17 @@ export class BrowserWorkspace {
   }
 
   #activate(tabId: string): BrowserOutcome {
-    const tab = this.#findTab(tabId)
-    if (!tab) return this.#failure(this.#tabNotFound(tabId))
-    if (this.#activeTabId !== tabId) {
-      this.#activeTabId = tabId
-      this.#changed()
-    }
+    if (!this.#tabCollection.find(tabId)) return this.#failure(this.#tabNotFound(tabId))
+    if (this.#tabCollection.activate(tabId)) this.#changed()
     return this.#success()
   }
 
   async #close(tabId: string): Promise<BrowserOutcome> {
-    const index = this.#tabs.findIndex((tab) => tab.snapshot.id === tabId)
-    if (index < 0) return this.#failure(this.#tabNotFound(tabId))
-    const tab = this.#tabs[index]
-    await this.#engine.disposeTab(tab.handle)
+    const tab = this.#tabCollection.find(tabId)
+    if (!tab) return this.#failure(this.#tabNotFound(tabId))
+    if (tab.handle) await this.#engine.disposeTab(tab.handle)
     if (this.#disposed) return this.#failure(this.#disposedError())
-
-    if (this.#activeTabId === tabId) {
-      this.#activeTabId =
-        this.#tabs[index + 1]?.snapshot.id ?? this.#tabs[index - 1]?.snapshot.id ?? null
-    }
-    this.#tabs.splice(index, 1)
-    this.#tabsByHandle.delete(tab.handle)
+    this.#tabCollection.remove(tabId)
     this.#changed()
     return this.#success()
   }
@@ -340,39 +328,14 @@ export class BrowserWorkspace {
       )
     }
 
-    const previousActiveTabId = this.#activeTabId
-    let tab: TabRecord | null = null
+    let tab: TabRecord
+    let previousActiveTabId: string | null
     try {
-      const tabId = this.#idFactory()
-      if (!tabId.trim() || this.#findTab(tabId)) {
-        throw new Error('Browser tab ID must be unique and non-empty')
-      }
-      tab = {
-        handle,
-        navigationRevision: 0,
-        snapshot: {
-          id: tabId,
-          title: 'New tab',
-          url: 'about:blank',
-          origin: null,
-          phase: 'idle',
-          canGoBack: false,
-          canGoForward: false,
-          isAgentControlled,
-          documentRevision: 0
-        }
-      }
-      this.#tabs.push(tab)
-      this.#tabsByHandle.set(handle, tab)
-      this.#activeTabId = tabId
+      const created = this.#tabCollection.create(handle, isAgentControlled)
+      tab = created.tab
+      previousActiveTabId = created.previousActiveTabId
       this.#changed()
     } catch (error) {
-      if (tab) {
-        const index = this.#tabs.indexOf(tab)
-        if (index >= 0) this.#tabs.splice(index, 1)
-        this.#tabsByHandle.delete(handle)
-      }
-      this.#activeTabId = previousActiveTabId
       await this.#engine.disposeTab(handle)
       throw error
     }
@@ -392,17 +355,10 @@ export class BrowserWorkspace {
   }
 
   async #rollbackCreatedTab(tab: TabRecord, previousActiveTabId: string | null): Promise<void> {
-    const index = this.#tabs.indexOf(tab)
-    if (index >= 0) this.#tabs.splice(index, 1)
-    if (this.#tabsByHandle.get(tab.handle) === tab) this.#tabsByHandle.delete(tab.handle)
-    if (this.#activeTabId === tab.snapshot.id) {
-      this.#activeTabId =
-        previousActiveTabId && this.#findTab(previousActiveTabId)
-          ? previousActiveTabId
-          : (this.#tabs.at(-1)?.snapshot.id ?? null)
-    }
+    const handle = tab.handle
+    this.#tabCollection.rollbackCreated(tab, previousActiveTabId)
     this.#changed()
-    await this.#engine.disposeTab(tab.handle)
+    if (handle) await this.#engine.disposeTab(handle)
   }
 
   async #navigate(
@@ -412,7 +368,7 @@ export class BrowserWorkspace {
     isAgentControlled: boolean,
     signal?: AbortSignal
   ): Promise<BrowserOutcome> {
-    const tab = this.#findTab(tabId)
+    const tab = this.#tabCollection.find(tabId)
     if (!tab) return this.#failure(this.#tabNotFound(tabId))
     if (
       expectedDocumentRevision !== undefined &&
@@ -427,6 +383,9 @@ export class BrowserWorkspace {
     }
     const normalized = this.#normalizeUrl(url, this.#policyContext)
     if (!normalized.ok) return this.#failure(normalized.error)
+    if (!tab.handle) {
+      return this.#materializeRestoredTab(tab, normalized.url, isAgentControlled, true, signal)
+    }
     if (isAgentControlled && !tab.snapshot.isAgentControlled) {
       this.#mutateTab(tab, (snapshot) => {
         snapshot.isAgentControlled = true
@@ -435,11 +394,71 @@ export class BrowserWorkspace {
     return this.#navigateEngine(tab, normalized.url, signal)
   }
 
+  async #restore(
+    tabId: string,
+    isAgentControlled: boolean,
+    signal?: AbortSignal
+  ): Promise<BrowserOutcome> {
+    const tab = this.#tabCollection.find(tabId)
+    if (!tab) return this.#failure(this.#tabNotFound(tabId))
+    if (tab.handle) return this.#success()
+    if (tab.snapshot.url === 'about:blank') {
+      return this.#materializeRestoredTab(tab, 'about:blank', isAgentControlled, false, signal)
+    }
+    const normalized = this.#normalizeUrl(tab.snapshot.url, this.#policyContext)
+    if (!normalized.ok) return this.#failure(normalized.error)
+    return this.#materializeRestoredTab(tab, normalized.url, isAgentControlled, true, signal)
+  }
+
+  async #materializeRestoredTab(
+    tab: TabRecord,
+    url: string,
+    isAgentControlled: boolean,
+    navigate: boolean,
+    signal?: AbortSignal
+  ): Promise<BrowserOutcome> {
+    const handle = await this.#engine.createTab({ partition: this.#partition })
+    if (this.#disposed || signal?.aborted) {
+      await this.#engine.disposeTab(handle)
+      return this.#failure(
+        this.#disposed
+          ? this.#disposedError()
+          : {
+              code: 'ACTION_CANCELLED',
+              message: 'Browser action was cancelled',
+              retryable: false
+            }
+      )
+    }
+    const binding = this.#tabCollection.bindRestored(tab, handle, isAgentControlled)
+    this.#changed()
+    if (!navigate) return this.#success()
+
+    try {
+      const outcome = await this.#navigateEngine(tab, url, signal)
+      if (!outcome.ok && outcome.error.code !== 'NAVIGATION_FAILED') {
+        await this.#rollbackRestoredTab(tab, binding)
+        return this.#failure(outcome.error)
+      }
+      return outcome
+    } catch (error) {
+      await this.#rollbackRestoredTab(tab, binding)
+      throw error
+    }
+  }
+
+  async #rollbackRestoredTab(tab: TabRecord, binding: RestoredTabBinding): Promise<void> {
+    this.#tabCollection.rollbackRestored(tab, binding)
+    this.#changed()
+    await this.#engine.disposeTab(binding.handle)
+  }
+
   async #navigateEngine(
     tab: TabRecord,
     url: string,
     signal?: AbortSignal
   ): Promise<BrowserOutcome> {
+    if (!tab.handle) return this.#failure(this.#disposedError())
     const result = await this.#engine.execute(tab.handle, { type: 'navigate', url }, signal)
     if (this.#disposed) return this.#failure(this.#disposedError())
     if (!result.ok) {
@@ -447,7 +466,7 @@ export class BrowserWorkspace {
       if (error.code === 'NAVIGATION_FAILED') {
         this.#mutateTab(tab, (snapshot) => {
           snapshot.url = url
-          snapshot.origin = originOf(url)
+          snapshot.origin = browserOriginOf(url)
           snapshot.phase = 'failed'
           snapshot.error = { ...error, tabId: snapshot.id }
         })
@@ -475,7 +494,7 @@ export class BrowserWorkspace {
 
   #applyEngineState(snapshot: BrowserTabSnapshot, state: EngineTabState): void {
     snapshot.url = state.url
-    snapshot.origin = originOf(state.url)
+    snapshot.origin = browserOriginOf(state.url)
     snapshot.title = state.title
     snapshot.phase = state.isLoading ? 'loading' : 'ready'
     snapshot.canGoBack = state.canGoBack
@@ -485,7 +504,7 @@ export class BrowserWorkspace {
 
   #reduceEngineEvent(event: EngineEvent): void {
     if (this.#disposed) return
-    const tab = this.#tabsByHandle.get(event.handle)
+    const tab = this.#tabCollection.findByHandle(event.handle)
     if (!tab) return
 
     switch (event.type) {
@@ -508,7 +527,7 @@ export class BrowserWorkspace {
         if (event.documentRevision <= tab.snapshot.documentRevision) return
         this.#mutateTab(tab, (snapshot) => {
           snapshot.url = event.url
-          snapshot.origin = originOf(event.url)
+          snapshot.origin = browserOriginOf(event.url)
           snapshot.documentRevision = event.documentRevision
           snapshot.canGoBack = event.canGoBack
           snapshot.canGoForward = event.canGoForward
@@ -525,7 +544,7 @@ export class BrowserWorkspace {
         if (!this.#acceptNavigationEvent(tab, event.navigationRevision)) return
         this.#mutateTab(tab, (snapshot) => {
           snapshot.url = event.url
-          snapshot.origin = originOf(event.url)
+          snapshot.origin = browserOriginOf(event.url)
           snapshot.phase = 'failed'
           snapshot.error = {
             code: 'NAVIGATION_FAILED',
@@ -553,16 +572,18 @@ export class BrowserWorkspace {
   }
 
   #queuePopup(source: TabRecord, event: Extract<EngineEvent, { type: 'popupRequested' }>): void {
+    const sourceHandle = source.handle
+    if (!sourceHandle) return
     const isAgentControlled = source.snapshot.isAgentControlled
     const queued = this.#commandTail.then(async () => {
-      if (this.#tabsByHandle.get(source.handle) !== source) return
+      if (!this.#tabCollection.isBound(source, sourceHandle)) return
       if (this.#disposed || event.method !== 'GET') return
       const normalized = this.#normalizeUrl(event.url, this.#policyContext)
       if (!normalized.ok) return
       try {
         await this.#createTab(normalized.url, isAgentControlled, this.#lifecycle.signal)
       } catch {
-        // A rejected popup must not break the command queue or create a native window.
+        return
       }
     })
     this.#commandTail = queued.then(
@@ -585,15 +606,28 @@ export class BrowserWorkspace {
 
   #changed(): void {
     this.#revision += 1
+    this.#persistCheckpoint()
     const event: BrowserWorkspaceEvent = {
       type: 'snapshotChanged',
       snapshot: this.snapshot()
     }
+    this.#emit(event)
+  }
+
+  #persistCheckpoint(): void {
+    if (!this.#checkpointCoordinator) return
+    this.#checkpointCoordinator.persistTabs(
+      this.#tabCollection.snapshots(),
+      this.#tabCollection.activeTabId
+    )
+  }
+
+  #emit(event: BrowserWorkspaceEvent): void {
     for (const listener of this.#listeners) {
       try {
         listener(event)
       } catch {
-        // A renderer listener cannot break browser state registration or cleanup.
+        continue
       }
     }
   }
@@ -601,8 +635,8 @@ export class BrowserWorkspace {
   #currentSnapshot(): BrowserWorkspaceSnapshot {
     return {
       sessionId: this.#sessionId,
-      activeTabId: this.#activeTabId,
-      tabs: this.#tabs.map((tab) => tab.snapshot),
+      activeTabId: this.#tabCollection.activeTabId,
+      tabs: this.#tabCollection.snapshots(),
       capabilities: this.#capabilities,
       revision: this.#revision
     }
@@ -625,10 +659,6 @@ export class BrowserWorkspace {
     }
   }
 
-  #findTab(tabId: string): TabRecord | undefined {
-    return this.#tabs.find((tab) => tab.snapshot.id === tabId)
-  }
-
   #disposedError(): BrowserError {
     return {
       code: 'ENGINE_UNAVAILABLE',
@@ -645,7 +675,10 @@ export class BrowserWorkspace {
 
   #remember(requestKey: string, outcome: BrowserOutcome): void {
     if (this.#recentRequestCap === 0) return
-    this.#recentRequests.set(requestKey, { at: this.#now(), outcome: cloneOutcome(outcome) })
+    this.#recentRequests.set(requestKey, {
+      at: this.#now(),
+      outcome: cloneBrowserOutcome(outcome)
+    })
     while (this.#recentRequests.size > this.#recentRequestCap) {
       let oldestId: string | null = null
       let oldestAt = Number.POSITIVE_INFINITY
