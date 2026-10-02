@@ -61,6 +61,7 @@ export type AppWorkspaceSidebarProps = {
   activeSkillId: string | null
   isLoadingSkills: boolean
   onOpenSkill: (skill: SkillSummary) => void
+  onOpenSkillCatalog: () => void
 
   mcpServers: McpServerSummary[]
   activeMcpServerId: string | null
@@ -130,6 +131,7 @@ function AppWorkspaceSidebarImpl({
   activeSkillId,
   isLoadingSkills,
   onOpenSkill,
+  onOpenSkillCatalog,
   mcpServers,
   activeMcpServerId,
   onOpenMcpServer,
@@ -318,6 +320,7 @@ function AppWorkspaceSidebarImpl({
             isLoading={isLoadingSkills}
             activeSkillId={activeSkillId}
             onSelectSkill={onOpenSkill}
+            onOpenCatalog={onOpenSkillCatalog}
           />
         </Box>
       ) : (
@@ -326,6 +329,7 @@ function AppWorkspaceSidebarImpl({
           isLoading={isLoadingSkills}
           activeSkillId={activeSkillId}
           onSelectSkill={onOpenSkill}
+          onOpenCatalog={onOpenSkillCatalog}
         />
       )
     ) : workspaceSidebarMode === 'mcp' ? (

@@ -76,6 +76,12 @@ import type {
   PackageManagerType,
   PackageRegistryView
 } from '../shared/packageManagerTypes'
+import type {
+  EnablementItemKey,
+  EnablementScope,
+  EnablementSnapshot
+} from '../shared/enablementTypes'
+import type { SkillContent, SkillSummary } from '../shared/skillTypes'
 
 type PreloadSessionSummary = {
   path: string
@@ -187,25 +193,6 @@ type PreloadPluginCatalogItem = {
   npmUrl: string
   installed: boolean
   installedPath?: string
-}
-
-type PreloadSkillSourceCategory = 'system' | 'third-party' | 'user' | 'generated'
-
-type PreloadSkillSummary = {
-  id: string
-  name: string
-  description: string
-  filePath: string
-  source: string
-  scope: 'user' | 'project' | 'temporary'
-  sourceCategory: PreloadSkillSourceCategory
-  sourceCategoryLabel: string
-  disabled: boolean
-}
-
-type PreloadSkillContent = {
-  filePath: string
-  content: string
 }
 
 type PreloadPromptAgentSummary = {
@@ -998,6 +985,7 @@ declare global {
       installPhiPluginFromDirectory: (path: string) => Promise<PhiPluginMutationResult>
       setPhiPluginEnabled: (id: string, enabled: boolean) => Promise<PhiPluginMutationResult>
       uninstallPhiPlugin: (id: string) => Promise<PhiPluginMutationResult>
+      pickPackageRegistryDirectory: () => Promise<string | null>
       readPackageRegistry: (dir: string) => Promise<PackageRegistryView>
       planPackageInstall: (
         dir: string,
@@ -1013,14 +1001,20 @@ declare global {
       ) => Promise<InstalledPackageView[]>
       uninstallPackage: (type: PackageManagerType, id: string) => Promise<InstalledPackageView[]>
       listInstalledPackages: () => Promise<InstalledPackageView[]>
-      listSkills: (cwd?: string) => Promise<PreloadSkillSummary[]>
-      readSkillContent: (filePath: string, cwd?: string) => Promise<PreloadSkillContent>
+      getEnablement: (projectCwd?: string) => Promise<EnablementSnapshot>
+      setEnablement: (
+        item: EnablementItemKey,
+        value: boolean | null,
+        scope: EnablementScope
+      ) => Promise<EnablementSnapshot>
+      listSkills: (cwd?: string) => Promise<SkillSummary[]>
+      readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
       setSkillDisabled: (
         filePath: string,
         disabled: boolean,
         cwd?: string
-      ) => Promise<PreloadSkillSummary[]>
-      deleteSkill: (filePath: string, cwd?: string) => Promise<PreloadSkillSummary[]>
+      ) => Promise<SkillSummary[]>
+      deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
       listPromptAgents: (cwd?: string) => Promise<PreloadPromptAgentSummary[]>
       listMcpServers: (cwd?: string) => Promise<PreloadMcpServerSummary[]>
       addRemoteMcpConnector: (name: string, url: string) => Promise<void>

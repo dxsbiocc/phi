@@ -322,6 +322,17 @@ test('skills.run reports an environment the user must build', async () => {
 test('skills.run rejects an unknown or invalid skill', async () => {
   await withFixture(async ({ host, projectDir }) => {
     await assert.rejects(
+      () =>
+        host.run({
+          requestId: 'disabled',
+          cwd: projectDir,
+          skill: 'echo',
+          script: 'echo.py',
+          allowedSkills: ['writer']
+        }),
+      /skill 'echo' is disabled/
+    )
+    await assert.rejects(
       () => host.run({ requestId: 'missing', cwd: projectDir, skill: 'nope', script: 'echo.py' }),
       /unknown skill 'nope'/
     )

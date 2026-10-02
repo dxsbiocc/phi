@@ -39,6 +39,19 @@ export type { McpServerSummary } from './features/mcp/lib/mcpTypes'
 import type { AgentEventSummary } from './features/chat/lib/agentEventTypes'
 import type { SessionExportResult } from '../../shared/sessionExportTypes'
 import type {
+  EnablementItemKey,
+  EnablementScope,
+  EnablementSnapshot
+} from '../../shared/enablementTypes'
+import type {
+  InstalledPackageView,
+  PackageInstallPlanView,
+  PackageManagerType,
+  PackageRegistryView
+} from '../../shared/packageManagerTypes'
+import type { SkillContent, SkillSummary } from '../../shared/skillTypes'
+export type { SkillContent, SkillSourceCategory, SkillSummary } from '../../shared/skillTypes'
+import type {
   AutoCompactionApi,
   ContextCompactionDetails,
   CurrentContextUsage,
@@ -317,25 +330,6 @@ export interface PluginCatalogItem {
   npmUrl: string
   installed: boolean
   installedPath?: string
-}
-
-export type SkillSourceCategory = 'system' | 'third-party' | 'user' | 'generated'
-
-export interface SkillSummary {
-  id: string
-  name: string
-  description: string
-  filePath: string
-  source: string
-  scope: 'user' | 'project' | 'temporary'
-  sourceCategory: SkillSourceCategory
-  sourceCategoryLabel: string
-  disabled: boolean
-}
-
-export interface SkillContent {
-  filePath: string
-  content: string
 }
 
 export interface PromptAgentSummary {
@@ -930,6 +924,26 @@ export type RendererApi = AutoCompactionApi & {
   listPlugins: () => Promise<PluginCatalogItem[]>
   installPlugin: (source: string) => Promise<PluginCatalogItem[]>
   removePlugin: (source: string) => Promise<PluginCatalogItem[]>
+  pickPackageRegistryDirectory: () => Promise<string | null>
+  readPackageRegistry: (dir: string) => Promise<PackageRegistryView>
+  planPackageInstall: (
+    dir: string,
+    type: PackageManagerType,
+    id: string,
+    version?: string
+  ) => Promise<PackageInstallPlanView>
+  installPackage: (
+    dir: string,
+    type: PackageManagerType,
+    id: string,
+    version?: string
+  ) => Promise<InstalledPackageView[]>
+  getEnablement: (projectCwd?: string) => Promise<EnablementSnapshot>
+  setEnablement: (
+    item: EnablementItemKey,
+    value: boolean | null,
+    scope: EnablementScope
+  ) => Promise<EnablementSnapshot>
   listSkills: (cwd?: string) => Promise<SkillSummary[]>
   readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
   setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string) => Promise<SkillSummary[]>

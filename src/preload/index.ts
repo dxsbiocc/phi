@@ -82,6 +82,12 @@ import type {
   PackageManagerType,
   PackageRegistryView
 } from '../shared/packageManagerTypes'
+import type {
+  EnablementItemKey,
+  EnablementScope,
+  EnablementSnapshot
+} from '../shared/enablementTypes'
+import type { SkillContent, SkillSummary } from '../shared/skillTypes'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
@@ -301,25 +307,6 @@ type PluginCatalogItem = {
   npmUrl: string
   installed: boolean
   installedPath?: string
-}
-
-type SkillSourceCategory = 'system' | 'third-party' | 'user' | 'generated'
-
-type SkillSummary = {
-  id: string
-  name: string
-  description: string
-  filePath: string
-  source: string
-  scope: 'user' | 'project' | 'temporary'
-  sourceCategory: SkillSourceCategory
-  sourceCategoryLabel: string
-  disabled: boolean
-}
-
-type SkillContent = {
-  filePath: string
-  content: string
 }
 
 type PromptAgentSummary = {
@@ -914,6 +901,7 @@ type RendererAuthApi = {
   installPhiPluginFromDirectory: (path: string) => Promise<PhiPluginMutationResult>
   setPhiPluginEnabled: (id: string, enabled: boolean) => Promise<PhiPluginMutationResult>
   uninstallPhiPlugin: (id: string) => Promise<PhiPluginMutationResult>
+  pickPackageRegistryDirectory: () => Promise<string | null>
   readPackageRegistry: (dir: string) => Promise<PackageRegistryView>
   planPackageInstall: (
     dir: string,
@@ -929,6 +917,12 @@ type RendererAuthApi = {
   ) => Promise<InstalledPackageView[]>
   uninstallPackage: (type: PackageManagerType, id: string) => Promise<InstalledPackageView[]>
   listInstalledPackages: () => Promise<InstalledPackageView[]>
+  getEnablement: (projectCwd?: string) => Promise<EnablementSnapshot>
+  setEnablement: (
+    item: EnablementItemKey,
+    value: boolean | null,
+    scope: EnablementScope
+  ) => Promise<EnablementSnapshot>
   listSkills: (cwd?: string) => Promise<SkillSummary[]>
   readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
   setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string) => Promise<SkillSummary[]>
@@ -1443,6 +1437,8 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('phiPlugins:setEnabled', id, enabled),
   uninstallPhiPlugin: (id: string): Promise<PhiPluginMutationResult> =>
     ipcRenderer.invoke('phiPlugins:uninstall', id),
+  pickPackageRegistryDirectory: (): Promise<string | null> =>
+    ipcRenderer.invoke('packages:pickRegistryDirectory'),
   readPackageRegistry: (dir: string): Promise<PackageRegistryView> =>
     ipcRenderer.invoke('packages:registry', dir),
   planPackageInstall: (
@@ -1462,6 +1458,13 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('packages:uninstall', type, id),
   listInstalledPackages: (): Promise<InstalledPackageView[]> =>
     ipcRenderer.invoke('packages:listInstalled'),
+  getEnablement: (projectCwd?: string): Promise<EnablementSnapshot> =>
+    ipcRenderer.invoke('enablement:get', projectCwd),
+  setEnablement: (
+    item: EnablementItemKey,
+    value: boolean | null,
+    scope: EnablementScope
+  ): Promise<EnablementSnapshot> => ipcRenderer.invoke('enablement:set', item, value, scope),
   listSkills: (cwd?: string): Promise<SkillSummary[]> => ipcRenderer.invoke('skills:list', cwd),
   readSkillContent: (filePath: string, cwd?: string): Promise<SkillContent> =>
     ipcRenderer.invoke('skills:read', filePath, cwd),

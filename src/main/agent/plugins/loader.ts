@@ -20,6 +20,7 @@ import {
   type PhiPlatform
 } from '../envs'
 import { getPhiAgentDir } from '../runtime-paths'
+import { isEnabled, setEnabled } from '../enablement'
 import type { PhiPluginManifest } from './phi-package'
 import {
   copyPluginPackage,
@@ -48,6 +49,8 @@ export interface PluginNamespace {
 export interface PluginLoaderOptions {
   /** Defaults to `PI_CODING_AGENT_DIR`, then `~/.phi`. */
   agentDir?: string
+  /** Project whose enablement override should be applied for session assembly. */
+  projectDir?: string
   /** Defaults to `<agentDir>/runtime`. */
   runtimeRoot?: string
   platform?: PhiPlatform
@@ -134,11 +137,19 @@ function resolvedPlatform(options: PluginLoaderOptions): PhiPlatform {
   return options.platform ?? currentPlatform()
 }
 
-function toLoadedPlugin(plugin: ValidatedPlugin, entry: PluginRegistryEntry): LoadedPlugin {
+function toLoadedPlugin(
+  plugin: ValidatedPlugin,
+  entry: PluginRegistryEntry,
+  options: PluginLoaderOptions
+): LoadedPlugin {
+  const agentDir = resolvedAgentDir(options)
   return {
     id: plugin.manifest.id,
     version: plugin.manifest.version,
-    enabled: entry.enabled,
+    enabled: isEnabled(
+      { key: `plugin:${plugin.manifest.id}`, source: 'plugin' },
+      { agentDir, ...(options.projectDir ? { projectDir: options.projectDir } : {}) }
+    ),
     source: entry.source,
     installedAt: entry.installedAt,
     dir: plugin.dir,
@@ -157,8 +168,9 @@ function toLoadedPlugin(plugin: ValidatedPlugin, entry: PluginRegistryEntry): Lo
 function installedPlugin(
   id: string,
   entry: PluginRegistryEntry,
-  agentDir: string
+  options: PluginLoaderOptions
 ): LoadedPlugin | undefined {
+  const agentDir = resolvedAgentDir(options)
   if (entry.uninstalledBundled) return undefined
   const dir = pluginVersionDir(id, entry.version, agentDir)
   if (!existsSync(dir)) return undefined
@@ -167,7 +179,7 @@ function installedPlugin(
   if (result.plugin.manifest.id !== id || result.plugin.manifest.version !== entry.version) {
     return undefined
   }
-  return toLoadedPlugin(result.plugin, entry)
+  return toLoadedPlugin(result.plugin, entry, options)
 }
 
 /** Installed packages, including disabled ones; bundled-uninstall tombstones are hidden. */
@@ -177,7 +189,7 @@ export function listInstalledPlugins(options: PluginLoaderOptions = {}): LoadedP
   return Object.entries(registry.plugins)
     .sort(([left], [right]) => left.localeCompare(right))
     .flatMap(([id, entry]) => {
-      const plugin = installedPlugin(id, entry, agentDir)
+      const plugin = installedPlugin(id, entry, options)
       return plugin ? [plugin] : []
     })
 }
@@ -367,12 +379,11 @@ export function installPlugin(
     }
     const entry: PluginRegistryEntry = {
       version: candidate.manifest.version,
-      enabled: true,
       source: options.source ?? 'local',
       installedAt: (options.now?.() ?? new Date()).toISOString()
     }
     writePluginRegistry(registryWith(registry, candidate.manifest.id, entry), agentDir)
-    const installed = toLoadedPlugin(copiedValidation.plugin, entry)
+    const installed = toLoadedPlugin(copiedValidation.plugin, entry, options)
     return succeeded(installed, validation.warnings)
   } catch (error) {
     for (const envId of referenced) removePluginReference(runtimeRoot, candidate.manifest.id, envId)
@@ -399,7 +410,7 @@ export async function upgradePlugin(
       validation.warnings
     )
   }
-  const current = installedPlugin(candidate.manifest.id, currentEntry, agentDir)
+  const current = installedPlugin(candidate.manifest.id, currentEntry, options)
   if (!current) {
     return failed(
       [problem('id', `installed plugin '${candidate.manifest.id}' is missing or invalid`)],
@@ -417,7 +428,7 @@ export async function upgradePlugin(
       validation.warnings
     )
   }
-  if (currentEntry.enabled) {
+  if (current.enabled) {
     const conflicts = namespaceProblems(candidate, options, candidate.manifest.id)
     if (conflicts.length > 0) return failed(conflicts, validation.warnings)
   }
@@ -452,7 +463,6 @@ export async function upgradePlugin(
   const newlyReferenced: string[] = []
   const entry: PluginRegistryEntry = {
     version: candidate.manifest.version,
-    enabled: currentEntry.enabled,
     source: options.source ?? currentEntry.source,
     installedAt: (options.now?.() ?? new Date()).toISOString()
   }
@@ -487,7 +497,7 @@ export async function upgradePlugin(
   }
   removePluginVersion(candidate.manifest.id, current.version, agentDir)
   gc(runtimeRoot)
-  return succeeded(toLoadedPlugin(copiedValidation.plugin, entry), validation.warnings)
+  return succeeded(toLoadedPlugin(copiedValidation.plugin, entry, options), validation.warnings)
 }
 
 export function setPluginEnabled(
@@ -500,19 +510,20 @@ export function setPluginEnabled(
   const entry = registry.plugins[id]
   if (!entry || entry.uninstalledBundled)
     return failed([problem('id', `plugin '${id}' is not installed`)])
-  const plugin = installedPlugin(id, entry, agentDir)
+  const plugin = installedPlugin(id, entry, options)
   if (!plugin) return failed([problem('id', `installed plugin '${id}' is missing or invalid`)])
-  if (entry.enabled === enabled) return succeeded(plugin, [])
 
-  if (enabled) {
+  if (enabled && plugin.enabled !== enabled) {
     const validation = validatePlugin(plugin.dir)
     if (!validation.ok || !validation.plugin) return failed(validation.errors, validation.warnings)
     const conflicts = namespaceProblems(validation.plugin, options, id)
     if (conflicts.length > 0) return failed(conflicts, validation.warnings)
   }
-  const nextEntry = { ...entry, enabled }
-  writePluginRegistry(registryWith(registry, id, nextEntry), agentDir)
-  const updated = installedPlugin(id, nextEntry, agentDir)
+  setEnabled(`plugin:${id}`, enabled, {
+    agentDir,
+    ...(options.projectDir ? { projectDir: options.projectDir } : {})
+  })
+  const updated = installedPlugin(id, entry, options)
   if (!updated) throw new Error(`updated plugin '${id}' failed validation`)
   return succeeded(updated, [])
 }
@@ -528,14 +539,16 @@ export function uninstallPlugin(
   const entry = registry.plugins[id]
   if (!entry || entry.uninstalledBundled)
     return failed([problem('id', `plugin '${id}' is not installed`)])
-  const plugin = installedPlugin(id, entry, agentDir)
+  const plugin = installedPlugin(id, entry, options)
   if (!plugin) return failed([problem('id', `installed plugin '${id}' is missing or invalid`)])
   const validation = validatePlugin(plugin.dir)
   if (!validation.ok || !validation.plugin) return failed(validation.errors, validation.warnings)
 
   const records = environmentsOf(validation.plugin, platform)
   const nextEntry: PluginRegistryEntry | undefined =
-    entry.source === 'bundled' ? { ...entry, enabled: false, uninstalledBundled: true } : undefined
+    entry.source === 'bundled'
+      ? { ...entry, enabled: undefined, uninstalledBundled: true }
+      : undefined
   writePluginRegistry(registryWith(registry, id, nextEntry), agentDir)
   for (const record of records.values()) removePluginReference(runtimeRoot, id, record.envId)
   removeAllPluginVersions(id, agentDir)

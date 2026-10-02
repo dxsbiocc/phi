@@ -50,7 +50,10 @@ function pluginAgentRoots(options: PhiAgentDiscoveryOptions): Root[] {
     return options.pluginAgentDirs.map((dir) => ({ dir, source: 'phi' as const }))
   }
   const roots = new Map<string, Root>()
-  for (const plugin of loadedPlugins({ agentDir: options.agentDir })) {
+  for (const plugin of loadedPlugins({
+    agentDir: options.agentDir,
+    ...(existsSync(options.cwd) ? { projectDir: options.cwd } : {})
+  })) {
     for (const filePath of plugin.components.agents) {
       const dir = dirname(filePath)
       roots.set(`${plugin.id}\0${dir}`, { dir, source: 'phi', pluginId: plugin.id })

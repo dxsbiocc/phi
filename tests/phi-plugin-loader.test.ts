@@ -182,7 +182,6 @@ test('install copies only allowlisted package files and records an environment r
     const registry = readPluginRegistry(agentDir)
     assert.deepEqual(registry.plugins['alpha-plugin'], {
       version: '1.0.0',
-      enabled: true,
       source: 'local',
       installedAt: '2026-10-01T00:00:00.000Z'
     })

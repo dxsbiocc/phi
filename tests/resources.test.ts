@@ -226,10 +226,14 @@ test('listSkills reads project skills from the selected cwd', async () => {
   assert(projectASkills.some((skill) => skill.name === 'project-a-skill'))
   assert(bundledSkill)
   assert(omicsVisualizationSkill)
-  assert.equal(bundledSkill.sourceCategory, 'system')
-  assert.equal(bundledSkill.sourceCategoryLabel, 'System')
-  assert.equal(omicsVisualizationSkill.sourceCategory, 'third-party')
-  assert.equal(omicsVisualizationSkill.sourceCategoryLabel, 'Plugin')
+  assert.equal(bundledSkill.sourceCategory, 'bundled')
+  assert.equal(bundledSkill.sourceCategoryLabel, '内置')
+  assert.equal(bundledSkill.globalEnabled, false)
+  assert.equal(bundledSkill.projectOverride, null)
+  assert.equal(bundledSkill.core, false)
+  assert.equal(omicsVisualizationSkill.sourceCategory, 'plugin')
+  assert.equal(omicsVisualizationSkill.sourceCategoryLabel, '插件')
+  assert.equal(omicsVisualizationSkill.sourceId, 'visualization')
   assert(
     projectASkills.some(
       (skill) => skill.name === 'project-a-phi-skill' && skill.scope === 'project'
@@ -245,8 +249,9 @@ test('listSkills reads project skills from the selected cwd', async () => {
   assert(!projectBSkills.some((skill) => skill.name === 'project-a-skill'))
   assert(projectASkills.some((skill) => skill.name === 'user-skill' && skill.scope === 'user'))
   assert.equal(projectAUserSkill?.sourceCategory, 'user')
-  assert.equal(projectAUserSkill?.sourceCategoryLabel, 'User')
-  assert.equal(projectAPhiSkill?.sourceCategory, 'user')
+  assert.equal(projectAUserSkill?.sourceCategoryLabel, '我的')
+  assert.equal(projectAPhiSkill?.sourceCategory, 'project')
+  assert.equal(projectAPhiSkill?.sourceCategoryLabel, '项目')
 })
 
 test('readSkillContent reads only cataloged skill files', async () => {
@@ -264,20 +269,19 @@ test('readSkillContent reads only cataloged skill files', async () => {
   )
 })
 
-test('setSkillDisabled updates skill frontmatter', async () => {
+test('setSkillDisabled updates enablement without rewriting skill files', async () => {
   const { setSkillDisabled } = await import('../src/main/agent/resources')
 
   const filePath = join(projectA, '.phi', 'skills', 'project-a-phi-skill', 'SKILL.md')
+  const original = readFileSync(filePath, 'utf-8')
 
   const disabledSkills = await setSkillDisabled(filePath, true, projectA)
   assert.equal(disabledSkills.find((skill) => skill.filePath === filePath)?.disabled, true)
-  assert.match(readFileSync(filePath, 'utf-8'), /disableModelInvocation: true/)
-  assert.match(readFileSync(filePath, 'utf-8'), /hide: true/)
+  assert.equal(readFileSync(filePath, 'utf-8'), original)
 
   const enabledSkills = await setSkillDisabled(filePath, false, projectA)
   assert.equal(enabledSkills.find((skill) => skill.filePath === filePath)?.disabled, false)
-  assert.match(readFileSync(filePath, 'utf-8'), /disableModelInvocation: false/)
-  assert.match(readFileSync(filePath, 'utf-8'), /hide: false/)
+  assert.equal(readFileSync(filePath, 'utf-8'), original)
 })
 
 test('deleteSkill removes mutable cataloged skill directories', async () => {

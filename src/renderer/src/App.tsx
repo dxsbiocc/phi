@@ -29,6 +29,7 @@ import type { WrapperRun } from '../../shared/wrapperTypes'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
+import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
 import ChatView from './features/chat/ChatView'
 import { HomeView } from './features/home/HomeView'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
@@ -46,7 +47,7 @@ import {
   wrapperResultBelongsToProject,
   wrapperResultScopeForPath
 } from './features/wrapper/lib/resultFiles'
-import { SkillDetail } from './features/skill/SkillView'
+import { SkillCatalogDialog, SkillDetail } from './features/skill/SkillView'
 import { useSkillCatalog } from './features/skill/hooks/useSkillCatalog'
 import { McpDetail } from './features/mcp/McpView'
 import { useMcpServerCatalog } from './features/mcp/hooks/useMcpServerCatalog'
@@ -700,6 +701,7 @@ function App(): React.JSX.Element {
   } | null>(null)
   const workspaceSidebarPreviewCloseTimer = useRef<number | null>(null)
   const [isNewProjectDialogOpen, setIsNewProjectDialogOpen] = useState(false)
+  const [isSkillCatalogOpen, setIsSkillCatalogOpen] = useState(false)
   const [isBusy, setIsBusy] = useState(false)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -746,6 +748,8 @@ function App(): React.JSX.Element {
     setActiveSkillId,
     refreshSkills,
     refreshPromptAgents,
+    setGlobalEnabled,
+    setProjectOverride,
     setSkillDisabled,
     deleteSkill
   } = useSkillCatalog(getActiveCwd)
@@ -3295,6 +3299,47 @@ function App(): React.JSX.Element {
     [setSkillDisabled, showSnackbar, showSnackbarError]
   )
 
+  const onSetSkillGlobalEnabled = useCallback(
+    async (skill: SkillSummary, enabled: boolean): Promise<void> => {
+      try {
+        await setGlobalEnabled(skill, enabled)
+        showSnackbar(enabled ? '已全局启用技能' : '已全局关闭技能', 'success')
+      } catch (error) {
+        showSnackbarError(error, enabled ? '启用技能失败' : '关闭技能失败')
+        throw error
+      }
+    },
+    [setGlobalEnabled, showSnackbar, showSnackbarError]
+  )
+
+  const onSetSkillProjectOverride = useCallback(
+    async (skill: SkillSummary, value: boolean | null): Promise<void> => {
+      const projectCwd =
+        activeProject?.location.kind === 'ssh' ? null : activeProject?.workingDirectory
+      if (!projectCwd) throw new Error('当前没有可用的本地项目')
+      try {
+        await setProjectOverride(skill, value, projectCwd)
+        showSnackbar(
+          value === null ? '已跟随全局技能设置' : value ? '项目已启用技能' : '项目已关闭技能',
+          'success'
+        )
+      } catch (error) {
+        showSnackbarError(error, '更新项目技能设置失败')
+        throw error
+      }
+    },
+    [activeProject, setProjectOverride, showSnackbar, showSnackbarError]
+  )
+
+  const onInstallSkillPackage = useCallback(
+    async (registryDir: string, entry: PackageRegistryEntryView): Promise<void> => {
+      await rendererApi.installPackage(registryDir, 'skill', entry.id, entry.version)
+      await refreshSkills()
+      showSnackbar(`已安装并启用「${entry.title}」`, 'success')
+    },
+    [refreshSkills, rendererApi, showSnackbar]
+  )
+
   const onDeleteSkill = useCallback(
     async (skill: SkillSummary): Promise<void> => {
       try {
@@ -3528,6 +3573,10 @@ function App(): React.JSX.Element {
       <SkillDetail
         selectedSkill={activeResourceSkill}
         busySkillId={busySkillId}
+        projectCwd={activeProject?.location.kind === 'ssh' ? null : activeProject?.workingDirectory}
+        onSetGlobalEnabled={onSetSkillGlobalEnabled}
+        onSetProjectOverride={onSetSkillProjectOverride}
+        onNavigateToPlugin={() => onOpenPhiPlugins()}
         onSetSkillDisabled={onSetSkillDisabled}
         onDeleteSkill={onDeleteSkill}
       />
@@ -3918,6 +3967,7 @@ function App(): React.JSX.Element {
           activeSkillId={activeSkillId}
           isLoadingSkills={isLoadingSkills}
           onOpenSkill={onOpenSkillTab}
+          onOpenSkillCatalog={() => setIsSkillCatalogOpen(true)}
           mcpServers={mcpServers}
           activeMcpServerId={activeMcpServerId}
           onOpenMcpServer={onOpenMcpServerTab}
@@ -3945,6 +3995,17 @@ function App(): React.JSX.Element {
           onDeleteProjectEntry={onDeleteProjectEntry}
           onFetchProjectSessions={onFetchProjectSessions}
           getSessionRuntimeState={getSessionRuntimeState}
+        />
+
+        <SkillCatalogDialog
+          open={isSkillCatalogOpen}
+          skills={skills}
+          isSkillsLoading={isLoadingSkills}
+          onClose={() => setIsSkillCatalogOpen(false)}
+          onEnableBundled={(skill) => onSetSkillGlobalEnabled(skill, true)}
+          onPickRegistryDirectory={() => rendererApi.pickPackageRegistryDirectory()}
+          onReadRegistry={(dir) => rendererApi.readPackageRegistry(dir)}
+          onInstallPackage={onInstallSkillPackage}
         />
 
         {isWorkspaceView ? (

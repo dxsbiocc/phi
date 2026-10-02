@@ -104,6 +104,11 @@ import {
 import { buildEnvRequestTool } from '../content/env-request-tool'
 import { buildScriptTools, buildSkillRunTool } from '../content/skill-tools'
 import type { ScriptToolDescriptor } from '../content/skill-tool-types'
+import {
+  filterEnabledMainSkills,
+  filterMainScriptTools,
+  selectDeclaredSpecialistSkills
+} from '../enablement'
 import { createHostJobClient } from '../wrappers/composition/job-host-client'
 import { buildWrapperCompositionTools } from '../wrappers/composition/tools'
 
@@ -1040,11 +1045,18 @@ async function createPhiAgentSession(
     sessionId,
     agentDir,
     definition.name,
-    deps.skillTools ? buildSkillRunTool(requestHost, skillHost) : undefined
+    deps.skillTools
+      ? buildSkillRunTool(requestHost, {
+          ...(typeof skillHost === 'string' ? { runtimeSessionId: skillHost } : skillHost),
+          allowedSkills: definition.skills
+        })
+      : undefined
   )
   for (const tool of deps.remoteTools?.() ?? []) availableTools.set(tool.name, tool)
   const attachedScriptTools = buildScriptTools(
-    (deps.skillTools ?? []).filter((tool) => tool.attachTo.includes(definition.name)),
+    (deps.skillTools ?? []).filter(
+      (tool) => definition.skills.includes(tool.skill) && tool.attachTo.includes(definition.name)
+    ),
     requestHost,
     skillHost
   )
@@ -1095,7 +1107,7 @@ async function createPhiAgentSession(
   const skills = deps.remoteRoot
     ? []
     : loader
-      ? loader.getSkills().skills.filter((skill) => definition.skills.includes(skill.name))
+      ? selectDeclaredSpecialistSkills(loader.getSkills().skills, definition.skills)
       : undefined
 
   const result = await createLegacyAgentSession({
@@ -1216,6 +1228,7 @@ async function createSession(params: unknown): Promise<unknown> {
     ...(phiAgents.length > 0 ? [createSpecialistFallbackExtension(phiAgents, agentRuns)] : []),
     ...(record.enableToolApproval ? [createBridgeToolApprovalExtension(sessionId)] : [])
   ]
+  let sessionSkillNames: Set<string> | undefined
   const resources =
     isRecord(record.resourceOptions) || extensionFactories.length > 0
       ? new DefaultResourceLoader({
@@ -1225,6 +1238,18 @@ async function createSession(params: unknown): Promise<unknown> {
             agentDir
           }),
           settingsManager: SettingsManager.create(settingsCwd, agentDir),
+          skillsOverride: (base) => {
+            sessionSkillNames ??= new Set(
+              filterEnabledMainSkills(base.skills, {
+                projectDir: cwd,
+                agentDir
+              }).map((skill) => skill.name)
+            )
+            return {
+              ...base,
+              skills: base.skills.filter((skill) => sessionSkillNames?.has(skill.name))
+            }
+          },
           ...(personaMarkdown
             ? {
                 agentsFilesOverride: (base) =>
@@ -1252,6 +1277,12 @@ async function createSession(params: unknown): Promise<unknown> {
   // stay out of the main conversation. Definitions come from the main process's scan.
   // Local only. A failed listing is logged and registers nothing; it must not block the session.
   const skillTools = remoteRoot ? undefined : await loadSkillScriptTools(cwd)
+  const enabledMainSkillNames = new Set(
+    resources?.getSkills().skills.map((skill) => skill.name) ?? []
+  )
+  const mainSkillTools = skillTools
+    ? filterMainScriptTools(skillTools, enabledMainSkillNames)
+    : undefined
   if (phiAgents.length > 0) pruneAgentUsageLogs(agentDir)
   const agentCustomTools = phiAgents.map((definition) =>
     buildAgentTool(
@@ -1469,11 +1500,14 @@ async function createSession(params: unknown): Promise<unknown> {
           })
         ]
       : []),
-    ...(skillTools
+    ...(mainSkillTools
       ? [
-          buildSkillRunTool(requestHost, sessionId),
+          buildSkillRunTool(requestHost, {
+            runtimeSessionId: sessionId,
+            allowedSkills: [...enabledMainSkillNames]
+          }),
           ...buildScriptTools(
-            skillTools.filter((tool) => tool.attachTo.includes('main')),
+            mainSkillTools.filter((tool) => tool.attachTo.includes('main')),
             requestHost,
             sessionId
           )

@@ -410,25 +410,33 @@ function pathIsInside(path: string, root: string): boolean {
   )
 }
 
-function installedPluginSkillDirectories(agentDir?: string): Array<{ dir: string; id: string }> {
-  return loadedPlugins({ agentDir }).flatMap((plugin) =>
-    plugin.components.skills.map((dir) => ({ dir, id: plugin.id }))
-  )
+function installedPluginSkillDirectories(
+  agentDir?: string,
+  projectDir?: string
+): Array<{ dir: string; id: string }> {
+  const availableProjectDir = projectDir && existsSync(projectDir) ? projectDir : undefined
+  return loadedPlugins({
+    agentDir,
+    ...(availableProjectDir ? { projectDir: availableProjectDir } : {})
+  }).flatMap((plugin) => plugin.components.skills.map((dir) => ({ dir, id: plugin.id })))
 }
 
-function runtimeSkillDirectories(agentDir?: string): string[] {
+function runtimeSkillDirectories(agentDir?: string, projectDir?: string): string[] {
   return [
     ...listActiveSkillPackages(agentDir).map((entry) => dirname(entry.dir)),
     getBundledSkillsDir(),
-    ...installedPluginSkillDirectories(agentDir).map((plugin) => dirname(plugin.dir))
+    ...installedPluginSkillDirectories(agentDir, projectDir).map((plugin) => dirname(plugin.dir))
   ]
 }
 
 function appendExistingBundledSkillPaths(
   paths: string[] | undefined,
-  agentDir?: string
+  agentDir?: string,
+  projectDir?: string
 ): string[] | undefined {
-  const bundledPaths = runtimeSkillDirectories(agentDir).filter((path) => existsSync(path))
+  const bundledPaths = runtimeSkillDirectories(agentDir, projectDir).filter((path) =>
+    existsSync(path)
+  )
   const merged = dedupePaths([...bundledPaths, ...(paths ?? [])])
   return merged.length > 0 ? merged : paths
 }
@@ -453,7 +461,7 @@ function markBundledSystemSkills(options: ResourceLoaderOptions): ResourceLoader
     skillsOverride: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
       const resolved = existingOverride ? existingOverride(base) : base
       const bundledRoot = getBundledSkillsDir()
-      const pluginRoots = installedPluginSkillDirectories(options.agentDir)
+      const pluginRoots = installedPluginSkillDirectories(options.agentDir, options.cwd)
       const installedPackages = listActiveSkillPackages(options.agentDir)
       const installedNames = new Set(installedPackages.map((entry) => entry.id))
       const skills = resolved.skills.map((skill) => {
@@ -560,7 +568,11 @@ function withPhiProjectResources(options: ResourceLoaderOptions): ResourceLoader
         'prompts'
       ),
       additionalSkillPaths: appendExistingProjectResourcePaths(
-        appendExistingBundledSkillPaths(options.additionalSkillPaths, options.agentDir),
+        appendExistingBundledSkillPaths(
+          options.additionalSkillPaths,
+          options.agentDir,
+          options.cwd
+        ),
         options.cwd,
         'skills'
       ),

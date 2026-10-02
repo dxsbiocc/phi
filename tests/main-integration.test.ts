@@ -188,6 +188,7 @@ type HarnessResult = {
   events: Array<{ channel: string; data: unknown }>
   approvalOptions: Array<Record<string, unknown>>
   runnerEvents: Array<Record<string, unknown>>
+  runStartInputs: Array<Record<string, unknown>>
   createdPhiSessions: Array<Record<string, unknown>>
   remoteConnectionChecks: Array<{ sessionId: string; projectId: string }>
   wrapperJobOptions: Record<string, unknown>
@@ -279,6 +280,7 @@ async function harness(
   const events: Array<{ channel: string; data: unknown }> = []
   const approvalOptions: Array<Record<string, unknown>> = []
   const runnerEvents: Array<Record<string, unknown>> = []
+  const runStartInputs: Array<Record<string, unknown>> = []
   const createdPhiSessions: Array<Record<string, unknown>> = []
   const remoteConnectionChecks: Array<{ sessionId: string; projectId: string }> = []
   const wrapperJobOptions: Record<string, unknown> = {}
@@ -309,6 +311,8 @@ async function harness(
   const updatedProjectDefaults: Array<Record<string, unknown>> = []
   const updatedSessionManifests: Array<{ sessionId: string; patch: Record<string, unknown> }> = []
   const appendedSessionEvents: Array<Record<string, unknown>> = []
+  const enablementGlobal: Record<string, boolean> = {}
+  const enablementProjects: Record<string, Record<string, boolean>> = {}
   let appFocused = true
   const reportedWrapperRuns = new Set<string>()
   const wrapperJobFinishListeners: Array<(run: unknown, status: unknown) => void> = []
@@ -481,12 +485,17 @@ async function harness(
     startRun(input: {
       sessionId: string
       runId: string
+      loadedSkills?: readonly string[]
       execute: (context: { signal: AbortSignal }) => Promise<void>
       getRecordedFailure?: () => string | null | undefined
     }): { done: Promise<void> } {
       if (this.runs.has(input.sessionId)) throw new Error('会话正在运行')
       if (this.runs.size >= this.maxActiveRuns) throw new Error('运行中的会话已达上限')
       const controller = new AbortController()
+      runStartInputs.push({
+        sessionId: input.sessionId,
+        loadedSkills: input.loadedSkills
+      })
       const run = {
         controller,
         runId: input.runId,
@@ -1124,7 +1133,8 @@ async function harness(
           options,
           async reload(): Promise<void> {
             return
-          }
+          },
+          getSkills: (): unknown => ({ skills: [], diagnostics: [] })
         }
       },
       getBundledSkillsDir: (): string => path.join(process.cwd(), 'resources', 'skills'),
@@ -1705,6 +1715,36 @@ async function harness(
       setPluginEnabled: (): unknown => ({ ok: true, errors: [], warnings: [] }),
       uninstallPlugin: (): unknown => ({ ok: true, errors: [], warnings: [] })
     },
+    './agent/plugins/store': {
+      readPluginRegistry: (): unknown => ({ version: 1, plugins: {} }),
+      writePluginRegistry: noop
+    },
+    './agent/enablement': {
+      getEnablementPath: (): string => '/isolated/state/enabled.json',
+      migrateEnablementFromHistory: (): unknown => ({
+        migrated: false,
+        enabledSkills: [],
+        sessionsScanned: 0,
+        bytesScanned: 0
+      }),
+      filterEnabledMainSkills: (skills: unknown[]): unknown[] => skills,
+      getEnablementSnapshot: ({ projectDir }: { projectDir?: string } = {}): unknown => ({
+        version: 1,
+        global: { ...enablementGlobal },
+        ...(projectDir ? { projectPath: projectDir } : {}),
+        project: projectDir ? { ...(enablementProjects[projectDir] ?? {}) } : {}
+      }),
+      setEnabled: (
+        item: string,
+        value: boolean | null,
+        { projectDir }: { projectDir?: string } = {}
+      ): unknown => {
+        const target = projectDir ? (enablementProjects[projectDir] ??= {}) : enablementGlobal
+        if (value === null) delete target[item]
+        else target[item] = value
+        return { version: 1, global: enablementGlobal, projects: enablementProjects }
+      }
+    },
     './agent/plugins/validate': {
       validatePlugin: (): unknown => ({ ok: false, errors: [], warnings: [] })
     },
@@ -1725,7 +1765,9 @@ async function harness(
         environments: [],
         agentDir: '/isolated'
       }),
-      installPackages: async (): Promise<unknown[]> => [],
+      installPackages: async (plan: { root: { type: string; id: string } }): Promise<unknown[]> => [
+        { type: plan.root.type, id: plan.root.id }
+      ],
       uninstallPackage: (): unknown[] => [],
       listInstalledPackages: (): unknown[] => []
     },
@@ -1747,6 +1789,7 @@ async function harness(
           scope: 'user',
           sourceCategory: 'user',
           sourceCategoryLabel: 'User',
+          enabled: true,
           disabled: false
         }
       ],
@@ -1774,8 +1817,26 @@ async function harness(
           scope: 'project',
           sourceCategory: 'user',
           sourceCategoryLabel: 'User',
+          enabled: true,
           disabled: false
-        }
+        },
+        ...Object.entries(enablementGlobal)
+          .filter(([key, enabled]) => key.startsWith('skill:') && enabled)
+          .map(([key]) => {
+            const name = key.slice('skill:'.length)
+            return {
+              id: `${cwd}:${name}`,
+              name,
+              description: name,
+              filePath: `${cwd}/.phi/skills/${name}/SKILL.md`,
+              source: 'installed-package',
+              scope: 'user',
+              sourceCategory: 'installed-package',
+              sourceCategoryLabel: '已安装',
+              enabled: true,
+              disabled: false
+            }
+          })
       ],
       readSkillContent: async (filePath: string): Promise<unknown> => ({
         filePath,
@@ -2571,6 +2632,7 @@ async function harness(
     events,
     approvalOptions,
     runnerEvents,
+    runStartInputs,
     createdPhiSessions,
     remoteConnectionChecks,
     wrapperJobOptions,
@@ -4264,6 +4326,9 @@ test('main IPC: plugin operations write compact support log events', async () =>
 test('main IPC exposes local package registry planning and lifecycle channels', async () => {
   const app = await harness()
 
+  app.setOpenDialogResult({ canceled: false, filePaths: ['/registry'] })
+  assert.equal(await app.invoke('packages:pickRegistryDirectory'), '/registry')
+
   const registry = (await app.invoke('packages:registry', '/registry')) as {
     id: string
     schemaVersion: number
@@ -4278,10 +4343,78 @@ test('main IPC exposes local package registry planning and lifecycle channels', 
     '1.0.0'
   )) as { root: { type: string; id: string; version: string } }
   assert.deepEqual(plan.root, { type: 'skill', id: 'alpha-skill', version: '1.0.0' })
-  assert.deepEqual(await app.invoke('packages:install', '/registry', 'skill', 'alpha-skill'), [])
+  assert.deepEqual(await app.invoke('packages:install', '/registry', 'skill', 'alpha-skill'), [
+    { type: 'skill', id: 'alpha-skill' }
+  ])
+  assert.deepEqual(await app.invoke('enablement:get'), {
+    version: 1,
+    global: { 'skill:alpha-skill': true },
+    project: {}
+  })
   assert.deepEqual(await app.invoke('packages:listInstalled'), [])
   assert.deepEqual(await app.invoke('packages:uninstall', 'skill', 'alpha-skill'), [])
   await assert.rejects(app.invoke('packages:plan', '', 'wrapper', '', undefined), /参数无效/)
+})
+
+test('main IPC validates and stores global and project enablement', async () => {
+  const app = await harness()
+
+  assert.deepEqual(await app.invoke('enablement:get'), {
+    version: 1,
+    global: {},
+    project: {}
+  })
+  assert.deepEqual(await app.invoke('enablement:set', 'skill:scanpy', true, { type: 'global' }), {
+    version: 1,
+    global: { 'skill:scanpy': true },
+    project: {}
+  })
+  assert.deepEqual(
+    await app.invoke('enablement:set', 'skill:scanpy', false, {
+      type: 'project',
+      projectCwd: '/projects/current'
+    }),
+    {
+      version: 1,
+      global: { 'skill:scanpy': true },
+      projectPath: '/projects/current',
+      project: { 'skill:scanpy': false }
+    }
+  )
+  await assert.rejects(
+    app.invoke('enablement:set', 'wrapper:fastqc', true, { type: 'global' }),
+    /标识无效/
+  )
+  await assert.rejects(
+    app.invoke('enablement:set', 'skill:scanpy', 'yes', { type: 'global' }),
+    /启用值无效/
+  )
+  await assert.rejects(
+    app.invoke('enablement:set', 'skill:scanpy', true, { type: 'project' }),
+    /项目启用范围无效/
+  )
+})
+
+test('main IPC records the production loaded-skill shape for migration', async () => {
+  const app = await harness()
+
+  await app.invoke('agent:prompt', 'use the available skill')
+
+  const started = app.runStartInputs[0]
+  assert.deepEqual(started?.loadedSkills, ['skill'])
+})
+
+test('main IPC refreshes loaded-skill history after runtime invalidation', async () => {
+  const app = await harness()
+
+  await app.invoke('agent:prompt', 'first run')
+  await app.invoke('packages:install', '/registry', 'skill', 'alpha-skill')
+  await app.invoke('agent:prompt', 'second run')
+
+  assert.deepEqual(
+    app.runStartInputs.map((input) => input.loadedSkills),
+    [['skill'], ['alpha-skill', 'skill']]
+  )
 })
 
 test(

@@ -19,7 +19,8 @@ export type PluginSource = 'bundled' | 'local'
 
 export interface PluginRegistryEntry {
   version: string
-  enabled: boolean
+  /** Legacy only. Enablement now lives in state/enabled.json. */
+  enabled?: boolean
   source: PluginSource
   installedAt: string
   uninstalledBundled?: boolean
@@ -45,7 +46,7 @@ function isRegistryEntry(value: unknown): value is PluginRegistryEntry {
   const entry = value as Record<string, unknown>
   return (
     typeof entry.version === 'string' &&
-    typeof entry.enabled === 'boolean' &&
+    (entry.enabled === undefined || typeof entry.enabled === 'boolean') &&
     (entry.source === 'bundled' || entry.source === 'local') &&
     typeof entry.installedAt === 'string' &&
     (entry.uninstalledBundled === undefined || typeof entry.uninstalledBundled === 'boolean')

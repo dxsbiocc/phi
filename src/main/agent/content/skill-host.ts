@@ -1,7 +1,7 @@
 import { realpathSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
 
-import { loadedPlugins, type LoadedPlugin } from '../plugins/loader'
+import { listInstalledPlugins, loadedPlugins, type LoadedPlugin } from '../plugins/loader'
 import { installedSkillPackageIdForDir } from '../packages/store'
 
 import { getRuntimeRoot, type PhiPlatform } from '../envs'
@@ -107,8 +107,8 @@ export function createSkillHost({
     if (runs.get(requestId) === controller) runs.delete(requestId)
   }
 
-  function owningPlugin(skillDir: string): LoadedPlugin | undefined {
-    return loadedPlugins(agentDir ? { agentDir } : {}).find((plugin) =>
+  function owningPlugin(skillDir: string, projectDir: string): LoadedPlugin | undefined {
+    return loadedPlugins({ ...(agentDir ? { agentDir } : {}), projectDir }).find((plugin) =>
       plugin.components.skills.some((componentDir) => {
         try {
           return realpathSync(skillDir) === realpathSync(componentDir)
@@ -119,17 +119,30 @@ export function createSkillHost({
     )
   }
 
-  async function resolveSkill(cwd: string, name: string): Promise<ResolvedSkill> {
-    const dirs = await listSkillDirs(cwd)
+  async function resolveSkill(
+    cwd: string,
+    name: string,
+    allowedSkills?: readonly string[],
+    requestedPluginId?: string
+  ): Promise<ResolvedSkill> {
+    if (allowedSkills && !allowedSkills.includes(name))
+      throw new Error(`skill '${name}' is disabled`)
+    const requestedPlugin = requestedPluginId
+      ? listInstalledPlugins(agentDir ? { agentDir } : {}).find(
+          (plugin) => plugin.id === requestedPluginId
+        )
+      : undefined
+    const dirs = [...(await listSkillDirs(cwd)), ...(requestedPlugin?.components.skills ?? [])]
     const dir = dirs.find(
       (candidate) =>
         basename(candidate) === name || installedSkillPackageIdForDir(candidate, agentDir) === name
     )
     if (!dir) throw new Error(`unknown skill '${name}'`)
     let validation: SkillValidationResult
+    const plugin = requestedPlugin ?? owningPlugin(dir, cwd)
     try {
       validation = validateSkill(dir, {
-        insidePlugin: owningPlugin(dir) !== undefined,
+        insidePlugin: plugin !== undefined,
         expectedName: installedSkillPackageIdForDir(dir, agentDir)
       })
     } catch (error) {
@@ -142,7 +155,7 @@ export function createSkillHost({
         .join('; ')
       throw new Error(`invalid skill '${name}': ${detail || 'validation failed'}`)
     }
-    const pluginId = owningPlugin(dir)?.id
+    const pluginId = plugin?.id
     return { skill: validation.skill, ...(pluginId ? { pluginId } : {}) }
   }
 
@@ -207,7 +220,7 @@ export function createSkillHost({
       const seenNames = new Set<string>()
 
       for (const dir of dirs) {
-        const plugin = owningPlugin(dir)
+        const plugin = owningPlugin(dir, cwd)
         let validation: SkillValidationResult
         try {
           validation = validateSkill(dir, {
@@ -267,9 +280,11 @@ export function createSkillHost({
       const runCwd = optionalString(record, 'runCwd')
       const sessionEnvironment = optionalString(record, 'sessionEnvironment')
       const runtimeSessionId = optionalSessionId(record)
-      const resolved = await resolveSkill(cwd, skillName)
+      const allowedSkills = optionalStringArray(record, 'allowedSkills')
+      const requestedPluginId = optionalString(record, 'pluginId')
+      const resolved = await resolveSkill(cwd, skillName, allowedSkills, requestedPluginId)
       const skill = resolved.skill
-      const pluginId = resolved.pluginId ?? optionalString(record, 'pluginId')
+      const pluginId = resolved.pluginId ?? requestedPluginId
       const controller = begin(requestId)
       try {
         const gate = await gateEnvironment({

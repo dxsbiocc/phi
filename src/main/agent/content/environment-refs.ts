@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-import { loadedPlugins } from '../plugins/loader'
+import { listInstalledPlugins } from '../plugins/loader'
 import { getBundledResourceDir } from '../runtime/runtime-adapter'
 import {
   computeEnvId,
@@ -182,7 +182,9 @@ function describePluginEnvironment(
   if (!pluginId) {
     throw new Error(`environment plugin:${name} requires a requesting plugin`)
   }
-  const plugins = loadedPlugins(agentDir ? { agentDir } : {})
+  // A requesting specialist already captured its plugin when the session started;
+  // later enablement changes must not invalidate that running session's environment.
+  const plugins = listInstalledPlugins(agentDir ? { agentDir } : {})
   const plugin = plugins.find((candidate) => candidate.id === pluginId)
   const declaration = plugin?.manifest.environments?.[name]
   if (!plugin || !declaration) {

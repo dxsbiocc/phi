@@ -15,6 +15,7 @@ import type {
   PhiPluginMutationResult,
   PhiPluginProblemView
 } from '../shared/phiPluginTypes'
+import type { EnablementItemKey, EnablementScope } from '../shared/enablementTypes'
 import { localizePhiPluginProblemMessage } from '../shared/phiPluginProblems'
 import { declaredExternalOutputRoot } from '../shared/wrapperResultTypes'
 import {
@@ -193,6 +194,8 @@ import {
   type PluginNamespace
 } from './agent/plugins/loader'
 import { validatePlugin, type PluginProblem } from './agent/plugins/validate'
+import { readPluginRegistry, writePluginRegistry } from './agent/plugins/store'
+import { getEnablementSnapshot, migrateEnablementFromHistory, setEnabled } from './agent/enablement'
 import {
   cleanupStalePackageStaging,
   installPackages as installRegistryPackages,
@@ -822,6 +825,7 @@ function requireRemoteEditApproval(request: RemoteEditRequest): void {
   }
 }
 const phiSessionIdsByKey = new Map<string, string>()
+const loadedSkillNamesBySession = new Map<string, string[]>()
 const sessionKeyAliases = new Map<string, string>()
 const sessionModelSelections = new Map<string, ModelSelection>()
 const sessionThinkingLevels = new Map<string, ThinkingLevel>()
@@ -972,11 +976,13 @@ function phiPluginInstallPreview(path: string): PhiPluginInstallPreview {
   }
 }
 
-async function installedPluginNamespace(): Promise<PluginNamespace> {
-  const pluginSkillRoots = loadedPlugins({ agentDir: AGENT_DIR }).flatMap(
-    (plugin) => plugin.components.skills
-  )
-  const skills = (await listSkills(currentCwd)).filter(
+async function installedPluginNamespace(projectDir?: string): Promise<PluginNamespace> {
+  const resourceCwd = projectDir ?? currentCwd
+  const pluginSkillRoots = loadedPlugins({
+    agentDir: AGENT_DIR,
+    ...(projectDir ? { projectDir } : {})
+  }).flatMap((plugin) => plugin.components.skills)
+  const skills = (await listSkills(resourceCwd)).filter(
     (skill) => !pluginSkillRoots.some((root) => isPathInsideRoot(root, skill.filePath))
   )
   const toolPrefixes = skills.flatMap((skill) => {
@@ -988,7 +994,7 @@ async function installedPluginNamespace(): Promise<PluginNamespace> {
     }
   })
   const agents = discoverPhiAgents({
-    cwd: currentCwd,
+    cwd: resourceCwd,
     agentDir: AGENT_DIR,
     bundledDir: getBundledAgentsDir(),
     pluginAgentDirs: []
@@ -3489,9 +3495,36 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
     const changeBaseline =
       project?.location?.kind === 'ssh' ? null : await beginWorkspaceChangeCapture(runSnapshot.cwd)
 
+    let loadedSkills = loadedSkillNamesBySession.get(phiSessionId)
+    if (!loadedSkills) {
+      if (
+        project?.location?.kind === 'ssh' ||
+        isRemoteProjectAnchorPath(runSnapshot.cwd, AGENT_DIR)
+      ) {
+        loadedSkills = []
+      } else {
+        try {
+          loadedSkills = (await listSkills(runSnapshot.cwd))
+            .filter((skill) => skill.enabled)
+            .map((skill) => skill.name)
+            .sort()
+        } catch (error) {
+          loadedSkills = []
+          writeAppLog({
+            event: 'session_loaded_skills_unavailable',
+            level: 'warn',
+            sessionId: phiSessionId,
+            metadata: { error: error instanceof Error ? error.message : String(error) }
+          })
+        }
+      }
+      loadedSkillNamesBySession.set(phiSessionId, loadedSkills)
+    }
+
     const registryRun = runnerRegistry.startRun({
       sessionId: phiSessionId,
       runId,
+      loadedSkills,
       getRecordedFailure: () => promptRun.recordedFailureMessage,
       execute: async ({ signal }) => {
         if (signal.aborted || promptRun.cancelled) return
@@ -4314,6 +4347,32 @@ function isRemoteResourceScope(cwd?: string): boolean {
     isRemoteProjectAnchorPath(currentCwd, AGENT_DIR) ||
     (typeof cwd === 'string' && isRemoteProjectAnchorPath(cwd, AGENT_DIR))
   )
+}
+
+function isEnablementItemKey(value: unknown): value is EnablementItemKey {
+  return (
+    typeof value === 'string' &&
+    (/^skill:[a-z0-9][a-z0-9-]{0,63}$/.test(value) || /^plugin:[a-z][a-z0-9-]{1,63}$/.test(value))
+  )
+}
+
+function enablementScopeOptions(value: unknown): { projectDir?: string } {
+  if (!isRecord(value) || (value.type !== 'global' && value.type !== 'project')) {
+    throw new Error('启用范围无效')
+  }
+  if (value.type === 'global') {
+    if (Object.keys(value).some((key) => key !== 'type')) throw new Error('全局启用范围无效')
+    return {}
+  }
+  if (
+    Object.keys(value).some((key) => key !== 'type' && key !== 'projectCwd') ||
+    typeof value.projectCwd !== 'string' ||
+    value.projectCwd.trim().length === 0 ||
+    isRemoteResourceScope(value.projectCwd)
+  ) {
+    throw new Error('项目启用范围无效')
+  }
+  return { projectDir: value.projectCwd }
 }
 
 function isLocalFilePathAllowed(
@@ -5439,6 +5498,8 @@ async function createDiagnosticsText(): Promise<string> {
 }
 
 async function invalidateAgentSession(): Promise<void> {
+  const phiSessionId = getPhiSessionIdForKey(currentSessionKey)
+  if (phiSessionId) loadedSkillNamesBySession.delete(phiSessionId)
   const lifecycle = getCurrentLifecycle()
   const previous = lifecycle.advance()
   advancePromptGeneration(currentSessionKey)
@@ -6047,6 +6108,50 @@ app.whenReady().then(async () => {
     })
   }
   writeAppLog({ event: 'app_started', metadata: { removedOldLogs: removedLogs } })
+  const bundledSkillNames = (() => {
+    try {
+      return readdirSync(getBundledSkillsDir(), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+    } catch {
+      return []
+    }
+  })()
+  migrateEnablementFromHistory(bundledSkillNames, { agentDir: AGENT_DIR })
+  try {
+    const registry = readPluginRegistry(AGENT_DIR)
+    const global = getEnablementSnapshot({ agentDir: AGENT_DIR }).global
+    const plugins = { ...registry.plugins }
+    const migratedPlugins: string[] = []
+    let hadLegacyEnablement = false
+    for (const [id, entry] of Object.entries(plugins)) {
+      if (typeof entry.enabled !== 'boolean') continue
+      hadLegacyEnablement = true
+      const key = `plugin:${id}` as const
+      if (!Object.hasOwn(global, key)) {
+        setEnabled(key, entry.enabled, { agentDir: AGENT_DIR })
+        migratedPlugins.push(id)
+      }
+      const lifecycleEntry = { ...entry }
+      delete lifecycleEntry.enabled
+      plugins[id] = lifecycleEntry
+    }
+    if (hadLegacyEnablement) {
+      writePluginRegistry({ version: 1, plugins }, AGENT_DIR)
+    }
+    if (migratedPlugins.length > 0) {
+      writeAppLog({
+        event: 'enablement_plugin_registry_migrated',
+        metadata: { plugins: migratedPlugins }
+      })
+    }
+  } catch (error) {
+    writeAppLog({
+      event: 'enablement_plugin_registry_migration_failed',
+      level: 'warn',
+      metadata: { error: error instanceof Error ? error.message : String(error) }
+    })
+  }
   // Bundled plugins: install missing ones before agent scans (a file copy), then upgrade in
   // the background, because an upgrade may first build the new environment it switches to.
   const bundledPluginOptions = async (): Promise<Parameters<typeof installBundledPlugins>[0]> => ({
@@ -6762,6 +6867,7 @@ app.whenReady().then(async () => {
       permissionMode: currentPermissionMode
     })
     deleteSession(path)
+    if (manifest) loadedSkillNamesBySession.delete(manifest.sessionId)
   })
   ipcMain.handle('sessions:rename', async (_, path: string, name: string) => {
     const trimmedName = name.trim()
@@ -7562,7 +7668,6 @@ app.whenReady().then(async () => {
         agentDir: AGENT_DIR,
         names: await installedPluginNamespace()
       })
-      if (result.ok) await invalidateAgentSession()
       return phiPluginMutation(result)
     } catch (error) {
       rememberErrorSummary(error)
@@ -7590,6 +7695,17 @@ app.whenReady().then(async () => {
         `插件卸载失败：${error instanceof Error ? error.message : String(error)}`
       )
     }
+  })
+  ipcMain.handle('packages:pickRegistryDirectory', async () => {
+    const window = getActiveWindow()
+    const options: Electron.OpenDialogOptions = {
+      title: '选择本地技能目录',
+      properties: ['openDirectory']
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
   })
   ipcMain.handle('packages:registry', async (_, dir: unknown) => {
     if (typeof dir !== 'string' || dir.trim().length === 0) {
@@ -7639,6 +7755,9 @@ app.whenReady().then(async () => {
         throw new Error('软件包安装参数无效')
       }
       try {
+        const installedBefore = new Set(
+          listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
+        )
         const plan = planRegistryInstall(
           readPackageRegistry(dir),
           { type, id, ...(version ? { version } : {}) },
@@ -7650,6 +7769,14 @@ app.whenReady().then(async () => {
           names: await installedPluginNamespace(),
           build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
         })
+        for (const installed of result) {
+          if (
+            installed.type === 'skill' &&
+            !installedBefore.has(`${installed.type}:${installed.id}`)
+          ) {
+            setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
+          }
+        }
         await invalidateAgentSession()
         return result
       } catch (error) {
@@ -7680,6 +7807,44 @@ app.whenReady().then(async () => {
         `读取已安装软件包失败：${error instanceof Error ? error.message : String(error)}`
       )
     }
+  })
+  ipcMain.handle('enablement:get', async (_, projectCwd?: unknown) => {
+    if (projectCwd !== undefined && typeof projectCwd !== 'string') {
+      throw new Error('项目目录无效')
+    }
+    if (typeof projectCwd === 'string' && isRemoteResourceScope(projectCwd)) {
+      throw new Error('远程项目 Skills 暂不可用')
+    }
+    return getEnablementSnapshot({
+      agentDir: AGENT_DIR,
+      ...(typeof projectCwd === 'string' && projectCwd.length > 0 ? { projectDir: projectCwd } : {})
+    })
+  })
+  ipcMain.handle('enablement:set', async (_, item: unknown, value: unknown, scope: unknown) => {
+    if (!isEnablementItemKey(item)) throw new Error('启用项目标识无效')
+    if (typeof value !== 'boolean' && value !== null) throw new Error('启用值无效')
+    const options = enablementScopeOptions(scope as EnablementScope)
+    if (item.startsWith('plugin:')) {
+      const pluginId = item.slice('plugin:'.length)
+      const inherited = options.projectDir
+        ? getEnablementSnapshot({ agentDir: AGENT_DIR, ...options }).global[item]
+        : undefined
+      const desired = value ?? inherited ?? true
+      const result = setPluginEnabled(pluginId, desired, {
+        agentDir: AGENT_DIR,
+        ...options,
+        names: await installedPluginNamespace(options.projectDir)
+      })
+      if (!result.ok) {
+        throw new Error(
+          result.errors.map((problem) => problem.message).join('; ') || '插件启用状态无效'
+        )
+      }
+      if (value === null) setEnabled(item, null, { agentDir: AGENT_DIR, ...options })
+    } else {
+      setEnabled(item, value, { agentDir: AGENT_DIR, ...options })
+    }
+    return getEnablementSnapshot({ agentDir: AGENT_DIR, ...options })
   })
   ipcMain.handle('skills:list', async (_, cwd?: string) =>
     isRemoteResourceScope(cwd) ? listGlobalSkills() : listSkills(cwd ?? currentCwd)
