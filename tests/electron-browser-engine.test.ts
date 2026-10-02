@@ -1,11 +1,48 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import test from 'node:test'
 import type { EngineTabHandle } from '../src/main/browser/browser-engine'
 import {
   ElectronBrowserEngine,
+  type BrowserSessionLike,
+  type BrowserWebContentsLike,
   type BrowserWebContentsViewLike,
   type BrowserWebContentsViewOptions
 } from '../src/main/browser/electron-browser-engine'
+
+class RequiredSession extends EventEmitter implements BrowserSessionLike {
+  setPermissionCheckHandler(handler: unknown): void {
+    void handler
+  }
+  setPermissionRequestHandler(handler: unknown): void {
+    void handler
+  }
+}
+
+class RequiredWebContents extends EventEmitter implements BrowserWebContentsLike {
+  readonly session = new RequiredSession()
+  readonly navigationHistory = {
+    canGoBack: (): boolean => false,
+    canGoForward: (): boolean => false,
+    goBack: (): void => undefined,
+    goForward: (): void => undefined
+  }
+  async loadURL(): Promise<void> {
+    return
+  }
+  close(): void {
+    return
+  }
+  reload(): void {
+    return
+  }
+  stop(): void {
+    return
+  }
+  closeDevTools(): void {
+    return
+  }
+}
 
 interface HarnessOptions {
   loadGate?: Promise<void>
@@ -28,7 +65,7 @@ function createHarness(options: HarnessOptions = {}): {
   const removeCalls: FakeView[] = []
   let nextWebContentsId = 900
 
-  class FakeWebContents {
+  class FakeWebContents extends RequiredWebContents {
     readonly id = nextWebContentsId++
     readonly loadedUrls: string[] = []
     closeCalls = 0
@@ -39,7 +76,7 @@ function createHarness(options: HarnessOptions = {}): {
       if (options.loadError) throw options.loadError
     }
 
-    close(): void {
+    override close(): void {
       this.closeCalls += 1
       if (options.closeErrorAt === this.id) throw new Error('raw close failure')
     }
@@ -143,10 +180,7 @@ test('reserves candidate handles across concurrent creates without overwrite', a
   const candidates = ['shared-handle', 'shared-handle', 'second-handle']
   const views: BrowserWebContentsViewLike[] = []
   class ReservedView implements BrowserWebContentsViewLike {
-    readonly webContents = {
-      loadURL: async (): Promise<void> => undefined,
-      close: (): void => undefined
-    }
+    readonly webContents = new RequiredWebContents()
     constructor(readonly options: BrowserWebContentsViewOptions) {
       views.push(this)
     }
@@ -177,10 +211,7 @@ test('reserves candidate handles across concurrent creates without overwrite', a
 
 test('wraps id factory failures without exposing injected error text', async () => {
   class NeverCreatedView implements BrowserWebContentsViewLike {
-    readonly webContents = {
-      loadURL: async (): Promise<void> => undefined,
-      close: (): void => undefined
-    }
+    readonly webContents = new RequiredWebContents()
   }
   const engine = new ElectronBrowserEngine({
     WebContentsView: NeverCreatedView,
@@ -320,7 +351,7 @@ test('returns safe structured errors for missing, cancelled, and unsupported com
     error: { code: 'ACTION_CANCELLED', message: 'Browser action was cancelled' }
   })
 
-  const unsupported = await engine.execute(handle, { type: 'reload' })
+  const unsupported = await engine.execute(handle, { type: 'screenshot' })
   assert.deepEqual(unsupported, {
     ok: false,
     error: { code: 'CAPABILITY_UNAVAILABLE', message: 'Browser command is unavailable' }
