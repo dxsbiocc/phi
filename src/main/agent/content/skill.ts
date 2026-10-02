@@ -65,6 +65,8 @@ export interface PhiSkillBlock {
   attachTo?: string[]
   toolPrefix?: string
   scripts?: ScriptToolDeclaration[]
+  /** Contract 1.1.0: still works, being replaced; the message names the replacement. */
+  deprecated?: string
 }
 
 export interface ScriptToolDeclaration {
@@ -610,6 +612,7 @@ function toPhiBlock(value: Record<string, unknown>): PhiSkillBlock {
     block.attachTo = value.attachTo
   }
   if (typeof value.toolPrefix === 'string') block.toolPrefix = value.toolPrefix
+  if (typeof value.deprecated === 'string') block.deprecated = value.deprecated
   if (Array.isArray(value.scripts)) {
     block.scripts = value.scripts.filter(isRecord).map(toScriptDeclaration)
   }

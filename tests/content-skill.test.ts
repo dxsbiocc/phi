@@ -124,7 +124,7 @@ function writeLocks(dir: string): void {
 }
 
 test('skill contract version and phi schema reject unknown fields', () => {
-  assert.equal(SKILL_CONTRACT_VERSION, '1.0.0')
+  assert.equal(SKILL_CONTRACT_VERSION, '1.1.0')
   assert.equal(phiSkillBlockSchema.additionalProperties, false)
   const scripts = phiSkillBlockSchema.properties.scripts
   assert.equal(scripts.type, 'array')
@@ -618,3 +618,11 @@ function skillMdBody(): string {
   return `name: demo
 description: ${DESCRIPTION}`
 }
+
+test('phi.deprecated is accepted (contract 1.1.0) and the bundled office skills carry it', () => {
+  for (const name of ['pptx', 'xlsx']) {
+    const result = validateSkill(join(process.cwd(), 'resources', 'skills', name))
+    assert.equal(result.ok, true, JSON.stringify(result.errors))
+    assert.match(String(result.skill?.phi?.deprecated ?? ''), /OfficeCLI/)
+  }
+})

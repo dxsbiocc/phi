@@ -7,6 +7,7 @@ metadata: {"version": "1.1", "skill-author": "K-Dense Inc."}
 compatibility: Runs in phi:python@1. LibreOffice (soffice) is a host dependency. gcc is a host dependency only when Unix sockets are restricted.
 phi:
   environment: phi:python@1
+  deprecated: 即将由 OfficeCLI 替代。Office 文档处理接入 OfficeCLI 后，这个技能会移出内置，改为可单独安装的包。
 ---
 
 # Requirements for Outputs

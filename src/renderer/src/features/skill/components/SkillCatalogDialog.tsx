@@ -16,7 +16,12 @@ import type {
 } from '../../../../../shared/packageManagerTypes'
 import { PhiIcons } from '../../../icons'
 import type { SkillSummary } from '../../../types'
-import { bundledCatalogSkills, formatPackageSize, registrySkillPackages } from '../lib/skillCatalog'
+import {
+  DEPRECATED_SKILL_LABEL,
+  bundledCatalogSkills,
+  formatPackageSize,
+  registrySkillPackages
+} from '../lib/skillCatalog'
 
 export type SkillCatalogDialogProps = {
   open: boolean
@@ -259,8 +264,16 @@ export function SkillCatalogDialog({
                   <CatalogCard
                     key={skill.id}
                     title={skill.name}
-                    summary={skill.description || '这个技能没有提供说明。'}
-                    metadata="内置 · 默认关闭"
+                    summary={
+                      skill.deprecated
+                        ? `${skill.deprecated}${skill.description ? ` ${skill.description}` : ''}`
+                        : skill.description || '这个技能没有提供说明。'
+                    }
+                    metadata={
+                      skill.deprecated
+                        ? `内置 · 默认关闭 · ${DEPRECATED_SKILL_LABEL}`
+                        : '内置 · 默认关闭'
+                    }
                     action={
                       <Button
                         size="small"

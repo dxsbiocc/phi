@@ -17,6 +17,8 @@ export interface SkillSummary {
   core: boolean
   /** Compatibility alias for older renderer consumers. */
   disabled: boolean
+  /** Skill contract 1.1.0 `phi.deprecated`: still works, being replaced; the message names the replacement. */
+  deprecated?: string
 }
 
 export interface SkillContent {

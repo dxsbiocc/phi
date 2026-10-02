@@ -38,11 +38,18 @@ export function skillSourceLabel(skill: SkillSummary): string {
   return skillSourceCategoryLabels[skill.sourceCategory]
 }
 
+/** Skill contract 1.1.0: deprecated skills stay listed but sort last. */
 export function bundledCatalogSkills(skills: SkillSummary[]): SkillSummary[] {
-  return skills.filter(
+  const available = skills.filter(
     (skill) => skill.sourceCategory === 'bundled' && !skill.core && !skillIsGloballyEnabled(skill)
   )
+  return [
+    ...available.filter((skill) => !skill.deprecated),
+    ...available.filter((skill) => skill.deprecated)
+  ]
 }
+
+export const DEPRECATED_SKILL_LABEL = '即将替代'
 
 export function registrySkillPackages(
   registry: Pick<PackageRegistryView, 'packages'> | null | undefined

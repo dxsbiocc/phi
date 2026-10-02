@@ -3,7 +3,7 @@
  * Args meta-rules (§ 5.1) are checked in code; they are not expressible cleanly here.
  */
 
-export const SKILL_CONTRACT_VERSION = '1.0.0'
+export const SKILL_CONTRACT_VERSION = '1.1.0'
 
 const scriptToolDeclarationSchema = {
   type: 'object',
@@ -38,6 +38,8 @@ export const phiSkillBlockSchema = {
       items: { type: 'string', pattern: '^(main|[A-Z][A-Za-z0-9]*)$' }
     },
     toolPrefix: { type: 'string', pattern: '^[a-z][a-z0-9]{1,11}$' },
+    /** Contract 1.1.0: the skill still works but is being replaced; the message says by what. */
+    deprecated: { type: 'string', minLength: 1, maxLength: 300 },
     scripts: {
       type: 'array',
       items: scriptToolDeclarationSchema

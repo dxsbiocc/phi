@@ -99,3 +99,15 @@ test('registry catalog filters to skill packages and formats package sizes', () 
   assert.equal(formatPackageSize(10 * 1024), '10 KB')
   assert.equal(formatPackageSize(2 * 1024 * 1024), '2 MB')
 })
+
+test('deprecated bundled skills stay in the catalog but sort last', () => {
+  const result = bundledCatalogSkills([
+    skill({ name: 'pptx', sourceCategory: 'bundled', deprecated: '即将由 OfficeCLI 替代。' }),
+    skill({ name: 'scanpy', sourceCategory: 'bundled' }),
+    skill({ name: 'xlsx', sourceCategory: 'bundled', deprecated: '即将由 OfficeCLI 替代。' })
+  ])
+  assert.deepEqual(
+    result.map((item) => item.name),
+    ['scanpy', 'pptx', 'xlsx']
+  )
+})

@@ -5,6 +5,7 @@ license: Proprietary. LICENSE.txt has complete terms
 metadata: {"version": "1.0"}
 phi:
   environment: phi:python@1
+  deprecated: 即将由 OfficeCLI 替代。Office 文档处理接入 OfficeCLI 后，这个技能会移出内置，改为可单独安装的包。
 ---
 
 # PPTX Skill

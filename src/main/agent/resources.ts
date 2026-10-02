@@ -12,6 +12,7 @@ import {
 import { getGlobalMcpConfigPaths, getPhiAgentDir, getProjectMcpConfigPaths } from './runtime-paths'
 import { discoverPhiAgents } from './agents/discovery'
 import { getEnablementSnapshot, isCoreSkill, setEnabled, skillEnablementSource } from './enablement'
+import { parseSkillFile } from './content/skill'
 
 const AGENT_DIR = getPhiAgentDir()
 
@@ -118,6 +119,20 @@ export function classifySkillSource(skill: {
   return skillEnablementSource(skill)
 }
 
+/** Skill contract 1.1.0 `phi.deprecated`; unreadable or malformed files simply have none. */
+function skillDeprecation(filePath: string): string | undefined {
+  try {
+    const parsed = parseSkillFile(readFileSync(filePath, 'utf8'))
+    if (!parsed.ok) return undefined
+    const phi = parsed.frontmatter.phi
+    if (!phi || typeof phi !== 'object' || Array.isArray(phi)) return undefined
+    const message = (phi as Record<string, unknown>).deprecated
+    return typeof message === 'string' && message.trim() ? message.trim() : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function toSkillSummary(
   skill: {
     name: string
@@ -144,6 +159,7 @@ function toSkillSummary(
     : null
   const globalEnabled = core ? true : (globalOverride ?? sourceDefault)
   const enabled = core ? true : (projectOverride ?? globalEnabled)
+  const deprecated = skillDeprecation(skill.filePath)
 
   return {
     id: skill.filePath,
@@ -163,7 +179,8 @@ function toSkillSummary(
     globalOverride,
     projectOverride,
     core,
-    disabled: !enabled
+    disabled: !enabled,
+    ...(deprecated ? { deprecated } : {})
   }
 }
 

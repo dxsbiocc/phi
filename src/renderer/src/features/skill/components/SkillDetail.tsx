@@ -26,7 +26,8 @@ import {
   skillDirectory,
   skillIsEnabled,
   skillSourceCategoryLabels,
-  skillSourceLabel
+  skillSourceLabel,
+  DEPRECATED_SKILL_LABEL
 } from '../lib/skillCatalog'
 
 const SkillIcon = PhiIcons.entity.skill
@@ -340,6 +341,15 @@ export function SkillDetail({
                 color={enabled ? 'success' : 'default'}
                 label={enabled ? '已启用' : '已关闭'}
               />
+              {selectedSkill.deprecated ? (
+                <Chip
+                  size="small"
+                  color="warning"
+                  variant="outlined"
+                  label={DEPRECATED_SKILL_LABEL}
+                  title={selectedSkill.deprecated}
+                />
+              ) : null}
               {selectedSkill.projectOverride !== null && projectCwd ? (
                 <Chip
                   size="small"
@@ -348,6 +358,11 @@ export function SkillDetail({
                 />
               ) : null}
             </Stack>
+            {selectedSkill.deprecated ? (
+              <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>
+                {selectedSkill.deprecated}
+              </Typography>
+            ) : null}
           </Box>
           <Stack spacing={1} sx={{ alignItems: 'flex-end', flexShrink: 0 }}>
             <SkillEnablementActions

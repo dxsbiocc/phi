@@ -1,6 +1,6 @@
 # Skill contract
 
-contractVersion: 1.0.0
+contractVersion: 1.1.0
 
 This contract defines a Phi skill: its files, its frontmatter, how its scripts run
 (`skill_run`), and how it declares **script tools**. It builds on the
@@ -63,12 +63,13 @@ phi:
       output: ./schemas/qc-result.json
 ```
 
-| Field         | Required                                                    | Rule                                                                                                                                                                                           |
-| ------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `environment` | when the skill has scripts (§ 3.1)                          | an environment reference: `phi:<name>@<major>`, `plugin:<name>`, `project:<name>`, or `./environment.yml`                                                                                      |
-| `attachTo`    | no                                                          | list of agent names (PascalCase) and/or `main`; default `[main]`. Script tools are registered for these agents only                                                                            |
-| `toolPrefix`  | when `scripts` is set and the skill is not part of a plugin | `^[a-z][a-z0-9]{1,11}$`, not an engine-reserved prefix (`skill`, `env`, `http`, `wrapper`, `agent`, `db`, `mcp`); inside a plugin the plugin's `toolPrefix` is used and this field is rejected |
-| `scripts`     | no                                                          | list of script tool declarations (§ 5)                                                                                                                                                         |
+| Field         | Required                                                    | Rule                                                                                                                                                                                                                         |
+| ------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `environment` | when the skill has scripts (§ 3.1)                          | an environment reference: `phi:<name>@<major>`, `plugin:<name>`, `project:<name>`, or `./environment.yml`                                                                                                                    |
+| `attachTo`    | no                                                          | list of agent names (PascalCase) and/or `main`; default `[main]`. Script tools are registered for these agents only                                                                                                          |
+| `toolPrefix`  | when `scripts` is set and the skill is not part of a plugin | `^[a-z][a-z0-9]{1,11}$`, not an engine-reserved prefix (`skill`, `env`, `http`, `wrapper`, `agent`, `db`, `mcp`); inside a plugin the plugin's `toolPrefix` is used and this field is rejected                               |
+| `scripts`     | no                                                          | list of script tool declarations (§ 5)                                                                                                                                                                                       |
+| `deprecated`  | no                                                          | 1–300 characters (1.1.0): the skill still works but is being replaced; the message names the replacement. The UI marks it on the Skills page and in the catalog, where it sorts last. Enablement and behaviour are unchanged |
 
 ## 3. Environments
 
@@ -194,3 +195,7 @@ in `npm run lint` for every skill in the repository and when a skill is installe
 `contractVersion` follows the content distribution design §4.4: minor versions are additive
 only (new optional fields, new path formats, new interpreters); anything else needs an ADR and
 a deprecation window.
+
+## Changes
+
+- **1.1.0** (2026-10-02): optional `phi.deprecated` message. Additive.
