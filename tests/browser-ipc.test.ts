@@ -21,7 +21,11 @@ import type {
   BrowserCheckpointStore
 } from '../src/main/browser/browser-checkpoints'
 import { InMemoryBrowserEngine } from '../src/main/browser/in-memory-browser-engine'
-import type { EngineTabHandle } from '../src/main/browser/browser-engine'
+import type {
+  EngineCommand,
+  EngineResult,
+  EngineTabHandle
+} from '../src/main/browser/browser-engine'
 import { BrowserWorkspace } from '../src/main/browser/browser-workspace'
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -42,6 +46,52 @@ class BlockingViewportEngine extends InMemoryBrowserEngine {
   ): Promise<void> {
     this.entered.resolve()
     await this.release.promise
+    await super.setViewport(handle, viewport)
+  }
+}
+
+class BlockingNavigationEngine extends InMemoryBrowserEngine {
+  readonly navigationEntered = deferred()
+  readonly releaseNavigation = deferred()
+  readonly viewportCalls: Array<BrowserViewport | null> = []
+
+  override async execute(
+    handle: EngineTabHandle,
+    command: EngineCommand,
+    signal?: AbortSignal
+  ): Promise<EngineResult> {
+    if (command.type === 'navigate') {
+      this.navigationEntered.resolve()
+      await this.releaseNavigation.promise
+    }
+    return super.execute(handle, command, signal)
+  }
+
+  override async setViewport(
+    handle: EngineTabHandle,
+    viewport: BrowserViewport | null
+  ): Promise<void> {
+    this.viewportCalls.push(viewport ? { ...viewport } : null)
+    await super.setViewport(handle, viewport)
+  }
+}
+
+class SequencedPresentationEngine extends InMemoryBrowserEngine {
+  readonly firstShowEntered = deferred()
+  readonly releaseFirstShow = deferred()
+  readonly viewportCalls: Array<BrowserViewport | null> = []
+  #blockedFirstShow = false
+
+  override async setViewport(
+    handle: EngineTabHandle,
+    viewport: BrowserViewport | null
+  ): Promise<void> {
+    this.viewportCalls.push(viewport ? { ...viewport } : null)
+    if (viewport && !this.#blockedFirstShow) {
+      this.#blockedFirstShow = true
+      this.firstShowEntered.resolve()
+      await this.releaseFirstShow.promise
+    }
     await super.setViewport(handle, viewport)
   }
 }
@@ -501,11 +551,10 @@ test('workspace viewport seam serializes close and fails safely across disposal 
     { kind: 'human' },
     { type: 'close', requestId: 'close-1', tabId }
   )
-  assert.equal(closeEngine.hasTab('engine-tab-1' as EngineTabHandle), true)
-  closeEngine.release.resolve()
-  await viewportPending
   assert.equal((await closePending).ok, true)
   assert.equal(closeEngine.hasTab('engine-tab-1' as EngineTabHandle), false)
+  closeEngine.release.resolve()
+  await assert.rejects(viewportPending, /Browser viewport could not be applied|superseded/)
 
   const disposeEngine = new BlockingViewportEngine()
   const disposeWorkspace = new BrowserWorkspace({
@@ -530,4 +579,70 @@ test('workspace viewport seam serializes close and fails safely across disposal 
   disposeEngine.release.resolve()
   await assert.rejects(disposedViewport, /Browser viewport could not be applied/)
   await disposal
+})
+
+test('workspace presentation runs independently from a blocked browser command', async () => {
+  const engine = new BlockingNavigationEngine()
+  const workspace = new BrowserWorkspace({
+    sessionId: 'phi-preempt',
+    partition: 'partition-preempt',
+    engine
+  })
+  const opened = await workspace.execute(
+    { kind: 'human' },
+    { type: 'newTab', requestId: 'preempt-open' }
+  )
+  const tabId = opened.snapshot.activeTabId
+  assert.ok(tabId)
+
+  const navigating = workspace.execute(
+    { kind: 'human' },
+    {
+      type: 'navigate',
+      requestId: 'preempt-navigate',
+      tabId,
+      url: 'https://slow.test'
+    }
+  )
+  await engine.navigationEntered.promise
+
+  await workspace.setViewport(tabId, null)
+  assert.deepEqual(engine.viewportCalls, [null])
+  await workspace.setViewport(tabId, { x: 5, y: 6, width: 120, height: 80 })
+  assert.deepEqual(engine.viewportCalls, [null, { x: 5, y: 6, width: 120, height: 80 }])
+
+  engine.releaseNavigation.resolve()
+  await navigating
+})
+
+test('presentation tickets order in-flight hide and skip superseded queued visibility', async () => {
+  const engine = new SequencedPresentationEngine()
+  const workspace = new BrowserWorkspace({
+    sessionId: 'phi-presentation',
+    partition: 'partition-presentation',
+    engine
+  })
+  const opened = await workspace.execute(
+    { kind: 'human' },
+    { type: 'newTab', requestId: 'presentation-open' }
+  )
+  const tabId = opened.snapshot.activeTabId
+  assert.ok(tabId)
+
+  const inFlightShow = workspace.setViewport(tabId, { x: 0, y: 0, width: 100, height: 100 })
+  await engine.firstShowEntered.promise
+  const queuedShow = workspace.setViewport(tabId, { x: 1, y: 2, width: 90, height: 80 })
+  const hide = workspace.setViewport(tabId, null)
+  assert.deepEqual(engine.viewportCalls, [{ x: 0, y: 0, width: 100, height: 100 }])
+  engine.releaseFirstShow.resolve()
+  await assert.rejects(inFlightShow, /superseded/)
+  await queuedShow
+  await hide
+  assert.deepEqual(engine.viewportCalls, [{ x: 0, y: 0, width: 100, height: 100 }, null])
+
+  const supersededHide = workspace.setViewport(tabId, null)
+  const latestShow = workspace.setViewport(tabId, { x: 5, y: 6, width: 120, height: 80 })
+  await assert.rejects(supersededHide, /superseded/)
+  await latestShow
+  assert.deepEqual(engine.viewportCalls.slice(-2), [null, { x: 5, y: 6, width: 120, height: 80 }])
 })

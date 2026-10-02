@@ -53,12 +53,16 @@ export interface BrowserTabRecord {
   handle: EngineTabHandle | null
   snapshot: BrowserTabSnapshot
   navigationRevision: number
+  engineNavigationRevisionOffset: number
+  engineDocumentRevisionOffset: number
 }
 
 export interface RestoredTabBinding {
   handle: EngineTabHandle
   snapshot: BrowserTabSnapshot
   navigationRevision: number
+  engineNavigationRevisionOffset: number
+  engineDocumentRevisionOffset: number
 }
 
 export class BrowserTabCollection {
@@ -100,6 +104,8 @@ export class BrowserTabCollection {
       this.#tabs.push({
         handle: null,
         navigationRevision: 0,
+        engineNavigationRevisionOffset: 0,
+        engineDocumentRevisionOffset: 0,
         snapshot: {
           id: saved.id,
           title: saved.title,
@@ -128,6 +134,8 @@ export class BrowserTabCollection {
     const tab: BrowserTabRecord = {
       handle,
       navigationRevision: 0,
+      engineNavigationRevisionOffset: 0,
+      engineDocumentRevisionOffset: 0,
       snapshot: {
         id: this.#nextId(),
         title: 'New tab',
@@ -183,7 +191,9 @@ export class BrowserTabCollection {
     const binding = {
       handle,
       snapshot: cloneBrowserTabSnapshot(tab.snapshot),
-      navigationRevision: tab.navigationRevision
+      navigationRevision: tab.navigationRevision,
+      engineNavigationRevisionOffset: tab.engineNavigationRevisionOffset,
+      engineDocumentRevisionOffset: tab.engineDocumentRevisionOffset
     }
     tab.handle = handle
     this.#byHandle.set(handle, tab)
@@ -197,6 +207,19 @@ export class BrowserTabCollection {
     tab.handle = null
     tab.snapshot = binding.snapshot
     tab.navigationRevision = binding.navigationRevision
+    tab.engineNavigationRevisionOffset = binding.engineNavigationRevisionOffset
+    tab.engineDocumentRevisionOffset = binding.engineDocumentRevisionOffset
+  }
+
+  replaceHandle(tab: BrowserTabRecord, handle: EngineTabHandle): EngineTabHandle | null {
+    if (!this.#tabs.includes(tab) || this.#byHandle.has(handle)) {
+      throw new Error('Browser tab handle could not be replaced')
+    }
+    const previous = tab.handle
+    if (previous && this.#byHandle.get(previous) === tab) this.#byHandle.delete(previous)
+    tab.handle = handle
+    this.#byHandle.set(handle, tab)
+    return previous
   }
 
   #removeRecord(tab: BrowserTabRecord): void {

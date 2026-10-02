@@ -202,11 +202,12 @@ test('terminal side panel shows only the terminal entry', () => {
   assert.doesNotMatch(markup, /变量检查/)
 })
 
-test('browser side panel shows only the browser entry', () => {
-  const markup = renderWorkspaceSidePanel({ mode: 'browser' })
+test('browser side panel renders passed browser content instead of a placeholder card', () => {
+  const markup = renderWorkspaceSidePanel({ mode: 'browser', children: '浏览器面板内容' })
 
   assert.match(markup, /data-phi-workspace-side-panel-mode="browser"/)
-  assert.match(markup, /data-phi-workspace-side-panel-tool-card="browser"/)
+  assert.match(markup, /浏览器面板内容/)
+  assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card="browser"/)
   assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card="terminal"/)
 })
 

@@ -328,6 +328,24 @@ test('disposeTab still closes webContents when removeChildView fails', async () 
   assert.equal(engine.tabCountForTesting(), 0)
 })
 
+test('dispose preserves cleanup debt after a tab cleanup failure', async () => {
+  const { engine, views } = createHarness({ removeError: new Error('raw remove debt secret') })
+  const handle = await engine.createTab({ partition: 'browser-project-a' })
+  await engine.setViewport(handle, { x: 0, y: 0, width: 100, height: 100 })
+
+  await assert.rejects(engine.disposeTab(handle), /Browser tab cleanup failed/)
+  const first = engine.dispose()
+  const second = engine.dispose()
+  assert.equal(first, second)
+  await assert.rejects(first, (error: Error) => {
+    return (
+      error.message === 'Browser engine cleanup failed' &&
+      !error.message.includes('raw remove debt secret')
+    )
+  })
+  assert.equal(views[0].webContents.closeCalls, 1)
+})
+
 test('dispose attempts every tab and safely rejects after partial close failure', async () => {
   const harness = createHarness()
   const first = await harness.engine.createTab({ partition: 'browser-project-a' })

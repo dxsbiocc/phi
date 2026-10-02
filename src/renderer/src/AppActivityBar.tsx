@@ -176,6 +176,8 @@ export type AppActivityBarProps = {
   refreshSkills: () => Promise<void>
   refreshMcpServers: () => Promise<void>
   setIsSettingsOpen: (open: boolean) => void
+  requestTrustedOverlay: (key: string, publish: () => void, onCancel: () => void) => void
+  cancelTrustedOverlay: (key: string) => void
 
   isWorkspaceSidebarPreviewOpen: boolean
   visibleWorkspaceSidebarPreview: { mode: WorkspaceSidebarMode; anchorEl: HTMLElement } | null
@@ -217,6 +219,8 @@ function AppActivityBarImpl({
   refreshSkills,
   refreshMcpServers,
   setIsSettingsOpen,
+  requestTrustedOverlay,
+  cancelTrustedOverlay,
   isWorkspaceSidebarPreviewOpen,
   visibleWorkspaceSidebarPreview,
   workspaceSidebarPreviewMode,
@@ -450,6 +454,8 @@ function AppActivityBarImpl({
           <SessionSidebar
             hideWindowDragSpacer
             compactHoverPreview
+            requestTrustedOverlay={requestTrustedOverlay}
+            cancelTrustedOverlay={cancelTrustedOverlay}
             onPreviewInteractionChange={handleWorkspaceSidebarPreviewInteractionChange}
             mode={sessionSidebarPreviewMode}
             sessions={sessions}

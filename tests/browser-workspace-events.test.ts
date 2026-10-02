@@ -82,6 +82,146 @@ test('keeps workspace and document revisions monotonic', async () => {
   assert.equal(workspace.snapshot().tabs[0].documentRevision > firstDocumentRevision, true)
 })
 
+class CrashRecoveryEngine extends InMemoryBrowserEngine {
+  createCalls = 0
+  failRecoveryCreate = false
+  failOldCleanup = false
+  readonly disposedHandles: EngineTabHandle[] = []
+
+  override async createTab(input: { partition: string }): Promise<EngineTabHandle> {
+    this.createCalls += 1
+    if (this.failRecoveryCreate && this.createCalls > 1) {
+      throw new Error('raw recovery create secret')
+    }
+    return super.createTab(input)
+  }
+
+  override async disposeTab(handle: EngineTabHandle): Promise<void> {
+    this.disposedHandles.push(handle)
+    if (this.failOldCleanup && handle === ('engine-tab-1' as EngineTabHandle)) {
+      throw new Error('raw old cleanup secret')
+    }
+    // Keep the old fixture state so a delayed event can be emitted after logical disposal.
+    if (handle !== ('engine-tab-1' as EngineTabHandle)) await super.disposeTab(handle)
+  }
+}
+
+function crashRecoveryWorkspace(engine: CrashRecoveryEngine): BrowserWorkspace {
+  return new BrowserWorkspace({
+    sessionId: 'session-recovery',
+    partition: 'partition-recovery',
+    engine,
+    idFactory: () => 'phi-tab-stable',
+    now: () => 42
+  })
+}
+
+test('reload recovers a crashed tab on a fresh handle with monotonic revisions', async () => {
+  let engineId = 0
+  const engine = new CrashRecoveryEngine({ idFactory: () => `engine-tab-${++engineId}` })
+  const workspace = crashRecoveryWorkspace(engine)
+  const opened = await workspace.execute(human, {
+    type: 'open',
+    requestId: 'recovery-open',
+    url: 'https://recovery.test/page'
+  })
+  successful(opened)
+  const beforeRevision = opened.snapshot.tabs[0].documentRevision
+  engine.emitCrash('engine-tab-1' as EngineTabHandle, 'crashed')
+
+  const recovered = await workspace.execute(human, {
+    type: 'reload',
+    requestId: 'recovery-reload',
+    tabId: 'phi-tab-stable'
+  })
+  successful(recovered)
+  assert.equal(recovered.snapshot.tabs[0].id, 'phi-tab-stable')
+  assert.equal(recovered.snapshot.tabs[0].url, 'https://recovery.test/page')
+  assert.equal(recovered.snapshot.tabs[0].phase, 'ready')
+  assert.equal(recovered.snapshot.tabs[0].documentRevision > beforeRevision, true)
+  assert.deepEqual(engine.disposedHandles, ['engine-tab-1'])
+  assert.equal(
+    engine.recordedActions('engine-tab-2' as EngineTabHandle)[0]?.command.type,
+    'navigate'
+  )
+
+  engine.emitTitle('engine-tab-1' as EngineTabHandle, 'Delayed old title', 99)
+  assert.notEqual(workspace.snapshot().tabs[0].title, 'Delayed old title')
+})
+
+test('crash recovery preserves the crashed tab on create failure and contains cleanup failure', async () => {
+  let createFailureId = 0
+  const createFailureEngine = new CrashRecoveryEngine({
+    idFactory: () => `engine-tab-${++createFailureId}`
+  })
+  const createFailureWorkspace = crashRecoveryWorkspace(createFailureEngine)
+  await createFailureWorkspace.execute(human, {
+    type: 'open',
+    requestId: 'create-failure-open',
+    url: 'https://recovery.test/'
+  })
+  createFailureEngine.emitCrash('engine-tab-1' as EngineTabHandle, 'crashed')
+  createFailureEngine.failRecoveryCreate = true
+  const createFailed = await createFailureWorkspace.execute(human, {
+    type: 'reload',
+    requestId: 'create-failure-reload',
+    tabId: 'phi-tab-stable'
+  })
+  assert.equal(createFailed.ok, false)
+  assert.equal(createFailed.snapshot.tabs[0].phase, 'crashed')
+  assert.deepEqual(createFailureEngine.disposedHandles, [])
+  assert.equal(JSON.stringify(createFailed).includes('raw recovery create secret'), false)
+
+  let cleanupFailureId = 0
+  const cleanupFailureEngine = new CrashRecoveryEngine({
+    idFactory: () => `engine-tab-${++cleanupFailureId}`
+  })
+  const cleanupFailureWorkspace = crashRecoveryWorkspace(cleanupFailureEngine)
+  await cleanupFailureWorkspace.execute(human, {
+    type: 'open',
+    requestId: 'cleanup-failure-open',
+    url: 'https://recovery.test/'
+  })
+  cleanupFailureEngine.emitCrash('engine-tab-1' as EngineTabHandle, 'crashed')
+  cleanupFailureEngine.failOldCleanup = true
+  const cleanupFailed = await cleanupFailureWorkspace.execute(human, {
+    type: 'reload',
+    requestId: 'cleanup-failure-reload',
+    tabId: 'phi-tab-stable'
+  })
+  assert.equal(cleanupFailed.ok, false)
+  assert.equal(cleanupFailed.error.code, 'ENGINE_UNAVAILABLE')
+  assert.equal(JSON.stringify(cleanupFailed).includes('raw old cleanup secret'), false)
+  assert.deepEqual(cleanupFailureEngine.disposedHandles, ['engine-tab-1'])
+  assert.equal(cleanupFailed.snapshot.tabs[0].documentRevision >= 2, true)
+})
+
+test('about blank crash recovery exposes a new document epoch before later navigation', async () => {
+  let engineId = 0
+  const engine = new CrashRecoveryEngine({ idFactory: () => `engine-tab-${++engineId}` })
+  const workspace = crashRecoveryWorkspace(engine)
+  await workspace.execute(human, { type: 'newTab', requestId: 'blank-open' })
+  engine.emitCrash('engine-tab-1' as EngineTabHandle, 'crashed')
+
+  const recovered = await workspace.execute(human, {
+    type: 'reload',
+    requestId: 'blank-reload',
+    tabId: 'phi-tab-stable'
+  })
+  successful(recovered)
+  assert.equal(recovered.snapshot.tabs[0].url, 'about:blank')
+  assert.equal(recovered.snapshot.tabs[0].documentRevision, 1)
+
+  const navigated = await workspace.execute(human, {
+    type: 'navigate',
+    requestId: 'blank-navigate',
+    tabId: 'phi-tab-stable',
+    url: 'https://after-blank.test/'
+  })
+  successful(navigated)
+  assert.equal(navigated.snapshot.tabs[0].documentRevision, 2)
+})
+
 test('keeps event-reduced page state when execute returns an equal stale revision', async () => {
   class EventAheadEngine extends InMemoryBrowserEngine {
     returnStaleResult = false

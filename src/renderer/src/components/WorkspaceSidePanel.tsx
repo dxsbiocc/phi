@@ -7,14 +7,13 @@ import { ProjectFileTree } from '../features/file-preview/components/ProjectFile
 
 const DirectoryTreeIcon = PhiIcons.entity.directoryTree
 const TerminalIcon = PhiIcons.tool.command
-const BrowserIcon = PhiIcons.tool.web
 
 function WorkspaceToolCard({
   kind,
   label,
   Icon
 }: {
-  kind: 'terminal' | 'browser'
+  kind: 'terminal'
   label: string
   Icon: typeof TerminalIcon
 }): React.JSX.Element {
@@ -112,20 +111,18 @@ export function WorkspaceSidePanel({
         display: 'flex',
         minHeight: 0,
         flexDirection: 'column',
-        gap: 1,
-        px: 1.5,
+        gap: mode === 'browser' ? 0 : 1,
+        px: mode === 'browser' ? 0 : 1.5,
         pt: 6,
-        pb: 1.5,
+        pb: mode === 'browser' ? 0 : 1.5,
         bgcolor: (theme) =>
           theme.palette.mode === 'dark' ? theme.palette.background.default : '#FFFFFF'
       }}
     >
-      {mode === 'jobs' ? (
+      {mode === 'jobs' || mode === 'browser' ? (
         children
-      ) : mode === 'terminal' ? (
-        <WorkspaceToolCard kind="terminal" label="终端" Icon={TerminalIcon} />
       ) : (
-        <WorkspaceToolCard kind="browser" label="浏览器" Icon={BrowserIcon} />
+        <WorkspaceToolCard kind="terminal" label="终端" Icon={TerminalIcon} />
       )}
     </Box>
   )

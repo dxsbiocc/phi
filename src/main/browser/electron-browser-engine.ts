@@ -168,6 +168,7 @@ export class ElectronBrowserEngine implements BrowserEngine {
   readonly #viewportController = new ElectronBrowserViewportController<EngineTabHandle>()
   #nextId = 0
   #disposed = false
+  #cleanupDebt = false
   #disposePromise: Promise<void> | null = null
 
   constructor(options: ElectronBrowserEngineOptions) {
@@ -218,7 +219,7 @@ export class ElectronBrowserEngine implements BrowserEngine {
       return handle
     } catch {
       if (handle && record && this.#tabs.get(handle) === record) this.#tabs.delete(handle)
-      if (record) this.#cleanupRecord(record)
+      if (record && this.#cleanupRecord(record)) this.#cleanupDebt = true
       throw new Error('Browser tab could not be created')
     }
   }
@@ -252,7 +253,10 @@ export class ElectronBrowserEngine implements BrowserEngine {
             }
           }
           record.state.navigationRevision += 1
-          await record.view.webContents.loadURL(normalized.url)
+          record.state.isLoading = true
+          void Promise.resolve(record.view.webContents.loadURL(normalized.url)).catch(
+            () => undefined
+          )
           break
         }
         case 'history': {
@@ -269,6 +273,16 @@ export class ElectronBrowserEngine implements BrowserEngine {
           break
         case 'stop':
           record.view.webContents.stop()
+          if (record.state.isLoading) {
+            record.state.isLoading = false
+            this.#publish({
+              type: 'loadingChanged',
+              handle,
+              isLoading: false,
+              navigationRevision: record.state.navigationRevision,
+              at: this.#now()
+            })
+          }
           break
         default:
           return this.#unavailable()
@@ -306,7 +320,10 @@ export class ElectronBrowserEngine implements BrowserEngine {
     const record = this.#tabs.get(handle)
     if (!record) return
     this.#tabs.delete(handle)
-    if (this.#cleanupRecord(record)) throw new Error('Browser tab cleanup failed')
+    if (this.#cleanupRecord(record)) {
+      this.#cleanupDebt = true
+      throw new Error('Browser tab cleanup failed')
+    }
   }
 
   dispose(): Promise<void> {
@@ -316,8 +333,9 @@ export class ElectronBrowserEngine implements BrowserEngine {
     const records = [...this.#tabs.values()]
     this.#tabs.clear()
     this.#disposePromise = Promise.resolve().then(() => {
-      let failed = false
+      let failed = this.#cleanupDebt
       for (const record of records) failed = this.#cleanupRecord(record) || failed
+      this.#cleanupDebt ||= failed
       if (failed) throw new Error('Browser engine cleanup failed')
     })
     return this.#disposePromise

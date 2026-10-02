@@ -65,6 +65,7 @@ class FakeWebContents extends EventEmitter {
   closeCalls = 0
   closeDevToolsCalls = 0
   loadError: Error | null = null
+  navigationLoadGate: Promise<void> | null = null
   emitDuringBlank = false
   closeError: Error | null = null
   securityInstalledAtFirstLoad = false
@@ -87,6 +88,7 @@ class FakeWebContents extends EventEmitter {
       this.emit('did-frame-navigate', {}, 'about:blank', 200, 'OK', true)
       this.emit('did-stop-loading')
     }
+    if (this.loadedUrls.length > 1 && this.navigationLoadGate) await this.navigationLoadGate
     if (this.loadError) throw this.loadError
   }
 
@@ -115,6 +117,7 @@ function harness(
     emitDuringBlank?: boolean
     loadError?: Error
     closeError?: Error
+    navigationLoadGate?: Promise<void>
   } = {}
 ): {
   engine: ElectronBrowserEngine
@@ -130,6 +133,7 @@ function harness(
       this.webContents.emitDuringBlank = options.emitDuringBlank ?? false
       this.webContents.loadError = options.loadError ?? null
       this.webContents.closeError = options.closeError ?? null
+      this.webContents.navigationLoadGate = options.navigationLoadGate ?? null
       contents.push(this.webContents)
     }
     setBounds(): void {
@@ -211,6 +215,33 @@ test('executes navigation history reload and stop with navigationHistory flags',
   assert.equal(reloaded.ok && reloaded.state.navigationRevision, 4)
   assert.equal(reloaded.ok && reloaded.state.canGoBack, true)
   assert.equal(reloaded.ok && reloaded.state.canGoForward, true)
+})
+
+test('returns a loading navigation state before loadURL settles so stop can preempt it', async () => {
+  let releaseLoad!: () => void
+  const navigationLoadGate = new Promise<void>((resolve) => {
+    releaseLoad = resolve
+  })
+  const { engine, contents } = harness({ navigationLoadGate })
+  const handle = await engine.createTab({ partition: 'partition-a' })
+  let navigationSettled = false
+  const navigating = engine
+    .execute(handle, { type: 'navigate', url: 'https://slow.test/' })
+    .then((result) => {
+      navigationSettled = true
+      return result
+    })
+  await new Promise((resolveMicrotask) => setImmediate(resolveMicrotask))
+
+  assert.equal(navigationSettled, true)
+  const loading = await navigating
+  assert.equal(loading.ok && loading.state.isLoading, true)
+  const stopped = await engine.execute(handle, { type: 'stop' })
+  assert.equal(stopped.ok, true)
+  assert.equal(stopped.ok && stopped.state.isLoading, false)
+  assert.equal(contents[0].stopCalls, 1)
+  releaseLoad()
+  await navigationLoadGate
 })
 
 test('translates loading title and main-frame commits without counting subframes', async () => {
@@ -517,17 +548,27 @@ test('removes per-tab listeners and isolates throwing engine subscribers', async
   assert.equal(contents[0].eventNames().length, 0)
 })
 
-test('maps raw navigation exceptions to safe engine errors', async () => {
+test('contains asynchronous loadURL rejection without blocking or leaking raw errors', async () => {
   const { engine, contents } = harness()
   const handle = await engine.createTab({ partition: 'partition-a' })
   contents[0].loadError = new Error('raw navigation secret')
+  const unhandled: unknown[] = []
+  const onUnhandled = (reason: unknown): void => {
+    unhandled.push(reason)
+  }
+  process.on('unhandledRejection', onUnhandled)
 
-  const result = await engine.execute(handle, {
-    type: 'navigate',
-    url: 'https://example.test/'
-  })
-  assert.equal(result.ok, false)
-  if (result.ok) assert.fail('navigation must fail')
-  assert.equal(result.error.code, 'NAVIGATION_FAILED')
-  assert.equal(JSON.stringify(result).includes('raw navigation secret'), false)
+  try {
+    const result = await engine.execute(handle, {
+      type: 'navigate',
+      url: 'https://example.test/'
+    })
+    assert.equal(result.ok, true)
+    assert.equal(result.ok && result.state.isLoading, true)
+    await new Promise((resolveMicrotask) => setImmediate(resolveMicrotask))
+    assert.deepEqual(unhandled, [])
+    assert.equal(JSON.stringify(result).includes('raw navigation secret'), false)
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandled)
+  }
 })

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { Box, Button, List, Stack } from '@mui/material'
@@ -8,6 +8,10 @@ import { ProjectRow } from './session-sidebar/ProjectRow'
 import { SessionDeleteDialogs } from './session-sidebar/SessionDeleteDialogs'
 import { SortableSessionRow } from './session-sidebar/SessionRow'
 import { ROW_LABEL_FONT_SIZE, sessionTitle, useSessionOrder } from '../lib/sessionSidebarShared'
+import {
+  createTrustedDialogRequestCoordinator,
+  type TrustedOverlayRequest
+} from '../lib/trustedOverlayRequests'
 import type { Project, SessionRuntimeState, SessionSummary } from '../types'
 
 const AddIcon = PhiIcons.action.add
@@ -16,6 +20,8 @@ const CONTENT_TOP_GAP = 1
 const HOVER_PREVIEW_MAX_HEIGHT = 'min(420px, calc(100vh - 96px))'
 const HOVER_PREVIEW_LIST_MAX_HEIGHT = 'min(320px, calc(100vh - 176px))'
 const CONVERSATION_SESSION_ORDER_SCOPE = 'conversation'
+const SESSION_DELETE_OVERLAY_KEY = 'session-delete'
+const PROJECT_DELETE_OVERLAY_KEY = 'project-delete'
 
 // macOS's traffic-light window controls float over the top-left of the window
 // (see the frameless BrowserWindow setup in main/index.ts) — reserve room so
@@ -27,6 +33,8 @@ type SessionSidebarProps = {
   hideWindowDragSpacer?: boolean
   compactHoverPreview?: boolean
   onPreviewInteractionChange?: (active: boolean) => void
+  requestTrustedOverlay?: TrustedOverlayRequest
+  cancelTrustedOverlay?: (key: string) => void
   sessions: SessionSummary[]
   activeSessionPath: string | null
   activeCwd: string
@@ -57,6 +65,8 @@ function SessionSidebar({
   hideWindowDragSpacer = false,
   compactHoverPreview = false,
   onPreviewInteractionChange,
+  requestTrustedOverlay,
+  cancelTrustedOverlay,
   sessions,
   activeSessionPath,
   activeCwd,
@@ -76,6 +86,14 @@ function SessionSidebar({
 }: SessionSidebarProps): React.JSX.Element {
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null)
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null)
+  const trustedDialogs = useMemo(
+    () =>
+      createTrustedDialogRequestCoordinator({
+        request: requestTrustedOverlay,
+        cancel: cancelTrustedOverlay
+      }),
+    [cancelTrustedOverlay, requestTrustedOverlay]
+  )
   const [projectExpansionOverrides, setProjectExpansionOverrides] = useState<
     Record<string, boolean | undefined>
   >({})
@@ -100,6 +118,8 @@ function SessionSidebar({
     onPreviewInteractionChange?.(true)
     return () => onPreviewInteractionChange?.(false)
   }, [onPreviewInteractionChange, previewDialogOpen])
+
+  useEffect(() => () => trustedDialogs.dispose(), [trustedDialogs])
 
   // Only covers the top-level `sessions` list (conversations mode) — project
   // sessions live in each ProjectRow's own fetched state and tick their own
@@ -224,7 +244,11 @@ function SessionSidebar({
               onRenameSession={onRenameSession}
               onDeleteSession={onDeleteSession}
               onExportSession={onExportSession}
-              onDeleteProject={() => setDeleteProjectTarget(project)}
+              onDeleteProject={() => {
+                trustedDialogs.request(PROJECT_DELETE_OVERLAY_KEY, () => {
+                  setDeleteProjectTarget(project)
+                })
+              }}
               onFetchSessions={onFetchProjectSessions}
               getSessionRuntimeState={getSessionRuntimeState}
               compactHoverPreview={compactHoverPreview}
@@ -253,7 +277,11 @@ function SessionSidebar({
                   onPreviewInteractionChange={onPreviewInteractionChange}
                   onSelect={() => onSelectSession(session.path)}
                   onRename={(name) => onRenameSession(session.path, name)}
-                  onDelete={() => setDeleteTarget(session)}
+                  onDelete={() => {
+                    trustedDialogs.request(SESSION_DELETE_OVERLAY_KEY, () => {
+                      setDeleteTarget(session)
+                    })
+                  }}
                   onExport={() => onExportSession(session)}
                 />
               ))}
@@ -268,14 +296,22 @@ function SessionSidebar({
         deleteProjectOpen={deleteProjectTarget !== null}
         deleteProjectName={deleteProjectTarget?.name ?? ''}
         compactHoverPreview={compactHoverPreview}
-        onCancelSessionDelete={() => setDeleteTarget(null)}
-        onConfirmSessionDelete={() => {
-          if (deleteTarget) onDeleteSession(deleteTarget.path)
+        onCancelSessionDelete={() => {
+          trustedDialogs.cancel(SESSION_DELETE_OVERLAY_KEY)
           setDeleteTarget(null)
         }}
-        onCancelProjectDelete={() => setDeleteProjectTarget(null)}
+        onConfirmSessionDelete={() => {
+          if (deleteTarget) onDeleteSession(deleteTarget.path)
+          trustedDialogs.cancel(SESSION_DELETE_OVERLAY_KEY)
+          setDeleteTarget(null)
+        }}
+        onCancelProjectDelete={() => {
+          trustedDialogs.cancel(PROJECT_DELETE_OVERLAY_KEY)
+          setDeleteProjectTarget(null)
+        }}
         onConfirmProjectDelete={() => {
           if (deleteProjectTarget) onDeleteProject(deleteProjectTarget)
+          trustedDialogs.cancel(PROJECT_DELETE_OVERLAY_KEY)
           setDeleteProjectTarget(null)
         }}
       />

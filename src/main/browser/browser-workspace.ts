@@ -14,13 +14,7 @@ import {
   type BrowserPolicyContext,
   type BrowserUrlPolicyResult
 } from './browser-policy'
-import type {
-  BrowserEngine,
-  EngineError,
-  EngineEvent,
-  EngineResult,
-  EngineTabState
-} from './browser-engine'
+import type { BrowserEngine, EngineEvent } from './browser-engine'
 import type { BrowserCheckpointStore } from './browser-checkpoints'
 import {
   BrowserCheckpointCoordinator,
@@ -30,11 +24,20 @@ export { BrowserWorkspaceDisposalError } from './browser-checkpoint-coordinator'
 import {
   BrowserTabCollection,
   browserOriginOf,
-  cloneBrowserOutcome,
   cloneBrowserWorkspaceSnapshot,
   type BrowserTabRecord as TabRecord,
   type RestoredTabBinding
 } from './browser-tab-collection'
+import {
+  reconcileEngineResult,
+  reduceBrowserEngineEvent,
+  safeBrowserEngineError,
+  workspaceEngineResult
+} from './browser-workspace-engine-state'
+import { prepareCrashedTabRecovery } from './browser-workspace-recovery'
+import { BrowserWorkspaceCleanup } from './browser-workspace-cleanup'
+import { BrowserWorkspacePresentation } from './browser-workspace-presentation'
+import { BrowserWorkspaceRequestCache } from './browser-workspace-request-cache'
 
 type BrowserUrlNormalizer = (input: string, context: BrowserPolicyContext) => BrowserUrlPolicyResult
 
@@ -50,49 +53,19 @@ export interface BrowserWorkspaceOptions {
   checkpointStore?: BrowserCheckpointStore
 }
 
-interface CachedOutcome {
-  at: number
-  outcome: BrowserOutcome
-}
-
-const DEFAULT_RECENT_REQUEST_CAP = 128
-const MAX_RECENT_REQUEST_CAP = 1024
-
-function normalizeRecentRequestCap(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value) || value < 0) {
-    return DEFAULT_RECENT_REQUEST_CAP
-  }
-  return Math.min(MAX_RECENT_REQUEST_CAP, Math.floor(value))
-}
-
-function engineError(error: EngineError): BrowserError {
-  if (error.code === 'NAVIGATION_FAILED') {
-    return {
-      code: 'NAVIGATION_FAILED',
-      message: 'Page failed to load',
-      retryable: true
-    }
-  }
-  return {
-    code: error.code,
-    message: error.message,
-    retryable: error.code === 'ENGINE_UNAVAILABLE' || error.code === 'ACTION_TIMEOUT'
-  }
-}
-
 export class BrowserWorkspace {
   readonly #sessionId: string
   readonly #partition: string
   readonly #engine: BrowserEngine
+  readonly #cleanup: BrowserWorkspaceCleanup
+  readonly #presentation: BrowserWorkspacePresentation
   readonly #capabilities: BrowserCapabilities
   readonly #policyContext: BrowserPolicyContext
   readonly #normalizeUrl: BrowserUrlNormalizer
   readonly #idFactory: () => string
-  readonly #now: () => number
-  readonly #recentRequestCap: number
+  readonly #requestCache: BrowserWorkspaceRequestCache
   readonly #checkpointCoordinator?: BrowserCheckpointCoordinator
   readonly #listeners = new Set<(event: BrowserWorkspaceEvent) => void>()
-  readonly #recentRequests = new Map<string, CachedOutcome>()
   readonly #tabCollection: BrowserTabCollection
   readonly #unsubscribeEngine: () => void
   readonly #lifecycle = new AbortController()
@@ -106,6 +79,8 @@ export class BrowserWorkspace {
     this.#sessionId = options.sessionId
     this.#partition = options.partition
     this.#engine = options.engine
+    this.#cleanup = new BrowserWorkspaceCleanup(options.engine)
+    this.#presentation = new BrowserWorkspacePresentation(options.engine)
     this.#capabilities = { ...options.engine.capabilities() }
     this.#policyContext = options.policyContext?.applicationOrigins
       ? { applicationOrigins: [...options.policyContext.applicationOrigins] }
@@ -113,8 +88,10 @@ export class BrowserWorkspace {
     this.#normalizeUrl = options.normalizeUrl ?? normalizeBrowserUrl
     this.#idFactory = options.idFactory ?? (() => `browser-tab-${++this.#nextId}`)
     this.#tabCollection = new BrowserTabCollection(this.#idFactory)
-    this.#now = options.now ?? Date.now
-    this.#recentRequestCap = normalizeRecentRequestCap(options.recentRequestCap)
+    this.#requestCache = new BrowserWorkspaceRequestCache(
+      options.recentRequestCap,
+      options.now ?? Date.now
+    )
     this.#checkpointCoordinator = options.checkpointStore
       ? new BrowserCheckpointCoordinator({
           sessionId: this.#sessionId,
@@ -161,21 +138,14 @@ export class BrowserWorkspace {
   setViewport(tabId: string, viewport: BrowserViewport | null): Promise<void> {
     const copiedViewport = viewport ? { ...viewport } : null
     if (this.#disposed) return Promise.reject(new Error('Browser workspace is disposed'))
-    const run = this.#commandTail.then(async () => {
-      if (this.#disposed) throw new Error('Browser workspace is disposed')
-      const tab = this.#tabCollection.find(tabId)
-      if (!tab?.handle) throw new Error('Browser tab is not available for presentation')
-      try {
-        await this.#engine.setViewport(tab.handle, copiedViewport)
-      } catch {
-        throw new Error('Browser viewport could not be applied')
-      }
-    })
-    this.#commandTail = run.then(
-      () => undefined,
-      () => undefined
+    if (!this.#tabCollection.find(tabId)?.handle) {
+      return Promise.reject(new Error('Browser tab is not available for presentation'))
+    }
+    return this.#presentation.apply(
+      tabId,
+      copiedViewport,
+      () => this.#tabCollection.find(tabId)?.handle ?? null
     )
-    return run
   }
 
   subscribe(listener: (event: BrowserWorkspaceEvent) => void): () => void {
@@ -190,17 +160,14 @@ export class BrowserWorkspace {
     this.#lifecycle.abort()
     this.#unsubscribeEngine()
     this.#listeners.clear()
-    this.#recentRequests.clear()
+    this.#requestCache.clear()
+    this.#presentation.clear()
     const pendingCommands = this.#commandTail
-    const engineDisposal = this.#engine.dispose()
+    const engineDisposal = this.#cleanup.disposeEngine()
     this.#disposePromise = (async () => {
-      let engineFailed = false
-      try {
-        await engineDisposal
-      } catch {
-        engineFailed = true
-      }
+      const disposalFailed = await engineDisposal
       await pendingCommands
+      const engineFailed = disposalFailed || this.#cleanup.engineFailed
       let checkpointFailed = false
       try {
         this.#checkpointCoordinator?.flush()
@@ -230,8 +197,8 @@ export class BrowserWorkspace {
     signal: AbortSignal
   ): Promise<BrowserOutcome> {
     if (this.#disposed) return this.#failure(this.#disposedError())
-    const cached = this.#recentRequests.get(requestKey)
-    if (cached) return cloneBrowserOutcome(cached.outcome)
+    const cached = this.#requestCache.get(requestKey)
+    if (cached) return cached
 
     let outcome: BrowserOutcome
     if (signal?.aborted) {
@@ -252,7 +219,7 @@ export class BrowserWorkspace {
       }
     }
 
-    if (!this.#disposed) this.#remember(requestKey, outcome)
+    if (!this.#disposed) this.#requestCache.remember(requestKey, outcome)
     return outcome
   }
 
@@ -278,6 +245,19 @@ export class BrowserWorkspace {
           actor.kind === 'agent',
           signal
         )
+      case 'history':
+        return this.#executeEngineCommand(
+          command.tabId,
+          {
+            type: 'history',
+            direction: command.direction
+          },
+          signal
+        )
+      case 'reload':
+        return this.#reload(command.tabId, signal)
+      case 'stop':
+        return this.#executeEngineCommand(command.tabId, { type: 'stop' }, signal)
       case 'snapshot':
         return this.#tabCollection.find(command.tabId)
           ? this.#success()
@@ -323,7 +303,8 @@ export class BrowserWorkspace {
   async #close(tabId: string): Promise<BrowserOutcome> {
     const tab = this.#tabCollection.find(tabId)
     if (!tab) return this.#failure(this.#tabNotFound(tabId))
-    if (tab.handle) await this.#engine.disposeTab(tab.handle)
+    this.#presentation.invalidate(tabId)
+    if (tab.handle) await this.#cleanup.release(tab.handle)
     if (this.#disposed) return this.#failure(this.#disposedError())
     this.#tabCollection.remove(tabId)
     this.#changed()
@@ -337,7 +318,7 @@ export class BrowserWorkspace {
   ): Promise<BrowserOutcome> {
     const handle = await this.#engine.createTab({ partition: this.#partition })
     if (this.#disposed || signal?.aborted) {
-      await this.#engine.disposeTab(handle)
+      await this.#cleanup.release(handle)
       return this.#failure(
         this.#disposed
           ? this.#disposedError()
@@ -357,7 +338,7 @@ export class BrowserWorkspace {
       previousActiveTabId = created.previousActiveTabId
       this.#changed()
     } catch (error) {
-      await this.#engine.disposeTab(handle)
+      await this.#cleanup.release(handle)
       throw error
     }
 
@@ -377,9 +358,10 @@ export class BrowserWorkspace {
 
   async #rollbackCreatedTab(tab: TabRecord, previousActiveTabId: string | null): Promise<void> {
     const handle = tab.handle
+    this.#presentation.invalidate(tab.snapshot.id)
     this.#tabCollection.rollbackCreated(tab, previousActiveTabId)
     this.#changed()
-    if (handle) await this.#engine.disposeTab(handle)
+    if (handle) await this.#cleanup.release(handle)
   }
 
   async #navigate(
@@ -440,7 +422,7 @@ export class BrowserWorkspace {
   ): Promise<BrowserOutcome> {
     const handle = await this.#engine.createTab({ partition: this.#partition })
     if (this.#disposed || signal?.aborted) {
-      await this.#engine.disposeTab(handle)
+      await this.#cleanup.release(handle)
       return this.#failure(
         this.#disposed
           ? this.#disposedError()
@@ -469,9 +451,10 @@ export class BrowserWorkspace {
   }
 
   async #rollbackRestoredTab(tab: TabRecord, binding: RestoredTabBinding): Promise<void> {
+    this.#presentation.invalidate(tab.snapshot.id)
     this.#tabCollection.rollbackRestored(tab, binding)
     this.#changed()
-    await this.#engine.disposeTab(binding.handle)
+    await this.#cleanup.release(binding.handle)
   }
 
   async #navigateEngine(
@@ -480,10 +463,11 @@ export class BrowserWorkspace {
     signal?: AbortSignal
   ): Promise<BrowserOutcome> {
     if (!tab.handle) return this.#failure(this.#disposedError())
-    const result = await this.#engine.execute(tab.handle, { type: 'navigate', url }, signal)
+    const engineResult = await this.#engine.execute(tab.handle, { type: 'navigate', url }, signal)
+    const result = workspaceEngineResult(tab, engineResult)
     if (this.#disposed) return this.#failure(this.#disposedError())
     if (!result.ok) {
-      const error = engineError(result.error)
+      const error = safeBrowserEngineError(result.error)
       if (error.code === 'NAVIGATION_FAILED') {
         this.#mutateTab(tab, (snapshot) => {
           snapshot.url = url
@@ -494,101 +478,109 @@ export class BrowserWorkspace {
       }
       return this.#failure(error)
     }
-    this.#syncEngineState(tab, result)
+    if (reconcileEngineResult(tab, result)) this.#changed()
     return this.#success()
   }
 
-  #syncEngineState(tab: TabRecord, result: Extract<EngineResult, { ok: true }>): void {
-    if (result.state.navigationRevision < tab.navigationRevision) return
-    if (
-      result.state.navigationRevision === tab.navigationRevision &&
-      result.state.documentRevision <= tab.snapshot.documentRevision
-    )
-      return
-    tab.navigationRevision = result.state.navigationRevision
-    if (result.state.documentRevision < tab.snapshot.documentRevision) return
-    this.#mutateTab(tab, (snapshot) => {
-      this.#applyEngineState(snapshot, result.state)
-      snapshot.error = undefined
+  async #executeEngineCommand(
+    tabId: string,
+    command: { type: 'history'; direction: 'back' | 'forward' } | { type: 'reload' | 'stop' },
+    signal?: AbortSignal
+  ): Promise<BrowserOutcome> {
+    const tab = this.#tabCollection.find(tabId)
+    if (!tab) return this.#failure(this.#tabNotFound(tabId))
+    if (!tab.handle) {
+      return this.#failure({
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'Restore the page before using browser controls',
+        retryable: false,
+        tabId
+      })
+    }
+    const engineResult = await this.#engine.execute(tab.handle, command, signal)
+    const result = workspaceEngineResult(tab, engineResult)
+    if (this.#disposed) return this.#failure(this.#disposedError())
+    if (!result.ok) return this.#failure(safeBrowserEngineError(result.error))
+    if (reconcileEngineResult(tab, result)) this.#changed()
+    return this.#success()
+  }
+
+  async #reload(tabId: string, signal?: AbortSignal): Promise<BrowserOutcome> {
+    const tab = this.#tabCollection.find(tabId)
+    if (!tab) return this.#failure(this.#tabNotFound(tabId))
+    if (tab.snapshot.phase !== 'crashed') {
+      return this.#executeEngineCommand(tabId, { type: 'reload' }, signal)
+    }
+    if (!tab.handle) return this.#failure(this.#tabNotFound(tabId))
+    const normalized =
+      tab.snapshot.url === 'about:blank'
+        ? { ok: true as const, url: 'about:blank' }
+        : this.#normalizeUrl(tab.snapshot.url, this.#policyContext)
+    if (!normalized.ok) return this.#failure(normalized.error)
+    this.#presentation.invalidate(tabId)
+
+    const recovery = await prepareCrashedTabRecovery({
+      engine: this.#engine,
+      release: (handle) => this.#cleanup.release(handle),
+      tabs: this.#tabCollection,
+      tab,
+      partition: this.#partition,
+      signal,
+      isDisposed: () => this.#disposed,
+      ...(normalized.url === 'about:blank'
+        ? {
+            exposeInitialDocument: () => {
+              this.#mutateTab(tab, (snapshot) => {
+                snapshot.documentRevision += 1
+                snapshot.phase = 'idle'
+                snapshot.error = undefined
+              })
+            }
+          }
+        : {})
     })
+    if (!recovery.ok) {
+      if (recovery.cancelled) {
+        return this.#failure(
+          this.#disposed
+            ? this.#disposedError()
+            : safeBrowserEngineError({ code: 'ACTION_CANCELLED', message: 'cancelled' })
+        )
+      }
+      return this.#failure({
+        code: 'ENGINE_UNAVAILABLE',
+        message: 'Browser engine is unavailable',
+        retryable: true,
+        tabId
+      })
+    }
+
+    let outcome: BrowserOutcome
+    if (normalized.url === 'about:blank') {
+      outcome = this.#success()
+    } else {
+      outcome = await this.#navigateEngine(tab, normalized.url, signal)
+    }
+    if (recovery.cleanupFailed) {
+      return this.#failure({
+        code: 'ENGINE_UNAVAILABLE',
+        message: 'Browser engine cleanup failed',
+        retryable: true,
+        tabId
+      })
+    }
+    return outcome
   }
 
-  #applyEngineState(snapshot: BrowserTabSnapshot, state: EngineTabState): void {
-    snapshot.url = state.url
-    snapshot.origin = browserOriginOf(state.url)
-    snapshot.title = state.title
-    snapshot.phase = state.isLoading ? 'loading' : 'ready'
-    snapshot.canGoBack = state.canGoBack
-    snapshot.canGoForward = state.canGoForward
-    snapshot.documentRevision = Math.max(snapshot.documentRevision, state.documentRevision)
-  }
-
-  #reduceEngineEvent(event: EngineEvent): void {
+  #reduceEngineEvent(rawEvent: EngineEvent): void {
     if (this.#disposed) return
-    const tab = this.#tabCollection.findByHandle(event.handle)
+    const tab = this.#tabCollection.findByHandle(rawEvent.handle)
     if (!tab) return
-
-    switch (event.type) {
-      case 'loadingChanged':
-        if (!this.#acceptNavigationEvent(tab, event.navigationRevision)) return
-        this.#mutateTab(tab, (snapshot) => {
-          if (event.isLoading) {
-            snapshot.phase = 'loading'
-            snapshot.error = undefined
-          } else if (snapshot.phase === 'loading') {
-            snapshot.phase = 'ready'
-          }
-        })
-        break
-      case 'navigationCommitted':
-        if (event.navigationRevision < tab.navigationRevision) return
-        if (event.navigationRevision > tab.navigationRevision) {
-          tab.navigationRevision = event.navigationRevision
-        }
-        if (event.documentRevision <= tab.snapshot.documentRevision) return
-        this.#mutateTab(tab, (snapshot) => {
-          snapshot.url = event.url
-          snapshot.origin = browserOriginOf(event.url)
-          snapshot.documentRevision = event.documentRevision
-          snapshot.canGoBack = event.canGoBack
-          snapshot.canGoForward = event.canGoForward
-          snapshot.error = undefined
-        })
-        break
-      case 'titleChanged':
-        if (!this.#acceptNavigationEvent(tab, event.navigationRevision)) return
-        this.#mutateTab(tab, (snapshot) => {
-          snapshot.title = event.title
-        })
-        break
-      case 'loadFailed':
-        if (!this.#acceptNavigationEvent(tab, event.navigationRevision)) return
-        this.#mutateTab(tab, (snapshot) => {
-          snapshot.url = event.url
-          snapshot.origin = browserOriginOf(event.url)
-          snapshot.phase = 'failed'
-          snapshot.error = {
-            code: 'NAVIGATION_FAILED',
-            message: 'Page failed to load',
-            retryable: true,
-            tabId: snapshot.id
-          }
-        })
-        break
-      case 'crashed':
-        this.#mutateTab(tab, (snapshot) => {
-          snapshot.phase = 'crashed'
-          snapshot.error = {
-            code: 'RENDERER_CRASHED',
-            message: 'The browser page stopped unexpectedly',
-            retryable: true,
-            tabId: snapshot.id
-          }
-        })
-        break
-      case 'popupRequested':
-        this.#queuePopup(tab, event)
-        break
+    const reduction = reduceBrowserEngineEvent(tab, rawEvent)
+    if ('popup' in reduction) {
+      this.#queuePopup(tab, reduction.popup)
+    } else if (reduction.changed) {
+      this.#changed()
     }
   }
 
@@ -611,12 +603,6 @@ export class BrowserWorkspace {
       () => undefined,
       () => undefined
     )
-  }
-
-  #acceptNavigationEvent(tab: TabRecord, navigationRevision: number): boolean {
-    if (navigationRevision < tab.navigationRevision) return false
-    tab.navigationRevision = navigationRevision
-    return true
   }
 
   #mutateTab(tab: TabRecord, mutate: (snapshot: BrowserTabSnapshot) => void): void {
@@ -692,25 +678,5 @@ export class BrowserWorkspace {
     if (actor.kind === 'human') return JSON.stringify(['human', requestId])
     if (actor.sessionId !== this.#sessionId) return null
     return JSON.stringify(['agent', actor.sessionId, actor.runId, actor.toolCallId, requestId])
-  }
-
-  #remember(requestKey: string, outcome: BrowserOutcome): void {
-    if (this.#recentRequestCap === 0) return
-    this.#recentRequests.set(requestKey, {
-      at: this.#now(),
-      outcome: cloneBrowserOutcome(outcome)
-    })
-    while (this.#recentRequests.size > this.#recentRequestCap) {
-      let oldestId: string | null = null
-      let oldestAt = Number.POSITIVE_INFINITY
-      for (const [id, cached] of this.#recentRequests) {
-        if (cached.at < oldestAt) {
-          oldestId = id
-          oldestAt = cached.at
-        }
-      }
-      if (oldestId === null) break
-      this.#recentRequests.delete(oldestId)
-    }
   }
 }

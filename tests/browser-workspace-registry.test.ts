@@ -492,6 +492,39 @@ test('preserves safe dual-failure categories across repeated session disposal', 
   )
 })
 
+test('failed tab release becomes registry cleanup debt and blocks session resurrection', async () => {
+  class ReleaseDebtEngine extends CountingEngine {
+    releaseCalls = 0
+    override async disposeTab(): Promise<void> {
+      this.releaseCalls += 1
+      throw new Error('raw registry release debt secret')
+    }
+  }
+  const engine = new ReleaseDebtEngine({ capabilities })
+  const registry = new BrowserWorkspaceRegistry({ engineFactory: () => engine })
+  const workspace = await registry.getOrCreate({ sessionId: 'debt-session', owner: ordinary })
+  await workspace.execute({ kind: 'human' }, { type: 'newTab', requestId: 'debt-open' })
+  const closed = await workspace.execute(
+    { kind: 'human' },
+    { type: 'close', requestId: 'debt-close', tabId: 'browser-tab-1' }
+  )
+  assert.equal(closed.ok, false)
+
+  await assert.rejects(
+    registry.disposeSession('debt-session'),
+    (error: BrowserWorkspaceRegistryCleanupError) =>
+      error.failures.engine === true &&
+      error.failures.checkpoint === false &&
+      !JSON.stringify(error).includes('raw registry release debt secret')
+  )
+  assert.equal(engine.releaseCalls, 1)
+  assert.equal(engine.disposeCalls, 1)
+  await assert.rejects(
+    registry.getOrCreate({ sessionId: 'debt-session', owner: ordinary }),
+    /being disposed/
+  )
+})
+
 test('disposeAll cleans every workspace once and permanently closes the registry', async () => {
   const { registry, engines } = createRegistryHarness()
   await registry.getOrCreate({ sessionId: 'session-1', owner: localA })

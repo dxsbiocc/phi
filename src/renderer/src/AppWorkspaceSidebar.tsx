@@ -89,6 +89,8 @@ export type AppWorkspaceSidebarProps = {
   projectSessionRefreshKey: number
   onNewChat: () => Promise<void>
   setIsNewProjectDialogOpen: (open: boolean) => void
+  requestTrustedOverlay: (key: string, publish: () => void, onCancel: () => void) => void
+  cancelTrustedOverlay: (key: string) => void
   onSelectSession: (path: string) => Promise<void>
   onRenameSession: (path: string, name: string) => Promise<void>
   onDeleteSession: (path: string) => Promise<void>
@@ -160,6 +162,8 @@ function AppWorkspaceSidebarImpl({
   projectSessionRefreshKey,
   onNewChat,
   setIsNewProjectDialogOpen,
+  requestTrustedOverlay,
+  cancelTrustedOverlay,
   onSelectSession,
   onRenameSession,
   onDeleteSession,
@@ -383,6 +387,8 @@ function AppWorkspaceSidebarImpl({
     ) : (
       <SessionSidebar
         mode={workspaceSidebarMode}
+        requestTrustedOverlay={requestTrustedOverlay}
+        cancelTrustedOverlay={cancelTrustedOverlay}
         sessions={sessions}
         activeSessionPath={activeSessionPath}
         activeCwd={activeCwd}

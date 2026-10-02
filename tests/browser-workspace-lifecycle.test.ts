@@ -6,7 +6,10 @@ import type {
   EngineTabHandle
 } from '../src/main/browser/browser-engine'
 import { InMemoryBrowserEngine } from '../src/main/browser/in-memory-browser-engine'
-import { BrowserWorkspace } from '../src/main/browser/browser-workspace'
+import {
+  BrowserWorkspace,
+  BrowserWorkspaceDisposalError
+} from '../src/main/browser/browser-workspace'
 import {
   browserCapabilities,
   createBrowserWorkspaceHarness,
@@ -205,20 +208,102 @@ test('returns deeply isolated snapshots and cached outcomes', async () => {
   assert.equal(duplicate.snapshot.tabs[0].title, 'New tab')
 })
 
-test('returns a structured error for commands deferred beyond the multi-tab task', async () => {
-  const { workspace } = createBrowserWorkspaceHarness()
+test('executes history reload and stop with boundaries and safe failures', async () => {
+  const { engine, workspace, engineHandle } = createBrowserWorkspaceHarness()
   await workspace.execute(human, { type: 'open', requestId: 'open-1', url: 'example.test' })
-  const before = workspace.snapshot()
-  const result = await workspace.execute(human, {
+
+  const back = await workspace.execute(human, {
     type: 'history',
-    requestId: 'history-1',
+    requestId: 'back-1',
     tabId: 'phi-tab-1',
     direction: 'back'
   })
-  assert.equal(result.ok, false)
-  if (result.ok) assert.fail('history is deferred to a later task')
-  assert.equal(result.error.code, 'CAPABILITY_UNAVAILABLE')
-  assert.deepEqual(workspace.snapshot(), before)
+  successful(back)
+  assert.equal(back.snapshot.tabs[0].url, 'about:blank')
+  assert.equal(back.snapshot.tabs[0].canGoBack, false)
+
+  const boundaryRevision = workspace.snapshot().revision
+  const boundary = await workspace.execute(human, {
+    type: 'history',
+    requestId: 'back-boundary',
+    tabId: 'phi-tab-1',
+    direction: 'back'
+  })
+  successful(boundary)
+  assert.equal(boundary.snapshot.revision, boundaryRevision)
+
+  const forward = await workspace.execute(human, {
+    type: 'history',
+    requestId: 'forward-1',
+    tabId: 'phi-tab-1',
+    direction: 'forward'
+  })
+  successful(forward)
+  assert.equal(forward.snapshot.tabs[0].url, 'https://example.test/')
+
+  const beforeReload = forward.snapshot.tabs[0].documentRevision
+  const reloaded = await workspace.execute(human, {
+    type: 'reload',
+    requestId: 'reload-1',
+    tabId: 'phi-tab-1'
+  })
+  successful(reloaded)
+  assert.equal(reloaded.snapshot.tabs[0].documentRevision > beforeReload, true)
+
+  engine.emitLoading(engineHandle, true)
+  const stopped = await workspace.execute(human, {
+    type: 'stop',
+    requestId: 'stop-1',
+    tabId: 'phi-tab-1'
+  })
+  successful(stopped)
+  assert.equal(stopped.snapshot.tabs[0].phase, 'ready')
+
+  const missing = await workspace.execute(human, {
+    type: 'reload',
+    requestId: 'reload-missing',
+    tabId: 'missing-tab'
+  })
+  assert.equal(missing.ok, false)
+  if (missing.ok) assert.fail('missing tabs must fail')
+  assert.equal(missing.error.code, 'TAB_NOT_FOUND')
+
+  class FailingReloadEngine extends InMemoryBrowserEngine {
+    override async execute(
+      handle: EngineTabHandle,
+      command: EngineCommand,
+      signal?: AbortSignal
+    ): Promise<EngineResult> {
+      if (command.type === 'reload') {
+        return {
+          ok: false,
+          error: { code: 'ENGINE_UNAVAILABLE', message: 'raw engine reload secret' }
+        }
+      }
+      return super.execute(handle, command, signal)
+    }
+  }
+  const failingEngine = new FailingReloadEngine({ idFactory: () => 'engine-tab-failure' })
+  const failingWorkspace = new BrowserWorkspace({
+    sessionId: 'session-failure',
+    partition: 'partition-failure',
+    engine: failingEngine,
+    idFactory: () => 'phi-tab-failure'
+  })
+  await failingWorkspace.execute(human, {
+    type: 'open',
+    requestId: 'failure-open',
+    url: 'failure.test'
+  })
+  const failed = await failingWorkspace.execute(human, {
+    type: 'reload',
+    requestId: 'failure-reload',
+    tabId: 'phi-tab-failure'
+  })
+  assert.equal(failed.ok, false)
+  if (failed.ok) assert.fail('engine failures must be structured')
+  assert.equal(failed.error.code, 'ENGINE_UNAVAILABLE')
+  assert.equal(JSON.stringify(failed).includes('raw engine reload secret'), false)
 })
 
 test('defensively copies application origins from the policy context', async () => {
@@ -394,4 +479,37 @@ test('disposes idempotently and returns safe outcomes after disposal', async () 
   unsubscribe()
   unsubscribe()
   assert.equal(calls, 0)
+})
+
+test('workspace disposal reports persistent engine debt from failed tab release', async () => {
+  class ReleaseDebtEngine extends InMemoryBrowserEngine {
+    releaseCalls = 0
+    override async disposeTab(): Promise<void> {
+      this.releaseCalls += 1
+      throw new Error('raw release debt secret')
+    }
+  }
+  const engine = new ReleaseDebtEngine({ idFactory: () => 'engine-debt' })
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-debt',
+    partition: 'partition-debt',
+    engine,
+    idFactory: () => 'phi-debt'
+  })
+  await workspace.execute(human, { type: 'newTab', requestId: 'debt-open' })
+  const closed = await workspace.execute(human, {
+    type: 'close',
+    requestId: 'debt-close',
+    tabId: 'phi-debt'
+  })
+  assert.equal(closed.ok, false)
+  assert.equal(JSON.stringify(closed).includes('raw release debt secret'), false)
+  await assert.rejects(
+    workspace.dispose(),
+    (error: BrowserWorkspaceDisposalError) =>
+      error.failures.engine === true &&
+      error.failures.checkpoint === false &&
+      !error.message.includes('raw release debt secret')
+  )
+  assert.equal(engine.releaseCalls, 1)
 })

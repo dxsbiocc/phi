@@ -37,6 +37,8 @@ import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
 import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
 import { BackgroundJobsPanel } from './features/jobs/BackgroundJobsPanel'
+import BrowserPanel from './features/browser/BrowserPanel'
+import { useBrowserTrustedOverlayGate } from './features/browser/hooks/useBrowserTrustedOverlayGate'
 import type { LocalPathKind } from './components/MarkdownContent'
 import { PluginDetail } from './features/plugin/PluginView'
 import { usePluginCatalog } from './features/plugin/hooks/usePluginCatalog'
@@ -1242,6 +1244,71 @@ function App(): React.JSX.Element {
   })
   const [workspaceSidePanelMode, setWorkspaceSidePanelMode] =
     useState<WorkspaceSidePanelMode | null>(null)
+  const closeBrowserPanelForTrustedOverlay = useCallback((): void => {
+    setWorkspaceSidePanelMode((current) => (current === 'browser' ? null : current))
+  }, [])
+  const handleBrowserTrustedOverlayFailure = useCallback((): void => {
+    showSnackbar('无法安全显示应用对话框，请重试。')
+  }, [showSnackbar])
+  const {
+    suspended: browserOverlaySuspended,
+    enqueue: enqueueBrowserTrustedOverlay,
+    cancel: cancelBrowserTrustedOverlay
+  } = useBrowserTrustedOverlayGate({
+    bridge: rendererApi.browser,
+    browserOpen: workspaceSidePanelMode === 'browser',
+    closeBrowserPanel: closeBrowserPanelForTrustedOverlay,
+    onFailure: handleBrowserTrustedOverlayFailure
+  })
+  const openLocalTrustedOverlay = useCallback(
+    (key: string, publish: () => void, onCancel?: () => void): void => {
+      cancelBrowserTrustedOverlay('local', key)
+      enqueueBrowserTrustedOverlay({
+        kind: 'local',
+        key,
+        publish,
+        ...(onCancel ? { onCancel } : {})
+      })
+    },
+    [cancelBrowserTrustedOverlay, enqueueBrowserTrustedOverlay]
+  )
+  const cancelLocalTrustedOverlay = useCallback(
+    (key: string): void => cancelBrowserTrustedOverlay('local', key),
+    [cancelBrowserTrustedOverlay]
+  )
+  const setSettingsOpenWithBrowserGate = useCallback(
+    (open: boolean): void => {
+      if (!open) {
+        cancelBrowserTrustedOverlay('local', 'settings')
+        setIsSettingsOpen(false)
+        return
+      }
+      openLocalTrustedOverlay('settings', () => setIsSettingsOpen(true))
+    },
+    [cancelBrowserTrustedOverlay, openLocalTrustedOverlay]
+  )
+  const setNewProjectDialogOpenWithBrowserGate = useCallback(
+    (open: boolean): void => {
+      if (!open) {
+        cancelBrowserTrustedOverlay('local', 'new-project')
+        setIsNewProjectDialogOpen(false)
+        return
+      }
+      openLocalTrustedOverlay('new-project', () => setIsNewProjectDialogOpen(true))
+    },
+    [cancelBrowserTrustedOverlay, openLocalTrustedOverlay]
+  )
+  const setSessionSearchOpenWithBrowserGate = useCallback(
+    (open: boolean): void => {
+      if (!open) {
+        cancelBrowserTrustedOverlay('local', 'session-search')
+        setIsSessionSearchOpen(false)
+        return
+      }
+      openLocalTrustedOverlay('session-search', () => setIsSessionSearchOpen(true))
+    },
+    [cancelBrowserTrustedOverlay, openLocalTrustedOverlay]
+  )
   const workspaceSidePanelCollapsed = workspaceSidePanelMode === null
   const [workspaceSidePanelWidth, setWorkspaceSidePanelWidth] = useState(
     workspaceSidePanelWidthDefault
@@ -1477,7 +1544,9 @@ function App(): React.JSX.Element {
   }
 
   const onExportSession = (session: SessionSummary): void => {
-    if (session.phiSessionId) setExportTarget(session)
+    if (session.phiSessionId) {
+      openLocalTrustedOverlay('session-export', () => setExportTarget(session))
+    }
   }
 
   const confirmExportSession = async (): Promise<void> => {
@@ -1686,12 +1755,15 @@ function App(): React.JSX.Element {
     void onSelectSession(path)
   }
 
-  const openSettings = useCallback((category?: SettingsCategory): void => {
-    if (category) {
-      setSettingsCategory(category)
-    }
-    setIsSettingsOpen(true)
-  }, [])
+  const openSettings = useCallback(
+    (category?: SettingsCategory): void => {
+      if (category) {
+        setSettingsCategory(category)
+      }
+      setSettingsOpenWithBrowserGate(true)
+    },
+    [setSettingsOpenWithBrowserGate]
+  )
 
   const onGoProviderSettings = useCallback((): void => {
     openSettings('providers')
@@ -1804,69 +1876,100 @@ function App(): React.JSX.Element {
     })
 
     const unsubscribeAuthInteraction = rendererApi.onAuthInteraction((event) => {
-      if (handleAuthInteractionEvent(event)) {
-        setIsSettingsOpen(true)
-      }
+      enqueueBrowserTrustedOverlay({
+        kind: 'auth',
+        key: event.type === 'prompt' ? event.requestId : `${event.providerId}:${event.event.type}`,
+        onCancel:
+          event.type === 'prompt'
+            ? () => rendererApi.submitAuthInteraction(event.requestId, '')
+            : undefined,
+        publish: () => {
+          if (handleAuthInteractionEvent(event)) {
+            setIsSettingsOpen(true)
+          }
+        }
+      })
     })
 
     const unsubscribeToolApproval = rendererApi.onToolApprovalRequest((event) => {
-      const approvalStateKey = sessionStateKeyFromToolApproval(
-        event,
-        useSessionStore.getState().activeSessionGeneration
-      )
-      if (approvalStateKey) {
-        pendingApprovalsBySession.set(approvalStateKey, event)
-        const nextRuntimeState = {
-          ...(sessionRuntimeStates.get(approvalStateKey) ?? idleSessionRuntimeState()),
-          status: 'needs_approval' as const,
-          unreadKind: 'approval' as const,
-          currentRunId: event.runId
+      enqueueBrowserTrustedOverlay({
+        kind: 'approval',
+        key: event.requestId,
+        onCancel: () => rendererApi.respondToolApproval(event.requestId, false),
+        publish: () => {
+          const approvalStateKey = sessionStateKeyFromToolApproval(
+            event,
+            useSessionStore.getState().activeSessionGeneration
+          )
+          if (approvalStateKey) {
+            pendingApprovalsBySession.set(approvalStateKey, event)
+            const nextRuntimeState = {
+              ...(sessionRuntimeStates.get(approvalStateKey) ?? idleSessionRuntimeState()),
+              status: 'needs_approval' as const,
+              unreadKind: 'approval' as const,
+              currentRunId: event.runId
+            }
+            storeSessionRuntimeState(approvalStateKey, nextRuntimeState)
+            if (approvalStateKey === useSessionStore.getState().activeAgentEventStateKey) {
+              setPendingApproval(event)
+              setActiveSessionRuntimeState(nextRuntimeState)
+            }
+          } else {
+            setPendingApproval(event)
+          }
+          setProjectSessionRefreshKey((key) => key + 1)
+          scheduleSessionRefresh()
         }
-        storeSessionRuntimeState(approvalStateKey, nextRuntimeState)
-        if (approvalStateKey === useSessionStore.getState().activeAgentEventStateKey) {
-          setPendingApproval(event)
-          setActiveSessionRuntimeState(nextRuntimeState)
-        }
-      } else {
-        setPendingApproval(event)
-      }
-      setProjectSessionRefreshKey((key) => key + 1)
-      scheduleSessionRefresh()
+      })
     })
 
     const unsubscribeToolApprovalCancelled = rendererApi.onToolApprovalCancelled(() => {
+      cancelBrowserTrustedOverlay('approval')
       pendingApprovalsBySession.clear()
       setPendingApproval(null)
       scheduleSessionRefresh()
     })
 
     const unsubscribeAgentUserInteraction = rendererApi.onAgentUserInteractionRequest((event) => {
-      const interactionStateKey = sessionStateKeyFromAgentUserInteraction(
-        event,
-        useSessionStore.getState().activeSessionGeneration
-      )
-      if (interactionStateKey) {
-        pendingUserInteractionsBySession.set(interactionStateKey, event)
-        const nextRuntimeState = {
-          ...(sessionRuntimeStates.get(interactionStateKey) ?? idleSessionRuntimeState()),
-          status: 'needs_input' as const,
-          unreadKind: 'input' as const,
-          currentRunId: event.runId
+      enqueueBrowserTrustedOverlay({
+        kind: 'interaction',
+        key: event.requestId,
+        onCancel: () =>
+          rendererApi.respondAgentUserInteraction(
+            event.requestId,
+            { requestId: event.requestId, answers: [], cancelled: true },
+            true
+          ),
+        publish: () => {
+          const interactionStateKey = sessionStateKeyFromAgentUserInteraction(
+            event,
+            useSessionStore.getState().activeSessionGeneration
+          )
+          if (interactionStateKey) {
+            pendingUserInteractionsBySession.set(interactionStateKey, event)
+            const nextRuntimeState = {
+              ...(sessionRuntimeStates.get(interactionStateKey) ?? idleSessionRuntimeState()),
+              status: 'needs_input' as const,
+              unreadKind: 'input' as const,
+              currentRunId: event.runId
+            }
+            storeSessionRuntimeState(interactionStateKey, nextRuntimeState)
+            if (interactionStateKey === useSessionStore.getState().activeAgentEventStateKey) {
+              setPendingUserInteraction(event)
+              setActiveSessionRuntimeState(nextRuntimeState)
+            }
+          } else {
+            setPendingUserInteraction(event)
+          }
+          setProjectSessionRefreshKey((key) => key + 1)
+          scheduleSessionRefresh()
         }
-        storeSessionRuntimeState(interactionStateKey, nextRuntimeState)
-        if (interactionStateKey === useSessionStore.getState().activeAgentEventStateKey) {
-          setPendingUserInteraction(event)
-          setActiveSessionRuntimeState(nextRuntimeState)
-        }
-      } else {
-        setPendingUserInteraction(event)
-      }
-      setProjectSessionRefreshKey((key) => key + 1)
-      scheduleSessionRefresh()
+      })
     })
 
     const unsubscribeAgentUserInteractionCancelled = rendererApi.onAgentUserInteractionCancelled(
       () => {
+        cancelBrowserTrustedOverlay('interaction')
         pendingUserInteractionsBySession.clear()
         setPendingUserInteraction(null)
         scheduleSessionRefresh()
@@ -1904,7 +2007,9 @@ function App(): React.JSX.Element {
     }
   }, [
     applyCurrentSession,
+    cancelBrowserTrustedOverlay,
     cancelScheduledSessionRefresh,
+    enqueueBrowserTrustedOverlay,
     handleAuthInteractionEvent,
     handleNotebookDraftChanged,
     handleNotebookFileChangedEvent,
@@ -3055,15 +3160,17 @@ function App(): React.JSX.Element {
     (delayMs = 0): void => {
       clearWorkspaceSidebarPreviewCloseTimer()
       if (delayMs <= 0) {
+        cancelBrowserTrustedOverlay('local', 'workspace-sidebar-preview')
         setWorkspaceSidebarPreview(null)
         return
       }
       workspaceSidebarPreviewCloseTimer.current = window.setTimeout(() => {
         workspaceSidebarPreviewCloseTimer.current = null
+        cancelBrowserTrustedOverlay('local', 'workspace-sidebar-preview')
         setWorkspaceSidebarPreview(null)
       }, delayMs)
     },
-    [clearWorkspaceSidebarPreviewCloseTimer]
+    [cancelBrowserTrustedOverlay, clearWorkspaceSidebarPreviewCloseTimer]
   )
   const openWorkspaceSidebarPreview = useCallback(
     (mode: WorkspaceSidebarMode, anchorEl: HTMLElement): void => {
@@ -3072,11 +3179,14 @@ function App(): React.JSX.Element {
         return
       }
       clearWorkspaceSidebarPreviewCloseTimer()
-      setWorkspaceSidebarPreview({ mode, anchorEl })
+      openLocalTrustedOverlay('workspace-sidebar-preview', () => {
+        setWorkspaceSidebarPreview({ mode, anchorEl })
+      })
     },
     [
       clearWorkspaceSidebarPreviewCloseTimer,
       closeWorkspaceSidebarPreview,
+      openLocalTrustedOverlay,
       shouldUseWorkspaceSidebarPreview
     ]
   )
@@ -3579,7 +3689,7 @@ function App(): React.JSX.Element {
       void onStartProjectChat(project)
       return
     }
-    setIsNewProjectDialogOpen(true)
+    setNewProjectDialogOpenWithBrowserGate(true)
   }
 
   const acknowledgeActiveSessionInteraction = useCallback((): void => {
@@ -3943,7 +4053,9 @@ function App(): React.JSX.Element {
           refreshPlugins={refreshPlugins}
           refreshSkills={refreshSkills}
           refreshMcpServers={refreshMcpServers}
-          setIsSettingsOpen={setIsSettingsOpen}
+          setIsSettingsOpen={setSettingsOpenWithBrowserGate}
+          requestTrustedOverlay={openLocalTrustedOverlay}
+          cancelTrustedOverlay={cancelLocalTrustedOverlay}
           isWorkspaceSidebarPreviewOpen={isWorkspaceSidebarPreviewOpen}
           visibleWorkspaceSidebarPreview={visibleWorkspaceSidebarPreview}
           workspaceSidebarPreviewMode={workspaceSidebarPreviewMode}
@@ -3956,7 +4068,7 @@ function App(): React.JSX.Element {
           projects={projects}
           projectSessionRefreshKey={projectSessionRefreshKey}
           onNewChat={onNewChatFromSidebar}
-          setIsNewProjectDialogOpen={setIsNewProjectDialogOpen}
+          setIsNewProjectDialogOpen={setNewProjectDialogOpenWithBrowserGate}
           onSelectSession={onOpenSessionFromSidebar}
           onRenameSession={onRenameSession}
           onDeleteSession={onDeleteSession}
@@ -4032,7 +4144,9 @@ function App(): React.JSX.Element {
           projects={projects}
           projectSessionRefreshKey={projectSessionRefreshKey}
           onNewChat={onNewChatFromSidebar}
-          setIsNewProjectDialogOpen={setIsNewProjectDialogOpen}
+          setIsNewProjectDialogOpen={setNewProjectDialogOpenWithBrowserGate}
+          requestTrustedOverlay={openLocalTrustedOverlay}
+          cancelTrustedOverlay={cancelLocalTrustedOverlay}
           onSelectSession={onOpenSessionFromSidebar}
           onRenameSession={onRenameSession}
           onDeleteSession={onDeleteSession}
@@ -4230,6 +4344,24 @@ function App(): React.JSX.Element {
                   <BackgroundJobsPanel
                     onOpenSession={(path) => void onOpenSessionFromSidebar(path)}
                   />
+                ) : workspaceSidePanelMode === 'browser' ? (
+                  <BrowserPanel
+                    bridge={rendererApi.browser}
+                    activePhiSessionId={activePhiSessionId ?? null}
+                    visible={
+                      !pendingApproval &&
+                      !pendingUserInteraction &&
+                      !browserOverlaySuspended &&
+                      !isWorkspaceSidebarPreviewOpen &&
+                      !isSettingsOpen &&
+                      !isSessionSearchOpen &&
+                      !isProviderDialogOpen &&
+                      !exportTarget &&
+                      !showEnvironmentSummary &&
+                      !showOnboarding &&
+                      !isNewProjectDialogOpen
+                    }
+                  />
                 ) : null}
               </WorkspaceSidePanel>
             </Box>
@@ -4260,7 +4392,7 @@ function App(): React.JSX.Element {
             <WindowNavigationControls
               isSidebarOpen={isSidebarOpen}
               onToggleSidebar={() => setIsSidebarOpen((value) => !value)}
-              onOpenSessionSearch={() => setIsSessionSearchOpen(true)}
+              onOpenSessionSearch={() => setSessionSearchOpenWithBrowserGate(true)}
               canGoBack={canGoBackInHistory}
               canGoForward={canGoForwardInHistory}
               onGoBack={goBackInHistory}
@@ -4297,7 +4429,7 @@ function App(): React.JSX.Element {
               projectSessionRefreshKey,
               projects.map((project) => [project.id, project.name, project.workingDirectory])
             ])}
-            onClose={() => setIsSessionSearchOpen(false)}
+            onClose={() => setSessionSearchOpenWithBrowserGate(false)}
             sessions={sessions}
             projects={projects}
             onFetchProjectSessions={onFetchProjectSessions}
@@ -4308,7 +4440,7 @@ function App(): React.JSX.Element {
         <AppDialogs
           rendererApi={rendererApi}
           isSettingsOpen={isSettingsOpen}
-          setIsSettingsOpen={setIsSettingsOpen}
+          setIsSettingsOpen={setSettingsOpenWithBrowserGate}
           settingsCategory={settingsCategory}
           setSettingsCategory={setSettingsCategory}
           providerStatuses={providerStatuses}
@@ -4391,7 +4523,7 @@ function App(): React.JSX.Element {
           onSubmitAuthPrompt={onSubmitAuthPrompt}
           onUpdatePromptValue={onUpdatePromptValue}
           isNewProjectDialogOpen={isNewProjectDialogOpen}
-          setIsNewProjectDialogOpen={setIsNewProjectDialogOpen}
+          setIsNewProjectDialogOpen={setNewProjectDialogOpenWithBrowserGate}
           onCreateProject={onCreateProject}
           onCreateRemoteProject={onCreateRemoteProject}
           snackbarNotice={snackbarNotice}
