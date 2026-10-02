@@ -213,7 +213,8 @@ test('micromambaEnvironment keeps, drops, and sets the invocation allowlist', ()
   }
 
   assert.deepEqual(micromambaEnvironment('/runtime', base), {
-    HOME: '/Users/phi',
+    // micromamba gets a home inside the runtime root, never the user's.
+    HOME: '/runtime/home',
     USER: 'phi',
     LOGNAME: 'phi',
     TMPDIR: '/tmp',

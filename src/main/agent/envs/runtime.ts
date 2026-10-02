@@ -149,7 +149,18 @@ export function micromambaEnvironment(
   env.PATH = MINIMAL_PATH
   env.MAMBA_ROOT_PREFIX = root
   env.MAMBA_NO_BANNER = '1'
+  // micromamba keeps per-user state under $HOME (for example the `micromamba run` process
+  // registry in ~/.cache/mamba/proc). Give it a home inside the runtime root so Phi never
+  // shares or writes the user's mamba/conda state. Content processes are unaffected: they
+  // are started through `environmentVariables`, which keeps the real HOME. The activation
+  // snapshot is unaffected too: it diffs against this same environment.
+  env.HOME = micromambaHome(root)
   return env
+}
+
+/** The HOME micromamba runs with; created on demand by `spawnMicromamba`. */
+export function micromambaHome(root: string): string {
+  return join(root, 'home')
 }
 
 export async function runMicromamba(
@@ -290,6 +301,7 @@ function spawnMicromamba(
   options: RunMicromambaOptions
 ): ReturnType<typeof spawn> {
   try {
+    mkdirSync(micromambaHome(options.root), { recursive: true })
     return spawn(executable, micromambaInvocationArgs(options.root, args), {
       cwd: options.root,
       env: {
