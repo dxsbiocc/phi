@@ -1,5 +1,6 @@
 import type {
   NavigationHistory,
+  BrowserWindow,
   WebContents,
   WebContentsViewConstructorOptions,
   WebPreferences
@@ -23,6 +24,11 @@ import {
   acquireBrowserSessionPolicy,
   type BrowserSessionLike
 } from './electron-browser-session-policy'
+import {
+  ElectronBrowserViewportController,
+  type NativeBrowserViewLike,
+  type NativeBrowserWindowLike
+} from './electron-browser-viewport'
 export type { BrowserSessionLike } from './electron-browser-session-policy'
 
 export type SecureBrowserWebPreferences = Pick<
@@ -58,7 +64,7 @@ export type BrowserWebContentsLike = Pick<
   navigationHistory: BrowserNavigationHistoryLike
 }
 
-export interface BrowserWebContentsViewLike {
+export interface BrowserWebContentsViewLike extends NativeBrowserViewLike {
   webContents: BrowserWebContentsLike
 }
 
@@ -71,12 +77,15 @@ export type ElectronWebContentsViewConstructorCompatibility = AssertWebContentsV
   typeof import('electron').WebContentsView
 >
 
-export interface BrowserOwningWindowLike {
-  contentView: {
-    addChildView(view: BrowserWebContentsViewLike): void
-    removeChildView(view: BrowserWebContentsViewLike): void
-  }
-}
+export type BrowserOwningWindowLike = Pick<
+  BrowserWindow,
+  'contentView' | 'getContentBounds' | 'isMinimized' | 'isVisible' | 'on' | 'off' | 'listenerCount'
+>
+
+type AssertBrowserWindow<T extends BrowserOwningWindowLike> = T
+export type ElectronBrowserWindowCompatibility = AssertBrowserWindow<
+  import('electron').BrowserWindow
+>
 
 export interface ElectronBrowserEngineOptions {
   WebContentsView: BrowserWebContentsViewConstructor
@@ -87,9 +96,9 @@ export interface ElectronBrowserEngineOptions {
 }
 
 interface ElectronTabRecord {
+  handle: EngineTabHandle
   view: BrowserWebContentsViewLike
   window: BrowserOwningWindowLike
-  attachAttempted: boolean
   cleanupAttempted: boolean
   closeSucceeded: boolean
   initializing: boolean
@@ -156,6 +165,7 @@ export class ElectronBrowserEngine implements BrowserEngine {
   readonly #now: () => number
   readonly #tabs = new Map<EngineTabHandle, ElectronTabRecord>()
   readonly #listeners = new Set<(event: EngineEvent) => void>()
+  readonly #viewportController = new ElectronBrowserViewportController<EngineTabHandle>()
   #nextId = 0
   #disposed = false
   #disposePromise: Promise<void> | null = null
@@ -187,9 +197,9 @@ export class ElectronBrowserEngine implements BrowserEngine {
       })
       this.#assertRequiredHooks(view.webContents)
       record = {
+        handle,
         view,
         window,
-        attachAttempted: false,
         cleanupAttempted: false,
         closeSucceeded: false,
         initializing: true,
@@ -203,8 +213,7 @@ export class ElectronBrowserEngine implements BrowserEngine {
       if (this.#disposed || record.cleanupAttempted || this.#tabs.get(handle) !== record) {
         throw new Error('engine disposed during creation')
       }
-      record.attachAttempted = true
-      window.contentView.addChildView(view)
+      this.#viewportController.register(handle, view, window as unknown as NativeBrowserWindowLike)
       record.initializing = false
       return handle
     } catch {
@@ -280,7 +289,11 @@ export class ElectronBrowserEngine implements BrowserEngine {
 
   async setViewport(handle: EngineTabHandle, viewport: BrowserViewport | null): Promise<void> {
     if (!this.#tabs.has(handle)) throw new Error('Browser tab was not found')
-    void viewport
+    try {
+      this.#viewportController.setViewport(handle, viewport)
+    } catch {
+      throw new Error('Browser viewport could not be applied')
+    }
   }
 
   subscribe(listener: (event: EngineEvent) => void): () => void {
@@ -519,7 +532,8 @@ export class ElectronBrowserEngine implements BrowserEngine {
     for (let attempt = 0; attempt < 10_000; attempt += 1) {
       const value = this.#idFactory()
       const handle = value as EngineTabHandle
-      if (value.trim() && !this.#tabs.has(handle)) return handle
+      if (value.trim() && !this.#tabs.has(handle) && !this.#viewportController.has(handle))
+        return handle
     }
     throw new Error('Browser tab could not be created')
   }
@@ -527,20 +541,14 @@ export class ElectronBrowserEngine implements BrowserEngine {
   #cleanupRecord(record: ElectronTabRecord): boolean {
     if (record.cleanupAttempted) return !record.closeSucceeded
     record.cleanupAttempted = true
-    let failed = false
-    if (record.attachAttempted) {
-      try {
-        record.window.contentView.removeChildView(record.view)
-      } catch {
-        failed = true
-      }
-    }
+    let failed = this.#viewportController.prepareForClose(record.handle)
     try {
       record.view.webContents.close()
       record.closeSucceeded = true
     } catch {
       failed = true
     }
+    failed = this.#viewportController.completeClose(record.handle, record.closeSucceeded) || failed
     if (!record.closeSucceeded) return true
     for (const { event, listener } of record.listeners) {
       try {

@@ -84,11 +84,19 @@ function createHarness(options: HarnessOptions = {}): {
 
   class FakeView implements BrowserWebContentsViewLike {
     readonly webContents = new FakeWebContents()
+    readonly visibility: boolean[] = []
+    setBounds(): void {
+      return
+    }
+    setVisible(value: boolean): void {
+      this.visibility.push(value)
+    }
     constructor(readonly options: BrowserWebContentsViewOptions) {
       views.push(this)
     }
   }
 
+  const windowEvents = new EventEmitter()
   const window = {
     contentView: {
       addChildView(view: BrowserWebContentsViewLike): void {
@@ -104,7 +112,13 @@ function createHarness(options: HarnessOptions = {}): {
         if (index >= 0) children.splice(index, 1)
         if (options.removeError) throw options.removeError
       }
-    }
+    },
+    getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+    isMinimized: () => false,
+    isVisible: () => true,
+    on: windowEvents.on.bind(windowEvents),
+    off: windowEvents.off.bind(windowEvents),
+    listenerCount: windowEvents.listenerCount.bind(windowEvents)
   }
   let nextHandle = 0
   const engine = new ElectronBrowserEngine({
@@ -122,6 +136,9 @@ test('creates an isolated about:blank child view with secure preferences', async
   assert.equal(handle, 'phi-engine-tab-1')
   assert.notEqual(handle, String(views[0].webContents.id))
   assert.deepEqual(views[0].webContents.loadedUrls, ['about:blank'])
+  assert.deepEqual(views[0].visibility, [false])
+  assert.deepEqual(children, [])
+  await engine.setViewport(handle, { x: 0, y: 0, width: 500, height: 400 })
   assert.deepEqual(children, [views[0]])
   assert.deepEqual(addCalls, [views[0]])
   assert.deepEqual(views[0].options.webPreferences, {
@@ -181,11 +198,18 @@ test('reserves candidate handles across concurrent creates without overwrite', a
   const views: BrowserWebContentsViewLike[] = []
   class ReservedView implements BrowserWebContentsViewLike {
     readonly webContents = new RequiredWebContents()
+    setBounds(): void {
+      return
+    }
+    setVisible(): void {
+      return
+    }
     constructor(readonly options: BrowserWebContentsViewOptions) {
       views.push(this)
     }
   }
   const children: BrowserWebContentsViewLike[] = []
+  const windowEvents = new EventEmitter()
   const engine = new ElectronBrowserEngine({
     WebContentsView: ReservedView,
     getOwningWindow: () => ({
@@ -195,7 +219,13 @@ test('reserves candidate handles across concurrent creates without overwrite', a
           const index = children.indexOf(view)
           if (index >= 0) children.splice(index, 1)
         }
-      }
+      },
+      getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+      isMinimized: () => false,
+      isVisible: () => true,
+      on: windowEvents.on.bind(windowEvents),
+      off: windowEvents.off.bind(windowEvents),
+      listenerCount: windowEvents.listenerCount.bind(windowEvents)
     }),
     idFactory: () => candidates.shift() ?? 'unexpected-handle'
   })
@@ -206,12 +236,18 @@ test('reserves candidate handles across concurrent creates without overwrite', a
   ])
   assert.deepEqual([first, second], ['shared-handle', 'second-handle'])
   assert.equal(engine.tabCountForTesting(), 2)
-  assert.equal(children.length, 2)
+  assert.equal(children.length, 0)
 })
 
 test('wraps id factory failures without exposing injected error text', async () => {
   class NeverCreatedView implements BrowserWebContentsViewLike {
     readonly webContents = new RequiredWebContents()
+    setBounds(): void {
+      return
+    }
+    setVisible(): void {
+      return
+    }
   }
   const engine = new ElectronBrowserEngine({
     WebContentsView: NeverCreatedView,
@@ -250,18 +286,22 @@ test('removes and closes a view if child attachment fails', async () => {
     addError: new Error('raw add failure')
   })
 
+  const handle = await engine.createTab({ partition: 'browser-project-a' })
   await assert.rejects(
-    engine.createTab({ partition: 'browser-project-a' }),
-    /Browser tab could not be created/
+    engine.setViewport(handle, { x: 0, y: 0, width: 500, height: 400 }),
+    /Browser viewport could not be applied/
   )
   assert.deepEqual(removeCalls, [views[0]])
   assert.deepEqual(children, [])
+  assert.equal(views[0].webContents.closeCalls, 0)
+  await engine.disposeTab(handle)
   assert.equal(views[0].webContents.closeCalls, 1)
 })
 
 test('disposeTab removes ownership and closes webContents exactly once', async () => {
   const { engine, views, children, removeCalls } = createHarness()
   const handle = await engine.createTab({ partition: 'browser-project-a' })
+  await engine.setViewport(handle, { x: 0, y: 0, width: 500, height: 400 })
 
   await engine.disposeTab(handle)
   await engine.disposeTab(handle)
@@ -275,6 +315,7 @@ test('disposeTab removes ownership and closes webContents exactly once', async (
 test('disposeTab still closes webContents when removeChildView fails', async () => {
   const { engine, views } = createHarness({ removeError: new Error('raw remove failure') })
   const handle = await engine.createTab({ partition: 'browser-project-a' })
+  await engine.setViewport(handle, { x: 0, y: 0, width: 500, height: 400 })
 
   await assert.rejects(
     engine.disposeTab(handle),

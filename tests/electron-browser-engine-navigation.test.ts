@@ -132,8 +132,15 @@ function harness(
       this.webContents.closeError = options.closeError ?? null
       contents.push(this.webContents)
     }
+    setBounds(): void {
+      return
+    }
+    setVisible(): void {
+      return
+    }
   }
   const children: BrowserWebContentsViewLike[] = []
+  const windowEvents = new EventEmitter()
   const applicationOrigins = options.applicationOrigins ?? []
   const engine = new ElectronBrowserEngine({
     WebContentsView: FakeView,
@@ -144,7 +151,13 @@ function harness(
           const index = children.indexOf(view)
           if (index >= 0) children.splice(index, 1)
         }
-      }
+      },
+      getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+      isMinimized: () => false,
+      isVisible: () => true,
+      on: windowEvents.on.bind(windowEvents),
+      off: windowEvents.off.bind(windowEvents),
+      listenerCount: windowEvents.listenerCount.bind(windowEvents)
     }),
     policyContext: { applicationOrigins },
     now: () => 123,
