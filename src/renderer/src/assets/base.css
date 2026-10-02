@@ -6,10 +6,6 @@
   font-weight: normal;
 }
 
-:root {
-  color-scheme: light;
-}
-
 html,
 body {
   margin: 0;
@@ -27,4 +23,38 @@ body {
 
 a {
   color: inherit;
+}
+
+/* Custom scrollbars: transparent track and no border, so no background band
+   ever shows beside scroll areas — including on hover, where macOS overlay
+   scrollbars would otherwise expand into a track with a separator. The capsule
+   thumb auto-hides: main.tsx sets --phi-thumb-alpha while scrolling and steps
+   it down for a brief fade-out (scrollbar pseudo-elements can't run CSS
+   transitions). Hovering or dragging keeps the thumb visible and thickens it
+   via a shrinking transparent border inside a fixed-width slot, so layout
+   never shifts. */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(145, 158, 171, var(--phi-thumb-alpha, 0));
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background-color: rgba(145, 158, 171, 0.45);
+  border-width: 1.5px;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }

@@ -30,9 +30,15 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
   const inkOnDark = isDark ? MINIMAL_GREY[800] : '#FFFFFF'
 
   return {
-    // NOTE: no global ::-webkit-scrollbar styling here on purpose — styled
-    // scrollbars on macOS stop being overlay scrollbars and become classic
-    // always-visible ones, which reads as "scrollbar is stuck on".
+    // Scrollbars are styled globally in base.css (auto-hiding capsule thumb that
+    // thickens on hover, transparent track). Here, color-scheme follows the
+    // active mode so remaining native UA chrome (form controls, etc.) renders
+    // dark in dark mode.
+    MuiCssBaseline: {
+      styleOverrides: (theme) => ({
+        ':root': { colorScheme: theme.palette.mode }
+      })
+    },
 
     // -- Surfaces -----------------------------------------------------------
 
