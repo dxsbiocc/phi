@@ -91,6 +91,8 @@ import {
 import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
 import { buildAskUserQuestionCustomTools } from '../user-interaction-tools'
+import { buildBrowserTool } from '../browser/browser-tool'
+import type { BrowserOutcome } from '../../../shared/browserTypes'
 import { isPhiAgentDefinition, type PhiAgentDefinition } from '../agents/definition'
 import { controlAgentRun } from '../agents/run-control'
 import { AGENT_RUN_HOST_METHODS } from '../agents/run-host'
@@ -1277,6 +1279,13 @@ async function createSession(params: unknown): Promise<unknown> {
   const userInteractionCustomTools = buildAskUserQuestionCustomTools(sessionId, async (request) =>
     requestHost('agentInteraction.request', request)
   )
+  const browserCustomTool = buildBrowserTool(
+    sessionId,
+    (request) => requestHost('browser.execute', request) as Promise<BrowserOutcome>,
+    {
+      cancelHost: (identity) => requestHost('browser.cancel', identity)
+    }
+  )
   const customTools = [
     ...(remoteRoot
       ? [
@@ -1413,7 +1422,8 @@ async function createSession(params: unknown): Promise<unknown> {
     ...notebookCustomTools,
     ...libraryCustomTools,
     buildPaletteRecommendationTool(),
-    ...userInteractionCustomTools
+    ...userInteractionCustomTools,
+    browserCustomTool
   ]
 
   const selectedModel = await modelBySelector(ctx, record.model)

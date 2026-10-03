@@ -41,6 +41,10 @@ import { BrowserWorkspacePresentation } from './browser-workspace-presentation'
 import { BrowserWorkspaceRequestCache } from './browser-workspace-request-cache'
 import { openActiveBrowserTabExternally } from './browser-workspace-external'
 import { captureBrowserWorkspaceScreenshot } from './browser-workspace-screenshot'
+import {
+  authorizeBrowserTabAccess,
+  type BrowserTabAccessResult
+} from './browser-workspace-agent-access'
 
 type BrowserUrlNormalizer = (input: string, context: BrowserPolicyContext) => BrowserUrlPolicyResult
 
@@ -237,9 +241,9 @@ export class BrowserWorkspace {
   ): Promise<BrowserOutcome> {
     switch (command.type) {
       case 'open':
-        return this.#open(command.url, actor.kind === 'agent', signal)
+        return this.#open(command.url, actor, signal)
       case 'newTab':
-        return this.#newTab(command.url, actor.kind === 'agent', signal)
+        return this.#newTab(command.url, actor, signal)
       case 'activate':
         return this.#activate(command.tabId)
       case 'close':
@@ -249,7 +253,8 @@ export class BrowserWorkspace {
           command.tabId,
           command.url,
           command.expectedDocumentRevision,
-          actor.kind === 'agent',
+          actor,
+          command.requireActive === true,
           signal
         )
       case 'history':
@@ -279,9 +284,15 @@ export class BrowserWorkspace {
         return result.ok ? this.#success() : this.#failure(result.error)
       }
       case 'snapshot':
-        return this.#captureScreenshot(command.tabId, signal)
+        return this.#captureScreenshot(
+          command.tabId,
+          actor,
+          command.expectedDocumentRevision,
+          command.requireActive === true,
+          signal
+        )
       case 'restore':
-        return this.#restore(command.tabId, actor.kind === 'agent', signal)
+        return this.#restore(command.tabId, actor, signal)
       default:
         return this.#failure({
           code: 'CAPABILITY_UNAVAILABLE',
@@ -291,25 +302,21 @@ export class BrowserWorkspace {
     }
   }
 
-  async #open(
-    url: string,
-    isAgentControlled: boolean,
-    signal?: AbortSignal
-  ): Promise<BrowserOutcome> {
+  async #open(url: string, actor: BrowserActor, signal?: AbortSignal): Promise<BrowserOutcome> {
     const normalized = this.#normalizeUrl(url, this.#policyContext)
     if (!normalized.ok) return this.#failure(normalized.error)
-    return this.#createTab(normalized.url, isAgentControlled, signal)
+    return this.#createTab(normalized.url, this.#agentRunId(actor), signal)
   }
 
   async #newTab(
     url: string | undefined,
-    isAgentControlled: boolean,
+    actor: BrowserActor,
     signal?: AbortSignal
   ): Promise<BrowserOutcome> {
-    if (url === undefined) return this.#createTab(null, isAgentControlled, signal)
+    if (url === undefined) return this.#createTab(null, this.#agentRunId(actor), signal)
     const normalized = this.#normalizeUrl(url, this.#policyContext)
     if (!normalized.ok) return this.#failure(normalized.error)
-    return this.#createTab(normalized.url, isAgentControlled, signal)
+    return this.#createTab(normalized.url, this.#agentRunId(actor), signal)
   }
 
   #activate(tabId: string): BrowserOutcome {
@@ -331,7 +338,7 @@ export class BrowserWorkspace {
 
   async #createTab(
     url: string | null,
-    isAgentControlled: boolean,
+    agentRunId: string | null,
     signal?: AbortSignal
   ): Promise<BrowserOutcome> {
     const handle = await this.#engine.createTab({ partition: this.#partition })
@@ -351,7 +358,7 @@ export class BrowserWorkspace {
     let tab: TabRecord
     let previousActiveTabId: string | null
     try {
-      const created = this.#tabCollection.create(handle, isAgentControlled)
+      const created = this.#tabCollection.create(handle, agentRunId)
       tab = created.tab
       previousActiveTabId = created.previousActiveTabId
       this.#changed()
@@ -386,55 +393,57 @@ export class BrowserWorkspace {
     tabId: string,
     url: string,
     expectedDocumentRevision: number | undefined,
-    isAgentControlled: boolean,
+    actor: BrowserActor,
+    requireActive: boolean,
     signal?: AbortSignal
   ): Promise<BrowserOutcome> {
     const tab = this.#tabCollection.find(tabId)
     if (!tab) return this.#failure(this.#tabNotFound(tabId))
-    if (
-      expectedDocumentRevision !== undefined &&
-      expectedDocumentRevision !== tab.snapshot.documentRevision
-    ) {
-      return this.#failure({
-        code: 'STALE_DOCUMENT',
-        message: 'The browser page changed before the action could run',
-        retryable: true,
-        tabId
-      })
-    }
+    const access = this.#authorizeTabAccess(tab, actor, expectedDocumentRevision, requireActive)
+    if (!access.ok) return this.#failure(access.error)
     const normalized = this.#normalizeUrl(url, this.#policyContext)
     if (!normalized.ok) return this.#failure(normalized.error)
+    let outcome: BrowserOutcome
     if (!tab.handle) {
-      return this.#materializeRestoredTab(tab, normalized.url, isAgentControlled, true, signal)
+      outcome = await this.#materializeRestoredTab(
+        tab,
+        normalized.url,
+        tab.agentRunId,
+        true,
+        signal
+      )
+    } else {
+      outcome = await this.#navigateEngine(tab, normalized.url, signal)
     }
-    if (isAgentControlled && !tab.snapshot.isAgentControlled) {
-      this.#mutateTab(tab, (snapshot) => {
-        snapshot.isAgentControlled = true
-      })
-    }
-    return this.#navigateEngine(tab, normalized.url, signal)
+    if (!outcome.ok) return outcome
+    if (signal?.aborted) return this.#failure(this.#cancelledError(tabId))
+    if (!access.claimRunId) return outcome
+    this.#claimTab(tab, access.claimRunId)
+    return this.#success()
   }
 
   async #restore(
     tabId: string,
-    isAgentControlled: boolean,
+    actor: BrowserActor,
     signal?: AbortSignal
   ): Promise<BrowserOutcome> {
     const tab = this.#tabCollection.find(tabId)
     if (!tab) return this.#failure(this.#tabNotFound(tabId))
+    const access = this.#authorizeTabAccess(tab, actor, undefined, false)
+    if (!access.ok) return this.#failure(access.error)
     if (tab.handle) return this.#success()
     if (tab.snapshot.url === 'about:blank') {
-      return this.#materializeRestoredTab(tab, 'about:blank', isAgentControlled, false, signal)
+      return this.#materializeRestoredTab(tab, 'about:blank', tab.agentRunId, false, signal)
     }
     const normalized = this.#normalizeUrl(tab.snapshot.url, this.#policyContext)
     if (!normalized.ok) return this.#failure(normalized.error)
-    return this.#materializeRestoredTab(tab, normalized.url, isAgentControlled, true, signal)
+    return this.#materializeRestoredTab(tab, normalized.url, tab.agentRunId, true, signal)
   }
 
   async #materializeRestoredTab(
     tab: TabRecord,
     url: string,
-    isAgentControlled: boolean,
+    agentRunId: string | null,
     navigate: boolean,
     signal?: AbortSignal
   ): Promise<BrowserOutcome> {
@@ -451,7 +460,7 @@ export class BrowserWorkspace {
             }
       )
     }
-    const binding = this.#tabCollection.bindRestored(tab, handle, isAgentControlled)
+    const binding = this.#tabCollection.bindRestored(tab, handle, agentRunId)
     this.#changed()
     if (!navigate) return this.#success()
 
@@ -523,9 +532,17 @@ export class BrowserWorkspace {
     return this.#success()
   }
 
-  async #captureScreenshot(tabId: string, signal?: AbortSignal): Promise<BrowserOutcome> {
+  async #captureScreenshot(
+    tabId: string,
+    actor: BrowserActor,
+    expectedDocumentRevision: number | undefined,
+    requireActive: boolean,
+    signal?: AbortSignal
+  ): Promise<BrowserOutcome> {
     const tab = this.#tabCollection.find(tabId)
     if (!tab) return this.#failure(this.#tabNotFound(tabId))
+    const access = this.#authorizeTabAccess(tab, actor, expectedDocumentRevision, requireActive)
+    if (!access.ok) return this.#failure(access.error)
     const result = await captureBrowserWorkspaceScreenshot({
       engine: this.#engine,
       tabs: this.#tabCollection,
@@ -534,7 +551,9 @@ export class BrowserWorkspace {
       signal,
       isDisposed: () => this.#disposed
     })
-    return result.ok ? this.#success(result.screenshot) : this.#failure(result.error)
+    if (!result.ok) return this.#failure(result.error)
+    if (access.claimRunId) this.#claimTab(tab, access.claimRunId)
+    return this.#success(result.screenshot)
   }
 
   async #reload(tabId: string, signal?: AbortSignal): Promise<BrowserOutcome> {
@@ -619,14 +638,14 @@ export class BrowserWorkspace {
   #queuePopup(source: TabRecord, event: Extract<EngineEvent, { type: 'popupRequested' }>): void {
     const sourceHandle = source.handle
     if (!sourceHandle) return
-    const isAgentControlled = source.snapshot.isAgentControlled
+    const agentRunId = source.agentRunId
     const queued = this.#commandTail.then(async () => {
       if (!this.#tabCollection.isBound(source, sourceHandle)) return
       if (this.#disposed || event.method !== 'GET') return
       const normalized = this.#normalizeUrl(event.url, this.#policyContext)
       if (!normalized.ok) return
       try {
-        await this.#createTab(normalized.url, isAgentControlled, this.#lifecycle.signal)
+        await this.#createTab(normalized.url, agentRunId, this.#lifecycle.signal)
       } catch {
         return
       }
@@ -641,6 +660,32 @@ export class BrowserWorkspace {
     const before = JSON.stringify(tab.snapshot)
     mutate(tab.snapshot)
     if (JSON.stringify(tab.snapshot) !== before) this.#changed()
+  }
+
+  #agentRunId(actor: BrowserActor): string | null {
+    return actor.kind === 'agent' ? actor.runId : null
+  }
+
+  #authorizeTabAccess(
+    tab: TabRecord,
+    actor: BrowserActor,
+    expectedDocumentRevision: number | undefined,
+    requireActive: boolean
+  ): BrowserTabAccessResult {
+    return authorizeBrowserTabAccess({
+      tab,
+      actor,
+      activeTabId: this.#tabCollection.activeTabId,
+      expectedDocumentRevision,
+      requireActive
+    })
+  }
+
+  #claimTab(tab: TabRecord, runId: string): void {
+    tab.agentRunId = runId
+    this.#mutateTab(tab, (snapshot) => {
+      snapshot.isAgentControlled = true
+    })
   }
 
   #changed(): void {
@@ -699,6 +744,15 @@ export class BrowserWorkspace {
       message: 'Browser tab was not found',
       retryable: false,
       tabId
+    }
+  }
+
+  #cancelledError(tabId?: string): BrowserError {
+    return {
+      code: 'ACTION_CANCELLED',
+      message: 'Browser action was cancelled',
+      retryable: false,
+      ...(tabId ? { tabId } : {})
     }
   }
 

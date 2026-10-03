@@ -81,6 +81,7 @@ export type BrowserCommand =
       tabId: string
       url: string
       expectedDocumentRevision?: number
+      requireActive?: boolean
     }
   | {
       type: 'history'
@@ -95,7 +96,13 @@ export type BrowserCommand =
       tabId: string
       expectedDocumentRevision: number
     }
-  | { type: 'snapshot'; requestId: string; tabId: string }
+  | {
+      type: 'snapshot'
+      requestId: string
+      tabId: string
+      expectedDocumentRevision?: number
+      requireActive?: boolean
+    }
   | { type: 'restore'; requestId: string; tabId: string }
   | {
       type: 'click'

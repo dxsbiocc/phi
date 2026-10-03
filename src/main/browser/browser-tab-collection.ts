@@ -52,6 +52,7 @@ export function cloneBrowserOutcome(outcome: BrowserOutcome): BrowserOutcome {
 export interface BrowserTabRecord {
   handle: EngineTabHandle | null
   snapshot: BrowserTabSnapshot
+  agentRunId: string | null
   navigationRevision: number
   engineNavigationRevisionOffset: number
   engineDocumentRevisionOffset: number
@@ -60,6 +61,7 @@ export interface BrowserTabRecord {
 export interface RestoredTabBinding {
   handle: EngineTabHandle
   snapshot: BrowserTabSnapshot
+  agentRunId: string | null
   navigationRevision: number
   engineNavigationRevisionOffset: number
   engineDocumentRevisionOffset: number
@@ -103,6 +105,7 @@ export class BrowserTabCollection {
     for (const saved of tabs) {
       this.#tabs.push({
         handle: null,
+        agentRunId: null,
         navigationRevision: 0,
         engineNavigationRevisionOffset: 0,
         engineDocumentRevisionOffset: 0,
@@ -125,7 +128,7 @@ export class BrowserTabCollection {
 
   create(
     handle: EngineTabHandle,
-    isAgentControlled: boolean
+    agentRunId: string | null
   ): {
     tab: BrowserTabRecord
     previousActiveTabId: string | null
@@ -133,6 +136,7 @@ export class BrowserTabCollection {
     const previousActiveTabId = this.#activeTabId
     const tab: BrowserTabRecord = {
       handle,
+      agentRunId,
       navigationRevision: 0,
       engineNavigationRevisionOffset: 0,
       engineDocumentRevisionOffset: 0,
@@ -144,7 +148,7 @@ export class BrowserTabCollection {
         phase: 'idle',
         canGoBack: false,
         canGoForward: false,
-        isAgentControlled,
+        isAgentControlled: agentRunId !== null,
         documentRevision: 0
       }
     }
@@ -186,11 +190,12 @@ export class BrowserTabCollection {
   bindRestored(
     tab: BrowserTabRecord,
     handle: EngineTabHandle,
-    isAgentControlled: boolean
+    agentRunId: string | null
   ): RestoredTabBinding {
     const binding = {
       handle,
       snapshot: cloneBrowserTabSnapshot(tab.snapshot),
+      agentRunId: tab.agentRunId,
       navigationRevision: tab.navigationRevision,
       engineNavigationRevisionOffset: tab.engineNavigationRevisionOffset,
       engineDocumentRevisionOffset: tab.engineDocumentRevisionOffset
@@ -198,7 +203,10 @@ export class BrowserTabCollection {
     tab.handle = handle
     this.#byHandle.set(handle, tab)
     delete tab.snapshot.restorable
-    tab.snapshot.isAgentControlled ||= isAgentControlled
+    if (agentRunId) {
+      tab.agentRunId = agentRunId
+      tab.snapshot.isAgentControlled = true
+    }
     return binding
   }
 
@@ -206,6 +214,7 @@ export class BrowserTabCollection {
     if (this.#byHandle.get(binding.handle) === tab) this.#byHandle.delete(binding.handle)
     tab.handle = null
     tab.snapshot = binding.snapshot
+    tab.agentRunId = binding.agentRunId
     tab.navigationRevision = binding.navigationRevision
     tab.engineNavigationRevisionOffset = binding.engineNavigationRevisionOffset
     tab.engineDocumentRevisionOffset = binding.engineDocumentRevisionOffset

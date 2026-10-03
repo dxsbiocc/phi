@@ -30,6 +30,7 @@ import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers
 import { isInstalledFigurePreviewPath } from '../src/main/agent/visualization/examples'
 import * as localFileAccess from '../src/main/agent/local-file-access'
 import * as browserIpc from '../src/main/browser/browser-ipc'
+import * as browserToolHost from '../src/main/agent/browser/browser-tool-host'
 import * as browserWorkspaceRegistry from '../src/main/browser/browser-workspace-registry'
 import * as electronBrowserEngine from '../src/main/browser/electron-browser-engine'
 
@@ -681,8 +682,14 @@ async function harness(
       return
     }
 
-    async capturePage(): Promise<{ toPNG: () => Buffer }> {
-      return { toPNG: () => Buffer.from('png') }
+    async capturePage(): Promise<{
+      toPNG: () => Buffer
+      getSize: () => { width: number; height: number }
+    }> {
+      return {
+        toPNG: () => Buffer.from('png'),
+        getSize: () => ({ width: 800, height: 600 })
+      }
     }
 
     sendInputEvent(): void {
@@ -1277,6 +1284,7 @@ async function harness(
       nativeTheme: { shouldUseDarkColors: false }
     },
     './browser/browser-ipc': browserIpc,
+    './agent/browser/browser-tool-host': browserToolHost,
     './browser/browser-checkpoints': {
       FileSystemBrowserCheckpointStore: MemoryBrowserCheckpointStore
     },
@@ -2984,17 +2992,93 @@ test('main browser IPC derives project partitions and applies only validated vie
 })
 
 test('main browser host handler trusts runtime origin and ignores forged agent identity', async () => {
-  const app = await harness()
+  const session = new FakeSession('browser-agent.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
   const current = (await app.invoke('projects:newSession', '/projects/browser-agent', 'ask')) as {
     phiSessionId: string
   }
-  await app.invoke('agent:prompt', 'initialize runtime mapping')
+  const prompt = app.invoke('agent:prompt', 'initialize runtime mapping')
+  while (!session.started) await tick()
   const runtimeSessionId = app.sessions[0].runtimeSessionId
   const execute = app.hostHandlers.get('browser.execute')
+  const cancel = app.hostHandlers.get('browser.cancel')
   assert.ok(execute)
+  assert.ok(cancel)
+
+  const humanCurrent = (await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'human-current-open',
+    url: 'https://human-current.example'
+  })) as {
+    snapshot: { activeTabId: string; tabs: Array<{ id: string; documentRevision: number }> }
+  }
+  const humanCurrentTab = humanCurrent.snapshot.tabs.find(
+    (tab) => tab.id === humanCurrent.snapshot.activeTabId
+  )
+  assert.ok(humanCurrentTab)
+  const currentNavigation = (await execute({
+    originSessionId: runtimeSessionId,
+    requestId: 'agent-current-navigate',
+    toolCallId: 'tool-current-navigate',
+    command: {
+      type: 'navigate',
+      requestId: 'agent-current-navigate',
+      tabId: humanCurrentTab.id,
+      url: 'https://claimed-current.example',
+      expectedDocumentRevision: humanCurrentTab.documentRevision,
+      requireActive: true
+    }
+  })) as { ok: boolean; snapshot: { tabs: Array<{ id: string; url: string }> } }
+  assert.equal(currentNavigation.ok, true, JSON.stringify(currentNavigation))
+  assert.equal(
+    currentNavigation.snapshot.tabs.find((tab) => tab.id === humanCurrentTab.id)?.url,
+    'https://claimed-current.example/'
+  )
+
+  const humanSnapshot = (await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'human-snapshot-open',
+    url: 'https://human-snapshot.example'
+  })) as {
+    snapshot: { activeTabId: string; tabs: Array<{ id: string; documentRevision: number }> }
+  }
+  const humanSnapshotTab = humanSnapshot.snapshot.tabs.find(
+    (tab) => tab.id === humanSnapshot.snapshot.activeTabId
+  )
+  assert.ok(humanSnapshotTab)
+  const currentSnapshot = (await execute({
+    originSessionId: runtimeSessionId,
+    requestId: 'agent-current-snapshot',
+    toolCallId: 'tool-current-snapshot',
+    command: {
+      type: 'snapshot',
+      requestId: 'agent-current-snapshot',
+      tabId: humanSnapshotTab.id,
+      expectedDocumentRevision: humanSnapshotTab.documentRevision,
+      requireActive: true
+    }
+  })) as { ok: boolean; screenshot?: { tabId: string } }
+  assert.equal(currentSnapshot.ok, true, JSON.stringify(currentSnapshot))
+  assert.equal(currentSnapshot.screenshot?.tabId, humanSnapshotTab.id)
+
+  await cancel({ originSessionId: runtimeSessionId, requestId: 'agent-cancelled-1' })
+  const cancelled = (await execute({
+    originSessionId: runtimeSessionId,
+    requestId: 'agent-cancelled-1',
+    toolCallId: 'tool-call-cancelled',
+    command: {
+      type: 'open',
+      requestId: 'agent-cancelled-1',
+      url: 'https://cancelled.example'
+    }
+  })) as { ok: boolean; error?: { code?: string } }
+  assert.equal(cancelled.ok, false)
+  assert.equal(cancelled.error?.code, 'ACTION_CANCELLED')
 
   const outcome = (await execute({
     originSessionId: runtimeSessionId,
+    requestId: 'agent-open-1',
     runId: 'agent-run-1',
     toolCallId: 'tool-call-1',
     sessionId: 'phi-forged',
@@ -3002,22 +3086,37 @@ test('main browser host handler trusts runtime origin and ignores forged agent i
     command: {
       type: 'open',
       requestId: 'agent-open-1',
-      url: 'https://agent.example',
-      sessionId: 'phi-forged'
+      url: 'https://agent.example'
     }
   })) as { snapshot: { sessionId: string; tabs: Array<{ isAgentControlled: boolean }> } }
   assert.equal(outcome.snapshot.sessionId, current.phiSessionId)
   assert.equal(outcome.snapshot.tabs.at(-1)?.isAgentControlled, true)
 
+  await cancel({ originSessionId: runtimeSessionId, requestId: 'agent-open-1' })
+  const replay = (await execute({
+    originSessionId: runtimeSessionId,
+    requestId: 'agent-open-1',
+    toolCallId: 'tool-call-1',
+    command: {
+      type: 'open',
+      requestId: 'agent-open-1',
+      url: 'https://agent.example'
+    }
+  })) as { ok: boolean }
+  assert.equal(replay.ok, true)
+
   await assert.rejects(
     execute({
       originSessionId: 'runtime-unknown',
+      requestId: 'unknown-open',
       runId: 'agent-run-1',
       toolCallId: 'tool-call-1',
-      command: { type: 'newTab', requestId: 'unknown-open' }
+      command: { type: 'open', requestId: 'unknown-open', url: 'https://unknown.example' }
     }),
-    /Browser session is unavailable/
+    /Active browser run is unavailable/
   )
+  session.finish.resolve()
+  await prompt
 })
 
 test('main browser cleanup restores idle metadata without loading pages after window reopen', async () => {
@@ -7296,6 +7395,111 @@ test(
     })
   }
 )
+
+test('main IPC: browser tool events persist only bounded control metadata', async () => {
+  const sensitiveUrl = 'https://example.test/private?token=super-secret#fragment'
+  const pngData = 'iVBORw0KGgoAAAANSUhEUg-browser-secret'
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      {
+        type: 'tool_execution_start',
+        toolCallId: 'browser-sdk-1',
+        toolName: 'browser',
+        args: {
+          action: 'open',
+          target: 'current',
+          tabId: 'tab-1',
+          expectedDocumentRevision: 4,
+          url: sensitiveUrl,
+          raw: { url: sensitiveUrl }
+        }
+      },
+      {
+        type: 'tool_execution_end',
+        toolCallId: 'browser-sdk-1',
+        toolName: 'browser',
+        result: {
+          content: [
+            { type: 'text', text: 'Captured tab tab-1' },
+            { type: 'image', mimeType: 'image/png', data: pngData }
+          ],
+          details: { kind: 'browser', screenshot: { tabId: 'tab-1', width: 10, height: 20 } }
+        },
+        isError: false
+      },
+      {
+        type: 'message_end',
+        message: {
+          role: 'toolResult',
+          toolCallId: 'browser-sdk-1',
+          content: [
+            { type: 'text', text: 'Captured tab tab-1' },
+            { type: 'image', mimeType: 'image/png', data: pngData }
+          ],
+          details: { raw: pngData }
+        }
+      },
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: 'browser-provider-1',
+              name: 'browser',
+              arguments: {
+                action: 'snapshot',
+                target: 'current',
+                tabId: 'tab-2',
+                expectedDocumentRevision: 9,
+                url: sensitiveUrl
+              }
+            }
+          ]
+        }
+      },
+      {
+        type: 'message_end',
+        message: {
+          role: 'toolResult',
+          toolCallId: 'browser-provider-1',
+          content: [
+            { type: 'text', text: 'Captured tab tab-2' },
+            { type: 'image', mimeType: 'image/png', data: pngData }
+          ]
+        }
+      }
+    ]
+    return session
+  })
+
+  await app.invoke('agent:prompt', 'browse safely')
+
+  const events = app.appendedSessionEvents.map((entry) => entry.event as Record<string, unknown>)
+  const starts = events.filter((event) => event.type === 'tool_call_started')
+  assert.deepEqual(
+    starts.map((event) => event.args),
+    [
+      {
+        action: 'open',
+        target: 'current',
+        tabId: 'tab-1',
+        expectedDocumentRevision: 4
+      },
+      {
+        action: 'snapshot',
+        target: 'current',
+        tabId: 'tab-2',
+        expectedDocumentRevision: 9
+      }
+    ]
+  )
+  const persisted = JSON.stringify(events)
+  assert.doesNotMatch(persisted, /super-secret|fragment|iVBORw0KGgo/)
+  assert.doesNotMatch(JSON.stringify(app.events), /super-secret|fragment|iVBORw0KGgo/)
+})
 
 test('main IPC: provider-managed tool results are persisted and sent to the chat', async () => {
   const app = await harness(async (_cwd, file) => {
