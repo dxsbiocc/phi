@@ -459,11 +459,11 @@ test('a genuine restorable navigation failure keeps the failed tab human-owned',
 })
 
 test('agent run ownership remains private and never enters browser checkpoints', async () => {
-  let saved: BrowserCheckpoint | null = null
+  const saved: BrowserCheckpoint[] = []
   const store: BrowserCheckpointStore = {
     load: () => null,
     save: (_sessionId, checkpoint) => {
-      saved = structuredClone(checkpoint)
+      saved.push(structuredClone(checkpoint))
     },
     remove: () => undefined
   }
@@ -484,4 +484,160 @@ test('agent run ownership remains private and never enters browser checkpoints',
 
   assert.ok(saved)
   assert.doesNotMatch(JSON.stringify(saved), /run-secret|agentRunId/)
+})
+
+test('disposing a run closes dedicated tabs but releases claimed human tabs', async () => {
+  const engine = new InMemoryBrowserEngine()
+  let tabNumber = 0
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    idFactory: () => `run-tab-${++tabNumber}`
+  })
+  const humanOpened = await workspace.execute(human, {
+    type: 'open',
+    requestId: 'run-human-open',
+    url: 'https://human.test'
+  })
+  successful(humanOpened)
+  const claimedTabId = humanOpened.snapshot.activeTabId
+  assert.ok(claimedTabId)
+  const claimedRevision = humanOpened.snapshot.tabs[0].documentRevision
+  successful(
+    await workspace.execute(agent('run-a', 'claim-human'), {
+      type: 'snapshot',
+      requestId: 'run-claim-human',
+      tabId: claimedTabId,
+      expectedDocumentRevision: claimedRevision,
+      requireActive: true
+    })
+  )
+  const dedicatedA = await workspace.execute(agent('run-a', 'open-a'), {
+    type: 'open',
+    requestId: 'run-open-a',
+    url: 'https://agent-a.test'
+  })
+  successful(dedicatedA)
+  const dedicatedAId = dedicatedA.snapshot.activeTabId
+  assert.ok(dedicatedAId)
+  const dedicatedB = await workspace.execute(agent('run-b', 'open-b'), {
+    type: 'open',
+    requestId: 'run-open-b',
+    url: 'https://agent-b.test'
+  })
+  successful(dedicatedB)
+  const dedicatedBId = dedicatedB.snapshot.activeTabId
+  assert.ok(dedicatedBId)
+  const humanSecond = await workspace.execute(human, {
+    type: 'open',
+    requestId: 'run-human-second',
+    url: 'https://human-second.test'
+  })
+  successful(humanSecond)
+  const humanSecondId = humanSecond.snapshot.activeTabId
+  assert.ok(humanSecondId)
+
+  await workspace.disposeRun('run-a')
+
+  const tabs = workspace.snapshot().tabs
+  assert.equal(
+    tabs.some((tab) => tab.id === dedicatedAId),
+    false
+  )
+  assert.equal(tabs.find((tab) => tab.id === claimedTabId)?.isAgentControlled, false)
+  assert.equal(tabs.find((tab) => tab.id === dedicatedBId)?.isAgentControlled, true)
+  assert.equal(tabs.find((tab) => tab.id === humanSecondId)?.isAgentControlled, false)
+  assert.equal(engine.hasTab('engine-tab-1' as EngineTabHandle), true)
+  assert.equal(engine.hasTab('engine-tab-2' as EngineTabHandle), false)
+  assert.equal(engine.hasTab('engine-tab-3' as EngineTabHandle), true)
+  assert.equal(engine.hasTab('engine-tab-4' as EngineTabHandle), true)
+})
+
+test('run disposal continues after one dedicated tab cleanup fails', async () => {
+  class PartialCleanupEngine extends InMemoryBrowserEngine {
+    readonly disposeCalls: EngineTabHandle[] = []
+    override async disposeTab(handle: EngineTabHandle): Promise<void> {
+      this.disposeCalls.push(handle)
+      if (handle === ('engine-tab-2' as EngineTabHandle)) {
+        throw new Error('raw cleanup secret')
+      }
+      await super.disposeTab(handle)
+    }
+  }
+  const engine = new PartialCleanupEngine()
+  const saved: BrowserCheckpoint[] = []
+  const checkpointStore: BrowserCheckpointStore = {
+    load: () => null,
+    save: (_sessionId, checkpoint) => {
+      saved.push(structuredClone(checkpoint))
+    },
+    remove: () => undefined
+  }
+  let tabNumber = 0
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    checkpointStore,
+    idFactory: () => `partial-tab-${++tabNumber}`
+  })
+  const humanOpened = await workspace.execute(human, {
+    type: 'open',
+    requestId: 'partial-human',
+    url: 'https://human.test'
+  })
+  successful(humanOpened)
+  const humanTabId = humanOpened.snapshot.activeTabId
+  assert.ok(humanTabId)
+  successful(
+    await workspace.execute(agent('run-a', 'partial-claim'), {
+      type: 'snapshot',
+      requestId: 'partial-claim',
+      tabId: humanTabId,
+      expectedDocumentRevision: humanOpened.snapshot.tabs[0].documentRevision,
+      requireActive: true
+    })
+  )
+  const firstDedicated = await workspace.execute(agent('run-a', 'partial-open-1'), {
+    type: 'open',
+    requestId: 'partial-open-1',
+    url: 'https://one.test'
+  })
+  successful(firstDedicated)
+  const firstDedicatedId = firstDedicated.snapshot.activeTabId
+  assert.ok(firstDedicatedId)
+  const secondDedicated = await workspace.execute(agent('run-a', 'partial-open-2'), {
+    type: 'open',
+    requestId: 'partial-open-2',
+    url: 'https://two.test'
+  })
+  successful(secondDedicated)
+  const secondDedicatedId = secondDedicated.snapshot.activeTabId
+
+  await assert.rejects(
+    workspace.disposeRun('run-a'),
+    (error: Error) =>
+      error.message === 'Browser run cleanup failed' &&
+      !error.message.includes('raw cleanup secret')
+  )
+  assert.deepEqual(engine.disposeCalls, ['engine-tab-2', 'engine-tab-3'])
+  assert.equal(
+    workspace.snapshot().tabs.some((tab) => tab.id === firstDedicatedId),
+    false
+  )
+  assert.equal(
+    workspace.snapshot().tabs.find((tab) => tab.id === humanTabId)?.isAgentControlled,
+    false
+  )
+  assert.equal(
+    workspace.snapshot().tabs.some((tab) => tab.id === secondDedicatedId),
+    false
+  )
+  const persisted = saved.at(-1)
+  assert.ok(persisted)
+  assert.equal(
+    persisted.tabs.some((tab) => tab.id === firstDedicatedId || tab.id === secondDedicatedId),
+    false
+  )
 })

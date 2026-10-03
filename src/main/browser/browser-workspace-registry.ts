@@ -41,6 +41,13 @@ export class BrowserWorkspaceRegistryCleanupError extends Error {
   }
 }
 
+export class BrowserWorkspaceRegistryPresentationError extends Error {
+  constructor() {
+    super('Browser presentation transition failed')
+    this.name = 'BrowserWorkspaceRegistryPresentationError'
+  }
+}
+
 interface RegistryEntry {
   sessionId: string
   ownerIdentity: string
@@ -105,6 +112,9 @@ export class BrowserWorkspaceRegistry {
   readonly #openExternal?: (url: string) => Promise<void>
   readonly #approveAgentAction?: BrowserActionApprovalRequester
   readonly #entries = new Map<string, RegistryEntry>()
+  #activeSessionId: string | null = null
+  #presentationTicket = 0
+  #presentationTail: Promise<void> = Promise.resolve()
   #disposed = false
   #disposeAllPromise: Promise<void> | null = null
 
@@ -151,9 +161,60 @@ export class BrowserWorkspaceRegistry {
     return entry && !entry.disposalRequested ? entry.workspace : undefined
   }
 
+  setActiveSession(sessionId: string | null): Promise<void> {
+    if (this.#disposed) return Promise.resolve()
+    if (this.#activeSessionId === sessionId) return this.#presentationTail
+    this.#activeSessionId = sessionId
+    const ticket = ++this.#presentationTicket
+    const run = this.#presentationTail.then(async () => {
+      if (ticket !== this.#presentationTicket || this.#disposed) return
+      const inactive = [...this.#entries.values()].filter(
+        (entry) =>
+          entry.sessionId !== sessionId && Boolean(entry.workspace) && !entry.disposalRequested
+      )
+      const hidden = await Promise.allSettled(
+        inactive.map((entry) => entry.workspace?.suspendPresentation() ?? Promise.resolve())
+      )
+      if (hidden.some((result) => result.status === 'rejected')) {
+        try {
+          await this.disposeAll()
+        } catch {
+          // The registry remains permanently disposed even when cleanup has debt.
+        }
+        throw new BrowserWorkspaceRegistryPresentationError()
+      }
+      if (ticket !== this.#presentationTicket || this.#disposed) return
+      const active = sessionId ? this.#entries.get(sessionId) : undefined
+      if (!active?.workspace || active.disposalRequested) return
+      try {
+        await active.workspace.resumePresentation()
+      } catch {
+        try {
+          await this.disposeAll()
+        } catch {
+          // The registry remains permanently disposed even when cleanup has debt.
+        }
+        throw new BrowserWorkspaceRegistryPresentationError()
+      }
+    })
+    this.#presentationTail = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
   disposeSession(sessionId: string): Promise<void> {
     const entry = this.#entries.get(sessionId)
     return entry ? this.#ensureCleanup(entry, true) : Promise.resolve()
+  }
+
+  async disposeRun(sessionId: string, runId: string): Promise<void> {
+    const entry = this.#entries.get(sessionId)
+    if (!entry || entry.disposalRequested) return
+    const workspace =
+      entry.workspace ?? (entry.workspacePromise ? await entry.workspacePromise : null)
+    await workspace?.disposeRun(runId)
   }
 
   disposeAll(): Promise<void> {
@@ -204,6 +265,8 @@ export class BrowserWorkspaceRegistry {
         ...(this.#approveAgentAction ? { approveAgentAction: this.#approveAgentAction } : {})
       })
       entry.workspace = workspace
+      if (entry.sessionId === this.#activeSessionId) await workspace.resumePresentation()
+      else await workspace.suspendPresentation()
       return workspace
     } catch (error) {
       if (!entry.disposalRequested) {

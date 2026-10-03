@@ -16,6 +16,8 @@ export interface BrowserViewportScheduler {
 
 export function createBrowserViewportScheduler(options: {
   bridge: BrowserRendererBridge
+  sessionId: string
+  sessionGeneration: number
   tabId: string
   getRect: () => BrowserViewportRect | null
   requestFrame: (callback: (time: number) => void) => number
@@ -25,7 +27,14 @@ export function createBrowserViewportScheduler(options: {
   let frameId: number | null = null
 
   const send = (viewport: BrowserViewport | null): void => {
-    void options.bridge.setViewport({ tabId: options.tabId, viewport }).catch(() => undefined)
+    void options.bridge
+      .setViewport({
+        sessionId: options.sessionId,
+        sessionGeneration: options.sessionGeneration,
+        tabId: options.tabId,
+        viewport
+      })
+      .catch(() => undefined)
   }
   const measure = (): void => {
     frameId = null
@@ -64,22 +73,31 @@ export function createBrowserViewportScheduler(options: {
 
 export function useBrowserViewport(options: {
   bridge: BrowserRendererBridge
+  sessionId: string | null
+  sessionGeneration: number
   tabId: string | null
   enabled: boolean
 }): RefObject<HTMLDivElement | null> {
   const contentRef = useRef<HTMLDivElement | null>(null)
 
   useLayoutEffect(() => {
-    if (!options.tabId) return
+    if (!options.sessionId || !options.tabId) return
     if (!options.enabled) {
       void options.bridge
-        .setViewport({ tabId: options.tabId, viewport: null })
+        .setViewport({
+          sessionId: options.sessionId,
+          sessionGeneration: options.sessionGeneration,
+          tabId: options.tabId,
+          viewport: null
+        })
         .catch(() => undefined)
       return
     }
 
     const scheduler = createBrowserViewportScheduler({
       bridge: options.bridge,
+      sessionId: options.sessionId,
+      sessionGeneration: options.sessionGeneration,
       tabId: options.tabId,
       getRect: () => contentRef.current?.getBoundingClientRect() ?? null,
       requestFrame: (callback) => window.requestAnimationFrame(callback),
@@ -112,7 +130,7 @@ export function useBrowserViewport(options: {
       window.removeEventListener('resize', onWindowResize)
       scheduler.dispose()
     }
-  }, [options.bridge, options.enabled, options.tabId])
+  }, [options.bridge, options.enabled, options.sessionGeneration, options.sessionId, options.tabId])
 
   return contentRef
 }

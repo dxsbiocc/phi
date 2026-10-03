@@ -1158,6 +1158,8 @@ function App(): React.JSX.Element {
     cancel: cancelBrowserTrustedOverlay
   } = useBrowserTrustedOverlayGate({
     bridge: rendererApi.browser,
+    activePhiSessionId: activePhiSessionId ?? null,
+    activeSessionGeneration,
     browserOpen: workspaceSidePanelMode === 'browser',
     closeBrowserPanel: closeBrowserPanelForTrustedOverlay,
     onFailure: handleBrowserTrustedOverlayFailure
@@ -4365,6 +4367,7 @@ function App(): React.JSX.Element {
                   <BrowserPanel
                     bridge={rendererApi.browser}
                     activePhiSessionId={activePhiSessionId ?? null}
+                    activeSessionGeneration={activeSessionGeneration}
                     visible={
                       !pendingApproval &&
                       !pendingUserInteraction &&

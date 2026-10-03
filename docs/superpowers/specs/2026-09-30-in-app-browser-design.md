@@ -291,7 +291,12 @@ export interface BrowserRendererEventEnvelope {
 export interface BrowserRendererBridge {
   execute(command: BrowserUiCommand): Promise<BrowserOutcome>
   snapshot(): Promise<BrowserWorkspaceSnapshot>
-  setViewport(input: { tabId: string; viewport: BrowserViewport | null }): Promise<void>
+  setViewport(input: {
+    sessionId: string
+    sessionGeneration: number
+    tabId: string
+    viewport: BrowserViewport | null
+  }): Promise<void>
   onEvent(listener: (envelope: BrowserRendererEventEnvelope) => void): () => void
 }
 ```

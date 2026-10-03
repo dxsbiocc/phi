@@ -53,6 +53,7 @@ export interface BrowserTabRecord {
   handle: EngineTabHandle | null
   snapshot: BrowserTabSnapshot
   agentRunId: string | null
+  createdByAgent: boolean
   navigationRevision: number
   engineNavigationRevisionOffset: number
   engineDocumentRevisionOffset: number
@@ -62,6 +63,7 @@ export interface RestoredTabBinding {
   handle: EngineTabHandle
   snapshot: BrowserTabSnapshot
   agentRunId: string | null
+  createdByAgent: boolean
   navigationRevision: number
   engineNavigationRevisionOffset: number
   engineDocumentRevisionOffset: number
@@ -89,6 +91,10 @@ export class BrowserTabCollection {
     return this.#tabs.map((tab) => tab.snapshot)
   }
 
+  materializedTabIds(): string[] {
+    return this.#tabs.filter((tab) => tab.handle !== null).map((tab) => tab.snapshot.id)
+  }
+
   find(tabId: string): BrowserTabRecord | undefined {
     return this.#tabs.find((tab) => tab.snapshot.id === tabId)
   }
@@ -106,6 +112,7 @@ export class BrowserTabCollection {
       this.#tabs.push({
         handle: null,
         agentRunId: null,
+        createdByAgent: false,
         navigationRevision: 0,
         engineNavigationRevisionOffset: 0,
         engineDocumentRevisionOffset: 0,
@@ -137,6 +144,7 @@ export class BrowserTabCollection {
     const tab: BrowserTabRecord = {
       handle,
       agentRunId,
+      createdByAgent: agentRunId !== null,
       navigationRevision: 0,
       engineNavigationRevisionOffset: 0,
       engineDocumentRevisionOffset: 0,
@@ -196,6 +204,7 @@ export class BrowserTabCollection {
       handle,
       snapshot: cloneBrowserTabSnapshot(tab.snapshot),
       agentRunId: tab.agentRunId,
+      createdByAgent: tab.createdByAgent,
       navigationRevision: tab.navigationRevision,
       engineNavigationRevisionOffset: tab.engineNavigationRevisionOffset,
       engineDocumentRevisionOffset: tab.engineDocumentRevisionOffset
@@ -215,6 +224,7 @@ export class BrowserTabCollection {
     tab.handle = null
     tab.snapshot = binding.snapshot
     tab.agentRunId = binding.agentRunId
+    tab.createdByAgent = binding.createdByAgent
     tab.navigationRevision = binding.navigationRevision
     tab.engineNavigationRevisionOffset = binding.engineNavigationRevisionOffset
     tab.engineDocumentRevisionOffset = binding.engineDocumentRevisionOffset
@@ -229,6 +239,17 @@ export class BrowserTabCollection {
     tab.handle = handle
     this.#byHandle.set(handle, tab)
     return previous
+  }
+
+  recordsOwnedByRun(runId: string): BrowserTabRecord[] {
+    return this.#tabs.filter((tab) => tab.agentRunId === runId)
+  }
+
+  releaseRunOwnership(tab: BrowserTabRecord, runId: string): boolean {
+    if (!this.#tabs.includes(tab) || tab.agentRunId !== runId || tab.createdByAgent) return false
+    tab.agentRunId = null
+    tab.snapshot.isAgentControlled = false
+    return true
   }
 
   #removeRecord(tab: BrowserTabRecord): void {

@@ -167,6 +167,7 @@ test('browser panel and status panes render friendly empty restore and failure s
     createElement(BrowserPanel, {
       bridge,
       activePhiSessionId: null,
+      activeSessionGeneration: 0,
       visible: true
     })
   )
@@ -236,6 +237,23 @@ test('browser panel and status panes render friendly empty restore and failure s
   assert.match(failed, /role="alert"/)
   const retryButton = failed.match(/<button[^>]*>重试<\/button>/)?.[0] ?? ''
   assert.match(retryButton, /disabled/)
+
+  const crashed = renderWithTheme(
+    createElement(BrowserStatusPane, {
+      activePhiSessionId: 'phi-session',
+      loading: false,
+      error: null,
+      busy: false,
+      activeTab: tab({ phase: 'crashed' }),
+      nativeEnabled: false,
+      onRestore: () => undefined,
+      onRetry: () => undefined
+    })
+  )
+  assert.match(crashed, /页面停止响应/)
+  assert.match(crashed, /role="alert"/)
+  const crashedRetry = crashed.match(/<button[^>]*>重试<\/button>/)?.[0] ?? ''
+  assert.doesNotMatch(crashedRetry, /disabled/)
 })
 
 test('App composes the browser feature through the narrow side-panel seam', () => {
@@ -246,6 +264,7 @@ test('App composes the browser feature through the narrow side-panel seam', () =
     /workspaceSidePanelMode === 'browser'[\s\S]{0,500}<BrowserPanel[\s\S]{0,300}bridge=\{rendererApi\.browser\}/
   )
   assert.match(appSource, /activePhiSessionId=\{activePhiSessionId \?\? null\}/)
+  assert.match(appSource, /activeSessionGeneration=\{activeSessionGeneration\}/)
   assert.match(
     appSource,
     /visible=\{[\s\S]{0,300}!pendingApproval[\s\S]{0,300}!pendingUserInteraction/
@@ -285,6 +304,20 @@ test('App composes the browser feature through the narrow side-panel seam', () =
   )
   assert.match(appSource, /openLocalTrustedOverlay\('session-export'/)
   assert.doesNotMatch(appSource, /onOpenExternal=\{[^}]+\}/)
+
+  const trustedGateHook = readFileSync(
+    resolve(
+      process.cwd(),
+      'src/renderer/src/features/browser/hooks/useBrowserTrustedOverlayGate.ts'
+    ),
+    'utf8'
+  )
+  assert.match(trustedGateHook, /class BrowserViewportHider/)
+  assert.match(
+    trustedGateHook,
+    /viewportHider\.update\([\s\S]{0,180}options\.activeSessionGeneration/
+  )
+  assert.match(trustedGateHook, /\[closeBrowserPanel, onFailure, viewportHider\]/)
 })
 
 test('browser approvals are scoped and presented as one-action decisions in both approval surfaces', () => {

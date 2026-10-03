@@ -100,6 +100,7 @@ export class BrowserWorkspace {
   #revision = 0
   #nextId = 0
   #commandTail: Promise<void> = Promise.resolve()
+  #presentationSuspended = false
   #disposed = false
   #disposePromise: Promise<void> | null = null
 
@@ -204,19 +205,72 @@ export class BrowserWorkspace {
     // Presentation adapters may apply viewport changes asynchronously. Revoke every
     // coordinate lease before that window opens so old pixels cannot race the update.
     this.#agentScreenshotLeases.invalidateAll()
+    const appliedViewport = this.#presentationSuspended ? null : copiedViewport
     return this.#presentation
-      .apply(tabId, copiedViewport, () => this.#tabCollection.find(tabId)?.handle ?? null)
-      .then(() => this.#agentScreenshotLeases.viewportApplied(tabId, copiedViewport))
+      .apply(tabId, appliedViewport, () => this.#tabCollection.find(tabId)?.handle ?? null)
+      .then(() => this.#agentScreenshotLeases.viewportApplied(tabId, appliedViewport))
       .catch((error) => {
         this.#agentScreenshotLeases.invalidateAll()
         throw error
       })
   }
 
+  async suspendPresentation(): Promise<void> {
+    if (this.#disposed) return
+    this.#presentationSuspended = true
+    this.#agentScreenshotLeases.invalidateAll()
+    await Promise.all(
+      this.#tabCollection
+        .materializedTabIds()
+        .map((tabId) =>
+          this.#presentation
+            .apply(tabId, null, () => this.#tabCollection.find(tabId)?.handle ?? null)
+            .then(() => this.#agentScreenshotLeases.viewportApplied(tabId, null))
+        )
+    )
+  }
+
+  async resumePresentation(): Promise<void> {
+    if (this.#disposed) return
+    this.#presentationSuspended = false
+  }
+
   subscribe(listener: (event: BrowserWorkspaceEvent) => void): () => void {
     if (this.#disposed) return () => undefined
     this.#listeners.add(listener)
     return () => this.#listeners.delete(listener)
+  }
+
+  disposeRun(runId: string): Promise<void> {
+    this.#agentApprovalLeases.invalidateRun(runId)
+    return this.#enqueue(async () => {
+      const ownedTabs = [...this.#tabCollection.recordsOwnedByRun(runId)]
+      let releasedOwnership = false
+      let cleanupFailed = false
+      for (const tab of ownedTabs) {
+        if (tab.createdByAgent) {
+          try {
+            await this.#close(tab.snapshot.id)
+          } catch {
+            cleanupFailed = true
+            const wasActive = this.#tabCollection.activeTabId === tab.snapshot.id
+            this.#presentation.invalidate(tab.snapshot.id)
+            this.#tabCollection.remove(tab.snapshot.id)
+            this.#agentScreenshotLeases.remove(tab.snapshot.id)
+            this.#agentApprovalLeases.invalidateTab(tab.snapshot.id)
+            if (wasActive) this.#agentScreenshotLeases.invalidateAll()
+            this.#changed()
+          }
+          continue
+        }
+        if (this.#tabCollection.releaseRunOwnership(tab, runId)) {
+          this.#agentScreenshotLeases.invalidate(tab.snapshot.id)
+          releasedOwnership = true
+        }
+      }
+      if (releasedOwnership) this.#changed()
+      if (cleanupFailed) throw new Error('Browser run cleanup failed')
+    })
   }
 
   dispose(): Promise<void> {

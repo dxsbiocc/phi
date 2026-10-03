@@ -360,6 +360,8 @@ type HarnessResult = {
   }
   openedExternalUrls: string[]
   approvalResolveCalls: Array<{ requestId: string; approved: boolean; trusted: boolean }>
+  beforeQuit: () => number
+  appQuitCount: () => number
 }
 
 async function harness(
@@ -370,6 +372,7 @@ async function harness(
   const deleted: string[] = []
   const events: Array<{ channel: string; data: unknown }> = []
   const approvalOptions: Array<Record<string, unknown>> = []
+  let appQuitCalls = 0
   const approvalResolveCalls: Array<{
     requestId: string
     approved: boolean
@@ -1127,7 +1130,9 @@ async function harness(
         toDataURL: () => 'data:image/png;base64,aWNvbg=='
       }
     },
-    quit: noop
+    quit: (): void => {
+      appQuitCalls += 1
+    }
   })
   class MemoryBrowserCheckpointStore {
     readonly values = new Map<string, unknown>()
@@ -2970,6 +2975,16 @@ async function harness(
     },
     openedExternalUrls,
     approvalResolveCalls,
+    beforeQuit: (): number => {
+      let prevented = 0
+      app.emit('before-quit', {
+        preventDefault: () => {
+          prevented += 1
+        }
+      })
+      return prevented
+    },
+    appQuitCount: (): number => appQuitCalls,
     tryFrameNavigation: (input): boolean => {
       let prevented = false
       frameNavigationHandler?.({
@@ -3225,6 +3240,7 @@ test('main browser IPC derives project partitions and applies only validated vie
 
   const project = (await app.invoke('projects:newSession', '/projects/browser-project', 'ask')) as {
     phiSessionId: string
+    sessionGeneration: number
   }
   const projectOpen = (await app.invoke('browser:execute', {
     type: 'open',
@@ -3240,15 +3256,18 @@ test('main browser IPC derives project partitions and applies only validated vie
   assert.doesNotMatch(projectPartition, /browser-project|projects\/|persist:/)
 
   await app.invoke('browser:setViewport', {
+    sessionId: project.phiSessionId,
+    sessionGeneration: project.sessionGeneration,
     tabId: projectOpen.snapshot.activeTabId,
-    viewport: { x: 10, y: 20, width: 300, height: 200 },
-    sessionId: ordinary.phiSessionId
+    viewport: { x: 10, y: 20, width: 300, height: 200 }
   })
   assert.deepEqual(projectView.bounds.at(-1), { x: 10, y: 20, width: 300, height: 200 })
   assert.equal(projectView.visibility.at(-1), true)
   const beforeInvalid = projectView.bounds.length
   await assert.rejects(
     app.invoke('browser:setViewport', {
+      sessionId: project.phiSessionId,
+      sessionGeneration: project.sessionGeneration,
       tabId: projectOpen.snapshot.activeTabId,
       viewport: { x: 0, y: 0, width: Number.NaN, height: 200 }
     }),
@@ -3264,6 +3283,77 @@ test('main browser IPC derives project partitions and applies only validated vie
     ),
     true
   )
+})
+
+test('main session switching suspends old native views and requires a fresh session viewport', async () => {
+  const app = await harness()
+  const sessionA = (await app.invoke('sessions:create')) as {
+    path: string
+    phiSessionId: string
+    sessionGeneration: number
+  }
+  const openedA = (await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'switch-browser-a',
+    url: 'https://a.example'
+  })) as { snapshot: { activeTabId: string } }
+  await app.invoke('browser:setViewport', {
+    sessionId: sessionA.phiSessionId,
+    sessionGeneration: sessionA.sessionGeneration,
+    tabId: openedA.snapshot.activeTabId,
+    viewport: { x: 1, y: 2, width: 300, height: 180 }
+  })
+  const viewA = app.browserViews[0]
+  assert.equal(viewA.visibility.at(-1), true)
+
+  const sessionB = (await app.invoke('sessions:create')) as {
+    path: string
+    phiSessionId: string
+    sessionGeneration: number
+  }
+  await tick()
+  assert.equal(viewA.visibility.at(-1), false)
+  const openedB = (await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'switch-browser-b',
+    url: 'https://b.example'
+  })) as { snapshot: { activeTabId: string } }
+  await app.invoke('browser:setViewport', {
+    sessionId: sessionB.phiSessionId,
+    sessionGeneration: sessionB.sessionGeneration,
+    tabId: openedB.snapshot.activeTabId,
+    viewport: { x: 3, y: 4, width: 320, height: 200 }
+  })
+  const viewB = app.browserViews[1]
+  assert.equal(viewB.visibility.at(-1), true)
+
+  const restoredA = (await app.invoke('sessions:switch', sessionA.path)) as {
+    phiSessionId: string
+    sessionGeneration: number
+  }
+  assert.equal(restoredA.phiSessionId, sessionA.phiSessionId)
+  await tick()
+  assert.equal(viewB.visibility.at(-1), false)
+  assert.equal(viewA.visibility.at(-1), false)
+  assert.equal(app.browserViews.length, 2)
+  await app.invoke('browser:setViewport', {
+    sessionId: sessionA.phiSessionId,
+    sessionGeneration: restoredA.sessionGeneration,
+    tabId: openedA.snapshot.activeTabId,
+    viewport: { x: 5, y: 6, width: 340, height: 220 }
+  })
+  assert.equal(viewA.visibility.at(-1), true)
+  await assert.rejects(
+    app.invoke('browser:setViewport', {
+      sessionId: sessionB.phiSessionId,
+      sessionGeneration: sessionB.sessionGeneration,
+      tabId: openedB.snapshot.activeTabId,
+      viewport: null
+    }),
+    /Browser session is unavailable/
+  )
+  assert.equal(viewA.visibility.at(-1), true)
+  assert.equal(app.browserViews.length, 2)
 })
 
 test('main browser host handler trusts runtime origin and ignores forged agent identity', async () => {
@@ -3402,6 +3492,39 @@ test('main browser host handler trusts runtime origin and ignores forged agent i
   await prompt
 })
 
+test('main run completion and stop dispose their dedicated browser tabs', async () => {
+  for (const outcome of ['completed', 'stopped'] as const) {
+    const session = new FakeSession(`browser-run-${outcome}.jsonl`)
+    session.hold = true
+    const app = await harness(async () => session)
+    await app.invoke('projects:newSession', `/projects/browser-${outcome}`, 'ask')
+    const prompt = app.invoke('agent:prompt', `browser ${outcome}`)
+    while (!session.started) await tick()
+    const execute = app.hostHandlers.get('browser.execute')
+    assert.ok(execute)
+    await execute({
+      originSessionId: session.runtimeSessionId,
+      requestId: `run-open-${outcome}`,
+      toolCallId: `run-tool-${outcome}`,
+      command: {
+        type: 'open',
+        requestId: `run-open-${outcome}`,
+        url: `https://${outcome}.example`
+      }
+    })
+    const view = app.browserViews[0]
+    if (outcome === 'stopped') await app.invoke('agent:stop')
+    else session.finish.resolve()
+    await prompt
+    for (let attempt = 0; attempt < 10 && view.webContents.closeCalls === 0; attempt += 1) {
+      await tick()
+    }
+    assert.equal(view.webContents.closeCalls, 1)
+    const snapshot = (await app.invoke('browser:snapshot')) as { tabs: unknown[] }
+    assert.deepEqual(snapshot.tabs, [])
+  }
+})
+
 test('main approval response validates payload, renderer identity, and one-shot resolution', async () => {
   const app = await harness()
   assert.equal(await app.invokeFromForeign('tool:approval-response', 'approval-live', true), false)
@@ -3469,6 +3592,53 @@ test('main browser cleanup restores idle metadata without loading pages after wi
     app.browserViews.at(-1)?.webContents.loadedUrls.includes('https://window.example/'),
     true
   )
+})
+
+test('before quit waits for browser cleanup and resumes app quit exactly once', async () => {
+  const app = await harness()
+  await app.invoke('sessions:create')
+  await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'before-quit-open',
+    url: 'https://quit.example'
+  })
+  const view = app.browserViews[0]
+  assert.equal(app.beforeQuit(), 1)
+  assert.equal(app.appQuitCount(), 0)
+  for (let attempt = 0; attempt < 20 && app.appQuitCount() === 0; attempt += 1) {
+    await tick()
+  }
+  assert.equal(view.webContents.closeCalls, 1)
+  assert.equal(app.appQuitCount(), 1)
+  assert.equal(app.beforeQuit(), 0)
+  await tick()
+  assert.equal(view.webContents.closeCalls, 1)
+  assert.equal(app.appQuitCount(), 1)
+})
+
+test('before quit does not wait for a hung runtime abort after browser cleanup', async () => {
+  const session = new FakeSession('hung-abort.jsonl')
+  session.hold = true
+  session.abortGate = new Promise<void>(() => undefined)
+  const app = await harness(async () => session)
+  await app.invoke('sessions:create')
+  const prompt = app.invoke('agent:prompt', 'hold runtime abort')
+  while (!session.started) await tick()
+  await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'hung-abort-open',
+    url: 'https://hung-abort.example'
+  })
+  const view = app.browserViews[0]
+  assert.equal(app.beforeQuit(), 1)
+  assert.equal(app.beforeQuit(), 1)
+  for (let attempt = 0; attempt < 20 && app.appQuitCount() === 0; attempt += 1) {
+    await tick()
+  }
+  assert.equal(view.webContents.closeCalls, 1)
+  assert.equal(app.appQuitCount(), 1)
+  session.finish.resolve()
+  await prompt
 })
 
 test('main browser cleanup failure permanently rejects browser recreation for the process', async () => {

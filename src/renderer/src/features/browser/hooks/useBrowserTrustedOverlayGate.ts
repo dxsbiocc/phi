@@ -7,8 +7,31 @@ import {
   type BrowserTrustedOverlayRequest
 } from '../lib/browserTrustedOverlayGate'
 
+class BrowserViewportHider {
+  #bridge: BrowserRendererBridge
+  #sessionId: string | null
+  #sessionGeneration: number
+
+  constructor(bridge: BrowserRendererBridge, sessionId: string | null, sessionGeneration: number) {
+    this.#bridge = bridge
+    this.#sessionId = sessionId
+    this.#sessionGeneration = sessionGeneration
+  }
+
+  update(bridge: BrowserRendererBridge, sessionId: string | null, sessionGeneration: number): void {
+    this.#bridge = bridge
+    this.#sessionId = sessionId
+    this.#sessionGeneration = sessionGeneration
+  }
+
+  readonly hide = (): Promise<boolean> =>
+    hideActiveBrowserViewport(this.#bridge, this.#sessionId, this.#sessionGeneration)
+}
+
 export function useBrowserTrustedOverlayGate(options: {
   bridge: BrowserRendererBridge
+  activePhiSessionId: string | null
+  activeSessionGeneration: number
   browserOpen: boolean
   closeBrowserPanel(): void
   onFailure(kind: BrowserTrustedOverlayKind): void
@@ -19,14 +42,25 @@ export function useBrowserTrustedOverlayGate(options: {
 } {
   const { bridge, browserOpen, closeBrowserPanel, onFailure } = options
   const browserOpenRef = useRef(browserOpen)
+  const [viewportHider] = useState(
+    () =>
+      new BrowserViewportHider(bridge, options.activePhiSessionId, options.activeSessionGeneration)
+  )
   useLayoutEffect(() => {
     browserOpenRef.current = browserOpen
-  }, [browserOpen])
+    viewportHider.update(bridge, options.activePhiSessionId, options.activeSessionGeneration)
+  }, [
+    bridge,
+    browserOpen,
+    options.activePhiSessionId,
+    options.activeSessionGeneration,
+    viewportHider
+  ])
   const [suspended, setSuspended] = useState(false)
   const gate = useMemo(
     () =>
       createBrowserTrustedOverlayGate({
-        hide: () => hideActiveBrowserViewport(bridge),
+        hide: viewportHider.hide,
         onHideFailure: () => {
           closeBrowserPanel()
         },
@@ -37,7 +71,7 @@ export function useBrowserTrustedOverlayGate(options: {
         requestFrame: (callback) => window.requestAnimationFrame(callback),
         cancelFrame: (id) => window.cancelAnimationFrame(id)
       }),
-    [bridge, closeBrowserPanel, onFailure]
+    [closeBrowserPanel, onFailure, viewportHider]
   )
 
   useEffect(() => () => gate.dispose(), [gate])
