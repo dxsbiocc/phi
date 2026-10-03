@@ -108,6 +108,7 @@ import { buildAgentTool } from '../agents/tool'
 import { createSpecialistFallbackExtension } from '../agents/fallback-policy'
 import { createProjectToolBoundaryExtension } from '../agents/project-tool-boundary'
 import { createRemoteUrlGuardExtension } from '../agents/remote-url-guard'
+import { installSpecialistToolCallExtensions } from '../agents/specialist-tool-call-extensions'
 import {
   createRemoteProjectToolGuardExtension,
   remoteWorkspaceToolsVerified
@@ -876,6 +877,26 @@ function phiToolFunctions(
   })
 }
 
+/** The tool_call guards every specialist session needs, in order. */
+export function specialistToolCallFactories(deps: {
+  sessionId: string
+  enableToolApproval: boolean
+  agentRunId?: string
+  remoteRoot?: string
+  parent: () => CreateAgentSessionResult | undefined
+}): ExtensionFactory[] {
+  return [
+    ...(deps.remoteRoot ? [createRemoteProjectToolGuardExtension()] : []),
+    createRemoteUrlGuardExtension(),
+    createPlanReviewToolGuardExtension(
+      () => deps.parent()?.session.getPlanModeState()?.enabled === true
+    ),
+    ...(deps.enableToolApproval
+      ? [createBridgeToolApprovalExtension(deps.sessionId, deps.agentRunId)]
+      : [])
+  ]
+}
+
 /**
  * Builds an in-memory session for one scanned Phi agent. The definition drives
  * everything: its Markdown body is the system prompt, `tools` is the (restricted)
@@ -904,6 +925,7 @@ async function createPhiAgentSession(
 ): Promise<AgentSessionLike> {
   const { sessionId, cwd, agentDir, ctx } = deps
   const sessionCwd = deps.remoteRoot ? agentDir : cwd
+  const toolCallFactories = specialistToolCallFactories(deps)
   const settings = await Settings.init({ cwd: sessionCwd, agentDir })
   const loader =
     isRecord(deps.resourceOptions) || deps.remoteRoot
@@ -924,12 +946,7 @@ async function createPhiAgentSession(
               : {})
           }),
           settingsManager: SettingsManager.create(sessionCwd, agentDir),
-          extensionFactories: [
-            ...(deps.remoteRoot ? [createRemoteProjectToolGuardExtension()] : []),
-            ...(deps.enableToolApproval
-              ? [createBridgeToolApprovalExtension(sessionId, deps.agentRunId)]
-              : [])
-          ]
+          extensionFactories: toolCallFactories
         })
       : undefined
   if (loader) await loader.reload()
@@ -960,7 +977,6 @@ async function createPhiAgentSession(
     ...(parentSession?.model ? { model: parentSession.model } : {}),
     ...(parentSession?.thinkingLevel ? { thinkingLevel: parentSession.thinkingLevel } : {}),
     ...(loader ? { resourceLoader: loader } : {}),
-    extensions: [createRemoteUrlGuardExtension()],
     ...(skills ? { skills } : {}),
     appendSystemPrompt: `${definition.systemPrompt}${deps.remoteRoot ? `\n\nRemote project root: ${JSON.stringify(deps.remoteRoot)}.` : ''}\n\n${AGENT_REPORT_PROTOCOL}`,
     ...(customTools.length > 0 ? { customTools } : {}),
@@ -980,6 +996,9 @@ async function createPhiAgentSession(
         }
       : {})
   })
+  // omp 18.1.10 drops caller extensions when restrictToolNames is set, so
+  // attach every tool_call guard to the live specialist runner before use.
+  await installSpecialistToolCallExtensions(result.session, toolCallFactories, sessionCwd)
   if (deps.remoteRoot) {
     await initializeExtensions(result.session, {
       reportSendError: () =>
