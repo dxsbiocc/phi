@@ -78,9 +78,29 @@ function copyOmpWorkerDepsPlugin(): { name: string; closeBundle(): void } {
   }
 }
 
+/**
+ * Terminal PTYs and cleanup supervision run as standalone Bun processes. Copy
+ * their TypeScript sources and public constants verbatim so relative imports
+ * keep the same layout in development, unpacked builds, and app.asar.unpacked.
+ */
+function copyTerminalWorkersPlugin(): { name: string; closeBundle(): void } {
+  return {
+    name: 'copy-terminal-workers',
+    closeBundle(): void {
+      const terminalTarget = resolve('out/main/terminal')
+      mkdirSync(dirname(terminalTarget), { recursive: true })
+      cpSync(resolve('src/main/terminal'), terminalTarget, { recursive: true })
+
+      const sharedTarget = resolve('out/shared/terminalTypes.ts')
+      mkdirSync(dirname(sharedTarget), { recursive: true })
+      copyFileSync(resolve('src/shared/terminalTypes.ts'), sharedTarget)
+    }
+  }
+}
+
 export default defineConfig({
   main: {
-    plugins: [copyOmpWorkerPlugin(), copyOmpWorkerDepsPlugin()],
+    plugins: [copyOmpWorkerPlugin(), copyOmpWorkerDepsPlugin(), copyTerminalWorkersPlugin()],
     build: {
       rollupOptions: {
         output: {

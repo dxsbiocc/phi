@@ -19,6 +19,10 @@ files:
 asarUnpack:
   - resources/**
   - out/main/agent/omp-sdk-worker.ts
+  - out/main/terminal/**
+  - out/shared/terminalTypes.ts
+  - node_modules/@oh-my-pi/pi-natives/**
+  - node_modules/@oh-my-pi/pi-natives-*/**
 win:
   executableName: pi-desktop
 nsis:
