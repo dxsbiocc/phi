@@ -18,7 +18,100 @@ files:
   - '!resources/runtime/micromamba/**'
 asarUnpack:
   - resources/**
-  - out/main/agent/omp-sdk-worker.ts
+  # The OMP worker runs under bun, which cannot read inside app.asar: the worker,
+  # its copied source closure, package.json (readAppVersion) and every package it
+  # imports at runtime must be unpacked. `bun run check:asar-unpack` derives the
+  # required set from the worker's import graph and prints any glob missing here.
+  - package.json
+  - out/main/agent/**
+  - out/shared/**
+  # Runtime package closure of the OMP worker (scoped packages grouped by scope).
+  - node_modules/@babel/**
+  - node_modules/@huggingface/**
+  - node_modules/@img/**
+  - node_modules/@jridgewell/**
+  - node_modules/@kurkle/**
+  - node_modules/@oh-my-pi/**
+  - node_modules/@opentelemetry/**
+  - node_modules/@protobufjs/**
+  - node_modules/@puppeteer/**
+  - node_modules/@tailwindcss/**
+  - node_modules/@types/**
+  - node_modules/adm-zip/**
+  - node_modules/ajv/**
+  - node_modules/boolean/**
+  - node_modules/buffer-crc32/**
+  - node_modules/chart.js/**
+  - node_modules/chromium-bidi/**
+  - node_modules/define-data-property/**
+  - node_modules/define-properties/**
+  - node_modules/detect-libc/**
+  - node_modules/detect-node/**
+  - node_modules/devtools-protocol/**
+  - node_modules/enhanced-resolve/**
+  - node_modules/es-define-property/**
+  - node_modules/es-errors/**
+  - node_modules/es6-error/**
+  - node_modules/escalade/**
+  - node_modules/escape-string-regexp/**
+  - node_modules/fast-deep-equal/**
+  - node_modules/fast-uri/**
+  - node_modules/fd-slicer/**
+  - node_modules/flatbuffers/**
+  - node_modules/get-caller-file/**
+  - node_modules/get-east-asian-width/**
+  - node_modules/glob/**
+  - node_modules/global-agent/**
+  - node_modules/globalthis/**
+  - node_modules/gopd/**
+  - node_modules/graceful-fs/**
+  - node_modules/guid-typescript/**
+  - node_modules/has-property-descriptors/**
+  - node_modules/jiti/**
+  - node_modules/json-schema-traverse/**
+  - node_modules/json-stringify-safe/**
+  - node_modules/lightningcss/**
+  - node_modules/lightningcss-darwin-arm64/**
+  - node_modules/long/**
+  - node_modules/lru-cache/**
+  - node_modules/lucide-react/**
+  - node_modules/magic-string/**
+  - node_modules/matcher/**
+  - node_modules/minipass/**
+  - node_modules/mitt/**
+  - node_modules/modern-tar/**
+  - node_modules/object-keys/**
+  - node_modules/onnxruntime-common/**
+  - node_modules/onnxruntime-node/**
+  - node_modules/onnxruntime-web/**
+  - node_modules/path-scurry/**
+  - node_modules/pend/**
+  - node_modules/platform/**
+  - node_modules/protobufjs/**
+  - node_modules/puppeteer-core/**
+  - node_modules/react/**
+  - node_modules/react-chartjs-2/**
+  - node_modules/require-from-string/**
+  - node_modules/roarr/**
+  - node_modules/scheduler/**
+  - node_modules/semver/**
+  - node_modules/semver-compare/**
+  - node_modules/serialize-error/**
+  - node_modules/sharp/**
+  - node_modules/sherpa-onnx-darwin-arm64/**
+  - node_modules/sherpa-onnx-node/**
+  - node_modules/source-map-js/**
+  - node_modules/sprintf-js/**
+  - node_modules/tailwindcss/**
+  - node_modules/tapable/**
+  - node_modules/type-fest/**
+  - node_modules/typed-query-selector/**
+  - node_modules/undici-types/**
+  - node_modules/webdriver-bidi-protocol/**
+  - node_modules/ws/**
+  - node_modules/y18n/**
+  - node_modules/yaml/**
+  - node_modules/yauzl/**
 win:
   executableName: pi-desktop
 nsis:
@@ -55,6 +148,8 @@ linux:
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
+# Restores worker assets the node_modules copier strips (*.d.ts, CHANGELOG.md).
+afterPack: ./scripts/build/after-pack.mjs
 publish:
   provider: generic
   url: https://example.com/auto-updates

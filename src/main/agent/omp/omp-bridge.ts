@@ -107,9 +107,11 @@ function resolveWorkerPath(): string {
     join(bundleDir, 'omp', 'omp-sdk-worker.ts')
   ]
   for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate
+    // Unpacked first: Electron's fs reports in-asar paths as existing, but the
+    // worker runs under bun, which cannot read inside app.asar.
     const unpacked = asarUnpackedPath(candidate)
     if (existsSync(unpacked)) return unpacked
+    if (existsSync(candidate)) return candidate
   }
 
   return candidates[0]
