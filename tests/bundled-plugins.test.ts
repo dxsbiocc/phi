@@ -7,6 +7,7 @@ import test from 'node:test'
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
 import { describeEnvironment } from '../src/main/agent/content/environment-refs'
 import { currentPlatform } from '../src/main/agent/envs'
+import { readPackageManifest } from '../src/main/agent/packages/manifest'
 import { installPlugin, loadedPlugins, type LoadedPlugin } from '../src/main/agent/plugins/loader'
 import { isPluginSkillPreviewPath } from '../src/main/agent/plugins/preview'
 import { createRuntimeResourceLoader } from '../src/main/agent/runtime/runtime-adapter'
@@ -49,9 +50,10 @@ test('installed plugin metadata and components come from the installed copy', as
       loaded.map((item) => item.id),
       ['visualization']
     )
-    assert.equal(plugin.version, '1.0.0')
+    const { version } = readPackageManifest(VISUALIZATION_SOURCE)
+    assert.equal(plugin.version, version)
     assert.equal(plugin.toolPrefix, 'viz')
-    assert.match(plugin.dir, /packages\/plugin\/visualization\/1\.0\.0$/)
+    assert.ok(plugin.dir.endsWith(join('packages', 'plugin', 'visualization', version)))
     assert.ok(plugin.components.agents.every((path) => path.startsWith(plugin.dir)))
     assert.ok(plugin.components.skills.every((path) => path.startsWith(plugin.dir)))
   })

@@ -145,20 +145,20 @@ function loadCatalog(agentDir: string, projectDir?: string): CachedCatalog {
   const reasonCache = new Map<string, string | undefined>()
   const unavailableReason = (id: string, visiting = new Set<string>()): string | undefined => {
     if (reasonCache.has(id)) return reasonCache.get(id)
-    if (visiting.has(id)) return `Dependency cycle reaches ${id}.`
+    if (visiting.has(id)) return `依赖出现循环：${id}`
     if (packageEnabled.get(id) === false) {
-      const reason = `Package ${id} is disabled.`
+      const reason = `软件包 ${id} 已停用`
       reasonCache.set(id, reason)
       return reason
     }
     const state = registry.packages[id]
-    if (!state) return `Dependency package ${id} is not installed.`
+    if (!state) return `依赖的软件包 ${id} 未安装`
     const nextVisiting = new Set(visiting).add(id)
     for (const dependency of state.manifest.dependsOn ?? []) {
       if (dependency.type !== 'wrapper') continue
       const dependencyReason = unavailableReason(dependency.id, nextVisiting)
       if (!dependencyReason) continue
-      const reason = `Dependency ${dependency.id} is unavailable: ${dependencyReason}`
+      const reason = `依赖 ${dependency.id} 不可用（${dependencyReason}）`
       reasonCache.set(id, reason)
       return reason
     }

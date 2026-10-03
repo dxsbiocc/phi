@@ -192,14 +192,14 @@ test('wrapper view shows package enablement and dependency-hidden reasons', () =
       moduleEntry({
         packageId: 'subworkflow-nf-core-demo',
         packageEnabled: true,
-        hiddenReason: 'Dependency module-nf-core-fastqc is disabled.'
+        hiddenReason: '依赖 module-nf-core-fastqc 不可用（软件包 module-nf-core-fastqc 已停用）'
       })
     ],
     onSetPackageEnabled: () => undefined
   })
-  assert.match(markup, /Package · subworkflow-nf-core-demo/)
+  assert.match(markup, /软件包 · subworkflow-nf-core-demo/)
   assert.match(markup, /已启用/)
-  assert.match(markup, /Dependency module-nf-core-fastqc is disabled/)
+  assert.match(markup, /依赖 module-nf-core-fastqc 不可用/)
   assert.doesNotMatch(markup, /aria-label="启用 package subworkflow-nf-core-demo"[^>]*disabled/)
 })
 

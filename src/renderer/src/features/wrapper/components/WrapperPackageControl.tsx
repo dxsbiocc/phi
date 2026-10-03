@@ -26,7 +26,7 @@ export function WrapperPackageControl({
         <Chip
           size="small"
           variant="outlined"
-          label={`Package · ${packageId}`}
+          label={`软件包 · ${packageId}`}
           sx={{ fontFamily: 'var(--font-mono)' }}
         />
         <FormControlLabel

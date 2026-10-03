@@ -139,9 +139,9 @@ test('agent discovery hides disabled packages and enabled dependents with a UI r
   const module = status.find((entry) => entry.id === 'nf-core/modules/fastqc')
   const subworkflow = status.find((entry) => entry.id === 'nf-core/subworkflows/qc')
   assert.equal(module?.packageEnabled, false)
-  assert.match(module?.hiddenReason ?? '', /module-nf-core-fastqc.*disabled/i)
+  assert.match(module?.hiddenReason ?? '', /module-nf-core-fastqc 已停用/)
   assert.equal(subworkflow?.packageEnabled, true)
-  assert.match(subworkflow?.hiddenReason ?? '', /module-nf-core-fastqc.*disabled/i)
+  assert.match(subworkflow?.hiddenReason ?? '', /依赖 module-nf-core-fastqc 不可用.*已停用/)
 })
 
 test('custom wrappers remain visible outside package ownership and enablement', () => {
