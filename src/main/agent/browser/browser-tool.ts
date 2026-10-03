@@ -1,16 +1,20 @@
-import { randomUUID } from 'node:crypto'
 import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 
-import type {
-  BrowserOutcome,
-  BrowserScreenshot,
-  BrowserTabSnapshot,
-  BrowserWorkspaceSnapshot
+import {
+  BROWSER_MAX_SCREENSHOT_COORDINATE,
+  BROWSER_MAX_SCROLL_DELTA,
+  BROWSER_SAFE_KEYS,
+  BROWSER_SAFE_MODIFIERS,
+  type BrowserOutcome,
+  type BrowserScreenshot,
+  type BrowserTabSnapshot,
+  type BrowserWorkspaceSnapshot
 } from '../../../shared/browserTypes'
 
 const MAX_URL_LENGTH = 16 * 1024
 const MAX_ID_LENGTH = 256
 const MAX_ORIGIN_ID_LENGTH = 512
+const SAFE_KEYS = new Set<string>(BROWSER_SAFE_KEYS)
 
 export type BrowserToolHostRequest = {
   originSessionId: string
@@ -78,7 +82,7 @@ function tabText(
 }
 
 function successDetails(
-  action: 'open' | 'snapshot',
+  action: 'open' | 'snapshot' | 'click' | 'scroll' | 'keypress',
   snapshot: BrowserWorkspaceSnapshot,
   tabId?: string,
   screenshot?: BrowserScreenshot
@@ -122,13 +126,44 @@ function validDocumentRevision(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0
 }
 
+function validCoordinate(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= BROWSER_MAX_SCREENSHOT_COORDINATE
+  )
+}
+
+function validScrollDelta(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Math.abs(value as number) <= BROWSER_MAX_SCROLL_DELTA
+}
+
+function validModifiers(value: unknown): value is ['shift'] | [] {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      (value.length === 0 ||
+        (value.length === 1 && BROWSER_SAFE_MODIFIERS.includes(value[0] as 'shift'))))
+  )
+}
+
+function targetIsValid(value: unknown): value is 'current' | 'dedicated' | undefined {
+  return value === undefined || value === 'dedicated' || value === 'current'
+}
+
 function cancelledResult(): {
   content: Array<{ type: 'text'; text: string }>
   details: { kind: string; code: string; retryable: boolean }
   isError: true
 } {
   return {
-    content: [{ type: 'text', text: 'Browser action was cancelled' }],
+    content: [
+      {
+        type: 'text',
+        text: 'Browser action was cancelled. Input already delivered to the page was not undone.'
+      }
+    ],
     details: { kind: 'browser_error', code: 'ACTION_CANCELLED', retryable: false },
     isError: true
   }
@@ -143,7 +178,7 @@ export function buildBrowserTool(
     name: 'browser',
     label: 'Browser',
     description:
-      'Open a web page in Phi or capture one Phi browser tab. Open creates a dedicated agent tab by default. Use target=current only when the user explicitly asks to reuse the referenced current tab, with its tabId and document revision. Snapshot returns compact page state and the current PNG pixels.',
+      'Open or inspect a page in Phi, or use read-only click, scroll, and safe navigation keys on the active project-loopback page. Input must use the tab and document revision from the latest screenshot. External-site input requires a later approval capability and is currently refused.',
     loadMode: 'essential',
     strict: true,
     approval: 'read',
@@ -199,13 +234,107 @@ export function buildBrowserTool(
               maximum: Number.MAX_SAFE_INTEGER
             }
           }
-        }
+        },
+        ...(['click', 'scroll', 'keypress'] as const).flatMap((action) => {
+          const actionProperties = {
+            action: { type: 'string', enum: [action] },
+            tabId: { type: 'string', minLength: 1, maxLength: MAX_ID_LENGTH },
+            expectedDocumentRevision: {
+              type: 'integer',
+              minimum: 0,
+              maximum: Number.MAX_SAFE_INTEGER
+            },
+            target: { type: 'string', enum: ['dedicated'] }
+          }
+          const actionSpecific =
+            action === 'click'
+              ? {
+                  x: {
+                    type: 'number',
+                    minimum: 0,
+                    maximum: BROWSER_MAX_SCREENSHOT_COORDINATE
+                  },
+                  y: {
+                    type: 'number',
+                    minimum: 0,
+                    maximum: BROWSER_MAX_SCREENSHOT_COORDINATE
+                  },
+                  consequence: { type: 'string', enum: ['read'] }
+                }
+              : action === 'scroll'
+                ? {
+                    deltaX: {
+                      type: 'integer',
+                      minimum: -BROWSER_MAX_SCROLL_DELTA,
+                      maximum: BROWSER_MAX_SCROLL_DELTA
+                    },
+                    deltaY: {
+                      type: 'integer',
+                      minimum: -BROWSER_MAX_SCROLL_DELTA,
+                      maximum: BROWSER_MAX_SCROLL_DELTA
+                    }
+                  }
+                : {
+                    key: { type: 'string', enum: [...BROWSER_SAFE_KEYS] },
+                    modifiers: {
+                      type: 'array',
+                      items: { type: 'string', enum: [...BROWSER_SAFE_MODIFIERS] },
+                      maxItems: 1,
+                      uniqueItems: true
+                    }
+                  }
+          const required = [
+            'action',
+            'tabId',
+            'expectedDocumentRevision',
+            ...(action === 'click'
+              ? ['x', 'y', 'consequence']
+              : action === 'scroll'
+                ? ['deltaX', 'deltaY']
+                : ['key'])
+          ]
+          return [
+            {
+              type: 'object',
+              required,
+              additionalProperties: false,
+              properties: { ...actionProperties, ...actionSpecific }
+            },
+            {
+              type: 'object',
+              required: [...required, 'target'],
+              additionalProperties: false,
+              properties: {
+                ...actionProperties,
+                ...actionSpecific,
+                target: { type: 'string', enum: ['current'] }
+              }
+            }
+          ]
+        })
       ]
     },
     async execute(toolCallId, params, _onUpdate, _ctx, signal) {
+      if (
+        !boundedText(originSessionId, MAX_ORIGIN_ID_LENGTH) ||
+        !boundedText(toolCallId, MAX_ID_LENGTH)
+      ) {
+        return {
+          content: [{ type: 'text', text: 'Invalid browser request' }],
+          details: { kind: 'browser_error', code: 'INVALID_REQUEST' },
+          isError: true
+        }
+      }
       const input = isRecord(params) ? params : {}
-      const action = input.action === 'open' || input.action === 'snapshot' ? input.action : null
-      const requestId = (options.requestId ?? randomUUID)()
+      const action =
+        input.action === 'open' ||
+        input.action === 'snapshot' ||
+        input.action === 'click' ||
+        input.action === 'scroll' ||
+        input.action === 'keypress'
+          ? input.action
+          : null
+      const requestId = options.requestId ? options.requestId() : toolCallId
       let command: Record<string, unknown> | null = null
       if (
         action === 'open' &&
@@ -227,6 +356,61 @@ export function buildBrowserTool(
           url: input.url,
           expectedDocumentRevision: input.expectedDocumentRevision,
           requireActive: true
+        }
+      } else if (
+        action === 'click' &&
+        targetIsValid(input.target) &&
+        boundedText(input.tabId, MAX_ID_LENGTH) &&
+        validDocumentRevision(input.expectedDocumentRevision) &&
+        validCoordinate(input.x) &&
+        validCoordinate(input.y) &&
+        input.consequence === 'read'
+      ) {
+        command = {
+          type: 'click',
+          requestId,
+          tabId: input.tabId,
+          expectedDocumentRevision: input.expectedDocumentRevision,
+          requireActive: true,
+          x: input.x,
+          y: input.y,
+          consequence: 'read'
+        }
+      } else if (
+        action === 'scroll' &&
+        targetIsValid(input.target) &&
+        boundedText(input.tabId, MAX_ID_LENGTH) &&
+        validDocumentRevision(input.expectedDocumentRevision) &&
+        validScrollDelta(input.deltaX) &&
+        validScrollDelta(input.deltaY) &&
+        (input.deltaX !== 0 || input.deltaY !== 0)
+      ) {
+        command = {
+          type: 'scroll',
+          requestId,
+          tabId: input.tabId,
+          expectedDocumentRevision: input.expectedDocumentRevision,
+          requireActive: true,
+          deltaX: input.deltaX,
+          deltaY: input.deltaY
+        }
+      } else if (
+        action === 'keypress' &&
+        targetIsValid(input.target) &&
+        boundedText(input.tabId, MAX_ID_LENGTH) &&
+        validDocumentRevision(input.expectedDocumentRevision) &&
+        typeof input.key === 'string' &&
+        SAFE_KEYS.has(input.key) &&
+        validModifiers(input.modifiers)
+      ) {
+        command = {
+          type: 'keypress',
+          requestId,
+          tabId: input.tabId,
+          expectedDocumentRevision: input.expectedDocumentRevision,
+          requireActive: true,
+          key: input.key,
+          ...(input.modifiers === undefined ? {} : { modifiers: [...input.modifiers] })
         }
       } else if (
         action === 'snapshot' &&
@@ -255,11 +439,7 @@ export function buildBrowserTool(
           isError: true
         }
       }
-      if (
-        !boundedText(originSessionId, MAX_ORIGIN_ID_LENGTH) ||
-        !boundedText(requestId, MAX_ID_LENGTH) ||
-        !boundedText(toolCallId, MAX_ID_LENGTH)
-      ) {
+      if (!boundedText(requestId, MAX_ID_LENGTH)) {
         return {
           content: [{ type: 'text', text: 'Invalid browser request' }],
           details: { kind: 'browser_error', code: 'INVALID_REQUEST' },
@@ -294,7 +474,7 @@ export function buildBrowserTool(
           }
         }
         const tabId = typeof command.tabId === 'string' ? command.tabId : undefined
-        if (action === 'snapshot' && !outcome.screenshot) {
+        if (action !== 'open' && !outcome.screenshot) {
           return {
             content: [{ type: 'text', text: 'Browser snapshot did not return an image' }],
             details: {
@@ -311,13 +491,13 @@ export function buildBrowserTool(
             {
               type: 'text',
               text: tabText(
-                action === 'snapshot' ? 'Captured' : 'Opened',
+                action === 'snapshot' ? 'Captured' : action === 'open' ? 'Opened' : 'Controlled',
                 outcome.snapshot,
                 tabId,
                 outcome.screenshot
               )
             },
-            ...(action === 'snapshot' && outcome.screenshot
+            ...(action !== 'open' && outcome.screenshot
               ? [
                   {
                     type: 'image' as const,

@@ -2889,7 +2889,15 @@ function toolArgsForPersistence(toolName: unknown, args: unknown): unknown {
   if (toolName !== 'browser') return args
   if (!isRecord(args)) return {}
   const sanitized: Record<string, unknown> = {}
-  if (args.action === 'open' || args.action === 'snapshot') sanitized.action = args.action
+  if (
+    args.action === 'open' ||
+    args.action === 'snapshot' ||
+    args.action === 'click' ||
+    args.action === 'scroll' ||
+    args.action === 'keypress'
+  ) {
+    sanitized.action = args.action
+  }
   if (args.target === 'current' || args.target === 'dedicated') sanitized.target = args.target
   if (
     typeof args.tabId === 'string' &&

@@ -7749,10 +7749,14 @@ test('main IPC: browser tool events persist only bounded control metadata', asyn
         toolCallId: 'browser-sdk-1',
         toolName: 'browser',
         args: {
-          action: 'open',
+          action: 'click',
           target: 'current',
           tabId: 'tab-1',
           expectedDocumentRevision: 4,
+          x: 987654.125,
+          y: 123456.75,
+          consequence: 'read',
+          modifiers: ['sentinel-modifier'],
           url: sensitiveUrl,
           raw: { url: sensitiveUrl }
         }
@@ -7792,10 +7796,13 @@ test('main IPC: browser tool events persist only bounded control metadata', asyn
               id: 'browser-provider-1',
               name: 'browser',
               arguments: {
-                action: 'snapshot',
+                action: 'keypress',
                 target: 'current',
                 tabId: 'tab-2',
                 expectedDocumentRevision: 9,
+                key: 'SENTINEL_DANGEROUS_KEY',
+                modifiers: ['sentinel-modifier'],
+                deltaY: 7654321,
                 url: sensitiveUrl
               }
             }
@@ -7825,13 +7832,13 @@ test('main IPC: browser tool events persist only bounded control metadata', asyn
     starts.map((event) => event.args),
     [
       {
-        action: 'open',
+        action: 'click',
         target: 'current',
         tabId: 'tab-1',
         expectedDocumentRevision: 4
       },
       {
-        action: 'snapshot',
+        action: 'keypress',
         target: 'current',
         tabId: 'tab-2',
         expectedDocumentRevision: 9
@@ -7841,6 +7848,10 @@ test('main IPC: browser tool events persist only bounded control metadata', asyn
   const persisted = JSON.stringify(events)
   assert.doesNotMatch(persisted, /super-secret|fragment|iVBORw0KGgo/)
   assert.doesNotMatch(JSON.stringify(app.events), /super-secret|fragment|iVBORw0KGgo/)
+  assert.doesNotMatch(
+    `${persisted}${JSON.stringify(app.events)}`,
+    /987654|123456|7654321|SENTINEL_DANGEROUS_KEY|sentinel-modifier/
+  )
 })
 
 test('main IPC: provider-managed tool results are persisted and sent to the chat', async () => {
