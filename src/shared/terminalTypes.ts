@@ -6,8 +6,18 @@ export const TERMINAL_MAX_INPUT_BYTES = 64 * 1024
 export const TERMINAL_RING_BUFFER_BYTES = 2 * 1024 * 1024
 export const TERMINAL_CREDIT_WINDOW_BYTES = 512 * 1024
 
-export type TerminalWorkspaceRef =
-  { kind: 'project'; projectId: string } | { kind: 'ordinary'; sessionId?: string }
+export type TerminalWorkspaceRef = { kind: 'project'; projectId: string } | { kind: 'ordinary' }
+
+export type TerminalErrorCode =
+  | 'not_found'
+  | 'remote_unsupported'
+  | 'directory_missing'
+  | 'limit_reached'
+  | 'busy'
+  | 'invalid'
+  | 'not_open'
+  | 'unavailable'
+  | 'unsupported_platform'
 
 export type TerminalState = 'starting' | 'open' | 'closing' | 'exited' | 'failed'
 
@@ -27,9 +37,43 @@ export interface TerminalSnapshot {
 }
 
 export type TerminalEvent =
-  | { type: 'data'; terminalId: string; seq: number; data: string }
-  | { type: 'state'; terminalId: string; snapshot: TerminalSnapshot }
-  | { type: 'gap'; terminalId: string; resumeSeq: number }
+  | { type: 'data'; terminalId: string; epoch: number; seq: number; data: string }
+  | {
+      type: 'gap'
+      terminalId: string
+      epoch: number
+      fromSeq: number
+      toSeq: number
+      droppedBytes: number
+    }
+  | { type: 'state'; snapshot: TerminalSnapshot }
+
+export interface TerminalAttachResult {
+  epoch: number
+  snapshot: TerminalSnapshot
+  records: Array<{ seq: number; data: string }>
+  gap?: { fromSeq: number; toSeq: number; droppedBytes: number }
+  nextSeq: number
+}
+
+export type TerminalResult<T> =
+  { ok: true; value: T } | { ok: false; code: TerminalErrorCode; message: string }
+
+export interface TerminalRendererBridge {
+  list(ref: TerminalWorkspaceRef): Promise<TerminalResult<TerminalSnapshot[]>>
+  create(input: {
+    workspace: TerminalWorkspaceRef
+    cols: number
+    rows: number
+    requestId: string
+  }): Promise<TerminalResult<TerminalSnapshot>>
+  attach(terminalId: string): Promise<TerminalResult<TerminalAttachResult>>
+  input(terminalId: string, data: string): Promise<TerminalResult<void>>
+  resize(terminalId: string, cols: number, rows: number): Promise<TerminalResult<void>>
+  ack(terminalId: string, epoch: number, bytes: number): Promise<TerminalResult<void>>
+  close(terminalId: string): Promise<TerminalResult<void>>
+  onEvent(cb: (event: TerminalEvent) => void): () => void
+}
 
 export interface TerminalCommandDraft {
   draftId: string

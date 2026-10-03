@@ -111,6 +111,8 @@ function harness(
     supervisor?: RequestHandler
     heartbeatIntervalMs?: number
     heartbeatTimeoutMs?: number
+    heartbeatStartupGraceMs?: number
+    faultCleanupTimeoutMs?: number
   } = {}
 ): { host: TerminalHost; worker: FakeEndpoint; supervisor: FakeEndpoint } {
   const worker = new FakeEndpoint(options.worker ?? defaultWorker)
@@ -121,7 +123,9 @@ function harness(
     workerPath: '/fake/worker.ts',
     supervisorPath: '/fake/supervisor.ts',
     heartbeatIntervalMs: options.heartbeatIntervalMs ?? 10_000,
-    heartbeatTimeoutMs: options.heartbeatTimeoutMs ?? 30_000
+    heartbeatTimeoutMs: options.heartbeatTimeoutMs ?? 30_000,
+    heartbeatStartupGraceMs: options.heartbeatStartupGraceMs,
+    faultCleanupTimeoutMs: options.faultCleanupTimeoutMs
   })
   return { host, worker, supervisor }
 }
@@ -229,6 +233,26 @@ test('input calls for one terminal are written in call order', async () => {
   }
 })
 
+test('setCredit forwards an absolute credit value to the worker', async () => {
+  const { host, worker } = harness()
+  try {
+    await host.createTerminal(terminal)
+    await host.setCredit(terminal.terminalId, 0)
+    await host.setCredit(terminal.terminalId, 512 * 1024)
+    assert.deepEqual(
+      worker.requests
+        .filter((request) => request.type === 'setCredit')
+        .map((request) => ({ terminalId: request.terminalId, bytes: request.bytes })),
+      [
+        { terminalId: terminal.terminalId, bytes: 0 },
+        { terminalId: terminal.terminalId, bytes: 512 * 1024 }
+      ]
+    )
+  } finally {
+    await host.dispose()
+  }
+})
+
 test('concurrent close calls share one cleanup operation', async () => {
   let terminateRequest: Frame | undefined
   const { host, supervisor } = harness({
@@ -255,7 +279,7 @@ test('concurrent close calls share one cleanup operation', async () => {
 test('worker heartbeat timeout fails terminals and asks supervisor to terminate all', async () => {
   let answerPings = true
   const events: unknown[] = []
-  const { host, supervisor } = harness({
+  const { host, worker, supervisor } = harness({
     worker: (request, endpoint) => {
       if (request.type === 'ping' && !answerPings) return
       defaultWorker(request, endpoint)
@@ -266,6 +290,8 @@ test('worker heartbeat timeout fails terminals and asks supervisor to terminate 
   host.subscribe((event) => events.push(event))
   try {
     await host.createTerminal(terminal)
+    await waitFor(() => worker.requests.some((request) => request.type === 'ping'))
+    await turn()
     answerPings = false
     await waitFor(
       () =>
@@ -278,6 +304,45 @@ test('worker heartbeat timeout fails terminals and asks supervisor to terminate 
       500
     )
     await waitFor(() => supervisor.requests.some((request) => request.type === 'terminateAll'))
+  } finally {
+    await host.dispose()
+  }
+})
+
+test('heartbeat uses startup grace until the first pong', async () => {
+  const events: unknown[] = []
+  const { host } = harness({
+    worker: (request, endpoint) => {
+      if (request.type === 'ping') return
+      defaultWorker(request, endpoint)
+    },
+    heartbeatIntervalMs: 5,
+    heartbeatTimeoutMs: 20,
+    heartbeatStartupGraceMs: 100
+  })
+  host.subscribe((event) => events.push(event))
+  try {
+    await host.createTerminal(terminal)
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    assert.equal(
+      events.some(
+        (event) =>
+          typeof event === 'object' &&
+          event !== null &&
+          (event as { type?: unknown }).type === 'failed'
+      ),
+      false
+    )
+    await waitFor(
+      () =>
+        events.some(
+          (event) =>
+            typeof event === 'object' &&
+            event !== null &&
+            (event as { type?: unknown }).type === 'failed'
+        ),
+      300
+    )
   } finally {
     await host.dispose()
   }
@@ -300,6 +365,64 @@ test('unexpected worker exit fails an active terminal', async () => {
     )
     await waitFor(() => supervisor.requests.some((request) => request.type === 'terminateAll'))
   } finally {
+    await host.dispose()
+  }
+})
+
+test('worker fault terminates, forgets failed terminals, then drops host records', async () => {
+  let terminateAllRequest: Frame | undefined
+  const { host, worker, supervisor } = harness({
+    supervisor: (request, endpoint) => {
+      if (request.type === 'terminateAll' && terminateAllRequest === undefined) {
+        terminateAllRequest = request
+        return
+      }
+      defaultSupervisor(request, endpoint)
+    }
+  })
+  try {
+    await host.createTerminal(terminal)
+    worker.emit('exit', 9, null)
+    await waitFor(() => terminateAllRequest !== undefined)
+    assert.equal(
+      supervisor.requests.some((request) => request.type === 'forget'),
+      false
+    )
+
+    assert.ok(terminateAllRequest)
+    supervisor.respond(terminateAllRequest, { allExited: true, survivors: [] })
+    await waitFor(() => supervisor.requests.some((request) => request.type === 'forget'))
+    await turn()
+    await assert.rejects(host.replay(terminal.terminalId, 1), /Unknown terminal/u)
+  } finally {
+    await host.dispose()
+  }
+})
+
+test('worker fault timeout retains cleanup ownership and quarantines new terminals', async () => {
+  const { host, worker, supervisor } = harness({
+    supervisor: (request, endpoint) => {
+      if (request.type === 'terminateAll') return
+      defaultSupervisor(request, endpoint)
+    },
+    faultCleanupTimeoutMs: 50
+  })
+  try {
+    await host.createTerminal(terminal)
+    worker.emit('exit', 9, null)
+    await waitFor(() => supervisor.requests.some((request) => request.type === 'terminateAll'))
+    await new Promise((resolve) => setTimeout(resolve, 75))
+
+    assert.equal(
+      supervisor.requests.some((request) => request.type === 'forget'),
+      false
+    )
+    await assert.rejects(
+      host.createTerminal({ ...terminal, terminalId: 'terminal_2' }),
+      /supervisor is unavailable/u
+    )
+  } finally {
+    supervisor.setHandler(defaultSupervisor)
     await host.dispose()
   }
 })

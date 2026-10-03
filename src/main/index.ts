@@ -73,6 +73,9 @@ import { ElectronBrowserEngine } from './browser/electron-browser-engine'
 import { BrowserWorkspaceRegistry } from './browser/browser-workspace-registry'
 import type { BrowserActionApprovalPrompt } from './browser/browser-approval'
 import { BrowserToolHostCoordinator } from './agent/browser/browser-tool-host'
+import { TerminalIpcCoordinator, registerTerminalRendererIpc } from './terminal/terminal-ipc'
+import { TerminalManager } from './terminal/terminal-manager'
+import { resolveTerminalWorkspace } from './terminal/terminal-workspace'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import semver from 'semver'
@@ -495,6 +498,7 @@ type BrowserRegistryLifecycle = 'idle' | 'disposing' | 'failed'
 let browserWorkspaceRegistry: BrowserWorkspaceRegistry | null = null
 let browserWorkspaceRegistryLifecycle: BrowserRegistryLifecycle = 'idle'
 let browserWorkspaceRegistryDisposal: Promise<void> | null = null
+let terminalManager: TerminalManager | null = null
 let mainWindowCleanupPromise: Promise<void> | null = null
 let beforeQuitCleanupComplete = false
 let beforeQuitResumeScheduled = false
@@ -621,6 +625,29 @@ function cleanupBrowserWorkspaceRegistry(): Promise<void> {
   return disposal
 }
 
+function getTerminalManager(): TerminalManager {
+  if (mainWindowCleanupStarted) throw new Error('Terminal manager is unavailable')
+  if (!terminalManager) {
+    terminalManager = new TerminalManager({
+      resolveWorkspace: (ref) =>
+        resolveTerminalWorkspace(ref, {
+          getProject,
+          noProjectTaskFolder: getNoProjectTaskFolder,
+          realDirectory: (path) => realDirectoryPath(path),
+          isRemoteAnchor: (path) => isRemoteProjectAnchorPath(path, AGENT_DIR)
+        }),
+      sink: (event) => terminalIpcCoordinator.sendEvent(event)
+    })
+  }
+  return terminalManager
+}
+
+function disposeTerminalManager(): Promise<void> {
+  const manager = terminalManager
+  terminalManager = null
+  return manager?.dispose() ?? Promise.resolve()
+}
+
 function browserSessionForPhiId(phiSessionId: string): BrowserIpcSession | undefined {
   const manifest = findPhiSessionById(phiSessionId)
   if (!manifest) return undefined
@@ -652,6 +679,14 @@ const browserIpcCoordinator = new BrowserIpcCoordinator({
   resolveAgentSession: (originSessionId) => {
     const origin = resolveOriginSession(originSessionId)
     return origin ? browserSessionForPhiId(origin.phiSessionId) : undefined
+  }
+})
+
+const terminalIpcCoordinator = new TerminalIpcCoordinator({
+  getManager: getTerminalManager,
+  getTrustedRenderer: () => {
+    const window = mainWindow
+    return window && !window.isDestroyed() ? window.webContents : null
   }
 })
 
@@ -6063,6 +6098,7 @@ function cleanupMainWindowRuntime(): Promise<void> {
     })
     await Promise.allSettled([
       promptShutdown.browserCleanup,
+      safeCleanupStep('terminal_cleanup_failed', () => disposeTerminalManager()),
       safeCleanupStep('notebook_watcher_cleanup_failed', () => notebookFileWatcher.dispose()),
       safeCleanupStep('jupyter_cleanup_failed', () => jupyterServerRegistry.disposeAll()),
       safeCleanupStep('agent_session_cleanup_failed', () => invalidateAgentSession()),
@@ -6863,6 +6899,7 @@ app.whenReady().then(async () => {
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
   registerBrowserRendererIpc(ipcMain, browserIpcCoordinator)
+  registerTerminalRendererIpc(ipcMain, terminalIpcCoordinator)
   ipcMain.handle('window:close', () => {
     getActiveWindow()?.close()
   })
@@ -7513,6 +7550,10 @@ app.whenReady().then(async () => {
     createCheckedRemoteProject(input)
   )
   ipcMain.handle('projects:delete', async (_, id: string) => {
+    // A broken terminal host must not make the project undeletable; its shells are already gone.
+    await terminalManager?.closeWorkspace(`project:${id}`).catch(() => {
+      writeAppLog({ level: 'error', event: 'terminal_project_close_failed' })
+    })
     deleteProject(id)
   })
   ipcMain.handle(

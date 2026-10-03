@@ -45,5 +45,7 @@ export interface TerminalHostOptions {
   supervisorPath?: string
   heartbeatIntervalMs?: number
   heartbeatTimeoutMs?: number
+  heartbeatStartupGraceMs?: number
+  faultCleanupTimeoutMs?: number
   requestTimeoutMs?: number
 }

@@ -5,6 +5,7 @@ import type {
 } from '../../shared/notebookDocument'
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettingsTypes'
 import type { BrowserRendererBridge } from '../../shared/browserTypes'
+import type { TerminalRendererBridge } from '../../shared/terminalTypes'
 import type {
   EnvironmentGetResult,
   EnvironmentHostDependency,
@@ -699,6 +700,7 @@ export interface AnalysisNotebookFormatResult {
 
 export type RendererApi = AutoCompactionApi & {
   browser: BrowserRendererBridge
+  terminal: TerminalRendererBridge
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
   toggleWindowFullscreen: () => Promise<void>

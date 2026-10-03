@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { BrowserRendererBridge, BrowserRendererEventEnvelope } from '../shared/browserTypes'
+import type { TerminalEvent, TerminalRendererBridge } from '../shared/terminalTypes'
 import type { RemoteWorkspaceFileRequest } from '../shared/remoteWorkspacePath'
 import type {
   WrapperResultDirectoryRequest,
@@ -670,6 +671,7 @@ type AnalysisNotebookCodeGenerationProgress = {
 
 type RendererAuthApi = {
   browser: BrowserRendererBridge
+  terminal: TerminalRendererBridge
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
   toggleWindowFullscreen: () => Promise<void>
@@ -1026,8 +1028,35 @@ const browserBridge: BrowserRendererBridge = {
   }
 }
 
+const terminalBridge: TerminalRendererBridge = {
+  list: (workspace) => ipcRenderer.invoke('terminal:list', workspace),
+  create: (input) => ipcRenderer.invoke('terminal:create', input),
+  attach: (terminalId) => ipcRenderer.invoke('terminal:attach', terminalId),
+  input: (terminalId, data) => ipcRenderer.invoke('terminal:input', terminalId, data),
+  resize: (terminalId, cols, rows) => ipcRenderer.invoke('terminal:resize', terminalId, cols, rows),
+  ack: (terminalId, epoch, bytes) => ipcRenderer.invoke('terminal:ack', terminalId, epoch, bytes),
+  close: (terminalId) => ipcRenderer.invoke('terminal:close', terminalId),
+  onEvent: (callback) => {
+    const handler = (_: unknown, event: TerminalEvent): void => {
+      try {
+        void Promise.resolve(callback(event)).catch(() => undefined)
+      } catch {
+        return
+      }
+    }
+    let subscribed = true
+    ipcRenderer.on('terminal:event', handler)
+    return () => {
+      if (!subscribed) return
+      subscribed = false
+      ipcRenderer.removeListener('terminal:event', handler)
+    }
+  }
+}
+
 const api: RendererAuthApi = {
   browser: browserBridge,
+  terminal: terminalBridge,
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   toggleWindowFullscreen: (): Promise<void> => ipcRenderer.invoke('window:toggle-fullscreen'),

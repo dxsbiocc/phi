@@ -1,5 +1,6 @@
 import {
   TERMINAL_MAX_COLS,
+  TERMINAL_CREDIT_WINDOW_BYTES,
   TERMINAL_MAX_INPUT_BYTES,
   TERMINAL_MAX_ROWS,
   TERMINAL_MIN_COLS,
@@ -67,6 +68,7 @@ export type WorkerRequest =
   | { id: string; type: 'resize'; terminalId: string; cols: number; rows: number }
   | { id: string; type: 'kill'; terminalId: string }
   | { id: string; type: 'credit'; terminalId: string; bytes: number }
+  | { id: string; type: 'setCredit'; terminalId: string; bytes: number }
   | { id: string; type: 'replay'; terminalId: string; fromSeq: number }
   | { id: string; type: 'ping' }
 
@@ -151,6 +153,11 @@ function positiveInteger(value: unknown): number {
 
 function safeInteger(value: unknown): number {
   return Number.isSafeInteger(value) ? (value as number) : invalid()
+}
+
+function integerRange(value: unknown, min: number, max: number): number {
+  const parsed = safeInteger(value)
+  return parsed >= min && parsed <= max ? parsed : invalid()
 }
 
 function dimension(value: unknown, min: number, max: number): number {
@@ -257,6 +264,15 @@ export function parseWorkerRequest(value: unknown): WorkerRequest {
         type: 'credit',
         terminalId: terminalId(parsed.terminalId),
         bytes
+      }
+    }
+    case 'setCredit': {
+      const parsed = exactRecord(input, ['id', 'type', 'terminalId', 'bytes'])
+      return {
+        id: requestId(parsed.id),
+        type: 'setCredit',
+        terminalId: terminalId(parsed.terminalId),
+        bytes: integerRange(parsed.bytes, 0, TERMINAL_CREDIT_WINDOW_BYTES)
       }
     }
     case 'replay': {
@@ -371,6 +387,7 @@ export function parseWorkerResponseResult(type: string, value: unknown): unknown
     case 'input':
     case 'resize':
     case 'credit':
+    case 'setCredit':
       return parseNullResult(value)
     case 'kill':
       return parseBooleanResult(value, 'killed')

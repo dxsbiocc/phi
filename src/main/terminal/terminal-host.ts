@@ -9,6 +9,7 @@ import {
   parseSupervisorResponseResult,
   parseWorkerMessage,
   parseWorkerResponseResult,
+  type SupervisorTerminationResult,
   type WorkerEvent
 } from './terminal-protocol'
 import type {
@@ -29,6 +30,7 @@ export type {
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 1_000
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 3_000
+const DEFAULT_HEARTBEAT_STARTUP_GRACE_MS = 10_000
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000
 const START_TIMEOUT_MS = 10_000
 const USER_CLOSE_BUDGET_MS = 5_000
@@ -47,7 +49,9 @@ interface ChildChannel {
   child: ChildProcessWithoutNullStreams
   reader: ReadLineInterface
   pending: Map<string, PendingRequest>
+  startedAt: number
   lastPongAt: number
+  receivedPong: boolean
   pingPending: boolean
   stopping: boolean
 }
@@ -90,6 +94,8 @@ export class TerminalHost {
   private readonly workerPath: string
   private readonly supervisorPath: string
   private readonly heartbeatTimeoutMs: number
+  private readonly heartbeatStartupGraceMs: number
+  private readonly faultCleanupTimeoutMs: number
   private readonly requestTimeoutMs: number
   private readonly listeners = new Set<(event: TerminalHostEvent) => void>()
   private readonly terminals = new Map<string, TerminalRecord>()
@@ -114,6 +120,9 @@ export class TerminalHost {
       'PHI_TERMINAL_SUPERVISOR_PATH'
     )
     this.heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS
+    this.heartbeatStartupGraceMs =
+      options.heartbeatStartupGraceMs ?? DEFAULT_HEARTBEAT_STARTUP_GRACE_MS
+    this.faultCleanupTimeoutMs = options.faultCleanupTimeoutMs ?? USER_CLOSE_BUDGET_MS
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     this.heartbeatTimer = setInterval(
       () => this.runHeartbeat(),
@@ -134,6 +143,7 @@ export class TerminalHost {
     if (!this.acceptingNewTerminals) throw new Error('Terminal supervisor is unavailable')
     if (this.terminals.has(options.terminalId)) throw new Error('Terminal already exists')
     await this.workerRecovery
+    if (!this.acceptingNewTerminals) throw new Error('Terminal supervisor is unavailable')
 
     const latch = createStartedLatch()
     const record: TerminalRecord = {
@@ -196,10 +206,20 @@ export class TerminalHost {
   }
 
   async credit(terminalId: string, bytes: number): Promise<void> {
-    this.requireOpenTerminal(terminalId)
+    this.requireKnownTerminal(terminalId)
     await this.request(this.requireWorker(), {
       id: randomUUID(),
       type: 'credit',
+      terminalId,
+      bytes
+    })
+  }
+
+  async setCredit(terminalId: string, bytes: number): Promise<void> {
+    this.requireKnownTerminal(terminalId)
+    await this.request(this.requireWorker(), {
+      id: randomUUID(),
+      type: 'setCredit',
       terminalId,
       bytes
     })
@@ -311,12 +331,15 @@ export class TerminalHost {
     kind: 'worker' | 'supervisor',
     child: ChildProcessWithoutNullStreams
   ): ChildChannel {
+    const startedAt = Date.now()
     const channel: ChildChannel = {
       kind,
       child,
       reader: createInterface({ input: child.stdout }),
       pending: new Map(),
-      lastPongAt: Date.now(),
+      startedAt,
+      lastPongAt: startedAt,
+      receivedPong: false,
       pingPending: false,
       stopping: false
     }
@@ -364,7 +387,10 @@ export class TerminalHost {
       : undefined
     channel.pending.delete(response.id)
     clearTimeout(pending.timer)
-    if (pending.type === 'ping' && response.ok) channel.lastPongAt = Date.now()
+    if (pending.type === 'ping' && response.ok) {
+      channel.lastPongAt = Date.now()
+      channel.receivedPong = true
+    }
     if (response.ok) pending.resolve(result)
     else pending.reject(new Error(response.error))
   }
@@ -439,7 +465,11 @@ export class TerminalHost {
     const now = Date.now()
     for (const channel of [this.worker, this.supervisor]) {
       if (!channel || channel.stopping) continue
-      if (now - channel.lastPongAt >= this.heartbeatTimeoutMs) {
+      const heartbeatAge = now - (channel.receivedPong ? channel.lastPongAt : channel.startedAt)
+      const timeoutMs = channel.receivedPong
+        ? this.heartbeatTimeoutMs
+        : this.heartbeatStartupGraceMs
+      if (heartbeatAge >= timeoutMs) {
         this.faultChannel(channel, new Error(`${channel.kind} heartbeat timed out`))
         continue
       }
@@ -466,16 +496,15 @@ export class TerminalHost {
 
     if (channel.kind === 'worker' && this.worker === channel) {
       this.worker = null
+      const failedRecords: TerminalRecord[] = []
       for (const record of this.terminals.values()) {
         if (record.state === 'closing' || record.state === 'exited') continue
         record.state = 'failed'
         record.rejectStarted(error)
         this.emit({ type: 'failed', terminalId: record.terminalId, message: error.message })
+        failedRecords.push(record)
       }
-      this.workerRecovery = this.bestEffortSupervisorRequest(
-        { id: randomUUID(), type: 'terminateAll', mode: 'user' },
-        USER_CLOSE_BUDGET_MS
-      )
+      this.workerRecovery = this.cleanupAfterWorkerFault(failedRecords)
     } else if (channel.kind === 'supervisor' && this.supervisor === channel) {
       this.supervisor = null
       this.acceptingNewTerminals = false
@@ -488,6 +517,41 @@ export class TerminalHost {
           { id: randomUUID(), type: 'kill', terminalId: record.terminalId },
           500
         )
+      }
+    }
+  }
+
+  private async cleanupAfterWorkerFault(records: TerminalRecord[]): Promise<void> {
+    const deadline = Date.now() + this.faultCleanupTimeoutMs
+    const supervisor = this.supervisor
+    if (!supervisor) {
+      this.acceptingNewTerminals = false
+      return
+    }
+    try {
+      const result = await this.request<SupervisorTerminationResult>(
+        supervisor,
+        { id: randomUUID(), type: 'terminateAll', mode: 'user' },
+        remainingBefore(deadline, Math.min(50, Math.max(1, this.faultCleanupTimeoutMs / 4)))
+      )
+      if (!result.allExited) throw new Error('registered terminal processes survived cleanup')
+      await Promise.all(
+        records.map((record) =>
+          this.request(
+            supervisor,
+            { id: randomUUID(), type: 'forget', terminalId: record.terminalId },
+            remaining(deadline)
+          )
+        )
+      )
+    } catch {
+      this.acceptingNewTerminals = false
+      process.stderr.write('Terminal worker fault cleanup did not finish\n')
+      return
+    }
+    for (const record of records) {
+      if (this.terminals.get(record.terminalId) === record) {
+        this.terminals.delete(record.terminalId)
       }
     }
   }

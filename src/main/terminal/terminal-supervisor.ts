@@ -1,16 +1,12 @@
 import { Process, ProcessStatus, type ProcessTerminateOptions } from '@oh-my-pi/pi-natives'
 
-import {
-  TERMINAL_MAX_FRAME_BYTES,
-  encodeProtocolFrame,
-  parseProtocolLine,
-  parseSupervisorRequest,
-  type SupervisorRequest,
-  type SupervisorResponse
-} from './terminal-protocol'
+import { parseSupervisorRequest, type SupervisorRequest } from './terminal-protocol'
+import { createProtocolRequestStream } from './terminal-protocol-stream'
 
 const REFRESH_INTERVAL_MS = 1_000
 const QUIT_EXIT_DEADLINE_MS = 1_500
+const USER_TERMINATION_DEADLINE_MS = 4_800
+const QUIT_TERMINATION_DEADLINE_MS = 1_300
 
 type ManagedProcess = {
   root: Process
@@ -25,18 +21,12 @@ type TerminationResult = {
 const managed = new Map<string, ManagedProcess>()
 let shuttingDown = false
 
-function writeFrame(frame: SupervisorResponse): void {
-  process.stdout.write(encodeProtocolFrame(frame))
-}
-
-function diagnostic(message: string): void {
-  process.stderr.write(`[terminal-supervisor] ${message}\n`)
-}
-
-function errorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  return (message || 'Supervisor operation failed').slice(0, 4_096)
-}
+const protocol = createProtocolRequestStream<SupervisorRequest>({
+  name: 'terminal-supervisor',
+  fallbackErrorMessage: 'Supervisor operation failed',
+  parseRequest: parseSupervisorRequest
+})
+const { diagnostic } = protocol
 
 function isRunning(processRef: Process): boolean {
   try {
@@ -95,20 +85,35 @@ async function terminateRef(processRef: Process, options: ProcessTerminateOption
 
 async function terminateEntry(
   entry: ManagedProcess,
-  mode: 'user' | 'quit'
+  mode: 'user' | 'quit',
+  deadline = Date.now() +
+    (mode === 'quit' ? QUIT_TERMINATION_DEADLINE_MS : USER_TERMINATION_DEADLINE_MS)
 ): Promise<TerminationResult> {
   refreshDescendants(entry)
   if (mode === 'quit') {
-    const options = { group: true, gracefulMs: 900, timeoutMs: 400 } as const
+    const remaining = Math.max(1, deadline - Date.now())
+    const gracefulMs = Math.min(900, Math.max(0, remaining - 1))
+    const options = {
+      group: true,
+      gracefulMs,
+      timeoutMs: Math.max(1, Math.min(400, remaining - gracefulMs))
+    } as const
     await Promise.all(entryReferences(entry).map((processRef) => terminateRef(processRef, options)))
     return terminationResult([entry])
   }
 
-  await terminateRef(entry.root, { group: true, gracefulMs: 2_000, timeoutMs: 5_000 })
+  const rootRemaining = Math.max(1, deadline - Date.now())
+  const rootGracefulMs = Math.min(2_000, Math.max(0, rootRemaining - 1))
+  await terminateRef(entry.root, {
+    group: true,
+    gracefulMs: rootGracefulMs,
+    timeoutMs: Math.max(1, rootRemaining - rootGracefulMs)
+  })
   const remainingDescendants = [...entry.descendants.values()].filter(isRunning)
+  const descendantTimeoutMs = Math.max(1, deadline - Date.now())
   await Promise.all(
     remainingDescendants.map((processRef) =>
-      terminateRef(processRef, { group: true, gracefulMs: 0, timeoutMs: 5_000 })
+      terminateRef(processRef, { group: true, gracefulMs: 0, timeoutMs: descendantTimeoutMs })
     )
   )
   return terminationResult([entry])
@@ -116,7 +121,9 @@ async function terminateEntry(
 
 async function terminateAll(mode: 'user' | 'quit'): Promise<TerminationResult> {
   const entries = [...managed.values()]
-  await Promise.all(entries.map((entry) => terminateEntry(entry, mode)))
+  const deadline =
+    Date.now() + (mode === 'quit' ? QUIT_TERMINATION_DEADLINE_MS : USER_TERMINATION_DEADLINE_MS)
+  await Promise.all(entries.map((entry) => terminateEntry(entry, mode, deadline)))
   return terminationResult(entries)
 }
 
@@ -148,58 +155,6 @@ async function handleRequest(request: SupervisorRequest): Promise<unknown> {
   }
 }
 
-async function processLine(line: string): Promise<void> {
-  let request: SupervisorRequest
-  try {
-    request = parseSupervisorRequest(parseProtocolLine(line))
-  } catch {
-    diagnostic('discarded an invalid protocol frame')
-    return
-  }
-
-  try {
-    const result = await handleRequest(request)
-    writeFrame({ id: request.id, ok: true, result })
-  } catch (error) {
-    writeFrame({ id: request.id, ok: false, error: errorMessage(error) })
-  }
-}
-
-function acceptProtocolInput(onLine: (line: string) => void): void {
-  let buffered = Buffer.alloc(0)
-  let discarding = false
-
-  process.stdin.on('data', (value: Buffer | string) => {
-    const chunk = typeof value === 'string' ? Buffer.from(value) : value
-    let offset = 0
-    while (offset < chunk.byteLength) {
-      const newline = chunk.indexOf(10, offset)
-      const end = newline < 0 ? chunk.byteLength : newline
-      const segment = chunk.subarray(offset, end)
-
-      if (!discarding) {
-        if (buffered.byteLength + segment.byteLength > TERMINAL_MAX_FRAME_BYTES) {
-          buffered = Buffer.alloc(0)
-          discarding = newline < 0
-          diagnostic('discarded an oversized protocol frame')
-        } else {
-          buffered = Buffer.concat([buffered, segment])
-          if (newline >= 0) {
-            const lineBuffer = buffered.at(-1) === 13 ? buffered.subarray(0, -1) : buffered
-            onLine(lineBuffer.toString('utf8'))
-            buffered = Buffer.alloc(0)
-          }
-        }
-      } else if (newline >= 0) {
-        discarding = false
-      }
-
-      if (newline < 0) break
-      offset = newline + 1
-    }
-  })
-}
-
 async function shutdownAfterHostExit(): Promise<void> {
   if (shuttingDown) return
   shuttingDown = true
@@ -217,9 +172,7 @@ const refreshTimer = setInterval(() => {
   for (const entry of managed.values()) refreshDescendants(entry)
 }, REFRESH_INTERVAL_MS)
 
-acceptProtocolInput((line) => {
-  void processLine(line).catch(() => diagnostic('request processing failed'))
-})
+protocol.start(handleRequest)
 process.stdin.once('end', () => void shutdownAfterHostExit())
 process.stdin.once('error', () => void shutdownAfterHostExit())
 process.stdout.once('error', () => void shutdownAfterHostExit())

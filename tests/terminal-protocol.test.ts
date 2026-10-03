@@ -20,6 +20,7 @@ import {
   type WorkerRequest
 } from '../src/main/terminal/terminal-protocol'
 import {
+  TERMINAL_CREDIT_WINDOW_BYTES,
   TERMINAL_MAX_COLS,
   TERMINAL_MAX_INPUT_BYTES,
   TERMINAL_MAX_ROWS,
@@ -55,6 +56,7 @@ describe('worker request protocol', () => {
     { id: requestId, type: 'resize', terminalId, cols: 80, rows: 24 },
     { id: requestId, type: 'kill', terminalId },
     { id: requestId, type: 'credit', terminalId, bytes: 512 * 1024 },
+    { id: requestId, type: 'setCredit', terminalId, bytes: TERMINAL_CREDIT_WINDOW_BYTES },
     { id: requestId, type: 'replay', terminalId, fromSeq: 1 },
     { id: requestId, type: 'ping' }
   ]
@@ -74,7 +76,15 @@ describe('worker request protocol', () => {
     assertProtocolError(() => parseWorkerRequest({ ...requests[0], env: { LANG: 7 } }))
     assertProtocolError(() => parseWorkerRequest({ ...requests[2], cols: 80.5 }))
     assertProtocolError(() => parseWorkerRequest({ ...requests[4], bytes: 0 }))
-    assertProtocolError(() => parseWorkerRequest({ ...requests[5], fromSeq: 0 }))
+    assertProtocolError(() => parseWorkerRequest({ ...requests[5], bytes: -1 }))
+    assertProtocolError(() =>
+      parseWorkerRequest({ ...requests[5], bytes: TERMINAL_CREDIT_WINDOW_BYTES + 1 })
+    )
+    assert.deepEqual(parseWorkerRequest({ ...requests[5], bytes: 0 }), {
+      ...requests[5],
+      bytes: 0
+    })
+    assertProtocolError(() => parseWorkerRequest({ ...requests[6], fromSeq: 0 }))
   })
 
   it('enforces terminal dimensions at both inclusive boundaries', () => {
@@ -204,6 +214,7 @@ describe('worker messages and responses', () => {
   it('validates every request-specific success result', () => {
     assert.deepEqual(parseWorkerResponseResult('create', { pid: 123 }), { pid: 123 })
     assert.equal(parseWorkerResponseResult('input', null), null)
+    assert.equal(parseWorkerResponseResult('setCredit', null), null)
     assert.deepEqual(parseWorkerResponseResult('kill', { killed: false }), { killed: false })
     assert.deepEqual(parseWorkerResponseResult('ping', { pong: true }), { pong: true })
     assert.deepEqual(parseSupervisorResponseResult('register', { registered: true }), {

@@ -138,6 +138,15 @@ test('evicts the oldest UTF-8 bytes and reports the missing sequence range', () 
     { seq: 3, data: 'bb' },
     { seq: 4, data: 'cccc' }
   ])
+
+  const fullyEvicted = createHarness({ batchBytes: 4, ringBytes: 3 })
+  fullyEvicted.buffer.push('gone')
+  assert.deepEqual(fullyEvicted.buffer.replay(1), {
+    records: [],
+    gap: { fromSeq: 1, toSeq: 1, droppedBytes: 4 },
+    nextSeq: 2,
+    more: false
+  })
 })
 
 test('does not report already-forwarded records as a live gap when retention evicts them', () => {
@@ -183,6 +192,27 @@ test('gates forwarding on whole-record credit and caps outstanding credit', () =
   assert.equal(TERMINAL_RING_BUFFER_BYTES, 2 * 1024 * 1024)
 })
 
+test('sets credit absolutely from zero through the configured window', () => {
+  const harness = createHarness({ batchBytes: 4, creditWindowBytes: 6 })
+  harness.buffer.push('one!')
+  harness.buffer.push('two!')
+
+  assert.equal(harness.buffer.setCredit(6), 2)
+  assert.deepEqual(harness.data, [{ seq: 1, data: 'one!' }])
+
+  assert.equal(harness.buffer.setCredit(0), 0)
+  assert.deepEqual(harness.data, [{ seq: 1, data: 'one!' }])
+
+  assert.equal(harness.buffer.setCredit(4), 0)
+  assert.deepEqual(harness.data, [
+    { seq: 1, data: 'one!' },
+    { seq: 2, data: 'two!' }
+  ])
+  assert.throws(() => harness.buffer.setCredit(-1), /0 to 6/u)
+  assert.throws(() => harness.buffer.setCredit(7), /0 to 6/u)
+  assert.throws(() => harness.buffer.setCredit(1.5), /0 to 6/u)
+})
+
 test('pages replay results below the configured frame budget', () => {
   const harness = createHarness({
     batchBytes: 30,
@@ -204,6 +234,52 @@ test('pages replay results below the configured frame budget', () => {
   assert.deepEqual(
     [...first.records, ...second.records].map((record) => record.seq),
     [1, 2, 3, 4]
+  )
+})
+
+test('keeps a paged replay stable while live output evicts the ring', () => {
+  const harness = createHarness({
+    batchBytes: 30,
+    ringBytes: 120,
+    replayPageBytes: 150
+  })
+  for (const character of ['a', 'b', 'c', 'd']) {
+    harness.buffer.push(character.repeat(30))
+  }
+
+  const first = harness.buffer.replay(1)
+  assert.equal(first.more, true)
+  harness.buffer.push('e'.repeat(30))
+  harness.buffer.push('f'.repeat(30))
+
+  const stableRecords = [...first.records]
+  let nextSeq = first.nextSeq
+  let more = first.more
+  while (more) {
+    const page = harness.buffer.replay(nextSeq)
+    stableRecords.push(...page.records)
+    nextSeq = page.nextSeq
+    more = page.more
+  }
+  assert.deepEqual(
+    stableRecords.map((record) => record.seq),
+    [1, 2, 3, 4]
+  )
+
+  const fresh = harness.buffer.replay(1)
+  assert.deepEqual(fresh.gap, { fromSeq: 1, toSeq: 2, droppedBytes: 60 })
+  const freshRecords = [...fresh.records]
+  nextSeq = fresh.nextSeq
+  more = fresh.more
+  while (more) {
+    const page = harness.buffer.replay(nextSeq)
+    freshRecords.push(...page.records)
+    nextSeq = page.nextSeq
+    more = page.more
+  }
+  assert.deepEqual(
+    freshRecords.map((record) => record.seq),
+    [3, 4, 5, 6]
   )
 })
 

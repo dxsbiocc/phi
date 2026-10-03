@@ -33,6 +33,14 @@ interface BufferedRecord extends TerminalDataRecord {
   bytes: number
 }
 
+interface ReplaySnapshot {
+  records: TerminalDataRecord[]
+  gap?: TerminalGap
+  index: number
+  expectedFromSeq: number
+  emptyNextSeq: number
+}
+
 export interface TerminalOutputBufferOptions {
   onData: (record: TerminalDataRecord) => void
   onGap: (gap: TerminalGap) => void
@@ -127,6 +135,7 @@ export class TerminalOutputBuffer {
   private credit = 0
   private droppedGap: TerminalGap | undefined
   private pendingForwardGap: TerminalGap | undefined
+  private replaySnapshot: ReplaySnapshot | undefined
   private disposed = false
 
   constructor(options: TerminalOutputBufferOptions) {
@@ -217,17 +226,42 @@ export class TerminalOutputBuffer {
     return this.credit
   }
 
+  setCredit(bytes: number): number {
+    if (this.disposed) return 0
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.creditWindowBytes) {
+      throw new RangeError(`credit bytes must be an integer from 0 to ${this.creditWindowBytes}`)
+    }
+    this.credit = bytes
+    this.forwardAvailable()
+    return this.credit
+  }
+
   replay(fromSeq: number): WorkerReplayResult {
     positiveInteger(fromSeq, 'fromSeq')
-    const gap = this.replayGap(fromSeq)
+    let snapshot = this.replaySnapshot
+    if (!snapshot || snapshot.expectedFromSeq !== fromSeq) {
+      const startIndex = this.firstIndexAtOrAfter(fromSeq)
+      const gap = this.replayGap(fromSeq)
+      snapshot = {
+        records: this.records
+          .slice(startIndex)
+          .map((record) => ({ seq: record.seq, data: record.data })),
+        ...(gap ? { gap } : {}),
+        index: 0,
+        expectedFromSeq: fromSeq,
+        emptyNextSeq: Math.max(this.replayStartSequence(fromSeq), (gap?.toSeq ?? 0) + 1)
+      }
+      this.replaySnapshot = snapshot
+    }
+
+    const gap = snapshot.index === 0 ? snapshot.gap : undefined
     const records: TerminalDataRecord[] = []
     let recordsJsonBytes = 0
-    let index = this.firstIndexAtOrAfter(fromSeq)
+    let index = snapshot.index
 
-    while (index < this.records.length) {
-      const record = this.records[index]
-      const publicRecord = { seq: record.seq, data: record.data }
-      const recordJsonBytes = Buffer.byteLength(JSON.stringify(publicRecord), 'utf8')
+    while (index < snapshot.records.length) {
+      const record = snapshot.records[index]
+      const recordJsonBytes = Buffer.byteLength(JSON.stringify(record), 'utf8')
       const candidateJsonBytes = recordsJsonBytes + (records.length > 0 ? 1 : 0) + recordJsonBytes
       const nextSeq = record.seq + 1
       const fits = replayByteLength(candidateJsonBytes, gap, nextSeq, false) <= this.replayPageBytes
@@ -237,14 +271,20 @@ export class TerminalOutputBuffer {
         }
         break
       }
-      records.push(publicRecord)
+      records.push(record)
       recordsJsonBytes = candidateJsonBytes
       index += 1
     }
 
-    const more = index < this.records.length
+    const more = index < snapshot.records.length
     const lastRecord = records.at(-1)
-    const nextSeq = lastRecord ? lastRecord.seq + 1 : this.replayStartSequence(fromSeq)
+    const nextSeq = lastRecord ? lastRecord.seq + 1 : snapshot.emptyNextSeq
+    if (more) {
+      snapshot.index = index
+      snapshot.expectedFromSeq = nextSeq
+    } else if (this.replaySnapshot === snapshot) {
+      this.replaySnapshot = undefined
+    }
     return { records, ...(gap ? { gap } : {}), nextSeq, more }
   }
 
@@ -258,6 +298,7 @@ export class TerminalOutputBuffer {
     this.recordHead = 0
     this.retainedBytes = 0
     this.credit = 0
+    this.replaySnapshot = undefined
   }
 
   private ensureBatchTimer(): void {

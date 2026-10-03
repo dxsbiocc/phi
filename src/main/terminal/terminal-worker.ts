@@ -1,15 +1,8 @@
 import { PtySession, type PtyRunResult } from '@oh-my-pi/pi-natives'
 
 import { TerminalOutputBuffer } from './terminal-output-buffer'
-import {
-  TERMINAL_MAX_FRAME_BYTES,
-  encodeProtocolFrame,
-  parseProtocolLine,
-  parseWorkerRequest,
-  type WorkerEvent,
-  type WorkerRequest,
-  type WorkerResponse
-} from './terminal-protocol'
+import { parseWorkerRequest, type WorkerRequest } from './terminal-protocol'
+import { createProtocolRequestStream } from './terminal-protocol-stream'
 
 const START_TIMEOUT_MS = 10_000
 
@@ -27,18 +20,12 @@ type TerminalSession = {
 
 const sessions = new Map<string, TerminalSession>()
 
-function writeFrame(frame: WorkerResponse | WorkerEvent): void {
-  process.stdout.write(encodeProtocolFrame(frame))
-}
-
-function diagnostic(message: string): void {
-  process.stderr.write(`[terminal-worker] ${message}\n`)
-}
-
-function errorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  return (message || 'Terminal operation failed').slice(0, 4_096)
-}
+const protocol = createProtocolRequestStream<WorkerRequest>({
+  name: 'terminal-worker',
+  fallbackErrorMessage: 'Terminal operation failed',
+  parseRequest: parseWorkerRequest
+})
+const { diagnostic, errorMessage, writeFrame } = protocol
 
 function emitError(terminalId: string, message: string): void {
   writeFrame({ type: 'error', terminalId, message })
@@ -219,63 +206,14 @@ async function handleRequest(request: WorkerRequest): Promise<unknown> {
     case 'credit':
       knownSession(request.terminalId).output.addCredit(request.bytes)
       return null
+    case 'setCredit':
+      knownSession(request.terminalId).output.setCredit(request.bytes)
+      return null
     case 'replay':
       return knownSession(request.terminalId).output.replay(request.fromSeq)
     case 'ping':
       return { pong: true }
   }
-}
-
-async function processLine(line: string): Promise<void> {
-  let request: WorkerRequest
-  try {
-    request = parseWorkerRequest(parseProtocolLine(line))
-  } catch {
-    diagnostic('discarded an invalid protocol frame')
-    return
-  }
-
-  try {
-    const result = await handleRequest(request)
-    writeFrame({ id: request.id, ok: true, result })
-  } catch (error) {
-    writeFrame({ id: request.id, ok: false, error: errorMessage(error) })
-  }
-}
-
-function acceptProtocolInput(onLine: (line: string) => void): void {
-  let buffered = Buffer.alloc(0)
-  let discarding = false
-
-  process.stdin.on('data', (value: Buffer | string) => {
-    const chunk = typeof value === 'string' ? Buffer.from(value) : value
-    let offset = 0
-    while (offset < chunk.byteLength) {
-      const newline = chunk.indexOf(10, offset)
-      const end = newline < 0 ? chunk.byteLength : newline
-      const segment = chunk.subarray(offset, end)
-
-      if (!discarding) {
-        if (buffered.byteLength + segment.byteLength > TERMINAL_MAX_FRAME_BYTES) {
-          buffered = Buffer.alloc(0)
-          discarding = newline < 0
-          diagnostic('discarded an oversized protocol frame')
-        } else {
-          buffered = Buffer.concat([buffered, segment])
-          if (newline >= 0) {
-            const lineBuffer = buffered.at(-1) === 13 ? buffered.subarray(0, -1) : buffered
-            onLine(lineBuffer.toString('utf8'))
-            buffered = Buffer.alloc(0)
-          }
-        }
-      } else if (newline >= 0) {
-        discarding = false
-      }
-
-      if (newline < 0) break
-      offset = newline + 1
-    }
-  })
 }
 
 function shutdownAfterHostExit(): void {
@@ -284,9 +222,7 @@ function shutdownAfterHostExit(): void {
   process.exit(0)
 }
 
-acceptProtocolInput((line) => {
-  void processLine(line).catch(() => diagnostic('request processing failed'))
-})
+protocol.start(handleRequest)
 process.stdin.once('end', shutdownAfterHostExit)
 process.stdin.once('error', () => shutdownAfterHostExit())
 process.stdout.once('error', shutdownAfterHostExit)

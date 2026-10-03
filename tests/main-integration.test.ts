@@ -1388,6 +1388,29 @@ async function harness(
       nativeTheme: { shouldUseDarkColors: false }
     },
     './browser/browser-ipc': browserIpc,
+    './terminal/terminal-ipc': {
+      TerminalIpcCoordinator: class {
+        sendEvent(): boolean {
+          return true
+        }
+      },
+      registerTerminalRendererIpc: noop
+    },
+    './terminal/terminal-manager': {
+      TerminalManager: class {
+        async closeWorkspace(): Promise<void> {
+          return undefined
+        }
+        async dispose(): Promise<void> {
+          return undefined
+        }
+      }
+    },
+    './terminal/terminal-workspace': {
+      resolveTerminalWorkspace: (): never => {
+        throw new Error('terminal workspace is not exercised by this harness')
+      }
+    },
     './agent/browser/browser-tool-host': browserToolHost,
     './browser/browser-checkpoints': {
       FileSystemBrowserCheckpointStore: MemoryBrowserCheckpointStore

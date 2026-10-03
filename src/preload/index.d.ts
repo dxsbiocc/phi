@@ -2,6 +2,7 @@
 // hand-duplicated) — see the matching comment in preload/index.ts.
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
 import type { BrowserRendererBridge } from '../shared/browserTypes'
+import type { TerminalRendererBridge } from '../shared/terminalTypes'
 import type { WrapperCompositionCatalogItem } from '../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
 import type { RemoteHpcSettings } from '../shared/wrapperRemoteTypes'
@@ -560,6 +561,7 @@ declare global {
     platform: NodeJS.Platform
     api: {
       browser: BrowserRendererBridge
+      terminal: TerminalRendererBridge
       closeWindow: () => Promise<void>
       minimizeWindow: () => Promise<void>
       toggleWindowFullscreen: () => Promise<void>
