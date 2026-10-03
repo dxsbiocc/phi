@@ -29,6 +29,18 @@ class FakeContents extends EventEmitter implements BrowserWebContentsLike {
     goBack: (): void => undefined,
     goForward: (): void => undefined
   }
+  capturePage(): Promise<{
+    toPNG: () => Buffer
+    getSize: () => { width: number; height: number }
+  }> {
+    return Promise.resolve({
+      toPNG: () => Buffer.from('png'),
+      getSize: () => ({ width: 1, height: 1 })
+    })
+  }
+  isDestroyed(): boolean {
+    return false
+  }
   closeCalls = 0
   closeError: Error | null = null
   async loadURL(): Promise<void> {

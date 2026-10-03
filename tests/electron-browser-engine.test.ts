@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import test from 'node:test'
 import type { HandlerDetails, WindowOpenHandlerResponse } from 'electron'
-import type { EngineTabHandle } from '../src/main/browser/browser-engine'
+import {
+  MAX_BROWSER_SCREENSHOT_BYTES,
+  type EngineTabHandle
+} from '../src/main/browser/browser-engine'
 import {
   ElectronBrowserEngine,
   type BrowserSessionLike,
@@ -28,6 +31,18 @@ class RequiredWebContents extends EventEmitter implements BrowserWebContentsLike
     canGoForward: (): boolean => false,
     goBack: (): void => undefined,
     goForward: (): void => undefined
+  }
+  capturePage(): Promise<{
+    toPNG: () => Buffer
+    getSize: () => { width: number; height: number }
+  }> {
+    return Promise.resolve({
+      toPNG: () => Buffer.from('png'),
+      getSize: () => ({ width: 1, height: 1 })
+    })
+  }
+  isDestroyed(): boolean {
+    return false
   }
   async loadURL(): Promise<void> {
     return
@@ -56,6 +71,11 @@ interface HarnessOptions {
   addError?: Error
   removeError?: Error
   closeErrorAt?: number
+  captureGate?: Promise<void>
+  captureError?: Error
+  capturePng?: Buffer
+  captureSize?: { width: number; height: number }
+  destroyed?: boolean
 }
 
 function createHarness(options: HarnessOptions = {}): {
@@ -75,6 +95,8 @@ function createHarness(options: HarnessOptions = {}): {
     readonly id = nextWebContentsId++
     readonly loadedUrls: string[] = []
     closeCalls = 0
+    captureCalls = 0
+    readonly captureOptions: Array<{ stayHidden?: boolean } | undefined> = []
 
     async loadURL(url: string): Promise<void> {
       this.loadedUrls.push(url)
@@ -85,6 +107,27 @@ function createHarness(options: HarnessOptions = {}): {
     override close(): void {
       this.closeCalls += 1
       if (options.closeErrorAt === this.id) throw new Error('raw close failure')
+    }
+
+    override async capturePage(
+      _rect?: { x: number; y: number; width: number; height: number },
+      captureOptions?: { stayHidden?: boolean }
+    ): Promise<{
+      toPNG: () => Buffer
+      getSize: () => { width: number; height: number }
+    }> {
+      this.captureCalls += 1
+      this.captureOptions.push(captureOptions ? { ...captureOptions } : undefined)
+      if (options.captureGate) await options.captureGate
+      if (options.captureError) throw options.captureError
+      return {
+        toPNG: () => options.capturePng ?? Buffer.from('png'),
+        getSize: () => options.captureSize ?? { width: 1280, height: 720 }
+      }
+    }
+
+    override isDestroyed(): boolean {
+      return options.destroyed ?? false
     }
   }
 
@@ -164,7 +207,7 @@ test('creates an isolated about:blank child view with secure preferences', async
   assert.equal('preload' in views[0].options.webPreferences, false)
   assert.deepEqual(engine.capabilities(), {
     presentation: 'native',
-    screenshot: false,
+    screenshot: true,
     coordinateInput: false,
     semanticInspection: false,
     downloads: false,
@@ -419,9 +462,155 @@ test('returns safe structured errors for missing, cancelled, and unsupported com
     error: { code: 'ACTION_CANCELLED', message: 'Browser action was cancelled' }
   })
 
-  const unsupported = await engine.execute(handle, { type: 'screenshot' })
-  assert.deepEqual(unsupported, {
+  const screenshot = await engine.execute(handle, { type: 'screenshot' })
+  assert.equal(screenshot.ok, true)
+})
+
+test('captures a bounded PNG with dimensions and the current engine revision', async () => {
+  const png = Buffer.from('bounded-png')
+  const { engine, views } = createHarness({
+    capturePng: png,
+    captureSize: { width: 1600, height: 900 }
+  })
+  const handle = await engine.createTab({ partition: 'browser-project-a' })
+
+  const captured = await engine.execute(handle, { type: 'screenshot' })
+
+  assert.deepEqual(captured, {
+    ok: true,
+    state: {
+      url: 'about:blank',
+      title: 'New tab',
+      isLoading: false,
+      canGoBack: false,
+      canGoForward: false,
+      documentRevision: 0,
+      navigationRevision: 0
+    },
+    screenshot: {
+      mediaType: 'image/png',
+      data: png.toString('base64'),
+      width: 1600,
+      height: 900,
+      documentRevision: 0
+    }
+  })
+  assert.equal(views[0].webContents.captureCalls, 1)
+  assert.deepEqual(views[0].webContents.captureOptions, [{ stayHidden: true }])
+})
+
+test('rejects destroyed, failed, empty, and oversized captures without raw errors', async () => {
+  const cases = [
+    {
+      name: 'destroyed',
+      options: { destroyed: true },
+      code: 'RENDERER_CRASHED'
+    },
+    {
+      name: 'capture failure',
+      options: { captureError: new Error('raw capture secret') },
+      code: 'RENDERER_CRASHED'
+    },
+    {
+      name: 'empty',
+      options: { capturePng: Buffer.alloc(0) },
+      code: 'CAPABILITY_UNAVAILABLE'
+    },
+    {
+      name: 'oversized',
+      options: { capturePng: Buffer.alloc(MAX_BROWSER_SCREENSHOT_BYTES + 1) },
+      code: 'CAPABILITY_UNAVAILABLE'
+    }
+  ] as const
+
+  for (const entry of cases) {
+    const { engine } = createHarness(entry.options)
+    const handle = await engine.createTab({ partition: 'browser-project-a' })
+    const captured = await engine.execute(handle, { type: 'screenshot' })
+    assert.equal(captured.ok, false, entry.name)
+    assert.equal(!captured.ok && captured.error.code, entry.code, entry.name)
+    assert.equal(JSON.stringify(captured).includes('raw capture secret'), false, entry.name)
+  }
+})
+
+test('returns capability unavailable when the capture primitive is missing', async () => {
+  const { engine, views } = createHarness()
+  const handle = await engine.createTab({ partition: 'browser-project-a' })
+  views[0].webContents.capturePage = undefined
+
+  const captured = await engine.execute(handle, { type: 'screenshot' })
+
+  assert.deepEqual(captured, {
     ok: false,
     error: { code: 'CAPABILITY_UNAVAILABLE', message: 'Browser command is unavailable' }
+  })
+})
+
+test('discards a delayed capture after abort or tab disposal', async () => {
+  let releaseAbort!: () => void
+  const abortGate = new Promise<void>((resolve) => {
+    releaseAbort = resolve
+  })
+  const abortedHarness = createHarness({ captureGate: abortGate })
+  const abortedHandle = await abortedHarness.engine.createTab({ partition: 'browser-project-a' })
+  const controller = new AbortController()
+  const pendingAbort = abortedHarness.engine.execute(
+    abortedHandle,
+    { type: 'screenshot' },
+    controller.signal
+  )
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  controller.abort()
+  const abortResult = await Promise.race([
+    pendingAbort,
+    new Promise<'capture-still-pending'>((resolve) =>
+      setTimeout(() => resolve('capture-still-pending'), 20)
+    )
+  ])
+  assert.notEqual(abortResult, 'capture-still-pending')
+  assert.deepEqual(abortResult, {
+    ok: false,
+    error: { code: 'ACTION_CANCELLED', message: 'Browser action was cancelled' }
+  })
+  releaseAbort()
+
+  let releaseDisposed!: () => void
+  const disposedGate = new Promise<void>((resolve) => {
+    releaseDisposed = resolve
+  })
+  const disposedHarness = createHarness({ captureGate: disposedGate })
+  const disposedHandle = await disposedHarness.engine.createTab({ partition: 'browser-project-a' })
+  const pendingDisposed = disposedHarness.engine.execute(disposedHandle, { type: 'screenshot' })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  await disposedHarness.engine.disposeTab(disposedHandle)
+  const disposedResult = await Promise.race([
+    pendingDisposed,
+    new Promise<'capture-still-pending'>((resolve) =>
+      setTimeout(() => resolve('capture-still-pending'), 20)
+    )
+  ])
+  assert.notEqual(disposedResult, 'capture-still-pending')
+  assert.deepEqual(disposedResult, {
+    ok: false,
+    error: { code: 'TAB_NOT_FOUND', message: 'Browser tab was not found' }
+  })
+  releaseDisposed()
+})
+
+test('rejects a delayed capture when its document revision changes', async () => {
+  let releaseCapture!: () => void
+  const captureGate = new Promise<void>((resolve) => {
+    releaseCapture = resolve
+  })
+  const { engine, views } = createHarness({ captureGate })
+  const handle = await engine.createTab({ partition: 'browser-project-a' })
+  const pending = engine.execute(handle, { type: 'screenshot' })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  views[0].webContents.emit('did-frame-navigate', {}, 'https://new-document.test/', 200, 'OK', true)
+  releaseCapture()
+
+  assert.deepEqual(await pending, {
+    ok: false,
+    error: { code: 'STALE_DOCUMENT', message: 'Browser page changed during capture' }
   })
 })

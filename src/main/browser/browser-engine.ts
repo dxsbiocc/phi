@@ -1,11 +1,12 @@
 import type {
   BrowserCapabilities,
   BrowserErrorCode,
-  BrowserScreenshot,
   BrowserViewport
 } from '../../shared/browserTypes'
 
 declare const engineTabHandleBrand: unique symbol
+
+export const MAX_BROWSER_SCREENSHOT_BYTES = 8 * 1024 * 1024
 
 export type EngineTabHandle = string & {
   readonly [engineTabHandleBrand]: 'EngineTabHandle'
@@ -36,6 +37,14 @@ export interface EngineTargetDescriptor {
   submitsForm: boolean
 }
 
+export interface EngineScreenshot {
+  mediaType: 'image/png'
+  data: string
+  width: number
+  height: number
+  documentRevision: number
+}
+
 export type EngineCommand =
   | { type: 'navigate'; url: string }
   | { type: 'history'; direction: 'back' | 'forward' }
@@ -55,7 +64,7 @@ export type EngineResult =
   | {
       ok: true
       state: EngineTabState
-      screenshot?: BrowserScreenshot
+      screenshot?: EngineScreenshot
       target?: EngineTargetDescriptor
     }
   | {

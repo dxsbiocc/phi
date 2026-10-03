@@ -100,7 +100,11 @@ test('reloads and stops a tab', async () => {
 })
 
 test('returns the configured screenshot fixture', async () => {
-  const engine = createEngine()
+  const engine = new InMemoryBrowserEngine({
+    capabilities,
+    screenshotData: 'synthetic-png-base64',
+    screenshotSize: { width: 1280, height: 720 }
+  })
   const handle = await engine.createTab({ partition: 'browser-project-a' })
 
   const result = await engine.execute(handle, { type: 'screenshot' })
@@ -109,6 +113,8 @@ test('returns the configured screenshot fixture', async () => {
   assert.deepEqual(result.ok && result.screenshot, {
     mediaType: 'image/png',
     data: 'synthetic-png-base64',
+    width: 1280,
+    height: 720,
     documentRevision: 0
   })
 })

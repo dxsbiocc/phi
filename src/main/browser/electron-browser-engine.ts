@@ -29,6 +29,10 @@ import {
   type NativeBrowserViewLike,
   type NativeBrowserWindowLike
 } from './electron-browser-viewport'
+import {
+  captureElectronBrowserScreenshot,
+  type ElectronScreenshotWebContentsLike
+} from './electron-browser-screenshot'
 export type { BrowserSessionLike } from './electron-browser-session-policy'
 
 export type SecureBrowserWebPreferences = Pick<
@@ -62,7 +66,7 @@ export type BrowserWebContentsLike = Pick<
 > & {
   session: BrowserSessionLike
   navigationHistory: BrowserNavigationHistoryLike
-}
+} & ElectronScreenshotWebContentsLike
 
 export interface BrowserWebContentsViewLike extends NativeBrowserViewLike {
   webContents: BrowserWebContentsLike
@@ -102,6 +106,7 @@ interface ElectronTabRecord {
   cleanupAttempted: boolean
   closeSucceeded: boolean
   initializing: boolean
+  lifecycle: AbortController
   state: EngineTabState
   listeners: Array<{ event: string; listener: (...args: unknown[]) => void }>
   releaseSessionPolicy?: () => boolean
@@ -114,7 +119,7 @@ interface GenericEventSource {
 
 const CAPABILITIES: BrowserCapabilities = {
   presentation: 'native',
-  screenshot: false,
+  screenshot: true,
   coordinateInput: false,
   semanticInspection: false,
   downloads: false,
@@ -203,6 +208,7 @@ export class ElectronBrowserEngine implements BrowserEngine {
         cleanupAttempted: false,
         closeSucceeded: false,
         initializing: true,
+        lifecycle: new AbortController(),
         state: initialState(),
         listeners: []
       }
@@ -285,6 +291,14 @@ export class ElectronBrowserEngine implements BrowserEngine {
             })
           }
           break
+        case 'screenshot':
+          return await captureElectronBrowserScreenshot({
+            webContents: record.view.webContents,
+            state: record.state,
+            signal,
+            invalidated: record.lifecycle.signal,
+            isCurrent: () => this.#tabs.get(handle) === record && !record.cleanupAttempted
+          })
         default:
           return this.#unavailable()
       }
@@ -583,6 +597,7 @@ export class ElectronBrowserEngine implements BrowserEngine {
   #cleanupRecord(record: ElectronTabRecord): boolean {
     if (record.cleanupAttempted) return !record.closeSucceeded
     record.cleanupAttempted = true
+    record.lifecycle.abort()
     let failed = this.#viewportController.prepareForClose(record.handle)
     try {
       record.view.webContents.close()

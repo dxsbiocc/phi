@@ -4,6 +4,7 @@ import type {
   BrowserCommand,
   BrowserError,
   BrowserOutcome,
+  BrowserScreenshot,
   BrowserTabSnapshot,
   BrowserViewport,
   BrowserWorkspaceEvent,
@@ -39,6 +40,7 @@ import { BrowserWorkspaceCleanup } from './browser-workspace-cleanup'
 import { BrowserWorkspacePresentation } from './browser-workspace-presentation'
 import { BrowserWorkspaceRequestCache } from './browser-workspace-request-cache'
 import { openActiveBrowserTabExternally } from './browser-workspace-external'
+import { captureBrowserWorkspaceScreenshot } from './browser-workspace-screenshot'
 
 type BrowserUrlNormalizer = (input: string, context: BrowserPolicyContext) => BrowserUrlPolicyResult
 
@@ -201,7 +203,8 @@ export class BrowserWorkspace {
     signal: AbortSignal
   ): Promise<BrowserOutcome> {
     if (this.#disposed) return this.#failure(this.#disposedError())
-    const cached = this.#requestCache.get(requestKey)
+    const cacheable = command.type !== 'snapshot'
+    const cached = cacheable ? this.#requestCache.get(requestKey) : undefined
     if (cached) return cached
 
     let outcome: BrowserOutcome
@@ -223,7 +226,7 @@ export class BrowserWorkspace {
       }
     }
 
-    if (!this.#disposed) this.#requestCache.remember(requestKey, outcome)
+    if (!this.#disposed && cacheable) this.#requestCache.remember(requestKey, outcome)
     return outcome
   }
 
@@ -276,9 +279,7 @@ export class BrowserWorkspace {
         return result.ok ? this.#success() : this.#failure(result.error)
       }
       case 'snapshot':
-        return this.#tabCollection.find(command.tabId)
-          ? this.#success()
-          : this.#failure(this.#tabNotFound(command.tabId))
+        return this.#captureScreenshot(command.tabId, signal)
       case 'restore':
         return this.#restore(command.tabId, actor.kind === 'agent', signal)
       default:
@@ -522,6 +523,20 @@ export class BrowserWorkspace {
     return this.#success()
   }
 
+  async #captureScreenshot(tabId: string, signal?: AbortSignal): Promise<BrowserOutcome> {
+    const tab = this.#tabCollection.find(tabId)
+    if (!tab) return this.#failure(this.#tabNotFound(tabId))
+    const result = await captureBrowserWorkspaceScreenshot({
+      engine: this.#engine,
+      tabs: this.#tabCollection,
+      tab,
+      screenshotAvailable: this.#capabilities.screenshot,
+      signal,
+      isDisposed: () => this.#disposed
+    })
+    return result.ok ? this.#success(result.screenshot) : this.#failure(result.error)
+  }
+
   async #reload(tabId: string, signal?: AbortSignal): Promise<BrowserOutcome> {
     const tab = this.#tabCollection.find(tabId)
     if (!tab) return this.#failure(this.#tabNotFound(tabId))
@@ -666,8 +681,12 @@ export class BrowserWorkspace {
     }
   }
 
-  #success(): BrowserOutcome {
-    return { ok: true, snapshot: this.snapshot() }
+  #success(screenshot?: BrowserScreenshot): BrowserOutcome {
+    return {
+      ok: true,
+      snapshot: this.snapshot(),
+      ...(screenshot ? { screenshot: { ...screenshot } } : {})
+    }
   }
 
   #failure(error: BrowserError): BrowserOutcome {

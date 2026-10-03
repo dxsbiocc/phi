@@ -150,6 +150,10 @@ export type BrowserUiCommand = Extract<
 export interface BrowserScreenshot {
   mediaType: 'image/png'
   data: string
+  width: number
+  height: number
+  tabId: string
+  url: string
   documentRevision: number
 }
 

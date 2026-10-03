@@ -77,6 +77,20 @@ class FakeWebContents extends EventEmitter {
     super()
   }
 
+  capturePage(): Promise<{
+    toPNG: () => Buffer
+    getSize: () => { width: number; height: number }
+  }> {
+    return Promise.resolve({
+      toPNG: () => Buffer.from('png'),
+      getSize: () => ({ width: 1, height: 1 })
+    })
+  }
+
+  isDestroyed(): boolean {
+    return false
+  }
+
   async loadURL(url: string): Promise<void> {
     this.loadedUrls.push(url)
     if (this.loadedUrls.length === 1) {

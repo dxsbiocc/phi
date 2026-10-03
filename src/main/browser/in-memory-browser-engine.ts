@@ -28,6 +28,7 @@ export interface InMemoryBrowserEngineOptions {
   idFactory?: () => string
   now?: () => number
   screenshotData?: string
+  screenshotSize?: { width: number; height: number }
   targetDescriptor?: EngineTargetDescriptor
 }
 
@@ -58,6 +59,7 @@ export class InMemoryBrowserEngine implements BrowserEngine {
   readonly #idFactory: () => string
   readonly #now: () => number
   readonly #screenshotData: string
+  readonly #screenshotSize: { width: number; height: number }
   readonly #targetDescriptor?: EngineTargetDescriptor
   readonly #tabs = new Map<EngineTabHandle, InMemoryTab>()
   readonly #listeners = new Set<(event: EngineEvent) => void>()
@@ -69,6 +71,7 @@ export class InMemoryBrowserEngine implements BrowserEngine {
     this.#idFactory = options.idFactory ?? (() => `engine-tab-${++this.#nextId}`)
     this.#now = options.now ?? Date.now
     this.#screenshotData = options.screenshotData ?? DEFAULT_SCREENSHOT
+    this.#screenshotSize = { ...(options.screenshotSize ?? { width: 1, height: 1 }) }
     this.#targetDescriptor = options.targetDescriptor
   }
 
@@ -149,6 +152,8 @@ export class InMemoryBrowserEngine implements BrowserEngine {
           screenshot: {
             mediaType: 'image/png',
             data: this.#screenshotData,
+            width: this.#screenshotSize.width,
+            height: this.#screenshotSize.height,
             documentRevision: tab.state.documentRevision
           }
         }
