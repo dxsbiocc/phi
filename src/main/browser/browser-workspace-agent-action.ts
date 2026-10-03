@@ -6,20 +6,31 @@ import {
   BROWSER_SAFE_MODIFIERS,
   type BrowserActor,
   type BrowserCommand,
-  type BrowserError,
-  type BrowserViewport
+  type BrowserError
 } from '../../shared/browserTypes'
-import type { BrowserScreenshot } from '../../shared/browserTypes'
-import type { BrowserEngine, EngineCommand, EngineTargetInspection } from './browser-engine'
+import type { BrowserEngine, EngineTargetInspection } from './browser-engine'
 import type { BrowserTabCollection, BrowserTabRecord } from './browser-tab-collection'
-import { isLoopbackBrowserHostname } from './browser-policy'
-import { captureBrowserWorkspaceScreenshot } from './browser-workspace-screenshot'
-import {
-  reconcileEngineResult,
-  safeBrowserEngineError,
-  workspaceEngineResult
-} from './browser-workspace-engine-state'
+import { safeBrowserEngineError } from './browser-workspace-engine-state'
 import { authorizeBrowserTarget, validatedBrowserTargetInspection } from './browser-target-policy'
+import {
+  BrowserActionApprovalLeases,
+  browserActionDigest,
+  browserActionApprovalRequirement,
+  browserTargetDescriptorDigest,
+  browserTextDigest,
+  isLoopbackBrowserActionUrl,
+  type BrowserActionApprovalIdentity,
+  type BrowserActionApprovalPrompt,
+  type BrowserActionConsequence
+} from './browser-approval'
+import {
+  executeBrowserAgentAction,
+  type BrowserAgentActionExecutionResult
+} from './browser-agent-action-execution'
+import {
+  type BrowserAgentScreenshotLease,
+  type BrowserAgentScreenshotLeases
+} from './browser-agent-screenshot-leases'
 
 export type BrowserAgentActionCommand = Extract<
   BrowserCommand,
@@ -43,62 +54,6 @@ export function normalizeBrowserActionStabilityMs(value: number | undefined): nu
     : 75
 }
 
-export type BrowserAgentScreenshotLease = {
-  runId: string
-  documentRevision: number
-  width: number
-  height: number
-}
-
-export class BrowserAgentScreenshotLeases {
-  readonly #leases = new Map<string, BrowserAgentScreenshotLease>()
-  readonly #viewports = new Map<string, BrowserViewport | null>()
-
-  get(tabId: string): BrowserAgentScreenshotLease | undefined {
-    return this.#leases.get(tabId)
-  }
-
-  remember(tabId: string, lease: BrowserAgentScreenshotLease): void {
-    this.#leases.set(tabId, lease)
-  }
-
-  consume(tabId: string, runId: string, documentRevision: number): boolean {
-    const lease = this.#leases.get(tabId)
-    if (lease?.runId !== runId || lease.documentRevision !== documentRevision) return false
-    this.#leases.delete(tabId)
-    return true
-  }
-
-  invalidate(tabId: string): void {
-    this.#leases.delete(tabId)
-  }
-
-  remove(tabId: string): void {
-    this.#leases.delete(tabId)
-    this.#viewports.delete(tabId)
-  }
-
-  viewportApplied(tabId: string, viewport: BrowserViewport | null): void {
-    if (JSON.stringify(this.#viewports.get(tabId)) !== JSON.stringify(viewport)) {
-      this.#leases.delete(tabId)
-    }
-    this.#viewports.set(tabId, viewport ? { ...viewport } : null)
-    if (!viewport) return
-    for (const otherTabId of this.#viewports.keys()) {
-      if (otherTabId !== tabId) this.#leases.delete(otherTabId)
-    }
-  }
-
-  clear(): void {
-    this.#leases.clear()
-    this.#viewports.clear()
-  }
-
-  invalidateAll(): void {
-    this.#leases.clear()
-  }
-}
-
 export type BrowserAgentActionAccess = { ok: true } | { ok: false; error: BrowserError }
 
 function error(
@@ -106,20 +61,8 @@ function error(
   code: BrowserError['code'],
   message: string,
   retryable = false
-): BrowserAgentActionAccess {
+): { ok: false; error: BrowserError } {
   return { ok: false, error: { code, message, retryable, tabId } }
-}
-
-export function isProjectLoopbackPage(url: string): boolean {
-  try {
-    const parsed = new URL(url)
-    return (
-      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
-      isLoopbackBrowserHostname(parsed.hostname)
-    )
-  } catch {
-    return false
-  }
 }
 
 export function authorizeBrowserAgentAction(options: {
@@ -159,16 +102,11 @@ export function authorizeBrowserAgentAction(options: {
   if (lease?.runId !== actor.runId || lease.documentRevision !== tab.snapshot.documentRevision) {
     return error(tabId, 'STALE_DOCUMENT', 'Take a new browser snapshot before sending input', true)
   }
-  if (!isProjectLoopbackPage(tab.snapshot.url)) {
-    return error(
-      tabId,
-      'PERMISSION_DENIED',
-      'External-site browser input requires approval that is not available yet'
-    )
-  }
   if (
     command.type === 'click' &&
-    (command.consequence !== 'read' ||
+    ((command.consequence !== 'read' &&
+      command.consequence !== 'write' &&
+      command.consequence !== 'irreversible') ||
       !Number.isFinite(command.x) ||
       command.x < 0 ||
       command.x >= lease.width ||
@@ -186,7 +124,7 @@ export function authorizeBrowserAgentAction(options: {
   }
   if (
     command.type === 'typeText' &&
-    (command.consequence !== 'write' ||
+    ((command.consequence !== 'write' && command.consequence !== 'irreversible') ||
       command.text.length === 0 ||
       Buffer.byteLength(command.text, 'utf8') > BROWSER_MAX_TEXT_BYTES)
   ) {
@@ -217,178 +155,33 @@ export function authorizeBrowserAgentAction(options: {
   return { ok: true }
 }
 
-export async function waitForBrowserActionStability(
-  milliseconds: number,
-  signal: AbortSignal
-): Promise<boolean> {
-  if (signal.aborted) return false
-  if (milliseconds <= 0) {
-    await Promise.resolve()
-    return !signal.aborted
-  }
-  return new Promise<boolean>((resolve) => {
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort)
-      resolve(true)
-    }, milliseconds)
-    const onAbort = (): void => {
-      clearTimeout(timer)
-      resolve(false)
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
-}
-
-export type BrowserAgentActionExecutionResult =
-  { ok: true; screenshot: BrowserScreenshot } | { ok: false; error: BrowserError }
-
-function engineActionCommand(
-  tab: BrowserTabRecord,
-  command: BrowserAgentActionCommand,
+export interface BrowserPreparedAgentAction {
   expectedTarget?: EngineTargetInspection
-): Extract<EngineCommand, { type: 'click' | 'typeText' | 'scroll' | 'keypress' }> | null {
-  const expectedDocumentRevision =
-    command.expectedDocumentRevision - tab.engineDocumentRevisionOffset
-  if (expectedDocumentRevision < 0) return null
-  if (command.type === 'click') {
-    return {
-      type: 'click',
-      x: command.x,
-      y: command.y,
-      expectedDocumentRevision,
-      ...(expectedTarget ? { expectedTarget } : {})
-    }
-  }
-  if (command.type === 'typeText') {
-    return {
-      type: 'typeText',
-      text: command.text,
-      expectedDocumentRevision,
-      ...(expectedTarget ? { expectedTarget } : {})
-    }
-  }
-  if (command.type === 'scroll') {
-    return {
-      type: 'scroll',
-      deltaX: command.deltaX,
-      deltaY: command.deltaY,
-      expectedDocumentRevision
-    }
-  }
-  return {
-    type: 'keypress',
-    key: command.key,
-    ...(command.modifiers ? { modifiers: [...command.modifiers] } : {}),
-    expectedDocumentRevision
-  }
+  approvalIdentity: BrowserActionApprovalIdentity | null
+  approvalPrompt: BrowserActionApprovalPrompt | null
+  originalScreenshotLease: BrowserAgentScreenshotLease
 }
 
-export async function executeBrowserAgentAction(options: {
-  engine: BrowserEngine
-  tabs: BrowserTabCollection
-  tab: BrowserTabRecord
-  command: BrowserAgentActionCommand
-  expectedTarget?: EngineTargetInspection
-  screenshotAvailable: boolean
-  actionStabilityMs: number
-  signal: AbortSignal
-  isDisposed: () => boolean
-  onChanged: () => void
-  onDocumentChanged: () => void
-}): Promise<BrowserAgentActionExecutionResult> {
-  const tabId = options.tab.snapshot.id
-  const engineCommand = engineActionCommand(options.tab, options.command, options.expectedTarget)
-  if (!engineCommand || !options.tab.handle) {
-    return {
-      ok: false,
-      error: {
-        code: engineCommand ? 'CAPABILITY_UNAVAILABLE' : 'STALE_DOCUMENT',
-        message: engineCommand
-          ? 'Browser input is unavailable'
-          : 'The browser page changed before the action could run',
-        retryable: !engineCommand,
-        tabId
-      }
-    }
-  }
+type BrowserAgentActionPreparationResult =
+  { ok: true; prepared: BrowserPreparedAgentAction } | { ok: false; error: BrowserError }
 
-  const engineResult = await options.engine.execute(
-    options.tab.handle,
-    engineCommand,
-    options.signal
-  )
-  const result = workspaceEngineResult(options.tab, engineResult)
-  if (!result.ok) {
-    return { ok: false, error: { ...safeBrowserEngineError(result.error), tabId } }
-  }
-  const previousDocumentRevision = options.tab.snapshot.documentRevision
-  if (reconcileEngineResult(options.tab, result)) options.onChanged()
-  if (options.tab.snapshot.documentRevision !== previousDocumentRevision) {
-    options.onDocumentChanged()
-  }
-
-  if (!(await waitForBrowserActionStability(options.actionStabilityMs, options.signal))) {
-    return {
-      ok: false,
-      error: {
-        code: 'ACTION_CANCELLED',
-        message: 'Browser input may have been delivered; no retry was attempted',
-        retryable: false,
-        tabId
-      }
-    }
-  }
-
-  const capture = (): ReturnType<typeof captureBrowserWorkspaceScreenshot> =>
-    captureBrowserWorkspaceScreenshot({
-      engine: options.engine,
-      tabs: options.tabs,
-      tab: options.tab,
-      screenshotAvailable: options.screenshotAvailable,
-      signal: options.signal,
-      isDisposed: options.isDisposed
-    })
-  let captured = await capture()
-  if (!captured.ok && captured.error.code === 'STALE_DOCUMENT' && !options.signal.aborted) {
-    if (await waitForBrowserActionStability(options.actionStabilityMs, options.signal)) {
-      captured = await capture()
-    }
-  }
-  if (!captured.ok) {
-    return {
-      ok: false,
-      error: {
-        code: 'ACTION_TIMEOUT',
-        message: 'Browser input was delivered; take a new snapshot to verify the result',
-        retryable: false,
-        tabId
-      }
-    }
-  }
-  return captured
-}
-
-export async function executeAuthorizedBrowserAgentAction(options: {
-  actor: BrowserActor
+export async function prepareBrowserAgentAction(options: {
+  actor: Extract<BrowserActor, { kind: 'agent' }>
   command: BrowserAgentActionCommand
   engine: BrowserEngine
-  tabs: BrowserTabCollection
   tab: BrowserTabRecord
   activeTabId: string | null
   leases: BrowserAgentScreenshotLeases
-  screenshotAvailable: boolean
   coordinateInputAvailable: boolean
-  actionStabilityMs: number
   signal: AbortSignal
-  isDisposed: () => boolean
-  onChanged: () => void
-}): Promise<BrowserAgentActionExecutionResult> {
+}): Promise<BrowserAgentActionPreparationResult> {
+  const originalScreenshotLease = options.leases.get(options.command.tabId)
   const access = authorizeBrowserAgentAction({
     actor: options.actor,
     command: options.command,
     tab: options.tab,
     activeTabId: options.activeTabId,
-    lease: options.leases.get(options.command.tabId)
+    lease: originalScreenshotLease
   })
   if (!access.ok) return access
   if (!options.coordinateInputAvailable || !options.tab.handle) {
@@ -468,9 +261,215 @@ export async function executeAuthorizedBrowserAgentAction(options: {
     const targetAccess = authorizeBrowserTarget({
       action: options.command.type,
       tabId: options.command.tabId,
-      inspection: expectedTarget
+      inspection: expectedTarget,
+      consequence: options.command.consequence
     })
     if (!targetAccess.ok) return targetAccess
+  }
+  const consequence: BrowserActionConsequence =
+    options.command.type === 'click' || options.command.type === 'typeText'
+      ? options.command.consequence
+      : 'read'
+  const requirement = browserActionApprovalRequirement({
+    url: options.tab.snapshot.url,
+    action: options.command.type,
+    consequence,
+    submitsForm: expectedTarget?.descriptor.submitsForm === true
+  })
+  const externalPage = !isLoopbackBrowserActionUrl(options.tab.snapshot.url)
+  const externalSubmitIsSafeGet = (() => {
+    if (!externalPage || !expectedTarget?.descriptor.submitsForm) return true
+    if (
+      expectedTarget.descriptor.formMethod !== 'get' ||
+      !expectedTarget.descriptor.formAction ||
+      !options.tab.snapshot.origin
+    ) {
+      return false
+    }
+    try {
+      return new URL(expectedTarget.descriptor.formAction).origin === options.tab.snapshot.origin
+    } catch {
+      return false
+    }
+  })()
+  if (!externalSubmitIsSafeGet) {
+    return error(
+      options.command.tabId,
+      'USER_HANDOFF_REQUIRED',
+      'External form submission requires user takeover'
+    )
+  }
+  if (
+    options.command.type === 'click' &&
+    externalPage &&
+    expectedTarget &&
+    !expectedTarget.descriptor.submitsForm &&
+    (expectedTarget.descriptor.tagName !== 'A' || options.command.consequence !== 'read')
+  ) {
+    return error(
+      options.command.tabId,
+      'USER_HANDOFF_REQUIRED',
+      'This external browser target requires user takeover'
+    )
+  }
+  let approvalIdentity: BrowserActionApprovalIdentity | null = null
+  let approvalPrompt: BrowserActionApprovalPrompt | null = null
+  if (requirement.kind === 'confirm') {
+    if (options.actor.kind !== 'agent' || !options.tab.snapshot.origin) {
+      return {
+        ok: false,
+        error: {
+          code: 'PERMISSION_DENIED',
+          message: 'Browser input requires explicit user approval',
+          retryable: false,
+          tabId: options.command.tabId
+        }
+      }
+    }
+    approvalIdentity = {
+      sessionId: options.actor.sessionId,
+      runId: options.actor.runId,
+      toolCallId: options.actor.toolCallId,
+      requestId: options.command.requestId,
+      tabId: options.command.tabId,
+      origin: options.tab.snapshot.origin,
+      documentRevision: options.command.expectedDocumentRevision,
+      action: options.command.type,
+      consequence,
+      targetFingerprint: expectedTarget?.fingerprint ?? null,
+      targetDescriptorDigest: browserTargetDescriptorDigest(expectedTarget),
+      textDigest:
+        options.command.type === 'typeText' ? browserTextDigest(options.command.text) : null,
+      actionDigest: browserActionDigest(options.command)
+    }
+    approvalPrompt = {
+      sessionId: options.actor.sessionId,
+      runId: options.actor.runId,
+      toolCallId: options.actor.toolCallId,
+      origin: options.tab.snapshot.origin,
+      action: options.command.type,
+      consequence,
+      reason: requirement.reason
+    }
+  }
+  if (!originalScreenshotLease) {
+    return error(
+      options.command.tabId,
+      'STALE_DOCUMENT',
+      'Take a new browser snapshot before sending input',
+      true
+    )
+  }
+  return {
+    ok: true,
+    prepared: {
+      ...(expectedTarget ? { expectedTarget } : {}),
+      approvalIdentity,
+      approvalPrompt,
+      originalScreenshotLease: { ...originalScreenshotLease }
+    }
+  }
+}
+
+export async function executePreparedBrowserAgentAction(options: {
+  actor: Extract<BrowserActor, { kind: 'agent' }>
+  command: BrowserAgentActionCommand
+  prepared: BrowserPreparedAgentAction
+  engine: BrowserEngine
+  tabs: BrowserTabCollection
+  tab: BrowserTabRecord
+  activeTabId: string | null
+  leases: BrowserAgentScreenshotLeases
+  approvalLeases: BrowserActionApprovalLeases
+  screenshotAvailable: boolean
+  actionStabilityMs: number
+  signal: AbortSignal
+  isDisposed: () => boolean
+  onChanged: () => void
+}): Promise<BrowserAgentActionExecutionResult> {
+  const freshAccess = authorizeBrowserAgentAction({
+    actor: options.actor,
+    command: options.command,
+    tab: options.tab,
+    activeTabId: options.activeTabId,
+    lease: options.leases.get(options.command.tabId)
+  })
+  if (!freshAccess.ok) return freshAccess
+  const approvalIdentity = options.prepared.approvalIdentity
+  if (approvalIdentity && browserActionDigest(options.command) !== approvalIdentity.actionDigest) {
+    return error(
+      options.command.tabId,
+      'PERMISSION_DENIED',
+      'Browser action changed after approval',
+      false
+    )
+  }
+  if (approvalIdentity && options.tab.snapshot.origin !== approvalIdentity.origin) {
+    return error(
+      options.command.tabId,
+      'STALE_DOCUMENT',
+      'The browser origin changed before approval completed',
+      true
+    )
+  }
+  let expectedTarget = options.prepared.expectedTarget
+  if (expectedTarget) {
+    const expectedDocumentRevision =
+      options.command.expectedDocumentRevision - options.tab.engineDocumentRevisionOffset
+    if (expectedDocumentRevision < 0 || !options.tab.handle) {
+      return error(
+        options.command.tabId,
+        'STALE_DOCUMENT',
+        'The browser page changed before approval completed',
+        true
+      )
+    }
+    const inspectedAgain = await options.engine.execute(
+      options.tab.handle,
+      options.command.type === 'click'
+        ? {
+            type: 'describeTarget',
+            target: 'point',
+            x: options.command.x,
+            y: options.command.y,
+            expectedDocumentRevision
+          }
+        : { type: 'describeTarget', target: 'focused', expectedDocumentRevision },
+      options.signal
+    )
+    const freshTarget = validatedBrowserTargetInspection(inspectedAgain)
+    if (
+      !freshTarget ||
+      freshTarget.fingerprint !== expectedTarget.fingerprint ||
+      (approvalIdentity &&
+        browserTargetDescriptorDigest(freshTarget) !== approvalIdentity.targetDescriptorDigest)
+    ) {
+      return error(
+        options.command.tabId,
+        'STALE_DOCUMENT',
+        'The browser target changed before approval completed',
+        true
+      )
+    }
+    const targetAccess = authorizeBrowserTarget({
+      action: options.command.type as 'click' | 'typeText',
+      tabId: options.command.tabId,
+      inspection: freshTarget,
+      consequence:
+        options.command.type === 'click' || options.command.type === 'typeText'
+          ? options.command.consequence
+          : undefined
+    })
+    if (!targetAccess.ok) return targetAccess
+    expectedTarget = freshTarget
+  }
+  if (approvalIdentity && !options.approvalLeases.consume(approvalIdentity)) {
+    return error(
+      options.command.tabId,
+      'STALE_DOCUMENT',
+      'Browser approval expired before input delivery',
+      true
+    )
   }
   if (
     options.actor.kind !== 'agent' ||

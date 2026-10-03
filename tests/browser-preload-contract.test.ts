@@ -47,7 +47,7 @@ test('shared browser renderer bridge exposes one Electron-free public contract',
   assert.match(bridge, /snapshot\(\): Promise<BrowserWorkspaceSnapshot>/)
   assert.match(
     bridge,
-    /setViewport\(input: \{ tabId: string; viewport: BrowserViewport \| null \}\): Promise<void>/
+    /setViewport\(input: \{[\s\S]{0,160}sessionId: string[\s\S]{0,160}sessionGeneration: number[\s\S]{0,160}tabId: string[\s\S]{0,160}viewport: BrowserViewport \| null[\s\S]{0,80}\): Promise<void>/
   )
   assert.match(
     bridge,
@@ -116,7 +116,7 @@ test('preload and renderer expose only one namespaced browser bridge using share
   assert.match(design, /execute\(command: BrowserUiCommand\): Promise<BrowserOutcome>/)
   assert.match(
     design,
-    /setViewport\(input: \{ tabId: string; viewport: BrowserViewport \| null \}\): Promise<void>/
+    /setViewport\(input: \{[\s\S]{0,160}sessionId: string[\s\S]{0,160}sessionGeneration: number[\s\S]{0,160}tabId: string[\s\S]{0,160}viewport: BrowserViewport \| null[\s\S]{0,80}\): Promise<void>/
   )
   assert.match(
     design,
@@ -170,6 +170,8 @@ test('preload browser bridge invokes exact channels and independently unsubscrib
   await api.browser.execute(command)
   await api.browser.snapshot()
   const viewportRequest = {
+    sessionId: 'phi-session',
+    sessionGeneration: 3,
     tabId: 'tab-1',
     viewport: { x: 1, y: 2, width: 300, height: 200 }
   }

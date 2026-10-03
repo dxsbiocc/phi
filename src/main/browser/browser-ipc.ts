@@ -51,6 +51,7 @@ export interface BrowserWorkspaceRegistryLike {
 export interface BrowserIpcSession {
   sessionId: string
   owner: BrowserWorkspaceOwner
+  sessionGeneration?: number
 }
 
 export interface BrowserIpcCoordinatorOptions {
@@ -234,7 +235,6 @@ export function parseBrowserCommand(input: unknown): BrowserCommand {
           tabId: boundedString(input.tabId, MAX_ID_BYTES)
         }
       case 'click':
-        if (input.consequence !== 'read') return invalidRequest()
         return {
           type: 'click',
           requestId,
@@ -259,14 +259,16 @@ export function parseBrowserCommand(input: unknown): BrowserCommand {
         ) {
           return invalidRequest()
         }
-        if (input.consequence !== 'write') return invalidRequest()
+        if (input.consequence !== 'write' && input.consequence !== 'irreversible') {
+          return invalidRequest()
+        }
         return {
           type: 'typeText',
           requestId,
           tabId: boundedString(input.tabId, MAX_ID_BYTES),
           text: boundedString(input.text, BROWSER_MAX_TEXT_BYTES),
           expectedDocumentRevision: revision(input.expectedDocumentRevision),
-          consequence: 'write',
+          consequence: input.consequence,
           requireActive: requiredActive(input.requireActive)
         }
       case 'keypress':
@@ -314,16 +316,31 @@ export function parseBrowserCommand(input: unknown): BrowserCommand {
   }
 }
 
-function parseViewport(input: unknown): { tabId: string; viewport: BrowserViewport | null } {
+function parseViewport(input: unknown): {
+  sessionId: string
+  sessionGeneration: number
+  tabId: string
+  viewport: BrowserViewport | null
+} {
   try {
-    if (!isRecord(input)) return invalidRequest()
+    if (
+      !isRecord(input) ||
+      !exactKeys(input, ['sessionId', 'sessionGeneration', 'tabId', 'viewport'])
+    ) {
+      return invalidRequest()
+    }
+    const sessionId = boundedString(input.sessionId, MAX_ID_BYTES)
+    const sessionGeneration = revision(input.sessionGeneration)
     const tabId = boundedString(input.tabId, MAX_ID_BYTES)
-    if (input.viewport === null) return { tabId, viewport: null }
+    if (input.viewport === null) return { sessionId, sessionGeneration, tabId, viewport: null }
     if (!isRecord(input.viewport)) return invalidRequest()
+    if (!exactKeys(input.viewport, ['x', 'y', 'width', 'height'])) return invalidRequest()
     const width = coordinate(input.viewport.width)
     const height = coordinate(input.viewport.height)
     if (width <= 0 || height <= 0) return invalidRequest()
     return {
+      sessionId,
+      sessionGeneration,
       tabId,
       viewport: {
         x: coordinate(input.viewport.x),
@@ -387,6 +404,12 @@ export class BrowserIpcCoordinator {
       this.#assertTrustedRenderer(sender)
       const parsed = parseViewport(input)
       const session = safeSession(this.#resolveHumanSession())
+      if (
+        parsed.sessionId !== session.sessionId ||
+        parsed.sessionGeneration !== session.sessionGeneration
+      ) {
+        throw new BrowserIpcError('Browser session is unavailable')
+      }
       const workspace = await this.#workspace(session)
       await workspace.setViewport(parsed.tabId, parsed.viewport)
     })
@@ -459,7 +482,10 @@ export class BrowserIpcCoordinator {
   }
 
   async #workspace(session: BrowserIpcSession): Promise<BrowserWorkspaceLike> {
-    const workspace = await this.#getRegistry().getOrCreate(session)
+    const workspace = await this.#getRegistry().getOrCreate({
+      sessionId: session.sessionId,
+      owner: session.owner
+    })
     if (!this.#subscribedWorkspaces.has(workspace)) {
       this.#subscribedWorkspaces.add(workspace)
       workspace.subscribe((event) => this.#sendEvent(session.sessionId, event))

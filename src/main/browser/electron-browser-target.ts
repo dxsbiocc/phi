@@ -48,7 +48,16 @@ const INSPECTOR_SUFFIX = String.raw`;
       candidate instanceof HTMLObjectElement ||
       candidate instanceof HTMLEmbedElement ||
       candidate.tagName === 'FRAME' ||
-      candidate.tagName === 'WEBVIEW') return null;
+      candidate.tagName === 'WEBVIEW') {
+    return {
+      descriptor: {
+        tagName: candidate.tagName,
+        editable: false,
+        submitsForm: false
+      },
+      fingerprint: 'target-1'
+    };
+  }
 
   const normalizeToken = (value, max) => {
     if (typeof value !== 'string') return undefined;

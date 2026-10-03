@@ -116,7 +116,7 @@ function crashRecoveryWorkspace(engine: CrashRecoveryEngine): BrowserWorkspace {
   })
 }
 
-test('reload recovers a crashed tab on a fresh handle with monotonic revisions', async () => {
+test('reload recovers a crashed tab on a fresh handle without replaying POST state', async () => {
   let engineId = 0
   const engine = new CrashRecoveryEngine({ idFactory: () => `engine-tab-${++engineId}` })
   const workspace = crashRecoveryWorkspace(engine)
@@ -140,9 +140,13 @@ test('reload recovers a crashed tab on a fresh handle with monotonic revisions',
   assert.equal(recovered.snapshot.tabs[0].phase, 'ready')
   assert.equal(recovered.snapshot.tabs[0].documentRevision > beforeRevision, true)
   assert.deepEqual(engine.disposedHandles, ['engine-tab-1'])
-  assert.equal(
-    engine.recordedActions('engine-tab-2' as EngineTabHandle)[0]?.command.type,
-    'navigate'
+  assert.deepEqual(engine.recordedActions('engine-tab-2' as EngineTabHandle)[0]?.command, {
+    type: 'navigate',
+    url: 'https://recovery.test/page'
+  })
+  assert.doesNotMatch(
+    JSON.stringify(engine.recordedActions('engine-tab-2' as EngineTabHandle)),
+    /postBody|postData|uploadData/i
   )
 
   engine.emitTitle('engine-tab-1' as EngineTabHandle, 'Delayed old title', 99)

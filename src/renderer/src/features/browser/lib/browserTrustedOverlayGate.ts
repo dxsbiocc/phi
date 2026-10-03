@@ -22,12 +22,22 @@ export interface BrowserTrustedOverlayGate {
   dispose(): void
 }
 
-export async function hideActiveBrowserViewport(bridge: BrowserRendererBridge): Promise<boolean> {
+export async function hideActiveBrowserViewport(
+  bridge: BrowserRendererBridge,
+  sessionId: string | null,
+  sessionGeneration: number
+): Promise<boolean> {
   try {
     const snapshot = await bridge.snapshot()
     const activeTab = snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId)
     if (activeTab && !activeTab.restorable) {
-      await bridge.setViewport({ tabId: activeTab.id, viewport: null })
+      if (!sessionId || snapshot.sessionId !== sessionId) return false
+      await bridge.setViewport({
+        sessionId,
+        sessionGeneration,
+        tabId: activeTab.id,
+        viewport: null
+      })
     }
     return true
   } catch {

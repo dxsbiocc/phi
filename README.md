@@ -35,6 +35,29 @@ diagnostics can be copied without full chat or tool output. It is not a public
 distribution build, a full plugin marketplace, a Git client, or a dedicated OMX
 team/swarm dashboard.
 
+### Built-in Browser
+
+Ordinary HTTP(S) links in chats open in Phi's built-in browser by default. Hold
+Cmd on macOS or Ctrl on Windows/Linux while clicking to use the system browser,
+or use the browser toolbar's system-browser action. The built-in browser supports
+normal tabs, an address bar, back, forward, reload, stop, localhost pages, and
+opening safe popups as new tabs.
+
+Each Phi session has its own tabs. Sessions in the same canonical project share
+ephemeral site storage. Switching sessions hides the previous browser without
+interrupting background work. After restarting Phi, saved pages appear as restore
+choices and do not connect to the network until you restore them. Browser checkpoints
+contain stable tab IDs, titles, URLs, order, and the active selection; deleting
+`~/.phi` removes them along with the rest of the beta data.
+
+The agent can take screenshots and use bounded coordinate clicks, scrolling,
+navigation keys, and ordinary text fields. Every agent input on an external site needs
+a new one-time approval. Password, file, and one-time-code fields always require
+you to take over. Purchases, account creation, CAPTCHAs, uploads, permission grants,
+and destructive actions also require takeover; external POST submissions cannot be
+automated. This beta does not provide downloads, a password manager, extensions, or
+a persistent browser profile. Quitting Phi clears ephemeral web state.
+
 Local Git sessions show a bounded file-change summary after each run. It compares the
 working tree at run start and finish, so earlier edits are excluded; ignored files and
 non-Git folders are outside this summary. Existing files in the card open in Phi's

@@ -11,6 +11,7 @@ import { InMemoryBrowserEngine } from '../src/main/browser/in-memory-browser-eng
 import {
   BrowserWorkspaceRegistry,
   BrowserWorkspaceRegistryCleanupError,
+  BrowserWorkspaceRegistryPresentationError,
   type BrowserEngineFactoryInput,
   type BrowserWorkspaceOwner
 } from '../src/main/browser/browser-workspace-registry'
@@ -600,6 +601,173 @@ test('disposeAll attempts every entry and reports partial cleanup failure', asyn
   assert.equal(registry.get('bad'), undefined)
   await assert.rejects(
     registry.getOrCreate({ sessionId: 'new', owner: ordinary }),
+    /registry is disposed/
+  )
+})
+
+test('active-session presentation switching hides old workspaces without disposal or recreation', async () => {
+  const engines = new Map<string, InMemoryBrowserEngine>()
+  let factoryCalls = 0
+  const registry = new BrowserWorkspaceRegistry({
+    engineFactory: ({ sessionId }) => {
+      factoryCalls += 1
+      const engine = new InMemoryBrowserEngine()
+      engines.set(sessionId, engine)
+      return engine
+    }
+  })
+  await registry.setActiveSession('session-a')
+  const workspaceA = await registry.getOrCreate({ sessionId: 'session-a', owner: ordinary })
+  const workspaceB = await registry.getOrCreate({ sessionId: 'session-b', owner: ordinary })
+  const openedA = await workspaceA.execute(
+    { kind: 'human' },
+    { type: 'newTab', requestId: 'open-a' }
+  )
+  const openedB = await workspaceB.execute(
+    { kind: 'human' },
+    { type: 'newTab', requestId: 'open-b' }
+  )
+  const tabA = openedA.snapshot.activeTabId
+  const tabB = openedB.snapshot.activeTabId
+  assert.ok(tabA)
+  assert.ok(tabB)
+  await workspaceA.setViewport(tabA, { x: 1, y: 2, width: 300, height: 180 })
+  await workspaceB.setViewport(tabB, { x: 3, y: 4, width: 320, height: 200 })
+  assert.deepEqual(engines.get('session-a')?.viewportFor('engine-tab-1' as EngineTabHandle), {
+    x: 1,
+    y: 2,
+    width: 300,
+    height: 180
+  })
+  assert.equal(engines.get('session-b')?.viewportFor('engine-tab-1' as EngineTabHandle), null)
+
+  await registry.setActiveSession('session-b')
+  assert.equal(engines.get('session-a')?.viewportFor('engine-tab-1' as EngineTabHandle), null)
+  assert.equal(engines.get('session-b')?.viewportFor('engine-tab-1' as EngineTabHandle), null)
+  await workspaceB.setViewport(tabB, { x: 5, y: 6, width: 340, height: 220 })
+  assert.deepEqual(engines.get('session-b')?.viewportFor('engine-tab-1' as EngineTabHandle), {
+    x: 5,
+    y: 6,
+    width: 340,
+    height: 220
+  })
+
+  await registry.setActiveSession('session-a')
+  await workspaceA.setViewport(tabA, { x: 7, y: 8, width: 360, height: 240 })
+  assert.equal(factoryCalls, 2)
+  assert.equal(await registry.getOrCreate({ sessionId: 'session-a', owner: ordinary }), workspaceA)
+  assert.equal(factoryCalls, 2)
+  assert.equal(engines.get('session-a')?.hasTab('engine-tab-1' as EngineTabHandle), true)
+  assert.equal(engines.get('session-b')?.hasTab('engine-tab-1' as EngineTabHandle), true)
+})
+
+test('presentation hide failure quarantines the registry before another workspace can resume', async () => {
+  class FailingTransitionEngine extends CountingEngine {
+    failHide = false
+    failDispose = false
+    override async setViewport(
+      handle: EngineTabHandle,
+      viewport: { x: number; y: number; width: number; height: number } | null
+    ): Promise<void> {
+      if (this.failHide && viewport === null) throw new Error('raw hide secret')
+      await super.setViewport(handle, viewport)
+    }
+    override async dispose(): Promise<void> {
+      if (this.failDispose) {
+        this.disposeCalls += 1
+        throw new Error('raw dispose secret')
+      }
+      await super.dispose()
+    }
+  }
+  const engineA = new FailingTransitionEngine({ capabilities })
+  const engineB = new FailingTransitionEngine({ capabilities })
+  const registry = new BrowserWorkspaceRegistry({
+    engineFactory: ({ sessionId }) => (sessionId === 'session-a' ? engineA : engineB)
+  })
+  await registry.setActiveSession('session-a')
+  const workspaceA = await registry.getOrCreate({ sessionId: 'session-a', owner: ordinary })
+  const workspaceB = await registry.getOrCreate({ sessionId: 'session-b', owner: ordinary })
+  const openedA = await workspaceA.execute(
+    { kind: 'human' },
+    { type: 'newTab', requestId: 'failure-open-a' }
+  )
+  const openedB = await workspaceB.execute(
+    { kind: 'human' },
+    { type: 'newTab', requestId: 'failure-open-b' }
+  )
+  assert.ok(openedA.snapshot.activeTabId)
+  assert.ok(openedB.snapshot.activeTabId)
+  await workspaceA.setViewport(openedA.snapshot.activeTabId, {
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100
+  })
+  await registry.setActiveSession('session-b')
+  await workspaceB.setViewport(openedB.snapshot.activeTabId, {
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100
+  })
+  engineB.failHide = true
+
+  await assert.rejects(
+    registry.setActiveSession('session-a'),
+    (error: Error) =>
+      error instanceof BrowserWorkspaceRegistryPresentationError &&
+      error.message === 'Browser presentation transition failed' &&
+      !error.message.includes('raw hide secret')
+  )
+  assert.equal(engineA.hasTab('engine-tab-1' as EngineTabHandle), false)
+  assert.equal(engineB.hasTab('engine-tab-1' as EngineTabHandle), false)
+  assert.equal(registry.get('session-a'), undefined)
+  assert.equal(registry.get('session-b'), undefined)
+  await assert.rejects(
+    registry.getOrCreate({ sessionId: 'session-a', owner: ordinary }),
+    /registry is disposed/
+  )
+
+  const debtEngineA = new FailingTransitionEngine({ capabilities })
+  const debtEngineB = new FailingTransitionEngine({ capabilities })
+  const debtRegistry = new BrowserWorkspaceRegistry({
+    engineFactory: ({ sessionId }) => (sessionId === 'debt-a' ? debtEngineA : debtEngineB)
+  })
+  await debtRegistry.setActiveSession('debt-a')
+  const debtA = await debtRegistry.getOrCreate({ sessionId: 'debt-a', owner: ordinary })
+  const debtB = await debtRegistry.getOrCreate({ sessionId: 'debt-b', owner: ordinary })
+  const debtOpenedA = await debtA.execute(
+    { kind: 'human' },
+    { type: 'newTab', requestId: 'debt-open-a' }
+  )
+  const debtOpenedB = await debtB.execute(
+    { kind: 'human' },
+    { type: 'newTab', requestId: 'debt-open-b' }
+  )
+  assert.ok(debtOpenedA.snapshot.activeTabId)
+  assert.ok(debtOpenedB.snapshot.activeTabId)
+  await debtA.setViewport(debtOpenedA.snapshot.activeTabId, {
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100
+  })
+  await debtRegistry.setActiveSession('debt-b')
+  await debtB.setViewport(debtOpenedB.snapshot.activeTabId, {
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100
+  })
+  debtEngineB.failHide = true
+  debtEngineB.failDispose = true
+  await assert.rejects(
+    debtRegistry.setActiveSession('debt-a'),
+    /Browser presentation transition failed/
+  )
+  await assert.rejects(
+    debtRegistry.getOrCreate({ sessionId: 'debt-new', owner: ordinary }),
     /registry is disposed/
   )
 })

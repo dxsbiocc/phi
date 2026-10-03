@@ -904,7 +904,7 @@ export type RendererApi = AutoCompactionApi & {
   stopGeneration: () => Promise<void>
   onSessionChanged: (cb: (session: CurrentSession) => void) => () => void
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => () => void
-  onToolApprovalCancelled: (cb: () => void) => () => void
+  onToolApprovalCancelled: (cb: (requestId?: string) => void) => () => void
   respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
   listPlugins: () => Promise<PluginCatalogItem[]>
   installPlugin: (source: string) => Promise<PluginCatalogItem[]>

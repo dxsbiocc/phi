@@ -1158,6 +1158,8 @@ function App(): React.JSX.Element {
     cancel: cancelBrowserTrustedOverlay
   } = useBrowserTrustedOverlayGate({
     bridge: rendererApi.browser,
+    activePhiSessionId: activePhiSessionId ?? null,
+    activeSessionGeneration,
     browserOpen: workspaceSidePanelMode === 'browser',
     closeBrowserPanel: closeBrowserPanelForTrustedOverlay,
     onFailure: handleBrowserTrustedOverlayFailure
@@ -1832,10 +1834,19 @@ function App(): React.JSX.Element {
       })
     })
 
-    const unsubscribeToolApprovalCancelled = rendererApi.onToolApprovalCancelled(() => {
-      cancelBrowserTrustedOverlay('approval')
-      pendingApprovalsBySession.clear()
-      setPendingApproval(null)
+    const unsubscribeToolApprovalCancelled = rendererApi.onToolApprovalCancelled((requestId) => {
+      cancelBrowserTrustedOverlay('approval', requestId)
+      if (requestId) {
+        for (const [key, request] of pendingApprovalsBySession) {
+          if (request.requestId === requestId) pendingApprovalsBySession.delete(key)
+        }
+        if (useSessionStore.getState().pendingApproval?.requestId === requestId) {
+          setPendingApproval(null)
+        }
+      } else {
+        pendingApprovalsBySession.clear()
+        setPendingApproval(null)
+      }
       scheduleSessionRefresh()
     })
 
@@ -4357,6 +4368,7 @@ function App(): React.JSX.Element {
                   <BrowserPanel
                     bridge={rendererApi.browser}
                     activePhiSessionId={activePhiSessionId ?? null}
+                    activeSessionGeneration={activeSessionGeneration}
                     visible={
                       !pendingApproval &&
                       !pendingUserInteraction &&

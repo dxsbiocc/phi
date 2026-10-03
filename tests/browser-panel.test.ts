@@ -538,6 +538,8 @@ test('browser workspace controller orders same-revision feedback by invocation s
 
 test('browser viewport scheduler coalesces the latest rect and cleanup prevents stale re-show', async () => {
   const viewportCalls: Array<{
+    sessionId: string
+    sessionGeneration: number
     tabId: string
     viewport: { x: number; y: number; width: number; height: number } | null
   }> = []
@@ -550,6 +552,8 @@ test('browser viewport scheduler coalesces the latest rect and cleanup prevents 
     },
     setViewport: async (input: (typeof viewportCalls)[number]): Promise<void> => {
       viewportCalls.push({
+        sessionId: input.sessionId,
+        sessionGeneration: input.sessionGeneration,
         tabId: input.tabId,
         viewport: input.viewport ? { ...input.viewport } : null
       })
@@ -562,6 +566,8 @@ test('browser viewport scheduler coalesces the latest rect and cleanup prevents 
   const cancelled: number[] = []
   const scheduler = createBrowserViewportScheduler({
     bridge,
+    sessionId: 'phi-session',
+    sessionGeneration: 4,
     tabId: 'tab-1',
     getRect: () => rect,
     requestFrame: (callback) => {
@@ -588,6 +594,8 @@ test('browser viewport scheduler coalesces the latest rect and cleanup prevents 
   await new Promise((resolveMicrotask) => setImmediate(resolveMicrotask))
   assert.deepEqual(viewportCalls, [
     {
+      sessionId: 'phi-session',
+      sessionGeneration: 4,
       tabId: 'tab-1',
       viewport: { x: 30.8, y: 40.1, width: 500.4, height: 260.7 }
     }
@@ -595,7 +603,12 @@ test('browser viewport scheduler coalesces the latest rect and cleanup prevents 
 
   scheduler.hide()
   await new Promise((resolveMicrotask) => setImmediate(resolveMicrotask))
-  assert.deepEqual(viewportCalls.at(-1), { tabId: 'tab-1', viewport: null })
+  assert.deepEqual(viewportCalls.at(-1), {
+    sessionId: 'phi-session',
+    sessionGeneration: 4,
+    tabId: 'tab-1',
+    viewport: null
+  })
   scheduler.schedule()
   const resumedFrameEntry = frames.entries().next().value
   assert.ok(resumedFrameEntry)
@@ -604,6 +617,8 @@ test('browser viewport scheduler coalesces the latest rect and cleanup prevents 
   resumedFrame(0)
   await new Promise((resolveMicrotask) => setImmediate(resolveMicrotask))
   assert.deepEqual(viewportCalls.at(-1), {
+    sessionId: 'phi-session',
+    sessionGeneration: 4,
     tabId: 'tab-1',
     viewport: { x: 30.8, y: 40.1, width: 500.4, height: 260.7 }
   })
@@ -614,13 +629,25 @@ test('browser viewport scheduler coalesces the latest rect and cleanup prevents 
   scheduler.dispose()
   await new Promise((resolveMicrotask) => setImmediate(resolveMicrotask))
   assert.equal(cancelled.length, 1)
-  assert.deepEqual(viewportCalls.at(-1), { tabId: 'tab-1', viewport: null })
+  assert.deepEqual(viewportCalls.at(-1), {
+    sessionId: 'phi-session',
+    sessionGeneration: 4,
+    tabId: 'tab-1',
+    viewport: null
+  })
   staleFrame(1)
   await new Promise((resolveMicrotask) => setImmediate(resolveMicrotask))
-  assert.deepEqual(viewportCalls.at(-1), { tabId: 'tab-1', viewport: null })
+  assert.deepEqual(viewportCalls.at(-1), {
+    sessionId: 'phi-session',
+    sessionGeneration: 4,
+    tabId: 'tab-1',
+    viewport: null
+  })
 
   const zeroScheduler = createBrowserViewportScheduler({
     bridge,
+    sessionId: 'phi-session',
+    sessionGeneration: 4,
     tabId: 'tab-2',
     getRect: () => ({ x: 0, y: 0, width: 0, height: 20 }),
     requestFrame: (callback) => {
@@ -631,7 +658,12 @@ test('browser viewport scheduler coalesces the latest rect and cleanup prevents 
   })
   zeroScheduler.schedule()
   await new Promise((resolveMicrotask) => setImmediate(resolveMicrotask))
-  assert.deepEqual(viewportCalls.at(-1), { tabId: 'tab-2', viewport: null })
+  assert.deepEqual(viewportCalls.at(-1), {
+    sessionId: 'phi-session',
+    sessionGeneration: 4,
+    tabId: 'tab-2',
+    viewport: null
+  })
 
   const unhandled: unknown[] = []
   const onUnhandled = (reason: unknown): void => {
@@ -646,6 +678,8 @@ test('browser viewport scheduler coalesces the latest rect and cleanup prevents 
           throw new Error('raw viewport failure')
         }
       },
+      sessionId: 'phi-session',
+      sessionGeneration: 4,
       tabId: 'tab-failure',
       getRect: () => ({ x: 0, y: 0, width: 100, height: 100 }),
       requestFrame: (callback) => {

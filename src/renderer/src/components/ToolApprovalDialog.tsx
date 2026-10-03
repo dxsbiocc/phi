@@ -5,7 +5,8 @@ const TOOL_LABELS: Record<string, string> = {
   bash: '执行终端命令',
   powershell: '执行 PowerShell 命令',
   write: '写入文件',
-  edit: '修改文件'
+  edit: '修改文件',
+  browser: '浏览器操作'
 }
 
 type ToolApprovalDialogProps = {
@@ -104,7 +105,7 @@ function ToolApprovalDialog({
             拒绝
           </Button>
           <Button variant="contained" onClick={() => onRespond(request.requestId, true)}>
-            批准
+            {request.toolName === 'browser' ? '仅允许这一次' : '批准'}
           </Button>
         </Box>
       </Stack>

@@ -43,7 +43,8 @@ const TOOL_LABELS: Record<string, string> = {
   bash: '终端命令',
   powershell: 'PowerShell',
   write: '写入文件',
-  edit: '修改文件'
+  edit: '修改文件',
+  browser: '浏览器操作'
 }
 const ApproveIcon = PhiIcons.action.approve
 const DenyIcon = PhiIcons.state.denied
@@ -166,7 +167,7 @@ export function PermissionSettingsSection({
                 startIcon={<ApproveIcon />}
                 onClick={() => onRespondApproval(pendingApproval.requestId, true)}
               >
-                批准
+                {pendingApproval.toolName === 'browser' ? '仅允许这一次' : '批准'}
               </Button>
             </Stack>
           </Stack>

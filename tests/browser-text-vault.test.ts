@@ -56,12 +56,14 @@ test('browser text vault persists only an opaque placeholder while delivering pl
     action: 'typeText',
     tabId: 'tab-1',
     expectedDocumentRevision: 1,
-    text: plaintext
+    text: plaintext,
+    consequence: 'write'
   }
   const revised = { input: vault.redact('call-1', input) as Record<string, unknown> }
   assert.doesNotMatch(JSON.stringify(revised), /PRIVATE_TEXT_SENTINEL|second line/)
   assert.deepEqual(Object.keys(revised.input).sort(), [
     'action',
+    'consequence',
     'expectedDocumentRevision',
     'tabId',
     'text'
@@ -97,11 +99,13 @@ test('browser text vault fail-closes forged placeholders and clears bounded entr
     tabId: string
     expectedDocumentRevision: number
     text: string
+    consequence: 'write'
   } => ({
     action: 'typeText',
     tabId: 'tab-1',
     expectedDocumentRevision: 1,
-    text
+    text,
+    consequence: 'write'
   })
   assert.equal(vault.take('missing', '__phi_browser_text_v1__:token-1'), undefined)
   const first = vault.redact('call-1', input('one'))
@@ -120,7 +124,8 @@ test('browser text vault invalidates denied approval without exposing text or re
     action: 'typeText',
     tabId: 'tab-1',
     expectedDocumentRevision: 1,
-    text: 'PRIVATE_APPROVAL_SENTINEL'
+    text: 'PRIVATE_APPROVAL_SENTINEL',
+    consequence: 'write'
   }
   const revised = vault.redact('call-1', input)
   const approval = vault.approvalInput('call-1', revised ?? {})
@@ -162,14 +167,16 @@ test('browser pre-dispatch redaction rewrites persistence before a later guard b
         action: 'typeText',
         tabId: 'tab-1',
         expectedDocumentRevision: 1,
-        text: 'PRIVATE_PREDISPATCH_SENTINEL'
+        text: 'PRIVATE_PREDISPATCH_SENTINEL',
+        consequence: 'write'
       }
     },
     args: {
       action: 'typeText',
       tabId: 'tab-1',
       expectedDocumentRevision: 1,
-      text: 'PRIVATE_PREDISPATCH_SENTINEL'
+      text: 'PRIVATE_PREDISPATCH_SENTINEL',
+      consequence: 'write'
     },
     requiredExtraContext: true
   }
@@ -200,17 +207,21 @@ test('browser pre-dispatch redaction forces placeholder execution args when guar
         action: 'typeText',
         tabId: 'tab-1',
         expectedDocumentRevision: 1,
-        text: 'PRIVATE_ALLOWED_SENTINEL'
+        text: 'PRIVATE_ALLOWED_SENTINEL',
+        consequence: 'write'
       }
     },
     args: {
       action: 'typeText',
       tabId: 'tab-1',
       expectedDocumentRevision: 1,
-      text: 'PRIVATE_ALLOWED_SENTINEL'
+      text: 'PRIVATE_ALLOWED_SENTINEL',
+      consequence: 'write'
     }
   }
-  const result = (await session.agent.beforeToolCall(context)) as {
+  const result = (await (session.agent.beforeToolCall as (context: unknown) => Promise<unknown>)(
+    context
+  )) as {
     args?: Record<string, unknown>
   }
   assert.equal(result.args?.text, '__phi_browser_text_v1__:token-1')
@@ -232,7 +243,9 @@ test('browser pre-dispatch redaction removes malformed raw JSON before persisten
     },
     args: {}
   }
-  const result = (await session.agent.beforeToolCall(context)) as {
+  const result = (await (session.agent.beforeToolCall as (context: unknown) => Promise<unknown>)(
+    context
+  )) as {
     args?: Record<string, unknown>
   }
   assert.deepEqual(context.toolCall.arguments, { action: 'invalid' })
@@ -255,7 +268,9 @@ test('browser pre-dispatch redaction removes forbidden selector and script field
       toolCall: { id: `call-${index}`, name: 'browser', arguments: args },
       args
     }
-    const result = (await session.agent.beforeToolCall(context)) as {
+    const result = (await (session.agent.beforeToolCall as (context: unknown) => Promise<unknown>)(
+      context
+    )) as {
       args?: Record<string, unknown>
     }
     assert.deepEqual(context.toolCall.arguments, { action: 'invalid' })
@@ -304,14 +319,16 @@ test('browser pre-dispatch sanitizer preserves only exact supported action shape
     target: 'current',
     tabId: 'tab-1',
     expectedDocumentRevision: 1,
-    text: 'PRIVATE_EXACT_SENTINEL'
+    text: 'PRIVATE_EXACT_SENTINEL',
+    consequence: 'write'
   })
   assert.deepEqual(typeText, {
     action: 'typeText',
     target: 'current',
     tabId: 'tab-1',
     expectedDocumentRevision: 1,
-    text: '__phi_browser_text_v1__:token-1'
+    text: '__phi_browser_text_v1__:token-1',
+    consequence: 'write'
   })
   assert.doesNotMatch(JSON.stringify(typeText), /PRIVATE_EXACT_SENTINEL/)
 })
@@ -352,7 +369,10 @@ test('browser text vault redacts a text field even when the model supplied the w
   })
   assert.deepEqual(revised, { action: 'invalid' })
   assert.doesNotMatch(JSON.stringify(revised), /PRIVATE_WRONG_ACTION_SENTINEL/)
-  assert.equal(vault.take('call-wrong-action', revised?.text), undefined)
+  assert.equal(
+    vault.take('call-wrong-action', (revised as Record<string, unknown> | undefined)?.text),
+    undefined
+  )
 })
 
 test('browser pre-dispatch abort revokes plaintext before execution can consume it', async () => {
@@ -368,17 +388,21 @@ test('browser pre-dispatch abort revokes plaintext before execution can consume 
         action: 'typeText',
         tabId: 'tab-1',
         expectedDocumentRevision: 1,
-        text: 'PRIVATE_ABORT_SENTINEL'
+        text: 'PRIVATE_ABORT_SENTINEL',
+        consequence: 'write'
       }
     },
     args: {
       action: 'typeText',
       tabId: 'tab-1',
       expectedDocumentRevision: 1,
-      text: 'PRIVATE_ABORT_SENTINEL'
+      text: 'PRIVATE_ABORT_SENTINEL',
+      consequence: 'write'
     }
   }
-  await session.agent.beforeToolCall(context, controller.signal)
+  await (
+    session.agent.beforeToolCall as (context: unknown, signal?: AbortSignal) => Promise<unknown>
+  )(context, controller.signal)
   controller.abort()
   assert.deepEqual(vault.take('call-abort', context.toolCall.arguments.text), { denied: true })
   assert.doesNotMatch(JSON.stringify(context), /PRIVATE_ABORT_SENTINEL/)
@@ -391,7 +415,8 @@ test('browser prompt cleanup clears plaintext after success and failure', async 
       action: 'typeText',
       tabId: 'tab-1',
       expectedDocumentRevision: 1,
-      text: 'PRIVATE_CLEANUP_SENTINEL'
+      text: 'PRIVATE_CLEANUP_SENTINEL',
+      consequence: 'write'
     })
     if (fail) {
       await assert.rejects(
@@ -426,7 +451,8 @@ test('browser text vault removes abort listeners after take and clear', () => {
     action: 'typeText',
     tabId: 'tab-1',
     expectedDocumentRevision: 1,
-    text: 'private'
+    text: 'private',
+    consequence: 'write'
   }
   const vault = new BrowserTextVault({ tokenFactory: () => 'token-1' })
   const first = vault.sanitize('call-1', input)

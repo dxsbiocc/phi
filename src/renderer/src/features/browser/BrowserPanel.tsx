@@ -115,6 +115,7 @@ export function BrowserStatusPane(props: BrowserStatusPaneProps): React.JSX.Elem
 export interface BrowserPanelProps {
   bridge: BrowserRendererBridge
   activePhiSessionId: string | null
+  activeSessionGeneration: number
   visible: boolean
 }
 
@@ -131,6 +132,8 @@ export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Elemen
   )
   const viewportRef = useBrowserViewport({
     bridge: props.bridge,
+    sessionId: props.activePhiSessionId,
+    sessionGeneration: props.activeSessionGeneration,
     tabId: activeTab?.id ?? null,
     enabled: nativeEnabled
   })

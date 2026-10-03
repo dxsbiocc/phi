@@ -184,6 +184,12 @@ type PreloadToolApprovalRequest = {
   projectName?: string
   toolName: string
   summary: string
+  browser?: {
+    origin: string
+    action: 'click' | 'typeText' | 'scroll' | 'keypress'
+    consequence: 'read' | 'write' | 'irreversible'
+    reason: 'external_origin' | 'form_submission' | 'irreversible'
+  }
 }
 
 type PreloadPluginCatalogItem = {
@@ -981,7 +987,7 @@ declare global {
         }) => void
       ) => () => void
       onToolApprovalRequest: (cb: (event: PreloadToolApprovalRequest) => void) => () => void
-      onToolApprovalCancelled: (cb: () => void) => () => void
+      onToolApprovalCancelled: (cb: (requestId?: string) => void) => () => void
       respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
       listPlugins: () => Promise<PreloadPluginCatalogItem[]>
       installPlugin: (source: string) => Promise<PreloadPluginCatalogItem[]>

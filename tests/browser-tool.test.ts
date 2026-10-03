@@ -102,7 +102,8 @@ test('browser typeText forwards bounded multiline text without echoing it in the
       target: 'current',
       tabId: 'tab-1',
       expectedDocumentRevision: 2,
-      text: secretText
+      text: secretText,
+      consequence: 'write'
     },
     undefined,
     {} as never
@@ -156,7 +157,8 @@ test('browser typeText enforces the 16 KiB UTF-8 boundary instead of a character
         action: 'typeText',
         tabId: 'tab-1',
         expectedDocumentRevision: 2,
-        text
+        text,
+        consequence: 'write'
       },
       undefined,
       {} as never
@@ -181,7 +183,8 @@ test('browser typeText fails closed without a one-time text vault resolver', asy
       action: 'typeText',
       tabId: 'tab-1',
       expectedDocumentRevision: 2,
-      text: 'PRIVATE_RAW_TEXT'
+      text: 'PRIVATE_RAW_TEXT',
+      consequence: 'write'
     },
     undefined,
     {} as never
@@ -214,7 +217,8 @@ test('browser typeText consumes its vault entry but never reaches the host in a 
       action: 'typeText',
       tabId: 'tab-1',
       expectedDocumentRevision: 2,
-      text: '__phi_browser_text_v1__:token-1'
+      text: '__phi_browser_text_v1__:token-1',
+      consequence: 'write'
     },
     undefined,
     {} as never
@@ -598,7 +602,11 @@ test('browser tool forwards in-flight cancellation and removes the listener afte
   controller.abort()
   await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(cancellations, [
-    { originSessionId: 'runtime-session-1', requestId: 'browser-request-4' }
+    {
+      originSessionId: 'runtime-session-1',
+      requestId: 'browser-request-4',
+      toolCallId: 'real-tool-call-4'
+    }
   ])
 
   finish?.(successfulOutcome())
@@ -673,7 +681,7 @@ test('browser tool validates direct current-tab and snapshot calls before host d
       expectedDocumentRevision: 1,
       x: 1,
       y: 1,
-      consequence: 'write'
+      consequence: 'unknown'
     },
     {
       action: 'click',
@@ -938,19 +946,124 @@ test('browser host propagates cancellation before and during execution and clean
     command: { type: 'open', requestId, url: 'https://example.test' }
   })
 
-  host.cancel({ originSessionId: 'runtime-session-1', requestId: 'before' })
+  host.cancel({
+    originSessionId: 'runtime-session-1',
+    requestId: 'before',
+    toolCallId: 'tool-before'
+  })
   await host.execute(request('before'))
   assert.equal(signals[0]?.aborted, true)
 
   const inFlight = host.execute(request('during'))
   await new Promise((resolve) => setImmediate(resolve))
-  host.cancel({ originSessionId: 'runtime-session-1', requestId: 'during' })
+  host.cancel({
+    originSessionId: 'runtime-session-1',
+    requestId: 'during',
+    toolCallId: 'tool-during'
+  })
   await inFlight
   assert.equal(signals[1]?.aborted, true)
   release?.()
 
   await host.execute(request('after'))
-  host.cancel({ originSessionId: 'runtime-session-1', requestId: 'after' })
+  host.cancel({
+    originSessionId: 'runtime-session-1',
+    requestId: 'after',
+    toolCallId: 'tool-after'
+  })
   await host.execute(request('after'))
   assert.equal(signals[3]?.aborted, false)
+})
+
+test('browser host late cancellation cannot cross tool-call or run identity', async () => {
+  let runId = 'run-1'
+  let releaseSecond!: () => void
+  const secondGate = new Promise<void>((resolve) => {
+    releaseSecond = resolve
+  })
+  let secondSignal: AbortSignal | undefined
+  const host = new BrowserToolHostCoordinator({
+    resolveActiveRun: () => ({ runId, cancelled: false }),
+    executeAgent: async (input, signal) => {
+      if ((input as { toolCallId?: string }).toolCallId === 'tool-2') {
+        secondSignal = signal
+        await secondGate
+      }
+      return successfulOutcome()
+    }
+  })
+  const request = (toolCallId: string): Record<string, unknown> => ({
+    originSessionId: 'runtime-session-1',
+    requestId: 'shared-request',
+    toolCallId,
+    command: { type: 'open', requestId: 'shared-request', url: 'https://example.test' }
+  })
+
+  await host.execute(request('tool-1'))
+  runId = 'run-2'
+  await assert.rejects(host.execute(request('tool-1')), /another run/i)
+
+  const second = host.execute(request('tool-2'))
+  await new Promise((resolve) => setImmediate(resolve))
+  host.cancel({
+    originSessionId: 'runtime-session-1',
+    requestId: 'shared-request',
+    toolCallId: 'tool-1'
+  })
+  assert.equal(secondSignal?.aborted, false)
+  releaseSecond()
+  await second
+})
+
+test('trusted run cancellation aborts only that run and survives resolver teardown', async () => {
+  let resolverAvailable = true
+  const signals = new Map<string, AbortSignal>()
+  let releaseOther!: () => void
+  const otherGate = new Promise<void>((resolve) => {
+    releaseOther = resolve
+  })
+  const host = new BrowserToolHostCoordinator({
+    resolveActiveRun: (originSessionId) => {
+      if (!resolverAvailable) return undefined
+      return {
+        runId: originSessionId === 'runtime-1' ? 'run-1' : 'run-2',
+        cancelled: false
+      }
+    },
+    executeAgent: async (input, signal) => {
+      const runId = (input as { runId: string }).runId
+      signals.set(runId, signal)
+      if (runId === 'run-1') {
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+      } else {
+        await otherGate
+      }
+      return successfulOutcome()
+    }
+  })
+  const request = (originSessionId: string, run: number): Record<string, unknown> => ({
+    originSessionId,
+    requestId: `request-${run}`,
+    toolCallId: `tool-${run}`,
+    command: {
+      type: 'open',
+      requestId: `request-${run}`,
+      url: 'https://example.test'
+    }
+  })
+  const first = host.execute(request('runtime-1', 1))
+  const second = host.execute(request('runtime-2', 2))
+  await new Promise((resolve) => setImmediate(resolve))
+  resolverAvailable = false
+  host.cancelRun('run-1')
+  assert.equal(signals.get('run-1')?.aborted, true)
+  assert.equal(signals.get('run-2')?.aborted, false)
+  await first
+
+  host.cancel({ originSessionId: 'runtime-1', requestId: 'request-1', toolCallId: 'tool-1' })
+  assert.equal(signals.get('run-2')?.aborted, false)
+  releaseOther()
+  await second
 })

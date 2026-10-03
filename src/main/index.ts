@@ -71,6 +71,7 @@ import {
 import { FileSystemBrowserCheckpointStore } from './browser/browser-checkpoints'
 import { ElectronBrowserEngine } from './browser/electron-browser-engine'
 import { BrowserWorkspaceRegistry } from './browser/browser-workspace-registry'
+import type { BrowserActionApprovalPrompt } from './browser/browser-approval'
 import { BrowserToolHostCoordinator } from './agent/browser/browser-tool-host'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -163,6 +164,7 @@ import {
   editApprovalDigest,
   cancelToolApprovals,
   createApprovalExtension,
+  requestToolApproval,
   resolveToolApproval,
   writeApprovalDigest
 } from './agent/tool-approval'
@@ -414,6 +416,7 @@ import type { AgentUserInteractionQuestion } from '../shared/agentInteractionTyp
 import icon from '../../resources/icon.png?asset'
 
 const APP_NAME = 'Phi'
+const APP_QUIT_CLEANUP_TIMEOUT_MS = 2_000
 const APP_ID = 'com.electron.app'
 const DEFAULT_WINDOW_WIDTH = 1280
 const DEFAULT_WINDOW_HEIGHT = 820
@@ -492,6 +495,9 @@ type BrowserRegistryLifecycle = 'idle' | 'disposing' | 'failed'
 let browserWorkspaceRegistry: BrowserWorkspaceRegistry | null = null
 let browserWorkspaceRegistryLifecycle: BrowserRegistryLifecycle = 'idle'
 let browserWorkspaceRegistryDisposal: Promise<void> | null = null
+let mainWindowCleanupPromise: Promise<void> | null = null
+let beforeQuitCleanupComplete = false
+let beforeQuitResumeScheduled = false
 const browserCheckpointStore = new FileSystemBrowserCheckpointStore({ agentDir: AGENT_DIR })
 
 function browserPolicyContext(): { applicationOrigins?: string[] } {
@@ -503,26 +509,88 @@ function getBrowserWorkspaceRegistry(): BrowserWorkspaceRegistry {
   if (mainWindowCleanupStarted || browserWorkspaceRegistryLifecycle !== 'idle') {
     throw new Error('Browser workspace is unavailable')
   }
-  browserWorkspaceRegistry ??= new BrowserWorkspaceRegistry({
-    engineFactory: () =>
-      new ElectronBrowserEngine({
-        WebContentsView,
-        getOwningWindow: () => {
-          const window = mainWindow
-          return window && !window.isDestroyed() ? window : null
-        },
-        policyContext: browserPolicyContext()
-      }),
-    policyContext: browserPolicyContext(),
-    checkpointStore: browserCheckpointStore,
-    openExternal: (url) => shell.openExternal(url)
-  })
+  if (!browserWorkspaceRegistry) {
+    browserWorkspaceRegistry = new BrowserWorkspaceRegistry({
+      engineFactory: () =>
+        new ElectronBrowserEngine({
+          WebContentsView,
+          getOwningWindow: () => {
+            const window = mainWindow
+            return window && !window.isDestroyed() ? window : null
+          },
+          policyContext: browserPolicyContext()
+        }),
+      policyContext: browserPolicyContext(),
+      checkpointStore: browserCheckpointStore,
+      openExternal: (url) => shell.openExternal(url),
+      approveAgentAction: requestBrowserActionApproval
+    })
+    const current = getCurrentSessionPayload()
+    void browserWorkspaceRegistry.setActiveSession(current.phiSessionId ?? null).catch(() => {
+      writeAppLog({ level: 'error', event: 'browser_presentation_transition_failed' })
+    })
+  }
   return browserWorkspaceRegistry
 }
 
-function cleanupBrowserWorkspaceRegistry(): void {
+async function requestBrowserActionApproval(
+  prompt: BrowserActionApprovalPrompt,
+  signal: AbortSignal
+): Promise<'approved' | 'denied' | 'cancelled'> {
+  const run = [...activePromptRuns.values()].find(
+    (candidate) =>
+      candidate.phiSessionId === prompt.sessionId &&
+      candidate.runId === prompt.runId &&
+      !candidate.cancelled
+  )
+  if (!run) return 'cancelled'
+  const manifest = findPhiSessionById(run.phiSessionId)
+  if (!manifest || signal.aborted) return 'cancelled'
+  const project = manifest.projectId ? getProject(manifest.projectId) : undefined
+  return requestToolApproval({
+    signal,
+    getWindow: () => {
+      const window = mainWindow
+      return window && !window.isDestroyed() ? window : null
+    },
+    context: {
+      sessionId: run.phiSessionId,
+      sessionPath: phiOnlySessionPath(run.phiSessionId),
+      sessionGeneration: run.sessionGeneration,
+      runId: run.runId,
+      cwd: run.cwd,
+      ...(project?.name ? { projectName: project.name } : {})
+    },
+    toolCallId: prompt.toolCallId,
+    browser: {
+      origin: prompt.origin,
+      action: prompt.action,
+      consequence: prompt.consequence,
+      reason: prompt.reason
+    },
+    onApprovalRequested: (request) => {
+      runnerRegistry.markNeedsApproval(run.phiSessionId, request.requestId, {
+        toolName: request.toolName,
+        summary: request.summary
+      })
+    },
+    onApprovalResolved: (request, approved) => {
+      if (approved) runnerRegistry.markApprovalApproved(run.phiSessionId, request.requestId)
+      else runnerRegistry.markApprovalDenied(run.phiSessionId, request.requestId)
+    },
+    onApprovalCancelled: (request) => {
+      runnerRegistry.markApprovalCancelled(run.phiSessionId, request.requestId)
+      sendToAllWindows('tool:approval-cancelled', request.requestId)
+    }
+  })
+}
+
+function cleanupBrowserWorkspaceRegistry(): Promise<void> {
   const registry = browserWorkspaceRegistry
-  if (!registry || browserWorkspaceRegistryLifecycle !== 'idle') return
+  if (!registry) return browserWorkspaceRegistryDisposal ?? Promise.resolve()
+  if (browserWorkspaceRegistryLifecycle !== 'idle') {
+    return browserWorkspaceRegistryDisposal ?? Promise.resolve()
+  }
   browserWorkspaceRegistryLifecycle = 'disposing'
   let disposal: Promise<void>
   try {
@@ -530,7 +598,7 @@ function cleanupBrowserWorkspaceRegistry(): void {
   } catch {
     browserWorkspaceRegistryLifecycle = 'failed'
     writeAppLog({ level: 'error', event: 'browser_registry_cleanup_failed' })
-    return
+    return Promise.resolve()
   }
   browserWorkspaceRegistryDisposal = disposal
   void disposal.then(
@@ -550,6 +618,7 @@ function cleanupBrowserWorkspaceRegistry(): void {
       writeAppLog({ level: 'error', event: 'browser_registry_cleanup_failed' })
     }
   )
+  return disposal
 }
 
 function browserSessionForPhiId(phiSessionId: string): BrowserIpcSession | undefined {
@@ -574,6 +643,7 @@ const browserIpcCoordinator = new BrowserIpcCoordinator({
     if (!current.phiSessionId) return undefined
     return {
       sessionId: current.phiSessionId,
+      sessionGeneration: current.sessionGeneration,
       owner: current.projectLocation
         ? { kind: 'project', location: current.projectLocation }
         : { kind: 'ordinary' }
@@ -1480,6 +1550,18 @@ const browserToolHostCoordinator = new BrowserToolHostCoordinator({
   },
   executeAgent: (params, signal) => browserIpcCoordinator.executeAgent(params, signal)
 })
+
+function cancelBrowserRun(run: PromptRun): void {
+  browserToolHostCoordinator.cancelRun(run.runId, run.session?.runtimeSessionId)
+}
+
+async function cleanupBrowserRunTabs(run: PromptRun): Promise<void> {
+  try {
+    await browserWorkspaceRegistry?.disposeRun(run.phiSessionId, run.runId)
+  } catch {
+    writeAppLog({ level: 'error', event: 'browser_run_cleanup_failed' })
+  }
+}
 
 getOmpBridge().registerHostHandler('browser.execute', (params) =>
   browserToolHostCoordinator.execute(params)
@@ -3436,6 +3518,8 @@ function setActivePromptRun(sessionKey: string, run: PromptRun): void {
 }
 
 function deleteActivePromptRun(sessionKey: string, run: PromptRun): void {
+  cancelBrowserRun(run)
+  void cleanupBrowserRunTabs(run)
   const canonicalKey = resolveSessionKeyAlias(sessionKey)
   if (activePromptRuns.get(canonicalKey) === run) {
     activePromptRuns.delete(canonicalKey)
@@ -5362,9 +5446,15 @@ function createDirectoryListing(dirPath: string): {
   }
 }
 
-function cancelPendingToolApprovals(): void {
-  cancelToolApprovals()
-  notifyToolApprovalsCancelled()
+function cancelPendingToolApprovals(scope?: { sessionId: string; runId: string }): void {
+  const cancelled = cancelToolApprovals(scope) ?? []
+  if (!scope) {
+    notifyToolApprovalsCancelled()
+    return
+  }
+  for (const request of cancelled) {
+    sendToAllWindows('tool:approval-cancelled', request.requestId)
+  }
 }
 
 function cancelPendingAgentUserInteractions(): void {
@@ -5372,8 +5462,8 @@ function cancelPendingAgentUserInteractions(): void {
   notifyAgentUserInteractionsCancelled()
 }
 
-function cancelPendingRunWaits(): void {
-  cancelPendingToolApprovals()
+function cancelPendingRunWaits(scope?: { sessionId: string; runId: string }): void {
+  cancelPendingToolApprovals(scope)
   cancelPendingAgentUserInteractions()
 }
 
@@ -5774,6 +5864,9 @@ async function getCurrentSessionPayloadWithMessages(): Promise<
 
 function notifySessionChanged(): void {
   const payload = getCurrentSessionPayload()
+  void browserWorkspaceRegistry?.setActiveSession(payload.phiSessionId ?? null).catch(() => {
+    writeAppLog({ level: 'error', event: 'browser_presentation_transition_failed' })
+  })
   sendToAllWindows('sessions:changed', payload)
 }
 
@@ -5883,8 +5976,14 @@ async function invalidateAgentSession(): Promise<void> {
   const activePromptRun = getActivePromptRun(currentSessionKey)
   if (activePromptRun) {
     activePromptRun.cancelled = true
+    cancelBrowserRun(activePromptRun)
+    void cleanupBrowserRunTabs(activePromptRun)
   }
-  cancelPendingRunWaits()
+  cancelPendingRunWaits(
+    activePromptRun
+      ? { sessionId: activePromptRun.phiSessionId, runId: activePromptRun.runId }
+      : undefined
+  )
   notifySessionChanged()
   void cleanupSessionRecord(previous)
 }
@@ -5894,46 +5993,98 @@ async function stopActivePrompt(): Promise<void> {
   advancePromptGeneration(currentSessionKey)
   const run = getActivePromptRun(currentSessionKey)
   if (!run) {
-    cancelPendingRunWaits()
     return
   }
 
   run.cancelled = true
+  cancelBrowserRun(run)
+  const browserCleanup = cleanupBrowserRunTabs(run)
   remoteBashManager.cancelSession(run.phiSessionId)
   remoteMutationManager.cancelSession(run.phiSessionId)
   runnerRegistry.stopRun(run.phiSessionId)
-  cancelPendingRunWaits()
+  cancelPendingRunWaits({ sessionId: run.phiSessionId, runId: run.runId })
   if (run.session) {
-    await abortSession(run.session)
+    await Promise.all([browserCleanup, abortSessionWithoutCancellingApprovals(run.session)])
+  } else {
+    await browserCleanup
   }
 }
 
-async function stopAllPromptRuns(): Promise<void> {
+function stopAllPromptRuns(): {
+  browserCleanup: Promise<void>
+  runtimeAbort: Promise<void>
+} {
   remoteBashManager.cancelAll()
   remoteMutationManager.cancelAll()
+  const runs = [...activePromptRuns.values()]
   for (const [sessionKey, run] of activePromptRuns) {
     advancePromptGeneration(sessionKey)
     run.cancelled = true
+    cancelBrowserRun(run)
   }
+  const browserCleanup = Promise.all(runs.map((run) => cleanupBrowserRunTabs(run)))
   runnerRegistry.stopAll()
   cancelPendingRunWaits()
-  await Promise.all(
-    [...activePromptRuns.values()].map(async (run) => {
+  const runtimeAbort = Promise.all(
+    runs.map(async (run) => {
       if (!run.session) return
       await abortSessionWithoutCancellingApprovals(run.session)
     })
-  )
+  ).then(() => undefined)
+  return { browserCleanup: browserCleanup.then(() => undefined), runtimeAbort }
 }
 
-function cleanupMainWindowRuntime(): void {
-  if (mainWindowCleanupStarted) return
+function safeCleanupStep(event: string, run: () => void | Promise<void>): Promise<void> {
+  try {
+    return Promise.resolve(run()).catch(() => {
+      writeAppLog({ level: 'error', event })
+    })
+  } catch {
+    writeAppLog({ level: 'error', event })
+    return Promise.resolve()
+  }
+}
+
+function cleanupMainWindowRuntime(): Promise<void> {
+  if (mainWindowCleanupPromise) return mainWindowCleanupPromise
   mainWindowCleanupStarted = true
-  cleanupBrowserWorkspaceRegistry()
-  void stopAllPromptRuns()
-  notebookFileWatcher.dispose()
-  jupyterServerRegistry.disposeAll()
-  void invalidateAgentSession()
-  void cursorH2Bridge.close()
+  mainWindowCleanupPromise = Promise.resolve().then(async () => {
+    let promptShutdown = {
+      browserCleanup: Promise.resolve(),
+      runtimeAbort: Promise.resolve()
+    }
+    try {
+      promptShutdown = stopAllPromptRuns()
+    } catch {
+      writeAppLog({ level: 'error', event: 'prompt_shutdown_failed' })
+    }
+    void promptShutdown.runtimeAbort.catch(() => {
+      writeAppLog({ level: 'error', event: 'agent_runtime_abort_failed' })
+    })
+    await Promise.allSettled([
+      promptShutdown.browserCleanup,
+      safeCleanupStep('notebook_watcher_cleanup_failed', () => notebookFileWatcher.dispose()),
+      safeCleanupStep('jupyter_cleanup_failed', () => jupyterServerRegistry.disposeAll()),
+      safeCleanupStep('agent_session_cleanup_failed', () => invalidateAgentSession()),
+      safeCleanupStep('cursor_bridge_cleanup_failed', () => cursorH2Bridge.close())
+    ])
+    await Promise.allSettled([cleanupBrowserWorkspaceRegistry()])
+  })
+  return mainWindowCleanupPromise
+}
+
+function waitForAppCleanupOrTimeout(cleanup: Promise<void>): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve()
+    }
+    const timer = setTimeout(finish, APP_QUIT_CLEANUP_TIMEOUT_MS)
+    void cleanup.then(finish, finish)
+  })
 }
 
 // A user-visible conversation switch points future getAgentSession() calls at a
@@ -5965,6 +6116,11 @@ async function disposeAndSwitchSession(
     currentPermissionMode = permissionMode
   }
   const target = getCurrentSessionPayload()
+  try {
+    await browserWorkspaceRegistry?.setActiveSession(target.phiSessionId ?? null)
+  } catch {
+    writeAppLog({ level: 'error', event: 'browser_presentation_transition_failed' })
+  }
   if (options.notify !== false) {
     notifySessionChanged()
   }
@@ -6397,6 +6553,7 @@ async function applyNextRunConfiguration(
 
 function createWindow(): void {
   mainWindowCleanupStarted = false
+  mainWindowCleanupPromise = null
 
   // Create the browser window.
   const window = new BrowserWindow({
@@ -6434,7 +6591,7 @@ function createWindow(): void {
   })
 
   window.on('close', () => {
-    cleanupMainWindowRuntime()
+    void cleanupMainWindowRuntime()
   })
 
   window.on('closed', () => {
@@ -7955,8 +8112,16 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('tool:approval-response', async (_, requestId: string, approved: boolean) => {
-    resolveToolApproval(requestId, approved)
+  ipcMain.handle('tool:approval-response', async (event, requestId: unknown, approved: unknown) => {
+    if (
+      typeof requestId !== 'string' ||
+      requestId.length === 0 ||
+      requestId.length > 256 ||
+      typeof approved !== 'boolean'
+    ) {
+      return false
+    }
+    return resolveToolApproval(requestId, approved, event.sender)
   })
 
   ipcMain.handle(
@@ -8862,14 +9027,29 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (beforeQuitCleanupComplete) return
+  event.preventDefault()
+  if (beforeQuitResumeScheduled) return
+  beforeQuitResumeScheduled = true
   // Stop local wrapper runs; detach remote runs so the next app launch can resume watching them.
-  wrapperJobs.shutdown()
-  if (preventSleepBlockerId !== null && powerSaveBlocker.isStarted(preventSleepBlockerId)) {
-    powerSaveBlocker.stop(preventSleepBlockerId)
-    preventSleepBlockerId = null
+  try {
+    wrapperJobs.shutdown()
+  } catch {
+    writeAppLog({ level: 'error', event: 'wrapper_shutdown_failed' })
   }
-  cleanupMainWindowRuntime()
+  try {
+    if (preventSleepBlockerId !== null && powerSaveBlocker.isStarted(preventSleepBlockerId)) {
+      powerSaveBlocker.stop(preventSleepBlockerId)
+      preventSleepBlockerId = null
+    }
+  } catch {
+    writeAppLog({ level: 'error', event: 'power_blocker_cleanup_failed' })
+  }
+  void waitForAppCleanupOrTimeout(cleanupMainWindowRuntime()).finally(() => {
+    beforeQuitCleanupComplete = true
+    app.quit()
+  })
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common

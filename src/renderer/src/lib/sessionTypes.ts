@@ -80,4 +80,10 @@ export interface ToolApprovalRequest {
   projectName?: string
   toolName: string
   summary: string
+  browser?: {
+    origin: string
+    action: 'click' | 'typeText' | 'scroll' | 'keypress'
+    consequence: 'read' | 'write' | 'irreversible'
+    reason: 'external_origin' | 'form_submission' | 'irreversible'
+  }
 }

@@ -205,6 +205,7 @@ function harness(): {
   const foreign = new FakeSender()
   let humanSession: BrowserIpcSession | undefined = {
     sessionId: 'phi-current',
+    sessionGeneration: 1,
     owner: { kind: 'ordinary' }
   }
   const origins = new Map<string, BrowserIpcSession>()
@@ -666,9 +667,19 @@ test('runtime parser rejects oversized nonfinite and invalid command fields befo
 test('viewport parsing rejects invalid bounds before workspace dispatch and copies valid values', async () => {
   const value = harness()
   const source = { x: 1, y: 2, width: 300, height: 200 }
-  await invoke(value, 'browser:setViewport', { tabId: 'tab-1', viewport: source })
+  await invoke(value, 'browser:setViewport', {
+    sessionId: 'phi-current',
+    sessionGeneration: 1,
+    tabId: 'tab-1',
+    viewport: source
+  })
   source.width = 999
-  await invoke(value, 'browser:setViewport', { tabId: 'tab-1', viewport: null })
+  await invoke(value, 'browser:setViewport', {
+    sessionId: 'phi-current',
+    sessionGeneration: 1,
+    tabId: 'tab-1',
+    viewport: null
+  })
   assert.deepEqual(value.registry.workspaces.get('phi-current')?.viewportCalls, [
     { tabId: 'tab-1', viewport: { x: 1, y: 2, width: 300, height: 200 } },
     { tabId: 'tab-1', viewport: null }
@@ -681,11 +692,66 @@ test('viewport parsing rejects invalid bounds before workspace dispatch and copi
     { x: 0, y: 0, width: Number.POSITIVE_INFINITY, height: 1 }
   ]) {
     await assert.rejects(
-      invoke(value, 'browser:setViewport', { tabId: 'tab-1', viewport }),
+      invoke(value, 'browser:setViewport', {
+        sessionId: 'phi-current',
+        sessionGeneration: 1,
+        tabId: 'tab-1',
+        viewport
+      }),
       /Invalid browser request/
     )
   }
   assert.equal(value.registry.workspaces.get('phi-current')?.viewportCalls.length, 2)
+})
+
+test('viewport IPC rejects stale session generations before same-tab routing', async () => {
+  const value = harness()
+  value.setHumanSession({
+    sessionId: 'phi-a',
+    sessionGeneration: 1,
+    owner: { kind: 'ordinary' }
+  })
+  await invoke(value, 'browser:setViewport', {
+    sessionId: 'phi-a',
+    sessionGeneration: 1,
+    tabId: 'shared-tab',
+    viewport: { x: 0, y: 0, width: 100, height: 100 }
+  })
+  value.setHumanSession({
+    sessionId: 'phi-b',
+    sessionGeneration: 2,
+    owner: { kind: 'ordinary' }
+  })
+  await assert.rejects(
+    invoke(value, 'browser:setViewport', {
+      sessionId: 'phi-a',
+      sessionGeneration: 1,
+      tabId: 'shared-tab',
+      viewport: null
+    }),
+    /Browser session is unavailable/
+  )
+  value.setHumanSession({
+    sessionId: 'phi-a',
+    sessionGeneration: 3,
+    owner: { kind: 'ordinary' }
+  })
+  await assert.rejects(
+    invoke(value, 'browser:setViewport', {
+      sessionId: 'phi-a',
+      sessionGeneration: 1,
+      tabId: 'shared-tab',
+      viewport: null
+    }),
+    /Browser session is unavailable/
+  )
+  assert.deepEqual(value.registry.workspaces.get('phi-a')?.viewportCalls, [
+    {
+      tabId: 'shared-tab',
+      viewport: { x: 0, y: 0, width: 100, height: 100 }
+    }
+  ])
+  assert.equal(value.registry.workspaces.has('phi-b'), false)
 })
 
 test('workspace events subscribe once and send safe session envelopes to the current renderer', async () => {
@@ -924,4 +990,72 @@ test('presentation tickets order in-flight hide and skip superseded queued visib
   await assert.rejects(supersededHide, /superseded/)
   await latestShow
   assert.deepEqual(engine.viewportCalls.slice(-2), [null, { x: 5, y: 6, width: 120, height: 80 }])
+})
+
+test('workspace presentation suspension hides and resumes the same owned tab without disposal', async () => {
+  const engine = new InMemoryBrowserEngine()
+  const workspace = new BrowserWorkspace({
+    sessionId: 'phi-suspend',
+    partition: 'partition-suspend',
+    engine
+  })
+  const actor: BrowserActor = {
+    kind: 'agent',
+    sessionId: 'phi-suspend',
+    runId: 'run-suspend',
+    toolCallId: 'tool-open'
+  }
+  const opened = await workspace.execute(actor, {
+    type: 'open',
+    requestId: 'suspend-open',
+    url: 'https://example.test'
+  })
+  assert.equal(opened.ok, true)
+  const tabId = opened.snapshot.activeTabId
+  assert.ok(tabId)
+  const viewport = { x: 4, y: 5, width: 300, height: 180 }
+  await workspace.setViewport(tabId, viewport)
+
+  await workspace.suspendPresentation()
+  assert.equal(engine.viewportFor('engine-tab-1' as EngineTabHandle), null)
+  assert.equal(workspace.snapshot().tabs[0].isAgentControlled, true)
+  const backgroundSnapshot = await workspace.execute(
+    { ...actor, toolCallId: 'tool-snapshot' },
+    { type: 'snapshot', requestId: 'suspend-snapshot', tabId }
+  )
+  assert.equal(backgroundSnapshot.ok, true)
+
+  await workspace.resumePresentation()
+  assert.equal(engine.viewportFor('engine-tab-1' as EngineTabHandle), null)
+  await workspace.setViewport(tabId, viewport)
+  assert.deepEqual(engine.viewportFor('engine-tab-1' as EngineTabHandle), viewport)
+  assert.equal(engine.hasTab('engine-tab-1' as EngineTabHandle), true)
+  assert.equal(workspace.snapshot().tabs[0].isAgentControlled, true)
+})
+
+test('suspension supersedes an in-flight show and resumes its latest desired viewport', async () => {
+  const engine = new SequencedPresentationEngine()
+  const workspace = new BrowserWorkspace({
+    sessionId: 'phi-suspend-race',
+    partition: 'partition-suspend-race',
+    engine
+  })
+  const opened = await workspace.execute(
+    { kind: 'human' },
+    { type: 'newTab', requestId: 'suspend-race-open' }
+  )
+  const tabId = opened.snapshot.activeTabId
+  assert.ok(tabId)
+  const viewport = { x: 7, y: 8, width: 240, height: 160 }
+  const showing = workspace.setViewport(tabId, viewport)
+  await engine.firstShowEntered.promise
+  const suspending = workspace.suspendPresentation()
+  engine.releaseFirstShow.resolve()
+  await assert.rejects(showing, /superseded/)
+  await suspending
+  assert.equal(engine.viewportFor('engine-tab-1' as EngineTabHandle), null)
+  await workspace.resumePresentation()
+  assert.equal(engine.viewportFor('engine-tab-1' as EngineTabHandle), null)
+  await workspace.setViewport(tabId, viewport)
+  assert.deepEqual(engine.viewportFor('engine-tab-1' as EngineTabHandle), viewport)
 })
