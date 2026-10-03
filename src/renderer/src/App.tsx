@@ -39,6 +39,7 @@ import { SessionSearchPanel } from './features/session-search/SessionSearchPanel
 import { BackgroundJobsPanel } from './features/jobs/BackgroundJobsPanel'
 import BrowserPanel from './features/browser/BrowserPanel'
 import { useBrowserTrustedOverlayGate } from './features/browser/hooks/useBrowserTrustedOverlayGate'
+import { useBrowserPanelRequests } from './features/browser/hooks/useBrowserPanelRequests'
 import { createBrowserLinkOpeningCoordinator } from './features/browser/lib/browserLinkOpening'
 import { createBrowserRequestIdFactory } from './features/browser/lib/browserPanelState'
 import type { BrowserTrustedOverlayRequest } from './features/browser/lib/browserTrustedOverlayGate'
@@ -1247,6 +1248,19 @@ function App(): React.JSX.Element {
   })
   const [workspaceSidePanelMode, setWorkspaceSidePanelMode] =
     useState<WorkspaceSidePanelMode | null>(null)
+  const openBrowserPanelFromRequest = useCallback((): void => {
+    setWorkspaceSidePanelMode('browser')
+  }, [setWorkspaceSidePanelMode])
+  const showBrowserAppShellFailure = useCallback(
+    (message: string): void => showSnackbar(message),
+    [showSnackbar]
+  )
+  useBrowserPanelRequests({
+    bridge: rendererApi.browser,
+    activeSessionId: activePhiSessionId ?? null,
+    onRequest: openBrowserPanelFromRequest,
+    onFailure: showBrowserAppShellFailure
+  })
   const showBrowserLinkFailure = useCallback((): void => {
     showSnackbar('无法在内置浏览器打开该链接。为安全起见，Phi 未跳转到外部浏览器。')
   }, [showSnackbar])

@@ -21,9 +21,11 @@ test('shared browser renderer bridge exposes one Electron-free public contract',
   assert.notEqual(uiStart, -1)
   const uiCommand = shared.slice(uiStart, shared.indexOf('\n\nexport', uiStart))
 
+  assert.match(shared, /export type BrowserRendererEventEnvelope\s*=/)
+  assert.match(shared, /sessionId: string[\s\S]{0,100}event: BrowserWorkspaceEvent/)
   assert.match(
     shared,
-    /export interface BrowserRendererEventEnvelope\s*{\s*sessionId: string\s*event: BrowserWorkspaceEvent\s*}/
+    /sessionId: null[\s\S]{0,140}type: 'appShellOpenFailed'[\s\S]{0,100}reason: 'browserUnavailable'/
   )
   assert.match(uiCommand, /Extract</)
   for (const type of [
@@ -35,7 +37,8 @@ test('shared browser renderer bridge exposes one Electron-free public contract',
     'history',
     'reload',
     'stop',
-    'restore'
+    'restore',
+    'openExternal'
   ]) {
     assert.match(uiCommand, new RegExp(`'${type}'`))
   }

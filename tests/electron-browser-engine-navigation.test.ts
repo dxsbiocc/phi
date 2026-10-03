@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import test from 'node:test'
+import type { HandlerDetails, WindowOpenHandlerResponse } from 'electron'
 import type { EngineEvent } from '../src/main/browser/browser-engine'
 import {
   ElectronBrowserEngine,
@@ -68,6 +69,8 @@ class FakeWebContents extends EventEmitter {
   navigationLoadGate: Promise<void> | null = null
   emitDuringBlank = false
   closeError: Error | null = null
+  windowOpenHandlerError: Error | null = null
+  windowOpenHandler: ((details: HandlerDetails) => WindowOpenHandlerResponse) | null = null
   securityInstalledAtFirstLoad = false
 
   constructor(readonly session: FakeSession) {
@@ -108,6 +111,11 @@ class FakeWebContents extends EventEmitter {
   closeDevTools(): void {
     this.closeDevToolsCalls += 1
   }
+
+  setWindowOpenHandler(handler: (details: HandlerDetails) => WindowOpenHandlerResponse): void {
+    if (this.windowOpenHandlerError) throw this.windowOpenHandlerError
+    this.windowOpenHandler = handler
+  }
 }
 
 function harness(
@@ -118,6 +126,7 @@ function harness(
     loadError?: Error
     closeError?: Error
     navigationLoadGate?: Promise<void>
+    windowOpenHandlerError?: Error
   } = {}
 ): {
   engine: ElectronBrowserEngine
@@ -134,6 +143,7 @@ function harness(
       this.webContents.loadError = options.loadError ?? null
       this.webContents.closeError = options.closeError ?? null
       this.webContents.navigationLoadGate = options.navigationLoadGate ?? null
+      this.webContents.windowOpenHandlerError = options.windowOpenHandlerError ?? null
       contents.push(this.webContents)
     }
     setBounds(): void {
@@ -188,6 +198,17 @@ function navigationDetails(
     }
   }
   return details
+}
+
+function popupDetails(url: string, postBody?: unknown): HandlerDetails {
+  return {
+    url,
+    frameName: '',
+    features: '',
+    disposition: 'foreground-tab',
+    referrer: { url: '', policy: 'default' },
+    ...(postBody === undefined ? {} : { postBody })
+  } as HandlerDetails
 }
 
 test('executes navigation history reload and stop with navigationHistory flags', async () => {
@@ -366,6 +387,69 @@ test('defensively copies application origins used by page navigation policy', as
   const blocked = navigationDetails('https://phi.internal/private')
   contents[0].emit('will-navigate', blocked)
   assert.equal(blocked.prevented, true)
+})
+
+test('denies native popups and publishes only policy-safe credential-free GET requests', async () => {
+  const { engine, contents } = harness({ applicationOrigins: ['https://phi.internal'] })
+  const handle = await engine.createTab({ partition: 'partition-a' })
+  const events: EngineEvent[] = []
+  engine.subscribe((event) => events.push(event))
+  const handler = contents[0].windowOpenHandler
+  assert.notEqual(handler, null)
+
+  assert.deepEqual(handler?.(popupDetails('https://example.test/path')), { action: 'deny' })
+  assert.deepEqual(handler?.(popupDetails('http://127.0.0.1:3000/path')), {
+    action: 'deny'
+  })
+  assert.deepEqual(
+    handler?.(popupDetails('https://example.test/submit', { data: [{ bytes: 'secret' }] })),
+    { action: 'deny' }
+  )
+  assert.deepEqual(handler?.(popupDetails('https://user:password@example.test/private')), {
+    action: 'deny'
+  })
+  assert.deepEqual(handler?.(popupDetails('http://public.test/private')), { action: 'deny' })
+  assert.deepEqual(handler?.(popupDetails('https://phi.internal/private')), { action: 'deny' })
+
+  assert.deepEqual(
+    events.map(
+      (event) => event.type === 'popupRequested' && [event.handle, event.url, event.method]
+    ),
+    [
+      [handle, 'https://example.test/path', 'GET'],
+      [handle, 'http://127.0.0.1:3000/path', 'GET']
+    ]
+  )
+  assert.equal(JSON.stringify(events).includes('password'), false)
+  assert.equal(JSON.stringify(events).includes('secret'), false)
+})
+
+test('keeps the popup handler deny-only and silent after tab cleanup', async () => {
+  const { engine, contents } = harness()
+  const handle = await engine.createTab({ partition: 'partition-a' })
+  const events: EngineEvent[] = []
+  engine.subscribe((event) => events.push(event))
+  const handler = contents[0].windowOpenHandler
+
+  await engine.disposeTab(handle)
+  assert.deepEqual(handler?.(popupDetails('https://after-cleanup.test/')), { action: 'deny' })
+  assert.deepEqual(events, [])
+})
+
+test('rolls back before blank load when the popup deny handler cannot be installed', async () => {
+  const { engine, contents } = harness({
+    windowOpenHandlerError: new Error('raw popup hook failure')
+  })
+
+  await assert.rejects(
+    engine.createTab({ partition: 'partition-a' }),
+    (error: Error) =>
+      error.message === 'Browser tab could not be created' &&
+      !error.message.includes('raw popup hook failure')
+  )
+  assert.deepEqual(contents[0].loadedUrls, [])
+  assert.equal(contents[0].closeCalls, 1)
+  assert.equal(engine.tabCountForTesting(), 0)
 })
 
 test('denies permissions downloads HTTP auth and guest DevTools', async () => {

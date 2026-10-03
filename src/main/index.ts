@@ -58,6 +58,7 @@ import {
 import {
   BrowserIpcCoordinator,
   registerBrowserRendererIpc,
+  routeBrowserAppShellWindowOpen,
   type BrowserIpcSession
 } from './browser/browser-ipc'
 import { FileSystemBrowserCheckpointStore } from './browser/browser-checkpoints'
@@ -455,7 +456,8 @@ function getBrowserWorkspaceRegistry(): BrowserWorkspaceRegistry {
         policyContext: browserPolicyContext()
       }),
     policyContext: browserPolicyContext(),
-    checkpointStore: browserCheckpointStore
+    checkpointStore: browserCheckpointStore,
+    openExternal: (url) => shell.openExternal(url)
   })
   return browserWorkspaceRegistry
 }
@@ -6001,8 +6003,12 @@ function createWindow(): void {
   })
 
   window.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
-    return { action: 'deny' }
+    return routeBrowserAppShellWindowOpen({
+      details,
+      coordinator: browserIpcCoordinator,
+      policyContext: browserPolicyContext(),
+      openExternal: (url) => shell.openExternal(url)
+    })
   })
 
   window.webContents.on('will-frame-navigate', (event) => {

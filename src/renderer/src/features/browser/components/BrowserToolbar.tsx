@@ -6,6 +6,7 @@ import { PhiIcons } from '../../../icons'
 const BackIcon = PhiIcons.action.back
 const RefreshIcon = PhiIcons.action.refresh
 const StopIcon = PhiIcons.action.stop
+const OpenExternalIcon = PhiIcons.action.openExternal
 
 function ToolbarButton({
   label,
@@ -52,6 +53,7 @@ export interface BrowserToolbarProps {
   onBack(): void
   onForward(): void
   onReloadOrStop(): void
+  onOpenExternal(): void
 }
 
 export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
@@ -145,6 +147,21 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
             '& .MuiInputBase-input': { px: 1.25, py: 0 }
           }}
         />
+        <ToolbarButton
+          label="在默认浏览器中打开"
+          disabled={
+            controlsDisabled ||
+            !props.activeTab ||
+            !props.activeTab.url ||
+            props.activeTab.url === 'about:blank' ||
+            Boolean(props.activeTab.restorable) ||
+            props.activeTab.phase === 'failed' ||
+            props.activeTab.phase === 'crashed'
+          }
+          onClick={props.onOpenExternal}
+        >
+          <OpenExternalIcon sx={{ fontSize: 18 }} />
+        </ToolbarButton>
       </Box>
       <Box data-phi-browser-progress-slot="true" sx={{ height: 2, overflow: 'hidden' }}>
         <LinearProgress

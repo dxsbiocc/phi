@@ -89,6 +89,12 @@ export type BrowserCommand =
       direction: 'back' | 'forward'
     }
   | { type: 'reload' | 'stop'; requestId: string; tabId: string }
+  | {
+      type: 'openExternal'
+      requestId: string
+      tabId: string
+      expectedDocumentRevision: number
+    }
   | { type: 'snapshot'; requestId: string; tabId: string }
   | { type: 'restore'; requestId: string; tabId: string }
   | {
@@ -137,6 +143,7 @@ export type BrowserUiCommand = Extract<
       | 'reload'
       | 'stop'
       | 'restore'
+      | 'openExternal'
   }
 >
 
@@ -168,11 +175,24 @@ export type BrowserWorkspaceEvent =
       error: BrowserError
       revision: number
     }
+  | {
+      type: 'panelRequested'
+      reason: 'appShellOpen'
+      revision: number
+    }
 
-export interface BrowserRendererEventEnvelope {
-  sessionId: string
-  event: BrowserWorkspaceEvent
-}
+export type BrowserRendererEventEnvelope =
+  | {
+      sessionId: string
+      event: BrowserWorkspaceEvent
+    }
+  | {
+      sessionId: null
+      event: {
+        type: 'appShellOpenFailed'
+        reason: 'browserUnavailable'
+      }
+    }
 
 export interface BrowserRendererBridge {
   execute(command: BrowserUiCommand): Promise<BrowserOutcome>

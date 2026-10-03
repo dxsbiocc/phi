@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import test from 'node:test'
+import type { HandlerDetails, WindowOpenHandlerResponse } from 'electron'
 import type { BrowserViewport } from '../src/shared/browserTypes'
 import {
   ElectronBrowserEngine,
@@ -45,6 +46,9 @@ class FakeContents extends EventEmitter implements BrowserWebContentsLike {
   }
   closeDevTools(): void {
     return
+  }
+  setWindowOpenHandler(handler: (details: HandlerDetails) => WindowOpenHandlerResponse): void {
+    void handler
   }
 }
 

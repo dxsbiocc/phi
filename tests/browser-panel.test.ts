@@ -14,6 +14,7 @@ import {
   browserCloseTabCommand,
   browserHistoryCommand,
   browserNewTabCommand,
+  browserOpenExternalCommand,
   browserReloadCommand,
   browserRestoreCommand,
   browserRetryCommand,
@@ -25,6 +26,10 @@ import {
   isBrowserTabActivationKey
 } from '../src/renderer/src/features/browser/lib/browserPanelState'
 import { createBrowserViewportScheduler } from '../src/renderer/src/features/browser/hooks/useBrowserViewport'
+import {
+  browserAppShellFailureMessage,
+  browserPanelRequestMatchesSession
+} from '../src/renderer/src/features/browser/hooks/useBrowserPanelRequests'
 
 function deferred<T>(): {
   promise: Promise<T>
@@ -120,6 +125,22 @@ test('browser panel state builds bounded single-tab UI commands', () => {
     requestId: 'request-10',
     tabId: 'tab-1'
   })
+  assert.deepEqual(browserOpenExternalCommand(snapshot(), 'request-11'), {
+    type: 'openExternal',
+    requestId: 'request-11',
+    tabId: 'tab-1',
+    expectedDocumentRevision: 2
+  })
+  assert.equal(browserOpenExternalCommand(snapshot([], null), 'request-12'), null)
+  assert.equal(
+    browserOpenExternalCommand(snapshot([tab({ url: 'about:blank' })]), 'request-13'),
+    null
+  )
+  assert.equal(
+    browserOpenExternalCommand(snapshot([tab({ restorable: true })]), 'request-14'),
+    null
+  )
+  assert.equal(browserOpenExternalCommand(snapshot([tab({ phase: 'failed' })]), 'request-15'), null)
 
   assert.equal(activeBrowserTab(snapshot())?.id, 'tab-1')
   assert.equal(canPresentNativeBrowser(tab(), true), true)
@@ -133,6 +154,34 @@ test('browser panel state builds bounded single-tab UI commands', () => {
   assert.notEqual(first, second)
   assert.equal(first.length <= 128, true)
   assert.equal(second.length <= 128, true)
+})
+
+test('browser panel requests are session-bound and ignore ordinary workspace events', () => {
+  const request = {
+    sessionId: 'phi-session',
+    event: { type: 'panelRequested', reason: 'appShellOpen', revision: 3 }
+  } as const
+  assert.equal(browserPanelRequestMatchesSession(request, 'phi-session'), true)
+  assert.equal(browserPanelRequestMatchesSession(request, 'phi-other'), false)
+  assert.equal(browserPanelRequestMatchesSession(request, null), false)
+  assert.equal(
+    browserPanelRequestMatchesSession(
+      {
+        sessionId: 'phi-session',
+        event: { type: 'snapshotChanged', snapshot: snapshot() }
+      },
+      'phi-session'
+    ),
+    false
+  )
+  assert.equal(
+    browserAppShellFailureMessage({
+      sessionId: null,
+      event: { type: 'appShellOpenFailed', reason: 'browserUnavailable' }
+    }),
+    '无法打开链接，请先选择一个会话或稍后重试。'
+  )
+  assert.equal(browserAppShellFailureMessage(request), null)
 })
 
 test('browser panel state builds multi-tab commands and stable display labels', () => {

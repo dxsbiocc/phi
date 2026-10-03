@@ -12,6 +12,7 @@ import {
   browserErrorMessage,
   browserHistoryCommand,
   browserNewTabCommand,
+  browserOpenExternalCommand,
   browserReloadCommand,
   browserRestoreCommand,
   browserRetryCommand,
@@ -200,6 +201,9 @@ export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Elemen
           run(browserHistoryCommand(currentSnapshot, 'forward', workspace.nextRequestId()))
         }
         onReloadOrStop={() => run(browserReloadCommand(currentSnapshot, workspace.nextRequestId()))}
+        onOpenExternal={() =>
+          run(browserOpenExternalCommand(currentSnapshot, workspace.nextRequestId()))
+        }
       />
       <Box
         ref={viewportRef}

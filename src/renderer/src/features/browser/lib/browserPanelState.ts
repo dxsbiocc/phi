@@ -106,7 +106,7 @@ export function createBrowserWorkspaceController(options: {
             if (relation === 'newer' || relation === 'same') {
               acceptFeedback(envelope.event.snapshot.revision, sequence, null)
             }
-          } else {
+          } else if (envelope.event.type === 'error') {
             acceptFeedback(
               envelope.event.revision,
               sequence,
@@ -269,6 +269,29 @@ export function browserReloadCommand(
     type: activeTab.phase === 'loading' ? 'stop' : 'reload',
     requestId,
     tabId: activeTab.id
+  }
+}
+
+export function browserOpenExternalCommand(
+  snapshot: BrowserWorkspaceSnapshot | null,
+  requestId: string
+): BrowserUiCommand | null {
+  const activeTab = activeBrowserTab(snapshot)
+  if (
+    !activeTab ||
+    !activeTab.url ||
+    activeTab.url === 'about:blank' ||
+    activeTab.restorable ||
+    activeTab.phase === 'failed' ||
+    activeTab.phase === 'crashed'
+  ) {
+    return null
+  }
+  return {
+    type: 'openExternal',
+    requestId,
+    tabId: activeTab.id,
+    expectedDocumentRevision: activeTab.documentRevision
   }
 }
 

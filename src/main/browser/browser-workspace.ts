@@ -38,6 +38,7 @@ import { prepareCrashedTabRecovery } from './browser-workspace-recovery'
 import { BrowserWorkspaceCleanup } from './browser-workspace-cleanup'
 import { BrowserWorkspacePresentation } from './browser-workspace-presentation'
 import { BrowserWorkspaceRequestCache } from './browser-workspace-request-cache'
+import { openActiveBrowserTabExternally } from './browser-workspace-external'
 
 type BrowserUrlNormalizer = (input: string, context: BrowserPolicyContext) => BrowserUrlPolicyResult
 
@@ -51,6 +52,7 @@ export interface BrowserWorkspaceOptions {
   now?: () => number
   recentRequestCap?: number
   checkpointStore?: BrowserCheckpointStore
+  openExternal?: (url: string) => Promise<void>
 }
 
 export class BrowserWorkspace {
@@ -65,6 +67,7 @@ export class BrowserWorkspace {
   readonly #idFactory: () => string
   readonly #requestCache: BrowserWorkspaceRequestCache
   readonly #checkpointCoordinator?: BrowserCheckpointCoordinator
+  readonly #openExternal?: (url: string) => Promise<void>
   readonly #listeners = new Set<(event: BrowserWorkspaceEvent) => void>()
   readonly #tabCollection: BrowserTabCollection
   readonly #unsubscribeEngine: () => void
@@ -92,6 +95,7 @@ export class BrowserWorkspace {
       options.recentRequestCap,
       options.now ?? Date.now
     )
+    this.#openExternal = options.openExternal
     this.#checkpointCoordinator = options.checkpointStore
       ? new BrowserCheckpointCoordinator({
           sessionId: this.#sessionId,
@@ -258,6 +262,19 @@ export class BrowserWorkspace {
         return this.#reload(command.tabId, signal)
       case 'stop':
         return this.#executeEngineCommand(command.tabId, { type: 'stop' }, signal)
+      case 'openExternal': {
+        const activeTabId = this.#tabCollection.activeTabId
+        const result = await openActiveBrowserTabExternally({
+          actor,
+          requestedTabId: command.tabId,
+          expectedDocumentRevision: command.expectedDocumentRevision,
+          activeTab: activeTabId ? this.#tabCollection.find(activeTabId)?.snapshot : undefined,
+          policyContext: this.#policyContext,
+          normalizeUrl: this.#normalizeUrl,
+          ...(this.#openExternal ? { openExternal: this.#openExternal } : {})
+        })
+        return result.ok ? this.#success() : this.#failure(result.error)
+      }
       case 'snapshot':
         return this.#tabCollection.find(command.tabId)
           ? this.#success()

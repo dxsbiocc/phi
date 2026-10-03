@@ -58,7 +58,7 @@ export type BrowserNavigationHistoryLike = Pick<
 
 export type BrowserWebContentsLike = Pick<
   WebContents,
-  'loadURL' | 'close' | 'reload' | 'stop' | 'closeDevTools' | 'on' | 'off'
+  'loadURL' | 'close' | 'reload' | 'stop' | 'closeDevTools' | 'setWindowOpenHandler' | 'on' | 'off'
 > & {
   session: BrowserSessionLike
   navigationHistory: BrowserNavigationHistoryLike
@@ -196,7 +196,6 @@ export class ElectronBrowserEngine implements BrowserEngine {
       const view = new this.#WebContentsView({
         webPreferences: safePreferences(input.partition)
       })
-      this.#assertRequiredHooks(view.webContents)
       record = {
         handle,
         view,
@@ -208,6 +207,8 @@ export class ElectronBrowserEngine implements BrowserEngine {
         listeners: []
       }
       this.#tabs.set(handle, record)
+      this.#assertRequiredHooks(view.webContents)
+      this.#installWindowOpenHandler(handle, record)
       record.releaseSessionPolicy = acquireBrowserSessionPolicy(view.webContents.session)
       this.#registerTabListeners(handle, record)
       await view.webContents.loadURL('about:blank')
@@ -374,7 +375,8 @@ export class ElectronBrowserEngine implements BrowserEngine {
       typeof webContents.off !== 'function' ||
       typeof webContents.reload !== 'function' ||
       typeof webContents.stop !== 'function' ||
-      typeof webContents.closeDevTools !== 'function'
+      typeof webContents.closeDevTools !== 'function' ||
+      typeof webContents.setWindowOpenHandler !== 'function'
     ) {
       throw new Error('required browser security hooks unavailable')
     }
@@ -389,6 +391,28 @@ export class ElectronBrowserEngine implements BrowserEngine {
 
   #suppressProductEvents(record: ElectronTabRecord): boolean {
     return record.initializing || record.cleanupAttempted
+  }
+
+  #installWindowOpenHandler(handle: EngineTabHandle, record: ElectronTabRecord): void {
+    record.view.webContents.setWindowOpenHandler((details) => {
+      try {
+        if (this.#disposed || this.#suppressProductEvents(record) || details.postBody != null) {
+          return { action: 'deny' }
+        }
+        const normalized = normalizeBrowserUrl(details.url, this.#policyContext)
+        if (!normalized.ok) return { action: 'deny' }
+        this.#publish({
+          type: 'popupRequested',
+          handle,
+          url: normalized.url,
+          method: 'GET',
+          at: this.#now()
+        })
+      } catch {
+        // A popup must remain denied even if policy evaluation or event delivery fails.
+      }
+      return { action: 'deny' }
+    })
   }
 
   #registerTabListeners(handle: EngineTabHandle, record: ElectronTabRecord): void {

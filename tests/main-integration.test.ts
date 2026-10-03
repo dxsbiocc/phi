@@ -292,6 +292,10 @@ type HarnessResult = {
   closeMainWindow: () => void
   activateApp: () => void
   browserWindowCount: () => number
+  tryWindowOpen: (details: { url: string; disposition?: string; postBody?: unknown }) => {
+    action: string
+  }
+  openedExternalUrls: string[]
 }
 
 async function harness(
@@ -399,6 +403,12 @@ async function harness(
   const appSettingsUpdates: string[] = []
   const dbConnectorEnabledUpdates: Array<{ id: string; digest: string; enabled: boolean }> = []
   const browserViews: BrowserIntegrationView[] = []
+  const openedExternalUrls: string[] = []
+  let windowOpenHandler:
+    | ((details: { url: string; disposition?: string; postBody?: unknown }) => {
+        action: string
+      })
+    | undefined
   let appDefaultProxyMode = 'auto'
   const appNoProjectTaskFolder = '/workspace'
   const appProxyTransportStatus = {
@@ -624,6 +634,7 @@ async function harness(
     historyIndex = 0
     closeCalls = 0
     closeError: Error | null = null
+    windowOpenHandler: ((details: Record<string, unknown>) => { action: string }) | null = null
     readonly navigationHistory = {
       canGoBack: (): boolean => this.historyIndex > 0,
       canGoForward: (): boolean => this.historyIndex < this.history.length - 1,
@@ -655,6 +666,10 @@ async function harness(
 
     stop(): void {
       this.emit('did-stop-loading')
+    }
+
+    setWindowOpenHandler(handler: (details: Record<string, unknown>) => { action: string }): void {
+      this.windowOpenHandler = handler
     }
 
     close(): void {
@@ -712,7 +727,13 @@ async function harness(
         operationLog.push({ type: 'webContents.send', channel, data })
         events.push({ channel, data })
       },
-      setWindowOpenHandler: noop,
+      setWindowOpenHandler: (
+        handler: (details: { url: string; disposition?: string; postBody?: unknown }) => {
+          action: string
+        }
+      ): void => {
+        windowOpenHandler = handler
+      },
       on: (name: string, handler: NonNullable<typeof frameNavigationHandler>): void => {
         if (name === 'will-frame-navigate') frameNavigationHandler = handler
       },
@@ -1202,7 +1223,9 @@ async function harness(
       BrowserWindow: Window,
       WebContentsView,
       shell: {
-        openExternal: noop,
+        openExternal: async (url: string): Promise<void> => {
+          openedExternalUrls.push(url)
+        },
         openPath: async (filePath: string): Promise<string> => {
           openedPaths.push(filePath)
           return ''
@@ -2616,7 +2639,10 @@ async function harness(
     {},
     {
       platform: process.platform,
-      env: { PI_CODING_AGENT_DIR: '/isolated' },
+      env: {
+        PI_CODING_AGENT_DIR: '/isolated',
+        ELECTRON_RENDERER_URL: 'https://phi.internal'
+      },
       versions: { node: '22.0.0', electron: '39.0.0' }
     }
   )
@@ -2655,6 +2681,11 @@ async function harness(
       app.emit('activate')
     },
     browserWindowCount: (): number => Window.getAllWindows().length,
+    tryWindowOpen: (details): { action: string } => {
+      assert.ok(windowOpenHandler, 'Missing app-shell window-open handler')
+      return windowOpenHandler(details)
+    },
+    openedExternalUrls,
     tryFrameNavigation: (input): boolean => {
       let prevented = false
       frameNavigationHandler?.({
@@ -2771,6 +2802,127 @@ test('main browser IPC routes the trusted renderer through the current Phi sessi
     app.invokeFromForeign('browser:snapshot'),
     /Browser renderer is not authorized/
   )
+})
+
+test('main browser explicit system open is validated and only runs for the trusted renderer', async () => {
+  const app = await harness()
+  await app.invoke('sessions:create')
+  const opened = (await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'explicit-open-page',
+    url: 'https://example.test/path'
+  })) as {
+    ok: boolean
+    snapshot: { activeTabId: string; tabs: Array<{ id: string; documentRevision: number }> }
+  }
+  assert.equal(opened.ok, true)
+
+  const external = (await app.invoke('browser:execute', {
+    type: 'openExternal',
+    requestId: 'explicit-system-open',
+    tabId: opened.snapshot.activeTabId,
+    expectedDocumentRevision: opened.snapshot.tabs[0].documentRevision
+  })) as { ok: boolean }
+  assert.equal(external.ok, true)
+  assert.deepEqual(app.openedExternalUrls, ['https://example.test/path'])
+
+  await assert.rejects(
+    app.invokeFromForeign('browser:execute', {
+      type: 'openExternal',
+      requestId: 'forged-system-open',
+      tabId: opened.snapshot.activeTabId,
+      expectedDocumentRevision: opened.snapshot.tabs[0].documentRevision
+    }),
+    /Browser renderer is not authorized/
+  )
+  assert.deepEqual(app.openedExternalUrls, ['https://example.test/path'])
+})
+
+test('app-shell window opens route safe pages in-app and modified clicks externally', async () => {
+  const app = await harness()
+  await app.invoke('sessions:create')
+
+  assert.deepEqual(
+    app.tryWindowOpen({ url: 'https://in-app.example/path', disposition: 'default' }),
+    { action: 'deny' }
+  )
+  await tick()
+  assert.equal(app.browserViews.length, 1)
+  assert.equal(
+    app.browserViews[0].webContents.loadedUrls.includes('https://in-app.example/path'),
+    true
+  )
+  assert.deepEqual(app.openedExternalUrls, [])
+  assert.equal(
+    app.events.some(
+      (entry) =>
+        entry.channel === 'browser:event' &&
+        (entry.data as { event?: { type?: string } }).event?.type === 'panelRequested'
+    ),
+    true
+  )
+
+  assert.deepEqual(
+    app.tryWindowOpen({ url: 'https://external.example/path', disposition: 'background-tab' }),
+    { action: 'deny' }
+  )
+  await tick()
+  assert.deepEqual(app.openedExternalUrls, ['https://external.example/path'])
+  assert.equal(app.browserViews.length, 1)
+
+  assert.deepEqual(
+    app.tryWindowOpen({ url: 'https://script-window.example/path', disposition: 'new-window' }),
+    { action: 'deny' }
+  )
+  await tick()
+  assert.deepEqual(app.openedExternalUrls, ['https://external.example/path'])
+  assert.equal(app.browserViews.length, 2)
+  assert.equal(
+    app.browserViews[1].webContents.loadedUrls.includes('https://script-window.example/path'),
+    true
+  )
+
+  for (const url of [
+    'javascript:alert(1)',
+    'https://user:password@credential.example/',
+    'https://phi.internal/private',
+    'https://PHI.INTERNAL.:443/private'
+  ]) {
+    for (const disposition of ['default', 'background-tab']) {
+      assert.deepEqual(app.tryWindowOpen({ url, disposition }), {
+        action: 'deny'
+      })
+    }
+  }
+  assert.deepEqual(
+    app.tryWindowOpen({
+      url: 'https://post.example/submit',
+      disposition: 'default',
+      postBody: { data: [{ bytes: 'secret' }] }
+    }),
+    { action: 'deny' }
+  )
+  await tick()
+  assert.deepEqual(app.openedExternalUrls, ['https://external.example/path'])
+  assert.equal(app.browserViews.length, 2)
+})
+
+test('app-shell window open reports failure without shell fallback when no Phi session is active', async () => {
+  const app = await harness()
+  assert.deepEqual(
+    app.tryWindowOpen({ url: 'https://fallback.example/path', disposition: 'default' }),
+    { action: 'deny' }
+  )
+  await tick()
+  assert.deepEqual(app.openedExternalUrls, [])
+  assert.equal(app.browserViews.length, 0)
+  assert.deepEqual(app.events.at(-1), {
+    channel: 'browser:event',
+    data: {
+      sessionId: null,
+      event: { type: 'appShellOpenFailed', reason: 'browserUnavailable' }
+    }
+  })
 })
 
 test('main browser IPC derives project partitions and applies only validated viewports', async () => {
@@ -3955,6 +4107,10 @@ test('main IPC: featured MCP tools are read through the Bun worker', async () =>
   )
   await openAuthUrl({ id: 'notion', url: 'https://mcp.notion.com/authorize' })
   await openAuthUrl({ id: 'composio', url: 'https://connect.composio.dev/oauth/authorize' })
+  assert.deepEqual(app.openedExternalUrls.slice(-2), [
+    'https://mcp.notion.com/authorize',
+    'https://connect.composio.dev/oauth/authorize'
+  ])
 })
 
 test('main IPC: API keys stay out of renderer responses and worker sync requests', async () => {

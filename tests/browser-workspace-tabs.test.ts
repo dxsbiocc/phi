@@ -87,6 +87,124 @@ test('newTab creates an active blank tab or navigates its optional URL', async (
   assert.equal(engine.tabInputFor('engine-tab-2' as EngineTabHandle).partition, 'browser-project-a')
 })
 
+test('explicit system open validates the active URL and remains human-only and idempotent', async () => {
+  const openedExternal: string[] = []
+  let engineId = 0
+  let tabId = 0
+  const engine = new InMemoryBrowserEngine({
+    capabilities: browserCapabilities,
+    idFactory: () => `engine-tab-${++engineId}`
+  })
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    idFactory: () => `phi-tab-${++tabId}`,
+    now: () => 42,
+    openExternal: async (url) => {
+      openedExternal.push(url)
+    }
+  })
+  await workspace.execute(human, {
+    type: 'open',
+    requestId: 'open-1',
+    url: 'example.test'
+  })
+
+  const command = {
+    type: 'openExternal',
+    requestId: 'external-1',
+    tabId: 'phi-tab-1',
+    expectedDocumentRevision: 1
+  } as const
+  const first = await workspace.execute(human, command)
+  successful(first)
+  const duplicate = await workspace.execute(human, command)
+  assert.deepEqual(duplicate, first)
+  assert.deepEqual(openedExternal, ['https://example.test/'])
+
+  const denied = await workspace.execute(
+    { kind: 'agent', sessionId: 'session-1', runId: 'run-1', toolCallId: 'tool-1' },
+    {
+      type: 'openExternal',
+      requestId: 'external-agent',
+      tabId: 'phi-tab-1',
+      expectedDocumentRevision: 1
+    }
+  )
+  assert.equal(denied.ok, false)
+  if (!denied.ok) assert.equal(denied.error.code, 'PERMISSION_DENIED')
+  assert.deepEqual(openedExternal, ['https://example.test/'])
+
+  await workspace.execute(human, { type: 'newTab', requestId: 'blank-1' })
+  const switched = await workspace.execute(human, {
+    type: 'openExternal',
+    requestId: 'external-after-switch',
+    tabId: 'phi-tab-1',
+    expectedDocumentRevision: 1
+  })
+  assert.equal(switched.ok, false)
+  if (!switched.ok) assert.equal(switched.error.code, 'STALE_DOCUMENT')
+  assert.deepEqual(openedExternal, ['https://example.test/'])
+
+  const blank = await workspace.execute(human, {
+    type: 'openExternal',
+    requestId: 'external-blank',
+    tabId: 'phi-tab-2',
+    expectedDocumentRevision: 0
+  })
+  assert.equal(blank.ok, false)
+  if (!blank.ok) assert.equal(blank.error.code, 'SCHEME_BLOCKED')
+  assert.deepEqual(openedExternal, ['https://example.test/'])
+
+  await workspace.execute(human, {
+    type: 'activate',
+    requestId: 'activate-first',
+    tabId: 'phi-tab-1'
+  })
+  await workspace.execute(human, {
+    type: 'navigate',
+    requestId: 'change-first-document',
+    tabId: 'phi-tab-1',
+    url: 'https://changed.test',
+    expectedDocumentRevision: 1
+  })
+  const staleDocument = await workspace.execute(human, {
+    type: 'openExternal',
+    requestId: 'external-stale-document',
+    tabId: 'phi-tab-1',
+    expectedDocumentRevision: 1
+  })
+  assert.equal(staleDocument.ok, false)
+  if (!staleDocument.ok) assert.equal(staleDocument.error.code, 'STALE_DOCUMENT')
+  assert.deepEqual(openedExternal, ['https://example.test/'])
+})
+
+test('explicit system open contains shell failures without exposing raw errors', async () => {
+  const { engine } = createBrowserWorkspaceHarness()
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    idFactory: () => 'phi-tab-1',
+    openExternal: async () => {
+      throw new Error('raw shell failure secret')
+    }
+  })
+  await workspace.execute(human, { type: 'open', requestId: 'open-1', url: 'example.test' })
+  const outcome = await workspace.execute(human, {
+    type: 'openExternal',
+    requestId: 'external-failure',
+    tabId: 'phi-tab-1',
+    expectedDocumentRevision: 1
+  })
+  assert.equal(outcome.ok, false)
+  if (!outcome.ok) {
+    assert.equal(outcome.error.code, 'ENGINE_UNAVAILABLE')
+    assert.doesNotMatch(outcome.error.message, /raw shell failure secret/)
+  }
+})
+
 test('activate selects a known tab without changing either page', async () => {
   const { workspace } = createBrowserWorkspaceHarness()
   await workspace.execute(human, { type: 'open', requestId: 'open-1', url: 'first.test' })

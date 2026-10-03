@@ -2,6 +2,7 @@ import type {
   BrowserActor,
   BrowserCommand,
   BrowserOutcome,
+  BrowserRendererEventEnvelope,
   BrowserViewport,
   BrowserWorkspaceEvent,
   BrowserWorkspaceSnapshot
@@ -10,6 +11,7 @@ import type {
   BrowserWorkspaceOwner,
   BrowserWorkspaceRegistration
 } from './browser-workspace-registry'
+import type { BrowserPolicyContext } from './browser-policy'
 
 const MAX_ID_BYTES = 256
 const MAX_ORIGIN_ID_BYTES = 512
@@ -45,6 +47,19 @@ export interface BrowserIpcCoordinatorOptions {
   getTrustedRenderer: () => BrowserRendererSenderLike | null
   resolveHumanSession: () => BrowserIpcSession | undefined
   resolveAgentSession: (originSessionId: string) => BrowserIpcSession | undefined
+}
+
+export interface BrowserAppShellWindowOpenDetails {
+  url: string
+  disposition?: string
+  postBody?: unknown
+}
+
+export interface BrowserAppShellWindowOpenOptions {
+  details: BrowserAppShellWindowOpenDetails
+  coordinator: BrowserIpcCoordinator
+  policyContext?: BrowserPolicyContext
+  openExternal: (url: string) => Promise<void>
 }
 
 export interface BrowserIpcMainLike {
@@ -117,6 +132,13 @@ export function parseBrowserCommand(input: unknown): BrowserCommand {
           type: 'open',
           requestId,
           url: boundedString(input.url, MAX_URL_BYTES)
+        }
+      case 'openExternal':
+        return {
+          type: 'openExternal',
+          requestId,
+          tabId: boundedString(input.tabId, MAX_ID_BYTES),
+          expectedDocumentRevision: revision(input.expectedDocumentRevision)
         }
       case 'newTab':
         return {
@@ -244,6 +266,7 @@ export class BrowserIpcCoordinator {
   readonly #resolveHumanSession: BrowserIpcCoordinatorOptions['resolveHumanSession']
   readonly #resolveAgentSession: BrowserIpcCoordinatorOptions['resolveAgentSession']
   readonly #subscribedWorkspaces = new WeakSet<BrowserWorkspaceLike>()
+  #nextAppShellRequestId = 0
 
   constructor(options: BrowserIpcCoordinatorOptions) {
     this.#getRegistry = options.getRegistry
@@ -296,6 +319,48 @@ export class BrowserIpcCoordinator {
     })
   }
 
+  async openAppShellUrl(input: unknown): Promise<BrowserOutcome> {
+    return this.#safe(async () => {
+      const url = boundedString(input, MAX_URL_BYTES)
+      const session = safeSession(this.#resolveHumanSession())
+      const workspace = await this.#workspace(session)
+      const outcome = await workspace.execute(
+        { kind: 'human' },
+        {
+          type: 'open',
+          requestId: `app-shell-${++this.#nextAppShellRequestId}`,
+          url
+        }
+      )
+      if (
+        outcome.ok &&
+        !this.#sendEvent(session.sessionId, {
+          type: 'panelRequested',
+          reason: 'appShellOpen',
+          revision: outcome.snapshot.revision
+        })
+      ) {
+        return {
+          ok: false,
+          error: {
+            code: 'ENGINE_UNAVAILABLE',
+            message: 'The in-app browser panel is unavailable',
+            retryable: true
+          },
+          snapshot: outcome.snapshot
+        }
+      }
+      return outcome
+    })
+  }
+
+  notifyAppShellOpenFailed(): void {
+    this.#sendEnvelope({
+      sessionId: null,
+      event: { type: 'appShellOpenFailed', reason: 'browserUnavailable' }
+    })
+  }
+
   async disposeSession(sessionId: string): Promise<void> {
     return this.#safe(async () => {
       const safeSessionId = boundedString(sessionId, MAX_ID_BYTES)
@@ -312,13 +377,18 @@ export class BrowserIpcCoordinator {
     return workspace
   }
 
-  #sendEvent(sessionId: string, event: BrowserWorkspaceEvent): void {
+  #sendEvent(sessionId: string, event: BrowserWorkspaceEvent): boolean {
+    return this.#sendEnvelope({ sessionId, event })
+  }
+
+  #sendEnvelope(envelope: BrowserRendererEventEnvelope): boolean {
     try {
       const renderer = this.#getTrustedRenderer()
-      if (!renderer || renderer.isDestroyed()) return
-      renderer.send('browser:event', { sessionId, event })
+      if (!renderer || renderer.isDestroyed()) return false
+      renderer.send('browser:event', envelope)
+      return true
     } catch {
-      return
+      return false
     }
   }
 
@@ -337,6 +407,54 @@ export class BrowserIpcCoordinator {
       throw new BrowserIpcError('Browser request failed')
     }
   }
+}
+
+function safeAppShellHttpUrl(
+  input: string,
+  policyContext: BrowserPolicyContext = {}
+): string | null {
+  if (!input.trim() || Buffer.byteLength(input, 'utf8') > MAX_URL_BYTES) return null
+  let url: URL
+  try {
+    url = new URL(input)
+  } catch {
+    return null
+  }
+  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password) {
+    return null
+  }
+  const canonicalOrigin = (value: URL): string => {
+    const hostname = value.hostname.endsWith('.') ? value.hostname.slice(0, -1) : value.hostname
+    return `${value.protocol}//${hostname}${value.port ? `:${value.port}` : ''}`
+  }
+  for (const applicationOrigin of policyContext.applicationOrigins ?? []) {
+    try {
+      if (canonicalOrigin(new URL(applicationOrigin)) === canonicalOrigin(url)) return null
+    } catch {
+      continue
+    }
+  }
+  return url.toString()
+}
+
+export function routeBrowserAppShellWindowOpen(options: BrowserAppShellWindowOpenOptions): {
+  action: 'deny'
+} {
+  if (options.details.postBody != null) return { action: 'deny' }
+  const url = safeAppShellHttpUrl(options.details.url, options.policyContext)
+  if (!url) return { action: 'deny' }
+  const run = Promise.resolve().then(() =>
+    options.details.disposition === 'background-tab'
+      ? options.openExternal(url)
+      : options.coordinator
+          .openAppShellUrl(url)
+          .then((outcome) => {
+            if (!outcome.ok) options.coordinator.notifyAppShellOpenFailed()
+          })
+          .catch(() => options.coordinator.notifyAppShellOpenFailed())
+  )
+  void run.catch(() => options.coordinator.notifyAppShellOpenFailed())
+  return { action: 'deny' }
 }
 
 export function registerBrowserRendererIpc(

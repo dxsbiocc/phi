@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import test from 'node:test'
+import type { HandlerDetails, WindowOpenHandlerResponse } from 'electron'
 import type { EngineTabHandle } from '../src/main/browser/browser-engine'
 import {
   ElectronBrowserEngine,
@@ -21,6 +22,7 @@ class RequiredSession extends EventEmitter implements BrowserSessionLike {
 
 class RequiredWebContents extends EventEmitter implements BrowserWebContentsLike {
   readonly session = new RequiredSession()
+  windowOpenHandlerSets = 0
   readonly navigationHistory = {
     canGoBack: (): boolean => false,
     canGoForward: (): boolean => false,
@@ -41,6 +43,10 @@ class RequiredWebContents extends EventEmitter implements BrowserWebContentsLike
   }
   closeDevTools(): void {
     return
+  }
+  setWindowOpenHandler(handler: (details: HandlerDetails) => WindowOpenHandlerResponse): void {
+    void handler
+    this.windowOpenHandlerSets += 1
   }
 }
 
@@ -136,6 +142,7 @@ test('creates an isolated about:blank child view with secure preferences', async
   assert.equal(handle, 'phi-engine-tab-1')
   assert.notEqual(handle, String(views[0].webContents.id))
   assert.deepEqual(views[0].webContents.loadedUrls, ['about:blank'])
+  assert.equal(views[0].webContents.windowOpenHandlerSets, 1)
   assert.deepEqual(views[0].visibility, [false])
   assert.deepEqual(children, [])
   await engine.setViewport(handle, { x: 0, y: 0, width: 500, height: 400 })
@@ -173,6 +180,8 @@ test('uses the requested partition independently for every tab', async () => {
 
   assert.equal(views[0].options.webPreferences.partition, 'browser-project-a')
   assert.equal(views[1].options.webPreferences.partition, 'browser-project-b')
+  assert.equal(views[0].webContents.windowOpenHandlerSets, 1)
+  assert.equal(views[1].webContents.windowOpenHandlerSets, 1)
 })
 
 test('dispose owns and closes a pending blank load before create can attach it', async () => {

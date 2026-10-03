@@ -11,6 +11,7 @@ import type {
 import {
   BrowserIpcCoordinator,
   registerBrowserRendererIpc,
+  routeBrowserAppShellWindowOpen,
   type BrowserIpcSession,
   type BrowserRendererSenderLike,
   type BrowserWorkspaceLike,
@@ -117,12 +118,13 @@ class FakeWorkspace implements BrowserWorkspaceLike {
   readonly viewportCalls: Array<{ tabId: string; viewport: BrowserViewport | null }> = []
   readonly listeners = new Set<(event: BrowserWorkspaceEvent) => void>()
   subscribeCalls = 0
+  executeOutcome: BrowserOutcome | null = null
 
   constructor(readonly sessionId: string) {}
 
   async execute(actor: BrowserActor, command: BrowserCommand): Promise<BrowserOutcome> {
     this.executeCalls.push({ actor, command })
-    return { ok: true, snapshot: snapshot(this.sessionId) }
+    return this.executeOutcome ?? { ok: true, snapshot: snapshot(this.sessionId) }
   }
 
   snapshot(): BrowserWorkspaceSnapshot {
@@ -273,10 +275,144 @@ test('renderer calls reject foreign destroyed or sessionless callers safely', as
   assert.equal(value.registry.registrations.length, 0)
 })
 
+test('app-shell routing always denies native windows and contains synchronous external failures', async () => {
+  const value = harness()
+  assert.doesNotThrow(() =>
+    routeBrowserAppShellWindowOpen({
+      details: {
+        url: 'https://external.example/path',
+        disposition: 'background-tab'
+      },
+      coordinator: value.coordinator,
+      openExternal: () => {
+        throw new Error('raw synchronous shell failure')
+      }
+    })
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(value.registry.registrations.length, 0)
+  assert.deepEqual(value.sender.sent.at(-1), {
+    channel: 'browser:event',
+    payload: {
+      sessionId: null,
+      event: { type: 'appShellOpenFailed', reason: 'browserUnavailable' }
+    }
+  })
+
+  assert.deepEqual(
+    routeBrowserAppShellWindowOpen({
+      details: { url: 'https://PHI.INTERNAL.:443/private', disposition: 'default' },
+      coordinator: value.coordinator,
+      policyContext: { applicationOrigins: ['https://phi.internal'] },
+      openExternal: async () => undefined
+    }),
+    { action: 'deny' }
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(value.registry.registrations.length, 0)
+})
+
+test('app-shell routing requests the matching panel and reports no-session failures without shell fallback', async () => {
+  const value = harness()
+  assert.deepEqual(
+    routeBrowserAppShellWindowOpen({
+      details: { url: 'https://in-app.example/path', disposition: 'default' },
+      coordinator: value.coordinator,
+      openExternal: async () => assert.fail('successful in-app routing must not open externally')
+    }),
+    { action: 'deny' }
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(value.sender.sent, [
+    {
+      channel: 'browser:event',
+      payload: {
+        sessionId: 'phi-current',
+        event: { type: 'panelRequested', reason: 'appShellOpen', revision: 0 }
+      }
+    }
+  ])
+
+  const fallbackUrls: string[] = []
+  value.setHumanSession(undefined)
+  routeBrowserAppShellWindowOpen({
+    details: { url: 'https://fallback.example/path', disposition: 'default' },
+    coordinator: value.coordinator,
+    openExternal: async (url) => {
+      fallbackUrls.push(url)
+    }
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(fallbackUrls, [])
+  assert.deepEqual(value.sender.sent.at(-1), {
+    channel: 'browser:event',
+    payload: {
+      sessionId: null,
+      event: { type: 'appShellOpenFailed', reason: 'browserUnavailable' }
+    }
+  })
+})
+
+test('app-shell routing reports workspace failures without opening the system browser', async () => {
+  const value = harness()
+  await invoke(value, 'browser:snapshot')
+  const workspace = value.registry.workspaces.get('phi-current')
+  assert.ok(workspace)
+  workspace.executeOutcome = {
+    ok: false,
+    error: { code: 'ENGINE_UNAVAILABLE', message: 'safe failure', retryable: true },
+    snapshot: snapshot('phi-current')
+  }
+  const openedExternal: string[] = []
+  routeBrowserAppShellWindowOpen({
+    details: { url: 'https://failed.example/path', disposition: 'new-window' },
+    coordinator: value.coordinator,
+    openExternal: async (url) => {
+      openedExternal.push(url)
+    }
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(openedExternal, [])
+  assert.deepEqual(value.sender.sent.at(-1), {
+    channel: 'browser:event',
+    payload: {
+      sessionId: null,
+      event: { type: 'appShellOpenFailed', reason: 'browserUnavailable' }
+    }
+  })
+})
+
+test('app-shell routing rejects oversized URLs before in-app or external dispatch', async () => {
+  const value = harness()
+  const openedExternal: string[] = []
+  const url = `https://example.test/${'x'.repeat(16 * 1024)}`
+  for (const disposition of ['default', 'background-tab']) {
+    assert.deepEqual(
+      routeBrowserAppShellWindowOpen({
+        details: { url, disposition },
+        coordinator: value.coordinator,
+        openExternal: async (target) => {
+          openedExternal.push(target)
+        }
+      }),
+      { action: 'deny' }
+    )
+  }
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(openedExternal, [])
+  assert.equal(value.registry.registrations.length, 0)
+})
+
 test('runtime parser accepts every command shape and copies only bounded whitelist fields', async () => {
   const value = harness()
   const inputs: unknown[] = [
     { type: 'newTab', requestId: '1', url: 'https://example.test', extra: true },
+    {
+      type: 'openExternal',
+      requestId: 'external',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2
+    },
     { type: 'activate', requestId: '2', tabId: 'tab-1' },
     { type: 'close', requestId: '3', tabId: 'tab-1' },
     {
@@ -334,6 +470,12 @@ test('runtime parser accepts every command shape and copies only bounded whiteli
     url: 'https://example.test'
   })
   assert.equal('extra' in calls[0].command, false)
+  assert.deepEqual(calls[1].command, {
+    type: 'openExternal',
+    requestId: 'external',
+    tabId: 'tab-1',
+    expectedDocumentRevision: 2
+  })
 })
 
 test('runtime parser rejects oversized nonfinite and invalid command fields before registry use', async () => {

@@ -41,7 +41,8 @@ test('browser toolbar exposes compact keyboard-accessible loading controls', () 
       onSubmit: () => undefined,
       onBack: () => undefined,
       onForward: () => undefined,
-      onReloadOrStop: () => undefined
+      onReloadOrStop: () => undefined,
+      onOpenExternal: () => undefined
     } satisfies ComponentProps<typeof BrowserToolbar>)
   )
 
@@ -63,7 +64,39 @@ test('browser toolbar exposes compact keyboard-accessible loading controls', () 
   assert.match(markup, /height:2px/)
   assert.match(markup, /min-width:0/)
   assert.match(markup, /overflow:hidden/)
-  assert.doesNotMatch(markup, /在系统浏览器中打开|openExternal/)
+  assert.match(markup, /aria-label="在默认浏览器中打开"/)
+  const externalButton =
+    markup.match(/<button[^>]*aria-label="在默认浏览器中打开"[^>]*>/)?.[0] ?? ''
+  assert.match(externalButton, /disabled/)
+})
+
+test('browser toolbar disables explicit system open for blank restorable and failed pages', () => {
+  for (const activeTab of [
+    tab({ url: 'about:blank' }),
+    tab({ restorable: true }),
+    tab({ phase: 'failed' })
+  ]) {
+    const markup = renderWithTheme(
+      createElement(BrowserToolbar, {
+        address: activeTab.url,
+        activeTab,
+        busy: false,
+        disabled: false,
+        onAddressChange: () => undefined,
+        onAddressFocus: () => undefined,
+        onAddressBlur: () => undefined,
+        onRestoreAddress: () => undefined,
+        onSubmit: () => undefined,
+        onBack: () => undefined,
+        onForward: () => undefined,
+        onReloadOrStop: () => undefined,
+        onOpenExternal: () => undefined
+      } satisfies ComponentProps<typeof BrowserToolbar>)
+    )
+    const externalButton =
+      markup.match(/<button[^>]*aria-label="在默认浏览器中打开"[^>]*>/)?.[0] ?? ''
+    assert.match(externalButton, /disabled/)
+  }
 })
 
 test('browser tabs expose compact accessible multi-page controls without close propagation', () => {
@@ -219,6 +252,19 @@ test('App composes the browser feature through the narrow side-panel seam', () =
   )
   assert.match(appSource, /!isWorkspaceSidebarPreviewOpen/)
   assert.match(appSource, /features\/browser\/hooks\/useBrowserTrustedOverlayGate/)
+  assert.match(appSource, /features\/browser\/hooks\/useBrowserPanelRequests/)
+  assert.match(
+    appSource,
+    /openBrowserPanelFromRequest = useCallback\([\s\S]{0,160}setWorkspaceSidePanelMode\('browser'\)/
+  )
+  assert.match(
+    appSource,
+    /useBrowserPanelRequests\(\{[\s\S]{0,160}activeSessionId: activePhiSessionId[\s\S]{0,160}onRequest: openBrowserPanelFromRequest/
+  )
+  assert.match(
+    appSource,
+    /useBrowserPanelRequests\(\{[\s\S]{0,260}onFailure: showBrowserAppShellFailure/
+  )
   assert.match(appSource, /!browserOverlaySuspended/)
   assert.match(
     appSource,

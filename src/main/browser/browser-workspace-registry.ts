@@ -23,6 +23,7 @@ export interface BrowserWorkspaceRegistryOptions {
   engineFactory: (input: BrowserEngineFactoryInput) => BrowserEngine | Promise<BrowserEngine>
   policyContext?: BrowserPolicyContext
   checkpointStore?: BrowserCheckpointStore
+  openExternal?: (url: string) => Promise<void>
 }
 
 export class BrowserWorkspaceRegistryCleanupError extends Error {
@@ -99,6 +100,7 @@ export class BrowserWorkspaceRegistry {
   readonly #engineFactory: BrowserWorkspaceRegistryOptions['engineFactory']
   readonly #policyContext: BrowserPolicyContext
   readonly #checkpointStore?: BrowserCheckpointStore
+  readonly #openExternal?: (url: string) => Promise<void>
   readonly #entries = new Map<string, RegistryEntry>()
   #disposed = false
   #disposeAllPromise: Promise<void> | null = null
@@ -109,6 +111,7 @@ export class BrowserWorkspaceRegistry {
       ? { applicationOrigins: [...options.policyContext.applicationOrigins] }
       : {}
     this.#checkpointStore = options.checkpointStore
+    this.#openExternal = options.openExternal
   }
 
   async getOrCreate(registration: BrowserWorkspaceRegistration): Promise<BrowserWorkspace> {
@@ -192,7 +195,8 @@ export class BrowserWorkspaceRegistry {
         partition: entry.partition,
         engine,
         policyContext: this.#policyContext,
-        checkpointStore: this.#checkpointStore
+        checkpointStore: this.#checkpointStore,
+        ...(this.#openExternal ? { openExternal: this.#openExternal } : {})
       })
       entry.workspace = workspace
       return workspace
