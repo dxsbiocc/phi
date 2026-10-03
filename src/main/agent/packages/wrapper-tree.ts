@@ -90,20 +90,39 @@ export function readWrapperTreeState(agentDir = getPhiAgentDir()): WrapperTreeRe
   )) {
     const state = parsePackageState(id, candidate, path)
     for (const ownedPath of state.paths) {
-      const conflict = [...owners].find(
-        ([path]) =>
-          ownedPath === path || ownedPath.startsWith(`${path}/`) || path.startsWith(`${ownedPath}/`)
-      )
-      if (conflict) {
-        throw new Error(
-          `invalid wrapper tree registry: paths ${conflict[0]} and ${ownedPath} conflict between ${conflict[1]} and ${id}`
-        )
-      }
+      const existing = owners.get(ownedPath)
+      if (existing !== undefined) throwOwnershipConflict(ownedPath, existing, ownedPath, id)
       owners.set(ownedPath, id)
     }
     packages[id] = state
   }
+  assertNoNestedOwnership(owners)
   return { version: TREE_REGISTRY_VERSION, packages }
+}
+
+/** A path owned inside another owned path conflicts; checks each path's ancestors, not every pair. */
+function assertNoNestedOwnership(owners: ReadonlyMap<string, string>): void {
+  for (const [ownedPath, id] of owners) {
+    let slash = ownedPath.lastIndexOf('/')
+    while (slash > 0) {
+      const ancestor = ownedPath.slice(0, slash)
+      const ancestorOwner = owners.get(ancestor)
+      if (ancestorOwner !== undefined)
+        throwOwnershipConflict(ancestor, ancestorOwner, ownedPath, id)
+      slash = ancestor.lastIndexOf('/')
+    }
+  }
+}
+
+function throwOwnershipConflict(
+  firstPath: string,
+  firstOwner: string,
+  secondPath: string,
+  secondOwner: string
+): never {
+  throw new Error(
+    `invalid wrapper tree registry: paths ${firstPath} and ${secondPath} conflict between ${firstOwner} and ${secondOwner}`
+  )
 }
 
 export const readWrapperTreeRegistry = readWrapperTreeState

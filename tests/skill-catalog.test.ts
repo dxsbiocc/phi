@@ -9,7 +9,8 @@ import {
   bundledCatalogSkills,
   formatPackageSize,
   registrySkillPackages,
-  skillSourceLabel
+  skillSourceLabel,
+  withoutBundledSkillNames
 } from '../src/renderer/src/features/skill/lib/skillCatalog'
 
 function skill(overrides: Partial<SkillSummary> = {}): SkillSummary {
@@ -109,5 +110,17 @@ test('deprecated bundled skills stay in the catalog but sort last', () => {
   assert.deepEqual(
     result.map((item) => item.name),
     ['scanpy', 'pptx', 'xlsx']
+  )
+})
+
+test('hides registry packages that share a bundled skill name', () => {
+  const skills = [
+    skill({ name: 'scanpy', sourceCategory: 'bundled' }),
+    skill({ name: 'qa-demo', sourceCategory: 'installed-package' })
+  ]
+  const packages = [{ id: 'scanpy' }, { id: 'qa-demo' }, { id: 'new-skill' }]
+  assert.deepEqual(
+    withoutBundledSkillNames(packages, skills).map((entry) => entry.id),
+    ['qa-demo', 'new-skill']
   )
 })

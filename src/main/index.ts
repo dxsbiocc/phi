@@ -6259,6 +6259,9 @@ app.whenReady().then(async () => {
       metadata: { error: error instanceof Error ? error.message : String(error) }
     })
   }
+  // The plugin namespace scans skills of the current folder; on a fresh account the
+  // no-project task folder does not exist until the first session creates it.
+  mkdirSync(currentCwd, { recursive: true })
   try {
     logBundledPlugins(
       await installBundledPlugins({ ...(await bundledPluginOptions()), phase: 'install' })

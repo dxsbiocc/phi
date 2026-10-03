@@ -57,8 +57,8 @@ import { readSkillsRegistry, skillPackagesDir, skillVersionDir, writeSkillsRegis
 import {
   installStagedWrapperPackage,
   installStagedWrapperPackages,
-  installedWrapperDependencies,
   promoteInstalledWrapperPackage,
+  readWrapperTreeState,
   removeInstalledWrapperPackage
 } from './wrapper-tree'
 
@@ -470,12 +470,15 @@ function dependentOn(
   target: InstalledPackage,
   agentDir: string
 ): InstalledPackage | undefined {
+  // One read of the wrapper tree state serves every wrapper candidate.
+  let wrapperTree: ReturnType<typeof readWrapperTreeState> | undefined
   return installed.find((candidate) => {
     if (candidate.type === target.type && candidate.id === target.id) return false
     try {
       const dependencies =
         candidate.type === 'wrapper'
-          ? installedWrapperDependencies(candidate.id, agentDir)
+          ? ((wrapperTree ??= readWrapperTreeState(agentDir)).packages[candidate.id]?.manifest
+              .dependsOn ?? [])
           : (readPackageManifest(candidate.dir).dependsOn ?? [])
       return dependencies.some(
         (dependency) => dependency.type === target.type && dependency.id === target.id

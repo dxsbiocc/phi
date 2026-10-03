@@ -13,15 +13,9 @@ import {
 } from '@mui/material'
 import type {
   KnownPackageRegistryView,
-  OfflinePackageImportPreview,
-  PackageTrust
+  OfflinePackageImportPreview
 } from '../../../../../shared/packageManagerTypes'
-
-const trustLabels: Record<PackageTrust, string> = {
-  builtin: '内置',
-  official: '官方',
-  imported: '导入'
-}
+import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../../../lib/packageTrust'
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -146,9 +140,21 @@ export function PackageSourcesSection(): React.JSX.Element {
                 sx={{ alignItems: { sm: 'center' } }}
               >
                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography sx={{ fontWeight: 700 }}>
-                    {registry.kind === 'bundled' ? 'Phi 内置软件源' : registry.path}
+                  <Typography sx={{ fontWeight: 700 }} title={registry.path}>
+                    {registry.kind === 'bundled'
+                      ? 'Phi 内置软件源'
+                      : registryDisplayName(registry.path)}
                   </Typography>
+                  {registry.kind === 'bundled' ? null : (
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      component="div"
+                      sx={{ overflowWrap: 'anywhere' }}
+                    >
+                      {registry.path}
+                    </Typography>
+                  )}
                   <Typography
                     variant="caption"
                     color={registry.error ? 'error' : 'text.secondary'}
@@ -158,7 +164,12 @@ export function PackageSourcesSection(): React.JSX.Element {
                   </Typography>
                 </Box>
                 {registry.trust ? (
-                  <Chip size="small" variant="outlined" label={trustLabels[registry.trust]} />
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    label={PACKAGE_TRUST_LABELS[registry.trust]}
+                    title={PACKAGE_TRUST_DESCRIPTIONS[registry.trust]}
+                  />
                 ) : null}
                 {registry.removable ? (
                   <Button
@@ -219,4 +230,8 @@ export function PackageSourcesSection(): React.JSX.Element {
       </Dialog>
     </Stack>
   )
+}
+
+function registryDisplayName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path
 }

@@ -6,16 +6,11 @@ import type {
   PackageTrust,
   PackageUpdateView
 } from '../../../../../shared/packageManagerTypes'
+import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../../../lib/packageTrust'
 
 type CatalogPlugin = PackageRegistryEntryView & {
   registryPath: string
   trust: PackageTrust
-}
-
-const trustLabels: Record<PackageTrust, string> = {
-  builtin: '内置',
-  official: '官方',
-  imported: '导入'
 }
 
 function errorMessage(error: unknown): string {
@@ -45,7 +40,7 @@ export function PhiPluginPackageCatalog({
     ])
     const readable = await Promise.all(
       registries
-        .filter((registry) => !registry.error)
+        .filter((registry) => registry.kind !== 'bundled' && !registry.error)
         .map(async (known) => {
           try {
             return await window.api.readPackageRegistry(known.path)
@@ -151,7 +146,12 @@ export function PhiPluginPackageCatalog({
                     </Typography>
                     <Stack direction="row" spacing={0.75} sx={{ mt: 0.75 }}>
                       <Chip size="small" label={`v${entry.version}`} />
-                      <Chip size="small" variant="outlined" label={trustLabels[entry.trust]} />
+                      <Chip
+                        size="small"
+                        variant="outlined"
+                        label={PACKAGE_TRUST_LABELS[entry.trust]}
+                        title={PACKAGE_TRUST_DESCRIPTIONS[entry.trust]}
+                      />
                     </Stack>
                   </Box>
                   <Button

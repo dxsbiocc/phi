@@ -1023,6 +1023,8 @@ async function harness(
       watch: (): { close: () => void } => ({
         close: noop
       }),
+      // Startup creates the no-project task folder before scanning plugin namespaces.
+      mkdirSync: (): undefined => undefined,
       readdirSync: (
         filePath: string
       ): Array<{

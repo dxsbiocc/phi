@@ -502,3 +502,54 @@ test('uninstall removes only owned paths and empty directories, never custom wra
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('reads a large ownership map quickly and still rejects nested ownership', async () => {
+  const { root, agentDir, registryDir } = sandbox()
+  try {
+    const entry = wrapperEntry(registryDir, 'module-nf-core-seed', {
+      files: { 'modules/nf-core/seed/main.nf': 'process SEED {}\n' }
+    })
+    await installPackages(
+      planInstall(registry(registryDir, [entry]), { type: 'wrapper', id: entry.id }, { agentDir }),
+      { agentDir }
+    )
+    const treePath = join(agentDir, 'wrappers', 'tree.json')
+    const tree = JSON.parse(readFileSync(treePath, 'utf8')) as {
+      packages: Record<string, Record<string, unknown>>
+    }
+    const seed = tree.packages[entry.id] as {
+      manifest: Record<string, unknown>
+      source: Record<string, unknown>
+    }
+    const clone = (id: string, paths: string[]): Record<string, unknown> => ({
+      ...seed,
+      manifest: { ...seed.manifest, id },
+      source: { ...seed.source, id },
+      paths
+    })
+    // About the size of the bundled tree: 200 packages owning 10 000 paths.
+    for (let index = 0; index < 200; index += 1) {
+      const id = `module-nf-core-tool${index}`
+      tree.packages[id] = clone(
+        id,
+        Array.from(
+          { length: 50 },
+          (_, file) => `modules/nf-core/tool${index}/sub/file${file}.nf`
+        ).sort()
+      )
+    }
+    writeFileSync(treePath, JSON.stringify(tree))
+
+    const started = performance.now()
+    assert.equal(Object.keys(readWrapperTreeState(agentDir).packages).length, 201)
+    assert.ok(performance.now() - started < 500, 'reading the ownership map must stay fast')
+
+    tree.packages['module-nf-core-nested'] = clone('module-nf-core-nested', [
+      'modules/nf-core/tool3/sub'
+    ])
+    writeFileSync(treePath, JSON.stringify(tree))
+    assert.throws(() => readWrapperTreeState(agentDir), /conflict between/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

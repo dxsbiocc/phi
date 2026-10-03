@@ -21,7 +21,8 @@ import {
   DEPRECATED_SKILL_LABEL,
   bundledCatalogSkills,
   formatPackageSize,
-  registrySkillPackages
+  registrySkillPackages,
+  withoutBundledSkillNames
 } from '../lib/skillCatalog'
 
 export type SkillCatalogDialogProps = {
@@ -164,7 +165,7 @@ export function SkillCatalogDialog({
       .then((registries) =>
         Promise.all(
           registries
-            .filter((item) => !item.error)
+            .filter((item) => item.kind !== 'bundled' && !item.error)
             .map(async (item) => {
               try {
                 return await window.api.readPackageRegistry(item.path)
@@ -199,10 +200,10 @@ export function SkillCatalogDialog({
   const displayedRegistry = registry === undefined ? localRegistry : registry
   const displayedRegistryDir = registryDir === undefined ? localRegistryDir : registryDir
   const bundledSkills = useMemo(() => bundledCatalogSkills(skills), [skills])
-  const packages = useMemo(
-    () => (displayedRegistry ? registrySkillPackages(displayedRegistry) : knownPackages),
-    [displayedRegistry, knownPackages]
-  )
+  const packages = useMemo(() => {
+    const candidates = displayedRegistry ? registrySkillPackages(displayedRegistry) : knownPackages
+    return withoutBundledSkillNames(candidates, skills)
+  }, [displayedRegistry, knownPackages, skills])
   const installedPackageIds = useMemo(() => {
     const ids = new Set(installedDuringSession)
     for (const skill of skills) {
@@ -385,13 +386,9 @@ export function SkillCatalogDialog({
                 正在读取本地目录
               </Typography>
             </Stack>
-          ) : !displayedRegistry ? (
-            <Typography variant="body2" color="text.secondary">
-              已知软件源中没有可安装的技能包
-            </Typography>
           ) : packages.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
-              目录中没有可安装的技能包
+              {displayedRegistry ? '目录中没有可安装的技能包' : '已知软件源中没有可安装的技能包'}
             </Typography>
           ) : (
             <Stack spacing={1.25}>

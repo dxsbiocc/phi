@@ -58,6 +58,17 @@ export function registrySkillPackages(
   return registry.packages.filter((entry) => entry.type === 'skill')
 }
 
+/** A package named like a bundled skill would shadow it; the bundled one is offered instead. */
+export function withoutBundledSkillNames<T extends { id: string }>(
+  packages: readonly T[],
+  skills: readonly SkillSummary[]
+): T[] {
+  const bundledNames = new Set(
+    skills.filter((skill) => skill.sourceCategory === 'bundled').map((skill) => skill.name)
+  )
+  return packages.filter((entry) => !bundledNames.has(entry.id))
+}
+
 export function formatPackageSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
   if (bytes < 1024) return `${Math.round(bytes)} B`

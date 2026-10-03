@@ -10,12 +10,7 @@ import {
   Typography
 } from '@mui/material'
 import type { PackageUpdateView } from '../../../shared/packageManagerTypes'
-
-const trustLabels: Record<PackageUpdateView['trust'], string> = {
-  builtin: '内置',
-  official: '官方',
-  imported: '导入'
-}
+import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../lib/packageTrust'
 
 export function PackageUpdatesDialog({
   open,
@@ -86,7 +81,12 @@ export function PackageUpdatesDialog({
                       {update.registryPath}
                     </Typography>
                   </Box>
-                  <Chip size="small" variant="outlined" label={trustLabels[update.trust]} />
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    label={PACKAGE_TRUST_LABELS[update.trust]}
+                    title={PACKAGE_TRUST_DESCRIPTIONS[update.trust]}
+                  />
                   <Button
                     variant="contained"
                     disabled={busyKey !== null}
