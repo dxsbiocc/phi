@@ -140,6 +140,21 @@ Foundation (confirmed 2026-09-29): [phi-runtime-foundation.md](../design/phi-run
 - The main agent's bash keeps using the host environment.
 - Plugins (step 6), content distribution (step 7), and remote / HPC runtime (step 8) follow after the beta, except the local skill catalog and enablement, which may land in the beta if time allows.
 
+## P1: In-App Terminal (local, manual)
+
+Goal: replace the terminal placeholder in the workspace side panel with a real local shell the user owns, and let the agent draft commands without ever running them.
+
+Plan: [phi-terminal-v1-implementation-plan.md](../design/phi-terminal-v1-implementation-plan.md) (中文). Milestones T0–T5; T1–T3 form the minimum internally usable terminal, T4–T5 complete V1.
+
+- T0 gate first: prove the PTY backend (`pi-natives` `PtySession` in a dedicated Bun worker, or `node-pty` as fallback) works in dev, `out/`, and the unpacked app, including resize, backpressure, and process-group cleanup. No mock-only panel ships if T0 fails.
+- macOS local shells only. Terminals are grouped by project (or task directory for ordinary workspaces), survive panel collapse and chat switches, and close with the main window; no PTY restore across app restarts.
+- Shell environment is an allowlist; Phi variables such as `PI_CODING_AGENT_DIR` and provider keys never reach the shell. The terminal is the user's own environment, not the runtime foundation's execution primitive.
+- Terminal cleanup joins `cleanupMainWindowRuntime()` and fits inside the 2-second app quit budget.
+- Bounded output: batching, ACK-based flow control, capped replay buffer and scrollback; terminal output is kept in memory only and is not logged.
+- Agent assistance is tool-less: "write a command" and "explain selection" produce editable drafts; only an explicit user "send to terminal" writes to the PTY. No terminal tools are registered for the chat agent.
+- Remote projects show "remote terminal comes later" and never fall back to a local shell.
+- Add tests for IPC sender/frame checks, workspace resolution, lifecycle and idempotent close, environment allowlist, input transactions, output flow control, and draft-never-executes; verify real PTY behavior with a separate local smoke script.
+
 ## P1: Diagnostics And Logs
 
 Goal: make small-circle beta support fast and privacy-aware.
@@ -194,3 +209,4 @@ decision records remain as rationale, not as current product behavior.
 - Project-level provider credential isolation.
 - Phi-specific model registry editor.
 - Automatic sync or import/export beyond backup-friendly local files.
+- Terminal follow-ups: SSH / remote project terminals, Windows and unverified Linux support, viewing or taking over agent-run shells, command completion tracking, split panes, terminal settings page, and using Phi-managed environments inside the terminal.
