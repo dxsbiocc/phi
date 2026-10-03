@@ -49,8 +49,8 @@ test('only running agent cards are listed, in timeline order', () => {
   const messages: ChatItem[] = [
     { id: 'u1', role: 'user', content: 'go' } as ChatItem,
     card({ id: 'call-1', agentName: 'Wrapper' }),
-    card({ id: 'call-2', agentName: 'Database', status: 'done' }),
-    card({ id: 'call-3', agentName: 'Database', status: 'error' }),
+    card({ id: 'call-2', agentName: 'Visualization', status: 'done' }),
+    card({ id: 'call-3', agentName: 'Visualization', status: 'error' }),
     card({ id: 'call-4', agentName: 'Wrapper', agentRunId: 'run_4' })
   ]
   assert.deepEqual(

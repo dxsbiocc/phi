@@ -10,9 +10,9 @@ import type { AgentExecutionStep } from '../src/renderer/src/lib/agentExecutionT
 
 const step = (overrides: Partial<AgentExecutionStep> = {}): AgentExecutionStep => ({
   id: 's1',
-  toolName: 'db_search',
-  argsPreview: 'THRSP UniProt',
-  argsJson: '{"query":"THRSP"}',
+  toolName: 'wrapper_search',
+  argsPreview: 'FASTQ QC',
+  argsJson: '{"query":"FASTQ QC"}',
   output: 'found it',
   status: 'done',
   ...overrides
@@ -58,8 +58,8 @@ test('a step becomes a tool call the ordinary tool card can show', () => {
   )
   assert.equal(item.role, 'tool')
   assert.equal(item.id, 's1')
-  assert.equal(item.toolName, 'db_search')
-  assert.equal(item.argsPreview, 'THRSP UniProt')
+  assert.equal(item.toolName, 'wrapper_search')
+  assert.equal(item.argsPreview, 'FASTQ QC')
   assert.equal(item.output, 'found it')
   assert.equal(item.status, 'done')
   assert.equal(item.durationMs, 4000)

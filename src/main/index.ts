@@ -136,7 +136,6 @@ import {
 import type { RemoteDoctorOptions } from '../shared/remoteDoctorTypes'
 import type { ProjectLocation, RemoteProjectCreateInput } from '../shared/projectLocation'
 import { renderMoleculeSvg } from './molecule-renderer'
-import { previewDatabaseWebImage } from './database-web-preview'
 import {
   bashApprovalDigest,
   editApprovalDigest,
@@ -282,20 +281,7 @@ import {
 } from './agent/wrappers/store'
 import { formatDiagnostics, type DiagnosticsSnapshot } from './agent/diagnostics'
 import { LOG_RETENTION_DAYS, cleanupOldLogs, getPhiLogDir, writeAppLog } from './agent/app-logger'
-import { readAppSettings, updateAppSettings, updateDefaultProxyMode } from './agent/app-settings'
-import {
-  findDbConnectorCatalogEntry,
-  listDbConnectorCatalog,
-  syncGeneratedDbConnectorDocs
-} from './agent/db/catalog'
-import {
-  clearDbConnectorSecret,
-  hasDbConnectorSecret,
-  isDbCredentialStorageAvailable,
-  resolveDbAuthSecret,
-  storeDbConnectorSecret
-} from './agent/db/credential-store'
-import { setDbConnectorQueryEnabled } from './agent/db/store'
+import { readAppSettings, updateAppSettings } from './agent/app-settings'
 import { isSecretMetadataKey, redactSensitiveText } from './agent/redaction'
 import {
   emptyNotebookRegistry,
@@ -391,7 +377,6 @@ import {
 } from '../shared/notebookDocument'
 import { messageContentTitleText } from '../shared/sessionTitle'
 import type { AgentUserInteractionQuestion } from '../shared/agentInteractionTypes'
-import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
 import icon from '../../resources/icon.png?asset'
 
 const APP_NAME = 'Phi'
@@ -1911,43 +1896,6 @@ function notebookAgentRuntimePrompt(projectCwd: string): string | null {
   ]
     .filter(Boolean)
     .join('\n')
-}
-
-function dbConnectorSettingsItems(): DbConnectorSettingsItem[] {
-  const storageAvailable = isDbCredentialStorageAvailable()
-  return listDbConnectorCatalog(AGENT_DIR).map((entry) => {
-    const auth = entry.manifest.auth
-    const envVar = auth?.envVar
-    const authSettings =
-      auth && auth.type !== 'none' && envVar
-        ? {
-            type: auth.type,
-            envVar,
-            required: Boolean(auth.required),
-            ...(auth.label ? { label: auth.label } : {}),
-            ...(auth.signupUrl ? { signupUrl: auth.signupUrl } : {}),
-            configured: Boolean(resolveDbAuthSecret(envVar, AGENT_DIR)),
-            configuredFromEnv: Boolean(process.env[envVar]?.trim()),
-            configuredInStore: hasDbConnectorSecret(envVar, AGENT_DIR),
-            storageAvailable
-          }
-        : undefined
-    return {
-      id: entry.manifest.id,
-      name: entry.manifest.name,
-      protocolFamily: entry.manifest.protocolFamily,
-      curationTier: entry.manifest.curationTier,
-      trustTier: entry.trustTier,
-      enabledForQuery: entry.enabledForQuery,
-      installedAt: entry.installedAt,
-      domainCount: entry.manifest.domains.length,
-      domains: entry.manifest.domains.map((domain) => ({
-        id: domain.id,
-        summary: domain.summary
-      })),
-      ...(authSettings ? { auth: authSettings } : {})
-    }
-  })
 }
 
 function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEvent): void {
@@ -6508,9 +6456,6 @@ app.whenReady().then(async () => {
       return renderMoleculeSvg(value, width, height)
     }
   )
-  ipcMain.handle('database:webImagePreview', async (_, sourceUrl: string) => {
-    return previewDatabaseWebImage(sourceUrl)
-  })
   ipcMain.handle('diagnostics:copy', async () => {
     const text = await createDiagnosticsText()
     clipboard.writeText(text)
@@ -6600,9 +6545,6 @@ app.whenReady().then(async () => {
     syncPreventSleepBlocker()
     return settings
   })
-  ipcMain.handle('settings:updateDefaultProxyMode', async (_, mode: unknown) =>
-    updateDefaultProxyMode(mode)
-  )
 
   ipcMain.handle('environment:get', async () => getEnvironment())
   ipcMain.handle('environment:redetect', async () => redetectEnvironment())
@@ -6661,60 +6603,6 @@ app.whenReady().then(async () => {
     } catch (error) {
       throw new Error(`清理环境失败：${error instanceof Error ? error.message : String(error)}`)
     }
-  })
-
-  ipcMain.handle('db:listConnectors', async () => dbConnectorSettingsItems())
-  ipcMain.handle('db:setConnectorEnabled', async (_, id: unknown, enabled: unknown) => {
-    if (typeof id !== 'string' || !id.trim()) {
-      throw new Error('数据库 id 无效')
-    }
-    if (typeof enabled !== 'boolean') {
-      throw new Error('数据库启用状态必须是布尔值')
-    }
-    const entry = findDbConnectorCatalogEntry(id, AGENT_DIR)
-    if (!entry) {
-      throw new Error(`未找到数据库连接器: ${id}`)
-    }
-    setDbConnectorQueryEnabled(entry.manifest.id, entry.digest, entry.trustTier, enabled, AGENT_DIR)
-    try {
-      syncGeneratedDbConnectorDocs(AGENT_DIR)
-    } catch {
-      // Generated navigator docs should not block settings changes.
-    }
-    return dbConnectorSettingsItems()
-  })
-  ipcMain.handle('db:setConnectorApiKey', async (_, id: unknown, apiKey: unknown) => {
-    if (typeof id !== 'string' || !id.trim()) {
-      throw new Error('数据库 id 无效')
-    }
-    if (typeof apiKey !== 'string') {
-      throw new Error('API key 必须是字符串')
-    }
-    const entry = findDbConnectorCatalogEntry(id, AGENT_DIR)
-    if (!entry) {
-      throw new Error(`未找到数据库连接器: ${id}`)
-    }
-    const envVar = entry.manifest.auth?.envVar
-    if (!envVar || entry.manifest.auth?.type === 'none') {
-      throw new Error(`数据库 ${entry.manifest.id} 不需要 API key`)
-    }
-    storeDbConnectorSecret(envVar, apiKey, AGENT_DIR)
-    return dbConnectorSettingsItems()
-  })
-  ipcMain.handle('db:clearConnectorApiKey', async (_, id: unknown) => {
-    if (typeof id !== 'string' || !id.trim()) {
-      throw new Error('数据库 id 无效')
-    }
-    const entry = findDbConnectorCatalogEntry(id, AGENT_DIR)
-    if (!entry) {
-      throw new Error(`未找到数据库连接器: ${id}`)
-    }
-    const envVar = entry.manifest.auth?.envVar
-    if (!envVar || entry.manifest.auth?.type === 'none') {
-      throw new Error(`数据库 ${entry.manifest.id} 不需要 API key`)
-    }
-    clearDbConnectorSecret(envVar, AGENT_DIR)
-    return dbConnectorSettingsItems()
   })
 
   ipcMain.handle('models:list', async () => {

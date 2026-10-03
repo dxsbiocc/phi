@@ -46,7 +46,6 @@ import { authPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
 import { createNextActionInstructionExtension } from './next-action-extension'
 import { cursorModelWithBridge } from './cursor-model-routing'
 import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
-import { buildDefaultDbCustomTools } from '../db/tools'
 import { buildProjectDownloadTool } from '../download/project-download-tool'
 import { buildPresentFilesTool } from '../deliverables/present-tool'
 import { enterPlanReviewMode, type PlanReviewChoice } from '../plan/plan-review-mode'
@@ -840,23 +839,14 @@ function phiToolFunctions(
   skillRun?: CustomTool
 ): Map<string, CustomTool> {
   let wrapperTools: CustomTool[] = []
-  let databaseTools: CustomTool[] = []
   if (agentName === 'Wrapper') {
     // Wrapper runs are background jobs owned by the main process; these tools only talk to it.
     // Each run is stamped with the session that started it, so its end can be reported there.
     const jobs = createHostJobClient(requestHost, { originSessionId })
     wrapperTools = [...buildWrapperCompositionTools(jobs, { agentDir, projectDir: cwd })]
   }
-  if (agentName === 'Database') {
-    try {
-      databaseTools = buildDefaultDbCustomTools(agentDir, {}, { enforceRouting: true })
-    } catch {
-      // A broken connector catalog must not prevent the specialist session from starting.
-    }
-  }
   const tools = buildScopedPhiToolMap(agentName, {
-    wrapper: wrapperTools,
-    database: databaseTools
+    wrapper: wrapperTools
   })
   if (skillRun) tools.set(skillRun.name, skillRun)
   return tools
@@ -1273,7 +1263,7 @@ async function createSession(params: unknown): Promise<unknown> {
   // Never let a wrapper-catalog problem block an otherwise-ordinary chat
   // session from starting.
   // The main agent leads: it gets one delegation tool per scanned Phi agent,
-  // named after the agent (for example `Wrapper` or `Database`), and none of
+  // named after the agent (for example `Wrapper`), and none of
   // the specialists' own tool functions, so internal catalogs and query tools
   // stay out of the main conversation. Definitions come from the main process's scan.
   // Local only. A failed listing is logged and registers nothing; it must not block the session.

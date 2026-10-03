@@ -260,8 +260,6 @@ type HarnessResult = {
     ) => Promise<unknown>
   ) => void
   operationLog: Array<Record<string, unknown>>
-  appSettingsUpdates: string[]
-  dbConnectorEnabledUpdates: Array<{ id: string; digest: string; enabled: boolean }>
   setOpenDialogResult: (result: { canceled: boolean; filePaths: string[] }) => void
   copiedText: () => string
   exportedSessions: Array<{ sessionId: string; destination: string }>
@@ -372,17 +370,7 @@ async function harness(
     remoteDigestVerified: true
   })
   const operationLog: Array<Record<string, unknown>> = []
-  const appSettingsUpdates: string[] = []
-  const dbConnectorEnabledUpdates: Array<{ id: string; digest: string; enabled: boolean }> = []
-  let appDefaultProxyMode = 'auto'
   const appNoProjectTaskFolder = '/workspace'
-  const appProxyTransportStatus = {
-    systemTransportAvailable: true,
-    controlledProxyAvailable: false,
-    autoTransportName: 'system',
-    enabledModeAvailable: false,
-    unavailableReason: '尚未配置受控代理通道'
-  }
   let openDialogResult: { canceled: boolean; filePaths: string[] } = {
     canceled: true,
     filePaths: []
@@ -896,18 +884,6 @@ async function harness(
     '../shared/remoteHostProfile': { sshConfigHostId: (alias: string) => `ssh-config:${alias}` },
     './molecule-renderer': {
       renderMoleculeSvg: async (): Promise<string> => '<svg xmlns="http://www.w3.org/2000/svg"/>'
-    },
-    './database-web-preview': {
-      previewDatabaseWebImage: async (): Promise<never> => {
-        throw new Error('Database web preview is mocked in main-integration.test.ts')
-      }
-    },
-    './agent/db/credential-store': {
-      clearDbConnectorSecret: (): void => {},
-      hasDbConnectorSecret: (): boolean => false,
-      isDbCredentialStorageAvailable: (): boolean => true,
-      resolveDbAuthSecret: (): undefined => undefined,
-      storeDbConnectorSecret: (): void => {}
     },
     './agent/environment': {
       createManagedEnvironmentActions: () => ({
@@ -2421,73 +2397,15 @@ async function harness(
     },
     './agent/app-settings': {
       readAppSettings: (): Record<string, unknown> => ({
-        defaultProxyMode: appDefaultProxyMode,
         noProjectTaskFolder: appNoProjectTaskFolder,
         preventSleepDuringRuns: false,
-        nextActionSuggestionsEnabled: true,
-        proxyTransportStatus: appProxyTransportStatus
+        nextActionSuggestionsEnabled: true
       }),
-      updateDefaultProxyMode: (mode: string): Record<string, unknown> => {
-        appSettingsUpdates.push(mode)
-        appDefaultProxyMode = mode
-        return {
-          defaultProxyMode: appDefaultProxyMode,
-          noProjectTaskFolder: appNoProjectTaskFolder,
-          preventSleepDuringRuns: false,
-          nextActionSuggestionsEnabled: true,
-          proxyTransportStatus: appProxyTransportStatus
-        }
-      }
-    },
-    './agent/db/catalog': {
-      listDbConnectorCatalog: (): unknown[] => [
-        {
-          manifest: {
-            phiDbConnectorVersion: 1,
-            id: 'entrez/ncbi',
-            name: 'NCBI Entrez',
-            protocolFamily: 'entrez',
-            curationTier: 'curated',
-            baseUrl: 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils',
-            networkPolicy: {
-              allowedHosts: ['eutils.ncbi.nlm.nih.gov'],
-              allowRedirects: false
-            },
-            domains: [{ id: 'gene', summary: 'Gene records.', commonFields: ['uid'] }]
-          },
-          trustTier: 'bundled',
-          installedPath: '/resources/db-connectors/entrez/ncbi',
-          installedAt: '2026-09-18T00:00:00.000Z',
-          digest: 'digest-entrez',
-          enabledForQuery: true
-        }
-      ],
-      findDbConnectorCatalogEntry: (id: string): unknown =>
-        id === 'entrez/ncbi'
-          ? {
-              manifest: {
-                id: 'entrez/ncbi',
-                name: 'NCBI Entrez',
-                protocolFamily: 'entrez',
-                curationTier: 'curated',
-                domains: [{ id: 'gene', summary: 'Gene records.', commonFields: ['uid'] }]
-              },
-              trustTier: 'bundled',
-              digest: 'digest-entrez',
-              enabledForQuery: true
-            }
-          : undefined,
-      syncGeneratedDbConnectorDocs: (): void => {}
-    },
-    './agent/db/store': {
-      setDbConnectorQueryEnabled: (
-        id: string,
-        digest: string,
-        _trustTier: string,
-        enabled: boolean
-      ): void => {
-        dbConnectorEnabledUpdates.push({ id, digest, enabled })
-      }
+      updateAppSettings: (): Record<string, unknown> => ({
+        noProjectTaskFolder: appNoProjectTaskFolder,
+        preventSleepDuringRuns: false,
+        nextActionSuggestionsEnabled: true
+      })
     },
     './agent/redaction': {
       isSecretMetadataKey,
@@ -2781,8 +2699,6 @@ async function harness(
     saveDialogOptions,
     downloadCalls,
     operationLog,
-    appSettingsUpdates,
-    dbConnectorEnabledUpdates,
     setOpenDialogResult: (result): void => {
       openDialogResult = result
     },
@@ -2827,73 +2743,14 @@ test('main IPC: user prompt stays verbatim while recommendation settings are rea
   })
 })
 
-test('main IPC: app settings exposes and updates default proxy mode', async () => {
+test('main IPC: app settings exposes general preferences', async () => {
   const app = await harness()
-  const expectedStatus = {
-    systemTransportAvailable: true,
-    controlledProxyAvailable: false,
-    autoTransportName: 'system',
-    enabledModeAvailable: false,
-    unavailableReason: '尚未配置受控代理通道'
-  }
 
   assert.deepEqual(await app.invoke('settings:get'), {
-    defaultProxyMode: 'auto',
     noProjectTaskFolder: '/workspace',
     preventSleepDuringRuns: false,
-    nextActionSuggestionsEnabled: true,
-    proxyTransportStatus: expectedStatus
+    nextActionSuggestionsEnabled: true
   })
-  assert.deepEqual(await app.invoke('settings:updateDefaultProxyMode', 'enabled'), {
-    defaultProxyMode: 'enabled',
-    noProjectTaskFolder: '/workspace',
-    preventSleepDuringRuns: false,
-    nextActionSuggestionsEnabled: true,
-    proxyTransportStatus: expectedStatus
-  })
-  assert.deepEqual(await app.invoke('settings:get'), {
-    defaultProxyMode: 'enabled',
-    noProjectTaskFolder: '/workspace',
-    preventSleepDuringRuns: false,
-    nextActionSuggestionsEnabled: true,
-    proxyTransportStatus: expectedStatus
-  })
-  assert.deepEqual(app.appSettingsUpdates, ['enabled'])
-})
-
-test('main IPC: DB connector tools stay behind Database agent and toggles remain per connector', async () => {
-  const app = await harness()
-  await app.invoke('projects:newSession', '/projects/db-enabled', 'ask')
-  await app.invoke('agent:prompt', 'hello')
-  assert.equal('enableDbConnectorTools' in app.createdAgentOptions[0], false)
-  const resourceOptions = app.resourceLoaderOptions.at(-1)
-  const appendSystemPrompt = resourceOptions?.appendSystemPrompt as string[] | undefined
-  assert.doesNotMatch(appendSystemPrompt?.join('\n') ?? '', /<phi_db_connector_runtime>/)
-  assert.doesNotMatch(
-    appendSystemPrompt?.join('\n') ?? '',
-    /\bdb_(?:search|domain|docs_search|query)\b/
-  )
-  // Phi's own scan feeds the leader prompt, and the same definitions go to the worker.
-  assert.match(appendSystemPrompt?.join('\n') ?? '', /<phi_agents>/)
-  assert.match(appendSystemPrompt?.join('\n') ?? '', /- Database: /)
-  assert.match(appendSystemPrompt?.join('\n') ?? '', /- Visualization: /)
-  assert.match(appendSystemPrompt?.join('\n') ?? '', /- Wrapper: /)
-  const phiAgents = app.createdAgentOptions[0].phiAgents as Array<{ name: string }> | undefined
-  assert.deepEqual(
-    phiAgents?.map((agent) => agent.name),
-    ['Database', 'Wrapper', 'Visualization']
-  )
-
-  const connectors = (await app.invoke('db:listConnectors')) as Array<{ id: string }>
-  assert.deepEqual(
-    connectors.map((connector) => connector.id),
-    ['entrez/ncbi']
-  )
-
-  await app.invoke('db:setConnectorEnabled', 'entrez/ncbi', false)
-  assert.deepEqual(app.dbConnectorEnabledUpdates, [
-    { id: 'entrez/ncbi', digest: 'digest-entrez', enabled: false }
-  ])
 })
 
 test('main IPC: reveal path is limited to Phi-owned files', async () => {
@@ -8399,12 +8256,12 @@ test('main jobs list maps live Agent runs to their owning Phi conversations', as
     {
       agentSessionId: session.runtimeSessionId,
       agentRunId: 'agent-run-1',
-      agentName: 'Database',
-      task: 'Search metadata',
+      agentName: 'Wrapper',
+      task: 'Run quality control',
       state: 'running',
       background: true,
       startedAt: Date.now(),
-      lastStep: 'db_query',
+      lastStep: 'wrapper_run',
       report: 'private full report must not reach the job list'
     },
     {
@@ -8421,7 +8278,7 @@ test('main jobs list maps live Agent runs to their owning Phi conversations', as
   assert.equal(jobs[0].agentRunId, 'agent-run-1')
   assert.equal(jobs[0].sessionPath, 'phi-session:phi-1')
   assert.equal(jobs[0].sessionTitle, 'Analyze samples')
-  assert.equal(jobs[0].lastStep, 'db_query')
+  assert.equal(jobs[0].lastStep, 'wrapper_run')
   assert.equal('report' in jobs[0], false)
   await app.invoke('agent:stop')
   await prompt

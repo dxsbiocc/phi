@@ -51,7 +51,7 @@ Format: scope / main files / acceptance / estimate.
 | 0.1 | Remove run leftovers from `resources/`; add `scripts/check-resources.mjs` (fails on untracked files) to `npm run lint` | `resources/`, `scripts/` | `git status --ignored resources` clean | 0.5 d |
 | 0.2 | Exclude leftovers in `electron-builder.yml` `files` | `electron-builder.yml` | no `.nextflow` in `build:unpack` output | 0.5 d |
 | 0.3 | Delete `resources/skills/create-database-connector` and its test references | `resources/skills/`, `tests/resources.test.ts`, `tests/phi-agents.test.ts` | `npm test` passes | 0.5 d |
-| 0.4 | Commit `scripts/eval/` with a README and `npm run eval:db` | `scripts/eval/` | one command reproduces the db comparison | 0.5 d |
+| 0.4 | Commit `scripts/eval/` with a README and `bun run eval:fetch` | `scripts/eval/` | one command reproduces the URL-reading evaluation | 0.5 d |
 | 0.5 | **Dependency inventory** per skill and visualization script: Python packages, R packages, external commands (known: `soffice`, pandoc, poppler, tesseract, Node `docx-js`, R) | `docs/runtime/dependency-inventory.md` | inventory for all script content; input to steps 3 and 4 | 1 d |
 
 ### Step 1 Runtime and environment model (L0 + L1)
@@ -94,11 +94,11 @@ New module: `src/main/agent/envs/`. The existing `src/main/agent/environment/`
 
 | ID | Scope | Main files | Acceptance | Est. |
 |---|---|---|---|---|
-| 4.1 | **Spike**: prototype Database, Wrapper, Visualization on omp `task` / registry; decide whether delegation moves to omp and whether duplicated parts of `agents/registry.ts` retire; record in the decision record | `src/main/agent/agents/` | decision record updated | 1 w |
+| 4.1 | **Spike**: prototype Wrapper and Visualization on omp `task` / registry; decide whether delegation moves to omp and whether duplicated parts of `agents/registry.ts` retire; record in the decision record | `src/main/agent/agents/` | decision record updated | 1 w |
 | 4.2 | **Freeze Agent-definition contract v1**: omp fields (`name`, `description`, `tools`, `spawns`, `model`, `thinkingLevel`) plus Phi `environment`, `visibility`, `skills`, `delegationMode`, `delegation`, `fallback` (legacy `delegation_mode` read as an alias); structured results via `outputSchema` | `docs/contracts/agent.schema.json`, `agents/definition.ts` | the three existing agents validate | 2 d |
 | 4.3 | bash injection extension: in bound sessions, merge `environmentVariables` into the bash call's `env` in the `tool_call` event | `src/main/agent/agents/`, `omp/omp-sdk-worker.ts` | `which python` points into the environment in bound sessions; the main agent's bash is unaffected | 2 d |
 | 4.4 | Create the plugin-shaped directory `resources/plugins/visualization/`: move in `resources/agents/Visualization.md` and `resources/skills/omics-visualization`; `viz` spec and locks under `environments/viz/` (covering the 159 R scripts and the Python scripts from the 0.5 inventory; the seven R packages without conda builds — gground, ggideogram, ggcor, linkET, ggsankey, ggsvg, ggmagnify — installed as pinned `sourcePackages`; settle the ggideogram / ggplot2 4.x incompatibility here) | `resources/plugins/visualization/` | `viz` builds on all three platforms; all templates pass a smoke render | 4 d |
-| 4.5 | **Freeze Artifact contract v1**: fields of `<file>.phi-artifact.json` (kind `figure` / `table` / `structure` / `molecule` / `network` / `report`, title, provenance); the engine presents artifacts | `docs/contracts/artifact.schema.json`, presentation layer | fixtures pass; existing db result viewers read artifacts | 2 d |
+| 4.5 | **Freeze Artifact contract v1**: fields of `<file>.phi-artifact.json` (kind `figure` / `table` / `structure` / `molecule` / `network` / `report`, title, provenance); the engine presents artifacts | `docs/contracts/artifact.schema.json`, presentation layer | fixtures pass; generic artifact viewers read artifacts | 2 d |
 | 4.6 | Rewrite visualization as the command-line program `scripts/viz.py` (subcommands `examples`, `route`, `prepare`, `render`): `route` calls the existing `route_template.py`; `prepare` and `examples` are ported from TypeScript to Python; `render` runs `Rscript` in the same environment plus QA and writes a `figure` artifact | `resources/plugins/visualization/skills/omics-visualization/scripts/` | tests per subcommand; outputs validate against their JSON Schemas | 4 d |
 | 4.7 | Declare four script tools in SKILL.md (`toolPrefix: viz`, names kept as `viz_examples`, `viz_route`, `viz_prepare`, `viz_render`); the Visualization agent declares `environment: plugin:viz`; workflow-based tool filtering moves into the agent's instructions; session creation ensures the environment or asks to build it | SKILL.md, `Visualization.md`, session creation | renders on a machine without host R; no regression on the visualization eval | 2 d |
 | 4.8 | Delete `src/main/agent/visualization/` and visualization-specific logic such as `visualizationToolNamesForWorkflow` from the engine | `src/main/agent/` | no visualization code in the engine; `npm test` passes | 1 d |
@@ -157,7 +157,7 @@ design. Batches:
 
 | Track | Needs | Scope |
 |---|---|---|
-| Data access redesign | step 3 (helper scripts need `skill_run`) | core fetch tool (retry, rate limits, allowlist and audit, pagination, bulk download); `protein-apis` prototype and extended eval; remaining API skills after the decision point; artifact-based result viewers; retire the `db_*` toolchain |
+| Data access redesign | independent side track | The old database toolchain is removed in this release; see [data-access-implementation.md](data-access-implementation.md) for public URL reading and the next-release source-family MCP connector plan. |
 | Multi-agent orchestration | step 6 | freeze the Orchestration contract; hard budgets, store tool, human checkpoints, and run view on omp; Co-Scientist–style reference plugin |
 
 ## 5. Contract freeze schedule

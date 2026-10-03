@@ -324,7 +324,7 @@ test('listPromptAgents reads prompt agents from the selected cwd', async () => {
   assert(projectANames.includes('codex-agent'))
   assert(projectANames.includes('codex-toml-agent'))
   assert(projectANames.includes('Visualization'))
-  assert(projectANames.includes('Database'))
+  assert(!projectANames.includes('Database'))
   assert(projectANames.includes('Wrapper'))
   assert.equal(
     projectAAgents.find((agent) => agent.name === 'project-a-agent')?.trigger,

@@ -50,12 +50,7 @@ import type {
   AgentUserInteractionRequest,
   AgentUserInteractionResponse
 } from '../shared/agentInteractionTypes'
-import type {
-  DefaultProxyMode,
-  PhiAppSettings,
-  PhiAppSettingsPatch
-} from '../shared/appSettingsTypes'
-import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
+import type { PhiAppSettings, PhiAppSettingsPatch } from '../shared/appSettingsTypes'
 import type {
   EnvironmentGetResult,
   ManagedEnvironmentCleanResult,
@@ -328,16 +323,6 @@ type PreloadDirectoryListing = {
   truncated: boolean
 }
 
-type PreloadDatabaseWebImagePreview = {
-  kind: 'string-network' | 'kegg-pathway'
-  label: string
-  sourceUrl: string
-  imageUrl: string
-  dataUrl: string
-  mimeType: 'image/png'
-  bytes: number
-}
-
 type PreloadAnalysisNotebookSummary = {
   path: string
   relativePath: string
@@ -592,7 +577,6 @@ declare global {
         cb: (progress: WrapperResultDownloadProgress) => void
       ) => () => void
       renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
-      previewDatabaseWebImage: (url: string) => Promise<PreloadDatabaseWebImagePreview>
       copyDiagnostics: () => Promise<string>
       sendPrompt: (
         text: string,
@@ -709,7 +693,6 @@ declare global {
       ) => () => void
       getAppSettings: () => Promise<PhiAppSettings>
       updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
-      updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
       getEnvironment: () => Promise<EnvironmentGetResult>
       redetectEnvironment: () => Promise<EnvironmentSnapshot>
       dismissEnvironmentSummary: () => Promise<EnvironmentSnapshot>
@@ -723,10 +706,6 @@ declare global {
       rebuildManagedEnvironment: (envId: string) => Promise<void>
       removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
       cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
-      listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
-      setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
-      setDbConnectorApiKey: (id: string, apiKey: string) => Promise<DbConnectorSettingsItem[]>
-      clearDbConnectorApiKey: (id: string) => Promise<DbConnectorSettingsItem[]>
       listModels: () => Promise<
         Array<{
           providerId: string

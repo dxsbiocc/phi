@@ -114,24 +114,6 @@ test('markdown inline code leaves GEO matrix filenames as plain code, not molecu
   assert.match(markup, />GSE180012_raw_counts_GRCh38\.txt\.gz<\/code>/)
 })
 
-test('markdown links render STRING network urls as hover webpage previews', () => {
-  const markup = renderMarkdown(
-    '完整 STRING 网络可视化：https://string-db.org/network/9606.ENSP00000281030'
-  )
-
-  assert.match(markup, /data-phi-slot="database-web-preview-link"/)
-  assert.match(markup, /data-phi-database-kind="string-network"/)
-  assert.match(markup, /https:\/\/string-db\.org\/network\/9606\.ENSP00000281030/)
-})
-
-test('markdown links render KEGG pathway urls as hover webpage previews', () => {
-  const markup = renderMarkdown('KEGG 通路：https://www.kegg.jp/pathway/hsa04110')
-
-  assert.match(markup, /data-phi-slot="database-web-preview-link"/)
-  assert.match(markup, /data-phi-database-kind="kegg-pathway"/)
-  assert.match(markup, /https:\/\/www\.kegg\.jp\/pathway\/hsa04110/)
-})
-
 test('markdown color swatches work inside emphasis and tables', () => {
   const markup = renderMarkdown(
     '**Blue #0072B2**\n\n| Name | Color |\n| --- | --- |\n| red | #D55E00 |'

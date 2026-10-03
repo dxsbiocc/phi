@@ -20,7 +20,8 @@ runtime. **Installed** means the configuration is saved, not that the server is
 connected or authorized. The public PubMed, bioRxiv, and Clinical Trials servers can
 be added now; services marked as requiring sign-in stay in the directory but cannot
 be added from it until Phi provides an authorization flow. Remote project conversations do not load MCP in
-this beta. Phi's built-in database connectors are a separate, direct-API capability.
+this beta. For public biological databases, the main agent reads public REST URLs;
+database file downloads use `download_file` directly.
 The directory reads the current tool list from each public MCP server when its detail
 page opens; services awaiting authorization do not display guessed tool lists.
 
@@ -153,8 +154,8 @@ PRD's "Relationship To Notebook Analysis" section for the full comparison.
 ## Development
 
 ```bash
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 ## Verification
@@ -164,10 +165,10 @@ be installed; the tests use Node's built-in test runner and the existing TypeScr
 compiler, without a separate test framework.
 
 ```bash
-npm test
-npm run lint
-npm run typecheck
-npm run build
+bun run test
+bun run lint
+bun run typecheck
+bun run build
 ```
 
 Tests isolate external model calls and Electron APIs. They do not verify real provider
@@ -179,9 +180,9 @@ with different Skills/MCP configuration.
 ## Packaging
 
 ```bash
-npm run build:win
-npm run build:mac
-npm run build:linux
+bun run build:win
+bun run build:mac
+bun run build:linux
 ```
 
 The packaging configuration still contains development identifiers and a placeholder

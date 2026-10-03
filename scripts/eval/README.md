@@ -1,8 +1,7 @@
-# db toolchain vs URL fetch
+# Public biological database URL fetch evaluation
 
-Compares the Database specialist's `db_*` tools with plain URL fetching (the runtime `read` tool) on 14 structured biological-database lookups. Each arm runs as an isolated in-memory agent session with only its own tools:
+Compares plain URL reading (the runtime `read` tool) on 14 structured biological-database lookups. Each arm runs as an isolated in-memory agent session with only `read`:
 
-- `db` — Database prompt plus the seven `db_*` tools
 - `fetch` — URL `read` only
 - `fetch-hints` — URL `read` plus a short list of public API base URLs
 
@@ -11,7 +10,7 @@ Each run appends one JSONL record (tokens, model calls, tool calls, wall time, f
 ## Prerequisites
 
 - `bun`
-- A model provider configured in Phi under `~/.phi`
+- A model provider configured in the selected `PI_CODING_AGENT_DIR`
 - Network access to the public database APIs the tasks query
 
 `cursor/*` models also need Phi's Cursor HTTP/2 bridge. Bun cannot speak that TLS leg, so start the bridge under Node and leave it running. It prints `http://127.0.0.1:PORT`.
@@ -20,14 +19,14 @@ Each run appends one JSONL record (tokens, model calls, tool calls, wall time, f
 
 ```
 node --import ./scripts/test-loader.mjs scripts/eval/cursor-bridge.mjs   # prints http://127.0.0.1:PORT, keep running
-npm run eval:db -- --model cursor/<model> --base-url http://127.0.0.1:PORT --out eval-results/db.jsonl
-python3 scripts/eval/db-vs-fetch-score.py eval-results/db.jsonl --detail
+bun run eval:fetch -- --model cursor/<model> --base-url http://127.0.0.1:PORT --out eval-results/fetch.jsonl
+python3 scripts/eval/db-vs-fetch-score.py eval-results/fetch.jsonl --detail
 ```
 
 Other providers do not need the bridge. The default model is `moonshot/kimi-k2.6` and the default output is `eval-results/db-vs-fetch.jsonl` (created if missing, gitignored):
 
 ```
-npm run eval:db
+bun run eval:fetch
 python3 scripts/eval/db-vs-fetch-score.py eval-results/db-vs-fetch.jsonl --detail
 ```
 
@@ -38,7 +37,7 @@ python3 scripts/eval/db-vs-fetch-score.py eval-results/db-vs-fetch.jsonl --detai
 | `--model` | `moonshot/kimi-k2.6` | `provider/model` from the Phi registry |
 | `--base-url` | model default | Override the model base URL. Required for `cursor/*` (the bridge URL) |
 | `--out` | `eval-results/db-vs-fetch.jsonl` | JSONL path. Records are appended |
-| `--arms` | `db,fetch,fetch-hints` | Comma-separated arms |
+| `--arms` | `fetch,fetch-hints` | Comma-separated arms |
 | `--tasks` | all (`T01`–`T14`) | Comma-separated task ids |
 | `--reps` | `1` | Repetitions of each task × arm |
 | `--concurrency` | `4` | Parallel sessions |

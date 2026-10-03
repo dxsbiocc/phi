@@ -3,7 +3,6 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
-import { DEFAULT_PROXY_TRANSPORT_STATUS } from '../src/shared/appSettingsTypes'
 import SettingsDialog from '../src/renderer/src/components/SettingsDialog'
 import type { ModelOption, Project, ProviderAuthStatus } from '../src/renderer/src/types'
 
@@ -43,14 +42,10 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
     onOpenApprovalSession: () => undefined,
     onRespondApproval: () => undefined,
     onCopyDiagnostics: async () => '',
-    defaultProxyMode: 'auto',
     noProjectTaskFolder: '/Users/example/Documents/Codex',
     preventSleepDuringRuns: false,
     nextActionSuggestionsEnabled: true,
-    proxyTransportStatus: DEFAULT_PROXY_TRANSPORT_STATUS,
-    isSavingDefaultProxyMode: false,
     isSavingAppSettings: false,
-    onSelectDefaultProxyMode: () => undefined,
     onUpdateAppSettings: () => undefined,
     onPickNoProjectTaskFolder: () => undefined,
     environmentSnapshot: {
@@ -81,59 +76,6 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
     isRedetectingEnvironment: false,
     onRedetectEnvironment: async () => undefined,
     onSetEnvironmentToolPath: async () => undefined,
-    dbConnectors: [
-      {
-        id: 'entrez/ncbi',
-        name: 'NCBI Entrez',
-        protocolFamily: 'entrez',
-        curationTier: 'curated',
-        trustTier: 'bundled',
-        enabledForQuery: true,
-        installedAt: 'bundled',
-        domainCount: 3,
-        domains: [
-          { id: 'gene', summary: 'Gene records' },
-          { id: 'pubmed', summary: 'Literature records' },
-          { id: 'clinvar', summary: 'Clinical variants' }
-        ],
-        auth: {
-          type: 'api_key_query_param',
-          envVar: 'NCBI_API_KEY',
-          required: false,
-          label: 'NCBI API key',
-          signupUrl: 'https://www.ncbi.nlm.nih.gov/account/settings/',
-          configured: false,
-          configuredFromEnv: false,
-          configuredInStore: false,
-          storageAvailable: true
-        }
-      },
-      {
-        id: 'example/required-key',
-        name: 'Required Key DB',
-        protocolFamily: 'rest-json',
-        curationTier: 'curated',
-        trustTier: 'bundled',
-        enabledForQuery: true,
-        installedAt: 'bundled',
-        domainCount: 1,
-        domains: [{ id: 'record', summary: 'Records' }],
-        auth: {
-          type: 'api_key_header',
-          envVar: 'REQUIRED_DB_KEY',
-          required: true,
-          label: 'Required DB key',
-          configured: false,
-          configuredFromEnv: false,
-          configuredInStore: false,
-          storageAvailable: true
-        }
-      }
-    ],
-    isLoadingDbConnectors: false,
-    updatingDbConnectorId: null,
-    onRefreshDbConnectors: async () => undefined,
-    onSetDbConnectorEnabled: async () => undefined,
     themeMode: 'system',
     onSelectThemeMode: () => undefined,
     ...overrides
@@ -222,17 +164,10 @@ test('settings dialog exposes developer extensions under advanced settings', () 
   assert.doesNotMatch(markup, /没有找到插件/)
 })
 
-test('settings dialog exposes default proxy mode in general settings', () => {
-  const markup = renderSettingsDialog({ category: 'general', defaultProxyMode: 'enabled' })
+test('settings dialog exposes general application settings', () => {
+  const markup = renderSettingsDialog({ category: 'general' })
 
   assert.match(markup, /通用/)
-  assert.match(markup, /默认代理模式/)
-  assert.match(markup, /自动选择/)
-  assert.match(markup, /开启/)
-  assert.match(markup, /关闭/)
-  assert.match(markup, /type="radio"/)
-  assert.match(markup, /受控代理通道/)
-  assert.match(markup, /开启不可用/)
   assert.match(markup, /无项目任务文件夹/)
   assert.match(markup, /在项目外启动的任务默认存储数据的位置。/)
   assert.match(markup, /\/Users\/example\/Documents\/Codex/)
@@ -260,31 +195,6 @@ test('general settings shows current-session compaction controls', () => {
 
   assert.match(markup, /正在读取自动压缩设置/)
   assert.match(markup, /aria-label="压缩当前会话上下文"/)
-})
-
-test('settings dialog exposes database connector toggles in database settings', () => {
-  const markup = renderSettingsDialog({ category: 'databases' })
-
-  assert.match(markup, /数据库/)
-  assert.match(markup, /控制 Database agent 是否允许查询各个生物数据库/)
-  assert.match(markup, /Database agent 可发现已安装数据库/)
-  assert.match(markup, /关闭后仍可看说明但不会执行查询/)
-  assert.doesNotMatch(markup, /\bdb_(?:search|domain|docs_search|query)\b/)
-  assert.match(markup, /NCBI Entrez/)
-  assert.match(markup, /3 个查询域/)
-  assert.match(markup, /Entrez/)
-  assert.match(markup, /API key/)
-  assert.match(markup, /MuiChip-colorSuccess/)
-  assert.match(markup, /Required Key DB/)
-  assert.match(markup, /MuiChip-colorError/)
-  assert.match(markup, /可选，配置后可提高速率限制/)
-  assert.match(markup, /为必填，点击展开后配置/)
-  assert.match(markup, /已启用查询，点击可关闭/)
-  assert.match(markup, /aria-expanded="false"/)
-  assert.doesNotMatch(markup, /详情\/API/)
-  assert.doesNotMatch(markup, /无需 API key/)
-  assert.match(markup, /type="checkbox"/)
-  assert.doesNotMatch(markup, /添加 Provider/)
 })
 
 test('settings dialog renders project permission controls without hiding defaults', () => {

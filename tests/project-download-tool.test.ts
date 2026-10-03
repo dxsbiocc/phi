@@ -76,3 +76,29 @@ test('main download tool rejects a redirect to a private host', async () => {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('main download tool refuses IPv4-mapped IPv6 private addresses', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'phi-project-download-'))
+  try {
+    let fetches = 0
+    const tool = buildProjectDownloadTool(root, root, {
+      transport: {
+        async fetch() {
+          fetches += 1
+          return new Response('no')
+        }
+      }
+    })
+    for (const url of [
+      'https://[::ffff:127.0.0.1]/data.txt',
+      'https://[::ffff:10.0.0.1]/data.txt',
+      'https://[::ffff:169.254.169.254]/latest'
+    ]) {
+      const result = await tool.execute('mapped', { url }, undefined, {} as never)
+      assert.equal(result.isError, true, url)
+    }
+    assert.equal(fetches, 0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

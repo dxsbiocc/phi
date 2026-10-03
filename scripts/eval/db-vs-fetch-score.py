@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scores db-vs-fetch.ts output: per-arm accuracy (all expected facts present in the final
+"""Scores the URL-fetch evaluation output: per-arm accuracy (all expected facts present in the final
 answer), model calls, tool calls, failed tool calls, tool result size and wall time.
 
 Usage: python3 scripts/eval/db-vs-fetch-score.py <results.jsonl> [--detail]

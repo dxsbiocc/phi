@@ -41,8 +41,8 @@ const USAGE_B = { input: 30, output: 50, cacheRead: 400, cacheWrite: 10, totalTo
 
 test('the collector sums token usage over assistant turns and keeps the first turn as fixed overhead', () => {
   const collector = new AgentUsageCollector({
-    agent: 'Database',
-    task: 'find TP53',
+    agent: 'Wrapper',
+    task: 'inspect FASTQ QC',
     clock: steppedClock()
   })
   collector.assistantMessage(assistant(USAGE_A))
@@ -63,26 +63,26 @@ test('the collector sums token usage over assistant turns and keeps the first tu
   // What the model was sent on turn one: system prompt + tool schemas + task, cached or not.
   assert.equal(record.firstTurnPromptTokens, 500)
   assert.equal(record.model, 'claude-final')
-  assert.equal(record.agent, 'Database')
-  assert.equal(record.taskChars, 'find TP53'.length)
+  assert.equal(record.agent, 'Wrapper')
+  assert.equal(record.taskChars, 'inspect FASTQ QC'.length)
   assert.equal(record.reportChars, 'done'.length)
   assert.equal(record.status, 'completed')
 })
 
 test('the collector records each tool call by name, argument keys and sizes, never by content', () => {
-  const collector = new AgentUsageCollector({ agent: 'Database', task: 't', clock: steppedClock() })
+  const collector = new AgentUsageCollector({ agent: 'Wrapper', task: 't', clock: steppedClock() })
   const args = {
-    database: 'rest-json/uniprot',
-    domain: 'protein',
+    wrapper: 'phi/ngs/fastq-qc',
+    target: 'local',
     filters: [{ token: 'sk-secretsecret1' }]
   }
-  collector.toolStarted('c1', 'db_query', args)
+  collector.toolStarted('c1', 'wrapper_run', args)
   collector.toolEnded('c1', { resultChars: 4200, isError: false })
-  collector.toolStarted('c2', 'db_query', { query: 'x' })
+  collector.toolStarted('c2', 'wrapper_run', { query: 'x' })
   collector.toolEnded('c2', {
     resultChars: 60,
     isError: true,
-    errorText: 'invalid_query: filters 与 rawQuery 不能同时使用。 token=sk-abcdefgh12345678'
+    errorText: 'invalid_input: filters 与 rawInput 不能同时使用。 token=sk-abcdefgh12345678'
   })
 
   const record = collector.finish('completed', '')
@@ -90,17 +90,17 @@ test('the collector records each tool call by name, argument keys and sizes, nev
   assert.equal(record.toolErrors, 1)
   assert.equal(record.toolResultChars, 4260)
   const [first, second] = record.tools
-  assert.equal(first.name, 'db_query')
-  assert.deepEqual(first.argKeys, ['database', 'domain', 'filters'])
+  assert.equal(first.name, 'wrapper_run')
+  assert.deepEqual(first.argKeys, ['filters', 'target', 'wrapper'])
   assert.equal(first.argChars, JSON.stringify(args).length)
   assert.equal(first.resultChars, 4200)
   assert.equal(first.durationMs, 10)
   assert.equal(first.isError, false)
   assert.equal(second.isError, true)
-  assert.match(second.errorHead ?? '', /invalid_query/)
+  assert.match(second.errorHead ?? '', /invalid_input/)
 
   const serialized = JSON.stringify(record)
-  assert.ok(!serialized.includes('rest-json/uniprot'), 'argument values must not be recorded')
+  assert.ok(!serialized.includes('phi/ngs/fastq-qc'), 'argument values must not be recorded')
   assert.ok(!serialized.includes('sk-secretsecret1'))
   assert.ok(!serialized.includes('sk-abcdefgh12345678'), 'error text is redacted')
 })
@@ -165,13 +165,13 @@ function scriptedTurns(emit: Listener): void {
   emit({
     type: 'tool_execution_start',
     toolCallId: 't1',
-    toolName: 'db_search',
-    args: { query: 'p53' }
+    toolName: 'wrapper_search',
+    args: { query: 'FASTQ QC' }
   })
   emit({
     type: 'tool_execution_end',
     toolCallId: 't1',
-    toolName: 'db_search',
+    toolName: 'wrapper_search',
     result: { content: [{ type: 'text', text: 'x'.repeat(300) }] }
   })
   emit({ type: 'message_end', message: assistant(USAGE_B) })
@@ -180,13 +180,13 @@ function scriptedTurns(emit: Listener): void {
 test('the runner reports one usage record per run, tagged with the run id', async () => {
   const records: AgentRunUsageRecord[] = []
   const run = createAgentRunner({
-    agent: 'Database',
+    agent: 'Wrapper',
     createSession: async () => fakeSession({ onPrompt: scriptedTurns }),
     onUsage: (record) => records.push(record),
     clock: steppedClock()
   })
 
-  const result = await run({ task: 'find TP53', runId: 'arun_7' })
+  const result = await run({ task: 'inspect FASTQ QC', runId: 'arun_7' })
 
   assert.equal(result.text, 'Report body')
   assert.equal(records.length, 1)
@@ -205,7 +205,7 @@ test('the runner reports one usage record per run, tagged with the run id', asyn
 test('a run that fails, is cancelled or times out still reports its usage', async () => {
   const failed: AgentRunUsageRecord[] = []
   const failRun = createAgentRunner({
-    agent: 'Database',
+    agent: 'Wrapper',
     createSession: async () =>
       fakeSession({
         onPrompt: scriptedTurns,
@@ -248,7 +248,7 @@ test('a run that fails, is cancelled or times out still reports its usage', asyn
 
 test('a broken usage sink never breaks the run', async () => {
   const run = createAgentRunner({
-    agent: 'Database',
+    agent: 'Wrapper',
     createSession: async () => fakeSession({ onPrompt: scriptedTurns }),
     onUsage: () => {
       throw new Error('disk full')
@@ -262,7 +262,7 @@ test('the registry hands each run its own id so usage can be matched to the run 
   const registry = new AgentRunRegistry()
   const seen: Array<string | undefined> = []
   const handle = registry.launch({
-    agent: 'Database',
+    agent: 'Wrapper',
     task: 't',
     background: false,
     runner: async (request) => {
@@ -280,7 +280,7 @@ function sampleRecord(overrides: Partial<AgentRunUsageRecord> = {}): AgentRunUsa
   return {
     version: 1,
     timestamp: '2026-09-21T08:00:00.000Z',
-    agent: 'Database',
+    agent: 'Wrapper',
     status: 'completed',
     durationMs: 1200,
     taskChars: 40,
@@ -300,7 +300,7 @@ function sampleRecord(overrides: Partial<AgentRunUsageRecord> = {}): AgentRunUsa
     toolResultChars: 5000,
     tools: [
       {
-        name: 'db_search',
+        name: 'wrapper_search',
         argKeys: ['query'],
         argChars: 20,
         resultChars: 4000,
@@ -308,13 +308,13 @@ function sampleRecord(overrides: Partial<AgentRunUsageRecord> = {}): AgentRunUsa
         isError: false
       },
       {
-        name: 'db_query',
+        name: 'wrapper_run',
         argKeys: ['domain'],
         argChars: 30,
         resultChars: 1000,
         durationMs: 90,
         isError: true,
-        errorHead: 'invalid_query'
+        errorHead: 'invalid_input'
       }
     ],
     ...overrides
@@ -326,7 +326,7 @@ test('usage records append as JSONL under the agent dir, one file per day, and r
   try {
     const day = new Date('2026-09-21T08:00:00.000Z')
     appendAgentUsageRecord(dir, sampleRecord({ sessionId: 's1' }), day)
-    appendAgentUsageRecord(dir, sampleRecord({ agent: 'Wrapper' }), day)
+    appendAgentUsageRecord(dir, sampleRecord({ agent: 'Visualization' }), day)
     appendAgentUsageRecord(dir, sampleRecord(), new Date('2026-09-22T08:00:00.000Z'))
 
     assert.deepEqual(readdirSync(getAgentUsageDir(dir)).sort(), [
@@ -355,7 +355,7 @@ test('an unwritable usage dir is swallowed, and a corrupt line is skipped on rea
     appendAgentUsageRecord(dir, sampleRecord(), new Date('2026-09-21T08:00:00.000Z'))
     writeFileSync(
       join(getAgentUsageDir(dir), 'agent-usage-2026-09-21.jsonl'),
-      `${JSON.stringify(sampleRecord())}\n{not json\n${JSON.stringify(sampleRecord({ agent: 'Wrapper' }))}\n`
+      `${JSON.stringify(sampleRecord())}\n{not json\n${JSON.stringify(sampleRecord({ agent: 'Visualization' }))}\n`
     )
     assert.equal(readAgentUsageRecords(dir).length, 2)
     assert.deepEqual(readAgentUsageRecords(join(dir, 'missing')), [])
@@ -408,7 +408,7 @@ test('the summary groups runs by agent and by tool', () => {
       toolResultChars: 9000,
       tools: [
         {
-          name: 'db_query',
+          name: 'wrapper_run',
           argKeys: ['domain'],
           argChars: 30,
           resultChars: 3000,
@@ -416,7 +416,7 @@ test('the summary groups runs by agent and by tool', () => {
           isError: true
         },
         {
-          name: 'db_query',
+          name: 'wrapper_run',
           argKeys: ['domain'],
           argChars: 30,
           resultChars: 6000,
@@ -425,36 +425,36 @@ test('the summary groups runs by agent and by tool', () => {
         }
       ]
     }),
-    sampleRecord({ agent: 'Wrapper', turns: 2 })
+    sampleRecord({ agent: 'Visualization', turns: 2 })
   ]
 
   const summary = summarizeUsage(records)
   assert.deepEqual(
     summary.map((item) => item.agent),
-    ['Database', 'Wrapper']
+    ['Visualization', 'Wrapper']
   )
-  const database = summary[0]
-  assert.equal(database.runs, 2)
-  assert.deepEqual(database.statuses, { completed: 1, failed: 1 })
-  assert.equal(database.meanTurns, 4)
-  assert.equal(database.meanToolCalls, 3)
-  assert.equal(database.meanFirstTurnPromptTokens, 10000)
-  assert.equal(database.meanTokens.total, (27700 + 40900) / 2)
-  assert.equal(database.meanTokens.output, 300)
+  const wrapper = summary[1]
+  assert.equal(wrapper.runs, 2)
+  assert.deepEqual(wrapper.statuses, { completed: 1, failed: 1 })
+  assert.equal(wrapper.meanTurns, 4)
+  assert.equal(wrapper.meanToolCalls, 3)
+  assert.equal(wrapper.meanFirstTurnPromptTokens, 10000)
+  assert.equal(wrapper.meanTokens.total, (27700 + 40900) / 2)
+  assert.equal(wrapper.meanTokens.output, 300)
 
-  const dbQuery = database.tools.find((tool) => tool.name === 'db_query')
-  assert.ok(dbQuery)
-  assert.equal(dbQuery.calls, 3)
-  assert.equal(dbQuery.errors, 2)
-  assert.equal(dbQuery.meanResultChars, (1000 + 3000 + 6000) / 3)
+  const wrapperRun = wrapper.tools.find((tool) => tool.name === 'wrapper_run')
+  assert.ok(wrapperRun)
+  assert.equal(wrapperRun.calls, 3)
+  assert.equal(wrapperRun.errors, 2)
+  assert.equal(wrapperRun.meanResultChars, (1000 + 3000 + 6000) / 3)
   // Tools that cost the most result text come first.
-  assert.equal(database.tools[0].name, 'db_query')
+  assert.equal(wrapper.tools[0].name, 'wrapper_run')
 })
 
 test('the report is readable text and says so when there is nothing to report', () => {
   assert.match(formatUsageReport([]), /no agent runs/i)
   const text = formatUsageReport(summarizeUsage([sampleRecord()]))
-  assert.match(text, /Database/)
-  assert.match(text, /db_query/)
+  assert.match(text, /Wrapper/)
+  assert.match(text, /wrapper_run/)
   assert.match(text, /first turn/i)
 })

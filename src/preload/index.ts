@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { DatabaseWebImagePreview } from '../shared/databaseWebPreview'
 import type { RemoteWorkspaceFileRequest } from '../shared/remoteWorkspacePath'
 import type {
   WrapperResultDirectoryRequest,
@@ -56,12 +55,7 @@ import type {
   AgentUserInteractionRequest,
   AgentUserInteractionResponse
 } from '../shared/agentInteractionTypes'
-import type {
-  DefaultProxyMode,
-  PhiAppSettings,
-  PhiAppSettingsPatch
-} from '../shared/appSettingsTypes'
-import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
+import type { PhiAppSettings, PhiAppSettingsPatch } from '../shared/appSettingsTypes'
 import type {
   EnvironmentGetResult,
   ManagedEnvironmentCleanResult,
@@ -685,7 +679,6 @@ type RendererAuthApi = {
     cb: (progress: WrapperResultDownloadProgress) => void
   ) => Unsubscribe
   renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
-  previewDatabaseWebImage: (url: string) => Promise<DatabaseWebImagePreview>
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
@@ -706,7 +699,6 @@ type RendererAuthApi = {
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => Unsubscribe
   getAppSettings: () => Promise<PhiAppSettings>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
-  updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
   getEnvironment: () => Promise<EnvironmentGetResult>
   redetectEnvironment: () => Promise<EnvironmentSnapshot>
   dismissEnvironmentSummary: () => Promise<EnvironmentSnapshot>
@@ -720,10 +712,6 @@ type RendererAuthApi = {
   rebuildManagedEnvironment: (envId: string) => Promise<void>
   removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
   cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
-  listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
-  setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
-  setDbConnectorApiKey: (id: string, apiKey: string) => Promise<DbConnectorSettingsItem[]>
-  clearDbConnectorApiKey: (id: string) => Promise<DbConnectorSettingsItem[]>
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<SelectedModel>
@@ -1030,8 +1018,6 @@ const api: RendererAuthApi = {
   },
   renderMoleculeSvg: (value: string, width: number, height: number): Promise<string> =>
     ipcRenderer.invoke('molecules:renderSvg', value, width, height),
-  previewDatabaseWebImage: (url: string): Promise<DatabaseWebImagePreview> =>
-    ipcRenderer.invoke('database:webImagePreview', url),
   copyDiagnostics: (): Promise<string> => ipcRenderer.invoke('diagnostics:copy'),
   sendPrompt: (text: string, target?: PromptTarget): Promise<PromptResult | null> =>
     ipcRenderer.invoke('agent:prompt', text, target),
@@ -1072,8 +1058,6 @@ const api: RendererAuthApi = {
   getAppSettings: (): Promise<PhiAppSettings> => ipcRenderer.invoke('settings:get'),
   updateAppSettings: (patch: PhiAppSettingsPatch): Promise<PhiAppSettings> =>
     ipcRenderer.invoke('settings:update', patch),
-  updateDefaultProxyMode: (mode: DefaultProxyMode): Promise<PhiAppSettings> =>
-    ipcRenderer.invoke('settings:updateDefaultProxyMode', mode),
   getEnvironment: (): Promise<EnvironmentGetResult> => ipcRenderer.invoke('environment:get'),
   redetectEnvironment: (): Promise<EnvironmentSnapshot> =>
     ipcRenderer.invoke('environment:redetect'),
@@ -1094,14 +1078,6 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('managedEnvironments:remove', envId),
   cleanManagedEnvironments: (): Promise<ManagedEnvironmentCleanResult> =>
     ipcRenderer.invoke('managedEnvironments:clean'),
-  listDbConnectors: (): Promise<DbConnectorSettingsItem[]> =>
-    ipcRenderer.invoke('db:listConnectors'),
-  setDbConnectorEnabled: (id: string, enabled: boolean): Promise<DbConnectorSettingsItem[]> =>
-    ipcRenderer.invoke('db:setConnectorEnabled', id, enabled),
-  setDbConnectorApiKey: (id: string, apiKey: string): Promise<DbConnectorSettingsItem[]> =>
-    ipcRenderer.invoke('db:setConnectorApiKey', id, apiKey),
-  clearDbConnectorApiKey: (id: string): Promise<DbConnectorSettingsItem[]> =>
-    ipcRenderer.invoke('db:clearConnectorApiKey', id),
   listModels: (): Promise<ModelOption[]> => ipcRenderer.invoke('models:list'),
   selectModel: (providerId: string, modelId: string): Promise<void> =>
     ipcRenderer.invoke('models:select', providerId, modelId),

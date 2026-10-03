@@ -28,12 +28,11 @@ import {
   extractAssistantText,
   type AgentSessionLike
 } from '../src/main/agent/agents/runner'
-import { buildScopedPhiToolMap, resolveAgentTools } from '../src/main/agent/agents/tool-resolution'
+import { resolveAgentTools } from '../src/main/agent/agents/tool-resolution'
 import { buildAgentTool, type AgentRunner } from '../src/main/agent/agents/tool'
 import { installPlugin, type LoadedPlugin } from '../src/main/agent/plugins/loader'
 
 const REPO_AGENTS_DIR = join(import.meta.dirname, '..', 'resources', 'agents')
-const REPO_SKILLS_DIR = join(import.meta.dirname, '..', 'resources', 'skills')
 const REPO_VIZ_PLUGIN_DIR = join(import.meta.dirname, '..', 'resources', 'plugins', 'visualization')
 const REPO_VIZ_AGENT = join(REPO_VIZ_PLUGIN_DIR, 'agents', 'Visualization.md')
 
@@ -444,11 +443,7 @@ test('discovery logs warnings without skipping the agent', () => {
 })
 
 test('the bundled agents validate with no errors and no warnings', () => {
-  const files = [
-    join(REPO_AGENTS_DIR, 'Database.md'),
-    join(REPO_AGENTS_DIR, 'Wrapper.md'),
-    REPO_VIZ_AGENT
-  ]
+  const files = [join(REPO_AGENTS_DIR, 'Wrapper.md'), REPO_VIZ_AGENT]
   for (const file of files) {
     const result = validateAgent(file)
     assert.equal(
@@ -712,62 +707,6 @@ test('the bundled Wrapper agent is a valid, well-formed definition', () => {
   assert.ok(wrapper.delegation && wrapper.delegation.length > 0)
 })
 
-test('the bundled Database agent owns only biological database tools', () => {
-  const { agents, diagnostics } = discoverPhiAgents({
-    cwd: '/nonexistent/cwd',
-    agentDir: '/nonexistent/agentdir',
-    bundledDir: REPO_AGENTS_DIR,
-    homeDir: '/nonexistent/home'
-  })
-  assert.deepEqual(diagnostics, [])
-  const database = agents.find((agent) => agent.name === 'Database')
-  assert.ok(database, 'resources/agents/Database.md should define Database')
-  assert.equal(database.source, 'phi')
-  assert.deepEqual(database.tools, [
-    'db_search',
-    'db_resolve',
-    'db_routes',
-    'db_domain',
-    'db_docs_search',
-    'db_query',
-    'db_download'
-  ])
-  for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit', 'eval', 'web_search']) {
-    assert.ok(!database.tools.includes(tool), `Database must not have system tool ${tool}`)
-  }
-  assert.deepEqual(database.skills, [])
-  assert.equal(existsSync(join(REPO_SKILLS_DIR, 'create-database-connector', 'SKILL.md')), false)
-  assert.match(database.systemPrompt, /stable_id/)
-  assert.match(database.systemPrompt, /provenance/i)
-  assert.match(database.systemPrompt, /bulk download/i)
-  assert.match(database.systemPrompt, /before (?:the )?first tool call/i)
-  assert.match(database.systemPrompt, /candidate databases/i)
-  assert.match(database.systemPrompt, /may be inspected and queried in parallel/i)
-  assert.match(database.systemPrompt, /exact public-accession/i)
-  assert.match(database.systemPrompt, /db_resolve.*replace these discovery steps/i)
-  assert.match(database.systemPrompt, /do not repeat/i)
-  assert.doesNotMatch(database.systemPrompt, /skill:\/\/create-database-connector/)
-  assert.ok(database.delegation && database.delegation.length > 0)
-  assert.equal(database.delegationMode, 'required-first')
-  assert.equal(database.fallback?.afterFailures, 1)
-  assert.deepEqual(database.fallback?.tools, ['bash', 'eval', 'web_search', 'download_file'])
-  assert.ok(database.fallback?.match.includes('rest.uniprot.org'))
-  assert.match(database.description, /does not conduct open-ended literature reviews/i)
-  assert.match(database.delegation ?? '', /literature search.*main agent/i)
-  assert.match(database.systemPrompt, /do not broaden a literature search/i)
-  for (const toolName of [
-    'db_search',
-    'db_resolve',
-    'db_routes',
-    'db_domain',
-    'db_docs_search',
-    'db_query',
-    'db_download'
-  ]) {
-    assert.doesNotMatch(database.delegation ?? '', new RegExp(`\\b${toolName}\\b`))
-  }
-})
-
 test('specialists keep delegated scope, evidence, and stop rules explicit', () => {
   withInstalledVisualization(({ agentDir }) => {
     const { agents } = discoverPhiAgents({
@@ -776,7 +715,7 @@ test('specialists keep delegated scope, evidence, and stop rules explicit', () =
       bundledDir: REPO_AGENTS_DIR,
       homeDir: '/nonexistent/home'
     })
-    for (const name of ['Database', 'Visualization', 'Wrapper']) {
+    for (const name of ['Visualization', 'Wrapper']) {
       const prompt = agents.find((agent) => agent.name === name)?.systemPrompt ?? ''
       assert.match(prompt, /do not broaden the delegated task/i, `${name} must preserve scope`)
       assert.match(
@@ -786,9 +725,6 @@ test('specialists keep delegated scope, evidence, and stop rules explicit', () =
       )
       assert.match(prompt, /missing.*report/i, `${name} must expose missing inputs`)
     }
-    const database = agents.find((agent) => agent.name === 'Database')!
-    assert.match(database.systemPrompt, /select databases.*select functions.*inspect inputs/i)
-    assert.match(database.systemPrompt, /independent.*parallel/i)
     const visualization = agents.find((agent) => agent.name === 'Visualization')!
     assert.match(visualization.systemPrompt, /preview.*before.*final render/i)
     assert.match(visualization.systemPrompt, /verify.*artifact.*before.*report/i)
@@ -806,7 +742,7 @@ test('specialist delegation excludes general explanation and adjacent deliverabl
       bundledDir: REPO_AGENTS_DIR,
       homeDir: '/nonexistent/home'
     })
-    for (const name of ['Database', 'Visualization', 'Wrapper']) {
+    for (const name of ['Visualization', 'Wrapper']) {
       const guidance = agents.find((agent) => agent.name === name)?.delegation ?? ''
       assert.match(guidance, /only the requested/i, `${name} must constrain delegation`)
     }
@@ -917,9 +853,12 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
     const prompt = buildAgentLeaderPrompt(agents)
     assert.match(prompt, /^<phi_agents>/)
     assert.match(prompt, /<\/phi_agents>$/)
-    assert.match(prompt, /- Database: /)
     assert.match(prompt, /- Visualization: /)
     assert.match(prompt, /- Wrapper: /)
+    assert.match(prompt, /public biological database.*read/i)
+    assert.match(prompt, /https:\/\/rest\.uniprot\.org\/uniprotkb\/P04637\.json/)
+    assert.match(prompt, /eutils\.ncbi\.nlm\.nih\.gov.*retmode=json/i)
+    assert.match(prompt, /database file.*download_file/i)
     assert.match(prompt, /self-contained/i)
     assert.match(prompt, /absolute/i)
     assert.match(prompt, /cannot (see|ask)/i)
@@ -927,7 +866,6 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
     assert.match(prompt, /nextflow/i)
     assert.match(prompt, /do not/i)
     assert.match(prompt, /required-first/i)
-    assert.match(prompt, /literature search.*main agent/i)
     assert.match(prompt, /only the requested subtask/i)
     assert.match(prompt, /follow-up edit.*exact source, input, and prior output paths/i)
     assert.match(prompt, /controlled fallback/i)
@@ -935,17 +873,7 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
     assert.match(prompt, /new and modified user-facing files separately/i)
     assert.match(prompt, /exact path and purpose/i)
     // The leader never learns the specialist's own tool functions.
-    for (const name of [
-      'wrapper_search',
-      'wrapper_inspect',
-      'wrapper_run',
-      'db_search',
-      'db_routes',
-      'db_domain',
-      'db_docs_search',
-      'db_query',
-      'db_download'
-    ]) {
+    for (const name of ['wrapper_search', 'wrapper_inspect', 'wrapper_run']) {
       assert.ok(!new RegExp(`\\b${name}\\b`).test(prompt), `leader prompt must not mention ${name}`)
     }
   })
@@ -967,24 +895,6 @@ test('resolveAgentTools separates Phi tool functions from SDK built-ins', () => 
   )
   assert.deepEqual(toolNames, ['read', 'wrapper_search', 'bash', 'not_registered'])
   assert.deepEqual(customTools, [fn])
-})
-
-test('resolveAgentTools resolves Database tools only when provided by its scoped registry', () => {
-  const dbQuery = { name: 'db_query' } as never
-  const declared = ['db_search', 'db_query']
-  assert.deepEqual(resolveAgentTools(declared, new Map()).customTools, [])
-  assert.deepEqual(resolveAgentTools(declared, new Map([['db_query', dbQuery]])).customTools, [
-    dbQuery
-  ])
-})
-
-test('Phi tool ownership isolates Wrapper and Database internals', () => {
-  const wrapper = { name: 'wrapper_run' } as never
-  const database = { name: 'db_query' } as never
-  const groups = { wrapper: [wrapper], database: [database] }
-  assert.deepEqual([...buildScopedPhiToolMap('Wrapper', groups).keys()], ['wrapper_run'])
-  assert.deepEqual([...buildScopedPhiToolMap('Database', groups).keys()], ['db_query'])
-  assert.deepEqual([...buildScopedPhiToolMap('Other', groups).keys()], [])
 })
 
 // ── delegation tool ───────────────────────────────────────────────────────

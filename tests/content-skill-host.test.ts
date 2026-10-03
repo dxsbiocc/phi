@@ -109,7 +109,7 @@ async function withFixture(
           name: 'echo',
           description: 'Echo script arguments as JSON.',
           toolPrefix: 'echo',
-          attachTo: ['main', 'Database'],
+          attachTo: ['main', 'Alpha'],
           scriptName: 'echo',
           scriptDescription: 'Print the flags passed to the script as JSON.',
           scriptFile: 'echo.py',
@@ -228,7 +228,7 @@ test('script tools list valid skills, skip invalid ones, and keep the first dupl
       listed.tools.map((tool) => tool.approval),
       ['read', 'write', 'read']
     )
-    assert.deepEqual(listed.tools[0]?.attachTo, ['main', 'Database'])
+    assert.deepEqual(listed.tools[0]?.attachTo, ['main', 'Alpha'])
     assert.deepEqual(listed.tools[1]?.attachTo, ['main'])
     assert.equal(listed.tools[0]?.parameters.type, 'object')
     assert.equal(

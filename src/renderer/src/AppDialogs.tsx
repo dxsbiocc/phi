@@ -9,8 +9,6 @@ import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
 import type { ThemeMode } from './theme'
 import type {
   ActiveAuthPrompt,
-  DbConnectorSettingsItem,
-  DefaultProxyMode,
   EnvironmentSnapshot,
   EnvironmentToolId,
   ModelOption,
@@ -18,7 +16,6 @@ import type {
   PermissionMode,
   Project,
   ProviderAuthStatus,
-  ProxyTransportStatus,
   RendererApi,
   ThinkingLevel,
   ToolApprovalRequest
@@ -63,14 +60,10 @@ export type AppDialogsProps = {
   onRespondToolApproval: (requestId: string, approved: boolean) => Promise<void>
   themeMode: ThemeMode
   setThemeMode: (mode: ThemeMode) => void
-  defaultProxyMode: DefaultProxyMode
   noProjectTaskFolder: string
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
-  proxyTransportStatus: ProxyTransportStatus
-  isSavingDefaultProxyMode: boolean
   isSavingAppSettings: boolean
-  onSelectDefaultProxyMode: (mode: DefaultProxyMode) => void
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
   autoCompactionTarget: ManualCompactionTarget
@@ -85,14 +78,6 @@ export type AppDialogsProps = {
   onSetEnvironmentToolPath: (toolId: EnvironmentToolId, path: string | null) => Promise<void>
   showEnvironmentSummary: boolean
   onDismissEnvironmentSummary: () => Promise<void>
-  dbConnectors: DbConnectorSettingsItem[]
-  isLoadingDbConnectors: boolean
-  updatingDbConnectorId: string | null
-  onRefreshDbConnectors: () => Promise<void>
-  onSetDbConnectorEnabled: (id: string, enabled: boolean) => Promise<void>
-  onSetDbConnectorApiKey: (id: string, apiKey: string) => Promise<void>
-  onClearDbConnectorApiKey: (id: string) => Promise<void>
-
   showOnboarding: boolean
   onCompleteOnboarding: (description: string) => Promise<void>
   onSkipOnboarding: () => Promise<void>
@@ -149,14 +134,10 @@ export default function AppDialogs({
   onRespondToolApproval,
   themeMode,
   setThemeMode,
-  defaultProxyMode,
   noProjectTaskFolder,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
-  proxyTransportStatus,
-  isSavingDefaultProxyMode,
   isSavingAppSettings,
-  onSelectDefaultProxyMode,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
   autoCompactionTarget,
@@ -171,13 +152,6 @@ export default function AppDialogs({
   onSetEnvironmentToolPath,
   showEnvironmentSummary,
   onDismissEnvironmentSummary,
-  dbConnectors,
-  isLoadingDbConnectors,
-  updatingDbConnectorId,
-  onRefreshDbConnectors,
-  onSetDbConnectorEnabled,
-  onSetDbConnectorApiKey,
-  onClearDbConnectorApiKey,
   showOnboarding,
   onCompleteOnboarding,
   onSkipOnboarding,
@@ -238,14 +212,10 @@ export default function AppDialogs({
         onOpenApprovalSession={onOpenApprovalSession}
         onRespondApproval={onRespondToolApproval}
         onCopyDiagnostics={() => rendererApi.copyDiagnostics()}
-        defaultProxyMode={defaultProxyMode}
         noProjectTaskFolder={noProjectTaskFolder}
         preventSleepDuringRuns={preventSleepDuringRuns}
         nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
-        proxyTransportStatus={proxyTransportStatus}
-        isSavingDefaultProxyMode={isSavingDefaultProxyMode}
         isSavingAppSettings={isSavingAppSettings}
-        onSelectDefaultProxyMode={onSelectDefaultProxyMode}
         onUpdateAppSettings={onUpdateAppSettings}
         onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
         autoCompactionTarget={autoCompactionTarget}
@@ -258,13 +228,6 @@ export default function AppDialogs({
         isRedetectingEnvironment={isRedetectingEnvironment}
         onRedetectEnvironment={onRedetectEnvironment}
         onSetEnvironmentToolPath={onSetEnvironmentToolPath}
-        dbConnectors={dbConnectors}
-        isLoadingDbConnectors={isLoadingDbConnectors}
-        updatingDbConnectorId={updatingDbConnectorId}
-        onRefreshDbConnectors={onRefreshDbConnectors}
-        onSetDbConnectorEnabled={onSetDbConnectorEnabled}
-        onSetDbConnectorApiKey={onSetDbConnectorApiKey}
-        onClearDbConnectorApiKey={onClearDbConnectorApiKey}
         themeMode={themeMode}
         onSelectThemeMode={setThemeMode}
       />

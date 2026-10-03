@@ -1351,11 +1351,11 @@ test('chatItemsFromSessionMessages restores the notice for a finished background
       eventId: 'event-agent-done',
       createdAt: '2026-09-20T10:03:00.000Z',
       agentRunId: 'run_2',
-      agent: 'Database',
+      agent: 'Wrapper',
       state: 'error',
       task: 'look up TP53 in ClinVar',
       elapsedSeconds: 125,
-      error: 'The Database agent failed: connector offline'
+      error: 'The Wrapper agent failed: runner offline'
     }
   ])
   assert.equal(items.length, 1)
@@ -1365,9 +1365,9 @@ test('chatItemsFromSessionMessages restores the notice for a finished background
     state: 'failed'
   })
   const content = (items[0] as { content: string }).content
-  assert.match(content, /^Database 后台任务失败\n/)
+  assert.match(content, /^Wrapper 后台任务失败\n/)
   assert.match(content, /TP53/)
-  assert.match(content, /connector offline/)
+  assert.match(content, /runner offline/)
   assert.match(content, /2 分 5 秒/)
   assert.match(content, /run_2/)
 })

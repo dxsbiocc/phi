@@ -3,13 +3,7 @@ import type {
   NotebookDocument,
   NotebookOutput
 } from '../../shared/notebookDocument'
-import type {
-  DefaultProxyMode,
-  PhiAppSettings,
-  PhiAppSettingsPatch,
-  ProxyTransportStatus
-} from '../../shared/appSettingsTypes'
-import type { DbConnectorSettingsItem } from '../../shared/dbConnectorTypes'
+import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettingsTypes'
 import type {
   EnvironmentGetResult,
   EnvironmentHostDependency,
@@ -120,8 +114,7 @@ export type {
   AuthPromptType
 } from './lib/authTypes'
 
-export type { DefaultProxyMode, PhiAppSettings, PhiAppSettingsPatch, ProxyTransportStatus }
-export type { DbConnectorSettingsItem }
+export type { PhiAppSettings, PhiAppSettingsPatch }
 export type {
   EnvironmentGetResult,
   EnvironmentHostDependency,
@@ -445,18 +438,6 @@ export type FileHoverPreview = FileHoverPreviewBase &
       }
   )
 
-export type DatabaseWebPreviewKind = 'string-network' | 'kegg-pathway'
-
-export type DatabaseWebImagePreview = {
-  kind: DatabaseWebPreviewKind
-  label: string
-  sourceUrl: string
-  imageUrl: string
-  dataUrl: string
-  mimeType: 'image/png'
-  bytes: number
-}
-
 export interface FileTreeEntry {
   path: string
   name: string
@@ -741,7 +722,6 @@ export type RendererApi = AutoCompactionApi & {
     cb: (progress: WrapperResultDownloadProgress) => void
   ) => () => void
   renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
-  previewDatabaseWebImage: (url: string) => Promise<DatabaseWebImagePreview>
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
@@ -762,7 +742,6 @@ export type RendererApi = AutoCompactionApi & {
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => () => void
   getAppSettings: () => Promise<PhiAppSettings>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
-  updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
   getEnvironment: () => Promise<EnvironmentGetResult>
   redetectEnvironment: () => Promise<EnvironmentSnapshot>
   dismissEnvironmentSummary: () => Promise<EnvironmentSnapshot>
@@ -776,10 +755,6 @@ export type RendererApi = AutoCompactionApi & {
   rebuildManagedEnvironment: (envId: string) => Promise<void>
   removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
   cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
-  listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
-  setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
-  setDbConnectorApiKey: (id: string, apiKey: string) => Promise<DbConnectorSettingsItem[]>
-  clearDbConnectorApiKey: (id: string) => Promise<DbConnectorSettingsItem[]>
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>

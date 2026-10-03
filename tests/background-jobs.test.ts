@@ -24,12 +24,12 @@ const agent: BackgroundAgentJob = {
   sessionId: 'session-1',
   sessionPath: 'phi-session:session-1',
   sessionTitle: 'Analyze samples',
-  agentName: 'Database',
-  task: 'Search metadata',
+  agentName: 'Wrapper',
+  task: 'Run quality control',
   state: 'running',
   background: true,
   startedAt: '2026-09-27T10:00:00.000Z',
-  lastStep: 'db_query'
+  lastStep: 'wrapper_run'
 }
 
 function wrapper(overrides: Partial<WrapperRun> = {}): WrapperRun {

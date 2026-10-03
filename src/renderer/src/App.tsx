@@ -21,8 +21,7 @@ import { alpha, type SxProps, type Theme } from '@mui/material/styles'
 import { GoGlobe, GoStack, GoSync, GoTerminal } from 'react-icons/go'
 import {
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
-  DEFAULT_PREVENT_SLEEP_DURING_RUNS,
-  DEFAULT_PROXY_TRANSPORT_STATUS
+  DEFAULT_PREVENT_SLEEP_DURING_RUNS
 } from '../../shared/appSettingsTypes'
 import type { WrapperCompositionManifest } from '../../shared/wrapperCompositionManifestTypes'
 import type { WrapperRun } from '../../shared/wrapperTypes'
@@ -154,8 +153,6 @@ import type { UserMessageRetryTarget } from './components/chat/ChatUserMessage'
 import type {
   AgentEventSummary,
   AnalysisNotebookFileChange,
-  DbConnectorSettingsItem,
-  DefaultProxyMode,
   EnvironmentSnapshot,
   EnvironmentToolId,
   McpServerSummary,
@@ -165,7 +162,6 @@ import type {
   PermissionMode,
   PromptTarget,
   Project,
-  ProxyTransportStatus,
   SessionSummary,
   SkillSummary
 } from './types'
@@ -707,7 +703,6 @@ function App(): React.JSX.Element {
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [personaMarkdown, setPersonaMarkdownState] = useState<string | null>(null)
-  const [defaultProxyMode, setDefaultProxyMode] = useState<DefaultProxyMode>('auto')
   const [noProjectTaskFolder, setNoProjectTaskFolder] = useState('')
   const [preventSleepDuringRuns, setPreventSleepDuringRuns] = useState(
     DEFAULT_PREVENT_SLEEP_DURING_RUNS
@@ -715,17 +710,10 @@ function App(): React.JSX.Element {
   const [nextActionSuggestionsEnabled, setNextActionSuggestionsEnabled] = useState(
     DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED
   )
-  const [proxyTransportStatus, setProxyTransportStatus] = useState<ProxyTransportStatus>(
-    DEFAULT_PROXY_TRANSPORT_STATUS
-  )
-  const [dbConnectors, setDbConnectors] = useState<DbConnectorSettingsItem[]>([])
-  const [isLoadingDbConnectors, setIsLoadingDbConnectors] = useState(true)
-  const [updatingDbConnectorId, setUpdatingDbConnectorId] = useState<string | null>(null)
   const [environmentSnapshot, setEnvironmentSnapshot] = useState<EnvironmentSnapshot | null>(null)
   const [isLoadingEnvironment, setIsLoadingEnvironment] = useState(true)
   const [isRedetectingEnvironment, setIsRedetectingEnvironment] = useState(false)
   const [showEnvironmentSummary, setShowEnvironmentSummary] = useState(false)
-  const [isSavingDefaultProxyMode, setIsSavingDefaultProxyMode] = useState(false)
   const [isSavingAppSettings, setIsSavingAppSettings] = useState(false)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
   const [exportTarget, setExportTarget] = useState<SessionSummary | null>(null)
@@ -797,11 +785,9 @@ function App(): React.JSX.Element {
   }, [showSnackbarError])
 
   const applyAppSettings = useCallback((settings: PhiAppSettings): void => {
-    setDefaultProxyMode(settings.defaultProxyMode)
     setNoProjectTaskFolder(settings.noProjectTaskFolder)
     setPreventSleepDuringRuns(settings.preventSleepDuringRuns)
     setNextActionSuggestionsEnabled(settings.nextActionSuggestionsEnabled)
-    setProxyTransportStatus(settings.proxyTransportStatus)
   }, [])
 
   useEffect(() => {
@@ -823,91 +809,6 @@ function App(): React.JSX.Element {
       cancelled = true
     }
   }, [applyAppSettings, rendererApi, showSnackbarError])
-
-  const refreshDbConnectors = useCallback(async (): Promise<void> => {
-    setIsLoadingDbConnectors(true)
-    try {
-      setDbConnectors(await rendererApi.listDbConnectors())
-    } catch (error) {
-      showSnackbarError(error, '读取数据库设置失败')
-    } finally {
-      setIsLoadingDbConnectors(false)
-    }
-  }, [rendererApi, showSnackbarError])
-
-  useEffect(() => {
-    let cancelled = false
-    void rendererApi
-      .listDbConnectors()
-      .then((connectors) => {
-        if (!cancelled) {
-          setDbConnectors(connectors)
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          showSnackbarError(error, '读取数据库设置失败')
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoadingDbConnectors(false)
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [rendererApi, showSnackbarError])
-
-  const onSetDbConnectorEnabled = useCallback(
-    async (id: string, enabled: boolean): Promise<void> => {
-      const previous = dbConnectors
-      setDbConnectors((items) =>
-        items.map((item) => (item.id === id ? { ...item, enabledForQuery: enabled } : item))
-      )
-      setUpdatingDbConnectorId(id)
-      try {
-        setDbConnectors(await rendererApi.setDbConnectorEnabled(id, enabled))
-      } catch (error) {
-        setDbConnectors(previous)
-        showSnackbarError(error, '保存数据库设置失败')
-      } finally {
-        setUpdatingDbConnectorId(null)
-      }
-    },
-    [dbConnectors, rendererApi, showSnackbarError]
-  )
-
-  const onSetDbConnectorApiKey = useCallback(
-    async (id: string, apiKey: string): Promise<void> => {
-      setUpdatingDbConnectorId(id)
-      try {
-        setDbConnectors(await rendererApi.setDbConnectorApiKey(id, apiKey))
-      } catch (error) {
-        showSnackbarError(error, '保存数据库 API key 失败')
-        throw error
-      } finally {
-        setUpdatingDbConnectorId(null)
-      }
-    },
-    [rendererApi, showSnackbarError]
-  )
-
-  const onClearDbConnectorApiKey = useCallback(
-    async (id: string): Promise<void> => {
-      setUpdatingDbConnectorId(id)
-      try {
-        setDbConnectors(await rendererApi.clearDbConnectorApiKey(id))
-      } catch (error) {
-        showSnackbarError(error, '清除数据库 API key 失败')
-        throw error
-      } finally {
-        setUpdatingDbConnectorId(null)
-      }
-    },
-    [rendererApi, showSnackbarError]
-  )
 
   useEffect(() => {
     let cancelled = false
@@ -960,48 +861,6 @@ function App(): React.JSX.Element {
       showSnackbarError(error, '关闭环境摘要失败')
     }
   }, [rendererApi, showSnackbarError])
-
-  const onSelectDefaultProxyMode = useCallback(
-    async (mode: DefaultProxyMode): Promise<void> => {
-      if (mode === defaultProxyMode) return
-      if (mode === 'enabled' && !proxyTransportStatus.enabledModeAvailable) {
-        setDefaultProxyMode('auto')
-        setIsSavingDefaultProxyMode(true)
-        showSnackbar('DB_PROXY_UNAVAILABLE：受控代理通道不可用，已切换到自动选择。', 'warning', {
-          persistent: true
-        })
-        try {
-          const settings = await rendererApi.updateDefaultProxyMode('auto')
-          applyAppSettings(settings)
-        } catch (error) {
-          showSnackbarError(error, '切换默认代理模式到自动选择失败')
-        } finally {
-          setIsSavingDefaultProxyMode(false)
-        }
-        return
-      }
-      const previousMode = defaultProxyMode
-      setDefaultProxyMode(mode)
-      setIsSavingDefaultProxyMode(true)
-      try {
-        const settings = await rendererApi.updateDefaultProxyMode(mode)
-        applyAppSettings(settings)
-      } catch (error) {
-        setDefaultProxyMode(previousMode)
-        showSnackbarError(error, '保存默认代理模式失败')
-      } finally {
-        setIsSavingDefaultProxyMode(false)
-      }
-    },
-    [
-      applyAppSettings,
-      defaultProxyMode,
-      proxyTransportStatus.enabledModeAvailable,
-      rendererApi,
-      showSnackbar,
-      showSnackbarError
-    ]
-  )
 
   const onUpdateAppSettings = useCallback(
     async (patch: PhiAppSettingsPatch): Promise<void> => {
@@ -4304,14 +4163,10 @@ function App(): React.JSX.Element {
           onRespondToolApproval={onRespondToolApproval}
           themeMode={themeMode}
           setThemeMode={setThemeMode}
-          defaultProxyMode={defaultProxyMode}
           noProjectTaskFolder={noProjectTaskFolder}
           preventSleepDuringRuns={preventSleepDuringRuns}
           nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
-          proxyTransportStatus={proxyTransportStatus}
-          isSavingDefaultProxyMode={isSavingDefaultProxyMode}
           isSavingAppSettings={isSavingAppSettings}
-          onSelectDefaultProxyMode={onSelectDefaultProxyMode}
           onUpdateAppSettings={onUpdateAppSettings}
           onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
           autoCompactionTarget={{
@@ -4344,13 +4199,6 @@ function App(): React.JSX.Element {
           onSetEnvironmentToolPath={onSetEnvironmentToolPath}
           showEnvironmentSummary={showEnvironmentSummary}
           onDismissEnvironmentSummary={onDismissEnvironmentSummary}
-          dbConnectors={dbConnectors}
-          isLoadingDbConnectors={isLoadingDbConnectors}
-          updatingDbConnectorId={updatingDbConnectorId}
-          onRefreshDbConnectors={refreshDbConnectors}
-          onSetDbConnectorEnabled={onSetDbConnectorEnabled}
-          onSetDbConnectorApiKey={onSetDbConnectorApiKey}
-          onClearDbConnectorApiKey={onClearDbConnectorApiKey}
           showOnboarding={showOnboarding}
           onCompleteOnboarding={onCompleteOnboarding}
           onSkipOnboarding={onSkipOnboarding}

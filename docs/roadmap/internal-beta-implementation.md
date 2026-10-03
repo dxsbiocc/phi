@@ -166,19 +166,18 @@ Goal: make the internal beta comfortable without expanding scope.
 - Show edit/write targets in the timeline and provide external reveal/open actions.
 - Do not build a full diff viewer, command palette, drag-and-drop attachments, system notifications, automatic updates, or first-class OMX team/swarm dashboard in the beta.
 - Update README with internal beta scope, resettable data model notice, manual update expectations, and macOS security prompt notes.
-- Run `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` before beta handoff.
+- Run `bun run test`, `bun run lint`, `bun run typecheck`, and `bun run build` before beta handoff.
 
-## Experimental: DB Connector Core Prototype
+## Public Biological Database Access
 
-Status (2026-09-29): **frozen.** Superseded by the data access side track of the runtime / content distribution plan (API skills + core fetch tool). The `create-database-connector` skill is deleted (step 0.3). Keep the existing connectors working as a fallback, add no new connectors or protocol families, and retire the toolchain once the retirement gate in the design (§10.3) passes.
+Status (2026-10-03): the experimental DB Connector core has been removed from this
+release. The main agent reads public REST URLs with its existing `read` tool and uses
+`download_file` directly for database files. Existing local connector settings are
+ignored rather than deleted.
 
-Goal: allow DB Connector implementation work without turning it into a broad public database product surface.
-
-- Keep the beta DB UI limited to a settings page for installed database connectors. The DB toolchain itself is always available; settings only enable or disable individual databases for `db_query`.
-- Allow core-only implementation under `src/main/agent/db/`, bundled connector manifests under `resources/db-connectors/`, and offline tests.
-- Agent runtime registration is always on for the core prototype so agents can actually use `db_search` without falling back to web/eval. Do not add an app-level feature toggle for DB Connector; use per-database query toggles instead.
-- The prototype should start with one bundled NCBI Entrez connector and avoid expanding to additional protocol families before `esummary`/`efetch`, result artifacts, policy tests, and documentation are stable.
-- Do not add plugin/MCP/federated database UI for this prototype.
+See [data-access-implementation.md](data-access-implementation.md) for the binding
+decision and the future MCP-connector direction. Historical design appendices and
+decision records remain as rationale, not as current product behavior.
 
 ## Deferred Until After Internal Beta
 
