@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Box, Button, Typography } from '@mui/material'
 import type { BrowserRendererBridge, BrowserTabSnapshot } from '../../../../shared/browserTypes'
+import { BrowserTabs } from './components/BrowserTabs'
 import { BrowserToolbar } from './components/BrowserToolbar'
 import { useBrowserViewport } from './hooks/useBrowserViewport'
 import { useBrowserWorkspace } from './hooks/useBrowserWorkspace'
 import {
   activeBrowserTab,
+  browserActivateTabCommand,
+  browserCloseTabCommand,
   browserErrorMessage,
   browserHistoryCommand,
+  browserNewTabCommand,
   browserReloadCommand,
   browserRestoreCommand,
   browserRetryCommand,
@@ -162,6 +166,18 @@ export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Elemen
         bgcolor: 'background.default'
       }}
     >
+      <BrowserTabs
+        tabs={currentSnapshot?.tabs ?? []}
+        activeTabId={currentSnapshot?.activeTabId ?? null}
+        disabled={!props.activePhiSessionId || workspace.loading || workspace.busy}
+        onNewTab={() => run(browserNewTabCommand(workspace.nextRequestId()))}
+        onActivate={(tabId) =>
+          run(browserActivateTabCommand(currentSnapshot, tabId, workspace.nextRequestId()))
+        }
+        onClose={(tabId) =>
+          run(browserCloseTabCommand(currentSnapshot, tabId, workspace.nextRequestId()))
+        }
+      />
       <BrowserToolbar
         address={address}
         activeTab={activeTab}

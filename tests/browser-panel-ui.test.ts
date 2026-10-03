@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import type { BrowserRendererBridge, BrowserTabSnapshot } from '../src/shared/browserTypes'
 import BrowserPanel, { BrowserStatusPane } from '../src/renderer/src/features/browser/BrowserPanel'
+import { BrowserTabs } from '../src/renderer/src/features/browser/components/BrowserTabs'
 import { BrowserToolbar } from '../src/renderer/src/features/browser/components/BrowserToolbar'
 
 const tab = (overrides: Partial<BrowserTabSnapshot> = {}): BrowserTabSnapshot => ({
@@ -63,6 +64,59 @@ test('browser toolbar exposes compact keyboard-accessible loading controls', () 
   assert.match(markup, /min-width:0/)
   assert.match(markup, /overflow:hidden/)
   assert.doesNotMatch(markup, /在系统浏览器中打开|openExternal/)
+})
+
+test('browser tabs expose compact accessible multi-page controls without close propagation', () => {
+  const markup = renderWithTheme(
+    createElement(BrowserTabs, {
+      tabs: [
+        tab({ id: 'tab-1', title: 'Documentation' }),
+        tab({
+          id: 'tab-2',
+          title: '',
+          url: 'https://docs.example.test/reference',
+          phase: 'loading'
+        }),
+        tab({ id: 'tab-3', title: '', url: 'about:blank' })
+      ],
+      activeTabId: 'tab-1',
+      disabled: false,
+      onNewTab: () => undefined,
+      onActivate: () => undefined,
+      onClose: () => undefined
+    } satisfies ComponentProps<typeof BrowserTabs>)
+  )
+
+  assert.match(markup, /data-phi-browser-tabs="true"/)
+  assert.match(markup, /role="tablist"/)
+  assert.match(markup, /aria-label="浏览器标签页"/)
+  assert.match(markup, /data-phi-browser-tab="active"/)
+  assert.match(markup, /aria-selected="true"/)
+  assert.match(markup, /data-phi-browser-tab="inactive"/)
+  assert.match(markup, /aria-selected="false"/)
+  assert.match(markup, />Documentation</)
+  assert.match(markup, />docs\.example\.test</)
+  assert.match(markup, />新标签页</)
+  assert.match(markup, /aria-label="正在加载 docs\.example\.test"/)
+  assert.match(markup, /role="progressbar"/)
+  assert.match(markup, /aria-label="关闭 Documentation"/)
+  assert.match(markup, /aria-label="新建标签页"/)
+  assert.match(markup, /overflow-x:auto/)
+
+  const tabsSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/browser/components/BrowserTabs.tsx'),
+    'utf8'
+  )
+  assert.match(tabsSource, /onKeyDown=\{\(event\) => \{[\s\S]{0,180}isBrowserTabActivationKey/)
+  assert.match(
+    tabsSource,
+    /aria-label=\{`关闭[\s\S]{0,400}onClick=\{\(event\) => \{[\s\S]{0,120}event\.stopPropagation\(\)/
+  )
+  assert.match(
+    tabsSource,
+    /aria-label=\{`关闭[\s\S]{0,600}onKeyDown=\{\(event\) => \{[\s\S]{0,160}event\.stopPropagation\(\)/
+  )
+  assert.doesNotMatch(tabsSource, /WorkspaceTab/)
 })
 
 test('browser panel and status panes render friendly empty restore and failure states', () => {

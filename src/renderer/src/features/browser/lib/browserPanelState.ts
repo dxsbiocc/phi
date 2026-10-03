@@ -184,6 +184,52 @@ export function activeBrowserTab(
   return snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null
 }
 
+export function browserTabDisplayTitle(tab: BrowserTabSnapshot): string {
+  const title = tab.title.trim()
+  if (title) return title
+  const url = tab.url.trim()
+  if (!url || url === 'about:blank') return '新标签页'
+  try {
+    const host = new URL(url).host.trim()
+    if (host) return host
+  } catch {
+    // Keep the last known address useful while a failed navigation is visible.
+  }
+  return url
+}
+
+export function isBrowserTabActivationKey(key: string): boolean {
+  return key === 'Enter' || key === ' '
+}
+
+export function browserNewTabCommand(requestId: string): BrowserUiCommand {
+  return { type: 'newTab', requestId }
+}
+
+export function browserActivateTabCommand(
+  snapshot: BrowserWorkspaceSnapshot | null,
+  tabId: string,
+  requestId: string
+): BrowserUiCommand | null {
+  if (
+    !snapshot ||
+    snapshot.activeTabId === tabId ||
+    !snapshot.tabs.some((tab) => tab.id === tabId)
+  ) {
+    return null
+  }
+  return { type: 'activate', requestId, tabId }
+}
+
+export function browserCloseTabCommand(
+  snapshot: BrowserWorkspaceSnapshot | null,
+  tabId: string,
+  requestId: string
+): BrowserUiCommand | null {
+  if (!snapshot?.tabs.some((tab) => tab.id === tabId)) return null
+  return { type: 'close', requestId, tabId }
+}
+
 export function browserSubmitCommand(
   snapshot: BrowserWorkspaceSnapshot | null,
   address: string,

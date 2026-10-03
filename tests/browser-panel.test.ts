@@ -10,14 +10,19 @@ import type {
 } from '../src/shared/browserTypes'
 import {
   activeBrowserTab,
+  browserActivateTabCommand,
+  browserCloseTabCommand,
   browserHistoryCommand,
+  browserNewTabCommand,
   browserReloadCommand,
   browserRestoreCommand,
   browserRetryCommand,
   browserSubmitCommand,
+  browserTabDisplayTitle,
   canPresentNativeBrowser,
   createBrowserWorkspaceController,
-  createBrowserRequestIdFactory
+  createBrowserRequestIdFactory,
+  isBrowserTabActivationKey
 } from '../src/renderer/src/features/browser/lib/browserPanelState'
 import { createBrowserViewportScheduler } from '../src/renderer/src/features/browser/hooks/useBrowserViewport'
 
@@ -128,6 +133,46 @@ test('browser panel state builds bounded single-tab UI commands', () => {
   assert.notEqual(first, second)
   assert.equal(first.length <= 128, true)
   assert.equal(second.length <= 128, true)
+})
+
+test('browser panel state builds multi-tab commands and stable display labels', () => {
+  const secondTab = tab({
+    id: 'tab-2',
+    title: '',
+    url: 'https://docs.example.test/reference?mode=compact'
+  })
+  const multiTabSnapshot = snapshot([tab(), secondTab], 'tab-1')
+
+  assert.deepEqual(browserNewTabCommand('request-new'), {
+    type: 'newTab',
+    requestId: 'request-new'
+  })
+  assert.deepEqual(browserActivateTabCommand(multiTabSnapshot, 'tab-2', 'request-activate'), {
+    type: 'activate',
+    requestId: 'request-activate',
+    tabId: 'tab-2'
+  })
+  assert.equal(browserActivateTabCommand(multiTabSnapshot, 'tab-1', 'request-current'), null)
+  assert.equal(browserActivateTabCommand(multiTabSnapshot, 'missing', 'request-missing'), null)
+  assert.deepEqual(browserCloseTabCommand(multiTabSnapshot, 'tab-1', 'request-close'), {
+    type: 'close',
+    requestId: 'request-close',
+    tabId: 'tab-1'
+  })
+  assert.equal(browserCloseTabCommand(multiTabSnapshot, 'missing', 'request-missing'), null)
+
+  assert.equal(browserTabDisplayTitle(tab({ title: '  Phi docs  ' })), 'Phi docs')
+  assert.equal(browserTabDisplayTitle(secondTab), 'docs.example.test')
+  assert.equal(
+    browserTabDisplayTitle(tab({ title: '', url: 'not a valid absolute address' })),
+    'not a valid absolute address'
+  )
+  assert.equal(browserTabDisplayTitle(tab({ title: '', url: 'about:blank' })), '新标签页')
+  assert.equal(browserTabDisplayTitle(tab({ title: '', url: '' })), '新标签页')
+
+  assert.equal(isBrowserTabActivationKey('Enter'), true)
+  assert.equal(isBrowserTabActivationKey(' '), true)
+  assert.equal(isBrowserTabActivationKey('Escape'), false)
 })
 
 test('browser workspace controller filters session events and contains failures and late updates', async () => {
