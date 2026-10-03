@@ -1,6 +1,7 @@
 import {
   BROWSER_MAX_SCREENSHOT_COORDINATE,
   BROWSER_MAX_SCROLL_DELTA,
+  BROWSER_MAX_TEXT_BYTES,
   BROWSER_SAFE_KEYS,
   BROWSER_SAFE_MODIFIERS,
   type BrowserActor,
@@ -9,7 +10,7 @@ import {
   type BrowserViewport
 } from '../../shared/browserTypes'
 import type { BrowserScreenshot } from '../../shared/browserTypes'
-import type { BrowserEngine, EngineCommand } from './browser-engine'
+import type { BrowserEngine, EngineCommand, EngineTargetInspection } from './browser-engine'
 import type { BrowserTabCollection, BrowserTabRecord } from './browser-tab-collection'
 import { isLoopbackBrowserHostname } from './browser-policy'
 import { captureBrowserWorkspaceScreenshot } from './browser-workspace-screenshot'
@@ -18,16 +19,22 @@ import {
   safeBrowserEngineError,
   workspaceEngineResult
 } from './browser-workspace-engine-state'
+import { authorizeBrowserTarget, validatedBrowserTargetInspection } from './browser-target-policy'
 
 export type BrowserAgentActionCommand = Extract<
   BrowserCommand,
-  { type: 'click' | 'scroll' | 'keypress' }
+  { type: 'click' | 'typeText' | 'scroll' | 'keypress' }
 >
 
 export function isBrowserAgentActionCommand(
   command: BrowserCommand
 ): command is BrowserAgentActionCommand {
-  return command.type === 'click' || command.type === 'scroll' || command.type === 'keypress'
+  return (
+    command.type === 'click' ||
+    command.type === 'typeText' ||
+    command.type === 'scroll' ||
+    command.type === 'keypress'
+  )
 }
 
 export function normalizeBrowserActionStabilityMs(value: number | undefined): number {
@@ -178,6 +185,14 @@ export function authorizeBrowserAgentAction(options: {
     )
   }
   if (
+    command.type === 'typeText' &&
+    (command.consequence !== 'write' ||
+      command.text.length === 0 ||
+      Buffer.byteLength(command.text, 'utf8') > BROWSER_MAX_TEXT_BYTES)
+  ) {
+    return error(tabId, 'PERMISSION_DENIED', 'Browser text input was not permitted')
+  }
+  if (
     command.type === 'scroll' &&
     (!Number.isSafeInteger(command.deltaX) ||
       !Number.isSafeInteger(command.deltaY) ||
@@ -229,8 +244,9 @@ export type BrowserAgentActionExecutionResult =
 
 function engineActionCommand(
   tab: BrowserTabRecord,
-  command: BrowserAgentActionCommand
-): Extract<EngineCommand, { type: 'click' | 'scroll' | 'keypress' }> | null {
+  command: BrowserAgentActionCommand,
+  expectedTarget?: EngineTargetInspection
+): Extract<EngineCommand, { type: 'click' | 'typeText' | 'scroll' | 'keypress' }> | null {
   const expectedDocumentRevision =
     command.expectedDocumentRevision - tab.engineDocumentRevisionOffset
   if (expectedDocumentRevision < 0) return null
@@ -239,7 +255,16 @@ function engineActionCommand(
       type: 'click',
       x: command.x,
       y: command.y,
-      expectedDocumentRevision
+      expectedDocumentRevision,
+      ...(expectedTarget ? { expectedTarget } : {})
+    }
+  }
+  if (command.type === 'typeText') {
+    return {
+      type: 'typeText',
+      text: command.text,
+      expectedDocumentRevision,
+      ...(expectedTarget ? { expectedTarget } : {})
     }
   }
   if (command.type === 'scroll') {
@@ -263,6 +288,7 @@ export async function executeBrowserAgentAction(options: {
   tabs: BrowserTabCollection
   tab: BrowserTabRecord
   command: BrowserAgentActionCommand
+  expectedTarget?: EngineTargetInspection
   screenshotAvailable: boolean
   actionStabilityMs: number
   signal: AbortSignal
@@ -271,7 +297,7 @@ export async function executeBrowserAgentAction(options: {
   onDocumentChanged: () => void
 }): Promise<BrowserAgentActionExecutionResult> {
   const tabId = options.tab.snapshot.id
-  const engineCommand = engineActionCommand(options.tab, options.command)
+  const engineCommand = engineActionCommand(options.tab, options.command, options.expectedTarget)
   if (!engineCommand || !options.tab.handle) {
     return {
       ok: false,
@@ -376,6 +402,76 @@ export async function executeAuthorizedBrowserAgentAction(options: {
       }
     }
   }
+  let expectedTarget: EngineTargetInspection | undefined
+  if (options.command.type === 'click' || options.command.type === 'typeText') {
+    const expectedDocumentRevision =
+      options.command.expectedDocumentRevision - options.tab.engineDocumentRevisionOffset
+    if (expectedDocumentRevision < 0) {
+      return {
+        ok: false,
+        error: {
+          code: 'STALE_DOCUMENT',
+          message: 'The browser page changed before the action could run',
+          retryable: true,
+          tabId: options.command.tabId
+        }
+      }
+    }
+    const inspected = await options.engine.execute(
+      options.tab.handle,
+      options.command.type === 'click'
+        ? {
+            type: 'describeTarget',
+            target: 'point',
+            x: options.command.x,
+            y: options.command.y,
+            expectedDocumentRevision
+          }
+        : { type: 'describeTarget', target: 'focused', expectedDocumentRevision },
+      options.signal
+    )
+    if (!inspected.ok) {
+      return {
+        ok: false,
+        error: { ...safeBrowserEngineError(inspected.error), tabId: options.command.tabId }
+      }
+    }
+    if (
+      options.signal.aborted ||
+      inspected.state.isLoading ||
+      inspected.state.documentRevision !== expectedDocumentRevision
+    ) {
+      return {
+        ok: false,
+        error: {
+          code: options.signal.aborted ? 'ACTION_CANCELLED' : 'STALE_DOCUMENT',
+          message: options.signal.aborted
+            ? 'Browser action was cancelled'
+            : 'The browser page changed before the action could run',
+          retryable: !options.signal.aborted,
+          tabId: options.command.tabId
+        }
+      }
+    }
+    expectedTarget = validatedBrowserTargetInspection(inspected) ?? undefined
+    if (!expectedTarget) {
+      return {
+        ok: false,
+        error: {
+          code: 'PERMISSION_DENIED',
+          message: 'The browser target could not be classified safely',
+          retryable: false,
+          tabId: options.command.tabId
+        }
+      }
+    }
+    const targetAccess = authorizeBrowserTarget({
+      action: options.command.type,
+      tabId: options.command.tabId,
+      inspection: expectedTarget
+    })
+    if (!targetAccess.ok) return targetAccess
+  }
   if (
     options.actor.kind !== 'agent' ||
     !options.leases.consume(
@@ -399,6 +495,7 @@ export async function executeAuthorizedBrowserAgentAction(options: {
     tabs: options.tabs,
     tab: options.tab,
     command: options.command,
+    ...(expectedTarget ? { expectedTarget } : {}),
     screenshotAvailable: options.screenshotAvailable,
     actionStabilityMs: options.actionStabilityMs,
     signal: options.signal,

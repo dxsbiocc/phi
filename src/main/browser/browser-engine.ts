@@ -38,6 +38,11 @@ export interface EngineTargetDescriptor {
   submitsForm: boolean
 }
 
+export interface EngineTargetInspection {
+  descriptor: EngineTargetDescriptor
+  fingerprint: string
+}
+
 export interface EngineScreenshot {
   mediaType: 'image/png'
   data: string
@@ -50,8 +55,19 @@ export type EngineCommand =
   | { type: 'navigate'; url: string }
   | { type: 'history'; direction: 'back' | 'forward' }
   | { type: 'reload' | 'stop' | 'screenshot' }
-  | { type: 'click'; x: number; y: number; expectedDocumentRevision: number }
-  | { type: 'typeText'; text: string }
+  | {
+      type: 'click'
+      x: number
+      y: number
+      expectedDocumentRevision: number
+      expectedTarget?: EngineTargetInspection
+    }
+  | {
+      type: 'typeText'
+      text: string
+      expectedDocumentRevision: number
+      expectedTarget?: EngineTargetInspection
+    }
   | {
       type: 'keypress'
       key: string
@@ -64,7 +80,18 @@ export type EngineCommand =
       deltaY: number
       expectedDocumentRevision: number
     }
-  | { type: 'describeTarget'; x: number; y: number }
+  | {
+      type: 'describeTarget'
+      target: 'point'
+      x: number
+      y: number
+      expectedDocumentRevision: number
+    }
+  | {
+      type: 'describeTarget'
+      target: 'focused'
+      expectedDocumentRevision: number
+    }
 
 export interface EngineError {
   code: BrowserErrorCode
@@ -77,6 +104,7 @@ export type EngineResult =
       state: EngineTabState
       screenshot?: EngineScreenshot
       target?: EngineTargetDescriptor
+      targetFingerprint?: string
     }
   | {
       ok: false

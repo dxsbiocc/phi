@@ -10,6 +10,7 @@ import type {
 import {
   BROWSER_MAX_SCREENSHOT_COORDINATE,
   BROWSER_MAX_SCROLL_DELTA,
+  BROWSER_MAX_TEXT_BYTES,
   BROWSER_SAFE_KEYS,
   BROWSER_SAFE_MODIFIERS
 } from '../../shared/browserTypes'
@@ -22,7 +23,6 @@ import type { BrowserPolicyContext } from './browser-policy'
 const MAX_ID_BYTES = 256
 const MAX_ORIGIN_ID_BYTES = 512
 const MAX_URL_BYTES = 16 * 1024
-const MAX_TEXT_BYTES = 16 * 1024
 const MAX_KEY_BYTES = 64
 const MAX_COORDINATE = BROWSER_MAX_SCREENSHOT_COORDINATE
 const SAFE_BROWSER_KEYS = new Set<string>(BROWSER_SAFE_KEYS)
@@ -93,6 +93,12 @@ function invalidRequest(): never {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort()
+  const wanted = [...expected].sort()
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index])
 }
 
 function boundedString(
@@ -240,13 +246,28 @@ export function parseBrowserCommand(input: unknown): BrowserCommand {
           requireActive: requiredActive(input.requireActive)
         }
       case 'typeText':
+        if (
+          !exactKeys(input, [
+            'type',
+            'requestId',
+            'tabId',
+            'text',
+            'expectedDocumentRevision',
+            'consequence',
+            'requireActive'
+          ])
+        ) {
+          return invalidRequest()
+        }
+        if (input.consequence !== 'write') return invalidRequest()
         return {
           type: 'typeText',
           requestId,
           tabId: boundedString(input.tabId, MAX_ID_BYTES),
-          text: boundedString(input.text, MAX_TEXT_BYTES, { allowEmpty: true }),
+          text: boundedString(input.text, BROWSER_MAX_TEXT_BYTES),
           expectedDocumentRevision: revision(input.expectedDocumentRevision),
-          consequence: consequence(input.consequence)
+          consequence: 'write',
+          requireActive: requiredActive(input.requireActive)
         }
       case 'keypress':
         if (typeof input.key !== 'string' || !SAFE_BROWSER_KEYS.has(input.key)) {

@@ -72,6 +72,7 @@ export type BrowserActor =
 
 export const BROWSER_MAX_SCREENSHOT_COORDINATE = 1_000_000
 export const BROWSER_MAX_SCROLL_DELTA = 10_000
+export const BROWSER_MAX_TEXT_BYTES = 16 * 1024
 export const BROWSER_SAFE_KEYS = [
   'Tab',
   'Escape',
@@ -140,6 +141,7 @@ export type BrowserCommand =
       text: string
       expectedDocumentRevision: number
       consequence: 'read' | 'write' | 'irreversible'
+      requireActive?: true
     }
   | {
       type: 'keypress'

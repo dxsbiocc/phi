@@ -458,7 +458,8 @@ test('runtime parser accepts every command shape and copies only bounded whiteli
       tabId: 'tab-1',
       text: 'hello',
       expectedDocumentRevision: 3,
-      consequence: 'write'
+      consequence: 'write',
+      requireActive: true
     },
     {
       type: 'keypress',
@@ -507,6 +508,15 @@ test('runtime parser accepts every command shape and copies only bounded whiteli
     requestId: '8',
     tabId: 'tab-1',
     expectedDocumentRevision: 3,
+    requireActive: true
+  })
+  assert.deepEqual(calls[11].command, {
+    type: 'typeText',
+    requestId: '11',
+    tabId: 'tab-1',
+    text: 'hello',
+    expectedDocumentRevision: 3,
+    consequence: 'write',
     requireActive: true
   })
 })
@@ -562,9 +572,47 @@ test('runtime parser rejects oversized nonfinite and invalid command fields befo
       type: 'typeText',
       requestId: '1',
       tabId: 'tab',
+      text: 'private',
+      expectedDocumentRevision: 1,
+      consequence: 'write',
+      requireActive: true,
+      selector: '#secret'
+    },
+    {
+      type: 'typeText',
+      requestId: '1',
+      tabId: 'tab',
+      text: '',
+      expectedDocumentRevision: 1,
+      consequence: 'write',
+      requireActive: true
+    },
+    {
+      type: 'typeText',
+      requestId: '1',
+      tabId: 'tab',
       text: 'x'.repeat(16_385),
       expectedDocumentRevision: 1,
-      consequence: 'write'
+      consequence: 'write',
+      requireActive: true
+    },
+    {
+      type: 'typeText',
+      requestId: '1',
+      tabId: 'tab',
+      text: 'private',
+      expectedDocumentRevision: 1,
+      consequence: 'read',
+      requireActive: true
+    },
+    {
+      type: 'typeText',
+      requestId: '1',
+      tabId: 'tab',
+      text: 'private',
+      expectedDocumentRevision: 1,
+      consequence: 'write',
+      requireActive: false
     },
     {
       type: 'keypress',

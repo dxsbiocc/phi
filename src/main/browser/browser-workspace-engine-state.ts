@@ -20,10 +20,7 @@ export function safeBrowserEngineError(error: EngineError): BrowserError {
   return {
     code: error.code,
     message: messages[error.code],
-    retryable:
-      error.code === 'NAVIGATION_FAILED' ||
-      error.code === 'ENGINE_UNAVAILABLE' ||
-      error.code === 'ACTION_TIMEOUT'
+    retryable: error.code === 'NAVIGATION_FAILED' || error.code === 'ENGINE_UNAVAILABLE'
   }
 }
 

@@ -132,7 +132,13 @@ test('describes a bounded action target without enabling semantic inspection', a
   const handle = await engine.createTab({ partition: 'browser-project-a' })
 
   assert.equal(engine.capabilities().semanticInspection, false)
-  const result = await engine.execute(handle, { type: 'describeTarget', x: 12, y: 34 })
+  const result = await engine.execute(handle, {
+    type: 'describeTarget',
+    target: 'point',
+    x: 12,
+    y: 34,
+    expectedDocumentRevision: 0
+  })
   assert.equal(result.ok, true)
   assert.deepEqual(result.ok && result.target, targetDescriptor)
 })
@@ -193,7 +199,11 @@ test('records coordinate and keyboard input without mutating page state', async 
     y: 34,
     expectedDocumentRevision: 0
   })
-  await engine.execute(handle, { type: 'typeText', text: 'hello' })
+  await engine.execute(handle, {
+    type: 'typeText',
+    text: 'hello',
+    expectedDocumentRevision: 0
+  })
   await engine.execute(handle, { type: 'keypress', key: 'Enter', expectedDocumentRevision: 0 })
   await engine.execute(handle, {
     type: 'scroll',
@@ -209,7 +219,10 @@ test('records coordinate and keyboard input without mutating page state', async 
         command: { type: 'click', x: 12, y: 34, expectedDocumentRevision: 0 },
         at: 42
       },
-      { command: { type: 'typeText', text: 'hello' }, at: 42 },
+      {
+        command: { type: 'typeText', text: 'hello', expectedDocumentRevision: 0 },
+        at: 42
+      },
       { command: { type: 'keypress', key: 'Enter', expectedDocumentRevision: 0 }, at: 42 },
       {
         command: { type: 'scroll', deltaX: 0, deltaY: 240, expectedDocumentRevision: 0 },

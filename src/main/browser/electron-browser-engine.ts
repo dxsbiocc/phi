@@ -39,6 +39,12 @@ import {
   sameElectronBrowserViewBounds,
   type ElectronBrowserScreenshotLease
 } from './electron-browser-input'
+import {
+  executeElectronBrowserTextInput,
+  inspectElectronBrowserTarget,
+  verifyElectronBrowserTarget
+} from './electron-browser-target'
+import { authorizeBrowserTarget, validatedBrowserTargetInspection } from './browser-target-policy'
 export type { BrowserSessionLike } from './electron-browser-session-policy'
 
 export type SecureBrowserWebPreferences = Pick<
@@ -74,6 +80,16 @@ export type BrowserWebContentsLike = Pick<
   navigationHistory: BrowserNavigationHistoryLike
   focus?: WebContents['focus']
   sendInputEvent?: WebContents['sendInputEvent']
+  insertText?: WebContents['insertText']
+  executeJavaScriptInIsolatedWorld?: WebContents['executeJavaScriptInIsolatedWorld']
+  readonly mainFrame?: Pick<
+    NonNullable<WebContents['focusedFrame']>,
+    'frameTreeNodeId' | 'isDestroyed'
+  >
+  readonly focusedFrame?: Pick<
+    NonNullable<WebContents['focusedFrame']>,
+    'frameTreeNodeId' | 'isDestroyed'
+  > | null
 } & ElectronScreenshotWebContentsLike
 
 export interface BrowserWebContentsViewLike extends NativeBrowserViewLike {
@@ -314,8 +330,43 @@ export class ElectronBrowserEngine implements BrowserEngine {
           break
         case 'screenshot':
           return await this.#captureScreenshot(record, signal)
-        case 'click':
-          return executeElectronBrowserInput(record, command, signal)
+        case 'describeTarget':
+          return await inspectElectronBrowserTarget(
+            record,
+            command.target === 'point'
+              ? { target: 'point', x: command.x, y: command.y }
+              : { target: 'focused' },
+            command.expectedDocumentRevision,
+            signal
+          )
+        case 'click': {
+          const verified = await verifyElectronBrowserTarget({
+            target: record,
+            selector: { target: 'point', x: command.x, y: command.y },
+            expectedDocumentRevision: command.expectedDocumentRevision,
+            expectedTarget: command.expectedTarget,
+            signal
+          })
+          if (!verified.ok) return verified
+          const inspection = validatedBrowserTargetInspection(verified)
+          if (!inspection) return this.#unavailable()
+          const access = authorizeBrowserTarget({ action: 'click', tabId: '', inspection })
+          if (!access.ok) {
+            return {
+              ok: false,
+              error: { code: access.error.code, message: 'Browser click was not permitted' }
+            }
+          }
+          return executeElectronBrowserInput(record, command, signal, { alreadyFocused: true })
+        }
+        case 'typeText':
+          return await executeElectronBrowserTextInput({
+            target: record,
+            text: command.text,
+            expectedDocumentRevision: command.expectedDocumentRevision,
+            expectedTarget: command.expectedTarget,
+            signal
+          })
         case 'scroll':
           return executeElectronBrowserInput(record, command, signal)
         case 'keypress':

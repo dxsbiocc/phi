@@ -7767,6 +7767,7 @@ test(
 test('main IPC: browser tool events persist only bounded control metadata', async () => {
   const sensitiveUrl = 'https://example.test/private?token=super-secret#fragment'
   const pngData = 'iVBORw0KGgoAAAANSUhEUg-browser-secret'
+  const sensitiveText = 'PRIVATE_FORM_TEXT_SENTINEL\nsecond line'
   const app = await harness(async (_cwd, file) => {
     const session = new FakeSession(file)
     session.toolEvents = [
@@ -7775,13 +7776,14 @@ test('main IPC: browser tool events persist only bounded control metadata', asyn
         toolCallId: 'browser-sdk-1',
         toolName: 'browser',
         args: {
-          action: 'click',
+          action: 'typeText',
           target: 'current',
           tabId: 'tab-1',
           expectedDocumentRevision: 4,
           x: 987654.125,
           y: 123456.75,
-          consequence: 'read',
+          consequence: 'write',
+          text: sensitiveText,
           modifiers: ['sentinel-modifier'],
           url: sensitiveUrl,
           raw: { url: sensitiveUrl }
@@ -7858,7 +7860,7 @@ test('main IPC: browser tool events persist only bounded control metadata', asyn
     starts.map((event) => event.args),
     [
       {
-        action: 'click',
+        action: 'typeText',
         target: 'current',
         tabId: 'tab-1',
         expectedDocumentRevision: 4
@@ -7872,8 +7874,11 @@ test('main IPC: browser tool events persist only bounded control metadata', asyn
     ]
   )
   const persisted = JSON.stringify(events)
-  assert.doesNotMatch(persisted, /super-secret|fragment|iVBORw0KGgo/)
-  assert.doesNotMatch(JSON.stringify(app.events), /super-secret|fragment|iVBORw0KGgo/)
+  assert.doesNotMatch(persisted, /super-secret|fragment|iVBORw0KGgo|PRIVATE_FORM_TEXT_SENTINEL/)
+  assert.doesNotMatch(
+    JSON.stringify(app.events),
+    /super-secret|fragment|iVBORw0KGgo|PRIVATE_FORM_TEXT_SENTINEL/
+  )
   assert.doesNotMatch(
     `${persisted}${JSON.stringify(app.events)}`,
     /987654|123456|7654321|SENTINEL_DANGEROUS_KEY|sentinel-modifier/
