@@ -1,6 +1,6 @@
 # Clean-machine isolation gate from docs/contracts/execution.md § Guarantees.
 #
-# The conformance suite (`npm run test:runtime`) must pass on a machine with no
+# The conformance suite (`bun run test:runtime`) must pass on a machine with no
 # host Python or R: the interpreter is inside the prefix, host-only modules are
 # not importable, and tool caches stay in the runtime cache. Each run builds
 # fixture environments from locks. Only micromamba downloads (`pkgs/`,
@@ -21,7 +21,7 @@ on:
       - 'scripts/runtime/**'
       - 'docs/contracts/**'
       - 'package.json'
-      - 'package-lock.json'
+      - 'bun.lock'
       - '.github/workflows/runtime.yml'
   pull_request:
     paths:
@@ -33,7 +33,7 @@ on:
       - 'scripts/runtime/**'
       - 'docs/contracts/**'
       - 'package.json'
-      - 'package-lock.json'
+      - 'bun.lock'
       - '.github/workflows/runtime.yml'
   workflow_dispatch:
 
@@ -55,19 +55,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The project is managed with bun (bun.lock); the tests themselves run on Node.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          # No .nvmrc, .node-version, or package.json engines.
-          # Major version implied by @types/node ^22.19.1.
           node-version: '22'
-          cache: npm
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Fetch micromamba
-        run: npm run runtime:fetch
+        run: bun run runtime:fetch
 
       - name: Cache micromamba package downloads
         uses: actions/cache@v4
@@ -83,4 +84,4 @@ jobs:
 
       # Runs tests/runtime/*.test.ts and the envs integration tests (PHI_RUNTIME_INTEGRATION=1).
       - name: Runtime conformance suite
-        run: npm run test:runtime
+        run: bun run test:runtime
