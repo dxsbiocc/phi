@@ -20,12 +20,7 @@ import {
   type DefaultResourceLoaderOptions,
   type ResourceDiagnostic
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
-import {
-  ExtensionRuntime,
-  loadExtensionFromFactory
-} from '@oh-my-pi/pi-coding-agent/extensibility/extensions/loader'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
-import { EventBus } from '@oh-my-pi/pi-coding-agent/utils/event-bus'
 import { mcpOAuthCredentialId } from '@oh-my-pi/pi-coding-agent/mcp/oauth-flow'
 import { estimateToolSchemaTokens } from '@oh-my-pi/pi-coding-agent/modes/utils/context-usage'
 import {
@@ -109,6 +104,7 @@ import { createSpecialistFallbackExtension } from '../agents/fallback-policy'
 import { createProjectToolBoundaryExtension } from '../agents/project-tool-boundary'
 import { createEnvironmentBindingExtension } from '../agents/environment-binding'
 import { createRemoteUrlGuardExtension } from '../agents/remote-url-guard'
+import { installSpecialistToolCallExtensions } from '../agents/specialist-tool-call-extensions'
 import {
   createRemoteProjectToolGuardExtension,
   remoteWorkspaceToolsVerified
@@ -972,7 +968,7 @@ function stringRecord(value: unknown): Record<string, string> | undefined {
   return record
 }
 
-function specialistToolCallFactories(
+export function specialistToolCallFactories(
   deps: {
     sessionId: string
     enableToolApproval: boolean
@@ -980,7 +976,7 @@ function specialistToolCallFactories(
     remoteRoot?: string
     parent: () => CreateAgentSessionResult | undefined
   },
-  binding: { ref: string; variables: Record<string, string>; pluginId?: string } | undefined
+  binding?: { ref: string; variables: Record<string, string>; pluginId?: string }
 ): ExtensionFactory[] {
   // Order matters: omp gives every handler the original input and keeps the last
   // non-empty result, and a block returns at once. Guards and approval run first,
@@ -997,41 +993,6 @@ function specialistToolCallFactories(
       : []),
     ...(binding ? [createEnvironmentBindingExtension(binding)] : [])
   ]
-}
-
-/**
- * Specialist sessions set `restrictToolNames`, and omp then loads none of the
- * caller's extensions: neither the resource loader's factories nor inline
- * `extensions` (verified against omp 18.1.10 — the session's runner is empty).
- * Without this, a specialist's bash, edit, and write would skip approval and the
- * guards, and a bound session would run bash on the host. Install the factories
- * on the live runner. If some future omp already loaded tool_call handlers, leave
- * them rather than attach twice (the binding would rewrite the command twice).
- */
-async function installSpecialistToolCallExtensions(
-  session: {
-    extensionRunner?: { hasHandlers(eventType: string): boolean }
-  },
-  factories: readonly ExtensionFactory[],
-  cwd: string
-): Promise<void> {
-  const runner = session.extensionRunner
-  if (!runner) throw new Error('specialist tool guards could not be installed')
-  if (runner.hasHandlers('tool_call')) return
-  const extensions = (runner as { extensions?: unknown }).extensions
-  if (!Array.isArray(extensions)) throw new Error('specialist tool guards could not be installed')
-  const runtime = new ExtensionRuntime()
-  const eventBus = new EventBus()
-  for (let index = 0; index < factories.length; index += 1) {
-    const factory = factories[index]
-    if (!factory) continue
-    extensions.push(
-      await loadExtensionFromFactory(factory, cwd, eventBus, runtime, `<phi-specialist-${index}>`)
-    )
-  }
-  if (!runner.hasHandlers('tool_call')) {
-    throw new Error('specialist tool guards could not be installed')
-  }
 }
 
 async function createPhiAgentSession(
@@ -1195,12 +1156,8 @@ async function createPhiAgentSession(
         }
       : {})
   })
-  try {
-    await installSpecialistToolCallExtensions(result.session, toolCallFactories, sessionCwd)
-  } catch (error) {
-    await result.session.dispose()
-    throw error
-  }
+  // The installer disposes the session and rethrows when the guards cannot be installed.
+  await installSpecialistToolCallExtensions(result.session, toolCallFactories, sessionCwd)
   if (deps.remoteRoot) {
     await initializeExtensions(result.session, {
       reportSendError: () =>
