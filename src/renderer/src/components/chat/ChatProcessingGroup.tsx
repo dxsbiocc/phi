@@ -45,6 +45,7 @@ export type ChatProcessingGroupProps = {
   onGoSettings: () => void
   onOpenBackgroundJobs: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
+  onOpenWebUrl?: (url: string) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
   onContentResize?: ChatContentResizeHandler
   cwd?: string
@@ -69,6 +70,7 @@ function processingGroupPropsEqual(
     prev.focusRequest === next.focusRequest &&
     prev.onOpenBackgroundJobs === next.onOpenBackgroundJobs &&
     prev.onOpenLocalPath === next.onOpenLocalPath &&
+    prev.onOpenWebUrl === next.onOpenWebUrl &&
     prev.cwd === next.cwd &&
     prev.isActive === next.isActive &&
     prev.startedAtMs === next.startedAtMs &&
@@ -83,6 +85,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
   onGoSettings,
   onOpenBackgroundJobs,
   onOpenLocalPath,
+  onOpenWebUrl,
   onJumpToNotebookCell,
   onContentResize,
   cwd = '',
@@ -207,6 +210,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
                     onGoSettings={onGoSettings}
                     onOpenBackgroundJobs={onOpenBackgroundJobs}
                     onOpenLocalPath={onOpenLocalPath}
+                    onOpenWebUrl={onOpenWebUrl}
                     onJumpToNotebookCell={onJumpToNotebookCell}
                     onContentResize={onContentResize}
                     cwd={cwd}
@@ -274,6 +278,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
                   onGoSettings={onGoSettings}
                   onOpenBackgroundJobs={onOpenBackgroundJobs}
                   onOpenLocalPath={onOpenLocalPath}
+                  onOpenWebUrl={onOpenWebUrl}
                   onContentResize={onContentResize}
                   cwd={cwd}
                 />

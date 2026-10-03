@@ -7,22 +7,118 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider, type Theme } from '@mui/material'
 import MarkdownContent from '../src/renderer/src/components/MarkdownContent'
 import { RemoteProjectFileContext } from '../src/renderer/src/lib/remoteProjectFileContext'
+import { isHttpWebUrl, openWebUrlFromClick } from '../src/renderer/src/lib/markdownWebLinks'
 import { createAppTheme } from '../src/renderer/src/theme'
 
 function renderMarkdown(
   text: string,
   theme: Theme = createTheme(),
   enableMath?: boolean,
-  showColorPalettes?: boolean
+  showColorPalettes?: boolean,
+  onOpenWebUrl?: (url: string) => void
 ): string {
   return renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme },
-      createElement(MarkdownContent, { text, enableMath, showColorPalettes })
+      createElement(MarkdownContent, { text, enableMath, showColorPalettes, onOpenWebUrl })
     )
   )
 }
+
+test('only HTTP(S) links are eligible for in-app opening', () => {
+  assert.equal(isHttpWebUrl('https://example.com/docs'), true)
+  assert.equal(isHttpWebUrl('http://example.com/docs'), true)
+  assert.equal(isHttpWebUrl('file:///tmp/report.html'), false)
+  assert.equal(isHttpWebUrl('javascript:alert(1)'), false)
+  assert.equal(isHttpWebUrl('./docs/report.html'), false)
+})
+
+test('web link handler only intercepts unmodified left clicks', () => {
+  const opened: string[] = []
+  let prevented = false
+  const click = {
+    button: 0,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    preventDefault: () => {
+      prevented = true
+    }
+  }
+
+  assert.equal(
+    openWebUrlFromClick('https://example.com/docs', click, (url) => opened.push(url)),
+    true
+  )
+  assert.equal(prevented, true)
+  assert.deepEqual(opened, ['https://example.com/docs'])
+
+  for (const modifiedClick of [
+    { ...click, button: 1 },
+    { ...click, metaKey: true },
+    { ...click, ctrlKey: true },
+    { ...click, shiftKey: true },
+    { ...click, altKey: true }
+  ]) {
+    prevented = false
+    assert.equal(
+      openWebUrlFromClick('https://example.com/docs', modifiedClick, (url) => opened.push(url)),
+      false
+    )
+    assert.equal(prevented, false)
+    assert.deepEqual(opened, ['https://example.com/docs'])
+  }
+})
+
+test('chat web links retain normal anchor semantics while advertising in-app handling', () => {
+  const withCallback = renderMarkdown(
+    '[Phi docs](https://example.com/docs)',
+    createTheme(),
+    false,
+    false,
+    () => undefined
+  )
+  const withoutCallback = renderMarkdown('[Phi docs](https://example.com/docs)')
+
+  assert.match(withCallback, /href="https:\/\/example\.com\/docs"/)
+  assert.match(withCallback, /target="_blank"/)
+  assert.match(withCallback, /data-phi-open-web-url="in-app"/)
+  assert.match(withoutCallback, /href="https:\/\/example\.com\/docs"/)
+  assert.match(withoutCallback, /target="_blank"/)
+  assert.doesNotMatch(withoutCallback, /data-phi-open-web-url="in-app"/)
+})
+
+test('local, database-preview, and unsafe links are not delegated to the in-app browser', () => {
+  const onOpenWebUrl = (): void => undefined
+  const local = renderMarkdown(
+    '[local](./docs/report.html)',
+    createTheme(),
+    false,
+    false,
+    onOpenWebUrl
+  )
+  const database = renderMarkdown(
+    '[STRING](https://string-db.org/network/9606.ENSP00000281030)',
+    createTheme(),
+    false,
+    false,
+    onOpenWebUrl
+  )
+  const unsafe = renderMarkdown(
+    '[unsafe](javascript:alert(1))',
+    createTheme(),
+    false,
+    false,
+    onOpenWebUrl
+  )
+
+  assert.doesNotMatch(local, /data-phi-open-web-url="in-app"/)
+  assert.match(database, /data-phi-slot="database-web-preview-link"/)
+  assert.doesNotMatch(database, /data-phi-open-web-url="in-app"/)
+  assert.doesNotMatch(unsafe, /data-phi-open-web-url="in-app"/)
+})
 
 test('markdown code blocks show language labels and copy controls', () => {
   const markup = renderMarkdown('```ts\nconst answer = 42\n```')

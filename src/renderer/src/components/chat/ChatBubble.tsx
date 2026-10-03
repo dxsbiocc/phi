@@ -40,6 +40,7 @@ export type ChatBubbleProps = {
   onGoSettings: () => void
   onOpenBackgroundJobs: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
+  onOpenWebUrl?: (url: string) => void
   onContentResize?: ChatContentResizeHandler
   cwd?: string
 }
@@ -57,7 +58,8 @@ function chatBubblePropsEqual(prev: ChatBubbleProps, next: ChatBubbleProps): boo
     prev.onEditUserMessage === next.onEditUserMessage &&
     prev.onRetryUserMessage === next.onRetryUserMessage &&
     prev.onForkUserMessage === next.onForkUserMessage &&
-    prev.onOpenBackgroundJobs === next.onOpenBackgroundJobs
+    prev.onOpenBackgroundJobs === next.onOpenBackgroundJobs &&
+    prev.onOpenWebUrl === next.onOpenWebUrl
   )
 }
 
@@ -70,6 +72,7 @@ export const ChatBubble = memo(function ChatBubble({
   onGoSettings,
   onOpenBackgroundJobs,
   onOpenLocalPath,
+  onOpenWebUrl,
   onContentResize,
   cwd = ''
 }: ChatBubbleProps): ReactNode {
@@ -192,6 +195,7 @@ export const ChatBubble = memo(function ChatBubble({
         text={message.content}
         cwd={cwd}
         onOpenLocalPath={onOpenLocalPath}
+        onOpenWebUrl={onOpenWebUrl}
         showColorPalettes
       />
     </Box>

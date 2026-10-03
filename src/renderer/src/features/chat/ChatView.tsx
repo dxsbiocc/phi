@@ -161,6 +161,7 @@ type ViewProps = {
   onRemoveQueuedPrompt?: (id: string) => void
   onOpenApprovalSession: (path: string) => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
+  onOpenWebUrl?: (url: string) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
   cwd?: string
 }
@@ -219,6 +220,7 @@ function ChatView({
   onRemoveQueuedPrompt,
   onOpenApprovalSession,
   onOpenLocalPath,
+  onOpenWebUrl,
   onJumpToNotebookCell,
   cwd = ''
 }: ViewProps): React.JSX.Element {
@@ -605,6 +607,7 @@ function ChatView({
         onGoSettings={onGoSettings}
         onOpenBackgroundJobs={onOpenBackgroundJobs}
         onOpenLocalPath={onOpenLocalPath}
+        onOpenWebUrl={onOpenWebUrl}
         onJumpToNotebookCell={onJumpToNotebookCell}
         onEditUserMessage={editUserMessage}
         onRetryUserMessage={retryUserMessage}

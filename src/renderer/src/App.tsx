@@ -39,6 +39,9 @@ import { SessionSearchPanel } from './features/session-search/SessionSearchPanel
 import { BackgroundJobsPanel } from './features/jobs/BackgroundJobsPanel'
 import BrowserPanel from './features/browser/BrowserPanel'
 import { useBrowserTrustedOverlayGate } from './features/browser/hooks/useBrowserTrustedOverlayGate'
+import { createBrowserLinkOpeningCoordinator } from './features/browser/lib/browserLinkOpening'
+import { createBrowserRequestIdFactory } from './features/browser/lib/browserPanelState'
+import type { BrowserTrustedOverlayRequest } from './features/browser/lib/browserTrustedOverlayGate'
 import type { LocalPathKind } from './components/MarkdownContent'
 import { PluginDetail } from './features/plugin/PluginView'
 import { usePluginCatalog } from './features/plugin/hooks/usePluginCatalog'
@@ -1244,15 +1247,38 @@ function App(): React.JSX.Element {
   })
   const [workspaceSidePanelMode, setWorkspaceSidePanelMode] =
     useState<WorkspaceSidePanelMode | null>(null)
+  const showBrowserLinkFailure = useCallback((): void => {
+    showSnackbar('无法在内置浏览器打开该链接。为安全起见，Phi 未跳转到外部浏览器。')
+  }, [showSnackbar])
+  const browserLinkOpeningCoordinator = useMemo(() => {
+    const nextRequestId = createBrowserRequestIdFactory()
+    return createBrowserLinkOpeningCoordinator({
+      execute: (command) => rendererApi.browser.execute(command),
+      nextRequestId,
+      getActiveSessionId: () => useSessionStore.getState().activePhiSessionId,
+      openBrowserPanel: () => setWorkspaceSidePanelMode('browser'),
+      showFailure: showBrowserLinkFailure
+    })
+  }, [rendererApi, setWorkspaceSidePanelMode, showBrowserLinkFailure])
+  const onOpenWebUrl = useCallback(
+    (url: string): void => {
+      void browserLinkOpeningCoordinator.open(url)
+    },
+    [browserLinkOpeningCoordinator]
+  )
+  useEffect(() => {
+    browserLinkOpeningCoordinator.invalidate()
+  }, [activePhiSessionId, activeSessionGeneration, browserLinkOpeningCoordinator])
   const closeBrowserPanelForTrustedOverlay = useCallback((): void => {
+    browserLinkOpeningCoordinator.invalidate()
     setWorkspaceSidePanelMode((current) => (current === 'browser' ? null : current))
-  }, [])
+  }, [browserLinkOpeningCoordinator, setWorkspaceSidePanelMode])
   const handleBrowserTrustedOverlayFailure = useCallback((): void => {
     showSnackbar('无法安全显示应用对话框，请重试。')
   }, [showSnackbar])
   const {
     suspended: browserOverlaySuspended,
-    enqueue: enqueueBrowserTrustedOverlay,
+    enqueue: enqueueBrowserTrustedOverlayGate,
     cancel: cancelBrowserTrustedOverlay
   } = useBrowserTrustedOverlayGate({
     bridge: rendererApi.browser,
@@ -1260,6 +1286,13 @@ function App(): React.JSX.Element {
     closeBrowserPanel: closeBrowserPanelForTrustedOverlay,
     onFailure: handleBrowserTrustedOverlayFailure
   })
+  const enqueueBrowserTrustedOverlay = useCallback(
+    (request: BrowserTrustedOverlayRequest): void => {
+      browserLinkOpeningCoordinator.invalidate()
+      enqueueBrowserTrustedOverlayGate(request)
+    },
+    [browserLinkOpeningCoordinator, enqueueBrowserTrustedOverlayGate]
+  )
   const openLocalTrustedOverlay = useCallback(
     (key: string, publish: () => void, onCancel?: () => void): void => {
       cancelBrowserTrustedOverlay('local', key)
@@ -2706,12 +2739,17 @@ function App(): React.JSX.Element {
     activeView === 'chat' || activeView === 'projects' || activeView === 'analysis'
   const isWorkspaceView = isChatWorkspaceView || isResourceWorkspaceView
   const isAnalysisWorkspaceView = activeView === 'analysis'
-  const onToggleWorkspaceSidePanel = useCallback((mode: WorkspaceSidePanelMode): void => {
-    setWorkspaceSidePanelMode((current) => toggleWorkspaceSidePanelMode(current, mode))
-  }, [])
+  const onToggleWorkspaceSidePanel = useCallback(
+    (mode: WorkspaceSidePanelMode): void => {
+      browserLinkOpeningCoordinator.invalidate()
+      setWorkspaceSidePanelMode((current) => toggleWorkspaceSidePanelMode(current, mode))
+    },
+    [browserLinkOpeningCoordinator, setWorkspaceSidePanelMode]
+  )
   const onOpenBackgroundJobs = useCallback((): void => {
+    browserLinkOpeningCoordinator.invalidate()
     setWorkspaceSidePanelMode('jobs')
-  }, [])
+  }, [browserLinkOpeningCoordinator, setWorkspaceSidePanelMode])
   const onRefreshWorkspaceSidePanel = useCallback((): void => {
     setWorkspaceSidePanelTreeRevision((value) => value + 1)
   }, [])
@@ -3847,6 +3885,7 @@ function App(): React.JSX.Element {
           onRemoveQueuedPrompt={removeQueuedPrompt}
           onOpenApprovalSession={onOpenApprovalSession}
           onOpenLocalPath={onOpenLocalPath}
+          onOpenWebUrl={onOpenWebUrl}
           onJumpToNotebookCell={onJumpToAnalysisNotebookCell}
           compactComposerControls={activeView === 'analysis'}
           cwd={activeDisplayCwd}

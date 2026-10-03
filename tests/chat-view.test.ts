@@ -65,6 +65,7 @@ function renderChat(
     skills?: SkillSummary[]
     promptAgents?: PromptAgentSummary[]
     onOpenLocalPath?: (path: string, kind: 'file' | 'directory') => void
+    onOpenWebUrl?: (url: string) => void
     onForkUserMessage?: (messageId: string) => void
     planReviewEnabled?: boolean
     disablePlanReview?: boolean
@@ -120,6 +121,7 @@ function renderChat(
         onGoSettings: () => undefined,
         onOpenBackgroundJobs: () => undefined,
         onOpenLocalPath: options.onOpenLocalPath,
+        onOpenWebUrl: options.onOpenWebUrl,
         onForkUserMessage: options.onForkUserMessage,
         planReviewEnabled: options.planReviewEnabled,
         disablePlanReview: options.disablePlanReview,
@@ -139,6 +141,22 @@ function renderChat(
     )
   )
 }
+
+test('chat view threads the in-app web opener to assistant markdown links', () => {
+  const markup = renderChat(
+    [
+      {
+        id: 'assistant-web-link',
+        role: 'assistant',
+        content: '[Open the docs](https://example.com/docs)'
+      }
+    ],
+    { onOpenWebUrl: () => undefined }
+  )
+
+  assert.match(markup, /href="https:\/\/example\.com\/docs"/)
+  assert.match(markup, /data-phi-open-web-url="in-app"/)
+})
 
 function renderChatError(content: string): string {
   return renderChat([{ id: 'error-1', role: 'error', content }])

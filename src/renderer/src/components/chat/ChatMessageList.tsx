@@ -207,6 +207,7 @@ export type ChatMessageListProps = {
   onGoSettings: () => void
   onOpenBackgroundJobs: () => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
+  onOpenWebUrl?: (url: string) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
   cwd?: string
 }
@@ -224,6 +225,7 @@ const ChatMessageList = memo(function ChatMessageList({
   onGoSettings,
   onOpenBackgroundJobs,
   onOpenLocalPath,
+  onOpenWebUrl,
   onJumpToNotebookCell,
   cwd = ''
 }: ChatMessageListProps): React.JSX.Element {
@@ -640,6 +642,7 @@ const ChatMessageList = memo(function ChatMessageList({
             onGoSettings={onGoSettings}
             onOpenBackgroundJobs={onOpenBackgroundJobs}
             onOpenLocalPath={onOpenLocalPath}
+            onOpenWebUrl={onOpenWebUrl}
             onJumpToNotebookCell={onJumpToNotebookCell}
             onContentResize={onMessagesContentResize}
             cwd={cwd}
@@ -708,6 +711,7 @@ const ChatMessageList = memo(function ChatMessageList({
           onGoSettings={onGoSettings}
           onOpenBackgroundJobs={onOpenBackgroundJobs}
           onOpenLocalPath={onOpenLocalPath}
+          onOpenWebUrl={onOpenWebUrl}
           onContentResize={onMessagesContentResize}
           cwd={cwd}
         />
@@ -724,6 +728,7 @@ const ChatMessageList = memo(function ChatMessageList({
       onJumpToNotebookCell,
       onMessagesContentResize,
       onOpenLocalPath,
+      onOpenWebUrl,
       onRetryUserMessage,
       onForkUserMessage,
       userMessageStates

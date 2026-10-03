@@ -1,4 +1,4 @@
-import { Box, Button, Divider, Link, Typography } from '@mui/material'
+import { Box, Button, Divider, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import {
   cloneElement,
@@ -55,6 +55,7 @@ import { MarkdownSmilesTokenView } from './markdown/MarkdownSmilesToken'
 import { StringNetworkPreview } from './markdown/StringNetworkPreview'
 import { KeggPathwayPreview } from './markdown/KeggPathwayPreview'
 import { useLocalPathKinds } from '../lib/markdownLocalPathPreview'
+import { MarkdownWebLink } from './markdown/MarkdownWebLink'
 
 export type { LocalPathKind } from '../lib/markdownLocalPathReferences'
 const ContentCopyIcon = PhiIcons.action.copy
@@ -654,6 +655,7 @@ type MarkdownContentProps = {
   text: string
   cwd?: string
   onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
+  onOpenWebUrl?: (url: string) => void
   enableMath?: boolean // off by default -- see markdownMathPlugins.ts for why
   showColorPalettes?: boolean
 }
@@ -662,6 +664,7 @@ function MarkdownContentImpl({
   text,
   cwd = '',
   onOpenLocalPath,
+  onOpenWebUrl,
   enableMath = false,
   showColorPalettes = false
 }: MarkdownContentProps): React.JSX.Element {
@@ -814,9 +817,9 @@ function MarkdownContentImpl({
         }
 
         return (
-          <Link href={href} target="_blank" rel="noreferrer" sx={{ color: 'primary.light' }}>
+          <MarkdownWebLink href={href} onOpenWebUrl={onOpenWebUrl}>
             {children}
-          </Link>
+          </MarkdownWebLink>
         )
       },
       img: ({ src, alt }) => (
@@ -898,7 +901,7 @@ function MarkdownContentImpl({
         </Box>
       )
     }),
-    [cwd, localPathKinds, onOpenLocalPath, remoteProject, showColorPalettes]
+    [cwd, localPathKinds, onOpenLocalPath, onOpenWebUrl, remoteProject, showColorPalettes]
   )
 
   return (
@@ -936,7 +939,8 @@ function MarkdownContentImpl({
 // `onOpenLocalPath` is intentionally excluded from the comparison: callers
 // often pass a fresh closure each render, but it doesn't capture render-local
 // state that would go stale, and including it would defeat memoization for
-// every historical chat message while a later one streams in.
+// every historical chat message while a later one streams in. The web opener
+// is included because adding or removing it changes the anchor click behavior.
 function markdownContentPropsEqual(
   prev: MarkdownContentProps,
   next: MarkdownContentProps
@@ -944,6 +948,7 @@ function markdownContentPropsEqual(
   return (
     prev.text === next.text &&
     prev.cwd === next.cwd &&
+    prev.onOpenWebUrl === next.onOpenWebUrl &&
     prev.enableMath === next.enableMath &&
     prev.showColorPalettes === next.showColorPalettes
   )
