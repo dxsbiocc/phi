@@ -287,6 +287,27 @@ test('App composes the browser feature through the narrow side-panel seam', () =
   assert.doesNotMatch(appSource, /onOpenExternal=\{[^}]+\}/)
 })
 
+test('browser approvals are scoped and presented as one-action decisions in both approval surfaces', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const dialogSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/ToolApprovalDialog.tsx'),
+    'utf8'
+  )
+  const permissionSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/PermissionView.tsx'),
+    'utf8'
+  )
+  assert.match(
+    appSource,
+    /onToolApprovalCancelled\(\(requestId\)[\s\S]{0,260}request\.requestId === requestId/
+  )
+  assert.match(appSource, /cancelBrowserTrustedOverlay\('approval', requestId\)/)
+  for (const source of [dialogSource, permissionSource]) {
+    assert.match(source, /browser: '浏览器操作'/)
+    assert.match(source, /仅允许这一次/)
+  }
+})
+
 test('browser viewport hook keeps the native rectangle below toolbar and cleans every observer', () => {
   const panelSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/features/browser/BrowserPanel.tsx'),

@@ -34,7 +34,11 @@ export type BrowserToolHostExecutor = (
 
 export interface BrowserToolOptions {
   requestId?: () => string
-  cancelHost?: (identity: { originSessionId: string; requestId: string }) => Promise<unknown>
+  cancelHost?: (identity: {
+    originSessionId: string
+    requestId: string
+    toolCallId: string
+  }) => Promise<unknown>
   takeText?: (
     toolCallId: string,
     placeholder: string
@@ -201,7 +205,7 @@ export function buildBrowserTool(
     name: 'browser',
     label: 'Browser',
     description:
-      'Open or inspect a page in Phi, or click, type, scroll, and use safe navigation keys on the active project-loopback page. Input must use the tab and document revision from the latest screenshot. External-site input requires a later approval capability and is currently refused.',
+      'Open or inspect a page in Phi, or click, type, scroll, and use safe navigation keys on the active page. Input must use the active tab and document revision from the latest screenshot. Each external-site input asks the user to allow that exact action once; sensitive or unsafe targets require user takeover.',
     loadMode: 'essential',
     strict: true,
     approval: 'read',
@@ -268,7 +272,9 @@ export function buildBrowserTool(
         validDocumentRevision(input.expectedDocumentRevision) &&
         validCoordinate(input.x) &&
         validCoordinate(input.y) &&
-        input.consequence === 'read'
+        (input.consequence === 'read' ||
+          input.consequence === 'write' ||
+          input.consequence === 'irreversible')
       ) {
         command = {
           type: 'click',
@@ -278,15 +284,22 @@ export function buildBrowserTool(
           requireActive: true,
           x: input.x,
           y: input.y,
-          consequence: 'read'
+          consequence: input.consequence
         }
       } else if (
         action === 'typeText' &&
-        exactOptionalTargetKeys(input, ['action', 'tabId', 'expectedDocumentRevision', 'text']) &&
+        exactOptionalTargetKeys(input, [
+          'action',
+          'tabId',
+          'expectedDocumentRevision',
+          'text',
+          'consequence'
+        ]) &&
         targetIsValid(input.target) &&
         boundedText(input.tabId, BROWSER_TOOL_MAX_ID_BYTES) &&
         validDocumentRevision(input.expectedDocumentRevision) &&
-        typeof input.text === 'string'
+        typeof input.text === 'string' &&
+        (input.consequence === 'write' || input.consequence === 'irreversible')
       ) {
         const taken = options.takeText?.(toolCallId, input.text)
         const text = taken?.text
@@ -304,7 +317,7 @@ export function buildBrowserTool(
             expectedDocumentRevision: input.expectedDocumentRevision,
             requireActive: true,
             text,
-            consequence: 'write'
+            consequence: input.consequence
           }
         }
       } else if (
@@ -410,7 +423,7 @@ export function buildBrowserTool(
       }
 
       const cancel = (): void => {
-        void options.cancelHost?.({ originSessionId, requestId }).catch(() => undefined)
+        void options.cancelHost?.({ originSessionId, requestId, toolCallId }).catch(() => undefined)
       }
       signal?.addEventListener('abort', cancel, { once: true })
       try {

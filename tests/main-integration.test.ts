@@ -359,6 +359,7 @@ type HarnessResult = {
     action: string
   }
   openedExternalUrls: string[]
+  approvalResolveCalls: Array<{ requestId: string; approved: boolean; trusted: boolean }>
 }
 
 async function harness(
@@ -369,6 +370,12 @@ async function harness(
   const deleted: string[] = []
   const events: Array<{ channel: string; data: unknown }> = []
   const approvalOptions: Array<Record<string, unknown>> = []
+  const approvalResolveCalls: Array<{
+    requestId: string
+    approved: boolean
+    trusted: boolean
+  }> = []
+  const resolvedApprovalIds = new Set<string>()
   const runnerEvents: Array<Record<string, unknown>> = []
   const runStartInputs: Array<Record<string, unknown>> = []
   const createdPhiSessions: Array<Record<string, unknown>> = []
@@ -1941,7 +1948,17 @@ async function harness(
       bashApprovalDigest: fakeBashApprovalDigest,
       writeApprovalDigest: fakeWriteApprovalDigest,
       editApprovalDigest: fakeEditApprovalDigest,
-      cancelToolApprovals: noop,
+      cancelToolApprovals: (): unknown[] => [],
+      requestToolApproval: async (): Promise<'cancelled'> => 'cancelled',
+      resolveToolApproval: (requestId: string, approved: boolean, responder: unknown): boolean => {
+        const trusted = responder === Window.getAllWindows()[0]?.webContents
+        approvalResolveCalls.push({ requestId, approved, trusted })
+        if (!trusted || requestId !== 'approval-live' || resolvedApprovalIds.has(requestId)) {
+          return false
+        }
+        resolvedApprovalIds.add(requestId)
+        return true
+      },
       createApprovalExtension: (options: Record<string, unknown>): Record<string, unknown> => {
         approvalOptions.push(options)
         return { name: 'approval-extension' }
@@ -2952,6 +2969,7 @@ async function harness(
       return windowOpenHandler(details)
     },
     openedExternalUrls,
+    approvalResolveCalls,
     tryFrameNavigation: (input): boolean => {
       let prevented = false
       frameNavigationHandler?.({
@@ -3319,7 +3337,11 @@ test('main browser host handler trusts runtime origin and ignores forged agent i
   assert.equal(currentSnapshot.ok, true, JSON.stringify(currentSnapshot))
   assert.equal(currentSnapshot.screenshot?.tabId, humanSnapshotTab.id)
 
-  await cancel({ originSessionId: runtimeSessionId, requestId: 'agent-cancelled-1' })
+  await cancel({
+    originSessionId: runtimeSessionId,
+    requestId: 'agent-cancelled-1',
+    toolCallId: 'tool-call-cancelled'
+  })
   const cancelled = (await execute({
     originSessionId: runtimeSessionId,
     requestId: 'agent-cancelled-1',
@@ -3349,7 +3371,11 @@ test('main browser host handler trusts runtime origin and ignores forged agent i
   assert.equal(outcome.snapshot.sessionId, current.phiSessionId)
   assert.equal(outcome.snapshot.tabs.at(-1)?.isAgentControlled, true)
 
-  await cancel({ originSessionId: runtimeSessionId, requestId: 'agent-open-1' })
+  await cancel({
+    originSessionId: runtimeSessionId,
+    requestId: 'agent-open-1',
+    toolCallId: 'tool-call-1'
+  })
   const replay = (await execute({
     originSessionId: runtimeSessionId,
     requestId: 'agent-open-1',
@@ -3374,6 +3400,22 @@ test('main browser host handler trusts runtime origin and ignores forged agent i
   )
   session.finish.resolve()
   await prompt
+})
+
+test('main approval response validates payload, renderer identity, and one-shot resolution', async () => {
+  const app = await harness()
+  assert.equal(await app.invokeFromForeign('tool:approval-response', 'approval-live', true), false)
+  assert.equal(await app.invoke('tool:approval-response', 'approval-live', 'false'), false)
+  assert.equal(await app.invoke('tool:approval-response', '', true), false)
+  assert.equal(await app.invoke('tool:approval-response', 'approval-unknown', true), false)
+  assert.equal(await app.invoke('tool:approval-response', 'approval-live', true), true)
+  assert.equal(await app.invoke('tool:approval-response', 'approval-live', true), false)
+  assert.deepEqual(app.approvalResolveCalls, [
+    { requestId: 'approval-live', approved: true, trusted: false },
+    { requestId: 'approval-unknown', approved: true, trusted: true },
+    { requestId: 'approval-live', approved: true, trusted: true },
+    { requestId: 'approval-live', approved: true, trusted: true }
+  ])
 })
 
 test('main browser cleanup restores idle metadata without loading pages after window reopen', async () => {

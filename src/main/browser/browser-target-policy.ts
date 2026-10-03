@@ -33,6 +33,8 @@ const TEXT_INPUT_TYPES = new Set([
   'time',
   'week'
 ])
+const FORBIDDEN_AUTOMATION_LABEL =
+  /(?:\b(?:buy|purchase|checkout|place\s+order|confirm\s+order|pay|payment|transfer|subscribe|delete|remove|destroy|close\s+account|create\s+account|sign\s*up|captcha|upload|grant\s+permission|allow\s+access|certificate|http\s+auth)\b|购买|下单|确认订单|付款|支付|转账|订阅|删除|移除|销毁|关闭账户|创建账户|注册账户|验证码|人机验证|上传|授予权限|允许访问|证书|身份认证)/iu
 
 function byteLength(value: string): number {
   return Buffer.byteLength(value, 'utf8')
@@ -171,10 +173,15 @@ export function authorizeBrowserTarget(options: {
   action: 'click' | 'typeText'
   tabId: string
   inspection: EngineTargetInspection
+  consequence?: 'read' | 'write' | 'irreversible'
 }): { ok: true } | { ok: false; error: BrowserError } {
   const descriptor = options.inspection.descriptor
   if (EMBEDDED_CONTENT_TAGS.has(descriptor.tagName)) {
-    return error(options.tabId, 'PERMISSION_DENIED', 'Embedded browser targets are not permitted')
+    return error(
+      options.tabId,
+      'USER_HANDOFF_REQUIRED',
+      'Embedded browser targets require user takeover'
+    )
   }
   if (descriptor.inputType && SENSITIVE_INPUT_TYPES.has(descriptor.inputType)) {
     return error(
@@ -183,12 +190,24 @@ export function authorizeBrowserTarget(options: {
       'This browser field requires user takeover'
     )
   }
-  if (descriptor.submitsForm) {
+  if (
+    descriptor.accessibleLabel !== undefined &&
+    FORBIDDEN_AUTOMATION_LABEL.test(descriptor.accessibleLabel)
+  ) {
     return error(
       options.tabId,
       'USER_HANDOFF_REQUIRED',
-      'Form submission requires user confirmation that is not available yet'
+      'This browser action requires user takeover'
     )
+  }
+  if (
+    options.action === 'click' &&
+    options.consequence !== undefined &&
+    options.consequence !== 'read' &&
+    !descriptor.accessibleLabel &&
+    !descriptor.submitsForm
+  ) {
+    return error(options.tabId, 'USER_HANDOFF_REQUIRED', 'This browser target is not clear enough')
   }
   if (options.action === 'typeText') {
     const ordinaryInput =

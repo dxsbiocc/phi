@@ -153,6 +153,7 @@ const {
   writeApprovalDigest,
   cancelToolApprovals,
   createApprovalExtension,
+  requestToolApproval,
   resolveToolApproval
 } = await import('../src/main/agent/tool-approval')
 
@@ -211,12 +212,105 @@ test('tool approval resolves and cleans up accepted requests', async () => {
   assert.equal(window.listenerCount('closed'), 1)
 
   const request = window.webContents.sent[0].payload as { requestId: string }
-  resolveToolApproval(request.requestId, true)
+  resolveToolApproval(request.requestId, true, window.webContents)
 
   assert.equal(await pending, undefined)
   assert.equal(window.listenerCount('closed'), 0)
   assert.equal(window.webContents.listenerCount('did-start-navigation'), 0)
-  resolveToolApproval(request.requestId, false)
+  resolveToolApproval(request.requestId, false, window.webContents)
+})
+
+test('imperative browser approval binds the trusted renderer and exposes only safe metadata', async () => {
+  const window = new FakeWindow()
+  const pending = requestToolApproval({
+    getWindow: () => window as never,
+    context: {
+      sessionId: 'phi-1',
+      runId: 'run-1',
+      cwd: '/project'
+    },
+    toolCallId: 'tool-1',
+    browser: {
+      origin: 'https://example.test',
+      action: 'typeText',
+      consequence: 'write',
+      reason: 'external_origin'
+    }
+  })
+  const request = window.webContents.sent[0]?.payload as {
+    requestId: string
+    summary: string
+    browser: Record<string, unknown>
+  }
+  assert.deepEqual(request.browser, {
+    origin: 'https://example.test',
+    action: 'typeText',
+    consequence: 'write',
+    reason: 'external_origin'
+  })
+  assert.doesNotMatch(JSON.stringify(request), /query|typed|descriptor|fingerprint/i)
+
+  assert.equal(resolveToolApproval(request.requestId, true, new FakeWebContents()), false)
+  assert.equal(
+    resolveToolApproval(request.requestId, 'false' as unknown as boolean, window.webContents),
+    false
+  )
+  assert.equal(resolveToolApproval(request.requestId, true, window.webContents), true)
+  assert.equal(await pending, 'approved')
+  assert.equal(resolveToolApproval(request.requestId, true, window.webContents), false)
+})
+
+test('imperative approval id collision fails closed without replacing the first request', async () => {
+  const window = new FakeWindow()
+  const base = {
+    getWindow: () => window as never,
+    requestId: () => 'fixed-id',
+    context: { sessionId: 'phi-1', runId: 'run-1', cwd: '/project' },
+    browser: {
+      origin: 'https://example.test',
+      action: 'scroll' as const,
+      consequence: 'read' as const,
+      reason: 'external_origin' as const
+    }
+  }
+  const first = requestToolApproval({ ...base, toolCallId: 'tool-1' })
+  const second = requestToolApproval({ ...base, toolCallId: 'tool-2' })
+  assert.equal(await second, 'cancelled')
+  assert.equal(resolveToolApproval('fixed-id', true, window.webContents), true)
+  assert.equal(await first, 'approved')
+})
+
+test('scoped cancellation stops one run approval without disturbing another session', async () => {
+  const window = new FakeWindow()
+  const browser = {
+    origin: 'https://example.test',
+    action: 'scroll' as const,
+    consequence: 'read' as const,
+    reason: 'external_origin' as const
+  }
+  const approvalA = requestToolApproval({
+    getWindow: () => window as never,
+    context: { sessionId: 'phi-a', runId: 'run-a', cwd: '/project-a' },
+    toolCallId: 'tool-a',
+    browser
+  })
+  const approvalB = requestToolApproval({
+    getWindow: () => window as never,
+    context: { sessionId: 'phi-b', runId: 'run-b', cwd: '/project-b' },
+    toolCallId: 'tool-b',
+    browser
+  })
+  const [requestA, requestB] = window.webContents.sent.map(
+    (entry) => entry.payload as { requestId: string }
+  )
+  const cancelled = cancelToolApprovals({ sessionId: 'phi-a', runId: 'run-a' })
+  assert.deepEqual(
+    cancelled.map((request) => request.requestId),
+    [requestA.requestId]
+  )
+  assert.equal(await approvalA, 'cancelled')
+  assert.equal(resolveToolApproval(requestB.requestId, true, window.webContents), true)
+  assert.equal(await approvalB, 'approved')
 })
 
 test('Composio execution needs approval while discovery remains read-only', async () => {
@@ -236,7 +330,7 @@ test('Composio execution needs approval while discovery remains read-only', asyn
   )
   const request = window.webContents.sent[0].payload as { requestId: string; toolName: string }
   assert.equal(request.toolName, 'mcp__composio_multi_execute_tool')
-  resolveToolApproval(request.requestId, false)
+  resolveToolApproval(request.requestId, false, window.webContents)
   assert.deepEqual(await pending, { block: true, reason: '用户拒绝了该操作' })
 })
 
@@ -263,7 +357,10 @@ test('plan drafts and proposal writes use the session sandbox without a second a
   )
   assert.match(
     String(
-      (await handler({ toolName: 'write', input: { path: '/project/result.txt' } }, {}))?.reason
+      (
+        (await handler({ toolName: 'write', input: { path: '/project/result.txt' } }, {})) as
+          { reason?: unknown } | undefined
+      )?.reason
     ),
     /没有可用窗口/
   )
@@ -317,7 +414,7 @@ test('remote Bash approval shows host, pinned cwd, scope warning and exact comma
   assert.match(request.summary, /printf marker/)
   assert.match(request.summary, /env keys: TOKEN/)
   assert.doesNotMatch(request.summary, /private-value/)
-  resolveToolApproval(request.requestId, false)
+  resolveToolApproval(request.requestId, false, window.webContents)
   await pending
 })
 
@@ -383,7 +480,7 @@ test('remote write approval shows host and path while binding exact content', as
     request.approvalDigest,
     writeApprovalDigest({ path: 'new.txt', content: 'changed' })
   )
-  resolveToolApproval(request.requestId, false)
+  resolveToolApproval(request.requestId, false, window.webContents)
   await pending
 })
 
@@ -425,7 +522,7 @@ test('remote edit approval binds old/new text without showing file content', asy
   assert.doesNotMatch(request.summary, /private old|private new/)
   assert.equal(request.approvalDigest, editApprovalDigest(input))
   assert.notEqual(request.approvalDigest, editApprovalDigest({ ...input, new_string: 'changed' }))
-  resolveToolApproval(request.requestId, false)
+  resolveToolApproval(request.requestId, false, window.webContents)
   await pending
 })
 
@@ -452,7 +549,7 @@ test('a remote approval hook follows the current ask/auto/full policy without se
   const pending = handler({ toolName: 'write', input: { path: 'note.txt', content: 'safe' } }, {})
   assert.equal(window.webContents.sent.length, 1)
   const request = window.webContents.sent[0].payload as { requestId: string }
-  resolveToolApproval(request.requestId, false)
+  resolveToolApproval(request.requestId, false, window.webContents)
   assert.deepEqual(await pending, { block: true, reason: '用户拒绝了该操作' })
 })
 
@@ -468,7 +565,7 @@ test('tool approval cancellation denies pending requests and ignores late respon
   assert.deepEqual(await pending, { block: true, reason: '用户拒绝了该操作' })
   assert.equal(window.listenerCount('closed'), 0)
 
-  resolveToolApproval(request.requestId, true)
+  resolveToolApproval(request.requestId, true, window.webContents)
 })
 
 test('aborted tool approval scopes deny late tool calls without creating requests', async () => {
@@ -646,7 +743,7 @@ test('classifyTool gates exec and write skill tools and leaves read alone', asyn
     summary: string
   }
   assert.equal(writeRequest.summary, JSON.stringify({ dest: 'out.txt' }))
-  resolveToolApproval(writeRequest.requestId, false)
+  resolveToolApproval(writeRequest.requestId, false, window.webContents)
   assert.deepEqual(await writePending, { block: true, reason: '用户拒绝了该操作' })
 
   const bashPending = handler({ toolName: 'bash', input: { command: 'date' } }, {})
@@ -655,7 +752,7 @@ test('classifyTool gates exec and write skill tools and leaves read alone', asyn
     summary: string
   }
   assert.match(bashRequest.summary, /date/)
-  resolveToolApproval(bashRequest.requestId, true)
+  resolveToolApproval(bashRequest.requestId, true, window.webContents)
   assert.equal(await bashPending, undefined)
 })
 

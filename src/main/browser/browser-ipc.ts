@@ -234,7 +234,6 @@ export function parseBrowserCommand(input: unknown): BrowserCommand {
           tabId: boundedString(input.tabId, MAX_ID_BYTES)
         }
       case 'click':
-        if (input.consequence !== 'read') return invalidRequest()
         return {
           type: 'click',
           requestId,
@@ -259,14 +258,16 @@ export function parseBrowserCommand(input: unknown): BrowserCommand {
         ) {
           return invalidRequest()
         }
-        if (input.consequence !== 'write') return invalidRequest()
+        if (input.consequence !== 'write' && input.consequence !== 'irreversible') {
+          return invalidRequest()
+        }
         return {
           type: 'typeText',
           requestId,
           tabId: boundedString(input.tabId, MAX_ID_BYTES),
           text: boundedString(input.text, BROWSER_MAX_TEXT_BYTES),
           expectedDocumentRevision: revision(input.expectedDocumentRevision),
-          consequence: 'write',
+          consequence: input.consequence,
           requireActive: requiredActive(input.requireActive)
         }
       case 'keypress':

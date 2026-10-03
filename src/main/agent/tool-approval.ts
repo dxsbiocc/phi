@@ -17,6 +17,12 @@ export interface ToolApprovalRequest {
   toolName: string
   command?: string
   summary: string
+  browser?: {
+    origin: string
+    action: 'click' | 'typeText' | 'scroll' | 'keypress'
+    consequence: 'read' | 'write' | 'irreversible'
+    reason: 'external_origin' | 'form_submission' | 'irreversible'
+  }
 }
 
 const RISKY_TOOLS = new Set([
@@ -52,6 +58,8 @@ interface CreateApprovalExtensionOptions {
 }
 
 interface PendingApproval {
+  request: ToolApprovalRequest
+  responder: unknown
   settle: (decision: ApprovalDecision) => void
 }
 
@@ -164,14 +172,34 @@ function createAbortErrorMessage(signal: AbortSignal | undefined): string {
   return signal?.aborted ? '操作已取消' : '用户拒绝了该操作'
 }
 
-export function resolveToolApproval(requestId: string, approved: boolean): void {
-  pendingApprovals.get(requestId)?.settle({ approved, cancelled: false })
+export function resolveToolApproval(
+  requestId: string,
+  approved: boolean,
+  responder: unknown
+): boolean {
+  if (typeof requestId !== 'string' || requestId.length === 0 || requestId.length > 256)
+    return false
+  if (typeof approved !== 'boolean') return false
+  const pending = pendingApprovals.get(requestId)
+  if (!pending || pending.responder !== responder) return false
+  pending.settle({ approved, cancelled: false })
+  return true
 }
 
-export function cancelToolApprovals(): void {
+export function cancelToolApprovals(scope?: {
+  sessionId?: string
+  runId?: string
+  toolCallId?: string
+}): ToolApprovalRequest[] {
+  const cancelled: ToolApprovalRequest[] = []
   for (const pending of [...pendingApprovals.values()]) {
+    if (scope?.sessionId && pending.request.sessionId !== scope.sessionId) continue
+    if (scope?.runId && pending.request.runId !== scope.runId) continue
+    if (scope?.toolCallId && pending.request.toolCallId !== scope.toolCallId) continue
+    cancelled.push(pending.request)
     pending.settle({ approved: false, cancelled: true })
   }
+  return cancelled
 }
 
 function waitForApproval(
@@ -179,6 +207,9 @@ function waitForApproval(
   window: ApprovalWindow,
   signals: ReadonlyArray<AbortSignal | undefined>
 ): Promise<ApprovalDecision> {
+  if (pendingApprovals.has(request.requestId)) {
+    return Promise.resolve({ approved: false, cancelled: true })
+  }
   return new Promise<ApprovalDecision>((resolve) => {
     let settled = false
     const cleanupFns: Array<() => void> = []
@@ -193,7 +224,7 @@ function waitForApproval(
       resolve(decision)
     }
 
-    const pending: PendingApproval = { settle }
+    const pending: PendingApproval = { request, responder: window.webContents, settle }
     pendingApprovals.set(request.requestId, pending)
 
     for (const signal of signals) {
@@ -217,6 +248,96 @@ function waitForApproval(
       settle({ approved: false, cancelled: true })
     }
   })
+}
+
+export interface RequestToolApprovalOptions {
+  signal?: AbortSignal
+  getWindow?: () => ApprovalWindow | null
+  requestId?: () => string
+  context: ToolApprovalContext
+  toolCallId: string
+  browser: NonNullable<ToolApprovalRequest['browser']>
+  onApprovalRequested?: (request: ToolApprovalRequest) => void
+  onApprovalResolved?: (request: ToolApprovalRequest, approved: boolean) => void
+  onApprovalCancelled?: (request: ToolApprovalRequest) => void
+}
+
+function safeBrowserApprovalMetadata(
+  value: RequestToolApprovalOptions['browser']
+): NonNullable<ToolApprovalRequest['browser']> | null {
+  try {
+    const parsed = new URL(value.origin)
+    if (
+      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+      parsed.username ||
+      parsed.password ||
+      parsed.origin !== value.origin ||
+      !['click', 'typeText', 'scroll', 'keypress'].includes(value.action) ||
+      !['read', 'write', 'irreversible'].includes(value.consequence) ||
+      !['external_origin', 'form_submission', 'irreversible'].includes(value.reason)
+    ) {
+      return null
+    }
+    return { ...value }
+  } catch {
+    return null
+  }
+}
+
+function browserApprovalSummary(browser: NonNullable<ToolApprovalRequest['browser']>): string {
+  const actionLabels = {
+    click: '点击',
+    typeText: '输入文本',
+    scroll: '滚动',
+    keypress: '按键'
+  }
+  const consequenceLabels = {
+    read: '读取/导航',
+    write: '修改页面状态',
+    irreversible: '不可逆操作'
+  }
+  const reasonLabels = {
+    external_origin: '外部网站操作',
+    form_submission: '提交表单',
+    irreversible: '不可逆操作'
+  }
+  return [
+    `来源：${browser.origin}`,
+    `操作：${actionLabels[browser.action]}`,
+    `影响：${consequenceLabels[browser.consequence]}`,
+    `原因：${reasonLabels[browser.reason]}`
+  ].join('\n')
+}
+
+export async function requestToolApproval(
+  options: RequestToolApprovalOptions
+): Promise<'approved' | 'denied' | 'cancelled'> {
+  const browser = safeBrowserApprovalMetadata(options.browser)
+  if (!browser || options.signal?.aborted) return 'cancelled'
+  const window = options.getWindow ? options.getWindow() : getActiveWindow()
+  if (!isUsableWindow(window)) return 'cancelled'
+  const requestId = options.requestId ? options.requestId() : randomUUID()
+  if (!requestId || requestId.length > 256 || pendingApprovals.has(requestId)) return 'cancelled'
+  const request: ToolApprovalRequest = {
+    requestId,
+    toolCallId: options.toolCallId,
+    sessionId: options.context.sessionId,
+    ...(options.context.sessionPath ? { sessionPath: options.context.sessionPath } : {}),
+    ...(typeof options.context.sessionGeneration === 'number'
+      ? { sessionGeneration: options.context.sessionGeneration }
+      : {}),
+    runId: options.context.runId,
+    cwd: options.context.cwd,
+    ...(options.context.projectName ? { projectName: options.context.projectName } : {}),
+    toolName: 'browser',
+    summary: browserApprovalSummary(browser),
+    browser
+  }
+  options.onApprovalRequested?.(request)
+  const decision = await waitForApproval(request, window, [options.signal])
+  if (decision.cancelled) options.onApprovalCancelled?.(request)
+  else options.onApprovalResolved?.(request, decision.approved)
+  return decision.cancelled ? 'cancelled' : decision.approved ? 'approved' : 'denied'
 }
 
 function addWindowUnavailableListener(window: ApprovalWindow, callback: () => void): () => void {

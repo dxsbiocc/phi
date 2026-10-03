@@ -5,6 +5,7 @@ import type { BrowserPolicyContext } from './browser-policy'
 import type { BrowserCheckpointStore } from './browser-checkpoints'
 import type { BrowserEngine } from './browser-engine'
 import { BrowserWorkspace, BrowserWorkspaceDisposalError } from './browser-workspace'
+import type { BrowserActionApprovalRequester } from './browser-approval'
 
 export type BrowserWorkspaceOwner =
   { kind: 'ordinary' } | { kind: 'project'; location: ProjectLocation }
@@ -24,6 +25,7 @@ export interface BrowserWorkspaceRegistryOptions {
   policyContext?: BrowserPolicyContext
   checkpointStore?: BrowserCheckpointStore
   openExternal?: (url: string) => Promise<void>
+  approveAgentAction?: BrowserActionApprovalRequester
 }
 
 export class BrowserWorkspaceRegistryCleanupError extends Error {
@@ -101,6 +103,7 @@ export class BrowserWorkspaceRegistry {
   readonly #policyContext: BrowserPolicyContext
   readonly #checkpointStore?: BrowserCheckpointStore
   readonly #openExternal?: (url: string) => Promise<void>
+  readonly #approveAgentAction?: BrowserActionApprovalRequester
   readonly #entries = new Map<string, RegistryEntry>()
   #disposed = false
   #disposeAllPromise: Promise<void> | null = null
@@ -112,6 +115,7 @@ export class BrowserWorkspaceRegistry {
       : {}
     this.#checkpointStore = options.checkpointStore
     this.#openExternal = options.openExternal
+    this.#approveAgentAction = options.approveAgentAction
   }
 
   async getOrCreate(registration: BrowserWorkspaceRegistration): Promise<BrowserWorkspace> {
@@ -196,7 +200,8 @@ export class BrowserWorkspaceRegistry {
         engine,
         policyContext: this.#policyContext,
         checkpointStore: this.#checkpointStore,
-        ...(this.#openExternal ? { openExternal: this.#openExternal } : {})
+        ...(this.#openExternal ? { openExternal: this.#openExternal } : {}),
+        ...(this.#approveAgentAction ? { approveAgentAction: this.#approveAgentAction } : {})
       })
       entry.workspace = workspace
       return workspace

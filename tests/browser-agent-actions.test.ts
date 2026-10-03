@@ -10,6 +10,7 @@ import type {
 import { InMemoryBrowserEngine } from '../src/main/browser/in-memory-browser-engine'
 import { BrowserWorkspace } from '../src/main/browser/browser-workspace'
 import { buildBrowserTool } from '../src/main/agent/browser/browser-tool'
+import { BrowserToolHostCoordinator } from '../src/main/agent/browser/browser-tool-host'
 import type { BrowserActor, BrowserCommand, BrowserOutcome } from '../src/shared/browserTypes'
 import { browserCapabilities, successful } from './helpers/browserWorkspaceHarness'
 
@@ -192,7 +193,7 @@ test('agent typeText inserts bounded multiline text into an ordinary focused fie
       .recordedActions('engine-tab-1' as EngineTabHandle)
       .filter(({ command }) => command.type === 'describeTarget' || command.type === 'typeText')
       .map(({ command }) => command.type),
-    ['describeTarget', 'typeText']
+    ['describeTarget', 'describeTarget', 'typeText']
   )
 })
 
@@ -275,7 +276,7 @@ test('agent typeText accepts textarea and contenteditable targets but rejects th
   }
 })
 
-test('external-site typeText remains denied before target inspection until Task 20 approval exists', async () => {
+test('external-site typeText asks once for the exact tool call before delivering text', async () => {
   const engine = new InMemoryBrowserEngine({
     targetDescriptor: {
       tagName: 'INPUT',
@@ -284,8 +285,28 @@ test('external-site typeText remains denied before target inspection until Task 
       submitsForm: false
     }
   })
-  const { workspace } = harness(engine)
+  const approvals: Array<Record<string, unknown>> = []
+  let tabIdCounter = 0
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    idFactory: () => `tab-${++tabIdCounter}`,
+    actionStabilityMs: 0,
+    approveAgentAction: async (request) => {
+      approvals.push({ ...request })
+      return 'approved'
+    }
+  })
   const { tabId, revision } = await openAndSnapshot(workspace, runA, 'https://example.test/form')
+  await workspace.setViewport(tabId, { x: 0, y: 0, width: 800, height: 600 })
+  successful(
+    await workspace.execute(runA, {
+      type: 'snapshot',
+      requestId: 'external-presented-snapshot',
+      tabId
+    })
+  )
   const result = await workspace.execute(runA, {
     type: 'typeText',
     requestId: 'external-type',
@@ -296,13 +317,813 @@ test('external-site typeText remains denied before target inspection until Task 
     requireActive: true
   })
 
-  assert.equal(result.ok, false)
-  if (!result.ok) assert.equal(result.error.code, 'PERMISSION_DENIED')
+  successful(result)
+  assert.deepEqual(approvals, [
+    {
+      sessionId: 'session-1',
+      runId: 'run-a',
+      toolCallId: 'tool-a',
+      origin: 'https://example.test',
+      action: 'typeText',
+      consequence: 'write',
+      reason: 'external_origin'
+    }
+  ])
+  assert.doesNotMatch(JSON.stringify(approvals), /private sentinel/)
   assert.equal(
     engine
       .recordedActions('engine-tab-1' as EngineTabHandle)
       .filter(({ command }) => command.type === 'describeTarget' || command.type === 'typeText')
-      .length,
+      .map(({ command }) => command.type)
+      .join(','),
+    'describeTarget,describeTarget,typeText'
+  )
+})
+
+test('approved external input waits for the trusted overlay viewport to return before delivery', async () => {
+  const engine = new InMemoryBrowserEngine({
+    targetDescriptor: {
+      tagName: 'INPUT',
+      inputType: 'text',
+      editable: true,
+      submitsForm: false
+    }
+  })
+  let approvalStarted!: () => void
+  const started = new Promise<void>((resolve) => {
+    approvalStarted = resolve
+  })
+  let tabNumber = 0
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    idFactory: () => `overlay-tab-${++tabNumber}`,
+    actionStabilityMs: 0,
+    approvalRestoreTimeoutMs: 500,
+    approveAgentAction: async () => {
+      await workspace.setViewport('overlay-tab-1', null)
+      approvalStarted()
+      return 'approved'
+    }
+  })
+  const opened = await workspace.execute(runA, {
+    type: 'open',
+    requestId: 'overlay-open',
+    url: 'https://example.test/form'
+  })
+  successful(opened)
+  const tabId = opened.snapshot.activeTabId as string
+  const revision = opened.snapshot.tabs[0].documentRevision
+  await workspace.setViewport(tabId, { x: 0, y: 0, width: 800, height: 600 })
+  successful(await workspace.execute(runA, { type: 'snapshot', requestId: 'overlay-shot', tabId }))
+
+  const action = workspace.execute(runA, {
+    type: 'typeText',
+    requestId: 'overlay-type',
+    tabId,
+    text: 'private sentinel',
+    expectedDocumentRevision: revision,
+    consequence: 'write',
+    requireActive: true
+  })
+  await started
+  assert.equal(
+    engine
+      .recordedActions('engine-tab-1' as EngineTabHandle)
+      .filter(({ command }) => command.type === 'typeText').length,
+    0
+  )
+
+  await workspace.setViewport(tabId, { x: 0, y: 0, width: 800, height: 600 })
+  successful(await action)
+  assert.equal(
+    engine
+      .recordedActions('engine-tab-1' as EngineTabHandle)
+      .filter(({ command }) => command.type === 'typeText').length,
+    1
+  )
+})
+
+test('approval fails closed when the restored viewport produces different screenshot bounds', async () => {
+  class ResizedAfterOverlayEngine extends InMemoryBrowserEngine {
+    hidden = false
+    restored = false
+    override async setViewport(
+      handle: EngineTabHandle,
+      viewport: { x: number; y: number; width: number; height: number } | null
+    ): Promise<void> {
+      if (!viewport) this.hidden = true
+      else if (this.hidden) this.restored = true
+      await super.setViewport(handle, viewport)
+    }
+    override async execute(
+      handle: EngineTabHandle,
+      command: EngineCommand,
+      signal?: AbortSignal
+    ): Promise<EngineResult> {
+      const result = await super.execute(handle, command, signal)
+      if (command.type === 'screenshot' && this.restored && result.ok && result.screenshot) {
+        return {
+          ...result,
+          screenshot: { ...result.screenshot, width: result.screenshot.width + 1 }
+        }
+      }
+      return result
+    }
+  }
+  const engine = new ResizedAfterOverlayEngine()
+  let approvalStarted!: () => void
+  const started = new Promise<void>((resolve) => {
+    approvalStarted = resolve
+  })
+  let tabNumber = 0
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    idFactory: () => `resize-tab-${++tabNumber}`,
+    actionStabilityMs: 0,
+    approvalRestoreTimeoutMs: 500,
+    approveAgentAction: async () => {
+      await workspace.setViewport('resize-tab-1', null)
+      approvalStarted()
+      return 'approved'
+    }
+  })
+  const opened = await workspace.execute(runA, {
+    type: 'open',
+    requestId: 'resize-open',
+    url: 'https://example.test/'
+  })
+  successful(opened)
+  const tabId = opened.snapshot.activeTabId as string
+  const revision = opened.snapshot.tabs[0].documentRevision
+  await workspace.setViewport(tabId, { x: 0, y: 0, width: 800, height: 600 })
+  successful(await workspace.execute(runA, { type: 'snapshot', requestId: 'resize-shot', tabId }))
+  const pending = workspace.execute(runA, {
+    type: 'scroll',
+    requestId: 'resize-scroll',
+    tabId,
+    deltaX: 0,
+    deltaY: 120,
+    expectedDocumentRevision: revision,
+    requireActive: true
+  })
+  await started
+  await workspace.setViewport(tabId, { x: 0, y: 0, width: 700, height: 600 })
+  const result = await pending
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.error.code, 'STALE_DOCUMENT')
+  assert.equal(
+    engine
+      .recordedActions('engine-tab-1' as EngineTabHandle)
+      .filter(({ command }) => command.type === 'scroll').length,
+    0
+  )
+})
+
+test('trusted run stop aborts an approved action before viewport restore or engine input', async () => {
+  const engine = new InMemoryBrowserEngine()
+  let approvalStarted!: () => void
+  const started = new Promise<void>((resolve) => {
+    approvalStarted = resolve
+  })
+  let tabNumber = 0
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    idFactory: () => `stop-tab-${++tabNumber}`,
+    actionStabilityMs: 0,
+    approvalRestoreTimeoutMs: 500,
+    approveAgentAction: async () => {
+      await workspace.setViewport('stop-tab-1', null)
+      approvalStarted()
+      return 'approved'
+    }
+  })
+  const opened = await workspace.execute(runA, {
+    type: 'open',
+    requestId: 'stop-open',
+    url: 'https://example.test/'
+  })
+  successful(opened)
+  const tabId = opened.snapshot.activeTabId as string
+  const revision = opened.snapshot.tabs[0].documentRevision
+  await workspace.setViewport(tabId, { x: 0, y: 0, width: 800, height: 600 })
+  successful(await workspace.execute(runA, { type: 'snapshot', requestId: 'stop-shot', tabId }))
+
+  const host = new BrowserToolHostCoordinator({
+    resolveActiveRun: () => ({ runId: 'run-a', cancelled: false }),
+    executeAgent: (input, signal) => {
+      const trusted = input as {
+        runId: string
+        toolCallId: string
+        command: BrowserCommand
+      }
+      return workspace.execute(
+        {
+          kind: 'agent',
+          sessionId: 'session-1',
+          runId: trusted.runId,
+          toolCallId: trusted.toolCallId
+        },
+        trusted.command,
+        signal
+      )
+    }
+  })
+  const pending = host.execute({
+    originSessionId: 'runtime-session-1',
+    requestId: 'stop-scroll',
+    toolCallId: 'stop-tool',
+    command: {
+      type: 'scroll',
+      requestId: 'stop-scroll',
+      tabId,
+      deltaX: 0,
+      deltaY: 120,
+      expectedDocumentRevision: revision,
+      requireActive: true
+    }
+  })
+  await started
+  host.cancelRun('run-a', 'runtime-session-1')
+  const result = await pending
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.error.code, 'ACTION_CANCELLED')
+  assert.equal(
+    engine
+      .recordedActions('engine-tab-1' as EngineTabHandle)
+      .filter(({ command }) => command.type === 'scroll').length,
+    0
+  )
+})
+
+test('external input denial and cancellation deliver no native input', async () => {
+  for (const decision of ['denied', 'cancelled'] as const) {
+    const engine = new InMemoryBrowserEngine()
+    let tabNumber = 0
+    const workspace = new BrowserWorkspace({
+      sessionId: 'session-1',
+      partition: 'browser-project-a',
+      engine,
+      idFactory: () => `decision-tab-${++tabNumber}`,
+      actionStabilityMs: 0,
+      approveAgentAction: async () => decision
+    })
+    const opened = await workspace.execute(runA, {
+      type: 'open',
+      requestId: `decision-open-${decision}`,
+      url: 'https://example.test/'
+    })
+    successful(opened)
+    const tabId = opened.snapshot.activeTabId as string
+    const revision = opened.snapshot.tabs[0].documentRevision
+    await workspace.setViewport(tabId, { x: 0, y: 0, width: 800, height: 600 })
+    successful(
+      await workspace.execute(runA, {
+        type: 'snapshot',
+        requestId: `decision-shot-${decision}`,
+        tabId
+      })
+    )
+    const result = await workspace.execute(runA, {
+      type: 'scroll',
+      requestId: `decision-scroll-${decision}`,
+      tabId,
+      deltaX: 0,
+      deltaY: 120,
+      expectedDocumentRevision: revision,
+      requireActive: true
+    })
+    assert.equal(result.ok, false)
+    if (!result.ok) {
+      assert.equal(
+        result.error.code,
+        decision === 'denied' ? 'PERMISSION_DENIED' : 'ACTION_CANCELLED'
+      )
+    }
+    assert.equal(
+      engine
+        .recordedActions('engine-tab-1' as EngineTabHandle)
+        .filter(({ command }) => command.type === 'scroll').length,
+      0
+    )
+  }
+})
+
+test('manual navigation during a pending approval revokes the action without blocking browsing', async () => {
+  const engine = new InMemoryBrowserEngine()
+  let approvalStarted!: () => void
+  const started = new Promise<void>((resolve) => {
+    approvalStarted = resolve
+  })
+  let tabNumber = 0
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    idFactory: () => `manual-tab-${++tabNumber}`,
+    actionStabilityMs: 0,
+    approveAgentAction: (_prompt, signal) => {
+      approvalStarted()
+      return new Promise<'approved'>((resolve) => {
+        signal.addEventListener('abort', () => resolve('approved'), { once: true })
+      })
+    }
+  })
+  const opened = await workspace.execute(runA, {
+    type: 'open',
+    requestId: 'manual-open',
+    url: 'https://example.test/'
+  })
+  successful(opened)
+  const tabId = opened.snapshot.activeTabId as string
+  const revision = opened.snapshot.tabs[0].documentRevision
+  await workspace.setViewport(tabId, { x: 0, y: 0, width: 800, height: 600 })
+  successful(await workspace.execute(runA, { type: 'snapshot', requestId: 'manual-shot', tabId }))
+  const pending = workspace.execute(runA, {
+    type: 'scroll',
+    requestId: 'manual-pending-scroll',
+    tabId,
+    deltaX: 0,
+    deltaY: 120,
+    expectedDocumentRevision: revision,
+    requireActive: true
+  })
+  await started
+  const navigated = await workspace.execute(
+    { kind: 'human' },
+    {
+      type: 'navigate',
+      requestId: 'manual-navigate',
+      tabId,
+      url: 'https://other.example.test/'
+    }
+  )
+  successful(navigated)
+  const result = await pending
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.error.code, 'ACTION_CANCELLED')
+  assert.equal(
+    engine
+      .recordedActions('engine-tab-1' as EngineTabHandle)
+      .filter(({ command }) => command.type === 'scroll').length,
+    0
+  )
+})
+
+test('external approval is per tool call and never becomes an origin allowlist', async () => {
+  const engine = new InMemoryBrowserEngine()
+  const prompts: unknown[] = []
+  let tabNumber = 0
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    idFactory: () => `once-tab-${++tabNumber}`,
+    actionStabilityMs: 0,
+    approveAgentAction: async (prompt) => {
+      prompts.push(prompt)
+      return 'approved'
+    }
+  })
+  const opened = await workspace.execute(runA, {
+    type: 'open',
+    requestId: 'once-open',
+    url: 'https://example.test/'
+  })
+  successful(opened)
+  const tabId = opened.snapshot.activeTabId as string
+  const revision = opened.snapshot.tabs[0].documentRevision
+  await workspace.setViewport(tabId, { x: 0, y: 0, width: 800, height: 600 })
+  successful(await workspace.execute(runA, { type: 'snapshot', requestId: 'once-shot', tabId }))
+
+  for (const [index, toolCallId] of ['tool-once-1', 'tool-once-2'].entries()) {
+    successful(
+      await workspace.execute(
+        { ...runA, toolCallId },
+        {
+          type: 'scroll',
+          requestId: `once-scroll-${index}`,
+          tabId,
+          deltaX: 0,
+          deltaY: 120,
+          expectedDocumentRevision: revision,
+          requireActive: true
+        }
+      )
+    )
+  }
+  assert.equal(prompts.length, 2)
+  assert.deepEqual(
+    prompts.map((prompt) => (prompt as { toolCallId: string }).toolCallId),
+    ['tool-once-1', 'tool-once-2']
+  )
+})
+
+test('one screenshot cannot preflight two concurrent external actions on the same tab', async () => {
+  const engine = new InMemoryBrowserEngine()
+  const decisionResolvers: Array<(decision: 'approved') => void> = []
+  const promptToolCalls: string[] = []
+  let tabNumber = 0
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    idFactory: () => `mutex-tab-${++tabNumber}`,
+    actionStabilityMs: 0,
+    approveAgentAction: (prompt) => {
+      promptToolCalls.push(prompt.toolCallId)
+      return new Promise<'approved'>((resolve) => decisionResolvers.push(resolve))
+    }
+  })
+  const opened = await workspace.execute(runA, {
+    type: 'open',
+    requestId: 'mutex-open',
+    url: 'https://example.test/'
+  })
+  successful(opened)
+  const tabId = opened.snapshot.activeTabId as string
+  const revision = opened.snapshot.tabs[0].documentRevision
+  await workspace.setViewport(tabId, { x: 0, y: 0, width: 800, height: 600 })
+  successful(await workspace.execute(runA, { type: 'snapshot', requestId: 'mutex-shot', tabId }))
+  const action = (toolCallId: string, requestId: string): Promise<BrowserOutcome> =>
+    workspace.execute(
+      { ...runA, toolCallId },
+      {
+        type: 'scroll',
+        requestId,
+        tabId,
+        deltaX: 0,
+        deltaY: 120,
+        expectedDocumentRevision: revision,
+        requireActive: true
+      }
+    )
+  const first = action('mutex-tool-1', 'mutex-action-1')
+  await new Promise((resolve) => setImmediate(resolve))
+  const second = action('mutex-tool-2', 'mutex-action-2')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(promptToolCalls, ['mutex-tool-1'])
+
+  const refused = await second
+  assert.equal(refused.ok, false)
+  if (!refused.ok) assert.equal(refused.error.code, 'STALE_DOCUMENT')
+  decisionResolvers[0]?.('approved')
+  successful(await first)
+  assert.deepEqual(promptToolCalls, ['mutex-tool-1'])
+  assert.equal(
+    engine
+      .recordedActions('engine-tab-1' as EngineTabHandle)
+      .filter(({ command }) => command.type === 'scroll').length,
+    1
+  )
+})
+
+test('an approval queued behind another tab never publishes a stale origin prompt', async () => {
+  const engine = new InMemoryBrowserEngine()
+  let releaseFirst!: () => void
+  const firstDecision = new Promise<void>((resolve) => {
+    releaseFirst = resolve
+  })
+  const prompts: Array<{ toolCallId: string; origin: string }> = []
+  let tabNumber = 0
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    idFactory: () => `tail-tab-${++tabNumber}`,
+    actionStabilityMs: 0,
+    approveAgentAction: async (prompt) => {
+      prompts.push({ toolCallId: prompt.toolCallId, origin: prompt.origin })
+      if (prompts.length === 1) await firstDecision
+      return 'approved'
+    }
+  })
+  const firstOpened = await workspace.execute(runA, {
+    type: 'open',
+    requestId: 'tail-open-a',
+    url: 'https://a.example.test/'
+  })
+  successful(firstOpened)
+  const firstTabId = firstOpened.snapshot.activeTabId as string
+  const firstRevision = firstOpened.snapshot.tabs[0].documentRevision
+  await workspace.setViewport(firstTabId, { x: 0, y: 0, width: 800, height: 600 })
+  successful(
+    await workspace.execute(runA, { type: 'snapshot', requestId: 'tail-shot-a', tabId: firstTabId })
+  )
+  const first = workspace.execute(
+    { ...runA, toolCallId: 'tail-tool-a' },
+    {
+      type: 'scroll',
+      requestId: 'tail-action-a',
+      tabId: firstTabId,
+      deltaX: 0,
+      deltaY: 120,
+      expectedDocumentRevision: firstRevision,
+      requireActive: true
+    }
+  )
+  while (prompts.length === 0) await new Promise((resolve) => setImmediate(resolve))
+
+  const secondOpened = await workspace.execute(
+    { kind: 'human' },
+    { type: 'open', requestId: 'tail-open-b', url: 'https://b.example.test/' }
+  )
+  successful(secondOpened)
+  const secondTabId = secondOpened.snapshot.activeTabId as string
+  const secondTab = secondOpened.snapshot.tabs.find((tab) => tab.id === secondTabId)
+  assert.ok(secondTab)
+  await workspace.setViewport(secondTabId, { x: 0, y: 0, width: 800, height: 600 })
+  successful(
+    await workspace.execute(runA, {
+      type: 'snapshot',
+      requestId: 'tail-shot-b',
+      tabId: secondTabId,
+      expectedDocumentRevision: secondTab.documentRevision,
+      requireActive: true
+    })
+  )
+  const second = workspace.execute(
+    { ...runA, toolCallId: 'tail-tool-b' },
+    {
+      type: 'scroll',
+      requestId: 'tail-action-b',
+      tabId: secondTabId,
+      deltaX: 0,
+      deltaY: 120,
+      expectedDocumentRevision: secondTab.documentRevision,
+      requireActive: true
+    }
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  successful(
+    await workspace.execute(
+      { kind: 'human' },
+      {
+        type: 'navigate',
+        requestId: 'tail-navigate-b',
+        tabId: secondTabId,
+        url: 'https://changed.example.test/'
+      }
+    )
+  )
+  releaseFirst()
+  const [firstResult, secondResult] = await Promise.all([first, second])
+  assert.equal(firstResult.ok, false)
+  assert.equal(secondResult.ok, false)
+  assert.deepEqual(prompts, [{ toolCallId: 'tail-tool-a', origin: 'https://a.example.test' }])
+  assert.equal(
+    engine
+      .recordedActions('engine-tab-2' as EngineTabHandle)
+      .filter(({ command }) => command.type === 'scroll').length,
+    0
+  )
+})
+
+test('loopback form submission and declared irreversible input require explicit confirmation', async () => {
+  for (const value of [
+    {
+      descriptor: {
+        tagName: 'BUTTON',
+        role: 'button',
+        accessibleLabel: 'Save changes',
+        formMethod: 'post',
+        formAction: 'http://localhost:3000/submit',
+        editable: false,
+        submitsForm: true
+      },
+      consequence: 'write' as const,
+      reason: 'form_submission'
+    },
+    {
+      descriptor: {
+        tagName: 'A',
+        role: 'link',
+        accessibleLabel: 'Finalize draft',
+        editable: false,
+        submitsForm: false
+      },
+      consequence: 'irreversible' as const,
+      reason: 'irreversible'
+    }
+  ]) {
+    const engine = new InMemoryBrowserEngine({ targetDescriptor: value.descriptor })
+    const reasons: string[] = []
+    let tabNumber = 0
+    const workspace = new BrowserWorkspace({
+      sessionId: 'session-1',
+      partition: 'browser-project-a',
+      engine,
+      idFactory: () => `confirm-tab-${++tabNumber}`,
+      actionStabilityMs: 0,
+      approveAgentAction: async (prompt) => {
+        reasons.push(prompt.reason)
+        return 'approved'
+      }
+    })
+    const opened = await workspace.execute(runA, {
+      type: 'open',
+      requestId: `confirm-open-${value.reason}`,
+      url: 'http://localhost:3000/form'
+    })
+    successful(opened)
+    const tabId = opened.snapshot.activeTabId as string
+    const revision = opened.snapshot.tabs[0].documentRevision
+    await workspace.setViewport(tabId, { x: 0, y: 0, width: 800, height: 600 })
+    successful(
+      await workspace.execute(runA, {
+        type: 'snapshot',
+        requestId: `confirm-shot-${value.reason}`,
+        tabId
+      })
+    )
+    successful(
+      await workspace.execute(runA, {
+        type: 'click',
+        requestId: `confirm-click-${value.reason}`,
+        tabId,
+        x: 0,
+        y: 0,
+        expectedDocumentRevision: revision,
+        consequence: value.consequence,
+        requireActive: true
+      })
+    )
+    assert.deepEqual(reasons, [value.reason])
+  }
+})
+
+test('purchase-labelled external targets require handoff and cannot be approved', async () => {
+  const engine = new InMemoryBrowserEngine({
+    targetDescriptor: {
+      tagName: 'BUTTON',
+      role: 'button',
+      accessibleLabel: 'Buy now',
+      editable: false,
+      submitsForm: true
+    }
+  })
+  let approvals = 0
+  let tabNumber = 0
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    idFactory: () => `purchase-tab-${++tabNumber}`,
+    actionStabilityMs: 0,
+    approveAgentAction: async () => {
+      approvals += 1
+      return 'approved'
+    }
+  })
+  const opened = await workspace.execute(runA, {
+    type: 'open',
+    requestId: 'purchase-open',
+    url: 'https://shop.example.test/'
+  })
+  successful(opened)
+  const tabId = opened.snapshot.activeTabId as string
+  const revision = opened.snapshot.tabs[0].documentRevision
+  successful(await workspace.execute(runA, { type: 'snapshot', requestId: 'purchase-shot', tabId }))
+  const result = await workspace.execute(runA, {
+    type: 'click',
+    requestId: 'purchase-click',
+    tabId,
+    x: 0,
+    y: 0,
+    expectedDocumentRevision: revision,
+    consequence: 'write',
+    requireActive: true
+  })
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.error.code, 'USER_HANDOFF_REQUIRED')
+  assert.equal(approvals, 0)
+})
+
+test('external click approval only accepts a structural navigation allowlist', async () => {
+  for (const value of [
+    {
+      descriptor: {
+        tagName: 'A',
+        role: 'link',
+        accessibleLabel: 'Read details',
+        editable: false,
+        submitsForm: false
+      },
+      expectedOk: true
+    },
+    {
+      descriptor: {
+        tagName: 'BUTTON',
+        role: 'button',
+        accessibleLabel: 'Continue',
+        editable: false,
+        submitsForm: false
+      },
+      expectedOk: false
+    }
+  ]) {
+    const engine = new InMemoryBrowserEngine({ targetDescriptor: value.descriptor })
+    let approvals = 0
+    let tabNumber = 0
+    const workspace = new BrowserWorkspace({
+      sessionId: 'session-1',
+      partition: 'browser-project-a',
+      engine,
+      idFactory: () => `external-click-tab-${++tabNumber}`,
+      actionStabilityMs: 0,
+      approveAgentAction: async () => {
+        approvals += 1
+        return 'approved'
+      }
+    })
+    const opened = await workspace.execute(runA, {
+      type: 'open',
+      requestId: `external-click-open-${value.descriptor.tagName}`,
+      url: 'https://example.test/'
+    })
+    successful(opened)
+    const tabId = opened.snapshot.activeTabId as string
+    const revision = opened.snapshot.tabs[0].documentRevision
+    await workspace.setViewport(tabId, { x: 0, y: 0, width: 800, height: 600 })
+    successful(
+      await workspace.execute(runA, {
+        type: 'snapshot',
+        requestId: `external-click-shot-${value.descriptor.tagName}`,
+        tabId
+      })
+    )
+    const result = await workspace.execute(runA, {
+      type: 'click',
+      requestId: `external-click-${value.descriptor.tagName}`,
+      tabId,
+      x: 0,
+      y: 0,
+      expectedDocumentRevision: revision,
+      consequence: 'read',
+      requireActive: true
+    })
+    assert.equal(result.ok, value.expectedOk)
+    assert.equal(approvals, value.expectedOk ? 1 : 0)
+    if (!result.ok) assert.equal(result.error.code, 'USER_HANDOFF_REQUIRED')
+  }
+})
+
+test('external POST submission requires handoff before approval or input', async () => {
+  const engine = new InMemoryBrowserEngine({
+    targetDescriptor: {
+      tagName: 'BUTTON',
+      role: 'button',
+      accessibleLabel: 'Continue',
+      formMethod: 'post',
+      formAction: 'https://example.test/submit',
+      editable: false,
+      submitsForm: true
+    }
+  })
+  let approvals = 0
+  let tabNumber = 0
+  const workspace = new BrowserWorkspace({
+    sessionId: 'session-1',
+    partition: 'browser-project-a',
+    engine,
+    idFactory: () => `post-tab-${++tabNumber}`,
+    actionStabilityMs: 0,
+    approveAgentAction: async () => {
+      approvals += 1
+      return 'approved'
+    }
+  })
+  const opened = await workspace.execute(runA, {
+    type: 'open',
+    requestId: 'post-open',
+    url: 'https://example.test/form'
+  })
+  successful(opened)
+  const tabId = opened.snapshot.activeTabId as string
+  const revision = opened.snapshot.tabs[0].documentRevision
+  successful(await workspace.execute(runA, { type: 'snapshot', requestId: 'post-shot', tabId }))
+  const result = await workspace.execute(runA, {
+    type: 'click',
+    requestId: 'post-click',
+    tabId,
+    x: 0,
+    y: 0,
+    expectedDocumentRevision: revision,
+    consequence: 'write',
+    requireActive: true
+  })
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.error.code, 'USER_HANDOFF_REQUIRED')
+  assert.equal(approvals, 0)
+  assert.equal(
+    engine
+      .recordedActions('engine-tab-1' as EngineTabHandle)
+      .filter(({ command }) => command.type === 'click').length,
     0
   )
 })
@@ -341,7 +1162,7 @@ test('agent input fails closed for a noneditable focused target and a submit-cap
         consequence: 'read',
         requireActive: true
       }),
-      code: 'USER_HANDOFF_REQUIRED'
+      code: 'PERMISSION_DENIED'
     },
     {
       descriptor: { tagName: 'WEBVIEW', editable: false, submitsForm: false },
@@ -355,7 +1176,7 @@ test('agent input fails closed for a noneditable focused target and a submit-cap
         consequence: 'read',
         requireActive: true
       }),
-      code: 'PERMISSION_DENIED'
+      code: 'USER_HANDOFF_REQUIRED'
     }
   ] as const) {
     const engine = new InMemoryBrowserEngine({ targetDescriptor: value.descriptor })
@@ -450,7 +1271,7 @@ test('input cannot reuse another run screenshot and only succeeds after current 
   )
 })
 
-test('browser actions serialize, honor queued cancellation, and do not replay duplicate requests', async () => {
+test('browser actions serialize, reject a second same-snapshot action, and do not replay duplicate requests', async () => {
   let releaseFirst!: () => void
   let firstStarted!: () => void
   const started = new Promise<void>((resolve) => {
@@ -506,7 +1327,7 @@ test('browser actions serialize, honor queued cancellation, and do not replay du
   successful(await first)
   const cancelled = await queued
   assert.equal(cancelled.ok, false)
-  if (!cancelled.ok) assert.equal(cancelled.error.code, 'ACTION_CANCELLED')
+  if (!cancelled.ok) assert.equal(cancelled.error.code, 'STALE_DOCUMENT')
 
   const replay = await workspace.execute(runA, {
     type: 'click',
@@ -985,7 +1806,8 @@ test('replayed typeText tool calls never resend text for the same stable tool ca
     action: 'typeText',
     tabId,
     expectedDocumentRevision: revision,
-    text: 'private sentinel'
+    text: 'private sentinel',
+    consequence: 'write'
   }
 
   await tool.execute('stable-type-call', params, undefined, {} as never)

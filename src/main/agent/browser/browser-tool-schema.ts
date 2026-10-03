@@ -86,10 +86,13 @@ export function browserToolParameters(): Record<string, unknown> {
                   minimum: 0,
                   maximum: BROWSER_MAX_SCREENSHOT_COORDINATE
                 },
-                consequence: { type: 'string', enum: ['read'] }
+                consequence: { type: 'string', enum: ['read', 'write', 'irreversible'] }
               }
             : action === 'typeText'
-              ? { text: { type: 'string' } }
+              ? {
+                  text: { type: 'string' },
+                  consequence: { type: 'string', enum: ['write', 'irreversible'] }
+                }
               : action === 'scroll'
                 ? {
                     deltaX: {
@@ -119,7 +122,7 @@ export function browserToolParameters(): Record<string, unknown> {
           ...(action === 'click'
             ? ['x', 'y', 'consequence']
             : action === 'typeText'
-              ? ['text']
+              ? ['text', 'consequence']
               : action === 'scroll'
                 ? ['deltaX', 'deltaY']
                 : ['key'])

@@ -339,6 +339,7 @@ test('fixed target inspection source contains sensitive classification but no fi
   assert.match(FOCUSED_TARGET_INSPECTION_SOURCE, /action\.hash = ''/)
   assert.match(FOCUSED_TARGET_INSPECTION_SOURCE, /action\.username = ''/)
   assert.match(FOCUSED_TARGET_INSPECTION_SOURCE, /candidate\.tagName === 'WEBVIEW'/)
+  assert.match(FOCUSED_TARGET_INSPECTION_SOURCE, /fingerprint: 'target-1'/)
   assert.doesNotMatch(
     FOCUSED_TARGET_INSPECTION_SOURCE,
     /\.value\b|innerHTML|outerHTML|document\.querySelector/
@@ -446,7 +447,7 @@ test('coordinate click never dispatches into embedded content targets', async ()
       expectedTarget: { descriptor, fingerprint: 'target-1' }
     })
     assert.equal(result.ok, false)
-    if (!result.ok) assert.equal(result.error.code, 'PERMISSION_DENIED')
+    if (!result.ok) assert.equal(result.error.code, 'USER_HANDOFF_REQUIRED')
     assert.deepEqual(value.views[0].webContents.inputEvents, [])
     await value.engine.dispose()
   }

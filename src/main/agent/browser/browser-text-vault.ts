@@ -95,12 +95,14 @@ function validTypeTextInput(input: Record<string, unknown>): input is Record<str
   tabId: string
   expectedDocumentRevision: number
   text: string
+  consequence: 'write' | 'irreversible'
 } {
   const expectedKeys = [
     'action',
     'tabId',
     'expectedDocumentRevision',
     'text',
+    'consequence',
     ...(Object.hasOwn(input, 'target') ? ['target'] : [])
   ].sort()
   const actualKeys = Object.keys(input).sort()
@@ -111,6 +113,7 @@ function validTypeTextInput(input: Record<string, unknown>): input is Record<str
     boundedIdentity(input.tabId) &&
     validRevision(input.expectedDocumentRevision) &&
     validOptionalTarget(input) &&
+    (input.consequence === 'write' || input.consequence === 'irreversible') &&
     validText(input.text)
   )
 }
@@ -205,7 +208,8 @@ export class BrowserTextVault {
       ...(validRevision(input.expectedDocumentRevision)
         ? { expectedDocumentRevision: input.expectedDocumentRevision }
         : {}),
-      text: placeholder
+      text: placeholder,
+      consequence: input.consequence
     }
   }
 
@@ -224,11 +228,18 @@ export class BrowserTextVault {
 
 function validTypeTextShapeWithPlaceholder(input: Record<string, unknown>): boolean {
   return (
-    optionalTargetKeys(input, ['action', 'tabId', 'expectedDocumentRevision', 'text']) &&
+    optionalTargetKeys(input, [
+      'action',
+      'tabId',
+      'expectedDocumentRevision',
+      'text',
+      'consequence'
+    ]) &&
     input.action === 'typeText' &&
     boundedIdentity(input.tabId) &&
     validRevision(input.expectedDocumentRevision) &&
     validOptionalTarget(input) &&
+    (input.consequence === 'write' || input.consequence === 'irreversible') &&
     typeof input.text === 'string' &&
     input.text.startsWith(PLACEHOLDER_PREFIX)
   )
@@ -307,7 +318,9 @@ function sanitizeOrdinaryBrowserInput(input: Record<string, unknown>): Record<st
         validRevision(input.expectedDocumentRevision) &&
         validCoordinate(input.x) &&
         validCoordinate(input.y) &&
-        input.consequence === 'read'
+        (input.consequence === 'read' ||
+          input.consequence === 'write' ||
+          input.consequence === 'irreversible')
       ) {
         return {
           action: 'click',
@@ -315,7 +328,7 @@ function sanitizeOrdinaryBrowserInput(input: Record<string, unknown>): Record<st
           expectedDocumentRevision: input.expectedDocumentRevision,
           x: input.x,
           y: input.y,
-          consequence: 'read',
+          consequence: input.consequence,
           ...(input.target ? { target: input.target } : {})
         }
       }

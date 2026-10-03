@@ -71,6 +71,7 @@ import {
 import { FileSystemBrowserCheckpointStore } from './browser/browser-checkpoints'
 import { ElectronBrowserEngine } from './browser/electron-browser-engine'
 import { BrowserWorkspaceRegistry } from './browser/browser-workspace-registry'
+import type { BrowserActionApprovalPrompt } from './browser/browser-approval'
 import { BrowserToolHostCoordinator } from './agent/browser/browser-tool-host'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -163,6 +164,7 @@ import {
   editApprovalDigest,
   cancelToolApprovals,
   createApprovalExtension,
+  requestToolApproval,
   resolveToolApproval,
   writeApprovalDigest
 } from './agent/tool-approval'
@@ -515,9 +517,62 @@ function getBrowserWorkspaceRegistry(): BrowserWorkspaceRegistry {
       }),
     policyContext: browserPolicyContext(),
     checkpointStore: browserCheckpointStore,
-    openExternal: (url) => shell.openExternal(url)
+    openExternal: (url) => shell.openExternal(url),
+    approveAgentAction: requestBrowserActionApproval
   })
   return browserWorkspaceRegistry
+}
+
+async function requestBrowserActionApproval(
+  prompt: BrowserActionApprovalPrompt,
+  signal: AbortSignal
+): Promise<'approved' | 'denied' | 'cancelled'> {
+  const run = [...activePromptRuns.values()].find(
+    (candidate) =>
+      candidate.phiSessionId === prompt.sessionId &&
+      candidate.runId === prompt.runId &&
+      !candidate.cancelled
+  )
+  if (!run) return 'cancelled'
+  const manifest = findPhiSessionById(run.phiSessionId)
+  if (!manifest || signal.aborted) return 'cancelled'
+  const project = manifest.projectId ? getProject(manifest.projectId) : undefined
+  return requestToolApproval({
+    signal,
+    getWindow: () => {
+      const window = mainWindow
+      return window && !window.isDestroyed() ? window : null
+    },
+    context: {
+      sessionId: run.phiSessionId,
+      sessionPath: phiOnlySessionPath(run.phiSessionId),
+      sessionGeneration: run.sessionGeneration,
+      runId: run.runId,
+      cwd: run.cwd,
+      ...(project?.name ? { projectName: project.name } : {})
+    },
+    toolCallId: prompt.toolCallId,
+    browser: {
+      origin: prompt.origin,
+      action: prompt.action,
+      consequence: prompt.consequence,
+      reason: prompt.reason
+    },
+    onApprovalRequested: (request) => {
+      runnerRegistry.markNeedsApproval(run.phiSessionId, request.requestId, {
+        toolName: request.toolName,
+        summary: request.summary
+      })
+    },
+    onApprovalResolved: (request, approved) => {
+      if (approved) runnerRegistry.markApprovalApproved(run.phiSessionId, request.requestId)
+      else runnerRegistry.markApprovalDenied(run.phiSessionId, request.requestId)
+    },
+    onApprovalCancelled: (request) => {
+      runnerRegistry.markApprovalCancelled(run.phiSessionId, request.requestId)
+      sendToAllWindows('tool:approval-cancelled', request.requestId)
+    }
+  })
 }
 
 function cleanupBrowserWorkspaceRegistry(): void {
@@ -3435,6 +3490,7 @@ function setActivePromptRun(sessionKey: string, run: PromptRun): void {
 }
 
 function deleteActivePromptRun(sessionKey: string, run: PromptRun): void {
+  browserToolHostCoordinator.cancelRun(run.runId, run.session?.runtimeSessionId)
   const canonicalKey = resolveSessionKeyAlias(sessionKey)
   if (activePromptRuns.get(canonicalKey) === run) {
     activePromptRuns.delete(canonicalKey)
@@ -5361,9 +5417,15 @@ function createDirectoryListing(dirPath: string): {
   }
 }
 
-function cancelPendingToolApprovals(): void {
-  cancelToolApprovals()
-  notifyToolApprovalsCancelled()
+function cancelPendingToolApprovals(scope?: { sessionId: string; runId: string }): void {
+  const cancelled = cancelToolApprovals(scope) ?? []
+  if (!scope) {
+    notifyToolApprovalsCancelled()
+    return
+  }
+  for (const request of cancelled) {
+    sendToAllWindows('tool:approval-cancelled', request.requestId)
+  }
 }
 
 function cancelPendingAgentUserInteractions(): void {
@@ -5371,8 +5433,8 @@ function cancelPendingAgentUserInteractions(): void {
   notifyAgentUserInteractionsCancelled()
 }
 
-function cancelPendingRunWaits(): void {
-  cancelPendingToolApprovals()
+function cancelPendingRunWaits(scope?: { sessionId: string; runId: string }): void {
+  cancelPendingToolApprovals(scope)
   cancelPendingAgentUserInteractions()
 }
 
@@ -5881,9 +5943,17 @@ async function invalidateAgentSession(): Promise<void> {
   advancePromptGeneration(currentSessionKey)
   const activePromptRun = getActivePromptRun(currentSessionKey)
   if (activePromptRun) {
+    browserToolHostCoordinator.cancelRun(
+      activePromptRun.runId,
+      activePromptRun.session?.runtimeSessionId
+    )
     activePromptRun.cancelled = true
   }
-  cancelPendingRunWaits()
+  cancelPendingRunWaits(
+    activePromptRun
+      ? { sessionId: activePromptRun.phiSessionId, runId: activePromptRun.runId }
+      : undefined
+  )
   notifySessionChanged()
   void cleanupSessionRecord(previous)
 }
@@ -5893,17 +5963,17 @@ async function stopActivePrompt(): Promise<void> {
   advancePromptGeneration(currentSessionKey)
   const run = getActivePromptRun(currentSessionKey)
   if (!run) {
-    cancelPendingRunWaits()
     return
   }
 
+  browserToolHostCoordinator.cancelRun(run.runId, run.session?.runtimeSessionId)
   run.cancelled = true
   remoteBashManager.cancelSession(run.phiSessionId)
   remoteMutationManager.cancelSession(run.phiSessionId)
   runnerRegistry.stopRun(run.phiSessionId)
-  cancelPendingRunWaits()
+  cancelPendingRunWaits({ sessionId: run.phiSessionId, runId: run.runId })
   if (run.session) {
-    await abortSession(run.session)
+    await abortSessionWithoutCancellingApprovals(run.session)
   }
 }
 
@@ -5912,6 +5982,7 @@ async function stopAllPromptRuns(): Promise<void> {
   remoteMutationManager.cancelAll()
   for (const [sessionKey, run] of activePromptRuns) {
     advancePromptGeneration(sessionKey)
+    browserToolHostCoordinator.cancelRun(run.runId, run.session?.runtimeSessionId)
     run.cancelled = true
   }
   runnerRegistry.stopAll()
@@ -7949,8 +8020,16 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('tool:approval-response', async (_, requestId: string, approved: boolean) => {
-    resolveToolApproval(requestId, approved)
+  ipcMain.handle('tool:approval-response', async (event, requestId: unknown, approved: unknown) => {
+    if (
+      typeof requestId !== 'string' ||
+      requestId.length === 0 ||
+      requestId.length > 256 ||
+      typeof approved !== 'boolean'
+    ) {
+      return false
+    }
+    return resolveToolApproval(requestId, approved, event.sender)
   })
 
   ipcMain.handle(

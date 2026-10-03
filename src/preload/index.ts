@@ -297,6 +297,12 @@ type ToolApprovalRequest = {
   projectName?: string
   toolName: string
   summary: string
+  browser?: {
+    origin: string
+    action: 'click' | 'typeText' | 'scroll' | 'keypress'
+    consequence: 'read' | 'write' | 'irreversible'
+    reason: 'external_origin' | 'form_submission' | 'irreversible'
+  }
 }
 
 type PluginCatalogItem = {
@@ -902,7 +908,7 @@ type RendererAuthApi = {
   onWrapperRunsChanged: (cb: (change: { runId: string }) => void) => Unsubscribe
   onSessionChanged: (cb: (session: CurrentSession) => void) => Unsubscribe
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => Unsubscribe
-  onToolApprovalCancelled: (cb: () => void) => Unsubscribe
+  onToolApprovalCancelled: (cb: (requestId?: string) => void) => Unsubscribe
   respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
   listPlugins: () => Promise<PluginCatalogItem[]>
   installPlugin: (source: string) => Promise<PluginCatalogItem[]>
@@ -1439,9 +1445,9 @@ const api: RendererAuthApi = {
       ipcRenderer.removeListener('tool:approval-request', handler)
     }
   },
-  onToolApprovalCancelled: (cb: () => void): Unsubscribe => {
-    const handler = (): void => {
-      cb()
+  onToolApprovalCancelled: (cb: (requestId?: string) => void): Unsubscribe => {
+    const handler = (_: unknown, requestId?: string): void => {
+      cb(requestId)
     }
 
     ipcRenderer.on('tool:approval-cancelled', handler)

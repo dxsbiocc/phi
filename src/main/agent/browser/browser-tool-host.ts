@@ -154,7 +154,13 @@ function parseCommand(
       'y',
       'consequence'
     ])
-    if (command.consequence !== 'read') throw new Error('Invalid browser host request')
+    if (
+      command.consequence !== 'read' &&
+      command.consequence !== 'write' &&
+      command.consequence !== 'irreversible'
+    ) {
+      throw new Error('Invalid browser host request')
+    }
     return {
       type: 'click',
       requestId,
@@ -163,7 +169,7 @@ function parseCommand(
       requireActive: true,
       x: coordinate(command.x),
       y: coordinate(command.y),
-      consequence: 'read'
+      consequence: command.consequence
     }
   }
   if (command.type === 'typeText') {
@@ -175,7 +181,9 @@ function parseCommand(
       'text',
       'consequence'
     ])
-    if (command.consequence !== 'write') throw new Error('Invalid browser host request')
+    if (command.consequence !== 'write' && command.consequence !== 'irreversible') {
+      throw new Error('Invalid browser host request')
+    }
     return {
       type: 'typeText',
       requestId,
@@ -183,7 +191,7 @@ function parseCommand(
       expectedDocumentRevision: documentRevision(command.expectedDocumentRevision),
       requireActive: true,
       text: boundedString(command.text, BROWSER_MAX_TEXT_BYTES),
-      consequence: 'write'
+      consequence: command.consequence
     }
   }
   if (command.type === 'scroll') {
@@ -257,17 +265,30 @@ function parseRequest(value: unknown): ParsedRequest {
   }
 }
 
-function requestKey(originSessionId: string, requestId: string): string {
-  return JSON.stringify([originSessionId, requestId])
+function requestIdentityKey(
+  originSessionId: string,
+  runId: string,
+  toolCallId: string,
+  requestId: string
+): string {
+  return JSON.stringify([originSessionId, runId, toolCallId, requestId])
+}
+
+function requestBaseKey(originSessionId: string, toolCallId: string, requestId: string): string {
+  return JSON.stringify([originSessionId, toolCallId, requestId])
 }
 
 export class BrowserToolHostCoordinator {
   readonly #resolveActiveRun: BrowserToolHostCoordinatorOptions['resolveActiveRun']
   readonly #executeAgent: BrowserToolHostCoordinatorOptions['executeAgent']
   readonly #rememberedRequestCap: number
-  readonly #controllers = new Map<string, AbortController>()
+  readonly #controllers = new Map<
+    string,
+    { controller: AbortController; runId: string; originSessionId: string }
+  >()
   readonly #cancelledBeforeStart = new Set<string>()
   readonly #completed = new Set<string>()
+  readonly #requestRuns = new Map<string, string>()
 
   constructor(options: BrowserToolHostCoordinatorOptions) {
     this.#resolveActiveRun = options.resolveActiveRun
@@ -284,12 +305,27 @@ export class BrowserToolHostCoordinator {
     const run = this.#resolveActiveRun(request.originSessionId)
     if (!run || run.cancelled) throw new Error('Active browser run is unavailable')
 
-    const key = requestKey(request.originSessionId, request.requestId)
+    const baseKey = requestBaseKey(request.originSessionId, request.toolCallId, request.requestId)
+    const existingRunId = this.#requestRuns.get(baseKey)
+    if (existingRunId && existingRunId !== run.runId) {
+      throw new Error('Browser request belongs to another run')
+    }
+    this.#rememberMap(this.#requestRuns, baseKey, run.runId)
+    const key = requestIdentityKey(
+      request.originSessionId,
+      run.runId,
+      request.toolCallId,
+      request.requestId
+    )
     if (this.#controllers.has(key)) throw new Error('Browser request is already active')
     this.#completed.delete(key)
     const controller = new AbortController()
     if (this.#cancelledBeforeStart.delete(key)) controller.abort()
-    this.#controllers.set(key, controller)
+    this.#controllers.set(key, {
+      controller,
+      runId: run.runId,
+      originSessionId: request.originSessionId
+    })
     try {
       return await this.#executeAgent(
         {
@@ -301,25 +337,44 @@ export class BrowserToolHostCoordinator {
         controller.signal
       )
     } finally {
-      if (this.#controllers.get(key) === controller) this.#controllers.delete(key)
+      if (this.#controllers.get(key)?.controller === controller) this.#controllers.delete(key)
       this.#remember(this.#completed, key)
     }
   }
 
   cancel(input: unknown): void {
-    if (!isRecord(input)) throw new Error('Invalid browser host request')
+    if (!isRecord(input) || !exactKeys(input, ['originSessionId', 'requestId', 'toolCallId'])) {
+      throw new Error('Invalid browser host request')
+    }
     const originSessionId = boundedString(input.originSessionId, MAX_ORIGIN_ID_BYTES)
     const requestId = boundedString(input.requestId, MAX_ID_BYTES)
-    if (!this.#resolveActiveRun(originSessionId)) {
-      throw new Error('Active browser run is unavailable')
+    const toolCallId = boundedString(input.toolCallId, MAX_ID_BYTES)
+    const baseKey = requestBaseKey(originSessionId, toolCallId, requestId)
+    const recordedRunId = this.#requestRuns.get(baseKey)
+    if (recordedRunId) {
+      const recordedKey = requestIdentityKey(originSessionId, recordedRunId, toolCallId, requestId)
+      const active = this.#controllers.get(recordedKey)
+      if (active) active.controller.abort()
+      return
     }
-    const key = requestKey(originSessionId, requestId)
-    const controller = this.#controllers.get(key)
-    if (controller) {
-      controller.abort()
+    const currentRun = this.#resolveActiveRun(originSessionId)
+    if (!currentRun) throw new Error('Active browser run is unavailable')
+    const key = requestIdentityKey(originSessionId, currentRun.runId, toolCallId, requestId)
+    const active = this.#controllers.get(key)
+    if (active) {
+      active.controller.abort()
       return
     }
     if (!this.#completed.has(key)) this.#remember(this.#cancelledBeforeStart, key)
+  }
+
+  cancelRun(runId: string, originSessionId?: string): void {
+    if (!runId) return
+    for (const active of this.#controllers.values()) {
+      if (active.runId !== runId) continue
+      if (originSessionId && active.originSessionId !== originSessionId) continue
+      active.controller.abort()
+    }
   }
 
   #remember(target: Set<string>, key: string): void {
@@ -327,6 +382,16 @@ export class BrowserToolHostCoordinator {
     target.add(key)
     while (target.size > this.#rememberedRequestCap) {
       const oldest = target.values().next().value
+      if (typeof oldest !== 'string') break
+      target.delete(oldest)
+    }
+  }
+
+  #rememberMap(target: Map<string, string>, key: string, value: string): void {
+    target.delete(key)
+    target.set(key, value)
+    while (target.size > this.#rememberedRequestCap) {
+      const oldest = target.keys().next().value
       if (typeof oldest !== 'string') break
       target.delete(oldest)
     }
