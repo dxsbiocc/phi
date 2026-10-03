@@ -164,7 +164,6 @@ function WorkspaceSidebarNavButton({
 }
 
 export type AppActivityBarProps = {
-  activeView: string
   isWorkspaceSidebarModeExpanded: (mode: WorkspaceSidebarMode) => boolean
   shouldUseWorkspaceSidebarPreview: (mode: WorkspaceSidebarMode) => boolean
   openWorkspaceSidebarPreview: (mode: WorkspaceSidebarMode, anchorEl: HTMLElement) => void
@@ -172,7 +171,7 @@ export type AppActivityBarProps = {
   onSelectWorkspaceView: (view: 'chat' | 'projects') => void
   onSelectWorkspaceSidebarMode: (mode: WorkspaceSidebarMode) => void
   refreshAnalysisJupyterRuntimeStatus: () => Promise<void>
-  onOpenPhiPlugins: () => void
+  refreshPhiPlugins: () => Promise<void>
   refreshSkills: () => Promise<void>
   refreshMcpServers: () => Promise<void>
   setIsSettingsOpen: (open: boolean) => void
@@ -208,7 +207,6 @@ export type AppActivityBarProps = {
 }
 
 function AppActivityBarImpl({
-  activeView,
   isWorkspaceSidebarModeExpanded,
   shouldUseWorkspaceSidebarPreview,
   openWorkspaceSidebarPreview,
@@ -216,7 +214,7 @@ function AppActivityBarImpl({
   onSelectWorkspaceView,
   onSelectWorkspaceSidebarMode,
   refreshAnalysisJupyterRuntimeStatus,
-  onOpenPhiPlugins,
+  refreshPhiPlugins,
   refreshSkills,
   refreshMcpServers,
   setIsSettingsOpen,
@@ -356,9 +354,12 @@ function AppActivityBarImpl({
         <Tooltip title="插件" placement="right">
           <IconButton
             size="small"
-            color={activeView === 'plugins' ? 'primary' : 'default'}
-            sx={activityBarButtonSx(activeView === 'plugins')}
-            onClick={onOpenPhiPlugins}
+            color={isWorkspaceSidebarModeExpanded('plugins') ? 'primary' : 'default'}
+            sx={activityBarButtonSx(isWorkspaceSidebarModeExpanded('plugins'))}
+            onClick={() => {
+              onSelectWorkspaceSidebarMode('plugins')
+              void refreshPhiPlugins()
+            }}
           >
             <NavPluginsIcon fontSize="small" />
           </IconButton>
@@ -506,7 +507,6 @@ function AppActivityBarImpl({
 // whenever any session's runtime state changes anywhere in the app.
 function appActivityBarPropsEqual(prev: AppActivityBarProps, next: AppActivityBarProps): boolean {
   return (
-    prev.activeView === next.activeView &&
     prev.isWorkspaceSidebarModeExpanded === next.isWorkspaceSidebarModeExpanded &&
     prev.shouldUseWorkspaceSidebarPreview === next.shouldUseWorkspaceSidebarPreview &&
     prev.isWorkspaceSidebarPreviewOpen === next.isWorkspaceSidebarPreviewOpen &&

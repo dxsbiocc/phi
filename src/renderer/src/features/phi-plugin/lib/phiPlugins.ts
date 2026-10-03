@@ -11,6 +11,20 @@ type PluginComponentCollection = {
   environments?: readonly unknown[]
 }
 
+export type PhiPluginSourceCategory = 'bundled' | 'registry' | 'local'
+
+export const phiPluginSourceCategoryOrder: readonly PhiPluginSourceCategory[] = [
+  'bundled',
+  'registry',
+  'local'
+]
+
+export const phiPluginSourceCategoryLabels: Record<PhiPluginSourceCategory, string> = {
+  bundled: '内置',
+  registry: '软件源',
+  local: '本地目录'
+}
+
 const ENVIRONMENT_STATE_LABELS: Record<ManagedEnvironmentState, string> = {
   absent: '未构建',
   building: '构建中',
@@ -21,6 +35,10 @@ const ENVIRONMENT_STATE_LABELS: Record<ManagedEnvironmentState, string> = {
 
 export function phiPluginSourceLabel(source: 'bundled' | 'local'): string {
   return source === 'bundled' ? '内置' : '本地'
+}
+
+export function phiPluginDistributionLabel(distribution: PhiPluginSourceCategory): string {
+  return phiPluginSourceCategoryLabels[distribution]
 }
 
 export function phiPluginEnabledLabel(enabled: boolean): string {

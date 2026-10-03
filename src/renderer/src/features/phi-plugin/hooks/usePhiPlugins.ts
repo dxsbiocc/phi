@@ -4,6 +4,7 @@ import type {
   ManagedEnvironmentEntry,
   ManagedEnvironmentState
 } from '../../../../../shared/environmentTypes'
+import type { InstalledPackageView, PackageTrust } from '../../../../../shared/packageManagerTypes'
 import type {
   PhiPluginListItem,
   PhiPluginMutationResult
@@ -20,11 +21,14 @@ type PhiPluginWithComponents = PhiPluginListItem & {
 export type PhiPluginEnvironmentStatus = {
   name: string
   ref: string
+  envId?: string
   state?: ManagedEnvironmentState
   error?: string
 }
 
 export type PhiPluginDisplayItem = PhiPluginWithComponents & {
+  distribution: 'bundled' | 'registry' | 'local'
+  trust: PackageTrust
   environmentStatuses: PhiPluginEnvironmentStatus[]
 }
 
@@ -65,6 +69,7 @@ function managedEnvironmentsForPlugin(
       name:
         declaration?.name ?? environment.label?.trim() ?? environment.ref.replace(/^plugin:/, ''),
       ref: environment.ref,
+      envId: environment.envId,
       state: environment.state,
       ...(environment.error ? { error: environment.error } : {})
     }
@@ -80,12 +85,20 @@ function managedEnvironmentsForPlugin(
 
 function withEnvironmentStatuses(
   plugins: readonly PhiPluginListItem[],
-  environments: readonly ManagedEnvironmentEntry[]
+  environments: readonly ManagedEnvironmentEntry[],
+  packages: readonly InstalledPackageView[]
 ): PhiPluginDisplayItem[] {
+  const registryPlugins = new Map(
+    packages.filter((item) => item.type === 'plugin').map((item) => [item.id, item])
+  )
   return plugins.map((plugin) => {
     const enriched = plugin as PhiPluginWithComponents
+    const installedPackage = registryPlugins.get(plugin.id)
     return {
       ...enriched,
+      distribution:
+        plugin.source === 'bundled' ? 'bundled' : installedPackage ? 'registry' : 'local',
+      trust: plugin.source === 'bundled' ? 'builtin' : (installedPackage?.trust ?? 'imported'),
       environmentStatuses: managedEnvironmentsForPlugin(enriched, environments)
     }
   })
@@ -107,12 +120,13 @@ export function usePhiPlugins(): PhiPluginsState {
       setNotice(null)
     }
     try {
-      const [installed, environments] = await Promise.all([
+      const [installed, environments, packages] = await Promise.all([
         window.api.listPhiPlugins(),
-        window.api.listManagedEnvironments().catch((): ManagedEnvironmentEntry[] => [])
+        window.api.listManagedEnvironments().catch((): ManagedEnvironmentEntry[] => []),
+        window.api.listInstalledPackages().catch((): InstalledPackageView[] => [])
       ])
       if (request !== requestRef.current) return
-      setPlugins(withEnvironmentStatuses(installed, environments))
+      setPlugins(withEnvironmentStatuses(installed, environments, packages))
     } catch (cause) {
       if (request !== requestRef.current) return
       setError(`无法读取插件：${readableError(cause)}`)

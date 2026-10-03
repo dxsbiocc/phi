@@ -159,7 +159,7 @@ test('workspace sessions and resources share the same tab strip', () => {
   assert.match(appSource, /onClose=\{onCloseWorkspaceTab\}/)
   assert.match(
     appSource,
-    /activeWorkspaceResourceTab\.kind === 'plugins'[\s\S]{0,80}<PhiPluginsView \/>/
+    /activeWorkspaceResourceTab\.kind === 'plugins'[\s\S]{0,500}<PhiPluginsView/
   )
   assert.match(
     appSource,

@@ -2,6 +2,8 @@ import { memo, type MouseEvent, type ReactNode } from 'react'
 import { Box, Typography } from '@mui/material'
 import SessionSidebar from './components/SessionSidebar'
 import { McpSidebar } from './features/mcp/McpView'
+import { PhiPluginSidebar } from './features/phi-plugin/PhiPluginsView'
+import type { PhiPluginDisplayItem } from './features/phi-plugin/hooks/usePhiPlugins'
 import { RuntimeSidebar } from './features/runtime/RuntimeView'
 import { SkillSidebar } from './features/skill/SkillView'
 import { WrapperSidebar } from './features/wrapper/WrapperView'
@@ -56,6 +58,13 @@ export type AppWorkspaceSidebarProps = {
   onStartRuntime: (cwd: string) => void
   onStopRuntime: (cwd: string) => void
   onStopRuntimeNotebookKernel: (notebookPath: string) => void
+
+  phiPlugins: PhiPluginDisplayItem[]
+  activePhiPluginId: string | null
+  isLoadingPhiPlugins: boolean
+  onOpenPhiPlugin: (plugin: PhiPluginDisplayItem) => void
+  onOpenPhiPluginCatalog: () => void
+  isPhiPluginCatalogOpen?: boolean
 
   skills: SkillSummary[]
   activeSkillId: string | null
@@ -129,6 +138,12 @@ function AppWorkspaceSidebarImpl({
   onStartRuntime,
   onStopRuntime,
   onStopRuntimeNotebookKernel,
+  phiPlugins,
+  activePhiPluginId,
+  isLoadingPhiPlugins,
+  onOpenPhiPlugin,
+  onOpenPhiPluginCatalog,
+  isPhiPluginCatalogOpen,
   skills,
   activeSkillId,
   isLoadingSkills,
@@ -315,7 +330,16 @@ function AppWorkspaceSidebarImpl({
           onStopNotebookKernel={onStopRuntimeNotebookKernel}
         />
       )
-    ) : workspaceSidebarMode === 'plugins' ? null : workspaceSidebarMode === 'skills' ? (
+    ) : workspaceSidebarMode === 'plugins' ? (
+      <PhiPluginSidebar
+        plugins={phiPlugins}
+        loading={isLoadingPhiPlugins}
+        activePluginId={activePhiPluginId}
+        onSelectPlugin={onOpenPhiPlugin}
+        onOpenCatalog={onOpenPhiPluginCatalog}
+        catalogOpen={isPhiPluginCatalogOpen}
+      />
+    ) : workspaceSidebarMode === 'skills' ? (
       isRemoteProject ? (
         <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
           <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>

@@ -45,7 +45,8 @@ import type { BrowserTrustedOverlayRequest } from './features/browser/lib/browse
 import { useEnvironmentBuildNotices } from './features/jobs/hooks/useEnvironmentBuildNotices'
 import type { LocalPathKind } from './components/MarkdownContent'
 import { useDeveloperExtensionCatalog } from './features/developer-extensions/hooks/useDeveloperExtensionCatalog'
-import PhiPluginsView from './features/phi-plugin/PhiPluginsView'
+import PhiPluginsView, { PhiPluginCatalogDialog } from './features/phi-plugin/PhiPluginsView'
+import { usePhiPlugins, type PhiPluginDisplayItem } from './features/phi-plugin/hooks/usePhiPlugins'
 import { WrapperDetail } from './features/wrapper/WrapperView'
 import { useWrapperCatalog } from './features/wrapper/hooks/useWrapperCatalog'
 import {
@@ -743,6 +744,7 @@ function App(): React.JSX.Element {
   const workspaceSidebarPreviewCloseTimer = useRef<number | null>(null)
   const [isNewProjectDialogOpen, setIsNewProjectDialogOpen] = useState(false)
   const [isSkillCatalogOpen, setIsSkillCatalogOpen] = useState(false)
+  const [isPhiPluginCatalogOpen, setIsPhiPluginCatalogOpen] = useState(false)
   const [isBusy, setIsBusy] = useState(false)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -772,6 +774,8 @@ function App(): React.JSX.Element {
   const getActiveProjectId = useCallback(() => useSessionStore.getState().activeProjectId, [])
 
   const { extensions: plugins, refreshExtensions: refreshPlugins } = useDeveloperExtensionCatalog()
+  const phiPluginsState = usePhiPlugins()
+  const refreshPhiPlugins = phiPluginsState.refresh
   const {
     skills,
     promptAgents,
@@ -1988,6 +1992,9 @@ function App(): React.JSX.Element {
       if (workspaceSidebarMode === 'runtime') {
         void refreshAnalysisJupyterRuntimeStatus()
       }
+      if (workspaceSidebarMode === 'plugins') {
+        void refreshPhiPlugins()
+      }
       if (workspaceSidebarMode === 'skills') {
         void refreshSkills()
       }
@@ -2008,6 +2015,7 @@ function App(): React.JSX.Element {
     refreshAnalysisJupyterStatus,
     refreshAnalysisNotebooks,
     refreshMcpServers,
+    refreshPhiPlugins,
     refreshProjects,
     refreshSkills,
     workspaceSidebarMode
@@ -3297,7 +3305,7 @@ function App(): React.JSX.Element {
       }
 
       setWorkspaceSidebarMode(workspaceResourceKindToSidebarMode(tab.kind))
-      setIsSidebarOpen(tab.kind !== 'plugins')
+      setIsSidebarOpen(true)
       if (tab.kind === 'skills') {
         setActiveSkillId(tab.itemId)
       } else if (tab.kind === 'mcp') {
@@ -3337,6 +3345,18 @@ function App(): React.JSX.Element {
       title: '插件'
     })
   }, [openWorkspaceResourceTab])
+
+  const onOpenPhiPluginTab = useCallback(
+    (plugin: PhiPluginDisplayItem): void => {
+      openWorkspaceResourceTab({
+        kind: 'plugins',
+        itemId: plugin.id,
+        title: plugin.title,
+        subtitle: plugin.directory
+      })
+    },
+    [openWorkspaceResourceTab]
+  )
 
   const onOpenSkillTab = useCallback(
     (skill: SkillSummary): void => {
@@ -3643,6 +3663,13 @@ function App(): React.JSX.Element {
     activeWorkspaceResourceTab?.kind === 'skills'
       ? (skills.find((skill) => skill.id === activeWorkspaceResourceTab.itemId) ?? null)
       : null
+  const activeResourcePhiPlugin =
+    activeWorkspaceResourceTab?.kind === 'plugins'
+      ? (phiPluginsState.plugins.find(
+          (plugin) => plugin.id === activeWorkspaceResourceTab.itemId
+        ) ?? null)
+      : null
+  const activePhiPluginId = activeResourcePhiPlugin?.id ?? null
   const activeResourceMcpServer =
     activeWorkspaceResourceTab?.kind === 'mcp'
       ? (mcpServers.find((server) => server.id === activeWorkspaceResourceTab.itemId) ?? null)
@@ -3650,7 +3677,16 @@ function App(): React.JSX.Element {
 
   const activeWorkspaceResourceContent = activeWorkspaceResourceTab ? (
     activeWorkspaceResourceTab.kind === 'plugins' ? (
-      <PhiPluginsView />
+      <PhiPluginsView
+        plugin={activeResourcePhiPlugin}
+        busyPluginId={phiPluginsState.busyPluginId}
+        error={phiPluginsState.error}
+        notice={phiPluginsState.notice}
+        onClearError={phiPluginsState.clearError}
+        onClearNotice={phiPluginsState.clearNotice}
+        onSetEnabled={phiPluginsState.setEnabled}
+        onUninstall={phiPluginsState.uninstall}
+      />
     ) : activeWorkspaceResourceTab.kind === 'skills' ? (
       <SkillDetail
         selectedSkill={activeResourceSkill}
@@ -3658,7 +3694,11 @@ function App(): React.JSX.Element {
         projectCwd={activeProject?.location.kind === 'ssh' ? null : activeProject?.workingDirectory}
         onSetGlobalEnabled={onSetSkillGlobalEnabled}
         onSetProjectOverride={onSetSkillProjectOverride}
-        onNavigateToPlugin={() => onOpenPhiPlugins()}
+        onNavigateToPlugin={(pluginId) => {
+          const plugin = phiPluginsState.plugins.find((item) => item.id === pluginId)
+          if (plugin) onOpenPhiPluginTab(plugin)
+          else onOpenPhiPlugins()
+        }}
         onSetSkillDisabled={onSetSkillDisabled}
         onDeleteSkill={onDeleteSkill}
       />
@@ -3978,7 +4018,6 @@ function App(): React.JSX.Element {
           }}
         />
         <AppActivityBar
-          activeView={activeView}
           isWorkspaceSidebarModeExpanded={isWorkspaceSidebarModeExpanded}
           shouldUseWorkspaceSidebarPreview={shouldUseWorkspaceSidebarPreview}
           openWorkspaceSidebarPreview={openWorkspaceSidebarPreview}
@@ -3986,7 +4025,7 @@ function App(): React.JSX.Element {
           onSelectWorkspaceView={onSelectWorkspaceView}
           onSelectWorkspaceSidebarMode={onSelectWorkspaceSidebarMode}
           refreshAnalysisJupyterRuntimeStatus={refreshAnalysisJupyterRuntimeStatus}
-          onOpenPhiPlugins={onOpenPhiPlugins}
+          refreshPhiPlugins={refreshPhiPlugins}
           refreshSkills={refreshSkills}
           refreshMcpServers={refreshMcpServers}
           setIsSettingsOpen={setSettingsOpenWithBrowserGate}
@@ -4051,6 +4090,12 @@ function App(): React.JSX.Element {
           onStopRuntimeNotebookKernel={(notebookPath) => {
             void onStopRuntimeNotebookSession(notebookPath)
           }}
+          phiPlugins={phiPluginsState.plugins}
+          activePhiPluginId={activePhiPluginId}
+          isLoadingPhiPlugins={phiPluginsState.loading}
+          onOpenPhiPlugin={onOpenPhiPluginTab}
+          onOpenPhiPluginCatalog={() => setIsPhiPluginCatalogOpen(true)}
+          isPhiPluginCatalogOpen={isPhiPluginCatalogOpen}
           skills={skills}
           activeSkillId={activeSkillId}
           isLoadingSkills={isLoadingSkills}
@@ -4101,6 +4146,22 @@ function App(): React.JSX.Element {
             await refreshSkills()
             showSnackbar(`已更新「${entry.title}」`, 'success')
           }}
+        />
+
+        <PhiPluginCatalogDialog
+          open={isPhiPluginCatalogOpen}
+          plugins={phiPluginsState.plugins}
+          installWorking={phiPluginsState.busyPluginId === '__install__'}
+          feedbackError={phiPluginsState.error}
+          feedbackNotice={phiPluginsState.notice}
+          onClose={() => setIsPhiPluginCatalogOpen(false)}
+          onChanged={phiPluginsState.refresh}
+          onClearFeedback={() => {
+            phiPluginsState.clearError()
+            phiPluginsState.clearNotice()
+          }}
+          onShowError={phiPluginsState.showError}
+          onInstallFromDirectory={phiPluginsState.installFromDirectory}
         />
 
         {isWorkspaceView ? (
