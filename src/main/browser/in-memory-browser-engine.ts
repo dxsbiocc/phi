@@ -161,7 +161,15 @@ export class InMemoryBrowserEngine implements BrowserEngine {
         return {
           ok: true,
           state: cloneState(tab.state),
-          ...(this.#targetDescriptor ? { target: { ...this.#targetDescriptor } } : {})
+          ...(this.#targetDescriptor
+            ? {
+                target: { ...this.#targetDescriptor },
+                targetFingerprint: 'target-1'
+              }
+            : {
+                target: { tagName: 'DIV', editable: false, submitsForm: false },
+                targetFingerprint: 'target-1'
+              })
         }
       case 'click':
       case 'typeText':

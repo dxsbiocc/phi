@@ -85,7 +85,18 @@ test('agent click is active, revision-bound, read-only, loopback-only, and retur
       .recordedActions(handle)
       .filter(({ command }) => command.type === 'click')
       .map(({ command }) => command),
-    [{ type: 'click', x: 0, y: 0, expectedDocumentRevision: 1 }]
+    [
+      {
+        type: 'click',
+        x: 0,
+        y: 0,
+        expectedDocumentRevision: 1,
+        expectedTarget: {
+          descriptor: { tagName: 'DIV', editable: false, submitsForm: false },
+          fingerprint: 'target-1'
+        }
+      }
+    ]
   )
 
   const outsideScreenshot = await workspace.execute(runA, {
@@ -147,6 +158,220 @@ test('agent click is active, revision-bound, read-only, loopback-only, and retur
   })
   assert.equal(denied.ok, false)
   if (!denied.ok) assert.equal(denied.error.code, 'PERMISSION_DENIED')
+})
+
+test('agent typeText inserts bounded multiline text into an ordinary focused field and returns a fresh screenshot', async () => {
+  const engine = new InMemoryBrowserEngine({
+    targetDescriptor: {
+      tagName: 'INPUT',
+      inputType: 'text',
+      role: 'textbox',
+      accessibleLabel: 'Notes',
+      editable: true,
+      submitsForm: false
+    }
+  })
+  const { workspace } = harness(engine)
+  const { tabId, revision } = await openAndSnapshot(workspace)
+  const text = 'first line\nsecond line'
+
+  const typed = await workspace.execute(runA, {
+    type: 'typeText',
+    requestId: 'type-1',
+    tabId,
+    text,
+    expectedDocumentRevision: revision,
+    consequence: 'write',
+    requireActive: true
+  })
+
+  successful(typed)
+  assert.equal(typed.screenshot?.documentRevision, revision)
+  assert.deepEqual(
+    engine
+      .recordedActions('engine-tab-1' as EngineTabHandle)
+      .filter(({ command }) => command.type === 'describeTarget' || command.type === 'typeText')
+      .map(({ command }) => command.type),
+    ['describeTarget', 'typeText']
+  )
+})
+
+test('agent typeText hands password, file, and one-time-code fields back to the user without delivery', async () => {
+  for (const inputType of ['password', 'file', 'one-time-code']) {
+    const engine = new InMemoryBrowserEngine({
+      targetDescriptor: {
+        tagName: 'INPUT',
+        inputType,
+        editable: true,
+        submitsForm: false
+      }
+    })
+    const { workspace } = harness(engine)
+    const { tabId, revision } = await openAndSnapshot(workspace)
+
+    const result = await workspace.execute(runA, {
+      type: 'typeText',
+      requestId: `type-${inputType}`,
+      tabId,
+      text: 'private sentinel',
+      expectedDocumentRevision: revision,
+      consequence: 'write',
+      requireActive: true
+    })
+
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.equal(result.error.code, 'USER_HANDOFF_REQUIRED')
+    assert.equal(
+      engine
+        .recordedActions('engine-tab-1' as EngineTabHandle)
+        .filter(({ command }) => command.type === 'typeText').length,
+      0
+    )
+  }
+})
+
+test('agent typeText accepts textarea and contenteditable targets but rejects their noneditable state', async () => {
+  for (const descriptor of [
+    { tagName: 'TEXTAREA', editable: true, submitsForm: false },
+    { tagName: 'DIV', inputType: 'contenteditable', editable: true, submitsForm: false }
+  ]) {
+    const engine = new InMemoryBrowserEngine({ targetDescriptor: descriptor })
+    const { workspace } = harness(engine)
+    const { tabId, revision } = await openAndSnapshot(workspace)
+    const result = await workspace.execute(runA, {
+      type: 'typeText',
+      requestId: `allowed-${descriptor.tagName}-${descriptor.inputType ?? 'native'}`,
+      tabId,
+      text: 'multiline\ntext',
+      expectedDocumentRevision: revision,
+      consequence: 'write',
+      requireActive: true
+    })
+    successful(result)
+  }
+
+  for (const tagName of ['INPUT', 'TEXTAREA']) {
+    const engine = new InMemoryBrowserEngine({
+      targetDescriptor: {
+        tagName,
+        ...(tagName === 'INPUT' ? { inputType: 'text' } : {}),
+        editable: false,
+        submitsForm: false
+      }
+    })
+    const { workspace } = harness(engine)
+    const { tabId, revision } = await openAndSnapshot(workspace)
+    const result = await workspace.execute(runA, {
+      type: 'typeText',
+      requestId: `readonly-${tagName}`,
+      tabId,
+      text: 'must not be delivered',
+      expectedDocumentRevision: revision,
+      consequence: 'write',
+      requireActive: true
+    })
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.equal(result.error.code, 'PERMISSION_DENIED')
+  }
+})
+
+test('external-site typeText remains denied before target inspection until Task 20 approval exists', async () => {
+  const engine = new InMemoryBrowserEngine({
+    targetDescriptor: {
+      tagName: 'INPUT',
+      inputType: 'text',
+      editable: true,
+      submitsForm: false
+    }
+  })
+  const { workspace } = harness(engine)
+  const { tabId, revision } = await openAndSnapshot(workspace, runA, 'https://example.test/form')
+  const result = await workspace.execute(runA, {
+    type: 'typeText',
+    requestId: 'external-type',
+    tabId,
+    text: 'private sentinel',
+    expectedDocumentRevision: revision,
+    consequence: 'write',
+    requireActive: true
+  })
+
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.error.code, 'PERMISSION_DENIED')
+  assert.equal(
+    engine
+      .recordedActions('engine-tab-1' as EngineTabHandle)
+      .filter(({ command }) => command.type === 'describeTarget' || command.type === 'typeText')
+      .length,
+    0
+  )
+})
+
+test('agent input fails closed for a noneditable focused target and a submit-capable click target', async () => {
+  for (const value of [
+    {
+      descriptor: { tagName: 'DIV', editable: false, submitsForm: false },
+      command: (tabId: string, revision: number): BrowserCommand => ({
+        type: 'typeText',
+        requestId: 'noneditable-type',
+        tabId,
+        text: 'must not be delivered',
+        expectedDocumentRevision: revision,
+        consequence: 'write',
+        requireActive: true
+      }),
+      code: 'PERMISSION_DENIED'
+    },
+    {
+      descriptor: {
+        tagName: 'BUTTON',
+        role: 'button',
+        formMethod: 'post',
+        formAction: 'http://localhost:3000/submit',
+        editable: false,
+        submitsForm: true
+      },
+      command: (tabId: string, revision: number): BrowserCommand => ({
+        type: 'click',
+        requestId: 'submit-click',
+        tabId,
+        x: 0,
+        y: 0,
+        expectedDocumentRevision: revision,
+        consequence: 'read',
+        requireActive: true
+      }),
+      code: 'USER_HANDOFF_REQUIRED'
+    },
+    {
+      descriptor: { tagName: 'WEBVIEW', editable: false, submitsForm: false },
+      command: (tabId: string, revision: number): BrowserCommand => ({
+        type: 'click',
+        requestId: 'embedded-click',
+        tabId,
+        x: 0,
+        y: 0,
+        expectedDocumentRevision: revision,
+        consequence: 'read',
+        requireActive: true
+      }),
+      code: 'PERMISSION_DENIED'
+    }
+  ] as const) {
+    const engine = new InMemoryBrowserEngine({ targetDescriptor: value.descriptor })
+    const { workspace } = harness(engine)
+    const { tabId, revision } = await openAndSnapshot(workspace)
+    const result = await workspace.execute(runA, value.command(tabId, revision))
+
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.equal(result.error.code, value.code)
+    assert.equal(
+      engine
+        .recordedActions('engine-tab-1' as EngineTabHandle)
+        .filter(({ command }) => command.type === 'typeText' || command.type === 'click').length,
+      0
+    )
+  }
 })
 
 test('loading state invalidates a workspace screenshot lease before input dispatch', async () => {
@@ -726,6 +951,51 @@ test('replayed tool calls share a stable request while distinct tool calls remai
     engine
       .recordedActions('engine-tab-1' as EngineTabHandle)
       .filter(({ command }) => command.type === 'click').length,
+    2
+  )
+})
+
+test('replayed typeText tool calls never resend text for the same stable tool call id', async () => {
+  const engine = new InMemoryBrowserEngine({
+    targetDescriptor: {
+      tagName: 'INPUT',
+      inputType: 'text',
+      editable: true,
+      submitsForm: false
+    }
+  })
+  const { workspace } = harness(engine)
+  const { tabId, revision } = await openAndSnapshot(workspace)
+  const tool = buildBrowserTool(
+    'session-1',
+    (request, signal) =>
+      workspace.execute(
+        {
+          kind: 'agent',
+          sessionId: 'session-1',
+          runId: 'run-a',
+          toolCallId: request.toolCallId
+        },
+        request.command as BrowserCommand,
+        signal
+      ),
+    { takeText: (_toolCallId, text) => ({ text }) }
+  )
+  const params = {
+    action: 'typeText',
+    tabId,
+    expectedDocumentRevision: revision,
+    text: 'private sentinel'
+  }
+
+  await tool.execute('stable-type-call', params, undefined, {} as never)
+  await tool.execute('stable-type-call', params, undefined, {} as never)
+  await tool.execute('distinct-type-call', params, undefined, {} as never)
+
+  assert.equal(
+    engine
+      .recordedActions('engine-tab-1' as EngineTabHandle)
+      .filter(({ command }) => command.type === 'typeText').length,
     2
   )
 })

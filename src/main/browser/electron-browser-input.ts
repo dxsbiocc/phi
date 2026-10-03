@@ -191,9 +191,12 @@ function sendPairedInput(
 export function executeElectronBrowserInput(
   target: ElectronBrowserInputTarget,
   command: BrowserInputCommand,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options: { alreadyFocused?: boolean } = {}
 ): EngineResult {
-  const input = prepareInput(target, command.expectedDocumentRevision, signal)
+  const input = options.alreadyFocused
+    ? inputContext(target, command.expectedDocumentRevision, signal)
+    : prepareInput(target, command.expectedDocumentRevision, signal)
   if (!input.ok) return input.result
 
   if (command.type === 'click') {

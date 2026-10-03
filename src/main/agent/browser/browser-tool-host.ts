@@ -1,6 +1,7 @@
 import {
   BROWSER_MAX_SCREENSHOT_COORDINATE,
   BROWSER_MAX_SCROLL_DELTA,
+  BROWSER_MAX_TEXT_BYTES,
   BROWSER_SAFE_KEYS,
   BROWSER_SAFE_MODIFIERS,
   type BrowserOutcome
@@ -163,6 +164,26 @@ function parseCommand(
       x: coordinate(command.x),
       y: coordinate(command.y),
       consequence: 'read'
+    }
+  }
+  if (command.type === 'typeText') {
+    validateInputKeys(command, [
+      'type',
+      'requestId',
+      'tabId',
+      'expectedDocumentRevision',
+      'text',
+      'consequence'
+    ])
+    if (command.consequence !== 'write') throw new Error('Invalid browser host request')
+    return {
+      type: 'typeText',
+      requestId,
+      tabId: boundedString(command.tabId, MAX_ID_BYTES),
+      expectedDocumentRevision: documentRevision(command.expectedDocumentRevision),
+      requireActive: true,
+      text: boundedString(command.text, BROWSER_MAX_TEXT_BYTES),
+      consequence: 'write'
     }
   }
   if (command.type === 'scroll') {

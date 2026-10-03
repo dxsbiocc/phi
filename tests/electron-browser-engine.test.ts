@@ -4,6 +4,8 @@ import test from 'node:test'
 import type { HandlerDetails, WindowOpenHandlerResponse } from 'electron'
 import {
   MAX_BROWSER_SCREENSHOT_BYTES,
+  type EngineCommand,
+  type EngineTargetInspection,
   type EngineTabHandle
 } from '../src/main/browser/browser-engine'
 import {
@@ -13,6 +15,10 @@ import {
   type BrowserWebContentsViewLike,
   type BrowserWebContentsViewOptions
 } from '../src/main/browser/electron-browser-engine'
+import {
+  FOCUSED_TARGET_INSPECTION_SOURCE,
+  pointTargetInspectionSource
+} from '../src/main/browser/electron-browser-target'
 
 class RequiredSession extends EventEmitter implements BrowserSessionLike {
   setPermissionCheckHandler(handler: unknown): void {
@@ -86,6 +92,9 @@ interface HarnessOptions {
   inputErrorAt?: number
   navigateOnFocus?: boolean
   setBoundsErrorAt?: number
+  inspectionResults?: unknown[]
+  insertError?: Error
+  insertGate?: Promise<void>
 }
 
 function createHarness(options: HarnessOptions = {}): {
@@ -108,7 +117,14 @@ function createHarness(options: HarnessOptions = {}): {
     captureCalls = 0
     readonly captureOptions: Array<{ stayHidden?: boolean } | undefined> = []
     readonly inputEvents: Array<Record<string, unknown>> = []
+    readonly insertedText: string[] = []
+    readonly isolatedWorldScripts: Array<{ worldId: number; code: string }> = []
     focusCalls = 0
+    readonly mainFrame = { frameTreeNodeId: 101, isDestroyed: (): boolean => false }
+    focusedFrame: { frameTreeNodeId: number; isDestroyed: () => boolean } | null = {
+      frameTreeNodeId: 101,
+      isDestroyed: (): boolean => false
+    }
 
     async loadURL(url: string): Promise<void> {
       this.loadedUrls.push(url)
@@ -154,6 +170,32 @@ function createHarness(options: HarnessOptions = {}): {
     override sendInputEvent(event: Record<string, unknown>): void {
       this.inputEvents.push({ ...event })
       if (options.inputErrorAt === this.inputEvents.length) throw new Error('raw input failure')
+    }
+
+    async executeJavaScriptInIsolatedWorld(
+      worldId: number,
+      scripts: Array<{ code: string }>
+    ): Promise<unknown> {
+      this.isolatedWorldScripts.push({ worldId, code: scripts[0]?.code ?? '' })
+      return (
+        options.inspectionResults?.shift() ?? {
+          descriptor: {
+            tagName: 'INPUT',
+            inputType: 'text',
+            role: 'textbox',
+            accessibleLabel: 'Message',
+            editable: true,
+            submitsForm: false
+          },
+          fingerprint: 'target-1'
+        }
+      )
+    }
+
+    async insertText(text: string): Promise<void> {
+      this.insertedText.push(text)
+      if (options.insertGate) await options.insertGate
+      if (options.insertError) throw options.insertError
     }
   }
 
@@ -214,6 +256,18 @@ function createHarness(options: HarnessOptions = {}): {
   return { engine, views, children, addCalls, removeCalls }
 }
 
+const defaultTargetInspection: EngineTargetInspection = {
+  descriptor: {
+    tagName: 'INPUT',
+    inputType: 'text',
+    role: 'textbox',
+    accessibleLabel: 'Message',
+    editable: true,
+    submitsForm: false
+  },
+  fingerprint: 'target-1'
+}
+
 test('maps screenshot pixels to integer Electron coordinates and sends one paired click', async () => {
   const { engine, views } = createHarness({ captureSize: { width: 1600, height: 900 } })
   const handle = await engine.createTab({ partition: 'browser-project-a' })
@@ -225,7 +279,8 @@ test('maps screenshot pixels to integer Electron coordinates and sends one paire
     type: 'click',
     x: 400,
     y: 450,
-    expectedDocumentRevision: 0
+    expectedDocumentRevision: 0,
+    expectedTarget: defaultTargetInspection
   })
 
   assert.equal(result.ok, true)
@@ -235,6 +290,264 @@ test('maps screenshot pixels to integer Electron coordinates and sends one paire
   ])
   assert.equal(views[0].webContents.focusCalls, 1)
   assert.equal(engine.capabilities().coordinateInput, true)
+})
+
+test('inspects the focused main-frame target in an isolated world before one insertText delivery', async () => {
+  const { engine, views } = createHarness()
+  const handle = await engine.createTab({ partition: 'browser-project-a' })
+  await engine.setViewport(handle, { x: 0, y: 0, width: 800, height: 450 })
+  await engine.execute(handle, { type: 'screenshot' })
+
+  const inspected = await engine.execute(handle, {
+    type: 'describeTarget',
+    target: 'focused',
+    expectedDocumentRevision: 0
+  })
+  assert.equal(inspected.ok, true)
+  if (!inspected.ok || !inspected.target || !inspected.targetFingerprint) return
+  const expectedTarget: EngineTargetInspection = {
+    descriptor: inspected.target,
+    fingerprint: inspected.targetFingerprint
+  }
+  const text = 'first line\nsecond line'
+  const inserted = await engine.execute(handle, {
+    type: 'typeText',
+    text,
+    expectedDocumentRevision: 0,
+    expectedTarget
+  })
+
+  assert.equal(inserted.ok, true)
+  assert.deepEqual(views[0].webContents.insertedText, [text])
+  assert.equal(views[0].webContents.isolatedWorldScripts.length, 2)
+  assert.ok(
+    views[0].webContents.isolatedWorldScripts.every(
+      ({ worldId }) => worldId !== 0 && worldId !== 999
+    )
+  )
+  assert.doesNotMatch(
+    views[0].webContents.isolatedWorldScripts.map(({ code }) => code).join('\n'),
+    /first line|second line/
+  )
+})
+
+test('fixed target inspection source contains sensitive classification but no field-value reads or caller code', () => {
+  assert.match(FOCUSED_TARGET_INSPECTION_SOURCE, /one-time-code/)
+  assert.match(FOCUSED_TARGET_INSPECTION_SOURCE, /current-password/)
+  assert.match(FOCUSED_TARGET_INSPECTION_SOURCE, /new-password/)
+  assert.match(FOCUSED_TARGET_INSPECTION_SOURCE, /action\.search = ''/)
+  assert.match(FOCUSED_TARGET_INSPECTION_SOURCE, /action\.hash = ''/)
+  assert.match(FOCUSED_TARGET_INSPECTION_SOURCE, /action\.username = ''/)
+  assert.match(FOCUSED_TARGET_INSPECTION_SOURCE, /candidate\.tagName === 'WEBVIEW'/)
+  assert.doesNotMatch(
+    FOCUSED_TARGET_INSPECTION_SOURCE,
+    /\.value\b|innerHTML|outerHTML|document\.querySelector/
+  )
+  const point = pointTargetInspectionSource(12, 34)
+  assert.ok(point)
+  assert.doesNotThrow(() => new Function(FOCUSED_TARGET_INSPECTION_SOURCE))
+  assert.doesNotThrow(() => new Function(point))
+  assert.match(point, /document\.elementFromPoint\(12, 34\)/)
+  assert.doesNotMatch(point, /private sentinel|#password|javascript:/)
+  assert.equal(pointTargetInspectionSource(1.2, 3), null)
+})
+
+test('target inspection rejects malformed descriptors and unstripped form destinations', async () => {
+  const valid = defaultTargetInspection.descriptor
+  const invalidResults: unknown[] = [
+    { descriptor: { ...valid, value: 'private sentinel' }, fingerprint: 'target-1' },
+    {
+      descriptor: { ...valid, accessibleLabel: 'x'.repeat(257) },
+      fingerprint: 'target-1'
+    },
+    {
+      descriptor: {
+        ...valid,
+        formAction: 'https://user:pass@example.test/submit?secret=1#private'
+      },
+      fingerprint: 'target-1'
+    },
+    { descriptor: valid, fingerprint: 'descriptor-hash' },
+    { descriptor: valid, fingerprint: 'target-1', extra: true },
+    {
+      descriptor: Object.assign(Object.create({ inputType: 'text' }), valid),
+      fingerprint: 'target-1'
+    }
+  ]
+
+  for (const inspection of invalidResults) {
+    const { engine, views } = createHarness({ inspectionResults: [inspection] })
+    const handle = await engine.createTab({ partition: 'browser-project-a' })
+    await engine.setViewport(handle, { x: 0, y: 0, width: 800, height: 450 })
+    await engine.execute(handle, { type: 'screenshot' })
+    const result = await engine.execute(handle, {
+      type: 'describeTarget',
+      target: 'focused',
+      expectedDocumentRevision: 0
+    })
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.equal(result.error.code, 'CAPABILITY_UNAVAILABLE')
+    assert.deepEqual(views[0].webContents.insertedText, [])
+    assert.doesNotMatch(JSON.stringify(result), /private sentinel|secret=1|user:pass/)
+  }
+})
+
+test('target inspection allows same main-frame identity wrappers and rejects null child or destroyed focus', async () => {
+  const allowed = createHarness()
+  const allowedHandle = await allowed.engine.createTab({ partition: 'browser-project-a' })
+  await allowed.engine.setViewport(allowedHandle, { x: 0, y: 0, width: 800, height: 450 })
+  await allowed.engine.execute(allowedHandle, { type: 'screenshot' })
+  assert.notEqual(allowed.views[0].webContents.focusedFrame, allowed.views[0].webContents.mainFrame)
+  assert.equal(
+    (
+      await allowed.engine.execute(allowedHandle, {
+        type: 'describeTarget',
+        target: 'focused',
+        expectedDocumentRevision: 0
+      })
+    ).ok,
+    true
+  )
+
+  for (const focusedFrame of [
+    null,
+    { frameTreeNodeId: 202, isDestroyed: (): boolean => false },
+    { frameTreeNodeId: 101, isDestroyed: (): boolean => true }
+  ]) {
+    const value = createHarness()
+    const handle = await value.engine.createTab({ partition: 'browser-project-a' })
+    value.views[0].webContents.focusedFrame = focusedFrame
+    await value.engine.setViewport(handle, { x: 0, y: 0, width: 800, height: 450 })
+    await value.engine.execute(handle, { type: 'screenshot' })
+    const result = await value.engine.execute(handle, {
+      type: 'describeTarget',
+      target: 'focused',
+      expectedDocumentRevision: 0
+    })
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.equal(result.error.code, 'CAPABILITY_UNAVAILABLE')
+  }
+})
+
+test('coordinate click never dispatches into embedded content targets', async () => {
+  for (const tagName of ['IFRAME']) {
+    const descriptor = { tagName, editable: false, submitsForm: false }
+    const value = createHarness({
+      inspectionResults: [{ descriptor, fingerprint: 'target-1' }]
+    })
+    const handle = await value.engine.createTab({ partition: 'browser-project-a' })
+    await value.engine.setViewport(handle, { x: 0, y: 0, width: 800, height: 450 })
+    await value.engine.execute(handle, { type: 'screenshot' })
+    const result = await value.engine.execute(handle, {
+      type: 'click',
+      x: 10,
+      y: 10,
+      expectedDocumentRevision: 0,
+      expectedTarget: { descriptor, fingerprint: 'target-1' }
+    })
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.equal(result.error.code, 'PERMISSION_DENIED')
+    assert.deepEqual(value.views[0].webContents.inputEvents, [])
+    await value.engine.dispose()
+  }
+})
+
+test('typeText rejects a same-shape focus swap before insertText and consumes the screenshot before uncertain delivery', async () => {
+  const changedFingerprint = {
+    descriptor: { ...defaultTargetInspection.descriptor },
+    fingerprint: 'target-2'
+  }
+  const swapped = createHarness({
+    inspectionResults: [
+      { descriptor: { ...defaultTargetInspection.descriptor }, fingerprint: 'target-1' },
+      changedFingerprint
+    ]
+  })
+  const handle = await swapped.engine.createTab({ partition: 'browser-project-a' })
+  await swapped.engine.setViewport(handle, { x: 0, y: 0, width: 800, height: 450 })
+  await swapped.engine.execute(handle, { type: 'screenshot' })
+  const inspected = await swapped.engine.execute(handle, {
+    type: 'describeTarget',
+    target: 'focused',
+    expectedDocumentRevision: 0
+  })
+  assert.equal(inspected.ok, true)
+  const swappedResult = await swapped.engine.execute(handle, {
+    type: 'typeText',
+    text: 'private sentinel',
+    expectedDocumentRevision: 0,
+    expectedTarget: defaultTargetInspection
+  })
+  assert.equal(swappedResult.ok, false)
+  if (!swappedResult.ok) assert.equal(swappedResult.error.code, 'STALE_DOCUMENT')
+  assert.deepEqual(swapped.views[0].webContents.insertedText, [])
+
+  const rejected = createHarness({ insertError: new Error('raw private delivery failure') })
+  const rejectedHandle = await rejected.engine.createTab({ partition: 'browser-project-a' })
+  await rejected.engine.setViewport(rejectedHandle, { x: 0, y: 0, width: 800, height: 450 })
+  await rejected.engine.execute(rejectedHandle, { type: 'screenshot' })
+  const uncertain = await rejected.engine.execute(rejectedHandle, {
+    type: 'typeText',
+    text: 'private sentinel',
+    expectedDocumentRevision: 0,
+    expectedTarget: defaultTargetInspection
+  })
+  assert.equal(uncertain.ok, false)
+  if (!uncertain.ok) assert.equal(uncertain.error.code, 'ACTION_TIMEOUT')
+  assert.doesNotMatch(JSON.stringify(uncertain), /private sentinel|raw private/)
+  const replay = await rejected.engine.execute(rejectedHandle, {
+    type: 'typeText',
+    text: 'private sentinel',
+    expectedDocumentRevision: 0,
+    expectedTarget: defaultTargetInspection
+  })
+  assert.equal(replay.ok, false)
+  if (!replay.ok) assert.equal(replay.error.code, 'STALE_DOCUMENT')
+  assert.equal(rejected.views[0].webContents.insertedText.length, 1)
+})
+
+test('typeText waits for uncertain insertion to settle after abort and never reuses its screenshot lease', async () => {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const value = createHarness({ insertGate: gate })
+  const handle = await value.engine.createTab({ partition: 'browser-project-a' })
+  await value.engine.setViewport(handle, { x: 0, y: 0, width: 800, height: 450 })
+  await value.engine.execute(handle, { type: 'screenshot' })
+  const controller = new AbortController()
+  let settled = false
+  const pending = value.engine
+    .execute(
+      handle,
+      {
+        type: 'typeText',
+        text: 'private sentinel',
+        expectedDocumentRevision: 0,
+        expectedTarget: defaultTargetInspection
+      },
+      controller.signal
+    )
+    .finally(() => {
+      settled = true
+    })
+  await new Promise((resolve) => setImmediate(resolve))
+  controller.abort()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(settled, false)
+  release()
+  const cancelled = await pending
+  assert.equal(cancelled.ok, false)
+  if (!cancelled.ok) assert.equal(cancelled.error.code, 'ACTION_CANCELLED')
+  const replay = await value.engine.execute(handle, {
+    type: 'typeText',
+    text: 'private sentinel',
+    expectedDocumentRevision: 0,
+    expectedTarget: defaultTargetInspection
+  })
+  assert.equal(replay.ok, false)
+  if (!replay.ok) assert.equal(replay.error.code, 'STALE_DOCUMENT')
+  assert.equal(value.views[0].webContents.insertedText.length, 1)
 })
 
 test('rejects stale, outside, resized, hidden, unfocused, and pre-cancelled input before delivery', async () => {
@@ -368,7 +681,8 @@ test('rechecks the engine revision after guest focus and before the first input 
     type: 'click',
     x: 20,
     y: 20,
-    expectedDocumentRevision: 0
+    expectedDocumentRevision: 0,
+    expectedTarget: defaultTargetInspection
   })
 
   assert.equal(result.ok, false)
@@ -377,15 +691,22 @@ test('rechecks the engine revision after guest focus and before the first input 
 })
 
 test('best-effort releases a paired input after a second-event failure without raw errors', async () => {
-  for (const command of [
-    { type: 'click' as const, x: 1, y: 1, expectedDocumentRevision: 0 },
+  const commands: EngineCommand[] = [
+    {
+      type: 'click' as const,
+      x: 1,
+      y: 1,
+      expectedDocumentRevision: 0,
+      expectedTarget: defaultTargetInspection
+    },
     {
       type: 'keypress' as const,
       key: 'Tab',
-      modifiers: ['shift'] as const,
+      modifiers: ['shift'],
       expectedDocumentRevision: 0
     }
-  ]) {
+  ]
+  for (const command of commands) {
     const { engine, views } = createHarness({ inputErrorAt: 2 })
     const handle = await engine.createTab({ partition: 'browser-project-a' })
     await engine.setViewport(handle, { x: 0, y: 0, width: 600, height: 400 })

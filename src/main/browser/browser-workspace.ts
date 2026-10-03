@@ -325,6 +325,7 @@ export class BrowserWorkspace {
           signal
         )
       case 'click':
+      case 'typeText':
       case 'scroll':
       case 'keypress':
         return this.#executeAgentInput(actor, command, signal ?? this.#lifecycle.signal)
@@ -333,7 +334,7 @@ export class BrowserWorkspace {
       default:
         return this.#failure({
           code: 'CAPABILITY_UNAVAILABLE',
-          message: `Browser command is not available yet: ${command.type}`,
+          message: 'Browser command is not available yet',
           retryable: false
         })
     }

@@ -91,6 +91,11 @@ import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
 import { buildAskUserQuestionCustomTools } from '../user-interaction-tools'
 import { buildBrowserTool } from '../browser/browser-tool'
+import {
+  BrowserTextVault,
+  installBrowserTextPreDispatchRedaction,
+  withBrowserTextVaultCleanup
+} from '../browser/browser-text-vault'
 import type { BrowserOutcome } from '../../../shared/browserTypes'
 import { isPhiAgentDefinition, type PhiAgentDefinition } from '../agents/definition'
 import { selectAgentModel } from '../agents/model-selection'
@@ -165,6 +170,7 @@ type SessionEntry = {
   agentRuns?: AgentRunRegistry
   /** Stops telling the main process about those runs (used when the session goes away). */
   stopAgentRunNotices?: () => void
+  browserTextVault?: BrowserTextVault
 }
 
 type WorkerPromptOptions = {
@@ -792,7 +798,8 @@ async function makeSessionManager(
 function requestToolApproval(
   sessionId: string,
   event: UnknownRecord,
-  agentRunId?: string
+  agentRunId?: string,
+  browserTextVault?: BrowserTextVault
 ): Promise<unknown> {
   const requestId = randomUUID()
   sendEvent(
@@ -801,7 +808,12 @@ function requestToolApproval(
       requestId,
       toolCallId: stringValue(event.toolCallId, requestId),
       toolName: stringValue(event.toolName),
-      input: isRecord(event.input) ? event.input : {},
+      input:
+        browserTextVault && stringValue(event.toolName) === 'browser'
+          ? browserTextVault.approvalInput(stringValue(event.toolCallId), event.input)
+          : isRecord(event.input)
+            ? event.input
+            : {},
       ...(agentRunId ? { agentRunId } : {})
     },
     { sessionId }
@@ -813,15 +825,27 @@ function requestToolApproval(
 
 function createBridgeToolApprovalExtension(
   sessionId: string,
-  agentRunId?: string
+  agentRunId?: string,
+  browserTextVault?: BrowserTextVault
 ): ExtensionFactory {
   return (pi) => {
     pi.on('tool_call', async (event) => {
+      const browserTypeText =
+        event.toolName === 'browser' && isRecord(event.input) && event.input.action === 'typeText'
       const result = await requestToolApproval(
         sessionId,
         event as unknown as UnknownRecord,
-        agentRunId
+        agentRunId,
+        browserTextVault
       )
+      if (browserTypeText && browserTextVault) {
+        const input = browserTextVault.approvalInput(event.toolCallId, event.input)
+        if (isRecord(result) && result.block === true) {
+          browserTextVault.markDenied(event.toolCallId)
+          return result
+        }
+        return { input }
+      }
       return result === null ? undefined : result
     })
   }
@@ -1158,6 +1182,7 @@ async function createPhiAgentSession(
         }
       : {})
   })
+
   // The installer disposes the session and rethrows when the guards cannot be installed.
   await installSpecialistToolCallExtensions(result.session, toolCallFactories, sessionCwd)
   if (deps.remoteRoot) {
@@ -1337,6 +1362,7 @@ async function createSession(params: unknown): Promise<unknown> {
   // and the run tools and controlled-fallback policy below act on it.
   const agentRuns = new AgentRunRegistry()
   const parentRef: { current?: CreateAgentSessionResult } = {}
+  const browserTextVault = new BrowserTextVault()
   const extensionFactories = [
     createNextActionInstructionExtension(
       async () => (await requestHost('settings.nextActionSuggestionsEnabled', {})) === true
@@ -1348,7 +1374,9 @@ async function createSession(params: unknown): Promise<unknown> {
     createRemoteUrlGuardExtension(),
     ...(record.projectBound && !remoteRoot ? [createProjectToolBoundaryExtension(cwd)] : []),
     ...(phiAgents.length > 0 ? [createSpecialistFallbackExtension(phiAgents, agentRuns)] : []),
-    ...(record.enableToolApproval ? [createBridgeToolApprovalExtension(sessionId)] : [])
+    ...(record.enableToolApproval
+      ? [createBridgeToolApprovalExtension(sessionId, undefined, browserTextVault)]
+      : [])
   ]
   let sessionSkillNames: Set<string> | undefined
   const resources =
@@ -1482,7 +1510,10 @@ async function createSession(params: unknown): Promise<unknown> {
     sessionId,
     (request) => requestHost('browser.execute', request) as Promise<BrowserOutcome>,
     {
-      cancelHost: (identity) => requestHost('browser.cancel', identity)
+      cancelHost: (identity) => requestHost('browser.cancel', identity),
+      takeText: (toolCallId, placeholder) => browserTextVault.take(toolCallId, placeholder),
+      allowTypeText: () =>
+        !remoteRoot && parentRef.current?.session.getPlanModeState()?.enabled !== true
     }
   )
   const customTools = [
@@ -1709,6 +1740,8 @@ async function createSession(params: unknown): Promise<unknown> {
     })
   }
 
+  installBrowserTextPreDispatchRedaction(result.session, browserTextVault)
+
   if (remoteRoot && !remoteWorkspaceToolsVerified(result.session.getAllToolInfos())) {
     await result.session.dispose()
     throw new Error(
@@ -1730,7 +1763,13 @@ async function createSession(params: unknown): Promise<unknown> {
     })
     sendEvent('sessionState', serializeSessionState(result), { sessionId })
   })
-  sessions.set(sessionId, { result, agentDir, agentRuns, stopAgentRunNotices })
+  sessions.set(sessionId, {
+    result,
+    agentDir,
+    agentRuns,
+    stopAgentRunNotices,
+    browserTextVault
+  })
   return {
     sessionId,
     state: serializeSessionState(result)
@@ -1767,9 +1806,17 @@ function promptOptions(value: unknown): WorkerPromptOptions | undefined {
 
 async function promptSession(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
-  const result = getSession(record.sessionId)
-  await result.session.prompt(stringValue(record.text), promptOptions(record.options))
-  return serializeSessionState(result)
+  const sessionId = stringValue(record.sessionId)
+  const entry = sessions.get(sessionId)
+  if (!entry) throw new Error(`Unknown session: ${sessionId}`)
+  if (entry.browserTextVault) {
+    await withBrowserTextVaultCleanup(entry.browserTextVault, () =>
+      entry.result.session.prompt(stringValue(record.text), promptOptions(record.options))
+    )
+  } else {
+    await entry.result.session.prompt(stringValue(record.text), promptOptions(record.options))
+  }
+  return serializeSessionState(entry.result)
 }
 
 function sessionContextUsage(params: unknown): ContextUsageSnapshot | null {
@@ -2039,9 +2086,15 @@ async function listSessionAgentRuns(): Promise<unknown[]> {
 
 async function abortSession(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
-  const result = getSession(record.sessionId)
-  await result.session.abort()
-  return serializeSessionState(result)
+  const sessionId = stringValue(record.sessionId)
+  const entry = sessions.get(sessionId)
+  if (!entry) throw new Error(`Unknown session: ${sessionId}`)
+  try {
+    await entry.result.session.abort()
+    return serializeSessionState(entry.result)
+  } finally {
+    entry.browserTextVault?.clear()
+  }
 }
 
 async function disposeSession(params: unknown): Promise<void> {
@@ -2053,6 +2106,7 @@ async function disposeSession(params: unknown): Promise<void> {
   const entry = sessions.get(sessionId)
   entry?.stopAgentRunNotices?.()
   entry?.agentRuns?.stopAll()
+  entry?.browserTextVault?.clear()
   sessions.delete(sessionId)
   await result.session.dispose()
 }

@@ -47,6 +47,7 @@ test('browser tool exposes one strict action-discriminated observation and input
   assert.equal(tool.strict, true)
   assert.equal(tool.loadMode, 'essential')
   assert.equal(tool.approval, 'read')
+  assert.equal((tool as unknown as { lenientArgValidation?: boolean }).lenientArgValidation, true)
   assert.deepEqual(
     (
       tool.parameters as { oneOf?: Array<{ properties?: { action?: { enum?: string[] } } }> }
@@ -58,12 +59,171 @@ test('browser tool exposes one strict action-discriminated observation and input
       'snapshot',
       'click',
       'click',
+      'typeText',
+      'typeText',
       'scroll',
       'scroll',
       'keypress',
       'keypress'
     ]
   )
+})
+
+test('browser typeText forwards bounded multiline text without echoing it in the result', async () => {
+  const calls: unknown[] = []
+  const secretText = 'first line\nsecond line — private'
+  const tool = buildBrowserTool(
+    'runtime-session-1',
+    async (request) => {
+      calls.push(request)
+      return {
+        ...successfulOutcome(),
+        screenshot: {
+          mediaType: 'image/png',
+          data: 'iVBORw0KGgoAAAANSUhEUg==',
+          width: 800,
+          height: 600,
+          tabId: 'tab-1',
+          url: 'http://localhost:3000/form',
+          documentRevision: 2
+        }
+      }
+    },
+    {
+      requestId: () => 'browser-type-1',
+      takeText: (_toolCallId, text) => ({ text })
+    }
+  )
+
+  const result = await tool.execute(
+    'tool-type-1',
+    {
+      action: 'typeText',
+      target: 'current',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      text: secretText
+    },
+    undefined,
+    {} as never
+  )
+
+  assert.deepEqual(calls, [
+    {
+      originSessionId: 'runtime-session-1',
+      requestId: 'browser-type-1',
+      toolCallId: 'tool-type-1',
+      command: {
+        type: 'typeText',
+        requestId: 'browser-type-1',
+        tabId: 'tab-1',
+        expectedDocumentRevision: 2,
+        requireActive: true,
+        text: secretText,
+        consequence: 'write'
+      }
+    }
+  ])
+  assert.equal(result.isError, undefined)
+  assert.doesNotMatch(JSON.stringify(result), /first line|second line|private/)
+})
+
+test('browser typeText enforces the 16 KiB UTF-8 boundary instead of a character count', async () => {
+  const calls: unknown[] = []
+  const tool = buildBrowserTool(
+    'runtime-session-1',
+    async (request) => {
+      calls.push(request)
+      return {
+        ...successfulOutcome(),
+        screenshot: {
+          mediaType: 'image/png',
+          data: 'iVBORw0KGgoAAAANSUhEUg==',
+          width: 1,
+          height: 1,
+          tabId: 'tab-1',
+          url: 'http://localhost:3000/',
+          documentRevision: 2
+        }
+      }
+    },
+    { takeText: (_toolCallId, text) => ({ text }) }
+  )
+  const execute = (text: string): ReturnType<typeof tool.execute> =>
+    tool.execute(
+      `tool-${calls.length}`,
+      {
+        action: 'typeText',
+        tabId: 'tab-1',
+        expectedDocumentRevision: 2,
+        text
+      },
+      undefined,
+      {} as never
+    )
+
+  const exact = await execute('😀'.repeat(4096))
+  assert.equal(exact.isError, undefined)
+  const oversized = await execute(`${'😀'.repeat(4096)}a`)
+  assert.equal(oversized.isError, true)
+  assert.equal(calls.length, 1)
+})
+
+test('browser typeText fails closed without a one-time text vault resolver', async () => {
+  let calls = 0
+  const tool = buildBrowserTool('runtime-session-1', async () => {
+    calls += 1
+    return successfulOutcome()
+  })
+  const result = await tool.execute(
+    'tool-no-vault',
+    {
+      action: 'typeText',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      text: 'PRIVATE_RAW_TEXT'
+    },
+    undefined,
+    {} as never
+  )
+  assert.equal(result.isError, true)
+  assert.equal(calls, 0)
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_RAW_TEXT/)
+})
+
+test('browser typeText consumes its vault entry but never reaches the host in a denied mode', async () => {
+  let hostCalls = 0
+  let takeCalls = 0
+  const tool = buildBrowserTool(
+    'runtime-session-1',
+    async () => {
+      hostCalls += 1
+      return successfulOutcome()
+    },
+    {
+      takeText: () => {
+        takeCalls += 1
+        return { text: 'private sentinel' }
+      },
+      allowTypeText: () => false
+    }
+  )
+  const result = await tool.execute(
+    'tool-plan-mode',
+    {
+      action: 'typeText',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      text: '__phi_browser_text_v1__:token-1'
+    },
+    undefined,
+    {} as never
+  )
+  assert.equal(result.isError, true)
+  assert.deepEqual(result.details, { kind: 'browser_error', code: 'PERMISSION_DENIED' })
+  assert.equal(takeCalls, 1)
+  assert.equal(hostCalls, 0)
+  assert.doesNotMatch(JSON.stringify(result), /private sentinel/)
 })
 
 test('browser click binds read-only input to the active screenshot revision', async () => {
@@ -495,7 +655,9 @@ test('browser tool validates direct current-tab and snapshot calls before host d
 
   for (const params of [
     { action: 'open', target: 'current', url: 'https://example.test', tabId: 'tab-1' },
+    { action: 'open', url: 'https://example.test', javascript: 'steal()' },
     { action: 'snapshot', tabId: '' },
+    { action: 'snapshot', tabId: 'tab-1', descriptor: { value: 'secret' } },
     { action: 'open', url: `https://example.test/${'x'.repeat(16 * 1024)}` },
     {
       action: 'click',
@@ -512,6 +674,15 @@ test('browser tool validates direct current-tab and snapshot calls before host d
       x: 1,
       y: 1,
       consequence: 'write'
+    },
+    {
+      action: 'click',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 1,
+      x: 1,
+      y: 1,
+      consequence: 'read',
+      selector: '#secret'
     },
     {
       action: 'scroll',
@@ -633,6 +804,35 @@ test('browser host derives agent identity from the active runtime run', async ()
       modifiers: ['shift']
     }
   })
+  const privateText = 'line one\nline two — private'
+  await host.execute({
+    originSessionId: 'runtime-session-1',
+    requestId: 'browser-request-type',
+    toolCallId: 'real-tool-call-type',
+    command: {
+      type: 'typeText',
+      requestId: 'browser-request-type',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      requireActive: true,
+      text: privateText,
+      consequence: 'write'
+    }
+  })
+  assert.deepEqual(calls[2]?.input, {
+    originSessionId: 'runtime-session-1',
+    runId: 'trusted-run-1',
+    toolCallId: 'real-tool-call-type',
+    command: {
+      type: 'typeText',
+      requestId: 'browser-request-type',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      requireActive: true,
+      text: privateText,
+      consequence: 'write'
+    }
+  })
   await assert.rejects(
     host.execute({
       originSessionId: 'runtime-unknown',
@@ -667,6 +867,23 @@ test('browser host derives agent identity from the active runtime run', async ()
       x: 1,
       y: 2,
       consequence: 'read'
+    },
+    {
+      type: 'typeText',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      requireActive: true,
+      text: 'x'.repeat(16 * 1024 + 1),
+      consequence: 'write'
+    },
+    {
+      type: 'typeText',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      requireActive: true,
+      text: 'private',
+      consequence: 'write',
+      selector: '#password'
     },
     {
       type: 'keypress',
@@ -707,7 +924,7 @@ test('browser host propagates cancellation before and during execution and clean
       if (signals.length === 2) {
         await new Promise<void>((resolve) => {
           release = resolve
-          signal.addEventListener('abort', resolve, { once: true })
+          signal.addEventListener('abort', () => resolve(), { once: true })
         })
       }
       return successfulOutcome()

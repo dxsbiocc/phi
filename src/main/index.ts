@@ -2893,6 +2893,7 @@ function toolArgsForPersistence(toolName: unknown, args: unknown): unknown {
     args.action === 'open' ||
     args.action === 'snapshot' ||
     args.action === 'click' ||
+    args.action === 'typeText' ||
     args.action === 'scroll' ||
     args.action === 'keypress'
   ) {

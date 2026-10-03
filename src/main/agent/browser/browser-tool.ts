@@ -3,6 +3,7 @@ import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 import {
   BROWSER_MAX_SCREENSHOT_COORDINATE,
   BROWSER_MAX_SCROLL_DELTA,
+  BROWSER_MAX_TEXT_BYTES,
   BROWSER_SAFE_KEYS,
   BROWSER_SAFE_MODIFIERS,
   type BrowserOutcome,
@@ -10,9 +11,12 @@ import {
   type BrowserTabSnapshot,
   type BrowserWorkspaceSnapshot
 } from '../../../shared/browserTypes'
+import {
+  BROWSER_TOOL_MAX_ID_BYTES,
+  BROWSER_TOOL_MAX_URL_BYTES,
+  browserToolParameters
+} from './browser-tool-schema'
 
-const MAX_URL_LENGTH = 16 * 1024
-const MAX_ID_LENGTH = 256
 const MAX_ORIGIN_ID_LENGTH = 512
 const SAFE_KEYS = new Set<string>(BROWSER_SAFE_KEYS)
 
@@ -31,10 +35,28 @@ export type BrowserToolHostExecutor = (
 export interface BrowserToolOptions {
   requestId?: () => string
   cancelHost?: (identity: { originSessionId: string; requestId: string }) => Promise<unknown>
+  takeText?: (
+    toolCallId: string,
+    placeholder: string
+  ) => { text?: string; denied?: boolean } | undefined
+  allowTypeText?: () => boolean
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort()
+  const wanted = [...expected].sort()
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index])
+}
+
+function exactOptionalTargetKeys(
+  input: Record<string, unknown>,
+  expected: readonly string[]
+): boolean {
+  return exactKeys(input, [...expected, ...(Object.hasOwn(input, 'target') ? ['target'] : [])])
 }
 
 function safeDisplayUrl(value: string): string {
@@ -82,7 +104,7 @@ function tabText(
 }
 
 function successDetails(
-  action: 'open' | 'snapshot' | 'click' | 'scroll' | 'keypress',
+  action: 'open' | 'snapshot' | 'click' | 'typeText' | 'scroll' | 'keypress',
   snapshot: BrowserWorkspaceSnapshot,
   tabId?: string,
   screenshot?: BrowserScreenshot
@@ -174,150 +196,20 @@ export function buildBrowserTool(
   executeHost: BrowserToolHostExecutor,
   options: BrowserToolOptions = {}
 ): CustomTool {
-  return {
+  const tool = {
+    lenientArgValidation: true,
     name: 'browser',
     label: 'Browser',
     description:
-      'Open or inspect a page in Phi, or use read-only click, scroll, and safe navigation keys on the active project-loopback page. Input must use the tab and document revision from the latest screenshot. External-site input requires a later approval capability and is currently refused.',
+      'Open or inspect a page in Phi, or click, type, scroll, and use safe navigation keys on the active project-loopback page. Input must use the tab and document revision from the latest screenshot. External-site input requires a later approval capability and is currently refused.',
     loadMode: 'essential',
     strict: true,
     approval: 'read',
-    parameters: {
-      oneOf: [
-        {
-          type: 'object',
-          required: ['action', 'url'],
-          additionalProperties: false,
-          properties: {
-            action: { type: 'string', enum: ['open'] },
-            url: { type: 'string', minLength: 1, maxLength: MAX_URL_LENGTH },
-            target: { type: 'string', enum: ['dedicated'] }
-          }
-        },
-        {
-          type: 'object',
-          required: ['action', 'url', 'target', 'tabId', 'expectedDocumentRevision'],
-          additionalProperties: false,
-          properties: {
-            action: { type: 'string', enum: ['open'] },
-            url: { type: 'string', minLength: 1, maxLength: MAX_URL_LENGTH },
-            target: { type: 'string', enum: ['current'] },
-            tabId: { type: 'string', minLength: 1, maxLength: MAX_ID_LENGTH },
-            expectedDocumentRevision: {
-              type: 'integer',
-              minimum: 0,
-              maximum: Number.MAX_SAFE_INTEGER
-            }
-          }
-        },
-        {
-          type: 'object',
-          required: ['action', 'tabId'],
-          additionalProperties: false,
-          properties: {
-            action: { type: 'string', enum: ['snapshot'] },
-            tabId: { type: 'string', minLength: 1, maxLength: MAX_ID_LENGTH },
-            target: { type: 'string', enum: ['dedicated'] }
-          }
-        },
-        {
-          type: 'object',
-          required: ['action', 'target', 'tabId', 'expectedDocumentRevision'],
-          additionalProperties: false,
-          properties: {
-            action: { type: 'string', enum: ['snapshot'] },
-            target: { type: 'string', enum: ['current'] },
-            tabId: { type: 'string', minLength: 1, maxLength: MAX_ID_LENGTH },
-            expectedDocumentRevision: {
-              type: 'integer',
-              minimum: 0,
-              maximum: Number.MAX_SAFE_INTEGER
-            }
-          }
-        },
-        ...(['click', 'scroll', 'keypress'] as const).flatMap((action) => {
-          const actionProperties = {
-            action: { type: 'string', enum: [action] },
-            tabId: { type: 'string', minLength: 1, maxLength: MAX_ID_LENGTH },
-            expectedDocumentRevision: {
-              type: 'integer',
-              minimum: 0,
-              maximum: Number.MAX_SAFE_INTEGER
-            },
-            target: { type: 'string', enum: ['dedicated'] }
-          }
-          const actionSpecific =
-            action === 'click'
-              ? {
-                  x: {
-                    type: 'number',
-                    minimum: 0,
-                    maximum: BROWSER_MAX_SCREENSHOT_COORDINATE
-                  },
-                  y: {
-                    type: 'number',
-                    minimum: 0,
-                    maximum: BROWSER_MAX_SCREENSHOT_COORDINATE
-                  },
-                  consequence: { type: 'string', enum: ['read'] }
-                }
-              : action === 'scroll'
-                ? {
-                    deltaX: {
-                      type: 'integer',
-                      minimum: -BROWSER_MAX_SCROLL_DELTA,
-                      maximum: BROWSER_MAX_SCROLL_DELTA
-                    },
-                    deltaY: {
-                      type: 'integer',
-                      minimum: -BROWSER_MAX_SCROLL_DELTA,
-                      maximum: BROWSER_MAX_SCROLL_DELTA
-                    }
-                  }
-                : {
-                    key: { type: 'string', enum: [...BROWSER_SAFE_KEYS] },
-                    modifiers: {
-                      type: 'array',
-                      items: { type: 'string', enum: [...BROWSER_SAFE_MODIFIERS] },
-                      maxItems: 1,
-                      uniqueItems: true
-                    }
-                  }
-          const required = [
-            'action',
-            'tabId',
-            'expectedDocumentRevision',
-            ...(action === 'click'
-              ? ['x', 'y', 'consequence']
-              : action === 'scroll'
-                ? ['deltaX', 'deltaY']
-                : ['key'])
-          ]
-          return [
-            {
-              type: 'object',
-              required,
-              additionalProperties: false,
-              properties: { ...actionProperties, ...actionSpecific }
-            },
-            {
-              type: 'object',
-              required: [...required, 'target'],
-              additionalProperties: false,
-              properties: {
-                ...actionProperties,
-                ...actionSpecific,
-                target: { type: 'string', enum: ['current'] }
-              }
-            }
-          ]
-        })
-      ]
-    },
+    parameters: browserToolParameters(),
     async execute(toolCallId, params, _onUpdate, _ctx, signal) {
       if (
         !boundedText(originSessionId, MAX_ORIGIN_ID_LENGTH) ||
-        !boundedText(toolCallId, MAX_ID_LENGTH)
+        !boundedText(toolCallId, BROWSER_TOOL_MAX_ID_BYTES)
       ) {
         return {
           content: [{ type: 'text', text: 'Invalid browser request' }],
@@ -330,23 +222,27 @@ export function buildBrowserTool(
         input.action === 'open' ||
         input.action === 'snapshot' ||
         input.action === 'click' ||
+        input.action === 'typeText' ||
         input.action === 'scroll' ||
         input.action === 'keypress'
           ? input.action
           : null
       const requestId = options.requestId ? options.requestId() : toolCallId
       let command: Record<string, unknown> | null = null
+      let typeTextDenied = false
       if (
         action === 'open' &&
-        boundedText(input.url, MAX_URL_LENGTH) &&
+        exactOptionalTargetKeys(input, ['action', 'url']) &&
+        boundedText(input.url, BROWSER_TOOL_MAX_URL_BYTES) &&
         (input.target === undefined || input.target === 'dedicated')
       ) {
         command = { type: 'open', requestId, url: input.url }
       } else if (
         action === 'open' &&
+        exactKeys(input, ['action', 'url', 'target', 'tabId', 'expectedDocumentRevision']) &&
         input.target === 'current' &&
-        boundedText(input.url, MAX_URL_LENGTH) &&
-        boundedText(input.tabId, MAX_ID_LENGTH) &&
+        boundedText(input.url, BROWSER_TOOL_MAX_URL_BYTES) &&
+        boundedText(input.tabId, BROWSER_TOOL_MAX_ID_BYTES) &&
         validDocumentRevision(input.expectedDocumentRevision)
       ) {
         command = {
@@ -359,8 +255,16 @@ export function buildBrowserTool(
         }
       } else if (
         action === 'click' &&
+        exactOptionalTargetKeys(input, [
+          'action',
+          'tabId',
+          'expectedDocumentRevision',
+          'x',
+          'y',
+          'consequence'
+        ]) &&
         targetIsValid(input.target) &&
-        boundedText(input.tabId, MAX_ID_LENGTH) &&
+        boundedText(input.tabId, BROWSER_TOOL_MAX_ID_BYTES) &&
         validDocumentRevision(input.expectedDocumentRevision) &&
         validCoordinate(input.x) &&
         validCoordinate(input.y) &&
@@ -377,9 +281,43 @@ export function buildBrowserTool(
           consequence: 'read'
         }
       } else if (
-        action === 'scroll' &&
+        action === 'typeText' &&
+        exactOptionalTargetKeys(input, ['action', 'tabId', 'expectedDocumentRevision', 'text']) &&
         targetIsValid(input.target) &&
-        boundedText(input.tabId, MAX_ID_LENGTH) &&
+        boundedText(input.tabId, BROWSER_TOOL_MAX_ID_BYTES) &&
+        validDocumentRevision(input.expectedDocumentRevision) &&
+        typeof input.text === 'string'
+      ) {
+        const taken = options.takeText?.(toolCallId, input.text)
+        const text = taken?.text
+        if (!boundedText(text, BROWSER_MAX_TEXT_BYTES)) {
+          typeTextDenied = taken?.denied === true
+          command = null
+        } else if (options.allowTypeText?.() === false) {
+          typeTextDenied = true
+          command = null
+        } else {
+          command = {
+            type: 'typeText',
+            requestId,
+            tabId: input.tabId,
+            expectedDocumentRevision: input.expectedDocumentRevision,
+            requireActive: true,
+            text,
+            consequence: 'write'
+          }
+        }
+      } else if (
+        action === 'scroll' &&
+        exactOptionalTargetKeys(input, [
+          'action',
+          'tabId',
+          'expectedDocumentRevision',
+          'deltaX',
+          'deltaY'
+        ]) &&
+        targetIsValid(input.target) &&
+        boundedText(input.tabId, BROWSER_TOOL_MAX_ID_BYTES) &&
         validDocumentRevision(input.expectedDocumentRevision) &&
         validScrollDelta(input.deltaX) &&
         validScrollDelta(input.deltaY) &&
@@ -396,8 +334,16 @@ export function buildBrowserTool(
         }
       } else if (
         action === 'keypress' &&
+        exactKeys(input, [
+          'action',
+          'tabId',
+          'expectedDocumentRevision',
+          'key',
+          ...(Object.hasOwn(input, 'target') ? ['target'] : []),
+          ...(Object.hasOwn(input, 'modifiers') ? ['modifiers'] : [])
+        ]) &&
         targetIsValid(input.target) &&
-        boundedText(input.tabId, MAX_ID_LENGTH) &&
+        boundedText(input.tabId, BROWSER_TOOL_MAX_ID_BYTES) &&
         validDocumentRevision(input.expectedDocumentRevision) &&
         typeof input.key === 'string' &&
         SAFE_KEYS.has(input.key) &&
@@ -414,14 +360,16 @@ export function buildBrowserTool(
         }
       } else if (
         action === 'snapshot' &&
-        boundedText(input.tabId, MAX_ID_LENGTH) &&
+        exactOptionalTargetKeys(input, ['action', 'tabId']) &&
+        boundedText(input.tabId, BROWSER_TOOL_MAX_ID_BYTES) &&
         (input.target === undefined || input.target === 'dedicated')
       ) {
         command = { type: 'snapshot', requestId, tabId: input.tabId }
       } else if (
         action === 'snapshot' &&
+        exactKeys(input, ['action', 'target', 'tabId', 'expectedDocumentRevision']) &&
         input.target === 'current' &&
-        boundedText(input.tabId, MAX_ID_LENGTH) &&
+        boundedText(input.tabId, BROWSER_TOOL_MAX_ID_BYTES) &&
         validDocumentRevision(input.expectedDocumentRevision)
       ) {
         command = {
@@ -434,12 +382,22 @@ export function buildBrowserTool(
       }
       if (!action || !command) {
         return {
-          content: [{ type: 'text', text: 'Invalid browser request' }],
-          details: { kind: 'browser_error', code: 'INVALID_REQUEST' },
+          content: [
+            {
+              type: 'text',
+              text: typeTextDenied
+                ? 'Browser text input is unavailable in the current mode'
+                : 'Invalid browser request'
+            }
+          ],
+          details: {
+            kind: 'browser_error',
+            code: typeTextDenied ? 'PERMISSION_DENIED' : 'INVALID_REQUEST'
+          },
           isError: true
         }
       }
-      if (!boundedText(requestId, MAX_ID_LENGTH)) {
+      if (!boundedText(requestId, BROWSER_TOOL_MAX_ID_BYTES)) {
         return {
           content: [{ type: 'text', text: 'Invalid browser request' }],
           details: { kind: 'browser_error', code: 'INVALID_REQUEST' },
@@ -521,4 +479,5 @@ export function buildBrowserTool(
       }
     }
   }
+  return tool as CustomTool
 }
