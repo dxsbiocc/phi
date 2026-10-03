@@ -21,9 +21,11 @@ import {
 } from '../envs'
 import { deleteEnvironmentEntry } from '../envs/index-store'
 import { tryAcquireEnvironmentLock } from '../envs/lock'
+import { listInstalledPlugins } from '../plugins/loader'
 import { directorySize } from './size'
 
 const ENV_ID = /^[a-z][a-z0-9-]*-[0-9a-f]{12}$/
+const PLUGIN_ID = /^[a-z][a-z0-9-]{1,63}$/
 const REMOVABLE_STATES = new Set(['ready', 'failed', 'drifted'])
 const CLEAN_BUILD_GUARD_REFERRER = 'environment-panel:active-build'
 
@@ -31,7 +33,7 @@ type Catalog = (projectCwd?: string) => Promise<ManagedEnvironmentEntry[]>
 
 export interface ManagedEnvironmentActions {
   list(projectCwd?: unknown): Promise<ManagedEnvironmentEntry[]>
-  build(ref: unknown, projectCwd?: unknown): { envId: string }
+  build(ref: unknown, projectCwd?: unknown, pluginId?: unknown): { envId: string }
   rebuild(envId: unknown): Promise<void>
   remove(envId: unknown): Promise<ManagedEnvironmentRemoveResult>
   clean(): Promise<ManagedEnvironmentCleanResult>
@@ -39,6 +41,7 @@ export interface ManagedEnvironmentActions {
 
 export interface ManagedEnvironmentActionDependencies {
   root: string
+  agentDir?: string
   builds: EnvironmentBuilds
   catalog: Catalog
   sizeOf?: typeof directorySize
@@ -78,11 +81,44 @@ function environmentId(value: unknown): string {
   return value
 }
 
-function envIdOf(
+function pluginIdentifier(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !PLUGIN_ID.test(value)) throw new Error('插件标识无效')
+  return value
+}
+
+type BuildTarget = { ref: string; projectCwd?: string; pluginId?: string }
+
+function validatePluginEnvironment(
   ref: string,
-  projectCwd?: string
+  pluginId: string | undefined,
+  agentDir: string | undefined
+): void {
+  const parsed = parseEnvironmentRef(ref)
+  if (parsed.kind !== 'plugin') {
+    if (pluginId) throw new Error('插件标识只能用于插件私有环境')
+    return
+  }
+  if (!pluginId) throw new Error('构建插件私有环境时必须提供插件标识')
+  const plugin = listInstalledPlugins({ ...(agentDir ? { agentDir } : {}) }).find(
+    (candidate) => candidate.id === pluginId
+  )
+  if (!plugin) throw new Error(`找不到已安装插件：${pluginId}`)
+  if (!Object.hasOwn(plugin.environments, parsed.name)) {
+    throw new Error(`插件 ${pluginId} 未声明环境 ${parsed.name}`)
+  }
+}
+
+function envIdOf(
+  target: BuildTarget,
+  agentDir?: string
 ): { envId: string; descriptor: ReturnType<typeof describeEnvironment> } {
-  const descriptor = describeEnvironment(ref, { projectDir: projectCwd })
+  validatePluginEnvironment(target.ref, target.pluginId, agentDir)
+  const descriptor = describeEnvironment(target.ref, {
+    ...(target.projectCwd ? { projectDir: target.projectCwd } : {}),
+    ...(target.pluginId ? { pluginId: target.pluginId } : {}),
+    ...(agentDir ? { agentDir } : {})
+  })
   return {
     descriptor,
     envId: computeEnvId({
@@ -111,7 +147,7 @@ export function createManagedEnvironmentActions(
   const sizeOf = dependencies.sizeOf ?? directorySize
   const collect = dependencies.collect ?? collectGarbage
   const repair = dependencies.repair ?? repairEnvironment
-  const descriptors = new Map<string, { ref: string; projectCwd?: string }>()
+  const descriptors = new Map<string, BuildTarget>()
 
   async function list(projectCwdValue?: unknown): Promise<ManagedEnvironmentEntry[]> {
     const projectCwd = projectDirectory(projectCwdValue)
@@ -120,22 +156,38 @@ export function createManagedEnvironmentActions(
       if (entry.source === 'orphaned') continue
       descriptors.set(entry.envId, {
         ref: entry.ref,
-        ...(projectCwd ? { projectCwd } : {})
+        ...(projectCwd ? { projectCwd } : {}),
+        ...(entry.pluginId ? { pluginId: entry.pluginId } : {})
       })
     }
     return entries
   }
 
-  function build(refValue: unknown, projectCwdValue?: unknown): { envId: string } {
+  function build(
+    refValue: unknown,
+    projectCwdValue?: unknown,
+    pluginIdValue?: unknown
+  ): { envId: string } {
     const ref = environmentRef(refValue)
     const projectCwd = projectDirectory(projectCwdValue)
+    const pluginId = pluginIdentifier(pluginIdValue)
     const parsed = parseEnvironmentRef(ref)
     if (parsed.kind === 'project' && !projectCwd) {
       throw new Error('构建项目环境时必须提供项目目录')
     }
-    const { descriptor, envId } = envIdOf(ref, projectCwd)
-    descriptors.set(envId, { ref, ...(projectCwd ? { projectCwd } : {}) })
-    void dependencies.builds.start(descriptor, { ref }).catch(() => undefined)
+    const target: BuildTarget = {
+      ref,
+      ...(projectCwd ? { projectCwd } : {}),
+      ...(pluginId ? { pluginId } : {})
+    }
+    const { descriptor, envId } = envIdOf(target, dependencies.agentDir)
+    descriptors.set(envId, target)
+    void dependencies.builds
+      .start(descriptor, {
+        ref,
+        ...(pluginId ? { requestedBy: { plugin: pluginId } } : {})
+      })
+      .catch(() => undefined)
     return { envId }
   }
 
@@ -150,12 +202,11 @@ export function createManagedEnvironmentActions(
     }
     let target = descriptors.get(envId)
     if (!target) {
-      const known = await list()
-      const entry = known.find((candidate) => candidate.envId === envId)
-      if (entry && entry.source !== 'orphaned') target = { ref: entry.ref }
+      await list()
+      target = descriptors.get(envId)
     }
     if (!target) throw new Error('找不到该环境的构建定义，请先刷新环境列表')
-    const { descriptor, envId: describedId } = envIdOf(target.ref, target.projectCwd)
+    const { descriptor, envId: describedId } = envIdOf(target, dependencies.agentDir)
     if (describedId !== envId) throw new Error('环境定义已经变化，请刷新环境列表后重试')
     await repair({
       root: dependencies.root,

@@ -17,20 +17,19 @@ import type {
   EnvironmentToolId,
   ManagedEnvironmentEntry
 } from '../../../../../shared/environmentTypes'
+import { EnvironmentBuildConfirmDialog } from '../../../components/EnvironmentBuildConfirmDialog'
 import { useSessionStore } from '../../../stores/sessionStore'
 import { HostDependenciesSection } from './HostDependenciesSection'
 import { HostToolsSection } from './HostToolsSection'
 import { ManagedEnvironmentsSection } from './ManagedEnvironmentsSection'
-import {
-  buildEnvironmentSections,
-  formatBuildEstimate,
-  formatEnvironmentSize
-} from '../lib/environmentPanel'
+import { buildEnvironmentSections, formatEnvironmentSize } from '../lib/environmentPanel'
 
 type PendingAction =
   | { kind: 'build'; environment: ManagedEnvironmentEntry }
   | { kind: 'remove'; environment: ManagedEnvironmentEntry }
   | { kind: 'clean' }
+
+type DestructiveAction = Exclude<PendingAction, { kind: 'build' }>
 
 export type EnvironmentSettingsPanelProps = {
   snapshot: EnvironmentSnapshot | null
@@ -44,20 +43,19 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
 }
 
-function actionDialogTitle(action: PendingAction): string {
-  if (action.kind === 'build') return `构建 ${action.environment.label ?? action.environment.ref}？`
+function actionDialogTitle(action: DestructiveAction): string {
   if (action.kind === 'remove')
     return `移除 ${action.environment.label ?? action.environment.ref}？`
   return '清理未引用环境？'
 }
 
-function ActionDialog({
+function DestructiveActionDialog({
   action,
   working,
   onClose,
   onConfirm
 }: {
-  action: PendingAction | null
+  action: DestructiveAction | null
   working: boolean
   onClose: () => void
   onConfirm: () => void
@@ -66,21 +64,6 @@ function ActionDialog({
     <Dialog open={action !== null} onClose={working ? undefined : onClose} fullWidth maxWidth="sm">
       <DialogTitle>{action ? actionDialogTitle(action) : ''}</DialogTitle>
       <DialogContent>
-        {action?.kind === 'build' ? (
-          <Stack spacing={1}>
-            <DialogContentText>
-              {formatBuildEstimate(action.environment.estimate)}。确认后构建会在后台任务面板中继续，
-              此页不重复显示进度。
-            </DialogContentText>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}
-            >
-              {action.environment.ref}
-            </Typography>
-          </Stack>
-        ) : null}
         {action?.kind === 'remove' ? (
           <DialogContentText>
             将删除此环境前缀并释放本机空间。只有无引用且未在构建的环境可以移除。
@@ -97,13 +80,13 @@ function ActionDialog({
           取消
         </Button>
         <Button
-          color={action?.kind === 'build' ? 'primary' : 'error'}
+          color="error"
           variant="contained"
           disabled={working}
           onClick={onConfirm}
           startIcon={working ? <CircularProgress size={14} color="inherit" /> : undefined}
         >
-          {working ? '处理中…' : action?.kind === 'build' ? '开始构建' : '确认'}
+          {working ? '处理中…' : '确认'}
         </Button>
       </DialogActions>
     </Dialog>
@@ -198,7 +181,11 @@ export function EnvironmentSettingsPanel({
     if ('environment' in action) setBusyEnvId(action.environment.envId)
     try {
       if (action.kind === 'build') {
-        await window.api.buildManagedEnvironment(action.environment.ref, projectCwd)
+        await window.api.buildManagedEnvironment(
+          action.environment.ref,
+          projectCwd,
+          action.environment.pluginId
+        )
         setNotice(
           `已开始构建 ${action.environment.label ?? action.environment.ref}，请到后台任务查看进度。`
         )
@@ -303,8 +290,14 @@ export function EnvironmentSettingsPanel({
         </>
       )}
 
-      <ActionDialog
-        action={pendingAction}
+      <EnvironmentBuildConfirmDialog
+        environment={pendingAction?.kind === 'build' ? pendingAction.environment : null}
+        working={actionWorking}
+        onClose={() => setPendingAction(null)}
+        onConfirm={() => void confirmAction()}
+      />
+      <DestructiveActionDialog
+        action={pendingAction?.kind === 'build' ? null : pendingAction}
         working={actionWorking}
         onClose={() => setPendingAction(null)}
         onConfirm={() => void confirmAction()}

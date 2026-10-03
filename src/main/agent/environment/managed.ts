@@ -20,7 +20,7 @@ import {
 } from '../envs'
 import { estimateBuild } from '../envs/estimate'
 import { projectEnvironmentExists, readOverrides } from '../envs/project-environments'
-import { loadedPlugins, type LoadedPlugin } from '../plugins/loader'
+import { listInstalledPlugins, type LoadedPlugin } from '../plugins/loader'
 import { listSkills } from '../resources'
 import { getPhiAgentDir } from '../runtime-paths'
 import { getBundledAgentsDir } from '../runtime/runtime-adapter'
@@ -303,7 +303,7 @@ export async function listManagedEnvironments(
   const root = options.root ?? getRuntimeRoot()
   const environmentsDir = options.environmentsDir ?? bundledEnvironmentsDir()
   const agentDir = options.agentDir ?? getPhiAgentDir()
-  const plugins = loadedPlugins({ agentDir })
+  const plugins = listInstalledPlugins({ agentDir })
   const platform = options.platform ?? currentPlatform()
   const builds = options.builds ?? []
   const sizeOf = options.sizeOf ?? directorySize
@@ -340,6 +340,7 @@ export async function listManagedEnvironments(
         envId,
         state,
         source: environment.source,
+        ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
         label: descriptor.spec.name,
         ...(descriptor.spec.description ? { description: descriptor.spec.description } : {}),
         referrers: [...(indexEntry?.referrers ?? [])].sort(),

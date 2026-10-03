@@ -1038,6 +1038,7 @@ const environmentBuilds = createEnvironmentBuilds({
 })
 const managedEnvironmentActions = createManagedEnvironmentActions({
   root: getRuntimeRoot(),
+  agentDir: AGENT_DIR,
   builds: environmentBuilds,
   catalog: (projectDir) =>
     listManagedEnvironments({
@@ -6974,13 +6975,18 @@ app.whenReady().then(async () => {
       throw new Error(`读取托管环境失败：${error instanceof Error ? error.message : String(error)}`)
     }
   })
-  ipcMain.handle('managedEnvironments:build', async (_, ref: unknown, projectCwd: unknown) => {
-    try {
-      return managedEnvironmentActions.build(ref, projectCwd)
-    } catch (error) {
-      throw new Error(`启动环境构建失败：${error instanceof Error ? error.message : String(error)}`)
+  ipcMain.handle(
+    'managedEnvironments:build',
+    async (_, ref: unknown, projectCwd: unknown, pluginId: unknown) => {
+      try {
+        return managedEnvironmentActions.build(ref, projectCwd, pluginId)
+      } catch (error) {
+        throw new Error(
+          `启动环境构建失败：${error instanceof Error ? error.message : String(error)}`
+        )
+      }
     }
-  })
+  )
   ipcMain.handle('managedEnvironments:rebuild', async (_, envId: unknown) => {
     try {
       await managedEnvironmentActions.rebuild(envId)

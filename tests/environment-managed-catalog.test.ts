@@ -8,7 +8,7 @@ import { describeEnvironment } from '../src/main/agent/content/environment-refs'
 import { listManagedEnvironments } from '../src/main/agent/environment/managed'
 import { updateEnvironmentEntry } from '../src/main/agent/envs'
 import { writeOverrides } from '../src/main/agent/envs/project-environments'
-import { installPlugin } from '../src/main/agent/plugins/loader'
+import { installPlugin, setPluginEnabled } from '../src/main/agent/plugins/loader'
 import type { EnvironmentBuild } from '../src/shared/environmentBuildTypes'
 import { copyMinimal, envIdFor } from './helpers/fakeEnvironment'
 
@@ -155,6 +155,38 @@ test('managed catalog includes official, plugin, project, and orphaned environme
     assert.equal(orphan?.source, 'orphaned')
     assert.equal(orphan?.state, 'failed')
     assert.equal(orphan?.sizeBytes, 123)
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('managed catalog keeps disabled plugin environments with owner and build estimate', async () => {
+  const temp = mkdtempSync(join(tmpdir(), 'phi-managed-disabled-plugin-'))
+  const root = join(temp, 'runtime')
+  const agentDir = join(temp, 'agent')
+  try {
+    const installed = installPlugin(join(process.cwd(), 'resources', 'plugins', 'visualization'), {
+      agentDir,
+      runtimeRoot: root,
+      platform: 'darwin-arm64'
+    })
+    assert.equal(installed.ok, true, JSON.stringify(installed.errors))
+    const disabled = setPluginEnabled('visualization', false, { agentDir, runtimeRoot: root })
+    assert.equal(disabled.ok, true, JSON.stringify(disabled.errors))
+
+    const catalog = await listManagedEnvironments({
+      root,
+      agentDir,
+      environmentsDir: join(temp, 'official'),
+      platform: 'darwin-arm64',
+      consumers: []
+    })
+    const plugin = catalog.find((entry) => entry.ref === 'plugin:viz')
+    assert.equal(plugin?.pluginId, 'visualization')
+    assert.equal(plugin?.state, 'absent')
+    assert.ok(plugin?.envId.startsWith('plugin-visualization-viz-'))
+    assert.ok((plugin?.estimate?.packages ?? 0) > 0)
+    assert.ok((plugin?.estimate?.cachedPackages ?? -1) >= 0)
   } finally {
     rmSync(temp, { recursive: true, force: true })
   }

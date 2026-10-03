@@ -5,14 +5,20 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 
+import type { EnvironmentBuild } from '../src/shared/environmentBuildTypes'
 import type { PackageUpdateView } from '../src/shared/packageManagerTypes'
 import type { PhiPluginProblemView } from '../src/shared/phiPluginTypes'
+import { EnvironmentBuildConfirmDialog } from '../src/renderer/src/components/EnvironmentBuildConfirmDialog'
 import PhiPluginsView, {
   PhiPluginCatalogContent,
   PhiPluginSidebar,
   type PhiPluginCatalogEntry
 } from '../src/renderer/src/features/phi-plugin/PhiPluginsView'
-import type { PhiPluginDisplayItem } from '../src/renderer/src/features/phi-plugin/hooks/usePhiPlugins'
+import {
+  applyEnvironmentBuildToPlugins,
+  type PhiPluginDisplayItem
+} from '../src/renderer/src/features/phi-plugin/hooks/usePhiPlugins'
+import { requestPhiPluginEnvironmentBuild } from '../src/renderer/src/features/phi-plugin/lib/environmentBuild'
 import { phiPluginCatalogAction } from '../src/renderer/src/features/phi-plugin/lib/phiPluginCatalog'
 import {
   filterPhiPlugins,
@@ -228,6 +234,7 @@ test('plugin detail contains management, components, environment state and sourc
       notice: null,
       onClearError: () => undefined,
       onClearNotice: () => undefined,
+      onRefresh: async () => undefined,
       onSetEnabled: async () => true,
       onUninstall: async () => true
     })
@@ -245,6 +252,143 @@ test('plugin detail contains management, components, environment state and sourc
   assert.match(markup, /卸载/)
 })
 
+test('plugin detail builds an absent private environment through the shared confirmation flow', async () => {
+  const estimate = {
+    packages: 12,
+    cachedPackages: 5,
+    remainingBytes: 4 * 1024 * 1024
+  }
+  const selected = plugin({
+    environmentStatuses: [
+      {
+        name: 'viz',
+        ref: 'plugin:viz',
+        envId: 'plugin-visualization-viz-0123456789ab',
+        state: 'absent',
+        estimate
+      }
+    ]
+  })
+  const markup = themed(
+    createElement(PhiPluginsView, {
+      plugin: selected,
+      busyPluginId: null,
+      error: null,
+      notice: null,
+      onClearError: () => undefined,
+      onClearNotice: () => undefined,
+      onRefresh: async () => undefined,
+      onSetEnabled: async () => true,
+      onUninstall: async () => true
+    })
+  )
+  assert.match(markup, /查看估算并构建/)
+
+  const dialogSource = readFileSync(
+    'src/renderer/src/components/EnvironmentBuildConfirmDialog.tsx',
+    'utf8'
+  )
+  const detailSource = readFileSync(
+    'src/renderer/src/features/phi-plugin/components/PhiPluginDetail.tsx',
+    'utf8'
+  )
+  const settingsSource = readFileSync(
+    'src/renderer/src/features/environment/components/EnvironmentSettingsPanel.tsx',
+    'utf8'
+  )
+  assert.match(dialogSource, /构建 .*？/)
+  assert.match(dialogSource, /确认后会在后台构建，进度可在后台任务面板查看/)
+  assert.match(dialogSource, /开始构建/)
+  assert.match(detailSource, /setPendingBuild\(\{ pluginId: plugin\.id, environment \}\)/)
+  assert.match(detailSource, /<EnvironmentBuildConfirmDialog/)
+  assert.match(settingsSource, /<EnvironmentBuildConfirmDialog/)
+  assert.match(
+    settingsSource,
+    /buildManagedEnvironment\([\s\S]{0,160}action\.environment\.pluginId/
+  )
+
+  const calls: unknown[][] = []
+  const result = await requestPhiPluginEnvironmentBuild(
+    {
+      buildManagedEnvironment: async (...args: unknown[]) => {
+        calls.push(args)
+        return { envId: 'plugin-visualization-viz-0123456789ab' }
+      }
+    },
+    selected.id,
+    selected.environmentStatuses[0]!
+  )
+  assert.equal(result.envId, 'plugin-visualization-viz-0123456789ab')
+  assert.deepEqual(calls, [['plugin:viz', undefined, 'visualization']])
+
+  const dialogMarkup = themed(
+    createElement(EnvironmentBuildConfirmDialog, {
+      environment: { ref: 'plugin:viz', label: 'viz', estimate },
+      working: false,
+      onClose: () => undefined,
+      onConfirm: () => undefined
+    })
+  )
+  assert.match(dialogMarkup, /构建 viz？/)
+  assert.match(dialogMarkup, /预计下载 4\.0 MB · 12 个包（5 个已缓存）/)
+  assert.match(dialogMarkup, /开始构建/)
+})
+
+test('plugin environment build events drive building progress and ready state', () => {
+  const selected = plugin({
+    environmentStatuses: [
+      {
+        name: 'viz',
+        ref: 'plugin:viz',
+        envId: 'plugin-visualization-viz-0123456789ab',
+        state: 'absent',
+        estimate: { packages: 12, cachedPackages: 5 }
+      }
+    ]
+  })
+  const building: EnvironmentBuild = {
+    envId: 'plugin-visualization-viz-0123456789ab',
+    ref: 'plugin:viz',
+    state: 'building',
+    phase: 'create',
+    message: '正在下载软件包',
+    startedAt: '2026-10-03T00:00:00.000Z',
+    estimate: { packages: 12, cachedPackages: 5 },
+    progress: { packages: 12, packagesDone: 8 }
+  }
+
+  const active = applyEnvironmentBuildToPlugins([selected], building)[0]!
+  assert.equal(active.environmentStatuses[0]?.state, 'building')
+  assert.equal(active.environmentStatuses[0]?.build?.progress.packagesDone, 8)
+  const activeMarkup = themed(
+    createElement(PhiPluginsView, {
+      plugin: active,
+      busyPluginId: null,
+      error: null,
+      notice: null,
+      onClearError: () => undefined,
+      onClearNotice: () => undefined,
+      onRefresh: async () => undefined,
+      onSetEnabled: async () => true,
+      onUninstall: async () => true
+    })
+  )
+  assert.match(activeMarkup, /正在下载软件包/)
+  assert.match(activeMarkup, /8 \/ 12 个包/)
+  assert.match(activeMarkup, /disabled=""/)
+
+  const ready = applyEnvironmentBuildToPlugins([active], {
+    ...building,
+    state: 'ready',
+    phase: 'ready',
+    message: 'ready',
+    finishedAt: '2026-10-03T00:01:00.000Z',
+    progress: { packages: 12, packagesDone: 12 }
+  })[0]!
+  assert.equal(ready.environmentStatuses[0]?.state, 'ready')
+  assert.equal(ready.environmentStatuses[0]?.error, undefined)
+})
+
 test('legacy plugin resource tabs render a safe empty-selection detail', () => {
   const markup = themed(
     createElement(PhiPluginsView, {
@@ -254,6 +398,7 @@ test('legacy plugin resource tabs render a safe empty-selection detail', () => {
       notice: null,
       onClearError: () => undefined,
       onClearNotice: () => undefined,
+      onRefresh: async () => undefined,
       onSetEnabled: async () => true,
       onUninstall: async () => true
     })

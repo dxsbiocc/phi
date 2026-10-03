@@ -19,9 +19,11 @@ import {
 import { alpha } from '@mui/material/styles'
 
 import type { ManagedEnvironmentState } from '../../../../../shared/environmentTypes'
+import { EnvironmentBuildConfirmDialog } from '../../../components/EnvironmentBuildConfirmDialog'
 import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../../../lib/packageTrust'
 import { PhiIcons } from '../../../icons'
-import type { PhiPluginDisplayItem } from '../hooks/usePhiPlugins'
+import type { PhiPluginDisplayItem, PhiPluginEnvironmentStatus } from '../hooks/usePhiPlugins'
+import { requestPhiPluginEnvironmentBuild } from '../lib/environmentBuild'
 import {
   phiPluginComponentName,
   phiPluginDistributionLabel,
@@ -81,8 +83,15 @@ export type PhiPluginDetailProps = {
   notice: string | null
   onClearError: () => void
   onClearNotice: () => void
+  onRefresh: () => Promise<void>
   onSetEnabled: (plugin: PhiPluginDisplayItem, enabled: boolean) => Promise<boolean>
   onUninstall: (plugin: PhiPluginDisplayItem) => Promise<boolean>
+}
+
+function environmentBuildProgress(environment: PhiPluginEnvironmentStatus): string {
+  const build = environment.build
+  if (!build) return '正在启动构建…'
+  return `${build.message} · ${build.progress.packagesDone} / ${build.progress.packages} 个包`
 }
 
 export function PhiPluginDetail({
@@ -92,15 +101,82 @@ export function PhiPluginDetail({
   notice,
   onClearError,
   onClearNotice,
+  onRefresh,
   onSetEnabled,
   onUninstall
 }: PhiPluginDetailProps): React.JSX.Element {
   const [pendingUninstall, setPendingUninstall] = useState<PhiPluginDisplayItem | null>(null)
+  const [pendingBuildState, setPendingBuild] = useState<{
+    pluginId: string
+    environment: PhiPluginEnvironmentStatus
+  } | null>(null)
+  const [busyEnvironmentState, setBusyEnvironment] = useState<{
+    pluginId: string
+    envId: string
+    kind: 'build' | 'rebuild'
+  } | null>(null)
+  const [environmentErrorState, setEnvironmentActionError] = useState<{
+    pluginId: string
+    message: string
+  } | null>(null)
   const busy = plugin !== null && busyPluginId === plugin.id
+  const pendingBuild =
+    pendingBuildState && pendingBuildState.pluginId === plugin?.id
+      ? pendingBuildState.environment
+      : null
+  const busyEnvironment =
+    busyEnvironmentState && busyEnvironmentState.pluginId === plugin?.id
+      ? busyEnvironmentState
+      : null
+  const environmentActionError =
+    environmentErrorState && environmentErrorState.pluginId === plugin?.id
+      ? environmentErrorState.message
+      : null
 
   async function confirmUninstall(): Promise<void> {
     if (!pendingUninstall) return
     if (await onUninstall(pendingUninstall)) setPendingUninstall(null)
+  }
+
+  async function confirmBuild(): Promise<void> {
+    if (!plugin || !pendingBuild) return
+    setEnvironmentActionError(null)
+    setBusyEnvironment({
+      pluginId: plugin.id,
+      envId: pendingBuild.envId ?? pendingBuild.ref,
+      kind: 'build'
+    })
+    try {
+      const result = await requestPhiPluginEnvironmentBuild(window.api, plugin.id, pendingBuild)
+      setBusyEnvironment({ pluginId: plugin.id, envId: result.envId, kind: 'build' })
+      setPendingBuild(null)
+      await onRefresh()
+    } catch (cause) {
+      setEnvironmentActionError({
+        pluginId: plugin.id,
+        message: `无法构建环境：${cause instanceof Error ? cause.message : String(cause)}`
+      })
+      setBusyEnvironment(null)
+      setPendingBuild(null)
+    }
+  }
+
+  async function rebuildEnvironment(environment: PhiPluginEnvironmentStatus): Promise<void> {
+    if (!environment.envId) return
+    setEnvironmentActionError(null)
+    if (!plugin) return
+    setBusyEnvironment({ pluginId: plugin.id, envId: environment.envId, kind: 'rebuild' })
+    try {
+      await window.api.rebuildManagedEnvironment(environment.envId)
+      await onRefresh()
+    } catch (cause) {
+      setEnvironmentActionError({
+        pluginId: plugin.id,
+        message: `无法重新构建环境：${cause instanceof Error ? cause.message : String(cause)}`
+      })
+    } finally {
+      setBusyEnvironment(null)
+    }
   }
 
   return (
@@ -247,52 +323,123 @@ export function PhiPluginDetail({
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.25 }}>
                   环境
                 </Typography>
+                {environmentActionError ? (
+                  <Alert
+                    severity="error"
+                    variant="outlined"
+                    onClose={() => setEnvironmentActionError(null)}
+                    sx={{ mb: 1.25 }}
+                  >
+                    {environmentActionError}
+                  </Alert>
+                ) : null}
                 {plugin.environmentStatuses.length > 0 ? (
                   <Stack spacing={1}>
-                    {plugin.environmentStatuses.map((environment) => (
-                      <Stack
-                        key={`${environment.ref}:${environment.name}`}
-                        direction="row"
-                        spacing={1.5}
-                        sx={{
-                          alignItems: 'center',
-                          p: 1.5,
-                          border: 1,
-                          borderColor: 'divider',
-                          borderRadius: 1.5
-                        }}
-                      >
-                        <Box sx={{ flex: 1, minWidth: 0 }}>
-                          <Typography sx={{ fontWeight: 650 }}>{environment.name}</Typography>
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ fontFamily: 'var(--font-mono)' }}
-                          >
-                            {environment.ref}
-                          </Typography>
-                          {environment.error ? (
+                    {plugin.environmentStatuses.map((environment) => {
+                      const actionBusy =
+                        busyEnvironment !== null &&
+                        (busyEnvironment.envId === environment.envId ||
+                          busyEnvironment.envId === environment.ref)
+                      const building =
+                        environment.state === 'building' ||
+                        (actionBusy &&
+                          (busyEnvironment?.kind === 'rebuild' || environment.state === 'absent'))
+                      const rebuildable =
+                        (environment.state === 'failed' || environment.state === 'drifted') &&
+                        Boolean(environment.envId)
+                      const showBuildAction =
+                        environment.state === 'absent' ||
+                        environment.state === 'building' ||
+                        (actionBusy && busyEnvironment?.kind === 'build')
+                      return (
+                        <Stack
+                          key={`${environment.ref}:${environment.name}`}
+                          direction={{ xs: 'column', sm: 'row' }}
+                          spacing={1.5}
+                          sx={{
+                            alignItems: { xs: 'stretch', sm: 'center' },
+                            p: 1.5,
+                            border: 1,
+                            borderColor: 'divider',
+                            borderRadius: 1.5
+                          }}
+                        >
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography sx={{ fontWeight: 650 }}>{environment.name}</Typography>
                             <Typography
                               variant="caption"
-                              color="error"
-                              sx={{ display: 'block', mt: 0.5 }}
+                              color="text.secondary"
+                              sx={{ fontFamily: 'var(--font-mono)' }}
                             >
-                              {environment.error}
+                              {environment.ref}
                             </Typography>
-                          ) : null}
-                        </Box>
-                        <Chip
-                          size="small"
-                          color={environmentColor(environment.state)}
-                          variant="outlined"
-                          label={
-                            environment.state
-                              ? phiPluginEnvironmentStateLabel(environment.state)
-                              : '状态未知'
-                          }
-                        />
-                      </Stack>
-                    ))}
+                            {building ? (
+                              <Typography
+                                variant="caption"
+                                color="primary"
+                                sx={{ display: 'block', mt: 0.5 }}
+                              >
+                                {environmentBuildProgress(environment)}
+                              </Typography>
+                            ) : null}
+                            {environment.error ? (
+                              <Typography
+                                variant="caption"
+                                color="error"
+                                sx={{ display: 'block', mt: 0.5 }}
+                              >
+                                {environment.error}
+                              </Typography>
+                            ) : null}
+                          </Box>
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            sx={{ alignItems: 'center', flexShrink: 0 }}
+                          >
+                            <Chip
+                              size="small"
+                              color={environmentColor(building ? 'building' : environment.state)}
+                              variant="outlined"
+                              label={
+                                building
+                                  ? phiPluginEnvironmentStateLabel('building')
+                                  : environment.state
+                                    ? phiPluginEnvironmentStateLabel(environment.state)
+                                    : '状态未知'
+                              }
+                            />
+                            {showBuildAction ? (
+                              <Button
+                                size="small"
+                                variant="contained"
+                                disabled={building || busyPluginId !== null}
+                                startIcon={
+                                  building ? (
+                                    <CircularProgress size={14} color="inherit" />
+                                  ) : undefined
+                                }
+                                onClick={() =>
+                                  setPendingBuild({ pluginId: plugin.id, environment })
+                                }
+                              >
+                                {building ? '构建中…' : '查看估算并构建'}
+                              </Button>
+                            ) : null}
+                            {rebuildable ? (
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                disabled={building || busyPluginId !== null}
+                                onClick={() => void rebuildEnvironment(environment)}
+                              >
+                                {environment.state === 'failed' ? '重新构建' : '修复环境'}
+                              </Button>
+                            ) : null}
+                          </Stack>
+                        </Stack>
+                      )
+                    })}
                   </Stack>
                 ) : (
                   <Typography variant="body2" color="text.secondary">
@@ -364,6 +511,16 @@ export function PhiPluginDetail({
           </Button>
         </DialogActions>
       </Dialog>
+      <EnvironmentBuildConfirmDialog
+        environment={
+          pendingBuild
+            ? { ref: pendingBuild.ref, label: pendingBuild.name, estimate: pendingBuild.estimate }
+            : null
+        }
+        working={Boolean(busyEnvironment)}
+        onClose={() => setPendingBuild(null)}
+        onConfirm={() => void confirmBuild()}
+      />
     </Box>
   )
 }

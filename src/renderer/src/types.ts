@@ -753,7 +753,11 @@ export type RendererApi = AutoCompactionApi & {
   ) => Promise<EnvironmentSnapshot>
   pickEnvironmentBinary: () => Promise<string | null>
   listManagedEnvironments: (projectCwd?: string) => Promise<ManagedEnvironmentEntry[]>
-  buildManagedEnvironment: (ref: string, projectCwd?: string) => Promise<{ envId: string }>
+  buildManagedEnvironment: (
+    ref: string,
+    projectCwd?: string,
+    pluginId?: string
+  ) => Promise<{ envId: string }>
   rebuildManagedEnvironment: (envId: string) => Promise<void>
   removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
   cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>

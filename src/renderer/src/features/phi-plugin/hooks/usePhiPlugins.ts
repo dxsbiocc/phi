@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type {
+  EnvironmentBuild,
+  EnvironmentBuildEstimate
+} from '../../../../../shared/environmentBuildTypes'
+import type {
   ManagedEnvironmentEntry,
   ManagedEnvironmentState
 } from '../../../../../shared/environmentTypes'
@@ -23,6 +27,8 @@ export type PhiPluginEnvironmentStatus = {
   ref: string
   envId?: string
   state?: ManagedEnvironmentState
+  estimate?: EnvironmentBuildEstimate
+  build?: EnvironmentBuild
   error?: string
 }
 
@@ -53,24 +59,31 @@ function readableError(cause: unknown): string {
 
 function managedEnvironmentsForPlugin(
   plugin: PhiPluginWithComponents,
-  environments: readonly ManagedEnvironmentEntry[]
+  environments: readonly ManagedEnvironmentEntry[],
+  builds: readonly EnvironmentBuild[]
 ): PhiPluginEnvironmentStatus[] {
   const declarations = plugin.environments ?? []
   const managed = environments.filter(
     (environment) =>
       environment.source === 'plugin' &&
-      environment.consumers.some(
-        (consumer) => consumer.kind === 'plugin' && consumer.name === plugin.id
-      )
+      (environment.pluginId === plugin.id ||
+        environment.consumers.some(
+          (consumer) => consumer.kind === 'plugin' && consumer.name === plugin.id
+        ))
   )
   const statuses: PhiPluginEnvironmentStatus[] = managed.map((environment) => {
     const declaration = declarations.find((item) => item.ref === environment.ref)
+    const build = builds.find((candidate) => candidate.envId === environment.envId)
     return {
       name:
         declaration?.name ?? environment.label?.trim() ?? environment.ref.replace(/^plugin:/, ''),
       ref: environment.ref,
       envId: environment.envId,
       state: environment.state,
+      ...(environment.estimate || build?.estimate
+        ? { estimate: environment.estimate ?? build?.estimate }
+        : {}),
+      ...(build ? { build } : {}),
       ...(environment.error ? { error: environment.error } : {})
     }
   })
@@ -86,7 +99,8 @@ function managedEnvironmentsForPlugin(
 function withEnvironmentStatuses(
   plugins: readonly PhiPluginListItem[],
   environments: readonly ManagedEnvironmentEntry[],
-  packages: readonly InstalledPackageView[]
+  packages: readonly InstalledPackageView[],
+  builds: readonly EnvironmentBuild[]
 ): PhiPluginDisplayItem[] {
   const registryPlugins = new Map(
     packages.filter((item) => item.type === 'plugin').map((item) => [item.id, item])
@@ -99,8 +113,32 @@ function withEnvironmentStatuses(
       distribution:
         plugin.source === 'bundled' ? 'bundled' : installedPackage ? 'registry' : 'local',
       trust: plugin.source === 'bundled' ? 'builtin' : (installedPackage?.trust ?? 'imported'),
-      environmentStatuses: managedEnvironmentsForPlugin(enriched, environments)
+      environmentStatuses: managedEnvironmentsForPlugin(enriched, environments, builds)
     }
+  })
+}
+
+export function applyEnvironmentBuildToPlugins(
+  plugins: readonly PhiPluginDisplayItem[],
+  build: EnvironmentBuild
+): PhiPluginDisplayItem[] {
+  const state: ManagedEnvironmentState = build.state === 'cancelled' ? 'failed' : build.state
+  return plugins.map((plugin) => {
+    let changed = false
+    const environmentStatuses = plugin.environmentStatuses.map((environment) => {
+      if (environment.envId !== build.envId) return environment
+      changed = true
+      const next: PhiPluginEnvironmentStatus = {
+        ...environment,
+        state,
+        estimate: build.estimate,
+        build
+      }
+      if (state === 'failed') next.error = build.error ?? build.message
+      else delete next.error
+      return next
+    })
+    return changed ? { ...plugin, environmentStatuses } : plugin
   })
 }
 
@@ -120,13 +158,16 @@ export function usePhiPlugins(): PhiPluginsState {
       setNotice(null)
     }
     try {
-      const [installed, environments, packages] = await Promise.all([
+      const [installed, environments, packages, builds] = await Promise.all([
         window.api.listPhiPlugins(),
         window.api.listManagedEnvironments().catch((): ManagedEnvironmentEntry[] => []),
-        window.api.listInstalledPackages().catch((): InstalledPackageView[] => [])
+        window.api.listInstalledPackages().catch((): InstalledPackageView[] => []),
+        typeof window.api.listEnvironmentBuilds === 'function'
+          ? window.api.listEnvironmentBuilds().catch((): EnvironmentBuild[] => [])
+          : Promise.resolve([] as EnvironmentBuild[])
       ])
       if (request !== requestRef.current) return
-      setPlugins(withEnvironmentStatuses(installed, environments, packages))
+      setPlugins(withEnvironmentStatuses(installed, environments, packages, builds))
     } catch (cause) {
       if (request !== requestRef.current) return
       setError(`无法读取插件：${readableError(cause)}`)
@@ -144,6 +185,13 @@ export function usePhiPlugins(): PhiPluginsState {
       requestRef.current += 1
     }
   }, [load])
+
+  useEffect(() => {
+    if (typeof window.api.onEnvironmentBuildsChanged !== 'function') return undefined
+    return window.api.onEnvironmentBuildsChanged((build) => {
+      setPlugins((current) => applyEnvironmentBuildToPlugins(current, build))
+    })
+  }, [])
 
   const runMutation = useCallback(
     async ({

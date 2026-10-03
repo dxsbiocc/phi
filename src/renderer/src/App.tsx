@@ -3684,6 +3684,7 @@ function App(): React.JSX.Element {
         notice={phiPluginsState.notice}
         onClearError={phiPluginsState.clearError}
         onClearNotice={phiPluginsState.clearNotice}
+        onRefresh={phiPluginsState.refresh}
         onSetEnabled={phiPluginsState.setEnabled}
         onUninstall={phiPluginsState.uninstall}
       />

@@ -7,6 +7,7 @@ import test from 'node:test'
 import { createManagedEnvironmentActions } from '../src/main/agent/environment/actions'
 import { readEnvironmentIndex, updateEnvironmentEntry } from '../src/main/agent/envs'
 import type { EnvironmentBuilds } from '../src/main/agent/content/environment-builds'
+import { installPlugin } from '../src/main/agent/plugins/loader'
 
 const ENV_ID = 'phi-python-0123456789ab'
 
@@ -67,16 +68,111 @@ function addIndexEntry(
   return prefix
 }
 
+function writePluginWithoutEnvironments(root: string): string {
+  const pluginDir = join(root, 'other-plugin-source')
+  const skillDir = join(pluginDir, 'skills', 'other-skill')
+  mkdirSync(skillDir, { recursive: true })
+  writeFileSync(
+    join(pluginDir, 'phi-package.yaml'),
+    `schemaVersion: 1
+id: other-plugin
+type: plugin
+version: 1.0.0
+title: Other plugin
+summary: Plugin without a private environment.
+toolPrefix: other
+components:
+  skills: [skills/other-skill]
+`
+  )
+  writeFileSync(
+    join(skillDir, 'SKILL.md'),
+    `---
+name: other-skill
+description: Other plugin fixture.
+---
+Use the fixture.
+`
+  )
+  return pluginDir
+}
+
 test('managed environment actions reject invalid IPC arguments with readable messages', async () => {
   const root = mkdtempSync(join(tmpdir(), 'phi-environment-actions-'))
   try {
     await assert.rejects(actions(root).list('relative/project'), /项目目录必须是绝对路径/)
     assert.throws(() => actions(root).build('', undefined), /环境引用不能为空/)
     assert.throws(() => actions(root).build('./environment.yml', undefined), /技能私有路径环境/)
+    assert.throws(() => actions(root).build('phi:python@1', undefined, 42), /插件标识无效/)
     await assert.rejects(actions(root).remove('../bad'), /envId 无效/)
     await assert.rejects(actions(root).rebuild('bad'), /envId 无效/)
   } finally {
     rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('plugin environment builds require the installed owning plugin and remember it for rebuild', async () => {
+  const temp = mkdtempSync(join(tmpdir(), 'phi-plugin-environment-actions-'))
+  const root = join(temp, 'runtime')
+  const agentDir = join(temp, 'agent')
+  const starts: Array<{ owner?: string; requestedBy?: string }> = []
+  const repairs: Array<{ owner?: string; name: string }> = []
+  try {
+    const installed = installPlugin(join(process.cwd(), 'resources', 'plugins', 'visualization'), {
+      agentDir,
+      runtimeRoot: root
+    })
+    assert.equal(installed.ok, true, JSON.stringify(installed.errors))
+    const other = installPlugin(writePluginWithoutEnvironments(temp), {
+      agentDir,
+      runtimeRoot: root
+    })
+    assert.equal(other.ok, true, JSON.stringify(other.errors))
+
+    const builds: EnvironmentBuilds = {
+      start: async (descriptor, options) => {
+        starts.push({
+          owner: descriptor.owner,
+          requestedBy: options.requestedBy?.plugin
+        })
+        return undefined as never
+      },
+      list: () => [],
+      cancel: () => undefined
+    }
+    const pluginActions = createManagedEnvironmentActions({
+      root,
+      agentDir,
+      builds,
+      catalog: async () => [],
+      repair: async (options) => {
+        repairs.push({ owner: options.owner, name: options.spec.name })
+        return undefined as never
+      }
+    })
+
+    assert.throws(() => pluginActions.build('plugin:viz'), /构建插件私有环境时必须提供插件标识/)
+    assert.throws(
+      () => pluginActions.build('plugin:viz', undefined, 'other-plugin'),
+      /插件 other-plugin 未声明环境 viz/
+    )
+    assert.throws(
+      () => pluginActions.build('plugin:viz', undefined, 'missing-plugin'),
+      /找不到已安装插件：missing-plugin/
+    )
+    assert.throws(
+      () => pluginActions.build('phi:python@1', undefined, 'visualization'),
+      /插件标识只能用于插件私有环境/
+    )
+
+    const built = pluginActions.build('plugin:viz', undefined, 'visualization')
+    assert.match(built.envId, /^plugin-visualization-viz-[0-9a-f]{12}$/)
+    assert.deepEqual(starts, [{ owner: 'visualization', requestedBy: 'visualization' }])
+
+    await pluginActions.rebuild(built.envId)
+    assert.deepEqual(repairs, [{ owner: 'visualization', name: 'viz' }])
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
   }
 })
 

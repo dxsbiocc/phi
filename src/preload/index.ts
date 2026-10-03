@@ -723,7 +723,11 @@ type RendererAuthApi = {
   ) => Promise<EnvironmentSnapshot>
   pickEnvironmentBinary: () => Promise<string | null>
   listManagedEnvironments: (projectCwd?: string) => Promise<ManagedEnvironmentEntry[]>
-  buildManagedEnvironment: (ref: string, projectCwd?: string) => Promise<{ envId: string }>
+  buildManagedEnvironment: (
+    ref: string,
+    projectCwd?: string,
+    pluginId?: string
+  ) => Promise<{ envId: string }>
   rebuildManagedEnvironment: (envId: string) => Promise<void>
   removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
   cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
@@ -1127,8 +1131,12 @@ const api: RendererAuthApi = {
   pickEnvironmentBinary: (): Promise<string | null> => ipcRenderer.invoke('environment:pickBinary'),
   listManagedEnvironments: (projectCwd?: string): Promise<ManagedEnvironmentEntry[]> =>
     ipcRenderer.invoke('managedEnvironments:list', projectCwd),
-  buildManagedEnvironment: (ref: string, projectCwd?: string): Promise<{ envId: string }> =>
-    ipcRenderer.invoke('managedEnvironments:build', ref, projectCwd),
+  buildManagedEnvironment: (
+    ref: string,
+    projectCwd?: string,
+    pluginId?: string
+  ): Promise<{ envId: string }> =>
+    ipcRenderer.invoke('managedEnvironments:build', ref, projectCwd, pluginId),
   rebuildManagedEnvironment: (envId: string): Promise<void> =>
     ipcRenderer.invoke('managedEnvironments:rebuild', envId),
   removeManagedEnvironment: (envId: string): Promise<ManagedEnvironmentRemoveResult> =>

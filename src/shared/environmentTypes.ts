@@ -116,6 +116,8 @@ export interface ManagedEnvironmentEntry {
   envId: string
   state: ManagedEnvironmentState
   source: ManagedEnvironmentSource
+  /** Installed plugin that owns a private `plugin:` environment. */
+  pluginId?: string
   label?: string
   description?: string
   sizeBytes?: number

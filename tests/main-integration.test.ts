@@ -324,6 +324,11 @@ type HarnessResult = {
     language?: string
     lineLength?: number
   }>
+  managedEnvironmentBuildCalls: Array<{
+    ref: unknown
+    projectCwd: unknown
+    pluginId: unknown
+  }>
   openDialogOptions: Array<Record<string, unknown>>
   saveDialogOptions: Array<Record<string, unknown>>
   downloadCalls: Array<{ request: unknown; destination: string }>
@@ -450,6 +455,11 @@ async function harness(
     source: string
     language?: string
     lineLength?: number
+  }> = []
+  const managedEnvironmentBuildCalls: Array<{
+    ref: unknown
+    projectCwd: unknown
+    pluginId: unknown
   }> = []
   const openDialogOptions: Array<Record<string, unknown>> = []
   const saveDialogOptions: Array<Record<string, unknown>> = []
@@ -1153,7 +1163,10 @@ async function harness(
     './agent/environment': {
       createManagedEnvironmentActions: () => ({
         list: async () => [],
-        build: () => ({ envId: 'phi-python-0123456789ab' }),
+        build: (ref: unknown, projectCwd: unknown, pluginId: unknown) => {
+          managedEnvironmentBuildCalls.push({ ref, projectCwd, pluginId })
+          return { envId: 'plugin-visualization-viz-0123456789ab' }
+        },
         rebuild: async () => undefined,
         remove: async () => ({ removed: true, bytesFreed: 0 }),
         clean: async () => ({
@@ -3026,6 +3039,7 @@ async function harness(
     notebookSessionCalls,
     notebookExecutionCalls,
     notebookFormatCalls,
+    managedEnvironmentBuildCalls,
     openDialogOptions,
     saveDialogOptions,
     downloadCalls,
@@ -5231,6 +5245,18 @@ test('main IPC exposes local package registry planning and lifecycle channels', 
   assert.deepEqual(await app.invoke('packages:listUpdates'), [])
   await assert.rejects(app.invoke('packages:applyUpdate', 'skill', 'alpha-skill'), /没有可用更新/)
   await assert.rejects(app.invoke('packages:plan', '', 'wrapper', '', undefined), /参数无效/)
+})
+
+test('main IPC forwards the owning plugin identity for private environment builds', async () => {
+  const app = await harness()
+
+  assert.deepEqual(
+    await app.invoke('managedEnvironments:build', 'plugin:viz', undefined, 'visualization'),
+    { envId: 'plugin-visualization-viz-0123456789ab' }
+  )
+  assert.deepEqual(app.managedEnvironmentBuildCalls, [
+    { ref: 'plugin:viz', projectCwd: undefined, pluginId: 'visualization' }
+  ])
 })
 
 test('main IPC validates and stores global and project enablement', async () => {
