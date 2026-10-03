@@ -71,6 +71,7 @@ import {
 import { FileSystemBrowserCheckpointStore } from './browser/browser-checkpoints'
 import { ElectronBrowserEngine } from './browser/electron-browser-engine'
 import { BrowserWorkspaceRegistry } from './browser/browser-workspace-registry'
+import { BrowserToolHostCoordinator } from './agent/browser/browser-tool-host'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import semver from 'semver'
@@ -744,6 +745,7 @@ interface PromptRun {
   compactionReasons: Map<string, string>
   agentToolCallIds: Set<string>
   sdkToolCallIds: Set<string>
+  browserSdkToolCallIds: Set<string>
   persistedToolCallIds: Set<string>
   pendingProviderToolCalls: Map<string, { toolName: string; args: unknown; createdAt?: string }>
   sessionPath?: string | null
@@ -1470,8 +1472,19 @@ function resolveOriginSession(
   return phiSessionId ? { phiSessionId, cwd: origin?.cwd ?? currentCwd } : undefined
 }
 
+const browserToolHostCoordinator = new BrowserToolHostCoordinator({
+  resolveActiveRun: (originSessionId) => {
+    const run = findActivePromptRunByRuntimeSessionId(originSessionId)
+    return run ? { runId: run.runId, cancelled: run.cancelled } : undefined
+  },
+  executeAgent: (params, signal) => browserIpcCoordinator.executeAgent(params, signal)
+})
+
 getOmpBridge().registerHostHandler('browser.execute', (params) =>
-  browserIpcCoordinator.executeAgent(params)
+  browserToolHostCoordinator.execute(params)
+)
+getOmpBridge().registerHostHandler('browser.cancel', (params) =>
+  browserToolHostCoordinator.cancel(params)
 )
 
 async function listBackgroundAgentJobs(): Promise<BackgroundAgentJob[]> {
@@ -2840,9 +2853,10 @@ function persistAssistantContentInOrder(run: PromptRun, summary: Record<string, 
     }
     if (part.type !== 'toolCall' || typeof part.id !== 'string') continue
     const toolName = typeof part.name === 'string' ? part.name : 'tool'
+    const persistedArgs = toolArgsForPersistence(toolName, part.arguments)
     run.pendingProviderToolCalls.set(part.id, {
       toolName,
-      args: part.arguments,
+      args: persistedArgs,
       ...createdAtFromSummary(summary)
     })
     if (run.persistedToolCallIds.has(part.id)) continue
@@ -2852,7 +2866,7 @@ function persistAssistantContentInOrder(run: PromptRun, summary: Record<string, 
       runId: run.runId,
       toolCallId: part.id,
       toolName,
-      args: part.arguments,
+      args: persistedArgs,
       ...createdAtFromSummary(summary)
     })
   }
@@ -2869,6 +2883,64 @@ function persistAssistantContentInOrder(run: PromptRun, summary: Record<string, 
   }
   run.thinkingBlocks.clear()
   run.thinkingBlockStartedAtMs.clear()
+}
+
+function toolArgsForPersistence(toolName: unknown, args: unknown): unknown {
+  if (toolName !== 'browser') return args
+  if (!isRecord(args)) return {}
+  const sanitized: Record<string, unknown> = {}
+  if (args.action === 'open' || args.action === 'snapshot') sanitized.action = args.action
+  if (args.target === 'current' || args.target === 'dedicated') sanitized.target = args.target
+  if (
+    typeof args.tabId === 'string' &&
+    args.tabId.length > 0 &&
+    Buffer.byteLength(args.tabId, 'utf8') <= 256
+  ) {
+    sanitized.tabId = args.tabId
+  }
+  const expectedDocumentRevision = args.expectedDocumentRevision
+  if (
+    typeof expectedDocumentRevision === 'number' &&
+    Number.isSafeInteger(expectedDocumentRevision) &&
+    expectedDocumentRevision >= 0
+  ) {
+    sanitized.expectedDocumentRevision = expectedDocumentRevision
+  }
+  return sanitized
+}
+
+function browserToolResultForEvent(result: unknown): unknown {
+  if (!isRecord(result) || !Array.isArray(result.content)) return { content: [] }
+  return {
+    content: result.content.flatMap((part) =>
+      isRecord(part) && part.type === 'text' && typeof part.text === 'string'
+        ? [{ type: 'text', text: part.text }]
+        : []
+    )
+  }
+}
+
+function browserSafeAssistantMessage(message: unknown): unknown {
+  if (!isRecord(message) || !Array.isArray(message.content)) return message
+  return {
+    ...message,
+    content: message.content.map((part) =>
+      isRecord(part) && part.type === 'toolCall' && part.name === 'browser'
+        ? { ...part, arguments: toolArgsForPersistence('browser', part.arguments) }
+        : part
+    )
+  }
+}
+
+function browserSafeToolResultMessage(message: unknown): unknown {
+  if (!isRecord(message)) return { role: 'toolResult', content: [] }
+  const result = browserToolResultForEvent(message)
+  return {
+    role: 'toolResult',
+    ...(typeof message.toolCallId === 'string' ? { toolCallId: message.toolCallId } : {}),
+    ...(isRecord(result) && Array.isArray(result.content) ? { content: result.content } : {}),
+    ...(typeof message.isError === 'boolean' ? { isError: message.isError } : {})
+  }
 }
 
 function persistSdkCompactionNotice(
@@ -3033,7 +3105,7 @@ function persistSessionEvent(
     }
 
     persistAssistantContentInOrder(run, summary)
-    return withRunId(summary)
+    return withRunId({ ...summary, message: browserSafeAssistantMessage(summary.message) })
   }
 
   if (
@@ -3049,7 +3121,14 @@ function persistSessionEvent(
     if (typeof toolCallId !== 'string') return withRunId(summary)
     const pending = run.pendingProviderToolCalls.get(toolCallId)
     run.pendingProviderToolCalls.delete(toolCallId)
-    if (!pending || run.sdkToolCallIds.has(toolCallId)) return withRunId(summary)
+    const browserSdkToolResult = run.browserSdkToolCallIds.delete(toolCallId)
+    if (!pending || run.sdkToolCallIds.has(toolCallId)) {
+      return withRunId(
+        browserSdkToolResult
+          ? { ...summary, message: browserSafeToolResultMessage(summary.message) }
+          : summary
+      )
+    }
 
     if (!run.persistedToolCallIds.has(toolCallId)) {
       run.persistedToolCallIds.add(toolCallId)
@@ -3086,6 +3165,7 @@ function persistSessionEvent(
 
   if (summary.type === 'tool_execution_start' && typeof summary.toolCallId === 'string') {
     run.sdkToolCallIds.add(summary.toolCallId)
+    if (summary.toolName === 'browser') run.browserSdkToolCallIds.add(summary.toolCallId)
     if (isAgentDelegationStart(summary)) {
       run.agentToolCallIds.add(summary.toolCallId)
       const task = agentTaskFromArgs(summary.args) ?? ''
@@ -3103,6 +3183,7 @@ function persistSessionEvent(
       return event
     }
 
+    const persistedArgs = toolArgsForPersistence(summary.toolName, summary.args)
     if (!run.persistedToolCallIds.has(summary.toolCallId)) {
       run.persistedToolCallIds.add(summary.toolCallId)
       appendSessionEvent(run.phiSessionId, {
@@ -3110,11 +3191,11 @@ function persistSessionEvent(
         runId: run.runId,
         toolCallId: summary.toolCallId,
         toolName: summary.toolName,
-        args: summary.args,
+        args: persistedArgs,
         ...createdAtFromSummary(summary)
       })
     }
-    return withRunId(summary)
+    return withRunId(summary.toolName === 'browser' ? { ...summary, args: persistedArgs } : summary)
   }
 
   if (isAgentDelegationUpdate(run, summary)) {
@@ -3217,7 +3298,13 @@ function persistSessionEvent(
     ...(persisted.outputArtifact ? { outputArtifact: persisted.outputArtifact } : {})
   })
 
-  if (!persisted.truncated) return withRunId(summary)
+  if (!persisted.truncated) {
+    return withRunId(
+      summary.toolName === 'browser'
+        ? { ...summary, result: browserToolResultForEvent(summary.result) }
+        : summary
+    )
+  }
   return withRunId({
     ...summary,
     result: {
@@ -3699,6 +3786,7 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
     compactionReasons: new Map(),
     agentToolCallIds: new Set(),
     sdkToolCallIds: new Set(),
+    browserSdkToolCallIds: new Set(),
     persistedToolCallIds: new Set(),
     pendingProviderToolCalls: new Map(),
     sessionPath: stableSessionPath

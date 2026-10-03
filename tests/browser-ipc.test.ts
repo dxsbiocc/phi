@@ -114,7 +114,11 @@ const snapshot = (sessionId: string): BrowserWorkspaceSnapshot => ({
 })
 
 class FakeWorkspace implements BrowserWorkspaceLike {
-  readonly executeCalls: Array<{ actor: BrowserActor; command: BrowserCommand }> = []
+  readonly executeCalls: Array<{
+    actor: BrowserActor
+    command: BrowserCommand
+    signal?: AbortSignal
+  }> = []
   readonly viewportCalls: Array<{ tabId: string; viewport: BrowserViewport | null }> = []
   readonly listeners = new Set<(event: BrowserWorkspaceEvent) => void>()
   subscribeCalls = 0
@@ -122,8 +126,12 @@ class FakeWorkspace implements BrowserWorkspaceLike {
 
   constructor(readonly sessionId: string) {}
 
-  async execute(actor: BrowserActor, command: BrowserCommand): Promise<BrowserOutcome> {
-    this.executeCalls.push({ actor, command })
+  async execute(
+    actor: BrowserActor,
+    command: BrowserCommand,
+    signal?: AbortSignal
+  ): Promise<BrowserOutcome> {
+    this.executeCalls.push({ actor, command, ...(signal ? { signal } : {}) })
     return this.executeOutcome ?? { ok: true, snapshot: snapshot(this.sessionId) }
   }
 
@@ -420,12 +428,19 @@ test('runtime parser accepts every command shape and copies only bounded whiteli
       requestId: '4',
       tabId: 'tab-1',
       url: 'https://example.test/next',
-      expectedDocumentRevision: 2
+      expectedDocumentRevision: 2,
+      requireActive: true
     },
     { type: 'history', requestId: '5', tabId: 'tab-1', direction: 'back' },
     { type: 'reload', requestId: '6', tabId: 'tab-1' },
     { type: 'stop', requestId: '7', tabId: 'tab-1' },
-    { type: 'snapshot', requestId: '8', tabId: 'tab-1' },
+    {
+      type: 'snapshot',
+      requestId: '8',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 3,
+      requireActive: true
+    },
     { type: 'restore', requestId: '9', tabId: 'tab-1' },
     {
       type: 'click',
@@ -476,6 +491,21 @@ test('runtime parser accepts every command shape and copies only bounded whiteli
     tabId: 'tab-1',
     expectedDocumentRevision: 2
   })
+  assert.deepEqual(calls[4].command, {
+    type: 'navigate',
+    requestId: '4',
+    tabId: 'tab-1',
+    url: 'https://example.test/next',
+    expectedDocumentRevision: 2,
+    requireActive: true
+  })
+  assert.deepEqual(calls[8].command, {
+    type: 'snapshot',
+    requestId: '8',
+    tabId: 'tab-1',
+    expectedDocumentRevision: 3,
+    requireActive: true
+  })
 })
 
 test('runtime parser rejects oversized nonfinite and invalid command fields before registry use', async () => {
@@ -489,6 +519,21 @@ test('runtime parser rejects oversized nonfinite and invalid command fields befo
       tabId: 'tab',
       url: 'https://x',
       expectedDocumentRevision: 1.2
+    },
+    {
+      type: 'navigate',
+      requestId: '1',
+      tabId: 'tab',
+      url: 'https://x',
+      expectedDocumentRevision: 1,
+      requireActive: false
+    },
+    {
+      type: 'snapshot',
+      requestId: '1',
+      tabId: 'tab',
+      expectedDocumentRevision: 1,
+      requireActive: false
     },
     { type: 'history', requestId: '1', tabId: 'tab', direction: 'sideways' },
     {
@@ -584,19 +629,23 @@ test('agent execution resolves trusted origin and ignores forged identities', as
       location: { kind: 'local', path: '/display/project', realPath: '/real/project' }
     }
   })
-  await value.coordinator.executeAgent({
-    originSessionId: 'runtime-origin',
-    runId: 'run-1',
-    toolCallId: 'tool-1',
-    sessionId: 'phi-forged',
-    actor: { kind: 'human' },
-    command: {
-      type: 'open',
-      requestId: 'request-1',
-      url: 'https://example.test',
-      sessionId: 'phi-forged'
-    }
-  })
+  const controller = new AbortController()
+  await value.coordinator.executeAgent(
+    {
+      originSessionId: 'runtime-origin',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+      sessionId: 'phi-forged',
+      actor: { kind: 'human' },
+      command: {
+        type: 'open',
+        requestId: 'request-1',
+        url: 'https://example.test',
+        sessionId: 'phi-forged'
+      }
+    },
+    controller.signal
+  )
 
   assert.deepEqual(value.registry.workspaces.get('phi-agent')?.executeCalls, [
     {
@@ -606,7 +655,8 @@ test('agent execution resolves trusted origin and ignores forged identities', as
         runId: 'run-1',
         toolCallId: 'tool-1'
       },
-      command: { type: 'open', requestId: 'request-1', url: 'https://example.test' }
+      command: { type: 'open', requestId: 'request-1', url: 'https://example.test' },
+      signal: controller.signal
     }
   ])
   await assert.rejects(

@@ -26,7 +26,11 @@ export interface BrowserRendererSenderLike {
 }
 
 export interface BrowserWorkspaceLike {
-  execute(actor: BrowserActor, command: BrowserCommand): Promise<BrowserOutcome>
+  execute(
+    actor: BrowserActor,
+    command: BrowserCommand,
+    signal?: AbortSignal
+  ): Promise<BrowserOutcome>
   snapshot(): BrowserWorkspaceSnapshot
   setViewport(tabId: string, viewport: BrowserViewport | null): Promise<void>
   subscribe(listener: (event: BrowserWorkspaceEvent) => void): () => void
@@ -108,6 +112,12 @@ function optionalRevision(value: unknown): number | undefined {
   return value === undefined ? undefined : revision(value)
 }
 
+function optionalRequireActive(value: unknown): true | undefined {
+  if (value === undefined) return undefined
+  if (value !== true) return invalidRequest()
+  return true
+}
+
 function coordinate(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > MAX_COORDINATE) {
     return invalidRequest()
@@ -148,7 +158,6 @@ export function parseBrowserCommand(input: unknown): BrowserCommand {
         }
       case 'activate':
       case 'close':
-      case 'snapshot':
       case 'restore':
         return {
           type: input.type,
@@ -157,12 +166,25 @@ export function parseBrowserCommand(input: unknown): BrowserCommand {
         }
       case 'navigate': {
         const expectedDocumentRevision = optionalRevision(input.expectedDocumentRevision)
+        const requireActive = optionalRequireActive(input.requireActive)
         return {
           type: 'navigate',
           requestId,
           tabId: boundedString(input.tabId, MAX_ID_BYTES),
           url: boundedString(input.url, MAX_URL_BYTES),
-          ...(expectedDocumentRevision === undefined ? {} : { expectedDocumentRevision })
+          ...(expectedDocumentRevision === undefined ? {} : { expectedDocumentRevision }),
+          ...(requireActive ? { requireActive } : {})
+        }
+      }
+      case 'snapshot': {
+        const expectedDocumentRevision = optionalRevision(input.expectedDocumentRevision)
+        const requireActive = optionalRequireActive(input.requireActive)
+        return {
+          type: 'snapshot',
+          requestId,
+          tabId: boundedString(input.tabId, MAX_ID_BYTES),
+          ...(expectedDocumentRevision === undefined ? {} : { expectedDocumentRevision }),
+          ...(requireActive ? { requireActive } : {})
         }
       }
       case 'history':
@@ -303,7 +325,7 @@ export class BrowserIpcCoordinator {
     })
   }
 
-  async executeAgent(input: unknown): Promise<BrowserOutcome> {
+  async executeAgent(input: unknown, signal?: AbortSignal): Promise<BrowserOutcome> {
     return this.#safe(async () => {
       if (!isRecord(input)) return invalidRequest()
       const originSessionId = boundedString(input.originSessionId, MAX_ORIGIN_ID_BYTES)
@@ -314,7 +336,8 @@ export class BrowserIpcCoordinator {
       const workspace = await this.#workspace(session)
       return workspace.execute(
         { kind: 'agent', sessionId: session.sessionId, runId, toolCallId },
-        command
+        command,
+        signal
       )
     })
   }
