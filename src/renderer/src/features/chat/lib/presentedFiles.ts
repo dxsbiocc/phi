@@ -24,6 +24,7 @@ export function presentedFilesItemFromPhiTimelineEvent(event: {
     ) {
       return []
     }
+    const artifact = presentedArtifact(file.artifact)
     return [
       {
         path: file.path,
@@ -31,7 +32,8 @@ export function presentedFilesItemFromPhiTimelineEvent(event: {
         bytes: file.bytes,
         ...(typeof file.description === 'string' && file.description
           ? { description: file.description }
-          : {})
+          : {}),
+        ...(artifact ? { artifact } : {})
       }
     ]
   })
@@ -42,5 +44,18 @@ export function presentedFilesItemFromPhiTimelineEvent(event: {
     ...(event.runId ? { runId: event.runId } : {}),
     ...(event.createdAt ? { createdAt: event.createdAt } : {}),
     files
+  }
+}
+
+/** Unknown or invalid artifact metadata is dropped; it does not reject the file. */
+function presentedArtifact(value: unknown): PresentedFile['artifact'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.kind !== 'string' || record.kind.length === 0) return undefined
+  if (typeof record.title !== 'string' || record.title.length === 0) return undefined
+  return {
+    kind: record.kind,
+    title: record.title,
+    ...(typeof record.envId === 'string' && record.envId.length > 0 ? { envId: record.envId } : {})
   }
 }

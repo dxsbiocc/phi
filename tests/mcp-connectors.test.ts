@@ -6,49 +6,57 @@ import test from 'node:test'
 import {
   addRemoteMcpConnector,
   isInjectedMcpServer,
+  listConnectorCatalog,
   removeRemoteMcpConnector,
   setMcpConnectorEnabled
 } from '../src/main/agent/mcp-connectors'
-import { featuredMcpConnectors, mcpConnectorCategories } from '../src/shared/mcpConnectorCatalog'
+import { mcpConnectorCategories } from '../src/shared/mcpConnectorCatalog'
 
 test('curated connector directory has distinct HTTPS services in every group', () => {
-  const ids = featuredMcpConnectors.map((connector) => connector.id)
-  const urls = featuredMcpConnectors.map((connector) => connector.url)
-  assert.equal(new Set(ids).size, ids.length)
-  assert.equal(new Set(urls).size, urls.length)
-  assert.ok(urls.every((url) => url.startsWith('https://')))
-  for (const category of mcpConnectorCategories) {
-    assert.ok(
-      featuredMcpConnectors.filter((connector) => connector.category === category).length >= 2,
-      category
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-mcp-catalog-'))
+  try {
+    const connectors = listConnectorCatalog({
+      agentDir,
+      appVersion: '1.0.0',
+      bundledConnectorsDir: join(process.cwd(), 'resources', 'connectors')
+    })
+    const ids = connectors.map((connector) => connector.id)
+    const urls = connectors.map((connector) => connector.url).filter((url) => url !== undefined)
+    assert.equal(new Set(ids).size, ids.length)
+    assert.equal(new Set(urls).size, urls.length)
+    assert.ok(urls.every((url) => url.startsWith('https://')))
+    assert.ok(connectors.every((connector) => mcpConnectorCategories.includes(connector.category)))
+    assert.deepEqual(
+      connectors
+        .filter((connector) => connector.signIn === '无需登录')
+        .map((connector) => connector.id)
+        .sort(),
+      ['biorxiv', 'clinical-trials', 'open-targets', 'pubmed']
     )
+    assert.equal(
+      connectors.find((connector) => connector.id === 'open-targets')?.url,
+      'https://mcp.platform.opentargets.org/mcp'
+    )
+    const composio = connectors.find((connector) => connector.id === 'composio')
+    assert.equal(composio?.url, 'https://connect.composio.dev/mcp')
+    assert.equal(composio?.oauthAuthorizationOrigin, 'https://connect.composio.dev')
+    assert.deepEqual(
+      connectors
+        .filter((connector) => connector.oauthAuthorizationOrigin)
+        .map((connector) => [connector.id, connector.oauthAuthorizationOrigin] as const)
+        .sort(([left], [right]) => left.localeCompare(right)),
+      [
+        ['biorender', 'https://mcp.services.biorender.com'],
+        ['canva', 'https://mcp.canva.com'],
+        ['composio', 'https://connect.composio.dev'],
+        ['figma', 'https://www.figma.com'],
+        ['linear', 'https://mcp.linear.app'],
+        ['notion', 'https://mcp.notion.com']
+      ]
+    )
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true })
   }
-  assert.deepEqual(
-    featuredMcpConnectors
-      .filter((connector) => connector.signIn === '无需登录')
-      .map((connector) => connector.id),
-    ['pubmed', 'biorxiv', 'clinical-trials', 'open-targets']
-  )
-  assert.equal(
-    featuredMcpConnectors.find((connector) => connector.id === 'open-targets')?.url,
-    'https://mcp.platform.opentargets.org/mcp'
-  )
-  const composio = featuredMcpConnectors.find((connector) => connector.id === 'composio')
-  assert.equal(composio?.url, 'https://connect.composio.dev/mcp')
-  assert.equal(composio?.oauthAuthorizationOrigin, 'https://connect.composio.dev')
-  assert.deepEqual(
-    featuredMcpConnectors
-      .filter((connector) => connector.oauthAuthorizationOrigin)
-      .map((connector) => [connector.id, connector.oauthAuthorizationOrigin]),
-    [
-      ['notion', 'https://mcp.notion.com'],
-      ['composio', 'https://connect.composio.dev'],
-      ['linear', 'https://mcp.linear.app'],
-      ['figma', 'https://www.figma.com'],
-      ['canva', 'https://mcp.canva.com'],
-      ['biorender', 'https://mcp.services.biorender.com']
-    ]
-  )
 })
 
 test('remote MCP connectors preserve unrelated configuration and remove only matching entries', () => {

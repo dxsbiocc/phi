@@ -33,7 +33,7 @@ export function WorkspaceResourceTabs({
   activeKey: string | null
   onSelect: (tab: WorkspaceTab) => void
   onClose: (tab: WorkspaceTab) => void
-  connectorIcon?: (url?: string) => React.ReactNode
+  connectorIcon?: (connectorId?: string) => React.ReactNode
   fileIcon?: (tab: WorkspaceFileWorkspaceTab) => React.ReactNode
 }): React.JSX.Element {
   return (
@@ -116,7 +116,7 @@ export function WorkspaceResourceTabs({
             }}
           >
             {tab.kind === 'mcp' && connectorIcon ? (
-              connectorIcon(tab.connectorUrl)
+              connectorIcon(tab.itemId)
             ) : (tab.kind === 'file' || tab.kind === 'directory' || tab.kind === 'notebook') &&
               fileIcon ? (
               fileIcon(tab)

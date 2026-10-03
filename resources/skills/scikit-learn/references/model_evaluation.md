@@ -539,7 +539,7 @@ model = RandomForestClassifier(class_weight=class_weights, random_state=42)
 ### Resampling (using imbalanced-learn)
 
 ```python
-# Install: uv pip install imbalanced-learn
+# imbalanced-learn is not part of phi:python@1
 from imblearn.over_sampling import SMOTE
 from imblearn.under_sampling import RandomUnderSampler
 from imblearn.pipeline import Pipeline as ImbPipeline

@@ -17,11 +17,13 @@ groups. **Discover** opens a directory of common productivity, communication, de
 and life-science services, plus a custom HTTPS MCP URL form. Adding a connector saves
 it in Phi's global `~/.phi/mcp.json`; new local conversations load it through the MCP
 runtime. **Installed** means the configuration is saved, not that the server is
-connected or authorized. Public servers and official MCP servers that publish OAuth can be authorized from
-the directory. API-key connectors ask for that key first. Google Drive, Gmail, and
-Slack stay listed, but their providers require a pre-registered OAuth client that
-Phi does not configure, so they cannot be authorized from the directory yet. Remote project conversations do not load MCP in
-this beta. Phi's built-in database connectors are a separate, direct-API capability.
+connected or authorized. The public PubMed, bioRxiv, and Clinical Trials servers can
+be added now, and official MCP servers that publish OAuth can be authorized from the
+directory. API-key connectors ask for that key first. Google Drive, Gmail, and Slack
+stay listed, but their providers require a pre-registered OAuth client that Phi does
+not configure, so they cannot be authorized from the directory yet. Remote project
+conversations do not load MCP in this beta. For public biological databases, the main
+agent reads public REST URLs; database file downloads use `download_file` directly.
 The directory reads the current tool list from each public MCP server when its detail
 page opens; services awaiting authorization do not display guessed tool lists.
 
@@ -154,8 +156,8 @@ PRD's "Relationship To Notebook Analysis" section for the full comparison.
 ## Development
 
 ```bash
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 ## Verification
@@ -165,10 +167,10 @@ be installed; the tests use Node's built-in test runner and the existing TypeScr
 compiler, without a separate test framework.
 
 ```bash
-npm test
-npm run lint
-npm run typecheck
-npm run build
+bun run test
+bun run lint
+bun run typecheck
+bun run build
 ```
 
 Tests isolate external model calls and Electron APIs. They do not verify real provider
@@ -180,9 +182,9 @@ with different Skills/MCP configuration.
 ## Packaging
 
 ```bash
-npm run build:win
-npm run build:mac
-npm run build:linux
+bun run build:win
+bun run build:mac
+bun run build:linux
 ```
 
 The packaging configuration still contains development identifiers and a placeholder

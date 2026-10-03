@@ -15,7 +15,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "'@RG\\tID:1\\tLB:lib1\\tPL:ILLUMINA\\tSM:test\\tPU:barcode1'"
     description: "Full @RG header line to add (passed to samtools addreplacerg -r)."
   outdir:
     kind: output

@@ -3,16 +3,16 @@ import type {
   NotebookDocument,
   NotebookOutput
 } from '../../shared/notebookDocument'
-import type {
-  DefaultProxyMode,
-  PhiAppSettings,
-  PhiAppSettingsPatch,
-  ProxyTransportStatus
-} from '../../shared/appSettingsTypes'
-import type { DbConnectorSettingsItem } from '../../shared/dbConnectorTypes'
+import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettingsTypes'
 import type { BrowserRendererBridge } from '../../shared/browserTypes'
 import type {
   EnvironmentGetResult,
+  EnvironmentHostDependency,
+  EnvironmentHostTool,
+  ManagedEnvironmentCleanResult,
+  ManagedEnvironmentConsumer,
+  ManagedEnvironmentEntry,
+  ManagedEnvironmentRemoveResult,
   EnvironmentSnapshot,
   EnvironmentToolId,
   EnvironmentToolState
@@ -31,8 +31,25 @@ import type {
 import type { PromptImageInput, StoredPromptImage } from '../../shared/promptImageTypes'
 import type { McpServerSummary } from './features/mcp/lib/mcpTypes'
 export type { McpServerSummary } from './features/mcp/lib/mcpTypes'
+import type { FeaturedMcpConnector } from '../../shared/mcpConnectorCatalog'
 import type { AgentEventSummary } from './features/chat/lib/agentEventTypes'
 import type { SessionExportResult } from '../../shared/sessionExportTypes'
+import type {
+  EnablementItemKey,
+  EnablementScope,
+  EnablementSnapshot
+} from '../../shared/enablementTypes'
+import type {
+  KnownPackageRegistryView,
+  OfflinePackageImportPreview,
+  InstalledPackageView,
+  PackageInstallPlanView,
+  PackageManagerType,
+  PackageRegistryView,
+  PackageUpdateView
+} from '../../shared/packageManagerTypes'
+import type { SkillContent, SkillSummary } from '../../shared/skillTypes'
+export type { SkillContent, SkillSourceCategory, SkillSummary } from '../../shared/skillTypes'
 import type {
   AutoCompactionApi,
   ContextCompactionDetails,
@@ -98,9 +115,19 @@ export type {
   AuthPromptType
 } from './lib/authTypes'
 
-export type { DefaultProxyMode, PhiAppSettings, PhiAppSettingsPatch, ProxyTransportStatus }
-export type { DbConnectorSettingsItem }
-export type { EnvironmentGetResult, EnvironmentSnapshot, EnvironmentToolId, EnvironmentToolState }
+export type { PhiAppSettings, PhiAppSettingsPatch }
+export type {
+  EnvironmentGetResult,
+  EnvironmentHostDependency,
+  EnvironmentHostTool,
+  ManagedEnvironmentCleanResult,
+  ManagedEnvironmentConsumer,
+  ManagedEnvironmentEntry,
+  ManagedEnvironmentRemoveResult,
+  EnvironmentSnapshot,
+  EnvironmentToolId,
+  EnvironmentToolState
+}
 export type {
   AgentExecutionItem,
   AgentExecutionStep,
@@ -303,25 +330,6 @@ export interface PluginCatalogItem {
   installedPath?: string
 }
 
-export type SkillSourceCategory = 'system' | 'third-party' | 'user' | 'generated'
-
-export interface SkillSummary {
-  id: string
-  name: string
-  description: string
-  filePath: string
-  source: string
-  scope: 'user' | 'project' | 'temporary'
-  sourceCategory: SkillSourceCategory
-  sourceCategoryLabel: string
-  disabled: boolean
-}
-
-export interface SkillContent {
-  filePath: string
-  content: string
-}
-
 export interface PromptAgentSummary {
   id: string
   name: string
@@ -430,18 +438,6 @@ export type FileHoverPreview = FileHoverPreviewBase &
         format?: never
       }
   )
-
-export type DatabaseWebPreviewKind = 'string-network' | 'kegg-pathway'
-
-export type DatabaseWebImagePreview = {
-  kind: DatabaseWebPreviewKind
-  label: string
-  sourceUrl: string
-  imageUrl: string
-  dataUrl: string
-  mimeType: 'image/png'
-  bytes: number
-}
 
 export interface FileTreeEntry {
   path: string
@@ -728,7 +724,6 @@ export type RendererApi = AutoCompactionApi & {
     cb: (progress: WrapperResultDownloadProgress) => void
   ) => () => void
   renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
-  previewDatabaseWebImage: (url: string) => Promise<DatabaseWebImagePreview>
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
@@ -749,7 +744,6 @@ export type RendererApi = AutoCompactionApi & {
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => () => void
   getAppSettings: () => Promise<PhiAppSettings>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
-  updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
   getEnvironment: () => Promise<EnvironmentGetResult>
   redetectEnvironment: () => Promise<EnvironmentSnapshot>
   dismissEnvironmentSummary: () => Promise<EnvironmentSnapshot>
@@ -758,10 +752,11 @@ export type RendererApi = AutoCompactionApi & {
     path: string | null
   ) => Promise<EnvironmentSnapshot>
   pickEnvironmentBinary: () => Promise<string | null>
-  listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
-  setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
-  setDbConnectorApiKey: (id: string, apiKey: string) => Promise<DbConnectorSettingsItem[]>
-  clearDbConnectorApiKey: (id: string) => Promise<DbConnectorSettingsItem[]>
+  listManagedEnvironments: (projectCwd?: string) => Promise<ManagedEnvironmentEntry[]>
+  buildManagedEnvironment: (ref: string, projectCwd?: string) => Promise<{ envId: string }>
+  rebuildManagedEnvironment: (envId: string) => Promise<void>
+  removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
+  cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>
@@ -910,12 +905,49 @@ export type RendererApi = AutoCompactionApi & {
   listPlugins: () => Promise<PluginCatalogItem[]>
   installPlugin: (source: string) => Promise<PluginCatalogItem[]>
   removePlugin: (source: string) => Promise<PluginCatalogItem[]>
+  pickPackageRegistryDirectory: () => Promise<string | null>
+  pickPackageArchive: () => Promise<string | null>
+  readPackageRegistry: (dir: string) => Promise<PackageRegistryView>
+  listPackageRegistries: () => Promise<KnownPackageRegistryView[]>
+  removePackageRegistry: (id: string) => Promise<KnownPackageRegistryView[]>
+  previewPackageImport: (path: string) => Promise<OfflinePackageImportPreview>
+  importPackage: (path: string) => Promise<InstalledPackageView[]>
+  listPackageUpdates: () => Promise<PackageUpdateView[]>
+  applyPackageUpdate: (type: PackageManagerType, id: string) => Promise<InstalledPackageView[]>
+  applyAllPackageUpdates: () => Promise<InstalledPackageView[]>
+  onPackageUpdatesAvailable: (cb: (updates: PackageUpdateView[]) => void) => () => void
+  planPackageInstall: (
+    dir: string,
+    type: PackageManagerType,
+    id: string,
+    version?: string
+  ) => Promise<PackageInstallPlanView>
+  installPackage: (
+    dir: string,
+    type: PackageManagerType,
+    id: string,
+    version?: string
+  ) => Promise<InstalledPackageView[]>
+  getEnablement: (projectCwd?: string) => Promise<EnablementSnapshot>
+  setEnablement: (
+    item: EnablementItemKey,
+    value: boolean | null,
+    scope: EnablementScope
+  ) => Promise<EnablementSnapshot>
   listSkills: (cwd?: string) => Promise<SkillSummary[]>
   readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
   setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string) => Promise<SkillSummary[]>
   deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
   listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
+  listMcpConnectorCatalog: () => Promise<FeaturedMcpConnector[]>
+  installMcpConnector: (
+    id: string,
+    version?: string,
+    registryDir?: string
+  ) => Promise<InstalledPackageView[]>
+  uninstallMcpConnector: (id: string) => Promise<InstalledPackageView[]>
+  buildMcpConnectorEnvironment: (id: string) => Promise<{ envId: string }>
   addRemoteMcpConnector: (name: string, url: string) => Promise<void>
   removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
   setMcpConnectorEnabled: (name: string, enabled: boolean, sourcePath?: string) => Promise<void>

@@ -21,15 +21,14 @@ import { alpha, type SxProps, type Theme } from '@mui/material/styles'
 import { GoGlobe, GoStack, GoSync, GoTerminal } from 'react-icons/go'
 import {
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
-  DEFAULT_PREVENT_SLEEP_DURING_RUNS,
-  DEFAULT_PROXY_TRANSPORT_STATUS
+  DEFAULT_PREVENT_SLEEP_DURING_RUNS
 } from '../../shared/appSettingsTypes'
 import type { WrapperCompositionManifest } from '../../shared/wrapperCompositionManifestTypes'
 import type { WrapperRun } from '../../shared/wrapperTypes'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
-import { featuredMcpConnectors } from '../../shared/mcpConnectorCatalog'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
+import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
 import ChatView from './features/chat/ChatView'
 import { HomeView } from './features/home/HomeView'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
@@ -43,16 +42,17 @@ import { useBrowserPanelRequests } from './features/browser/hooks/useBrowserPane
 import { createBrowserLinkOpeningCoordinator } from './features/browser/lib/browserLinkOpening'
 import { createBrowserRequestIdFactory } from './features/browser/lib/browserPanelState'
 import type { BrowserTrustedOverlayRequest } from './features/browser/lib/browserTrustedOverlayGate'
+import { useEnvironmentBuildNotices } from './features/jobs/hooks/useEnvironmentBuildNotices'
 import type { LocalPathKind } from './components/MarkdownContent'
-import { PluginDetail } from './features/plugin/PluginView'
-import { usePluginCatalog } from './features/plugin/hooks/usePluginCatalog'
+import { useDeveloperExtensionCatalog } from './features/developer-extensions/hooks/useDeveloperExtensionCatalog'
+import PhiPluginsView from './features/phi-plugin/PhiPluginsView'
 import { WrapperDetail } from './features/wrapper/WrapperView'
 import { useWrapperCatalog } from './features/wrapper/hooks/useWrapperCatalog'
 import {
   wrapperResultBelongsToProject,
   wrapperResultScopeForPath
 } from './features/wrapper/lib/resultFiles'
-import { SkillDetail } from './features/skill/SkillView'
+import { SkillCatalogDialog, SkillDetail } from './features/skill/SkillView'
 import { useSkillCatalog } from './features/skill/hooks/useSkillCatalog'
 import { McpDetail } from './features/mcp/McpView'
 import { ConnectorIcon } from './features/mcp/components/ConnectorIcon'
@@ -67,6 +67,7 @@ import FilePreviewPanel, {
 } from './features/file-preview/FilePreviewPanel'
 import AnalysisView, { type AnalysisWorkspaceFileTab } from './features/analysis/AnalysisView'
 import { WorkspaceSidePanel } from './components/WorkspaceSidePanel'
+import { PackageUpdateNotice } from './components/PackageUpdateNotice'
 import { useAnalysisNotebookRuntime } from './features/analysis/hooks/useAnalysisNotebookRuntime'
 import { WorkspaceResourceTabs } from './components/WorkspaceResourceTabs'
 import { createAppTheme } from './theme'
@@ -165,8 +166,6 @@ import type { UserMessageRetryTarget } from './components/chat/ChatUserMessage'
 import type {
   AgentEventSummary,
   AnalysisNotebookFileChange,
-  DbConnectorSettingsItem,
-  DefaultProxyMode,
   EnvironmentSnapshot,
   EnvironmentToolId,
   McpServerSummary,
@@ -174,10 +173,8 @@ import type {
   PhiAppSettings,
   PhiAppSettingsPatch,
   PermissionMode,
-  PluginCatalogItem,
   PromptTarget,
   Project,
-  ProxyTransportStatus,
   SessionSummary,
   SkillSummary
 } from './types'
@@ -581,8 +578,8 @@ function WorkspaceResourceHeader({
   )
 }
 
-function renderConnectorTabIcon(url?: string): React.JSX.Element {
-  return <ConnectorIcon url={url} size={20} />
+function renderConnectorTabIcon(connectorId?: string): React.JSX.Element {
+  return <ConnectorIcon connectorId={connectorId} size={20} />
 }
 
 function renderFileWorkspaceTabIcon(tab: WorkspaceFileWorkspaceTab): React.JSX.Element {
@@ -745,11 +742,11 @@ function App(): React.JSX.Element {
   } | null>(null)
   const workspaceSidebarPreviewCloseTimer = useRef<number | null>(null)
   const [isNewProjectDialogOpen, setIsNewProjectDialogOpen] = useState(false)
+  const [isSkillCatalogOpen, setIsSkillCatalogOpen] = useState(false)
   const [isBusy, setIsBusy] = useState(false)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [personaMarkdown, setPersonaMarkdownState] = useState<string | null>(null)
-  const [defaultProxyMode, setDefaultProxyMode] = useState<DefaultProxyMode>('auto')
   const [noProjectTaskFolder, setNoProjectTaskFolder] = useState('')
   const [preventSleepDuringRuns, setPreventSleepDuringRuns] = useState(
     DEFAULT_PREVENT_SLEEP_DURING_RUNS
@@ -757,17 +754,10 @@ function App(): React.JSX.Element {
   const [nextActionSuggestionsEnabled, setNextActionSuggestionsEnabled] = useState(
     DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED
   )
-  const [proxyTransportStatus, setProxyTransportStatus] = useState<ProxyTransportStatus>(
-    DEFAULT_PROXY_TRANSPORT_STATUS
-  )
-  const [dbConnectors, setDbConnectors] = useState<DbConnectorSettingsItem[]>([])
-  const [isLoadingDbConnectors, setIsLoadingDbConnectors] = useState(true)
-  const [updatingDbConnectorId, setUpdatingDbConnectorId] = useState<string | null>(null)
   const [environmentSnapshot, setEnvironmentSnapshot] = useState<EnvironmentSnapshot | null>(null)
   const [isLoadingEnvironment, setIsLoadingEnvironment] = useState(true)
   const [isRedetectingEnvironment, setIsRedetectingEnvironment] = useState(false)
   const [showEnvironmentSummary, setShowEnvironmentSummary] = useState(false)
-  const [isSavingDefaultProxyMode, setIsSavingDefaultProxyMode] = useState(false)
   const [isSavingAppSettings, setIsSavingAppSettings] = useState(false)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
   const [exportTarget, setExportTarget] = useState<SessionSummary | null>(null)
@@ -781,17 +771,7 @@ function App(): React.JSX.Element {
   const getActiveCwd = useCallback(() => useSessionStore.getState().activeCwd, [])
   const getActiveProjectId = useCallback(() => useSessionStore.getState().activeProjectId, [])
 
-  const {
-    plugins,
-    activePluginId,
-    isLoadingPlugins,
-    busyPluginSource,
-    pluginOperationError,
-    setActivePluginId,
-    refreshPlugins,
-    installPlugin: onInstallPlugin,
-    removePlugin: onRemovePlugin
-  } = usePluginCatalog()
+  const { extensions: plugins, refreshExtensions: refreshPlugins } = useDeveloperExtensionCatalog()
   const {
     skills,
     promptAgents,
@@ -801,6 +781,8 @@ function App(): React.JSX.Element {
     setActiveSkillId,
     refreshSkills,
     refreshPromptAgents,
+    setGlobalEnabled,
+    setProjectOverride,
     setSkillDisabled,
     deleteSkill
   } = useSkillCatalog(getActiveCwd)
@@ -812,11 +794,13 @@ function App(): React.JSX.Element {
     selectedWrapperId,
     isLoadingWrappers,
     wrapperError,
+    packageEnablementBusy,
     setSelectedWrapperId,
     refreshWrappers,
     refreshRuns: refreshWrapperRuns,
     cancelWrapperRun,
-    exportWrapperReproducibility
+    exportWrapperReproducibility,
+    setPackageEnabled
   } = useWrapperCatalog()
 
   const showSnackbar = useCallback(
@@ -829,6 +813,7 @@ function App(): React.JSX.Element {
     },
     []
   )
+  useEnvironmentBuildNotices(showSnackbar)
 
   const showSnackbarError = useCallback(
     (error: unknown, fallback: string): void => {
@@ -844,11 +829,9 @@ function App(): React.JSX.Element {
   }, [showSnackbarError])
 
   const applyAppSettings = useCallback((settings: PhiAppSettings): void => {
-    setDefaultProxyMode(settings.defaultProxyMode)
     setNoProjectTaskFolder(settings.noProjectTaskFolder)
     setPreventSleepDuringRuns(settings.preventSleepDuringRuns)
     setNextActionSuggestionsEnabled(settings.nextActionSuggestionsEnabled)
-    setProxyTransportStatus(settings.proxyTransportStatus)
   }, [])
 
   useEffect(() => {
@@ -870,91 +853,6 @@ function App(): React.JSX.Element {
       cancelled = true
     }
   }, [applyAppSettings, rendererApi, showSnackbarError])
-
-  const refreshDbConnectors = useCallback(async (): Promise<void> => {
-    setIsLoadingDbConnectors(true)
-    try {
-      setDbConnectors(await rendererApi.listDbConnectors())
-    } catch (error) {
-      showSnackbarError(error, '读取数据库设置失败')
-    } finally {
-      setIsLoadingDbConnectors(false)
-    }
-  }, [rendererApi, showSnackbarError])
-
-  useEffect(() => {
-    let cancelled = false
-    void rendererApi
-      .listDbConnectors()
-      .then((connectors) => {
-        if (!cancelled) {
-          setDbConnectors(connectors)
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          showSnackbarError(error, '读取数据库设置失败')
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoadingDbConnectors(false)
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [rendererApi, showSnackbarError])
-
-  const onSetDbConnectorEnabled = useCallback(
-    async (id: string, enabled: boolean): Promise<void> => {
-      const previous = dbConnectors
-      setDbConnectors((items) =>
-        items.map((item) => (item.id === id ? { ...item, enabledForQuery: enabled } : item))
-      )
-      setUpdatingDbConnectorId(id)
-      try {
-        setDbConnectors(await rendererApi.setDbConnectorEnabled(id, enabled))
-      } catch (error) {
-        setDbConnectors(previous)
-        showSnackbarError(error, '保存数据库设置失败')
-      } finally {
-        setUpdatingDbConnectorId(null)
-      }
-    },
-    [dbConnectors, rendererApi, showSnackbarError]
-  )
-
-  const onSetDbConnectorApiKey = useCallback(
-    async (id: string, apiKey: string): Promise<void> => {
-      setUpdatingDbConnectorId(id)
-      try {
-        setDbConnectors(await rendererApi.setDbConnectorApiKey(id, apiKey))
-      } catch (error) {
-        showSnackbarError(error, '保存数据库 API key 失败')
-        throw error
-      } finally {
-        setUpdatingDbConnectorId(null)
-      }
-    },
-    [rendererApi, showSnackbarError]
-  )
-
-  const onClearDbConnectorApiKey = useCallback(
-    async (id: string): Promise<void> => {
-      setUpdatingDbConnectorId(id)
-      try {
-        setDbConnectors(await rendererApi.clearDbConnectorApiKey(id))
-      } catch (error) {
-        showSnackbarError(error, '清除数据库 API key 失败')
-        throw error
-      } finally {
-        setUpdatingDbConnectorId(null)
-      }
-    },
-    [rendererApi, showSnackbarError]
-  )
 
   useEffect(() => {
     let cancelled = false
@@ -1007,46 +905,6 @@ function App(): React.JSX.Element {
       showSnackbarError(error, '关闭环境摘要失败')
     }
   }, [rendererApi, showSnackbarError])
-
-  const onSelectDefaultProxyMode = useCallback(
-    async (mode: DefaultProxyMode): Promise<void> => {
-      if (mode === defaultProxyMode) return
-      if (mode === 'enabled' && !proxyTransportStatus.enabledModeAvailable) {
-        setDefaultProxyMode('auto')
-        setIsSavingDefaultProxyMode(true)
-        showSnackbar('DB_PROXY_UNAVAILABLE：受控代理通道不可用，已切换到自动选择。', 'warning')
-        try {
-          const settings = await rendererApi.updateDefaultProxyMode('auto')
-          applyAppSettings(settings)
-        } catch (error) {
-          showSnackbarError(error, '切换默认代理模式到自动选择失败')
-        } finally {
-          setIsSavingDefaultProxyMode(false)
-        }
-        return
-      }
-      const previousMode = defaultProxyMode
-      setDefaultProxyMode(mode)
-      setIsSavingDefaultProxyMode(true)
-      try {
-        const settings = await rendererApi.updateDefaultProxyMode(mode)
-        applyAppSettings(settings)
-      } catch (error) {
-        setDefaultProxyMode(previousMode)
-        showSnackbarError(error, '保存默认代理模式失败')
-      } finally {
-        setIsSavingDefaultProxyMode(false)
-      }
-    },
-    [
-      applyAppSettings,
-      defaultProxyMode,
-      proxyTransportStatus.enabledModeAvailable,
-      rendererApi,
-      showSnackbar,
-      showSnackbarError
-    ]
-  )
 
   const onUpdateAppSettings = useCallback(
     async (patch: PhiAppSettingsPatch): Promise<void> => {
@@ -2130,9 +1988,6 @@ function App(): React.JSX.Element {
       if (workspaceSidebarMode === 'runtime') {
         void refreshAnalysisJupyterRuntimeStatus()
       }
-      if (workspaceSidebarMode === 'plugins') {
-        void refreshPlugins()
-      }
       if (workspaceSidebarMode === 'skills') {
         void refreshSkills()
       }
@@ -2153,7 +2008,6 @@ function App(): React.JSX.Element {
     refreshAnalysisJupyterStatus,
     refreshAnalysisNotebooks,
     refreshMcpServers,
-    refreshPlugins,
     refreshProjects,
     refreshSkills,
     workspaceSidebarMode
@@ -2727,10 +2581,8 @@ function App(): React.JSX.Element {
   const onOpenInputAddMenu = useCallback((): void => {
     void refreshSkills()
     void refreshPromptAgents()
-    if (plugins.length === 0) {
-      void refreshPlugins()
-    }
-  }, [plugins.length, refreshPlugins, refreshPromptAgents, refreshSkills])
+    void refreshPlugins()
+  }, [refreshPlugins, refreshPromptAgents, refreshSkills])
 
   const onPickInputFiles = useCallback(async (): Promise<string[]> => {
     try {
@@ -3445,10 +3297,8 @@ function App(): React.JSX.Element {
       }
 
       setWorkspaceSidebarMode(workspaceResourceKindToSidebarMode(tab.kind))
-      setIsSidebarOpen(true)
-      if (tab.kind === 'plugins') {
-        setActivePluginId(tab.itemId)
-      } else if (tab.kind === 'skills') {
+      setIsSidebarOpen(tab.kind !== 'plugins')
+      if (tab.kind === 'skills') {
         setActiveSkillId(tab.itemId)
       } else if (tab.kind === 'mcp') {
         setActiveMcpServerId(tab.itemId)
@@ -3463,7 +3313,6 @@ function App(): React.JSX.Element {
       onSelectSession,
       onSelectWorkspaceFileTab,
       setActiveMcpServerId,
-      setActivePluginId,
       setActiveSkillId,
       setSelectedWrapperId
     ]
@@ -3481,18 +3330,13 @@ function App(): React.JSX.Element {
     [selectWorkspaceTab, upsertWorkspaceTab]
   )
 
-  const onOpenPluginTab = useCallback(
-    (plugin: PluginCatalogItem): void => {
-      setActivePluginId(plugin.id)
-      openWorkspaceResourceTab({
-        kind: 'plugins',
-        itemId: plugin.id,
-        title: plugin.name,
-        subtitle: plugin.source
-      })
-    },
-    [openWorkspaceResourceTab, setActivePluginId]
-  )
+  const onOpenPhiPlugins = useCallback((): void => {
+    openWorkspaceResourceTab({
+      kind: 'plugins',
+      itemId: 'installed',
+      title: '插件'
+    })
+  }, [openWorkspaceResourceTab])
 
   const onOpenSkillTab = useCallback(
     (skill: SkillSummary): void => {
@@ -3518,6 +3362,47 @@ function App(): React.JSX.Element {
       }
     },
     [setSkillDisabled, showSnackbar, showSnackbarError]
+  )
+
+  const onSetSkillGlobalEnabled = useCallback(
+    async (skill: SkillSummary, enabled: boolean): Promise<void> => {
+      try {
+        await setGlobalEnabled(skill, enabled)
+        showSnackbar(enabled ? '已全局启用技能' : '已全局关闭技能', 'success')
+      } catch (error) {
+        showSnackbarError(error, enabled ? '启用技能失败' : '关闭技能失败')
+        throw error
+      }
+    },
+    [setGlobalEnabled, showSnackbar, showSnackbarError]
+  )
+
+  const onSetSkillProjectOverride = useCallback(
+    async (skill: SkillSummary, value: boolean | null): Promise<void> => {
+      const projectCwd =
+        activeProject?.location.kind === 'ssh' ? null : activeProject?.workingDirectory
+      if (!projectCwd) throw new Error('当前没有可用的本地项目')
+      try {
+        await setProjectOverride(skill, value, projectCwd)
+        showSnackbar(
+          value === null ? '已跟随全局技能设置' : value ? '项目已启用技能' : '项目已关闭技能',
+          'success'
+        )
+      } catch (error) {
+        showSnackbarError(error, '更新项目技能设置失败')
+        throw error
+      }
+    },
+    [activeProject, setProjectOverride, showSnackbar, showSnackbarError]
+  )
+
+  const onInstallSkillPackage = useCallback(
+    async (registryDir: string, entry: PackageRegistryEntryView): Promise<void> => {
+      await rendererApi.installPackage(registryDir, 'skill', entry.id, entry.version)
+      await refreshSkills()
+      showSnackbar(`已安装并启用「${entry.title}」`, 'success')
+    },
+    [refreshSkills, rendererApi, showSnackbar]
   )
 
   const onDeleteSkill = useCallback(
@@ -3554,13 +3439,10 @@ function App(): React.JSX.Element {
   const onOpenMcpServerTab = useCallback(
     (server: McpServerSummary): void => {
       setActiveMcpServerId(server.id)
-      const connector = featuredMcpConnectors.find(
-        (entry) => entry.url === server.url && (!entry.apiKey || entry.id === server.name)
-      )
       openWorkspaceResourceTab({
         kind: 'mcp',
         itemId: server.id,
-        title: connector?.name ?? server.name,
+        title: server.title ?? server.name,
         subtitle: server.sourcePath ?? server.command,
         connectorUrl: server.url
       })
@@ -3583,6 +3465,19 @@ function App(): React.JSX.Element {
       void refreshWrapperRuns()
     },
     [openWorkspaceResourceTab, refreshWrapperRuns, setSelectedWrapperId]
+  )
+
+  const onOpenWrapperRunFromJobs = useCallback(
+    (canonicalId: string): void => {
+      const entry = wrapperCatalog.find((item) => item.id === canonicalId)
+      if (entry) {
+        onOpenWrapperTab(entry)
+        return
+      }
+      setWorkspaceSidebarMode('wrappers')
+      setIsSidebarOpen(true)
+    },
+    [onOpenWrapperTab, wrapperCatalog]
   )
 
   const onCloseWorkspaceTab = useCallback(
@@ -3611,9 +3506,7 @@ function App(): React.JSX.Element {
       // bar* wouldn't otherwise clear its sidebar highlight even when the
       // tab wasn't the active one. Without this, the sidebar keeps showing
       // an item selected indefinitely after its last tab closes.
-      if (tab.kind === 'plugins' && activePluginId === tab.itemId) {
-        setActivePluginId(null)
-      } else if (tab.kind === 'skills' && activeSkillId === tab.itemId) {
+      if (tab.kind === 'skills' && activeSkillId === tab.itemId) {
         setActiveSkillId(null)
       } else if (tab.kind === 'mcp' && activeMcpServerId === tab.itemId) {
         setActiveMcpServerId(null)
@@ -3633,7 +3526,6 @@ function App(): React.JSX.Element {
     },
     [
       activeMcpServerId,
-      activePluginId,
       activeSkillId,
       effectiveActiveWorkspaceTabKey,
       navigateToView,
@@ -3641,7 +3533,6 @@ function App(): React.JSX.Element {
       selectWorkspaceTab,
       selectedWrapperId,
       setActiveMcpServerId,
-      setActivePluginId,
       setActiveSkillId,
       setSelectedWrapperId,
       visibleWorkspaceTabs
@@ -3748,10 +3639,6 @@ function App(): React.JSX.Element {
     void acknowledgeActiveSession()
   }, [acknowledgeActiveSession])
 
-  const activeResourcePlugin =
-    activeWorkspaceResourceTab?.kind === 'plugins'
-      ? (plugins.find((plugin) => plugin.id === activeWorkspaceResourceTab.itemId) ?? null)
-      : null
   const activeResourceSkill =
     activeWorkspaceResourceTab?.kind === 'skills'
       ? (skills.find((skill) => skill.id === activeWorkspaceResourceTab.itemId) ?? null)
@@ -3763,21 +3650,15 @@ function App(): React.JSX.Element {
 
   const activeWorkspaceResourceContent = activeWorkspaceResourceTab ? (
     activeWorkspaceResourceTab.kind === 'plugins' ? (
-      <PluginDetail
-        selectedPlugin={activeResourcePlugin}
-        busySource={busyPluginSource}
-        operationError={pluginOperationError}
-        onInstall={(source) => {
-          void onInstallPlugin(source)
-        }}
-        onRemove={(source) => {
-          void onRemovePlugin(source)
-        }}
-      />
+      <PhiPluginsView />
     ) : activeWorkspaceResourceTab.kind === 'skills' ? (
       <SkillDetail
         selectedSkill={activeResourceSkill}
         busySkillId={busySkillId}
+        projectCwd={activeProject?.location.kind === 'ssh' ? null : activeProject?.workingDirectory}
+        onSetGlobalEnabled={onSetSkillGlobalEnabled}
+        onSetProjectOverride={onSetSkillProjectOverride}
+        onNavigateToPlugin={() => onOpenPhiPlugins()}
         onSetSkillDisabled={onSetSkillDisabled}
         onDeleteSkill={onDeleteSkill}
       />
@@ -3793,6 +3674,8 @@ function App(): React.JSX.Element {
         onOpenRemoteResult={onOpenWrapperResult}
         onExportReproducibility={(runId) => void exportWrapperReproducibility(runId)}
         onCancelRun={(runId) => void cancelWrapperRun(runId)}
+        packageEnablementBusy={packageEnablementBusy}
+        onSetPackageEnabled={(packageId, enabled) => void setPackageEnabled(packageId, enabled)}
         project={activeProject ?? undefined}
         updatingRemoteProjectId={updatingRemoteProjectId}
         onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
@@ -4103,7 +3986,7 @@ function App(): React.JSX.Element {
           onSelectWorkspaceView={onSelectWorkspaceView}
           onSelectWorkspaceSidebarMode={onSelectWorkspaceSidebarMode}
           refreshAnalysisJupyterRuntimeStatus={refreshAnalysisJupyterRuntimeStatus}
-          refreshPlugins={refreshPlugins}
+          onOpenPhiPlugins={onOpenPhiPlugins}
           refreshSkills={refreshSkills}
           refreshMcpServers={refreshMcpServers}
           setIsSettingsOpen={setSettingsOpenWithBrowserGate}
@@ -4168,17 +4051,11 @@ function App(): React.JSX.Element {
           onStopRuntimeNotebookKernel={(notebookPath) => {
             void onStopRuntimeNotebookSession(notebookPath)
           }}
-          plugins={plugins}
-          activePluginId={activePluginId}
-          isLoadingPlugins={isLoadingPlugins}
-          onOpenPlugin={onOpenPluginTab}
-          onRefreshPlugins={() => {
-            void refreshPlugins()
-          }}
           skills={skills}
           activeSkillId={activeSkillId}
           isLoadingSkills={isLoadingSkills}
           onOpenSkill={onOpenSkillTab}
+          onOpenSkillCatalog={() => setIsSkillCatalogOpen(true)}
           mcpServers={mcpServers}
           activeMcpServerId={activeMcpServerId}
           onOpenMcpServer={onOpenMcpServerTab}
@@ -4208,6 +4085,22 @@ function App(): React.JSX.Element {
           onDeleteProjectEntry={onDeleteProjectEntry}
           onFetchProjectSessions={onFetchProjectSessions}
           getSessionRuntimeState={getSessionRuntimeState}
+        />
+
+        <SkillCatalogDialog
+          open={isSkillCatalogOpen}
+          skills={skills}
+          isSkillsLoading={isLoadingSkills}
+          onClose={() => setIsSkillCatalogOpen(false)}
+          onEnableBundled={(skill) => onSetSkillGlobalEnabled(skill, true)}
+          onPickRegistryDirectory={() => rendererApi.pickPackageRegistryDirectory()}
+          onReadRegistry={(dir) => rendererApi.readPackageRegistry(dir)}
+          onInstallPackage={onInstallSkillPackage}
+          onApplyUpdate={async (entry) => {
+            await rendererApi.applyPackageUpdate('skill', entry.id)
+            await refreshSkills()
+            showSnackbar(`已更新「${entry.title}」`, 'success')
+          }}
         />
 
         {isWorkspaceView ? (
@@ -4396,6 +4289,7 @@ function App(): React.JSX.Element {
                 {workspaceSidePanelMode === 'jobs' ? (
                   <BackgroundJobsPanel
                     onOpenSession={(path) => void onOpenSessionFromSidebar(path)}
+                    onOpenWrapper={onOpenWrapperRunFromJobs}
                   />
                 ) : workspaceSidePanelMode === 'browser' ? (
                   <BrowserPanel
@@ -4515,14 +4409,10 @@ function App(): React.JSX.Element {
           setThemeMode={setThemeMode}
           themeFamily={themeFamily}
           setThemeFamily={setThemeFamily}
-          defaultProxyMode={defaultProxyMode}
           noProjectTaskFolder={noProjectTaskFolder}
           preventSleepDuringRuns={preventSleepDuringRuns}
           nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
-          proxyTransportStatus={proxyTransportStatus}
-          isSavingDefaultProxyMode={isSavingDefaultProxyMode}
           isSavingAppSettings={isSavingAppSettings}
-          onSelectDefaultProxyMode={onSelectDefaultProxyMode}
           onUpdateAppSettings={onUpdateAppSettings}
           onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
           autoCompactionTarget={{
@@ -4555,13 +4445,6 @@ function App(): React.JSX.Element {
           onSetEnvironmentToolPath={onSetEnvironmentToolPath}
           showEnvironmentSummary={showEnvironmentSummary}
           onDismissEnvironmentSummary={onDismissEnvironmentSummary}
-          dbConnectors={dbConnectors}
-          isLoadingDbConnectors={isLoadingDbConnectors}
-          updatingDbConnectorId={updatingDbConnectorId}
-          onRefreshDbConnectors={refreshDbConnectors}
-          onSetDbConnectorEnabled={onSetDbConnectorEnabled}
-          onSetDbConnectorApiKey={onSetDbConnectorApiKey}
-          onClearDbConnectorApiKey={onClearDbConnectorApiKey}
           showOnboarding={showOnboarding}
           onCompleteOnboarding={onCompleteOnboarding}
           onSkipOnboarding={onSkipOnboarding}
@@ -4593,6 +4476,7 @@ function App(): React.JSX.Element {
           onClose={() => setExportTarget(null)}
           onExport={() => void confirmExportSession()}
         />
+        <PackageUpdateNotice />
       </Box>
     </ThemeProvider>
   )

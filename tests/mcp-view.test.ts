@@ -11,12 +11,18 @@ test('connector sidebar groups installed services and toggles them with a switch
     {
       id: 'pubmed',
       name: 'pubmed',
+      title: 'PubMed',
+      connectorId: 'pubmed',
+      category: '健康与生命科学',
       url: 'https://pubmed.mcp.claude.com/mcp',
       status: 'configured'
     },
     {
       id: 'drive',
       name: 'google-drive',
+      title: 'Google Drive',
+      connectorId: 'google-drive',
+      category: '生产力',
       url: 'https://drivemcp.googleapis.com/mcp/v1',
       status: 'configured'
     },
@@ -92,9 +98,25 @@ test('installed connector detail retains its catalog introduction and MCP addres
       ThemeProvider,
       { theme: createTheme() },
       createElement(McpDetail, {
+        initialCatalog: [
+          {
+            id: 'open-targets',
+            version: '1.0.0',
+            name: 'Open Targets Platform',
+            description: '检索靶点、疾病、药物及其关联数据',
+            publisher: 'Open Targets',
+            category: '健康与生命科学',
+            signIn: '无需登录',
+            transport: 'http',
+            auth: 'none',
+            url: 'https://mcp.platform.opentargets.org/mcp',
+            added: true
+          }
+        ],
         selectedServer: {
           id: 'open-targets',
           name: 'open-targets',
+          connectorId: 'open-targets',
           url: 'https://mcp.platform.opentargets.org/mcp',
           sourcePath: '/tmp/mcp.json',
           managed: true,
@@ -104,7 +126,7 @@ test('installed connector detail retains its catalog introduction and MCP addres
       })
     )
   )
-  assert.match(markup, /Open Targets Platform 整合公开数据/)
+  assert.match(markup, /检索靶点、疾病、药物及其关联数据/)
   assert.match(markup, /https:\/\/mcp\.platform\.opentargets\.org\/mcp/)
   assert.match(markup, /\/tmp\/mcp\.json/)
   assert.match(markup, /移除/)

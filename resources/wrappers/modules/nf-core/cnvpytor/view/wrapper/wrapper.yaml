@@ -15,7 +15,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "10000 100000"
     description: "Space-separated bin sizes."
   outdir:
     kind: output

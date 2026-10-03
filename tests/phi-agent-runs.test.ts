@@ -29,7 +29,9 @@ const WRAPPER: PhiAgentDefinition = {
   skills: [],
   systemPrompt: 'You are Wrapper.',
   source: 'phi',
-  filePath: '/agents/Wrapper.md'
+  filePath: '/agents/Wrapper.md',
+  visibility: 'entry',
+  warnings: []
 }
 
 interface Deferred<T> {

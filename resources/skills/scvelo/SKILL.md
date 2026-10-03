@@ -3,6 +3,8 @@ name: scvelo
 description: RNA velocity analysis with scVelo. Estimate cell state transitions from unspliced/spliced mRNA dynamics, infer trajectory directions, compute latent time, and identify driver genes in single-cell RNA-seq data. Complements Scanpy/scVI-tools for trajectory inference.
 license: BSD-3-Clause
 metadata: {"version": "1.0", "skill-author": "Kuan-lin Huang"}
+phi:
+  environment: phi:python@1
 ---
 
 # scVelo — RNA Velocity Analysis
@@ -11,7 +13,7 @@ metadata: {"version": "1.0", "skill-author": "Kuan-lin Huang"}
 
 scVelo is the leading Python package for RNA velocity analysis in single-cell RNA-seq data. It infers cell state transitions by modeling the kinetics of mRNA splicing — using the ratio of unspliced (pre-mRNA) to spliced (mature mRNA) abundances to determine whether a gene is being upregulated or downregulated in each cell. This allows reconstruction of developmental trajectories and identification of cell fate decisions without requiring time-course data.
 
-**Installation:** `pip install scvelo`
+**Installation:** This skill runs in the managed `phi:python@1` environment; `scvelo` is already there.
 
 **Key resources:**
 - Documentation: https://scvelo.readthedocs.io/

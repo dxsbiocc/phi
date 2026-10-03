@@ -5,4 +5,9 @@ export interface PresentedFile {
   displayPath: string
   bytes: number
   description?: string
+  artifact?: {
+    kind: string
+    title: string
+    envId?: string
+  }
 }

@@ -19,6 +19,9 @@ const legacyComponentViews = new Set([
 
 const legacyOversizedFiles = new Set([
   'src/renderer/src/App.tsx',
+  // Temporary merge exception: split the unified managed-runtime and live-file
+  // synchronization lifecycle during the planned notebook boundary cleanup.
+  'src/renderer/src/features/analysis/hooks/useAnalysisNotebookRuntime.ts',
   // Temporary legacy exception: split as part of the notebook canvas boundary cleanup.
   'src/renderer/src/features/analysis/notebook/NotebookCanvas.tsx',
   // Temporary legacy exception: existing wrapper workspace shell predates feature-boundary checks.

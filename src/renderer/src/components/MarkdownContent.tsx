@@ -26,7 +26,6 @@ import { collectLocalPathTokenPaths, tokenizeLocalPaths } from '../lib/localPath
 import { highlightLine, type SyntaxLanguage } from '../lib/syntaxHighlight'
 import { syntaxTokenColor } from '../lib/syntaxTheme'
 import { smilesExpressionFromInlineCode } from '../lib/moleculeExpressions'
-import { databaseWebPreviewKindFromString } from '../../../shared/databaseWebPreview'
 import type { FilePreview } from '../types'
 import {
   collectBareFileReferencePaths,
@@ -52,8 +51,6 @@ import {
 } from './markdown/MarkdownColorToken'
 import { LocalPathButton } from './markdown/LocalPathButton'
 import { MarkdownSmilesTokenView } from './markdown/MarkdownSmilesToken'
-import { StringNetworkPreview } from './markdown/StringNetworkPreview'
-import { KeggPathwayPreview } from './markdown/KeggPathwayPreview'
 import { useLocalPathKinds } from '../lib/markdownLocalPathPreview'
 import { MarkdownWebLink } from './markdown/MarkdownWebLink'
 
@@ -804,16 +801,6 @@ function MarkdownContentImpl({
               {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
             </>
           )
-        }
-
-        if (typeof href === 'string') {
-          const databasePreviewKind = databaseWebPreviewKindFromString(href)
-          if (databasePreviewKind === 'string-network') {
-            return <StringNetworkPreview href={href} label={textFromNode(children) || href} />
-          }
-          if (databasePreviewKind === 'kegg-pathway') {
-            return <KeggPathwayPreview href={href} label={textFromNode(children) || href} />
-          }
         }
 
         return (

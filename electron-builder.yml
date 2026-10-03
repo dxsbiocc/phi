@@ -5,10 +5,17 @@ directories:
 files:
   - '!**/.vscode/*'
   - '!src/*'
+  - '!scripts/**'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!**/.DS_Store'
+  - '!resources/**/.nextflow/**'
+  - '!resources/**/.nextflow.log*'
+  - '!resources/**/work/**'
+  - '!resources/**/results/**'
+  - '!resources/runtime/micromamba/**'
 asarUnpack:
   - resources/**
   - out/main/agent/omp-sdk-worker.ts
@@ -20,6 +27,11 @@ nsis:
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
+  # Only the target's micromamba ships (runtime foundation §2.1). ${arch} is the target arch;
+  # ${platform} would be the build host, so the OS part is spelled out per target.
+  extraResources:
+    - from: resources/runtime/micromamba/darwin-${arch}
+      to: runtime/micromamba/darwin-${arch}
   icon: build/icon.icns
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
@@ -31,6 +43,9 @@ mac:
 dmg:
   artifactName: ${name}-${version}.${ext}
 linux:
+  extraResources:
+    - from: resources/runtime/micromamba/linux-${arch}
+      to: runtime/micromamba/linux-${arch}
   target:
     - AppImage
     - snap

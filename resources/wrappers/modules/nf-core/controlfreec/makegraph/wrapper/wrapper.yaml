@@ -52,7 +52,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "2"
     description: "Sample ploidy."
   outdir:
     kind: output

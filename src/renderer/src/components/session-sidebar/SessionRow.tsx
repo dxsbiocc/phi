@@ -361,7 +361,9 @@ const SessionRow = memo(function SessionRow({
                 : 'background.paper !important',
               // plainSidebarRowSx forces a transparent resting background, so
               // the lift only reads once hover paints the surface.
-              boxShadow: isActive ? 'none' : (theme: Theme) => theme.customShadows.listItem
+              boxShadow: isActive
+                ? 'none'
+                : (theme: Theme) => theme.customShadows?.listItem ?? theme.shadows[2]
             }
           }}
         >

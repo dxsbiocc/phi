@@ -94,101 +94,23 @@ test('hosted PubMed fetch detail shows the decoded search terms', () => {
   assert.match(markup, /MID1IP1 OR Mig12/)
 })
 
-test('tool detail surfaces database viewer hints before raw DB JSON', () => {
+test('legacy database tool calls fall back to the generic tool detail', () => {
   const item: ToolCallItem = {
-    id: 'tool-1',
+    id: 'legacy-tool-1',
     role: 'tool',
     toolName: 'db_query',
-    argsPreview: 'db_query',
-    argsJson: '{"database":"rest-json/toy","domain":"compound"}',
-    output: JSON.stringify({
-      kind: 'db_query_result',
-      mode: 'inline',
-      summary: {
-        rowCount: 1,
-        returnedRows: 1,
-        truncated: false,
-        fields: ['canonical_smiles'],
-        warnings: []
-      },
-      rows: [{ canonical_smiles: 'CCO' }],
-      viewerHints: [
-        {
-          kind: 'small_molecule',
-          label: '小分子结构',
-          recommendedLibrary: 'rdkit-js',
-          confidence: 'high',
-          rowCount: 1,
-          fields: ['canonical_smiles'],
-          sampleValues: ['CCO'],
-          reason: 'matched fields: canonical_smiles'
-        }
-      ],
-      provenance: {
-        database: 'rest-json/toy',
-        domain: 'compound',
-        retrievedAt: '2026-09-20T00:00:00.000Z'
-      }
-    }),
+    argsPreview: '{"database":"uniprot"}',
+    argsJson: '{"database":"uniprot"}',
+    output: '{"kind":"db_query_result","rows":[{"id":"P04637"}]}',
     status: 'done'
   }
   const markup = renderToStaticMarkup(
     createElement(ThemeProvider, { theme: createTheme() }, createElement(ToolCallDetail, { item }))
   )
 
-  assert.match(markup, /数据库结果展示/)
-  assert.match(markup, /小分子结构/)
-  assert.match(markup, /RDKit\.js/)
-  assert.match(markup, /data-phi-molecule-expression="true"/)
-  assert.match(markup, /CCO/)
-  assert.match(markup, /canonical_smiles/)
-})
-
-test('tool detail does not send InChI-only molecule hints to RDKit rendering', () => {
-  const item: ToolCallItem = {
-    id: 'tool-1',
-    role: 'tool',
-    toolName: 'db_query',
-    argsPreview: 'db_query',
-    argsJson: '{"database":"rest-json/toy","domain":"compound"}',
-    output: JSON.stringify({
-      kind: 'db_query_result',
-      mode: 'inline',
-      summary: {
-        rowCount: 1,
-        returnedRows: 1,
-        truncated: false,
-        fields: ['inchi'],
-        warnings: []
-      },
-      rows: [{ inchi: 'InChI=1S/H2O/h1H2' }],
-      viewerHints: [
-        {
-          kind: 'small_molecule',
-          label: '小分子结构',
-          recommendedLibrary: 'rdkit-js',
-          confidence: 'high',
-          rowCount: 1,
-          fields: ['inchi'],
-          sampleValues: ['InChI=1S/H2O/h1H2'],
-          reason: 'matched fields: inchi'
-        }
-      ],
-      provenance: {
-        database: 'rest-json/toy',
-        domain: 'compound',
-        retrievedAt: '2026-09-20T00:00:00.000Z'
-      }
-    }),
-    status: 'done'
-  }
-  const markup = renderToStaticMarkup(
-    createElement(ThemeProvider, { theme: createTheme() }, createElement(ToolCallDetail, { item }))
-  )
-
-  assert.match(markup, /小分子结构/)
-  assert.match(markup, /没有可渲染的小分子结构字段/)
-  assert.doesNotMatch(markup, /正在加载 RDKit\.js/)
+  assert.match(markup, /db_query/)
+  assert.match(markup, /P04637/)
+  assert.doesNotMatch(markup, /数据库结果展示/)
 })
 
 test('tool detail surfaces edit and write targets before raw args', () => {

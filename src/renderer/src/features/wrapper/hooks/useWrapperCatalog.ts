@@ -1,43 +1,37 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { WrapperCompositionManifest } from '../../../../../shared/wrapperCompositionManifestTypes'
+import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
 import { retainSelectedCatalogId } from '../../../lib/catalogSelection'
 
 export type WrapperCatalogState = {
-  catalog: WrapperCompositionManifest[]
+  catalog: WrapperCompositionCatalogItem[]
   runs: WrapperRun[]
   selectedWrapperId: string | null
   isLoadingWrappers: boolean
   wrapperError: string | null
+  packageEnablementBusy: boolean
   setSelectedWrapperId: (id: string | null) => void
   refreshWrappers: () => Promise<void>
   /** Reloads only the run list — no loading flag, no catalog swap, so nothing but the run views re-render. */
   refreshRuns: () => Promise<void>
   cancelWrapperRun: (runId: string) => Promise<void>
   exportWrapperReproducibility: (runId: string) => Promise<void>
+  setPackageEnabled: (packageId: string, enabled: boolean) => Promise<void>
 }
 
 /**
- * Reads the agent's own composition catalog — the same bundled
- * `resources/wrappers/{modules,subworkflows,workflows}/**\/wrapper/wrapper.yaml`
- * scan the `wrapper_search`/`wrapper_run` agent tools use (see
- * `src/main/agent/wrappers/composition/discovery.ts`) — rather than the
- * legacy `~/.phi/wrappers/installed` catalog (`listWrapperCatalog`), which
- * nothing keeps in sync with it: that legacy catalog's bundled-install path
- * is dead (`BUNDLED_WRAPPER_PACKAGE_DIRS` is empty), so it would just show
- * nothing for every wrapper actually shipped today. There is currently no
- * "add custom wrapper" affordance here to match: a legacy custom install
- * writes a full `WrapperManifest`-shaped `wrapper.yaml`, which this
- * composition catalog can't parse, and — separately — discovery only scans
- * the bundled resources tree, not `~/.phi/wrappers/installed`, so a legacy
- * custom install was never reachable by the agent's own tools either.
+ * Reads package-aware composition entries from the assembled wrapper tree
+ * plus user-authored entries under `wrappers/custom/`. Disabled entries stay
+ * in this renderer catalog with a reason, while agent tools receive only the
+ * available subset from the same discovery layer.
  */
 export function useWrapperCatalog(): WrapperCatalogState {
-  const [catalog, setCatalog] = useState<WrapperCompositionManifest[]>([])
+  const [catalog, setCatalog] = useState<WrapperCompositionCatalogItem[]>([])
   const [runs, setRuns] = useState<WrapperRun[]>([])
   const [selectedWrapperId, setSelectedWrapperId] = useState<string | null>(null)
   const [isLoadingWrappers, setIsLoadingWrappers] = useState(true)
   const [wrapperError, setWrapperError] = useState<string | null>(null)
+  const [packageEnablementBusy, setPackageEnablementBusy] = useState(false)
 
   const refreshWrappers = useCallback(async (): Promise<void> => {
     setIsLoadingWrappers(true)
@@ -81,6 +75,22 @@ export function useWrapperCatalog(): WrapperCatalogState {
     }
   }, [])
 
+  const setPackageEnabled = useCallback(
+    async (packageId: string, enabled: boolean): Promise<void> => {
+      setPackageEnablementBusy(true)
+      setWrapperError(null)
+      try {
+        await window.api.setEnablement(`wrapper:${packageId}`, enabled, { type: 'global' })
+        await refreshWrappers()
+      } catch (err) {
+        setWrapperError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setPackageEnablementBusy(false)
+      }
+    },
+    [refreshWrappers]
+  )
+
   useEffect(() => {
     void Promise.resolve().then(() => refreshWrappers())
   }, [refreshWrappers])
@@ -111,10 +121,12 @@ export function useWrapperCatalog(): WrapperCatalogState {
     selectedWrapperId,
     isLoadingWrappers,
     wrapperError,
+    packageEnablementBusy,
     setSelectedWrapperId,
     refreshWrappers,
     refreshRuns,
     cancelWrapperRun,
-    exportWrapperReproducibility
+    exportWrapperReproducibility,
+    setPackageEnabled
   }
 }

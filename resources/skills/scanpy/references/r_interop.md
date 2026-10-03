@@ -2,6 +2,8 @@
 
 Many single-cell datasets arrive as R objects (`.rds`, `.RData`, Seurat, or SingleCellExperiment) even when the downstream analysis should happen in Scanpy. Agents should convert these inputs to AnnData `.h5ad` first, then continue with normal Scanpy workflows.
 
+R and the CRAN/Bioconductor packages below are host dependencies. They are not part of the managed `phi:python@1` environment.
+
 ## Operating Principles
 
 1. **Do not parse Seurat `.rds` directly in Python.** Use R to deserialize R objects and write `.h5ad`.

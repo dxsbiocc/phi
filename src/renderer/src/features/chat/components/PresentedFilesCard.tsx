@@ -5,6 +5,19 @@ import { fileIconForPath } from '../../../icons'
 import type { PresentedFilesItem } from '../../../types'
 import { formatBytes } from '../../../lib/toolOutputPresentation'
 
+const ARTIFACT_KIND_LABELS: Record<string, string> = {
+  figure: '图',
+  table: '表',
+  structure: '结构',
+  molecule: '分子',
+  network: '网络',
+  report: '报告'
+}
+
+function artifactKindLabel(kind: string): string {
+  return ARTIFACT_KIND_LABELS[kind] ?? kind
+}
+
 export function PresentedFilesCard({
   item,
   onOpenFile
@@ -147,6 +160,20 @@ export function PresentedFilesCard({
                     '@container phi-chat (max-width: 560px)': { gap: 0, mt: 0 }
                   }}
                 >
+                  {file.artifact?.kind ? (
+                    <Typography
+                      component="span"
+                      variant="caption"
+                      sx={{
+                        flexShrink: 0,
+                        color: 'text.secondary',
+                        fontSize: '0.65rem',
+                        '@container phi-chat (max-width: 560px)': { fontSize: '0.6rem' }
+                      }}
+                    >
+                      {artifactKindLabel(file.artifact.kind)}
+                    </Typography>
+                  ) : null}
                   {file.description && (
                     <Typography
                       variant="body2"

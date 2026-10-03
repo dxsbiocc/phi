@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import { Box, Stack } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import remarkGfm from 'remark-gfm'
+import { outlineMarkerWidth } from '../lib/notebookOutline'
 import { plainMarkdownInlineText, type NotebookOutlineItem } from '../lib/notebookViewModel'
 import {
   notebookFloatingActionCenterInset,
@@ -13,15 +14,6 @@ import {
 const macTitlebarHeight = 44
 const outlineMarkerActiveWidth = 22
 const outlineMarkerRestWidth = 10
-const outlineMarkerMinWidth = 6
-
-export function outlineMarkerWidth(distance: number): number {
-  if (distance <= 0) return outlineMarkerActiveWidth
-  const falloff = Math.exp(-distance * 0.35)
-  const wave = 0.42 + 0.58 * Math.abs(Math.sin(distance * 1.2))
-  const width = outlineMarkerMinWidth + 8 * falloff * wave
-  return Math.round(width * 10) / 10
-}
 
 function NotebookOutlineTitle({ item }: { item: NotebookOutlineItem }): React.JSX.Element {
   return (

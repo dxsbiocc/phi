@@ -20,7 +20,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "ribocode"
     description: "ORF caller name."
   outdir:
     kind: output

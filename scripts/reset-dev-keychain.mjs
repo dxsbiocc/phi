@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Removes the dev app's "Phi Safe Storage" keychain entries (macOS only).
 //
 // Why: in dev, the Electron binary is re-signed ad-hoc on every upgrade or
@@ -7,7 +8,7 @@
 // password prompts on every safeStorage access. Deleting the entry lets the
 // current binary recreate one it owns.
 //
-// Side effect: credentials previously stored via safeStorage (DB API keys,
+// Side effect: credentials previously stored via safeStorage (MCP API keys,
 // connector tokens, ...) become undecryptable and must be re-entered in the
 // dev app. Production builds with a stable Developer ID signature never need
 // this.

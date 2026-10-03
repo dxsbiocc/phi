@@ -1,12 +1,27 @@
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import assert from 'node:assert/strict'
 
 import {
   findWrapperCompositionEntry,
   resetWrapperCompositionCatalogCache
 } from '../../src/main/agent/wrappers/composition/discovery'
+import { getBundledWrapperPackagesDir } from '../../src/main/agent/wrappers/catalog'
+import {
+  getWrapperTreeDir,
+  getWrapperTreeOwnershipPath
+} from '../../src/main/agent/packages/wrapper-tree'
 
 /** A bundled wrapper that needs no downloads: its default `gff` is a local fixture. */
 export const WRAPPER_ID = 'nf-core/modules/gffread'
@@ -14,7 +29,9 @@ export const WRAPPER_ID = 'nf-core/modules/gffread'
 /**
  * A stand-in `nextflow`. Modes (FAKE_NF_MODE): `fail` exits 1; `hang` prints a
  * process line and never exits; anything else prints process lines, waits
- * FAKE_NF_MS (default 200) and writes the wrapper's primary output.
+ * FAKE_NF_MS (default 200) and writes the wrapper's primary output. With
+ * FAKE_NF_GATE set, it instead waits until that file exists, so a test can hold
+ * the pipeline open for as long as it needs (see Sandbox.releaseGate).
  */
 export const FAKE_NEXTFLOW = `#!/usr/bin/env node
 const fs = require('fs')
@@ -36,17 +53,29 @@ if (mode === 'fail') {
   setInterval(() => {}, 1000)
 } else {
   console.log('[PROCESS 87/ef5c73] GFFREAD (genome)')
-  setTimeout(() => {
+  const finish = () => {
     fs.mkdirSync(path.join(params.outdir, 'gffread'), { recursive: true })
     fs.writeFileSync(path.join(params.outdir, 'gffread', 'out.gtf'), 'x')
     console.log('[SUCCESS] completed=1 failed=0 cached=0')
     process.exit(0)
-  }, Number(process.env.FAKE_NF_MS || 200))
+  }
+  const gate = process.env.FAKE_NF_GATE
+  if (gate) {
+    setInterval(() => {
+      if (fs.existsSync(gate)) finish()
+    }, 20)
+  } else {
+    setTimeout(finish, Number(process.env.FAKE_NF_MS || 200))
+  }
 }
 `
 
 /** A shell "nextflow" that leaves a background grandchild, to prove the whole process group dies. */
 export const FAKE_NEXTFLOW_TREE = `#!/bin/sh
+if [ "$1" = "-version" ]; then
+  echo '      version 26.04.6 build 12646'
+  exit 0
+fi
 echo $$ > "$FAKE_NF_PIDFILE"
 sleep 300 &
 echo $! > "$FAKE_NF_PIDFILE.child"
@@ -59,6 +88,9 @@ export interface Sandbox {
   outdir: string
   pidFile: string
   useFake: (script?: string) => void
+  /** Hold the fake pipeline open (FAKE_NF_GATE) until `releaseGate` is called. */
+  holdGate: () => void
+  releaseGate: () => void
 }
 
 const ENV_KEYS = [
@@ -66,8 +98,68 @@ const ENV_KEYS = [
   'PI_CODING_AGENT_DIR',
   'FAKE_NF_PIDFILE',
   'FAKE_NF_MODE',
-  'FAKE_NF_MS'
+  'FAKE_NF_MS',
+  'FAKE_NF_GATE'
 ]
+
+function seedGffreadPackage(agentDir: string): void {
+  const tree = getWrapperTreeDir(agentDir)
+  const source = join(getBundledWrapperPackagesDir(), 'modules', 'nf-core', 'gffread')
+  const target = join(tree, 'modules', 'nf-core', 'gffread')
+  mkdirSync(join(target, '..'), { recursive: true })
+  cpSync(source, target, { recursive: true })
+  const paths: string[] = []
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name)
+      if (lstatSync(path).isDirectory()) walk(path)
+      else paths.push(relative(tree, path).split('\\').join('/'))
+    }
+  }
+  walk(target)
+  const id = 'module-nf-core-gffread'
+  const version = '1.0.0'
+  const installedAt = '2026-10-02T00:00:00.000Z'
+  const manifest = {
+    schemaVersion: 1,
+    id,
+    type: 'wrapper',
+    version,
+    title: 'nf-core/gffread module family',
+    summary: 'GffRead wrapper fixture.',
+    dependsOn: [],
+    files: 'files.json'
+  }
+  mkdirSync(join(getWrapperTreeOwnershipPath(agentDir), '..'), { recursive: true })
+  writeFileSync(
+    getWrapperTreeOwnershipPath(agentDir),
+    `${JSON.stringify(
+      {
+        version: 1,
+        packages: {
+          [id]: {
+            version,
+            title: manifest.title,
+            summary: manifest.summary,
+            manifest,
+            source: {
+              registry: 'test-fixture',
+              id,
+              type: 'wrapper',
+              version,
+              sha256: '0'.repeat(64),
+              installedAt,
+              installedBy: 'user'
+            },
+            paths: paths.sort()
+          }
+        }
+      },
+      null,
+      2
+    )}\n`
+  )
+}
 
 export async function withSandbox(fn: (sandbox: Sandbox) => Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'phi-wrapper-runs-'))
@@ -82,10 +174,17 @@ export async function withSandbox(fn: (sandbox: Sandbox) => Promise<void>): Prom
       writeFileSync(bin, script)
       chmodSync(bin, 0o755)
       process.env.NEXTFLOW_BIN = bin
+    },
+    holdGate: () => {
+      process.env.FAKE_NF_GATE = join(root, 'nf.gate')
+    },
+    releaseGate: () => {
+      writeFileSync(join(root, 'nf.gate'), '')
     }
   }
   process.env.PI_CODING_AGENT_DIR = sandbox.agentDir
   process.env.FAKE_NF_PIDFILE = sandbox.pidFile
+  seedGffreadPackage(sandbox.agentDir)
   resetWrapperCompositionCatalogCache()
   try {
     await fn(sandbox)
@@ -119,6 +218,30 @@ export async function waitFor(condition: () => boolean, timeoutMs = 30_000): Pro
       throw new Error(`timed out after ${timeoutMs} ms waiting for: ${String(condition)}`)
     }
     await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
+/**
+ * Fails with `what` if `promise` has not settled by the deadline. For calls that must not
+ * wait on a gated pipeline: the bound is only there so a regression fails with a clear
+ * message instead of hanging until the runner's test timeout, so keep it generous.
+ */
+export async function settlesWithin<T>(
+  promise: Promise<T>,
+  what: string,
+  timeoutMs = 60_000
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${what} (still pending after ${timeoutMs} ms)`)),
+      timeoutMs
+    )
+  })
+  try {
+    return await Promise.race([promise, deadline])
+  } finally {
+    clearTimeout(timer)
   }
 }
 

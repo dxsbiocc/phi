@@ -1096,11 +1096,11 @@ export default function NotebookCanvas({
     event.dataTransfer.setData('application/x-phi-notebook-ai-prompt', 'true')
     event.dataTransfer.effectAllowed = 'move'
   }
-  const onSave = (): void => {
+  const onSave = useCallback((): void => {
     if (notebookFile && draftDocument) {
       onSaveNotebook?.(notebookFile, draftDocument)
     }
-  }
+  }, [draftDocument, notebookFile, onSaveNotebook])
   // Same rationale as onInsertCell/onMoveAiPrompt above: onRunCell/onStopCell
   // read notebookFile/draftDocument directly, so NotebookCell needs their
   // real identity (not a blanket "ignore all functions") to avoid running a

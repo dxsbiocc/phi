@@ -24,6 +24,6 @@ test('plugin source validation rejects arbitrary URLs and local archives', () =>
 })
 
 test('plugin operations reject unsupported sources before runtime install or removal', async () => {
-  await assert.rejects(installPlugin('https://example.com/plugin.tgz'), /插件源格式不受支持/)
-  await assert.rejects(removePlugin('/tmp/plugin.zip'), /插件源格式不受支持/)
+  await assert.rejects(installPlugin('https://example.com/plugin.tgz'), /开发者扩展源格式不受支持/)
+  await assert.rejects(removePlugin('/tmp/plugin.zip'), /开发者扩展源格式不受支持/)
 })

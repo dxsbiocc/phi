@@ -11,10 +11,10 @@ import {
   Typography
 } from '@mui/material'
 import {
-  featuredMcpConnectors,
   mcpConnectorCategories,
   type FeaturedMcpConnector
 } from '../../../../../shared/mcpConnectorCatalog'
+import type { PackageUpdateView } from '../../../../../shared/packageManagerTypes'
 import { PhiIcons } from '../../../icons'
 import type { McpServerSummary } from '../../../types'
 import { featuredAuthFailureNotice, featuredOAuthStatusFromError } from '../lib/featuredAuthStatus'
@@ -37,9 +37,11 @@ import { McpFeaturedConnectorDetails } from './McpFeaturedConnectorDetails'
 
 type CatalogPage = 'list' | 'detail'
 type CatalogGroup = (typeof mcpConnectorCategories)[number]
-const authConnectors = featuredMcpConnectors.filter(
-  (connector) => connector.oauthAuthorizationOrigin || connector.apiKey
-)
+
+function ipcErrorMessage(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : String(cause)
+  return message.replace(/^Error invoking remote method '[^']+': (?:[^:]+: )?/, '')
+}
 
 function apiKeyErrorMessage(cause: unknown): string {
   const message = cause instanceof Error ? cause.message : String(cause)
@@ -61,7 +63,12 @@ function matchingServer(
   servers: McpServerSummary[]
 ): McpServerSummary | undefined {
   return servers.find(
-    (server) => server.url === connector.url && (!connector.apiKey || server.name === connector.id)
+    (server) =>
+      server.packageId === connector.id ||
+      server.connectorId === connector.id ||
+      (connector.url !== undefined &&
+        server.url === connector.url &&
+        (!connector.apiKey || server.name === connector.id))
   )
 }
 
@@ -72,6 +79,9 @@ export function McpConnectorCatalogDialog({
   onRefresh
 }: McpConnectorCatalogDialogProps): React.JSX.Element {
   const [page, setPage] = useState<CatalogPage>('list')
+  const [connectors, setConnectors] = useState<FeaturedMcpConnector[]>([])
+  const [updates, setUpdates] = useState<PackageUpdateView[]>([])
+  const [catalogLoading, setCatalogLoading] = useState(true)
   const [group, setGroup] = useState<CatalogGroup>('生产力')
   const [selectedId, setSelectedId] = useState('google-drive')
   const [query, setQuery] = useState('')
@@ -95,68 +105,106 @@ export function McpConnectorCatalogDialog({
   useEffect(() => {
     if (!open) return
     let active = true
-    for (const connector of authConnectors) {
-      const cachedTools = cachedFeaturedToolNames(connector.id)
-      const status = connector.apiKey
-        ? typeof window.api.getFeaturedMcpApiKeyStatus === 'function'
-          ? window.api.getFeaturedMcpApiKeyStatus(connector.id)
-          : Promise.reject(new Error('本地密钥接口尚未加载'))
-        : connector.oauthAuthorizationOrigin &&
-            typeof window.api.getFeaturedMcpAuthStatus === 'function'
-          ? window.api.getFeaturedMcpAuthStatus(connector.id)
-          : cachedTools !== null
-            ? Promise.resolve(true)
-            : window.api.listFeaturedMcpTools(connector.id).then((names) => {
-                cacheFeaturedToolNames(connector.id, names)
-                return true
-              })
-      void status
-        .then((authenticated) => {
-          if (active) {
-            setAuthStatusById((current) => ({
-              ...current,
-              [connector.id]: authenticated ? 'authenticated' : 'unauthenticated'
-            }))
-          }
-        })
-        .catch((cause: unknown) => {
-          if (!active) return
-          const message = cause instanceof Error ? cause.message : String(cause)
-          setAuthStatusById((current) => ({
-            ...current,
-            [connector.id]: featuredOAuthStatusFromError(message, connector.name)
-          }))
-        })
-    }
+    void Promise.all([window.api.listMcpConnectorCatalog(), window.api.listPackageUpdates()])
+      .then(([entries, availableUpdates]) => {
+        if (!active) return
+        setConnectors(entries)
+        setUpdates(availableUpdates)
+        for (const connector of entries.filter(
+          (entry) => entry.oauthAuthorizationOrigin || entry.apiKey
+        )) {
+          const cachedTools = cachedFeaturedToolNames(connector.id)
+          const status = connector.apiKey
+            ? typeof window.api.getFeaturedMcpApiKeyStatus === 'function'
+              ? window.api.getFeaturedMcpApiKeyStatus(connector.id)
+              : Promise.reject(new Error('本地密钥接口尚未加载'))
+            : typeof window.api.getFeaturedMcpAuthStatus === 'function'
+              ? window.api.getFeaturedMcpAuthStatus(connector.id)
+              : cachedTools !== null
+                ? Promise.resolve(true)
+                : window.api.listFeaturedMcpTools(connector.id).then((names) => {
+                    cacheFeaturedToolNames(connector.id, names)
+                    return true
+                  })
+          void status
+            .then((authenticated) => {
+              if (active) {
+                setAuthStatusById((current) => ({
+                  ...current,
+                  [connector.id]: authenticated ? 'authenticated' : 'unauthenticated'
+                }))
+              }
+            })
+            .catch((cause: unknown) => {
+              if (!active) return
+              const message = ipcErrorMessage(cause)
+              setAuthStatusById((current) => ({
+                ...current,
+                [connector.id]: connector.oauthAuthorizationOrigin
+                  ? featuredOAuthStatusFromError(message, connector.name)
+                  : 'unavailable'
+              }))
+            })
+        }
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(ipcErrorMessage(cause))
+      })
+      .finally(() => {
+        if (active) setCatalogLoading(false)
+      })
     return () => {
       active = false
     }
   }, [open])
-  const selected = featuredMcpConnectors.find((connector) => connector.id === selectedId)
+  const selected = connectors.find((connector) => connector.id === selectedId)
   const apiKeyDialogConnector =
-    featuredMcpConnectors.find(
-      (connector) => connector.id === apiKeyDialogId && connector.apiKey
-    ) ?? null
+    connectors.find((connector) => connector.id === apiKeyDialogId && connector.apiKey) ?? null
   const selectedAuthStatus = authStatusById[selectedId] ?? 'checking'
   const normalizedQuery = query.trim().toLowerCase()
   const filteredFeatured = useMemo(
     () =>
-      filterFeaturedConnectors(featuredMcpConnectors, {
+      filterFeaturedConnectors(connectors, {
         category: group,
         query,
         signIn: signInFilter,
         install: installFilter,
         sort,
-        isInstalled: (connector) => Boolean(matchingServer(connector, servers))
+        isInstalled: (connector) => connector.added || Boolean(matchingServer(connector, servers))
       }),
-    [group, installFilter, query, servers, signInFilter, sort]
+    [connectors, group, installFilter, query, servers, signInFilter, sort]
   )
-  async function add(name: string, url: string): Promise<void> {
-    setBusy(name)
+
+  async function refreshCatalog(): Promise<void> {
+    const [nextConnectors, nextUpdates] = await Promise.all([
+      window.api.listMcpConnectorCatalog(),
+      window.api.listPackageUpdates()
+    ])
+    setConnectors(nextConnectors)
+    setUpdates(nextUpdates)
+  }
+
+  async function addConnector(connector: FeaturedMcpConnector): Promise<void> {
+    setBusy(connector.id)
     setError(null)
     try {
-      await window.api.addRemoteMcpConnector(name, url)
+      await window.api.installMcpConnector(connector.id, connector.version, connector.registryDir)
       await onRefresh()
+      await refreshCatalog()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function buildEnvironment(connector: FeaturedMcpConnector): Promise<void> {
+    setBusy(connector.id)
+    setError(null)
+    try {
+      await window.api.buildMcpConnectorEnvironment(connector.id)
+      await onRefresh()
+      await refreshCatalog()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -165,16 +213,18 @@ export function McpConnectorCatalogDialog({
   }
 
   async function remove(server: McpServerSummary): Promise<void> {
-    if (!server.url) return
+    if (!server.packageId && !server.url) return
     setBusy(server.name)
     setError(null)
     try {
-      await window.api.removeRemoteMcpConnector(server.name, server.url)
-      const connector = featuredMcpConnectors.find(
-        (entry) => entry.url === server.url && (!entry.apiKey || entry.id === server.name)
+      if (server.packageId) await window.api.uninstallMcpConnector(server.packageId)
+      else if (server.url) await window.api.removeRemoteMcpConnector(server.name, server.url)
+      const connector = connectors.find(
+        (entry) => entry.id === server.packageId || entry.url === server.url
       )
       if (connector) clearFeaturedToolNames(connector.id)
       if (connector?.apiKey) {
+        await window.api.clearFeaturedMcpApiKey(connector.id)
         toolRequestRef.current += 1
         setToolNames(null)
         setToolsError(null)
@@ -182,6 +232,7 @@ export function McpConnectorCatalogDialog({
         setAuthStatusById((current) => ({ ...current, [connector.id]: 'unauthenticated' }))
       }
       await onRefresh()
+      await refreshCatalog()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -222,8 +273,9 @@ export function McpConnectorCatalogDialog({
       setAuthStatusById((current) => ({ ...current, [connector.id]: 'authenticated' }))
       clearFeaturedToolNames(connector.id)
       if (!matchingServer(connector, servers)) {
-        await window.api.addRemoteMcpConnector(connector.id, connector.url)
+        await window.api.installMcpConnector(connector.id, connector.version, connector.registryDir)
         await onRefresh()
+        await refreshCatalog()
       }
       const names = await window.api.listFeaturedMcpTools(connector.id)
       cacheFeaturedToolNames(connector.id, names)
@@ -270,8 +322,9 @@ export function McpConnectorCatalogDialog({
       }
       clearFeaturedToolNames(connector.id)
       if (!matchingServer(connector, servers)) {
-        await window.api.addRemoteMcpConnector(connector.id, connector.url)
+        await window.api.installMcpConnector(connector.id, connector.version, connector.registryDir)
         await onRefresh()
+        await refreshCatalog()
       }
       closeApiKeyDialog()
       const request = ++toolRequestRef.current
@@ -311,7 +364,8 @@ export function McpConnectorCatalogDialog({
     const request = ++toolRequestRef.current
     if (
       (connector.signIn === '需要登录' && !connector.oauthAuthorizationOrigin) ||
-      (connector.apiKey && authStatusById[connector.id] !== 'authenticated')
+      ((connector.apiKey || connector.oauthAuthorizationOrigin) &&
+        authStatusById[connector.id] !== 'authenticated')
     ) {
       setToolsLoading(false)
       return
@@ -339,7 +393,7 @@ export function McpConnectorCatalogDialog({
       })
       .catch((cause: unknown) => {
         if (request === toolRequestRef.current) {
-          const message = cause instanceof Error ? cause.message : String(cause)
+          const message = ipcErrorMessage(cause)
           const staleCatalog =
             connector.signIn === '无需登录' &&
             message.includes('该连接器需要授权，暂无法读取实际工具列表')
@@ -372,6 +426,7 @@ export function McpConnectorCatalogDialog({
     setInstallFilter('all')
     setSort('default')
     setPage('list')
+    setCatalogLoading(true)
     onClose()
   }
 
@@ -399,26 +454,30 @@ export function McpConnectorCatalogDialog({
   }
 
   function connectorCard(connector: FeaturedMcpConnector, key = connector.id): React.JSX.Element {
+    const updateAvailable = updates.some(
+      (update) => update.type === 'mcp' && update.id === connector.id
+    )
     return (
       <McpFeaturedConnectorCard
         key={key}
         connector={connector}
-        installed={Boolean(matchingServer(connector, servers))}
+        installed={connector.added || Boolean(matchingServer(connector, servers))}
+        updateAvailable={updateAvailable}
         authStatus={authStatusById[connector.id] ?? 'checking'}
         busy={busy !== null}
         authorizing={authorizingId === connector.id}
         onOpen={() => openDetail(connector)}
         onCancel={() => cancelOAuth(connector)}
         onAdd={() =>
-          connector.apiKey ? openApiKeyDialog(connector) : void add(connector.id, connector.url)
+          connector.apiKey ? openApiKeyDialog(connector) : void addConnector(connector)
         }
         onAuthorize={() =>
           connector.apiKey ? openApiKeyDialog(connector) : void connectOAuth(connector)
         }
+        onBuildEnvironment={() => void buildEnvironment(connector)}
       />
     )
   }
-
   return (
     <Dialog
       open={open}
@@ -511,19 +570,24 @@ export function McpConnectorCatalogDialog({
           }}
         >
           <List disablePadding>
-            {mcpConnectorCategories.map((category) => (
-              <ListItemButton
-                key={category}
-                selected={group === category && page === 'list'}
-                onClick={() => openGroup(category)}
-                sx={{ borderRadius: 1.5, mb: 0.5 }}
-              >
-                <Typography variant="body2">
-                  {category} ·{' '}
-                  {featuredMcpConnectors.filter((entry) => entry.category === category).length}
-                </Typography>
-              </ListItemButton>
-            ))}
+            {mcpConnectorCategories
+              .map((category) => ({
+                category,
+                count: connectors.filter((entry) => entry.category === category).length
+              }))
+              .filter(({ count }) => count > 0)
+              .map(({ category, count }) => (
+                <ListItemButton
+                  key={category}
+                  selected={group === category && page === 'list'}
+                  onClick={() => openGroup(category)}
+                  sx={{ borderRadius: 1.5, mb: 0.5 }}
+                >
+                  <Typography variant="body2">
+                    {category} · {count}
+                  </Typography>
+                </ListItemButton>
+              ))}
           </List>
         </Box>
         <Box sx={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -535,21 +599,26 @@ export function McpConnectorCatalogDialog({
                 authStatus={selectedAuthStatus}
                 busy={busy !== null}
                 authorizing={authorizingId === selected.id}
+                updateAvailable={updates.some(
+                  (update) => update.type === 'mcp' && update.id === selected.id
+                )}
                 onCancelAuthorize={() => cancelOAuth(selected)}
                 toolNames={toolNames}
                 toolsLoading={toolsLoading}
                 toolsError={toolsError}
-                onAdd={() => void add(selected.id, selected.url)}
+                onAdd={() => void addConnector(selected)}
                 onRemove={() => {
                   const server = matchingServer(selected, servers)
                   if (server) void remove(server)
                 }}
                 onAuthorize={() => void connectOAuth(selected)}
                 onApiKey={() => openApiKeyDialog(selected)}
+                onBuildEnvironment={() => void buildEnvironment(selected)}
                 onRetry={() => openDetail(selected, true)}
               />
             ) : (
               <>
+                {catalogLoading && <Typography color="text.secondary">正在加载连接器…</Typography>}
                 <McpConnectorCatalogToolbar
                   query={query}
                   signIn={signInFilter}
@@ -567,15 +636,22 @@ export function McpConnectorCatalogDialog({
                     gap: 1.5
                   }}
                 >
-                  {filteredFeatured.map((connector) => connectorCard(connector))}
+                  {!catalogLoading && filteredFeatured.map((connector) => connectorCard(connector))}
                 </Box>
-                {filteredFeatured.length === 0 && (
+                {!catalogLoading && filteredFeatured.length === 0 && (
                   <Typography color="text.secondary" sx={{ mt: 2 }}>
                     {normalizedQuery || signInFilter !== 'all' || installFilter !== 'all'
                       ? '没有符合条件的连接器'
                       : '这个分组目前没有连接器'}
                   </Typography>
                 )}
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: 'block', mt: 2 }}
+                >
+                  添加会保存全局 MCP 配置；新建本地会话时加载。需要登录的服务还需完成授权。
+                </Typography>
               </>
             )}
             {error && (
@@ -586,17 +662,19 @@ export function McpConnectorCatalogDialog({
           </Box>
         </Box>
       </Box>
-      <McpCustomConnectorDialog
-        open={customOpen}
-        busy={busy !== null}
-        error={customError}
-        onClose={() => {
-          if (busy !== null) return
-          setCustomOpen(false)
-          setCustomError(null)
-        }}
-        onSubmit={(name, url) => void addCustom(name, url)}
-      />
+      {customOpen && (
+        <McpCustomConnectorDialog
+          open
+          busy={busy !== null}
+          error={customError}
+          onClose={() => {
+            if (busy !== null) return
+            setCustomOpen(false)
+            setCustomError(null)
+          }}
+          onSubmit={(name, url) => void addCustom(name, url)}
+        />
+      )}
       <McpApiKeyDialog
         connector={apiKeyDialogConnector}
         value={apiKeyInput}

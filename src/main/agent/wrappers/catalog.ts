@@ -1,8 +1,40 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
+import semver from 'semver'
+import { stringify as stringifyYaml } from 'yaml'
 
 import { getPhiAgentDir } from '../runtime-paths'
+import {
+  installPackages,
+  listInstalledPackages,
+  readRegistry,
+  uninstallPackage
+} from '../packages/installer'
+import type { InstallPlan, InstalledPackage } from '../packages/installer'
+import {
+  getWrapperCustomDir,
+  getWrapperTreeOwnershipPath,
+  readWrapperTreeState
+} from '../packages/wrapper-tree'
+import {
+  materializeWrapperRegistry,
+  type WrapperPackageBuildDiagnostics,
+  type WrapperPackageSource
+} from './packages/builder'
+import { prepareLegacyWrapperPack, selectLegacyWrapperPack } from './legacy-pack-migration'
 import { getInstalledWrappersDir } from './store'
 import { parseWrapperManifest } from './manifest'
 import type { WrapperManifest } from './manifest-types'
@@ -31,8 +63,8 @@ const MANIFEST_FILE = 'wrapper.yaml'
 const nodeRequire = createRequire(import.meta.url)
 
 /**
- * Locates `resources/wrappers/` — the on-disk home for every bundled
- * wrapper package (manifest + vendored pipeline/module source). Not
+ * Locates `resources/wrappers/` — the shipped source tree from which bundled
+ * wrapper packages are materialized. Not
  * `src/main/agent/wrappers/fixtures/`, where these lived until this
  * function replaced a rollup copy-plugin hack
  * (`copyWrapperFixturesPlugin` in electron.vite.config.ts's history):
@@ -73,16 +105,41 @@ export function getBundledWrapperPackagesDir(): string {
   return join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'wrappers')
 }
 
-/**
- * Legacy package-level bundled wrappers were removed from `resources/wrappers/`.
- * The app's bundled wrapper surface is now the composition layout discovered
- * from `modules/**\/wrapper` and `subworkflows/**\/wrapper`.
- *
- * Keep this empty so the legacy catalog still supports custom installs and old
- * plan/run tests, without app startup trying to copy directories that are no
- * longer shipped.
- */
-const BUNDLED_WRAPPER_PACKAGE_DIRS: string[] = []
+const BUNDLED_MARKER_VERSION = 1
+const DEFAULT_BUNDLED_PACKAGE_VERSION = '1.0.0'
+const BUNDLED_REGISTRY_ID = 'bundled-wrappers'
+// This is the version-independent digest of resources/wrappers. Bump the
+// fingerprint prefix and update this value if package partitioning semantics
+// change without a corresponding resource-tree change.
+export const BUNDLED_WRAPPER_SOURCE_FINGERPRINT =
+  '7728ba5493c7d55239c97eba41a1ffa559c5c0b2487453d42afd8c01bc6bc0a8'
+
+interface BundledWrapperMarker {
+  version: 1
+  packageVersion: string
+  packageIds: string[]
+  sourceFingerprint?: string
+  packageFingerprints?: Record<string, string>
+  installedPackages?: Record<string, { version: string; sha256: string }>
+  packages?: InstalledPackage[]
+  diagnostics: WrapperPackageBuildDiagnostics
+}
+
+export interface BundledWrapperInstallResult {
+  packages: InstalledPackage[]
+  installed: string[]
+  removed: string[]
+  migratedCustom: string[]
+  migratedPackVersion?: string
+  legacyPackWarnings: Array<{ root: string; reason: string }>
+  diagnostics: WrapperPackageBuildDiagnostics
+}
+
+export interface BundledWrapperInstallOptions {
+  sourceRoot?: string
+  packageVersion?: string
+  generatedAt?: string
+}
 
 function ensureDir(path: string): void {
   if (!existsSync(path)) {
@@ -144,24 +201,453 @@ function loadManifestFromDir(dir: string): WrapperManifest {
   return result.manifest
 }
 
-/**
- * Writes the app's bundled wrapper packages into `installed/` if missing,
- * always refreshing the manifest content (bundled wrappers are the app's own
- * definition — there is nothing for a user to customize) and the source
- * marker. Idempotent: safe to call on every app start.
- */
-export function ensureBundledWrappersInstalled(agentDir = getPhiAgentDir()): WrapperCatalogEntry[] {
-  const entries: WrapperCatalogEntry[] = []
-  for (const packageDir of BUNDLED_WRAPPER_PACKAGE_DIRS) {
-    const manifest = loadManifestFromDir(packageDir)
-    const installedPath = installedDirFor(manifest, agentDir)
-    ensureDir(installedPath)
-    copyWrapperSourceTree(packageDir, installedPath)
-    const installedAt = readSourceMarker(installedPath)?.installedAt ?? new Date().toISOString()
-    writeSourceMarker(installedPath, { trustTier: 'bundled', installedAt })
-    entries.push({ manifest, trustTier: 'bundled', installedPath, installedAt })
+function bundledMarkerPath(agentDir: string): string {
+  return join(agentDir, 'wrappers', 'bundled.json')
+}
+
+function readBundledMarker(agentDir: string): BundledWrapperMarker | undefined {
+  try {
+    const value = JSON.parse(
+      readFileSync(bundledMarkerPath(agentDir), 'utf8')
+    ) as BundledWrapperMarker
+    if (
+      value.version !== BUNDLED_MARKER_VERSION ||
+      !semver.valid(value.packageVersion) ||
+      !Array.isArray(value.packageIds) ||
+      value.packageIds.some((id) => typeof id !== 'string') ||
+      (value.sourceFingerprint !== undefined && !isSha256(value.sourceFingerprint)) ||
+      (value.packageFingerprints !== undefined &&
+        (!isRecord(value.packageFingerprints) ||
+          Object.values(value.packageFingerprints).some((digest) => !isSha256(digest)))) ||
+      (value.installedPackages !== undefined &&
+        (!isRecord(value.installedPackages) ||
+          Object.values(value.installedPackages).some(
+            (entry) =>
+              !isRecord(entry) ||
+              typeof entry.version !== 'string' ||
+              !semver.valid(entry.version) ||
+              !isSha256(entry.sha256)
+          ))) ||
+      (value.packages !== undefined &&
+        (!Array.isArray(value.packages) ||
+          value.packages.some(
+            (entry) =>
+              !isRecord(entry) ||
+              typeof entry.id !== 'string' ||
+              entry.type !== 'wrapper' ||
+              typeof entry.version !== 'string' ||
+              !semver.valid(entry.version) ||
+              typeof entry.title !== 'string' ||
+              typeof entry.summary !== 'string' ||
+              typeof entry.dir !== 'string' ||
+              typeof entry.installedAt !== 'string' ||
+              (entry.installedBy !== 'user' && entry.installedBy !== 'dependency') ||
+              typeof entry.registry !== 'string' ||
+              !isSha256(entry.sha256)
+          ))) ||
+      !value.diagnostics ||
+      !Array.isArray(value.diagnostics.unattributedIncludes) ||
+      !Array.isArray(value.diagnostics.unattributedSupportFiles)
+    ) {
+      return undefined
+    }
+    return value
+  } catch {
+    return undefined
   }
-  return entries
+}
+
+function writeBundledMarker(agentDir: string, marker: BundledWrapperMarker): void {
+  const target = bundledMarkerPath(agentDir)
+  ensureDir(join(target, '..'))
+  const temporary = `${target}.${process.pid}.tmp`
+  writeFileSync(temporary, `${JSON.stringify(marker, null, 2)}\n`, 'utf8')
+  renameSync(temporary, target)
+}
+
+function markerMatchesInstalledTree(agentDir: string, marker: BundledWrapperMarker): boolean {
+  try {
+    const value = JSON.parse(readFileSync(getWrapperTreeOwnershipPath(agentDir), 'utf8')) as unknown
+    if (!isRecord(value) || !isRecord(value.packages)) return false
+    const packages = value.packages
+    return marker.packageIds.every((id) => {
+      const installed = packages[id]
+      if (!isRecord(installed) || !isRecord(installed.source)) return false
+      const expected = marker.installedPackages?.[id]
+      return expected
+        ? installed.source.registry === BUNDLED_REGISTRY_ID &&
+            installed.version === expected.version &&
+            installed.source.sha256 === expected.sha256
+        : installed.version === marker.packageVersion
+    })
+  } catch {
+    return false
+  }
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+}
+
+export function fingerprintBundledWrapperSource(root: string): string {
+  const hash = createHash('sha256')
+  const walk = (dir: string, prefix: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+    )) {
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name
+      if (!prefix && (path === 'index.json' || path === 'pack.json')) continue
+      const fullPath = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        walk(fullPath, path)
+      } else if (entry.isFile()) {
+        const data = readFileSync(fullPath)
+        hash.update(`file:${Buffer.byteLength(path)}:${path}:${data.length}:`)
+        hash.update(data)
+      } else {
+        hash.update(`other:${Buffer.byteLength(path)}:${path}`)
+      }
+    }
+  }
+  hash.update('phi-bundled-wrapper-source-v1\0')
+  walk(root, '')
+  return hash.digest('hex')
+}
+
+function bundledPackageFingerprint(source: WrapperPackageSource): string {
+  const hash = createHash('sha256')
+  hash.update('phi-bundled-wrapper-package-v1\0')
+  for (const [path, data] of [...source.files.entries()]
+    .filter(([path]) => path !== 'phi-package.yaml')
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))) {
+    hash.update(`file:${Buffer.byteLength(path)}:${path}:${data.length}:`)
+    hash.update(data)
+  }
+  return hash.digest('hex')
+}
+
+function bundledPackageNeedsInstall(
+  source: WrapperPackageSource,
+  installed: ReturnType<typeof readWrapperTreeState>['packages'][string] | undefined,
+  marker: BundledWrapperMarker | undefined,
+  agentDir: string
+): boolean {
+  if (!installed || installed.source.registry !== BUNDLED_REGISTRY_ID) return true
+  const expected = marker?.installedPackages?.[source.manifest.id]
+  const fingerprint = marker?.packageFingerprints?.[source.manifest.id]
+  if (expected && fingerprint) {
+    return (
+      installed.version !== expected.version ||
+      installed.source.sha256 !== expected.sha256 ||
+      bundledPackageFingerprint(source) !== fingerprint
+    )
+  }
+  return !installedPayloadMatches(source, installed, agentDir)
+}
+
+function installedPayloadMatches(
+  source: WrapperPackageSource,
+  installed: ReturnType<typeof readWrapperTreeState>['packages'][string] | undefined,
+  agentDir: string
+): boolean {
+  if (!installed || installed.source.registry !== BUNDLED_REGISTRY_ID) return false
+  const payload = [...source.files.entries()].filter(([path]) => path !== 'phi-package.yaml')
+  const installedPaths = new Set(installed.paths)
+  if (
+    payload.length !== installedPaths.size ||
+    payload.some(([path]) => !installedPaths.has(path))
+  ) {
+    return false
+  }
+  const tree = join(agentDir, 'wrappers', 'tree')
+  return payload.every(([path, data]) => {
+    try {
+      return data.equals(readFileSync(join(tree, ...path.split('/'))))
+    } catch {
+      return false
+    }
+  })
+}
+
+function migrateLegacyCustomWrappers(agentDir: string): string[] {
+  const migrated: string[] = []
+  for (const dir of findManifestDirs(getInstalledWrappersDir(agentDir))) {
+    const marker = readSourceMarker(dir)
+    if (marker?.trustTier !== 'custom') continue
+    let manifest: WrapperManifest
+    try {
+      manifest = loadManifestFromDir(dir)
+    } catch {
+      continue
+    }
+    const provider = manifest.id.split('/')[0]
+    const name = manifest.shortId
+    if (
+      !provider ||
+      !/^[a-z][a-z0-9-]*$/.test(provider) ||
+      !/^[a-z][a-z0-9-]*$/.test(name) ||
+      manifest.engine.entrypoint !== 'main.nf' ||
+      !manifest.outputs.some((output) => output.primary === true)
+    ) {
+      continue
+    }
+    const componentDir = join(getWrapperCustomDir(agentDir), 'modules', provider, name)
+    const wrapperDir = join(componentDir, 'wrapper')
+    if (existsSync(wrapperDir)) continue
+    ensureDir(componentDir)
+    cpSync(dir, wrapperDir, {
+      recursive: true,
+      errorOnExist: true,
+      filter: (source) => !['.source.json', 'wrapper.yaml'].includes(basename(source))
+    })
+    const schema = manifest.parameters.schema
+    const properties = isRecord(schema.properties) ? schema.properties : {}
+    const required = new Set(
+      Array.isArray(schema.required)
+        ? schema.required.filter((value): value is string => typeof value === 'string')
+        : []
+    )
+    const params: Record<string, Record<string, unknown>> = {}
+    const defaults: Record<string, unknown> = {}
+    for (const input of manifest.inputs) {
+      params[input.id] = {
+        kind: 'input',
+        type: input.type,
+        required: input.required
+      }
+    }
+    for (const [id, value] of Object.entries(properties)) {
+      if (!isRecord(value) || !/^[a-z][a-z0-9_]*$/.test(id)) continue
+      const numeric = value.type === 'integer' || value.type === 'number'
+      params[id] = {
+        kind: params[id]?.kind ?? 'option',
+        type: typeof value.type === 'string' && value.type ? value.type : 'string',
+        required: required.has(id) || params[id]?.required === true,
+        ...(typeof value.description === 'string' ? { description: value.description } : {}),
+        ...(numeric && typeof value.minimum === 'number' ? { minimum: value.minimum } : {}),
+        ...(numeric && typeof value.maximum === 'number' ? { maximum: value.maximum } : {}),
+        ...(Array.isArray(value.enum) && value.enum.every((item) => typeof item === 'string')
+          ? { enum: value.enum }
+          : {})
+      }
+      if (Object.hasOwn(value, 'default')) defaults[id] = value.default
+    }
+    const outputs = Object.fromEntries(
+      manifest.outputs.map((output) => [
+        output.id,
+        {
+          type: output.type,
+          path: output.path,
+          ...(output.primary === true ? { primary: true } : {})
+        }
+      ])
+    )
+    writeFileSync(
+      join(wrapperDir, 'wrapper.yaml'),
+      stringifyYaml({
+        id: `${provider}/modules/${name}`,
+        name: manifest.name,
+        summary: manifest.summary,
+        params,
+        outputs
+      }),
+      'utf8'
+    )
+    writeFileSync(join(wrapperDir, 'params.json'), `${JSON.stringify(defaults, null, 2)}\n`, 'utf8')
+    migrated.push(manifest.id)
+  }
+  return migrated.sort()
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Installs the shipped wrapper source as ordinary wrapper packages. Archives
+ * are materialized only into a temporary local registry, avoiding a second
+ * permanent copy of the 40+ MB source tree in the application bundle.
+ */
+export async function ensureBundledWrappersInstalled(
+  agentDir = getPhiAgentDir(),
+  options: BundledWrapperInstallOptions = {}
+): Promise<BundledWrapperInstallResult> {
+  const packageVersion = options.packageVersion ?? DEFAULT_BUNDLED_PACKAGE_VERSION
+  if (!semver.valid(packageVersion)) {
+    throw new Error(`Invalid bundled wrapper package version: ${packageVersion}`)
+  }
+  const migratedCustom = migrateLegacyCustomWrappers(agentDir)
+  const marker = readBundledMarker(agentDir)
+  if (marker?.packageVersion === packageVersion && markerMatchesInstalledTree(agentDir, marker)) {
+    const ids = new Set(marker.packageIds)
+    const packages =
+      marker.packages ??
+      listInstalledPackages({ agentDir }).filter(
+        (entry) => entry.type === 'wrapper' && ids.has(entry.id)
+      )
+    if (!marker.packages) writeBundledMarker(agentDir, { ...marker, packages })
+    return {
+      packages,
+      installed: [],
+      removed: [],
+      migratedCustom,
+      legacyPackWarnings: [],
+      diagnostics: marker.diagnostics
+    }
+  }
+
+  const sourceRoot = options.sourceRoot ?? getBundledWrapperPackagesDir()
+  const sourceFingerprint = options.sourceRoot
+    ? fingerprintBundledWrapperSource(sourceRoot)
+    : BUNDLED_WRAPPER_SOURCE_FINGERPRINT
+  if (
+    marker?.sourceFingerprint === sourceFingerprint &&
+    markerMatchesInstalledTree(agentDir, marker)
+  ) {
+    const packages = marker.packages ?? []
+    writeBundledMarker(agentDir, { ...marker, packageVersion, packages })
+    return {
+      packages,
+      installed: [],
+      removed: [],
+      migratedCustom,
+      legacyPackWarnings: [],
+      diagnostics: marker.diagnostics
+    }
+  }
+
+  const registryDir = mkdtempSync(join(tmpdir(), 'phi-bundled-wrapper-registry-'))
+  try {
+    const legacyPack = marker ? { rejected: [] } : selectLegacyWrapperPack(agentDir)
+    const legacyPackWarnings = [...legacyPack.rejected]
+    const registryOutput = join(registryDir, 'registry')
+    let migratedPackVersion: string | undefined
+    let built: ReturnType<typeof materializeWrapperRegistry> | undefined
+    const installedTree = readWrapperTreeState(agentDir).packages
+    if (legacyPack.root) {
+      try {
+        const legacySource = join(registryDir, 'legacy-source')
+        for (const reason of prepareLegacyWrapperPack(legacyPack.root, legacySource)) {
+          legacyPackWarnings.push({ root: legacyPack.root, reason })
+        }
+        built = materializeWrapperRegistry({
+          wrappersRoot: legacySource,
+          outDir: registryOutput,
+          version: packageVersion,
+          includePackage: (source) =>
+            bundledPackageNeedsInstall(source, installedTree[source.manifest.id], marker, agentDir),
+          ...(options.generatedAt ? { generatedAt: options.generatedAt } : {})
+        })
+        const unresolvedLocal = built.diagnostics.unattributedIncludes.filter(
+          (include) => !include.target.startsWith('plugin/')
+        )
+        if (unresolvedLocal.length > 0) {
+          throw new Error(
+            `legacy pack has unresolved local includes: ${unresolvedLocal
+              .map((include) => `${include.from} -> ${include.target}`)
+              .join(', ')}`
+          )
+        }
+        migratedPackVersion = legacyPack.version
+      } catch (error) {
+        legacyPackWarnings.push({
+          root: legacyPack.root,
+          reason: `conversion failed; used bundled source: ${error instanceof Error ? error.message : String(error)}`
+        })
+        built = undefined
+        rmSync(registryOutput, { recursive: true, force: true })
+      }
+    }
+    built ??= materializeWrapperRegistry({
+      wrappersRoot: sourceRoot,
+      outDir: registryOutput,
+      version: packageVersion,
+      includePackage: (source) =>
+        bundledPackageNeedsInstall(source, installedTree[source.manifest.id], marker, agentDir),
+      ...(options.generatedAt ? { generatedAt: options.generatedAt } : {})
+    })
+    const registry = {
+      ...readRegistry(registryOutput, { builtin: true }),
+      id: BUNDLED_REGISTRY_ID
+    }
+    const pending = registry.packages
+    if (pending.length > 0) {
+      const root = pending.at(-1)
+      if (!root) throw new Error('Bundled wrapper install plan unexpectedly has no root package')
+      const plan: InstallPlan = {
+        registry,
+        root: { type: root.type, id: root.id, version: root.version },
+        packages: pending.map((entry) => ({ ...entry, installedBy: 'user' as const })),
+        totalSize: pending.reduce((total, entry) => total + entry.size, 0),
+        environments: [],
+        agentDir
+      }
+      await installPackages(plan, { agentDir })
+    }
+    const packageIds = built.sources.map((source) => source.manifest.id).sort()
+    const nextIds = new Set(packageIds)
+    const stateBeforeRemoval = readWrapperTreeState(agentDir).packages
+    const retired = new Set(
+      (marker?.packageIds ?? []).filter((id) => {
+        const current = stateBeforeRemoval[id]
+        return !nextIds.has(id) && current?.source.registry === BUNDLED_REGISTRY_ID
+      })
+    )
+    const removed: string[] = []
+    while (retired.size > 0) {
+      const removable = [...retired].find((id) =>
+        [...retired].every(
+          (candidate) =>
+            candidate === id ||
+            !(stateBeforeRemoval[candidate]?.manifest.dependsOn ?? []).some(
+              (dependency) => dependency.type === 'wrapper' && dependency.id === id
+            )
+        )
+      )
+      if (!removable) {
+        throw new Error(
+          `Cannot reconcile cyclic retired wrapper packages: ${[...retired].join(', ')}`
+        )
+      }
+      uninstallPackage('wrapper', removable, { agentDir })
+      retired.delete(removable)
+      removed.push(removable)
+    }
+    const ids = new Set(packageIds)
+    const packages = listInstalledPackages({ agentDir }).filter(
+      (entry) => entry.type === 'wrapper' && ids.has(entry.id)
+    )
+    const nextMarker: BundledWrapperMarker = {
+      version: BUNDLED_MARKER_VERSION,
+      packageVersion,
+      packageIds,
+      ...(!migratedPackVersion
+        ? {
+            sourceFingerprint,
+            packageFingerprints: Object.fromEntries(
+              built.sources.map((source) => [source.manifest.id, bundledPackageFingerprint(source)])
+            ),
+            installedPackages: Object.fromEntries(
+              packages.map((entry) => [entry.id, { version: entry.version, sha256: entry.sha256 }])
+            )
+          }
+        : {}),
+      packages,
+      diagnostics: built.diagnostics
+    }
+    writeBundledMarker(agentDir, nextMarker)
+    return {
+      packages,
+      installed: pending.map((entry) => entry.id),
+      removed: removed.sort(),
+      migratedCustom,
+      ...(migratedPackVersion ? { migratedPackVersion } : {}),
+      legacyPackWarnings,
+      diagnostics: built.diagnostics
+    }
+  } finally {
+    rmSync(registryDir, { recursive: true, force: true })
+  }
 }
 
 /**

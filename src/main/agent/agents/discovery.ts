@@ -1,13 +1,9 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
-import {
-  PhiAgentParseError,
-  parsePhiAgent,
-  type PhiAgentDefinition,
-  type PhiAgentSource
-} from './definition'
+import { validateAgentFile, type PhiAgentDefinition, type PhiAgentSource } from './definition'
+import { loadedPlugins } from '../plugins/loader'
 import { PHI_PROJECT_CONFIG_DIR_NAME } from '../runtime-paths'
 
 /**
@@ -16,7 +12,7 @@ import { PHI_PROJECT_CONFIG_DIR_NAME } from '../runtime-paths'
  * Phi skills also honour legacy config directories. First definition of a name
  * wins, so a Phi agent always beats a compat one.
  *
- *   Phi     <cwd>/.phi/agents · <agentDir>/agents (~/.phi/agents) · bundled resources/agents
+ *   Phi     <cwd>/.phi/agents · <agentDir>/agents (~/.phi/agents) · bundled resources/agents · plugin agents/
  *   compat  <cwd>/{.omp,.pi,.claude}/agents · ~/.omp/agent/agents · ~/.pi/agent/agents · ~/.claude/agents
  */
 export interface PhiAgentDiscoveryOptions {
@@ -24,12 +20,18 @@ export interface PhiAgentDiscoveryOptions {
   agentDir: string
   /** Bundled `resources/agents` (resolved by the caller: it depends on packaging). */
   bundledDir?: string
+  /**
+   * Plugin `agents/` directories. Scanned after `bundledDir` and before compatibility
+   * roots. Omit to scan bundled plugins. Pass `[]` to skip them.
+   */
+  pluginAgentDirs?: readonly string[]
   homeDir?: string
 }
 
 export interface PhiAgentDiagnostic {
   filePath: string
   message: string
+  level: 'error' | 'warning'
 }
 
 export interface PhiAgentDiscoveryResult {
@@ -40,6 +42,24 @@ export interface PhiAgentDiscoveryResult {
 interface Root {
   dir: string
   source: PhiAgentSource
+  pluginId?: string
+}
+
+function pluginAgentRoots(options: PhiAgentDiscoveryOptions): Root[] {
+  if (options.pluginAgentDirs !== undefined) {
+    return options.pluginAgentDirs.map((dir) => ({ dir, source: 'phi' as const }))
+  }
+  const roots = new Map<string, Root>()
+  for (const plugin of loadedPlugins({
+    agentDir: options.agentDir,
+    ...(existsSync(options.cwd) ? { projectDir: options.cwd } : {})
+  })) {
+    for (const filePath of plugin.components.agents) {
+      const dir = dirname(filePath)
+      roots.set(`${plugin.id}\0${dir}`, { dir, source: 'phi', pluginId: plugin.id })
+    }
+  }
+  return [...roots.values()]
 }
 
 function agentRoots(options: PhiAgentDiscoveryOptions): Root[] {
@@ -47,7 +67,8 @@ function agentRoots(options: PhiAgentDiscoveryOptions): Root[] {
   const roots: Root[] = [
     { dir: join(options.cwd, PHI_PROJECT_CONFIG_DIR_NAME, 'agents'), source: 'phi' },
     { dir: join(options.agentDir, 'agents'), source: 'phi' },
-    ...(options.bundledDir ? [{ dir: options.bundledDir, source: 'phi' as const }] : [])
+    ...(options.bundledDir ? [{ dir: options.bundledDir, source: 'phi' as const }] : []),
+    ...pluginAgentRoots(options)
   ]
   const compat = [
     ...['.omp', '.pi', '.claude'].map((dir) => join(options.cwd, dir, 'agents')),
@@ -77,20 +98,31 @@ export function discoverPhiAgents(options: PhiAgentDiscoveryOptions): PhiAgentDi
 
   for (const root of agentRoots(options)) {
     for (const filePath of markdownFiles(root.dir)) {
+      let content: string
       try {
-        const agent = parsePhiAgent(filePath, readFileSync(filePath, 'utf-8'), root.source)
-        if (seen.has(agent.name)) continue
-        seen.add(agent.name)
-        agents.push(agent)
+        content = readFileSync(filePath, 'utf-8')
       } catch (error) {
         diagnostics.push({
           filePath,
-          message:
-            error instanceof PhiAgentParseError || error instanceof Error
-              ? error.message
-              : String(error)
+          level: 'error',
+          message: error instanceof Error ? error.message : String(error)
         })
+        continue
       }
+      const result = validateAgentFile(filePath, content, root.source)
+      if (!result.ok || !result.agent) {
+        for (const error of result.errors) {
+          diagnostics.push({ filePath, level: 'error', message: error.message })
+        }
+        continue
+      }
+      // Warnings stay on the agent and in the scan log; they do not skip the file.
+      for (const warning of result.warnings) {
+        diagnostics.push({ filePath, level: 'warning', message: warning.message })
+      }
+      if (seen.has(result.agent.name)) continue
+      seen.add(result.agent.name)
+      agents.push(root.pluginId ? { ...result.agent, pluginId: root.pluginId } : result.agent)
     }
   }
   return { agents, diagnostics }

@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process'
 import { realpathSync, statSync } from 'node:fs'
 import { request } from 'node:http'
 
+import { resolveManagedJupyterLaunch, type ManagedJupyterOptions } from './managed-jupyter-server'
+
 export type JupyterServerState = 'stopped' | 'starting' | 'ready' | 'error' | 'exited'
 
 export interface JupyterServerPublicStatus {
@@ -28,7 +30,17 @@ export type JupyterServerConnection = {
 
 export type JupyterServerLaunch = {
   port: number
+  /** Absolute `jupyter` of `phi:jupyter@1` once resolved. */
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
 }
+
+/** Turns `{ port }` into a full launch, or throws (for example: environment not ready). */
+export type JupyterLaunchResolver = (
+  projectCwd: string,
+  launch: JupyterServerLaunch
+) => Promise<JupyterServerLaunch>
 
 type StreamLike = {
   on(event: 'data', listener: (chunk: Buffer | string) => void): unknown
@@ -95,10 +107,20 @@ export function jupyterServerArgs(launch: JupyterServerLaunch): string[] {
 }
 
 function defaultProcessFactory(cwd: string, launch: JupyterServerLaunch): ManagedJupyterProcess {
-  return spawn('jupyter', jupyterServerArgs(launch), {
+  // Never the host's `jupyter`: only a resolved managed launch is spawned.
+  if (!launch.command || !launch.env) {
+    throw new Error('Jupyter Server launch is not resolved to phi:jupyter@1')
+  }
+  return spawn(launch.command, launch.args ?? jupyterServerArgs(launch), {
     cwd,
+    env: launch.env,
     stdio: ['ignore', 'pipe', 'pipe']
   })
+}
+
+export function managedLaunchResolver(options: ManagedJupyterOptions = {}): JupyterLaunchResolver {
+  return (_projectCwd, launch) =>
+    resolveManagedJupyterLaunch({ ...launch, args: jupyterServerArgs(launch) }, options)
 }
 
 function errorMessage(error: unknown): string {
@@ -215,6 +237,8 @@ function publicStatus(record: JupyterServerRecord): JupyterServerPublicStatus {
 export class JupyterServerRegistry {
   private readonly records = new Map<string, JupyterServerRecord>()
   private readonly createProcess: JupyterProcessFactory
+  private readonly resolveLaunch?: JupyterLaunchResolver
+  private readonly port?: number
   private readonly readyProbe: JupyterServerReadyProbe
   private readonly identityProbe: JupyterServerIdentityProbe
   private readonly readyProbeAttempts: number
@@ -224,6 +248,15 @@ export class JupyterServerRegistry {
   constructor(
     options: {
       createProcess?: JupyterProcessFactory
+      /**
+       * Defaults to the managed `phi:jupyter@1` resolver unless `createProcess` is injected
+       * without a resolver (tests that fake the process).
+       */
+      resolveLaunch?: JupyterLaunchResolver
+      /** Options for the default managed resolver (runtime root, builds, build prompt). */
+      managed?: ManagedJupyterOptions
+      /** Overrides the fixed app port (integration tests). */
+      port?: number
       readyProbe?: JupyterServerReadyProbe
       identityProbe?: JupyterServerIdentityProbe
       readyProbeAttempts?: number
@@ -232,6 +265,11 @@ export class JupyterServerRegistry {
     } = {}
   ) {
     this.createProcess = options.createProcess ?? defaultProcessFactory
+    const resolveLaunch =
+      options.resolveLaunch ??
+      (options.createProcess ? undefined : managedLaunchResolver(options.managed))
+    if (resolveLaunch) this.resolveLaunch = resolveLaunch
+    if (options.port !== undefined) this.port = options.port
     this.readyProbe = options.readyProbe ?? defaultReadyProbe
     this.identityProbe = options.identityProbe ?? defaultServerIdentityProbe
     this.readyProbeAttempts = options.readyProbeAttempts ?? READY_PROBE_ATTEMPTS
@@ -244,7 +282,7 @@ export class JupyterServerRegistry {
     return publicStatus(
       this.records.get(projectCwd) ?? {
         projectCwd,
-        port: jupyterPortForProject(projectCwd),
+        port: this.port ?? jupyterPortForProject(projectCwd),
         state: 'stopped',
         logs: [],
         pendingOutput: ''
@@ -268,7 +306,7 @@ export class JupyterServerRegistry {
 
     const record: JupyterServerRecord = {
       projectCwd,
-      port: jupyterPortForProject(projectCwd),
+      port: this.port ?? jupyterPortForProject(projectCwd),
       state: 'starting',
       startedAt: this.now().toISOString(),
       message: '正在启动 Jupyter Server',
@@ -277,18 +315,11 @@ export class JupyterServerRegistry {
     }
     this.records.set(projectCwd, record)
 
-    try {
-      const process = this.createProcess(projectCwd, { port: record.port })
-      record.process = process
-      record.pid = process.pid
-      process.unref?.()
-      process.stdout?.on('data', (chunk) => this.consumeOutput(record, chunk))
-      process.stderr?.on('data', (chunk) => this.consumeOutput(record, chunk))
-      process.on('error', (error) => this.markError(record, error))
-      process.on('exit', (code, signal) => this.markExited(record, code, signal))
-      this.scheduleReadyProbe(record)
-    } catch (error) {
-      this.markError(record, error)
+    const launch: JupyterServerLaunch = { port: record.port }
+    if (this.resolveLaunch) {
+      void this.resolveAndSpawn(record, this.resolveLaunch, launch)
+    } else {
+      this.spawnInto(record, launch)
     }
 
     return publicStatus(record)
@@ -318,6 +349,40 @@ export class JupyterServerRegistry {
       record.state = 'stopped'
       record.exitedAt = this.now().toISOString()
       record.message = 'Jupyter Server 已停止'
+    }
+  }
+
+  private async resolveAndSpawn(
+    record: JupyterServerRecord,
+    resolve: JupyterLaunchResolver,
+    launch: JupyterServerLaunch
+  ): Promise<void> {
+    let resolved: JupyterServerLaunch
+    try {
+      resolved = await resolve(record.projectCwd, launch)
+    } catch (error) {
+      if (this.records.get(record.projectCwd) === record && record.state === 'starting') {
+        this.markError(record, error)
+      }
+      return
+    }
+    if (this.records.get(record.projectCwd) !== record || record.state !== 'starting') return
+    this.spawnInto(record, resolved)
+  }
+
+  private spawnInto(record: JupyterServerRecord, launch: JupyterServerLaunch): void {
+    try {
+      const process = this.createProcess(record.projectCwd, launch)
+      record.process = process
+      record.pid = process.pid
+      process.unref?.()
+      process.stdout?.on('data', (chunk) => this.consumeOutput(record, chunk))
+      process.stderr?.on('data', (chunk) => this.consumeOutput(record, chunk))
+      process.on('error', (error) => this.markError(record, error))
+      process.on('exit', (code, signal) => this.markExited(record, code, signal))
+      this.scheduleReadyProbe(record)
+    } catch (error) {
+      this.markError(record, error)
     }
   }
 

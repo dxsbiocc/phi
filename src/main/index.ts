@@ -9,6 +9,14 @@ import type {
   ManualCompactionTarget
 } from '../shared/contextUsageTypes'
 import type { WrapperRunFinishedEvent } from '../shared/wrapperRunNotice'
+import type {
+  PhiPluginInstallPreview,
+  PhiPluginListItem,
+  PhiPluginMutationResult,
+  PhiPluginProblemView
+} from '../shared/phiPluginTypes'
+import type { EnablementItemKey, EnablementScope } from '../shared/enablementTypes'
+import { localizePhiPluginProblemMessage } from '../shared/phiPluginProblems'
 import { declaredExternalOutputRoot } from '../shared/wrapperResultTypes'
 import {
   hoverMediaPreviewType,
@@ -20,8 +28,7 @@ import {
   installNotebookOutputProtocol,
   registerNotebookOutputScheme
 } from './agent/notebook/notebook-output-protocol'
-import { isInstalledFigurePreviewPath } from './agent/visualization/examples'
-import { getBundledSkillRoot } from './agent/visualization/tools'
+import { isPluginSkillPreviewPath } from './agent/plugins/preview'
 import type {
   WrapperRetargetRequest,
   WrapperRun,
@@ -66,6 +73,7 @@ import { ElectronBrowserEngine } from './browser/electron-browser-engine'
 import { BrowserWorkspaceRegistry } from './browser/browser-workspace-registry'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import semver from 'semver'
 import { createAgentSession } from './agent/session/session-manager'
 import { getAuthManager } from './agent/auth-manager'
 import {
@@ -149,7 +157,6 @@ import {
 import type { RemoteDoctorOptions } from '../shared/remoteDoctorTypes'
 import type { ProjectLocation, RemoteProjectCreateInput } from '../shared/projectLocation'
 import { renderMoleculeSvg } from './molecule-renderer'
-import { previewDatabaseWebImage } from './database-web-preview'
 import {
   bashApprovalDigest,
   editApprovalDigest,
@@ -158,6 +165,26 @@ import {
   resolveToolApproval,
   writeApprovalDigest
 } from './agent/tool-approval'
+import { createEnvironmentBuilds } from './agent/content/environment-builds'
+import { getWrapperTreeOwnershipPath } from './agent/packages/wrapper-tree'
+import { bindAgentSession } from './agent/content/environment-gate'
+import {
+  createSkillHost,
+  type ConfirmBuildRequest,
+  type PresentArtifactsRequest
+} from './agent/content/skill-host'
+import { getRuntimeRoot } from './agent/envs/runtime'
+import {
+  BUILD_NOW,
+  confirmedEnvironmentBuild,
+  environmentBuildQuestion
+} from './agent/content/environment-build-prompt'
+import {
+  ADD_PACKAGES,
+  confirmedEnvironmentRequest,
+  requestProjectEnvironment,
+  type EnvironmentRequestConfirm
+} from './agent/content/env-request'
 import {
   canRequestAgentUserInteraction,
   cancelAgentUserInteractions,
@@ -175,12 +202,51 @@ import {
   type RuntimeModel,
   type RuntimeResourceLoader
 } from './agent/runtime/runtime-adapter'
-import { installPlugin, listPlugins, removePlugin } from './agent/plugins'
+import { installPlugin as installDeveloperPlugin, listPlugins, removePlugin } from './agent/plugins'
+import { installBundledPlugins } from './agent/plugins/bundled-install'
+import {
+  installPlugin as installPhiPlugin,
+  listInstalledPlugins,
+  loadedPlugins,
+  setPluginEnabled,
+  uninstallPlugin as uninstallPhiPlugin,
+  upgradePlugin,
+  type PluginLifecycleResult,
+  type PluginNamespace
+} from './agent/plugins/loader'
+import { validatePlugin, type PluginProblem } from './agent/plugins/validate'
+import { readPluginRegistry, writePluginRegistry } from './agent/plugins/store'
+import { getEnablementSnapshot, migrateEnablementFromHistory, setEnabled } from './agent/enablement'
+import {
+  addKnownRegistry,
+  applyPackageUpdate,
+  applyPackageUpdates,
+  cleanupStalePackageStaging,
+  importOfflinePackage,
+  installPackages as installRegistryPackages,
+  listKnownRegistries,
+  listInstalledPackages as listRegistryPackages,
+  listPackageUpdates,
+  loadKnownRegistryIndexes,
+  planInstall as planRegistryInstall,
+  previewOfflinePackageImport,
+  readRegistry as readPackageRegistry,
+  removeKnownRegistry,
+  type PackageUpdate,
+  uninstallPackage as uninstallRegistryPackage
+} from './agent/packages/installer'
 import {
   addRemoteMcpConnector,
+  connectorEnvironmentBuildAction,
   disableFeaturedApiKeyAutoDiscovery,
+  installCatalogConnector,
+  listConnectorCatalog,
+  mcpOAuthAuthorizationOrigin,
+  refreshPersistedManagedStdioServers,
   removeRemoteMcpConnector,
-  setMcpConnectorEnabled
+  setMcpConnectorEnabled,
+  setMcpPackageEnabled,
+  uninstallCatalogConnector
 } from './agent/mcp-connectors'
 import {
   API_KEY_CONNECTOR_IDS,
@@ -191,7 +257,7 @@ import {
   setFeaturedMcpApiKey
 } from './agent/mcp-key-credentials'
 import { McpApiKeyValidationError, validateFeaturedMcpApiKey } from './agent/mcp-key-validation'
-import { featuredMcpConnectors } from '../shared/mcpConnectorCatalog'
+import { scriptToolName, validateSkill } from './agent/content/skill'
 import {
   deleteSkill,
   listGlobalMcpServers,
@@ -209,9 +275,10 @@ import {
   listWrapperCatalog
 } from './agent/wrappers/catalog'
 import {
-  listWrapperCompositionCatalog,
+  listWrapperCompositionCatalogStatus,
   readWrapperCompositionDag,
-  readWrapperModuleDetails
+  readWrapperModuleDetails,
+  resetWrapperCompositionCatalogCache
 } from './agent/wrappers/composition/discovery'
 import { wrapperJobHostHandlers } from './agent/wrappers/composition/job-host-handlers'
 import { shouldContinueConversation } from './agent/wrappers/composition/job-continue'
@@ -247,20 +314,7 @@ import {
 } from './agent/wrappers/store'
 import { formatDiagnostics, type DiagnosticsSnapshot } from './agent/diagnostics'
 import { LOG_RETENTION_DAYS, cleanupOldLogs, getPhiLogDir, writeAppLog } from './agent/app-logger'
-import { readAppSettings, updateAppSettings, updateDefaultProxyMode } from './agent/app-settings'
-import {
-  findDbConnectorCatalogEntry,
-  listDbConnectorCatalog,
-  syncGeneratedDbConnectorDocs
-} from './agent/db/catalog'
-import {
-  clearDbConnectorSecret,
-  hasDbConnectorSecret,
-  isDbCredentialStorageAvailable,
-  resolveDbAuthSecret,
-  storeDbConnectorSecret
-} from './agent/db/credential-store'
-import { setDbConnectorQueryEnabled } from './agent/db/store'
+import { readAppSettings, updateAppSettings } from './agent/app-settings'
 import { isSecretMetadataKey, redactSensitiveText } from './agent/redaction'
 import {
   emptyNotebookRegistry,
@@ -277,9 +331,11 @@ import {
 } from './agent/notebook/analysis-notebook-files'
 import { AnalysisNotebookFileWatcher } from './agent/notebook/analysis-notebook-watch'
 import {
+  createManagedEnvironmentActions,
   detectConfiguredAnalysisKernels,
   dismissEnvironmentSummary,
   getEnvironment,
+  listManagedEnvironments,
   redetectEnvironment,
   setEnvironmentToolPath
 } from './agent/environment'
@@ -307,6 +363,7 @@ import {
 import { AnalysisNotebookToolExecutor } from './agent/notebook/notebook-tool-executor'
 import { getOmpBridge } from './agent/omp/omp-bridge'
 import { validatePresentedFiles } from './agent/deliverables/present-files'
+import { MAX_PRESENTED_FILES, type PresentedFile } from '../shared/presentedFileTypes'
 import {
   isStaleSessionError,
   StaleSessionError,
@@ -353,7 +410,6 @@ import {
 } from '../shared/notebookDocument'
 import { messageContentTitleText } from '../shared/sessionTitle'
 import type { AgentUserInteractionQuestion } from '../shared/agentInteractionTypes'
-import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
 import icon from '../../resources/icon.png?asset'
 
 const APP_NAME = 'Phi'
@@ -419,6 +475,7 @@ let macLaunchServicesHandlers: Promise<MacLaunchServicesHandler[]> | null = null
 const macApplicationPathQueries = new Map<string, Promise<string[]>>()
 // Set by agent-env.ts before this module's own top-level code runs.
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
+let cachedPackageUpdates: PackageUpdate[] = []
 
 app.setName(APP_NAME)
 
@@ -526,6 +583,40 @@ const browserIpcCoordinator = new BrowserIpcCoordinator({
     return origin ? browserSessionForPhiId(origin.phiSessionId) : undefined
   }
 })
+
+function loadPackageRegistries(): ReturnType<typeof loadKnownRegistryIndexes> {
+  return loadKnownRegistryIndexes({ agentDir: AGENT_DIR })
+}
+
+function packageUpdateViews(updates: readonly PackageUpdate[]): PackageUpdate[] {
+  return [...updates]
+}
+
+function refreshCachedPackageUpdates(): PackageUpdate[] {
+  const loaded = loadPackageRegistries()
+  cachedPackageUpdates = listPackageUpdates(loaded.registries, {
+    agentDir: AGENT_DIR,
+    appVersion: app.getVersion()
+  })
+  return cachedPackageUpdates
+}
+
+function scheduleStartupPackageUpdateCheck(): void {
+  setImmediate(() => {
+    try {
+      const updates = refreshCachedPackageUpdates()
+      if (updates.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('packages:updatesAvailable', packageUpdateViews(updates))
+      }
+    } catch (error) {
+      writeAppLog({
+        level: 'warn',
+        event: 'package_update_check_failed',
+        metadata: { error: error instanceof Error ? error.message : String(error) }
+      })
+    }
+  })
+}
 
 type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -904,6 +995,7 @@ function requireRemoteEditApproval(request: RemoteEditRequest): void {
   }
 }
 const phiSessionIdsByKey = new Map<string, string>()
+const loadedSkillNamesBySession = new Map<string, string[]>()
 const sessionKeyAliases = new Map<string, string>()
 const sessionModelSelections = new Map<string, ModelSelection>()
 const sessionThinkingLevels = new Map<string, ThinkingLevel>()
@@ -936,7 +1028,23 @@ function syncPreventSleepBlocker(): void {
     preventSleepBlockerId = null
   }
 }
-const jupyterServerRegistry = new JupyterServerRegistry()
+const environmentBuilds = createEnvironmentBuilds({
+  root: getRuntimeRoot(),
+  onChange: (build) => {
+    sendToAllWindows('environmentBuilds:changed', build)
+  }
+})
+const managedEnvironmentActions = createManagedEnvironmentActions({
+  root: getRuntimeRoot(),
+  builds: environmentBuilds,
+  catalog: (projectDir) =>
+    listManagedEnvironments({
+      ...(projectDir ? { projectDir } : {}),
+      builds: environmentBuilds.list()
+    })
+})
+// The notebook server joins builds started elsewhere (chat prompt or the environment panel).
+const jupyterServerRegistry = new JupyterServerRegistry({ managed: { builds: environmentBuilds } })
 const notebookSessionRegistry = new AnalysisNotebookSessionRegistry({
   getConnection: (projectCwd) => jupyterServerRegistry.connection(projectCwd)
 })
@@ -955,6 +1063,135 @@ const notebookFileWatcher = new AnalysisNotebookFileWatcher({
 getOmpBridge().registerHostHandler('notebookTool.execute', (params) =>
   notebookToolExecutor.execute(params as Parameters<typeof notebookToolExecutor.execute>[0])
 )
+const skillHost = createSkillHost({
+  listSkillDirs: async (cwd) => {
+    const skills = await listSkills(cwd)
+    return skills.map((skill) => dirname(skill.filePath))
+  },
+  builds: environmentBuilds,
+  confirmBuild: (request) => confirmEnvironmentBuild(request),
+  presentArtifacts: (request) => presentScriptArtifacts(request)
+})
+
+function phiPluginListItems(): PhiPluginListItem[] {
+  return listInstalledPlugins({ agentDir: AGENT_DIR }).map((plugin) => ({
+    id: plugin.id,
+    version: plugin.version,
+    title: plugin.manifest.title,
+    summary: plugin.manifest.summary,
+    enabled: plugin.enabled,
+    source: plugin.source,
+    installedAt: plugin.installedAt,
+    directory: plugin.dir,
+    agents: plugin.agents.map((agent) => agent.name).sort(),
+    skills: plugin.skills.map((skill) => skill.name).sort(),
+    scriptTools: plugin.skills
+      .flatMap((skill) =>
+        (skill.phi?.scripts ?? []).map((script) => scriptToolName(plugin.toolPrefix, script.name))
+      )
+      .sort(),
+    environments: Object.keys(plugin.environments)
+      .sort()
+      .map((name) => ({ name, ref: `plugin:${name}` }))
+  }))
+}
+
+function phiPluginProblemView(problem: PluginProblem): PhiPluginProblemView {
+  const label = problem.level === 'error' ? '错误' : '警告'
+  return {
+    ...problem,
+    displayMessage: `${label}（${problem.path}）：${localizePhiPluginProblemMessage(problem.message)}`
+  }
+}
+
+function phiPluginMutation(result: PluginLifecycleResult): PhiPluginMutationResult {
+  return {
+    ok: result.ok,
+    plugins: phiPluginListItems(),
+    problems: [...result.errors, ...result.warnings].map(phiPluginProblemView)
+  }
+}
+
+function failedPhiPluginMutation(path: string, message: string): PhiPluginMutationResult {
+  return phiPluginMutation({
+    ok: false,
+    errors: [{ level: 'error', path, message }],
+    warnings: []
+  })
+}
+
+function phiPluginInstallPreview(path: string): PhiPluginInstallPreview {
+  const validation = validatePlugin(path)
+  const problems = [...validation.errors, ...validation.warnings].map(phiPluginProblemView)
+  if (!validation.ok || !validation.plugin) return { ok: false, path, problems }
+
+  const { manifest } = validation.plugin
+  const existing = listInstalledPlugins({ agentDir: AGENT_DIR }).find(
+    (plugin) => plugin.id === manifest.id
+  )
+  return {
+    ok: true,
+    path,
+    action: !existing
+      ? 'install'
+      : semver.gt(manifest.version, existing.version)
+        ? 'upgrade'
+        : 'same-or-older',
+    id: manifest.id,
+    version: manifest.version,
+    title: manifest.title,
+    summary: manifest.summary,
+    ...(existing ? { installedVersion: existing.version } : {}),
+    problems
+  }
+}
+
+async function installedPluginNamespace(projectDir?: string): Promise<PluginNamespace> {
+  const resourceCwd = projectDir ?? currentCwd
+  const pluginSkillRoots = loadedPlugins({
+    agentDir: AGENT_DIR,
+    ...(projectDir ? { projectDir } : {})
+  }).flatMap((plugin) => plugin.components.skills)
+  const skills = (await listSkills(resourceCwd)).filter(
+    (skill) => !pluginSkillRoots.some((root) => isPathInsideRoot(root, skill.filePath))
+  )
+  const toolPrefixes = skills.flatMap((skill) => {
+    try {
+      const result = validateSkill(dirname(skill.filePath), { expectedName: skill.name })
+      return result.skill?.phi?.toolPrefix ? [result.skill.phi.toolPrefix] : []
+    } catch {
+      return []
+    }
+  })
+  const agents = discoverPhiAgents({
+    cwd: resourceCwd,
+    agentDir: AGENT_DIR,
+    bundledDir: getBundledAgentsDir(),
+    pluginAgentDirs: []
+  }).agents
+  return {
+    agentNames: agents.map((agent) => agent.name),
+    skillNames: skills.map((skill) => skill.name),
+    toolPrefixes
+  }
+}
+getOmpBridge().registerHostHandler('skills.scriptTools', (params) => skillHost.scriptTools(params))
+getOmpBridge().registerHostHandler('skills.run', (params) => skillHost.run(params))
+getOmpBridge().registerHostHandler('skills.scriptTool', (params) => skillHost.scriptTool(params))
+getOmpBridge().registerHostHandler('skills.cancel', (params) => skillHost.cancel(params))
+getOmpBridge().registerHostHandler('environments.bindSession', (params) =>
+  bindAgentSession(params, {
+    builds: environmentBuilds,
+    confirmBuild: (request) => confirmEnvironmentBuild(request)
+  })
+)
+getOmpBridge().registerHostHandler('environments.request', (params) =>
+  requestProjectEnvironment(params, {
+    root: getRuntimeRoot(),
+    builds: environmentBuilds,
+    confirm: (request) => confirmEnvironmentRequest(request)
+  })
+)
 getOmpBridge().registerHostHandler('agentInteraction.request', handleAgentInteractionRequest)
 getOmpBridge().registerHostHandler(
   'settings.nextActionSuggestionsEnabled',
@@ -968,12 +1205,21 @@ getOmpBridge().registerHostHandler('planReview.request', handlePlanReviewRequest
 getOmpBridge().registerHostHandler('deliverables.present', handlePresentFilesRequest)
 getOmpBridge().registerHostHandler('mcp.openAuthUrl', async (params) => {
   const request = params as { id?: unknown; url?: unknown } | null
-  const connector = featuredMcpConnectors.find(
-    (entry) => entry.id === request?.id && entry.oauthAuthorizationOrigin
-  )
-  if (!connector || typeof request?.url !== 'string') throw new Error('授权地址无效')
+  if (typeof request?.id !== 'string' || typeof request.url !== 'string') {
+    throw new Error('授权地址无效')
+  }
+  const catalogConnector = listConnectorCatalog({
+    agentDir: AGENT_DIR,
+    appVersion: app.getVersion(),
+    runtimeRoot: getRuntimeRoot(),
+    registryDirs: loadPackageRegistries().registries.map((registry) => registry.dir)
+  }).find((entry) => entry.id === request.id)
+  const authorizationOrigin = catalogConnector?.url
+    ? mcpOAuthAuthorizationOrigin(request.id, catalogConnector.url)
+    : undefined
+  if (!authorizationOrigin) throw new Error('授权地址无效')
   const url = new URL(request.url)
-  if (url.origin !== connector.oauthAuthorizationOrigin || url.username || url.password) {
+  if (url.origin !== authorizationOrigin || url.username || url.password) {
     throw new Error('授权地址与连接器不匹配')
   }
   await shell.openExternal(url.toString())
@@ -1146,6 +1392,12 @@ getOmpBridge().registerHostHandler('remoteWorkspace.cancelBash', (params) =>
 // Background wrapper runs. The manager lives here, not in the agent worker: a run
 // must outlive any chat session, and the worker is stopped whenever it idles.
 const wrapperJobs = new WrapperJobManager({
+  // Local runs use phi:nextflow@1; a missing environment is offered for building in the chat
+  // that started the run.
+  nextflowLaunch: {
+    builds: environmentBuilds,
+    confirmBuild: (request) => confirmEnvironmentBuild(request)
+  },
   resolveProjectForRun: (originSessionId) => {
     const origin = resolveOriginSession(originSessionId)
     const manifest = origin ? findPhiSessionById(origin.phiSessionId) : null
@@ -1504,12 +1756,10 @@ function findActivePromptRunByRuntimeSessionId(runtimeSessionId: string): Prompt
   )
 }
 
-function handlePresentFilesRequest(params: unknown): {
-  files: ReturnType<typeof validatePresentedFiles>
-} {
-  const record = isRecord(params) ? params : {}
-  const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
-  const toolCallId = optionalStringField(record, 'toolCallId')
+function presentableRun(
+  runtimeSessionId: string | undefined,
+  toolCallId: string | undefined
+): { run: PromptRun; toolCallId: string } {
   if (!runtimeSessionId || !toolCallId || toolCallId.length > 200) {
     throw new Error('Invalid file delivery request')
   }
@@ -1520,15 +1770,90 @@ function handlePresentFilesRequest(params: unknown): {
   if (manifest?.projectLocation?.kind === 'ssh' || project?.location.kind === 'ssh') {
     throw new Error('Remote project file delivery is not available')
   }
+  return { run, toolCallId }
+}
+
+function recordPresentedFiles(run: PromptRun, toolCallId: string, files: PresentedFile[]): void {
+  for (let index = 0; index < files.length; index += MAX_PRESENTED_FILES) {
+    const batch = files.slice(index, index + MAX_PRESENTED_FILES)
+    const stored = appendSessionEvent(run.phiSessionId, {
+      type: 'files_presented',
+      runId: run.runId,
+      toolCallId,
+      files: batch
+    })
+    broadcastSessionTimelineEvent(run.phiSessionId, stored)
+  }
+}
+
+function handlePresentFilesRequest(params: unknown): {
+  files: ReturnType<typeof validatePresentedFiles>
+} {
+  const record = isRecord(params) ? params : {}
+  const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
+  const toolCallId = optionalStringField(record, 'toolCallId')
+  const { run, toolCallId: callId } = presentableRun(runtimeSessionId, toolCallId)
   const files = validatePresentedFiles(run.cwd, record.files)
-  const stored = appendSessionEvent(run.phiSessionId, {
-    type: 'files_presented',
-    runId: run.runId,
-    toolCallId,
-    files
-  })
-  broadcastSessionTimelineEvent(run.phiSessionId, stored)
+  recordPresentedFiles(run, callId, files)
   return { files }
+}
+
+function presentScriptArtifacts(request: PresentArtifactsRequest): void {
+  const { run, toolCallId } = presentableRun(request.runtimeSessionId, request.toolCallId)
+  const files: PresentedFile[] = request.artifacts.map((artifact) => ({
+    path: artifact.path,
+    displayPath: artifact.relativePath,
+    bytes: statSync(artifact.path).size,
+    description: artifact.descriptor.title,
+    artifact: {
+      kind: artifact.descriptor.kind,
+      title: artifact.descriptor.title,
+      envId: request.envId
+    }
+  }))
+  recordPresentedFiles(run, toolCallId, files)
+}
+
+async function confirmEnvironmentBuild(request: ConfirmBuildRequest): Promise<boolean> {
+  try {
+    const response = await handleAgentInteractionRequest({
+      runtimeSessionId: request.runtimeSessionId,
+      questions: [
+        {
+          header: '环境',
+          question: environmentBuildQuestion(request),
+          options: [
+            { label: BUILD_NOW, description: '下载并安装这个环境' },
+            { label: '暂不', description: '这次先不安装' }
+          ]
+        }
+      ]
+    })
+    return confirmedEnvironmentBuild(response)
+  } catch {
+    return false
+  }
+}
+
+async function confirmEnvironmentRequest(request: EnvironmentRequestConfirm): Promise<boolean> {
+  try {
+    const response = await handleAgentInteractionRequest({
+      runtimeSessionId: request.runtimeSessionId,
+      questions: [
+        {
+          header: '环境',
+          question: request.question,
+          options: [
+            { label: ADD_PACKAGES, description: '求解并安装这些包' },
+            { label: '取消', description: '不添加这些包' }
+          ]
+        }
+      ]
+    })
+    return confirmedEnvironmentRequest(response)
+  } catch {
+    return false
+  }
 }
 
 async function handleAgentInteractionRequest(params: unknown): Promise<unknown> {
@@ -1822,43 +2147,6 @@ function notebookAgentRuntimePrompt(projectCwd: string): string | null {
   ]
     .filter(Boolean)
     .join('\n')
-}
-
-function dbConnectorSettingsItems(): DbConnectorSettingsItem[] {
-  const storageAvailable = isDbCredentialStorageAvailable()
-  return listDbConnectorCatalog(AGENT_DIR).map((entry) => {
-    const auth = entry.manifest.auth
-    const envVar = auth?.envVar
-    const authSettings =
-      auth && auth.type !== 'none' && envVar
-        ? {
-            type: auth.type,
-            envVar,
-            required: Boolean(auth.required),
-            ...(auth.label ? { label: auth.label } : {}),
-            ...(auth.signupUrl ? { signupUrl: auth.signupUrl } : {}),
-            configured: Boolean(resolveDbAuthSecret(envVar, AGENT_DIR)),
-            configuredFromEnv: Boolean(process.env[envVar]?.trim()),
-            configuredInStore: hasDbConnectorSecret(envVar, AGENT_DIR),
-            storageAvailable
-          }
-        : undefined
-    return {
-      id: entry.manifest.id,
-      name: entry.manifest.name,
-      protocolFamily: entry.manifest.protocolFamily,
-      curationTier: entry.manifest.curationTier,
-      trustTier: entry.trustTier,
-      enabledForQuery: entry.enabledForQuery,
-      installedAt: entry.installedAt,
-      domainCount: entry.manifest.domains.length,
-      domains: entry.manifest.domains.map((domain) => ({
-        id: domain.id,
-        summary: domain.summary
-      })),
-      ...(authSettings ? { auth: authSettings } : {})
-    }
-  })
 }
 
 function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEvent): void {
@@ -3462,9 +3750,36 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
     const changeBaseline =
       project?.location?.kind === 'ssh' ? null : await beginWorkspaceChangeCapture(runSnapshot.cwd)
 
+    let loadedSkills = loadedSkillNamesBySession.get(phiSessionId)
+    if (!loadedSkills) {
+      if (
+        project?.location?.kind === 'ssh' ||
+        isRemoteProjectAnchorPath(runSnapshot.cwd, AGENT_DIR)
+      ) {
+        loadedSkills = []
+      } else {
+        try {
+          loadedSkills = (await listSkills(runSnapshot.cwd))
+            .filter((skill) => skill.enabled)
+            .map((skill) => skill.name)
+            .sort()
+        } catch (error) {
+          loadedSkills = []
+          writeAppLog({
+            event: 'session_loaded_skills_unavailable',
+            level: 'warn',
+            sessionId: phiSessionId,
+            metadata: { error: error instanceof Error ? error.message : String(error) }
+          })
+        }
+      }
+      loadedSkillNamesBySession.set(phiSessionId, loadedSkills)
+    }
+
     const registryRun = runnerRegistry.startRun({
       sessionId: phiSessionId,
       runId,
+      loadedSkills,
       getRecordedFailure: () => promptRun.recordedFailureMessage,
       execute: async ({ signal }) => {
         if (signal.aborted || promptRun.cancelled) return
@@ -4284,18 +4599,40 @@ function isRemoteResourceScope(cwd?: string): boolean {
   )
 }
 
+function isEnablementItemKey(value: unknown): value is EnablementItemKey {
+  return (
+    typeof value === 'string' &&
+    (/^skill:[a-z0-9][a-z0-9-]{0,63}$/.test(value) ||
+      /^(?:plugin|wrapper|mcp):[a-z][a-z0-9-]{1,63}$/.test(value))
+  )
+}
+
+function enablementScopeOptions(value: unknown): { projectDir?: string } {
+  if (!isRecord(value) || (value.type !== 'global' && value.type !== 'project')) {
+    throw new Error('启用范围无效')
+  }
+  if (value.type === 'global') {
+    if (Object.keys(value).some((key) => key !== 'type')) throw new Error('全局启用范围无效')
+    return {}
+  }
+  if (
+    Object.keys(value).some((key) => key !== 'type' && key !== 'projectCwd') ||
+    typeof value.projectCwd !== 'string' ||
+    value.projectCwd.trim().length === 0 ||
+    isRemoteResourceScope(value.projectCwd)
+  ) {
+    throw new Error('项目启用范围无效')
+  }
+  return { projectDir: value.projectCwd }
+}
+
 function isLocalFilePathAllowed(
   target: string,
   scope: LocalPathScope = currentLocalPathScope(),
   projectRoots: readonly string[] = []
 ): boolean {
   if (isRemoteProjectAnchorPath(target, AGENT_DIR)) return false
-  if (
-    basename(target) === 'preview.png' &&
-    isInstalledFigurePreviewPath(target, getBundledSkillRoot())
-  ) {
-    return true
-  }
+  if (isPluginSkillPreviewPath(target)) return true
   return isLocalFilePathAllowedByRoots(
     target,
     localFileAllowRoots({
@@ -5440,6 +5777,8 @@ async function createDiagnosticsText(): Promise<string> {
 }
 
 async function invalidateAgentSession(): Promise<void> {
+  const phiSessionId = getPhiSessionIdForKey(currentSessionKey)
+  if (phiSessionId) loadedSkillNamesBySession.delete(phiSessionId)
   const lifecycle = getCurrentLifecycle()
   const previous = lifecycle.advance()
   advancePromptGeneration(currentSessionKey)
@@ -5649,7 +5988,10 @@ async function getAgentSession(
           })
       for (const diagnostic of agentScan.diagnostics) {
         writeAppLog({
-          event: 'agent_definition_invalid',
+          event:
+            diagnostic.level === 'warning'
+              ? 'agent_definition_warning'
+              : 'agent_definition_invalid',
           metadata: { filePath: diagnostic.filePath, message: diagnostic.message }
         })
       }
@@ -5664,6 +6006,7 @@ async function getAgentSession(
           ? [
               createApprovalExtension({
                 signal: sessionAbortController.signal,
+                classifyTool: (toolName, input) => skillHost.approvalFor(toolName, input),
                 ...(remoteProject
                   ? {
                       shouldGate: () =>
@@ -6037,21 +6380,180 @@ registerNotebookOutputScheme()
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   installNotebookOutputProtocol()
   applyDockIcon()
 
   const removedLogs = cleanupOldLogs()
-  writeAppLog({ event: 'app_started', metadata: { removedOldLogs: removedLogs } })
-  recoverInterruptedPhiSessions()
   try {
-    ensureBundledWrappersInstalled()
+    cleanupStalePackageStaging({ agentDir: AGENT_DIR })
   } catch (error) {
     writeAppLog({
       level: 'error',
-      event: 'wrapper_bundled_install_failed',
+      event: 'package_staging_cleanup_failed',
       metadata: { error: error instanceof Error ? error.message : String(error) }
     })
+  }
+  writeAppLog({ event: 'app_started', metadata: { removedOldLogs: removedLogs } })
+  const bundledSkillNames = (() => {
+    try {
+      return readdirSync(getBundledSkillsDir(), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+    } catch {
+      return []
+    }
+  })()
+  migrateEnablementFromHistory(bundledSkillNames, { agentDir: AGENT_DIR })
+  try {
+    const refreshed = refreshPersistedManagedStdioServers({
+      agentDir: AGENT_DIR,
+      runtimeRoot: getRuntimeRoot()
+    })
+    if (refreshed.failures.length > 0) {
+      writeAppLog({
+        level: 'warn',
+        event: 'mcp_managed_stdio_refresh_failed',
+        metadata: {
+          failures: refreshed.failures.map(({ name, ref, error }) => ({
+            name,
+            ref,
+            error: error.message
+          }))
+        }
+      })
+    }
+  } catch (error) {
+    writeAppLog({
+      level: 'warn',
+      event: 'mcp_managed_stdio_refresh_failed',
+      metadata: { error: error instanceof Error ? error.message : String(error) }
+    })
+  }
+  try {
+    const registry = readPluginRegistry(AGENT_DIR)
+    const global = getEnablementSnapshot({ agentDir: AGENT_DIR }).global
+    const plugins = { ...registry.plugins }
+    const migratedPlugins: string[] = []
+    let hadLegacyEnablement = false
+    for (const [id, entry] of Object.entries(plugins)) {
+      if (typeof entry.enabled !== 'boolean') continue
+      hadLegacyEnablement = true
+      const key = `plugin:${id}` as const
+      if (!Object.hasOwn(global, key)) {
+        setEnabled(key, entry.enabled, { agentDir: AGENT_DIR })
+        migratedPlugins.push(id)
+      }
+      const lifecycleEntry = { ...entry }
+      delete lifecycleEntry.enabled
+      plugins[id] = lifecycleEntry
+    }
+    if (hadLegacyEnablement) {
+      writePluginRegistry({ version: 1, plugins }, AGENT_DIR)
+    }
+    if (migratedPlugins.length > 0) {
+      writeAppLog({
+        event: 'enablement_plugin_registry_migrated',
+        metadata: { plugins: migratedPlugins }
+      })
+    }
+  } catch (error) {
+    writeAppLog({
+      event: 'enablement_plugin_registry_migration_failed',
+      level: 'warn',
+      metadata: { error: error instanceof Error ? error.message : String(error) }
+    })
+  }
+  // Bundled plugins: install missing ones before agent scans (a file copy), then upgrade in
+  // the background, because an upgrade may first build the new environment it switches to.
+  const bundledPluginOptions = async (): Promise<Parameters<typeof installBundledPlugins>[0]> => ({
+    agentDir: AGENT_DIR,
+    runtimeRoot: getRuntimeRoot(),
+    names: await installedPluginNamespace(),
+    build: (descriptor, options) => environmentBuilds.start(descriptor, options)
+  })
+  const logBundledPlugins = (result: Awaited<ReturnType<typeof installBundledPlugins>>): void => {
+    if (result.errors.length === 0) return
+    writeAppLog({
+      level: 'error',
+      event: 'phi_plugin_bundled_install_failed',
+      metadata: {
+        errors: result.errors.map((problem) => phiPluginProblemView(problem).displayMessage)
+      }
+    })
+  }
+  const logBundledPluginError = (error: unknown): void => {
+    writeAppLog({
+      level: 'error',
+      event: 'phi_plugin_bundled_install_failed',
+      metadata: { error: error instanceof Error ? error.message : String(error) }
+    })
+  }
+  // The plugin namespace scans skills of the current folder; on a fresh account the
+  // no-project task folder does not exist until the first session creates it.
+  mkdirSync(currentCwd, { recursive: true })
+  try {
+    logBundledPlugins(
+      await installBundledPlugins({ ...(await bundledPluginOptions()), phase: 'install' })
+    )
+  } catch (error) {
+    logBundledPluginError(error)
+  }
+  void bundledPluginOptions()
+    .then((options) => installBundledPlugins({ ...options, phase: 'upgrade' }))
+    .then(logBundledPlugins)
+    .catch(logBundledPluginError)
+  recoverInterruptedPhiSessions()
+  // Bundled wrappers: the first install (or the migration from the old pack) is awaited so
+  // wrapper tools find a tree; later updates run in the background, because a changed
+  // package rebuilds the temporary archives (~10 s) and each package is swapped atomically.
+  const installBundledWrappers = async (): Promise<void> => {
+    try {
+      const bundledWrappers = await ensureBundledWrappersInstalled(AGENT_DIR, {
+        packageVersion: app.getVersion()
+      })
+      if (
+        bundledWrappers.diagnostics.unattributedIncludes.length > 0 ||
+        bundledWrappers.diagnostics.unattributedSupportFiles.length > 0
+      ) {
+        writeAppLog({
+          level: 'warn',
+          event: 'wrapper_bundled_attribution_warning',
+          metadata: { ...bundledWrappers.diagnostics }
+        })
+      }
+      if (bundledWrappers.migratedCustom.length > 0) {
+        writeAppLog({
+          event: 'wrapper_custom_migrated',
+          metadata: { ids: bundledWrappers.migratedCustom }
+        })
+      }
+      if (bundledWrappers.migratedPackVersion) {
+        writeAppLog({
+          event: 'wrapper_legacy_pack_migrated',
+          metadata: { version: bundledWrappers.migratedPackVersion }
+        })
+      }
+      if (bundledWrappers.legacyPackWarnings.length > 0) {
+        writeAppLog({
+          level: 'warn',
+          event: 'wrapper_legacy_pack_rejected',
+          metadata: { rejected: bundledWrappers.legacyPackWarnings }
+        })
+      }
+      resetWrapperCompositionCatalogCache()
+    } catch (error) {
+      writeAppLog({
+        level: 'error',
+        event: 'wrapper_bundled_install_failed',
+        metadata: { error: error instanceof Error ? error.message : String(error) }
+      })
+    }
+  }
+  if (existsSync(getWrapperTreeOwnershipPath(AGENT_DIR))) {
+    void installBundledWrappers()
+  } else {
+    await installBundledWrappers()
   }
   // Fire-and-forget: resumes remote Slurm and detached runs left mid-flight by
   // the previous app session (see executor-slurm-reconcile.ts's doc comment).
@@ -6237,9 +6739,6 @@ app.whenReady().then(() => {
       return renderMoleculeSvg(value, width, height)
     }
   )
-  ipcMain.handle('database:webImagePreview', async (_, sourceUrl: string) => {
-    return previewDatabaseWebImage(sourceUrl)
-  })
   ipcMain.handle('diagnostics:copy', async () => {
     const text = await createDiagnosticsText()
     clipboard.writeText(text)
@@ -6348,9 +6847,6 @@ app.whenReady().then(() => {
   ipcMain.handle('settings:webSearch:apiKey:clear', async (_, providerId: unknown) =>
     getOmpBridge().request('settings.webSearch.apiKey.clear', { agentDir: AGENT_DIR, providerId })
   )
-  ipcMain.handle('settings:updateDefaultProxyMode', async (_, mode: unknown) =>
-    updateDefaultProxyMode(mode)
-  )
 
   ipcMain.handle('environment:get', async () => getEnvironment())
   ipcMain.handle('environment:redetect', async () => redetectEnvironment())
@@ -6375,59 +6871,40 @@ app.whenReady().then(() => {
       : await dialog.showOpenDialog(options)
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
-
-  ipcMain.handle('db:listConnectors', async () => dbConnectorSettingsItems())
-  ipcMain.handle('db:setConnectorEnabled', async (_, id: unknown, enabled: unknown) => {
-    if (typeof id !== 'string' || !id.trim()) {
-      throw new Error('数据库 id 无效')
-    }
-    if (typeof enabled !== 'boolean') {
-      throw new Error('数据库启用状态必须是布尔值')
-    }
-    const entry = findDbConnectorCatalogEntry(id, AGENT_DIR)
-    if (!entry) {
-      throw new Error(`未找到数据库连接器: ${id}`)
-    }
-    setDbConnectorQueryEnabled(entry.manifest.id, entry.digest, entry.trustTier, enabled, AGENT_DIR)
+  ipcMain.handle('managedEnvironments:list', async (_, projectCwd: unknown) => {
     try {
-      syncGeneratedDbConnectorDocs(AGENT_DIR)
-    } catch {
-      // Generated navigator docs should not block settings changes.
+      return await managedEnvironmentActions.list(projectCwd)
+    } catch (error) {
+      throw new Error(`读取托管环境失败：${error instanceof Error ? error.message : String(error)}`)
     }
-    return dbConnectorSettingsItems()
   })
-  ipcMain.handle('db:setConnectorApiKey', async (_, id: unknown, apiKey: unknown) => {
-    if (typeof id !== 'string' || !id.trim()) {
-      throw new Error('数据库 id 无效')
+  ipcMain.handle('managedEnvironments:build', async (_, ref: unknown, projectCwd: unknown) => {
+    try {
+      return managedEnvironmentActions.build(ref, projectCwd)
+    } catch (error) {
+      throw new Error(`启动环境构建失败：${error instanceof Error ? error.message : String(error)}`)
     }
-    if (typeof apiKey !== 'string') {
-      throw new Error('API key 必须是字符串')
-    }
-    const entry = findDbConnectorCatalogEntry(id, AGENT_DIR)
-    if (!entry) {
-      throw new Error(`未找到数据库连接器: ${id}`)
-    }
-    const envVar = entry.manifest.auth?.envVar
-    if (!envVar || entry.manifest.auth?.type === 'none') {
-      throw new Error(`数据库 ${entry.manifest.id} 不需要 API key`)
-    }
-    storeDbConnectorSecret(envVar, apiKey, AGENT_DIR)
-    return dbConnectorSettingsItems()
   })
-  ipcMain.handle('db:clearConnectorApiKey', async (_, id: unknown) => {
-    if (typeof id !== 'string' || !id.trim()) {
-      throw new Error('数据库 id 无效')
+  ipcMain.handle('managedEnvironments:rebuild', async (_, envId: unknown) => {
+    try {
+      await managedEnvironmentActions.rebuild(envId)
+    } catch (error) {
+      throw new Error(`重新构建环境失败：${error instanceof Error ? error.message : String(error)}`)
     }
-    const entry = findDbConnectorCatalogEntry(id, AGENT_DIR)
-    if (!entry) {
-      throw new Error(`未找到数据库连接器: ${id}`)
+  })
+  ipcMain.handle('managedEnvironments:remove', async (_, envId: unknown) => {
+    try {
+      return await managedEnvironmentActions.remove(envId)
+    } catch (error) {
+      throw new Error(`删除环境失败：${error instanceof Error ? error.message : String(error)}`)
     }
-    const envVar = entry.manifest.auth?.envVar
-    if (!envVar || entry.manifest.auth?.type === 'none') {
-      throw new Error(`数据库 ${entry.manifest.id} 不需要 API key`)
+  })
+  ipcMain.handle('managedEnvironments:clean', async () => {
+    try {
+      return await managedEnvironmentActions.clean()
+    } catch (error) {
+      throw new Error(`清理环境失败：${error instanceof Error ? error.message : String(error)}`)
     }
-    clearDbConnectorSecret(envVar, AGENT_DIR)
-    return dbConnectorSettingsItems()
   })
 
   ipcMain.handle('models:list', async () => {
@@ -6715,6 +7192,7 @@ app.whenReady().then(() => {
       }
     }
     deleteSession(path)
+    if (manifest) loadedSkillNamesBySession.delete(manifest.sessionId)
   })
   ipcMain.handle('sessions:rename', async (_, path: string, name: string) => {
     const trimmedName = name.trim()
@@ -7388,7 +7866,7 @@ app.whenReady().then(() => {
   ipcMain.handle('plugins:list', async () => listPlugins())
   ipcMain.handle('plugins:install', async (_, source: string) => {
     try {
-      const list = await installPlugin(source)
+      const list = await installDeveloperPlugin(source)
       writeAppLog({ event: 'plugin_installed', metadata: { source } })
       await invalidateAgentSession()
       return list
@@ -7418,6 +7896,447 @@ app.whenReady().then(() => {
       throw error
     }
   })
+  ipcMain.handle('phiPlugins:list', async () => phiPluginListItems())
+  ipcMain.handle('phiPlugins:pickDirectory', async () => {
+    const window = getActiveWindow()
+    const options: Electron.OpenDialogOptions = {
+      title: '选择 Phi 插件目录',
+      properties: ['openDirectory']
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+  ipcMain.handle('phiPlugins:previewDirectory', async (_, path: unknown) => {
+    if (typeof path !== 'string' || path.trim().length === 0) {
+      return {
+        ok: false,
+        path: '',
+        problems: [
+          phiPluginProblemView({ level: 'error', path: 'path', message: '请选择有效的插件目录' })
+        ]
+      } satisfies PhiPluginInstallPreview
+    }
+    try {
+      return phiPluginInstallPreview(path)
+    } catch (error) {
+      rememberErrorSummary(error)
+      return {
+        ok: false,
+        path,
+        problems: [
+          phiPluginProblemView({
+            level: 'error',
+            path: 'preview',
+            message: `插件检查失败：${error instanceof Error ? error.message : String(error)}`
+          })
+        ]
+      } satisfies PhiPluginInstallPreview
+    }
+  })
+  ipcMain.handle('phiPlugins:installFromDirectory', async (_, path: unknown) => {
+    if (typeof path !== 'string' || path.trim().length === 0) {
+      return failedPhiPluginMutation('path', '请选择有效的插件目录')
+    }
+    try {
+      const validation = validatePlugin(path)
+      if (!validation.ok || !validation.plugin) {
+        return phiPluginMutation({
+          ok: false,
+          errors: validation.errors,
+          warnings: validation.warnings
+        })
+      }
+      const existing = listInstalledPlugins({ agentDir: AGENT_DIR }).find(
+        (plugin) => plugin.id === validation.plugin?.manifest.id
+      )
+      const names = await installedPluginNamespace()
+      let result: PluginLifecycleResult
+      if (!existing) {
+        result = installPhiPlugin(path, {
+          agentDir: AGENT_DIR,
+          runtimeRoot: getRuntimeRoot(),
+          names,
+          source: 'local'
+        })
+      } else if (semver.gt(validation.plugin.manifest.version, existing.version)) {
+        result = await upgradePlugin(path, {
+          agentDir: AGENT_DIR,
+          runtimeRoot: getRuntimeRoot(),
+          names,
+          source: 'local',
+          build: (descriptor, options) => environmentBuilds.start(descriptor, options)
+        })
+      } else {
+        return failedPhiPluginMutation(
+          'version',
+          `已安装 ${existing.id} ${existing.version}；请选择更高版本进行升级`
+        )
+      }
+      if (result.ok) await invalidateAgentSession()
+      return phiPluginMutation(result)
+    } catch (error) {
+      rememberErrorSummary(error)
+      return failedPhiPluginMutation(
+        'install',
+        `插件安装失败：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  })
+  ipcMain.handle('phiPlugins:setEnabled', async (_, id: unknown, enabled: unknown) => {
+    if (typeof id !== 'string' || id.length === 0 || typeof enabled !== 'boolean') {
+      return failedPhiPluginMutation('request', '插件标识或启用状态无效')
+    }
+    try {
+      const result = setPluginEnabled(id, enabled, {
+        agentDir: AGENT_DIR,
+        names: await installedPluginNamespace()
+      })
+      return phiPluginMutation(result)
+    } catch (error) {
+      rememberErrorSummary(error)
+      return failedPhiPluginMutation(
+        'enabled',
+        `插件状态更新失败：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  })
+  ipcMain.handle('phiPlugins:uninstall', async (_, id: unknown) => {
+    if (typeof id !== 'string' || id.length === 0) {
+      return failedPhiPluginMutation('id', '插件标识无效')
+    }
+    try {
+      const result = uninstallPhiPlugin(id, {
+        agentDir: AGENT_DIR,
+        runtimeRoot: getRuntimeRoot()
+      })
+      if (result.ok) await invalidateAgentSession()
+      return phiPluginMutation(result)
+    } catch (error) {
+      rememberErrorSummary(error)
+      return failedPhiPluginMutation(
+        'uninstall',
+        `插件卸载失败：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  })
+  ipcMain.handle('packages:pickRegistryDirectory', async () => {
+    const window = getActiveWindow()
+    const options: Electron.OpenDialogOptions = {
+      title: '选择本地技能目录',
+      properties: ['openDirectory']
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+  ipcMain.handle('packages:pickArchive', async () => {
+    const window = getActiveWindow()
+    const options: Electron.OpenDialogOptions = {
+      title: '导入软件包',
+      properties: ['openFile'],
+      filters: [{ name: 'Phi 软件包', extensions: ['tar.gz'] }]
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+  ipcMain.handle('packages:listRegistries', async () => {
+    const result = listKnownRegistries({ agentDir: AGENT_DIR })
+    if (result.error) {
+      writeAppLog({
+        level: 'warn',
+        event: 'package_registries_invalid',
+        metadata: { error: result.error }
+      })
+    }
+    return result.registries
+  })
+  ipcMain.handle('packages:removeRegistry', async (_, id: unknown) => {
+    if (typeof id !== 'string') throw new Error('软件源标识无效')
+    removeKnownRegistry(id, { agentDir: AGENT_DIR })
+    return listKnownRegistries({ agentDir: AGENT_DIR }).registries
+  })
+  ipcMain.handle('packages:registry', async (_, dir: unknown) => {
+    if (typeof dir !== 'string' || dir.trim().length === 0) {
+      throw new Error('注册表目录无效')
+    }
+    try {
+      const registry = readPackageRegistry(dir)
+      addKnownRegistry(registry.dir, { agentDir: AGENT_DIR })
+      return registry
+    } catch (error) {
+      throw new Error(
+        `读取软件包注册表失败：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  })
+  ipcMain.handle(
+    'packages:plan',
+    async (_, dir: unknown, type: unknown, id: unknown, version?: unknown) => {
+      if (
+        typeof dir !== 'string' ||
+        (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
+        typeof id !== 'string' ||
+        id.length === 0 ||
+        (version !== undefined && typeof version !== 'string')
+      ) {
+        throw new Error('软件包安装计划参数无效')
+      }
+      try {
+        const registry = readPackageRegistry(dir)
+        addKnownRegistry(registry.dir, { agentDir: AGENT_DIR })
+        return planRegistryInstall(
+          registry,
+          { type, id, ...(version ? { version } : {}) },
+          { agentDir: AGENT_DIR, appVersion: app.getVersion() }
+        )
+      } catch (error) {
+        throw new Error(
+          `生成软件包安装计划失败：${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+    }
+  )
+  ipcMain.handle(
+    'packages:install',
+    async (_, dir: unknown, type: unknown, id: unknown, version?: unknown) => {
+      if (
+        typeof dir !== 'string' ||
+        (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
+        typeof id !== 'string' ||
+        id.length === 0 ||
+        (version !== undefined && typeof version !== 'string')
+      ) {
+        throw new Error('软件包安装参数无效')
+      }
+      try {
+        const registry = readPackageRegistry(dir)
+        addKnownRegistry(registry.dir, { agentDir: AGENT_DIR })
+        const installedBefore = new Set(
+          listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
+        )
+        const plan = planRegistryInstall(
+          registry,
+          { type, id, ...(version ? { version } : {}) },
+          { agentDir: AGENT_DIR, appVersion: app.getVersion() }
+        )
+        const result = await installRegistryPackages(plan, {
+          agentDir: AGENT_DIR,
+          runtimeRoot: getRuntimeRoot(),
+          names: await installedPluginNamespace(),
+          build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+        })
+        for (const installed of result) {
+          if (
+            installed.type === 'skill' &&
+            !installedBefore.has(`${installed.type}:${installed.id}`)
+          ) {
+            setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
+          }
+          if (
+            installed.type === 'mcp' &&
+            !installedBefore.has(`${installed.type}:${installed.id}`)
+          ) {
+            setEnabled(`mcp:${installed.id}`, true, { agentDir: AGENT_DIR })
+            setMcpPackageEnabled(installed.id, true, AGENT_DIR)
+          }
+        }
+        if (result.some((installed) => installed.type === 'wrapper')) {
+          resetWrapperCompositionCatalogCache()
+        }
+        await invalidateAgentSession()
+        return result
+      } catch (error) {
+        throw new Error(`安装软件包失败：${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+  )
+  ipcMain.handle('packages:uninstall', async (_, type: unknown, id: unknown) => {
+    if (
+      (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
+      typeof id !== 'string' ||
+      id.length === 0
+    ) {
+      throw new Error('软件包卸载参数无效')
+    }
+    try {
+      const result = uninstallRegistryPackage(type, id, {
+        agentDir: AGENT_DIR,
+        runtimeRoot: getRuntimeRoot()
+      })
+      if (type === 'wrapper') resetWrapperCompositionCatalogCache()
+      if (type === 'mcp') setEnabled(`mcp:${id}`, null, { agentDir: AGENT_DIR })
+      await invalidateAgentSession()
+      return result
+    } catch (error) {
+      throw new Error(`卸载软件包失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  })
+  ipcMain.handle('packages:listInstalled', async () => {
+    try {
+      return listRegistryPackages({ agentDir: AGENT_DIR })
+    } catch (error) {
+      throw new Error(
+        `读取已安装软件包失败：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  })
+  ipcMain.handle('packages:previewImport', async (_, path: unknown) => {
+    if (typeof path !== 'string' || path.length === 0) throw new Error('离线软件包路径无效')
+    try {
+      return previewOfflinePackageImport(path, {
+        agentDir: AGENT_DIR,
+        appVersion: app.getVersion(),
+        registries: loadPackageRegistries().registries
+      })
+    } catch (error) {
+      throw new Error(
+        `读取离线软件包失败：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  })
+  ipcMain.handle('packages:import', async (_, path: unknown) => {
+    if (typeof path !== 'string' || path.length === 0) throw new Error('离线软件包路径无效')
+    const installedBefore = new Set(
+      listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
+    )
+    try {
+      const result = await importOfflinePackage(path, {
+        agentDir: AGENT_DIR,
+        appVersion: app.getVersion(),
+        runtimeRoot: getRuntimeRoot(),
+        registries: loadPackageRegistries().registries,
+        names: await installedPluginNamespace(),
+        build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+      })
+      for (const installed of result) {
+        if (
+          !installedBefore.has(`${installed.type}:${installed.id}`) &&
+          installed.type === 'skill'
+        ) {
+          setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
+        }
+        if (!installedBefore.has(`${installed.type}:${installed.id}`) && installed.type === 'mcp') {
+          setEnabled(`mcp:${installed.id}`, true, { agentDir: AGENT_DIR })
+          setMcpPackageEnabled(installed.id, true, AGENT_DIR)
+        }
+      }
+      if (result.some((installed) => installed.type === 'wrapper')) {
+        resetWrapperCompositionCatalogCache()
+      }
+      await invalidateAgentSession()
+      return result
+    } catch (error) {
+      throw new Error(`导入软件包失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  })
+  ipcMain.handle('packages:listUpdates', async () =>
+    packageUpdateViews(refreshCachedPackageUpdates())
+  )
+  ipcMain.handle('packages:applyUpdate', async (_, type: unknown, id: unknown) => {
+    if (
+      (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
+      typeof id !== 'string' ||
+      id.length === 0
+    ) {
+      throw new Error('软件包更新参数无效')
+    }
+    const loaded = loadPackageRegistries()
+    const updates = listPackageUpdates(loaded.registries, {
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion()
+    })
+    const update = updates.find((candidate) => candidate.type === type && candidate.id === id)
+    if (!update) throw new Error(`没有可用更新：${type}:${id}`)
+    const result = await applyPackageUpdate(update, loaded.registries, {
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion(),
+      runtimeRoot: getRuntimeRoot(),
+      names: await installedPluginNamespace(),
+      build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+    })
+    if (type === 'wrapper') resetWrapperCompositionCatalogCache()
+    cachedPackageUpdates = listPackageUpdates(loaded.registries, {
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion()
+    })
+    await invalidateAgentSession()
+    return result
+  })
+  ipcMain.handle('packages:applyAllUpdates', async () => {
+    const loaded = loadPackageRegistries()
+    const updates = listPackageUpdates(loaded.registries, {
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion()
+    })
+    const result = await applyPackageUpdates(updates, loaded.registries, {
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion(),
+      runtimeRoot: getRuntimeRoot(),
+      names: await installedPluginNamespace(),
+      build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+    })
+    if (updates.some((update) => update.type === 'wrapper')) {
+      resetWrapperCompositionCatalogCache()
+    }
+    cachedPackageUpdates = listPackageUpdates(loaded.registries, {
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion()
+    })
+    await invalidateAgentSession()
+    return result
+  })
+  ipcMain.handle('enablement:get', async (_, projectCwd?: unknown) => {
+    if (projectCwd !== undefined && typeof projectCwd !== 'string') {
+      throw new Error('项目目录无效')
+    }
+    if (typeof projectCwd === 'string' && isRemoteResourceScope(projectCwd)) {
+      throw new Error('远程项目 Skills 暂不可用')
+    }
+    return getEnablementSnapshot({
+      agentDir: AGENT_DIR,
+      ...(typeof projectCwd === 'string' && projectCwd.length > 0 ? { projectDir: projectCwd } : {})
+    })
+  })
+  ipcMain.handle('enablement:set', async (_, item: unknown, value: unknown, scope: unknown) => {
+    if (!isEnablementItemKey(item)) throw new Error('启用项目标识无效')
+    if (typeof value !== 'boolean' && value !== null) throw new Error('启用值无效')
+    const options = enablementScopeOptions(scope as EnablementScope)
+    if (item.startsWith('plugin:')) {
+      const pluginId = item.slice('plugin:'.length)
+      const inherited = options.projectDir
+        ? getEnablementSnapshot({ agentDir: AGENT_DIR, ...options }).global[item]
+        : undefined
+      const desired = value ?? inherited ?? true
+      const result = setPluginEnabled(pluginId, desired, {
+        agentDir: AGENT_DIR,
+        ...options,
+        names: await installedPluginNamespace(options.projectDir)
+      })
+      if (!result.ok) {
+        throw new Error(
+          result.errors.map((problem) => problem.message).join('; ') || '插件启用状态无效'
+        )
+      }
+      if (value === null) setEnabled(item, null, { agentDir: AGENT_DIR, ...options })
+    } else if (item.startsWith('mcp:')) {
+      const packageId = item.slice('mcp:'.length)
+      const inherited = options.projectDir
+        ? getEnablementSnapshot({ agentDir: AGENT_DIR, ...options }).global[item]
+        : undefined
+      const desired = value ?? inherited ?? true
+      setEnabled(item, value, { agentDir: AGENT_DIR, ...options })
+      setMcpPackageEnabled(packageId, desired, AGENT_DIR)
+    } else {
+      setEnabled(item, value, { agentDir: AGENT_DIR, ...options })
+    }
+    if (item.startsWith('wrapper:')) resetWrapperCompositionCatalogCache()
+    return getEnablementSnapshot({ agentDir: AGENT_DIR, ...options })
+  })
   ipcMain.handle('skills:list', async (_, cwd?: string) =>
     isRemoteResourceScope(cwd) ? listGlobalSkills() : listSkills(cwd ?? currentCwd)
   )
@@ -7445,9 +8364,93 @@ app.whenReady().then(() => {
   ipcMain.handle('agents:list', async (_, cwd?: string) =>
     isRemoteResourceScope(cwd) ? [] : listPromptAgents(cwd ?? currentCwd)
   )
-  ipcMain.handle('mcp:listServers', async (_, cwd?: string) =>
-    isRemoteResourceScope(cwd) ? listGlobalMcpServers() : listMcpServers(cwd ?? currentCwd)
+  const connectorCatalog = (): ReturnType<typeof listConnectorCatalog> =>
+    listConnectorCatalog({
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion(),
+      runtimeRoot: getRuntimeRoot(),
+      registryDirs: loadPackageRegistries().registries.map((registry) => registry.dir)
+    })
+  ipcMain.handle('mcp:listServers', async (_, cwd?: string) => {
+    const servers = await (isRemoteResourceScope(cwd)
+      ? listGlobalMcpServers()
+      : listMcpServers(cwd ?? currentCwd))
+    const catalog = connectorCatalog()
+    return servers.map((server) => {
+      const connector = catalog.find(
+        (entry) =>
+          entry.id === server.packageId || (server.url !== undefined && entry.url === server.url)
+      )
+      return connector
+        ? {
+            ...server,
+            connectorId: connector.id,
+            category: connector.category,
+            title: connector.name
+          }
+        : server
+    })
+  })
+  ipcMain.handle('mcp:listConnectorCatalog', async () => connectorCatalog())
+  ipcMain.handle(
+    'mcp:installConnector',
+    async (_, id: unknown, version?: unknown, registryDir?: unknown) => {
+      if (
+        typeof id !== 'string' ||
+        id.length === 0 ||
+        (version !== undefined && typeof version !== 'string') ||
+        (registryDir !== undefined && typeof registryDir !== 'string')
+      ) {
+        throw new Error('连接器安装参数无效')
+      }
+      const connector = connectorCatalog().find(
+        (entry) =>
+          entry.id === id &&
+          (version === undefined || entry.version === version) &&
+          (registryDir === undefined || entry.registryDir === registryDir)
+      )
+      if (!connector?.registryDir) throw new Error(`连接器目录中找不到 ${id}`)
+      if (connector.unavailableReason) throw new Error(connector.unavailableReason)
+      const result = await installCatalogConnector(
+        connector.registryDir,
+        connector.id,
+        connector.version,
+        {
+          agentDir: AGENT_DIR,
+          appVersion: app.getVersion(),
+          runtimeRoot: getRuntimeRoot()
+        }
+      )
+      setEnabled(`mcp:${connector.id}`, true, { agentDir: AGENT_DIR })
+      setMcpPackageEnabled(connector.id, true, AGENT_DIR)
+      await invalidateAgentSession()
+      return result
+    }
   )
+  ipcMain.handle('mcp:uninstallConnector', async (_, id: unknown) => {
+    if (typeof id !== 'string' || id.length === 0) throw new Error('连接器标识无效')
+    const result = uninstallCatalogConnector(id, {
+      agentDir: AGENT_DIR,
+      runtimeRoot: getRuntimeRoot()
+    })
+    setEnabled(`mcp:${id}`, null, { agentDir: AGENT_DIR })
+    await invalidateAgentSession()
+    return result
+  })
+  ipcMain.handle('mcp:buildConnectorEnvironment', async (_, id: unknown) => {
+    if (typeof id !== 'string' || id.length === 0) throw new Error('连接器标识无效')
+    const action = connectorEnvironmentBuildAction(id, {
+      agentDir: AGENT_DIR
+    })
+    const handle = await environmentBuilds.start(action.descriptor, action.options)
+    const refreshed = refreshPersistedManagedStdioServers({
+      agentDir: AGENT_DIR,
+      runtimeRoot: getRuntimeRoot()
+    })
+    const failure = refreshed.failures.find((entry) => entry.name === id)
+    if (failure) throw failure.error
+    return { envId: handle.envId }
+  })
   ipcMain.handle('mcp:addRemoteConnector', async (_, name: string, url: string) => {
     addRemoteMcpConnector(name, url)
     await syncFeaturedMcpApiKeySessions(name)
@@ -7499,19 +8502,27 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('mcp:featuredTools', async (_, id: string) => {
     if (typeof id !== 'string') throw new Error('连接器标识无效')
-    return getOmpBridge().request<string[]>('mcp.featuredTools', { id })
+    const connector = connectorCatalog().find((entry) => entry.id === id)
+    if (!connector?.url) throw new Error('连接器目录中找不到远程连接器')
+    return getOmpBridge().request<string[]>('mcp.featuredTools', {
+      id,
+      url: connector.url,
+      auth: connector.auth
+    })
   })
   ipcMain.handle('mcp:featuredAuthStatus', async (_, id: string) => {
-    if (!featuredMcpConnectors.some((entry) => entry.id === id && entry.oauthAuthorizationOrigin)) {
+    const connector = connectorCatalog().find((entry) => entry.id === id)
+    if (!connector?.url || !mcpOAuthAuthorizationOrigin(id, connector.url)) {
       throw new Error('该连接器尚不支持登录状态查询')
     }
-    return getOmpBridge().request<boolean>('mcp.featuredAuthStatus', { id })
+    return getOmpBridge().request<boolean>('mcp.featuredAuthStatus', { id, url: connector.url })
   })
   ipcMain.handle('mcp:authorizeFeatured', async (_, id: string) => {
-    if (!featuredMcpConnectors.some((entry) => entry.id === id && entry.oauthAuthorizationOrigin)) {
+    const connector = connectorCatalog().find((entry) => entry.id === id)
+    if (!connector?.url || !mcpOAuthAuthorizationOrigin(id, connector.url)) {
       throw new Error('该连接器尚不支持 OAuth 授权')
     }
-    await getOmpBridge().request('mcp.authorizeFeatured', { id })
+    await getOmpBridge().request('mcp.authorizeFeatured', { id, url: connector.url })
   })
   ipcMain.handle('mcp:cancelFeaturedAuth', async (_, id: string) => {
     if (typeof id !== 'string' || !id) return
@@ -7607,7 +8618,8 @@ app.whenReady().then(() => {
       try {
         return submitWrapperRunPlan(planId, {
           heavyWorkloadAcknowledged,
-          externalOutputRoot: confirmation?.externalOutputRoot
+          externalOutputRoot: confirmation?.externalOutputRoot,
+          nextflowLaunch: { builds: environmentBuilds }
         })
       } catch (error) {
         rememberErrorSummary(error)
@@ -7625,7 +8637,7 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('wrappers:listCatalog', async () => listWrapperCatalog())
   ipcMain.handle('wrappers:listCompositionCatalog', async () =>
-    listWrapperCompositionCatalog().map((entry) => entry.manifest)
+    listWrapperCompositionCatalogStatus({ agentDir: AGENT_DIR })
   )
   ipcMain.handle('wrappers:getCompositionDag', async (_, id: string) =>
     readWrapperCompositionDag(id)
@@ -7649,6 +8661,11 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('wrappers:listRuns', async () => listWrapperRuns())
+  ipcMain.handle('environmentBuilds:list', () => environmentBuilds.list())
+  ipcMain.handle('environmentBuilds:cancel', (_event, envId: unknown) => {
+    if (typeof envId !== 'string' || envId.length === 0) throw new Error('envId is required')
+    environmentBuilds.cancel(envId)
+  })
   ipcMain.handle('jobs:listAgents', listBackgroundAgentJobs)
   ipcMain.handle('jobs:listShell', listBackgroundShellJobs)
   ipcMain.handle('jobs:stopShell', async (_, agentSessionId: unknown, jobId: unknown) => {
@@ -7731,6 +8748,7 @@ app.whenReady().then(() => {
   })
 
   createWindow()
+  scheduleStartupPackageUpdateCheck()
 
   app.on('activate', function () {
     applyDockIcon()

@@ -20,13 +20,11 @@ params:
     kind: option
     type: string
     required: false
-    default: "a"
     description: "Genotypes to replace (e.g. a = all)."
   new_gt:
     kind: option
     type: string
     required: false
-    default: "p"
     description: "Replacement genotype (e.g. p = phased)."
   outdir:
     kind: output

@@ -17,9 +17,8 @@
 // `projectDir`-relative asset paths — see that file's own top-of-file
 // comment. There is no `bin/` here (or in ../bin): the one script a
 // process actually called by bare name, deseq2_qc.r, now lives inside
-// the shared modules/local/deseq2_qc module itself and reaches its task
-// via Nextflow's `path`-input staging (see that module's own
-// SCRIPT-STAGING.md) instead of `<projectDir>/bin`. The other two
+// the shared modules/local/differential-expression/qc module itself as a
+// Nextflow template instead of `<projectDir>/bin`. The other two
 // scripts formerly here (fastq_dir_to_samplesheet.py,
 // mqc_features_stat.py) were dead weight — the former a user-facing CLI
 // helper no process ever called, the latter fully superseded by

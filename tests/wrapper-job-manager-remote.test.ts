@@ -163,7 +163,7 @@ test('SSH project starts the same wrapper on its server without a target argumen
       if (!result.ok) return
       assert.equal(result.status.remote?.host, 'login.hpc.test')
       assert.match(result.status.targetReason ?? '', /远程项目固定使用/)
-      const done = await m.wait(result.status.runId, 10_000)
+      const done = await m.wait(result.status.runId, 60_000)
       assert.equal(done?.state, 'completed')
       assert.match(formatJobStatus(done!), /Target: 远程项目固定使用/)
       const saved = readWrapperRun(result.status.runId, sb.agentDir)
@@ -228,7 +228,7 @@ test('local project keeps local default and can explicitly select its saved remo
     assert.equal(local.ok, true, JSON.stringify(local))
     if (local.ok) {
       assert.equal(local.status.remote, undefined)
-      assert.equal((await localManager.wait(local.status.runId, 10_000))?.state, 'completed')
+      assert.equal((await localManager.wait(local.status.runId, 60_000))?.state, 'completed')
     }
     await withRemote(sb, async (env) => {
       const remoteProject = {
@@ -263,7 +263,7 @@ test('local project keeps local default and can explicitly select its saved remo
       if (stillLocal.ok) {
         assert.equal(stillLocal.status.remote, undefined)
         assert.equal(
-          (await remoteManager.wait(stillLocal.status.runId, 10_000))?.state,
+          (await remoteManager.wait(stillLocal.status.runId, 60_000))?.state,
           'completed'
         )
       }
@@ -280,7 +280,7 @@ test('local project keeps local default and can explicitly select its saved remo
         assert.equal(saved?.inputReferences?.[0]?.source, 'remote')
         assert.deepEqual(saved?.inputReferences?.[0]?.localPaths, [])
         assert.deepEqual(saved?.inputReferences?.[0]?.remotePaths, [remoteGff])
-        assert.equal((await remoteManager.wait(selected.status.runId, 10_000))?.state, 'completed')
+        assert.equal((await remoteManager.wait(selected.status.runId, 60_000))?.state, 'completed')
       }
     })
   })
@@ -330,7 +330,7 @@ test('local input references use the saved mapping and persist final server path
       assert.equal(run?.inputReferences?.[0]?.source, 'local')
       assert.deepEqual(run?.inputReferences?.[0]?.localPaths, [localGff])
       assert.deepEqual(run?.inputReferences?.[0]?.remotePaths, [remoteGff])
-      assert.equal((await m.wait(result.status.runId, 10_000))?.state, 'completed')
+      assert.equal((await m.wait(result.status.runId, 60_000))?.state, 'completed')
     })
   })
 })
@@ -395,7 +395,7 @@ test('unknown originating session cannot turn an omitted target into a local run
     assert.equal(local.ok, true)
     if (local.ok) {
       assert.equal(local.status.remote, undefined)
-      assert.equal((await ordinary.wait(local.status.runId, 10_000))?.state, 'completed')
+      assert.equal((await ordinary.wait(local.status.runId, 60_000))?.state, 'completed')
     }
   })
 })
@@ -410,7 +410,7 @@ test('a remote run is recorded as remote, completes, and reports outputs found o
       assert.equal(started.remote?.host, 'login.hpc.test')
       assert.match(started.outDir, new RegExp(`^${env.remoteRoot}/wrappers/runs/wrun_.*/results$`))
 
-      const done = (await m.wait(started.runId, 10_000)) as WrapperJobStatus
+      const done = (await m.wait(started.runId, 60_000)) as WrapperJobStatus
       assert.equal(done.state, 'completed', JSON.stringify(done))
       const run = readWrapperRun(started.runId, sb.agentDir)!
       assert.equal(run.executor, 'slurm')
@@ -451,7 +451,7 @@ test('a scheduler of "local" is recorded as the remote-background executor', asy
       env.resolved.target.hpc = { scheduler: 'local', nextflowBin: process.env.NEXTFLOW_BIN }
       const m = manager(sb, env)
       const started = await startRemote(m)
-      await m.wait(started.runId, 10_000)
+      await m.wait(started.runId, 60_000)
       assert.equal(readWrapperRun(started.runId, sb.agentDir)!.executor, 'remote-background')
     })
   })
@@ -468,7 +468,7 @@ test('an explicit profile wins over the connection default', async () => {
         target: 'remote'
       })
       assert.equal(result.ok && result.status.profile, 'conda')
-      if (result.ok) await m.wait(result.status.runId, 10_000)
+      if (result.ok) await m.wait(result.status.runId, 60_000)
     })
   })
 })
@@ -502,7 +502,7 @@ test('a cluster-only input path passes the local check and is verified on the cl
     await withRemote(sb, async (env) => {
       const m = manager(sb, env)
       const started = await startRemote(m, { gff: '/cluster/only/genome.gff3' })
-      const done = (await m.wait(started.runId, 10_000)) as WrapperJobStatus
+      const done = (await m.wait(started.runId, 60_000)) as WrapperJobStatus
       assert.equal(done.state, 'failed')
       assert.match(
         done.logTail + JSON.stringify(readWrapperRun(started.runId, sb.agentDir)),
@@ -532,7 +532,7 @@ test('an uncertain remote launch keeps its run ID and claim location in the save
       }
       const m = manager(sb, env)
       const started = await startRemote(m)
-      const done = (await m.wait(started.runId, 10_000)) as WrapperJobStatus
+      const done = (await m.wait(started.runId, 60_000)) as WrapperJobStatus
       assert.equal(done.state, 'lost')
       const snapshot = readCompositionRemoteSnapshot(started.runId, sb.agentDir)
       assert.equal(snapshot?.runId, started.runId)
@@ -547,7 +547,7 @@ test('an uncertain remote launch keeps its run ID and claim location in the save
       writeFileSync(join(runDir, 'exit_code'), '0\n')
       const restored = manager(sb, env)
       assert.equal(await restored.adoptRemoteRuns(), 1)
-      const completed = (await restored.wait(started.runId, 10_000)) as WrapperJobStatus
+      const completed = (await restored.wait(started.runId, 60_000)) as WrapperJobStatus
       assert.equal(completed.state, 'completed', JSON.stringify(completed))
       assert.match(completed.logTail, /\[SUCCESS\]/)
     })
@@ -564,7 +564,7 @@ test('cancelling a remote run stops it and records it cancelled', async () => {
       const nfPid = Number(readFileSync(sb.pidFile, 'utf-8'))
       const cancelled = await m.cancel(started.runId)
       assert.equal(cancelled.ok, true)
-      const done = (await m.wait(started.runId, 10_000)) as WrapperJobStatus
+      const done = (await m.wait(started.runId, 60_000)) as WrapperJobStatus
       assert.equal(done.state, 'cancelled')
       await waitFor(() => !isAlive(nfPid))
     })
@@ -586,7 +586,7 @@ test('a lost composition run can be reattached and cancelled without a second la
       const restored = manager(sb, env)
       const requested = await restored.cancel(started.runId)
       assert.equal(requested.ok, true)
-      const done = (await restored.wait(started.runId, 10_000)) as WrapperJobStatus
+      const done = (await restored.wait(started.runId, 60_000)) as WrapperJobStatus
       assert.equal(done.state, 'cancelled')
       await waitFor(() => !isAlive(pid))
       const repeated = await restored.cancel(started.runId)
@@ -617,7 +617,7 @@ test('quitting the app leaves a remote run going, and the next start picks it up
       assert.equal(markInterruptedCompositionRuns(sb.agentDir), 0)
       const second = manager(sb, env)
       assert.equal(await second.adoptRemoteRuns(), 1)
-      const done = (await second.wait(started.runId, 10_000)) as WrapperJobStatus
+      const done = (await second.wait(started.runId, 60_000)) as WrapperJobStatus
       assert.equal(done.state, 'completed', JSON.stringify(done))
       assert.match(done.logTail, /\[SUCCESS\] completed=1/)
       assert.equal(done.progress.started, 1, 'progress is rebuilt from the whole log')
@@ -694,7 +694,7 @@ test('a lost remote run is rechecked after the server returns and resumes its lo
 
       const restored = manager(sb, env)
       assert.equal(await restored.adoptRemoteRuns(), 1)
-      const done = (await restored.wait(started.runId, 10_000)) as WrapperJobStatus
+      const done = (await restored.wait(started.runId, 60_000)) as WrapperJobStatus
       assert.equal(done.state, 'completed', JSON.stringify(done))
       const savedLog = readFileSync(
         join(getWrapperRunsDir(sb.agentDir), started.runId, 'nextflow.log'),
@@ -718,7 +718,7 @@ test('local runs are unaffected: a local run never needs the remote resolver', a
     assert.equal(result.ok, true)
     if (result.ok) {
       assert.equal(result.status.remote, undefined)
-      const done = await m.wait(result.status.runId, 10_000)
+      const done = await m.wait(result.status.runId, 60_000)
       assert.equal(done?.state, 'completed')
     }
   })

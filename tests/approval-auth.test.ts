@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { registerHooks } from 'node:module'
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
+import { planModeToolDecision } from '../src/main/agent/plan/plan-tool-policy'
 
 const electronMockUrl = 'phi-test:electron'
 
@@ -598,4 +599,74 @@ test('auth prompt renderer death rejects and aborts the login interaction signal
   assert.equal(window.listenerCount('closed'), 0)
   assert.equal(window.webContents.listenerCount('render-process-gone'), 0)
   await manager.resolveInteraction(requestId, 'late')
+})
+
+test('classifyTool gates exec and write skill tools and leaves read alone', async () => {
+  const window = new FakeWindow()
+  __electronMock.setFocusedWindow(window)
+  let handler: ToolHandler | undefined
+  const extension = createApprovalExtension({
+    classifyTool: (toolName) => {
+      if (toolName === 'skill_run') return 'exec'
+      if (toolName === 'plot_save') return 'write'
+      if (toolName === 'plot_read') return 'read'
+      return undefined
+    }
+  })
+  if (typeof extension !== 'function') {
+    await extension.factory({
+      on(eventName: string, candidate: ToolHandler): void {
+        if (eventName === 'tool_call') handler = candidate
+      }
+    } as never)
+  }
+  assert.ok(handler)
+
+  const readBefore = window.webContents.sent.length
+  assert.equal(await handler({ toolName: 'plot_read', input: { src: 'a.txt' } }, {}), undefined)
+  assert.equal(await handler({ toolName: 'grep', input: { pattern: 'x' } }, {}), undefined)
+  assert.equal(window.webContents.sent.length, readBefore)
+
+  const controller = new AbortController()
+  const pending = handler(
+    {
+      toolName: 'skill_run',
+      input: { skill: 'echo', script: 'run.py', args: ['--limit', '2'] }
+    },
+    { signal: controller.signal }
+  )
+  const request = window.webContents.sent.at(-1)?.payload as { requestId: string; summary: string }
+  assert.equal(request.summary, 'echo/run.py --limit 2')
+  controller.abort()
+  assert.deepEqual(await pending, { block: true, reason: '操作已取消' })
+
+  const writePending = handler({ toolName: 'plot_save', input: { dest: 'out.txt' } }, {})
+  const writeRequest = window.webContents.sent.at(-1)?.payload as {
+    requestId: string
+    summary: string
+  }
+  assert.equal(writeRequest.summary, JSON.stringify({ dest: 'out.txt' }))
+  resolveToolApproval(writeRequest.requestId, false)
+  assert.deepEqual(await writePending, { block: true, reason: '用户拒绝了该操作' })
+
+  const bashPending = handler({ toolName: 'bash', input: { command: 'date' } }, {})
+  const bashRequest = window.webContents.sent.at(-1)?.payload as {
+    requestId: string
+    summary: string
+  }
+  assert.match(bashRequest.summary, /date/)
+  resolveToolApproval(bashRequest.requestId, true)
+  assert.equal(await bashPending, undefined)
+})
+
+test('plan mode blocks skill_run and script tools', () => {
+  const skillRun = planModeToolDecision(true, 'skill_run', { skill: 'echo', script: 'run.py' })
+  const scriptTool = planModeToolDecision(true, 'plot_save', { dest: 'out.txt' })
+  assert.equal(skillRun.allowed, false)
+  assert.equal(scriptTool.allowed, false)
+  assert.match(skillRun.reason ?? '', /计划评审前/)
+  assert.equal(
+    planModeToolDecision(false, 'skill_run', { skill: 'echo', script: 'run.py' }).allowed,
+    true
+  )
 })

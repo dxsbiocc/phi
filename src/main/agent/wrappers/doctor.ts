@@ -31,15 +31,13 @@ function checkBinary(
 }
 
 /**
- * Local-only doctor check (Phase 1 has no remote doctor yet — see
- * docs/design/phi-wrapper-technical-design.md, Executor Model). Checks
- * Nextflow always; checks Docker only when `requireDocker` is set (the
- * chosen profile declares `containerRuntime: docker`).
+ * Local-only host dependency check (Phase 1 has no remote doctor yet — see
+ * docs/design/phi-wrapper-technical-design.md, Executor Model). Nextflow is
+ * resolved separately through Phi's managed-environment gate; only Docker is
+ * checked here when the chosen profile declares it as a container runtime.
  */
 export function checkLocalDoctor(options: { requireDocker?: boolean } = {}): LocalDoctorReport {
-  const checks: DoctorCheckResult[] = [
-    checkBinary('nextflow', 'Nextflow', 'nextflow', ['-version'])
-  ]
+  const checks: DoctorCheckResult[] = []
   if (options.requireDocker) {
     checks.push(checkBinary('docker', 'Docker', 'docker', ['--version']))
   }

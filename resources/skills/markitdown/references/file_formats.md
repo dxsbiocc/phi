@@ -12,10 +12,7 @@ This document provides detailed information about each file format supported by 
 - Metadata extraction
 - OCR for scanned documents (with dependencies)
 
-**Dependencies**:
-```bash
-pip install 'markitdown[pdf]'
-```
+**Dependencies**: `markitdown` is already in the managed `phi:python@1` environment.
 
 **Best For**:
 - Scientific papers
@@ -54,10 +51,7 @@ result = md.convert("complex_layout.pdf")
 - List formatting
 - Basic text formatting (bold, italic)
 
-**Dependencies**:
-```bash
-pip install 'markitdown[docx]'
-```
+**Dependencies**: `markitdown` is already in the managed `phi:python@1` environment.
 
 **Best For**:
 - Research papers
@@ -87,10 +81,7 @@ result = md.convert("manuscript.docx")
 - Table extraction
 - Image descriptions (with AI)
 
-**Dependencies**:
-```bash
-pip install 'markitdown[pptx]'
-```
+**Dependencies**: `markitdown` is already in the managed `phi:python@1` environment.
 
 **Best For**:
 - Presentations
@@ -131,11 +122,7 @@ result = md.convert("presentation.pptx")
 - Data preservation
 - Formula values (calculated)
 
-**Dependencies**:
-```bash
-pip install 'markitdown[xlsx]'  # Modern Excel
-pip install 'markitdown[xls]'   # Legacy Excel
-```
+**Dependencies**: `markitdown` is already in the managed `phi:python@1` environment.
 
 **Best For**:
 - Data tables
@@ -169,10 +156,7 @@ result = md.convert("experimental_data.xlsx")
 - OCR text extraction
 - AI-powered image descriptions
 
-**Dependencies**:
-```bash
-pip install 'markitdown[all]'  # Includes image support
-```
+**Dependencies**: `markitdown` is already in the managed `phi:python@1` environment.
 
 **Best For**:
 - Scanned documents
@@ -224,10 +208,7 @@ sudo apt-get install tesseract-ocr
 - Speech-to-text transcription
 - Duration and technical info
 
-**Dependencies**:
-```bash
-pip install 'markitdown[audio-transcription]'
-```
+**Dependencies**: `markitdown` is already in the managed `phi:python@1` environment.
 
 **Best For**:
 - Lecture recordings
@@ -287,10 +268,7 @@ result = md.convert("webpage.html")
 - Extract video metadata
 - Caption download
 
-**Dependencies**:
-```bash
-pip install 'markitdown[youtube-transcription]'
-```
+**Dependencies**: `markitdown` is already in the managed `phi:python@1` environment.
 
 **Best For**:
 - Educational videos
@@ -434,10 +412,7 @@ result = md.convert("book.epub")
 - Attachment listing
 - Metadata (from, to, subject, date)
 
-**Dependencies**:
-```bash
-pip install 'markitdown[outlook]'
-```
+**Dependencies**: `markitdown` is already in the managed `phi:python@1` environment.
 
 **Best For**:
 - Email archives

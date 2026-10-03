@@ -15,7 +15,6 @@ params:
     kind: option
     type: string
     required: false
-    default: coordinate
     enum: [coordinate, queryname, unsorted, duplicate]
     description: Sort order to apply.
   outdir:

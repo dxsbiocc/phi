@@ -2,7 +2,6 @@ import { memo, type MouseEvent, type ReactNode } from 'react'
 import { Box, Typography } from '@mui/material'
 import SessionSidebar from './components/SessionSidebar'
 import { McpSidebar } from './features/mcp/McpView'
-import { PluginSidebar } from './features/plugin/PluginView'
 import { RuntimeSidebar } from './features/runtime/RuntimeView'
 import { SkillSidebar } from './features/skill/SkillView'
 import { WrapperSidebar } from './features/wrapper/WrapperView'
@@ -16,7 +15,6 @@ import type {
   AnalysisJupyterRuntimeStatus,
   DirectoryListing,
   McpServerSummary,
-  PluginCatalogItem,
   Project,
   SessionRuntimeState,
   SessionSummary,
@@ -59,16 +57,11 @@ export type AppWorkspaceSidebarProps = {
   onStopRuntime: (cwd: string) => void
   onStopRuntimeNotebookKernel: (notebookPath: string) => void
 
-  plugins: PluginCatalogItem[]
-  activePluginId: string | null
-  isLoadingPlugins: boolean
-  onOpenPlugin: (plugin: PluginCatalogItem) => void
-  onRefreshPlugins: () => void
-
   skills: SkillSummary[]
   activeSkillId: string | null
   isLoadingSkills: boolean
   onOpenSkill: (skill: SkillSummary) => void
+  onOpenSkillCatalog: () => void
 
   mcpServers: McpServerSummary[]
   activeMcpServerId: string | null
@@ -136,15 +129,11 @@ function AppWorkspaceSidebarImpl({
   onStartRuntime,
   onStopRuntime,
   onStopRuntimeNotebookKernel,
-  plugins,
-  activePluginId,
-  isLoadingPlugins,
-  onOpenPlugin,
-  onRefreshPlugins,
   skills,
   activeSkillId,
   isLoadingSkills,
   onOpenSkill,
+  onOpenSkillCatalog,
   mcpServers,
   activeMcpServerId,
   onOpenMcpServer,
@@ -326,15 +315,7 @@ function AppWorkspaceSidebarImpl({
           onStopNotebookKernel={onStopRuntimeNotebookKernel}
         />
       )
-    ) : workspaceSidebarMode === 'plugins' ? (
-      <PluginSidebar
-        plugins={plugins}
-        isLoading={isLoadingPlugins}
-        activePluginId={activePluginId}
-        onSelectPlugin={onOpenPlugin}
-        onRefresh={onRefreshPlugins}
-      />
-    ) : workspaceSidebarMode === 'skills' ? (
+    ) : workspaceSidebarMode === 'plugins' ? null : workspaceSidebarMode === 'skills' ? (
       isRemoteProject ? (
         <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
           <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
@@ -345,6 +326,7 @@ function AppWorkspaceSidebarImpl({
             isLoading={isLoadingSkills}
             activeSkillId={activeSkillId}
             onSelectSkill={onOpenSkill}
+            onOpenCatalog={onOpenSkillCatalog}
           />
         </Box>
       ) : (
@@ -353,6 +335,7 @@ function AppWorkspaceSidebarImpl({
           isLoading={isLoadingSkills}
           activeSkillId={activeSkillId}
           onSelectSkill={onOpenSkill}
+          onOpenCatalog={onOpenSkillCatalog}
         />
       )
     ) : workspaceSidebarMode === 'mcp' ? (

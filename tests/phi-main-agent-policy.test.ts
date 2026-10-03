@@ -6,14 +6,7 @@ import {
   buildPhiRemoteProjectSystemPrompt,
   filterPersonaContextFile
 } from '../src/main/agent/main-system-prompt'
-import {
-  evaluateSpecialistFallback,
-  type SpecialistToolCall
-} from '../src/main/agent/agents/fallback-policy'
-import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
 import { parseAgentReport } from '../src/main/agent/agents/report'
-import { AgentRunRegistry } from '../src/main/agent/agents/registry'
-import type { PhiAgentDefinition } from '../src/main/agent/agents/definition'
 import { projectToolBoundaryDecision } from '../src/main/agent/agents/project-tool-boundary'
 import { remoteUrlGuardDecision } from '../src/main/agent/agents/remote-url-guard'
 import {
@@ -28,22 +21,6 @@ import {
   PHI_REMOTE_GLOB_DESCRIPTION,
   PHI_REMOTE_GREP_DESCRIPTION
 } from '../src/main/agent/remote-workspace-search-tools'
-
-const DATABASE: PhiAgentDefinition = {
-  name: 'Database',
-  description: 'Retrieves biological database records.',
-  tools: ['db_query'],
-  skills: [],
-  delegationMode: 'required-first',
-  fallback: {
-    afterFailures: 1,
-    tools: ['bash', 'eval', 'web_search', 'download_file'],
-    match: ['rest.uniprot.org', 'eutils.ncbi.nlm.nih.gov']
-  },
-  systemPrompt: 'You are Database.',
-  source: 'phi',
-  filePath: '/agents/Database.md'
-}
 
 test('Phi owns the main system identity while retaining OMP runtime instructions', () => {
   const defaults = [
@@ -89,17 +66,7 @@ test('remote project prompt presents the server root without exposing the SDK an
 })
 
 test('remote project guard blocks built-in and Phi custom tools before local execution', async () => {
-  for (const name of [
-    'read',
-    'write',
-    'edit',
-    'glob',
-    'grep',
-    'bash',
-    'powershell',
-    'Wrapper',
-    'db_query'
-  ]) {
+  for (const name of ['read', 'write', 'edit', 'glob', 'grep', 'bash', 'powershell', 'Wrapper']) {
     const decision = remoteProjectToolDecision(name)
     assert.ok(decision)
     assert.equal(decision.block, true)
@@ -225,69 +192,6 @@ test('the Phi-managed persona file is removed from generic context after explici
   assert.deepEqual(result.agentsFiles, [{ path: '/project/AGENTS.md', content: 'project rules' }])
 })
 
-test('leader prompt forbids duplicating an in-flight required-first specialist task', () => {
-  const prompt = buildAgentLeaderPrompt([DATABASE])
-
-  assert.match(prompt, /queued or running/)
-  assert.match(prompt, /never duplicate the same retrieval, download, plotting, or analysis/)
-  assert.match(prompt, /wait for that run, stop\/steer it/)
-  assert.match(prompt, /use download_file rather than shell/)
-})
-
-test('required-first blocks a matching generic tool until the specialist has failed', async () => {
-  const registry = new AgentRunRegistry()
-  const call: SpecialistToolCall = {
-    toolName: 'bash',
-    input: { command: 'curl https://rest.uniprot.org/uniprotkb/Q92748.json' }
-  }
-
-  const before = evaluateSpecialistFallback(call, [DATABASE], registry)
-  assert.equal(before.allowed, false)
-  assert.equal(before.agent, 'Database')
-  assert.match(before.reason ?? '', /Database/)
-
-  await registry.launch({
-    agent: 'Database',
-    task: 'retrieve Q92748',
-    background: false,
-    runner: async () => {
-      throw new Error('connector unavailable')
-    }
-  }).done
-
-  const after = evaluateSpecialistFallback(call, [DATABASE], registry)
-  assert.equal(after.allowed, true)
-  assert.equal(after.agent, 'Database')
-})
-
-test('required-first Database fallback catches GEO download URLs before shell use', () => {
-  const registry = new AgentRunRegistry()
-  const databaseWithGeoFallback: PhiAgentDefinition = {
-    ...DATABASE,
-    fallback: {
-      afterFailures: 1,
-      tools: ['bash', 'eval', 'web_search'],
-      match: ['www.ncbi.nlm.nih.gov', 'ncbi.nlm.nih.gov/geo', 'geo/query', 'acc.cgi', 'gse']
-    }
-  }
-
-  const decision = evaluateSpecialistFallback(
-    {
-      toolName: 'bash',
-      input: {
-        command:
-          'curl -s "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE180012&targ=self&view=quick&form=text"'
-      }
-    },
-    [databaseWithGeoFallback],
-    registry
-  )
-
-  assert.equal(decision.allowed, false)
-  assert.equal(decision.agent, 'Database')
-  assert.match(decision.reason ?? '', /Database/)
-})
-
 test('project boundary blocks explicit shell and file paths outside the project', () => {
   const cwd = process.cwd()
   assert.equal(
@@ -329,116 +233,6 @@ test('raw SDK ssh URLs are blocked before file or shell tools route them', () =>
     remoteUrlGuardDecision('write', { path: 'notes.md', content: 'ssh://example/path' }).allowed,
     true
   )
-})
-
-test('in-flight Database work blocks the main download tool for a GEO URL', async () => {
-  const registry = new AgentRunRegistry()
-  let finish!: () => void
-  const waiting = new Promise<void>((resolve) => {
-    finish = resolve
-  })
-  const handle = registry.launch({
-    agent: 'Database',
-    task: 'download GSE180012',
-    background: true,
-    runner: async () => {
-      await waiting
-      return { text: 'done', toolCalls: 1 }
-    }
-  })
-  const agent = {
-    ...DATABASE,
-    fallback: { ...DATABASE.fallback!, match: ['ncbi.nlm.nih.gov', 'gse'] }
-  }
-  const decision = evaluateSpecialistFallback(
-    {
-      toolName: 'download_file',
-      input: { url: 'https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE180012' }
-    },
-    [agent],
-    registry
-  )
-  assert.equal(decision.allowed, false)
-  finish()
-  await handle.done
-})
-
-test('successful specialist work does not unlock fallback, and unrelated shell work is unaffected', async () => {
-  const registry = new AgentRunRegistry()
-  await registry.launch({
-    agent: 'Database',
-    task: 'retrieve Q92748',
-    background: false,
-    runner: async () => ({ text: 'record found', toolCalls: 1 })
-  }).done
-
-  assert.equal(
-    evaluateSpecialistFallback(
-      {
-        toolName: 'bash',
-        input: { command: 'curl https://rest.uniprot.org/uniprotkb/Q92748.json' }
-      },
-      [DATABASE],
-      registry
-    ).allowed,
-    false
-  )
-  assert.deepEqual(
-    evaluateSpecialistFallback(
-      { toolName: 'bash', input: { command: 'git status --short' } },
-      [DATABASE],
-      registry
-    ),
-    { allowed: true }
-  )
-})
-
-test('a structured blocked report unlocks the declared fallback route', async () => {
-  const registry = new AgentRunRegistry()
-  await registry.launch({
-    agent: 'Database',
-    task: 'retrieve Q92748',
-    background: false,
-    runner: async () => ({
-      text: `<phi_agent_result>{"status":"blocked","missingInputs":[],"fallbackReason":"connector does not expose this endpoint"}</phi_agent_result>\nThe connector cannot serve this record.`,
-      toolCalls: 1
-    })
-  }).done
-
-  const decision = evaluateSpecialistFallback(
-    {
-      toolName: 'eval',
-      input: { code: "fetch('https://rest.uniprot.org/uniprotkb/Q92748.json')" }
-    },
-    [DATABASE],
-    registry
-  )
-  assert.equal(decision.allowed, true)
-  assert.equal(decision.agent, 'Database')
-})
-
-test('a structured not-found report hands the exhausted database route back to the main agent', async () => {
-  const registry = new AgentRunRegistry()
-  const run = await registry.launch({
-    agent: 'Database',
-    task: 'find an experimental structure',
-    background: false,
-    runner: async () => ({
-      text: `<phi_agent_result>{"status":"not_found","missingInputs":[],"fallbackReason":"no matching record in installed connectors"}</phi_agent_result>\nNo matching database record was found.`,
-      toolCalls: 2
-    })
-  }).done
-
-  assert.equal(run.reportStatus, 'not_found')
-  const decision = evaluateSpecialistFallback(
-    {
-      toolName: 'bash',
-      input: { command: 'curl https://rest.uniprot.org/uniprotkb/search' }
-    },
-    [DATABASE],
-    registry
-  )
-  assert.equal(decision.allowed, true)
 })
 
 test('structured specialist reports preserve prose and expose blocked state', () => {

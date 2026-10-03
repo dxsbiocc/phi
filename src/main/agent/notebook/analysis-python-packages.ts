@@ -2,6 +2,9 @@ import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { environmentVariables, getRuntimeRoot } from '../envs'
+import { managedEnvironmentState } from './managed-kernels'
+
 export interface AnalysisPythonPackageSummary {
   name: string
   kind: 'module' | 'package'
@@ -18,7 +21,12 @@ export interface PythonPackageListRunOptions {
   cwd: string
   input: string
   timeoutMs: number
+  /** Set for the managed interpreter: its `environmentVariables`. */
+  env?: Record<string, string>
 }
+
+/** The default kernel's interpreter, when `phi:python@1` is built. */
+export type ManagedPythonResolver = () => { command: string; env: Record<string, string> } | null
 
 export interface PythonPackageListRunResult {
   status: number | null
@@ -85,6 +93,17 @@ type PackageCacheEntry = {
 
 const packageListCache = new Map<string, PackageCacheEntry>()
 
+export function managedPythonInterpreter(
+  root: string = getRuntimeRoot()
+): { command: string; env: Record<string, string> } | null {
+  const state = managedEnvironmentState('phi:python@1', { root })
+  if ('notBuilt' in state) return null
+  return {
+    command: join(state.handle.prefix, 'bin', 'python'),
+    env: environmentVariables(state.handle)
+  }
+}
+
 function pythonCommands(projectCwd: string): string[] {
   const localCandidates = [
     join(projectCwd, '.venv', 'bin', 'python'),
@@ -103,6 +122,7 @@ function defaultPackageListRunner(
 ): PythonPackageListRunResult {
   const result = spawnSync(command, args, {
     cwd: options.cwd,
+    ...(options.env ? { env: options.env } : {}),
     input: options.input,
     encoding: 'utf8',
     timeout: options.timeoutMs,
@@ -145,7 +165,12 @@ export function clearAnalysisPythonPackageCache(): void {
 
 export function listAnalysisPythonPackages(
   input: { projectCwd: string; maxPackages?: number },
-  options: { runner?: PythonPackageListRunner; now?: () => number } = {}
+  options: {
+    runner?: PythonPackageListRunner
+    now?: () => number
+    /** Defaults to `managedPythonInterpreter` unless a runner is injected. */
+    managedPython?: ManagedPythonResolver
+  } = {}
 ): AnalysisPythonPackageListResult {
   const now = options.now ?? (() => Date.now())
   const maxPackages = Math.max(50, Math.min(input.maxPackages ?? DEFAULT_MAX_PACKAGE_COUNT, 2_000))
@@ -156,12 +181,22 @@ export function listAnalysisPythonPackages(
   }
 
   const runner = options.runner ?? defaultPackageListRunner
+  const resolveManaged =
+    options.managedPython ?? (options.runner ? undefined : () => managedPythonInterpreter())
+  // The default kernel is phi-python, so its packages come first; project and host
+  // interpreters remain fallbacks for completion only.
+  const managed = resolveManaged?.() ?? null
+  const candidates: { command: string; env?: Record<string, string> }[] = [
+    ...(managed ? [managed] : []),
+    ...pythonCommands(input.projectCwd).map((command) => ({ command }))
+  ]
   let lastFailure = 'Python package discovery failed.'
-  for (const command of pythonCommands(input.projectCwd)) {
+  for (const { command, env } of candidates) {
     const result = runner(command, ['-c', PYTHON_PACKAGE_LIST_SCRIPT], {
       cwd: input.projectCwd,
       input: JSON.stringify({ limit: maxPackages }),
-      timeoutMs: PACKAGE_LIST_TIMEOUT_MS
+      timeoutMs: PACKAGE_LIST_TIMEOUT_MS,
+      ...(env ? { env } : {})
     })
     if (result.status !== 0) {
       lastFailure = failureMessage(result)

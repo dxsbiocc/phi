@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEventHandler, type ReactNode } from 'react'
 import { Box, IconButton, Menu, MenuItem, Tooltip, Typography } from '@mui/material'
 import { alpha, useTheme } from '@mui/material/styles'
 import { GoCircleSlash, GoDownload, GoEye, GoSync, GoZoomIn, GoZoomOut } from 'react-icons/go'
@@ -11,7 +11,8 @@ import {
   isJsonObject,
   type NotebookMimeMetadata,
   prettyJson,
-  vegaMode
+  vegaMode,
+  zoomNumericDomain
 } from './notebookOutputUtils'
 
 function containerWidth(spec: JsonObject): JsonObject[string] | undefined {
@@ -25,18 +26,6 @@ function usesContainerWidth(spec: JsonObject): boolean {
 
 const zoomInFactor = 1 / 1.4
 const zoomOutFactor = 1.4
-
-export function zoomNumericDomain(
-  domain: readonly number[],
-  factor: number
-): [number, number] | null {
-  if (domain.length < 2) return null
-  const start = domain[0]
-  const end = domain[1]
-  if (!Number.isFinite(start) || !Number.isFinite(end) || start === end) return null
-  const anchor = (start + end) / 2
-  return [anchor + (start - anchor) * factor, anchor + (end - anchor) * factor]
-}
 
 function numericDomain(domain: unknown): number[] {
   if (!Array.isArray(domain)) return []
@@ -80,23 +69,20 @@ function zoomChartView(view: View, factor: number): void {
 function ChartModeButton({
   label,
   disabled,
-  buttonRef,
   menu,
   onClick,
   children
 }: {
   label: string
   disabled: boolean
-  buttonRef?: Ref<HTMLButtonElement>
   menu?: boolean
-  onClick: () => void
+  onClick: MouseEventHandler<HTMLButtonElement>
   children: ReactNode
 }): React.JSX.Element {
   return (
     <Tooltip title={label} enterDelay={300}>
       <span>
         <IconButton
-          ref={buttonRef}
           type="button"
           size="small"
           disabled={disabled}
@@ -138,10 +124,10 @@ export function NotebookVegaOutput({
   const initialStateRef = useRef<ReturnType<View['getState']> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isRendering, setIsRendering] = useState(true)
-  const downloadButtonRef = useRef<HTMLButtonElement | null>(null)
+  const [downloadAnchorEl, setDownloadAnchorEl] = useState<HTMLButtonElement | null>(null)
   const [viewReady, setViewReady] = useState(false)
   const [tooltipEnabled, setTooltipEnabled] = useState(true)
-  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false)
+  const downloadMenuOpen = downloadAnchorEl !== null
   const theme = useTheme()
   const specText = useMemo(() => prettyJson(spec), [spec])
   const shouldRemeasureContainer = useMemo(() => usesContainerWidth(spec), [spec])
@@ -254,7 +240,7 @@ export function NotebookVegaOutput({
   }
 
   function exportChart(format: 'png' | 'svg'): void {
-    setDownloadMenuOpen(false)
+    setDownloadAnchorEl(null)
     const view = viewRef.current
     if (!view) return
     void view
@@ -312,15 +298,14 @@ export function NotebookVegaOutput({
           label="下载图片"
           disabled={!viewReady}
           menu
-          buttonRef={downloadButtonRef}
-          onClick={() => setDownloadMenuOpen(true)}
+          onClick={(event) => setDownloadAnchorEl(event.currentTarget)}
         >
           <GoDownload size={20} />
         </ChartModeButton>
         <Menu
-          anchorEl={downloadButtonRef.current}
+          anchorEl={downloadAnchorEl}
           open={downloadMenuOpen}
-          onClose={() => setDownloadMenuOpen(false)}
+          onClose={() => setDownloadAnchorEl(null)}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
           transformOrigin={{ vertical: 'top', horizontal: 'right' }}
         >

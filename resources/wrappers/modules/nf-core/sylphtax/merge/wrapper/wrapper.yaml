@@ -32,7 +32,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "relative_abundance"
     description: "Column to merge (e.g. relative_abundance)."
   outdir:
     kind: output

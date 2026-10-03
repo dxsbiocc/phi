@@ -14,11 +14,7 @@ import type { SystemStyleObject } from '@mui/system'
 import { GoPlus } from 'react-icons/go'
 import { PhiIcons } from '../../icons'
 import type { McpServerSummary } from '../../types'
-import {
-  featuredMcpConnectors,
-  mcpConnectorCategories,
-  type FeaturedMcpConnector
-} from '../../../../shared/mcpConnectorCatalog'
+import { mcpConnectorCategories } from '../../../../shared/mcpConnectorCatalog'
 import { McpConnectorCatalogDialog } from './components/McpConnectorCatalogDialog'
 import { McpEnableSwitch } from './components/McpEnableSwitch'
 import { ConnectorIcon } from './components/ConnectorIcon'
@@ -148,15 +144,8 @@ function selectedServerFromList(
   return servers.find((server) => server.id === activeServerId) ?? null
 }
 
-function featuredConnectorForServer(server: McpServerSummary): FeaturedMcpConnector | undefined {
-  return featuredMcpConnectors.find(
-    (connector) =>
-      connector.url === server.url && (!connector.apiKey || connector.id === server.name)
-  )
-}
-
 function serverCategory(server: McpServerSummary): string {
-  return featuredConnectorForServer(server)?.category ?? '其他'
+  return server.category ?? '其他'
 }
 
 function ResizeSeparator({
@@ -256,6 +245,7 @@ export function McpSidebar({
     return servers.filter((server) =>
       [
         server.name,
+        server.title,
         server.command,
         server.url,
         server.sourcePath,
@@ -396,11 +386,15 @@ export function McpSidebar({
               onExpandedChange={(isExpanded) =>
                 setExpandedCategory(isExpanded ? group.category : '')
               }
-              title={group.category}
+              title={
+                <Box component="span" aria-label={`${group.category} · ${group.entries.length}`}>
+                  {group.category}
+                </Box>
+              }
               count={group.entries.length}
             >
               {group.entries.map((server) => {
-                const label = featuredConnectorForServer(server)?.name ?? server.name
+                const label = server.title ?? server.name
                 const active = enabledOverride[server.id] ?? server.enabled !== false
                 return (
                   <Box
@@ -418,7 +412,7 @@ export function McpSidebar({
                       cursor: 'pointer'
                     }}
                   >
-                    <ConnectorIcon url={server.url} size={34} />
+                    <ConnectorIcon connectorId={server.connectorId ?? server.packageId} size={34} />
                     <Typography
                       variant="body2"
                       noWrap

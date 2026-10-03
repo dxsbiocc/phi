@@ -67,7 +67,7 @@ export interface RemoteLaunchSpec {
    * completion; the shared configured launch script and `wrapWithExitCodeTrap`
    * both provide this for detached runs.
    * Building the actual Nextflow invocation (the remote counterpart to
-   * executor-nextflow.ts's `buildNextflowLaunch`) is a separate concern,
+   * executor-nextflow.ts's `buildNextflowInvocation`) is a separate concern,
    * not this module's.
    */
   launchScript: string
@@ -144,7 +144,7 @@ export function wrapWithExitCodeTrap(command: string): string {
 /**
  * Pure command builder — kept separate from `SshExecRunner` so it's
  * testable without a connection, matching `executor-nextflow.ts`'s split
- * between "build the command" (`buildNextflowLaunch`) and "actually run
+ * between "build the command" (`buildNextflowInvocation`) and "actually run
  * it" (`executor-local.ts`).
  */
 export function buildDetachedLaunchCommand(remoteRunDir: string): string {

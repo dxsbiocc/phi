@@ -8,7 +8,7 @@ import type { RemoteSshSession } from '../remote-ssh-session'
 import { shellQuote } from '../remote-ssh-session'
 
 /**
- * Ships the wrapper source tree (`resources/wrappers`) to the cluster once per
+ * Ships the assembled installed wrapper tree (`~/.phi/wrappers/tree`) to the cluster once per
  * version. Wrappers include sources by relative path — a subworkflow reaches
  * `../../../../modules/...` — so the remote needs the same tree layout, not just
  * one component. The tree is content-addressed: an unchanged tree is uploaded once

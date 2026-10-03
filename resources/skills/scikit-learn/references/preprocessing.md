@@ -148,7 +148,7 @@ print(f"Classes: {le.classes_}")
 ### Target Encoding (using category_encoders)
 
 ```python
-# Install: uv pip install category-encoders
+# category-encoders is not part of phi:python@1
 from category_encoders import TargetEncoder
 
 encoder = TargetEncoder()

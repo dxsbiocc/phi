@@ -415,15 +415,7 @@ Modern fingerprint generation API. Prefer this over legacy `AllChem.GetMorganFin
 
 ## Installation
 
-```bash
-# Existing uv/pip environment
-uv pip install rdkit
-
-# Fresh conda-forge environment (upstream recommendation)
-conda create -c conda-forge -n my-rdkit-env rdkit
-```
-
-The PyPI package is now `rdkit`; `rdkit-pypi` is the legacy name for older releases.
+This skill runs in the managed `phi:python@1` environment; `rdkit` is already there. `rdkit-pypi` is the legacy PyPI name. Do not install a second copy into this environment.
 
 ## Importing
 

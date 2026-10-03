@@ -19,7 +19,10 @@ import {
 } from '../src/renderer/src/features/wrapper/components/WrapperPlanTarget'
 import type { Project } from '../src/renderer/src/lib/projectTypes'
 import { readLegacyFastqQcWrapperManifest } from './helpers/wrapperFixtures'
-import type { WrapperCompositionManifest } from '../src/shared/wrapperCompositionManifestTypes'
+import type {
+  WrapperCompositionCatalogItem,
+  WrapperCompositionManifest
+} from '../src/shared/wrapperCompositionManifestTypes'
 import type { WrapperManifest } from '../src/shared/wrapperManifestTypes'
 import type { WrapperRun, WrapperRunPlan } from '../src/shared/wrapperTypes'
 
@@ -31,8 +34,8 @@ function fastqQcManifest(): WrapperManifest {
 }
 
 function moduleEntry(
-  overrides: Partial<WrapperCompositionManifest> = {}
-): WrapperCompositionManifest {
+  overrides: Partial<WrapperCompositionCatalogItem> = {}
+): WrapperCompositionCatalogItem {
   return {
     id: 'nf-core/modules/demo',
     name: 'Demo Module',
@@ -181,6 +184,23 @@ test('wrapper view groups catalog entries by tier', () => {
   const markup = renderView({ catalog: [moduleEntry(), workflowEntry()] })
   assert.match(markup, /模块/)
   assert.match(markup, /工作流/)
+})
+
+test('wrapper view shows package enablement and dependency-hidden reasons', () => {
+  const markup = renderView({
+    catalog: [
+      moduleEntry({
+        packageId: 'subworkflow-nf-core-demo',
+        packageEnabled: true,
+        hiddenReason: '依赖 module-nf-core-fastqc 不可用（软件包 module-nf-core-fastqc 已停用）'
+      })
+    ],
+    onSetPackageEnabled: () => undefined
+  })
+  assert.match(markup, /软件包 · subworkflow-nf-core-demo/)
+  assert.match(markup, /已启用/)
+  assert.match(markup, /依赖 module-nf-core-fastqc 不可用/)
+  assert.doesNotMatch(markup, /aria-label="启用 package subworkflow-nf-core-demo"[^>]*disabled/)
 })
 
 test('wrapper view run history shows state and links to the output directory', () => {

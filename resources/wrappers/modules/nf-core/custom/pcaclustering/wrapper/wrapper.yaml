@@ -15,25 +15,21 @@ params:
     kind: option
     type: string
     required: false
-    default: "kmeans"
     description: "Clustering algorithm (kmeans or dbscan)."
   n_clusters:
     kind: option
     type: integer
     required: false
-    default: 3
     description: "Number of clusters (k-means)."
   dbscan_eps:
     kind: option
     type: string
     required: false
-    default: "0.5"
     description: "DBSCAN epsilon."
   dbscan_min_samples:
     kind: option
     type: integer
     required: false
-    default: 5
     description: "DBSCAN minimum samples."
   outdir:
     kind: output

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Alert, Box, Button, Chip, Divider, Stack, Typography } from '@mui/material'
-import { featuredMcpConnectors } from '../../../../../shared/mcpConnectorCatalog'
+import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
 import { PhiIcons } from '../../../icons'
 import type { McpServerSummary } from '../../../types'
 import { featuredAuthFailureNotice, featuredOAuthStatusFromError } from '../lib/featuredAuthStatus'
@@ -17,6 +17,7 @@ import { McpFeaturedConnectorDetails } from './McpFeaturedConnectorDetails'
 export interface McpDetailPanelProps {
   selectedServer: McpServerSummary | null
   onRemoveServer?: (server: McpServerSummary) => Promise<void>
+  initialCatalog?: readonly FeaturedMcpConnector[]
 }
 
 function commandLine(server: McpServerSummary): string {
@@ -33,12 +34,28 @@ function errorMessage(cause: unknown): string {
 
 export function McpDetailPanel({
   selectedServer,
-  onRemoveServer
+  onRemoveServer,
+  initialCatalog = []
 }: McpDetailPanelProps): React.JSX.Element {
+  const [catalog, setCatalog] = useState<FeaturedMcpConnector[]>(() => [...initialCatalog])
+  useEffect(() => {
+    let active = true
+    void window.api
+      .listMcpConnectorCatalog()
+      .then((entries) => {
+        if (active) setCatalog(entries)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [selectedServer?.id])
   const connector = selectedServer
-    ? featuredMcpConnectors.find(
+    ? catalog.find(
         (entry) =>
-          entry.url === selectedServer.url && (!entry.apiKey || entry.id === selectedServer.name)
+          entry.id === selectedServer.packageId ||
+          entry.id === selectedServer.connectorId ||
+          (entry.url === selectedServer.url && (!entry.apiKey || entry.id === selectedServer.name))
       )
     : undefined
   const [authStatusById, setAuthStatusById] = useState<Record<string, ConnectorAuthStatus>>({})
@@ -214,7 +231,10 @@ export function McpDetailPanel({
           ) : (
             <>
               <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
-                <ConnectorIcon url={selectedServer.url} size={72} />
+                <ConnectorIcon
+                  connectorId={selectedServer.connectorId ?? selectedServer.packageId}
+                  size={72}
+                />
                 <Box sx={{ minWidth: 0, flex: 1 }}>
                   <Typography variant="h4" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
                     {selectedServer.name}

@@ -90,7 +90,7 @@ test('chat web links retain normal anchor semantics while advertising in-app han
   assert.doesNotMatch(withoutCallback, /data-phi-open-web-url="in-app"/)
 })
 
-test('local, database-preview, and unsafe links are not delegated to the in-app browser', () => {
+test('local and unsafe links stay local while former database links use the in-app browser', () => {
   const onOpenWebUrl = (): void => undefined
   const local = renderMarkdown(
     '[local](./docs/report.html)',
@@ -115,8 +115,8 @@ test('local, database-preview, and unsafe links are not delegated to the in-app 
   )
 
   assert.doesNotMatch(local, /data-phi-open-web-url="in-app"/)
-  assert.match(database, /data-phi-slot="database-web-preview-link"/)
-  assert.doesNotMatch(database, /data-phi-open-web-url="in-app"/)
+  assert.doesNotMatch(database, /data-phi-slot="database-web-preview-link"/)
+  assert.match(database, /data-phi-open-web-url="in-app"/)
   assert.doesNotMatch(unsafe, /data-phi-open-web-url="in-app"/)
 })
 
@@ -219,24 +219,6 @@ test('markdown inline code leaves GEO matrix filenames as plain code, not molecu
   assert.doesNotMatch(markup, /data-phi-molecule-expression="true"/)
   assert.doesNotMatch(markup, /data-phi-slot="local-file-link"/)
   assert.match(markup, />GSE180012_raw_counts_GRCh38\.txt\.gz<\/code>/)
-})
-
-test('markdown links render STRING network urls as hover webpage previews', () => {
-  const markup = renderMarkdown(
-    '完整 STRING 网络可视化：https://string-db.org/network/9606.ENSP00000281030'
-  )
-
-  assert.match(markup, /data-phi-slot="database-web-preview-link"/)
-  assert.match(markup, /data-phi-database-kind="string-network"/)
-  assert.match(markup, /https:\/\/string-db\.org\/network\/9606\.ENSP00000281030/)
-})
-
-test('markdown links render KEGG pathway urls as hover webpage previews', () => {
-  const markup = renderMarkdown('KEGG 通路：https://www.kegg.jp/pathway/hsa04110')
-
-  assert.match(markup, /data-phi-slot="database-web-preview-link"/)
-  assert.match(markup, /data-phi-database-kind="kegg-pathway"/)
-  assert.match(markup, /https:\/\/www\.kegg\.jp\/pathway\/hsa04110/)
 })
 
 test('markdown color swatches work inside emphasis and tables', () => {
@@ -450,7 +432,7 @@ test('markdown local image syntax renders a local preview container', () => {
       ThemeProvider,
       { theme: createTheme() },
       createElement(MarkdownContent, {
-        text: '推荐模板：![Volcano template](/Users/example/project/resources/skills/omics-visualization/scripts/scatter/volcano/preview.png)',
+        text: '推荐模板：![Volcano template](/Users/example/project/resources/plugins/visualization/skills/omics-visualization/scripts/scatter/volcano/preview.png)',
         cwd: '/Users/example/project'
       })
     )
@@ -460,7 +442,7 @@ test('markdown local image syntax renders a local preview container', () => {
   assert.match(markup, /data-phi-example-preview="true"/)
   assert.match(
     markup,
-    /data-phi-path="\/Users\/example\/project\/resources\/skills\/omics-visualization\/scripts\/scatter\/volcano\/preview\.png"/
+    /data-phi-path="\/Users\/example\/project\/resources\/plugins\/visualization\/skills\/omics-visualization\/scripts\/scatter\/volcano\/preview\.png"/
   )
   assert.match(markup, /data-phi-slot="local-file-link"/)
   assert.match(markup, />Volcano template<\/span><\/button>/)

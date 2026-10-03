@@ -3,6 +3,9 @@ name: pptx
 description: "Use this skill any time a .pptx file is involved in any way — as input, output, or both. This includes: creating slide decks, pitch decks, or presentations; reading, parsing, or extracting text from any .pptx file (even if the extracted content will be used elsewhere, like in an email or summary); editing, modifying, or updating existing presentations; combining or splitting slide files; working with templates, layouts, speaker notes, or comments. Trigger whenever the user mentions \"deck,\" \"slides,\" \"presentation,\" or references a .pptx filename, regardless of what they plan to do with the content afterward. If a .pptx file needs to be opened, created, or touched, use this skill."
 license: Proprietary. LICENSE.txt has complete terms
 metadata: {"version": "1.0"}
+phi:
+  environment: phi:python@1
+  deprecated: 即将由 OfficeCLI 替代。Office 文档处理接入 OfficeCLI 后，这个技能会移出内置，改为可单独安装的包。
 ---
 
 # PPTX Skill
@@ -24,10 +27,10 @@ metadata: {"version": "1.0"}
 python -m markitdown presentation.pptx
 
 # Visual overview
-python scripts/thumbnail.py presentation.pptx
+skill_run({ skill: "pptx", script: "thumbnail.py", args: ["presentation.pptx"] })
 
 # Raw XML
-python scripts/office/unpack.py presentation.pptx unpacked/
+skill_run({ skill: "pptx", script: "office/unpack.py", args: ["presentation.pptx", "unpacked/"] })
 ```
 
 ---
@@ -210,7 +213,7 @@ Report ALL issues found, including minor ones.
 Convert presentations to individual slide images for visual inspection:
 
 ```bash
-python scripts/office/soffice.py --headless --convert-to pdf output.pptx
+skill_run({ skill: "pptx", script: "office/soffice.py", args: ["--headless", "--convert-to", "pdf", "output.pptx"] })
 pdftoppm -jpeg -r 150 output.pdf slide
 ```
 
@@ -226,8 +229,6 @@ pdftoppm -jpeg -r 150 -f N -l N output.pdf slide-fixed
 
 ## Dependencies
 
-- `pip install "markitdown[pptx]"` - text extraction
-- `pip install Pillow` - thumbnail grids
-- `npm install -g pptxgenjs` - creating from scratch
-- LibreOffice (`soffice`) - PDF conversion (auto-configured for sandboxed environments via `scripts/office/soffice.py`)
-- Poppler (`pdftoppm`) - PDF to images
+This skill runs in the managed `phi:python@1` environment; `markitdown`, `pillow`, `pptxgenjs`, `nodejs`, `poppler`, `defusedxml`, and `lxml` are already there.
+
+LibreOffice (`soffice`) is a host dependency for PDF conversion (auto-configured for sandboxed environments via `scripts/office/soffice.py`).

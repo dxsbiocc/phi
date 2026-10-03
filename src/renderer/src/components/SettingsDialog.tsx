@@ -5,14 +5,11 @@ import {
   Button,
   Chip,
   Dialog,
-  FormControl,
   FormControlLabel,
   IconButton,
   ListItemButton,
   ListItemText,
   Paper,
-  Radio,
-  RadioGroup,
   Stack,
   Switch,
   TextField,
@@ -23,22 +20,15 @@ import {
 } from '@mui/material'
 import { GoPlus, GoSync } from 'react-icons/go'
 import { PhiIcons } from '../icons'
-import type {
-  DbConnectorSettingsItem,
-  DefaultProxyMode,
-  ModelOption,
-  PhiAppSettingsPatch,
-  ProviderAuthStatus,
-  ProxyTransportStatus
-} from '../types'
+import type { ModelOption, PhiAppSettingsPatch, ProviderAuthStatus } from '../types'
 import type { PermissionMode, Project, ThinkingLevel, ToolApprovalRequest } from '../types'
 import type { ThemeMode } from '../theme'
 import { accentAt, ACCENT_PALETTE } from '../theme'
 import type { ThemeFamily } from '../useThemeMode'
 import { RemoteHostSettingsSection } from '../features/wrapper/components/RemoteHostSettings'
-import { DatabaseSettingsPanel } from '../features/databases/DatabaseSettingsPanel'
 import { EnvironmentSettingsPanel } from '../features/environment/components/EnvironmentSettingsPanel'
 import { WebSearchSettingsPanel } from '../features/settings/WebSearchSettingsPanel'
+import DeveloperExtensionsView from '../features/developer-extensions/DeveloperExtensionsView'
 import { PermissionSettingsSection } from './PermissionView'
 import type { EnvironmentSnapshot, EnvironmentToolId } from '../types'
 import type { ManualCompactionTarget } from '../../../shared/contextUsageTypes'
@@ -59,31 +49,31 @@ const ShieldIcon = PhiIcons.settings.permissions
 const DiagnosticsIcon = PhiIcons.settings.diagnostics
 const RemoteExecutionIcon = PhiIcons.settings.remoteExecution
 const GeneralIcon = PhiIcons.nav.settings
-const DatabaseIcon = PhiIcons.file.data
+const AdvancedIcon = PhiIcons.entity.plugin
 const CheckIcon = PhiIcons.state.check
 
 export type SettingsCategory =
   | 'general'
   | 'environment'
-  | 'databases'
   | 'persona'
   | 'providers'
   | 'web-search'
   | 'permissions'
   | 'remote'
   | 'diagnostics'
+  | 'advanced'
   | 'appearance'
 
 const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.Element }> = [
   { id: 'general', label: '通用', icon: <GeneralIcon fontSize="small" /> },
   { id: 'environment', label: '环境', icon: <RemoteExecutionIcon fontSize="small" /> },
-  { id: 'databases', label: '数据库', icon: <DatabaseIcon fontSize="small" /> },
   { id: 'persona', label: '助手', icon: <PsychologyIcon fontSize="small" /> },
   { id: 'providers', label: 'Provider', icon: <ProviderIcon fontSize="small" /> },
   { id: 'web-search', label: '网页搜索', icon: <SearchIcon fontSize="small" /> },
   { id: 'permissions', label: '权限', icon: <ShieldIcon fontSize="small" /> },
   { id: 'remote', label: '远程', icon: <RemoteExecutionIcon fontSize="small" /> },
   { id: 'diagnostics', label: '诊断', icon: <ContentCopyIcon fontSize="small" /> },
+  { id: 'advanced', label: '高级', icon: <AdvancedIcon fontSize="small" /> },
   { id: 'appearance', label: '外观', icon: <PaletteIcon fontSize="small" /> }
 ]
 
@@ -327,14 +317,10 @@ function ProvidersSection({
 }
 
 function GeneralSection({
-  defaultProxyMode,
   noProjectTaskFolder,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
-  proxyTransportStatus,
-  isSavingDefaultProxyMode,
   isSavingAppSettings,
-  onSelectDefaultProxyMode,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
   autoCompactionTarget,
@@ -343,14 +329,10 @@ function GeneralSection({
   compactDisabled,
   onCompactContext
 }: {
-  defaultProxyMode: DefaultProxyMode
   noProjectTaskFolder: string
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
-  proxyTransportStatus: ProxyTransportStatus
-  isSavingDefaultProxyMode: boolean
   isSavingAppSettings: boolean
-  onSelectDefaultProxyMode: (mode: DefaultProxyMode) => void
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
   autoCompactionTarget?: ManualCompactionTarget | null
@@ -359,14 +341,6 @@ function GeneralSection({
   compactDisabled?: boolean
   onCompactContext?: () => void
 }): React.JSX.Element {
-  const proxyStatusSeverity =
-    proxyTransportStatus.controlledProxyAvailable || defaultProxyMode !== 'enabled'
-      ? 'info'
-      : 'warning'
-  const proxyStatusText = proxyTransportStatus.controlledProxyAvailable
-    ? `受控代理通道可用：${proxyTransportStatus.controlledProxyName ?? 'proxy'}`
-    : (proxyTransportStatus.unavailableReason ?? '受控代理通道不可用')
-
   return (
     <Stack spacing={2}>
       <Box>
@@ -427,38 +401,6 @@ function GeneralSection({
             更改
           </Button>
         </Stack>
-      </Box>
-
-      <Box>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          默认代理模式
-        </Typography>
-        <FormControl disabled={isSavingDefaultProxyMode}>
-          <RadioGroup
-            row
-            value={defaultProxyMode}
-            onChange={(event) => onSelectDefaultProxyMode(event.target.value as DefaultProxyMode)}
-          >
-            <FormControlLabel value="auto" control={<Radio />} label="自动选择" />
-            <FormControlLabel value="enabled" control={<Radio />} label="开启" />
-            <FormControlLabel value="disabled" control={<Radio />} label="关闭" />
-          </RadioGroup>
-        </FormControl>
-        <Alert severity={proxyStatusSeverity} variant="outlined" sx={{ mt: 1.5 }}>
-          <Stack spacing={0.75}>
-            <Typography variant="body2">{proxyStatusText}</Typography>
-            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
-              <Chip size="small" label={`自动选择：${proxyTransportStatus.autoTransportName}`} />
-              <Chip
-                size="small"
-                color={proxyTransportStatus.enabledModeAvailable ? 'success' : 'default'}
-                variant="outlined"
-                label={proxyTransportStatus.enabledModeAvailable ? '开启可用' : '开启不可用'}
-              />
-              <Chip size="small" variant="outlined" label="关闭：system" />
-            </Stack>
-          </Stack>
-        </Alert>
       </Box>
 
       <Box>
@@ -696,14 +638,10 @@ type SettingsDialogProps = {
   onOpenApprovalSession: (path: string) => void
   onRespondApproval: (requestId: string, approved: boolean) => void
   onCopyDiagnostics: () => Promise<string>
-  defaultProxyMode: DefaultProxyMode
   noProjectTaskFolder: string
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
-  proxyTransportStatus: ProxyTransportStatus
-  isSavingDefaultProxyMode: boolean
   isSavingAppSettings: boolean
-  onSelectDefaultProxyMode: (mode: DefaultProxyMode) => void
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
   autoCompactionTarget?: ManualCompactionTarget | null
@@ -716,13 +654,6 @@ type SettingsDialogProps = {
   isRedetectingEnvironment: boolean
   onRedetectEnvironment: () => Promise<void>
   onSetEnvironmentToolPath: (toolId: EnvironmentToolId, path: string | null) => Promise<void>
-  dbConnectors?: DbConnectorSettingsItem[]
-  isLoadingDbConnectors?: boolean
-  updatingDbConnectorId?: string | null
-  onRefreshDbConnectors?: () => Promise<void>
-  onSetDbConnectorEnabled?: (id: string, enabled: boolean) => Promise<void>
-  onSetDbConnectorApiKey?: (id: string, apiKey: string) => Promise<void>
-  onClearDbConnectorApiKey?: (id: string) => Promise<void>
   themeMode: ThemeMode
   onSelectThemeMode: (mode: ThemeMode) => void
   themeFamily: ThemeFamily
@@ -749,14 +680,10 @@ function SettingsDialog({
   onOpenApprovalSession,
   onRespondApproval,
   onCopyDiagnostics,
-  defaultProxyMode,
   noProjectTaskFolder,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
-  proxyTransportStatus,
-  isSavingDefaultProxyMode,
   isSavingAppSettings,
-  onSelectDefaultProxyMode,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
   autoCompactionTarget,
@@ -769,13 +696,6 @@ function SettingsDialog({
   isRedetectingEnvironment,
   onRedetectEnvironment,
   onSetEnvironmentToolPath,
-  dbConnectors = [],
-  isLoadingDbConnectors = false,
-  updatingDbConnectorId = null,
-  onRefreshDbConnectors = async () => undefined,
-  onSetDbConnectorEnabled = async () => undefined,
-  onSetDbConnectorApiKey = async () => undefined,
-  onClearDbConnectorApiKey = async () => undefined,
   themeMode,
   onSelectThemeMode,
   themeFamily,
@@ -879,14 +799,10 @@ function SettingsDialog({
         >
           {category === 'general' && (
             <GeneralSection
-              defaultProxyMode={defaultProxyMode}
               noProjectTaskFolder={noProjectTaskFolder}
               preventSleepDuringRuns={preventSleepDuringRuns}
               nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
-              proxyTransportStatus={proxyTransportStatus}
-              isSavingDefaultProxyMode={isSavingDefaultProxyMode}
               isSavingAppSettings={isSavingAppSettings}
-              onSelectDefaultProxyMode={onSelectDefaultProxyMode}
               onUpdateAppSettings={onUpdateAppSettings}
               onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
               autoCompactionTarget={autoCompactionTarget}
@@ -903,17 +819,6 @@ function SettingsDialog({
               redetecting={isRedetectingEnvironment}
               onRedetect={onRedetectEnvironment}
               onSavePath={onSetEnvironmentToolPath}
-            />
-          )}
-          {category === 'databases' && (
-            <DatabaseSettingsPanel
-              connectors={dbConnectors}
-              isLoading={isLoadingDbConnectors}
-              updatingConnectorId={updatingDbConnectorId}
-              onRefresh={onRefreshDbConnectors}
-              onSetEnabled={onSetDbConnectorEnabled}
-              onSetApiKey={onSetDbConnectorApiKey}
-              onClearApiKey={onClearDbConnectorApiKey}
             />
           )}
           {category === 'persona' && (
@@ -949,6 +854,7 @@ function SettingsDialog({
           {category === 'diagnostics' && (
             <DiagnosticsSection onCopyDiagnostics={onCopyDiagnostics} />
           )}
+          {category === 'advanced' && <DeveloperExtensionsView />}
           {category === 'appearance' && (
             <AppearanceSection
               mode={themeMode}

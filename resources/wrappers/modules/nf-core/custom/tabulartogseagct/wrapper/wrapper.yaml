@@ -15,19 +15,16 @@ params:
     kind: option
     type: string
     required: false
-    default: "treatment"
     description: "Variable column to contrast."
   reference:
     kind: option
     type: string
     required: false
-    default: "mCherry"
     description: "Reference level."
   target:
     kind: option
     type: string
     required: false
-    default: "hND6"
     description: "Target level."
   outdir:
     kind: output

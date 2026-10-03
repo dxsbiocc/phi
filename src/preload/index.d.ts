@@ -2,7 +2,7 @@
 // hand-duplicated) — see the matching comment in preload/index.ts.
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
 import type { BrowserRendererBridge } from '../shared/browserTypes'
-import type { WrapperCompositionManifest } from '../shared/wrapperCompositionManifestTypes'
+import type { WrapperCompositionCatalogItem } from '../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
 import type { RemoteHpcSettings } from '../shared/wrapperRemoteTypes'
 import type {
@@ -51,23 +51,43 @@ import type {
   AgentUserInteractionRequest,
   AgentUserInteractionResponse
 } from '../shared/agentInteractionTypes'
-import type {
-  DefaultProxyMode,
-  PhiAppSettings,
-  PhiAppSettingsPatch
-} from '../shared/appSettingsTypes'
+import type { PhiAppSettings, PhiAppSettingsPatch } from '../shared/appSettingsTypes'
 import type {
   SearxngEngineOption,
   WebSearchKeyStatus,
   WebSearchSettings,
   WebSearchSettingsPatch
 } from '../shared/webSearchSettingsTypes'
-import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
 import type {
   EnvironmentGetResult,
+  ManagedEnvironmentCleanResult,
+  ManagedEnvironmentEntry,
+  ManagedEnvironmentRemoveResult,
   EnvironmentSnapshot,
   EnvironmentToolId
 } from '../shared/environmentTypes'
+import type { EnvironmentBuild } from '../shared/environmentBuildTypes'
+import type {
+  PhiPluginInstallPreview,
+  PhiPluginListItem,
+  PhiPluginMutationResult
+} from '../shared/phiPluginTypes'
+import type {
+  KnownPackageRegistryView,
+  OfflinePackageImportPreview,
+  InstalledPackageView,
+  PackageInstallPlanView,
+  PackageManagerType,
+  PackageRegistryView,
+  PackageUpdateView
+} from '../shared/packageManagerTypes'
+import type {
+  EnablementItemKey,
+  EnablementScope,
+  EnablementSnapshot
+} from '../shared/enablementTypes'
+import type { SkillContent, SkillSummary } from '../shared/skillTypes'
+import type { FeaturedMcpConnector } from '../shared/mcpConnectorCatalog'
 
 type PreloadSessionSummary = {
   path: string
@@ -181,25 +201,6 @@ type PreloadPluginCatalogItem = {
   installedPath?: string
 }
 
-type PreloadSkillSourceCategory = 'system' | 'third-party' | 'user' | 'generated'
-
-type PreloadSkillSummary = {
-  id: string
-  name: string
-  description: string
-  filePath: string
-  source: string
-  scope: 'user' | 'project' | 'temporary'
-  sourceCategory: PreloadSkillSourceCategory
-  sourceCategoryLabel: string
-  disabled: boolean
-}
-
-type PreloadSkillContent = {
-  filePath: string
-  content: string
-}
-
 type PreloadPromptAgentSummary = {
   id: string
   name: string
@@ -211,6 +212,10 @@ type PreloadPromptAgentSummary = {
 type PreloadMcpServerSummary = {
   id: string
   name: string
+  title?: string
+  connectorId?: string
+  packageId?: string
+  category?: string
   command?: string
   args?: string[]
   envKeys?: string[]
@@ -325,16 +330,6 @@ type PreloadDirectoryListing = {
   rootLabel: string
   entries: PreloadFileTreeEntry[]
   truncated: boolean
-}
-
-type PreloadDatabaseWebImagePreview = {
-  kind: 'string-network' | 'kegg-pathway'
-  label: string
-  sourceUrl: string
-  imageUrl: string
-  dataUrl: string
-  mimeType: 'image/png'
-  bytes: number
 }
 
 type PreloadAnalysisNotebookSummary = {
@@ -592,7 +587,6 @@ declare global {
         cb: (progress: WrapperResultDownloadProgress) => void
       ) => () => void
       renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
-      previewDatabaseWebImage: (url: string) => Promise<PreloadDatabaseWebImagePreview>
       copyDiagnostics: () => Promise<string>
       sendPrompt: (
         text: string,
@@ -714,7 +708,6 @@ declare global {
       listSearxngEngines: () => Promise<SearxngEngineOption[]>
       setWebSearchApiKey: (providerId: string, key: string) => Promise<WebSearchKeyStatus>
       clearWebSearchApiKey: (providerId: string) => Promise<WebSearchKeyStatus>
-      updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
       getEnvironment: () => Promise<EnvironmentGetResult>
       redetectEnvironment: () => Promise<EnvironmentSnapshot>
       dismissEnvironmentSummary: () => Promise<EnvironmentSnapshot>
@@ -723,10 +716,11 @@ declare global {
         path: string | null
       ) => Promise<EnvironmentSnapshot>
       pickEnvironmentBinary: () => Promise<string | null>
-      listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
-      setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
-      setDbConnectorApiKey: (id: string, apiKey: string) => Promise<DbConnectorSettingsItem[]>
-      clearDbConnectorApiKey: (id: string) => Promise<DbConnectorSettingsItem[]>
+      listManagedEnvironments: (projectCwd?: string) => Promise<ManagedEnvironmentEntry[]>
+      buildManagedEnvironment: (ref: string, projectCwd?: string) => Promise<{ envId: string }>
+      rebuildManagedEnvironment: (envId: string) => Promise<void>
+      removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
+      cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
       listModels: () => Promise<
         Array<{
           providerId: string
@@ -988,16 +982,61 @@ declare global {
       listPlugins: () => Promise<PreloadPluginCatalogItem[]>
       installPlugin: (source: string) => Promise<PreloadPluginCatalogItem[]>
       removePlugin: (source: string) => Promise<PreloadPluginCatalogItem[]>
-      listSkills: (cwd?: string) => Promise<PreloadSkillSummary[]>
-      readSkillContent: (filePath: string, cwd?: string) => Promise<PreloadSkillContent>
+      listPhiPlugins: () => Promise<PhiPluginListItem[]>
+      pickPhiPluginDirectory: () => Promise<string | null>
+      previewPhiPluginDirectory: (path: string) => Promise<PhiPluginInstallPreview>
+      installPhiPluginFromDirectory: (path: string) => Promise<PhiPluginMutationResult>
+      setPhiPluginEnabled: (id: string, enabled: boolean) => Promise<PhiPluginMutationResult>
+      uninstallPhiPlugin: (id: string) => Promise<PhiPluginMutationResult>
+      pickPackageRegistryDirectory: () => Promise<string | null>
+      pickPackageArchive: () => Promise<string | null>
+      readPackageRegistry: (dir: string) => Promise<PackageRegistryView>
+      listPackageRegistries: () => Promise<KnownPackageRegistryView[]>
+      removePackageRegistry: (id: string) => Promise<KnownPackageRegistryView[]>
+      previewPackageImport: (path: string) => Promise<OfflinePackageImportPreview>
+      importPackage: (path: string) => Promise<InstalledPackageView[]>
+      listPackageUpdates: () => Promise<PackageUpdateView[]>
+      applyPackageUpdate: (type: PackageManagerType, id: string) => Promise<InstalledPackageView[]>
+      applyAllPackageUpdates: () => Promise<InstalledPackageView[]>
+      onPackageUpdatesAvailable: (cb: (updates: PackageUpdateView[]) => void) => () => void
+      planPackageInstall: (
+        dir: string,
+        type: PackageManagerType,
+        id: string,
+        version?: string
+      ) => Promise<PackageInstallPlanView>
+      installPackage: (
+        dir: string,
+        type: PackageManagerType,
+        id: string,
+        version?: string
+      ) => Promise<InstalledPackageView[]>
+      uninstallPackage: (type: PackageManagerType, id: string) => Promise<InstalledPackageView[]>
+      listInstalledPackages: () => Promise<InstalledPackageView[]>
+      getEnablement: (projectCwd?: string) => Promise<EnablementSnapshot>
+      setEnablement: (
+        item: EnablementItemKey,
+        value: boolean | null,
+        scope: EnablementScope
+      ) => Promise<EnablementSnapshot>
+      listSkills: (cwd?: string) => Promise<SkillSummary[]>
+      readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
       setSkillDisabled: (
         filePath: string,
         disabled: boolean,
         cwd?: string
-      ) => Promise<PreloadSkillSummary[]>
-      deleteSkill: (filePath: string, cwd?: string) => Promise<PreloadSkillSummary[]>
+      ) => Promise<SkillSummary[]>
+      deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
       listPromptAgents: (cwd?: string) => Promise<PreloadPromptAgentSummary[]>
       listMcpServers: (cwd?: string) => Promise<PreloadMcpServerSummary[]>
+      listMcpConnectorCatalog: () => Promise<FeaturedMcpConnector[]>
+      installMcpConnector: (
+        id: string,
+        version?: string,
+        registryDir?: string
+      ) => Promise<InstalledPackageView[]>
+      uninstallMcpConnector: (id: string) => Promise<InstalledPackageView[]>
+      buildMcpConnectorEnvironment: (id: string) => Promise<{ envId: string }>
       addRemoteMcpConnector: (name: string, url: string) => Promise<void>
       removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
       setMcpConnectorEnabled: (name: string, enabled: boolean, sourcePath?: string) => Promise<void>
@@ -1018,10 +1057,13 @@ declare global {
       cancelWrapperRunPlan: (planId: string) => Promise<WrapperRunPlan>
       listWrapperCatalog: () => Promise<WrapperCatalogEntry[]>
       addCustomWrapper: (sourceDir: string) => Promise<WrapperCatalogEntry>
-      listWrapperCompositionCatalog: () => Promise<WrapperCompositionManifest[]>
+      listWrapperCompositionCatalog: () => Promise<WrapperCompositionCatalogItem[]>
       getWrapperCompositionDag: (id: string) => Promise<string | undefined>
       getWrapperCompositionModuleDetails: (id: string) => Promise<WrapperModuleDetails | undefined>
       listWrapperRuns: () => Promise<WrapperRun[]>
+      listEnvironmentBuilds: () => Promise<EnvironmentBuild[]>
+      cancelEnvironmentBuild: (envId: string) => Promise<void>
+      onEnvironmentBuildsChanged: (cb: (build: EnvironmentBuild) => void) => () => void
       listAgentJobs: () => Promise<BackgroundAgentJob[]>
       listShellJobs: () => Promise<BackgroundShellJob[]>
       stopShellJob: (agentSessionId: string, jobId: string) => Promise<void>

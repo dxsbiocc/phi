@@ -190,6 +190,7 @@ test('runner records lifecycle events and failed outcome', async () => {
     const run = registry.startRun({
       sessionId,
       runId,
+      loadedSkills: ['pptx'],
       execute: async () => {
         throw new Error('boom org-930ebedfe4d54cf998034940e3c937c1<ak-fch4ix7rq6wi11c3z111>')
       }
@@ -204,6 +205,7 @@ test('runner records lifecycle events and failed outcome', async () => {
       ['run_started', 'run_failed']
     )
     assert.equal(events[0].runId, runId)
+    assert.deepEqual(events[0].loadedSkills, ['pptx'])
     assert.equal(events[0].createdAt, run.startedAt)
     assert.equal(typeof events[1].durationMs, 'number')
     assert.equal(events[1].errorMessage, 'boom [redacted]')

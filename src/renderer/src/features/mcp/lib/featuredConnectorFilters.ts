@@ -29,7 +29,7 @@ export function filterFeaturedConnectors(
       connector.overview,
       connector.category,
       connector.publisher
-    ].some((value) => value.toLowerCase().includes(query))
+    ].some((value) => (value ?? '').toLowerCase().includes(query))
   })
 
   if (options.sort === 'name') {

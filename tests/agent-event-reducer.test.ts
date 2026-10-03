@@ -1119,3 +1119,29 @@ test('a steering message without text is ignored', () => {
   ])
   assert.equal((agentCard(state) as { steers?: unknown }).steers, undefined)
 })
+
+test('live file delivery keeps artifact metadata', () => {
+  const event: AgentEventSummary = {
+    source: 'phi',
+    type: 'files_presented',
+    eventId: 'delivery-artifact',
+    runId: 'run-1',
+    files: [
+      {
+        path: '/project/figures/plot.png',
+        displayPath: 'figures/plot.png',
+        bytes: 12,
+        artifact: { kind: 'figure', title: 'Volcano plot', envId: 'env-1' }
+      }
+    ]
+  }
+  const first = reduceAgentEventState(createAgentEventReducerState(), event)
+  assert.equal(first.messages[0]?.role, 'presented_files')
+  if (first.messages[0]?.role === 'presented_files') {
+    assert.deepEqual(first.messages[0].files[0]?.artifact, {
+      kind: 'figure',
+      title: 'Volcano plot',
+      envId: 'env-1'
+    })
+  }
+})

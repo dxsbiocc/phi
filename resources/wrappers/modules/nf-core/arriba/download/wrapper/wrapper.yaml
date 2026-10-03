@@ -10,7 +10,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "GRCh38"
     description: "Genome build name (e.g. GRCh38)."
   outdir:
     kind: output

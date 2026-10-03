@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import test from 'node:test'
+import test, { mock } from 'node:test'
 
 import {
   beginWorkspaceChangeCapture,
@@ -216,9 +216,17 @@ test('change summaries cap the visible file list while retaining the total', asy
     for (let index = 0; index < 55; index += 1) {
       writeFileSync(join(root, `result-${String(index).padStart(2, '0')}.txt`), 'new\n')
     }
-    const summary = await finishWorkspaceChangeCapture(baseline)
-    assert.equal(summary?.totalChanged, 55)
-    assert.equal(summary?.files.length, 50)
-    assert.equal(summary?.truncated, true)
+    // Scanning 55 files spawns a git diff each; on a loaded machine that outlasts the
+    // capture's wall-clock budget and the scan stops early. That budget is not what this
+    // test measures, so freeze the clock it reads (only Date; real timers still run).
+    mock.timers.enable({ apis: ['Date'], now: Date.now() })
+    try {
+      const summary = await finishWorkspaceChangeCapture(baseline)
+      assert.equal(summary?.totalChanged, 55)
+      assert.equal(summary?.files.length, 50)
+      assert.equal(summary?.truncated, true)
+    } finally {
+      mock.timers.reset()
+    }
   })
 })

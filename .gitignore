@@ -6,6 +6,7 @@ out
 *.log*
 .codegraph
 *.tsbuildinfo
+*.key.pem
 
 # Nextflow run artifacts left behind by testing wrapper/subworkflow/workflow
 # adapters under resources/wrappers/ — not something to ship or commit.
@@ -17,6 +18,13 @@ resources/wrappers/**/.nextflow/
 # the committed source of the pack's name and version.
 resources/wrappers/index.json
 
+# Micromamba binaries downloaded by `npm run runtime:fetch`. Version, URL, and
+# sha256 live in resources/runtime/manifest.json, which is committed.
+resources/runtime/micromamba/
+
 # Local agent-tool runtime state (progress tracking, screenshots) — not
 # project source.
 .omx/
+
+# Local db-vs-fetch evaluation results (scripts/eval/).
+eval-results/

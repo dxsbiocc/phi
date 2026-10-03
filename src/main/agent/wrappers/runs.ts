@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { getProject, getProjectByCwd } from '../projects'
 import { getPhiAgentDir } from '../runtime-paths'
 import { findWrapperCatalogEntry } from './catalog'
-import { runLocalWrapperExecution } from './executor-local'
+import { runLocalWrapperExecution, type RunLocalWrapperOptions } from './executor-local'
 import { joinRemote, type RemoteJobHandle } from './executor-remote'
 import { runRemoteBackgroundWrapperExecution } from './executor-remote-background-submit'
 import { readRemoteRunSnapshot, transition } from './executor-remote-run'
@@ -256,6 +256,12 @@ export function submitWrapperRunPlan(
      * an override for the same host and remote root.
      */
     remote?: RemoteSubmitOptions
+    /**
+     * Local Nextflow resolution (build registry, runtime root). A plan submitted from the
+     * wrapper panel has no chat session, so a missing environment is joined if a build is
+     * already running and otherwise fails the run with the not-ready message.
+     */
+    nextflowLaunch?: RunLocalWrapperOptions['nextflowLaunch']
   } = {}
 ): WrapperRun {
   const agentDir = options.agentDir ?? getPhiAgentDir()
@@ -367,7 +373,10 @@ export function submitWrapperRunPlan(
     // and drives its own state transitions (see executor-local.ts). Any
     // failure to even start executing still needs to land as a terminal
     // run state — an unstarted run must never sit at "created" forever.
-    void runLocalWrapperExecution(run, submittedPlan, { agentDir }).catch((error: unknown) => {
+    void runLocalWrapperExecution(run, submittedPlan, {
+      agentDir,
+      ...(options.nextflowLaunch ? { nextflowLaunch: options.nextflowLaunch } : {})
+    }).catch((error: unknown) => {
       markRunFailed(run, agentDir, error instanceof Error ? error.message : String(error))
     })
   } else if (options.autoExecute !== false && run.executor === 'slurm-controller') {

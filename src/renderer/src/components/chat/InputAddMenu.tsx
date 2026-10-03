@@ -213,7 +213,7 @@ export function InputAddPanel({
         )}
       </InputAddGroup>
 
-      <InputAddGroup title="插件">
+      <InputAddGroup title="开发者扩展">
         {installedPlugins.length > 0 ? (
           installedPlugins.map((plugin) => (
             <InputAddMenuRow
@@ -224,7 +224,7 @@ export function InputAddPanel({
             />
           ))
         ) : (
-          <InputAddEmptyState>暂无已安装插件</InputAddEmptyState>
+          <InputAddEmptyState>暂无已安装开发者扩展</InputAddEmptyState>
         )}
       </InputAddGroup>
     </Paper>
@@ -243,12 +243,12 @@ export function InputAddControl({
   onToggle: () => void
 }): ReactNode {
   return (
-    <Tooltip title="添加文件、智能体、Skill 或插件" enterDelay={400}>
+    <Tooltip title="添加文件、智能体、Skill 或开发者扩展" enterDelay={400}>
       <IconButton
         ref={buttonRef}
         size="small"
         type="button"
-        aria-label="添加文件、智能体、Skill 或插件"
+        aria-label="添加文件、智能体、Skill 或开发者扩展"
         aria-controls={open ? controls : undefined}
         aria-expanded={open}
         aria-haspopup="menu"

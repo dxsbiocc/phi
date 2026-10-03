@@ -1,0 +1,86 @@
+# Clean-machine isolation gate from docs/contracts/execution.md § Guarantees.
+#
+# The conformance suite (`npm run test:runtime`) must pass on a machine with no
+# host Python or R: the interpreter is inside the prefix, host-only modules are
+# not importable, and tool caches stay in the runtime cache. Each run builds
+# fixture environments from locks. Only micromamba downloads (`pkgs/`,
+# `sources/`) are cached; `envs/` is not, so prefixes are created from scratch.
+
+name: Runtime conformance
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'src/main/agent/envs/**'
+      - 'tests/runtime/**'
+      - 'tests/envs-*.test.ts'
+      - 'tests/fixtures/envs/**'
+      - 'resources/runtime/**'
+      - 'scripts/runtime/**'
+      - 'docs/contracts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/runtime.yml'
+  pull_request:
+    paths:
+      - 'src/main/agent/envs/**'
+      - 'tests/runtime/**'
+      - 'tests/envs-*.test.ts'
+      - 'tests/fixtures/envs/**'
+      - 'resources/runtime/**'
+      - 'scripts/runtime/**'
+      - 'docs/contracts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/runtime.yml'
+  workflow_dispatch:
+
+jobs:
+  conformance:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-14 is arm64; ubuntu-latest is x64.
+        os: [macos-14, ubuntu-latest]
+    steps:
+      # The runner context is not available in job-level env, so set it here.
+      - name: Runtime root
+        run: echo "PHI_TEST_RUNTIME_ROOT=${{ runner.temp }}/phi-test-runtime" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # No .nvmrc, .node-version, or package.json engines.
+          # Major version implied by @types/node ^22.19.1.
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fetch micromamba
+        run: npm run runtime:fetch
+
+      - name: Cache micromamba package downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.PHI_TEST_RUNTIME_ROOT }}/pkgs
+            ${{ env.PHI_TEST_RUNTIME_ROOT }}/sources
+          # Lockfile hash is identical on every runner; OS and arch keep
+          # osx-arm64 and linux-64 archives apart. envs/ is not cached.
+          key: micromamba-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tests/fixtures/envs/**/locks/*.txt', 'tests/fixtures/envs/**/environment.yml') }}
+          restore-keys: |
+            micromamba-${{ runner.os }}-${{ runner.arch }}-
+
+      # Runs tests/runtime/*.test.ts and the envs integration tests (PHI_RUNTIME_INTEGRATION=1).
+      - name: Runtime conformance suite
+        run: npm run test:runtime

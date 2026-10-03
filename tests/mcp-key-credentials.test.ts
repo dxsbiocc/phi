@@ -16,9 +16,9 @@ import {
   disableFeaturedApiKeyAutoDiscovery
 } from '../src/main/agent/mcp-connectors'
 import {
-  isDbCredentialStorageAvailable,
+  isCredentialStorageAvailable,
   type SafeStorageLike
-} from '../src/main/agent/db/credential-store'
+} from '../src/main/agent/credentials/credential-store'
 
 const safeStorage: SafeStorageLike = {
   isEncryptionAvailable: () => true,
@@ -58,7 +58,7 @@ test('Linux basic_text storage is rejected even when encryption reports availabl
   const weakStorage = { ...safeStorage, getSelectedStorageBackend: () => 'basic_text' }
   try {
     Object.defineProperty(process, 'platform', { ...platform, value: 'linux' })
-    assert.equal(isDbCredentialStorageAvailable(weakStorage), false)
+    assert.equal(isCredentialStorageAvailable(weakStorage), false)
     assert.throws(
       () => setFeaturedMcpApiKey('tavily', 'tvly-test-secret', agentDir, weakStorage),
       /不支持加密存储/

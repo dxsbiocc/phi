@@ -20,7 +20,6 @@ params:
     kind: option
     type: string
     required: false
-    default: ""
     description: Comma-separated read names to filter (empty keeps all reads, useful as a pass-through reformat).
   outdir:
     kind: output

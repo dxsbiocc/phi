@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync, type Dirent } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, rmSync, type Dirent } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, join, resolve } from 'node:path'
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
+import type { SkillContent, SkillSourceCategory, SkillSummary } from '../../shared/skillTypes'
 import { WORKSPACE_DIR } from './session/sessions'
 import {
   createRuntimeResourceLoader,
@@ -12,31 +12,21 @@ import {
 import { isInjectedMcpServer, readDisabledMcpServerNames } from './mcp-connectors'
 import { getGlobalMcpConfigPaths, getPhiAgentDir, getProjectMcpConfigPaths } from './runtime-paths'
 import { discoverPhiAgents } from './agents/discovery'
+import { getEnablementSnapshot, isCoreSkill, setEnabled, skillEnablementSource } from './enablement'
+import { parseSkillFile } from './content/skill'
 
 const AGENT_DIR = getPhiAgentDir()
 
-export type SkillSourceCategory = 'system' | 'third-party' | 'user' | 'generated'
-
-export interface SkillSummary {
-  id: string
-  name: string
-  description: string
-  filePath: string
-  source: string
-  scope: 'user' | 'project' | 'temporary'
-  sourceCategory: SkillSourceCategory
-  sourceCategoryLabel: string
-  disabled: boolean
-}
-
-export interface SkillContent {
-  filePath: string
-  content: string
-}
+export type { SkillContent, SkillSourceCategory, SkillSummary } from '../../shared/skillTypes'
 
 export interface McpServerSummary {
   id: string
   name: string
+  /** Catalog title of the connector this server came from, when known. */
+  title?: string
+  connectorId?: string
+  packageId?: string
+  category?: string
   command?: string
   args?: string[]
   envKeys?: string[]
@@ -110,23 +100,21 @@ function promptAgentTrigger(name: string): string {
 }
 
 const SKILL_SOURCE_CATEGORY_LABELS: Record<SkillSourceCategory, string> = {
-  system: 'System',
-  'third-party': 'Plugin',
-  user: 'User',
-  generated: 'Agent'
+  bundled: '内置',
+  'installed-package': '已安装',
+  user: '我的',
+  project: '项目',
+  plugin: '插件'
 }
 const SKILL_SOURCE_CATEGORY_ORDER: Record<SkillSourceCategory, number> = {
-  system: 0,
-  'third-party': 1,
+  bundled: 0,
+  'installed-package': 1,
   user: 2,
-  generated: 3
+  project: 3,
+  plugin: 4
 }
 
-function normalizedPath(value: string | undefined): string {
-  return value ? value.replaceAll('\\', '/').toLowerCase() : ''
-}
-
-function classifySkillSource(skill: {
+export function classifySkillSource(skill: {
   filePath: string
   sourceInfo: {
     source: string
@@ -135,59 +123,50 @@ function classifySkillSource(skill: {
     baseDir?: string
   }
 }): SkillSourceCategory {
-  const filePath = normalizedPath(skill.filePath)
-  const baseDir = normalizedPath(skill.sourceInfo.baseDir)
-  const source = skill.sourceInfo.source.toLowerCase()
-  const origin = skill.sourceInfo.origin?.toLowerCase() ?? ''
-  const haystack = `${filePath} ${baseDir} ${source} ${origin}`
-
-  if (
-    haystack.includes('/.agents/skills/') ||
-    source.startsWith('agents') ||
-    origin.includes('generated')
-  ) {
-    return 'generated'
-  }
-
-  if (
-    haystack.includes('/resources/skills/') ||
-    (source === 'bundled' && origin.includes('resources'))
-  ) {
-    return 'system'
-  }
-
-  if (
-    haystack.includes('/plugins/cache/') ||
-    haystack.includes('/plugins/') ||
-    haystack.includes('/skills/.system/') ||
-    haystack.includes('/openai-bundled/') ||
-    haystack.includes('/openai-primary-runtime/') ||
-    source.includes('plugin') ||
-    source.includes('package') ||
-    source.includes('npm') ||
-    source.includes('system') ||
-    source.includes('builtin')
-  ) {
-    return 'third-party'
-  }
-
-  return 'user'
+  return skillEnablementSource(skill)
 }
 
-function toSkillSummary(skill: {
-  name: string
-  description: string
-  filePath: string
-  disableModelInvocation?: boolean
-  hide?: boolean
-  sourceInfo: {
-    source: string
-    scope: 'user' | 'project' | 'temporary'
-    origin?: string
-    baseDir?: string
+/** Skill contract 1.1.0 `phi.deprecated`; unreadable or malformed files simply have none. */
+function skillDeprecation(filePath: string): string | undefined {
+  try {
+    const parsed = parseSkillFile(readFileSync(filePath, 'utf8'))
+    if (!parsed.ok) return undefined
+    const phi = parsed.frontmatter.phi
+    if (!phi || typeof phi !== 'object' || Array.isArray(phi)) return undefined
+    const message = (phi as Record<string, unknown>).deprecated
+    return typeof message === 'string' && message.trim() ? message.trim() : undefined
+  } catch {
+    return undefined
   }
-}): SkillSummary {
+}
+
+function toSkillSummary(
+  skill: {
+    name: string
+    description: string
+    filePath: string
+    disableModelInvocation?: boolean
+    hide?: boolean
+    sourceInfo: {
+      source: string
+      scope: 'user' | 'project' | 'temporary'
+      origin?: string
+      baseDir?: string
+    }
+  },
+  snapshot: ReturnType<typeof getEnablementSnapshot>
+): SkillSummary {
   const sourceCategory = classifySkillSource(skill)
+  const key = `skill:${skill.name}`
+  const core = isCoreSkill(skill.name)
+  const sourceDefault = sourceCategory !== 'bundled'
+  const globalOverride = Object.hasOwn(snapshot.global, key) ? (snapshot.global[key] ?? null) : null
+  const projectOverride = Object.hasOwn(snapshot.project, key)
+    ? (snapshot.project[key] ?? null)
+    : null
+  const globalEnabled = core ? true : (globalOverride ?? sourceDefault)
+  const enabled = core ? true : (projectOverride ?? globalEnabled)
+  const deprecated = skillDeprecation(skill.filePath)
 
   return {
     id: skill.filePath,
@@ -195,37 +174,20 @@ function toSkillSummary(skill: {
     description: skill.description,
     filePath: skill.filePath,
     source: skill.sourceInfo.source,
+    ...(skill.sourceInfo.origin ? { sourceId: skill.sourceInfo.origin } : {}),
     scope: skill.sourceInfo.scope,
     sourceCategory,
-    sourceCategoryLabel: SKILL_SOURCE_CATEGORY_LABELS[sourceCategory],
-    disabled: skillDisabledFromFile(skill)
-  }
-}
-
-function metadataBoolean(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined
-}
-
-function skillDisabledFromFile(skill: {
-  filePath: string
-  disableModelInvocation?: boolean
-  hide?: boolean
-}): boolean {
-  const fallback = skill.disableModelInvocation === true || skill.hide === true
-
-  try {
-    const metadata = parseFrontmatterRecord(
-      markdownFrontmatter(readFileSync(skill.filePath, 'utf-8'))
-    )
-    const values = [
-      metadataBoolean(metadata.disableModelInvocation),
-      metadataBoolean(metadata.hide),
-      metadataBoolean(metadata['disable-model-invocation'])
-    ].filter((value): value is boolean => value !== undefined)
-
-    return values.length > 0 ? values.some(Boolean) : fallback
-  } catch {
-    return fallback
+    sourceCategoryLabel:
+      sourceCategory === 'bundled' && isCoreSkill(skill.name)
+        ? '内置·核心'
+        : SKILL_SOURCE_CATEGORY_LABELS[sourceCategory],
+    enabled,
+    globalEnabled,
+    globalOverride,
+    projectOverride,
+    core,
+    disabled: !enabled,
+    ...(deprecated ? { deprecated } : {})
   }
 }
 
@@ -274,12 +236,14 @@ function toMcpServerSummary(
   const envKeys = isRecord(value.env) ? Object.keys(value.env).sort() : undefined
   const url = stringValue(value.url)
   const transport = stringValue(value.type)
+  const packageId = stringValue(value.phiPackage)
 
   if (!command && !args && !envKeys && !url) return null
 
   return {
     id: `${sourcePath}:${name}`,
     name,
+    ...(packageId ? { connectorId: packageId, packageId } : {}),
     command,
     args,
     envKeys,
@@ -319,26 +283,6 @@ function markdownFrontmatter(content: string): string {
 function markdownBody(content: string): string {
   const match = content.match(/^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/)
   return match ? content.slice(match[0].length) : content
-}
-
-function parseFrontmatterRecord(frontmatter: string): UnknownRecord {
-  const parsed = frontmatter.trim() ? parseYaml(frontmatter) : {}
-  if (!isRecord(parsed)) {
-    throw new Error('Skill metadata must be a YAML mapping')
-  }
-  return parsed
-}
-
-function skillMarkdownWithMetadata(content: string, patch: UnknownRecord): string {
-  const frontmatter = markdownFrontmatter(content)
-  const body = markdownBody(content)
-  const metadata = {
-    ...parseFrontmatterRecord(frontmatter),
-    ...patch
-  }
-  const nextFrontmatter = stringifyYaml(metadata).trimEnd()
-  const separator = body.startsWith('\n') || body.startsWith('\r\n') ? '' : '\n'
-  return `---\n${nextFrontmatter}\n---${separator}${body}`
 }
 
 function markdownDescription(content: string): string {
@@ -446,9 +390,10 @@ export async function listSkills(cwd = WORKSPACE_DIR): Promise<SkillSummary[]> {
   const loader = createResourceLoader(cwd)
   await loader.reload()
   const { skills } = loader.getSkills()
+  const snapshot = getEnablementSnapshot({ projectDir: cwd, agentDir: AGENT_DIR })
 
   return skills
-    .map(toSkillSummary)
+    .map((skill) => toSkillSummary(skill, snapshot))
     .sort(
       (left, right) =>
         SKILL_SOURCE_CATEGORY_ORDER[left.sourceCategory] -
@@ -522,27 +467,22 @@ export async function setSkillDisabled(
 ): Promise<SkillSummary[]> {
   const { skill, sourceCategory } = await findCatalogSkill(filePath, cwd)
 
-  if (sourceCategory === 'system') {
-    throw new Error('System skills cannot be modified')
-  }
-
-  const content = readFileSync(skill.filePath, 'utf-8')
-  writeFileSync(
-    skill.filePath,
-    skillMarkdownWithMetadata(content, { disableModelInvocation: disabled, hide: disabled }),
-    'utf-8'
-  )
+  if (sourceCategory === 'plugin') throw new Error('Plugin skills are managed on the Plugins page')
+  setEnabled(`skill:${skill.name}`, !disabled, { agentDir: AGENT_DIR })
   return listSkills(cwd)
 }
 
 export async function deleteSkill(filePath: string, cwd = WORKSPACE_DIR): Promise<SkillSummary[]> {
   const { skill, sourceCategory } = await findCatalogSkill(filePath, cwd)
 
-  if (sourceCategory === 'system') {
+  if (sourceCategory === 'bundled') {
     throw new Error('System skills cannot be deleted')
   }
-  if (sourceCategory === 'third-party') {
+  if (sourceCategory === 'plugin') {
     throw new Error('Plugin skills must be removed from the plugin manager')
+  }
+  if (sourceCategory === 'installed-package') {
+    throw new Error('Installed package skills must be removed from the package manager')
   }
 
   rmSync(dirname(skill.filePath), { recursive: true, force: false })

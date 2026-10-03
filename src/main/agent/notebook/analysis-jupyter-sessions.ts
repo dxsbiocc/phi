@@ -60,6 +60,15 @@ export type JupyterSessionRecord = {
   executionState: JupyterKernelExecutionState
 }
 
+/**
+ * Prepares a managed kernel whose environment is not built: the build prompt, the build, and
+ * the kernelspec. `ready: false` carries the gate's message (declined, failed, not ready).
+ */
+export type PrepareNotebookKernel = (
+  kernel: AnalysisKernelSummary,
+  input: EnsureNotebookSessionInput
+) => Promise<{ ready: true } | { ready: false; message: string }>
+
 export interface JupyterSessionClient {
   createSession(
     connection: JupyterServerConnection,
@@ -130,7 +139,12 @@ function notebookKernelSpec(document: NotebookDocument): {
   }
 }
 
-function selectNotebookKernel(
+/**
+ * An exact kernelspec name is an explicit choice and may name a host kernel. Every other
+ * match (display name, language, preferred, first) considers only non-host kernels, so a host
+ * kernel is never picked by default.
+ */
+export function selectNotebookKernel(
   document: NotebookDocument,
   kernels: AnalysisKernelDiagnostics
 ): AnalysisKernelSummary | null {
@@ -139,21 +153,28 @@ function selectNotebookKernel(
     const exact = kernels.kernels.find((kernel) => kernel.name === requested.name)
     if (exact) return exact
   }
+  const defaults = kernels.kernels.filter((kernel) => kernel.source !== 'host')
   if (requested.displayName) {
-    const exactDisplay = kernels.kernels.find(
+    const exactDisplay = defaults.find(
       (kernel) =>
         kernel.displayName.toLocaleLowerCase() === requested.displayName?.toLocaleLowerCase()
     )
     if (exactDisplay) return exactDisplay
   }
+  const preferred = kernels.preferredKernelName
+    ? defaults.find((kernel) => kernel.name === kernels.preferredKernelName)
+    : undefined
   if (requested.language) {
-    return kernels.kernels.find((kernel) => kernel.language === requested.language) ?? null
+    if (preferred?.language === requested.language) return preferred
+    return defaults.find((kernel) => kernel.language === requested.language) ?? null
   }
-  if (kernels.preferredKernelName) {
-    const preferred = kernels.kernels.find((kernel) => kernel.name === kernels.preferredKernelName)
-    if (preferred) return preferred
-  }
-  return kernels.kernels[0] ?? null
+  if (preferred) return preferred
+  return defaults[0] ?? null
+}
+
+function notBuiltMessage(kernel: AnalysisKernelSummary): string {
+  const ref = kernel.environment?.ref ?? kernel.name
+  return `environment ${ref} is not ready; the user must build it first`
 }
 
 function notebookRelativePath(projectCwd: string, notebookPath: string): string {
@@ -331,15 +352,18 @@ export class AnalysisNotebookSessionRegistry {
   private readonly getConnection: (projectCwd: string) => JupyterServerConnection | null
   private readonly client: JupyterSessionClient
   private readonly now: () => Date
+  private readonly prepareKernel?: PrepareNotebookKernel
 
   constructor(options: {
     getConnection: (projectCwd: string) => JupyterServerConnection | null
     client?: JupyterSessionClient
     now?: () => Date
+    prepareKernel?: PrepareNotebookKernel
   }) {
     this.getConnection = options.getConnection
     this.client = options.client ?? new FetchJupyterSessionClient()
     this.now = options.now ?? (() => new Date())
+    if (options.prepareKernel) this.prepareKernel = options.prepareKernel
   }
 
   status(input: EnsureNotebookSessionInput): AnalysisNotebookSessionStatus {
@@ -348,6 +372,9 @@ export class AnalysisNotebookSessionRegistry {
     if (existing) return publicStatus(existing)
     const kernel = selectNotebookKernel(input.document, input.kernels)
     if (!kernel) return this.missingStatus(input)
+    if (kernel.status === 'not-built') {
+      return this.notBuiltStatus(input, kernel, notBuiltMessage(kernel))
+    }
     if (!this.getConnection(input.projectCwd)) {
       return {
         projectCwd: input.projectCwd,
@@ -376,6 +403,16 @@ export class AnalysisNotebookSessionRegistry {
     const existing = this.records.get(key)
     if (existing && existing.kernelName === kernel.name && this.isHealthy(existing.state)) {
       return publicStatus(existing)
+    }
+
+    if (kernel.status === 'not-built') {
+      if (!this.prepareKernel) return this.notBuiltStatus(input, kernel, notBuiltMessage(kernel))
+      try {
+        const prepared = await this.prepareKernel(kernel, input)
+        if (!prepared.ready) return this.notBuiltStatus(input, kernel, prepared.message)
+      } catch (error) {
+        return this.notBuiltStatus(input, kernel, errorMessage(error))
+      }
     }
 
     const connection = this.getConnection(input.projectCwd)
@@ -560,6 +597,21 @@ export class AnalysisNotebookSessionRegistry {
 
   private isHealthy(state: AnalysisNotebookKernelState): boolean {
     return state === 'idle' || state === 'busy' || state === 'restarting'
+  }
+
+  private notBuiltStatus(
+    input: EnsureNotebookSessionInput,
+    kernel: AnalysisKernelSummary,
+    message: string
+  ): AnalysisNotebookSessionStatus {
+    return {
+      projectCwd: input.projectCwd,
+      notebookPath: input.notebookPath,
+      kernelName: kernel.name,
+      kernelDisplayName: kernel.displayName,
+      state: 'missing',
+      message
+    }
   }
 
   private missingStatus(input: EnsureNotebookSessionInput): AnalysisNotebookSessionStatus {

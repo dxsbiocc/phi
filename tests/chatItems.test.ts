@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { presentedFilesItemFromPhiTimelineEvent } from '../src/renderer/src/features/chat/lib/presentedFiles'
 import {
   chatItemsFromSessionMessages,
   extractNotebookToolSummary,
@@ -1350,11 +1351,11 @@ test('chatItemsFromSessionMessages restores the notice for a finished background
       eventId: 'event-agent-done',
       createdAt: '2026-09-20T10:03:00.000Z',
       agentRunId: 'run_2',
-      agent: 'Database',
+      agent: 'Wrapper',
       state: 'error',
       task: 'look up TP53 in ClinVar',
       elapsedSeconds: 125,
-      error: 'The Database agent failed: connector offline'
+      error: 'The Wrapper agent failed: runner offline'
     }
   ])
   assert.equal(items.length, 1)
@@ -1364,9 +1365,9 @@ test('chatItemsFromSessionMessages restores the notice for a finished background
     state: 'failed'
   })
   const content = (items[0] as { content: string }).content
-  assert.match(content, /^Database 后台任务失败\n/)
+  assert.match(content, /^Wrapper 后台任务失败\n/)
   assert.match(content, /TP53/)
-  assert.match(content, /connector offline/)
+  assert.match(content, /runner offline/)
   assert.match(content, /2 分 5 秒/)
   assert.match(content, /run_2/)
 })
@@ -1498,4 +1499,81 @@ test('a restored card keeps the user’s steering messages', () => {
     steers?: Array<{ text: string; createdAt?: string }>
   }
   assert.deepEqual(card.steers, [{ text: 'use hg38', createdAt: '2026-09-20T10:01:00.000Z' }])
+})
+
+test('presented files keep a valid artifact and drop invalid artifact metadata', () => {
+  const kept = presentedFilesItemFromPhiTimelineEvent({
+    type: 'files_presented',
+    eventId: 'delivery-artifact',
+    runId: 'run-1',
+    files: [
+      {
+        path: '/project/figures/plot.png',
+        displayPath: 'figures/plot.png',
+        bytes: 12,
+        description: 'Volcano plot',
+        artifact: { kind: 'figure', title: 'Volcano plot', envId: 'env-1', extra: 'ignored' }
+      }
+    ]
+  })
+  assert.deepEqual(kept?.files[0]?.artifact, {
+    kind: 'figure',
+    title: 'Volcano plot',
+    envId: 'env-1'
+  })
+
+  const history = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'files_presented',
+      eventId: 'delivery-artifact',
+      runId: 'run-1',
+      files: [
+        {
+          path: '/project/figures/plot.png',
+          displayPath: 'figures/plot.png',
+          bytes: 12,
+          description: 'Volcano plot',
+          artifact: { kind: 'figure', title: 'Volcano plot', envId: 'env-1' }
+        }
+      ]
+    }
+  ])
+  assert.equal(history[0]?.role, 'presented_files')
+  if (history[0]?.role === 'presented_files') {
+    assert.deepEqual(history[0].files[0]?.artifact, {
+      kind: 'figure',
+      title: 'Volcano plot',
+      envId: 'env-1'
+    })
+  }
+
+  const dropped = presentedFilesItemFromPhiTimelineEvent({
+    type: 'files_presented',
+    eventId: 'delivery-bad-artifact',
+    files: [
+      {
+        path: '/project/figures/plot.png',
+        displayPath: 'figures/plot.png',
+        bytes: 12,
+        artifact: { kind: 1, title: 'Volcano plot' }
+      }
+    ]
+  })
+  assert.equal(dropped?.files.length, 1)
+  assert.equal(dropped?.files[0]?.artifact, undefined)
+
+  const partial = presentedFilesItemFromPhiTimelineEvent({
+    type: 'files_presented',
+    eventId: 'delivery-partial-artifact',
+    files: [
+      {
+        path: '/project/figures/plot.png',
+        displayPath: 'figures/plot.png',
+        bytes: 12,
+        artifact: { kind: 'table', title: 'Counts', envId: 4 }
+      }
+    ]
+  })
+  assert.deepEqual(partial?.files[0]?.artifact, { kind: 'table', title: 'Counts' })
 })

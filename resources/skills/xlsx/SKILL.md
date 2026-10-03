@@ -4,7 +4,10 @@ description: "Create, edit, analyze, or convert Excel spreadsheets (.xlsx, .xlsm
 allowed-tools: Read Write Edit Bash Grep Glob
 license: Proprietary. LICENSE.txt has complete terms
 metadata: {"version": "1.1", "skill-author": "K-Dense Inc."}
-compatibility: Requires Python 3.8+, LibreOffice (soffice on PATH), and gcc only when Unix sockets are restricted
+compatibility: Runs in phi:python@1. LibreOffice (soffice) is a host dependency. gcc is a host dependency only when Unix sockets are restricted.
+phi:
+  environment: phi:python@1
+  deprecated: 即将由 OfficeCLI 替代。Office 文档处理接入 OfficeCLI 后，这个技能会移出内置，改为可单独安装的包。
 ---
 
 # Requirements for Outputs
@@ -74,35 +77,22 @@ A user may ask you to create, edit, or analyze the contents of an .xlsx file. Yo
 
 ## Installation
 
-```bash
-uv pip install openpyxl pandas
-```
-
-Optional — faster Excel reading across formats with pandas 2.2+:
-
-```bash
-uv pip install python-calamine
-```
-
-For untrusted workbook files, harden openpyxl against XML expansion attacks:
-
-```bash
-uv pip install defusedxml
-```
+This skill runs in the managed `phi:python@1` environment; `openpyxl`, `pandas`, `python-calamine`, and `defusedxml` are already there.
 
 See [openpyxl security guidance](https://openpyxl.readthedocs.io/en/stable/index.html#security).
 
 ## Important Requirements
 
-**LibreOffice required for formula recalculation**: Assume LibreOffice is installed for recalculating formula values using `scripts/recalc.py`. The script configures LibreOffice on first run, including in sandboxed environments where Unix sockets are restricted (handled by `scripts/office/soffice.py`).
+**LibreOffice is a host dependency** for formula recalculation via `scripts/recalc.py`. The script configures LibreOffice on first run, including in sandboxed environments where Unix sockets are restricted (handled by `scripts/office/soffice.py`).
 
-**System dependencies** (not installed via uv):
+**Host dependencies** (not in `phi:python@1`):
 
 | Tool | Purpose |
 |------|---------|
 | `soffice` (LibreOffice 7.x+) | Evaluates Excel formulas via `scripts/recalc.py` |
 | `gcc` | Only when Unix domain sockets are blocked; compiles a one-time shim into `~/.cache/xlsx-skill/lo-shim/` |
-| `gtimeout` (macOS, optional) | GNU coreutils `timeout` for recalc timeout support on Darwin |
+
+`coreutils` (including `timeout`) is already in `phi:python@1`.
 
 Verify LibreOffice is available: `soffice --version`
 
@@ -172,7 +162,7 @@ This applies to ALL calculations - totals, percentages, ratios, differences, etc
 4. **Save**: Write to file
 5. **Recalculate formulas (MANDATORY IF USING FORMULAS)**: Use the `scripts/recalc.py` script
    ```bash
-   python skills/xlsx/scripts/recalc.py output.xlsx
+   skill_run({ skill: "xlsx", script: "recalc.py", args: ["output.xlsx"] })
    ```
 6. **Verify and fix any errors**: 
    - The script returns JSON with error details
@@ -245,12 +235,12 @@ wb.save('modified.xlsx')
 Excel files created or modified by openpyxl contain formulas as strings but not calculated values. Use the provided `scripts/recalc.py` script to recalculate formulas:
 
 ```bash
-python skills/xlsx/scripts/recalc.py <excel_file> [timeout_seconds]
+skill_run({ skill: "xlsx", script: "recalc.py", args: ["<excel_file>"] })          # optional second arg: timeout in seconds
 ```
 
 Example:
 ```bash
-python skills/xlsx/scripts/recalc.py output.xlsx 30
+skill_run({ skill: "xlsx", script: "recalc.py", args: ["output.xlsx", "30"] })
 ```
 
 The script:

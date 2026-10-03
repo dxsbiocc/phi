@@ -163,7 +163,7 @@ function ProjectRowImpl({
           // lift only reads once hover paints the surface.
           '&:hover': {
             backgroundColor: 'background.paper !important',
-            boxShadow: (theme: Theme) => theme.customShadows.listItem
+            boxShadow: (theme: Theme) => theme.customShadows?.listItem ?? theme.shadows[2]
           },
           '&:hover .project-actions': { opacity: 1 },
           '&:hover .project-toggle-icon': { opacity: 1 }

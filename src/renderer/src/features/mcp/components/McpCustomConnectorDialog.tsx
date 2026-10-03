@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   Alert,
   Button,
@@ -25,12 +25,6 @@ export function McpCustomConnectorDialog({
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const canSubmit = Boolean(name.trim() && url.trim())
-
-  useEffect(() => {
-    if (!open) return
-    setName('')
-    setUrl('')
-  }, [open])
 
   return (
     <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="xs" fullWidth>

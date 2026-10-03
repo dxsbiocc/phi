@@ -5,13 +5,17 @@ import {
   ENVIRONMENT_TOOL_IDS,
   ENVIRONMENT_TOOL_LABELS,
   type EnvironmentGetResult,
+  type EnvironmentHostDependency,
+  type EnvironmentHostTool,
   type EnvironmentSnapshot,
   type EnvironmentToolId,
   type EnvironmentToolState
 } from '../../../shared/environmentTypes'
 import { getPhiAgentDir } from '../runtime-paths'
 import {
+  detectEnvironmentHostTools,
   detectEnvironmentTools,
+  detectHostDependencies,
   probeCustomToolPath,
   type DetectEnvironmentOptions
 } from './detect'
@@ -27,6 +31,8 @@ type PersistedEnvironmentFile = {
   customPaths?: PersistedCustomPaths
   /** Last scan cache — rewritten on each detect. */
   tools?: EnvironmentToolState[]
+  hostDependencies?: EnvironmentHostDependency[]
+  hostTools?: EnvironmentHostTool[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -97,6 +103,8 @@ export function mergeDetectedWithCustoms(
 
 function toSnapshot(
   tools: EnvironmentToolState[],
+  hostDependencies: EnvironmentHostDependency[],
+  hostTools: EnvironmentHostTool[],
   meta: {
     scannedAt: string
     firstScanCompleted: boolean
@@ -107,7 +115,9 @@ function toSnapshot(
     scannedAt: meta.scannedAt,
     firstScanCompleted: meta.firstScanCompleted,
     summaryDismissed: meta.summaryDismissed,
-    tools
+    tools,
+    hostDependencies,
+    hostTools
   }
 }
 
@@ -121,21 +131,28 @@ function persistSnapshot(
     summaryDismissed: snapshot.summaryDismissed,
     scannedAt: snapshot.scannedAt,
     customPaths,
-    tools: snapshot.tools
+    tools: snapshot.tools,
+    hostDependencies: snapshot.hostDependencies,
+    hostTools: snapshot.hostTools
   })
 }
 
 export function readEnvironmentSnapshot(agentDir = getPhiAgentDir()): EnvironmentSnapshot {
   const persisted = readPersisted(agentDir)
   if (Array.isArray(persisted.tools) && persisted.tools.length > 0) {
-    return toSnapshot(persisted.tools, {
-      scannedAt:
-        typeof persisted.scannedAt === 'string' ? persisted.scannedAt : new Date(0).toISOString(),
-      firstScanCompleted: persisted.firstScanCompleted === true,
-      summaryDismissed: persisted.summaryDismissed === true
-    })
+    return toSnapshot(
+      persisted.tools,
+      Array.isArray(persisted.hostDependencies) ? persisted.hostDependencies : [],
+      Array.isArray(persisted.hostTools) ? persisted.hostTools : [],
+      {
+        scannedAt:
+          typeof persisted.scannedAt === 'string' ? persisted.scannedAt : new Date(0).toISOString(),
+        firstScanCompleted: persisted.firstScanCompleted === true,
+        summaryDismissed: persisted.summaryDismissed === true
+      }
+    )
   }
-  return toSnapshot(emptyTools(), {
+  return toSnapshot(emptyTools(), [], [], {
     scannedAt: new Date(0).toISOString(),
     firstScanCompleted: false,
     summaryDismissed: false
@@ -150,8 +167,10 @@ export function scanAndPersistEnvironment(
   const customPaths = normalizeCustomPaths(persisted.customPaths)
   const detected = detectEnvironmentTools(options)
   const tools = mergeDetectedWithCustoms(detected, customPaths, options)
+  const hostDependencies = detectHostDependencies(options)
+  const hostTools = detectEnvironmentHostTools(tools, customPaths, options)
   const scannedAt = options.now?.() ?? new Date().toISOString()
-  const snapshot = toSnapshot(tools, {
+  const snapshot = toSnapshot(tools, hostDependencies, hostTools, {
     scannedAt,
     firstScanCompleted: true,
     // Re-scan keeps dismissal unless this was the very first scan.
@@ -164,7 +183,11 @@ export function scanAndPersistEnvironment(
 
 export function getEnvironment(agentDir = getPhiAgentDir()): EnvironmentGetResult {
   const persisted = readPersisted(agentDir)
-  if (persisted.firstScanCompleted !== true) {
+  if (
+    persisted.firstScanCompleted !== true ||
+    !Array.isArray(persisted.hostDependencies) ||
+    !Array.isArray(persisted.hostTools)
+  ) {
     const snapshot = scanAndPersistEnvironment(agentDir)
     return {
       snapshot,
@@ -219,8 +242,10 @@ export function setEnvironmentToolPath(
 
   const detected = detectEnvironmentTools(options)
   const tools = mergeDetectedWithCustoms(detected, customPaths, options)
+  const hostDependencies = detectHostDependencies(options)
+  const hostTools = detectEnvironmentHostTools(tools, customPaths, options)
   const scannedAt = options.now?.() ?? new Date().toISOString()
-  const snapshot = toSnapshot(tools, {
+  const snapshot = toSnapshot(tools, hostDependencies, hostTools, {
     scannedAt,
     firstScanCompleted: true,
     summaryDismissed: persisted.summaryDismissed === true
@@ -236,4 +261,16 @@ export function getActiveToolPath(
   const tool = readEnvironmentSnapshot(agentDir).tools.find((item) => item.id === toolId)
   if (tool?.status === 'ready' && tool.activePath) return tool.activePath
   return undefined
+}
+
+/**
+ * The path the user set explicitly for a tool (`customPaths`), whether or not it is
+ * currently valid. Unlike {@link getActiveToolPath} this ignores auto-detected paths:
+ * wrappers use a host nextflow only when the user chose one (runtime foundation §5.2).
+ */
+export function getCustomToolPath(
+  toolId: EnvironmentToolId,
+  agentDir = getPhiAgentDir()
+): string | undefined {
+  return normalizeCustomPaths(readPersisted(agentDir).customPaths)[toolId]
 }

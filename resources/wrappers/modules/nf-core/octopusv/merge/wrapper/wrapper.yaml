@@ -20,7 +20,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "intersect"
     description: "Merge strategy (e.g. intersect, union)."
   outdir:
     kind: output

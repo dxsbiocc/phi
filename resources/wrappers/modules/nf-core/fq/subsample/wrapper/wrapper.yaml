@@ -16,7 +16,7 @@ params:
     description: Glob matching one sample's FASTQ file(s) — a pair for paired-end, or one file for single-end.
   probability:
     kind: option
-    type: string
+    type: number
     required: false
     minimum: 0
     maximum: 1

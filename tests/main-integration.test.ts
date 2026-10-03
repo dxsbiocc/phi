@@ -20,18 +20,81 @@ import * as notebookCodeGeneration from '../src/main/agent/notebook/notebook-cod
 import * as lifecycle from '../src/main/agent/session/session-lifecycle'
 import * as notebookDocument from '../src/shared/notebookDocument'
 import * as sessionTitle from '../src/shared/sessionTitle'
-import { featuredMcpConnectors } from '../src/shared/mcpConnectorCatalog'
 import * as htmlReportPreview from '../src/shared/htmlReportPreview'
+import * as phiPluginProblems from '../src/shared/phiPluginProblems'
 import type { WorkspaceChangeSummary } from '../src/shared/workspaceChangeTypes'
 import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
 import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
 import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-preview-media'
 import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers/remote-result-download'
-import { isInstalledFigurePreviewPath } from '../src/main/agent/visualization/examples'
 import * as localFileAccess from '../src/main/agent/local-file-access'
 import * as browserIpc from '../src/main/browser/browser-ipc'
 import * as browserWorkspaceRegistry from '../src/main/browser/browser-workspace-registry'
 import * as electronBrowserEngine from '../src/main/browser/electron-browser-engine'
+
+const connectorCatalogFixture = [
+  {
+    id: 'notion',
+    version: '1.0.0',
+    name: 'Notion',
+    description: 'Notion connector',
+    publisher: 'Notion',
+    category: '生产力',
+    signIn: '需要登录',
+    transport: 'http',
+    auth: 'oauth',
+    url: 'https://mcp.notion.com/mcp',
+    registryDir: '/bundled-connectors',
+    added: false
+  },
+  {
+    id: 'composio',
+    version: '1.0.0',
+    name: 'Composio Connect',
+    description: 'Composio connector',
+    publisher: 'Composio',
+    category: '生产力',
+    signIn: '需要登录',
+    transport: 'http',
+    auth: 'oauth',
+    url: 'https://connect.composio.dev/mcp',
+    registryDir: '/bundled-connectors',
+    added: false
+  },
+  {
+    id: 'pubmed',
+    version: '1.0.0',
+    name: 'PubMed',
+    description: 'PubMed connector',
+    publisher: 'Anthropic',
+    category: '健康与生命科学',
+    signIn: '无需登录',
+    transport: 'http',
+    auth: 'none',
+    url: 'https://pubmed.mcp.claude.com/mcp',
+    registryDir: '/bundled-connectors',
+    added: false
+  },
+  ...[
+    ['tavily', 'https://mcp.tavily.com/mcp'],
+    ['serpapi', 'https://mcp.serpapi.com/mcp'],
+    ['firecrawl', 'https://mcp.firecrawl.dev/v2/mcp'],
+    ['browser-use', 'https://api.browser-use.com/v3/mcp']
+  ].map(([id, url]) => ({
+    id,
+    version: '1.0.0',
+    name: id,
+    description: `${id} connector`,
+    publisher: id,
+    category: '生产力',
+    signIn: '需要凭据',
+    transport: 'http',
+    auth: 'header',
+    url,
+    registryDir: '/bundled-connectors',
+    added: false
+  }))
+]
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -208,6 +271,7 @@ type HarnessResult = {
   events: Array<{ channel: string; data: unknown }>
   approvalOptions: Array<Record<string, unknown>>
   runnerEvents: Array<Record<string, unknown>>
+  runStartInputs: Array<Record<string, unknown>>
   createdPhiSessions: Array<Record<string, unknown>>
   remoteConnectionChecks: Array<{ sessionId: string; projectId: string }>
   wrapperJobOptions: Record<string, unknown>
@@ -279,8 +343,6 @@ type HarnessResult = {
     ) => Promise<unknown>
   ) => void
   operationLog: Array<Record<string, unknown>>
-  appSettingsUpdates: string[]
-  dbConnectorEnabledUpdates: Array<{ id: string; digest: string; enabled: boolean }>
   setOpenDialogResult: (result: { canceled: boolean; filePaths: string[] }) => void
   copiedText: () => string
   exportedSessions: Array<{ sessionId: string; destination: string }>
@@ -307,6 +369,7 @@ async function harness(
   const events: Array<{ channel: string; data: unknown }> = []
   const approvalOptions: Array<Record<string, unknown>> = []
   const runnerEvents: Array<Record<string, unknown>> = []
+  const runStartInputs: Array<Record<string, unknown>> = []
   const createdPhiSessions: Array<Record<string, unknown>> = []
   const remoteConnectionChecks: Array<{ sessionId: string; projectId: string }> = []
   const wrapperJobOptions: Record<string, unknown> = {}
@@ -337,6 +400,8 @@ async function harness(
   const updatedProjectDefaults: Array<Record<string, unknown>> = []
   const updatedSessionManifests: Array<{ sessionId: string; patch: Record<string, unknown> }> = []
   const appendedSessionEvents: Array<Record<string, unknown>> = []
+  const enablementGlobal: Record<string, boolean> = {}
+  const enablementProjects: Record<string, Record<string, boolean>> = {}
   let appFocused = true
   const reportedWrapperRuns = new Set<string>()
   const wrapperJobFinishListeners: Array<(run: unknown, status: unknown) => void> = []
@@ -400,8 +465,6 @@ async function harness(
     remoteDigestVerified: true
   })
   const operationLog: Array<Record<string, unknown>> = []
-  const appSettingsUpdates: string[] = []
-  const dbConnectorEnabledUpdates: Array<{ id: string; digest: string; enabled: boolean }> = []
   const browserViews: BrowserIntegrationView[] = []
   const openedExternalUrls: string[] = []
   let windowOpenHandler:
@@ -409,15 +472,7 @@ async function harness(
         action: string
       })
     | undefined
-  let appDefaultProxyMode = 'auto'
   const appNoProjectTaskFolder = '/workspace'
-  const appProxyTransportStatus = {
-    systemTransportAvailable: true,
-    controlledProxyAvailable: false,
-    autoTransportName: 'system',
-    enabledModeAvailable: false,
-    unavailableReason: '尚未配置受控代理通道'
-  }
   let openDialogResult: { canceled: boolean; filePaths: string[] } = {
     canceled: true,
     filePaths: []
@@ -426,6 +481,8 @@ async function harness(
   const bundledFigurePreview = path.join(
     process.cwd(),
     'resources',
+    'plugins',
+    'visualization',
     'skills',
     'omics-visualization',
     'scripts',
@@ -477,7 +534,17 @@ async function harness(
     ],
     ['/projects/current/src', [{ name: 'App.tsx', kind: 'file' }]],
     ['/projects/saved', [{ name: 'README.md', kind: 'file' }]],
-    [path.join(process.cwd(), 'resources', 'skills', 'omics-visualization'), []],
+    [
+      path.join(
+        process.cwd(),
+        'resources',
+        'plugins',
+        'visualization',
+        'skills',
+        'omics-visualization'
+      ),
+      []
+    ],
     ['/isolated', [{ name: 'sessions', kind: 'directory' }]],
     ['/isolated/sessions', [{ name: 'session-1', kind: 'directory' }]],
     ['/isolated/sessions/session-1', [{ name: 'tool-outputs', kind: 'directory' }]],
@@ -510,12 +577,17 @@ async function harness(
     startRun(input: {
       sessionId: string
       runId: string
+      loadedSkills?: readonly string[]
       execute: (context: { signal: AbortSignal }) => Promise<void>
       getRecordedFailure?: () => string | null | undefined
     }): { done: Promise<void> } {
       if (this.runs.has(input.sessionId)) throw new Error('会话正在运行')
       if (this.runs.size >= this.maxActiveRuns) throw new Error('运行中的会话已达上限')
       const controller = new AbortController()
+      runStartInputs.push({
+        sessionId: input.sessionId,
+        loadedSkills: input.loadedSkills
+      })
       const run = {
         controller,
         runId: input.runId,
@@ -1060,27 +1132,31 @@ async function harness(
   }
   const modules: Record<string, unknown> = {
     'node:crypto': { createHash },
+    semver: { gt: (left: string, right: string): boolean => left > right },
     './agent-env': {},
     './file-preview-media': { hoverMediaPreviewType, mediaPreviewType },
     '../shared/wrapperResultTypes': { declaredExternalOutputRoot },
     '../shared/htmlReportPreview': htmlReportPreview,
+    '../shared/phiPluginProblems': phiPluginProblems,
+    '../shared/presentedFileTypes': { MAX_PRESENTED_FILES: 4 },
     '../shared/remoteHostProfile': { sshConfigHostId: (alias: string) => `ssh-config:${alias}` },
     './molecule-renderer': {
       renderMoleculeSvg: async (): Promise<string> => '<svg xmlns="http://www.w3.org/2000/svg"/>'
     },
-    './database-web-preview': {
-      previewDatabaseWebImage: async (): Promise<never> => {
-        throw new Error('Database web preview is mocked in main-integration.test.ts')
-      }
-    },
-    './agent/db/credential-store': {
-      clearDbConnectorSecret: (): void => {},
-      hasDbConnectorSecret: (): boolean => false,
-      isDbCredentialStorageAvailable: (): boolean => true,
-      resolveDbAuthSecret: (): undefined => undefined,
-      storeDbConnectorSecret: (): void => {}
-    },
     './agent/environment': {
+      createManagedEnvironmentActions: () => ({
+        list: async () => [],
+        build: () => ({ envId: 'phi-python-0123456789ab' }),
+        rebuild: async () => undefined,
+        remove: async () => ({ removed: true, bytesFreed: 0 }),
+        clean: async () => ({
+          removed: [],
+          orphans: [],
+          skipped: [],
+          logsRemoved: 0,
+          bytesFreed: 0
+        })
+      }),
       detectConfiguredAnalysisKernels: () => ({
         jupyterServer: { available: true, command: 'jupyter', version: '2.14.0' },
         kernels: [
@@ -1098,6 +1174,7 @@ async function harness(
       }),
       dismissEnvironmentSummary: (): void => {},
       getEnvironment: (): Record<string, never> => ({}),
+      listManagedEnvironments: async () => [],
       redetectEnvironment: (): Record<string, never> => ({}),
       setEnvironmentToolPath: (): Record<string, never> => ({})
     },
@@ -1180,6 +1257,8 @@ async function harness(
       watch: (): { close: () => void } => ({
         close: noop
       }),
+      // Startup creates the no-project task folder before scanning plugin namespaces.
+      mkdirSync: (): undefined => undefined,
       readdirSync: (
         filePath: string
       ): Array<{
@@ -1299,11 +1378,13 @@ async function harness(
           options,
           async reload(): Promise<void> {
             return
-          }
+          },
+          getSkills: (): unknown => ({ skills: [], diagnostics: [] })
         }
       },
       getBundledSkillsDir: (): string => path.join(process.cwd(), 'resources', 'skills'),
       getBundledAgentsDir: (): string => path.join(process.cwd(), 'resources', 'agents'),
+      getBundledResourceDir: (name: string): string => path.join(process.cwd(), 'resources', name),
       createInMemoryRuntimeSessionManager: (cwd: string): { file: string; cwd: string } => ({
         file: 'in-memory',
         cwd
@@ -1795,7 +1876,59 @@ async function harness(
     },
     '../shared/notebookDocument': notebookDocument,
     '../shared/sessionTitle': sessionTitle,
-    '../shared/mcpConnectorCatalog': { featuredMcpConnectors },
+    './agent/content/skill-host': {
+      createSkillHost: (): {
+        scriptTools: (params: unknown) => Promise<{ tools: unknown[]; problems: string[] }>
+        run: (params: unknown) => Promise<unknown>
+        scriptTool: (params: unknown) => Promise<unknown>
+        cancel: (params: unknown) => void
+        approvalFor: (toolName: string, input: unknown) => undefined
+      } => ({
+        scriptTools: async () => ({ tools: [], problems: [] }),
+        run: async () => {
+          throw new Error('skill host is mocked')
+        },
+        scriptTool: async () => {
+          throw new Error('skill host is mocked')
+        },
+        cancel: () => undefined,
+        approvalFor: () => undefined
+      })
+    },
+    './agent/packages/wrapper-tree': {
+      // No tree yet: startup awaits the (mocked) bundled wrapper install, as on a first run.
+      getWrapperTreeOwnershipPath: (): string => '/isolated/agent/wrappers/tree.json'
+    },
+    './agent/content/env-request': {
+      ADD_PACKAGES: '添加',
+      confirmedEnvironmentRequest: (): boolean => false,
+      environmentRequestQuestion: (): string => 'add packages?',
+      requestProjectEnvironment: async (): Promise<unknown> => {
+        throw new Error('env_request is mocked')
+      }
+    },
+    './agent/content/environment-gate': {
+      bindAgentSession: async (): Promise<unknown> => {
+        throw new Error('environment binding is mocked')
+      }
+    },
+    './agent/content/environment-builds': {
+      createEnvironmentBuilds: (): {
+        list: () => unknown[]
+        cancel: (envId: string) => void
+      } => ({
+        list: () => [],
+        cancel: () => undefined
+      })
+    },
+    './agent/content/environment-build-prompt': {
+      BUILD_NOW: '现在构建',
+      confirmedEnvironmentBuild: (): boolean => false,
+      environmentBuildQuestion: (): string => 'build?'
+    },
+    './agent/envs/runtime': {
+      getRuntimeRoot: (): string => '/isolated/runtime'
+    },
     './agent/tool-approval': {
       bashApprovalDigest: fakeBashApprovalDigest,
       writeApprovalDigest: fakeWriteApprovalDigest,
@@ -1824,10 +1957,146 @@ async function harness(
       installPlugin: async (): Promise<unknown[]> => [],
       removePlugin: async (): Promise<unknown[]> => []
     },
+    './agent/plugins/bundled-install': {
+      installBundledPlugins: async (): Promise<unknown> => ({
+        installed: [],
+        upgraded: [],
+        skipped: [],
+        errors: [],
+        warnings: []
+      })
+    },
+    './agent/plugins/loader': {
+      listInstalledPlugins: (): unknown[] => [],
+      loadedPlugins: (): unknown[] => [],
+      installPlugin: (): unknown => ({ ok: true, errors: [], warnings: [] }),
+      upgradePlugin: async (): Promise<unknown> => ({ ok: true, errors: [], warnings: [] }),
+      setPluginEnabled: (): unknown => ({ ok: true, errors: [], warnings: [] }),
+      uninstallPlugin: (): unknown => ({ ok: true, errors: [], warnings: [] })
+    },
+    './agent/plugins/store': {
+      readPluginRegistry: (): unknown => ({ version: 1, plugins: {} }),
+      writePluginRegistry: noop
+    },
+    './agent/enablement': {
+      getEnablementPath: (): string => '/isolated/state/enabled.json',
+      migrateEnablementFromHistory: (): unknown => ({
+        migrated: false,
+        enabledSkills: [],
+        sessionsScanned: 0,
+        bytesScanned: 0
+      }),
+      filterEnabledMainSkills: (skills: unknown[]): unknown[] => skills,
+      getEnablementSnapshot: ({ projectDir }: { projectDir?: string } = {}): unknown => ({
+        version: 1,
+        global: { ...enablementGlobal },
+        ...(projectDir ? { projectPath: projectDir } : {}),
+        project: projectDir ? { ...(enablementProjects[projectDir] ?? {}) } : {}
+      }),
+      setEnabled: (
+        item: string,
+        value: boolean | null,
+        { projectDir }: { projectDir?: string } = {}
+      ): unknown => {
+        const target = projectDir ? (enablementProjects[projectDir] ??= {}) : enablementGlobal
+        if (value === null) delete target[item]
+        else target[item] = value
+        return { version: 1, global: enablementGlobal, projects: enablementProjects }
+      }
+    },
+    './agent/plugins/validate': {
+      validatePlugin: (): unknown => ({ ok: false, errors: [], warnings: [] })
+    },
+    './agent/packages/installer': {
+      addKnownRegistry: noop,
+      removeKnownRegistry: (): boolean => true,
+      listKnownRegistries: (): unknown => ({
+        registries: [
+          {
+            id: 'builtin',
+            kind: 'bundled',
+            path: '/bundled-registry',
+            removable: false,
+            trust: 'builtin',
+            packageCount: 0
+          }
+        ]
+      }),
+      loadKnownRegistryIndexes: (): unknown => ({ registries: [], errors: [] }),
+      listPackageUpdates: (): unknown[] => [],
+      applyPackageUpdate: async (): Promise<unknown[]> => [],
+      applyPackageUpdates: async (): Promise<unknown[]> => [],
+      previewOfflinePackageImport: (archivePath: string): unknown => ({
+        archivePath,
+        plan: {
+          registry: {
+            id: archivePath,
+            dir: '/temporary',
+            trust: 'imported',
+            schemaVersion: 1,
+            generatedAt: '1970-01-01T00:00:00.000Z',
+            packages: []
+          },
+          root: { type: 'skill', id: 'offline-skill', version: '1.0.0' },
+          packages: [],
+          totalSize: 0,
+          environments: [],
+          agentDir: '/isolated'
+        }
+      }),
+      importOfflinePackage: async (): Promise<unknown[]> => [],
+      cleanupStalePackageStaging: (): string[] => [],
+      readRegistry: (dir: string): unknown => ({
+        id: dir,
+        dir,
+        trust: 'imported',
+        schemaVersion: 1,
+        generatedAt: '2026-10-02T00:00:00.000Z',
+        packages: []
+      }),
+      planInstall: (registry: unknown, request: Record<string, unknown>): unknown => ({
+        registry,
+        root: { type: request.type, id: request.id, version: request.version ?? '1.0.0' },
+        packages: [],
+        totalSize: 0,
+        environments: [],
+        agentDir: '/isolated'
+      }),
+      installPackages: async (plan: { root: { type: string; id: string } }): Promise<unknown[]> => [
+        { type: plan.root.type, id: plan.root.id }
+      ],
+      uninstallPackage: (): unknown[] => [],
+      listInstalledPackages: (): unknown[] => []
+    },
+    './agent/content/skill': {
+      validateSkill: (): unknown => ({ ok: true, errors: [], warnings: [] })
+    },
     './agent/mcp-connectors': {
       addRemoteMcpConnector: noop,
       disableFeaturedApiKeyAutoDiscovery: noop,
-      removeRemoteMcpConnector: noop
+      removeRemoteMcpConnector: noop,
+      listConnectorCatalog: (): unknown[] => connectorCatalogFixture,
+      mcpOAuthAuthorizationOrigin: (id: string, url: string): string | undefined => {
+        const allowed: Record<string, { url: string; origin: string }> = {
+          notion: { url: 'https://mcp.notion.com/mcp', origin: 'https://mcp.notion.com' },
+          composio: {
+            url: 'https://connect.composio.dev/mcp',
+            origin: 'https://connect.composio.dev'
+          }
+        }
+        return allowed[id]?.url === url ? allowed[id].origin : undefined
+      },
+      installCatalogConnector: async (): Promise<unknown[]> => [],
+      uninstallCatalogConnector: (): unknown[] => [],
+      connectorEnvironmentBuildAction: (): unknown => {
+        throw new Error('connector has no environment in this fixture')
+      },
+      refreshPersistedManagedStdioServers: (): unknown => {
+        operationLog.push({ type: 'refreshManagedStdioServers' })
+        return { config: {}, refreshed: [], failures: [], written: false }
+      },
+      setMcpConnectorEnabled: noop,
+      setMcpPackageEnabled: (): boolean => true
     },
     './agent/mcp-key-credentials': {
       API_KEY_CONNECTOR_IDS: ['tavily', 'serpapi', 'firecrawl', 'browser-use'],
@@ -1835,7 +2104,15 @@ async function harness(
         if (!['tavily', 'serpapi', 'firecrawl', 'browser-use'].includes(id)) {
           throw new Error('该连接器不支持 API key')
         }
-        return featuredMcpConnectors.find((connector) => connector.id === id)
+        const connector = connectorCatalogFixture.find((entry) => entry.id === id)
+        assert.ok(connector?.url)
+        return {
+          ...connector,
+          apiKey: {
+            header: id === 'browser-use' ? 'x-browser-use-api-key' : 'Authorization',
+            obtainUrl: 'https://example.test/key'
+          }
+        }
       },
       clearFeaturedMcpApiKey: (id: string) => mcpApiKeys.delete(id),
       featuredMcpApiKeyStatus: (id: string) => mcpApiKeys.has(id),
@@ -1861,6 +2138,7 @@ async function harness(
           scope: 'user',
           sourceCategory: 'user',
           sourceCategoryLabel: 'User',
+          enabled: true,
           disabled: false
         }
       ],
@@ -1888,8 +2166,26 @@ async function harness(
           scope: 'project',
           sourceCategory: 'user',
           sourceCategoryLabel: 'User',
+          enabled: true,
           disabled: false
-        }
+        },
+        ...Object.entries(enablementGlobal)
+          .filter(([key, enabled]) => key.startsWith('skill:') && enabled)
+          .map(([key]) => {
+            const name = key.slice('skill:'.length)
+            return {
+              id: `${cwd}:${name}`,
+              name,
+              description: name,
+              filePath: `${cwd}/.phi/skills/${name}/SKILL.md`,
+              source: 'installed-package',
+              scope: 'user',
+              sourceCategory: 'installed-package',
+              sourceCategoryLabel: '已安装',
+              enabled: true,
+              disabled: false
+            }
+          })
       ],
       readSkillContent: async (filePath: string): Promise<unknown> => ({
         filePath,
@@ -2048,21 +2344,40 @@ async function harness(
       reconcileRemoteWrapperRuns: (): Promise<void> => Promise.resolve()
     },
     './agent/wrappers/catalog': {
-      ensureBundledWrappersInstalled: (): unknown[] => [],
+      ensureBundledWrappersInstalled: () =>
+        Promise.resolve({
+          packages: [],
+          installed: [],
+          removed: [],
+          migratedCustom: [],
+          legacyPackWarnings: [],
+          diagnostics: { unattributedIncludes: [], unattributedSupportFiles: [] }
+        }),
       listWrapperCatalog: (): unknown[] => [],
       addCustomWrapper: (): never => {
         throw new Error('wrapper.yaml 校验失败: (mocked in main-integration.test.ts)')
       }
     },
-    './agent/visualization/examples': { isInstalledFigurePreviewPath },
-    './agent/visualization/tools': {
-      getBundledSkillRoot: () =>
-        path.join(process.cwd(), 'resources', 'skills', 'omics-visualization')
-    },
     // Real scan of the repo's bundled agents, but never the developer's own ~/.claude etc.
     './agent/agents/discovery': {
       discoverPhiAgents: (options: Parameters<typeof discoverPhiAgents>[0]) =>
-        discoverPhiAgents({ ...options, homeDir: '/nonexistent-home' })
+        discoverPhiAgents({
+          ...options,
+          homeDir: '/nonexistent-home',
+          ...(options.pluginAgentDirs === undefined
+            ? {
+                pluginAgentDirs: [
+                  path.join(process.cwd(), 'resources', 'plugins', 'visualization', 'agents')
+                ]
+              }
+            : {})
+        })
+    },
+    './agent/plugins/preview': {
+      isPluginSkillPreviewPath: (target: string): boolean =>
+        target.includes(
+          path.join('resources', 'plugins', 'visualization', 'skills', 'omics-visualization')
+        ) && target.endsWith('preview.png')
     },
     './agent/agents/remote-wrapper-agent': { loadRemoteWrapperAgent },
     './agent/agents/background-approval': { BackgroundAgentApprovalTracker },
@@ -2070,7 +2385,8 @@ async function harness(
     './agent/agents/run-continue': agentRunContinue,
     './agent/agents/run-host': { agentRunHostHandlers },
     './agent/wrappers/composition/discovery': {
-      listWrapperCompositionCatalog: (): unknown[] => []
+      listWrapperCompositionCatalogStatus: (): unknown[] => [],
+      resetWrapperCompositionCatalogCache: (): void => {}
     },
     './agent/remote-hosts': {
       listRemoteHostProfiles: (): unknown[] => [],
@@ -2369,73 +2685,15 @@ async function harness(
     },
     './agent/app-settings': {
       readAppSettings: (): Record<string, unknown> => ({
-        defaultProxyMode: appDefaultProxyMode,
         noProjectTaskFolder: appNoProjectTaskFolder,
         preventSleepDuringRuns: false,
-        nextActionSuggestionsEnabled: true,
-        proxyTransportStatus: appProxyTransportStatus
+        nextActionSuggestionsEnabled: true
       }),
-      updateDefaultProxyMode: (mode: string): Record<string, unknown> => {
-        appSettingsUpdates.push(mode)
-        appDefaultProxyMode = mode
-        return {
-          defaultProxyMode: appDefaultProxyMode,
-          noProjectTaskFolder: appNoProjectTaskFolder,
-          preventSleepDuringRuns: false,
-          nextActionSuggestionsEnabled: true,
-          proxyTransportStatus: appProxyTransportStatus
-        }
-      }
-    },
-    './agent/db/catalog': {
-      listDbConnectorCatalog: (): unknown[] => [
-        {
-          manifest: {
-            phiDbConnectorVersion: 1,
-            id: 'entrez/ncbi',
-            name: 'NCBI Entrez',
-            protocolFamily: 'entrez',
-            curationTier: 'curated',
-            baseUrl: 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils',
-            networkPolicy: {
-              allowedHosts: ['eutils.ncbi.nlm.nih.gov'],
-              allowRedirects: false
-            },
-            domains: [{ id: 'gene', summary: 'Gene records.', commonFields: ['uid'] }]
-          },
-          trustTier: 'bundled',
-          installedPath: '/resources/db-connectors/entrez/ncbi',
-          installedAt: '2026-09-18T00:00:00.000Z',
-          digest: 'digest-entrez',
-          enabledForQuery: true
-        }
-      ],
-      findDbConnectorCatalogEntry: (id: string): unknown =>
-        id === 'entrez/ncbi'
-          ? {
-              manifest: {
-                id: 'entrez/ncbi',
-                name: 'NCBI Entrez',
-                protocolFamily: 'entrez',
-                curationTier: 'curated',
-                domains: [{ id: 'gene', summary: 'Gene records.', commonFields: ['uid'] }]
-              },
-              trustTier: 'bundled',
-              digest: 'digest-entrez',
-              enabledForQuery: true
-            }
-          : undefined,
-      syncGeneratedDbConnectorDocs: (): void => {}
-    },
-    './agent/db/store': {
-      setDbConnectorQueryEnabled: (
-        id: string,
-        digest: string,
-        _trustTier: string,
-        enabled: boolean
-      ): void => {
-        dbConnectorEnabledUpdates.push({ id, digest, enabled })
-      }
+      updateAppSettings: (): Record<string, unknown> => ({
+        noProjectTaskFolder: appNoProjectTaskFolder,
+        preventSleepDuringRuns: false,
+        nextActionSuggestionsEnabled: true
+      })
     },
     './agent/redaction': {
       isSecretMetadataKey,
@@ -2704,6 +2962,7 @@ async function harness(
     events,
     approvalOptions,
     runnerEvents,
+    runStartInputs,
     createdPhiSessions,
     remoteConnectionChecks,
     wrapperJobOptions,
@@ -2763,8 +3022,6 @@ async function harness(
     saveDialogOptions,
     downloadCalls,
     operationLog,
-    appSettingsUpdates,
-    dbConnectorEnabledUpdates,
     setOpenDialogResult: (result): void => {
       openDialogResult = result
     },
@@ -3166,38 +3423,14 @@ test('main IPC: user prompt stays verbatim while recommendation settings are rea
   })
 })
 
-test('main IPC: app settings exposes and updates default proxy mode', async () => {
+test('main IPC: app settings exposes general preferences', async () => {
   const app = await harness()
-  const expectedStatus = {
-    systemTransportAvailable: true,
-    controlledProxyAvailable: false,
-    autoTransportName: 'system',
-    enabledModeAvailable: false,
-    unavailableReason: '尚未配置受控代理通道'
-  }
 
   assert.deepEqual(await app.invoke('settings:get'), {
-    defaultProxyMode: 'auto',
     noProjectTaskFolder: '/workspace',
     preventSleepDuringRuns: false,
-    nextActionSuggestionsEnabled: true,
-    proxyTransportStatus: expectedStatus
+    nextActionSuggestionsEnabled: true
   })
-  assert.deepEqual(await app.invoke('settings:updateDefaultProxyMode', 'enabled'), {
-    defaultProxyMode: 'enabled',
-    noProjectTaskFolder: '/workspace',
-    preventSleepDuringRuns: false,
-    nextActionSuggestionsEnabled: true,
-    proxyTransportStatus: expectedStatus
-  })
-  assert.deepEqual(await app.invoke('settings:get'), {
-    defaultProxyMode: 'enabled',
-    noProjectTaskFolder: '/workspace',
-    preventSleepDuringRuns: false,
-    nextActionSuggestionsEnabled: true,
-    proxyTransportStatus: expectedStatus
-  })
-  assert.deepEqual(app.appSettingsUpdates, ['enabled'])
 })
 
 test('main IPC: web search settings are routed to the OMP worker', async () => {
@@ -3226,41 +3459,6 @@ test('main IPC: web search settings are routed to the OMP worker', async () => {
       method: 'settings.webSearch.apiKey.clear',
       params: { agentDir: '/isolated', providerId: 'brave' }
     }
-  ])
-})
-
-test('main IPC: DB connector tools stay behind Database agent and toggles remain per connector', async () => {
-  const app = await harness()
-  await app.invoke('projects:newSession', '/projects/db-enabled', 'ask')
-  await app.invoke('agent:prompt', 'hello')
-  assert.equal('enableDbConnectorTools' in app.createdAgentOptions[0], false)
-  const resourceOptions = app.resourceLoaderOptions.at(-1)
-  const appendSystemPrompt = resourceOptions?.appendSystemPrompt as string[] | undefined
-  assert.doesNotMatch(appendSystemPrompt?.join('\n') ?? '', /<phi_db_connector_runtime>/)
-  assert.doesNotMatch(
-    appendSystemPrompt?.join('\n') ?? '',
-    /\bdb_(?:search|domain|docs_search|query)\b/
-  )
-  // Phi's own scan feeds the leader prompt, and the same definitions go to the worker.
-  assert.match(appendSystemPrompt?.join('\n') ?? '', /<phi_agents>/)
-  assert.match(appendSystemPrompt?.join('\n') ?? '', /- Database: /)
-  assert.match(appendSystemPrompt?.join('\n') ?? '', /- Visualization: /)
-  assert.match(appendSystemPrompt?.join('\n') ?? '', /- Wrapper: /)
-  const phiAgents = app.createdAgentOptions[0].phiAgents as Array<{ name: string }> | undefined
-  assert.deepEqual(
-    phiAgents?.map((agent) => agent.name),
-    ['Database', 'Visualization', 'Wrapper']
-  )
-
-  const connectors = (await app.invoke('db:listConnectors')) as Array<{ id: string }>
-  assert.deepEqual(
-    connectors.map((connector) => connector.id),
-    ['entrez/ncbi']
-  )
-
-  await app.invoke('db:setConnectorEnabled', 'entrez/ncbi', false)
-  assert.deepEqual(app.dbConnectorEnabledUpdates, [
-    { id: 'entrez/ncbi', digest: 'digest-entrez', enabled: false }
   ])
 })
 
@@ -3501,6 +3699,8 @@ test('main IPC: an installed template preview image is displayable outside the p
   const previewPath = path.join(
     process.cwd(),
     'resources',
+    'plugins',
+    'visualization',
     'skills',
     'omics-visualization',
     'scripts',
@@ -3525,6 +3725,8 @@ test('main IPC: an installed template preview image is displayable outside the p
       path.join(
         process.cwd(),
         'resources',
+        'plugins',
+        'visualization',
         'skills',
         'omics-visualization',
         'scripts',
@@ -4068,29 +4270,33 @@ test('main IPC: featured MCP tools are read through the Bun worker', async () =>
   assert.deepEqual(await app.invoke('mcp:featuredTools', 'pubmed'), ['search_articles'])
   assert.deepEqual(app.bridgeRequests.at(-1), {
     method: 'mcp.featuredTools',
-    params: { id: 'pubmed' }
+    params: {
+      id: 'pubmed',
+      url: 'https://pubmed.mcp.claude.com/mcp',
+      auth: 'none'
+    }
   })
   await assert.rejects(app.invoke('mcp:featuredTools', null), /连接器标识无效/)
   assert.equal(await app.invoke('mcp:featuredAuthStatus', 'notion'), true)
   assert.deepEqual(app.bridgeRequests.at(-1), {
     method: 'mcp.featuredAuthStatus',
-    params: { id: 'notion' }
+    params: { id: 'notion', url: 'https://mcp.notion.com/mcp' }
   })
   assert.equal(await app.invoke('mcp:featuredAuthStatus', 'composio'), true)
   assert.deepEqual(app.bridgeRequests.at(-1), {
     method: 'mcp.featuredAuthStatus',
-    params: { id: 'composio' }
+    params: { id: 'composio', url: 'https://connect.composio.dev/mcp' }
   })
   await assert.rejects(app.invoke('mcp:featuredAuthStatus', 'gmail'), /不支持登录状态查询/)
   await app.invoke('mcp:authorizeFeatured', 'notion')
   assert.deepEqual(app.bridgeRequests.at(-1), {
     method: 'mcp.authorizeFeatured',
-    params: { id: 'notion' }
+    params: { id: 'notion', url: 'https://mcp.notion.com/mcp' }
   })
   await app.invoke('mcp:authorizeFeatured', 'composio')
   assert.deepEqual(app.bridgeRequests.at(-1), {
     method: 'mcp.authorizeFeatured',
-    params: { id: 'composio' }
+    params: { id: 'composio', url: 'https://connect.composio.dev/mcp' }
   })
   await assert.rejects(app.invoke('mcp:authorizeFeatured', 'gmail'), /不支持 OAuth 授权/)
   const openAuthUrl = app.hostHandlers.get('mcp.openAuthUrl')
@@ -4157,6 +4363,11 @@ test('main IPC: an API key is not saved before the provider verifies it', async 
   app.failMcpApiKeyValidation(new Error('验证失败'))
   await assert.rejects(app.invoke('mcp:setFeaturedApiKey', 'tavily', 'invalid-key'), /验证失败/)
   assert.equal(await app.invoke('mcp:featuredApiKeyStatus', 'tavily'), false)
+})
+
+test('main startup refreshes managed stdio MCP entries', async () => {
+  const app = await harness()
+  assert.ok(app.operationLog.some((entry) => entry.type === 'refreshManagedStdioServers'))
 })
 
 test(
@@ -4858,6 +5069,137 @@ test('main IPC: plugin operations write compact support log events', async () =>
         (entry.metadata as { source?: string }).source === 'npm:@phi/example'
     ),
     true
+  )
+})
+
+test('main IPC exposes local package registry planning and lifecycle channels', async () => {
+  const app = await harness()
+
+  app.setOpenDialogResult({ canceled: false, filePaths: ['/registry'] })
+  assert.equal(await app.invoke('packages:pickRegistryDirectory'), '/registry')
+
+  const registry = (await app.invoke('packages:registry', '/registry')) as {
+    id: string
+    schemaVersion: number
+  }
+  assert.equal(registry.id, '/registry')
+  assert.equal(registry.schemaVersion, 1)
+  const plan = (await app.invoke(
+    'packages:plan',
+    '/registry',
+    'skill',
+    'alpha-skill',
+    '1.0.0'
+  )) as { root: { type: string; id: string; version: string } }
+  assert.deepEqual(plan.root, { type: 'skill', id: 'alpha-skill', version: '1.0.0' })
+  assert.deepEqual(await app.invoke('packages:install', '/registry', 'skill', 'alpha-skill'), [
+    { type: 'skill', id: 'alpha-skill' }
+  ])
+  assert.deepEqual(await app.invoke('enablement:get'), {
+    version: 1,
+    global: { 'skill:alpha-skill': true },
+    project: {}
+  })
+  assert.deepEqual(await app.invoke('packages:listInstalled'), [])
+  assert.deepEqual(await app.invoke('packages:uninstall', 'skill', 'alpha-skill'), [])
+  assert.deepEqual(await app.invoke('packages:listRegistries'), [
+    {
+      id: 'builtin',
+      kind: 'bundled',
+      path: '/bundled-registry',
+      removable: false,
+      trust: 'builtin',
+      packageCount: 0
+    }
+  ])
+  assert.deepEqual(await app.invoke('packages:removeRegistry', '0123456789abcdef'), [
+    {
+      id: 'builtin',
+      kind: 'bundled',
+      path: '/bundled-registry',
+      removable: false,
+      trust: 'builtin',
+      packageCount: 0
+    }
+  ])
+  app.setOpenDialogResult({ canceled: false, filePaths: ['/tmp/offline-skill.tar.gz'] })
+  assert.equal(await app.invoke('packages:pickArchive'), '/tmp/offline-skill.tar.gz')
+  const preview = (await app.invoke('packages:previewImport', '/tmp/offline-skill.tar.gz')) as {
+    plan: { root: { id: string } }
+  }
+  assert.equal(preview.plan.root.id, 'offline-skill')
+  assert.deepEqual(await app.invoke('packages:import', '/tmp/offline-skill.tar.gz'), [])
+  assert.deepEqual(await app.invoke('packages:listUpdates'), [])
+  await assert.rejects(app.invoke('packages:applyUpdate', 'skill', 'alpha-skill'), /没有可用更新/)
+  await assert.rejects(app.invoke('packages:plan', '', 'wrapper', '', undefined), /参数无效/)
+})
+
+test('main IPC validates and stores global and project enablement', async () => {
+  const app = await harness()
+
+  assert.deepEqual(await app.invoke('enablement:get'), {
+    version: 1,
+    global: {},
+    project: {}
+  })
+  assert.deepEqual(await app.invoke('enablement:set', 'skill:scanpy', true, { type: 'global' }), {
+    version: 1,
+    global: { 'skill:scanpy': true },
+    project: {}
+  })
+  assert.deepEqual(
+    await app.invoke('enablement:set', 'skill:scanpy', false, {
+      type: 'project',
+      projectCwd: '/projects/current'
+    }),
+    {
+      version: 1,
+      global: { 'skill:scanpy': true },
+      projectPath: '/projects/current',
+      project: { 'skill:scanpy': false }
+    }
+  )
+  assert.deepEqual(
+    await app.invoke('enablement:set', 'wrapper:module-nf-core-fastqc', true, { type: 'global' }),
+    {
+      version: 1,
+      global: { 'skill:scanpy': true, 'wrapper:module-nf-core-fastqc': true },
+      project: {}
+    }
+  )
+  await assert.rejects(
+    app.invoke('enablement:set', 'wrapper:FastQC', true, { type: 'global' }),
+    /标识无效/
+  )
+  await assert.rejects(
+    app.invoke('enablement:set', 'skill:scanpy', 'yes', { type: 'global' }),
+    /启用值无效/
+  )
+  await assert.rejects(
+    app.invoke('enablement:set', 'skill:scanpy', true, { type: 'project' }),
+    /项目启用范围无效/
+  )
+})
+
+test('main IPC records the production loaded-skill shape for migration', async () => {
+  const app = await harness()
+
+  await app.invoke('agent:prompt', 'use the available skill')
+
+  const started = app.runStartInputs[0]
+  assert.deepEqual(started?.loadedSkills, ['skill'])
+})
+
+test('main IPC refreshes loaded-skill history after runtime invalidation', async () => {
+  const app = await harness()
+
+  await app.invoke('agent:prompt', 'first run')
+  await app.invoke('packages:install', '/registry', 'skill', 'alpha-skill')
+  await app.invoke('agent:prompt', 'second run')
+
+  assert.deepEqual(
+    app.runStartInputs.map((input) => input.loadedSkills),
+    [['skill'], ['alpha-skill', 'skill']]
   )
 })
 
@@ -8529,6 +8871,48 @@ test('main host records final file delivery only for an active conversation', as
   await prompt
 })
 
+test('main host splits presented file batches into events of at most 4', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  const prompt = app.invoke('agent:prompt', 'create report')
+  await tick()
+  const present = app.hostHandlers.get('deliverables.present')
+  assert.ok(present)
+  const files = Array.from({ length: 5 }, (_, index) => ({
+    path: `/workspace/report-${index}.txt`,
+    displayPath: `report-${index}.txt`,
+    bytes: index + 1
+  }))
+  const result = await present({
+    runtimeSessionId: session.runtimeSessionId,
+    toolCallId: 'present-batch',
+    files
+  })
+  assert.deepEqual(result, { files })
+  const batches = app.appendedSessionEvents
+    .filter((entry) => (entry.event as { toolCallId?: string }).toolCallId === 'present-batch')
+    .map((entry) => (entry.event as { files: Array<{ displayPath: string }> }).files)
+  assert.deepEqual(
+    batches.map((batch) => batch.length),
+    [4, 1]
+  )
+  assert.equal(batches[0]?.[0]?.displayPath, 'report-0.txt')
+  assert.equal(batches[0]?.[3]?.displayPath, 'report-3.txt')
+  assert.equal(batches[1]?.[0]?.displayPath, 'report-4.txt')
+  assert.equal(
+    app.events.filter(
+      (entry) =>
+        entry.channel === 'agent:event' &&
+        (entry.data as { type?: string; toolCallId?: string }).type === 'files_presented' &&
+        (entry.data as { toolCallId?: string }).toolCallId === 'present-batch'
+    ).length,
+    2
+  )
+  await app.invoke('agent:stop')
+  await prompt
+})
+
 test('main plan review pauses the run and records approval in its conversation', async () => {
   const session = new FakeSession('fresh.jsonl')
   session.hold = true
@@ -8661,12 +9045,12 @@ test('main jobs list maps live Agent runs to their owning Phi conversations', as
     {
       agentSessionId: session.runtimeSessionId,
       agentRunId: 'agent-run-1',
-      agentName: 'Database',
-      task: 'Search metadata',
+      agentName: 'Wrapper',
+      task: 'Run quality control',
       state: 'running',
       background: true,
       startedAt: Date.now(),
-      lastStep: 'db_query',
+      lastStep: 'wrapper_run',
       report: 'private full report must not reach the job list'
     },
     {
@@ -8683,7 +9067,7 @@ test('main jobs list maps live Agent runs to their owning Phi conversations', as
   assert.equal(jobs[0].agentRunId, 'agent-run-1')
   assert.equal(jobs[0].sessionPath, 'phi-session:phi-1')
   assert.equal(jobs[0].sessionTitle, 'Analyze samples')
-  assert.equal(jobs[0].lastStep, 'db_query')
+  assert.equal(jobs[0].lastStep, 'wrapper_run')
   assert.equal('report' in jobs[0], false)
   await app.invoke('agent:stop')
   await prompt

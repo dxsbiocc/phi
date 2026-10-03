@@ -64,7 +64,7 @@ test('connector tabs display the selected connector icon', () => {
         activeKey: tab.key,
         onSelect: () => undefined,
         onClose: () => undefined,
-        connectorIcon: (url) => createElement(ConnectorIcon, { url, size: 20 })
+        connectorIcon: (connectorId) => createElement(ConnectorIcon, { connectorId, size: 20 })
       })
     )
   )

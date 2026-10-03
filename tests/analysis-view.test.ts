@@ -20,7 +20,7 @@ import {
   shouldAutoStartNotebookSession,
   upsertNotebookKernelSession
 } from '../src/renderer/src/features/analysis/lib/notebookSession'
-import { outlineMarkerWidth } from '../src/renderer/src/features/analysis/notebook/NotebookScrollProgressRail'
+import { outlineMarkerWidth } from '../src/renderer/src/features/analysis/lib/notebookOutline'
 import {
   displayMimes,
   metadataForMime,

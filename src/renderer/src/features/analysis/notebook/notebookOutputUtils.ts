@@ -57,6 +57,18 @@ export type NotebookMimeMetadata = {
   height?: number
 }
 
+export function zoomNumericDomain(
+  domain: readonly number[],
+  factor: number
+): [number, number] | null {
+  if (domain.length < 2) return null
+  const start = domain[0]
+  const end = domain[1]
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start === end) return null
+  const anchor = (start + end) / 2
+  return [anchor + (start - anchor) * factor, anchor + (end - anchor) * factor]
+}
+
 export function isJsonObject(value: JsonValue | undefined): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

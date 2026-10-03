@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-// Summarises what delegated agent runs (Database, Wrapper, Visualization, ...) cost:
+// Summarises what delegated agent runs (Wrapper, Visualization, ...) cost:
 // tokens, model calls, tool calls and their result sizes, and the fixed price of the
 // first turn. Reads the records Phi writes to <agent dir>/telemetry/.
 //
 // Usage (needs the TS loader, so go through the npm script):
 //   npm run usage:report                       # last 7 days, all agents
 //   npm run usage:report -- --days 1           # last day
-//   npm run usage:report -- --agent Database   # one agent
+//   bun run usage:report -- --agent Wrapper   # one agent
 //   npm run usage:report -- --dir /path/.phi   # another agent dir
 //   npm run usage:report -- --json             # machine-readable summary
 //

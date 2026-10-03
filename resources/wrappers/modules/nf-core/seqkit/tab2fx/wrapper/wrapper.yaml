@@ -15,7 +15,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "fa.zst"
     description: "Output extension (e.g. fa.zst)."
   outdir:
     kind: output

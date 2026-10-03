@@ -6,8 +6,10 @@ import {
   javascriptDocument,
   notebookOutputFrameDocument
 } from '../src/renderer/src/features/analysis/lib/notebookOutputFrameDocument'
-import { extractVegaSpecFromHtml } from '../src/renderer/src/features/analysis/notebook/notebookOutputUtils'
-import { zoomNumericDomain } from '../src/renderer/src/features/analysis/notebook/NotebookRichOutput'
+import {
+  extractVegaSpecFromHtml,
+  zoomNumericDomain
+} from '../src/renderer/src/features/analysis/notebook/notebookOutputUtils'
 import {
   NOTEBOOK_OUTPUT_CSP,
   notebookOutputFrameId,
@@ -62,7 +64,7 @@ test('altair 6 html is rendered as an in-app vega spec', () => {
   )
   assert.match(rendererSource, /ast:\s*true/)
   assert.match(rendererSource, /right: 6/)
-  assert.match(rendererSource, /opacity: 0/)
+  assert.match(rendererSource, /opacity: downloadMenuOpen \? 1 : 0/)
   assert.match(
     rendererSource,
     /&:hover \.notebook-output-hover-actions, &:focus-within \.notebook-output-hover-actions/

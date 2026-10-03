@@ -1,28 +1,53 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { MCPHttpServerConfig } from '@oh-my-pi/pi-coding-agent/mcp/types'
-import { featuredMcpConnectors, type FeaturedMcpConnector } from '../../shared/mcpConnectorCatalog'
 import {
-  clearDbConnectorSecret,
-  readDbConnectorSecret,
-  storeDbConnectorSecret,
+  clearCredentialSecret,
+  readCredentialSecret,
+  storeCredentialSecret,
   type SafeStorageLike
-} from './db/credential-store'
+} from './credentials/credential-store'
 import { getPhiAgentDir } from './runtime-paths'
 
 export const API_KEY_CONNECTOR_IDS = ['tavily', 'serpapi', 'firecrawl', 'browser-use'] as const
-const apiKeyConnectorIds = new Set<string>(API_KEY_CONNECTOR_IDS)
+export type ApiKeyConnectorId = (typeof API_KEY_CONNECTOR_IDS)[number]
 
-export function apiKeyConnector(id: string): FeaturedMcpConnector & {
-  apiKey: NonNullable<FeaturedMcpConnector['apiKey']>
-} {
-  const connector = featuredMcpConnectors.find((entry) => entry.id === id)
-  if (!apiKeyConnectorIds.has(id) || !connector?.apiKey) {
-    throw new Error('该连接器不支持 API key')
+export interface ApiKeyConnectorConfig {
+  id: ApiKeyConnectorId
+  url: string
+  apiKey: { header: string; obtainUrl: string }
+}
+
+const API_KEY_CONNECTORS: Record<ApiKeyConnectorId, ApiKeyConnectorConfig> = {
+  tavily: {
+    id: 'tavily',
+    url: 'https://mcp.tavily.com/mcp',
+    apiKey: { header: 'Authorization', obtainUrl: 'https://app.tavily.com/home' }
+  },
+  serpapi: {
+    id: 'serpapi',
+    url: 'https://mcp.serpapi.com/mcp',
+    apiKey: { header: 'Authorization', obtainUrl: 'https://serpapi.com/manage-api-key' }
+  },
+  firecrawl: {
+    id: 'firecrawl',
+    url: 'https://mcp.firecrawl.dev/v2/mcp',
+    apiKey: { header: 'Authorization', obtainUrl: 'https://www.firecrawl.dev/app/api-keys' }
+  },
+  'browser-use': {
+    id: 'browser-use',
+    url: 'https://api.browser-use.com/v3/mcp',
+    apiKey: {
+      header: 'x-browser-use-api-key',
+      obtainUrl: 'https://cloud.browser-use.com/settings'
+    }
   }
-  return connector as FeaturedMcpConnector & {
-    apiKey: NonNullable<FeaturedMcpConnector['apiKey']>
-  }
+}
+
+export function apiKeyConnector(id: string): ApiKeyConnectorConfig {
+  const connector = API_KEY_CONNECTORS[id as ApiKeyConnectorId]
+  if (!connector) throw new Error('该连接器不支持 API key')
+  return connector
 }
 
 function credentialName(id: string): string {
@@ -37,11 +62,11 @@ export function setFeaturedMcpApiKey(
   safeStorage?: SafeStorageLike
 ): void {
   if (typeof key !== 'string' || /[\r\n\0]/.test(key)) throw new Error('API key 格式无效')
-  storeDbConnectorSecret(credentialName(id), key, agentDir, safeStorage)
+  storeCredentialSecret(credentialName(id), key, agentDir, safeStorage)
 }
 
 export function clearFeaturedMcpApiKey(id: string, agentDir = getPhiAgentDir()): void {
-  clearDbConnectorSecret(credentialName(id), agentDir)
+  clearCredentialSecret(credentialName(id), agentDir)
 }
 
 export function readFeaturedMcpApiKey(
@@ -49,7 +74,7 @@ export function readFeaturedMcpApiKey(
   agentDir = getPhiAgentDir(),
   safeStorage?: SafeStorageLike
 ): string | undefined {
-  return readDbConnectorSecret(credentialName(id), agentDir, safeStorage)
+  return readCredentialSecret(credentialName(id), agentDir, safeStorage)
 }
 
 export function featuredMcpApiKeyStatus(
@@ -87,11 +112,12 @@ export function isFeaturedMcpApiKeyInstalled(id: string, agentDir = getPhiAgentD
     const entry = (servers as Record<string, unknown>)[id]
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false
     const server = entry as Record<string, unknown>
+    const keys = Object.keys(server).sort().join(',')
+    const recognizedShape =
+      keys === 'enabled,type,url' ||
+      (keys === 'enabled,phiPackage,type,url' && server.phiPackage === id)
     return (
-      Object.keys(server).sort().join(',') === 'enabled,type,url' &&
-      server.type === 'http' &&
-      server.url === connector.url &&
-      server.enabled === false
+      recognizedShape && server.type === 'http' && server.url === connector.url && !server.enabled
     )
   } catch {
     return false

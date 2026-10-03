@@ -1,0 +1,480 @@
+import { realpathSync } from 'node:fs'
+import { basename, resolve } from 'node:path'
+
+import { listInstalledPlugins, loadedPlugins, type LoadedPlugin } from '../plugins/loader'
+import { installedSkillPackageIdForDir } from '../packages/store'
+
+import { getRuntimeRoot, type PhiPlatform } from '../envs'
+import { applyOverrides } from '../envs/project-environments'
+import { collectArtifacts, type ReadArtifactOk } from './artifacts'
+import type { ScriptTool, ValidatedSkill } from './skill'
+import type { EnvironmentBuilds } from './environment-builds'
+import { ensureEnvironmentReady, isBuilding, type ConfirmBuildRequest } from './environment-gate'
+import {
+  EnvironmentNotReadyError,
+  describeEnvironment,
+  resolveSkillEnvironment,
+  runScriptTool,
+  runSkillScript,
+  scriptToolApproval,
+  scriptToolsOf,
+  validateSkill,
+  type ScriptToolResult,
+  type SkillRunResult,
+  type SkillValidationResult
+} from './index'
+import type { ScriptToolDescriptor } from './skill-tool-types'
+
+export type { ConfirmBuildRequest }
+
+export interface SkillNotReady {
+  notReady: {
+    ref: string
+    envId: string
+    message: string
+  }
+}
+
+export interface PresentArtifactsRequest {
+  runtimeSessionId: string
+  toolCallId: string
+  artifacts: ReadArtifactOk[]
+  envId: string
+}
+
+export interface SkillHost {
+  scriptTools(params: unknown): Promise<{ tools: ScriptToolDescriptor[]; problems: string[] }>
+  run(params: unknown): Promise<SkillRunResult | SkillNotReady>
+  scriptTool(params: unknown): Promise<ScriptToolResult>
+  cancel(params: unknown): void
+  approvalFor(toolName: string, input: unknown): 'exec' | 'read' | 'write' | undefined
+}
+
+interface RememberedTool {
+  skill: ValidatedSkill
+  tool: ScriptTool
+  pluginId?: string
+}
+
+interface ResolvedSkill {
+  skill: ValidatedSkill
+  pluginId?: string
+}
+
+type EnvironmentGate =
+  | { action: 'continue'; warnings: string[] }
+  | { action: 'notReady'; notReady: SkillNotReady['notReady']; warnings: string[] }
+  | { action: 'aborted'; envId: string; warnings: string[] }
+
+/**
+ * Main-process handlers for `skills.*`. A missing environment is not replaced by the host.
+ * With a `runtimeSessionId`, the user can confirm a build; otherwise the call stays not-ready.
+ */
+export function createSkillHost({
+  runtimeRoot = getRuntimeRoot(),
+  listSkillDirs,
+  environmentsDir,
+  platform,
+  builds,
+  confirmBuild,
+  presentArtifacts,
+  agentDir
+}: {
+  runtimeRoot?: string
+  listSkillDirs: (cwd: string) => Promise<string[]>
+  environmentsDir?: string
+  platform?: PhiPlatform
+  builds?: EnvironmentBuilds
+  confirmBuild?: (request: ConfirmBuildRequest) => Promise<boolean>
+  presentArtifacts?: (request: PresentArtifactsRequest) => Promise<void> | void
+  /** Phi agent directory override used by tests and isolated runtime instances. */
+  agentDir?: string
+}): SkillHost {
+  const remembered = new Map<string, RememberedTool>()
+  const runs = new Map<string, AbortController>()
+  const cancelled = new Set<string>()
+
+  function begin(requestId: string): AbortController {
+    const controller = new AbortController()
+    if (cancelled.delete(requestId)) controller.abort()
+    const previous = runs.get(requestId)
+    runs.set(requestId, controller)
+    previous?.abort()
+    return controller
+  }
+
+  function end(requestId: string, controller: AbortController): void {
+    if (runs.get(requestId) === controller) runs.delete(requestId)
+  }
+
+  function owningPlugin(skillDir: string, projectDir: string): LoadedPlugin | undefined {
+    return loadedPlugins({ ...(agentDir ? { agentDir } : {}), projectDir }).find((plugin) =>
+      plugin.components.skills.some((componentDir) => {
+        try {
+          return realpathSync(skillDir) === realpathSync(componentDir)
+        } catch {
+          return resolve(skillDir) === resolve(componentDir)
+        }
+      })
+    )
+  }
+
+  async function resolveSkill(
+    cwd: string,
+    name: string,
+    allowedSkills?: readonly string[],
+    requestedPluginId?: string
+  ): Promise<ResolvedSkill> {
+    if (allowedSkills && !allowedSkills.includes(name))
+      throw new Error(`skill '${name}' is disabled`)
+    const requestedPlugin = requestedPluginId
+      ? listInstalledPlugins(agentDir ? { agentDir } : {}).find(
+          (plugin) => plugin.id === requestedPluginId
+        )
+      : undefined
+    const dirs = [...(await listSkillDirs(cwd)), ...(requestedPlugin?.components.skills ?? [])]
+    const dir = dirs.find(
+      (candidate) =>
+        basename(candidate) === name || installedSkillPackageIdForDir(candidate, agentDir) === name
+    )
+    if (!dir) throw new Error(`unknown skill '${name}'`)
+    let validation: SkillValidationResult
+    const plugin = requestedPlugin ?? owningPlugin(dir, cwd)
+    try {
+      validation = validateSkill(dir, {
+        insidePlugin: plugin !== undefined,
+        expectedName: installedSkillPackageIdForDir(dir, agentDir)
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`invalid skill '${name}': ${message}`)
+    }
+    if (!validation.ok || !validation.skill) {
+      const detail = validation.errors
+        .map((problem) => `${problem.path}: ${problem.message}`)
+        .join('; ')
+      throw new Error(`invalid skill '${name}': ${detail || 'validation failed'}`)
+    }
+    const pluginId = plugin?.id
+    return { skill: validation.skill, ...(pluginId ? { pluginId } : {}) }
+  }
+
+  async function gateEnvironment(input: {
+    skill: ValidatedSkill
+    projectDir: string
+    sessionEnvironment?: string
+    runtimeSessionId?: string
+    pluginId?: string
+    signal: AbortSignal
+  }): Promise<EnvironmentGate> {
+    const choice = resolveSkillEnvironment(input.skill, input.sessionEnvironment)
+    const applied = applyOverrides(choice.ref, input.projectDir)
+    const warnings = [...choice.warnings, ...applied.warnings]
+    let descriptor: ReturnType<typeof describeEnvironment>
+    try {
+      descriptor = describeEnvironment(applied.ref, {
+        skill: input.skill,
+        projectDir: input.projectDir,
+        pluginId: input.pluginId,
+        agentDir,
+        ...(environmentsDir ? { environmentsDir } : {}),
+        ...(platform ? { platform } : {})
+      })
+    } catch {
+      // An unusable reference is reported by the executor in its own result shape.
+      return { action: 'continue', warnings }
+    }
+    const outcome = await ensureEnvironmentReady({
+      root: runtimeRoot,
+      descriptor,
+      ref: applied.ref,
+      requester: { skill: input.skill.name },
+      ...(input.runtimeSessionId ? { runtimeSessionId: input.runtimeSessionId } : {}),
+      ...(builds ? { builds } : {}),
+      ...(confirmBuild ? { confirmBuild } : {}),
+      signal: input.signal
+    })
+    if (outcome.status === 'ready') return { action: 'continue', warnings }
+    if (outcome.status === 'aborted') return { action: 'aborted', envId: outcome.envId, warnings }
+    // Without a session to ask, the executor reports its own not-ready text.
+    if (
+      !isBuilding(builds, outcome.envId) &&
+      (!input.runtimeSessionId || !confirmBuild || !builds)
+    ) {
+      return { action: 'continue', warnings }
+    }
+    if (!builds) return { action: 'continue', warnings }
+    return {
+      action: 'notReady',
+      warnings,
+      notReady: { ref: outcome.ref, envId: outcome.envId, message: outcome.message }
+    }
+  }
+
+  return {
+    async scriptTools(params) {
+      const cwd = requireString(requireRecord(params), 'cwd')
+      const dirs = await listSkillDirs(cwd)
+      const tools: ScriptToolDescriptor[] = []
+      const problems: string[] = []
+      const seenNames = new Set<string>()
+
+      for (const dir of dirs) {
+        const plugin = owningPlugin(dir, cwd)
+        let validation: SkillValidationResult
+        try {
+          validation = validateSkill(dir, {
+            insidePlugin: plugin !== undefined,
+            expectedName: installedSkillPackageIdForDir(dir, agentDir)
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          problems.push(`invalid skill '${basename(dir)}': ${message}`)
+          continue
+        }
+        if (!validation.ok || !validation.skill) {
+          const error = validation.errors[0]
+          problems.push(
+            error
+              ? `invalid skill '${basename(dir)}': ${error.path}: ${error.message}`
+              : `invalid skill '${basename(dir)}'`
+          )
+          continue
+        }
+
+        const skill = validation.skill
+        const prefix = plugin?.toolPrefix ?? skill.phi?.toolPrefix
+        if (!prefix) continue
+        for (const tool of scriptToolsOf(skill, { prefix })) {
+          if (seenNames.has(tool.name)) {
+            problems.push(`duplicate script tool name '${tool.name}'`)
+            continue
+          }
+          seenNames.add(tool.name)
+          tools.push({
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.args,
+            attachTo: [...tool.attachTo],
+            skill: skill.name,
+            approval: tool.approval
+          })
+          remembered.set(tool.name, {
+            skill,
+            tool,
+            ...(plugin ? { pluginId: plugin.id } : {})
+          })
+        }
+      }
+
+      return { tools, problems }
+    },
+
+    async run(params) {
+      const record = requireRecord(params)
+      const requestId = requireString(record, 'requestId')
+      const cwd = requireString(record, 'cwd')
+      const skillName = requireString(record, 'skill')
+      const script = requireString(record, 'script')
+      const args = optionalStringArray(record, 'args')
+      const runCwd = optionalString(record, 'runCwd')
+      const sessionEnvironment = optionalString(record, 'sessionEnvironment')
+      const runtimeSessionId = optionalSessionId(record)
+      const allowedSkills = optionalStringArray(record, 'allowedSkills')
+      const requestedPluginId = optionalString(record, 'pluginId')
+      const resolved = await resolveSkill(cwd, skillName, allowedSkills, requestedPluginId)
+      const skill = resolved.skill
+      const pluginId = resolved.pluginId ?? requestedPluginId
+      const controller = begin(requestId)
+      try {
+        const gate = await gateEnvironment({
+          skill,
+          projectDir: cwd,
+          ...(sessionEnvironment !== undefined ? { sessionEnvironment } : {}),
+          ...(runtimeSessionId !== undefined ? { runtimeSessionId } : {}),
+          ...(pluginId !== undefined ? { pluginId } : {}),
+          signal: controller.signal
+        })
+        if (gate.action === 'aborted') return abortedRun(gate.envId, gate.warnings)
+        if (gate.action === 'notReady') return { notReady: gate.notReady }
+        return await runSkillScript({
+          root: runtimeRoot,
+          projectDir: cwd,
+          skill,
+          script,
+          ...(args ? { args } : {}),
+          ...(runCwd !== undefined ? { cwd: runCwd } : {}),
+          ...(sessionEnvironment !== undefined ? { sessionEnvironment } : {}),
+          ...(pluginId !== undefined ? { pluginId } : {}),
+          ...(agentDir !== undefined ? { agentDir } : {}),
+          ...(environmentsDir ? { environmentsDir } : {}),
+          ...(platform ? { platform } : {}),
+          signal: controller.signal
+        })
+      } catch (error) {
+        if (error instanceof EnvironmentNotReadyError) {
+          return {
+            notReady: {
+              ref: error.ref,
+              envId: error.envId,
+              message: `environment ${error.ref} is not ready; the user must build it first`
+            }
+          }
+        }
+        if (controller.signal.aborted || isAbortError(error)) {
+          return abortedRun('', [])
+        }
+        throw error
+      } finally {
+        end(requestId, controller)
+      }
+    },
+
+    async scriptTool(params) {
+      const record = requireRecord(params)
+      const requestId = requireString(record, 'requestId')
+      const cwd = requireString(record, 'cwd')
+      const toolName = requireString(record, 'tool')
+      if (!Object.hasOwn(record, 'args')) throw new Error('args is required')
+      const entry = remembered.get(toolName)
+      if (!entry) throw new Error(`unknown script tool '${toolName}'`)
+      const sessionEnvironment = optionalString(record, 'sessionEnvironment')
+      const pluginId = entry.pluginId ?? optionalString(record, 'pluginId')
+      const runtimeSessionId = optionalSessionId(record)
+      const toolCallId = optionalString(record, 'toolCallId')
+      const controller = begin(requestId)
+      try {
+        const gate = await gateEnvironment({
+          skill: entry.skill,
+          projectDir: cwd,
+          ...(sessionEnvironment !== undefined ? { sessionEnvironment } : {}),
+          ...(runtimeSessionId !== undefined ? { runtimeSessionId } : {}),
+          ...(pluginId !== undefined ? { pluginId } : {}),
+          signal: controller.signal
+        })
+        if (gate.action === 'aborted') {
+          return { ok: false, error: 'aborted', envId: gate.envId, warnings: gate.warnings }
+        }
+        if (gate.action === 'notReady') {
+          return {
+            ok: false,
+            error: gate.notReady.message,
+            envId: gate.notReady.envId,
+            warnings: gate.warnings
+          }
+        }
+        const result = await runScriptTool({
+          root: runtimeRoot,
+          projectDir: cwd,
+          skill: entry.skill,
+          tool: entry.tool,
+          args: record.args,
+          ...(sessionEnvironment !== undefined ? { sessionEnvironment } : {}),
+          ...(pluginId !== undefined ? { pluginId } : {}),
+          ...(agentDir !== undefined ? { agentDir } : {}),
+          ...(environmentsDir ? { environmentsDir } : {}),
+          ...(platform ? { platform } : {}),
+          signal: controller.signal
+        })
+        if (!result.ok) return result
+        const collected = collectArtifacts(cwd, result.output)
+        const presentWarnings: string[] = []
+        if (collected.artifacts.length > 0 && runtimeSessionId && toolCallId && presentArtifacts) {
+          try {
+            await presentArtifacts({
+              runtimeSessionId,
+              toolCallId,
+              artifacts: collected.artifacts,
+              envId: result.envId
+            })
+          } catch (error) {
+            // Artifact contract § 3: presentation problems are warnings; the call succeeded.
+            const message = error instanceof Error ? error.message : String(error)
+            presentWarnings.push(`artifacts were not presented: ${message}`)
+          }
+        }
+        return {
+          ok: true,
+          output: result.output,
+          envId: result.envId,
+          warnings: [...result.warnings, ...collected.warnings, ...presentWarnings],
+          presented: collected.artifacts.map((artifact) => artifact.relativePath),
+          presentedArtifacts: collected.artifacts.map((artifact) => ({
+            title: artifact.descriptor.title,
+            path: artifact.relativePath
+          }))
+        }
+      } finally {
+        end(requestId, controller)
+      }
+    },
+
+    cancel(params) {
+      const requestId = requireString(requireRecord(params), 'requestId')
+      const controller = runs.get(requestId)
+      if (controller) {
+        controller.abort()
+        return
+      }
+      cancelled.add(requestId)
+    },
+
+    approvalFor(toolName, input) {
+      if (toolName === 'skill_run') return 'exec'
+      const entry = remembered.get(toolName)
+      if (!entry) return undefined
+      return scriptToolApproval(entry.tool, input)
+    }
+  }
+}
+
+function abortedRun(envId: string, warnings: string[]): SkillRunResult {
+  return {
+    envId,
+    resolvedCommand: '',
+    exitCode: null,
+    terminated: 'aborted',
+    stdout: '',
+    stderr: '',
+    truncated: { stdout: false, stderr: false },
+    durationMs: 0,
+    warnings
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+function requireRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('expected an object')
+  }
+  return value as Record<string, unknown>
+}
+
+function requireString(record: Record<string, unknown>, key: string): string {
+  const value = record[key]
+  if (typeof value !== 'string' || value.length === 0) throw new Error(`${key} is required`)
+  return value
+}
+
+function optionalString(record: Record<string, unknown>, key: string): string | undefined {
+  if (record[key] === undefined) return undefined
+  if (typeof record[key] !== 'string') throw new Error(`${key} must be a string`)
+  return record[key]
+}
+
+function optionalSessionId(record: Record<string, unknown>): string | undefined {
+  const value = optionalString(record, 'runtimeSessionId')
+  return value && value.length > 0 ? value : undefined
+}
+
+function optionalStringArray(record: Record<string, unknown>, key: string): string[] | undefined {
+  if (record[key] === undefined) return undefined
+  const value = record[key]
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new Error(`${key} must be an array of strings`)
+  }
+  return value as string[]
+}

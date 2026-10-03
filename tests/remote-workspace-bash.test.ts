@@ -56,11 +56,18 @@ function fixture(): {
   } as PhiSessionManifest
   const calls: string[] = []
   let closeCount = 0
-  const runShell = (command: string): ReturnType<typeof spawnSync> =>
+  const remoteHome = join(base, 'remote-home')
+  mkdirSync(remoteHome)
+  // The command is `bash -lc …`, so the stand-in host gets its own empty HOME: the login
+  // shell must not source the developer's profile. Like the real SSH session, it honours the
+  // manager's timeout; a short fixed one turned slow starts under load into a null exit code,
+  // which the manager rightly reports as an unknown result.
+  const runShell = (command: string, timeoutMs = 60_000): ReturnType<typeof spawnSync> =>
     spawnSync('bash', ['-c', command], {
       encoding: 'utf-8',
-      timeout: 3_000,
-      maxBuffer: 1_000_000
+      timeout: timeoutMs,
+      maxBuffer: 1_000_000,
+      env: { ...process.env, HOME: remoteHome }
     })
   const dependencies: RemoteBashManagerDependencies = {
     agentDir,
@@ -81,7 +88,7 @@ function fixture(): {
       },
       execBounded: async (command, options) => {
         calls.push(command)
-        const result = runShell(command)
+        const result = runShell(command, options.timeoutMs)
         const stdout = Buffer.from(result.stdout ?? '')
         const stderr = Buffer.from(result.stderr ?? '')
         const retainedStdout = stdout.subarray(0, options.maxOutputBytes)

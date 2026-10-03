@@ -11,6 +11,12 @@ export type SkillCatalogState = {
   setActiveSkillId: (id: string | null) => void
   refreshSkills: () => Promise<void>
   refreshPromptAgents: () => Promise<void>
+  setGlobalEnabled: (skill: SkillSummary, enabled: boolean) => Promise<SkillSummary[]>
+  setProjectOverride: (
+    skill: SkillSummary,
+    value: boolean | null,
+    projectCwd: string
+  ) => Promise<SkillSummary[]>
   setSkillDisabled: (skill: SkillSummary, disabled: boolean) => Promise<SkillSummary[]>
   deleteSkill: (skill: SkillSummary) => Promise<SkillSummary[]>
 }
@@ -52,12 +58,17 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
     setPromptAgents(list)
   }, [getActiveCwd])
 
-  const setSkillDisabled = useCallback(
-    async (skill: SkillSummary, disabled: boolean): Promise<SkillSummary[]> => {
+  const updateEnablement = useCallback(
+    async (
+      skill: SkillSummary,
+      value: boolean | null,
+      scope: { type: 'global' } | { type: 'project'; projectCwd: string }
+    ): Promise<SkillSummary[]> => {
       const cwd = getActiveCwd()
       setBusySkillId(skill.id)
       try {
-        const list = await window.api.setSkillDisabled(skill.filePath, disabled, cwd)
+        await window.api.setEnablement(`skill:${skill.name}`, value, scope)
+        const list = await window.api.listSkills(cwd)
         if (cwd === getActiveCwd()) applySkills(list)
         return list
       } finally {
@@ -65,6 +76,24 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
       }
     },
     [applySkills, getActiveCwd]
+  )
+
+  const setGlobalEnabled = useCallback(
+    (skill: SkillSummary, enabled: boolean): Promise<SkillSummary[]> =>
+      updateEnablement(skill, enabled, { type: 'global' }),
+    [updateEnablement]
+  )
+
+  const setProjectOverride = useCallback(
+    (skill: SkillSummary, value: boolean | null, projectCwd: string): Promise<SkillSummary[]> =>
+      updateEnablement(skill, value, { type: 'project', projectCwd }),
+    [updateEnablement]
+  )
+
+  const setSkillDisabled = useCallback(
+    (skill: SkillSummary, disabled: boolean): Promise<SkillSummary[]> =>
+      setGlobalEnabled(skill, !disabled),
+    [setGlobalEnabled]
   )
 
   const deleteSkill = useCallback(
@@ -91,6 +120,8 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
     setActiveSkillId,
     refreshSkills,
     refreshPromptAgents,
+    setGlobalEnabled,
+    setProjectOverride,
     setSkillDisabled,
     deleteSkill
   }

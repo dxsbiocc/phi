@@ -3,12 +3,54 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ThemeProvider, createTheme } from '@mui/material/styles'
 import test from 'node:test'
-import { featuredMcpConnectors } from '../src/shared/mcpConnectorCatalog'
+import type { FeaturedMcpConnector } from '../src/shared/mcpConnectorCatalog'
 import { McpFeaturedConnectorCard } from '../src/renderer/src/features/mcp/components/McpFeaturedConnectorCard'
 
-function render(id: string, installed: boolean, authenticated: boolean): string {
-  const connector = featuredMcpConnectors.find((entry) => entry.id === id)
-  assert.ok(connector)
+function render(
+  id: string,
+  installed: boolean,
+  authenticated: boolean,
+  overrides: Partial<FeaturedMcpConnector> = {}
+): string {
+  const names: Record<string, string> = {
+    'google-drive': 'Google Drive',
+    notion: 'Notion',
+    composio: 'Composio Connect',
+    linear: 'Linear',
+    figma: 'Figma',
+    canva: 'Canva',
+    biorender: 'BioRender',
+    gmail: 'Gmail',
+    tavily: 'Tavily'
+  }
+  const oauthAuthorizationOrigin = [
+    'notion',
+    'composio',
+    'linear',
+    'figma',
+    'canva',
+    'biorender'
+  ].includes(id)
+    ? 'https://auth.example.com'
+    : undefined
+  const connector: FeaturedMcpConnector = {
+    id,
+    version: '1.0.0',
+    name: names[id] ?? id,
+    description: 'Connector description',
+    publisher: id === 'google-drive' ? 'Google' : (names[id] ?? id),
+    category: '生产力',
+    signIn: '需要登录',
+    transport: 'http',
+    auth: 'oauth',
+    url: `https://example.com/${id}`,
+    added: installed,
+    ...(oauthAuthorizationOrigin ? { oauthAuthorizationOrigin } : {}),
+    ...(id === 'tavily'
+      ? { apiKey: { header: 'Authorization', obtainUrl: 'https://example.com/key' } }
+      : {}),
+    ...overrides
+  }
   return renderToStaticMarkup(
     createElement(
       ThemeProvider,
@@ -20,7 +62,8 @@ function render(id: string, installed: boolean, authenticated: boolean): string 
         busy: false,
         onOpen: () => undefined,
         onAdd: () => undefined,
-        onAuthorize: () => undefined
+        onAuthorize: () => undefined,
+        onBuildEnvironment: () => undefined
       })
     )
   )
@@ -84,4 +127,25 @@ test('API key connectors offer setup before a key is saved and show completion a
   const connected = render('tavily', true, true)
   assert.match(connected, /已验证/)
   assert.match(connected, /aria-label="已添加 Tavily"/)
+})
+
+test('catalog cards expose unavailable and not-built environment states', () => {
+  const unavailable = render('notion', false, false, {
+    unavailableReason: 'requires app 9.0.0'
+  })
+  assert.match(unavailable, /需要新版 Phi/)
+  assert.match(unavailable, /Mui-disabled/)
+
+  const pending = render('local-stdio', false, false, {
+    name: 'Local stdio',
+    transport: 'stdio',
+    auth: undefined,
+    url: undefined,
+    environment: './environment.yml',
+    command: './server',
+    signIn: '无需登录',
+    environmentState: 'not-built'
+  })
+  assert.match(pending, /环境未构建/)
+  assert.match(pending, /aria-label="构建 Local stdio 环境"/)
 })

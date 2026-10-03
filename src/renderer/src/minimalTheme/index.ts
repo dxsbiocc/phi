@@ -1,4 +1,10 @@
-import { alpha, createTheme, type ThemeOptions } from '@mui/material'
+import {
+  alpha,
+  createTheme,
+  type PaletteColorOptions,
+  type Theme,
+  type ThemeOptions
+} from '@mui/material'
 
 import { buildMinimalComponents } from './components'
 import { buildCustomShadows, buildShadows, type MinimalCustomShadows } from './shadows'
@@ -40,7 +46,7 @@ declare module '@mui/material/Chip' {
 
 // ---------------------------------------------------------------------------
 
-function semanticPalette(color: SemanticColor, isDark: boolean) {
+function semanticPalette(color: SemanticColor, isDark: boolean): PaletteColorOptions {
   const scale = SEMANTIC_SCALES[color]
   return {
     lighter: scale.lighter,
@@ -52,7 +58,7 @@ function semanticPalette(color: SemanticColor, isDark: boolean) {
   }
 }
 
-export function createMinimalTheme(mode: 'light' | 'dark') {
+export function createMinimalTheme(mode: 'light' | 'dark'): Theme {
   const isDark = mode === 'dark'
 
   const palette: ThemeOptions['palette'] = {

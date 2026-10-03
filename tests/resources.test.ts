@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { after } from 'node:test'
 
+import { installPlugin } from '../src/main/agent/plugins/loader'
+
 const tempRoot = mkdtempSync(join(tmpdir(), 'pi-resources-test-'))
 const agentDir = join(tempRoot, 'agent')
 const codexHome = join(tempRoot, 'codex')
@@ -108,6 +110,15 @@ writeFileSync(
 process.env.PI_CODING_AGENT_DIR = agentDir
 process.env.CODEX_HOME = codexHome
 
+const visualizationInstall = installPlugin(
+  join(process.cwd(), 'resources', 'plugins', 'visualization'),
+  { agentDir, runtimeRoot: join(tempRoot, 'runtime') }
+)
+assert.equal(visualizationInstall.ok, true, JSON.stringify(visualizationInstall.errors))
+assert.ok(visualizationInstall.plugin)
+const visualizationSkillDir = visualizationInstall.plugin.components.skills[0]
+assert.ok(visualizationSkillDir)
+
 after(() => {
   rmSync(tempRoot, { recursive: true, force: true })
 })
@@ -141,12 +152,18 @@ test('listMcpServers includes remote URL-only servers', async () => {
   try {
     writeFileSync(
       path,
-      JSON.stringify({ mcpServers: { pubmed: { type: 'http', url: 'https://example.com/mcp' } } })
+      JSON.stringify({
+        mcpServers: {
+          pubmed: { type: 'http', url: 'https://example.com/mcp', phiPackage: 'pubmed' }
+        }
+      })
     )
     const servers = await listGlobalMcpServers()
     assert.equal(servers[0]?.name, 'pubmed')
     assert.equal(servers[0]?.url, 'https://example.com/mcp')
     assert.equal(servers[0]?.transport, 'http')
+    assert.equal(servers[0]?.packageId, 'pubmed')
+    assert.equal(servers[0]?.connectorId, 'pubmed')
   } finally {
     writeFileSync(path, original)
   }
@@ -206,26 +223,23 @@ test('listSkills reads project skills from the selected cwd', async () => {
     (skill) =>
       skill.name === 'anndata' && skill.filePath.includes(join('resources', 'skills', 'anndata'))
   )
-  const databaseConnectorSkill = projectASkills.find(
-    (skill) =>
-      skill.name === 'create-database-connector' &&
-      skill.filePath.includes(join('resources', 'skills', 'create-database-connector'))
-  )
   const omicsVisualizationSkill = projectASkills.find(
     (skill) =>
       skill.name === 'omics-visualization' &&
-      skill.filePath.includes(join('resources', 'skills', 'omics-visualization'))
+      skill.filePath === join(visualizationSkillDir, 'SKILL.md')
   )
 
   assert(projectASkills.some((skill) => skill.name === 'project-a-skill'))
   assert(bundledSkill)
-  assert(databaseConnectorSkill)
   assert(omicsVisualizationSkill)
-  assert.equal(bundledSkill.sourceCategory, 'system')
-  assert.equal(bundledSkill.sourceCategoryLabel, 'System')
-  assert.equal(databaseConnectorSkill.sourceCategory, 'system')
-  assert.equal(omicsVisualizationSkill.sourceCategory, 'system')
-  assert.equal(omicsVisualizationSkill.sourceCategoryLabel, 'System')
+  assert.equal(bundledSkill.sourceCategory, 'bundled')
+  assert.equal(bundledSkill.sourceCategoryLabel, '内置')
+  assert.equal(bundledSkill.globalEnabled, false)
+  assert.equal(bundledSkill.projectOverride, null)
+  assert.equal(bundledSkill.core, false)
+  assert.equal(omicsVisualizationSkill.sourceCategory, 'plugin')
+  assert.equal(omicsVisualizationSkill.sourceCategoryLabel, '插件')
+  assert.equal(omicsVisualizationSkill.sourceId, 'visualization')
   assert(
     projectASkills.some(
       (skill) => skill.name === 'project-a-phi-skill' && skill.scope === 'project'
@@ -241,8 +255,9 @@ test('listSkills reads project skills from the selected cwd', async () => {
   assert(!projectBSkills.some((skill) => skill.name === 'project-a-skill'))
   assert(projectASkills.some((skill) => skill.name === 'user-skill' && skill.scope === 'user'))
   assert.equal(projectAUserSkill?.sourceCategory, 'user')
-  assert.equal(projectAUserSkill?.sourceCategoryLabel, 'User')
-  assert.equal(projectAPhiSkill?.sourceCategory, 'user')
+  assert.equal(projectAUserSkill?.sourceCategoryLabel, '我的')
+  assert.equal(projectAPhiSkill?.sourceCategory, 'project')
+  assert.equal(projectAPhiSkill?.sourceCategoryLabel, '项目')
 })
 
 test('readSkillContent reads only cataloged skill files', async () => {
@@ -260,20 +275,19 @@ test('readSkillContent reads only cataloged skill files', async () => {
   )
 })
 
-test('setSkillDisabled updates skill frontmatter', async () => {
+test('setSkillDisabled updates enablement without rewriting skill files', async () => {
   const { setSkillDisabled } = await import('../src/main/agent/resources')
 
   const filePath = join(projectA, '.phi', 'skills', 'project-a-phi-skill', 'SKILL.md')
+  const original = readFileSync(filePath, 'utf-8')
 
   const disabledSkills = await setSkillDisabled(filePath, true, projectA)
   assert.equal(disabledSkills.find((skill) => skill.filePath === filePath)?.disabled, true)
-  assert.match(readFileSync(filePath, 'utf-8'), /disableModelInvocation: true/)
-  assert.match(readFileSync(filePath, 'utf-8'), /hide: true/)
+  assert.equal(readFileSync(filePath, 'utf-8'), original)
 
   const enabledSkills = await setSkillDisabled(filePath, false, projectA)
   assert.equal(enabledSkills.find((skill) => skill.filePath === filePath)?.disabled, false)
-  assert.match(readFileSync(filePath, 'utf-8'), /disableModelInvocation: false/)
-  assert.match(readFileSync(filePath, 'utf-8'), /hide: false/)
+  assert.equal(readFileSync(filePath, 'utf-8'), original)
 })
 
 test('deleteSkill removes mutable cataloged skill directories', async () => {
@@ -310,7 +324,7 @@ test('listPromptAgents reads prompt agents from the selected cwd', async () => {
   assert(projectANames.includes('codex-agent'))
   assert(projectANames.includes('codex-toml-agent'))
   assert(projectANames.includes('Visualization'))
-  assert(projectANames.includes('Database'))
+  assert(!projectANames.includes('Database'))
   assert(projectANames.includes('Wrapper'))
   assert.equal(
     projectAAgents.find((agent) => agent.name === 'project-a-agent')?.trigger,

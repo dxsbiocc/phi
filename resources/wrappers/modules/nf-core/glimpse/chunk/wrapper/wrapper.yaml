@@ -20,7 +20,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "chr22"
     description: "Region to chunk (e.g. chr22)."
   outdir:
     kind: output

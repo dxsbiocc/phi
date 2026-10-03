@@ -30,7 +30,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "vcf"
     description: "Output suffix."
   outdir:
     kind: output

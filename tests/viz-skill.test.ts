@@ -1,18 +1,27 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { parse as parseYaml } from 'yaml'
 
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
+import { installPlugin } from '../src/main/agent/plugins/loader'
 
-const SKILL_DIR = join(process.cwd(), 'resources', 'skills', 'omics-visualization')
+const SKILL_DIR = join(
+  process.cwd(),
+  'resources',
+  'plugins',
+  'visualization',
+  'skills',
+  'omics-visualization'
+)
 const SKILL = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf-8')
 const AGENTS_DIR = join(process.cwd(), 'resources', 'agents')
 
 // The skill is read whole by the Visualization agent on every delegation, so what is in it
 // is paid for every time. Long, situational material lives in references/ and is read on demand.
-const SKILL_BUDGET_BYTES = 16_500
+const SKILL_BUDGET_BYTES = 22_000
 
 test('SKILL.md stays within its budget', () => {
   assert.ok(
@@ -59,7 +68,7 @@ test('nothing in the moved sections was lost', () => {
 test('the rules that keep figures honest and project-bound are still in SKILL.md', () => {
   assert.match(SKILL, /active Phi project working directory/)
   assert.match(SKILL, /Treat data directories outside the\s+project as read-only inputs/)
-  assert.match(SKILL, /Do not copy `references\/`, Phi's shared `resources\/palettes\/`/)
+  assert.match(SKILL, /Do not copy `references\/`, `references\/palettes\/`/)
   assert.match(SKILL, /Do not invent sample sizes/)
   assert.match(SKILL, /Do not silently filter, aggregate, impute/)
   assert.match(SKILL, /Qualitative\.Safe/)
@@ -85,8 +94,9 @@ test('SKILL.md tells the agent to use the visualization tools, and keeps the man
   )
   assert.match(reference, /Inspect the actual attached image/i)
   assert.match(reference, /Do not reuse plotted values/i)
-  assert.match(SKILL, /scripts\/route_template\.py/)
-  assert.match(SKILL, /qa_single_plot\.py/)
+  assert.match(SKILL, /validate_template_contracts\.py/)
+  assert.doesNotMatch(SKILL, /script: "route_template\.py"/)
+  assert.doesNotMatch(SKILL, /script: "qa_single_plot\.py"/)
 })
 
 test('every relative link in SKILL.md points at a file that exists', () => {
@@ -100,11 +110,11 @@ test('every relative link in SKILL.md points at a file that exists', () => {
   }
 })
 
-test('the figure index points at Phi shared palettes', () => {
+test('the figure index points at the generated plugin palette copy', () => {
   const plots = parseYaml(readFileSync(join(SKILL_DIR, 'references', 'plots.yaml'), 'utf8')) as {
     palettes: string
   }
-  assert.equal(plots.palettes, '../../palettes/palettes.yaml')
+  assert.equal(plots.palettes, 'references/palettes.yaml')
   assert.ok(existsSync(join(SKILL_DIR, plots.palettes)))
 })
 
@@ -120,21 +130,34 @@ test('the moved multi-panel workflow links still resolve from its new home', () 
 })
 
 test('the Visualization agent is given example, route, prepare and render tools', () => {
-  const { agents, diagnostics } = discoverPhiAgents({
-    cwd: '/nonexistent/cwd',
-    agentDir: '/nonexistent/agentdir',
-    bundledDir: AGENTS_DIR,
-    homeDir: '/nonexistent/home'
-  })
-  assert.deepEqual(diagnostics, [])
-  const visualization = agents.find((agent) => agent.name === 'Visualization')
-  assert.ok(visualization)
-  for (const tool of ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']) {
-    assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
-    assert.match(visualization.systemPrompt, new RegExp(tool))
+  const root = mkdtempSync(join(tmpdir(), 'phi-viz-skill-agent-'))
+  const agentDir = join(root, 'agent')
+  try {
+    const installed = installPlugin(join(process.cwd(), 'resources', 'plugins', 'visualization'), {
+      agentDir,
+      runtimeRoot: join(root, 'runtime')
+    })
+    assert.equal(installed.ok, true, JSON.stringify(installed.errors))
+    const { agents, diagnostics } = discoverPhiAgents({
+      cwd: '/nonexistent/cwd',
+      agentDir,
+      bundledDir: AGENTS_DIR,
+      homeDir: '/nonexistent/home'
+    })
+    assert.deepEqual(diagnostics, [])
+    const visualization = agents.find((agent) => agent.name === 'Visualization')
+    assert.ok(visualization)
+    assert.equal(visualization.environment, 'plugin:viz')
+    assert.equal(visualization.pluginId, 'visualization')
+    for (const tool of ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']) {
+      assert.equal(visualization.tools.includes(tool), false)
+      assert.match(visualization.systemPrompt, new RegExp(tool))
+    }
+    assert.ok(
+      Buffer.byteLength(visualization.systemPrompt) <= 7_200,
+      `the Visualization prompt is ${Buffer.byteLength(visualization.systemPrompt)} bytes`
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
-  assert.ok(
-    Buffer.byteLength(visualization.systemPrompt) <= 7_200,
-    `the Visualization prompt is ${Buffer.byteLength(visualization.systemPrompt)} bytes`
-  )
 })

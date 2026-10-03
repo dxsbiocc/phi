@@ -18,6 +18,37 @@ function resolveInclude(fromFile: string, target: string): string | undefined {
   return undefined
 }
 
+export interface WrapperIncludeReference {
+  /** Absolute path of the Nextflow source containing the include. */
+  fromFile: string
+  /** Include target exactly as written in the source. */
+  target: string
+  /** Absolute resolved file path, when the target exists locally. */
+  resolvedFile?: string
+}
+
+/**
+ * Every include reached from `mainNf`, including targets that cannot be
+ * resolved. The unresolved entries let package builders report a dependency
+ * they cannot attribute instead of silently publishing an incomplete graph.
+ */
+export function collectIncludeReferences(mainNf: string): WrapperIncludeReference[] {
+  const references: WrapperIncludeReference[] = []
+  const seen = new Set<string>()
+  const visit = (file: string): void => {
+    if (seen.has(file)) return
+    seen.add(file)
+    for (const match of readFileSync(file, 'utf-8').matchAll(INCLUDE)) {
+      const target = match[1]
+      const resolvedFile = resolveInclude(file, target)
+      references.push({ fromFile: file, target, ...(resolvedFile ? { resolvedFile } : {}) })
+      if (resolvedFile) visit(resolvedFile)
+    }
+  }
+  visit(resolve(mainNf))
+  return references
+}
+
 /** Absolute paths of `mainNf` and every file it includes, each once, in visit order. */
 export function collectIncludedFiles(mainNf: string): string[] {
   const seen = new Set<string>()

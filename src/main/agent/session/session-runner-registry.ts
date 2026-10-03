@@ -16,6 +16,7 @@ export interface SessionRunContext {
 export interface StartSessionRunInput {
   sessionId: string
   runId: string
+  loadedSkills?: readonly string[]
   execute: (context: SessionRunContext) => Promise<void>
   getRecordedFailure?: () => string | null | undefined
 }
@@ -101,6 +102,7 @@ export class SessionRunnerRegistry {
     this.appendEvent(input.sessionId, {
       type: 'run_started',
       runId: input.runId,
+      ...(input.loadedSkills ? { loadedSkills: [...input.loadedSkills] } : {}),
       createdAt: startedAt
     })
     writeAppLog({

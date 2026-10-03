@@ -40,7 +40,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "chr21"
     description: "Region to evaluate."
   outdir:
     kind: output

@@ -6,13 +6,18 @@ import test from 'node:test'
 
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
 import {
+  AGENT_CONTRACT_VERSION,
+  PhiAgentParseError,
   isPhiAgentDefinition,
   isValidPhiAgentName,
   normalizeToolName,
   parsePhiAgent,
   toPhiAgentName,
+  validateAgent,
+  validateAgentFile,
   type PhiAgentDefinition
 } from '../src/main/agent/agents/definition'
+import { selectAgentModel } from '../src/main/agent/agents/model-selection'
 import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
 import { AGENT_REPORT_PROTOCOL } from '../src/main/agent/agents/report'
 import {
@@ -23,15 +28,13 @@ import {
   extractAssistantText,
   type AgentSessionLike
 } from '../src/main/agent/agents/runner'
-import {
-  buildScopedPhiToolMap,
-  resolveAgentTools,
-  visualizationToolNamesForWorkflow
-} from '../src/main/agent/agents/tool-resolution'
+import { resolveAgentTools } from '../src/main/agent/agents/tool-resolution'
 import { buildAgentTool, type AgentRunner } from '../src/main/agent/agents/tool'
+import { installPlugin, type LoadedPlugin } from '../src/main/agent/plugins/loader'
 
 const REPO_AGENTS_DIR = join(import.meta.dirname, '..', 'resources', 'agents')
-const REPO_SKILLS_DIR = join(import.meta.dirname, '..', 'resources', 'skills')
+const REPO_VIZ_PLUGIN_DIR = join(import.meta.dirname, '..', 'resources', 'plugins', 'visualization')
+const REPO_VIZ_AGENT = join(REPO_VIZ_PLUGIN_DIR, 'agents', 'Visualization.md')
 
 function agentMarkdown(fields: Record<string, string>, body = 'You are a specialist.'): string {
   const lines = Object.entries(fields).map(([key, value]) => `${key}: ${value}`)
@@ -48,6 +51,24 @@ function withTree(fn: (root: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), 'phi-agents-'))
   try {
     fn(root)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+function withInstalledVisualization(
+  fn: (fixture: { agentDir: string; plugin: LoadedPlugin }) => void
+): void {
+  const root = mkdtempSync(join(tmpdir(), 'phi-agents-plugin-'))
+  const agentDir = join(root, 'agent')
+  try {
+    const installed = installPlugin(REPO_VIZ_PLUGIN_DIR, {
+      agentDir,
+      runtimeRoot: join(root, 'runtime')
+    })
+    assert.equal(installed.ok, true, JSON.stringify(installed.errors))
+    assert.ok(installed.plugin)
+    fn({ agentDir, plugin: installed.plugin })
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -117,7 +138,9 @@ test('a native definition parses into a complete agent', () => {
     delegation: 'Delegate alpha work.',
     systemPrompt: 'System prompt body.',
     source: 'phi',
-    filePath: '/x/Alpha.md'
+    filePath: '/x/Alpha.md',
+    visibility: 'entry',
+    warnings: []
   })
 })
 
@@ -168,12 +191,316 @@ test('isPhiAgentDefinition guards the worker boundary', () => {
     skills: [],
     systemPrompt: 'p',
     source: 'phi',
-    filePath: '/x'
+    filePath: '/x',
+    visibility: 'entry',
+    warnings: []
   }
   assert.equal(isPhiAgentDefinition(good), true)
+  assert.equal(
+    isPhiAgentDefinition({
+      ...good,
+      environment: 'phi:python@1',
+      model: ['openai/gpt'],
+      thinkingLevel: 'low',
+      warnings: ['legacy alias']
+    }),
+    true
+  )
   assert.equal(isPhiAgentDefinition({ ...good, tools: 'read' }), false)
   assert.equal(isPhiAgentDefinition({ ...good, name: 'alpha' }), false)
+  assert.equal(isPhiAgentDefinition({ ...good, thinkingLevel: 'max' }), false)
+  assert.equal(isPhiAgentDefinition({ ...good, visibility: 'internal' }), false)
+  assert.equal(isPhiAgentDefinition({ ...good, model: 'openai/gpt' }), false)
   assert.equal(isPhiAgentDefinition(null), false)
+})
+
+function agentDocument(frontmatter: string, body = 'You are a specialist.'): string {
+  return `---\n${frontmatter.trim()}\n---\n${body}\n`
+}
+
+const PHI_FRONTMATTER = `name: Alpha
+description: Does alpha things.
+tools: [read, bash]`
+
+test('contract v1 accepts each field and rejects each broken rule', () => {
+  assert.equal(AGENT_CONTRACT_VERSION, '1.0.0')
+
+  const passing = validateAgentFile(
+    '/x/Alpha.md',
+    agentDocument(`
+name: Alpha
+description: ${'d'.repeat(1024)}
+tools: [read]
+skills: [one, two]
+environment: phi:python@1
+model:
+  - openai/gpt-4
+  - anthropic/claude
+thinkingLevel: high
+visibility: entry
+delegationMode: preferred
+delegation: Hand over alpha work.
+fallback:
+  afterFailures: 2
+  tools: [bash]
+  match: [ncbi]
+`),
+    'phi'
+  )
+  assert.equal(passing.ok, true, passing.errors.map((error) => error.message).join('\n'))
+  assert.deepEqual(passing.warnings, [])
+  assert.equal(passing.agent?.description.length, 1024)
+  assert.deepEqual(passing.agent?.skills, ['one', 'two'])
+  assert.equal(passing.agent?.environment, 'phi:python@1')
+  assert.deepEqual(passing.agent?.model, ['openai/gpt-4', 'anthropic/claude'])
+  assert.equal(passing.agent?.thinkingLevel, 'high')
+  assert.equal(passing.agent?.visibility, 'entry')
+  assert.equal(passing.agent?.delegationMode, 'preferred')
+  assert.equal(passing.agent?.fallback?.afterFailures, 2)
+
+  for (const level of ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const) {
+    const result = validateAgentFile(
+      '/x/Alpha.md',
+      agentDocument(`${PHI_FRONTMATTER}\nthinkingLevel: ${level}`),
+      'phi'
+    )
+    assert.equal(result.ok, true, level)
+    assert.equal(result.agent?.thinkingLevel, level)
+  }
+  for (const mode of ['required-first', 'preferred', 'optional'] as const) {
+    const result = validateAgentFile(
+      '/x/Alpha.md',
+      agentDocument(`${PHI_FRONTMATTER}\ndelegationMode: ${mode}`),
+      'phi'
+    )
+    assert.equal(result.ok, true, mode)
+    assert.equal(result.agent?.delegationMode, mode)
+  }
+  for (const ref of ['phi:python@1', 'plugin:viz', 'project:default']) {
+    const result = validateAgentFile(
+      '/x/Alpha.md',
+      agentDocument(`${PHI_FRONTMATTER}\nenvironment: ${ref}`),
+      'phi'
+    )
+    assert.equal(result.ok, true, ref)
+    assert.equal(result.agent?.environment, ref)
+  }
+
+  const stringModel = parsePhiAgent(
+    '/x/Alpha.md',
+    agentDocument(`${PHI_FRONTMATTER}\nmodel: openai/gpt-4`),
+    'phi'
+  )
+  assert.deepEqual(stringModel.model, ['openai/gpt-4'])
+
+  const omitted = parsePhiAgent('/x/Alpha.md', agentDocument(PHI_FRONTMATTER), 'phi')
+  assert.equal(omitted.visibility, 'entry')
+  assert.equal(omitted.environment, undefined)
+  assert.equal(omitted.model, undefined)
+  assert.equal(omitted.thinkingLevel, undefined)
+  assert.deepEqual(omitted.warnings, [])
+
+  const failures: Array<[string, RegExp]> = [
+    [`name: nope\ndescription: d\ntools: [read]`, /capitalised|Agent/i],
+    [`${PHI_FRONTMATTER.replace('Alpha', 'Beta')}`, /file name/i],
+    [`name: Alpha\ntools: [read]`, /description/i],
+    [`name: Alpha\ndescription: ${'d'.repeat(1025)}\ntools: [read]`, /1-1024/],
+    [`name: Alpha\ndescription: d\ntools: []`, /tools/i],
+    [`${PHI_FRONTMATTER}\nmodel: []`, /model/],
+    [`${PHI_FRONTMATTER}\nmodel: 1`, /model/],
+    [`${PHI_FRONTMATTER}\nthinkingLevel: max`, /thinkingLevel/],
+    [`${PHI_FRONTMATTER}\nskills: 1`, /skills/],
+    [`${PHI_FRONTMATTER}\nenvironment: phi:python`, /environment/],
+    [`${PHI_FRONTMATTER}\nenvironment: ./environment.yml`, /environment/],
+    [`${PHI_FRONTMATTER}\nvisibility: internal`, /reserved/],
+    [`${PHI_FRONTMATTER}\nvisibility: hidden`, /entry/],
+    [`${PHI_FRONTMATTER}\ndelegationMode: sometimes`, /delegationMode/],
+    [`${PHI_FRONTMATTER}\ndelegation: 1`, /delegation/],
+    [
+      `${PHI_FRONTMATTER}\nfallback:\n  afterFailures: 0\n  tools: [bash]\n  match: [ncbi]`,
+      /positive integer/
+    ],
+    [
+      `${PHI_FRONTMATTER}\nfallback:\n  afterFailures: 1\n  tools: []\n  match: [ncbi]`,
+      /fallback.tools/
+    ],
+    [`${PHI_FRONTMATTER}\nspawns: [Other]`, /reserved/],
+    [`${PHI_FRONTMATTER}\noutputSchema:\n  type: object`, /reserved/]
+  ]
+  for (const [frontmatter, pattern] of failures) {
+    const result = validateAgentFile('/x/Alpha.md', agentDocument(frontmatter), 'phi')
+    assert.equal(result.ok, false, frontmatter)
+    assert.equal(result.agent, undefined)
+    assert.ok(
+      result.errors.some((error) => pattern.test(error.message)),
+      `${frontmatter}\n${result.errors.map((error) => error.message).join('\n')}`
+    )
+  }
+
+  assert.throws(
+    () => parsePhiAgent('/x/Alpha.md', agentDocument('name: nope\ntools: []'), 'phi'),
+    (error: unknown) => {
+      assert.ok(error instanceof PhiAgentParseError)
+      assert.match(error.message, /name/i)
+      assert.match(error.message, /description/i)
+      assert.match(error.message, /tools/i)
+      return true
+    }
+  )
+})
+
+test('legacy aliases warn and name the new spelling; unknown keys warn and are ignored', () => {
+  const result = validateAgentFile(
+    '/x/Alpha.md',
+    agentDocument(`
+name: Alpha
+description: Does alpha things.
+tools: [read]
+delegation_mode: required-first
+extra: true
+fallback:
+  after_failures: 1
+  tools: [bash]
+  match: [ncbi]
+  note: leftover
+`),
+    'phi'
+  )
+  assert.equal(result.ok, true, result.errors.map((error) => error.message).join('\n'))
+  assert.equal(result.agent?.delegationMode, 'required-first')
+  assert.equal(result.agent?.fallback?.afterFailures, 1)
+  const messages = result.warnings.map((warning) => warning.message)
+  assert.ok(messages.some((message) => message.includes('delegationMode')))
+  assert.ok(messages.some((message) => message.includes('afterFailures')))
+  assert.ok(messages.some((message) => message.includes('extra')))
+  assert.ok(messages.some((message) => message.includes('note')))
+  assert.deepEqual(result.agent?.warnings, messages)
+})
+
+test('compatibility mode ignores Phi fields, including environment and spawns', () => {
+  const result = validateAgentFile(
+    '/p/.claude/agents/code-reviewer.md',
+    agentDocument(
+      `
+name: code-reviewer
+description: Reviews code.
+tools: Read, Bash
+environment: not-a-ref
+spawns: [Other]
+outputSchema:
+  type: object
+visibility: internal
+delegation_mode: not-a-mode
+skills: 12
+fallback: nope
+thinkingLevel: max
+model: openai/gpt-4
+`,
+      'Review the diff.'
+    ),
+    'compat'
+  )
+  assert.equal(result.ok, true, result.errors.map((error) => error.message).join('\n'))
+  assert.deepEqual(result.errors, [])
+  assert.deepEqual(result.warnings, [])
+  assert.equal(result.agent?.name, 'CodeReviewer')
+  assert.deepEqual(result.agent?.tools, ['read', 'bash'])
+  assert.equal(result.agent?.environment, undefined)
+  assert.equal(result.agent?.delegationMode, undefined)
+  assert.equal(result.agent?.visibility, 'entry')
+  assert.deepEqual(result.agent?.skills, [])
+  assert.equal(result.agent?.thinkingLevel, undefined)
+  assert.deepEqual(result.agent?.model, ['openai/gpt-4'])
+  assert.deepEqual(result.agent?.warnings, [])
+})
+
+test('discovery logs warnings without skipping the agent', () => {
+  withTree((root) => {
+    put(root, 'project/.phi/agents/Alpha.md', agentDocument(`${PHI_FRONTMATTER}\nextra: true`))
+    put(root, 'project/.phi/agents/Bad.md', agentDocument('name: Bad\ndescription: d\ntools: []'))
+    const { agents, diagnostics } = discoverPhiAgents({
+      cwd: join(root, 'project'),
+      agentDir: join(root, 'home', '.phi'),
+      homeDir: join(root, 'home'),
+      pluginAgentDirs: []
+    })
+    assert.deepEqual(
+      agents.map((agent) => agent.name),
+      ['Alpha']
+    )
+    assert.ok(agents[0].warnings.some((warning) => warning.includes('extra')))
+    assert.ok(
+      diagnostics.some(
+        (diagnostic) => diagnostic.level === 'warning' && diagnostic.message.includes('extra')
+      )
+    )
+    assert.ok(
+      diagnostics.some(
+        (diagnostic) => diagnostic.level === 'error' && diagnostic.filePath.endsWith('Bad.md')
+      )
+    )
+  })
+})
+
+test('the bundled agents validate with no errors and no warnings', () => {
+  const files = [join(REPO_AGENTS_DIR, 'Wrapper.md'), REPO_VIZ_AGENT]
+  for (const file of files) {
+    const result = validateAgent(file)
+    assert.equal(
+      result.ok,
+      true,
+      result.errors.map((error) => `${error.path}: ${error.message}`).join('\n')
+    )
+    assert.deepEqual(result.errors, [])
+    assert.deepEqual(result.warnings, [])
+    assert.deepEqual(result.agent?.warnings, [])
+    assert.equal(result.agent?.visibility, 'entry')
+    assert.equal(result.agent?.delegationMode, 'required-first')
+  }
+})
+
+test('selectAgentModel uses the first selector that resolves', async () => {
+  const calls: string[] = []
+  const parent = { provider: 'parent', id: 'p' }
+  const result = await selectAgentModel(
+    'Alpha',
+    ['missing/a', 'found/b', 'later/c'],
+    (selector) => {
+      calls.push(selector)
+      return selector === 'found/b' ? { provider: 'found', id: 'b' } : undefined
+    },
+    parent
+  )
+  assert.deepEqual(calls, ['missing/a', 'found/b'])
+  assert.deepEqual(result, { model: { provider: 'found', id: 'b' } })
+})
+
+test('selectAgentModel keeps the parent model when no selector resolves', async () => {
+  const parent = { provider: 'parent', id: 'p' }
+  let called = false
+  const absent = await selectAgentModel(
+    'Alpha',
+    undefined,
+    () => {
+      called = true
+      return undefined
+    },
+    parent
+  )
+  assert.equal(called, false)
+  assert.deepEqual(absent, { model: parent })
+
+  const missing = await selectAgentModel(
+    'Alpha',
+    ['missing/a', 'missing/b'],
+    () => undefined,
+    parent
+  )
+  assert.equal(missing.model, parent)
+  assert.equal(
+    missing.warning,
+    "Phi agent Alpha: model missing/a, missing/b not available; using the conversation's model"
+  )
 })
 
 // ── discovery ─────────────────────────────────────────────────────────────
@@ -200,7 +527,8 @@ test('discovery scans the Phi roots first and never reads a legacy directory as 
       cwd,
       agentDir,
       bundledDir: bundled,
-      homeDir: join(root, 'home')
+      homeDir: join(root, 'home'),
+      pluginAgentDirs: []
     })
     assert.deepEqual(
       agents.map((a) => [a.name, a.source]),
@@ -236,7 +564,12 @@ test('discovery is compatible with .omp, .pi and .claude agents, project and use
     put(root, 'home/.omp/agent/agents/scout.md', agentMarkdown({ name: 'scout', description: 's' }))
     put(root, 'home/.claude/agents/writer.md', agentMarkdown({ name: 'writer', description: 'w' }))
 
-    const { agents } = discoverPhiAgents({ cwd, agentDir: join(home, '.phi'), homeDir: home })
+    const { agents } = discoverPhiAgents({
+      cwd,
+      agentDir: join(home, '.phi'),
+      homeDir: home,
+      pluginAgentDirs: []
+    })
     assert.deepEqual(agents.map((a) => a.name).sort(), [
       'Planner',
       'Reviewer',
@@ -268,7 +601,8 @@ test('a Phi definition beats a compat one with the same name, and project beats 
       cwd,
       agentDir: join(home, '.phi'),
       bundledDir: join(root, 'bundled'),
-      homeDir: home
+      homeDir: home,
+      pluginAgentDirs: []
     })
     assert.equal(result.agents.length, 1)
     assert.equal(result.agents[0].description, 'user alpha')
@@ -282,7 +616,8 @@ test('a Phi definition beats a compat one with the same name, and project beats 
       cwd,
       agentDir: join(home, '.phi'),
       bundledDir: join(root, 'bundled'),
-      homeDir: home
+      homeDir: home,
+      pluginAgentDirs: []
     })
     assert.equal(result.agents[0].description, 'project alpha')
   })
@@ -305,7 +640,8 @@ test('an invalid definition becomes a diagnostic and never blocks the others', (
     const { agents, diagnostics } = discoverPhiAgents({
       cwd: join(root, 'project'),
       agentDir: join(root, 'home', '.phi'),
-      homeDir: join(root, 'home')
+      homeDir: join(root, 'home'),
+      pluginAgentDirs: []
     })
     assert.deepEqual(
       agents.map((a) => a.name),
@@ -321,7 +657,8 @@ test('missing directories are fine', () => {
     const result = discoverPhiAgents({
       cwd: join(root, 'nope'),
       agentDir: join(root, 'nope2'),
-      homeDir: join(root, 'nope3')
+      homeDir: join(root, 'nope3'),
+      pluginAgentDirs: []
     })
     assert.deepEqual(result, { agents: [], diagnostics: [] })
   })
@@ -370,173 +707,133 @@ test('the bundled Wrapper agent is a valid, well-formed definition', () => {
   assert.ok(wrapper.delegation && wrapper.delegation.length > 0)
 })
 
-test('the bundled Database agent owns only biological database tools', () => {
-  const { agents, diagnostics } = discoverPhiAgents({
-    cwd: '/nonexistent/cwd',
-    agentDir: '/nonexistent/agentdir',
-    bundledDir: REPO_AGENTS_DIR,
-    homeDir: '/nonexistent/home'
-  })
-  assert.deepEqual(diagnostics, [])
-  const database = agents.find((agent) => agent.name === 'Database')
-  assert.ok(database, 'resources/agents/Database.md should define Database')
-  assert.equal(database.source, 'phi')
-  assert.deepEqual(database.tools, [
-    'db_search',
-    'db_resolve',
-    'db_routes',
-    'db_domain',
-    'db_docs_search',
-    'db_query',
-    'db_download'
-  ])
-  for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit', 'eval', 'web_search']) {
-    assert.ok(!database.tools.includes(tool), `Database must not have system tool ${tool}`)
-  }
-  assert.deepEqual(database.skills, [])
-  assert.equal(existsSync(join(REPO_SKILLS_DIR, 'create-database-connector', 'SKILL.md')), true)
-  assert.match(database.systemPrompt, /stable_id/)
-  assert.match(database.systemPrompt, /provenance/i)
-  assert.match(database.systemPrompt, /bulk download/i)
-  assert.match(database.systemPrompt, /before (?:the )?first tool call/i)
-  assert.match(database.systemPrompt, /candidate databases/i)
-  assert.match(database.systemPrompt, /may be inspected and queried in parallel/i)
-  assert.match(database.systemPrompt, /exact public-accession/i)
-  assert.match(database.systemPrompt, /db_resolve.*replace these discovery steps/i)
-  assert.match(database.systemPrompt, /do not repeat/i)
-  assert.doesNotMatch(database.systemPrompt, /skill:\/\/create-database-connector/)
-  assert.ok(database.delegation && database.delegation.length > 0)
-  assert.equal(database.delegationMode, 'required-first')
-  assert.equal(database.fallback?.afterFailures, 1)
-  assert.deepEqual(database.fallback?.tools, ['bash', 'eval', 'web_search', 'download_file'])
-  assert.ok(database.fallback?.match.includes('rest.uniprot.org'))
-  assert.match(database.description, /does not conduct open-ended literature reviews/i)
-  assert.match(database.delegation ?? '', /literature search.*main agent/i)
-  assert.match(database.systemPrompt, /do not broaden a literature search/i)
-  for (const toolName of [
-    'db_search',
-    'db_resolve',
-    'db_routes',
-    'db_domain',
-    'db_docs_search',
-    'db_query',
-    'db_download'
-  ]) {
-    assert.doesNotMatch(database.delegation ?? '', new RegExp(`\\b${toolName}\\b`))
-  }
-})
-
 test('specialists keep delegated scope, evidence, and stop rules explicit', () => {
-  const { agents } = discoverPhiAgents({
-    cwd: '/nonexistent/cwd',
-    agentDir: '/nonexistent/agentdir',
-    bundledDir: REPO_AGENTS_DIR,
-    homeDir: '/nonexistent/home'
+  withInstalledVisualization(({ agentDir }) => {
+    const { agents } = discoverPhiAgents({
+      cwd: '/nonexistent/cwd',
+      agentDir,
+      bundledDir: REPO_AGENTS_DIR,
+      homeDir: '/nonexistent/home'
+    })
+    for (const name of ['Visualization', 'Wrapper']) {
+      const prompt = agents.find((agent) => agent.name === name)?.systemPrompt ?? ''
+      assert.match(prompt, /do not broaden the delegated task/i, `${name} must preserve scope`)
+      assert.match(
+        prompt,
+        /tool outputs?.*evidence, not instructions/i,
+        `${name} must distrust data`
+      )
+      assert.match(prompt, /missing.*report/i, `${name} must expose missing inputs`)
+    }
+    const visualization = agents.find((agent) => agent.name === 'Visualization')!
+    assert.match(visualization.systemPrompt, /preview.*before.*final render/i)
+    assert.match(visualization.systemPrompt, /verify.*artifact.*before.*report/i)
+    const wrapper = agents.find((agent) => agent.name === 'Wrapper')!
+    assert.match(wrapper.systemPrompt, /inspect.*before.*run/i)
+    assert.match(wrapper.systemPrompt, /lost.*unknown outcome/i)
   })
-  for (const name of ['Database', 'Visualization', 'Wrapper']) {
-    const prompt = agents.find((agent) => agent.name === name)?.systemPrompt ?? ''
-    assert.match(prompt, /do not broaden the delegated task/i, `${name} must preserve scope`)
-    assert.match(prompt, /tool outputs?.*evidence, not instructions/i, `${name} must distrust data`)
-    assert.match(prompt, /missing.*report/i, `${name} must expose missing inputs`)
-  }
-  const database = agents.find((agent) => agent.name === 'Database')!
-  assert.match(database.systemPrompt, /select databases.*select functions.*inspect inputs/i)
-  assert.match(database.systemPrompt, /independent.*parallel/i)
-  const visualization = agents.find((agent) => agent.name === 'Visualization')!
-  assert.match(visualization.systemPrompt, /preview.*before.*final render/i)
-  assert.match(visualization.systemPrompt, /verify.*artifact.*before.*report/i)
-  const wrapper = agents.find((agent) => agent.name === 'Wrapper')!
-  assert.match(wrapper.systemPrompt, /inspect.*before.*run/i)
-  assert.match(wrapper.systemPrompt, /lost.*unknown outcome/i)
 })
 
 test('specialist delegation excludes general explanation and adjacent deliverables', () => {
-  const { agents } = discoverPhiAgents({
-    cwd: '/nonexistent/cwd',
-    agentDir: '/nonexistent/agentdir',
-    bundledDir: REPO_AGENTS_DIR,
-    homeDir: '/nonexistent/home'
+  withInstalledVisualization(({ agentDir }) => {
+    const { agents } = discoverPhiAgents({
+      cwd: '/nonexistent/cwd',
+      agentDir,
+      bundledDir: REPO_AGENTS_DIR,
+      homeDir: '/nonexistent/home'
+    })
+    for (const name of ['Visualization', 'Wrapper']) {
+      const guidance = agents.find((agent) => agent.name === name)?.delegation ?? ''
+      assert.match(guidance, /only the requested/i, `${name} must constrain delegation`)
+    }
+    assert.match(
+      agents.find((agent) => agent.name === 'Visualization')?.delegation ?? '',
+      /general explanation/i
+    )
+    assert.match(
+      agents.find((agent) => agent.name === 'Wrapper')?.delegation ?? '',
+      /general explanation/i
+    )
   })
-  for (const name of ['Database', 'Visualization', 'Wrapper']) {
-    const guidance = agents.find((agent) => agent.name === name)?.delegation ?? ''
-    assert.match(guidance, /only the requested/i, `${name} must constrain delegation`)
-  }
-  assert.match(
-    agents.find((agent) => agent.name === 'Visualization')?.delegation ?? '',
-    /general explanation/i
-  )
-  assert.match(
-    agents.find((agent) => agent.name === 'Wrapper')?.delegation ?? '',
-    /general explanation/i
-  )
 })
 
 test('the bundled Visualization agent routes template previews through omics visualization', () => {
-  const { agents, diagnostics } = discoverPhiAgents({
-    cwd: '/nonexistent/cwd',
-    agentDir: '/nonexistent/agentdir',
-    bundledDir: REPO_AGENTS_DIR,
-    homeDir: '/nonexistent/home'
-  })
-  assert.deepEqual(diagnostics, [])
-  const visualization = agents.find((agent) => agent.name === 'Visualization')
-  assert.ok(visualization, 'resources/agents/Visualization.md should define Visualization')
-  assert.equal(visualization.source, 'phi')
-  for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit']) {
-    assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
-  }
-  assert.ok(visualization.tools.includes('viz_examples'))
-  assert.deepEqual(visualization.skills, ['omics-visualization'])
-  assert.equal(existsSync(join(REPO_SKILLS_DIR, 'omics-visualization', 'SKILL.md')), true)
-  assert.equal(visualization.delegationMode, 'required-first')
-  assert.equal(visualization.fallback?.afterFailures, 1)
-  assert.deepEqual(visualization.fallback?.tools, ['bash', 'eval'])
-  assert.ok(visualization.fallback?.match.includes('resources/skills/omics-visualization'))
-  assert.match(visualization.delegation ?? '', /show a few templates/i)
-  assert.match(visualization.delegation ?? '', /preview/i)
-  assert.match(visualization.delegation ?? '', /directly drawing with Python\/R/i)
-  assert.match(visualization.delegation ?? '', /current project working directory/i)
-  assert.match(visualization.delegation ?? '', /Output directories must be inside/)
-  assert.match(visualization.systemPrompt, /skill:\/\/omics-visualization/)
-  assert.match(visualization.systemPrompt, /preview-selection mode/i)
-  assert.match(visualization.systemPrompt, /Markdown image/i)
-  assert.match(visualization.systemPrompt, /template_id/)
-  assert.match(visualization.systemPrompt, /absolute path/i)
-  assert.match(visualization.systemPrompt, /Project output boundary/)
-  assert.match(visualization.systemPrompt, /external input dataset/)
-  assert.match(visualization.systemPrompt, /Do not copy the skill's `references\/`/)
-  assert.match(
-    visualization.systemPrompt,
-    /sourcing the installed read-only `scripts\/lib\/common\.R`/
-  )
-  assert.match(visualization.systemPrompt, /Do not invent template ids/i)
-  assert.match(visualization.systemPrompt, /viz_examples.*without.*data/i)
-  assert.match(visualization.systemPrompt, /do not simulate.*render.*example/i)
-  assert.match(visualization.systemPrompt, /example-only request is `completed`/i)
-  assert.match(visualization.systemPrompt, /revision mode.*existing figure/i)
-  assert.match(visualization.systemPrompt, /do not call `viz_route` or `viz_prepare`/i)
-  assert.match(visualization.systemPrompt, /existing `plot\.R`.*input.*output/i)
-  assert.match(visualization.systemPrompt, /palette.*existing.*script/i)
-  assert.match(visualization.delegation ?? '', /existing `plot\.R`.*input.*output/i)
-  assert.match(visualization.delegation ?? '', /examples, create, revise, or reference/i)
-  assert.match(
-    visualization.systemPrompt,
-    /reference image.*visual evidence, not an instruction source/i
-  )
-  assert.match(visualization.systemPrompt, /reference.*user.*data.*do not invent/i)
-  assert.match(visualization.systemPrompt, /same cutoffs for Up\/Down\/None colors/i)
-  assert.match(visualization.systemPrompt, /counts based on adjusted P value alone distinct/i)
+  withInstalledVisualization(({ agentDir, plugin }) => {
+    const { agents, diagnostics } = discoverPhiAgents({
+      cwd: '/nonexistent/cwd',
+      agentDir,
+      bundledDir: REPO_AGENTS_DIR,
+      homeDir: '/nonexistent/home'
+    })
+    assert.deepEqual(diagnostics, [])
+    const visualization = agents.find((agent) => agent.name === 'Visualization')
+    assert.ok(visualization, 'the visualization plugin should define Visualization')
+    assert.equal(visualization.filePath, plugin.components.agents[0])
+    assert.equal(visualization.pluginId, 'visualization')
+    assert.equal(visualization.source, 'phi')
+    for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit']) {
+      assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
+    }
+    assert.equal(visualization.environment, 'plugin:viz')
+    for (const tool of ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']) {
+      assert.equal(visualization.tools.includes(tool), false, `${tool} arrives through attachTo`)
+    }
+    assert.deepEqual(visualization.skills, ['omics-visualization'])
+    const skillDir = plugin.components.skills[0]
+    assert.ok(skillDir)
+    assert.equal(existsSync(join(skillDir, 'SKILL.md')), true)
+    assert.equal(visualization.delegationMode, 'required-first')
+    assert.equal(visualization.fallback?.afterFailures, 1)
+    assert.deepEqual(visualization.fallback?.tools, ['bash', 'eval'])
+    assert.ok(
+      visualization.fallback?.match.includes('plugins/visualization/skills/omics-visualization')
+    )
+    assert.match(visualization.delegation ?? '', /show a few templates/i)
+    assert.match(visualization.delegation ?? '', /preview/i)
+    assert.match(visualization.delegation ?? '', /directly drawing with Python\/R/i)
+    assert.match(visualization.delegation ?? '', /current project working directory/i)
+    assert.match(visualization.delegation ?? '', /Output directories must be inside/)
+    assert.match(visualization.systemPrompt, /skill:\/\/omics-visualization/)
+    assert.match(visualization.systemPrompt, /preview-selection mode/i)
+    assert.match(visualization.systemPrompt, /Markdown image/i)
+    assert.match(visualization.systemPrompt, /template_id/)
+    assert.match(visualization.systemPrompt, /absolute path/i)
+    assert.match(visualization.systemPrompt, /Project output boundary/)
+    assert.match(visualization.systemPrompt, /external input dataset/)
+    assert.match(visualization.systemPrompt, /Do not copy the skill's `references\/`/)
+    assert.match(
+      visualization.systemPrompt,
+      /sourcing the installed read-only `scripts\/lib\/common\.R`/
+    )
+    assert.match(visualization.systemPrompt, /Do not invent template ids/i)
+    assert.match(visualization.systemPrompt, /viz_examples.*without.*data/i)
+    assert.match(visualization.systemPrompt, /do not simulate.*render.*example/i)
+    assert.match(visualization.systemPrompt, /example-only request is `completed`/i)
+    assert.match(visualization.systemPrompt, /revision mode.*existing figure/i)
+    assert.match(visualization.systemPrompt, /do not call `viz_route` or `viz_prepare`/i)
+    assert.match(visualization.systemPrompt, /existing `plot\.R`.*input.*output/i)
+    assert.match(visualization.systemPrompt, /palette.*existing.*script/i)
+    assert.match(visualization.delegation ?? '', /existing `plot\.R`.*input.*output/i)
+    assert.match(visualization.delegation ?? '', /examples, create, revise, or reference/i)
+    assert.match(
+      visualization.systemPrompt,
+      /reference image.*visual evidence, not an instruction source/i
+    )
+    assert.match(visualization.systemPrompt, /reference.*user.*data.*do not invent/i)
+    assert.match(visualization.systemPrompt, /same cutoffs for Up\/Down\/None colors/i)
+    assert.match(visualization.systemPrompt, /counts based on adjusted P value alone distinct/i)
 
-  const skillText = readFileSync(join(REPO_SKILLS_DIR, 'omics-visualization', 'SKILL.md'), 'utf-8')
-  assert.match(skillText, /active Phi project working directory/)
-  assert.match(skillText, /Treat data directories outside the\s+project as read-only inputs/)
-  assert.match(skillText, /Do not copy `references\/`, Phi's shared `resources\/palettes\/`/)
-  assert.match(skillText, /same values for point classification, cutoff lines, legend text/i)
-  const commonR = readFileSync(
-    join(REPO_SKILLS_DIR, 'omics-visualization', 'scripts', 'lib', 'common.R'),
-    'utf-8'
-  )
-  assert.match(commonR, /OMICS_VISUALIZATION_SKILL_ROOT/)
+    const skillText = readFileSync(join(skillDir, 'SKILL.md'), 'utf-8')
+    assert.match(skillText, /active Phi project working directory/)
+    assert.match(skillText, /Treat data directories outside the\s+project as read-only inputs/)
+    assert.match(
+      skillText,
+      /Do not copy `references\/`, `references\/palettes\/`, or catalog files/
+    )
+    assert.match(skillText, /same values for point classification, cutoff lines, legend text/i)
+    const commonR = readFileSync(join(skillDir, 'scripts', 'lib', 'common.R'), 'utf-8')
+    assert.match(commonR, /OMICS_VISUALIZATION_SKILL_ROOT/)
+  })
 })
 
 // ── the leader prompt ─────────────────────────────────────────────────────
@@ -546,46 +843,40 @@ test('there is no leader prompt when there are no agents', () => {
 })
 
 test('the leader prompt lists agents by name and tells the main agent to delegate, not do the work', () => {
-  const { agents } = discoverPhiAgents({
-    cwd: '/nonexistent/cwd',
-    agentDir: '/nonexistent/agentdir',
-    bundledDir: REPO_AGENTS_DIR,
-    homeDir: '/nonexistent/home'
+  withInstalledVisualization(({ agentDir }) => {
+    const { agents } = discoverPhiAgents({
+      cwd: '/nonexistent/cwd',
+      agentDir,
+      bundledDir: REPO_AGENTS_DIR,
+      homeDir: '/nonexistent/home'
+    })
+    const prompt = buildAgentLeaderPrompt(agents)
+    assert.match(prompt, /^<phi_agents>/)
+    assert.match(prompt, /<\/phi_agents>$/)
+    assert.match(prompt, /- Visualization: /)
+    assert.match(prompt, /- Wrapper: /)
+    assert.match(prompt, /public biological database.*read/i)
+    assert.match(prompt, /https:\/\/rest\.uniprot\.org\/uniprotkb\/P04637\.json/)
+    assert.match(prompt, /eutils\.ncbi\.nlm\.nih\.gov.*retmode=json/i)
+    assert.match(prompt, /database file.*download_file/i)
+    assert.match(prompt, /self-contained/i)
+    assert.match(prompt, /absolute/i)
+    assert.match(prompt, /cannot (see|ask)/i)
+    assert.match(prompt, /show a few templates/i)
+    assert.match(prompt, /nextflow/i)
+    assert.match(prompt, /do not/i)
+    assert.match(prompt, /required-first/i)
+    assert.match(prompt, /only the requested subtask/i)
+    assert.match(prompt, /follow-up edit.*exact source, input, and prior output paths/i)
+    assert.match(prompt, /controlled fallback/i)
+    assert.match(prompt, /not_found/i)
+    assert.match(prompt, /new and modified user-facing files separately/i)
+    assert.match(prompt, /exact path and purpose/i)
+    // The leader never learns the specialist's own tool functions.
+    for (const name of ['wrapper_search', 'wrapper_inspect', 'wrapper_run']) {
+      assert.ok(!new RegExp(`\\b${name}\\b`).test(prompt), `leader prompt must not mention ${name}`)
+    }
   })
-  const prompt = buildAgentLeaderPrompt(agents)
-  assert.match(prompt, /^<phi_agents>/)
-  assert.match(prompt, /<\/phi_agents>$/)
-  assert.match(prompt, /- Database: /)
-  assert.match(prompt, /- Visualization: /)
-  assert.match(prompt, /- Wrapper: /)
-  assert.match(prompt, /self-contained/i)
-  assert.match(prompt, /absolute/i)
-  assert.match(prompt, /cannot (see|ask)/i)
-  assert.match(prompt, /show a few templates/i)
-  assert.match(prompt, /nextflow/i)
-  assert.match(prompt, /do not/i)
-  assert.match(prompt, /required-first/i)
-  assert.match(prompt, /literature search.*main agent/i)
-  assert.match(prompt, /only the requested subtask/i)
-  assert.match(prompt, /follow-up edit.*exact source, input, and prior output paths/i)
-  assert.match(prompt, /controlled fallback/i)
-  assert.match(prompt, /not_found/i)
-  assert.match(prompt, /new and modified user-facing files separately/i)
-  assert.match(prompt, /exact path and purpose/i)
-  // The leader never learns the specialist's own tool functions.
-  for (const name of [
-    'wrapper_search',
-    'wrapper_inspect',
-    'wrapper_run',
-    'db_search',
-    'db_routes',
-    'db_domain',
-    'db_docs_search',
-    'db_query',
-    'db_download'
-  ]) {
-    assert.ok(!new RegExp(`\\b${name}\\b`).test(prompt), `leader prompt must not mention ${name}`)
-  }
 })
 
 test('specialist reporting requires a verifiable file inventory', () => {
@@ -606,47 +897,6 @@ test('resolveAgentTools separates Phi tool functions from SDK built-ins', () => 
   assert.deepEqual(customTools, [fn])
 })
 
-test('resolveAgentTools resolves Database tools only when provided by its scoped registry', () => {
-  const dbQuery = { name: 'db_query' } as never
-  const declared = ['db_search', 'db_query']
-  assert.deepEqual(resolveAgentTools(declared, new Map()).customTools, [])
-  assert.deepEqual(resolveAgentTools(declared, new Map([['db_query', dbQuery]])).customTools, [
-    dbQuery
-  ])
-})
-
-test('Visualization exposes only tools appropriate to its selected workflow', () => {
-  const declared = ['read', 'edit', 'viz_examples', 'viz_route', 'viz_prepare', 'viz_render']
-  assert.deepEqual(visualizationToolNamesForWorkflow(declared, 'examples'), [
-    'read',
-    'edit',
-    'viz_examples'
-  ])
-  assert.deepEqual(visualizationToolNamesForWorkflow(declared, 'revise'), [
-    'read',
-    'edit',
-    'viz_render'
-  ])
-  for (const workflow of ['create', 'reference'] as const) {
-    assert.deepEqual(visualizationToolNamesForWorkflow(declared, workflow), [
-      'read',
-      'edit',
-      'viz_route',
-      'viz_prepare',
-      'viz_render'
-    ])
-  }
-})
-
-test('Phi tool ownership isolates Wrapper and Database internals', () => {
-  const wrapper = { name: 'wrapper_run' } as never
-  const database = { name: 'db_query' } as never
-  const groups = { wrapper: [wrapper], database: [database] }
-  assert.deepEqual([...buildScopedPhiToolMap('Wrapper', groups).keys()], ['wrapper_run'])
-  assert.deepEqual([...buildScopedPhiToolMap('Database', groups).keys()], ['db_query'])
-  assert.deepEqual([...buildScopedPhiToolMap('Other', groups).keys()], [])
-})
-
 // ── delegation tool ───────────────────────────────────────────────────────
 
 const WRAPPER: PhiAgentDefinition = {
@@ -656,17 +906,9 @@ const WRAPPER: PhiAgentDefinition = {
   skills: [],
   systemPrompt: 'p',
   source: 'phi',
-  filePath: '/x/Wrapper.md'
-}
-
-const VISUALIZATION: PhiAgentDefinition = {
-  name: 'Visualization',
-  description: 'Specialist for template-guided omics visualization.',
-  tools: ['read', 'bash', 'write'],
-  skills: ['omics-visualization'],
-  systemPrompt: 'p',
-  source: 'phi',
-  filePath: '/x/Visualization.md'
+  filePath: '/x/Wrapper.md',
+  visibility: 'entry',
+  warnings: []
 }
 
 test('the delegation tool is named after the agent, so the agent is the tool', () => {
@@ -701,36 +943,12 @@ test('the tool passes the trimmed task to the runner and returns its report', as
   })
 })
 
-test('the Visualization delegation tool injects the project output boundary', async () => {
-  const seen: string[] = []
-  const runner: AgentRunner = async (request) => {
-    seen.push(request.task)
-    return { text: 'Rendered output in project.', toolCalls: 1 }
-  }
-  const tool = buildAgentTool(VISUALIZATION, runner, undefined, { cwd: '/project/root' })
-  assert.match(tool.description, /Project output boundary for Visualization/)
-  assert.match(tool.description, /\/project\/root\/visualizations/)
-
-  const result = await tool.execute('call-viz', {
-    task: '  render /data/results.tsv  ',
-    workflow: 'create'
-  })
-
-  assert.equal(result.isError, undefined)
-  assert.equal(seen.length, 1)
-  assert.match(seen[0], /Phi execution context:/)
-  assert.match(seen[0], /Current project working directory \(cwd\): \/project\/root/)
-  assert.match(seen[0], /Treat input\/data paths outside cwd as read-only/)
-  assert.match(seen[0], /Do not create sibling plots/)
-  assert.match(seen[0], /Delegated task:\nrender \/data\/results\.tsv/)
-})
-
-test('Visualization delegation distinguishes examples, creation, revision, and reference imitation', async () => {
-  const seen: Array<{ task: string; images?: unknown[]; workflow?: string }> = []
+test('local specialists get an execution context and image forwarding', async () => {
+  const seen: Array<{ task: string; images?: unknown[] }> = []
   const tool = buildAgentTool(
-    VISUALIZATION,
+    WRAPPER,
     async (request) => {
-      seen.push(request)
+      seen.push({ task: request.task, ...(request.images ? { images: request.images } : {}) })
       return { text: 'Done.', toolCalls: 0 }
     },
     undefined,
@@ -738,42 +956,44 @@ test('Visualization delegation distinguishes examples, creation, revision, and r
   )
   const parameters = tool.parameters as {
     required: string[]
-    properties: { workflow: { enum: string[] } }
+    properties: Record<string, unknown>
   }
-  assert.deepEqual(parameters.required, ['task', 'workflow'])
-  assert.deepEqual(parameters.properties.workflow.enum, [
-    'examples',
-    'create',
-    'revise',
-    'reference'
-  ])
-  const missing = await tool.execute('missing-mode', { task: '修改刚才的配色' })
+  assert.deepEqual(parameters.required, ['task'])
+  assert.equal('workflow' in parameters.properties, false)
+  assert.equal('image_paths' in parameters.properties, true)
+  assert.equal('include_attached_images' in parameters.properties, true)
+  assert.match(tool.description, /Project output boundary/)
+  assert.match(tool.description, /\/project\/root/)
+  assert.doesNotMatch(tool.description, /workflow/)
+
+  const result = await tool.execute('call-local', { task: '  render /data/results.tsv  ' })
+  assert.equal(result.isError, undefined)
+  assert.match(seen[0]?.task ?? '', /Phi execution context:/)
+  assert.match(seen[0]?.task ?? '', /Current project working directory \(cwd\): \/project\/root/)
+  assert.match(seen[0]?.task ?? '', /read-only/)
+  assert.match(seen[0]?.task ?? '', /cwd-contained paths/)
+  assert.match(seen[0]?.task ?? '', /Delegated task:\nrender \/data\/results\.tsv/)
+
+  const relative = await tool.execute('relative-image', {
+    task: 'Use the figure.',
+    image_paths: ['relative.png']
+  })
+  assert.equal(relative.isError, true)
+  assert.match(JSON.stringify(relative.content), /image_paths must be an absolute file path/)
+
+  const missing = await tool.execute('missing-image', {
+    task: 'Use the attached image.',
+    include_attached_images: true
+  })
   assert.equal(missing.isError, true)
-  const misplacedReference = await tool.execute('wrong-mode-reference', {
-    workflow: 'revise',
-    task: 'Edit /project/plots/plot.R colors.',
-    reference_image_path: '/project/example.png'
-  })
-  assert.equal(misplacedReference.isError, true)
-
-  await tool.execute('revision', {
-    workflow: 'revise',
-    task: 'Edit /project/plots/plot.R colors using /project/data.tsv; update /project/plots/figure.png.'
-  })
-  assert.match(seen[0]?.task ?? '', /Workflow: revise/)
-  assert.equal(seen[0]?.workflow, 'revise')
-  assert.equal(seen[0]?.images, undefined)
-
-  await tool.execute('examples', { workflow: 'examples', task: 'Show installed heatmap examples.' })
-  assert.match(seen[1]?.task ?? '', /Workflow: examples/)
-  assert.match(seen[1]?.task ?? '', /without creating project files/)
+  assert.match(JSON.stringify(missing.content), /reference image/i)
 })
 
-test('reference imitation forwards the user image into the specialist prompt', async () => {
+test('include_attached_images forwards the latest user image for any local specialist', async () => {
   let forwarded: unknown
-  const tool = buildAgentTool(VISUALIZATION, async (request) => {
+  const tool = buildAgentTool(WRAPPER, async (request) => {
     forwarded = request.images
-    return { text: 'Reference inspected.', toolCalls: 0 }
+    return { text: 'Seen.', toolCalls: 0 }
   })
   const ctx = {
     sessionManager: {
@@ -783,7 +1003,7 @@ test('reference imitation forwards the user image into the specialist prompt', a
           message: {
             role: 'user',
             content: [
-              { type: 'text', text: '参考这张图画我的数据' },
+              { type: 'text', text: '参考这张图' },
               { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }
             ]
           }
@@ -792,26 +1012,68 @@ test('reference imitation forwards the user image into the specialist prompt', a
     }
   } as never
   const result = await tool.execute(
-    'reference',
-    { workflow: 'reference', task: 'Use the attached reference image with /project/data.tsv.' },
+    'attached',
+    { task: 'Use the attached image.', include_attached_images: true },
     undefined,
     ctx
   )
   assert.equal(result.isError, undefined)
   assert.deepEqual(forwarded, [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }])
-  const absent = await tool.execute('no-reference', {
-    workflow: 'reference',
-    task: '模仿一张图绘制 /project/data.tsv，输出 /project/plot.png'
-  })
-  assert.equal(absent.isError, true)
-  assert.match(JSON.stringify(absent.content), /reference image/i)
+})
 
-  const byPath = await tool.execute('reference-path', {
-    workflow: 'reference',
-    reference_image_path: '/project/reference.png',
-    task: 'Use /project/data.tsv and save /project/result.png.'
-  })
-  assert.equal(byPath.isError, undefined)
+test('image_paths forwards an image file and remote projects keep the plain task', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'phi-agent-image-'))
+  const image = join(dir, 'ref.png')
+  writeFileSync(
+    image,
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64'
+    )
+  )
+  try {
+    let forwarded: unknown
+    let task = ''
+    const tool = buildAgentTool(
+      WRAPPER,
+      async (request) => {
+        forwarded = request.images
+        task = request.task
+        return { text: 'Seen.', toolCalls: 0 }
+      },
+      undefined,
+      { cwd: '/project/root' }
+    )
+    const result = await tool.execute('by-path', {
+      task: 'Match this image.',
+      image_paths: [image]
+    })
+    assert.equal(result.isError, undefined)
+    assert.equal((forwarded as Array<{ mimeType: string }>)[0]?.mimeType, 'image/png')
+    assert.match(task, new RegExp(image.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+
+    const remoteSeen: string[] = []
+    const remote = buildAgentTool(
+      WRAPPER,
+      async (request) => {
+        remoteSeen.push(request.task)
+        return { text: 'Remote.', toolCalls: 0 }
+      },
+      undefined,
+      { cwd: '/project/root', remote: true }
+    )
+    const remoteParameters = remote.parameters as { properties: Record<string, unknown> }
+    assert.equal('image_paths' in remoteParameters.properties, false)
+    assert.equal('workflow' in remoteParameters.properties, false)
+    await remote.execute('remote', {
+      task: 'Run on the remote project.',
+      image_paths: [image],
+      include_attached_images: true
+    })
+    assert.deepEqual(remoteSeen, ['Run on the remote project.'])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('the tool rejects a missing, blank or oversized task without running the agent', async () => {
@@ -977,8 +1239,8 @@ test('the specialist runner sends reference images with the delegated prompt', a
     }
   })
   const images = [{ type: 'image' as const, data: 'aGVsbG8=', mimeType: 'image/png' }]
-  await runner({ task: 'Use the reference image.', images, workflow: 'reference' })
-  assert.deepEqual(createdWith, { workflow: 'reference' })
+  await runner({ task: 'Use the reference image.', images })
+  assert.deepEqual(createdWith, {})
   assert.deepEqual((session as typeof session & { promptOptions: unknown[] }).promptOptions, [
     { images }
   ])

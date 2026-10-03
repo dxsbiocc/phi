@@ -19,7 +19,9 @@ export function McpFeaturedConnectorDetails({
   onAuthorize,
   onCancelAuthorize,
   authorizing = false,
+  updateAvailable = false,
   onApiKey,
+  onBuildEnvironment,
   onRetry
 }: {
   connector: FeaturedMcpConnector
@@ -35,7 +37,9 @@ export function McpFeaturedConnectorDetails({
   onAuthorize: () => void
   onCancelAuthorize?: () => void
   authorizing?: boolean
+  updateAvailable?: boolean
   onApiKey: () => void
+  onBuildEnvironment?: () => void
   onRetry: () => void
 }): React.JSX.Element {
   const removeButton =
@@ -45,7 +49,25 @@ export function McpFeaturedConnectorDetails({
       </Button>
     ) : null
   let actions: React.JSX.Element
-  if (connector.apiKey) {
+  if (connector.unavailableReason) {
+    actions = (
+      <Button variant="outlined" disabled>
+        需要新版 Phi
+      </Button>
+    )
+  } else if (connector.environmentState === 'not-built') {
+    actions = (
+      <Button variant="contained" disabled={busy} onClick={onBuildEnvironment}>
+        构建环境
+      </Button>
+    )
+  } else if (updateAvailable) {
+    actions = (
+      <Button variant="contained" disabled={busy} onClick={onAdd}>
+        更新
+      </Button>
+    )
+  } else if (connector.apiKey) {
     actions = (
       <Stack direction="row" spacing={1}>
         <Button variant={server ? 'outlined' : 'contained'} disabled={busy} onClick={onApiKey}>
@@ -123,7 +145,9 @@ export function McpFeaturedConnectorDetails({
         <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
           服务介绍
         </Typography>
-        <Typography color="text.secondary">{connector.overview}</Typography>
+        <Typography color="text.secondary">
+          {connector.overview ?? connector.description}
+        </Typography>
       </Box>
       {connector.apiKey && (
         <Alert severity="info" sx={{ mb: 3 }}>
@@ -165,7 +189,8 @@ export function McpFeaturedConnectorDetails({
             MCP 地址
           </Typography>
           <Typography sx={{ overflowWrap: 'anywhere', fontFamily: 'monospace' }}>
-            {connector.url}
+            {connector.url ??
+              [connector.command, ...(connector.args ?? [])].filter(Boolean).join(' ')}
           </Typography>
         </Box>
         <Box>
@@ -196,21 +221,23 @@ export function McpFeaturedConnectorDetails({
             <Typography sx={{ overflowWrap: 'anywhere' }}>{server.sourcePath}</Typography>
           </Box>
         )}
-        <Box>
-          <Typography variant="overline" color="text.secondary">
-            更多信息
-          </Typography>
-          <Button
-            component="a"
-            href={connector.homepageUrl}
-            target="_blank"
-            rel="noreferrer"
-            size="small"
-            sx={{ pl: 0 }}
-          >
-            连接器说明 ↗
-          </Button>
-        </Box>
+        {connector.homepageUrl && (
+          <Box>
+            <Typography variant="overline" color="text.secondary">
+              更多信息
+            </Typography>
+            <Button
+              component="a"
+              href={connector.homepageUrl}
+              target="_blank"
+              rel="noreferrer"
+              size="small"
+              sx={{ pl: 0 }}
+            >
+              连接器说明 ↗
+            </Button>
+          </Box>
+        )}
       </Box>
     </>
   )

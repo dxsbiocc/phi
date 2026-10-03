@@ -220,6 +220,25 @@ write.table(cbind(sample = rownames(sampleDistMatrix), sampleDistMatrix), file =
 dev.off()
 
 ################################################
+## OPTIONAL MULTIQC FRAGMENTS                 ##
+################################################
+
+label_lower <- tolower('$task.ext.args2')
+if (nzchar(label_lower) && label_lower != 'null' &&
+    file.exists('$pca_header_multiqc') && file.exists('$clustering_header_multiqc')) {
+    pca_values <- paste(opt\$output_prefix, ".pca.vals.txt", sep = "")
+    distance_values <- paste(opt\$output_prefix, ".sample.dists.txt", sep = "")
+    writeLines(
+        c(readLines('$pca_header_multiqc'), readLines(pca_values)),
+        paste0(label_lower, ".pca.vals_mqc.tsv")
+    )
+    writeLines(
+        c(readLines('$clustering_header_multiqc'), readLines(distance_values)),
+        paste0(label_lower, ".sample.dists_mqc.tsv")
+    )
+}
+
+################################################
 ################################################
 ## SAVE SIZE FACTORS                          ##
 ################################################

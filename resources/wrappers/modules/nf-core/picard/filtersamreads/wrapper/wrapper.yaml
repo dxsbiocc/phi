@@ -18,7 +18,6 @@ params:
     kind: option
     type: string
     required: false
-    default: includeAligned
     enum: [includeAligned, excludeAligned, includePairedIntervals, excludeSingleReadEvents, includeSecondaryAlignments, excludeSecondaryAlignments]
     description: Built-in Picard filter to apply.
   outdir:

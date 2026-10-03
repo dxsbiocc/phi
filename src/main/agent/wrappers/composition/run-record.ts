@@ -18,7 +18,6 @@ import type {
   WrapperRunProgress,
   WrapperRunState
 } from '../types'
-import type { ActiveWrapperPack, WrapperRunPack } from '../../../../shared/wrapperPackTypes'
 import type { WrapperRunResources } from './resources'
 import type { WrapperCompositionEntry } from './discovery'
 import type { RemoteJobSnapshot } from './remote-job'
@@ -47,10 +46,6 @@ function wrapperIdentity(id: string): WrapperRun['wrapper'] {
     // The composition manifest has no version; don't invent a SemVer.
     version: 'unversioned'
   }
-}
-
-function runPackOf({ name, version, source, digest }: ActiveWrapperPack): WrapperRunPack {
-  return { name, version, source, ...(digest ? { digest } : {}) }
 }
 
 function writeRunFile(runId: string, agentDir: string, fileName: string, value: unknown): void {
@@ -99,6 +94,8 @@ export function startCompositionRun(input: {
   continueWhenDone?: boolean
   /** Resources the run asked for, already validated. */
   resources?: WrapperRunResources
+  /** Local runs: which nextflow ran (`nextflowLaunchRecord`), kept in `nextflow.json`. */
+  nextflow?: Record<string, string>
   /** Set for a run on a remote host: where it will live and which executor name it gets. */
   remote?: {
     host: string
@@ -150,7 +147,6 @@ export function startCompositionRun(input: {
     outDir,
     origin: 'composition',
     ...(input.resources ? { resources: input.resources } : {}),
-    ...(entry.pack ? { pack: runPackOf(entry.pack) } : {}),
     ...(input.inputReferences?.length ? { inputReferences: input.inputReferences } : {}),
     ...(input.environmentWarnings?.length
       ? { environmentWarnings: input.environmentWarnings }
@@ -177,6 +173,7 @@ export function startCompositionRun(input: {
   }
   writeWrapperRun(run, agentDir)
   writeRunFile(run.runId, agentDir, 'params.json', params)
+  if (input.nextflow) writeRunFile(run.runId, agentDir, 'nextflow.json', input.nextflow)
   appendWrapperRunEvent(
     run.runId,
     { type: 'run_created', timestamp: now, wrapperId: run.wrapper.canonicalId, profile },

@@ -17,9 +17,9 @@ tools:
 skills:
   - create-wrapper
   - nextflow
-delegation_mode: required-first
+delegationMode: required-first
 fallback:
-  after_failures: 1
+  afterFailures: 1
   tools:
     - bash
     - eval

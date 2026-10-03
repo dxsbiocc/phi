@@ -1,6 +1,7 @@
 # Phi Internal Beta Implementation Roadmap
 
 Date: 2026-09-05
+Updated: 2026-09-29 — content distribution (see [content-distribution decisions](../decisions/content-distribution.md)).
 
 This roadmap turns the internal beta decisions into implementation phases. The beta success criterion is a reliable local desktop workbench for heavy Pi/OMX users: project-bound sessions, multiple concurrent runs, understandable approvals, visible resources, and recoverable local history.
 
@@ -90,7 +91,7 @@ Goal: make local project boundaries explicit without polluting repositories.
 - Keep relocation optional for P1 if time allows; otherwise show unavailable and allow removal.
 - Do not create project `.phi/` directories on add.
 - Prefer `.phi` resources while retaining `.pi` and `.omp` compatibility.
-- Keep Skills and MCP pages read-only.
+- Keep skill and MCP *content* read-only in the app (no in-app editing). Enabling, disabling, and installing units from catalogs is allowed under P1: Content Distribution.
 - Display skill source, scope, disabled state, file path, and diagnostics.
 - Display MCP configured status, config source, command, args, env keys, and diagnostics.
 - Do not actively read or inject project `.env`.
@@ -115,12 +116,29 @@ Goal: preserve enough evidence for heavy users without overwhelming the renderer
 
 Goal: keep plugin management available but bounded.
 
+- These are pi runtime plugins. Rename the page to "Developer extensions" and move it to advanced settings; "plugin" in the UI is reserved for Phi plugins (post-beta, runtime plan step 6).
+
 - Preserve plugin list/install/remove through the SDK/runtime.
 - Do not add arbitrary URL download or local zip install beyond runtime-supported source formats.
 - Add concise confirmation for install source and remove target.
 - Show plugin source, installed state, installed path, and operation errors.
 - Keep the latest plugin operation failure visible until refresh or the next operation.
 - Add tests for confirm flows and failure state retention where the UI can be exercised without live network installs.
+
+## P1: Runtime Foundation And Content Distribution (steps 0–5)
+
+Goal: give Phi its own managed runtime so skills, specialist agents, notebooks, and wrappers stop depending on the host, then make content installable on top of it. Built inside-out; no public distribution in the beta.
+
+Foundation (confirmed 2026-09-29): [phi-runtime-foundation.md](../design/phi-runtime-foundation.md). Distribution design: [phi-content-distribution-design.md](../design/phi-content-distribution-design.md). Decisions: [content-distribution.md](../decisions/content-distribution.md). **Step-by-step plan: [content-distribution-implementation.md](content-distribution-implementation.md)** (中文: [zh-CN](content-distribution-implementation.zh-CN.md)).
+
+- Step 0 — preparation: clean `resources/` leftovers and block new ones; delete the `create-database-connector` skill; commit `scripts/eval/`; dependency inventory for all script content.
+- Step 1 — runtime and environment model: bundled micromamba isolated from the user's conda; `~/.phi/runtime`; environments built from explicit locks, read-only, reference-counted.
+- Step 2 — execution primitive: `runInEnvironment` with sanitised variables; isolation tests locally and in CI gate everything after.
+- Step 3 — skills in environments: `skill_run`, declared script tools, `phi-python`, all script skills migrated.
+- Step 4 — agents bound to environments: bash injection for specialist sessions; visualization rewritten as the `scripts/viz.py` CLI with declared script tools (tool names unchanged) running in its own environment, and removed from the engine; `env_request` for extra packages. Includes the omp delegation spike.
+- Step 5 — remaining consumers: Nextflow and Jupyter default to managed environments, with explicit, version-checked host versions for Nextflow and host kernels for notebooks; MCP stdio; environment panel.
+- The main agent's bash keeps using the host environment.
+- Plugins (step 6), content distribution (step 7), and remote / HPC runtime (step 8) follow after the beta, except the local skill catalog and enablement, which may land in the beta if time allows.
 
 ## P1: Diagnostics And Logs
 
@@ -148,17 +166,18 @@ Goal: make the internal beta comfortable without expanding scope.
 - Show edit/write targets in the timeline and provide external reveal/open actions.
 - Do not build a full diff viewer, command palette, drag-and-drop attachments, system notifications, automatic updates, or first-class OMX team/swarm dashboard in the beta.
 - Update README with internal beta scope, resettable data model notice, manual update expectations, and macOS security prompt notes.
-- Run `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` before beta handoff.
+- Run `bun run test`, `bun run lint`, `bun run typecheck`, and `bun run build` before beta handoff.
 
-## Experimental: DB Connector Core Prototype
+## Public Biological Database Access
 
-Goal: allow DB Connector implementation work without turning it into a broad public database product surface.
+Status (2026-10-03): the experimental DB Connector core has been removed from this
+release. The main agent reads public REST URLs with its existing `read` tool and uses
+`download_file` directly for database files. Existing local connector settings are
+ignored rather than deleted.
 
-- Keep the beta DB UI limited to a settings page for installed database connectors. The DB toolchain itself is always available; settings only enable or disable individual databases for `db_query`.
-- Allow core-only implementation under `src/main/agent/db/`, bundled connector manifests under `resources/db-connectors/`, and offline tests.
-- Agent runtime registration is always on for the core prototype so agents can actually use `db_search` without falling back to web/eval. Do not add an app-level feature toggle for DB Connector; use per-database query toggles instead.
-- The prototype should start with one bundled NCBI Entrez connector and avoid expanding to additional protocol families before `esummary`/`efetch`, result artifacts, policy tests, and documentation are stable.
-- Do not add plugin/MCP/federated database UI for this prototype.
+See [data-access-implementation.md](data-access-implementation.md) for the binding
+decision and the future MCP-connector direction. Historical design appendices and
+decision records remain as rationale, not as current product behavior.
 
 ## Deferred Until After Internal Beta
 
@@ -167,6 +186,7 @@ Goal: allow DB Connector implementation work without turning it into a broad pub
 - Cross-session full-text search.
 - Drag-and-drop file/image attachments.
 - In-app editing of AGENTS.md, Skills, or MCP config.
+- Runtime / content distribution steps 6–8: Phi plugins (visualization packaged as the first plugin), content distribution (packages, catalogs, wrapper and connector packaging, signed remote registry, installer slimming), remote / HPC runtime; side tracks: data access redesign, multi-agent orchestration on omp.
 - Full diff/review UI and Git operations.
 - System notifications.
 - Dedicated OMX team/swarm dashboard.

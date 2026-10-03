@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { DatabaseWebImagePreview } from '../shared/databaseWebPreview'
 import type { BrowserRendererBridge, BrowserRendererEventEnvelope } from '../shared/browserTypes'
 import type { RemoteWorkspaceFileRequest } from '../shared/remoteWorkspacePath'
 import type {
@@ -38,7 +37,7 @@ import type { WorkspaceDiffReference } from '../shared/workspaceChangeTypes'
 // them here and in index.d.ts would just be another place for the two to
 // drift out of sync.
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
-import type { WrapperCompositionManifest } from '../shared/wrapperCompositionManifestTypes'
+import type { WrapperCompositionCatalogItem } from '../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
 import type { RemoteHpcSettings } from '../shared/wrapperRemoteTypes'
 import type {
@@ -57,23 +56,43 @@ import type {
   AgentUserInteractionRequest,
   AgentUserInteractionResponse
 } from '../shared/agentInteractionTypes'
-import type {
-  DefaultProxyMode,
-  PhiAppSettings,
-  PhiAppSettingsPatch
-} from '../shared/appSettingsTypes'
+import type { PhiAppSettings, PhiAppSettingsPatch } from '../shared/appSettingsTypes'
 import type {
   SearxngEngineOption,
   WebSearchKeyStatus,
   WebSearchSettings,
   WebSearchSettingsPatch
 } from '../shared/webSearchSettingsTypes'
-import type { DbConnectorSettingsItem } from '../shared/dbConnectorTypes'
 import type {
   EnvironmentGetResult,
+  ManagedEnvironmentCleanResult,
+  ManagedEnvironmentEntry,
+  ManagedEnvironmentRemoveResult,
   EnvironmentSnapshot,
   EnvironmentToolId
 } from '../shared/environmentTypes'
+import type { EnvironmentBuild } from '../shared/environmentBuildTypes'
+import type {
+  PhiPluginInstallPreview,
+  PhiPluginListItem,
+  PhiPluginMutationResult
+} from '../shared/phiPluginTypes'
+import type {
+  KnownPackageRegistryView,
+  OfflinePackageImportPreview,
+  InstalledPackageView,
+  PackageInstallPlanView,
+  PackageManagerType,
+  PackageRegistryView,
+  PackageUpdateView
+} from '../shared/packageManagerTypes'
+import type {
+  EnablementItemKey,
+  EnablementScope,
+  EnablementSnapshot
+} from '../shared/enablementTypes'
+import type { SkillContent, SkillSummary } from '../shared/skillTypes'
+import type { FeaturedMcpConnector } from '../shared/mcpConnectorCatalog'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
@@ -295,25 +314,6 @@ type PluginCatalogItem = {
   installedPath?: string
 }
 
-type SkillSourceCategory = 'system' | 'third-party' | 'user' | 'generated'
-
-type SkillSummary = {
-  id: string
-  name: string
-  description: string
-  filePath: string
-  source: string
-  scope: 'user' | 'project' | 'temporary'
-  sourceCategory: SkillSourceCategory
-  sourceCategoryLabel: string
-  disabled: boolean
-}
-
-type SkillContent = {
-  filePath: string
-  content: string
-}
-
 type PromptAgentSummary = {
   id: string
   name: string
@@ -325,6 +325,10 @@ type PromptAgentSummary = {
 type McpServerSummary = {
   id: string
   name: string
+  title?: string
+  connectorId?: string
+  packageId?: string
+  category?: string
   command?: string
   args?: string[]
   envKeys?: string[]
@@ -685,7 +689,6 @@ type RendererAuthApi = {
     cb: (progress: WrapperResultDownloadProgress) => void
   ) => Unsubscribe
   renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
-  previewDatabaseWebImage: (url: string) => Promise<DatabaseWebImagePreview>
   copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
@@ -711,7 +714,6 @@ type RendererAuthApi = {
   listSearxngEngines: () => Promise<SearxngEngineOption[]>
   setWebSearchApiKey: (providerId: string, key: string) => Promise<WebSearchKeyStatus>
   clearWebSearchApiKey: (providerId: string) => Promise<WebSearchKeyStatus>
-  updateDefaultProxyMode: (mode: DefaultProxyMode) => Promise<PhiAppSettings>
   getEnvironment: () => Promise<EnvironmentGetResult>
   redetectEnvironment: () => Promise<EnvironmentSnapshot>
   dismissEnvironmentSummary: () => Promise<EnvironmentSnapshot>
@@ -720,10 +722,11 @@ type RendererAuthApi = {
     path: string | null
   ) => Promise<EnvironmentSnapshot>
   pickEnvironmentBinary: () => Promise<string | null>
-  listDbConnectors: () => Promise<DbConnectorSettingsItem[]>
-  setDbConnectorEnabled: (id: string, enabled: boolean) => Promise<DbConnectorSettingsItem[]>
-  setDbConnectorApiKey: (id: string, apiKey: string) => Promise<DbConnectorSettingsItem[]>
-  clearDbConnectorApiKey: (id: string) => Promise<DbConnectorSettingsItem[]>
+  listManagedEnvironments: (projectCwd?: string) => Promise<ManagedEnvironmentEntry[]>
+  buildManagedEnvironment: (ref: string, projectCwd?: string) => Promise<{ envId: string }>
+  rebuildManagedEnvironment: (envId: string) => Promise<void>
+  removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
+  cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<SelectedModel>
@@ -904,12 +907,57 @@ type RendererAuthApi = {
   listPlugins: () => Promise<PluginCatalogItem[]>
   installPlugin: (source: string) => Promise<PluginCatalogItem[]>
   removePlugin: (source: string) => Promise<PluginCatalogItem[]>
+  listPhiPlugins: () => Promise<PhiPluginListItem[]>
+  pickPhiPluginDirectory: () => Promise<string | null>
+  previewPhiPluginDirectory: (path: string) => Promise<PhiPluginInstallPreview>
+  installPhiPluginFromDirectory: (path: string) => Promise<PhiPluginMutationResult>
+  setPhiPluginEnabled: (id: string, enabled: boolean) => Promise<PhiPluginMutationResult>
+  uninstallPhiPlugin: (id: string) => Promise<PhiPluginMutationResult>
+  pickPackageRegistryDirectory: () => Promise<string | null>
+  pickPackageArchive: () => Promise<string | null>
+  readPackageRegistry: (dir: string) => Promise<PackageRegistryView>
+  listPackageRegistries: () => Promise<KnownPackageRegistryView[]>
+  removePackageRegistry: (id: string) => Promise<KnownPackageRegistryView[]>
+  previewPackageImport: (path: string) => Promise<OfflinePackageImportPreview>
+  importPackage: (path: string) => Promise<InstalledPackageView[]>
+  listPackageUpdates: () => Promise<PackageUpdateView[]>
+  applyPackageUpdate: (type: PackageManagerType, id: string) => Promise<InstalledPackageView[]>
+  applyAllPackageUpdates: () => Promise<InstalledPackageView[]>
+  onPackageUpdatesAvailable: (cb: (updates: PackageUpdateView[]) => void) => Unsubscribe
+  planPackageInstall: (
+    dir: string,
+    type: PackageManagerType,
+    id: string,
+    version?: string
+  ) => Promise<PackageInstallPlanView>
+  installPackage: (
+    dir: string,
+    type: PackageManagerType,
+    id: string,
+    version?: string
+  ) => Promise<InstalledPackageView[]>
+  uninstallPackage: (type: PackageManagerType, id: string) => Promise<InstalledPackageView[]>
+  listInstalledPackages: () => Promise<InstalledPackageView[]>
+  getEnablement: (projectCwd?: string) => Promise<EnablementSnapshot>
+  setEnablement: (
+    item: EnablementItemKey,
+    value: boolean | null,
+    scope: EnablementScope
+  ) => Promise<EnablementSnapshot>
   listSkills: (cwd?: string) => Promise<SkillSummary[]>
   readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
   setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string) => Promise<SkillSummary[]>
   deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
   listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
+  listMcpConnectorCatalog: () => Promise<FeaturedMcpConnector[]>
+  installMcpConnector: (
+    id: string,
+    version?: string,
+    registryDir?: string
+  ) => Promise<InstalledPackageView[]>
+  uninstallMcpConnector: (id: string) => Promise<InstalledPackageView[]>
+  buildMcpConnectorEnvironment: (id: string) => Promise<{ envId: string }>
   addRemoteMcpConnector: (name: string, url: string) => Promise<void>
   removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
   setMcpConnectorEnabled: (name: string, enabled: boolean, sourcePath?: string) => Promise<void>
@@ -930,10 +978,13 @@ type RendererAuthApi = {
   cancelWrapperRunPlan: (planId: string) => Promise<WrapperRunPlan>
   listWrapperCatalog: () => Promise<WrapperCatalogEntry[]>
   addCustomWrapper: (sourceDir: string) => Promise<WrapperCatalogEntry>
-  listWrapperCompositionCatalog: () => Promise<WrapperCompositionManifest[]>
+  listWrapperCompositionCatalog: () => Promise<WrapperCompositionCatalogItem[]>
   getWrapperCompositionDag: (id: string) => Promise<string | undefined>
   getWrapperCompositionModuleDetails: (id: string) => Promise<WrapperModuleDetails | undefined>
   listWrapperRuns: () => Promise<WrapperRun[]>
+  listEnvironmentBuilds: () => Promise<EnvironmentBuild[]>
+  cancelEnvironmentBuild: (envId: string) => Promise<void>
+  onEnvironmentBuildsChanged: (cb: (build: EnvironmentBuild) => void) => Unsubscribe
   listAgentJobs: () => Promise<BackgroundAgentJob[]>
   listShellJobs: () => Promise<BackgroundShellJob[]>
   stopShellJob: (agentSessionId: string, jobId: string) => Promise<void>
@@ -1014,8 +1065,6 @@ const api: RendererAuthApi = {
   },
   renderMoleculeSvg: (value: string, width: number, height: number): Promise<string> =>
     ipcRenderer.invoke('molecules:renderSvg', value, width, height),
-  previewDatabaseWebImage: (url: string): Promise<DatabaseWebImagePreview> =>
-    ipcRenderer.invoke('database:webImagePreview', url),
   copyDiagnostics: (): Promise<string> => ipcRenderer.invoke('diagnostics:copy'),
   sendPrompt: (text: string, target?: PromptTarget): Promise<PromptResult | null> =>
     ipcRenderer.invoke('agent:prompt', text, target),
@@ -1066,8 +1115,6 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('settings:webSearch:apiKey:set', providerId, key),
   clearWebSearchApiKey: (providerId: string): Promise<WebSearchKeyStatus> =>
     ipcRenderer.invoke('settings:webSearch:apiKey:clear', providerId),
-  updateDefaultProxyMode: (mode: DefaultProxyMode): Promise<PhiAppSettings> =>
-    ipcRenderer.invoke('settings:updateDefaultProxyMode', mode),
   getEnvironment: (): Promise<EnvironmentGetResult> => ipcRenderer.invoke('environment:get'),
   redetectEnvironment: (): Promise<EnvironmentSnapshot> =>
     ipcRenderer.invoke('environment:redetect'),
@@ -1078,14 +1125,16 @@ const api: RendererAuthApi = {
     path: string | null
   ): Promise<EnvironmentSnapshot> => ipcRenderer.invoke('environment:setToolPath', toolId, path),
   pickEnvironmentBinary: (): Promise<string | null> => ipcRenderer.invoke('environment:pickBinary'),
-  listDbConnectors: (): Promise<DbConnectorSettingsItem[]> =>
-    ipcRenderer.invoke('db:listConnectors'),
-  setDbConnectorEnabled: (id: string, enabled: boolean): Promise<DbConnectorSettingsItem[]> =>
-    ipcRenderer.invoke('db:setConnectorEnabled', id, enabled),
-  setDbConnectorApiKey: (id: string, apiKey: string): Promise<DbConnectorSettingsItem[]> =>
-    ipcRenderer.invoke('db:setConnectorApiKey', id, apiKey),
-  clearDbConnectorApiKey: (id: string): Promise<DbConnectorSettingsItem[]> =>
-    ipcRenderer.invoke('db:clearConnectorApiKey', id),
+  listManagedEnvironments: (projectCwd?: string): Promise<ManagedEnvironmentEntry[]> =>
+    ipcRenderer.invoke('managedEnvironments:list', projectCwd),
+  buildManagedEnvironment: (ref: string, projectCwd?: string): Promise<{ envId: string }> =>
+    ipcRenderer.invoke('managedEnvironments:build', ref, projectCwd),
+  rebuildManagedEnvironment: (envId: string): Promise<void> =>
+    ipcRenderer.invoke('managedEnvironments:rebuild', envId),
+  removeManagedEnvironment: (envId: string): Promise<ManagedEnvironmentRemoveResult> =>
+    ipcRenderer.invoke('managedEnvironments:remove', envId),
+  cleanManagedEnvironments: (): Promise<ManagedEnvironmentCleanResult> =>
+    ipcRenderer.invoke('managedEnvironments:clean'),
   listModels: (): Promise<ModelOption[]> => ipcRenderer.invoke('models:list'),
   selectModel: (providerId: string, modelId: string): Promise<void> =>
     ipcRenderer.invoke('models:select', providerId, modelId),
@@ -1342,6 +1391,19 @@ const api: RendererAuthApi = {
       ipcRenderer.removeListener('wrappers:runsChanged', handler)
     }
   },
+  listEnvironmentBuilds: (): Promise<EnvironmentBuild[]> =>
+    ipcRenderer.invoke('environmentBuilds:list'),
+  cancelEnvironmentBuild: (envId: string): Promise<void> =>
+    ipcRenderer.invoke('environmentBuilds:cancel', envId),
+  onEnvironmentBuildsChanged: (cb: (build: EnvironmentBuild) => void): Unsubscribe => {
+    const handler = (_: unknown, build: EnvironmentBuild): void => {
+      cb(build)
+    }
+    ipcRenderer.on('environmentBuilds:changed', handler)
+    return () => {
+      ipcRenderer.removeListener('environmentBuilds:changed', handler)
+    }
+  },
   onAnalysisNotebookFileChanged: (
     cb: (change: AnalysisNotebookFileChange) => void
   ): Unsubscribe => {
@@ -1425,6 +1487,66 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('plugins:install', source),
   removePlugin: (source: string): Promise<PluginCatalogItem[]> =>
     ipcRenderer.invoke('plugins:remove', source),
+  listPhiPlugins: (): Promise<PhiPluginListItem[]> => ipcRenderer.invoke('phiPlugins:list'),
+  pickPhiPluginDirectory: (): Promise<string | null> =>
+    ipcRenderer.invoke('phiPlugins:pickDirectory'),
+  previewPhiPluginDirectory: (path: string): Promise<PhiPluginInstallPreview> =>
+    ipcRenderer.invoke('phiPlugins:previewDirectory', path),
+  installPhiPluginFromDirectory: (path: string): Promise<PhiPluginMutationResult> =>
+    ipcRenderer.invoke('phiPlugins:installFromDirectory', path),
+  setPhiPluginEnabled: (id: string, enabled: boolean): Promise<PhiPluginMutationResult> =>
+    ipcRenderer.invoke('phiPlugins:setEnabled', id, enabled),
+  uninstallPhiPlugin: (id: string): Promise<PhiPluginMutationResult> =>
+    ipcRenderer.invoke('phiPlugins:uninstall', id),
+  pickPackageRegistryDirectory: (): Promise<string | null> =>
+    ipcRenderer.invoke('packages:pickRegistryDirectory'),
+  pickPackageArchive: (): Promise<string | null> => ipcRenderer.invoke('packages:pickArchive'),
+  readPackageRegistry: (dir: string): Promise<PackageRegistryView> =>
+    ipcRenderer.invoke('packages:registry', dir),
+  listPackageRegistries: (): Promise<KnownPackageRegistryView[]> =>
+    ipcRenderer.invoke('packages:listRegistries'),
+  removePackageRegistry: (id: string): Promise<KnownPackageRegistryView[]> =>
+    ipcRenderer.invoke('packages:removeRegistry', id),
+  previewPackageImport: (path: string): Promise<OfflinePackageImportPreview> =>
+    ipcRenderer.invoke('packages:previewImport', path),
+  importPackage: (path: string): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('packages:import', path),
+  listPackageUpdates: (): Promise<PackageUpdateView[]> =>
+    ipcRenderer.invoke('packages:listUpdates'),
+  applyPackageUpdate: (type: PackageManagerType, id: string): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('packages:applyUpdate', type, id),
+  applyAllPackageUpdates: (): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('packages:applyAllUpdates'),
+  onPackageUpdatesAvailable: (cb: (updates: PackageUpdateView[]) => void): Unsubscribe => {
+    const listener = (_event: Electron.IpcRendererEvent, updates: PackageUpdateView[]): void =>
+      cb(updates)
+    ipcRenderer.on('packages:updatesAvailable', listener)
+    return () => ipcRenderer.removeListener('packages:updatesAvailable', listener)
+  },
+  planPackageInstall: (
+    dir: string,
+    type: PackageManagerType,
+    id: string,
+    version?: string
+  ): Promise<PackageInstallPlanView> => ipcRenderer.invoke('packages:plan', dir, type, id, version),
+  installPackage: (
+    dir: string,
+    type: PackageManagerType,
+    id: string,
+    version?: string
+  ): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('packages:install', dir, type, id, version),
+  uninstallPackage: (type: PackageManagerType, id: string): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('packages:uninstall', type, id),
+  listInstalledPackages: (): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('packages:listInstalled'),
+  getEnablement: (projectCwd?: string): Promise<EnablementSnapshot> =>
+    ipcRenderer.invoke('enablement:get', projectCwd),
+  setEnablement: (
+    item: EnablementItemKey,
+    value: boolean | null,
+    scope: EnablementScope
+  ): Promise<EnablementSnapshot> => ipcRenderer.invoke('enablement:set', item, value, scope),
   listSkills: (cwd?: string): Promise<SkillSummary[]> => ipcRenderer.invoke('skills:list', cwd),
   readSkillContent: (filePath: string, cwd?: string): Promise<SkillContent> =>
     ipcRenderer.invoke('skills:read', filePath, cwd),
@@ -1436,6 +1558,18 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('agents:list', cwd),
   listMcpServers: (cwd?: string): Promise<McpServerSummary[]> =>
     ipcRenderer.invoke('mcp:listServers', cwd),
+  listMcpConnectorCatalog: (): Promise<FeaturedMcpConnector[]> =>
+    ipcRenderer.invoke('mcp:listConnectorCatalog'),
+  installMcpConnector: (
+    id: string,
+    version?: string,
+    registryDir?: string
+  ): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('mcp:installConnector', id, version, registryDir),
+  uninstallMcpConnector: (id: string): Promise<InstalledPackageView[]> =>
+    ipcRenderer.invoke('mcp:uninstallConnector', id),
+  buildMcpConnectorEnvironment: (id: string): Promise<{ envId: string }> =>
+    ipcRenderer.invoke('mcp:buildConnectorEnvironment', id),
   addRemoteMcpConnector: (name: string, url: string): Promise<void> =>
     ipcRenderer.invoke('mcp:addRemoteConnector', name, url),
   removeRemoteMcpConnector: (name: string, url: string): Promise<void> =>
@@ -1472,7 +1606,7 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('wrappers:listCatalog'),
   addCustomWrapper: (sourceDir: string): Promise<WrapperCatalogEntry> =>
     ipcRenderer.invoke('wrappers:addCustom', sourceDir),
-  listWrapperCompositionCatalog: (): Promise<WrapperCompositionManifest[]> =>
+  listWrapperCompositionCatalog: (): Promise<WrapperCompositionCatalogItem[]> =>
     ipcRenderer.invoke('wrappers:listCompositionCatalog'),
   getWrapperCompositionDag: (id: string): Promise<string | undefined> =>
     ipcRenderer.invoke('wrappers:getCompositionDag', id),

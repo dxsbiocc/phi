@@ -20,7 +20,12 @@ import {
   type DefaultResourceLoaderOptions,
   type ResourceDiagnostic
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
+import {
+  ExtensionRuntime,
+  loadExtensionFromFactory
+} from '@oh-my-pi/pi-coding-agent/extensibility/extensions/loader'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
+import { EventBus } from '@oh-my-pi/pi-coding-agent/utils/event-bus'
 import { mcpOAuthCredentialId } from '@oh-my-pi/pi-coding-agent/mcp/oauth-flow'
 import { estimateToolSchemaTokens } from '@oh-my-pi/pi-coding-agent/modes/utils/context-usage'
 import {
@@ -42,13 +47,11 @@ import { authPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
 import { createNextActionInstructionExtension } from './next-action-extension'
 import { cursorModelWithBridge } from './cursor-model-routing'
 import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
-import { buildDefaultDbCustomTools } from '../db/tools'
 import { buildProjectDownloadTool } from '../download/project-download-tool'
 import { buildPresentFilesTool } from '../deliverables/present-tool'
 import { enterPlanReviewMode, type PlanReviewChoice } from '../plan/plan-review-mode'
 import { planModeToolDecision } from '../plan/plan-tool-policy'
 import type { PresentedFile } from '../../../shared/presentedFileTypes'
-import { featuredMcpConnectors } from '../../../shared/mcpConnectorCatalog'
 import { authorizeFeaturedMcp, listFeaturedMcpTools } from './featured-mcp-auth'
 import {
   API_KEY_CONNECTOR_IDS,
@@ -59,6 +62,7 @@ import {
 import {
   disableFeaturedApiKeyAutoDiscovery,
   isMcpConnectorUserDisabled,
+  mcpOAuthAuthorizationOrigin,
   readMcpServerEntry
 } from '../mcp-connectors'
 import type {
@@ -92,21 +96,18 @@ import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
 import { buildAskUserQuestionCustomTools } from '../user-interaction-tools'
 import { isPhiAgentDefinition, type PhiAgentDefinition } from '../agents/definition'
+import { selectAgentModel } from '../agents/model-selection'
 import { controlAgentRun } from '../agents/run-control'
 import { AGENT_RUN_HOST_METHODS } from '../agents/run-host'
 import { AgentRunRegistry } from '../agents/registry'
 import { buildAgentRunTools } from '../agents/run-tools'
 import { createAgentRunner, type AgentSessionLike } from '../agents/runner'
 import { appendAgentUsageRecord, pruneAgentUsageLogs } from '../agents/usage-log'
-import {
-  buildScopedPhiToolMap,
-  resolveAgentTools,
-  visualizationToolNamesForWorkflow,
-  type VisualizationWorkflow
-} from '../agents/tool-resolution'
+import { buildScopedPhiToolMap, resolveAgentTools } from '../agents/tool-resolution'
 import { buildAgentTool } from '../agents/tool'
 import { createSpecialistFallbackExtension } from '../agents/fallback-policy'
 import { createProjectToolBoundaryExtension } from '../agents/project-tool-boundary'
+import { createEnvironmentBindingExtension } from '../agents/environment-binding'
 import { createRemoteUrlGuardExtension } from '../agents/remote-url-guard'
 import {
   createRemoteProjectToolGuardExtension,
@@ -118,7 +119,14 @@ import {
   buildPhiRemoteProjectSystemPrompt,
   filterPersonaContextFile
 } from '../main-system-prompt'
-import { buildVisualizationTools } from '../visualization/tools'
+import { buildEnvRequestTool } from '../content/env-request-tool'
+import { buildScriptTools, buildSkillRunTool } from '../content/skill-tools'
+import type { ScriptToolDescriptor } from '../content/skill-tool-types'
+import {
+  filterEnabledMainSkills,
+  filterMainScriptTools,
+  selectDeclaredSpecialistSkills
+} from '../enablement'
 import { createHostJobClient } from '../wrappers/composition/job-host-client'
 import { buildWrapperCompositionTools } from '../wrappers/composition/tools'
 
@@ -841,6 +849,45 @@ function serializeSessionState(result: CreateAgentSessionResult): unknown {
   }
 }
 
+function isScriptToolDescriptor(value: unknown): value is ScriptToolDescriptor {
+  if (!isRecord(value)) return false
+  if (typeof value.name !== 'string' || typeof value.description !== 'string') return false
+  if (!isRecord(value.parameters)) return false
+  if (!Array.isArray(value.attachTo) || value.attachTo.some((item) => typeof item !== 'string')) {
+    return false
+  }
+  if (typeof value.skill !== 'string') return false
+  return value.approval === 'read' || value.approval === 'write'
+}
+
+async function loadSkillScriptTools(cwd: string): Promise<ScriptToolDescriptor[] | undefined> {
+  try {
+    const result = await requestHost('skills.scriptTools', { cwd })
+    if (!isRecord(result) || !Array.isArray(result.tools)) {
+      throw new Error('skills.scriptTools returned an unexpected result')
+    }
+    const tools: ScriptToolDescriptor[] = []
+    for (const entry of result.tools) {
+      if (!isScriptToolDescriptor(entry)) {
+        throw new Error('skills.scriptTools returned an invalid tool')
+      }
+      tools.push(entry)
+    }
+    if (Array.isArray(result.problems)) {
+      for (const problem of result.problems) {
+        if (typeof problem === 'string' && problem.length > 0) {
+          process.stderr.write(`Phi skill tool: ${problem}\n`)
+        }
+      }
+    }
+    return tools
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    process.stderr.write(`Phi skill tools unavailable: ${message}\n`)
+    return undefined
+  }
+}
+
 /**
  * The Phi tool functions an agent definition may list in `tools:`. Built fresh
  * per agent session so each one binds to that session. Add a provider here to
@@ -850,30 +897,22 @@ function serializeSessionState(result: CreateAgentSessionResult): unknown {
 function phiToolFunctions(
   originSessionId: string,
   agentDir: string,
-  agentName: string
+  cwd: string,
+  agentName: string,
+  skillRun?: CustomTool
 ): Map<string, CustomTool> {
   let wrapperTools: CustomTool[] = []
-  let databaseTools: CustomTool[] = []
   if (agentName === 'Wrapper') {
     // Wrapper runs are background jobs owned by the main process; these tools only talk to it.
     // Each run is stamped with the session that started it, so its end can be reported there.
     const jobs = createHostJobClient(requestHost, { originSessionId })
-    wrapperTools = [...buildWrapperCompositionTools(jobs)]
+    wrapperTools = [...buildWrapperCompositionTools(jobs, { agentDir, projectDir: cwd })]
   }
-  if (agentName === 'Database') {
-    try {
-      databaseTools = buildDefaultDbCustomTools(agentDir, {}, { enforceRouting: true })
-    } catch {
-      // A broken connector catalog must not prevent the specialist session from starting.
-    }
-  }
-  // The figure tools only run local scripts and write inside the delegating session's project.
-  const visualizationTools = agentName === 'Visualization' ? buildVisualizationTools() : []
-  return buildScopedPhiToolMap(agentName, {
-    wrapper: wrapperTools,
-    database: databaseTools,
-    visualization: visualizationTools
+  const tools = buildScopedPhiToolMap(agentName, {
+    wrapper: wrapperTools
   })
+  if (skillRun) tools.set(skillRun.name, skillRun)
+  return tools
 }
 
 /**
@@ -882,9 +921,119 @@ function phiToolFunctions(
  * toolbox, `skills` the only skills exposed. The session gets its own resource
  * loader (the SDK forbids sharing loaded extension instances across sessions)
  * whose approval extension is bound to the *parent's* sessionId, so its shell
- * and file writes are approved in the chat the user is looking at. The parent's
- * model and thinking level are reused.
+ * and file writes are approved in the chat the user is looking at. A declared
+ * `model` is tried in order with the main session's selector lookup; otherwise
+ * the parent's model is reused. `thinkingLevel` overrides the parent's level.
  */
+
+async function bindSpecialistEnvironment(
+  definition: PhiAgentDefinition,
+  deps: { sessionId: string; cwd: string; remoteRoot?: string }
+): Promise<{ ref: string; variables: Record<string, string>; pluginId?: string } | undefined> {
+  const ref = definition.environment
+  if (!ref) return undefined
+  if (deps.remoteRoot) {
+    throw new Error('environment binding is not supported for remote projects yet')
+  }
+  const result = await requestHost('environments.bindSession', {
+    runtimeSessionId: deps.sessionId,
+    ref,
+    agent: definition.name,
+    cwd: deps.cwd,
+    ...(definition.pluginId ? { pluginId: definition.pluginId } : {})
+  })
+  if (!isRecord(result)) throw new Error('environments.bindSession returned an unexpected result')
+  if (isRecord(result.notReady)) {
+    const message = result.notReady.message
+    if (typeof message !== 'string' || message.length === 0) {
+      throw new Error('environments.bindSession returned an unexpected result')
+    }
+    throw new Error(message)
+  }
+  const boundRef = result.ref
+  const variables = stringRecord(result.variables)
+  if (typeof boundRef !== 'string' || boundRef.length === 0 || !variables) {
+    throw new Error('environments.bindSession returned an unexpected result')
+  }
+  return {
+    ref: boundRef,
+    variables,
+    ...(definition.pluginId ? { pluginId: definition.pluginId } : {})
+  }
+}
+
+function stringRecord(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined
+  const record: Record<string, string> = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item !== 'string') return undefined
+    record[key] = item
+  }
+  return record
+}
+
+function specialistToolCallFactories(
+  deps: {
+    sessionId: string
+    enableToolApproval: boolean
+    agentRunId?: string
+    remoteRoot?: string
+    parent: () => CreateAgentSessionResult | undefined
+  },
+  binding: { ref: string; variables: Record<string, string>; pluginId?: string } | undefined
+): ExtensionFactory[] {
+  // Order matters: omp gives every handler the original input and keeps the last
+  // non-empty result, and a block returns at once. Guards and approval run first,
+  // so the approval card shows the command the model wrote; the binding's rewrite
+  // is last, so it is the input that executes.
+  return [
+    ...(deps.remoteRoot ? [createRemoteProjectToolGuardExtension()] : []),
+    createRemoteUrlGuardExtension(),
+    createPlanReviewToolGuardExtension(
+      () => deps.parent()?.session.getPlanModeState()?.enabled === true
+    ),
+    ...(deps.enableToolApproval
+      ? [createBridgeToolApprovalExtension(deps.sessionId, deps.agentRunId)]
+      : []),
+    ...(binding ? [createEnvironmentBindingExtension(binding)] : [])
+  ]
+}
+
+/**
+ * Specialist sessions set `restrictToolNames`, and omp then loads none of the
+ * caller's extensions: neither the resource loader's factories nor inline
+ * `extensions` (verified against omp 18.1.10 — the session's runner is empty).
+ * Without this, a specialist's bash, edit, and write would skip approval and the
+ * guards, and a bound session would run bash on the host. Install the factories
+ * on the live runner. If some future omp already loaded tool_call handlers, leave
+ * them rather than attach twice (the binding would rewrite the command twice).
+ */
+async function installSpecialistToolCallExtensions(
+  session: {
+    extensionRunner?: { hasHandlers(eventType: string): boolean }
+  },
+  factories: readonly ExtensionFactory[],
+  cwd: string
+): Promise<void> {
+  const runner = session.extensionRunner
+  if (!runner) throw new Error('specialist tool guards could not be installed')
+  if (runner.hasHandlers('tool_call')) return
+  const extensions = (runner as { extensions?: unknown }).extensions
+  if (!Array.isArray(extensions)) throw new Error('specialist tool guards could not be installed')
+  const runtime = new ExtensionRuntime()
+  const eventBus = new EventBus()
+  for (let index = 0; index < factories.length; index += 1) {
+    const factory = factories[index]
+    if (!factory) continue
+    extensions.push(
+      await loadExtensionFromFactory(factory, cwd, eventBus, runtime, `<phi-specialist-${index}>`)
+    )
+  }
+  if (!runner.hasHandlers('tool_call')) {
+    throw new Error('specialist tool guards could not be installed')
+  }
+}
+
 async function createPhiAgentSession(
   definition: PhiAgentDefinition,
   deps: {
@@ -895,15 +1044,31 @@ async function createPhiAgentSession(
     resourceOptions: unknown
     enableToolApproval: boolean
     agentRunId?: string
-    workflow?: VisualizationWorkflow
     remoteRoot?: string
     remoteContextFiles?: Array<{ path: string; content: string }>
     remoteTools?: () => CustomTool[]
+    skillTools?: ScriptToolDescriptor[]
     parent: () => CreateAgentSessionResult | undefined
   }
 ): Promise<AgentSessionLike> {
   const { sessionId, cwd, agentDir, ctx } = deps
   const sessionCwd = deps.remoteRoot ? agentDir : cwd
+  const binding = await bindSpecialistEnvironment(definition, deps)
+  const holder = binding
+    ? {
+        ref: binding.ref,
+        variables: { ...binding.variables },
+        ...(binding.pluginId ? { pluginId: binding.pluginId } : {})
+      }
+    : undefined
+  const toolCallFactories = specialistToolCallFactories(deps, holder)
+  const skillHost = holder
+    ? {
+        runtimeSessionId: sessionId,
+        environmentBinding: holder,
+        ...(holder.pluginId ? { pluginId: holder.pluginId } : {})
+      }
+    : sessionId
   const settings = await Settings.init({ cwd: sessionCwd, agentDir })
   const loader =
     isRecord(deps.resourceOptions) || deps.remoteRoot
@@ -924,28 +1089,79 @@ async function createPhiAgentSession(
               : {})
           }),
           settingsManager: SettingsManager.create(sessionCwd, agentDir),
-          extensionFactories: [
-            ...(deps.remoteRoot ? [createRemoteProjectToolGuardExtension()] : []),
-            ...(deps.enableToolApproval
-              ? [createBridgeToolApprovalExtension(sessionId, deps.agentRunId)]
-              : [])
-          ]
+          extensionFactories: toolCallFactories
         })
       : undefined
   if (loader) await loader.reload()
 
-  const availableTools = phiToolFunctions(sessionId, agentDir, definition.name)
+  const availableTools = phiToolFunctions(
+    sessionId,
+    agentDir,
+    sessionCwd,
+    definition.name,
+    deps.skillTools
+      ? buildSkillRunTool(requestHost, {
+          ...(typeof skillHost === 'string' ? { runtimeSessionId: skillHost } : skillHost),
+          allowedSkills: definition.skills
+        })
+      : undefined
+  )
   for (const tool of deps.remoteTools?.() ?? []) availableTools.set(tool.name, tool)
-  const declaredTools =
-    definition.name === 'Visualization'
-      ? visualizationToolNamesForWorkflow(definition.tools, deps.workflow)
-      : definition.tools
+  const attachedScriptTools = buildScriptTools(
+    (deps.skillTools ?? []).filter(
+      (tool) => definition.skills.includes(tool.skill) && tool.attachTo.includes(definition.name)
+    ),
+    requestHost,
+    skillHost
+  )
+  for (const tool of attachedScriptTools) availableTools.set(tool.name, tool)
+  if (holder) {
+    const envRequest = buildEnvRequestTool(requestHost, {
+      runtimeSessionId: sessionId,
+      binding: holder,
+      agent: definition.name
+    })
+    availableTools.set(envRequest.name, envRequest)
+  }
+  const declaredTools = [...definition.tools]
+  for (const tool of attachedScriptTools) {
+    if (!declaredTools.includes(tool.name)) declaredTools.push(tool.name)
+  }
+  if (holder && !declaredTools.includes('env_request')) declaredTools.push('env_request')
   const { toolNames, customTools } = resolveAgentTools(declaredTools, availableTools)
   const parentSession = deps.parent()?.session
+  const parentModel = parentSession?.model || undefined
+  let model = parentModel
+  if (definition.model && definition.model.length > 0) {
+    const selection = await selectAgentModel(
+      definition.name,
+      definition.model,
+      async (selector) => {
+        const slash = selector.indexOf('/')
+        if (slash <= 0 || slash >= selector.length - 1) return undefined
+        try {
+          return await modelBySelector(ctx, {
+            provider: selector.slice(0, slash),
+            id: selector.slice(slash + 1)
+          })
+        } catch {
+          // An unusable selector (for example an unavailable Cursor bridge) falls
+          // through to the next one, then to the conversation's model.
+          return undefined
+        }
+      },
+      parentModel
+    )
+    if (selection.warning) process.stderr.write(`${selection.warning}\n`)
+    model = selection.model
+  }
+  const thinkingLevel = definition.thinkingLevel
+    ? (definition.thinkingLevel as ConfiguredThinkingLevel)
+    : parentSession?.thinkingLevel
   const skills = deps.remoteRoot
     ? []
     : loader
-      ? loader.getSkills().skills.filter((skill) => definition.skills.includes(skill.name))
+      ? selectDeclaredSpecialistSkills(loader.getSkills().skills, definition.skills)
       : undefined
 
   const result = await createLegacyAgentSession({
@@ -957,10 +1173,9 @@ async function createPhiAgentSession(
     authStorage: ctx.authStorage,
     modelRegistry: ctx.modelRegistry,
     sessionManager: SessionManager.inMemory(sessionCwd),
-    ...(parentSession?.model ? { model: parentSession.model } : {}),
-    ...(parentSession?.thinkingLevel ? { thinkingLevel: parentSession.thinkingLevel } : {}),
+    ...(model ? { model } : {}),
+    ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(loader ? { resourceLoader: loader } : {}),
-    extensions: [createRemoteUrlGuardExtension()],
     ...(skills ? { skills } : {}),
     appendSystemPrompt: `${definition.systemPrompt}${deps.remoteRoot ? `\n\nRemote project root: ${JSON.stringify(deps.remoteRoot)}.` : ''}\n\n${AGENT_REPORT_PROTOCOL}`,
     ...(customTools.length > 0 ? { customTools } : {}),
@@ -980,6 +1195,12 @@ async function createPhiAgentSession(
         }
       : {})
   })
+  try {
+    await installSpecialistToolCallExtensions(result.session, toolCallFactories, sessionCwd)
+  } catch (error) {
+    await result.session.dispose()
+    throw error
+  }
   if (deps.remoteRoot) {
     await initializeExtensions(result.session, {
       reportSendError: () =>
@@ -1170,6 +1391,7 @@ async function createSession(params: unknown): Promise<unknown> {
     ...(phiAgents.length > 0 ? [createSpecialistFallbackExtension(phiAgents, agentRuns)] : []),
     ...(record.enableToolApproval ? [createBridgeToolApprovalExtension(sessionId)] : [])
   ]
+  let sessionSkillNames: Set<string> | undefined
   const resources =
     isRecord(record.resourceOptions) || extensionFactories.length > 0
       ? new DefaultResourceLoader({
@@ -1179,6 +1401,18 @@ async function createSession(params: unknown): Promise<unknown> {
             agentDir
           }),
           settingsManager: SettingsManager.create(settingsCwd, agentDir),
+          skillsOverride: (base) => {
+            sessionSkillNames ??= new Set(
+              filterEnabledMainSkills(base.skills, {
+                projectDir: cwd,
+                agentDir
+              }).map((skill) => skill.name)
+            )
+            return {
+              ...base,
+              skills: base.skills.filter((skill) => sessionSkillNames?.has(skill.name))
+            }
+          },
           ...(personaMarkdown
             ? {
                 agentsFilesOverride: (base) =>
@@ -1201,9 +1435,17 @@ async function createSession(params: unknown): Promise<unknown> {
   // Never let a wrapper-catalog problem block an otherwise-ordinary chat
   // session from starting.
   // The main agent leads: it gets one delegation tool per scanned Phi agent,
-  // named after the agent (for example `Wrapper` or `Database`), and none of
+  // named after the agent (for example `Wrapper`), and none of
   // the specialists' own tool functions, so internal catalogs and query tools
   // stay out of the main conversation. Definitions come from the main process's scan.
+  // Local only. A failed listing is logged and registers nothing; it must not block the session.
+  const skillTools = remoteRoot ? undefined : await loadSkillScriptTools(cwd)
+  const enabledMainSkillNames = new Set(
+    resources?.getSkills().skills.map((skill) => skill.name) ?? []
+  )
+  const mainSkillTools = skillTools
+    ? filterMainScriptTools(skillTools, enabledMainSkillNames)
+    : undefined
   if (phiAgents.length > 0) pruneAgentUsageLogs(agentDir)
   const agentCustomTools = phiAgents.map((definition) =>
     buildAgentTool(
@@ -1212,7 +1454,7 @@ async function createSession(params: unknown): Promise<unknown> {
         agent: definition.name,
         // What each delegation cost, for judging prompt and tool changes; see agents/usage.ts.
         onUsage: (record) => appendAgentUsageRecord(agentDir, { ...record, sessionId }),
-        createSession: ({ runId, workflow }) =>
+        createSession: ({ runId }) =>
           createPhiAgentSession(definition, {
             sessionId,
             cwd,
@@ -1221,7 +1463,6 @@ async function createSession(params: unknown): Promise<unknown> {
             resourceOptions: record.resourceOptions,
             enableToolApproval: Boolean(record.enableToolApproval),
             ...(runId ? { agentRunId: runId } : {}),
-            ...(workflow ? { workflow } : {}),
             ...(remoteRoot
               ? {
                   remoteRoot,
@@ -1232,11 +1473,12 @@ async function createSession(params: unknown): Promise<unknown> {
                     )
                 }
               : {}),
+            ...(skillTools ? { skillTools } : {}),
             parent: () => parentRef.current
           })
       }),
       agentRuns,
-      { cwd }
+      { cwd, ...(remoteRoot ? { remote: true } : {}) }
     )
   )
   const agentRunTools = phiAgents.length > 0 ? buildAgentRunTools(agentRuns) : []
@@ -1413,7 +1655,28 @@ async function createSession(params: unknown): Promise<unknown> {
     ...notebookCustomTools,
     ...libraryCustomTools,
     buildPaletteRecommendationTool(),
-    ...userInteractionCustomTools
+    ...userInteractionCustomTools,
+    ...(!remoteRoot
+      ? [
+          buildEnvRequestTool(requestHost, {
+            runtimeSessionId: sessionId,
+            requireEnvironment: true
+          })
+        ]
+      : []),
+    ...(mainSkillTools
+      ? [
+          buildSkillRunTool(requestHost, {
+            runtimeSessionId: sessionId,
+            allowedSkills: [...enabledMainSkillNames]
+          }),
+          ...buildScriptTools(
+            mainSkillTools.filter((tool) => tool.attachTo.includes('main')),
+            requestHost,
+            sessionId
+          )
+        ]
+      : [])
   ]
 
   const selectedModel = await modelBySelector(ctx, record.model)
@@ -1951,26 +2214,27 @@ async function renameSession(params: unknown): Promise<void> {
 async function handleRequest(method: string, params: unknown): Promise<unknown> {
   switch (method) {
     case 'mcp.featuredTools': {
-      const id = isRecord(params) ? stringValue(params.id) : ''
-      const connector = featuredMcpConnectors.find((entry) => entry.id === id)
-      if (!connector || (connector.signIn === '需要登录' && !connector.oauthAuthorizationOrigin)) {
+      const record = isRecord(params) ? params : {}
+      const id = stringValue(record.id)
+      const url = stringValue(record.url)
+      const auth = stringValue(record.auth)
+      if (!id || !url.startsWith('https://') || !['none', 'oauth', 'header'].includes(auth)) {
         throw new Error('该连接器需要授权，暂无法读取实际工具列表')
       }
-      const authStorage = connector.oauthAuthorizationOrigin
-        ? (await getContext()).authStorage
-        : undefined
-      if (authStorage && !authStorage.get(mcpOAuthCredentialId(connector.url))) {
-        throw new Error(`请先授权登录 ${connector.name}`)
+      if (auth === 'oauth' && !mcpOAuthAuthorizationOrigin(id, url)) {
+        throw new Error('该连接器尚不支持登录状态查询')
       }
-      const apiKey = connector.apiKey
-        ? await requestHost('mcp.featuredApiKey', { id: connector.id })
-        : undefined
-      if (connector.apiKey && (typeof apiKey !== 'string' || !apiKey)) {
-        throw new Error(`请先保存 ${connector.name} API key 并添加连接器`)
+      const authStorage = auth === 'oauth' ? (await getContext()).authStorage : undefined
+      if (authStorage && !authStorage.get(mcpOAuthCredentialId(url))) {
+        throw new Error(`请先授权登录 ${id}`)
+      }
+      const apiKey = auth === 'header' ? await requestHost('mcp.featuredApiKey', { id }) : undefined
+      if (auth === 'header' && (typeof apiKey !== 'string' || !apiKey)) {
+        throw new Error(`请先保存 ${id} API key 并添加连接器`)
       }
       return listFeaturedMcpTools(
-        connector.id,
-        connector.url,
+        id,
+        url,
         authStorage,
         typeof apiKey === 'string' ? apiKey : undefined
       )
@@ -1987,13 +2251,14 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return undefined
     }
     case 'mcp.featuredAuthStatus': {
-      const id = isRecord(params) ? stringValue(params.id) : ''
-      const connector = featuredMcpConnectors.find(
-        (entry) => entry.id === id && entry.oauthAuthorizationOrigin
-      )
-      if (!connector) throw new Error('该连接器尚不支持登录状态查询')
+      const record = isRecord(params) ? params : {}
+      const id = stringValue(record.id)
+      const url = stringValue(record.url)
+      if (!mcpOAuthAuthorizationOrigin(id, url)) {
+        throw new Error('该连接器尚不支持登录状态查询')
+      }
       const { authStorage } = await getContext()
-      return authStorage.get(mcpOAuthCredentialId(connector.url))?.type === 'oauth'
+      return authStorage.get(mcpOAuthCredentialId(url))?.type === 'oauth'
     }
     case 'mcp.cancelFeaturedAuth': {
       const id = isRecord(params) ? stringValue(params.id) : ''
@@ -2001,17 +2266,18 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return undefined
     }
     case 'mcp.authorizeFeatured': {
-      const id = isRecord(params) ? stringValue(params.id) : ''
-      const connector = featuredMcpConnectors.find(
-        (entry) => entry.id === id && entry.oauthAuthorizationOrigin
-      )
-      if (!connector) throw new Error('该连接器尚不支持 OAuth 授权')
+      const record = isRecord(params) ? params : {}
+      const id = stringValue(record.id)
+      const url = stringValue(record.url)
+      if (!mcpOAuthAuthorizationOrigin(id, url)) {
+        throw new Error('该连接器尚不支持 OAuth 授权')
+      }
       const ctx = await getContext()
       const cancel = new AbortController()
       featuredAuthAbort.set(id, cancel)
       try {
         await authorizeFeaturedMcp(
-          connector.url,
+          url,
           ctx.authStorage,
           (url) => requestHost('mcp.openAuthUrl', { id, url }) as Promise<void>,
           cancel.signal

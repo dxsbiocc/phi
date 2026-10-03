@@ -45,16 +45,7 @@ import matplotlib.pyplot as plt
 
 ## Installation
 
-Tested against scikit-learn **1.8.0** (Python 3.11–3.14). Install the PyPI package `scikit-learn` (import as `sklearn`).
-
-```bash
-# Using uv (recommended)
-uv pip install "scikit-learn>=1.7"
-
-# Optional dependencies
-uv pip install "scikit-learn[plots]"  # For plotting utilities
-uv pip install pandas numpy matplotlib seaborn  # Common companions
-```
+This skill runs in the managed `phi:python@1` environment; `scikit-learn`, `numpy`, `scipy`, `pandas`, `matplotlib`, and `seaborn` are already there. Import scikit-learn as `sklearn`.
 
 ## Quick Workflow Templates
 

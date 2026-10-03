@@ -5,8 +5,6 @@
  */
 
 import { AgentUsageCollector, type AgentRunStatus, type AgentRunUsageRecord } from './usage'
-import type { VisualizationWorkflow } from './tool-resolution'
-
 /** The slice of the SDK's AgentSession this runner relies on. */
 export interface AgentSessionLike {
   subscribe(listener: (event: unknown) => void): () => void
@@ -33,7 +31,6 @@ export interface AgentRunControl {
 export interface AgentRunRequest {
   task: string
   images?: AgentImage[]
-  workflow?: VisualizationWorkflow
   /** The registry's id for this run; carried into the usage record. */
   runId?: string
   signal?: AbortSignal
@@ -166,10 +163,7 @@ function optionalCreatedAt(
 export function createAgentRunner(deps: {
   /** Agent name, used in error messages. */
   agent: string
-  createSession: (request: {
-    runId?: string
-    workflow?: VisualizationWorkflow
-  }) => Promise<AgentSessionLike>
+  createSession: (request: { runId?: string }) => Promise<AgentSessionLike>
   timeoutMs?: number
   /**
    * The current time as an ISO string. The SDK's events carry none, so a step is timed here:
@@ -184,7 +178,7 @@ export function createAgentRunner(deps: {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const now = deps.now ?? ((): string => new Date().toISOString())
 
-  return async ({ task, images, workflow, runId, signal, onProgress, onToolStep, onControl }) => {
+  return async ({ task, images, runId, signal, onProgress, onToolStep, onControl }) => {
     if (signal?.aborted) throw new AgentCancelledError(deps.agent)
 
     const usage = new AgentUsageCollector({
@@ -195,8 +189,7 @@ export function createAgentRunner(deps: {
     })
 
     const session = await deps.createSession({
-      ...(runId ? { runId } : {}),
-      ...(workflow ? { workflow } : {})
+      ...(runId ? { runId } : {})
     })
     onControl?.({
       steer: async (text) => {

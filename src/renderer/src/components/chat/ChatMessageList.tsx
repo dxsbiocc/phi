@@ -256,16 +256,19 @@ const ChatMessageList = memo(function ChatMessageList({
   const pendingRowHeightsRef = useRef<Record<string, number>>({})
   const rowHeightFrameRef = useRef<number | null>(null)
   const scrollResetKeyRef = useRef(scrollResetKey)
-  scrollResetKeyRef.current = scrollResetKey
   const seenScrollResetKeyRef = useRef(scrollResetKey)
-  if (seenScrollResetKeyRef.current !== scrollResetKey) {
-    seenScrollResetKeyRef.current = scrollResetKey
-    pendingRowHeightsRef.current = {}
-    if (rowHeightFrameRef.current !== null) {
-      window.cancelAnimationFrame(rowHeightFrameRef.current)
-      rowHeightFrameRef.current = null
+
+  useLayoutEffect(() => {
+    scrollResetKeyRef.current = scrollResetKey
+    if (seenScrollResetKeyRef.current !== scrollResetKey) {
+      seenScrollResetKeyRef.current = scrollResetKey
+      pendingRowHeightsRef.current = {}
+      if (rowHeightFrameRef.current !== null) {
+        window.cancelAnimationFrame(rowHeightFrameRef.current)
+        rowHeightFrameRef.current = null
+      }
     }
-  }
+  }, [scrollResetKey])
   const virtualizationEnabledRef = useRef(false)
   const visibleRowKeysRef = useRef<ReadonlySet<string>>(new Set())
   const currentMessageMarker = useMemo(() => messageScrollMarker(messages), [messages])
@@ -325,8 +328,10 @@ const ChatMessageList = memo(function ChatMessageList({
     virtualRowHeights,
     virtualViewport.viewportHeight
   ])
-  virtualizationEnabledRef.current = virtualItems.length >= chatVirtualMinimumRowCount
-  visibleRowKeysRef.current = new Set(virtualCells.items.map(({ item }) => item.id))
+  useLayoutEffect(() => {
+    virtualizationEnabledRef.current = virtualItems.length >= chatVirtualMinimumRowCount
+    visibleRowKeysRef.current = new Set(virtualCells.items.map(({ item }) => item.id))
+  }, [virtualCells.items, virtualItems.length])
 
   const flushRowHeights = useCallback((): void => {
     rowHeightFrameRef.current = null

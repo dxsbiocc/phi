@@ -15,7 +15,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "0.5"
     description: "Fraction of reads to keep (0-1)."
   outdir:
     kind: output

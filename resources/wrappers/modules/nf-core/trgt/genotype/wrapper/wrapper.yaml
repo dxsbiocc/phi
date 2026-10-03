@@ -22,7 +22,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "XX"
     description: "Sample karyotype (XX or XY)."
   fasta_gz:
     kind: input
@@ -33,7 +32,6 @@ params:
     kind: option
     type: string
     required: false
-    default: "chr22\\t18890357\\t18890451\\tID=TEST;MOTIFS=AT;STRUC=(AT)n"
     description: "Repeat definitions (chrom, start, end, ID/MOTIFS/STRUC)."
   outdir:
     kind: output

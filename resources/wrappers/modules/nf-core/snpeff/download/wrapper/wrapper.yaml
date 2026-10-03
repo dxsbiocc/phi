@@ -13,7 +13,6 @@ params:
     kind: option
     type: string
     required: false
-    default: NC_045512.2
     description: snpEff database identifier to download (e.g. GRCh38.99, NC_045512.2).
   outdir:
     kind: output

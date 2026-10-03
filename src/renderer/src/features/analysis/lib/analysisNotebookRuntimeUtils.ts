@@ -64,6 +64,16 @@ export function missingJupyterRuntimeHandler(error: unknown): boolean {
   )
 }
 
+export function notebookEnvironmentErrorMessage(error: unknown, fallback: string): string {
+  const message = readableErrorMessage(error, fallback)
+  const environmentNotBuilt =
+    message.includes('环境未构建') ||
+    /环境[^。\n]*尚未构建/u.test(message) ||
+    /environment\s+\S+\s+is not (?:ready|built)/iu.test(message)
+  if (!environmentNotBuilt || message.includes('设置 → 环境')) return message
+  return `${message} 请前往“设置 → 环境”的“托管环境”构建后重试。`
+}
+
 export function waitForRendererDelay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms)

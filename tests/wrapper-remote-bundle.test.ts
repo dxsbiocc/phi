@@ -18,7 +18,11 @@ import {
   ensureRemoteBundle,
   hashBundleFiles
 } from '../src/main/agent/wrappers/composition/remote-bundle'
-import { getBundledWrapperPackagesDir } from '../src/main/agent/wrappers/catalog'
+import {
+  ensureBundledWrappersInstalled,
+  getBundledWrapperPackagesDir
+} from '../src/main/agent/wrappers/catalog'
+import { getWrapperTreeDir } from '../src/main/agent/packages/wrapper-tree'
 import { componentBundleScope } from '../src/main/agent/wrappers/composition/includes'
 import { createLocalShellSession } from './helpers/localShellSession'
 
@@ -66,6 +70,45 @@ test('bundle files are the runnable sources only, sorted, with posix relative pa
     ])
   } finally {
     cleanup()
+  }
+})
+
+test('remote bundling reads the assembled installed wrapper tree', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-bundle-assembled-'))
+  const sourceRoot = join(root, 'source')
+  const agentDir = join(root, 'agent')
+  const remote = join(root, 'remote')
+  try {
+    const wrapper = join(sourceRoot, 'modules', 'acme', 'toy', 'wrapper')
+    mkdirSync(wrapper, { recursive: true })
+    writeFileSync(join(wrapper, 'main.nf'), 'workflow {}\n')
+    writeFileSync(join(wrapper, 'params.json'), '{}\n')
+    writeFileSync(
+      join(wrapper, 'wrapper.yaml'),
+      `id: acme/modules/toy
+name: Toy
+summary: Remote assembled-tree fixture.
+params: {}
+outputs:
+  report:
+    type: path
+    path: results/report.txt
+    primary: true
+`
+    )
+    await ensureBundledWrappersInstalled(agentDir, { sourceRoot })
+
+    const session = createLocalShellSession()
+    const bundled = await ensureRemoteBundle(session, {
+      localRoot: getWrapperTreeDir(agentDir),
+      workspaceRoot: remote
+    })
+    assert.equal(
+      readFileSync(join(bundled.bundleDir, 'modules/acme/toy/wrapper/main.nf'), 'utf8'),
+      'workflow {}\n'
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
 

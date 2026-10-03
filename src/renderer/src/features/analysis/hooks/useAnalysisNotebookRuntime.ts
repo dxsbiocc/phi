@@ -27,6 +27,7 @@ import {
   cacheAnalysisNotebookFile,
   jupyterServerIsReady,
   missingJupyterRuntimeHandler,
+  notebookEnvironmentErrorMessage,
   removeAnalysisNotebookFileCacheEntry,
   requireRendererApiMethod,
   waitForRendererDelay
@@ -504,13 +505,15 @@ export function useAnalysisNotebookRuntime({
         } catch (fallbackError) {
           if (request !== analysisJupyterRuntimeRequestRef.current) return
           setAnalysisJupyterRuntimeError(
-            readableErrorMessage(fallbackError, '无法读取 Jupyter Server 状态')
+            notebookEnvironmentErrorMessage(fallbackError, '无法读取 Jupyter Server 状态')
           )
           setAnalysisJupyterRuntimeStatus(null)
           return
         }
       }
-      setAnalysisJupyterRuntimeError(readableErrorMessage(error, '无法读取 Jupyter runtime 状态'))
+      setAnalysisJupyterRuntimeError(
+        notebookEnvironmentErrorMessage(error, '无法读取 Jupyter runtime 状态')
+      )
       setAnalysisJupyterRuntimeStatus(null)
     } finally {
       if (request === analysisJupyterRuntimeRequestRef.current) {
@@ -552,7 +555,7 @@ export function useAnalysisNotebookRuntime({
         )
       } catch (error) {
         if (request !== analysisJupyterRequestRef.current) return
-        setAnalysisJupyterError(readableErrorMessage(error, '无法启动 Jupyter Server'))
+        setAnalysisJupyterError(notebookEnvironmentErrorMessage(error, '无法启动 Jupyter Server'))
       } finally {
         if (request === analysisJupyterRequestRef.current) {
           setIsStartingAnalysisJupyter(false)
@@ -657,7 +660,9 @@ export function useAnalysisNotebookRuntime({
         setAnalysisJupyterRuntimeStatus((current) =>
           dropUnconfirmedNotebookKernelSession(current, file.path)
         )
-        setAnalysisNotebookSessionError(readableErrorMessage(error, '无法连接 notebook kernel'))
+        setAnalysisNotebookSessionError(
+          notebookEnvironmentErrorMessage(error, '无法连接 notebook kernel')
+        )
       } finally {
         if (request === analysisNotebookSessionRequestRef.current) {
           isStartingNotebookSessionRef.current = false
@@ -757,7 +762,7 @@ export function useAnalysisNotebookRuntime({
         setAnalysisNotebookSessionStatus(result.sessionStatus)
       } catch (error) {
         if (request !== analysisCellExecutionRequestRef.current) return
-        const message = readableErrorMessage(error, '无法执行 notebook cell')
+        const message = notebookEnvironmentErrorMessage(error, '无法执行 notebook cell')
         setAnalysisCellExecutionError(message)
         // Without this, a failed run (timeout, lost kernel connection, stale
         // session, ...) leaves the cell showing nothing at all once the

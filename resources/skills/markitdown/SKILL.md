@@ -4,7 +4,9 @@ description: Convert files and office documents to Markdown. Supports PDF, DOCX,
 allowed-tools: Read Write Edit Bash
 license: MIT license
 required_environment_variables: [{"name": "OPENROUTER_API_KEY", "prompt": "OpenRouter API key for the skill's LLM-powered steps.", "required_for": "optional features"}]
-metadata: {"version": "1.1", "skill-author": "K-Dense Inc.", "openclaw": {"primaryEnv": "OPENROUTER_API_KEY", "envVars": [{"name": "OPENROUTER_API_KEY", "required": false, "description": "OpenRouter API key for the skill's LLM-powered steps."}]}}
+metadata: {"version": "1.1", "skill-author": "K-Dense Inc."}
+phi:
+  environment: phi:python@1
 ---
 
 # MarkItDown - File to Markdown Conversion
@@ -34,7 +36,7 @@ If your document does not already contain schematics or diagrams:
 
 **How to generate schematics:**
 ```bash
-python scripts/generate_schematic.py "your diagram description" -o figures/output.png
+skill_run({ skill: "markitdown", script: "generate_schematic.py", args: ["your diagram description", "-o", "figures/output.png"] })
 ```
 
 The AI will automatically:
@@ -78,15 +80,7 @@ For detailed guidance on creating schematics, refer to the scientific-schematics
 
 ### Installation
 
-```bash
-# Install with all features
-pip install 'markitdown[all]'
-
-# Or from source
-git clone https://github.com/microsoft/markitdown.git
-cd markitdown
-pip install -e 'packages/markitdown[all]'
-```
+This skill runs in the managed `phi:python@1` environment; `markitdown`, `requests`, `openai`, `python-dotenv`, and `tesseract` are already there.
 
 ### Command-Line Usage
 
@@ -181,24 +175,18 @@ Find plugins on GitHub with hashtag: `#markitdown-plugin`
 
 ## Optional Dependencies
 
-Control which file formats you support:
+`markitdown` in `phi:python@1` already provides the bundled converters. Upstream extra names, for reference:
 
-```bash
-# Install specific formats
-pip install 'markitdown[pdf, docx, pptx]'
-
-# All available options:
-# [all]                  - All optional dependencies
-# [pptx]                 - PowerPoint files
-# [docx]                 - Word documents
-# [xlsx]                 - Excel spreadsheets
-# [xls]                  - Older Excel files
-# [pdf]                  - PDF documents
-# [outlook]              - Outlook messages
-# [az-doc-intel]         - Azure Document Intelligence
-# [audio-transcription]  - WAV and MP3 transcription
-# [youtube-transcription] - YouTube video transcription
-```
+- `[all]` - All optional dependencies
+- `[pptx]` - PowerPoint files
+- `[docx]` - Word documents
+- `[xlsx]` - Excel spreadsheets
+- `[xls]` - Older Excel files
+- `[pdf]` - PDF documents
+- `[outlook]` - Outlook messages
+- `[az-doc-intel]` - Azure Document Intelligence
+- `[audio-transcription]` - WAV and MP3 transcription
+- `[youtube-transcription]` - YouTube video transcription
 
 ## Common Use Cases
 
@@ -327,7 +315,7 @@ docker run --rm -i markitdown:latest < ~/document.pdf > output.md
 - **Simple documents**: Use basic `MarkItDown()`
 - **Complex PDFs**: Use Azure Document Intelligence
 - **Visual content**: Enable AI image descriptions
-- **Scanned documents**: Ensure OCR dependencies are installed
+- **Scanned documents**: `tesseract` is already in `phi:python@1`
 
 ### 2. Handle Errors Gracefully
 
@@ -441,10 +429,7 @@ print(result.text_content)
 
 ### Common Issues
 
-1. **Missing dependencies**: Install feature-specific packages
-   ```bash
-   pip install 'markitdown[pdf]'  # For PDF support
-   ```
+1. **Missing dependencies**: `markitdown` is already in the managed `phi:python@1` environment.
 
 2. **Binary file errors**: Ensure files are opened in binary mode
    ```python
@@ -452,14 +437,7 @@ print(result.text_content)
        result = md.convert_stream(f, file_extension=".pdf")
    ```
 
-3. **OCR not working**: Install tesseract
-   ```bash
-   # macOS
-   brew install tesseract
-   
-   # Ubuntu
-   sudo apt-get install tesseract-ocr
-   ```
+3. **OCR not working**: `tesseract` is already in the managed `phi:python@1` environment.
 
 ## Performance Considerations
 
