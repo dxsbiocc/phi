@@ -233,7 +233,7 @@ OMP `hub` 可以管理长期进程，但其项目共享语义、固定 120×40 �
 
 Worker 崩溃或通信卡住不能只把界面改成 failed。`terminal-host.ts` 负责存活监督，主进程注册表保留由创建回调产生的可信清理身份，并维护独立于 PTY 输出的清理路径。具体实现必须在 T0 锁定：优先验证宿主退出关闭 PTY 时的普通前台进程组行为；若不足，使用独立清理监督者，在创建时就登记稳定的进程引用或可验证的进程创建身份和进程组，不能等到崩溃后才盲目凭旧 PID 建立引用。
 
-使用公开 API 的最小后备实现是每个主窗口一个独立 Bun 清理监督者，与 PTY Worker 分开。`onStart` 后立即在监督者中调用 `Process.fromPid(pid)` 并保留稳定引用，登记完成后才确认终端创建；关闭请求按 terminalId 路由并调用 `terminate({ group: true, gracefulMs, timeoutMs })`：用户结束时 `gracefulMs: 2000`、总期限 5 秒，退出路径按上文 1.5 秒预算传参。根进程引用本身不证明已重归属或另建 job-control 进程组的后代会被清理，因此这个后备实现也必须通过 T0 故障注入，不能只凭类型声明验收。Bun 原生库仍由 Bun 加载，不为监督逻辑假设 Electron 可直接导入。
+使用公开 API 的最小后备实现是每个主窗口一个独立 Bun 清理监督者，与 PTY Worker 分开。`onStart` 后立即在监督者中调用 `Process.fromPid(pid)` 并保留稳定引用，登记完成后才确认终端创建；关闭请求按 terminalId 路由并调用 `terminate({ group: true, gracefulMs, timeoutMs })`：用户结束时 `gracefulMs: 2000`、总期限 5 秒，退出路径按上文 1.5 秒预算传参。**T0 结论（见 [terminal-backend.md](../decisions/terminal-backend.md)）**：Worker 被强杀后 Shell 随 PTY master 关闭立即退出，但对已退出根引用调用 group terminate 不会到达忽略 HUP 的后代。因此监督者在 Worker 存活期间随心跳（每 1 秒）从可信根引用刷新后代的 `Process` 稳定引用集合，崩溃时终止根与全部已登记后代，绝不按 PID 扫描系统。保证范围相应缩小：崩溃前 1 秒内新建、尚未登记的后代不在保证内，文档与验收如实说明。Bun 原生库仍由 Bun 加载，不为监督逻辑假设 Electron 可直接导入。
 
 监督协议使用不混入 Shell 输出的心跳：每 1 秒一次，连续 3 秒无响应开始故障处理；故障清理从识别起最多等待 5 秒（应用退出期间改用退出路径的预算）。故障时先拒绝新输入，将终端标为 failed，再通过独立路径结束已验证的受管理进程并回收 Worker。清理失败保留错误，不能显示“已全部结束”。如果原生后端无法通过进程身份校验及故障清理验证，T0 判定该后端不满足本版要求，不能带着无效保证交付。
 
@@ -319,14 +319,14 @@ PTY 底层输出是字节流，当前原生 `onChunk` 的公开回调已经返�
 | resize               | 合并连续变化，约 50 ms 节流；最终尺寸必须发送              |
 | 真机压力验收         | 持续输出 10 秒时仍能输入；Ctrl+C 到输出停止目标不超过 1 秒 |
 
-采用 xterm `write` 完成回调产生 ACK，并将高低水位传播到 PTY 宿主。已安装 `PtySession` 的公开接口没有 pause/resume，因此这一项是 T0 的显式可行性门槛。不得在计划或实现中假设原生库已经提供可暂停读取的流；若只能采用丢弃策略，需要证明宿主自身队列有界并在可见界面提示输出缺口，否则切换到支持流控的后端。背压策略必须覆盖可见、隐藏和 Renderer 断连状态：
+**T0 结论**：`PtySession` 没有 pause/resume，PTY 读取不可暂停。流控改为“Worker 始终 drain + 每终端 2 MiB 有界环形缓冲 + 应用层停止 live 转发 + gap 标记”。3 秒 `yes` 压测（约 330 MiB）下 Worker RSS 增长约 60 MiB、Ctrl+C 后约 15–25 ms 停止输出。xterm `write` 完成回调产生 ACK，高低水位只控制主进程向 Renderer 的 live 转发，不控制原生读取。策略必须覆盖可见、隐藏和 Renderer 断连状态：
 
 - 面板收起、终端切换和工作区切换保留 xterm 实例，实例继续消费输出及 ACK，避免隐藏后把进程永久暂停。
 - 实例管理位于终端 feature 的长生命周期控制层，而非条件渲染的可见面板。React state 只存摘要；原始输出不进入聊天 store 或每个 chunk 的 React state。
 - Renderer 重载或失去订阅时，宿主继续 drain 到有界重放缓存并丢弃最旧数据，不能等待一个不存在的 UI ACK。
 - 重新 attach 使用新 epoch，先取得缓存区间，再接续 live seq，避免重复或遗漏。缓存缺口显示“部分输出已超出保留范围”。
 - 缓存截断后的 ANSI 状态与全屏程序画面不能保证完整恢复。重载后重置显示并重放保留内容，明确标示截断；V1 不承诺重建重载前的完整 alternate screen。
-- 到达高水位时暂停后端读取，低水位恢复。后端无原生 pause/resume 时，T0 必须验证有界替代方案；不能用无界 Promise 队列模拟背压。
+- 到达高水位时停止 live 转发（Worker 继续 drain 到环形缓冲），低水位后从缓冲续传；被丢弃的区间以 gap 事件提示。不能用无界 Promise 队列模拟背压。
 - 终端交互需要的协议回复可以送回同一 PTY，但限制类型与尺寸，不能转为任意命令。禁用未授权的 OSC 52 剪贴板写入和自动外部链接打开。
 
 输出默认仅保留在有界内存中，避免额外保存可能包含密钥的手动终端完整转录。用户可以复制或主动导出保留文本，导出说明保留范围。既有 Agent 工具输出的本地存储规则继续使用原实现。
@@ -373,7 +373,7 @@ src/renderer/src/features/terminal/
 | `src/preload/index.ts`、`src/preload/index.d.ts`     | 暴露具名终端 API 和可取消订阅；保持接口形状一致                             |
 | `src/main/index.ts`                                  | 初始化服务、注册 IPC、传入可信工作区解析及模型生成工厂；终端清理接入 `cleanupMainWindowRuntime()` |
 | `electron.vite.config.ts`                            | 独立终端 Worker 及其依赖复制与输出路径                                      |
-| `electron-builder.yml`                               | `asarUnpack` 补齐终端 Worker 与 `pi-natives` 原生二进制（E20）              |
+| `electron-builder.yml`                               | `asarUnpack` 补齐 `out/main/terminal/**`、`node_modules/@oh-my-pi/pi-natives/**` 与平台包 `pi-natives-*/**`（E20、T0） |
 | `package.json` 与 `bun.lock`                         | 仅在依赖选型与授权完成后修改；使用 `pi-natives` 时将其声明为直接依赖并锁定与 OMP 相同版本 |
 
 `App.tsx` 和 `src/main/index.ts` 当前已明显超出一般文件大小要求。本功能只做接线，新增逻辑置于独立模块，并在实现说明中记录保留既有大文件的判断；不把终端接入变成整个应用迁移。
@@ -478,7 +478,7 @@ src/renderer/src/features/terminal/
 | Worker 崩溃与卡住  | 真机强杀及阻断通信        | 故障识别后 5 秒内结束受管理前台父子进程；无法清理时状态明确且不误杀其他进程 |
 | 输出隐私           | 模型请求与日志 spy        | 未选择内容不进入模型；按键、全文和密钥不进普通日志                          |
 | 既有聊天           | 现有 session/OMP 回归     | 手动终端开关、崩溃和结束不改变聊天运行状态                                  |
-| 安装包             | unpacked 应用真机         | 能发现 Bun、加载 PTY 原生库、输入输出并清理                                 |
+| 安装包             | 移出开发目录的 unpacked 应用 | 从 `app.asar.unpacked` 启动 Worker，只从该根解析 `pi-natives`；输入输出并清理 |
 
 建议新增 `tests/terminal-manager.test.ts`、`terminal-workspace.test.ts`、`terminal-ipc.test.ts`、`terminal-output.test.ts`、`terminal-input.test.ts`、`terminal-command-draft.test.ts`、`terminal-panel.test.ts`。真实 PTY smoke 脚本放在 `scripts/`，明确要求本机环境；具体文件数量可按测试职责合并。
 
