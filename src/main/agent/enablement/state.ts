@@ -8,7 +8,7 @@ import {
   unlinkSync,
   writeFileSync
 } from 'node:fs'
-import { dirname, isAbsolute, join } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import type { EnablementItemKey, EnablementSnapshot } from '../../../shared/enablementTypes'
 import type { SkillSourceCategory } from '../../../shared/skillTypes'
@@ -99,6 +99,20 @@ function resolveProjectPath(projectDir: string): string {
   return realpathSync(projectDir)
 }
 
+/**
+ * Reading overrides for a project folder that no longer exists (deleted, or not
+ * mounted) falls back to its resolved path, which no saved override matches, so
+ * the defaults apply. Writes still require a real folder (resolveProjectPath).
+ */
+function resolveProjectPathForRead(projectDir: string): string {
+  try {
+    return realpathSync(projectDir)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return resolve(projectDir)
+    throw error
+  }
+}
+
 function assertEnablementKey(key: string): asserts key is EnablementItemKey {
   const separator = key.indexOf(':')
   const kind = key.slice(0, separator)
@@ -166,7 +180,9 @@ export function writeEnablementState(state: EnablementState, options?: Enablemen
 
 export function getEnablementSnapshot(options?: EnablementResolutionOptions): EnablementSnapshot {
   const state = readEnablementState(options)
-  const projectPath = options?.projectDir ? resolveProjectPath(options.projectDir) : undefined
+  const projectPath = options?.projectDir
+    ? resolveProjectPathForRead(options.projectDir)
+    : undefined
   return {
     version: 1,
     global: { ...state.global },
@@ -187,7 +203,7 @@ export function isEnabled(item: EnablementItem, options?: EnablementResolutionOp
 
   const state = readEnablementState(options)
   if (options?.projectDir) {
-    const projectPath = resolveProjectPath(options.projectDir)
+    const projectPath = resolveProjectPathForRead(options.projectDir)
     const projectValue = configuredValue(state.projects[projectPath] ?? {}, item.key)
     if (projectValue !== undefined) return projectValue
   }

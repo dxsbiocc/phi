@@ -187,6 +187,8 @@ async function withFixture(
     }
     const host = createSkillHost({
       runtimeRoot: root,
+      // Never read the developer's ~/.phi (installed plugins would change the result).
+      agentDir: join(root, 'agent'),
       environmentsDir,
       platform,
       listSkillDirs: async () => dirs,

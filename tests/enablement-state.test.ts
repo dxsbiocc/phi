@@ -250,3 +250,11 @@ test('invalid item keys, sources, and unavailable projects are rejected', () => 
     )
   })
 })
+
+test('a project folder that no longer exists resolves to defaults instead of throwing', () => {
+  withSandbox(({ agentDir }) => {
+    const options = { agentDir, logger: createLogger(), projectDir: join(agentDir, 'gone') }
+    assert.equal(isEnabled({ key: 'plugin:visualization', source: 'bundled' }, options), true)
+    assert.equal(isEnabled({ key: 'skill:scanpy', source: 'bundled' }, options), false)
+  })
+})
