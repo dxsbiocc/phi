@@ -1,6 +1,7 @@
 import type {
   BrowserCapabilities,
   BrowserErrorCode,
+  BrowserInputModifier,
   BrowserViewport
 } from '../../shared/browserTypes'
 
@@ -49,10 +50,20 @@ export type EngineCommand =
   | { type: 'navigate'; url: string }
   | { type: 'history'; direction: 'back' | 'forward' }
   | { type: 'reload' | 'stop' | 'screenshot' }
-  | { type: 'click'; x: number; y: number }
+  | { type: 'click'; x: number; y: number; expectedDocumentRevision: number }
   | { type: 'typeText'; text: string }
-  | { type: 'keypress'; key: string }
-  | { type: 'scroll'; deltaX: number; deltaY: number }
+  | {
+      type: 'keypress'
+      key: string
+      modifiers?: BrowserInputModifier[]
+      expectedDocumentRevision: number
+    }
+  | {
+      type: 'scroll'
+      deltaX: number
+      deltaY: number
+      expectedDocumentRevision: number
+    }
   | { type: 'describeTarget'; x: number; y: number }
 
 export interface EngineError {

@@ -1,8 +1,15 @@
-import type { BrowserOutcome } from '../../../shared/browserTypes'
+import {
+  BROWSER_MAX_SCREENSHOT_COORDINATE,
+  BROWSER_MAX_SCROLL_DELTA,
+  BROWSER_SAFE_KEYS,
+  BROWSER_SAFE_MODIFIERS,
+  type BrowserOutcome
+} from '../../../shared/browserTypes'
 
 const MAX_ORIGIN_ID_BYTES = 512
 const MAX_ID_BYTES = 256
 const MAX_URL_BYTES = 16 * 1024
+const SAFE_KEYS = new Set<string>(BROWSER_SAFE_KEYS)
 
 export interface BrowserToolActiveRun {
   runId: string
@@ -47,6 +54,31 @@ function documentRevision(value: unknown): number {
     throw new Error('Invalid browser host request')
   }
   return value as number
+}
+
+function coordinate(value: unknown): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > BROWSER_MAX_SCREENSHOT_COORDINATE
+  ) {
+    throw new Error('Invalid browser host request')
+  }
+  return value
+}
+
+function scrollDelta(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Math.abs(value as number) > BROWSER_MAX_SCROLL_DELTA) {
+    throw new Error('Invalid browser host request')
+  }
+  return value as number
+}
+
+function validateInputKeys(command: Record<string, unknown>, baseKeys: string[]): void {
+  if (!exactKeys(command, [...baseKeys, 'requireActive']) || command.requireActive !== true) {
+    throw new Error('Invalid browser host request')
+  }
 }
 
 function parseCommand(
@@ -109,6 +141,81 @@ function parseCommand(
             requireActive: true
           }
         : {})
+    }
+  }
+  if (command.type === 'click') {
+    validateInputKeys(command, [
+      'type',
+      'requestId',
+      'tabId',
+      'expectedDocumentRevision',
+      'x',
+      'y',
+      'consequence'
+    ])
+    if (command.consequence !== 'read') throw new Error('Invalid browser host request')
+    return {
+      type: 'click',
+      requestId,
+      tabId: boundedString(command.tabId, MAX_ID_BYTES),
+      expectedDocumentRevision: documentRevision(command.expectedDocumentRevision),
+      requireActive: true,
+      x: coordinate(command.x),
+      y: coordinate(command.y),
+      consequence: 'read'
+    }
+  }
+  if (command.type === 'scroll') {
+    validateInputKeys(command, [
+      'type',
+      'requestId',
+      'tabId',
+      'expectedDocumentRevision',
+      'deltaX',
+      'deltaY'
+    ])
+    const deltaX = scrollDelta(command.deltaX)
+    const deltaY = scrollDelta(command.deltaY)
+    if (deltaX === 0 && deltaY === 0) throw new Error('Invalid browser host request')
+    return {
+      type: 'scroll',
+      requestId,
+      tabId: boundedString(command.tabId, MAX_ID_BYTES),
+      expectedDocumentRevision: documentRevision(command.expectedDocumentRevision),
+      requireActive: true,
+      deltaX,
+      deltaY
+    }
+  }
+  if (command.type === 'keypress') {
+    const hasModifiers = Object.hasOwn(command, 'modifiers')
+    validateInputKeys(command, [
+      'type',
+      'requestId',
+      'tabId',
+      'expectedDocumentRevision',
+      'key',
+      ...(hasModifiers ? ['modifiers'] : [])
+    ])
+    const key = boundedString(command.key, 16)
+    if (!SAFE_KEYS.has(key)) throw new Error('Invalid browser host request')
+    if (
+      hasModifiers &&
+      (!Array.isArray(command.modifiers) ||
+        command.modifiers.length > 1 ||
+        (command.modifiers.length === 1 &&
+          !BROWSER_SAFE_MODIFIERS.includes(command.modifiers[0] as 'shift')))
+    ) {
+      throw new Error('Invalid browser host request')
+    }
+    return {
+      type: 'keypress',
+      requestId,
+      tabId: boundedString(command.tabId, MAX_ID_BYTES),
+      expectedDocumentRevision: documentRevision(command.expectedDocumentRevision),
+      requireActive: true,
+      key,
+      ...(hasModifiers ? { modifiers: [...(command.modifiers as string[])] } : {})
     }
   }
   throw new Error('Invalid browser host request')

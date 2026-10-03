@@ -38,7 +38,7 @@ function successfulOutcome(): BrowserOutcome {
   }
 }
 
-test('browser tool exposes one strict action-discriminated open and snapshot schema', () => {
+test('browser tool exposes one strict action-discriminated observation and input schema', () => {
   const tool = buildBrowserTool('runtime-session-1', async () => {
     throw new Error('not called')
   })
@@ -51,8 +51,194 @@ test('browser tool exposes one strict action-discriminated open and snapshot sch
     (
       tool.parameters as { oneOf?: Array<{ properties?: { action?: { enum?: string[] } } }> }
     ).oneOf?.map((variant) => variant.properties?.action?.enum?.[0]),
-    ['open', 'open', 'snapshot', 'snapshot']
+    [
+      'open',
+      'open',
+      'snapshot',
+      'snapshot',
+      'click',
+      'click',
+      'scroll',
+      'scroll',
+      'keypress',
+      'keypress'
+    ]
   )
+})
+
+test('browser click binds read-only input to the active screenshot revision', async () => {
+  const calls: unknown[] = []
+  const tool = buildBrowserTool(
+    'runtime-session-1',
+    async (request) => {
+      calls.push(request)
+      return {
+        ...successfulOutcome(),
+        screenshot: {
+          mediaType: 'image/png',
+          data: 'iVBORw0KGgoAAAANSUhEUg==',
+          width: 800,
+          height: 600,
+          tabId: 'tab-1',
+          url: 'http://localhost:3000/results',
+          documentRevision: 2
+        }
+      }
+    },
+    { requestId: () => 'browser-input-1' }
+  )
+
+  const result = await tool.execute(
+    'tool-input-1',
+    {
+      action: 'click',
+      target: 'current',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      x: 320,
+      y: 240,
+      consequence: 'read'
+    },
+    undefined,
+    {} as never
+  )
+
+  assert.deepEqual(calls, [
+    {
+      originSessionId: 'runtime-session-1',
+      requestId: 'browser-input-1',
+      toolCallId: 'tool-input-1',
+      command: {
+        type: 'click',
+        requestId: 'browser-input-1',
+        tabId: 'tab-1',
+        expectedDocumentRevision: 2,
+        requireActive: true,
+        x: 320,
+        y: 240,
+        consequence: 'read'
+      }
+    }
+  ])
+  assert.equal(result.isError, undefined)
+  assert.equal(result.content[1]?.type, 'image')
+  assert.deepEqual(result.details, {
+    kind: 'browser',
+    action: 'click',
+    revision: 3,
+    tab: {
+      id: 'tab-1',
+      title: 'Example',
+      url: 'https://example.test/path',
+      phase: 'ready',
+      documentRevision: 2
+    },
+    screenshot: {
+      tabId: 'tab-1',
+      width: 800,
+      height: 600,
+      documentRevision: 2
+    }
+  })
+})
+
+test('browser defaults request identity to the validated tool call for replay safety', async () => {
+  const requestIds: string[] = []
+  const tool = buildBrowserTool('runtime-session-1', async (request) => {
+    requestIds.push(request.requestId)
+    return successfulOutcome()
+  })
+
+  await tool.execute(
+    'stable-tool-call',
+    { action: 'open', url: 'https://example.test' },
+    undefined,
+    {} as never
+  )
+  await tool.execute(
+    'stable-tool-call',
+    { action: 'open', url: 'https://example.test' },
+    undefined,
+    {} as never
+  )
+  await tool.execute(
+    'distinct-tool-call',
+    { action: 'open', url: 'https://example.test' },
+    undefined,
+    {} as never
+  )
+
+  assert.deepEqual(requestIds, ['stable-tool-call', 'stable-tool-call', 'distinct-tool-call'])
+})
+
+test('browser forwards bounded scroll and navigation-only keypress with active revision binding', async () => {
+  const calls: unknown[] = []
+  const tool = buildBrowserTool(
+    'runtime-session-1',
+    async (request) => {
+      calls.push(request.command)
+      return {
+        ...successfulOutcome(),
+        screenshot: {
+          mediaType: 'image/png',
+          data: 'iVBORw0KGgoAAAANSUhEUg==',
+          width: 800,
+          height: 600,
+          tabId: 'tab-1',
+          url: 'http://localhost:3000/',
+          documentRevision: 2
+        }
+      }
+    },
+    { requestId: () => `input-${calls.length + 1}` }
+  )
+
+  await tool.execute(
+    'scroll-call',
+    {
+      action: 'scroll',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      deltaX: -40,
+      deltaY: 240
+    },
+    undefined,
+    {} as never
+  )
+  await tool.execute(
+    'key-call',
+    {
+      action: 'keypress',
+      target: 'current',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      key: 'Tab',
+      modifiers: ['shift']
+    },
+    undefined,
+    {} as never
+  )
+
+  assert.deepEqual(calls, [
+    {
+      type: 'scroll',
+      requestId: 'input-1',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      requireActive: true,
+      deltaX: -40,
+      deltaY: 240
+    },
+    {
+      type: 'keypress',
+      requestId: 'input-2',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      requireActive: true,
+      key: 'Tab',
+      modifiers: ['shift']
+    }
+  ])
 })
 
 test('browser open defaults to a dedicated tab and forwards trusted runtime origin and tool call', async () => {
@@ -310,7 +496,43 @@ test('browser tool validates direct current-tab and snapshot calls before host d
   for (const params of [
     { action: 'open', target: 'current', url: 'https://example.test', tabId: 'tab-1' },
     { action: 'snapshot', tabId: '' },
-    { action: 'open', url: `https://example.test/${'x'.repeat(16 * 1024)}` }
+    { action: 'open', url: `https://example.test/${'x'.repeat(16 * 1024)}` },
+    {
+      action: 'click',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 1,
+      x: -1,
+      y: 1,
+      consequence: 'read'
+    },
+    {
+      action: 'click',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 1,
+      x: 1,
+      y: 1,
+      consequence: 'write'
+    },
+    {
+      action: 'scroll',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 1,
+      deltaX: 0,
+      deltaY: 0
+    },
+    {
+      action: 'keypress',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 1,
+      key: 'Enter'
+    },
+    {
+      action: 'keypress',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 1,
+      key: 'Tab',
+      modifiers: ['control']
+    }
   ]) {
     const result = await tool.execute('tool-invalid', params, undefined, {} as never)
     assert.equal(result.isError, true)
@@ -382,6 +604,35 @@ test('browser host derives agent identity from the active runtime run', async ()
     }
   })
   assert.equal(calls[0]?.signal?.aborted, false)
+
+  await host.execute({
+    originSessionId: 'runtime-session-1',
+    requestId: 'browser-request-input',
+    toolCallId: 'real-tool-call-input',
+    command: {
+      type: 'keypress',
+      requestId: 'browser-request-input',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      requireActive: true,
+      key: 'Tab',
+      modifiers: ['shift']
+    }
+  })
+  assert.deepEqual(calls[1]?.input, {
+    originSessionId: 'runtime-session-1',
+    runId: 'trusted-run-1',
+    toolCallId: 'real-tool-call-input',
+    command: {
+      type: 'keypress',
+      requestId: 'browser-request-input',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      requireActive: true,
+      key: 'Tab',
+      modifiers: ['shift']
+    }
+  })
   await assert.rejects(
     host.execute({
       originSessionId: 'runtime-unknown',
@@ -407,7 +658,31 @@ test('browser host derives agent identity from the active runtime run', async ()
       requireActive: false
     },
     { type: 'snapshot', tabId: 'tab-1', requireActive: true },
-    { type: 'open', url: 'https://example.test', tabId: 'tab-1' }
+    { type: 'open', url: 'https://example.test', tabId: 'tab-1' },
+    {
+      type: 'click',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      requireActive: false,
+      x: 1,
+      y: 2,
+      consequence: 'read'
+    },
+    {
+      type: 'keypress',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      requireActive: true,
+      key: 'Enter'
+    },
+    {
+      type: 'scroll',
+      tabId: 'tab-1',
+      expectedDocumentRevision: 2,
+      requireActive: true,
+      deltaX: 0,
+      deltaY: 0
+    }
   ].entries()) {
     const requestId = `browser-request-forged-${index}`
     await assert.rejects(

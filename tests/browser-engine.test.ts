@@ -144,7 +144,12 @@ test('rejects unavailable screenshot and coordinate capabilities without recordi
   const handle = await engine.createTab({ partition: 'browser-project-a' })
 
   const screenshot = await engine.execute(handle, { type: 'screenshot' })
-  const click = await engine.execute(handle, { type: 'click', x: 1, y: 2 })
+  const click = await engine.execute(handle, {
+    type: 'click',
+    x: 1,
+    y: 2,
+    expectedDocumentRevision: 0
+  })
 
   assert.deepEqual(screenshot, {
     ok: false,
@@ -182,18 +187,34 @@ test('records coordinate and keyboard input without mutating page state', async 
   const engine = createEngine()
   const handle = await engine.createTab({ partition: 'browser-project-a' })
 
-  await engine.execute(handle, { type: 'click', x: 12, y: 34 })
+  await engine.execute(handle, {
+    type: 'click',
+    x: 12,
+    y: 34,
+    expectedDocumentRevision: 0
+  })
   await engine.execute(handle, { type: 'typeText', text: 'hello' })
-  await engine.execute(handle, { type: 'keypress', key: 'Enter' })
-  await engine.execute(handle, { type: 'scroll', deltaX: 0, deltaY: 240 })
+  await engine.execute(handle, { type: 'keypress', key: 'Enter', expectedDocumentRevision: 0 })
+  await engine.execute(handle, {
+    type: 'scroll',
+    deltaX: 0,
+    deltaY: 240,
+    expectedDocumentRevision: 0
+  })
 
   assert.deepEqual(
     engine.recordedActions(handle).map(({ command, at }) => ({ command, at })),
     [
-      { command: { type: 'click', x: 12, y: 34 }, at: 42 },
+      {
+        command: { type: 'click', x: 12, y: 34, expectedDocumentRevision: 0 },
+        at: 42
+      },
       { command: { type: 'typeText', text: 'hello' }, at: 42 },
-      { command: { type: 'keypress', key: 'Enter' }, at: 42 },
-      { command: { type: 'scroll', deltaX: 0, deltaY: 240 }, at: 42 }
+      { command: { type: 'keypress', key: 'Enter', expectedDocumentRevision: 0 }, at: 42 },
+      {
+        command: { type: 'scroll', deltaX: 0, deltaY: 240, expectedDocumentRevision: 0 },
+        at: 42
+      }
     ]
   )
   assert.equal(engine.tabState(handle).documentRevision, 0)

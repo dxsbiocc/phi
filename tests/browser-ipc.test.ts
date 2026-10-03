@@ -447,9 +447,10 @@ test('runtime parser accepts every command shape and copies only bounded whiteli
       requestId: '10',
       tabId: 'tab-1',
       x: 1.5,
-      y: -2,
+      y: 2,
       expectedDocumentRevision: 3,
-      consequence: 'read'
+      consequence: 'read',
+      requireActive: true
     },
     {
       type: 'typeText',
@@ -463,8 +464,9 @@ test('runtime parser accepts every command shape and copies only bounded whiteli
       type: 'keypress',
       requestId: '12',
       tabId: 'tab-1',
-      key: 'Enter',
-      expectedDocumentRevision: 3
+      key: 'Tab',
+      expectedDocumentRevision: 3,
+      requireActive: true
     },
     {
       type: 'scroll',
@@ -472,7 +474,8 @@ test('runtime parser accepts every command shape and copies only bounded whiteli
       tabId: 'tab-1',
       deltaX: 0,
       deltaY: 120,
-      expectedDocumentRevision: 3
+      expectedDocumentRevision: 3,
+      requireActive: true
     }
   ]
   for (const input of inputs) await invoke(value, 'browser:execute', input)
@@ -546,6 +549,16 @@ test('runtime parser rejects oversized nonfinite and invalid command fields befo
       consequence: 'read'
     },
     {
+      type: 'click',
+      requestId: '1',
+      tabId: 'tab',
+      x: -1,
+      y: 2,
+      expectedDocumentRevision: 1,
+      consequence: 'read',
+      requireActive: true
+    },
+    {
       type: 'typeText',
       requestId: '1',
       tabId: 'tab',
@@ -561,12 +574,38 @@ test('runtime parser rejects oversized nonfinite and invalid command fields befo
       expectedDocumentRevision: 1
     },
     {
+      type: 'keypress',
+      requestId: '1',
+      tabId: 'tab',
+      key: 'Enter',
+      expectedDocumentRevision: 1,
+      requireActive: true
+    },
+    {
+      type: 'keypress',
+      requestId: '1',
+      tabId: 'tab',
+      key: 'Tab',
+      modifiers: ['control'],
+      expectedDocumentRevision: 1,
+      requireActive: true
+    },
+    {
       type: 'scroll',
       requestId: '1',
       tabId: 'tab',
       deltaX: 0,
       deltaY: Number.POSITIVE_INFINITY,
       expectedDocumentRevision: 1
+    },
+    {
+      type: 'scroll',
+      requestId: '1',
+      tabId: 'tab',
+      deltaX: 0,
+      deltaY: 0,
+      expectedDocumentRevision: 1,
+      requireActive: true
     }
   ]
   for (const input of invalid) {

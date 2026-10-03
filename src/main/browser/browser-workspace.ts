@@ -45,6 +45,13 @@ import {
   authorizeBrowserTabAccess,
   type BrowserTabAccessResult
 } from './browser-workspace-agent-access'
+import {
+  BrowserAgentScreenshotLeases,
+  executeAuthorizedBrowserAgentAction,
+  isBrowserAgentActionCommand,
+  normalizeBrowserActionStabilityMs,
+  type BrowserAgentActionCommand
+} from './browser-workspace-agent-action'
 
 type BrowserUrlNormalizer = (input: string, context: BrowserPolicyContext) => BrowserUrlPolicyResult
 
@@ -59,6 +66,7 @@ export interface BrowserWorkspaceOptions {
   recentRequestCap?: number
   checkpointStore?: BrowserCheckpointStore
   openExternal?: (url: string) => Promise<void>
+  actionStabilityMs?: number
 }
 
 export class BrowserWorkspace {
@@ -74,7 +82,9 @@ export class BrowserWorkspace {
   readonly #requestCache: BrowserWorkspaceRequestCache
   readonly #checkpointCoordinator?: BrowserCheckpointCoordinator
   readonly #openExternal?: (url: string) => Promise<void>
+  readonly #actionStabilityMs: number
   readonly #listeners = new Set<(event: BrowserWorkspaceEvent) => void>()
+  readonly #agentScreenshotLeases = new BrowserAgentScreenshotLeases()
   readonly #tabCollection: BrowserTabCollection
   readonly #unsubscribeEngine: () => void
   readonly #lifecycle = new AbortController()
@@ -102,6 +112,7 @@ export class BrowserWorkspace {
       options.now ?? Date.now
     )
     this.#openExternal = options.openExternal
+    this.#actionStabilityMs = normalizeBrowserActionStabilityMs(options.actionStabilityMs)
     this.#checkpointCoordinator = options.checkpointStore
       ? new BrowserCheckpointCoordinator({
           sessionId: this.#sessionId,
@@ -151,11 +162,16 @@ export class BrowserWorkspace {
     if (!this.#tabCollection.find(tabId)?.handle) {
       return Promise.reject(new Error('Browser tab is not available for presentation'))
     }
-    return this.#presentation.apply(
-      tabId,
-      copiedViewport,
-      () => this.#tabCollection.find(tabId)?.handle ?? null
-    )
+    // Presentation adapters may apply viewport changes asynchronously. Revoke every
+    // coordinate lease before that window opens so old pixels cannot race the update.
+    this.#agentScreenshotLeases.invalidateAll()
+    return this.#presentation
+      .apply(tabId, copiedViewport, () => this.#tabCollection.find(tabId)?.handle ?? null)
+      .then(() => this.#agentScreenshotLeases.viewportApplied(tabId, copiedViewport))
+      .catch((error) => {
+        this.#agentScreenshotLeases.invalidateAll()
+        throw error
+      })
   }
 
   subscribe(listener: (event: BrowserWorkspaceEvent) => void): () => void {
@@ -171,6 +187,7 @@ export class BrowserWorkspace {
     this.#unsubscribeEngine()
     this.#listeners.clear()
     this.#requestCache.clear()
+    this.#agentScreenshotLeases.clear()
     this.#presentation.clear()
     const pendingCommands = this.#commandTail
     const engineDisposal = this.#cleanup.disposeEngine()
@@ -230,7 +247,23 @@ export class BrowserWorkspace {
       }
     }
 
-    if (!this.#disposed && cacheable) this.#requestCache.remember(requestKey, outcome)
+    if (!this.#disposed && cacheable) {
+      this.#requestCache.remember(
+        requestKey,
+        isBrowserAgentActionCommand(command) && outcome.ok
+          ? {
+              ok: false,
+              error: {
+                code: 'CAPABILITY_UNAVAILABLE',
+                message: 'Browser input was already delivered; take a new snapshot',
+                retryable: false,
+                tabId: command.tabId
+              },
+              snapshot: outcome.snapshot
+            }
+          : outcome
+      )
+    }
     return outcome
   }
 
@@ -291,6 +324,10 @@ export class BrowserWorkspace {
           command.requireActive === true,
           signal
         )
+      case 'click':
+      case 'scroll':
+      case 'keypress':
+        return this.#executeAgentInput(actor, command, signal ?? this.#lifecycle.signal)
       case 'restore':
         return this.#restore(command.tabId, actor, signal)
       default:
@@ -305,7 +342,7 @@ export class BrowserWorkspace {
   async #open(url: string, actor: BrowserActor, signal?: AbortSignal): Promise<BrowserOutcome> {
     const normalized = this.#normalizeUrl(url, this.#policyContext)
     if (!normalized.ok) return this.#failure(normalized.error)
-    return this.#createTab(normalized.url, this.#agentRunId(actor), signal)
+    return this.#createTab(normalized.url, actor.kind === 'agent' ? actor.runId : null, signal)
   }
 
   async #newTab(
@@ -313,25 +350,32 @@ export class BrowserWorkspace {
     actor: BrowserActor,
     signal?: AbortSignal
   ): Promise<BrowserOutcome> {
-    if (url === undefined) return this.#createTab(null, this.#agentRunId(actor), signal)
+    if (url === undefined)
+      return this.#createTab(null, actor.kind === 'agent' ? actor.runId : null, signal)
     const normalized = this.#normalizeUrl(url, this.#policyContext)
     if (!normalized.ok) return this.#failure(normalized.error)
-    return this.#createTab(normalized.url, this.#agentRunId(actor), signal)
+    return this.#createTab(normalized.url, actor.kind === 'agent' ? actor.runId : null, signal)
   }
 
   #activate(tabId: string): BrowserOutcome {
     if (!this.#tabCollection.find(tabId)) return this.#failure(this.#tabNotFound(tabId))
-    if (this.#tabCollection.activate(tabId)) this.#changed()
+    if (this.#tabCollection.activate(tabId)) {
+      this.#agentScreenshotLeases.invalidateAll()
+      this.#changed()
+    }
     return this.#success()
   }
 
   async #close(tabId: string): Promise<BrowserOutcome> {
     const tab = this.#tabCollection.find(tabId)
     if (!tab) return this.#failure(this.#tabNotFound(tabId))
+    const wasActive = this.#tabCollection.activeTabId === tabId
     this.#presentation.invalidate(tabId)
     if (tab.handle) await this.#cleanup.release(tab.handle)
     if (this.#disposed) return this.#failure(this.#disposedError())
     this.#tabCollection.remove(tabId)
+    this.#agentScreenshotLeases.remove(tabId)
+    if (wasActive) this.#agentScreenshotLeases.invalidateAll()
     this.#changed()
     return this.#success()
   }
@@ -361,6 +405,7 @@ export class BrowserWorkspace {
       const created = this.#tabCollection.create(handle, agentRunId)
       tab = created.tab
       previousActiveTabId = created.previousActiveTabId
+      this.#agentScreenshotLeases.invalidateAll()
       this.#changed()
     } catch (error) {
       await this.#cleanup.release(handle)
@@ -385,6 +430,7 @@ export class BrowserWorkspace {
     const handle = tab.handle
     this.#presentation.invalidate(tab.snapshot.id)
     this.#tabCollection.rollbackCreated(tab, previousActiveTabId)
+    this.#agentScreenshotLeases.invalidateAll()
     this.#changed()
     if (handle) await this.#cleanup.release(handle)
   }
@@ -490,6 +536,7 @@ export class BrowserWorkspace {
     signal?: AbortSignal
   ): Promise<BrowserOutcome> {
     if (!tab.handle) return this.#failure(this.#disposedError())
+    const previousDocumentRevision = tab.snapshot.documentRevision
     const engineResult = await this.#engine.execute(tab.handle, { type: 'navigate', url }, signal)
     const result = workspaceEngineResult(tab, engineResult)
     if (this.#disposed) return this.#failure(this.#disposedError())
@@ -506,6 +553,12 @@ export class BrowserWorkspace {
       return this.#failure(error)
     }
     if (reconcileEngineResult(tab, result)) this.#changed()
+    if (
+      tab.snapshot.documentRevision !== previousDocumentRevision ||
+      tab.snapshot.phase !== 'ready'
+    ) {
+      this.#agentScreenshotLeases.invalidate(tab.snapshot.id)
+    }
     return this.#success()
   }
 
@@ -524,11 +577,18 @@ export class BrowserWorkspace {
         tabId
       })
     }
+    const previousDocumentRevision = tab.snapshot.documentRevision
     const engineResult = await this.#engine.execute(tab.handle, command, signal)
     const result = workspaceEngineResult(tab, engineResult)
     if (this.#disposed) return this.#failure(this.#disposedError())
     if (!result.ok) return this.#failure(safeBrowserEngineError(result.error))
     if (reconcileEngineResult(tab, result)) this.#changed()
+    if (
+      tab.snapshot.documentRevision !== previousDocumentRevision ||
+      tab.snapshot.phase !== 'ready'
+    ) {
+      this.#agentScreenshotLeases.invalidate(tab.snapshot.id)
+    }
     return this.#success()
   }
 
@@ -553,7 +613,41 @@ export class BrowserWorkspace {
     })
     if (!result.ok) return this.#failure(result.error)
     if (access.claimRunId) this.#claimTab(tab, access.claimRunId)
+    if (actor.kind === 'agent' && tab.snapshot.phase === 'ready') {
+      this.#agentScreenshotLeases.remember(tabId, {
+        runId: actor.runId,
+        documentRevision: result.screenshot.documentRevision,
+        width: result.screenshot.width,
+        height: result.screenshot.height
+      })
+    }
     return this.#success(result.screenshot)
+  }
+
+  async #executeAgentInput(
+    actor: BrowserActor,
+    command: BrowserAgentActionCommand,
+    signal: AbortSignal
+  ): Promise<BrowserOutcome> {
+    const tab = this.#tabCollection.find(command.tabId)
+    if (!tab) return this.#failure(this.#tabNotFound(command.tabId))
+    const captured = await executeAuthorizedBrowserAgentAction({
+      actor,
+      engine: this.#engine,
+      tabs: this.#tabCollection,
+      tab,
+      command,
+      activeTabId: this.#tabCollection.activeTabId,
+      leases: this.#agentScreenshotLeases,
+      screenshotAvailable: this.#capabilities.screenshot,
+      coordinateInputAvailable: this.#capabilities.coordinateInput,
+      actionStabilityMs: this.#actionStabilityMs,
+      signal,
+      isDisposed: () => this.#disposed,
+      onChanged: () => this.#changed()
+    })
+    if (!captured.ok) return this.#failure(captured.error)
+    return this.#success(captured.screenshot)
   }
 
   async #reload(tabId: string, signal?: AbortSignal): Promise<BrowserOutcome> {
@@ -631,6 +725,13 @@ export class BrowserWorkspace {
     if ('popup' in reduction) {
       this.#queuePopup(tab, reduction.popup)
     } else if (reduction.changed) {
+      if (
+        rawEvent.type === 'navigationCommitted' ||
+        rawEvent.type === 'crashed' ||
+        tab.snapshot.phase !== 'ready'
+      ) {
+        this.#agentScreenshotLeases.invalidate(tab.snapshot.id)
+      }
       this.#changed()
     }
   }
@@ -660,10 +761,6 @@ export class BrowserWorkspace {
     const before = JSON.stringify(tab.snapshot)
     mutate(tab.snapshot)
     if (JSON.stringify(tab.snapshot) !== before) this.#changed()
-  }
-
-  #agentRunId(actor: BrowserActor): string | null {
-    return actor.kind === 'agent' ? actor.runId : null
   }
 
   #authorizeTabAccess(

@@ -33,6 +33,12 @@ import {
   captureElectronBrowserScreenshot,
   type ElectronScreenshotWebContentsLike
 } from './electron-browser-screenshot'
+import {
+  executeElectronBrowserInput,
+  readElectronBrowserViewBounds,
+  sameElectronBrowserViewBounds,
+  type ElectronBrowserScreenshotLease
+} from './electron-browser-input'
 export type { BrowserSessionLike } from './electron-browser-session-policy'
 
 export type SecureBrowserWebPreferences = Pick<
@@ -66,10 +72,13 @@ export type BrowserWebContentsLike = Pick<
 > & {
   session: BrowserSessionLike
   navigationHistory: BrowserNavigationHistoryLike
+  focus?: WebContents['focus']
+  sendInputEvent?: WebContents['sendInputEvent']
 } & ElectronScreenshotWebContentsLike
 
 export interface BrowserWebContentsViewLike extends NativeBrowserViewLike {
   webContents: BrowserWebContentsLike
+  getBounds?: () => { x: number; y: number; width: number; height: number }
 }
 
 export interface BrowserWebContentsViewConstructor {
@@ -84,7 +93,7 @@ export type ElectronWebContentsViewConstructorCompatibility = AssertWebContentsV
 export type BrowserOwningWindowLike = Pick<
   BrowserWindow,
   'contentView' | 'getContentBounds' | 'isMinimized' | 'isVisible' | 'on' | 'off' | 'listenerCount'
->
+> & { isFocused?: BrowserWindow['isFocused'] }
 
 type AssertBrowserWindow<T extends BrowserOwningWindowLike> = T
 export type ElectronBrowserWindowCompatibility = AssertBrowserWindow<
@@ -110,6 +119,8 @@ interface ElectronTabRecord {
   state: EngineTabState
   listeners: Array<{ event: string; listener: (...args: unknown[]) => void }>
   releaseSessionPolicy?: () => boolean
+  presented: boolean
+  latestScreenshot?: ElectronBrowserScreenshotLease
 }
 
 interface GenericEventSource {
@@ -120,7 +131,7 @@ interface GenericEventSource {
 const CAPABILITIES: BrowserCapabilities = {
   presentation: 'native',
   screenshot: true,
-  coordinateInput: false,
+  coordinateInput: true,
   semanticInspection: false,
   downloads: false,
   recording: false,
@@ -210,7 +221,8 @@ export class ElectronBrowserEngine implements BrowserEngine {
         initializing: true,
         lifecycle: new AbortController(),
         state: initialState(),
-        listeners: []
+        listeners: [],
+        presented: false
       }
       this.#tabs.set(handle, record)
       this.#assertRequiredHooks(view.webContents)
@@ -261,6 +273,7 @@ export class ElectronBrowserEngine implements BrowserEngine {
           }
           record.state.navigationRevision += 1
           record.state.isLoading = true
+          record.latestScreenshot = undefined
           void Promise.resolve(record.view.webContents.loadURL(normalized.url)).catch(
             () => undefined
           )
@@ -270,12 +283,20 @@ export class ElectronBrowserEngine implements BrowserEngine {
           const history = record.view.webContents.navigationHistory
           if (!history) return this.#unavailable()
           record.state.navigationRevision += 1
-          if (command.direction === 'back' && history.canGoBack()) history.goBack()
-          if (command.direction === 'forward' && history.canGoForward()) history.goForward()
+          const canNavigate =
+            command.direction === 'back' ? history.canGoBack() : history.canGoForward()
+          if (canNavigate) {
+            record.state.isLoading = true
+            record.latestScreenshot = undefined
+            if (command.direction === 'back') history.goBack()
+            else history.goForward()
+          }
           break
         }
         case 'reload':
           record.state.navigationRevision += 1
+          record.state.isLoading = true
+          record.latestScreenshot = undefined
           record.view.webContents.reload()
           break
         case 'stop':
@@ -292,13 +313,13 @@ export class ElectronBrowserEngine implements BrowserEngine {
           }
           break
         case 'screenshot':
-          return await captureElectronBrowserScreenshot({
-            webContents: record.view.webContents,
-            state: record.state,
-            signal,
-            invalidated: record.lifecycle.signal,
-            isCurrent: () => this.#tabs.get(handle) === record && !record.cleanupAttempted
-          })
+          return await this.#captureScreenshot(record, signal)
+        case 'click':
+          return executeElectronBrowserInput(record, command, signal)
+        case 'scroll':
+          return executeElectronBrowserInput(record, command, signal)
+        case 'keypress':
+          return executeElectronBrowserInput(record, command, signal)
         default:
           return this.#unavailable()
       }
@@ -317,10 +338,26 @@ export class ElectronBrowserEngine implements BrowserEngine {
   }
 
   async setViewport(handle: EngineTabHandle, viewport: BrowserViewport | null): Promise<void> {
-    if (!this.#tabs.has(handle)) throw new Error('Browser tab was not found')
+    const record = this.#tabs.get(handle)
+    if (!record) throw new Error('Browser tab was not found')
     try {
       this.#viewportController.setViewport(handle, viewport)
+      if (viewport !== null) {
+        for (const other of this.#tabs.values()) {
+          if (other === record) continue
+          other.presented = false
+          other.latestScreenshot = undefined
+        }
+      }
+      record.presented = viewport !== null
+      if (viewport === null || !this.#screenshotBoundsMatch(record)) {
+        record.latestScreenshot = undefined
+      }
     } catch {
+      for (const tab of this.#tabs.values()) {
+        tab.presented = false
+        tab.latestScreenshot = undefined
+      }
       throw new Error('Browser viewport could not be applied')
     }
   }
@@ -369,6 +406,35 @@ export class ElectronBrowserEngine implements BrowserEngine {
       ok: false,
       error: { code: 'CAPABILITY_UNAVAILABLE', message: 'Browser command is unavailable' }
     }
+  }
+
+  async #captureScreenshot(record: ElectronTabRecord, signal?: AbortSignal): Promise<EngineResult> {
+    const result = await captureElectronBrowserScreenshot({
+      webContents: record.view.webContents,
+      state: record.state,
+      signal,
+      invalidated: record.lifecycle.signal,
+      isCurrent: () => this.#tabs.get(record.handle) === record && !record.cleanupAttempted
+    })
+    if (!result.ok || !result.screenshot) return result
+    const bounds = readElectronBrowserViewBounds(record)
+    if (record.presented && bounds && !record.state.isLoading) {
+      record.latestScreenshot = {
+        width: result.screenshot.width,
+        height: result.screenshot.height,
+        documentRevision: result.screenshot.documentRevision,
+        bounds
+      }
+    } else {
+      record.latestScreenshot = undefined
+    }
+    return result
+  }
+
+  #screenshotBoundsMatch(record: ElectronTabRecord): boolean {
+    if (!record.latestScreenshot) return false
+    const bounds = readElectronBrowserViewBounds(record)
+    return bounds !== null && sameElectronBrowserViewBounds(bounds, record.latestScreenshot.bounds)
   }
 
   #assertRequiredHooks(webContents: BrowserWebContentsLike): void {
@@ -434,6 +500,7 @@ export class ElectronBrowserEngine implements BrowserEngine {
     this.#listen(record, 'did-start-loading', () => {
       if (this.#suppressProductEvents(record)) return
       record.state.isLoading = true
+      record.latestScreenshot = undefined
       this.#publish({
         type: 'loadingChanged',
         handle,
@@ -475,6 +542,7 @@ export class ElectronBrowserEngine implements BrowserEngine {
         return
       }
       record.state.url = normalized.url
+      record.latestScreenshot = undefined
       record.state.documentRevision += 1
       this.#refreshHistory(record)
       this.#publish({
@@ -503,6 +571,7 @@ export class ElectronBrowserEngine implements BrowserEngine {
     })
     this.#listen(record, 'render-process-gone', () => {
       if (this.#suppressProductEvents(record)) return
+      record.latestScreenshot = undefined
       this.#publish({
         type: 'crashed',
         handle,
@@ -519,6 +588,8 @@ export class ElectronBrowserEngine implements BrowserEngine {
       if (!normalized.ok)
         return this.#rejectNavigation(handle, record, details, normalized.error.code)
       record.state.navigationRevision += 1
+      record.state.isLoading = true
+      record.latestScreenshot = undefined
     })
     this.#listen(record, 'will-redirect', (...args: unknown[]) => {
       const details = args[0] as
@@ -527,6 +598,10 @@ export class ElectronBrowserEngine implements BrowserEngine {
       if (record.initializing && details.url === 'about:blank') return
       const normalized = normalizeElectronEventUrl(details.url, this.#policyContext)
       if (!normalized.ok) this.#rejectNavigation(handle, record, details, normalized.error.code)
+      else {
+        record.state.isLoading = true
+        record.latestScreenshot = undefined
+      }
     })
     this.#listen(record, 'login', (...args: unknown[]) => {
       const event = args[0] as { preventDefault?: () => void } | undefined

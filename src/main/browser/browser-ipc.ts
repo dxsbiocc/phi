@@ -7,6 +7,12 @@ import type {
   BrowserWorkspaceEvent,
   BrowserWorkspaceSnapshot
 } from '../../shared/browserTypes'
+import {
+  BROWSER_MAX_SCREENSHOT_COORDINATE,
+  BROWSER_MAX_SCROLL_DELTA,
+  BROWSER_SAFE_KEYS,
+  BROWSER_SAFE_MODIFIERS
+} from '../../shared/browserTypes'
 import type {
   BrowserWorkspaceOwner,
   BrowserWorkspaceRegistration
@@ -18,7 +24,8 @@ const MAX_ORIGIN_ID_BYTES = 512
 const MAX_URL_BYTES = 16 * 1024
 const MAX_TEXT_BYTES = 16 * 1024
 const MAX_KEY_BYTES = 64
-const MAX_COORDINATE = 1_000_000
+const MAX_COORDINATE = BROWSER_MAX_SCREENSHOT_COORDINATE
+const SAFE_BROWSER_KEYS = new Set<string>(BROWSER_SAFE_KEYS)
 
 export interface BrowserRendererSenderLike {
   isDestroyed(): boolean
@@ -125,6 +132,24 @@ function coordinate(value: unknown): number {
   return value
 }
 
+function screenshotCoordinate(value: unknown): number {
+  const result = coordinate(value)
+  if (result < 0) return invalidRequest()
+  return result
+}
+
+function scrollDelta(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Math.abs(value as number) > BROWSER_MAX_SCROLL_DELTA) {
+    return invalidRequest()
+  }
+  return value as number
+}
+
+function requiredActive(value: unknown): true {
+  if (value !== true) return invalidRequest()
+  return true
+}
+
 function consequence(value: unknown): 'read' | 'write' | 'irreversible' {
   if (value !== 'read' && value !== 'write' && value !== 'irreversible') {
     return invalidRequest()
@@ -203,14 +228,16 @@ export function parseBrowserCommand(input: unknown): BrowserCommand {
           tabId: boundedString(input.tabId, MAX_ID_BYTES)
         }
       case 'click':
+        if (input.consequence !== 'read') return invalidRequest()
         return {
           type: 'click',
           requestId,
           tabId: boundedString(input.tabId, MAX_ID_BYTES),
-          x: coordinate(input.x),
-          y: coordinate(input.y),
+          x: screenshotCoordinate(input.x),
+          y: screenshotCoordinate(input.y),
           expectedDocumentRevision: revision(input.expectedDocumentRevision),
-          consequence: consequence(input.consequence)
+          consequence: consequence(input.consequence),
+          requireActive: requiredActive(input.requireActive)
         }
       case 'typeText':
         return {
@@ -222,22 +249,41 @@ export function parseBrowserCommand(input: unknown): BrowserCommand {
           consequence: consequence(input.consequence)
         }
       case 'keypress':
+        if (typeof input.key !== 'string' || !SAFE_BROWSER_KEYS.has(input.key)) {
+          return invalidRequest()
+        }
+        if (
+          input.modifiers !== undefined &&
+          (!Array.isArray(input.modifiers) ||
+            input.modifiers.length > 1 ||
+            (input.modifiers.length === 1 &&
+              !BROWSER_SAFE_MODIFIERS.includes(input.modifiers[0] as 'shift')))
+        ) {
+          return invalidRequest()
+        }
         return {
           type: 'keypress',
           requestId,
           tabId: boundedString(input.tabId, MAX_ID_BYTES),
           key: boundedString(input.key, MAX_KEY_BYTES),
-          expectedDocumentRevision: revision(input.expectedDocumentRevision)
+          expectedDocumentRevision: revision(input.expectedDocumentRevision),
+          ...(input.modifiers === undefined ? {} : { modifiers: [...input.modifiers] }),
+          requireActive: requiredActive(input.requireActive)
         }
-      case 'scroll':
+      case 'scroll': {
+        const deltaX = scrollDelta(input.deltaX)
+        const deltaY = scrollDelta(input.deltaY)
+        if (deltaX === 0 && deltaY === 0) return invalidRequest()
         return {
           type: 'scroll',
           requestId,
           tabId: boundedString(input.tabId, MAX_ID_BYTES),
-          deltaX: coordinate(input.deltaX),
-          deltaY: coordinate(input.deltaY),
-          expectedDocumentRevision: revision(input.expectedDocumentRevision)
+          deltaX,
+          deltaY,
+          expectedDocumentRevision: revision(input.expectedDocumentRevision),
+          requireActive: requiredActive(input.requireActive)
         }
+      }
       default:
         return invalidRequest()
     }

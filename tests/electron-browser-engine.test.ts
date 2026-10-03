@@ -56,6 +56,12 @@ class RequiredWebContents extends EventEmitter implements BrowserWebContentsLike
   stop(): void {
     return
   }
+  focus(): void {
+    return
+  }
+  sendInputEvent(): void {
+    return
+  }
   closeDevTools(): void {
     return
   }
@@ -76,6 +82,10 @@ interface HarnessOptions {
   capturePng?: Buffer
   captureSize?: { width: number; height: number }
   destroyed?: boolean
+  focused?: boolean
+  inputErrorAt?: number
+  navigateOnFocus?: boolean
+  setBoundsErrorAt?: number
 }
 
 function createHarness(options: HarnessOptions = {}): {
@@ -97,6 +107,8 @@ function createHarness(options: HarnessOptions = {}): {
     closeCalls = 0
     captureCalls = 0
     readonly captureOptions: Array<{ stayHidden?: boolean } | undefined> = []
+    readonly inputEvents: Array<Record<string, unknown>> = []
+    focusCalls = 0
 
     async loadURL(url: string): Promise<void> {
       this.loadedUrls.push(url)
@@ -129,13 +141,36 @@ function createHarness(options: HarnessOptions = {}): {
     override isDestroyed(): boolean {
       return options.destroyed ?? false
     }
+
+    override focus(): void {
+      this.focusCalls += 1
+      if (options.navigateOnFocus) {
+        const url = 'http://localhost:3000/changed'
+        this.emit('will-navigate', { url, isMainFrame: true })
+        this.emit('did-frame-navigate', {}, url, 200, 'OK', true)
+      }
+    }
+
+    override sendInputEvent(event: Record<string, unknown>): void {
+      this.inputEvents.push({ ...event })
+      if (options.inputErrorAt === this.inputEvents.length) throw new Error('raw input failure')
+    }
   }
 
   class FakeView implements BrowserWebContentsViewLike {
     readonly webContents = new FakeWebContents()
     readonly visibility: boolean[] = []
-    setBounds(): void {
-      return
+    bounds = { x: 0, y: 0, width: 0, height: 0 }
+    setBoundsCalls = 0
+    setBounds(value: { x: number; y: number; width: number; height: number }): void {
+      this.setBoundsCalls += 1
+      if (options.setBoundsErrorAt === this.setBoundsCalls) {
+        throw new Error('raw bounds failure')
+      }
+      this.bounds = { ...value }
+    }
+    getBounds(): { x: number; y: number; width: number; height: number } {
+      return { ...this.bounds }
     }
     setVisible(value: boolean): void {
       this.visibility.push(value)
@@ -165,6 +200,7 @@ function createHarness(options: HarnessOptions = {}): {
     getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
     isMinimized: () => false,
     isVisible: () => true,
+    isFocused: () => options.focused ?? true,
     on: windowEvents.on.bind(windowEvents),
     off: windowEvents.off.bind(windowEvents),
     listenerCount: windowEvents.listenerCount.bind(windowEvents)
@@ -177,6 +213,263 @@ function createHarness(options: HarnessOptions = {}): {
   })
   return { engine, views, children, addCalls, removeCalls }
 }
+
+test('maps screenshot pixels to integer Electron coordinates and sends one paired click', async () => {
+  const { engine, views } = createHarness({ captureSize: { width: 1600, height: 900 } })
+  const handle = await engine.createTab({ partition: 'browser-project-a' })
+  await engine.setViewport(handle, { x: 5, y: 7, width: 800, height: 450 })
+  const captured = await engine.execute(handle, { type: 'screenshot' })
+  assert.equal(captured.ok, true)
+
+  const result = await engine.execute(handle, {
+    type: 'click',
+    x: 400,
+    y: 450,
+    expectedDocumentRevision: 0
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(views[0].webContents.inputEvents, [
+    { type: 'mouseDown', x: 200, y: 225, button: 'left', clickCount: 1 },
+    { type: 'mouseUp', x: 200, y: 225, button: 'left', clickCount: 1 }
+  ])
+  assert.equal(views[0].webContents.focusCalls, 1)
+  assert.equal(engine.capabilities().coordinateInput, true)
+})
+
+test('rejects stale, outside, resized, hidden, unfocused, and pre-cancelled input before delivery', async () => {
+  const value = createHarness({ captureSize: { width: 1000, height: 500 } })
+  const handle = await value.engine.createTab({ partition: 'browser-project-a' })
+  await value.engine.setViewport(handle, { x: 0, y: 0, width: 500, height: 250 })
+
+  for (const command of [
+    { type: 'click' as const, x: 0, y: 0, expectedDocumentRevision: 0 },
+    { type: 'scroll' as const, deltaX: 0, deltaY: 120, expectedDocumentRevision: 0 },
+    { type: 'keypress' as const, key: 'Tab', expectedDocumentRevision: 0 }
+  ]) {
+    const result = await value.engine.execute(handle, command)
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.equal(result.error.code, 'STALE_DOCUMENT')
+  }
+
+  await value.engine.execute(handle, { type: 'screenshot' })
+  const outside = await value.engine.execute(handle, {
+    type: 'click',
+    x: 1000,
+    y: 1,
+    expectedDocumentRevision: 0
+  })
+  assert.equal(outside.ok, false)
+  if (!outside.ok) assert.equal(outside.error.code, 'STALE_DOCUMENT')
+
+  await value.engine.setViewport(handle, { x: 0, y: 0, width: 400, height: 250 })
+  const resized = await value.engine.execute(handle, {
+    type: 'keypress',
+    key: 'Escape',
+    expectedDocumentRevision: 0
+  })
+  assert.equal(resized.ok, false)
+  if (!resized.ok) assert.equal(resized.error.code, 'STALE_DOCUMENT')
+
+  await value.engine.execute(handle, { type: 'screenshot' })
+  await value.engine.setViewport(handle, null)
+  const hidden = await value.engine.execute(handle, {
+    type: 'scroll',
+    deltaX: 0,
+    deltaY: 120,
+    expectedDocumentRevision: 0
+  })
+  assert.equal(hidden.ok, false)
+  if (!hidden.ok) assert.equal(hidden.error.code, 'STALE_DOCUMENT')
+
+  const unfocused = createHarness({ focused: false })
+  const unfocusedHandle = await unfocused.engine.createTab({ partition: 'browser-project-a' })
+  await unfocused.engine.setViewport(unfocusedHandle, { x: 0, y: 0, width: 500, height: 250 })
+  await unfocused.engine.execute(unfocusedHandle, { type: 'screenshot' })
+  const notFocused = await unfocused.engine.execute(unfocusedHandle, {
+    type: 'keypress',
+    key: 'Tab',
+    expectedDocumentRevision: 0
+  })
+  assert.equal(notFocused.ok, false)
+  if (!notFocused.ok) assert.equal(notFocused.error.code, 'CAPABILITY_UNAVAILABLE')
+
+  await value.engine.setViewport(handle, { x: 0, y: 0, width: 400, height: 250 })
+  await value.engine.execute(handle, { type: 'screenshot' })
+  const controller = new AbortController()
+  controller.abort()
+  await value.engine.execute(
+    handle,
+    { type: 'keypress', key: 'Tab', expectedDocumentRevision: 0 },
+    controller.signal
+  )
+  assert.deepEqual(value.views[0].webContents.inputEvents, [])
+})
+
+test('sends bounded scroll and safe key pairs at the captured viewport center', async () => {
+  const { engine, views } = createHarness({ captureSize: { width: 1200, height: 800 } })
+  const handle = await engine.createTab({ partition: 'browser-project-a' })
+  await engine.setViewport(handle, { x: 0, y: 0, width: 600, height: 400 })
+  await engine.execute(handle, { type: 'screenshot' })
+
+  assert.equal(
+    (
+      await engine.execute(handle, {
+        type: 'scroll',
+        deltaX: -40,
+        deltaY: 240,
+        expectedDocumentRevision: 0
+      })
+    ).ok,
+    true
+  )
+  await engine.execute(handle, { type: 'screenshot' })
+  assert.equal(
+    (
+      await engine.execute(handle, {
+        type: 'keypress',
+        key: 'Tab',
+        modifiers: ['shift'],
+        expectedDocumentRevision: 0
+      })
+    ).ok,
+    true
+  )
+  await engine.execute(handle, { type: 'screenshot' })
+  const unsafe = await engine.execute(handle, {
+    type: 'keypress',
+    key: 'Enter',
+    expectedDocumentRevision: 0
+  })
+  assert.equal(unsafe.ok, false)
+  if (!unsafe.ok) assert.equal(unsafe.error.code, 'PERMISSION_DENIED')
+  assert.deepEqual(views[0].webContents.inputEvents, [
+    {
+      type: 'mouseWheel',
+      x: 300,
+      y: 200,
+      deltaX: -40,
+      deltaY: 240,
+      canScroll: true,
+      hasPreciseScrollingDeltas: true
+    },
+    { type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] },
+    { type: 'keyUp', keyCode: 'Tab', modifiers: ['shift'] }
+  ])
+})
+
+test('rechecks the engine revision after guest focus and before the first input event', async () => {
+  const { engine, views } = createHarness({ navigateOnFocus: true })
+  const handle = await engine.createTab({ partition: 'browser-project-a' })
+  await engine.setViewport(handle, { x: 0, y: 0, width: 600, height: 400 })
+  await engine.execute(handle, { type: 'screenshot' })
+
+  const result = await engine.execute(handle, {
+    type: 'click',
+    x: 20,
+    y: 20,
+    expectedDocumentRevision: 0
+  })
+
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.error.code, 'STALE_DOCUMENT')
+  assert.deepEqual(views[0].webContents.inputEvents, [])
+})
+
+test('best-effort releases a paired input after a second-event failure without raw errors', async () => {
+  for (const command of [
+    { type: 'click' as const, x: 1, y: 1, expectedDocumentRevision: 0 },
+    {
+      type: 'keypress' as const,
+      key: 'Tab',
+      modifiers: ['shift'] as const,
+      expectedDocumentRevision: 0
+    }
+  ]) {
+    const { engine, views } = createHarness({ inputErrorAt: 2 })
+    const handle = await engine.createTab({ partition: 'browser-project-a' })
+    await engine.setViewport(handle, { x: 0, y: 0, width: 600, height: 400 })
+    await engine.execute(handle, { type: 'screenshot' })
+
+    const result = await engine.execute(handle, command)
+    assert.equal(result.ok, false)
+    if (!result.ok) {
+      assert.equal(result.error.code, 'CAPABILITY_UNAVAILABLE')
+      assert.doesNotMatch(result.error.message, /raw input failure/)
+    }
+    assert.equal(views[0].webContents.inputEvents.length, 3)
+    assert.equal(
+      views[0].webContents.inputEvents[1]?.type,
+      views[0].webContents.inputEvents[2]?.type
+    )
+    const retry = await engine.execute(handle, command)
+    assert.equal(retry.ok, false)
+    if (!retry.ok) assert.equal(retry.error.code, 'STALE_DOCUMENT')
+    assert.equal(views[0].webContents.inputEvents.length, 3)
+  }
+})
+
+test('a failed viewport application clears presentation and screenshot input state', async () => {
+  const { engine, views } = createHarness({ setBoundsErrorAt: 2 })
+  const handle = await engine.createTab({ partition: 'browser-project-a' })
+  await engine.setViewport(handle, { x: 0, y: 0, width: 600, height: 400 })
+  await engine.execute(handle, { type: 'screenshot' })
+
+  await assert.rejects(
+    engine.setViewport(handle, { x: 0, y: 0, width: 500, height: 400 }),
+    /could not be applied/i
+  )
+  const result = await engine.execute(handle, {
+    type: 'click',
+    x: 10,
+    y: 10,
+    expectedDocumentRevision: 0
+  })
+
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.error.code, 'STALE_DOCUMENT')
+  assert.deepEqual(views[0].webContents.inputEvents, [])
+})
+
+test('a screenshot captured while navigation is pending cannot restore input authority', async () => {
+  const { engine, views } = createHarness()
+  const handle = await engine.createTab({ partition: 'browser-project-a' })
+  await engine.setViewport(handle, { x: 0, y: 0, width: 600, height: 400 })
+  await engine.execute(handle, { type: 'screenshot' })
+  views[0].webContents.emit('will-navigate', {
+    url: 'http://localhost:3000/pending',
+    isMainFrame: true
+  })
+  const observed = await engine.execute(handle, { type: 'screenshot' })
+  assert.equal(observed.ok, true)
+
+  const result = await engine.execute(handle, {
+    type: 'click',
+    x: 10,
+    y: 10,
+    expectedDocumentRevision: 0
+  })
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.error.code, 'STALE_DOCUMENT')
+  assert.deepEqual(views[0].webContents.inputEvents, [])
+})
+
+test('did-start-loading invalidates same-revision screenshot input before delivery', async () => {
+  const { engine, views } = createHarness()
+  const handle = await engine.createTab({ partition: 'browser-project-a' })
+  await engine.setViewport(handle, { x: 0, y: 0, width: 600, height: 400 })
+  await engine.execute(handle, { type: 'screenshot' })
+  views[0].webContents.emit('did-start-loading')
+
+  const result = await engine.execute(handle, {
+    type: 'keypress',
+    key: 'Tab',
+    expectedDocumentRevision: 0
+  })
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.error.code, 'STALE_DOCUMENT')
+  assert.deepEqual(views[0].webContents.inputEvents, [])
+})
 
 test('creates an isolated about:blank child view with secure preferences', async () => {
   const { engine, views, children, addCalls } = createHarness()
@@ -208,7 +501,7 @@ test('creates an isolated about:blank child view with secure preferences', async
   assert.deepEqual(engine.capabilities(), {
     presentation: 'native',
     screenshot: true,
-    coordinateInput: false,
+    coordinateInput: true,
     semanticInspection: false,
     downloads: false,
     recording: false,

@@ -70,6 +70,25 @@ export type BrowserActor =
       toolCallId: string
     }
 
+export const BROWSER_MAX_SCREENSHOT_COORDINATE = 1_000_000
+export const BROWSER_MAX_SCROLL_DELTA = 10_000
+export const BROWSER_SAFE_KEYS = [
+  'Tab',
+  'Escape',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'PageUp',
+  'PageDown',
+  'Home',
+  'End'
+] as const
+export const BROWSER_SAFE_MODIFIERS = ['shift'] as const
+
+export type BrowserInputModifier = (typeof BROWSER_SAFE_MODIFIERS)[number]
+export type BrowserSafeKey = (typeof BROWSER_SAFE_KEYS)[number]
+
 export type BrowserCommand =
   | { type: 'open'; requestId: string; url: string }
   | { type: 'newTab'; requestId: string; url?: string }
@@ -112,6 +131,7 @@ export type BrowserCommand =
       y: number
       expectedDocumentRevision: number
       consequence: 'read' | 'write' | 'irreversible'
+      requireActive?: true
     }
   | {
       type: 'typeText'
@@ -127,6 +147,8 @@ export type BrowserCommand =
       tabId: string
       key: string
       expectedDocumentRevision: number
+      modifiers?: BrowserInputModifier[]
+      requireActive?: true
     }
   | {
       type: 'scroll'
@@ -135,6 +157,7 @@ export type BrowserCommand =
       deltaX: number
       deltaY: number
       expectedDocumentRevision: number
+      requireActive?: true
     }
 
 export type BrowserUiCommand = Extract<

@@ -31,7 +31,7 @@ function blockedUrl(): BrowserUrlPolicyResult {
   }
 }
 
-function isLoopbackHostname(hostname: string): boolean {
+export function isLoopbackBrowserHostname(hostname: string): boolean {
   if (hostname === 'localhost' || hostname === '[::1]') return true
   const octets = hostname.split('.')
   return (
@@ -74,7 +74,7 @@ export function normalizeBrowserUrl(
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return blockedUrl()
     if (url.username || url.password) return invalidUrl()
     if (applicationOrigins(policyContext).has(canonicalOrigin(url))) return blockedUrl()
-    if (url.protocol === 'http:' && !isLoopbackHostname(url.hostname)) {
+    if (url.protocol === 'http:' && !isLoopbackBrowserHostname(url.hostname)) {
       return blockedUrl()
     }
 
