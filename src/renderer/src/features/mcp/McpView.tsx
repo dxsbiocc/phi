@@ -255,6 +255,7 @@ export function McpSidebar({
     return servers.filter((server) =>
       [
         server.name,
+        server.title,
         server.command,
         server.url,
         server.sourcePath,
@@ -405,7 +406,7 @@ export function McpSidebar({
                       <ConnectorIcon connectorId={server.connectorId} size={34} />
                     </Box>
                     <ListItemText
-                      primary={server.name}
+                      primary={server.title ?? server.name}
                       secondary={`${server.enabled === false ? '已停用 · ' : ''}${server.url || server.command || server.sourcePath || ''}`}
                       slotProps={{
                         primary: { noWrap: true, sx: { fontSize: '0.9rem', fontWeight: 600 } },
@@ -448,7 +449,7 @@ export function McpDetail({ selectedServer }: McpDetailProps): React.JSX.Element
             <ConnectorIcon connectorId={selectedServer.connectorId} size={72} />
             <Box sx={{ minWidth: 0, flex: 1 }}>
               <Typography variant="h4" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
-                {selectedServer.name}
+                {selectedServer.title ?? selectedServer.name}
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                 {selectedServer.sourcePath ?? '本地配置'}

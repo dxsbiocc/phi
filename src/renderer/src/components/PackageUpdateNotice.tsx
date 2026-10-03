@@ -69,8 +69,15 @@ export function PackageUpdateNotice(): React.JSX.Element {
   return (
     <>
       <Snackbar
+        // Bottom left, clear of the icon rail: the rail holds settings, dialogs close at the
+        // top right, and their actions sit at the bottom right.
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        sx={{ left: { xs: 96, sm: 96 } }}
         open={noticeOpen && updates.length > 0}
-        onClose={() => setNoticeOpen(false)}
+        // A click elsewhere (startup dialogs included) must not dismiss the notice unseen.
+        onClose={(_, reason) => {
+          if (reason !== 'clickaway') setNoticeOpen(false)
+        }}
         message={`有 ${updates.length} 个内容包可更新`}
         action={
           <Button

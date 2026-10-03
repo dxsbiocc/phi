@@ -1,5 +1,5 @@
 name: viz
-description: R 4.4 and Python 3.12 for the omics-visualization templates. Python is the standard library only.
+description: 组学绘图模板使用的 R 4.4 与 Python 3.12（Python 仅含标准库）。
 channels:
   - conda-forge
   - bioconda

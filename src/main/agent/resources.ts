@@ -21,6 +21,8 @@ export type { SkillContent, SkillSourceCategory, SkillSummary } from '../../shar
 export interface McpServerSummary {
   id: string
   name: string
+  /** Catalog title of the connector this server came from, when known. */
+  title?: string
   connectorId?: string
   packageId?: string
   category?: string

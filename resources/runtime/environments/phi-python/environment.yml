@@ -1,5 +1,5 @@
 name: phi-python
-description: Shared Python 3.12 base for the official Python skills and the notebook kernel.
+description: 官方 Python 技能和 Notebook 内核共用的 Python 3.12 基础环境。
 channels:
   - conda-forge
   - bioconda

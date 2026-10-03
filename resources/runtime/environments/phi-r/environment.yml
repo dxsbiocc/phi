@@ -1,5 +1,5 @@
 name: phi-r
-description: Shared R 4.4 base for R notebooks (IRkernel) and scanpy's R interop.
+description: R Notebook（IRkernel）和 scanpy 的 R 互操作共用的 R 4.4 基础环境。
 channels:
   - conda-forge
   - bioconda

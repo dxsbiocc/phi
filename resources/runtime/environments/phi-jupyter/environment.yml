@@ -1,5 +1,5 @@
 name: phi-jupyter
-description: Jupyter Server that hosts notebook sessions; kernels run in the analysis environments.
+description: 承载 Notebook 会话的 Jupyter Server；内核运行在各自的分析环境里。
 channels:
   - conda-forge
 dependencies:

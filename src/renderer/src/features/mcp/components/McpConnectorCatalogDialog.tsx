@@ -142,7 +142,7 @@ export function McpConnectorCatalogDialog({
       servers.filter(
         (server) =>
           !normalizedQuery ||
-          [server.name, server.url, server.command, server.sourcePath].some((value) =>
+          [server.name, server.title, server.url, server.command, server.sourcePath].some((value) =>
             value?.toLowerCase().includes(normalizedQuery)
           )
       ),
@@ -263,6 +263,12 @@ export function McpConnectorCatalogDialog({
     }
   }
 
+  // Notion signs in inside Phi; other OAuth servers are not wired up yet.
+  function needsSignIn(connector: FeaturedMcpConnector): boolean {
+    if (connector.signIn !== '需要登录') return false
+    return connector.id !== 'notion' || notionAuthStatus !== 'authenticated'
+  }
+
   function openDetail(connector: FeaturedMcpConnector, refresh = false): void {
     setSelectedId(connector.id)
     setPage('detail')
@@ -270,7 +276,7 @@ export function McpConnectorCatalogDialog({
     setToolNames(null)
     setToolsError(null)
     const request = ++toolRequestRef.current
-    if (connector.signIn === '需要登录' && connector.id !== 'notion') {
+    if (needsSignIn(connector)) {
       setToolsLoading(false)
       return
     }
@@ -304,7 +310,7 @@ export function McpConnectorCatalogDialog({
           setToolsError(
             /No handler registered for ['"]mcp:featuredTools['"]/.test(message)
               ? '主进程尚未加载工具查询接口，请重新启动 Phi 后重试'
-              : message
+              : message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
           )
         }
       })
@@ -360,7 +366,7 @@ export function McpConnectorCatalogDialog({
         <Stack direction="row" spacing={1.5} sx={{ alignItems: 'flex-start' }}>
           <ConnectorIcon connectorId={server.connectorId ?? server.packageId} />
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography sx={{ fontWeight: 700 }}>{server.name}</Typography>
+            <Typography sx={{ fontWeight: 700 }}>{server.title ?? server.name}</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
               {server.url ?? server.command ?? '本地 MCP 服务'}
             </Typography>
@@ -438,18 +444,24 @@ export function McpConnectorCatalogDialog({
             >
               发现
             </Typography>
-            {mcpConnectorCategories.map((category) => (
-              <ListItemButton
-                key={category}
-                selected={group === category && page === 'list'}
-                onClick={() => openGroup(category)}
-                sx={{ borderRadius: 1.5, mb: 0.5 }}
-              >
-                <Typography variant="body2">
-                  {category} · {connectors.filter((entry) => entry.category === category).length}
-                </Typography>
-              </ListItemButton>
-            ))}
+            {mcpConnectorCategories
+              .map((category) => ({
+                category,
+                count: connectors.filter((entry) => entry.category === category).length
+              }))
+              .filter(({ count }) => count > 0)
+              .map(({ category, count }) => (
+                <ListItemButton
+                  key={category}
+                  selected={group === category && page === 'list'}
+                  onClick={() => openGroup(category)}
+                  sx={{ borderRadius: 1.5, mb: 0.5 }}
+                >
+                  <Typography variant="body2">
+                    {category} · {count}
+                  </Typography>
+                </ListItemButton>
+              ))}
           </List>
         </Box>
 
@@ -592,7 +604,7 @@ export function McpConnectorCatalogDialog({
                   </Alert>
                 )}
                 <McpToolList
-                  requiresSignIn={selected.signIn === '需要登录' && selected.id !== 'notion'}
+                  requiresSignIn={needsSignIn(selected)}
                   loading={toolsLoading}
                   names={toolNames}
                   error={toolsError}

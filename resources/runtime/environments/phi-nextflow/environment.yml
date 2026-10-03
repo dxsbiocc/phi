@@ -1,5 +1,5 @@
 name: phi-nextflow
-description: Nextflow, its Java runtime, and the nf-core / nf-test authoring tools for the wrapper executor.
+description: Wrapper 执行器使用的 Nextflow、Java 运行时，以及 nf-core / nf-test 开发工具。
 channels:
   - conda-forge
   - bioconda

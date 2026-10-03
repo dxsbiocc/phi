@@ -8184,7 +8184,12 @@ app.whenReady().then(async () => {
           entry.id === server.packageId || (server.url !== undefined && entry.url === server.url)
       )
       return connector
-        ? { ...server, connectorId: connector.id, category: connector.category }
+        ? {
+            ...server,
+            connectorId: connector.id,
+            category: connector.category,
+            title: connector.name
+          }
         : server
     })
   })

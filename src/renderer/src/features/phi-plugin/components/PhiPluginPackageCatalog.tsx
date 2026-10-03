@@ -113,9 +113,9 @@ export function PhiPluginPackageCatalog({
   return (
     <Stack spacing={1.25}>
       <Box>
-        <Typography variant="h5">软件源目录</Typography>
+        <Typography variant="h5">从软件源安装</Typography>
         <Typography variant="body2" color="text.secondary">
-          从已知软件源安装或更新 Phi 插件。
+          从已添加的软件源安装或更新 Phi 插件。
         </Typography>
       </Box>
       {error ? <Alert severity="error">{error}</Alert> : null}
@@ -123,7 +123,7 @@ export function PhiPluginPackageCatalog({
         <CircularProgress size={20} />
       ) : entries.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
-          已知软件源中没有插件包。
+          已添加的软件源中没有插件包。可在「设置 › 高级 › 软件源」中添加目录。
         </Typography>
       ) : (
         <Box

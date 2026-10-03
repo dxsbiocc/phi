@@ -170,11 +170,7 @@ export function PhiPluginsView(): React.JSX.Element {
             </Alert>
           ) : null}
 
-          <PhiPluginPackageCatalog
-            installedIds={new Set(plugins.map((plugin) => plugin.id))}
-            onChanged={refresh}
-          />
-
+          <Typography variant="h5">已安装</Typography>
           <PhiPluginsCatalog
             plugins={plugins}
             loading={loading}
@@ -182,6 +178,11 @@ export function PhiPluginsView(): React.JSX.Element {
             onChooseDirectory={() => void choosePluginDirectory()}
             onSetEnabled={(plugin, enabled) => void setEnabled(plugin, enabled)}
             onRequestUninstall={setPendingUninstall}
+          />
+
+          <PhiPluginPackageCatalog
+            installedIds={new Set(plugins.map((plugin) => plugin.id))}
+            onChanged={refresh}
           />
         </Stack>
       </Box>
