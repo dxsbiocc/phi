@@ -1,4 +1,4 @@
-import { Box, Button, Stack, Typography } from '@mui/material'
+import { Box, Button, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { PhiIcons } from '../../icons'
 import { sessionDisplayTitle } from '../../lib/sessionTitles'
@@ -11,6 +11,20 @@ interface HomeViewProps {
   onShowProjects: () => void
   onOpenSession: (path: string) => void
 }
+
+const homeCardButtonSx = {
+  flex: 1,
+  minHeight: 112,
+  p: 2.5,
+  gap: 2,
+  justifyContent: 'flex-start',
+  textAlign: 'left',
+  textTransform: 'none',
+  border: 1,
+  borderColor: 'divider',
+  borderRadius: 3,
+  color: 'text.primary'
+} as const
 
 export function HomeView({
   sessions,
@@ -52,22 +66,18 @@ export function HomeView({
           继续最近的对话，或开启一项新任务。
         </Typography>
 
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+            gap: 2
+          }}
+        >
           <Button
             onClick={onNewChat}
             sx={{
-              flex: 1,
-              minHeight: 112,
-              p: 2.5,
-              gap: 2,
-              justifyContent: 'flex-start',
-              textAlign: 'left',
-              textTransform: 'none',
-              border: 1,
-              borderColor: 'divider',
-              borderRadius: 3,
+              ...homeCardButtonSx,
               bgcolor: 'background.paper',
-              color: 'text.primary',
               '&:hover, &.Mui-focusVisible': {
                 bgcolor: (theme) => alpha(theme.palette.primary.main, 0.07),
                 borderColor: (theme) => alpha(theme.palette.primary.main, 0.28),
@@ -79,7 +89,7 @@ export function HomeView({
               className="home-new-chat-icon"
               sx={{ fontSize: 26, flexShrink: 0, color: 'text.secondary' }}
             />
-            <Box>
+            <Box className="home-card-text" sx={{ minWidth: 0, wordBreak: 'normal' }}>
               <Typography sx={{ fontWeight: 700, color: 'text.primary' }}>新建对话</Typography>
               <Typography variant="body2" color="text.secondary">
                 从一个问题或任务开始
@@ -89,29 +99,19 @@ export function HomeView({
           <Button
             onClick={onShowProjects}
             sx={{
-              flex: 1,
-              minHeight: 112,
-              p: 2.5,
-              gap: 2,
-              justifyContent: 'flex-start',
-              textAlign: 'left',
-              textTransform: 'none',
-              border: 1,
-              borderColor: 'divider',
-              borderRadius: 3,
-              color: 'text.primary',
+              ...homeCardButtonSx,
               '&:hover': { bgcolor: 'action.hover' }
             }}
           >
             <PhiIcons.nav.projects sx={{ fontSize: 26, flexShrink: 0 }} />
-            <Box>
+            <Box className="home-card-text" sx={{ minWidth: 0, wordBreak: 'normal' }}>
               <Typography sx={{ fontWeight: 700 }}>选择项目</Typography>
               <Typography variant="body2" color="text.secondary">
                 在项目中继续工作
               </Typography>
             </Box>
           </Button>
-        </Stack>
+        </Box>
 
         {recentSessions.length > 0 ? (
           <Box sx={{ mt: 5 }}>
