@@ -280,6 +280,18 @@ class FakeBridge implements TerminalRendererBridge {
     return Promise.resolve(ok(undefined))
   }
 
+  async generateDraft(): Promise<never> {
+    throw new Error('not used by controller tests')
+  }
+
+  cancelDraft(): Promise<TerminalResult<void>> {
+    return Promise.resolve(ok(undefined))
+  }
+
+  submitDraft(): Promise<TerminalResult<void>> {
+    return Promise.resolve(ok(undefined))
+  }
+
   onEvent(listener: (event: TerminalEvent) => void): () => void {
     this.listener = listener
     return () => {
@@ -671,4 +683,18 @@ test('module singleton survives consumers and explicitly disposes before resubsc
   assert.ok(secondBridge.listener)
   disposeTerminalController()
   assert.equal(secondBridge.unsubscribeCalls, 1)
+})
+
+test('module singleton rejects an unavailable bridge before reuse', () => {
+  const bridge = new FakeBridge()
+  getTerminalController(bridge)
+
+  try {
+    assert.throws(
+      () => getTerminalController({} as TerminalRendererBridge),
+      /Terminal bridge is unavailable/
+    )
+  } finally {
+    disposeTerminalController()
+  }
 })

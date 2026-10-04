@@ -1,7 +1,7 @@
 import { Box, Button, Typography } from '@mui/material'
 
 export type TerminalStatusKind =
-  'starting' | 'exited' | 'failed' | 'remote' | 'unsupported' | 'limit'
+  'starting' | 'exited' | 'failed' | 'remote' | 'unsupported' | 'limit' | 'unavailable'
 
 export interface TerminalStatusPaneProps {
   kind: TerminalStatusKind
@@ -41,6 +41,13 @@ function statusCopy(props: TerminalStatusPaneProps): {
       return {
         title: `已达到终端数量上限（当前 ${props.terminalCount ?? 0} 个）`,
         detail: '请先结束一个终端后再新建。',
+        alert: true
+      }
+    case 'unavailable':
+      return {
+        title: '终端需要重启 Phi',
+        detail:
+          '当前窗口的后台程序版本较旧，请完全退出并重新打开 Phi（开发模式下请重新启动开发服务器）后再使用终端。',
         alert: true
       }
   }

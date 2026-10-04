@@ -16,6 +16,7 @@ import { TerminalStatusPane, type TerminalStatusKind } from './components/Termin
 import { TerminalTitleBar } from './components/TerminalTitleBar'
 import { useTerminalDraft } from './hooks/useTerminalDraft'
 import { useTerminalWorkspace } from './hooks/useTerminalWorkspace'
+import { isTerminalBridgeAvailable } from './lib/terminalBridge'
 import { isTerminalInputWithinLimit } from './lib/terminalInput'
 import { createTerminalTheme } from './lib/terminalTheme'
 
@@ -43,13 +44,74 @@ interface PanelStatus {
 }
 
 export interface TerminalPanelProps {
-  bridge: TerminalRendererBridge
+  bridge: unknown
   projects: readonly Project[]
   /** Maximize/close controls supplied by the workspace workbench slot. */
   headerActions?: ReactNode
 }
 
+interface AvailableTerminalPanelProps extends Omit<TerminalPanelProps, 'bridge'> {
+  bridge: TerminalRendererBridge
+}
+
+const noop = (): void => undefined
+
+function UnavailableTerminalPanel(
+  props: Pick<TerminalPanelProps, 'headerActions'>
+): React.JSX.Element {
+  const theme = useTheme()
+  const terminalTheme = createTerminalTheme(theme.palette.mode)
+
+  return (
+    <Box
+      data-phi-terminal-panel="true"
+      sx={{
+        width: '100%',
+        height: '100%',
+        minWidth: 0,
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        bgcolor: terminalTheme.background
+      }}
+    >
+      <TerminalTitleBar
+        terminals={[]}
+        activeTerminalId={null}
+        projectName="Phi"
+        headerActions={props.headerActions}
+        canCreate={false}
+        busy={false}
+        onSelect={noop}
+        onCreate={noop}
+        onOpenAssist={noop}
+        onExplainSelection={noop}
+        onEnd={noop}
+        onEndAll={noop}
+      />
+      <Box sx={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center' }}>
+        <TerminalStatusPane kind="unavailable" />
+      </Box>
+    </Box>
+  )
+}
+
 export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Element {
+  if (!isTerminalBridgeAvailable(props.bridge)) {
+    return <UnavailableTerminalPanel headerActions={props.headerActions} />
+  }
+
+  return (
+    <AvailableTerminalPanel
+      bridge={props.bridge}
+      projects={props.projects}
+      headerActions={props.headerActions}
+    />
+  )
+}
+
+function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.Element {
   const theme = useTheme()
   const workspace = useTerminalWorkspace(props.bridge, props.projects)
   const viewportRef = useRef<HTMLDivElement | null>(null)

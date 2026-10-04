@@ -22,6 +22,7 @@ import {
   isTerminalLineDirty,
   updateTerminalLineInput
 } from './terminalDraft'
+import { isTerminalBridgeAvailable } from './terminalBridge'
 import {
   isTerminalInputWithinLimit,
   terminalInputByteLength,
@@ -615,10 +616,17 @@ export function createTerminalController(options: {
 
 let singleton: TerminalController | null = null
 
-export function getTerminalController(bridge?: TerminalRendererBridge): TerminalController {
+export function getTerminalController(bridge?: unknown): TerminalController {
+  const fallbackBridge =
+    typeof window === 'undefined'
+      ? undefined
+      : (window as unknown as { api?: { terminal?: unknown } }).api?.terminal
+  const resolvedBridge = bridge === undefined ? fallbackBridge : bridge
+  if (!isTerminalBridgeAvailable(resolvedBridge)) {
+    throw new Error('Terminal bridge is unavailable')
+  }
+
   if (!singleton) {
-    const resolvedBridge =
-      bridge ?? (window as unknown as { api: { terminal: TerminalRendererBridge } }).api.terminal
     singleton = createTerminalController({ bridge: resolvedBridge })
   }
   return singleton

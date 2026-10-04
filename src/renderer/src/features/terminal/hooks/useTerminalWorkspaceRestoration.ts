@@ -1,13 +1,13 @@
 import { useEffect, useMemo } from 'react'
 
-import type { TerminalRendererBridge } from '../../../../../shared/terminalTypes'
 import type { Project } from '../../../lib/projectTypes'
+import { isTerminalBridgeAvailable } from '../lib/terminalBridge'
 import { getTerminalController } from '../lib/terminalController'
 import { terminalWorkspaceRefFromActiveProject } from '../lib/terminalWorkspaceRef'
 
 /** Reconnect existing terminals after a renderer reload without creating a shell. */
 export function useTerminalWorkspaceRestoration(
-  bridge: TerminalRendererBridge,
+  bridge: unknown,
   projects: readonly Project[],
   activeProjectId: string | null
 ): void {
@@ -19,10 +19,13 @@ export function useTerminalWorkspaceRestoration(
     () => terminalWorkspaceRefFromActiveProject(activeProject),
     [activeProject]
   )
-  const controller = useMemo(() => getTerminalController(bridge), [bridge])
+  const controller = useMemo(
+    () => (isTerminalBridgeAvailable(bridge) ? getTerminalController(bridge) : null),
+    [bridge]
+  )
 
   useEffect(() => {
-    if (!ready || target === 'remote') return
+    if (!controller || !ready || target === 'remote') return
     void controller.restoreWorkspace(target)
   }, [controller, ready, target])
 }

@@ -16,6 +16,7 @@ import {
 } from '../src/renderer/src/features/terminal/components/TerminalStatusPane'
 import { TerminalTitleBar } from '../src/renderer/src/features/terminal/components/TerminalTitleBar'
 import type { TerminalDraftState } from '../src/renderer/src/features/terminal/hooks/useTerminalDraft'
+import { useTerminalWorkspaceRestoration } from '../src/renderer/src/features/terminal/hooks/useTerminalWorkspaceRestoration'
 import { disposeTerminalController } from '../src/renderer/src/features/terminal/lib/terminalController'
 import {
   EMPTY_TERMINAL_LINE_INPUT,
@@ -365,6 +366,11 @@ test('terminal panel renders the thin reference-style shell without creating dur
     resize: async () => ({ ok: true, value: undefined }),
     ack: async () => ({ ok: true, value: undefined }),
     close: async () => ({ ok: true, value: undefined }),
+    generateDraft: async () => {
+      throw new Error('not called during server render')
+    },
+    cancelDraft: async () => ({ ok: true, value: undefined }),
+    submitDraft: async () => ({ ok: true, value: undefined }),
     onEvent: () => () => undefined
   }
 
@@ -384,6 +390,53 @@ test('terminal panel renders the thin reference-style shell without creating dur
     assert.doesNotMatch(markup, /当前没有终端/)
   } finally {
     disposeTerminalController()
+  }
+})
+
+test('terminal workspace restoration does not construct a controller without a bridge', () => {
+  function RestorationHarness(): ReactElement {
+    useTerminalWorkspaceRestoration(undefined, [], null)
+    return createElement('div')
+  }
+
+  disposeTerminalController()
+  assert.doesNotThrow(() => renderToStaticMarkup(createElement(RestorationHarness)))
+})
+
+test('terminal panel explains unavailable bridges without rendering a terminal viewport', () => {
+  const unavailableBridges: unknown[] = [
+    undefined,
+    {
+      onEvent: () => {
+        throw new Error('must not subscribe to a partial bridge')
+      }
+    }
+  ]
+
+  for (const bridge of unavailableBridges) {
+    disposeTerminalController()
+    const markup = renderWithTheme(
+      createElement(TerminalPanel, {
+        bridge,
+        projects: [],
+        headerActions: createElement('button', { type: 'button', 'aria-label': '工作台槽操作' })
+      })
+    )
+
+    assert.match(markup, /data-phi-terminal-panel="true"/)
+    assert.match(markup, /终端需要重启 Phi/)
+    assert.match(
+      markup,
+      /当前窗口的后台程序版本较旧，请完全退出并重新打开 Phi（开发模式下请重新启动开发服务器）后再使用终端。/
+    )
+    assert.match(markup, /aria-label="工作台槽操作"/)
+    assert.doesNotMatch(markup, /data-phi-terminal-viewport="true"/)
+
+    for (const label of ['新建终端', '更多终端操作']) {
+      const button = markup.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`, 'u'))?.[0]
+      assert.ok(button, `missing ${label} button`)
+      assert.match(button, /disabled=""/)
+    }
   }
 })
 
