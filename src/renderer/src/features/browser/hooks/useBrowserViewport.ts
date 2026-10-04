@@ -8,6 +8,21 @@ interface BrowserViewportRect {
   height: number
 }
 
+export function browserViewportRectsOverlap(
+  viewport: BrowserViewportRect,
+  overlay: BrowserViewportRect
+): boolean {
+  if (viewport.width <= 0 || viewport.height <= 0 || overlay.width <= 0 || overlay.height <= 0) {
+    return false
+  }
+  return (
+    Math.min(viewport.x + viewport.width, overlay.x + overlay.width) >
+      Math.max(viewport.x, overlay.x) &&
+    Math.min(viewport.y + viewport.height, overlay.y + overlay.height) >
+      Math.max(viewport.y, overlay.y)
+  )
+}
+
 export interface BrowserViewportScheduler {
   schedule(): void
   hide(): void
@@ -94,22 +109,55 @@ export function useBrowserViewport(options: {
       return
     }
 
+    const trustedOverlaySelector =
+      '.MuiModal-root, .MuiPopover-root, [role="dialog"], [role="alertdialog"]'
+    const hoverPreviewSelector = '[data-phi-workspace-sidebar-hover-preview]'
+    const getUnobstructedRect = (): BrowserViewportRect | null => {
+      const rect = contentRef.current?.getBoundingClientRect() ?? null
+      if (!rect || document.querySelector(trustedOverlaySelector)) return null
+      for (const preview of document.querySelectorAll(hoverPreviewSelector)) {
+        const style = window.getComputedStyle(preview)
+        if (
+          style.display === 'none' ||
+          style.visibility === 'hidden' ||
+          style.visibility === 'collapse' ||
+          style.opacity === '0'
+        ) {
+          continue
+        }
+        if (browserViewportRectsOverlap(rect, preview.getBoundingClientRect())) return null
+      }
+      return rect
+    }
     const scheduler = createBrowserViewportScheduler({
       bridge: options.bridge,
       sessionId: options.sessionId,
       sessionGeneration: options.sessionGeneration,
       tabId: options.tabId,
-      getRect: () => contentRef.current?.getBoundingClientRect() ?? null,
+      // Recheck at frame delivery so a newly placed preview cannot be
+      // covered by a viewport update queued before it appeared.
+      getRect: getUnobstructedRect,
       requestFrame: (callback) => window.requestAnimationFrame(callback),
       cancelFrame: (id) => window.cancelAnimationFrame(id)
     })
-    const trustedOverlaySelector =
-      '.MuiModal-root, .MuiPopover-root, [role="dialog"], [role="alertdialog"]'
+    const observedPreviews = new Set<Element>()
+    let observer: ResizeObserver | null = null
     const updateForTrustedOverlay = (): void => {
+      const previews = new Set(document.querySelectorAll(hoverPreviewSelector))
+      for (const preview of observedPreviews) {
+        if (previews.has(preview)) continue
+        observer?.unobserve(preview)
+        observedPreviews.delete(preview)
+      }
+      for (const preview of previews) {
+        if (observedPreviews.has(preview)) continue
+        observer?.observe(preview)
+        observedPreviews.add(preview)
+      }
       if (document.querySelector(trustedOverlaySelector)) scheduler.hide()
       else scheduler.schedule()
     }
-    const observer =
+    observer =
       typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateForTrustedOverlay)
     if (contentRef.current) observer?.observe(contentRef.current)
     const overlayObserver =
@@ -126,6 +174,7 @@ export function useBrowserViewport(options: {
 
     return () => {
       observer?.disconnect()
+      observedPreviews.clear()
       overlayObserver?.disconnect()
       window.removeEventListener('resize', onWindowResize)
       scheduler.dispose()

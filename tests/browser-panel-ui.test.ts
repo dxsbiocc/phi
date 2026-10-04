@@ -307,7 +307,7 @@ test('App composes the browser feature through the narrow side-panel seam', () =
     appSource,
     /visible=\{[\s\S]{0,300}!pendingApproval[\s\S]{0,300}!pendingUserInteraction/
   )
-  assert.match(appSource, /!isWorkspaceSidebarPreviewOpen/)
+  assert.equal(appSource.includes('!isWorkspaceSidebarPreviewOpen'), false)
   assert.match(appSource, /features\/browser\/hooks\/useBrowserTrustedOverlayGate/)
   assert.match(appSource, /features\/browser\/hooks\/useBrowserPanelRequests/)
   assert.match(

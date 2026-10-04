@@ -199,7 +199,11 @@ export class BrowserWorkspace {
   setViewport(tabId: string, viewport: BrowserViewport | null): Promise<void> {
     const copiedViewport = viewport ? { ...viewport } : null
     if (this.#disposed) return Promise.reject(new Error('Browser workspace is disposed'))
-    if (!this.#tabCollection.find(tabId)?.handle) {
+    const tab = this.#tabCollection.find(tabId)
+    if (!tab?.handle) {
+      // Checkpoint tabs have metadata but no native view until explicitly restored.
+      // Their startup/teardown hide requests are already satisfied.
+      if (copiedViewport === null && tab?.snapshot.restorable) return Promise.resolve()
       return Promise.reject(new Error('Browser tab is not available for presentation'))
     }
     // Presentation adapters may apply viewport changes asynchronously. Revoke every

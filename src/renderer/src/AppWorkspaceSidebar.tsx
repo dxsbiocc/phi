@@ -28,6 +28,9 @@ const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 
 export type AppWorkspaceSidebarProps = {
   isSidebarOpen: boolean
+  compactHoverPreview?: boolean
+  onPreviewInteractionChange?: (active: boolean) => void
+  onPreviewNavigate?: () => void
   sidebarWidth: number
   activeView: AppView
   activeChatView: ReactNode
@@ -110,8 +113,24 @@ export type AppWorkspaceSidebarProps = {
   ) => SessionRuntimeState | null
 }
 
+export type WorkspaceSidebarDataProps = Omit<
+  AppWorkspaceSidebarProps,
+  | 'isSidebarOpen'
+  | 'sidebarWidth'
+  | 'onStartSidebarResize'
+  | 'activeView'
+  | 'activeChatView'
+  | 'workspaceSidebarMode'
+  | 'compactHoverPreview'
+  | 'onPreviewInteractionChange'
+  | 'onPreviewNavigate'
+>
+
 function AppWorkspaceSidebarImpl({
   isSidebarOpen,
+  compactHoverPreview = false,
+  onPreviewInteractionChange,
+  onPreviewNavigate,
   sidebarWidth,
   activeView,
   activeChatView,
@@ -179,8 +198,16 @@ function AppWorkspaceSidebarImpl({
 }: AppWorkspaceSidebarProps): React.JSX.Element | null {
   if (!isSidebarOpen) return null
 
+  const navigate = (action: () => void | Promise<void>): void => {
+    const pending = action()
+    onPreviewNavigate?.()
+    if (pending && onPreviewNavigate) void pending.then(onPreviewNavigate, onPreviewNavigate)
+  }
+
   const sidebarContent =
-    activeView === 'analysis' && workspaceSidebarMode === 'conversations' ? (
+    !compactHoverPreview &&
+    activeView === 'analysis' &&
+    workspaceSidebarMode === 'conversations' ? (
       <Box
         data-phi-analysis-sidebar="true"
         sx={{
@@ -273,6 +300,7 @@ function AppWorkspaceSidebarImpl({
       </Box>
     ) : workspaceSidebarMode === 'files' ? (
       <Box
+        className="app-sidebar-surface"
         data-phi-files-sidebar="true"
         sx={{
           width: '100%',
@@ -306,7 +334,7 @@ function AppWorkspaceSidebarImpl({
               rootPath={workspaceRootPath}
               activePath={activeWorkspacePath}
               treeRevision={workspaceFileTreeRevision}
-              onOpenFile={onOpenWorkspaceFile}
+              onOpenFile={(path) => navigate(() => onOpenWorkspaceFile(path))}
               onListDirectory={onListWorkspaceDirectory}
             />
           )}
@@ -322,7 +350,7 @@ function AppWorkspaceSidebarImpl({
           projectCwd={runtimeProjectCwd}
           runtimeStatus={runtimeStatus}
           isLoading={isRuntimeLoading}
-          onOpenNotebook={onOpenRuntimeNotebook}
+          onOpenNotebook={(path) => navigate(() => onOpenRuntimeNotebook(path))}
           closingNotebookPath={runtimeClosingNotebookPath}
           onRefresh={onRefreshRuntime}
           onStartJupyter={onStartRuntime}
@@ -335,8 +363,8 @@ function AppWorkspaceSidebarImpl({
         plugins={phiPlugins}
         loading={isLoadingPhiPlugins}
         activePluginId={activePhiPluginId}
-        onSelectPlugin={onOpenPhiPlugin}
-        onOpenCatalog={onOpenPhiPluginCatalog}
+        onSelectPlugin={(plugin) => navigate(() => onOpenPhiPlugin(plugin))}
+        onOpenCatalog={() => navigate(onOpenPhiPluginCatalog)}
         catalogOpen={isPhiPluginCatalogOpen}
       />
     ) : workspaceSidebarMode === 'skills' ? (
@@ -349,8 +377,8 @@ function AppWorkspaceSidebarImpl({
             skills={skills}
             isLoading={isLoadingSkills}
             activeSkillId={activeSkillId}
-            onSelectSkill={onOpenSkill}
-            onOpenCatalog={onOpenSkillCatalog}
+            onSelectSkill={(skill) => navigate(() => onOpenSkill(skill))}
+            onOpenCatalog={() => navigate(onOpenSkillCatalog)}
           />
         </Box>
       ) : (
@@ -358,8 +386,8 @@ function AppWorkspaceSidebarImpl({
           skills={skills}
           isLoading={isLoadingSkills}
           activeSkillId={activeSkillId}
-          onSelectSkill={onOpenSkill}
-          onOpenCatalog={onOpenSkillCatalog}
+          onSelectSkill={(skill) => navigate(() => onOpenSkill(skill))}
+          onOpenCatalog={() => navigate(onOpenSkillCatalog)}
         />
       )
     ) : workspaceSidebarMode === 'mcp' ? (
@@ -371,16 +399,22 @@ function AppWorkspaceSidebarImpl({
           <McpSidebar
             servers={mcpServers}
             activeServerId={activeMcpServerId}
-            onSelectServer={onOpenMcpServer}
+            onSelectServer={(server) => navigate(() => onOpenMcpServer(server))}
             onRefreshServers={onRefreshMcpServers}
+            requestTrustedOverlay={requestTrustedOverlay}
+            cancelTrustedOverlay={cancelTrustedOverlay}
+            onPreviewInteractionChange={onPreviewInteractionChange}
           />
         </Box>
       ) : (
         <McpSidebar
           servers={mcpServers}
           activeServerId={activeMcpServerId}
-          onSelectServer={onOpenMcpServer}
+          onSelectServer={(server) => navigate(() => onOpenMcpServer(server))}
           onRefreshServers={onRefreshMcpServers}
+          requestTrustedOverlay={requestTrustedOverlay}
+          cancelTrustedOverlay={cancelTrustedOverlay}
+          onPreviewInteractionChange={onPreviewInteractionChange}
         />
       )
     ) : workspaceSidebarMode === 'wrappers' ? (
@@ -388,12 +422,15 @@ function AppWorkspaceSidebarImpl({
         catalog={wrapperCatalog}
         selectedId={selectedWrapperId}
         isLoading={isLoadingWrappers}
-        onSelect={onOpenWrapper}
+        onSelect={(entry) => navigate(() => onOpenWrapper(entry))}
         onRefresh={onRefreshWrappers}
       />
     ) : (
       <SessionSidebar
         mode={workspaceSidebarMode}
+        hideWindowDragSpacer={compactHoverPreview}
+        compactHoverPreview={compactHoverPreview}
+        onPreviewInteractionChange={onPreviewInteractionChange}
         requestTrustedOverlay={requestTrustedOverlay}
         cancelTrustedOverlay={cancelTrustedOverlay}
         sessions={sessions}
@@ -403,11 +440,11 @@ function AppWorkspaceSidebarImpl({
         projects={projects}
         projectSessionRefreshKey={projectSessionRefreshKey}
         onNewChat={() => {
-          void onNewChat()
+          navigate(onNewChat)
         }}
-        onNewProject={() => setIsNewProjectDialogOpen(true)}
+        onNewProject={() => navigate(() => setIsNewProjectDialogOpen(true))}
         onSelectSession={(path) => {
-          void onSelectSession(path)
+          navigate(() => onSelectSession(path))
         }}
         onRenameSession={(path, name) => {
           void onRenameSession(path, name)
@@ -415,9 +452,9 @@ function AppWorkspaceSidebarImpl({
         onDeleteSession={(path) => {
           void onDeleteSession(path)
         }}
-        onExportSession={onExportSession}
+        onExportSession={(session) => navigate(() => onExportSession(session))}
         onStartProjectChat={(project) => {
-          void onStartProjectChat(project)
+          navigate(() => onStartProjectChat(project))
         }}
         onDeleteProject={(project) => {
           void onDeleteProjectEntry(project)
@@ -426,6 +463,29 @@ function AppWorkspaceSidebarImpl({
         getSessionRuntimeState={getSessionRuntimeState}
       />
     )
+
+  if (compactHoverPreview) {
+    const sessionsPreview =
+      workspaceSidebarMode === 'conversations' || workspaceSidebarMode === 'projects'
+    return (
+      <Box
+        data-phi-sidebar-content-preview={workspaceSidebarMode}
+        sx={{
+          height: sessionsPreview ? 'auto' : 'min(420px, calc(100vh - 96px))',
+          maxHeight: 'min(420px, calc(100vh - 96px))',
+          minHeight: 0,
+          overflow: 'hidden',
+          pt: sessionsPreview ? 0 : 1,
+          '& .app-sidebar-surface': {
+            pt: 0,
+            ...(sessionsPreview ? {} : { minHeight: 0, flex: '1 1 auto' })
+          }
+        }}
+      >
+        {sidebarContent}
+      </Box>
+    )
+  }
 
   return (
     <>

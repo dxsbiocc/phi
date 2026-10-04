@@ -63,7 +63,7 @@ import { useMcpServerCatalog } from './features/mcp/hooks/useMcpServerCatalog'
 import { type SettingsCategory } from './components/SettingsDialog'
 import AppDialogs, { type SnackbarNotice } from './AppDialogs'
 import AppActivityBar from './AppActivityBar'
-import AppWorkspaceSidebar from './AppWorkspaceSidebar'
+import AppWorkspaceSidebar, { type WorkspaceSidebarDataProps } from './AppWorkspaceSidebar'
 import FilePreviewPanel, {
   FilePreviewTitleTab,
   type FilePreviewPanelState
@@ -458,7 +458,12 @@ function WorkspaceFileTabs({
                 component="span"
                 role="img"
                 aria-label="未保存修改"
-                sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: 'warning.main' }}
+                sx={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  bgcolor: 'warning.main'
+                }}
               />
             )}
             <Box
@@ -724,7 +729,10 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    const current: NavigationHistoryEntry = { view: activeView, sessionPath: activeSessionPath }
+    const current: NavigationHistoryEntry = {
+      view: activeView,
+      sessionPath: activeSessionPath
+    }
     const restoringTo = restoringNavigationEntryRef.current
     if (restoringTo) {
       // Still catching up to a back/forward target -- e.g. the view
@@ -829,7 +837,12 @@ function App(): React.JSX.Element {
       severity: SnackbarNotice['severity'] = 'error',
       options?: { persistent?: boolean }
     ): void => {
-      setSnackbarNotice({ id: Date.now(), message, severity, persistent: options?.persistent })
+      setSnackbarNotice({
+        id: Date.now(),
+        message,
+        severity,
+        persistent: options?.persistent
+      })
     },
     []
   )
@@ -1131,7 +1144,10 @@ function App(): React.JSX.Element {
   }))
   useEffect(() => {
     const onResize = (): void =>
-      setAppViewportSize({ width: window.innerWidth, height: window.innerHeight })
+      setAppViewportSize({
+        width: window.innerWidth,
+        height: window.innerHeight
+      })
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
@@ -1422,7 +1438,10 @@ function App(): React.JSX.Element {
         applyCurrentSession(
           result,
           { resetSending: true },
-          { onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange, onResetSending }
+          {
+            onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange,
+            onResetSending
+          }
         )
         const targetStateKey = sessionStateKey({
           phiSessionId: result.phiSessionId,
@@ -1497,35 +1516,53 @@ function App(): React.JSX.Element {
   const canGoBackInHistory = navigationHistoryTargetIndex(navigationHistory, 'back') !== null
   const canGoForwardInHistory = navigationHistoryTargetIndex(navigationHistory, 'forward') !== null
 
-  const onDeleteSession = async (path: string): Promise<void> => {
-    const request = sessionRequestRef.current
-    const wasActive = path === useSessionStore.getState().activeSessionPath
-    await rendererApi.deleteSession(path)
-    if (wasActive && request === sessionRequestRef.current) {
-      const current = await rendererApi.getCurrentSession()
-      if (request === sessionRequestRef.current) {
-        applyCurrentSession(
-          current,
-          { resetSending: true },
-          { onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange, onResetSending }
-        )
-        void refreshCurrentModelControls(request)
-        replaceMessages([])
-        setSessionTabWasOpened(false)
-        setActiveWorkspaceTabKey((currentKey) =>
-          currentKey?.startsWith('session:') ? null : currentKey
-        )
+  const onDeleteSession = useCallback(
+    async (path: string): Promise<void> => {
+      const request = sessionRequestRef.current
+      const wasActive = path === useSessionStore.getState().activeSessionPath
+      await rendererApi.deleteSession(path)
+      if (wasActive && request === sessionRequestRef.current) {
+        const current = await rendererApi.getCurrentSession()
+        if (request === sessionRequestRef.current) {
+          applyCurrentSession(
+            current,
+            { resetSending: true },
+            {
+              onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange,
+              onResetSending
+            }
+          )
+          void refreshCurrentModelControls(request)
+          replaceMessages([])
+          setSessionTabWasOpened(false)
+          setActiveWorkspaceTabKey((currentKey) =>
+            currentKey?.startsWith('session:') ? null : currentKey
+          )
+        }
       }
-    }
-    await refreshSessions()
-    setProjectSessionRefreshKey((key) => key + 1)
-  }
+      await refreshSessions()
+      setProjectSessionRefreshKey((key) => key + 1)
+    },
+    [
+      rendererApi,
+      applyCurrentSession,
+      resetAnalysisJupyterRuntimeForCwdChange,
+      onResetSending,
+      refreshCurrentModelControls,
+      replaceMessages,
+      refreshSessions,
+      setProjectSessionRefreshKey
+    ]
+  )
 
-  const onExportSession = (session: SessionSummary): void => {
-    if (session.phiSessionId) {
-      openLocalTrustedOverlay('session-export', () => setExportTarget(session))
-    }
-  }
+  const onExportSession = useCallback(
+    (session: SessionSummary): void => {
+      if (session.phiSessionId) {
+        openLocalTrustedOverlay('session-export', () => setExportTarget(session))
+      }
+    },
+    [openLocalTrustedOverlay]
+  )
 
   const confirmExportSession = async (): Promise<void> => {
     if (!exportTarget?.phiSessionId || isExportingSession) return
@@ -1657,7 +1694,10 @@ function App(): React.JSX.Element {
         applyCurrentSession(
           current,
           { resetSending: true },
-          { onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange, onResetSending }
+          {
+            onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange,
+            onResetSending
+          }
         )
         void refreshCurrentModelControls(request)
         startFreshChat()
@@ -1707,10 +1747,13 @@ function App(): React.JSX.Element {
     setWorkspaceSidebarMode('projects')
   }
 
-  const onDeleteProjectEntry = async (project: Project): Promise<void> => {
-    await rendererApi.deleteProject(project.id)
-    await refreshProjects()
-  }
+  const onDeleteProjectEntry = useCallback(
+    async (project: Project): Promise<void> => {
+      await rendererApi.deleteProject(project.id)
+      await refreshProjects()
+    },
+    [rendererApi, refreshProjects]
+  )
 
   const onFetchProjectSessions = useCallback(
     async (workingDirectory: string, projectId?: string): Promise<SessionSummary[]> => {
@@ -2292,7 +2335,10 @@ function App(): React.JSX.Element {
               delete updated[activeDraftKey]
               updated[materializedQueueKey] = [
                 ...(updated[materializedQueueKey] ?? []),
-                ...queued.map((item) => ({ ...item, target: materializedTarget }))
+                ...queued.map((item) => ({
+                  ...item,
+                  target: materializedTarget
+                }))
               ]
               return updated
             })
@@ -2405,12 +2451,18 @@ function App(): React.JSX.Element {
     if (currentSessionIsBusy || isSendingRef.current) {
       queuePromptText(text, target, { images, planMode: planReviewEnabled })
       clearInputImages()
-      setPlanReviewByDraft((previous) => ({ ...previous, [activeDraftKey]: false }))
+      setPlanReviewByDraft((previous) => ({
+        ...previous,
+        [activeDraftKey]: false
+      }))
       return
     }
     setActiveInput('')
     clearInputImages()
-    setPlanReviewByDraft((previous) => ({ ...previous, [activeDraftKey]: false }))
+    setPlanReviewByDraft((previous) => ({
+      ...previous,
+      [activeDraftKey]: false
+    }))
     await sendPromptText(text, target, { images, planMode: planReviewEnabled })
   }
 
@@ -3144,9 +3196,26 @@ function App(): React.JSX.Element {
       }),
     [activeView, isSidebarOpen, workspaceSidebarMode]
   )
+  const isWorkspaceSidebarPreviewBlocked = Boolean(
+    isSettingsOpen ||
+    pendingApproval ||
+    pendingUserInteraction ||
+    isSessionSearchOpen ||
+    isProviderDialogOpen ||
+    isNewProjectDialogOpen ||
+    isSkillCatalogOpen ||
+    isPhiPluginCatalogOpen ||
+    showEnvironmentSummary ||
+    showOnboarding ||
+    exportTarget
+  )
+  if (isWorkspaceSidebarPreviewBlocked && workspaceSidebarPreview !== null) {
+    setWorkspaceSidebarPreview(null)
+  }
   const shouldUseWorkspaceSidebarPreview = useCallback(
-    (mode: WorkspaceSidebarMode): boolean => !isWorkspaceSidebarModeExpanded(mode),
-    [isWorkspaceSidebarModeExpanded]
+    (mode: WorkspaceSidebarMode): boolean =>
+      !isWorkspaceSidebarPreviewBlocked && !isWorkspaceSidebarModeExpanded(mode),
+    [isWorkspaceSidebarModeExpanded, isWorkspaceSidebarPreviewBlocked]
   )
   const visibleWorkspaceSidebarPreview =
     workspaceSidebarPreview && shouldUseWorkspaceSidebarPreview(workspaceSidebarPreview.mode)
@@ -3163,17 +3232,15 @@ function App(): React.JSX.Element {
     (delayMs = 0): void => {
       clearWorkspaceSidebarPreviewCloseTimer()
       if (delayMs <= 0) {
-        cancelBrowserTrustedOverlay('local', 'workspace-sidebar-preview')
         setWorkspaceSidebarPreview(null)
         return
       }
       workspaceSidebarPreviewCloseTimer.current = window.setTimeout(() => {
         workspaceSidebarPreviewCloseTimer.current = null
-        cancelBrowserTrustedOverlay('local', 'workspace-sidebar-preview')
         setWorkspaceSidebarPreview(null)
       }, delayMs)
     },
-    [cancelBrowserTrustedOverlay, clearWorkspaceSidebarPreviewCloseTimer]
+    [clearWorkspaceSidebarPreviewCloseTimer]
   )
   const openWorkspaceSidebarPreview = useCallback(
     (mode: WorkspaceSidebarMode, anchorEl: HTMLElement): void => {
@@ -3182,14 +3249,11 @@ function App(): React.JSX.Element {
         return
       }
       clearWorkspaceSidebarPreviewCloseTimer()
-      openLocalTrustedOverlay('workspace-sidebar-preview', () => {
-        setWorkspaceSidebarPreview({ mode, anchorEl })
-      })
+      setWorkspaceSidebarPreview({ mode, anchorEl })
     },
     [
       clearWorkspaceSidebarPreviewCloseTimer,
       closeWorkspaceSidebarPreview,
-      openLocalTrustedOverlay,
       shouldUseWorkspaceSidebarPreview
     ]
   )
@@ -4080,6 +4144,149 @@ function App(): React.JSX.Element {
         ? activeWorkspaceFileTabContent
         : activeWorkspaceResourceContent
 
+  const onWorkspaceSidebarPreviewNavigate = useCallback((): void => {
+    closeWorkspaceSidebarPreview()
+    if (!isSidebarOpen) setIsSidebarOpen(false)
+  }, [closeWorkspaceSidebarPreview, isSidebarOpen])
+
+  const workspaceSidebarProps = useMemo<WorkspaceSidebarDataProps>(
+    () => ({
+      activeWorkspaceIsProject: activeWorkspaceIsProject,
+      activeWorkspaceTitle: activeWorkspaceTitle,
+      activeWorkspaceScopeLabel: activeWorkspaceScopeLabel,
+      workspaceRootPath: workspaceFilesRootPath,
+      isRemoteProject: activeProjectLocation?.kind === 'ssh',
+      remoteHostAlias: activeProject?.remoteHostAlias,
+      remoteConnection: activeRemoteConnection,
+      onRetryRemoteConnection: onRetryRemoteConnection,
+      activeWorkspacePath: activeWorkspaceSidePanelPath,
+      workspaceFileTreeRevision: workspaceSidePanelTreeRevision,
+      onOpenWorkspaceFile: onOpenWorkspaceFileFromSidebar,
+      onListWorkspaceDirectory: onListPreviewDirectory,
+      runtimeProjectCwd: activeProject?.workingDirectory ?? '',
+      runtimeStatus: analysisJupyterRuntimeStatus,
+      isRuntimeLoading: isLoadingAnalysisJupyterRuntime || isStartingAnalysisJupyter,
+      runtimeClosingNotebookPath: closingRuntimeNotebookPath,
+      onOpenRuntimeNotebook: onOpenNotebookWorkspaceFile,
+      onRefreshRuntime: () => {
+        void refreshAnalysisJupyterRuntimeStatus()
+      },
+      onStartRuntime: (cwd) => {
+        void onStartAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
+      },
+      onStopRuntime: (cwd) => {
+        void onStopAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
+      },
+      onStopRuntimeNotebookKernel: (notebookPath) => {
+        void onStopRuntimeNotebookSession(notebookPath)
+      },
+      phiPlugins: phiPluginsState.plugins,
+      activePhiPluginId: activePhiPluginId,
+      isLoadingPhiPlugins: phiPluginsState.loading,
+      onOpenPhiPlugin: onOpenPhiPluginTab,
+      onOpenPhiPluginCatalog: () =>
+        openLocalTrustedOverlay('phi-plugin-catalog', () => setIsPhiPluginCatalogOpen(true)),
+      isPhiPluginCatalogOpen: isPhiPluginCatalogOpen,
+      skills: skills,
+      activeSkillId: activeSkillId,
+      isLoadingSkills: isLoadingSkills,
+      onOpenSkill: onOpenSkillTab,
+      onOpenSkillCatalog: () =>
+        openLocalTrustedOverlay('skill-catalog', () => setIsSkillCatalogOpen(true)),
+      mcpServers: mcpServers,
+      activeMcpServerId: activeMcpServerId,
+      onOpenMcpServer: onOpenMcpServerTab,
+      onRefreshMcpServers: refreshMcpServers,
+      wrapperCatalog: wrapperCatalog,
+      selectedWrapperId: selectedWrapperId,
+      isLoadingWrappers: isLoadingWrappers,
+      onOpenWrapper: onOpenWrapperTab,
+      onRefreshWrappers: () => {
+        void refreshWrappers()
+      },
+      sessions: sessions,
+      activeSessionPath: sidebarSelectedSessionPath,
+      activeCwd: activeCwd,
+      activeProjectId: activeProjectId,
+      projects: projects,
+      projectSessionRefreshKey: projectSessionRefreshKey,
+      onNewChat: onNewChatFromSidebar,
+      setIsNewProjectDialogOpen: setNewProjectDialogOpenWithBrowserGate,
+      requestTrustedOverlay: openLocalTrustedOverlay,
+      cancelTrustedOverlay: cancelLocalTrustedOverlay,
+      onSelectSession: onOpenSessionFromSidebar,
+      onRenameSession: onRenameSession,
+      onDeleteSession: onDeleteSession,
+      onExportSession: onExportSession,
+      onStartProjectChat: onStartProjectChatFromSidebar,
+      onDeleteProjectEntry: onDeleteProjectEntry,
+      onFetchProjectSessions: onFetchProjectSessions,
+      getSessionRuntimeState: getSessionRuntimeState
+    }),
+    [
+      activeWorkspaceIsProject,
+      activeWorkspaceTitle,
+      activeWorkspaceScopeLabel,
+      workspaceFilesRootPath,
+      activeProjectLocation?.kind,
+      activeProject?.remoteHostAlias,
+      activeRemoteConnection,
+      onRetryRemoteConnection,
+      activeWorkspaceSidePanelPath,
+      workspaceSidePanelTreeRevision,
+      onOpenWorkspaceFileFromSidebar,
+      onListPreviewDirectory,
+      activeProject?.workingDirectory,
+      analysisJupyterRuntimeStatus,
+      isLoadingAnalysisJupyterRuntime,
+      isStartingAnalysisJupyter,
+      closingRuntimeNotebookPath,
+      onOpenNotebookWorkspaceFile,
+      refreshAnalysisJupyterRuntimeStatus,
+      onStartAnalysisJupyter,
+      onStopAnalysisJupyter,
+      onStopRuntimeNotebookSession,
+      phiPluginsState.plugins,
+      activePhiPluginId,
+      phiPluginsState.loading,
+      onOpenPhiPluginTab,
+      setIsPhiPluginCatalogOpen,
+      isPhiPluginCatalogOpen,
+      skills,
+      activeSkillId,
+      isLoadingSkills,
+      onOpenSkillTab,
+      setIsSkillCatalogOpen,
+      mcpServers,
+      activeMcpServerId,
+      onOpenMcpServerTab,
+      refreshMcpServers,
+      wrapperCatalog,
+      selectedWrapperId,
+      isLoadingWrappers,
+      onOpenWrapperTab,
+      refreshWrappers,
+      sessions,
+      sidebarSelectedSessionPath,
+      activeCwd,
+      activeProjectId,
+      projects,
+      projectSessionRefreshKey,
+      onNewChatFromSidebar,
+      setNewProjectDialogOpenWithBrowserGate,
+      openLocalTrustedOverlay,
+      cancelLocalTrustedOverlay,
+      onOpenSessionFromSidebar,
+      onRenameSession,
+      onDeleteSession,
+      onExportSession,
+      onStartProjectChatFromSidebar,
+      onDeleteProjectEntry,
+      onFetchProjectSessions,
+      getSessionRuntimeState
+    ]
+  )
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -4121,107 +4328,24 @@ function App(): React.JSX.Element {
           refreshSkills={refreshSkills}
           refreshMcpServers={refreshMcpServers}
           setIsSettingsOpen={setSettingsOpenWithBrowserGate}
-          requestTrustedOverlay={openLocalTrustedOverlay}
-          cancelTrustedOverlay={cancelLocalTrustedOverlay}
           isWorkspaceSidebarPreviewOpen={isWorkspaceSidebarPreviewOpen}
           visibleWorkspaceSidebarPreview={visibleWorkspaceSidebarPreview}
           workspaceSidebarPreviewMode={workspaceSidebarPreviewMode}
           workspaceSidebarPreviewWidth={workspaceSidebarPreviewWidth}
           clearWorkspaceSidebarPreviewCloseTimer={clearWorkspaceSidebarPreviewCloseTimer}
           closeWorkspaceSidebarPreview={closeWorkspaceSidebarPreview}
-          sessions={sessions}
-          activeSessionPath={sidebarSelectedSessionPath}
-          activeCwd={activeCwd}
-          projects={projects}
-          projectSessionRefreshKey={projectSessionRefreshKey}
-          onNewChat={onNewChatFromSidebar}
-          setIsNewProjectDialogOpen={setNewProjectDialogOpenWithBrowserGate}
-          onSelectSession={onOpenSessionFromSidebar}
-          onRenameSession={onRenameSession}
-          onDeleteSession={onDeleteSession}
-          onExportSession={onExportSession}
-          onStartProjectChat={onStartProjectChatFromSidebar}
-          onDeleteProjectEntry={onDeleteProjectEntry}
-          onFetchProjectSessions={onFetchProjectSessions}
-          getSessionRuntimeState={getSessionRuntimeState}
+          sidebarProps={workspaceSidebarProps}
+          onPreviewNavigate={onWorkspaceSidebarPreviewNavigate}
         />
 
         <AppWorkspaceSidebar
+          {...workspaceSidebarProps}
           isSidebarOpen={isSidebarOpen}
           sidebarWidth={sidebarWidth}
           activeView={activeView}
           activeChatView={activeChatView}
           onStartSidebarResize={onStartSidebarResize}
-          activeWorkspaceIsProject={activeWorkspaceIsProject}
-          activeWorkspaceTitle={activeWorkspaceTitle}
-          activeWorkspaceScopeLabel={activeWorkspaceScopeLabel}
           workspaceSidebarMode={workspaceSidebarMode}
-          workspaceRootPath={workspaceFilesRootPath}
-          isRemoteProject={activeProjectLocation?.kind === 'ssh'}
-          remoteHostAlias={activeProject?.remoteHostAlias}
-          remoteConnection={activeRemoteConnection}
-          onRetryRemoteConnection={onRetryRemoteConnection}
-          activeWorkspacePath={activeWorkspaceSidePanelPath}
-          workspaceFileTreeRevision={workspaceSidePanelTreeRevision}
-          onOpenWorkspaceFile={onOpenWorkspaceFileFromSidebar}
-          onListWorkspaceDirectory={onListPreviewDirectory}
-          runtimeProjectCwd={activeProject?.workingDirectory ?? ''}
-          runtimeStatus={analysisJupyterRuntimeStatus}
-          isRuntimeLoading={isLoadingAnalysisJupyterRuntime || isStartingAnalysisJupyter}
-          runtimeClosingNotebookPath={closingRuntimeNotebookPath}
-          onOpenRuntimeNotebook={onOpenNotebookWorkspaceFile}
-          onRefreshRuntime={() => {
-            void refreshAnalysisJupyterRuntimeStatus()
-          }}
-          onStartRuntime={(cwd) => {
-            void onStartAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
-          }}
-          onStopRuntime={(cwd) => {
-            void onStopAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
-          }}
-          onStopRuntimeNotebookKernel={(notebookPath) => {
-            void onStopRuntimeNotebookSession(notebookPath)
-          }}
-          phiPlugins={phiPluginsState.plugins}
-          activePhiPluginId={activePhiPluginId}
-          isLoadingPhiPlugins={phiPluginsState.loading}
-          onOpenPhiPlugin={onOpenPhiPluginTab}
-          onOpenPhiPluginCatalog={() => setIsPhiPluginCatalogOpen(true)}
-          isPhiPluginCatalogOpen={isPhiPluginCatalogOpen}
-          skills={skills}
-          activeSkillId={activeSkillId}
-          isLoadingSkills={isLoadingSkills}
-          onOpenSkill={onOpenSkillTab}
-          onOpenSkillCatalog={() => setIsSkillCatalogOpen(true)}
-          mcpServers={mcpServers}
-          activeMcpServerId={activeMcpServerId}
-          onOpenMcpServer={onOpenMcpServerTab}
-          onRefreshMcpServers={refreshMcpServers}
-          wrapperCatalog={wrapperCatalog}
-          selectedWrapperId={selectedWrapperId}
-          isLoadingWrappers={isLoadingWrappers}
-          onOpenWrapper={onOpenWrapperTab}
-          onRefreshWrappers={() => {
-            void refreshWrappers()
-          }}
-          sessions={sessions}
-          activeSessionPath={sidebarSelectedSessionPath}
-          activeCwd={activeCwd}
-          activeProjectId={activeProjectId}
-          projects={projects}
-          projectSessionRefreshKey={projectSessionRefreshKey}
-          onNewChat={onNewChatFromSidebar}
-          setIsNewProjectDialogOpen={setNewProjectDialogOpenWithBrowserGate}
-          requestTrustedOverlay={openLocalTrustedOverlay}
-          cancelTrustedOverlay={cancelLocalTrustedOverlay}
-          onSelectSession={onOpenSessionFromSidebar}
-          onRenameSession={onRenameSession}
-          onDeleteSession={onDeleteSession}
-          onExportSession={onExportSession}
-          onStartProjectChat={onStartProjectChatFromSidebar}
-          onDeleteProjectEntry={onDeleteProjectEntry}
-          onFetchProjectSessions={onFetchProjectSessions}
-          getSessionRuntimeState={getSessionRuntimeState}
         />
 
         <SkillCatalogDialog
@@ -4332,7 +4456,15 @@ function App(): React.JSX.Element {
                 ) : null}
               </Box>
             ) : null}
-            <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
+            <Box
+              sx={{
+                flex: 1,
+                minHeight: 0,
+                minWidth: 0,
+                display: 'flex',
+                overflow: 'hidden'
+              }}
+            >
               {showWorkspaceTabs ? (
                 <Box
                   sx={{
@@ -4477,7 +4609,6 @@ function App(): React.JSX.Element {
                           !pendingApproval &&
                           !pendingUserInteraction &&
                           !browserOverlaySuspended &&
-                          !isWorkspaceSidebarPreviewOpen &&
                           !isSettingsOpen &&
                           !isSessionSearchOpen &&
                           !isProviderDialogOpen &&

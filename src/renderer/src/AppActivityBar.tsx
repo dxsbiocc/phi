@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, type FocusEvent } from 'react'
+import { memo, useCallback, useRef, useState, type FocusEvent } from 'react'
 import { Box, IconButton, Paper, Popper, Tooltip } from '@mui/material'
 import type { SxProps, Theme } from '@mui/material/styles'
 import type { IconType } from 'react-icons'
@@ -12,10 +12,9 @@ import {
   GoProject,
   GoWorkflow
 } from 'react-icons/go'
-import SessionSidebar from './components/SessionSidebar'
+import AppWorkspaceSidebar, { type WorkspaceSidebarDataProps } from './AppWorkspaceSidebar'
 import { PhiIcons } from './icons'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
-import type { Project, SessionRuntimeState, SessionSummary } from './types'
 
 const activityBarWidth = 48
 const macTitlebarHeight = 44
@@ -123,7 +122,9 @@ function WorkspaceSidebarNavButton({
   useContentPreview,
   onPreviewOpen,
   onPreviewClose,
-  onClick
+  onClick,
+  previewOpen,
+  onFocusPreview
 }: {
   mode: WorkspaceSidebarMode
   label: string
@@ -133,11 +134,21 @@ function WorkspaceSidebarNavButton({
   onPreviewOpen: (mode: WorkspaceSidebarMode, anchorEl: HTMLElement) => void
   onPreviewClose: () => void
   onClick: () => void
+  previewOpen: boolean
+  onFocusPreview: () => void
 }): React.JSX.Element {
   const button = (
     <IconButton
       size="small"
       aria-label={label}
+      aria-expanded={useContentPreview ? previewOpen : undefined}
+      aria-controls={previewOpen ? 'workspace-sidebar-preview' : undefined}
+      onKeyDown={(event) => {
+        if (event.key !== 'ArrowRight' || !useContentPreview) return
+        event.preventDefault()
+        onPreviewOpen(mode, event.currentTarget)
+        onFocusPreview()
+      }}
       color={active ? 'primary' : 'default'}
       sx={activityBarButtonSx(active)}
       onMouseEnter={(event) => {
@@ -175,35 +186,19 @@ export type AppActivityBarProps = {
   refreshSkills: () => Promise<void>
   refreshMcpServers: () => Promise<void>
   setIsSettingsOpen: (open: boolean) => void
-  requestTrustedOverlay: (key: string, publish: () => void, onCancel: () => void) => void
-  cancelTrustedOverlay: (key: string) => void
 
   isWorkspaceSidebarPreviewOpen: boolean
-  visibleWorkspaceSidebarPreview: { mode: WorkspaceSidebarMode; anchorEl: HTMLElement } | null
+  visibleWorkspaceSidebarPreview: {
+    mode: WorkspaceSidebarMode
+    anchorEl: HTMLElement
+  } | null
   workspaceSidebarPreviewMode: WorkspaceSidebarMode
   workspaceSidebarPreviewWidth: number
   clearWorkspaceSidebarPreviewCloseTimer: () => void
   closeWorkspaceSidebarPreview: () => void
 
-  sessions: SessionSummary[]
-  activeSessionPath: string | null
-  activeCwd: string
-  projects: Project[]
-  projectSessionRefreshKey: number
-  onNewChat: () => Promise<void>
-  setIsNewProjectDialogOpen: (open: boolean) => void
-  onSelectSession: (path: string) => Promise<void>
-  onRenameSession: (path: string, name: string) => Promise<void>
-  onDeleteSession: (path: string) => Promise<void>
-  onExportSession: (session: SessionSummary) => void
-  onStartProjectChat: (project: Project) => Promise<void>
-  onDeleteProjectEntry: (project: Project) => Promise<void>
-  onFetchProjectSessions: (workingDirectory: string) => Promise<SessionSummary[]>
-  getSessionRuntimeState: (
-    path: string,
-    cwd: string,
-    phiSessionId?: string | null
-  ) => SessionRuntimeState | null
+  sidebarProps: WorkspaceSidebarDataProps
+  onPreviewNavigate: () => void
 }
 
 function AppActivityBarImpl({
@@ -218,31 +213,17 @@ function AppActivityBarImpl({
   refreshSkills,
   refreshMcpServers,
   setIsSettingsOpen,
-  requestTrustedOverlay,
-  cancelTrustedOverlay,
   isWorkspaceSidebarPreviewOpen,
   visibleWorkspaceSidebarPreview,
   workspaceSidebarPreviewMode,
   workspaceSidebarPreviewWidth,
   clearWorkspaceSidebarPreviewCloseTimer,
   closeWorkspaceSidebarPreview,
-  sessions,
-  activeSessionPath,
-  activeCwd,
-  projects,
-  projectSessionRefreshKey,
-  onNewChat,
-  setIsNewProjectDialogOpen,
-  onSelectSession,
-  onRenameSession,
-  onDeleteSession,
-  onExportSession,
-  onStartProjectChat,
-  onDeleteProjectEntry,
-  onFetchProjectSessions,
-  getSessionRuntimeState
+  sidebarProps,
+  onPreviewNavigate
 }: AppActivityBarProps): React.JSX.Element {
   const previewInteractionLockedRef = useRef(false)
+  const [previewInteractionLocked, setPreviewInteractionLocked] = useState(false)
   const previewSurfaceActiveRef = useRef(false)
   const requestWorkspaceSidebarPreviewClose = useCallback((): void => {
     if (previewInteractionLockedRef.current) {
@@ -254,6 +235,7 @@ function AppActivityBarImpl({
   const handleWorkspaceSidebarPreviewInteractionChange = useCallback(
     (active: boolean): void => {
       previewInteractionLockedRef.current = active
+      setPreviewInteractionLocked(active)
       if (active) {
         clearWorkspaceSidebarPreviewCloseTimer()
       } else if (!previewSurfaceActiveRef.current) {
@@ -281,8 +263,46 @@ function AppActivityBarImpl({
     },
     [requestWorkspaceSidebarPreviewClose]
   )
-  const sessionSidebarPreviewMode =
-    workspaceSidebarPreviewMode === 'projects' ? 'projects' : 'conversations'
+  const skipPreviewFocusRef = useRef(false)
+  const refreshInFlightRef = useRef(new Set<WorkspaceSidebarMode>())
+  const previewRefreshers: Partial<Record<WorkspaceSidebarMode, () => Promise<void>>> = {
+    runtime: refreshAnalysisJupyterRuntimeStatus,
+    plugins: refreshPhiPlugins,
+    skills: refreshSkills,
+    mcp: refreshMcpServers
+  }
+  const refreshForMode = (mode: WorkspaceSidebarMode): (() => Promise<void>) | undefined =>
+    previewRefreshers[mode]
+  const handlePreviewOpen = (mode: WorkspaceSidebarMode, anchorEl: HTMLElement): void => {
+    if (skipPreviewFocusRef.current) return
+    openWorkspaceSidebarPreview(mode, anchorEl)
+    const refresh = refreshForMode(mode)
+    if (!refresh || refreshInFlightRef.current.has(mode)) return
+    refreshInFlightRef.current.add(mode)
+    void refresh()
+      .catch(() => undefined)
+      .finally(() => refreshInFlightRef.current.delete(mode))
+  }
+  const focusPreview = (): void => {
+    window.requestAnimationFrame(() => {
+      const preview = document.getElementById('workspace-sidebar-preview')
+      const first = preview?.querySelector<HTMLElement>(
+        'input:not([disabled]), button:not([disabled]), [tabindex="0"]'
+      )
+      const target = first ?? preview
+      target?.focus()
+    })
+  }
+  const navigationItems = [
+    { mode: 'conversations', label: '对话', icon: NavChatIcon },
+    { mode: 'projects', label: '项目', icon: NavProjectsIcon },
+    { mode: 'files', label: '文件', icon: NavFilesIcon },
+    { mode: 'runtime', label: '运行时', icon: NavRuntimeIcon },
+    { mode: 'plugins', label: '插件', icon: NavPluginsIcon },
+    { mode: 'skills', label: '技能', icon: NavSkillsIcon },
+    { mode: 'mcp', label: '连接器', icon: NavMcpIcon },
+    { mode: 'wrappers', label: 'Wrappers', icon: NavWrappersIcon }
+  ] as const
 
   return (
     <>
@@ -308,108 +328,42 @@ function AppActivityBarImpl({
           }
         }}
       >
-        <WorkspaceSidebarNavButton
-          mode="conversations"
-          label="对话"
-          icon={NavChatIcon}
-          active={isWorkspaceSidebarModeExpanded('conversations')}
-          useContentPreview={shouldUseWorkspaceSidebarPreview('conversations')}
-          onPreviewOpen={openWorkspaceSidebarPreview}
-          onPreviewClose={requestWorkspaceSidebarPreviewClose}
-          onClick={() => onSelectWorkspaceView('chat')}
-        />
-        <WorkspaceSidebarNavButton
-          mode="projects"
-          label="项目"
-          icon={NavProjectsIcon}
-          active={isWorkspaceSidebarModeExpanded('projects')}
-          useContentPreview={shouldUseWorkspaceSidebarPreview('projects')}
-          onPreviewOpen={openWorkspaceSidebarPreview}
-          onPreviewClose={requestWorkspaceSidebarPreviewClose}
-          onClick={() => onSelectWorkspaceView('projects')}
-        />
-        <WorkspaceSidebarNavButton
-          mode="files"
-          label="文件"
-          icon={NavFilesIcon}
-          active={isWorkspaceSidebarModeExpanded('files')}
-          useContentPreview={false}
-          onPreviewOpen={openWorkspaceSidebarPreview}
-          onPreviewClose={requestWorkspaceSidebarPreviewClose}
-          onClick={() => onSelectWorkspaceSidebarMode('files')}
-        />
-        <Tooltip title="运行时" placement="right">
-          <IconButton
-            size="small"
-            color={isWorkspaceSidebarModeExpanded('runtime') ? 'primary' : 'default'}
-            sx={activityBarButtonSx(isWorkspaceSidebarModeExpanded('runtime'))}
+        {navigationItems.map(({ mode, label, icon }) => (
+          <WorkspaceSidebarNavButton
+            key={mode}
+            mode={mode}
+            label={label}
+            icon={icon}
+            active={isWorkspaceSidebarModeExpanded(mode)}
+            useContentPreview={shouldUseWorkspaceSidebarPreview(mode)}
+            previewOpen={isWorkspaceSidebarPreviewOpen && workspaceSidebarPreviewMode === mode}
+            onPreviewOpen={handlePreviewOpen}
+            onPreviewClose={requestWorkspaceSidebarPreviewClose}
+            onFocusPreview={focusPreview}
             onClick={() => {
-              onSelectWorkspaceSidebarMode('runtime')
-              void refreshAnalysisJupyterRuntimeStatus()
+              closeWorkspaceSidebarPreview()
+              if (mode === 'conversations' || mode === 'projects') {
+                onSelectWorkspaceView(mode === 'conversations' ? 'chat' : 'projects')
+              } else {
+                onSelectWorkspaceSidebarMode(mode)
+              }
+              const refresh = refreshForMode(mode)
+              if (refresh) void refresh().catch(() => undefined)
             }}
-          >
-            <NavRuntimeIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="插件" placement="right">
-          <IconButton
-            size="small"
-            color={isWorkspaceSidebarModeExpanded('plugins') ? 'primary' : 'default'}
-            sx={activityBarButtonSx(isWorkspaceSidebarModeExpanded('plugins'))}
-            onClick={() => {
-              onSelectWorkspaceSidebarMode('plugins')
-              void refreshPhiPlugins()
-            }}
-          >
-            <NavPluginsIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="技能" placement="right">
-          <IconButton
-            size="small"
-            color={isWorkspaceSidebarModeExpanded('skills') ? 'primary' : 'default'}
-            sx={activityBarButtonSx(isWorkspaceSidebarModeExpanded('skills'))}
-            onClick={() => {
-              onSelectWorkspaceSidebarMode('skills')
-              void refreshSkills()
-            }}
-          >
-            <NavSkillsIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="连接器" placement="right">
-          <IconButton
-            size="small"
-            color={isWorkspaceSidebarModeExpanded('mcp') ? 'primary' : 'default'}
-            sx={activityBarButtonSx(isWorkspaceSidebarModeExpanded('mcp'))}
-            onClick={() => {
-              onSelectWorkspaceSidebarMode('mcp')
-              void refreshMcpServers()
-            }}
-          >
-            <NavMcpIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="Wrappers" placement="right">
-          <IconButton
-            size="small"
-            color={isWorkspaceSidebarModeExpanded('wrappers') ? 'primary' : 'default'}
-            sx={activityBarButtonSx(isWorkspaceSidebarModeExpanded('wrappers'))}
-            onClick={() => onSelectWorkspaceSidebarMode('wrappers')}
-          >
-            <NavWrappersIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
+          />
+        ))}
         <Box sx={{ flex: 1 }} />
-        <Tooltip title="设置" placement="right">
-          <IconButton
-            size="small"
-            onClick={() => setIsSettingsOpen(true)}
-            sx={{ ...activityBarButtonSx(false), mb: 1 }}
-          >
-            <NavSettingsIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
+        <IconButton
+          size="small"
+          aria-label="设置"
+          sx={{ ...activityBarButtonSx(false), mb: 1 }}
+          onClick={() => {
+            closeWorkspaceSidebarPreview()
+            setIsSettingsOpen(true)
+          }}
+        >
+          <NavSettingsIcon fontSize="small" />
+        </IconButton>
       </Box>
 
       <Popper
@@ -426,9 +380,28 @@ function AppActivityBarImpl({
             options: { padding: 8 }
           }
         ]}
-        sx={{ zIndex: (muiTheme) => muiTheme.zIndex.tooltip }}
+        sx={{
+          zIndex: (muiTheme) =>
+            previewInteractionLocked ? muiTheme.zIndex.modal - 1 : muiTheme.zIndex.tooltip
+        }}
       >
         <Paper
+          id="workspace-sidebar-preview"
+          role="region"
+          aria-label="导航内容预览"
+          tabIndex={-1}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape' || !event.currentTarget.contains(event.target as Node))
+              return
+            event.preventDefault()
+            closeWorkspaceSidebarPreview()
+            const anchor = visibleWorkspaceSidebarPreview?.anchorEl
+            if (anchor?.isConnected && document.activeElement !== anchor) {
+              skipPreviewFocusRef.current = true
+              anchor.focus({ preventScroll: true })
+              skipPreviewFocusRef.current = false
+            }
+          }}
           data-phi-workspace-sidebar-hover-preview={workspaceSidebarPreviewMode}
           elevation={8}
           onMouseEnter={handleWorkspaceSidebarPreviewEnter}
@@ -450,49 +423,18 @@ function AppActivityBarImpl({
                 : '0 18px 46px rgba(12, 26, 32, 0.18)'
           }}
         >
-          <SessionSidebar
-            hideWindowDragSpacer
+          <AppWorkspaceSidebar
+            key={workspaceSidebarPreviewMode}
+            {...sidebarProps}
+            isSidebarOpen
+            sidebarWidth={workspaceSidebarPreviewWidth}
+            activeView="chat"
+            activeChatView={null}
+            onStartSidebarResize={() => undefined}
+            workspaceSidebarMode={workspaceSidebarPreviewMode}
             compactHoverPreview
-            requestTrustedOverlay={requestTrustedOverlay}
-            cancelTrustedOverlay={cancelTrustedOverlay}
             onPreviewInteractionChange={handleWorkspaceSidebarPreviewInteractionChange}
-            mode={sessionSidebarPreviewMode}
-            sessions={sessions}
-            activeSessionPath={activeSessionPath}
-            activeCwd={activeCwd}
-            projects={projects}
-            projectSessionRefreshKey={projectSessionRefreshKey}
-            onNewChat={() => {
-              closeWorkspaceSidebarPreview()
-              void onNewChat()
-            }}
-            onNewProject={() => {
-              closeWorkspaceSidebarPreview()
-              setIsNewProjectDialogOpen(true)
-            }}
-            onSelectSession={(path) => {
-              closeWorkspaceSidebarPreview()
-              void onSelectSession(path)
-            }}
-            onRenameSession={(path, name) => {
-              void onRenameSession(path, name)
-            }}
-            onDeleteSession={(path) => {
-              void onDeleteSession(path)
-            }}
-            onExportSession={(session) => {
-              closeWorkspaceSidebarPreview()
-              onExportSession(session)
-            }}
-            onStartProjectChat={(project) => {
-              closeWorkspaceSidebarPreview()
-              void onStartProjectChat(project)
-            }}
-            onDeleteProject={(project) => {
-              void onDeleteProjectEntry(project)
-            }}
-            onFetchProjectSessions={onFetchProjectSessions}
-            getSessionRuntimeState={getSessionRuntimeState}
+            onPreviewNavigate={onPreviewNavigate}
           />
         </Paper>
       </Popper>
@@ -502,9 +444,8 @@ function AppActivityBarImpl({
 
 // Same rationale as AppWorkspaceSidebar's comparator: App() re-renders on
 // every agent-stream event, but this bar's own visible state only depends on
-// these fields — `sessions`/`projects` are reference-stable except when their
-// data actually changes, and `projectSessionRefreshKey` reliably bumps
-// whenever any session's runtime state changes anywhere in the app.
+// these fields and App's memoized shared sidebar data. Stream-only changes
+// do not rebuild resource previews; refreshed resource arrays do.
 function appActivityBarPropsEqual(prev: AppActivityBarProps, next: AppActivityBarProps): boolean {
   return (
     prev.isWorkspaceSidebarModeExpanded === next.isWorkspaceSidebarModeExpanded &&
@@ -515,11 +456,8 @@ function appActivityBarPropsEqual(prev: AppActivityBarProps, next: AppActivityBa
       next.visibleWorkspaceSidebarPreview?.anchorEl &&
     prev.workspaceSidebarPreviewMode === next.workspaceSidebarPreviewMode &&
     prev.workspaceSidebarPreviewWidth === next.workspaceSidebarPreviewWidth &&
-    prev.sessions === next.sessions &&
-    prev.activeSessionPath === next.activeSessionPath &&
-    prev.activeCwd === next.activeCwd &&
-    prev.projects === next.projects &&
-    prev.projectSessionRefreshKey === next.projectSessionRefreshKey
+    prev.sidebarProps === next.sidebarProps &&
+    prev.onPreviewNavigate === next.onPreviewNavigate
   )
 }
 

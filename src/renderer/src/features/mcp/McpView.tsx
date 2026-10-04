@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import { Box, Divider, InputAdornment, List, Stack, TextField, Typography } from '@mui/material'
 import { alpha, type Theme } from '@mui/material/styles'
 import { PhiIcons } from '../../icons'
@@ -10,6 +10,10 @@ import { ConnectorIcon } from './components/ConnectorIcon'
 import { McpDetailPanel as McpDetail, type McpDetailPanelProps } from './components/McpDetailPanel'
 import { SidebarAccordionGroup } from '../../components/SidebarAccordionGroup'
 import { DiscoverButton } from '../../components/DiscoverButton'
+import {
+  createTrustedDialogRequestCoordinator,
+  type TrustedOverlayRequest
+} from '../../lib/trustedOverlayRequests'
 
 const SearchIcon = PhiIcons.action.search
 
@@ -29,6 +33,9 @@ export type McpSidebarProps = {
   sidebarWidth?: SidebarWidth
   onSelectServer: (server: McpServerSummary) => void
   onRefreshServers?: () => Promise<void>
+  requestTrustedOverlay?: TrustedOverlayRequest
+  cancelTrustedOverlay?: (key: string) => void
+  onPreviewInteractionChange?: (active: boolean) => void
 }
 
 export type McpDetailProps = McpDetailPanelProps
@@ -152,10 +159,48 @@ export function McpSidebar({
   activeServerId,
   sidebarWidth = '100%',
   onSelectServer,
-  onRefreshServers
+  onRefreshServers,
+  requestTrustedOverlay,
+  cancelTrustedOverlay,
+  onPreviewInteractionChange
 }: McpSidebarProps): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [catalogOpen, setCatalogOpen] = useState(false)
+  const [catalogPending, setCatalogPending] = useState(false)
+  const catalogDialogs = useMemo(
+    () =>
+      createTrustedDialogRequestCoordinator({
+        request: requestTrustedOverlay
+          ? (key, publish, cancel) => {
+              try {
+                requestTrustedOverlay(key, publish, () => {
+                  setCatalogPending(false)
+                  cancel()
+                })
+              } catch (error) {
+                setCatalogPending(false)
+                throw error
+              }
+            }
+          : undefined,
+        cancel: cancelTrustedOverlay
+      }),
+    [requestTrustedOverlay, cancelTrustedOverlay]
+  )
+  useEffect(() => () => catalogDialogs.dispose(), [catalogDialogs])
+  useEffect(() => {
+    if (!catalogOpen && !catalogPending) return undefined
+    onPreviewInteractionChange?.(true)
+    return () => onPreviewInteractionChange?.(false)
+  }, [catalogOpen, catalogPending, onPreviewInteractionChange])
+  const openCatalog = (): void => {
+    onPreviewInteractionChange?.(true)
+    setCatalogPending(true)
+    catalogDialogs.request('mcp-sidebar-catalog', () => {
+      setCatalogPending(false)
+      setCatalogOpen(true)
+    })
+  }
   const [pendingServerId, setPendingServerId] = useState<string | null>(null)
   const [enabledOverride, setEnabledOverride] = useState<Record<string, boolean>>({})
   const [expandedCategory, setExpandedCategory] = useState<string | null>(() => {
@@ -243,7 +288,7 @@ export function McpSidebar({
             连接器
           </Typography>
           {onRefreshServers && (
-            <DiscoverButton expanded={catalogOpen} onClick={() => setCatalogOpen(true)} />
+            <DiscoverButton expanded={catalogOpen || catalogPending} onClick={openCatalog} />
           )}
         </Stack>
         <TextField
@@ -344,7 +389,11 @@ export function McpSidebar({
         <McpConnectorCatalogDialog
           open={catalogOpen}
           servers={servers}
-          onClose={() => setCatalogOpen(false)}
+          onClose={() => {
+            catalogDialogs.cancel('mcp-sidebar-catalog')
+            setCatalogPending(false)
+            setCatalogOpen(false)
+          }}
           onRefresh={onRefreshServers}
         />
       )}
