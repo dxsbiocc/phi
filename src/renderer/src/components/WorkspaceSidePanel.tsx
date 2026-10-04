@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import { GoScreenFull, GoScreenNormal, GoX } from 'react-icons/go'
 import { PhiIcons } from '../icons'
+import { WINDOW_TITLEBAR_HEIGHT } from '../lib/windowChromeLayout'
 import type { WorkspaceSidePanelMode } from '../lib/workspaceSidePanelMode'
 import type { DirectoryListing } from '../types'
 import { ProjectFileTree } from '../features/file-preview/components/ProjectFileTree'
@@ -33,8 +34,8 @@ function WorkspaceSidePanelSlotActions({
 }): React.JSX.Element {
   const label = workspacePanelLabels[mode]
   const actionSx = {
-    width: 44,
-    height: 44,
+    width: WINDOW_TITLEBAR_HEIGHT,
+    height: WINDOW_TITLEBAR_HEIGHT,
     borderRadius: 1.25,
     color: 'text.secondary',
     WebkitAppRegion: 'no-drag',
@@ -79,7 +80,7 @@ function WorkspaceSidePanelSlotHeader({
     <Box
       data-phi-workspace-side-panel-slot-header={mode}
       sx={{
-        height: 50,
+        height: WINDOW_TITLEBAR_HEIGHT,
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
@@ -187,7 +188,8 @@ export function WorkspaceSidePanel({
         minHeight: 0,
         flexDirection: 'column',
         gap: 1,
-        py: 1,
+        pt: 0,
+        pb: 1,
         pr: 1,
         bgcolor: 'background.default'
       }}
@@ -216,8 +218,9 @@ export function WorkspaceSidePanel({
               flexDirection: 'column',
               overflow: 'hidden',
               border: 1,
+              borderTop: index === 0 ? 0 : 1,
               borderColor: 'divider',
-              borderRadius: '16px',
+              borderRadius: index === 0 ? '0 0 16px 16px' : '16px',
               bgcolor: 'background.paper'
             }}
           >

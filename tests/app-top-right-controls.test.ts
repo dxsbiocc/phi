@@ -195,9 +195,16 @@ test('workspace sessions and resources share the same tab strip', () => {
 test('workspace top-right controls are app-level chrome, not notebook-only content', () => {
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
 
-  assert.match(appSource, /const titlebarChromeTopOffset = '10px'/)
+  assert.match(
+    appSource,
+    /import \{ WINDOW_TITLEBAR_HEIGHT, windowChromeLayout \} from '\.\/lib\/windowChromeLayout'/
+  )
   assert.match(appSource, /const titlebarChromeHorizontalInset = '14px'/)
   assert.match(appSource, /const titlebarChromeIconButtonSize = 28/)
+  assert.match(
+    appSource,
+    /const titlebarChromeTopOffset = `\$\{\(WINDOW_TITLEBAR_HEIGHT - titlebarChromeIconButtonSize\) \/ 2\}px`/
+  )
   assert.match(appSource, /width: titlebarChromeIconButtonSize/)
   assert.match(appSource, /height: titlebarChromeIconButtonSize/)
   assert.match(appSource, /pointerEvents: 'auto'[\s\S]{0,120}WebkitAppRegion: 'no-drag'/)
@@ -436,11 +443,23 @@ test('workspace file titlebars reserve trailing app chrome only at the window ed
 
 test('collapsed-sidebar workspace titlebars keep their leading reserve with any workbench layout', () => {
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const chromeLayoutSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/lib/windowChromeLayout.ts'),
+    'utf8'
+  )
 
-  assert.match(appSource, /import \{ windowChromeLayout \} from '\.\/lib\/windowChromeLayout'/)
+  assert.match(chromeLayoutSource, /export const WINDOW_TITLEBAR_HEIGHT = 44/)
+  assert.match(
+    appSource,
+    /import \{ WINDOW_TITLEBAR_HEIGHT, windowChromeLayout \} from '\.\/lib\/windowChromeLayout'/
+  )
   assert.match(
     appSource,
     /const chromeLayout = windowChromeLayout\(\{\s*isMac,\s*sidebarOpen: isSidebarOpen,\s*fullscreen: isWindowFullscreen\s*\}\)/
+  )
+  assert.match(
+    appSource,
+    /data-phi-workspace-titlebar="true"[\s\S]{0,180}height: WINDOW_TITLEBAR_HEIGHT/
   )
   assert.match(
     appSource,

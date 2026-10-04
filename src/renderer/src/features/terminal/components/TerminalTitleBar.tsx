@@ -3,6 +3,7 @@ import { Box, Divider, IconButton, Menu, MenuItem, Tooltip, Typography } from '@
 
 import type { TerminalSnapshot } from '../../../../../shared/terminalTypes'
 import { PhiIcons } from '../../../icons'
+import { WINDOW_TITLEBAR_HEIGHT } from '../../../lib/windowChromeLayout'
 
 const AddIcon = PhiIcons.action.add
 const MoreIcon = PhiIcons.action.more
@@ -94,13 +95,15 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
       onContextMenu={openMenu}
       sx={{
         flexShrink: 0,
-        height: 44,
+        height: WINDOW_TITLEBAR_HEIGHT,
         minWidth: 0,
         display: 'flex',
         alignItems: 'center',
         gap: 0.5,
         px: 1.25,
-        color: 'text.primary'
+        color: 'text.primary',
+        borderBottom: 1,
+        borderColor: 'divider'
       }}
     >
       <Box

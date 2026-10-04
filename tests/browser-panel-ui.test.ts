@@ -138,7 +138,7 @@ test('browser tabs expose compact accessible multi-page controls without close p
   assert.match(markup, /aria-label="关闭 Documentation"/)
   assert.match(markup, /aria-label="新建标签页"/)
   assert.match(markup, /overflow-x:auto/)
-  assert.match(markup, /height:50px/)
+  assert.match(markup, /height:44px/)
   assert.match(markup, /min-height:44px/)
   assert.match(markup, /width:40px/)
   assert.match(markup, /width:44px/)
@@ -172,6 +172,22 @@ test('browser tabs expose compact accessible multi-page controls without close p
   )
   assert.match(panelSource, /id="phi-browser-viewport"/)
   assert.match(panelSource, /role="tabpanel"/)
+})
+
+test('browser tabs use the shared window titlebar height', () => {
+  const tabsSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/browser/components/BrowserTabs.tsx'),
+    'utf8'
+  )
+
+  assert.match(
+    tabsSource,
+    /import \{ WINDOW_TITLEBAR_HEIGHT \} from '\.\.\/\.\.\/\.\.\/lib\/windowChromeLayout'/
+  )
+  assert.match(
+    tabsSource,
+    /data-phi-browser-tabs="true"[\s\S]{0,180}height: WINDOW_TITLEBAR_HEIGHT/
+  )
 })
 
 test('browser panel and status panes render friendly empty restore and failure states', () => {

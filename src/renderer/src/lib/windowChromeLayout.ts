@@ -1,3 +1,5 @@
+export const WINDOW_TITLEBAR_HEIGHT = 44
+
 const activityBarWidth = 48
 const macChromeHorizontalInset = 14
 const macWindowedChromeGap = 18

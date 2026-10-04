@@ -3,6 +3,7 @@ import { Box, CircularProgress, IconButton, Tooltip, Typography } from '@mui/mat
 import { alpha } from '@mui/material/styles'
 import type { BrowserTabSnapshot } from '../../../../../shared/browserTypes'
 import { PhiIcons } from '../../../icons'
+import { WINDOW_TITLEBAR_HEIGHT } from '../../../lib/windowChromeLayout'
 import { browserTabDisplayTitle, isBrowserTabActivationKey } from '../lib/browserPanelState'
 
 const AddIcon = PhiIcons.action.add
@@ -26,7 +27,7 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
       sx={{
         flexShrink: 0,
         minWidth: 0,
-        height: 50,
+        height: WINDOW_TITLEBAR_HEIGHT,
         display: 'flex',
         alignItems: 'center',
         gap: 0.5,
@@ -74,8 +75,8 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
                 flex: '0 0 clamp(120px, 32vw, 180px)',
                 minWidth: 120,
                 maxWidth: 180,
-                height: 44,
-                minHeight: 44,
+                height: WINDOW_TITLEBAR_HEIGHT,
+                minHeight: WINDOW_TITLEBAR_HEIGHT,
                 minInlineSize: 0,
                 display: 'flex',
                 alignItems: 'center',
@@ -138,7 +139,7 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
                   flex: 1,
                   alignSelf: 'stretch',
                   minWidth: 0,
-                  minHeight: 44,
+                  minHeight: WINDOW_TITLEBAR_HEIGHT,
                   display: 'flex',
                   alignItems: 'center',
                   gap: 0.75,
@@ -231,7 +232,12 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
             disabled={props.disabled}
             size="small"
             onClick={props.onNewTab}
-            sx={{ width: 44, height: 44, borderRadius: 1.25, WebkitAppRegion: 'no-drag' }}
+            sx={{
+              width: 44,
+              height: WINDOW_TITLEBAR_HEIGHT,
+              borderRadius: 1.25,
+              WebkitAppRegion: 'no-drag'
+            }}
           >
             <AddIcon sx={{ fontSize: 18 }} />
           </IconButton>

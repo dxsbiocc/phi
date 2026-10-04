@@ -146,6 +146,26 @@ test('terminal title bar matches the compact single-terminal control surface', (
   }
 })
 
+test('terminal title bar uses the shared window titlebar height and divider', () => {
+  const titleBarSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/terminal/components/TerminalTitleBar.tsx'),
+    'utf8'
+  )
+
+  assert.match(
+    titleBarSource,
+    /import \{ WINDOW_TITLEBAR_HEIGHT \} from '\.\.\/\.\.\/\.\.\/lib\/windowChromeLayout'/
+  )
+  assert.match(
+    titleBarSource,
+    /data-phi-terminal-title-bar="true"[\s\S]{0,180}height: WINDOW_TITLEBAR_HEIGHT/
+  )
+  assert.match(
+    titleBarSource,
+    /height: WINDOW_TITLEBAR_HEIGHT[\s\S]{0,240}borderBottom: 1,[\s\S]{0,80}borderColor: 'divider'/
+  )
+})
+
 test('terminal title bar switches to a compact selector for multiple terminals', () => {
   const markup = titleBarMarkup({
     terminals: [

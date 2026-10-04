@@ -39,6 +39,7 @@ function renderWorkspaceSidePanel(
   options: {
     slots?: Array<'jobs' | 'terminal' | 'browser'>
     maximized?: 'jobs' | 'terminal' | 'browser' | null
+    singleVisibleMode?: 'jobs' | 'terminal' | 'browser' | null
     content?: string
   } = {}
 ): string {
@@ -51,6 +52,7 @@ function renderWorkspaceSidePanel(
         width: 340,
         slots: options.slots ?? ['terminal'],
         maximized: options.maximized ?? null,
+        singleVisibleMode: options.singleVisibleMode ?? null,
         onCloseSlot: () => undefined,
         onToggleMaximized: () => undefined,
         renderSlot: (mode, context) =>
@@ -228,11 +230,80 @@ test('browser side panel renders passed browser content instead of a placeholder
   assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card="browser"/)
   assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card="terminal"/)
   assert.match(markup, /height:100vh/)
-  assert.match(markup, /padding-top:8px/)
-  assert.match(markup, /border-radius:16px/)
+  assert.match(markup, /padding-top:0/)
+  assert.match(markup, /padding-bottom:8px/)
+  assert.match(markup, /border-top:0/)
+  assert.match(markup, /border-radius:0 0 16px 16px/)
   assert.match(markup, /overflow:hidden/)
   assert.doesNotMatch(markup, /aria-label="在右侧工作区展开浏览器"/)
   assert.match(markup, /aria-label="关闭浏览器"/)
+})
+
+test('workspace side panel uses the shared titlebar height for jobs headers', () => {
+  const chromeLayoutSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/lib/windowChromeLayout.ts'),
+    'utf8'
+  )
+  const sidePanelSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/WorkspaceSidePanel.tsx'),
+    'utf8'
+  )
+  const markup = renderWorkspaceSidePanel({ slots: ['jobs'], content: '后台任务列表' })
+
+  assert.match(chromeLayoutSource, /export const WINDOW_TITLEBAR_HEIGHT = 44/)
+  assert.match(
+    sidePanelSource,
+    /import \{ WINDOW_TITLEBAR_HEIGHT \} from '\.\.\/lib\/windowChromeLayout'/
+  )
+  assert.match(
+    sidePanelSource,
+    /data-phi-workspace-side-panel-slot-header=\{mode\}[\s\S]{0,180}height: WINDOW_TITLEBAR_HEIGHT/
+  )
+  assert.match(markup, /data-phi-workspace-side-panel-slot-header="jobs"/)
+  assert.match(markup, /height:44px/)
+})
+
+test('workspace side panel removes the top inset and border from every first visible slot', () => {
+  const sidePanelSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/WorkspaceSidePanel.tsx'),
+    'utf8'
+  )
+
+  assert.match(sidePanelSource, /pt: 0,\s*pb: 1/)
+  assert.match(sidePanelSource, /borderTop: index === 0 \? 0 : 1/)
+  assert.match(sidePanelSource, /borderRadius: index === 0 \? '0 0 16px 16px' : '16px'/)
+
+  const layouts = [
+    renderWorkspaceSidePanel({ slots: ['browser', 'terminal'], content: '分屏' }),
+    renderWorkspaceSidePanel({
+      slots: ['browser', 'terminal'],
+      maximized: 'terminal',
+      content: '最大化'
+    }),
+    renderWorkspaceSidePanel({
+      slots: ['browser', 'terminal'],
+      singleVisibleMode: 'terminal',
+      content: '单槽'
+    })
+  ]
+
+  for (const markup of layouts) {
+    const workbenchTag =
+      markup.match(/<div[^>]*data-phi-workspace-tools-side-panel="true"[^>]*>/u)?.[0] ?? ''
+    const firstSlotTag =
+      markup.match(/<div[^>]*data-phi-workspace-side-panel-slot="[^"]+"[^>]*>/u)?.[0] ?? ''
+    const workbenchClass = workbenchTag.match(/class="[^"]*\b(css-[^"\s]+)/u)?.[1] ?? ''
+    const firstSlotClass = firstSlotTag.match(/class="[^"]*\b(css-[^"\s]+)/u)?.[1] ?? ''
+    const workbenchStyles =
+      markup.match(new RegExp(`\\.${workbenchClass}\\{[^}]*\\}`, 'u'))?.[0] ?? ''
+    const firstSlotStyles =
+      markup.match(new RegExp(`\\.${firstSlotClass}\\{[^}]*\\}`, 'u'))?.[0] ?? ''
+
+    assert.match(workbenchStyles, /padding-top:0/)
+    assert.match(workbenchStyles, /padding-bottom:8px/)
+    assert.match(firstSlotStyles, /border-top:0/)
+    assert.match(firstSlotStyles, /border-radius:0 0 16px 16px/)
+  }
 })
 
 test('workspace side panel shows jobs content instead of tool cards in jobs mode', () => {

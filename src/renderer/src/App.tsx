@@ -97,7 +97,7 @@ import {
 } from './stores/sessionStore'
 import { getRendererApi } from './lib/rendererApi'
 import { useWindowFullscreen } from './lib/useWindowFullscreen'
-import { windowChromeLayout } from './lib/windowChromeLayout'
+import { WINDOW_TITLEBAR_HEIGHT, windowChromeLayout } from './lib/windowChromeLayout'
 import {
   absoluteWorkspacePath,
   fileNameFromPath,
@@ -208,7 +208,6 @@ type SendPromptOptions = {
 }
 
 const activityBarWidth = 48
-const macTitlebarHeight = 44
 const minNavigationPaneWidth = 240
 const maxNavigationPaneWidth = 520
 const workspaceSidePanelWidthDefault = 340
@@ -217,9 +216,9 @@ const maxWorkspaceSidePanelWidth = 520
 const browserSidePanelWidthDefault = 600
 const minBrowserSidePanelWidth = 480
 const maxBrowserSidePanelWidth = 820
-const titlebarChromeTopOffset = '10px'
 const titlebarChromeHorizontalInset = '14px'
 const titlebarChromeIconButtonSize = 28
+const titlebarChromeTopOffset = `${(WINDOW_TITLEBAR_HEIGHT - titlebarChromeIconButtonSize) / 2}px`
 const titlebarTrailingToggleChromeReserve = '120px'
 
 function isWorkspaceFileWorkspaceTab(
@@ -525,7 +524,7 @@ function WorkspaceFileHeader({
     <Box
       data-phi-workspace-file-header="true"
       sx={{
-        height: macTitlebarHeight,
+        height: WINDOW_TITLEBAR_HEIGHT,
         flexShrink: 0,
         borderBottom: 1,
         borderColor: 'divider',
@@ -566,7 +565,7 @@ function WorkspaceResourceHeader({
     <Box
       data-phi-workspace-resource-header="true"
       sx={{
-        height: macTitlebarHeight,
+        height: WINDOW_TITLEBAR_HEIGHT,
         flexShrink: 0,
         borderBottom: 1,
         borderColor: 'divider',
@@ -4273,7 +4272,7 @@ function App(): React.JSX.Element {
               <Box
                 data-phi-workspace-titlebar="true"
                 sx={{
-                  height: macTitlebarHeight,
+                  height: WINDOW_TITLEBAR_HEIGHT,
                   flexShrink: 0,
                   display: 'flex',
                   alignItems: 'center',
@@ -4661,7 +4660,7 @@ function App(): React.JSX.Element {
           isSidebarOpen={isSidebarOpen}
           activityBarWidth={activityBarWidth}
           sidebarWidth={sidebarWidth}
-          macTitlebarHeight={macTitlebarHeight}
+          macTitlebarHeight={WINDOW_TITLEBAR_HEIGHT}
         />
         <SessionExportDialog
           session={exportTarget}
