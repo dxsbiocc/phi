@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
-import { createElement, type ComponentProps } from 'react'
+import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import AnalysisView, {
@@ -36,7 +36,11 @@ function renderAnalysisView(props: AnalysisViewProps = {}): string {
 }
 
 function renderWorkspaceSidePanel(
-  props: Partial<ComponentProps<typeof WorkspaceSidePanel>> = {}
+  options: {
+    slots?: Array<'jobs' | 'terminal' | 'browser'>
+    maximized?: 'jobs' | 'terminal' | 'browser' | null
+    content?: string
+  } = {}
 ): string {
   const theme = createTheme()
   return renderToStaticMarkup(
@@ -45,7 +49,20 @@ function renderWorkspaceSidePanel(
       { theme },
       createElement(WorkspaceSidePanel, {
         width: 340,
-        ...props
+        slots: options.slots ?? ['terminal'],
+        maximized: options.maximized ?? null,
+        onCloseSlot: () => undefined,
+        onToggleMaximized: () => undefined,
+        renderSlot: (mode, context) =>
+          options.content
+            ? createElement(
+                'div',
+                null,
+                options.content,
+                // Browser and terminal draw their own header and host the slot actions.
+                mode === 'browser' || mode === 'terminal' ? context.headerActions : null
+              )
+            : null
       })
     )
   )
@@ -185,11 +202,12 @@ test('analysis view does not own the workspace side panel', () => {
   assert.doesNotMatch(markup, /workflows\/main\.nf/)
 })
 
-test('terminal side panel renders passed terminal content without the legacy placeholder', () => {
-  const markup = renderWorkspaceSidePanel({ children: '终端面板内容' })
+test('terminal side panel renders the terminal feature instead of a placeholder card', () => {
+  const markup = renderWorkspaceSidePanel({ content: '终端面板内容' })
 
   assert.match(markup, /data-phi-workspace-tools-side-panel="true"/)
-  assert.match(markup, /data-phi-workspace-side-panel-mode="terminal"/)
+  assert.match(markup, /data-phi-workspace-side-panel-modes="terminal"/)
+  assert.match(markup, /data-phi-workspace-side-panel-slot="terminal"/)
   assert.match(markup, /终端面板内容/)
   assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card=/)
   assert.doesNotMatch(markup, /浏览器/)
@@ -202,20 +220,57 @@ test('terminal side panel renders passed terminal content without the legacy pla
 })
 
 test('browser side panel renders passed browser content instead of a placeholder card', () => {
-  const markup = renderWorkspaceSidePanel({ mode: 'browser', children: '浏览器面板内容' })
+  const markup = renderWorkspaceSidePanel({ slots: ['browser'], content: '浏览器面板内容' })
 
-  assert.match(markup, /data-phi-workspace-side-panel-mode="browser"/)
+  assert.match(markup, /data-phi-workspace-side-panel-modes="browser"/)
+  assert.match(markup, /data-phi-workspace-side-panel-slot="browser"/)
   assert.match(markup, /浏览器面板内容/)
   assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card="browser"/)
   assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card="terminal"/)
+  assert.match(markup, /height:100vh/)
+  assert.match(markup, /padding-top:8px/)
+  assert.match(markup, /border-radius:16px/)
+  assert.match(markup, /overflow:hidden/)
+  assert.doesNotMatch(markup, /aria-label="在右侧工作区展开浏览器"/)
+  assert.match(markup, /aria-label="关闭浏览器"/)
 })
 
 test('workspace side panel shows jobs content instead of tool cards in jobs mode', () => {
-  const markup = renderWorkspaceSidePanel({ mode: 'jobs', children: '后台任务列表' })
+  const markup = renderWorkspaceSidePanel({ slots: ['jobs'], content: '后台任务列表' })
 
-  assert.match(markup, /data-phi-workspace-side-panel-mode="jobs"/)
+  assert.match(markup, /data-phi-workspace-side-panel-modes="jobs"/)
   assert.match(markup, /后台任务列表/)
   assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card=/)
+})
+
+test('workspace side panel stacks two slots and gives each slot local controls', () => {
+  const markup = renderWorkspaceSidePanel({
+    slots: ['browser', 'terminal'],
+    content: '浏览器面板内容'
+  })
+
+  assert.match(markup, /data-phi-workspace-side-panel-modes="browser,terminal"/)
+  assert.match(markup, /data-phi-workspace-side-panel-slot="browser"/)
+  assert.match(markup, /data-phi-workspace-side-panel-slot="terminal"/)
+  assert.match(markup, /aria-label="在右侧工作区展开浏览器"/)
+  assert.match(markup, /aria-label="关闭浏览器"/)
+  assert.match(markup, /aria-label="在右侧工作区展开终端"/)
+  assert.match(markup, /aria-label="关闭终端"/)
+  assert.doesNotMatch(markup, /data-phi-workspace-window-controls-reserve/)
+  assert.match(markup, /flex:3 1 0/)
+  assert.match(markup, /flex:2 1 0/)
+})
+
+test('workspace side panel renders only the maximized slot and offers restore', () => {
+  const markup = renderWorkspaceSidePanel({
+    slots: ['browser', 'terminal'],
+    maximized: 'terminal',
+    content: '终端面板内容'
+  })
+
+  assert.doesNotMatch(markup, /data-phi-workspace-side-panel-slot="browser"/)
+  assert.match(markup, /data-phi-workspace-side-panel-slot="terminal"/)
+  assert.match(markup, /aria-label="还原分屏"/)
 })
 
 test('workspace side panel does not render the workspace file tree', () => {

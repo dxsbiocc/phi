@@ -1,12 +1,10 @@
-import { useState, type MouseEvent } from 'react'
+import { useState, type MouseEvent, type ReactNode } from 'react'
 import { Box, Divider, IconButton, Menu, MenuItem, Tooltip, Typography } from '@mui/material'
-import { FiMaximize2, FiMinimize2 } from 'react-icons/fi'
 
 import type { TerminalSnapshot } from '../../../../../shared/terminalTypes'
 import { PhiIcons } from '../../../icons'
 
 const AddIcon = PhiIcons.action.add
-const CloseIcon = PhiIcons.action.close
 const MoreIcon = PhiIcons.action.more
 
 function TitleButton(props: {
@@ -38,7 +36,8 @@ export interface TerminalTitleBarProps {
   activeTerminalId: string | null
   projectName: string
   initialDirectory?: string
-  maximized: boolean
+  /** Maximize/close controls owned by the workspace workbench slot. */
+  headerActions?: ReactNode
   canCreate?: boolean
   busy?: boolean
   canExplainSelection?: boolean
@@ -48,8 +47,6 @@ export interface TerminalTitleBarProps {
   onExplainSelection(): void
   onEnd(terminalId: string): void
   onEndAll(): void
-  onToggleMaximize(): void
-  onCollapse(): void
 }
 
 export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Element {
@@ -172,15 +169,11 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
       >
         <MoreIcon sx={{ fontSize: 18 }} />
       </TitleButton>
-      <TitleButton
-        label={props.maximized ? '还原终端' : '放大终端'}
-        onClick={props.onToggleMaximize}
-      >
-        {props.maximized ? <FiMinimize2 size={17} /> : <FiMaximize2 size={17} />}
-      </TitleButton>
-      <TitleButton label="收起终端面板" onClick={props.onCollapse}>
-        <CloseIcon sx={{ fontSize: 19 }} />
-      </TitleButton>
+      {props.headerActions ? (
+        <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+          {props.headerActions}
+        </Box>
+      ) : null}
 
       <Menu
         anchorEl={menuAnchor}

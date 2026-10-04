@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Box, Button, Typography } from '@mui/material'
 import type { BrowserRendererBridge, BrowserTabSnapshot } from '../../../../shared/browserTypes'
 import { BrowserTabs } from './components/BrowserTabs'
@@ -117,6 +117,7 @@ export interface BrowserPanelProps {
   activePhiSessionId: string | null
   activeSessionGeneration: number
   visible: boolean
+  headerActions?: ReactNode
 }
 
 export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Element {
@@ -174,6 +175,7 @@ export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Elemen
         tabs={currentSnapshot?.tabs ?? []}
         activeTabId={currentSnapshot?.activeTabId ?? null}
         disabled={!props.activePhiSessionId || workspace.loading || workspace.busy}
+        headerActions={props.headerActions}
         onNewTab={() => run(browserNewTabCommand(workspace.nextRequestId()))}
         onActivate={(tabId) =>
           run(browserActivateTabCommand(currentSnapshot, tabId, workspace.nextRequestId()))
@@ -209,6 +211,9 @@ export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Elemen
         }
       />
       <Box
+        id="phi-browser-viewport"
+        role="tabpanel"
+        aria-label={activeTab ? `网页内容：${activeTab.title || activeTab.url}` : '浏览器内容'}
         ref={viewportRef}
         data-phi-browser-native-viewport={nativeEnabled ? 'true' : 'false'}
         sx={{
@@ -216,7 +221,10 @@ export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Elemen
           flex: 1,
           minWidth: 0,
           minHeight: 0,
-          overflow: 'hidden'
+          overflow: 'hidden',
+          mx: 1,
+          mb: 1,
+          borderRadius: 1.5
         }}
       >
         <BrowserStatusPane

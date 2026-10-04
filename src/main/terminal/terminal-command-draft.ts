@@ -481,7 +481,10 @@ export class TerminalDraftService {
       await this.manager.input(draft.terminalId, `${source}\r`)
     } catch (error) {
       // These codes are raised before any byte reaches the PTY, so the draft may be sent again.
-      if (error instanceof TerminalError && (error.code === 'not_open' || error.code === 'invalid')) {
+      if (
+        error instanceof TerminalError &&
+        (error.code === 'not_open' || error.code === 'invalid')
+      ) {
         draft.submitted = false
       }
       if (error instanceof TerminalError) throw error

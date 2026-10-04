@@ -58,8 +58,11 @@ test('browser toolbar exposes compact keyboard-accessible loading controls', () 
   assert.match(markup, /autoCapitalize="none"|autocapitalize="none"/)
   assert.match(markup, /value="https:\/\/example\.test\/"/)
   assert.match(markup, /role="progressbar"/)
+  assert.match(markup, /height:66px/)
+  assert.match(markup, /width:44px/)
+  assert.match(markup, /height:44px/)
   assert.match(markup, /height:48px/)
-  assert.match(markup, /height:36px/)
+  assert.match(markup, /gap:8px/)
   assert.match(markup, /data-phi-browser-progress-slot="true"/)
   assert.match(markup, /height:2px/)
   assert.match(markup, /min-width:0/)
@@ -135,6 +138,11 @@ test('browser tabs expose compact accessible multi-page controls without close p
   assert.match(markup, /aria-label="关闭 Documentation"/)
   assert.match(markup, /aria-label="新建标签页"/)
   assert.match(markup, /overflow-x:auto/)
+  assert.match(markup, /height:50px/)
+  assert.match(markup, /min-height:44px/)
+  assert.match(markup, /width:40px/)
+  assert.match(markup, /width:44px/)
+  assert.doesNotMatch(markup, /data-phi-browser-window-controls-reserve/)
 
   const tabsSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/features/browser/components/BrowserTabs.tsx'),
@@ -149,7 +157,21 @@ test('browser tabs expose compact accessible multi-page controls without close p
     tabsSource,
     /aria-label=\{`关闭[\s\S]{0,600}onKeyDown=\{\(event\) => \{[\s\S]{0,160}event\.stopPropagation\(\)/
   )
+  assert.match(tabsSource, /WebkitAppRegion: 'drag'/)
+  assert.match(tabsSource, /WebkitAppRegion: 'no-drag'/)
+  assert.match(tabsSource, /tabIndex=\{selected \|\| fallbackTabStop \? 0 : -1\}/)
+  for (const key of ['ArrowLeft', 'ArrowRight', 'Home', 'End']) {
+    assert.match(tabsSource, new RegExp(`'${key}'`))
+  }
   assert.doesNotMatch(tabsSource, /WorkspaceTab/)
+  assert.doesNotMatch(tabsSource, /borderColor: selected/)
+
+  const panelSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/browser/BrowserPanel.tsx'),
+    'utf8'
+  )
+  assert.match(panelSource, /id="phi-browser-viewport"/)
+  assert.match(panelSource, /role="tabpanel"/)
 })
 
 test('browser panel and status panes render friendly empty restore and failure states', () => {
@@ -261,7 +283,7 @@ test('App composes the browser feature through the narrow side-panel seam', () =
   assert.match(appSource, /import BrowserPanel from '\.\/features\/browser\/BrowserPanel'/)
   assert.match(
     appSource,
-    /workspaceSidePanelMode === 'browser'[\s\S]{0,500}<BrowserPanel[\s\S]{0,300}bridge=\{rendererApi\.browser\}/
+    /if \(mode === 'browser'\)[\s\S]{0,500}<BrowserPanel[\s\S]{0,300}bridge=\{rendererApi\.browser\}/
   )
   assert.match(appSource, /activePhiSessionId=\{activePhiSessionId \?\? null\}/)
   assert.match(appSource, /activeSessionGeneration=\{activeSessionGeneration\}/)
@@ -274,8 +296,9 @@ test('App composes the browser feature through the narrow side-panel seam', () =
   assert.match(appSource, /features\/browser\/hooks\/useBrowserPanelRequests/)
   assert.match(
     appSource,
-    /openBrowserPanelFromRequest = useCallback\([\s\S]{0,160}setWorkspaceSidePanelMode\('browser'\)/
+    /openBrowserPanelFromRequest = useCallback\([\s\S]{0,160}openWorkspaceSidePanel\('browser'\)/
   )
+  assert.match(appSource, /headerActions=\{slotContext\.headerActions\}/)
   assert.match(
     appSource,
     /useBrowserPanelRequests\(\{[\s\S]{0,160}activeSessionId: activePhiSessionId[\s\S]{0,160}onRequest: openBrowserPanelFromRequest/

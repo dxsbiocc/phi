@@ -15,9 +15,15 @@ test('packaged worker path prefers app.asar.unpacked even though Electron report
 
 test('worker path outside an asar archive is used as is', () => {
   const plain = '/repo/out/main/terminal/terminal-worker.ts'
-  assert.equal(pickTerminalScript(['/missing.ts', plain], (path) => path === plain), plain)
+  assert.equal(
+    pickTerminalScript(['/missing.ts', plain], (path) => path === plain),
+    plain
+  )
 })
 
 test('falls back to the last candidate when nothing exists', () => {
-  assert.equal(pickTerminalScript(['/a.ts', '/b.ts'], () => false), '/b.ts')
+  assert.equal(
+    pickTerminalScript(['/a.ts', '/b.ts'], () => false),
+    '/b.ts'
+  )
 })

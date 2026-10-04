@@ -31,7 +31,7 @@ function ToolbarButton({
           disabled={disabled}
           onClick={onClick}
           size="small"
-          sx={{ width: 36, height: 36, borderRadius: 1.25 }}
+          sx={{ width: 44, height: 44, borderRadius: 1.5 }}
         >
           {children}
         </IconButton>
@@ -85,12 +85,12 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
         component="form"
         onSubmit={submit}
         sx={{
-          height: 48,
+          height: 66,
           minWidth: 0,
           display: 'flex',
           alignItems: 'center',
-          gap: 0.25,
-          px: 0.75,
+          gap: 1,
+          px: 1.5,
           overflow: 'hidden'
         }}
       >
@@ -137,14 +137,13 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
           }}
           sx={{
             minWidth: 0,
-            ml: 0.25,
             '& .MuiInputBase-root': {
-              height: 36,
-              borderRadius: 1.25,
+              height: 48,
+              borderRadius: 1.5,
               bgcolor: 'action.hover',
-              fontSize: 13.5
+              fontSize: 14
             },
-            '& .MuiInputBase-input': { px: 1.25, py: 0 }
+            '& .MuiInputBase-input': { px: 1.5, py: 0 }
           }}
         />
         <ToolbarButton

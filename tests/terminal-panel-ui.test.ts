@@ -58,7 +58,7 @@ function titleBarMarkup(overrides: Partial<ComponentProps<typeof TerminalTitleBa
       activeTerminalId: 'terminal-1',
       projectName: 'Phi',
       initialDirectory: '/work/project',
-      maximized: false,
+      headerActions: createElement('button', { type: 'button', 'aria-label': '工作台槽操作' }),
       canCreate: true,
       busy: false,
       onSelect: noop,
@@ -67,8 +67,6 @@ function titleBarMarkup(overrides: Partial<ComponentProps<typeof TerminalTitleBa
       onExplainSelection: noop,
       onEnd: noop,
       onEndAll: noop,
-      onToggleMaximize: noop,
-      onCollapse: noop,
       ...overrides
     })
   )
@@ -134,20 +132,17 @@ test('terminal title bar matches the compact single-terminal control surface', (
   assert.doesNotMatch(markup, /aria-label="选择终端"/)
   assert.match(markup, /aria-label="新建终端"/)
   assert.match(markup, /aria-label="更多终端操作"/)
-  assert.match(markup, /aria-label="放大终端"/)
-  assert.match(markup, /aria-label="收起终端面板"/)
+  // Maximize/close belong to the workbench slot and arrive as headerActions.
+  assert.match(markup, /aria-label="工作台槽操作"/)
+  assert.doesNotMatch(markup, /aria-label="放大终端"|aria-label="收起终端面板"/)
   assert.match(markup, /初始目录：\/work\/project/)
   assert.match(markup, /height:44px/)
   assert.match(markup, /width:32px/)
   assert.match(markup, /-webkit-app-region:no-drag/)
 
-  for (const label of ['新建终端', '更多终端操作', '放大终端', '收起终端面板']) {
+  for (const label of ['新建终端', '更多终端操作', '工作台槽操作']) {
     assert.equal(markup.match(new RegExp(`aria-label="${label}"`, 'gu'))?.length, 1)
   }
-
-  const maximized = titleBarMarkup({ maximized: true })
-  assert.match(maximized, /aria-label="还原终端"/)
-  assert.equal(maximized.match(/aria-label="还原终端"/gu)?.length, 1)
 })
 
 test('terminal title bar switches to a compact selector for multiple terminals', () => {
@@ -377,15 +372,13 @@ test('terminal panel renders the thin reference-style shell without creating dur
     const markup = renderWithTheme(
       createElement(TerminalPanel, {
         bridge,
-        projects: [],
-        maximized: false,
-        onToggleMaximize: noop,
-        onCollapse: noop
+        projects: []
       })
     )
     assert.match(markup, /data-phi-terminal-panel="true"/)
     assert.match(markup, /data-phi-terminal-viewport="true"/)
-    assert.match(markup, /border-radius:16px/)
+    // The workbench slot owns the border; the panel must not draw a second one inside it.
+    assert.doesNotMatch(markup, /border-radius:16px/)
     assert.match(markup, /\.xterm-viewport\{[^}]*background-color:#FFFFFF/u)
     assert.match(markup, /正在启动 Shell/)
     assert.doesNotMatch(markup, /当前没有终端/)

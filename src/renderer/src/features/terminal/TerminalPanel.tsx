@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Box, Menu, MenuItem, Typography, useTheme } from '@mui/material'
 import '@xterm/xterm/css/xterm.css'
 
@@ -45,9 +45,8 @@ interface PanelStatus {
 export interface TerminalPanelProps {
   bridge: TerminalRendererBridge
   projects: readonly Project[]
-  maximized: boolean
-  onToggleMaximize(): void
-  onCollapse(): void
+  /** Maximize/close controls supplied by the workspace workbench slot. */
+  headerActions?: ReactNode
 }
 
 export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Element {
@@ -270,9 +269,7 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
         minWidth: 0,
         minHeight: 0,
         display: 'flex',
-        p: 0.5,
-        overflow: 'hidden',
-        bgcolor: 'background.default'
+        overflow: 'hidden'
       }}
     >
       <Box
@@ -283,9 +280,7 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          border: 1,
-          borderColor: 'divider',
-          borderRadius: '16px',
+          // The workbench slot already draws the border and rounded corners.
           bgcolor: terminalTheme.background
         }}
       >
@@ -294,7 +289,7 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
           activeTerminalId={activeId}
           projectName={workspace.projectName}
           initialDirectory={workspace.initialDirectory}
-          maximized={props.maximized}
+          headerActions={props.headerActions}
           canCreate={canCreate}
           busy={workspace.snapshot.pending}
           canExplainSelection={Boolean(activeSelection)}
@@ -304,8 +299,6 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
           onExplainSelection={() => explainSelection()}
           onEnd={(terminalId) => void workspace.close(terminalId)}
           onEndAll={() => void workspace.closeAll()}
-          onToggleMaximize={props.onToggleMaximize}
-          onCollapse={props.onCollapse}
         />
 
         <Box
