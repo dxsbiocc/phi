@@ -1,14 +1,15 @@
 # Phi Terminal V1 后端决策
 
 日期：2026-10-03  
-状态：有条件采用  
+状态：已采用（T3 已验证 macOS arm64 解包产物）
+
 对应计划：[phi-terminal-v1-implementation-plan.md](../design/phi-terminal-v1-implementation-plan.md)
 
 ## 决策
 
 Terminal V1 采用 `@oh-my-pi/pi-natives@18.1.10` 的 `PtySession`，并在独立 Bun Worker 中持有 PTY。主进程不得直接加载原生包。关闭和故障清理由独立 Bun 监督者持有 `Process` 稳定引用并执行。
 
-这是后端能力的 **GO**，不是现有安装包已经可用的结论。进入功能实现前仍须把 `pi-natives` 固定为直接依赖、复制并解包 Terminal Worker 及其源码依赖、解包 Bun 可解析的 `pi-natives` JS 包装层和平台二进制。当前 unpacked app 缺少前两者，不能从安装包运行 Terminal Worker。
+这是后端能力的 **GO**。T3 已将 `pi-natives` 直接固定为 18.1.10，复制并解包 Terminal Worker 及其相对 import 闭包，同时解包 Bun 可解析的 JS 包装层和平台二进制。开发路径、`out/` 和移出源码树的 unpacked app 现在均有实际运行证据；这不扩大为签名、公证或其他平台的结论。
 
 ## 真机证据
 
@@ -45,7 +46,17 @@ INFO packaging resources=/Users/dengxsh/Downloads/Work/App/Phi-worktrees/termina
 
 公开 `PtySession` 没有 pause/resume。V1 不得再承诺在 ACK 高水位暂停内核 PTY 读取。Worker 必须始终消费 `onChunk`，按 UTF-8 字节计数写入每终端 2 MiB 有界环形缓冲；缓冲满时丢弃最旧内容并累计丢弃字节。Renderer/主进程未消费时停止继续转发 live 数据，但不能停止 drain；重新 attach 时发送明确的 gap 标记后从保留区继续。
 
-3 秒 `yes` 压测产生 336.6 MiB，缓冲保留 2.0 MiB、丢弃 334.6 MiB，Worker RSS 增长 59.6 MiB；Ctrl+C 后最后输出延迟 14.1 ms，低于 1 秒门槛。该结果证明本次负载下的替代策略可行，不证明 JS 事件循环被长时间阻塞时的原生内部队列，也不证明超过 3 秒的任意负载上界；T3 仍需做断连、阻塞和更长时间的集成压测。
+3 秒 `yes` 压测产生 336.6 MiB，缓冲保留 2.0 MiB、丢弃 334.6 MiB，Worker RSS 增长 59.6 MiB；Ctrl+C 后最后输出延迟 14.1 ms，低于 1 秒门槛。T3 又使用真实 Manager、Host、Worker 和 Supervisor 完成两组 30 秒压测：断连输出在 credit 耗尽后确实停止协议转发，Worker RSS 增长 181.7 MiB；随后单独做了 3 分钟断连 `yes` 探针，RSS 在前 10 秒升至约 235 MiB（起点约 62 MiB），之后 170 秒内只再增加约 6 MiB 并保持平台期，判定为高速字符串流下的 GC 余量而非泄漏，压测门槛据此设为 320 MiB，主进程堆增长 0.9 MiB；重连返回 gap、2,097,152 字节重放和 69 个连续且不重复的 replay/live seq。ACK 消费路径在 15 秒中点回显输入，30 秒后 Ctrl+C 到输出安静为 65.3 ms。
+
+`bun run smoke:terminal-stress` 的完整 PASS 输出（进程 ID 仅用于本次证据）：
+
+```text
+PASS terminal-stress-disconnected durationMs=30000 dataEvents=24 protocolBytes=513367 plateauTailEvents=0 workerPid=67189 workerRssStartMiB=61.8 workerRssPeakMiB=243.5 workerRssGrowthMiB=181.7 workerRssLimitMiB=200.0 mainHeapStartMiB=2.9 mainHeapPeakMiB=3.8 mainHeapGrowthMiB=0.9 mainHeapLimitMiB=128.0
+PASS terminal-stress-reattach gap=1-119773 droppedBytes=3924448599 replayBytes=2097152 replayLimitBytes=2097152 sequences=69 staleAckHostCreditCalls=0 validAckBytes=524288 currentAckHostCreditCalls=1 floodStopMs=0.4 acknowledgedBytes=2121137 drainToLiveMs=568.3 liveSentinelMs=50.6
+PASS terminal-stress-acked durationMs=30000 midpointMs=15000 dataEvents=127929 protocolMiB=3997.7 typedEchoMs=0.6 queuedSentinelMs=48.7 outputStopMs=65.3 ackBatchBytes=32768 ackBatchDelayMs=16
+PASS terminal-stress-worker-crash worker=67310 epoch=1 shell=67413 hupIgnoringChild=67465 cleanupMs=10.7 failedState=true unhandledRejections=0 recreatedTerminal=J_bIJd7SkN_Vg7eVcfsteQ recreatedEpoch=1
+PASS terminal-stress-supervisor-crash supervisor=67311 existingPty=67477 existingPtyKilledMs=11.0 createUnavailable=true disposeMs=2.6 bun=/Users/dengxsh/.bun/bin/bun absoluteBun=true
+```
 
 ## 生命周期与监督
 
@@ -61,12 +72,16 @@ INFO packaging resources=/Users/dengxsh/Downloads/Work/App/Phi-worktrees/termina
 
 `bun run build:unpack` 成功。构建产物确认：
 
-- `pi-natives` 目前只是 `@oh-my-pi/pi-coding-agent@18.1.10` 等包的间接依赖；选定后必须在 `package.json` 直接、精确固定为 `@oh-my-pi/pi-natives: "18.1.10"` 并更新 `bun.lock`。
-- 原生文件位于 `node_modules/@oh-my-pi/pi-natives-darwin-arm64/pi_natives.darwin-arm64.node`；electron-builder 自动把该平台包放进了 `app.asar.unpacked/node_modules`。
-- `@oh-my-pi/pi-natives/native/index.js` 仍在 `app.asar`，没有进入 `app.asar.unpacked`。现有 Worker 也仍在 `app.asar`；当前 `asarUnpack` 的 `out/main/agent/omp-sdk-worker.ts` 与实际 `out/main/agent/omp/omp-sdk-worker.ts` 不匹配。
-- T0 没有生产 Terminal Worker，故 unpacked app 中不存在 `out/main/terminal/terminal-worker.ts`，无法诚实地从该位置运行 spike Worker。位于源码工作树内部的 app 会向上误解析到开发目录 `node_modules`，这种“成功”不能作为打包证据。
+- `package.json` 直接、精确固定 `@oh-my-pi/pi-natives: "18.1.10"`。
+- `electron.vite.config.ts` 把 `src/main/terminal/` 及共享终端类型复制到 `out/`；`electron-builder.yml` 解包 `out/main/terminal/**`、`out/shared/terminalTypes.ts`、`node_modules/@oh-my-pi/pi-natives/**` 和目标平台包。OMP 的解包条目未由本任务修改。
+- Finder 风格的最小 `PATH=/usr/bin:/bin:/usr/sbin:/sbin` 下，宿主不再依赖 `spawn('bun')`，而是按固定优先级解析可执行的 Bun 绝对路径。本次从 `HOME` 找到 `/Users/dengxsh/.bun/bin/bun`。
+- app 复制到源码树外的 `/private/tmp/phi-pack-check.QwVPgb/`后，真实 Host 从复制产物的 `app.asar.unpacked/out/main/terminal/` 启动 Worker 和 Supervisor；Shell 回显、`37x113` resize 和关闭全部通过。`lsof` 确认 Worker 加载的唯一 `pi_natives.darwin-arm64.node` 位于复制 app 内，没有指向源码仓库。
 
-后续实现需要在 `electron.vite.config.ts` 把 Terminal Worker 及它的相对 import 闭包复制到 `out/main/terminal/`；在 `electron-builder.yml` 解包 `out/main/terminal/**`、`node_modules/@oh-my-pi/pi-natives/**` 和目标平台的 `node_modules/@oh-my-pi/pi-natives-*/**`。完成后必须把 app 移到开发工作树之外，再从 `Contents/Resources/app.asar.unpacked/out/main/terminal/` 启动 Bun Worker，证明它只从同一 unpacked 根解析包装层和 `.node` 文件。
+`bun run smoke:terminal-packaged -- /private/tmp/phi-pack-check.QwVPgb/pi-desktop.app` 输出：
+
+```text
+PASS terminal-packaged app=/private/tmp/phi-pack-check.QwVPgb/pi-desktop.app bun=/Users/dengxsh/.bun/bin/bun worker=58877 shell=58880 echo=true size=37x113 native=/private/tmp/phi-pack-check.QwVPgb/pi-desktop.app/Contents/Resources/app.asar.unpacked/node_modules/@oh-my-pi/pi-natives-darwin-arm64/pi_natives.darwin-arm64.node
+```
 
 ## 计划契约变更
 
@@ -77,4 +92,4 @@ INFO packaging resources=/Users/dengxsh/Downloads/Work/App/Phi-worktrees/termina
 
 ## 未验证范围
 
-Linux、Windows/ConPTY、x64 macOS、签名/公证安装包均未验证。输出压测只覆盖约 3 秒持续输出；用户特意 `disown`、`setsid` 或重归属的进程不在清理保证内。当前 build 只证明缺口和平台二进制位置，没有证明修正配置后的 Terminal Worker 可以在最终安装包加载；这必须由后续打包改动补测。
+Linux、Windows/ConPTY、x64 macOS、签名/公证安装包和正式安装器启动仍未验证；手动 UI 项继续留在 `terminal-v1-manual-checklist.md`，不因本次自动证据标记通过。输出压测已扩展到本机两组 30 秒 `yes`，但仍不证明任意负载或任意时长的上界；Worker 在持续高速输出时约有 180 MiB 的 GC 余量；所有终端共用一个 Worker 堆，该开销不按终端数线性叠加，但仍未在 8 个终端同时刷屏时实测。用户特意 `disown`、`setsid`、重归属，以及 Worker 崩溃前不足一个 Supervisor 刷新周期就新建的后代，不在清理保证内。当前打包结论仅覆盖移出工作树的 macOS arm64 unpacked app，不等同于已验证公开分发。

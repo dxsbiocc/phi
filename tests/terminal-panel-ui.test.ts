@@ -76,8 +76,13 @@ test('terminal title bar matches the compact single-terminal control surface', (
   assert.match(markup, /width:32px/)
   assert.match(markup, /-webkit-app-region:no-drag/)
 
+  for (const label of ['新建终端', '更多终端操作', '放大终端', '收起终端面板']) {
+    assert.equal(markup.match(new RegExp(`aria-label="${label}"`, 'gu'))?.length, 1)
+  }
+
   const maximized = titleBarMarkup({ maximized: true })
   assert.match(maximized, /aria-label="还原终端"/)
+  assert.equal(maximized.match(/aria-label="还原终端"/gu)?.length, 1)
 })
 
 test('terminal title bar switches to a compact selector for multiple terminals', () => {
@@ -153,6 +158,16 @@ test('multi-line paste preview shows bounded context and explicit send/cancel ac
   assert.doesNotMatch(markup, /echo third/)
   assert.match(markup, />发送到终端</)
   assert.match(markup, />取消</)
+
+  const trailingNewline = renderWithTheme(
+    createElement(TerminalPastePreview, {
+      text: 'echo first\necho second\n',
+      onSend: noop,
+      onCancel: noop
+    })
+  )
+  assert.match(trailingNewline, /2 行/)
+  assert.doesNotMatch(trailingNewline, /3 行/)
 })
 
 test('terminal panel renders the thin reference-style shell without creating during SSR', () => {
@@ -184,6 +199,7 @@ test('terminal panel renders the thin reference-style shell without creating dur
     assert.match(markup, /data-phi-terminal-panel="true"/)
     assert.match(markup, /data-phi-terminal-viewport="true"/)
     assert.match(markup, /border-radius:16px/)
+    assert.match(markup, /\.xterm-viewport\{[^}]*background-color:#FFFFFF/u)
     assert.match(markup, /正在启动 Shell/)
     assert.doesNotMatch(markup, /当前没有终端/)
   } finally {

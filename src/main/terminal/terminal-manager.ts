@@ -13,6 +13,7 @@ import {
   type TerminalWorkspaceRef
 } from '../../shared/terminalTypes'
 import { TerminalError } from './terminal-error'
+import { BunExecutableNotFoundError } from './terminal-bun'
 import { buildTerminalEnv, resolveTerminalShell, type TerminalShellLaunch } from './terminal-env'
 import {
   TerminalHost,
@@ -366,11 +367,16 @@ export class TerminalManager {
       if (record.snapshot.state === 'starting') this.updateState(record, { state: 'open' })
       return cloneSnapshot(record.snapshot)
     } catch (error) {
+      const mappedError =
+        error instanceof TerminalError
+          ? error
+          : error instanceof BunExecutableNotFoundError
+            ? new TerminalError('unavailable', '未找到 Bun 运行时')
+            : new TerminalError('unavailable', 'Terminal failed to start')
       if (this.terminals.get(id) === record && record.snapshot.state !== 'failed') {
-        this.updateState(record, { state: 'failed', message: 'Terminal failed to start' })
+        this.updateState(record, { state: 'failed', message: mappedError.message })
       }
-      if (error instanceof TerminalError) throw error
-      throw new TerminalError('unavailable', 'Terminal failed to start')
+      throw mappedError
     }
   }
 

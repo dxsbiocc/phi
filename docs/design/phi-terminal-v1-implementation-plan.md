@@ -469,16 +469,16 @@ src/renderer/src/features/terminal/
 | 异步目标变化       | 草稿和工作区测试          | 迟到结果属于原终端，不能进入新工作区                                        |
 | Agent 权限         | 注入模型/session 工厂测试 | 生成会话工具集合为空，无法调用用户终端 API                                  |
 | 越权访问           | IPC 假 sender 测试        | iframe、浏览器 WebContentsView、未知终端及远程锚点被拒绝                    |
-| 有界输出           | 流量模拟与真机压力        | 缓存不越界，无无界任务队列；压力时 Ctrl+C 目标 ≤1 秒                        |
-| 隐藏消费           | 假 ACK 与真机             | 隐藏后进程持续输出，不被 UI 背压永久锁住                                    |
-| 断连恢复           | 输出协议测试              | 新 epoch 拒绝旧 ACK；重放与 live 无重复，缺口有提示                         |
+| 有界输出           | 流量模拟与两组 30 秒真机压力 | 断连后协议转发归零，Worker RSS 增长 181.7 MiB < 200 MiB，主堆增长 0.9 MiB；ACK 路径 Ctrl+C 后 65.3 ms 停止 |
+| 隐藏消费           | 10,000 事件假 ACK 与真机压力  | 隐藏控制层持续 ACK，累计 ACK 不超过已交付字节；隐藏后不永久锁住输出                  |
+| 断连恢复           | 输出协议测试与 30 秒断连真机压力 | gap 与 2,097,152 字节重放受 2 MiB 上限约束；旧 epoch ACK 未授信，69 个 replay/live seq 连续且不重复 |
 | UTF-8 与 ANSI      | 跨块字节测试              | 中文、emoji 和分割控制序列正确处理                                          |
-| 结束与退出         | 真机前台父子进程测试      | 关闭幂等；用户结束 ≤5 秒；应用退出时终端清理 ≤1.5 秒，在全局 2 秒上限内完成 |
+| 结束与退出         | 真机前台父子进程与退出预算测试 | 关闭幂等；用户结束 ≤5 秒；Manager dispose 2.6 ms，低于 1.5 秒预算                |
 | 终端环境           | 真实 Shell 中执行 `env`   | 无 `PI_CODING_AGENT_DIR`、`ELECTRON_*`、Provider 密钥；登录 Shell 重建 PATH |
-| Worker 崩溃与卡住  | 真机强杀及阻断通信        | 故障识别后 5 秒内结束受管理前台父子进程；无法清理时状态明确且不误杀其他进程 |
+| Worker 崩溃与卡住  | Worker/Supervisor `kill -9` 真机注入 | Worker 崩溃后 Shell 与忽略 HUP 后代 10.7 ms 退出、可重建终端；Supervisor 崩溃后拒绝新建并由 Worker 关闭已有 PTY |
 | 输出隐私           | 模型请求与日志 spy        | 未选择内容不进入模型；按键、全文和密钥不进普通日志                          |
 | 既有聊天           | 现有 session/OMP 回归     | 手动终端开关、崩溃和结束不改变聊天运行状态                                  |
-| 安装包             | 移出开发目录的 unpacked 应用 | 从 `app.asar.unpacked` 启动 Worker，只从该根解析 `pi-natives`；输入输出并清理 |
+| 安装包             | 移出开发目录的 macOS arm64 unpacked 应用 | 最小 PATH 下使用绝对 Bun；Shell 回显与 37x113 resize 通过；`lsof` 只见复制 app 内的 `pi_natives.darwin-arm64.node` |
 
 建议新增 `tests/terminal-manager.test.ts`、`terminal-workspace.test.ts`、`terminal-ipc.test.ts`、`terminal-output.test.ts`、`terminal-input.test.ts`、`terminal-command-draft.test.ts`、`terminal-panel.test.ts`。真实 PTY smoke 脚本放在 `scripts/`，明确要求本机环境；具体文件数量可按测试职责合并。
 

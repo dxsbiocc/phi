@@ -54,7 +54,7 @@ class FakeTerminal implements XtermTerminalLike {
   readonly dataListeners = new Set<(data: string) => void>()
   cols: number
   rows: number
-  options: XtermTerminalLike['options']
+  private terminalOptions: XtermTerminalLike['options']
   openCalls = 0
   resetCalls = 0
   disposeCalls = 0
@@ -65,10 +65,21 @@ class FakeTerminal implements XtermTerminalLike {
   selection = ''
 
   constructor(options: XtermTerminalLike['options'] & { cols?: number; rows?: number } = {}) {
-    this.options = options
+    this.terminalOptions = options
     this.cols = options.cols ?? 80
     this.rows = options.rows ?? 24
     FakeTerminal.instances.push(this)
+  }
+
+  get options(): XtermTerminalLike['options'] {
+    return this.terminalOptions
+  }
+
+  set options(options: XtermTerminalLike['options']) {
+    if ('cols' in options || 'rows' in options) {
+      throw new TypeError('constructor-only xterm options cannot be assigned after construction')
+    }
+    this.terminalOptions = options
   }
 
   loadAddon(): void {
@@ -435,7 +446,12 @@ test('StrictMode-style double ensure creates once and creation is isolated per w
 
 test('renderer startup restoration reattaches existing terminals without creating a shell', async () => {
   const bridge = new FakeBridge()
-  const existing = snapshot('terminal-alpha')
+  const firstHarness = harness(bridge)
+  const firstSnapshot = await firstHarness.controller.ensureWorkspace(project('alpha'))
+  const existing = firstSnapshot.terminals[0]
+  assert.ok(existing)
+  firstHarness.controller.dispose()
+
   bridge.listResults.set('alpha', [existing])
   bridge.attachResults.set(existing.terminalId, [attachment(existing, 3)])
   const { controller } = harness(bridge)
@@ -443,9 +459,57 @@ test('renderer startup restoration reattaches existing terminals without creatin
   await controller.restoreWorkspace(project('alpha'))
   await controller.ensureWorkspace(project('alpha'))
 
-  assert.deepEqual(bridge.listCalls, [project('alpha')])
-  assert.deepEqual(bridge.attachCalls, [existing.terminalId])
-  assert.equal(bridge.createCalls.length, 0)
+  assert.deepEqual(bridge.listCalls, [project('alpha'), project('alpha')])
+  assert.deepEqual(bridge.attachCalls, [existing.terminalId, existing.terminalId])
+  assert.equal(bridge.createCalls.length, 1)
+  assert.deepEqual(controller.getWorkspaceSnapshot(project('alpha')).terminals, [existing])
+  controller.dispose()
+})
+
+test('hidden controller drains 10k events and never ACKs more than xterm accepted', async () => {
+  const bridge = new FakeBridge()
+  const existing = snapshot('terminal-alpha')
+  bridge.listResults.set('alpha', [existing])
+  bridge.attachResults.set(existing.terminalId, [attachment(existing, 11)])
+  const { controller, scheduler } = harness(bridge)
+  await controller.ensureWorkspace(project('alpha'))
+
+  let deliveredBytes = 0
+  for (let index = 1; index <= 10_000; index += 1) {
+    const data = index % 2 === 0 ? '隐藏' : 'x'
+    deliveredBytes += Buffer.byteLength(data, 'utf8')
+    bridge.emit({ type: 'data', terminalId: existing.terminalId, epoch: 11, seq: index, data })
+    assert.ok(
+      bridge.ackCalls.reduce((total, call) => total + call.bytes, 0) <= deliveredBytes,
+      `ACK credit exceeded delivered bytes after event ${index}`
+    )
+  }
+  scheduler.flush()
+
+  assert.equal(FakeTerminal.instances[0].writes.length, 10_000)
+  assert.equal(
+    bridge.ackCalls.reduce((total, call) => total + call.bytes, 0),
+    deliveredBytes
+  )
+  controller.dispose()
+})
+
+test('theme updates avoid reassigning constructor-only xterm options', async () => {
+  const bridge = new FakeBridge()
+  const existing = snapshot('terminal-alpha')
+  bridge.listResults.set('alpha', [existing])
+  bridge.attachResults.set(existing.terminalId, [attachment(existing, 1)])
+  const { controller } = harness(bridge)
+  await controller.ensureWorkspace(project('alpha'))
+  const terminal = FakeTerminal.instances[0]
+  const view = controller.getTerminalView(existing.terminalId)
+  assert.ok(view)
+
+  assert.throws(() => {
+    terminal.options = { ...terminal.options, theme: { background: '#ffffff' } }
+  }, /constructor-only xterm options/u)
+  assert.doesNotThrow(() => view.setTheme({ background: '#123456' }))
+  assert.deepEqual(terminal.options.theme, { background: '#123456' })
   controller.dispose()
 })
 

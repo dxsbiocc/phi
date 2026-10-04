@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveBunExecutable } from './terminal-bun'
 
 function asarUnpackedPath(path: string): string {
   return path.includes('.asar/') ? path.replace('.asar/', '.asar.unpacked/') : path
@@ -39,7 +40,8 @@ function terminalChildEnvironment(): NodeJS.ProcessEnv {
 }
 
 export function spawnBunProcess(scriptPath: string): ChildProcessWithoutNullStreams {
-  return spawn('bun', [scriptPath], {
+  const bunExecutable = resolveBunExecutable(process.env)
+  return spawn(bunExecutable, [scriptPath], {
     cwd: process.cwd(),
     env: terminalChildEnvironment(),
     stdio: ['pipe', 'pipe', 'pipe']

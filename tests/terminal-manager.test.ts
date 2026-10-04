@@ -7,6 +7,7 @@ import {
   type TerminalWorkspaceRef
 } from '../src/shared/terminalTypes'
 import { TerminalError } from '../src/main/terminal/terminal-error'
+import { BunExecutableNotFoundError } from '../src/main/terminal/terminal-bun'
 import type {
   TerminalCreateOptions,
   TerminalHostEvent,
@@ -548,5 +549,20 @@ test('sanitizes host errors so terminal input and output are absent from thrown 
   const outputError = await terminalError(() => manager.attach(snapshot.terminalId), 'unavailable')
   assert.equal(inputError.message.includes(sensitiveInput), false)
   assert.equal(outputError.message.includes(sensitiveOutput), false)
+  await manager.dispose()
+})
+
+test('maps missing Bun to the packaged-app runtime error shown by the UI', async () => {
+  const { host, manager } = harness()
+  host.createTerminal = () => Promise.reject(new BunExecutableNotFoundError())
+
+  const error = await terminalError(
+    () => manager.create(project('alpha'), 80, 24, 'missing_bun_create'),
+    'unavailable'
+  )
+  assert.equal(error.message, '未找到 Bun 运行时')
+  const [failedSnapshot] = await manager.list(project('alpha'))
+  assert.equal(failedSnapshot.state, 'failed')
+  assert.equal(failedSnapshot.message, '未找到 Bun 运行时')
   await manager.dispose()
 })

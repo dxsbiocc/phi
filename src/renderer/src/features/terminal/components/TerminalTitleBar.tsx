@@ -16,7 +16,7 @@ function TitleButton(props: {
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    <Tooltip title={props.label} arrow>
+    <Tooltip title={props.label} arrow describeChild>
       <span style={{ display: 'inline-flex', flexShrink: 0 }}>
         <IconButton
           type="button"

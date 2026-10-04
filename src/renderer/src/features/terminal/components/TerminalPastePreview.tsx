@@ -1,7 +1,9 @@
 import { Box, Button, Typography } from '@mui/material'
 
 function pasteLines(text: string): string[] {
-  return text.split(/\r\n|\r|\n/u)
+  const lines = text.split(/\r\n|\r|\n/u)
+  if (lines.length > 1 && lines.at(-1) === '') lines.pop()
+  return lines
 }
 
 export interface TerminalPastePreviewProps {
