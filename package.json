@@ -40,6 +40,7 @@
     "smoke:terminal-manager": "bun scripts/terminal-manager-smoke.ts",
     "smoke:terminal-stress": "bun scripts/terminal-stress-smoke.ts",
     "smoke:terminal-packaged": "bun scripts/terminal-packaged-smoke.ts",
+    "smoke:packaged-quit": "node scripts/smoke-packaged-quit.mjs",
     "runtime:fetch": "node scripts/runtime/fetch-micromamba.mjs",
     "runtime:lock": "node --import ./scripts/test-loader.mjs scripts/runtime/lock-env.ts",
     "runtime:smoke": "node --import ./scripts/test-loader.mjs scripts/runtime/smoke-env.ts",
