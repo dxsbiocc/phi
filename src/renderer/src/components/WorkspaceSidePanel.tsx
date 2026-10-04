@@ -17,7 +17,6 @@ const workspacePanelLabels: Record<WorkspaceSidePanelMode, string> = {
 
 export interface WorkspaceSidePanelSlotRenderContext {
   headerActions: ReactNode
-  globalControlsInset: number
 }
 
 function WorkspaceToolCard({
@@ -105,12 +104,10 @@ function WorkspaceSidePanelSlotActions({
 
 function WorkspaceSidePanelSlotHeader({
   mode,
-  actions,
-  globalControlsInset
+  actions
 }: {
   mode: Exclude<WorkspaceSidePanelMode, 'browser'>
   actions: ReactNode
-  globalControlsInset: number
 }): React.JSX.Element {
   return (
     <Box
@@ -132,13 +129,6 @@ function WorkspaceSidePanelSlotHeader({
         {workspacePanelLabels[mode]}
       </Typography>
       {actions}
-      {globalControlsInset > 0 ? (
-        <Box
-          data-phi-workspace-window-controls-reserve="true"
-          aria-hidden="true"
-          sx={{ flex: `0 0 ${globalControlsInset}px`, width: globalControlsInset, height: '100%' }}
-        />
-      ) : null}
     </Box>
   )
 }
@@ -237,7 +227,6 @@ export function WorkspaceSidePanel({
       }}
     >
       {visibleSlots.map((mode, index) => {
-        const globalControlsInset = index === 0 ? 136 : 0
         const actions = (
           <WorkspaceSidePanelSlotActions
             mode={mode}
@@ -267,20 +256,16 @@ export function WorkspaceSidePanel({
             }}
           >
             {mode === 'browser' ? (
-              renderSlot(mode, { headerActions: actions, globalControlsInset })
+              renderSlot(mode, { headerActions: actions })
             ) : (
               <>
-                <WorkspaceSidePanelSlotHeader
-                  mode={mode}
-                  actions={actions}
-                  globalControlsInset={globalControlsInset}
-                />
+                <WorkspaceSidePanelSlotHeader mode={mode} actions={actions} />
                 <Box sx={{ flex: 1, minHeight: 0, display: 'flex', p: mode === 'jobs' ? 1.5 : 0 }}>
                   {mode === 'terminal'
-                    ? (renderSlot(mode, { headerActions: actions, globalControlsInset }) ?? (
+                    ? (renderSlot(mode, { headerActions: actions }) ?? (
                         <WorkspaceToolCard kind="terminal" label="终端" Icon={TerminalIcon} />
                       ))
-                    : renderSlot(mode, { headerActions: actions, globalControlsInset })}
+                    : renderSlot(mode, { headerActions: actions })}
                 </Box>
               </>
             )}

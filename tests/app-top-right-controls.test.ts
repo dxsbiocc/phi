@@ -218,9 +218,16 @@ test('workspace top-right controls are app-level chrome, not notebook-only conte
   )
   assert.doesNotMatch(appSource, /isChatWorkspaceView \? \([\s\S]{0,400}<TopRightControls/)
   assert.match(appSource, /left: titlebarChromeHorizontalInset[\s\S]{0,360}<MacWindowControls/)
-  assert.match(appSource, /position: 'absolute'[\s\S]{0,360}<TopRightControls/)
-  assert.match(appSource, /top: titlebarChromeTopOffset[\s\S]{0,360}<TopRightControls/)
-  assert.match(appSource, /right: titlebarChromeHorizontalInset[\s\S]{0,360}<TopRightControls/)
+  assert.match(appSource, /position: 'absolute'[\s\S]{0,800}<TopRightControls/)
+  assert.match(appSource, /top: titlebarChromeTopOffset[\s\S]{0,800}<TopRightControls/)
+  assert.match(
+    appSource,
+    /right:\s*workspaceSidePanelSlots\.length === 0[\s\S]{0,160}\? titlebarChromeHorizontalInset[\s\S]{0,220}activeWorkspaceSidePanelWidth/
+  )
+  assert.match(
+    appSource,
+    /activeWorkspaceSidePanelWidth[\s\S]{0,120}workspaceSidePanelOverlay \? 0 : 1[\s\S]{0,100}titlebarChromeHorizontalInset/
+  )
   assert.match(appSource, /showSidePanelRefresh=\{false\}/)
   assert.match(appSource, /sidePanelRefreshDisabled=\{false\}/)
   assert.match(appSource, /onRefreshSidePanel=\{onRefreshWorkspaceSidePanel\}/)

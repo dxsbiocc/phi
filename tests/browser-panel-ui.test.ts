@@ -117,7 +117,6 @@ test('browser tabs expose compact accessible multi-page controls without close p
       ],
       activeTabId: 'tab-1',
       disabled: false,
-      globalControlsInset: 136,
       onNewTab: () => undefined,
       onActivate: () => undefined,
       onClose: () => undefined
@@ -143,8 +142,7 @@ test('browser tabs expose compact accessible multi-page controls without close p
   assert.match(markup, /min-height:44px/)
   assert.match(markup, /width:40px/)
   assert.match(markup, /width:44px/)
-  assert.match(markup, /data-phi-browser-window-controls-reserve="true"/)
-  assert.match(markup, /width:136px/)
+  assert.doesNotMatch(markup, /data-phi-browser-window-controls-reserve/)
 
   const tabsSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/features/browser/components/BrowserTabs.tsx'),
@@ -301,7 +299,6 @@ test('App composes the browser feature through the narrow side-panel seam', () =
     /openBrowserPanelFromRequest = useCallback\([\s\S]{0,160}openWorkspaceSidePanel\('browser'\)/
   )
   assert.match(appSource, /headerActions=\{slotContext\.headerActions\}/)
-  assert.match(appSource, /globalControlsInset=\{slotContext\.globalControlsInset\}/)
   assert.match(
     appSource,
     /useBrowserPanelRequests\(\{[\s\S]{0,160}activeSessionId: activePhiSessionId[\s\S]{0,160}onRequest: openBrowserPanelFromRequest/

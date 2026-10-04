@@ -14,7 +14,6 @@ export interface BrowserTabsProps {
   activeTabId: string | null
   disabled: boolean
   headerActions?: ReactNode
-  globalControlsInset?: number
   onNewTab(): void
   onActivate(tabId: string): void
   onClose(tabId: string): void
@@ -242,18 +241,6 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
         <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
           {props.headerActions}
         </Box>
-      ) : null}
-      {(props.globalControlsInset ?? 0) > 0 ? (
-        <Box
-          data-phi-browser-window-controls-reserve="true"
-          aria-hidden="true"
-          sx={{
-            flex: `0 0 ${props.globalControlsInset}px`,
-            width: props.globalControlsInset,
-            height: '100%',
-            ml: 'auto'
-          }}
-        />
       ) : null}
     </Box>
   )

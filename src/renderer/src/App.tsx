@@ -4464,7 +4464,6 @@ function App(): React.JSX.Element {
                         activePhiSessionId={activePhiSessionId ?? null}
                         activeSessionGeneration={activeSessionGeneration}
                         headerActions={slotContext.headerActions}
-                        globalControlsInset={slotContext.globalControlsInset}
                         visible={
                           browserSlotVisible &&
                           !pendingApproval &&
@@ -4526,7 +4525,10 @@ function App(): React.JSX.Element {
           sx={{
             position: 'absolute',
             top: titlebarChromeTopOffset,
-            right: titlebarChromeHorizontalInset,
+            right:
+              workspaceSidePanelSlots.length === 0
+                ? titlebarChromeHorizontalInset
+                : `calc(${activeWorkspaceSidePanelWidth}px + ${workspaceSidePanelOverlay ? 0 : 1}px + ${titlebarChromeHorizontalInset})`,
             display: 'flex',
             alignItems: 'center',
             pointerEvents: 'auto',

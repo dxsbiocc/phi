@@ -118,7 +118,6 @@ export interface BrowserPanelProps {
   activeSessionGeneration: number
   visible: boolean
   headerActions?: ReactNode
-  globalControlsInset?: number
 }
 
 export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Element {
@@ -177,7 +176,6 @@ export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Elemen
         activeTabId={currentSnapshot?.activeTabId ?? null}
         disabled={!props.activePhiSessionId || workspace.loading || workspace.busy}
         headerActions={props.headerActions}
-        globalControlsInset={props.globalControlsInset}
         onNewTab={() => run(browserNewTabCommand(workspace.nextRequestId()))}
         onActivate={(tabId) =>
           run(browserActivateTabCommand(currentSnapshot, tabId, workspace.nextRequestId()))

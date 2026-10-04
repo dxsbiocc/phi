@@ -256,6 +256,7 @@ test('workspace side panel stacks two slots and gives each slot local controls',
   assert.match(markup, /aria-label="关闭浏览器"/)
   assert.match(markup, /aria-label="在右侧工作区展开终端"/)
   assert.match(markup, /aria-label="关闭终端"/)
+  assert.doesNotMatch(markup, /data-phi-workspace-window-controls-reserve/)
   assert.match(markup, /flex:3 1 0/)
   assert.match(markup, /flex:2 1 0/)
 })
