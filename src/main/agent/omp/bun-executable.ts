@@ -1,7 +1,7 @@
-import { execFileSync } from 'node:child_process'
 import { accessSync, constants, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
+import { readLoginShellEnv } from './login-shell-env'
 
 // The OMP worker runs under bun. An app launched from Finder/Dock inherits
 // launchd's minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin), so a bare
@@ -13,9 +13,6 @@ import { delimiter, dirname, join } from 'node:path'
 //   4. the user's login shell PATH (custom installs: asdf, mise, nix, ...)
 
 export const BUN_PATH_ENV = 'PHI_BUN_PATH'
-
-const LOGIN_SHELL_TIMEOUT_MS = 5000
-const PATH_MARKER = '__PHI_PATH__'
 
 export type BunLookupOptions = {
   env?: NodeJS.ProcessEnv
@@ -58,19 +55,7 @@ function wellKnownBunDirs(env: NodeJS.ProcessEnv, homeDir: string): string[] {
 }
 
 export function readLoginShellPath(env: NodeJS.ProcessEnv): string | undefined {
-  const shell = env.SHELL || '/bin/zsh'
-  try {
-    // -i -l so rc files that extend PATH run; markers fence off rc-file noise.
-    const output = execFileSync(
-      shell,
-      ['-ilc', `printf '%s%s%s' '${PATH_MARKER}' "$PATH" '${PATH_MARKER}'`],
-      { encoding: 'utf8', timeout: LOGIN_SHELL_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'] }
-    )
-    const [, pathValue] = output.split(PATH_MARKER)
-    return pathValue || undefined
-  } catch {
-    return undefined
-  }
+  return readLoginShellEnv(env).PATH
 }
 
 export function findBunExecutable(options: BunLookupOptions = {}): string | undefined {

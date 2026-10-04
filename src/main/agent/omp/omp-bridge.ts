@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { writeAppLog } from '../app-logger'
 import { getPhiAgentDir } from '../runtime-paths'
 import { resolveBunExecutable, workerPathWithBun } from './bun-executable'
+import { resolveWorkerProxyEnv } from './worker-proxy-env'
 
 type PendingRequest = {
   method: string
@@ -132,6 +133,7 @@ function spawnBunWorker(workerPath: string, agentDir: string): ChildProcessWitho
     cwd: process.cwd(),
     env: {
       ...process.env,
+      ...resolveWorkerProxyEnv(process.env),
       PATH: workerPathWithBun(bunPath, process.env.PATH),
       PI_CODING_AGENT_DIR: agentDir,
       OMP_APP_NAME: 'Phi'
