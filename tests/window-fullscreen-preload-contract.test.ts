@@ -92,11 +92,11 @@ test('fullscreen state is typed end to end and only sourced from the trusted mai
   assert.match(main, /window\.webContents\.send\('window:fullscreen-changed', fullscreen\)/)
   assert.match(
     main,
-    /window\.on\('enter-full-screen',[\s\S]{0,120}sendMainWindowFullscreenState\(window, true\)/
+    /window\.on\('enter-full-screen',[\s\S]{0,160}setWindowButtonVisibility\(true\)[\s\S]{0,120}sendMainWindowFullscreenState\(window, true\)/
   )
   assert.match(
     main,
-    /window\.on\('leave-full-screen',[\s\S]{0,120}sendMainWindowFullscreenState\(window, false\)/
+    /window\.on\('leave-full-screen',[\s\S]{0,160}setWindowButtonVisibility\(false\)[\s\S]{0,120}sendMainWindowFullscreenState\(window, false\)/
   )
   assert.match(
     main,

@@ -6675,10 +6675,14 @@ function createWindow(): void {
     window.webContents.on('did-finish-load', () => {
       sendMainWindowFullscreenState(window, window.isFullScreen())
     })
+    // In fullscreen the renderer hides its drawn traffic lights; hand the job back to macOS so the
+    // native buttons slide in with the menu bar when the pointer reaches the top edge.
     window.on('enter-full-screen', () => {
+      if (!window.isDestroyed()) window.setWindowButtonVisibility(true)
       sendMainWindowFullscreenState(window, true)
     })
     window.on('leave-full-screen', () => {
+      if (!window.isDestroyed()) window.setWindowButtonVisibility(false)
       sendMainWindowFullscreenState(window, false)
     })
   }
