@@ -413,6 +413,7 @@ import {
 } from '../shared/notebookDocument'
 import { messageContentTitleText } from '../shared/sessionTitle'
 import type { AgentUserInteractionQuestion } from '../shared/agentInteractionTypes'
+import { createBeforeQuitHandler } from './app-quit'
 import icon from '../../resources/icon.png?asset'
 
 const APP_NAME = 'Phi'
@@ -496,8 +497,6 @@ let browserWorkspaceRegistry: BrowserWorkspaceRegistry | null = null
 let browserWorkspaceRegistryLifecycle: BrowserRegistryLifecycle = 'idle'
 let browserWorkspaceRegistryDisposal: Promise<void> | null = null
 let mainWindowCleanupPromise: Promise<void> | null = null
-let beforeQuitCleanupComplete = false
-let beforeQuitResumeScheduled = false
 const browserCheckpointStore = new FileSystemBrowserCheckpointStore({ agentDir: AGENT_DIR })
 
 function browserPolicyContext(): { applicationOrigins?: string[] } {
@@ -6073,20 +6072,6 @@ function cleanupMainWindowRuntime(): Promise<void> {
   return mainWindowCleanupPromise
 }
 
-function waitForAppCleanupOrTimeout(cleanup: Promise<void>): Promise<void> {
-  return new Promise((resolve) => {
-    let settled = false
-    const finish = (): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      resolve()
-    }
-    const timer = setTimeout(finish, APP_QUIT_CLEANUP_TIMEOUT_MS)
-    void cleanup.then(finish, finish)
-  })
-}
-
 // A user-visible conversation switch points future getAgentSession() calls at a
 // different file/cwd/permission mode. It deliberately does not abort the old
 // session: switching conversations is navigation, not stop.
@@ -9027,30 +9012,30 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('before-quit', (event) => {
-  if (beforeQuitCleanupComplete) return
-  event.preventDefault()
-  if (beforeQuitResumeScheduled) return
-  beforeQuitResumeScheduled = true
-  // Stop local wrapper runs; detach remote runs so the next app launch can resume watching them.
-  try {
-    wrapperJobs.shutdown()
-  } catch {
-    writeAppLog({ level: 'error', event: 'wrapper_shutdown_failed' })
-  }
-  try {
-    if (preventSleepBlockerId !== null && powerSaveBlocker.isStarted(preventSleepBlockerId)) {
-      powerSaveBlocker.stop(preventSleepBlockerId)
-      preventSleepBlockerId = null
-    }
-  } catch {
-    writeAppLog({ level: 'error', event: 'power_blocker_cleanup_failed' })
-  }
-  void waitForAppCleanupOrTimeout(cleanupMainWindowRuntime()).finally(() => {
-    beforeQuitCleanupComplete = true
-    app.quit()
+app.on(
+  'before-quit',
+  createBeforeQuitHandler({
+    beginShutdown: () => {
+      // Stop local wrapper runs; detach remote runs so the next app launch can resume watching them.
+      try {
+        wrapperJobs.shutdown()
+      } catch {
+        writeAppLog({ level: 'error', event: 'wrapper_shutdown_failed' })
+      }
+      try {
+        if (preventSleepBlockerId !== null && powerSaveBlocker.isStarted(preventSleepBlockerId)) {
+          powerSaveBlocker.stop(preventSleepBlockerId)
+          preventSleepBlockerId = null
+        }
+      } catch {
+        writeAppLog({ level: 'error', event: 'power_blocker_cleanup_failed' })
+      }
+    },
+    cleanup: cleanupMainWindowRuntime,
+    quit: () => app.quit(),
+    timeoutMs: APP_QUIT_CLEANUP_TIMEOUT_MS
   })
-})
+)
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

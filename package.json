@@ -36,6 +36,7 @@
     "test": "node --import ./scripts/test-loader.mjs --test --test-timeout=300000 --test-force-exit tests/*.test.ts",
     "test:runtime": "PHI_RUNTIME_INTEGRATION=1 node --import ./scripts/test-loader.mjs --test tests/runtime/*.test.ts tests/envs-*.test.ts",
     "smoke:wrappers": "node --import ./scripts/test-loader.mjs scripts/smoke-wrappers.mjs",
+    "smoke:packaged-quit": "node scripts/smoke-packaged-quit.mjs",
     "runtime:fetch": "node scripts/runtime/fetch-micromamba.mjs",
     "runtime:lock": "node --import ./scripts/test-loader.mjs scripts/runtime/lock-env.ts",
     "runtime:smoke": "node --import ./scripts/test-loader.mjs scripts/runtime/smoke-env.ts",

@@ -26,6 +26,7 @@ import type { WorkspaceChangeSummary } from '../src/shared/workspaceChangeTypes'
 import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
 import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
 import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-preview-media'
+import { createBeforeQuitHandler } from '../src/main/app-quit'
 import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers/remote-result-download'
 import * as localFileAccess from '../src/main/agent/local-file-access'
 import * as browserIpc from '../src/main/browser/browser-ipc'
@@ -1163,6 +1164,7 @@ async function harness(
     'node:crypto': { createHash },
     semver: { gt: (left: string, right: string): boolean => left > right },
     './agent-env': {},
+    './app-quit': { createBeforeQuitHandler },
     './file-preview-media': { hoverMediaPreviewType, mediaPreviewType },
     '../shared/wrapperResultTypes': { declaredExternalOutputRoot },
     '../shared/htmlReportPreview': htmlReportPreview,
