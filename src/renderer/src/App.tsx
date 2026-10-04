@@ -37,6 +37,8 @@ import WindowNavigationControls from './components/WindowNavigationControls'
 import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
 import { BackgroundJobsPanel } from './features/jobs/BackgroundJobsPanel'
 import BrowserPanel from './features/browser/BrowserPanel'
+import TerminalPanel from './features/terminal/TerminalPanel'
+import { useTerminalWorkspaceRestoration } from './features/terminal/hooks/useTerminalWorkspaceRestoration'
 import { useBrowserTrustedOverlayGate } from './features/browser/hooks/useBrowserTrustedOverlayGate'
 import { useBrowserPanelRequests } from './features/browser/hooks/useBrowserPanelRequests'
 import { createBrowserLinkOpeningCoordinator } from './features/browser/lib/browserLinkOpening'
@@ -999,6 +1001,7 @@ function App(): React.JSX.Element {
     onUpdateProjectRemoteConnection,
     onUpdateProjectRemoteDefaults
   } = useProjects(showSnackbarError)
+  useTerminalWorkspaceRestoration(rendererApi.terminal, projects, activeProjectId)
 
   const getActiveRemoteProject = useCallback(() => {
     const state = useSessionStore.getState()
@@ -1110,7 +1113,10 @@ function App(): React.JSX.Element {
   })
   const [workspaceSidePanelMode, setWorkspaceSidePanelMode] =
     useState<WorkspaceSidePanelMode | null>(null)
+  const [terminalPanelMaximized, setTerminalPanelMaximized] = useState(false)
+  const isTerminalPanelMaximized = workspaceSidePanelMode === 'terminal' && terminalPanelMaximized
   const openBrowserPanelFromRequest = useCallback((): void => {
+    setTerminalPanelMaximized(false)
     setWorkspaceSidePanelMode('browser')
   }, [setWorkspaceSidePanelMode])
   const showBrowserAppShellFailure = useCallback(
@@ -1132,7 +1138,10 @@ function App(): React.JSX.Element {
       execute: (command) => rendererApi.browser.execute(command),
       nextRequestId,
       getActiveSessionId: () => useSessionStore.getState().activePhiSessionId,
-      openBrowserPanel: () => setWorkspaceSidePanelMode('browser'),
+      openBrowserPanel: () => {
+        setTerminalPanelMaximized(false)
+        setWorkspaceSidePanelMode('browser')
+      },
       showFailure: showBrowserLinkFailure
     })
   }, [rendererApi, setWorkspaceSidePanelMode, showBrowserLinkFailure])
@@ -2627,14 +2636,25 @@ function App(): React.JSX.Element {
   const onToggleWorkspaceSidePanel = useCallback(
     (mode: WorkspaceSidePanelMode): void => {
       browserLinkOpeningCoordinator.invalidate()
+      if (mode !== 'terminal' || workspaceSidePanelMode === 'terminal') {
+        setTerminalPanelMaximized(false)
+      }
       setWorkspaceSidePanelMode((current) => toggleWorkspaceSidePanelMode(current, mode))
     },
-    [browserLinkOpeningCoordinator, setWorkspaceSidePanelMode]
+    [browserLinkOpeningCoordinator, setWorkspaceSidePanelMode, workspaceSidePanelMode]
   )
   const onOpenBackgroundJobs = useCallback((): void => {
     browserLinkOpeningCoordinator.invalidate()
+    setTerminalPanelMaximized(false)
     setWorkspaceSidePanelMode('jobs')
   }, [browserLinkOpeningCoordinator, setWorkspaceSidePanelMode])
+  const onToggleTerminalPanelMaximized = useCallback((): void => {
+    setTerminalPanelMaximized((current) => !current)
+  }, [])
+  const onCollapseTerminalPanel = useCallback((): void => {
+    setTerminalPanelMaximized(false)
+    setWorkspaceSidePanelMode(null)
+  }, [setWorkspaceSidePanelMode])
   const onRefreshWorkspaceSidePanel = useCallback((): void => {
     setWorkspaceSidePanelTreeRevision((value) => value + 1)
   }, [])
@@ -4184,7 +4204,7 @@ function App(): React.JSX.Element {
               minWidth: 0,
               height: '100vh',
               overflow: 'hidden',
-              display: 'flex',
+              display: isTerminalPanelMaximized ? 'none' : 'flex',
               flexDirection: 'column'
             }}
           >
@@ -4339,26 +4359,40 @@ function App(): React.JSX.Element {
             </Box>
           </Box>
         ) : (
-          <Box component="main" sx={{ flex: 1, minWidth: 0, height: '100vh' }} />
+          <Box
+            component="main"
+            sx={{
+              flex: 1,
+              minWidth: 0,
+              height: '100vh',
+              display: isTerminalPanelMaximized ? 'none' : 'block'
+            }}
+          />
         )}
 
         {workspaceSidePanelMode ? (
           <>
-            <AppResizeSeparator
-              label="调整工作区面板宽度"
-              onMouseDown={onStartWorkspaceSidePanelResize}
-            />
+            {isTerminalPanelMaximized ? null : (
+              <AppResizeSeparator
+                label="调整工作区面板宽度"
+                onMouseDown={onStartWorkspaceSidePanelResize}
+              />
+            )}
             <Box
               data-phi-workspace-side-panel-shell="true"
               sx={{
                 height: '100vh',
+                flex: isTerminalPanelMaximized ? 1 : undefined,
                 flexShrink: 0,
                 display: 'flex',
                 minWidth: 0,
                 minHeight: 0
               }}
             >
-              <WorkspaceSidePanel width={workspaceSidePanelWidth} mode={workspaceSidePanelMode}>
+              <WorkspaceSidePanel
+                width={isTerminalPanelMaximized ? '100%' : workspaceSidePanelWidth}
+                mode={workspaceSidePanelMode}
+              >
                 {workspaceSidePanelMode === 'jobs' ? (
                   <BackgroundJobsPanel
                     onOpenSession={(path) => void onOpenSessionFromSidebar(path)}
@@ -4383,7 +4417,15 @@ function App(): React.JSX.Element {
                       !isNewProjectDialogOpen
                     }
                   />
-                ) : null}
+                ) : (
+                  <TerminalPanel
+                    bridge={rendererApi.terminal}
+                    projects={projects}
+                    maximized={isTerminalPanelMaximized}
+                    onToggleMaximize={onToggleTerminalPanelMaximized}
+                    onCollapse={onCollapseTerminalPanel}
+                  />
+                )}
               </WorkspaceSidePanel>
             </Box>
           </>

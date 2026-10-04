@@ -185,14 +185,13 @@ test('analysis view does not own the workspace side panel', () => {
   assert.doesNotMatch(markup, /workflows\/main\.nf/)
 })
 
-test('terminal side panel shows only the terminal entry', () => {
-  const markup = renderWorkspaceSidePanel()
+test('terminal side panel renders passed terminal content without the legacy placeholder', () => {
+  const markup = renderWorkspaceSidePanel({ children: '终端面板内容' })
 
   assert.match(markup, /data-phi-workspace-tools-side-panel="true"/)
   assert.match(markup, /data-phi-workspace-side-panel-mode="terminal"/)
-  assert.match(markup, /data-phi-workspace-side-panel-tool-card="terminal"/)
-  assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card="browser"/)
-  assert.match(markup, /终端/)
+  assert.match(markup, /终端面板内容/)
+  assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card=/)
   assert.doesNotMatch(markup, /浏览器/)
   assert.doesNotMatch(markup, /data-phi-workspace-explorer-header="true"/)
   assert.doesNotMatch(markup, /刷新文件树/)

@@ -207,7 +207,7 @@ test('App composes link opening and invalidates it on explicit panel actions', (
 
   assert.match(
     app,
-    /createBrowserLinkOpeningCoordinator\(\{[\s\S]*?execute: \(command\) => rendererApi\.browser\.execute\(command\)[\s\S]*?getActiveSessionId:[\s\S]*?openBrowserPanel: \(\) => setWorkspaceSidePanelMode\('browser'\)[\s\S]*?showFailure:/
+    /createBrowserLinkOpeningCoordinator\(\{[\s\S]*?execute: \(command\) => rendererApi\.browser\.execute\(command\)[\s\S]*?getActiveSessionId:[\s\S]*?openBrowserPanel: \(\) => \{[\s\S]*?setTerminalPanelMaximized\(false\)[\s\S]*?setWorkspaceSidePanelMode\('browser'\)[\s\S]*?showFailure:/
   )
   assert.match(app, /onOpenWebUrl[\s\S]*?browserLinkOpeningCoordinator\.open\(url\)/)
   assert.ok(trustedOverlayEnqueue, 'trusted overlay enqueue must have one App-level wrapper')

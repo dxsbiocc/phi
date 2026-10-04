@@ -258,6 +258,38 @@ test('workspace file previews and chats can show the shared right side panel', (
   assert.doesNotMatch(appSource, /position: 'fixed'[\s\S]{0,120}inset: 0/)
 })
 
+test('terminal panel wiring preserves content while maximizing and resets on collapse', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+
+  assert.match(appSource, /import TerminalPanel from '\.\/features\/terminal\/TerminalPanel'/)
+  assert.match(
+    appSource,
+    /const \[terminalPanelMaximized, setTerminalPanelMaximized\] = useState\(false\)/
+  )
+  assert.match(
+    appSource,
+    /const onToggleWorkspaceSidePanel = useCallback\([\s\S]{0,320}mode !== 'terminal' \|\| workspaceSidePanelMode === 'terminal'[\s\S]{0,100}setTerminalPanelMaximized\(false\)/
+  )
+  assert.match(appSource, /display: isTerminalPanelMaximized \? 'none' : 'flex'/)
+  assert.match(appSource, /flex: isTerminalPanelMaximized \? 1 : undefined/)
+  assert.match(appSource, /width=\{isTerminalPanelMaximized \? '100%' : workspaceSidePanelWidth\}/)
+  assert.match(
+    appSource,
+    /<TerminalPanel[\s\S]{0,320}bridge=\{rendererApi\.terminal\}[\s\S]{0,160}projects=\{projects\}/
+  )
+  assert.match(appSource, /maximized=\{isTerminalPanelMaximized\}/)
+  assert.match(appSource, /onToggleMaximize=\{onToggleTerminalPanelMaximized\}/)
+  assert.match(appSource, /onCollapse=\{onCollapseTerminalPanel\}/)
+  assert.match(
+    appSource,
+    /useTerminalWorkspaceRestoration\(rendererApi\.terminal, projects, activeProjectId\)/
+  )
+  assert.match(
+    appSource,
+    /const onCollapseTerminalPanel = useCallback\([\s\S]{0,180}setTerminalPanelMaximized\(false\)[\s\S]{0,100}setWorkspaceSidePanelMode\(null\)/
+  )
+})
+
 test('workspace session tabs do not stack stale file previews under chat', () => {
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
   const chatWorkspaceStart = appSource.indexOf('const chatWorkspaceContent = (')

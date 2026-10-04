@@ -6,38 +6,6 @@ import type { DirectoryListing } from '../types'
 import { ProjectFileTree } from '../features/file-preview/components/ProjectFileTree'
 
 const DirectoryTreeIcon = PhiIcons.entity.directoryTree
-const TerminalIcon = PhiIcons.tool.command
-
-function WorkspaceToolCard({
-  kind,
-  label,
-  Icon
-}: {
-  kind: 'terminal'
-  label: string
-  Icon: typeof TerminalIcon
-}): React.JSX.Element {
-  return (
-    <Box
-      data-phi-workspace-side-panel-tool-card={kind}
-      sx={{
-        minHeight: 74,
-        borderRadius: 1.5,
-        bgcolor: 'action.hover',
-        color: 'text.primary',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 1.25,
-        px: 1.5
-      }}
-    >
-      <Icon sx={{ fontSize: 24, color: 'primary.main', flexShrink: 0 }} />
-      <Typography variant="body1" sx={{ minWidth: 0, fontWeight: 800 }} noWrap>
-        {label}
-      </Typography>
-    </Box>
-  )
-}
 
 export function WorkspaceFilesPane({
   rootPath,
@@ -111,19 +79,15 @@ export function WorkspaceSidePanel({
         display: 'flex',
         minHeight: 0,
         flexDirection: 'column',
-        gap: mode === 'browser' ? 0 : 1,
-        px: mode === 'browser' ? 0 : 1.5,
+        gap: mode === 'jobs' ? 1 : 0,
+        px: mode === 'jobs' ? 1.5 : 0,
         pt: 6,
-        pb: mode === 'browser' ? 0 : 1.5,
+        pb: mode === 'jobs' ? 1.5 : 0,
         bgcolor: (theme) =>
           theme.palette.mode === 'dark' ? theme.palette.background.default : '#FFFFFF'
       }}
     >
-      {mode === 'jobs' || mode === 'browser' ? (
-        children
-      ) : (
-        <WorkspaceToolCard kind="terminal" label="终端" Icon={TerminalIcon} />
-      )}
+      {children}
     </Box>
   )
 }
