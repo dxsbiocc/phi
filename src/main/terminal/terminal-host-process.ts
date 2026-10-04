@@ -22,12 +22,23 @@ export function resolveTerminalScript(
 
   const bundleDir = dirname(fileURLToPath(import.meta.url))
   const candidates = [join(bundleDir, fileName), join(bundleDir, 'terminal', fileName)]
+  return pickTerminalScript(candidates, existsSync)
+}
+
+/**
+ * Prefer the app.asar.unpacked copy: Electron's fs reports files inside app.asar as existing,
+ * but Bun runs outside Electron and cannot read them.
+ */
+export function pickTerminalScript(
+  candidates: readonly string[],
+  exists: (path: string) => boolean
+): string {
   for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate
     const unpacked = asarUnpackedPath(candidate)
-    if (existsSync(unpacked)) return unpacked
+    if (unpacked !== candidate && exists(unpacked)) return unpacked
+    if (exists(candidate)) return candidate
   }
-  return candidates[1]
+  return candidates[candidates.length - 1]
 }
 
 function terminalChildEnvironment(): NodeJS.ProcessEnv {
