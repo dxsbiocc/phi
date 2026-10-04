@@ -72,7 +72,17 @@ export interface TerminalRendererBridge {
   resize(terminalId: string, cols: number, rows: number): Promise<TerminalResult<void>>
   ack(terminalId: string, epoch: number, bytes: number): Promise<TerminalResult<void>>
   close(terminalId: string): Promise<TerminalResult<void>>
+  generateDraft(
+    input: TerminalGenerateDraftInput
+  ): Promise<TerminalResult<TerminalDraftGenerationResult>>
+  cancelDraft(requestId: string): Promise<TerminalResult<void>>
+  submitDraft(input: TerminalSubmitDraftInput): Promise<TerminalResult<void>>
   onEvent(cb: (event: TerminalEvent) => void): () => void
+}
+
+export interface TerminalDraftRequiredInput {
+  name: string
+  description: string
 }
 
 export interface TerminalCommandDraft {
@@ -81,5 +91,22 @@ export interface TerminalCommandDraft {
   workspaceKey: string
   source: string
   explanation: string
-  requiredInputs: Array<{ name: string; description: string }>
+  requiredInputs: TerminalDraftRequiredInput[]
+}
+
+export type TerminalDraftGenerationResult = TerminalCommandDraft & { selectionTruncated?: boolean }
+
+export interface TerminalGenerateDraftInput {
+  requestId: string
+  terminalId: string
+  kind: 'command' | 'explain'
+  request: string
+  selection?: string
+}
+
+export interface TerminalSubmitDraftInput {
+  requestId: string
+  draftId: string
+  source: string
+  bracketedPaste: boolean
 }

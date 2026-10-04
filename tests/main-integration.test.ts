@@ -1396,6 +1396,21 @@ async function harness(
       },
       registerTerminalRendererIpc: noop
     },
+    './terminal/terminal-command-draft': {
+      TerminalDraftService: class {
+        terminalClosed(): void {
+          return undefined
+        }
+        async dispose(): Promise<void> {
+          return undefined
+        }
+      }
+    },
+    './terminal/terminal-draft-session': {
+      buildTerminalDraftSessionFactory: (): (() => never) => () => {
+        throw new Error('terminal draft sessions are not exercised by this harness')
+      }
+    },
     './terminal/terminal-manager': {
       TerminalManager: class {
         async closeWorkspace(): Promise<void> {

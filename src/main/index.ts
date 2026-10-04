@@ -74,6 +74,8 @@ import { BrowserWorkspaceRegistry } from './browser/browser-workspace-registry'
 import type { BrowserActionApprovalPrompt } from './browser/browser-approval'
 import { BrowserToolHostCoordinator } from './agent/browser/browser-tool-host'
 import { TerminalIpcCoordinator, registerTerminalRendererIpc } from './terminal/terminal-ipc'
+import { TerminalDraftService } from './terminal/terminal-command-draft'
+import { buildTerminalDraftSessionFactory } from './terminal/terminal-draft-session'
 import { TerminalManager } from './terminal/terminal-manager'
 import { resolveTerminalWorkspace } from './terminal/terminal-workspace'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
@@ -499,6 +501,7 @@ let browserWorkspaceRegistry: BrowserWorkspaceRegistry | null = null
 let browserWorkspaceRegistryLifecycle: BrowserRegistryLifecycle = 'idle'
 let browserWorkspaceRegistryDisposal: Promise<void> | null = null
 let terminalManager: TerminalManager | null = null
+let terminalDraftService: TerminalDraftService | null = null
 let mainWindowCleanupPromise: Promise<void> | null = null
 let beforeQuitCleanupComplete = false
 let beforeQuitResumeScheduled = false
@@ -636,16 +639,57 @@ function getTerminalManager(): TerminalManager {
           realDirectory: (path) => realDirectoryPath(path),
           isRemoteAnchor: (path) => isRemoteProjectAnchorPath(path, AGENT_DIR)
         }),
-      sink: (event) => terminalIpcCoordinator.sendEvent(event)
+      sink: (event) => {
+        if (
+          event.type === 'state' &&
+          (event.snapshot.state === 'closing' ||
+            event.snapshot.state === 'exited' ||
+            event.snapshot.state === 'failed')
+        ) {
+          terminalDraftService?.terminalClosed(event.snapshot.terminalId)
+        }
+        terminalIpcCoordinator.sendEvent(event)
+      }
     })
   }
   return terminalManager
 }
 
-function disposeTerminalManager(): Promise<void> {
+function getTerminalDraftService(): TerminalDraftService {
+  if (mainWindowCleanupStarted) throw new Error('Terminal draft service is unavailable')
+  if (!terminalDraftService) {
+    terminalDraftService = new TerminalDraftService({
+      createSession: buildTerminalDraftSessionFactory({
+        createAgentSession,
+        createSessionManager: createInMemoryRuntimeSessionManager,
+        resolveSession: async (context) => {
+          const runtime = await getAuthManager().getRuntime()
+          const project = context.workspaceKey.startsWith('project:')
+            ? getProject(context.workspaceKey.slice('project:'.length))
+            : undefined
+          const modelSelection = project?.defaultModel ?? selectedModel
+          const model = modelSelection
+            ? resolveRuntimeModelSelection(runtime, modelSelection)?.model
+            : undefined
+          return {
+            modelRuntime: runtime,
+            model,
+            thinkingLevel: project?.defaultThinkingLevel ?? selectedThinkingLevel
+          }
+        }
+      }),
+      manager: getTerminalManager()
+    })
+  }
+  return terminalDraftService
+}
+
+async function disposeTerminalManager(): Promise<void> {
+  const draftService = terminalDraftService
   const manager = terminalManager
+  terminalDraftService = null
   terminalManager = null
-  return manager?.dispose() ?? Promise.resolve()
+  await Promise.all([draftService?.dispose(), manager?.dispose()])
 }
 
 function browserSessionForPhiId(phiSessionId: string): BrowserIpcSession | undefined {
@@ -684,6 +728,7 @@ const browserIpcCoordinator = new BrowserIpcCoordinator({
 
 const terminalIpcCoordinator = new TerminalIpcCoordinator({
   getManager: getTerminalManager,
+  getDraftService: getTerminalDraftService,
   getTrustedRenderer: () => {
     const window = mainWindow
     return window && !window.isDestroyed() ? window.webContents : null

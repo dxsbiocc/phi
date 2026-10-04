@@ -41,8 +41,11 @@ export interface TerminalTitleBarProps {
   maximized: boolean
   canCreate?: boolean
   busy?: boolean
+  canExplainSelection?: boolean
   onSelect(terminalId: string): void
   onCreate(): void
+  onOpenAssist(): void
+  onExplainSelection(): void
   onEnd(terminalId: string): void
   onEndAll(): void
   onToggleMaximize(): void
@@ -68,6 +71,14 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
     if (activeTerminal && window.confirm('结束后该终端中正在运行的程序会被终止。')) {
       props.onEnd(activeTerminal.terminalId)
     }
+  }
+  const openAssist = (): void => {
+    closeMenu()
+    props.onOpenAssist()
+  }
+  const explainSelection = (): void => {
+    closeMenu()
+    props.onExplainSelection()
   }
   const endAll = (): void => {
     closeMenu()
@@ -177,6 +188,16 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
         onClose={closeMenu}
         slotProps={{ list: { 'aria-label': '终端操作' } }}
       >
+        <MenuItem disabled={!activeTerminal || props.busy} onClick={openAssist}>
+          帮我写命令
+        </MenuItem>
+        <MenuItem
+          disabled={!activeTerminal || !props.canExplainSelection || props.busy}
+          onClick={explainSelection}
+        >
+          让 Agent 解释
+        </MenuItem>
+        <Divider />
         <MenuItem disabled={!activeTerminal || props.busy} onClick={endActive}>
           结束终端
         </MenuItem>

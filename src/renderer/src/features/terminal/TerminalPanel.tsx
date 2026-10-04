@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Box, Typography, useTheme } from '@mui/material'
+import { Box, Menu, MenuItem, Typography, useTheme } from '@mui/material'
 import '@xterm/xterm/css/xterm.css'
 
 import {
@@ -10,9 +10,11 @@ import {
   type TerminalRendererBridge
 } from '../../../../shared/terminalTypes'
 import type { Project } from '../../lib/projectTypes'
+import { TerminalAssistPanel } from './components/TerminalAssistPanel'
 import { TerminalPastePreview } from './components/TerminalPastePreview'
 import { TerminalStatusPane, type TerminalStatusKind } from './components/TerminalStatusPane'
 import { TerminalTitleBar } from './components/TerminalTitleBar'
+import { useTerminalDraft } from './hooks/useTerminalDraft'
 import { useTerminalWorkspace } from './hooks/useTerminalWorkspace'
 import { isTerminalInputWithinLimit } from './lib/terminalInput'
 import { createTerminalTheme } from './lib/terminalTheme'
@@ -58,12 +60,42 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
   } | null>(null)
   const [pasteBusy, setPasteBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [, setInteractionVersion] = useState(0)
+  const [contextMenu, setContextMenu] = useState<{
+    terminalId: string | null
+    mouseX: number
+    mouseY: number
+    selection: string
+  } | null>(null)
   const activeId = workspace.activeTerminal?.terminalId ?? null
   const activeView = activeId ? workspace.controller.getTerminalView(activeId) : null
+  const terminalDraftScope = useMemo(
+    () =>
+      workspace.initialized && !workspace.snapshot.pending
+        ? {
+            workspaceKey: workspace.snapshot.workspaceKey,
+            terminalIds: workspace.snapshot.terminals.map((terminal) => terminal.terminalId)
+          }
+        : undefined,
+    [
+      workspace.initialized,
+      workspace.snapshot.pending,
+      workspace.snapshot.terminals,
+      workspace.snapshot.workspaceKey
+    ]
+  )
+  const terminalDraft = useTerminalDraft(props.bridge, activeId, terminalDraftScope)
   const ensureWorkspace = workspace.ensure
   const workspaceReady = workspace.ready
   const workspaceTarget = workspace.target
   const terminalTheme = useMemo(() => createTerminalTheme(theme.palette.mode), [theme.palette.mode])
+  const activeSelection = activeView?.getSelection() ?? ''
+  const currentLineDirty = activeView?.isCurrentLineDirty() ?? false
+
+  useEffect(() => {
+    if (!activeView) return undefined
+    return activeView.subscribeInteraction(() => setInteractionVersion((version) => version + 1))
+  }, [activeView])
 
   useEffect(() => {
     if (workspaceTarget === 'remote' || !workspaceReady) return
@@ -138,6 +170,38 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
       })
       .finally(() => setPasteBusy(false))
   }
+  const openAssist = (): void => {
+    if (!activeId || !workspace.activeTerminal) return
+    if (visiblePaste) cancelPaste()
+    terminalDraft.open({
+      terminalId: activeId,
+      workspaceKey: workspace.activeTerminal.workspaceKey,
+      kind: 'command'
+    })
+  }
+  const explainSelection = (selection = activeSelection): void => {
+    if (!activeId || !workspace.activeTerminal || !selection) return
+    if (visiblePaste) cancelPaste()
+    terminalDraft.open({
+      terminalId: activeId,
+      workspaceKey: workspace.activeTerminal.workspaceKey,
+      kind: 'explain',
+      selection
+    })
+  }
+  const assistVisible = Boolean(terminalDraft.state?.open && activeId)
+  const submitDraft = (source: string): void => {
+    const targetView = activeView
+    if (!targetView) return
+    void terminalDraft
+      .submit(source, targetView.terminal.modes.bracketedPasteMode)
+      .then((submitted) => {
+        if (submitted) targetView.markCurrentLineClean()
+      })
+  }
+  const copyDraft = (source: string): void => {
+    void navigator.clipboard.writeText(source).catch(() => setNotice('无法复制到剪贴板'))
+  }
 
   let status: PanelStatus | null = null
   const error = workspace.snapshot.error
@@ -194,7 +258,12 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
   return (
     <Box
       data-phi-terminal-panel="true"
-      aria-busy={workspace.snapshot.pending || pasteBusy}
+      aria-busy={
+        workspace.snapshot.pending ||
+        pasteBusy ||
+        terminalDraft.state?.phase === 'generating' ||
+        terminalDraft.state?.submitting
+      }
       sx={{
         width: '100%',
         height: '100%',
@@ -228,8 +297,11 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
           maximized={props.maximized}
           canCreate={canCreate}
           busy={workspace.snapshot.pending}
+          canExplainSelection={Boolean(activeSelection)}
           onSelect={workspace.select}
           onCreate={createTerminal}
+          onOpenAssist={openAssist}
+          onExplainSelection={() => explainSelection()}
           onEnd={(terminalId) => void workspace.close(terminalId)}
           onEndAll={() => void workspace.closeAll()}
           onToggleMaximize={props.onToggleMaximize}
@@ -249,6 +321,15 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
           <Box
             ref={viewportRef}
             data-phi-terminal-viewport="true"
+            onContextMenu={(event) => {
+              event.preventDefault()
+              setContextMenu({
+                terminalId: activeId,
+                mouseX: event.clientX + 2,
+                mouseY: event.clientY - 6,
+                selection: activeView?.getSelection() ?? ''
+              })
+            }}
             sx={{
               flex: 1,
               minWidth: 0,
@@ -298,7 +379,25 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
             </Box>
           ) : null}
 
-          {visiblePaste ? (
+          {assistVisible && terminalDraft.state && workspace.activeTerminal ? (
+            <TerminalAssistPanel
+              state={terminalDraft.state}
+              targetLabel={workspace.activeTerminal.title}
+              targetOpen={workspace.activeTerminal.state === 'open'}
+              currentLineDirty={currentLineDirty}
+              generationBusy={terminalDraft.generationBusy}
+              onRequestChange={terminalDraft.setRequest}
+              onSelectionChange={terminalDraft.setSelection}
+              onCommandChange={terminalDraft.setCommand}
+              onInputChange={terminalDraft.setInputValue}
+              onReadyForDirtyLineChange={terminalDraft.setReadyForDirtyLine}
+              onGenerate={() => void terminalDraft.generate()}
+              onCancelGeneration={() => void terminalDraft.cancelGeneration()}
+              onCopy={copyDraft}
+              onSend={submitDraft}
+              onClose={terminalDraft.close}
+            />
+          ) : visiblePaste ? (
             <TerminalPastePreview
               text={visiblePaste.text}
               busy={pasteBusy}
@@ -314,7 +413,7 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
                 position: 'absolute',
                 left: 12,
                 right: 12,
-                bottom: visiblePaste ? 128 : 12,
+                bottom: assistVisible || visiblePaste ? 128 : 12,
                 px: 1.25,
                 py: 0.75,
                 borderRadius: 1,
@@ -328,6 +427,27 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
               {notice}
             </Box>
           ) : null}
+
+          <Menu
+            open={Boolean(contextMenu && contextMenu.terminalId === activeId)}
+            onClose={() => setContextMenu(null)}
+            anchorReference="anchorPosition"
+            anchorPosition={
+              contextMenu ? { top: contextMenu.mouseY, left: contextMenu.mouseX } : undefined
+            }
+            slotProps={{ list: { 'aria-label': '终端右键操作' } }}
+          >
+            <MenuItem
+              disabled={!contextMenu?.selection}
+              onClick={() => {
+                const selection = contextMenu?.selection ?? ''
+                setContextMenu(null)
+                explainSelection(selection)
+              }}
+            >
+              让 Agent 解释
+            </MenuItem>
+          </Menu>
         </Box>
       </Box>
     </Box>

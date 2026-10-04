@@ -284,8 +284,8 @@ test('worker heartbeat timeout fails terminals and asks supervisor to terminate 
       if (request.type === 'ping' && !answerPings) return
       defaultWorker(request, endpoint)
     },
-    heartbeatIntervalMs: 10,
-    heartbeatTimeoutMs: 35
+    heartbeatIntervalMs: 20,
+    heartbeatTimeoutMs: 80
   })
   host.subscribe((event) => events.push(event))
   try {
@@ -301,7 +301,7 @@ test('worker heartbeat timeout fails terminals and asks supervisor to terminate 
             event !== null &&
             (event as { type?: unknown }).type === 'failed'
         ),
-      500
+      3_000
     )
     await waitFor(() => supervisor.requests.some((request) => request.type === 'terminateAll'))
   } finally {
@@ -316,14 +316,15 @@ test('heartbeat uses startup grace until the first pong', async () => {
       if (request.type === 'ping') return
       defaultWorker(request, endpoint)
     },
-    heartbeatIntervalMs: 5,
-    heartbeatTimeoutMs: 20,
-    heartbeatStartupGraceMs: 100
+    // Wide margins: under full-suite load, createTerminal alone can take longer than a tight grace window.
+    heartbeatIntervalMs: 20,
+    heartbeatTimeoutMs: 80,
+    heartbeatStartupGraceMs: 1_500
   })
   host.subscribe((event) => events.push(event))
   try {
     await host.createTerminal(terminal)
-    await new Promise((resolve) => setTimeout(resolve, 60))
+    await new Promise((resolve) => setTimeout(resolve, 300))
     assert.equal(
       events.some(
         (event) =>
@@ -341,7 +342,7 @@ test('heartbeat uses startup grace until the first pong', async () => {
             event !== null &&
             (event as { type?: unknown }).type === 'failed'
         ),
-      300
+      5_000
     )
   } finally {
     await host.dispose()

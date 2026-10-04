@@ -21,6 +21,9 @@ test('shared, preload, ambient, and renderer types expose one terminal bridge co
 
   assert.match(shared, /export interface TerminalRendererBridge/)
   assert.match(shared, /list\(ref: TerminalWorkspaceRef\)/)
+  assert.match(shared, /generateDraft\(\s*input: TerminalGenerateDraftInput/)
+  assert.match(shared, /cancelDraft\(requestId: string\)/)
+  assert.match(shared, /submitDraft\(input: TerminalSubmitDraftInput\)/)
   assert.match(shared, /onEvent\(cb: \(event: TerminalEvent\) => void\): \(\) => void/)
   assert.match(preload, /terminal: TerminalRendererBridge/)
   assert.match(preload, /terminal: terminalBridge/)
@@ -72,6 +75,21 @@ test('preload terminal bridge invokes exact channels and independently unsubscri
   await api.terminal.resize('terminal_123', 100, 30)
   await api.terminal.ack('terminal_123', 2, 12)
   await api.terminal.close('terminal_123')
+  const generateDraft = {
+    requestId: 'request_2',
+    terminalId: 'terminal_123',
+    kind: 'command' as const,
+    request: 'create a marker'
+  }
+  const submitDraft = {
+    requestId: 'request_3',
+    draftId: 'draft_123',
+    source: 'touch marker',
+    bracketedPaste: false
+  }
+  await api.terminal.generateDraft(generateDraft)
+  await api.terminal.cancelDraft('request_2')
+  await api.terminal.submitDraft(submitDraft)
   assert.deepEqual(calls, [
     { channel: 'terminal:list', args: [workspace] },
     { channel: 'terminal:create', args: [create] },
@@ -79,7 +97,10 @@ test('preload terminal bridge invokes exact channels and independently unsubscri
     { channel: 'terminal:input', args: ['terminal_123', 'echo safe\n'] },
     { channel: 'terminal:resize', args: ['terminal_123', 100, 30] },
     { channel: 'terminal:ack', args: ['terminal_123', 2, 12] },
-    { channel: 'terminal:close', args: ['terminal_123'] }
+    { channel: 'terminal:close', args: ['terminal_123'] },
+    { channel: 'terminal:generateDraft', args: [generateDraft] },
+    { channel: 'terminal:cancelDraft', args: ['request_2'] },
+    { channel: 'terminal:submitDraft', args: [submitDraft] }
   ])
 
   const terminalEvent: TerminalEvent = {

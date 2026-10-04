@@ -227,6 +227,7 @@ class FakeBridge implements TerminalRendererBridge {
     input: Parameters<TerminalRendererBridge['create']>[0]
   ) => Promise<TerminalResult<TerminalSnapshot>>
   attachHandler?: (terminalId: string) => Promise<TerminalResult<TerminalAttachResult>>
+  inputHandler?: (terminalId: string, data: string) => Promise<TerminalResult<void>>
   listener: ((event: TerminalEvent) => void) | null = null
   unsubscribeCalls = 0
   nextTerminal = 0
@@ -260,6 +261,7 @@ class FakeBridge implements TerminalRendererBridge {
 
   input(terminalId: string, data: string): Promise<TerminalResult<void>> {
     this.inputCalls.push({ terminalId, data })
+    if (this.inputHandler) return this.inputHandler(terminalId, data)
     return Promise.resolve(ok(undefined))
   }
 
@@ -557,16 +559,24 @@ test('serializes xterm input, confirms bracketed paste once, and disposes subscr
   const { controller } = harness(bridge)
   await controller.ensureWorkspace(project('alpha'))
   const terminal = FakeTerminal.instances[0]
+  const view = controller.getTerminalView(existing.terminalId)
+  assert.ok(view)
 
   terminal.emitData('a')
   terminal.emitData('b')
   terminal.modes.bracketedPasteMode = true
   const pasteResult = await controller.submitPaste(existing.terminalId, 'one\ntwo')
   assert.equal(pasteResult.ok, true)
+  assert.equal(view.isCurrentLineDirty(), true)
+
+  const newlineEndingPasteResult = await controller.submitPaste(existing.terminalId, 'reset\r\n')
+  assert.equal(newlineEndingPasteResult.ok, true)
+  assert.equal(view.isCurrentLineDirty(), false)
   assert.deepEqual(bridge.inputCalls, [
     { terminalId: existing.terminalId, data: 'a' },
     { terminalId: existing.terminalId, data: 'b' },
-    { terminalId: existing.terminalId, data: '\u001b[200~one\ntwo\u001b[201~' }
+    { terminalId: existing.terminalId, data: '\u001b[200~one\ntwo\u001b[201~' },
+    { terminalId: existing.terminalId, data: '\u001b[200~reset\r\n\u001b[201~' }
   ])
 
   controller.dispose()
@@ -575,6 +585,38 @@ test('serializes xterm input, confirms bracketed paste once, and disposes subscr
   assert.equal(terminal.disposeCalls, 1)
   bridge.emit({ type: 'data', terminalId: existing.terminalId, epoch: 1, seq: 2, data: 'ignored' })
   assert.equal(terminal.screen.includes('ignored'), false)
+})
+
+test('pending newline paste cannot erase later printable keyboard state', async () => {
+  const bridge = new FakeBridge()
+  const existing = snapshot('terminal-alpha')
+  const pasteGate = new Deferred<TerminalResult<void>>()
+  bridge.listResults.set('alpha', [existing])
+  bridge.attachResults.set(existing.terminalId, [attachment(existing, 1)])
+  bridge.inputHandler = (_terminalId, data) =>
+    data === 'reset\n' ? pasteGate.promise : Promise.resolve(ok(undefined))
+  const { controller } = harness(bridge)
+  await controller.ensureWorkspace(project('alpha'))
+  const terminal = FakeTerminal.instances[0]
+  const view = controller.getTerminalView(existing.terminalId)
+  assert.ok(view)
+
+  const paste = controller.submitPaste(existing.terminalId, 'reset\n')
+  await waitFor(() => bridge.inputCalls.length === 1)
+  terminal.emitData('partial')
+  assert.equal(view.isCurrentLineDirty(), true)
+  assert.equal(bridge.inputCalls.length, 1)
+
+  pasteGate.resolve(ok(undefined))
+  assert.equal((await paste).ok, true)
+  await waitFor(() => bridge.inputCalls.length === 2)
+
+  assert.equal(view.isCurrentLineDirty(), true)
+  assert.deepEqual(bridge.inputCalls, [
+    { terminalId: existing.terminalId, data: 'reset\n' },
+    { terminalId: existing.terminalId, data: 'partial' }
+  ])
+  controller.dispose()
 })
 
 test('multi-line paste blocks xterm same-target forwarding until confirmation', async () => {

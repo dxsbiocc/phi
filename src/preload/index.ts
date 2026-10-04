@@ -1036,6 +1036,9 @@ const terminalBridge: TerminalRendererBridge = {
   resize: (terminalId, cols, rows) => ipcRenderer.invoke('terminal:resize', terminalId, cols, rows),
   ack: (terminalId, epoch, bytes) => ipcRenderer.invoke('terminal:ack', terminalId, epoch, bytes),
   close: (terminalId) => ipcRenderer.invoke('terminal:close', terminalId),
+  generateDraft: (input) => ipcRenderer.invoke('terminal:generateDraft', input),
+  cancelDraft: (requestId) => ipcRenderer.invoke('terminal:cancelDraft', requestId),
+  submitDraft: (input) => ipcRenderer.invoke('terminal:submitDraft', input),
   onEvent: (callback) => {
     const handler = (_: unknown, event: TerminalEvent): void => {
       try {

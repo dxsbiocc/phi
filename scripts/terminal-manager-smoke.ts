@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import type { TerminalEvent } from '../src/shared/terminalTypes'
+import { TerminalDraftService } from '../src/main/terminal/terminal-command-draft'
 import { TerminalHost, type TerminalChildSpawner } from '../src/main/terminal/terminal-host'
 import { TerminalManager } from '../src/main/terminal/terminal-manager'
 import { resolveTerminalWorkspace } from '../src/main/terminal/terminal-workspace'
@@ -18,9 +19,11 @@ const workspace = mkdtempSync(join(tmpdir(), 'phi-terminal-manager-'))
 const workspaceRealPath = realpathSync(workspace)
 const pidFile = join(workspace, 'shell.pid')
 const childPidFile = join(workspace, 'child.pid')
+const draftMarkerFile = join(workspace, 'draft-marker')
 const recordsByEpoch = new Map<number, Array<{ seq: number; data: string }>>()
 const hostChildren: ChildProcessWithoutNullStreams[] = []
 let manager: TerminalManager | undefined
+let draftService: TerminalDraftService | undefined
 let ackChain = Promise.resolve()
 
 function waitFor(check: () => boolean, timeoutMs: number, label: string): Promise<void> {
@@ -128,6 +131,40 @@ try {
   )
   if (replayBytes > 0) await manager.ack(terminal.terminalId, firstAttach.epoch, replayBytes)
 
+  draftService = new TerminalDraftService({
+    manager,
+    randomDraftId: () => 'draft_smoke',
+    createSession: async () => {
+      let assistantText = ''
+      return {
+        prompt: async () => {
+          assistantText = JSON.stringify({
+            command: 'touch <marker>',
+            explanation: 'Create the requested marker file.',
+            requiredInputs: [{ name: 'marker', description: 'Marker file path' }]
+          })
+        },
+        assistantText: () => assistantText,
+        abort: async () => undefined,
+        dispose: async () => undefined
+      }
+    }
+  })
+  const generatedDraft = await draftService.generate({
+    requestId: 'draft_generate_smoke',
+    terminalId: terminal.terminalId,
+    kind: 'command',
+    request: 'Create a marker file'
+  })
+  assert.equal(existsSync(draftMarkerFile), false)
+  await draftService.submit({
+    requestId: 'draft_submit_smoke',
+    draftId: generatedDraft.draftId,
+    source: `touch '${draftMarkerFile.replaceAll("'", "'\\''")}'`,
+    bracketedPaste: false
+  })
+  await waitFor(() => existsSync(draftMarkerFile), 2_000, 'draft marker file')
+
   await manager.input(
     terminal.terminalId,
     `printf '%s\\n' "$$" > '${pidFile.replaceAll("'", "'\\''")}'\n`
@@ -215,9 +252,10 @@ try {
   await waitFor(() => hostPids.every((pid) => !running(pid)), 1_000, 'host process cleanup')
 
   process.stdout.write(
-    `PASS terminal-manager echo=true reattachRecords=${reattached.length} ctrlCMs=${interruptElapsedMs.toFixed(1)} disposeMs=${disposeElapsedMs.toFixed(1)} shell=${shellPid} child=${childPid} hostProcesses=${hostPids.length} survivors=0\n`
+    `PASS terminal-manager echo=true draftMarker=true reattachRecords=${reattached.length} ctrlCMs=${interruptElapsedMs.toFixed(1)} disposeMs=${disposeElapsedMs.toFixed(1)} shell=${shellPid} child=${childPid} hostProcesses=${hostPids.length} survivors=0\n`
   )
 } finally {
+  await draftService?.dispose().catch(() => undefined)
   await manager?.dispose().catch(() => undefined)
   rmSync(workspace, { recursive: true, force: true })
 }

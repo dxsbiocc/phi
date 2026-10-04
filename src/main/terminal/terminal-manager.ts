@@ -73,6 +73,7 @@ interface OutputSubscription {
 
 interface ManagedTerminal {
   snapshot: TerminalSnapshot
+  workspaceLabel: string
   nextEpoch: number
   subscription?: OutputSubscription
   closePromise?: Promise<void>
@@ -133,6 +134,13 @@ export class TerminalManager {
     return [...this.terminals.values()]
       .filter((record) => record.snapshot.workspaceKey === workspace.workspaceKey)
       .map((record) => cloneSnapshot(record.snapshot))
+  }
+
+  snapshot(terminalId: string): (TerminalSnapshot & { workspaceLabel: string }) | undefined {
+    const record = this.terminals.get(terminalId)
+    return record
+      ? { ...cloneSnapshot(record.snapshot), workspaceLabel: record.workspaceLabel }
+      : undefined
   }
 
   async create(
@@ -347,7 +355,7 @@ export class TerminalManager {
       rows,
       ...(shell.fallbackReason ? { message: shell.fallbackReason } : {})
     }
-    const record: ManagedTerminal = { snapshot, nextEpoch: 0 }
+    const record: ManagedTerminal = { snapshot, workspaceLabel: workspace.label, nextEpoch: 0 }
     this.terminals.set(id, record)
 
     try {

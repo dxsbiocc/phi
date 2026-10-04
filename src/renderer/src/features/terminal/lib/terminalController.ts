@@ -18,6 +18,11 @@ import type {
   WorkspaceRecord
 } from './terminalControllerTypes'
 import {
+  EMPTY_TERMINAL_LINE_INPUT,
+  isTerminalLineDirty,
+  updateTerminalLineInput
+} from './terminalDraft'
+import {
   isTerminalInputWithinLimit,
   terminalInputByteLength,
   wrapBracketedPaste
@@ -148,14 +153,30 @@ class RendererTerminalController implements TerminalController {
     await Promise.all(terminalIds.map((terminalId) => this.close(terminalId)))
   }
 
-  submitPaste(terminalId: string, text: string): Promise<TerminalResult<void>> {
+  async submitPaste(terminalId: string, text: string): Promise<TerminalResult<void>> {
     const record = this.terminals.get(terminalId)
     if (!record || record.disposed) {
-      return Promise.resolve({ ok: false, code: 'not_found', message: 'Terminal was not found' })
+      return { ok: false, code: 'not_found', message: 'Terminal was not found' }
     }
     record.pendingPaste = undefined
     const payload = wrapBracketedPaste(text, record.terminal.modes.bracketedPasteMode)
-    return this.enqueueInput(record, payload)
+    const previousLineInputState = record.lineInputState
+    const pasteLineInputState = updateTerminalLineInput(previousLineInputState, text)
+    record.lineInputState = pasteLineInputState
+    this.publishInteraction(record)
+    const result = await this.enqueueInput(record, payload)
+    if (!result.ok && !record.disposed) {
+      // Roll back only while this paste is still the newest line transformation.
+      // Otherwise preserve a dirty state so later keyboard input is never hidden.
+      record.lineInputState =
+        record.lineInputState === pasteLineInputState
+          ? previousLineInputState
+          : {
+              printableCharacters: Math.max(1, record.lineInputState.printableCharacters)
+            }
+      this.publishInteraction(record)
+    }
+    return result
   }
 
   discardPaste(terminalId: string): void {
@@ -302,18 +323,25 @@ class RendererTerminalController implements TerminalController {
         clearTimer: this.dependencies.clearTimer
       }),
       inputChain: Promise.resolve(),
+      lineInputState: EMPTY_TERMINAL_LINE_INPUT,
+      interactionListeners: new Set<() => void>(),
       pasteHandler: null,
       disposed: false
     })
     record.inputDisposable = bindTerminalInput({
       terminal,
       writeClipboard: this.dependencies.writeClipboard,
-      onData: (data) => void this.enqueueInput(record, data),
+      onData: (data) => {
+        record.lineInputState = updateTerminalLineInput(record.lineInputState, data)
+        this.publishInteraction(record)
+        void this.enqueueInput(record, data)
+      },
       onMultilinePaste: (text) => {
         record.pendingPaste = text
         record.pasteHandler?.(text)
       }
     })
+    record.selectionDisposable = terminal.onSelectionChange?.(() => this.publishInteraction(record))
     record.view = this.createView(record)
     this.terminals.set(record.snapshot.terminalId, record)
     return record
@@ -355,6 +383,18 @@ class RendererTerminalController implements TerminalController {
       setPasteHandler: (handler) => {
         record.pasteHandler = handler
         if (handler && record.pendingPaste !== undefined) handler(record.pendingPaste)
+      },
+      getSelection: () => (record.disposed ? '' : record.terminal.getSelection()),
+      isCurrentLineDirty: () => isTerminalLineDirty(record.lineInputState),
+      markCurrentLineClean: () => {
+        if (record.disposed) return
+        record.lineInputState = EMPTY_TERMINAL_LINE_INPUT
+        this.publishInteraction(record)
+      },
+      subscribeInteraction: (listener) => {
+        if (record.disposed) return () => undefined
+        record.interactionListeners.add(listener)
+        return () => record.interactionListeners.delete(listener)
       }
     }
   }
@@ -493,6 +533,12 @@ class RendererTerminalController implements TerminalController {
       // Continue releasing the xterm instance.
     }
     try {
+      record.selectionDisposable?.dispose()
+    } catch {
+      // Continue releasing the xterm instance.
+    }
+    record.interactionListeners.clear()
+    try {
       record.fitAddon.dispose?.()
     } catch {
       // Continue releasing the xterm instance.
@@ -508,6 +554,11 @@ class RendererTerminalController implements TerminalController {
     const workspace = this.workspaces.get(record.workspaceClientKey)
     if (!workspace) return
     this.publish(workspace, { terminals: this.workspaceTerminals(workspace) })
+  }
+
+  private publishInteraction(record: TerminalRecord): void {
+    if (record.disposed) return
+    for (const listener of record.interactionListeners) listener()
   }
 
   private publishTerminalError(

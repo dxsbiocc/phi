@@ -7,15 +7,21 @@ import {
   TERMINAL_MIN_ROWS,
   TERMINAL_RING_BUFFER_BYTES,
   type TerminalAttachResult,
+  type TerminalDraftGenerationResult,
   type TerminalEvent,
+  type TerminalGenerateDraftInput,
   type TerminalResult,
   type TerminalSnapshot,
+  type TerminalSubmitDraftInput,
   type TerminalWorkspaceRef
 } from '../../shared/terminalTypes'
 import { TerminalError } from './terminal-error'
 import { TERMINAL_ID_PATTERN } from './terminal-protocol'
 
 const MAX_PROJECT_ID_BYTES = 256
+const MAX_DRAFT_ID_BYTES = 128
+const MAX_DRAFT_REQUEST_BYTES = 4 * 1024
+const MAX_DRAFT_SOURCE_BYTES = 16 * 1024
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/u
 
 export interface TerminalRendererSenderLike {
@@ -51,8 +57,16 @@ export interface TerminalManagerLike {
   close(terminalId: string): Promise<void>
 }
 
+export interface TerminalDraftServiceLike {
+  generate(input: TerminalGenerateDraftInput): Promise<TerminalDraftGenerationResult>
+  cancel(requestId: string): void | Promise<void>
+  submit(input: TerminalSubmitDraftInput): Promise<void>
+  terminalClosed(terminalId: string): void
+}
+
 export interface TerminalIpcCoordinatorOptions {
   getManager: () => TerminalManagerLike
+  getDraftService: () => TerminalDraftServiceLike
   getTrustedRenderer: () => TerminalRendererSenderLike | null
   platform?: NodeJS.Platform
 }
@@ -132,13 +146,19 @@ function requestId(value: unknown): string {
   return REQUEST_ID_PATTERN.test(parsed) ? parsed : invalidRequest()
 }
 
+function draftSelection(value: unknown): string {
+  return typeof value === 'string' && !value.includes('\0') ? value : invalidRequest()
+}
+
 export class TerminalIpcCoordinator {
   private readonly getManager: TerminalIpcCoordinatorOptions['getManager']
+  private readonly getDraftService: TerminalIpcCoordinatorOptions['getDraftService']
   private readonly getTrustedRenderer: TerminalIpcCoordinatorOptions['getTrustedRenderer']
   private readonly platform: NodeJS.Platform
 
   constructor(options: TerminalIpcCoordinatorOptions) {
     this.getManager = options.getManager
+    this.getDraftService = options.getDraftService
     this.getTrustedRenderer = options.getTrustedRenderer
     this.platform = options.platform ?? process.platform
   }
@@ -218,7 +238,59 @@ export class TerminalIpcCoordinator {
 
   close(event: TerminalIpcEventLike, input: unknown): Promise<TerminalResult<void>> {
     return this.run(event, async () => {
-      await this.getManager().close(terminalId(input))
+      const id = terminalId(input)
+      await this.getManager().close(id)
+      this.getDraftService().terminalClosed(id)
+    })
+  }
+
+  generateDraft(
+    event: TerminalIpcEventLike,
+    input: unknown
+  ): Promise<TerminalResult<TerminalDraftGenerationResult>> {
+    return this.run(event, async () => {
+      const parsed = exactRecord(
+        input,
+        record(input).selection === undefined
+          ? ['requestId', 'terminalId', 'kind', 'request']
+          : ['requestId', 'terminalId', 'kind', 'request', 'selection']
+      )
+      const kind = parsed.kind
+      if (kind !== 'command' && kind !== 'explain') return invalidRequest()
+      const selection =
+        parsed.selection === undefined ? undefined : draftSelection(parsed.selection)
+      return await this.getDraftService().generate({
+        requestId: requestId(parsed.requestId),
+        terminalId: terminalId(parsed.terminalId),
+        kind,
+        request: boundedString(parsed.request, MAX_DRAFT_REQUEST_BYTES, {
+          allowEmpty: true,
+          rejectNul: true
+        }),
+        ...(selection === undefined ? {} : { selection })
+      })
+    })
+  }
+
+  cancelDraft(event: TerminalIpcEventLike, input: unknown): Promise<TerminalResult<void>> {
+    return this.run(event, async () => {
+      await this.getDraftService().cancel(requestId(input))
+    })
+  }
+
+  submitDraft(event: TerminalIpcEventLike, input: unknown): Promise<TerminalResult<void>> {
+    return this.run(event, async () => {
+      const parsed = exactRecord(input, ['requestId', 'draftId', 'source', 'bracketedPaste'])
+      if (typeof parsed.bracketedPaste !== 'boolean') return invalidRequest()
+      await this.getDraftService().submit({
+        requestId: requestId(parsed.requestId),
+        draftId: boundedString(parsed.draftId, MAX_DRAFT_ID_BYTES, { rejectNul: true }),
+        source: boundedString(parsed.source, MAX_DRAFT_SOURCE_BYTES, {
+          allowEmpty: true,
+          rejectNul: true
+        }),
+        bracketedPaste: parsed.bracketedPaste
+      })
     })
   }
 
@@ -293,5 +365,14 @@ export function registerTerminalRendererIpc(
   )
   ipcMain.handle('terminal:close', (event, ...args) =>
     args.length === 1 ? coordinator.close(event, args[0]) : coordinator.invalid(event)
+  )
+  ipcMain.handle('terminal:generateDraft', (event, ...args) =>
+    args.length === 1 ? coordinator.generateDraft(event, args[0]) : coordinator.invalid(event)
+  )
+  ipcMain.handle('terminal:cancelDraft', (event, ...args) =>
+    args.length === 1 ? coordinator.cancelDraft(event, args[0]) : coordinator.invalid(event)
+  )
+  ipcMain.handle('terminal:submitDraft', (event, ...args) =>
+    args.length === 1 ? coordinator.submitDraft(event, args[0]) : coordinator.invalid(event)
   )
 }

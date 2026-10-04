@@ -8,6 +8,7 @@ import type {
   TerminalWorkspaceRef
 } from '../../../../../shared/terminalTypes'
 import type { TerminalAckBatcher } from './terminalAckBatcher'
+import type { TerminalLineInputState } from './terminalDraft'
 
 export interface DisposableLike {
   dispose(): void
@@ -30,6 +31,7 @@ export interface XtermTerminalLike {
   focus(): void
   dispose(): void
   onData(listener: (data: string) => void): DisposableLike
+  onSelectionChange?(listener: () => void): DisposableLike
   attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void
   hasSelection(): boolean
   getSelection(): string
@@ -98,6 +100,9 @@ export interface TerminalRecord {
   ackBatcher: TerminalAckBatcher
   inputChain: Promise<void>
   inputDisposable: DisposableLike
+  selectionDisposable?: DisposableLike
+  lineInputState: TerminalLineInputState
+  interactionListeners: Set<() => void>
   pasteHandler: ((text: string) => void) | null
   pendingPaste?: string
   disposed: boolean
@@ -110,6 +115,10 @@ export interface TerminalView {
   focus(): void
   setTheme(theme: ITheme): void
   setPasteHandler(handler: ((text: string) => void) | null): void
+  getSelection(): string
+  isCurrentLineDirty(): boolean
+  markCurrentLineClean(): void
+  subscribeInteraction(listener: () => void): () => void
 }
 
 export interface TerminalController {

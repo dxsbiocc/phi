@@ -8,13 +8,24 @@ import { createTheme, ThemeProvider } from '@mui/material'
 
 import type { TerminalRendererBridge, TerminalSnapshot } from '../src/shared/terminalTypes'
 import TerminalPanel from '../src/renderer/src/features/terminal/TerminalPanel'
+import { TerminalAssistPanel } from '../src/renderer/src/features/terminal/components/TerminalAssistPanel'
 import { TerminalPastePreview } from '../src/renderer/src/features/terminal/components/TerminalPastePreview'
 import {
   TerminalStatusPane,
   type TerminalStatusKind
 } from '../src/renderer/src/features/terminal/components/TerminalStatusPane'
 import { TerminalTitleBar } from '../src/renderer/src/features/terminal/components/TerminalTitleBar'
+import type { TerminalDraftState } from '../src/renderer/src/features/terminal/hooks/useTerminalDraft'
 import { disposeTerminalController } from '../src/renderer/src/features/terminal/lib/terminalController'
+import {
+  EMPTY_TERMINAL_LINE_INPUT,
+  isTerminalLineDirty,
+  substituteTerminalDraftInputs,
+  terminalDraftErrorMessage,
+  terminalDraftRetentionRemovals,
+  terminalDraftSelectionBoundary,
+  updateTerminalLineInput
+} from '../src/renderer/src/features/terminal/lib/terminalDraft'
 import { terminalWorkspaceRefFromActiveProject } from '../src/renderer/src/features/terminal/lib/terminalWorkspaceRef'
 import type { Project } from '../src/renderer/src/lib/projectTypes'
 
@@ -52,10 +63,64 @@ function titleBarMarkup(overrides: Partial<ComponentProps<typeof TerminalTitleBa
       busy: false,
       onSelect: noop,
       onCreate: noop,
+      onOpenAssist: noop,
+      onExplainSelection: noop,
       onEnd: noop,
       onEndAll: noop,
       onToggleMaximize: noop,
       onCollapse: noop,
+      ...overrides
+    })
+  )
+}
+
+function draftState(overrides: Partial<TerminalDraftState> = {}): TerminalDraftState {
+  return {
+    terminalId: 'terminal-2',
+    workspaceKey: 'project:project-1',
+    kind: 'command',
+    open: true,
+    phase: 'result',
+    request: 'create a marker file',
+    draft: {
+      draftId: 'draft-1',
+      terminalId: 'terminal-2',
+      workspaceKey: 'project:project-1',
+      source: 'touch <marker>',
+      explanation: 'Creates the requested marker file.',
+      requiredInputs: [{ name: 'marker', description: 'Marker filename' }]
+    },
+    command: 'touch <marker>',
+    inputValues: { marker: '' },
+    readyForDirtyLine: false,
+    selectionTruncated: false,
+    submitting: false,
+    submitted: false,
+    ...overrides
+  }
+}
+
+function assistMarkup(
+  state: TerminalDraftState,
+  overrides: Partial<ComponentProps<typeof TerminalAssistPanel>> = {}
+): string {
+  return renderWithTheme(
+    createElement(TerminalAssistPanel, {
+      state,
+      targetLabel: 'Terminal 2',
+      targetOpen: true,
+      currentLineDirty: false,
+      generationBusy: false,
+      onRequestChange: noop,
+      onSelectionChange: noop,
+      onCommandChange: noop,
+      onInputChange: noop,
+      onReadyForDirtyLineChange: noop,
+      onGenerate: noop,
+      onCancelGeneration: noop,
+      onCopy: noop,
+      onSend: noop,
+      onClose: noop,
       ...overrides
     })
   )
@@ -168,6 +233,128 @@ test('multi-line paste preview shows bounded context and explicit send/cancel ac
   )
   assert.match(trailingNewline, /2 行/)
   assert.doesNotMatch(trailingNewline, /3 行/)
+})
+
+test('terminal assist panel keeps drafts explicit, terminal-bound, and input-gated', () => {
+  const missingInput = assistMarkup(draftState())
+  assert.match(missingInput, /data-phi-terminal-assist="true"/)
+  assert.match(missingInput, /目标：Terminal 2/)
+  assert.match(missingInput, /生成内容不会自动发送/)
+  assert.match(missingInput, /发送到 Terminal 2/)
+  assert.match(
+    missingInput,
+    /<button[^>]*disabled=""[^>]*>[\s\S]*?发送到 Terminal 2[\s\S]*?<\/button>/u
+  )
+  assert.match(missingInput, /Marker filename/)
+  assert.match(missingInput, /touch &lt;marker&gt;/)
+
+  const filledInput = assistMarkup(draftState({ inputValues: { marker: 'done.txt' } }))
+  assert.match(filledInput, /data-phi-terminal-command-preview="true"/)
+  assert.match(filledInput, /touch done.txt/)
+  assert.doesNotMatch(
+    filledInput,
+    /<button[^>]*disabled=""[^>]*>[\s\S]*?发送到 Terminal 2[\s\S]*?<\/button>/u
+  )
+
+  const sent = assistMarkup(draftState({ inputValues: { marker: 'done.txt' }, submitted: true }))
+  assert.match(sent, />已发送</)
+  assert.match(sent, /<button[^>]*disabled=""[^>]*>[\s\S]*?已发送[\s\S]*?<\/button>/u)
+
+  const closed = assistMarkup(draftState({ inputValues: { marker: 'done.txt' } }), {
+    targetOpen: false
+  })
+  assert.match(closed, /目标终端已关闭，无法发送/)
+  assert.match(closed, /<button[^>]*disabled=""[^>]*>[\s\S]*?发送到 Terminal 2[\s\S]*?<\/button>/u)
+})
+
+test('terminal assist panel requires dirty-line readiness and exposes editable selection removal', () => {
+  const selection = 'selected output\nwith details'
+  const markup = assistMarkup(
+    draftState({
+      kind: 'explain',
+      selection,
+      inputValues: { marker: 'done.txt' }
+    }),
+    { currentLineDirty: true }
+  )
+
+  assert.match(markup, /让 Agent 解释/)
+  assert.match(markup, /附带的终端内容/)
+  assert.match(markup, /selected output\nwith details/)
+  assert.match(markup, />移除附带内容</)
+  assert.match(markup, /我已准备好接收此命令（当前行已有输入）/)
+  assert.match(markup, /<button[^>]*disabled=""[^>]*>[\s\S]*?发送到 Terminal 2[\s\S]*?<\/button>/u)
+
+  const ready = assistMarkup(
+    draftState({
+      kind: 'explain',
+      selection,
+      inputValues: { marker: 'done.txt' },
+      readyForDirtyLine: true
+    }),
+    { currentLineDirty: true }
+  )
+  assert.match(ready, /checked=""/)
+  assert.doesNotMatch(
+    ready,
+    /<button[^>]*disabled=""[^>]*>[\s\S]*?发送到 Terminal 2[\s\S]*?<\/button>/u
+  )
+})
+
+test('terminal draft helpers substitute inputs, expose UTF-8 truncation, and track line input', () => {
+  assert.equal(
+    substituteTerminalDraftInputs(
+      'printf %s <value> && echo <value>',
+      [{ name: 'value', description: '' }],
+      { value: 'safe text' }
+    ),
+    'printf %s safe text && echo safe text'
+  )
+  assert.equal(terminalDraftErrorMessage('请先配置模型'), '请先在设置中配置模型')
+
+  const boundary = terminalDraftSelectionBoundary(`${'a'.repeat(16 * 1024 - 1)}你`)
+  assert.equal(boundary.truncated, true)
+  assert.equal(boundary.includedCharacters, 16 * 1024 - 1)
+
+  let line = updateTerminalLineInput(EMPTY_TERMINAL_LINE_INPUT, 'echo')
+  assert.equal(isTerminalLineDirty(line), true)
+  line = updateTerminalLineInput(line, '\u001b[A')
+  assert.equal(line.printableCharacters, 4)
+  line = updateTerminalLineInput(line, '\u007f')
+  assert.equal(line.printableCharacters, 3)
+  line = updateTerminalLineInput(line, '\u0015')
+  assert.equal(isTerminalLineDirty(line), false)
+  line = updateTerminalLineInput(line, 'pwd\r')
+  assert.equal(isTerminalLineDirty(line), false)
+})
+
+test('terminal draft retention removes disappeared, expired, and over-limit entries', () => {
+  const now = 2_000_000
+  const entries = Array.from({ length: 34 }, (_, index) => ({
+    terminalId: `terminal-${index}`,
+    workspaceKey: index < 3 ? 'project:active' : 'project:other',
+    lastTouchedAt: now - index
+  }))
+  entries.push({
+    terminalId: 'terminal-expired',
+    workspaceKey: 'project:other',
+    lastTouchedAt: now - 30 * 60 * 1_000
+  })
+
+  const removals = terminalDraftRetentionRemovals(entries, {
+    now,
+    liveWorkspace: {
+      workspaceKey: 'project:active',
+      terminalIds: new Set(['terminal-0', 'terminal-2'])
+    }
+  })
+
+  assert.equal(removals.includes('terminal-1'), true)
+  assert.equal(removals.includes('terminal-expired'), true)
+  assert.equal(removals.includes('terminal-0'), false)
+  assert.equal(removals.includes('terminal-2'), false)
+  assert.equal(removals.includes('terminal-3'), false)
+  assert.equal(entries.length - removals.length, 32)
 })
 
 test('terminal panel renders the thin reference-style shell without creating during SSR', () => {

@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import type { TerminalEvent, TerminalSnapshot } from '../src/shared/terminalTypes'
+import type {
+  TerminalCommandDraft,
+  TerminalEvent,
+  TerminalSnapshot
+} from '../src/shared/terminalTypes'
 import {
   TerminalIpcCoordinator,
   registerTerminalRendererIpc,
+  type TerminalDraftServiceLike,
   type TerminalIpcEventLike,
   type TerminalManagerLike,
   type TerminalRendererSenderLike
@@ -50,6 +55,27 @@ function fakeManager(overrides: Partial<TerminalManagerLike> = {}): TerminalMana
   }
 }
 
+const draft: TerminalCommandDraft = {
+  draftId: 'draft_123',
+  terminalId: snapshot.terminalId,
+  workspaceKey: snapshot.workspaceKey,
+  source: 'echo safe',
+  explanation: 'prints safe',
+  requiredInputs: []
+}
+
+function fakeDraftService(
+  overrides: Partial<TerminalDraftServiceLike> = {}
+): TerminalDraftServiceLike {
+  return {
+    generate: async () => draft,
+    cancel: async () => undefined,
+    submit: async () => undefined,
+    terminalClosed: () => undefined,
+    ...overrides
+  }
+}
+
 function event(sender: FakeSender, senderFrame: unknown = sender.mainFrame): TerminalIpcEventLike {
   return { sender, senderFrame }
 }
@@ -58,6 +84,7 @@ function registeredHarness(
   options: {
     trusted?: FakeSender | null
     manager?: TerminalManagerLike
+    draftService?: TerminalDraftServiceLike
     platform?: NodeJS.Platform
   } = {}
 ): {
@@ -67,8 +94,10 @@ function registeredHarness(
 } {
   const trusted = options.trusted === undefined ? new FakeSender() : options.trusted
   const manager = options.manager ?? fakeManager()
+  const draftService = options.draftService ?? fakeDraftService()
   const coordinator = new TerminalIpcCoordinator({
     getManager: () => manager,
+    getDraftService: () => draftService,
     getTrustedRenderer: () => trusted,
     platform: options.platform ?? 'darwin'
   })
@@ -100,11 +129,14 @@ test('registers the complete namespaced terminal IPC surface', () => {
   assert.deepEqual([...handlers.keys()].sort(), [
     'terminal:ack',
     'terminal:attach',
+    'terminal:cancelDraft',
     'terminal:close',
     'terminal:create',
+    'terminal:generateDraft',
     'terminal:input',
     'terminal:list',
-    'terminal:resize'
+    'terminal:resize',
+    'terminal:submitDraft'
   ])
 })
 
@@ -181,6 +213,7 @@ test('sends events only to the current live trusted renderer', () => {
   let current: FakeSender | null = new FakeSender()
   const coordinator = new TerminalIpcCoordinator({
     getManager: () => fakeManager(),
+    getDraftService: () => fakeDraftService(),
     getTrustedRenderer: () => current,
     platform: 'darwin'
   })
@@ -199,6 +232,97 @@ test('sends events only to the current live trusted renderer', () => {
   assert.equal(coordinator.sendEvent(terminalEvent), false)
   current = null
   assert.equal(coordinator.sendEvent(terminalEvent), false)
+})
+
+test('draft IPC validates trusted callers and exact request keys before routing', async () => {
+  const calls: unknown[] = []
+  const draftService = fakeDraftService({
+    generate: async (input) => {
+      calls.push(['generate', input])
+      return { ...draft, selectionTruncated: true }
+    },
+    cancel: async (requestId) => {
+      calls.push(['cancel', requestId])
+    },
+    submit: async (input) => {
+      calls.push(['submit', input])
+    },
+    terminalClosed: (terminalId) => {
+      calls.push(['terminalClosed', terminalId])
+    }
+  })
+  const { trusted, handlers } = registeredHarness({ draftService })
+  assert.ok(trusted)
+  const trustedEvent = event(trusted)
+  const generate = {
+    requestId: 'request_1',
+    terminalId: 'terminal_123',
+    kind: 'explain',
+    request: 'explain this',
+    selection: 'printf safe'
+  }
+  const submit = {
+    requestId: 'request_2',
+    draftId: 'draft_123',
+    source: 'printf safe',
+    bracketedPaste: true
+  }
+
+  assert.deepEqual(await invoke(handlers, 'terminal:generateDraft', trustedEvent, generate), {
+    ok: true,
+    value: { ...draft, selectionTruncated: true }
+  })
+  assert.deepEqual(await invoke(handlers, 'terminal:cancelDraft', trustedEvent, 'request_1'), {
+    ok: true,
+    value: undefined
+  })
+  assert.deepEqual(await invoke(handlers, 'terminal:submitDraft', trustedEvent, submit), {
+    ok: true,
+    value: undefined
+  })
+  assert.deepEqual(await invoke(handlers, 'terminal:close', trustedEvent, 'terminal_123'), {
+    ok: true,
+    value: undefined
+  })
+  assert.deepEqual(calls, [
+    ['generate', generate],
+    ['cancel', 'request_1'],
+    ['submit', submit],
+    ['terminalClosed', 'terminal_123']
+  ])
+
+  const invalidCalls: Array<[string, unknown[]]> = [
+    ['terminal:generateDraft', [{ ...generate, workspaceKey: 'ordinary' }]],
+    ['terminal:generateDraft', [{ ...generate, kind: 'other' }]],
+    ['terminal:generateDraft', [{ ...generate, selection: 'bad\0selection' }]],
+    ['terminal:cancelDraft', ['short']],
+    ['terminal:submitDraft', [{ ...submit, terminalId: 'terminal_123' }]],
+    ['terminal:submitDraft', [{ ...submit, bracketedPaste: 'yes' }]],
+    ['terminal:submitDraft', [{ ...submit, source: 'bad\0source' }]]
+  ]
+  for (const [channel, args] of invalidCalls) {
+    const result = (await invoke(handlers, channel, trustedEvent, ...args)) as {
+      ok: boolean
+      code?: string
+    }
+    assert.equal(result.ok, false, channel)
+    assert.equal(result.code, 'invalid', channel)
+  }
+  assert.equal(calls.length, 4)
+
+  const stranger = new FakeSender()
+  for (const [channel, args] of [
+    ['terminal:generateDraft', [generate]],
+    ['terminal:cancelDraft', ['request_1']],
+    ['terminal:submitDraft', [submit]]
+  ] as Array<[string, unknown[]]>) {
+    const result = await invoke(handlers, channel, event(stranger), ...args)
+    assert.deepEqual(result, {
+      ok: false,
+      code: 'unavailable',
+      message: 'Terminal renderer is not authorized'
+    })
+  }
 })
 
 test('returns unsupported_platform for create and an empty list outside macOS', async () => {
