@@ -150,7 +150,12 @@ import {
 } from './lib/workspaceResourceTabs'
 import { workspaceSidebarModeIsExpanded, type WorkspaceSidebarMode } from './lib/workspaceSidebar'
 import {
-  toggleWorkspaceSidePanelMode,
+  browserSidePanelWidthForViewport,
+  closeWorkspaceSidePanelMode,
+  emptyWorkspaceSidePanelState,
+  openWorkspaceSidePanelMode,
+  toggleWorkspaceSidePanelMaximized,
+  toggleWorkspaceSidePanelModeForLayout,
   type WorkspaceSidePanelMode
 } from './lib/workspaceSidePanelMode'
 import { PhiIcons, fileIconForPath, directoryIconForPath } from './icons'
@@ -205,6 +210,9 @@ const maxNavigationPaneWidth = 520
 const workspaceSidePanelWidthDefault = 340
 const minWorkspaceSidePanelWidth = 240
 const maxWorkspaceSidePanelWidth = 520
+const browserSidePanelWidthDefault = 600
+const minBrowserSidePanelWidth = 480
+const maxBrowserSidePanelWidth = 820
 const titlebarChromeTopOffset = '10px'
 const titlebarChromeHorizontalInset = '14px'
 const titlebarChromeIconButtonSize = 28
@@ -225,14 +233,14 @@ const RefreshIcon = GoSync
 export function TopRightControls({
   showSidePanelRefresh,
   sidePanelRefreshDisabled,
-  activePanel,
+  activePanels,
   showSidePanelButtons,
   onRefreshSidePanel,
   onTogglePanel
 }: {
   showSidePanelRefresh: boolean
   sidePanelRefreshDisabled: boolean
-  activePanel: WorkspaceSidePanelMode | null
+  activePanels: readonly WorkspaceSidePanelMode[]
   showSidePanelButtons: boolean
   onRefreshSidePanel: () => void
   onTogglePanel: (mode: WorkspaceSidePanelMode) => void
@@ -296,11 +304,12 @@ export function TopRightControls({
         <Tooltip title="后台任务">
           <IconButton
             data-phi-background-jobs-toggle-button="true"
+            data-phi-workspace-panel-toggle="jobs"
             size="small"
             aria-label="后台任务"
-            aria-pressed={activePanel === 'jobs'}
+            aria-pressed={activePanels.includes('jobs')}
             onClick={() => onTogglePanel('jobs')}
-            sx={panelButtonSx(activePanel === 'jobs')}
+            sx={panelButtonSx(activePanels.includes('jobs'))}
           >
             <GoStack aria-hidden focusable="false" size={20} />
           </IconButton>
@@ -310,11 +319,12 @@ export function TopRightControls({
         <Tooltip title="终端">
           <IconButton
             data-phi-terminal-toggle-button="true"
+            data-phi-workspace-panel-toggle="terminal"
             size="small"
             aria-label="终端"
-            aria-pressed={activePanel === 'terminal'}
+            aria-pressed={activePanels.includes('terminal')}
             onClick={() => onTogglePanel('terminal')}
-            sx={panelButtonSx(activePanel === 'terminal')}
+            sx={panelButtonSx(activePanels.includes('terminal'))}
           >
             <GoTerminal aria-hidden focusable="false" size={20} />
           </IconButton>
@@ -324,11 +334,12 @@ export function TopRightControls({
         <Tooltip title="浏览器">
           <IconButton
             data-phi-browser-toggle-button="true"
+            data-phi-workspace-panel-toggle="browser"
             size="small"
             aria-label="浏览器"
-            aria-pressed={activePanel === 'browser'}
+            aria-pressed={activePanels.includes('browser')}
             onClick={() => onTogglePanel('browser')}
-            sx={panelButtonSx(activePanel === 'browser')}
+            sx={panelButtonSx(activePanels.includes('browser'))}
           >
             <GoGlobe aria-hidden focusable="false" size={20} />
           </IconButton>
@@ -1108,11 +1119,35 @@ function App(): React.JSX.Element {
     showSnackbar,
     onNavigateToNotebookView
   })
-  const [workspaceSidePanelMode, setWorkspaceSidePanelMode] =
-    useState<WorkspaceSidePanelMode | null>(null)
+  const [appViewportSize, setAppViewportSize] = useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight
+  }))
+  useEffect(() => {
+    const onResize = (): void =>
+      setAppViewportSize({ width: window.innerWidth, height: window.innerHeight })
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  const appViewportWidth = appViewportSize.width
+  const workspaceSidePanelCanSplit = appViewportWidth >= 1200 && appViewportSize.height >= 640
+  const [workspaceSidePanelState, setWorkspaceSidePanelState] = useState(
+    emptyWorkspaceSidePanelState
+  )
+  const workspaceSidePanelSlots = workspaceSidePanelState.slots
+  const browserSlotVisible =
+    workspaceSidePanelSlots.includes('browser') &&
+    (workspaceSidePanelState.maximized === null ||
+      workspaceSidePanelState.maximized === 'browser') &&
+    (workspaceSidePanelSlots.length === 1 ||
+      workspaceSidePanelCanSplit ||
+      workspaceSidePanelState.active === 'browser')
+  const openWorkspaceSidePanel = useCallback((mode: WorkspaceSidePanelMode): void => {
+    setWorkspaceSidePanelState((current) => openWorkspaceSidePanelMode(current, mode))
+  }, [])
   const openBrowserPanelFromRequest = useCallback((): void => {
-    setWorkspaceSidePanelMode('browser')
-  }, [setWorkspaceSidePanelMode])
+    openWorkspaceSidePanel('browser')
+  }, [openWorkspaceSidePanel])
   const showBrowserAppShellFailure = useCallback(
     (message: string): void => showSnackbar(message),
     [showSnackbar]
@@ -1132,10 +1167,10 @@ function App(): React.JSX.Element {
       execute: (command) => rendererApi.browser.execute(command),
       nextRequestId,
       getActiveSessionId: () => useSessionStore.getState().activePhiSessionId,
-      openBrowserPanel: () => setWorkspaceSidePanelMode('browser'),
+      openBrowserPanel: () => openWorkspaceSidePanel('browser'),
       showFailure: showBrowserLinkFailure
     })
-  }, [rendererApi, setWorkspaceSidePanelMode, showBrowserLinkFailure])
+  }, [openWorkspaceSidePanel, rendererApi, showBrowserLinkFailure])
   const onOpenWebUrl = useCallback(
     (url: string): void => {
       void browserLinkOpeningCoordinator.open(url)
@@ -1147,8 +1182,8 @@ function App(): React.JSX.Element {
   }, [activePhiSessionId, activeSessionGeneration, browserLinkOpeningCoordinator])
   const closeBrowserPanelForTrustedOverlay = useCallback((): void => {
     browserLinkOpeningCoordinator.invalidate()
-    setWorkspaceSidePanelMode((current) => (current === 'browser' ? null : current))
-  }, [browserLinkOpeningCoordinator, setWorkspaceSidePanelMode])
+    setWorkspaceSidePanelState((current) => closeWorkspaceSidePanelMode(current, 'browser'))
+  }, [browserLinkOpeningCoordinator])
   const handleBrowserTrustedOverlayFailure = useCallback((): void => {
     showSnackbar('无法安全显示应用对话框，请重试。')
   }, [showSnackbar])
@@ -1160,7 +1195,7 @@ function App(): React.JSX.Element {
     bridge: rendererApi.browser,
     activePhiSessionId: activePhiSessionId ?? null,
     activeSessionGeneration,
-    browserOpen: workspaceSidePanelMode === 'browser',
+    browserOpen: browserSlotVisible,
     closeBrowserPanel: closeBrowserPanelForTrustedOverlay,
     onFailure: handleBrowserTrustedOverlayFailure
   })
@@ -1220,10 +1255,36 @@ function App(): React.JSX.Element {
     },
     [cancelBrowserTrustedOverlay, openLocalTrustedOverlay]
   )
-  const workspaceSidePanelCollapsed = workspaceSidePanelMode === null
+  const workspaceSidePanelCollapsed = workspaceSidePanelSlots.length === 0
   const [workspaceSidePanelWidth, setWorkspaceSidePanelWidth] = useState(
     workspaceSidePanelWidthDefault
   )
+  const [browserSidePanelWidth, setBrowserSidePanelWidth] = useState(browserSidePanelWidthDefault)
+  const browserSidePanelEffectiveWidth = browserSidePanelWidthForViewport({
+    preferredWidth: browserSidePanelWidth,
+    viewportWidth: appViewportWidth,
+    navigationWidth: activityBarWidth + (isSidebarOpen ? sidebarWidth : 0),
+    compactMinimum: minWorkspaceSidePanelWidth,
+    maximum: maxBrowserSidePanelWidth
+  })
+  const responsiveSingleVisibleMode =
+    !workspaceSidePanelCanSplit && workspaceSidePanelSlots.length > 1
+      ? (workspaceSidePanelState.active ?? workspaceSidePanelSlots.at(-1) ?? null)
+      : null
+  const workspaceSidePanelOverlay =
+    appViewportWidth < 1100 ||
+    (workspaceSidePanelSlots.includes('browser') &&
+      browserSidePanelEffectiveWidth < minBrowserSidePanelWidth)
+  const activeWorkspaceSidePanelWidth = workspaceSidePanelOverlay
+    ? Math.min(
+        workspaceSidePanelSlots.includes('browser')
+          ? browserSidePanelWidth
+          : workspaceSidePanelWidth,
+        Math.max(0, appViewportWidth - 16)
+      )
+    : workspaceSidePanelSlots.includes('browser')
+      ? browserSidePanelEffectiveWidth
+      : workspaceSidePanelWidth
   const [workspaceSidePanelTreeRevision, setWorkspaceSidePanelTreeRevision] = useState(0)
 
   const handleNotebookFileChangedEvent = useCallback(
@@ -2627,14 +2688,27 @@ function App(): React.JSX.Element {
   const onToggleWorkspaceSidePanel = useCallback(
     (mode: WorkspaceSidePanelMode): void => {
       browserLinkOpeningCoordinator.invalidate()
-      setWorkspaceSidePanelMode((current) => toggleWorkspaceSidePanelMode(current, mode))
+      setWorkspaceSidePanelState((current) =>
+        toggleWorkspaceSidePanelModeForLayout(current, mode, workspaceSidePanelCanSplit)
+      )
     },
-    [browserLinkOpeningCoordinator, setWorkspaceSidePanelMode]
+    [browserLinkOpeningCoordinator, workspaceSidePanelCanSplit]
   )
   const onOpenBackgroundJobs = useCallback((): void => {
     browserLinkOpeningCoordinator.invalidate()
-    setWorkspaceSidePanelMode('jobs')
-  }, [browserLinkOpeningCoordinator, setWorkspaceSidePanelMode])
+    openWorkspaceSidePanel('jobs')
+  }, [browserLinkOpeningCoordinator, openWorkspaceSidePanel])
+  const onCloseWorkspaceSidePanelSlot = useCallback((mode: WorkspaceSidePanelMode): void => {
+    setWorkspaceSidePanelState((current) => closeWorkspaceSidePanelMode(current, mode))
+    window.requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLButtonElement>(`[data-phi-workspace-panel-toggle="${mode}"]`)
+        ?.focus()
+    })
+  }, [])
+  const onToggleWorkspaceSidePanelMaximized = useCallback((mode: WorkspaceSidePanelMode): void => {
+    setWorkspaceSidePanelState((current) => toggleWorkspaceSidePanelMaximized(current, mode))
+  }, [])
   const onRefreshWorkspaceSidePanel = useCallback((): void => {
     setWorkspaceSidePanelTreeRevision((value) => value + 1)
   }, [])
@@ -2643,15 +2717,15 @@ function App(): React.JSX.Element {
       event.preventDefault()
 
       const startX = event.clientX
-      const startWidth = workspaceSidePanelWidth
+      const browserMode = workspaceSidePanelSlots.includes('browser')
+      const startWidth = browserMode ? browserSidePanelWidth : workspaceSidePanelWidth
+      const minWidth = browserMode ? minBrowserSidePanelWidth : minWorkspaceSidePanelWidth
+      const maxWidth = browserMode ? maxBrowserSidePanelWidth : maxWorkspaceSidePanelWidth
       const onMouseMove = (moveEvent: globalThis.MouseEvent): void => {
         const delta = moveEvent.clientX - startX
-        setWorkspaceSidePanelWidth(
-          Math.min(
-            maxWorkspaceSidePanelWidth,
-            Math.max(minWorkspaceSidePanelWidth, startWidth - delta)
-          )
-        )
+        const nextWidth = Math.min(maxWidth, Math.max(minWidth, startWidth - delta))
+        if (browserMode) setBrowserSidePanelWidth(nextWidth)
+        else setWorkspaceSidePanelWidth(nextWidth)
       }
 
       const onMouseUp = (): void => {
@@ -2666,7 +2740,7 @@ function App(): React.JSX.Element {
       document.addEventListener('mousemove', onMouseMove)
       document.addEventListener('mouseup', onMouseUp)
     },
-    [workspaceSidePanelWidth]
+    [browserSidePanelWidth, workspaceSidePanelSlots, workspaceSidePanelWidth]
   )
   const activeSession = activeSessionPath
     ? (sessions.find((session) =>
@@ -4342,15 +4416,24 @@ function App(): React.JSX.Element {
           <Box component="main" sx={{ flex: 1, minWidth: 0, height: '100vh' }} />
         )}
 
-        {workspaceSidePanelMode ? (
+        {workspaceSidePanelSlots.length > 0 ? (
           <>
-            <AppResizeSeparator
-              label="调整工作区面板宽度"
-              onMouseDown={onStartWorkspaceSidePanelResize}
-            />
+            {!workspaceSidePanelOverlay ? (
+              <AppResizeSeparator
+                label="调整工作区面板宽度"
+                onMouseDown={onStartWorkspaceSidePanelResize}
+              />
+            ) : null}
             <Box
               data-phi-workspace-side-panel-shell="true"
+              data-phi-workspace-side-panel-presentation={
+                workspaceSidePanelOverlay ? 'overlay' : 'dock'
+              }
               sx={{
+                position: workspaceSidePanelOverlay ? 'absolute' : 'relative',
+                top: workspaceSidePanelOverlay ? 0 : 'auto',
+                right: workspaceSidePanelOverlay ? 0 : 'auto',
+                zIndex: workspaceSidePanelOverlay ? 20 : 'auto',
                 height: '100vh',
                 flexShrink: 0,
                 display: 'flex',
@@ -4358,33 +4441,50 @@ function App(): React.JSX.Element {
                 minHeight: 0
               }}
             >
-              <WorkspaceSidePanel width={workspaceSidePanelWidth} mode={workspaceSidePanelMode}>
-                {workspaceSidePanelMode === 'jobs' ? (
-                  <BackgroundJobsPanel
-                    onOpenSession={(path) => void onOpenSessionFromSidebar(path)}
-                    onOpenWrapper={onOpenWrapperRunFromJobs}
-                  />
-                ) : workspaceSidePanelMode === 'browser' ? (
-                  <BrowserPanel
-                    bridge={rendererApi.browser}
-                    activePhiSessionId={activePhiSessionId ?? null}
-                    activeSessionGeneration={activeSessionGeneration}
-                    visible={
-                      !pendingApproval &&
-                      !pendingUserInteraction &&
-                      !browserOverlaySuspended &&
-                      !isWorkspaceSidebarPreviewOpen &&
-                      !isSettingsOpen &&
-                      !isSessionSearchOpen &&
-                      !isProviderDialogOpen &&
-                      !exportTarget &&
-                      !showEnvironmentSummary &&
-                      !showOnboarding &&
-                      !isNewProjectDialogOpen
-                    }
-                  />
-                ) : null}
-              </WorkspaceSidePanel>
+              <WorkspaceSidePanel
+                width={activeWorkspaceSidePanelWidth}
+                slots={workspaceSidePanelSlots}
+                maximized={workspaceSidePanelState.maximized}
+                singleVisibleMode={responsiveSingleVisibleMode}
+                onCloseSlot={onCloseWorkspaceSidePanelSlot}
+                onToggleMaximized={onToggleWorkspaceSidePanelMaximized}
+                renderSlot={(mode, slotContext) => {
+                  if (mode === 'jobs') {
+                    return (
+                      <BackgroundJobsPanel
+                        onOpenSession={(path) => void onOpenSessionFromSidebar(path)}
+                        onOpenWrapper={onOpenWrapperRunFromJobs}
+                      />
+                    )
+                  }
+                  if (mode === 'browser') {
+                    return (
+                      <BrowserPanel
+                        bridge={rendererApi.browser}
+                        activePhiSessionId={activePhiSessionId ?? null}
+                        activeSessionGeneration={activeSessionGeneration}
+                        headerActions={slotContext.headerActions}
+                        globalControlsInset={slotContext.globalControlsInset}
+                        visible={
+                          browserSlotVisible &&
+                          !pendingApproval &&
+                          !pendingUserInteraction &&
+                          !browserOverlaySuspended &&
+                          !isWorkspaceSidebarPreviewOpen &&
+                          !isSettingsOpen &&
+                          !isSessionSearchOpen &&
+                          !isProviderDialogOpen &&
+                          !exportTarget &&
+                          !showEnvironmentSummary &&
+                          !showOnboarding &&
+                          !isNewProjectDialogOpen
+                        }
+                      />
+                    )
+                  }
+                  return null
+                }}
+              />
             </Box>
           </>
         ) : null}
@@ -4438,7 +4538,7 @@ function App(): React.JSX.Element {
             showSidePanelRefresh={false}
             sidePanelRefreshDisabled={false}
             showSidePanelButtons
-            activePanel={workspaceSidePanelMode}
+            activePanels={workspaceSidePanelSlots}
             onRefreshSidePanel={onRefreshWorkspaceSidePanel}
             onTogglePanel={onToggleWorkspaceSidePanel}
           />

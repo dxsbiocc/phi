@@ -15,7 +15,7 @@ function renderControls(
     showSidePanelRefresh?: boolean
     sidePanelRefreshDisabled?: boolean
     showSidePanelButtons?: boolean
-    activePanel?: WorkspaceSidePanelMode | null
+    activePanels?: WorkspaceSidePanelMode[]
   } = {}
 ): string {
   const theme = createTheme()
@@ -26,7 +26,7 @@ function renderControls(
       createElement(TopRightControls, {
         showSidePanelRefresh: options.showSidePanelRefresh ?? true,
         sidePanelRefreshDisabled: options.sidePanelRefreshDisabled ?? false,
-        activePanel: options.activePanel ?? null,
+        activePanels: options.activePanels ?? [],
         showSidePanelButtons: options.showSidePanelButtons ?? true,
         onRefreshSidePanel: () => undefined,
         onTogglePanel: () => undefined
@@ -75,8 +75,11 @@ test('right-side buttons use Go icons and the left navigation color treatment', 
   assert.doesNotMatch(controlsSource, /bgcolor: activePanel ===/)
 })
 
-test('workspace top-right controls mark only the open panel as pressed', () => {
-  const markup = renderControls({ activePanel: 'jobs', showSidePanelRefresh: false })
+test('workspace top-right controls mark every open slot as pressed', () => {
+  const markup = renderControls({
+    activePanels: ['jobs', 'browser'],
+    showSidePanelRefresh: false
+  })
 
   assert.match(markup, /aria-label="后台任务"/)
   assert.match(markup, /aria-label="终端"/)
@@ -84,7 +87,7 @@ test('workspace top-right controls mark only the open panel as pressed', () => {
   assert.doesNotMatch(markup, /aria-label="刷新文件树"/)
   assert.match(markup, /aria-label="后台任务" aria-pressed="true"/)
   assert.match(markup, /aria-label="终端" aria-pressed="false"/)
-  assert.match(markup, /aria-label="浏览器" aria-pressed="false"/)
+  assert.match(markup, /aria-label="浏览器" aria-pressed="true"/)
 })
 
 test('workspace top-right controls can disable refresh without moving panel buttons', () => {
@@ -222,7 +225,10 @@ test('workspace top-right controls are app-level chrome, not notebook-only conte
   assert.match(appSource, /sidePanelRefreshDisabled=\{false\}/)
   assert.match(appSource, /onRefreshSidePanel=\{onRefreshWorkspaceSidePanel\}/)
   assert.match(appSource, /onTogglePanel=\{onToggleWorkspaceSidePanel\}/)
-  assert.match(appSource, /toggleWorkspaceSidePanelMode\(current, mode\)/)
+  assert.match(
+    appSource,
+    /toggleWorkspaceSidePanelModeForLayout\(current, mode, workspaceSidePanelCanSplit\)/
+  )
   assert.doesNotMatch(appSource, /showSidePanelFullscreen/)
   assert.doesNotMatch(appSource, /workspaceSidePanelFullscreen/)
   assert.doesNotMatch(appSource, /onToggleWorkspaceSidePanelFullscreen/)
@@ -242,9 +248,9 @@ test('workspace file previews and chats can show the shared right side panel', (
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
 
   assert.match(appSource, /data-phi-workspace-side-panel-shell="true"/)
-  assert.match(appSource, /workspaceSidePanelMode \? \([\s\S]*?<WorkspaceSidePanel/)
-  assert.match(appSource, /mode=\{workspaceSidePanelMode\}/)
-  assert.match(appSource, /workspaceSidePanelMode === 'jobs' \? \([\s\S]*?<BackgroundJobsPanel/)
+  assert.match(appSource, /workspaceSidePanelSlots\.length > 0 \? \([\s\S]*?<WorkspaceSidePanel/)
+  assert.match(appSource, /slots=\{workspaceSidePanelSlots\}/)
+  assert.match(appSource, /if \(mode === 'jobs'\) \{[\s\S]*?<BackgroundJobsPanel/)
   assert.doesNotMatch(appSource, /<WorkspaceSidePanel[\s\S]{0,180}workspaceRootPath=/)
   assert.doesNotMatch(appSource, /<WorkspaceSidePanel[\s\S]{0,180}activeWorkspacePath=/)
   assert.doesNotMatch(
@@ -253,6 +259,23 @@ test('workspace file previews and chats can show the shared right side panel', (
   )
   assert.doesNotMatch(appSource, /activeChatView[\s\S]{0,900}<WorkspaceSidePanel/)
   assert.match(appSource, /label="调整工作区面板宽度"/)
+  assert.match(appSource, /browserSidePanelWidthDefault = 600/)
+  assert.match(appSource, /minBrowserSidePanelWidth = 480/)
+  assert.match(appSource, /maxBrowserSidePanelWidth = 820/)
+  assert.match(appSource, /setBrowserSidePanelWidth/)
+  assert.match(
+    appSource,
+    /workspaceSidePanelSlots\.includes\('browser'\)[\s\S]{0,180}browserSidePanelEffectiveWidth/
+  )
+  assert.match(appSource, /const browserMode = workspaceSidePanelSlots\.includes\('browser'\)/)
+  assert.match(appSource, /if \(browserMode\) setBrowserSidePanelWidth\(nextWidth\)/)
+  assert.match(appSource, /maximized=\{workspaceSidePanelState\.maximized\}/)
+  assert.match(appSource, /onCloseSlot=\{onCloseWorkspaceSidePanelSlot\}/)
+  assert.match(appSource, /onToggleMaximized=\{onToggleWorkspaceSidePanelMaximized\}/)
+  assert.match(
+    appSource,
+    /workspaceSidePanelCanSplit = appViewportWidth >= 1200 && appViewportSize\.height >= 640/
+  )
   assert.doesNotMatch(appSource, /<WorkspaceSidePanel[\s\S]{0,180}treeRevision=/)
   assert.doesNotMatch(appSource, /<WorkspaceSidePanel[\s\S]{0,180}titlebarInsetEnd=/)
   assert.doesNotMatch(appSource, /position: 'fixed'[\s\S]{0,120}inset: 0/)

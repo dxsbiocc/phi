@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Box, CircularProgress, IconButton, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import type { BrowserTabSnapshot } from '../../../../../shared/browserTypes'
@@ -12,6 +13,8 @@ export interface BrowserTabsProps {
   tabs: BrowserTabSnapshot[]
   activeTabId: string | null
   disabled: boolean
+  headerActions?: ReactNode
+  globalControlsInset?: number
   onNewTab(): void
   onActivate(tabId: string): void
   onClose(tabId: string): void
@@ -24,67 +27,69 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
       sx={{
         flexShrink: 0,
         minWidth: 0,
-        height: 40,
+        height: 50,
         display: 'flex',
         alignItems: 'center',
         gap: 0.5,
-        px: 0.75,
+        px: 1,
         bgcolor: 'background.paper',
         borderBottom: 1,
-        borderColor: 'divider'
+        borderColor: 'divider',
+        WebkitAppRegion: 'drag'
       }}
     >
       <Box
         role="tablist"
         aria-label="浏览器标签页"
         sx={{
-          flex: 1,
+          flex: '1 1 auto',
           minWidth: 0,
           height: '100%',
           display: 'flex',
           alignItems: 'center',
           gap: 0.5,
           overflowX: 'auto',
+          WebkitAppRegion: 'no-drag',
           scrollbarWidth: 'none',
           '&::-webkit-scrollbar': { display: 'none' }
         }}
       >
-        {props.tabs.map((tab) => {
+        {props.tabs.length === 0 ? (
+          <Typography
+            component="span"
+            data-phi-browser-empty-tab-title="true"
+            sx={{ px: 1, fontSize: 13, fontWeight: 600, color: 'text.secondary' }}
+          >
+            新标签页
+          </Typography>
+        ) : null}
+        {props.tabs.map((tab, index) => {
           const selected = tab.id === props.activeTabId
+          const fallbackTabStop = props.activeTabId === null && index === 0
           const label = browserTabDisplayTitle(tab)
           return (
             <Box
               key={tab.id}
               data-phi-browser-tab={selected ? 'active' : 'inactive'}
               sx={{
-                flex: '0 0 clamp(104px, 58%, 168px)',
-                minWidth: 104,
-                maxWidth: 168,
-                height: 32,
-                minHeight: 32,
+                flex: '0 0 clamp(120px, 32vw, 180px)',
+                minWidth: 120,
+                maxWidth: 180,
+                height: 44,
+                minHeight: 44,
                 minInlineSize: 0,
                 display: 'flex',
                 alignItems: 'center',
                 pr: 0.25,
-                border: 1,
-                borderColor: selected
-                  ? (theme) => alpha(theme.palette.primary.main, 0.48)
-                  : (theme) => alpha(theme.palette.text.primary, 0.12),
-                borderRadius: 1.25,
-                bgcolor: selected
-                  ? (theme) =>
-                      alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.18 : 0.1)
-                  : (theme) => alpha(theme.palette.background.default, 0.72),
+                border: 0,
+                borderBottom: 2,
+                borderBottomColor: selected ? 'primary.main' : 'transparent',
+                borderRadius: 0.5,
+                bgcolor: 'transparent',
                 color: selected ? 'text.primary' : 'text.secondary',
-                transition: 'background-color 120ms ease, border-color 120ms ease',
+                transition: 'background-color 120ms ease, color 120ms ease',
                 '&:hover': {
-                  bgcolor: selected
-                    ? (theme) =>
-                        alpha(
-                          theme.palette.primary.main,
-                          theme.palette.mode === 'dark' ? 0.23 : 0.14
-                        )
-                    : 'action.hover',
+                  bgcolor: 'action.hover',
                   color: 'text.primary'
                 }
               }}
@@ -92,26 +97,53 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
               <Box
                 component="div"
                 role="tab"
-                tabIndex={0}
+                tabIndex={selected || fallbackTabStop ? 0 : -1}
                 aria-selected={selected}
                 aria-disabled={props.disabled || undefined}
+                aria-controls="phi-browser-viewport"
                 title={tab.url && tab.url !== 'about:blank' ? tab.url : label}
                 onClick={() => {
                   if (!props.disabled && !selected) props.onActivate(tab.id)
                 }}
                 onKeyDown={(event) => {
-                  if (!isBrowserTabActivationKey(event.key)) return
-                  event.preventDefault()
-                  if (!props.disabled && !selected) props.onActivate(tab.id)
+                  if (isBrowserTabActivationKey(event.key)) {
+                    event.preventDefault()
+                    if (!props.disabled && !selected) props.onActivate(tab.id)
+                    return
+                  }
+                  if (
+                    event.key === 'ArrowLeft' ||
+                    event.key === 'ArrowRight' ||
+                    event.key === 'Home' ||
+                    event.key === 'End'
+                  ) {
+                    event.preventDefault()
+                    const tabs = Array.from(
+                      event.currentTarget
+                        .closest('[role="tablist"]')
+                        ?.querySelectorAll<HTMLElement>('[role="tab"]') ?? []
+                    )
+                    const currentIndex = tabs.indexOf(event.currentTarget)
+                    const nextIndex =
+                      event.key === 'Home'
+                        ? 0
+                        : event.key === 'End'
+                          ? tabs.length - 1
+                          : event.key === 'ArrowLeft'
+                            ? (currentIndex - 1 + tabs.length) % tabs.length
+                            : (currentIndex + 1) % tabs.length
+                    tabs[nextIndex]?.focus()
+                  }
                 }}
                 sx={{
                   flex: 1,
                   alignSelf: 'stretch',
                   minWidth: 0,
+                  minHeight: 44,
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 0.5,
-                  pl: 0.85,
+                  gap: 0.75,
+                  pl: 1,
                   cursor: props.disabled || selected ? 'default' : 'pointer',
                   borderRadius: 1.1,
                   '&:focus-visible': {
@@ -123,8 +155,8 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
                 <Box
                   component="span"
                   sx={{
-                    width: 14,
-                    height: 14,
+                    width: 16,
+                    height: 16,
                     flexShrink: 0,
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -134,13 +166,13 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
                 >
                   {tab.phase === 'loading' ? (
                     <CircularProgress
-                      size={12}
+                      size={13}
                       thickness={5}
                       aria-label={`正在加载 ${label}`}
                       sx={{ color: 'primary.main' }}
                     />
                   ) : (
-                    <WebIcon aria-hidden="true" sx={{ fontSize: 14 }} />
+                    <WebIcon aria-hidden="true" sx={{ fontSize: 15 }} />
                   )}
                 </Box>
                 <Typography
@@ -149,9 +181,9 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
                   sx={{
                     flex: 1,
                     minWidth: 0,
-                    fontSize: 12,
-                    fontWeight: selected ? 700 : 550,
-                    lineHeight: 1.25
+                    fontSize: 13,
+                    fontWeight: selected ? 700 : 500,
+                    lineHeight: 1.3
                   }}
                 >
                   {label}
@@ -172,8 +204,8 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
                       if (isBrowserTabActivationKey(event.key)) event.stopPropagation()
                     }}
                     sx={{
-                      width: 26,
-                      height: 26,
+                      width: 40,
+                      height: 40,
                       borderRadius: 1,
                       color: 'text.secondary',
                       opacity: selected ? 0.78 : 0.5,
@@ -184,7 +216,7 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
                       }
                     }}
                   >
-                    <CloseIcon sx={{ fontSize: 14 }} />
+                    <CloseIcon sx={{ fontSize: 16 }} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -200,12 +232,29 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
             disabled={props.disabled}
             size="small"
             onClick={props.onNewTab}
-            sx={{ width: 32, height: 32, borderRadius: 1.25 }}
+            sx={{ width: 44, height: 44, borderRadius: 1.25, WebkitAppRegion: 'no-drag' }}
           >
-            <AddIcon sx={{ fontSize: 17 }} />
+            <AddIcon sx={{ fontSize: 18 }} />
           </IconButton>
         </span>
       </Tooltip>
+      {props.headerActions ? (
+        <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+          {props.headerActions}
+        </Box>
+      ) : null}
+      {(props.globalControlsInset ?? 0) > 0 ? (
+        <Box
+          data-phi-browser-window-controls-reserve="true"
+          aria-hidden="true"
+          sx={{
+            flex: `0 0 ${props.globalControlsInset}px`,
+            width: props.globalControlsInset,
+            height: '100%',
+            ml: 'auto'
+          }}
+        />
+      ) : null}
     </Box>
   )
 }
