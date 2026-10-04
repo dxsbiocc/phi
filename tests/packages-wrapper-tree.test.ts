@@ -200,6 +200,37 @@ test('refuses wrapper paths already owned by another package', async () => {
   }
 })
 
+test('refuses wrapper paths nested above or below another package path', async () => {
+  const { root, agentDir, registryDir } = sandbox()
+  try {
+    const owner = wrapperEntry(registryDir, 'module-nf-core-alpha', {
+      files: { 'modules/nf-core/shared/tool/main.nf': 'alpha\n' }
+    })
+    const above = wrapperEntry(registryDir, 'module-nf-core-above', {
+      files: { 'modules/nf-core/shared': 'above\n' }
+    })
+    const below = wrapperEntry(registryDir, 'module-nf-core-below', {
+      files: { 'modules/nf-core/shared/tool/main.nf/extra.nf': 'below\n' }
+    })
+    const source = registry(registryDir, [owner, above, below])
+    await installPackages(planInstall(source, { type: 'wrapper', id: owner.id }, { agentDir }), {
+      agentDir
+    })
+
+    for (const entry of [above, below]) {
+      await assert.rejects(
+        installPackages(planInstall(source, { type: 'wrapper', id: entry.id }, { agentDir }), {
+          agentDir
+        }),
+        /module-nf-core-alpha.*拥有/
+      )
+      assert.equal(readWrapperTreeState(agentDir).packages[entry.id], undefined)
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('refuses duplicate wrapper ids declared at different owned paths', async () => {
   const { root, agentDir, registryDir } = sandbox()
   const manifest = (name: string): string => `id: acme/modules/duplicate

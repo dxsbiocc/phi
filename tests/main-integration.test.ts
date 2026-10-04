@@ -2426,8 +2426,8 @@ async function harness(
     './agent/wrappers/executor-slurm-reconcile': {
       reconcileRemoteWrapperRuns: (): Promise<void> => Promise.resolve()
     },
-    './agent/wrappers/catalog': {
-      ensureBundledWrappersInstalled: () =>
+    './agent/wrappers/bundled-install-process': {
+      installBundledWrappersInUtilityProcess: () =>
         Promise.resolve({
           packages: [],
           installed: [],
@@ -2435,7 +2435,9 @@ async function harness(
           migratedCustom: [],
           legacyPackWarnings: [],
           diagnostics: { unattributedIncludes: [], unattributedSupportFiles: [] }
-        }),
+        })
+    },
+    './agent/wrappers/catalog': {
       listWrapperCatalog: (): unknown[] => [],
       addCustomWrapper: (): never => {
         throw new Error('wrapper.yaml 校验失败: (mocked in main-integration.test.ts)')

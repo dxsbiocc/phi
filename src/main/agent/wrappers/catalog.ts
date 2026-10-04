@@ -137,6 +137,8 @@ export interface BundledWrapperInstallResult {
 
 export interface BundledWrapperInstallOptions {
   sourceRoot?: string
+  /** Digest of `sourceRoot` when the caller already knows it, so the tree is not re-hashed. */
+  sourceFingerprint?: string
   packageVersion?: string
   generatedAt?: string
 }
@@ -497,9 +499,11 @@ export async function ensureBundledWrappersInstalled(
   }
 
   const sourceRoot = options.sourceRoot ?? getBundledWrapperPackagesDir()
-  const sourceFingerprint = options.sourceRoot
-    ? fingerprintBundledWrapperSource(sourceRoot)
-    : BUNDLED_WRAPPER_SOURCE_FINGERPRINT
+  const sourceFingerprint =
+    options.sourceFingerprint ??
+    (options.sourceRoot
+      ? fingerprintBundledWrapperSource(sourceRoot)
+      : BUNDLED_WRAPPER_SOURCE_FINGERPRINT)
   if (
     marker?.sourceFingerprint === sourceFingerprint &&
     markerMatchesInstalledTree(agentDir, marker)

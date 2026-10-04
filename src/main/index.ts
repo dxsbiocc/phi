@@ -277,11 +277,8 @@ import {
   readGlobalSkillContent,
   setSkillDisabled
 } from './agent/resources'
-import {
-  addCustomWrapper,
-  ensureBundledWrappersInstalled,
-  listWrapperCatalog
-} from './agent/wrappers/catalog'
+import { addCustomWrapper, listWrapperCatalog } from './agent/wrappers/catalog'
+import { installBundledWrappersInUtilityProcess } from './agent/wrappers/bundled-install-process'
 import {
   listWrapperCompositionCatalogStatus,
   readWrapperCompositionDag,
@@ -485,6 +482,9 @@ let macLaunchServicesHandlers: Promise<MacLaunchServicesHandler[]> | null = null
 const macApplicationPathQueries = new Map<string, Promise<string[]>>()
 // Set by agent-env.ts before this module's own top-level code runs.
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
+// Settles when the bundled wrapper install started at launch has finished; package
+// mutations wait on it so they never race the utility process over the wrapper tree.
+let bundledWrapperInstall: Promise<void> = Promise.resolve()
 let cachedPackageUpdates: PackageUpdate[] = []
 
 app.setName(APP_NAME)
@@ -6827,10 +6827,11 @@ app.whenReady().then(async () => {
   recoverInterruptedPhiSessions()
   // Bundled wrappers: the first install (or the migration from the old pack) is awaited so
   // wrapper tools find a tree; later updates run in the background, because a changed
-  // package rebuilds the temporary archives (~10 s) and each package is swapped atomically.
+  // package rebuilds the temporary archives and each package is swapped atomically. Either
+  // way the work runs in a utility process, keeping the event loop (and quit) responsive.
   const installBundledWrappers = async (): Promise<void> => {
     try {
-      const bundledWrappers = await ensureBundledWrappersInstalled(AGENT_DIR, {
+      const bundledWrappers = await installBundledWrappersInUtilityProcess(AGENT_DIR, {
         packageVersion: app.getVersion()
       })
       if (
@@ -6871,11 +6872,9 @@ app.whenReady().then(async () => {
       })
     }
   }
-  if (existsSync(getWrapperTreeOwnershipPath(AGENT_DIR))) {
-    void installBundledWrappers()
-  } else {
-    await installBundledWrappers()
-  }
+  const firstWrapperInstall = !existsSync(getWrapperTreeOwnershipPath(AGENT_DIR))
+  bundledWrapperInstall = installBundledWrappers()
+  if (firstWrapperInstall) await bundledWrapperInstall
   // Fire-and-forget: resumes remote Slurm and detached runs left mid-flight by
   // the previous app session (see executor-slurm-reconcile.ts's doc comment).
   // Must never block startup — a network hiccup here shouldn't delay the window.
@@ -8452,6 +8451,7 @@ app.whenReady().then(async () => {
       ) {
         throw new Error('软件包安装参数无效')
       }
+      await bundledWrapperInstall
       try {
         const registry = readPackageRegistry(dir)
         addKnownRegistry(registry.dir, { agentDir: AGENT_DIR })
@@ -8502,6 +8502,7 @@ app.whenReady().then(async () => {
     ) {
       throw new Error('软件包卸载参数无效')
     }
+    await bundledWrapperInstall
     try {
       const result = uninstallRegistryPackage(type, id, {
         agentDir: AGENT_DIR,
@@ -8985,6 +8986,7 @@ app.whenReady().then(async () => {
     readWrapperModuleDetails(id)
   )
   ipcMain.handle('wrappers:addCustom', async (_, sourceDir: string) => {
+    await bundledWrapperInstall
     try {
       const entry = addCustomWrapper(sourceDir)
       writeAppLog({ event: 'wrapper_custom_added', metadata: { sourceDir, id: entry.manifest.id } })

@@ -10,10 +10,19 @@
 // The app-quit case asks AppKit to terminate that PID (NSRunningApplication), which
 // goes through applicationShouldTerminate: like the Cmd+Q menu item, without
 // needing Accessibility/System Events permission.
-// Quit is requested only once the main process has gone idle: a fresh profile runs
-// first-launch setup (bundled wrapper install) that is not part of this check.
+// The idle cases request quit once the main process has gone idle and the first-launch
+// bundled wrapper install has written its tree; the first-run case sends SIGTERM while
+// that install is still running, which must not delay the quit.
 import { spawn, execFileSync } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -23,6 +32,8 @@ const IDLE_SAMPLE_MS = 1_000
 const IDLE_CPU_MS_PER_SAMPLE = 100
 const IDLE_SAMPLES_REQUIRED = 3
 const EXIT_DEADLINE_MS = 3_000
+const APP_STARTED_TIMEOUT_MS = 30_000
+const FIRST_RUN_QUIT_DELAY_MS = 1_000
 
 function parseArgs(argv) {
   const args = { app: resolve('dist/mac-arm64/pi-desktop.app') }
@@ -80,6 +91,47 @@ async function waitForStartupIdle(pid, label) {
   }
 }
 
+const wrapperTreeOwnershipPath = (home) => join(home, '.phi', 'wrappers', 'tree.json')
+
+function hasLoggedAppStarted(home) {
+  const logs = join(home, '.phi', 'logs')
+  if (!existsSync(logs)) return false
+  return readdirSync(logs)
+    .filter((name) => name.endsWith('.jsonl'))
+    .some((name) => readFileSync(join(logs, name), 'utf8').includes('"event":"app_started"'))
+}
+
+async function waitForIdleWithWrappers(pid, home, label) {
+  // The install runs in a utility process, so main-process idleness alone does not mean
+  // first-run setup is over: wait for the wrapper tree first, then for the main process.
+  const started = Date.now()
+  while (!existsSync(wrapperTreeOwnershipPath(home))) {
+    if (Date.now() - started > STARTUP_IDLE_TIMEOUT_MS) {
+      throw new Error(
+        `${label}: bundled wrappers not installed within ${STARTUP_IDLE_TIMEOUT_MS} ms`
+      )
+    }
+    if (!isAlive(pid)) throw new Error(`${label}: app exited before quit was requested`)
+    await sleep(250)
+  }
+  await waitForStartupIdle(pid, label)
+}
+
+async function waitForFirstRunSetup(pid, home, label) {
+  const started = Date.now()
+  while (!hasLoggedAppStarted(home)) {
+    if (Date.now() - started > APP_STARTED_TIMEOUT_MS) {
+      throw new Error(`${label}: app_started was not logged within ${APP_STARTED_TIMEOUT_MS} ms`)
+    }
+    if (!isAlive(pid)) throw new Error(`${label}: app exited before quit was requested`)
+    await sleep(100)
+  }
+  await sleep(FIRST_RUN_QUIT_DELAY_MS)
+  if (existsSync(wrapperTreeOwnershipPath(home))) {
+    throw new Error(`${label}: bundled wrapper install finished before quit; case did not run`)
+  }
+}
+
 function requestAppQuit(pid) {
   const script = `ObjC.import('AppKit');
     const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${pid});
@@ -87,7 +139,7 @@ function requestAppQuit(pid) {
   execFileSync('osascript', ['-l', 'JavaScript', '-e', script])
 }
 
-async function runCase(appPath, label, triggerQuit) {
+async function runCase(appPath, label, waitBeforeQuit, triggerQuit) {
   const root = mkdtempSync(join(tmpdir(), 'phi-quit-smoke-'))
   let child = null
   try {
@@ -102,7 +154,7 @@ async function runCase(appPath, label, triggerQuit) {
       env: { ...process.env, HOME: home },
       stdio: 'ignore'
     })
-    await waitForStartupIdle(child.pid, label)
+    await waitBeforeQuit(child.pid, home, label)
 
     triggerQuit(child.pid)
     const elapsed = await waitForExit(child.pid, EXIT_DEADLINE_MS)
@@ -122,8 +174,10 @@ async function main() {
     return
   }
   const args = parseArgs(process.argv.slice(2))
-  await runCase(args.app, 'SIGTERM', (pid) => process.kill(pid, 'SIGTERM'))
-  await runCase(args.app, 'app quit (Cmd+Q path)', requestAppQuit)
+  const sigterm = (pid) => process.kill(pid, 'SIGTERM')
+  await runCase(args.app, 'SIGTERM during first-run setup', waitForFirstRunSetup, sigterm)
+  await runCase(args.app, 'SIGTERM', waitForIdleWithWrappers, sigterm)
+  await runCase(args.app, 'app quit (Cmd+Q path)', waitForIdleWithWrappers, requestAppQuit)
 }
 
 main().catch((error) => {
