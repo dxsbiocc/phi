@@ -96,6 +96,8 @@ import {
   sessionAgentEventStates
 } from './stores/sessionStore'
 import { getRendererApi } from './lib/rendererApi'
+import { useWindowFullscreen } from './lib/useWindowFullscreen'
+import { windowChromeLayout } from './lib/windowChromeLayout'
 import {
   absoluteWorkspacePath,
   fileNameFromPath,
@@ -218,11 +220,7 @@ const maxBrowserSidePanelWidth = 820
 const titlebarChromeTopOffset = '10px'
 const titlebarChromeHorizontalInset = '14px'
 const titlebarChromeIconButtonSize = 28
-const titlebarLeadingChromeReserveWidth = 220
 const titlebarTrailingToggleChromeReserve = '120px'
-const workspaceFileHeaderLeadingChromeInsetWidth =
-  titlebarLeadingChromeReserveWidth - activityBarWidth
-const workspaceFileHeaderLeadingChromeInset = `${workspaceFileHeaderLeadingChromeInsetWidth}px`
 
 function isWorkspaceFileWorkspaceTab(
   tab: WorkspaceTab | null | undefined
@@ -513,14 +511,14 @@ function WorkspaceFileHeader({
   activePath,
   onSelect,
   onClose,
-  reserveLeadingChromeSpace = false,
+  leadingChromeInset = 0,
   reserveTrailingChromeSpace = false
 }: {
   tabs: WorkspaceFileTab[]
   activePath: string | null
   onSelect: (tab: WorkspaceFileTab) => void
   onClose: (tab: WorkspaceFileTab) => void
-  reserveLeadingChromeSpace?: boolean
+  leadingChromeInset?: number
   reserveTrailingChromeSpace?: boolean
 }): React.JSX.Element {
   return (
@@ -531,7 +529,7 @@ function WorkspaceFileHeader({
         flexShrink: 0,
         borderBottom: 1,
         borderColor: 'divider',
-        pl: reserveLeadingChromeSpace ? workspaceFileHeaderLeadingChromeInset : 1.5,
+        pl: leadingChromeInset > 0 ? `${leadingChromeInset}px` : 1.5,
         pr: reserveTrailingChromeSpace ? titlebarTrailingToggleChromeReserve : 1.5,
         display: 'flex',
         alignItems: 'center',
@@ -554,14 +552,14 @@ function WorkspaceResourceHeader({
   activeKey,
   onSelect,
   onClose,
-  reserveLeadingChromeSpace = false,
+  leadingChromeInset = 0,
   reserveTrailingChromeSpace = false
 }: {
   tabs: WorkspaceTab[]
   activeKey: string | null
   onSelect: (tab: WorkspaceTab) => void
   onClose: (tab: WorkspaceTab) => void
-  reserveLeadingChromeSpace?: boolean
+  leadingChromeInset?: number
   reserveTrailingChromeSpace?: boolean
 }): React.JSX.Element {
   return (
@@ -572,7 +570,7 @@ function WorkspaceResourceHeader({
         flexShrink: 0,
         borderBottom: 1,
         borderColor: 'divider',
-        pl: reserveLeadingChromeSpace ? workspaceFileHeaderLeadingChromeInset : 1.5,
+        pl: leadingChromeInset > 0 ? `${leadingChromeInset}px` : 1.5,
         pr: reserveTrailingChromeSpace ? titlebarTrailingToggleChromeReserve : 1.5,
         display: 'flex',
         alignItems: 'center',
@@ -783,6 +781,12 @@ function App(): React.JSX.Element {
   const sendRequestRef = useRef(0)
   const projectSidebarSelectionRequestRef = useRef(0)
   const rendererApi = useMemo(() => getRendererApi(), [])
+  const isWindowFullscreen = useWindowFullscreen(rendererApi, isMac)
+  const chromeLayout = windowChromeLayout({
+    isMac,
+    sidebarOpen: isSidebarOpen,
+    fullscreen: isWindowFullscreen
+  })
   const getActiveCwd = useCallback(() => useSessionStore.getState().activeCwd, [])
   const getActiveProjectId = useCallback(() => useSessionStore.getState().activeProjectId, [])
 
@@ -4267,6 +4271,7 @@ function App(): React.JSX.Element {
           >
             {showWorkspaceTitlebar ? (
               <Box
+                data-phi-workspace-titlebar="true"
                 sx={{
                   height: macTitlebarHeight,
                   flexShrink: 0,
@@ -4277,7 +4282,8 @@ function App(): React.JSX.Element {
                       ? muiTheme.palette.background.default
                       : '#FFFFFF',
                   WebkitAppRegion: 'drag',
-                  zIndex: 7
+                  zIndex: 7,
+                  pl: `${chromeLayout.mainColumnTitlebarInset}px`
                 }}
               >
                 <Box
@@ -4343,7 +4349,7 @@ function App(): React.JSX.Element {
                     activeKey={effectiveActiveWorkspaceTabKey}
                     onSelect={selectWorkspaceTab}
                     onClose={onCloseWorkspaceTab}
-                    reserveLeadingChromeSpace={isMac && !isSidebarOpen}
+                    leadingChromeInset={chromeLayout.mainColumnTitlebarInset}
                     reserveTrailingChromeSpace={workspaceSidePanelCollapsed}
                   />
                   <Box
@@ -4376,7 +4382,7 @@ function App(): React.JSX.Element {
                     activePath={activeWorkspaceFilePath}
                     onSelect={onSelectWorkspaceFileTab}
                     onClose={onCloseWorkspaceFileTab}
-                    reserveLeadingChromeSpace={isMac && !isSidebarOpen}
+                    leadingChromeInset={chromeLayout.mainColumnTitlebarInset}
                     reserveTrailingChromeSpace={workspaceSidePanelCollapsed}
                   />
                   <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>
@@ -4504,20 +4510,22 @@ function App(): React.JSX.Element {
             sx={{
               position: 'absolute',
               top: titlebarChromeTopOffset,
-              left: titlebarChromeHorizontalInset,
+              left: `${chromeLayout.topLeftChromeInset}px`,
               display: 'flex',
               alignItems: 'center',
-              gap: '18px',
+              gap: `${chromeLayout.topLeftChromeGap}px`,
               pointerEvents: 'auto',
               zIndex: 30,
               WebkitAppRegion: 'no-drag'
             }}
           >
-            <MacWindowControls
-              onClose={() => void rendererApi.closeWindow()}
-              onMinimize={() => void rendererApi.minimizeWindow()}
-              onToggleFullscreen={() => void rendererApi.toggleWindowFullscreen()}
-            />
+            {chromeLayout.showMacWindowControls ? (
+              <MacWindowControls
+                onClose={() => void rendererApi.closeWindow()}
+                onMinimize={() => void rendererApi.minimizeWindow()}
+                onToggleFullscreen={() => void rendererApi.toggleWindowFullscreen()}
+              />
+            ) : null}
             <WindowNavigationControls
               isSidebarOpen={isSidebarOpen}
               onToggleSidebar={() => setIsSidebarOpen((value) => !value)}

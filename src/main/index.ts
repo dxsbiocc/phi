@@ -503,6 +503,13 @@ let browserWorkspaceRegistryDisposal: Promise<void> | null = null
 let terminalManager: TerminalManager | null = null
 let terminalDraftService: TerminalDraftService | null = null
 let mainWindowCleanupPromise: Promise<void> | null = null
+
+function sendMainWindowFullscreenState(window: BrowserWindow, fullscreen: boolean): void {
+  if (mainWindow !== window || window.isDestroyed() || window.webContents.isDestroyed()) {
+    return
+  }
+  window.webContents.send('window:fullscreen-changed', fullscreen)
+}
 let beforeQuitCleanupComplete = false
 let beforeQuitResumeScheduled = false
 const browserCheckpointStore = new FileSystemBrowserCheckpointStore({ agentDir: AGENT_DIR })
@@ -6665,6 +6672,15 @@ function createWindow(): void {
   if (process.platform === 'darwin') {
     window.setVibrancy(null)
     window.setWindowButtonVisibility(false)
+    window.webContents.on('did-finish-load', () => {
+      sendMainWindowFullscreenState(window, window.isFullScreen())
+    })
+    window.on('enter-full-screen', () => {
+      sendMainWindowFullscreenState(window, true)
+    })
+    window.on('leave-full-screen', () => {
+      sendMainWindowFullscreenState(window, false)
+    })
   }
 
   window.on('ready-to-show', () => {
@@ -6955,6 +6971,19 @@ app.whenReady().then(async () => {
     const window = getActiveWindow()
     if (!window) return
     window.setFullScreen(!window.isFullScreen())
+  })
+  ipcMain.handle('window:get-fullscreen', (event) => {
+    const window = mainWindow
+    if (
+      !window ||
+      window.isDestroyed() ||
+      event.sender !== window.webContents ||
+      event.sender.isDestroyed() ||
+      event.senderFrame !== event.sender.mainFrame
+    ) {
+      throw new Error('Window renderer is not authorized')
+    }
+    return window.isFullScreen()
   })
   ipcMain.handle('files:reveal', async (_, filePath: string) => {
     shell.showItemInFolder(assertRevealPathAllowed(filePath))

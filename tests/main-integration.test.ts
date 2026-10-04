@@ -9207,6 +9207,16 @@ test(
   }
 )
 
+test('main IPC: fullscreen state is available only to the trusted main renderer', async () => {
+  const app = await harness()
+
+  assert.equal(await app.invoke('window:get-fullscreen'), false)
+  await assert.rejects(
+    app.invokeFromForeign('window:get-fullscreen'),
+    /Window renderer is not authorized/
+  )
+})
+
 test('main IPC: closing the window stops all active prompt runs', { timeout: 3000 }, async () => {
   const app = await harness(async (_cwd, file) => {
     const session = new FakeSession(file)

@@ -565,6 +565,8 @@ declare global {
       closeWindow: () => Promise<void>
       minimizeWindow: () => Promise<void>
       toggleWindowFullscreen: () => Promise<void>
+      getWindowFullscreen: () => Promise<boolean>
+      onWindowFullscreenChanged: (cb: (fullscreen: boolean) => void) => () => void
       revealPath: (path: string) => Promise<void>
       openPath: (path: string) => Promise<void>
       getFileIcon: (path: string) => Promise<string | null>

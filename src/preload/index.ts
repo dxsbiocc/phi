@@ -675,6 +675,8 @@ type RendererAuthApi = {
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
   toggleWindowFullscreen: () => Promise<void>
+  getWindowFullscreen: () => Promise<boolean>
+  onWindowFullscreenChanged: (cb: (fullscreen: boolean) => void) => Unsubscribe
   revealPath: (path: string) => Promise<void>
   openPath: (path: string) => Promise<void>
   getFileIcon: (path: string) => Promise<string | null>
@@ -1063,6 +1065,19 @@ const api: RendererAuthApi = {
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   toggleWindowFullscreen: (): Promise<void> => ipcRenderer.invoke('window:toggle-fullscreen'),
+  getWindowFullscreen: (): Promise<boolean> => ipcRenderer.invoke('window:get-fullscreen'),
+  onWindowFullscreenChanged: (cb: (fullscreen: boolean) => void): Unsubscribe => {
+    const handler = (_: unknown, fullscreen: unknown): void => {
+      if (typeof fullscreen === 'boolean') cb(fullscreen)
+    }
+    let subscribed = true
+    ipcRenderer.on('window:fullscreen-changed', handler)
+    return () => {
+      if (!subscribed) return
+      subscribed = false
+      ipcRenderer.removeListener('window:fullscreen-changed', handler)
+    }
+  },
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('files:reveal', path),
   openPath: (path: string): Promise<void> => ipcRenderer.invoke('files:openPath', path),
   getFileIcon: (path: string): Promise<string | null> => ipcRenderer.invoke('files:getIcon', path),

@@ -67,3 +67,15 @@ test('App.tsx renders top-left chrome after draggable workspace layers', () => {
     'top-left controls must render after the side panel shell so fullscreen panels cannot cover them'
   )
 })
+
+test('App.tsx removes macOS traffic lights in true fullscreen but keeps navigation controls', () => {
+  const appSource = readSource('src/renderer/src/App.tsx')
+
+  assert.match(appSource, /const isWindowFullscreen = useWindowFullscreen\(rendererApi, isMac\)/)
+  assert.match(appSource, /fullscreen: isWindowFullscreen/)
+  assert.match(
+    appSource,
+    /chromeLayout\.showMacWindowControls \? \([\s\S]{0,220}<MacWindowControls[\s\S]{0,500}: null\}[\s\S]{0,160}<WindowNavigationControls/
+  )
+  assert.match(appSource, /gap: `\$\{chromeLayout\.topLeftChromeGap\}px`/)
+})

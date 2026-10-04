@@ -217,7 +217,10 @@ test('workspace top-right controls are app-level chrome, not notebook-only conte
     'top-right controls must render after the workspace side panel shell so they stay clickable on top'
   )
   assert.doesNotMatch(appSource, /isChatWorkspaceView \? \([\s\S]{0,400}<TopRightControls/)
-  assert.match(appSource, /left: titlebarChromeHorizontalInset[\s\S]{0,360}<MacWindowControls/)
+  assert.match(
+    appSource,
+    /left: `\$\{chromeLayout\.topLeftChromeInset\}px`[\s\S]{0,500}<MacWindowControls/
+  )
   assert.match(appSource, /position: 'absolute'[\s\S]{0,800}<TopRightControls/)
   assert.match(appSource, /top: titlebarChromeTopOffset[\s\S]{0,800}<TopRightControls/)
   assert.match(
@@ -410,16 +413,7 @@ test('workspace file titlebars reserve trailing app chrome only at the window ed
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
 
   assert.match(appSource, /FilePreviewTitleTab,/)
-  assert.match(appSource, /const titlebarLeadingChromeReserveWidth = 220/)
   assert.match(appSource, /const titlebarTrailingToggleChromeReserve = '120px'/)
-  assert.match(
-    appSource,
-    /const workspaceFileHeaderLeadingChromeInsetWidth =\s*titlebarLeadingChromeReserveWidth - activityBarWidth/
-  )
-  assert.match(
-    appSource,
-    /const workspaceFileHeaderLeadingChromeInset = `\$\{workspaceFileHeaderLeadingChromeInsetWidth\}px`/
-  )
   assert.match(
     appSource,
     /filePreview && !showProjectSessionPlaceholder \? \([\s\S]{0,220}<FilePreviewTitleTab/
@@ -429,17 +423,35 @@ test('workspace file titlebars reserve trailing app chrome only at the window ed
     /titlebarInsetEnd=\{\s*workspaceSidePanelCollapsed \? titlebarTrailingToggleChromeReserve : 1\.25\s*\}/
   )
   assert.match(appSource, /onClose=\{onCloseCurrentFilePreview\}/)
-  assert.match(
-    appSource,
-    /pl: reserveLeadingChromeSpace \? workspaceFileHeaderLeadingChromeInset : 1\.5/
-  )
+  assert.match(appSource, /leadingChromeInset\?: number/)
+  assert.match(appSource, /pl: leadingChromeInset > 0 \? `\$\{leadingChromeInset\}px` : 1\.5/)
   assert.match(appSource, /reserveTrailingChromeSpace\?: boolean/)
   assert.match(
     appSource,
     /pr: reserveTrailingChromeSpace \? titlebarTrailingToggleChromeReserve : 1\.5/
   )
-  assert.match(appSource, /reserveLeadingChromeSpace=\{isMac && !isSidebarOpen\}/)
+  assert.match(appSource, /leadingChromeInset=\{chromeLayout\.mainColumnTitlebarInset\}/)
   assert.match(appSource, /reserveTrailingChromeSpace=\{workspaceSidePanelCollapsed\}/)
+})
+
+test('collapsed-sidebar workspace titlebars keep their leading reserve with any workbench layout', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+
+  assert.match(appSource, /import \{ windowChromeLayout \} from '\.\/lib\/windowChromeLayout'/)
+  assert.match(
+    appSource,
+    /const chromeLayout = windowChromeLayout\(\{\s*isMac,\s*sidebarOpen: isSidebarOpen,\s*fullscreen: isWindowFullscreen\s*\}\)/
+  )
+  assert.match(
+    appSource,
+    /data-phi-workspace-titlebar="true"[\s\S]{0,600}pl: `\$\{chromeLayout\.mainColumnTitlebarInset\}px`/
+  )
+  assert.equal(
+    (appSource.match(/leadingChromeInset=\{chromeLayout\.mainColumnTitlebarInset\}/g) ?? []).length,
+    2,
+    'file and resource titlebars must use the same workbench-independent leading inset'
+  )
+  assert.doesNotMatch(appSource, /reserveLeadingChromeSpace=\{isMac && !isSidebarOpen\}/)
 })
 
 test('workspace file tabs reuse cached surfaces when switching', () => {
