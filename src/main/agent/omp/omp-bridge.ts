@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 import { writeAppLog } from '../app-logger'
 import { getPhiAgentDir } from '../runtime-paths'
+import { resolveBunExecutable, workerPathWithBun } from './bun-executable'
 
 type PendingRequest = {
   method: string
@@ -126,10 +127,12 @@ function createBridgeError(message: string, stack?: string): Error {
 export type WorkerSpawner = (workerPath: string, agentDir: string) => ChildProcessWithoutNullStreams
 
 function spawnBunWorker(workerPath: string, agentDir: string): ChildProcessWithoutNullStreams {
-  return spawn('bun', [workerPath], {
+  const bunPath = resolveBunExecutable()
+  return spawn(bunPath, [workerPath], {
     cwd: process.cwd(),
     env: {
       ...process.env,
+      PATH: workerPathWithBun(bunPath, process.env.PATH),
       PI_CODING_AGENT_DIR: agentDir,
       OMP_APP_NAME: 'Phi'
     },
@@ -161,7 +164,13 @@ export class OmpBridge extends EventEmitter {
 
   request<T = unknown>(method: string, params?: unknown): Promise<T> {
     this.cancelIdleStop()
-    const child = this.ensureStarted()
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = this.ensureStarted()
+    } catch (error) {
+      // e.g. bun is not installed: surface it as a failed request, not a throw.
+      return Promise.reject(error)
+    }
     const id = randomUUID()
 
     const promise = new Promise<T>((resolve, reject) => {
