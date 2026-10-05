@@ -1,5 +1,5 @@
-import { memo, useCallback, useRef, useState, type FocusEvent } from 'react'
-import { Box, IconButton, Paper, Popper, Tooltip } from '@mui/material'
+import { memo, useCallback, useEffect, useRef, useState, type FocusEvent } from 'react'
+import { Box, Fade, IconButton, Paper, Popper, Tooltip, useMediaQuery } from '@mui/material'
 import type { SxProps, Theme } from '@mui/material/styles'
 import type { IconType } from 'react-icons'
 import {
@@ -222,11 +222,28 @@ function AppActivityBarImpl({
   sidebarProps,
   onPreviewNavigate
 }: AppActivityBarProps): React.JSX.Element {
+  const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
+  const [retainedPreview, setRetainedPreview] = useState(visibleWorkspaceSidebarPreview)
+  if (
+    visibleWorkspaceSidebarPreview &&
+    (retainedPreview?.mode !== visibleWorkspaceSidebarPreview.mode ||
+      retainedPreview?.anchorEl !== visibleWorkspaceSidebarPreview.anchorEl)
+  ) {
+    setRetainedPreview(visibleWorkspaceSidebarPreview)
+  }
+  const displayedPreview = visibleWorkspaceSidebarPreview ?? retainedPreview
+  const displayedPreviewMode = displayedPreview?.mode ?? workspaceSidebarPreviewMode
   const previewInteractionLockedRef = useRef(false)
   const [previewInteractionLocked, setPreviewInteractionLocked] = useState(false)
   const previewSurfaceActiveRef = useRef(false)
+  const previewPointerInsideRef = useRef(false)
+  useEffect(() => {
+    if (isWorkspaceSidebarPreviewOpen) return
+    previewPointerInsideRef.current = false
+    previewSurfaceActiveRef.current = false
+  }, [isWorkspaceSidebarPreviewOpen])
   const requestWorkspaceSidebarPreviewClose = useCallback((): void => {
-    if (previewInteractionLockedRef.current) {
+    if (previewInteractionLockedRef.current || previewSurfaceActiveRef.current) {
       clearWorkspaceSidebarPreviewCloseTimer()
       return
     }
@@ -245,10 +262,24 @@ function AppActivityBarImpl({
     [clearWorkspaceSidebarPreviewCloseTimer, scheduleWorkspaceSidebarPreviewClose]
   )
   const handleWorkspaceSidebarPreviewEnter = useCallback((): void => {
+    previewPointerInsideRef.current = true
+    previewSurfaceActiveRef.current = true
+    clearWorkspaceSidebarPreviewCloseTimer()
+    if (!isWorkspaceSidebarPreviewOpen && displayedPreview) {
+      openWorkspaceSidebarPreview(displayedPreview.mode, displayedPreview.anchorEl)
+    }
+  }, [
+    clearWorkspaceSidebarPreviewCloseTimer,
+    displayedPreview,
+    isWorkspaceSidebarPreviewOpen,
+    openWorkspaceSidebarPreview
+  ])
+  const handleWorkspaceSidebarPreviewFocus = useCallback((): void => {
     previewSurfaceActiveRef.current = true
     clearWorkspaceSidebarPreviewCloseTimer()
   }, [clearWorkspaceSidebarPreviewCloseTimer])
   const handleWorkspaceSidebarPreviewLeave = useCallback((): void => {
+    previewPointerInsideRef.current = false
     previewSurfaceActiveRef.current = false
     requestWorkspaceSidebarPreviewClose()
   }, [requestWorkspaceSidebarPreviewClose])
@@ -258,8 +289,8 @@ function AppActivityBarImpl({
       if (nextFocusedElement instanceof Node && event.currentTarget.contains(nextFocusedElement)) {
         return
       }
-      previewSurfaceActiveRef.current = false
-      requestWorkspaceSidebarPreviewClose()
+      previewSurfaceActiveRef.current = previewPointerInsideRef.current
+      if (!previewSurfaceActiveRef.current) requestWorkspaceSidebarPreviewClose()
     },
     [requestWorkspaceSidebarPreviewClose]
   )
@@ -368,7 +399,8 @@ function AppActivityBarImpl({
 
       <Popper
         open={isWorkspaceSidebarPreviewOpen}
-        anchorEl={visibleWorkspaceSidebarPreview?.anchorEl ?? null}
+        anchorEl={displayedPreview?.anchorEl ?? null}
+        transition
         placement="right-start"
         modifiers={[
           {
@@ -382,61 +414,92 @@ function AppActivityBarImpl({
         ]}
         sx={{
           zIndex: (muiTheme) =>
-            previewInteractionLocked ? muiTheme.zIndex.modal - 1 : muiTheme.zIndex.tooltip
+            previewInteractionLocked || !isWorkspaceSidebarPreviewOpen
+              ? muiTheme.zIndex.modal - 1
+              : muiTheme.zIndex.tooltip
         }}
       >
-        <Paper
-          id="workspace-sidebar-preview"
-          role="region"
-          aria-label="导航内容预览"
-          tabIndex={-1}
-          onKeyDown={(event) => {
-            if (event.key !== 'Escape' || !event.currentTarget.contains(event.target as Node))
-              return
-            event.preventDefault()
-            closeWorkspaceSidebarPreview()
-            const anchor = visibleWorkspaceSidebarPreview?.anchorEl
-            if (anchor?.isConnected && document.activeElement !== anchor) {
-              skipPreviewFocusRef.current = true
-              anchor.focus({ preventScroll: true })
-              skipPreviewFocusRef.current = false
-            }
-          }}
-          data-phi-workspace-sidebar-hover-preview={workspaceSidebarPreviewMode}
-          elevation={8}
-          onMouseEnter={handleWorkspaceSidebarPreviewEnter}
-          onMouseLeave={handleWorkspaceSidebarPreviewLeave}
-          onFocus={handleWorkspaceSidebarPreviewEnter}
-          onBlur={handleWorkspaceSidebarPreviewBlur}
-          sx={{
-            width: workspaceSidebarPreviewWidth,
-            maxHeight: 'min(420px, calc(100vh - 96px))',
-            mt: isMac ? -0.5 : 0.5,
-            overflow: 'hidden',
-            borderRadius: 2,
-            border: 1,
-            borderColor: 'divider',
-            bgcolor: 'background.default',
-            boxShadow: (muiTheme) =>
-              muiTheme.palette.mode === 'dark'
-                ? '0 18px 46px rgba(0, 0, 0, 0.48)'
-                : '0 18px 46px rgba(12, 26, 32, 0.18)'
-          }}
-        >
-          <AppWorkspaceSidebar
-            key={workspaceSidebarPreviewMode}
-            {...sidebarProps}
-            isSidebarOpen
-            sidebarWidth={workspaceSidebarPreviewWidth}
-            activeView="chat"
-            activeChatView={null}
-            onStartSidebarResize={() => undefined}
-            workspaceSidebarMode={workspaceSidebarPreviewMode}
-            compactHoverPreview
-            onPreviewInteractionChange={handleWorkspaceSidebarPreviewInteractionChange}
-            onPreviewNavigate={onPreviewNavigate}
-          />
-        </Paper>
+        {({ TransitionProps }) => (
+          <Box
+            data-phi-workspace-sidebar-preview-region
+            onMouseEnter={handleWorkspaceSidebarPreviewEnter}
+            onMouseLeave={handleWorkspaceSidebarPreviewLeave}
+            onFocus={handleWorkspaceSidebarPreviewFocus}
+            onBlur={handleWorkspaceSidebarPreviewBlur}
+            sx={{
+              position: 'relative',
+              '&::before': {
+                content: '""',
+                position: 'absolute',
+                left: -6,
+                width: 6,
+                top: 0,
+                bottom: 0
+              }
+            }}
+          >
+            <Fade
+              {...TransitionProps}
+              timeout={reduceMotion ? 0 : { enter: 180, exit: 120 }}
+              easing={{ enter: 'ease-out', exit: 'ease-in' }}
+              onExited={() => {
+                TransitionProps?.onExited?.()
+                if (!isWorkspaceSidebarPreviewOpen) setRetainedPreview(null)
+              }}
+            >
+              <Paper
+                id="workspace-sidebar-preview"
+                role="region"
+                aria-label="导航内容预览"
+                tabIndex={-1}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape' || !event.currentTarget.contains(event.target as Node))
+                    return
+                  event.preventDefault()
+                  closeWorkspaceSidebarPreview()
+                  const anchor = displayedPreview?.anchorEl
+                  if (anchor?.isConnected && document.activeElement !== anchor) {
+                    skipPreviewFocusRef.current = true
+                    anchor.focus({ preventScroll: true })
+                    skipPreviewFocusRef.current = false
+                  }
+                }}
+                data-phi-workspace-sidebar-hover-preview={displayedPreviewMode}
+                inert={!isWorkspaceSidebarPreviewOpen}
+                aria-hidden={!isWorkspaceSidebarPreviewOpen || undefined}
+                elevation={8}
+                sx={{
+                  width: workspaceSidebarPreviewWidth,
+                  maxHeight: 'min(420px, calc(100vh - 96px))',
+                  mt: isMac ? -0.5 : 0.5,
+                  overflow: 'hidden',
+                  borderRadius: 2,
+                  border: 1,
+                  borderColor: 'divider',
+                  bgcolor: 'background.default',
+                  boxShadow: (muiTheme) =>
+                    muiTheme.palette.mode === 'dark'
+                      ? '0 18px 46px rgba(0, 0, 0, 0.48)'
+                      : '0 18px 46px rgba(12, 26, 32, 0.18)'
+                }}
+              >
+                <AppWorkspaceSidebar
+                  key={displayedPreviewMode}
+                  {...sidebarProps}
+                  isSidebarOpen
+                  sidebarWidth={workspaceSidebarPreviewWidth}
+                  activeView="chat"
+                  activeChatView={null}
+                  onStartSidebarResize={() => undefined}
+                  workspaceSidebarMode={displayedPreviewMode}
+                  compactHoverPreview
+                  onPreviewInteractionChange={handleWorkspaceSidebarPreviewInteractionChange}
+                  onPreviewNavigate={onPreviewNavigate}
+                />
+              </Paper>
+            </Fade>
+          </Box>
+        )}
       </Popper>
     </>
   )

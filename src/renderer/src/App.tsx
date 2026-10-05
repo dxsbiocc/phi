@@ -3190,14 +3190,25 @@ function App(): React.JSX.Element {
     workspaceSidebarPreviewCloseTimer.current = null
   }, [])
   const closeWorkspaceSidebarPreview = useCallback(
-    (delayMs = 0): void => {
-      clearWorkspaceSidebarPreviewCloseTimer()
+    (delayMs = 0, expectedPreview?: typeof workspaceSidebarPreview): void => {
+      // A completed navigation must not cancel a newer preview's leave timer.
+      // Opening any new preview already clears timers from its predecessor.
+      if (!expectedPreview || delayMs > 0) clearWorkspaceSidebarPreviewCloseTimer()
       if (delayMs <= 0) {
-        setWorkspaceSidebarPreview(null)
+        setWorkspaceSidebarPreview((current) =>
+          expectedPreview && current !== expectedPreview ? current : null
+        )
         return
       }
       workspaceSidebarPreviewCloseTimer.current = window.setTimeout(() => {
         workspaceSidebarPreviewCloseTimer.current = null
+        const preview =
+          document.querySelector('[data-phi-workspace-sidebar-preview-region]') ??
+          document.getElementById('workspace-sidebar-preview')
+        const anchor = document.querySelector(
+          '.app-activity-bar [aria-controls="workspace-sidebar-preview"]'
+        )
+        if (preview?.matches(':hover') || anchor?.matches(':hover')) return
         setWorkspaceSidebarPreview(null)
       }, delayMs)
     },
@@ -3219,7 +3230,7 @@ function App(): React.JSX.Element {
     ]
   )
   const scheduleWorkspaceSidebarPreviewClose = useCallback((): void => {
-    closeWorkspaceSidebarPreview(160)
+    closeWorkspaceSidebarPreview(350)
   }, [closeWorkspaceSidebarPreview])
 
   useEffect(
@@ -4116,9 +4127,20 @@ function App(): React.JSX.Element {
         : activeWorkspaceResourceContent
 
   const onWorkspaceSidebarPreviewNavigate = useCallback((): void => {
-    closeWorkspaceSidebarPreview()
+    const dismiss =
+      workspaceSidebarPreviewMode === 'conversations' || workspaceSidebarPreviewMode === 'projects'
+    if (dismiss) closeWorkspaceSidebarPreview(0, visibleWorkspaceSidebarPreview)
+    else clearWorkspaceSidebarPreviewCloseTimer()
     if (!isSidebarOpen) setIsSidebarOpen(false)
-  }, [closeWorkspaceSidebarPreview, isSidebarOpen])
+    else if (!dismiss) setWorkspaceSidebarMode(workspaceSidebarMode)
+  }, [
+    clearWorkspaceSidebarPreviewCloseTimer,
+    closeWorkspaceSidebarPreview,
+    isSidebarOpen,
+    workspaceSidebarMode,
+    workspaceSidebarPreviewMode,
+    visibleWorkspaceSidebarPreview
+  ])
 
   const workspaceSidebarProps = useMemo<WorkspaceSidebarDataProps>(
     () => ({
