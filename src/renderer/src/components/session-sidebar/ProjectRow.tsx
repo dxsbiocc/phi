@@ -1,6 +1,4 @@
 import { memo, useCallback, useEffect, useState } from 'react'
-import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
-import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import {
   Box,
   Collapse,
@@ -14,16 +12,15 @@ import {
 } from '@mui/material'
 import { alpha, type Theme } from '@mui/material/styles'
 import { PhiIcons } from '../../icons'
-import { preserveSessionListOrder } from '../../lib/sessionOrder'
+import { orderSessionsForDisplay } from '../../lib/sessionOrder'
 import {
   plainSidebarRowSx,
   ROW_LABEL_FONT_SIZE,
-  ROW_META_FONT_SIZE,
-  useSessionOrder
+  ROW_META_FONT_SIZE
 } from '../../lib/sessionSidebarShared'
 import type { Project, SessionRuntimeState, SessionSummary } from '../../types'
 import { projectLocationSummary } from '../../lib/projectTypes'
-import { SortableSessionRow } from './SessionRow'
+import { SessionRow } from './SessionRow'
 
 const AddCommentIcon = PhiIcons.action.addSession
 const ExpandMoreIcon = PhiIcons.action.expand
@@ -95,12 +92,13 @@ function ProjectRowImpl({
   const isRemote = project.location?.kind === 'ssh'
   const gitStatusLabel = projectGitStatusLabel(project)
   const remoteSummary = projectLocationSummary(project)
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   const sourceSessions = searchSessions ?? sessions ?? []
   const sessionsReady = searchSessions !== undefined || sessions !== null
-  const { orderedSessions, handleDragEnd } = useSessionOrder(
-    isRemote ? `project:${project.id}` : `project:${project.workingDirectory}`,
-    sourceSessions
+  const orderedSessions = orderSessionsForDisplay(
+    sourceSessions.map((session) => ({
+      ...session,
+      ...getSessionRuntimeState?.(session.path, project.workingDirectory, session.phiSessionId)
+    }))
   )
 
   useEffect(() => {
@@ -108,7 +106,7 @@ function ProjectRowImpl({
     let cancelled = false
     void onFetchSessions(project.workingDirectory, project.id).then((nextSessions) => {
       if (!cancelled) {
-        setSessions((previous) => preserveSessionListOrder(previous ?? [], nextSessions))
+        setSessions(orderSessionsForDisplay(nextSessions))
       }
     })
     return () => {
@@ -121,12 +119,12 @@ function ProjectRowImpl({
   // SessionSidebar's own timer (which only covers the top-level conversation
   // list), since project sessions live in this component's own fetched
   // `sessions` state and aren't visible to the parent.
-  const hasActiveAttention = sourceSessions.some((session) => {
-    const runtimeState =
-      getSessionRuntimeState?.(session.path, project.workingDirectory, session.phiSessionId) ?? null
-    const status = runtimeState?.status ?? session.status
-    return status === 'running' || status === 'needs_approval' || status === 'needs_input'
-  })
+  const hasActiveAttention = orderedSessions.some(
+    (session) =>
+      session.status === 'running' ||
+      session.status === 'needs_approval' ||
+      session.status === 'needs_input'
+  )
 
   useEffect(() => {
     if (!hasActiveAttention) return
@@ -304,39 +302,23 @@ function ProjectRowImpl({
           </Typography>
         )}
         {sessionsReady && orderedSessions.length > 0 && (
-          <DndContext
-            sensors={searchSessions === undefined ? sensors : []}
-            collisionDetection={closestCenter}
-            onDragEnd={searchSessions === undefined ? handleDragEnd : undefined}
-          >
-            <SortableContext
-              items={orderedSessions.map((session) => session.path)}
-              strategy={verticalListSortingStrategy}
-            >
-              {orderedSessions.map((session) => (
-                <SortableSessionRow
-                  key={session.path}
-                  session={session}
-                  runtimeState={
-                    getSessionRuntimeState?.(
-                      session.path,
-                      project.workingDirectory,
-                      session.phiSessionId
-                    ) ?? null
-                  }
-                  isActive={session.path === activeSessionPath}
-                  indent
-                  nowMs={nowMs}
-                  compactHoverPreview={compactHoverPreview}
-                  onPreviewInteractionChange={onPreviewInteractionChange}
-                  onSelect={() => onSelectSession(session.path)}
-                  onRename={(name) => onRenameSession(session.path, name)}
-                  onDelete={() => onDeleteSession(session.path)}
-                  onExport={() => onExportSession(session)}
-                />
-              ))}
-            </SortableContext>
-          </DndContext>
+          <>
+            {orderedSessions.map((session) => (
+              <SessionRow
+                key={session.path}
+                session={session}
+                isActive={session.path === activeSessionPath}
+                indent
+                nowMs={nowMs}
+                compactHoverPreview={compactHoverPreview}
+                onPreviewInteractionChange={onPreviewInteractionChange}
+                onSelect={() => onSelectSession(session.path)}
+                onRename={(name) => onRenameSession(session.path, name)}
+                onDelete={() => onDeleteSession(session.path)}
+                onExport={() => onExportSession(session)}
+              />
+            ))}
+          </>
         )}
         {sessionsReady && orderedSessions.length === 0 && (
           <Typography

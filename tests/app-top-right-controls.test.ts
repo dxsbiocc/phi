@@ -276,8 +276,8 @@ test('workspace file previews and chats can show the shared right side panel', (
   )
   assert.doesNotMatch(appSource, /activeChatView[\s\S]{0,900}<WorkspaceSidePanel/)
   assert.match(appSource, /label="调整工作区面板宽度"/)
-  assert.match(appSource, /browserSidePanelWidthDefault = 600/)
-  assert.match(appSource, /minBrowserSidePanelWidth = 480/)
+  assert.match(appSource, /browserSidePanelWidthDefault = workspaceSidePanelWidthDefault/)
+  assert.match(appSource, /minBrowserSidePanelWidth = minWorkspaceSidePanelWidth/)
   assert.match(appSource, /maxBrowserSidePanelWidth = 820/)
   assert.match(appSource, /setBrowserSidePanelWidth/)
   assert.match(
@@ -403,16 +403,17 @@ test('workspace files are available from the left sidebar activity item', () => 
     /const NavRuntimeIcon = createActivityBarPhiIcon\(PhiIcons\.nav\.runtime\)/
   )
   assert.match(activitySource, /const NavSettingsIcon = createActivityBarReactIcon\(GoGear\)/)
-  assert.match(activitySource, /mode="files"[\s\S]{0,160}label="文件"/)
-  assert.match(activitySource, /onClick=\{\(\) => onSelectWorkspaceSidebarMode\('files'\)\}/)
+  assert.match(activitySource, /mode: 'files', label: '文件', icon: NavFilesIcon/)
+  assert.match(activitySource, /navigationItems\.map\(\(\{ mode, label, icon \}\)/)
+  assert.match(activitySource, /onSelectWorkspaceSidebarMode\(mode\)/)
   assert.match(sidebarSource, /workspaceSidebarMode === 'files'/)
   assert.match(sidebarSource, /data-phi-files-sidebar="true"/)
   assert.match(sidebarSource, /<WorkspaceFilesPane/)
-  assert.match(appSource, /workspaceRootPath=\{workspaceFilesRootPath\}/)
+  assert.match(appSource, /workspaceRootPath: workspaceFilesRootPath/)
   assert.doesNotMatch(sidebarSource, /远程项目文件浏览暂不可用/)
   assert.doesNotMatch(sidebarSource, /Tooltip title="刷新文件树"/)
   assert.doesNotMatch(sidebarSource, /aria-label="刷新文件树"/)
-  assert.match(appSource, /onOpenWorkspaceFile=\{onOpenWorkspaceFileFromSidebar\}/)
+  assert.match(appSource, /onOpenWorkspaceFile: onOpenWorkspaceFileFromSidebar/)
   assert.doesNotMatch(appSource, /onRefreshWorkspaceFiles=\{onRefreshWorkspaceSidePanel\}/)
 })
 
@@ -555,7 +556,7 @@ test('workspace nav content hover renders as a compact flyout', () => {
     'utf8'
   )
   const hoverPreviewStart = activityBarSource.indexOf('data-phi-workspace-sidebar-hover-preview=')
-  const hoverPreviewEnd = activityBarSource.indexOf('<SessionSidebar')
+  const hoverPreviewEnd = activityBarSource.indexOf('<AppWorkspaceSidebar', hoverPreviewStart)
 
   assert.notEqual(hoverPreviewStart, -1)
   assert.notEqual(hoverPreviewEnd, -1)

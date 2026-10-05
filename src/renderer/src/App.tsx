@@ -131,7 +131,7 @@ import { getPromptReadiness } from './lib/promptReadiness'
 import { shouldRefreshProjectGitStatusForAgentEvent } from './lib/projectGitRefresh'
 import { readableErrorMessage } from './lib/sessionNotifications'
 import { sessionDraftKey, updateSessionDraft } from './lib/sessionDrafts'
-import { preserveSessionListOrder } from './lib/sessionOrder'
+import { orderSessionsForDisplay } from './lib/sessionOrder'
 import { sessionDisplayTitle, titleFromMessages, truncateSessionTitle } from './lib/sessionTitles'
 import { isNotebookFilePath } from './features/analysis/lib/notebookPaths'
 import { orderProjectsForSessionSelection } from './lib/projectSidebar'
@@ -213,8 +213,8 @@ const maxNavigationPaneWidth = 520
 const workspaceSidePanelWidthDefault = 340
 const minWorkspaceSidePanelWidth = 240
 const maxWorkspaceSidePanelWidth = 520
-const browserSidePanelWidthDefault = 600
-const minBrowserSidePanelWidth = 480
+const browserSidePanelWidthDefault = workspaceSidePanelWidthDefault
+const minBrowserSidePanelWidth = minWorkspaceSidePanelWidth
 const maxBrowserSidePanelWidth = 820
 const titlebarChromeHorizontalInset = '14px'
 const titlebarChromeIconButtonSize = 28
@@ -458,12 +458,7 @@ function WorkspaceFileTabs({
                 component="span"
                 role="img"
                 aria-label="未保存修改"
-                sx={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: '50%',
-                  bgcolor: 'warning.main'
-                }}
+                sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: 'warning.main' }}
               />
             )}
             <Box
@@ -531,8 +526,6 @@ function WorkspaceFileHeader({
       sx={{
         height: WINDOW_TITLEBAR_HEIGHT,
         flexShrink: 0,
-        borderBottom: 1,
-        borderColor: 'divider',
         pl: leadingChromeInset > 0 ? `${leadingChromeInset}px` : 1.5,
         pr: reserveTrailingChromeSpace ? titlebarTrailingToggleChromeReserve : 1.5,
         display: 'flex',
@@ -572,8 +565,6 @@ function WorkspaceResourceHeader({
       sx={{
         height: WINDOW_TITLEBAR_HEIGHT,
         flexShrink: 0,
-        borderBottom: 1,
-        borderColor: 'divider',
         pl: leadingChromeInset > 0 ? `${leadingChromeInset}px` : 1.5,
         pr: reserveTrailingChromeSpace ? titlebarTrailingToggleChromeReserve : 1.5,
         display: 'flex',
@@ -623,8 +614,6 @@ function AppResizeSeparator({
         flexShrink: 0,
         position: 'relative',
         cursor: 'col-resize',
-        bgcolor: (theme) =>
-          theme.palette.mode === 'dark' ? 'rgba(241, 246, 246, 0.18)' : 'rgba(15, 42, 48, 0.18)',
         zIndex: 5,
         WebkitAppRegion: 'no-drag',
         '&::before': {
@@ -706,7 +695,7 @@ function App(): React.JSX.Element {
   const [contextUsageRefreshKey, setContextUsageRefreshKey] = useState(0)
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false)
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('general')
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(navigationPaneWidth)
   const [activeView, setActiveViewState] = useState<AppView>('chat')
 
@@ -729,10 +718,7 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    const current: NavigationHistoryEntry = {
-      view: activeView,
-      sessionPath: activeSessionPath
-    }
+    const current: NavigationHistoryEntry = { view: activeView, sessionPath: activeSessionPath }
     const restoringTo = restoringNavigationEntryRef.current
     if (restoringTo) {
       // Still catching up to a back/forward target -- e.g. the view
@@ -838,12 +824,7 @@ function App(): React.JSX.Element {
       severity: SnackbarNotice['severity'] = 'error',
       options?: { persistent?: boolean }
     ): void => {
-      setSnackbarNotice({
-        id: Date.now(),
-        message,
-        severity,
-        persistent: options?.persistent
-      })
+      setSnackbarNotice({ id: Date.now(), message, severity, persistent: options?.persistent })
     },
     []
   )
@@ -1145,10 +1126,7 @@ function App(): React.JSX.Element {
   }))
   useEffect(() => {
     const onResize = (): void =>
-      setAppViewportSize({
-        width: window.innerWidth,
-        height: window.innerHeight
-      })
+      setAppViewportSize({ width: window.innerWidth, height: window.innerHeight })
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
@@ -1439,10 +1417,7 @@ function App(): React.JSX.Element {
         applyCurrentSession(
           result,
           { resetSending: true },
-          {
-            onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange,
-            onResetSending
-          }
+          { onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange, onResetSending }
         )
         const targetStateKey = sessionStateKey({
           phiSessionId: result.phiSessionId,
@@ -1528,10 +1503,7 @@ function App(): React.JSX.Element {
           applyCurrentSession(
             current,
             { resetSending: true },
-            {
-              onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange,
-              onResetSending
-            }
+            { onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange, onResetSending }
           )
           void refreshCurrentModelControls(request)
           replaceMessages([])
@@ -1695,10 +1667,7 @@ function App(): React.JSX.Element {
         applyCurrentSession(
           current,
           { resetSending: true },
-          {
-            onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange,
-            onResetSending
-          }
+          { onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange, onResetSending }
         )
         void refreshCurrentModelControls(request)
         startFreshChat()
@@ -2080,11 +2049,8 @@ function App(): React.JSX.Element {
         rendererApi.getCurrentSession(),
         rendererApi.listProjects()
       ])
-      setSessions((previous) =>
-        preserveSessionListOrder(
-          previous,
-          mergeSessionSummariesRuntimeState(sessionList, current.cwd)
-        )
+      setSessions(
+        orderSessionsForDisplay(mergeSessionSummariesRuntimeState(sessionList, current.cwd))
       )
       applyCurrentSession(current, undefined, {
         onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
@@ -2452,18 +2418,12 @@ function App(): React.JSX.Element {
     if (currentSessionIsBusy || isSendingRef.current) {
       queuePromptText(text, target, { images, planMode: planReviewEnabled })
       clearInputImages()
-      setPlanReviewByDraft((previous) => ({
-        ...previous,
-        [activeDraftKey]: false
-      }))
+      setPlanReviewByDraft((previous) => ({ ...previous, [activeDraftKey]: false }))
       return
     }
     setActiveInput('')
     clearInputImages()
-    setPlanReviewByDraft((previous) => ({
-      ...previous,
-      [activeDraftKey]: false
-    }))
+    setPlanReviewByDraft((previous) => ({ ...previous, [activeDraftKey]: false }))
     await sendPromptText(text, target, { images, planMode: planReviewEnabled })
   }
 
@@ -3186,7 +3146,7 @@ function App(): React.JSX.Element {
     (activeView === 'chat' || activeView === 'analysis' || isResourceWorkspaceView)
   const showWorkspaceTitlebar =
     !isAnalysisWorkspaceView && !isResourceWorkspaceView && !showWorkspaceTabs
-  const workspaceSidebarPreviewWidth = Math.min(360, Math.max(320, sidebarWidth))
+  const workspaceSidebarPreviewWidth = Math.min(360, Math.max(navigationPaneWidth, sidebarWidth))
   const isWorkspaceSidebarModeExpanded = useCallback(
     (mode: WorkspaceSidebarMode): boolean =>
       workspaceSidebarModeIsExpanded({
@@ -4436,9 +4396,7 @@ function App(): React.JSX.Element {
                     minWidth: 0,
                     height: '100%',
                     display: 'flex',
-                    alignItems: 'center',
-                    borderBottom: 1,
-                    borderColor: 'divider'
+                    alignItems: 'center'
                   }}
                 >
                   <Box
@@ -4477,15 +4435,7 @@ function App(): React.JSX.Element {
                 ) : null}
               </Box>
             ) : null}
-            <Box
-              sx={{
-                flex: 1,
-                minHeight: 0,
-                minWidth: 0,
-                display: 'flex',
-                overflow: 'hidden'
-              }}
-            >
+            <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
               {showWorkspaceTabs ? (
                 <Box
                   sx={{

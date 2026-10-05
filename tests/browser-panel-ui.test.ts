@@ -58,11 +58,11 @@ test('browser toolbar exposes compact keyboard-accessible loading controls', () 
   assert.match(markup, /autoCapitalize="none"|autocapitalize="none"/)
   assert.match(markup, /value="https:\/\/example\.test\/"/)
   assert.match(markup, /role="progressbar"/)
-  assert.match(markup, /height:66px/)
-  assert.match(markup, /width:44px/)
-  assert.match(markup, /height:44px/)
-  assert.match(markup, /height:48px/)
-  assert.match(markup, /gap:8px/)
+  assert.match(markup, /height:40px/)
+  assert.match(markup, /width:28px/)
+  assert.match(markup, /height:28px/)
+  assert.match(markup, /height:30px/)
+  assert.match(markup, /gap:4px/)
   assert.match(markup, /data-phi-browser-progress-slot="true"/)
   assert.match(markup, /height:2px/)
   assert.match(markup, /min-width:0/)
@@ -138,10 +138,9 @@ test('browser tabs expose compact accessible multi-page controls without close p
   assert.match(markup, /aria-label="关闭 Documentation"/)
   assert.match(markup, /aria-label="新建标签页"/)
   assert.match(markup, /overflow-x:auto/)
-  assert.match(markup, /height:44px/)
-  assert.match(markup, /min-height:44px/)
-  assert.match(markup, /width:40px/)
-  assert.match(markup, /width:44px/)
+  assert.match(markup, /height:32px/)
+  assert.match(markup, /min-height:32px/)
+  assert.match(markup, /width:28px/)
   assert.doesNotMatch(markup, /data-phi-browser-window-controls-reserve/)
 
   const tabsSource = readFileSync(
@@ -174,19 +173,16 @@ test('browser tabs expose compact accessible multi-page controls without close p
   assert.match(panelSource, /role="tabpanel"/)
 })
 
-test('browser tabs use the shared window titlebar height', () => {
+test('browser tabs use the compact workspace panel header height', () => {
   const tabsSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/features/browser/components/BrowserTabs.tsx'),
     'utf8'
   )
 
+  assert.match(tabsSource, /workspacePanelHeaderHeight.*from '\.\.\/\.\.\/\.\.\/layout'/)
   assert.match(
     tabsSource,
-    /import \{ WINDOW_TITLEBAR_HEIGHT \} from '\.\.\/\.\.\/\.\.\/lib\/windowChromeLayout'/
-  )
-  assert.match(
-    tabsSource,
-    /data-phi-browser-tabs="true"[\s\S]{0,180}height: WINDOW_TITLEBAR_HEIGHT/
+    /data-phi-browser-tabs="true"[\s\S]{0,180}height: workspacePanelHeaderHeight/
   )
 })
 

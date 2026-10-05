@@ -137,8 +137,8 @@ test('terminal title bar matches the compact single-terminal control surface', (
   assert.match(markup, /aria-label="工作台槽操作"/)
   assert.doesNotMatch(markup, /aria-label="放大终端"|aria-label="收起终端面板"/)
   assert.match(markup, /初始目录：\/work\/project/)
-  assert.match(markup, /height:44px/)
-  assert.match(markup, /width:32px/)
+  assert.match(markup, /height:32px/)
+  assert.match(markup, /width:28px/)
   assert.match(markup, /-webkit-app-region:no-drag/)
 
   for (const label of ['新建终端', '更多终端操作', '工作台槽操作']) {
@@ -146,23 +146,20 @@ test('terminal title bar matches the compact single-terminal control surface', (
   }
 })
 
-test('terminal title bar uses the shared window titlebar height and divider', () => {
+test('terminal title bar uses the shared height without an extra divider', () => {
   const titleBarSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/features/terminal/components/TerminalTitleBar.tsx'),
     'utf8'
   )
 
+  assert.match(titleBarSource, /workspacePanelHeaderHeight.*from '\.\.\/\.\.\/\.\.\/layout'/)
   assert.match(
     titleBarSource,
-    /import \{ WINDOW_TITLEBAR_HEIGHT \} from '\.\.\/\.\.\/\.\.\/lib\/windowChromeLayout'/
+    /data-phi-terminal-title-bar="true"[\s\S]{0,180}height: workspacePanelHeaderHeight/
   )
-  assert.match(
+  assert.doesNotMatch(
     titleBarSource,
-    /data-phi-terminal-title-bar="true"[\s\S]{0,180}height: WINDOW_TITLEBAR_HEIGHT/
-  )
-  assert.match(
-    titleBarSource,
-    /height: WINDOW_TITLEBAR_HEIGHT[\s\S]{0,240}borderBottom: 1,[\s\S]{0,80}borderColor: 'divider'/
+    /height: workspacePanelHeaderHeight[\s\S]{0,240}borderBottom:/
   )
 })
 
@@ -405,7 +402,7 @@ test('terminal panel renders the thin reference-style shell without creating dur
     assert.match(markup, /data-phi-terminal-viewport="true"/)
     // The workbench slot owns the border; the panel must not draw a second one inside it.
     assert.doesNotMatch(markup, /border-radius:16px/)
-    assert.match(markup, /\.xterm-viewport\{[^}]*background-color:#FFFFFF/u)
+    assert.match(markup, /\.xterm-viewport\{[^}]*background-color:#(?:fff|ffffff)(?:;|\})/iu)
     assert.match(markup, /正在启动 Shell/)
     assert.doesNotMatch(markup, /当前没有终端/)
   } finally {

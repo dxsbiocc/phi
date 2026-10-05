@@ -3,7 +3,7 @@ import { Box, Divider, IconButton, Menu, MenuItem, Tooltip, Typography } from '@
 
 import type { TerminalSnapshot } from '../../../../../shared/terminalTypes'
 import { PhiIcons } from '../../../icons'
-import { WINDOW_TITLEBAR_HEIGHT } from '../../../lib/windowChromeLayout'
+import { workspacePanelActionSize, workspacePanelHeaderHeight } from '../../../layout'
 
 const AddIcon = PhiIcons.action.add
 const MoreIcon = PhiIcons.action.more
@@ -23,7 +23,18 @@ function TitleButton(props: {
           disabled={props.disabled}
           size="small"
           onClick={props.onClick}
-          sx={{ width: 32, height: 32, borderRadius: 1.25, WebkitAppRegion: 'no-drag' }}
+          sx={{
+            width: workspacePanelActionSize,
+            height: workspacePanelActionSize,
+            p: 0.5,
+            borderRadius: 1,
+            WebkitAppRegion: 'no-drag',
+            '&.Mui-focusVisible': {
+              outline: '2px solid',
+              outlineColor: 'primary.main',
+              outlineOffset: -2
+            }
+          }}
         >
           {props.children}
         </IconButton>
@@ -95,15 +106,13 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
       onContextMenu={openMenu}
       sx={{
         flexShrink: 0,
-        height: WINDOW_TITLEBAR_HEIGHT,
+        height: workspacePanelHeaderHeight,
         minWidth: 0,
         display: 'flex',
         alignItems: 'center',
-        gap: 0.5,
-        px: 1.25,
-        color: 'text.primary',
-        borderBottom: 1,
-        borderColor: 'divider'
+        gap: 0.25,
+        px: 1,
+        color: 'text.primary'
       }}
     >
       <Box
@@ -124,7 +133,8 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
             onChange={(event) => props.onSelect(event.currentTarget.value)}
             sx={{
               maxWidth: 148,
-              height: 30,
+              minWidth: 0,
+              height: 26,
               pl: 0.75,
               pr: 0.5,
               border: 0,
@@ -149,7 +159,7 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
             ))}
           </Box>
         ) : (
-          <Typography component="span" sx={{ fontSize: 16, fontWeight: 650, px: 0.5 }}>
+          <Typography component="span" sx={{ fontSize: 14, fontWeight: 600, px: 0.5 }}>
             Terminal
           </Typography>
         )}
@@ -160,7 +170,7 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
         disabled={!props.canCreate || props.busy}
         onClick={props.onCreate}
       >
-        <AddIcon sx={{ fontSize: 19 }} />
+        <AddIcon sx={{ fontSize: 16 }} />
       </TitleButton>
 
       <Box sx={{ flex: 1, minWidth: 8 }} />
@@ -170,7 +180,7 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
         disabled={props.terminals.length === 0}
         onClick={(event) => setMenuAnchor(event.currentTarget)}
       >
-        <MoreIcon sx={{ fontSize: 18 }} />
+        <MoreIcon sx={{ fontSize: 16 }} />
       </TitleButton>
       {props.headerActions ? (
         <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>

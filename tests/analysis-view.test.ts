@@ -230,18 +230,18 @@ test('browser side panel renders passed browser content instead of a placeholder
   assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card="browser"/)
   assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card="terminal"/)
   assert.match(markup, /height:100vh/)
-  assert.match(markup, /padding-top:0/)
+  assert.match(markup, /padding-top:8px/)
   assert.match(markup, /padding-bottom:8px/)
-  assert.match(markup, /border-top:0/)
-  assert.match(markup, /border-radius:0 0 16px 16px/)
+  assert.match(markup, /border:1px solid/)
+  assert.match(markup, /border-radius:16px/)
   assert.match(markup, /overflow:hidden/)
   assert.doesNotMatch(markup, /aria-label="在右侧工作区展开浏览器"/)
   assert.match(markup, /aria-label="关闭浏览器"/)
 })
 
-test('workspace side panel uses the shared titlebar height for jobs headers', () => {
-  const chromeLayoutSource = readFileSync(
-    resolve(process.cwd(), 'src/renderer/src/lib/windowChromeLayout.ts'),
+test('workspace side panel uses the compact shared height for jobs headers', () => {
+  const panelLayoutSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/layout.ts'),
     'utf8'
   )
   const sidePanelSource = readFileSync(
@@ -250,28 +250,25 @@ test('workspace side panel uses the shared titlebar height for jobs headers', ()
   )
   const markup = renderWorkspaceSidePanel({ slots: ['jobs'], content: '后台任务列表' })
 
-  assert.match(chromeLayoutSource, /export const WINDOW_TITLEBAR_HEIGHT = 44/)
+  assert.match(panelLayoutSource, /export const workspacePanelHeaderHeight = 32/)
+  assert.match(sidePanelSource, /workspacePanelHeaderHeight.*from '\.\.\/layout'/)
   assert.match(
     sidePanelSource,
-    /import \{ WINDOW_TITLEBAR_HEIGHT \} from '\.\.\/lib\/windowChromeLayout'/
-  )
-  assert.match(
-    sidePanelSource,
-    /data-phi-workspace-side-panel-slot-header=\{mode\}[\s\S]{0,180}height: WINDOW_TITLEBAR_HEIGHT/
+    /data-phi-workspace-side-panel-slot-header=\{mode\}[\s\S]{0,180}height: workspacePanelHeaderHeight/
   )
   assert.match(markup, /data-phi-workspace-side-panel-slot-header="jobs"/)
-  assert.match(markup, /height:44px/)
+  assert.match(markup, /height:32px/)
 })
 
-test('workspace side panel removes the top inset and border from every first visible slot', () => {
+test('workspace side panel leaves top space and full rounded borders in every layout', () => {
   const sidePanelSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/components/WorkspaceSidePanel.tsx'),
     'utf8'
   )
 
-  assert.match(sidePanelSource, /pt: 0,\s*pb: 1/)
-  assert.match(sidePanelSource, /borderTop: index === 0 \? 0 : 1/)
-  assert.match(sidePanelSource, /borderRadius: index === 0 \? '0 0 16px 16px' : '16px'/)
+  assert.match(sidePanelSource, /pt: 1,\s*pb: 1/)
+  assert.doesNotMatch(sidePanelSource, /borderTop: index/)
+  assert.match(sidePanelSource, /borderRadius: '16px'/)
 
   const layouts = [
     renderWorkspaceSidePanel({ slots: ['browser', 'terminal'], content: '分屏' }),
@@ -299,10 +296,10 @@ test('workspace side panel removes the top inset and border from every first vis
     const firstSlotStyles =
       markup.match(new RegExp(`\\.${firstSlotClass}\\{[^}]*\\}`, 'u'))?.[0] ?? ''
 
-    assert.match(workbenchStyles, /padding-top:0/)
+    assert.match(workbenchStyles, /padding-top:8px/)
     assert.match(workbenchStyles, /padding-bottom:8px/)
-    assert.match(firstSlotStyles, /border-top:0/)
-    assert.match(firstSlotStyles, /border-radius:0 0 16px 16px/)
+    assert.match(firstSlotStyles, /border:1px solid/)
+    assert.match(firstSlotStyles, /border-radius:16px/)
   }
 })
 
@@ -328,8 +325,7 @@ test('workspace side panel stacks two slots and gives each slot local controls',
   assert.match(markup, /aria-label="在右侧工作区展开终端"/)
   assert.match(markup, /aria-label="关闭终端"/)
   assert.doesNotMatch(markup, /data-phi-workspace-window-controls-reserve/)
-  assert.match(markup, /flex:3 1 0/)
-  assert.match(markup, /flex:2 1 0/)
+  assert.match(markup, /grid-template-rows:repeat\(2, minmax\(0, 1fr\)\)/)
 })
 
 test('workspace side panel renders only the maximized slot and offers restore', () => {

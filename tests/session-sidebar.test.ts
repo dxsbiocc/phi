@@ -21,11 +21,7 @@ import {
   sessionRunningBeaconSlotWidth
 } from '../src/renderer/src/lib/sessionBeacon'
 import { editableSessionTitle, sessionTitle } from '../src/renderer/src/lib/sessionSidebarShared'
-import {
-  isSessionListSortedByActivityTime,
-  orderSessionsForDisplay,
-  preserveSessionListOrder
-} from '../src/renderer/src/lib/sessionOrder'
+import { orderSessionsForDisplay } from '../src/renderer/src/lib/sessionOrder'
 import type { SessionRuntimeState, SessionSummary } from '../src/renderer/src/types'
 
 const baseSession: SessionSummary = {
@@ -39,9 +35,24 @@ const baseSession: SessionSummary = {
   unreadKind: null
 }
 
+test('recent conversations move above older history after a refresh', () => {
+  const older = { ...baseSession, path: 'older', modified: '2026-09-18T00:00:00Z' }
+  const recent = { ...baseSession, path: 'recent', modified: '2026-10-04T00:00:00Z' }
+  const latest = { ...baseSession, path: 'latest', modified: '2026-10-04T01:00:00Z' }
+
+  assert.deepEqual(
+    orderSessionsForDisplay([older, recent, latest]).map((s) => s.path),
+    ['latest', 'recent', 'older']
+  )
+})
+
 function renderSidebar(
   sessions: SessionSummary[],
-  getSessionRuntimeState?: (path: string, cwd: string) => SessionRuntimeState | null,
+  getSessionRuntimeState?: (
+    path: string,
+    cwd: string,
+    phiSessionId?: string | null
+  ) => SessionRuntimeState | null,
   options: { hideWindowDragSpacer?: boolean; compactHoverPreview?: boolean } = {}
 ): string {
   const theme = createTheme()
@@ -350,77 +361,103 @@ test('session sidebar uses live runtime state before persisted summaries refresh
   assert.match(markup, /运行中/)
 })
 
-test('session sidebar applies manual order without dropping new conversations', () => {
-  const second = { ...baseSession, path: 'session-b', id: 'session-b', firstMessage: '第二段' }
-  const third = { ...baseSession, path: 'session-c', id: 'session-c', firstMessage: '第三段' }
-
-  const ordered = orderSessionsForDisplay([baseSession, second, third], ['session-b'])
-
-  assert.deepEqual(
-    ordered.map((session) => session.path),
-    ['session-b', 'session-a', 'session-c']
-  )
-})
-
-test('session sidebar detects activity-time sorted refreshes', () => {
+test('session sidebar orders history by activity instead of creation or arrival order', () => {
   const older = {
     ...baseSession,
-    path: 'session-old',
-    id: 'session-old',
-    modified: '2026-09-06T00:00:00.000Z'
+    path: 'older',
+    created: '2026-09-01T00:00:00Z',
+    modified: '2026-10-04T00:00:00Z',
+    lastActivityAt: '2026-10-04T01:00:00Z'
   }
   const newer = {
     ...baseSession,
-    path: 'session-new',
-    id: 'session-new',
-    modified: '2026-09-06T00:02:00.000Z'
+    path: 'newer',
+    created: '2026-10-03T00:00:00Z',
+    modified: '2026-10-03T00:01:00Z'
   }
+  const source = [newer, older]
 
-  assert.equal(isSessionListSortedByActivityTime([newer, older]), true)
-  assert.equal(isSessionListSortedByActivityTime([older, newer]), false)
+  assert.deepEqual(
+    orderSessionsForDisplay(source).map((s) => s.path),
+    ['older', 'newer']
+  )
+  assert.deepEqual(
+    source.map((s) => s.path),
+    ['newer', 'older']
+  )
 })
 
-test('session sidebar keeps implicit order stable across summary refreshes', () => {
-  const second = { ...baseSession, path: 'session-b', id: 'session-b', firstMessage: '第二段' }
-  const refreshed = [
+test('session activity order falls back through invalid or missing timestamps', () => {
+  const sessions = [
     {
-      ...second,
-      modified: '2026-09-06T00:02:00.000Z'
+      ...baseSession,
+      path: 'invalid',
+      lastActivityAt: 'invalid',
+      modified: 'invalid',
+      created: 'invalid'
     },
     {
       ...baseSession,
-      status: 'completed_unread' as const,
-      unreadKind: 'completed' as const,
-      modified: '2026-09-06T00:01:00.000Z'
-    }
+      path: 'created',
+      lastActivityAt: 'invalid',
+      modified: '',
+      created: '2026-10-02T00:00:00Z'
+    },
+    {
+      ...baseSession,
+      path: 'modified',
+      lastActivityAt: 'invalid',
+      modified: '2026-10-03T00:00:00Z'
+    },
+    { ...baseSession, path: 'activity', lastActivityAt: '2026-10-04T00:00:00Z' }
   ]
-  const ordered = preserveSessionListOrder([baseSession, second], refreshed)
 
   assert.deepEqual(
-    ordered.map((session) => session.path),
-    ['session-a', 'session-b']
+    orderSessionsForDisplay(sessions).map((s) => s.path),
+    ['activity', 'modified', 'created', 'invalid']
   )
-  assert.equal(ordered[0].unreadKind, 'completed')
 })
 
-test('session sidebar accepts refresh order when it is not activity-time sorted', () => {
+test('equal activity times have a stable order across refreshes', () => {
+  const a = { ...baseSession, path: 'session-a' }
+  const b = { ...baseSession, path: 'session-b', status: 'failed' as const }
+
+  assert.deepEqual(
+    orderSessionsForDisplay([b, a]).map((s) => s.path),
+    ['session-a', 'session-b']
+  )
+  assert.deepEqual(
+    orderSessionsForDisplay([a, b]).map((s) => s.path),
+    ['session-a', 'session-b']
+  )
+})
+
+test('session sidebar uses live activity to order a background conversation before refresh', () => {
   const older = {
     ...baseSession,
-    path: 'session-old',
-    id: 'session-old',
-    modified: '2026-09-06T00:00:00.000Z'
+    path: 'older',
+    phiSessionId: 'phi-older',
+    firstMessage: '旧会话继续工作'
   }
   const newer = {
     ...baseSession,
-    path: 'session-new',
-    id: 'session-new',
-    modified: '2026-09-06T00:02:00.000Z'
+    path: 'newer',
+    modified: '2026-10-03T00:00:00Z',
+    firstMessage: '昨天的会话'
   }
-
-  const ordered = preserveSessionListOrder([newer, older], [older, newer])
-
-  assert.deepEqual(
-    ordered.map((session) => session.path),
-    ['session-old', 'session-new']
+  const markup = renderSidebar([newer, older], (_path, _cwd, phiSessionId) =>
+    phiSessionId === 'phi-older'
+      ? { status: 'running', unreadKind: null, lastActivityAt: '2026-10-04T00:00:00Z' }
+      : null
   )
+
+  assert.ok(markup.indexOf('旧会话继续工作') < markup.indexOf('昨天的会话'))
+})
+
+test('session rows give the title all resting space and expose its full accessible name', () => {
+  const fullTitle = '一个很长的完整对话标题'.repeat(15)
+  const markup = renderSidebar([{ ...baseSession, name: fullTitle }])
+
+  assert.match(markup, new RegExp(`aria-label="${fullTitle}"`))
+  assert.doesNotMatch(markup, /session-time|分钟前|小时前|天前|2026\/09\/06/)
 })

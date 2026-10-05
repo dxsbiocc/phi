@@ -60,7 +60,7 @@ function UnavailableTerminalPanel(
   props: Pick<TerminalPanelProps, 'headerActions'>
 ): React.JSX.Element {
   const theme = useTheme()
-  const terminalTheme = createTerminalTheme(theme.palette.mode)
+  const terminalTheme = createTerminalTheme(theme.palette.mode, theme.palette.background.paper)
 
   return (
     <Box
@@ -149,7 +149,10 @@ function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.E
   const ensureWorkspace = workspace.ensure
   const workspaceReady = workspace.ready
   const workspaceTarget = workspace.target
-  const terminalTheme = useMemo(() => createTerminalTheme(theme.palette.mode), [theme.palette.mode])
+  const terminalTheme = useMemo(
+    () => createTerminalTheme(theme.palette.mode, theme.palette.background.paper),
+    [theme.palette.mode, theme.palette.background.paper]
+  )
   const activeSelection = activeView?.getSelection() ?? ''
   const currentLineDirty = activeView?.isCurrentLineDirty() ?? false
 

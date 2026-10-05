@@ -83,7 +83,7 @@ export function BrowserStatusPane(props: BrowserStatusPaneProps): React.JSX.Elem
         px: 2,
         py: 3,
         textAlign: 'center',
-        bgcolor: 'background.default',
+        bgcolor: 'background.paper',
         color: 'text.primary'
       }}
     >
@@ -168,7 +168,7 @@ export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Elemen
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        bgcolor: 'background.default'
+        bgcolor: 'background.paper'
       }}
     >
       <BrowserTabs

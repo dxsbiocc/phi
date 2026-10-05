@@ -1,1 +1,3 @@
-export const navigationPaneWidth = 320
+export const navigationPaneWidth = 280
+export const workspacePanelHeaderHeight = 32
+export const workspacePanelActionSize = 28

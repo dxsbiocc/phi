@@ -14,7 +14,7 @@ import {
   sessionRuntimeStatesEqual
 } from '../lib/sessionRuntimeState'
 import { sessionDraftKey } from '../lib/sessionDrafts'
-import { preserveSessionListOrder } from '../lib/sessionOrder'
+import { orderSessionsForDisplay } from '../lib/sessionOrder'
 import { getRendererApi } from '../lib/rendererApi'
 import type {
   AgentEventSummary,
@@ -404,7 +404,7 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
       await rendererApi.listSessions(),
       state.activeCwd
     )
-    set((s) => ({ sessions: preserveSessionListOrder(s.sessions, list) }))
+    set({ sessions: orderSessionsForDisplay(list) })
     const { activeSessionPath, activePhiSessionId } = get()
     if (!activeSessionPath && !activePhiSessionId) return
     const active = list.find((session) =>

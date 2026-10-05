@@ -1,15 +1,14 @@
 import type { ITheme } from '@xterm/xterm'
 
 import type { EffectiveMode } from '../../../theme'
+import { MINIMAL_GREY } from '../../../minimalTheme/tokens'
 
 export const TERMINAL_FONT_FAMILY =
   '"SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Monaco, Consolas, monospace'
 
 const DARK_THEME: Readonly<ITheme> = {
-  background: '#1B1B1B',
   foreground: '#E8E8E8',
   cursor: '#2E9FB3',
-  cursorAccent: '#10191C',
   selectionBackground: '#2E9FB366',
   selectionInactiveBackground: '#7E8B8E33',
   black: '#1B1B1B',
@@ -31,10 +30,8 @@ const DARK_THEME: Readonly<ITheme> = {
 }
 
 const LIGHT_THEME: Readonly<ITheme> = {
-  background: '#FFFFFF',
   foreground: '#17343A',
   cursor: '#167E93',
-  cursorAccent: '#FFFFFF',
   selectionBackground: '#2E9FB34D',
   selectionInactiveBackground: '#4B646926',
   black: '#17343A',
@@ -55,6 +52,13 @@ const LIGHT_THEME: Readonly<ITheme> = {
   brightWhite: '#F6FAFA'
 }
 
-export function createTerminalTheme(mode: EffectiveMode): ITheme {
-  return { ...(mode === 'dark' ? DARK_THEME : LIGHT_THEME) }
+export function createTerminalTheme(
+  mode: EffectiveMode,
+  surfaceBackground = mode === 'dark' ? MINIMAL_GREY[900] : '#FFFFFF'
+): ITheme {
+  return {
+    ...(mode === 'dark' ? DARK_THEME : LIGHT_THEME),
+    background: surfaceBackground,
+    cursorAccent: surfaceBackground
+  }
 }

@@ -31,7 +31,18 @@ function ToolbarButton({
           disabled={disabled}
           onClick={onClick}
           size="small"
-          sx={{ width: 44, height: 44, borderRadius: 1.5 }}
+          sx={{
+            width: 28,
+            height: 28,
+            p: 0.5,
+            borderRadius: 1,
+            '&.Mui-focusVisible': {
+              bgcolor: 'action.hover',
+              outline: '2px solid',
+              outlineColor: 'primary.main',
+              outlineOffset: -2
+            }
+          }}
         >
           {children}
         </IconButton>
@@ -76,21 +87,19 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
       sx={{
         flexShrink: 0,
         minWidth: 0,
-        bgcolor: 'background.paper',
-        borderBottom: 1,
-        borderColor: 'divider'
+        bgcolor: 'background.paper'
       }}
     >
       <Box
         component="form"
         onSubmit={submit}
         sx={{
-          height: 66,
+          height: 40,
           minWidth: 0,
           display: 'flex',
           alignItems: 'center',
-          gap: 1,
-          px: 1.5,
+          gap: 0.5,
+          px: 1,
           overflow: 'hidden'
         }}
       >
@@ -99,14 +108,14 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
           disabled={controlsDisabled || !props.activeTab?.canGoBack}
           onClick={props.onBack}
         >
-          <BackIcon sx={{ fontSize: 19, transform: 'rotate(180deg)' }} />
+          <BackIcon sx={{ fontSize: 16, transform: 'rotate(180deg)' }} />
         </ToolbarButton>
         <ToolbarButton
           label="前进"
           disabled={controlsDisabled || !props.activeTab?.canGoForward}
           onClick={props.onForward}
         >
-          <BackIcon sx={{ fontSize: 19 }} />
+          <BackIcon sx={{ fontSize: 16 }} />
         </ToolbarButton>
         <ToolbarButton
           label={loading ? '停止加载' : '重新加载'}
@@ -114,7 +123,7 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
           pressed={loading}
           onClick={props.onReloadOrStop}
         >
-          {loading ? <StopIcon sx={{ fontSize: 16 }} /> : <RefreshIcon sx={{ fontSize: 18 }} />}
+          {loading ? <StopIcon sx={{ fontSize: 16 }} /> : <RefreshIcon sx={{ fontSize: 16 }} />}
         </ToolbarButton>
         <TextField
           value={props.address}
@@ -138,12 +147,12 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
           sx={{
             minWidth: 0,
             '& .MuiInputBase-root': {
-              height: 48,
-              borderRadius: 1.5,
+              height: 30,
+              borderRadius: 1,
               bgcolor: 'action.hover',
-              fontSize: 14
+              fontSize: 13
             },
-            '& .MuiInputBase-input': { px: 1.5, py: 0 }
+            '& .MuiInputBase-input': { px: 1, py: 0 }
           }}
         />
         <ToolbarButton
@@ -159,7 +168,7 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
           }
           onClick={props.onOpenExternal}
         >
-          <OpenExternalIcon sx={{ fontSize: 18 }} />
+          <OpenExternalIcon sx={{ fontSize: 16 }} />
         </ToolbarButton>
       </Box>
       <Box data-phi-browser-progress-slot="true" sx={{ height: 2, overflow: 'hidden' }}>

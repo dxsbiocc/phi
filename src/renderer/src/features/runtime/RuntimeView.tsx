@@ -154,7 +154,8 @@ export function RuntimeSidebar({
             alignItems: 'flex-start',
             mx: 0.75,
             mb: 1,
-            px: 1.25,
+            pl: 0.25,
+            pr: 1.25,
             py: 1.2,
             borderRadius: 1.5,
             cursor: 'default',
@@ -295,7 +296,8 @@ export function RuntimeSidebar({
 
         <Box
           sx={{
-            px: 2,
+            pl: 1,
+            pr: 2,
             pt: 0.5,
             pb: 0.75,
             display: 'flex',
@@ -329,7 +331,8 @@ export function RuntimeSidebar({
                 sx={{
                   alignItems: 'flex-start',
                   mx: 0.75,
-                  px: 1.25,
+                  pl: 0.25,
+                  pr: 1.25,
                   py: 1,
                   borderRadius: 1.5,
                   backgroundColor: 'transparent !important',

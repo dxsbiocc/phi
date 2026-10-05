@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import { GoScreenFull, GoScreenNormal, GoX } from 'react-icons/go'
 import { PhiIcons } from '../icons'
-import { WINDOW_TITLEBAR_HEIGHT } from '../lib/windowChromeLayout'
+import { workspacePanelActionSize, workspacePanelHeaderHeight } from '../layout'
 import type { WorkspaceSidePanelMode } from '../lib/workspaceSidePanelMode'
 import type { DirectoryListing } from '../types'
 import { ProjectFileTree } from '../features/file-preview/components/ProjectFileTree'
@@ -34,18 +34,26 @@ function WorkspaceSidePanelSlotActions({
 }): React.JSX.Element {
   const label = workspacePanelLabels[mode]
   const actionSx = {
-    width: WINDOW_TITLEBAR_HEIGHT,
-    height: WINDOW_TITLEBAR_HEIGHT,
-    borderRadius: 1.25,
+    width: workspacePanelActionSize,
+    height: workspacePanelActionSize,
+    p: 0.5,
+    borderRadius: 1,
     color: 'text.secondary',
     WebkitAppRegion: 'no-drag',
-    '&:hover, &:focus-visible': { bgcolor: 'action.hover', color: 'text.primary' }
+    '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
+    '&.Mui-focusVisible': {
+      bgcolor: 'action.hover',
+      color: 'text.primary',
+      outline: '2px solid',
+      outlineColor: 'primary.main',
+      outlineOffset: -2
+    }
   } as const
 
   return (
     <Box
       data-phi-workspace-side-panel-slot-actions={mode}
-      sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}
+      sx={{ display: 'flex', alignItems: 'center', gap: 0.25, flexShrink: 0 }}
     >
       {showLayoutAction ? (
         <Tooltip title={maximized ? '还原分屏' : `在右侧工作区展开${label}`}>
@@ -56,13 +64,13 @@ function WorkspaceSidePanelSlotActions({
             onClick={onToggleMaximized}
             sx={actionSx}
           >
-            {maximized ? <GoScreenNormal size={18} /> : <GoScreenFull size={18} />}
+            {maximized ? <GoScreenNormal size={16} /> : <GoScreenFull size={16} />}
           </IconButton>
         </Tooltip>
       ) : null}
       <Tooltip title={`关闭${label}`}>
         <IconButton type="button" aria-label={`关闭${label}`} onClick={onClose} sx={actionSx}>
-          <GoX size={20} />
+          <GoX size={16} />
         </IconButton>
       </Tooltip>
     </Box>
@@ -80,19 +88,17 @@ function WorkspaceSidePanelSlotHeader({
     <Box
       data-phi-workspace-side-panel-slot-header={mode}
       sx={{
-        height: WINDOW_TITLEBAR_HEIGHT,
+        height: workspacePanelHeaderHeight,
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
-        gap: 1,
-        pl: 1.5,
+        gap: 0.5,
+        pl: 1,
         pr: 0.5,
-        borderBottom: 1,
-        borderColor: 'divider',
         WebkitAppRegion: 'drag'
       }}
     >
-      <Typography variant="body2" sx={{ flex: 1, minWidth: 0, fontWeight: 700 }} noWrap>
+      <Typography variant="body2" sx={{ flex: 1, minWidth: 0, fontWeight: 600 }} noWrap>
         {workspacePanelLabels[mode]}
       </Typography>
       {actions}
@@ -184,17 +190,18 @@ export function WorkspaceSidePanel({
         maxHeight: '100vh',
         boxSizing: 'border-box',
         flexShrink: 0,
-        display: 'flex',
+        display: 'grid',
+        gridTemplateRows:
+          visibleSlots.length > 0 ? `repeat(${visibleSlots.length}, minmax(0, 1fr))` : 'none',
         minHeight: 0,
-        flexDirection: 'column',
         gap: 1,
-        pt: 0,
+        pt: 1,
         pb: 1,
         pr: 1,
         bgcolor: 'background.default'
       }}
     >
-      {visibleSlots.map((mode, index) => {
+      {visibleSlots.map((mode) => {
         const actions = (
           <WorkspaceSidePanelSlotActions
             mode={mode}
@@ -211,16 +218,14 @@ export function WorkspaceSidePanel({
             role="region"
             aria-label={workspacePanelLabels[mode]}
             sx={{
-              flex: visibleSlots.length === 1 ? '1 1 0' : index === 0 ? '3 1 0' : '2 1 0',
               minWidth: 0,
               minHeight: visibleSlots.length === 1 ? 0 : 240,
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
               border: 1,
-              borderTop: index === 0 ? 0 : 1,
               borderColor: 'divider',
-              borderRadius: index === 0 ? '0 0 16px 16px' : '16px',
+              borderRadius: '16px',
               bgcolor: 'background.paper'
             }}
           >

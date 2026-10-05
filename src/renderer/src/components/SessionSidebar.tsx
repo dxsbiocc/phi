@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
-import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { Box, Button, List, Stack } from '@mui/material'
 import { PhiIcons } from '../icons'
 import { resolveProjectExpandedIds } from '../lib/projectSidebar'
 import { ProjectRow } from './session-sidebar/ProjectRow'
 import { SessionDeleteDialogs } from './session-sidebar/SessionDeleteDialogs'
-import { SortableSessionRow } from './session-sidebar/SessionRow'
-import { ROW_LABEL_FONT_SIZE, sessionTitle, useSessionOrder } from '../lib/sessionSidebarShared'
+import { SessionRow } from './session-sidebar/SessionRow'
+import { ROW_LABEL_FONT_SIZE, sessionTitle } from '../lib/sessionSidebarShared'
+import { orderSessionsForDisplay } from '../lib/sessionOrder'
 import {
   createTrustedDialogRequestCoordinator,
   type TrustedOverlayRequest
@@ -19,7 +18,6 @@ const AddCommentIcon = PhiIcons.action.addSession
 const CONTENT_TOP_GAP = 1
 const HOVER_PREVIEW_MAX_HEIGHT = 'min(420px, calc(100vh - 96px))'
 const HOVER_PREVIEW_LIST_MAX_HEIGHT = 'min(320px, calc(100vh - 176px))'
-const CONVERSATION_SESSION_ORDER_SCOPE = 'conversation'
 const SESSION_DELETE_OVERLAY_KEY = 'session-delete'
 const PROJECT_DELETE_OVERLAY_KEY = 'project-delete'
 
@@ -105,10 +103,11 @@ function SessionSidebar({
     activeProjectId
   )
   const [nowMs, setNowMs] = useState(() => Date.now())
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
-  const { orderedSessions, handleDragEnd } = useSessionOrder(
-    CONVERSATION_SESSION_ORDER_SCOPE,
-    sessions
+  const orderedSessions = orderSessionsForDisplay(
+    sessions.map((session) => ({
+      ...session,
+      ...getSessionRuntimeState?.(session.path, activeCwd, session.phiSessionId)
+    }))
   )
   const previewDialogOpen =
     compactHoverPreview && (deleteTarget !== null || deleteProjectTarget !== null)
@@ -127,11 +126,12 @@ function SessionSidebar({
   // (and shouldn't) special-case 'projects' mode: doing so used to force a
   // 1s re-render of the whole sidebar the entire time the Projects tab was
   // open, regardless of whether anything was actually running.
-  const hasActiveAttention = sessions.some((session) => {
-    const runtimeState = getSessionRuntimeState?.(session.path, activeCwd) ?? null
-    const status = runtimeState?.status ?? session.status
-    return status === 'running' || status === 'needs_approval' || status === 'needs_input'
-  })
+  const hasActiveAttention = orderedSessions.some(
+    (session) =>
+      session.status === 'running' ||
+      session.status === 'needs_approval' ||
+      session.status === 'needs_input'
+  )
 
   useEffect(() => {
     if (!hasActiveAttention) return
@@ -177,7 +177,8 @@ function SessionSidebar({
       <Stack
         spacing={1}
         sx={{
-          px: compactHoverPreview ? 1 : 1.5,
+          pl: compactHoverPreview ? 1 : 0.5,
+          pr: compactHoverPreview ? 1 : 1.5,
           pt: compactHoverPreview ? 1 : CONTENT_TOP_GAP,
           pb: compactHoverPreview ? 0.75 : 1,
           flexShrink: 0,
@@ -224,7 +225,8 @@ function SessionSidebar({
           minHeight: 0,
           maxHeight: compactHoverPreview ? HOVER_PREVIEW_LIST_MAX_HEIGHT : undefined,
           overflowY: 'auto',
-          px: 0.5,
+          pl: compactHoverPreview ? 1 : 0.5,
+          pr: compactHoverPreview ? 1 : 1.5,
           pb: compactHoverPreview ? 0.5 : undefined,
           backgroundColor: 'transparent !important'
         }}
@@ -257,36 +259,26 @@ function SessionSidebar({
           ))}
 
         {isConversationsMode && orderedSessions.length > 0 && (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={orderedSessions.map((session) => session.path)}
-              strategy={verticalListSortingStrategy}
-            >
-              {orderedSessions.map((session) => (
-                <SortableSessionRow
-                  key={session.path}
-                  session={session}
-                  runtimeState={getSessionRuntimeState?.(session.path, activeCwd) ?? null}
-                  isActive={session.path === activeSessionPath}
-                  nowMs={nowMs}
-                  compactHoverPreview={compactHoverPreview}
-                  onPreviewInteractionChange={onPreviewInteractionChange}
-                  onSelect={() => onSelectSession(session.path)}
-                  onRename={(name) => onRenameSession(session.path, name)}
-                  onDelete={() => {
-                    trustedDialogs.request(SESSION_DELETE_OVERLAY_KEY, () => {
-                      setDeleteTarget(session)
-                    })
-                  }}
-                  onExport={() => onExportSession(session)}
-                />
-              ))}
-            </SortableContext>
-          </DndContext>
+          <>
+            {orderedSessions.map((session) => (
+              <SessionRow
+                key={session.path}
+                session={session}
+                isActive={session.path === activeSessionPath}
+                nowMs={nowMs}
+                compactHoverPreview={compactHoverPreview}
+                onPreviewInteractionChange={onPreviewInteractionChange}
+                onSelect={() => onSelectSession(session.path)}
+                onRename={(name) => onRenameSession(session.path, name)}
+                onDelete={() => {
+                  trustedDialogs.request(SESSION_DELETE_OVERLAY_KEY, () => {
+                    setDeleteTarget(session)
+                  })
+                }}
+                onExport={() => onExportSession(session)}
+              />
+            ))}
+          </>
         )}
       </List>
 

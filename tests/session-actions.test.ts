@@ -4,10 +4,8 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { DndContext } from '@dnd-kit/core'
-import { SortableContext } from '@dnd-kit/sortable'
 import { createTheme, ThemeProvider } from '@mui/material'
-import { SortableSessionRow } from '../src/renderer/src/components/session-sidebar/SessionRow'
+import { SessionRow } from '../src/renderer/src/components/session-sidebar/SessionRow'
 import { editableSessionTitle, sessionTitle } from '../src/renderer/src/lib/sessionSidebarShared'
 import type { SessionSummary } from '../src/renderer/src/types'
 
@@ -27,22 +25,14 @@ test('conversation actions have a separate menu trigger beside the row', () => {
     createElement(
       ThemeProvider,
       { theme: createTheme() },
-      createElement(
-        DndContext,
-        null,
-        createElement(
-          SortableContext,
-          { items: [session.path] },
-          createElement(SortableSessionRow, {
-            session,
-            isActive: false,
-            nowMs: Date.now(),
-            onSelect: () => undefined,
-            onRename: () => undefined,
-            onDelete: () => undefined
-          })
-        )
-      )
+      createElement(SessionRow, {
+        session,
+        isActive: false,
+        nowMs: Date.now(),
+        onSelect: () => undefined,
+        onRename: () => undefined,
+        onDelete: () => undefined
+      })
     )
   )
   const rowSource = readFileSync(

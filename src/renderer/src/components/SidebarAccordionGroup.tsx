@@ -63,9 +63,8 @@ export function SidebarAccordionGroup({
       sx={{
         bgcolor: 'transparent',
         border: 0,
-        // Symmetric inset for the whole group: the header's hover pill and
-        // the body rows share these 8px side gutters, so both line up.
-        px: 1,
+        // The catalog sidebar supplies the same gutter as its search field.
+        px: 0,
         '&::before': { display: 'none' }
       }}
     >

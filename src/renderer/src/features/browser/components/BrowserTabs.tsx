@@ -3,7 +3,7 @@ import { Box, CircularProgress, IconButton, Tooltip, Typography } from '@mui/mat
 import { alpha } from '@mui/material/styles'
 import type { BrowserTabSnapshot } from '../../../../../shared/browserTypes'
 import { PhiIcons } from '../../../icons'
-import { WINDOW_TITLEBAR_HEIGHT } from '../../../lib/windowChromeLayout'
+import { workspacePanelActionSize, workspacePanelHeaderHeight } from '../../../layout'
 import { browserTabDisplayTitle, isBrowserTabActivationKey } from '../lib/browserPanelState'
 
 const AddIcon = PhiIcons.action.add
@@ -27,14 +27,12 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
       sx={{
         flexShrink: 0,
         minWidth: 0,
-        height: WINDOW_TITLEBAR_HEIGHT,
+        height: workspacePanelHeaderHeight,
         display: 'flex',
         alignItems: 'center',
-        gap: 0.5,
+        gap: 0.25,
         px: 1,
         bgcolor: 'background.paper',
-        borderBottom: 1,
-        borderColor: 'divider',
         WebkitAppRegion: 'drag'
       }}
     >
@@ -72,18 +70,19 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
               key={tab.id}
               data-phi-browser-tab={selected ? 'active' : 'inactive'}
               sx={{
-                flex: '0 0 clamp(120px, 32vw, 180px)',
-                minWidth: 120,
-                maxWidth: 180,
-                height: WINDOW_TITLEBAR_HEIGHT,
-                minHeight: WINDOW_TITLEBAR_HEIGHT,
+                flex: props.tabs.length === 1 ? '1 1 0' : '0 0 clamp(120px, 32vw, 180px)',
+                minWidth: props.tabs.length === 1 ? 0 : 120,
+                maxWidth: props.tabs.length === 1 ? 'none' : 180,
+                height: workspacePanelHeaderHeight,
+                minHeight: workspacePanelHeaderHeight,
                 minInlineSize: 0,
                 display: 'flex',
                 alignItems: 'center',
                 pr: 0.25,
                 border: 0,
-                borderBottom: 2,
-                borderBottomColor: selected ? 'primary.main' : 'transparent',
+                boxShadow: selected
+                  ? (theme) => `inset 0 -2px 0 ${theme.palette.primary.main}`
+                  : 'none',
                 borderRadius: 0.5,
                 bgcolor: 'transparent',
                 color: selected ? 'text.primary' : 'text.secondary',
@@ -139,7 +138,7 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
                   flex: 1,
                   alignSelf: 'stretch',
                   minWidth: 0,
-                  minHeight: WINDOW_TITLEBAR_HEIGHT,
+                  minHeight: workspacePanelHeaderHeight,
                   display: 'flex',
                   alignItems: 'center',
                   gap: 0.75,
@@ -204,8 +203,9 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
                       if (isBrowserTabActivationKey(event.key)) event.stopPropagation()
                     }}
                     sx={{
-                      width: 40,
-                      height: 40,
+                      width: workspacePanelActionSize,
+                      height: workspacePanelActionSize,
+                      p: 0.5,
                       borderRadius: 1,
                       color: 'text.secondary',
                       opacity: selected ? 0.78 : 0.5,
@@ -213,6 +213,11 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
                         opacity: 1,
                         color: 'text.primary',
                         bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08)
+                      },
+                      '&.Mui-focusVisible': {
+                        outline: '2px solid',
+                        outlineColor: 'primary.main',
+                        outlineOffset: -2
                       }
                     }}
                   >
@@ -233,13 +238,19 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
             size="small"
             onClick={props.onNewTab}
             sx={{
-              width: 44,
-              height: WINDOW_TITLEBAR_HEIGHT,
-              borderRadius: 1.25,
-              WebkitAppRegion: 'no-drag'
+              width: workspacePanelActionSize,
+              height: workspacePanelActionSize,
+              p: 0.5,
+              borderRadius: 1,
+              WebkitAppRegion: 'no-drag',
+              '&.Mui-focusVisible': {
+                outline: '2px solid',
+                outlineColor: 'primary.main',
+                outlineOffset: -2
+              }
             }}
           >
-            <AddIcon sx={{ fontSize: 18 }} />
+            <AddIcon sx={{ fontSize: 16 }} />
           </IconButton>
         </span>
       </Tooltip>

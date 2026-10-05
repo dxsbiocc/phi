@@ -313,7 +313,13 @@ export function BackgroundJobsPanel({
       role="region"
       aria-label="后台任务"
       data-phi-background-jobs-panel="true"
-      sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+      sx={{
+        flex: 1,
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        bgcolor: 'background.paper'
+      }}
     >
       <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: 'center' }}>
         <Typography variant="subtitle2" sx={{ flex: 1, fontWeight: 700 }}>

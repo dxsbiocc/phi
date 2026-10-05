@@ -1,6 +1,4 @@
 import { memo, useEffect, useState } from 'react'
-import { useSortable, type AnimateLayoutChanges } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import {
   Box,
   Divider,
@@ -27,6 +25,7 @@ import {
   sessionTitle
 } from '../../lib/sessionSidebarShared'
 import type { SessionRuntimeState, SessionSummary } from '../../types'
+import { sessionActivityTime } from '../../lib/sessionOrder'
 
 const sessionActionButtonSx = {
   width: 30,
@@ -55,19 +54,18 @@ const sessionMenuItemSx = {
   fontWeight: 500,
   '& svg': { flexShrink: 0, color: 'action.active' }
 } as const
-const animateSortableLayoutChanges: AnimateLayoutChanges = ({ isSorting, wasDragging }) =>
-  isSorting || wasDragging
-
-function formatRelativeTime(iso: string): string {
-  const diffMs = Date.now() - new Date(iso).getTime()
-  const minutes = Math.round(diffMs / 60000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes} 分钟前`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours} 小时前`
-  const days = Math.round(hours / 24)
-  if (days < 7) return `${days} 天前`
-  return new Date(iso).toLocaleDateString()
+function formatDateTime(value: string | number): string {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return '未知'
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  })
 }
 
 function formatElapsedTime(iso: string, nowMs = Date.now()): string {
@@ -163,7 +161,7 @@ function SessionAttentionBeacon({
   )
 }
 
-function sessionSecondaryText(session: SessionSummary, nowMs = Date.now()): string {
+function sessionStatusText(session: SessionSummary, nowMs: number): string | null {
   const status = sessionStatusLabel(session)
   if (
     (session.status === 'running' ||
@@ -173,8 +171,7 @@ function sessionSecondaryText(session: SessionSummary, nowMs = Date.now()): stri
   ) {
     return `${status ?? '运行中'} · ${formatElapsedTime(session.currentRunStartedAt, nowMs)}`
   }
-  const time = formatRelativeTime(session.lastActivityAt ?? session.modified)
-  return status ? `${status} · ${time}` : time
+  return status
 }
 
 type SessionRowProps = {
@@ -258,7 +255,7 @@ function sessionRowPropsMatch(left: SessionRowProps, right: SessionRowProps): bo
   return true
 }
 
-const SessionRow = memo(function SessionRow({
+export const SessionRow = memo(function SessionRow({
   session,
   runtimeState,
   isActive,
@@ -272,9 +269,12 @@ const SessionRow = memo(function SessionRow({
   onPreviewInteractionChange
 }: SessionRowProps): React.JSX.Element {
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
+  const [hoverDetailsOpen, setHoverDetailsOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
   const [editingName, setEditingName] = useState('')
   const displaySession = mergedSessionForDisplay({ session, runtimeState })
+  const fullTitle = editableSessionTitle(displaySession)
+  const statusText = sessionStatusText(displaySession, nowMs)
   const hasAttentionWeight = Boolean(
     displaySession.status === 'needs_approval' ||
     displaySession.status === 'needs_input' ||
@@ -300,10 +300,10 @@ const SessionRow = memo(function SessionRow({
   }
 
   useEffect(() => {
-    if (!compactHoverPreview || !interactionOpen) return undefined
+    if (!compactHoverPreview || (!interactionOpen && !hoverDetailsOpen)) return undefined
     onPreviewInteractionChange?.(true)
     return () => onPreviewInteractionChange?.(false)
-  }, [compactHoverPreview, interactionOpen, onPreviewInteractionChange])
+  }, [compactHoverPreview, hoverDetailsOpen, interactionOpen, onPreviewInteractionChange])
 
   return (
     <>
@@ -314,101 +314,143 @@ const SessionRow = memo(function SessionRow({
           '&:hover .session-actions, &:focus-within .session-actions': {
             opacity: 1
           },
-          '&:hover .session-time, &:focus-within .session-time': { opacity: 0 }
+          '&:hover .session-title, &:focus-within .session-title': { pr: '34px' }
         }}
       >
-        <ListItemButton
-          selected={isActive}
-          data-phi-session-row={isActive ? 'active' : 'inactive'}
-          onClick={onSelect}
-          sx={{
-            ...plainSidebarRowSx,
-            alignItems: 'center',
-            minHeight: 36,
-            py: 0.5,
-            pl: `${sessionRunningBeaconSlotWidth(indent)}px`,
-            pr: 1,
-            position: 'relative',
-            overflow: 'hidden',
-            border: 1,
-            borderColor: isActive
-              ? (theme: Theme) => alpha(theme.palette.primary.main, 0.5)
-              : 'transparent',
-            borderRadius: isActive ? '999px' : 1.5,
-            bgcolor: isActive
-              ? (theme: Theme) =>
-                  alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)
-              : 'transparent',
-            boxShadow: 'none',
-            transition:
-              'border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease',
-            '&.Mui-selected': {
-              backgroundColor: isActive
-                ? (theme: Theme) =>
-                    `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)} !important`
-                : 'transparent !important'
+        <Tooltip
+          describeChild
+          open={hoverDetailsOpen && !interactionOpen}
+          onOpen={() => setHoverDetailsOpen(true)}
+          onClose={() => setHoverDetailsOpen(false)}
+          placement="right"
+          enterDelay={450}
+          enterNextDelay={250}
+          disableTouchListener
+          title={
+            interactionOpen ? (
+              ''
+            ) : (
+              <Box data-phi-session-hover-details="true">
+                <Typography
+                  sx={{ fontSize: ROW_LABEL_FONT_SIZE, fontWeight: 600, overflowWrap: 'anywhere' }}
+                >
+                  {fullTitle}
+                </Typography>
+                <Box sx={{ mt: 1, fontSize: ROW_META_FONT_SIZE, color: 'text.secondary' }}>
+                  <Box>最近活动：{formatDateTime(sessionActivityTime(displaySession) || NaN)}</Box>
+                  <Box>创建时间：{formatDateTime(displaySession.created)}</Box>
+                  {statusText && (
+                    <Box sx={{ mt: 0.5, color: sessionStatusColor(displaySession) }}>
+                      {statusText}
+                    </Box>
+                  )}
+                </Box>
+              </Box>
+            )
+          }
+          slotProps={{
+            tooltip: {
+              sx: {
+                maxWidth: 'min(360px, calc(100vw - 32px))',
+                maxHeight: 'min(480px, calc(100vh - 32px))',
+                overflowY: 'auto',
+                px: 1.5,
+                py: 1.25,
+                bgcolor: 'background.paper',
+                color: 'text.primary',
+                border: 1,
+                borderColor: 'divider',
+                boxShadow: (theme: Theme) => theme.customShadows?.dropdown ?? theme.shadows[4]
+              }
             },
-            '&.Mui-selected:hover': {
-              backgroundColor: isActive
-                ? (theme: Theme) =>
-                    `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)} !important`
-                : 'transparent !important'
-            },
-            '&:hover': {
-              backgroundColor: isActive
-                ? (theme: Theme) =>
-                    `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)} !important`
-                : 'background.paper !important',
-              // plainSidebarRowSx forces a transparent resting background, so
-              // the lift only reads once hover paints the surface.
-              boxShadow: isActive
-                ? 'none'
-                : (theme: Theme) => theme.customShadows?.listItem ?? theme.shadows[2]
+            popper: {
+              sx: compactHoverPreview
+                ? { zIndex: (theme: Theme) => theme.zIndex.tooltip + 2 }
+                : undefined
             }
           }}
         >
-          <SessionAttentionBeacon session={displaySession} indent={indent} />
-          <Box
+          <ListItemButton
+            selected={isActive}
+            data-phi-session-row={isActive ? 'active' : 'inactive'}
+            aria-label={fullTitle}
+            onClick={() => {
+              setHoverDetailsOpen(false)
+              onSelect()
+            }}
             sx={{
-              minWidth: 0,
-              flex: 1,
-              display: 'flex',
+              ...plainSidebarRowSx,
               alignItems: 'center',
-              gap: 0.75
+              minHeight: 36,
+              py: 0.5,
+              pl: `${sessionRunningBeaconSlotWidth(indent)}px`,
+              pr: 1,
+              position: 'relative',
+              overflow: 'hidden',
+              border: 1,
+              borderColor: isActive
+                ? (theme: Theme) => alpha(theme.palette.primary.main, 0.5)
+                : 'transparent',
+              borderRadius: isActive ? '999px' : 1.5,
+              bgcolor: isActive
+                ? (theme: Theme) =>
+                    alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)
+                : 'transparent',
+              boxShadow: 'none',
+              transition:
+                'border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease',
+              '&.Mui-selected': {
+                backgroundColor: isActive
+                  ? (theme: Theme) =>
+                      `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)} !important`
+                  : 'transparent !important'
+              },
+              '&.Mui-selected:hover': {
+                backgroundColor: isActive
+                  ? (theme: Theme) =>
+                      `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)} !important`
+                  : 'transparent !important'
+              },
+              '&:hover': {
+                backgroundColor: isActive
+                  ? (theme: Theme) =>
+                      `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)} !important`
+                  : 'background.paper !important',
+                // plainSidebarRowSx forces a transparent resting background, so
+                // the lift only reads once hover paints the surface.
+                boxShadow: isActive
+                  ? 'none'
+                  : (theme: Theme) => theme.customShadows?.listItem ?? theme.shadows[2]
+              }
             }}
           >
-            <Typography
-              component="span"
-              noWrap
+            <SessionAttentionBeacon session={displaySession} indent={indent} />
+            <Box
               sx={{
                 minWidth: 0,
                 flex: 1,
-                fontSize: ROW_LABEL_FONT_SIZE,
-                fontWeight: hasAttentionWeight ? 600 : 400
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.75
               }}
             >
-              {sessionTitle(displaySession)}
-            </Typography>
-            <Typography
-              component="span"
-              className="session-time"
-              noWrap
-              sx={{
-                maxWidth: 92,
-                flexShrink: 0,
-                textAlign: 'right',
-                fontSize: ROW_META_FONT_SIZE,
-                color: sessionStatusLabel(displaySession)
-                  ? sessionStatusColor(displaySession)
-                  : 'text.secondary',
-                opacity: menuAnchor ? 0 : 1,
-                transition: 'opacity 0.15s ease'
-              }}
-            >
-              {sessionSecondaryText(displaySession, nowMs)}
-            </Typography>
-          </Box>
-        </ListItemButton>
+              <Typography
+                component="span"
+                className="session-title"
+                noWrap
+                sx={{
+                  minWidth: 0,
+                  flex: 1,
+                  pr: menuAnchor ? '34px' : 0,
+                  fontSize: ROW_LABEL_FONT_SIZE,
+                  fontWeight: hasAttentionWeight ? 600 : 400
+                }}
+              >
+                {sessionTitle(displaySession)}
+              </Typography>
+            </Box>
+          </ListItemButton>
+        </Tooltip>
         <Box
           className="session-actions"
           sx={{
@@ -437,6 +479,7 @@ const SessionRow = memo(function SessionRow({
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.stopPropagation()
+                setHoverDetailsOpen(false)
                 setMenuAnchor(event.currentTarget)
               }}
             >
@@ -511,31 +554,3 @@ const SessionRow = memo(function SessionRow({
     </>
   )
 }, sessionRowPropsMatch)
-
-export const SortableSessionRow = memo(function SortableSessionRow(
-  props: SessionRowProps
-): React.JSX.Element {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: props.session.path,
-    animateLayoutChanges: animateSortableLayoutChanges
-  })
-  const hasSortableTransform = transform !== null
-
-  return (
-    <Box
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition: isDragging || hasSortableTransform ? transition : undefined,
-        opacity: isDragging ? 0.72 : undefined,
-        position: 'relative',
-        zIndex: isDragging ? 2 : undefined,
-        willChange: isDragging || hasSortableTransform ? 'transform' : undefined
-      }}
-      {...attributes}
-      {...listeners}
-    >
-      <SessionRow {...props} />
-    </Box>
-  )
-})
