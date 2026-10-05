@@ -33,7 +33,7 @@ import {
   removeInputInvocationReferenceRange,
   replaceInputReferenceRange
 } from '../src/renderer/src/lib/inputReferences'
-import { toolActionKind } from '../src/renderer/src/lib/toolActions'
+import { toolActionKind, toolApprovalLabel } from '../src/renderer/src/lib/toolActions'
 import {
   suggestedNextActionPlaceholderFromMessages,
   suggestedNextActionToAccept
@@ -70,6 +70,11 @@ function renderChat(
     planReviewEnabled?: boolean
     disablePlanReview?: boolean
     onTogglePlanReview?: () => void
+    officeTarget?: {
+      artifactId: string
+      label: string
+      selection?: { sheet?: string; range?: string; paths: string[] }
+    }
     contextUsageTarget?: {
       sessionPath: string | null
       phiSessionId: string | null
@@ -126,6 +131,9 @@ function renderChat(
         planReviewEnabled: options.planReviewEnabled,
         disablePlanReview: options.disablePlanReview,
         onTogglePlanReview: options.onTogglePlanReview,
+        officeTarget: options.officeTarget,
+        onRemoveOfficeTarget: () => undefined,
+        onClearOfficeSelection: () => undefined,
         permissionMode: options.permissionMode ?? 'auto',
         onSelectPermissionMode: () => undefined,
         disableModelControls: options.disableModelControls ?? false,
@@ -141,6 +149,29 @@ function renderChat(
     )
   )
 }
+
+test('chat composer shows the ready Office document association', () => {
+  const markup = renderChat([], {
+    officeTarget: { artifactId: 'artifact-1', label: '预算.xlsx' }
+  })
+
+  assert.match(markup, /关联文档：预算\.xlsx/)
+  assert.match(markup, /aria-label="取消关联文档 预算\.xlsx"/)
+})
+
+test('chat composer shows a rectangular Office selection and a clear action', () => {
+  const markup = renderChat([], {
+    officeTarget: {
+      artifactId: 'artifact-1',
+      label: '预算.xlsx',
+      selection: { sheet: 'Sheet1', range: 'A1:B3', paths: ['/Sheet1/A1'] }
+    }
+  })
+
+  assert.match(markup, /关联文档：预算\.xlsx · 选区：Sheet1!A1:B3/)
+  assert.match(markup, /data-phi-office-clear-selection="artifact-1"/)
+  assert.match(markup, />清除选区</)
+})
 
 test('chat view threads the in-app web opener to assistant markdown links', () => {
   const markup = renderChat(
@@ -861,6 +892,38 @@ test('chat view shows delivered files with a preview action and current-file not
   assert.match(markup, /内容可能已更改/)
 })
 
+test('chat view labels Office deliverables by kind and shows remaining warnings', () => {
+  const markup = renderChat(
+    [
+      {
+        id: 'office-delivery',
+        role: 'presented_files',
+        files: [
+          {
+            path: '/project/slides.pptx',
+            displayPath: 'slides.pptx',
+            bytes: 456,
+            office: {
+              artifactId: 'artifact-1',
+              outputId: 'output-1',
+              kind: 'pptx',
+              revision: 4,
+              sha256: 'b'.repeat(64),
+              warnings: ['text_may_overflow'],
+              checks: { schema: 'passed', content: 'passed', samples: 1, pageCount: 2 }
+            }
+          }
+        ]
+      }
+    ],
+    { onOpenLocalPath: () => undefined }
+  )
+
+  assert.match(markup, /PowerPoint 演示文稿/)
+  assert.match(markup, /文本可能溢出/)
+  assert.doesNotMatch(markup, /内容可能已更改/)
+})
+
 test('chat view shows delivered files after a later tool call and closing reply', () => {
   const markup = renderChat(
     [
@@ -1435,6 +1498,11 @@ test('thinking block shows elapsed time when folded and hides content until expa
 
 test('tool rows classify common actions with distinct icons', () => {
   assert.equal(toolActionKind('read', 'src/App.tsx', '{"path":"src/App.tsx"}'), 'read')
+  assert.equal(toolActionKind('office_read', 'Sheet1!A1:B3', '{"range":"A1:B3"}'), 'read')
+  assert.equal(
+    toolActionKind('office_apply', '修改 Word 段落', '{"type":"set_paragraph_text"}'),
+    'edit'
+  )
   assert.equal(toolActionKind('write', 'src/App.tsx', '{"path":"src/App.tsx"}'), 'edit')
   assert.equal(toolActionKind('bash', 'npm test', '{"cmd":"npm test"}'), 'command')
   assert.equal(toolActionKind('bash', 'rg provider', '{"cmd":"rg provider"}'), 'command')
@@ -1616,6 +1684,25 @@ test('tool rows classify common actions with distinct icons', () => {
   assert.match(groupMarkup, /aria-label="编辑文件"/)
   assert.match(groupMarkup, /aria-label="运行命令"/)
   assert.match(groupMarkup, /aria-label="搜索"/)
+})
+
+test('office approval labels distinguish PowerPoint slide creation and text changes', () => {
+  assert.equal(
+    toolApprovalLabel('office_apply', '新增幻灯片到演示文稿末尾；标题：「封面」'),
+    '新增 PowerPoint 幻灯片'
+  )
+  assert.equal(
+    toolApprovalLabel('office_apply', '修改第 2 页标题（256/2）：「旧」→「新」'),
+    '修改 PowerPoint 文本'
+  )
+})
+
+test('Office delivery uses a write action and a dedicated approval label', () => {
+  assert.equal(toolActionKind('office_deliver', '交付 report.xlsx', '{}'), 'edit')
+  assert.equal(
+    toolApprovalLabel('office_deliver', '将在当前工作区写入新的 Excel 表格'),
+    '交付 Office 文件'
+  )
 })
 
 test('tool group keeps the aggregate row neutral when one child failed', () => {

@@ -30,6 +30,24 @@ import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptIma
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
 import ChatView from './features/chat/ChatView'
+import { ChatArtifactSplit } from './features/chat/components/ChatArtifactSplit'
+import {
+  shouldEnableOfficeChatSplit,
+  sidebarHostsCurrentConversation
+} from './features/chat/lib/chatArtifactSplit'
+import { OfficeCreateButton } from './features/office/components/OfficeCreateButton'
+import { isOfficeDocumentPath } from './lib/officeDocumentPath'
+import { useOfficePromptTarget } from './features/office/hooks/useOfficePromptTarget'
+import { officeDocumentRegistry } from './features/office/lib/officeDocumentRegistry'
+import {
+  retargetCapturedOfficePrompt,
+  visibleOfficeComposerTarget,
+  withCapturedOfficeTarget
+} from './features/office/lib/officePromptTarget'
+import {
+  isOfficePromptTargetFailure,
+  officePromptFailureRecovery
+} from './features/office/lib/officePromptFailure'
 import { HomeView } from './features/home/HomeView'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
 import MacWindowControls from './components/MacWindowControls'
@@ -144,6 +162,7 @@ import {
   workspaceResourceKindLabel,
   workspaceResourceKindToSidebarMode,
   workspaceResourceTabKey,
+  activeTabKeyAfterPrompt,
   workspaceSessionTabKey,
   visibleWorkspaceTabsForState,
   type WorkspaceFileWorkspaceTab,
@@ -549,6 +568,7 @@ function WorkspaceResourceHeader({
   activeKey,
   onSelect,
   onClose,
+  actions,
   leadingChromeInset = 0,
   reserveTrailingChromeSpace = false
 }: {
@@ -556,6 +576,7 @@ function WorkspaceResourceHeader({
   activeKey: string | null
   onSelect: (tab: WorkspaceTab) => void
   onClose: (tab: WorkspaceTab) => void
+  actions?: React.ReactNode
   leadingChromeInset?: number
   reserveTrailingChromeSpace?: boolean
 }): React.JSX.Element {
@@ -581,6 +602,7 @@ function WorkspaceResourceHeader({
         connectorIcon={renderConnectorTabIcon}
         fileIcon={renderFileWorkspaceTabIcon}
       />
+      {actions}
     </Box>
   )
 }
@@ -1060,6 +1082,30 @@ function App(): React.JSX.Element {
     setIsSidebarOpen,
     setActiveView: navigateToView
   })
+  const officeDevelopmentEnabled =
+    typeof window !== 'undefined' && window.api?.office?.enabled === true
+  const activeOfficeFileTab = workspaceFileTabs.find(
+    (tab) =>
+      tab.path === activeWorkspaceFilePath &&
+      activeWorkspaceTabKey === workspaceFileTabKey(tab.path) &&
+      isOfficeDocumentPath(tab.path)
+  )
+  const readyOfficeTarget = useOfficePromptTarget(
+    officeDevelopmentEnabled ? (activeOfficeFileTab?.path ?? null) : null,
+    activeOfficeFileTab?.name ?? ''
+  )
+  const [dismissedOfficeArtifactId, setDismissedOfficeArtifactId] = useState<string | null>(null)
+  const officeComposerTarget = visibleOfficeComposerTarget(
+    readyOfficeTarget,
+    dismissedOfficeArtifactId
+  )
+  const onClearOfficeSelection = useCallback(
+    (artifactId: string): void => {
+      officeDocumentRegistry.publishSelection(artifactId, null)
+      void rendererApi.office.clearSelection({ artifactId }).catch(() => undefined)
+    },
+    [rendererApi]
+  )
 
   const onNavigateToNotebookView = useCallback((): void => {
     setFilePreview(null)
@@ -2238,14 +2284,16 @@ function App(): React.JSX.Element {
       isSendingRef.current = true
       const submitGeneration = target.sessionGeneration
       const sendRequest = ++sendRequestRef.current
+      let optimisticUserMessageId: string | undefined
 
       if (options.retryUserMessageId) {
         updateMessages((prev) => messagesForUserRetry(prev, options.retryUserMessageId as string))
       } else if (options.appendUserMessage !== false) {
+        optimisticUserMessageId = `user-${Date.now()}`
         updateMessages((prev) => [
           ...prev,
           {
-            id: `user-${Date.now()}`,
+            id: optimisticUserMessageId as string,
             role: 'user',
             content: text,
             ...(images.length ? { images } : {})
@@ -2273,6 +2321,37 @@ function App(): React.JSX.Element {
                 ...(options.planMode ? { planMode: true } : {})
               }
         )
+        if (isOfficePromptTargetFailure(result)) {
+          const officeRecovery = officePromptFailureRecovery(result, text)
+          if (!officeRecovery) return false
+          setDraftInputs((prev) =>
+            prev[activeDraftKey]
+              ? prev
+              : updateSessionDraft(prev, activeDraftKey, officeRecovery.draft)
+          )
+          if (images.length) {
+            setDraftImagesBySession((prev) =>
+              prev[activeDraftKey]?.length ? prev : { ...prev, [activeDraftKey]: images }
+            )
+          }
+          if (
+            sendRequest === sendRequestRef.current &&
+            submitGeneration === useSessionStore.getState().activeSessionGeneration
+          ) {
+            if (optimisticUserMessageId) {
+              updateMessages((prev) =>
+                prev.filter((message) => message.id !== optimisticUserMessageId)
+              )
+            }
+            showSnackbarError(
+              Object.assign(new Error(officeRecovery.error.message), {
+                code: officeRecovery.error.code
+              }),
+              '发送消息失败'
+            )
+          }
+          return false
+        }
         if (
           !result ||
           sendRequest !== sendRequestRef.current ||
@@ -2304,7 +2383,7 @@ function App(): React.JSX.Element {
                 ...(updated[materializedQueueKey] ?? []),
                 ...queued.map((item) => ({
                   ...item,
-                  target: materializedTarget
+                  target: retargetCapturedOfficePrompt(item.target, materializedTarget)
                 }))
               ]
               return updated
@@ -2325,7 +2404,7 @@ function App(): React.JSX.Element {
             nextKeys.delete(tabKey)
             return nextKeys
           })
-          setActiveWorkspaceTabKey(tabKey)
+          setActiveWorkspaceTabKey((currentKey) => activeTabKeyAfterPrompt(currentKey, tabKey))
         }
         if (
           result.phiSessionId &&
@@ -2409,12 +2488,16 @@ function App(): React.JSX.Element {
       showSnackbarError(new Error('当前模型不支持图片，请切换到支持图片的模型'), '无法发送图片')
       return
     }
-    const target: PromptTarget = {
-      path: useSessionStore.getState().activeSessionPath,
-      phiSessionId: useSessionStore.getState().activePhiSessionId ?? undefined,
-      cwd: useSessionStore.getState().activeCwd,
-      sessionGeneration: useSessionStore.getState().activeSessionGeneration
-    }
+    const target = withCapturedOfficeTarget<PromptTarget>(
+      {
+        path: useSessionStore.getState().activeSessionPath,
+        phiSessionId: useSessionStore.getState().activePhiSessionId ?? undefined,
+        cwd: useSessionStore.getState().activeCwd,
+        sessionGeneration: useSessionStore.getState().activeSessionGeneration
+      },
+      officeComposerTarget,
+      officeDevelopmentEnabled
+    )
     if (currentSessionIsBusy || isSendingRef.current) {
       queuePromptText(text, target, { images, planMode: planReviewEnabled })
       clearInputImages()
@@ -3935,6 +4018,17 @@ function App(): React.JSX.Element {
           onInputFilesDropped={rendererApi.onInputFilesDropped}
           onListInputDirectory={onListInputDirectory}
           onChatSubmit={onChatSubmit}
+          officeTarget={officeDevelopmentEnabled ? (officeComposerTarget ?? undefined) : undefined}
+          onRemoveOfficeTarget={
+            officeComposerTarget
+              ? () => setDismissedOfficeArtifactId(officeComposerTarget.artifactId)
+              : undefined
+          }
+          onClearOfficeSelection={
+            officeComposerTarget?.selection
+              ? () => onClearOfficeSelection(officeComposerTarget.artifactId)
+              : undefined
+          }
           planReviewEnabled={planReviewEnabled}
           onTogglePlanReview={togglePlanReview}
           disablePlanReview={activeProjectLocation?.kind === 'ssh'}
@@ -4119,12 +4213,32 @@ function App(): React.JSX.Element {
     ) : null
   ) : null
 
-  const activeWorkspaceTabContent =
+  const officeChatSplitEnabled = shouldEnableOfficeChatSplit({
+    officeEnabled: typeof window !== 'undefined' && window.api?.office?.enabled === true,
+    activeTabKind: activeWorkspaceTab?.kind,
+    activeTabPath: isWorkspaceFileWorkspaceTab(activeWorkspaceTab) ? activeWorkspaceTab.path : null,
+    previewPath: activeFilePreviewState ? filePreviewStatePath(activeFilePreviewState) : null,
+    currentConversationInSidebar: sidebarHostsCurrentConversation({
+      activeView,
+      isSidebarOpen,
+      workspaceSidebarMode
+    })
+  })
+
+  const standardWorkspaceTabContent =
     activeWorkspaceTab?.kind === 'session'
       ? chatWorkspaceContent
       : isWorkspaceFileWorkspaceTab(activeWorkspaceTab)
         ? activeWorkspaceFileTabContent
         : activeWorkspaceResourceContent
+
+  const activeWorkspaceTabContent = officeChatSplitEnabled ? (
+    <ChatArtifactSplit enabled artifact={activeWorkspaceFileTabContent}>
+      {chatWorkspaceContent}
+    </ChatArtifactSplit>
+  ) : (
+    standardWorkspaceTabContent
+  )
 
   const onWorkspaceSidebarPreviewNavigate = useCallback((): void => {
     const dismiss =
@@ -4473,6 +4587,13 @@ function App(): React.JSX.Element {
                     activeKey={effectiveActiveWorkspaceTabKey}
                     onSelect={selectWorkspaceTab}
                     onClose={onCloseWorkspaceTab}
+                    actions={
+                      <OfficeCreateButton
+                        bridge={rendererApi.office}
+                        disabled={!activePhiSessionId}
+                        onCreated={previewFilePathInWorkspaceTab}
+                      />
+                    }
                     leadingChromeInset={chromeLayout.mainColumnTitlebarInset}
                     reserveTrailingChromeSpace={workspaceSidePanelCollapsed}
                   />

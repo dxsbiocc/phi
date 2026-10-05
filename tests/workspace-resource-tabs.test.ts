@@ -6,6 +6,7 @@ import test from 'node:test'
 import { WorkspaceResourceTabs } from '../src/renderer/src/components/WorkspaceResourceTabs'
 import { ConnectorIcon } from '../src/renderer/src/features/mcp/components/ConnectorIcon'
 import {
+  activeTabKeyAfterPrompt,
   upsertWorkspaceResourceTab,
   workspaceResourceTabKey,
   type WorkspaceResourceTab
@@ -99,4 +100,14 @@ test('a modified notebook tab keeps a visible unsaved marker', () => {
     )
   )
   assert.match(markup, /未保存修改/)
+})
+
+test('a finished prompt only moves the active tab off session tabs', () => {
+  const session = 'session:/tmp/chat.jsonl'
+  assert.equal(activeTabKeyAfterPrompt(null, session), session)
+  assert.equal(activeTabKeyAfterPrompt('session:fresh:3', session), session)
+  assert.equal(activeTabKeyAfterPrompt('session:/tmp/old.jsonl', session), session)
+  // The user is watching an Office draft or another file/resource while the chat sits in the sidebar.
+  assert.equal(activeTabKeyAfterPrompt('file:/tmp/book.xlsx', session), 'file:/tmp/book.xlsx')
+  assert.equal(activeTabKeyAfterPrompt('skills', session), 'skills')
 })

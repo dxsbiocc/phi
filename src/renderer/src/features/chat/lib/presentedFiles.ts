@@ -25,6 +25,8 @@ export function presentedFilesItemFromPhiTimelineEvent(event: {
       return []
     }
     const artifact = presentedArtifact(file.artifact)
+    const office = presentedOfficeFile(file.office)
+    if (Object.hasOwn(file, 'office') && !office) return []
     return [
       {
         path: file.path,
@@ -33,7 +35,8 @@ export function presentedFilesItemFromPhiTimelineEvent(event: {
         ...(typeof file.description === 'string' && file.description
           ? { description: file.description }
           : {}),
-        ...(artifact ? { artifact } : {})
+        ...(artifact ? { artifact } : {}),
+        ...(office ? { office } : {})
       }
     ]
   })
@@ -45,6 +48,67 @@ export function presentedFilesItemFromPhiTimelineEvent(event: {
     ...(event.createdAt ? { createdAt: event.createdAt } : {}),
     files
   }
+}
+
+function presentedOfficeFile(value: unknown): PresentedFile['office'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const checks = record.checks
+  if (
+    !validOfficeFields(record) ||
+    !checks ||
+    typeof checks !== 'object' ||
+    Array.isArray(checks)
+  ) {
+    return undefined
+  }
+  const checked = checks as Record<string, unknown>
+  if (!validChecks(checked)) return undefined
+  return {
+    artifactId: record.artifactId as string,
+    outputId: record.outputId as string,
+    kind: record.kind as 'xlsx' | 'docx' | 'pptx',
+    revision: record.revision as number,
+    sha256: record.sha256 as string,
+    warnings: [...(record.warnings as string[])],
+    checks: {
+      schema: 'passed',
+      content: 'passed',
+      samples: checked.samples as number,
+      ...(typeof checked.pageCount === 'number' ? { pageCount: checked.pageCount } : {})
+    }
+  }
+}
+
+function validOfficeFields(value: Record<string, unknown>): boolean {
+  return Boolean(
+    validId(value.artifactId) &&
+    validId(value.outputId) &&
+    ['xlsx', 'docx', 'pptx'].includes(String(value.kind)) &&
+    validInteger(value.revision) &&
+    typeof value.sha256 === 'string' &&
+    /^[a-f0-9]{64}$/u.test(value.sha256) &&
+    Array.isArray(value.warnings) &&
+    value.warnings.length <= 8 &&
+    value.warnings.every((warning) => typeof warning === 'string' && warning.length <= 200)
+  )
+}
+
+function validChecks(value: Record<string, unknown>): boolean {
+  return Boolean(
+    value.schema === 'passed' &&
+    value.content === 'passed' &&
+    validInteger(value.samples) &&
+    (value.pageCount === undefined || validInteger(value.pageCount))
+  )
+}
+
+function validId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/u.test(value)
+}
+
+function validInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
 /** Unknown or invalid artifact metadata is dropped; it does not reject the file. */

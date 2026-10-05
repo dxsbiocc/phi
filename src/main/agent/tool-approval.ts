@@ -52,6 +52,15 @@ interface CreateApprovalExtensionOptions {
     toolName: string,
     input: Record<string, unknown>
   ) => 'exec' | 'read' | 'write' | undefined
+  prepareClassifiedToolApproval?: (
+    toolName: string,
+    input: Record<string, unknown>,
+    context: ToolApprovalContext | null,
+    event: { toolCallId?: string; agentRunId?: string }
+  ) =>
+    | { summary: string; approvalDigest?: string; skipApproval?: boolean }
+    | undefined
+    | Promise<{ summary: string; approvalDigest?: string; skipApproval?: boolean } | undefined>
   onApprovalRequested?: (request: ToolApprovalRequest) => void
   onApprovalResolved?: (request: ToolApprovalRequest, approved: boolean) => void
   onApprovalCancelled?: (request: ToolApprovalRequest) => void
@@ -170,6 +179,11 @@ function isUsableWindow(window: ApprovalWindow | null): window is ApprovalWindow
 
 function createAbortErrorMessage(signal: AbortSignal | undefined): string {
   return signal?.aborted ? '操作已取消' : '用户拒绝了该操作'
+}
+
+function blockedToolReason(toolName: string, signal: AbortSignal | undefined): string {
+  if (toolName === 'office_apply') return '用户未批准，未做任何修改'
+  return createAbortErrorMessage(signal)
 }
 
 export function resolveToolApproval(
@@ -388,16 +402,39 @@ export function createApprovalExtension(
         if (options.shouldGate && !options.shouldGate()) return undefined
 
         if (options.signal?.aborted || ctx.signal?.aborted) {
-          return { block: true, reason: createAbortErrorMessage(options.signal ?? ctx.signal) }
-        }
-
-        const window = options.getWindow ? options.getWindow() : getActiveWindow()
-        if (!isUsableWindow(window)) {
-          return { block: true, reason: '没有可用窗口来请求批准' }
+          return {
+            block: true,
+            reason: blockedToolReason(event.toolName, options.signal ?? ctx.signal)
+          }
         }
 
         const requestId = randomUUID()
         const context = options.getContext?.(event) ?? null
+        let prepared:
+          { summary: string; approvalDigest?: string; skipApproval?: boolean } | undefined
+        if (options.prepareClassifiedToolApproval && classified) {
+          try {
+            prepared = await options.prepareClassifiedToolApproval(
+              event.toolName,
+              event.input,
+              context,
+              {
+                ...(typeof event.toolCallId === 'string' ? { toolCallId: event.toolCallId } : {}),
+                ...(typeof event.agentRunId === 'string' ? { agentRunId: event.agentRunId } : {})
+              }
+            )
+          } catch (error) {
+            return {
+              block: true,
+              reason: error instanceof Error ? error.message : '无法准备工具审批信息'
+            }
+          }
+        }
+        if (prepared?.skipApproval) return undefined
+        const window = options.getWindow ? options.getWindow() : getActiveWindow()
+        if (!isUsableWindow(window)) {
+          return { block: true, reason: '没有可用窗口来请求批准' }
+        }
         const request: ToolApprovalRequest = {
           requestId,
           ...(typeof event.toolCallId === 'string' ? { toolCallId: event.toolCallId } : {}),
@@ -432,16 +469,19 @@ export function createApprovalExtension(
           typeof event.input.new_string === 'string'
             ? { approvalDigest: editApprovalDigest(event.input) }
             : {}),
-          summary: [
-            event.toolName === 'write' || event.toolName === 'edit'
-              ? context?.writeScopeNote
-              : context?.scopeNote,
-            classified === 'exec' || classified === 'write'
-              ? summarizeClassifiedToolCall(event.toolName, event.input)
-              : summarizeToolCall(event.toolName, event.input)
-          ]
-            .filter(Boolean)
-            .join('\n')
+          ...(prepared?.approvalDigest ? { approvalDigest: prepared.approvalDigest } : {}),
+          summary:
+            prepared?.summary ??
+            [
+              event.toolName === 'write' || event.toolName === 'edit'
+                ? context?.writeScopeNote
+                : context?.scopeNote,
+              classified === 'exec' || classified === 'write'
+                ? summarizeClassifiedToolCall(event.toolName, event.input)
+                : summarizeToolCall(event.toolName, event.input)
+            ]
+              .filter(Boolean)
+              .join('\n')
         }
         options.onApprovalRequested?.(request)
         const decision = await waitForApproval(request, window, [options.signal, ctx.signal])
@@ -453,7 +493,10 @@ export function createApprovalExtension(
 
         return decision.approved
           ? undefined
-          : { block: true, reason: createAbortErrorMessage(options.signal ?? ctx.signal) }
+          : {
+              block: true,
+              reason: blockedToolReason(event.toolName, options.signal ?? ctx.signal)
+            }
       })
     }
   }

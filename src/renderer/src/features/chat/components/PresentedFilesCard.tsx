@@ -4,6 +4,8 @@ import { GoChevronRight } from 'react-icons/go'
 import { fileIconForPath } from '../../../icons'
 import type { PresentedFilesItem } from '../../../types'
 import { formatBytes } from '../../../lib/toolOutputPresentation'
+import { OfficePresentedFileDetails } from './OfficePresentedFileDetails'
+import { usePresentedFileOpen } from '../hooks/usePresentedFileOpen'
 
 const ARTIFACT_KIND_LABELS: Record<string, string> = {
   figure: '图',
@@ -25,6 +27,7 @@ export function PresentedFilesCard({
   item: PresentedFilesItem
   onOpenFile?: (path: string) => void
 }): React.JSX.Element {
+  const { openFile, errorFor } = usePresentedFileOpen(onOpenFile)
   return (
     <Box
       role="region"
@@ -72,6 +75,7 @@ export function PresentedFilesCard({
         {item.files.map((file) => {
           const icon = fileIconForPath(file.path)
           const FileIcon = icon.Icon
+          const openError = errorFor(file.path)
           return (
             <ButtonBase
               key={file.path}
@@ -80,7 +84,7 @@ export function PresentedFilesCard({
               aria-label={`预览交付文件 ${file.displayPath}`}
               title={file.description ? `${file.path}\n${file.description}` : file.path}
               disabled={!onOpenFile}
-              onClick={onOpenFile ? () => onOpenFile(file.path) : undefined}
+              onClick={onOpenFile ? () => void openFile(file) : undefined}
               sx={{
                 width: '100%',
                 minHeight: 84,
@@ -93,7 +97,7 @@ export function PresentedFilesCard({
                 textAlign: 'left',
                 color: 'text.primary',
                 border: 1,
-                borderColor: 'divider',
+                borderColor: openError ? 'error.main' : 'divider',
                 borderRadius: 2.5,
                 bgcolor: 'background.paper',
                 transition: 'border-color 150ms, background-color 150ms',
@@ -205,6 +209,12 @@ export function PresentedFilesCard({
                     {formatBytes(file.bytes)}
                   </Typography>
                 </Box>
+                {file.office ? <OfficePresentedFileDetails office={file.office} /> : null}
+                {openError ? (
+                  <Typography variant="caption" sx={{ display: 'block', color: 'error.main' }}>
+                    交付文件已失效：{openError}
+                  </Typography>
+                ) : null}
               </Box>
               {onOpenFile && (
                 <Box
@@ -226,7 +236,11 @@ export function PresentedFilesCard({
       <Typography
         variant="caption"
         noWrap
-        title="打开的是工作区中的当前文件，内容可能已更改。"
+        title={
+          item.files.some((file) => file.office)
+            ? '打开的是经校验的 Office 交付版本；如文件被修改，入口会失效。'
+            : '打开的是工作区中的当前文件，内容可能已更改。'
+        }
         sx={{
           display: 'block',
           mt: 1,
@@ -235,7 +249,9 @@ export function PresentedFilesCard({
           '@container phi-chat (max-width: 560px)': { mt: 0.5, px: 0.25, fontSize: '0.67rem' }
         }}
       >
-        打开的是工作区中的当前文件，内容可能已更改。
+        {item.files.some((file) => file.office)
+          ? '打开的是经校验的 Office 交付版本；如文件被修改，入口会失效。'
+          : '打开的是工作区中的当前文件，内容可能已更改。'}
       </Typography>
     </Box>
   )

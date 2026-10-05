@@ -3,6 +3,11 @@
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
 import type { BrowserRendererBridge } from '../shared/browserTypes'
 import type { TerminalRendererBridge } from '../shared/terminalTypes'
+import type {
+  OfficePromptTargetFailure,
+  OfficeRendererBridge,
+  OfficeTargetInput
+} from '../shared/officeProtocol'
 import type { WrapperCompositionCatalogItem } from '../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
 import type { RemoteHpcSettings } from '../shared/wrapperRemoteTypes'
@@ -118,13 +123,12 @@ type PreloadPromptTarget = {
   retryUserMessageId?: string
   images?: PromptImageInput[]
   planMode?: boolean
+  officeTarget?: OfficeTargetInput
 }
 
-type PreloadPromptResult = {
-  path: string | null
-  phiSessionId?: string
-  sessionGeneration: number
-}
+type PreloadPromptResult =
+  | { path: string | null; phiSessionId?: string; sessionGeneration: number }
+  | OfficePromptTargetFailure
 
 /** Mirrors `ProjectRemoteConnection` (src/main/agent/projects.ts) — no secret material, see that type's doc comment. */
 type PreloadProjectRemoteConnection = {
@@ -562,6 +566,7 @@ declare global {
     api: {
       browser: BrowserRendererBridge
       terminal: TerminalRendererBridge
+      office: OfficeRendererBridge
       closeWindow: () => Promise<void>
       minimizeWindow: () => Promise<void>
       toggleWindowFullscreen: () => Promise<void>

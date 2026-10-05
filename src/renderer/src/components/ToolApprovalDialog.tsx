@@ -1,11 +1,14 @@
 import { Box, Button, Paper, Stack, Typography } from '@mui/material'
 import type { ToolApprovalRequest } from '../types'
+import { toolApprovalLabel } from '../lib/toolActions'
 
 const TOOL_LABELS: Record<string, string> = {
   bash: '执行终端命令',
   powershell: '执行 PowerShell 命令',
   write: '写入文件',
   edit: '修改文件',
+  office_apply: '修改 Office 文档',
+  office_deliver: '交付 Office 文件',
   browser: '浏览器操作'
 }
 
@@ -45,7 +48,9 @@ function ToolApprovalDialog({
       <Stack spacing={1.25}>
         <Box>
           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-            {TOOL_LABELS[request.toolName] ?? request.toolName}
+            {toolApprovalLabel(request.toolName, request.summary) ??
+              TOOL_LABELS[request.toolName] ??
+              request.toolName}
           </Typography>
           <Stack direction="row" spacing={1} sx={{ mt: 0.25, flexWrap: 'wrap' }}>
             {request.projectName && (

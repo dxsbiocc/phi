@@ -21,3 +21,26 @@ test('a saved project can be opened while another session directory is current',
   assert.equal(isLocalFilePathAllowedByRoots('/Work/other', roots), false)
   assert.equal(isLocalFilePathAllowedByRoots('/etc/passwd', roots), false)
 })
+
+test('an Office-looking artifact path does not expand the local file allow roots', () => {
+  const roots = localFileAllowRoots({
+    agentDir: '/phi',
+    sessionCwd: '/workspace',
+    projectRoots: ['/Work/test']
+  })
+
+  assert.equal(
+    isLocalFilePathAllowedByRoots(
+      '/private/phi/sessions/session-1/artifacts/office/artifact-1/report.xlsx',
+      roots
+    ),
+    false
+  )
+  assert.equal(
+    isLocalFilePathAllowedByRoots(
+      '/phi/sessions/session-1/artifacts/office/artifact-1/report.xlsx',
+      roots
+    ),
+    true
+  )
+})

@@ -28,6 +28,14 @@ import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
 import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-preview-media'
 import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers/remote-result-download'
 import * as localFileAccess from '../src/main/agent/local-file-access'
+import * as officeProtocol from '../src/shared/officeProtocol'
+import * as officePromptTarget from '../src/main/agent/office/office-prompt-target'
+import * as officeToolHost from '../src/main/agent/office/office-tool-host'
+import * as officeTools from '../src/main/agent/office/office-tools'
+import * as officeApproval from '../src/main/agent/office/office-approval'
+import * as officeDeliverApproval from '../src/main/agent/office/office-deliver-approval'
+import * as officeDeliverToolHost from '../src/main/agent/office/office-deliver-tool-host'
+import { OfficeWriteError } from '../src/main/agent/office/office-write-contract'
 import * as browserIpc from '../src/main/browser/browser-ipc'
 import * as browserToolHost from '../src/main/agent/browser/browser-tool-host'
 import * as browserWorkspaceRegistry from '../src/main/browser/browser-workspace-registry'
@@ -246,6 +254,12 @@ class FakeSession {
 }
 
 type Handler = (_event: unknown, ...args: unknown[]) => unknown
+type HostContext = { originSessionId?: string; agentRunId?: string; toolCallId?: string }
+type HostHandler = (params: unknown, context?: HostContext) => Promise<unknown>
+type HarnessOptions = {
+  officeDev?: boolean
+  officeService?: Record<string, unknown>
+}
 type BrowserIntegrationView = {
   options: { webPreferences: { partition: string; [key: string]: unknown } }
   webContents: EventEmitter & {
@@ -257,7 +271,7 @@ type BrowserIntegrationView = {
   visibility: boolean[]
 }
 type HarnessResult = {
-  hostHandlers: Map<string, (params: unknown) => Promise<unknown>>
+  hostHandlers: Map<string, HostHandler>
   setAgentInteractionResponse: (response: Record<string, unknown>) => void
   setBridgeAgentJobs: (jobs: unknown[]) => void
   bridgeRequests: Array<{ method: string; params: unknown }>
@@ -370,7 +384,8 @@ type HarnessResult = {
 }
 
 async function harness(
-  factory?: (cwd: string, file: string) => Promise<FakeSession>
+  factory?: (cwd: string, file: string) => Promise<FakeSession>,
+  options: HarnessOptions = {}
 ): Promise<HarnessResult> {
   const handlers = new Map<string, Handler>()
   const sessions: FakeSession[] = []
@@ -421,7 +436,7 @@ async function harness(
   let appFocused = true
   const reportedWrapperRuns = new Set<string>()
   const wrapperJobFinishListeners: Array<(run: unknown, status: unknown) => void> = []
-  const hostHandlers = new Map<string, (params: unknown) => Promise<unknown>>()
+  const hostHandlers = new Map<string, HostHandler>()
   let agentInteractionResponse: Record<string, unknown> = { answers: [] }
   let bridgeAgentJobs: unknown[] = []
   const bridgeRequests: Array<{ method: string; params: unknown }> = []
@@ -1916,10 +1931,7 @@ async function harness(
     },
     './agent/omp/omp-bridge': {
       getOmpBridge: (): {
-        registerHostHandler: (
-          method: string,
-          handler: (params: unknown) => Promise<unknown>
-        ) => () => void
+        registerHostHandler: (method: string, handler: HostHandler) => () => void
         request: (method: string, params: unknown) => Promise<unknown>
         stop: () => Promise<void>
       } => ({
@@ -2793,7 +2805,13 @@ async function harness(
       validatePresentedFiles: (_cwd: string, value: unknown) => {
         if (!Array.isArray(value)) throw new Error('Invalid delivery files')
         return value
-      }
+      },
+      validateOfficePresentedFile: (_cwd: string, value: Record<string, unknown>) => ({
+        path: value.path,
+        displayPath: path.basename(String(value.path)),
+        bytes: 321,
+        office: value
+      })
     },
     './agent/session/workspace-changes': {
       beginWorkspaceChangeCapture: async (): Promise<object | null> =>
@@ -2953,6 +2971,33 @@ async function harness(
       }
     },
     './agent/local-file-access': localFileAccess,
+    // Office is a dev-gated feature: these stubs keep the harness off the real service so the
+    // shared prompt path is exercised exactly as it runs with PHI_OFFICE_DEV unset.
+    '../shared/officeProtocol': officeProtocol,
+    './agent/office/office-prompt-target': officePromptTarget,
+    './agent/office/office-tool-host': officeToolHost,
+    './agent/office/office-deliver-tool-host': officeDeliverToolHost,
+    './agent/office/office-tools': officeTools,
+    './agent/office/office-approval': officeApproval,
+    './agent/office/office-deliver-approval': officeDeliverApproval,
+    './agent/office/office-service': {
+      createOfficeService: () => options.officeService
+    },
+    './agent/office/office-ipc': {
+      OfficeIpcCoordinator: class {},
+      registerOfficeRendererIpc: noop
+    },
+    './agent/office/office-export-ipc': {
+      OfficeExportIpcFlow: class {},
+      registerOfficeExportRendererIpc: noop
+    },
+    './agent/office/office-export-dialog': {
+      chooseOfficeExportTarget: async (): Promise<null> => null
+    },
+    './agent/office/office-save-as-dialog': {
+      chooseOfficeSaveAsTarget: async (): Promise<null> => null
+    },
+    './agent/office/office-webview': { installOfficeWebviewSecurity: noop },
     '../../resources/icon.png?asset': { default: '/icon.png' }
   }
   const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
@@ -2972,7 +3017,8 @@ async function harness(
       platform: process.platform,
       env: {
         PI_CODING_AGENT_DIR: '/isolated',
-        ELECTRON_RENDERER_URL: 'https://phi.internal'
+        ELECTRON_RENDERER_URL: 'https://phi.internal',
+        ...(options.officeDev ? { PHI_OFFICE_DEV: '1' } : {})
       },
       versions: { node: '22.0.0', electron: '39.0.0' }
     }
@@ -3532,6 +3578,464 @@ test('main browser host handler trusts runtime origin and ignores forged agent i
     }),
     /Active browser run is unavailable/
   )
+  session.finish.resolve()
+  await prompt
+})
+
+test('main office host handler is dev-gated and derives run identity from bridge context', async () => {
+  const disabled = await harness()
+  assert.equal(disabled.hostHandlers.has('office.read'), false)
+  assert.equal(disabled.hostHandlers.has('office.describe'), false)
+  assert.equal(disabled.hostHandlers.has('office.apply'), false)
+  assert.equal(disabled.hostHandlers.has('office.deliver'), false)
+
+  const reads: Array<{ runId: string; params: unknown }> = []
+  const session = new FakeSession('office-agent.jsonl')
+  session.hold = true
+  const officeService = {
+    shouldBypassCellEditApproval: async (): Promise<boolean> => false,
+    readRange: async (runId: string, params: unknown) => {
+      reads.push({ runId, params })
+      return {
+        revision: 2,
+        sheet: 'Sheet1',
+        range: 'A1:B3',
+        cells: [],
+        rowCount: 3,
+        columnCount: 2,
+        complete: true,
+        truncated: false,
+        limits: { maxCells: 2000, maxBytes: 262144 }
+      }
+    },
+    clearRunTarget: (): boolean => false,
+    closeSession: async (): Promise<void> => {},
+    dispose: async (): Promise<void> => {},
+    ownsPreviewUrl: (): boolean => false
+  }
+  const app = await harness(async () => session, { officeDev: true, officeService })
+  await app.invoke('projects:newSession', '/projects/office-agent', 'ask')
+  const prompt = app.invoke('agent:prompt', 'initialize office runtime mapping')
+  while (!session.started) await tick()
+  const handler = app.hostHandlers.get('office.read')
+  assert.ok(handler)
+  assert.ok(app.hostHandlers.get('office.describe'))
+  assert.ok(app.hostHandlers.get('office.apply'))
+  assert.ok(app.hostHandlers.get('office.deliver'))
+
+  const result = (await handler(
+    {
+      sheet: 'Sheet1',
+      range: 'A1:B3',
+      runId: 'forged-run',
+      sessionId: 'forged-session',
+      path: '/private/forged.xlsx'
+    },
+    { originSessionId: session.runtimeSessionId }
+  )) as { ok: boolean }
+  assert.equal(result.ok, true)
+  assert.equal(reads.length, 1)
+  assert.notEqual(reads[0].runId, 'forged-run')
+  assert.deepEqual(reads[0].params, { sheet: 'Sheet1', range: 'A1:B3' })
+
+  const unknown = (await handler(
+    { runId: reads[0].runId },
+    { originSessionId: 'unknown-runtime' }
+  )) as { ok: boolean; error: { code: string } }
+  assert.equal(unknown.ok, false)
+  assert.equal(unknown.error.code, 'no_target')
+  assert.equal(reads.length, 1)
+
+  session.finish.resolve()
+  await prompt
+})
+
+test('main ask-mode office apply uses a one-shot approval bound to exact parameters', async () => {
+  const applies: Array<{ runId: string; params: Record<string, unknown> }> = []
+  let descriptions = 0
+  const receipts = new Map<
+    string,
+    { digest: string; result?: Record<string, unknown>; error?: OfficeWriteError }
+  >()
+  const session = new FakeSession('office-apply-agent.jsonl')
+  session.hold = true
+  const officeService = {
+    describeCellEdit: async (_runId: string, params: Record<string, unknown>) => {
+      descriptions += 1
+      return {
+        documentName: '实验<一>.xlsx',
+        sheet: params.sheet,
+        cell: params.cell,
+        before: '旧值\n```html',
+        after: params.value,
+        revision: 2
+      }
+    },
+    shouldBypassCellEditApproval: async (
+      _runId: string,
+      params: Record<string, unknown>,
+      operationId: string
+    ): Promise<boolean> => {
+      const previous = receipts.get(operationId)
+      if (!previous) return false
+      void params
+      return true
+    },
+    applyCellEdit: async (
+      runId: string,
+      params: Record<string, unknown>,
+      options: { operationId?: string; authorize?: () => boolean | Promise<boolean> }
+    ) => {
+      const operationId = options.operationId ?? ''
+      const digest = JSON.stringify(params)
+      const previous = receipts.get(operationId)
+      if (previous?.digest !== undefined && previous.digest !== digest) {
+        throw new OfficeWriteError('operation_conflict', 'conflict')
+      }
+      if (previous?.result) return { ...previous.result, deduplicated: true }
+      if (previous?.error) throw previous.error
+      if (options.authorize && !(await options.authorize())) {
+        const error = new OfficeWriteError('approval_changed', 'not authorized')
+        receipts.set(operationId, { digest, error })
+        throw error
+      }
+      applies.push({ runId, params })
+      const result = {
+        applied: true,
+        saved: true,
+        revision: 3,
+        sheet: params.sheet,
+        cell: params.cell,
+        before: '旧值',
+        after: params.value,
+        previewConfirmed: true
+      }
+      receipts.set(operationId, { digest, result })
+      return result
+    },
+    clearRunTarget: (): boolean => false,
+    closeSession: async (): Promise<void> => {},
+    dispose: async (): Promise<void> => {},
+    ownsPreviewUrl: (): boolean => false
+  }
+  const app = await harness(async () => session, { officeDev: true, officeService })
+  await app.invoke('projects:newSession', '/projects/office-apply-agent', 'ask')
+  const prompt = app.invoke('agent:prompt', 'initialize office apply runtime mapping')
+  while (!session.started) await tick()
+
+  const input = {
+    operation: { type: 'set_cell', sheet: 'Sheet1', cell: 'A1', value: '实验编号' },
+    baseRevision: 2
+  }
+  const apply = app.hostHandlers.get('office.apply')
+  assert.ok(apply)
+  const approval = app.approvalOptions[0] as {
+    getContext: (event: { agentRunId?: string }) => { sessionId: string; runId: string }
+    prepareClassifiedToolApproval: (
+      toolName: string,
+      input: Record<string, unknown>,
+      context: unknown,
+      event: { toolCallId: string }
+    ) => Promise<{ summary: string; approvalDigest: string }>
+    onApprovalResolved: (
+      request: {
+        sessionId: string
+        runId: string
+        requestId: string
+        toolCallId: string
+        toolName: string
+        approvalDigest: string
+      },
+      approved: boolean
+    ) => void
+  }
+  const context = approval.getContext({})
+  const prepared = await approval.prepareClassifiedToolApproval('office_apply', input, context, {
+    toolCallId: 'office-call-1'
+  })
+  assert.match(prepared.summary, /将 Sheet1!A1 从「旧值↵｀｀｀html」改为「实验编号」/u)
+  assert.match(prepared.summary, /文档：实验‹一›\.xlsx/u)
+  assert.equal(descriptions, 1)
+
+  const unapproved = (await apply(input, {
+    originSessionId: session.runtimeSessionId,
+    toolCallId: 'office-call-1'
+  })) as { ok: boolean; error?: { code?: string } }
+  assert.equal(unapproved.ok, false)
+  assert.equal(unapproved.error?.code, 'approval_changed')
+  assert.equal(applies.length, 0)
+
+  approval.onApprovalResolved(
+    {
+      ...context,
+      requestId: 'approval-office-1',
+      toolCallId: 'office-call-1',
+      toolName: 'office_apply',
+      approvalDigest: prepared.approvalDigest
+    },
+    true
+  )
+  const changedInput = { ...input, operation: { ...input.operation, value: '批准后篡改' } }
+  assert.deepEqual(
+    await approval.prepareClassifiedToolApproval('office_apply', changedInput, context, {
+      toolCallId: 'office-call-1'
+    }),
+    { summary: '', skipApproval: true }
+  )
+  assert.equal(descriptions, 1)
+  const changed = (await apply(changedInput, {
+    originSessionId: session.runtimeSessionId,
+    toolCallId: 'office-call-1'
+  })) as { ok: boolean; error?: { code?: string } }
+  assert.equal(changed.ok, false)
+  assert.equal(changed.error?.code, 'operation_conflict')
+  assert.equal(applies.length, 0)
+
+  approval.onApprovalResolved(
+    {
+      ...context,
+      requestId: 'approval-office-2',
+      toolCallId: 'office-call-2',
+      toolName: 'office_apply',
+      approvalDigest: prepared.approvalDigest
+    },
+    true
+  )
+  const applied = (await apply(input, {
+    originSessionId: session.runtimeSessionId,
+    toolCallId: 'office-call-2'
+  })) as { ok: boolean }
+  assert.equal(applied.ok, true)
+  assert.equal(applies.length, 1)
+  const replayPreparation = await approval.prepareClassifiedToolApproval(
+    'office_apply',
+    input,
+    context,
+    { toolCallId: 'office-call-2' }
+  )
+  assert.deepEqual(replayPreparation, { summary: '', skipApproval: true })
+  assert.equal(descriptions, 1)
+  const replay = (await apply(input, {
+    originSessionId: session.runtimeSessionId,
+    toolCallId: 'office-call-2'
+  })) as { ok: boolean; value?: { deduplicated?: boolean } }
+  assert.equal(replay.ok, true)
+  assert.equal(replay.value?.deduplicated, true)
+  assert.equal(applies.length, 1)
+
+  await app.invoke('agent:stop')
+  approval.onApprovalResolved(
+    {
+      ...context,
+      requestId: 'approval-office-late',
+      toolCallId: 'office-call-late',
+      toolName: 'office_apply',
+      approvalDigest: prepared.approvalDigest
+    },
+    true
+  )
+  const late = (await apply(input, {
+    originSessionId: session.runtimeSessionId,
+    agentRunId: context.runId,
+    toolCallId: 'office-call-late'
+  })) as { ok: boolean; error?: { code?: string } }
+  assert.equal(late.ok, false)
+  assert.equal(late.error?.code, 'approval_changed')
+  assert.equal(applies.length, 1)
+  await prompt
+})
+
+test('main auto and full modes follow existing write policy without Office approval tickets', async () => {
+  for (const permissionMode of ['auto', 'full'] as const) {
+    let writes = 0
+    const session = new FakeSession(`office-apply-${permissionMode}.jsonl`)
+    session.hold = true
+    const officeService = {
+      shouldBypassCellEditApproval: async (): Promise<boolean> => false,
+      applyCellEdit: async (_runId: string, params: Record<string, unknown>) => {
+        writes += 1
+        return {
+          applied: true,
+          saved: true,
+          revision: 1,
+          sheet: params.sheet,
+          cell: params.cell,
+          before: null,
+          after: params.value,
+          previewConfirmed: true
+        }
+      },
+      clearRunTarget: (): boolean => false,
+      closeSession: async (): Promise<void> => {},
+      dispose: async (): Promise<void> => {},
+      ownsPreviewUrl: (): boolean => false
+    }
+    const app = await harness(async () => session, { officeDev: true, officeService })
+    await app.invoke(
+      'projects:newSession',
+      `/projects/office-apply-${permissionMode}`,
+      permissionMode
+    )
+    const prompt = app.invoke('agent:prompt', `run office apply in ${permissionMode}`)
+    while (!session.started) await tick()
+    const apply = app.hostHandlers.get('office.apply')
+    assert.ok(apply)
+
+    const result = (await apply(
+      {
+        operation: { type: 'set_cell', sheet: 'Sheet1', cell: 'A1', value: permissionMode },
+        baseRevision: 0
+      },
+      { originSessionId: session.runtimeSessionId, toolCallId: `office-${permissionMode}` }
+    )) as { ok: boolean }
+    assert.equal(result.ok, true)
+    assert.equal(writes, 1)
+    assert.equal(app.approvalOptions.length, 0)
+
+    session.finish.resolve()
+    await prompt
+  }
+})
+
+test('main ask-mode Office delivery validates, records, and presents the approved output', async () => {
+  const deliveries: unknown[] = []
+  let delivered = false
+  const session = new FakeSession('office-deliver-agent.jsonl')
+  session.hold = true
+  const officeService = {
+    shouldBypassDeliverApproval: async (): Promise<boolean> => delivered,
+    describeDelivery: async () => ({
+      fileName: '报告.xlsx',
+      kind: 'xlsx' as const,
+      outputPath: '报告.xlsx'
+    }),
+    resolveRunTarget: () => ({ artifactId: 'artifact-1' }),
+    deliverDocument: async (
+      runId: string,
+      cwd: string,
+      cwdRealPath: string,
+      outputName: string | undefined,
+      options: {
+        operationId: string
+        authorize?: () => boolean | Promise<boolean>
+        validatePresentation?: (result: Record<string, unknown>) => void | Promise<void>
+      }
+    ) => {
+      if (!delivered && options.authorize && !(await options.authorize())) {
+        throw Object.assign(new Error('not authorized'), { code: 'approval_changed' })
+      }
+      const result = {
+        absolutePath: `${cwd}/报告.xlsx`,
+        outputPath: '报告.xlsx',
+        fileName: '报告.xlsx',
+        outputId: 'output-1',
+        kind: 'xlsx' as const,
+        revision: 3,
+        sha256: 'a'.repeat(64),
+        size: 321,
+        warnings: [] as string[],
+        checks: [
+          { name: 'schema' as const, status: 'passed' as const },
+          { name: 'xlsx_content' as const, status: 'passed' as const, sampled: 1 }
+        ]
+      }
+      deliveries.push({ runId, cwd, cwdRealPath, outputName, operationId: options.operationId })
+      await options.validatePresentation?.(result)
+      const response = delivered ? { ...result, deduplicated: true as const } : result
+      delivered = true
+      return response
+    },
+    clearRunTarget: (): boolean => false,
+    closeSession: async (): Promise<void> => {},
+    dispose: async (): Promise<void> => {},
+    ownsPreviewUrl: (): boolean => false
+  }
+  const app = await harness(async () => session, { officeDev: true, officeService })
+  await app.invoke('projects:newSession', '/projects/office-deliver-agent', 'ask')
+  const prompt = app.invoke('agent:prompt', 'deliver current office document')
+  while (!session.started) await tick()
+  const approval = app.approvalOptions[0] as {
+    getContext: (event: object) => { sessionId: string; runId: string }
+    prepareClassifiedToolApproval: (
+      toolName: string,
+      input: Record<string, unknown>,
+      context: unknown,
+      event: { toolCallId: string }
+    ) => Promise<{ summary: string; approvalDigest: string }>
+    onApprovalResolved: (request: Record<string, unknown>, approved: boolean) => void
+  }
+  const context = approval.getContext({})
+  const prepared = await approval.prepareClassifiedToolApproval(
+    'office_deliver',
+    { outputName: '报告' },
+    context,
+    { toolCallId: 'deliver-1' }
+  )
+  assert.match(prepared.summary, /Excel 表格.*报告\.xlsx.*相对位置/u)
+  approval.onApprovalResolved(
+    {
+      ...context,
+      requestId: 'approval-deliver-1',
+      toolCallId: 'deliver-1',
+      toolName: 'office_deliver',
+      approvalDigest: prepared.approvalDigest
+    },
+    true
+  )
+  const deliver = app.hostHandlers.get('office.deliver')
+  assert.ok(deliver)
+  const result = (await deliver(
+    { outputName: '报告', artifactId: 'forged', path: '/private/forged.xlsx' },
+    { originSessionId: session.runtimeSessionId, toolCallId: 'deliver-1' }
+  )) as { ok: boolean; value?: { outputPath?: string; checks?: { content?: string } } }
+  assert.equal(result.ok, true)
+  assert.equal(result.value?.outputPath, '报告.xlsx')
+  assert.equal(result.value?.checks?.content, 'passed')
+  assert.equal(deliveries.length, 1)
+  const event = app.appendedSessionEvents.find(
+    (entry) => (entry.event as { toolCallId?: string }).toolCallId === 'deliver-1'
+  )?.event as { files?: Array<{ office?: { outputId?: string; kind?: string } }> }
+  assert.equal(event.files?.[0]?.office?.outputId, 'output-1')
+  assert.equal(event.files?.[0]?.office?.kind, 'xlsx')
+  const deliveryEventIndex = app.appendedSessionEvents.findIndex(
+    (entry) => (entry.event as { toolCallId?: string }).toolCallId === 'deliver-1'
+  )
+  assert.notEqual(deliveryEventIndex, -1)
+  app.appendedSessionEvents.splice(deliveryEventIndex, 1)
+  assert.deepEqual(
+    await approval.prepareClassifiedToolApproval(
+      'office_deliver',
+      { outputName: '报告' },
+      context,
+      { toolCallId: 'deliver-1' }
+    ),
+    { summary: '', skipApproval: true }
+  )
+  const replay = (await deliver(
+    { outputName: '报告' },
+    { originSessionId: session.runtimeSessionId, toolCallId: 'deliver-1' }
+  )) as { ok: boolean; value?: { deduplicated?: boolean } }
+  assert.equal(replay.ok, true)
+  assert.equal(replay.value?.deduplicated, true)
+  assert.equal(deliveries.length, 2)
+  assert.equal(
+    app.appendedSessionEvents.filter(
+      (entry) => (entry.event as { toolCallId?: string }).toolCallId === 'deliver-1'
+    ).length,
+    1
+  )
+  await deliver(
+    { outputName: '报告' },
+    { originSessionId: session.runtimeSessionId, toolCallId: 'deliver-1' }
+  )
+  assert.equal(deliveries.length, 3)
+  assert.equal(
+    app.appendedSessionEvents.filter(
+      (entry) => (entry.event as { toolCallId?: string }).toolCallId === 'deliver-1'
+    ).length,
+    1
+  )
+
   session.finish.resolve()
   await prompt
 })
@@ -9582,6 +10086,46 @@ test(
     assert.deepEqual(app.deleted, ['A'])
   }
 )
+
+test('main IPC: session deletion closes Office resources before deleting history', async () => {
+  const closed: string[] = []
+  const officeService = {
+    clearRunTarget: (): boolean => false,
+    closeSession: async (sessionId: string): Promise<void> => {
+      assert.deepEqual(app.deleted, [])
+      closed.push(sessionId)
+    },
+    dispose: async (): Promise<void> => {},
+    ownsPreviewUrl: (): boolean => false
+  }
+  const app = await harness(undefined, { officeDev: true, officeService })
+  const current = (await app.invoke('sessions:create')) as { path: string; phiSessionId: string }
+
+  await app.invoke('sessions:delete', current.path)
+
+  assert.deepEqual(closed, [current.phiSessionId])
+  assert.deepEqual(app.deleted, [current.path])
+})
+
+test('main IPC: failed Office cleanup preserves session history for a safe retry', async () => {
+  const officeService = {
+    clearRunTarget: (): boolean => false,
+    closeSession: async (): Promise<void> => {
+      throw new Error('resident still alive')
+    },
+    dispose: async (): Promise<void> => {},
+    ownsPreviewUrl: (): boolean => false
+  }
+  const app = await harness(undefined, { officeDev: true, officeService })
+  const current = (await app.invoke('sessions:create')) as { path: string }
+
+  await assert.rejects(app.invoke('sessions:delete', current.path), /resident still alive/u)
+  assert.deepEqual(app.deleted, [])
+  assert.equal(
+    app.appLogs.some((entry) => entry.event === 'office_session_cleanup_failed'),
+    true
+  )
+})
 
 test(
   'main IPC: stopping immediately also cancels a prompt still queued for creation',

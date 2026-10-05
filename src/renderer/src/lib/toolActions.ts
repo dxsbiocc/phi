@@ -1,7 +1,15 @@
 export type ToolActionKind =
   'command' | 'python' | 'read' | 'edit' | 'search' | 'web' | 'notebook' | 'generic'
 
-const EDIT_TOOL_NAMES = new Set(['edit', 'write', 'apply_patch', 'patch', 'replace'])
+const EDIT_TOOL_NAMES = new Set([
+  'edit',
+  'write',
+  'apply_patch',
+  'patch',
+  'replace',
+  'office_apply',
+  'office_deliver'
+])
 const READ_TOOL_NAMES = new Set(['read', 'open', 'view'])
 const COMMAND_TOOL_NAMES = new Set([
   'bash',
@@ -78,4 +86,15 @@ export function toolActionKind(toolName: string, argsPreview = '', argsJson = ''
     return 'search'
   }
   return 'generic'
+}
+
+export function toolApprovalLabel(toolName: string, summary: string): string | undefined {
+  const name = normalizedToolName(toolName)
+  if (name === 'office_deliver') return '交付 Office 文件'
+  if (name !== 'office_apply') return undefined
+  if (summary.startsWith('新增幻灯片')) return '新增 PowerPoint 幻灯片'
+  if (summary.startsWith('修改第') && summary.includes('页')) return '修改 PowerPoint 文本'
+  if (summary.startsWith('新增段落')) return '新增 Word 段落'
+  if (summary.startsWith('修改第') && summary.includes('段')) return '修改 Word 段落'
+  return '修改 Office 文档'
 }

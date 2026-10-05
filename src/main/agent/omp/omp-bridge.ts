@@ -42,6 +42,7 @@ type BridgeHostRequest = {
   id: string
   method: string
   params?: unknown
+  context?: unknown
 }
 
 type BridgeHostResponse =
@@ -59,7 +60,18 @@ type BridgeHostResponse =
       stack?: string
     }
 
-type HostRequestHandler = (params: unknown) => unknown | Promise<unknown>
+export interface HostRequestContext {
+  readonly originSessionId?: string
+  readonly agentRunId?: string
+  readonly toolCallId?: string
+}
+
+type HostRequestHandler = (
+  params: unknown,
+  context: HostRequestContext
+) => unknown | Promise<unknown>
+
+const MAX_HOST_CONTEXT_ID_LENGTH = 512
 
 function isBridgeResponse(value: unknown): value is BridgeResponse {
   return (
@@ -88,6 +100,25 @@ function isBridgeHostRequest(value: unknown): value is BridgeHostRequest {
     typeof (value as { id?: unknown }).id === 'string' &&
     typeof (value as { method?: unknown }).method === 'string'
   )
+}
+
+function hostRequestContext(value: unknown): HostRequestContext {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+  const context = value as Record<string, unknown>
+  const originSessionId = boundedContextId(context.originSessionId)
+  const agentRunId = boundedContextId(context.agentRunId)
+  const toolCallId = boundedContextId(context.toolCallId)
+  return {
+    ...(originSessionId ? { originSessionId } : {}),
+    ...(agentRunId ? { agentRunId } : {}),
+    ...(toolCallId ? { toolCallId } : {})
+  }
+}
+
+function boundedContextId(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_HOST_CONTEXT_ID_LENGTH
+    ? value
+    : undefined
 }
 
 function asarUnpackedPath(path: string): string {
@@ -376,7 +407,7 @@ export class OmpBridge extends EventEmitter {
       if (!handler) {
         throw new Error(`Unknown host request method: ${request.method}`)
       }
-      const result = await handler(request.params)
+      const result = await handler(request.params, hostRequestContext(request.context))
       respond({ type: 'hostResponse', id: request.id, ok: true, result })
     } catch (error) {
       respond({

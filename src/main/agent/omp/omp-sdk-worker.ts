@@ -125,6 +125,7 @@ import {
 import { buildEnvRequestTool } from '../content/env-request-tool'
 import { buildScriptTools, buildSkillRunTool } from '../content/skill-tools'
 import type { ScriptToolDescriptor } from '../content/skill-tool-types'
+import { buildOfficeTools, type OfficeHostRequest } from '../office/office-tools'
 import {
   filterEnabledMainSkills,
   filterMainScriptTools,
@@ -171,6 +172,7 @@ type SessionEntry = {
   /** Stops telling the main process about those runs (used when the session goes away). */
   stopAgentRunNotices?: () => void
   browserTextVault?: BrowserTextVault
+  activeHostRunId?: string
 }
 
 type WorkerPromptOptions = {
@@ -201,6 +203,12 @@ type HostResponse =
       error: string
       stack?: string
     }
+
+type HostRequestContext = {
+  originSessionId?: string
+  agentRunId?: string
+  toolCallId?: string
+}
 
 type RuntimeModelSummary = {
   provider: string
@@ -328,17 +336,33 @@ function isHostResponse(value: unknown): value is HostResponse {
   )
 }
 
-function requestHost(method: string, params: unknown): Promise<unknown> {
+function requestHost(
+  method: string,
+  params: unknown,
+  context?: HostRequestContext
+): Promise<unknown> {
   const id = randomUUID()
   send({
     type: 'hostRequest',
     id,
     method,
-    params
+    params,
+    ...(context ? { context } : {})
   })
   return new Promise<unknown>((resolve, reject) => {
     pendingHostRequests.set(id, { resolve, reject })
   })
+}
+
+function officeHostRequest(sessionId: string): OfficeHostRequest {
+  return (method, params, requestContext) => {
+    const activeHostRunId = sessions.get(sessionId)?.activeHostRunId
+    return requestHost(method, params, {
+      ...requestContext,
+      originSessionId: sessionId,
+      ...(activeHostRunId ? { agentRunId: activeHostRunId } : {})
+    })
+  }
 }
 
 function handleHostResponse(response: HostResponse): void {
@@ -1516,6 +1540,7 @@ async function createSession(params: unknown): Promise<unknown> {
         !remoteRoot && parentRef.current?.session.getPlanModeState()?.enabled !== true
     }
   )
+  const officeCustomTools = remoteRoot ? [] : buildOfficeTools(officeHostRequest(sessionId))
   const customTools = [
     ...(remoteRoot
       ? [
@@ -1674,6 +1699,7 @@ async function createSession(params: unknown): Promise<unknown> {
           )
         ]
       : []),
+    ...officeCustomTools,
     browserCustomTool
   ]
 
@@ -1809,12 +1835,19 @@ async function promptSession(params: unknown): Promise<unknown> {
   const sessionId = stringValue(record.sessionId)
   const entry = sessions.get(sessionId)
   if (!entry) throw new Error(`Unknown session: ${sessionId}`)
-  if (entry.browserTextVault) {
-    await withBrowserTextVaultCleanup(entry.browserTextVault, () =>
-      entry.result.session.prompt(stringValue(record.text), promptOptions(record.options))
-    )
-  } else {
-    await entry.result.session.prompt(stringValue(record.text), promptOptions(record.options))
+  const rawHostRunId = isRecord(record.options) ? stringValue(record.options.hostRunId) : ''
+  const hostRunId = rawHostRunId && rawHostRunId.length <= 200 ? rawHostRunId : undefined
+  entry.activeHostRunId = hostRunId
+  try {
+    if (entry.browserTextVault) {
+      await withBrowserTextVaultCleanup(entry.browserTextVault, () =>
+        entry.result.session.prompt(stringValue(record.text), promptOptions(record.options))
+      )
+    } else {
+      await entry.result.session.prompt(stringValue(record.text), promptOptions(record.options))
+    }
+  } finally {
+    if (entry.activeHostRunId === hostRunId) entry.activeHostRunId = undefined
   }
   return serializeSessionState(entry.result)
 }

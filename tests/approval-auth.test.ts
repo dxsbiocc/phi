@@ -3,6 +3,7 @@ import { registerHooks } from 'node:module'
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import { planModeToolDecision } from '../src/main/agent/plan/plan-tool-policy'
+import { officeToolApproval } from '../src/main/agent/office/office-tools'
 
 const electronMockUrl = 'phi-test:electron'
 
@@ -526,6 +527,116 @@ test('remote edit approval binds old/new text without showing file content', asy
   await pending
 })
 
+test('classified tool approval can prepare a safe summary and exact digest before prompting', async () => {
+  const window = new FakeWindow()
+  __electronMock.setFocusedWindow(window)
+  let handler: ToolHandler | undefined
+  const extension = createApprovalExtension({
+    classifyTool: (toolName) => (toolName === 'office_apply' ? 'write' : undefined),
+    prepareClassifiedToolApproval: async (toolName, input) => {
+      assert.equal(toolName, 'office_apply')
+      assert.deepEqual(input, {
+        operation: { type: 'set_cell', sheet: 'Sheet1', cell: 'A1', value: 'secret' },
+        baseRevision: 3
+      })
+      return { summary: '安全摘要', approvalDigest: 'digest-3' }
+    }
+  })
+  if (typeof extension !== 'function') {
+    await extension.factory({
+      on(eventName: string, candidate: ToolHandler): void {
+        if (eventName === 'tool_call') handler = candidate
+      }
+    } as never)
+  }
+  assert.ok(handler)
+
+  const pending = handler(
+    {
+      toolName: 'office_apply',
+      toolCallId: 'office-tool-1',
+      input: {
+        operation: { type: 'set_cell', sheet: 'Sheet1', cell: 'A1', value: 'secret' },
+        baseRevision: 3
+      }
+    },
+    {}
+  )
+  await Promise.resolve()
+  const request = window.webContents.sent[0].payload as {
+    requestId: string
+    summary: string
+    approvalDigest: string
+  }
+  assert.equal(request.summary, '安全摘要')
+  assert.equal(request.approvalDigest, 'digest-3')
+  resolveToolApproval(request.requestId, false, window.webContents)
+  await pending
+})
+
+test('classified tool preparation failure blocks the call without showing an empty approval', async () => {
+  const window = new FakeWindow()
+  __electronMock.setFocusedWindow(window)
+  let handler: ToolHandler | undefined
+  const extension = createApprovalExtension({
+    classifyTool: (toolName) => (toolName === 'office_apply' ? 'write' : undefined),
+    prepareClassifiedToolApproval: async () => {
+      throw new Error('文档已更新，请先重新读取')
+    }
+  })
+  if (typeof extension !== 'function') {
+    await extension.factory({
+      on(eventName: string, candidate: ToolHandler): void {
+        if (eventName === 'tool_call') handler = candidate
+      }
+    } as never)
+  }
+  assert.ok(handler)
+
+  assert.deepEqual(await handler({ toolName: 'office_apply', input: {} }, {}), {
+    block: true,
+    reason: '文档已更新，请先重新读取'
+  })
+  assert.deepEqual(window.webContents.sent, [])
+})
+
+test('classified tool preparation can bypass an already completed idempotent write', async () => {
+  __electronMock.setFocusedWindow(null)
+  let handler: ToolHandler | undefined
+  let prepared = 0
+  const extension = createApprovalExtension({
+    classifyTool: (toolName) => (toolName === 'office_apply' ? 'write' : undefined),
+    prepareClassifiedToolApproval: async () => {
+      prepared += 1
+      return { summary: '', skipApproval: true }
+    },
+    onApprovalRequested: () => {
+      throw new Error('must not request approval')
+    }
+  })
+  if (typeof extension !== 'function') {
+    await extension.factory({
+      on(eventName: string, candidate: ToolHandler): void {
+        if (eventName === 'tool_call') handler = candidate
+      }
+    } as never)
+  }
+  assert.ok(handler)
+
+  assert.equal(
+    await handler(
+      {
+        toolName: 'office_apply',
+        toolCallId: 'completed-office-call',
+        input: { operation: { type: 'set_cell' }, baseRevision: 0 }
+      },
+      {}
+    ),
+    undefined
+  )
+  assert.equal(prepared, 1)
+})
+
 test('a remote approval hook follows the current ask/auto/full policy without session recreation', async () => {
   const window = new FakeWindow()
   __electronMock.setFocusedWindow(window)
@@ -754,6 +865,41 @@ test('classifyTool gates exec and write skill tools and leaves read alone', asyn
   assert.match(bashRequest.summary, /date/)
   resolveToolApproval(bashRequest.requestId, true, window.webContents)
   assert.equal(await bashPending, undefined)
+})
+
+test('Office read stays approval-free in ask and auto while the reserved write classification gates', async () => {
+  const window = new FakeWindow()
+  __electronMock.setFocusedWindow(window)
+  let ask = false
+  let handler: ToolHandler | undefined
+  const extension = createApprovalExtension({
+    shouldGate: () => ask,
+    classifyTool: (toolName) => officeToolApproval(toolName)
+  })
+  if (typeof extension !== 'function') {
+    await extension.factory({
+      on(eventName: string, candidate: ToolHandler): void {
+        if (eventName === 'tool_call') handler = candidate
+      }
+    } as never)
+  }
+  assert.ok(handler)
+
+  assert.equal(await handler({ toolName: 'office_read', input: { range: 'A1' } }, {}), undefined)
+  assert.equal(await handler({ toolName: 'office_apply', input: { cell: 'A1' } }, {}), undefined)
+  assert.equal(window.webContents.sent.length, 0)
+
+  ask = true
+  assert.equal(await handler({ toolName: 'office_read', input: { range: 'A1' } }, {}), undefined)
+  assert.equal(window.webContents.sent.length, 0)
+  const pending = handler({ toolName: 'office_apply', input: { cell: 'A1' } }, {})
+  const request = window.webContents.sent[0].payload as { requestId: string; toolName: string }
+  assert.equal(request.toolName, 'office_apply')
+  resolveToolApproval(request.requestId, false, window.webContents)
+  assert.deepEqual(await pending, {
+    block: true,
+    reason: '用户未批准，未做任何修改'
+  })
 })
 
 test('plan mode blocks skill_run and script tools', () => {

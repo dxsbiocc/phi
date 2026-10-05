@@ -1,0 +1,15 @@
+{
+  "officecli": {
+    "version": "1.0.153",
+    "platforms": {
+      "darwin-arm64": {
+        "url": "https://github.com/iOfficeAI/OfficeCLI/releases/download/v1.0.153/officecli-mac-arm64",
+        "sha256": "61d6449da326c234149352a82e6047bd73b38e7d34d8b23310bd877b4ea65e79"
+      },
+      "darwin-x64": {
+        "url": "https://github.com/iOfficeAI/OfficeCLI/releases/download/v1.0.153/officecli-mac-x64",
+        "sha256": "64d5084ed2fc7cce05954ecaf5f8247d53fa272626d5872f6fb1f018bc628fee"
+      }
+    }
+  }
+}

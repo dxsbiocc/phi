@@ -12,7 +12,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { validatePresentedFiles } from '../src/main/agent/deliverables/present-files'
+import {
+  validateOfficePresentedFile,
+  validatePresentedFiles
+} from '../src/main/agent/deliverables/present-files'
 import { buildPresentFilesTool } from '../src/main/agent/deliverables/present-tool'
 
 function withWorkspace(run: (root: string, outside: string) => void): void {
@@ -104,4 +107,26 @@ test('present_files reports host validation failures as tool errors', async () =
   const result = await tool.execute('call-1', { files: [{ path: '../private.txt' }] })
   assert.equal(result.isError, true)
   assert.match(result.content[0].text ?? '', /outside the current workspace/)
+})
+
+test('Office delivery reuses present_files path validation and adds trusted metadata', () => {
+  withWorkspace((root) => {
+    const path = join(root, 'report.xlsx')
+    writeFileSync(path, 'office output')
+    const file = validateOfficePresentedFile(root, {
+      path,
+      artifactId: 'artifact-1',
+      outputId: 'output-1',
+      kind: 'xlsx',
+      revision: 3,
+      sha256: 'a'.repeat(64),
+      warnings: [],
+      checks: { schema: 'passed', content: 'passed', samples: 1 }
+    })
+
+    assert.equal(file.path, realpathSync(path))
+    assert.equal(file.displayPath, 'report.xlsx')
+    assert.equal(file.office?.outputId, 'output-1')
+    assert.equal(file.office?.kind, 'xlsx')
+  })
 })

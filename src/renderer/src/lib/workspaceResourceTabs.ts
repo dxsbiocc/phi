@@ -61,6 +61,15 @@ export function workspaceSessionTabKey(path: string | null, sessionGeneration: n
   return path ? `session:${path}` : `session:fresh:${sessionGeneration}`
 }
 
+/**
+ * A finished prompt moves the active tab to the session's own tab, but only from a session tab. With the
+ * conversation docked in the sidebar the user may be viewing a file, Office draft or resource tab, and
+ * switching away from it would blank the pane they are watching.
+ */
+export function activeTabKeyAfterPrompt(currentKey: string | null, sessionTabKey: string): string {
+  return currentKey === null || currentKey.startsWith('session:') ? sessionTabKey : currentKey
+}
+
 export function visibleWorkspaceTabsForState({
   currentSessionTab,
   workspaceTabs,

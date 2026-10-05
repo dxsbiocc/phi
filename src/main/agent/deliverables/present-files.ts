@@ -1,7 +1,11 @@
 import { lstatSync, realpathSync } from 'node:fs'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 
-import { MAX_PRESENTED_FILES, type PresentedFile } from '../../../shared/presentedFileTypes'
+import {
+  MAX_PRESENTED_FILES,
+  type PresentedFile,
+  type PresentedOfficeFile
+} from '../../../shared/presentedFileTypes'
 
 const MAX_PATH_LENGTH = 4096
 const MAX_DESCRIPTION_LENGTH = 160
@@ -56,4 +60,30 @@ export function validatePresentedFiles(cwd: string, value: unknown): PresentedFi
       ...(description ? { description } : {})
     }
   })
+}
+
+export function validateOfficePresentedFile(
+  cwd: string,
+  input: PresentedOfficeFile & { readonly path: string; readonly description?: string }
+): PresentedFile {
+  const description = input.description ?? officeDescription(input.kind)
+  const [file] = validatePresentedFiles(cwd, [{ path: input.path, description }])
+  return {
+    ...file,
+    office: {
+      artifactId: input.artifactId,
+      outputId: input.outputId,
+      kind: input.kind,
+      revision: input.revision,
+      sha256: input.sha256,
+      warnings: [...input.warnings],
+      checks: { ...input.checks }
+    }
+  }
+}
+
+function officeDescription(kind: PresentedOfficeFile['kind']): string {
+  if (kind === 'xlsx') return '经重新打开和内容检查的 Excel 表格'
+  if (kind === 'docx') return '经重新打开和内容检查的 Word 文档'
+  return '经重新打开和内容检查的 PowerPoint 演示文稿'
 }

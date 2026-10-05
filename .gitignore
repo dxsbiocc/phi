@@ -22,6 +22,10 @@ resources/wrappers/index.json
 # sha256 live in resources/runtime/manifest.json, which is committed.
 resources/runtime/micromamba/
 
+# OfficeCLI binaries downloaded by `bun run office:fetch`. Version, URL, and sha256
+# live in resources/office/manifest.json, which is committed.
+resources/office/officecli/
+
 # Local agent-tool runtime state (progress tracking, screenshots) — not
 # project source.
 .omx/

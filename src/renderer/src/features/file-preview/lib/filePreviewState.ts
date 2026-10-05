@@ -25,6 +25,26 @@ export type FileDownloadState =
     }
   | { status: 'error'; sourcePath: string; message: string }
 
+export type DefaultAppIconMode = 'native' | 'extension'
+
+const OFFICE_DRAFT_EXTENSION_PATTERN = /\.(?:xlsx|docx|pptx)$/i
+
+export function isOfficeDraftFilePath(path: string): boolean {
+  const normalizedPath = path.replaceAll('\\', '/')
+  return (
+    /(?:^|\/)artifacts\/office\/[^/]+\/[^/]+$/.test(normalizedPath) &&
+    OFFICE_DRAFT_EXTENSION_PATTERN.test(normalizedPath)
+  )
+}
+
+export function defaultAppIconMode(
+  path: string,
+  pathKind: 'file' | 'directory'
+): DefaultAppIconMode {
+  if (pathKind !== 'file') return 'native'
+  return isOfficeDraftFilePath(path) ? 'extension' : 'native'
+}
+
 export function fileNameFromPath(path: string): string {
   return path.split('/').filter(Boolean).pop() ?? path
 }
@@ -47,6 +67,7 @@ export function previewFullPath(state: FilePreviewPanelState): string {
 }
 
 export function previewDisplayPath(state: FilePreviewPanelState): string {
+  if (isOfficeDraftFilePath(previewFullPath(state))) return fileNameFromPath(previewFullPath(state))
   if (state.status === 'ready') return state.file.displayPath
   if (state.status === 'directory') return state.directory.displayPath
   return fileNameFromPath(state.path)
@@ -64,6 +85,7 @@ export function previewTreeRootPath(state: FilePreviewPanelState): string {
 }
 
 export function previewRootLabel(state: FilePreviewPanelState): string {
+  if (isOfficeDraftFilePath(previewFullPath(state))) return 'Office 草稿'
   if (state.status === 'ready') return state.file.rootLabel
   if (state.status === 'directory') return state.directory.rootLabel
   if (state.path.startsWith('ssh://')) {

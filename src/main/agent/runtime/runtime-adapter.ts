@@ -128,6 +128,7 @@ export interface ModelRuntime {
 export type AgentSessionEvent = { type: string } & Record<string, unknown>
 export type RuntimePromptOptions = {
   preflightResult?: (accepted: boolean) => void
+  hostRunId?: string
   images?: Array<{ type: 'image'; data: string; mimeType: string }>
   expandPromptTemplates?: boolean
   synthetic?: boolean
@@ -630,6 +631,7 @@ function runtimePromptOptionsForWorker(
 ): Record<string, unknown> | undefined {
   if (!options) return undefined
   const promptOptions = {
+    ...(typeof options.hostRunId === 'string' ? { hostRunId: options.hostRunId } : {}),
     ...(options.images?.length ? { images: options.images } : {}),
     ...(typeof options.expandPromptTemplates === 'boolean'
       ? { expandPromptTemplates: options.expandPromptTemplates }

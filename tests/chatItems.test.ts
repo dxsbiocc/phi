@@ -1577,3 +1577,52 @@ test('presented files keep a valid artifact and drop invalid artifact metadata',
   })
   assert.deepEqual(partial?.files[0]?.artifact, { kind: 'table', title: 'Counts' })
 })
+
+test('presented Office files keep bounded delivery metadata across timeline replay', () => {
+  const sha256 = 'a'.repeat(64)
+  const item = presentedFilesItemFromPhiTimelineEvent({
+    type: 'files_presented',
+    eventId: 'office-delivery',
+    files: [
+      {
+        path: '/project/报告.docx',
+        displayPath: '报告.docx',
+        bytes: 120,
+        office: {
+          artifactId: 'artifact-1',
+          outputId: 'output-1',
+          kind: 'docx',
+          revision: 3,
+          sha256,
+          warnings: ['复杂版式未做像素级校验'],
+          checks: { schema: 'passed', content: 'passed', samples: 2 }
+        }
+      }
+    ]
+  })
+
+  assert.deepEqual(item?.files[0]?.office, {
+    artifactId: 'artifact-1',
+    outputId: 'output-1',
+    kind: 'docx',
+    revision: 3,
+    sha256,
+    warnings: ['复杂版式未做像素级校验'],
+    checks: { schema: 'passed', content: 'passed', samples: 2 }
+  })
+
+  assert.equal(
+    presentedFilesItemFromPhiTimelineEvent({
+      type: 'files_presented',
+      files: [
+        {
+          path: '/project/报告.docx',
+          displayPath: '报告.docx',
+          bytes: 120,
+          office: { ...item?.files[0]?.office, sha256: 'tampered' }
+        }
+      ]
+    }),
+    null
+  )
+})

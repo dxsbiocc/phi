@@ -1,11 +1,15 @@
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { useEffect, useState } from 'react'
-import { PhiIcons } from '../../icons'
+import { PhiIcons, fileIconForPath } from '../../icons'
 import type { DirectoryListing } from '../../types'
+import { isOfficeDocumentPath } from '../../lib/officeDocumentPath'
+import { OfficePanel } from '../office/OfficePanel'
+import { OfficeImportAction } from '../office/components/OfficeImportAction'
 import { FilePreviewBody } from './components/FilePreviewBody'
 import { ResultDownloadStatus } from './components/ResultDownloadStatus'
 import {
+  defaultAppIconMode,
   previewDisplayPath,
   previewFullPath,
   previewIconForState,
@@ -72,6 +76,10 @@ function fileManagerLabel(): string {
   if (typeof window !== 'undefined' && window.platform === 'darwin') return 'Finder 中显示'
   if (typeof window !== 'undefined' && window.platform === 'win32') return '资源管理器中显示'
   return '文件管理器中显示'
+}
+
+function officePreviewEnabled(): boolean {
+  return typeof window !== 'undefined' && window.api?.office?.enabled === true
 }
 
 export function FilePreviewTitleTab({
@@ -236,6 +244,9 @@ function FilePreviewActions({
 }): React.JSX.Element {
   const isRemote = path.startsWith('ssh://')
   const revealLabel = fileManagerLabel()
+  const iconMode = defaultAppIconMode(path, pathKind)
+  const extensionIcon = iconMode === 'extension' ? fileIconForPath(path) : null
+  const ExtensionIcon = extensionIcon?.Icon
   const [defaultAppIcon, setDefaultAppIcon] = useState<{ path: string; src: string | null } | null>(
     null
   )
@@ -246,6 +257,7 @@ function FilePreviewActions({
 
     if (
       isRemote ||
+      iconMode === 'extension' ||
       typeof window === 'undefined' ||
       typeof window.api?.getFileIcon !== 'function'
     ) {
@@ -266,7 +278,7 @@ function FilePreviewActions({
     return () => {
       active = false
     }
-  }, [isRemote, path])
+  }, [iconMode, isRemote, path])
 
   if (isRemote) {
     return (
@@ -349,6 +361,11 @@ function FilePreviewActions({
                 flexShrink: 0
               }}
             />
+          ) : ExtensionIcon && extensionIcon ? (
+            <ExtensionIcon
+              data-phi-file-open-default-app-icon="extension"
+              sx={{ flexShrink: 0, fontSize: 18, color: extensionIcon.color }}
+            />
           ) : (
             <DefaultOpenIcon sx={{ fontSize: 17 }} />
           )}
@@ -395,6 +412,8 @@ export default function FilePreviewPanel({
   const previewIcon = previewIconForState(state)
   const isDirectoryState = state.status === 'directory'
   const availableDownload = downloadState?.status === 'running' ? undefined : onDownloadFile
+  const isOfficePreview = officePreviewEnabled() && isOfficeDocumentPath(path)
+  const officeBridge = typeof window !== 'undefined' ? window.api?.office : undefined
 
   return (
     <Box
@@ -443,6 +462,10 @@ export default function FilePreviewPanel({
         />
       </Box>
 
+      {officeBridge ? (
+        <OfficeImportAction bridge={officeBridge} sourcePath={path} onImported={onOpenFile} />
+      ) : null}
+
       <ResultDownloadStatus state={downloadState} onCancel={onCancelDownload} />
 
       <Box
@@ -464,12 +487,16 @@ export default function FilePreviewPanel({
             flexDirection: 'column'
           }}
         >
-          <FilePreviewBody
-            state={state}
-            onOpenFile={onOpenFile}
-            onListDirectory={onListDirectory}
-            onDownloadFile={availableDownload}
-          />
+          {isOfficePreview ? (
+            <OfficePanel key={path} sourcePath={path} />
+          ) : (
+            <FilePreviewBody
+              state={state}
+              onOpenFile={onOpenFile}
+              onListDirectory={onListDirectory}
+              onDownloadFile={availableDownload}
+            />
+          )}
         </Box>
       </Box>
     </Box>

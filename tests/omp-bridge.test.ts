@@ -140,3 +140,42 @@ test('sanity: the fake worker really forgets sessions across restarts', async ()
     }
   })
 })
+
+test('host requests deliver runtime context separately from tool parameters', async () => {
+  await withAgentDir(async () => {
+    const bridge = newBridge()
+    try {
+      bridge.registerHostHandler(
+        'office.read',
+        (
+          params,
+          context?: { originSessionId?: string; agentRunId?: string; toolCallId?: string }
+        ) => ({
+          params,
+          context
+        })
+      )
+      const result = await bridge.request('test.hostRequest', {
+        method: 'office.read',
+        hostParams: { sheet: 'Sheet1', range: 'A1:B3' },
+        context: {
+          originSessionId: 'runtime-main',
+          agentRunId: 'child-run',
+          toolCallId: 'tool-apply-1',
+          forged: 'ignored'
+        }
+      })
+
+      assert.deepEqual(result, {
+        params: { sheet: 'Sheet1', range: 'A1:B3' },
+        context: {
+          originSessionId: 'runtime-main',
+          agentRunId: 'child-run',
+          toolCallId: 'tool-apply-1'
+        }
+      })
+    } finally {
+      await bridge.stop()
+    }
+  })
+})

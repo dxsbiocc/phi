@@ -39,6 +39,8 @@ import { useComposerFileDrop } from '../../components/chat/useComposerFileDrop'
 import { useInputFileReferenceMenu } from '../../components/chat/useInputFileReferenceMenu'
 import { useInputInvocationReferenceMenu } from '../../components/chat/useInputInvocationReferenceMenu'
 import { PhiIcons } from '../../icons'
+import { OfficeTargetChip } from '../office/components/OfficeTargetChip'
+import type { OfficeComposerTarget } from '../office/lib/officePromptTarget'
 import { GoPaperAirplane, GoSquare } from 'react-icons/go'
 import {
   canNavigatePromptHistory,
@@ -136,6 +138,9 @@ type ViewProps = {
   onInputFilesDropped?: (cb: (paths: string[]) => void) => () => void
   onListInputDirectory?: (path: string) => Promise<DirectoryListing>
   onChatSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>
+  officeTarget?: OfficeComposerTarget
+  onRemoveOfficeTarget?: () => void
+  onClearOfficeSelection?: () => void
   planReviewEnabled?: boolean
   onTogglePlanReview?: () => void
   disablePlanReview?: boolean
@@ -199,6 +204,9 @@ function ChatView({
   onInputFilesDropped,
   onListInputDirectory,
   onChatSubmit,
+  officeTarget,
+  onRemoveOfficeTarget,
+  onClearOfficeSelection,
   planReviewEnabled = false,
   onTogglePlanReview,
   disablePlanReview = false,
@@ -729,6 +737,13 @@ function ChatView({
               dragActive: composerDragActive
             })}
           >
+            {officeTarget && onRemoveOfficeTarget && (
+              <OfficeTargetChip
+                target={officeTarget}
+                onClearSelection={onClearOfficeSelection}
+                onRemove={onRemoveOfficeTarget}
+              />
+            )}
             <FileReferenceCards
               paths={composerFileReferences}
               variant="composer"

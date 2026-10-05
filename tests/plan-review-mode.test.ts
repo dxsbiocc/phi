@@ -134,3 +134,18 @@ test('plan tool guard blocks workspace mutations and hidden device calls', () =>
   }
   assert.equal(planModeToolDecision(false, 'bash', { command: 'npm test' }).allowed, true)
 })
+
+test('plan mode keeps office_read available while reserving office_apply as a blocked write', async () => {
+  const session = fakeSession()
+  session.activeTools.push('office_read', 'office_apply')
+  await enterPlanReviewMode(
+    session,
+    async () => ({ title: 'plan', content: '# Plan', planFilePath: 'local://plan.md' }),
+    async () => ({ decision: 'approve' })
+  )
+
+  assert.equal(session.activeTools.includes('office_read'), true)
+  assert.equal(session.activeTools.includes('office_apply'), false)
+  assert.equal(planModeToolDecision(true, 'office_read', {}).allowed, true)
+  assert.equal(planModeToolDecision(true, 'office_apply', {}).allowed, false)
+})

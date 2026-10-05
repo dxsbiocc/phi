@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { BrowserRendererBridge, BrowserRendererEventEnvelope } from '../shared/browserTypes'
 import type { TerminalEvent, TerminalRendererBridge } from '../shared/terminalTypes'
+import type {
+  OfficePromptTargetFailure,
+  OfficeRendererBridge,
+  OfficeSelectionEvent,
+  OfficeTargetInput
+} from '../shared/officeProtocol'
+import { sanitizePromptTargetForIpc } from './promptTarget'
 import type { RemoteWorkspaceFileRequest } from '../shared/remoteWorkspacePath'
 import type {
   WrapperResultDirectoryRequest,
@@ -221,11 +228,9 @@ type CurrentSession = SessionRuntimeState & {
   messages?: unknown[]
 }
 
-type PromptResult = {
-  path: string | null
-  phiSessionId?: string
-  sessionGeneration: number
-}
+type PromptResult =
+  | { path: string | null; phiSessionId?: string; sessionGeneration: number }
+  | OfficePromptTargetFailure
 
 type PromptTarget = {
   path: string | null
@@ -236,6 +241,7 @@ type PromptTarget = {
   retryUserMessageId?: string
   images?: PromptImageInput[]
   planMode?: boolean
+  officeTarget?: OfficeTargetInput
 }
 
 type PermissionMode = 'auto' | 'ask' | 'full'
@@ -672,6 +678,7 @@ type AnalysisNotebookCodeGenerationProgress = {
 type RendererAuthApi = {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
+  office: OfficeRendererBridge
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
   toggleWindowFullscreen: () => Promise<void>
@@ -1059,9 +1066,40 @@ const terminalBridge: TerminalRendererBridge = {
   }
 }
 
+const officeBridge: OfficeRendererBridge = {
+  enabled: typeof process !== 'undefined' && process.env?.PHI_OFFICE_DEV === '1',
+  create: (input) => ipcRenderer.invoke('office:create', input),
+  cancelCreate: (input) => ipcRenderer.invoke('office:cancelCreate', input),
+  importFile: (input) => ipcRenderer.invoke('office:import', input),
+  cancelImport: (input) => ipcRenderer.invoke('office:cancelImport', input),
+  open: (input) => ipcRenderer.invoke('office:open', input),
+  close: (input) => ipcRenderer.invoke('office:close', input),
+  clearSelection: (input) => ipcRenderer.invoke('office:clearSelection', input),
+  reconcile: (input) => ipcRenderer.invoke('office:reconcile', input),
+  save: (input) => ipcRenderer.invoke('office:save', input),
+  saveAs: (input) => ipcRenderer.invoke('office:saveAs', input),
+  exportSheet: (input) => ipcRenderer.invoke('office:export', input),
+  cancelExport: (input) => ipcRenderer.invoke('office:cancelExport', input),
+  revealOutput: (input) => ipcRenderer.invoke('office:revealOutput', input),
+  resolveOutput: (input) => ipcRenderer.invoke('office:resolveOutput', input),
+  status: (input) => ipcRenderer.invoke('office:status', input),
+  setPreviewPreferences: (input) => ipcRenderer.invoke('office:setPreviewPreferences', input),
+  onSelection: (listener) => {
+    const handler = (_event: unknown, selection: OfficeSelectionEvent): void => listener(selection)
+    let subscribed = true
+    ipcRenderer.on('office:selection', handler)
+    return () => {
+      if (!subscribed) return
+      subscribed = false
+      ipcRenderer.removeListener('office:selection', handler)
+    }
+  }
+}
+
 const api: RendererAuthApi = {
   browser: browserBridge,
   terminal: terminalBridge,
+  office: officeBridge,
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   toggleWindowFullscreen: (): Promise<void> => ipcRenderer.invoke('window:toggle-fullscreen'),
@@ -1124,7 +1162,7 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('molecules:renderSvg', value, width, height),
   copyDiagnostics: (): Promise<string> => ipcRenderer.invoke('diagnostics:copy'),
   sendPrompt: (text: string, target?: PromptTarget): Promise<PromptResult | null> =>
-    ipcRenderer.invoke('agent:prompt', text, target),
+    ipcRenderer.invoke('agent:prompt', text, sanitizePromptTargetForIpc(target)),
   readPromptImage: (ref: StoredPromptImage): Promise<PromptImageInput> =>
     ipcRenderer.invoke('agent:readPromptImage', ref),
   readWorkspaceDiff: (ref: WorkspaceDiffReference): Promise<string> =>

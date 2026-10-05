@@ -19,6 +19,7 @@ import {
 } from '../src/renderer/src/lib/spreadsheetPreview'
 import type { DirectoryListing } from '../src/renderer/src/types'
 import { htmlReportSrcDoc } from '../src/shared/htmlReportPreview'
+import { isOfficeDocumentPath } from '../src/renderer/src/lib/officeDocumentPath'
 
 const readyPreviewState: FilePreviewPanelState = {
   status: 'ready',
@@ -121,6 +122,23 @@ test('file preview panel renders file content with line numbers', () => {
   assert.match(markup, />2<\/span>/)
   assert.match(markup, /const[\s\S]*answer[\s\S]*42/)
   assert.match(markup, /export[\s\S]*default[\s\S]*answer/)
+})
+
+test('Office draft breadcrumbs replace the artifact id with a friendly parent label', () => {
+  const markup = renderPanel({
+    status: 'loading',
+    path: '/phi/sessions/session-1/artifacts/office/0e54a0d9-4e66-4d8f/预算二.xlsx'
+  })
+
+  assert.match(markup, /aria-label="文件路径：Office 草稿 \/ 预算二\.xlsx"/)
+  assert.doesNotMatch(markup, /aria-label="文件路径：[^"]*0e54a0d9-4e66-4d8f[^"]*"/)
+})
+
+test('Office preview routing accepts xlsx, docx, and pptx paths case-insensitively', () => {
+  assert.equal(isOfficeDocumentPath('/project/report.xlsx'), true)
+  assert.equal(isOfficeDocumentPath('/project/report.DOCX'), true)
+  assert.equal(isOfficeDocumentPath('/project/report.PPTX'), true)
+  assert.equal(isOfficeDocumentPath('/project/report.docx.bak'), false)
 })
 
 test('remote HTML stays text and large results show metadata with a download entry', () => {

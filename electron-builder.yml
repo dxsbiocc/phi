@@ -16,6 +16,7 @@ files:
   - '!resources/**/work/**'
   - '!resources/**/results/**'
   - '!resources/runtime/micromamba/**'
+  - '!resources/office/officecli/**'
 asarUnpack:
   - resources/**
   - out/main/agent/omp-sdk-worker.ts
@@ -36,6 +37,8 @@ mac:
   extraResources:
     - from: resources/runtime/micromamba/darwin-${arch}
       to: runtime/micromamba/darwin-${arch}
+    - from: resources/office/officecli/darwin-${arch}
+      to: office/officecli/darwin-${arch}
   icon: build/icon.icns
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
