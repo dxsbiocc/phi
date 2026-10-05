@@ -44,7 +44,8 @@ export function ConnectorIcon({
         borderColor: 'divider',
         borderRadius: 1.5,
         overflow: 'hidden',
-        bgcolor: '#FFFFFF'
+        bgcolor: source ? '#FFFFFF' : 'action.hover',
+        color: 'text.secondary'
       }}
     >
       {source ? (

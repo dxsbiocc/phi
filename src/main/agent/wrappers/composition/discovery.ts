@@ -1,9 +1,10 @@
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { basename, dirname, join, relative } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 
 import type { WrapperCompositionCatalogItem } from '../../../../shared/wrapperCompositionManifestTypes'
-import { getEnablementSnapshot } from '../../enablement'
+import { getEnablementPath, getEnablementSnapshot } from '../../enablement'
 import { getPhiAgentDir } from '../../runtime-paths'
 import {
   readWrapperTreeRegistry,
@@ -43,6 +44,8 @@ export interface WrapperCompositionEntry {
   componentDir: string
   /** Installed package owner; absent for user-authored wrappers. */
   packageId?: string
+  /** Stable identifier for the existing wrapper enablement API. */
+  enablementId?: string
   /** Why agent tools must hide this wrapper. */
   hiddenReason?: string
 }
@@ -92,11 +95,26 @@ interface CachedCatalog {
   agentDir: string
   sourceRoot?: string
   projectDir?: string
+  revision?: string
   entries: WrapperCompositionEntry[]
   packageEnabled: Map<string, boolean>
+  packageSelected: Set<string>
 }
 
 let cachedCatalog: CachedCatalog | undefined
+
+function catalogRevision(agentDir: string): string {
+  return [wrapperTreeRegistryPath(agentDir), getEnablementPath(agentDir)]
+    .map((path) => {
+      try {
+        const stat = statSync(path)
+        return `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`
+      } catch {
+        return 'missing'
+      }
+    })
+    .join('|')
+}
 
 function customWrappersDir(agentDir: string): string {
   return join(dirname(wrapperTreeRegistryPath(agentDir)), 'custom')
@@ -135,12 +153,33 @@ function loadCatalog(agentDir: string, projectDir?: string): CachedCatalog {
   const treeRoot = wrapperTreeDir(agentDir)
   const packageByPath = new Map<string, string>()
   const packageEnabled = new Map<string, boolean>()
+  const packageSelected = new Set<string>()
   const enablement = getEnablementSnapshot({ agentDir, ...(projectDir ? { projectDir } : {}) })
+  const configured = (id: string): boolean | undefined =>
+    enablement.project[`wrapper:${id}`] ?? enablement.global[`wrapper:${id}`]
   for (const [id, state] of Object.entries(registry.packages)) {
-    const key = `wrapper:${id}`
-    packageEnabled.set(id, enablement.project[key] ?? enablement.global[key] ?? true)
+    // The former startup installer used this registry for every bundled package.
+    // Retain its payloads, but require a user choice before exposing them to tools.
+    const wasAutomaticallyInstalled = state.source.registry === 'bundled-wrappers'
+    const value = configured(id)
+    packageEnabled.set(id, value ?? !wasAutomaticallyInstalled)
+    if (value !== undefined || !wasAutomaticallyInstalled) packageSelected.add(id)
     for (const path of state.paths) packageByPath.set(path, id)
   }
+
+  const resolvedDependencies = new Set<string>()
+  const enableDependencies = (id: string): void => {
+    if (resolvedDependencies.has(id) || packageEnabled.get(id) !== true) return
+    resolvedDependencies.add(id)
+    for (const dependency of registry.packages[id]?.manifest.dependsOn ?? []) {
+      if (dependency.type !== 'wrapper' || !registry.packages[dependency.id]) continue
+      packageSelected.add(dependency.id)
+      // An explicit dependency override always wins over the selected root.
+      if (configured(dependency.id) !== false) packageEnabled.set(dependency.id, true)
+      enableDependencies(dependency.id)
+    }
+  }
+  for (const id of packageSelected) enableDependencies(id)
 
   const reasonCache = new Map<string, string | undefined>()
   const unavailableReason = (id: string, visiting = new Set<string>()): string | undefined => {
@@ -171,27 +210,45 @@ function loadCatalog(agentDir: string, projectDir?: string): CachedCatalog {
       return { ...entry, hiddenReason: 'Wrapper tree path has no package owner.' }
     }
     const hiddenReason = unavailableReason(entry.packageId)
-    return hiddenReason ? { ...entry, hiddenReason } : entry
+    return {
+      ...entry,
+      enablementId: entry.packageId,
+      ...(hiddenReason ? { hiddenReason } : {})
+    }
   })
   const seenIds = new Set(packaged.map((entry) => entry.manifest.id))
-  const custom = scanCompositionRoot(customWrappersDir(agentDir)).filter(
-    (entry) => !seenIds.has(entry.manifest.id)
-  )
+  const custom = scanCompositionRoot(customWrappersDir(agentDir))
+    .filter((entry) => !seenIds.has(entry.manifest.id))
+    .map((entry) => {
+      const enablementId = `custom-${createHash('sha256').update(entry.manifest.id).digest('hex').slice(0, 24)}`
+      const enabled = configured(enablementId) ?? true
+      packageEnabled.set(enablementId, enabled)
+      packageSelected.add(enablementId)
+      return {
+        ...entry,
+        enablementId,
+        ...(!enabled ? { hiddenReason: `自定义 wrapper ${entry.manifest.name} 已停用` } : {})
+      }
+    })
   const entries = [...packaged, ...custom].sort((left, right) =>
     left.manifest.id.localeCompare(right.manifest.id)
   )
-  return { agentDir, projectDir, entries, packageEnabled }
+  return { agentDir, projectDir, entries, packageEnabled, packageSelected }
 }
 
 function catalogFor(options: WrapperCompositionDiscoveryOptions = {}): CachedCatalog {
   const agentDir = options.agentDir ?? getPhiAgentDir()
   const sourceRoot = options.sourceRoot
   const projectDir = options.projectDir
+  // Enable/install IPC runs in the desktop host, while tool discovery also runs
+  // in long-lived agent workers. Observe persisted changes in both processes.
+  const revision = sourceRoot ? undefined : catalogRevision(agentDir)
   if (
     !cachedCatalog ||
     cachedCatalog.agentDir !== agentDir ||
     cachedCatalog.sourceRoot !== sourceRoot ||
-    cachedCatalog.projectDir !== projectDir
+    cachedCatalog.projectDir !== projectDir ||
+    cachedCatalog.revision !== revision
   ) {
     cachedCatalog = sourceRoot
       ? {
@@ -201,9 +258,11 @@ function catalogFor(options: WrapperCompositionDiscoveryOptions = {}): CachedCat
           entries: scanCompositionRoot(sourceRoot).sort((left, right) =>
             left.manifest.id.localeCompare(right.manifest.id)
           ),
-          packageEnabled: new Map()
+          packageEnabled: new Map(),
+          packageSelected: new Set()
         }
       : loadCatalog(agentDir, projectDir)
+    cachedCatalog.revision = revision
   }
   return cachedCatalog
 }
@@ -222,10 +281,12 @@ export function listWrapperCompositionCatalogStatus(
   const catalog = catalogFor(options)
   return catalog.entries.map((entry) => ({
     ...entry.manifest,
-    ...(entry.packageId
+    ...(entry.packageId ? { packageId: entry.packageId } : {}),
+    ...(entry.enablementId
       ? {
-          packageId: entry.packageId,
-          packageEnabled: catalog.packageEnabled.get(entry.packageId) !== false
+          enablementId: entry.enablementId,
+          packageSelected: catalog.packageSelected.has(entry.enablementId),
+          packageEnabled: catalog.packageEnabled.get(entry.enablementId) !== false
         }
       : {}),
     ...(entry.hiddenReason ? { hiddenReason: entry.hiddenReason } : {})

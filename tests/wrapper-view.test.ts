@@ -177,7 +177,7 @@ test('a local plan waits for a saved server before offering remote retarget', ()
 
 test('wrapper view shows an empty state when no wrappers are found', () => {
   const markup = renderView({ catalog: [], selectedId: null })
-  assert.match(markup, /没有发现任何 wrapper/)
+  assert.match(markup, /尚未添加 wrapper，从目录选择需要的内容/)
 })
 
 test('wrapper view groups catalog entries by tier', () => {

@@ -12,7 +12,8 @@ import {
   findWrapperCatalogEntry,
   getBundledWrapperPackagesDir,
   listDefaultAgentToolWrappers,
-  listWrapperCatalog
+  listWrapperCatalog,
+  migrateLegacyCustomWrappers
 } from '../src/main/agent/wrappers/catalog'
 import { buildLegacyWrapperPackIndex } from '../src/main/agent/wrappers/legacy-pack-migration'
 import {
@@ -103,6 +104,45 @@ test('bundled wrapper source fingerprint matches the shipped wrapper tree', () =
     fingerprintBundledWrapperSource(getBundledWrapperPackagesDir()),
     BUNDLED_WRAPPER_SOURCE_FINGERPRINT
   )
+})
+
+test('Finder metadata does not change a bundled wrapper source fingerprint', () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-wrapper-fingerprint-'))
+  try {
+    writeBundledCompositionFixture(root)
+    const expected = fingerprintBundledWrapperSource(root)
+    writeFileSync(join(root, '.DS_Store'), 'Finder root metadata')
+    writeFileSync(join(root, 'modules', '.DS_Store'), 'Finder module metadata')
+    assert.equal(fingerprintBundledWrapperSource(root), expected)
+    writeFileSync(
+      join(root, 'modules', 'acme', 'toy', 'wrapper', 'main.nf'),
+      'workflow { changed }\n'
+    )
+    assert.notEqual(fingerprintBundledWrapperSource(root), expected)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('startup migration preserves custom wrappers without installing the bundled catalogue', () => {
+  withAgentDir((agentDir) => {
+    assert.deepEqual(migrateLegacyCustomWrappers(agentDir), [])
+    assert.equal(existsSync(join(agentDir, 'wrappers', 'tree.json')), false)
+    assert.deepEqual(listWrapperCompositionCatalog({ agentDir }), [])
+
+    const customSource = join(agentDir, 'custom-source')
+    mkdirSync(customSource, { recursive: true })
+    writeCustomWrapperFixture(customSource)
+    addCustomWrapper(customSource, agentDir)
+    assert.deepEqual(migrateLegacyCustomWrappers(agentDir), ['acme/tools/toy-wrapper'])
+    assert.deepEqual(migrateLegacyCustomWrappers(agentDir), [])
+    resetWrapperCompositionCatalogCache()
+    assert.deepEqual(
+      listWrapperCompositionCatalog({ agentDir }).map((entry) => entry.manifest.id),
+      ['acme/modules/toy-wrapper']
+    )
+    assert.equal(existsSync(join(agentDir, 'wrappers', 'tree.json')), false)
+  })
 })
 
 test('bundled wrapper packages install idempotently into the assembled tree', async () => {

@@ -11,7 +11,10 @@ import { WorkspaceFilesPane } from './components/WorkspaceSidePanel'
 import { RemoteConnectionNotice } from './features/project/components/RemoteConnectionNotice'
 import type { AppView } from './App'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
-import type { WrapperCompositionManifest } from '../../shared/wrapperCompositionManifestTypes'
+import type {
+  WrapperCompositionCatalogItem,
+  WrapperCompositionManifest
+} from '../../shared/wrapperCompositionManifestTypes'
 import type { RemoteProjectConnectionState } from '../../shared/projectLocation'
 import type {
   AnalysisJupyterRuntimeStatus,
@@ -65,6 +68,8 @@ export type AppWorkspaceSidebarProps = {
   phiPlugins: PhiPluginDisplayItem[]
   activePhiPluginId: string | null
   isLoadingPhiPlugins: boolean
+  busyPhiPluginId?: string | null
+  onSetPhiPluginEnabled: (plugin: PhiPluginDisplayItem, enabled: boolean) => Promise<boolean>
   onOpenPhiPlugin: (plugin: PhiPluginDisplayItem) => void
   onOpenPhiPluginCatalog: () => void
   isPhiPluginCatalogOpen?: boolean
@@ -72,6 +77,8 @@ export type AppWorkspaceSidebarProps = {
   skills: SkillSummary[]
   activeSkillId: string | null
   isLoadingSkills: boolean
+  busySkillId?: string | null
+  onSetSkillEnabled: (skill: SkillSummary, enabled: boolean) => Promise<void>
   onOpenSkill: (skill: SkillSummary) => void
   onOpenSkillCatalog: () => void
 
@@ -80,11 +87,13 @@ export type AppWorkspaceSidebarProps = {
   onOpenMcpServer: (server: McpServerSummary) => void
   onRefreshMcpServers: () => Promise<void>
 
-  wrapperCatalog: WrapperCompositionManifest[]
+  wrapperCatalog: WrapperCompositionCatalogItem[]
   selectedWrapperId: string | null
   isLoadingWrappers: boolean
   onOpenWrapper: (entry: WrapperCompositionManifest) => void
-  onRefreshWrappers: () => void
+  onRefreshWrappers: () => void | Promise<void>
+  busyWrapperPackageId?: string | null
+  onSetWrapperPackageEnabled: (packageId: string, enabled: boolean) => Promise<boolean>
 
   sessions: SessionSummary[]
   activeSessionPath: string | null
@@ -160,12 +169,16 @@ function AppWorkspaceSidebarImpl({
   phiPlugins,
   activePhiPluginId,
   isLoadingPhiPlugins,
+  busyPhiPluginId,
+  onSetPhiPluginEnabled,
   onOpenPhiPlugin,
   onOpenPhiPluginCatalog,
   isPhiPluginCatalogOpen,
   skills,
   activeSkillId,
   isLoadingSkills,
+  busySkillId,
+  onSetSkillEnabled,
   onOpenSkill,
   onOpenSkillCatalog,
   mcpServers,
@@ -177,6 +190,8 @@ function AppWorkspaceSidebarImpl({
   isLoadingWrappers,
   onOpenWrapper,
   onRefreshWrappers,
+  busyWrapperPackageId,
+  onSetWrapperPackageEnabled,
   sessions,
   activeSessionPath,
   activeCwd,
@@ -362,6 +377,8 @@ function AppWorkspaceSidebarImpl({
       <PhiPluginSidebar
         plugins={phiPlugins}
         loading={isLoadingPhiPlugins}
+        busyPluginId={busyPhiPluginId}
+        onSetEnabled={onSetPhiPluginEnabled}
         activePluginId={activePhiPluginId}
         onSelectPlugin={(plugin) => navigate(() => onOpenPhiPlugin(plugin))}
         onOpenCatalog={() => navigate(onOpenPhiPluginCatalog)}
@@ -376,6 +393,8 @@ function AppWorkspaceSidebarImpl({
           <SkillSidebar
             skills={skills}
             isLoading={isLoadingSkills}
+            busySkillId={busySkillId}
+            onSetEnabled={onSetSkillEnabled}
             activeSkillId={activeSkillId}
             onSelectSkill={(skill) => navigate(() => onOpenSkill(skill))}
             onOpenCatalog={() => navigate(onOpenSkillCatalog)}
@@ -385,6 +404,8 @@ function AppWorkspaceSidebarImpl({
         <SkillSidebar
           skills={skills}
           isLoading={isLoadingSkills}
+          busySkillId={busySkillId}
+          onSetEnabled={onSetSkillEnabled}
           activeSkillId={activeSkillId}
           onSelectSkill={(skill) => navigate(() => onOpenSkill(skill))}
           onOpenCatalog={() => navigate(onOpenSkillCatalog)}
@@ -424,6 +445,11 @@ function AppWorkspaceSidebarImpl({
         isLoading={isLoadingWrappers}
         onSelect={(entry) => navigate(() => onOpenWrapper(entry))}
         onRefresh={onRefreshWrappers}
+        busyPackageId={busyWrapperPackageId}
+        onSetPackageEnabled={onSetWrapperPackageEnabled}
+        requestTrustedOverlay={requestTrustedOverlay}
+        cancelTrustedOverlay={cancelTrustedOverlay}
+        onPreviewInteractionChange={onPreviewInteractionChange}
       />
     ) : (
       <SessionSidebar

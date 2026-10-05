@@ -3,31 +3,16 @@ import {
   Box,
   Button,
   Chip,
-  CircularProgress,
   Divider,
   IconButton,
   Link,
-  List,
-  ListItemButton,
   Stack,
   Tooltip,
   Typography
 } from '@mui/material'
-import { alpha, type Theme } from '@mui/material/styles'
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type MouseEvent,
-  type ReactNode,
-  type RefObject
-} from 'react'
-import type {
-  WrapperCompositionCatalogItem,
-  WrapperCompositionManifest
-} from '../../../../shared/wrapperCompositionManifestTypes'
+import { type Theme } from '@mui/material/styles'
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import type { WrapperCompositionCatalogItem } from '../../../../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../../../../shared/wrapperModuleDetailsTypes'
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
 import type { Project, ProjectRemoteConnection } from '../../types'
@@ -51,52 +36,13 @@ import { WrapperRunResultActions } from './components/WrapperRunResultActions'
 import { WrapperExecutionTargetControl } from './components/WrapperExecutionTargetControl'
 import { WrapperPackageControl } from './components/WrapperPackageControl'
 import { useWrapperCatalog } from './hooks/useWrapperCatalog'
-import {
-  SidebarAccordionGroup,
-  SIDEBAR_GROUP_HEADER_HEIGHT
-} from '../../components/SidebarAccordionGroup'
+import { WrapperSidebar } from './components/WrapperSidebar'
+export { WrapperSidebar, type WrapperSidebarProps } from './components/WrapperSidebar'
 
-const RefreshIcon = PhiIcons.action.refresh
 const ExportIcon = PhiIcons.action.download
 const WrapperEntityIcon = PhiIcons.entity.wrapper
 
-type SidebarWidth = number | string
-
-const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 const macTitlebarHeight = 44
-const contentTopGap = 8
-const plainSidebarRowSx = {
-  alignItems: 'center',
-  borderRadius: 1.5,
-  mx: 1,
-  my: 0.25,
-  py: 1.25,
-  backgroundColor: 'transparent !important',
-  transition: 'background-color 120ms ease',
-  '&:hover': {
-    backgroundColor: (theme: Theme) =>
-      `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.12 : 0.06)} !important`
-  },
-  '&.Mui-selected': {
-    backgroundColor: (theme: Theme) =>
-      `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)} !important`,
-    boxShadow: 'none'
-  },
-  '&.Mui-selected:hover': {
-    backgroundColor: (theme: Theme) =>
-      `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)} !important`
-  }
-} as const
-
-export interface WrapperSidebarProps {
-  catalog: WrapperCompositionManifest[]
-  selectedId: string | null
-  isLoading: boolean
-  sidebarWidth?: SidebarWidth
-  onSelect: (entry: WrapperCompositionManifest) => void
-  onRefresh: () => void
-}
-
 export interface WrapperDetailProps {
   catalog: WrapperCompositionCatalogItem[]
   runs: WrapperRun[]
@@ -107,7 +53,7 @@ export interface WrapperDetailProps {
   onExportReproducibility?: (runId: string) => void
   onCancelRun?: (runId: string) => void
   packageEnablementBusy?: boolean
-  onSetPackageEnabled?: (packageId: string, enabled: boolean) => void
+  onSetPackageEnabled?: (packageId: string, enabled: boolean) => Promise<boolean | void> | void
   project?: Project
   updatingRemoteProjectId?: string | null
   onUpdateProjectRemoteConnection?: (
@@ -126,7 +72,8 @@ export interface WrapperViewContentProps extends WrapperDetailProps {
   isLoading: boolean
   sidebarWidth: number
   onSelect: (id: string) => void
-  onRefresh: () => void
+  onRefresh: () => Promise<void> | void
+  busyPackageId?: string | null
   onStartSidebarResize?: (event: MouseEvent<HTMLDivElement>) => void
 }
 
@@ -241,419 +188,6 @@ function WrapperYamlBlock({ yaml }: { yaml: string }): React.JSX.Element {
           ))}
         </Box>
       ))}
-    </Box>
-  )
-}
-
-/** Groups by the `<provider>/<tier>/...` id convention — see `parseWrapperCompositionId`. */
-function groupByTier(
-  catalog: WrapperCompositionManifest[]
-): Array<{ tier: string; entries: WrapperCompositionManifest[] }> {
-  const order = ['workflows', 'subworkflows', 'modules']
-  const byTier = new Map<string, WrapperCompositionManifest[]>()
-  // Seed every known tier up front so one with no wrappers yet (e.g.
-  // subworkflows, today) still shows up as an empty group rather than
-  // disappearing from the sidebar entirely.
-  for (const tier of order) {
-    byTier.set(tier, [])
-  }
-  for (const entry of catalog) {
-    const { tier } = parseWrapperCompositionId(entry.id)
-    const key = tier || '其他'
-    const bucket = byTier.get(key) ?? []
-    bucket.push(entry)
-    byTier.set(key, bucket)
-  }
-  const sortedKeys = [...byTier.keys()].sort((a, b) => {
-    const ia = order.indexOf(a)
-    const ib = order.indexOf(b)
-    if (ia === -1 && ib === -1) return a.localeCompare(b)
-    if (ia === -1) return 1
-    if (ib === -1) return -1
-    return ia - ib
-  })
-  return sortedKeys.map((tier) => ({ tier, entries: byTier.get(tier) ?? [] }))
-}
-
-// Rendering every entry in a large tier group at once (nf-core/modules alone
-// runs ~30) is what made the Accordion's Collapse height animation
-// noticeably janky — the animation has to lay out every mounted row on every
-// frame. Paginating each group's rows independently bounds how much is
-// mounted up front; the rest loads in as the user scrolls near the bottom.
-const DEFAULT_VISIBLE_ENTRY_COUNT = 20
-const LOAD_MORE_STEP = 20
-
-// Header height lives in the shared SidebarAccordionGroup — collapsed groups
-// must be a known, fixed size so the remaining space available to the
-// expanded group's body can be computed precisely (see
-// `useExpandedBodyMaxHeight`).
-// Matches the outer List's `py: 1` (MUI spacing unit is 8px), which eats
-// into the space available to the expanded group's body.
-const LIST_VERTICAL_PADDING = 16
-const EXPANDED_BODY_MIN_HEIGHT = 80
-
-/**
- * Computes how tall the *currently expanded* group's own scrollable body may
- * be: the sidebar list's real measured height, minus every header (all three
- * stay on-screen at their fixed height, expanded or not) and the list's own
- * padding. This is what lets the body be capped with a plain `max-height` +
- * `overflow-y: auto` — no fighting Collapse's own height animation with
- * flexbox, which is what broke rendering the first time around.
- */
-function useExpandedBodyMaxHeight(
-  listRef: RefObject<HTMLUListElement | null>,
-  groupCount: number
-): number {
-  const [listHeight, setListHeight] = useState(0)
-
-  useEffect(() => {
-    const node = listRef.current
-    if (!node) return undefined
-    const observer = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect
-      if (rect) setListHeight(rect.height)
-    })
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [listRef])
-
-  return Math.max(
-    EXPANDED_BODY_MIN_HEIGHT,
-    listHeight - groupCount * SIDEBAR_GROUP_HEADER_HEIGHT - LIST_VERTICAL_PADDING
-  )
-}
-
-/**
- * An invisible row observed against `rootRef` — the currently expanded tier
- * group's own scrollable body. Crossing into view triggers the next page;
- * MUI's `rootMargin` pre-fires slightly before it's actually visible so the
- * next batch is ready before the user hits bottom.
- */
-function LoadMoreSentinel({
-  rootRef,
-  tier,
-  totalCount,
-  remainingCount,
-  onLoadMore
-}: {
-  rootRef: RefObject<HTMLDivElement | null>
-  tier: string
-  totalCount: number
-  remainingCount: number
-  onLoadMore: (tier: string, totalCount: number) => void
-}): React.JSX.Element {
-  const sentinelRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    const node = sentinelRef.current
-    if (!node) return undefined
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) onLoadMore(tier, totalCount)
-      },
-      { root: rootRef.current, rootMargin: '160px' }
-    )
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [onLoadMore, rootRef, tier, totalCount])
-
-  return (
-    <Box
-      ref={sentinelRef}
-      sx={{ display: 'flex', justifyContent: 'center', py: 1, WebkitAppRegion: 'no-drag' }}
-    >
-      <Typography variant="caption" color="text.disabled">
-        还有 {remainingCount} 个 · 向下滚动加载
-      </Typography>
-    </Box>
-  )
-}
-
-function WrapperTierGroupAccordion({
-  tier,
-  entries,
-  selectedId,
-  visibleCount,
-  expanded,
-  expandedBodyMaxHeight,
-  onExpandedChange,
-  onSelect,
-  onLoadMore
-}: {
-  tier: string
-  entries: WrapperCompositionManifest[]
-  selectedId: string | null
-  visibleCount: number
-  expanded: boolean
-  expandedBodyMaxHeight: number
-  onExpandedChange: (tier: string, expanded: boolean) => void
-  onSelect: (entry: WrapperCompositionManifest) => void
-  onLoadMore: (tier: string, totalCount: number) => void
-}): React.JSX.Element {
-  const detailsRef = useRef<HTMLDivElement | null>(null)
-
-  // Pagination must never hide the currently selected wrapper — if it's
-  // further down than the default page (e.g. its tab was reopened from
-  // elsewhere), reveal up through it regardless of how much has loaded in.
-  const selectedIndex = entries.findIndex((entry) => entry.id === selectedId)
-  const effectiveVisibleCount = Math.max(visibleCount, selectedIndex + 1)
-  const visibleEntries = entries.slice(0, effectiveVisibleCount)
-  const remainingCount = entries.length - visibleEntries.length
-
-  return (
-    // Only one tier group is expanded at a time, and none of the three
-    // headers ever move — the sidebar's outer list does not scroll at
-    // all. The expanded group's own body is capped at a plain, measured
-    // `max-height` (see useExpandedBodyMaxHeight) with its own
-    // `overflow-y: auto`, so scrolling happens strictly inside that one
-    // box. This is deliberately NOT a flexbox/Collapse-internals trick —
-    // that fought MUI's own height animation and made content vanish.
-    <SidebarAccordionGroup
-      expanded={expanded}
-      onExpandedChange={(isExpanded) => onExpandedChange(tier, isExpanded)}
-      title={wrapperTierLabel(tier)}
-      count={entries.length}
-      expandedBodyMaxHeight={expandedBodyMaxHeight}
-      detailsRef={detailsRef}
-    >
-      {entries.length === 0 ? (
-        <Box sx={{ px: 2, py: 1.5 }}>
-          <Typography variant="body2" color="text.disabled">
-            暂无{wrapperTierLabel(tier)} wrapper
-          </Typography>
-        </Box>
-      ) : null}
-      {visibleEntries.map((entry) => {
-        // The id's own name segment, not the author-chosen display name,
-        // is the trustworthy identifier — a manifest's `name` is free text
-        // and could be set to anything, including something misleading
-        // about which wrapper this actually is.
-        const { provider, name } = parseWrapperCompositionId(entry.id)
-        return (
-          <ListItemButton
-            key={entry.id}
-            selected={entry.id === selectedId}
-            onClick={() => onSelect(entry)}
-            sx={plainSidebarRowSx}
-          >
-            <Box
-              sx={{
-                width: 26,
-                height: 26,
-                mr: 1,
-                borderRadius: 0.75,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                bgcolor: 'primary.main',
-                color: 'primary.contrastText',
-                flexShrink: 0
-              }}
-            >
-              <WrapperEntityIcon sx={{ fontSize: 15 }} />
-            </Box>
-            <Box sx={{ minWidth: 0, flex: 1 }}>
-              <Typography
-                noWrap
-                title={name}
-                sx={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '0.82rem',
-                  fontWeight: 600,
-                  lineHeight: 1.25
-                }}
-              >
-                {name}
-              </Typography>
-              <Typography
-                noWrap
-                title={entry.summary}
-                color="text.secondary"
-                sx={{ mt: 0.25, fontSize: '0.75rem', lineHeight: 1.25 }}
-              >
-                {entry.summary}
-              </Typography>
-              <Stack direction="row" spacing={0.5} sx={{ mt: 0.25, alignItems: 'center' }}>
-                <Box
-                  sx={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: '50%',
-                    flexShrink: 0,
-                    bgcolor: (theme) => {
-                      const providerColor = wrapperProviderColor(provider)
-                      return providerColor === 'default'
-                        ? theme.palette.text.disabled
-                        : theme.palette[providerColor].main
-                    }
-                  }}
-                />
-                <Typography
-                  noWrap
-                  color="text.secondary"
-                  sx={{
-                    fontSize: '0.72rem',
-                    fontWeight: 700,
-                    lineHeight: 1.25
-                  }}
-                >
-                  {provider}
-                </Typography>
-              </Stack>
-            </Box>
-          </ListItemButton>
-        )
-      })}
-      {remainingCount > 0 ? (
-        <LoadMoreSentinel
-          rootRef={detailsRef}
-          tier={tier}
-          totalCount={entries.length}
-          remainingCount={remainingCount}
-          onLoadMore={onLoadMore}
-        />
-      ) : null}
-    </SidebarAccordionGroup>
-  )
-}
-
-export function WrapperSidebar({
-  catalog,
-  selectedId,
-  isLoading,
-  sidebarWidth = '100%',
-  onSelect,
-  onRefresh
-}: WrapperSidebarProps): React.JSX.Element {
-  const groups = useMemo(() => groupByTier(catalog), [catalog])
-  const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({})
-  const listRef = useRef<HTMLUListElement | null>(null)
-  const selectedTier = selectedId ? parseWrapperCompositionId(selectedId).tier : null
-
-  // `undefined` means "no explicit choice yet" (fall back to the selected
-  // wrapper's group, then the first group, below); `null` means the user
-  // deliberately collapsed every group — kept distinct so the fallback never
-  // fights a manual collapse-to-none.
-  const [manualExpandedTier, setManualExpandedTier] = useState<string | null | undefined>(undefined)
-  // Adjusting state during render (React's documented pattern for reacting
-  // to a changed prop) instead of in an effect: when the *selection itself*
-  // changes tier (a different wrapper's tab was opened), reveal that group —
-  // without fighting a manual collapse the user made afterward for that same
-  // selection, and without an extra effect-driven commit.
-  const [trackedSelectedTier, setTrackedSelectedTier] = useState(selectedTier)
-  if (selectedTier !== trackedSelectedTier) {
-    setTrackedSelectedTier(selectedTier)
-    if (selectedTier) setManualExpandedTier(selectedTier)
-  }
-
-  const expandedTier =
-    manualExpandedTier !== undefined
-      ? manualExpandedTier
-      : (selectedTier ?? groups[0]?.tier ?? null)
-
-  const expandedBodyMaxHeight = useExpandedBodyMaxHeight(listRef, groups.length)
-
-  const handleLoadMore = useCallback((tier: string, totalCount: number): void => {
-    setVisibleCounts((counts) => ({
-      ...counts,
-      [tier]: Math.min((counts[tier] ?? DEFAULT_VISIBLE_ENTRY_COUNT) + LOAD_MORE_STEP, totalCount)
-    }))
-  }, [])
-
-  const handleExpandedChange = useCallback((tier: string, isExpanded: boolean): void => {
-    setManualExpandedTier(isExpanded ? tier : null)
-  }, [])
-
-  return (
-    <Box
-      className="app-sidebar-surface"
-      sx={{
-        width: sidebarWidth,
-        minWidth: 0,
-        flexShrink: 0,
-        backgroundColor: (muiTheme) =>
-          muiTheme.palette.mode === 'dark' ? muiTheme.palette.background.default : '#FFFFFF',
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'relative',
-        pt: isMac ? `${macTitlebarHeight + contentTopGap}px` : 2,
-        WebkitAppRegion: 'no-drag'
-      }}
-    >
-      <Box sx={{ px: 2, pb: 1.5, WebkitAppRegion: 'drag' }}>
-        <Stack
-          direction="row"
-          sx={{ mb: 1.5, alignItems: 'center', justifyContent: 'space-between' }}
-        >
-          <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.5 }}>
-            Wrappers
-          </Typography>
-          <Stack direction="row" spacing={0.5}>
-            <Tooltip title="刷新">
-              <span>
-                <IconButton
-                  aria-label="刷新"
-                  size="small"
-                  onClick={onRefresh}
-                  disabled={isLoading}
-                  sx={{ WebkitAppRegion: 'no-drag' }}
-                >
-                  <RefreshIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-          </Stack>
-        </Stack>
-        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
-          <Chip size="small" variant="outlined" label={`${catalog.length} 个 wrapper`} />
-        </Stack>
-      </Box>
-
-      <Divider />
-
-      <List
-        ref={listRef}
-        disablePadding
-        sx={{
-          // The outer list itself never scrolls and never moves — all three
-          // headers stay exactly where they are. Only the expanded group's
-          // own body scrolls, capped at a measured max-height (see
-          // useExpandedBodyMaxHeight / WrapperTierGroupAccordion).
-          overflow: 'hidden',
-          flex: 1,
-          py: 1,
-          backgroundColor: 'transparent !important',
-          WebkitAppRegion: 'no-drag'
-        }}
-      >
-        {isLoading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
-            <CircularProgress size={20} />
-          </Box>
-        ) : catalog.length === 0 ? (
-          <Box sx={{ px: 2, py: 2 }}>
-            <Typography variant="body2" color="text.secondary">
-              没有发现任何 wrapper。
-            </Typography>
-          </Box>
-        ) : (
-          groups.map((group) => (
-            <WrapperTierGroupAccordion
-              key={group.tier}
-              tier={group.tier}
-              entries={group.entries}
-              selectedId={selectedId}
-              visibleCount={visibleCounts[group.tier] ?? DEFAULT_VISIBLE_ENTRY_COUNT}
-              expanded={group.tier === expandedTier}
-              expandedBodyMaxHeight={expandedBodyMaxHeight}
-              onExpandedChange={handleExpandedChange}
-              onSelect={onSelect}
-              onLoadMore={handleLoadMore}
-            />
-          ))
-        )}
-      </List>
     </Box>
   )
 }
@@ -1093,6 +627,7 @@ export function WrapperViewContent({
   onExportReproducibility,
   onCancelRun,
   packageEnablementBusy,
+  busyPackageId,
   onSetPackageEnabled,
   project,
   updatingRemoteProjectId,
@@ -1112,6 +647,8 @@ export function WrapperViewContent({
         sidebarWidth={sidebarWidth}
         onSelect={(entry) => onSelect(entry.id)}
         onRefresh={onRefresh}
+        busyPackageId={busyPackageId}
+        onSetPackageEnabled={onSetPackageEnabled}
       />
       <ResizeSeparator onMouseDown={onStartSidebarResize} />
       <DetailPage title={selected?.name ?? 'Wrappers'}>
@@ -1160,6 +697,7 @@ export default function WrapperView({
     refreshWrappers,
     exportWrapperReproducibility,
     packageEnablementBusy,
+    busyPackageId,
     setPackageEnabled
   } = useWrapperCatalog()
 
@@ -1172,12 +710,13 @@ export default function WrapperView({
       error={wrapperError}
       sidebarWidth={sidebarWidth}
       onSelect={setSelectedWrapperId}
-      onRefresh={() => void refreshWrappers()}
+      onRefresh={refreshWrappers}
       onOpenLocalPath={onOpenLocalPath}
       onOpenRemoteResult={onOpenRemoteResult}
       onExportReproducibility={(runId) => void exportWrapperReproducibility(runId)}
       packageEnablementBusy={packageEnablementBusy}
-      onSetPackageEnabled={(packageId, enabled) => void setPackageEnabled(packageId, enabled)}
+      busyPackageId={busyPackageId}
+      onSetPackageEnabled={setPackageEnabled}
       onStartSidebarResize={onStartSidebarResize}
     />
   )

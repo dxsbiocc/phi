@@ -295,6 +295,7 @@ export function fingerprintBundledWrapperSource(root: string): string {
     for (const entry of readdirSync(dir, { withFileTypes: true }).sort((left, right) =>
       left.name < right.name ? -1 : left.name > right.name ? 1 : 0
     )) {
+      if (entry.name === '.DS_Store') continue
       const path = prefix ? `${prefix}/${entry.name}` : entry.name
       if (!prefix && (path === 'index.json' || path === 'pack.json')) continue
       const fullPath = join(dir, entry.name)
@@ -369,7 +370,8 @@ function installedPayloadMatches(
   })
 }
 
-function migrateLegacyCustomWrappers(agentDir: string): string[] {
+/** Preserve user-authored legacy wrappers without installing the bundled catalogue. */
+export function migrateLegacyCustomWrappers(agentDir: string): string[] {
   const migrated: string[] = []
   for (const dir of findManifestDirs(getInstalledWrappersDir(agentDir))) {
     const marker = readSourceMarker(dir)

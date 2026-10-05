@@ -38,9 +38,9 @@ outputs:
 `
 }
 
-function source(id: string): Record<string, unknown> {
+function source(id: string, automaticallyInstalled = false): Record<string, unknown> {
   return {
-    registry: 'bundled-wrappers',
+    registry: automaticallyInstalled ? 'bundled-wrappers' : 'builtin',
     id,
     type: 'wrapper',
     version: '1.0.0',
@@ -50,7 +50,7 @@ function source(id: string): Record<string, unknown> {
   }
 }
 
-function fixture(): string {
+function fixture(automaticallyInstalled = false): string {
   const root = mkdtempSync(join(tmpdir(), 'phi-wrapper-discovery-'))
   roots.push(root)
   const agentDir = join(root, 'agent')
@@ -91,7 +91,7 @@ function fixture(): string {
               dependsOn: [],
               files: 'files.json'
             },
-            source: source(moduleId),
+            source: source(moduleId, automaticallyInstalled),
             paths: [
               'modules/nf-core/fastqc/wrapper/main.nf',
               'modules/nf-core/fastqc/wrapper/params.json',
@@ -112,7 +112,7 @@ function fixture(): string {
               dependsOn: [{ id: moduleId, type: 'wrapper', version: '^1.0.0' }],
               files: 'files.json'
             },
-            source: source(subworkflowId),
+            source: source(subworkflowId, automaticallyInstalled),
             paths: [
               'subworkflows/nf-core/qc/wrapper/main.nf',
               'subworkflows/nf-core/qc/wrapper/params.json',
@@ -158,7 +158,110 @@ test('custom wrappers remain visible outside package ownership and enablement', 
     (entry) => entry.id === 'acme/modules/toy'
   )
   assert.equal(item?.packageId, undefined)
+  assert.match(item?.enablementId ?? '', /^custom-[a-f0-9]{24}$/)
+  assert.equal(item?.packageEnabled, true)
+  assert.equal(item?.packageSelected, true)
   assert.equal(item?.hiddenReason, undefined)
+})
+
+test('untouched automatically bundled packages remain cached without becoming agent tools', () => {
+  const agentDir = fixture(true)
+  assert.deepEqual(listWrapperCompositionCatalog({ agentDir }), [])
+  const status = listWrapperCompositionCatalogStatus({ agentDir })
+  assert.equal(status.length, 2)
+  assert.ok(status.every((entry) => entry.packageEnabled === false))
+  assert.ok(status.every((entry) => entry.packageSelected === false))
+  assert.ok(status.every((entry) => entry.enablementId === entry.packageId))
+})
+
+test('selecting a cached bundled root makes only its dependency closure available', () => {
+  const agentDir = fixture(true)
+  setEnabled('wrapper:subworkflow-nf-core-qc', true, { agentDir })
+  resetWrapperCompositionCatalogCache()
+  assert.equal(listWrapperCompositionCatalog({ agentDir }).length, 2)
+  assert.ok(
+    listWrapperCompositionCatalogStatus({ agentDir }).every(
+      (entry) => entry.packageSelected === true && entry.packageEnabled === true
+    )
+  )
+
+  setEnabled('wrapper:subworkflow-nf-core-qc', false, { agentDir })
+  resetWrapperCompositionCatalogCache()
+  assert.deepEqual(listWrapperCompositionCatalog({ agentDir }), [])
+  const status = listWrapperCompositionCatalogStatus({ agentDir })
+  assert.equal(
+    status.find((entry) => entry.packageId === 'subworkflow-nf-core-qc')?.packageSelected,
+    true
+  )
+  assert.equal(
+    status.find((entry) => entry.packageId === 'module-nf-core-fastqc')?.packageSelected,
+    false
+  )
+})
+
+test('selecting one bundled module does not expose unrelated bundled roots', () => {
+  const agentDir = fixture(true)
+  setEnabled('wrapper:module-nf-core-fastqc', true, { agentDir })
+  resetWrapperCompositionCatalogCache()
+  assert.deepEqual(
+    listWrapperCompositionCatalog({ agentDir }).map((entry) => entry.manifest.id),
+    ['nf-core/modules/fastqc']
+  )
+  assert.equal(
+    listWrapperCompositionCatalogStatus({ agentDir }).find(
+      (entry) => entry.packageId === 'subworkflow-nf-core-qc'
+    )?.packageSelected,
+    false
+  )
+})
+
+test('a running agent observes user enablement changes without a host cache reset', () => {
+  const agentDir = fixture(true)
+  assert.deepEqual(listWrapperCompositionCatalog({ agentDir }), [])
+  setEnabled('wrapper:module-nf-core-fastqc', true, { agentDir })
+  assert.deepEqual(
+    listWrapperCompositionCatalog({ agentDir }).map((entry) => entry.manifest.id),
+    ['nf-core/modules/fastqc']
+  )
+  setEnabled('wrapper:module-nf-core-fastqc', false, { agentDir })
+  assert.deepEqual(listWrapperCompositionCatalog({ agentDir }), [])
+})
+
+test('an explicit disabled dependency blocks an opted-in root', () => {
+  const agentDir = fixture(true)
+  setEnabled('wrapper:subworkflow-nf-core-qc', true, { agentDir })
+  setEnabled('wrapper:module-nf-core-fastqc', false, { agentDir })
+  resetWrapperCompositionCatalogCache()
+  assert.deepEqual(listWrapperCompositionCatalog({ agentDir }), [])
+  const root = listWrapperCompositionCatalogStatus({ agentDir }).find(
+    (entry) => entry.packageId === 'subworkflow-nf-core-qc'
+  )
+  assert.equal(root?.packageEnabled, true)
+  assert.match(root?.hiddenReason ?? '', /依赖 module-nf-core-fastqc 不可用.*已停用/)
+})
+
+test('custom wrappers can be disabled and restored through their stable enablement identifier', () => {
+  const agentDir = fixture(true)
+  const custom = join(agentDir, 'wrappers', 'custom', 'modules', 'acme', 'toy', 'wrapper')
+  write(join(custom, 'wrapper.yaml'), wrapperYaml('acme/modules/toy'))
+  const item = listWrapperCompositionCatalogStatus({ agentDir }).find(
+    (entry) => entry.id === 'acme/modules/toy'
+  )
+  assert.ok(item?.enablementId)
+  const key = `wrapper:${item.enablementId}` as const
+  setEnabled(key, false, { agentDir })
+  resetWrapperCompositionCatalogCache()
+  assert.deepEqual(listWrapperCompositionCatalog({ agentDir }), [])
+  const disabled = listWrapperCompositionCatalogStatus({ agentDir }).find(
+    (entry) => entry.id === item.id
+  )
+  assert.equal(disabled?.packageSelected, true)
+  assert.equal(disabled?.packageEnabled, false)
+  assert.match(disabled?.hiddenReason ?? '', /自定义 wrapper toy 已停用/)
+
+  setEnabled(key, true, { agentDir })
+  resetWrapperCompositionCatalogCache()
+  assert.equal(listWrapperCompositionCatalog({ agentDir })[0]?.manifest.id, item.id)
 })
 
 test('wrapper_search uses the same enablement and dependency-filtered catalog', async () => {

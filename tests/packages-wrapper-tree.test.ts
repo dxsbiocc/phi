@@ -18,6 +18,11 @@ import {
   type RegistryPackageEntry
 } from '../src/main/agent/packages/installer'
 import { readWrapperTreeState } from '../src/main/agent/packages/wrapper-tree'
+import {
+  listWrapperCompositionCatalog,
+  listWrapperCompositionCatalogStatus,
+  resetWrapperCompositionCatalogCache
+} from '../src/main/agent/wrappers/composition/discovery'
 
 interface WrapperOptions {
   version?: string
@@ -145,6 +150,9 @@ outputs:
     })
     const source = registry(registryDir, [entry])
 
+    resetWrapperCompositionCatalogCache()
+    assert.deepEqual(listWrapperCompositionCatalog({ agentDir }), [])
+
     await installPackages(planInstall(source, { type: 'wrapper', id: entry.id }, { agentDir }), {
       agentDir
     })
@@ -167,6 +175,10 @@ outputs:
     )
     assert.equal(existsSync(join(agentDir, 'wrappers', 'tree', 'phi-package.yaml')), false)
     assert.equal(existsSync(join(agentDir, 'wrappers', 'tree', 'files.json')), false)
+    const discovered = listWrapperCompositionCatalogStatus({ agentDir })
+    assert.equal(discovered[0]?.packageSelected, true)
+    assert.equal(discovered[0]?.packageEnabled, true)
+    assert.equal(listWrapperCompositionCatalog({ agentDir }).length, 1)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

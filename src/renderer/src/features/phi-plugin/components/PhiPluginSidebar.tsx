@@ -1,21 +1,9 @@
 import { useMemo, useState } from 'react'
-import {
-  Box,
-  Chip,
-  CircularProgress,
-  Divider,
-  IconButton,
-  InputAdornment,
-  List,
-  ListItemButton,
-  Stack,
-  TextField,
-  Tooltip,
-  Typography
-} from '@mui/material'
-import { alpha, type Theme } from '@mui/material/styles'
+import { Box, CircularProgress, IconButton, List, Stack, Typography } from '@mui/material'
 
 import { SidebarAccordionGroup } from '../../../components/SidebarAccordionGroup'
+import { CatalogSidebar } from '../../../components/CatalogSidebar'
+import { CatalogResourceRow } from '../../../components/CatalogResourceRow'
 import { PhiIcons } from '../../../icons'
 import type { PhiPluginDisplayItem } from '../hooks/usePhiPlugins'
 import {
@@ -26,33 +14,13 @@ import {
 import { phiPluginSourceCategoryLabels, type PhiPluginSourceCategory } from '../lib/phiPlugins'
 import { DiscoverButton } from '../../../components/DiscoverButton'
 
-const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
-const MAC_TITLEBAR_HEIGHT = 44
-const CONTENT_TOP_GAP = 8
-
-const rowSx = {
-  mx: 1,
-  my: 0.25,
-  px: 1.5,
-  py: 1,
-  gap: 1.25,
-  borderRadius: 1.5,
-  backgroundColor: 'transparent !important',
-  '&:hover': {
-    backgroundColor: (theme: Theme) =>
-      `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.12 : 0.06)} !important`
-  },
-  '&.Mui-selected': {
-    backgroundColor: (theme: Theme) =>
-      `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)} !important`
-  }
-} as const
-
 export type PhiPluginSidebarProps = {
   plugins: readonly PhiPluginDisplayItem[]
   loading: boolean
   activePluginId: string | null
   onSelectPlugin: (plugin: PhiPluginDisplayItem) => void
+  onSetEnabled?: (plugin: PhiPluginDisplayItem, enabled: boolean) => void | Promise<void | boolean>
+  busyPluginId?: string | null
   onOpenCatalog: () => void
   catalogOpen?: boolean
 }
@@ -62,6 +30,8 @@ export function PhiPluginSidebar({
   loading,
   activePluginId,
   onSelectPlugin,
+  onSetEnabled,
+  busyPluginId,
   onOpenCatalog,
   catalogOpen = false
 }: PhiPluginSidebarProps): React.JSX.Element {
@@ -86,52 +56,15 @@ export function PhiPluginSidebar({
   const visibleCategory = visiblePhiPluginCategory(groups, expandedCategory, query)
 
   return (
-    <Box
-      className="app-sidebar-surface"
-      data-phi-plugin-sidebar="true"
-      sx={{
-        width: '100%',
-        minWidth: 0,
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        bgcolor: (theme) =>
-          theme.palette.mode === 'dark' ? theme.palette.background.default : '#FFFFFF',
-        pt: isMac ? `${MAC_TITLEBAR_HEIGHT + CONTENT_TOP_GAP}px` : 2,
-        WebkitAppRegion: 'no-drag'
-      }}
+    <CatalogSidebar
+      title="插件"
+      resource="plugins"
+      query={query}
+      onQueryChange={setQuery}
+      searchPlaceholder="搜索插件"
+      summary={`${plugins.length} 个已安装`}
+      action={<DiscoverButton expanded={catalogOpen} onClick={onOpenCatalog} />}
     >
-      <Box sx={{ px: 2, pb: 1.5, WebkitAppRegion: 'drag' }}>
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1.5 }}>
-          <Typography variant="subtitle1" sx={{ flex: 1, fontWeight: 700 }}>
-            插件
-          </Typography>
-          <DiscoverButton expanded={catalogOpen} onClick={onOpenCatalog} />
-        </Stack>
-        <TextField
-          size="small"
-          fullWidth
-          placeholder="搜索插件"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          slotProps={{
-            input: {
-              startAdornment: (
-                <InputAdornment position="start">
-                  <PhiIcons.action.search fontSize="small" />
-                </InputAdornment>
-              )
-            }
-          }}
-          sx={{ WebkitAppRegion: 'no-drag' }}
-        />
-      </Box>
-
-      <Box sx={{ px: 2, pb: 1 }}>
-        <Chip size="small" variant="outlined" label={`${plugins.length} 个已安装`} />
-      </Box>
-      <Divider />
-
       <List disablePadding sx={{ flex: 1, minHeight: 0, overflowY: 'auto', py: 1 }}>
         {loading && plugins.length === 0 ? (
           <Stack spacing={1.25} sx={{ alignItems: 'center', py: 5 }}>
@@ -152,56 +85,61 @@ export function PhiPluginSidebar({
               count={group.plugins.length}
             >
               {group.plugins.map((plugin) => (
-                <ListItemButton
+                <CatalogResourceRow
                   key={plugin.id}
+                  id={plugin.id}
+                  resource="plugins"
+                  label={plugin.title}
+                  enabled={plugin.enabled}
                   selected={plugin.id === activePluginId}
-                  onClick={() => {
+                  busy={busyPluginId === plugin.id}
+                  onSelect={() => {
                     setManualExpandedCategory(group.category)
                     onSelectPlugin(plugin)
                   }}
-                  sx={rowSx}
+                  onEnabledChange={
+                    onSetEnabled ? (checked) => onSetEnabled(plugin, checked) : undefined
+                  }
+                  icon={
+                    <Box
+                      sx={{
+                        width: 32,
+                        height: 32,
+                        flexShrink: 0,
+                        borderRadius: 1.25,
+                        display: 'grid',
+                        placeItems: 'center',
+                        color: plugin.enabled ? 'primary.main' : 'text.disabled',
+                        bgcolor: 'action.hover'
+                      }}
+                    >
+                      <PhiIcons.entity.plugin size={20} />
+                    </Box>
+                  }
                 >
-                  <Box
+                  <Typography
+                    noWrap
+                    title={plugin.title}
+                    sx={{ fontSize: '0.875rem', fontWeight: 600, lineHeight: 1.25 }}
+                  >
+                    {plugin.title}
+                  </Typography>
+                  <Typography
+                    noWrap
+                    title={`${plugin.id} · v${plugin.version}`}
+                    variant="caption"
+                    color="text.secondary"
                     sx={{
-                      width: 36,
-                      height: 36,
-                      flexShrink: 0,
-                      borderRadius: 1.25,
-                      display: 'grid',
-                      placeItems: 'center',
-                      color: plugin.enabled ? 'primary.main' : 'text.disabled',
-                      bgcolor: 'action.hover'
+                      display: 'block',
+                      mt: 0.25,
+                      fontSize: '0.75rem',
+                      lineHeight: 1.25,
+                      fontFamily: 'var(--font-mono)'
                     }}
                   >
-                    <PhiIcons.entity.plugin size={21} />
-                  </Box>
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography noWrap sx={{ fontSize: '0.9rem', fontWeight: 700 }}>
-                      {plugin.title}
-                    </Typography>
-                    <Typography
-                      noWrap
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: 'block', fontFamily: 'var(--font-mono)' }}
-                    >
-                      {plugin.id} · v{plugin.version}
-                    </Typography>
-                  </Box>
-                  <Tooltip title={plugin.enabled ? '已启用' : '已停用'}>
-                    <Box
-                      component="span"
-                      aria-label={plugin.enabled ? '已启用' : '已停用'}
-                      sx={{
-                        width: 8,
-                        height: 8,
-                        flexShrink: 0,
-                        borderRadius: '50%',
-                        bgcolor: plugin.enabled ? 'success.main' : 'text.disabled'
-                      }}
-                    />
-                  </Tooltip>
-                </ListItemButton>
+                    {plugin.id} · v{plugin.version}
+                  </Typography>
+                </CatalogResourceRow>
               ))}
             </SidebarAccordionGroup>
           ))
@@ -219,6 +157,6 @@ export function PhiPluginSidebar({
           </Stack>
         )}
       </List>
-    </Box>
+    </CatalogSidebar>
   )
 }

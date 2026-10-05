@@ -146,7 +146,18 @@ export default function SkillView({
         isLoading={isLoading}
         activeSkillId={activeSkillId}
         sidebarWidth={sidebarWidth}
+        busySkillId={busySkillId}
         onSelectSkill={(skill) => onSelectSkill(skill.id)}
+        onSetEnabled={
+          onSetGlobalEnabled || onSetSkillDisabled || onSetProjectOverride
+            ? (skill, enabled) =>
+                skill.projectOverride != null && projectCwd
+                  ? onSetProjectOverride?.(skill, enabled)
+                  : onSetGlobalEnabled
+                    ? onSetGlobalEnabled(skill, enabled)
+                    : onSetSkillDisabled?.(skill, !enabled)
+            : undefined
+        }
         onOpenCatalog={() => setCatalogOpen(true)}
       />
       <ResizeSeparator onMouseDown={onStartSidebarResize} />

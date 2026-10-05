@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
 import { retainSelectedCatalogId } from '../../../lib/catalogSelection'
@@ -10,13 +10,14 @@ export type WrapperCatalogState = {
   isLoadingWrappers: boolean
   wrapperError: string | null
   packageEnablementBusy: boolean
+  busyPackageId: string | null
   setSelectedWrapperId: (id: string | null) => void
   refreshWrappers: () => Promise<void>
   /** Reloads only the run list — no loading flag, no catalog swap, so nothing but the run views re-render. */
   refreshRuns: () => Promise<void>
   cancelWrapperRun: (runId: string) => Promise<void>
   exportWrapperReproducibility: (runId: string) => Promise<void>
-  setPackageEnabled: (packageId: string, enabled: boolean) => Promise<void>
+  setPackageEnabled: (packageId: string, enabled: boolean) => Promise<boolean>
 }
 
 /**
@@ -31,25 +32,30 @@ export function useWrapperCatalog(): WrapperCatalogState {
   const [selectedWrapperId, setSelectedWrapperId] = useState<string | null>(null)
   const [isLoadingWrappers, setIsLoadingWrappers] = useState(true)
   const [wrapperError, setWrapperError] = useState<string | null>(null)
-  const [packageEnablementBusy, setPackageEnablementBusy] = useState(false)
+  const [busyPackageId, setBusyPackageId] = useState<string | null>(null)
+  const mutationRef = useRef<string | null>(null)
+
+  const loadWrappers = useCallback(async (): Promise<void> => {
+    const [catalogList, runList] = await Promise.all([
+      window.api.listWrapperCompositionCatalog(),
+      window.api.listWrapperRuns()
+    ])
+    setCatalog(catalogList)
+    setRuns(runList)
+    setSelectedWrapperId((current) => retainSelectedCatalogId(current, catalogList))
+  }, [])
 
   const refreshWrappers = useCallback(async (): Promise<void> => {
     setIsLoadingWrappers(true)
     setWrapperError(null)
     try {
-      const [catalogList, runList] = await Promise.all([
-        window.api.listWrapperCompositionCatalog(),
-        window.api.listWrapperRuns()
-      ])
-      setCatalog(catalogList)
-      setRuns(runList)
-      setSelectedWrapperId((current) => retainSelectedCatalogId(current, catalogList))
+      await loadWrappers()
     } catch (err) {
       setWrapperError(err instanceof Error ? err.message : String(err))
     } finally {
       setIsLoadingWrappers(false)
     }
-  }, [])
+  }, [loadWrappers])
 
   const refreshRuns = useCallback(async (): Promise<void> => {
     try {
@@ -76,19 +82,24 @@ export function useWrapperCatalog(): WrapperCatalogState {
   }, [])
 
   const setPackageEnabled = useCallback(
-    async (packageId: string, enabled: boolean): Promise<void> => {
-      setPackageEnablementBusy(true)
+    async (packageId: string, enabled: boolean): Promise<boolean> => {
+      if (mutationRef.current) return false
+      mutationRef.current = packageId
+      setBusyPackageId(packageId)
       setWrapperError(null)
       try {
         await window.api.setEnablement(`wrapper:${packageId}`, enabled, { type: 'global' })
-        await refreshWrappers()
+        await loadWrappers()
+        return true
       } catch (err) {
         setWrapperError(err instanceof Error ? err.message : String(err))
+        return false
       } finally {
-        setPackageEnablementBusy(false)
+        mutationRef.current = null
+        setBusyPackageId(null)
       }
     },
-    [refreshWrappers]
+    [loadWrappers]
   )
 
   useEffect(() => {
@@ -121,7 +132,8 @@ export function useWrapperCatalog(): WrapperCatalogState {
     selectedWrapperId,
     isLoadingWrappers,
     wrapperError,
-    packageEnablementBusy,
+    packageEnablementBusy: busyPackageId !== null,
+    busyPackageId,
     setSelectedWrapperId,
     refreshWrappers,
     refreshRuns,

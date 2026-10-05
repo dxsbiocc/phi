@@ -1,21 +1,18 @@
 import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
-import { Box, Divider, InputAdornment, List, Stack, TextField, Typography } from '@mui/material'
-import { alpha, type Theme } from '@mui/material/styles'
-import { PhiIcons } from '../../icons'
+import { Box, List, Tooltip, Typography } from '@mui/material'
 import type { McpServerSummary } from '../../types'
 import { mcpConnectorCategories } from '../../../../shared/mcpConnectorCatalog'
 import { McpConnectorCatalogDialog } from './components/McpConnectorCatalogDialog'
-import { McpEnableSwitch } from './components/McpEnableSwitch'
+import { CatalogResourceRow } from '../../components/CatalogResourceRow'
 import { ConnectorIcon } from './components/ConnectorIcon'
 import { McpDetailPanel as McpDetail, type McpDetailPanelProps } from './components/McpDetailPanel'
 import { SidebarAccordionGroup } from '../../components/SidebarAccordionGroup'
 import { DiscoverButton } from '../../components/DiscoverButton'
+import { CatalogSidebar } from '../../components/CatalogSidebar'
 import {
   createTrustedDialogRequestCoordinator,
   type TrustedOverlayRequest
 } from '../../lib/trustedOverlayRequests'
-
-const SearchIcon = PhiIcons.action.search
 
 type SidebarWidth = number | string
 
@@ -40,33 +37,7 @@ export type McpSidebarProps = {
 
 export type McpDetailProps = McpDetailPanelProps
 
-const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 const macTitlebarHeight = 44
-const contentTopGap = 8
-const plainSidebarRowSx = {
-  alignItems: 'flex-start',
-  mx: 1,
-  my: 0.5,
-  px: 1.5,
-  py: 1.25,
-  borderRadius: 1.5,
-  border: '1px solid transparent',
-  backgroundColor: 'transparent',
-  transition: 'none',
-  '&:hover': {
-    backgroundColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.09),
-    borderColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.2)
-  },
-  '&.Mui-selected': {
-    backgroundColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.13),
-    borderColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.38)
-  },
-  '&.Mui-selected:hover': {
-    backgroundColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.17)
-  },
-  '@media (prefers-reduced-motion: reduce)': { transition: 'none' }
-} as const
-
 function selectedServerFromList(
   servers: McpServerSummary[],
   activeServerId: string | null
@@ -175,17 +146,19 @@ export function McpSidebar({
               try {
                 requestTrustedOverlay(key, publish, () => {
                   setCatalogPending(false)
+                  onPreviewInteractionChange?.(false)
                   cancel()
                 })
               } catch (error) {
                 setCatalogPending(false)
+                onPreviewInteractionChange?.(false)
                 throw error
               }
             }
           : undefined,
         cancel: cancelTrustedOverlay
       }),
-    [requestTrustedOverlay, cancelTrustedOverlay]
+    [requestTrustedOverlay, cancelTrustedOverlay, onPreviewInteractionChange]
   )
   useEffect(() => () => catalogDialogs.dispose(), [catalogDialogs])
   useEffect(() => {
@@ -201,8 +174,6 @@ export function McpSidebar({
       setCatalogOpen(true)
     })
   }
-  const [pendingServerId, setPendingServerId] = useState<string | null>(null)
-  const [enabledOverride, setEnabledOverride] = useState<Record<string, boolean>>({})
   const [expandedCategory, setExpandedCategory] = useState<string | null>(() => {
     const activeServer = servers.find((server) => server.id === activeServerId)
     return activeServer ? serverCategory(activeServer) : null
@@ -236,26 +207,8 @@ export function McpSidebar({
   }, [filteredServers])
 
   async function setConnectorEnabled(server: McpServerSummary, enabled: boolean): Promise<void> {
-    if (pendingServerId === server.id) return
-    setEnabledOverride((current) => ({ ...current, [server.id]: enabled }))
-    setPendingServerId(server.id)
-    try {
-      await window.api.setMcpConnectorEnabled(server.name, enabled, server.sourcePath)
-      await onRefreshServers?.()
-      setEnabledOverride((current) => {
-        const next = { ...current }
-        delete next[server.id]
-        return next
-      })
-    } catch {
-      setEnabledOverride((current) => {
-        const next = { ...current }
-        delete next[server.id]
-        return next
-      })
-    } finally {
-      setPendingServerId(null)
-    }
+    await window.api.setMcpConnectorEnabled(server.name, enabled, server.sourcePath)
+    await onRefreshServers?.()
   }
 
   const visibleCategory =
@@ -266,64 +219,32 @@ export function McpSidebar({
         : (groups[0]?.category ?? null)
 
   return (
-    <Box
-      className="app-sidebar-surface"
-      sx={{
-        width: sidebarWidth,
-        minWidth: 0,
-        flexShrink: 0,
-        backgroundColor: (muiTheme) =>
-          muiTheme.palette.mode === 'dark' ? muiTheme.palette.background.default : '#FFFFFF',
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'relative',
-        pt: isMac ? `${macTitlebarHeight + contentTopGap}px` : 2,
-        WebkitAppRegion: 'no-drag'
-      }}
+    <CatalogSidebar
+      title="连接器"
+      resource="connectors"
+      width={sidebarWidth}
+      query={query}
+      onQueryChange={setQuery}
+      searchPlaceholder="搜索连接器"
+      summary={`${servers.length} 个连接器`}
+      action={
+        onRefreshServers ? (
+          <DiscoverButton expanded={catalogOpen || catalogPending} onClick={openCatalog} />
+        ) : undefined
+      }
     >
-      <Box sx={{ px: 2, pb: 1.5, WebkitAppRegion: 'drag' }}>
-        <Stack direction="row" sx={{ mb: 1.5, alignItems: 'center' }}>
-          <Typography variant="subtitle1" sx={{ flex: 1, fontWeight: 700 }}>
-            连接器
-          </Typography>
-          {onRefreshServers && (
-            <DiscoverButton expanded={catalogOpen || catalogPending} onClick={openCatalog} />
-          )}
-        </Stack>
-        <TextField
-          size="small"
-          fullWidth
-          placeholder="搜索连接器"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          slotProps={{
-            input: {
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon fontSize="small" />
-                </InputAdornment>
-              )
-            }
-          }}
-          sx={{ WebkitAppRegion: 'no-drag' }}
-        />
-      </Box>
-
-      <Divider />
-
       <List
         disablePadding
         sx={{
           overflowY: 'auto',
           flex: 1,
+          minHeight: 0,
           py: 1,
-          backgroundColor: 'transparent !important',
           WebkitAppRegion: 'no-drag'
         }}
       >
         {groups.length === 0 ? (
-          <Box sx={{ px: 2, py: 2 }}>
+          <Box sx={{ px: 1.5, py: 2 }}>
             <Typography variant="body2" color="text.secondary">
               {normalizedQuery ? '没有匹配的已配置连接器' : '尚未配置连接器。点击“发现”浏览目录。'}
             </Typography>
@@ -345,40 +266,47 @@ export function McpSidebar({
             >
               {group.entries.map((server) => {
                 const label = server.title ?? server.name
-                const active = enabledOverride[server.id] ?? server.enabled !== false
+                const active = server.enabled !== false
+                const isSelected = selectedServer?.id === server.id
                 return (
-                  <Box
+                  <CatalogResourceRow
                     key={server.id}
-                    className={selectedServer?.id === server.id ? 'Mui-selected' : undefined}
-                    onClick={() => {
+                    id={server.id}
+                    resource="connectors"
+                    label={label}
+                    enabled={active}
+                    selected={isSelected}
+                    onSelect={() => {
                       setExpandedCategory(group.category)
                       onSelectServer(server)
                     }}
-                    sx={{
-                      ...plainSidebarRowSx,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 1.25,
-                      cursor: 'pointer'
-                    }}
+                    onEnabledChange={(enabled) => setConnectorEnabled(server, enabled)}
+                    icon={
+                      <ConnectorIcon
+                        connectorId={server.connectorId ?? server.packageId}
+                        size={32}
+                      />
+                    }
                   >
-                    <ConnectorIcon connectorId={server.connectorId ?? server.packageId} size={34} />
-                    <Typography
-                      variant="body2"
-                      noWrap
-                      sx={{ flex: 1, minWidth: 0, fontWeight: 600 }}
-                    >
-                      {label}
-                    </Typography>
-                    <McpEnableSwitch
-                      checked={active}
-                      disabled={pendingServerId === server.id}
-                      label={active ? `关闭 ${label}` : `启用 ${label}`}
-                      onChange={(enabled) => {
-                        void setConnectorEnabled(server, enabled)
-                      }}
-                    />
-                  </Box>
+                    <Tooltip title={label} enterDelay={450}>
+                      <Typography
+                        component="span"
+                        noWrap
+                        sx={{
+                          display: 'block',
+                          fontSize: '0.875rem',
+                          fontWeight: isSelected ? 600 : 500,
+                          color: isSelected
+                            ? 'primary.main'
+                            : active
+                              ? 'text.primary'
+                              : 'text.secondary'
+                        }}
+                      >
+                        {label}
+                      </Typography>
+                    </Tooltip>
+                  </CatalogResourceRow>
                 )
               })}
             </SidebarAccordionGroup>
@@ -397,7 +325,7 @@ export function McpSidebar({
           onRefresh={onRefreshServers}
         />
       )}
-    </Box>
+    </CatalogSidebar>
   )
 }
 

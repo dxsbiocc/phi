@@ -177,7 +177,7 @@ test('plugin sidebar groups installed plugins by source and exposes search/filte
   assert.match(markup, /软件源/)
   assert.match(markup, /本地目录/)
   assert.match(markup, /registry-reviewer · v1\.0\.0/)
-  assert.match(markup, /aria-label="已启用"/)
+  assert.match(markup, /data-phi-catalog-status="enabled"/)
   assert.equal(
     groupPhiPlugins(installedPlugins)
       .map((group) => group.category)
@@ -202,6 +202,29 @@ test('plugin sidebar groups installed plugins by source and exposes search/filte
     ),
     'registry'
   )
+})
+
+test('plugin sidebar exposes separate enablement switches and pending state', () => {
+  const selected = plugin({ enabled: false })
+  const markup = themed(
+    createElement(PhiPluginSidebar, {
+      plugins: [selected],
+      loading: false,
+      activePluginId: selected.id,
+      busyPluginId: selected.id,
+      onSelectPlugin: () => undefined,
+      onSetEnabled: async () => true,
+      onOpenCatalog: () => undefined
+    })
+  )
+
+  assert.match(markup, /data-phi-catalog-status="disabled"/)
+  assert.match(markup, /data-phi-catalog-pending="true"/)
+  assert.match(
+    markup,
+    /role="switch"[^>]*disabled=""[^>]*aria-checked="false"[^>]*aria-busy="true"/
+  )
+  assert.match(markup, /aria-current="true"/)
 })
 
 test('plugin sidebar renders the requested empty state with an add action', () => {

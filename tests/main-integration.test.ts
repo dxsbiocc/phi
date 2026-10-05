@@ -2425,15 +2425,7 @@ async function harness(
       reconcileRemoteWrapperRuns: (): Promise<void> => Promise.resolve()
     },
     './agent/wrappers/catalog': {
-      ensureBundledWrappersInstalled: () =>
-        Promise.resolve({
-          packages: [],
-          installed: [],
-          removed: [],
-          migratedCustom: [],
-          legacyPackWarnings: [],
-          diagnostics: { unattributedIncludes: [], unattributedSupportFiles: [] }
-        }),
+      migrateLegacyCustomWrappers: (): string[] => [],
       listWrapperCatalog: (): unknown[] => [],
       addCustomWrapper: (): never => {
         throw new Error('wrapper.yaml 校验失败: (mocked in main-integration.test.ts)')

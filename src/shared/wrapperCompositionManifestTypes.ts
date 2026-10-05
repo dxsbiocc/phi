@@ -44,7 +44,11 @@ export interface WrapperCompositionManifest {
 export interface WrapperCompositionCatalogItem extends WrapperCompositionManifest {
   /** Absent for user-authored wrappers under wrappers/custom/. */
   packageId?: string
-  /** The package's resolved global enablement. */
+  /** Identifier used by wrapper:<id> enablement, including user-authored wrappers. */
+  enablementId?: string
+  /** False for untouched packages from the former automatic bundled installation. */
+  packageSelected?: boolean
+  /** The wrapper's resolved global or project enablement. */
   packageEnabled?: boolean
   /** Set when this wrapper is hidden from agent tools. */
   hiddenReason?: string

@@ -823,6 +823,7 @@ function App(): React.JSX.Element {
     isLoadingWrappers,
     wrapperError,
     packageEnablementBusy,
+    busyPackageId: busyWrapperPackageId,
     setSelectedWrapperId,
     refreshWrappers,
     refreshRuns: refreshWrapperRuns,
@@ -3571,6 +3572,16 @@ function App(): React.JSX.Element {
     [activeProject, setProjectOverride, showSnackbar, showSnackbarError]
   )
 
+  const onSetSidebarSkillEnabled = useCallback(
+    (skill: SkillSummary, enabled: boolean): Promise<void> =>
+      skill.projectOverride != null &&
+      activeProject?.location.kind !== 'ssh' &&
+      activeProject?.workingDirectory
+        ? onSetSkillProjectOverride(skill, enabled)
+        : onSetSkillGlobalEnabled(skill, enabled),
+    [activeProject, onSetSkillProjectOverride, onSetSkillGlobalEnabled]
+  )
+
   const onInstallSkillPackage = useCallback(
     async (registryDir: string, entry: PackageRegistryEntryView): Promise<void> => {
       await rendererApi.installPackage(registryDir, 'skill', entry.id, entry.version)
@@ -4183,6 +4194,8 @@ function App(): React.JSX.Element {
       phiPlugins: phiPluginsState.plugins,
       activePhiPluginId: activePhiPluginId,
       isLoadingPhiPlugins: phiPluginsState.loading,
+      busyPhiPluginId: phiPluginsState.busyPluginId,
+      onSetPhiPluginEnabled: phiPluginsState.setEnabled,
       onOpenPhiPlugin: onOpenPhiPluginTab,
       onOpenPhiPluginCatalog: () =>
         openLocalTrustedOverlay('phi-plugin-catalog', () => setIsPhiPluginCatalogOpen(true)),
@@ -4190,6 +4203,8 @@ function App(): React.JSX.Element {
       skills: skills,
       activeSkillId: activeSkillId,
       isLoadingSkills: isLoadingSkills,
+      busySkillId: busySkillId,
+      onSetSkillEnabled: onSetSidebarSkillEnabled,
       onOpenSkill: onOpenSkillTab,
       onOpenSkillCatalog: () =>
         openLocalTrustedOverlay('skill-catalog', () => setIsSkillCatalogOpen(true)),
@@ -4201,9 +4216,9 @@ function App(): React.JSX.Element {
       selectedWrapperId: selectedWrapperId,
       isLoadingWrappers: isLoadingWrappers,
       onOpenWrapper: onOpenWrapperTab,
-      onRefreshWrappers: () => {
-        void refreshWrappers()
-      },
+      onRefreshWrappers: refreshWrappers,
+      busyWrapperPackageId: busyWrapperPackageId,
+      onSetWrapperPackageEnabled: setPackageEnabled,
       sessions: sessions,
       activeSessionPath: sidebarSelectedSessionPath,
       activeCwd: activeCwd,
@@ -4249,12 +4264,16 @@ function App(): React.JSX.Element {
       phiPluginsState.plugins,
       activePhiPluginId,
       phiPluginsState.loading,
+      phiPluginsState.busyPluginId,
+      phiPluginsState.setEnabled,
       onOpenPhiPluginTab,
       setIsPhiPluginCatalogOpen,
       isPhiPluginCatalogOpen,
       skills,
       activeSkillId,
       isLoadingSkills,
+      busySkillId,
+      onSetSidebarSkillEnabled,
       onOpenSkillTab,
       setIsSkillCatalogOpen,
       mcpServers,
@@ -4264,6 +4283,8 @@ function App(): React.JSX.Element {
       wrapperCatalog,
       selectedWrapperId,
       isLoadingWrappers,
+      busyWrapperPackageId,
+      setPackageEnabled,
       onOpenWrapperTab,
       refreshWrappers,
       sessions,

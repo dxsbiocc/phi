@@ -90,6 +90,36 @@ test('skill sidebar keeps management actions out of the browsing list', () => {
   assert.doesNotMatch(markup, /全局启用技能/)
 })
 
+test('skill sidebar uses effective enablement and keeps core switches locked', () => {
+  const markup = themed(
+    createElement(SkillSidebar, {
+      skills: [
+        skill(),
+        skill({
+          id: '/bundled/scanpy/SKILL.md',
+          name: 'scanpy',
+          core: false,
+          enabled: true,
+          globalEnabled: false,
+          projectOverride: true
+        })
+      ],
+      isLoading: false,
+      activeSkillId: null,
+      onSelectSkill: () => undefined,
+      onSetEnabled: async () => undefined
+    })
+  )
+
+  assert.match(markup, /aria-label="打开 scanpy，已启用"/)
+  assert.match(markup, /role="switch"[^>]*aria-label="关闭 scanpy"[^>]*aria-checked="true"/)
+  assert.match(
+    markup,
+    /role="switch"[^>]*disabled=""[^>]*aria-label="核心技能由 Phi 依赖，不可关闭"/
+  )
+  assert.equal(markup.match(/data-phi-catalog-status="enabled"/g)?.length, 2)
+})
+
 test('skill sidebar has no selected row after its detail tab closes', () => {
   const markup = themed(
     createElement(SkillSidebar, {

@@ -174,7 +174,6 @@ import {
   writeApprovalDigest
 } from './agent/tool-approval'
 import { createEnvironmentBuilds } from './agent/content/environment-builds'
-import { getWrapperTreeOwnershipPath } from './agent/packages/wrapper-tree'
 import { bindAgentSession } from './agent/content/environment-gate'
 import {
   createSkillHost,
@@ -279,7 +278,7 @@ import {
 } from './agent/resources'
 import {
   addCustomWrapper,
-  ensureBundledWrappersInstalled,
+  migrateLegacyCustomWrappers,
   listWrapperCatalog
 } from './agent/wrappers/catalog'
 import {
@@ -6860,56 +6859,20 @@ app.whenReady().then(async () => {
     .then(logBundledPlugins)
     .catch(logBundledPluginError)
   recoverInterruptedPhiSessions()
-  // Bundled wrappers: the first install (or the migration from the old pack) is awaited so
-  // wrapper tools find a tree; later updates run in the background, because a changed
-  // package rebuilds the temporary archives (~10 s) and each package is swapped atomically.
-  const installBundledWrappers = async (): Promise<void> => {
-    try {
-      const bundledWrappers = await ensureBundledWrappersInstalled(AGENT_DIR, {
-        packageVersion: app.getVersion()
-      })
-      if (
-        bundledWrappers.diagnostics.unattributedIncludes.length > 0 ||
-        bundledWrappers.diagnostics.unattributedSupportFiles.length > 0
-      ) {
-        writeAppLog({
-          level: 'warn',
-          event: 'wrapper_bundled_attribution_warning',
-          metadata: { ...bundledWrappers.diagnostics }
-        })
-      }
-      if (bundledWrappers.migratedCustom.length > 0) {
-        writeAppLog({
-          event: 'wrapper_custom_migrated',
-          metadata: { ids: bundledWrappers.migratedCustom }
-        })
-      }
-      if (bundledWrappers.migratedPackVersion) {
-        writeAppLog({
-          event: 'wrapper_legacy_pack_migrated',
-          metadata: { version: bundledWrappers.migratedPackVersion }
-        })
-      }
-      if (bundledWrappers.legacyPackWarnings.length > 0) {
-        writeAppLog({
-          level: 'warn',
-          event: 'wrapper_legacy_pack_rejected',
-          metadata: { rejected: bundledWrappers.legacyPackWarnings }
-        })
-      }
-      resetWrapperCompositionCatalogCache()
-    } catch (error) {
-      writeAppLog({
-        level: 'error',
-        event: 'wrapper_bundled_install_failed',
-        metadata: { error: error instanceof Error ? error.message : String(error) }
-      })
+  // Wrapper packages are installed from the catalogue only after a user choice.
+  // Keep legacy user-authored wrappers available without seeding every bundled package.
+  try {
+    const migratedCustom = migrateLegacyCustomWrappers(AGENT_DIR)
+    if (migratedCustom.length > 0) {
+      writeAppLog({ event: 'wrapper_custom_migrated', metadata: { ids: migratedCustom } })
     }
-  }
-  if (existsSync(getWrapperTreeOwnershipPath(AGENT_DIR))) {
-    void installBundledWrappers()
-  } else {
-    await installBundledWrappers()
+    resetWrapperCompositionCatalogCache()
+  } catch (error) {
+    writeAppLog({
+      level: 'error',
+      event: 'wrapper_custom_migration_failed',
+      metadata: { error: error instanceof Error ? error.message : String(error) }
+    })
   }
   // Fire-and-forget: resumes remote Slurm and detached runs left mid-flight by
   // the previous app session (see executor-slurm-reconcile.ts's doc comment).
