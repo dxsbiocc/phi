@@ -146,7 +146,7 @@ Goal: replace the terminal placeholder in the workspace side panel with a real l
 
 Plan: [phi-terminal-v1-implementation-plan.md](../design/phi-terminal-v1-implementation-plan.md) (中文). Milestones T0–T5; T1–T3 form the minimum internally usable terminal, T4–T5 complete V1.
 
-Status (2026-10-04): implemented on branch `feat/terminal-v1`; pending human checks: Chinese IME, real-model drafts/explanations, and drag resize.
+Status (2026-10-06): merged into `main` and rendered inside the two-slot workbench; pending human checks in [terminal-v1-manual-checklist.md](../design/terminal-v1-manual-checklist.md), chiefly Chinese IME, real-model drafts/explanations, and drag resize.
 
 - T0 gate first: prove the PTY backend (`pi-natives` `PtySession` in a dedicated Bun worker, or `node-pty` as fallback) works in dev, `out/`, and the unpacked app, including resize, backpressure, and process-group cleanup. No mock-only panel ships if T0 fails.
 - macOS local shells only. Terminals are grouped by project (or task directory for ordinary workspaces), survive panel collapse and chat switches, and close with the main window; no PTY restore across app restarts.
