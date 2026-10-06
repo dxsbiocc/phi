@@ -276,16 +276,23 @@ test('workspace file previews and chats can show the shared right side panel', (
   )
   assert.doesNotMatch(appSource, /activeChatView[\s\S]{0,900}<WorkspaceSidePanel/)
   assert.match(appSource, /label="调整工作区面板宽度"/)
-  assert.match(appSource, /browserSidePanelWidthDefault = workspaceSidePanelWidthDefault/)
-  assert.match(appSource, /minBrowserSidePanelWidth = minWorkspaceSidePanelWidth/)
-  assert.match(appSource, /maxBrowserSidePanelWidth = 820/)
-  assert.match(appSource, /setBrowserSidePanelWidth/)
   assert.match(
     appSource,
-    /workspaceSidePanelSlots\.includes\('browser'\)[\s\S]{0,180}browserSidePanelEffectiveWidth/
+    /const \[workspaceSidePanelWidth, setWorkspaceSidePanelWidth\] = useState\(\s*workspaceSidePanelWidthDefault\s*\)/
   )
-  assert.match(appSource, /const browserMode = workspaceSidePanelSlots\.includes\('browser'\)/)
-  assert.match(appSource, /if \(browserMode\) setBrowserSidePanelWidth\(nextWidth\)/)
+  assert.match(
+    appSource,
+    /workspaceSidePanelEffectiveWidth = workspaceSidePanelWidthForViewport\(\{[\s\S]{0,260}preferredWidth: workspaceSidePanelWidth[\s\S]{0,260}maximum: maxWorkspaceSidePanelWidth/
+  )
+  assert.match(
+    appSource,
+    /const startWidth = workspaceSidePanelWidth[\s\S]{0,300}setWorkspaceSidePanelWidth\(nextWidth\)/
+  )
+  assert.doesNotMatch(appSource, /browserSidePanelWidth/)
+  assert.doesNotMatch(
+    appSource,
+    /workspaceSidePanelSlots\.includes\('browser'\)[\s\S]{0,200}(?:EffectiveWidth|SidePanelWidth)/
+  )
   assert.match(appSource, /maximized=\{workspaceSidePanelState\.maximized\}/)
   assert.match(appSource, /onCloseSlot=\{onCloseWorkspaceSidePanelSlot\}/)
   assert.match(appSource, /onToggleMaximized=\{onToggleWorkspaceSidePanelMaximized\}/)
