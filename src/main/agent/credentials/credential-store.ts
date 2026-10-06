@@ -17,7 +17,13 @@ export interface SafeStorageLike {
 const nodeRequire = createRequire(import.meta.url)
 
 function getSafeStorage(): SafeStorageLike {
-  const electronModule = nodeRequire('electron') as { safeStorage?: SafeStorageLike }
+  let electronModule: { safeStorage?: SafeStorageLike } | undefined
+  try {
+    electronModule = nodeRequire('electron') as { safeStorage?: SafeStorageLike }
+  } catch {
+    // A packaged app's bun worker has no `electron` package to resolve.
+    electronModule = undefined
+  }
   if (!electronModule?.safeStorage) {
     throw new Error('safeStorage 不可用：当前不在 Electron 主进程环境中运行')
   }

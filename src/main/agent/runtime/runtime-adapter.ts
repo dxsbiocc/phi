@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import type { ProjectLocation } from '../../../shared/projectLocation'
 import type {
@@ -372,17 +373,30 @@ function resourceDirCandidates(resourceName: string, appPath?: string): string[]
   return candidates
 }
 
+type ElectronAppLike = { isPackaged: boolean; getAppPath(): string }
+
+function loadElectronApp(): ElectronAppLike | undefined {
+  // Outside Electron, `electron` is either the dev package (exporting the
+  // binary path as a string) or, in a packaged app's bun worker, absent.
+  try {
+    const electronModule = nodeRequire('electron') as { app?: ElectronAppLike } | string
+    return typeof electronModule === 'object' ? electronModule.app : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function getBundledResourceDir(resourceName: string): string {
-  const electronModule = nodeRequire('electron') as
-    | {
-        app?: {
-          isPackaged: boolean
-          getAppPath(): string
-        }
-      }
-    | string
-  const electronApp = typeof electronModule === 'object' ? electronModule.app : undefined
-  if (!electronApp) return firstExistingPath(resourceDirCandidates(resourceName))
+  const electronApp = loadElectronApp()
+  if (!electronApp) {
+    return firstExistingPath([
+      ...resourceDirCandidates(resourceName),
+      // OMP worker under bun (no Electron): this file is copied to
+      // <app>/out/main/agent/runtime/, so resources sit four levels up — in a
+      // packaged app that is app.asar.unpacked/resources, not process.cwd().
+      fileURLToPath(new URL(`../../../../resources/${resourceName}`, import.meta.url))
+    ])
+  }
 
   if (!electronApp.isPackaged) {
     return firstExistingPath(resourceDirCandidates(resourceName, electronApp.getAppPath()))
