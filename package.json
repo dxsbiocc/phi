@@ -41,6 +41,7 @@
     "smoke:terminal-manager": "bun scripts/terminal-manager-smoke.ts",
     "smoke:terminal-stress": "bun scripts/terminal-stress-smoke.ts",
     "smoke:terminal-packaged": "bun scripts/terminal-packaged-smoke.ts",
+    "smoke:packaged-quit": "node scripts/smoke-packaged-quit.mjs",
     "runtime:fetch": "node scripts/runtime/fetch-micromamba.mjs",
     "office:fetch": "node scripts/office/fetch-officecli.mjs",
     "office:smoke": "bun run scripts/office/smoke-preview.ts",
