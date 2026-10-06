@@ -230,8 +230,7 @@ test('browser side panel renders passed browser content instead of a placeholder
   assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card="browser"/)
   assert.doesNotMatch(markup, /data-phi-workspace-side-panel-tool-card="terminal"/)
   assert.match(markup, /height:100vh/)
-  assert.match(markup, /padding-top:8px/)
-  assert.match(markup, /padding-bottom:8px/)
+  assert.match(markup, /padding:8px/)
   assert.match(markup, /border:1px solid/)
   assert.match(markup, /border-radius:16px/)
   assert.match(markup, /overflow:hidden/)
@@ -260,13 +259,19 @@ test('workspace side panel uses the compact shared height for jobs headers', () 
   assert.match(markup, /height:32px/)
 })
 
-test('workspace side panel leaves top space and full rounded borders in every layout', () => {
+test('workspace side panel uses one gap constant on every edge and between full cards', () => {
+  const panelLayoutSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/layout.ts'),
+    'utf8'
+  )
   const sidePanelSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/components/WorkspaceSidePanel.tsx'),
     'utf8'
   )
 
-  assert.match(sidePanelSource, /pt: 1,\s*pb: 1/)
+  assert.match(panelLayoutSource, /export const workspacePanelGap = 1/)
+  assert.match(sidePanelSource, /workspacePanelGap.*from '\.\.\/layout'/)
+  assert.match(sidePanelSource, /gap: workspacePanelGap,\s*p: workspacePanelGap/)
   assert.doesNotMatch(sidePanelSource, /borderTop: index/)
   assert.match(sidePanelSource, /borderRadius: '16px'/)
 
@@ -296,8 +301,8 @@ test('workspace side panel leaves top space and full rounded borders in every la
     const firstSlotStyles =
       markup.match(new RegExp(`\\.${firstSlotClass}\\{[^}]*\\}`, 'u'))?.[0] ?? ''
 
-    assert.match(workbenchStyles, /padding-top:8px/)
-    assert.match(workbenchStyles, /padding-bottom:8px/)
+    assert.match(workbenchStyles, /gap:8px/)
+    assert.match(workbenchStyles, /padding:8px/)
     assert.match(firstSlotStyles, /border:1px solid/)
     assert.match(firstSlotStyles, /border-radius:16px/)
   }

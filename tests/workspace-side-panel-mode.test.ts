@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  browserSidePanelWidthForViewport,
   closeWorkspaceSidePanelMode,
   emptyWorkspaceSidePanelState,
   openWorkspaceSidePanelMode,
   toggleWorkspaceSidePanelMaximized,
   toggleWorkspaceSidePanelMode,
   toggleWorkspaceSidePanelModeForLayout,
+  workspaceSidePanelWidthForViewport,
   type WorkspaceSidePanelState
 } from '../src/renderer/src/lib/workspaceSidePanelMode'
 
@@ -94,9 +94,9 @@ test('an open slot closes immediately when both slots are visible', () => {
   })
 })
 
-test('browser width preserves useful workspace room before falling back to compact mode', () => {
+test('workspace panel width preserves useful main-column room for every slot mode', () => {
   const width = (viewportWidth: number, sidebarWidth: number): number =>
-    browserSidePanelWidthForViewport({
+    workspaceSidePanelWidthForViewport({
       preferredWidth: 600,
       viewportWidth,
       navigationWidth: 48 + sidebarWidth
@@ -105,10 +105,10 @@ test('browser width preserves useful workspace room before falling back to compa
   assert.equal(width(860, 0), 492)
   assert.equal(width(860, 240), 252)
   assert.equal(width(860, 520), 240)
-  assert.equal(width(1024, 0), 600)
+  assert.equal(width(1024, 0), 520)
   assert.equal(width(1024, 240), 416)
   assert.equal(width(1024, 520), 240)
-  assert.equal(width(1200, 0), 600)
-  assert.equal(width(1200, 240), 592)
+  assert.equal(width(1200, 0), 520)
+  assert.equal(width(1200, 240), 520)
   assert.equal(width(1200, 520), 312)
 })

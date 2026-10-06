@@ -173,12 +173,12 @@ import {
 } from './lib/workspaceResourceTabs'
 import { workspaceSidebarModeIsExpanded, type WorkspaceSidebarMode } from './lib/workspaceSidebar'
 import {
-  browserSidePanelWidthForViewport,
   closeWorkspaceSidePanelMode,
   emptyWorkspaceSidePanelState,
   openWorkspaceSidePanelMode,
   toggleWorkspaceSidePanelMaximized,
   toggleWorkspaceSidePanelModeForLayout,
+  workspaceSidePanelWidthForViewport,
   type WorkspaceSidePanelMode
 } from './lib/workspaceSidePanelMode'
 import { PhiIcons, fileIconForPath, directoryIconForPath } from './icons'
@@ -232,9 +232,6 @@ const maxNavigationPaneWidth = 520
 const workspaceSidePanelWidthDefault = 340
 const minWorkspaceSidePanelWidth = 240
 const maxWorkspaceSidePanelWidth = 520
-const browserSidePanelWidthDefault = workspaceSidePanelWidthDefault
-const minBrowserSidePanelWidth = minWorkspaceSidePanelWidth
-const maxBrowserSidePanelWidth = 820
 const titlebarChromeHorizontalInset = '14px'
 const titlebarChromeIconButtonSize = 28
 const titlebarChromeTopOffset = `${(WINDOW_TITLEBAR_HEIGHT - titlebarChromeIconButtonSize) / 2}px`
@@ -1306,32 +1303,22 @@ function App(): React.JSX.Element {
   const [workspaceSidePanelWidth, setWorkspaceSidePanelWidth] = useState(
     workspaceSidePanelWidthDefault
   )
-  const [browserSidePanelWidth, setBrowserSidePanelWidth] = useState(browserSidePanelWidthDefault)
-  const browserSidePanelEffectiveWidth = browserSidePanelWidthForViewport({
-    preferredWidth: browserSidePanelWidth,
+  const workspaceSidePanelEffectiveWidth = workspaceSidePanelWidthForViewport({
+    preferredWidth: workspaceSidePanelWidth,
     viewportWidth: appViewportWidth,
     navigationWidth: activityBarWidth + (isSidebarOpen ? sidebarWidth : 0),
     compactMinimum: minWorkspaceSidePanelWidth,
-    maximum: maxBrowserSidePanelWidth
+    maximum: maxWorkspaceSidePanelWidth
   })
   const responsiveSingleVisibleMode =
     !workspaceSidePanelCanSplit && workspaceSidePanelSlots.length > 1
       ? (workspaceSidePanelState.active ?? workspaceSidePanelSlots.at(-1) ?? null)
       : null
   const workspaceSidePanelOverlay =
-    appViewportWidth < 1100 ||
-    (workspaceSidePanelSlots.includes('browser') &&
-      browserSidePanelEffectiveWidth < minBrowserSidePanelWidth)
+    appViewportWidth < 1100 || workspaceSidePanelEffectiveWidth < minWorkspaceSidePanelWidth
   const activeWorkspaceSidePanelWidth = workspaceSidePanelOverlay
-    ? Math.min(
-        workspaceSidePanelSlots.includes('browser')
-          ? browserSidePanelWidth
-          : workspaceSidePanelWidth,
-        Math.max(0, appViewportWidth - 16)
-      )
-    : workspaceSidePanelSlots.includes('browser')
-      ? browserSidePanelEffectiveWidth
-      : workspaceSidePanelWidth
+    ? Math.min(workspaceSidePanelWidth, Math.max(0, appViewportWidth - 16))
+    : workspaceSidePanelEffectiveWidth
   const [workspaceSidePanelTreeRevision, setWorkspaceSidePanelTreeRevision] = useState(0)
 
   const handleNotebookFileChangedEvent = useCallback(
@@ -2819,15 +2806,14 @@ function App(): React.JSX.Element {
       event.preventDefault()
 
       const startX = event.clientX
-      const browserMode = workspaceSidePanelSlots.includes('browser')
-      const startWidth = browserMode ? browserSidePanelWidth : workspaceSidePanelWidth
-      const minWidth = browserMode ? minBrowserSidePanelWidth : minWorkspaceSidePanelWidth
-      const maxWidth = browserMode ? maxBrowserSidePanelWidth : maxWorkspaceSidePanelWidth
+      const startWidth = workspaceSidePanelWidth
       const onMouseMove = (moveEvent: globalThis.MouseEvent): void => {
         const delta = moveEvent.clientX - startX
-        const nextWidth = Math.min(maxWidth, Math.max(minWidth, startWidth - delta))
-        if (browserMode) setBrowserSidePanelWidth(nextWidth)
-        else setWorkspaceSidePanelWidth(nextWidth)
+        const nextWidth = Math.min(
+          maxWorkspaceSidePanelWidth,
+          Math.max(minWorkspaceSidePanelWidth, startWidth - delta)
+        )
+        setWorkspaceSidePanelWidth(nextWidth)
       }
 
       const onMouseUp = (): void => {
@@ -2842,7 +2828,7 @@ function App(): React.JSX.Element {
       document.addEventListener('mousemove', onMouseMove)
       document.addEventListener('mouseup', onMouseUp)
     },
-    [browserSidePanelWidth, workspaceSidePanelSlots, workspaceSidePanelWidth]
+    [workspaceSidePanelWidth]
   )
   const activeSession = activeSessionPath
     ? (sessions.find((session) =>

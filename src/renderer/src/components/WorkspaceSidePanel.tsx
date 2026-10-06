@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import { GoScreenFull, GoScreenNormal, GoX } from 'react-icons/go'
 import { PhiIcons } from '../icons'
-import { workspacePanelActionSize, workspacePanelHeaderHeight } from '../layout'
+import { workspacePanelActionSize, workspacePanelGap, workspacePanelHeaderHeight } from '../layout'
 import type { WorkspaceSidePanelMode } from '../lib/workspaceSidePanelMode'
 import type { DirectoryListing } from '../types'
 import { ProjectFileTree } from '../features/file-preview/components/ProjectFileTree'
@@ -194,10 +194,8 @@ export function WorkspaceSidePanel({
         gridTemplateRows:
           visibleSlots.length > 0 ? `repeat(${visibleSlots.length}, minmax(0, 1fr))` : 'none',
         minHeight: 0,
-        gap: 1,
-        pt: 1,
-        pb: 1,
-        pr: 1,
+        gap: workspacePanelGap,
+        p: workspacePanelGap,
         bgcolor: 'background.default'
       }}
     >

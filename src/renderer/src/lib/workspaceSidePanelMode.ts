@@ -12,7 +12,7 @@ export const emptyWorkspaceSidePanelState: WorkspaceSidePanelState = {
   active: null
 }
 
-export function browserSidePanelWidthForViewport(options: {
+export function workspaceSidePanelWidthForViewport(options: {
   preferredWidth: number
   viewportWidth: number
   navigationWidth: number
@@ -22,7 +22,7 @@ export function browserSidePanelWidthForViewport(options: {
 }): number {
   const minimumMainWidth = options.minimumMainWidth ?? 320
   const compactMinimum = options.compactMinimum ?? 240
-  const maximum = options.maximum ?? 820
+  const maximum = options.maximum ?? 520
   const availableAfterNavigation = Math.max(0, options.viewportWidth - options.navigationWidth)
   const widthThatPreservesMain = Math.max(
     compactMinimum,
