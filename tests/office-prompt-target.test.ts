@@ -334,7 +334,7 @@ test('preload strips host-owned identity fields from an Office prompt target', (
   )
 })
 
-test('the disabled Office development path leaves the original prompt payload untouched', () => {
+test('the disabled Office availability path leaves the original prompt payload untouched', () => {
   const prompt = { path: null, cwd: '/workspace', sessionGeneration: 1 }
 
   assert.equal(

@@ -15,6 +15,12 @@ import type { OfficeRendererBridge } from '../src/shared/officeProtocol'
 function officeBridge(enabled: boolean): OfficeRendererBridge {
   return {
     enabled,
+    availability: {
+      supported: true,
+      userEnabled: enabled,
+      enabled,
+      reason: enabled ? null : 'user-disabled'
+    },
     create: async () => ({ ok: false, error: { code: 'unused', message: 'unused' } }),
     cancelCreate: async () => ({ ok: true, value: false }),
     open: async () => ({ ok: false, error: { code: 'unused', message: 'unused' } }),
@@ -26,7 +32,7 @@ function officeBridge(enabled: boolean): OfficeRendererBridge {
   }
 }
 
-test('blank Excel, Word, and PowerPoint entries render only when Office development is enabled', () => {
+test('blank Excel, Word, and PowerPoint entries render only when Office is available', () => {
   const hidden = renderToStaticMarkup(
     createElement(OfficeCreateButton, {
       bridge: officeBridge(false),

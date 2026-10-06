@@ -29,6 +29,7 @@ import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-previe
 import { createBeforeQuitHandler } from '../src/main/app-quit'
 import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers/remote-result-download'
 import * as localFileAccess from '../src/main/agent/local-file-access'
+import * as officeAvailability from '../src/shared/officeAvailability'
 import * as officeProtocol from '../src/shared/officeProtocol'
 import * as officePromptTarget from '../src/main/agent/office/office-prompt-target'
 import * as officeToolHost from '../src/main/agent/office/office-tool-host'
@@ -258,7 +259,7 @@ type Handler = (_event: unknown, ...args: unknown[]) => unknown
 type HostContext = { originSessionId?: string; agentRunId?: string; toolCallId?: string }
 type HostHandler = (params: unknown, context?: HostContext) => Promise<unknown>
 type HarnessOptions = {
-  officeDev?: boolean
+  officeEnabled?: boolean
   officeService?: Record<string, unknown>
 }
 type BrowserIntegrationView = {
@@ -2774,12 +2775,14 @@ async function harness(
       readAppSettings: (): Record<string, unknown> => ({
         noProjectTaskFolder: appNoProjectTaskFolder,
         preventSleepDuringRuns: false,
-        nextActionSuggestionsEnabled: true
+        nextActionSuggestionsEnabled: true,
+        officeEnabled: options.officeEnabled === true
       }),
       updateAppSettings: (): Record<string, unknown> => ({
         noProjectTaskFolder: appNoProjectTaskFolder,
         preventSleepDuringRuns: false,
-        nextActionSuggestionsEnabled: true
+        nextActionSuggestionsEnabled: true,
+        officeEnabled: options.officeEnabled === true
       })
     },
     './agent/redaction': {
@@ -2973,9 +2976,40 @@ async function harness(
       }
     },
     './agent/local-file-access': localFileAccess,
-    // Office is a dev-gated feature: these stubs keep the harness off the real service so the
-    // shared prompt path is exercised exactly as it runs with PHI_OFFICE_DEV unset.
+    // Office availability stays explicit in the harness so tests can cover both startup modes
+    // without probing a host OfficeCLI installation.
+    '../shared/officeAvailability': officeAvailability,
     '../shared/officeProtocol': officeProtocol,
+    './agent/office/office-availability': {
+      officeAvailabilityCache: {
+        initialize: async (): Promise<Record<string, unknown>> => ({
+          supported: true,
+          userEnabled: options.officeEnabled === true,
+          enabled: options.officeEnabled === true,
+          reason: options.officeEnabled === true ? null : 'user-disabled'
+        }),
+        get: (): Record<string, unknown> => ({
+          supported: true,
+          userEnabled: options.officeEnabled === true,
+          enabled: options.officeEnabled === true,
+          reason: options.officeEnabled === true ? null : 'user-disabled'
+        }),
+        getRuntime: (): Record<string, unknown> => ({
+          state: 'available',
+          binaryPath: '/officecli',
+          version: '0.4.0',
+          platform: 'darwin-arm64'
+        })
+      }
+    },
+    './agent/office/office-skill-enablement': {
+      initializePhiOfficeSkillDefault: async (): Promise<void> => {},
+      filterOfficeSkillForAvailability: (skills: Array<{ name?: string }>, enabled: boolean) =>
+        enabled ? skills : skills.filter((skill) => skill.name !== 'phi-office')
+    },
+    './agent/office/office-test-hooks': {
+      officeTestHooksEnabled: (): boolean => false
+    },
     './agent/office/office-prompt-target': officePromptTarget,
     './agent/office/office-tool-host': officeToolHost,
     './agent/office/office-deliver-tool-host': officeDeliverToolHost,
@@ -3019,8 +3053,7 @@ async function harness(
       platform: process.platform,
       env: {
         PI_CODING_AGENT_DIR: '/isolated',
-        ELECTRON_RENDERER_URL: 'https://phi.internal',
-        ...(options.officeDev ? { PHI_OFFICE_DEV: '1' } : {})
+        ELECTRON_RENDERER_URL: 'https://phi.internal'
       },
       versions: { node: '22.0.0', electron: '39.0.0' }
     }
@@ -3584,7 +3617,7 @@ test('main browser host handler trusts runtime origin and ignores forged agent i
   await prompt
 })
 
-test('main office host handler is dev-gated and derives run identity from bridge context', async () => {
+test('main office host handler is availability-gated and derives run identity from bridge context', async () => {
   const disabled = await harness()
   assert.equal(disabled.hostHandlers.has('office.read'), false)
   assert.equal(disabled.hostHandlers.has('office.describe'), false)
@@ -3615,7 +3648,7 @@ test('main office host handler is dev-gated and derives run identity from bridge
     dispose: async (): Promise<void> => {},
     ownsPreviewUrl: (): boolean => false
   }
-  const app = await harness(async () => session, { officeDev: true, officeService })
+  const app = await harness(async () => session, { officeEnabled: true, officeService })
   await app.invoke('projects:newSession', '/projects/office-agent', 'ask')
   const prompt = app.invoke('agent:prompt', 'initialize office runtime mapping')
   while (!session.started) await tick()
@@ -3720,7 +3753,7 @@ test('main ask-mode office apply uses a one-shot approval bound to exact paramet
     dispose: async (): Promise<void> => {},
     ownsPreviewUrl: (): boolean => false
   }
-  const app = await harness(async () => session, { officeDev: true, officeService })
+  const app = await harness(async () => session, { officeEnabled: true, officeService })
   await app.invoke('projects:newSession', '/projects/office-apply-agent', 'ask')
   const prompt = app.invoke('agent:prompt', 'initialize office apply runtime mapping')
   while (!session.started) await tick()
@@ -3872,7 +3905,7 @@ test('main auto and full modes follow existing write policy without Office appro
       dispose: async (): Promise<void> => {},
       ownsPreviewUrl: (): boolean => false
     }
-    const app = await harness(async () => session, { officeDev: true, officeService })
+    const app = await harness(async () => session, { officeEnabled: true, officeService })
     await app.invoke(
       'projects:newSession',
       `/projects/office-apply-${permissionMode}`,
@@ -3952,7 +3985,7 @@ test('main ask-mode Office delivery validates, records, and presents the approve
     dispose: async (): Promise<void> => {},
     ownsPreviewUrl: (): boolean => false
   }
-  const app = await harness(async () => session, { officeDev: true, officeService })
+  const app = await harness(async () => session, { officeEnabled: true, officeService })
   await app.invoke('projects:newSession', '/projects/office-deliver-agent', 'ask')
   const prompt = app.invoke('agent:prompt', 'deliver current office document')
   while (!session.started) await tick()
@@ -4290,7 +4323,8 @@ test('main IPC: app settings exposes general preferences', async () => {
   assert.deepEqual(await app.invoke('settings:get'), {
     noProjectTaskFolder: '/workspace',
     preventSleepDuringRuns: false,
-    nextActionSuggestionsEnabled: true
+    nextActionSuggestionsEnabled: true,
+    officeEnabled: false
   })
 })
 
@@ -10100,7 +10134,7 @@ test('main IPC: session deletion closes Office resources before deleting history
     dispose: async (): Promise<void> => {},
     ownsPreviewUrl: (): boolean => false
   }
-  const app = await harness(undefined, { officeDev: true, officeService })
+  const app = await harness(undefined, { officeEnabled: true, officeService })
   const current = (await app.invoke('sessions:create')) as { path: string; phiSessionId: string }
 
   await app.invoke('sessions:delete', current.path)
@@ -10118,7 +10152,7 @@ test('main IPC: failed Office cleanup preserves session history for a safe retry
     dispose: async (): Promise<void> => {},
     ownsPreviewUrl: (): boolean => false
   }
-  const app = await harness(undefined, { officeDev: true, officeService })
+  const app = await harness(undefined, { officeEnabled: true, officeService })
   const current = (await app.invoke('sessions:create')) as { path: string }
 
   await assert.rejects(app.invoke('sessions:delete', current.path), /resident still alive/u)

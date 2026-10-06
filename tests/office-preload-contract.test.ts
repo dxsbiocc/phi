@@ -6,6 +6,8 @@ import test from 'node:test'
 import ts from 'typescript'
 
 import * as promptTarget from '../src/preload/promptTarget'
+import * as officeAvailability from '../src/shared/officeAvailability'
+import { officeAvailabilityArgument } from '../src/shared/officeAvailability'
 import type { OfficeRendererBridge } from '../src/shared/officeProtocol'
 
 test('preload exposes controlled Office reconcile, selection clear, and independently cancellable events', async () => {
@@ -26,6 +28,7 @@ test('preload exposes controlled Office reconcile, selection clear, and independ
   const exposed = new Map<string, unknown>()
   const load = (specifier: string): unknown => {
     if (specifier === './promptTarget') return promptTarget
+    if (specifier === '../shared/officeAvailability') return officeAvailability
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {
@@ -41,12 +44,32 @@ test('preload exposes controlled Office reconcile, selection clear, and independ
   new Function('require', 'exports', 'process', 'window', 'console', compiled)(
     load,
     {},
-    { contextIsolated: true, platform: 'darwin', env: { PHI_OFFICE_DEV: '1' } },
+    {
+      argv: [
+        '/path/to/electron',
+        officeAvailabilityArgument({
+          supported: true,
+          userEnabled: true,
+          enabled: true,
+          reason: null
+        })
+      ],
+      contextIsolated: true,
+      platform: 'darwin',
+      env: {}
+    },
     { addEventListener: (): void => undefined },
     console
   )
 
   const office = (exposed.get('api') as { office: OfficeRendererBridge }).office
+  assert.equal(office.enabled, true)
+  assert.deepEqual(office.availability, {
+    supported: true,
+    userEnabled: true,
+    enabled: true,
+    reason: null
+  })
   await office.create({ requestId: 'create-docx', kind: 'docx', name: '未命名文档' })
   await office.importFile?.({
     requestId: 'import-csv',

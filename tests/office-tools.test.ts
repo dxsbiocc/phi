@@ -20,13 +20,12 @@ test('Office approval classification distinguishes the read tool from the reserv
   assert.equal(officeToolApproval('office_unknown'), undefined)
 })
 
-test('Office agent tools are absent unless PHI_OFFICE_DEV is exactly 1', () => {
+test('Office agent tools follow the main-process availability decision', () => {
   const requestHost = async (): Promise<unknown> => ({ ok: true })
 
-  assert.deepEqual(buildOfficeTools(requestHost, {}), [])
-  assert.deepEqual(buildOfficeTools(requestHost, { PHI_OFFICE_DEV: '0' }), [])
+  assert.deepEqual(buildOfficeTools(requestHost, false), [])
   assert.deepEqual(
-    buildOfficeTools(requestHost, { PHI_OFFICE_DEV: '1' }).map((tool) => tool.name),
+    buildOfficeTools(requestHost, true).map((tool) => tool.name),
     ['office_read', 'office_apply', 'office_deliver']
   )
 })

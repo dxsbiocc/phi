@@ -77,7 +77,7 @@ test('phi-office distinguishes paged reads from an XLSX overview without a curso
 test('every documented Office call uses a registered tool and its live parameter schema', () => {
   const text = readFileSync(SKILL_PATH, 'utf8')
   const body = skillBody(text)
-  const tools = buildOfficeTools(async () => ({ ok: true }), { PHI_OFFICE_DEV: '1' })
+  const tools = buildOfficeTools(async () => ({ ok: true }), true)
   const toolsByName = new Map(tools.map((tool) => [tool.name, tool]))
   const documentedToolNames = new Set(text.match(/\boffice_[a-z0-9_]+\b/giu) ?? [])
 

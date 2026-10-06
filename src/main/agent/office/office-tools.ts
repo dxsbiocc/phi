@@ -120,11 +120,8 @@ function officeHostError(value: unknown): { code: string; message: string } | un
   return { code, message }
 }
 
-export function buildOfficeTools(
-  requestHost: OfficeHostRequest,
-  environment: Readonly<Record<string, string | undefined>> = process.env
-): CustomTool[] {
-  return environment.PHI_OFFICE_DEV === '1'
+export function buildOfficeTools(requestHost: OfficeHostRequest, enabled: boolean): CustomTool[] {
+  return enabled
     ? [
         buildOfficeReadTool(requestHost),
         buildOfficeApplyTool(requestHost),

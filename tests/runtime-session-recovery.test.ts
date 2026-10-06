@@ -88,6 +88,28 @@ test(
   }
 )
 
+test(
+  'recovery preserves the main-process Office availability decision',
+  { skip: !hasBun },
+  async () => {
+    await withFakeWorker(async (dir) => {
+      const { session } = await createRuntimeAgentSession({
+        cwd: dir,
+        officeEnabled: true,
+        sessionManager: createRuntimeSessionManager(dir)
+      })
+      const bridge = getOmpBridge()
+      await assert.rejects(bridge.request('crash'))
+      await session.prompt('resume')
+
+      const inspected = await bridge.request<{
+        sessions: Record<string, { officeEnabled?: boolean }>
+      }>('inspect')
+      assert.equal(inspected.sessions[session.runtimeSessionId].officeEnabled, true)
+    })
+  }
+)
+
 test('concurrent calls on a lost session share one recreation', { skip: !hasBun }, async () => {
   await withFakeWorker(async (dir) => {
     const { session } = await createRuntimeAgentSession({

@@ -141,12 +141,12 @@ test('a target created during the final link wins and is never overwritten', asy
   }
 })
 
-test('save-as target selection supports cancellation, dev smoke injection, and destroyed windows', async () => {
+test('save-as target selection restricts smoke injection to unpackaged test hooks', async () => {
   let dialogs = 0
   const cancelled = await chooseOfficeSaveAsTarget(
     { projectRoot: '/project', fileName: 'report.xlsx' },
     {
-      officeDev: true,
+      testHooksEnabled: true,
       isPackaged: false,
       smokePath: undefined,
       getWindow: () => undefined,
@@ -162,7 +162,7 @@ test('save-as target selection supports cancellation, dev smoke injection, and d
   const injected = await chooseOfficeSaveAsTarget(
     { projectRoot: '/project', fileName: 'report.xlsx' },
     {
-      officeDev: true,
+      testHooksEnabled: true,
       isPackaged: false,
       smokePath: '/project/smoke.xlsx',
       getWindow: () => undefined,
@@ -174,8 +174,8 @@ test('save-as target selection supports cancellation, dev smoke injection, and d
   assert.equal(injected, '/project/smoke.xlsx')
 
   for (const gate of [
-    { officeDev: false, isPackaged: false },
-    { officeDev: true, isPackaged: true }
+    { testHooksEnabled: false, isPackaged: false },
+    { testHooksEnabled: true, isPackaged: true }
   ]) {
     const ignored = await chooseOfficeSaveAsTarget(
       { projectRoot: '/project', fileName: 'report.xlsx' },
@@ -198,7 +198,7 @@ test('save-as target selection supports cancellation, dev smoke injection, and d
   await chooseOfficeSaveAsTarget(
     { projectRoot: '/project', fileName: 'report.xlsx' },
     {
-      officeDev: true,
+      testHooksEnabled: true,
       isPackaged: false,
       getWindow: () => destroyed,
       showSaveDialog: async (window) => {
@@ -214,7 +214,7 @@ test('save-as dialog title and filter match the document kind', async () => {
   await chooseOfficeSaveAsTarget(
     { projectRoot: '/project', fileName: '报告.docx', kind: 'docx' },
     {
-      officeDev: true,
+      testHooksEnabled: true,
       isPackaged: false,
       getWindow: () => undefined,
       showSaveDialog: async (_window, options) => {
@@ -228,7 +228,7 @@ test('save-as dialog title and filter match the document kind', async () => {
   await chooseOfficeSaveAsTarget(
     { projectRoot: '/project', fileName: '演示.pptx', kind: 'pptx' },
     {
-      officeDev: true,
+      testHooksEnabled: true,
       isPackaged: false,
       getWindow: () => undefined,
       showSaveDialog: async (_window, options) => {

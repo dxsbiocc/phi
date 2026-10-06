@@ -64,7 +64,7 @@ function environment(homeDir: string, agentDir: string, saveAsPath: string): Nod
   const env: NodeJS.ProcessEnv = {
     HOME: homeDir,
     PI_CODING_AGENT_DIR: agentDir,
-    PHI_OFFICE_DEV: '1',
+    PHI_OFFICE_TEST_HOOKS: '1',
     PHI_OFFICE_SMOKE_SAVE_AS_PATH: saveAsPath
   }
   for (const key of [

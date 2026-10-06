@@ -4,7 +4,7 @@ import type { OfficeExportFormat } from './office-export-contract'
 import type { OfficeSaveAsDialogOptions, OfficeSaveAsDialogWindow } from './office-save-as-dialog'
 
 interface OfficeExportDialogDependencies {
-  readonly officeDev: boolean
+  readonly testHooksEnabled: boolean
   readonly isPackaged: boolean
   readonly smokePath?: string
   readonly getWindow: () => OfficeSaveAsDialogWindow | undefined
@@ -22,7 +22,7 @@ export async function chooseOfficeExportTarget(
   },
   dependencies: OfficeExportDialogDependencies
 ): Promise<string | null> {
-  if (dependencies.officeDev && !dependencies.isPackaged && dependencies.smokePath) {
+  if (dependencies.testHooksEnabled && !dependencies.isPackaged && dependencies.smokePath) {
     return dependencies.smokePath
   }
   const window = liveWindow(dependencies.getWindow)

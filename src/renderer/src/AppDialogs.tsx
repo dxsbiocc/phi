@@ -10,6 +10,7 @@ import OnboardingDialog from './components/OnboardingDialog'
 import NewProjectDialog from './features/project/NewProjectPanel'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
+import type { OfficeAvailability } from '../../shared/officeAvailability'
 import type { ThemeMode } from './theme'
 import type { ThemeFamily } from './useThemeMode'
 import type {
@@ -72,6 +73,7 @@ export type AppDialogsProps = {
   noProjectTaskFolder: string
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
+  officeAvailability: OfficeAvailability
   isSavingAppSettings: boolean
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
@@ -148,6 +150,7 @@ export default function AppDialogs({
   noProjectTaskFolder,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
+  officeAvailability,
   isSavingAppSettings,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
@@ -226,6 +229,7 @@ export default function AppDialogs({
         noProjectTaskFolder={noProjectTaskFolder}
         preventSleepDuringRuns={preventSleepDuringRuns}
         nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
+        officeAvailability={officeAvailability}
         isSavingAppSettings={isSavingAppSettings}
         onUpdateAppSettings={onUpdateAppSettings}
         onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}

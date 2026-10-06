@@ -26,7 +26,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
 
   switch (method) {
     case 'session.create':
-      sessions.set(params.sessionId, { manager: params.sessionManager, model: params.model })
+      sessions.set(params.sessionId, {
+        manager: params.sessionManager,
+        model: params.model,
+        officeEnabled: params.officeEnabled
+      })
       return ok({
         sessionId: params.sessionId,
         state: { sessionFile: params.sessionManager?.path }

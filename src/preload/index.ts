@@ -7,6 +7,7 @@ import type {
   OfficeSelectionEvent,
   OfficeTargetInput
 } from '../shared/officeProtocol'
+import { parseOfficeAvailabilityArguments } from '../shared/officeAvailability'
 import { sanitizePromptTargetForIpc } from './promptTarget'
 import type { RemoteWorkspaceFileRequest } from '../shared/remoteWorkspacePath'
 import type {
@@ -1066,8 +1067,12 @@ const terminalBridge: TerminalRendererBridge = {
   }
 }
 
+const officeAvailability = parseOfficeAvailabilityArguments(
+  typeof process !== 'undefined' && Array.isArray(process.argv) ? process.argv : []
+)
 const officeBridge: OfficeRendererBridge = {
-  enabled: typeof process !== 'undefined' && process.env?.PHI_OFFICE_DEV === '1',
+  enabled: officeAvailability.enabled,
+  availability: officeAvailability,
   create: (input) => ipcRenderer.invoke('office:create', input),
   cancelCreate: (input) => ipcRenderer.invoke('office:cancelCreate', input),
   importFile: (input) => ipcRenderer.invoke('office:import', input),

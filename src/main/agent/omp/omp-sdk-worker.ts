@@ -126,6 +126,7 @@ import { buildEnvRequestTool } from '../content/env-request-tool'
 import { buildScriptTools, buildSkillRunTool } from '../content/skill-tools'
 import type { ScriptToolDescriptor } from '../content/skill-tool-types'
 import { buildOfficeTools, type OfficeHostRequest } from '../office/office-tools'
+import { filterOfficeSkillForAvailability } from '../office/office-skill-enablement'
 import {
   filterEnabledMainSkills,
   filterMainScriptTools,
@@ -1059,6 +1060,7 @@ async function createPhiAgentSession(
     remoteContextFiles?: Array<{ path: string; content: string }>
     remoteTools?: () => CustomTool[]
     skillTools?: ScriptToolDescriptor[]
+    officeEnabled: boolean
     parent: () => CreateAgentSessionResult | undefined
   }
 ): Promise<AgentSessionLike> {
@@ -1172,7 +1174,10 @@ async function createPhiAgentSession(
   const skills = deps.remoteRoot
     ? []
     : loader
-      ? selectDeclaredSpecialistSkills(loader.getSkills().skills, definition.skills)
+      ? filterOfficeSkillForAvailability(
+          selectDeclaredSpecialistSkills(loader.getSkills().skills, definition.skills),
+          deps.officeEnabled
+        )
       : undefined
 
   const result = await createLegacyAgentSession({
@@ -1371,6 +1376,7 @@ async function createSession(params: unknown): Promise<unknown> {
     throw new Error('Invalid remote project instruction context')
   }
   const ctx = await getContext(agentDir)
+  const officeEnabled = record.officeEnabled === true && !remoteRoot
   const settingsCwd = remoteRoot ? agentDir : cwd
   const baseSettings = await Settings.init({ cwd: settingsCwd, agentDir })
   const settings = await baseSettings.cloneForCwd(settingsCwd)
@@ -1414,10 +1420,13 @@ async function createSession(params: unknown): Promise<unknown> {
           settingsManager: SettingsManager.create(settingsCwd, agentDir),
           skillsOverride: (base) => {
             sessionSkillNames ??= new Set(
-              filterEnabledMainSkills(base.skills, {
-                projectDir: cwd,
-                agentDir
-              }).map((skill) => skill.name)
+              filterOfficeSkillForAvailability(
+                filterEnabledMainSkills(base.skills, {
+                  projectDir: cwd,
+                  agentDir
+                }),
+                officeEnabled
+              ).map((skill) => skill.name)
             )
             return {
               ...base,
@@ -1485,6 +1494,7 @@ async function createSession(params: unknown): Promise<unknown> {
                 }
               : {}),
             ...(skillTools ? { skillTools } : {}),
+            officeEnabled,
             parent: () => parentRef.current
           })
       }),
@@ -1540,7 +1550,7 @@ async function createSession(params: unknown): Promise<unknown> {
         !remoteRoot && parentRef.current?.session.getPlanModeState()?.enabled !== true
     }
   )
-  const officeCustomTools = remoteRoot ? [] : buildOfficeTools(officeHostRequest(sessionId))
+  const officeCustomTools = buildOfficeTools(officeHostRequest(sessionId), officeEnabled)
   const customTools = [
     ...(remoteRoot
       ? [

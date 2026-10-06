@@ -29,12 +29,22 @@ export interface SmokePaths {
   readonly ompWorkerPath?: string
 }
 
-export function environment(paths: SmokePaths): NodeJS.ProcessEnv {
+export interface SmokeLaunchOptions {
+  readonly injectSaveAsPath?: boolean
+  readonly environment?: NodeJS.ProcessEnv
+}
+
+export function environment(
+  paths: SmokePaths,
+  options: Pick<SmokeLaunchOptions, 'injectSaveAsPath'> = {}
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     HOME: paths.homeDir,
     PI_CODING_AGENT_DIR: paths.agentDir,
-    PHI_OFFICE_DEV: '1',
-    PHI_OFFICE_SMOKE_SAVE_AS_PATH: paths.saveAsPath,
+    PHI_OFFICE_TEST_HOOKS: '1',
+    ...(options.injectSaveAsPath === false
+      ? {}
+      : { PHI_OFFICE_SMOKE_SAVE_AS_PATH: paths.saveAsPath }),
     ...(paths.ompWorkerPath ? { PHI_OMP_WORKER_PATH: paths.ompWorkerPath } : {})
   }
   for (const key of [
@@ -92,14 +102,20 @@ function reservePort(): Promise<number> {
   })
 }
 
-export async function launch(paths: SmokePaths): Promise<RunningApp> {
+export async function launch(
+  paths: SmokePaths,
+  options: SmokeLaunchOptions = {}
+): Promise<RunningApp> {
   const port = await reservePort()
   const child = spawn(
     electronPath,
     ['.', `--remote-debugging-port=${port}`, `--user-data-dir=${paths.userDataDir}`],
     {
       cwd: repoRoot,
-      env: environment(paths),
+      env: {
+        ...environment(paths, { injectSaveAsPath: options.injectSaveAsPath }),
+        ...options.environment
+      },
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe']
     }
@@ -160,7 +176,7 @@ export async function stopChild(child: ChildProcess): Promise<void> {
   }
 }
 
-function officePidsForRoot(root: string): number[] | null {
+export function officePidsForRoot(root: string): number[] | null {
   try {
     return execFileSync('/bin/ps', ['-axo', 'pid=,command='], { encoding: 'utf8' })
       .split('\n')

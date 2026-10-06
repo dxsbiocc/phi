@@ -53,7 +53,7 @@ async function main(): Promise<void> {
       [hostOutput],
       {
         ...process.env,
-        PHI_OFFICE_DEV: '1',
+        PHI_OFFICE_TEST_HOOKS: '1',
         PI_CODING_AGENT_DIR: join(workDir, 'phi'),
         PHI_OFFICE_SMOKE_SOURCE: join(repoRoot, 'tests', 'fixtures', 'office', 'sample.xlsx'),
         PHI_OFFICE_SMOKE_BINARY: join(

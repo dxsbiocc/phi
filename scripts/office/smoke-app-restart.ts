@@ -72,7 +72,7 @@ function environment(homeDir: string, agentDir: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     HOME: homeDir,
     PI_CODING_AGENT_DIR: agentDir,
-    PHI_OFFICE_DEV: '1'
+    PHI_OFFICE_TEST_HOOKS: '1'
   }
   for (const key of ['PATH', 'TMPDIR', 'LANG', 'SHELL', 'USER', 'LOGNAME', 'DISPLAY']) {
     if (process.env[key]) env[key] = process.env[key]

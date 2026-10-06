@@ -310,6 +310,8 @@ export type CreateAgentSessionOptions = {
   phiAgents?: PhiAgentDefinition[]
   /** Restrict explicit file paths in project sessions to the selected project. */
   projectBound?: boolean
+  /** Startup-cached Office capability decided by the main process. */
+  officeEnabled?: boolean
   remoteProject?: {
     phiSessionId: string
     projectId: string
@@ -1111,6 +1113,7 @@ export async function createRuntimeAgentSession(
     enableToolApproval: toolCallHandlers.length > 0,
     phiAgents: options.phiAgents,
     projectBound: options.projectBound,
+    officeEnabled: options.officeEnabled === true,
     remoteProject: options.remoteProject,
     personaMarkdown: options.personaMarkdown
   }
