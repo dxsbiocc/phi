@@ -280,17 +280,33 @@ function assertNoOwnershipConflicts(
   tree: string
 ): void {
   const owned = new Map<string, string>()
+  // Paths owned by other packages, and every directory above them, so each new path is
+  // checked against its own ancestors and descendants by lookup rather than every pair.
+  const otherOwned = new Map<string, string>()
+  const otherOwnedDirs = new Map<string, string>()
   for (const [owner, state] of Object.entries(registry.packages)) {
-    for (const path of state.paths) owned.set(path, owner)
+    for (const path of state.paths) {
+      owned.set(path, owner)
+      if (owner === packageId) continue
+      otherOwned.set(path, owner)
+      for (let slash = path.lastIndexOf('/'); slash > 0; slash = path.lastIndexOf('/', slash - 1)) {
+        const dir = path.slice(0, slash)
+        if (otherOwnedDirs.has(dir)) break
+        otherOwnedDirs.set(dir, owner)
+      }
+    }
+  }
+  const ownedAncestor = (path: string): string | undefined => {
+    for (let slash = path.lastIndexOf('/'); slash > 0; slash = path.lastIndexOf('/', slash - 1)) {
+      const owner = otherOwned.get(path.slice(0, slash))
+      if (owner !== undefined) return owner
+    }
+    return undefined
   }
   for (const path of paths) {
-    for (const [ownedPath, owner] of owned) {
-      if (
-        owner !== packageId &&
-        (path === ownedPath || path.startsWith(`${ownedPath}/`) || ownedPath.startsWith(`${path}/`))
-      ) {
-        throw new Error(`wrapper path ${path} 已由软件包 ${owner} 拥有`)
-      }
+    const conflictingOwner = otherOwned.get(path) ?? otherOwnedDirs.get(path) ?? ownedAncestor(path)
+    if (conflictingOwner !== undefined) {
+      throw new Error(`wrapper path ${path} 已由软件包 ${conflictingOwner} 拥有`)
     }
     const target = join(tree, ...path.split('/'))
     if (existsSync(target) && owned.get(path) !== packageId) {
