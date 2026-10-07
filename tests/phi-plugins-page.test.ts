@@ -902,10 +902,7 @@ test('plugin selection uses resource tabs, keeps the sidebar open, and uninstall
     appSource,
     /setWorkspaceSidebarMode\(workspaceResourceKindToSidebarMode\(tab\.kind\)\)[\s\S]{0,80}setIsSidebarOpen\(true\)/
   )
-  assert.match(
-    sidebarHostSource,
-    /workspaceSidebarMode === 'plugins'[\s\S]{0,180}<PhiPluginSidebar/
-  )
+  assert.match(sidebarHostSource, /mode === 'plugins'[\s\S]{0,180}<PhiPluginSidebar/)
   assert.match(detailSource, /onClick=\{\(\) => setPendingUninstall\(plugin\)\}/)
   assert.match(detailSource, /open=\{pendingUninstall !== null\}/)
   assert.match(detailSource, /确认卸载/)

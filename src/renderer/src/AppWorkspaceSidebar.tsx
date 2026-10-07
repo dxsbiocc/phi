@@ -9,6 +9,7 @@ import { SkillSidebar } from './features/skill/SkillView'
 import { WrapperSidebar } from './features/wrapper/WrapperView'
 import { WorkspaceFilesPane } from './components/WorkspaceSidePanel'
 import { RemoteConnectionNotice } from './features/project/components/RemoteConnectionNotice'
+import { RetainedCatalogSidebars } from './components/RetainedCatalogSidebars'
 import type { AppView } from './App'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
 import type {
@@ -214,7 +215,7 @@ function AppWorkspaceSidebarImpl({
   onFetchProjectSessions,
   getSessionRuntimeState
 }: AppWorkspaceSidebarProps): React.JSX.Element | null {
-  if (!isSidebarOpen) return null
+  if (!isSidebarOpen && compactHoverPreview) return null
 
   const navigate = (action: () => void | Promise<void>): void => {
     const pending = action()
@@ -222,10 +223,11 @@ function AppWorkspaceSidebarImpl({
     if (pending && onPreviewNavigate) void pending.then(onPreviewNavigate, onPreviewNavigate)
   }
 
-  const sidebarContent =
-    !compactHoverPreview &&
-    activeView === 'analysis' &&
-    workspaceSidebarMode === 'conversations' ? (
+  const sidebarContent = (
+    mode: WorkspaceSidebarMode = workspaceSidebarMode,
+    visible = true
+  ): ReactNode =>
+    !compactHoverPreview && activeView === 'analysis' && mode === 'conversations' ? (
       <Box
         data-phi-analysis-sidebar="true"
         sx={{
@@ -316,7 +318,7 @@ function AppWorkspaceSidebarImpl({
           </Box>
         </Box>
       </Box>
-    ) : workspaceSidebarMode === 'files' ? (
+    ) : mode === 'files' ? (
       <Box
         className="app-sidebar-surface"
         data-phi-files-sidebar="true"
@@ -358,7 +360,7 @@ function AppWorkspaceSidebarImpl({
           )}
         </Box>
       </Box>
-    ) : workspaceSidebarMode === 'runtime' ? (
+    ) : mode === 'runtime' ? (
       isRemoteProject ? (
         <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
           远程项目的 Notebook/Jupyter 暂不可用。
@@ -376,7 +378,7 @@ function AppWorkspaceSidebarImpl({
           onStopNotebookKernel={onStopRuntimeNotebookKernel}
         />
       )
-    ) : workspaceSidebarMode === 'plugins' ? (
+    ) : mode === 'plugins' ? (
       <PhiPluginSidebar
         plugins={phiPlugins}
         loading={isLoadingPhiPlugins}
@@ -387,13 +389,14 @@ function AppWorkspaceSidebarImpl({
         onOpenCatalog={() => navigate(onOpenPhiPluginCatalog)}
         catalogOpen={isPhiPluginCatalogOpen}
       />
-    ) : workspaceSidebarMode === 'skills' ? (
+    ) : mode === 'skills' ? (
       isRemoteProject ? (
         <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
           <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
             远程项目级 Skills 暂未接通；下方仅显示全局 Skills。
           </Typography>
           <SkillSidebar
+            visible={visible}
             skills={skills}
             isLoading={isLoadingSkills}
             busySkillId={busySkillId}
@@ -405,6 +408,7 @@ function AppWorkspaceSidebarImpl({
         </Box>
       ) : (
         <SkillSidebar
+          visible={visible}
           skills={skills}
           isLoading={isLoadingSkills}
           busySkillId={busySkillId}
@@ -414,13 +418,14 @@ function AppWorkspaceSidebarImpl({
           onOpenCatalog={() => navigate(onOpenSkillCatalog)}
         />
       )
-    ) : workspaceSidebarMode === 'mcp' ? (
+    ) : mode === 'mcp' ? (
       isRemoteProject ? (
         <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
           <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
             远程项目级 MCP 暂未接通；下方仅显示全局配置。
           </Typography>
           <McpSidebar
+            visible={visible}
             servers={mcpServers}
             activeServerId={activeMcpServerId}
             onSelectServer={(server) => navigate(() => onOpenMcpServer(server))}
@@ -432,6 +437,7 @@ function AppWorkspaceSidebarImpl({
         </Box>
       ) : (
         <McpSidebar
+          visible={visible}
           servers={mcpServers}
           activeServerId={activeMcpServerId}
           onSelectServer={(server) => navigate(() => onOpenMcpServer(server))}
@@ -441,8 +447,9 @@ function AppWorkspaceSidebarImpl({
           onPreviewInteractionChange={onPreviewDialogChange ?? onPreviewInteractionChange}
         />
       )
-    ) : workspaceSidebarMode === 'wrappers' ? (
+    ) : mode === 'wrappers' ? (
       <WrapperSidebar
+        visible={visible}
         catalog={wrapperCatalog}
         selectedId={selectedWrapperId}
         isLoading={isLoadingWrappers}
@@ -456,7 +463,7 @@ function AppWorkspaceSidebarImpl({
       />
     ) : (
       <SessionSidebar
-        mode={workspaceSidebarMode}
+        mode={mode}
         hideWindowDragSpacer={compactHoverPreview}
         compactHoverPreview={compactHoverPreview}
         onPreviewInteractionChange={onPreviewInteractionChange}
@@ -511,7 +518,7 @@ function AppWorkspaceSidebarImpl({
           }
         }}
       >
-        {sidebarContent}
+        {sidebarContent()}
       </Box>
     )
   }
@@ -521,6 +528,7 @@ function AppWorkspaceSidebarImpl({
       <Box
         className="app-sidebar-shell"
         sx={{
+          display: isSidebarOpen ? 'block' : 'none',
           width: sidebarWidth,
           maxWidth: sidebarWidth,
           minWidth: 0,
@@ -537,7 +545,12 @@ function AppWorkspaceSidebarImpl({
           }
         }}
       >
-        {sidebarContent}
+        <RetainedCatalogSidebars
+          mode={workspaceSidebarMode}
+          open={isSidebarOpen}
+          scopeKey={activeCwd}
+          renderPanel={sidebarContent}
+        />
       </Box>
 
       <Box
@@ -546,6 +559,7 @@ function AppWorkspaceSidebarImpl({
         aria-label="调整侧边栏宽度"
         onMouseDown={onStartSidebarResize}
         sx={{
+          display: isSidebarOpen ? 'block' : 'none',
           width: '1px',
           flexShrink: 0,
           position: 'relative',

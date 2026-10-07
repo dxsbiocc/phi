@@ -10,6 +10,7 @@ export type SkillCatalogState = {
   busySkillId: string | null
   setActiveSkillId: (id: string | null) => void
   refreshSkills: () => Promise<void>
+  refreshSkillsForNavigation: () => Promise<void>
   refreshPromptAgents: () => Promise<void>
   setGlobalEnabled: (skill: SkillSummary, enabled: boolean) => Promise<SkillSummary[]>
   setProjectOverride: (
@@ -29,26 +30,46 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
   const [busySkillId, setBusySkillId] = useState<string | null>(null)
   const skillsRequestRef = useRef(0)
   const promptAgentsRequestRef = useRef(0)
+  const skillsReadRef = useRef<{
+    cwd: string
+    request: number
+    promise: Promise<SkillSummary[]>
+  } | null>(null)
 
   const applySkills = useCallback((list: SkillSummary[]): void => {
     setSkills(list)
     setActiveSkillId((current) => retainSelectedCatalogId(current, list))
   }, [])
 
+  const readSkills = useCallback(
+    (cwd: string, force = false): Promise<SkillSummary[]> => {
+      if (!force && skillsReadRef.current?.cwd === cwd) return skillsReadRef.current.promise
+      const request = ++skillsRequestRef.current
+      const promise = Promise.resolve()
+        .then(() => window.api.listSkills(cwd))
+        .then((list) => {
+          if (request === skillsRequestRef.current && cwd === getActiveCwd()) applySkills(list)
+          return list
+        })
+        .finally(() => {
+          if (skillsReadRef.current?.request === request) skillsReadRef.current = null
+          if (request === skillsRequestRef.current) setIsLoadingSkills(false)
+        })
+      skillsReadRef.current = { cwd, request, promise }
+      return promise
+    },
+    [applySkills, getActiveCwd]
+  )
+
   const refreshSkills = useCallback(async (): Promise<void> => {
-    const request = ++skillsRequestRef.current
-    const cwd = getActiveCwd()
     setIsLoadingSkills(true)
-    try {
-      const list = await window.api.listSkills(cwd)
-      if (request !== skillsRequestRef.current || cwd !== getActiveCwd()) return
-      applySkills(list)
-    } finally {
-      if (request === skillsRequestRef.current) {
-        setIsLoadingSkills(false)
-      }
-    }
-  }, [applySkills, getActiveCwd])
+    await readSkills(getActiveCwd(), true)
+  }, [getActiveCwd, readSkills])
+
+  const refreshSkillsForNavigation = useCallback(async (): Promise<void> => {
+    setIsLoadingSkills(true)
+    await readSkills(getActiveCwd())
+  }, [getActiveCwd, readSkills])
 
   const refreshPromptAgents = useCallback(async (): Promise<void> => {
     const request = ++promptAgentsRequestRef.current
@@ -68,14 +89,14 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
       setBusySkillId(skill.id)
       try {
         await window.api.setEnablement(`skill:${skill.name}`, value, scope)
-        const list = await window.api.listSkills(cwd)
-        if (cwd === getActiveCwd()) applySkills(list)
-        return list
+        return cwd === getActiveCwd()
+          ? await readSkills(cwd, true)
+          : await window.api.listSkills(cwd)
       } finally {
         setBusySkillId((current) => (current === skill.id ? null : current))
       }
     },
-    [applySkills, getActiveCwd]
+    [getActiveCwd, readSkills]
   )
 
   const setGlobalEnabled = useCallback(
@@ -102,7 +123,12 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
       setBusySkillId(skill.id)
       try {
         const list = await window.api.deleteSkill(skill.filePath, cwd)
-        if (cwd === getActiveCwd()) applySkills(list)
+        if (cwd === getActiveCwd()) {
+          skillsRequestRef.current += 1
+          skillsReadRef.current = null
+          setIsLoadingSkills(false)
+          applySkills(list)
+        }
         return list
       } finally {
         setBusySkillId((current) => (current === skill.id ? null : current))
@@ -119,6 +145,7 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
     busySkillId,
     setActiveSkillId,
     refreshSkills,
+    refreshSkillsForNavigation,
     refreshPromptAgents,
     setGlobalEnabled,
     setProjectOverride,
