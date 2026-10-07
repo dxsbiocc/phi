@@ -5,11 +5,12 @@
 When using an existing presentation as a template:
 
 1. **Analyze existing slides**:
-   ```bash
-   skill_run({ skill: "pptx", script: "thumbnail.py", args: ["template.pptx"] })
-   python -m markitdown template.pptx
+
+   ```json
+   { "skill": "office-workflow", "script": "extract_text.py", "args": ["--input", "template.pptx"] }
    ```
-   Review `thumbnails.jpg` to see layouts, and markitdown output to see placeholder text.
+
+   Reopen the file with `python-pptx` to count slides and shapes, and review the extracted text for placeholders.
 
 2. **Plan slide mapping**: For each content section, choose a template slide.
 
@@ -45,13 +46,12 @@ When using an existing presentation as a template:
 
 ## Scripts
 
-| Script | Purpose |
-|--------|---------|
-| `unpack.py` | Extract and pretty-print PPTX |
+| Script         | Purpose                               |
+| -------------- | ------------------------------------- |
+| `unpack.py`    | Extract and pretty-print PPTX         |
 | `add_slide.py` | Duplicate slide or create from layout |
-| `clean.py` | Remove orphaned files |
-| `pack.py` | Repack with validation |
-| `thumbnail.py` | Create visual grid of slides |
+| `clean.py`     | Remove orphaned files                 |
+| `pack.py`      | Repack with validation                |
 
 ### unpack.py
 
@@ -86,19 +86,6 @@ skill_run({ skill: "pptx", script: "office/pack.py", args: ["unpacked/", "output
 
 Validates, repairs, condenses XML, re-encodes smart quotes.
 
-### thumbnail.py
-
-```bash
-skill_run({ skill: "pptx", script: "thumbnail.py", args: ["input.pptx"] })
-skill_run({ skill: "pptx", script: "thumbnail.py", args: ["input.pptx", "thumbs", "--cols", "4"] }) # optional output prefix and column count
-```
-
-Creates `thumbnails.jpg` with slide filenames as labels. Default 3 columns, max 12 per grid.
-
-**Use for template analysis only** (choosing layouts). For visual QA, use `soffice` + `pdftoppm` to create full-resolution individual slide images—see SKILL.md.
-
----
-
 ## Slide Operations
 
 Slide order is in `ppt/presentation.xml` → `<p:sldIdLst>`.
@@ -114,11 +101,13 @@ Slide order is in `ppt/presentation.xml` → `<p:sldIdLst>`.
 ## Editing Content
 
 **Subagents:** If available, use them here (after completing step 4). Each slide is a separate XML file, so subagents can edit in parallel. In your prompt to subagents, include:
+
 - The slide file path(s) to edit
 - **"Use the Edit tool for all changes"**
 - The formatting rules and common pitfalls below
 
 For each slide:
+
 1. Read the slide's XML
 2. Identify ALL placeholder content—text, images, charts, icons, captions
 3. Replace each placeholder with final content
@@ -141,14 +130,16 @@ For each slide:
 ### Template Adaptation
 
 When source content has fewer items than the template:
+
 - **Remove excess elements entirely** (images, shapes, text boxes), don't just clear text
 - Check for orphaned visuals after clearing text content
-- Run visual QA to catch mismatched counts
+- Open the result in Phi's right-side viewer to catch mismatched counts and orphaned visuals
 
 When replacing text with different length content:
+
 - **Shorter replacements**: Usually safe
 - **Longer replacements**: May overflow or wrap unexpectedly
-- Test with visual QA after text changes
+- Reopen the result in Phi's right-side viewer after text changes
 - Consider truncating or splitting content to fit the template's design constraints
 
 **Template slots ≠ Source items**: If template has 4 team members but source has 3 users, delete the 4th member's entire group (image + text boxes), not just the text.
@@ -158,6 +149,7 @@ When replacing text with different length content:
 If source has multiple items (numbered lists, multiple sections), create separate `<a:p>` elements for each — **never concatenate into one string**.
 
 **❌ WRONG** — all items in one paragraph:
+
 ```xml
 <a:p>
   <a:r><a:rPr .../><a:t>Step 1: Do the first thing. Step 2: Do the second thing.</a:t></a:r>
@@ -165,6 +157,7 @@ If source has multiple items (numbered lists, multiple sections), create separat
 ```
 
 **✅ CORRECT** — separate paragraphs with bold headers:
+
 ```xml
 <a:p>
   <a:pPr algn="l"><a:lnSpc><a:spcPts val="3919"/></a:lnSpc></a:pPr>
@@ -193,12 +186,12 @@ Handled automatically by unpack/pack. But the Edit tool converts smart quotes to
 <a:t>the &#x201C;Agreement&#x201D;</a:t>
 ```
 
-| Character | Name | Unicode | XML Entity |
-|-----------|------|---------|------------|
-| `“` | Left double quote | U+201C | `&#x201C;` |
-| `”` | Right double quote | U+201D | `&#x201D;` |
-| `‘` | Left single quote | U+2018 | `&#x2018;` |
-| `’` | Right single quote | U+2019 | `&#x2019;` |
+| Character | Name               | Unicode | XML Entity |
+| --------- | ------------------ | ------- | ---------- |
+| `“`       | Left double quote  | U+201C  | `&#x201C;` |
+| `”`       | Right double quote | U+201D  | `&#x201D;` |
+| `‘`       | Left single quote  | U+2018  | `&#x2018;` |
+| `’`       | Right single quote | U+2019  | `&#x2019;` |
 
 ### Other
 

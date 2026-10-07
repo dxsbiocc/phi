@@ -8,22 +8,29 @@ dependencies:
   - python=3.12
   - ipykernel
 
-  # pptx. poppler, defusedxml, lxml, and git are shared with pdf and xlsx.
+  # Shared command-line tooling retained for runtime compatibility.
+  - coreutils
+
+  # pptx. defusedxml, lxml, pillow, and git support the OOXML utilities.
   - defusedxml
   - git
   - lxml
   - nodejs
   - pillow
-  - poppler
+  - python-pptx
   - pptxgenjs
 
   # xlsx. defusedxml, lxml, and git are listed under pptx.
-  - coreutils
   - openpyxl
   - python-calamine
+  - xlsxwriter
 
-  # pdf. poppler is listed under pptx.
+  # docx. lxml is listed under pptx.
+  - python-docx
+
+  # pdf.
   - pdfplumber
+  - poppler
   - pypdf
   - reportlab
 

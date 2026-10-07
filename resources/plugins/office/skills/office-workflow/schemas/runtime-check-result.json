@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["environment", "ok", "packages", "missing"],
+  "properties": {
+    "environment": { "const": "phi:python@1" },
+    "ok": { "type": "boolean" },
+    "packages": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "null"] }
+    },
+    "missing": { "type": "array", "items": { "type": "string" } }
+  }
+}

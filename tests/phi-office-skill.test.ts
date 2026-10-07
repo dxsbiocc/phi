@@ -36,7 +36,7 @@ test('runtime skill discovery exposes the bundled phi-office skill to skill-list
   assert.equal(skill.filePath, SKILL_PATH)
 })
 
-test('phi-office frontmatter declares its triggers and precedence over legacy Office skills', () => {
+test('phi-office is limited to small interactive edits of an already-open Office file', () => {
   const validation = validateSkill(SKILL_DIR)
   assert.deepEqual(validation.errors, [])
   assert.deepEqual(validation.warnings, [])
@@ -47,12 +47,16 @@ test('phi-office frontmatter declares its triggers and precedence over legacy Of
   for (const extension of ['.xlsx', '.docx', '.pptx']) {
     assert.match(description, new RegExp(escapeRegExp(extension), 'iu'))
   }
-  assert.match(description, /(?:创建|修改|查看)/u)
-  assert.match(description, /右侧.*实时预览/u)
-  assert.match(description, /交付/u)
-  assert.match(description, /优先.*(?:pptx.*xlsx|xlsx.*pptx)/iu)
-  assert.match(description, /Office 文件的创建\/修改一律用本技能/u)
-  assert.match(description, /只在本技能明确不支持时才考虑旧技能/u)
+  assert.match(description, /仅用于.*已在右侧打开.*少量交互式修改/u)
+  assert.match(description, /生成类任务.*图表.*图片.*复杂格式.*批量/u)
+  for (const skill of ['xlsx', 'pptx', 'docx', 'pdf']) {
+    assert.match(description, new RegExp(`\\b${skill}\\b`, 'iu'))
+  }
+  assert.doesNotMatch(description, /优先于旧/u)
+
+  const body = skillBody()
+  assert.match(body, /^\s*# Phi Office\s+仅用于.*已在右侧打开/msu)
+  assert.match(body, /生成类任务.*`xlsx`.*`pptx`.*`docx`.*`pdf`/su)
 })
 
 test('phi-office body contains no forbidden install or direct Office command and no absolute path', () => {

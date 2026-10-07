@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "file",
+    "paragraphCount",
+    "tableCount",
+    "sectionCount",
+    "textTruncated",
+    "paragraphsTruncated",
+    "tablesTruncated",
+    "sectionsTruncated",
+    "stylesTruncated",
+    "paragraphs",
+    "tables",
+    "sections",
+    "stylesUsed"
+  ],
+  "properties": {
+    "file": { "type": "string" },
+    "paragraphCount": { "type": "integer", "minimum": 0 },
+    "tableCount": { "type": "integer", "minimum": 0 },
+    "sectionCount": { "type": "integer", "minimum": 0 },
+    "textTruncated": { "type": "boolean" },
+    "paragraphsTruncated": { "type": "boolean" },
+    "tablesTruncated": { "type": "boolean" },
+    "sectionsTruncated": { "type": "boolean" },
+    "stylesTruncated": { "type": "boolean" },
+    "paragraphs": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "text", "style", "styleTruncated", "runCount", "truncated"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "text": { "type": "string", "maxLength": 2000 },
+          "style": { "type": ["string", "null"], "maxLength": 100 },
+          "styleTruncated": { "type": "boolean" },
+          "runCount": { "type": "integer", "minimum": 0 },
+          "truncated": { "type": "boolean" }
+        }
+      }
+    },
+    "tables": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "rows", "columns"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "rows": { "type": "integer", "minimum": 0 },
+          "columns": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "sections": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "topMarginInches",
+          "rightMarginInches",
+          "bottomMarginInches",
+          "leftMarginInches",
+          "headerParagraphs",
+          "footerParagraphs"
+        ],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "topMarginInches": { "type": ["number", "null"] },
+          "rightMarginInches": { "type": ["number", "null"] },
+          "bottomMarginInches": { "type": ["number", "null"] },
+          "leftMarginInches": { "type": ["number", "null"] },
+          "headerParagraphs": { "type": "integer", "minimum": 0 },
+          "footerParagraphs": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "stylesUsed": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "type": "string", "maxLength": 100 }
+    }
+  }
+}

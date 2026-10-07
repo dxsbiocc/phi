@@ -1,0 +1,15 @@
+schemaVersion: 1
+id: office
+type: plugin
+version: 1.0.0
+title: 办公文档（Excel / Word / PowerPoint / PDF）
+summary: 以托管 Python 生成和处理办公文档；原生 phi-office 仅用于已打开文件的少量交互式修改。
+toolPrefix: officepy
+components:
+  agents: []
+  skills:
+    - skills/xlsx
+    - skills/pptx
+    - skills/pdf
+    - skills/docx
+    - skills/office-workflow

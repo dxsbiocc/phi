@@ -275,6 +275,35 @@ test('plugin detail contains management, components, environment state and sourc
   assert.match(markup, /卸载/)
 })
 
+test('plugin detail describes a plugin with no private environments without an unbuilt warning', () => {
+  const office = plugin({
+    id: 'office',
+    title: '办公文档（Excel / Word / PowerPoint / PDF）',
+    summary: '使用托管 Python 环境生成和批量处理办公文档。',
+    agents: [],
+    skills: ['skills/xlsx', 'skills/pptx', 'skills/pdf', 'skills/docx', 'skills/office-workflow'],
+    scriptTools: ['officepy_check_formulas', 'officepy_docx_inspect'],
+    environments: [],
+    environmentStatuses: []
+  })
+  const markup = themed(
+    createElement(PhiPluginsView, {
+      plugin: office,
+      busyPluginId: null,
+      error: null,
+      notice: null,
+      onClearError: () => undefined,
+      onClearNotice: () => undefined,
+      onRefresh: async () => undefined,
+      onSetEnabled: async () => true,
+      onUninstall: async () => true
+    })
+  )
+
+  assert.match(markup, /此插件未声明托管环境/)
+  assert.doesNotMatch(markup, />未构建</)
+})
+
 test('plugin detail builds an absent private environment through the shared confirmation flow', async () => {
   const estimate = {
     packages: 12,

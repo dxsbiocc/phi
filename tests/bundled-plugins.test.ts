@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
 import { describeEnvironment } from '../src/main/agent/content/environment-refs'
+import { filterEnabledMainSkills, writeEnablementState } from '../src/main/agent/enablement'
 import { currentPlatform } from '../src/main/agent/envs'
 import { readPackageManifest } from '../src/main/agent/packages/manifest'
 import { installPlugin, loadedPlugins, type LoadedPlugin } from '../src/main/agent/plugins/loader'
@@ -13,6 +14,7 @@ import { isPluginSkillPreviewPath } from '../src/main/agent/plugins/preview'
 import { createRuntimeResourceLoader } from '../src/main/agent/runtime/runtime-adapter'
 
 const VISUALIZATION_SOURCE = join(process.cwd(), 'resources', 'plugins', 'visualization')
+const OFFICE_SOURCE = join(process.cwd(), 'resources', 'plugins', 'office')
 
 function withTemp(body: (root: string) => void | Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'phi-installed-plugins-'))
@@ -29,6 +31,19 @@ function installVisualization(root: string): {
   const agentDir = join(root, 'agent')
   const runtimeRoot = join(root, 'runtime')
   const result = installPlugin(VISUALIZATION_SOURCE, { agentDir, runtimeRoot })
+  assert.equal(result.ok, true, JSON.stringify(result.errors))
+  assert.ok(result.plugin)
+  return { agentDir, runtimeRoot, plugin: result.plugin }
+}
+
+function installOffice(root: string): {
+  agentDir: string
+  runtimeRoot: string
+  plugin: LoadedPlugin
+} {
+  const agentDir = join(root, 'agent')
+  const runtimeRoot = join(root, 'runtime')
+  const result = installPlugin(OFFICE_SOURCE, { agentDir, runtimeRoot })
   assert.equal(result.ok, true, JSON.stringify(result.errors))
   assert.ok(result.plugin)
   return { agentDir, runtimeRoot, plugin: result.plugin }
@@ -157,5 +172,65 @@ test('runtime skill loading and preview access use installed plugin files', asyn
     )
     assert.equal(isPluginSkillPreviewPath(installedPreview, agentDir), true)
     assert.equal(isPluginSkillPreviewPath(sourcePreview, agentDir), false)
+  })
+})
+
+test('office plugin installs five Python office skills without a private environment', async () => {
+  await withTemp(async (root) => {
+    installVisualization(root)
+    const { agentDir, plugin } = installOffice(root)
+    assert.equal(plugin.id, 'office')
+    assert.equal(plugin.toolPrefix, 'officepy')
+    assert.equal(Object.hasOwn(plugin.manifest, 'environments'), false)
+    assert.deepEqual(plugin.components.agents, [])
+    assert.equal(plugin.components.skills.length, 5)
+    assert.deepEqual(
+      loadedPlugins({ agentDir }).map((item) => item.toolPrefix),
+      ['officepy', 'viz']
+    )
+
+    const loader = createRuntimeResourceLoader({ cwd: join(root, 'project'), agentDir })
+    await loader.reload()
+    const skills = loader.getSkills().skills.filter((skill) => skill.sourceInfo.origin === 'office')
+    assert.deepEqual(skills.map((skill) => skill.name).sort(), [
+      'docx',
+      'office-workflow',
+      'pdf',
+      'pptx',
+      'xlsx'
+    ])
+    assert.equal(
+      skills.every((skill) => skill.sourceInfo.source === 'phi-plugin'),
+      true
+    )
+  })
+})
+
+test('office plugin skills preserve old explicit skill enablement overrides', async () => {
+  await withTemp(async (root) => {
+    const agentDir = join(root, 'agent')
+    writeEnablementState(
+      {
+        version: 1,
+        global: { 'skill:xlsx': true, 'skill:pptx': false },
+        projects: {}
+      },
+      { agentDir }
+    )
+    installOffice(root)
+
+    const loader = createRuntimeResourceLoader({ cwd: join(root, 'project'), agentDir })
+    await loader.reload()
+    const officeSkills = loader
+      .getSkills()
+      .skills.filter((skill) => skill.sourceInfo.origin === 'office')
+    const enabled = filterEnabledMainSkills(officeSkills, { agentDir })
+
+    assert.deepEqual(enabled.map((skill) => skill.name).sort(), [
+      'docx',
+      'office-workflow',
+      'pdf',
+      'xlsx'
+    ])
   })
 })
