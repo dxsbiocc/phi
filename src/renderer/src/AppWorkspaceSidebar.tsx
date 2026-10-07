@@ -33,6 +33,7 @@ export type AppWorkspaceSidebarProps = {
   isSidebarOpen: boolean
   compactHoverPreview?: boolean
   onPreviewInteractionChange?: (active: boolean) => void
+  onPreviewDialogChange?: (active: boolean) => void
   onPreviewNavigate?: () => void
   sidebarWidth: number
   activeView: AppView
@@ -132,6 +133,7 @@ export type WorkspaceSidebarDataProps = Omit<
   | 'workspaceSidebarMode'
   | 'compactHoverPreview'
   | 'onPreviewInteractionChange'
+  | 'onPreviewDialogChange'
   | 'onPreviewNavigate'
 >
 
@@ -139,6 +141,7 @@ function AppWorkspaceSidebarImpl({
   isSidebarOpen,
   compactHoverPreview = false,
   onPreviewInteractionChange,
+  onPreviewDialogChange,
   onPreviewNavigate,
   sidebarWidth,
   activeView,
@@ -424,7 +427,7 @@ function AppWorkspaceSidebarImpl({
             onRefreshServers={onRefreshMcpServers}
             requestTrustedOverlay={requestTrustedOverlay}
             cancelTrustedOverlay={cancelTrustedOverlay}
-            onPreviewInteractionChange={onPreviewInteractionChange}
+            onPreviewInteractionChange={onPreviewDialogChange ?? onPreviewInteractionChange}
           />
         </Box>
       ) : (
@@ -435,7 +438,7 @@ function AppWorkspaceSidebarImpl({
           onRefreshServers={onRefreshMcpServers}
           requestTrustedOverlay={requestTrustedOverlay}
           cancelTrustedOverlay={cancelTrustedOverlay}
-          onPreviewInteractionChange={onPreviewInteractionChange}
+          onPreviewInteractionChange={onPreviewDialogChange ?? onPreviewInteractionChange}
         />
       )
     ) : workspaceSidebarMode === 'wrappers' ? (
@@ -449,7 +452,7 @@ function AppWorkspaceSidebarImpl({
         onSetPackageEnabled={onSetWrapperPackageEnabled}
         requestTrustedOverlay={requestTrustedOverlay}
         cancelTrustedOverlay={cancelTrustedOverlay}
-        onPreviewInteractionChange={onPreviewInteractionChange}
+        onPreviewInteractionChange={onPreviewDialogChange ?? onPreviewInteractionChange}
       />
     ) : (
       <SessionSidebar

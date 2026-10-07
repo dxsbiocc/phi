@@ -161,11 +161,12 @@ export function McpSidebar({
     [requestTrustedOverlay, cancelTrustedOverlay, onPreviewInteractionChange]
   )
   useEffect(() => () => catalogDialogs.dispose(), [catalogDialogs])
+  const catalogInteractionActive = catalogOpen || catalogPending
   useEffect(() => {
-    if (!catalogOpen && !catalogPending) return undefined
+    if (!catalogInteractionActive) return undefined
     onPreviewInteractionChange?.(true)
     return () => onPreviewInteractionChange?.(false)
-  }, [catalogOpen, catalogPending, onPreviewInteractionChange])
+  }, [catalogInteractionActive, onPreviewInteractionChange])
   const openCatalog = (): void => {
     onPreviewInteractionChange?.(true)
     setCatalogPending(true)

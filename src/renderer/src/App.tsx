@@ -150,6 +150,10 @@ import { shouldRefreshProjectGitStatusForAgentEvent } from './lib/projectGitRefr
 import { readableErrorMessage } from './lib/sessionNotifications'
 import { sessionDraftKey, updateSessionDraft } from './lib/sessionDrafts'
 import { orderSessionsForDisplay } from './lib/sessionOrder'
+import {
+  isPointerWithinWorkspaceSidebarPreview,
+  isWorkspaceSidebarPreviewDialogActive
+} from './lib/workspaceSidebarPreviewPointer'
 import { sessionDisplayTitle, titleFromMessages, truncateSessionTitle } from './lib/sessionTitles'
 import { isNotebookFilePath } from './features/analysis/lib/notebookPaths'
 import { orderProjectsForSessionSelection } from './lib/projectSidebar'
@@ -3271,13 +3275,8 @@ function App(): React.JSX.Element {
       }
       workspaceSidebarPreviewCloseTimer.current = window.setTimeout(() => {
         workspaceSidebarPreviewCloseTimer.current = null
-        const preview =
-          document.querySelector('[data-phi-workspace-sidebar-preview-region]') ??
-          document.getElementById('workspace-sidebar-preview')
-        const anchor = document.querySelector(
-          '.app-activity-bar [aria-controls="workspace-sidebar-preview"]'
-        )
-        if (preview?.matches(':hover') || anchor?.matches(':hover')) return
+        if (isWorkspaceSidebarPreviewDialogActive() || isPointerWithinWorkspaceSidebarPreview())
+          return
         setWorkspaceSidebarPreview(null)
       }, delayMs)
     },
@@ -4432,6 +4431,7 @@ function App(): React.JSX.Element {
           refreshMcpServers={refreshMcpServers}
           setIsSettingsOpen={setSettingsOpenWithBrowserGate}
           isWorkspaceSidebarPreviewOpen={isWorkspaceSidebarPreviewOpen}
+          isWorkspaceSidebarPreviewBlocked={isWorkspaceSidebarPreviewBlocked}
           visibleWorkspaceSidebarPreview={visibleWorkspaceSidebarPreview}
           workspaceSidebarPreviewMode={workspaceSidebarPreviewMode}
           workspaceSidebarPreviewWidth={workspaceSidebarPreviewWidth}

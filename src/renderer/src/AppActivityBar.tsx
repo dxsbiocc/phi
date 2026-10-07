@@ -1,4 +1,12 @@
-import { memo, useCallback, useEffect, useRef, useState, type FocusEvent } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEvent
+} from 'react'
 import { Box, Fade, IconButton, Paper, Popper, Tooltip, useMediaQuery } from '@mui/material'
 import type { SxProps, Theme } from '@mui/material/styles'
 import type { IconType } from 'react-icons'
@@ -15,6 +23,11 @@ import {
 import AppWorkspaceSidebar, { type WorkspaceSidebarDataProps } from './AppWorkspaceSidebar'
 import { PhiIcons } from './icons'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
+import {
+  hasVisibleWorkspaceSidebarDialog,
+  isPointerWithinWorkspaceSidebarPreview,
+  trackWorkspaceSidebarPointer
+} from './lib/workspaceSidebarPreviewPointer'
 
 const activityBarWidth = 48
 const macTitlebarHeight = 44
@@ -188,6 +201,7 @@ export type AppActivityBarProps = {
   setIsSettingsOpen: (open: boolean) => void
 
   isWorkspaceSidebarPreviewOpen: boolean
+  isWorkspaceSidebarPreviewBlocked?: boolean
   visibleWorkspaceSidebarPreview: {
     mode: WorkspaceSidebarMode
     anchorEl: HTMLElement
@@ -195,7 +209,10 @@ export type AppActivityBarProps = {
   workspaceSidebarPreviewMode: WorkspaceSidebarMode
   workspaceSidebarPreviewWidth: number
   clearWorkspaceSidebarPreviewCloseTimer: () => void
-  closeWorkspaceSidebarPreview: () => void
+  closeWorkspaceSidebarPreview: (
+    delayMs?: number,
+    expectedPreview?: AppActivityBarProps['visibleWorkspaceSidebarPreview']
+  ) => void
 
   sidebarProps: WorkspaceSidebarDataProps
   onPreviewNavigate: () => void
@@ -214,6 +231,7 @@ function AppActivityBarImpl({
   refreshMcpServers,
   setIsSettingsOpen,
   isWorkspaceSidebarPreviewOpen,
+  isWorkspaceSidebarPreviewBlocked = false,
   visibleWorkspaceSidebarPreview,
   workspaceSidebarPreviewMode,
   workspaceSidebarPreviewWidth,
@@ -233,6 +251,13 @@ function AppActivityBarImpl({
   }
   const displayedPreview = visibleWorkspaceSidebarPreview ?? retainedPreview
   const displayedPreviewMode = displayedPreview?.mode ?? workspaceSidebarPreviewMode
+  const currentPreviewRef = useRef(displayedPreview)
+  const dialogOwnerPreviewRef = useRef<AppActivityBarProps['visibleWorkspaceSidebarPreview']>(null)
+  const [previewDialogHidden, setPreviewDialogHidden] = useState(false)
+  const [previewDialogActive, setPreviewDialogActive] = useState(false)
+  useLayoutEffect(() => {
+    currentPreviewRef.current = displayedPreview
+  }, [displayedPreview])
   const previewInteractionLockedRef = useRef(false)
   const [previewInteractionLocked, setPreviewInteractionLocked] = useState(false)
   const previewSurfaceActiveRef = useRef(false)
@@ -243,12 +268,32 @@ function AppActivityBarImpl({
     previewSurfaceActiveRef.current = false
   }, [isWorkspaceSidebarPreviewOpen])
   const requestWorkspaceSidebarPreviewClose = useCallback((): void => {
-    if (previewInteractionLockedRef.current || previewSurfaceActiveRef.current) {
+    if (
+      previewInteractionLockedRef.current ||
+      previewSurfaceActiveRef.current ||
+      isPointerWithinWorkspaceSidebarPreview()
+    ) {
       clearWorkspaceSidebarPreviewCloseTimer()
       return
     }
     scheduleWorkspaceSidebarPreviewClose()
   }, [clearWorkspaceSidebarPreviewCloseTimer, scheduleWorkspaceSidebarPreviewClose])
+  useEffect(
+    () =>
+      trackWorkspaceSidebarPointer(() => {
+        const inside = isPointerWithinWorkspaceSidebarPreview()
+        const wasInside = previewPointerInsideRef.current
+        previewPointerInsideRef.current = inside
+        if (inside) {
+          previewSurfaceActiveRef.current = true
+          clearWorkspaceSidebarPreviewCloseTimer()
+        } else if (wasInside) {
+          previewSurfaceActiveRef.current = false
+          requestWorkspaceSidebarPreviewClose()
+        }
+      }),
+    [clearWorkspaceSidebarPreviewCloseTimer, requestWorkspaceSidebarPreviewClose]
+  )
   const handleWorkspaceSidebarPreviewInteractionChange = useCallback(
     (active: boolean): void => {
       previewInteractionLockedRef.current = active
@@ -261,9 +306,32 @@ function AppActivityBarImpl({
     },
     [clearWorkspaceSidebarPreviewCloseTimer, scheduleWorkspaceSidebarPreviewClose]
   )
+  const handleWorkspaceSidebarPreviewDialogChange = useCallback(
+    (active: boolean): void => {
+      setPreviewDialogActive(active)
+      handleWorkspaceSidebarPreviewInteractionChange(active)
+      if (active) {
+        dialogOwnerPreviewRef.current ??= currentPreviewRef.current
+        setPreviewDialogHidden(true)
+        clearWorkspaceSidebarPreviewCloseTimer()
+      } else {
+        const owner = dialogOwnerPreviewRef.current
+        dialogOwnerPreviewRef.current = null
+        previewSurfaceActiveRef.current = false
+        if (owner) closeWorkspaceSidebarPreview(0, owner)
+      }
+    },
+    [
+      clearWorkspaceSidebarPreviewCloseTimer,
+      closeWorkspaceSidebarPreview,
+      handleWorkspaceSidebarPreviewInteractionChange
+    ]
+  )
   const handleWorkspaceSidebarPreviewEnter = useCallback((): void => {
-    previewPointerInsideRef.current = true
-    previewSurfaceActiveRef.current = true
+    const inside = isPointerWithinWorkspaceSidebarPreview()
+    previewPointerInsideRef.current = inside
+    previewSurfaceActiveRef.current = inside
+    if (!inside) return
     clearWorkspaceSidebarPreviewCloseTimer()
     if (!isWorkspaceSidebarPreviewOpen && displayedPreview) {
       openWorkspaceSidebarPreview(displayedPreview.mode, displayedPreview.anchorEl)
@@ -274,14 +342,19 @@ function AppActivityBarImpl({
     isWorkspaceSidebarPreviewOpen,
     openWorkspaceSidebarPreview
   ])
-  const handleWorkspaceSidebarPreviewFocus = useCallback((): void => {
-    previewSurfaceActiveRef.current = true
-    clearWorkspaceSidebarPreviewCloseTimer()
-  }, [clearWorkspaceSidebarPreviewCloseTimer])
+  const handleWorkspaceSidebarPreviewFocus = useCallback(
+    (event: FocusEvent<HTMLElement>): void => {
+      if (!event.currentTarget.contains(event.target)) return
+      previewSurfaceActiveRef.current = true
+      clearWorkspaceSidebarPreviewCloseTimer()
+    },
+    [clearWorkspaceSidebarPreviewCloseTimer]
+  )
   const handleWorkspaceSidebarPreviewLeave = useCallback((): void => {
-    previewPointerInsideRef.current = false
-    previewSurfaceActiveRef.current = false
-    requestWorkspaceSidebarPreviewClose()
+    const inside = isPointerWithinWorkspaceSidebarPreview()
+    previewPointerInsideRef.current = inside
+    previewSurfaceActiveRef.current = inside
+    if (!inside) requestWorkspaceSidebarPreviewClose()
   }, [requestWorkspaceSidebarPreviewClose])
   const handleWorkspaceSidebarPreviewBlur = useCallback(
     (event: FocusEvent<HTMLElement>): void => {
@@ -289,7 +362,7 @@ function AppActivityBarImpl({
       if (nextFocusedElement instanceof Node && event.currentTarget.contains(nextFocusedElement)) {
         return
       }
-      previewSurfaceActiveRef.current = previewPointerInsideRef.current
+      previewSurfaceActiveRef.current = isPointerWithinWorkspaceSidebarPreview()
       if (!previewSurfaceActiveRef.current) requestWorkspaceSidebarPreviewClose()
     },
     [requestWorkspaceSidebarPreviewClose]
@@ -305,7 +378,9 @@ function AppActivityBarImpl({
   const refreshForMode = (mode: WorkspaceSidebarMode): (() => Promise<void>) | undefined =>
     previewRefreshers[mode]
   const handlePreviewOpen = (mode: WorkspaceSidebarMode, anchorEl: HTMLElement): void => {
-    if (skipPreviewFocusRef.current) return
+    if (skipPreviewFocusRef.current || previewDialogActive || hasVisibleWorkspaceSidebarDialog())
+      return
+    setPreviewDialogHidden(false)
     openWorkspaceSidebarPreview(mode, anchorEl)
     const refresh = refreshForMode(mode)
     if (!refresh || refreshInFlightRef.current.has(mode)) return
@@ -413,6 +488,8 @@ function AppActivityBarImpl({
           }
         ]}
         sx={{
+          visibility:
+            previewDialogHidden || isWorkspaceSidebarPreviewBlocked ? 'hidden' : 'visible',
           zIndex: (muiTheme) =>
             previewInteractionLocked || !isWorkspaceSidebarPreviewOpen
               ? muiTheme.zIndex.modal - 1
@@ -422,6 +499,7 @@ function AppActivityBarImpl({
         {({ TransitionProps }) => (
           <Box
             data-phi-workspace-sidebar-preview-region
+            data-phi-preview-dialog-active={previewDialogActive || undefined}
             onMouseEnter={handleWorkspaceSidebarPreviewEnter}
             onMouseLeave={handleWorkspaceSidebarPreviewLeave}
             onFocus={handleWorkspaceSidebarPreviewFocus}
@@ -445,6 +523,7 @@ function AppActivityBarImpl({
               onExited={() => {
                 TransitionProps?.onExited?.()
                 if (!isWorkspaceSidebarPreviewOpen) setRetainedPreview(null)
+                setPreviewDialogHidden(false)
               }}
             >
               <Paper
@@ -465,8 +544,17 @@ function AppActivityBarImpl({
                   }
                 }}
                 data-phi-workspace-sidebar-hover-preview={displayedPreviewMode}
-                inert={!isWorkspaceSidebarPreviewOpen}
-                aria-hidden={!isWorkspaceSidebarPreviewOpen || undefined}
+                inert={
+                  !isWorkspaceSidebarPreviewOpen ||
+                  previewDialogHidden ||
+                  isWorkspaceSidebarPreviewBlocked
+                }
+                aria-hidden={
+                  !isWorkspaceSidebarPreviewOpen ||
+                  previewDialogHidden ||
+                  isWorkspaceSidebarPreviewBlocked ||
+                  undefined
+                }
                 elevation={8}
                 sx={{
                   width: workspaceSidebarPreviewWidth,
@@ -494,6 +582,7 @@ function AppActivityBarImpl({
                   workspaceSidebarMode={displayedPreviewMode}
                   compactHoverPreview
                   onPreviewInteractionChange={handleWorkspaceSidebarPreviewInteractionChange}
+                  onPreviewDialogChange={handleWorkspaceSidebarPreviewDialogChange}
                   onPreviewNavigate={onPreviewNavigate}
                 />
               </Paper>
@@ -514,6 +603,7 @@ function appActivityBarPropsEqual(prev: AppActivityBarProps, next: AppActivityBa
     prev.isWorkspaceSidebarModeExpanded === next.isWorkspaceSidebarModeExpanded &&
     prev.shouldUseWorkspaceSidebarPreview === next.shouldUseWorkspaceSidebarPreview &&
     prev.isWorkspaceSidebarPreviewOpen === next.isWorkspaceSidebarPreviewOpen &&
+    prev.isWorkspaceSidebarPreviewBlocked === next.isWorkspaceSidebarPreviewBlocked &&
     prev.visibleWorkspaceSidebarPreview?.mode === next.visibleWorkspaceSidebarPreview?.mode &&
     prev.visibleWorkspaceSidebarPreview?.anchorEl ===
       next.visibleWorkspaceSidebarPreview?.anchorEl &&

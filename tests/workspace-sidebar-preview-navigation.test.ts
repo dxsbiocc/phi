@@ -90,6 +90,7 @@ function blurPreview(
     useCallback: (action: unknown) => action,
     Node: PreviewNode,
     previewPointerInsideRef: { current: pointerInside },
+    isPointerWithinWorkspaceSidebarPreview: () => pointerInside,
     previewSurfaceActiveRef: surface,
     requestWorkspaceSidebarPreviewClose: () => closes++
   }) as (event: unknown) => void
