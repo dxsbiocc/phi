@@ -1,6 +1,7 @@
 # Phi 运行时基础设计：环境、执行、绑定与插件结构
 
 日期：2026-09-29
+更新：2026-10-07 — 可视化改用共享的 `phi-r` 环境。
 英文版：[phi-runtime-foundation.md](phi-runtime-foundation.md)。
 状态：**已确认（2026-09-29，§9 的 6 条决策全部确认）。** 本文先于 [内容分发设计](phi-content-distribution-design.zh-CN.md) 和 [实施计划](../roadmap/content-distribution-implementation.zh-CN.md)：那两份文档里凡是涉及环境、执行、插件结构的内容，都以本文为准。
 
@@ -70,8 +71,11 @@
 | 种类     | 例子                                                 | 谁定义                              | 可变性                       |
 | -------- | ---------------------------------------------------- | ----------------------------------- | ---------------------------- |
 | 基础环境 | `phi-python`、`phi-r`、`phi-nextflow`、`phi-jupyter` | Phi 开发者，随 app 或 registry 发布 | 不可变；新版本是新环境       |
-| 包环境   | 可视化插件的 `viz` 环境；某个 skill 自带的环境       | 插件或 skill 作者                   | 不可变                       |
+| 包环境   | 插件私有环境；某个 skill 自带的环境                  | 插件或 skill 作者                   | 不可变                       |
 | 项目环境 | 某项目额外需要的包                                   | 用户（经 agent 请求、用户确认）     | 不可变；追加依赖会生成新环境 |
+
+`phi-r` 是 R notebook、scanpy R 互操作和内置可视化插件共用的基础
+环境。可视化插件不再声明私有包环境。
 
 ### 3.2 规格与锁文件
 
@@ -85,15 +89,15 @@
 
 ```json
 {
-  "envId": "viz-3f9a1c2b7d10",
-  "name": "viz",
-  "kind": "package",
+  "envId": "phi-r-3f9a1c2b7d10",
+  "name": "phi-r",
+  "kind": "base",
   "platform": "darwin-arm64",
   "lockSha256": "…",
   "createdAt": "…",
   "micromambaVersion": "2.x",
   "activation": { "set": { "CONDA_PREFIX": "…", "JAVA_HOME": "…" }, "pathPrepend": ["…/bin"] },
-  "host": { "soffice": "/Applications/LibreOffice.app/Contents/MacOS/soffice" },
+  "host": {},
   "sourcePackages": [
     { "language": "r", "name": "ggsankey", "source": "github", "ref": "…", "sha256": "…" }
   ],
@@ -186,7 +190,7 @@ runInEnvironment(envRef, argv, { cwd, stdin, timeout, signal }) // 直接运行
 name: omics-visualization
 description: …
 phi:
-  environment: plugin:viz
+  environment: phi:r@1
   scripts:
     - name: route
       run: [python, ./scripts/viz.py, route]
@@ -234,14 +238,17 @@ agent 仍然可以在绑定了环境的会话里用 `bash` 直接运行这些程
 
 ### 6.1 谁可以声明环境
 
-| 声明位置                      | 写法                                                                                       | 含义                                               |
-| ----------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------- |
-| skill frontmatter 的 `phi` 块 | `environment: phi:python@1` / `environment: ./environment.yml` / `environment: plugin:viz` | 这个 skill 的脚本和脚本工具在哪个环境里跑          |
-| agent frontmatter             | `environment: plugin:viz`                                                                  | 这个 agent 会话的 bash 和核心工具用哪个环境        |
-| 插件 manifest                 | `environments: { viz: {...} }`                                                             | 插件自带的具名环境，供插件内的 skill 和 agent 引用 |
-| 项目                          | `.phi/environment.yml`（可选），引用写作 `project:default`                                 | 项目需要的额外依赖                                 |
+| 声明位置                      | 写法                                                                                            | 含义                                               |
+| ----------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| skill frontmatter 的 `phi` 块 | `environment: phi:python@1` / `environment: ./environment.yml` / `environment: plugin:statistics` | 这个 skill 的脚本和脚本工具在哪个环境里跑          |
+| agent frontmatter             | `environment: phi:r@1` / `environment: plugin:statistics`                                      | 这个 agent 会话的 bash 和核心工具用哪个环境        |
+| 插件 manifest                 | `environments: { statistics: {...} }`                                                          | 插件自带的具名环境，供插件内的 skill 和 agent 引用 |
+| 项目                          | `.phi/environment.yml`（可选），引用写作 `project:default`                                      | 项目需要的额外依赖                                 |
 
 `plugin:<name>` 只能引用同一插件内的环境；跨插件引用不允许。
+
+内置可视化插件在 skill 和 agent frontmatter 中都使用官方环境
+`phi:r@1`，因此它的 manifest 不写可选的 `environments` 字段。
 
 ### 6.2 解析顺序
 
@@ -269,41 +276,36 @@ agent 仍然可以在绑定了环境的会话里用 `bash` 直接运行这些程
     Visualization.md            # frontmatter: visibility, environment, skills, tools, spawns
   skills/
     omics-visualization/
-      SKILL.md                  # frontmatter: environment: plugin:viz, scripts: [...]
+      SKILL.md                  # frontmatter: environment: phi:r@1, scripts: [...]
       scripts/  references/  assets/
-  environments/
-    viz/
-      environment.yml
-      locks/darwin-arm64.txt  locks/darwin-x64.txt  locks/linux-x64.txt
   mcp/                          # 可选：stdio 服务定义
   wrappers/                     # 可选
   orchestrator/                 # 预留
 ```
 
-### 7.2 manifest 与环境相关的部分
+### 7.2 可视化插件 manifest
 
 ```yaml
 id: visualization
 type: plugin
-version: 1.0.0
+version: 1.0.2
 toolPrefix: viz # 脚本工具名前缀，见 §10
-environments:
-  viz:
-    spec: environments/viz/environment.yml
-    locks: environments/viz/locks/
-    host: [] # 宿主依赖，本插件没有
 components:
   agents: [agents/Visualization.md]
   skills: [skills/omics-visualization]
 ```
 
-### 7.3 插件 agent 怎么管理自己的环境
+`可视化` manifest 不含 `environments` 字段。它的 agent 和 skill
+frontmatter 都绑定 `phi:r@1`。
 
-1. **安装插件时**：引擎按锁文件为 `viz` 调用 ensure，记录"插件 visualization 引用 envId"。环境可以立即构建，也可以推迟到首次使用；两种情况都显示大小和进度。
-2. **创建 agent 会话时**：读取 agent 的 `environment: plugin:viz` → ensure 环境就绪（没就绪就提示用户构建，而不是静默回落到本机）→ 挂上 bash 注入扩展 → 核心工具通过运行上下文拿到同一个环境 → 插件内的 skill 经 `skill_run` 解析到同一个环境。
+### 7.3 可视化插件如何使用共享环境
+
+1. **安装插件时**：引擎注册 agent、skill 和脚本工具；没有插件私有环境需要构建。
+2. **创建 agent 会话时**：读取 `environment: phi:r@1` → ensure 官方环境就绪（没就绪就提示用户构建，而不是静默回落到本机）→ 挂上 bash 注入扩展 → 核心工具通过运行上下文拿到同一个环境 → 插件内的 skill 经 `skill_run` 解析到同一个环境。
 3. **运行中**：环境只读；需要额外包走 §6.3。
-4. **升级插件时**：新版本的锁文件对应新的 envId，新环境建好后再切换；旧环境失去引用后回收。
-5. **卸载插件时**：删除插件文件，移除引用，GC 回收环境。
+4. **移除旧私有环境的升级时**：活动版本原子切换后，旧版本的
+   `plugin:viz` 引用被移除；现有 GC 会在它无其他引用后回收该环境。
+5. **卸载插件时**：删除插件组件；插件不拥有共享的官方 `phi-r` 环境。
 
 agent 本身不"管理"环境，它只**声明**要用哪个环境；创建、激活、隔离、回收都由引擎负责。这样插件作者不写任何环境管理代码，引擎也不需要为某个插件做特殊处理。
 
@@ -316,7 +318,7 @@ agent 本身不"管理"环境，它只**声明**要用哪个环境；创建、�
 | 1    | L0 + L1 | 打包 micromamba；`~/.phi/runtime` 布局与 `mambarc`；按 explicit 锁创建环境、激活快照、只读、索引、GC                                                                           | 在干净账户上，用一个只含 python 的锁文件建出环境；重复 ensure 不重建     |
 | 2    | L2      | `environmentVariables` / `runInEnvironment`；净化规则；金丝雀测试（解释器位置、反向导入、干净机器）                                                                            | 三项隔离测试全部通过                                                     |
 | 3    | L3      | `skill_run`；`phi-python` 首版；迁移一个 skill（如 scanpy）走 `skill_run`                                                                                                      | 该 skill 在没有本机 Python 科学栈的机器上可用                            |
-| 4    | L4      | agent frontmatter 的 `environment`；bash 注入扩展；可视化改写为命令行程序 `scripts/viz.py` 并声明为脚本工具，在 `viz` 环境中运行；删除引擎中的 `src/main/agent/visualization/` | 可视化在没有本机 R 的机器上出图；引擎中没有可视化代码                    |
+| 4    | L4      | agent frontmatter 的 `environment`；bash 注入扩展；可视化改写为命令行程序 `scripts/viz.py` 并声明为脚本工具，在 `phi-r` 环境中运行；删除引擎中的 `src/main/agent/visualization/` | 可视化在没有本机 R 的机器上出图；引擎中没有可视化代码                    |
 | 5    | L3      | 其余使用方：notebook 内核（`phi-jupyter`）、Nextflow（`phi-nextflow` + `conda.useMicromamba`）、MCP stdio；显式选用本机版本（§5.2）                                            | 在没有本机 jupyter / nextflow / conda 的机器上，notebook 和 wrapper 可用 |
 | 6    | L5      | 插件目录结构和 manifest；把已经改写好的可视化在本地打包成插件，按 §7.3 安装、运行、卸载                                                                                        | 插件的完整生命周期跑通                                                   |
 | 7    | L6      | 内容分发：单元、目录、安装器、registry（见内容分发设计）                                                                                                                       | 按内容分发设计的标准                                                     |
@@ -344,9 +346,9 @@ agent 本身不"管理"环境，它只**声明**要用哪个环境；创建、�
 | 脚本工具                     | `<toolPrefix>_<脚本名>`；`toolPrefix` 在包 manifest 中声明，2–12 位小写字母或数字，registry 内唯一，不得与保留前缀冲突                                                                                                                 | `viz_route`、`viz_render`                                                                    |
 | 包 id、skill 名、插件 id     | kebab-case                                                                                                                                                                                                                             | `omics-visualization`、`visualization`、`protein-apis`                                       |
 | agent 名                     | PascalCase                                                                                                                                                                                                                             | `Visualization`、`Database`、`Wrapper`                                                       |
-| 环境名                       | kebab-case；Phi 维护的环境加 `phi-` 前缀，按用途命名；插件内环境不加前缀                                                                                                                                                               | `phi-python`、`phi-r`、`phi-nextflow`、`phi-jupyter`；`viz`                                  |
-| 环境引用                     | `<作用域>:<名>[@<主版本>]`，或相对路径                                                                                                                                                                                                 | `phi:python@1`、`plugin:viz`、`project:default`、`./environment.yml`                         |
-| envId                        | `<作用域>-<所有者>-<名>-<hash12>`；`phi` 作用域省略所有者                                                                                                                                                                              | `phi-python-3f9a1c2b7d10`、`plugin-visualization-viz-…`、`project-<项目短 id>-default-…`     |
+| 环境名                       | kebab-case；Phi 维护的环境加 `phi-` 前缀，按用途命名；插件内环境不加前缀                                                                                                                                                               | `phi-python`、`phi-r`、`phi-nextflow`、`phi-jupyter`；`statistics`                           |
+| 环境引用                     | `<作用域>:<名>[@<主版本>]`，或相对路径                                                                                                                                                                                                 | `phi:python@1`、`phi:r@1`、`plugin:statistics`、`project:default`、`./environment.yml`       |
+| envId                        | `<作用域>-<所有者>-<名>-<hash12>`；`phi` 作用域省略所有者                                                                                                                                                                              | `phi-python-3f9a1c2b7d10`、`plugin-reports-statistics-…`、`project-<项目短 id>-default-…` |
 | 包清单                       | 所有类型统一为 `phi-package.yaml`，用 `type` 区分                                                                                                                                                                                      | `type: skill` / `wrapper` / `mcp` / `plugin`                                                 |
 | frontmatter 和 manifest 字段 | camelCase，与 omp 一致；例外：SKILL.md 的标准字段沿用 Agent Skills 规范（如 `allowed-tools`、`disable-model-invocation`），Phi 的字段一律放在 `phi` 块里；旧的 snake_case 字段（如 `delegation_mode`）作为兼容别名读取，校验器提示迁移 | `thinkingLevel`、`outputSchema`、`attachTo`、`toolPrefix`、`delegationMode`                  |
 | 脚本入口                     | `scripts/<toolPrefix>.py`，子命令与脚本工具名一致                                                                                                                                                                                      | `scripts/viz.py route`                                                                       |

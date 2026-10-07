@@ -1222,7 +1222,7 @@ function integrationSkip(): string | false {
 }
 
 test(
-  'integration: the viz environment runs route, prepare, and render',
+  'integration: phi-r runs viz route, prepare, and render',
   { timeout: 1_200_000, skip: integrationSkip() },
   async () => {
     const root = createTestRuntimeRoot('viz-cli')
@@ -1230,7 +1230,7 @@ test(
     const project = join(runtimeRoot, 'project')
     mkdirSync(project)
     try {
-      const descriptor = describeEnvironment('plugin:viz', { platform: currentPlatform() })
+      const descriptor = describeEnvironment('phi:r@1', { platform: currentPlatform() })
       const env = await buildEnvironment(runtimeRoot, descriptor)
       const routed = await runInEnvironment(
         env,

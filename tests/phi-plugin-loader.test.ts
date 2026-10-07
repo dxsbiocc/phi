@@ -16,7 +16,7 @@ import test from 'node:test'
 
 import { stringify as stringifyYaml } from 'yaml'
 
-import { computeEnvId, readEnvironmentIndex } from '../src/main/agent/envs'
+import { computeEnvId, readEnvironmentIndex, updateEnvironmentEntry } from '../src/main/agent/envs'
 import { installBundledPlugins } from '../src/main/agent/plugins/bundled-install'
 import {
   installPlugin,
@@ -46,6 +46,7 @@ interface FixtureOptions {
   toolPrefix?: string
   environmentName?: string
   lockSalt?: string
+  withEnvironment?: boolean
 }
 
 function writePlugin(root: string, options: FixtureOptions = {}): string {
@@ -55,6 +56,8 @@ function writePlugin(root: string, options: FixtureOptions = {}): string {
   const skillName = options.skillName ?? 'alpha-skill'
   const toolPrefix = options.toolPrefix ?? 'alph'
   const environmentName = options.environmentName ?? 'alpha-env'
+  const withEnvironment = options.withEnvironment ?? true
+  const environmentRef = withEnvironment ? `plugin:${environmentName}` : 'phi:python@1'
   const dir = join(root, `${id}-${version}-${Math.random().toString(16).slice(2)}`)
   const skillDir = join(dir, 'skills', skillName)
   const environmentDir = join(dir, 'environments', environmentName)
@@ -79,9 +82,13 @@ function writePlugin(root: string, options: FixtureOptions = {}): string {
         agents: [`agents/${agentName}.md`],
         skills: [`skills/${skillName}`]
       },
-      environments: {
-        [environmentName]: { spec: `environments/${environmentName}/environment.yml` }
-      }
+      ...(withEnvironment
+        ? {
+            environments: {
+              [environmentName]: { spec: `environments/${environmentName}/environment.yml` }
+            }
+          }
+        : {})
     })
   )
   writeFileSync(join(dir, 'README.md'), `# ${agentName}\n`)
@@ -92,7 +99,7 @@ name: ${agentName}
 description: ${agentName} fixture agent.
 tools: [bash]
 skills: [${skillName}]
-environment: plugin:${environmentName}
+environment: ${environmentRef}
 ---
 Run the fixture skill and report the result.
 `
@@ -103,7 +110,7 @@ Run the fixture skill and report the result.
 name: ${skillName}
 description: Fixture plugin skill.
 phi:
-  environment: plugin:${environmentName}
+  environment: ${environmentRef}
   attachTo: [${agentName}]
   scripts:
     - name: run
@@ -128,8 +135,8 @@ Use this fixture skill.
   writeFileSync(join(dir, 'assets', 'palette.json'), '{}\n')
   writeFileSync(join(dir, 'not-allowlisted.txt'), 'must not be copied\n')
 
-  copyMinimal(environmentDir, environmentName)
-  if (options.lockSalt) {
+  if (withEnvironment) copyMinimal(environmentDir, environmentName)
+  if (withEnvironment && options.lockSalt) {
     const lockPath = join(environmentDir, 'locks', `${PLATFORM}.txt`)
     writeFileSync(
       lockPath,
@@ -329,6 +336,31 @@ test('upgrade builds changed environments before switching and rolls back a fail
     assert.equal(existsSync(pluginVersionDir('alpha-plugin', '1.2.0', agentDir)), false)
     assert.equal(loadedPlugins({ agentDir })[0]?.version, '1.1.0')
     assert.equal(gcCalls, 2)
+  })
+})
+
+test('upgrade to a plugin without environments drops the old referrer and garbage-collects it', async () => {
+  await withSandbox(async (root, agentDir, runtimeRoot) => {
+    const options = { agentDir, runtimeRoot, platform: PLATFORM }
+    assert.equal(installPlugin(writePlugin(root), options).ok, true)
+    const descriptor = describeEnvironment('plugin:alpha-env', {
+      pluginId: 'alpha-plugin',
+      agentDir,
+      platform: PLATFORM
+    })
+    const oldEnvId = installReady(runtimeRoot, descriptor, {})
+    const oldPrefix = join(runtimeRoot, 'envs', oldEnvId)
+    updateEnvironmentEntry(runtimeRoot, oldEnvId, { status: 'ready' })
+
+    const upgraded = await upgradePlugin(
+      writePlugin(root, { version: '1.1.0', withEnvironment: false }),
+      options
+    )
+
+    assert.equal(upgraded.ok, true, JSON.stringify(upgraded.errors))
+    assert.deepEqual(upgraded.plugin?.environments, {})
+    assert.equal(readEnvironmentIndex(runtimeRoot).environments[oldEnvId], undefined)
+    assert.equal(existsSync(oldPrefix), false)
   })
 })
 

@@ -451,7 +451,7 @@ test('a bound env_request swaps the live bash variables and skill environment', 
       return { notReady: { ref: 'x', envId: 'e', message: 'not ready' } }
     }
     if (method === 'environments.request') {
-      assert.ok(params.environment === 'phi:python@1' || params.environment === 'plugin:viz')
+      assert.ok(params.environment === 'phi:python@1' || params.environment === 'plugin:demo')
       return {
         ref: 'project:python-x1',
         envId: 'project-p0000000000-python-x1-abcdefabcdef',
@@ -546,7 +546,7 @@ test('a bound env_request swaps the live bash variables and skill environment', 
   assert.equal(missing.isError, true)
   const sent = await main.execute(
     'call-7',
-    { packages: ['six'], reason: 'need six', environment: 'plugin:viz' },
+    { packages: ['six'], reason: 'need six', environment: 'plugin:demo' },
     undefined,
     ctx as never,
     undefined

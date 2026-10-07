@@ -1194,7 +1194,7 @@ async function harness(
         list: async () => [],
         build: (ref: unknown, projectCwd: unknown, pluginId: unknown) => {
           managedEnvironmentBuildCalls.push({ ref, projectCwd, pluginId })
-          return { envId: 'plugin-visualization-viz-0123456789ab' }
+          return { envId: 'plugin-demo-owner-demo-0123456789ab' }
         },
         rebuild: async () => undefined,
         remove: async () => ({ removed: true, bytesFreed: 0 }),
@@ -5999,11 +5999,11 @@ test('main IPC forwards the owning plugin identity for private environment build
   const app = await harness()
 
   assert.deepEqual(
-    await app.invoke('managedEnvironments:build', 'plugin:viz', undefined, 'visualization'),
-    { envId: 'plugin-visualization-viz-0123456789ab' }
+    await app.invoke('managedEnvironments:build', 'plugin:demo', undefined, 'demo-owner'),
+    { envId: 'plugin-demo-owner-demo-0123456789ab' }
   )
   assert.deepEqual(app.managedEnvironmentBuildCalls, [
-    { ref: 'plugin:viz', projectCwd: undefined, pluginId: 'visualization' }
+    { ref: 'plugin:demo', projectCwd: undefined, pluginId: 'demo-owner' }
   ])
 })
 

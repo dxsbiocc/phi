@@ -276,7 +276,7 @@ fallback:
     assert.equal(result.ok, true, mode)
     assert.equal(result.agent?.delegationMode, mode)
   }
-  for (const ref of ['phi:python@1', 'plugin:viz', 'project:default']) {
+  for (const ref of ['phi:python@1', 'plugin:demo', 'project:default']) {
     const result = validateAgentFile(
       '/x/Alpha.md',
       agentDocument(`${PHI_FRONTMATTER}\nenvironment: ${ref}`),
@@ -774,7 +774,7 @@ test('the bundled Visualization agent routes template previews through omics vis
     for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit']) {
       assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
     }
-    assert.equal(visualization.environment, 'plugin:viz')
+    assert.equal(visualization.environment, 'phi:r@1')
     for (const tool of ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']) {
       assert.equal(visualization.tools.includes(tool), false, `${tool} arrives through attachTo`)
     }

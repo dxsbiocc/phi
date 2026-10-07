@@ -74,35 +74,18 @@ test('installed plugin metadata and components come from the installed copy', as
   })
 })
 
-test('plugin environment resolution requires the requesting installed plugin', async () => {
+test('the visualization plugin has no private environment and uses phi-r', async () => {
   await withTemp((root) => {
-    const { agentDir } = installVisualization(root)
+    const { agentDir, plugin } = installVisualization(root)
     const platform = currentPlatform()
-    const found = describeEnvironment('plugin:viz', {
-      agentDir,
-      pluginId: 'visualization',
-      platform
-    })
-    assert.equal(found.ref, 'plugin:viz')
-    assert.equal(found.scope, 'plugin')
-    assert.equal(found.owner, 'visualization')
-    assert.equal(found.kind, 'package')
-    assert.equal(found.spec.name, 'viz')
+    assert.deepEqual(plugin.environments, {})
+    const found = describeEnvironment('phi:r@1', { agentDir, platform })
+    assert.equal(found.ref, 'phi:r@1')
+    assert.equal(found.scope, 'phi')
+    assert.equal(found.owner, undefined)
+    assert.equal(found.kind, 'base')
+    assert.equal(found.spec.name, 'phi-r')
     assert.match(found.lockText, /@EXPLICIT/)
-
-    assert.throws(
-      () => describeEnvironment('plugin:viz', { agentDir, platform }),
-      /requires a requesting plugin/
-    )
-    assert.throws(
-      () =>
-        describeEnvironment('plugin:viz', {
-          agentDir,
-          pluginId: 'another-plugin',
-          platform
-        }),
-      /environment plugin:viz is not available/
-    )
   })
 })
 

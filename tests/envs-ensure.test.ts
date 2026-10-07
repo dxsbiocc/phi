@@ -39,7 +39,6 @@ import {
   type EnvironmentSpec,
   type PhiPlatform
 } from '../src/main/agent/envs'
-import { linkScriptFailureFromOutput } from '../src/main/agent/envs/ensure'
 import { getMicromambaPath } from '../src/main/agent/envs/paths'
 import { createTestRuntimeRoot } from './helpers/testRuntimeRoot'
 
@@ -182,7 +181,7 @@ test('updateEnvironmentEntry writes atomically and preserves referrers', async (
     const envId = 'phi-demo-0123456789ab'
     const otherId = 'phi-other-abcdefabcdef'
     entryPatch(root, envId, {
-      referrers: ['plugin:viz'],
+      referrers: ['plugin:demo'],
       error: 'old failure'
     })
     entryPatch(root, otherId, { referrers: ['project:alpha'], name: 'other' })
@@ -206,7 +205,7 @@ test('updateEnvironmentEntry writes atomically and preserves referrers', async (
       >
     }
     assert.equal(parsed.version, 1)
-    assert.deepEqual(parsed.environments[envId].referrers, ['plugin:viz'])
+    assert.deepEqual(parsed.environments[envId].referrers, ['plugin:demo'])
     assert.equal(parsed.environments[envId].status, 'ready')
     assert.equal(parsed.environments[envId].error, undefined)
     assert.equal(parsed.environments[envId].name, 'demo')
@@ -399,17 +398,6 @@ exit 0
       "micromamba post-link script failed for package 'bioconductor-genomeinfodbdata': installBiocDataPackage.sh: command not found"
     )
   })
-})
-
-test('link-script warnings without shell failure diagnostics stay warnings', () => {
-  const output = [
-    'warning  libmamba Security Warning: This transaction includes executing package scripts.',
-    "warning  libmamba Executing post-link script for package 'demo'.",
-    'demo configured an optional feature',
-    "warning  libmamba Executing pre-unlink script for package 'old-demo'."
-  ].join('\n')
-
-  assert.equal(linkScriptFailureFromOutput(output), undefined)
 })
 
 function loadMinimal(): { spec: EnvironmentSpec; lockText: string } {

@@ -51,8 +51,8 @@ function plugin(overrides: Partial<PhiPluginDisplayItem> = {}): PhiPluginDisplay
     agents: ['agents/Visualization.md'],
     skills: ['skills/omics-visualization'],
     scriptTools: ['viz_prepare', 'viz_render'],
-    environments: [{ name: 'viz', ref: 'plugin:viz' }],
-    environmentStatuses: [{ name: 'viz', ref: 'plugin:viz', state: 'ready' }],
+    environments: [{ name: 'demo', ref: 'plugin:demo' }],
+    environmentStatuses: [{ name: 'demo', ref: 'plugin:demo', state: 'ready' }],
     ...overrides
   }
 }
@@ -119,7 +119,7 @@ test('Phi plugin component summaries omit empty categories and preserve final to
       agents: ['agents/Visualization.md', 'agents/Reviewer.md'],
       skills: ['skills/omics-visualization'],
       scriptTools: ['viz_render', 'viz_prepare'],
-      environments: [{ name: 'viz', ref: 'plugin:viz' }]
+      environments: [{ name: 'demo', ref: 'plugin:demo' }]
     }),
     '2 个智能体 · 1 个技能 · 2 个脚本工具 · 1 个环境'
   )
@@ -245,7 +245,7 @@ test('plugin sidebar renders the requested empty state with an add action', () =
 test('plugin detail contains management, components, environment state and source metadata', () => {
   const selected = plugin({
     environmentStatuses: [
-      { name: 'viz', ref: 'plugin:viz', envId: 'viz-123', state: 'drifted' },
+      { name: 'demo', ref: 'plugin:demo', envId: 'demo-123', state: 'drifted' },
       { name: 'stats', ref: 'plugin:stats', state: 'absent' }
     ]
   })
@@ -313,9 +313,9 @@ test('plugin detail builds an absent private environment through the shared conf
   const selected = plugin({
     environmentStatuses: [
       {
-        name: 'viz',
-        ref: 'plugin:viz',
-        envId: 'plugin-visualization-viz-0123456789ab',
+        name: 'demo',
+        ref: 'plugin:demo',
+        envId: 'plugin-visualization-demo-0123456789ab',
         state: 'absent',
         estimate
       }
@@ -364,24 +364,24 @@ test('plugin detail builds an absent private environment through the shared conf
     {
       buildManagedEnvironment: async (...args: unknown[]) => {
         calls.push(args)
-        return { envId: 'plugin-visualization-viz-0123456789ab' }
+        return { envId: 'plugin-visualization-demo-0123456789ab' }
       }
     },
     selected.id,
     selected.environmentStatuses[0]!
   )
-  assert.equal(result.envId, 'plugin-visualization-viz-0123456789ab')
-  assert.deepEqual(calls, [['plugin:viz', undefined, 'visualization']])
+  assert.equal(result.envId, 'plugin-visualization-demo-0123456789ab')
+  assert.deepEqual(calls, [['plugin:demo', undefined, 'visualization']])
 
   const dialogMarkup = themed(
     createElement(EnvironmentBuildConfirmDialog, {
-      environment: { ref: 'plugin:viz', label: 'viz', estimate },
+      environment: { ref: 'plugin:demo', label: 'demo', estimate },
       working: false,
       onClose: () => undefined,
       onConfirm: () => undefined
     })
   )
-  assert.match(dialogMarkup, /构建 viz？/)
+  assert.match(dialogMarkup, /构建 demo？/)
   assert.match(dialogMarkup, /预计下载 4\.0 MB · 12 个包（5 个已缓存）/)
   assert.match(dialogMarkup, /开始构建/)
 })
@@ -390,17 +390,17 @@ test('plugin environment build events drive building progress and ready state', 
   const selected = plugin({
     environmentStatuses: [
       {
-        name: 'viz',
-        ref: 'plugin:viz',
-        envId: 'plugin-visualization-viz-0123456789ab',
+        name: 'demo',
+        ref: 'plugin:demo',
+        envId: 'plugin-visualization-demo-0123456789ab',
         state: 'absent',
         estimate: { packages: 12, cachedPackages: 5 }
       }
     ]
   })
   const building: EnvironmentBuild = {
-    envId: 'plugin-visualization-viz-0123456789ab',
-    ref: 'plugin:viz',
+    envId: 'plugin-visualization-demo-0123456789ab',
+    ref: 'plugin:demo',
     state: 'building',
     phase: 'create',
     message: '正在下载软件包',

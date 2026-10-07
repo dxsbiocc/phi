@@ -1,6 +1,7 @@
 # Phi Runtime Foundation: Environments, Execution, Binding, and Plugin Structure
 
 Date: 2026-09-29
+Updated: 2026-10-07 — visualization uses the shared `phi-r` environment.
 Chinese version: [phi-runtime-foundation.zh-CN.md](phi-runtime-foundation.zh-CN.md).
 Status: **Confirmed (2026-09-29; all six decisions in §9 accepted).** This
 document precedes the [content distribution design](phi-content-distribution-design.md)
@@ -87,11 +88,15 @@ Every micromamba call sets:
 
 ### 3.1 Kinds
 
-| Kind    | Examples                                                    | Defined by                                              | Mutability                                               |
-| ------- | ----------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------- |
-| base    | `phi-python`, `phi-r`, `phi-nextflow`, `phi-jupyter`        | Phi developers, shipped with the app or registry        | immutable; a new version is a new environment            |
-| package | the visualization plugin's `viz`; a skill's own environment | plugin or skill author                                  | immutable                                                |
-| project | extra packages a project needs                              | the user (requested by an agent, confirmed by the user) | immutable; adding dependencies creates a new environment |
+| Kind    | Examples                                             | Defined by                                              | Mutability                                               |
+| ------- | ---------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------- |
+| base    | `phi-python`, `phi-r`, `phi-nextflow`, `phi-jupyter` | Phi developers, shipped with the app or registry        | immutable; a new version is a new environment            |
+| package | a plugin-local or skill-owned environment            | plugin or skill author                                  | immutable                                                |
+| project | extra packages a project needs                       | the user (requested by an agent, confirmed by the user) | immutable; adding dependencies creates a new environment |
+
+`phi-r` is the shared base for R notebooks, scanpy R interoperability, and
+the bundled visualization plugin. Visualization does not declare a private
+package environment.
 
 ### 3.2 Specs and locks
 
@@ -114,15 +119,15 @@ Every micromamba call sets:
 
 ```json
 {
-  "envId": "viz-3f9a1c2b7d10",
-  "name": "viz",
-  "kind": "package",
+  "envId": "phi-r-3f9a1c2b7d10",
+  "name": "phi-r",
+  "kind": "base",
   "platform": "darwin-arm64",
   "lockSha256": "…",
   "createdAt": "…",
   "micromambaVersion": "2.x",
   "activation": { "set": { "CONDA_PREFIX": "…", "JAVA_HOME": "…" }, "pathPrepend": ["…/bin"] },
-  "host": { "soffice": "/Applications/LibreOffice.app/Contents/MacOS/soffice" },
+  "host": {},
   "sourcePackages": [
     { "language": "r", "name": "ggsankey", "source": "github", "ref": "…", "sha256": "…" }
   ],
@@ -260,7 +265,7 @@ declaration, with no per-domain code.
 name: omics-visualization
 description: …
 phi:
-  environment: plugin:viz
+  environment: phi:r@1
   scripts:
     - name: route
       run: [python, ./scripts/viz.py, route]
@@ -323,15 +328,19 @@ paths, and graded approvals.
 
 ### 6.1 Who declares environments
 
-| Where                         | Syntax                                                                                     | Meaning                                                                       |
-| ----------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| skill frontmatter `phi` block | `environment: phi:python@1` / `environment: ./environment.yml` / `environment: plugin:viz` | where the skill's scripts and script tools run                                |
-| agent frontmatter             | `environment: plugin:viz`                                                                  | which environment the agent session's bash and core tools use                 |
-| plugin manifest               | `environments: { viz: {...} }`                                                             | named environments shipped by the plugin, referenced by its skills and agents |
-| project                       | `.phi/environment.yml` (optional), referenced as `project:default`                         | extra dependencies for the project                                            |
+| Where                         | Syntax                                                                                          | Meaning                                                                       |
+| ----------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| skill frontmatter `phi` block | `environment: phi:python@1` / `environment: ./environment.yml` / `environment: plugin:statistics` | where the skill's scripts and script tools run                                |
+| agent frontmatter             | `environment: phi:r@1` / `environment: plugin:statistics`                                      | which environment the agent session's bash and core tools use                 |
+| plugin manifest               | `environments: { statistics: {...} }`                                                          | named environments shipped by the plugin, referenced by its skills and agents |
+| project                       | `.phi/environment.yml` (optional), referenced as `project:default`                              | extra dependencies for the project                                            |
 
 `plugin:<name>` resolves only within the same plugin; cross-plugin references
 are not allowed.
+
+The bundled visualization plugin uses the official `phi:r@1` reference in
+both its skill and agent frontmatter and therefore omits the manifest's
+optional `environments` field.
 
 ### 6.2 Resolution order
 
@@ -368,52 +377,45 @@ dependencies:
     Visualization.md            # frontmatter: visibility, environment, skills, tools, spawns
   skills/
     omics-visualization/
-      SKILL.md                  # frontmatter: environment: plugin:viz, scripts: [...]
+      SKILL.md                  # frontmatter: environment: phi:r@1, scripts: [...]
       scripts/  references/  assets/
-  environments/
-    viz/
-      environment.yml
-      locks/darwin-arm64.txt  locks/darwin-x64.txt  locks/linux-x64.txt
   mcp/                          # optional: stdio server definitions
   wrappers/                     # optional
   orchestrator/                 # reserved
 ```
 
-### 7.2 Environment-related manifest fields
+### 7.2 Visualization manifest
 
 ```yaml
 id: visualization
 type: plugin
-version: 1.0.0
+version: 1.0.2
 toolPrefix: viz # script tool prefix, see §10
-environments:
-  viz:
-    spec: environments/viz/environment.yml
-    locks: environments/viz/locks/
-    host: [] # host dependencies; none for this plugin
 components:
   agents: [agents/Visualization.md]
   skills: [skills/omics-visualization]
 ```
 
-### 7.3 How a plugin's agent manages its environment
+The visualization manifest has no `environments` field. Its agent and skill
+frontmatter bind both execution paths to `phi:r@1`.
 
-1. **On plugin install** the engine ensures `viz` from its lock and records
-   "plugin visualization references envId". Building can happen now or on
-   first use; both show size and progress.
-2. **On agent session creation** the engine reads `environment: plugin:viz`
-   → ensures the environment is ready (asking the user to build it rather
-   than silently falling back to the host) → attaches the bash injection
-   extension → passes the same environment to core tools through the run
-   context → the plugin's skills resolve to the same environment via
+### 7.3 How the visualization plugin uses the shared environment
+
+1. **On plugin install** the engine registers the agent, skill, and script
+   tools. There is no plugin-private environment to build.
+2. **On agent session creation** the engine reads `environment: phi:r@1` →
+   ensures the official environment is ready (asking the user to build it
+   rather than silently falling back to the host) → attaches the bash
+   injection extension → passes the same environment to core tools through
+   the run context → the plugin's skill resolves to the same environment via
    `skill_run`.
 3. **While running** the environment is read-only; extra packages go through
    §6.3.
-4. **On upgrade** the new version's lock yields a new envId; the new
-   environment is built before switching; the old one is collected once
-   unreferenced.
-5. **On uninstall** plugin files are removed, references dropped, and GC
-   collects the environment.
+4. **On the upgrade that removes the legacy private environment** the active
+   version switches atomically, its old `plugin:viz` reference is dropped,
+   and the existing GC collects that environment once it is unreferenced.
+5. **On uninstall** plugin components are removed. The plugin does not own the
+   shared official `phi-r` environment.
 
 The agent does not "manage" its environment; it only **declares** which one
 it uses. Creation, activation, isolation, and collection belong to the engine,
@@ -429,7 +431,7 @@ Each step starts only after the previous one is complete and tested.
 | 1    | L0 + L1 | bundle micromamba; `~/.phi/runtime` layout and `mambarc`; create from explicit locks, activation snapshot, read-only, index, GC                                                                                                      | a python-only lock builds an environment on a clean account; repeated ensure does not rebuild |
 | 2    | L2      | `environmentVariables` / `runInEnvironment`; sanitisation; canary tests (interpreter location, negative import, clean machine)                                                                                                       | all three isolation tests pass                                                                |
 | 3    | L3      | `skill_run`; first `phi-python`; migrate one skill (e.g. scanpy)                                                                                                                                                                     | the skill works on a machine without a host Python scientific stack                           |
-| 4    | L4      | agent frontmatter `environment`; bash injection extension; visualization rewritten as the command-line program `scripts/viz.py`, declared as script tools, running in `viz`; `src/main/agent/visualization/` deleted from the engine | visualization renders on a machine without host R; no visualization code in the engine        |
+| 4    | L4      | agent frontmatter `environment`; bash injection extension; visualization rewritten as the command-line program `scripts/viz.py`, declared as script tools, running in `phi-r`; `src/main/agent/visualization/` deleted from the engine | visualization renders on a machine without host R; no visualization code in the engine        |
 | 5    | L3      | remaining consumers: notebook kernels (`phi-jupyter`), Nextflow (`phi-nextflow` + `conda.useMicromamba`), MCP stdio; explicit host versions (§5.2)                                                                                   | notebooks and wrappers work on a machine without host jupyter / nextflow / conda              |
 | 6    | L5      | plugin layout and manifest; package the already rewritten visualization locally and install / run / uninstall it per §7.3                                                                                                            | the full plugin lifecycle works                                                               |
 | 7    | L6      | content distribution: units, catalogs, installer, registry (see the content distribution design)                                                                                                                                     | per that design                                                                               |
@@ -471,9 +473,9 @@ on top of it.
 | script tools                         | `<toolPrefix>_<script name>`; `toolPrefix` declared in the package manifest, 2–12 lowercase letters or digits, unique in the registry, no clash with reserved prefixes                                                                                                                                | `viz_route`, `viz_render`                                                                       |
 | package ids, skill names, plugin ids | kebab-case                                                                                                                                                                                                                                                                                            | `omics-visualization`, `visualization`, `protein-apis`                                          |
 | agent names                          | PascalCase                                                                                                                                                                                                                                                                                            | `Visualization`, `Database`, `Wrapper`                                                          |
-| environment names                    | kebab-case; Phi-maintained environments use a `phi-` prefix and are named by purpose; plugin-local environments have no prefix                                                                                                                                                                        | `phi-python`, `phi-r`, `phi-nextflow`, `phi-jupyter`; `viz`                                     |
-| environment references               | `<scope>:<name>[@<major>]`, or a relative path                                                                                                                                                                                                                                                        | `phi:python@1`, `plugin:viz`, `project:default`, `./environment.yml`                            |
-| envId                                | `<scope>-<owner>-<name>-<hash12>`; owner omitted for scope `phi`                                                                                                                                                                                                                                      | `phi-python-3f9a1c2b7d10`, `plugin-visualization-viz-…`, `project-<short project id>-default-…` |
+| environment names                    | kebab-case; Phi-maintained environments use a `phi-` prefix and are named by purpose; plugin-local environments have no prefix                                                                                                                                                                        | `phi-python`, `phi-r`, `phi-nextflow`, `phi-jupyter`; `statistics`                              |
+| environment references               | `<scope>:<name>[@<major>]`, or a relative path                                                                                                                                                                                                                                                        | `phi:python@1`, `phi:r@1`, `plugin:statistics`, `project:default`, `./environment.yml`          |
+| envId                                | `<scope>-<owner>-<name>-<hash12>`; owner omitted for scope `phi`                                                                                                                                                                                                                                      | `phi-python-3f9a1c2b7d10`, `plugin-reports-statistics-…`, `project-<short project id>-default-…` |
 | package manifest                     | `phi-package.yaml` for every type, distinguished by `type`                                                                                                                                                                                                                                            | `type: skill` / `wrapper` / `mcp` / `plugin`                                                    |
 | frontmatter and manifest fields      | camelCase, aligned with omp; exception: SKILL.md standard fields keep the Agent Skills spelling (`allowed-tools`, `disable-model-invocation`) and all Phi fields go under the `phi` block; legacy snake_case fields (e.g. `delegation_mode`) are read as aliases and the validator suggests migration | `thinkingLevel`, `outputSchema`, `attachTo`, `toolPrefix`, `delegationMode`                     |
 | script entry points                  | `scripts/<toolPrefix>.py`, subcommands named after the script tools                                                                                                                                                                                                                                   | `scripts/viz.py route`                                                                          |

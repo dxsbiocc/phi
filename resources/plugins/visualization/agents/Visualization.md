@@ -1,7 +1,7 @@
 ---
 name: Visualization
 description: Specialist for template-guided scientific and omics figure design, template preview shortlists, and publication-ready visualization using the bundled omics-visualization skill.
-environment: plugin:viz
+environment: phi:r@1
 tools:
   - read
   - glob

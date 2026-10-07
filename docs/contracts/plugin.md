@@ -53,17 +53,20 @@ Example:
 schemaVersion: 1
 id: visualization
 type: plugin
-version: 1.0.0
+version: 1.0.2
 title: 科研绘图
-summary: Template-guided, publication-ready omics figures with a dedicated agent.
+summary: 用模板生成可直接发表的组学图表，配有专属绘图智能体。
 toolPrefix: viz
 components:
   agents: [agents/Visualization.md]
   skills: [skills/omics-visualization]
-environments:
-  viz:
-    spec: environments/viz/environment.yml
 ```
+
+The bundled visualization plugin deliberately omits `environments`: its agent
+and `omics-visualization` skill both declare `phi:r@1`. The shared `phi-r`
+environment contains R, the visualization packages, and Python 3.12 for the
+plugin's standard-library-only command-line scripts. Other plugins may still
+declare private environments through the optional field above.
 
 ## 3. Rules across components
 
@@ -109,6 +112,11 @@ step below; a plugin contains no install code.
 installed through the same loader: on start, a bundled plugin that is not
 installed, or whose version is newer than the installed one, is installed or
 upgraded. A user who uninstalled a bundled plugin keeps it uninstalled.
+
+For the visualization upgrade that removes its former private environment, the
+atomic switch drops the installed version's `plugin:viz` reference. The normal
+environment GC then removes that old environment once it has no other
+referrers; there is no visualization-specific migration or deletion path.
 
 ## 5. Validation
 

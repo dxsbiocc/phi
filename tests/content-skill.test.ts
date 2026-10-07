@@ -363,10 +363,10 @@ phi:
 })
 
 test('environment references are parsed, and only ./environment.yml is skill-local', () => {
-  const plugin = assertValid(skillDir([scriptEntry()], { environment: 'plugin:viz' }))
-  assert.deepEqual(plugin.skill?.environment, { kind: 'plugin', name: 'viz' })
-  const project = assertValid(skillDir([scriptEntry()], { environment: 'project:viz' }))
-  assert.deepEqual(project.skill?.environment, { kind: 'project', name: 'viz' })
+  const plugin = assertValid(skillDir([scriptEntry()], { environment: 'plugin:demo' }))
+  assert.deepEqual(plugin.skill?.environment, { kind: 'plugin', name: 'demo' })
+  const project = assertValid(skillDir([scriptEntry()], { environment: 'project:demo' }))
+  assert.deepEqual(project.skill?.environment, { kind: 'project', name: 'demo' })
   const phi = assertValid(skillDir([scriptEntry()]))
   assert.deepEqual(phi.skill?.environment, { kind: 'phi', name: 'python', major: 1 })
 

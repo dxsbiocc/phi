@@ -97,7 +97,7 @@ test('the bundled visualization skill yields four viz script tools for Visualiza
       homeDir: join(root, 'home')
     })
     const visualization = agents.find((agent) => agent.name === 'Visualization')
-    assert.equal(visualization?.environment, 'plugin:viz')
+    assert.equal(visualization?.environment, 'phi:r@1')
     assert.equal(visualization?.pluginId, 'visualization')
   })
 })
@@ -135,11 +135,7 @@ test(
       assert.equal(installed.ok, true, JSON.stringify(installed.errors))
       const installedSkill = installed.plugin?.components.skills[0]
       assert.ok(installedSkill)
-      const descriptor = describeEnvironment('plugin:viz', {
-        agentDir,
-        pluginId: 'visualization',
-        platform: currentPlatform()
-      })
+      const descriptor = describeEnvironment('phi:r@1', { platform: currentPlatform() })
       await buildEnvironment(root, descriptor)
       const host = createSkillHost({
         runtimeRoot: root,

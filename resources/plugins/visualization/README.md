@@ -4,6 +4,8 @@ Bundled visualization plugin:
 
 - `agents/Visualization.md` — the Visualization specialist
 - `skills/omics-visualization/` — figure templates and scripts
-- `environments/viz/` — the R and Python environment those scripts run in (`plugin:viz`)
+- `resources/runtime/environments/phi-r/` — the built-in R/Python environment used by the
+  agent and skill (`phi:r@1`)
 
-Until the plugin loader lands (implementation plan step 6), Phi loads this directory with the temporary built-in loader: its agents and skills are registered as bundled content, and `plugin:<name>` resolves to the plugin environment directory. `phi-package.yaml` is present for the plugin `toolPrefix`; only `toolPrefix` is read until step 6.
+The plugin declares no private managed environment. Its scripts use the shared built-in
+`phi:r@1` environment, which provides both `python` and `Rscript`.

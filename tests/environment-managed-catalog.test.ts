@@ -34,7 +34,7 @@ function addIndexed(
   return prefix
 }
 
-test('managed catalog includes official, plugin, project, and orphaned environments', async () => {
+test('managed catalog includes shared phi-r, project overrides, and orphaned environments', async () => {
   const temp = mkdtempSync(join(tmpdir(), 'phi-managed-catalog-'))
   const root = join(temp, 'runtime')
   const environmentsDir = join(temp, 'official')
@@ -44,14 +44,15 @@ test('managed catalog includes official, plugin, project, and orphaned environme
     mkdirSync(projectDir, { recursive: true })
     copyMinimal(join(environmentsDir, 'phi-python'), 'phi-python')
     copyMinimal(join(environmentsDir, 'phi-nextflow'), 'phi-nextflow')
+    copyMinimal(join(environmentsDir, 'phi-r'), 'phi-r')
     const installed = installPlugin(join(process.cwd(), 'resources', 'plugins', 'visualization'), {
       agentDir,
       runtimeRoot: root,
       platform: 'darwin-arm64'
     })
     assert.equal(installed.ok, true, JSON.stringify(installed.errors))
-    copyMinimal(join(projectDir, '.phi', 'environments', 'viz-x1'), 'viz-x1')
-    writeOverrides(projectDir, { 'plugin:viz': 'project:viz-x1' })
+    copyMinimal(join(projectDir, '.phi', 'environments', 'r-x1'), 'r-x1')
+    writeOverrides(projectDir, { 'phi:r@1': 'project:r-x1' })
 
     const pythonDescriptor = describeEnvironment('phi:python@1', {
       environmentsDir,
@@ -63,26 +64,24 @@ test('managed catalog includes official, plugin, project, and orphaned environme
     })
     writeFileSync(join(pythonPrefix, '.phi', 'env.json'), JSON.stringify({ status: 'drifted' }))
 
-    const projectDescriptor = describeEnvironment('project:viz-x1', {
+    const projectDescriptor = describeEnvironment('project:r-x1', {
       environmentsDir,
       projectDir,
       platform: 'darwin-arm64'
     })
     const projectId = envIdFor(projectDescriptor)
-    addIndexed(root, projectId, 'viz-x1')
+    addIndexed(root, projectId, 'r-x1')
 
-    const orphanId = 'plugin-old-viz-0123456789ab'
-    addIndexed(root, orphanId, 'old-viz', { status: 'failed' })
+    const orphanId = 'plugin-old-plot-0123456789ab'
+    addIndexed(root, orphanId, 'old-plot', { status: 'failed' })
 
-    const pluginDescriptor = describeEnvironment('plugin:viz', {
+    const rDescriptor = describeEnvironment('phi:r@1', {
       environmentsDir,
-      agentDir,
-      pluginId: 'visualization',
       platform: 'darwin-arm64'
     })
-    const pluginBuild: EnvironmentBuild = {
-      envId: envIdFor(pluginDescriptor),
-      ref: 'plugin:viz',
+    const rBuild: EnvironmentBuild = {
+      envId: envIdFor(rDescriptor),
+      ref: 'phi:r@1',
       state: 'building',
       phase: 'create',
       message: 'building',
@@ -92,7 +91,7 @@ test('managed catalog includes official, plugin, project, and orphaned environme
     }
     const staleFailedBuild: EnvironmentBuild = {
       envId: projectId,
-      ref: 'project:viz-x1',
+      ref: 'project:r-x1',
       state: 'failed',
       phase: 'failed',
       message: 'old repair failed',
@@ -109,12 +108,12 @@ test('managed catalog includes official, plugin, project, and orphaned environme
       agentDir,
       projectDir,
       platform: 'darwin-arm64',
-      builds: [pluginBuild, staleFailedBuild],
+      builds: [rBuild, staleFailedBuild],
       sizeOf: async () => 123,
       consumers: [
         { ref: 'phi:python@1', consumer: { kind: 'skill', name: 'scanpy' } },
         {
-          ref: 'plugin:viz',
+          ref: 'phi:r@1',
           pluginId: 'visualization',
           consumer: { kind: 'agent', name: 'Visualization' }
         }
@@ -138,18 +137,17 @@ test('managed catalog includes official, plugin, project, and orphaned environme
     assert.ok(nextflow?.estimate?.remainingBytes)
     assert.equal(nextflow?.consumers[0]?.kind, 'wrapper')
 
-    const plugin = byRef.get('plugin:viz')
-    assert.equal(plugin?.source, 'plugin')
-    assert.equal(plugin?.state, 'building')
-    assert.deepEqual(plugin?.consumers, [])
+    const r = byRef.get('phi:r@1')
+    assert.equal(r?.source, 'official')
+    assert.equal(r?.state, 'building')
+    assert.deepEqual(r?.consumers, [])
 
-    const project = byRef.get('project:viz-x1')
+    const project = byRef.get('project:r-x1')
     assert.equal(project?.source, 'project')
     assert.equal(project?.state, 'ready')
     assert.equal(project?.error, undefined)
-    assert.deepEqual(project?.overrideFrom, ['plugin:viz'])
+    assert.deepEqual(project?.overrideFrom, ['phi:r@1'])
     assert.ok(project?.consumers.some((consumer) => consumer.name === 'Visualization'))
-    assert.ok(project?.consumers.some((consumer) => consumer.kind === 'plugin'))
 
     const orphan = byRef.get(`orphaned:${orphanId}`)
     assert.equal(orphan?.source, 'orphaned')
@@ -160,11 +158,13 @@ test('managed catalog includes official, plugin, project, and orphaned environme
   }
 })
 
-test('managed catalog keeps disabled plugin environments with owner and build estimate', async () => {
+test('managed catalog does not add a private environment for the disabled visualization plugin', async () => {
   const temp = mkdtempSync(join(tmpdir(), 'phi-managed-disabled-plugin-'))
   const root = join(temp, 'runtime')
   const agentDir = join(temp, 'agent')
+  const environmentsDir = join(temp, 'official')
   try {
+    copyMinimal(join(environmentsDir, 'phi-r'), 'phi-r')
     const installed = installPlugin(join(process.cwd(), 'resources', 'plugins', 'visualization'), {
       agentDir,
       runtimeRoot: root,
@@ -177,16 +177,22 @@ test('managed catalog keeps disabled plugin environments with owner and build es
     const catalog = await listManagedEnvironments({
       root,
       agentDir,
-      environmentsDir: join(temp, 'official'),
+      environmentsDir,
       platform: 'darwin-arm64',
       consumers: []
     })
-    const plugin = catalog.find((entry) => entry.ref === 'plugin:viz')
-    assert.equal(plugin?.pluginId, 'visualization')
-    assert.equal(plugin?.state, 'absent')
-    assert.ok(plugin?.envId.startsWith('plugin-visualization-viz-'))
-    assert.ok((plugin?.estimate?.packages ?? 0) > 0)
-    assert.ok((plugin?.estimate?.cachedPackages ?? -1) >= 0)
+    assert.equal(
+      catalog.some((entry) => entry.source === 'plugin'),
+      false
+    )
+    assert.equal(
+      catalog.some((entry) => entry.name === 'viz'),
+      false
+    )
+    assert.equal(
+      catalog.some((entry) => entry.ref === 'phi:r@1'),
+      true
+    )
   } finally {
     rmSync(temp, { recursive: true, force: true })
   }

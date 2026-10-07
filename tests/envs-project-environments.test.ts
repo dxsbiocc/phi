@@ -75,10 +75,10 @@ test('project environment names take the next free -x suffix', () => {
     assert.equal(nextProjectEnvironmentName(dir, 'python'), 'python-x1')
     mkdirSync(join(dir, '.phi', 'environments', 'python-x1'), { recursive: true })
     mkdirSync(join(dir, '.phi', 'environments', 'python-x3'))
-    mkdirSync(join(dir, '.phi', 'environments', 'viz-x9'))
+    mkdirSync(join(dir, '.phi', 'environments', 'demo-x9'))
     writeFileSync(join(dir, '.phi', 'environments', 'python-x8'), 'not a directory')
     assert.equal(nextProjectEnvironmentName(dir, 'python'), 'python-x4')
-    assert.equal(nextProjectEnvironmentName(dir, 'viz'), 'viz-x10')
+    assert.equal(nextProjectEnvironmentName(dir, 'demo'), 'demo-x10')
     assert.throws(() => nextProjectEnvironmentName(dir, 'Python'), /project:/)
     assert.throws(() => nextProjectEnvironmentName(dir, ''), /project:/)
   } finally {
@@ -126,13 +126,13 @@ test('overrides are atomic, invalid files are empty, and a missing target is ign
     assert.match(ignored.warnings[0] ?? '', /missing project environment 'project:python-x1'/)
 
     assert.throws(() => setOverride(dir, 'not a ref', 'project:python-x1'))
-    assert.throws(() => setOverride(dir, 'phi:python@1', 'plugin:viz'), /project:/)
+    assert.throws(() => setOverride(dir, 'phi:python@1', 'plugin:demo'), /project:/)
 
     writeFileSync(file, 'not json')
-    setOverride(dir, 'plugin:viz', 'project:viz-x1')
+    setOverride(dir, 'plugin:demo', 'project:demo-x1')
     assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), {
       version: 1,
-      overrides: { 'plugin:viz': 'project:viz-x1' }
+      overrides: { 'plugin:demo': 'project:demo-x1' }
     })
 
     const spec = minimalSpec('python-x1')
@@ -157,7 +157,7 @@ test('overrides are atomic, invalid files are empty, and a missing target is ign
       warnings: []
     })
     assert.equal(applyOverrides('project:python-x1', dir).ref, 'project:python-x2')
-    assert.deepEqual(applyOverrides('plugin:viz', dir), { ref: 'plugin:viz', warnings: [] })
+    assert.deepEqual(applyOverrides('plugin:demo', dir), { ref: 'plugin:demo', warnings: [] })
 
     const described = describeEnvironment('project:python-x1', { projectDir: dir, platform })
     assert.equal(described.scope, 'project')

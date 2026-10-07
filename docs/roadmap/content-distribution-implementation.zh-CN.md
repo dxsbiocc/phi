@@ -1,6 +1,7 @@
 # 运行时与内容分发实施计划
 
 日期：2026-09-29（按 [运行时基础设计](../design/phi-runtime-foundation.zh-CN.md) §8 重写；同日补充：R 源码包、删除 docx 和 scvi-tools skill、`phi-nextflow` 纳入 nf-core 和 nf-test）
+更新：2026-10-07 — 可视化依赖并入 `phi-r`。
 依据：[运行时基础设计](../design/phi-runtime-foundation.zh-CN.md)（已确认）、[内容分发设计](../design/phi-content-distribution-design.zh-CN.md)、[决策记录](../decisions/content-distribution.zh-CN.md)。
 英文版：[content-distribution-implementation.md](content-distribution-implementation.md)。
 
@@ -86,10 +87,10 @@
 | 4.1 | **调研**：在 omp 的 `task` / 注册表上给 Wrapper、Visualization 做原型，决定专家委派是否迁移到 omp、`agents/registry.ts` 中重复的部分是否退役；结论写进决策记录 | `src/main/agent/agents/` | 决策记录更新 | 1 周 |
 | 4.2 | **冻结 Agent 定义契约 v1**：沿用 omp 字段（`name`、`description`、`tools`、`spawns`、`model`、`thinkingLevel`），加 Phi 的 `environment`、`visibility`、`skills`、`delegationMode`、`delegation`、`fallback`（旧的 `delegation_mode` 作为别名读取）；结构化结果用 `outputSchema` | `docs/contracts/agent.schema.json`、`agents/definition.ts` | 现有 3 个 agent 通过校验 | 2 天 |
 | 4.3 | bash 注入扩展：绑定了环境的会话里，在 `tool_call` 事件中把 `environmentVariables` 并入 bash 调用的 `env` 参数 | `src/main/agent/agents/`、`omp/omp-sdk-worker.ts` | 绑定会话里 `which python` 指向环境；主 agent 的 bash 不受影响 | 2 天 |
-| 4.4 | 建立插件形态的目录 `resources/plugins/visualization/`：把 `resources/agents/Visualization.md`、`resources/skills/omics-visualization` 移入；`viz` 环境的规格和锁文件放在 `environments/viz/`（按 0.5 的清单覆盖 159 个 R 脚本和 Python 脚本；没有 conda 构建的 7 个 R 包——gground、ggideogram、ggcor、linkET、ggsankey、ggsvg、ggmagnify——用 `sourcePackages` 锁定提交安装；ggideogram 与 ggplot2 4.x 的兼容问题在此确认处理方式） | `resources/plugins/visualization/` | 三个平台都能建出 `viz` 环境；全部模板冒烟渲染通过 | 4 天 |
+| 4.4 | 建立插件形态的目录 `resources/plugins/visualization/`：把 `resources/agents/Visualization.md`、`resources/skills/omics-visualization` 移入；把完整的可视化依赖并入官方 `phi-r` 规格和锁文件（159 个 R 脚本，及为纯标准库脚本提供的 Python 3.12）。没有 conda 构建的 7 个直接 R 包——gground、ggideogram、ggcor、linkET、ggsankey、ggsvg、ggmagnify——加上 ggmagnify 的 gridGeometry 依赖，作为 8 个有顺序、锁定提交的 `sourcePackages`；保留 `phi-r` 已有的 GenomeInfoDbData 源码包，并在此解决 ggideogram 与 ggplot2 4.x 的兼容问题。插件不声明私有环境 | `resources/plugins/visualization/`、`resources/runtime/environments/phi-r/` | 三个平台都能建出 `phi-r`；全部模板冒烟渲染通过；IRkernel、Seurat 和 SingleCellExperiment 仍可加载 | 4 天 |
 | 4.5 | **冻结产物契约 v1**：`<文件>.phi-artifact.json` 的字段（类型 `figure` / `table` / `structure` / `molecule` / `network` / `report`、标题、来源）；引擎按产物展示 | `docs/contracts/artifact.schema.json`、展示层 | 样例通过；通用产物查看器可以读取产物 | 2 天 |
 | 4.6 | 可视化改写为命令行程序 `scripts/viz.py`（子命令 `examples`、`route`、`prepare`、`render`）：`route` 调用现有的 `route_template.py`；`prepare`、`examples` 从 TS 改写为 Python；`render` 在同一环境中调用 `Rscript` 并运行 QA，输出 `figure` 产物 | `resources/plugins/visualization/skills/omics-visualization/scripts/` | 四个子命令各有测试；输出通过 JSON Schema 校验 | 4 天 |
-| 4.7 | 在 SKILL.md 中声明 4 个脚本工具（`toolPrefix: viz`，工具名保持 `viz_examples`、`viz_route`、`viz_prepare`、`viz_render`）；Visualization agent 声明 `environment: plugin:viz`，原先按工作流过滤工具的逻辑移入 agent 指令；创建会话时确保环境就绪，否则提示构建 | SKILL.md、`Visualization.md`、会话创建 | 没有本机 R 的机器上出图；可视化评测不退化 | 2 天 |
+| 4.7 | 在 SKILL.md 中声明 4 个脚本工具（`toolPrefix: viz`，工具名保持 `viz_examples`、`viz_route`、`viz_prepare`、`viz_render`）；Visualization agent 和 `omics-visualization` skill 都声明 `environment: phi:r@1`，原先按工作流过滤工具的逻辑移入 agent 指令；创建会话时确保环境就绪，否则提示构建 | SKILL.md、`Visualization.md`、会话创建 | 没有本机 R 的机器上出图；可视化评测不退化 | 2 天 |
 | 4.8 | 删除引擎中的 `src/main/agent/visualization/` 以及 `visualizationToolNamesForWorkflow` 等专用逻辑 | `src/main/agent/` | 引擎中没有可视化代码；`npm test` 通过 | 1 天 |
 | 4.9 | `env_request`：agent 请求额外包 → 用户确认 → 以"原规格 + 额外包"求解新的项目环境并生成锁 → 该项目改为绑定新环境 | `src/main/agent/envs/`、项目状态 | 测试覆盖请求、确认、绑定切换 | 2.5 天 |
 
@@ -113,7 +114,7 @@
 |---|---|---|---|---|
 | 6.1 | **冻结插件契约 v1**：目录结构、`phi-package.yaml`（`type: plugin`、`toolPrefix`）、`environments`、`components`、agent 的 `visibility`、预留 `orchestrator` | `docs/contracts/plugin.schema.json` | 样例通过 | 2 天 |
 | 6.2 | 插件加载器：从本地目录安装到 `~/.phi/packages/plugin/<id>/<version>/`；确保环境；注册 agent、skill 和脚本工具；升级时先建新环境再切换；卸载时移除引用并回收环境 | `src/main/agent/plugins/`（新建） | 测试覆盖安装、升级、卸载 | 3 天 |
-| 6.3 | 给 `resources/plugins/visualization/` 补上 `phi-package.yaml`，改由插件加载器安装；移除步骤 4 的临时加载逻辑 | `resources/`、`src/main/agent/` | 通过插件加载器安装后工作正常 | 1 天 |
+| 6.3 | 给 `resources/plugins/visualization/` 补上不含 `environments` 的 `phi-package.yaml`，改由插件加载器安装；移除步骤 4 的临时加载逻辑。提升内置插件版本，使升级时移除旧 `plugin:viz` 引用；现有 GC 在该环境无引用后回收它 | `resources/`、`src/main/agent/` | 通过插件加载器安装或升级后工作正常；不再有可视化私有环境被引用 | 1 天 |
 | 6.4 | 插件页（列表、从本地安装、卸载）；pi 插件页改名为"开发者扩展"，移到高级设置 | `features/plugin/` | UI 可用 | 2 天 |
 
 ### 步骤 7 内容分发（L6）
