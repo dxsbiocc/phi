@@ -116,13 +116,16 @@ export async function launch(paths: SmokePaths): Promise<RunningApp> {
         `Electron 已退出 code=${String(child.exitCode)} signal=${child.signalCode}\n${output}`
       )
     }
-    return connect({ browserURL: `http://127.0.0.1:${port}` }).catch(() => null)
+    return connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: null }).catch(
+      () => null
+    )
   })
   const page = await waitUntil('Phi renderer 页面', async () => {
     const pages = await browser.pages()
     return pages.find((candidate) => candidate.url() !== 'about:blank') ?? null
   })
-  await page.setViewport({ width: 1500, height: 950 })
+  // Keep layout and popup centers tied to the visible Electron content area.
+  await page.setViewport(null)
   return { browser, page, child, logs: () => output }
 }
 
