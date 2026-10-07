@@ -11,20 +11,21 @@ import type {
 import type { InstalledPackageView, PackageTrust } from '../../../../../shared/packageManagerTypes'
 import type {
   PhiPluginListItem,
-  PhiPluginMutationResult
+  PhiPluginMutationResult,
+  PhiPluginUsedEnvironment
 } from '../../../../../shared/phiPluginTypes'
 import { formatPhiPluginProblems } from '../lib/phiPlugins'
 
-type PhiPluginWithComponents = PhiPluginListItem & {
-  agents?: string[]
-  skills?: string[]
-  scriptTools?: string[]
-  environments?: Array<{ name: string; ref: string }>
-}
+type PhiPluginWithComponents = PhiPluginListItem
 
 export type PhiPluginEnvironmentStatus = {
   name: string
   ref: string
+  description?: string
+  scope: PhiPluginUsedEnvironment['scope']
+  skillNames: string[]
+  agentNames: string[]
+  warnings: string[]
   envId?: string
   state?: ManagedEnvironmentState
   estimate?: EnvironmentBuildEstimate
@@ -57,43 +58,95 @@ function readableError(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
 }
 
-function managedEnvironmentsForPlugin(
+function ownsPluginEnvironment(environment: ManagedEnvironmentEntry, pluginId: string): boolean {
+  return (
+    environment.pluginId === pluginId ||
+    environment.consumers.some(
+      (consumer) => consumer.kind === 'plugin' && consumer.name === pluginId
+    )
+  )
+}
+
+function managedEntryForUsage(
+  usage: PhiPluginUsedEnvironment,
+  pluginId: string,
+  environments: readonly ManagedEnvironmentEntry[]
+): ManagedEnvironmentEntry | undefined {
+  const candidates = environments.filter((environment) => environment.ref === usage.ref)
+  if (usage.scope === 'builtin') {
+    return candidates.find((entry) => entry.source === 'official')
+  }
+  if (usage.scope === 'project') {
+    return candidates.find((entry) => entry.source === 'project')
+  }
+  if (usage.scope === 'private') {
+    return candidates.find(
+      (entry) => entry.source === 'plugin' && ownsPluginEnvironment(entry, pluginId)
+    )
+  }
+  return undefined
+}
+
+function environmentUsagesForPlugin(
+  plugin: PhiPluginWithComponents,
+  environments: readonly ManagedEnvironmentEntry[]
+): PhiPluginUsedEnvironment[] {
+  const usages = [...(plugin.usedEnvironments ?? [])]
+  for (const declaration of plugin.environments ?? []) {
+    if (usages.some((usage) => usage.ref === declaration.ref)) continue
+    usages.push({ ...declaration, scope: 'private', skillNames: [], agentNames: [] })
+  }
+  if (plugin.usedEnvironments !== undefined) return usages
+  for (const entry of environments) {
+    if (entry.source !== 'plugin' || !ownsPluginEnvironment(entry, plugin.id)) continue
+    if (usages.some((usage) => usage.ref === entry.ref)) continue
+    usages.push({
+      ref: entry.ref,
+      name: entry.label?.trim() || entry.ref.replace(/^plugin:/, ''),
+      scope: 'private',
+      skillNames: [],
+      agentNames: []
+    })
+  }
+  return usages
+}
+
+function environmentStatus(
+  usage: PhiPluginUsedEnvironment,
+  pluginId: string,
+  environments: readonly ManagedEnvironmentEntry[],
+  builds: readonly EnvironmentBuild[]
+): PhiPluginEnvironmentStatus {
+  const managed = managedEntryForUsage(usage, pluginId, environments)
+  const build = builds.find((candidate) => candidate.envId === managed?.envId)
+  return {
+    name: managed?.label?.trim() || usage.name,
+    ref: usage.ref,
+    ...(managed?.description?.trim() || usage.description
+      ? { description: managed?.description?.trim() || usage.description }
+      : {}),
+    scope: usage.scope,
+    skillNames: usage.skillNames,
+    agentNames: usage.agentNames,
+    warnings: usage.warnings ?? [],
+    ...(managed?.envId ? { envId: managed.envId } : {}),
+    ...(managed?.state ? { state: managed.state } : {}),
+    ...(managed?.estimate || build?.estimate
+      ? { estimate: managed?.estimate ?? build?.estimate }
+      : {}),
+    ...(build ? { build } : {}),
+    ...(managed?.error ? { error: managed.error } : {})
+  }
+}
+
+export function managedEnvironmentsForPlugin(
   plugin: PhiPluginWithComponents,
   environments: readonly ManagedEnvironmentEntry[],
   builds: readonly EnvironmentBuild[]
 ): PhiPluginEnvironmentStatus[] {
-  const declarations = plugin.environments ?? []
-  const managed = environments.filter(
-    (environment) =>
-      environment.source === 'plugin' &&
-      (environment.pluginId === plugin.id ||
-        environment.consumers.some(
-          (consumer) => consumer.kind === 'plugin' && consumer.name === plugin.id
-        ))
+  return environmentUsagesForPlugin(plugin, environments).map((usage) =>
+    environmentStatus(usage, plugin.id, environments, builds)
   )
-  const statuses: PhiPluginEnvironmentStatus[] = managed.map((environment) => {
-    const declaration = declarations.find((item) => item.ref === environment.ref)
-    const build = builds.find((candidate) => candidate.envId === environment.envId)
-    return {
-      name:
-        declaration?.name ?? environment.label?.trim() ?? environment.ref.replace(/^plugin:/, ''),
-      ref: environment.ref,
-      envId: environment.envId,
-      state: environment.state,
-      ...(environment.estimate || build?.estimate
-        ? { estimate: environment.estimate ?? build?.estimate }
-        : {}),
-      ...(build ? { build } : {}),
-      ...(environment.error ? { error: environment.error } : {})
-    }
-  })
-
-  for (const declaration of declarations) {
-    if (statuses.some((status) => status.ref === declaration.ref)) continue
-    statuses.push({ name: declaration.name, ref: declaration.ref })
-  }
-
-  return statuses
 }
 
 function withEnvironmentStatuses(

@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 
 import type { EnvironmentBuild } from '../src/shared/environmentBuildTypes'
+import type { ManagedEnvironmentEntry } from '../src/shared/environmentTypes'
 import type { PackageUpdateView } from '../src/shared/packageManagerTypes'
 import type { PhiPluginProblemView } from '../src/shared/phiPluginTypes'
 import { EnvironmentBuildConfirmDialog } from '../src/renderer/src/components/EnvironmentBuildConfirmDialog'
@@ -16,6 +17,8 @@ import PhiPluginsView, {
 } from '../src/renderer/src/features/phi-plugin/PhiPluginsView'
 import {
   applyEnvironmentBuildToPlugins,
+  managedEnvironmentsForPlugin,
+  type PhiPluginEnvironmentStatus,
   type PhiPluginDisplayItem
 } from '../src/renderer/src/features/phi-plugin/hooks/usePhiPlugins'
 import { requestPhiPluginEnvironmentBuild } from '../src/renderer/src/features/phi-plugin/lib/environmentBuild'
@@ -52,7 +55,53 @@ function plugin(overrides: Partial<PhiPluginDisplayItem> = {}): PhiPluginDisplay
     skills: ['skills/omics-visualization'],
     scriptTools: ['viz_prepare', 'viz_render'],
     environments: [{ name: 'demo', ref: 'plugin:demo' }],
-    environmentStatuses: [{ name: 'demo', ref: 'plugin:demo', state: 'ready' }],
+    agentDetails: [{ name: 'Visualization', description: '规划和审查科研图表。' }],
+    skillDetails: [
+      {
+        name: 'omics-visualization',
+        description: '生成发表级组学图表。',
+        enabled: true,
+        environmentRef: 'plugin:demo'
+      }
+    ],
+    scriptToolDetails: [
+      {
+        name: 'viz_prepare',
+        description: '准备绘图数据。',
+        approval: 'read',
+        skillName: 'omics-visualization'
+      },
+      {
+        name: 'viz_render',
+        description: '渲染最终图表。',
+        approval: 'write',
+        skillName: 'omics-visualization'
+      }
+    ],
+    usedEnvironments: [
+      {
+        name: 'demo',
+        ref: 'plugin:demo',
+        scope: 'private',
+        skillNames: ['omics-visualization'],
+        agentNames: ['Visualization']
+      }
+    ],
+    environmentStatuses: [pluginEnvironmentStatus({ state: 'ready' })],
+    ...overrides
+  }
+}
+
+function pluginEnvironmentStatus(
+  overrides: Partial<PhiPluginEnvironmentStatus> = {}
+): PhiPluginEnvironmentStatus {
+  return {
+    name: 'demo',
+    ref: 'plugin:demo',
+    scope: 'private',
+    skillNames: [],
+    agentNames: [],
+    warnings: [],
     ...overrides
   }
 }
@@ -109,7 +158,7 @@ test('Phi plugin labels use concise Chinese product language', () => {
   assert.equal(phiPluginEnabledLabel(true), '已启用')
   assert.equal(phiPluginEnabledLabel(false), '已停用')
   assert.equal(phiPluginEnvironmentStateLabel('absent'), '未构建')
-  assert.equal(phiPluginEnvironmentStateLabel('ready'), '已就绪')
+  assert.equal(phiPluginEnvironmentStateLabel('ready'), '已构建')
   assert.equal(phiPluginEnvironmentStateLabel('drifted'), '需要修复')
 })
 
@@ -124,6 +173,21 @@ test('Phi plugin component summaries omit empty categories and preserve final to
     '2 个智能体 · 1 个技能 · 2 个脚本工具 · 1 个环境'
   )
   assert.equal(phiPluginComponentSummary({}), '未声明可显示的组件')
+  assert.equal(
+    phiPluginComponentSummary({
+      environments: [],
+      usedEnvironments: [
+        {
+          ref: 'phi:python@1',
+          name: 'phi-python',
+          scope: 'builtin',
+          skillNames: [],
+          agentNames: []
+        }
+      ]
+    }),
+    '1 个环境'
+  )
   assert.equal(phiPluginComponentName('agents/Visualization.md'), 'Visualization')
   assert.equal(phiPluginComponentName('skills\\omics-visualization'), 'omics-visualization')
   assert.equal(phiPluginComponentName('viz_render'), 'viz_render')
@@ -245,8 +309,8 @@ test('plugin sidebar renders the requested empty state with an add action', () =
 test('plugin detail contains management, components, environment state and source metadata', () => {
   const selected = plugin({
     environmentStatuses: [
-      { name: 'demo', ref: 'plugin:demo', envId: 'demo-123', state: 'drifted' },
-      { name: 'stats', ref: 'plugin:stats', state: 'absent' }
+      pluginEnvironmentStatus({ envId: 'demo-123', state: 'drifted' }),
+      pluginEnvironmentStatus({ name: 'stats', ref: 'plugin:stats', state: 'absent' })
     ]
   })
   const markup = themed(
@@ -269,21 +333,309 @@ test('plugin detail contains management, components, environment state and sourc
   assert.match(markup, /技能/)
   assert.match(markup, /脚本工具（最终名称）/)
   assert.match(markup, /viz_prepare/)
+  assert.match(markup, /审批：只读/)
+  assert.match(markup, /审批：写入/)
   assert.match(markup, /需要修复/)
   assert.match(markup, /未构建/)
   assert.match(markup, /\/plugins\/visualization\/1\.2\.0/)
   assert.match(markup, /卸载/)
 })
 
-test('plugin detail describes a plugin with no private environments without an unbuilt warning', () => {
+test('plugin detail renders component descriptions, statuses, approvals and legacy fallbacks', () => {
+  const longDescription =
+    '这是一个很长的技能说明，用于验证界面只显示一行、省略溢出内容，并且仍可通过悬停查看完整说明。'
+  const detailed = plugin({
+    agents: [],
+    agentDetails: [],
+    skills: ['skills/omics-visualization', 'skills/review'],
+    skillDetails: [
+      { name: 'omics-visualization', description: longDescription, enabled: true },
+      { name: 'review', description: '审查图表质量。', enabled: false }
+    ],
+    scriptTools: ['viz_render'],
+    scriptToolDetails: [
+      {
+        name: 'viz_render',
+        description: '执行渲染并写入目标文件。',
+        approval: 'execute',
+        skillName: 'omics-visualization'
+      }
+    ]
+  })
+  const markup = themed(
+    createElement(PhiPluginsView, {
+      plugin: detailed,
+      busyPluginId: null,
+      error: null,
+      notice: null,
+      onClearError: () => undefined,
+      onClearNotice: () => undefined,
+      onRefresh: async () => undefined,
+      onSetEnabled: async () => true,
+      onUninstall: async () => true
+    })
+  )
+
+  assert.match(markup, /无专属智能体（由主智能体按技能调用）/)
+  assert.match(markup, /已启用/)
+  assert.match(markup, /已停用/)
+  assert.match(markup, /审批：执行/)
+  assert.match(markup, /所属技能：omics-visualization/)
+  assert.match(markup, /data-phi-description-truncated="true"/)
+  assert.ok(markup.includes(`aria-label="${longDescription}"`))
+  assert.match(markup, /text-overflow:ellipsis/)
+
+  const legacyMarkup = themed(
+    createElement(PhiPluginsView, {
+      plugin: plugin({
+        agentDetails: undefined,
+        skillDetails: undefined,
+        scriptToolDetails: undefined,
+        agents: ['agents/LegacyAgent.md'],
+        skills: ['skills/legacy-skill'],
+        scriptTools: ['legacy_tool']
+      }),
+      busyPluginId: null,
+      error: null,
+      notice: null,
+      onClearError: () => undefined,
+      onClearNotice: () => undefined,
+      onRefresh: async () => undefined,
+      onSetEnabled: async () => true,
+      onUninstall: async () => true
+    })
+  )
+  assert.match(legacyMarkup, /LegacyAgent/)
+  assert.match(legacyMarkup, /legacy-skill/)
+  assert.match(legacyMarkup, /legacy_tool/)
+  assert.match(legacyMarkup, /状态未知/)
+})
+
+test('plugin environment aggregation matches used refs and preserves private declarations', () => {
+  const entries: ManagedEnvironmentEntry[] = [
+    {
+      ref: 'phi:python@1',
+      envId: 'phi-python-0123456789ab',
+      state: 'ready',
+      source: 'official',
+      label: 'phi-python',
+      description: '内置科学计算环境。',
+      referrers: [],
+      consumers: []
+    },
+    {
+      ref: 'plugin:stats',
+      envId: 'plugin-other-stats-0123456789ab',
+      state: 'ready',
+      source: 'plugin',
+      pluginId: 'other',
+      label: 'stats',
+      referrers: [],
+      consumers: []
+    },
+    {
+      ref: 'plugin:stats',
+      envId: 'plugin-visualization-stats-0123456789ab',
+      state: 'absent',
+      source: 'plugin',
+      pluginId: 'visualization',
+      label: 'stats',
+      description: '插件统计环境。',
+      referrers: [],
+      consumers: []
+    },
+    {
+      ref: 'project:python-x1',
+      envId: 'project-demo-python-x1-0123456789ab',
+      state: 'building',
+      source: 'project',
+      label: 'python-x1',
+      referrers: [],
+      consumers: []
+    },
+    {
+      ref: 'plugin:legacy',
+      envId: 'plugin-visualization-legacy-0123456789ab',
+      state: 'ready',
+      source: 'plugin',
+      pluginId: 'visualization',
+      label: 'legacy',
+      referrers: [],
+      consumers: []
+    }
+  ]
+  const selected = plugin({
+    environments: [{ name: 'legacy', ref: 'plugin:legacy' }],
+    usedEnvironments: [
+      {
+        ref: 'phi:python@1',
+        name: 'phi-python',
+        description: '汇总层用途。',
+        scope: 'builtin',
+        skillNames: ['xlsx', 'docx'],
+        agentNames: [],
+        warnings: ['skill docx declares no environment']
+      },
+      {
+        ref: 'plugin:stats',
+        name: 'stats',
+        scope: 'private',
+        skillNames: ['statistics'],
+        agentNames: ['Visualization']
+      },
+      {
+        ref: 'project:python-x1',
+        name: 'python-x1',
+        scope: 'project',
+        skillNames: ['custom'],
+        agentNames: []
+      }
+    ]
+  })
+  const statuses = managedEnvironmentsForPlugin(selected, entries, [])
+
+  assert.deepEqual(
+    statuses.map(({ ref, envId, state, scope }) => ({ ref, envId, state, scope })),
+    [
+      {
+        ref: 'phi:python@1',
+        envId: 'phi-python-0123456789ab',
+        state: 'ready',
+        scope: 'builtin'
+      },
+      {
+        ref: 'plugin:stats',
+        envId: 'plugin-visualization-stats-0123456789ab',
+        state: 'absent',
+        scope: 'private'
+      },
+      {
+        ref: 'project:python-x1',
+        envId: 'project-demo-python-x1-0123456789ab',
+        state: 'building',
+        scope: 'project'
+      },
+      {
+        ref: 'plugin:legacy',
+        envId: 'plugin-visualization-legacy-0123456789ab',
+        state: 'ready',
+        scope: 'private'
+      }
+    ]
+  )
+  assert.equal(statuses[0]?.description, '内置科学计算环境。')
+  assert.deepEqual(statuses[0]?.skillNames, ['xlsx', 'docx'])
+  assert.deepEqual(statuses[0]?.warnings, ['skill docx declares no environment'])
+
+  const legacyStatuses = managedEnvironmentsForPlugin(
+    plugin({
+      usedEnvironments: undefined,
+      environments: [{ name: 'legacy', ref: 'plugin:legacy' }]
+    }),
+    entries,
+    []
+  )
+  assert.deepEqual(
+    legacyStatuses.map(({ ref, envId, state, scope }) => ({ ref, envId, state, scope })),
+    [
+      {
+        ref: 'plugin:legacy',
+        envId: 'plugin-visualization-legacy-0123456789ab',
+        state: 'ready',
+        scope: 'private'
+      },
+      {
+        ref: 'plugin:stats',
+        envId: 'plugin-visualization-stats-0123456789ab',
+        state: 'absent',
+        scope: 'private'
+      }
+    ]
+  )
+})
+
+test('plugin detail shows builtin and private environments in ready, absent and building states', () => {
+  const building: EnvironmentBuild = {
+    envId: 'phi-r-0123456789ab',
+    ref: 'phi:r@1',
+    state: 'building',
+    phase: 'create',
+    message: '正在安装 R 软件包',
+    startedAt: '2026-10-03T00:00:00.000Z',
+    estimate: { packages: 9, cachedPackages: 3 },
+    progress: { packages: 9, packagesDone: 4 }
+  }
+  const selected = plugin({
+    environmentStatuses: [
+      pluginEnvironmentStatus({
+        name: 'phi-python',
+        ref: 'phi:python@1',
+        description: '运行办公文档脚本。',
+        scope: 'builtin',
+        skillNames: ['xlsx', 'docx'],
+        agentNames: [],
+        warnings: ['skill docx declares no environment'],
+        state: 'ready'
+      }),
+      pluginEnvironmentStatus({
+        name: 'stats',
+        ref: 'plugin:stats',
+        description: '插件统计环境。',
+        scope: 'private',
+        skillNames: ['statistics'],
+        agentNames: ['Visualization'],
+        state: 'absent'
+      }),
+      pluginEnvironmentStatus({
+        name: 'phi-r',
+        ref: 'phi:r@1',
+        scope: 'builtin',
+        skillNames: ['omics-visualization'],
+        agentNames: ['Visualization'],
+        envId: building.envId,
+        state: 'building',
+        build: building
+      })
+    ]
+  })
+  const markup = themed(
+    createElement(PhiPluginsView, {
+      plugin: selected,
+      busyPluginId: null,
+      error: null,
+      notice: null,
+      onClearError: () => undefined,
+      onClearNotice: () => undefined,
+      onRefresh: async () => undefined,
+      onSetEnabled: async () => true,
+      onUninstall: async () => true
+    })
+  )
+
+  assert.match(markup, /内置 Python 环境 · phi-python/)
+  assert.match(markup, /内置 R 环境 · phi-r/)
+  assert.match(markup, /与其他内置技能共享/)
+  assert.match(markup, /插件私有/)
+  assert.match(markup, /使用技能：xlsx、docx/)
+  assert.match(markup, /使用智能体：Visualization/)
+  assert.match(markup, /skill docx declares no environment/)
+  assert.match(markup, /运行办公文档脚本/)
+  assert.match(markup, /已构建/)
+  assert.match(markup, /未构建/)
+  assert.match(markup, /构建中/)
+  assert.match(markup, /查看估算并构建/)
+})
+
+test('plugin detail describes a plugin with no environment references truthfully', () => {
   const office = plugin({
     id: 'office',
-    title: '办公文档（Excel / Word / PowerPoint / PDF）',
+    title: '办公文档',
     summary: '使用托管 Python 环境生成和批量处理办公文档。',
     agents: [],
     skills: ['skills/xlsx', 'skills/pptx', 'skills/pdf', 'skills/docx', 'skills/office-workflow'],
     scriptTools: ['officepy_check_formulas', 'officepy_docx_inspect'],
     environments: [],
+    usedEnvironments: [],
     environmentStatuses: []
   })
   const markup = themed(
@@ -300,7 +652,8 @@ test('plugin detail describes a plugin with no private environments without an u
     })
   )
 
-  assert.match(markup, /此插件未声明托管环境/)
+  assert.match(markup, /此插件不需要托管环境/)
+  assert.doesNotMatch(markup, /此插件未声明托管环境/)
   assert.doesNotMatch(markup, />未构建</)
 })
 
@@ -312,13 +665,13 @@ test('plugin detail builds an absent private environment through the shared conf
   }
   const selected = plugin({
     environmentStatuses: [
-      {
+      pluginEnvironmentStatus({
         name: 'demo',
         ref: 'plugin:demo',
         envId: 'plugin-visualization-demo-0123456789ab',
         state: 'absent',
         estimate
-      }
+      })
     ]
   })
   const markup = themed(
@@ -373,6 +726,19 @@ test('plugin detail builds an absent private environment through the shared conf
   assert.equal(result.envId, 'plugin-visualization-demo-0123456789ab')
   assert.deepEqual(calls, [['plugin:demo', undefined, 'visualization']])
 
+  calls.length = 0
+  await requestPhiPluginEnvironmentBuild(
+    {
+      buildManagedEnvironment: async (...args: unknown[]) => {
+        calls.push(args)
+        return { envId: 'phi-python-0123456789ab' }
+      }
+    },
+    selected.id,
+    { ref: 'phi:python@1' }
+  )
+  assert.deepEqual(calls, [['phi:python@1', undefined, undefined]])
+
   const dialogMarkup = themed(
     createElement(EnvironmentBuildConfirmDialog, {
       environment: { ref: 'plugin:demo', label: 'demo', estimate },
@@ -389,13 +755,13 @@ test('plugin detail builds an absent private environment through the shared conf
 test('plugin environment build events drive building progress and ready state', () => {
   const selected = plugin({
     environmentStatuses: [
-      {
+      pluginEnvironmentStatus({
         name: 'demo',
         ref: 'plugin:demo',
         envId: 'plugin-visualization-demo-0123456789ab',
         state: 'absent',
         estimate: { packages: 12, cachedPackages: 5 }
-      }
+      })
     ]
   })
   const building: EnvironmentBuild = {

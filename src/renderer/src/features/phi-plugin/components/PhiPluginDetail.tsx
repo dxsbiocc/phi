@@ -18,63 +18,14 @@ import {
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 
-import type { ManagedEnvironmentState } from '../../../../../shared/environmentTypes'
 import { EnvironmentBuildConfirmDialog } from '../../../components/EnvironmentBuildConfirmDialog'
 import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../../../lib/packageTrust'
 import { PhiIcons } from '../../../icons'
 import type { PhiPluginDisplayItem, PhiPluginEnvironmentStatus } from '../hooks/usePhiPlugins'
 import { requestPhiPluginEnvironmentBuild } from '../lib/environmentBuild'
-import {
-  phiPluginComponentName,
-  phiPluginDistributionLabel,
-  phiPluginEnabledLabel,
-  phiPluginEnvironmentStateLabel
-} from '../lib/phiPlugins'
-
-function environmentColor(
-  state: ManagedEnvironmentState | undefined
-): 'default' | 'primary' | 'success' | 'warning' | 'error' {
-  if (state === 'building') return 'primary'
-  if (state === 'ready') return 'success'
-  if (state === 'failed') return 'error'
-  if (state === 'drifted') return 'warning'
-  return 'default'
-}
-
-function ComponentSection({
-  title,
-  values,
-  preserveNames = false
-}: {
-  title: string
-  values: readonly string[]
-  preserveNames?: boolean
-}): React.JSX.Element {
-  return (
-    <Box component="section">
-      <Typography variant="overline" color="text.secondary" sx={{ fontWeight: 700 }}>
-        {title}
-      </Typography>
-      {values.length > 0 ? (
-        <Stack direction="row" spacing={0.75} useFlexGap sx={{ mt: 0.5, flexWrap: 'wrap' }}>
-          {values.map((value) => (
-            <Chip
-              key={value}
-              size="small"
-              variant="outlined"
-              label={preserveNames ? value : phiPluginComponentName(value)}
-              sx={preserveNames ? { fontFamily: 'var(--font-mono)' } : undefined}
-            />
-          ))}
-        </Stack>
-      ) : (
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-          未提供
-        </Typography>
-      )}
-    </Box>
-  )
-}
+import { phiPluginDistributionLabel, phiPluginEnabledLabel } from '../lib/phiPlugins'
+import { PhiPluginComponentDetails } from './PhiPluginComponentDetails'
+import { PhiPluginEnvironmentDetails } from './PhiPluginEnvironmentDetails'
 
 export type PhiPluginDetailProps = {
   plugin: PhiPluginDisplayItem | null
@@ -86,12 +37,6 @@ export type PhiPluginDetailProps = {
   onRefresh: () => Promise<void>
   onSetEnabled: (plugin: PhiPluginDisplayItem, enabled: boolean) => Promise<boolean>
   onUninstall: (plugin: PhiPluginDisplayItem) => Promise<boolean>
-}
-
-function environmentBuildProgress(environment: PhiPluginEnvironmentStatus): string {
-  const build = environment.build
-  if (!build) return '正在启动构建…'
-  return `${build.message} · ${build.progress.packagesDone} / ${build.progress.packages} 个包`
 }
 
 export function PhiPluginDetail({
@@ -165,7 +110,11 @@ export function PhiPluginDetail({
     if (!environment.envId) return
     setEnvironmentActionError(null)
     if (!plugin) return
-    setBusyEnvironment({ pluginId: plugin.id, envId: environment.envId, kind: 'rebuild' })
+    setBusyEnvironment({
+      pluginId: plugin.id,
+      envId: environment.envId,
+      kind: 'rebuild'
+    })
     try {
       await window.api.rebuildManagedEnvironment(environment.envId)
       await onRefresh()
@@ -302,151 +251,18 @@ export function PhiPluginDetail({
               </Stack>
 
               <Divider />
-              <Box
-                sx={{
-                  display: 'grid',
-                  gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' },
-                  gap: 2.5
-                }}
-              >
-                <ComponentSection title="智能体" values={plugin.agents ?? []} />
-                <ComponentSection title="技能" values={plugin.skills ?? []} />
-                <ComponentSection
-                  title="脚本工具（最终名称）"
-                  values={plugin.scriptTools ?? []}
-                  preserveNames
-                />
-              </Box>
+              <PhiPluginComponentDetails plugin={plugin} />
 
               <Divider />
-              <Box component="section">
-                <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.25 }}>
-                  环境
-                </Typography>
-                {environmentActionError ? (
-                  <Alert
-                    severity="error"
-                    variant="outlined"
-                    onClose={() => setEnvironmentActionError(null)}
-                    sx={{ mb: 1.25 }}
-                  >
-                    {environmentActionError}
-                  </Alert>
-                ) : null}
-                {plugin.environmentStatuses.length > 0 ? (
-                  <Stack spacing={1}>
-                    {plugin.environmentStatuses.map((environment) => {
-                      const actionBusy =
-                        busyEnvironment !== null &&
-                        (busyEnvironment.envId === environment.envId ||
-                          busyEnvironment.envId === environment.ref)
-                      const building =
-                        environment.state === 'building' ||
-                        (actionBusy &&
-                          (busyEnvironment?.kind === 'rebuild' || environment.state === 'absent'))
-                      const rebuildable =
-                        (environment.state === 'failed' || environment.state === 'drifted') &&
-                        Boolean(environment.envId)
-                      const showBuildAction =
-                        environment.state === 'absent' ||
-                        environment.state === 'building' ||
-                        (actionBusy && busyEnvironment?.kind === 'build')
-                      return (
-                        <Stack
-                          key={`${environment.ref}:${environment.name}`}
-                          direction={{ xs: 'column', sm: 'row' }}
-                          spacing={1.5}
-                          sx={{
-                            alignItems: { xs: 'stretch', sm: 'center' },
-                            p: 1.5,
-                            border: 1,
-                            borderColor: 'divider',
-                            borderRadius: 1.5
-                          }}
-                        >
-                          <Box sx={{ flex: 1, minWidth: 0 }}>
-                            <Typography sx={{ fontWeight: 650 }}>{environment.name}</Typography>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ fontFamily: 'var(--font-mono)' }}
-                            >
-                              {environment.ref}
-                            </Typography>
-                            {building ? (
-                              <Typography
-                                variant="caption"
-                                color="primary"
-                                sx={{ display: 'block', mt: 0.5 }}
-                              >
-                                {environmentBuildProgress(environment)}
-                              </Typography>
-                            ) : null}
-                            {environment.error ? (
-                              <Typography
-                                variant="caption"
-                                color="error"
-                                sx={{ display: 'block', mt: 0.5 }}
-                              >
-                                {environment.error}
-                              </Typography>
-                            ) : null}
-                          </Box>
-                          <Stack
-                            direction="row"
-                            spacing={1}
-                            sx={{ alignItems: 'center', flexShrink: 0 }}
-                          >
-                            <Chip
-                              size="small"
-                              color={environmentColor(building ? 'building' : environment.state)}
-                              variant="outlined"
-                              label={
-                                building
-                                  ? phiPluginEnvironmentStateLabel('building')
-                                  : environment.state
-                                    ? phiPluginEnvironmentStateLabel(environment.state)
-                                    : '状态未知'
-                              }
-                            />
-                            {showBuildAction ? (
-                              <Button
-                                size="small"
-                                variant="contained"
-                                disabled={building || busyPluginId !== null}
-                                startIcon={
-                                  building ? (
-                                    <CircularProgress size={14} color="inherit" />
-                                  ) : undefined
-                                }
-                                onClick={() =>
-                                  setPendingBuild({ pluginId: plugin.id, environment })
-                                }
-                              >
-                                {building ? '构建中…' : '查看估算并构建'}
-                              </Button>
-                            ) : null}
-                            {rebuildable ? (
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                disabled={building || busyPluginId !== null}
-                                onClick={() => void rebuildEnvironment(environment)}
-                              >
-                                {environment.state === 'failed' ? '重新构建' : '修复环境'}
-                              </Button>
-                            ) : null}
-                          </Stack>
-                        </Stack>
-                      )
-                    })}
-                  </Stack>
-                ) : (
-                  <Typography variant="body2" color="text.secondary">
-                    此插件未声明托管环境。
-                  </Typography>
-                )}
-              </Box>
+              <PhiPluginEnvironmentDetails
+                environments={plugin.environmentStatuses}
+                busyEnvironment={busyEnvironment}
+                busyPluginId={busyPluginId}
+                actionError={environmentActionError}
+                onDismissError={() => setEnvironmentActionError(null)}
+                onBuild={(environment) => setPendingBuild({ pluginId: plugin.id, environment })}
+                onRebuild={(environment) => void rebuildEnvironment(environment)}
+              />
 
               <Divider />
               <Stack spacing={0.75}>

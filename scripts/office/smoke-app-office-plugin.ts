@@ -10,6 +10,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import type { Page } from 'puppeteer-core'
 
@@ -28,6 +29,7 @@ import {
 } from './smoke-app-pptx-runtime'
 
 const OFFICE_SKILLS = ['docx', 'office-workflow', 'pdf', 'pptx', 'xlsx'] as const
+const APPROVAL_LABELS = { read: '只读', write: '写入', execute: '执行' } as const
 
 interface SmokeApi {
   createProject(name: string, workingDirectory: string, permissionMode: 'auto'): Promise<unknown>
@@ -35,21 +37,17 @@ interface SmokeApi {
   listSkills(cwd?: string): Promise<SkillSummary[]>
 }
 
-function smokePaths(runtimeRoot: string): SmokePaths {
+function smokePaths(runtimeRoot: string, screenshotDir: string): SmokePaths {
   return {
     homeDir: join(runtimeRoot, 'home'),
     agentDir: join(runtimeRoot, 'home', '.phi'),
     projectDir: join(runtimeRoot, 'project'),
     userDataDir: join(runtimeRoot, 'electron-user-data'),
     saveAsPath: join(runtimeRoot, 'project', 'unused.xlsx'),
-    screenshotDir: join(runtimeRoot, 'screenshots')
+    screenshotDir
   }
 }
 
-/**
- * A fresh account opens the environment check once host detection finishes, at an unpredictable moment,
- * and "知道了" is its only way out. Dismiss it on every poll until no dialog is visible.
- */
 async function waitForDialogsToClose(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
@@ -57,7 +55,6 @@ async function waitForDialogsToClose(page: Page): Promise<void> {
         (dialog) => dialog.offsetParent !== null
       )
       for (const dialog of visible) {
-        if (!dialog.innerText.includes('工作台环境检测')) continue
         Array.from(dialog.querySelectorAll<HTMLButtonElement>('button'))
           .find((button) => button.innerText.trim() === '知道了')
           ?.click()
@@ -66,6 +63,47 @@ async function waitForDialogsToClose(page: Page): Promise<void> {
     },
     { timeout: readyTimeoutMs, polling: 250 }
   )
+}
+
+async function dismissFirstRunDialogs(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).some(
+        (dialog) => dialog.offsetParent !== null && dialog.innerText.includes('工作台环境检测')
+      ),
+    { timeout: readyTimeoutMs, polling: 250 }
+  )
+  await waitForDialogsToClose(page)
+}
+
+async function openPluginDetail(page: Page, pluginId: string): Promise<void> {
+  const row = `[data-phi-catalog-sidebar="plugins"] [data-phi-catalog-row="${pluginId}"]`
+  await waitUntil(`打开 ${pluginId} 插件详情`, async () => {
+    const opened = await page
+      .$eval(
+        '[data-phi-plugin-detail="true"]',
+        (element, id) => (element.textContent ?? '').includes(`${id} · v`),
+        pluginId
+      )
+      .catch(() => false)
+    if (opened) return true
+    await page.evaluate((selector) => {
+      const visibleRow = Array.from(document.querySelectorAll<HTMLElement>(selector)).find(
+        (candidate) => candidate.offsetParent !== null
+      )
+      visibleRow?.querySelector<HTMLElement>('[role="button"]')?.click()
+    }, row)
+    await delay(1_500)
+    return (await page
+      .$eval(
+        '[data-phi-plugin-detail="true"]',
+        (element, id) => (element.textContent ?? '').includes(`${id} · v`),
+        pluginId
+      )
+      .catch(() => false))
+      ? true
+      : null
+  })
 }
 
 async function startProjectChat(page: Page, projectDir: string): Promise<void> {
@@ -104,7 +142,7 @@ async function startProjectChat(page: Page, projectDir: string): Promise<void> {
   })
 }
 
-async function assertOfficePlugin(page: Page): Promise<PhiPluginListItem> {
+async function assertOfficePlugin(page: Page, screenshotDir: string): Promise<PhiPluginListItem> {
   await waitForDialogsToClose(page)
   await page.click('[aria-label="插件"]')
   await page.waitForSelector('[data-phi-catalog-sidebar="plugins"]', {
@@ -115,32 +153,83 @@ async function assertOfficePlugin(page: Page): Promise<PhiPluginListItem> {
     visible: true,
     timeout: readyTimeoutMs
   })
+  await openPluginDetail(page, 'office')
+  await page.waitForSelector('[data-phi-plugin-detail="true"]', {
+    visible: true,
+    timeout: readyTimeoutMs
+  })
+  await page.waitForSelector('[data-phi-plugin-component-details="true"]', {
+    visible: true,
+    timeout: readyTimeoutMs
+  })
+  await page.waitForSelector('[data-phi-plugin-environment="phi:python@1"]', {
+    visible: true,
+    timeout: readyTimeoutMs
+  })
+  const screenshotPath = join(screenshotDir, 'office-plugin-detail.png')
+  await page.screenshot({ path: screenshotPath, fullPage: true })
+  process.stdout.write(`OFFICE_APP_PLUGIN_DETAIL_SCREENSHOT ${screenshotPath}\n`)
+
   assert.equal(
     await page.$eval('[data-phi-catalog-row="office"] [data-phi-catalog-status]', (element) =>
       element.getAttribute('data-phi-catalog-status')
     ),
     'enabled'
   )
-  await page.click('[data-phi-catalog-row="office"] [role="button"]')
-  await page.waitForSelector('[data-phi-plugin-detail="true"]', {
-    visible: true,
-    timeout: readyTimeoutMs
-  })
+  assert.equal(
+    await page.$eval('[data-phi-plugin-detail="true"] h4', (element) =>
+      (element as HTMLElement).innerText.trim()
+    ),
+    '办公文档'
+  )
   const detail = await page.$eval(
     '[data-phi-plugin-detail="true"]',
-    (element) => element.textContent ?? ''
+    (element) => (element as HTMLElement).innerText
   )
-  assert.match(detail, /办公文档（Excel \/ Word \/ PowerPoint \/ PDF）/u)
-  assert.match(detail, /此插件未声明托管环境/u)
-  for (const skill of OFFICE_SKILLS) assert.match(detail, new RegExp(skill, 'u'))
+  assert.doesNotMatch(detail, /办公文档（Excel \/ Word \/ PowerPoint \/ PDF）/u)
+  assert.doesNotMatch(detail, /此插件未声明托管环境/u)
 
   const plugin = await page.evaluate(async () => {
     const plugins = await (window as unknown as { api: SmokeApi }).api.listPhiPlugins()
     return plugins.find((candidate) => candidate.id === 'office') ?? null
   })
   assert.ok(plugin, '插件 API 未返回 office')
+  assert.equal(plugin.title, '办公文档')
+  assert.equal(plugin.version, '1.0.1')
   assert.equal(plugin.enabled, true)
   assert.deepEqual(plugin.environments, [])
+  assert.equal(plugin.skillDetails?.length, OFFICE_SKILLS.length)
+  assert.deepEqual(plugin.skillDetails?.map((skill) => skill.name).sort(), [...OFFICE_SKILLS])
+  for (const skill of plugin.skillDetails ?? []) {
+    assert.ok(skill.description, `${skill.name} 缺少技能描述`)
+    assert.ok(detail.includes(skill.description), `${skill.name} 的技能描述未显示`)
+    assert.ok(detail.includes(skill.name), `${skill.name} 未显示`)
+  }
+  assert.equal(plugin.scriptToolDetails?.length, 6)
+  for (const tool of plugin.scriptToolDetails ?? []) {
+    assert.ok(tool.description, `${tool.name} 缺少脚本工具描述`)
+    assert.ok(detail.includes(tool.description), `${tool.name} 的脚本工具描述未显示`)
+    assert.ok(detail.includes(tool.name), `${tool.name} 未显示`)
+    assert.ok(
+      detail.includes(`审批：${APPROVAL_LABELS[tool.approval]}`),
+      `${tool.name} 未显示审批等级`
+    )
+    assert.ok(detail.includes(`所属技能：${tool.skillName}`), `${tool.name} 未显示所属技能`)
+  }
+  const environment = plugin.usedEnvironments?.find((candidate) => candidate.ref === 'phi:python@1')
+  assert.ok(environment, 'office 未声明实际使用的 phi:python@1')
+  assert.equal(environment.name, 'phi-python')
+  assert.equal(environment.scope, 'builtin')
+  assert.deepEqual(environment.skillNames, [...OFFICE_SKILLS])
+  const environmentDetail = await page.$eval(
+    '[data-phi-plugin-environment="phi:python@1"]',
+    (element) => (element as HTMLElement).innerText
+  )
+  assert.match(environmentDetail, /内置 Python 环境 · phi-python/u)
+  assert.match(environmentDetail, /与其他内置技能共享/u)
+  assert.match(environmentDetail, /使用技能：docx、office-workflow、pdf、pptx、xlsx/u)
+  assert.match(environmentDetail, /未构建/u)
+  assert.match(environmentDetail, /查看估算并构建/u)
   return plugin
 }
 
@@ -202,23 +291,27 @@ async function main(): Promise<void> {
   assert.ok(existsSync(join(repoRoot, 'out', 'main', 'index.mjs')), '请先构建 Electron 应用')
   assert.ok(existsSync(electronPath), 'Electron 可执行入口不存在')
   const runtimeRoot = mkdtempSync(join(tmpdir(), 'phi-office-plugin-app-smoke-'))
-  const paths = smokePaths(runtimeRoot)
+  const screenshotDir = mkdtempSync(join(tmpdir(), 'phi-office-plugin-detail-shots-'))
+  const paths = smokePaths(runtimeRoot, screenshotDir)
   for (const path of [paths.agentDir, paths.projectDir, paths.userDataDir, paths.screenshotDir]) {
     mkdirSync(path, { recursive: true })
   }
-  writeFileSync(join(paths.agentDir, 'onboarding.json'), '{"onboarded":true}\n')
+  writeFileSync(join(paths.homeDir, '.phi', 'onboarding.json'), '{"onboarded":true}\n')
   let app: RunningApp | undefined
+  let completed = false
   try {
     app = await launch(paths)
+    await dismissFirstRunDialogs(app.page)
     await startProjectChat(app.page, paths.projectDir)
-    const plugin = await assertOfficePlugin(app.page)
+    const plugin = await assertOfficePlugin(app.page, paths.screenshotDir)
     await assertOfficeSkills(app.page, paths.projectDir)
     const directoryCount = officeSkillDirectoryCount()
     assert.equal(plugin.skills.length, directoryCount)
     assert.equal(directoryCount, OFFICE_SKILLS.length)
     process.stdout.write(
-      `OFFICE_APP_PLUGIN_SMOKE_RESULT ${JSON.stringify({ plugin: plugin.id, skills: plugin.skills, directoryCount })}\n`
+      `OFFICE_APP_PLUGIN_SMOKE_RESULT ${JSON.stringify({ plugin: plugin.id, skills: plugin.skills, directoryCount, screenshotDir })}\n`
     )
+    completed = true
     await closeNormally(app)
   } catch (error) {
     const logs = app?.logs().trim()
@@ -230,6 +323,7 @@ async function main(): Promise<void> {
       await stopChild(app.child)
     }
     rmSync(runtimeRoot, { recursive: true, force: true })
+    if (!completed) rmSync(screenshotDir, { recursive: true, force: true })
   }
 }
 

@@ -163,6 +163,12 @@ test('office plugin installs five Python office skills without a private environ
     installVisualization(root)
     const { agentDir, plugin } = installOffice(root)
     assert.equal(plugin.id, 'office')
+    assert.equal(plugin.version, '1.0.1')
+    assert.equal(plugin.manifest.title, '办公文档')
+    assert.equal(
+      plugin.manifest.summary,
+      '使用托管 Python 生成和处理 Excel、Word、PowerPoint 与 PDF，并用原生 phi-office 对已打开文件做少量交互式修改。'
+    )
     assert.equal(plugin.toolPrefix, 'officepy')
     assert.equal(Object.hasOwn(plugin.manifest, 'environments'), false)
     assert.deepEqual(plugin.components.agents, [])

@@ -22,6 +22,7 @@ import * as notebookDocument from '../src/shared/notebookDocument'
 import * as sessionTitle from '../src/shared/sessionTitle'
 import * as htmlReportPreview from '../src/shared/htmlReportPreview'
 import * as phiPluginProblems from '../src/shared/phiPluginProblems'
+import * as phiPluginDetails from '../src/main/agent/plugins/details'
 import type { WorkspaceChangeSummary } from '../src/shared/workspaceChangeTypes'
 import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
 import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
@@ -434,6 +435,7 @@ async function harness(
   const appendedSessionEvents: Array<Record<string, unknown>> = []
   const enablementGlobal: Record<string, boolean> = {}
   const enablementProjects: Record<string, Record<string, boolean>> = {}
+  let installedPhiPlugins: unknown[] = []
   let appFocused = true
   const reportedWrapperRuns = new Set<string>()
   const wrapperJobFinishListeners: Array<(run: unknown, status: unknown) => void> = []
@@ -1184,6 +1186,7 @@ async function harness(
     '../shared/wrapperResultTypes': { declaredExternalOutputRoot },
     '../shared/htmlReportPreview': htmlReportPreview,
     '../shared/phiPluginProblems': phiPluginProblems,
+    './agent/plugins/details': phiPluginDetails,
     '../shared/presentedFileTypes': { MAX_PRESENTED_FILES: 4 },
     '../shared/remoteHostProfile': { sshConfigHostId: (alias: string) => `ssh-config:${alias}` },
     './molecule-renderer': {
@@ -2062,7 +2065,7 @@ async function harness(
       })
     },
     './agent/plugins/loader': {
-      listInstalledPlugins: (): unknown[] => [],
+      listInstalledPlugins: (): unknown[] => installedPhiPlugins,
       loadedPlugins: (): unknown[] => [],
       installPlugin: (): unknown => ({ ok: true, errors: [], warnings: [] }),
       upgradePlugin: async (): Promise<unknown> => ({ ok: true, errors: [], warnings: [] }),
@@ -2082,6 +2085,7 @@ async function harness(
         bytesScanned: 0
       }),
       filterEnabledMainSkills: (skills: unknown[]): unknown[] => skills,
+      isCoreSkill: (): boolean => false,
       getEnablementSnapshot: ({ projectDir }: { projectDir?: string } = {}): unknown => ({
         version: 1,
         global: { ...enablementGlobal },
@@ -3050,6 +3054,9 @@ async function harness(
     },
     setWorkspaceDiffPatch: (patch): void => {
       workspaceDiffPatch = patch
+    },
+    setInstalledPhiPlugins: (plugins: unknown[]): void => {
+      installedPhiPlugins = plugins
     },
     savedWorkspaceDiff: (): string | undefined => savedWorkspaceDiff,
     browserViews,
@@ -6004,6 +6011,101 @@ test('main IPC forwards the owning plugin identity for private environment build
   )
   assert.deepEqual(app.managedEnvironmentBuildCalls, [
     { ref: 'plugin:demo', projectCwd: undefined, pluginId: 'demo-owner' }
+  ])
+})
+
+test('main IPC exposes additive plugin details with global skill enablement', async () => {
+  const app = await harness()
+  app.setInstalledPhiPlugins([
+    {
+      id: 'detail-plugin',
+      version: '1.0.0',
+      enabled: true,
+      source: 'local',
+      installedAt: '2026-10-07T00:00:00.000Z',
+      dir: '/plugins/detail-plugin',
+      manifest: {
+        schemaVersion: 1,
+        id: 'detail-plugin',
+        type: 'plugin',
+        version: '1.0.0',
+        title: 'Detail plugin',
+        summary: 'Detail summary.',
+        toolPrefix: 'detl',
+        components: { agents: [], skills: ['skills/detail-skill'] }
+      },
+      agents: [],
+      skills: [
+        {
+          dir: '/plugins/detail-plugin/skills/detail-skill',
+          name: 'detail-skill',
+          description: 'Detailed skill description.',
+          body: 'Instructions.',
+          frontmatter: { name: 'detail-skill', description: 'Detailed skill description.' },
+          phi: {
+            environment: 'phi:python@1',
+            scripts: [
+              {
+                name: 'inspect',
+                description: 'Inspect a fixture.',
+                run: ['python', './scripts/inspect.py'],
+                args: { type: 'object', properties: {}, additionalProperties: false },
+                approval: 'read'
+              }
+            ]
+          },
+          environment: { kind: 'phi', name: 'python', major: 1 }
+        }
+      ],
+      environments: {},
+      toolPrefix: 'detl',
+      components: { agents: [], skills: ['/plugins/detail-plugin/skills/detail-skill'] }
+    }
+  ])
+  await app.invoke('enablement:set', 'skill:detail-skill', false, { type: 'global' })
+
+  const plugins = (await app.invoke('phiPlugins:list')) as Array<Record<string, unknown>>
+  assert.deepEqual(plugins, [
+    {
+      id: 'detail-plugin',
+      version: '1.0.0',
+      title: 'Detail plugin',
+      summary: 'Detail summary.',
+      enabled: true,
+      source: 'local',
+      installedAt: '2026-10-07T00:00:00.000Z',
+      directory: '/plugins/detail-plugin',
+      agents: [],
+      skills: ['detail-skill'],
+      scriptTools: ['detl_inspect'],
+      environments: [],
+      agentDetails: [],
+      skillDetails: [
+        {
+          name: 'detail-skill',
+          description: 'Detailed skill description.',
+          enabled: false,
+          environmentRef: 'phi:python@1'
+        }
+      ],
+      scriptToolDetails: [
+        {
+          name: 'detl_inspect',
+          description: 'Inspect a fixture.',
+          approval: 'read',
+          skillName: 'detail-skill'
+        }
+      ],
+      usedEnvironments: [
+        {
+          ref: 'phi:python@1',
+          name: 'phi-python',
+          scope: 'builtin',
+          skillNames: ['detail-skill'],
+          agentNames: []
+        }
+      ]
+    }
   ])
 })
 

@@ -11,5 +11,6 @@ export function requestPhiPluginEnvironmentBuild(
   pluginId: string,
   environment: { ref: string }
 ): Promise<{ envId: string }> {
-  return api.buildManagedEnvironment(environment.ref, undefined, pluginId)
+  const ownerPluginId = environment.ref.startsWith('plugin:') ? pluginId : undefined
+  return api.buildManagedEnvironment(environment.ref, undefined, ownerPluginId)
 }

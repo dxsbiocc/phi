@@ -8,9 +8,12 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { connect, type Browser, type Page } from 'puppeteer-core'
 
+import type { PhiPluginListItem } from '../../src/shared/phiPluginTypes'
+
 const repoRoot = resolve(import.meta.dirname, '..', '..')
 const electronPath = join(repoRoot, 'node_modules', '.bin', 'electron')
 const readyTimeoutMs = 60_000
+const APPROVAL_LABELS = { read: '只读', write: '写入', execute: '执行' } as const
 
 class FatalSmokeError extends Error {}
 
@@ -24,6 +27,10 @@ interface RunningApp {
 interface ManagedEnvironmentCard {
   readonly title: string
   readonly identity: string
+}
+
+interface SmokeApi {
+  listPhiPlugins(): Promise<PhiPluginListItem[]>
 }
 
 function environment(homeDir: string, agentDir: string): NodeJS.ProcessEnv {
@@ -178,6 +185,22 @@ async function clickExactControl(page: Page, scopeSelector: string, text: string
   )
 }
 
+async function waitForDialogsToClose(page: Page): Promise<void> {
+  await waitUntil('关闭所有可见对话框', () =>
+    page.evaluate(() => {
+      const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).filter(
+        (dialog) => dialog.offsetParent !== null
+      )
+      for (const dialog of dialogs) {
+        Array.from(dialog.querySelectorAll<HTMLButtonElement>('button'))
+          .find((button) => button.innerText.trim() === '知道了')
+          ?.click()
+      }
+      return dialogs.length === 0
+    })
+  )
+}
+
 async function dismissFirstRunEnvironmentSummary(page: Page): Promise<void> {
   await waitUntil('首次工作台环境检测对话框', () =>
     page.evaluate(() =>
@@ -186,21 +209,14 @@ async function dismissFirstRunEnvironmentSummary(page: Page): Promise<void> {
       )
     )
   )
-  await clickExactControl(page, '[role="dialog"]', '知道了')
-  // innerText can go empty while the dialog still fades out and its backdrop swallows clicks, so wait
-  // until no dialog is on screen at all.
-  await waitUntil(
-    '关闭工作台环境检测对话框',
-    async () =>
-      (await page.evaluate(() =>
-        Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).every(
-          (dialog) => dialog.offsetParent === null
-        )
-      )) || null
-  )
+  await waitForDialogsToClose(page)
 }
 
-async function assertVisualizationPlugin(page: Page): Promise<void> {
+async function assertVisualizationPlugin(
+  page: Page,
+  screenshotDir: string
+): Promise<PhiPluginListItem> {
+  await waitForDialogsToClose(page)
   await page.click('button[aria-label="插件"]')
   await page.waitForSelector('[data-phi-catalog-sidebar="plugins"]', {
     visible: true,
@@ -213,15 +229,43 @@ async function assertVisualizationPlugin(page: Page): Promise<void> {
   // settles it, so click again until the detail opens. The row's [role="button"] opens the plugin; matching
   // by aria-label hits the enable switch's neighbour instead.
   await waitUntil('打开 visualization 插件详情', async () => {
-    if ((await page.$('[data-phi-plugin-detail="true"]')) !== null) return true
-    await page.click(`${visualizationRow} [role="button"]`).catch(() => undefined)
+    const opened = await page
+      .$eval('[data-phi-plugin-detail="true"]', (element) =>
+        (element.textContent ?? '').includes('visualization · v')
+      )
+      .catch(() => false)
+    if (opened) return true
+    await page.evaluate((selector) => {
+      const visibleRow = Array.from(document.querySelectorAll<HTMLElement>(selector)).find(
+        (candidate) => candidate.offsetParent !== null
+      )
+      visibleRow?.querySelector<HTMLElement>('[role="button"]')?.click()
+    }, visualizationRow)
     await delay(1_500)
-    return (await page.$('[data-phi-plugin-detail="true"]')) !== null ? true : null
+    return (await page
+      .$eval('[data-phi-plugin-detail="true"]', (element) =>
+        (element.textContent ?? '').includes('visualization · v')
+      )
+      .catch(() => false))
+      ? true
+      : null
   })
   await page.waitForSelector('[data-phi-plugin-detail="true"]', {
     visible: true,
     timeout: readyTimeoutMs
   })
+  await page.waitForSelector('[data-phi-plugin-component-details="true"]', {
+    visible: true,
+    timeout: readyTimeoutMs
+  })
+  await page.waitForSelector('[data-phi-plugin-environment="phi:r@1"]', {
+    visible: true,
+    timeout: readyTimeoutMs
+  })
+  const screenshotPath = join(screenshotDir, 'visualization-plugin-detail.png')
+  await page.screenshot({ path: screenshotPath, fullPage: true })
+  process.stdout.write(`VIZ_APP_PLUGIN_DETAIL_SCREENSHOT ${screenshotPath}\n`)
+
   const detail = await waitUntil('visualization 插件详情', async () => {
     const text = await page.$eval(
       '[data-phi-plugin-detail="true"]',
@@ -229,11 +273,59 @@ async function assertVisualizationPlugin(page: Page): Promise<void> {
     )
     return text.includes('visualization · v') ? text : null
   })
-  assert.ok(detail.includes('科研绘图'), '插件详情未显示 visualization 插件')
-  assert.ok(detail.includes('此插件未声明托管环境。'), 'visualization 插件仍显示托管环境声明')
+  assert.equal(
+    await page.$eval('[data-phi-plugin-detail="true"] h4', (element) =>
+      (element as HTMLElement).innerText.trim()
+    ),
+    '科研绘图'
+  )
+  assert.doesNotMatch(detail, /此插件未声明托管环境/u)
+  const plugin = await page.evaluate(async () => {
+    const plugins = await (window as unknown as { api: SmokeApi }).api.listPhiPlugins()
+    return plugins.find((candidate) => candidate.id === 'visualization') ?? null
+  })
+  assert.ok(plugin, '插件 API 未返回 visualization')
+  assert.equal(plugin.agentDetails?.length, 1)
+  assert.equal(plugin.skillDetails?.length, 1)
+  assert.equal(plugin.scriptToolDetails?.length, 4)
+  for (const agent of plugin.agentDetails ?? []) {
+    assert.ok(agent.description, `${agent.name} 缺少智能体描述`)
+    assert.ok(detail.includes(agent.description), `${agent.name} 的智能体描述未显示`)
+  }
+  for (const skill of plugin.skillDetails ?? []) {
+    assert.ok(skill.description, `${skill.name} 缺少技能描述`)
+    assert.ok(detail.includes(skill.description), `${skill.name} 的技能描述未显示`)
+  }
+  for (const tool of plugin.scriptToolDetails ?? []) {
+    assert.ok(tool.description, `${tool.name} 缺少脚本工具描述`)
+    assert.ok(detail.includes(tool.description), `${tool.name} 的脚本工具描述未显示`)
+    assert.ok(
+      detail.includes(`审批：${APPROVAL_LABELS[tool.approval]}`),
+      `${tool.name} 未显示审批等级`
+    )
+    assert.ok(detail.includes(`所属技能：${tool.skillName}`), `${tool.name} 未显示所属技能`)
+  }
+  const environment = plugin.usedEnvironments?.find((candidate) => candidate.ref === 'phi:r@1')
+  assert.ok(environment, 'visualization 未声明实际使用的 phi:r@1')
+  assert.equal(environment.name, 'phi-r')
+  assert.equal(environment.scope, 'builtin')
+  assert.deepEqual(environment.skillNames, ['omics-visualization'])
+  assert.deepEqual(environment.agentNames, ['Visualization'])
+  const environmentDetail = await page.$eval(
+    '[data-phi-plugin-environment="phi:r@1"]',
+    (element) => (element as HTMLElement).innerText
+  )
+  assert.match(environmentDetail, /内置 R 环境 · phi-r/u)
+  assert.match(environmentDetail, /与其他内置技能共享/u)
+  assert.match(environmentDetail, /使用技能：omics-visualization/u)
+  assert.match(environmentDetail, /使用智能体：Visualization/u)
+  assert.match(environmentDetail, /未构建/u)
+  assert.match(environmentDetail, /查看估算并构建/u)
+  return plugin
 }
 
 async function assertManagedEnvironments(page: Page): Promise<ManagedEnvironmentCard[]> {
+  await waitForDialogsToClose(page)
   await page.click('button[aria-label="设置"]')
   await page.waitForSelector('[role="dialog"]', { visible: true, timeout: readyTimeoutMs })
   await clickExactControl(page, '[role="dialog"]', '环境')
@@ -296,7 +388,7 @@ async function assertVisualizationSkill(page: Page): Promise<void> {
     page.evaluate(() => {
       const sidebar = document.querySelector('[data-phi-catalog-sidebar="skills"]')
       const summary = Array.from(
-        sidebar?.querySelectorAll<HTMLElement>('button.MuiAccordionSummary-root') ?? []
+        sidebar?.querySelectorAll<HTMLElement>('button[aria-expanded]') ?? []
       ).find((candidate) => candidate.innerText.trim().startsWith('插件'))
       if (!summary) return false
       if (summary.getAttribute('aria-expanded') !== 'true') summary.click()
@@ -314,6 +406,7 @@ async function main(): Promise<void> {
   const homeDir = join(smokeRoot, 'home')
   const agentDir = join(smokeRoot, 'agent')
   const userDataDir = join(smokeRoot, 'user-data')
+  const screenshotDir = mkdtempSync(join(tmpdir(), 'phi-viz-plugin-detail-shots-'))
   for (const path of [homeDir, agentDir, userDataDir]) mkdirSync(path, { recursive: true })
   // Without this a fresh account opens the persona onboarding dialog right after the environment check.
   // The onboarding state lives under the account's ~/.phi, which is not the same as PI_CODING_AGENT_DIR here.
@@ -321,32 +414,36 @@ async function main(): Promise<void> {
   writeFileSync(join(homeDir, '.phi', 'onboarding.json'), '{"onboarded":true}\n')
 
   let app: RunningApp | null = null
+  let completed = false
   try {
     app = await launch(homeDir, agentDir, userDataDir)
     await dismissFirstRunEnvironmentSummary(app.page)
-    await assertVisualizationPlugin(app.page)
+    const plugin = await assertVisualizationPlugin(app.page, screenshotDir)
     const environments = await assertManagedEnvironments(app.page)
     await assertVisualizationSkill(app.page)
-    console.log(
-      JSON.stringify(
+    process.stdout.write(
+      `${JSON.stringify(
         {
           ok: true,
-          plugin: 'visualization',
-          pluginEnvironmentMessage: '此插件未声明托管环境。',
+          plugin: plugin.id,
+          pluginEnvironment: 'phi:r@1',
           managedEnvironments: environments.map((environment) => environment.title),
-          skill: 'omics-visualization'
+          skill: 'omics-visualization',
+          screenshotDir
         },
         null,
         2
-      )
+      )}\n`
     )
+    completed = true
   } catch (error) {
-    if (app?.logs()) console.error(app.logs())
+    if (app?.logs()) process.stderr.write(`${app.logs()}\n`)
     throw error
   } finally {
     await app?.browser.close().catch(() => undefined)
     if (app) await stopChild(app.child)
     rmSync(smokeRoot, { recursive: true, force: true })
+    if (!completed) rmSync(screenshotDir, { recursive: true, force: true })
   }
 }
 
