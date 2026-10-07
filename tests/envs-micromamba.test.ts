@@ -148,13 +148,16 @@ test('micromambaCandidates omits the packaged path when resourcesPath is undefin
 })
 
 test('getMicromambaPath reports how to fetch a missing binary', () => {
+  // Outside Electron, resolution falls back to the repository's own resources/runtime, which CI
+  // (and any developer who ran runtime:fetch) has populated for the real platforms. A platform
+  // name nothing is ever bundled for keeps this about the error message, not the machine.
   const root = mkdtempSync(join(tmpdir(), 'phi-micromamba-missing-'))
   const previous = process.cwd()
   try {
     process.chdir(root)
     assert.throws(
-      () => getMicromambaPath('linux-x64'),
-      /Bundled micromamba for linux-x64 is missing at .*micromamba; run npm run runtime:fetch/
+      () => getMicromambaPath('no-such-platform'),
+      /Bundled micromamba for no-such-platform is missing at .*micromamba; run npm run runtime:fetch/
     )
   } finally {
     process.chdir(previous)
