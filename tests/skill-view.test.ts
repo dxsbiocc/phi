@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createElement } from 'react'
+import { Children, createElement, isValidElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import SkillView, { SkillDetail, SkillSidebar } from '../src/renderer/src/features/skill/SkillView'
+import {
+  SkillCatalogDialog,
+  type SkillCatalogDialogProps
+} from '../src/renderer/src/features/skill/components/SkillCatalogDialog'
 import { skillMarkdownBody } from '../src/renderer/src/features/skill/lib/skillMarkdown'
 import type { SkillSummary } from '../src/renderer/src/types'
+import type { PackageRegistryEntryView } from '../src/shared/packageManagerTypes'
 
 function skill(overrides: Partial<SkillSummary> = {}): SkillSummary {
   return {
@@ -69,6 +74,60 @@ function renderSkillSidebar(skillList: SkillSummary[] = skills): string {
       onSelectSkill: () => undefined
     })
   )
+}
+
+function renderSkillCatalog(
+  overrides: Partial<SkillCatalogDialogProps> = {},
+  observeRowKeys?: (keys: Array<string | null>) => void
+): string {
+  function ObservedTableBody({ children }: { children?: ReactNode }): React.ReactElement {
+    const keys: Array<string | null> = []
+    Children.forEach(children, (child) => {
+      if (isValidElement(child)) keys.push(child.key)
+    })
+    observeRowKeys?.(keys)
+    return createElement('tbody', null, children)
+  }
+  const theme = createTheme({
+    components: {
+      MuiDialog: { defaultProps: { disablePortal: true } },
+      ...(observeRowKeys
+        ? { MuiTableBody: { defaultProps: { component: ObservedTableBody } } }
+        : {})
+    }
+  })
+  return renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme },
+      createElement(SkillCatalogDialog, {
+        open: true,
+        skills: [],
+        onClose: () => undefined,
+        onEnableBundled: () => undefined,
+        onInstallPackage: () => undefined,
+        ...overrides
+      })
+    )
+  )
+}
+
+function packageEntry(
+  id: string,
+  overrides: Partial<PackageRegistryEntryView> = {}
+): PackageRegistryEntryView {
+  return {
+    id,
+    type: 'skill',
+    version: '1.0.0',
+    title: id,
+    summary: `${id} package summary`,
+    archive: `${id}.tar.gz`,
+    sha256: 'a'.repeat(64),
+    size: 1024,
+    dependsOn: [],
+    ...overrides
+  }
 }
 
 test('skill view groups skills by source category and exposes the skill markdown panel', () => {
@@ -204,4 +263,208 @@ description: Internal metadata
 正文内容`
 
   assert.equal(skillMarkdownBody(markdown), '# ProteinTalks\n\n正文内容')
+})
+
+test('skill catalog renders ten rows per page with navigation instead of accumulating rows', () => {
+  const markup = renderSkillCatalog({
+    skills: Array.from({ length: 12 }, (_, index) =>
+      skill({
+        id: `catalog-${index}`,
+        name: `catalog-skill-${index}`,
+        core: false,
+        enabled: false,
+        globalEnabled: false
+      })
+    )
+  })
+
+  assert.match(markup, /aria-label="技能目录分组"/)
+  assert.match(markup, /全部技能/)
+  assert.match(markup, /内置技能/)
+  assert.match(markup, /aria-label="搜索技能名称或说明"/)
+  assert.equal(markup.match(/data-phi-skill-catalog-card=/g)?.length, 10)
+  assert.doesNotMatch(markup, /data-phi-skill-catalog-card="catalog-10"/)
+  assert.doesNotMatch(markup, /加载更多/)
+  assert.match(markup, /aria-label="目录分页"/)
+  assert.match(markup, /1–10 \/ 12/)
+  assert.match(markup, /每页/)
+  assert.match(markup, /aria-label="下一页"/)
+  assert.match(markup, /aria-label="上一页"/)
+  assert.match(markup, /<table[^>]*aria-label="技能目录结果"/)
+  assert.equal(markup.match(/<tr[^>]*data-phi-skill-catalog-card=/g)?.length, 10)
+  assert.match(markup, />来源</)
+  assert.match(markup, /环境 \/ 版本/)
+  assert.doesNotMatch(markup, />状态</)
+  assert.match(markup, />操作</)
+  assert.equal(markup.match(/>未声明</g)?.length, 10)
+})
+
+test('skill catalog preserves explicit registry content, bundled shadowing and installed status', () => {
+  const markup = renderSkillCatalog({
+    skills: [
+      skill({ name: 'shadowed', core: true }),
+      skill({ name: 'installed', sourceId: 'installed', sourceCategory: 'installed-package' })
+    ],
+    registry: {
+      id: 'explicit',
+      dir: '/explicit',
+      trust: 'imported',
+      schemaVersion: 1,
+      generatedAt: '2026-10-07',
+      packages: [
+        packageEntry('shadowed', { category: '成像' }),
+        packageEntry('installed', { category: '成像' }),
+        packageEntry('available'),
+        packageEntry('wrapper-only', { type: 'wrapper' })
+      ]
+    },
+    registryDir: '/explicit'
+  })
+
+  assert.match(markup, /成像/)
+  assert.match(markup, /本地软件包/)
+  assert.match(markup, /更换目录/)
+  assert.match(markup, /已安装/)
+  assert.equal(markup.match(/>已安装</g)?.length, 1)
+  assert.match(markup, /软件包/)
+  assert.match(markup, /v1\.0\.0 · 1 KB/)
+  assert.doesNotMatch(markup, /未安装/)
+  assert.equal(markup.match(/data-phi-skill-catalog-card=/g)?.length, 2)
+  assert.match(markup, /data-phi-skill-catalog-card="available"/)
+  assert.doesNotMatch(markup, /data-phi-skill-catalog-card="shadowed"/)
+  assert.doesNotMatch(markup, /data-phi-skill-catalog-card="wrapper-only"/)
+  assert.doesNotMatch(markup, /加载更多/)
+})
+
+test('skill catalog keeps loading and registry errors visible within the browser', () => {
+  const markup = renderSkillCatalog({
+    isSkillsLoading: true,
+    isRegistryLoading: true,
+    registryError: 'Directory unavailable',
+    registry: {
+      id: 'stale',
+      dir: '/stale',
+      trust: 'imported',
+      schemaVersion: 1,
+      generatedAt: '2026-10-07',
+      packages: [packageEntry('stale-package')]
+    }
+  })
+
+  assert.match(markup, /正在读取内置技能/)
+  assert.match(markup, /正在读取本地目录/)
+  assert.match(markup, /Directory unavailable/)
+  assert.doesNotMatch(markup, /data-phi-skill-catalog-card="stale-package"/)
+  assert.doesNotMatch(markup, /没有匹配的技能/)
+})
+
+test('skill catalog distinguishes project enablement from global enablement', () => {
+  const markup = renderSkillCatalog({
+    skills: [
+      skill({
+        id: '/bundled/project-enabled/SKILL.md',
+        name: 'project-enabled',
+        core: false,
+        enabled: true,
+        globalEnabled: false,
+        projectOverride: true
+      })
+    ]
+  })
+
+  assert.match(markup, /data-phi-skill-catalog-card="\/bundled\/project-enabled\/SKILL.md"/)
+  assert.match(markup, /title="已在本项目启用；此操作将在全局启用"/)
+  assert.doesNotMatch(markup, />项目启用</)
+  assert.match(markup, /<button[^>]*>启用<\/button>/)
+})
+
+test('skill catalog shows actual declared environments and versions without guessing from names', () => {
+  const markup = renderSkillCatalog({
+    skills: [
+      skill({
+        id: 'declared',
+        name: 'declared',
+        core: false,
+        enabled: false,
+        globalEnabled: false,
+        environment: 'phi:python@1',
+        version: '1.3'
+      }),
+      skill({
+        id: 'local-environment',
+        name: 'local-environment',
+        core: false,
+        enabled: false,
+        globalEnabled: false,
+        environment: './environment.yml'
+      }),
+      skill({
+        id: 'version-only',
+        name: 'version-only',
+        core: false,
+        enabled: false,
+        globalEnabled: false,
+        version: '2.0'
+      }),
+      skill({
+        id: 'undeclared-scanpy',
+        name: 'scanpy',
+        core: false,
+        enabled: false,
+        globalEnabled: false
+      })
+    ]
+  })
+
+  assert.match(markup, /环境 \/ 版本/)
+  assert.match(markup, /phi:python@1 · 1\.3/)
+  assert.match(markup, /\.\/environment.yml/)
+  assert.match(markup, />2\.0</)
+  assert.equal(markup.match(/>未声明</g)?.length, 1)
+  const undeclaredRow = markup.match(
+    /<tr[^>]*data-phi-skill-catalog-card="undeclared-scanpy"[^>]*>([\s\S]*?)<\/tr>/
+  )?.[1]
+  assert.ok(undeclaredRow)
+  assert.match(undeclaredRow, /未声明/)
+  assert.doesNotMatch(undeclaredRow, /Python|python|phi:/)
+})
+
+test('skill catalog gives explicit package versions distinct rendered row keys', () => {
+  let rowKeys: Array<string | null> = []
+  const markup = renderSkillCatalog(
+    {
+      skills: [
+        skill({
+          id: 'shared',
+          name: 'bundled-fixture',
+          core: false,
+          enabled: false,
+          globalEnabled: false
+        })
+      ],
+      registry: {
+        id: 'versions',
+        dir: '/versions',
+        trust: 'imported',
+        schemaVersion: 1,
+        generatedAt: '2026-10-07',
+        packages: [
+          packageEntry('shared', { version: '1.0.0', summary: 'First version' }),
+          packageEntry('shared', { version: '2.0.0', summary: 'Second version' })
+        ]
+      },
+      registryDir: '/versions'
+    },
+    (keys) => {
+      rowKeys = keys
+    }
+  )
+
+  assert.deepEqual(rowKeys, ['bundled:shared', 'package:shared@1.0.0', 'package:shared@2.0.0'])
+  assert.equal(new Set(rowKeys).size, 3)
+  assert.equal(markup.match(/<tr[^>]*data-phi-skill-catalog-card="shared"/g)?.length, 3)
+  assert.match(markup, /v1\.0\.0/)
+  assert.match(markup, /v2\.0\.0/)
+  assert.match(markup, /First version/)
+  assert.match(markup, /Second version/)
 })

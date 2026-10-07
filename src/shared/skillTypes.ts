@@ -19,6 +19,10 @@ export interface SkillSummary {
   disabled: boolean
   /** Skill contract 1.1.0 `phi.deprecated`: still works, being replaced; the message names the replacement. */
   deprecated?: string
+  /** Declared `phi.environment` reference from the skill file. */
+  environment?: string
+  /** Declared `metadata.version` from the skill file. */
+  version?: string
 }
 
 export interface SkillContent {

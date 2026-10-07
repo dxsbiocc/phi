@@ -126,15 +126,23 @@ export function classifySkillSource(skill: {
   return skillEnablementSource(skill)
 }
 
-/** Skill contract 1.1.0 `phi.deprecated`; unreadable or malformed files simply have none. */
-function skillDeprecation(filePath: string): string | undefined {
+/** Read declared metadata once; unreadable or malformed fields are omitted. */
+function skillMetadata(
+  filePath: string
+): Pick<SkillSummary, 'deprecated' | 'environment' | 'version'> | undefined {
   try {
     const parsed = parseSkillFile(readFileSync(filePath, 'utf8'))
     if (!parsed.ok) return undefined
-    const phi = parsed.frontmatter.phi
-    if (!phi || typeof phi !== 'object' || Array.isArray(phi)) return undefined
-    const message = (phi as Record<string, unknown>).deprecated
-    return typeof message === 'string' && message.trim() ? message.trim() : undefined
+    const phi = isRecord(parsed.frontmatter.phi) ? parsed.frontmatter.phi : undefined
+    const metadata = isRecord(parsed.frontmatter.metadata) ? parsed.frontmatter.metadata : undefined
+    const deprecated = stringValue(phi?.deprecated)
+    const environment = stringValue(phi?.environment)
+    const version = stringValue(metadata?.version)
+    return {
+      ...(deprecated ? { deprecated } : {}),
+      ...(environment ? { environment } : {}),
+      ...(version ? { version } : {})
+    }
   } catch {
     return undefined
   }
@@ -166,7 +174,7 @@ function toSkillSummary(
     : null
   const globalEnabled = core ? true : (globalOverride ?? sourceDefault)
   const enabled = core ? true : (projectOverride ?? globalEnabled)
-  const deprecated = skillDeprecation(skill.filePath)
+  const metadata = skillMetadata(skill.filePath)
 
   return {
     id: skill.filePath,
@@ -187,7 +195,7 @@ function toSkillSummary(
     projectOverride,
     core,
     disabled: !enabled,
-    ...(deprecated ? { deprecated } : {})
+    ...metadata
   }
 }
 
