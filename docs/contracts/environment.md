@@ -74,7 +74,7 @@ One explicit lock per platform, at `locks/<platform>.txt` (for example `locks/da
 
 ## Names and references
 
-Environment names are kebab-case, matching `name` above. Phi-maintained environments use a `phi-` prefix and are named by purpose (`phi-python`, `phi-r`, `phi-nextflow`, `phi-jupyter`). Plugin-local names have no prefix (`viz`). See foundation §10.
+Environment names are kebab-case, matching `name` above. Phi-maintained environments use a `phi-` prefix and are named by purpose (`phi-python`, `phi-r`, `phi-nextflow`, `phi-jupyter`). Plugin-local names have no prefix (`statistics`). See foundation §10.
 
 `parseEnvironmentRef` accepts four forms and throws on anything else:
 
@@ -85,7 +85,7 @@ Environment names are kebab-case, matching `name` above. Phi-maintained environm
 | `project:<name>`     | `{ kind: 'project', name }`                                                               |
 | `./…`                | `{ kind: 'path', path }`. The path must stay under `./`: no empty, `.`, or `..` segments  |
 
-`<name>` uses the environment name pattern. Examples: `phi:python@1`, `plugin:viz`, `project:default`, `./environment.yml`.
+`<name>` uses the environment name pattern. Examples: `phi:python@1`, `phi:r@1`, `plugin:statistics`, `project:default`, `./environment.yml`.
 
 The reference token is the purpose (`python` in `phi:python@1`). The spec file's conda name for that environment is `phi-python`. `computeEnvId` does not rewrite the name you pass: pass `python` so the id is `phi-python-<hash12>`, not `phi-phi-python-…`.
 
@@ -99,7 +99,7 @@ skill:   skill-<owner>-<name>-<hash12>      (1.1.0; owner is the skill name)
 mcp:     mcp-<owner>-<name>-<hash12>        (1.3.0; owner is the connector package id)
 ```
 
-`owner` is required for `plugin`, `project`, and `skill` and, like `name`, must match `^[a-z][a-z0-9-]{0,62}$`; anything else is rejected so the id always matches the `env.json` pattern. `owner` is omitted for `phi` even when the caller passes one. For `phi`, a name that already starts with `phi-` (the official specs are named `phi-python`, `phi-r`, …) is used without that prefix, so the id is `phi-python-<hash12>`, never `phi-phi-python-…`. Examples: `phi-python-3f9a1c2b7d10`, `plugin-visualization-viz-…`, `project-<short project id>-default-…`.
+`owner` is required for `plugin`, `project`, and `skill` and, like `name`, must match `^[a-z][a-z0-9-]{0,62}$`; anything else is rejected so the id always matches the `env.json` pattern. `owner` is omitted for `phi` even when the caller passes one. For `phi`, a name that already starts with `phi-` (the official specs are named `phi-python`, `phi-r`, …) is used without that prefix, so the id is `phi-python-<hash12>`, never `phi-phi-python-…`. Examples: `phi-python-3f9a1c2b7d10`, `plugin-reports-statistics-…`, `project-<short project id>-default-…`.
 
 `<hash12>` is the first 12 hex characters of SHA-256 over the UTF-8 canonical JSON of:
 
@@ -170,7 +170,7 @@ created through `env_request` (runtime foundation §6.3) after the user confirms
   same dry-run export as official locks (one `@EXPLICIT` lock with a
   `# download-bytes:` header). Other platforms have no lock; the environment is
   not portable, and that is expected.
-- `<name>` is `<base name>-x<n>` (`viz-x1`, `python-x2`), with `n` one more than the
+- `<name>` is `<base name>-x<n>` (`statistics-x1`, `python-x2`), with `n` one more than the
   highest existing project environment of that base.
 - The envId uses scope `project` and, as owner, `p` followed by the first 10 hex
   digits of the SHA-256 of the project's real path.
@@ -181,7 +181,7 @@ created through `env_request` (runtime foundation §6.3) after the user confirms
 in this project:
 
 ```json
-{ "version": 1, "overrides": { "plugin:viz": "project:viz-x1" } }
+{ "version": 1, "overrides": { "plugin:statistics": "project:statistics-x1" } }
 ```
 
 Every resolution inside the project applies the overrides **once**, before

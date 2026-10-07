@@ -136,11 +136,10 @@ components:
   wrappers: []
   mcp: []
   orchestrator: null                  # 预留：workflow.yaml 或脚本（§11.4）
-environments:
-  viz: { spec: environment/viz.yml, lock: environment/viz.lock.yml }
-bindings:
-  agents/Visualization.md: viz
 ```
+
+可视化插件刻意不声明私有环境：它的 agent 与 skill frontmatter 都绑定共享的
+官方环境 `phi:r@1`。
 
 ### 5.2 白名单打包
 
@@ -231,7 +230,7 @@ registry 是一个 `index.json`，每个包列出：`id`、`type`、`version`、
 ### 9.2 共享基础环境
 
 - `phi-python`：官方 skill 使用的、锁定的科学计算 Python 栈（numpy、pandas、matplotlib、scikit-learn、scanpy、scvelo、rdkit、openpyxl、defusedxml、pillow、markitdown……），包列表来自现有 skill 实际的 import。由 Phi 开发者维护，带版本号，按平台锁定（osx-arm64、osx-64、linux-64）。
-- `phi-r`：可选，按需构建，随可视化插件一起引入。
+- `phi-r`：可选，按需构建，由 R notebook、scanpy R 互操作和可视化插件共用。
 
 ### 9.3 为包解析环境
 
@@ -286,15 +285,15 @@ registry 是一个 `index.json`，每个包列出：`id`、`type`、`version`、
 
 ### 11.1 形态
 
-插件是 `type: plugin` 的包，组件安装在 `~/.phi/packages/plugin/<id>/<version>/` 下，并按类型路由（§4.3）。一个插件最多有一个**入口** agent，也就是主 agent 能看到的那个；插件还可以带任意数量的**内部** agent，它们只对插件自己的编排器可见（§11.4）。环境绑定在 manifest 里声明。
+插件是 `type: plugin` 的包，组件安装在 `~/.phi/packages/plugin/<id>/<version>/` 下，并按类型路由（§4.3）。一个插件最多有一个**入口** agent，也就是主 agent 能看到的那个；插件还可以带任意数量的**内部** agent，它们只对插件自己的编排器可见（§11.4）。私有环境在 manifest 中声明，组件绑定在 agent 或 skill frontmatter 中声明；可视化改用 `phi:r@1`。
 
 ### 11.2 代码边界
 
-插件不携带在 Phi 内部运行的 TypeScript。新的程序化能力只能来自三处：(a) 在 `requires.coreTools` 中引用的核心工具；(b) 在插件环境中运行的脚本；(c) MCP 服务。这样审核、安全和兼容性才可控。
+插件不携带在 Phi 内部运行的 TypeScript。新的程序化能力只能来自三处：(a) 在 `requires.coreTools` 中引用的核心工具；(b) 在组件解析到的受管理环境中运行的脚本；(c) MCP 服务。这样审核、安全和兼容性才可控。
 
 ### 11.3 第一个插件：可视化
 
-`agents/Visualization.md` + `skills/omics-visualization`（脚本、模板、预览图）+ `viz` 环境。现在的 `viz_*` 工具（`src/main/agent/visualization/`，约 1100 行）是放在引擎里的领域逻辑；它们会改写为命令行程序 `scripts/viz.py`，以脚本工具的形式声明（运行时基础设计 §5.1），工具名保持不变，图表以 `figure` 产物的形式返回。这一步在实施计划的步骤 4 完成，早于插件机制；步骤 6 只负责打包。可视化插件同时是插件、环境、脚本工具、产物四个契约的参考实现。
+`agents/Visualization.md` + `skills/omics-visualization`（脚本、模板、预览图），两者都绑定共享的 `phi:r@1` 环境。现在的 `viz_*` 工具（`src/main/agent/visualization/`，约 1100 行）是放在引擎里的领域逻辑；它们会改写为命令行程序 `scripts/viz.py`，以脚本工具的形式声明（运行时基础设计 §5.1），工具名保持不变，图表以 `figure` 产物的形式返回。这一步在实施计划的步骤 4 完成，早于插件机制；步骤 6 只负责打包。可视化插件同时是插件、官方环境引用、脚本工具、产物四个契约的参考实现。
 
 之后可能的插件：单细胞分析（agent + scanpy/scvi skill + starsolo wrapper + torch 环境）、bulk RNA-seq（agent + skill + wrapper 元包）。
 
@@ -412,7 +411,7 @@ limits:
 | 3 | skills、wrappers、连接器的目录界面；wrapper 按工具族拆包和目录树拼装；启用管理；迁移 | 路由评测不退化；主 agent 首轮提示词有可测量的下降 |
 | 4 | micromamba、`phi-python`、环境解析、`skill_run`、环境管理页 | 带脚本的 skill 在干净机器上无需手动配置即可运行 |
 | 5 | 核心获取工具、API skill、辅助脚本、扩展评测、退役 db 工具链 | 扩展评测中 `api-skill` ≥ `db`；`src/main/agent/db/` 大幅缩减 |
-| 6 | 插件加载器、可视化插件（可视化逻辑移出引擎）、`phi-r`、"开发者扩展"改名 | 可视化插件能安装、在自己的环境中运行、干净卸载；引擎里不再有 `viz_*` 代码 |
+| 6 | 插件加载器、可视化插件（可视化逻辑移出引擎）、`phi-r`、"开发者扩展"改名 | 可视化插件能安装、在共享 `phi-r` 中运行、干净卸载；引擎里不再有 `viz_*` 代码 |
 | 7 | 带签名的远程 registry、更新、镜像、离线导入、安装包瘦身 | 全新安装能从服务器获取内容；离线也能首次启动 |
 | 8 | 远程 / HPC 上 skill 和环境的对齐 | skill 脚本能在 SSH 项目和离线集群上运行 |
 | 9 | 基于 omp 的编排（§11.4）：由适配器生成的 `spawns`、硬性预算、存储工具、人工检查点、运行视图；层级 1 的类似 Co-Scientist 参考插件；冻结编排契约。层级 2、3 按需跟进 | 参考插件在预算内完成多轮运行，能在 app 重启后恢复（恢复 parked 的 agent），并且可以 steer 和停止 |

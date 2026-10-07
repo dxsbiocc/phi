@@ -44,7 +44,7 @@ test('builds the three product sections and sorts managed sources', () => {
   const sections = buildEnvironmentSections(
     [
       managed({ ref: 'project:python-x1', source: 'project' }),
-      managed({ ref: 'plugin:viz', source: 'plugin' }),
+      managed({ ref: 'plugin:demo', source: 'plugin' }),
       managed({ ref: 'orphan:old', source: 'orphaned' }),
       managed({ ref: 'phi:python@1', source: 'official' })
     ],
@@ -57,7 +57,7 @@ test('builds the three product sections and sorts managed sources', () => {
   )
   assert.deepEqual(
     sections[0].items.map((entry) => entry.ref),
-    ['phi:python@1', 'plugin:viz', 'project:python-x1', 'orphan:old']
+    ['phi:python@1', 'plugin:demo', 'project:python-x1', 'orphan:old']
   )
   assert.equal(sections[1].items[0]?.label, 'Docker')
   assert.equal(sections[2].items[0]?.label, 'Nextflow')

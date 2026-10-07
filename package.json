@@ -57,6 +57,7 @@
     "runtime:lock": "node --import ./scripts/test-loader.mjs scripts/runtime/lock-env.ts",
     "runtime:smoke": "node --import ./scripts/test-loader.mjs scripts/runtime/smoke-env.ts",
     "runtime:smoke:viz": "node --import ./scripts/test-loader.mjs scripts/runtime/smoke-viz.ts",
+    "runtime:smoke:app:viz": "bunx electron-vite build && bun run scripts/runtime/smoke-app-viz-env.ts",
     "registry:build": "node --import ./scripts/test-loader.mjs scripts/packages/build-registry.ts",
     "registry:keygen": "node --import ./scripts/test-loader.mjs scripts/packages/generate-registry-key.ts",
     "registry:sign": "node --import ./scripts/test-loader.mjs scripts/packages/sign-registry.ts",

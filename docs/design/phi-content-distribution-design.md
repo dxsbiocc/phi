@@ -200,11 +200,10 @@ components:
   wrappers: []
   mcp: []
   orchestrator: null                  # reserved: workflow.yaml or a script (§11.4)
-environments:
-  viz: { spec: environment/viz.yml, lock: environment/viz.lock.yml }
-bindings:
-  agents/Visualization.md: viz
 ```
+
+Visualization deliberately declares no private environment: its agent and
+skill frontmatter both bind to the shared official `phi:r@1` environment.
 
 ### 5.2 Allowlisted contents
 
@@ -356,8 +355,8 @@ Upgrade installs the new version side by side and switches atomically.
   defusedxml, pillow, markitdown, …), derived from the actual imports of the
   current skills. Maintained by Phi developers, versioned, locked per
   platform (osx-arm64, osx-64, linux-64).
-- `phi-r`: optional, built on demand; introduced with the visualization
-  plugin.
+- `phi-r`: optional, built on demand; shared by R notebooks, scanpy R
+  interoperability, and the visualization plugin.
 
 ### 9.3 Resolving an environment for a package
 
@@ -450,25 +449,26 @@ A plugin is a package of `type: plugin` whose components are installed under
 `~/.phi/packages/plugin/<id>/<version>/` and routed by type (§4.3). A plugin has at most one
 **entry** agent, which is what the main agent sees; it may ship any number of
 **internal** agents, which are visible only to the plugin's orchestrator
-(§11.4). Environment bindings are declared in the manifest.
+(§11.4). A private environment is declared in the manifest; component bindings
+live in agent or skill frontmatter. Visualization instead binds to `phi:r@1`.
 
 ### 11.2 Code boundary
 
 Plugins do not ship TypeScript that runs inside Phi. New programmatic
 capability comes from (a) core tools referenced in `requires.coreTools`,
-(b) scripts run in the plugin environment, or (c) MCP servers. This keeps
+(b) scripts run in the component's resolved managed environment, or (c) MCP servers. This keeps
 review, security, and compatibility tractable.
 
 ### 11.3 First plugin: visualization
 
 `agents/Visualization.md` + `skills/omics-visualization` (scripts, templates,
-previews) + the `viz` environment. Today's `viz_*` tools
+previews), both bound to the shared `phi:r@1` environment. Today's `viz_*` tools
 (`src/main/agent/visualization/`, ~1.1k lines) are domain logic in the engine;
 they become the command-line program `scripts/viz.py` declared as script tools
 (runtime foundation §5.1), keeping their names, and figures are returned as
 `figure` artifacts. This happens in step 4 of the implementation plan, before
 plugins exist; step 6 only packages it. The visualization plugin is the
-reference implementation for the Plugin, Environment, script-tool, and
+reference implementation for the Plugin, official Environment reference, script-tool, and
 Artifact contracts.
 
 Candidate later plugins: single-cell analysis (agent + scanpy/scvi skills +
@@ -649,7 +649,7 @@ models where credentials allow.
 | 3 | Catalog UI for skills, wrappers, connectors; wrapper per-family packages and tree assembly; enablement; migration | routing eval not worse; main first-turn prompt measurably smaller |
 | 4 | micromamba, `phi-python`, environment resolution, `skill_run`, environment page | script skills run on a clean machine without manual setup |
 | 5 | Core fetch tool, API skills, helper scripts, extended eval, db toolchain retirement | `api-skill` ≥ `db` on the extended eval; `src/main/agent/db/` substantially reduced |
-| 6 | Plugin loader, visualization plugin (viz logic moved out of the engine), `phi-r`, developer-extensions rename | visualization installs, runs in its env, uninstalls cleanly; no `viz_*` code left in the engine |
+| 6 | Plugin loader, visualization plugin (viz logic moved out of the engine), `phi-r`, developer-extensions rename | visualization installs, runs in shared `phi-r`, uninstalls cleanly; no `viz_*` code left in the engine |
 | 7 | Remote signed registry, updates, mirrors, offline import, installer slimming | fresh install obtains content from the server; offline first launch works |
 | 8 | Remote / HPC parity for skills and environments | skill scripts run on an SSH project and on an offline cluster |
 | 9 | Orchestration on omp (§11.4): adapter-generated `spawns`, hard budgets, store tool, human checkpoints, run view; Co-Scientist–style reference plugin at level 1; freeze the Orchestration contract. Levels 2–3 follow when needed | the reference plugin completes a multi-round run within budget, survives an app restart (parked agents revived), and can be steered and stopped |

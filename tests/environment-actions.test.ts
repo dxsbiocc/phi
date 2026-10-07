@@ -8,6 +8,7 @@ import { createManagedEnvironmentActions } from '../src/main/agent/environment/a
 import { readEnvironmentIndex, updateEnvironmentEntry } from '../src/main/agent/envs'
 import type { EnvironmentBuilds } from '../src/main/agent/content/environment-builds'
 import { installPlugin } from '../src/main/agent/plugins/loader'
+import { copyMinimal } from './helpers/fakeEnvironment'
 
 const ENV_ID = 'phi-python-0123456789ab'
 
@@ -68,7 +69,7 @@ function addIndexEntry(
   return prefix
 }
 
-function writePluginWithoutEnvironments(root: string): string {
+function writePluginWithEnvironment(root: string): string {
   const pluginDir = join(root, 'other-plugin-source')
   const skillDir = join(pluginDir, 'skills', 'other-skill')
   mkdirSync(skillDir, { recursive: true })
@@ -83,6 +84,9 @@ summary: Plugin without a private environment.
 toolPrefix: other
 components:
   skills: [skills/other-skill]
+environments:
+  demo:
+    spec: environments/demo/environment.yml
 `
   )
   writeFileSync(
@@ -94,6 +98,7 @@ description: Other plugin fixture.
 Use the fixture.
 `
   )
+  copyMinimal(join(pluginDir, 'environments', 'demo'), 'demo')
   return pluginDir
 }
 
@@ -123,7 +128,7 @@ test('plugin environment builds require the installed owning plugin and remember
       runtimeRoot: root
     })
     assert.equal(installed.ok, true, JSON.stringify(installed.errors))
-    const other = installPlugin(writePluginWithoutEnvironments(temp), {
+    const other = installPlugin(writePluginWithEnvironment(temp), {
       agentDir,
       runtimeRoot: root
     })
@@ -151,13 +156,13 @@ test('plugin environment builds require the installed owning plugin and remember
       }
     })
 
-    assert.throws(() => pluginActions.build('plugin:viz'), /构建插件私有环境时必须提供插件标识/)
+    assert.throws(() => pluginActions.build('plugin:demo'), /构建插件私有环境时必须提供插件标识/)
     assert.throws(
-      () => pluginActions.build('plugin:viz', undefined, 'other-plugin'),
-      /插件 other-plugin 未声明环境 viz/
+      () => pluginActions.build('plugin:demo', undefined, 'visualization'),
+      /插件 visualization 未声明环境 demo/
     )
     assert.throws(
-      () => pluginActions.build('plugin:viz', undefined, 'missing-plugin'),
+      () => pluginActions.build('plugin:demo', undefined, 'missing-plugin'),
       /找不到已安装插件：missing-plugin/
     )
     assert.throws(
@@ -165,12 +170,12 @@ test('plugin environment builds require the installed owning plugin and remember
       /插件标识只能用于插件私有环境/
     )
 
-    const built = pluginActions.build('plugin:viz', undefined, 'visualization')
-    assert.match(built.envId, /^plugin-visualization-viz-[0-9a-f]{12}$/)
-    assert.deepEqual(starts, [{ owner: 'visualization', requestedBy: 'visualization' }])
+    const built = pluginActions.build('plugin:demo', undefined, 'other-plugin')
+    assert.match(built.envId, /^plugin-other-plugin-demo-[0-9a-f]{12}$/)
+    assert.deepEqual(starts, [{ owner: 'other-plugin', requestedBy: 'other-plugin' }])
 
     await pluginActions.rebuild(built.envId)
-    assert.deepEqual(repairs, [{ owner: 'visualization', name: 'viz' }])
+    assert.deepEqual(repairs, [{ owner: 'other-plugin', name: 'demo' }])
   } finally {
     rmSync(temp, { recursive: true, force: true })
   }

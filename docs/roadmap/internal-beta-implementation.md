@@ -135,7 +135,7 @@ Foundation (confirmed 2026-09-29): [phi-runtime-foundation.md](../design/phi-run
 - Step 1 — runtime and environment model: bundled micromamba isolated from the user's conda; `~/.phi/runtime`; environments built from explicit locks, read-only, reference-counted.
 - Step 2 — execution primitive: `runInEnvironment` with sanitised variables; isolation tests locally and in CI gate everything after.
 - Step 3 — skills in environments: `skill_run`, declared script tools, `phi-python`, all script skills migrated.
-- Step 4 — agents bound to environments: bash injection for specialist sessions; visualization rewritten as the `scripts/viz.py` CLI with declared script tools (tool names unchanged) running in its own environment, and removed from the engine; `env_request` for extra packages. Includes the omp delegation spike.
+- Step 4 — agents bound to environments: bash injection for specialist sessions; visualization rewritten as the `scripts/viz.py` CLI with declared script tools (tool names unchanged) running in the shared `phi-r` environment, and removed from the engine; `env_request` for extra packages. Includes the omp delegation spike.
 - Step 5 — remaining consumers: Nextflow and Jupyter default to managed environments, with explicit, version-checked host versions for Nextflow and host kernels for notebooks; MCP stdio; environment panel.
 - The main agent's bash keeps using the host environment.
 - Plugins (step 6), content distribution (step 7), and remote / HPC runtime (step 8) follow after the beta, except the local skill catalog and enablement, which may land in the beta if time allows.

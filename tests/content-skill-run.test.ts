@@ -232,8 +232,8 @@ test('describeEnvironment resolves phi, skill-local, plugin, and project refs', 
     assert.match(local.lockText, /@EXPLICIT/)
 
     assert.throws(
-      () => describeEnvironment('plugin:viz', { platform }),
-      /environment plugin:viz requires a requesting plugin/
+      () => describeEnvironment('plugin:demo', { platform }),
+      /environment plugin:demo requires a requesting plugin/
     )
     assert.throws(
       () => describeEnvironment('project:alpha', { platform }),

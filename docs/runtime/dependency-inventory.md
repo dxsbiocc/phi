@@ -1,8 +1,9 @@
 # Dependency inventory
 
 Date: 2026-10-07
+Updated: 2026-10-07 — visualization dependencies consolidated into `phi-r`.
 
-Input for the `phi-python`, `viz`, `phi-nextflow`, and `phi-jupyter` specs
+Input for the `phi-python`, `phi-r`, `phi-nextflow`, and `phi-jupyter` specs
 ([runtime foundation](../design/phi-runtime-foundation.md) §3, §3.2, §5, §10;
 [implementation plan](../roadmap/content-distribution-implementation.md) step
 0.5 and steps 3–5). This file only records what the scripts and the listed
@@ -87,34 +88,41 @@ transitively through `scanpy`. Notebook formatters `ruff` and `black` exist
 on conda-forge for all three platforms; the notebook treats them as optional
 (see Notebook).
 
-### `viz`
+### `phi-r`
 
-R plus the packages the 159 R scripts load, and a Python interpreter for the
-three standard-library scripts. No third-party Python import.
+The shared R environment serves IRkernel notebooks, scanpy R interoperability,
+and the bundled visualization plugin. It contains the packages loaded by the
+159 visualization R scripts and Python 3.12 for the plugin's standard-library
+scripts; those scripts have no third-party Python import. The visualization
+plugin and its agent both reference this environment as `phi:r@1` and declare
+no private environment.
 
-| Conda package                                                 | Used by (of 159 R files) | Notes                                                                                                                      |
-| ------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `python`                                                      | 3 Python scripts         | standard library only                                                                                                      |
-| `r-base`                                                      | every render (`Rscript`) | includes `grid`, `stats`, `grDevices`, `graphics`, `tools`                                                                 |
-| `r-readr`                                                     | 154                      |                                                                                                                            |
-| `r-ggplot2`                                                   | 146                      |                                                                                                                            |
-| `r-ggprism`                                                   | 115                      |                                                                                                                            |
-| `r-ggraph`, `r-tidygraph`                                     | 18 each                  |                                                                                                                            |
-| `r-ggrepel`                                                   | 14                       |                                                                                                                            |
-| `r-patchwork`                                                 | 14                       | 10 plot scripts plus 3 layout compose scripts and `::`                                                                     |
-| `r-circlize`                                                  | 12                       |                                                                                                                            |
-| `bioconductor-complexheatmap`                                 | 11                       | Bioconductor. bioconda, all three                                                                                          |
-| `r-ggforce`, `r-ggpubr`                                       | 9 each                   |                                                                                                                            |
-| `r-ggnewscale`, `r-scales`                                    | 6 each                   |                                                                                                                            |
-| `r-jsonlite`                                                  | 6                        | helpers and layout compose, not plot templates                                                                             |
-| `r-geomtextpath`, `r-gghalves`, `r-ggsignif`, `r-gtable`      | 3 each                   |                                                                                                                            |
-| `r-aplot`, `r-ggbeeswarm`, `r-ggh4x`                          | 2 each                   |                                                                                                                            |
-| `r-cli`                                                       | 1                        | only the ggideogram compatibility patch                                                                                    |
-| `r-ggextra`                                                   | 1                        | import name `ggExtra`                                                                                                      |
-| `r-ggridges`, `r-ggtern`, `r-ggvenn`, `r-graphlayouts`        | 1 each                   |                                                                                                                            |
-| `r-hexbin`, `r-quantreg`, `r-sf`, `r-survival`, `r-survminer` | 1 each                   |                                                                                                                            |
-| `r-waffle`                                                    | removed                  | Removed: `r-extrafont` depends on `r-rttf2pt1`, which has no osx-arm64 build; `scripts/bar/waffle/plot.R` is ggplot2 only. |
-| `r-yaml`                                                      | 1                        | `layouts/validate_layouts.R` only                                                                                          |
+| Conda package                                                 | Used by / purpose            | Notes                                                                                                                      |
+| ------------------------------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `python` (3.12)                                               | visualization Python scripts | standard library only                                                                                                      |
+| `r-base` (4.4)                                                | every render (`Rscript`)     | includes `grid`, `stats`, `grDevices`, `graphics`, `tools`                                                                 |
+| `r-irkernel`                                                  | managed R notebook kernel    | keeps the step 5.3 notebook use case                                                                                       |
+| `r-tidyverse`                                                 | general R data work          | existing `phi-r` dependency                                                                                                |
+| `bioconductor-singlecellexperiment`, `r-seurat`               | scanpy R interoperability    | `SeuratObject` arrives transitively through Seurat                                                                         |
+| `r-readr`                                                     | 154                          |                                                                                                                            |
+| `r-ggplot2`                                                   | 146                          |                                                                                                                            |
+| `r-ggprism`                                                   | 115                          |                                                                                                                            |
+| `r-ggraph`, `r-tidygraph`                                     | 18 each                      |                                                                                                                            |
+| `r-ggrepel`                                                   | 14                           |                                                                                                                            |
+| `r-patchwork`                                                 | 14                           | 10 plot scripts plus 3 layout compose scripts and `::`                                                                     |
+| `r-circlize`                                                  | 12                           |                                                                                                                            |
+| `bioconductor-complexheatmap`                                 | 11                           | Bioconductor. bioconda, all three                                                                                          |
+| `r-ggforce`, `r-ggpubr`                                       | 9 each                       |                                                                                                                            |
+| `r-ggnewscale`, `r-scales`                                    | 6 each                       |                                                                                                                            |
+| `r-jsonlite`                                                  | 6                            | helpers and layout compose, not plot templates                                                                             |
+| `r-geomtextpath`, `r-gghalves`, `r-ggsignif`, `r-gtable`      | 3 each                       |                                                                                                                            |
+| `r-aplot`, `r-ggbeeswarm`, `r-ggh4x`                          | 2 each                       |                                                                                                                            |
+| `r-cli`                                                       | 1                            | only the ggideogram compatibility patch                                                                                    |
+| `r-ggextra`                                                   | 1                            | import name `ggExtra`                                                                                                      |
+| `r-ggridges`, `r-ggtern`, `r-ggvenn`, `r-graphlayouts`        | 1 each                       |                                                                                                                            |
+| `r-hexbin`, `r-quantreg`, `r-sf`, `r-survival`, `r-survminer` | 1 each                       |                                                                                                                            |
+| `r-waffle`                                                    | removed                      | Removed: `r-extrafont` depends on `r-rttf2pt1`, which has no osx-arm64 build; `scripts/bar/waffle/plot.R` is ggplot2 only. |
+| `r-yaml`                                                      | 1                            | `layouts/validate_layouts.R` only                                                                                          |
 
 All of those conda names were found on all three platforms. `r-survival` is
 the split-out recommended package; the other base packages in the `::` list
@@ -134,7 +142,22 @@ bioconda) build on any of the three platforms:
 | `ggsvg`      | 2     | `scripts/scatter/svg/plot.R:86`           |
 | `ggmagnify`  | 1     | `scripts/scatter/volcano_inset/plot.R:86` |
 
-`viz` does not need the document-processing packages in `phi-python`.
+The merged `phi-r` has nine pinned GitHub `sourcePackages` in dependency order:
+its existing `GenomeInfoDbData`, then `gground`, `ggideogram`, `ggcor`,
+`linkET`, `ggsankey`, `ggsvg`, `gridGeometry`, and `ggmagnify`.
+`gridGeometry` is installed before `ggmagnify`, which imports it; the other
+seven visualization packages are direct template dependencies.
+
+The spec also declares the source-package dependency closure explicitly even
+when templates do not load a package directly: `r-ade4`, `r-deldir`,
+`r-digest`, `r-dplyr`, `r-forcats`, `r-glue`, `r-gridextra`, `r-igraph`,
+`r-magrittr`, `r-polyclip`, `r-purrr`, `r-rcolorbrewer`, `r-rlang`, `r-rsvg`,
+`r-stringr`, `r-tibble`, `r-tidyr`, `r-vctrs`, and `r-vegan`. The environment
+spec remains the canonical declaration; lock files carry their transitive
+closure.
+
+The visualization workload does not need LibreOffice, pandoc, poppler, or
+tesseract.
 
 ### `phi-nextflow` and `phi-jupyter`
 
@@ -153,8 +176,8 @@ Current executables, not a full lock:
   on `jupyter_core`, which provides the `jupyter` command the notebook
   spawns. Kernels stay in the analysis environments: `ipykernel` in
   `phi-python`, `r-irkernel` in `phi-r` (step 5.3). `r-irkernel` is on
-  conda-forge for all three platforms. This inventory did not enumerate
-  `phi-r` beyond that and the scanpy interop note below.
+  conda-forge for all three platforms. The shared `phi-r` inventory above
+  includes this kernel alongside the visualization and scanpy dependencies.
 
 ### Host dependencies
 
@@ -173,21 +196,26 @@ belong to workflow execution.
    `phi-python` environment. `pptxgenjs` remains distinct: its conda-forge
    package is noarch, depends on `nodejs`, and is available on all three
    platforms.
-2. **Seven R packages have no conda build** (table above). A `viz` lock
-   cannot cover those templates until they are packaged or vendored.
-   `scripts/lib/common.R` lines 246–248 also say ggideogram 0.1.0 calls a
-   ggplot2 internal that ggplot2 4.x removed. conda-forge `r-ggplot2` latest
-   on the day of this search was 4.0.3.
+2. **Visualization R packages without conda builds.** Resolved by pinning the
+   seven direct packages in the table plus the `gridGeometry` dependency as
+   ordered GitHub `sourcePackages` in `phi-r`. `gridGeometry` precedes
+   `ggmagnify`. The compatibility patch in `scripts/lib/common.R` handles the
+   ggideogram call removed by ggplot2 4.x, so `r-ggplot2` stays deliberately
+   unpinned apart from the explicit lock.
 3. **`scvi-tools` in the shared env.** Resolved on 2026-09-29 by removing
    the skill. It pulls PyTorch. It may return later in its own environment.
-4. **Scanpy R interop is documented, not shipped.**
+4. **Scanpy R interop is partially shipped in `phi-r`.**
    `resources/skills/scanpy/references/r_interop.md` tells the agent to
    `Rscript` a conversion that needs `zellkonverter`, `SingleCellExperiment`,
    `Seurat`, and `SeuratObject`. Those four conda names
    (`bioconductor-zellkonverter`, `bioconductor-singlecellexperiment`,
    `r-seurat`, `r-seuratobject`) exist on all three platforms.
-   `SeuratDisk` is installed from GitHub in that note. This belongs with
-   `phi-r`, not `phi-python`. No `convert_rds_to_h5ad.R` is in the tree.
+   `phi-r` declares `bioconductor-singlecellexperiment` and `r-seurat`
+   (`SeuratObject` is transitive), plus pinned `GenomeInfoDbData` needed by
+   the Bioconductor stack. `zellkonverter` remains absent because its basilisk
+   backend creates Python environments at run time, which is incompatible
+   with a read-only prefix. `SeuratDisk` is not declared. No
+   `convert_rds_to_h5ad.R` is in the tree.
 5. **Tesseract language data** was not checked. The `tesseract` package is
    present; whether `eng.traineddata` is inside it is unverified.
 6. **`nf-core` and `nf-test`** are noarch on bioconda and solve on osx-arm64
@@ -501,25 +529,24 @@ and the three `compose.R` scripts that call `load_layout_packages()`.
 
 **Node:** none.
 
+## Visualization plugin runtime
+
+### `resources/plugins/visualization/skills/omics-visualization/scripts/`
+
+The declared script tools start `python ./scripts/viz.py <subcommand>` in
+`phi:r@1`. The CLI launches two programs from the same managed prefix:
+
+| Command          | Calls                                | Evidence                    |
+| ---------------- | ------------------------------------ | --------------------------- |
+| `sys.executable` | `scripts/route_template.py`          | `viz.py` `command_route()`  |
+| `Rscript`        | the selected `plot.R` or `compose.R` | `viz.py` `command_render()` |
+| `sys.executable` | `scripts/qa_single_plot.py`          | `viz.py` `command_render()` |
+
+The Python programs use only the standard library. `python` and `Rscript`
+both come from the `phi-r` prefix; execution does not fall back to host
+interpreters. The CLI fails closed if either executable is unavailable.
+
 ## Engine components
-
-### `src/main/agent/visualization/`
-
-Spawns two host executables. It does not import Python or R packages itself.
-
-| Command   | Calls                                                        | Evidence                                                                        |
-| --------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `python3` | `scripts/route_template.py`                                  | `route.ts:140` `run('python3', args)` with `args` starting at `route.ts:128`    |
-| `Rscript` | the template `plot.R` (or `compose.R`) passed in the request | `render.ts:141` `run('Rscript', [script.path, ...request.inputs, output.path])` |
-| `python3` | `scripts/qa_single_plot.py`                                  | `render.ts:161`                                                                 |
-
-`prepare.ts:112` returns the string `Rscript ${script} ...` to the agent.
-It does not spawn it. `examples.ts` does not spawn.
-
-Both Python programs are the standard-library scripts above. Rendering fails
-closed when `Rscript` or `python3` is missing (`render.ts:149`,
-`route.ts:144`). After step 4 these become programs inside `viz`, so `viz`
-must provide `Rscript` and `python3` on its own prefix `bin`.
 
 ### `src/main/agent/notebook/`
 

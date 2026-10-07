@@ -1,9 +1,9 @@
-// Builds the viz environment and renders every omics-visualization template
+// Builds the built-in phi-r environment and renders every omics-visualization template
 // that ships a plot.R plus an example input.
 //
-// Usage (needs the TS loader, so go through the npm script):
-//   npm run runtime:smoke:viz
-//   npm run runtime:smoke:viz -- --spec resources/plugins/visualization/environments/viz \
+// Usage (needs the TS loader, so go through the Bun script):
+//   bun run runtime:smoke:viz
+//   bun run runtime:smoke:viz -- --spec resources/runtime/environments/phi-r \
 //     --templates resources/plugins/visualization/skills/omics-visualization/scripts
 //
 // The runtime root is PHI_TEST_RUNTIME_ROOT when that variable is set, otherwise
@@ -69,7 +69,7 @@ function repoRoot(): string {
 
 export function parseSmokeVizArgs(argv: readonly string[]): SmokeVizOptions {
   const root = repoRoot()
-  let specDir = join(root, 'resources/plugins/visualization/environments/viz')
+  let specDir = join(root, 'resources/runtime/environments/phi-r')
   let templatesDir = join(
     root,
     'resources/plugins/visualization/skills/omics-visualization/scripts'
@@ -349,9 +349,8 @@ async function smokeViz(options: SmokeVizOptions): Promise<number> {
   const buildStarted = Date.now()
   const built = await ensureEnvironment({
     root,
-    scope: 'plugin',
-    owner: 'visualization',
-    kind: 'package',
+    scope: 'phi',
+    kind: 'base',
     spec,
     lockText,
     platform,

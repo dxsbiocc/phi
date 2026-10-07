@@ -29,7 +29,7 @@ const MD5 = '0123456789abcdef0123456789abcdef'
 const PACKAGE_URL = `https://conda.anaconda.org/conda-forge/osx-arm64/python-3.12.0-h123.conda#${MD5}`
 
 const validSpecYaml = `
-name: viz
+name: demo
 channels:
   - conda-forge
   - bioconda
@@ -74,7 +74,7 @@ test('a spec with host requirements and both source package kinds parses', () =>
   const result = parseEnvironmentSpec(validSpecYaml)
   assert.equal(result.ok, true)
   if (!result.ok) return
-  assert.equal(result.spec.name, 'viz')
+  assert.equal(result.spec.name, 'demo')
   assert.deepEqual(result.spec.channels, ['conda-forge', 'bioconda'])
   assert.deepEqual(result.spec.dependencies, ['r-base=4.4', { pip: ['numpy==2.1.0'] }])
   assert.equal(result.spec.description, 'visualization environment')
@@ -106,7 +106,7 @@ test('a spec with host requirements and both source package kinds parses', () =>
 })
 
 test('invalid specs are rejected', () => {
-  expectInvalid(validSpecYaml.replace('name: viz', 'name: Viz'), /name/)
+  expectInvalid(validSpecYaml.replace('name: demo', 'name: Viz'), /name/)
   expectInvalid(validSpecYaml.replace('channels:\n  - conda-forge\n  - bioconda\n', ''), /channels/)
   expectInvalid(validSpecYaml.replace(GITHUB_REF, 'main'), /ref/)
   expectInvalid(validSpecYaml.replace('    repo: davidsjoberg/ggsankey\n', ''), /repo/)
@@ -128,7 +128,7 @@ test('condaSpecOf strips Phi sections and description', () => {
   if (!result.ok) return
   const conda = condaSpecOf(result.spec)
   assert.deepEqual(conda, {
-    name: 'viz',
+    name: 'demo',
     channels: ['conda-forge', 'bioconda'],
     dependencies: ['r-base=4.4', { pip: ['numpy==2.1.0'] }]
   })
@@ -182,14 +182,14 @@ test('computeEnvId is stable and tracks the lock and source packages', () => {
   const input = {
     scope: 'plugin' as const,
     owner: 'visualization',
-    name: 'viz',
+    name: 'demo',
     platform: 'darwin-arm64' as const,
     lockText,
     sourcePackages: parsed.spec.sourcePackages
   }
   const id = computeEnvId(input)
   assert.equal(id, computeEnvId({ ...input }))
-  assert.match(id, /^plugin-visualization-viz-[0-9a-f]{12}$/)
+  assert.match(id, /^plugin-visualization-demo-[0-9a-f]{12}$/)
   assert.notEqual(
     id,
     computeEnvId({ ...input, lockText: `${lockText}https://example.com/b.conda#${MD5}\n` })
@@ -232,15 +232,15 @@ test('computeEnvId is stable and tracks the lock and source packages', () => {
 test('parseEnvironmentRef accepts the four reference forms and rejects the rest', () => {
   assert.deepEqual(parseEnvironmentRef('phi:python@1'), { kind: 'phi', name: 'python', major: 1 })
   assert.deepEqual(parseEnvironmentRef('phi:python@0'), { kind: 'phi', name: 'python', major: 0 })
-  assert.deepEqual(parseEnvironmentRef('plugin:viz'), { kind: 'plugin', name: 'viz' })
+  assert.deepEqual(parseEnvironmentRef('plugin:demo'), { kind: 'plugin', name: 'demo' })
   assert.deepEqual(parseEnvironmentRef('project:default'), { kind: 'project', name: 'default' })
   assert.deepEqual(parseEnvironmentRef('./environment.yml'), {
     kind: 'path',
     path: './environment.yml'
   })
-  assert.deepEqual(parseEnvironmentRef('./envs/viz/environment.yml'), {
+  assert.deepEqual(parseEnvironmentRef('./envs/demo/environment.yml'), {
     kind: 'path',
-    path: './envs/viz/environment.yml'
+    path: './envs/demo/environment.yml'
   })
 
   for (const ref of [
@@ -303,16 +303,16 @@ test('env.json metadata matching the contract validates', () => {
   const ajv = new Ajv({ allErrors: true, strict: false })
   const validate = ajv.compile(envMetadataSchema)
   const metadata = {
-    envId: 'plugin-visualization-viz-3f9a1c2b7d10',
-    name: 'viz',
+    envId: 'plugin-visualization-demo-3f9a1c2b7d10',
+    name: 'demo',
     kind: 'package',
     platform: 'darwin-arm64',
     lockSha256: SHA_A,
     createdAt: '2026-09-29T09:03:00.000Z',
     micromambaVersion: '2.0.5',
     activation: {
-      set: { CONDA_PREFIX: '/Users/me/.phi/runtime/envs/plugin-visualization-viz-3f9a1c2b7d10' },
-      pathPrepend: ['/Users/me/.phi/runtime/envs/plugin-visualization-viz-3f9a1c2b7d10/bin']
+      set: { CONDA_PREFIX: '/Users/me/.phi/runtime/envs/plugin-visualization-demo-3f9a1c2b7d10' },
+      pathPrepend: ['/Users/me/.phi/runtime/envs/plugin-visualization-demo-3f9a1c2b7d10/bin']
     },
     host: { soffice: '/Applications/LibreOffice.app/Contents/MacOS/soffice' },
     sourcePackages: [
@@ -341,7 +341,7 @@ test('computeEnvId rejects names and owners that would break the envId format', 
     computeEnvId({
       scope: 'plugin',
       owner: 'Viz/x',
-      name: 'viz',
+      name: 'demo',
       platform: 'darwin-arm64',
       lockText
     })
