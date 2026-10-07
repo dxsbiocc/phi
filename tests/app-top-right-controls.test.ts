@@ -413,7 +413,8 @@ test('workspace files are available from the left sidebar activity item', () => 
   assert.match(activitySource, /mode: 'files', label: '文件', icon: NavFilesIcon/)
   assert.match(activitySource, /navigationItems\.map\(\(\{ mode, label, icon \}\)/)
   assert.match(activitySource, /onSelectWorkspaceSidebarMode\(mode\)/)
-  assert.match(sidebarSource, /workspaceSidebarMode === 'files'/)
+  // The renderer now compares the sidebar mode through a `mode` parameter that defaults to the current one.
+  assert.match(sidebarSource, /\bmode === 'files'/)
   assert.match(sidebarSource, /data-phi-files-sidebar="true"/)
   assert.match(sidebarSource, /<WorkspaceFilesPane/)
   assert.match(appSource, /workspaceRootPath: workspaceFilesRootPath/)
