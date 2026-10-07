@@ -39,6 +39,12 @@ test('the bundled office plugin owns five managed-Python skills and no private r
   assert.deepEqual(result.warnings, [])
   assert(result.plugin)
   assert.equal(result.plugin.manifest.id, 'office')
+  assert.equal(result.plugin.manifest.version, '1.0.1')
+  assert.equal(result.plugin.manifest.title, '办公文档')
+  assert.equal(
+    result.plugin.manifest.summary,
+    '使用托管 Python 生成和处理 Excel、Word、PowerPoint 与 PDF，并用原生 phi-office 对已打开文件做少量交互式修改。'
+  )
   assert.equal(result.plugin.manifest.toolPrefix, 'officepy')
   assert.equal(result.plugin.manifest.environments, undefined)
   assert.deepEqual(result.plugin.agents, [])
@@ -47,6 +53,29 @@ test('the bundled office plugin owns five managed-Python skills and no private r
 
   for (const name of ['xlsx', 'pptx', 'pdf']) {
     assert.equal(existsSync(join(REPO_ROOT, 'resources', 'skills', name)), false)
+  }
+})
+
+test('office plugin exposes descriptions and ownership for every skill and script tool', () => {
+  const result = validatePlugin(OFFICE_PLUGIN_DIR)
+  assert(result.plugin)
+
+  assert.equal(result.plugin.skills.length, 5)
+  for (const skill of result.plugin.skills) {
+    assert.ok(skill.description.trim(), `${skill.name} must have a description`)
+  }
+
+  const tools = result.plugin.skills.flatMap((skill) =>
+    scriptToolsOf(skill, { prefix: result.plugin?.manifest.toolPrefix ?? '' }).map((tool) => ({
+      ...tool,
+      skillName: skill.name
+    }))
+  )
+  assert.equal(tools.length, 6)
+  for (const tool of tools) {
+    assert.ok(tool.description.trim(), `${tool.name} must have a description`)
+    assert.match(tool.approval, /^(?:read|write|execute)$/u)
+    assert.ok(OFFICE_SKILLS.includes(tool.skillName), `${tool.name} must identify its skill`)
   }
 })
 

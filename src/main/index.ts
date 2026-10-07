@@ -266,8 +266,14 @@ import {
   type PluginNamespace
 } from './agent/plugins/loader'
 import { validatePlugin, type PluginProblem } from './agent/plugins/validate'
+import { buildPhiPluginListItem } from './agent/plugins/details'
 import { readPluginRegistry, writePluginRegistry } from './agent/plugins/store'
-import { getEnablementSnapshot, migrateEnablementFromHistory, setEnabled } from './agent/enablement'
+import {
+  getEnablementSnapshot,
+  isCoreSkill,
+  migrateEnablementFromHistory,
+  setEnabled
+} from './agent/enablement'
 import {
   addKnownRegistry,
   applyPackageUpdate,
@@ -308,7 +314,7 @@ import {
   setFeaturedMcpApiKey
 } from './agent/mcp-key-credentials'
 import { McpApiKeyValidationError, validateFeaturedMcpApiKey } from './agent/mcp-key-validation'
-import { scriptToolName, validateSkill } from './agent/content/skill'
+import { validateSkill } from './agent/content/skill'
 import {
   deleteSkill,
   listGlobalMcpServers,
@@ -1741,26 +1747,12 @@ const skillHost = createSkillHost({
 })
 
 function phiPluginListItems(): PhiPluginListItem[] {
-  return listInstalledPlugins({ agentDir: AGENT_DIR }).map((plugin) => ({
-    id: plugin.id,
-    version: plugin.version,
-    title: plugin.manifest.title,
-    summary: plugin.manifest.summary,
-    enabled: plugin.enabled,
-    source: plugin.source,
-    installedAt: plugin.installedAt,
-    directory: plugin.dir,
-    agents: plugin.agents.map((agent) => agent.name).sort(),
-    skills: plugin.skills.map((skill) => skill.name).sort(),
-    scriptTools: plugin.skills
-      .flatMap((skill) =>
-        (skill.phi?.scripts ?? []).map((script) => scriptToolName(plugin.toolPrefix, script.name))
-      )
-      .sort(),
-    environments: Object.keys(plugin.environments)
-      .sort()
-      .map((name) => ({ name, ref: `plugin:${name}` }))
-  }))
+  const enablement = getEnablementSnapshot({ agentDir: AGENT_DIR })
+  return listInstalledPlugins({ agentDir: AGENT_DIR }).map((plugin) =>
+    buildPhiPluginListItem(plugin, {
+      isSkillEnabled: (name) => isCoreSkill(name) || enablement.global[`skill:${name}`] !== false
+    })
+  )
 }
 
 function phiPluginProblemView(problem: PluginProblem): PhiPluginProblemView {

@@ -9,6 +9,7 @@ type PluginComponentCollection = {
   skills?: readonly string[]
   scriptTools?: readonly string[]
   environments?: readonly unknown[]
+  usedEnvironments?: readonly unknown[]
 }
 
 export type PhiPluginSourceCategory = 'bundled' | 'registry' | 'local'
@@ -28,7 +29,7 @@ export const phiPluginSourceCategoryLabels: Record<PhiPluginSourceCategory, stri
 const ENVIRONMENT_STATE_LABELS: Record<ManagedEnvironmentState, string> = {
   absent: '未构建',
   building: '构建中',
-  ready: '已就绪',
+  ready: '已构建',
   failed: '构建失败',
   drifted: '需要修复'
 }
@@ -54,7 +55,7 @@ export function phiPluginComponentSummary(plugin: PluginComponentCollection): st
     [plugin.agents?.length ?? 0, '个智能体'],
     [plugin.skills?.length ?? 0, '个技能'],
     [plugin.scriptTools?.length ?? 0, '个脚本工具'],
-    [plugin.environments?.length ?? 0, '个环境']
+    [plugin.usedEnvironments?.length ?? plugin.environments?.length ?? 0, '个环境']
   ] as const
   const visible = parts.filter(([count]) => count > 0).map(([count, label]) => `${count} ${label}`)
   return visible.length > 0 ? visible.join(' · ') : '未声明可显示的组件'

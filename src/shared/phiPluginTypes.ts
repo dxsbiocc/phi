@@ -14,6 +14,40 @@ export interface PhiPluginListItem {
     name: string
     ref: string
   }>
+  agentDetails?: PhiPluginAgentDetail[]
+  skillDetails?: PhiPluginSkillDetail[]
+  scriptToolDetails?: PhiPluginScriptToolDetail[]
+  usedEnvironments?: PhiPluginUsedEnvironment[]
+}
+
+export interface PhiPluginAgentDetail {
+  name: string
+  description: string
+}
+
+export interface PhiPluginSkillDetail {
+  name: string
+  description: string
+  enabled: boolean
+  environmentRef?: string
+  environmentWarning?: string
+}
+
+export interface PhiPluginScriptToolDetail {
+  name: string
+  description: string
+  approval: 'read' | 'write' | 'execute'
+  skillName: string
+}
+
+export interface PhiPluginUsedEnvironment {
+  ref: string
+  name: string
+  description?: string
+  scope: 'builtin' | 'private' | 'project' | 'skill'
+  skillNames: string[]
+  agentNames: string[]
+  warnings?: string[]
 }
 
 export interface PhiPluginProblemView {
