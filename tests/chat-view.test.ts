@@ -892,6 +892,33 @@ test('chat view shows delivered files with a preview action and current-file not
   assert.match(markup, /内容可能已更改/)
 })
 
+test('chat view groups separate PNG and PDF deliveries under one title and notice', () => {
+  const markup = renderChat(
+    [
+      {
+        id: 'delivery-png',
+        role: 'presented_files',
+        runId: 'run-1',
+        files: [{ path: '/project/heatmap.png', displayPath: 'heatmap.png', bytes: 302_000 }]
+      },
+      {
+        id: 'delivery-pdf',
+        role: 'presented_files',
+        runId: 'run-1',
+        files: [{ path: '/project/heatmap.pdf', displayPath: 'heatmap.pdf', bytes: 8_800 }]
+      }
+    ],
+    { onOpenLocalPath: () => undefined }
+  )
+
+  assert.equal((markup.match(/aria-label="交付文件"/g) ?? []).length, 1)
+  assert.equal((markup.match(/data-phi-presented-file-row="true"/g) ?? []).length, 2)
+  assert.equal((markup.match(/>打开的是工作区中的当前文件，内容可能已更改。</g) ?? []).length, 1)
+  assert.match(markup, />2 个</)
+  assert.match(markup, /aria-label="预览交付文件 heatmap\.png"/)
+  assert.match(markup, /aria-label="预览交付文件 heatmap\.pdf"/)
+})
+
 test('chat view labels Office deliverables by kind and shows remaining warnings', () => {
   const markup = renderChat(
     [

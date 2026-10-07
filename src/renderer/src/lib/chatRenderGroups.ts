@@ -9,6 +9,7 @@ import type {
   WorkspaceChangeSummaryItem,
   WrapperPlanItem
 } from '../types'
+import { mergeTurnFileItems } from '../features/chat/lib/presentedFiles'
 
 export type VisibleChatItem =
   | ChatMessage
@@ -186,7 +187,7 @@ export function groupMessages(
   const flushTurn = (activeTurn = false): void => {
     if (turnItems.length === 0) return
 
-    const turnTailFiles = turnItems.filter(isTurnTailFileItem)
+    const turnTailFiles = mergeTurnFileItems(turnItems.filter(isTurnTailFileItem))
     const runStartedAtMs = firstRunStartedAtMs(turnItems)
     const runCompletedAtMs = lastRunTerminalAtMs(turnItems)
     const runDurationMs = lastRunTerminalDurationMs(turnItems)

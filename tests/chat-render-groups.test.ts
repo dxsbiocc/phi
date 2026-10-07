@@ -144,6 +144,129 @@ test('chat render groups keep delivered files outside the processing fold', () =
   assert.equal(groups.at(-1)?.key, 'delivery-1')
 })
 
+test('separate PNG and PDF delivery events in one turn share a single file card', () => {
+  const messages: ChatItem[] = [
+    { id: 'user-1', role: 'user', content: 'make a heatmap in PNG and PDF' },
+    {
+      id: 'delivery-png',
+      role: 'presented_files',
+      runId: 'run-1',
+      files: [{ path: '/project/heatmap.png', displayPath: 'heatmap.png', bytes: 302_000 }]
+    },
+    {
+      id: 'delivery-pdf',
+      role: 'presented_files',
+      runId: 'run-1',
+      files: [{ path: '/project/heatmap.pdf', displayPath: 'heatmap.pdf', bytes: 8_800 }]
+    },
+    { id: 'assistant-final', role: 'assistant', content: 'The heatmap is ready.' }
+  ]
+
+  const tool: ChatItem = {
+    id: 'present-tool',
+    role: 'tool',
+    toolName: 'present_files',
+    argsPreview: '',
+    argsJson: '',
+    output: 'done',
+    status: 'done'
+  }
+  for (const withTool of [false, true]) {
+    for (const activeRun of [false, true]) {
+      const groups = groupMessages(withTool ? [...messages, tool] : messages, { activeRun })
+      const deliveries = groups.flatMap((group) =>
+        group.kind === 'single' && group.item.role === 'presented_files' ? [group.item] : []
+      )
+      assert.equal(deliveries.length, 1)
+      assert.deepEqual(
+        deliveries[0].files.map((file) => file.displayPath),
+        ['heatmap.png', 'heatmap.pdf']
+      )
+      assert.equal(groups.at(-1)?.key, 'delivery-png')
+    }
+  }
+})
+
+test('delivery grouping preserves turn and run boundaries, including legacy receipts', () => {
+  const delivery = (id: string, runId?: string): ChatItem => ({
+    id,
+    role: 'presented_files',
+    runId,
+    files: [{ path: `/project/${id}.pdf`, displayPath: `${id}.pdf`, bytes: 123 }]
+  })
+  const groups = groupMessages([
+    { id: 'user-1', role: 'user', content: 'first report' },
+    delivery('legacy-1'),
+    delivery('legacy-2'),
+    { id: 'user-2', role: 'user', content: 'second report' },
+    delivery('legacy-3'),
+    delivery('delivery-1', 'run-1'),
+    delivery('delivery-2', 'run-2')
+  ])
+  const deliveries = groups.flatMap((group) =>
+    group.kind === 'single' && group.item.role === 'presented_files' ? [group.item] : []
+  )
+
+  assert.deepEqual(
+    deliveries.map((item) => item.files.map((file) => file.displayPath)),
+    [['legacy-1.pdf', 'legacy-2.pdf'], ['legacy-3.pdf'], ['delivery-1.pdf'], ['delivery-2.pdf']]
+  )
+})
+
+test('repeated deliveries show the latest file metadata once without mutating history', () => {
+  const messages: ChatItem[] = [
+    {
+      id: 'delivery-1',
+      role: 'presented_files',
+      runId: 'run-1',
+      files: [{ path: '/project/report.pdf', displayPath: 'report.pdf', bytes: 100 }]
+    },
+    {
+      id: 'changes-1',
+      role: 'workspace_changes',
+      files: [
+        {
+          path: '/project/report.pdf',
+          displayPath: 'report.pdf',
+          status: 'modified',
+          added: 1,
+          deleted: 0
+        }
+      ],
+      totalChanged: 1,
+      truncated: false
+    },
+    {
+      id: 'delivery-2',
+      role: 'presented_files',
+      runId: 'run-1',
+      files: [
+        {
+          path: '/project/report.pdf',
+          displayPath: 'report.pdf',
+          bytes: 200,
+          description: 'Revised'
+        },
+        { path: '/project/report.png', displayPath: 'report.png', bytes: 300 }
+      ]
+    }
+  ]
+  const original = structuredClone(messages)
+  const groups = groupMessages(messages)
+  const delivery = groups[0]
+
+  assert.deepEqual(
+    groups.map((group) => group.key),
+    ['delivery-1', 'changes-1']
+  )
+  assert.ok(delivery.kind === 'single' && delivery.item.role === 'presented_files')
+  assert.deepEqual(delivery.item.files, [
+    { path: '/project/report.pdf', displayPath: 'report.pdf', bytes: 200, description: 'Revised' },
+    { path: '/project/report.png', displayPath: 'report.png', bytes: 300 }
+  ])
+  assert.deepEqual(messages, original)
+})
+
 test('file deliveries remain at the turn tail when a later tool call follows their event', () => {
   const groups = groupMessages([
     { id: 'user-1', role: 'user', content: 'make a figure' },
