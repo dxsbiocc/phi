@@ -178,10 +178,16 @@ function WorkspaceSidebarNavButton({
     </IconButton>
   )
 
-  return useContentPreview ? (
-    button
-  ) : (
-    <Tooltip title={label} placement="right">
+  // Keep the same button mounted while its content preview fades out.
+  return (
+    <Tooltip
+      title={useContentPreview ? '' : label}
+      placement="right"
+      describeChild
+      disableHoverListener={useContentPreview}
+      disableFocusListener={useContentPreview}
+      disableTouchListener={useContentPreview}
+    >
       {button}
     </Tooltip>
   )
@@ -453,8 +459,6 @@ function AppActivityBarImpl({
               } else {
                 onSelectWorkspaceSidebarMode(mode)
               }
-              const refresh = refreshForMode(mode)
-              if (refresh) void refresh().catch(() => undefined)
             }}
           />
         ))}

@@ -1,5 +1,31 @@
 import { MAX_PRESENTED_FILES, type PresentedFile } from '../../../../../shared/presentedFileTypes'
-import type { PresentedFilesItem } from '../../../types'
+import type { PresentedFilesItem, WorkspaceChangeSummaryItem } from '../../../types'
+
+/** Merge delivery receipts for one turn without changing the stored timeline. */
+export function mergeTurnFileItems(
+  items: (PresentedFilesItem | WorkspaceChangeSummaryItem)[]
+): (PresentedFilesItem | WorkspaceChangeSummaryItem)[] {
+  const deliveries = new Map<string | undefined, PresentedFilesItem>()
+  const merged: (PresentedFilesItem | WorkspaceChangeSummaryItem)[] = []
+  for (const item of items) {
+    if (item.role === 'workspace_changes') {
+      merged.push(item)
+      continue
+    }
+    const previous = deliveries.get(item.runId)
+    if (!previous) {
+      const delivery = { ...item, files: [...item.files] }
+      deliveries.set(item.runId, delivery)
+      merged.push(delivery)
+      continue
+    }
+    // A later receipt can carry a newer Office revision or description.
+    previous.files = [
+      ...new Map([...previous.files, ...item.files].map((file) => [file.path, file])).values()
+    ]
+  }
+  return merged
+}
 
 export function presentedFilesItemFromPhiTimelineEvent(event: {
   type?: string

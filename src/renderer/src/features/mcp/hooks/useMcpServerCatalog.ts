@@ -7,26 +7,48 @@ export type McpServerCatalogState = {
   activeMcpServerId: string | null
   setActiveMcpServerId: (id: string | null) => void
   refreshMcpServers: () => Promise<void>
+  refreshMcpServersForNavigation: () => Promise<void>
 }
 
 export function useMcpServerCatalog(getActiveCwd: () => string): McpServerCatalogState {
   const [mcpServers, setMcpServers] = useState<McpServerSummary[]>([])
   const [activeMcpServerId, setActiveMcpServerId] = useState<string | null>(null)
   const mcpServersRequestRef = useRef(0)
+  const mcpServersReadRef = useRef<{
+    cwd: string
+    request: number
+    promise: Promise<void>
+  } | null>(null)
 
-  const refreshMcpServers = useCallback(async (): Promise<void> => {
-    const request = ++mcpServersRequestRef.current
-    const cwd = getActiveCwd()
-    const list = await window.api.listMcpServers(cwd)
-    if (request !== mcpServersRequestRef.current || cwd !== getActiveCwd()) return
-    setMcpServers(list)
-    setActiveMcpServerId((current) => retainSelectedCatalogId(current, list))
-  }, [getActiveCwd])
+  const readMcpServers = useCallback(
+    (force = false): Promise<void> => {
+      const cwd = getActiveCwd()
+      if (!force && mcpServersReadRef.current?.cwd === cwd) return mcpServersReadRef.current.promise
+      const request = ++mcpServersRequestRef.current
+      const promise = Promise.resolve()
+        .then(() => window.api.listMcpServers(cwd))
+        .then((list) => {
+          if (request !== mcpServersRequestRef.current || cwd !== getActiveCwd()) return
+          setMcpServers(list)
+          setActiveMcpServerId((current) => retainSelectedCatalogId(current, list))
+        })
+        .finally(() => {
+          if (mcpServersReadRef.current?.request === request) mcpServersReadRef.current = null
+        })
+      mcpServersReadRef.current = { cwd, request, promise }
+      return promise
+    },
+    [getActiveCwd]
+  )
+
+  const refreshMcpServers = useCallback(() => readMcpServers(true), [readMcpServers])
+  const refreshMcpServersForNavigation = useCallback(() => readMcpServers(), [readMcpServers])
 
   return {
     mcpServers,
     activeMcpServerId,
     setActiveMcpServerId,
-    refreshMcpServers
+    refreshMcpServers,
+    refreshMcpServersForNavigation
   }
 }

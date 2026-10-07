@@ -1,25 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import {
-  Alert,
-  Box,
-  Button,
-  CircularProgress,
-  Dialog,
-  IconButton,
-  InputAdornment,
-  Stack,
-  TextField,
-  Typography
-} from '@mui/material'
+import { Alert, Box, Button, CircularProgress, Dialog, Typography } from '@mui/material'
 import type {
   InstalledPackageView,
   PackageRegistryView
 } from '../../../../../shared/packageManagerTypes'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import { PhiIcons } from '../../../icons'
+import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
+import { CatalogResultsTable } from '../../../components/catalog/CatalogResultsTable'
+import { CatalogPagination } from '../../../components/catalog/CatalogPagination'
+import {
+  CATALOG_DEFAULT_PAGE_SIZE,
+  getCatalogPage
+} from '../../../components/catalog/catalogPaging'
 import {
   filterWrapperCatalogChoices,
   wrapperCatalogChoices,
+  wrapperCatalogGroups,
   type WrapperCatalogChoice
 } from '../lib/wrapperCatalog'
 
@@ -39,7 +36,9 @@ export function WrapperCatalogDialog({
   onSetPackageEnabled
 }: WrapperCatalogDialogProps): React.JSX.Element {
   const [query, setQuery] = useState('')
-  const [visibleCount, setVisibleCount] = useState(40)
+  const [groupId, setGroupId] = useState('all')
+  const [page, setPage] = useState(0)
+  const [rowsPerPage, setRowsPerPage] = useState(CATALOG_DEFAULT_PAGE_SIZE)
   const [registries, setRegistries] = useState<PackageRegistryView[]>([])
   const [installedPackages, setInstalledPackages] = useState<InstalledPackageView[]>([])
   const [loading, setLoading] = useState(true)
@@ -93,8 +92,19 @@ export function WrapperCatalogDialog({
     () => wrapperCatalogChoices(catalog, registries, installedPackages),
     [catalog, registries, installedPackages]
   )
-  const filtered = useMemo(() => filterWrapperCatalogChoices(choices, query), [choices, query])
-  const visibleChoices = filtered.slice(0, visibleCount)
+  const groups = useMemo(() => wrapperCatalogGroups(choices), [choices])
+  const selectedGroupId = groups.some((group) => group.id === groupId) ? groupId : 'all'
+  if (groupId !== selectedGroupId) {
+    setGroupId(selectedGroupId)
+    setPage(0)
+  }
+  const filtered = useMemo(
+    () => filterWrapperCatalogChoices(choices, query, selectedGroupId),
+    [choices, query, selectedGroupId]
+  )
+  const result = getCatalogPage(filtered, groupId === selectedGroupId ? page : 0, rowsPerPage)
+  if (!loading && page !== result.page) setPage(result.page)
+  const visibleChoices = result.rows
 
   async function add(choice: WrapperCatalogChoice): Promise<void> {
     if (busyId) return
@@ -155,7 +165,10 @@ export function WrapperCatalogDialog({
     if (busyId) return
     setLoading(true)
     setError(null)
-    setVisibleCount(40)
+    setPage(0)
+    setRowsPerPage(CATALOG_DEFAULT_PAGE_SIZE)
+    setGroupId('all')
+    setQuery('')
     onClose()
   }
 
@@ -164,152 +177,116 @@ export function WrapperCatalogDialog({
       open={open}
       onClose={close}
       maxWidth={false}
-      aria-labelledby="wrapper-catalog-title"
+      aria-label="Wrapper 目录"
       slotProps={{
         paper: {
           sx: {
-            width: 'min(800px, calc(100vw - 48px))',
-            height: 'min(680px, calc(100vh - 64px))',
+            width: 'min(1100px, calc(100vw - 48px))',
+            height: 'min(720px, calc(100vh - 64px))',
             borderRadius: 2,
             overflow: 'hidden'
           }
         }
       }}
     >
-      <Stack direction="row" sx={{ alignItems: 'center', px: 3, pt: 2, pb: 1 }}>
-        <Typography id="wrapper-catalog-title" variant="h6" sx={{ flex: 1, fontWeight: 700 }}>
-          Wrapper 目录
-        </Typography>
-        <IconButton
-          aria-label="关闭 wrapper 目录"
-          disabled={Boolean(busyId)}
-          onClick={close}
-          size="small"
-        >
-          <PhiIcons.action.close size={18} />
-        </IconButton>
-      </Stack>
-      <Box sx={{ px: 3, pb: 2 }}>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          选择需要的 wrapper，添加后即可在侧边栏开启或关闭。
-        </Typography>
-        <TextField
-          fullWidth
-          size="small"
-          placeholder="搜索 wrapper 目录"
-          value={query}
-          onChange={(event) => {
-            setQuery(event.target.value)
-            setVisibleCount(40)
-          }}
-          slotProps={{
-            htmlInput: { 'aria-label': '搜索 wrapper 目录' },
-            input: {
-              startAdornment: (
-                <InputAdornment position="start">
-                  <PhiIcons.action.search size={16} />
-                </InputAdornment>
-              )
-            }
-          }}
-        />
-        {error && (
-          <Alert severity="error" sx={{ mt: 1.5 }}>
+      <CatalogBrowseLayout
+        title="Wrapper"
+        closeLabel="关闭 wrapper 目录"
+        groups={groups}
+        selectedGroupId={selectedGroupId}
+        onGroupChange={(id) => {
+          setGroupId(id)
+          setPage(0)
+        }}
+        query={query}
+        onQueryChange={(value) => {
+          setQuery(value)
+          setPage(0)
+        }}
+        searchLabel="搜索 wrapper 目录"
+        onClose={close}
+        busy={Boolean(busyId)}
+        page={result.page}
+        rowsPerPage={rowsPerPage}
+        actions={
+          <Button
+            size="small"
+            disabled={Boolean(busyId)}
+            onClick={() => void chooseDirectory()}
+            startIcon={<PhiIcons.entity.folder size={16} />}
+          >
+            添加本地目录
+          </Button>
+        }
+        footer={
+          !loading ? (
+            <CatalogPagination
+              count={filtered.length}
+              page={result.page}
+              rowsPerPage={rowsPerPage}
+              onPageChange={setPage}
+              onRowsPerPageChange={(size) => {
+                setRowsPerPage(size)
+                setPage(0)
+              }}
+            />
+          ) : null
+        }
+      >
+        {error ? (
+          <Alert severity="error" sx={{ mb: 2 }}>
             {error}
           </Alert>
-        )}
-      </Box>
-      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 3, pb: 2 }}>
+        ) : null}
         {loading ? (
           <Box sx={{ display: 'grid', placeItems: 'center', py: 6 }}>
             <CircularProgress size={22} />
           </Box>
         ) : filtered.length === 0 ? (
           <Typography color="text.secondary" sx={{ py: 4 }}>
-            {query.trim() ? '没有匹配的 wrapper' : '目录中暂无 wrapper，可添加本地目录。'}
+            {query.trim() ? '没有匹配的 wrapper' : '这个分组暂无 wrapper，可添加本地目录。'}
           </Typography>
         ) : (
-          visibleChoices.map((choice) => {
-            const added = choice.selected && choice.enabled
-            return (
-              <Stack
-                key={choice.id}
-                data-phi-wrapper-catalog-choice={choice.id}
-                direction="row"
-                spacing={1.5}
-                sx={{ alignItems: 'center', py: 1.5 }}
-              >
-                <Box
-                  sx={{
-                    width: 36,
-                    height: 36,
-                    flexShrink: 0,
-                    display: 'grid',
-                    placeItems: 'center',
-                    bgcolor: 'action.hover',
-                    color: 'primary.main',
-                    borderRadius: 1.25
-                  }}
-                >
-                  <PhiIcons.entity.wrapper sx={{ fontSize: 20 }} />
-                </Box>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography
-                    noWrap
-                    title={choice.title}
-                    sx={{ fontWeight: 600, fontSize: '0.875rem' }}
+          <CatalogResultsTable
+            label="Wrapper 目录列表"
+            nameLabel="Wrapper"
+            detailsLabel="分类 / 版本"
+            rowAttribute="data-phi-wrapper-catalog-choice"
+            rows={visibleChoices.map((choice) => {
+              const added = choice.selected && choice.enabled
+              return {
+                rowKey: choice.id,
+                id: choice.id,
+                title: choice.title,
+                summary: choice.summary,
+                metadata: choice.metadata,
+                details: `${choice.category}${choice.version ? ` · v${choice.version}` : ''}`,
+                action: (
+                  <Button
+                    size="small"
+                    variant={added ? 'text' : 'outlined'}
+                    disabled={added || Boolean(busyId)}
+                    onClick={() => void add(choice)}
+                    aria-label={`${added ? '已添加' : choice.selected ? '启用' : choice.installed ? '添加' : '安装'} ${choice.title}`}
                   >
-                    {choice.title}
-                  </Typography>
-                  <Typography variant="body2" noWrap title={choice.summary} color="text.secondary">
-                    {choice.summary}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {choice.metadata}
-                  </Typography>
-                </Box>
-                <Button
-                  size="small"
-                  variant={added ? 'text' : 'outlined'}
-                  disabled={added || Boolean(busyId)}
-                  onClick={() => void add(choice)}
-                  aria-label={`${added ? '已添加' : choice.selected ? '启用' : choice.installed ? '添加' : '安装'} ${choice.title}`}
-                  sx={{ minWidth: 72, flexShrink: 0 }}
-                >
-                  {busyId === choice.id ? (
-                    <CircularProgress size={16} />
-                  ) : added ? (
-                    '已添加'
-                  ) : choice.selected ? (
-                    '启用'
-                  ) : choice.installed ? (
-                    '添加'
-                  ) : (
-                    '安装'
-                  )}
-                </Button>
-              </Stack>
-            )
-          })
+                    {busyId === choice.id ? (
+                      <CircularProgress size={16} />
+                    ) : added ? (
+                      '已添加'
+                    ) : choice.selected ? (
+                      '启用'
+                    ) : choice.installed ? (
+                      '添加'
+                    ) : (
+                      '安装'
+                    )}
+                  </Button>
+                )
+              }
+            })}
+          />
         )}
-        {!loading && filtered.length > visibleCount && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
-            <Button size="small" onClick={() => setVisibleCount((count) => count + 40)}>
-              加载更多 · 还有 {filtered.length - visibleCount} 个
-            </Button>
-          </Box>
-        )}
-      </Box>
-      <Box sx={{ px: 3, py: 1.5 }}>
-        <Button
-          size="small"
-          disabled={Boolean(busyId)}
-          onClick={() => void chooseDirectory()}
-          startIcon={<PhiIcons.action.add size={16} />}
-        >
-          添加本地目录
-        </Button>
-      </Box>
+      </CatalogBrowseLayout>
     </Dialog>
   )
 }

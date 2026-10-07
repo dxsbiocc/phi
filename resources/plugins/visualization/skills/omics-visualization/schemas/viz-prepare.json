@@ -7,6 +7,7 @@
   "required": [
     "template_id",
     "script",
+    "common_r",
     "purpose",
     "inputs",
     "run",
@@ -18,6 +19,10 @@
       "minLength": 1
     },
     "script": {
+      "type": "string",
+      "minLength": 1
+    },
+    "common_r": {
       "type": "string",
       "minLength": 1
     },

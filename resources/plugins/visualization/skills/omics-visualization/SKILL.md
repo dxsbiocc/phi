@@ -223,7 +223,11 @@ Use `viz_route`, `viz_prepare`, `viz_render` for new figures.
    `visualizations/<short-task-name>/` or `plots/<short-task-name>/` inside the
    project. `viz_prepare` and `viz_render` refuse paths outside the project, and
    `viz_prepare` points the copy at the installed read-only `scripts/lib/common.R`
-   by absolute path [by hand: source that helper by absolute path, or copy only
+   by absolute path and returns that location as `common_r`. Preserve the
+   prepared bootstrap when adapting a plot; use `common_r` for any helper
+   reference instead of guessing repository resource paths. `viz_prepare` and
+   `viz_render` refresh missing installed helper references in existing copies
+   without resetting their plotting code. [By hand: source that helper by absolute path, or copy only
    the helper and set `OMICS_VISUALIZATION_SKILL_ROOT` to the installed skill
    root]. Do not copy `references/`, `references/palettes/`, or catalog files into
    the project merely to make palette lookup work; choose palette ids from the

@@ -260,6 +260,62 @@ test('listSkills reads project skills from the selected cwd', async () => {
   assert.equal(projectAPhiSkill?.sourceCategoryLabel, '项目')
 })
 
+test('listSkills exposes declared metadata and omits absent, blank or malformed fields', async () => {
+  const { listSkills } = await import('../src/main/agent/resources')
+  const metadataProject = join(tempRoot, 'metadata-project')
+  const fixtures = [
+    {
+      name: 'declared-metadata',
+      fields:
+        'metadata:\n  version: " 1.3 "\nphi:\n  environment: " phi:python@1 "\n  deprecated: " Use modern instead. "'
+    },
+    { name: 'version-only', fields: 'metadata:\n  version: "2.0"' },
+    { name: 'environment-only', fields: 'phi:\n  environment: ./environment.yml' },
+    { name: 'absent-metadata', fields: '' },
+    { name: 'malformed-blocks', fields: 'metadata: []\nphi: invalid' },
+    {
+      name: 'malformed-values',
+      fields: 'metadata:\n  version: 3\nphi:\n  environment: [python]\n  deprecated: false'
+    },
+    {
+      name: 'blank-metadata',
+      fields: 'metadata:\n  version: " "\nphi:\n  environment: " "\n  deprecated: " "'
+    }
+  ]
+  for (const fixture of fixtures) {
+    const skillDir = join(metadataProject, '.phi', 'skills', fixture.name)
+    mkdirSync(skillDir, { recursive: true })
+    writeFileSync(
+      join(skillDir, 'SKILL.md'),
+      `---\nname: ${fixture.name}\ndescription: Metadata fixture\n${fixture.fields}\n---\n# Fixture\n`
+    )
+  }
+
+  const skills = await listSkills(metadataProject)
+  const declared = skills.find((skill) => skill.name === 'declared-metadata')
+  assert.equal(declared?.environment, 'phi:python@1')
+  assert.equal(declared?.version, '1.3')
+  assert.equal(declared?.deprecated, 'Use modern instead.')
+  const versionOnly = skills.find((skill) => skill.name === 'version-only')
+  assert.equal(versionOnly?.version, '2.0')
+  assert.equal(versionOnly?.environment, undefined)
+  const environmentOnly = skills.find((skill) => skill.name === 'environment-only')
+  assert.equal(environmentOnly?.environment, './environment.yml')
+  assert.equal(environmentOnly?.version, undefined)
+  for (const name of [
+    'absent-metadata',
+    'malformed-blocks',
+    'malformed-values',
+    'blank-metadata'
+  ]) {
+    const summary = skills.find((skill) => skill.name === name)
+    assert.ok(summary, `${name} remains available in the skill catalog`)
+    for (const field of ['deprecated', 'environment', 'version']) {
+      assert.equal(Object.hasOwn(summary, field), false, `${name} does not invent ${field}`)
+    }
+  }
+})
+
 test('readSkillContent reads only cataloged skill files', async () => {
   const { readSkillContent } = await import('../src/main/agent/resources')
 

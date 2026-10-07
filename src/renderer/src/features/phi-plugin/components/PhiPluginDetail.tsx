@@ -234,7 +234,7 @@ export function PhiPluginDetail({
                   </Tooltip>
                   <Button
                     color="error"
-                    variant="outlined"
+                    variant="text"
                     disabled={busyPluginId !== null}
                     startIcon={
                       busy ? (

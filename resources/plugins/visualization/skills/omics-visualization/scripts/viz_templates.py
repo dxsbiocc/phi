@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import json
+import ntpath
 import os
 import re
 import shutil
@@ -15,6 +17,7 @@ sys.dont_write_bytecode = True
 from viz_common import (
     MEDIA_TYPES,
     SKILL_ROOT,
+    note,
     one_line,
     png_size,
     project_relative,
@@ -174,6 +177,39 @@ def patch_bootstrap(text: str, common_r: str) -> str:
         raise ValueError("The template has no common.R bootstrap block to replace.")
     replacement = f"source({r_string(common_r)})\n"
     return text[: match.start()] + replacement + text[match.end() :]
+
+
+def refresh_project_common_r(script_path: str, common_r: str) -> str:
+    """Rebind a missing installed helper without resetting an adapted plot."""
+    with open(script_path, encoding="utf-8", newline="") as handle:
+        text = handle.read()
+    if not os.path.isfile(common_r):
+        return text
+    source = re.compile(
+        r"""^[ \t]*source\([ \t]*(?:file[ \t]*=[ \t]*)?(?P<path>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')(?=[ \t]*[,\)])""",
+        re.MULTILINE,
+    )
+
+    def rebind(match: re.Match[str]) -> str:
+        try:
+            path = ast.literal_eval(match.group("path"))
+        except (SyntaxError, ValueError):
+            return match.group(0)
+        absolute = os.path.isabs(path) or ntpath.isabs(path)
+        installed = absolute and path.replace("\\", "/").endswith(
+            "/skills/omics-visualization/scripts/lib/common.R"
+        )
+        if not installed or os.path.exists(path):
+            return match.group(0)
+        prefix = match.group(0)[: match.start("path") - match.start()]
+        return prefix + r_string(common_r)
+
+    updated = source.sub(rebind, text)
+    if updated != text:
+        with open(script_path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(updated)
+        note("Updated a missing installed common.R reference in the project plotting script.")
+    return updated
 
 
 def find_plot_scripts(directory: str, depth: int) -> list[str]:
@@ -398,4 +434,3 @@ def write_descriptor(
             except OSError:
                 pass
         raise
-

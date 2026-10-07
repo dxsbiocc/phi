@@ -46,6 +46,7 @@ export type PhiPluginsState = {
   error: string | null
   notice: string | null
   refresh: () => Promise<void>
+  refreshForNavigation: () => Promise<void>
   installFromDirectory: (path: string, description: string) => Promise<boolean>
   setEnabled: (plugin: PhiPluginDisplayItem, enabled: boolean) => Promise<boolean>
   uninstall: (plugin: PhiPluginDisplayItem) => Promise<boolean>
@@ -202,40 +203,49 @@ export function usePhiPlugins(): PhiPluginsState {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const requestRef = useRef(0)
+  const readRef = useRef<{ request: number; promise: Promise<void> } | null>(null)
 
-  const load = useCallback(async (clearFeedback: boolean): Promise<void> => {
-    const request = ++requestRef.current
+  const load = useCallback((clearFeedback: boolean, force = false): Promise<void> => {
     setLoading(true)
     if (clearFeedback) {
       setError(null)
       setNotice(null)
     }
-    try {
-      const [installed, environments, packages, builds] = await Promise.all([
-        window.api.listPhiPlugins(),
-        window.api.listManagedEnvironments().catch((): ManagedEnvironmentEntry[] => []),
-        window.api.listInstalledPackages().catch((): InstalledPackageView[] => []),
-        typeof window.api.listEnvironmentBuilds === 'function'
-          ? window.api.listEnvironmentBuilds().catch((): EnvironmentBuild[] => [])
-          : Promise.resolve([] as EnvironmentBuild[])
-      ])
-      if (request !== requestRef.current) return
-      setPlugins(withEnvironmentStatuses(installed, environments, packages, builds))
-    } catch (cause) {
-      if (request !== requestRef.current) return
-      setError(`无法读取插件：${readableError(cause)}`)
-    } finally {
-      if (request === requestRef.current) setLoading(false)
-    }
+    if (!force && readRef.current) return readRef.current.promise
+    const request = ++requestRef.current
+    const promise = Promise.resolve().then(async () => {
+      try {
+        const [installed, environments, packages, builds] = await Promise.all([
+          window.api.listPhiPlugins(),
+          window.api.listManagedEnvironments().catch((): ManagedEnvironmentEntry[] => []),
+          window.api.listInstalledPackages().catch((): InstalledPackageView[] => []),
+          typeof window.api.listEnvironmentBuilds === 'function'
+            ? window.api.listEnvironmentBuilds().catch((): EnvironmentBuild[] => [])
+            : Promise.resolve([] as EnvironmentBuild[])
+        ])
+        if (request !== requestRef.current) return
+        setPlugins(withEnvironmentStatuses(installed, environments, packages, builds))
+      } catch (cause) {
+        if (request !== requestRef.current) return
+        setError(`无法读取插件：${readableError(cause)}`)
+      } finally {
+        if (readRef.current?.request === request) readRef.current = null
+        if (request === requestRef.current) setLoading(false)
+      }
+    })
+    readRef.current = { request, promise }
+    return promise
   }, [])
 
-  const refresh = useCallback(() => load(true), [load])
+  const refresh = useCallback(() => load(true, true), [load])
+  const refreshForNavigation = useCallback(() => load(true), [load])
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(false), 0)
     return () => {
       window.clearTimeout(timer)
       requestRef.current += 1
+      readRef.current = null
     }
   }, [load])
 
@@ -276,7 +286,7 @@ export function usePhiPlugins(): PhiPluginsState {
       } catch (cause) {
         setError(`${failurePrefix}：${readableError(cause)}`)
       } finally {
-        await load(false)
+        await load(false, true)
         setBusyPluginId(null)
       }
       return succeeded
@@ -329,6 +339,7 @@ export function usePhiPlugins(): PhiPluginsState {
     error,
     notice,
     refresh,
+    refreshForNavigation,
     installFromDirectory,
     setEnabled,
     uninstall,

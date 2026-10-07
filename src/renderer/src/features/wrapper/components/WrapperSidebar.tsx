@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject
+} from 'react'
 import { Box, CircularProgress, List, Typography } from '@mui/material'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import { PhiIcons } from '../../../icons'
@@ -20,6 +28,7 @@ import { WrapperCatalogDialog } from './WrapperCatalogDialog'
 const WrapperEntityIcon = PhiIcons.entity.wrapper
 
 export interface WrapperSidebarProps {
+  visible?: boolean
   catalog: WrapperCompositionCatalogItem[]
   selectedId: string | null
   isLoading: boolean
@@ -90,20 +99,23 @@ const EXPANDED_BODY_MIN_HEIGHT = 80
  */
 function useExpandedBodyMaxHeight(
   listRef: RefObject<HTMLUListElement | null>,
-  groupCount: number
+  groupCount: number,
+  visible: boolean
 ): number {
   const [listHeight, setListHeight] = useState(0)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = listRef.current
-    if (!node) return undefined
-    const observer = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect
-      if (rect) setListHeight(rect.height)
+    if (!node || !visible) return undefined
+    const height = node.offsetHeight
+    if (height > 0) setListHeight(height)
+    const observer = new ResizeObserver(() => {
+      const height = node.offsetHeight
+      if (height > 0) setListHeight(height)
     })
     observer.observe(node)
     return () => observer.disconnect()
-  }, [listRef])
+  }, [listRef, visible, listHeight])
 
   return Math.max(
     EXPANDED_BODY_MIN_HEIGHT,
@@ -302,6 +314,7 @@ function WrapperTierGroupAccordion({
 }
 
 export function WrapperSidebar({
+  visible = true,
   catalog,
   selectedId,
   isLoading,
@@ -320,33 +333,32 @@ export function WrapperSidebar({
   const catalogDialogs = useMemo(
     () =>
       createTrustedDialogRequestCoordinator({
-        request: requestTrustedOverlay
-          ? (key, publish, cancel) => {
-              try {
-                requestTrustedOverlay(key, publish, () => {
-                  setCatalogPending(false)
-                  onPreviewInteractionChange?.(false)
-                  cancel()
-                })
-              } catch (error) {
-                setCatalogPending(false)
-                onPreviewInteractionChange?.(false)
-                throw error
-              }
-            }
-          : undefined,
-        cancel: cancelTrustedOverlay
+        request: requestTrustedOverlay,
+        cancel: cancelTrustedOverlay,
+        onCancel: () => {
+          setCatalogPending(false)
+          onPreviewInteractionChange?.(false)
+        }
       }),
     [requestTrustedOverlay, cancelTrustedOverlay, onPreviewInteractionChange]
   )
   useEffect(() => () => catalogDialogs.dispose(), [catalogDialogs])
-  const catalogInteractionActive = catalogOpen || catalogPending
+  if (!visible && (catalogOpen || catalogPending)) {
+    setCatalogOpen(false)
+    setCatalogPending(false)
+  }
+  useLayoutEffect(() => {
+    if (!visible) catalogDialogs.cancel('wrapper-sidebar-catalog')
+  }, [visible, catalogDialogs])
+  const catalogInteractionActive = visible && (catalogOpen || catalogPending)
   useEffect(() => {
     if (!catalogInteractionActive) return undefined
     onPreviewInteractionChange?.(true)
     return () => onPreviewInteractionChange?.(false)
   }, [catalogInteractionActive, onPreviewInteractionChange])
   const openCatalog = (): void => {
+    if (!visible) return
+    catalogDialogs.cancel('wrapper-sidebar-catalog')
     onPreviewInteractionChange?.(true)
     setCatalogPending(true)
     catalogDialogs.request('wrapper-sidebar-catalog', () => {
@@ -389,7 +401,7 @@ export function WrapperSidebar({
       : (selectedTier ?? groups[0]?.tier ?? null)
 
   const visibleTier = visibleWrapperTier(groups, expandedTier, query)
-  const expandedBodyMaxHeight = useExpandedBodyMaxHeight(listRef, groups.length)
+  const expandedBodyMaxHeight = useExpandedBodyMaxHeight(listRef, groups.length, visible)
 
   const handleLoadMore = useCallback((tier: string, totalCount: number): void => {
     setVisibleCounts((counts) => ({
@@ -457,17 +469,19 @@ export function WrapperSidebar({
           ))
         )}
       </List>
-      <WrapperCatalogDialog
-        open={catalogOpen}
-        catalog={catalog}
-        onRefresh={onRefresh}
-        onSetPackageEnabled={onSetPackageEnabled}
-        onClose={() => {
-          catalogDialogs.cancel('wrapper-sidebar-catalog')
-          setCatalogPending(false)
-          setCatalogOpen(false)
-        }}
-      />
+      {visible && (
+        <WrapperCatalogDialog
+          open={catalogOpen}
+          catalog={catalog}
+          onRefresh={onRefresh}
+          onSetPackageEnabled={onSetPackageEnabled}
+          onClose={() => {
+            catalogDialogs.cancel('wrapper-sidebar-catalog')
+            setCatalogPending(false)
+            setCatalogOpen(false)
+          }}
+        />
+      )}
     </CatalogSidebar>
   )
 }

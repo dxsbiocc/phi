@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  type MouseEvent,
+  type ReactNode
+} from 'react'
 import { Box, List, Tooltip, Typography } from '@mui/material'
 import type { McpServerSummary } from '../../types'
 import { mcpConnectorCategories } from '../../../../shared/mcpConnectorCatalog'
@@ -25,6 +32,7 @@ export type McpViewProps = {
 }
 
 export type McpSidebarProps = {
+  visible?: boolean
   servers: McpServerSummary[]
   activeServerId: string | null
   sidebarWidth?: SidebarWidth
@@ -126,6 +134,7 @@ function DetailPage({
 }
 
 export function McpSidebar({
+  visible = true,
   servers,
   activeServerId,
   sidebarWidth = '100%',
@@ -141,33 +150,32 @@ export function McpSidebar({
   const catalogDialogs = useMemo(
     () =>
       createTrustedDialogRequestCoordinator({
-        request: requestTrustedOverlay
-          ? (key, publish, cancel) => {
-              try {
-                requestTrustedOverlay(key, publish, () => {
-                  setCatalogPending(false)
-                  onPreviewInteractionChange?.(false)
-                  cancel()
-                })
-              } catch (error) {
-                setCatalogPending(false)
-                onPreviewInteractionChange?.(false)
-                throw error
-              }
-            }
-          : undefined,
-        cancel: cancelTrustedOverlay
+        request: requestTrustedOverlay,
+        cancel: cancelTrustedOverlay,
+        onCancel: () => {
+          setCatalogPending(false)
+          onPreviewInteractionChange?.(false)
+        }
       }),
     [requestTrustedOverlay, cancelTrustedOverlay, onPreviewInteractionChange]
   )
   useEffect(() => () => catalogDialogs.dispose(), [catalogDialogs])
-  const catalogInteractionActive = catalogOpen || catalogPending
+  if (!visible && (catalogOpen || catalogPending)) {
+    setCatalogOpen(false)
+    setCatalogPending(false)
+  }
+  useLayoutEffect(() => {
+    if (!visible) catalogDialogs.cancel('mcp-sidebar-catalog')
+  }, [visible, catalogDialogs])
+  const catalogInteractionActive = visible && (catalogOpen || catalogPending)
   useEffect(() => {
     if (!catalogInteractionActive) return undefined
     onPreviewInteractionChange?.(true)
     return () => onPreviewInteractionChange?.(false)
   }, [catalogInteractionActive, onPreviewInteractionChange])
   const openCatalog = (): void => {
+    if (!visible) return
+    catalogDialogs.cancel('mcp-sidebar-catalog')
     onPreviewInteractionChange?.(true)
     setCatalogPending(true)
     catalogDialogs.request('mcp-sidebar-catalog', () => {
@@ -314,7 +322,7 @@ export function McpSidebar({
           ))
         )}
       </List>
-      {onRefreshServers && (
+      {visible && onRefreshServers && (
         <McpConnectorCatalogDialog
           open={catalogOpen}
           servers={servers}

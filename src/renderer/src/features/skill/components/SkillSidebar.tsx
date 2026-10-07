@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { Box, CircularProgress, List, Stack, Typography } from '@mui/material'
 import { PhiIcons } from '../../../icons'
 import { CatalogSidebar } from '../../../components/CatalogSidebar'
@@ -30,6 +30,7 @@ const categoryMarkerColors: Record<SkillSourceCategory, string> = {
 }
 
 export type SkillSidebarProps = {
+  visible?: boolean
   skills: SkillSummary[]
   isLoading: boolean
   activeSkillId: string | null
@@ -58,20 +59,24 @@ function groupedSkills(skills: SkillSummary[]): SkillSection[] {
 
 function useExpandedBodyMaxHeight(
   listRef: RefObject<HTMLUListElement | null>,
-  groupCount: number
+  groupCount: number,
+  visible: boolean
 ): number {
   const [listHeight, setListHeight] = useState(0)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = listRef.current
-    if (!node) return undefined
-    const observer = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect
-      if (rect) setListHeight(rect.height)
+    if (!node || !visible) return undefined
+    // Measure before paint so a newly shown catalog never starts at its minimum height.
+    const height = node.offsetHeight
+    if (height > 0) setListHeight(height)
+    const observer = new ResizeObserver(() => {
+      const height = node.offsetHeight
+      if (height > 0) setListHeight(height)
     })
     observer.observe(node)
     return () => observer.disconnect()
-  }, [listRef])
+  }, [listRef, visible, listHeight])
 
   return Math.max(
     EXPANDED_BODY_MIN_HEIGHT,
@@ -80,6 +85,7 @@ function useExpandedBodyMaxHeight(
 }
 
 export function SkillSidebar({
+  visible = true,
   skills,
   isLoading,
   activeSkillId,
@@ -116,7 +122,7 @@ export function SkillSidebar({
     manualExpandedCategory !== undefined
       ? manualExpandedCategory
       : (selectedCategory ?? sections[0]?.category ?? null)
-  const expandedBodyMaxHeight = useExpandedBodyMaxHeight(listRef, sections.length)
+  const expandedBodyMaxHeight = useExpandedBodyMaxHeight(listRef, sections.length, visible)
   const handleExpandedChange = useCallback(
     (category: SkillSourceCategory, isExpanded: boolean): void => {
       setManualExpandedCategory(isExpanded ? category : null)

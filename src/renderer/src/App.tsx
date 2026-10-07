@@ -808,7 +808,7 @@ function App(): React.JSX.Element {
 
   const { extensions: plugins, refreshExtensions: refreshPlugins } = useDeveloperExtensionCatalog()
   const phiPluginsState = usePhiPlugins()
-  const refreshPhiPlugins = phiPluginsState.refresh
+  const refreshPhiPluginsForNavigation = phiPluginsState.refreshForNavigation
   const {
     skills,
     promptAgents,
@@ -817,14 +817,20 @@ function App(): React.JSX.Element {
     busySkillId,
     setActiveSkillId,
     refreshSkills,
+    refreshSkillsForNavigation,
     refreshPromptAgents,
     setGlobalEnabled,
     setProjectOverride,
     setSkillDisabled,
     deleteSkill
   } = useSkillCatalog(getActiveCwd)
-  const { mcpServers, activeMcpServerId, setActiveMcpServerId, refreshMcpServers } =
-    useMcpServerCatalog(getActiveCwd)
+  const {
+    mcpServers,
+    activeMcpServerId,
+    setActiveMcpServerId,
+    refreshMcpServers,
+    refreshMcpServersForNavigation
+  } = useMcpServerCatalog(getActiveCwd)
   const {
     catalog: wrapperCatalog,
     runs: wrapperRuns,
@@ -2118,13 +2124,13 @@ function App(): React.JSX.Element {
         void refreshAnalysisJupyterRuntimeStatus()
       }
       if (workspaceSidebarMode === 'plugins') {
-        void refreshPhiPlugins()
+        void refreshPhiPluginsForNavigation()
       }
       if (workspaceSidebarMode === 'skills') {
-        void refreshSkills()
+        void refreshSkillsForNavigation()
       }
       if (workspaceSidebarMode === 'mcp') {
-        void refreshMcpServers()
+        void refreshMcpServersForNavigation()
       }
       if (activeView === 'analysis') {
         void refreshAnalysisNotebooks()
@@ -2139,10 +2145,10 @@ function App(): React.JSX.Element {
     refreshAnalysisJupyterRuntimeStatus,
     refreshAnalysisJupyterStatus,
     refreshAnalysisNotebooks,
-    refreshMcpServers,
-    refreshPhiPlugins,
+    refreshMcpServersForNavigation,
+    refreshPhiPluginsForNavigation,
     refreshProjects,
-    refreshSkills,
+    refreshSkillsForNavigation,
     workspaceSidebarMode
   ])
 
@@ -4426,9 +4432,9 @@ function App(): React.JSX.Element {
           onSelectWorkspaceView={onSelectWorkspaceView}
           onSelectWorkspaceSidebarMode={onSelectWorkspaceSidebarMode}
           refreshAnalysisJupyterRuntimeStatus={refreshAnalysisJupyterRuntimeStatus}
-          refreshPhiPlugins={refreshPhiPlugins}
-          refreshSkills={refreshSkills}
-          refreshMcpServers={refreshMcpServers}
+          refreshPhiPlugins={refreshPhiPluginsForNavigation}
+          refreshSkills={refreshSkillsForNavigation}
+          refreshMcpServers={refreshMcpServersForNavigation}
           setIsSettingsOpen={setSettingsOpenWithBrowserGate}
           isWorkspaceSidebarPreviewOpen={isWorkspaceSidebarPreviewOpen}
           isWorkspaceSidebarPreviewBlocked={isWorkspaceSidebarPreviewBlocked}
