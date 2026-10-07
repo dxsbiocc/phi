@@ -14,6 +14,12 @@ import {
 function bridge(enabled = true): OfficeRendererBridge {
   return {
     enabled,
+    availability: {
+      supported: true,
+      userEnabled: enabled,
+      enabled,
+      reason: enabled ? null : 'user-disabled'
+    },
     create: async () => ({ ok: false, error: { code: 'unused', message: 'unused' } }),
     cancelCreate: async () => ({ ok: true, value: false }),
     importFile: async () => ({ ok: false, error: { code: 'unused', message: 'unused' } }),
@@ -39,7 +45,7 @@ describe('Office import UI', () => {
     assert.equal(officeImportFormatForPath('/project/data.csv.bak'), undefined)
   })
 
-  it('shows the development-gated action with the type and size rules', () => {
+  it('shows the availability-gated action with the type and size rules', () => {
     const visible = renderToStaticMarkup(
       createElement(OfficeImportAction, {
         bridge: bridge(true),

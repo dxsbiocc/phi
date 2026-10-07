@@ -4,6 +4,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import SettingsDialog from '../src/renderer/src/components/SettingsDialog'
+import type { OfficeAvailability } from '../src/shared/officeAvailability'
 import type { ModelOption, Project, ProviderAuthStatus } from '../src/renderer/src/types'
 
 const provider: ProviderAuthStatus = {
@@ -45,6 +46,12 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
     noProjectTaskFolder: '/Users/example/Documents/Codex',
     preventSleepDuringRuns: false,
     nextActionSuggestionsEnabled: true,
+    officeAvailability: {
+      supported: true,
+      userEnabled: true,
+      enabled: true,
+      reason: null
+    },
     isSavingAppSettings: false,
     onUpdateAppSettings: () => undefined,
     onPickNoProjectTaskFolder: () => undefined,
@@ -182,6 +189,12 @@ test('settings dialog exposes general application settings', () => {
   assert.match(markup, /更改/)
   assert.match(markup, /运行任务时防止系统休眠/)
   assert.match(markup, /提示词建议/)
+  assert.match(markup, /Office 文档（Excel \/ Word \/ PowerPoint）实时预览与编辑/)
+  assert.match(markup, /更改后需重启应用生效/)
+  const officeSwitch = markup.match(/<input[^>]+name="officeEnabled"[^>]*>/u)?.[0]
+  assert.ok(officeSwitch)
+  assert.match(officeSwitch, /checked=""/u)
+  assert.doesNotMatch(officeSwitch, /disabled=""/u)
   assert.match(markup, /上下文压缩/)
   assert.match(markup, /自动压缩设置仅作用于当前会话/)
   assert.match(markup, /打开会话后可调整压缩设置/)
@@ -189,6 +202,30 @@ test('settings dialog exposes general application settings', () => {
   assert.doesNotMatch(markup, /本地路径点击方式/)
   assert.doesNotMatch(markup, /添加 Provider/)
 })
+
+for (const [reason, message] of [
+  ['unsupported-platform', '当前平台暂不支持 Office 文档功能'],
+  ['runtime-missing', '未找到 OfficeCLI 运行时'],
+  ['runtime-invalid', 'OfficeCLI 运行时校验失败'],
+  ['forced-disabled', 'Office 文档功能已由排障开关强制关闭']
+] as const satisfies ReadonlyArray<[OfficeAvailability['reason'], string]>) {
+  test(`general settings disables Office for ${reason}`, () => {
+    const markup = renderSettingsDialog({
+      category: 'general',
+      officeAvailability: {
+        supported: reason !== 'unsupported-platform',
+        userEnabled: true,
+        enabled: false,
+        reason
+      }
+    })
+
+    assert.match(markup, new RegExp(message))
+    const officeSwitch = markup.match(/<input[^>]+name="officeEnabled"[^>]*>/u)?.[0]
+    assert.ok(officeSwitch)
+    assert.match(officeSwitch, /disabled=""/u)
+  })
+}
 
 test('general settings shows current-session compaction controls', () => {
   const markup = renderSettingsDialog({

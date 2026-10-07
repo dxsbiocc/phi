@@ -21,6 +21,7 @@ import { alpha, type SxProps, type Theme } from '@mui/material/styles'
 import { GoGlobe, GoStack, GoSync, GoTerminal } from 'react-icons/go'
 import {
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
+  DEFAULT_OFFICE_ENABLED,
   DEFAULT_PREVENT_SLEEP_DURING_RUNS
 } from '../../shared/appSettingsTypes'
 import type { WrapperCompositionManifest } from '../../shared/wrapperCompositionManifestTypes'
@@ -779,6 +780,11 @@ function App(): React.JSX.Element {
   const [nextActionSuggestionsEnabled, setNextActionSuggestionsEnabled] = useState(
     DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED
   )
+  const [officeEnabledPreference, setOfficeEnabledPreference] = useState(() =>
+    typeof window === 'undefined'
+      ? DEFAULT_OFFICE_ENABLED
+      : window.api.office.availability.userEnabled
+  )
   const [environmentSnapshot, setEnvironmentSnapshot] = useState<EnvironmentSnapshot | null>(null)
   const [isLoadingEnvironment, setIsLoadingEnvironment] = useState(true)
   const [isRedetectingEnvironment, setIsRedetectingEnvironment] = useState(false)
@@ -866,6 +872,7 @@ function App(): React.JSX.Element {
     setNoProjectTaskFolder(settings.noProjectTaskFolder)
     setPreventSleepDuringRuns(settings.preventSleepDuringRuns)
     setNextActionSuggestionsEnabled(settings.nextActionSuggestionsEnabled)
+    setOfficeEnabledPreference(settings.officeEnabled)
   }, [])
 
   useEffect(() => {
@@ -945,6 +952,7 @@ function App(): React.JSX.Element {
       const previousNoProjectTaskFolder = noProjectTaskFolder
       const previousPreventSleepDuringRuns = preventSleepDuringRuns
       const previousNextActionSuggestionsEnabled = nextActionSuggestionsEnabled
+      const previousOfficeEnabledPreference = officeEnabledPreference
 
       if (patch.noProjectTaskFolder !== undefined) {
         setNoProjectTaskFolder(patch.noProjectTaskFolder)
@@ -955,6 +963,9 @@ function App(): React.JSX.Element {
       if (patch.nextActionSuggestionsEnabled !== undefined) {
         setNextActionSuggestionsEnabled(patch.nextActionSuggestionsEnabled)
       }
+      if (patch.officeEnabled !== undefined) {
+        setOfficeEnabledPreference(patch.officeEnabled)
+      }
 
       setIsSavingAppSettings(true)
       try {
@@ -964,6 +975,7 @@ function App(): React.JSX.Element {
         setNoProjectTaskFolder(previousNoProjectTaskFolder)
         setPreventSleepDuringRuns(previousPreventSleepDuringRuns)
         setNextActionSuggestionsEnabled(previousNextActionSuggestionsEnabled)
+        setOfficeEnabledPreference(previousOfficeEnabledPreference)
         showSnackbarError(error, '保存通用设置失败')
       } finally {
         setIsSavingAppSettings(false)
@@ -973,6 +985,7 @@ function App(): React.JSX.Element {
       applyAppSettings,
       nextActionSuggestionsEnabled,
       noProjectTaskFolder,
+      officeEnabledPreference,
       preventSleepDuringRuns,
       rendererApi,
       showSnackbarError
@@ -1079,8 +1092,7 @@ function App(): React.JSX.Element {
     setIsSidebarOpen,
     setActiveView: navigateToView
   })
-  const officeDevelopmentEnabled =
-    typeof window !== 'undefined' && window.api?.office?.enabled === true
+  const officeEnabled = typeof window !== 'undefined' && window.api?.office?.enabled === true
   const activeOfficeFileTab = workspaceFileTabs.find(
     (tab) =>
       tab.path === activeWorkspaceFilePath &&
@@ -1088,7 +1100,7 @@ function App(): React.JSX.Element {
       isOfficeDocumentPath(tab.path)
   )
   const readyOfficeTarget = useOfficePromptTarget(
-    officeDevelopmentEnabled ? (activeOfficeFileTab?.path ?? null) : null,
+    officeEnabled ? (activeOfficeFileTab?.path ?? null) : null,
     activeOfficeFileTab?.name ?? ''
   )
   const [dismissedOfficeArtifactId, setDismissedOfficeArtifactId] = useState<string | null>(null)
@@ -2483,7 +2495,7 @@ function App(): React.JSX.Element {
         sessionGeneration: useSessionStore.getState().activeSessionGeneration
       },
       officeComposerTarget,
-      officeDevelopmentEnabled
+      officeEnabled
     )
     if (currentSessionIsBusy || isSendingRef.current) {
       queuePromptText(text, target, { images, planMode: planReviewEnabled })
@@ -4004,7 +4016,7 @@ function App(): React.JSX.Element {
           onInputFilesDropped={rendererApi.onInputFilesDropped}
           onListInputDirectory={onListInputDirectory}
           onChatSubmit={onChatSubmit}
-          officeTarget={officeDevelopmentEnabled ? (officeComposerTarget ?? undefined) : undefined}
+          officeTarget={officeEnabled ? (officeComposerTarget ?? undefined) : undefined}
           onRemoveOfficeTarget={
             officeComposerTarget
               ? () => setDismissedOfficeArtifactId(officeComposerTarget.artifactId)
@@ -4200,7 +4212,7 @@ function App(): React.JSX.Element {
   ) : null
 
   const officeChatSplitEnabled = shouldEnableOfficeChatSplit({
-    officeEnabled: typeof window !== 'undefined' && window.api?.office?.enabled === true,
+    officeEnabled,
     activeTabKind: activeWorkspaceTab?.kind,
     activeTabPath: isWorkspaceFileWorkspaceTab(activeWorkspaceTab) ? activeWorkspaceTab.path : null,
     previewPath: activeFilePreviewState ? filePreviewStatePath(activeFilePreviewState) : null,
@@ -4835,6 +4847,10 @@ function App(): React.JSX.Element {
           noProjectTaskFolder={noProjectTaskFolder}
           preventSleepDuringRuns={preventSleepDuringRuns}
           nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
+          officeAvailability={{
+            ...rendererApi.office.availability,
+            userEnabled: officeEnabledPreference
+          }}
           isSavingAppSettings={isSavingAppSettings}
           onUpdateAppSettings={onUpdateAppSettings}
           onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}

@@ -22,6 +22,12 @@ const document: OfficePreviewDocument = {
 function unusedBridge(): OfficeRendererBridge {
   return {
     enabled: true,
+    availability: {
+      supported: true,
+      userEnabled: true,
+      enabled: true,
+      reason: null
+    },
     create: async () => ({ ok: false, error: { code: 'unused', message: 'unused' } }),
     cancelCreate: async () => ({ ok: true, value: false }),
     open: async () => ({ ok: false, error: { code: 'unused', message: 'unused' } }),

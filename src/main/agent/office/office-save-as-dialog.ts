@@ -14,7 +14,7 @@ export interface OfficeSaveAsDialogOptions {
 }
 
 interface OfficeSaveAsDialogDependencies {
-  readonly officeDev: boolean
+  readonly testHooksEnabled: boolean
   readonly isPackaged: boolean
   readonly smokePath?: string
   readonly getWindow: () => OfficeSaveAsDialogWindow | undefined
@@ -32,7 +32,7 @@ export async function chooseOfficeSaveAsTarget(
   },
   dependencies: OfficeSaveAsDialogDependencies
 ): Promise<string | null> {
-  if (dependencies.officeDev && !dependencies.isPackaged && dependencies.smokePath) {
+  if (dependencies.testHooksEnabled && !dependencies.isPackaged && dependencies.smokePath) {
     return dependencies.smokePath
   }
   const window = liveWindow(dependencies.getWindow)

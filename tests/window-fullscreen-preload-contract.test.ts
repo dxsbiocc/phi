@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 import * as promptTarget from '../src/preload/promptTarget'
+import * as officeAvailability from '../src/shared/officeAvailability'
 
 const source = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8')
 
@@ -25,8 +26,8 @@ test('preload exposes the initial fullscreen state and an independently cancella
   const ipcRenderer = new FakeIpcRenderer()
   const exposed = new Map<string, unknown>()
   const load = (specifier: string): unknown => {
-    // The preload's only local dependency is the pure prompt-target sanitiser.
     if (specifier === './promptTarget') return promptTarget
+    if (specifier === '../shared/officeAvailability') return officeAvailability
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {

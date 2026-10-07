@@ -1,3 +1,5 @@
+import type { OfficeAvailability } from './officeAvailability'
+
 export type OfficeApplyCellValue = string | number | boolean
 
 export type OfficeDocumentKind = 'xlsx' | 'docx' | 'pptx'
@@ -330,6 +332,7 @@ export interface OfficePreviewPreferencesInput {
 
 export interface OfficeRendererBridge {
   readonly enabled: boolean
+  readonly availability: OfficeAvailability
   create: (input: OfficeCreateInput) => Promise<OfficeIpcResult<OfficeCreateState>>
   cancelCreate: (input: OfficeCancelCreateInput) => Promise<OfficeIpcResult<boolean>>
   importFile?: (input: OfficeImportInput) => Promise<OfficeIpcResult<OfficeImportState>>

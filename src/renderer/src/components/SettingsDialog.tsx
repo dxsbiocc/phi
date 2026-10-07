@@ -28,10 +28,12 @@ import type { ThemeFamily } from '../useThemeMode'
 import { RemoteHostSettingsSection } from '../features/wrapper/components/RemoteHostSettings'
 import { EnvironmentSettingsPanel } from '../features/environment/components/EnvironmentSettingsPanel'
 import { WebSearchSettingsPanel } from '../features/settings/WebSearchSettingsPanel'
+import { OfficeDocumentsSetting } from '../features/settings/components/OfficeDocumentsSetting'
 import DeveloperExtensionsView from '../features/developer-extensions/DeveloperExtensionsView'
 import { PermissionSettingsSection } from './PermissionView'
 import type { EnvironmentSnapshot, EnvironmentToolId } from '../types'
 import type { ManualCompactionTarget } from '../../../shared/contextUsageTypes'
+import type { OfficeAvailability } from '../../../shared/officeAvailability'
 import { AutoCompactionSettingsSection } from '../features/chat/components/AutoCompactionSettingsSection'
 
 const AddIcon = PhiIcons.action.add
@@ -320,6 +322,7 @@ function GeneralSection({
   noProjectTaskFolder,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
+  officeAvailability,
   isSavingAppSettings,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
@@ -332,6 +335,7 @@ function GeneralSection({
   noProjectTaskFolder: string
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
+  officeAvailability: OfficeAvailability
   isSavingAppSettings: boolean
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
@@ -438,6 +442,12 @@ function GeneralSection({
           允许助手在合适时给出一句可直接继续的下一步建议。
         </Typography>
       </Box>
+
+      <OfficeDocumentsSetting
+        availability={officeAvailability}
+        saving={isSavingAppSettings}
+        onChange={(officeEnabled) => onUpdateAppSettings({ officeEnabled })}
+      />
 
       <AutoCompactionSettingsSection
         target={autoCompactionTarget ?? null}
@@ -641,6 +651,7 @@ type SettingsDialogProps = {
   noProjectTaskFolder: string
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
+  officeAvailability: OfficeAvailability
   isSavingAppSettings: boolean
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
@@ -683,6 +694,7 @@ function SettingsDialog({
   noProjectTaskFolder,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
+  officeAvailability,
   isSavingAppSettings,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
@@ -802,6 +814,7 @@ function SettingsDialog({
               noProjectTaskFolder={noProjectTaskFolder}
               preventSleepDuringRuns={preventSleepDuringRuns}
               nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
+              officeAvailability={officeAvailability}
               isSavingAppSettings={isSavingAppSettings}
               onUpdateAppSettings={onUpdateAppSettings}
               onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}

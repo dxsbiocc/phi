@@ -46,7 +46,7 @@ import { OfficeDocxWriter } from './office-docx-write'
 import { OfficePptxReader } from './office-pptx-read'
 import { OfficePptxWriter } from './office-pptx-write'
 import { OfficeSheetReader } from './office-sheet-driver'
-import { detectOfficeRuntime } from './office-runtime'
+import { detectOfficeRuntime, type OfficeRuntimeStatus } from './office-runtime'
 import { resolveOfficeSelection } from './office-selection-resolver'
 import { OfficeService } from './office-service'
 import { verifySavedOfficeFile } from './office-save-verification'
@@ -56,6 +56,7 @@ import { runOfficeDeliveryChecks } from './office-deliver-checks'
 
 export interface CreateOfficeServiceOptions {
   readonly runOfficeCli?: typeof import('./office-driver').runOfficeCli
+  readonly detectRuntime?: () => Promise<OfficeRuntimeStatus>
 }
 
 export function createOfficeService(options: CreateOfficeServiceOptions = {}): OfficeService {
@@ -91,7 +92,7 @@ export function createOfficeService(options: CreateOfficeServiceOptions = {}): O
     (artifactId, slideCount) => serviceRef.current?.publishPreviewSlideCount(artifactId, slideCount)
   )
   const service = new OfficeService({
-    detectRuntime: detectOfficeRuntime,
+    detectRuntime: options.detectRuntime ?? detectOfficeRuntime,
     prepareDraft: async (request, binaryPath) => {
       const kind = officeDocumentKindFromPath(request.sourcePath)
       const artifact = await createOfficeDraft(request, {

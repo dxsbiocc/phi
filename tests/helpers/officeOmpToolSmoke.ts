@@ -237,13 +237,10 @@ async function smokePermissionMode(
   const agentDir = mkdtempSync(join(rootDir, `${permissionMode}-`))
   const calls: Array<{ method: string; params: unknown; context?: unknown }> = []
   const askEventToolCallIds: string[] = []
-  const tools = buildOfficeTools(
-    async (method, params, context) => {
-      calls.push({ method, params, context })
-      return hostResponse(method, params)
-    },
-    { PHI_OFFICE_DEV: '1' }
-  )
+  const tools = buildOfficeTools(async (method, params, context) => {
+    calls.push({ method, params, context })
+    return hostResponse(method, params)
+  }, true)
   const authStorage = await discoverAuthStorage(agentDir)
   const settings = await Settings.init({ cwd: agentDir, agentDir })
   const result = await createAgentSession({

@@ -8,7 +8,7 @@ test('export dialog uses format-specific labels and ignores destroyed windows', 
   const result = await chooseOfficeExportTarget(
     { projectRoot: '/project', fileName: '预算表-数据.tsv', format: 'tsv' },
     {
-      officeDev: true,
+      testHooksEnabled: true,
       isPackaged: false,
       getWindow: () => ({ isDestroyed: () => true }),
       showSaveDialog: async (window, options) => {
@@ -31,13 +31,13 @@ test('export dialog uses format-specific labels and ignores destroyed windows', 
   ])
 })
 
-test('export dialog smoke injection is dev-only and cancellation writes nothing', async () => {
+test('export dialog smoke injection requires unpackaged test hooks and cancellation writes nothing', async () => {
   let dialogs = 0
   assert.equal(
     await chooseOfficeExportTarget(
       { projectRoot: '/project', fileName: 'book.csv', format: 'csv' },
       {
-        officeDev: true,
+        testHooksEnabled: true,
         isPackaged: false,
         smokePath: '/project/injected.csv',
         getWindow: () => undefined,
@@ -54,7 +54,20 @@ test('export dialog smoke injection is dev-only and cancellation writes nothing'
     await chooseOfficeExportTarget(
       { projectRoot: '/project', fileName: 'book.csv', format: 'csv' },
       {
-        officeDev: true,
+        testHooksEnabled: true,
+        isPackaged: true,
+        smokePath: '/project/must-be-ignored.csv',
+        getWindow: () => undefined,
+        showSaveDialog: async () => ({ canceled: false, filePath: '/project/dialog.csv' })
+      }
+    ),
+    '/project/dialog.csv'
+  )
+  assert.equal(
+    await chooseOfficeExportTarget(
+      { projectRoot: '/project', fileName: 'book.csv', format: 'csv' },
+      {
+        testHooksEnabled: true,
         isPackaged: false,
         getWindow: () => undefined,
         showSaveDialog: async () => ({ canceled: true })

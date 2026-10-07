@@ -1,4 +1,5 @@
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
+import { officeAvailabilityArgument } from '../shared/officeAvailability'
 import {
   sanitizeOfficeTargetInput,
   type OfficePromptTargetFailure,
@@ -95,6 +96,12 @@ import {
 } from './agent/office/office-export-ipc'
 import { chooseOfficeExportTarget } from './agent/office/office-export-dialog'
 import { installOfficeWebviewSecurity } from './agent/office/office-webview'
+import { officeAvailabilityCache } from './agent/office/office-availability'
+import {
+  filterOfficeSkillForAvailability,
+  initializePhiOfficeSkillDefault
+} from './agent/office/office-skill-enablement'
+import { officeTestHooksEnabled } from './agent/office/office-test-hooks'
 import { prepareOfficePromptSubmission } from './agent/office/office-prompt-target'
 import {
   createOfficeApplyHostHandler,
@@ -534,7 +541,6 @@ let macLaunchServicesHandlers: Promise<MacLaunchServicesHandler[]> | null = null
 const macApplicationPathQueries = new Map<string, Promise<string[]>>()
 // Set by agent-env.ts before this module's own top-level code runs.
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
-const OFFICE_DEV_ENABLED = process.env.PHI_OFFICE_DEV === '1'
 let cachedPackageUpdates: PackageUpdate[] = []
 
 app.setName(APP_NAME)
@@ -811,8 +817,9 @@ function currentOfficeContext():
 }
 
 function registerOfficeIpc(): void {
-  if (!OFFICE_DEV_ENABLED) return
-  officeService ??= createOfficeService()
+  if (!officeAvailabilityCache.get().enabled) return
+  officeService = getOfficeService()
+  const testHooksEnabled = officeTestHooksEnabled(app.isPackaged)
   registerOfficeRendererIpc(
     ipcMain,
     new OfficeIpcCoordinator({
@@ -824,10 +831,10 @@ function registerOfficeIpc(): void {
       resolveContext: currentOfficeContext,
       chooseSaveAsTarget: (input) =>
         chooseOfficeSaveAsTarget(input, {
-          officeDev: OFFICE_DEV_ENABLED,
+          testHooksEnabled,
           isPackaged: app.isPackaged,
           // Automated Electron smoke cannot drive a native save sheet; packaged builds ignore it.
-          smokePath: process.env.PHI_OFFICE_SMOKE_SAVE_AS_PATH,
+          smokePath: testHooksEnabled ? process.env.PHI_OFFICE_SMOKE_SAVE_AS_PATH : undefined,
           getWindow: () => mainWindow ?? undefined,
           showSaveDialog: async (window, options) => {
             const electronOptions: Electron.SaveDialogOptions = {
@@ -857,12 +864,13 @@ function registerOfficeIpc(): void {
       resolveContext: currentOfficeContext,
       chooseExportTarget: (input) =>
         chooseOfficeExportTarget(input, {
-          officeDev: OFFICE_DEV_ENABLED,
+          testHooksEnabled,
           isPackaged: app.isPackaged,
-          smokePath:
-            input.format === 'csv'
+          smokePath: testHooksEnabled
+            ? input.format === 'csv'
               ? process.env.PHI_OFFICE_SMOKE_EXPORT_CSV_PATH
-              : process.env.PHI_OFFICE_SMOKE_EXPORT_TSV_PATH,
+              : process.env.PHI_OFFICE_SMOKE_EXPORT_TSV_PATH
+            : undefined,
           getWindow: () => mainWindow ?? undefined,
           showSaveDialog: async (window, options) => {
             const electronOptions: Electron.SaveDialogOptions = {
@@ -1187,6 +1195,12 @@ const selectedThinkingLevel: ThinkingLevel = 'high'
 let currentSessionKey = createSessionKey(undefined, currentCwd, freshSessionCounter)
 let officeService: OfficeService | null = null
 let officeDescribeHostHandler: ReturnType<typeof createOfficeDescribeHostHandler> | null = null
+
+function getOfficeService(): OfficeService {
+  const runtime = officeAvailabilityCache.getRuntime()
+  officeService ??= createOfficeService({ detectRuntime: async () => runtime })
+  return officeService
+}
 const officeApplyApprovals = new OfficeApplyApprovalRegistry()
 const officeDeliverApprovals = new OfficeDeliverApprovalRegistry()
 let sessionSwitchRequest = 0
@@ -1491,7 +1505,7 @@ async function deliverOfficeOutputFromRun(
   operationId: string
 ): Promise<Record<string, unknown>> {
   const context = officeDeliveryRunContext(runId)
-  officeService ??= createOfficeService()
+  officeService = getOfficeService()
   const artifactId = officeService.resolveRunTarget(runId).artifactId
   let presentedFile: PresentedFile | undefined
   const result = await officeService.deliverDocument(
@@ -1574,7 +1588,7 @@ async function prepareOfficeToolApproval(
     event.agentRunId ??
     (originSessionId ? resolveActiveOfficeRun(originSessionId)?.runId : undefined)
   if (trustedRunId && event.toolCallId) {
-    officeService ??= createOfficeService()
+    officeService = getOfficeService()
     const bypass =
       typeof officeService.shouldBypassWriteApproval === 'function'
         ? await officeService.shouldBypassWriteApproval(trustedRunId, request, event.toolCallId)
@@ -1619,7 +1633,7 @@ async function prepareOfficeDeliveryApproval(
     (originSessionId ? resolveActiveOfficeRun(originSessionId)?.runId : undefined)
   if (!runId || !event.toolCallId) throw new Error('Office 交付审批暂不可用')
   const context = officeDeliveryRunContext(runId)
-  officeService ??= createOfficeService()
+  officeService = getOfficeService()
   if (
     await officeService.shouldBypassDeliverApproval(
       runId,
@@ -2163,13 +2177,14 @@ getOmpBridge().registerHostHandler('browser.execute', (params) =>
 getOmpBridge().registerHostHandler('browser.cancel', (params) =>
   browserToolHostCoordinator.cancel(params)
 )
-if (OFFICE_DEV_ENABLED) {
+function registerOfficeAgentHostHandlers(): void {
+  if (!officeAvailabilityCache.get().enabled) return
   getOmpBridge().registerHostHandler(
     'office.read',
     createOfficeReadHostHandler({
       resolveActiveRun: resolveActiveOfficeRun,
       readRange: (runId, params) => {
-        officeService ??= createOfficeService()
+        officeService = getOfficeService()
         return officeService.readRange(runId, params)
       }
     })
@@ -2177,11 +2192,11 @@ if (OFFICE_DEV_ENABLED) {
   officeDescribeHostHandler = createOfficeDescribeHostHandler({
     resolveActiveRun: resolveActiveOfficeRun,
     describeCellEdit: (runId, params) => {
-      officeService ??= createOfficeService()
+      officeService = getOfficeService()
       return officeService.describeCellEdit(runId, params)
     },
     describeWriteRequest: (runId, request) => {
-      officeService ??= createOfficeService()
+      officeService = getOfficeService()
       return officeService.describeWriteRequest(runId, request)
     }
   })
@@ -2192,11 +2207,11 @@ if (OFFICE_DEV_ENABLED) {
       resolveActiveRun: resolveActiveOfficeRun,
       authorizeWrite: authorizeOfficeWrite,
       applyCellEdit: (runId, params, options) => {
-        officeService ??= createOfficeService()
+        officeService = getOfficeService()
         return officeService.applyCellEdit(runId, params, options)
       },
       applyWriteRequest: (runId, request, options) => {
-        officeService ??= createOfficeService()
+        officeService = getOfficeService()
         return officeService.applyWriteRequest(runId, request, options)
       }
     })
@@ -4617,8 +4632,10 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<
         loadedSkills = []
       } else {
         try {
-          loadedSkills = (await listSkills(runSnapshot.cwd))
-            .filter((skill) => skill.enabled)
+          loadedSkills = filterOfficeSkillForAvailability(
+            (await listSkills(runSnapshot.cwd)).filter((skill) => skill.enabled),
+            officeAvailabilityCache.get().enabled
+          )
             .map((skill) => skill.name)
             .sort()
         } catch (error) {
@@ -7157,6 +7174,7 @@ async function getAgentSession(
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(agentScan.agents.length > 0 ? { phiAgents: agentScan.agents } : {}),
         projectBound: Boolean(project),
+        officeEnabled: officeAvailabilityCache.get().enabled,
         ...(remoteProject
           ? {
               remoteProject: {
@@ -7264,6 +7282,7 @@ async function applyNextRunConfiguration(
 function createWindow(): void {
   mainWindowCleanupStarted = false
   mainWindowCleanupPromise = null
+  const officeAvailability = officeAvailabilityCache.get()
 
   // Create the browser window.
   const window = new BrowserWindow({
@@ -7285,14 +7304,15 @@ function createWindow(): void {
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.mjs'),
       sandbox: false,
-      webviewTag: OFFICE_DEV_ENABLED
+      webviewTag: officeAvailability.enabled,
+      additionalArguments: [officeAvailabilityArgument(officeAvailability)]
     }
   })
   mainWindow = window
 
   window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0B262D' : '#FFFFFF')
   window.webContents.setBackgroundThrottling(false)
-  if (OFFICE_DEV_ENABLED) {
+  if (officeAvailability.enabled) {
     installOfficeWebviewSecurity(
       window.webContents,
       (url) => officeService?.ownsPreviewUrl(url) === true
@@ -7380,6 +7400,13 @@ app.whenReady().then(async () => {
     })
   }
   writeAppLog({ event: 'app_started', metadata: { removedOldLogs: removedLogs } })
+  const officeAvailabilityInitialization = officeAvailabilityCache.initialize({
+    userEnabled: readAppSettings().officeEnabled,
+    forcedDisabled: process.env.PHI_OFFICE === '0',
+    onUnavailable: (reason) => {
+      writeAppLog({ level: 'warn', event: 'office_runtime_unavailable', metadata: { reason } })
+    }
+  })
   const bundledSkillNames = (() => {
     try {
       return readdirSync(getBundledSkillsDir(), { withFileTypes: true })
@@ -7390,6 +7417,8 @@ app.whenReady().then(async () => {
     }
   })()
   migrateEnablementFromHistory(bundledSkillNames, { agentDir: AGENT_DIR })
+  const officeAvailability = await officeAvailabilityInitialization
+  initializePhiOfficeSkillDefault(officeAvailability.enabled, { agentDir: AGENT_DIR })
   try {
     const refreshed = refreshPersistedManagedStdioServers({
       agentDir: AGENT_DIR,
@@ -7558,6 +7587,7 @@ app.whenReady().then(async () => {
   ipcMain.on('ping', () => console.log('pong'))
   registerBrowserRendererIpc(ipcMain, browserIpcCoordinator)
   registerTerminalRendererIpc(ipcMain, terminalIpcCoordinator)
+  registerOfficeAgentHostHandlers()
   registerOfficeIpc()
   ipcMain.handle('window:close', () => {
     getActiveWindow()?.close()
@@ -9330,9 +9360,14 @@ app.whenReady().then(async () => {
     if (item.startsWith('wrapper:')) resetWrapperCompositionCatalogCache()
     return getEnablementSnapshot({ agentDir: AGENT_DIR, ...options })
   })
-  ipcMain.handle('skills:list', async (_, cwd?: string) =>
-    isRemoteResourceScope(cwd) ? listGlobalSkills() : listSkills(cwd ?? currentCwd)
-  )
+  ipcMain.handle('skills:list', async (_, cwd?: string) => {
+    const remote = isRemoteResourceScope(cwd)
+    const skills = remote ? await listGlobalSkills() : await listSkills(cwd ?? currentCwd)
+    return filterOfficeSkillForAvailability(
+      skills,
+      officeAvailabilityCache.get().enabled && !remote
+    )
+  })
   ipcMain.handle('skills:read', async (_, filePath: string, cwd?: string) => {
     if (isRemoteResourceScope(cwd)) {
       return readGlobalSkillContent(filePath)
@@ -9345,14 +9380,20 @@ app.whenReady().then(async () => {
       if (isRemoteResourceScope(cwd)) {
         throw new Error('远程项目 Skills 暂不可用')
       }
-      return setSkillDisabled(filePath, Boolean(disabled), cwd ?? currentCwd)
+      return filterOfficeSkillForAvailability(
+        await setSkillDisabled(filePath, Boolean(disabled), cwd ?? currentCwd),
+        officeAvailabilityCache.get().enabled
+      )
     }
   )
   ipcMain.handle('skills:delete', async (_, filePath: string, cwd?: string) => {
     if (isRemoteResourceScope(cwd)) {
       throw new Error('远程项目 Skills 暂不可用')
     }
-    return deleteSkill(filePath, cwd ?? currentCwd)
+    return filterOfficeSkillForAvailability(
+      await deleteSkill(filePath, cwd ?? currentCwd),
+      officeAvailabilityCache.get().enabled
+    )
   })
   ipcMain.handle('agents:list', async (_, cwd?: string) =>
     isRemoteResourceScope(cwd) ? [] : listPromptAgents(cwd ?? currentCwd)

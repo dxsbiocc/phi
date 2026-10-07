@@ -1,6 +1,6 @@
 # Enablement contract
 
-contractVersion: 1.1.0
+contractVersion: 1.2.0
 
 Installing content and **using** it are separate. Only enabled items reach the main
 agent, which keeps its prompt and tool routing small (the original goal of content
@@ -49,6 +49,7 @@ For an item in a project, the first defined value wins:
 | Source                                                                                                           | Default                           |
 | ---------------------------------------------------------------------------------------------------------------- | --------------------------------- |
 | core skills shipped with Phi that the engine depends on (`create-wrapper`, `nextflow`)                           | enabled; cannot be disabled       |
+| bundled `phi-office` skill when Office is available at startup                                                   | enabled; user can disable         |
 | other bundled skills (`resources/skills/`)                                                                       | disabled — added from the catalog |
 | skills installed as packages, user-authored skills (`~/.phi/skills/`), project skills (`<project>/.phi/skills/`) | enabled                           |
 | bundled plugins                                                                                                  | enabled                           |
@@ -69,6 +70,9 @@ The core list lives in one place in the engine and is shown in the UI as "built-
   part of the agent. Its script tools follow their `attachTo` as usual.
 - Changing enablement takes effect for new sessions; a running session keeps the
   set it started with.
+- `phi-office` is omitted from catalogs and session resources when startup Office
+  availability is disabled, unsupported, or invalid. Its stored user preference is
+  preserved so availability recovery does not overwrite an explicit disable.
 - Enablement never deletes or rewrites content files.
 
 ## 5. Migration
@@ -78,6 +82,10 @@ that the user's existing sessions have used is enabled globally, so nobody loses
 skill they rely on. "Used" means the skill name appears as a loaded/invoked skill in
 the session history Phi keeps. Everything else starts at its default.
 
+After this migration, Phi seeds `skill:phi-office` to `true` only when Office is
+available and no explicit global value already exists. This is the sole exception to
+the default-off policy for non-core bundled skills.
+
 ## 6. Versioning
 
 `contractVersion` follows the content distribution design §4.4: minor versions are
@@ -86,4 +94,6 @@ decision record and a deprecation window.
 
 ## Changes
 
+- **1.2.0** (2026-10-07): make `phi-office` default-on when Office is available,
+  while preserving user disablement and hiding it when Office is unavailable.
 - **1.1.0** (2026-10-02): `wrapper:` and `mcp:` items with their defaults. Additive.

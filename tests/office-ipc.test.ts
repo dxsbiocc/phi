@@ -415,7 +415,7 @@ test('IPC applies sender and main-frame checks to create and cancel', async () =
   })
 })
 
-test('IPC registers no Office channels when the development gate is disabled', () => {
+test('IPC registers no Office channels when Office availability is disabled', () => {
   const { coordinator } = fixture()
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
   const ipcMain: OfficeIpcMainLike = {
