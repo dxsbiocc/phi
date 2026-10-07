@@ -619,10 +619,22 @@ function skillMdBody(): string {
 description: ${DESCRIPTION}`
 }
 
-test('phi.deprecated is accepted (contract 1.1.0) and the bundled office skills carry it', () => {
+test('phi.deprecated is accepted by contract 1.1.0', () => {
+  const dir = plain(`name: demo
+description: ${DESCRIPTION}
+phi:
+  deprecated: Use the replacement skill.`)
+  const result = assertValid(dir)
+  assert.equal(result.skill?.phi?.deprecated, 'Use the replacement skill.')
+})
+
+test('office plugin skills are active replacements rather than deprecated bundled skills', () => {
   for (const name of ['pptx', 'xlsx']) {
-    const result = validateSkill(join(process.cwd(), 'resources', 'skills', name))
+    const result = validateSkill(
+      join(process.cwd(), 'resources', 'plugins', 'office', 'skills', name),
+      { insidePlugin: true }
+    )
     assert.equal(result.ok, true, JSON.stringify(result.errors))
-    assert.match(String(result.skill?.phi?.deprecated ?? ''), /OfficeCLI/)
+    assert.equal(result.skill?.phi?.deprecated, undefined)
   }
 })

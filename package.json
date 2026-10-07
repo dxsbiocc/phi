@@ -52,6 +52,7 @@
     "office:smoke:app:highlight": "bunx electron-vite build && bun run scripts/office/smoke-app-highlight.ts",
     "office:smoke:app:export": "bunx electron-vite build && bun run scripts/office/smoke-app-export.ts",
     "office:smoke:app:pptx": "bunx electron-vite build && bun run scripts/office/smoke-app-pptx.ts",
+    "office:smoke:app:plugin": "bunx electron-vite build && bun run scripts/office/smoke-app-office-plugin.ts",
     "office:smoke:restart": "bunx electron-vite build && bun run scripts/office/smoke-app-restart.ts",
     "runtime:lock": "node --import ./scripts/test-loader.mjs scripts/runtime/lock-env.ts",
     "runtime:smoke": "node --import ./scripts/test-loader.mjs scripts/runtime/smoke-env.ts",

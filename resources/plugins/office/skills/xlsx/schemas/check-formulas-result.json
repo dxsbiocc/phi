@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "file",
+    "sheetCount",
+    "formulaCount",
+    "ok",
+    "issueCount",
+    "issuesTruncated",
+    "issues"
+  ],
+  "properties": {
+    "file": { "type": "string" },
+    "sheetCount": { "type": "integer", "minimum": 0 },
+    "formulaCount": { "type": "integer", "minimum": 0 },
+    "ok": { "type": "boolean" },
+    "issueCount": { "type": "integer", "minimum": 0 },
+    "issuesTruncated": { "type": "boolean" },
+    "issues": {
+      "type": "array",
+      "maxItems": 400,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sheet", "cell", "code", "message", "formula"],
+        "properties": {
+          "sheet": { "type": "string" },
+          "cell": { "type": "string" },
+          "code": {
+            "type": "string",
+            "enum": [
+              "error_literal",
+              "unbalanced_parentheses",
+              "whole_column_reference",
+              "division_by_literal_zero",
+              "missing_sheet",
+              "circular_reference"
+            ]
+          },
+          "message": { "type": "string" },
+          "formula": { "type": "string", "maxLength": 300 }
+        }
+      }
+    }
+  }
+}

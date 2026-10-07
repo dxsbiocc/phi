@@ -103,13 +103,13 @@ test('registry catalog filters to skill packages and formats package sizes', () 
 
 test('deprecated bundled skills stay in the catalog but sort last', () => {
   const result = bundledCatalogSkills([
-    skill({ name: 'pptx', sourceCategory: 'bundled', deprecated: '即将由 OfficeCLI 替代。' }),
+    skill({ name: 'legacy-b', sourceCategory: 'bundled', deprecated: '由新技能替代。' }),
     skill({ name: 'scanpy', sourceCategory: 'bundled' }),
-    skill({ name: 'xlsx', sourceCategory: 'bundled', deprecated: '即将由 OfficeCLI 替代。' })
+    skill({ name: 'legacy-a', sourceCategory: 'bundled', deprecated: '由新技能替代。' })
   ])
   assert.deepEqual(
     result.map((item) => item.name),
-    ['scanpy', 'pptx', 'xlsx']
+    ['scanpy', 'legacy-b', 'legacy-a']
   )
 })
 

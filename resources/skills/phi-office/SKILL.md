@@ -1,9 +1,11 @@
 ---
 name: phi-office
-description: '当用户要创建、修改或查看 Excel 表格（.xlsx）、Word 文档（.docx）、PowerPoint 演示文稿（.pptx），或要在右侧实时预览并交付 Office 文件时使用。Phi 中 Office 文件的创建/修改一律用本技能，优先于旧 pptx/xlsx 技能；只在本技能明确不支持时才考虑旧技能。'
+description: '仅用于对已在右侧打开的 Excel（.xlsx）、Word（.docx）或 PowerPoint（.pptx）文件做少量交互式修改。生成类任务、图表、图片、复杂格式或批量处理请使用 xlsx / pptx / docx / pdf 技能（办公插件）。'
 ---
 
 # Phi Office
+
+仅用于对已在右侧打开的 Office 文件做少量交互式修改。生成类任务、图表、图片、复杂格式或批量处理请使用办公插件的 `xlsx`、`pptx`、`docx`、`pdf` 技能。
 
 只通过 Phi 提供的 `office_read`、`office_apply`、`office_deliver` 操作当前关联的 Office 文档。先读、再小批修改、再复读检查，最后交付。
 
