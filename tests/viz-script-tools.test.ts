@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict'
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -75,6 +84,54 @@ test('the bundled visualization skill yields four viz script tools for Visualiza
     assert.equal(installed.ok, true, JSON.stringify(installed.errors))
     const skill = installed.plugin?.components.skills[0]
     assert.ok(skill)
+    if (spawnSync('python3', ['--version']).status === 0) {
+      const project = join(root, 'project')
+      mkdirSync(project)
+      const prepared = spawnSync(
+        'python3',
+        [
+          join(skill, 'scripts', 'viz.py'),
+          'prepare',
+          '--template_id',
+          'scatter-volcano',
+          '--workdir',
+          'plots'
+        ],
+        { cwd: project, encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } }
+      )
+      assert.equal(prepared.status, 0, prepared.stderr)
+      const result = JSON.parse(prepared.stdout) as { script: string; common_r: string }
+      assert.equal(result.common_r, realpathSync(join(skill, 'scripts', 'lib', 'common.R')))
+      assert.equal(existsSync(result.common_r), true)
+      assert.notEqual(result.common_r, join(SKILL_DIR, 'scripts', 'lib', 'common.R'))
+      assert.ok(
+        readFileSync(result.script, 'utf8').includes(`source(${JSON.stringify(result.common_r)})`)
+      )
+      if (spawnSync('Rscript', ['--version']).status === 0) {
+        const data = join(project, 'input.tsv')
+        const output = join(project, 'volcano.png')
+        cpSync(VOLCANO_DATA, data)
+        const rendered = spawnSync(
+          'python3',
+          [
+            join(skill, 'scripts', 'viz.py'),
+            'render',
+            '--script',
+            result.script,
+            '--inputs',
+            data,
+            '--output',
+            output,
+            '--timeout_seconds',
+            '60'
+          ],
+          { cwd: project, encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } }
+        )
+        assert.equal(rendered.status, 0, `${rendered.stderr}\n${rendered.stdout}`)
+        assert.equal((JSON.parse(rendered.stdout) as { ok: boolean }).ok, true)
+        assert.equal(existsSync(output), true)
+      }
+    }
     const host = createSkillHost({
       agentDir,
       listSkillDirs: async () => [skill]

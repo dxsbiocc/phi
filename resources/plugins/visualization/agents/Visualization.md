@@ -93,7 +93,7 @@ For a PNG preview that Phi must read with a vision model, also check the image a
 
 Write generated scripts, QA data, and figures inside the current project working directory (`cwd`). Treat an external input dataset as read-only, even when a shell could write beside it. Use a concise project-local output directory when none is named. Return each verified absolute path.
 
-Do not edit the installed skill. `viz_prepare` copies only editable plotting source while sourcing the installed read-only `scripts/lib/common.R`. Do not copy the skill's `references/`, generated palettes, or catalogs. If a one-off edit requires a copied `common.R`, set `OMICS_VISUALIZATION_SKILL_ROOT` to the installed skill root. Do not use generic freehand plotting when a bundled template fits, and do not install packages.
+Do not edit the installed skill. `viz_prepare` creates editable plotting source, sourcing the installed read-only `scripts/lib/common.R`. Keep this bootstrap and its returned `common_r`; never guess repository paths. Do not copy the skill's `references/`, palettes, or catalogs. A one-off copied helper needs `OMICS_VISUALIZATION_SKILL_ROOT` set to the installed skill root. Use fitting bundled templates and do not install packages.
 
 # Stop and report
 

@@ -159,6 +159,7 @@ const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="48"></sv
 interface Prepared {
   template_id: string
   script: string
+  common_r: string
   existing?: boolean
   assets?: string[]
   inputs: string[]
@@ -499,6 +500,7 @@ describe('viz.py', { skip: skipPython }, () => {
       const body = prepare(box, 'scatter-volcano', join(box.cwd, 'plots', 'volcano'))
       const script = join(box.cwd, 'plots', 'volcano', 'plot.R')
       assert.equal(body.script, script)
+      assert.equal(body.common_r, join(SKILL_ROOT, 'scripts', 'lib', 'common.R'))
       assert.equal(body.template_id, 'scatter-volcano')
       assert.deepEqual(body.inputs, ['input'])
       assert.deepEqual(body.dependencies, ['ggplot2', 'readr', 'ggprism', 'ggrepel'])
@@ -543,6 +545,132 @@ describe('viz.py', { skip: skipPython }, () => {
       const reset = prepare(box, 'scatter-volcano', workdir, true)
       assert.equal(reset.existing, undefined)
       assert.doesNotMatch(readFileSync(script, 'utf8'), /# my edit/)
+    } finally {
+      box.cleanup()
+    }
+  })
+
+  test('prepare repairs a retired skill helper path without resetting plot edits', () => {
+    const box = sandbox()
+    try {
+      const workdir = join(box.cwd, 'plots', 'v')
+      const prepared = prepare(box, 'scatter-volcano', workdir)
+      const common = join(SKILL_ROOT, 'scripts', 'lib', 'common.R')
+      const legacy = join(
+        process.cwd(),
+        'resources',
+        'skills',
+        'omics-visualization',
+        'scripts',
+        'lib',
+        'common.R'
+      )
+      const edited = `${readFileSync(prepared.script, 'utf8').replace(common, legacy)}\n# my adapted plot\n`
+      writeFileSync(prepared.script, edited)
+
+      const again = prepare(box, 'scatter-volcano', workdir)
+
+      assert.equal(again.existing, true)
+      assert.equal(readFileSync(prepared.script, 'utf8'), edited.replace(legacy, common))
+    } finally {
+      box.cleanup()
+    }
+  })
+
+  test(
+    'render repairs a retired common.R source before executing the adapted script',
+    { skip: has('Rscript') ? false : 'Rscript is not on PATH' },
+    () => {
+      const box = sandbox()
+      try {
+        const legacy = join(
+          process.cwd(),
+          'resources',
+          'skills',
+          'omics-visualization',
+          'scripts',
+          'lib',
+          'common.R'
+        )
+        const script = join(box.cwd, 'plot.R')
+        const data = join(box.cwd, 'input.tsv')
+        const output = join(box.cwd, 'plot.png')
+        const bodyFile = join(box.cwd, 'body.png')
+        writeFileSync(data, 'value\n1\n')
+        writeFileSync(bodyFile, png(64, 48))
+        for (const source of [`source(${JSON.stringify(legacy)})`, `source('${legacy}')`]) {
+          const adapted = [
+            '# my adapted plot',
+            source,
+            'stopifnot(exists("load_packages", mode = "function"))',
+            `bytes <- readBin(${JSON.stringify(bodyFile)}, "raw", n = 10000)`,
+            'writeBin(bytes, tail(commandArgs(trailingOnly = TRUE), 1))',
+            ''
+          ].join('\n')
+          writeFileSync(script, adapted)
+
+          const result = ok<Rendered>(
+            runViz(['render', '--script', script, '--inputs', data, '--output', output], box.cwd),
+            schemas.render,
+            'migrated helper render'
+          )
+
+          assert.equal(result.ok, true)
+          assert.deepEqual(readFileSync(output), readFileSync(bodyFile))
+          assert.equal(
+            readFileSync(script, 'utf8'),
+            adapted.replace(
+              source,
+              `source(${JSON.stringify(join(SKILL_ROOT, 'scripts', 'lib', 'common.R'))})`
+            )
+          )
+        }
+      } finally {
+        box.cleanup()
+      }
+    }
+  )
+
+  test('prepare preserves working installed helpers and script-relative custom helpers', () => {
+    const box = sandbox()
+    try {
+      const workdir = join(box.cwd, 'plots', 'v')
+      const prepared = prepare(box, 'scatter-volcano', workdir)
+      const original = readFileSync(prepared.script, 'utf8')
+      const relative = join('custom', 'skills', 'omics-visualization', 'scripts', 'lib', 'common.R')
+      const absolute = join(workdir, relative)
+      mkdirSync(dirname(absolute), { recursive: true })
+      writeFileSync(absolute, '# my helper\n')
+      for (const reference of [relative, absolute, join(workdir, 'custom', 'common.R')]) {
+        const edited = original.replace(prepared.common_r, reference)
+        writeFileSync(prepared.script, edited)
+        prepare(box, 'scatter-volcano', workdir)
+        assert.equal(readFileSync(prepared.script, 'utf8'), edited)
+      }
+    } finally {
+      box.cleanup()
+    }
+  })
+
+  test('prepare refuses to rewrite a plot symlink outside the project', () => {
+    const box = sandbox()
+    try {
+      const workdir = join(box.cwd, 'plots')
+      mkdirSync(workdir)
+      const outside = join(box.outside, 'plot.R')
+      const original = 'source("/old/resources/skills/omics-visualization/scripts/lib/common.R")\n'
+      writeFileSync(outside, original)
+      symlinkSync(outside, join(workdir, 'plot.R'))
+      for (const extra of [[], ['--reset']]) {
+        failed(
+          runViz(
+            ['prepare', '--template_id', 'scatter-volcano', '--workdir', workdir, ...extra],
+            box.cwd
+          ),
+          /project/
+        )
+        assert.equal(readFileSync(outside, 'utf8'), original)
+      }
     } finally {
       box.cleanup()
     }

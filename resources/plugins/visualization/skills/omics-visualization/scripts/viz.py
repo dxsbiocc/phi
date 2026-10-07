@@ -52,6 +52,7 @@ from viz_templates import (
     list_template_sources,
     parse_template_source,
     patch_bootstrap,
+    refresh_project_common_r,
     score_template,
     script_input_names,
     terms_for,
@@ -242,6 +243,7 @@ def command_prepare(template_id: str, workdir: str, reset: bool) -> None:
         )
     directory = resolve_inside_project(os.getcwd(), workdir, "The working directory")
     script = os.path.join(directory, "plot.R")
+    resolve_inside_project(os.getcwd(), os.path.realpath(script), "The script")
     existing = os.path.exists(script) and not reset
     assets: list[str] = []
     if not existing:
@@ -254,9 +256,9 @@ def command_prepare(template_id: str, workdir: str, reset: bool) -> None:
         with open(script, "w", encoding="utf-8") as handle:
             handle.write(patched)
         assets = copy_assets(template["path"], directory)
-    current = parse_template_source(open(script, encoding="utf-8").read())
+    current = parse_template_source(refresh_project_common_r(script, COMMON_R))
     names = template["input_names"]
-    result: dict[str, Any] = {"template_id": template["id"], "script": script}
+    result: dict[str, Any] = {"template_id": template["id"], "script": script, "common_r": COMMON_R}
     if existing:
         result["existing"] = True
     if assets:
@@ -301,7 +303,7 @@ def command_render(script: str, inputs: list[str], output: str, timeout_seconds:
     missing = [item for item in resolved_inputs if not os.path.exists(item)]
     if missing:
         fail(f"Input file(s) not found: {', '.join(missing)}")
-    expected = script_input_names(open(script_path, encoding="utf-8").read())
+    expected = script_input_names(refresh_project_common_r(script_path, COMMON_R))
     if expected is not None and len(expected) != len(resolved_inputs):
         fail(
             f"This template expects {len(expected)} input(s): {', '.join(expected)}; "
