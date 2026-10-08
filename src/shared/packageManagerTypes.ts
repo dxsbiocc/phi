@@ -2,6 +2,7 @@ export type PackageManagerType = 'skill' | 'plugin' | 'wrapper' | 'mcp'
 export type PackageTrust = 'builtin' | 'official' | 'imported'
 
 export interface PackageRegistryEntryView {
+  icon?: ResourceIconRef
   id: string
   type: PackageManagerType
   version: string
@@ -36,6 +37,7 @@ export interface PackageInstallPlanView {
 }
 
 export interface InstalledPackageView {
+  icon?: ResourceIconRef
   id: string
   type: PackageManagerType
   version: string
@@ -76,3 +78,4 @@ export interface OfflinePackageImportPreview {
   archivePath: string
   plan: PackageInstallPlanView
 }
+import type { ResourceIconRef } from './resourceIconTypes'

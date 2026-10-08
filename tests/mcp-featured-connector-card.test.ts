@@ -5,6 +5,7 @@ import { ThemeProvider, createTheme } from '@mui/material/styles'
 import test from 'node:test'
 import type { FeaturedMcpConnector } from '../src/shared/mcpConnectorCatalog'
 import { McpFeaturedConnectorCard } from '../src/renderer/src/features/mcp/components/McpFeaturedConnectorCard'
+import { cacheResourceIconFixture } from './helpers/resourceIconFixture'
 
 function render(
   id: string,
@@ -188,7 +189,18 @@ test('authorization in progress shows a waiting indicator instead of an add or c
   }
 })
 
-test('cBioPortal uses its bundled official website icon', () => {
-  const markup = render('cbioportal', false, false)
-  assert.match(markup, /cbioportal\.png/)
+test('connector cards render resource-owned metadata icons independently of their connector ID', async () => {
+  const key = 'catalog-cbioportal-icon'
+  await cacheResourceIconFixture(key)
+  const markup = render('third-party-catalog-id', false, false, {
+    name: 'cBioPortal',
+    icon: { key }
+  })
+  assert.match(markup, /data-phi-resource-icon-key="catalog-cbioportal-icon"/)
+  assert.match(markup, /<img[^>]*src="data:image\/png;base64,iVBORw0KGgo="[^>]*alt=""/)
+  assert.doesNotMatch(markup, /cbioportal\.png/)
+
+  const missing = render('cbioportal', false, false)
+  assert.match(missing, /data-phi-resource-icon="mcp"/)
+  assert.doesNotMatch(missing, /<img/)
 })

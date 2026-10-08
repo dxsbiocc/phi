@@ -10,6 +10,7 @@ export interface RemoteMcpConnectorOptions {
 }
 
 export interface FeaturedMcpConnector {
+  icon?: ResourceIconRef
   id: string
   version: string
   name: string
@@ -46,3 +47,4 @@ export const mcpConnectorCategories = [
 ] as const
 
 export type McpConnectorCategory = (typeof mcpConnectorCategories)[number]
+import type { ResourceIconRef } from './resourceIconTypes'

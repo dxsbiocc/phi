@@ -27,6 +27,8 @@ import {
 } from '../../src/main/agent/packages/manifest'
 import { validatePlugin } from '../../src/main/agent/plugins/validate'
 import { signRegistryIndex } from '../../src/main/agent/packages/signature'
+import { findPackageIcon, writeRegistryIconAsset } from '../../src/main/agent/packages/icon-assets'
+import type { RegistryIconAsset } from '../../src/shared/resourceIconTypes'
 import {
   materializeWrapperRegistry,
   type UnattributedWrapperInclude,
@@ -47,6 +49,7 @@ export interface RegistryIndexEntry {
   requires?: PackageRequirements
   category?: string
   preview?: string
+  iconAsset?: RegistryIconAsset
 }
 
 export interface RegistryIndex {
@@ -303,6 +306,13 @@ function writePackage(source: PackageSource, outDir: string): RegistryIndexEntry
   }
   if (source.manifest.minAppVersion) entry.minAppVersion = source.manifest.minAppVersion
   if (source.manifest.requires) entry.requires = source.manifest.requires
+  const iconAsset = writeRegistryIconAsset(
+    entry,
+    findPackageIcon(source.files),
+    source.files,
+    outDir
+  )
+  if (iconAsset) entry.iconAsset = iconAsset
   return entry
 }
 

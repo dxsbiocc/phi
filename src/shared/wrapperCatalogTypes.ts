@@ -1,5 +1,6 @@
 import type { WrapperManifest } from './wrapperManifestTypes'
 import type { WrapperTrustTier } from './wrapperTypes'
+import type { ResourceIconRef } from './resourceIconTypes'
 
 /**
  * One installed wrapper (bundled or custom) as shown in the Wrappers
@@ -9,6 +10,7 @@ import type { WrapperTrustTier } from './wrapperTypes'
  * type. See src/main/agent/wrappers/catalog.ts for how these get produced.
  */
 export interface WrapperCatalogEntry {
+  icon?: ResourceIconRef
   manifest: WrapperManifest
   trustTier: WrapperTrustTier
   /** Directory under `~/.phi/wrappers/installed` holding this wrapper's files. */

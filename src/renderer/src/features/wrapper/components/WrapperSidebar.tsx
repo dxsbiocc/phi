@@ -9,9 +9,9 @@ import {
 } from 'react'
 import { Box, CircularProgress, List, Typography } from '@mui/material'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
-import { PhiIcons } from '../../../icons'
 import { CatalogSidebar } from '../../../components/CatalogSidebar'
 import { CatalogResourceRow } from '../../../components/CatalogResourceRow'
+import { ResourceIcon } from '../../../components/ResourceIcon'
 import { DiscoverButton } from '../../../components/DiscoverButton'
 import {
   SidebarAccordionGroup,
@@ -24,8 +24,6 @@ import {
 import { filterWrappers, selectedWrappers, visibleWrapperTier } from '../lib/wrapperSidebar'
 import { parseWrapperCompositionId, wrapperTierLabel } from '../lib/wrapperView'
 import { WrapperCatalogDialog } from './WrapperCatalogDialog'
-
-const WrapperEntityIcon = PhiIcons.entity.wrapper
 
 export interface WrapperSidebarProps {
   visible?: boolean
@@ -271,7 +269,7 @@ function WrapperTierGroupAccordion({
                   flexShrink: 0
                 }}
               >
-                <WrapperEntityIcon sx={{ fontSize: 18 }} />
+                <ResourceIcon icon={entry.icon} kind="wrapper" size={32} fallbackSize={18} />
               </Box>
             }
           >

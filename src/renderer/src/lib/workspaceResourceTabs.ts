@@ -1,4 +1,5 @@
 import type { WorkspaceSidebarMode } from './workspaceSidebar'
+import type { ResourceIconRef } from '../../../shared/resourceIconTypes'
 
 export type WorkspaceResourceKind = 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
 export type WorkspaceFileTabKind = 'file' | 'directory' | 'notebook'
@@ -16,6 +17,7 @@ export type WorkspaceSessionTab = {
 }
 
 export type WorkspaceResourceTab = {
+  icon?: ResourceIconRef
   key: string
   kind: WorkspaceResourceKind
   itemId: string

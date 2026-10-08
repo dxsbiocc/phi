@@ -10,6 +10,7 @@ import { resolveSkillEnvironment } from '../content/environment-refs'
 import { scriptToolName, type ValidatedSkill } from '../content/skill'
 import { parseEnvironmentRef } from '../envs'
 import type { LoadedPlugin } from './loader'
+import { findResourceIcon } from '../resource-icons'
 
 export const PLUGIN_DETAIL_IPC_STRING_LIMITS = {
   identifier: 128,
@@ -207,8 +208,10 @@ export function buildPhiPluginListItem(
   const agents = agentDetails(plugin.agents)
   const skills = skillDetails(plugin, options)
   const tools = scriptToolDetails(plugin)
+  const icon = findResourceIcon(plugin.dir)
   return {
     id: identifier(plugin.id),
+    ...(icon ? { icon } : {}),
     version: identifier(plugin.version),
     title: bounded(plugin.manifest.title, PLUGIN_DETAIL_IPC_STRING_LIMITS.title),
     summary: bounded(plugin.manifest.summary, PLUGIN_DETAIL_IPC_STRING_LIMITS.summary),

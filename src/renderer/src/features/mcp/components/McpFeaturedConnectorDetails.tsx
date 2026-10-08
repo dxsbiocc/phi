@@ -120,7 +120,7 @@ export function McpFeaturedConnectorDetails({
         spacing={2}
         sx={{ alignItems: 'center', mb: 4 }}
       >
-        <ConnectorIcon connectorId={connector.id} size={iconSize} />
+        <ConnectorIcon icon={server?.icon ?? connector.icon} size={iconSize} />
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography variant="h4" sx={{ fontWeight: 700 }}>
             {connector.name}

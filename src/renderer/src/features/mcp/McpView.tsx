@@ -290,12 +290,7 @@ export function McpSidebar({
                       onSelectServer(server)
                     }}
                     onEnabledChange={(enabled) => setConnectorEnabled(server, enabled)}
-                    icon={
-                      <ConnectorIcon
-                        connectorId={server.connectorId ?? server.packageId}
-                        size={32}
-                      />
-                    }
+                    icon={<ConnectorIcon icon={server.icon} size={32} />}
                   >
                     <Tooltip
                       title={`${label} · 已配置 · ${active ? '已启用' : '已停用'}`}

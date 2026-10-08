@@ -1,6 +1,7 @@
 export type SkillSourceCategory = 'bundled' | 'installed-package' | 'user' | 'project' | 'plugin'
 
 export interface SkillSummary {
+  icon?: ResourceIconRef
   id: string
   name: string
   description: string
@@ -29,3 +30,4 @@ export interface SkillContent {
   filePath: string
   content: string
 }
+import type { ResourceIconRef } from './resourceIconTypes'

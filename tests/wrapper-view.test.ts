@@ -25,6 +25,7 @@ import type {
 } from '../src/shared/wrapperCompositionManifestTypes'
 import type { WrapperManifest } from '../src/shared/wrapperManifestTypes'
 import type { WrapperRun, WrapperRunPlan } from '../src/shared/wrapperTypes'
+import { cacheResourceIconFixture } from './helpers/resourceIconFixture'
 
 // Only used by the diagram-equality test below, which just needs a
 // `{name, steps}`-shaped fixture — unrelated to the catalog shape the rest
@@ -111,6 +112,14 @@ function renderView(overrides: Partial<Parameters<typeof WrapperViewContent>[0]>
 test('wrapper sidebar has no selected row after its detail tab closes', () => {
   const markup = renderView({ selectedId: null })
   assert.equal(markup.match(/class="[^"]*Mui-selected[^"]*"/g)?.length ?? 0, 0)
+})
+
+test('wrapper sidebar and detail share the composition-owned image', async () => {
+  const key = 'owned-wrapper-icon'
+  await cacheResourceIconFixture(key)
+  const markup = renderView({ catalog: [moduleEntry({ icon: { key } })] })
+  assert.equal(markup.match(/data-phi-resource-icon-key="owned-wrapper-icon"/g)?.length, 2)
+  assert.equal(markup.match(/<img[^>]*src="data:image\/png;base64,iVBORw0KGgo="/g)?.length, 2)
 })
 
 test('a local project offers server compute only inside the Wrapper view', () => {

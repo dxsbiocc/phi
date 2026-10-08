@@ -17,6 +17,7 @@ import type { WrapperModuleDetails } from '../../../../shared/wrapperModuleDetai
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
 import type { Project, ProjectRemoteConnection } from '../../types'
 import { PhiIcons } from '../../icons'
+import { ResourceIcon } from '../../components/ResourceIcon'
 import { buildWrapperParamsFlowGraph } from './lib/wrapperFlow'
 import { parseWrapperNextflowDag } from './lib/wrapperNextflowDag'
 import { highlightLine } from '../../lib/syntaxHighlight'
@@ -40,7 +41,6 @@ import { WrapperSidebar } from './components/WrapperSidebar'
 export { WrapperSidebar, type WrapperSidebarProps } from './components/WrapperSidebar'
 
 const ExportIcon = PhiIcons.action.download
-const WrapperEntityIcon = PhiIcons.entity.wrapper
 
 const macTitlebarHeight = 44
 export interface WrapperDetailProps {
@@ -328,7 +328,7 @@ export function WrapperDetail({
                 flexShrink: 0
               }}
             >
-              <WrapperEntityIcon />
+              <ResourceIcon icon={selected.icon} kind="wrapper" size={72} fallbackSize={24} />
             </Box>
             <Box sx={{ minWidth: 0, flex: 1 }}>
               <Typography variant="h4" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>

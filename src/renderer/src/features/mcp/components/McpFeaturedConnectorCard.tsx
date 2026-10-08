@@ -106,7 +106,7 @@ export function McpFeaturedConnectorCard({
         '&:hover': { bgcolor: 'action.hover' }
       }}
     >
-      <ConnectorIcon connectorId={connector.id} />
+      <ConnectorIcon icon={connector.icon} />
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Typography noWrap title={connector.name} sx={{ fontWeight: 700 }}>
           {connector.name}

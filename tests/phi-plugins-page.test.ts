@@ -10,6 +10,7 @@ import type { ManagedEnvironmentEntry } from '../src/shared/environmentTypes'
 import type { PackageUpdateView } from '../src/shared/packageManagerTypes'
 import type { PhiPluginProblemView } from '../src/shared/phiPluginTypes'
 import { EnvironmentBuildConfirmDialog } from '../src/renderer/src/components/EnvironmentBuildConfirmDialog'
+import { cacheResourceIconFixture } from './helpers/resourceIconFixture'
 import PhiPluginsView, {
   PhiPluginCatalogContent,
   PhiPluginSidebar,
@@ -160,6 +161,51 @@ test('Phi plugin labels use concise Chinese product language', () => {
   assert.equal(phiPluginEnvironmentStateLabel('absent'), '未构建')
   assert.equal(phiPluginEnvironmentStateLabel('ready'), '已构建')
   assert.equal(phiPluginEnvironmentStateLabel('drifted'), '需要修复')
+})
+
+test('plugins display their own icons in sidebar, detail and installed or registry catalogs', async () => {
+  const key = 'owned-plugin-icon'
+  await cacheResourceIconFixture(key)
+  const owned = plugin({ icon: { key } })
+  const sidebar = themed(
+    createElement(PhiPluginSidebar, {
+      plugins: [owned],
+      loading: false,
+      activePluginId: owned.id,
+      onSelectPlugin: () => undefined,
+      onOpenCatalog: () => undefined
+    })
+  )
+  const detail = themed(
+    createElement(PhiPluginsView, {
+      plugin: owned,
+      busyPluginId: null,
+      error: null,
+      notice: null,
+      onClearError: () => undefined,
+      onClearNotice: () => undefined,
+      onRefresh: async () => undefined,
+      onSetEnabled: async () => true,
+      onUninstall: async () => true
+    })
+  )
+  const catalog = (initialCategory: string): string =>
+    themed(
+      createElement(PhiPluginCatalogContent, {
+        plugins: [owned],
+        entries: [{ ...catalogEntry('available-icon-plugin', 'Owned icon'), icon: { key } }],
+        updates: [],
+        loading: false,
+        busyId: null,
+        initialCategory,
+        onChooseDirectory: () => undefined,
+        onInstall: () => undefined
+      })
+    )
+  for (const markup of [sidebar, detail, catalog('installed'), catalog('科研')]) {
+    assert.match(markup, /data-phi-resource-icon-key="owned-plugin-icon"/)
+    assert.match(markup, /<img[^>]*src="data:image\/png;base64,iVBORw0KGgo="/)
+  }
 })
 
 test('Phi plugin component summaries omit empty categories and preserve final tool names', () => {

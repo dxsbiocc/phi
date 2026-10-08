@@ -17,6 +17,7 @@ import semver from 'semver'
 import { stringify as stringifyYaml } from 'yaml'
 
 import { getPhiAgentDir } from '../runtime-paths'
+import { findResourceIcon } from '../resource-icons'
 import {
   installPackages,
   listInstalledPackages,
@@ -667,7 +668,8 @@ export function addCustomWrapper(
   copyWrapperSourceTree(sourceDir, installedPath)
   const installedAt = new Date().toISOString()
   writeSourceMarker(installedPath, { trustTier: 'custom', installedAt, sourcePath: sourceDir })
-  return { manifest, trustTier: 'custom', installedPath, installedAt }
+  const icon = findResourceIcon(installedPath)
+  return { manifest, trustTier: 'custom', installedPath, installedAt, ...(icon ? { icon } : {}) }
 }
 
 function findManifestDirs(root: string): string[] {
@@ -697,11 +699,13 @@ export function listWrapperCatalog(agentDir = getPhiAgentDir()): WrapperCatalogE
       if (!marker) return undefined
       try {
         const manifest = loadManifestFromDir(dir)
+        const icon = findResourceIcon(dir)
         return {
           manifest,
           trustTier: marker.trustTier,
           installedPath: dir,
-          installedAt: marker.installedAt
+          installedAt: marker.installedAt,
+          ...(icon ? { icon } : {})
         }
       } catch {
         return undefined

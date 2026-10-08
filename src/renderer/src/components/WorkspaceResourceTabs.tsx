@@ -1,6 +1,7 @@
 import { Box, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { PhiIcons } from '../icons'
+import type { ResourceIconRef } from '../../../shared/resourceIconTypes'
 import type {
   WorkspaceFileWorkspaceTab,
   WorkspaceTab,
@@ -33,7 +34,7 @@ export function WorkspaceResourceTabs({
   activeKey: string | null
   onSelect: (tab: WorkspaceTab) => void
   onClose: (tab: WorkspaceTab) => void
-  connectorIcon?: (connectorId?: string) => React.ReactNode
+  connectorIcon?: (icon?: ResourceIconRef) => React.ReactNode
   fileIcon?: (tab: WorkspaceFileWorkspaceTab) => React.ReactNode
 }): React.JSX.Element {
   return (
@@ -116,7 +117,7 @@ export function WorkspaceResourceTabs({
             }}
           >
             {tab.kind === 'mcp' && connectorIcon ? (
-              connectorIcon(tab.connectorId ?? tab.itemId)
+              connectorIcon(tab.icon)
             ) : (tab.kind === 'file' || tab.kind === 'directory' || tab.kind === 'notebook') &&
               fileIcon ? (
               fileIcon(tab)

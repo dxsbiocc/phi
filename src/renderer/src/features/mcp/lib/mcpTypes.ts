@@ -1,4 +1,7 @@
+import type { ResourceIconRef } from '../../../../../shared/resourceIconTypes'
+
 export interface McpServerSummary {
+  icon?: ResourceIconRef
   id: string
   name: string
   /** Catalog title of the connector this server came from, when known. */

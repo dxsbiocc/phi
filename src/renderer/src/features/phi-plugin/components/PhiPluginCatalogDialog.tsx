@@ -23,7 +23,9 @@ import semver from 'semver'
 
 import type { PackageTrust, PackageUpdateView } from '../../../../../shared/packageManagerTypes'
 import type { PhiPluginInstallPreview } from '../../../../../shared/phiPluginTypes'
+import type { ResourceIconRef } from '../../../../../shared/resourceIconTypes'
 import { PhiIcons } from '../../../icons'
+import { ResourceIcon } from '../../../components/ResourceIcon'
 import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../../../lib/packageTrust'
 import type { PhiPluginDisplayItem } from '../hooks/usePhiPlugins'
 import {
@@ -52,6 +54,7 @@ function pluginDisplayName(preview: PhiPluginInstallPreview): string {
 }
 
 function CatalogCard({
+  icon,
   title,
   summary,
   version,
@@ -62,6 +65,7 @@ function CatalogCard({
   disabled,
   onAction
 }: {
+  icon?: ResourceIconRef
   title: string
   summary: string
   version: string
@@ -87,7 +91,7 @@ function CatalogCard({
             color: 'primary.main'
           }}
         >
-          <PhiIcons.entity.plugin size={23} />
+          <ResourceIcon icon={icon} kind="plugin" size={42} fallbackSize={23} />
         </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography sx={{ fontWeight: 700 }}>{title}</Typography>
@@ -282,6 +286,7 @@ export function PhiPluginCatalogContent({
                 ? visiblePlugins.map((plugin) => (
                     <CatalogCard
                       key={plugin.id}
+                      icon={plugin.icon}
                       title={plugin.title}
                       summary={plugin.summary}
                       version={plugin.version}
@@ -297,6 +302,7 @@ export function PhiPluginCatalogContent({
                     return (
                       <CatalogCard
                         key={entry.id}
+                        icon={entry.icon}
                         title={entry.title}
                         summary={entry.summary}
                         version={entry.version}

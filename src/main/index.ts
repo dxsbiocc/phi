@@ -292,6 +292,8 @@ import {
   type PackageUpdate,
   uninstallPackage as uninstallRegistryPackage
 } from './agent/packages/installer'
+import { packageRegistryIconView } from './agent/packages/icon-views'
+import { readResourceIcon } from './agent/resource-icons'
 import type { RemoteMcpConnectorOptions } from '../shared/mcpConnectorCatalog'
 import {
   addRemoteMcpConnector,
@@ -7639,6 +7641,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('files:getIcon', async (_, filePath: string) => {
     return getLocalFileIconDataUrl(filePath)
   })
+  ipcMain.handle('resources:readIcon', (_, key: unknown) => readResourceIcon(key))
   ipcMain.handle('files:pickInput', async () => {
     if (isRemoteProjectAnchorPath(currentCwd, AGENT_DIR)) {
       throw new Error('远程项目文件选择暂不可用；不会打开本机会话目录')
@@ -9107,7 +9110,7 @@ app.whenReady().then(async () => {
     try {
       const registry = readPackageRegistry(dir)
       addKnownRegistry(registry.dir, { agentDir: AGENT_DIR })
-      return registry
+      return packageRegistryIconView(registry)
     } catch (error) {
       throw new Error(
         `读取软件包注册表失败：${error instanceof Error ? error.message : String(error)}`

@@ -3,6 +3,7 @@ import { Box, CircularProgress, List, Stack, Typography } from '@mui/material'
 import { PhiIcons } from '../../../icons'
 import { CatalogSidebar } from '../../../components/CatalogSidebar'
 import { CatalogResourceRow } from '../../../components/CatalogResourceRow'
+import { ResourceIcon } from '../../../components/ResourceIcon'
 import { DiscoverButton } from '../../../components/DiscoverButton'
 import {
   SidebarAccordionGroup,
@@ -219,7 +220,7 @@ export function SkillSidebar({
                           flexShrink: 0
                         }}
                       >
-                        <SkillIcon sx={{ fontSize: 20 }} />
+                        <ResourceIcon icon={skill.icon} kind="skill" size={32} fallbackSize={20} />
                       </Box>
                     }
                   >

@@ -1,4 +1,5 @@
 import {
+  Box,
   Table,
   TableBody,
   TableCell,
@@ -15,6 +16,7 @@ export interface CatalogResultRow {
   summary: string
   metadata: string
   details: string
+  icon?: React.ReactNode
   action: React.ReactNode
 }
 
@@ -53,19 +55,24 @@ export function CatalogResultsTable({
           {rows.map((row) => (
             <TableRow key={row.rowKey} hover {...{ [rowAttribute]: row.id }}>
               <TableCell>
-                <Typography variant="subtitle2" sx={{ overflowWrap: 'anywhere' }}>
-                  {row.title}
-                </Typography>
-                <Typography variant="body2" color="text.secondary" noWrap title={row.summary}>
-                  {row.summary}
-                </Typography>
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ display: { xs: 'block', sm: 'none' }, overflowWrap: 'anywhere' }}
-                >
-                  {row.metadata} · {row.details}
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+                  {row.icon}
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography variant="subtitle2" sx={{ overflowWrap: 'anywhere' }}>
+                      {row.title}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" noWrap title={row.summary}>
+                      {row.summary}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: { xs: 'block', sm: 'none' }, overflowWrap: 'anywhere' }}
+                    >
+                      {row.metadata} · {row.details}
+                    </Typography>
+                  </Box>
+                </Box>
               </TableCell>
               <TableCell
                 sx={{ display: { xs: 'none', sm: 'table-cell' }, overflowWrap: 'anywhere' }}

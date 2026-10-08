@@ -8,6 +8,7 @@ import type { PackageDependency, PackageRequirements } from './manifest'
 import { errorMessage, isRecord, packageVersionKey } from './installer-utils'
 import { parseRegistrySignature, verifyRegistryIndex, type TrustedRegistryKey } from './signature'
 import { TRUSTED_REGISTRY_KEYS } from './trusted-keys'
+import { parseRegistryIconAsset } from './icon-assets'
 
 export interface ReadRegistryOptions {
   builtin?: boolean
@@ -108,6 +109,14 @@ function parseRegistryEntry(value: unknown, index: number): RegistryPackageEntry
   }
   const dependsOn = parseDependencies(entry.dependsOn, index)
   const requires = parseRequirements(entry.requires, index)
+  let iconAsset: RegistryPackageEntry['iconAsset']
+  if (entry.iconAsset !== undefined) {
+    try {
+      iconAsset = parseRegistryIconAsset(entry.iconAsset)
+    } catch {
+      throw new Error(`注册表 packages[${index}].iconAsset 无效`)
+    }
+  }
   return {
     id: entry.id,
     type: entry.type,
@@ -121,7 +130,8 @@ function parseRegistryEntry(value: unknown, index: number): RegistryPackageEntry
     ...(typeof entry.minAppVersion === 'string' ? { minAppVersion: entry.minAppVersion } : {}),
     ...(requires ? { requires } : {}),
     ...(typeof entry.category === 'string' ? { category: entry.category } : {}),
-    ...(typeof entry.preview === 'string' ? { preview: entry.preview } : {})
+    ...(typeof entry.preview === 'string' ? { preview: entry.preview } : {}),
+    ...(iconAsset ? { iconAsset } : {})
   }
 }
 

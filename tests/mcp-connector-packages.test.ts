@@ -279,10 +279,17 @@ test('only the real bundled connector source installs with builtin trust', async
     process.platform === 'win32' ? 'junction' : 'dir'
   )
 
-  await installCatalogConnector(bundledLink, 'pubmed', '1.0.0', installOptions(fixture))
+  const manifest = parsePackageManifestText(
+    readFileSync(join(bundledLink, 'pubmed', 'phi-package.yaml'), 'utf8')
+  )
+  await installCatalogConnector(bundledLink, 'pubmed', manifest.version, installOptions(fixture))
 
   const installed = listInstalledPackages({ agentDir: fixture.agentDir })[0]
   assert.equal(installed?.trust, 'builtin')
+  assert.deepEqual(
+    readFileSync(join(installed?.dir ?? '', 'icon.svg')),
+    readFileSync(join(bundledLink, 'pubmed', 'icon.svg'))
+  )
   assert.equal(
     JSON.parse(readFileSync(join(installed?.dir ?? '', '.source.json'), 'utf8')).trust,
     'builtin'

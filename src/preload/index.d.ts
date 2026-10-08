@@ -575,6 +575,7 @@ declare global {
       revealPath: (path: string) => Promise<void>
       openPath: (path: string) => Promise<void>
       getFileIcon: (path: string) => Promise<string | null>
+      readResourceIcon: (key: string) => Promise<string | null>
       pickInputFiles: () => Promise<string[]>
       getPathForFile: (file: File) => string
       onInputFilesDropped: (cb: (paths: string[]) => void) => () => void

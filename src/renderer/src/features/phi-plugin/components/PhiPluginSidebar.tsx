@@ -4,6 +4,7 @@ import { Box, CircularProgress, IconButton, List, Stack, Typography } from '@mui
 import { SidebarAccordionGroup } from '../../../components/SidebarAccordionGroup'
 import { CatalogSidebar } from '../../../components/CatalogSidebar'
 import { CatalogResourceRow } from '../../../components/CatalogResourceRow'
+import { ResourceIcon } from '../../../components/ResourceIcon'
 import { PhiIcons } from '../../../icons'
 import type { PhiPluginDisplayItem } from '../hooks/usePhiPlugins'
 import {
@@ -113,7 +114,7 @@ export function PhiPluginSidebar({
                         bgcolor: 'action.hover'
                       }}
                     >
-                      <PhiIcons.entity.plugin size={20} />
+                      <ResourceIcon icon={plugin.icon} kind="plugin" size={32} fallbackSize={20} />
                     </Box>
                   }
                 >

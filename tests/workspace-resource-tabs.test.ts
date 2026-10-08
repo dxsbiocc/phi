@@ -5,6 +5,7 @@ import { ThemeProvider, createTheme } from '@mui/material/styles'
 import test from 'node:test'
 import { WorkspaceResourceTabs } from '../src/renderer/src/components/WorkspaceResourceTabs'
 import { ConnectorIcon } from '../src/renderer/src/features/mcp/components/ConnectorIcon'
+import { cacheResourceIconFixture } from './helpers/resourceIconFixture'
 import {
   activeTabKeyAfterPrompt,
   upsertWorkspaceResourceTab,
@@ -48,12 +49,15 @@ test('opening another item reuses the tab for its resource type', () => {
   assert.deepEqual(upsertWorkspaceResourceTab([plugin, second], otherPlugin), [otherPlugin, second])
 })
 
-test('connector tabs display the selected connector icon', () => {
+test('connector tabs display the selected resource-owned icon', async () => {
+  const key = 'owned-firecrawl-tab-icon'
+  await cacheResourceIconFixture(key)
   const tab: WorkspaceResourceTab = {
     key: 'mcp',
     kind: 'mcp',
     itemId: 'firecrawl',
     title: 'Firecrawl',
+    icon: { key },
     connectorUrl: 'https://mcp.firecrawl.dev/v2/mcp'
   }
   const markup = renderToStaticMarkup(
@@ -65,25 +69,25 @@ test('connector tabs display the selected connector icon', () => {
         activeKey: tab.key,
         onSelect: () => undefined,
         onClose: () => undefined,
-        connectorIcon: (connectorId) => createElement(ConnectorIcon, { connectorId, size: 20 })
+        connectorIcon: (icon) => createElement(ConnectorIcon, { icon, size: 20 })
       })
     )
   )
-  assert.match(markup, /firecrawl\.png/)
+  assert.match(markup, /data-phi-resource-icon-key="owned-firecrawl-tab-icon"/)
+  assert.match(markup, /<img[^>]*src="data:image\/png;base64,iVBORw0KGgo="/)
   assert.match(markup, /Firecrawl/)
 })
 
-test('connector tabs use the brand identity even when the configured server has a scoped ID', () => {
-  for (const [connectorId, asset] of [
-    ['cbioportal', 'cbioportal.png'],
-    ['firecrawl', 'firecrawl.png'],
-    ['open-targets', 'open-targets.svg']
-  ]) {
+test('connector tab icons follow metadata even when the configured server has a scoped ID', async () => {
+  for (const connectorId of ['cbioportal', 'firecrawl', 'third-party-resource']) {
+    const key = `owned-tab-icon-${connectorId}`
+    await cacheResourceIconFixture(key)
     const tab: WorkspaceResourceTab = {
       key: 'mcp',
       kind: 'mcp',
       itemId: `/Users/test/.phi/mcp.json:${connectorId}`,
       connectorId,
+      icon: { key },
       title: connectorId
     }
     const markup = renderToStaticMarkup(
@@ -95,11 +99,12 @@ test('connector tabs use the brand identity even when the configured server has 
           activeKey: tab.key,
           onSelect: () => undefined,
           onClose: () => undefined,
-          connectorIcon: (id) => createElement(ConnectorIcon, { connectorId: id, size: 20 })
+          connectorIcon: (icon) => createElement(ConnectorIcon, { icon, size: 20 })
         })
       )
     )
-    assert.ok(markup.includes(asset), `${connectorId} tab should display ${asset}`)
+    assert.ok(markup.includes(`data-phi-resource-icon-key="${key}"`))
+    assert.match(markup, /<img[^>]*src="data:image\/png;base64,iVBORw0KGgo="/)
   }
 })
 

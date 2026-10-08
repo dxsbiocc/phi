@@ -6,6 +6,7 @@ import { parse as parseYaml } from 'yaml'
 import type { WrapperCompositionCatalogItem } from '../../../../shared/wrapperCompositionManifestTypes'
 import { getEnablementPath, getEnablementSnapshot } from '../../enablement'
 import { getPhiAgentDir } from '../../runtime-paths'
+import { findResourceIcon } from '../../resource-icons'
 import {
   readWrapperTreeRegistry,
   wrapperTreeDir,
@@ -42,6 +43,8 @@ export interface WrapperCompositionEntry {
   wrapperDir: string
   /** The module/subworkflow's own root directory (wrapperDir's parent). */
   componentDir: string
+  /** Bounded module family root, derived from the provider/family layout. */
+  familyDir?: string
   /** Installed package owner; absent for user-authored wrappers. */
   packageId?: string
   /** Stable identifier for the existing wrapper enablement API. */
@@ -132,12 +135,17 @@ function scanCompositionRoot(
       try {
         const manifest = parseWrapperCompositionManifest(readFileSync(wrapperYamlPath, 'utf-8'))
         const wrapperDir = join(wrapperYamlPath, '..')
+        const componentDir = dirname(wrapperDir)
+        const familyParts = relative(rootDir, componentDir).split(/[\\/]/)
+        const familyDir =
+          familyParts.length >= 2 ? join(rootDir, ...familyParts.slice(0, 2)) : undefined
         const path = relative(root, wrapperYamlPath).split('\\').join('/')
         const packageId = packageByPath?.get(path)
         entries.push({
           manifest,
           wrapperDir,
-          componentDir: join(wrapperDir, '..'),
+          componentDir,
+          ...(familyDir ? { familyDir } : {}),
           ...(packageId ? { packageId } : {})
         })
       } catch {
@@ -279,18 +287,25 @@ export function listWrapperCompositionCatalogStatus(
   options: WrapperCompositionDiscoveryOptions = {}
 ): WrapperCompositionCatalogItem[] {
   const catalog = catalogFor(options)
-  return catalog.entries.map((entry) => ({
-    ...entry.manifest,
-    ...(entry.packageId ? { packageId: entry.packageId } : {}),
-    ...(entry.enablementId
-      ? {
-          enablementId: entry.enablementId,
-          packageSelected: catalog.packageSelected.has(entry.enablementId),
-          packageEnabled: catalog.packageEnabled.get(entry.enablementId) !== false
-        }
-      : {}),
-    ...(entry.hiddenReason ? { hiddenReason: entry.hiddenReason } : {})
-  }))
+  return catalog.entries.map((entry) => {
+    const icon = findResourceIcon(entry.wrapperDir, [
+      entry.componentDir,
+      ...(entry.familyDir ? [entry.familyDir] : [])
+    ])
+    return {
+      ...entry.manifest,
+      ...(icon ? { icon } : {}),
+      ...(entry.packageId ? { packageId: entry.packageId } : {}),
+      ...(entry.enablementId
+        ? {
+            enablementId: entry.enablementId,
+            packageSelected: catalog.packageSelected.has(entry.enablementId),
+            packageEnabled: catalog.packageEnabled.get(entry.enablementId) !== false
+          }
+        : {}),
+      ...(entry.hiddenReason ? { hiddenReason: entry.hiddenReason } : {})
+    }
+  })
 }
 
 /** A wrapper's `params.json` (the defaults every run starts from); {} when missing or unreadable. */

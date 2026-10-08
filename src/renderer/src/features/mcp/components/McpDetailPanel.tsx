@@ -252,10 +252,7 @@ export function McpDetailPanel({
           ) : (
             <>
               <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
-                <ConnectorIcon
-                  connectorId={selectedServer.connectorId ?? selectedServer.packageId}
-                  size={72}
-                />
+                <ConnectorIcon icon={selectedServer.icon} size={72} />
                 <Box sx={{ minWidth: 0, flex: 1 }}>
                   <Typography variant="h4" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
                     {selectedServer.name}

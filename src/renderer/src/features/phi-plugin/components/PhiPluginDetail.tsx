@@ -21,6 +21,7 @@ import { alpha } from '@mui/material/styles'
 import { EnvironmentBuildConfirmDialog } from '../../../components/EnvironmentBuildConfirmDialog'
 import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../../../lib/packageTrust'
 import { PhiIcons } from '../../../icons'
+import { ResourceIcon } from '../../../components/ResourceIcon'
 import type { PhiPluginDisplayItem, PhiPluginEnvironmentStatus } from '../hooks/usePhiPlugins'
 import { requestPhiPluginEnvironmentBuild } from '../lib/environmentBuild'
 import { phiPluginDistributionLabel, phiPluginEnabledLabel } from '../lib/phiPlugins'
@@ -166,7 +167,7 @@ export function PhiPluginDetail({
                       )
                   }}
                 >
-                  <PhiIcons.entity.plugin size={30} />
+                  <ResourceIcon icon={plugin.icon} kind="plugin" size={58} fallbackSize={30} />
                 </Box>
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                   <Typography variant="h4" sx={{ fontWeight: 750 }}>

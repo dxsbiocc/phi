@@ -5,6 +5,7 @@ import type {
   PackageRegistryView
 } from '../../../../../shared/packageManagerTypes'
 import { PhiIcons } from '../../../icons'
+import { ResourceIcon } from '../../../components/ResourceIcon'
 import type { SkillSummary } from '../../../types'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
 import { CatalogPagination } from '../../../components/catalog/CatalogPagination'
@@ -247,6 +248,7 @@ export function SkillCatalogDialog({
       return {
         rowKey: `bundled:${skill.id}`,
         id: skill.id,
+        icon: <ResourceIcon icon={skill.icon} kind="skill" sx={{ color: 'primary.main' }} />,
         title: skill.name,
         summary: skill.deprecated
           ? `${DEPRECATED_SKILL_LABEL}：${skill.deprecated}${skill.description ? ` ${skill.description}` : ''}`
@@ -273,6 +275,7 @@ export function SkillCatalogDialog({
     return {
       rowKey: key,
       id: entry.id,
+      icon: <ResourceIcon icon={entry.icon} kind="skill" sx={{ color: 'primary.main' }} />,
       title: entry.title,
       summary: entry.summary,
       metadata: '软件包',

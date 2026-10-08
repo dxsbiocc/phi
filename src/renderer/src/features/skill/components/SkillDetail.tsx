@@ -19,6 +19,7 @@ import {
   Typography
 } from '@mui/material'
 import MarkdownContent from '../../../components/MarkdownContent'
+import { ResourceIcon } from '../../../components/ResourceIcon'
 import { PhiIcons } from '../../../icons'
 import type { SkillSummary } from '../../../types'
 import { skillMarkdownBody } from '../lib/skillMarkdown'
@@ -325,7 +326,7 @@ export function SkillDetail({
               flexShrink: 0
             }}
           >
-            <SkillIcon />
+            <ResourceIcon icon={selectedSkill.icon} kind="skill" size={72} fallbackSize={24} />
           </Box>
           <Box sx={{ minWidth: 0, flex: 1 }}>
             <Typography variant="h4" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>

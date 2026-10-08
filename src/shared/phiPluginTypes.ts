@@ -1,4 +1,5 @@
 export interface PhiPluginListItem {
+  icon?: ResourceIconRef
   id: string
   version: string
   title: string
@@ -75,3 +76,4 @@ export interface PhiPluginInstallPreview {
   installedVersion?: string
   problems: PhiPluginProblemView[]
 }
+import type { ResourceIconRef } from './resourceIconTypes'

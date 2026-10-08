@@ -23,6 +23,9 @@ import type {
 } from '../../shared/mcpConnectorCatalog'
 import type { EnvironmentBuildStartOptions } from './content/environment-builds'
 import type { EnvironmentDescriptor } from './content/environment-refs'
+import { findResourceIcon, registerResourceIconAsset } from './resource-icons'
+import type { RegistryIconAsset } from '../../shared/resourceIconTypes'
+import { listActiveMcpPackages } from './packages/mcp-store'
 import { createDeterministicTarGz, parseTarGz, type ArchiveFile } from './packages/archive'
 import {
   installPackages,
@@ -112,6 +115,8 @@ export interface ConnectorEnvironmentBuildAction {
 interface CatalogSource {
   manifest: McpPackageManifest
   registryDir: string
+  packageDir?: string
+  iconAsset?: RegistryIconAsset
 }
 
 export function getBundledConnectorsDir(): string {
@@ -128,17 +133,33 @@ export function listConnectorCatalog(
   const config = readMcpConfig(agentDir)
   const servers = config.mcpServers ?? {}
   const sources: CatalogSource[] = []
+  const installed = listActiveMcpPackages(agentDir)
+  const installedRoots = new Map(installed.map((entry) => [entry.id, entry.dir]))
 
-  if (options.bundledRegistryDir) {
+  if (options.bundledRegistryDir && existsSync(options.bundledRegistryDir)) {
     sources.push(...catalogSourcesFromRegistry(options.bundledRegistryDir))
-  } else {
-    sources.push(
-      ...catalogSourcesFromDirectory(options.bundledConnectorsDir ?? getBundledConnectorsDir())
-    )
+  } else if (!options.bundledRegistryDir) {
+    const root = options.bundledConnectorsDir ?? getBundledConnectorsDir()
+    if (existsSync(root)) sources.push(...catalogSourcesFromDirectory(root))
   }
   for (const dir of uniquePaths(options.registryDirs ?? [])) {
     if (options.bundledRegistryDir && resolve(dir) === resolve(options.bundledRegistryDir)) continue
-    sources.push(...catalogSourcesFromRegistry(dir))
+    if (existsSync(dir)) sources.push(...catalogSourcesFromRegistry(dir))
+  }
+  // Installed connectors retain presentation metadata when their original source is unavailable.
+  for (const entry of installed) {
+    try {
+      const manifest = readPackageManifest(entry.dir)
+      if (
+        manifest.type === 'mcp' &&
+        manifest.id === entry.id &&
+        manifest.version === entry.version
+      ) {
+        sources.push({ manifest, registryDir: entry.dir, packageDir: entry.dir })
+      }
+    } catch {
+      // A broken installation must not hide the other catalog entries.
+    }
   }
 
   const selected = new Map<string, CatalogSource>()
@@ -150,16 +171,22 @@ export function listConnectorCatalog(
   }
 
   return [...selected.values()]
-    .map(({ manifest, registryDir }) => {
+    .map(({ manifest, registryDir, packageDir, iconAsset }) => {
       const connector = manifest.connector
       const entry = servers[manifest.id]
       const marker = readManagedMarker(entry)
+      const installedRoot = installedRoots.get(manifest.id)
+      const icon =
+        (installedRoot ? findResourceIcon(installedRoot) : undefined) ??
+        (packageDir ? findResourceIcon(packageDir) : undefined) ??
+        (iconAsset ? registerResourceIconAsset(registryDir, iconAsset) : undefined)
       const unavailableReason =
         manifest.minAppVersion && semver.lt(appVersion, manifest.minAppVersion)
           ? `需要 Phi ${manifest.minAppVersion} 或更高版本`
           : undefined
       const result: FeaturedMcpConnector = {
         id: manifest.id,
+        ...(icon ? { icon } : {}),
         version: manifest.version,
         name: manifest.title,
         description: manifest.summary,
@@ -485,7 +512,7 @@ function catalogSourcesFromDirectory(root: string): CatalogSource[] {
           .join('; ')}`
       )
     }
-    return { manifest: validation.package.manifest, registryDir: directory }
+    return { manifest: validation.package.manifest, registryDir: directory, packageDir: dir }
   })
 }
 
@@ -495,7 +522,8 @@ function catalogSourcesFromRegistry(dir: string): CatalogSource[] {
     .filter((entry) => entry.type === 'mcp')
     .map((entry) => ({
       manifest: manifestFromRegistryEntry(registry, entry),
-      registryDir: registry.dir
+      registryDir: registry.dir,
+      ...(entry.iconAsset ? { iconAsset: entry.iconAsset } : {})
     }))
 }
 

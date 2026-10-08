@@ -13,6 +13,7 @@ test('connector sidebar groups installed services and toggles them with a switch
       name: 'pubmed',
       title: 'PubMed',
       connectorId: 'pubmed',
+      icon: { key: 'owned-pubmed-icon' },
       category: '健康与生命科学',
       url: 'https://pubmed.mcp.claude.com/mcp',
       status: 'configured'
@@ -22,6 +23,7 @@ test('connector sidebar groups installed services and toggles them with a switch
       name: 'google-drive',
       title: 'Google Drive',
       connectorId: 'google-drive',
+      icon: { key: 'owned-google-drive-icon' },
       category: '生产力',
       url: 'https://drivemcp.googleapis.com/mcp/v1',
       status: 'configured'
@@ -56,8 +58,10 @@ test('connector sidebar groups installed services and toggles them with a switch
   assert.match(markup, /启用 disabled-local-service/)
   assert.match(markup, /关闭 Google Drive/)
   assert.match(markup, /关闭 PubMed/)
-  assert.match(markup, /google-drive\.svg/)
-  assert.match(markup, /pubmed\.svg/)
+  assert.match(markup, /data-phi-resource-icon-key="owned-google-drive-icon"/)
+  assert.match(markup, /data-phi-resource-icon-key="owned-pubmed-icon"/)
+  assert.equal(markup.match(/data-phi-resource-icon="mcp"/g)?.length, 3)
+  assert.doesNotMatch(markup, /<img/)
   assert.doesNotMatch(markup, /https:\/\/pubmed\.mcp\.claude\.com\/mcp/)
   assert.doesNotMatch(markup, /https:\/\/drivemcp\.googleapis\.com\/mcp\/v1/)
 })

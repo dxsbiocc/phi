@@ -14,6 +14,8 @@ import { stringify as stringifyYaml } from 'yaml'
 import { createDeterministicTarGz, type ArchiveFile } from '../../packages/archive'
 import { parseWrapperCompositionManifest } from '../composition/manifest'
 import { collectIncludeReferences } from '../composition/includes'
+import { findPackageIcon, writeRegistryIconAsset } from '../../packages/icon-assets'
+import type { RegistryIconAsset } from '../../../../shared/resourceIconTypes'
 
 export type WrapperPackageKind = 'module' | 'subworkflow' | 'workflow' | 'support'
 
@@ -39,6 +41,8 @@ export interface WrapperPackageSource {
   manifest: GeneratedWrapperPackageManifest
   /** Tree-relative source files plus the generated package manifest. */
   files: Map<string, Buffer>
+  /** Optional icon at the family root or beside its root wrapper adapter. */
+  iconPath?: string
 }
 
 export interface UnattributedWrapperInclude {
@@ -75,6 +79,7 @@ export interface WrapperRegistryEntry {
   sha256: string
   size: number
   dependsOn: WrapperPackageDependency[]
+  iconAsset?: RegistryIconAsset
 }
 
 export interface WrapperRegistryIndex {
@@ -98,6 +103,7 @@ export interface MaterializeWrapperRegistryResult extends BuildWrapperPackageSou
 
 interface MutablePackage {
   id: string
+  root: string
   kind: WrapperPackageKind
   provider: string
   title: string
@@ -157,6 +163,7 @@ export function buildWrapperPackageSources(
     const id = packageId('support', provider, support.name)
     const source: MutablePackage = {
       id,
+      root: support.root,
       kind: 'support',
       provider,
       title: `${support.name} shared wrapper support`,
@@ -248,6 +255,7 @@ function discoverComponentPackages(wrappersRoot: string, files: string[]): Mutab
     const metadata = readAdapterMetadata(wrappersRoot, root)
     return {
       id: packageId(definition.kind, definition.provider, definition.name),
+      root,
       kind: definition.kind,
       provider: definition.provider,
       title:
@@ -274,6 +282,7 @@ function discoverComponentPackages(wrappersRoot: string, files: string[]): Mutab
     if (!idMatch) continue
     packages.push({
       id: packageId('workflow', idMatch[1], idMatch[2]),
+      root,
       kind: 'workflow',
       provider: idMatch[1],
       title: metadata.name,
@@ -431,7 +440,8 @@ function loadPackageSource(
     fileMap.set(path, readFileSync(fullPath))
   }
   fileMap.set('phi-package.yaml', Buffer.from(stringifyYaml(manifest), 'utf8'))
-  return { kind: source.kind, manifest, files: fileMap }
+  const iconPath = findPackageIcon(fileMap, [source.root, `${source.root}/wrapper`])
+  return { kind: source.kind, manifest, files: fileMap, ...(iconPath ? { iconPath } : {}) }
 }
 
 function writeWrapperPackage(source: WrapperPackageSource, outDir: string): WrapperRegistryEntry {
@@ -449,6 +459,7 @@ function writeWrapperPackage(source: WrapperPackageSource, outDir: string): Wrap
   const archive = createDeterministicTarGz(archiveFiles)
   const archiveName = `wrapper-${source.manifest.id}-${source.manifest.version}.tar.gz`
   writeFileSync(join(outDir, archiveName), archive)
+  const iconAsset = writeRegistryIconAsset(source.manifest, source.iconPath, source.files, outDir)
   return {
     id: source.manifest.id,
     type: 'wrapper',
@@ -458,7 +469,8 @@ function writeWrapperPackage(source: WrapperPackageSource, outDir: string): Wrap
     archive: archiveName,
     sha256: sha256(archive),
     size: archive.length,
-    dependsOn: source.manifest.dependsOn
+    dependsOn: source.manifest.dependsOn,
+    ...(iconAsset ? { iconAsset } : {})
   }
 }
 

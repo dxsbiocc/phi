@@ -6,6 +6,7 @@ import type {
 } from '../../../../../shared/packageManagerTypes'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import { PhiIcons } from '../../../icons'
+import { ResourceIcon } from '../../../components/ResourceIcon'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
 import { CatalogResultsTable } from '../../../components/catalog/CatalogResultsTable'
 import { CatalogPagination } from '../../../components/catalog/CatalogPagination'
@@ -257,6 +258,13 @@ export function WrapperCatalogDialog({
               return {
                 rowKey: choice.id,
                 id: choice.id,
+                icon: (
+                  <ResourceIcon
+                    icon={choice.cached?.icon ?? choice.registryEntry?.icon}
+                    kind="wrapper"
+                    sx={{ color: 'primary.main' }}
+                  />
+                ),
                 title: choice.title,
                 summary: choice.summary,
                 metadata: choice.metadata,

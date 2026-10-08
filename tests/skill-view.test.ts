@@ -11,6 +11,7 @@ import {
 import { skillMarkdownBody } from '../src/renderer/src/features/skill/lib/skillMarkdown'
 import type { SkillSummary } from '../src/renderer/src/types'
 import type { PackageRegistryEntryView } from '../src/shared/packageManagerTypes'
+import { cacheResourceIconFixture } from './helpers/resourceIconFixture'
 
 function skill(overrides: Partial<SkillSummary> = {}): SkillSummary {
   return {
@@ -147,6 +148,30 @@ test('skill sidebar keeps management actions out of the browsing list', () => {
   assert.match(markup, /create-wrapper/)
   assert.doesNotMatch(markup, /卸载技能/)
   assert.doesNotMatch(markup, /全局启用技能/)
+})
+
+test('skills reuse their own icon in sidebar, detail, and bundled or package catalog rows', async () => {
+  const key = 'owned-skill-icon'
+  await cacheResourceIconFixture(key)
+  const owned = skill({ icon: { key }, core: false, enabled: false, globalEnabled: false })
+  const view = renderSkillView([owned])
+  assert.equal(view.match(/data-phi-resource-icon-key="owned-skill-icon"/g)?.length, 2)
+  assert.equal(view.match(/<img[^>]*src="data:image\/png;base64,iVBORw0KGgo="/g)?.length, 2)
+
+  const catalog = renderSkillCatalog({
+    skills: [owned],
+    registry: {
+      id: 'owned-icons',
+      dir: '/owned-icons',
+      trust: 'imported',
+      schemaVersion: 1,
+      generatedAt: '2026-10-08',
+      packages: [packageEntry('available-icon-skill', { icon: { key } })]
+    },
+    registryDir: '/owned-icons'
+  })
+  assert.equal(catalog.match(/data-phi-resource-icon-key="owned-skill-icon"/g)?.length, 2)
+  assert.equal(catalog.match(/<img[^>]*src="data:image\/png;base64,iVBORw0KGgo="/g)?.length, 2)
 })
 
 test('skill sidebar uses effective enablement and keeps core switches locked', () => {

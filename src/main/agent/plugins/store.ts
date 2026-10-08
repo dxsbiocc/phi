@@ -14,6 +14,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 
 import { getPhiAgentDir } from '../runtime-paths'
 import type { PhiPluginManifest } from './phi-package'
+import { PACKAGE_ICON_FILENAMES } from '../packages/icon-assets'
 
 export type PluginSource = 'bundled' | 'local'
 
@@ -194,7 +195,7 @@ export function copyPluginPackage(
   )
   mkdirSync(temporary, { recursive: false })
 
-  const paths = new Set<string>(['phi-package.yaml'])
+  const paths = new Set<string>(['phi-package.yaml', ...PACKAGE_ICON_FILENAMES])
   if (manifest.files) paths.add(manifest.files)
   if (existsSync(join(sourceRoot, 'README.md'))) paths.add('README.md')
   for (const file of manifest.components.agents ?? []) paths.add(file)

@@ -77,6 +77,7 @@ import { SkillCatalogDialog, SkillDetail } from './features/skill/SkillView'
 import { useSkillCatalog } from './features/skill/hooks/useSkillCatalog'
 import { McpDetail } from './features/mcp/McpView'
 import { ConnectorIcon } from './features/mcp/components/ConnectorIcon'
+import type { ResourceIconRef } from '../../shared/resourceIconTypes'
 import { useMcpServerCatalog } from './features/mcp/hooks/useMcpServerCatalog'
 import { type SettingsCategory } from './components/SettingsDialog'
 import AppDialogs, { type SnackbarNotice } from './AppDialogs'
@@ -608,8 +609,8 @@ function WorkspaceResourceHeader({
   )
 }
 
-function renderConnectorTabIcon(connectorId?: string): React.JSX.Element {
-  return <ConnectorIcon connectorId={connectorId} size={20} />
+function renderConnectorTabIcon(icon?: ResourceIconRef): React.JSX.Element {
+  return <ConnectorIcon icon={icon} size={20} />
 }
 
 function renderFileWorkspaceTabIcon(tab: WorkspaceFileWorkspaceTab): React.JSX.Element {
@@ -3676,6 +3677,7 @@ function App(): React.JSX.Element {
         title: server.title ?? server.name,
         subtitle: server.sourcePath ?? server.command,
         connectorId: server.connectorId ?? server.packageId,
+        icon: server.icon,
         connectorUrl: server.url
       })
     },

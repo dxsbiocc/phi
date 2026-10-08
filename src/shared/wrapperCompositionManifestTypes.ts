@@ -42,6 +42,7 @@ export interface WrapperCompositionManifest {
  * it and why it may be unavailable to the agent.
  */
 export interface WrapperCompositionCatalogItem extends WrapperCompositionManifest {
+  icon?: ResourceIconRef
   /** Absent for user-authored wrappers under wrappers/custom/. */
   packageId?: string
   /** Identifier used by wrapper:<id> enablement, including user-authored wrappers. */
@@ -53,3 +54,4 @@ export interface WrapperCompositionCatalogItem extends WrapperCompositionManifes
   /** Set when this wrapper is hidden from agent tools. */
   hiddenReason?: string
 }
+import type { ResourceIconRef } from './resourceIconTypes'

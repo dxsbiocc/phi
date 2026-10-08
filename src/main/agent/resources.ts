@@ -14,12 +14,17 @@ import { getGlobalMcpConfigPaths, getPhiAgentDir, getProjectMcpConfigPaths } fro
 import { discoverPhiAgents } from './agents/discovery'
 import { getEnablementSnapshot, isCoreSkill, setEnabled, skillEnablementSource } from './enablement'
 import { parseSkillFile } from './content/skill'
+import { findResourceIcon } from './resource-icons'
+import type { ResourceIconRef } from '../../shared/resourceIconTypes'
+import { listActiveMcpPackages } from './packages/mcp-store'
+import { listInstalledPlugins } from './plugins/loader'
 
 const AGENT_DIR = getPhiAgentDir()
 
 export type { SkillContent, SkillSourceCategory, SkillSummary } from '../../shared/skillTypes'
 
 export interface McpServerSummary {
+  icon?: ResourceIconRef
   id: string
   name: string
   /** Catalog title of the connector this server came from, when known. */
@@ -162,7 +167,8 @@ function toSkillSummary(
       baseDir?: string
     }
   },
-  snapshot: ReturnType<typeof getEnablementSnapshot>
+  snapshot: ReturnType<typeof getEnablementSnapshot>,
+  pluginDirectory?: string
 ): SkillSummary {
   const sourceCategory = classifySkillSource(skill)
   const key = `skill:${skill.name}`
@@ -175,9 +181,14 @@ function toSkillSummary(
   const globalEnabled = core ? true : (globalOverride ?? sourceDefault)
   const enabled = core ? true : (projectOverride ?? globalEnabled)
   const metadata = skillMetadata(skill.filePath)
+  const icon = findResourceIcon(
+    dirname(skill.filePath),
+    sourceCategory === 'plugin' && pluginDirectory ? [pluginDirectory] : []
+  )
 
   return {
     id: skill.filePath,
+    ...(icon ? { icon } : {}),
     name: skill.name,
     description: skill.description,
     filePath: skill.filePath,
@@ -399,9 +410,15 @@ export async function listSkills(cwd = WORKSPACE_DIR): Promise<SkillSummary[]> {
   await loader.reload()
   const { skills } = loader.getSkills()
   const snapshot = getEnablementSnapshot({ projectDir: cwd, agentDir: AGENT_DIR })
+  // SDK baseDir is a plugin skill component directory, so use the validated installed package root.
+  const pluginDirectories = new Map(
+    listInstalledPlugins({ agentDir: AGENT_DIR }).map((plugin) => [plugin.id, plugin.dir])
+  )
 
   return skills
-    .map((skill) => toSkillSummary(skill, snapshot))
+    .map((skill) =>
+      toSkillSummary(skill, snapshot, pluginDirectories.get(skill.sourceInfo.origin ?? ''))
+    )
     .sort(
       (left, right) =>
         SKILL_SOURCE_CATEGORY_ORDER[left.sourceCategory] -
@@ -533,6 +550,9 @@ async function listMcpServersFromPaths(configPaths: string[]): Promise<McpServer
   const seen = new Set<string>()
   const servers: McpServerSummary[] = []
   const disabled = new Set(readDisabledMcpServerNames())
+  const installedRoots = new Map(
+    listActiveMcpPackages(AGENT_DIR).map((entry) => [entry.id, entry.dir])
+  )
 
   for (const path of configPaths) {
     const serverMap = getServerMap(readJsonFile(path))
@@ -541,6 +561,9 @@ async function listMcpServersFromPaths(configPaths: string[]): Promise<McpServer
     for (const [name, value] of Object.entries(serverMap)) {
       const server = toMcpServerSummary(name, value, path, disabled.has(name))
       if (!server || seen.has(server.id)) continue
+      const installedRoot = server.packageId ? installedRoots.get(server.packageId) : undefined
+      const icon = installedRoot ? findResourceIcon(installedRoot) : undefined
+      if (icon) server.icon = icon
       seen.add(server.id)
       servers.push(server)
     }
