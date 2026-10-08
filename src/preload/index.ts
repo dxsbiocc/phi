@@ -27,6 +27,10 @@ import type {
   RemoteProjectReachability
 } from '../shared/projectLocation'
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
+import type {
+  RemoteDirectoryListRequest,
+  RemoteDirectoryListing
+} from '../shared/remoteDirectoryBrowser'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
@@ -806,6 +810,9 @@ type RendererAuthApi = {
     }
   ) => Promise<Project>
   listRemoteHosts: () => Promise<RemoteHostProfile[]>
+  listRemoteProjectDirectories: (
+    request: RemoteDirectoryListRequest
+  ) => Promise<RemoteDirectoryListing>
   listOpenSshHosts: () => Promise<OpenSshHost[]>
   saveOpenSshHost: (input: OpenSshHostInput) => Promise<RemoteHostProfile>
   saveRemoteHost: (input: {
@@ -1323,6 +1330,10 @@ const api: RendererAuthApi = {
   ): Promise<Project> => ipcRenderer.invoke('projects:updateDefaults', id, defaults),
   listRemoteHosts: (): Promise<RemoteHostProfile[]> =>
     ipcRenderer.invoke('projects:listRemoteHosts'),
+  listRemoteProjectDirectories: (
+    request: RemoteDirectoryListRequest
+  ): Promise<RemoteDirectoryListing> =>
+    ipcRenderer.invoke('projects:listRemoteDirectories', request),
   listOpenSshHosts: (): Promise<OpenSshHost[]> => ipcRenderer.invoke('projects:listOpenSshHosts'),
   saveOpenSshHost: (input: OpenSshHostInput): Promise<RemoteHostProfile> =>
     ipcRenderer.invoke('projects:saveOpenSshHost', input),

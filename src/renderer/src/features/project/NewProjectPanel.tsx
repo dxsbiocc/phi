@@ -161,7 +161,10 @@ function NewProjectDialog({
             hostsError={hostsError}
             hostProfileId={hostProfileId}
             remoteRoot={remoteRoot}
-            onHostChange={setHostProfileId}
+            onHostChange={(id) => {
+              setHostProfileId(id)
+              setRemoteRoot('')
+            }}
             onRemoteRootChange={setRemoteRoot}
             onOpenRemoteSettings={() => {
               setCreateError(null)
@@ -181,19 +184,35 @@ function NewProjectDialog({
             >
               <ToggleButton value="ask" sx={{ minHeight: 44 }}>
                 <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
-                  <AskPermissionIcon fontSize="small" />
+                  <AskPermissionIcon
+                    fontSize="small"
+                    sx={{ color: PERMISSION_MODE_ICON_META.ask.color }}
+                  />
                   <span>重要操作前询问</span>
                 </Stack>
               </ToggleButton>
-              <ToggleButton value="auto" sx={{ minHeight: 44 }}>
+              <ToggleButton
+                value="auto"
+                sx={{
+                  minHeight: 44,
+                  color: 'warning.main',
+                  '&.Mui-selected': { color: 'warning.main' }
+                }}
+              >
                 <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
-                  <AutoPermissionIcon fontSize="small" />
+                  <AutoPermissionIcon
+                    fontSize="small"
+                    sx={{ color: PERMISSION_MODE_ICON_META.auto.color }}
+                  />
                   <span>帮我批准</span>
                 </Stack>
               </ToggleButton>
               <ToggleButton value="full" sx={{ minHeight: 44, color: 'error.main' }}>
                 <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
-                  <FullPermissionIcon fontSize="small" />
+                  <FullPermissionIcon
+                    fontSize="small"
+                    sx={{ color: PERMISSION_MODE_ICON_META.full.color }}
+                  />
                   <span>完全访问权限</span>
                 </Stack>
               </ToggleButton>

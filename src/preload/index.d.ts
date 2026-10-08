@@ -25,6 +25,10 @@ import type {
   RemoteProjectReachability
 } from '../shared/projectLocation'
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
+import type {
+  RemoteDirectoryListRequest,
+  RemoteDirectoryListing
+} from '../shared/remoteDirectoryBrowser'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
@@ -848,6 +852,9 @@ declare global {
         }
       ) => Promise<PreloadProject>
       listRemoteHosts: () => Promise<PreloadRemoteHostProfile[]>
+      listRemoteProjectDirectories: (
+        request: RemoteDirectoryListRequest
+      ) => Promise<RemoteDirectoryListing>
       listOpenSshHosts: () => Promise<PreloadOpenSshHost[]>
       saveOpenSshHost: (input: OpenSshHostInput) => Promise<PreloadRemoteHostProfile>
       saveRemoteHost: (input: {

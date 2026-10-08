@@ -178,6 +178,7 @@ import { listOpenSshHosts } from './agent/ssh-config-discovery'
 import { saveOpenSshHost } from './agent/ssh-config-editor'
 import { sshConfigHostId, type OpenSshHostInput } from '../shared/remoteHostProfile'
 import { remoteDoctor } from './agent/remote-doctor'
+import { listRemoteProjectDirectories } from './agent/remote-directory-browser'
 import { createCursorH2Bridge } from './agent/cursor-h2-bridge'
 import { installRemoteNextflow } from './agent/remote-nextflow-install'
 import { RemoteProjectConnectionTracker } from './agent/remote-project-connection'
@@ -8318,6 +8319,9 @@ app.whenReady().then(async () => {
     }
   )
   ipcMain.handle('projects:listRemoteHosts', async () => listAvailableRemoteHostProfiles())
+  ipcMain.handle('projects:listRemoteDirectories', async (_, input: unknown) =>
+    listRemoteProjectDirectories(input)
+  )
   ipcMain.handle('projects:listOpenSshHosts', async () => listOpenSshHosts())
   ipcMain.handle('projects:saveOpenSshHost', async (_, input: OpenSshHostInput) => {
     if (!input || typeof input !== 'object') throw new Error('SSH 服务器配置无效')

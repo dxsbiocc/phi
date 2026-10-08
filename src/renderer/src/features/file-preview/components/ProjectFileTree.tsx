@@ -8,6 +8,7 @@ import {
   type FileTreeVirtualItem,
   type FileTreeVirtualViewport
 } from '../../../lib/fileTreeVirtualization'
+import { fileTreeRevealPaths } from '../lib/fileTreeReveal'
 import { FileTreeRootRow } from './FileTreeRootRow'
 import { FileTreeRow } from './FileTreeRow'
 import {
@@ -40,8 +41,12 @@ type ProjectFileTreeProps = {
   rootPath: string
   activePath: string
   onOpenFile: (path: string) => void
+  onSelectDirectory?: (path: string) => void
   onListDirectory: (path: string) => Promise<DirectoryListing>
   initialListing?: DirectoryListing
+  revealPath?: string
+  searchPlaceholder?: string
+  stateKey?: string
   variant?: 'sidebar' | 'standalone'
 }
 
@@ -151,11 +156,15 @@ export function ProjectFileTree({
   rootPath,
   activePath,
   onOpenFile,
+  onSelectDirectory,
   onListDirectory,
   initialListing,
+  revealPath,
+  searchPlaceholder = '筛选文件...',
+  stateKey,
   variant = 'sidebar'
 }: ProjectFileTreeProps): React.JSX.Element {
-  const treeStateKey = `${variant}:${rootPath}`
+  const treeStateKey = stateKey ?? `${variant}:${rootPath}`
   const [query, setQuery] = useState(() => rememberedTreeStates.get(treeStateKey)?.query ?? '')
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
     () => new Set(rememberedTreeStates.get(treeStateKey)?.expandedPaths ?? [rootPath])
@@ -171,6 +180,27 @@ export function ProjectFileTree({
   }))
   const normalizedQuery = query.trim().toLowerCase()
   const isStandalone = variant === 'standalone'
+  const revealPaths = useMemo(
+    () => (revealPath ? fileTreeRevealPaths(rootPath, revealPath) : []),
+    [revealPath, rootPath]
+  )
+  const revealTarget = revealPaths.at(-1) ?? ''
+
+  useEffect(() => {
+    if (revealPaths.length === 0) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      setQuery('')
+      setExpandedPaths((current) => {
+        if (revealPaths.every((path) => current.has(path))) return current
+        return new Set([...current, ...revealPaths])
+      })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [revealPaths])
 
   useEffect(() => {
     rememberTreeState(treeStateKey, {
@@ -330,6 +360,33 @@ export function ProjectFileTree({
     if (state) state.scrollTop = scrollContainer.scrollTop
   }, [scrollContainer, treeStateKey, updateVirtualViewport])
 
+  const lastAutoRevealRef = useRef('')
+  useEffect(() => {
+    if (!scrollContainer || !revealTarget || lastAutoRevealRef.current === revealTarget) return
+    let nextScrollTop: number
+    if (revealTarget === rootPath) {
+      nextScrollTop = 0
+    } else {
+      const rowIndex = flatRows.findIndex(
+        (row) => row.kind === 'entry' && row.entry.path === revealTarget
+      )
+      if (rowIndex < 0) return
+      const precedingHeight = flatRows.slice(0, rowIndex).reduce((height, row) => {
+        return height + (virtualRowHeights[row.id] ?? 32)
+      }, 34)
+      nextScrollTop = Math.max(
+        0,
+        precedingHeight - Math.max(0, (scrollContainer.clientHeight - 32) / 2)
+      )
+    }
+    const frame = window.requestAnimationFrame(() => {
+      scrollContainer.scrollTop = nextScrollTop
+      updateVirtualViewport(scrollContainer)
+      lastAutoRevealRef.current = revealTarget
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [flatRows, revealTarget, rootPath, scrollContainer, updateVirtualViewport, virtualRowHeights])
+
   useEffect(() => {
     if (restoredScrollRef.current || !scrollContainer) return undefined
     if (
@@ -379,6 +436,7 @@ export function ProjectFileTree({
               isActive={isActive}
               onClick={() => {
                 if (isDirectory) {
+                  onSelectDirectory?.(entry.path)
                   toggleDirectory(entry.path)
                 } else {
                   onOpenFile(entry.path)
@@ -389,7 +447,7 @@ export function ProjectFileTree({
         }
       }
     },
-    [activePath, expandedPaths, onOpenFile, toggleDirectory]
+    [activePath, expandedPaths, onOpenFile, onSelectDirectory, toggleDirectory]
   )
 
   const rootState = directories[rootPath]
@@ -423,7 +481,7 @@ export function ProjectFileTree({
         <TextField
           size="small"
           fullWidth
-          placeholder="筛选文件..."
+          placeholder={searchPlaceholder}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           slotProps={{
@@ -448,7 +506,10 @@ export function ProjectFileTree({
           rootDisplayPath={rootDisplayPath}
           isExpanded={rootExpanded}
           isActive={rootActive}
-          onToggle={() => toggleDirectory(rootPath)}
+          onToggle={() => {
+            onSelectDirectory?.(rootPath)
+            toggleDirectory(rootPath)
+          }}
         />
         <Box ref={virtualListRef}>
           {virtualCells.beforeHeight > 0 ? (

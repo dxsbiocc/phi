@@ -151,19 +151,26 @@ test('remote fields select a discovered OpenSSH host directly and accept a serve
     onOpenRemoteSettings: () => actions.push('settings')
   })
   const hostField = findProps(fields, (props) => props.label === 'SSH 服务器')
-  const pathField = findProps(fields, (props) => props.label === '服务器上的项目目录')
+  const directoryTree = findProps(
+    fields,
+    (props) => props.hostProfileId === 'ssh-config:lab-hpc' && props.selectedPath === '/cluster/lab'
+  )
   const settings = findProps(fields, (props) => props.children === '管理服务器')
   ;(hostField.onChange as (event: { target: { value: string } }) => void)({
     target: { value: 'ssh-config:other' }
   })
-  ;(pathField.onChange as (event: { target: { value: string } }) => void)({
-    target: { value: '/new/path' }
-  })
+  ;(directoryTree.onSelectPath as (path: string) => void)('/new/path')
   ;(settings.onClick as () => void)()
   assert.deepEqual(actions, ['host:ssh-config:other', 'path:/new/path', 'settings'])
   const markup = render(fields)
   assert.match(markup, /lab-hpc/)
+  assert.doesNotMatch(markup, /lab-hpc · lab-hpc/)
   assert.match(markup, /可直接选择/)
   assert.match(markup, /\/cluster\/lab/)
+  assert.match(markup, /服务器上的项目目录/)
+  assert.match(markup, /可直接输入绝对路径，或在下方目录树中选择/)
+  assert.match(markup, /筛选文件夹/)
+  assert.doesNotMatch(markup, /填写服务器上的绝对路径/)
+  assert.doesNotMatch(markup, /创建后可在服务器目录中对话/)
   assert.doesNotMatch(markup, /选择文件夹/)
 })

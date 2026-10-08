@@ -341,6 +341,7 @@ type HarnessResult = {
   wrapperJobOptions: Record<string, unknown>
   remoteResolverProjectIds: string[]
   remoteDoctorCalls: Array<{ hostProfileId: string; remotePath?: string; options?: unknown }>
+  remoteDirectoryCalls: Array<{ hostProfileId: string; path: string }>
   setWrapperPlan: (
     plan:
       | {
@@ -467,6 +468,7 @@ async function harness(
     remotePath?: string
     options?: unknown
   }> = []
+  const remoteDirectoryCalls: Array<{ hostProfileId: string; path: string }> = []
   let wrapperPlan:
     | {
         revision?: number
@@ -2691,6 +2693,17 @@ async function harness(
         }
       }
     },
+    './agent/remote-directory-browser': {
+      listRemoteProjectDirectories: async (input: { hostProfileId: string; path: string }) => {
+        remoteDirectoryCalls.push(input)
+        return {
+          hostProfileId: input.hostProfileId,
+          path: input.path,
+          directories: [{ name: 'data', path: `${input.path.replace(/\/$/, '')}/data` }],
+          truncated: false
+        }
+      }
+    },
     './agent/remote-nextflow-install': {
       installRemoteNextflow: async () => ({
         path: '/home/scientist/.local/bin/nextflow',
@@ -3272,6 +3285,7 @@ async function harness(
     wrapperJobOptions,
     remoteResolverProjectIds,
     remoteDoctorCalls,
+    remoteDirectoryCalls,
     setWrapperPlan: (plan) => {
       wrapperPlan = plan
     },
@@ -5156,6 +5170,24 @@ test('main IPC: remote doctor accepts a host profile before any project exists',
   })
   await assert.rejects(app.invoke('remote:doctor', '', '/cluster/work'), /档案 ID 无效/)
   await assert.rejects(app.invoke('remote:doctor', 'host-1', 42), /路径无效/)
+  assert.equal(app.sessions.length, 0)
+})
+
+test('main IPC lists remote project directories before a project exists', async () => {
+  const app = await harness()
+  assert.deepEqual(
+    await app.invoke('projects:listRemoteDirectories', {
+      hostProfileId: 'host-1',
+      path: '/'
+    }),
+    {
+      hostProfileId: 'host-1',
+      path: '/',
+      directories: [{ name: 'data', path: '/data' }],
+      truncated: false
+    }
+  )
+  assert.deepEqual(app.remoteDirectoryCalls, [{ hostProfileId: 'host-1', path: '/' }])
   assert.equal(app.sessions.length, 0)
 })
 

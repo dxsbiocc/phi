@@ -27,6 +27,10 @@ import type {
 } from '../../shared/projectLocation'
 import type { OpenSshHostInput } from '../../shared/remoteHostProfile'
 import type {
+  RemoteDirectoryListRequest,
+  RemoteDirectoryListing
+} from '../../shared/remoteDirectoryBrowser'
+import type {
   WorkspaceChangeSummary,
   WorkspaceDiffReference
 } from '../../shared/workspaceChangeTypes'
@@ -821,6 +825,9 @@ export type RendererApi = AutoCompactionApi & {
     }
   ) => Promise<Project>
   listRemoteHosts: () => Promise<RemoteHostProfile[]>
+  listRemoteProjectDirectories: (
+    request: RemoteDirectoryListRequest
+  ) => Promise<RemoteDirectoryListing>
   listOpenSshHosts: () => Promise<OpenSshHost[]>
   saveOpenSshHost: (input: OpenSshHostInput) => Promise<RemoteHostProfile>
   saveRemoteHost: (input: RemoteHostProfileInput) => Promise<RemoteHostProfile>
