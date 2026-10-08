@@ -168,7 +168,7 @@ test('prefers the recorded source registry before a newer alternate registry', (
   }
 })
 
-test('filters incompatible updates and every app-managed bundled package', () => {
+test('filters incompatible updates and lets legacy bundled content move to signed sources', () => {
   const { root } = sandbox()
   try {
     const source = registry(root, 'source', 'official', [])
@@ -193,20 +193,22 @@ test('filters incompatible updates and every app-managed bundled package', () =>
       ...skillEntry(imported.dir, 'bundled-connector', '3.0.0'),
       type: 'mcp'
     })
-    assert.deepEqual(
-      computePackageUpdates(
-        [
-          installed('too-new', 'skill', 'official'),
-          installed('missing-tool', 'skill', 'official'),
-          installed('bundled-plugin', 'plugin', 'builtin'),
-          installed('bundled-wrapper', 'wrapper', 'builtin'),
-          installed('bundled-connector', 'mcp', 'builtin')
-        ],
-        [source, imported],
-        { appVersion: '1.0.0' }
-      ),
-      []
+    const updates = computePackageUpdates(
+      [
+        installed('too-new', 'skill', 'official'),
+        installed('missing-tool', 'skill', 'official'),
+        installed('bundled-plugin', 'plugin', 'builtin'),
+        installed('bundled-wrapper', 'wrapper', 'builtin'),
+        installed('bundled-connector', 'mcp', 'builtin')
+      ],
+      [source, imported],
+      { appVersion: '1.0.0' }
     )
+    assert.deepEqual(
+      updates.map((entry) => entry.id),
+      ['bundled-connector', 'bundled-plugin', 'bundled-wrapper']
+    )
+    assert.ok(updates.every((entry) => entry.trust === 'official' && entry.newVersion === '2.0.0'))
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -255,10 +257,18 @@ test('applies one update and all updates through dependency-safe upgrade order',
     )
     source.packages.push(alphaV2, betaV2)
     const pending = listPackageUpdates([source], { agentDir, appVersion: '1.0.0' })
+    const prepared: string[] = []
     const result = await applyPackageUpdates(pending, [source], {
       agentDir,
-      appVersion: '1.0.0'
+      appVersion: '1.0.0',
+      preparePackage: async (registry, request) => {
+        // A remote prepare step uses the current installed state, so alpha can only
+        // resolve its ^2 dependency after beta's upgrade has already committed.
+        planInstall(registry, request, { agentDir, appVersion: '1.0.0' })
+        prepared.push(request.id)
+      }
     })
+    assert.deepEqual(prepared, ['beta-skill', 'alpha-skill'])
     assert.deepEqual(
       result.map((item) => [item.id, item.version]),
       [

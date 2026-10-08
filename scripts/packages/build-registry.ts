@@ -30,6 +30,10 @@ import { signRegistryIndex } from '../../src/main/agent/packages/signature'
 import { findPackageIcon, writeRegistryIconAsset } from '../../src/main/agent/packages/icon-assets'
 import type { RegistryIconAsset } from '../../src/shared/resourceIconTypes'
 import {
+  writeRegistryManifestAsset,
+  type RegistryManifestAsset
+} from '../../src/main/agent/packages/manifest-assets'
+import {
   materializeWrapperRegistry,
   type UnattributedWrapperInclude,
   type WrapperPackageKind
@@ -50,6 +54,7 @@ export interface RegistryIndexEntry {
   category?: string
   preview?: string
   iconAsset?: RegistryIconAsset
+  manifestAsset?: RegistryManifestAsset
 }
 
 export interface RegistryIndex {
@@ -77,6 +82,7 @@ export interface BuildRegistryOptions {
   outDir?: string
   generatedAt?: string
   signKey?: string
+  wrapperVersion?: string
 }
 
 interface PackageSource {
@@ -98,6 +104,8 @@ export function buildRegistryWithReport(options: BuildRegistryOptions = {}): Reg
   )
   const outDir = resolve(repoRoot, options.outDir ?? 'dist/registry')
   const generatedAt = options.generatedAt ?? new Date().toISOString()
+  if (options.wrapperVersion && !semver.valid(options.wrapperVersion))
+    throw new Error('wrapperVersion must be semantic version')
   if (!Number.isFinite(Date.parse(generatedAt)))
     throw new Error(`invalid generatedAt: ${generatedAt}`)
   rejectUntrackedResources(repoRoot)
@@ -129,7 +137,8 @@ export function buildRegistryWithReport(options: BuildRegistryOptions = {}): Reg
     files: tracked
       .filter((path) => path.startsWith(wrappersPrefix))
       .map((path) => path.slice(wrappersPrefix.length)),
-    writeIndex: false
+    writeIndex: false,
+    version: options.wrapperVersion
   })
   const entries = [
     ...sources.map((source) => writePackage(source, outDir)),
@@ -313,6 +322,13 @@ function writePackage(source: PackageSource, outDir: string): RegistryIndexEntry
     outDir
   )
   if (iconAsset) entry.iconAsset = iconAsset
+  if (entry.type === 'mcp') {
+    entry.manifestAsset = writeRegistryManifestAsset(
+      entry,
+      source.files.get('phi-package.yaml')!,
+      outDir
+    )
+  }
   return entry
 }
 
@@ -463,7 +479,9 @@ if (entryScript === fileURLToPath(import.meta.url)) {
     const argv = process.argv.slice(2)
     const outDir = parseOptionalArg(argv, '--out')
     const signKey = parseOptionalArg(argv, '--sign-key')
-    const { index, report } = buildRegistryWithReport({ outDir, signKey })
+    const repoRoot = parseOptionalArg(argv, '--source')
+    const wrapperVersion = parseOptionalArg(argv, '--wrapper-version')
+    const { index, report } = buildRegistryWithReport({ outDir, signKey, repoRoot, wrapperVersion })
     const totalSize = index.packages.reduce((sum, item) => sum + item.size, 0)
     console.log(`Built ${index.packages.length} packages (${totalSize} bytes).`)
     for (const type of Object.keys(report.countsByType).sort(compareText)) {

@@ -43,6 +43,25 @@ import * as browserToolHost from '../src/main/agent/browser/browser-tool-host'
 import * as browserWorkspaceRegistry from '../src/main/browser/browser-workspace-registry'
 import * as electronBrowserEngine from '../src/main/browser/electron-browser-engine'
 
+const officialRegistryFixture = {
+  id: 'phi-packages',
+  dir: `/isolated/cache/registries/phi-packages/generations/${'a'.repeat(64)}`,
+  trust: 'official',
+  schemaVersion: 1,
+  generatedAt: '2026-10-08T00:00:00.000Z',
+  packages: []
+}
+const officialSourceDetailsFixture = {
+  id: 'phi-packages',
+  kind: 'official',
+  label: 'Phi Packages',
+  path: 'phi-packages',
+  removable: false,
+  trust: 'official',
+  status: 'ready',
+  packageCount: 0
+}
+
 const connectorCatalogFixture = [
   {
     id: 'notion',
@@ -55,7 +74,7 @@ const connectorCatalogFixture = [
     transport: 'http',
     auth: 'oauth',
     url: 'https://mcp.notion.com/mcp',
-    registryDir: '/bundled-connectors',
+    registryDir: officialRegistryFixture.dir,
     added: false
   },
   {
@@ -69,7 +88,7 @@ const connectorCatalogFixture = [
     transport: 'http',
     auth: 'oauth',
     url: 'https://connect.composio.dev/mcp',
-    registryDir: '/bundled-connectors',
+    registryDir: officialRegistryFixture.dir,
     added: false
   },
   {
@@ -83,7 +102,7 @@ const connectorCatalogFixture = [
     transport: 'http',
     auth: 'none',
     url: 'https://pubmed.mcp.claude.com/mcp',
-    registryDir: '/bundled-connectors',
+    registryDir: officialRegistryFixture.dir,
     added: false
   },
   {
@@ -97,7 +116,7 @@ const connectorCatalogFixture = [
     transport: 'http',
     auth: 'oauth',
     url: 'https://mcp.cbioportal.org/db/mcp',
-    registryDir: '/bundled-connectors',
+    registryDir: officialRegistryFixture.dir,
     added: false
   },
   ...[
@@ -116,7 +135,7 @@ const connectorCatalogFixture = [
     transport: 'http',
     auth: 'header',
     url,
-    registryDir: '/bundled-connectors',
+    registryDir: officialRegistryFixture.dir,
     added: false
   }))
 ]
@@ -342,6 +361,14 @@ type HarnessResult = {
   setRemoteConnectionCheck: (impl: () => Promise<{ phase: string }>) => void
   createdAgentOptions: Array<Record<string, unknown>>
   resourceLoaderOptions: Array<Record<string, unknown>>
+  contentSourceCalls: Array<{
+    phase: string
+    source: string
+    type?: string
+    id?: string
+    agentDir?: string
+  }>
+  contentFetchRequests: string[]
   updatedProjectDefaults: Array<Record<string, unknown>>
   updatedSessionManifests: Array<{ sessionId: string; patch: Record<string, unknown> }>
   appendedSessionEvents: Array<Record<string, unknown>>
@@ -458,6 +485,14 @@ async function harness(
   let remoteConnectionCheck: () => Promise<{ phase: string }> = async () => ({ phase: 'reachable' })
   const createdAgentOptions: Array<Record<string, unknown>> = []
   const resourceLoaderOptions: Array<Record<string, unknown>> = []
+  const contentSourceCalls: Array<{
+    phase: string
+    source: string
+    type?: string
+    id?: string
+    agentDir?: string
+  }> = []
+  const contentFetchRequests: string[] = []
   const updatedProjectDefaults: Array<Record<string, unknown>> = []
   const updatedSessionManifests: Array<{ sessionId: string; patch: Record<string, unknown> }> = []
   const appendedSessionEvents: Array<Record<string, unknown>> = []
@@ -1314,7 +1349,7 @@ async function harness(
       existsSync: (filePath: string): boolean => {
         const target = path.resolve(filePath)
         return (
-          target === path.resolve(process.cwd(), 'resources', 'skills') ||
+          target === path.resolve(process.cwd(), 'resources', 'skills', 'create-wrapper') ||
           previewFiles.has(target) ||
           previewDirectories.has(target)
         )
@@ -1389,6 +1424,12 @@ async function harness(
     },
     path,
     electron: {
+      net: {
+        fetch: async (input: string): Promise<Response> => {
+          contentFetchRequests.push(String(input))
+          return new Response('{}')
+        }
+      },
       app,
       BrowserWindow: Window,
       WebContentsView,
@@ -1512,7 +1553,8 @@ async function harness(
           getSkills: (): unknown => ({ skills: [], diagnostics: [] })
         }
       },
-      getBundledSkillsDir: (): string => path.join(process.cwd(), 'resources', 'skills'),
+      getCoreAuthoringSkillDir: (): string =>
+        path.join(process.cwd(), 'resources', 'skills', 'create-wrapper'),
       getBundledAgentsDir: (): string => path.join(process.cwd(), 'resources', 'agents'),
       getBundledResourceDir: (name: string): string => path.join(process.cwd(), 'resources', name),
       createInMemoryRuntimeSessionManager: (cwd: string): { file: string; cwd: string } => ({
@@ -2030,7 +2072,7 @@ async function harness(
       })
     },
     './agent/packages/wrapper-tree': {
-      // No tree yet: startup awaits the (mocked) bundled wrapper install, as on a first run.
+      // A fresh installation has no domain wrapper tree before a catalog choice.
       getWrapperTreeOwnershipPath: (): string => '/isolated/agent/wrappers/tree.json'
     },
     './agent/content/env-request': {
@@ -2152,22 +2194,62 @@ async function harness(
     './agent/plugins/validate': {
       validatePlugin: (): unknown => ({ ok: false, errors: [], warnings: [] })
     },
+    './agent/packages/official-registry': {
+      syncOfficialRegistry: async (options: {
+        agentDir?: string
+        fetch: typeof fetch
+      }): Promise<unknown> => {
+        await options.fetch('https://example.invalid/catalog/index.json')
+        return officialRegistryFixture
+      }
+    },
+    './agent/packages/content-source': {
+      readContentRegistry: async (
+        source: string,
+        options: { agentDir?: string; fetch: typeof fetch }
+      ): Promise<unknown> => {
+        contentSourceCalls.push({ phase: 'read', source, agentDir: options.agentDir })
+        if (source === 'phi-packages' || source === officialRegistryFixture.dir) {
+          await options.fetch('https://example.invalid/catalog/index.json')
+          return officialRegistryFixture
+        }
+        return { ...officialRegistryFixture, id: source, dir: source, trust: 'imported' }
+      },
+      prepareContentPackageInstall: async (
+        registry: { id: string },
+        request: { type: string; id: string },
+        options: { agentDir?: string; fetch: typeof fetch }
+      ): Promise<unknown> => {
+        contentSourceCalls.push({
+          phase: 'prepare',
+          source: registry.id,
+          type: request.type,
+          id: request.id,
+          agentDir: options.agentDir
+        })
+        if (registry.id === 'phi-packages')
+          await options.fetch(
+            `https://example.invalid/catalog/${request.type}-${request.id}.tar.gz`
+          )
+        return registry
+      }
+    },
+    './agent/packages/icon-views': {
+      packageRegistryIconView: (registry: unknown): unknown => registry
+    },
+    './agent/resource-icons': { readResourceIcon: (): null => null },
     './agent/packages/installer': {
       addKnownRegistry: noop,
       removeKnownRegistry: (): boolean => true,
-      listKnownRegistries: (): unknown => ({
-        registries: [
-          {
-            id: 'builtin',
-            kind: 'bundled',
-            path: '/bundled-registry',
-            removable: false,
-            trust: 'builtin',
-            packageCount: 0
-          }
-        ]
-      }),
-      loadKnownRegistryIndexes: (): unknown => ({ registries: [], errors: [] }),
+      listKnownRegistries: async (options: {
+        loadOfficialRegistry: () => Promise<unknown>
+      }): Promise<unknown> => {
+        await options.loadOfficialRegistry()
+        return { registries: [officialSourceDetailsFixture] }
+      },
+      loadKnownRegistryIndexes: async (options: {
+        loadOfficialRegistry: () => Promise<unknown>
+      }): Promise<unknown> => ({ registries: [await options.loadOfficialRegistry()], errors: [] }),
       listPackageUpdates: (): unknown[] => [],
       applyPackageUpdate: async (): Promise<unknown[]> => [],
       applyPackageUpdates: async (): Promise<unknown[]> => [],
@@ -2207,9 +2289,19 @@ async function harness(
         environments: [],
         agentDir: '/isolated'
       }),
-      installPackages: async (plan: { root: { type: string; id: string } }): Promise<unknown[]> => [
-        { type: plan.root.type, id: plan.root.id }
-      ],
+      installPackages: async (
+        plan: { registry: { id: string }; root: { type: string; id: string } },
+        options: { agentDir?: string }
+      ): Promise<unknown[]> => {
+        contentSourceCalls.push({
+          phase: 'install',
+          source: plan.registry.id,
+          type: plan.root.type,
+          id: plan.root.id,
+          agentDir: options.agentDir
+        })
+        return [{ type: plan.root.type, id: plan.root.id }]
+      },
       uninstallPackage: (): unknown[] => [],
       listInstalledPackages: (): unknown[] => []
     },
@@ -2248,7 +2340,17 @@ async function harness(
         }
         return allowed[id]?.url === url ? allowed[id].origin : undefined
       },
-      installCatalogConnector: async (): Promise<unknown[]> => [],
+      installCatalogConnector: async (
+        source: string,
+        id: string,
+        _version: string,
+        options: { agentDir?: string; fetch: typeof fetch }
+      ): Promise<unknown[]> => {
+        contentSourceCalls.push({ phase: 'mcp-install', source, id, agentDir: options.agentDir })
+        if (source === officialRegistryFixture.dir)
+          await options.fetch(`https://example.invalid/catalog/mcp-${id}.tar.gz`)
+        return []
+      },
       uninstallCatalogConnector: (): unknown[] => [],
       connectorEnvironmentBuildAction: (): unknown => {
         throw new Error('connector has no environment in this fixture')
@@ -3183,6 +3285,8 @@ async function harness(
     },
     createdAgentOptions,
     resourceLoaderOptions,
+    contentSourceCalls,
+    contentFetchRequests,
     updatedProjectDefaults,
     updatedSessionManifests,
     appendedSessionEvents,
@@ -6256,25 +6360,9 @@ test('main IPC exposes local package registry planning and lifecycle channels', 
   })
   assert.deepEqual(await app.invoke('packages:listInstalled'), [])
   assert.deepEqual(await app.invoke('packages:uninstall', 'skill', 'alpha-skill'), [])
-  assert.deepEqual(await app.invoke('packages:listRegistries'), [
-    {
-      id: 'builtin',
-      kind: 'bundled',
-      path: '/bundled-registry',
-      removable: false,
-      trust: 'builtin',
-      packageCount: 0
-    }
-  ])
+  assert.deepEqual(await app.invoke('packages:listRegistries'), [officialSourceDetailsFixture])
   assert.deepEqual(await app.invoke('packages:removeRegistry', '0123456789abcdef'), [
-    {
-      id: 'builtin',
-      kind: 'bundled',
-      path: '/bundled-registry',
-      removable: false,
-      trust: 'builtin',
-      packageCount: 0
-    }
+    officialSourceDetailsFixture
   ])
   app.setOpenDialogResult({ canceled: false, filePaths: ['/tmp/offline-skill.tar.gz'] })
   assert.equal(await app.invoke('packages:pickArchive'), '/tmp/offline-skill.tar.gz')
@@ -6286,6 +6374,57 @@ test('main IPC exposes local package registry planning and lifecycle channels', 
   assert.deepEqual(await app.invoke('packages:listUpdates'), [])
   await assert.rejects(app.invoke('packages:applyUpdate', 'skill', 'alpha-skill'), /没有可用更新/)
   await assert.rejects(app.invoke('packages:plan', '', 'wrapper', '', undefined), /参数无效/)
+})
+
+test('main IPC plans official metadata before fetching and routes all four install types through preparation', async () => {
+  const app = await harness()
+  const beforePlanning = app.contentFetchRequests.filter((url) => url.endsWith('.tar.gz')).length
+  for (const type of ['skill', 'plugin', 'wrapper', 'mcp']) {
+    const id = `demo-${type}`
+    const plan = (await app.invoke('packages:plan', 'phi-packages', type, id, '1.0.0')) as {
+      registry: { id: string; dir: string }
+    }
+    assert.equal(plan.registry.id, 'phi-packages')
+    assert.equal(plan.registry.dir, officialRegistryFixture.dir)
+    assert.equal(
+      app.contentFetchRequests.filter((url) => url.endsWith('.tar.gz')).length,
+      beforePlanning
+    )
+  }
+  app.contentSourceCalls.length = 0
+  for (const type of ['skill', 'plugin', 'wrapper', 'mcp']) {
+    const id = `demo-${type}`
+    assert.deepEqual(
+      await app.invoke('packages:install', officialRegistryFixture.dir, type, id, '1.0.0'),
+      [{ type, id }]
+    )
+    const calls = app.contentSourceCalls.filter((call) => call.id === id)
+    assert.deepEqual(
+      calls.map((call) => call.phase),
+      ['prepare', 'install']
+    )
+    assert.ok(
+      calls.every((call) => call.source === 'phi-packages' && call.agentDir === '/isolated')
+    )
+  }
+  assert.equal(app.contentFetchRequests.filter((url) => url.endsWith('.tar.gz')).length, 4)
+})
+
+test('main dedicated MCP installation passes Chromium fetch and the selected official generation', async () => {
+  const app = await harness()
+  await app.invoke('mcp:installConnector', 'pubmed', '1.0.0', officialRegistryFixture.dir)
+  assert.deepEqual(
+    app.contentSourceCalls.filter((call) => call.phase === 'mcp-install'),
+    [
+      {
+        phase: 'mcp-install',
+        source: officialRegistryFixture.dir,
+        id: 'pubmed',
+        agentDir: '/isolated'
+      }
+    ]
+  )
+  assert.ok(app.contentFetchRequests.includes('https://example.invalid/catalog/mcp-pubmed.tar.gz'))
 })
 
 test('main IPC forwards the owning plugin identity for private environment builds', async () => {

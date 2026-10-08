@@ -1,12 +1,12 @@
-import { readFileSync } from 'node:fs'
+import { lstatSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import semver from 'semver'
 
-import { listInstalledPlugins } from '../plugins/loader'
+import { listInstalledPlugins, type LoadedPlugin } from '../plugins/loader'
 import { getPhiAgentDir } from '../runtime-paths'
 import type { InstalledPackage, InstallerOptions, PackageSourceMetadata } from './installer-types'
-import { normalizeSourceMetadata, packageKey } from './installer-utils'
+import { errorCode, normalizeSourceMetadata } from './installer-utils'
 import { readPackageManifest, type PackageManifest, type PackageType } from './manifest'
 import { listActiveMcpPackages } from './mcp-store'
 import { listActiveSkillPackages } from './store'
@@ -26,7 +26,7 @@ export function listInstalledPackages(
     if (item && item.id === entry.id && item.version === entry.version) installed.push(item)
   }
   for (const plugin of listInstalledPlugins({ agentDir })) {
-    const item = installedPackageFromDir(plugin.dir, 'plugin')
+    const item = installedPackageFromDir(plugin.dir, 'plugin') ?? legacyInstalledPlugin(plugin)
     if (item && item.id === plugin.id && item.version === plugin.version) {
       installed.push({ ...item, enabled: plugin.enabled })
     }
@@ -41,25 +41,31 @@ export function listInstalledPackages(
 }
 
 export function packagesAvailableForPlanning(agentDir: string): InstalledPackage[] {
-  const managed = listInstalledPackages({ agentDir })
-  const keys = new Set(managed.map(packageKey))
-  const loaderPlugins = listInstalledPlugins({ agentDir })
-    .filter((plugin) => !keys.has(packageKey({ type: 'plugin', id: plugin.id })))
-    .map<InstalledPackage>((plugin) => ({
-      id: plugin.id,
-      type: 'plugin',
-      version: plugin.version,
-      title: plugin.manifest.title,
-      summary: plugin.manifest.summary,
-      dir: plugin.dir,
-      installedAt: plugin.installedAt,
-      installedBy: 'user',
-      registry: plugin.source,
-      sha256: '',
-      trust: plugin.source === 'bundled' ? 'builtin' : 'imported',
-      enabled: plugin.enabled
-    }))
-  return [...managed, ...loaderPlugins]
+  return listInstalledPackages({ agentDir })
+}
+
+/** Older validated loader installations predate .source.json; present invalid metadata fails closed. */
+function legacyInstalledPlugin(plugin: LoadedPlugin): InstalledPackage | undefined {
+  try {
+    lstatSync(join(plugin.dir, '.source.json'))
+    return undefined
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') return undefined
+  }
+  return {
+    id: plugin.id,
+    type: 'plugin',
+    version: plugin.version,
+    title: plugin.manifest.title,
+    summary: plugin.manifest.summary,
+    dir: plugin.dir,
+    installedAt: plugin.installedAt,
+    installedBy: 'user',
+    registry: plugin.source,
+    sha256: '',
+    trust: plugin.source === 'bundled' ? 'builtin' : 'imported',
+    enabled: plugin.enabled
+  }
 }
 
 function installedPackageFromDir(

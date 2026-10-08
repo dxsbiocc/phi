@@ -76,7 +76,7 @@ test('fresh wrapper discovery lists registry choices without installing or selec
   assert.equal(choices[0].registryPath, '/registry')
 })
 
-test('cached auto-seeded wrappers stay discoverable while disabled user choices remain installed', () => {
+test('automatic seeds require package installation while disabled user choices remain installed', () => {
   const cached = [
     wrapper('fastqc', { packageSelected: false, packageEnabled: false }),
     wrapper('rnaseq', { packageSelected: true, packageEnabled: false })
@@ -87,7 +87,7 @@ test('cached auto-seeded wrappers stay discoverable while disabled user choices 
   assert.equal(choices.length, 2)
   assert.equal(choices[0].cached, cached[0])
   assert.equal(choices[0].selected, false)
-  assert.equal(choices[0].installed, true)
+  assert.equal(choices[0].installed, false)
   assert.equal(choices[1].selected, true)
   assert.equal(choices[1].enabled, false)
 })
@@ -219,7 +219,7 @@ test('previous automatic seeds are not mistaken for user installations when the 
     [registry([packageEntry('fastqc'), packageEntry('rnaseq', '2.0.0')])],
     [installed('fastqc', 'bundled-wrappers'), installed('rnaseq', 'builtin')]
   )
-  assert.equal(choices[0].installed, true)
+  assert.equal(choices[0].installed, false)
   assert.equal(choices[0].selected, false)
   assert.equal(choices[1].selected, true)
   assert.equal(choices[1].enabled, false)

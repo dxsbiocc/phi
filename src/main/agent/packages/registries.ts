@@ -1,24 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto'
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync
-} from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
-import { isCoreSkill } from '../enablement'
-import { getBundledResourceDir } from '../runtime/runtime-adapter'
 import { getPhiAgentDir } from '../runtime-paths'
-import { buildWrapperPackageSources } from '../wrappers/packages/builder'
 import type { LocalRegistry, RegistryTrustTier } from './installer-types'
 import { errorMessage, isRecord } from './installer-utils'
-import { readPackageManifest, type PackageType } from './manifest'
 import { readRegistry } from './registry'
+import { OFFICIAL_REGISTRY_ID, syncOfficialRegistry } from './official-registry'
 
 export const BUNDLED_REGISTRY_ID = 'builtin'
 
@@ -42,18 +30,22 @@ export interface KnownRegistryMutationOptions {
 }
 
 export interface KnownRegistryListOptions extends Pick<KnownRegistryMutationOptions, 'agentDir'> {
-  /** Shipped resource root override for tests and isolated runtimes. */
-  bundledResourcesDir?: string
+  /** Isolated source override for tests; production always syncs the signed official catalog. */
+  loadOfficialRegistry?: () => Promise<LocalRegistry>
 }
 
 export interface KnownRegistryDetails {
   id: string
-  kind: 'bundled' | 'directory'
+  kind: 'official' | 'directory'
   path: string
   addedAt?: string
   removable: boolean
   trust?: RegistryTrustTier
   packageCount?: number
+  label?: string
+  status?: 'ready' | 'cached' | 'unavailable'
+  notice?: string
+  refreshedAt?: string
   error?: string
 }
 
@@ -68,8 +60,6 @@ export interface LoadedKnownRegistries {
   errors: string[]
   stateError?: string
 }
-
-const bundledPackageCountCache = new Map<string, number>()
 
 export function knownRegistriesPath(agentDir = getPhiAgentDir()): string {
   return join(agentDir, 'state', 'registries.json')
@@ -91,24 +81,54 @@ export function readKnownRegistries(agentDir = getPhiAgentDir()): KnownRegistrie
   return isKnownRegistriesState(value) ? value : invalidKnownRegistries(file, new Error('格式无效'))
 }
 
-export function listKnownRegistries(
+export async function listKnownRegistries(
   options: KnownRegistryListOptions = {}
-): KnownRegistryListResult {
-  const bundledPath = resolve(options.bundledResourcesDir ?? getBundledResourceDir(''))
+): Promise<KnownRegistryListResult> {
   const state = readKnownRegistries(options.agentDir)
+  let official: KnownRegistryDetails
+  try {
+    const registry = await loadOfficialRegistry(options)
+    official = {
+      id: OFFICIAL_REGISTRY_ID,
+      kind: 'official',
+      label: 'Phi Packages',
+      path: OFFICIAL_REGISTRY_ID,
+      removable: false,
+      trust: registry.trust,
+      packageCount: registry.packages.length,
+      status: registry.status ?? 'ready',
+      ...(registry.notice ? { notice: registry.notice } : {}),
+      ...(registry.refreshedAt ? { refreshedAt: registry.refreshedAt } : {})
+    }
+  } catch (error) {
+    official = {
+      id: OFFICIAL_REGISTRY_ID,
+      kind: 'official',
+      label: 'Phi Packages',
+      path: OFFICIAL_REGISTRY_ID,
+      removable: false,
+      status: 'unavailable',
+      error: errorMessage(error)
+    }
+  }
   const registries = [
-    bundledRegistryDetails(bundledPath),
+    official,
     ...state.registries.map((entry) => registryDetails({ ...entry, removable: true }))
   ]
   return state.error ? { registries, error: state.error } : { registries }
 }
 
-export function loadKnownRegistryIndexes(
-  options: Pick<KnownRegistryMutationOptions, 'agentDir'> = {}
-): LoadedKnownRegistries {
+export async function loadKnownRegistryIndexes(
+  options: KnownRegistryListOptions = {}
+): Promise<LoadedKnownRegistries> {
   const state = readKnownRegistries(options.agentDir)
   const registries: LocalRegistry[] = []
   const errors: string[] = []
+  try {
+    registries.push(await loadOfficialRegistry(options))
+  } catch (error) {
+    errors.push(`Phi Packages：${errorMessage(error)}`)
+  }
   for (const source of state.registries) {
     try {
       registries.push(readRegistry(source.path))
@@ -121,6 +141,10 @@ export function loadKnownRegistryIndexes(
     errors,
     ...(state.error ? { stateError: state.error } : {})
   }
+}
+
+function loadOfficialRegistry(options: KnownRegistryListOptions): Promise<LocalRegistry> {
+  return options.loadOfficialRegistry?.() ?? syncOfficialRegistry({ agentDir: options.agentDir })
 }
 
 export function addKnownRegistry(
@@ -161,6 +185,7 @@ export function removeKnownRegistry(
   id: string,
   options: Pick<KnownRegistryMutationOptions, 'agentDir'> = {}
 ): boolean {
+  if (id === OFFICIAL_REGISTRY_ID) throw new Error('官方软件源不能移除')
   if (id === BUNDLED_REGISTRY_ID) throw new Error('内置软件源不能移除')
   if (!/^[a-f0-9]{16}$/.test(id)) throw new Error('软件源标识无效')
   const state = readKnownRegistries(options.agentDir)
@@ -187,55 +212,6 @@ function registryDetails(
       error: errorMessage(error)
     }
   }
-}
-
-function bundledRegistryDetails(resourcesDir: string): KnownRegistryDetails {
-  const details = {
-    id: BUNDLED_REGISTRY_ID,
-    kind: 'bundled' as const,
-    path: resourcesDir,
-    removable: false,
-    trust: 'builtin' as const
-  }
-  try {
-    return { ...details, packageCount: countBundledPackages(resourcesDir) }
-  } catch (error) {
-    return { ...details, error: errorMessage(error) }
-  }
-}
-
-function countBundledPackages(resourcesDir: string): number {
-  const cached = bundledPackageCountCache.get(resourcesDir)
-  if (cached !== undefined) return cached
-
-  const packageCount =
-    countManifestPackages(join(resourcesDir, 'plugins'), 'plugin') +
-    buildWrapperPackageSources({ wrappersRoot: join(resourcesDir, 'wrappers') }).sources.length +
-    countManifestPackages(join(resourcesDir, 'connectors'), 'mcp') +
-    countCatalogSkillSources(join(resourcesDir, 'skills'))
-  bundledPackageCountCache.set(resourcesDir, packageCount)
-  return packageCount
-}
-
-function countManifestPackages(root: string, expectedType: PackageType): number {
-  return readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .reduce((count, entry) => {
-      const manifest = readPackageManifest(join(root, entry.name))
-      if (manifest.type !== expectedType) {
-        throw new Error(`内置软件包类型无效: ${entry.name} 应为 ${expectedType}`)
-      }
-      return count + 1
-    }, 0)
-}
-
-function countCatalogSkillSources(root: string): number {
-  return readdirSync(root, { withFileTypes: true }).filter(
-    (entry) =>
-      entry.isDirectory() &&
-      !isCoreSkill(entry.name) &&
-      existsSync(join(root, entry.name, 'SKILL.md'))
-  ).length
 }
 
 function writeKnownRegistries(state: KnownRegistriesState, agentDir = getPhiAgentDir()): void {

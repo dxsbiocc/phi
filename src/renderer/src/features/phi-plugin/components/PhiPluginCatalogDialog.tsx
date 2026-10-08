@@ -19,7 +19,6 @@ import {
   TextField,
   Typography
 } from '@mui/material'
-import semver from 'semver'
 
 import type { PackageTrust, PackageUpdateView } from '../../../../../shared/packageManagerTypes'
 import type { PhiPluginInstallPreview } from '../../../../../shared/phiPluginTypes'
@@ -27,6 +26,11 @@ import type { ResourceIconRef } from '../../../../../shared/resourceIconTypes'
 import { PhiIcons } from '../../../icons'
 import { ResourceIcon } from '../../../components/ResourceIcon'
 import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../../../lib/packageTrust'
+import {
+  catalogPackages,
+  installCatalogPackage,
+  loadContentCatalog
+} from '../../../lib/contentCatalog'
 import type { PhiPluginDisplayItem } from '../hooks/usePhiPlugins'
 import {
   phiPluginCatalogAction,
@@ -137,6 +141,7 @@ export type PhiPluginCatalogContentProps = {
   busyId: string | null
   error?: string | null
   notice?: string | null
+  sourceNotice?: string | null
   initialCategory?: string
   onChooseDirectory: () => void
   onInstall: (entry: PhiPluginCatalogEntry, update: boolean) => void
@@ -150,7 +155,8 @@ export function PhiPluginCatalogContent({
   busyId,
   error,
   notice,
-  initialCategory = 'installed',
+  sourceNotice,
+  initialCategory = 'all',
   onChooseDirectory,
   onInstall
 }: PhiPluginCatalogContentProps): React.JSX.Element {
@@ -172,7 +178,7 @@ export function PhiPluginCatalogContent({
     )
   )
   const visibleEntries = entries.filter((entry) => {
-    if ((entry.category?.trim() || '其他') !== category) return false
+    if (category !== 'all' && (entry.category?.trim() || '其他') !== category) return false
     if (!normalizedQuery) return true
     return [entry.title, entry.id, entry.version, entry.summary, entry.category]
       .filter(Boolean)
@@ -203,6 +209,13 @@ export function PhiPluginCatalogContent({
         }}
       >
         <List disablePadding>
+          <ListItemButton
+            selected={category === 'all'}
+            onClick={() => setCategory('all')}
+            sx={{ borderRadius: 1.5, mb: 0.5 }}
+          >
+            <Typography variant="body2">全部插件 · {entries.length}</Typography>
+          </ListItemButton>
           <ListItemButton
             selected={installedSelected}
             onClick={() => setCategory('installed')}
@@ -238,7 +251,7 @@ export function PhiPluginCatalogContent({
       <Box sx={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', px: 3, py: 2 }}>
           <Typography variant="h5" sx={{ flex: 1, fontWeight: 700 }}>
-            {installedSelected ? '已安装' : category}
+            {installedSelected ? '已安装' : category === 'all' ? '全部插件' : category}
           </Typography>
           <TextField
             size="small"
@@ -265,6 +278,11 @@ export function PhiPluginCatalogContent({
           {notice ? (
             <Alert severity="success" sx={{ mb: 2 }}>
               {notice}
+            </Alert>
+          ) : null}
+          {sourceNotice ? (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              {sourceNotice}
             </Alert>
           ) : null}
           {loading ? (
@@ -307,6 +325,7 @@ export function PhiPluginCatalogContent({
                         summary={entry.summary}
                         version={entry.version}
                         trust={entry.trust}
+                        source={entry.registryLabel}
                         action={action}
                         busy={busyId === entry.id}
                         disabled={busyId !== null}
@@ -363,54 +382,46 @@ export function PhiPluginCatalogDialog({
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [sourceNotice, setSourceNotice] = useState<string | null>(null)
   const [pickingDirectory, setPickingDirectory] = useState(false)
   const [pendingInstall, setPendingInstall] = useState<PhiPluginInstallPreview | null>(null)
 
   const fetchCatalog = useCallback(async (): Promise<{
     entries: PhiPluginCatalogEntry[]
     updates: PackageUpdateView[]
+    error: string | null
+    notice: string | null
   }> => {
-    const [registries, availableUpdates] = await Promise.all([
-      window.api.listPackageRegistries(),
-      window.api.listPackageUpdates()
+    const [catalog, availableUpdates] = await Promise.all([
+      loadContentCatalog(window.api),
+      window.api.listPackageUpdates().catch(() => [])
     ])
-    const readable = await Promise.all(
-      registries
-        .filter((registry) => registry.kind !== 'bundled' && !registry.error)
-        .map(async (registry) => {
-          try {
-            return await window.api.readPackageRegistry(registry.path)
-          } catch {
-            return null
-          }
-        })
-    )
-    const selected = new Map<string, PhiPluginCatalogEntry>()
-    for (const registry of readable) {
-      if (!registry) continue
-      for (const entry of registry.packages) {
-        if (entry.type !== 'plugin') continue
-        const current = selected.get(entry.id)
-        if (!current || semver.gt(entry.version, current.version)) {
-          selected.set(entry.id, { ...entry, registryPath: registry.dir, trust: registry.trust })
-        }
-      }
-    }
     return {
-      entries: [...selected.values()].sort((left, right) => left.title.localeCompare(right.title)),
-      updates: availableUpdates
+      entries: catalogPackages(catalog.registries, 'plugin').map(({ entry, registry }) => ({
+        ...entry,
+        registryPath: registry.dir,
+        registryLabel: registry.label ?? registry.id,
+        trust: registry.trust
+      })),
+      updates: availableUpdates,
+      error: catalog.errors.join('\n') || null,
+      notice: catalog.notices.join('\n') || '首选来源：Phi Packages'
     }
   }, [])
 
   useEffect(() => {
     if (!open) return
     let active = true
+    void Promise.resolve().then(() => {
+      if (active) setLoading(true)
+    })
     void fetchCatalog()
       .then((catalog) => {
         if (!active) return
         setEntries(catalog.entries)
         setUpdates(catalog.updates)
-        setError(null)
+        setError(catalog.error)
+        setSourceNotice(catalog.notice)
       })
       .catch((cause) => {
         if (active) setError(errorMessage(cause))
@@ -429,10 +440,12 @@ export function PhiPluginCatalogDialog({
     setError(null)
     try {
       if (update) await window.api.applyPackageUpdate('plugin', entry.id)
-      else await window.api.installPackage(entry.registryPath, 'plugin', entry.id, entry.version)
+      else await installCatalogPackage(window.api, entry.registryPath, entry)
       const catalog = await fetchCatalog()
       setEntries(catalog.entries)
       setUpdates(catalog.updates)
+      setError(catalog.error)
+      setSourceNotice(catalog.notice)
       await onChanged()
     } catch (cause) {
       setError(errorMessage(cause))
@@ -523,6 +536,7 @@ export function PhiPluginCatalogDialog({
           busyId={busyId ?? (installWorking || pickingDirectory ? '__directory__' : null)}
           error={error ?? feedbackError}
           notice={feedbackNotice}
+          sourceNotice={sourceNotice}
           onChooseDirectory={() => void choosePluginDirectory()}
           onInstall={(entry, update) => void install(entry, update)}
         />

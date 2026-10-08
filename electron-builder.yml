@@ -11,6 +11,11 @@ files:
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!**/.DS_Store'
+  # Domain content is installed from the signed Phi Packages catalog.
+  - '!resources/connectors/**'
+  - '!resources/plugins/**'
+  - '!resources/wrappers/**'
+  - '!resources/skills/!(create-wrapper)/**'
   - '!resources/**/.nextflow/**'
   - '!resources/**/.nextflow.log*'
   - '!resources/**/work/**'

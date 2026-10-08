@@ -6,11 +6,9 @@ import type {
 } from '../src/shared/packageManagerTypes'
 import type { SkillSummary } from '../src/shared/skillTypes'
 import {
-  bundledCatalogSkills,
   formatPackageSize,
   registrySkillPackages,
-  skillSourceLabel,
-  withoutBundledSkillNames
+  skillSourceLabel
 } from '../src/renderer/src/features/skill/lib/skillCatalog'
 
 function skill(overrides: Partial<SkillSummary> = {}): SkillSummary {
@@ -64,29 +62,11 @@ test('skill source labels match the Skills page Chinese copy', () => {
   )
 })
 
-test('bundled catalog includes disabled non-core bundled skills only', () => {
-  const disabledBundled = skill()
-  const result = bundledCatalogSkills([
-    disabledBundled,
-    skill({ id: 'core', name: 'nextflow', core: true }),
-    skill({
-      id: 'enabled',
-      name: 'pptx',
-      enabled: false,
-      globalEnabled: true,
-      projectOverride: false,
-      disabled: true
-    }),
-    skill({ id: 'user', name: 'mine', sourceCategory: 'user' })
-  ])
-
-  assert.deepEqual(result, [disabledBundled])
-})
-
 test('registry catalog filters to skill packages and formats package sizes', () => {
   const skillPackage = registryEntry('scanpy', 'skill')
   const registry: PackageRegistryView = {
     id: 'local',
+    trust: 'imported',
     dir: '/registry',
     schemaVersion: 1,
     generatedAt: '2026-10-02T00:00:00.000Z',
@@ -99,28 +79,4 @@ test('registry catalog filters to skill packages and formats package sizes', () 
   assert.equal(formatPackageSize(1536), '1.5 KB')
   assert.equal(formatPackageSize(10 * 1024), '10 KB')
   assert.equal(formatPackageSize(2 * 1024 * 1024), '2 MB')
-})
-
-test('deprecated bundled skills stay in the catalog but sort last', () => {
-  const result = bundledCatalogSkills([
-    skill({ name: 'legacy-b', sourceCategory: 'bundled', deprecated: '由新技能替代。' }),
-    skill({ name: 'scanpy', sourceCategory: 'bundled' }),
-    skill({ name: 'legacy-a', sourceCategory: 'bundled', deprecated: '由新技能替代。' })
-  ])
-  assert.deepEqual(
-    result.map((item) => item.name),
-    ['scanpy', 'legacy-b', 'legacy-a']
-  )
-})
-
-test('hides registry packages that share a bundled skill name', () => {
-  const skills = [
-    skill({ name: 'scanpy', sourceCategory: 'bundled' }),
-    skill({ name: 'qa-demo', sourceCategory: 'installed-package' })
-  ]
-  const packages = [{ id: 'scanpy' }, { id: 'qa-demo' }, { id: 'new-skill' }]
-  assert.deepEqual(
-    withoutBundledSkillNames(packages, skills).map((entry) => entry.id),
-    ['qa-demo', 'new-skill']
-  )
 })

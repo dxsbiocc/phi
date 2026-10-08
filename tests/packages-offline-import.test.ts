@@ -217,3 +217,44 @@ test('copies only the dependency closure from known registries and cleans its st
   )
   assert.deepEqual(readdirSync(join(fixture.agentDir, '.staging')), [])
 })
+
+test('preview needs only dependency metadata and import prepares selected archives on demand', async () => {
+  const fixture = sandbox()
+  const dependency = skillArchive(fixture.registryDir, 'remote-helper')
+  const bytes = readFileSync(dependency.path)
+  rmSync(dependency.path)
+  const root = skillArchive(fixture.root, 'offline-root', {
+    dependsOn: [{ id: 'remote-helper', type: 'skill', version: '^1.0.0' }]
+  })
+  const source: LocalRegistry = {
+    id: 'phi-packages',
+    dir: fixture.registryDir,
+    trust: 'official',
+    schemaVersion: 1,
+    generatedAt: '2026-10-08T00:00:00Z',
+    packages: [dependency.entry]
+  }
+  let preparations = 0
+  const options = {
+    agentDir: fixture.agentDir,
+    registries: [source],
+    preparePackage: async (registry: LocalRegistry, entry: RegistryPackageEntry): Promise<void> => {
+      preparations += 1
+      assert.equal(registry.id, source.id)
+      assert.equal(entry.id, 'remote-helper')
+      writeFileSync(dependency.path, bytes)
+    }
+  }
+  const preview = previewOfflinePackageImport(root.path, options)
+  assert.deepEqual(
+    preview.plan.packages.map((entry) => entry.id),
+    ['remote-helper', 'offline-root']
+  )
+  assert.equal(preparations, 0)
+  await importOfflinePackage(root.path, options)
+  assert.equal(preparations, 1)
+  assert.deepEqual(
+    listInstalledPackages({ agentDir: fixture.agentDir }).map((entry) => entry.id),
+    ['offline-root', 'remote-helper']
+  )
+})

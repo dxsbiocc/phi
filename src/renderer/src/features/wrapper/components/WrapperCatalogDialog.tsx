@@ -20,6 +20,7 @@ import {
   wrapperCatalogGroups,
   type WrapperCatalogChoice
 } from '../lib/wrapperCatalog'
+import { installCatalogPackage, loadContentCatalog } from '../../../lib/contentCatalog'
 
 export interface WrapperCatalogDialogProps {
   open: boolean
@@ -45,38 +46,39 @@ export function WrapperCatalogDialog({
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [sourceNotice, setSourceNotice] = useState<string | null>(null)
 
   const readCatalog = useCallback(async (): Promise<{
     registries: PackageRegistryView[]
     installed: InstalledPackageView[]
+    error: string | null
+    notice: string | null
   }> => {
     const [sources, installed] = await Promise.all([
-      window.api.listPackageRegistries(),
+      loadContentCatalog(window.api),
       window.api.listInstalledPackages()
     ])
-    const readable = await Promise.allSettled(
-      sources
-        .filter((source) => !source.error)
-        .map((source) => window.api.readPackageRegistry(source.path))
-    )
-    const registries = readable.flatMap((result) =>
-      result.status === 'fulfilled' ? [result.value] : []
-    )
-    if (sources.length > 0 && registries.length === 0) {
-      throw new Error('无法读取 wrapper 目录，请重试或添加本地目录。')
+    return {
+      registries: sources.registries,
+      installed,
+      error: sources.errors.join('\n') || null,
+      notice: sources.notices.join('\n') || '首选来源：Phi Packages'
     }
-    return { registries, installed }
   }, [])
 
   useEffect(() => {
     if (!open) return undefined
     let active = true
+    void Promise.resolve().then(() => {
+      if (active) setLoading(true)
+    })
     void readCatalog()
       .then((data) => {
         if (!active) return
         setRegistries(data.registries)
         setInstalledPackages(data.installed)
-        setError(null)
+        setError(data.error)
+        setSourceNotice(data.notice)
       })
       .catch((cause) => {
         if (active) setError(cause instanceof Error ? cause.message : String(cause))
@@ -121,11 +123,10 @@ export function WrapperCatalogDialog({
           choice.id,
           choice.registryEntry.version
         )
-        const installed = await window.api.installPackage(
+        const installed = await installCatalogPackage(
+          window.api,
           choice.registryPath,
-          'wrapper',
-          choice.id,
-          choice.registryEntry.version
+          choice.registryEntry
         )
         setInstalledPackages(installed)
       }
@@ -139,6 +140,8 @@ export function WrapperCatalogDialog({
       const refreshed = await readCatalog()
       setRegistries(refreshed.registries)
       setInstalledPackages(refreshed.installed)
+      setError(refreshed.error)
+      setSourceNotice(refreshed.notice)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -237,6 +240,11 @@ export function WrapperCatalogDialog({
         {error ? (
           <Alert severity="error" sx={{ mb: 2 }}>
             {error}
+          </Alert>
+        ) : null}
+        {sourceNotice ? (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            {sourceNotice}
           </Alert>
         ) : null}
         {loading ? (

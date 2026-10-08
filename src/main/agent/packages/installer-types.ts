@@ -2,6 +2,7 @@ import type { collectGarbage, PhiPlatform } from '../envs'
 import type { PluginEnvironmentBuilder, PluginNamespace } from '../plugins/loader'
 import type { PackageDependency, PackageRequirements, PackageType } from './manifest'
 import type { RegistryIconAsset } from '../../../shared/resourceIconTypes'
+import type { RegistryManifestAsset } from './manifest-assets'
 
 export type RegistryTrust = 'builtin' | 'official' | 'imported'
 export type RegistryTrustTier = RegistryTrust
@@ -21,9 +22,15 @@ export interface RegistryPackageEntry {
   category?: string
   preview?: string
   iconAsset?: RegistryIconAsset
+  manifestAsset?: RegistryManifestAsset
 }
 
 export interface LocalRegistry {
+  kind?: 'official' | 'directory'
+  label?: string
+  status?: 'ready' | 'cached'
+  notice?: string
+  refreshedAt?: string
   id: string
   dir: string
   trust: RegistryTrustTier

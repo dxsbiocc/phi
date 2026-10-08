@@ -64,6 +64,7 @@ import {
   ipcMain,
   nativeImage,
   nativeTheme,
+  net,
   Notification,
   powerSaveBlocker
 } from 'electron'
@@ -246,7 +247,7 @@ import {
   createInMemoryRuntimeSessionManager,
   createRuntimeResourceLoader,
   getBundledAgentsDir,
-  getBundledSkillsDir,
+  getCoreAuthoringSkillDir,
   openRuntimeSessionManager,
   readAutoCompactionDefaults,
   type ModelRuntime,
@@ -254,7 +255,6 @@ import {
   type RuntimeResourceLoader
 } from './agent/runtime/runtime-adapter'
 import { installPlugin as installDeveloperPlugin, listPlugins, removePlugin } from './agent/plugins'
-import { installBundledPlugins } from './agent/plugins/bundled-install'
 import {
   installPlugin as installPhiPlugin,
   listInstalledPlugins,
@@ -275,7 +275,6 @@ import {
   setEnabled
 } from './agent/enablement'
 import {
-  addKnownRegistry,
   applyPackageUpdate,
   applyPackageUpdates,
   cleanupStalePackageStaging,
@@ -287,11 +286,12 @@ import {
   loadKnownRegistryIndexes,
   planInstall as planRegistryInstall,
   previewOfflinePackageImport,
-  readRegistry as readPackageRegistry,
   removeKnownRegistry,
   type PackageUpdate,
   uninstallPackage as uninstallRegistryPackage
 } from './agent/packages/installer'
+import { prepareContentPackageInstall, readContentRegistry } from './agent/packages/content-source'
+import { syncOfficialRegistry } from './agent/packages/official-registry'
 import { packageRegistryIconView } from './agent/packages/icon-views'
 import { readResourceIcon } from './agent/resource-icons'
 import type { RemoteMcpConnectorOptions } from '../shared/mcpConnectorCatalog'
@@ -892,16 +892,39 @@ function registerOfficeIpc(): void {
   )
 }
 
+// The desktop uses Chromium networking so the operating system's proxy settings also
+// apply to catalog metadata and package archives. The transport remains usable in Node/tests.
+const officialRegistryFetch: typeof fetch = (input, init) =>
+  net.fetch(input instanceof URL ? input.toString() : input, init)
+
+function officialContentSourceOptions(): {
+  agentDir: string
+  appVersion: string
+  fetch: typeof fetch
+} {
+  return { agentDir: AGENT_DIR, appVersion: app.getVersion(), fetch: officialRegistryFetch }
+}
+
+function knownContentSourceOptions(): {
+  agentDir: string
+  loadOfficialRegistry: () => ReturnType<typeof syncOfficialRegistry>
+} {
+  return {
+    agentDir: AGENT_DIR,
+    loadOfficialRegistry: () => syncOfficialRegistry(officialContentSourceOptions())
+  }
+}
+
 function loadPackageRegistries(): ReturnType<typeof loadKnownRegistryIndexes> {
-  return loadKnownRegistryIndexes({ agentDir: AGENT_DIR })
+  return loadKnownRegistryIndexes(knownContentSourceOptions())
 }
 
 function packageUpdateViews(updates: readonly PackageUpdate[]): PackageUpdate[] {
   return [...updates]
 }
 
-function refreshCachedPackageUpdates(): PackageUpdate[] {
-  const loaded = loadPackageRegistries()
+async function refreshCachedPackageUpdates(): Promise<PackageUpdate[]> {
+  const loaded = await loadPackageRegistries()
   cachedPackageUpdates = listPackageUpdates(loaded.registries, {
     agentDir: AGENT_DIR,
     appVersion: app.getVersion()
@@ -910,9 +933,9 @@ function refreshCachedPackageUpdates(): PackageUpdate[] {
 }
 
 function scheduleStartupPackageUpdateCheck(): void {
-  setImmediate(() => {
+  setImmediate(async () => {
     try {
-      const updates = refreshCachedPackageUpdates()
+      const updates = await refreshCachedPackageUpdates()
       if (updates.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('packages:updatesAvailable', packageUpdateViews(updates))
       }
@@ -1875,7 +1898,7 @@ getOmpBridge().registerHostHandler('mcp.openAuthUrl', async (params) => {
     agentDir: AGENT_DIR,
     appVersion: app.getVersion(),
     runtimeRoot: getRuntimeRoot(),
-    registryDirs: loadPackageRegistries().registries.map((registry) => registry.dir)
+    registries: (await loadPackageRegistries()).registries
   }).find((entry) => entry.id === request.id)
   const authorizationOrigin = catalogConnector?.url
     ? mcpOAuthAuthorizationOrigin(request.id, catalogConnector.url)
@@ -6984,7 +7007,7 @@ async function getAgentSession(
         ...(notebookPrompt ? [notebookPrompt] : []),
         ...(agentLeaderPrompt ? [agentLeaderPrompt] : [])
       ]
-      const shouldLoadBundledSkills = !remoteProject && existsSync(getBundledSkillsDir())
+      const shouldLoadCoreSkill = !remoteProject && existsSync(getCoreAuthoringSkillDir())
       const extensionFactories =
         remoteProject || creationSnapshot.permissionMode === 'ask'
           ? [
@@ -7168,7 +7191,7 @@ async function getAgentSession(
           : []
       if (
         remoteProject ||
-        shouldLoadBundledSkills ||
+        shouldLoadCoreSkill ||
         appendSystemPrompt.length > 0 ||
         extensionFactories.length > 0
       ) {
@@ -7429,16 +7452,7 @@ app.whenReady().then(async () => {
     })
   }
   writeAppLog({ event: 'app_started', metadata: { removedOldLogs: removedLogs } })
-  const bundledSkillNames = (() => {
-    try {
-      return readdirSync(getBundledSkillsDir(), { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name)
-    } catch {
-      return []
-    }
-  })()
-  migrateEnablementFromHistory(bundledSkillNames, { agentDir: AGENT_DIR })
+  migrateEnablementFromHistory(['create-wrapper'], { agentDir: AGENT_DIR })
   try {
     const refreshed = refreshPersistedManagedStdioServers({
       agentDir: AGENT_DIR,
@@ -7498,45 +7512,8 @@ app.whenReady().then(async () => {
       metadata: { error: error instanceof Error ? error.message : String(error) }
     })
   }
-  // Bundled plugins: install missing ones before agent scans (a file copy), then upgrade in
-  // the background, because an upgrade may first build the new environment it switches to.
-  const bundledPluginOptions = async (): Promise<Parameters<typeof installBundledPlugins>[0]> => ({
-    agentDir: AGENT_DIR,
-    runtimeRoot: getRuntimeRoot(),
-    names: await installedPluginNamespace(),
-    build: (descriptor, options) => environmentBuilds.start(descriptor, options)
-  })
-  const logBundledPlugins = (result: Awaited<ReturnType<typeof installBundledPlugins>>): void => {
-    if (result.errors.length === 0) return
-    writeAppLog({
-      level: 'error',
-      event: 'phi_plugin_bundled_install_failed',
-      metadata: {
-        errors: result.errors.map((problem) => phiPluginProblemView(problem).displayMessage)
-      }
-    })
-  }
-  const logBundledPluginError = (error: unknown): void => {
-    writeAppLog({
-      level: 'error',
-      event: 'phi_plugin_bundled_install_failed',
-      metadata: { error: error instanceof Error ? error.message : String(error) }
-    })
-  }
-  // The plugin namespace scans skills of the current folder; on a fresh account the
-  // no-project task folder does not exist until the first session creates it.
+  // Domain packages are installed only after a catalog choice. Core runtime assets remain bundled.
   mkdirSync(currentCwd, { recursive: true })
-  try {
-    logBundledPlugins(
-      await installBundledPlugins({ ...(await bundledPluginOptions()), phase: 'install' })
-    )
-  } catch (error) {
-    logBundledPluginError(error)
-  }
-  void bundledPluginOptions()
-    .then((options) => installBundledPlugins({ ...options, phase: 'upgrade' }))
-    .then(logBundledPlugins)
-    .catch(logBundledPluginError)
   recoverInterruptedPhiSessions()
   // Wrapper packages are installed from the catalogue only after a user choice.
   // Keep legacy user-authored wrappers available without seeding every bundled package.
@@ -9088,7 +9065,7 @@ app.whenReady().then(async () => {
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
   ipcMain.handle('packages:listRegistries', async () => {
-    const result = listKnownRegistries({ agentDir: AGENT_DIR })
+    const result = await listKnownRegistries(knownContentSourceOptions())
     if (result.error) {
       writeAppLog({
         level: 'warn',
@@ -9101,15 +9078,14 @@ app.whenReady().then(async () => {
   ipcMain.handle('packages:removeRegistry', async (_, id: unknown) => {
     if (typeof id !== 'string') throw new Error('软件源标识无效')
     removeKnownRegistry(id, { agentDir: AGENT_DIR })
-    return listKnownRegistries({ agentDir: AGENT_DIR }).registries
+    return (await listKnownRegistries(knownContentSourceOptions())).registries
   })
   ipcMain.handle('packages:registry', async (_, dir: unknown) => {
     if (typeof dir !== 'string' || dir.trim().length === 0) {
       throw new Error('注册表目录无效')
     }
     try {
-      const registry = readPackageRegistry(dir)
-      addKnownRegistry(registry.dir, { agentDir: AGENT_DIR })
+      const registry = await readContentRegistry(dir, officialContentSourceOptions())
       return packageRegistryIconView(registry)
     } catch (error) {
       throw new Error(
@@ -9130,8 +9106,7 @@ app.whenReady().then(async () => {
         throw new Error('软件包安装计划参数无效')
       }
       try {
-        const registry = readPackageRegistry(dir)
-        addKnownRegistry(registry.dir, { agentDir: AGENT_DIR })
+        const registry = await readContentRegistry(dir, officialContentSourceOptions())
         return planRegistryInstall(
           registry,
           { type, id, ...(version ? { version } : {}) },
@@ -9157,10 +9132,14 @@ app.whenReady().then(async () => {
         throw new Error('软件包安装参数无效')
       }
       try {
-        const registry = readPackageRegistry(dir)
-        addKnownRegistry(registry.dir, { agentDir: AGENT_DIR })
+        const registry = await readContentRegistry(dir, officialContentSourceOptions())
         const installedBefore = new Set(
           listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
+        )
+        await prepareContentPackageInstall(
+          registry,
+          { type, id, ...(version ? { version } : {}) },
+          officialContentSourceOptions()
         )
         const plan = planRegistryInstall(
           registry,
@@ -9234,7 +9213,7 @@ app.whenReady().then(async () => {
       return previewOfflinePackageImport(path, {
         agentDir: AGENT_DIR,
         appVersion: app.getVersion(),
-        registries: loadPackageRegistries().registries
+        registries: (await loadPackageRegistries()).registries
       })
     } catch (error) {
       throw new Error(
@@ -9252,7 +9231,14 @@ app.whenReady().then(async () => {
         agentDir: AGENT_DIR,
         appVersion: app.getVersion(),
         runtimeRoot: getRuntimeRoot(),
-        registries: loadPackageRegistries().registries,
+        registries: (await loadPackageRegistries()).registries,
+        preparePackage: async (registry, entry) => {
+          await prepareContentPackageInstall(
+            registry,
+            { type: entry.type, id: entry.id, version: entry.version },
+            officialContentSourceOptions()
+          )
+        },
         names: await installedPluginNamespace(),
         build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
       })
@@ -9278,7 +9264,7 @@ app.whenReady().then(async () => {
     }
   })
   ipcMain.handle('packages:listUpdates', async () =>
-    packageUpdateViews(refreshCachedPackageUpdates())
+    packageUpdateViews(await refreshCachedPackageUpdates())
   )
   ipcMain.handle('packages:applyUpdate', async (_, type: unknown, id: unknown) => {
     if (
@@ -9288,7 +9274,7 @@ app.whenReady().then(async () => {
     ) {
       throw new Error('软件包更新参数无效')
     }
-    const loaded = loadPackageRegistries()
+    const loaded = await loadPackageRegistries()
     const updates = listPackageUpdates(loaded.registries, {
       agentDir: AGENT_DIR,
       appVersion: app.getVersion()
@@ -9296,6 +9282,9 @@ app.whenReady().then(async () => {
     const update = updates.find((candidate) => candidate.type === type && candidate.id === id)
     if (!update) throw new Error(`没有可用更新：${type}:${id}`)
     const result = await applyPackageUpdate(update, loaded.registries, {
+      preparePackage: async (registry, request) => {
+        await prepareContentPackageInstall(registry, request, officialContentSourceOptions())
+      },
       agentDir: AGENT_DIR,
       appVersion: app.getVersion(),
       runtimeRoot: getRuntimeRoot(),
@@ -9311,12 +9300,15 @@ app.whenReady().then(async () => {
     return result
   })
   ipcMain.handle('packages:applyAllUpdates', async () => {
-    const loaded = loadPackageRegistries()
+    const loaded = await loadPackageRegistries()
     const updates = listPackageUpdates(loaded.registries, {
       agentDir: AGENT_DIR,
       appVersion: app.getVersion()
     })
     const result = await applyPackageUpdates(updates, loaded.registries, {
+      preparePackage: async (registry, request) => {
+        await prepareContentPackageInstall(registry, request, officialContentSourceOptions())
+      },
       agentDir: AGENT_DIR,
       appVersion: app.getVersion(),
       runtimeRoot: getRuntimeRoot(),
@@ -9407,18 +9399,18 @@ app.whenReady().then(async () => {
   ipcMain.handle('agents:list', async (_, cwd?: string) =>
     isRemoteResourceScope(cwd) ? [] : listPromptAgents(cwd ?? currentCwd)
   )
-  const connectorCatalog = (): ReturnType<typeof listConnectorCatalog> =>
+  const connectorCatalog = async (): Promise<ReturnType<typeof listConnectorCatalog>> =>
     listConnectorCatalog({
       agentDir: AGENT_DIR,
       appVersion: app.getVersion(),
       runtimeRoot: getRuntimeRoot(),
-      registryDirs: loadPackageRegistries().registries.map((registry) => registry.dir)
+      registries: (await loadPackageRegistries()).registries
     })
   ipcMain.handle('mcp:listServers', async (_, cwd?: string) => {
     const servers = await (isRemoteResourceScope(cwd)
       ? listGlobalMcpServers()
       : listMcpServers(cwd ?? currentCwd))
-    const catalog = connectorCatalog()
+    const catalog = await connectorCatalog()
     return servers.map((server) => {
       const connector = catalog.find(
         (entry) =>
@@ -9446,7 +9438,7 @@ app.whenReady().then(async () => {
       ) {
         throw new Error('连接器安装参数无效')
       }
-      const connector = connectorCatalog().find(
+      const connector = (await connectorCatalog()).find(
         (entry) =>
           entry.id === id &&
           (version === undefined || entry.version === version) &&
@@ -9459,8 +9451,7 @@ app.whenReady().then(async () => {
         connector.id,
         connector.version,
         {
-          agentDir: AGENT_DIR,
-          appVersion: app.getVersion(),
+          ...officialContentSourceOptions(),
           runtimeRoot: getRuntimeRoot()
         }
       )
@@ -9548,7 +9539,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('mcp:featuredTools', async (_, id: string) => {
     if (typeof id !== 'string') throw new Error('连接器标识无效')
-    const connector = connectorCatalog().find((entry) => entry.id === id)
+    const connector = (await connectorCatalog()).find((entry) => entry.id === id)
     if (!connector?.url) throw new Error('连接器目录中找不到远程连接器')
     return getOmpBridge().request<string[]>('mcp.featuredTools', {
       id,
@@ -9557,14 +9548,14 @@ app.whenReady().then(async () => {
     })
   })
   ipcMain.handle('mcp:featuredAuthStatus', async (_, id: string) => {
-    const connector = connectorCatalog().find((entry) => entry.id === id)
+    const connector = (await connectorCatalog()).find((entry) => entry.id === id)
     if (!connector?.url || !mcpOAuthAuthorizationOrigin(id, connector.url)) {
       throw new Error('该连接器尚不支持登录状态查询')
     }
     return getOmpBridge().request<boolean>('mcp.featuredAuthStatus', { id, url: connector.url })
   })
   ipcMain.handle('mcp:authorizeFeatured', async (_, id: string) => {
-    const connector = connectorCatalog().find((entry) => entry.id === id)
+    const connector = (await connectorCatalog()).find((entry) => entry.id === id)
     if (!connector?.url || !mcpOAuthAuthorizationOrigin(id, connector.url)) {
       throw new Error('该连接器尚不支持 OAuth 授权')
     }

@@ -1,4 +1,3 @@
-import semver from 'semver'
 import type {
   InstalledPackageView,
   PackageRegistryEntryView,
@@ -7,6 +6,7 @@ import type {
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import { parseWrapperCompositionId, wrapperTierLabel } from './wrapperView'
 import type { CatalogBrowseGroup } from '../../../components/catalog/CatalogBrowseLayout'
+import { catalogPackages } from '../../../lib/contentCatalog'
 
 export interface WrapperCatalogChoice {
   id: string
@@ -45,29 +45,24 @@ export function wrapperCatalogChoices(
       category: provider === 'custom' ? '自定义' : wrapperTierLabel(tier) || '其他',
       version: installed.get(id)?.version,
       cached: entry,
-      installed: true,
+      installed: entry.packageSelected !== false,
       selected: entry.packageSelected !== false,
       enabled: entry.packageEnabled !== false
     })
   }
-  const packages = new Map<
-    string,
-    { entry: PackageRegistryEntryView; path: string; source: string }
-  >()
-  for (const registry of registries) {
-    for (const entry of registry.packages) {
-      if (entry.type !== 'wrapper') continue
-      const current = packages.get(entry.id)
-      if (!current || semver.gt(entry.version, current.entry.version)) {
-        packages.set(entry.id, { entry, path: registry.dir, source: registry.id })
-      }
-    }
-  }
-  for (const { entry, path, source } of packages.values()) {
+  for (const { entry, registry } of catalogPackages(registries, 'wrapper')) {
     const category = entry.category?.trim()
     const cached = choices.get(entry.id)
     if (cached) {
       if (category) cached.category = wrapperTierLabel(category)
+      cached.registryEntry = entry
+      cached.registryPath = registry.dir
+      if (!cached.installed) {
+        cached.title = entry.title
+        cached.summary = entry.summary
+        cached.metadata = registry.label ?? registry.id
+        cached.version = entry.version
+      }
       continue
     }
     const existing = installed.get(entry.id)
@@ -76,14 +71,14 @@ export function wrapperCatalogChoices(
       id: entry.id,
       title: entry.title,
       summary: entry.summary,
-      metadata: source,
-      version: existing?.version ?? entry.version,
+      metadata: registry.label ?? registry.id,
+      version: selected ? existing?.version : entry.version,
       category: category
         ? wrapperTierLabel(category)
         : wrapperTierLabel(parseWrapperCompositionId(entry.id).tier) || '其他',
       registryEntry: entry,
-      registryPath: path,
-      installed: Boolean(existing),
+      registryPath: registry.dir,
+      installed: selected,
       selected,
       enabled: selected && existing?.enabled !== false
     })

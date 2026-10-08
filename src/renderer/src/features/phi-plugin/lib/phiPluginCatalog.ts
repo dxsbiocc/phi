@@ -6,6 +6,7 @@ import type {
 
 export type PhiPluginCatalogEntry = PackageRegistryEntryView & {
   registryPath: string
+  registryLabel?: string
   trust: PackageTrust
 }
 

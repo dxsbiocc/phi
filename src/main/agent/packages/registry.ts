@@ -9,6 +9,7 @@ import { errorMessage, isRecord, packageVersionKey } from './installer-utils'
 import { parseRegistrySignature, verifyRegistryIndex, type TrustedRegistryKey } from './signature'
 import { TRUSTED_REGISTRY_KEYS } from './trusted-keys'
 import { parseRegistryIconAsset } from './icon-assets'
+import { parseRegistryManifestAsset } from './manifest-assets'
 
 export interface ReadRegistryOptions {
   builtin?: boolean
@@ -117,6 +118,11 @@ function parseRegistryEntry(value: unknown, index: number): RegistryPackageEntry
       throw new Error(`注册表 packages[${index}].iconAsset 无效`)
     }
   }
+  const manifestAsset =
+    entry.manifestAsset === undefined ? undefined : parseRegistryManifestAsset(entry.manifestAsset)
+  if (manifestAsset && entry.type !== 'mcp') {
+    throw new Error(`注册表 packages[${index}].manifestAsset 只适用于 connector`)
+  }
   return {
     id: entry.id,
     type: entry.type,
@@ -131,7 +137,8 @@ function parseRegistryEntry(value: unknown, index: number): RegistryPackageEntry
     ...(requires ? { requires } : {}),
     ...(typeof entry.category === 'string' ? { category: entry.category } : {}),
     ...(typeof entry.preview === 'string' ? { preview: entry.preview } : {}),
-    ...(iconAsset ? { iconAsset } : {})
+    ...(iconAsset ? { iconAsset } : {}),
+    ...(manifestAsset ? { manifestAsset } : {})
   }
 }
 

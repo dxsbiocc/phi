@@ -4,12 +4,7 @@ import type {
   PackageRegistryEntryView,
   PackageRegistryView
 } from '../src/shared/packageManagerTypes'
-import type { SkillSummary } from '../src/shared/skillTypes'
 import { getCatalogPage } from '../src/renderer/src/components/catalog/catalogPaging'
-import {
-  bundledCatalogSkills,
-  withoutBundledSkillNames
-} from '../src/renderer/src/features/skill/lib/skillCatalog'
 import {
   filterSkillCatalogItems,
   initialSkillCatalogBrowserState,
@@ -19,26 +14,6 @@ import {
   skillCatalogItems,
   type SkillCatalogItem
 } from '../src/renderer/src/features/skill/lib/skillCatalogBrowser'
-
-function skill(name: string, overrides: Partial<SkillSummary> = {}): SkillSummary {
-  return {
-    id: `/bundled/${name}/SKILL.md`,
-    name,
-    description: `${name} description`,
-    filePath: `/bundled/${name}/SKILL.md`,
-    source: 'bundled',
-    scope: 'user',
-    sourceCategory: 'bundled',
-    sourceCategoryLabel: '内置',
-    enabled: false,
-    globalEnabled: false,
-    globalOverride: null,
-    projectOverride: null,
-    core: false,
-    disabled: true,
-    ...overrides
-  }
-}
 
 function entry(
   id: string,
@@ -63,81 +38,66 @@ function registry(dir: string, packages: PackageRegistryEntryView[]): PackageReg
 }
 
 test('skill catalog groups use actual categories and count only offered items', () => {
-  const skills = [
-    skill('scanpy'),
-    skill('legacy', { deprecated: '新版已替代' }),
-    skill('enabled', { globalEnabled: true }),
-    skill('core', { core: true }),
-    skill('project-only', { sourceCategory: 'project' })
-  ]
   const packages = [
     entry('scanpy', { category: '生物信息' }),
     entry('alignment', { category: ' 生物信息 ' }),
     entry('imaging', { category: '生物信息' }),
     entry('local', { category: '  ' })
   ]
-  const items = skillCatalogItems(
-    bundledCatalogSkills(skills),
-    withoutBundledSkillNames(packages, skills)
-  )
+  const items = skillCatalogItems(packages)
   const groups = skillCatalogGroups(items)
 
-  assert.deepEqual(groups.slice(0, 2), [
-    { id: 'all', label: '全部技能', count: 5 },
-    { id: 'bundled', label: '内置技能', count: 2 }
-  ])
+  assert.deepEqual(groups[0], { id: 'all', label: '全部技能', count: 4 })
+  assert.ok(groups.every((group) => group.id !== 'bundled'))
   assert.deepEqual(
     groups.find((group) => group.label === '生物信息'),
     {
       id: 'category:生物信息',
       label: '生物信息',
-      count: 2
+      count: 3
     }
   )
   assert.deepEqual(
-    groups.find((group) => group.label === '本地软件包'),
+    groups.find((group) => group.label === '软件包'),
     {
-      id: 'category:本地软件包',
-      label: '本地软件包',
+      id: 'category:软件包',
+      label: '软件包',
       count: 1
     }
-  )
-  assert.equal(
-    filterSkillCatalogItems(items, 'bundled', '').every((item) => item.kind === 'bundled'),
-    true
   )
   assert.deepEqual(
     filterSkillCatalogItems(items, 'category:生物信息', '').map(
       (item) => item.kind === 'package' && item.entry.id
     ),
-    ['alignment', 'imaging']
+    ['scanpy', 'alignment', 'imaging']
   )
 })
 
-test('skill catalog search stays within its selected group and includes names, descriptions and metadata', () => {
-  const items = skillCatalogItems(
-    [
-      skill('scanpy', { description: 'Single Cell Analysis' }),
-      skill('legacy', { deprecated: 'Use Modern' })
-    ],
-    [entry('package-id', { title: 'Workbench', summary: 'Analysis tools', category: '成像' })]
-  )
-
-  assert.equal(filterSkillCatalogItems(items, 'bundled', '  CELL  ').length, 1)
-  assert.equal(filterSkillCatalogItems(items, 'bundled', 'modern').length, 1)
+test('skill catalog search stays within its selected group and includes source metadata', () => {
+  const items = skillCatalogItems([
+    entry('scanpy', { summary: 'Single Cell Analysis', category: '生物信息' }),
+    entry('package-id', {
+      title: 'Workbench',
+      summary: 'Analysis tools',
+      category: '成像',
+      registryLabel: 'Phi Packages'
+    })
+  ])
+  assert.equal(filterSkillCatalogItems(items, 'category:生物信息', '  CELL  ').length, 1)
   assert.equal(filterSkillCatalogItems(items, 'all', 'analysis').length, 2)
   assert.equal(filterSkillCatalogItems(items, 'all', 'PACKAGE-ID').length, 1)
   assert.equal(filterSkillCatalogItems(items, 'category:成像', 'workbench').length, 1)
   assert.equal(filterSkillCatalogItems(items, 'category:成像', '成像').length, 1)
-  assert.equal(filterSkillCatalogItems(items, 'bundled', 'workbench').length, 0)
+  assert.equal(filterSkillCatalogItems(items, 'category:生物信息', 'workbench').length, 0)
+  assert.equal(filterSkillCatalogItems(items, 'all', 'Phi Packages').length, 1)
   assert.equal(filterSkillCatalogItems(items, 'all', 'nothing').length, 0)
 })
 
 test('skill catalog pages are disjoint and filtering happens before pagination', () => {
-  const items = skillCatalogItems(
-    Array.from({ length: 12 }, (_, index) => skill(`built-${index}`)),
-    Array.from({ length: 23 }, (_, index) => entry(`package-${index}`, { category: '软件包组' }))
-  )
+  const items = skillCatalogItems([
+    ...Array.from({ length: 12 }, (_, index) => entry(`other-${index}`)),
+    ...Array.from({ length: 23 }, (_, index) => entry(`package-${index}`, { category: '软件包组' }))
+  ])
   let state = initialSkillCatalogBrowserState
   const visible = (): SkillCatalogItem[] =>
     getCatalogPage(
@@ -230,7 +190,6 @@ test('completed skill refresh resets a removed group to the first page and keeps
   state = skillCatalogBrowserReducer(state, { type: 'page', page: 1 })
 
   const refreshedItems = skillCatalogItems(
-    [],
     Array.from({ length: 42 }, (_, index) => entry(`match-${index}`, { category: '新分类' }))
   )
   const groupIds = skillCatalogGroups(refreshedItems).map((group) => group.id)

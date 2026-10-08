@@ -5,6 +5,7 @@ import type {
   InstalledPackage,
   InstallerOptions,
   LocalRegistry,
+  PackageRequest,
   RegistryPackageEntry,
   RegistryTrustTier
 } from './installer-types'
@@ -28,6 +29,11 @@ export interface PackageUpdateOptions extends Pick<InstallerOptions, 'agentDir' 
   installed?: readonly InstalledPackage[]
 }
 
+export interface PackageUpdateInstallOptions extends InstallerOptions {
+  /** Remote preparation runs in the same dependency order as upgrades. */
+  preparePackage?: (registry: LocalRegistry, request: PackageRequest) => Promise<void>
+}
+
 const TRUST_RANK: Record<RegistryTrustTier, number> = {
   imported: 0,
   builtin: 1,
@@ -43,7 +49,6 @@ export function computePackageUpdates(
   if (!semver.valid(appVersion)) throw new Error(`应用版本无效: ${appVersion}`)
 
   return installed
-    .filter((item) => !isAppManaged(item))
     .flatMap((item) => {
       const candidates = eligibleCandidates(item, registries, appVersion)
       const preferred = candidates.filter(({ registry }) => registry.id === item.registry)
@@ -70,7 +75,7 @@ export function listPackageUpdates(
 export async function applyPackageUpdate(
   update: PackageUpdate,
   registries: readonly LocalRegistry[],
-  options: InstallerOptions = {}
+  options: PackageUpdateInstallOptions = {}
 ): Promise<InstalledPackage[]> {
   const current = listPackageUpdates(registries, options).find(
     (candidate) =>
@@ -84,17 +89,15 @@ export async function applyPackageUpdate(
     throw new Error(`软件包更新已不可用或已过期: ${update.type}:${update.id}@${update.newVersion}`)
   }
   const registry = findUpdateRegistry(current, registries)
-  return upgradePackage(
-    registry,
-    { type: current.type, id: current.id, version: current.newVersion },
-    options
-  )
+  const request = { type: current.type, id: current.id, version: current.newVersion }
+  await options.preparePackage?.(registry, request)
+  return upgradePackage(registry, request, options)
 }
 
 export async function applyPackageUpdates(
   updates: readonly PackageUpdate[],
   registries: readonly LocalRegistry[],
-  options: InstallerOptions = {}
+  options: PackageUpdateInstallOptions = {}
 ): Promise<InstalledPackage[]> {
   for (const update of orderUpdates(updates, registries)) {
     await applyPackageUpdate(update, registries, options)
@@ -155,10 +158,6 @@ function toPackageUpdate(
     registryPath: registry.dir,
     trust: registry.trust
   }
-}
-
-function isAppManaged(item: InstalledPackage): boolean {
-  return item.trust === 'builtin'
 }
 
 function findUpdateRegistry(

@@ -1,3 +1,4 @@
+import { readDirectSkills } from '../runtime/direct-skills'
 import { randomUUID } from 'node:crypto'
 import { editDiffString } from '@oh-my-pi/pi-natives'
 import { cpSync, existsSync } from 'node:fs'
@@ -150,19 +151,6 @@ type AutoCompactionBaseline = {
 const autoCompactionBaselines = new WeakMap<Settings, AutoCompactionBaseline>()
 type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 type ProjectResourceName = 'extensions' | 'prompts' | 'skills' | 'themes'
-type SerializableResourceOptions = Omit<
-  DefaultResourceLoaderOptions,
-  | 'settingsManager'
-  | 'eventBus'
-  | 'extensionFactories'
-  | 'extensionsOverride'
-  | 'skillsOverride'
-  | 'promptsOverride'
-  | 'themesOverride'
-  | 'agentsFilesOverride'
-  | 'systemPromptOverride'
-  | 'appendSystemPromptOverride'
->
 
 type RuntimeContext = {
   agentDir: string
@@ -659,12 +647,25 @@ function addExistingProjectResourcePaths(
   return merged.length > 0 ? merged : paths
 }
 
-function resourceOptions(params: unknown): SerializableResourceOptions {
+function resourceOptions(params: unknown): DefaultResourceLoaderOptions {
   const record = isRecord(params) ? params : {}
   const cwd = stringValue(record.cwd, process.cwd())
   const agentDir = stringValue(record.agentDir, process.env.PI_CODING_AGENT_DIR)
+  const skillFiles = stringArrayValue(record.additionalSkillFiles) ?? []
 
   return {
+    ...(skillFiles.length > 0 && !booleanValue(record.noSkills)
+      ? {
+          skillsOverride: (base) => {
+            const direct = readDirectSkills(skillFiles)
+            const paths = new Set(direct.map((skill) => skill.filePath))
+            return {
+              ...base,
+              skills: [...base.skills.filter((skill) => !paths.has(skill.filePath)), ...direct]
+            }
+          }
+        }
+      : {}),
     cwd,
     agentDir,
     additionalExtensionPaths: addExistingProjectResourcePaths(
@@ -1418,25 +1419,27 @@ async function createSession(params: unknown): Promise<unknown> {
       : [])
   ]
   let sessionSkillNames: Set<string> | undefined
+  const contentResourceOptions = resourceOptions({
+    ...(isRecord(record.resourceOptions) ? record.resourceOptions : {}),
+    cwd: settingsCwd,
+    agentDir
+  })
   const resources =
     isRecord(record.resourceOptions) || extensionFactories.length > 0
       ? new DefaultResourceLoader({
-          ...resourceOptions({
-            ...(isRecord(record.resourceOptions) ? record.resourceOptions : {}),
-            cwd: settingsCwd,
-            agentDir
-          }),
+          ...contentResourceOptions,
           settingsManager: SettingsManager.create(settingsCwd, agentDir),
           skillsOverride: (base) => {
+            const resolved = contentResourceOptions.skillsOverride?.(base) ?? base
             sessionSkillNames ??= new Set(
-              filterEnabledMainSkills(base.skills, {
+              filterEnabledMainSkills(resolved.skills, {
                 projectDir: cwd,
                 agentDir
               }).map((skill) => skill.name)
             )
             return {
-              ...base,
-              skills: base.skills.filter((skill) => sessionSkillNames?.has(skill.name))
+              ...resolved,
+              skills: resolved.skills.filter((skill) => sessionSkillNames?.has(skill.name))
             }
           },
           ...(personaMarkdown

@@ -201,7 +201,7 @@ test('remote resource catalog keeps global Skills and MCP without reading an anc
   )
 })
 
-test('runtime resource loader includes bundled skills from resources/skills', async () => {
+test('runtime resource loader includes only core authoring skill from resources/skills', async () => {
   const { createRuntimeResourceLoader, getBundledSkillsDir } =
     await import('../src/main/agent/runtime/runtime-adapter')
 
@@ -209,7 +209,26 @@ test('runtime resource loader includes bundled skills from resources/skills', as
   const loader = createRuntimeResourceLoader({ cwd: projectA, agentDir })
 
   assert.equal(existsSync(bundledSkillsDir), true)
-  assert.equal(loader.options.additionalSkillPaths?.includes(bundledSkillsDir), true)
+  assert.equal(loader.options.additionalSkillPaths?.includes(bundledSkillsDir), false)
+  assert.equal(
+    loader.options.additionalSkillFiles?.includes(
+      join(bundledSkillsDir, 'create-wrapper/SKILL.md')
+    ),
+    true
+  )
+  await loader.reload()
+  assert.equal(
+    loader.getSkills().skills.some((skill) => skill.name === 'create-wrapper'),
+    true
+  )
+  assert.equal(
+    loader
+      .getSkills()
+      .skills.some(
+        (skill) => skill.filePath.startsWith(bundledSkillsDir) && skill.name !== 'create-wrapper'
+      ),
+    false
+  )
 })
 
 test('listSkills reads project skills from the selected cwd', async () => {
@@ -230,13 +249,8 @@ test('listSkills reads project skills from the selected cwd', async () => {
   )
 
   assert(projectASkills.some((skill) => skill.name === 'project-a-skill'))
-  assert(bundledSkill)
+  assert.equal(bundledSkill, undefined)
   assert(omicsVisualizationSkill)
-  assert.equal(bundledSkill.sourceCategory, 'bundled')
-  assert.equal(bundledSkill.sourceCategoryLabel, '内置')
-  assert.equal(bundledSkill.globalEnabled, false)
-  assert.equal(bundledSkill.projectOverride, null)
-  assert.equal(bundledSkill.core, false)
   assert.equal(omicsVisualizationSkill.sourceCategory, 'plugin')
   assert.equal(omicsVisualizationSkill.sourceCategoryLabel, '插件')
   assert.equal(omicsVisualizationSkill.sourceId, 'visualization')

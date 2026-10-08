@@ -225,6 +225,8 @@ export type ResourceLoaderOptions = {
   settingsManager?: RuntimeSettingsManager
   additionalExtensionPaths?: string[]
   additionalSkillPaths?: string[]
+  /** Exact content entry files; avoids scanning inactive sibling versions or bundled domain skills. */
+  additionalSkillFiles?: string[]
   additionalPromptTemplatePaths?: string[]
   additionalThemePaths?: string[]
   extensionFactories?: InlineExtension[]
@@ -412,6 +414,10 @@ export function getBundledSkillsDir(): string {
   return getBundledResourceDir('skills')
 }
 
+export function getCoreAuthoringSkillDir(): string {
+  return join(getBundledSkillsDir(), 'create-wrapper')
+}
+
 export function getBundledPalettesDir(): string {
   return getBundledResourceDir('palettes')
 }
@@ -442,20 +448,20 @@ function installedPluginSkillDirectories(
 
 function runtimeSkillDirectories(agentDir?: string, projectDir?: string): string[] {
   return [
-    ...listActiveSkillPackages(agentDir).map((entry) => dirname(entry.dir)),
-    getBundledSkillsDir(),
-    ...installedPluginSkillDirectories(agentDir, projectDir).map((plugin) => dirname(plugin.dir))
+    ...listActiveSkillPackages(agentDir).map((entry) => entry.dir),
+    getCoreAuthoringSkillDir(),
+    ...installedPluginSkillDirectories(agentDir, projectDir).map((plugin) => plugin.dir)
   ]
 }
 
-function appendExistingBundledSkillPaths(
+function appendExistingContentSkillPaths(
   paths: string[] | undefined,
   agentDir?: string,
   projectDir?: string
 ): string[] | undefined {
-  const bundledPaths = runtimeSkillDirectories(agentDir, projectDir).filter((path) =>
-    existsSync(path)
-  )
+  const bundledPaths = runtimeSkillDirectories(agentDir, projectDir)
+    .map((directory) => join(directory, 'SKILL.md'))
+    .filter((path) => existsSync(path))
   const merged = dedupePaths([...bundledPaths, ...(paths ?? [])])
   return merged.length > 0 ? merged : paths
 }
@@ -482,7 +488,7 @@ function markBundledSystemSkills(options: ResourceLoaderOptions): ResourceLoader
       const bundledRoot = getBundledSkillsDir()
       const pluginRoots = installedPluginSkillDirectories(options.agentDir, options.cwd)
       const installedPackages = listActiveSkillPackages(options.agentDir)
-      const installedNames = new Set(installedPackages.map((entry) => entry.id))
+      const coreSkillRoot = getCoreAuthoringSkillDir()
       const skills = resolved.skills.map((skill) => {
         const installedPackage = installedPackages.find(({ dir }) =>
           pathIsInside(skill.filePath, dir)
@@ -534,7 +540,9 @@ function markBundledSystemSkills(options: ResourceLoaderOptions): ResourceLoader
       return {
         ...resolved,
         skills: skills.filter(
-          (skill) => !(installedNames.has(skill.name) && pathIsInside(skill.filePath, bundledRoot))
+          (skill) =>
+            !pathIsInside(skill.filePath, bundledRoot) ||
+            pathIsInside(skill.filePath, coreSkillRoot)
         )
       }
     }
@@ -586,12 +594,13 @@ function withPhiProjectResources(options: ResourceLoaderOptions): ResourceLoader
         options.cwd,
         'prompts'
       ),
+      additionalSkillFiles: appendExistingContentSkillPaths(
+        options.additionalSkillFiles,
+        options.agentDir,
+        options.cwd
+      ),
       additionalSkillPaths: appendExistingProjectResourcePaths(
-        appendExistingBundledSkillPaths(
-          options.additionalSkillPaths,
-          options.agentDir,
-          options.cwd
-        ),
+        options.additionalSkillPaths,
         options.cwd,
         'skills'
       ),
@@ -610,6 +619,7 @@ function serializableResourceOptions(options: ResourceLoaderOptions): Record<str
     agentDir: options.agentDir,
     additionalExtensionPaths: options.additionalExtensionPaths,
     additionalSkillPaths: options.additionalSkillPaths,
+    additionalSkillFiles: options.additionalSkillFiles,
     additionalPromptTemplatePaths: options.additionalPromptTemplatePaths,
     additionalThemePaths: options.additionalThemePaths,
     noExtensions: options.noExtensions,

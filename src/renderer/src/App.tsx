@@ -4469,7 +4469,6 @@ function App(): React.JSX.Element {
           skills={skills}
           isSkillsLoading={isLoadingSkills}
           onClose={() => setIsSkillCatalogOpen(false)}
-          onEnableBundled={(skill) => onSetSkillGlobalEnabled(skill, true)}
           onPickRegistryDirectory={() => rendererApi.pickPackageRegistryDirectory()}
           onReadRegistry={(dir) => rendererApi.readPackageRegistry(dir)}
           onInstallPackage={onInstallSkillPackage}

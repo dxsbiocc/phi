@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 
+import type { LocalRegistry } from '../src/main/agent/packages/installer-types'
+import { OFFICIAL_REGISTRY_ID } from '../src/main/agent/packages/official-registry'
 import {
   addKnownRegistry,
   BUNDLED_REGISTRY_ID,
@@ -138,37 +140,49 @@ test('validates the persisted file and each directory entry exactly', () => {
   }
 })
 
-test('lists the real bundled source tree first with a cached package count and no read error', () => {
+function officialRegistry(agentDir: string): LocalRegistry {
+  return {
+    id: OFFICIAL_REGISTRY_ID,
+    dir: join(agentDir, 'cache', 'registries', OFFICIAL_REGISTRY_ID, 'generations', 'a'.repeat(64)),
+    trust: 'official',
+    schemaVersion: 1,
+    generatedAt: '2026-10-08T00:00:00.000Z',
+    packages: [],
+    status: 'ready'
+  }
+}
+
+test('lists the official source before user directories without persisting the default', async () => {
   const { root, agentDir, registryDir } = sandbox()
   try {
     const added = addKnownRegistry(registryDir, {
       agentDir,
       now: () => new Date('2026-10-02T01:02:03.000Z')
     })
-
-    const resourcesDir = join(process.cwd(), 'resources')
-    const listed = listKnownRegistries({ agentDir, bundledResourcesDir: resourcesDir })
-    assert.equal(listed.error, undefined)
-    assert.equal(listed.registries[0]?.error, undefined)
-    assert.ok((listed.registries[0]?.packageCount ?? 0) > 0)
+    const listed = await listKnownRegistries({
+      agentDir,
+      loadOfficialRegistry: async () => officialRegistry(agentDir)
+    })
     assert.deepEqual(listed, {
       registries: [
         {
-          id: BUNDLED_REGISTRY_ID,
-          kind: 'bundled',
-          path: resourcesDir,
+          id: OFFICIAL_REGISTRY_ID,
+          kind: 'official',
+          label: 'Phi Packages',
+          path: OFFICIAL_REGISTRY_ID,
           removable: false,
-          trust: 'builtin',
-          packageCount: listed.registries[0]?.packageCount
-        },
-        {
-          ...added,
-          removable: true,
-          trust: 'imported',
+          trust: 'official',
+          status: 'ready',
           packageCount: 0
-        }
+        },
+        { ...added, removable: true, trust: 'imported', packageCount: 0 }
       ]
     })
+    assert.deepEqual(readKnownRegistries(agentDir).registries, [added])
+    assert.throws(
+      () => removeKnownRegistry(OFFICIAL_REGISTRY_ID, { agentDir }),
+      /官方软件源不能移除/
+    )
     assert.throws(
       () => removeKnownRegistry(BUNDLED_REGISTRY_ID, { agentDir }),
       /内置软件源不能移除/
@@ -178,35 +192,66 @@ test('lists the real bundled source tree first with a cached package count and n
   }
 })
 
-test('loads no registry indexes or errors when the user has not added a registry', () => {
+test('loads the official index by default when no custom source has been added', async () => {
   const { root, agentDir } = sandbox()
   try {
-    assert.deepEqual(loadKnownRegistryIndexes({ agentDir }), {
-      registries: [],
-      errors: []
-    })
+    const registry = officialRegistry(agentDir)
+    assert.deepEqual(
+      await loadKnownRegistryIndexes({ agentDir, loadOfficialRegistry: async () => registry }),
+      {
+        registries: [registry],
+        errors: []
+      }
+    )
+    assert.deepEqual(readKnownRegistries(agentDir).registries, [])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })
 
-test('keeps a registry in the list with its read error when the directory stops loading', () => {
+test('failed official synchronization is visible and never falls back to bundled resources', async () => {
+  const { root, agentDir } = sandbox()
+  try {
+    const options = {
+      agentDir,
+      loadOfficialRegistry: async (): Promise<LocalRegistry> => {
+        throw new Error('离线且没有已验证缓存')
+      }
+    }
+    const listed = await listKnownRegistries(options)
+    assert.equal(listed.registries.length, 1)
+    assert.equal(listed.registries[0]?.kind, 'official')
+    assert.equal(listed.registries[0]?.status, 'unavailable')
+    assert.match(listed.registries[0]?.error ?? '', /没有已验证缓存/)
+    const loaded = await loadKnownRegistryIndexes(options)
+    assert.deepEqual(loaded.registries, [])
+    assert.match(loaded.errors[0] ?? '', /Phi Packages/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('preserves a verified cached official source and unavailable custom entries', async () => {
   const { root, agentDir, registryDir } = sandbox()
   try {
     const added = addKnownRegistry(registryDir, { agentDir })
     unlinkSync(join(registryDir, 'index.json'))
-
-    const listed = listKnownRegistries({
+    const registry = {
+      ...officialRegistry(agentDir),
+      status: 'cached' as const,
+      notice: '使用已验证缓存'
+    }
+    const listed = await listKnownRegistries({
       agentDir,
-      bundledResourcesDir: join(process.cwd(), 'resources')
+      loadOfficialRegistry: async () => registry
     })
-    assert.equal(listed.registries[0]?.id, BUNDLED_REGISTRY_ID)
+    assert.equal(listed.registries[0]?.id, OFFICIAL_REGISTRY_ID)
+    assert.equal(listed.registries[0]?.status, 'cached')
+    assert.equal(listed.registries[0]?.notice, '使用已验证缓存')
     const unavailable = listed.registries[1]
     assert.equal(unavailable?.id, added.id)
     assert.equal(unavailable?.path, added.path)
     assert.equal(unavailable?.removable, true)
-    assert.equal(unavailable?.trust, undefined)
-    assert.equal(unavailable?.packageCount, undefined)
     assert.match(unavailable?.error ?? '', /无法读取本地软件包注册表/)
     assert.deepEqual(readKnownRegistries(agentDir).registries, [added])
   } finally {

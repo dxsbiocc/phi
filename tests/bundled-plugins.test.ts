@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import test from 'node:test'
 
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
@@ -136,7 +136,7 @@ test('runtime skill loading and preview access use installed plugin files', asyn
     const skillDir = plugin.components.skills[0]
     assert.ok(skillDir)
     const loader = createRuntimeResourceLoader({ cwd: join(root, 'project'), agentDir })
-    assert.equal(loader.options.additionalSkillPaths?.includes(dirname(skillDir)), true)
+    assert.equal(loader.options.additionalSkillFiles?.includes(join(skillDir, 'SKILL.md')), true)
     await loader.reload()
     const skill = loader.getSkills().skills.find((item) => item.name === 'omics-visualization')
     assert.ok(skill)

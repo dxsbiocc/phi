@@ -38,17 +38,6 @@ export function skillSourceLabel(skill: SkillSummary): string {
   return skillSourceCategoryLabels[skill.sourceCategory]
 }
 
-/** Skill contract 1.1.0: deprecated skills stay listed but sort last. */
-export function bundledCatalogSkills(skills: SkillSummary[]): SkillSummary[] {
-  const available = skills.filter(
-    (skill) => skill.sourceCategory === 'bundled' && !skill.core && !skillIsGloballyEnabled(skill)
-  )
-  return [
-    ...available.filter((skill) => !skill.deprecated),
-    ...available.filter((skill) => skill.deprecated)
-  ]
-}
-
 export const DEPRECATED_SKILL_LABEL = '即将替代'
 
 export function registrySkillPackages(
@@ -56,17 +45,6 @@ export function registrySkillPackages(
 ): PackageRegistryEntryView[] {
   if (!registry) return []
   return registry.packages.filter((entry) => entry.type === 'skill')
-}
-
-/** A package named like a bundled skill would shadow it; the bundled one is offered instead. */
-export function withoutBundledSkillNames<T extends { id: string }>(
-  packages: readonly T[],
-  skills: readonly SkillSummary[]
-): T[] {
-  const bundledNames = new Set(
-    skills.filter((skill) => skill.sourceCategory === 'bundled').map((skill) => skill.name)
-  )
-  return packages.filter((entry) => !bundledNames.has(entry.id))
 }
 
 export function formatPackageSize(bytes: number): string {

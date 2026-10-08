@@ -21,6 +21,11 @@ export interface PackageRegistryEntryView {
 export interface PackageRegistryView {
   id: string
   dir: string
+  kind?: 'official' | 'directory'
+  label?: string
+  status?: 'ready' | 'cached'
+  notice?: string
+  refreshedAt?: string
   trust: PackageTrust
   schemaVersion: 1
   generatedAt: string
@@ -54,8 +59,12 @@ export interface InstalledPackageView {
 
 export interface KnownPackageRegistryView {
   id: string
-  kind: 'bundled' | 'directory'
+  kind: 'official' | 'bundled' | 'directory'
   path: string
+  label?: string
+  status?: 'ready' | 'cached' | 'unavailable'
+  notice?: string
+  refreshedAt?: string
   addedAt?: string
   removable: boolean
   trust?: PackageTrust

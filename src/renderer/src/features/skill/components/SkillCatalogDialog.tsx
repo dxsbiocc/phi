@@ -10,18 +10,12 @@ import type { SkillSummary } from '../../../types'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
 import { CatalogPagination } from '../../../components/catalog/CatalogPagination'
 import { getCatalogPage } from '../../../components/catalog/catalogPaging'
+import { loadContentCatalog } from '../../../lib/contentCatalog'
 import {
   CatalogResultsTable,
   type CatalogResultRow
 } from '../../../components/catalog/CatalogResultsTable'
-import {
-  DEPRECATED_SKILL_LABEL,
-  bundledCatalogSkills,
-  formatPackageSize,
-  registrySkillPackages,
-  skillIsEnabled,
-  withoutBundledSkillNames
-} from '../lib/skillCatalog'
+import { formatPackageSize } from '../lib/skillCatalog'
 import {
   filterSkillCatalogItems,
   initialSkillCatalogBrowserState,
@@ -40,7 +34,6 @@ export type SkillCatalogDialogProps = {
   isRegistryLoading?: boolean
   registryError?: string | null
   onClose: () => void
-  onEnableBundled?: (skill: SkillSummary) => Promise<void> | void
   onPickRegistryDirectory?: () => Promise<string | null>
   onReadRegistry?: (dir: string) => Promise<PackageRegistryView>
   onInstallPackage?: (registryDir: string, entry: PackageRegistryEntryView) => Promise<void> | void
@@ -57,11 +50,9 @@ export function SkillCatalogDialog({
   skills,
   isSkillsLoading = false,
   registry,
-  registryDir,
   isRegistryLoading = false,
   registryError = null,
   onClose,
-  onEnableBundled,
   onPickRegistryDirectory,
   onReadRegistry,
   onInstallPackage,
@@ -69,15 +60,15 @@ export function SkillCatalogDialog({
   onRefresh
 }: SkillCatalogDialogProps): React.JSX.Element {
   const [localRegistry, setLocalRegistry] = useState<PackageRegistryView | null>(null)
-  const [localRegistryDir, setLocalRegistryDir] = useState<string | null>(null)
   const [loadingRegistry, setLoadingRegistry] = useState(false)
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [installedDuringSession, setInstalledDuringSession] = useState<Set<string>>(new Set())
   const [updateIds, setUpdateIds] = useState<Set<string>>(new Set())
-  const [knownPackages, setKnownPackages] = useState<
-    Array<PackageRegistryEntryView & { registryDir: string }>
-  >([])
+  const [knownRegistries, setKnownRegistries] = useState<PackageRegistryView[]>([])
+  const [loadingKnownRegistries, setLoadingKnownRegistries] = useState(false)
+  const [sourceError, setSourceError] = useState<string | null>(null)
+  const [sourceNotice, setSourceNotice] = useState<string | null>(null)
   const [browser, dispatchBrowser] = useReducer(
     skillCatalogBrowserReducer,
     initialSkillCatalogBrowserState
@@ -108,38 +99,32 @@ export function SkillCatalogDialog({
   useEffect(() => {
     if (!open) return
     let active = true
-    void window.api
-      .listPackageRegistries()
-      .then((registries) =>
-        Promise.all(
-          registries
-            .filter((item) => item.kind !== 'bundled' && !item.error)
-            .map(async (item) => {
-              try {
-                return await window.api.readPackageRegistry(item.path)
-              } catch {
-                return null
-              }
-            })
-        )
-      )
-      .then((registries) => {
+    void Promise.resolve().then(() => {
+      if (active) setLoadingKnownRegistries(true)
+    })
+    void loadContentCatalog(window.api)
+      .then((catalog) => {
         if (!active) return
-        setKnownPackages(knownSkillCatalogPackages(registries))
+        setKnownRegistries(catalog.registries)
+        setSourceError(catalog.errors.join('\n') || null)
+        setSourceNotice(catalog.notices.join('\n') || '首选来源：Phi Packages')
       })
-      .catch(() => undefined)
+      .catch((cause) => {
+        if (active) setSourceError(errorMessage(cause))
+      })
+      .finally(() => {
+        if (active) setLoadingKnownRegistries(false)
+      })
     return () => {
       active = false
     }
   }, [open])
 
   const displayedRegistry = registry === undefined ? localRegistry : registry
-  const displayedRegistryDir = registryDir === undefined ? localRegistryDir : registryDir
-  const bundledSkills = useMemo(() => bundledCatalogSkills(skills), [skills])
-  const packages = useMemo(() => {
-    const candidates = displayedRegistry ? registrySkillPackages(displayedRegistry) : knownPackages
-    return withoutBundledSkillNames(candidates, skills)
-  }, [displayedRegistry, knownPackages, skills])
+  const packages = useMemo(
+    () => knownSkillCatalogPackages([...knownRegistries, displayedRegistry ?? null]),
+    [displayedRegistry, knownRegistries]
+  )
   const installedPackageIds = useMemo(() => {
     const ids = new Set(installedDuringSession)
     for (const skill of skills) {
@@ -147,12 +132,9 @@ export function SkillCatalogDialog({
     }
     return ids
   }, [installedDuringSession, skills])
-  const loading = loadingRegistry || isRegistryLoading
-  const error = actionError ?? registryError
-  const items = useMemo(
-    () => skillCatalogItems(bundledSkills, loading ? [] : packages),
-    [bundledSkills, loading, packages]
-  )
+  const loading = loadingRegistry || loadingKnownRegistries || isRegistryLoading
+  const error = actionError ?? registryError ?? sourceError
+  const items = useMemo(() => skillCatalogItems(loading ? [] : packages), [loading, packages])
   const groups = useMemo(() => skillCatalogGroups(items), [items])
   const selectedGroupId = groups.some((group) => group.id === browser.groupId)
     ? browser.groupId
@@ -190,7 +172,6 @@ export function SkillCatalogDialog({
       const dir = await onPickRegistryDirectory()
       if (!dir) return
       const nextRegistry = await onReadRegistry(dir)
-      setLocalRegistryDir(dir)
       setLocalRegistry(nextRegistry)
     } catch (cause) {
       setActionError(`读取本地目录失败：${errorMessage(cause)}`)
@@ -199,26 +180,11 @@ export function SkillCatalogDialog({
     }
   }
 
-  async function enableBundled(skill: SkillSummary): Promise<void> {
-    if (!onEnableBundled) return
-    const key = `bundled:${skill.name}`
-    setBusyKey(key)
-    setActionError(null)
-    try {
-      await onEnableBundled(skill)
-      await onRefresh?.()
-    } catch (cause) {
-      setActionError(`启用技能失败：${errorMessage(cause)}`)
-    } finally {
-      setBusyKey(null)
-    }
-  }
-
   async function install(
     entry: PackageRegistryEntryView & { registryDir?: string }
   ): Promise<void> {
     const updating = updateIds.has(entry.id)
-    const sourceDir = displayedRegistryDir ?? entry.registryDir
+    const sourceDir = entry.registryDir
     if (updating ? !onApplyUpdate : !onInstallPackage || !sourceDir) return
     const key = `package:${entry.id}@${entry.version}`
     setBusyKey(key)
@@ -241,33 +207,6 @@ export function SkillCatalogDialog({
   }
 
   const rows: CatalogResultRow[] = visibleItems.map((item) => {
-    if (item.kind === 'bundled') {
-      const { skill } = item
-      const key = `bundled:${skill.name}`
-      const enabledInProject = skillIsEnabled(skill)
-      return {
-        rowKey: `bundled:${skill.id}`,
-        id: skill.id,
-        icon: <ResourceIcon icon={skill.icon} kind="skill" sx={{ color: 'primary.main' }} />,
-        title: skill.name,
-        summary: skill.deprecated
-          ? `${DEPRECATED_SKILL_LABEL}：${skill.deprecated}${skill.description ? ` ${skill.description}` : ''}`
-          : skill.description || '这个技能没有提供说明。',
-        metadata: '内置',
-        details: [skill.environment, skill.version].filter(Boolean).join(' · ') || '未声明',
-        action: (
-          <Button
-            size="small"
-            variant="contained"
-            title={enabledInProject ? '已在本项目启用；此操作将在全局启用' : '在全局启用此技能'}
-            disabled={busyKey !== null || !onEnableBundled}
-            onClick={() => void enableBundled(skill)}
-          >
-            {busyKey === key ? '正在启用…' : '启用'}
-          </Button>
-        )
-      }
-    }
     const { entry } = item
     const key = `package:${entry.id}@${entry.version}`
     const installed = installedPackageIds.has(entry.id)
@@ -278,7 +217,7 @@ export function SkillCatalogDialog({
       icon: <ResourceIcon icon={entry.icon} kind="skill" sx={{ color: 'primary.main' }} />,
       title: entry.title,
       summary: entry.summary,
-      metadata: '软件包',
+      metadata: entry.registryLabel ?? '软件包',
       details: `v${entry.version} · ${formatPackageSize(entry.size)}`,
       action: (
         <Button
@@ -346,7 +285,7 @@ export function SkillCatalogDialog({
             disabled={loading || busyKey !== null || !onPickRegistryDirectory || !onReadRegistry}
             onClick={() => void chooseRegistry()}
           >
-            {displayedRegistryDir ? '更换目录' : '选择目录'}
+            添加
           </Button>
         }
         footer={
@@ -361,9 +300,6 @@ export function SkillCatalogDialog({
           />
         }
       >
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          启用 Phi 内置技能，或从本地软件包目录安装技能。安装的技能默认启用。
-        </Typography>
         {error ? (
           <Alert severity="error" sx={{ mb: 2 }} onClose={() => setActionError(null)}>
             {error}
@@ -373,22 +309,27 @@ export function SkillCatalogDialog({
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 2 }}>
             <CircularProgress size={18} />
             <Typography variant="body2" color="text.secondary">
-              正在读取内置技能
+              正在读取已安装技能
             </Typography>
           </Stack>
         ) : null}
-        {loading && selectedGroupId !== 'bundled' ? (
+        {loading ? (
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 2 }}>
             <CircularProgress size={18} />
             <Typography variant="body2" color="text.secondary">
-              正在读取本地目录
+              正在读取 Phi Packages 和本地目录
             </Typography>
           </Stack>
+        ) : null}
+        {sourceNotice ? (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            {sourceNotice}
+          </Alert>
         ) : null}
         <CatalogResultsTable
           label="技能目录结果"
           nameLabel="技能"
-          detailsLabel="环境 / 版本"
+          detailsLabel="版本 / 大小"
           rows={rows}
           rowAttribute="data-phi-skill-catalog-card"
         />
@@ -396,11 +337,9 @@ export function SkillCatalogDialog({
           <Typography variant="body2" color="text.secondary" sx={{ py: 3 }}>
             {browser.query.trim()
               ? '没有匹配的技能，请尝试其他关键词。'
-              : selectedGroupId === 'bundled'
-                ? '没有待启用的内置技能'
-                : displayedRegistry
-                  ? '目录中没有可安装的技能包'
-                  : '已知软件源中没有可安装的技能包'}
+              : displayedRegistry
+                ? '目录中没有可安装的技能包'
+                : '已知软件源中没有可安装的技能包'}
           </Typography>
         ) : null}
       </CatalogBrowseLayout>

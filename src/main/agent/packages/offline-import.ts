@@ -39,6 +39,8 @@ export interface OfflinePackageImportPreview {
 
 export interface OfflinePackageImportOptions extends InstallerOptions {
   registries?: readonly LocalRegistry[]
+  /** Prepare a selected remote dependency only when the actual import is requested. */
+  preparePackage?: (registry: LocalRegistry, entry: RegistryPackageEntry) => Promise<void>
 }
 
 export function previewOfflinePackageImport(
@@ -47,7 +49,7 @@ export function previewOfflinePackageImport(
 ): OfflinePackageImportPreview {
   const prepared = prepareOfflineRegistry(archivePath, options)
   try {
-    return { archivePath: resolve(archivePath), plan: planOfflineImport(prepared, options) }
+    return { archivePath: resolve(archivePath), plan: planOfflineImport(prepared, options, false) }
   } finally {
     prepared.cleanup()
   }
@@ -59,7 +61,16 @@ export async function importOfflinePackage(
 ): Promise<InstalledPackage[]> {
   const prepared = prepareOfflineRegistry(archivePath, options)
   try {
-    const plan = planOfflineImport(prepared, options)
+    const closure = planInstall(
+      prepared.registry,
+      { type: prepared.root.type, id: prepared.root.id, version: prepared.root.version },
+      options
+    )
+    for (const entry of closure.packages) {
+      const source = prepared.sources.get(packageVersionKey(entry))
+      if (source) await options.preparePackage?.(source.registry, entry)
+    }
+    const plan = planOfflineImport(prepared, options, true)
     const installed = await installPackages(plan, options)
     return installed
   } finally {
@@ -73,7 +84,8 @@ export async function importOfflinePackage(
  */
 function planOfflineImport(
   prepared: ReturnType<typeof prepareOfflineRegistry>,
-  options: OfflinePackageImportOptions
+  options: OfflinePackageImportOptions,
+  materialize: boolean
 ): InstallPlan {
   const request = {
     type: prepared.root.type,
@@ -82,7 +94,7 @@ function planOfflineImport(
   }
   const planOptions = { agentDir: options.agentDir, appVersion: options.appVersion }
   const closure = planInstall(prepared.registry, request, planOptions)
-  for (const entry of closure.packages) {
+  for (const entry of materialize ? closure.packages : []) {
     const source = prepared.sources.get(packageVersionKey(entry))
     if (!source) continue
     copyFileSync(

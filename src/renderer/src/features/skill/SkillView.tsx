@@ -133,11 +133,6 @@ export default function SkillView({
 }: SkillViewProps): React.JSX.Element {
   const [catalogOpen, setCatalogOpen] = useState(false)
   const selectedSkill = skills.find((skill) => skill.id === activeSkillId) ?? null
-  const enableBundled = onSetGlobalEnabled
-    ? (skill: SkillSummary) => onSetGlobalEnabled(skill, true)
-    : onSetSkillDisabled
-      ? (skill: SkillSummary) => onSetSkillDisabled(skill, false)
-      : undefined
 
   return (
     <Fragment>
@@ -182,7 +177,6 @@ export default function SkillView({
         isRegistryLoading={isRegistryLoading}
         registryError={registryError}
         onClose={() => setCatalogOpen(false)}
-        onEnableBundled={enableBundled}
         onPickRegistryDirectory={onPickRegistryDirectory}
         onReadRegistry={onReadRegistry}
         onInstallPackage={onInstallPackage}

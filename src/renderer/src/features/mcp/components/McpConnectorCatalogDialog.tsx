@@ -17,6 +17,7 @@ import {
 } from '../../../../../shared/mcpConnectorCatalog'
 import type { PackageUpdateView } from '../../../../../shared/packageManagerTypes'
 import { PhiIcons } from '../../../icons'
+import { loadContentCatalog } from '../../../lib/contentCatalog'
 import type { McpServerSummary } from '../../../types'
 import { featuredAuthFailureNotice, featuredOAuthStatusFromError } from '../lib/featuredAuthStatus'
 import {
@@ -103,6 +104,8 @@ export function McpConnectorCatalogDialog({
   const [busy, setBusy] = useState<string | null>(null)
   const [authorizingId, setAuthorizingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [sourceNotice, setSourceNotice] = useState<string | null>(null)
+  const [sourceError, setSourceError] = useState<string | null>(null)
   const [toolNames, setToolNames] = useState<string[] | null>(null)
   const [toolsLoading, setToolsLoading] = useState(false)
   const [toolsError, setToolsError] = useState<string | null>(null)
@@ -112,11 +115,20 @@ export function McpConnectorCatalogDialog({
   useEffect(() => {
     if (!open) return
     let active = true
-    void Promise.all([window.api.listMcpConnectorCatalog(), window.api.listPackageUpdates()])
-      .then(([entries, availableUpdates]) => {
+    void Promise.resolve().then(() => {
+      if (active) setCatalogLoading(true)
+    })
+    void Promise.all([
+      window.api.listMcpConnectorCatalog(),
+      window.api.listPackageUpdates().catch(() => []),
+      loadContentCatalog(window.api)
+    ])
+      .then(([entries, availableUpdates, catalog]) => {
         if (!active) return
         setConnectors(entries)
         setUpdates(availableUpdates)
+        setSourceError(catalog.errors.join('\n') || null)
+        setSourceNotice(catalog.notices.join('\n') || '首选来源：Phi Packages')
         for (const connector of entries.filter(
           (entry) => entry.oauthAuthorizationOrigin || entry.apiKey
         )) {
@@ -646,6 +658,16 @@ export function McpConnectorCatalogDialog({
         </Box>
         <Box sx={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <Box sx={{ flex: 1, overflowY: 'auto', px: 3, py: 3 }}>
+            {sourceError ? (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {sourceError}
+              </Alert>
+            ) : null}
+            {sourceNotice ? (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                {sourceNotice}
+              </Alert>
+            ) : null}
             {page === 'detail' && selected ? (
               <McpFeaturedConnectorDetails
                 connector={selected}

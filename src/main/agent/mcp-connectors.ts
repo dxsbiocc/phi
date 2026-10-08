@@ -1,4 +1,11 @@
 import {
+  OFFICIAL_REGISTRY_ID,
+  isOfficialRegistryDirectory,
+  type OfficialRegistryOptions
+} from './packages/official-registry'
+import { prepareContentPackageInstall, readContentRegistry } from './packages/content-source'
+import { readRegistryManifestAsset } from './packages/manifest-assets'
+import {
   existsSync,
   lstatSync,
   mkdirSync,
@@ -98,7 +105,9 @@ export function mcpOAuthAuthorizationOrigin(id: string, url: string): string | u
 }
 
 export interface ConnectorCatalogOptions extends McpPackageConfigOptions {
-  /** Optional built registry containing bundled connectors; source manifests are used by default. */
+  /** Verified loaded indexes, including the official metadata-only catalog. */
+  registries?: readonly LocalRegistry[]
+  /** Explicit legacy source for tooling/tests; domain content is never loaded implicitly. */
   bundledRegistryDir?: string
   /** Bundled connector source root override used by isolated runtimes and tests. */
   bundledConnectorsDir?: string
@@ -113,6 +122,7 @@ export interface ConnectorEnvironmentBuildAction {
 }
 
 interface CatalogSource {
+  official?: boolean
   manifest: McpPackageManifest
   registryDir: string
   packageDir?: string
@@ -123,7 +133,7 @@ export function getBundledConnectorsDir(): string {
   return getBundledResourceDir('connectors')
 }
 
-/** Catalog data from shipped source packages and each local registry known by the caller. */
+/** Catalog data from supplied verified indexes and installed connectors. */
 export function listConnectorCatalog(
   options: ConnectorCatalogOptions = {}
 ): FeaturedMcpConnector[] {
@@ -136,10 +146,13 @@ export function listConnectorCatalog(
   const installed = listActiveMcpPackages(agentDir)
   const installedRoots = new Map(installed.map((entry) => [entry.id, entry.dir]))
 
+  for (const registry of options.registries ?? []) {
+    sources.push(...catalogSourcesFromRegistryIndex(registry))
+  }
   if (options.bundledRegistryDir && existsSync(options.bundledRegistryDir)) {
     sources.push(...catalogSourcesFromRegistry(options.bundledRegistryDir))
-  } else if (!options.bundledRegistryDir) {
-    const root = options.bundledConnectorsDir ?? getBundledConnectorsDir()
+  } else if (options.bundledConnectorsDir) {
+    const root = options.bundledConnectorsDir
     if (existsSync(root)) sources.push(...catalogSourcesFromDirectory(root))
   }
   for (const dir of uniquePaths(options.registryDirs ?? [])) {
@@ -165,7 +178,12 @@ export function listConnectorCatalog(
   const selected = new Map<string, CatalogSource>()
   for (const source of sources) {
     const current = selected.get(source.manifest.id)
-    if (!current || semver.gt(source.manifest.version, current.manifest.version)) {
+    if (
+      !current ||
+      (source.official === true && current.official !== true) ||
+      (source.official === current.official &&
+        semver.gt(source.manifest.version, current.manifest.version))
+    ) {
       selected.set(source.manifest.id, source)
     }
   }
@@ -239,8 +257,20 @@ export async function installCatalogConnector(
   registryDir: string,
   id: string,
   version?: string,
-  options: InstallerOptions = {}
+  options: InstallerOptions & OfficialRegistryOptions = {}
 ): Promise<InstalledPackage[]> {
+  if (
+    registryDir === OFFICIAL_REGISTRY_ID ||
+    isOfficialRegistryDirectory(registryDir, options.agentDir)
+  ) {
+    const registry = await readContentRegistry(registryDir, options)
+    const prepared = await prepareContentPackageInstall(
+      registry,
+      { type: 'mcp', id, ...(version ? { version } : {}) },
+      options
+    )
+    return installConnectorFromRegistry(prepared, id, version, options)
+  }
   const source = resolve(registryDir)
   if (isRegistryDirectory(source)) {
     const registry = readRegistry(source)
@@ -517,10 +547,16 @@ function catalogSourcesFromDirectory(root: string): CatalogSource[] {
 }
 
 function catalogSourcesFromRegistry(dir: string): CatalogSource[] {
-  const registry = readRegistry(dir)
+  return catalogSourcesFromRegistryIndex(readRegistry(dir))
+}
+
+function catalogSourcesFromRegistryIndex(registry: LocalRegistry): CatalogSource[] {
   return registry.packages
     .filter((entry) => entry.type === 'mcp')
     .map((entry) => ({
+      ...(registry.id === OFFICIAL_REGISTRY_ID && registry.trust === 'official'
+        ? { official: true }
+        : {}),
       manifest: manifestFromRegistryEntry(registry, entry),
       registryDir: registry.dir,
       ...(entry.iconAsset ? { iconAsset: entry.iconAsset } : {})
@@ -531,6 +567,11 @@ function manifestFromRegistryEntry(
   registry: LocalRegistry,
   entry: RegistryPackageEntry
 ): McpPackageManifest {
+  const sidecar = readRegistryManifestAsset(registry.dir, entry)
+  if (sidecar) {
+    if (sidecar.type !== 'mcp') throw new Error(`连接器清单类型无效: ${entry.id}`)
+    return sidecar
+  }
   const archive = readFileSync(localArchivePath(registry, entry.archive))
   if (archive.length !== entry.size || sha256(archive) !== entry.sha256) {
     throw new Error(`MCP 软件包归档校验失败: ${entry.id}@${entry.version}`)
