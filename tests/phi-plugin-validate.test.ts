@@ -335,6 +335,14 @@ test('nothing directly under agents or skills may be left unlisted', () => {
   ])
 })
 
+test('macOS Finder metadata under agents or skills is not an unlisted component', () => {
+  const dir = pluginFixture(undefined, {
+    'agents/.DS_Store': 'junk',
+    'skills/.DS_Store': 'junk'
+  })
+  assertValid(dir)
+})
+
 test('environment declarations must use their own canonical spec path', () => {
   const dir = pluginFixture((manifest) => {
     manifest.environments = {

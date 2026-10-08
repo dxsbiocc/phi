@@ -206,6 +206,7 @@ function validateListedEntries(
     return
   }
   for (const name of entries.sort()) {
+    if (name === '.DS_Store') continue
     const relativePath = `${component}/${name}`
     if (!listed.has(relativePath)) {
       fail(relativePath, `${relativePath} is not listed in components.${component}`)
