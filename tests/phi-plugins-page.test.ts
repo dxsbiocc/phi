@@ -343,7 +343,7 @@ test('plugin detail contains management, components, environment state and sourc
 
 test('plugin detail renders component descriptions, statuses, approvals and legacy fallbacks', () => {
   const longDescription =
-    '这是一个很长的技能说明，用于验证界面只显示一行、省略溢出内容，并且仍可通过悬停查看完整说明。'
+    '这是一个很长的技能说明，用于验证界面只显示一行、省略溢出内容，并且可以通过点击查看完整说明。'
   const detailed = plugin({
     agents: [],
     agentDetails: [],
@@ -382,7 +382,9 @@ test('plugin detail renders component descriptions, statuses, approvals and lega
   assert.match(markup, /审批：执行/)
   assert.match(markup, /所属技能：omics-visualization/)
   assert.match(markup, /data-phi-description-truncated="true"/)
-  assert.ok(markup.includes(`aria-label="${longDescription}"`))
+  assert.ok(!markup.includes(`aria-label="${longDescription}"`))
+  assert.ok(!markup.includes(`title="${longDescription}"`))
+  assert.match(markup, /aria-label="查看技能 omics-visualization"/)
   assert.match(markup, /text-overflow:ellipsis/)
 
   const legacyMarkup = themed(
