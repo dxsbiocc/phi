@@ -18,6 +18,7 @@ const icons: Record<string, string> = {
   pubmed: new URL('../assets/pubmed.svg', import.meta.url).href,
   biorxiv: new URL('../assets/biorxiv.png', import.meta.url).href,
   'clinical-trials': new URL('../assets/clinical-trials.png', import.meta.url).href,
+  cbioportal: new URL('../assets/cbioportal.png', import.meta.url).href,
   'open-targets': new URL('../assets/open-targets.svg', import.meta.url).href
 }
 

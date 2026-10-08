@@ -38,7 +38,9 @@ export function McpApiKeyDialog({
 
   return (
     <Dialog open={Boolean(connector)} onClose={busy ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{installed ? `更新 ${name} API key` : `添加 ${name}`}</DialogTitle>
+      <DialogTitle>
+        {installed ? (verified ? `更新 ${name} API key` : `验证 ${name} API key`) : `添加 ${name}`}
+      </DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
           <Typography variant="body2" color="text.secondary">
@@ -91,7 +93,9 @@ export function McpApiKeyDialog({
             ? '正在验证…'
             : value.trim()
               ? installed
-                ? '验证并更新'
+                ? verified
+                  ? '验证并更新'
+                  : '验证并保存'
                 : '验证并添加'
               : '添加连接器'}
         </Button>

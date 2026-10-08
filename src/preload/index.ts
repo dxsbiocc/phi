@@ -100,7 +100,7 @@ import type {
   EnablementSnapshot
 } from '../shared/enablementTypes'
 import type { SkillContent, SkillSummary } from '../shared/skillTypes'
-import type { FeaturedMcpConnector } from '../shared/mcpConnectorCatalog'
+import type { FeaturedMcpConnector, RemoteMcpConnectorOptions } from '../shared/mcpConnectorCatalog'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
@@ -979,7 +979,13 @@ type RendererAuthApi = {
   ) => Promise<InstalledPackageView[]>
   uninstallMcpConnector: (id: string) => Promise<InstalledPackageView[]>
   buildMcpConnectorEnvironment: (id: string) => Promise<{ envId: string }>
-  addRemoteMcpConnector: (name: string, url: string) => Promise<void>
+  addRemoteMcpConnector: (
+    name: string,
+    url: string,
+    options?: RemoteMcpConnectorOptions
+  ) => Promise<void>
+  authorizeRemoteMcpConnector: (name: string) => Promise<void>
+  cancelRemoteMcpAuth: (name: string) => Promise<void>
   removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
   setMcpConnectorEnabled: (name: string, enabled: boolean, sourcePath?: string) => Promise<void>
   listFeaturedMcpTools: (id: string) => Promise<string[]>
@@ -1669,8 +1675,15 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('mcp:uninstallConnector', id),
   buildMcpConnectorEnvironment: (id: string): Promise<{ envId: string }> =>
     ipcRenderer.invoke('mcp:buildConnectorEnvironment', id),
-  addRemoteMcpConnector: (name: string, url: string): Promise<void> =>
-    ipcRenderer.invoke('mcp:addRemoteConnector', name, url),
+  addRemoteMcpConnector: (
+    name: string,
+    url: string,
+    options?: RemoteMcpConnectorOptions
+  ): Promise<void> => ipcRenderer.invoke('mcp:addRemoteConnector', name, url, options),
+  authorizeRemoteMcpConnector: (name: string): Promise<void> =>
+    ipcRenderer.invoke('mcp:authorizeRemoteConnector', name),
+  cancelRemoteMcpAuth: (name: string): Promise<void> =>
+    ipcRenderer.invoke('mcp:cancelRemoteAuth', name),
   removeRemoteMcpConnector: (name: string, url: string): Promise<void> =>
     ipcRenderer.invoke('mcp:removeRemoteConnector', name, url),
   setMcpConnectorEnabled: (name: string, enabled: boolean, sourcePath?: string): Promise<void> =>

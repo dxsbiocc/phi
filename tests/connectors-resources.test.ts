@@ -180,6 +180,16 @@ const featuredMcpConnectors = [
     '无需登录',
     'https://mcp.platform.opentargets.org/mcp',
     'https://github.com/opentargets/platform-mcp'
+  ],
+  [
+    'cbioportal',
+    'cBioPortal',
+    '查询癌症基因组研究、样本、突变和临床数据',
+    'cBioPortal',
+    '健康与生命科学',
+    '需要登录',
+    'https://mcp.cbioportal.org/db/mcp',
+    'https://docs.cbioportal.org/ai-integrations/mcp/'
   ]
 ] as const
 

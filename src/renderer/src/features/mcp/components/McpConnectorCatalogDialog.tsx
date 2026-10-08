@@ -12,7 +12,8 @@ import {
 } from '@mui/material'
 import {
   mcpConnectorCategories,
-  type FeaturedMcpConnector
+  type FeaturedMcpConnector,
+  type RemoteMcpConnectorOptions
 } from '../../../../../shared/mcpConnectorCatalog'
 import type { PackageUpdateView } from '../../../../../shared/packageManagerTypes'
 import { PhiIcons } from '../../../icons'
@@ -90,6 +91,12 @@ export function McpConnectorCatalogDialog({
   const [sort, setSort] = useState<ConnectorSort>('default')
   const [customOpen, setCustomOpen] = useState(false)
   const [customError, setCustomError] = useState<string | null>(null)
+  const [customAuthorizingName, setCustomAuthorizingName] = useState<string | null>(null)
+  const savedCustomAuthRef = useRef<{
+    name: string
+    url: string
+    oauth: RemoteMcpConnectorOptions['oauth'] | null
+  } | null>(null)
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [apiKeyDialogId, setApiKeyDialogId] = useState<string | null>(null)
   const [apiKeyError, setApiKeyError] = useState<string | null>(null)
@@ -156,7 +163,7 @@ export function McpConnectorCatalogDialog({
     return () => {
       active = false
     }
-  }, [open])
+  }, [open, servers])
   const selected = connectors.find((connector) => connector.id === selectedId)
   const apiKeyDialogConnector =
     connectors.find((connector) => connector.id === apiKeyDialogId && connector.apiKey) ?? null
@@ -207,6 +214,20 @@ export function McpConnectorCatalogDialog({
       await refreshCatalog()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function setConnectorEnabled(server: McpServerSummary, enabled: boolean): Promise<void> {
+    setBusy(server.name)
+    setError(null)
+    try {
+      await window.api.setMcpConnectorEnabled(server.name, enabled, server.sourcePath)
+      await onRefresh()
+      await refreshCatalog()
+    } catch (cause) {
+      setError(ipcErrorMessage(cause))
     } finally {
       setBusy(null)
     }
@@ -412,6 +433,9 @@ export function McpConnectorCatalogDialog({
   }
 
   function close(): void {
+    if (customAuthorizingName) {
+      void window.api.cancelRemoteMcpAuth(customAuthorizingName)
+    }
     if (authorizingId && typeof window.api.cancelFeaturedMcpAuth === 'function') {
       void window.api.cancelFeaturedMcpAuth(authorizingId)
     }
@@ -421,7 +445,9 @@ export function McpConnectorCatalogDialog({
     setApiKeyDialogId(null)
     setApiKeyError(null)
     setCustomOpen(false)
+    savedCustomAuthRef.current = null
     setCustomError(null)
+    setCustomAuthorizingName(null)
     setSignInFilter('all')
     setInstallFilter('all')
     setSort('default')
@@ -430,16 +456,39 @@ export function McpConnectorCatalogDialog({
     onClose()
   }
 
-  async function addCustom(name: string, url: string): Promise<void> {
+  async function addCustom(
+    name: string,
+    url: string,
+    options?: RemoteMcpConnectorOptions
+  ): Promise<void> {
     setBusy(name)
     setCustomError(null)
     try {
-      await window.api.addRemoteMcpConnector(name, url)
+      const previous = savedCustomAuthRef.current
+      const retryOptions =
+        previous?.name === name && previous.url === url
+          ? { ...options, expectedOAuth: previous.oauth }
+          : options
+      await window.api.addRemoteMcpConnector(name, url, retryOptions)
+      savedCustomAuthRef.current = { name, url, oauth: options?.oauth ?? null }
       await onRefresh()
+      if (options?.oauth?.clientId) {
+        setCustomAuthorizingName(name)
+        await window.api.authorizeRemoteMcpConnector(name)
+        for (const connector of connectors.filter(
+          (entry) => entry.url === url && entry.oauthAuthorizationOrigin
+        )) {
+          clearFeaturedToolNames(connector.id)
+          await refreshOAuthStatus(connector)
+        }
+      }
+      await refreshCatalog()
+      savedCustomAuthRef.current = null
       setCustomOpen(false)
     } catch (cause) {
-      setCustomError(cause instanceof Error ? cause.message : String(cause))
+      setCustomError(featuredAuthFailureNotice(ipcErrorMessage(cause)))
     } finally {
+      setCustomAuthorizingName(null)
       setBusy(null)
     }
   }
@@ -454,6 +503,7 @@ export function McpConnectorCatalogDialog({
   }
 
   function connectorCard(connector: FeaturedMcpConnector, key = connector.id): React.JSX.Element {
+    const server = matchingServer(connector, servers)
     const updateAvailable = updates.some(
       (update) => update.type === 'mcp' && update.id === connector.id
     )
@@ -461,7 +511,8 @@ export function McpConnectorCatalogDialog({
       <McpFeaturedConnectorCard
         key={key}
         connector={connector}
-        installed={connector.added || Boolean(matchingServer(connector, servers))}
+        installed={connector.added || Boolean(server)}
+        enabled={server?.enabled !== false}
         updateAvailable={updateAvailable}
         authStatus={authStatusById[connector.id] ?? 'checking'}
         busy={busy !== null}
@@ -475,6 +526,7 @@ export function McpConnectorCatalogDialog({
           connector.apiKey ? openApiKeyDialog(connector) : void connectOAuth(connector)
         }
         onBuildEnvironment={() => void buildEnvironment(connector)}
+        onEnable={server ? () => void setConnectorEnabled(server, true) : undefined}
       />
     )
   }
@@ -490,7 +542,8 @@ export function McpConnectorCatalogDialog({
             height: 'min(720px, calc(100vh - 96px))',
             maxHeight: 'calc(100vh - 96px)',
             borderRadius: 2,
-            overflow: 'hidden'
+            overflow: 'hidden',
+            WebkitAppRegion: 'no-drag'
           }
         }
       }}
@@ -535,6 +588,7 @@ export function McpConnectorCatalogDialog({
               variant="contained"
               startIcon={<PhiIcons.action.add size={16} />}
               onClick={() => {
+                savedCustomAuthRef.current = null
                 setCustomError(null)
                 setCustomOpen(true)
               }}
@@ -614,6 +668,10 @@ export function McpConnectorCatalogDialog({
                 onAuthorize={() => void connectOAuth(selected)}
                 onApiKey={() => openApiKeyDialog(selected)}
                 onBuildEnvironment={() => void buildEnvironment(selected)}
+                onEnabledChange={(enabled) => {
+                  const server = matchingServer(selected, servers)
+                  if (server) void setConnectorEnabled(server, enabled)
+                }}
                 onRetry={() => openDetail(selected, true)}
               />
             ) : (
@@ -645,13 +703,6 @@ export function McpConnectorCatalogDialog({
                       : '这个分组目前没有连接器'}
                   </Typography>
                 )}
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ display: 'block', mt: 2 }}
-                >
-                  添加会保存全局 MCP 配置；新建本地会话时加载。需要登录的服务还需完成授权。
-                </Typography>
               </>
             )}
             {error && (
@@ -666,13 +717,21 @@ export function McpConnectorCatalogDialog({
         <McpCustomConnectorDialog
           open
           busy={busy !== null}
+          authorizing={customAuthorizingName !== null}
           error={customError}
           onClose={() => {
+            if (customAuthorizingName) {
+              void window.api.cancelRemoteMcpAuth(customAuthorizingName).catch((cause: unknown) => {
+                setCustomError(ipcErrorMessage(cause))
+              })
+              return
+            }
             if (busy !== null) return
+            savedCustomAuthRef.current = null
             setCustomOpen(false)
             setCustomError(null)
           }}
-          onSubmit={(name, url) => void addCustom(name, url)}
+          onSubmit={(name, url, options) => void addCustom(name, url, options)}
         />
       )}
       <McpApiKeyDialog

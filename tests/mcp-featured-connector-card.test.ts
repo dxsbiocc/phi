@@ -10,7 +10,10 @@ function render(
   id: string,
   installed: boolean,
   authenticated: boolean,
-  overrides: Partial<FeaturedMcpConnector> = {}
+  overrides: Partial<FeaturedMcpConnector> = {},
+  enabled = true,
+  authorizing = false,
+  updateAvailable = false
 ): string {
   const names: Record<string, string> = {
     'google-drive': 'Google Drive',
@@ -20,6 +23,7 @@ function render(
     figma: 'Figma',
     canva: 'Canva',
     biorender: 'BioRender',
+    cbioportal: 'cBioPortal',
     gmail: 'Gmail',
     tavily: 'Tavily'
   }
@@ -29,7 +33,8 @@ function render(
     'linear',
     'figma',
     'canva',
-    'biorender'
+    'biorender',
+    'cbioportal'
   ].includes(id)
     ? 'https://auth.example.com'
     : undefined
@@ -58,6 +63,9 @@ function render(
       createElement(McpFeaturedConnectorCard, {
         connector,
         installed,
+        enabled,
+        authorizing,
+        updateAvailable,
         authStatus: authenticated ? 'authenticated' : 'unauthenticated',
         busy: false,
         onOpen: () => undefined,
@@ -94,7 +102,8 @@ test('a connector awaiting OAuth offers authorization instead of a config-only a
     ['linear', 'Linear'],
     ['figma', 'Figma'],
     ['canva', 'Canva'],
-    ['biorender', 'BioRender']
+    ['biorender', 'BioRender'],
+    ['cbioportal', 'cBioPortal']
   ] as const) {
     const markup = render(id, false, false)
     assert.match(markup, new RegExp(`aria-label="授权登录 ${name}"`))
@@ -129,6 +138,21 @@ test('API key connectors offer setup before a key is saved and show completion a
   assert.match(connected, /aria-label="已添加 Tavily"/)
 })
 
+test('a configured API key connector remains visibly configured while awaiting verification', () => {
+  const configured = render('tavily', true, false)
+  assert.match(configured, /已配置/)
+  assert.match(configured, /API key 未验证/)
+  assert.match(configured, /aria-label="验证 API key Tavily"/)
+  assert.doesNotMatch(configured, /aria-label="已添加 Tavily"/)
+})
+
+test('a configured disabled OAuth connector does not look enabled after login', () => {
+  const disabled = render('notion', true, true, {}, false)
+  assert.match(disabled, /已登录/)
+  assert.match(disabled, /已停用/)
+  assert.doesNotMatch(disabled, /aria-label="已添加 Notion"/)
+})
+
 test('catalog cards expose unavailable and not-built environment states', () => {
   const unavailable = render('notion', false, false, {
     unavailableReason: 'requires app 9.0.0'
@@ -148,4 +172,23 @@ test('catalog cards expose unavailable and not-built environment states', () => 
   })
   assert.match(pending, /环境未构建/)
   assert.match(pending, /aria-label="构建 Local stdio 环境"/)
+})
+
+test('authorization in progress shows a waiting indicator instead of an add or completion icon', () => {
+  for (const [installed, authenticated, updateAvailable] of [
+    [false, false, false],
+    [true, true, false],
+    [true, true, true]
+  ] as const) {
+    const markup = render('cbioportal', installed, authenticated, {}, true, true, updateAvailable)
+    assert.match(markup, /aria-label="取消授权 cBioPortal"/)
+    assert.match(markup, /role="progressbar"/)
+    assert.match(markup, /aria-label="等待授权"/)
+    assert.doesNotMatch(markup, /aria-label="已添加 cBioPortal"/)
+  }
+})
+
+test('cBioPortal uses its bundled official website icon', () => {
+  const markup = render('cbioportal', false, false)
+  assert.match(markup, /cbioportal\.png/)
 })

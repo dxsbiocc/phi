@@ -24,7 +24,7 @@ import type {
 const SORT_LABEL: Record<ConnectorSort, string> = {
   default: '默认',
   name: '名称',
-  added: '已添加优先'
+  added: '已配置优先'
 }
 
 export function McpConnectorCatalogToolbar({
@@ -112,7 +112,7 @@ export function McpConnectorCatalogToolbar({
           </ToggleButtonGroup>
           <Divider />
           <Typography variant="caption" color="text.secondary">
-            添加状态
+            配置状态
           </Typography>
           <ToggleButtonGroup
             exclusive
@@ -123,8 +123,8 @@ export function McpConnectorCatalogToolbar({
             }}
           >
             <ToggleButton value="all">全部</ToggleButton>
-            <ToggleButton value="added">已添加</ToggleButton>
-            <ToggleButton value="not-added">未添加</ToggleButton>
+            <ToggleButton value="added">已配置</ToggleButton>
+            <ToggleButton value="not-added">未配置</ToggleButton>
           </ToggleButtonGroup>
         </Stack>
       </Popover>

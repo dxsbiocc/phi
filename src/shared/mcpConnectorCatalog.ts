@@ -1,3 +1,14 @@
+export interface RemoteMcpOAuthCredentials {
+  clientId?: string
+  clientSecret?: string
+}
+
+export interface RemoteMcpConnectorOptions {
+  oauth?: RemoteMcpOAuthCredentials
+  /** Optimistic guard for retrying the immediately preceding save in the add dialog. */
+  expectedOAuth?: RemoteMcpOAuthCredentials | null
+}
+
 export interface FeaturedMcpConnector {
   id: string
   version: string

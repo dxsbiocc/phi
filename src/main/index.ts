@@ -41,7 +41,7 @@ import type {
 } from '../shared/wrapperTypes'
 import './agent-env'
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   closeSync,
   existsSync,
@@ -292,6 +292,7 @@ import {
   type PackageUpdate,
   uninstallPackage as uninstallRegistryPackage
 } from './agent/packages/installer'
+import type { RemoteMcpConnectorOptions } from '../shared/mcpConnectorCatalog'
 import {
   addRemoteMcpConnector,
   connectorEnvironmentBuildAction,
@@ -299,6 +300,7 @@ import {
   installCatalogConnector,
   listConnectorCatalog,
   mcpOAuthAuthorizationOrigin,
+  readCustomRemoteMcpConnector,
   refreshPersistedManagedStdioServers,
   removeRemoteMcpConnector,
   setMcpConnectorEnabled,
@@ -1879,6 +1881,59 @@ getOmpBridge().registerHostHandler('mcp.openAuthUrl', async (params) => {
   if (!authorizationOrigin) throw new Error('授权地址无效')
   const url = new URL(request.url)
   if (url.origin !== authorizationOrigin || url.username || url.password) {
+    throw new Error('授权地址与连接器不匹配')
+  }
+  await shell.openExternal(url.toString())
+})
+type PendingCustomMcpAuthorization = {
+  attemptId: string
+  serverUrl: string
+  configDigest: string
+  cancelled: boolean
+  authorizationOrigin?: string
+  authorizationPath?: string
+}
+const pendingCustomMcpAuthorizations = new Map<string, PendingCustomMcpAuthorization>()
+
+function customMcpAuthUrl(value: unknown): URL {
+  try {
+    if (typeof value !== 'string') throw new Error('Invalid URL')
+    const url = new URL(value)
+    if (url.protocol !== 'https:' || url.username || url.password || url.hash)
+      throw new Error('Invalid URL')
+    return url
+  } catch {
+    throw new Error('连接器授权地址无效')
+  }
+}
+
+function customMcpConfigDigest(connector: ReturnType<typeof readCustomRemoteMcpConnector>): string {
+  return createHash('sha256').update(JSON.stringify(connector)).digest('hex')
+}
+
+getOmpBridge().registerHostHandler('mcp.openCustomAuthUrl', async (params) => {
+  const request = params as { name?: unknown; attemptId?: unknown; url?: unknown } | null
+  if (typeof request?.name !== 'string' || typeof request.attemptId !== 'string') {
+    throw new Error('连接器授权请求无效')
+  }
+  const pending = pendingCustomMcpAuthorizations.get(request.name)
+  if (
+    !pending ||
+    pending.cancelled ||
+    pending.attemptId !== request.attemptId ||
+    !pending.authorizationOrigin
+  ) {
+    throw new Error('连接器授权请求已失效')
+  }
+  const connector = readCustomRemoteMcpConnector(request.name, AGENT_DIR)
+  if (
+    connector.url !== pending.serverUrl ||
+    customMcpConfigDigest(connector) !== pending.configDigest
+  ) {
+    throw new Error('连接器配置已变化，请重新授权')
+  }
+  const url = customMcpAuthUrl(request.url)
+  if (url.origin !== pending.authorizationOrigin || url.pathname !== pending.authorizationPath) {
     throw new Error('授权地址与连接器不匹配')
   }
   await shell.openExternal(url.toString())
@@ -9436,10 +9491,13 @@ app.whenReady().then(async () => {
     if (failure) throw failure.error
     return { envId: handle.envId }
   })
-  ipcMain.handle('mcp:addRemoteConnector', async (_, name: string, url: string) => {
-    addRemoteMcpConnector(name, url)
-    await syncFeaturedMcpApiKeySessions(name)
-  })
+  ipcMain.handle(
+    'mcp:addRemoteConnector',
+    async (_, name: string, url: string, options?: RemoteMcpConnectorOptions) => {
+      addRemoteMcpConnector(name, url, undefined, options)
+      await syncFeaturedMcpApiKeySessions(name)
+    }
+  )
   ipcMain.handle('mcp:removeRemoteConnector', async (_, name: string, url: string) => {
     removeRemoteMcpConnector(name, url)
     if (API_KEY_CONNECTOR_IDS.some((id) => id === name && apiKeyConnector(id).url === url)) {
@@ -9512,6 +9570,63 @@ app.whenReady().then(async () => {
   ipcMain.handle('mcp:cancelFeaturedAuth', async (_, id: string) => {
     if (typeof id !== 'string' || !id) return
     await getOmpBridge().request('mcp.cancelFeaturedAuth', { id })
+  })
+
+  ipcMain.handle('mcp:authorizeRemoteConnector', async (_, name: string) => {
+    const connector = readCustomRemoteMcpConnector(name, AGENT_DIR)
+    if (pendingCustomMcpAuthorizations.has(connector.name)) throw new Error('该连接器正在授权')
+    const pending: PendingCustomMcpAuthorization = {
+      attemptId: randomUUID(),
+      serverUrl: connector.url,
+      configDigest: customMcpConfigDigest(connector),
+      cancelled: false
+    }
+    // Register before discovery: cancel during preflight must prevent the later browser flow.
+    pendingCustomMcpAuthorizations.set(connector.name, pending)
+    let authorizationStarted = false
+    try {
+      const prepared = await getOmpBridge().request<{
+        serverUrl?: unknown
+        authorizationUrl?: unknown
+      }>('mcp.prepareRemoteAuth', { name: connector.name, attemptId: pending.attemptId })
+      if (pending.cancelled) throw new Error('授权已取消')
+      const current = readCustomRemoteMcpConnector(connector.name, AGENT_DIR)
+      if (
+        !prepared ||
+        prepared.serverUrl !== pending.serverUrl ||
+        customMcpConfigDigest(current) !== pending.configDigest
+      ) {
+        throw new Error('连接器配置已变化，请重新授权')
+      }
+      const authorizationUrl = customMcpAuthUrl(prepared.authorizationUrl)
+      pending.authorizationOrigin = authorizationUrl.origin
+      pending.authorizationPath = authorizationUrl.pathname
+      authorizationStarted = true
+      await getOmpBridge().request('mcp.authorizeRemote', {
+        name: connector.name,
+        attemptId: pending.attemptId,
+        serverUrl: pending.serverUrl
+      })
+    } finally {
+      if (pendingCustomMcpAuthorizations.get(connector.name) === pending)
+        pendingCustomMcpAuthorizations.delete(connector.name)
+      if (!authorizationStarted) {
+        await getOmpBridge()
+          .request('mcp.cancelRemoteAuth', { name: connector.name, attemptId: pending.attemptId })
+          .catch(() => undefined)
+      }
+    }
+  })
+  ipcMain.handle('mcp:cancelRemoteAuth', async (_, name: unknown) => {
+    if (typeof name !== 'string') throw new Error('连接器名称无效')
+    const key = name.trim()
+    const pending = pendingCustomMcpAuthorizations.get(key)
+    if (!pending) return
+    pending.cancelled = true
+    await getOmpBridge().request('mcp.cancelRemoteAuth', {
+      name: key,
+      attemptId: pending.attemptId
+    })
   })
 
   ipcMain.handle('wrappers:getPlan', async (_, planId: string) => readWrapperPlan(planId))

@@ -3915,7 +3915,11 @@ function App(): React.JSX.Element {
         onDeleteSkill={onDeleteSkill}
       />
     ) : activeWorkspaceResourceTab.kind === 'mcp' ? (
-      <McpDetail selectedServer={activeResourceMcpServer} onRemoveServer={onRemoveMcpServer} />
+      <McpDetail
+        selectedServer={activeResourceMcpServer}
+        onRemoveServer={onRemoveMcpServer}
+        onRefreshServers={refreshMcpServers}
+      />
     ) : activeWorkspaceResourceTab.kind === 'wrappers' ? (
       <WrapperDetail
         catalog={wrapperCatalog}

@@ -47,7 +47,11 @@ import { buildPresentFilesTool } from '../deliverables/present-tool'
 import { enterPlanReviewMode, type PlanReviewChoice } from '../plan/plan-review-mode'
 import { planModeToolDecision } from '../plan/plan-tool-policy'
 import type { PresentedFile } from '../../../shared/presentedFileTypes'
-import { authorizeFeaturedMcp, listFeaturedMcpTools } from './featured-mcp-auth'
+import {
+  authorizeFeaturedMcp,
+  discoverCustomMcpOAuthEndpoints,
+  listFeaturedMcpTools
+} from './featured-mcp-auth'
 import {
   API_KEY_CONNECTOR_IDS,
   apiKeyConnector,
@@ -58,6 +62,8 @@ import {
   disableFeaturedApiKeyAutoDiscovery,
   isMcpConnectorUserDisabled,
   mcpOAuthAuthorizationOrigin,
+  readCustomRemoteMcpConnector,
+  readRemoteMcpOAuthCredentials,
   readMcpServerEntry
 } from '../mcp-connectors'
 import type {
@@ -253,6 +259,15 @@ const pendingAuthPrompts = new Map<
   }
 >()
 const featuredAuthAbort = new Map<string, AbortController>()
+const pendingCustomMcpAuth = new Map<
+  string,
+  {
+    attemptId: string
+    connector: ReturnType<typeof readCustomRemoteMcpConnector>
+    cancel: AbortController
+    endpoints?: Awaited<ReturnType<typeof discoverCustomMcpOAuthEndpoints>>
+  }
+>()
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -2304,6 +2319,94 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       await applyConnectorEnabled(name)
       return undefined
     }
+    case 'mcp.prepareRemoteAuth': {
+      const record = isRecord(params) ? params : {}
+      const connector = readCustomRemoteMcpConnector(stringValue(record.name))
+      const attemptId = stringValue(record.attemptId)
+      if (!attemptId || attemptId.length > 100) throw new Error('连接器授权请求无效')
+      if (pendingCustomMcpAuth.has(connector.name)) throw new Error('该连接器正在授权')
+      const pending = {
+        attemptId,
+        connector,
+        cancel: new AbortController(),
+        endpoints: undefined as
+          Awaited<ReturnType<typeof discoverCustomMcpOAuthEndpoints>> | undefined
+      }
+      pendingCustomMcpAuth.set(connector.name, pending)
+      try {
+        pending.endpoints = await discoverCustomMcpOAuthEndpoints(
+          connector.url,
+          pending.cancel.signal
+        )
+        return { serverUrl: connector.url, authorizationUrl: pending.endpoints.authorizationUrl }
+      } catch (error) {
+        if (pendingCustomMcpAuth.get(connector.name) === pending)
+          pendingCustomMcpAuth.delete(connector.name)
+        throw error
+      }
+    }
+    case 'mcp.cancelRemoteAuth': {
+      const record = isRecord(params) ? params : {}
+      const name = stringValue(record.name)
+      const pending = pendingCustomMcpAuth.get(name)
+      if (pending?.attemptId === stringValue(record.attemptId)) {
+        pending.cancel.abort('授权已取消')
+        pendingCustomMcpAuth.delete(name)
+      }
+      return undefined
+    }
+    case 'mcp.authorizeRemote': {
+      const record = isRecord(params) ? params : {}
+      const name = stringValue(record.name)
+      const pending = pendingCustomMcpAuth.get(name)
+      if (!pending?.endpoints || pending.attemptId !== stringValue(record.attemptId)) {
+        throw new Error('连接器授权准备已失效，请重试')
+      }
+      try {
+        const connector = readCustomRemoteMcpConnector(name)
+        if (
+          JSON.stringify(connector) !== JSON.stringify(pending.connector) ||
+          connector.url !== record.serverUrl
+        ) {
+          throw new Error('连接器配置已变化，请重新授权')
+        }
+        if (pending.cancel.signal.aborted) throw new Error('授权已取消')
+        const ctx = await getContext()
+        await authorizeFeaturedMcp(
+          connector.url,
+          ctx.authStorage,
+          (url) =>
+            requestHost('mcp.openCustomAuthUrl', {
+              name,
+              attemptId: pending.attemptId,
+              url
+            }) as Promise<void>,
+          pending.cancel.signal,
+          connector.oauth,
+          pending.endpoints,
+          () => {
+            if (
+              JSON.stringify(readCustomRemoteMcpConnector(name)) !==
+              JSON.stringify(pending.connector)
+            ) {
+              throw new Error('连接器配置已变化，请重新授权')
+            }
+          }
+        )
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+        if (pending.cancel.signal.aborted || message.includes('授权已取消'))
+          throw new Error('授权已取消')
+        if (message.includes('授权已超时')) throw new Error('授权已超时')
+        if (message === '连接器配置已变化，请重新授权') throw new Error(message)
+        // Provider errors can echo submitted client credentials. Keep those in neither IPC nor logs.
+        throw new Error('连接器授权失败，请检查客户端信息并重试')
+      } finally {
+        if (pendingCustomMcpAuth.get(name) === pending) pendingCustomMcpAuth.delete(name)
+      }
+      return undefined
+    }
     case 'mcp.featuredAuthStatus': {
       const record = isRecord(params) ? params : {}
       const id = stringValue(record.id)
@@ -2334,7 +2437,8 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
           url,
           ctx.authStorage,
           (url) => requestHost('mcp.openAuthUrl', { id, url }) as Promise<void>,
-          cancel.signal
+          cancel.signal,
+          readRemoteMcpOAuthCredentials(id, url, ctx.agentDir || undefined)
         )
       } finally {
         featuredAuthAbort.delete(id)

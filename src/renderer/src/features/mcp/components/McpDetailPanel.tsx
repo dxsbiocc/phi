@@ -17,6 +17,7 @@ import { McpFeaturedConnectorDetails } from './McpFeaturedConnectorDetails'
 export interface McpDetailPanelProps {
   selectedServer: McpServerSummary | null
   onRemoveServer?: (server: McpServerSummary) => Promise<void>
+  onRefreshServers?: () => Promise<void>
   initialCatalog?: readonly FeaturedMcpConnector[]
 }
 
@@ -35,6 +36,7 @@ function errorMessage(cause: unknown): string {
 export function McpDetailPanel({
   selectedServer,
   onRemoveServer,
+  onRefreshServers,
   initialCatalog = []
 }: McpDetailPanelProps): React.JSX.Element {
   const [catalog, setCatalog] = useState<FeaturedMcpConnector[]>(() => [...initialCatalog])
@@ -123,7 +125,7 @@ export function McpDetailPanel({
     return () => {
       active = false
     }
-  }, [connector])
+  }, [connector, selectedServer])
 
   useEffect(() => {
     const request = ++toolRequestRef.current
@@ -191,6 +193,24 @@ export function McpDetailPanel({
     }
   }
 
+  async function setEnabled(enabled: boolean): Promise<void> {
+    if (!selectedServer || !onRefreshServers) return
+    setBusy(true)
+    setError(null)
+    try {
+      await window.api.setMcpConnectorEnabled(
+        selectedServer.name,
+        enabled,
+        selectedServer.sourcePath
+      )
+      await onRefreshServers()
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function replaceApiKey(): Promise<void> {
     if (!connector?.apiKey || !apiKeyInput.trim()) return
     setBusy(true)
@@ -226,6 +246,7 @@ export function McpDetailPanel({
               onRemove={onRemoveServer ? () => void remove() : undefined}
               onAuthorize={() => void authorize()}
               onApiKey={() => setApiKeyDialogOpen(true)}
+              onEnabledChange={onRefreshServers ? (enabled) => void setEnabled(enabled) : undefined}
               onRetry={refreshTools}
             />
           ) : (
@@ -248,6 +269,15 @@ export function McpDetailPanel({
                     label={selectedServer.enabled === false ? '已停用' : '已配置'}
                     sx={{ mt: 1.5 }}
                   />
+                  {onRefreshServers && (
+                    <Button
+                      variant="outlined"
+                      disabled={busy}
+                      onClick={() => void setEnabled(selectedServer.enabled === false)}
+                    >
+                      {selectedServer.enabled === false ? '启用' : '停用'}
+                    </Button>
+                  )}
                 </Box>
                 {selectedServer.managed && selectedServer.url && onRemoveServer && (
                   <Button

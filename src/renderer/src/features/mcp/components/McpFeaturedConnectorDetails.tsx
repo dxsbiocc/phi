@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Divider, Stack, Typography } from '@mui/material'
+import { Alert, Box, Button, Chip, Divider, Stack, Typography } from '@mui/material'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
 import type { McpServerSummary } from '../../../types'
 import { ConnectorIcon } from './ConnectorIcon'
@@ -22,6 +22,7 @@ export function McpFeaturedConnectorDetails({
   updateAvailable = false,
   onApiKey,
   onBuildEnvironment,
+  onEnabledChange,
   onRetry
 }: {
   connector: FeaturedMcpConnector
@@ -40,6 +41,7 @@ export function McpFeaturedConnectorDetails({
   updateAvailable?: boolean
   onApiKey: () => void
   onBuildEnvironment?: () => void
+  onEnabledChange?: (enabled: boolean) => void
   onRetry: () => void
 }): React.JSX.Element {
   const removeButton =
@@ -71,7 +73,7 @@ export function McpFeaturedConnectorDetails({
     actions = (
       <Stack direction="row" spacing={1}>
         <Button variant={server ? 'outlined' : 'contained'} disabled={busy} onClick={onApiKey}>
-          {server ? '更换密钥' : '添加连接器'}
+          {server ? (authStatus === 'authenticated' ? '更换密钥' : '验证 API key') : '添加连接器'}
         </Button>
         {removeButton}
       </Stack>
@@ -124,8 +126,37 @@ export function McpFeaturedConnectorDetails({
             {connector.name}
           </Typography>
           <Typography color="text.secondary">{connector.description}</Typography>
+          {server && (
+            <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+              <Chip size="small" variant="outlined" label="已配置" />
+              <Chip
+                size="small"
+                variant="outlined"
+                label={server.enabled === false ? '已停用' : '已启用'}
+              />
+            </Stack>
+          )}
         </Box>
-        {actions}
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          {server && onEnabledChange && (
+            <Button
+              variant={server.enabled === false ? 'contained' : 'outlined'}
+              disabled={
+                busy ||
+                authorizing ||
+                (server.enabled === false &&
+                  (Boolean(connector.unavailableReason) ||
+                    connector.environmentState === 'not-built' ||
+                    ((connector.apiKey || connector.signIn === '需要登录') &&
+                      authStatus !== 'authenticated')))
+              }
+              onClick={() => onEnabledChange(server.enabled === false)}
+            >
+              {server.enabled === false ? '启用' : '停用'}
+            </Button>
+          )}
+          {actions}
+        </Stack>
       </Stack>
       {connector.signIn === '需要登录' && !connector.oauthAuthorizationOrigin && (
         <Alert severity="warning" sx={{ mb: 3 }}>
@@ -152,10 +183,16 @@ export function McpFeaturedConnectorDetails({
       {connector.apiKey && (
         <Alert severity="info" sx={{ mb: 3 }}>
           {authStatus === 'authenticated'
-            ? 'API key 已通过验证并加密保存在本机。需要更换时，点击右上角的「更换密钥」。'
-            : server
-              ? 'API key 尚未通过验证。点击右上角的「更换密钥」重新验证。'
-              : '此连接器需要 API key。点击右上角的「添加连接器」进行验证和保存。'}
+            ? server
+              ? 'API key 已通过验证并加密保存在本机。需要更换时，点击右上角的「更换密钥」。'
+              : 'API key 已通过验证并加密保存在本机，可直接添加连接器。'
+            : authStatus === 'checking'
+              ? '正在检查 API key 验证状态…'
+              : authStatus === 'unavailable'
+                ? '暂时无法检查 API key 状态，请稍后重试验证。'
+                : server
+                  ? '配置已保存，API key 未验证。点击右上角的「验证 API key」完成验证后才可使用。'
+                  : '此连接器需要 API key。点击右上角的「添加连接器」进行验证和保存。'}
         </Alert>
       )}
       <McpToolList
@@ -206,11 +243,17 @@ export function McpFeaturedConnectorDetails({
           <Typography>
             {connector.apiKey && authStatus === 'authenticated'
               ? 'API key 已验证'
-              : authorizing
-                ? '等待授权'
-                : connector.oauthAuthorizationOrigin && authStatus === 'authenticated'
-                  ? '已登录'
-                  : connector.signIn}
+              : connector.apiKey
+                ? authStatus === 'checking'
+                  ? '检查中'
+                  : authStatus === 'unavailable'
+                    ? '状态不可用'
+                    : 'API key 未验证'
+                : authorizing
+                  ? '等待授权'
+                  : connector.oauthAuthorizationOrigin && authStatus === 'authenticated'
+                    ? '已登录'
+                    : connector.signIn}
           </Typography>
         </Box>
         {server?.sourcePath && (

@@ -10,7 +10,7 @@ import * as agentRunContinue from '../src/main/agent/agents/run-continue'
 import { agentRunHostHandlers } from '../src/main/agent/agents/run-host'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import * as path from 'node:path'
 import test from 'node:test'
@@ -83,6 +83,20 @@ const connectorCatalogFixture = [
     transport: 'http',
     auth: 'none',
     url: 'https://pubmed.mcp.claude.com/mcp',
+    registryDir: '/bundled-connectors',
+    added: false
+  },
+  {
+    id: 'cbioportal',
+    version: '1.0.0',
+    name: 'cBioPortal',
+    description: 'cBioPortal connector',
+    publisher: 'cBioPortal',
+    category: '健康与生命科学',
+    signIn: '需要登录',
+    transport: 'http',
+    auth: 'oauth',
+    url: 'https://mcp.cbioportal.org/db/mcp',
     registryDir: '/bundled-connectors',
     added: false
   },
@@ -281,6 +295,20 @@ type HarnessResult = {
   failBridgeRequests: (error: Error | undefined) => void
   failMcpApiKeyValidation: (error: Error | undefined) => void
   mcpApiKeyValidationCallCount: () => number
+  setCustomMcpBridgeRequest: (
+    handler: (method: string, params: unknown) => Promise<unknown>
+  ) => void
+  setCustomRemoteConnector: (
+    name: string,
+    connector:
+      { name: string; url: string; oauth: { clientId: string; clientSecret?: string } } | undefined
+  ) => void
+  addedRemoteMcpConnectors: Array<{
+    name: string
+    url: string
+    agentDir?: string
+    options?: unknown
+  }>
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
   invokeFromForeign: (channel: string, ...args: unknown[]) => Promise<unknown>
   sessions: FakeSession[]
@@ -444,6 +472,17 @@ async function harness(
   let bridgeAgentJobs: unknown[] = []
   const bridgeRequests: Array<{ method: string; params: unknown }> = []
   let bridgeStops = 0
+  const addedRemoteMcpConnectors: Array<{
+    name: string
+    url: string
+    agentDir?: string
+    options?: unknown
+  }> = []
+  const customRemoteConnectors = new Map<
+    string,
+    { name: string; url: string; oauth: { clientId: string; clientSecret?: string } }
+  >()
+  let customMcpBridgeRequest: ((method: string, params: unknown) => Promise<unknown>) | undefined
   const mcpApiKeys = new Map<string, string>()
   let mcpApiKeyValidationFailure: Error | undefined
   let mcpApiKeyValidationCalls = 0
@@ -1178,7 +1217,7 @@ async function harness(
     }
   }
   const modules: Record<string, unknown> = {
-    'node:crypto': { createHash },
+    'node:crypto': { createHash, randomUUID },
     semver: { gt: (left: string, right: string): boolean => left > right },
     './agent-env': {},
     './app-quit': { createBeforeQuitHandler },
@@ -1947,6 +1986,13 @@ async function harness(
         request: async (method, params) => {
           bridgeRequests.push({ method, params })
           if (bridgeFailure) throw bridgeFailure
+          if (
+            customMcpBridgeRequest &&
+            ['mcp.prepareRemoteAuth', 'mcp.authorizeRemote', 'mcp.cancelRemoteAuth'].includes(
+              method
+            )
+          )
+            return customMcpBridgeRequest(method, params)
           if (method === 'agentRuns.list') return bridgeAgentJobs
           if (method === 'mcp.featuredTools') return ['search_articles']
           if (method === 'mcp.featuredAuthStatus') return true
@@ -2171,9 +2217,22 @@ async function harness(
       validateSkill: (): unknown => ({ ok: true, errors: [], warnings: [] })
     },
     './agent/mcp-connectors': {
-      addRemoteMcpConnector: noop,
+      addRemoteMcpConnector: (
+        name: string,
+        url: string,
+        agentDir?: string,
+        options?: unknown
+      ): void => {
+        addedRemoteMcpConnectors.push({ name, url, agentDir, options })
+      },
       disableFeaturedApiKeyAutoDiscovery: noop,
       removeRemoteMcpConnector: noop,
+      readCustomRemoteMcpConnector: (name: string): unknown => {
+        const connector =
+          typeof name === 'string' ? customRemoteConnectors.get(name.trim()) : undefined
+        if (!connector) throw new Error('请选择已保存的自定义 HTTP 连接器')
+        return connector
+      },
       listConnectorCatalog: (): unknown[] => connectorCatalogFixture,
       mcpOAuthAuthorizationOrigin: (id: string, url: string): string | undefined => {
         const allowed: Record<string, { url: string; origin: string }> = {
@@ -2181,6 +2240,10 @@ async function harness(
           composio: {
             url: 'https://connect.composio.dev/mcp',
             origin: 'https://connect.composio.dev'
+          },
+          cbioportal: {
+            url: 'https://mcp.cbioportal.org/db/mcp',
+            origin: 'https://mcp.cbioportal.org'
           }
         }
         return allowed[id]?.url === url ? allowed[id].origin : undefined
@@ -3140,6 +3203,14 @@ async function harness(
       mcpApiKeyValidationFailure = error
     },
     mcpApiKeyValidationCallCount: () => mcpApiKeyValidationCalls,
+    setCustomMcpBridgeRequest: (handler): void => {
+      customMcpBridgeRequest = handler
+    },
+    setCustomRemoteConnector: (name, connector): void => {
+      if (connector) customRemoteConnectors.set(name, connector)
+      else customRemoteConnectors.delete(name)
+    },
+    addedRemoteMcpConnectors,
     osNotifications,
     reportedWrapperRuns,
     setAppFocused: (focused: boolean): void => {
@@ -5133,6 +5204,205 @@ test('main IPC: remote project session is tied to its ID and a private anchor', 
   assert.equal(restored.cwd, current.cwd)
 })
 
+test('main IPC: custom connector setup forwards optional OAuth fields only to private persistence', async () => {
+  const app = await harness()
+  const options = {
+    oauth: { clientId: 'private-client', clientSecret: 'private-secret' },
+    expectedOAuth: { clientId: 'previous-client', clientSecret: 'previous-secret' }
+  }
+  assert.equal(
+    await app.invoke('mcp:addRemoteConnector', 'my-connector', 'https://example.test/mcp', options),
+    undefined
+  )
+  assert.equal(
+    await app.invoke('mcp:addRemoteConnector', 'no-auth', 'https://public.test/mcp'),
+    undefined
+  )
+  assert.deepEqual(app.addedRemoteMcpConnectors, [
+    { name: 'my-connector', url: 'https://example.test/mcp', agentDir: undefined, options },
+    { name: 'no-auth', url: 'https://public.test/mcp', agentDir: undefined, options: undefined }
+  ])
+  assert.equal(JSON.stringify(app.bridgeRequests).includes('private-secret'), false)
+  assert.equal(JSON.stringify(app.bridgeRequests).includes('previous-secret'), false)
+  assert.equal(JSON.stringify(app.events).includes('private-secret'), false)
+})
+
+test('main IPC: custom OAuth locks browser opening to the prepared endpoint and attempt', async () => {
+  const app = await harness()
+  const connector = {
+    name: 'custom',
+    url: 'https://example.test/mcp',
+    oauth: { clientId: 'client', clientSecret: 'private-secret' }
+  }
+  app.setCustomRemoteConnector('custom', connector)
+  const open = app.hostHandlers.get('mcp.openCustomAuthUrl')
+  assert.ok(open)
+  let actualAttempt = ''
+  app.setCustomMcpBridgeRequest(async (method, params) => {
+    const request = params as { name: string; attemptId: string; serverUrl?: string }
+    assert.equal(request.name, 'custom')
+    if (method === 'mcp.prepareRemoteAuth')
+      return {
+        serverUrl: connector.url,
+        authorizationUrl: 'https://auth.example.test/oauth/authorize'
+      }
+    if (method === 'mcp.authorizeRemote') {
+      actualAttempt = request.attemptId
+      assert.equal(request.serverUrl, connector.url)
+      await assert.rejects(app.invoke('mcp:authorizeRemoteConnector', 'custom'), /正在授权/)
+      for (const url of [
+        'http://auth.example.test/oauth/authorize',
+        'https://user:password@auth.example.test/oauth/authorize',
+        'https://other.test/oauth/authorize',
+        'https://auth.example.test/another-path'
+      ]) {
+        await assert.rejects(
+          open({ name: 'custom', attemptId: request.attemptId, url }),
+          /无效|不匹配/
+        )
+      }
+      await assert.rejects(
+        open({
+          name: 'custom',
+          attemptId: 'stale-attempt',
+          url: 'https://auth.example.test/oauth/authorize'
+        }),
+        /失效/
+      )
+      await open({
+        name: 'custom',
+        attemptId: request.attemptId,
+        url: 'https://auth.example.test/oauth/authorize?client_id=client&state=state'
+      })
+      return undefined
+    }
+    return undefined
+  })
+  await app.invoke('mcp:authorizeRemoteConnector', 'custom')
+  assert.deepEqual(app.openedExternalUrls.slice(-1), [
+    'https://auth.example.test/oauth/authorize?client_id=client&state=state'
+  ])
+  await assert.rejects(
+    open({
+      name: 'custom',
+      attemptId: actualAttempt,
+      url: 'https://auth.example.test/oauth/authorize'
+    }),
+    /失效/
+  )
+  assert.equal(JSON.stringify(app.bridgeRequests).includes('private-secret'), false)
+  assert.equal(JSON.stringify(app.events).includes('private-secret'), false)
+})
+
+test('main IPC: custom OAuth rejects invalid preflight and changed saved configuration', async () => {
+  const app = await harness()
+  const connector = {
+    name: 'custom',
+    url: 'https://example.test/mcp',
+    oauth: { clientId: 'client', clientSecret: 'private-secret' }
+  }
+  await assert.rejects(app.invoke('mcp:authorizeRemoteConnector', 'missing'), /已保存/)
+  app.setCustomRemoteConnector('custom', connector)
+  for (const prepared of [
+    { serverUrl: connector.url, authorizationUrl: 'http://auth.example.test/authorize' },
+    { serverUrl: connector.url, authorizationUrl: 'https://user:pass@auth.example.test/authorize' },
+    {
+      serverUrl: 'https://changed.test/mcp',
+      authorizationUrl: 'https://auth.example.test/authorize'
+    }
+  ]) {
+    app.setCustomMcpBridgeRequest(async (method) =>
+      method === 'mcp.prepareRemoteAuth' ? prepared : undefined
+    )
+    await assert.rejects(app.invoke('mcp:authorizeRemoteConnector', 'custom'), /无效|已变化/)
+  }
+  app.setCustomMcpBridgeRequest(async (method) => {
+    if (method === 'mcp.prepareRemoteAuth') {
+      app.setCustomRemoteConnector('custom', {
+        ...connector,
+        oauth: { clientId: 'changed-client' }
+      })
+      return { serverUrl: connector.url, authorizationUrl: 'https://auth.example.test/authorize' }
+    }
+    return undefined
+  })
+  await assert.rejects(app.invoke('mcp:authorizeRemoteConnector', 'custom'), /已变化/)
+  assert.equal(
+    app.bridgeRequests.some((request) => request.method === 'mcp.authorizeRemote'),
+    false
+  )
+})
+
+test('main IPC: cancellation during custom OAuth discovery prevents the later browser flow', async () => {
+  const app = await harness()
+  const connector = {
+    name: 'custom',
+    url: 'https://example.test/mcp',
+    oauth: { clientId: 'client' }
+  }
+  app.setCustomRemoteConnector('custom', connector)
+  const started = deferred<void>()
+  const prepared = deferred<{ serverUrl: string; authorizationUrl: string }>()
+  app.setCustomMcpBridgeRequest(async (method) => {
+    if (method === 'mcp.prepareRemoteAuth') {
+      started.resolve()
+      return prepared.promise
+    }
+    return undefined
+  })
+  const authorize = app.invoke('mcp:authorizeRemoteConnector', 'custom')
+  await started.promise
+  await app.invoke('mcp:cancelRemoteAuth', 'custom')
+  prepared.resolve({
+    serverUrl: connector.url,
+    authorizationUrl: 'https://auth.example.test/authorize'
+  })
+  await assert.rejects(authorize, /授权已取消/)
+  assert.equal(
+    app.bridgeRequests.some((request) => request.method === 'mcp.authorizeRemote'),
+    false
+  )
+  assert.equal(app.openedExternalUrls.length, 0)
+  const first = app.bridgeRequests.find((request) => request.method === 'mcp.prepareRemoteAuth')
+  const cancelled = app.bridgeRequests.find((request) => request.method === 'mcp.cancelRemoteAuth')
+  assert.deepEqual(cancelled?.params, first?.params)
+})
+
+test('main IPC: custom OAuth cancellation and config changes invalidate browser callbacks', async () => {
+  const app = await harness()
+  const connector = {
+    name: 'custom',
+    url: 'https://example.test/mcp',
+    oauth: { clientId: 'client' }
+  }
+  app.setCustomRemoteConnector('custom', connector)
+  const open = app.hostHandlers.get('mcp.openCustomAuthUrl')
+  assert.ok(open)
+  const started = deferred<{ name: string; attemptId: string }>()
+  const completed = deferred<void>()
+  app.setCustomMcpBridgeRequest(async (method, params) => {
+    if (method === 'mcp.prepareRemoteAuth')
+      return { serverUrl: connector.url, authorizationUrl: 'https://auth.example.test/authorize' }
+    if (method === 'mcp.authorizeRemote') {
+      started.resolve(params as { name: string; attemptId: string })
+      await completed.promise
+      throw new Error('授权已取消')
+    }
+    return undefined
+  })
+  const authorize = app.invoke('mcp:authorizeRemoteConnector', 'custom')
+  const request = await started.promise
+  app.setCustomRemoteConnector('custom', { ...connector, oauth: { clientId: 'changed' } })
+  await assert.rejects(open({ ...request, url: 'https://auth.example.test/authorize' }), /已变化/)
+  app.setCustomRemoteConnector('custom', connector)
+  await app.invoke('mcp:cancelRemoteAuth', 'custom')
+  await assert.rejects(open({ ...request, url: 'https://auth.example.test/authorize' }), /失效/)
+  completed.resolve()
+  await assert.rejects(authorize, /授权已取消/)
+  const cancelled = app.bridgeRequests.find((entry) => entry.method === 'mcp.cancelRemoteAuth')
+  assert.deepEqual(cancelled?.params, { name: request.name, attemptId: request.attemptId })
+})
+
 test('main IPC: featured MCP tools are read through the Bun worker', async () => {
   const app = await harness()
   assert.deepEqual(await app.invoke('mcp:featuredTools', 'pubmed'), ['search_articles'])
@@ -5155,6 +5425,11 @@ test('main IPC: featured MCP tools are read through the Bun worker', async () =>
     method: 'mcp.featuredAuthStatus',
     params: { id: 'composio', url: 'https://connect.composio.dev/mcp' }
   })
+  assert.equal(await app.invoke('mcp:featuredAuthStatus', 'cbioportal'), true)
+  assert.deepEqual(app.bridgeRequests.at(-1), {
+    method: 'mcp.featuredAuthStatus',
+    params: { id: 'cbioportal', url: 'https://mcp.cbioportal.org/db/mcp' }
+  })
   await assert.rejects(app.invoke('mcp:featuredAuthStatus', 'gmail'), /不支持登录状态查询/)
   await app.invoke('mcp:authorizeFeatured', 'notion')
   assert.deepEqual(app.bridgeRequests.at(-1), {
@@ -5165,6 +5440,11 @@ test('main IPC: featured MCP tools are read through the Bun worker', async () =>
   assert.deepEqual(app.bridgeRequests.at(-1), {
     method: 'mcp.authorizeFeatured',
     params: { id: 'composio', url: 'https://connect.composio.dev/mcp' }
+  })
+  await app.invoke('mcp:authorizeFeatured', 'cbioportal')
+  assert.deepEqual(app.bridgeRequests.at(-1), {
+    method: 'mcp.authorizeFeatured',
+    params: { id: 'cbioportal', url: 'https://mcp.cbioportal.org/db/mcp' }
   })
   await assert.rejects(app.invoke('mcp:authorizeFeatured', 'gmail'), /不支持 OAuth 授权/)
   const openAuthUrl = app.hostHandlers.get('mcp.openAuthUrl')
@@ -5179,11 +5459,17 @@ test('main IPC: featured MCP tools are read through the Bun worker', async () =>
     openAuthUrl({ id: 'composio', url: 'https://mcp.notion.com/authorize' }),
     /不匹配/
   )
+  await assert.rejects(
+    openAuthUrl({ id: 'cbioportal', url: 'https://accounts.google.com/authorize' }),
+    /不匹配/
+  )
   await openAuthUrl({ id: 'notion', url: 'https://mcp.notion.com/authorize' })
   await openAuthUrl({ id: 'composio', url: 'https://connect.composio.dev/oauth/authorize' })
-  assert.deepEqual(app.openedExternalUrls.slice(-2), [
+  await openAuthUrl({ id: 'cbioportal', url: 'https://mcp.cbioportal.org/authorize' })
+  assert.deepEqual(app.openedExternalUrls.slice(-3), [
     'https://mcp.notion.com/authorize',
-    'https://connect.composio.dev/oauth/authorize'
+    'https://connect.composio.dev/oauth/authorize',
+    'https://mcp.cbioportal.org/authorize'
   ])
 })
 

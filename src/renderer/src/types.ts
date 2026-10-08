@@ -33,7 +33,10 @@ import type {
 import type { PromptImageInput, StoredPromptImage } from '../../shared/promptImageTypes'
 import type { McpServerSummary } from './features/mcp/lib/mcpTypes'
 export type { McpServerSummary } from './features/mcp/lib/mcpTypes'
-import type { FeaturedMcpConnector } from '../../shared/mcpConnectorCatalog'
+import type {
+  FeaturedMcpConnector,
+  RemoteMcpConnectorOptions
+} from '../../shared/mcpConnectorCatalog'
 import type { AgentEventSummary } from './features/chat/lib/agentEventTypes'
 import type { SessionExportResult } from '../../shared/sessionExportTypes'
 import type {
@@ -958,7 +961,13 @@ export type RendererApi = AutoCompactionApi & {
   ) => Promise<InstalledPackageView[]>
   uninstallMcpConnector: (id: string) => Promise<InstalledPackageView[]>
   buildMcpConnectorEnvironment: (id: string) => Promise<{ envId: string }>
-  addRemoteMcpConnector: (name: string, url: string) => Promise<void>
+  addRemoteMcpConnector: (
+    name: string,
+    url: string,
+    options?: RemoteMcpConnectorOptions
+  ) => Promise<void>
+  authorizeRemoteMcpConnector: (name: string) => Promise<void>
+  cancelRemoteMcpAuth: (name: string) => Promise<void>
   removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
   setMcpConnectorEnabled: (name: string, enabled: boolean, sourcePath?: string) => Promise<void>
   listFeaturedMcpTools: (id: string) => Promise<string[]>

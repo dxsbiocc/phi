@@ -297,7 +297,10 @@ export function McpSidebar({
                       />
                     }
                   >
-                    <Tooltip title={label} enterDelay={450}>
+                    <Tooltip
+                      title={`${label} · 已配置 · ${active ? '已启用' : '已停用'}`}
+                      enterDelay={450}
+                    >
                       <Typography
                         component="span"
                         noWrap

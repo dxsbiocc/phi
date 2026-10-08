@@ -16,7 +16,11 @@ import { fileURLToPath } from 'node:url'
 
 import semver from 'semver'
 
-import type { FeaturedMcpConnector } from '../../shared/mcpConnectorCatalog'
+import type {
+  FeaturedMcpConnector,
+  RemoteMcpConnectorOptions,
+  RemoteMcpOAuthCredentials
+} from '../../shared/mcpConnectorCatalog'
 import type { EnvironmentBuildStartOptions } from './content/environment-builds'
 import type { EnvironmentDescriptor } from './content/environment-refs'
 import { createDeterministicTarGz, parseTarGz, type ArchiveFile } from './packages/archive'
@@ -74,6 +78,10 @@ const OAUTH_CONNECTORS: Record<string, { url: string; authorizationOrigin: strin
   linear: { url: 'https://mcp.linear.app/mcp', authorizationOrigin: 'https://mcp.linear.app' },
   figma: { url: 'https://mcp.figma.com/mcp', authorizationOrigin: 'https://www.figma.com' },
   canva: { url: 'https://mcp.canva.com/mcp', authorizationOrigin: 'https://mcp.canva.com' },
+  cbioportal: {
+    url: 'https://mcp.cbioportal.org/db/mcp',
+    authorizationOrigin: 'https://mcp.cbioportal.org'
+  },
   biorender: {
     url: 'https://mcp.services.biorender.com/mcp',
     authorizationOrigin: 'https://mcp.services.biorender.com'
@@ -274,19 +282,54 @@ export function setMcpPackageEnabled(
 export function addRemoteMcpConnector(
   name: string,
   url: string,
-  agentDir = getPhiAgentDir()
+  agentDir = getPhiAgentDir(),
+  options?: RemoteMcpConnectorOptions
 ): void {
   const validatedName = validateName(name)
   const validatedUrl = validateUrl(url)
+  const validatedOptions = validateRemoteConnectorOptions(options)
+  const oauth = validatedOptions.oauth
   const apiKeyConnectorEntry = knownApiKeyConnector(validatedName)
   if (apiKeyConnectorEntry && validatedUrl !== apiKeyConnectorEntry.url) {
     throw new Error('API key 连接器地址与官方地址不匹配')
   }
+  if (apiKeyConnectorEntry && oauth) {
+    throw new Error('此连接器使用 API key，不支持 OAuth 客户端信息')
+  }
   const config = readMcpConfig(agentDir)
   const servers = config.mcpServers ?? {}
   const existing = servers[validatedName]
+  if (validatedOptions.expectedOAuth !== undefined) {
+    if (
+      !isRecord(existing) ||
+      existing.type !== 'http' ||
+      existing.url !== validatedUrl ||
+      existing.command !== undefined ||
+      existing[MCP_PACKAGE_MARKER_FIELD] !== undefined ||
+      apiKeyConnectorEntry ||
+      (isRecord(existing.auth) && existing.auth.type === 'apikey') ||
+      !oauthCredentialsMatch(existing.oauth, validatedOptions.expectedOAuth)
+    ) {
+      throw new Error('连接器配置已变化，请刷新后重试')
+    }
+    const updated = { ...existing }
+    if (oauth) updated.oauth = oauth
+    else delete updated.oauth
+    writeMcpConfig({ ...config, mcpServers: { ...servers, [validatedName]: updated } }, agentDir)
+    return
+  }
   if (existing !== undefined) {
     if (isRecord(existing) && existing.url === validatedUrl) {
+      if (
+        oauth &&
+        (existing.type !== 'http' ||
+          existing.command !== undefined ||
+          !isRecord(existing.oauth) ||
+          existing.oauth.clientId !== oauth.clientId ||
+          existing.oauth.clientSecret !== oauth.clientSecret)
+      ) {
+        throw new Error(`已有名为 ${validatedName} 的连接器使用不同认证信息，请先移除或重命名`)
+      }
       if (apiKeyConnectorEntry) {
         if (!isPhiManagedApiKeyEntry(existing, validatedName, validatedUrl)) {
           throw new Error(`已有名为 ${validatedName} 的自定义 MCP 配置，请先移除或重命名`)
@@ -313,11 +356,66 @@ export function addRemoteMcpConnector(
       ...config,
       mcpServers: {
         ...servers,
-        [validatedName]: { type: 'http', url: validatedUrl, enabled: !apiKeyConnectorEntry }
+        [validatedName]: {
+          type: 'http',
+          url: validatedUrl,
+          enabled: !apiKeyConnectorEntry,
+          ...(oauth ? { oauth } : {})
+        }
       }
     },
     agentDir
   )
+}
+
+/** Resolve saved client credentials only for the requested endpoint. Never expose these in summaries. */
+export function readRemoteMcpOAuthCredentials(
+  name: string,
+  url: string,
+  agentDir = getPhiAgentDir()
+): RemoteMcpConnectorOptions['oauth'] {
+  const validatedUrl = validateUrl(url)
+  const servers = readMcpConfig(agentDir).mcpServers ?? {}
+  const matches = Object.entries(servers).filter(
+    ([, entry]) =>
+      isRecord(entry) &&
+      entry.url === validatedUrl &&
+      entry.command === undefined &&
+      (entry.type === undefined || entry.type === 'http') &&
+      isRecord(entry.oauth)
+  )
+  const named = matches.find(([entryName]) => entryName === name)
+  if (!named && matches.length > 1) {
+    throw new Error('同一服务地址有多个 OAuth 配置，请保留一个或使用目录中的连接器名称')
+  }
+  const entry = (named ?? matches[0])?.[1]
+  if (!isRecord(entry) || !isRecord(entry.oauth)) return undefined
+  return validateRemoteConnectorOptions({
+    oauth: { clientId: entry.oauth.clientId, clientSecret: entry.oauth.clientSecret }
+  }).oauth
+}
+
+/** Private setup data for an exact custom entry; never accepted from a renderer request. */
+export function readCustomRemoteMcpConnector(
+  name: string,
+  agentDir = getPhiAgentDir()
+): { name: string; url: string; oauth: { clientId: string; clientSecret?: string } } {
+  const validatedName = validateName(name)
+  const entry = readMcpConfig(agentDir).mcpServers?.[validatedName]
+  if (
+    !isRecord(entry) ||
+    entry.type !== 'http' ||
+    entry.command !== undefined ||
+    entry[MCP_PACKAGE_MARKER_FIELD] !== undefined ||
+    knownApiKeyConnector(validatedName) ||
+    (isRecord(entry.auth) && entry.auth.type === 'apikey')
+  ) {
+    throw new Error('请选择已保存的自定义 HTTP 连接器')
+  }
+  const url = typeof entry.url === 'string' ? validateUrl(entry.url) : undefined
+  const oauth = validateRemoteConnectorOptions({ oauth: entry.oauth }).oauth
+  if (!url || !oauth?.clientId) throw new Error('自定义连接器需要已保存的 OAuth Client ID')
+  return { name: validatedName, url, oauth: { ...oauth, clientId: oauth.clientId } }
 }
 
 export function removeRemoteMcpConnector(
@@ -517,11 +615,75 @@ function uniquePaths(paths: readonly string[]): string[] {
 }
 
 function validateName(name: string): string {
+  if (typeof name !== 'string') throw new Error('连接器名称无效')
   const trimmed = name.trim()
   if (!/^[a-z][a-z0-9_-]{1,63}$/i.test(trimmed)) {
     throw new Error('连接器名称需为 2–64 位字母、数字、下划线或连字符，并以字母开头')
   }
   return trimmed
+}
+
+function validateRemoteConnectorOptions(options: unknown): RemoteMcpConnectorOptions {
+  if (options === undefined) return {}
+  if (
+    !isRecord(options) ||
+    Object.keys(options).some((key) => key !== 'oauth' && key !== 'expectedOAuth')
+  ) {
+    throw new Error('连接器认证设置无效')
+  }
+  const oauth = validateOAuthCredentials(options.oauth)
+  const expectedOAuth =
+    options.expectedOAuth === undefined
+      ? undefined
+      : (validateOAuthCredentials(
+          options.expectedOAuth === null ? undefined : options.expectedOAuth
+        ) ?? null)
+  return {
+    ...(oauth ? { oauth } : {}),
+    ...(expectedOAuth !== undefined ? { expectedOAuth } : {})
+  }
+}
+
+function validateOAuthCredentials(value: unknown): RemoteMcpOAuthCredentials | undefined {
+  if (value === undefined) return undefined
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some((key) => key !== 'clientId' && key !== 'clientSecret')
+  ) {
+    throw new Error('OAuth 客户端设置无效')
+  }
+  const clientId = validateOAuthField(value.clientId, 'Client ID', 1024)
+  const clientSecret = validateOAuthField(value.clientSecret, 'Client Secret', 4096)
+  if (clientSecret && !clientId) throw new Error('填写 OAuth Client Secret 时必须提供 Client ID')
+  if (!clientId) return undefined
+  return { clientId, ...(clientSecret ? { clientSecret } : {}) }
+}
+
+function oauthCredentialsMatch(
+  value: unknown,
+  expected: RemoteMcpOAuthCredentials | null
+): boolean {
+  if (expected === null) return value === undefined
+  if (!isRecord(value)) return false
+  const keys = Object.keys(expected) as Array<keyof RemoteMcpOAuthCredentials>
+  return (
+    Object.keys(value).length === keys.length && keys.every((key) => value[key] === expected[key])
+  )
+}
+
+function validateOAuthField(value: unknown, label: string, maxLength: number): string | undefined {
+  if (value === undefined) return undefined
+  if (
+    typeof value !== 'string' ||
+    value.length > maxLength ||
+    Array.from(value).some((character) => {
+      const code = character.charCodeAt(0)
+      return code < 32 || code === 127
+    })
+  ) {
+    throw new Error(`OAuth ${label} 无效，不能包含控制字符且长度不能超过 ${maxLength}`)
+  }
+  return value.trim() || undefined
 }
 
 function validateUrl(value: string): string {
