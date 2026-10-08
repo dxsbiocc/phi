@@ -33,6 +33,8 @@ import {
 } from '../../../lib/contentCatalog'
 import type { PhiPluginDisplayItem } from '../hooks/usePhiPlugins'
 import {
+  buildPhiPluginCatalog,
+  filterPhiPluginCatalog,
   phiPluginCatalogAction,
   type PhiPluginCatalogAction,
   type PhiPluginCatalogEntry
@@ -163,27 +165,21 @@ export function PhiPluginCatalogContent({
   const [category, setCategory] = useState(initialCategory)
   const [query, setQuery] = useState('')
   const installedIds = useMemo(() => new Set(plugins.map((plugin) => plugin.id)), [plugins])
+  const catalog = useMemo(() => buildPhiPluginCatalog(plugins, entries), [plugins, entries])
   const groups = useMemo(() => {
     const counts = new Map<string, number>()
-    for (const entry of entries) {
-      const label = entry.category?.trim() || '其他'
-      counts.set(label, (counts.get(label) ?? 0) + 1)
+    for (const item of catalog) {
+      counts.set(item.category, (counts.get(item.category) ?? 0) + 1)
     }
     return [...counts.entries()].sort(([left], [right]) => left.localeCompare(right, 'zh-CN'))
-  }, [entries])
+  }, [catalog])
   const normalizedQuery = query.trim().toLowerCase()
   const visiblePlugins = plugins.filter((plugin) =>
     [plugin.title, plugin.id, plugin.version, plugin.summary].some((value) =>
       value.toLowerCase().includes(normalizedQuery)
     )
   )
-  const visibleEntries = entries.filter((entry) => {
-    if (category !== 'all' && (entry.category?.trim() || '其他') !== category) return false
-    if (!normalizedQuery) return true
-    return [entry.title, entry.id, entry.version, entry.summary, entry.category]
-      .filter(Boolean)
-      .some((value) => value!.toLowerCase().includes(normalizedQuery))
-  })
+  const visibleItems = filterPhiPluginCatalog(catalog, category, query)
   const installedSelected = category === 'installed'
 
   return (
@@ -214,7 +210,7 @@ export function PhiPluginCatalogContent({
             onClick={() => setCategory('all')}
             sx={{ borderRadius: 1.5, mb: 0.5 }}
           >
-            <Typography variant="body2">全部插件 · {entries.length}</Typography>
+            <Typography variant="body2">全部插件 · {catalog.length}</Typography>
           </ListItemButton>
           <ListItemButton
             selected={installedSelected}
@@ -315,21 +311,24 @@ export function PhiPluginCatalogContent({
                       disabled
                     />
                   ))
-                : visibleEntries.map((entry) => {
-                    const action = phiPluginCatalogAction(entry, installedIds, updates)
+                : visibleItems.map((item) => {
+                    const entry = item.entry
+                    const action = entry
+                      ? phiPluginCatalogAction(entry, installedIds, updates)
+                      : 'installed'
                     return (
                       <CatalogCard
-                        key={entry.id}
-                        icon={entry.icon}
-                        title={entry.title}
-                        summary={entry.summary}
-                        version={entry.version}
-                        trust={entry.trust}
-                        source={entry.registryLabel}
+                        key={item.id}
+                        icon={item.icon}
+                        title={item.title}
+                        summary={item.summary}
+                        version={item.version}
+                        trust={item.trust}
+                        source={item.source}
                         action={action}
-                        busy={busyId === entry.id}
+                        busy={busyId === item.id}
                         disabled={busyId !== null}
-                        onAction={() => onInstall(entry, action === 'update')}
+                        onAction={entry ? () => onInstall(entry, action === 'update') : undefined}
                       />
                     )
                   })}
@@ -337,7 +336,7 @@ export function PhiPluginCatalogContent({
           )}
           {!loading &&
           ((installedSelected && visiblePlugins.length === 0) ||
-            (!installedSelected && visibleEntries.length === 0)) ? (
+            (!installedSelected && visibleItems.length === 0)) ? (
             <Typography variant="body2" color="text.secondary">
               {normalizedQuery
                 ? '没有符合搜索条件的插件'
@@ -405,7 +404,7 @@ export function PhiPluginCatalogDialog({
       })),
       updates: availableUpdates,
       error: catalog.errors.join('\n') || null,
-      notice: catalog.notices.join('\n') || '首选来源：Phi Packages'
+      notice: catalog.notices.join('\n') || null
     }
   }, [])
 

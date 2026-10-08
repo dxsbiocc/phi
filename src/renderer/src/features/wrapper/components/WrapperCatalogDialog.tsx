@@ -5,9 +5,9 @@ import type {
   PackageRegistryView
 } from '../../../../../shared/packageManagerTypes'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
-import { PhiIcons } from '../../../icons'
 import { ResourceIcon } from '../../../components/ResourceIcon'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
+import { CatalogAddButton } from '../../../components/catalog/CatalogAddButton'
 import { CatalogResultsTable } from '../../../components/catalog/CatalogResultsTable'
 import { CatalogPagination } from '../../../components/catalog/CatalogPagination'
 import {
@@ -62,7 +62,7 @@ export function WrapperCatalogDialog({
       registries: sources.registries,
       installed,
       error: sources.errors.join('\n') || null,
-      notice: sources.notices.join('\n') || '首选来源：Phi Packages'
+      notice: sources.notices.join('\n') || null
     }
   }, [])
 
@@ -213,14 +213,11 @@ export function WrapperCatalogDialog({
         page={result.page}
         rowsPerPage={rowsPerPage}
         actions={
-          <Button
-            size="small"
+          <CatalogAddButton
+            label="添加 wrapper 目录"
             disabled={Boolean(busyId)}
             onClick={() => void chooseDirectory()}
-            startIcon={<PhiIcons.entity.folder size={16} />}
-          >
-            添加本地目录
-          </Button>
+          />
         }
         footer={
           !loading ? (

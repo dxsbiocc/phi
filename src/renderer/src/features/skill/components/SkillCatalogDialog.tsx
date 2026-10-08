@@ -4,10 +4,10 @@ import type {
   PackageRegistryEntryView,
   PackageRegistryView
 } from '../../../../../shared/packageManagerTypes'
-import { PhiIcons } from '../../../icons'
 import { ResourceIcon } from '../../../components/ResourceIcon'
 import type { SkillSummary } from '../../../types'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
+import { CatalogAddButton } from '../../../components/catalog/CatalogAddButton'
 import { CatalogPagination } from '../../../components/catalog/CatalogPagination'
 import { getCatalogPage } from '../../../components/catalog/catalogPaging'
 import { loadContentCatalog } from '../../../lib/contentCatalog'
@@ -107,12 +107,7 @@ export function SkillCatalogDialog({
         if (!active) return
         setKnownRegistries(catalog.registries)
         setSourceError(catalog.errors.join('\n') || null)
-        setSourceNotice(
-          catalog.notices.join('\n') ||
-            (catalog.registries.some((source) => source.kind === 'official')
-              ? '首选来源：Phi Packages'
-              : null)
-        )
+        setSourceNotice(catalog.notices.join('\n') || null)
       })
       .catch((cause) => {
         if (active) setSourceError(errorMessage(cause))
@@ -283,15 +278,11 @@ export function SkillCatalogDialog({
         onClose={close}
         busy={busyKey !== null}
         actions={
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<PhiIcons.entity.folder size={17} />}
+          <CatalogAddButton
+            label="添加技能目录"
             disabled={loading || busyKey !== null || !onPickRegistryDirectory || !onReadRegistry}
             onClick={() => void chooseRegistry()}
-          >
-            添加
-          </Button>
+          />
         }
         footer={
           <CatalogPagination

@@ -17,6 +17,7 @@ import {
 } from '../../../../../shared/mcpConnectorCatalog'
 import type { PackageUpdateView } from '../../../../../shared/packageManagerTypes'
 import { PhiIcons } from '../../../icons'
+import { CatalogAddButton } from '../../../components/catalog/CatalogAddButton'
 import { loadContentCatalog } from '../../../lib/contentCatalog'
 import type { McpServerSummary } from '../../../types'
 import { featuredAuthFailureNotice, featuredOAuthStatusFromError } from '../lib/featuredAuthStatus'
@@ -128,7 +129,7 @@ export function McpConnectorCatalogDialog({
         setConnectors(entries)
         setUpdates(availableUpdates)
         setSourceError(catalog.errors.join('\n') || null)
-        setSourceNotice(catalog.notices.join('\n') || '首选来源：Phi Packages')
+        setSourceNotice(catalog.notices.join('\n') || null)
         for (const connector of entries.filter(
           (entry) => entry.oauthAuthorizationOrigin || entry.apiKey
         )) {
@@ -596,31 +597,28 @@ export function McpConnectorCatalogDialog({
             </>
           )}
           {page === 'list' && (
-            <Button
-              variant="contained"
-              startIcon={<PhiIcons.action.add size={16} />}
+            <CatalogAddButton
+              label="添加连接器"
               onClick={() => {
                 savedCustomAuthRef.current = null
                 setCustomError(null)
                 setCustomOpen(true)
               }}
-            >
-              添加
-            </Button>
+            />
           )}
           <IconButton
             aria-label="关闭连接器目录"
             onClick={close}
             sx={{
-              width: 36,
-              height: 36,
+              width: 32,
+              height: 32,
               p: 0,
-              flex: '0 0 36px',
-              borderRadius: 1.5,
+              flex: '0 0 32px',
+              borderRadius: '50%',
               '&:hover': { bgcolor: 'action.hover' }
             }}
           >
-            <PhiIcons.action.close size={18} />
+            <PhiIcons.action.close size={20} />
           </IconButton>
         </Stack>
         <Box
