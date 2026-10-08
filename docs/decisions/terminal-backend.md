@@ -17,7 +17,7 @@ Terminal V1 采用 `@oh-my-pi/pi-natives@18.1.10` 的 `PtySession`，并在独�
 
 ```text
 PASS env-semantics env replaces inherited worker values; PHI_SPIKE_LEAK=false PI_CODING_AGENT_DIR=false keys=115
-PASS login-path PATH=/Users/dengxsh/.kimi-code/bin:/Users/dengxsh/.bun/bin:/Users/dengxsh/.opencode/bin:/opt/homebrew/opt/postgresql@15/bin:/opt/homebrew/opt/postgresql@15/bin:/opt/homebrew/opt/postgresql@15/bin:/Users/dengxsh/.codeium/windsurf/bin:/Users/dengxsh/miniconda3/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/X11/bin:/Applications/quarto/bin:/Users/dengxsh/.local/bin:/Users/dengxsh/.cargo/bin:/Users/dengxsh/.modular/bin; rebuiltFromMinimal=true
+PASS login-path PATH=/Users/example/.kimi-code/bin:/Users/example/.bun/bin:/Users/example/.opencode/bin:/opt/homebrew/opt/postgresql@15/bin:/opt/homebrew/opt/postgresql@15/bin:/opt/homebrew/opt/postgresql@15/bin:/Users/example/.codeium/windsurf/bin:/Users/example/miniconda3/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/X11/bin:/Applications/quarto/bin:/Users/example/.local/bin:/Users/example/.cargo/bin:/Users/example/.modular/bin; rebuiltFromMinimal=true
 PASS tty stdin=true stdout=true
 PASS stty-size before=30 100 after=40 120 pid=88003 unchanged=true
 PASS state-persist cwd=/var/folders/4n/zt5jjl7n237d_phyc6k91s_40000gn/T/phi-terminal-pty-XLBpag/persisted-cwd FOO=bar across separate writes
@@ -31,7 +31,7 @@ PASS close-graceful killAloneLeft=0/2 terminateResult=true tracked=3 gone=true e
 PASS close-quit-budget shells=3 tracked=6 elapsedMs=999.9 budgetMs=1500
 INFO job-control-group shellGroup=88587 childGroup=88627 separate=true groupTerminateReachedChild=true
 PASS worker-crash registeredPid=88649 childRefs=1 cleanupMs=2.4 masterCloseAutoExit=true autoExitMs=2.2 rootTerminateResult=true rootRefReachedChildren=false retainedChildFallback=1 unregisteredPid=88637 remainedAlive=true signalledOnlyRegistered=true
-INFO packaging resources=/Users/dengxsh/Downloads/Work/App/Phi-worktrees/terminal-v1/dist/mac-arm64/pi-desktop.app/Contents/Resources worker=false wrapper=false nativeBinary=true; current config cannot run an unpacked Bun terminal worker unless all three are unpacked; pin direct @oh-my-pi/pi-natives=18.1.10
+INFO packaging resources=/Users/example/Downloads/Work/App/Phi-worktrees/terminal-v1/dist/mac-arm64/pi-desktop.app/Contents/Resources worker=false wrapper=false nativeBinary=true; current config cannot run an unpacked Bun terminal worker unless all three are unpacked; pin direct @oh-my-pi/pi-natives=18.1.10
 ```
 
 `PtyRunResult` 的实测形状为 `{ cancelled, timedOut, exitCode }`，正常 `exit 7` 得到 `exitCode: 7`。`onStart` 给出的 PID 在 resize 前后不变。32,000 字节中文与 emoji 输出没有 U+FFFD，也没有观察到 Unicode code point 被回调分块切开。
@@ -55,7 +55,7 @@ PASS terminal-stress-disconnected durationMs=30000 dataEvents=24 protocolBytes=5
 PASS terminal-stress-reattach gap=1-119773 droppedBytes=3924448599 replayBytes=2097152 replayLimitBytes=2097152 sequences=69 staleAckHostCreditCalls=0 validAckBytes=524288 currentAckHostCreditCalls=1 floodStopMs=0.4 acknowledgedBytes=2121137 drainToLiveMs=568.3 liveSentinelMs=50.6
 PASS terminal-stress-acked durationMs=30000 midpointMs=15000 dataEvents=127929 protocolMiB=3997.7 typedEchoMs=0.6 queuedSentinelMs=48.7 outputStopMs=65.3 ackBatchBytes=32768 ackBatchDelayMs=16
 PASS terminal-stress-worker-crash worker=67310 epoch=1 shell=67413 hupIgnoringChild=67465 cleanupMs=10.7 failedState=true unhandledRejections=0 recreatedTerminal=J_bIJd7SkN_Vg7eVcfsteQ recreatedEpoch=1
-PASS terminal-stress-supervisor-crash supervisor=67311 existingPty=67477 existingPtyKilledMs=11.0 createUnavailable=true disposeMs=2.6 bun=/Users/dengxsh/.bun/bin/bun absoluteBun=true
+PASS terminal-stress-supervisor-crash supervisor=67311 existingPty=67477 existingPtyKilledMs=11.0 createUnavailable=true disposeMs=2.6 bun=/Users/example/.bun/bin/bun absoluteBun=true
 ```
 
 ## 生命周期与监督
@@ -74,13 +74,13 @@ PASS terminal-stress-supervisor-crash supervisor=67311 existingPty=67477 existin
 
 - `package.json` 直接、精确固定 `@oh-my-pi/pi-natives: "18.1.10"`。
 - `electron.vite.config.ts` 把 `src/main/terminal/` 及共享终端类型复制到 `out/`；`electron-builder.yml` 解包 `out/main/terminal/**`、`out/shared/terminalTypes.ts`、`node_modules/@oh-my-pi/pi-natives/**` 和目标平台包。OMP 的解包条目未由本任务修改。
-- Finder 风格的最小 `PATH=/usr/bin:/bin:/usr/sbin:/sbin` 下，宿主不再依赖 `spawn('bun')`，而是按固定优先级解析可执行的 Bun 绝对路径。本次从 `HOME` 找到 `/Users/dengxsh/.bun/bin/bun`。
+- Finder 风格的最小 `PATH=/usr/bin:/bin:/usr/sbin:/sbin` 下，宿主不再依赖 `spawn('bun')`，而是按固定优先级解析可执行的 Bun 绝对路径。本次从 `HOME` 找到 `/Users/example/.bun/bin/bun`。
 - app 复制到源码树外的 `/private/tmp/phi-pack-check.QwVPgb/`后，真实 Host 从复制产物的 `app.asar.unpacked/out/main/terminal/` 启动 Worker 和 Supervisor；Shell 回显、`37x113` resize 和关闭全部通过。`lsof` 确认 Worker 加载的唯一 `pi_natives.darwin-arm64.node` 位于复制 app 内，没有指向源码仓库。
 
 `bun run smoke:terminal-packaged -- /private/tmp/phi-pack-check.QwVPgb/pi-desktop.app` 输出：
 
 ```text
-PASS terminal-packaged app=/private/tmp/phi-pack-check.QwVPgb/pi-desktop.app bun=/Users/dengxsh/.bun/bin/bun worker=58877 shell=58880 echo=true size=37x113 native=/private/tmp/phi-pack-check.QwVPgb/pi-desktop.app/Contents/Resources/app.asar.unpacked/node_modules/@oh-my-pi/pi-natives-darwin-arm64/pi_natives.darwin-arm64.node
+PASS terminal-packaged app=/private/tmp/phi-pack-check.QwVPgb/pi-desktop.app bun=/Users/example/.bun/bin/bun worker=58877 shell=58880 echo=true size=37x113 native=/private/tmp/phi-pack-check.QwVPgb/pi-desktop.app/Contents/Resources/app.asar.unpacked/node_modules/@oh-my-pi/pi-natives-darwin-arm64/pi_natives.darwin-arm64.node
 ```
 
 ## 计划契约变更

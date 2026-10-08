@@ -491,7 +491,7 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
           fontWeight: 600,
           lineHeight: '24px',
           color: theme.palette.text.secondary,
-          backgroundColor: isDark ? alpha(MINIMAL_GREY[500], 0.08) : MINIMAL_GREY[200],
+          backgroundColor: isDark ? MINIMAL_GREY[800] : MINIMAL_GREY[200],
           borderBottom: 'none'
         })
       }

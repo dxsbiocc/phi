@@ -35,7 +35,15 @@ export function CatalogResultsTable({
   rowAttribute: string
 }): React.JSX.Element {
   return (
-    <TableContainer sx={{ overflow: 'visible', borderRadius: 2 }}>
+    <TableContainer
+      data-phi-catalog-table-scroll="true"
+      sx={{
+        flex: rows.length > 0 ? 1 : '0 0 auto',
+        minHeight: 0,
+        overflow: 'auto',
+        borderRadius: 2
+      }}
+    >
       <Table size="small" stickyHeader aria-label={label} sx={{ tableLayout: 'fixed' }}>
         <TableHead>
           <TableRow sx={{ bgcolor: 'action.hover' }}>

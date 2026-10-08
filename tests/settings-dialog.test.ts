@@ -209,7 +209,7 @@ test('settings dialog renders project permission controls without hiding default
   const project: Project = {
     id: 'project-1',
     name: 'test',
-    workingDirectory: '/Users/dengxsh/Downloads/Work/App/Phi',
+    workingDirectory: '/Users/example/Downloads/Work/App/Phi',
     permissionMode: 'full',
     createdAt: '2026-09-06T00:00:00.000Z'
   }

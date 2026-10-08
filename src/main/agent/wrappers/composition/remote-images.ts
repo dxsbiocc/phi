@@ -13,7 +13,7 @@ import { collectIncludedFiles } from './includes'
  * Puts a wrapper's Singularity images into the cluster's cache before a run.
  *
  * Nextflow pulls each image on first use, from wherever the head job runs —
- * which on many clusters is a compute node with no internet (the yzhang
+ * which on many clusters is a compute node with no internet (the HPC
  * cluster: every pull failed). Phi fills the gap: it works out which images a
  * wrapper needs, has the login node download the missing ones, and when the
  * login node cannot reach the registry either, downloads them on this machine

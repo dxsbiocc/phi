@@ -52,7 +52,10 @@ export function CatalogBrowseLayout({
 }): React.JSX.Element {
   const resultsRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (resultsRef.current) resultsRef.current.scrollTop = 0
+    const results = resultsRef.current
+    const scroller =
+      results?.querySelector<HTMLElement>('[data-phi-catalog-table-scroll]') ?? results
+    if (scroller) scroller.scrollTop = 0
   }, [query, selectedGroupId, page, rowsPerPage])
   const selected = groups.find((group) => group.id === selectedGroupId) ?? groups[0]
 
@@ -88,8 +91,13 @@ export function CatalogBrowseLayout({
           {selected?.label ?? title}
         </Typography>
         {actions}
-        <IconButton aria-label={closeLabel} disabled={busy} onClick={onClose} size="small">
-          <PhiIcons.action.close size={18} />
+        <IconButton
+          aria-label={closeLabel}
+          disabled={busy}
+          onClick={onClose}
+          sx={{ width: 32, height: 32, p: 0, flexShrink: 0, borderRadius: '50%' }}
+        >
+          <PhiIcons.action.close size={20} />
         </IconButton>
       </Stack>
       <Box
@@ -156,7 +164,18 @@ export function CatalogBrowseLayout({
             }}
           />
         </Box>
-        <Box ref={resultsRef} sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 3, pb: 2 }}>
+        <Box
+          ref={resultsRef}
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            px: 3,
+            pb: 2
+          }}
+        >
           {children}
         </Box>
         {footer ? <Box sx={{ px: 3, py: 1.5 }}>{footer}</Box> : null}

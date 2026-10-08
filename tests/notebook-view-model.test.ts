@@ -208,13 +208,13 @@ test('notebook view model updates kernel metadata without losing language info',
 })
 
 test('contextReferenceForFilePath builds a data_source reference from an absolute path', () => {
-  const reference = contextReferenceForFilePath('/Users/dengxsh/projects/demo/data/patients.csv')
+  const reference = contextReferenceForFilePath('/Users/example/projects/demo/data/patients.csv')
 
   assert.equal(reference.kind, 'data_source')
   assert.equal(reference.name, 'patients.csv')
-  assert.equal(reference.detail, '/Users/dengxsh/projects/demo/data/patients.csv')
-  assert.equal(reference.preview?.source, '/Users/dengxsh/projects/demo/data/patients.csv')
-  assert.equal(reference.id, 'data_source:/Users/dengxsh/projects/demo/data/patients.csv')
+  assert.equal(reference.detail, '/Users/example/projects/demo/data/patients.csv')
+  assert.equal(reference.preview?.source, '/Users/example/projects/demo/data/patients.csv')
+  assert.equal(reference.id, 'data_source:/Users/example/projects/demo/data/patients.csv')
 })
 
 test('contextReferenceForFilePath handles Windows-style paths too', () => {
